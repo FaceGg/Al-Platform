@@ -8,6 +8,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
 
+# Import all operators so they register themselves
+import app.operators.io_operators  # noqa: F401
+import app.operators.processing  # noqa: F401
+import app.operators.ml_operators  # noqa: F401
+import app.operators.evaluation  # noqa: F401
+import app.operators.visualization  # noqa: F401
+
+# Import API routers
+from app.api import auth, projects, workflows, runs, operators, datasets
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -31,6 +41,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register routers
+app.include_router(auth.router)
+app.include_router(projects.router)
+app.include_router(workflows.router)
+app.include_router(runs.router)
+app.include_router(operators.router)
+app.include_router(datasets.router)
 
 
 @app.get("/api/health")

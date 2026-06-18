@@ -1,4 +1,4 @@
-﻿from app.models.user import User
+from app.models.user import User
 from app.models.project import Project
 from app.models.workflow import Workflow, WorkflowNode, WorkflowEdge
 from app.models.run import WorkflowRun, NodeRun

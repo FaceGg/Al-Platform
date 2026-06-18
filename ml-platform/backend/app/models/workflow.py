@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 
 from sqlalchemy import Column, String, Text, Boolean, Float, ForeignKey, DateTime, func
 from sqlalchemy import JSON
