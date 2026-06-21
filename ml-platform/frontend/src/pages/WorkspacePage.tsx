@@ -25,7 +25,7 @@ export default function WorkspacePage() {
     }).catch(() => {})
 
     if (workflowId) {
-      apiClient.get('/projects/*/workflows/' + workflowId).then((res) => {
+      apiClient.get('/workflows/' + workflowId).then((res) => {
         const wf = res.data
         if (wf.nodes) {
           setNodes(wf.nodes.map((n: any) => ({
