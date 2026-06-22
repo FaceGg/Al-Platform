@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import uuid
 from typing import Any, Callable
@@ -34,7 +34,6 @@ class DAGExecutor:
     def validate(self) -> list[str]:
         errors: list[str] = []
 
-        # Cycle detection
         try:
             cycles = list(nx.simple_cycles(self._graph))
             if cycles:
@@ -43,13 +42,11 @@ class DAGExecutor:
         except nx.NetworkXNoCycle:
             pass
 
-        # Missing operators
         for node_id, data in self._graph.nodes(data=True):
             op_id = data.get("operator_id", "")
             if op_id and OperatorRegistry.get(op_id) is None:
                 errors.append(f"Node '{node_id}': operator '{op_id}' not registered")
 
-        # Missing required inputs
         for node_id, data in self._graph.nodes(data=True):
             op_id = data.get("operator_id", "")
             op = OperatorRegistry.get(op_id)
@@ -72,7 +69,7 @@ class DAGExecutor:
     def execute(
         self,
         run_id: str,
-        status_callback: Callable[[str, str, str], None] | None = None,
+        status_callback: Callable[[str, str, str, dict | None], None] | None = None,
     ) -> dict[str, Any]:
         errors = self.validate()
         if errors:
@@ -111,15 +108,13 @@ class DAGExecutor:
 
             # Execute
             try:
-                if status_callback:
-                    status_callback(run_id, node_id, "running")
                 outputs = op.execute(inputs, params)
             except Exception as e:
                 if status_callback:
-                    status_callback(run_id, node_id, "failed")
+                    status_callback(run_id, node_id, "failed", {"error": str(e)})
                 raise RuntimeError(f"Execution failed for node '{node_id}': {e}") from e
 
-            # Save outputs
+            # Save outputs to data bus
             node_results: dict[str, str] = {}
             for port_name, data in outputs.items():
                 path = DataBus.save_data(run_id, node_id, port_name, data)
@@ -127,7 +122,17 @@ class DAGExecutor:
 
             results[node_id] = node_results
 
+            # Build preview-friendly result for frontend
+            preview: dict[str, Any] = {}
+            for port_name, raw_data in outputs.items():
+                if isinstance(raw_data, str) and len(raw_data) > 500:
+                    preview[port_name] = raw_data[:200] + f"...({len(raw_data)} chars)"
+                elif isinstance(raw_data, (list, dict)):
+                    preview[port_name] = raw_data
+                else:
+                    preview[port_name] = str(raw_data)[:500]
+
             if status_callback:
-                status_callback(run_id, node_id, "completed")
+                status_callback(run_id, node_id, "completed", preview)
 
         return results

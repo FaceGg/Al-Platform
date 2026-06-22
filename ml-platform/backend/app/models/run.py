@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey
 from sqlalchemy import JSON
@@ -31,6 +31,7 @@ class NodeRun(Base):
     run_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False)
     node_id = Column(UUID(as_uuid=True), ForeignKey("nodes.id", ondelete="SET NULL"))
     status = Column(String(16), default="pending")
+    result = Column(JSON)
     output_meta = Column(JSON)
     preview_data = Column(Text)
     error_message = Column(Text)

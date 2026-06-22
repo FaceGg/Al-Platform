@@ -51,25 +51,29 @@ def _run_workflow(workflow_run_id: str):
 
         executor = DAGExecutor(dag_nodes, dag_edges)
 
-        def status_callback(run_id: str, node_id: str, status: str):
+        def status_callback(run_id: str, node_id: str, status: str, result: dict = None):
             try:
                 nr = NodeRun(
                     run_id=workflow_run.id,
                     node_id=uuid.UUID(node_id),
                     status=status,
+                    result=result,
                     started_at=datetime.utcnow() if status in ("running",) else None,
                     finished_at=datetime.utcnow() if status in ("completed", "failed") else None,
                 )
                 db.add(nr)
                 db.commit()
 
+                # Broadcast to WebSocket with result data
+                payload = {"type": "node_status", "node_id": node_id, "status": status, "run_id": run_id}
+                if result:
+                    payload["result"] = result
+
                 import asyncio
                 try:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
-                        loop.create_task(manager.broadcast(
-                            run_id, {"type": "node_status", "node_id": node_id, "status": status, "run_id": run_id}
-                        ))
+                        loop.create_task(manager.broadcast(run_id, payload))
                 except RuntimeError:
                     pass
             except Exception:
@@ -87,7 +91,7 @@ def _run_workflow(workflow_run_id: str):
         workflow_run.finished_at = datetime.utcnow()
         db.commit()
 
-        status_callback(run_id, "__workflow__", "completed")
+        status_callback(run_id, "__workflow__", "completed", {"message": "Workflow execution completed"})
 
     except Exception as e:
         try:
@@ -132,7 +136,6 @@ def start_run(
     db.commit()
     db.refresh(workflow_run)
 
-    # Pass only the run ID - background thread creates its own session
     import threading
     thread = threading.Thread(target=_run_workflow, args=(str(workflow_run.id),), daemon=True)
     thread.start()

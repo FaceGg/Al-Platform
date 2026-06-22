@@ -1,5 +1,6 @@
-import { create } from 'zustand'
+﻿import { create } from 'zustand'
 import { Node, Edge, applyNodeChanges, applyEdgeChanges, addEdge, Connection, NodeChange, EdgeChange } from 'reactflow'
+import type { ReactFlowInstance } from 'reactflow'
 
 export interface WorkflowState {
   nodes: Node[]
@@ -9,6 +10,7 @@ export interface WorkflowState {
   nodeStatuses: Record<string, string>
   nodeResults: Record<string, any>
   operators: any[]
+  reactFlowInstance: ReactFlowInstance | null
   setNodes: (nodes: Node[]) => void
   setEdges: (edges: Edge[]) => void
   onNodesChange: (changes: NodeChange[]) => void
@@ -21,6 +23,7 @@ export interface WorkflowState {
   setIsRunning: (v: boolean) => void
   setNodeStatus: (nodeId: string, status: string) => void
   setNodeResult: (nodeId: string, result: any) => void
+  setReactFlowInstance: (instance: ReactFlowInstance | null) => void
   reset: () => void
 }
 
@@ -32,6 +35,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   nodeStatuses: {},
   nodeResults: {},
   operators: [],
+  reactFlowInstance: null,
 
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
@@ -77,6 +81,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   setNodeResult: (nodeId, result) => set((state) => ({
     nodeResults: { ...state.nodeResults, [nodeId]: result },
   })),
+
+  setReactFlowInstance: (instance) => set({ reactFlowInstance: instance }),
 
   reset: () => set({
     nodes: [], edges: [], selectedNode: null,

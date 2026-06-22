@@ -1,4 +1,4 @@
-﻿import { Input, InputNumber, Select, Switch, Form, Divider, Button, message, Upload } from 'antd'
+﻿import { Input, InputNumber, Select, Switch, Form, Divider, Button, message, Upload, Image } from 'antd'
 import { UploadOutlined } from '@ant-design/icons'
 import { useI18n } from '../../i18n'
 import { useWorkflowStore } from '../../stores/workflowStore'
@@ -52,24 +52,17 @@ export default function NodeConfigPanel() {
     } finally {
       setUploading(false)
     }
-    return false // prevent default upload behavior
+    return false
   }
 
-  // Determine if the operator is CSV Import (has source param)
   const isCSVImport = operator?.id === 'csv_import'
   const sourceValue = params['source'] || 'local'
 
   const renderParamField = (p: any) => {
     const value = params[p.name] ?? p.default
 
-    // For CSV import: file_path only shows when source is 'local'
-    if (isCSVImport && p.name === 'file_path' && sourceValue !== 'local') {
-      return null
-    }
-    // For CSV import: url only shows when source is 'url'
-    if (isCSVImport && p.name === 'url' && sourceValue !== 'url') {
-      return null
-    }
+    if (isCSVImport && p.name === 'file_path' && sourceValue !== 'local') return null
+    if (isCSVImport && p.name === 'url' && sourceValue !== 'url') return null
 
     if (p.type === 'file') {
       return (
@@ -131,6 +124,35 @@ export default function NodeConfigPanel() {
     )
   }
 
+  // Check if result contains chart/base64 image data
+  const hasChart = result && result.chart && typeof result.chart === 'string' && result.chart.length > 100
+  const isVisualizationOp = operator?.category === 'visualization'
+
+  // Render result content
+  const renderResult = () => {
+    if (!result) return null
+
+    // Chart image (base64) from visualization operators
+    if (hasChart) {
+      return (
+        <div>
+          <Image src={`data:image/png;base64,${result.chart}`} alt="图表" style={{ width: '100%' }} />
+        </div>
+      )
+    }
+
+    // JSON result
+    return (
+      <pre style={{
+        fontSize: 11, background: '#f5f5f5', padding: 8,
+        borderRadius: 4, maxHeight: 300, overflow: 'auto',
+        whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+      }}>
+        {JSON.stringify(result, null, 2)}
+      </pre>
+    )
+  }
+
   return (
     <div style={{ padding: 12, overflow: 'auto', height: '100%' }}>
       <Divider plain>{selectedNode.data.label || selectedNode.data.operatorId}</Divider>
@@ -173,12 +195,7 @@ export default function NodeConfigPanel() {
       {result && (
         <>
           <Divider plain>{t.workspace.result_preview}</Divider>
-          <pre style={{
-            fontSize: 12, background: '#f5f5f5', padding: 8,
-            borderRadius: 4, maxHeight: 200, overflow: 'auto'
-          }}>
-            {JSON.stringify(result, null, 2)}
-          </pre>
+          {renderResult()}
         </>
       )}
     </div>
