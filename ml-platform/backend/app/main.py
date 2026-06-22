@@ -35,6 +35,10 @@ from app.api import knowledge, monitor, labeling, training, orchestration
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Create database tables on startup and clean up on shutdown."""
     Base.metadata.create_all(bind=engine)
+    # Capture event loop for background thread WebSocket broadcast
+    import app.api.runs as runs_mod
+    import asyncio
+    runs_mod._main_loop = asyncio.get_running_loop()
     yield
     engine.dispose()
 
@@ -76,3 +80,4 @@ app.include_router(orchestration.router)
 def health_check():
     """Return API health status."""
     return {"status": "ok"}
+

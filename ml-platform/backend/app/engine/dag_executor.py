@@ -34,6 +34,7 @@ class DAGExecutor:
     def validate(self) -> list[str]:
         errors: list[str] = []
 
+        # Cycle detection
         try:
             cycles = list(nx.simple_cycles(self._graph))
             if cycles:
@@ -42,22 +43,37 @@ class DAGExecutor:
         except nx.NetworkXNoCycle:
             pass
 
+        # Missing operators
         for node_id, data in self._graph.nodes(data=True):
             op_id = data.get("operator_id", "")
             if op_id and OperatorRegistry.get(op_id) is None:
                 errors.append(f"Node '{node_id}': operator '{op_id}' not registered")
 
+        # Input port validation (relaxed: if single input + single edge, allow)
         for node_id, data in self._graph.nodes(data=True):
             op_id = data.get("operator_id", "")
             op = OperatorRegistry.get(op_id)
             if op is None:
                 continue
-            if not list(self._graph.predecessors(node_id)):
+            if not op.inputs:
+                continue  # No inputs needed
+            predecessors = list(self._graph.predecessors(node_id))
+            if not predecessors:
+                continue  # Source node, OK
+
+            # Single input + single edge = always valid (port name might not match handle ID)
+            if len(op.inputs) == 1 and len(predecessors) == 1:
                 continue
-            incoming_ports = {
-                self._graph.edges[edge]["target_port"]
-                for edge in self._graph.in_edges(node_id)
-            }
+
+            # Multiple inputs: check port names
+            incoming_ports: set[str] = set()
+            for src, tgt in self._graph.in_edges(node_id):
+                try:
+                    edge_data = self._graph.edges[src, tgt]
+                    incoming_ports.add(edge_data.get("target_port", ""))
+                except (KeyError, TypeError):
+                    pass
+
             for port in op.inputs:
                 if port.name not in incoming_ports:
                     errors.append(
@@ -92,19 +108,39 @@ class DAGExecutor:
 
             # Collect inputs from upstream nodes
             inputs: dict[str, Any] = {}
-            for src, tgt, edge_data in self._graph.in_edges(node_id, data=True):
-                target_port = edge_data.get("target_port", "")
-                upstream_path = results.get(src, {}).get(edge_data.get("source_port", ""))
+            in_edges = [(src, tgt) for src, tgt in self._graph.in_edges(node_id)]
+
+            if len(in_edges) == 1 and len(op.inputs) == 1:
+                # Single input: use it regardless of port name mismatch
+                src, tgt = in_edges[0]
+                edge_data = self._graph.edges.get((src, tgt), {})
+                src_port = edge_data.get("source_port", "")
+                src_results = results.get(src, {})
+                # Try exact port match first, then fallback to any available output
+                upstream_path = src_results.get(src_port)
+                if not upstream_path and src_results:
+                    upstream_path = next(iter(src_results.values()))
                 if upstream_path:
-                    inputs[target_port] = DataBus.load_data(upstream_path)
+                    inputs[op.inputs[0].name] = DataBus.load_data(upstream_path)
+            else:
+                # Multiple inputs: match by port name
+                for src, tgt in in_edges:
+                    edge_data = self._graph.edges.get((src, tgt), {})
+                    target_port = edge_data.get("target_port", "")
+                    source_port = edge_data.get("source_port", "")
+                    src_results = results.get(src, {})
+                    upstream_path = src_results.get(source_port)
+                    if not upstream_path and src_results:
+                        # Fallback: use first available output from source
+                        upstream_path = next(iter(src_results.values()))
+                    if upstream_path:
+                        inputs[target_port] = DataBus.load_data(upstream_path)
 
             # Validate
             if not op.validate(inputs):
                 if status_callback:
-                    status_callback(run_id, node_id, "failed")
-                raise RuntimeError(
-                    f"Validation failed for node '{node_id}' (op '{op_id}')"
-                )
+                    status_callback(run_id, node_id, "failed", {"error": "Validation failed"})
+                raise RuntimeError(f"Validation failed for node '{node_id}' (op '{op_id}')")
 
             # Execute
             try:
@@ -136,3 +172,4 @@ class DAGExecutor:
                 status_callback(run_id, node_id, "completed", preview)
 
         return results
+
