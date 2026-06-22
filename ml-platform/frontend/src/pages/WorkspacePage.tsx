@@ -1,4 +1,4 @@
-﻿import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { Layout, Button, Space, message } from 'antd'
 import { PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons'
@@ -16,7 +16,7 @@ const { Sider, Content } = Layout
 export default function WorkspacePage() {
   const { workflowId } = useParams<{ workflowId: string }>()
   const navigate = useNavigate()
-  const { operators, setOperators, setNodes, setEdges, setIsRunning, setNodeStatus, setNodeResult, nodeStatuses } = useWorkflowStore()
+  const { operators, setOperators, setNodes, setEdges, setIsRunning, setNodeStatus, setNodeResult } = useWorkflowStore()
 
   useEffect(() => {
     apiClient.get('/operators').then((res) => {
@@ -45,40 +45,40 @@ export default function WorkspacePage() {
           })))
         }
       }).catch(() => {
-        message.warning('无法加载工作流')
+        message.warning('\u65e0\u6cd5\u52a0\u8f7d\u5de5\u4f5c\u6d41')
       })
     }
   }, [workflowId])
 
-  const handleSave = async () => {
-    try {
-      const store = useWorkflowStore.getState()
-      const payload = {
-        name: 'untitled',
-        nodes: store.nodes.map((n: any) => ({
-          id: n.id,
-          operator_id: n.data.operatorId,
-          label: n.data.label || '',
-          position: { x: n.position.x, y: n.position.y },
-          params: n.data.params || {},
-        })),
-        edges: store.edges.map((e: any) => ({
-          id: e.id,
-          source: e.source,
-          source_port: e.sourceHandle || 'output',
-          target: e.target,
-          target_port: e.targetHandle || 'input',
-        })),
-      }
+  // Build save payload from current store state
+  const buildPayload = () => {
+    const store = useWorkflowStore.getState()
+    return {
+      name: 'untitled',
+      nodes: store.nodes.map((n: any) => ({
+        id: n.id,
+        operator_id: n.data.operatorId,
+        label: n.data.label || '',
+        position: { x: n.position.x, y: n.position.y },
+        params: n.data.params || {},
+      })),
+      edges: store.edges.map((e: any) => ({
+        id: e.id,
+        source: e.source,
+        source_port: e.sourceHandle || 'output',
+        target: e.target,
+        target_port: e.targetHandle || 'input',
+      })),
+    }
+  }
 
-      if (workflowId) {
-        // Use the project-wf endpoint
-        const pid = window.location.pathname.split('/projects/')[1]?.split('/')[0] || ''
-        await apiClient.put('/projects/' + pid + '/workflows/' + workflowId, payload)
-      }
-      message.success('已保存')
+  const handleSave = async () => {
+    if (!workflowId) return
+    try {
+      await apiClient.put('/workflows/' + workflowId, buildPayload())
+      message.success('\u5df2\u4fdd\u5b58')
     } catch {
-      message.error('保存失败')
+      message.error('\u4fdd\u5b58\u5931\u8d25')
     }
   }
 
@@ -87,10 +87,11 @@ export default function WorkspacePage() {
     setIsRunning(true)
     setNodeStatus('__wf__', 'running')
     try {
+      // Auto-save current canvas state before running
+      await apiClient.put('/workflows/' + workflowId, buildPayload())
       const res = await apiClient.post('/workflows/' + workflowId + '/run')
       const runId = res.data.run_id
 
-      // Connect to WebSocket for real-time updates
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const ws = new WebSocket(protocol + '//localhost:8000/ws/runs/' + runId)
       ws.onmessage = (event) => {
@@ -102,30 +103,33 @@ export default function WorkspacePage() {
           setIsRunning(false)
           ws.close()
           if (msg.status === 'completed') {
-            message.success('工作流执行完成')
+            message.success('\u5de5\u4f5c\u6d41\u6267\u884c\u5b8c\u6210')
           } else {
-            message.error('执行失败: ' + (msg.error || ''))
+            message.error('\u6267\u884c\u5931\u8d25: ' + (msg.error || ''))
           }
         }
       }
       ws.onerror = () => {
         setIsRunning(false)
-        message.warning('无法连接实时状态，请检查后端是否运行')
+        message.warning('\u65e0\u6cd5\u8fde\u63a5\u5b9e\u65f6\u72b6\u6001\uff0c\u8bf7\u68c0\u67e5\u540e\u7aef\u662f\u5426\u8fd0\u884c')
       }
     } catch (e: any) {
       setIsRunning(false)
       setNodeStatus('__wf__', 'failed')
-      message.error(e.response?.data?.detail || '执行失败')
+      message.error(e.response?.data?.detail || '\u6267\u884c\u5931\u8d25')
     }
   }
 
   const onDrop = useCallback((event: React.DragEvent) => {
     event.preventDefault()
     const opData = JSON.parse(event.dataTransfer.getData('application/reactflow'))
-    const bounds = event.currentTarget.getBoundingClientRect()
-    const position = {
-      x: event.clientX - bounds.left - 75,
-      y: event.clientY - bounds.top - 30,
+    const rfInstance = useWorkflowStore.getState().reactFlowInstance
+    let position: { x: number; y: number }
+    if (rfInstance) {
+      position = rfInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    } else {
+      const bounds = event.currentTarget.getBoundingClientRect()
+      position = { x: event.clientX - bounds.left - 75, y: event.clientY - bounds.top - 30 }
     }
     useWorkflowStore.getState().addNode(opData.id, position, opData)
   }, [])
@@ -164,6 +168,3 @@ export default function WorkspacePage() {
     </ReactFlowProvider>
   )
 }
-
-
-
