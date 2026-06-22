@@ -11,11 +11,29 @@ from app.api.auth import get_current_user
 from app.engine.dag_executor import DAGExecutor
 from app.engine.registry import OperatorRegistry
 from app.websocket.manager import manager
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+# Main event loop (captured at import time in main thread)
+_main_loop = None
+try:
+    _main_loop = asyncio.get_event_loop()
+except RuntimeError:
+    pass
 
 router = APIRouter(tags=["runs"])
 
 
-def _run_workflow(workflow_run_id: str):
+def _broadcast_from_thread(loop, run_id: str, payload: dict):
+    """Thread-safe broadcast to WebSocket clients."""
+    try:
+        asyncio.run_coroutine_threadsafe(manager.broadcast(run_id, payload), loop)
+    except Exception:
+        pass
+
+
+def _run_workflow(workflow_run_id: str, main_loop):
     """Execute workflow in background using a fresh DB session."""
     db = SessionLocal()
     try:
@@ -30,6 +48,17 @@ def _run_workflow(workflow_run_id: str):
 
         nodes = db.query(WorkflowNode).filter(WorkflowNode.workflow_id == workflow.id).all()
         edges = db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == workflow.id).all()
+
+        if not nodes:
+            _broadcast_from_thread(main_loop, run_id, {
+                "type": "run_completed", "run_id": run_id,
+                "status": "failed", "error": "No nodes in workflow"
+            })
+            workflow_run.status = "failed"
+            workflow_run.error_message = "No nodes in workflow"
+            workflow_run.finished_at = datetime.utcnow()
+            db.commit()
+            return
 
         dag_nodes = []
         for n in nodes:
@@ -52,38 +81,33 @@ def _run_workflow(workflow_run_id: str):
         executor = DAGExecutor(dag_nodes, dag_edges)
 
         def status_callback(run_id: str, node_id: str, status: str, result: dict = None):
+            """Called by DAG executor for each node status change."""
             try:
                 nr = NodeRun(
                     run_id=workflow_run.id,
                     node_id=uuid.UUID(node_id),
                     status=status,
                     result=result,
-                    started_at=datetime.utcnow() if status in ("running",) else None,
+                    started_at=datetime.utcnow() if status == "running" else None,
                     finished_at=datetime.utcnow() if status in ("completed", "failed") else None,
                 )
                 db.add(nr)
                 db.commit()
-
-                # Broadcast to WebSocket with result data
-                payload = {"type": "node_status", "node_id": node_id, "status": status, "run_id": run_id}
-                if result:
-                    payload["result"] = result
-
-                import asyncio
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        loop.create_task(manager.broadcast(run_id, payload))
-                except RuntimeError:
-                    pass
             except Exception:
                 db.rollback()
+
+            payload = {"type": "node_status", "node_id": node_id, "status": status, "run_id": run_id}
+            if result:
+                payload["result"] = result
+            _broadcast_from_thread(main_loop, run_id, payload)
 
         workflow_run.started_at = datetime.utcnow()
         workflow_run.status = "running"
         db.commit()
 
-        status_callback(run_id, "__workflow__", "running")
+        _broadcast_from_thread(main_loop, run_id, {
+            "type": "node_status", "node_id": "__wf__", "status": "running", "run_id": run_id,
+        })
 
         result = executor.execute(run_id, status_callback)
 
@@ -91,26 +115,24 @@ def _run_workflow(workflow_run_id: str):
         workflow_run.finished_at = datetime.utcnow()
         db.commit()
 
-        status_callback(run_id, "__workflow__", "completed", {"message": "Workflow execution completed"})
+        _broadcast_from_thread(main_loop, run_id, {
+            "type": "run_completed", "run_id": run_id, "status": "completed",
+            "result": {"message": "Workflow execution completed"}
+        })
 
     except Exception as e:
+        logger.exception(f"Workflow {workflow_run_id} failed: {e}")
         try:
-            workflow_run = db.query(WorkflowRun).filter(WorkflowRun.id == uuid.UUID(workflow_run_id)).first()
-            if workflow_run:
-                workflow_run.status = "failed"
-                workflow_run.error_message = str(e)
-                workflow_run.finished_at = datetime.utcnow()
+            wr = db.query(WorkflowRun).filter(WorkflowRun.id == uuid.UUID(workflow_run_id)).first()
+            if wr:
+                wr.status = "failed"
+                wr.error_message = str(e)
+                wr.finished_at = datetime.utcnow()
                 db.commit()
-            import asyncio
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(manager.broadcast(
-                        workflow_run_id,
-                        {"type": "run_completed", "run_id": workflow_run_id, "status": "failed", "error": str(e)}
-                    ))
-            except RuntimeError:
-                pass
+            _broadcast_from_thread(main_loop, workflow_run_id, {
+                "type": "run_completed", "run_id": workflow_run_id,
+                "status": "failed", "error": str(e)
+            })
         except Exception:
             pass
     finally:
@@ -136,8 +158,15 @@ def start_run(
     db.commit()
     db.refresh(workflow_run)
 
+    # Capture event loop from main thread for WebSocket broadcast
+    main_loop = _main_loop
+
     import threading
-    thread = threading.Thread(target=_run_workflow, args=(str(workflow_run.id),), daemon=True)
+    thread = threading.Thread(
+        target=_run_workflow,
+        args=(str(workflow_run.id), main_loop),
+        daemon=True,
+    )
     thread.start()
 
     return {"run_id": str(workflow_run.id), "status": workflow_run.status}
@@ -163,3 +192,4 @@ async def run_websocket(websocket: WebSocket, run_id: str):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(run_id, websocket)
+
