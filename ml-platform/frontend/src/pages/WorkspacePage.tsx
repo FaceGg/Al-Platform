@@ -1,7 +1,7 @@
-import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Layout, Button, Space, message } from 'antd'
-import { PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons'
+import { Layout, Button, Space, message, Input } from 'antd'
+import { PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined } from '@ant-design/icons'
 import { ReactFlowProvider } from 'reactflow'
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../api/client'
@@ -17,44 +17,49 @@ export default function WorkspacePage() {
   const { workflowId } = useParams<{ workflowId: string }>()
   const navigate = useNavigate()
   const { operators, setOperators, setNodes, setEdges, setIsRunning, setNodeStatus, setNodeResult } = useWorkflowStore()
+  const [wfName, setWfName] = useState('')
+  const [editingName, setEditingName] = useState(false)
+
+  // Load workflow and operators
+  const loadWorkflow = () => {
+    if (!workflowId) return
+    apiClient.get('/workflows/' + workflowId).then((res) => {
+      const wf = res.data
+      setWfName(wf.name || 'untitled')
+      if (wf.nodes) {
+        setNodes(wf.nodes.map((n: any) => ({
+          id: String(n.id),
+          type: 'custom',
+          position: { x: n.position_x || 200, y: n.position_y || 200 },
+          data: { operatorId: n.operator_id, label: n.label || '', params: n.params || {} },
+        })))
+      }
+      if (wf.edges) {
+        setEdges(wf.edges.map((e: any) => ({
+          id: String(e.id),
+          source: String(e.source_node_id),
+          target: String(e.target_node_id),
+          sourceHandle: e.source_port || 'output',
+          targetHandle: e.target_port || 'input',
+        })))
+      }
+    }).catch(() => {
+      message.warning('\u65e0\u6cd5\u52a0\u8f7d\u5de5\u4f5c\u6d41')
+    })
+  }
 
   useEffect(() => {
     apiClient.get('/operators').then((res) => {
       const data = res.data
       setOperators(Array.isArray(data) ? data : data.items || [])
     }).catch(() => {})
-
-    if (workflowId) {
-      apiClient.get('/workflows/' + workflowId).then((res) => {
-        const wf = res.data
-        if (wf.nodes) {
-          setNodes(wf.nodes.map((n: any) => ({
-            id: String(n.id),
-            type: 'custom',
-            position: { x: n.position_x || 200, y: n.position_y || 200 },
-            data: { operatorId: n.operator_id, label: n.label || '', params: n.params || {} },
-          })))
-        }
-        if (wf.edges) {
-          setEdges(wf.edges.map((e: any) => ({
-            id: String(e.id),
-            source: String(e.source_node_id),
-            target: String(e.target_node_id),
-            sourceHandle: e.source_port || 'output',
-            targetHandle: e.target_port || 'input',
-          })))
-        }
-      }).catch(() => {
-        message.warning('\u65e0\u6cd5\u52a0\u8f7d\u5de5\u4f5c\u6d41')
-      })
-    }
+    loadWorkflow()
   }, [workflowId])
 
-  // Build save payload from current store state
   const buildPayload = () => {
     const store = useWorkflowStore.getState()
     return {
-      name: 'untitled',
+      name: wfName || 'untitled',
       nodes: store.nodes.map((n: any) => ({
         id: n.id,
         operator_id: n.data.operatorId,
@@ -77,8 +82,20 @@ export default function WorkspacePage() {
     try {
       await apiClient.put('/workflows/' + workflowId, buildPayload())
       message.success('\u5df2\u4fdd\u5b58')
+      // Reload to get fresh DB UUIDs for nodes/edges
+      loadWorkflow()
     } catch {
       message.error('\u4fdd\u5b58\u5931\u8d25')
+    }
+  }
+
+  const handleNameSave = async () => {
+    setEditingName(false)
+    if (!workflowId || !wfName.trim()) return
+    try {
+      await apiClient.put('/workflows/' + workflowId, buildPayload())
+    } catch {
+      // silent
     }
   }
 
@@ -87,8 +104,29 @@ export default function WorkspacePage() {
     setIsRunning(true)
     setNodeStatus('__wf__', 'running')
     try {
-      // Auto-save current canvas state before running
+      // Auto-save + reload to sync node IDs with DB
       await apiClient.put('/workflows/' + workflowId, buildPayload())
+      // Reload workflow to get latest DB UUIDs
+      const reload = await apiClient.get('/workflows/' + workflowId)
+      const wf = reload.data
+      if (wf.nodes) {
+        setNodes(wf.nodes.map((n: any) => ({
+          id: String(n.id),
+          type: 'custom',
+          position: { x: n.position_x || 200, y: n.position_y || 200 },
+          data: { operatorId: n.operator_id, label: n.label || '', params: n.params || {} },
+        })))
+      }
+      if (wf.edges) {
+        setEdges(wf.edges.map((e: any) => ({
+          id: String(e.id),
+          source: String(e.source_node_id),
+          target: String(e.target_node_id),
+          sourceHandle: e.source_port || 'output',
+          targetHandle: e.target_port || 'input',
+        })))
+      }
+
       const res = await apiClient.post('/workflows/' + workflowId + '/run')
       const runId = res.data.run_id
 
@@ -153,6 +191,30 @@ export default function WorkspacePage() {
           onDragOver={onDragOver}
           style={{ position: 'relative', background: '#fafafa' }}
         >
+          {/* Editable workflow name header */}
+          <div style={{
+            position: 'absolute', top: 8, left: 8, zIndex: 10,
+            background: '#fff', borderRadius: 6, padding: '4px 12px',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.1)', display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+            {editingName ? (
+              <Input
+                size="small"
+                value={wfName}
+                onChange={(e) => setWfName(e.target.value)}
+                onPressEnter={handleNameSave}
+                onBlur={handleNameSave}
+                autoFocus
+                style={{ width: 180 }}
+              />
+            ) : (
+              <>
+                <span style={{ fontWeight: 600, fontSize: 14 }}>{wfName || 'untitled'}</span>
+                <Button type="text" size="small" icon={<EditOutlined />} onClick={() => setEditingName(true)} />
+              </>
+            )}
+          </div>
+
           <WorkflowCanvas />
           <ExecutionProgress />
           <Space style={{ position: 'absolute', top: 8, right: 8, zIndex: 10 }}>
