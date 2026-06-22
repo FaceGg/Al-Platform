@@ -1,9 +1,16 @@
-from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
+﻿from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import OperatorRegistry
 from app.schemas.operator import OperatorSchema, PortSpecSchema, ParamSpecSchema
-from fastapi import APIRouter
+from fastapi import APIRouter, UploadFile, File, Depends
+from app.api.auth import get_current_user
+from app.models.user import User
+import os
+import shutil
 
 router = APIRouter(prefix="/api", tags=["operators"])
+
+UPLOAD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "uploads"))
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 @router.get("/operators")
@@ -28,3 +35,16 @@ def list_operators():
             ) for p in op.parameters],
         ))
     return result
+
+
+@router.post("/upload")
+def upload_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """Upload a file for use in workflow operators."""
+    safe_name = file.filename.replace("\\", "_").replace("/", "_")
+    dest = os.path.join(UPLOAD_DIR, safe_name)
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return {"file_path": os.path.abspath(dest), "filename": safe_name, "message": "Upload successful"}
