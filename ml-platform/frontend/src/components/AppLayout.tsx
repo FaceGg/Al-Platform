@@ -15,7 +15,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   const userMenu = {
     items: [
-      { key: 'profile', icon: <UserOutlined />, label: '个人信息' },
+      { key: 'profile', icon: <UserOutlined />, label: localStorage.getItem('role') === 'admin' ? '管理员' : '工程师', disabled: true },
       { type: 'divider' as const },
       { key: 'logout', icon: <LogoutOutlined />, label: '退出登录',
         onClick: () => { localStorage.clear(); navigate('/login') }
