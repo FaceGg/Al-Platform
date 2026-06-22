@@ -1,13 +1,25 @@
-from fastapi import APIRouter, Depends, HTTPException
+﻿from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from uuid import UUID
 from app.database import get_db
 from app.models.workflow import Workflow, WorkflowNode, WorkflowEdge
 from app.models.user import User
-from app.schemas.workflow import WorkflowSave, WorkflowResponse, NodeResponse, EdgeResponse
+from app.schemas.workflow import WorkflowSave
 from app.api.auth import get_current_user
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows_direct"])
+
+
+def _to_uuid(value: str, id_map: dict[str, UUID]) -> UUID:
+    """Convert a client-side ID or UUID string to a UUID object using id_map."""
+    # First try the id_map (client-side IDs like "n1", "node_xxx")
+    if value in id_map:
+        return id_map[value]
+    # Try parsing as UUID directly (for server-generated UUID strings)
+    try:
+        return UUID(value)
+    except (ValueError, AttributeError):
+        raise HTTPException(400, f"Invalid node reference: {value}")
 
 
 @router.get("/{workflow_id}")
@@ -53,15 +65,13 @@ def save_workflow_direct(
     if data.name:
         wf.name = data.name
 
-    # Replace nodes and edges
-    existing_nodes = db.query(WorkflowNode).filter(WorkflowNode.workflow_id == UUID(workflow_id)).all()
-    existing_edges = db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == UUID(workflow_id)).all()
-    for n in existing_nodes: db.delete(n)
-    for e in existing_edges: db.delete(e)
+    # Delete existing nodes and edges
+    db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == UUID(workflow_id)).delete()
+    db.query(WorkflowNode).filter(WorkflowNode.workflow_id == UUID(workflow_id)).delete()
     db.flush()
 
-    # Track mapping from client ids to db ids
-    id_map = {}
+    # Create new nodes, track client-id -> UUID mapping
+    id_map: dict[str, UUID] = {}
     for n in data.nodes:
         node = WorkflowNode(
             workflow_id=UUID(workflow_id),
@@ -69,23 +79,22 @@ def save_workflow_direct(
             label=n.label,
             position_x=n.position.x,
             position_y=n.position.y,
-            params=n.params,
+            params=n.params or {},
         )
         db.add(node)
         db.flush()
-        id_map[n.id] = str(node.id)
+        id_map[n.id] = node.id
 
+    # Create edges using id_map for resolution
     for e in data.edges:
-        src_id = id_map.get(e.source, e.source)
-        tgt_id = id_map.get(e.target, e.target)
         edge = WorkflowEdge(
             workflow_id=UUID(workflow_id),
-            source_node_id=src_id,
+            source_node_id=_to_uuid(e.source, id_map),
             source_port=e.source_port,
-            target_node_id=tgt_id,
+            target_node_id=_to_uuid(e.target, id_map),
             target_port=e.target_port,
         )
         db.add(edge)
 
     db.commit()
-    return {"message": "Workflow saved", "id_map": id_map}
+    return {"message": "Workflow saved"}
