@@ -1,7 +1,7 @@
-import { useEffect, useCallback, useState } from 'react'
+import { useEffect, useCallback, useState, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { Layout, Button, Space, message, Input } from 'antd'
-import { PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined, PauseCircleOutlined } from '@ant-design/icons'
 import { ReactFlowProvider } from 'reactflow'
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../api/client'
@@ -16,9 +16,10 @@ const { Sider, Content } = Layout
 export default function WorkspacePage() {
   const { workflowId } = useParams<{ workflowId: string }>()
   const navigate = useNavigate()
-  const { operators, setOperators, setNodes, setEdges, setIsRunning, setNodeStatus, setNodeResult } = useWorkflowStore()
+  const { operators, setOperators, setNodes, setEdges, isRunning, setIsRunning, setNodeStatus, setNodeResult, reset } = useWorkflowStore()
   const [wfName, setWfName] = useState('')
   const [editingName, setEditingName] = useState(false)
+  const wsRef = useRef<WebSocket | null>(null)
 
   const loadWorkflow = () => {
     if (!workflowId) return
@@ -53,6 +54,7 @@ export default function WorkspacePage() {
       setOperators(Array.isArray(data) ? data : data.items || [])
     }).catch(() => {})
     loadWorkflow()
+    return () => { if (wsRef.current) wsRef.current.close() }
   }, [workflowId])
 
   const buildPayload = () => {
@@ -95,12 +97,28 @@ export default function WorkspacePage() {
     } catch { /* silent */ }
   }
 
+  const handleStop = () => {
+    if (wsRef.current) {
+      wsRef.current.close()
+      wsRef.current = null
+    }
+    setIsRunning(false)
+    setNodeStatus('__wf__', 'failed')
+    message.info('已终止运行')
+  }
+
   const handleRun = async () => {
     if (!workflowId) return
+
+    // If already running, stop it
+    if (isRunning) {
+      handleStop()
+      return
+    }
+
     setIsRunning(true)
     setNodeStatus('__wf__', 'running')
     try {
-      // Save + reload to sync node IDs with DB
       await apiClient.put('/workflows/' + workflowId, buildPayload())
       const reload = await apiClient.get('/workflows/' + workflowId)
       const wf = reload.data
@@ -122,12 +140,12 @@ export default function WorkspacePage() {
         })))
       }
 
-      // Start run - backend delays 300ms before starting thread
       const res = await apiClient.post('/workflows/' + workflowId + '/run')
       const runId = res.data.run_id
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const ws = new WebSocket(protocol + '//localhost:8000/ws/runs/' + runId)
+      wsRef.current = ws
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data)
         if (msg.type === 'node_status') {
@@ -135,6 +153,7 @@ export default function WorkspacePage() {
           if (msg.result) setNodeResult(msg.node_id, msg.result)
         } else if (msg.type === 'run_completed') {
           setIsRunning(false)
+          wsRef.current = null
           ws.close()
           if (msg.status === 'completed') {
             message.success('工作流执行完成')
@@ -145,6 +164,7 @@ export default function WorkspacePage() {
       }
       ws.onerror = () => {
         setIsRunning(false)
+        wsRef.current = null
         message.warning('无法连接实时状态，请检查后端是否运行')
       }
     } catch (e: any) {
@@ -212,7 +232,11 @@ export default function WorkspacePage() {
           <Space style={{ position: 'absolute', top: 8, right: 8, zIndex: 10 }}>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>返回</Button>
             <Button icon={<SaveOutlined />} onClick={handleSave}>保存</Button>
-            <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRun}>运行</Button>
+            {isRunning ? (
+              <Button danger icon={<PauseCircleOutlined />} onClick={handleRun}>终止</Button>
+            ) : (
+              <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRun}>运行</Button>
+            )}
           </Space>
         </Content>
         <Sider width={280} style={{ background: '#fff', borderLeft: '1px solid #f0f0f0', overflow: 'auto' }}>
