@@ -20,7 +20,6 @@ export default function WorkspacePage() {
   const [wfName, setWfName] = useState('')
   const [editingName, setEditingName] = useState(false)
 
-  // Load workflow and operators
   const loadWorkflow = () => {
     if (!workflowId) return
     apiClient.get('/workflows/' + workflowId).then((res) => {
@@ -44,7 +43,7 @@ export default function WorkspacePage() {
         })))
       }
     }).catch(() => {
-      message.warning('\u65e0\u6cd5\u52a0\u8f7d\u5de5\u4f5c\u6d41')
+      message.warning('无法加载工作流')
     })
   }
 
@@ -81,11 +80,10 @@ export default function WorkspacePage() {
     if (!workflowId) return
     try {
       await apiClient.put('/workflows/' + workflowId, buildPayload())
-      message.success('\u5df2\u4fdd\u5b58')
-      // Reload to get fresh DB UUIDs for nodes/edges
+      message.success('已保存')
       loadWorkflow()
     } catch {
-      message.error('\u4fdd\u5b58\u5931\u8d25')
+      message.error('保存失败')
     }
   }
 
@@ -94,9 +92,7 @@ export default function WorkspacePage() {
     if (!workflowId || !wfName.trim()) return
     try {
       await apiClient.put('/workflows/' + workflowId, buildPayload())
-    } catch {
-      // silent
-    }
+    } catch { /* silent */ }
   }
 
   const handleRun = async () => {
@@ -104,9 +100,8 @@ export default function WorkspacePage() {
     setIsRunning(true)
     setNodeStatus('__wf__', 'running')
     try {
-      // Auto-save + reload to sync node IDs with DB
+      // Save + reload to sync node IDs with DB
       await apiClient.put('/workflows/' + workflowId, buildPayload())
-      // Reload workflow to get latest DB UUIDs
       const reload = await apiClient.get('/workflows/' + workflowId)
       const wf = reload.data
       if (wf.nodes) {
@@ -141,20 +136,20 @@ export default function WorkspacePage() {
           setIsRunning(false)
           ws.close()
           if (msg.status === 'completed') {
-            message.success('\u5de5\u4f5c\u6d41\u6267\u884c\u5b8c\u6210')
+            message.success('工作流执行完成')
           } else {
-            message.error('\u6267\u884c\u5931\u8d25: ' + (msg.error || ''))
+            message.error('执行失败: ' + (msg.error || ''))
           }
         }
       }
       ws.onerror = () => {
         setIsRunning(false)
-        message.warning('\u65e0\u6cd5\u8fde\u63a5\u5b9e\u65f6\u72b6\u6001\uff0c\u8bf7\u68c0\u67e5\u540e\u7aef\u662f\u5426\u8fd0\u884c')
+        message.warning('无法连接实时状态，请检查后端是否运行')
       }
     } catch (e: any) {
       setIsRunning(false)
       setNodeStatus('__wf__', 'failed')
-      message.error(e.response?.data?.detail || '\u6267\u884c\u5931\u8d25')
+      message.error(e.response?.data?.detail || '执行失败')
     }
   }
 
@@ -191,26 +186,22 @@ export default function WorkspacePage() {
           onDragOver={onDragOver}
           style={{ position: 'relative', background: '#fafafa' }}
         >
-          {/* Editable workflow name header */}
           <div style={{
             position: 'absolute', top: 8, left: 8, zIndex: 10,
             background: '#fff', borderRadius: 6, padding: '4px 12px',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.1)', display: 'flex', alignItems: 'center', gap: 6,
+            boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+            display: 'flex', alignItems: 'center', gap: 6,
           }}>
             {editingName ? (
-              <Input
-                size="small"
-                value={wfName}
+              <Input size="small" value={wfName}
                 onChange={(e) => setWfName(e.target.value)}
-                onPressEnter={handleNameSave}
-                onBlur={handleNameSave}
-                autoFocus
-                style={{ width: 180 }}
-              />
+                onPressEnter={handleNameSave} onBlur={handleNameSave}
+                autoFocus style={{ width: 180 }} />
             ) : (
               <>
                 <span style={{ fontWeight: 600, fontSize: 14 }}>{wfName || 'untitled'}</span>
-                <Button type="text" size="small" icon={<EditOutlined />} onClick={() => setEditingName(true)} />
+                <Button type="text" size="small" icon={<EditOutlined />}
+                  onClick={() => setEditingName(true)} />
               </>
             )}
           </div>

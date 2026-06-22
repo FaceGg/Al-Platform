@@ -8,17 +8,17 @@ import { useWorkflowStore } from '../../stores/workflowStore'
 const nodeTypes = { custom: CustomNode }
 
 export default function WorkflowCanvas() {
-  const { nodes, edges, onNodesChange, onEdgesChange, onConnect, selectNode, setReactFlowInstance } = useWorkflowStore()
+  const { nodes, edges, onNodesChange, onEdgesChange, onConnect, selectNode, setReactFlowInstance, nodeStatuses } = useWorkflowStore()
 
   const onInit = useCallback((instance: ReactFlowInstance) => {
     setReactFlowInstance(instance)
   }, [setReactFlowInstance])
 
   // Inject status into node data for rendering
-  const nodesWithStatus = nodes.map((n) => {
-    const status = useWorkflowStore.getState().nodeStatuses[n.id]
-    return { ...n, data: { ...n.data, status: status || 'pending' } }
-  })
+  const nodesWithStatus = nodes.map((n) => ({
+    ...n,
+    data: { ...n.data, status: nodeStatuses[n.id] || 'pending' },
+  }))
 
   return (
     <div style={{ width: '100%', height: '100%' }}>
