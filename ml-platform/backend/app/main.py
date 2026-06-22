@@ -16,7 +16,7 @@ import app.operators.evaluation  # noqa: F401
 import app.operators.visualization  # noqa: F401
 
 # Import API routers
-from app.api import auth, projects, workflows, runs, operators, datasets, workflows_direct
+from app.api import auth, projects, workflows, runs, operators, datasets, workflows_direct, templates
 
 
 @asynccontextmanager
@@ -50,6 +50,7 @@ app.include_router(runs.router)
 app.include_router(operators.router)
 app.include_router(datasets.router)
 app.include_router(workflows_direct.router)
+app.include_router(templates.router)
 
 
 @app.get("/api/health")
