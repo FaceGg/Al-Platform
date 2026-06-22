@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from uuid import UUID
 from app.database import get_db
@@ -16,11 +16,11 @@ def get_workflow_direct(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    wf = db.query(Workflow).filter(Workflow.id == workflow_id).first()
+    wf = db.query(Workflow).filter(Workflow.id == UUID(workflow_id)).first()
     if not wf:
         raise HTTPException(404, "Workflow not found")
-    nodes = db.query(WorkflowNode).filter(WorkflowNode.workflow_id == workflow_id).all()
-    edges = db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == workflow_id).all()
+    nodes = db.query(WorkflowNode).filter(WorkflowNode.workflow_id == UUID(workflow_id)).all()
+    edges = db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == UUID(workflow_id)).all()
     return {
         "id": str(wf.id),
         "project_id": str(wf.project_id),
@@ -47,15 +47,15 @@ def save_workflow_direct(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    wf = db.query(Workflow).filter(Workflow.id == workflow_id).first()
+    wf = db.query(Workflow).filter(Workflow.id == UUID(workflow_id)).first()
     if not wf:
         raise HTTPException(404, "Workflow not found")
     if data.name:
         wf.name = data.name
 
     # Replace nodes and edges
-    existing_nodes = db.query(WorkflowNode).filter(WorkflowNode.workflow_id == workflow_id).all()
-    existing_edges = db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == workflow_id).all()
+    existing_nodes = db.query(WorkflowNode).filter(WorkflowNode.workflow_id == UUID(workflow_id)).all()
+    existing_edges = db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == UUID(workflow_id)).all()
     for n in existing_nodes: db.delete(n)
     for e in existing_edges: db.delete(e)
     db.flush()
@@ -64,7 +64,7 @@ def save_workflow_direct(
     id_map = {}
     for n in data.nodes:
         node = WorkflowNode(
-            workflow_id=workflow_id,
+            workflow_id=UUID(workflow_id),
             operator_id=n.operator_id,
             label=n.label,
             position_x=n.position.x,
@@ -79,7 +79,7 @@ def save_workflow_direct(
         src_id = id_map.get(e.source, e.source)
         tgt_id = id_map.get(e.target, e.target)
         edge = WorkflowEdge(
-            workflow_id=workflow_id,
+            workflow_id=UUID(workflow_id),
             source_node_id=src_id,
             source_port=e.source_port,
             target_node_id=tgt_id,

@@ -17,5 +17,11 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
 
+    # LLM / RAG settings
+    llm_api_url: str = "https://api.openai.com/v1/chat/completions"
+    llm_api_key: str = ""
+    llm_model: str = "gpt-3.5-turbo"
+
+
 
 settings = Settings()

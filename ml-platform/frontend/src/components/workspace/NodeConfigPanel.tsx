@@ -1,8 +1,10 @@
-import { Input, InputNumber, Select, Switch, Form, Divider, Button, message } from 'antd'
+﻿import { Input, InputNumber, Select, Switch, Form, Divider, Button, message } from 'antd'
+import { useI18n } from '../../i18n'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useEffect, useState } from 'react'
 
 export default function NodeConfigPanel() {
+  const { t } = useI18n()
   const { selectedNode, operators, updateNodeParams, nodeResults, nodeStatuses } = useWorkflowStore()
   const [params, setParams] = useState<Record<string, any>>({})
 

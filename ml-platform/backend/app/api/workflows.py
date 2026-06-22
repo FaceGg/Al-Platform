@@ -31,10 +31,10 @@ def list_workflows(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = db.query(Project).filter(Project.id == project_id, Project.owner_id == current_user.id).first()
+    project = db.query(Project).filter(Project.id == UUID(project_id), Project.owner_id == current_user.id).first()
     if not project:
         raise HTTPException(404, "Project not found")
-    workflows = db.query(Workflow).filter(Workflow.project_id == project_id).all()
+    workflows = db.query(Workflow).filter(Workflow.project_id == UUID(project_id)).all()
     return [{"id": str(w.id), "name": w.name, "description": w.description, "created_at": w.created_at.isoformat() if w.created_at else None} for w in workflows]
 
 
@@ -45,7 +45,7 @@ def create_workflow(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = db.query(Project).filter(Project.id == project_id, Project.owner_id == current_user.id).first()
+    project = db.query(Project).filter(Project.id == UUID(project_id), Project.owner_id == current_user.id).first()
     if not project:
         raise HTTPException(404, "Project not found")
 
@@ -95,8 +95,8 @@ def get_workflow(
     current_user: User = Depends(get_current_user),
 ):
     workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.project_id == project_id,
+        Workflow.id == UUID(workflow_id),
+        Workflow.project_id == UUID(project_id),
     ).first()
     if not workflow:
         raise HTTPException(404, "Workflow not found")
@@ -112,8 +112,8 @@ def save_workflow(
     current_user: User = Depends(get_current_user),
 ):
     workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.project_id == project_id,
+        Workflow.id == UUID(workflow_id),
+        Workflow.project_id == UUID(project_id),
     ).first()
     if not workflow:
         raise HTTPException(404, "Workflow not found")
@@ -166,8 +166,8 @@ def delete_workflow(
     current_user: User = Depends(get_current_user),
 ):
     workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.project_id == project_id,
+        Workflow.id == UUID(workflow_id),
+        Workflow.project_id == UUID(project_id),
     ).first()
     if not workflow:
         raise HTTPException(404, "Workflow not found")

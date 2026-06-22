@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { Card, Form, Input, InputNumber, Button, Steps, message, Descriptions } from 'antd'
 import apiClient from '../api/client'
@@ -22,12 +22,16 @@ export default function TemplateWizardPage() {
   }, [templateId])
 
   const handleStart = async () => {
-    const values = await projectForm.validateFields()
-    if (!projectId) {
-      const res = await apiClient.post('/projects', { name: values.projectName, description: values.projectDesc || '' })
-      setProjectId(res.data.id)
+    try {
+      const values = await projectForm.validateFields()
+      if (!projectId) {
+        const res = await apiClient.post('/projects', { name: values.projectName, description: values.projectDesc || '' })
+        setProjectId(res.data.id)
+      }
+      setStep(1)
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '操作失败，请检查后端是否运行')
     }
-    setStep(1)
   }
 
   const handleRun = async (values: any) => {
@@ -100,3 +104,4 @@ export default function TemplateWizardPage() {
     </AppLayout>
   )
 }
+

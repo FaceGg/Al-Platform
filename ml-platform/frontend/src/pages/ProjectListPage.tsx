@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import apiClient from '../api/client'
 import AppLayout from '../components/AppLayout'
+import { useI18n } from '../i18n'
 
 export default function ProjectListPage() {
   const navigate = useNavigate()
@@ -19,6 +20,27 @@ export default function ProjectListPage() {
   }
 
   useEffect(() => { load() }, [])
+
+  const { t } = useI18n()
+
+  const deleteProject = (id: string, name: string) => {
+    Modal.confirm({
+      title: '确认删除项目 ' + name + '?',
+      content: '此操作不可撤销，项目下的所有工作流将被一并删除。',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await apiClient.delete('/projects/' + id)
+          message.success('删除成功')
+          load()
+        } catch (e: any) {
+          message.error(e.response?.data?.detail || '删除失败')
+        }
+      },
+    })
+  }
 
   const createProject = async (values: any) => {
     try {
@@ -45,6 +67,7 @@ export default function ProjectListPage() {
       render: (_: any, record: any) => (
         <Space>
           <a onClick={() => navigate('/projects/' + record.id)}>进入</a>
+          <a style={{ color: '#ff4d4f' }} onClick={() => deleteProject(record.id, record.name)}>删除</a>
         </Space>
       ),
     },

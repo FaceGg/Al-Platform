@@ -63,7 +63,7 @@ def _run_workflow(workflow_run: WorkflowRun, db: Session):
                 try:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
-                        loop.create_task(manager.broadcast(run_id, {"node_id": node_id, "status": status, "run_id": run_id}))
+                        loop.create_task(manager.broadcast(run_id, {"type": "node_status", "node_id": node_id, "status": status, "run_id": run_id}))
                 except RuntimeError:
                     pass
             except Exception:
@@ -93,7 +93,7 @@ def _run_workflow(workflow_run: WorkflowRun, db: Session):
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    loop.create_task(manager.broadcast(str(workflow_run.id), {"run_id": str(workflow_run.id), "status": "failed", "error": str(e)}))
+                    loop.create_task(manager.broadcast(str(workflow_run.id), {"type": "run_completed", "run_id": str(workflow_run.id), "status": "failed", "error": str(e)}))
             except RuntimeError:
                 pass
         except Exception:
@@ -106,7 +106,7 @@ def start_run(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    workflow = db.query(Workflow).filter(Workflow.id == workflow_id).first()
+    workflow = db.query(Workflow).filter(Workflow.id == uuid.UUID(workflow_id)).first()
     if not workflow:
         raise HTTPException(404, "Workflow not found")
 
@@ -132,7 +132,7 @@ def get_run(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+    run = db.query(WorkflowRun).filter(WorkflowRun.id == uuid.UUID(run_id)).first()
     if not run:
         raise HTTPException(404, "Run not found")
     return run

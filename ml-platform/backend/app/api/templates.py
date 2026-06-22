@@ -1,3 +1,4 @@
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -64,7 +65,7 @@ def instantiate_template(
     if template_id not in TEMPLATES:
         raise HTTPException(404, "Template not found")
     tmpl = TEMPLATES[template_id]
-    wf = Workflow(project_id=project_id, name=tmpl["name"] + " (副本)", type="free", created_by=current_user.id)
+    wf = Workflow(project_id=uuid.UUID(project_id), name=tmpl["name"] + " (副本)", type="free", created_by=current_user.id)
     db.add(wf)
     db.commit()
 
@@ -89,7 +90,7 @@ def instantiate_template(
             node_idx = int(parts[0])
             param_name = parts[2]
             val = user_params[param_path]
-            n = db.query(WorkflowNode).filter(WorkflowNode.id == node_map[node_idx]).first()
+            n = db.query(WorkflowNode).filter(WorkflowNode.id == uuid.UUID(node_map[node_idx])).first()
             if n:
                 p = n.params or {}
                 p[param_name] = val
@@ -98,9 +99,9 @@ def instantiate_template(
     for edef in tmpl["edges"]:
         edge = WorkflowEdge(
             workflow_id=wf.id,
-            source_node_id=node_map[edef["source"]],
+            source_node_id=uuid.UUID(node_map[edef["source"]]),
             source_port=edef["source_port"],
-            target_node_id=node_map[edef["target"]],
+            target_node_id=uuid.UUID(node_map[edef["target"]]),
             target_port=edef["target_port"],
         )
         db.add(edge)

@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 
 from sqlalchemy import Column, String, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -19,3 +19,4 @@ class User(Base):
     projects = relationship("Project", back_populates="owner")
     created_workflows = relationship("Workflow", back_populates="created_by_user")
     triggered_runs = relationship("WorkflowRun", back_populates="triggered_by_user")
+    knowledge_bases = relationship("KnowledgeBase", back_populates="owner")

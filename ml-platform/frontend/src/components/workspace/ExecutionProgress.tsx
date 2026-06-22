@@ -1,7 +1,9 @@
-import { Progress, Tag } from 'antd'
+﻿import { Progress, Tag } from 'antd'
+import { useI18n } from '../../i18n'
 import { useWorkflowStore } from '../../stores/workflowStore'
 
 export default function ExecutionProgress() {
+  const { t } = useI18n()
   const { isRunning, nodeStatuses } = useWorkflowStore()
   const entries = Object.entries(nodeStatuses)
 
@@ -18,10 +20,10 @@ export default function ExecutionProgress() {
       zIndex: 10, minWidth: 300,
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-        <span style={{ fontSize: 12 }}>执行进度</span>
-        <span style={{ fontSize: 12 }}>{completed}/{total} 节点</span>
+        <span style={{ fontSize: 12 }}>{t.workspace.run_progress || '执行进度'}</span>
+        <span style={{ fontSize: 12 }}>{completed}/{total} {t.workspace.nodes || '节点'}</span>
       </div>
-      <Progress percent={percent} size="small" status={isRunning ? 'active' : 'success'} />
+      <Progress percent={percent} size='small' status={isRunning ? 'active' : 'success'} />
       <div style={{ marginTop: 4 }}>
         {entries.slice(0, 5).map(([id, status]) => (
           <Tag key={id} color={status === 'completed' ? 'success' : status === 'running' ? 'processing' : status === 'failed' ? 'error' : 'default'}>
