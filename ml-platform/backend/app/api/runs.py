@@ -35,6 +35,8 @@ def _broadcast_from_thread(loop, run_id: str, payload: dict):
 
 def _run_workflow(workflow_run_id: str, main_loop):
     """Execute workflow in background using a fresh DB session."""
+    import time
+    time.sleep(0.5)  # Wait for frontend WebSocket to connect
     db = SessionLocal()
     try:
         workflow_run = db.query(WorkflowRun).filter(WorkflowRun.id == uuid.UUID(workflow_run_id)).first()
@@ -192,4 +194,6 @@ async def run_websocket(websocket: WebSocket, run_id: str):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(run_id, websocket)
+
+
 

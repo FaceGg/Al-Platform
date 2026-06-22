@@ -122,6 +122,7 @@ export default function WorkspacePage() {
         })))
       }
 
+      // Start run - backend delays 300ms before starting thread
       const res = await apiClient.post('/workflows/' + workflowId + '/run')
       const runId = res.data.run_id
 
