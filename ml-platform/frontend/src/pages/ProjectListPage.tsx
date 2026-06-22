@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { Button, Table, Modal, Form, Input, Space, message } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
@@ -21,11 +21,15 @@ export default function ProjectListPage() {
   useEffect(() => { load() }, [])
 
   const createProject = async (values: any) => {
-    await apiClient.post('/projects', values)
-    message.success('项目已创建')
-    setModalOpen(false)
-    form.resetFields()
-    load()
+    try {
+      await apiClient.post('/projects', values)
+      message.success('项目已创建')
+      setModalOpen(false)
+      form.resetFields()
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '创建失败，请检查后端是否运行')
+    }
   }
 
   const columns = [

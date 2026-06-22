@@ -47,19 +47,14 @@ export default function TemplateWizardPage() {
 
   if (!template) return <AppLayout><Card loading /></AppLayout>
 
-  const templates: Record<string, any> = {
-    weld_quality: {
-      name: '焊接质量预测',
-      description: '基于焊接工艺参数（电流、电压、压力、时间）预测焊接质量等级',
-      params: [
-        { name: 'target_column', label: '目标列', type: 'text', default: 'quality' },
-        { name: 'n_estimators', label: '树的数量', type: 'int', default: 100 },
-        { name: 'test_size', label: '测试集比例', type: 'float', default: 0.2 },
-      ],
-    },
+  const tpl = template || {
+    name: '模板',
+    description: '',
+    params: [
+      { name: 'target_column', label: '目标列', type: 'text', default: 'quality' },
+      { name: 'n_estimators', label: '树的数量', type: 'int', default: 100 },
+    ],
   }
-
-  const tpl = templates[templateId as string] || templates.weld_quality
 
   return (
     <AppLayout>
