@@ -1,8 +1,8 @@
-import uuid
+﻿import uuid
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models.workflow import Workflow, WorkflowNode, WorkflowEdge
 from app.models.run import WorkflowRun, NodeRun
 from app.models.user import User
@@ -15,10 +15,15 @@ from app.websocket.manager import manager
 router = APIRouter(tags=["runs"])
 
 
-def _run_workflow(workflow_run: WorkflowRun, db: Session):
-    """Execute workflow in background and update run status."""
+def _run_workflow(workflow_run_id: str):
+    """Execute workflow in background using a fresh DB session."""
+    db = SessionLocal()
     try:
-        run_id = str(workflow_run.id)
+        workflow_run = db.query(WorkflowRun).filter(WorkflowRun.id == uuid.UUID(workflow_run_id)).first()
+        if not workflow_run:
+            return
+
+        run_id = workflow_run_id
         workflow = db.query(Workflow).filter(Workflow.id == workflow_run.workflow_id).first()
         if not workflow:
             raise RuntimeError("Workflow not found")
@@ -47,7 +52,6 @@ def _run_workflow(workflow_run: WorkflowRun, db: Session):
         executor = DAGExecutor(dag_nodes, dag_edges)
 
         def status_callback(run_id: str, node_id: str, status: str):
-            nonlocal db
             try:
                 nr = NodeRun(
                     run_id=workflow_run.id,
@@ -63,7 +67,9 @@ def _run_workflow(workflow_run: WorkflowRun, db: Session):
                 try:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
-                        loop.create_task(manager.broadcast(run_id, {"type": "node_status", "node_id": node_id, "status": status, "run_id": run_id}))
+                        loop.create_task(manager.broadcast(
+                            run_id, {"type": "node_status", "node_id": node_id, "status": status, "run_id": run_id}
+                        ))
                 except RuntimeError:
                     pass
             except Exception:
@@ -85,19 +91,26 @@ def _run_workflow(workflow_run: WorkflowRun, db: Session):
 
     except Exception as e:
         try:
-            workflow_run.status = "failed"
-            workflow_run.error_message = str(e)
-            workflow_run.finished_at = datetime.utcnow()
-            db.commit()
+            workflow_run = db.query(WorkflowRun).filter(WorkflowRun.id == uuid.UUID(workflow_run_id)).first()
+            if workflow_run:
+                workflow_run.status = "failed"
+                workflow_run.error_message = str(e)
+                workflow_run.finished_at = datetime.utcnow()
+                db.commit()
             import asyncio
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    loop.create_task(manager.broadcast(str(workflow_run.id), {"type": "run_completed", "run_id": str(workflow_run.id), "status": "failed", "error": str(e)}))
+                    loop.create_task(manager.broadcast(
+                        workflow_run_id,
+                        {"type": "run_completed", "run_id": workflow_run_id, "status": "failed", "error": str(e)}
+                    ))
             except RuntimeError:
                 pass
         except Exception:
             pass
+    finally:
+        db.close()
 
 
 @router.post("/api/workflows/{workflow_id}/run", status_code=201)
@@ -119,8 +132,9 @@ def start_run(
     db.commit()
     db.refresh(workflow_run)
 
+    # Pass only the run ID - background thread creates its own session
     import threading
-    thread = threading.Thread(target=_run_workflow, args=(workflow_run, db), daemon=True)
+    thread = threading.Thread(target=_run_workflow, args=(str(workflow_run.id),), daemon=True)
     thread.start()
 
     return {"run_id": str(workflow_run.id), "status": workflow_run.status}
