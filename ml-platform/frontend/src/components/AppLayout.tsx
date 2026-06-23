@@ -1,10 +1,10 @@
-import { Layout as AntLayout, Menu, Avatar, Dropdown, Space, Button, Modal, Descriptions, Tag } from 'antd';
+﻿import { Layout as AntLayout, Menu, Avatar, Dropdown, Space, Button, Modal, Descriptions, Tag } from 'antd';
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   DashboardOutlined, ProjectOutlined, LogoutOutlined, UserOutlined,
   DatabaseOutlined, AppstoreOutlined, TeamOutlined, ApartmentOutlined,
-  CloudUploadOutlined, ThunderboltOutlined, ExperimentOutlined
+  CloudUploadOutlined, ThunderboltOutlined, ExperimentOutlined, ApiOutlined, CloudServerOutlined, EyeOutlined
 } from '@ant-design/icons';
 import { useI18n } from '../i18n';
 
@@ -60,7 +60,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     if (p.startsWith('/knowledge')) return '/knowledge';
     if (p.startsWith('/automl')) return '/automl';
     if (p.startsWith('/training')) return '/training';
-    if (p.startsWith('/monitor')) return '/monitor';
+        if (p.startsWith('/monitor')) return '/monitor';
+    if (p.startsWith('/algorithms')) return '/algorithms';
+    if (p.startsWith('/api-marketplace')) return '/api-marketplace';
+    if (p.startsWith('/compute')) return '/compute';
     if (p.startsWith('/admin/users')) return '/admin/users';
     return '';
   })();
@@ -127,3 +130,4 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     </>
   );
 }
+

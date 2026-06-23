@@ -12,7 +12,12 @@ from app.database import Base, engine
 # Import models (must happen before create_all)
 from app.models import knowledge  # noqa: F401 (register models)
 from app.models import training as training_models  # noqa: F401 (register models)
+from app.models import algorithm as algo_models  # noqa: F401 (register models)
+from app.models import model_library as ml_models  # noqa: F401 (register models)
+from app.models import api_model as api_models  # noqa: F401 (register models)
+from app.models import compute as compute_models  # noqa: F401 (register models)
 from app.models import agent as agent_models  # noqa: F401 (register models)
+from app.models import platform_models as pm  # noqa: F401 (register models)
 
 import app.operators.io_operators  # noqa: F401
 import app.operators.processing  # noqa: F401
@@ -25,10 +30,17 @@ try:
 except ImportError:
     pass
 
+try:
+    import app.operators.mechanism_models  # noqa: F401
+except ImportError:
+    pass
+
 # Import API routers
 from app.api import auth, projects, workflows, runs, operators, datasets, workflows_direct, templates
 from app.api import users, models as model_api
 from app.api import knowledge, monitor, labeling, training, orchestration
+from app.api import algorithm as algo_api, platform_api, compute
+from app.api import model_library as model_lib_api, dashboard as dash_api
 
 
 @asynccontextmanager
@@ -44,9 +56,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="ML Platform API",
-    description="Web-based visual ML workflow platform",
-    version="0.1.0",
+    title="AI模型训练编排平台",
+    description="Web-based visual AI model training orchestration platform",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -74,10 +86,14 @@ app.include_router(monitor.router)
 app.include_router(labeling.router)
 app.include_router(training.router)
 app.include_router(orchestration.router)
+app.include_router(algo_api.router)
+app.include_router(platform_api.router)
+app.include_router(compute.router)
+app.include_router(model_lib_api.router)
+app.include_router(dash_api.router)
 
 
 @app.get("/api/health")
 def health_check():
     """Return API health status."""
     return {"status": "ok"}
-

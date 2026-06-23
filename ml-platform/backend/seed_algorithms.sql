@@ -1,0 +1,37 @@
+﻿DELETE FROM algorithms;
+
+INSERT INTO algorithms (id, name, display_name, category, sub_category, framework, backbone, benchmark_mAP, benchmark_speed, tags, version) VALUES
+('a0000001-0000-0000-0000-000000000001', 'ResNet-18', 'ResNet-18', 'computer_vision', 'classification', 'pytorch', 'resnet18', 76.5, 1.2, '["image","classification"]', '1.0'),
+('a0000001-0000-0000-0000-000000000002', 'ResNet-50', 'ResNet-50', 'computer_vision', 'classification', 'pytorch', 'resnet50', 79.8, 2.5, '["image","classification"]', '1.0'),
+('a0000001-0000-0000-0000-000000000003', 'MobileNet-V2', 'MobileNet-V2', 'computer_vision', 'classification', 'pytorch', 'mobilenet_v2', 71.8, 0.8, '["image","classification","mobile"]', '1.0'),
+('a0000001-0000-0000-0000-000000000004', 'ViT-Base', 'ViT-Base', 'computer_vision', 'classification', 'pytorch', 'vit_base', 84.0, 5.5, '["image","classification","transformer"]', '1.0'),
+('a0000001-0000-0000-0000-000000000005', 'Swin-T', 'Swin-T', 'computer_vision', 'classification', 'pytorch', 'swin_tiny', 86.3, 4.2, '["image","classification","transformer"]', '1.0'),
+('a0000001-0000-0000-0000-000000000006', 'YOLOv8n', 'YOLOv8 Nano', 'computer_vision', 'detection', 'pytorch', 'yolov8n', 37.3, 1.2, '["image","detection","yolo"]', '1.0'),
+('a0000001-0000-0000-0000-000000000007', 'YOLOv8s', 'YOLOv8 Small', 'computer_vision', 'detection', 'pytorch', 'yolov8s', 44.9, 2.5, '["image","detection","yolo"]', '1.0'),
+('a0000001-0000-0000-0000-000000000008', 'YOLOv8m', 'YOLOv8 Medium', 'computer_vision', 'detection', 'pytorch', 'yolov8m', 50.2, 5.1, '["image","detection","yolo"]', '1.0'),
+('a0000001-0000-0000-0000-000000000009', 'YOLOv10n', 'YOLOv10 Nano', 'computer_vision', 'detection', 'pytorch', 'yolov10n', 39.5, 1.0, '["image","detection","yolo","v10"]', '1.0'),
+('a0000001-0000-0000-0000-000000000010', 'RT-DETR', 'RT-DETR', 'computer_vision', 'detection', 'pytorch', 'resnet50', 53.1, 7.5, '["image","detection","transformer"]', '1.0'),
+('a0000001-0000-0000-0000-000000000011', 'DeepLabV3', 'DeepLabV3', 'computer_vision', 'segmentation', 'pytorch', 'resnet50', 76.8, 35.0, '["image","segmentation","semantic"]', '1.0'),
+('a0000001-0000-0000-0000-000000000012', 'U-Net', 'U-Net', 'computer_vision', 'segmentation', 'pytorch', 'unet', 82.1, 22.0, '["image","segmentation","semantic"]', '1.0'),
+('a0000001-0000-0000-0000-000000000013', 'HRNet-W32', 'HRNet姿态估计', 'computer_vision', 'pose', 'pytorch', 'hrnet_w32', 74.9, 8.5, '["image","pose"]', '1.0'),
+('a0000001-0000-0000-0000-000000000014', 'RetinaFace', 'RetinaFace', 'computer_vision', 'face', 'pytorch', 'resnet50', 91.2, 12.0, '["image","face","detection"]', '1.0'),
+('a0000001-0000-0000-0000-000000000015', 'DeepSORT', 'DeepSORT', 'computer_vision', 'tracking', 'pytorch', 'osnet', 60.3, 8.0, '["video","tracking"]', '1.0'),
+('a0000001-0000-0000-0000-000000000016', 'PaDiM', 'PaDiM', 'computer_vision', 'anomaly', 'pytorch', 'resnet18', 95.5, 25.0, '["image","anomaly","industrial"]', '1.0'),
+('a0000001-0000-0000-0000-000000000017', 'PP-OCRv3-Det', 'PP-OCRv3文字检测', 'ocr', 'detection', 'paddle', 'mobilenet_v3', 90.2, 8.5, '["ocr","text","detection"]', '1.0'),
+('a0000001-0000-0000-0000-000000000018', 'PP-OCRv3-Rec', 'PP-OCRv3文字识别', 'ocr', 'recognition', 'paddle', 'svtr', 95.0, 12.0, '["ocr","text","recognition"]', '1.0'),
+('a0000001-0000-0000-0000-000000000019', 'PANNS-CNN14', 'PANNS声音分类', 'speech', 'classification', 'pytorch', 'cnn14', 85.2, 15.0, '["audio","classification"]', '1.0'),
+('a0000001-0000-0000-0000-000000000020', 'Whisper-Tiny', 'Whisper Tiny', 'speech', 'recognition', 'pytorch', 'whisper_tiny', 0, 120.0, '["audio","asr"]', '1.0'),
+('a0000001-0000-0000-0000-000000000021', 'BERT-Base', 'BERT Base', 'nlp', 'classification', 'pytorch', 'bert_base', 92.5, 35.0, '["text","classification","nlp"]', '1.0'),
+('a0000001-0000-0000-0000-000000000022', 'LLaMA-3B', 'LLaMA 3B', 'nlp', 'llm', 'pytorch', 'llama', 0, 500, '["text","llm","chat"]', '1.0'),
+('a0000001-0000-0000-0000-000000000023', 'RandomForest-CLS', '随机森林分类', 'ml', 'classification', 'sklearn', 'random_forest', 85.0, 0.5, '["tabular","classification"]', '1.0'),
+('a0000001-0000-0000-0000-000000000024', 'XGBoost-CLS', 'XGBoost分类', 'ml', 'classification', 'sklearn', 'xgboost', 89.5, 1.2, '["tabular","classification","boosting"]', '1.0'),
+('a0000001-0000-0000-0000-000000000025', 'SVM-CLS', 'SVM分类', 'ml', 'classification', 'sklearn', 'svm', 82.0, 0.3, '["tabular","classification"]', '1.0'),
+('a0000001-0000-0000-0000-000000000026', 'RandomForest-REG', '随机森林回归', 'ml', 'regression', 'sklearn', 'random_forest', 0, 0.5, '["tabular","regression"]', '1.0'),
+('a0000001-0000-0000-0000-000000000027', 'XGBoost-REG', 'XGBoost回归', 'ml', 'regression', 'sklearn', 'xgboost', 0, 1.2, '["tabular","regression","boosting"]', '1.0'),
+('a0000001-0000-0000-0000-000000000028', 'KMeans', 'K均值聚类', 'ml', 'clustering', 'sklearn', 'kmeans', 0, 0.2, '["tabular","clustering"]', '1.0'),
+('a0000001-0000-0000-0000-000000000029', 'PCA', 'PCA降维', 'ml', 'dim_reduction', 'sklearn', 'pca', 0, 0.1, '["tabular","dim_reduction"]', '1.0'),
+('a0000001-0000-0000-0000-000000000030', 'IsolationForest', '孤立森林', 'ml', 'anomaly', 'sklearn', 'isolation_forest', 88.0, 0.3, '["tabular","anomaly"]', '1.0'),
+('a0000001-0000-0000-0000-000000000031', 'WeldQuality-Pipeline', '焊接质量流水线', 'composite', 'spot_weld', 'pytorch', 'pipeline', 0, 0, '["composite","weld","spot_welding"]', '1.0'),
+('a0000001-0000-0000-0000-000000000032', 'OCR-Pipeline', 'OCR全流程', 'composite', 'ocr', 'pytorch', 'pipeline', 0, 0, '["composite","ocr"]', '1.0');
+
+SELECT 'Seeded ' || COUNT(*) || ' algorithms' FROM algorithms;

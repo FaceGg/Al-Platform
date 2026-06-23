@@ -20,6 +20,9 @@ import DataManagePage from "./pages/DataManagePage";
 import AutoMLPage from "./pages/AutoMLPage";
 import TrainingJobsPage from "./pages/TrainingJobsPage";
 import MonitorPage from "./pages/MonitorPage";
+import AlgorithmCatalogPage from "./pages/AlgorithmCatalogPage";
+import APIMarketplacePage from "./pages/APIMarketplacePage";
+import ComputeResourcePage from "./pages/ComputeResourcePage";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 type Lang = "zh" | "en";
@@ -54,6 +57,9 @@ export default function App() {
             <Route path="/automl" element={<ProtectedRoute><AutoMLPage /></ProtectedRoute>} />
             <Route path="/training" element={<ProtectedRoute><TrainingJobsPage /></ProtectedRoute>} />
             <Route path="/monitor" element={<ProtectedRoute><MonitorPage /></ProtectedRoute>} />
+                        <Route path="/algorithms" element={<ProtectedRoute><AlgorithmCatalogPage /></ProtectedRoute>} />
+            <Route path="/api-marketplace" element={<ProtectedRoute><APIMarketplacePage /></ProtectedRoute>} />
+            <Route path="/compute" element={<ProtectedRoute><ComputeResourcePage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
@@ -61,3 +67,4 @@ export default function App() {
     </LangContext.Provider>
   );
 }
+
