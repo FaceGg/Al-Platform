@@ -1,4 +1,4 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 
 const apiClient = axios.create({
   baseURL: '/api',
@@ -27,3 +27,23 @@ apiClient.interceptors.response.use(
 )
 
 export default apiClient
+
+export async function apiGet(url: string) {
+  const res = await apiClient.get(url)
+  return res.data
+}
+
+export async function apiPost(url: string, data?: any) {
+  const res = await apiClient.post(url, data)
+  return res.data
+}
+
+export async function apiPut(url: string, data?: any) {
+  const res = await apiClient.put(url, data)
+  return res.data
+}
+
+export async function apiDelete(url: string) {
+  const res = await apiClient.delete(url)
+  return res.data
+}

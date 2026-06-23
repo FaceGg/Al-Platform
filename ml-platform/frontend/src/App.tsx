@@ -23,6 +23,8 @@ import MonitorPage from "./pages/MonitorPage";
 import AlgorithmCatalogPage from "./pages/AlgorithmCatalogPage";
 import APIMarketplacePage from "./pages/APIMarketplacePage";
 import ComputeResourcePage from "./pages/ComputeResourcePage";
+import AnnotationPage from "./pages/AnnotationPage";
+import OrchestrationPage from "./pages/OrchestrationPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 type Lang = "zh" | "en";
@@ -59,6 +61,8 @@ export default function App() {
             <Route path="/monitor" element={<ProtectedRoute><MonitorPage /></ProtectedRoute>} />
                         <Route path="/algorithms" element={<ProtectedRoute><AlgorithmCatalogPage /></ProtectedRoute>} />
             <Route path="/api-marketplace" element={<ProtectedRoute><APIMarketplacePage /></ProtectedRoute>} />
+            <Route path="/annotations" element={<ProtectedRoute><AnnotationPage /></ProtectedRoute>} />
+            <Route path="/orchestration" element={<ProtectedRoute><OrchestrationPage /></ProtectedRoute>} />
             <Route path="/compute" element={<ProtectedRoute><ComputeResourcePage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
@@ -67,4 +71,6 @@ export default function App() {
     </LangContext.Provider>
   );
 }
+
+
 

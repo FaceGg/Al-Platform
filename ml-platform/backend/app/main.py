@@ -39,7 +39,7 @@ except ImportError:
 from app.api import auth, projects, workflows, runs, operators, datasets, workflows_direct, templates
 from app.api import users, models as model_api
 from app.api import knowledge, monitor, labeling, training, orchestration
-from app.api import algorithm as algo_api, platform_api, compute
+from app.api import algorithm as algo_api, platform_api, compute, annotations as annot_api
 from app.api import model_library as model_lib_api, dashboard as dash_api
 
 
@@ -89,6 +89,7 @@ app.include_router(orchestration.router)
 app.include_router(algo_api.router)
 app.include_router(platform_api.router)
 app.include_router(compute.router)
+app.include_router(annot_api.router)
 app.include_router(model_lib_api.router)
 app.include_router(dash_api.router)
 
@@ -97,3 +98,4 @@ app.include_router(dash_api.router)
 def health_check():
     """Return API health status."""
     return {"status": "ok"}
+
