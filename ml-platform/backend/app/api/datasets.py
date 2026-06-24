@@ -233,7 +233,83 @@ def export_single_dataset(
     )
 
 
-@router.get("/datasets/{dataset_id}/preview")
+
+@router.post("/projects/{project_id}/datasets/batch-upload")
+async def batch_upload_dataset(
+    project_id: str,
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Batch upload multiple files or a folder to a project."""
+    project = db.query(Project).filter(
+        Project.id == UUID(project_id), Project.owner_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+    artifacts = []
+    for file in files:
+        content = await file.read()
+        storage_path = os.path.join(UPLOAD_DIR, str(uuid.uuid4()), file.filename)
+        os.makedirs(os.path.dirname(storage_path), exist_ok=True)
+        with open(storage_path, "wb") as f:
+            f.write(content)
+        ext = os.path.splitext(file.filename)[1].lower()
+        fmt_map = {".csv": "csv", ".xlsx": "xlsx", ".xls": "xls", ".txt": "txt",
+                   ".json": "json", ".png": "png", ".jpg": "jpg"}
+        artifact = Artifact(
+            project_id=UUID(project_id), name=file.filename, type="dataset",
+            storage_path=storage_path, file_size=len(content),
+            format=fmt_map.get(ext, ext.lstrip(".")),
+        )
+        db.add(artifact)
+        artifacts.append({"name": file.filename, "size": len(content), "format": fmt_map.get(ext, "")})
+    db.commit()
+    return {"message": f"Uploaded {len(artifacts)} files", "files": artifacts}
+
+
+@router.post("/projects/{project_id}/datasets/import-zip")
+async def import_zip_dataset(
+    project_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Import a ZIP-compressed dataset. Extracts and processes all files inside."""
+    import zipfile, tempfile
+    project = db.query(Project).filter(
+        Project.id == UUID(project_id), Project.owner_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+    content = await file.read()
+    artifacts = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zip_path = os.path.join(tmpdir, file.filename)
+        with open(zip_path, "wb") as f:
+            f.write(content)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            for member in zf.namelist():
+                if member.endswith("/"):
+                    continue
+                extracted = zf.read(member)
+                fname = os.path.basename(member)
+                storage_path = os.path.join(UPLOAD_DIR, str(uuid.uuid4()), fname)
+                os.makedirs(os.path.dirname(storage_path), exist_ok=True)
+                with open(storage_path, "wb") as f:
+                    f.write(extracted)
+                ext = os.path.splitext(fname)[1].lower()
+                fmt_map = {".csv": "csv", ".xlsx": "xlsx", ".xls": "xls",
+                           ".txt": "txt", ".json": "json", ".png": "png", ".jpg": "jpg"}
+                artifact = Artifact(
+                    project_id=UUID(project_id), name=fname, type="dataset",
+                    storage_path=storage_path, file_size=len(extracted),
+                    format=fmt_map.get(ext, ext.lstrip(".")),
+                )
+                db.add(artifact)
+                artifacts.append({"name": fname, "size": len(extracted)})
+        db.commit()
+    return {"message": f"Imported {len(artifacts)} files from ZIP", "files": artifacts}@router.get("/datasets/{dataset_id}/preview")
 def preview_dataset(
     dataset_id: str,
     db: Session = Depends(get_db),
@@ -261,3 +337,5 @@ def preview_dataset(
         }
     except Exception as e:
         raise HTTPException(400, f"Failed to read file: {e}")
+
+

@@ -2,6 +2,7 @@
 import { Card, Table, Tag, Button, Space, Typography, Modal, Input, Select, Form, message, Progress, Row, Col } from "antd";
 import { PlusOutlined, ThunderboltOutlined, EyeOutlined, DeleteOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import AnnotationCanvas from "../components/AnnotationCanvas";
 import { apiGet, apiPost, apiPut, apiDelete } from "../api/client";
 
 const { Title } = Typography;
@@ -14,6 +15,8 @@ export default function AnnotationPage() {
   const [samples, setSamples] = useState<any[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [showSamples, setShowSamples] = useState(false);
+  const [showCanvas, setShowCanvas] = useState(false);
+  const [canvasSample, setCanvasSample] = useState<any>(null);
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [form] = Form.useForm();
 
@@ -88,6 +91,7 @@ export default function AnnotationPage() {
     { title: "操作", key: "actions",
       render: (_:any, s:any) => (
         <Space>
+          <Button size="small" type="primary" onClick={() => { setCanvasSample(s); setShowCanvas(true); }}>标注</Button>
           {s.status === "unlabeled" && <Button size="small" onClick={() => handleUpdateSample(s.id, "labeled")}>标记完成</Button>}
           {s.status === "labeled" && <Button size="small" onClick={() => handleUpdateSample(s.id, "reviewed")}>审核通过</Button>}
         </Space>
@@ -117,6 +121,10 @@ export default function AnnotationPage() {
         onCancel={() => { setShowSamples(false); setSelectedTask(null); }} footer={null} width={900}>
         <Table dataSource={samples} columns={sampleColumns} rowKey="id" size="small" pagination={{ pageSize: 20 }} />
       </Modal>
+          <Modal title="在线标注" open={showCanvas} onCancel={() => setShowCanvas(false)} footer={null} width={900}>
+        {canvasSample && <AnnotationCanvas sampleId={canvasSample.id} imageUrl={canvasSample.sample_path} existingAnnotations={canvasSample.annotations||[]} onSave={() => { fetchSamples(selectedTask?.id); fetchTasks(); }} />}
+      </Modal>
     </AppLayout>
   );
 }
+

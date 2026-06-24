@@ -1,4 +1,4 @@
-"""
+﻿"""
 Knowledge Base, Knowledge Graph, and RAG API endpoints.
 """
 import uuid
@@ -965,7 +965,233 @@ def delete_relation(
     return {"message": "Relation deleted"}
 
 
-@router.get("/bases/{kb_id}/graph")
+
+# -------------------------------------------------------------------------------
+#  Range Search (threshold-based similarity search)
+# -------------------------------------------------------------------------------
+
+@router.post("/bases/{kb_id}/search/range")
+def range_search(
+    kb_id: str,
+    query: str = Body(...),
+    threshold: float = Body(default=0.3),
+    metadata_filter: dict = Body(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Range search: return all vectors above similarity threshold."""
+    kb = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == uuid.UUID(kb_id),
+        KnowledgeBase.owner_id == current_user.id,
+    ).first()
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    vstore = get_vector_store()
+    query_emb = _compute_tfidf_embedding([query], single_text=query)
+    query_vec = np.array(json.loads(query_emb), dtype=np.float32)
+    results = vstore.range_search(query_vec, threshold=threshold, metadata_filter=metadata_filter)
+    enriched = []
+    for r in results:
+        chunk = db.query(Chunk).filter(Chunk.id == uuid.UUID(r["id"])).first()
+        enriched.append({
+            "chunk_id": r["id"],
+            "content": chunk.content if chunk else r["metadata"].get("content", ""),
+            "score": round(r["score"], 4),
+        })
+    return {"query": query, "threshold": threshold, "count": len(enriched), "results": enriched}
+
+
+# -------------------------------------------------------------------------------
+#  Vector Store Management endpoints
+# -------------------------------------------------------------------------------
+
+@router.post("/bases/{kb_id}/vectorize")
+def vectorize_documents(
+    kb_id: str,
+    chunk_size: int = Body(default=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Vectorize all documents in knowledge base and store in vector store."""
+    kb = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == uuid.UUID(kb_id),
+        KnowledgeBase.owner_id == current_user.id,
+    ).first()
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    docs = db.query(Document).filter(Document.kb_id == kb.id).all()
+    if not docs:
+        return {"message": "No documents to vectorize", "count": 0}
+    vstore = get_vector_store()
+    total_chunks = 0
+    for doc in docs:
+        chunks = db.query(Chunk).filter(Chunk.doc_id == doc.id).all()
+        if not chunks:
+            texts = [doc.content[i:i+chunk_size] for i in range(0, len(doc.content), chunk_size)]
+            ids_list = []
+            texts_list = []
+            meta_list = []
+            for j, text in enumerate(texts):
+                if not text.strip():
+                    continue
+                chunk = Chunk(doc_id=doc.id, content=text, chunk_index=j)
+                db.add(chunk)
+                db.flush()
+                ids_list.append(str(chunk.id))
+                texts_list.append(text)
+                meta_list.append({"doc_id": str(doc.id), "kb_id": kb_id, "filename": doc.filename, "chunk_index": j})
+                total_chunks += 1
+            if texts_list:
+                try:
+                    embs = _compute_tfidf_embedding(texts_list)
+                    vecs = np.array([np.array(json.loads(e), dtype=np.float32) for e in embs])
+                    vstore.add(ids_list, vecs, meta_list)
+                except Exception as e:
+                    pass
+        else:
+            for chunk in chunks:
+                if chunk.embedding and chunk.embedding.strip():
+                    try:
+                        vec = np.array(json.loads(chunk.embedding), dtype=np.float32)
+                        vstore.add([str(chunk.id)], vec.reshape(1, -1), [{"doc_id": str(doc.id), "kb_id": kb_id, "filename": doc.filename, "chunk_index": chunk.chunk_index}])
+                        total_chunks += 1
+                    except:
+                        pass
+    doc.chunk_count = total_chunks
+    db.commit()
+    # Auto-save vector store
+    save_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", f"vs_{kb_id}.pkl")
+    try:
+        vstore.save(save_path)
+    except:
+        pass
+    return {"message": f"Vectorized {total_chunks} chunks", "count": total_chunks}
+
+
+@router.get("/bases/{kb_id}/vector-stats")
+def vector_stats(kb_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Get vector store statistics for a knowledge base."""
+    kb = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == uuid.UUID(kb_id),
+        KnowledgeBase.owner_id == current_user.id,
+    ).first()
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    vstore = get_vector_store()
+    stats = vstore.get_stats()
+    # Count vectors for this KB
+    kb_count = vstore.count(metadata_filter={"kb_id": kb_id})
+    stats["kb_vectors"] = kb_count
+    return stats
+
+
+@router.get("/bases/{kb_id}/export-vectors")
+def export_vectors(kb_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Export vector store for a knowledge base."""
+    kb = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == uuid.UUID(kb_id),
+        KnowledgeBase.owner_id == current_user.id,
+    ).first()
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    vstore = get_vector_store()
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "data", f"vs_{kb_id}_export.pkl")
+    vstore.export_kb(kb_id, path)
+    return {"message": "Vectors exported", "path": path, "kb_id": kb_id}
+
+
+@router.post("/bases/{kb_id}/reload-vectors")
+def reload_vectors(kb_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Reload vector store from saved file."""
+    kb = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == uuid.UUID(kb_id),
+        KnowledgeBase.owner_id == current_user.id,
+    ).first()
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    vstore = get_vector_store()
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "data", f"vs_{kb_id}.pkl")
+    loaded = vstore.load(path)
+    return {"loaded": loaded, "total_vectors": len(vstore.ids)}
+
+
+# -------------------------------------------------------------------------------
+#  Enhanced RAG endpoint with source tracking
+# -------------------------------------------------------------------------------
+
+@router.post("/bases/{kb_id}/rag-enhanced")
+def rag_enhanced(
+    kb_id: str,
+    query: str = Body(...),
+    top_k: int = Body(default=5),
+    include_sources: bool = Body(default=True),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Enhanced RAG: retrieve + augment with source tracking + optional LLM call."""
+    kb = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == uuid.UUID(kb_id),
+        KnowledgeBase.owner_id == current_user.id,
+    ).first()
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    vstore = get_vector_store()
+    query_emb = _compute_tfidf_embedding([query], single_text=query)
+    query_vec = np.array(json.loads(query_emb), dtype=np.float32)
+    results = vstore.search(query_vec, top_k=top_k)
+    
+    context_chunks = []
+    sources = []
+    for r in results:
+        chunk = db.query(Chunk).filter(Chunk.id == uuid.UUID(r["id"])).first()
+        if chunk:
+            doc = db.query(Document).filter(Document.id == chunk.doc_id).first()
+            context_chunks.append(chunk.content)
+            if include_sources:
+                sources.append({
+                    "chunk_id": str(chunk.id),
+                    "doc_id": str(doc.id) if doc else "",
+                    "filename": doc.filename if doc else "unknown",
+                    "score": round(r["score"], 4),
+                    "content_snippet": chunk.content[:200],
+                })
+    
+    context = "\n\n".join(context_chunks)
+    
+    # Try LLM call if configured
+    llm_answer = None
+    if settings.llm_api_key:
+        try:
+            import httpx
+            async def _call_llm():
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.post(
+                        settings.llm_api_url,
+                        headers={"Authorization": f"Bearer {settings.llm_api_key}", "Content-Type": "application/json"},
+                        json={
+                            "model": settings.llm_model,
+                            "messages": [
+                                {"role": "system", "content": f"You are a helpful assistant. Answer based on this context:\n\n{context}"},
+                                {"role": "user", "content": query}
+                            ],
+                            "temperature": 0.3,
+                        }
+                    )
+                    return resp.json()
+            import asyncio
+            llm_resp = asyncio.run(_call_llm())
+            llm_answer = llm_resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+        except Exception as e:
+            llm_answer = f"[LLM call failed: {str(e)}]"
+    
+    return {
+        "query": query,
+        "context": context,
+        "sources": sources,
+        "llm_answer": llm_answer,
+        "answer": llm_answer or "LLM not configured. Context retrieved successfully.",
+        "context_chunks": len(context_chunks),
+    }@router.get("/bases/{kb_id}/graph")
 def get_full_graph(
     kb_id: str,
     db: Session = Depends(get_db),
@@ -1059,3 +1285,5 @@ def hybrid_search(
         "metadata_filter": metadata_filter,
         "keyword": keyword,
     }
+
+
