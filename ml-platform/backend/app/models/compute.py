@@ -1,4 +1,4 @@
-﻿"""Compute resource and edge device management models."""
+"""Compute resource and edge device management models."""
 import uuid
 from sqlalchemy import Column, String, Text, Integer, Float, DateTime, JSON, Boolean, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID

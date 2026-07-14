@@ -1,9 +1,7 @@
-﻿import { useState, useCallback } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { ConfigProvider } from "antd";
-import zhCN from "antd/locale/zh_CN";
-import enUS from "antd/locale/en_US";
-import { LangContext, translations, type TranslationKeys } from "./i18n";
+import { ConfigProvider, theme as antTheme, App as AntApp } from "antd";
+import { useTheme } from "./stores/themeContext";
+import ProtectedRoute from "./components/ProtectedRoute";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -12,35 +10,63 @@ import ProjectDetailPage from "./pages/ProjectDetailPage";
 import WorkspacePage from "./pages/WorkspacePage";
 import TemplateWizardPage from "./pages/TemplateWizardPage";
 import ModelLibraryPage from "./pages/ModelLibraryPage";
+import DataManagePage from "./pages/DataManagePage";
 import UserManagementPage from "./pages/UserManagementPage";
 import KnowledgeBasePage from "./pages/KnowledgeBasePage";
 import KnowledgeDetailPage from "./pages/KnowledgeDetailPage";
 import KnowledgeGraphPage from "./pages/KnowledgeGraphPage";
-import DataManagePage from "./pages/DataManagePage";
 import AutoMLPage from "./pages/AutoMLPage";
 import TrainingJobsPage from "./pages/TrainingJobsPage";
 import MonitorPage from "./pages/MonitorPage";
 import AlgorithmCatalogPage from "./pages/AlgorithmCatalogPage";
 import APIMarketplacePage from "./pages/APIMarketplacePage";
-import ComputeResourcePage from "./pages/ComputeResourcePage";
 import AnnotationPage from "./pages/AnnotationPage";
 import OrchestrationPage from "./pages/OrchestrationPage";
-import ProtectedRoute from "./components/ProtectedRoute";
+import ComputeResourcePage from "./pages/ComputeResourcePage";
+import AIChatPage from "./pages/AIChatPage";
 
-type Lang = "zh" | "en";
+const LIGHT_TOKENS = {
+  colorPrimary: "#F0883E",
+  colorSuccess: "#3FB950",
+  colorWarning: "#D29922",
+  colorError: "#F85149",
+  colorInfo: "#58A6FF",
+  borderRadius: 8,
+  fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif",
+  colorBgContainer: "#FFFFFF",
+  colorBgElevated: "#F8F9FA",
+  colorBorder: "#E1E4E8",
+  colorText: "#24292F",
+  colorTextSecondary: "#57606A",
+};
 
-export default function App() {
-  const [lang, setLangState] = useState<Lang>(() => (localStorage.getItem("lang") as Lang) || "zh");
-  const setLang = useCallback((l: Lang) => {
-    setLangState(l);
-    localStorage.setItem("lang", l);
-  }, []);
-  const t: TranslationKeys = translations[lang];
-  const locale = lang === "zh" ? zhCN : enUS;
+const DARK_TOKENS = {
+  colorPrimary: "#F0883E",
+  colorSuccess: "#3FB950",
+  colorWarning: "#D29922",
+  colorError: "#F85149",
+  colorInfo: "#58A6FF",
+  borderRadius: 8,
+  fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif",
+  colorBgContainer: "#161B22",
+  colorBgElevated: "#1C2129",
+  colorBorder: "#30363D",
+  colorText: "#E6EDF3",
+  colorTextSecondary: "#8B949E",
+};
+
+function AppContent() {
+  const { theme } = useTheme();
+  const isDark = theme === "dark";
 
   return (
-    <LangContext.Provider value={{ lang, t, setLang }}>
-      <ConfigProvider locale={locale}>
+    <ConfigProvider
+      theme={{
+        algorithm: isDark ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
+        token: isDark ? DARK_TOKENS : LIGHT_TOKENS,
+      }}
+    >
+      <AntApp>
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
@@ -59,18 +85,20 @@ export default function App() {
             <Route path="/automl" element={<ProtectedRoute><AutoMLPage /></ProtectedRoute>} />
             <Route path="/training" element={<ProtectedRoute><TrainingJobsPage /></ProtectedRoute>} />
             <Route path="/monitor" element={<ProtectedRoute><MonitorPage /></ProtectedRoute>} />
-                        <Route path="/algorithms" element={<ProtectedRoute><AlgorithmCatalogPage /></ProtectedRoute>} />
+            <Route path="/algorithms" element={<ProtectedRoute><AlgorithmCatalogPage /></ProtectedRoute>} />
             <Route path="/api-marketplace" element={<ProtectedRoute><APIMarketplacePage /></ProtectedRoute>} />
             <Route path="/annotations" element={<ProtectedRoute><AnnotationPage /></ProtectedRoute>} />
             <Route path="/orchestration" element={<ProtectedRoute><OrchestrationPage /></ProtectedRoute>} />
             <Route path="/compute" element={<ProtectedRoute><ComputeResourcePage /></ProtectedRoute>} />
+            <Route path="/chat" element={<ProtectedRoute><AIChatPage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
-      </ConfigProvider>
-    </LangContext.Provider>
+      </AntApp>
+    </ConfigProvider>
   );
 }
 
-
-
+export default function App() {
+  return <AppContent />;
+}

@@ -7,7 +7,7 @@ import shutil
 import threading
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 from app.models.user import User
@@ -124,7 +124,7 @@ def get_gpu_usage():
 def collect_metrics():
     """Collect all system metrics and return a snapshot dict."""
     return {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "cpu": {"percent": get_cpu_usage()},
         "memory": get_memory_usage(),
         "disk": get_disk_usage(),

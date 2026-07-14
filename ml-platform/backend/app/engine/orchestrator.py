@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 import json
 import requests
 import threading

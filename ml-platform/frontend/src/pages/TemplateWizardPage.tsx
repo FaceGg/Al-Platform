@@ -1,107 +1,173 @@
-﻿import { useEffect, useState } from 'react'
-import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
-import { Card, Form, Input, InputNumber, Button, Steps, message, Descriptions } from 'antd'
-import apiClient from '../api/client'
-import AppLayout from '../components/AppLayout'
+import { useEffect, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Button, Descriptions, Empty, Form, Input, InputNumber, Select, Space, Tag, Typography, message } from "antd";
+import { PlusOutlined, SwapOutlined } from "@ant-design/icons";
+import apiClient, { formatApiError } from "../api/client";
+import { getTemplate, instantiateTemplate, type IndustrialTemplateDetail } from "../api/templates";
+import AppLayout from "../components/AppLayout";
+import { useI18n } from "../i18n";
 
-export default function TemplateWizardPage() {
-  const { templateId } = useParams()
-  const [searchParams] = useSearchParams()
-  const navigate = useNavigate()
-  const [template, setTemplate] = useState<any>(null)
-  const [loading, setLoading] = useState(false)
-  const [form] = Form.useForm()
-  const [projectForm] = Form.useForm()
-  const [step, setStep] = useState(0)
-  const [projectId, setProjectId] = useState(searchParams.get('project') || '')
+const { Title, Paragraph, Text } = Typography;
 
-  useEffect(() => {
-    apiClient.get('/templates/' + templateId).then((res) => {
-      setTemplate(res.data)
-    }).catch(() => message.error('无法加载模板'))
-  }, [templateId])
-
-  const handleStart = async () => {
-    try {
-      const values = await projectForm.validateFields()
-      if (!projectId) {
-        const res = await apiClient.post('/projects', { name: values.projectName, description: values.projectDesc || '' })
-        setProjectId(res.data.id)
-      }
-      setStep(1)
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || '操作失败，请检查后端是否运行')
-    }
-  }
-
-  const handleRun = async (values: any) => {
-    setLoading(true)
-    try {
-      const res = await apiClient.post('/templates/' + templateId + '/instantiate', null, {
-        params: { project_id: projectId, ...values }
-      })
-      message.success('工作流已创建')
-      navigate('/workspace/' + res.data.workflow_id)
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || '创建失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (!template) return <AppLayout><Card loading /></AppLayout>
-
-  const tpl = template || {
-    name: '模板',
-    description: '',
-    params: [
-      { name: 'target_column', label: '目标列', type: 'text', default: 'quality' },
-      { name: 'n_estimators', label: '树的数量', type: 'int', default: 100 },
-    ],
-  }
-
-  return (
-    <AppLayout>
-      <Card title={'模板向导: ' + tpl.name} style={{ maxWidth: 700, margin: '0 auto' }}>
-        <Steps current={step} style={{ marginBottom: 24 }}>
-          <Steps.Step title="项目" />
-          <Steps.Step title="参数配置" />
-          <Steps.Step title="完成" />
-        </Steps>
-
-        {step === 0 && (
-          <Form form={projectForm} layout="vertical">
-            <Form.Item name="projectName" label="项目名称" rules={[{ required: true }]} initialValue={tpl.name + ' 分析'}>
-              <Input />
-            </Form.Item>
-            <Form.Item name="projectDesc" label="项目描述">
-              <Input.TextArea rows={2} />
-            </Form.Item>
-            <Descriptions column={1} style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="模板">{tpl.name}</Descriptions.Item>
-              <Descriptions.Item label="说明">{tpl.description}</Descriptions.Item>
-            </Descriptions>
-            <Button type="primary" onClick={handleStart}>下一步</Button>
-          </Form>
-        )}
-
-        {step === 1 && (
-          <Form form={form} layout="vertical" onFinish={handleRun}>
-            {tpl.params.map((p: any) => (
-              <Form.Item key={p.name} name={p.name} label={p.label} initialValue={p.default}>
-                {p.type === 'int' ? <InputNumber style={{ width: '100%' }} /> :
-                 p.type === 'float' ? <InputNumber style={{ width: '100%' }} step={0.1} /> :
-                 <Input />}
-              </Form.Item>
-            ))}
-            <Button type="primary" htmlType="submit" loading={loading}>
-              创建并运行
-            </Button>
-            <Button style={{ marginLeft: 8 }} onClick={() => setStep(0)}>返回</Button>
-          </Form>
-        )}
-      </Card>
-    </AppLayout>
-  )
+interface ProjectOption {
+  id: string;
+  name: string;
 }
 
+interface DatasetOption {
+  artifact_id?: string;
+  id: string;
+  name: string;
+  row_count?: number;
+}
+
+export default function TemplateWizardPage() {
+  const { templateId = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { t } = useI18n();
+  const labels = t.template as typeof t.template & Record<string, string>;
+  const [form] = Form.useForm();
+  const [projectForm] = Form.useForm();
+  const [template, setTemplate] = useState<IndustrialTemplateDetail | null>(null);
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [datasets, setDatasets] = useState<DatasetOption[]>([]);
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadDatasets = async (projectId: string) => {
+    form.setFieldsValue({ project_id: projectId, dataset_artifact_id: undefined });
+    setDatasets([]);
+    const response = await apiClient.get(`/projects/${projectId}/datasets`);
+    setDatasets(response.data.items || response.data || []);
+  };
+
+  useEffect(() => {
+    Promise.all([getTemplate(templateId), apiClient.get("/projects")])
+      .then(([templateDetail, projectResponse]) => {
+        setTemplate(templateDetail);
+        setProjects(projectResponse.data.items || projectResponse.data || []);
+        const defaults = Object.fromEntries(
+          templateDetail.parameters.map((parameter) => [parameter.key, parameter.default]),
+        );
+        form.setFieldsValue({ parameters: defaults });
+        const initialProject = searchParams.get("project");
+        if (initialProject) void loadDatasets(initialProject);
+      })
+      .catch((error) => message.error(formatApiError(error, labels.load_failed)));
+  }, [templateId]);
+
+  const createProject = async (values: { name: string; description?: string }) => {
+    try {
+      const response = await apiClient.post("/projects", {
+        name: values.name,
+        description: values.description || "",
+      });
+      const project = response.data as ProjectOption;
+      setProjects((current) => [...current, project]);
+      setCreatingProject(false);
+      projectForm.resetFields();
+      await loadDatasets(project.id);
+    } catch (error) {
+      message.error(formatApiError(error, labels.create_failed));
+    }
+  };
+
+  const submit = async (values: {
+    project_id: string;
+    dataset_artifact_id: string;
+    parameters?: Record<string, number | string>;
+  }) => {
+    setSubmitting(true);
+    try {
+      const result = await instantiateTemplate(templateId, {
+        project_id: values.project_id,
+        dataset_artifact_id: values.dataset_artifact_id,
+        parameters: values.parameters || {},
+      });
+      navigate(`/workspace/${result.workflow_id}`);
+    } catch (error) {
+      message.error(formatApiError(error, labels.create_failed));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!template) {
+    return <AppLayout><div style={{ minHeight: 240 }} /></AppLayout>;
+  }
+
+  return <AppLayout>
+    <div style={{ maxWidth: 920, margin: "0 auto" }}>
+      <div style={{ borderBottom: "1px solid #d9dde3", paddingBottom: 20, marginBottom: 24 }}>
+        <Text type="secondary">{labels.wizard_title}</Text>
+        <Title level={3} style={{ margin: "4px 0 8px", letterSpacing: 0 }}>{template.name}</Title>
+        <Paragraph style={{ maxWidth: 720, marginBottom: 16 }}>{template.description}</Paragraph>
+        <Descriptions column={{ xs: 1, sm: 3 }} size="small">
+          <Descriptions.Item label={labels.scenario}>{template.scenario}</Descriptions.Item>
+          <Descriptions.Item label={labels.target}><Tag color="red">{template.target_column}</Tag></Descriptions.Item>
+          <Descriptions.Item label={labels.required_columns}>
+            <Space size={[4, 4]} wrap>{template.required_columns.map((column) => <Tag key={column}>{column}</Tag>)}</Space>
+          </Descriptions.Item>
+        </Descriptions>
+      </div>
+
+      <Form form={form} layout="vertical" onFinish={submit} requiredMark="optional">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 20 }}>
+          <section>
+            <Title level={5}>{labels.project}</Title>
+            {!creatingProject ? <>
+              <Form.Item name="project_id" label={labels.project} rules={[{ required: true }]}>
+                <Select
+                  options={projects.map((project) => ({ value: project.id, label: project.name }))}
+                  onChange={(value) => void loadDatasets(value)}
+                />
+              </Form.Item>
+              <Button icon={<PlusOutlined />} onClick={() => setCreatingProject(true)}>{labels.create_project}</Button>
+            </> : <Form form={projectForm} component={false} onFinish={createProject}>
+              <Form.Item name="name" label={labels.project_name} rules={[{ required: true }]}><Input /></Form.Item>
+              <Form.Item name="description" label={labels.project_description}><Input.TextArea rows={2} /></Form.Item>
+              <Space wrap>
+                <Button type="primary" onClick={() => projectForm.submit()}>{labels.create_project}</Button>
+                <Button icon={<SwapOutlined />} onClick={() => setCreatingProject(false)}>{labels.use_existing_project}</Button>
+              </Space>
+            </Form>}
+          </section>
+
+          <section>
+            <Title level={5}>{labels.dataset_artifact}</Title>
+            <Form.Item name="dataset_artifact_id" label={labels.dataset_artifact} rules={[{ required: true }]}>
+              <Select
+                notFoundContent={<Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={labels.no_datasets} />}
+                options={datasets.map((dataset) => ({
+                  value: dataset.artifact_id || dataset.id,
+                  label: dataset.row_count ? `${dataset.name} (${dataset.row_count})` : dataset.name,
+                }))}
+              />
+            </Form.Item>
+          </section>
+        </div>
+
+        <section style={{ borderTop: "1px solid #d9dde3", marginTop: 24, paddingTop: 20 }}>
+          <Title level={5}>{labels.parameter_config}</Title>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0 20px" }}>
+            {template.parameters.map((parameter) => <Form.Item
+              key={parameter.key}
+              name={["parameters", parameter.key]}
+              label={parameter.label}
+              rules={[{ required: parameter.required }]}
+            >
+              {parameter.type === "int" ? <InputNumber precision={0} style={{ width: "100%" }} />
+                : parameter.type === "float" ? <InputNumber step={0.01} style={{ width: "100%" }} />
+                  : <Input />}
+            </Form.Item>)}
+          </div>
+        </section>
+
+        <Button type="primary" htmlType="submit" loading={submitting} size="large">
+          {labels.create_workflow}
+        </Button>
+      </Form>
+    </div>
+  </AppLayout>;
+}

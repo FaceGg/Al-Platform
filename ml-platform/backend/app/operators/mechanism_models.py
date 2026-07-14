@@ -1,4 +1,5 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
+from app.engine.operator_contract import OperatorContext, OperatorResult
 """
 点焊工艺机理模型算子集 — 物理约束层
 =======================================
@@ -104,7 +105,7 @@ class MechanismThermalConduction(BaseOperator):
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         I_kA   = float(params.get("current_ka", 10.0))
         V      = float(params.get("voltage_v", 1.5))
         t_ms   = float(params.get("weld_time_ms", 200.0))
@@ -166,13 +167,13 @@ class MechanismThermalConduction(BaseOperator):
         if not is_melted:
             warnings.append(f"未达到材料熔点 {T_melt}K，焊接不充分")
 
-        return {
+        return OperatorResult(outputs={
             "peak_temperature": round(T_peak, 1),
             "melt_radius": round(melt_rad, 2),
             "is_melted": is_melted,
             "temperature_profile": profile,
             "warnings": warnings,
-        }
+        })
 
     def get_preview(self, outputs):
         return {
@@ -230,7 +231,7 @@ class MechanismNuggetGrowth(BaseOperator):
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         I_kA  = float(params.get("current_ka", 10.0))
         t_ms  = float(params.get("weld_time_ms", 200.0))
         F_kn  = float(params.get("electrode_force_kn", 3.0))
@@ -275,13 +276,13 @@ class MechanismNuggetGrowth(BaseOperator):
         if nugget_p_mm < 0.2 * h_tot:
             warnings.append(f"熔深不足 ({nugget_p_mm:.1f}mm)")
 
-        return {
+        return OperatorResult(outputs={
             "nugget_diameter_mm": round(nugget_d_mm, 2),
             "nugget_penetration_mm": round(nugget_p_mm, 2),
             "min_required_diameter_mm": round(d_min, 2),
             "diameter_ok": ok,
             "details": details,
-        }
+        })
 
     def get_preview(self, outputs):
         return {
@@ -340,7 +341,7 @@ class MechanismWeldLobe(BaseOperator):
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         I_in  = float(params.get("current_ka", 10.0))
         t_in  = float(params.get("weld_time_ms", 200.0))
         F_kn  = float(params.get("electrode_force_kn", 3.0))
@@ -384,7 +385,7 @@ class MechanismWeldLobe(BaseOperator):
         else:
             margin = 0.0
 
-        return {
+        return OperatorResult(outputs={
             "current_range_ka": [{"label": "下限", "value": I_min}, {"label": "上限", "value": I_max}],
             "time_range_ms": [{"label": "下限", "value": round(t_min, 0)}, {"label": "上限", "value": round(t_max, 0)}],
             "is_in_lobe": in_lobe,
@@ -394,7 +395,7 @@ class MechanismWeldLobe(BaseOperator):
                 {"参数": "推荐时间 (ms)", "值": round((t_min + t_max) / 2, 0)},
                 {"参数": "电流窗口宽度 (kA)", "值": round(I_max - I_min, 1)},
             ],
-        }
+        })
 
     def get_preview(self, outputs):
         return {
@@ -456,7 +457,7 @@ class MechanismSplashPredict(BaseOperator):
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         I_kA  = float(params.get("current_ka", 10.0))
         V     = float(params.get("voltage_v", 1.5))
         t_ms  = float(params.get("weld_time_ms", 200.0))
@@ -521,7 +522,7 @@ class MechanismSplashPredict(BaseOperator):
         if not recs:
             recs.append("当前参数飞溅风险较低，无需调整")
 
-        return {
+        return OperatorResult(outputs={
             "splash_probability": round(score, 3),
             "risk_level": level,
             "factor_contributions": [
@@ -530,7 +531,7 @@ class MechanismSplashPredict(BaseOperator):
                 {"因素": "加热速率", "贡献度": round(min(factor_R, 1.0), 2), "速率": f"{heat_rate:.0f} K/s"},
             ],
             "recommendations": recs,
-        }
+        })
 
     def get_preview(self, outputs):
         return {
@@ -594,7 +595,7 @@ class MechanismResidualStress(BaseOperator):
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         I_kA  = float(params.get("current_ka", 10.0))
         t_ms  = float(params.get("weld_time_ms", 200.0))
         h_tot = float(params.get("sheet_thickness_mm", 1.0))
@@ -650,13 +651,13 @@ class MechanismResidualStress(BaseOperator):
         if D_index > 5:
             risk += "；变形倾向指数高，建议增加焊点间距或调整焊接顺序"
 
-        return {
+        return OperatorResult(outputs={
             "max_residual_stress_mpa": round(sigma_res, 1),
             "yield_stress_mpa": round(sigma_yield, 0),
             "stress_ratio": round(stress_ratio, 3),
             "deformation_index": round(D_index, 2),
             "risk_summary": risk,
-        }
+        })
 
     def get_preview(self, outputs):
         return {
@@ -710,7 +711,7 @@ class MechanismValidationGate(BaseOperator):
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         from app.engine.registry import OperatorRegistry
 
         results = []
@@ -719,11 +720,11 @@ class MechanismValidationGate(BaseOperator):
         # --- 热传导检查 ---
         thermal = OperatorRegistry.get("mechanism_thermal")
         if thermal:
-            r = thermal.execute({}, {
+            r = thermal.execute(context, {}, {
                 "current_ka": params.get("current_ka"), "voltage_v": params.get("voltage_v"),
                 "weld_time_ms": params.get("weld_time_ms"), "sheet_thickness_mm": params.get("sheet_thickness_mm"),
                 "material_code": params.get("material_code"), "electrode_diameter_mm": params.get("electrode_diameter_mm"),
-            })
+            }).outputs
             ok = r["is_melted"] and len(r["warnings"]) == 0
             results.append({"模型": "热传导", "通过": ok, "关键值": f"峰值{r['peak_temperature']}K",
                            "详情": r["warnings"] if r["warnings"] else ["OK"]})
@@ -732,11 +733,11 @@ class MechanismValidationGate(BaseOperator):
         # --- 熔核生长检查 ---
         nugget = OperatorRegistry.get("mechanism_nugget")
         if nugget:
-            r = nugget.execute({}, {
+            r = nugget.execute(context, {}, {
                 "current_ka": params.get("current_ka"), "weld_time_ms": params.get("weld_time_ms"),
                 "electrode_force_kn": params.get("electrode_force_kn"), "sheet_thickness_mm": params.get("sheet_thickness_mm"),
                 "material_code": params.get("material_code"),
-            })
+            }).outputs
             results.append({"模型": "熔核生长", "通过": r["diameter_ok"],
                            "关键值": f"直径{r['nugget_diameter_mm']}mm / 最小{r['min_required_diameter_mm']}mm",
                            "详情": ["OK" if r["diameter_ok"] else "直径不达标"]})
@@ -745,11 +746,11 @@ class MechanismValidationGate(BaseOperator):
         # --- 焊接窗口检查 ---
         lobe = OperatorRegistry.get("mechanism_lobe")
         if lobe:
-            r = lobe.execute({}, {
+            r = lobe.execute(context, {}, {
                 "current_ka": params.get("current_ka"), "weld_time_ms": params.get("weld_time_ms"),
                 "electrode_force_kn": params.get("electrode_force_kn"), "sheet_thickness_mm": params.get("sheet_thickness_mm") / 2,
                 "material_code": params.get("material_code"),
-            })
+            }).outputs
             results.append({"模型": "焊接窗口", "通过": r["is_in_lobe"],
                            "关键值": f"margin {r['margin_pct']}%",
                            "详情": ["OK" if r["is_in_lobe"] else "参数超出可焊窗口"]})
@@ -758,12 +759,12 @@ class MechanismValidationGate(BaseOperator):
         # --- 飞溅检查 ---
         splash = OperatorRegistry.get("mechanism_splash")
         if splash:
-            r = splash.execute({}, {
+            r = splash.execute(context, {}, {
                 "current_ka": params.get("current_ka"), "voltage_v": params.get("voltage_v"),
                 "weld_time_ms": params.get("weld_time_ms"), "electrode_force_kn": params.get("electrode_force_kn"),
                 "electrode_diameter_mm": params.get("electrode_diameter_mm"), "sheet_thickness_mm": params.get("sheet_thickness_mm"),
                 "material_code": params.get("material_code"),
-            })
+            }).outputs
             ok = r["risk_level"] in ("低", "中")
             results.append({"模型": "飞溅预测", "通过": ok,
                            "关键值": f"概率{r['splash_probability']} / {r['risk_level']}",
@@ -773,11 +774,11 @@ class MechanismValidationGate(BaseOperator):
         # --- 残余应力检查 ---
         stress = OperatorRegistry.get("mechanism_stress")
         if stress:
-            r = stress.execute({}, {
+            r = stress.execute(context, {}, {
                 "current_ka": params.get("current_ka"), "weld_time_ms": params.get("weld_time_ms"),
                 "sheet_thickness_mm": params.get("sheet_thickness_mm"), "sheet_width_mm": params.get("sheet_width_mm"),
                 "material_code": params.get("material_code"),
-            })
+            }).outputs
             ok = r["stress_ratio"] < 0.6
             results.append({"模型": "残余应力", "通过": ok,
                            "关键值": f"应力{r['max_residual_stress_mpa']}MPa / 屈服{r['yield_stress_mpa']}MPa",
@@ -796,13 +797,13 @@ class MechanismValidationGate(BaseOperator):
         else:
             overall = "极高风险: 参数严重偏离物理可行范围"
 
-        return {
+        return OperatorResult(outputs={
             "all_pass": all_pass,
             "passed_count": pass_count,
             "total_count": total,
             "model_results": results,
             "overall_risk": overall,
-        }
+        })
 
     def get_preview(self, outputs):
         return {

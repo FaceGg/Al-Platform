@@ -1,9 +1,9 @@
-﻿import os
+import os
 import glob
 import json
 import uuid
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from uuid import UUID
 
@@ -17,6 +17,8 @@ from app.models.project import Project
 from app.models.artifact import Artifact
 from app.models.user import User
 from app.api.auth import get_current_user
+from app.services.artifact_service import ArtifactAccessError, ArtifactService
+from app.services.training_service import TrainingService
 
 router = APIRouter(prefix="/api/training", tags=["training"])
 
@@ -46,9 +48,23 @@ def start_training(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    dataset_path = data.get("dataset_path")
-    if not dataset_path:
-        raise HTTPException(400, "dataset_path is required")
+    dataset_artifact_id = data.get("dataset_artifact_id")
+    if not dataset_artifact_id:
+        raise HTTPException(400, {
+            "code": "DATASET_ARTIFACT_REQUIRED",
+            "message": "dataset_artifact_id is required",
+        })
+    artifact_service = ArtifactService(
+        db, os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifact_store"),
+    )
+    try:
+        dataset = artifact_service.resolve(
+            UUID(dataset_artifact_id), UUID(project_id), expected_type="dataset",
+        )
+    except (ValueError, ArtifactAccessError) as exc:
+        raise HTTPException(400, {
+            "code": "DATASET_ARTIFACT_INVALID", "message": str(exc),
+        }) from exc
 
     job = TrainingJob(
         project_id=UUID(project_id),
@@ -56,7 +72,8 @@ def start_training(
         name=data.get("name", "training_job"),
         operator_id=data.get("operator_id"),
         params=data.get("params", {}),
-        dataset_path=dataset_path,
+        dataset_artifact_id=dataset.id,
+        dataset_path=dataset.storage_path,
         status="pending",
     )
     db.add(job)
@@ -64,7 +81,7 @@ def start_training(
     db.refresh(job)
 
     # Start background training thread
-    thread = threading.Thread(target=_run_training, args=(str(job.id),), daemon=True)
+    thread = threading.Thread(target=_run_training_artifact, args=(str(job.id),), daemon=True)
     thread.start()
 
     return {"job_id": str(job.id), "status": "started"}
@@ -224,9 +241,18 @@ def _job_to_dict(job: TrainingJob) -> dict:
         "operator_id": job.operator_id,
         "params": job.params,
         "dataset_path": job.dataset_path,
+        "dataset_artifact_id": str(job.dataset_artifact_id) if job.dataset_artifact_id else None,
         "status": job.status,
         "metrics": job.metrics,
         "model_path": job.model_path,
+        "model_artifact_id": str(job.model_artifact_id) if job.model_artifact_id else None,
+        "model_library_id": str(job.model_library_id) if job.model_library_id else None,
+        "feature_schema": job.feature_schema or [],
+        "target_schema": job.target_schema or {},
+        "preprocessing": job.preprocessing or {},
+        "error_code": job.error_code,
+        "error_details": job.error_details,
+        "logs": job.logs or [],
         "error_message": job.error_message,
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
@@ -239,6 +265,17 @@ def _get_db_session() -> Session:
     return SessionLocal()
 
 
+def _run_training_artifact(job_id: str):
+    db = _get_db_session()
+    try:
+        artifact_service = ArtifactService(
+            db, os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifact_store"),
+        )
+        TrainingService(db, artifact_service).run(UUID(job_id))
+    finally:
+        db.close()
+
+
 def _run_training(job_id: str):
     db = _get_db_session()
     try:
@@ -247,7 +284,7 @@ def _run_training(job_id: str):
             return
 
         job.status = "running"
-        job.started_at = datetime.utcnow()
+        job.started_at = datetime.now(timezone.utc)
         db.commit()
 
         import pandas as pd
@@ -320,7 +357,7 @@ def _run_training(job_id: str):
         job.model_path = model_path
         job.metrics = metrics
         job.status = "completed"
-        job.finished_at = datetime.utcnow()
+        job.finished_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as e:
         db = _get_db_session()
@@ -328,7 +365,7 @@ def _run_training(job_id: str):
         if job:
             job.status = "failed"
             job.error_message = str(e)
-            job.finished_at = datetime.utcnow()
+            job.finished_at = datetime.now(timezone.utc)
             db.commit()
     finally:
         db.close()
@@ -342,7 +379,7 @@ def _run_automl(job_id: str, dataset_path: str, target_column: str, task: str, t
             return
 
         job.status = "running"
-        job.started_at = datetime.utcnow()
+        job.started_at = datetime.now(timezone.utc)
         db.commit()
 
         import pandas as pd
@@ -465,7 +502,7 @@ def _run_automl(job_id: str, dataset_path: str, target_column: str, task: str, t
         job.model_path = model_path
         job.metrics = metrics
         job.status = "completed"
-        job.finished_at = datetime.utcnow()
+        job.finished_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as e:
         db = _get_db_session()
@@ -473,7 +510,36 @@ def _run_automl(job_id: str, dataset_path: str, target_column: str, task: str, t
         if job:
             job.status = "failed"
             job.error_message = str(e)
-            job.finished_at = datetime.utcnow()
+            job.finished_at = datetime.now(timezone.utc)
             db.commit()
     finally:
         db.close()
+
+
+from pydantic import BaseModel
+from typing import List
+
+class BatchDeleteRequest(BaseModel):
+    ids: List[str]
+
+@router.post("/batch-delete", status_code=200)
+def batch_delete_training_jobs(
+    data: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    deleted = 0
+    for tid_str in data.ids:
+        try:
+            uid = uuid.UUID(tid_str)
+        except ValueError:
+            continue
+        job = db.query(TrainingJob).filter(
+            TrainingJob.id == uid, TrainingJob.user_id == current_user.id
+        ).first()
+        if not job:
+            continue
+        db.delete(job)
+        deleted += 1
+    db.commit()
+    return {"deleted": deleted}

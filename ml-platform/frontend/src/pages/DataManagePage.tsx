@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Card, Table, Button, Upload, Select, Space, message, Modal, Typography, Row, Col, Tag
 } from "antd";

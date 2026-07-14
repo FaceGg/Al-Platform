@@ -1,7 +1,8 @@
-﻿from app.models.user import User
+from app.models.user import User
 from app.models.project import Project
 from app.models.workflow import Workflow, WorkflowNode, WorkflowEdge
 from app.models.run import WorkflowRun, NodeRun
+from app.models.workflow_version import WorkflowVersion
 from app.models.artifact import Artifact
 from app.models.knowledge import KnowledgeBase, Document, Chunk, GraphEntity, GraphRelation
 from app.models.training import TrainingJob
@@ -20,6 +21,7 @@ __all__ = [
     "WorkflowEdge",
     "WorkflowRun",
     "NodeRun",
+    "WorkflowVersion",
     "Artifact",
     "KnowledgeBase",
     "Document",

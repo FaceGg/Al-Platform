@@ -1,7 +1,9 @@
-﻿import os
+import os
 import io
 from typing import List, Optional
 from uuid import UUID
+import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
@@ -12,11 +14,59 @@ from app.models.project import Project
 from app.models.artifact import Artifact
 from app.models.user import User
 from app.api.auth import get_current_user
+from app.services.artifact_service import ArtifactService
 
 router = APIRouter(prefix="/api", tags=["datasets"])
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
+ARTIFACT_DIR = os.getenv(
+    "ARTIFACT_STORAGE_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifact_store"),
+)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def _store_uploaded_dataset(db: Session, project_id, file: UploadFile) -> Artifact:
+    safe_name = Path(file.filename or "uploaded_file").name
+    staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
+    staging_path.write_bytes(file.file.read())
+    try:
+        return ArtifactService(db, ARTIFACT_DIR).create_dataset(project_id, staging_path, safe_name)
+    finally:
+        staging_path.unlink(missing_ok=True)
+
+
+@router.get("/projects/{project_id}/datasets")
+def list_project_datasets(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = db.query(Project).filter(
+        Project.id == UUID(project_id), Project.owner_id == current_user.id,
+    ).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    artifacts = db.query(Artifact).filter(
+        Artifact.project_id == project.id, Artifact.type == "dataset",
+    ).order_by(Artifact.created_at.desc()).all()
+    items = []
+    for artifact in artifacts:
+        metadata = artifact.metadata_ or {}
+        items.append({
+            "id": str(artifact.id),
+            "artifact_id": str(artifact.id),
+            "project_id": str(artifact.project_id),
+            "name": artifact.name,
+            "type": artifact.type,
+            "format": artifact.format,
+            "file_size": artifact.file_size,
+            "row_count": metadata.get("row_count", 0),
+            "schema": metadata.get("schema", []),
+            "created_at": artifact.created_at,
+        })
+    return {"items": items, "total": len(items)}
 
 
 @router.post("/projects/{project_id}/datasets/upload")
@@ -30,23 +80,15 @@ def upload_dataset(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    file_path = os.path.join(UPLOAD_DIR, f"{UUID(project_id)}_{file.filename}")
-    content = file.file.read()
-    with open(file_path, "wb") as f:
-        f.write(content)
-
-    artifact = Artifact(
-        project_id=UUID(project_id),
-        name=file.filename or "uploaded_file",
-        type="dataset",
-        storage_path=file_path,
-        file_size=len(content),
-        format=file.filename.split(".")[-1] if file.filename else None,
-    )
-    db.add(artifact)
-    db.commit()
-    db.refresh(artifact)
-    return {"id": str(artifact.id), "name": artifact.name, "storage_path": artifact.storage_path}
+    artifact = _store_uploaded_dataset(db, UUID(project_id), file)
+    metadata = artifact.metadata_ or {}
+    return {
+        "id": str(artifact.id), "artifact_id": str(artifact.id),
+        "name": artifact.name, "storage_path": artifact.storage_path,
+        "row_count": metadata.get("row_count", 0),
+        "schema": metadata.get("schema", []),
+        "sha256": metadata.get("sha256", ""),
+    }
 
 
 @router.post("/projects/{project_id}/datasets/batch")
@@ -66,40 +108,16 @@ def batch_import(
 
     for file in files:
         try:
-            file_path = os.path.join(UPLOAD_DIR, f"{UUID(project_id)}_{file.filename}")
-            content = file.file.read()
-            with open(file_path, "wb") as f:
-                f.write(content)
-
-            fmt = file.filename.split(".")[-1] if file.filename else None
-            artifact = Artifact(
-                project_id=UUID(project_id),
-                name=file.filename or "uploaded_file",
-                type="dataset",
-                storage_path=file_path,
-                file_size=len(content),
-                format=fmt,
-            )
-            db.add(artifact)
-            db.commit()
-            db.refresh(artifact)
-
-            import pandas as pd
-            rows = 0
-            try:
-                if file_path.endswith((".xls", ".xlsx")):
-                    df = pd.read_excel(file_path)
-                else:
-                    df = pd.read_csv(file_path)
-                rows = len(df)
-            except Exception:
-                rows = 0
+            artifact = _store_uploaded_dataset(db, UUID(project_id), file)
+            metadata = artifact.metadata_ or {}
 
             results.append({
                 "id": str(artifact.id),
                 "name": artifact.name,
                 "format": artifact.format,
-                "rows": rows,
+                "rows": metadata.get("row_count", 0),
+                "schema": metadata.get("schema", []),
+                "sha256": metadata.get("sha256", ""),
             })
             success_count += 1
         except Exception as e:
@@ -309,7 +327,8 @@ async def import_zip_dataset(
                 db.add(artifact)
                 artifacts.append({"name": fname, "size": len(extracted)})
         db.commit()
-    return {"message": f"Imported {len(artifacts)} files from ZIP", "files": artifacts}@router.get("/datasets/{dataset_id}/preview")
+    return {"message": f"Imported {len(artifacts)} files from ZIP", "files": artifacts}
+@router.get("/datasets/{dataset_id}/preview")
 def preview_dataset(
     dataset_id: str,
     db: Session = Depends(get_db),
@@ -337,5 +356,4 @@ def preview_dataset(
         }
     except Exception as e:
         raise HTTPException(400, f"Failed to read file: {e}")
-
 

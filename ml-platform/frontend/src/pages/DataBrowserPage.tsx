@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Card, Select, Table, Button, Upload, message, Modal, Row, Col } from 'antd'
 import { UploadOutlined, EyeOutlined } from '@ant-design/icons'
 import type { UploadFile } from 'antd/es/upload/interface'

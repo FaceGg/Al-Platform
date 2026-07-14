@@ -1,4 +1,4 @@
-﻿"""Annotation task management API."""
+"""Annotation task management API."""
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session

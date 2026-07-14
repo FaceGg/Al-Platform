@@ -1,4 +1,4 @@
-﻿"""Algorithm catalog model for built-in algorithm management."""
+"""Algorithm catalog model for built-in algorithm management."""
 import uuid
 from sqlalchemy import Column, String, Text, Float, DateTime, JSON, Boolean, func
 from sqlalchemy.dialects.postgresql import UUID

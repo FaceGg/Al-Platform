@@ -1,4 +1,4 @@
-﻿"""Algorithm catalog API."""
+"""Algorithm catalog API."""
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -41,7 +41,7 @@ def list_algorithms(
             }
             for a in algorithms
         ],
-        "total": algorithms.count() if hasattr(algorithms, "count") else len(algorithms),
+        "total": len(algorithms),
         "categories": [
             {"key": "computer_vision", "label": "计算机视觉", "count": 0},
             {"key": "ocr", "label": "文本识别", "count": 0},
@@ -56,6 +56,23 @@ def list_algorithms(
 def list_categories(db: Session = Depends(get_db)):
     cats = db.query(Algorithm.category).distinct().all()
     return {"categories": [c[0] for c in cats]}
+
+
+@router.get("/{algo_id}")
+def get_algorithm(algo_id: str, db: Session = Depends(get_db)):
+    algo = db.query(Algorithm).filter(Algorithm.id == uuid.UUID(algo_id)).first()
+    if not algo:
+        raise HTTPException(404, "Algorithm not found")
+    return {
+        "id": str(algo.id),
+        "name": algo.name,
+        "display_name": algo.display_name or algo.name,
+        "category": algo.category,
+        "description": algo.description,
+        "benchmark_mAP": algo.benchmark_mAP,
+        "is_active": algo.is_active,
+        "created_at": algo.created_at.isoformat() if algo.created_at else None,
+    }
 
 
 @router.post("")

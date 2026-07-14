@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, List, Modal, Form, Input, Space, message, Tag } from 'antd'
-import { PlusOutlined, ExperimentOutlined, BranchesOutlined, EditOutlined } from '@ant-design/icons'
+import { Button, Card, List, Modal, Form, Input, Space, message, Tag, Popconfirm } from 'antd'
+import { PlusOutlined, ExperimentOutlined, BranchesOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useParams, useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import apiClient from '../api/client'
@@ -52,6 +52,16 @@ export default function ProjectDetailPage() {
     navigate('/workspace/' + res.data.id)
   }
 
+  const deleteWorkflow = async (wfId: string) => {
+    try {
+      await apiClient.delete('/projects/' + projectId + '/workflows/' + wfId)
+      message.success('工作流已删除')
+      load()
+    } catch {
+      message.error('删除失败')
+    }
+  }
+
   return (
     <AppLayout>
       <div style={{ marginBottom: 16 }}>
@@ -89,7 +99,19 @@ export default function ProjectDetailPage() {
         renderItem={(item: any) => (
           <List.Item>
             <Card hoverable
-              actions={[<Button type="link" onClick={() => navigate('/workspace/' + item.id)}>编辑</Button>]}>
+              actions={[
+                <Button type="link" onClick={() => navigate('/workspace/' + item.id)}>编辑</Button>,
+                <Popconfirm
+                  title="确认删除"
+                  description={"删除工作流 " + item.name + "？"}
+                  onConfirm={() => deleteWorkflow(item.id)}
+                  okText="删除"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true }}
+                >
+                  <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+                </Popconfirm>
+              ]}>
               <Card.Meta
                 avatar={<BranchesOutlined style={{ fontSize: 24, color: '#1890ff' }} />}
                 title={item.name}

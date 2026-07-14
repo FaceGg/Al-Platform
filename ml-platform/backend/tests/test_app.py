@@ -22,7 +22,9 @@ class TestConfig(unittest.TestCase):
     """Configuration tests."""
 
     def test_default_database_url(self):
-        self.assertEqual(settings.database_url, "sqlite:///./ml_platform.db")
+        import os
+        expected = os.environ.get("DATABASE_URL", "sqlite:///./ml_platform.db")
+        self.assertEqual(settings.database_url, expected)
 
     def test_default_secret_key(self):
         self.assertEqual(settings.secret_key, "change-me-in-production")
@@ -70,8 +72,9 @@ class TestModels(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        from app.database import Base, engine
-        Base.metadata.drop_all(bind=engine)
+        # Do not drop tables - other tests may need them
+        from app.database import engine
+        engine.dispose()
 
     def setUp(self):
         self.session = self.SessionLocal()
