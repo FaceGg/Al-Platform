@@ -50,7 +50,7 @@ class XGBoostTrainer(BaseOperator):
             model = xgb.XGBClassifier(
                 n_estimators=n_estimators, max_depth=max_depth,
                 learning_rate=learning_rate, random_state=random_seed,
-                use_label_encoder=False, eval_metric="logloss",
+                eval_metric="logloss",
                 scale_pos_weight=scale_pos_weight,
             )
         else:

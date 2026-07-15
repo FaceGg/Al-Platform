@@ -1,117 +1,116 @@
-﻿"""Run each test module individually with a clean database."""
-import subprocess, sys, os, shutil, time
+"""Run backend test modules individually with isolated storage."""
 
-suite_dir = os.path.join(os.path.dirname(__file__), "tests")
-backend_dir = os.path.dirname(__file__)
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import time
 
-# Test files in dependency order (engine first, then API)
-test_modules = [
-    "test_weld_demo_service",
-    "test_operator_contract",
-    "test_industrial_templates",
-    "test_dag",
-    "test_engine_advanced",
-    "test_engine_vector_store",
-    "test_engine_orchestrator",
-    "test_run_reliability",
-    "test_operators_extended",
-    "test_operators_mechanism",
-    "test_app",
-    "test_api_users",
-    "test_api_projects",
-    "test_api_workflows",
-    "test_workflow_versions",
-    "test_artifact_service",
-    "test_api_datasets",
-    "test_api_runs",
-    "test_industrial_template_e2e",
-    "test_api_chat",
-    "test_api_compute",
-    "test_api_monitor",
-    "test_api_dashboard",
-    "test_api_labeling",
-    "test_api_platform",
-    "test_api_algorithm",
-    "test_api_model_library",
-    "test_knowledge",
-    "test_training",
-    "test_training_artifacts",
-    "test_agents",
-]
+from tests.week_manifest import ALL_TEST_MODULES, WEEK_TEST_MODULES
 
-project_dir = os.path.dirname(os.path.dirname(backend_dir))
-DB_DIR = os.path.join(project_dir, "temp_test", "test-suite", str(int(time.time())))
-os.makedirs(DB_DIR, exist_ok=True)
 
-passed = 0
-failed = 0
-errors_list = []
+BACKEND_DIR = os.path.dirname(__file__)
+PROJECT_DIR = os.path.dirname(os.path.dirname(BACKEND_DIR))
 
-for mod in test_modules:
-    db_path = os.path.join(DB_DIR, f"test_{mod}.db")
-    artifact_dir = os.path.join(DB_DIR, f"artifacts_{mod}")
-    system_temp_dir = os.path.join(DB_DIR, f"system_{mod}")
-    os.makedirs(system_temp_dir, exist_ok=True)
-    env = os.environ.copy()
-    env["DATABASE_URL"] = f"sqlite:///{db_path}"
-    env["ARTIFACT_STORAGE_DIR"] = artifact_dir
-    env["ML_PLATFORM_TEMP_DIR"] = os.path.join(DB_DIR, f"data_{mod}")
-    env["TEMP"] = system_temp_dir
-    env["TMP"] = system_temp_dir
-    env["TMPDIR"] = system_temp_dir
-    env["PYTHONPATH"] = backend_dir
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--week",
+        type=int,
+        choices=sorted(WEEK_TEST_MODULES),
+        help="Run only the test modules owned by one development week.",
+    )
+    return parser.parse_args()
+
+
+def run_modules(test_modules: list[str]) -> int:
+    test_root = os.path.join(
+        PROJECT_DIR,
+        "temp_test",
+        "test-suite",
+        str(int(time.time())),
+    )
+    os.makedirs(test_root, exist_ok=True)
+
+    passed = 0
+    failed = 0
+    errors: list[str] = []
+
+    try:
+        for module in test_modules:
+            db_path = os.path.join(test_root, f"test_{module}.db")
+            artifact_dir = os.path.join(test_root, f"artifacts_{module}")
+            system_temp_dir = os.path.join(test_root, f"system_{module}")
+            os.makedirs(system_temp_dir, exist_ok=True)
+            env = os.environ.copy()
+            env["DATABASE_URL"] = f"sqlite:///{db_path}"
+            env["ARTIFACT_STORAGE_DIR"] = artifact_dir
+            env["ML_PLATFORM_TEMP_DIR"] = os.path.join(test_root, f"data_{module}")
+            env["TEMP"] = system_temp_dir
+            env["TMP"] = system_temp_dir
+            env["TMPDIR"] = system_temp_dir
+            env["PYTHONPATH"] = BACKEND_DIR
+
+            print(f"\n{'=' * 60}")
+            print(f"  RUNNING: {module}")
+            print(f"  DB: {db_path}")
+            print(f"{'=' * 60}")
+
+            result = subprocess.run(
+                [sys.executable, "-m", "unittest", f"tests.{module}", "-v"],
+                capture_output=True,
+                text=True,
+                cwd=BACKEND_DIR,
+                env=env,
+                timeout=120,
+            )
+
+            lines = result.stdout.splitlines()
+            for line in lines:
+                if line.strip() and any(
+                    marker in line
+                    for marker in ("...", "FAIL", "ERROR", "Ran ", "OK", "FAILED")
+                ):
+                    print(f"  {line}")
+
+            if result.returncode == 0:
+                passed += 1
+                print(f"  >>> {module}: PASSED")
+                continue
+
+            failed += 1
+            errors.append(module)
+            print(f"  >>> {module}: FAILED")
+            if result.stdout.strip():
+                print("  STDOUT:")
+                for output_line in result.stdout.rstrip().splitlines():
+                    print(f"    {output_line}")
+            if result.stderr.strip():
+                print("  STDERR:")
+                for error_line in result.stderr.rstrip().splitlines():
+                    print(f"    {error_line}")
+    finally:
+        shutil.rmtree(test_root, ignore_errors=True)
 
     print(f"\n{'=' * 60}")
-    print(f"  RUNNING: {mod}")
-    print(f"  DB: {db_path}")
+    print(f"  RESULTS: {passed} passed, {failed} failed out of {passed + failed} modules")
+    if errors:
+        print(f"  Failed modules: {', '.join(errors)}")
     print(f"{'=' * 60}")
+    return 0 if failed == 0 else 1
 
-    result = subprocess.run(
-        [sys.executable, "-m", "unittest", f"tests.{mod}", "-v"],
-        capture_output=True, text=True, cwd=backend_dir, env=env,
-        timeout=120
-    )
 
-    # Print output (last 20 lines for brevity)
-    lines = result.stdout.split("\n")
-    for line in lines:
-        if line.strip() and ("..." in line or "FAIL" in line or "ERROR" in line or "Ran " in line or "OK" in line or "FAILED" in line):
-            print(f"  {line}")
-
-    if result.returncode == 0:
-        passed += 1
-        print(f"  >>> {mod}: PASSED")
+def main() -> int:
+    args = parse_args()
+    modules = WEEK_TEST_MODULES[args.week] if args.week else ALL_TEST_MODULES
+    if args.week:
+        print(f"Running Week {args.week} acceptance suite ({len(modules)} modules).")
     else:
-        failed += 1
-        errors_list.append(mod)
-        # Extract error details
-        error_lines = []
-        capture = False
-        for line in lines:
-            if "ERROR:" in line or "FAIL:" in line:
-                capture = True
-            if capture and line.strip():
-                error_lines.append(line)
-                if len(error_lines) > 30:
-                    break
-        print(f"  >>> {mod}: FAILED")
-        if error_lines:
-            print(f"  First errors:")
-            for el in error_lines[:8]:
-                print(f"    {el}")
-        # Preserve the import traceback so CI failures remain actionable.
-        if result.stderr.strip():
-            print("  STDERR:")
-            for stderr_line in result.stderr.rstrip().splitlines():
-                print(f"    {stderr_line}")
+        print(f"Running complete Week 1-4 acceptance suite ({len(modules)} modules).")
+    return run_modules(modules)
 
-# Cleanup
-shutil.rmtree(DB_DIR, ignore_errors=True)
 
-print(f"\n{'=' * 60}")
-print(f"  RESULTS: {passed} passed, {failed} failed out of {passed + failed} modules")
-if errors_list:
-    print(f"  Failed modules: {', '.join(errors_list)}")
-print(f"{'=' * 60}")
-
-sys.exit(0 if failed == 0 else 1)
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -6,12 +6,14 @@ import { useI18n } from '../../i18n'
 const CATEGORY_LABELS: Record<string, { zh: string; en: string }> = {
   data_io: { zh: '数据IO', en: 'Data I/O' },
   processing: { zh: '数据处理', en: 'Processing' },
+  blending: { zh: '数据融合', en: 'Data Blending' },
   ml: { zh: '传统机器学习', en: 'ML' },
   dl: { zh: '深度学习', en: 'Deep Learning' },
   evaluation: { zh: '模型评估', en: 'Evaluation' },
   visualization: { zh: '可视化', en: 'Visualization' },
   control: { zh: '流程控制', en: 'Control Flow' },
   mechanism: { zh: '机理模型', en: 'Mechanism' },
+  utility: { zh: '工具', en: 'Utilities' },
 }
 
 const CAT_ORDER = ['data_io', 'processing', 'blending', 'ml', 'dl', 'evaluation', 'visualization', 'control', 'mechanism', 'utility']

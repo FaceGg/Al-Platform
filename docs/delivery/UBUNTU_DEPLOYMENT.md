@@ -69,4 +69,4 @@ BACKEND_PORT=8010 FRONTEND_PORT=5180 ./scripts/health-check.sh
 
 ## 验收状态
 
-脚本已通过 `D:\software\Git\bin\bash.exe -n` 语法检查。真实 Ubuntu 执行配置在 `.github/workflows/ci.yml`；分支未推送前没有真实 GitHub Actions 运行证据，因此当前仍是待验收项。
+脚本已通过 Git Bash 和 WSL2 的 `bash -n` 语法检查。GitHub Actions Run `29381233328` 已在 Ubuntu 22.04 完成后端 31 模块、前端测试、生产构建、服务启停冒烟和 Chromium 主流程验收，Ubuntu 交付路径通过。当前 WSL2 已安装 Node.js 22/npm，并使用 `/home/jingms/venv` 的 Python 依赖完成启动、健康检查、默认管理员登录、停止和端口释放。Windows 与 WSL 的 `node_modules` 不可复用；本地通过 `ML_PLATFORM_FRONTEND_DIR` 指向 `temp_test/wsl-frontend` 的独立 Linux 依赖目录。

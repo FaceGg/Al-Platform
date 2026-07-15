@@ -1,7 +1,7 @@
 # 汽车焊接工业 AI 平台开发文档
 
 > 文档状态：持续维护
-> 最近更新：2026-07-14
+> 最近更新：2026-07-15
 > 适用项目：`E:\codex_workspace\agent_spot_welding`
 > 总周期：20 周，共计 5 个月
 
@@ -88,7 +88,7 @@
 | 第 1 周 | 已完成 | 基线治理与范围冻结 | 已盘点页面、API、模型、算子和测试；修复前端构建与测试环境、Join 数据正确性；冻结状态、错误、数据和执行器接口 | `docs/baseline/` 功能台账、技术债清单、接口基线、构建测试基线；前后端可构建可测试 |
 | 第 2 周 | 已完成 | 工作流与执行可靠性 | 已完成发布快照版本、前置运行校验、协作取消、节点超时/重试、尝试历史、有限日志、结构化错误、画布和进度状态同步 | 稳定工作流主链路、冻结状态机、后端 25 模块与前端 19 用例 |
 | 第 3 周 | 已完成 | 数据、算子与训练闭环 | 已统一 79 个运行时算子协议；完成数据 Artifact、训练评估、模型保存、模型库登记和血缘展示 | 严格算子协议、数据训练闭环；后端 28/28 模块、前端 22/22 测试和生产构建通过 |
-| 第 4 周 | 进行中 | 工业模板与首版交付 | 已完成真实数据准备、四套模板执行闭环、Artifact 向导、Playwright 主流程、Windows/Linux 脚本和跨平台 CI 配置；待完整回归、Ubuntu CI 与交付文档 | 稳定可交付版、首月验收报告 |
+| 第 4 周 | 已完成 | 工业模板与首版交付 | 已完成真实数据准备、四套模板执行闭环、Artifact 向导、Playwright 主流程、Windows/Linux 脚本、跨平台 CI 和交付文档；GitHub Ubuntu 22.04 质量门禁与 Chromium 验收通过 | 稳定可交付版、首月验收报告 |
 | 第 5 周 | 未开始 | 生产存储与异步任务 | PostgreSQL、Alembic、Redis/Celery、MinIO、制品 URI、配置和密钥管理 | 生产数据层、对象存储、异步任务框架 |
 | 第 6 周 | 未开始 | 实验与训练管理 | 实验、Run、参数、指标、日志、制品、检查点、恢复、早停和 TensorBoard | 企业基础版、实验训练追踪 |
 | 第 7 周 | 未开始 | Pipeline 调度与权限 | Cron、补录、依赖、并发、超时、重试、暂停恢复、项目角色和审计 | 调度器、实例管理、权限审计 |
@@ -123,7 +123,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周需以 Celery/独立进程替换线程适配器，解决服务重启恢复和超时算子强制终止。
-- 第 4 周本地验收已完成：后端 31/31、前端 26/26、构建、Playwright 和 Windows 脚本通过；Ubuntu CI 未在 GitHub 实跑，因此状态仍为进行中。
+- 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
 
@@ -148,9 +148,9 @@
 - FastAPI TestClient 未使用上下文时可能不执行 lifespan，不能依赖启动钩子创建测试数据。
 - ReactFlow 连线删除、节点状态和 Zustand 状态需要保持单一数据源。
 - 新增 store 方法后必须同步所有调用方解构和类型定义。
-- Join 多键关联必须使用左右键列表一次性 merge；当前多键实现需要增加复合主键回归测试并重新确认语义。
+- Join 多键关联必须使用左右键列表一次性 merge；复合主键回归已覆盖空输入、行数和左右键映射语义。
 - i18n 对象批量编辑容易产生孤立逗号、括号错误和重复键。
-- 前端页面存在硬编码英文和中文乱码风险。
+- 前端页面存在硬编码英文和中文乱码风险；工作流参数标签、分类和端口预览已完成双语修复，其他原型页面仍需持续扫描。
 - DOCX 自动生成必须同时检查正文、项目符号、编号、表格和分页结果。
 
 ### 7.2 可能出现的问题
@@ -378,8 +378,48 @@
 - 验证方式：后端 31/31 模块通过且数据库路径位于 `temp_test/test-suite`；前端 9/9 文件、26/26 用例通过；生产构建输出位于 `temp_test/frontend-dist`；Playwright Chromium 1/1 通过；Windows/Linux 脚本语法检查通过；旧临时路径核对为空。
 - 预防措施：新增项目临时输出必须优先使用 `ML_PLATFORM_TEMP_DIR` 或 `temp_test` 子目录；不得在源码目录新增临时数据库、日志、报告和构建目录。
 - 遗留事项：系统库内部创建并自动回收的短生命周期临时文件仍由操作系统管理，不作为项目持久临时文件保留。
+
+### 2026-07-15：第四周 Ubuntu 验收完成
+
+- 当前周次：第 4 周。
+- 开发内容：完成第四周剩余的真实 Ubuntu CI 验收，并使用 WSL2 补充本地 Linux 环境检查。
+- 问题现象：此前只有 Git Bash 语法检查，缺少真实 Ubuntu 后端、前端、服务启停和浏览器验收证据，因此第四周不能标记完成。
+- 根因：交付分支尚未推送运行 CI；早期 CI 还遇到 `requests` 依赖缺失、失败 traceback 截断、可选 PyTorch 未安装和浏览器运行目录不存在。
+- 解决方法：完善依赖与 CI 诊断，安装 CPU PyTorch，准备浏览器运行目录；在 PR #1 上运行 Windows/Ubuntu 质量矩阵和 Ubuntu Chromium 验收。WSL2 Ubuntu 额外完成 Bash 语法与项目文件检查。
+- 验证方式：[GitHub Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328) 中 `Quality (windows-latest)`、`Quality (ubuntu-22.04)`、`Chromium acceptance (Ubuntu)` 三项全部成功；PR #1 检查全绿且可合并。WSL2 内核为 `6.18.33.2-microsoft-standard-WSL2`，三个 Shell 脚本通过 `bash -n`。
+- 影响范围：第四周验收状态、Windows/Linux 交付路径、CI、功能台账和交付文档。
+- 预防措施：跨平台交付必须记录真实 Actions Run URL 和 job 结果；本地 WSL 只能作为补充，不替代干净 Ubuntu CI。
+- 遗留事项：PR #1 仍为 Draft 且尚未合并；WSL2 已安装 Node.js 22/npm，但系统 Python 为 3.14，与 CI 的 Python 3.11 不一致，完整本地启动需使用 Python 3.11 虚拟环境；GitHub action 已在本地升级到支持 Node.js 24 的版本，待推送后取得新一轮远程证据。
 - 2026-07-15 CI 记录：Windows/Ubuntu Actions 中 26 个导入 app.main 的测试在收集阶段失败，5 个独立模块通过。run_suite.py 原先只输出 stderr 前 5 行，隐藏了 unittest traceback；已改为输出完整 stderr。当前根因仍待 CI 新日志确认，不据此猜测业务修复。
 - 2026-07-15 CI 修复：完整 traceback 确认 `app/engine/orchestrator.py` 导入 `requests`，但后端 requirements 未声明，导致两平台导入阶段失败。已补充 `requests==2.32.*`，需通过本地完整回归和远程 Windows/Ubuntu/Chromium 检查后再关闭该问题。
 - 2026-07-15 CI 后续问题：补充 `requests` 后，远程 CI 已从 26 个导入失败收敛为 1 个模块失败；Ubuntu 中 `test_operators_extended` 的 4 个断言失败，原因是未安装可选 PyTorch 时 `dl_operators.py` 不注册 `mlp_classifier`、`mlp_regressor` 和 `cnn1d_classifier`。尝试增加 scikit-learn CPU 回退注册，但代码插入位置与原 PyTorch 类定义边界冲突，当前本地修复草稿出现重复类/注册和抽象类未实现 `validate` 问题，尚未完成，已按要求暂停。恢复时应先清理 `dl_operators.py` 的重复定义，明确 `TORCH_AVAILABLE` 分支，并为回退类实现完整 `validate` 与测试。
 - 2026-07-15 CI 修复更新：已清理并恢复 `dl_operators.py` 到提交基线，放弃未充分验证的源码回退实现；改为在 Windows/Ubuntu 质量任务和 Chromium 验收任务中显式安装 CPU 版 PyTorch。生产 `requirements.txt` 保持轻量，应用源码仍使用原始 PyTorch 算子实现。待本地回归及远程 CI 全部通过后关闭该问题。
 - 2026-07-15 Chromium CI 问题：Windows/Ubuntu 质量任务通过后，Chromium webServer 启动失败，FastAPI lifespan 报 SQLite `unable to open database file`。根因是 Playwright 配置只给后端进程设置了数据库环境变量，而 CI 浏览器任务未为测试命令设置对应运行目录变量，应用启动时仍读取默认数据库路径。已在 Chromium 步骤显式设置 `DATABASE_URL`、`ARTIFACT_STORAGE_DIR` 和 `ML_PLATFORM_TEMP_DIR` 到 `temp_test`，待远程 Chromium 重跑验证。
+
+### 2026-07-15：已知前端缺陷与维护项清理
+
+- 当前周次：第四周完成后的缺陷清理。
+- 开发内容：修复工作流算子配置和端口预览未汉化、测试环境告警、首屏单包过大及 GitHub action 运行时弃用告警；补充 WSL2 本地依赖检查。
+- 问题现象：Join/Pivot/Aggregate/Sort 参数标签和端口预览显示英文；`blending`、`utility` 分类显示内部 ID；Vitest 输出 Router future、React `act` 和 jsdom `getComputedStyle` 告警；所有页面同步导入导致入口包约 2.62 MB；GitHub action 使用旧 Node.js 20 运行时。
+- 根因：参数标签和预览文本未接入语言状态；测试环境缺少浏览器 API 兼容层及 Router future 配置；`App.tsx` 同步导入全部页面；CI action 主版本未升级。
+- 解决方法：增加双语参数标签和端口预览格式、补齐算子分类；增加 4 个回归测试；统一测试环境 `getComputedStyle` 行为并启用 Router future flags；22 个页面改为 `React.lazy` 路由加载；升级 `checkout@v5`、`setup-node@v5`、`setup-python@v6`。
+- 验证方式：参数标签和预览测试先失败后通过；前端 11/11 文件、30/30 用例通过且不再输出三类测试告警；生产构建成功，首屏依赖块均低于 500 kB；Playwright Chromium 1/1 通过；CI YAML 解析通过且旧 action 版本搜索为空。
+- 影响范围：工作流编辑器、国际化、前端测试环境、路由加载、生产构建和 GitHub Actions。
+- 预防措施：新增工作流可见文本必须提供中英文；测试环境 API mock 集中维护；新页面默认路由懒加载；每季度检查 action 运行时弃用公告。
+- 遗留事项：ECharts 懒加载 chunk 约 1.13 MB，虽不进入首屏仍需后续改用 `echarts/core` 按图表类型注册；WSL2 Python 3.14 安装科学计算依赖耗时异常，建议使用与 CI 一致的 Python 3.11。
+- 后续安全修复：`npm audit` 确认旧 Vite 5、Vitest 2 和 ECharts 5 存在 6 个公开漏洞；已升级到 Vite 8.1.4、Vitest 4.1.10、ECharts 6.1.0 和 plugin-react 6.0.3，使用 npm 官方 registry 复查为 0 漏洞。升级后的 30/30 测试、构建和 Playwright 1/1 通过。
+- WSL2 验收更新：用户已安装 Node.js/npm 和 `/home/jingms/venv` 后端依赖；为避免复用 Windows 原生依赖，`start.sh` 新增 `ML_PLATFORM_FRONTEND_DIR`，指向 `temp_test/wsl-frontend` 的 Linux npm 依赖。WSL2 启动、两次健康检查、默认管理员登录、停止及 8000/5173 端口释放全部通过。
+- 浏览器兼容更新：真实 BrowserRouter 已启用 future flags，主流程页面改用 Ant Design `App.useApp()` 消息上下文，Card `bodyStyle` 已迁移为 `styles.body`。最新 Playwright 主流程通过；仍观察到一次无功能影响的 ResizeObserver 通知循环，后续若可稳定复现再增加针对性处理。
+- XGBoost 告警修复：回归测试先确认 `XGBoostTrainer` 仍传入已移除的 `use_label_encoder` 参数，再删除该参数；聚焦测试通过。该参数不再出现在后端源码中。
+
+### 2026-07-15：第一至第四周全模块测试体系
+
+- 当前周次：第四周完成后的全量回归与测试治理。
+- 开发内容：按第一至第四周重组后端和前端测试清单，增加全应用模块导入检查、测试归属自检、工作区端口映射回归，并提供后端 `--week` 分组入口。
+- 问题现象：原标准入口只有扁平模块列表，无法证明四周任务分别被覆盖；新增前端清单测试首次运行时，Vite glob 不包含当前清单测试文件自身。
+- 根因：测试与周计划缺少机器可校验的映射；`import.meta.glob` 在当前测试模块中不会返回该模块自身。
+- 解决方法：新增后端 `WEEK_TEST_MODULES` 和前端周次映射，自动比较磁盘发现结果；前端清单显式补入自身路径；每个后端模块继续使用独立数据库、Artifact 和临时目录。
+- 验证方式：Windows 后端第一至第四周分别 16/16、7/7、7/7、3/3，通过统一入口复核为 33/33；前端 14/14 文件、35/35 测试、生产构建、npm audit 0 漏洞和 Playwright Chromium 1/1 通过。
+- 跨平台结果：WSL2 前端独立 Linux 依赖已安装，单元测试后进入并完成生产构建；后端 32/33 模块通过，`test_operators_extended` 因 `/home/jingms/venv` 未安装可选 PyTorch 而缺少三个深度学习算子注册。该问题与既有 CI 前置依赖结论一致，不修改业务代码或跳过断言。
+- 预防措施：新增测试必须在周次清单中唯一归属；新增生产模块必须通过全模块导入；完整算子验收环境必须显式安装 PyTorch CPU；Linux 前端依赖不得复用 Windows `node_modules`。
+- 未完成：在 WSL2 执行 `/home/jingms/venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu` 后，重跑第三周或全量后端测试，取得本地 33/33 证据。

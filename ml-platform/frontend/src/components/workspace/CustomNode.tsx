@@ -5,6 +5,7 @@ import {
   LoadingOutlined, CheckCircleFilled, CloseCircleFilled, PlayCircleOutlined,
 } from "@ant-design/icons";
 import { useWorkflowStore } from "../../stores/workflowStore";
+import { useI18n } from "../../i18n";
 
 const STATUS_CFG: Record<string, {
   bg: string; border: string; icon: React.ReactNode; tagColor: string;
@@ -24,44 +25,49 @@ function buildPortPreview(
   portDirection: "in" | "out",
   nodes: any[],
   edges: any[],
-  nodeResults: Record<string, any>
+  nodeResults: Record<string, any>,
+  lang: "zh" | "en"
 ): string {
   if (portDirection === "in") {
     // For input ports: show data from the connected upstream source port
     const incEdge = edges.find(e => e.target === nodeId && (e.targetHandle === portName || e.targetHandle === "in-0"));
     if (incEdge && nodeResults[incEdge.source]) {
       const upstream = nodeResults[incEdge.source];
-      return formatResult(upstream);
+      return formatResult(upstream, lang);
     }
   } else {
     // For output ports: show this node's result
     if (nodeResults[nodeId]) {
-      return formatResult(nodeResults[nodeId]);
+      return formatResult(nodeResults[nodeId], lang);
     }
   }
   return "";
 }
 
-function formatResult(result: any): string {
-  if (!result) return "";
+export function formatResult(result: any, lang: "zh" | "en"): string {
+  const noData = lang === "zh" ? "暂无数据" : "No data available";
+  if (!result) return noData;
   try {
     // If result has data array
     if (Array.isArray(result) && result.length > 0) {
       const row = result[0];
       const keys = typeof row === "object" ? Object.keys(row) : [];
-      return keys.length + " cols x " + result.length + " rows\n" +
+      const dimensions = lang === "zh"
+        ? `${keys.length} 列 × ${result.length} 行`
+        : `${keys.length} cols × ${result.length} rows`;
+      return dimensions + "\n" +
         keys.slice(0, 8).join(", ") + (keys.length > 8 ? " ..." : "");
     }
     if (result && typeof result === "object") {
       const keys = Object.keys(result);
       // If contains data array
       if (result.data && Array.isArray(result.data)) {
-        return formatResult(result.data);
+        return formatResult(result.data, lang);
       }
       if (result.metrics) {
-        return "Metrics: " + JSON.stringify(result.metrics, null, 1).slice(0, 200);
+        return (lang === "zh" ? "指标: " : "Metrics: ") + JSON.stringify(result.metrics, null, 1).slice(0, 200);
       }
-      if (result.chart) return "Chart (image)";
+      if (result.chart) return lang === "zh" ? "图表（图片）" : "Chart (image)";
       return keys.slice(0, 6).join(", ") + (keys.length > 6 ? " ..." : "");
     }
     return String(result).slice(0, 200);
@@ -71,6 +77,7 @@ function formatResult(result: any): string {
 }
 
 function CustomNode({ data, selected }: NodeProps) {
+  const { lang } = useI18n();
   const status = (data.status as string) || "pending";
   const cfg = STATUS_CFG[status] || STATUS_CFG.pending;
   const progress = (data.progress as number) ?? undefined;
@@ -110,7 +117,7 @@ function CustomNode({ data, selected }: NodeProps) {
       }}
     >
       {inputs.map((p: any, i: number) => {
-        const preview = buildPortPreview(nodeId, p.name, "in", allNodes, allEdges, nodeResults);
+        const preview = buildPortPreview(nodeId, p.name, "in", allNodes, allEdges, nodeResults, lang);
         const portLabel = (p.label || p.name) + (p.type ? " (" + p.type + ")" : "");
         const tooltipContent = (
           <div style={{ fontSize: 12, lineHeight: 1.6 }}>
@@ -125,7 +132,7 @@ function CustomNode({ data, selected }: NodeProps) {
               </div>
             ) : (
               <div style={{ color: "rgba(255,255,255,0.45)", fontStyle: "italic" }}>
-                No data available
+                {lang === "zh" ? "暂无数据" : "No data available"}
               </div>
             )}
           </div>
@@ -179,7 +186,7 @@ function CustomNode({ data, selected }: NodeProps) {
       )}
 
       {outputs.map((p: any, i: number) => {
-        const preview = buildPortPreview(nodeId, p.name, "out", allNodes, allEdges, nodeResults);
+        const preview = buildPortPreview(nodeId, p.name, "out", allNodes, allEdges, nodeResults, lang);
         const portLabel = (p.label || p.name) + (p.type ? " (" + p.type + ")" : "");
         const tooltipContent = (
           <div style={{ fontSize: 12, lineHeight: 1.6 }}>
@@ -194,7 +201,7 @@ function CustomNode({ data, selected }: NodeProps) {
               </div>
             ) : (
               <div style={{ color: "rgba(255,255,255,0.45)", fontStyle: "italic" }}>
-                No data available
+                {lang === "zh" ? "暂无数据" : "No data available"}
               </div>
             )}
           </div>

@@ -1,29 +1,31 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { ConfigProvider, theme as antTheme, App as AntApp } from "antd";
+import { lazy, Suspense } from "react";
+import { ConfigProvider, theme as antTheme, App as AntApp, Spin } from "antd";
 import { useTheme } from "./stores/themeContext";
 import ProtectedRoute from "./components/ProtectedRoute";
-import LoginPage from "./pages/LoginPage";
-import RegisterPage from "./pages/RegisterPage";
-import DashboardPage from "./pages/DashboardPage";
-import ProjectListPage from "./pages/ProjectListPage";
-import ProjectDetailPage from "./pages/ProjectDetailPage";
-import WorkspacePage from "./pages/WorkspacePage";
-import TemplateWizardPage from "./pages/TemplateWizardPage";
-import ModelLibraryPage from "./pages/ModelLibraryPage";
-import DataManagePage from "./pages/DataManagePage";
-import UserManagementPage from "./pages/UserManagementPage";
-import KnowledgeBasePage from "./pages/KnowledgeBasePage";
-import KnowledgeDetailPage from "./pages/KnowledgeDetailPage";
-import KnowledgeGraphPage from "./pages/KnowledgeGraphPage";
-import AutoMLPage from "./pages/AutoMLPage";
-import TrainingJobsPage from "./pages/TrainingJobsPage";
-import MonitorPage from "./pages/MonitorPage";
-import AlgorithmCatalogPage from "./pages/AlgorithmCatalogPage";
-import APIMarketplacePage from "./pages/APIMarketplacePage";
-import AnnotationPage from "./pages/AnnotationPage";
-import OrchestrationPage from "./pages/OrchestrationPage";
-import ComputeResourcePage from "./pages/ComputeResourcePage";
-import AIChatPage from "./pages/AIChatPage";
+
+const LoginPage = lazy(() => import("./pages/LoginPage"));
+const RegisterPage = lazy(() => import("./pages/RegisterPage"));
+const DashboardPage = lazy(() => import("./pages/DashboardPage"));
+const ProjectListPage = lazy(() => import("./pages/ProjectListPage"));
+const ProjectDetailPage = lazy(() => import("./pages/ProjectDetailPage"));
+const WorkspacePage = lazy(() => import("./pages/WorkspacePage"));
+const TemplateWizardPage = lazy(() => import("./pages/TemplateWizardPage"));
+const ModelLibraryPage = lazy(() => import("./pages/ModelLibraryPage"));
+const DataManagePage = lazy(() => import("./pages/DataManagePage"));
+const UserManagementPage = lazy(() => import("./pages/UserManagementPage"));
+const KnowledgeBasePage = lazy(() => import("./pages/KnowledgeBasePage"));
+const KnowledgeDetailPage = lazy(() => import("./pages/KnowledgeDetailPage"));
+const KnowledgeGraphPage = lazy(() => import("./pages/KnowledgeGraphPage"));
+const AutoMLPage = lazy(() => import("./pages/AutoMLPage"));
+const TrainingJobsPage = lazy(() => import("./pages/TrainingJobsPage"));
+const MonitorPage = lazy(() => import("./pages/MonitorPage"));
+const AlgorithmCatalogPage = lazy(() => import("./pages/AlgorithmCatalogPage"));
+const APIMarketplacePage = lazy(() => import("./pages/APIMarketplacePage"));
+const AnnotationPage = lazy(() => import("./pages/AnnotationPage"));
+const OrchestrationPage = lazy(() => import("./pages/OrchestrationPage"));
+const ComputeResourcePage = lazy(() => import("./pages/ComputeResourcePage"));
+const AIChatPage = lazy(() => import("./pages/AIChatPage"));
 
 const LIGHT_TOKENS = {
   colorPrimary: "#F0883E",
@@ -67,8 +69,9 @@ function AppContent() {
       }}
     >
       <AntApp>
-        <BrowserRouter>
-          <Routes>
+        <Suspense fallback={<div style={{ display: "grid", minHeight: "100vh", placeItems: "center" }}><Spin size="large" /></div>}>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
@@ -92,8 +95,9 @@ function AppContent() {
             <Route path="/compute" element={<ProtectedRoute><ComputeResourcePage /></ProtectedRoute>} />
             <Route path="/chat" element={<ProtectedRoute><AIChatPage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
+            </Routes>
+          </BrowserRouter>
+        </Suspense>
       </AntApp>
     </ConfigProvider>
   );

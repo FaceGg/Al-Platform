@@ -18,9 +18,9 @@
 | P2 | SQLite 与临时目录依赖工作目录 | 不同启动目录可能连接不同数据库/制品目录 | Week 1 文档化，Week 5 生产化 |
 | P2 | 前端覆盖率低 | 已增至 5 个测试文件/19 个测试，仍缺浏览器 WebSocket 主链路 | Week 3-4 |
 | 已完成 | 后端标准 runner 未覆盖新增可靠性测试 | runner 已扩展为 25 个隔离模块 | Week 2 完成 |
-| P2 | 测试存在 React `act` 告警 | 当前通过但可能掩盖异步断言不稳定 | Week 2 |
+| 已解决 | 前端测试环境告警 | Router future、React `act` 和 jsdom `getComputedStyle` 告警已清理 | 2026-07-15 |
 | P2 | 大量未跟踪修复脚本、日志和运行数据 | 难区分源码、测试资产和临时产物 | 按所有权分类清理，不自动删除 |
-| P3 | 前端单包体积 2.6 MB | Vite 报超过 500 kB，影响首屏加载 | Week 11 |
+| P3 | ECharts 懒加载 chunk 约 1.13 MB | 已不进入首屏，仍增加图表页面首次加载体积 | Week 11 |
 | P3 | Compose `version` 字段老化 | 新版 Compose 可忽略但会产生提示 | Week 4 |
 | 受阻 | Docker 构建未验证 | 当前 Windows 环境没有 `docker` 命令 | 提供 Docker 环境后执行 Week 1 补充验收 |
 
@@ -38,16 +38,16 @@
 - P1：数据集 ZIP 导入及部分历史批量入口仍未全部统一到 `ArtifactService`。
 - P1：模型制品、模型库记录和训练任务完成状态尚未形成真正单事务提交。
 - P1：`OperatorResult.artifacts` 已定义，但 DAG 尚未持久化算子产出的 `ArtifactDraft`。
-- P2：前端 jsdom 测试仍有 React `act`、Router future flag 和 `getComputedStyle` 环境告警。
-- P3：生产构建主 JavaScript 包约 2.64 MB，继续保留按路由拆包任务。
+- 已解决：前端 jsdom、React `act` 和 Router future flag 测试环境告警。
+- 已缓解：页面已按路由拆包，入口依赖块低于 500 kB；继续保留 ECharts 按需注册任务。
 
 ## 2026-07-14 Week 4 技术债更正与新增
 
 - 已完成：四套焊接工业模板通过真实数据后端 E2E；模板向导改用项目范围 Artifact。
 - 已完成：Playwright 焊接主流程覆盖登录、上传、模板实例化、执行终态和 metrics。
 - 已完成：Windows 启停脚本管理 PID 和完整 Node 进程树，健康和端口释放通过。
-- P1：Ubuntu 脚本和 CI 尚无真实 GitHub Actions 运行证据，第四周不能标记完成。
+- 已完成：Ubuntu 22.04 质量门禁、服务冒烟和 Chromium 验收已有真实 GitHub Actions 证据，WSL2 本地闭环也已通过。
 - P1：工作流仍由服务进程内线程执行，服务重启恢复和硬终止留到 Week 5。
-- P2：XGBoost 仍传入已无效的 `use_label_encoder`，产生运行告警。
-- P2：前端 jsdom/React 测试告警尚未清理，但 26 项测试均通过。
-- P3：主 JavaScript 包 2,621.11 kB（gzip 846.97 kB），继续保留路由拆包任务。
+- 已解决：XGBoost 已删除无效的 `use_label_encoder` 参数并增加源码回归约束。
+- 已解决：前端 jsdom/React/Router 测试告警已清理，当前 30 项测试通过。
+- 已缓解：页面已按路由懒加载；继续保留 ECharts 按需注册任务。

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Table, Modal, Form, Input, Space, message } from 'antd'
+import { App as AntApp, Button, Table, Modal, Form, Input, Space } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { Link, useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
@@ -8,6 +8,7 @@ import AppLayout from '../components/AppLayout'
 import { useI18n } from '../i18n'
 
 export default function ProjectListPage() {
+  const { message } = AntApp.useApp()
   const navigate = useNavigate()
   const [projects, setProjects] = useState<any[]>([])
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])

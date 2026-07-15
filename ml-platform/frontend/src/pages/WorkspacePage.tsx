@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
-import { Layout, Button, Space, message, Input, Modal, Drawer, List, Tag } from "antd";
+import { App as AntApp, Layout, Button, Space, Input, Modal, Drawer, List, Tag } from "antd";
 import { PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined, PauseCircleOutlined, DeleteOutlined, CloudUploadOutlined, HistoryOutlined } from "@ant-design/icons";
 import { ReactFlowProvider } from "reactflow";
 import { useNavigate } from "react-router-dom";
@@ -16,7 +16,7 @@ import { listWorkflowVersions, publishWorkflow, restoreWorkflowVersion, Workflow
 
 const { Sider, Content } = Layout;
 
-function resolvePort(handleId: string, portList: {name:string}[]): string {
+export function resolvePort(handleId: string, portList: {name:string}[]): string {
   if (!handleId) return "";
   // Already a port name (e.g., "data", "left") — pass through
   if (!/^(in|out)-\d+$/.test(handleId)) return handleId;
@@ -25,6 +25,7 @@ function resolvePort(handleId: string, portList: {name:string}[]): string {
 }
 
 export default function WorkspacePage() {
+  const { message } = AntApp.useApp();
   const { workflowId } = useParams<{ workflowId: string }>();
   const navigate = useNavigate();
   const {

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { App as AntApp } from "antd";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import TemplateWizardPage from "./TemplateWizardPage";
 
@@ -78,7 +79,7 @@ describe("TemplateWizardPage", () => {
   });
 
   it("selects a project dataset and submits semantic parameters", async () => {
-    render(<TemplateWizardPage />);
+    render(<AntApp><TemplateWizardPage /></AntApp>);
 
     expect(await screen.findByText("Weld quality")).toBeInTheDocument();
     expect(screen.getByText("Fault classification")).toBeInTheDocument();
@@ -100,7 +101,7 @@ describe("TemplateWizardPage", () => {
   });
 
   it("creates a project before selecting its dataset", async () => {
-    render(<TemplateWizardPage />);
+    render(<AntApp><TemplateWizardPage /></AntApp>);
     await screen.findByText("Weld quality");
 
     fireEvent.click(screen.getByRole("button", { name: /Create project/ }));

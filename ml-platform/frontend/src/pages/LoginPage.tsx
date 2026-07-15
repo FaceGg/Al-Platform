@@ -1,4 +1,4 @@
-import { Form, Input, Button, Card, message, Typography } from "antd";
+import { App as AntApp, Form, Input, Button, Card, Typography } from "antd";
 import { UserOutlined, LockOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { useNavigate, Link } from "react-router-dom";
 import { login } from "../api/auth";
@@ -7,6 +7,7 @@ import { useTheme } from "../stores/themeContext";
 const { Title, Text } = Typography;
 
 export default function LoginPage() {
+  const { message } = AntApp.useApp();
   const { theme } = useTheme();
   const navigate = useNavigate();
 
@@ -28,7 +29,7 @@ export default function LoginPage() {
       <div style={{ position: "absolute", top: "-20%", right: "-10%", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle, rgba(240,136,62,0.08) 0%, transparent 70%)" }} />
       <div style={{ position: "absolute", bottom: "-15%", left: "-5%", width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle, rgba(88,166,255,0.06) 0%, transparent 70%)" }} />
 
-      <Card style={{ width: 420, border: theme === "dark" ? "1px solid #30363D" : "1px solid #D0D7DE", background: theme === "dark" ? "#161B22" : "#FFFFFF", borderRadius: 16, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", position: "relative", zIndex: 1 }} bodyStyle={{ padding: "40px 36px" }}>
+      <Card style={{ width: 420, border: theme === "dark" ? "1px solid #30363D" : "1px solid #D0D7DE", background: theme === "dark" ? "#161B22" : "#FFFFFF", borderRadius: 16, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", position: "relative", zIndex: 1 }} styles={{ body: { padding: "40px 36px" } }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{ width: 56, height: 56, borderRadius: 14, background: "linear-gradient(135deg, #F0883E, #F5A623)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
             <ThunderboltOutlined style={{ color: "#fff", fontSize: 28 }} />

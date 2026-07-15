@@ -1,6 +1,6 @@
 # AI模型训练编排平台 - 需求与开发进度总览
 
-> 最后更新: 2026-07-14 | 当前版本: 0.2.0
+> 最后更新: 2026-07-15 | 当前版本: 0.2.0
 
 ---
 
@@ -313,9 +313,9 @@
 ### 测试文件
 | 文件 | 说明 |
 |------|------|
-| backend/run_suite.py | 31 个隔离后端测试模块的唯一标准入口 |
+| backend/run_suite.py | 33 个隔离后端测试模块的标准入口，支持第一至第四周分组执行 |
 | backend/tests/test_industrial_template_e2e.py | 四套工业模板真实后端 E2E |
-| frontend/src/**/*.test.ts(x) | 9 个 Vitest 文件、26 个测试 |
+| frontend/src/**/*.test.ts(x) | 14 个 Vitest 文件、35 个测试 |
 | frontend/e2e/weld-quality.spec.ts | Playwright 焊接质量浏览器主流程 |
 
 ---
@@ -357,7 +357,7 @@
 | 持久化模型 | 30 个 SQLAlchemy 模型类 |
 | 算子 | 80 个完整应用运行时注册算子，ID 全部唯一 |
 | 后端测试 | `python run_suite.py`：31/31 隔离模块通过 |
-| 前端测试 | `npm test`：9/9 文件、26/26 测试通过 |
+| 前端测试 | `npm test`：11/11 文件、30/30 测试通过 |
 | 前端构建 | TypeScript 与 Vite 生产构建通过 |
 
 ### 已完成并有自动化验证
@@ -390,13 +390,21 @@
 - 四套工业模板全部通过生产 DAG/API 路径执行，并有模板级预期输出断言。
 - 模板向导使用项目范围 Dataset Artifact 和语义参数，不再输入服务器路径。
 - Chromium 主流程覆盖登录、项目、上传、实例化、六节点运行和 metrics，并完成重复验证。
-- Windows 启动、健康、登录、停止和端口释放通过；Ubuntu 脚本语法及 CI 配置通过本地检查。
-- 完整验证：后端 31/31 模块、前端 9/9 文件 26/26 测试、生产构建、Playwright 1/1 均通过。
-- 外部缺口：分支尚未推送，没有真实 Ubuntu GitHub Actions URL，第四周保持进行中。
+- Windows 启动、健康、登录、停止和端口释放通过；Ubuntu 脚本语法、服务冒烟和 CI 全部通过。
+- 完整验证：后端 31/31 模块、前端当前 11/11 文件 30/30 测试、生产构建、Playwright 1/1 均通过。
+- Ubuntu 证据：[GitHub Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328) 的 Ubuntu 22.04 质量门禁和 Chromium 验收成功，第四周验收完成。
 
 ### 当前风险
 
-- 工作区包含大量未提交和未跟踪文件，当前能力尚未形成可追溯发布提交。
-- 前端测试存在 React `act`、Router future flag 和 jsdom 浏览器 API 告警。
-- 主 JavaScript 包约 2.64 MB，首屏性能尚未优化。
+- 第四周能力已形成可追溯提交和 PR #1，但 PR 仍为 Draft、尚未合并到 `main`。
+- 前端测试环境告警已清理；工作流参数标签、分类和端口预览双语已补齐。
+- 路由懒加载后首屏依赖块均低于 500 kB；ECharts 懒加载 chunk 约 1.13 MB，后续继续按图表能力裁剪。
 - 当前机器未完成 Docker 验收，不能将 Compose 文件存在等同于容器交付完成。
+
+## 十三、2026-07-15 第一至第四周全模块回归
+
+- 后端建立周次清单和覆盖自检，第一至第四周分别为 16、7、7、3 个模块。
+- Windows 分周测试全部通过，统一全量入口为 33/33 模块通过。
+- 前端 14/14 文件、35/35 测试通过，并新增生产模块导入和工作区端口映射回归。
+- TypeScript/Vite 生产构建、npm 安全审计（0 漏洞）和 Playwright Chromium 主流程 1/1 通过。
+- WSL2 前端依赖安装、测试和构建已执行；后端 32/33 模块通过，唯一环境缺口为 `/home/jingms/venv` 未安装可选 PyTorch，深度学习算子复测仍待完成。

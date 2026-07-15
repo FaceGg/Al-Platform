@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from uuid import UUID
 from datetime import datetime
 
@@ -33,23 +33,27 @@ class WorkflowSave(BaseModel):
     edges: list[EdgeCreate] = []
 
 class NodeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     operator_id: str
     label: str
     position_x: float
     position_y: float
     params: dict
-    class Config: from_attributes = True
 
 class EdgeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     source_node_id: UUID
     source_port: str
     target_node_id: UUID
     target_port: str
-    class Config: from_attributes = True
 
 class WorkflowResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     project_id: UUID
     name: str
@@ -59,4 +63,3 @@ class WorkflowResponse(BaseModel):
     edges: list[EdgeResponse] = []
     created_at: datetime
     updated_at: datetime
-    class Config: from_attributes = True

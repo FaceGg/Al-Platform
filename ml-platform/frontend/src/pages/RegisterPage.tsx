@@ -21,7 +21,7 @@ export default function RegisterPage() {
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #0D1117 0%, #161B22 50%, #0D1117 100%)" }}>
       <div style={{ position: "absolute", top: "30%", left: "50%", transform: "translate(-50%, -50%)", width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle, rgba(163,113,247,0.06) 0%, transparent 70%)" }} />
-      <Card style={{ width: 420, border: "1px solid var(--border-default)", background: "var(--bg-surface)", borderRadius: 16, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", position: "relative", zIndex: 1 }} bodyStyle={{ padding: "40px 36px" }}>
+      <Card style={{ width: 420, border: "1px solid var(--border-default)", background: "var(--bg-surface)", borderRadius: 16, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", position: "relative", zIndex: 1 }} styles={{ body: { padding: "40px 36px" } }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <Title level={3} style={{ margin: 0, color: "var(--text-primary)", fontWeight: 700 }}>注册新账号</Title>
           <Text type="secondary" style={{ fontSize: 13 }}>创建您的 Precision Forge 账户</Text>

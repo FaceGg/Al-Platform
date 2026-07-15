@@ -219,7 +219,7 @@ export default function KnowledgeGraphPage() {
         <div style={{ flex: 1 }}>
           <Card
             style={{ height: 500, padding: 0, overflow: "hidden" }}
-            bodyStyle={{ height: "100%", padding: 0 }}
+            styles={{ body: { height: "100%", padding: 0 } }}
           >
             {simNodes.length === 0 && !loading ? (
               <Empty description={t.common.loading} style={{ marginTop: 200 }} />

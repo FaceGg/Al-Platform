@@ -56,7 +56,7 @@ export default function AIChatPage() {
           <Button icon={<ClearOutlined />} onClick={() => setMessages([])} disabled={messages.length === 0}>{t.ai_chat.clear}</Button>
         </Space>
       </div>
-      <Card bodyStyle={{ height: "calc(100vh - 260px)", display: "flex", flexDirection: "column", padding: 0 }}>
+      <Card styles={{ body: { height: "calc(100vh - 260px)", display: "flex", flexDirection: "column", padding: 0 } }}>
         <div ref={listRef} style={{ flex: 1, overflowY: "auto", padding: 16 }}>
           {messages.length === 0 && <Empty description="Start a conversation" style={{ marginTop: 100 }} />}
           {messages.map((msg, i) => (

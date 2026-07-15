@@ -25,18 +25,25 @@ function useUpstreamColumns(nodeId: string): string[] {
   }, [nodeId, edges, nodeResults]);
 }
 
-function getPortLabel(opId: string, paramName: string): string | null {
-  const portMappings: Record<string, Record<string, string>> = {
-    join: { left_keys: "Left Key Columns (comma-separated)", right_keys: "Right Key Columns (comma-separated)" },
-    pivot: { index: "Index Column", columns: "Column Axis", values: "Values Column" },
-    aggregate: { group_by: "Group By Column" },
-    sort: { sort_column: "Sort Column" },
+export function getPortLabel(opId: string, paramName: string, lang: "zh" | "en"): string | null {
+  const portMappings: Record<string, Record<string, { zh: string; en: string }>> = {
+    join: {
+      left_keys: { zh: "左侧键列（逗号分隔）", en: "Left Key Columns (comma-separated)" },
+      right_keys: { zh: "右侧键列（逗号分隔）", en: "Right Key Columns (comma-separated)" },
+    },
+    pivot: {
+      index: { zh: "索引列", en: "Index Column" },
+      columns: { zh: "列轴", en: "Column Axis" },
+      values: { zh: "值列", en: "Values Column" },
+    },
+    aggregate: { group_by: { zh: "分组列", en: "Group By Column" } },
+    sort: { sort_column: { zh: "排序列", en: "Sort Column" } },
   };
-  return portMappings[opId]?.[paramName] || null;
+  return portMappings[opId]?.[paramName]?.[lang] || null;
 }
 
 export default function NodeConfigPanel() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { selectedNode, operators, updateNodeParams, nodeStatuses } = useWorkflowStore();
   const [params, setParams] = useState<Record<string, any>>({});
   const [uploading, setUploading] = useState(false);
@@ -95,7 +102,7 @@ export default function NodeConfigPanel() {
 
     const colName = isColumnParam(p.name);
     if (colName && upstreamColumns.length > 0 && (p.type === "str" || p.type === "select")) {
-      const portLabel = getPortLabel(operator?.id, p.name) || p.label || p.name;
+      const portLabel = getPortLabel(operator?.id, p.name, lang) || p.label || p.name;
       return (
         <Select
           style={{ width: "100%" }}

@@ -18,12 +18,7 @@ import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
-# Main event loop (captured at import time in main thread)
 _main_loop = None
-try:
-    _main_loop = asyncio.get_event_loop()
-except RuntimeError:
-    pass
 
 router = APIRouter(tags=["runs"])
 

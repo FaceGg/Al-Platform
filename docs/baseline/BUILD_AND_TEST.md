@@ -3,6 +3,7 @@
 ## 环境
 
 - Python 3.11+，依赖见 `ml-platform/backend/requirements.txt`。
+- 深度学习算子验收需额外安装 PyTorch CPU；CI 使用 `python -m pip install torch --index-url https://download.pytorch.org/whl/cpu`。
 - Node.js 20+ 与 npm，依赖以 `ml-platform/frontend/package-lock.json` 为准。
 - Docker Compose 为可选部署验收依赖；当前开发机未安装。
 
@@ -14,7 +15,18 @@ python -m pip install -r requirements.txt
 python run_suite.py
 ```
 
-`run_suite.py` 为每个模块创建独立临时 SQLite 数据库，2026-07-14 当前验收结果为 31/31 模块通过，最新约 199.1 秒。
+`run_suite.py` 为每个模块创建独立临时 SQLite 数据库、Artifact 目录和系统临时目录。2026-07-15 当前验收结果为 33/33 模块通过，最新约 182.4 秒。
+
+按周验收：
+
+```powershell
+python run_suite.py --week 1
+python run_suite.py --week 2
+python run_suite.py --week 3
+python run_suite.py --week 4
+```
+
+当前周次结果依次为 16/16、7/7、7/7、3/3。`tests/test_suite_manifest.py` 保证每个后端测试模块恰好归属一个周次，`tests/test_module_imports.py` 导入全部 `app.*` 模块并检查已移除的框架 API。
 
 单模块和 Join 回归：
 
@@ -32,7 +44,7 @@ npm test
 npm run build
 ```
 
-当前验收结果为 9/9 测试文件、26/26 测试通过，TypeScript 与 Vite 生产构建通过。测试仍输出 React Router future flag、React `act` 和 jsdom `getComputedStyle` 告警；构建主包 2,621.11 kB。CI 应优先使用 `npm ci`。
+当前验收结果为 14/14 测试文件、35/35 测试通过，TypeScript 与 Vite 生产构建通过。`src/weekAcceptance.test.ts` 校验全部前端测试文件的周次归属，`src/moduleImports.test.ts` 导入 API、组件、国际化、页面和 Store 生产模块。React Router future flag、React `act` 和 jsdom `getComputedStyle` 测试环境告警已清理。路由懒加载后首屏依赖块均低于 500 kB；ECharts 懒加载 chunk 约 1.13 MB。CI 应优先使用 `npm ci`。
 
 ## 浏览器验收
 
@@ -78,5 +90,6 @@ Docker 命令当前未在本机验证，不能据 Compose 文件存在声明容�
 - 前端测试与构建退出码为 0。
 - Playwright 主流程退出码为 0。
 - Windows 启动、健康、登录、停止和端口释放全部通过。
-- Ubuntu CI 成功前，第四周只能保持进行中。
+- Ubuntu 验收以真实 GitHub Actions 为准；Run `29381233328` 的 Ubuntu 22.04 质量门禁和 Chromium 验收均成功，第四周已完成。
+- WSL2 补充验证中，前端 Linux 依赖安装、35 个测试和生产构建已执行；后端 32/33 模块通过，唯一失败为本地虚拟环境未安装可选 PyTorch，安装上述 CPU 包后需重跑 `python run_suite.py --week 3` 或全量入口。
 - 测试数据库、上传目录和临时制品不得复用生产数据。

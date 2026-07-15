@@ -90,7 +90,7 @@ export default function DashboardPage() {
       <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         {statCards.map((card, i) => (
           <Col xs={12} sm={12} md={6} key={i}>
-            <Card className="stat-card-accent fade-in" bodyStyle={{ padding: "20px 24px" }}>
+            <Card className="stat-card-accent fade-in" styles={{ body: { padding: "20px 24px" } }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div>
                   <Text type="secondary" style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.5px" }}>{card.title}</Text>
@@ -107,7 +107,7 @@ export default function DashboardPage() {
 
       <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         <Col xs={24} md={10}>
-          <Card title={<Text strong>算法分布</Text>} bodyStyle={{ padding: "12px" }}>
+          <Card title={<Text strong>算法分布</Text>} styles={{ body: { padding: "12px" } }}>
             <ReactECharts option={pieOption} style={{ height: 280 }} />
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", marginTop: 8 }}>
               {algoTags.map((t) => <Tag key={t.name} color={t.color} style={{ fontSize: 10 }}>{t.name}</Tag>)}
@@ -115,7 +115,7 @@ export default function DashboardPage() {
           </Card>
         </Col>
         <Col xs={24} md={6}>
-          <Card title={<Text strong>模型状态</Text>} bodyStyle={{ padding: "12px 12px 4px" }}>
+          <Card title={<Text strong>模型状态</Text>} styles={{ body: { padding: "12px 12px 4px" } }}>
             <ReactECharts option={barOption} style={{ height: 220 }} />
             <Space style={{ justifyContent: "center", width: "100%", marginTop: 8 }}>
               <Progress type="circle" percent={completePct} size={60} strokeColor="#3FB950" />
@@ -123,7 +123,7 @@ export default function DashboardPage() {
           </Card>
         </Col>
         <Col xs={24} md={8}>
-          <Card title={<Text strong>快捷操作</Text>} bodyStyle={{ padding: "16px" }}>
+          <Card title={<Text strong>快捷操作</Text>} styles={{ body: { padding: "16px" } }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {[
                 { icon: <CloudUploadOutlined />, label: "新建数据集", path: "/data" },
@@ -146,7 +146,7 @@ export default function DashboardPage() {
           <List dataSource={projects} grid={{ gutter: 16, xs: 1, sm: 2, md: 3, lg: 3 }}
             renderItem={(item: any) => (
               <List.Item>
-                <Card hoverable className="glow-border" style={{ borderRadius: 10 }} bodyStyle={{ padding: "16px 18px" }} onClick={() => navigate("/projects/" + item.id)}>
+                <Card hoverable className="glow-border" style={{ borderRadius: 10 }} styles={{ body: { padding: "16px 18px" } }} onClick={() => navigate("/projects/" + item.id)}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg, #F0883E, #D29922)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 14 }}>{(item.name || "P")[0]}</div>
                     <div>

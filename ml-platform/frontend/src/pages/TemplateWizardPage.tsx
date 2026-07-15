@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Button, Descriptions, Empty, Form, Input, InputNumber, Select, Space, Tag, Typography, message } from "antd";
+import { App as AntApp, Button, Descriptions, Empty, Form, Input, InputNumber, Select, Space, Tag, Typography } from "antd";
 import { PlusOutlined, SwapOutlined } from "@ant-design/icons";
 import apiClient, { formatApiError } from "../api/client";
 import { getTemplate, instantiateTemplate, type IndustrialTemplateDetail } from "../api/templates";
@@ -22,6 +22,7 @@ interface DatasetOption {
 }
 
 export default function TemplateWizardPage() {
+  const { message } = AntApp.useApp();
   const { templateId = "" } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();

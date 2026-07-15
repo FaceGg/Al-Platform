@@ -1,8 +1,10 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from uuid import UUID
 from datetime import datetime
 
 class NodeRunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     node_id: UUID | None
     status: str
@@ -17,9 +19,10 @@ class NodeRunResponse(BaseModel):
     logs: list[dict] = []
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    class Config: from_attributes = True
 
 class RunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     workflow_id: UUID
     status: str
@@ -33,4 +36,3 @@ class RunResponse(BaseModel):
     cancel_requested_at: datetime | None = None
     cancelled_at: datetime | None = None
     node_runs: list[NodeRunResponse] = []
-    class Config: from_attributes = True

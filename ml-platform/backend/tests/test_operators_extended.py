@@ -1,5 +1,5 @@
 """Extended Operator tests: IO, ML, DL, Visualization, and Evaluation operators."""
-import sys, os, unittest, json
+import sys, os, unittest, json, inspect
 import pandas as pd
 sys.path.insert(0, ".")
 
@@ -85,6 +85,10 @@ class TestMLOperators(unittest.TestCase):
 
     def test_xgboost_train_exists(self):
         self.assertIsNotNone(OperatorRegistry.get("xgboost_train"))
+
+    def test_xgboost_classifier_does_not_use_removed_label_encoder_option(self):
+        operator = OperatorRegistry.get("xgboost_train")
+        self.assertNotIn("use_label_encoder", inspect.getsource(operator.execute))
 
     def test_random_forest_train_exists(self):
         self.assertIsNotNone(OperatorRegistry.get("random_forest_train"))
