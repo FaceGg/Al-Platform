@@ -96,8 +96,15 @@ jobs:
       - name: Install Chromium
         working-directory: ml-platform/frontend
         run: npx playwright install --with-deps chromium
+      - name: Prepare browser runtime directories
+        working-directory: ml-platform/frontend
+        run: mkdir -p ../../temp_test
       - name: Run browser acceptance
         working-directory: ml-platform/frontend
+        env:
+          DATABASE_URL: sqlite:///../../temp_test/playwright_ci.db
+          ARTIFACT_STORAGE_DIR: ../../temp_test/playwright-artifacts
+          ML_PLATFORM_TEMP_DIR: ../../temp_test/playwright-data
         run: npm run test:e2e -- --project=chromium
       - name: Upload Playwright failure evidence
         if: failure()
