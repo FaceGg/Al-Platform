@@ -1,4 +1,5 @@
-﻿from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
+from app.engine.operator_contract import OperatorContext, OperatorResult
+from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
 import pandas as pd
 import numpy as np
@@ -21,7 +22,7 @@ class MissingValueHandler(BaseOperator):
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         data = inputs.get("data", [])
         df = pd.DataFrame(data)
         strategy = params.get("strategy", "drop")
@@ -48,7 +49,7 @@ class MissingValueHandler(BaseOperator):
                 if col in df.columns:
                     df[col] = df[col].fillna(fill_value)
 
-        return {"data": df.to_dict(orient="records")}
+        return OperatorResult(outputs={"data": df.to_dict(orient="records")})
 
     def get_preview(self, outputs):
         data = outputs.get("data", [])
@@ -71,7 +72,7 @@ class LabelEncoderOp(BaseOperator):
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         data = inputs.get("data", [])
         df = pd.DataFrame(data)
         columns_str = params.get("columns", "")
@@ -85,7 +86,7 @@ class LabelEncoderOp(BaseOperator):
         elif encoding_type == "onehot":
             df = pd.get_dummies(df, columns=columns)
 
-        return {"data": df.to_dict(orient="records")}
+        return OperatorResult(outputs={"data": df.to_dict(orient="records")})
 
     def get_preview(self, outputs):
         data = outputs.get("data", [])
@@ -103,21 +104,25 @@ class ScalerOp(BaseOperator):
     parameters = [
         ParamSpec("method", "select", "standard", "Scaling Method", options=["standard", "minmax", "robust"]),
         ParamSpec("columns", "str", "", "Columns to scale (comma-separated)"),
+        ParamSpec("target_column", "str", "", "Target column to exclude from scaling"),
     ]
 
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
         data = inputs.get("data", [])
         df = pd.DataFrame(data)
         method = params.get("method", "standard")
         columns_str = params.get("columns", "")
         columns = [c.strip() for c in columns_str.split(",") if c.strip()] if columns_str else df.select_dtypes(include=[np.number]).columns.tolist()
+        target = params.get("target_column", "")
+        if target and target in columns:
+            columns.remove(target)
 
         if not columns:
-            return {"data": df.to_dict(orient="records")}
+            return OperatorResult(outputs={"data": df.to_dict(orient="records")})
 
         scaler_map = {
             "standard": StandardScaler,
@@ -128,7 +133,7 @@ class ScalerOp(BaseOperator):
         scaler = scaler_cls()
         df[columns] = scaler.fit_transform(df[columns])
 
-        return {"data": df.to_dict(orient="records")}
+        return OperatorResult(outputs={"data": df.to_dict(orient="records")})
 
     def get_preview(self, outputs):
         data = outputs.get("data", [])
@@ -149,22 +154,29 @@ class TrainTestSplit(BaseOperator):
     parameters = [
         ParamSpec("test_size", "float", 0.2, "Test Size"),
         ParamSpec("random_seed", "int", 42, "Random Seed"),
+        ParamSpec("target_column", "str", "", "Target Column"),
+        ParamSpec("stratify", "boolean", False, "Stratified Split"),
     ]
 
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         from sklearn.model_selection import train_test_split as tts
         data = inputs.get("data", [])
         df = pd.DataFrame(data)
         test_size = float(params.get("test_size", 0.2))
         random_seed = int(params.get("random_seed", 42))
-        train, test = tts(df, test_size=test_size, random_state=random_seed)
-        return {
+        target_column = params.get("target_column", "")
+        stratify = params.get("stratify", False)
+        stratify_values = df[target_column] if stratify and target_column in df.columns else None
+        train, test = tts(
+            df, test_size=test_size, random_state=random_seed, stratify=stratify_values,
+        )
+        return OperatorResult(outputs={
             "train": train.to_dict(orient="records"),
             "test": test.to_dict(orient="records"),
-        }
+        })
 
     def get_preview(self, outputs):
         train = outputs.get("train", [])
@@ -176,127 +188,6 @@ class TrainTestSplit(BaseOperator):
 # ============================================================
 # Control Flow Operators
 # ============================================================
-
-@register_operator
-class ConditionOperator(BaseOperator):
-    id = "condition"
-    name = "Condition / Branch"
-    category = "control"
-    description = "Evaluate a Python expression and route data to true/false branch"
-    inputs = [PortSpec("data", "DataTable", "Input Data")]
-    outputs = [
-        PortSpec("true", "DataTable", "True Branch"),
-        PortSpec("false", "DataTable", "False Branch"),
-        PortSpec("condition_result", "Params", "Condition Result"),
-    ]
-    parameters = [
-        ParamSpec("expression", "str", "True", "Python Expression to evaluate"),
-    ]
-
-    def validate(self, inputs):
-        return "data" in inputs
-
-    def execute(self, inputs, params):
-        data = inputs.get("data", [])
-        expr = params.get("expression", "True")
-        try:
-            # Evaluate condition in a safe context
-            safe_globals = {"__builtins__": {"len": len, "sum": sum, "min": min, "max": max, "any": any, "all": all, "isinstance": isinstance, "str": str, "int": int, "float": float, "bool": bool, "list": list, "dict": dict, "True": True, "False": False, "None": None}, "data": data}
-            result = eval(expr, safe_globals, {})
-            condition_met = bool(result)
-        except Exception as e:
-            condition_met = False
-        return {
-            "true": data if condition_met else [],
-            "false": data if not condition_met else [],
-            "condition_result": {"expression": expr, "result": condition_met},
-        }
-
-    def get_preview(self, outputs):
-        return outputs
-
-
-@register_operator
-class LoopOperator(BaseOperator):
-    id = "loop"
-    name = "Loop / Iterator"
-    category = "control"
-    description = "Iterate over data N times, useful for repeated processing"
-    inputs = [PortSpec("data", "DataTable", "Input Data")]
-    outputs = [
-        PortSpec("iteration", "DataTable", "Iteration Output"),
-        PortSpec("final", "DataTable", "Final Output"),
-    ]
-    parameters = [
-        ParamSpec("max_iterations", "int", 5, "Max Iterations"),
-        ParamSpec("stop_condition", "str", "False", "Stop Condition Expression"),
-    ]
-
-    def validate(self, inputs):
-        return "data" in inputs
-
-    def execute(self, inputs, params):
-        data = inputs.get("data", [])
-        max_iter = params.get("max_iterations", 5)
-        stop_expr = params.get("stop_condition", "False")
-        iteration_results = []
-        current_data = data
-        for i in range(max_iter):
-            try:
-                safe_globals = {"__builtins__": {"len": len, "sum": sum, "any": any, "all": all, "True": True, "False": False}, "data": current_data, "iteration": i}
-                should_stop = eval(stop_expr, safe_globals, {})
-                if bool(should_stop):
-                    break
-            except:
-                pass
-            iteration_results.append({"iteration": i, "data_count": len(current_data) if isinstance(current_data, (list, dict)) else 1})
-        return {
-            "iteration": iteration_results,
-            "final": current_data,
-        }
-
-    def get_preview(self, outputs):
-        return outputs
-
-
-@register_operator
-class MergeOperator(BaseOperator):
-    id = "merge"
-    name = "Merge / Concatenate"
-    category = "control"
-    description = "Merge multiple data streams into one"
-    inputs = [
-        PortSpec("data_a", "DataTable", "Data Stream A"),
-        PortSpec("data_b", "DataTable", "Data Stream B"),
-    ]
-    outputs = [PortSpec("merged", "DataTable", "Merged Data")]
-    parameters = [
-        ParamSpec("merge_type", "select", "concat", "Merge Type",
-                  options=["concat", "union", "intersection"]),
-    ]
-
-    def validate(self, inputs):
-        return True
-
-    def execute(self, inputs, params):
-        a = inputs.get("data_a", [])
-        b = inputs.get("data_b", [])
-        merge_type = params.get("merge_type", "concat")
-        if merge_type == "concat":
-            result = a + b if isinstance(a, list) and isinstance(b, list) else [a, b]
-        elif merge_type == "union":
-            if isinstance(a, list) and isinstance(b, list):
-                result = list({str(x): x for x in a + b}.values())
-            else:
-                result = [a, b]
-        else:
-            result = a if isinstance(a, list) else [a]
-        return {"merged": result}
-
-    def get_preview(self, outputs):
-        return outputs
-
-
 
 @register_operator
 class AutoFeatureEngineering(BaseOperator):
@@ -321,7 +212,7 @@ class AutoFeatureEngineering(BaseOperator):
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         import pandas as pd
         import numpy as np
         from sklearn.preprocessing import PolynomialFeatures
@@ -385,7 +276,191 @@ class AutoFeatureEngineering(BaseOperator):
 
         report["final_features"] = len([c for c in df.columns if c != target_col])
 
-        return {"data": df.to_dict(orient="records"), "feature_report": report}
+        return OperatorResult(outputs={"data": df.to_dict(orient="records"), "feature_report": report})
 
     def get_preview(self, outputs):
         return {"feature_report": outputs.get("feature_report", {}), "data_shape": f"{len(outputs.get('data', []))} rows"}
+
+
+# === Auto-generated Processing operators ===
+
+@register_operator
+class NormalizeOp(BaseOperator):
+    id = "normalize"; name = "Normalize"; category = "processing"
+    description = "Normalize / standardize numeric columns"
+    inputs = [PortSpec("data", "DataTable", "Input Data")]
+    outputs = [PortSpec("data", "DataTable", "Normalized Data")]
+    parameters = [
+        ParamSpec("method", "select", "zscore", "Method", options=["zscore", "minmax", "robust"]),
+        ParamSpec("columns", "str", "", "Columns (comma-separated, empty=all numeric)"),
+    ]
+    def validate(self, inputs): return True
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
+        data = inputs.get("data", []); df = pd.DataFrame(data)
+        method = params.get("method", "zscore")
+        col_str = params.get("columns", "")
+        if col_str: columns = [c.strip() for c in col_str.split(",") if c.strip() in df.columns]
+        else: columns = df.select_dtypes(include=[np.number]).columns.tolist()
+        scaler_map = {"zscore": StandardScaler, "minmax": MinMaxScaler, "robust": RobustScaler}
+        scaler = scaler_map.get(method, StandardScaler)()
+        if columns: df[columns] = scaler.fit_transform(df[columns])
+        return OperatorResult(outputs={"data": df.to_dict(orient="records")})
+
+@register_operator
+class DiscretizeOp(BaseOperator):
+    id = "discretize"; name = "Discretize"; category = "processing"
+    description = "Discretize continuous values into bins"
+    inputs = [PortSpec("data", "DataTable", "Input Data")]
+    outputs = [PortSpec("data", "DataTable", "Discretized Data")]
+    parameters = [
+        ParamSpec("columns", "str", "", "Columns (comma-separated)"),
+        ParamSpec("bins", "int", 5, "Number of Bins"),
+        ParamSpec("method", "select", "equal_width", "Method", options=["equal_width", "equal_frequency"]),
+    ]
+    def validate(self, inputs): return True
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        data = inputs.get("data", []); df = pd.DataFrame(data)
+        col_str = params.get("columns", ""); bins = int(params.get("bins", 5))
+        if col_str: columns = [c.strip() for c in col_str.split(",") if c.strip() in df.columns]
+        else: columns = df.select_dtypes(include=[np.number]).columns.tolist()
+        for col in columns:
+            if params.get("method") == "equal_frequency":
+                df[col + "_bin"] = pd.qcut(df[col], q=bins, duplicates="drop", labels=False)
+            else: df[col + "_bin"] = pd.cut(df[col], bins=bins, labels=False)
+        return OperatorResult(outputs={"data": df.to_dict(orient="records")})
+
+@register_operator
+class OutlierDetector(BaseOperator):
+    id = "detect_outliers"; name = "Detect Outliers"; category = "processing"
+    description = "Detect outliers in numeric data"
+    inputs = [PortSpec("data", "DataTable", "Input Data")]
+    outputs = [PortSpec("data", "DataTable", "Data with outlier flags")]
+    parameters = [
+        ParamSpec("method", "select", "isolation_forest", "Method", options=["isolation_forest", "iqr", "zscore"]),
+        ParamSpec("contamination", "float", 0.1, "Expected outlier ratio"),
+        ParamSpec("exclude_columns", "str", "", "Columns excluded from detection"),
+    ]
+    def validate(self, inputs): return True
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        from sklearn.ensemble import IsolationForest
+        data = inputs.get("data", []); df = pd.DataFrame(data)
+        excluded = {
+            column.strip() for column in params.get("exclude_columns", "").split(",")
+            if column.strip()
+        }
+        num_cols = [
+            column for column in df.select_dtypes(include=[np.number]).columns
+            if column not in excluded
+        ]
+        if not num_cols:
+            raise ValueError("No numeric columns available for outlier detection")
+        method = params.get("method", "isolation_forest")
+        contamination = float(params.get("contamination", 0.1))
+        if method == "isolation_forest":
+            clf = IsolationForest(contamination=contamination, random_state=42)
+            df["outlier"] = clf.fit_predict(df[num_cols])
+            df["outlier"] = (df["outlier"] == -1)
+        elif method == "zscore":
+            z = np.abs((df[num_cols] - df[num_cols].mean()) / df[num_cols].std())
+            df["outlier"] = (z > 3).any(axis=1)
+        else:
+            Q1 = df[num_cols].quantile(0.25); Q3 = df[num_cols].quantile(0.75); IQR = Q3 - Q1
+            df["outlier"] = ((df[num_cols] < (Q1 - 1.5*IQR)) | (df[num_cols] > (Q3 + 1.5*IQR))).any(axis=1)
+        return OperatorResult(outputs={"data": df.to_dict(orient="records")})
+
+@register_operator
+class SelectAttributes(BaseOperator):
+    id = "select_attributes"; name = "Select Attributes"; category = "processing"
+    description = "Select / filter columns from dataset"
+    inputs = [PortSpec("data", "DataTable", "Input Data")]
+    outputs = [PortSpec("data", "DataTable", "Filtered Data")]
+    parameters = [
+        ParamSpec("columns", "str", "", "Columns to keep (comma-separated)"),
+        ParamSpec("invert", "bool", False, "Invert selection"),
+    ]
+    def validate(self, inputs): return True
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        data = inputs.get("data", []); df = pd.DataFrame(data)
+        col_str = params.get("columns", ""); invert = params.get("invert", False)
+        if col_str:
+            cols = [c.strip() for c in col_str.split(",") if c.strip() in df.columns]
+            if invert: cols = [c for c in df.columns if c not in cols]
+            df = df[cols]
+        return OperatorResult(outputs={"data": df.to_dict(orient="records")})
+
+@register_operator
+class SetRoleOp(BaseOperator):
+    id = "set_role"; name = "Set Role"; category = "processing"
+    description = "Set the role of a column (label, id, weight, etc.)"
+    inputs = [PortSpec("data", "DataTable", "Input Data")]
+    outputs = [PortSpec("data", "DataTable", "Data with role metadata")]
+    parameters = [
+        ParamSpec("column", "str", "", "Target Column"),
+        ParamSpec("role", "select", "label", "Role", options=["label", "id", "weight", "feature", "ignore"]),
+    ]
+    def validate(self, inputs): return True
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        data = inputs.get("data", [])
+        return OperatorResult(outputs={"data": data})
+
+@register_operator
+class FilterExamples(BaseOperator):
+    id = "filter_examples"; name = "Filter Examples"; category = "processing"
+    description = "Filter rows by expression"
+    inputs = [PortSpec("data", "DataTable", "Input Data")]
+    outputs = [PortSpec("data", "DataTable", "Filtered Data")]
+    parameters = [ParamSpec("expression", "str", "", "Filter expression (e.g., column > 0)")]
+    def validate(self, inputs): return True
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        data = inputs.get("data", []); df = pd.DataFrame(data)
+        expr = params.get("expression", "")
+        if expr:
+            try: df = df.query(expr)
+            except: pass
+        return OperatorResult(outputs={"data": df.to_dict(orient="records")})
+
+@register_operator
+class SampleOp(BaseOperator):
+    id = "sample"; name = "Sample"; category = "processing"
+    description = "Random sample of data"
+    inputs = [PortSpec("data", "DataTable", "Input Data")]
+    outputs = [PortSpec("data", "DataTable", "Sampled Data")]
+    parameters = [
+        ParamSpec("sample_size", "int", 100, "Sample Size"),
+        ParamSpec("with_replacement", "bool", False, "With Replacement"),
+        ParamSpec("random_seed", "int", 42, "Random Seed"),
+    ]
+    def validate(self, inputs): return True
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        data = inputs.get("data", []); df = pd.DataFrame(data)
+        n = min(int(params.get("sample_size", 100)), len(df))
+        replace = params.get("with_replacement", False)
+        seed = int(params.get("random_seed", 42))
+        df = df.sample(n=n, replace=replace, random_state=seed)
+        return OperatorResult(outputs={"data": df.to_dict(orient="records")})
+
+@register_operator
+class ImputeMissingAdvanced(BaseOperator):
+    id = "impute_missing_advanced"; name = "Impute Missing (Advanced)"; category = "processing"
+    description = "Advanced missing value imputation"
+    inputs = [PortSpec("data", "DataTable", "Input Data")]
+    outputs = [PortSpec("data", "DataTable", "Imputed Data")]
+    parameters = [
+        ParamSpec("strategy", "select", "mean", "Strategy", options=["mean", "median", "most_frequent", "constant"]),
+        ParamSpec("fill_value", "str", "0", "Fill value (constant strategy)"),
+    ]
+    def validate(self, inputs): return True
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        from sklearn.impute import SimpleImputer
+        data = inputs.get("data", []); df = pd.DataFrame(data)
+        strategy = params.get("strategy", "mean")
+        fill_val = params.get("fill_value", "0")
+        num_cols = df.select_dtypes(include=[np.number]).columns
+        if strategy == "constant":
+            try: fv = float(fill_val)
+            except: fv = fill_val
+            imp = SimpleImputer(strategy=strategy, fill_value=fv)
+        else: imp = SimpleImputer(strategy=strategy)
+        if len(num_cols) > 0: df[num_cols] = imp.fit_transform(df[num_cols])
+        return OperatorResult(outputs={"data": df.to_dict(orient="records")})

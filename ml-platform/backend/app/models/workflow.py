@@ -26,6 +26,7 @@ class Workflow(Base):
     nodes = relationship("WorkflowNode", back_populates="workflow", cascade="all, delete-orphan")
     edges = relationship("WorkflowEdge", back_populates="workflow", cascade="all, delete-orphan")
     runs = relationship("WorkflowRun", back_populates="workflow", cascade="all, delete-orphan")
+    versions = relationship("WorkflowVersion", back_populates="workflow", cascade="all, delete-orphan")
 
 
 class WorkflowNode(Base):

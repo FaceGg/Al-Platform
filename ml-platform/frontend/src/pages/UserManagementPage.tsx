@@ -1,11 +1,12 @@
-﻿import { useEffect, useState } from 'react'
-import { Table, Select, message, Tag } from 'antd'
+import { useEffect, useState } from 'react'
+import { Table, Tag, Button, Modal, Descriptions, Form, Input, message, Popconfirm, Space } from 'antd'
+import { EyeOutlined, LockOutlined, DeleteOutlined } from '@ant-design/icons'
 import apiClient from '../api/client'
 import AppLayout from '../components/AppLayout'
 import { useI18n } from '../i18n'
 
 interface User {
-  id: number
+  id: string
   username: string
   role: string
   created_at: string
@@ -15,69 +16,135 @@ export default function UserManagementPage() {
   const { t } = useI18n()
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
+  const [currentUserRole, setCurrentUserRole] = useState('')
+  const [currentUserId, setCurrentUserId] = useState('')
+  const [infoOpen, setInfoOpen] = useState(false)
+  const [pwdOpen, setPwdOpen] = useState(false)
+  const [selectedUser, setSelectedUser] = useState<User | null>(null)
+  const [pwdForm] = Form.useForm()
+  const [pwdLoading, setPwdLoading] = useState(false)
 
   useEffect(() => {
-    setLoading(true)
-    apiClient.get('/admin/users').then((res) => {
-      setUsers(res.data.items || res.data.users || [])
-    }).catch(() => {
-      message.error(t.common.error)
-    }).finally(() => setLoading(false))
+    setCurrentUserRole(localStorage.getItem('role') || '')
+    setCurrentUserId(localStorage.getItem('userId') || '')
   }, [])
 
-  const handleRoleChange = async (userId: number, newRole: string) => {
+  useEffect(() => {
+    if (!currentUserRole) return
+    setLoading(true)
+    const fetchUrl = currentUserRole === 'admin' ? '/admin/users' : '/auth/me'
+    apiClient.get(fetchUrl)
+      .then(res => {
+        const data = res.data.items || res.data.users || (Array.isArray(res.data) ? res.data : [res.data])
+        setUsers(data)
+      })
+      .catch(() => message.error(t.common.error))
+      .finally(() => setLoading(false))
+  }, [currentUserRole, t.common.error])
+
+  const showInfo = (user: User) => { setSelectedUser(user); setInfoOpen(true) }
+
+  const showPwd = (user: User) => { setSelectedUser(user); setPwdOpen(true); pwdForm.resetFields() }
+
+  const changePassword = async (values: any) => {
+    setPwdLoading(true)
     try {
-      await apiClient.put('/admin/users/' + userId + '/role', { role: newRole })
+      await apiClient.put('/auth/change-password', values)
       message.success(t.common.success)
-      setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, role: newRole } : u))
-    } catch {
-      message.error(t.common.error)
+      setPwdOpen(false)
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || t.common.error)
+    } finally {
+      setPwdLoading(false)
+    }
+  }
+
+  const deleteUser = async (userId: string) => {
+    try {
+      await apiClient.delete('/admin/users/' + userId)
+      message.success('用户已删除')
+      setUsers(prev => prev.filter(u => u.id !== userId))
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '删除失败')
     }
   }
 
   const columns = [
-    { title: '用户名', dataIndex: 'username', key: 'username' },
+    { title: t.profile.username || '用户名', dataIndex: 'username', key: 'username' },
     {
-      title: '角色',
-      dataIndex: 'role',
-      key: 'role',
-      render: (role: string) => (
-        <Tag color={role === 'admin' ? 'red' : role === 'engineer' ? 'blue' : 'default'}>
-          {t.profile[role as keyof typeof t.profile] || role}
-        </Tag>
-      ),
-    },
-    { title: '创建时间', dataIndex: 'created_at', key: 'created_at' },
-    {
-      title: '操作',
-      key: 'actions',
-      render: (_: unknown, record: User) => {
-        const currentUserId = localStorage.getItem('userId')
-        if (record.id.toString() === currentUserId) return <span>-</span>
-        return (
-          <Select
-            value={record.role}
-            style={{ width: 120 }}
-            onChange={(val) => handleRoleChange(record.id, val)}
-            options={[
-              { value: 'admin', label: t.profile.admin },
-              { value: 'engineer', label: t.profile.engineer },
-            ]}
-          />
-        )
+      title: t.profile.role || '角色', dataIndex: 'role', key: 'role',
+      render: (role: string) => {
+        const color = role === 'admin' ? 'red' : role === 'engineer' ? 'blue' : 'green'
+        return <Tag color={color}>{role === 'admin' ? t.profile.admin : role === 'engineer' ? t.profile.engineer : t.profile.user}</Tag>
       },
+    },
+    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => v ? new Date(v).toLocaleDateString() : '-' },
+    {
+      title: '操作', key: 'actions',
+      render: (_: any, record: User) => (
+        <Space>
+          <Button size="small" icon={<EyeOutlined />} onClick={() => showInfo(record)}>查看</Button>
+          {record.id === currentUserId && (
+            <Button size="small" icon={<LockOutlined />} onClick={() => showPwd(record)}>修改密码</Button>
+          )}
+          {currentUserRole === 'admin' && record.id !== currentUserId && (
+            <Popconfirm title="确定要删除此用户吗？" onConfirm={() => deleteUser(record.id)} okText="删除" cancelText="取消">
+              <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+            </Popconfirm>
+          )}
+        </Space>
+      ),
     },
   ]
 
   return (
     <AppLayout>
-      <Table
-        dataSource={users}
-        columns={columns}
-        rowKey="id"
-        loading={loading}
-        pagination={{ pageSize: 20 }}
-      />
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+        <h3>{t.nav.users || '用户管理'}</h3>
+      </div>
+      <Table rowKey="id" dataSource={users} columns={columns} loading={loading} pagination={{ pageSize: 20 }} />
+
+      {/* 用户信息弹窗 */}
+      <Modal title="用户信息" open={infoOpen} onCancel={() => setInfoOpen(false)} footer={null}>
+        {selectedUser && (
+          <Descriptions column={1} bordered size="small">
+            <Descriptions.Item label="ID">{selectedUser.id}</Descriptions.Item>
+            <Descriptions.Item label="用户名">{selectedUser.username}</Descriptions.Item>
+            <Descriptions.Item label="角色">
+              <Tag color={selectedUser.role === 'admin' ? 'red' : 'blue'}>{selectedUser.role}</Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="创建时间">{selectedUser.created_at ? new Date(selectedUser.created_at).toLocaleString() : '-'}</Descriptions.Item>
+          </Descriptions>
+        )}
+      </Modal>
+
+      {/* 修改密码弹窗 */}
+      <Modal title="修改密码" open={pwdOpen} onCancel={() => setPwdOpen(false)} onOk={() => pwdForm.submit()} confirmLoading={pwdLoading}>
+        <Form form={pwdForm} onFinish={changePassword} layout="vertical">
+          <Form.Item name="old_password" label="旧密码" rules={[{ required: true, message: '请输入旧密码' }]}>
+            <Input.Password placeholder="请输入旧密码" />
+          </Form.Item>
+          <Form.Item name="new_password" label="新密码" rules={[{ required: true, message: '请输入新密码' }, { min: 6, message: '密码至少6位' }]}>
+            <Input.Password placeholder="请输入新密码" />
+          </Form.Item>
+          <Form.Item
+            name="confirm_password"
+            label="确认密码"
+            dependencies={['new_password']}
+            rules={[
+              { required: true, message: '请确认新密码' },
+              ({ getFieldValue }) => ({
+                validator(_: any, value: string) {
+                  if (!value || getFieldValue('new_password') === value) return Promise.resolve()
+                  return Promise.reject(new Error('两次密码不一致'))
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="请再次输入新密码" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </AppLayout>
   )
 }

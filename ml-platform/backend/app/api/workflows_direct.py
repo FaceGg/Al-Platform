@@ -1,4 +1,5 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from uuid import UUID
 from app.database import get_db
@@ -98,3 +99,19 @@ def save_workflow_direct(
 
     db.commit()
     return {"message": "Workflow saved"}
+
+
+@router.delete("/{workflow_id}", status_code=204)
+def delete_workflow_direct(
+    workflow_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    wf = db.query(Workflow).filter(Workflow.id == UUID(workflow_id)).first()
+    if not wf:
+        raise HTTPException(404, "Workflow not found")
+    db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == UUID(workflow_id)).delete()
+    db.query(WorkflowNode).filter(WorkflowNode.workflow_id == UUID(workflow_id)).delete()
+    db.delete(wf)
+    db.commit()
+    return Response(status_code=204)

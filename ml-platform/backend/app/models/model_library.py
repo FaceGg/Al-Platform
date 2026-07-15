@@ -1,4 +1,4 @@
-﻿"""Trained model library ORM model."""
+"""Trained model library ORM model."""
 import uuid
 from sqlalchemy import Column, String, Text, Float, DateTime, JSON, Boolean, ForeignKey, Integer, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -22,6 +22,9 @@ class ModelLibrary(Base):
     metrics = Column(JSON, default=dict)
     params = Column(JSON, default=dict)
     model_path = Column(String(512), default="")
+    training_job_id = Column(UUID(as_uuid=True), ForeignKey("training_jobs.id"), nullable=True)
+    dataset_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id"), nullable=True)
+    model_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id"), nullable=True)
     file_size = Column(Integer, default=0)
     format = Column(String(32), default="pth")
     tags = Column(JSON, default=list)

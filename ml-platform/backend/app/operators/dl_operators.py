@@ -1,9 +1,9 @@
-﻿from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
+from app.engine.operator_contract import OperatorContext, OperatorResult
+from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
 import pandas as pd
 import numpy as np
 import io
-import base64
 
 try:
     import torch
@@ -56,32 +56,34 @@ if TORCH_AVAILABLE:
         name = "MLP Classifier"
         category = "dl"
         description = "Train a simple MLP classifier with PyTorch"
-        inputs = [PortSpec("train", "DataTable", "Training Data")]
+        inputs = [PortSpec("data", "DataTable", "Training Data")]
         outputs = [PortSpec("model", "Model", "Trained Model")]
         parameters = [
             ParamSpec("target_column", "str", "target", "Target Column"),
             ParamSpec("hidden_layers", "str", "64,32", "Hidden Layer Sizes"),
             ParamSpec("activation", "select", "relu", "Activation Function", options=["relu", "tanh"]),
-            ParamSpec("epochs", "int", 10, "Epochs"),
-            ParamSpec("batch_size", "int", 32, "Batch Size"),
+            ParamSpec("epochs", "int", 10, "Epochs", range_min=1),
+            ParamSpec("batch_size", "int", 32, "Batch Size", range_min=1),
             ParamSpec("learning_rate", "float", 0.001, "Learning Rate"),
+            ParamSpec("device", "select", "cpu", "Device", options=["cpu", "cuda"]),
             ParamSpec("random_seed", "int", 42, "Random Seed"),
         ]
 
         def validate(self, inputs):
             return True
 
-        def execute(self, inputs, params):
+        def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
             torch.manual_seed(int(params.get("random_seed", 42)))
-            data = inputs.get("train", [])
+            data = inputs.get("data", [])
             df = pd.DataFrame(data)
             target = params.get("target_column", "target")
 
-            X = df.drop(columns=[target]).values.astype(np.float32)
+            cat_cols = df.drop(columns=[target]).select_dtypes(include=["object", "category"]).columns.tolist()
+            if cat_cols:
+                X = pd.get_dummies(df.drop(columns=[target]), columns=cat_cols).values.astype(np.float32)
+            else:
+                X = df.drop(columns=[target]).values.astype(np.float32)
             y = df[target].values
-
-            for col in df.drop(columns=[target]).select_dtypes(include=["object", "category"]).columns:
-                X = pd.get_dummies(df.drop(columns=[target]), columns=[col]).values.astype(np.float32)
 
             if y.dtype.kind in ("O", "U"):
                 from sklearn.preprocessing import LabelEncoder
@@ -113,18 +115,21 @@ if TORCH_AVAILABLE:
                     loss.backward()
                     optimizer.step()
 
-            buf = io.BytesIO()
-            torch.save(model.state_dict(), buf)
-            buf.seek(0)
-            state_bytes = buf.getvalue()
-            model_meta = {
-                "type": "mlp_classifier",
+            import pickle as _pickle
+            model_pkg = {
+                "__framework__": "pytorch",
+                "__model_type__": "mlp_classifier",
+                "state_dict": model.state_dict(),
                 "input_dim": X.shape[1],
                 "hidden_layers": hidden,
                 "num_classes": num_classes,
                 "activation": activation,
+                "net_class": _MLP,
             }
-            return {"model": base64.b64encode(state_bytes).decode() + "|" + base64.b64encode(str(model_meta).encode()).decode()}
+            buf = io.BytesIO()
+            _pickle.dump(model_pkg, buf)
+            buf.seek(0)
+            return OperatorResult(outputs={"model": buf.getvalue()})
 
 
     @register_operator
@@ -133,33 +138,35 @@ if TORCH_AVAILABLE:
         name = "MLP Regressor"
         category = "dl"
         description = "Train a simple MLP regressor with PyTorch"
-        inputs = [PortSpec("train", "DataTable", "Training Data")]
+        inputs = [PortSpec("data", "DataTable", "Training Data")]
         outputs = [PortSpec("model", "Model", "Trained Model")]
         parameters = [
             ParamSpec("target_column", "str", "target", "Target Column"),
             ParamSpec("hidden_layers", "str", "64,32", "Hidden Layer Sizes"),
             ParamSpec("activation", "select", "relu", "Activation Function", options=["relu", "tanh"]),
-            ParamSpec("epochs", "int", 10, "Epochs"),
-            ParamSpec("batch_size", "int", 32, "Batch Size"),
+            ParamSpec("epochs", "int", 10, "Epochs", range_min=1),
+            ParamSpec("batch_size", "int", 32, "Batch Size", range_min=1),
             ParamSpec("learning_rate", "float", 0.001, "Learning Rate"),
+            ParamSpec("device", "select", "cpu", "Device", options=["cpu", "cuda"]),
             ParamSpec("random_seed", "int", 42, "Random Seed"),
         ]
 
         def validate(self, inputs):
             return True
 
-        def execute(self, inputs, params):
+        def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
             torch.manual_seed(int(params.get("random_seed", 42)))
-            data = inputs.get("train", [])
+            data = inputs.get("data", [])
             df = pd.DataFrame(data)
             target = params.get("target_column", "target")
 
-            X = df.drop(columns=[target]).values.astype(np.float32)
+
+            cat_cols = df.drop(columns=[target]).select_dtypes(include=["object", "category"]).columns.tolist()
+            if cat_cols:
+                X = pd.get_dummies(df.drop(columns=[target]), columns=cat_cols).values.astype(np.float32)
+            else:
+                X = df.drop(columns=[target]).values.astype(np.float32)
             y = df[target].values.astype(np.float32).reshape(-1, 1)
-
-            for col in df.drop(columns=[target]).select_dtypes(include=["object", "category"]).columns:
-                X = pd.get_dummies(df.drop(columns=[target]), columns=[col]).values.astype(np.float32)
-
             X = torch.tensor(X, dtype=torch.float32)
             y = torch.tensor(y, dtype=torch.float32)
 
@@ -185,17 +192,20 @@ if TORCH_AVAILABLE:
                     loss.backward()
                     optimizer.step()
 
-            buf = io.BytesIO()
-            torch.save(model.state_dict(), buf)
-            buf.seek(0)
-            state_bytes = buf.getvalue()
-            model_meta = {
-                "type": "mlp_regressor",
+            import pickle as _pickle
+            model_pkg = {
+                "__framework__": "pytorch",
+                "__model_type__": "mlp_regressor",
+                "state_dict": model.state_dict(),
                 "input_dim": X.shape[1],
                 "hidden_layers": hidden,
                 "activation": activation,
+                "net_class": _MLP,
             }
-            return {"model": base64.b64encode(state_bytes).decode() + "|" + base64.b64encode(str(model_meta).encode()).decode()}
+            buf = io.BytesIO()
+            _pickle.dump(model_pkg, buf)
+            buf.seek(0)
+            return OperatorResult(outputs={"model": buf.getvalue()})
 
 
     @register_operator
@@ -204,30 +214,32 @@ if TORCH_AVAILABLE:
         name = "CNN1D Classifier"
         category = "dl"
         description = "Train a 1D CNN classifier with PyTorch"
-        inputs = [PortSpec("train", "DataTable", "Training Data")]
+        inputs = [PortSpec("data", "DataTable", "Training Data")]
         outputs = [PortSpec("model", "Model", "Trained Model")]
         parameters = [
             ParamSpec("target_column", "str", "target", "Target Column"),
-            ParamSpec("epochs", "int", 10, "Epochs"),
-            ParamSpec("batch_size", "int", 32, "Batch Size"),
+            ParamSpec("epochs", "int", 10, "Epochs", range_min=1),
+            ParamSpec("batch_size", "int", 32, "Batch Size", range_min=1),
             ParamSpec("learning_rate", "float", 0.001, "Learning Rate"),
+            ParamSpec("device", "select", "cpu", "Device", options=["cpu", "cuda"]),
             ParamSpec("random_seed", "int", 42, "Random Seed"),
         ]
 
         def validate(self, inputs):
             return True
 
-        def execute(self, inputs, params):
+        def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
             torch.manual_seed(int(params.get("random_seed", 42)))
-            data = inputs.get("train", [])
+            data = inputs.get("data", [])
             df = pd.DataFrame(data)
             target = params.get("target_column", "target")
 
-            X = df.drop(columns=[target]).values.astype(np.float32)
+            cat_cols = df.drop(columns=[target]).select_dtypes(include=["object", "category"]).columns.tolist()
+            if cat_cols:
+                X = pd.get_dummies(df.drop(columns=[target]), columns=cat_cols).values.astype(np.float32)
+            else:
+                X = df.drop(columns=[target]).values.astype(np.float32)
             y = df[target].values
-
-            for col in df.drop(columns=[target]).select_dtypes(include=["object", "category"]).columns:
-                X = pd.get_dummies(df.drop(columns=[target]), columns=[col]).values.astype(np.float32)
 
             if y.dtype.kind in ("O", "U"):
                 from sklearn.preprocessing import LabelEncoder
@@ -259,14 +271,17 @@ if TORCH_AVAILABLE:
                     loss.backward()
                     optimizer.step()
 
-            buf = io.BytesIO()
-            torch.save(model.state_dict(), buf)
-            buf.seek(0)
-            state_bytes = buf.getvalue()
-            model_meta = {
-                "type": "cnn1d_classifier",
+            import pickle as _pickle
+            model_pkg = {
+                "__framework__": "pytorch",
+                "__model_type__": "cnn1d_classifier",
+                "state_dict": model.state_dict(),
                 "input_channels": 1,
                 "seq_length": seq_length,
                 "num_classes": num_classes,
+                "net_class": _CNN1D,
             }
-            return {"model": base64.b64encode(state_bytes).decode() + "|" + base64.b64encode(str(model_meta).encode()).decode()}
+            buf = io.BytesIO()
+            _pickle.dump(model_pkg, buf)
+            buf.seek(0)
+            return OperatorResult(outputs={"model": buf.getvalue()})

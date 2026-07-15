@@ -1,4 +1,4 @@
-﻿"""API management model for platform APIs."""
+"""API management model for platform APIs."""
 import uuid
 from sqlalchemy import Column, String, Text, Integer, DateTime, JSON, Boolean, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID

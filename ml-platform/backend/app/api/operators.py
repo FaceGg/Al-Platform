@@ -1,4 +1,4 @@
-﻿from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
+from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import OperatorRegistry
 from app.schemas.operator import OperatorSchema, PortSpecSchema, ParamSpecSchema
 from fastapi import APIRouter, UploadFile, File, Depends

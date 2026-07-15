@@ -1,4 +1,5 @@
-﻿from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
+from app.engine.operator_contract import OperatorContext, OperatorResult
+from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
 import pandas as pd
 import numpy as np
@@ -8,6 +9,43 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, mean_squared_error, mean_absolute_error, r2_score
+
+
+@register_operator
+class AnomalyEval(BaseOperator):
+    id = "anomaly_eval"
+    name = "Anomaly Evaluation"
+    category = "evaluation"
+    description = "Compare unsupervised anomaly flags with known fault labels"
+    inputs = [PortSpec("data", "DataTable", "Flagged Data")]
+    outputs = [PortSpec("metrics", "Params", "Anomaly Metrics")]
+    parameters = [
+        ParamSpec("target_column", "str", "Fault", "Fault Target Column"),
+        ParamSpec("flag_column", "str", "outlier", "Anomaly Flag Column"),
+    ]
+
+    def validate(self, inputs):
+        return True
+
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        frame = pd.DataFrame(inputs.get("data", []))
+        target_column = params.get("target_column", "Fault")
+        flag_column = params.get("flag_column", "outlier")
+        if target_column not in frame.columns or flag_column not in frame.columns:
+            raise ValueError("Fault target and anomaly flag columns are required")
+        actual = pd.to_numeric(frame[target_column], errors="raise").astype(int)
+        predicted = frame[flag_column].astype(bool).astype(int)
+        matrix = confusion_matrix(actual, predicted, labels=[0, 1])
+        metrics = {
+            "anomaly_rate": float(predicted.mean()),
+            "fault_precision": float(precision_score(actual, predicted, zero_division=0)),
+            "fault_recall": float(recall_score(actual, predicted, zero_division=0)),
+            "fault_f1": float(f1_score(actual, predicted, zero_division=0)),
+            "confusion_matrix": matrix.astype(int).tolist(),
+        }
+        return OperatorResult(outputs={"metrics": metrics}, metrics={
+            key: value for key, value in metrics.items() if isinstance(value, float)
+        })
 
 
 
@@ -35,14 +73,14 @@ class ClassificationEvalDetailed(BaseOperator):
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         import joblib
         model_bytes = inputs.get("model")
         test_data = inputs.get("test", [])
         target = params.get("target_column", "target")
         threshold = params.get("threshold", 0.5)
 
-        model = joblib.loads(model_bytes)
+        model = joblib.load(io.BytesIO(model_bytes))
         df = pd.DataFrame(test_data)
         X_test = df.drop(columns=[target])
         y_test = df[target]
@@ -138,7 +176,7 @@ class ClassificationEvalDetailed(BaseOperator):
         plt.close(fig)
         chart_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
-        return {"metrics": metrics, "per_label": per_label, "chart": chart_b64, "errors": error_stats}
+        return OperatorResult(outputs={"metrics": metrics, "per_label": per_label, "chart": chart_b64, "errors": error_stats})
 
     def get_preview(self, outputs):
         return outputs
@@ -165,10 +203,10 @@ class ModelComparison(BaseOperator):
     def validate(self, inputs):
         return "model_b" in inputs
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         import joblib
-        models = {"A": joblib.loads(inputs.get("model_a")),
-                  "B": joblib.loads(inputs.get("model_b"))}
+        models = {"A": joblib.load(io.BytesIO(inputs.get("model_a"))),
+                  "B": joblib.load(io.BytesIO(inputs.get("model_b")))}
         test_data = inputs.get("test", [])
         target = params.get("target_column", "target")
         metric_name = params.get("metric", "accuracy")
@@ -193,7 +231,7 @@ class ModelComparison(BaseOperator):
             }
 
         winner = "A" if results["A"][metric_name] >= results["B"][metric_name] else "B"
-        return {"comparison": {"results": results, "winner": winner, "metric": metric_name, "margin": round(abs(results["A"][metric_name] - results["B"][metric_name]), 4)}}
+        return OperatorResult(outputs={"comparison": {"results": results, "winner": winner, "metric": metric_name, "margin": round(abs(results["A"][metric_name] - results["B"][metric_name]), 4)}})
 @register_operator
 class ClassificationEval(BaseOperator):
     id = "classification_eval"
@@ -215,13 +253,13 @@ class ClassificationEval(BaseOperator):
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         import joblib
         model_bytes = inputs.get("model")
         test_data = inputs.get("test", [])
         target = params.get("target_column", "target")
 
-        model = joblib.loads(model_bytes)
+        model = joblib.load(io.BytesIO(model_bytes))
         df = pd.DataFrame(test_data)
         X_test = df.drop(columns=[target])
         y_test = df[target]
@@ -255,7 +293,7 @@ class ClassificationEval(BaseOperator):
         plt.close(fig)
         chart_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
-        return {"metrics": metrics, "chart": chart_b64}
+        return OperatorResult(outputs={"metrics": metrics, "chart": chart_b64})
 
     def get_preview(self, outputs):
         return outputs
@@ -279,13 +317,13 @@ class RegressionEval(BaseOperator):
     def validate(self, inputs):
         return True
 
-    def execute(self, inputs, params):
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         import joblib
         model_bytes = inputs.get("model")
         test_data = inputs.get("test", [])
         target = params.get("target_column", "target")
 
-        model = joblib.loads(model_bytes)
+        model = joblib.load(io.BytesIO(model_bytes))
         df = pd.DataFrame(test_data)
         X_test = df.drop(columns=[target])
         y_test = df[target]
@@ -304,5 +342,136 @@ class RegressionEval(BaseOperator):
             "r2": float(r2_score(y_test, y_pred)),
         }
 
-        return {"metrics": metrics}
+        return OperatorResult(outputs={"metrics": metrics})
 
+
+
+@register_operator
+class CrossValidation(BaseOperator):
+    """k-fold cross-validation for supervised models"""
+    id = "cross_validation"
+    name = "Cross Validation"
+    category = "evaluation"
+    description = "k-折交叉验证，评估模型泛化能力"
+    inputs = [PortSpec("data", "DataTable", "Input Data")]
+    outputs = [
+        PortSpec("fold_metrics", "Params", "Per-fold Metrics"),
+        PortSpec("avg_metrics", "Params", "Average Metrics"),
+    ]
+    parameters = [
+        ParamSpec("target_column", "str", "target", "Target Column"),
+        ParamSpec("model_type", "select", "random_forest", "Model Type",
+                  options=["random_forest", "decision_tree", "logistic_regression", "svm"]),
+        ParamSpec("task", "select", "classification", "Task Type", options=["classification", "regression"]),
+        ParamSpec("n_folds", "int", 5, "Number of Folds (k)", range_min=2, range_max=20),
+        ParamSpec("stratified", "boolean", True, "Stratified Folds (classification only)"),
+        ParamSpec("random_seed", "int", 42, "Random Seed"),
+    ]
+
+    def validate(self, inputs):
+        return True
+
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        from sklearn.model_selection import StratifiedKFold, KFold
+        from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+        from sklearn.tree import DecisionTreeClassifier
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.svm import SVC, SVR
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, mean_squared_error, mean_absolute_error, r2_score
+        import numpy as np
+
+        data = inputs.get("data", [])
+        target = params.get("target_column", "target")
+        model_type = params.get("model_type", "random_forest")
+        task = params.get("task", "classification")
+        n_folds = int(params.get("n_folds", 5))
+        stratified = params.get("stratified", True)
+        random_seed = int(params.get("random_seed", 42))
+
+        df = pd.DataFrame(data)
+        if target not in df.columns:
+            raise RuntimeError(f"Target column '{target}' not found")
+
+        X = df.drop(columns=[target])
+        y = df[target]
+
+        for col in X.select_dtypes(include=["object", "category"]).columns:
+            X[col] = X[col].astype("category").cat.codes
+
+        if stratified and task == "classification":
+            cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=random_seed)
+        else:
+            cv = KFold(n_splits=n_folds, shuffle=True, random_state=random_seed)
+
+        model_map = {
+            "random_forest": (RandomForestClassifier(n_estimators=100, random_state=random_seed),
+                             RandomForestRegressor(n_estimators=100, random_state=random_seed)),
+            "decision_tree": (DecisionTreeClassifier(random_state=random_seed),
+                             None),
+            "logistic_regression": (LogisticRegression(random_state=random_seed, max_iter=1000),
+                                    None),
+            "svm": (SVC(random_state=random_seed),
+                    SVR()),
+        }
+
+        clf, reg = model_map.get(model_type, (RandomForestClassifier(n_estimators=100, random_state=random_seed), None))
+        if task == "regression" and reg is not None:
+            model = reg
+        elif task == "classification" and clf is not None:
+            model = clf
+        else:
+            model = clf
+
+        fold_results = []
+        all_y_true = []
+        all_y_pred = []
+
+        for fold, (train_idx, test_idx) in enumerate(cv.split(X, y)):
+            X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+            y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+
+            model_clone = model
+            from sklearn.base import clone
+            m = clone(model)
+            m.fit(X_train, y_train)
+            y_pred = m.predict(X_test)
+
+            all_y_true.extend(y_test.tolist())
+            all_y_pred.extend(y_pred.tolist())
+
+            if task == "classification":
+                fold_results.append({
+                    "fold": fold + 1,
+                    "accuracy": float(accuracy_score(y_test, y_pred)),
+                    "precision": float(precision_score(y_test, y_pred, average="weighted", zero_division=0)),
+                    "recall": float(recall_score(y_test, y_pred, average="weighted", zero_division=0)),
+                    "f1": float(f1_score(y_test, y_pred, average="weighted", zero_division=0)),
+                    "n_train": len(y_train),
+                    "n_test": len(y_test),
+                })
+            else:
+                fold_results.append({
+                    "fold": fold + 1,
+                    "mse": float(mean_squared_error(y_test, y_pred)),
+                    "rmse": float(np.sqrt(mean_squared_error(y_test, y_pred))),
+                    "mae": float(mean_absolute_error(y_test, y_pred)),
+                    "r2": float(r2_score(y_test, y_pred)),
+                    "n_train": len(y_train),
+                    "n_test": len(y_test),
+                })
+
+        avg_metrics = {}
+        if fold_results:
+            keys = [k for k in fold_results[0] if k not in ("fold", "n_train", "n_test")]
+            for k in keys:
+                values = [r[k] for r in fold_results]
+                avg_metrics[k] = float(np.mean(values))
+                avg_metrics[k + "_std"] = float(np.std(values))
+            avg_metrics["n_folds"] = n_folds
+
+        return OperatorResult(outputs={"fold_metrics": fold_results, "avg_metrics": avg_metrics})
+
+    def get_preview(self, outputs):
+        avg = outputs.get("avg_metrics", {})
+        folds = outputs.get("fold_metrics", [])
+        return {"avg_metrics": avg, "n_folds": len(folds)}

@@ -1,6 +1,6 @@
-﻿import uuid
+import uuid
 
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer
 from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -17,6 +17,13 @@ class WorkflowRun(Base):
     started_at = Column(DateTime)
     finished_at = Column(DateTime)
     error_message = Column(Text)
+    error_code = Column(String(64))
+    error_details = Column(JSON)
+    workflow_version = Column(Integer)
+    workflow_snapshot = Column(JSON)
+    logs = Column(JSON, default=list)
+    cancel_requested_at = Column(DateTime)
+    cancelled_at = Column(DateTime)
     triggered_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
 
     workflow = relationship("Workflow", back_populates="runs")
@@ -31,10 +38,15 @@ class NodeRun(Base):
     run_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False)
     node_id = Column(UUID(as_uuid=True), ForeignKey("nodes.id", ondelete="SET NULL"))
     status = Column(String(16), default="pending")
+    attempt = Column(Integer, default=1, nullable=False)
     result = Column(JSON)
     output_meta = Column(JSON)
     preview_data = Column(Text)
     error_message = Column(Text)
+    error_code = Column(String(64))
+    error_details = Column(JSON)
+    duration_ms = Column(Integer)
+    logs = Column(JSON, default=list)
     started_at = Column(DateTime)
     finished_at = Column(DateTime)
 

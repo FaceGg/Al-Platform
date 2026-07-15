@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Card, Table, Tag, Input, Select, Space, Typography } from "antd";
 import { SearchOutlined, ApiOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";

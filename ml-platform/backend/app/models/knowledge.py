@@ -1,4 +1,4 @@
-﻿"""
+"""
 Knowledge Base / Knowledge Graph ORM models.
 """
 import uuid

@@ -1,4 +1,4 @@
-﻿"""FastAPI application entry point."""
+"""FastAPI application entry point."""
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
+from app.database_migrations import ensure_schema_compatibility
 
 # Import all operators so they register themselves
 # Import models (must happen before create_all)
@@ -35,8 +36,10 @@ try:
 except ImportError:
     pass
 
+import app.operators.control_operators  # noqa: F401
+
 # Import API routers
-from app.api import auth, projects, workflows, runs, operators, datasets, workflows_direct, templates
+from app.api import auth, projects, workflows, runs, operators, datasets, workflows_direct, workflow_versions, templates
 from app.api import users, models as model_api
 from app.api import knowledge, monitor, labeling, training, orchestration
 from app.api import algorithm as algo_api, platform_api, compute, annotations as annot_api, chat as chat_api
@@ -47,6 +50,19 @@ from app.api import model_library as model_lib_api, dashboard as dash_api
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Create database tables on startup and clean up on shutdown."""
     Base.metadata.create_all(bind=engine)
+    ensure_schema_compatibility(engine)
+    # Seed default admin user if not exists
+    from app.database import SessionLocal
+    from app.models.user import User
+    from passlib.context import CryptContext
+    pwd_ctx = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+    db = SessionLocal()
+    try:
+        if not db.query(User).filter(User.username == "admin").first():
+            db.add(User(username="admin", password_hash=pwd_ctx.hash("admin123"), role="admin"))
+            db.commit()
+    finally:
+        db.close()
     # Capture event loop for background thread WebSocket broadcast
     import app.api.runs as runs_mod
     import asyncio
@@ -78,6 +94,7 @@ app.include_router(runs.router)
 app.include_router(operators.router)
 app.include_router(datasets.router)
 app.include_router(workflows_direct.router)
+app.include_router(workflow_versions.router)
 app.include_router(templates.router)
 app.include_router(users.router)
 app.include_router(model_api.router)

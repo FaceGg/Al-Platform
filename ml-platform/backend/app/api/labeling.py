@@ -1,4 +1,4 @@
-﻿"""
+"""
 Auto-labeling API endpoints: rule-based and similarity-based labeling.
 """
 import re

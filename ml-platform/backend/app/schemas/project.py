@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from uuid import UUID
 from datetime import datetime
 
@@ -11,13 +11,14 @@ class ProjectUpdate(BaseModel):
     description: str | None = None
 
 class ProjectResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     name: str
     description: str
     owner_id: UUID
     created_at: datetime
     updated_at: datetime
-    class Config: from_attributes = True
 
 class ProjectList(BaseModel):
     items: list[ProjectResponse]

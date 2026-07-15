@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey, func, BigInteger, Boolean, Float, Integer
 from sqlalchemy import JSON
@@ -12,15 +12,24 @@ class TrainingJob(Base):
     __tablename__ = "training_jobs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     name = Column(String(128), nullable=False)
     operator_id = Column(String(64))
     params = Column(JSON, default=dict)
     dataset_path = Column(String(512))
+    dataset_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id"), nullable=True)
     status = Column(String(16), default="pending")  # pending/running/completed/failed
     metrics = Column(JSON, default=dict)
     model_path = Column(String(512))
+    model_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id"), nullable=True)
+    model_library_id = Column(UUID(as_uuid=True), ForeignKey("model_library.id"), nullable=True)
+    feature_schema = Column(JSON, default=list)
+    target_schema = Column(JSON, default=dict)
+    preprocessing = Column(JSON, default=dict)
+    error_code = Column(String(64))
+    error_details = Column(JSON)
+    logs = Column(JSON, default=list)
     error_message = Column(Text)
     started_at = Column(DateTime)
     finished_at = Column(DateTime)

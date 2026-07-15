@@ -1,8 +1,11 @@
-﻿import axios from 'axios'
+import axios from 'axios'
 
 const apiClient = axios.create({
   baseURL: '/api',
   timeout: 30000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
 })
 
 apiClient.interceptors.request.use((config) => {
@@ -27,6 +30,16 @@ apiClient.interceptors.response.use(
 )
 
 export default apiClient
+
+export function formatApiError(error: any, fallback: string): string {
+  const detail = error?.response?.data?.detail;
+  if (detail && typeof detail === "object") {
+    const code = detail.code ? String(detail.code) : "";
+    const message = detail.message ? String(detail.message) : JSON.stringify(detail);
+    return code ? `${code}: ${message}` : message;
+  }
+  return String(detail || error?.message || fallback);
+}
 
 export async function apiGet(url: string) {
   const res = await apiClient.get(url)

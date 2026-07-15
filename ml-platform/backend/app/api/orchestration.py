@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
@@ -66,6 +66,85 @@ def create_agent(data: dict = Body(...), db=Depends(get_db), current_user=Depend
     return {"id": str(agent.id), "name": agent.name, "agent_type": agent.agent_type}
 
 
+
+# --------------------------------------------------------------------------
+# Agent Communication (Message) Endpoints
+# --------------------------------------------------------------------------
+
+@router.get("/tasks/{task_id}/messages")
+def list_task_messages(task_id: str, db=Depends(get_db)):
+    msgs = db.query(AgentMessage).filter(AgentMessage.task_id == uuid.UUID(task_id)).order_by(AgentMessage.created_at.asc()).all()
+    return {"items": [
+        {
+            "id": str(m.id), "task_id": str(m.task_id),
+            "from_agent_id": str(m.from_agent_id) if m.from_agent_id else None,
+            "to_agent_id": str(m.to_agent_id) if m.to_agent_id else None,
+            "message_type": m.message_type, "content": m.content,
+            "metadata": m.msg_metadata, "created_at": m.created_at.isoformat() if m.created_at else None,
+        } for m in msgs
+    ]}
+
+
+@router.post("/tasks/{task_id}/messages")
+def send_agent_message(task_id: str, data: dict = Body(...), db=Depends(get_db)):
+    msg = AgentMessage(
+        task_id=uuid.UUID(task_id),
+        from_agent_id=uuid.UUID(data["from_agent_id"]) if data.get("from_agent_id") else None,
+        to_agent_id=uuid.UUID(data["to_agent_id"]) if data.get("to_agent_id") else None,
+        message_type=data.get("message_type", "info"),
+        content=data.get("content", ""),
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    return {"id": str(msg.id), "status": "sent"}
+
+
+@router.put("/agents/{agent_id}")
+def update_agent(agent_id: str, data: dict = Body(...), db=Depends(get_db)):
+    agent = db.query(Agent).filter(Agent.id == uuid.UUID(agent_id)).first()
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+    for key in ["name", "description", "model_name", "is_active", "config"]:
+        if key in data:
+            setattr(agent, key, data[key])
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/agents/{agent_id}")
+def delete_agent(agent_id: str, db=Depends(get_db)):
+    agent = db.query(Agent).filter(Agent.id == uuid.UUID(agent_id)).first()
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+    db.delete(agent)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@router.put("/tasks/{task_id}")
+def update_task(task_id: str, data: dict = Body(...), db=Depends(get_db)):
+    task = db.query(AgentTask).filter(AgentTask.id == uuid.UUID(task_id)).first()
+    if not task:
+        raise HTTPException(404, "Task not found")
+    for key in ["name", "description", "status", "priority", "assigned_agent_id", "requires_review"]:
+        if key in data:
+            if key == "assigned_agent_id" and data[key]:
+                setattr(task, key, uuid.UUID(data[key]))
+            else:
+                setattr(task, key, data[key])
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/tasks/{task_id}")
+def delete_task(task_id: str, db=Depends(get_db)):
+    task = db.query(AgentTask).filter(AgentTask.id == uuid.UUID(task_id)).first()
+    if not task:
+        raise HTTPException(404, "Task not found")
+    db.delete(task)
+    db.commit()
+    return {"status": "deleted"}
 @router.get("/agents")
 def list_agents(db=Depends(get_db), current_user=Depends(get_current_user)):
     agents = db.query(Agent).filter(Agent.created_by == current_user.id).all()
@@ -138,3 +217,50 @@ def send_message(data: dict = Body(...), db=Depends(get_db)):
     db.add(msg)
     db.commit()
     return {"id": str(msg.id)}
+
+
+
+from pydantic import BaseModel
+from typing import List
+
+class BatchDeleteRequest(BaseModel):
+    ids: List[str]
+
+@router.post("/batch-delete", status_code=200)
+def batch_delete_agent_tasks(
+    data: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+):
+    deleted = 0
+    for tid_str in data.ids:
+        try:
+            uid = uuid.UUID(tid_str)
+        except ValueError:
+            continue
+        task = db.query(AgentTask).filter(AgentTask.id == uid).first()
+        if not task:
+            continue
+        db.query(AgentMessage).filter(AgentMessage.task_id == uid).delete()
+        db.delete(task)
+        deleted += 1
+    db.commit()
+    return {"deleted": deleted}
+
+@router.post("/agents/batch-delete", status_code=200)
+def batch_delete_agents(
+    data: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+):
+    deleted = 0
+    for aid_str in data.ids:
+        try:
+            uid = uuid.UUID(aid_str)
+        except ValueError:
+            continue
+        agent = db.query(Agent).filter(Agent.id == uid).first()
+        if not agent:
+            continue
+        db.delete(agent)
+        deleted += 1
+    db.commit()
+    return {"deleted": deleted}

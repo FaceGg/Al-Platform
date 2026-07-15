@@ -1,4 +1,4 @@
-﻿"""
+"""
 Knowledge Base, Knowledge Graph, and RAG API endpoints.
 """
 import uuid

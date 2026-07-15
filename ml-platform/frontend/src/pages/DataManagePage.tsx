@@ -1,6 +1,6 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  Card, Table, Button, Upload, Select, Space, message, Modal, Typography, Row, Col, Tag
+  App as AntApp, Card, Table, Button, Upload, Select, Space, Modal, Typography, Row, Col, Tag
 } from "antd";
 import {
   UploadOutlined, DownloadOutlined, DeleteOutlined, EyeOutlined, ImportOutlined, ExportOutlined
@@ -12,6 +12,7 @@ import { useI18n } from "../i18n";
 const { Text } = Typography;
 
 export default function DataManagePage() {
+  const { message } = AntApp.useApp();
   const { t } = useI18n();
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);

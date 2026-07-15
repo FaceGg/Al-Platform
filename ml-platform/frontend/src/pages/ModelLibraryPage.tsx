@@ -1,6 +1,6 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Card, Table, Select, Button, Space, message, Modal, Tag, Row, Col, List } from 'antd'
-import { DownloadOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons'
+import { DownloadOutlined, DeleteOutlined, EyeOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../api/client'
 import AppLayout from '../components/AppLayout'
@@ -27,6 +27,7 @@ export default function ModelLibraryPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
   const [models, setModels] = useState<Model[]>([])
   const [loading, setLoading] = useState(false)
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
 
   useEffect(() => {
     apiClient.get('/projects').then((res) => {
@@ -47,7 +48,29 @@ export default function ModelLibraryPage() {
       .finally(() => setLoading(false))
   }, [selectedProjectId])
 
-  const handleDownload = async (modelId: number) => {
+  const handleBatchDelete = () => {
+    if (selectedRowKeys.length === 0) return
+    Modal.confirm({
+      title: '批量删除选中的 ' + selectedRowKeys.length + ' 个模型？',
+      icon: <ExclamationCircleOutlined />,
+      content: '删除后不可恢复，请谨慎操作。',
+      okText: '确认删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await apiClient.post('/model-library/batch-delete', { ids: selectedRowKeys })
+          message.success('成功删除 ' + selectedRowKeys.length + ' 个模型')
+          setSelectedRowKeys([])
+          setModels((prev) => prev.filter((m) => selectedRowKeys.includes(m.id)))
+        } catch {
+          message.error('批量删除失败')
+        }
+      },
+    })
+  }
+
+    const handleDownload = async (modelId: number) => {
     try {
       const res = await apiClient.get('/models/' + modelId + '/download', { responseType: 'blob' })
       const url = URL.createObjectURL(res.data)
@@ -78,7 +101,14 @@ export default function ModelLibraryPage() {
     })
   }
 
-  const columns = [
+  const rowSelection = {
+    selectedRowKeys,
+    onChange: (newSelectedRowKeys: React.Key[]) => {
+      setSelectedRowKeys(newSelectedRowKeys)
+    },
+  }
+
+    const columns = [
     { title: t.model.title, dataIndex: 'name', key: 'name' },
     { title: '类型', dataIndex: 'model_type', key: 'model_type' },
     { title: t.model.created, dataIndex: 'created_at', key: 'created_at' },
@@ -131,13 +161,25 @@ export default function ModelLibraryPage() {
             )}
           />
         ) : (
-          <Table
+          <>
+            {selectedRowKeys.length > 0 && (
+            <Row gutter={16} style={{ marginBottom: 16 }}>
+              <Col>
+                <Button icon={<DeleteOutlined />} danger type='primary' onClick={handleBatchDelete}>
+                  批量删除 ({selectedRowKeys.length})
+                </Button>
+              </Col>
+            </Row>
+          )}
+            <Table
             dataSource={models}
             columns={columns}
             rowKey="id"
+          rowSelection={rowSelection}
             loading={loading}
             pagination={{ pageSize: 10 }}
           />
+          </>
         )}
       </Card>
     </AppLayout>

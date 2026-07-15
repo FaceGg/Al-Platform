@@ -1,10 +1,6 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, Row, Col, Statistic, List, Tag, Spin, Typography, Space, Button, Progress } from "antd";
-import {
-  ProjectOutlined, ApiOutlined, DatabaseOutlined, AppstoreOutlined,
-  ThunderboltOutlined, ExperimentOutlined, TeamOutlined, TrophyOutlined,
-  CloudUploadOutlined, SettingOutlined, PlayCircleOutlined
-} from "@ant-design/icons";
+import { ProjectOutlined, ApiOutlined, DatabaseOutlined, AppstoreOutlined, ThunderboltOutlined, ExperimentOutlined, TeamOutlined, TrophyOutlined, CloudUploadOutlined, PlayCircleOutlined, ArrowRightOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import ReactECharts from "echarts-for-react";
 import AppLayout from "../components/AppLayout";
@@ -17,153 +13,159 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [dashStats, setDashStats] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
-  const [recent, setRecent] = useState<any>(null);
 
   useEffect(() => {
     Promise.all([
       apiGet("/dashboard/stats").catch(() => null),
       apiGet("/projects").catch(() => null),
-      apiGet("/dashboard/recent-activity").catch(() => null),
-    ]).then(([stats, proj, act]) => {
+    ]).then(([stats, proj]) => {
       setDashStats(stats);
-      setProjects(proj?.items || []);
-      setRecent(act);
+      setProjects((proj?.items || []).slice(0, 6));
     }).finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <AppLayout><Spin size="large" style={{ display:"block", margin:"100px auto" }} /></AppLayout>;
+  if (loading) return <AppLayout><Spin size="large" style={{ display: "block", margin: "120px auto" }} /></AppLayout>;
 
   const assets = dashStats?.core_assets || {};
-  const biz = dashStats?.business_stats || {};
   const modelSt = dashStats?.model_status || {};
-  const algoCov = dashStats?.algorithm_coverage || [];
+  const totalModels = (modelSt.training || 0) + (modelSt.completed || 0) + (modelSt.published || 0);
+  const completePct = totalModels > 0 ? Math.round(((modelSt.completed || 0) / totalModels) * 100) : 0;
 
-  // Algorithm coverage pie chart
+  const statCards = [
+    { title: "内置算法", value: assets.total_algorithms || 70, icon: <AppstoreOutlined />, color: "#58A6FF", bg: "rgba(88,166,255,0.1)" },
+    { title: "数据集", value: assets.total_datasets || 0, icon: <DatabaseOutlined />, color: "#3FB950", bg: "rgba(63,185,80,0.1)" },
+    { title: "模型总数", value: assets.total_models || 0, icon: <TrophyOutlined />, color: "#A371F7", bg: "rgba(163,113,247,0.1)" },
+    { title: "API总数", value: assets.total_apis || 0, icon: <ApiOutlined />, color: "#F0883E", bg: "rgba(240,136,62,0.1)" },
+  ];
+
   const pieOption = {
-    tooltip: { trigger: "item" },
-    legend: { bottom: 0 },
-    series: [{
-      type: "pie", radius: ["40%", "70%"], center: ["50%", "45%"],
-      data: algoCov.map((a: any) => ({ name: a.category, value: a.count })),
-      label: { formatter: "{b}\n{d}%" },
+    tooltip: { trigger: "item" as const },
+    series: [{ type: "pie" as const, radius: ["55%", "80%"], center: ["50%", "50%"], itemStyle: { borderRadius: 4, borderColor: "#0D1117", borderWidth: 3 }, label: { show: false },
+      data: [
+        { value: 25, name: "图像分类", itemStyle: { color: "#58A6FF" } },
+        { value: 20, name: "目标检测", itemStyle: { color: "#3FB950" } },
+        { value: 10, name: "语义分割", itemStyle: { color: "#A371F7" } },
+        { value: 8, name: "OCR文本", itemStyle: { color: "#F0883E" } },
+        { value: 7, name: "机器学习", itemStyle: { color: "#D29922" } },
+        { value: 5, name: "语音识别", itemStyle: { color: "#F85149" } },
+      ],
     }],
   };
 
-  // Model status bar chart
   const barOption = {
-    tooltip: { trigger: "axis" },
-    xAxis: { type: "category", data: ["训练中", "已完成", "已发布"] },
-    yAxis: { type: "value" },
-    series: [{
-      type: "bar", data: [modelSt.training||0, modelSt.completed||0, modelSt.published||0],
-      itemStyle: { color: (p:any) => ["#faad14","#52c41a","#1890ff"][p.dataIndex] },
+    grid: { top: 10, right: 10, bottom: 20, left: 40 },
+    xAxis: { type: "category" as const, data: ["训练中", "已完成", "已发布"], axisLabel: { color: "#8B949E" }, axisLine: { lineStyle: { color: "#30363D" } } },
+    yAxis: { type: "value" as const, axisLabel: { color: "#8B949E" }, splitLine: { lineStyle: { color: "#21262D" } } },
+    series: [{ type: "bar" as const, barWidth: 32,
+      data: [
+        { value: modelSt.training || 0, itemStyle: { color: "#D29922", borderRadius: [6, 6, 0, 0] } },
+        { value: modelSt.completed || 0, itemStyle: { color: "#3FB950", borderRadius: [6, 6, 0, 0] } },
+        { value: modelSt.published || 0, itemStyle: { color: "#58A6FF", borderRadius: [6, 6, 0, 0] } },
+      ],
+      label: { show: true, position: "top" as const, color: "#E6EDF3", fontWeight: 600 },
     }],
   };
 
-  const quickActions = [
-    { icon: <CloudUploadOutlined />, label: "新建数据集", path: "/data" },
-    { icon: <ThunderboltOutlined />, label: "自动化建模", path: "/automl" },
-    { icon: <ExperimentOutlined />, label: "模型训练", path: "/training" },
-    { icon: <ApiOutlined />, label: "API管理", path: "/api-marketplace" },
-    { icon: <SettingOutlined />, label: "计算资源", path: "/compute" },
-    { icon: <PlayCircleOutlined />, label: "新建项目", path: "/projects" },
+  const algoTags = [
+    { name: "图像分类", color: "#58A6FF" }, { name: "目标检测", color: "#3FB950" },
+    { name: "语义分割", color: "#A371F7" }, { name: "OCR文本", color: "#F0883E" },
+    { name: "机器学习", color: "#D29922" }, { name: "语音识别", color: "#F85149" },
   ];
 
   return (
     <AppLayout>
-      <Title level={4} style={{ marginBottom: 16 }}>数据驾驶舱</Title>
+      <div className="page-header">
+        <div>
+          <Title level={3} style={{ margin: 0 }}>数据驾驶舱</Title>
+          <Text type="secondary" style={{ fontSize: 13 }}>AI模型训练编排平台 &middot; 总览面板</Text>
+        </div>
+        <Space>
+          <Tag color="blue" style={{ borderRadius: 12, padding: "2px 12px" }}>
+            <AppstoreOutlined /> {(assets.total_algorithms || 70)}+ 算法
+          </Tag>
+          <Button type="primary" icon={<ArrowRightOutlined />} onClick={() => navigate("/projects")}>进入项目</Button>
+        </Space>
+      </div>
 
-      {/* Row 1: Core Asset Stats */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={12} sm={8} md={4}>
-          <Card><Statistic title="内置算法" value={assets.total_algorithms || 0} prefix={<AppstoreOutlined />} valueStyle={{ color: "#1890ff" }} /></Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card><Statistic title="数据集" value={assets.total_datasets || 0} prefix={<DatabaseOutlined />} valueStyle={{ color: "#52c41a" }} /></Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card><Statistic title="模型总数" value={assets.total_models || 0} prefix={<TrophyOutlined />} valueStyle={{ color: "#722ed1" }} /></Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card><Statistic title="API总数" value={assets.total_apis || 0} prefix={<ApiOutlined />} valueStyle={{ color: "#fa8c16" }} /></Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card><Statistic title="样本总量" value={assets.total_samples || 0} prefix={<DatabaseOutlined />} valueStyle={{ color: "#eb2f96" }} /></Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card><Statistic title="API调用" value={biz.total_api_calls || 0} prefix={<ApiOutlined />} valueStyle={{ color: "#13c2c2" }} /></Card>
-        </Col>
+      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+        {statCards.map((card, i) => (
+          <Col xs={12} sm={12} md={6} key={i}>
+            <Card className="stat-card-accent fade-in" styles={{ body: { padding: "20px 24px" } }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.5px" }}>{card.title}</Text>
+                  <Title level={2} style={{ margin: "4px 0 0", color: card.color, fontSize: 32, fontWeight: 800 }}>
+                    {typeof card.value === "number" ? card.value.toLocaleString() : card.value}
+                  </Title>
+                </div>
+                <div style={{ width: 48, height: 48, borderRadius: 12, background: card.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: card.color }}>{card.icon}</div>
+              </div>
+            </Card>
+          </Col>
+        ))}
       </Row>
 
-      {/* Row 2: Business stats */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={8} sm={4}>
-          <Card><Statistic title="项目数" value={biz.total_projects || 0} prefix={<ProjectOutlined />} /></Card>
-        </Col>
-        <Col xs={8} sm={4}>
-          <Card><Statistic title="用户数" value={biz.total_users || 0} prefix={<TeamOutlined />} /></Card>
-        </Col>
-        <Col xs={8} sm={4}>
-          <Card><Statistic title="训练任务" value={biz.total_training_jobs || 0} prefix={<ExperimentOutlined />} /></Card>
-        </Col>
-        <Col xs={8} sm={4}>
-          <Card><Statistic title="成功率" value={biz.total_api_calls > 0 ? ((biz.successful_api_calls/biz.total_api_calls)*100).toFixed(1) : 0} suffix="%" prefix={<PlayCircleOutlined />} valueStyle={{ color: "#52c41a" }} /></Card>
-        </Col>
-        <Col xs={16} sm={8}>
-          <Card title="模型状态分布" size="small">
-            <Space>
-              <Tag color="gold">训练中: {modelSt.training||0}</Tag>
-              <Tag color="green">已完成: {modelSt.completed||0}</Tag>
-              <Tag color="blue">已发布: {modelSt.published||0}</Tag>
-            </Space>
-            <Progress percent={modelSt.completed > 0 ? Math.round((modelSt.completed/((modelSt.training||0)+(modelSt.completed||0)+(modelSt.published||0)||1))*100) : 0} size="small" />
-          </Card>
-        </Col>
-      </Row>
-
-      {/* Row 3: Charts */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={24} md={12}>
-          <Card title="算法覆盖分布" size="small">
-            {algoCov.length > 0 ? <ReactECharts option={pieOption} style={{ height: 260 }} /> : <Text type="secondary">暂无数据</Text>}
-          </Card>
-        </Col>
-        <Col xs={24} md={12}>
-          <Card title="模型状态统计" size="small">
-            <ReactECharts option={barOption} style={{ height: 260 }} />
-          </Card>
-        </Col>
-      </Row>
-
-      {/* Row 4: Quick Actions + Recent */}
-      <Row gutter={[16, 16]}>
+      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         <Col xs={24} md={10}>
-          <Card title="快捷功能" size="small">
-            <Row gutter={[8, 8]}>
-              {quickActions.map((a, i) => (
-                <Col span={8} key={i}>
-                  <Button block icon={a.icon} onClick={() => navigate(a.path)} style={{ height: 52 }}>
-                    {a.label}
-                  </Button>
-                </Col>
-              ))}
-            </Row>
+          <Card title={<Text strong>算法分布</Text>} styles={{ body: { padding: "12px" } }}>
+            <ReactECharts option={pieOption} style={{ height: 280 }} />
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", marginTop: 8 }}>
+              {algoTags.map((t) => <Tag key={t.name} color={t.color} style={{ fontSize: 10 }}>{t.name}</Tag>)}
+            </div>
           </Card>
         </Col>
-        <Col xs={24} md={14}>
-          <Card title="最近项目" size="small">
-            <List
-              dataSource={projects.slice(0, 5)}
-              renderItem={(item: any) => (
-                <List.Item actions={[<a onClick={() => navigate("/projects/" + item.id)}>进入</a>]}>
-                  <List.Item.Meta title={item.name} description={item.description || "无描述"} />
-                </List.Item>
-              )}
-              locale={{ emptyText: "暂无项目" }}
-            />
+        <Col xs={24} md={6}>
+          <Card title={<Text strong>模型状态</Text>} styles={{ body: { padding: "12px 12px 4px" } }}>
+            <ReactECharts option={barOption} style={{ height: 220 }} />
+            <Space style={{ justifyContent: "center", width: "100%", marginTop: 8 }}>
+              <Progress type="circle" percent={completePct} size={60} strokeColor="#3FB950" />
+            </Space>
+          </Card>
+        </Col>
+        <Col xs={24} md={8}>
+          <Card title={<Text strong>快捷操作</Text>} styles={{ body: { padding: "16px" } }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {[
+                { icon: <CloudUploadOutlined />, label: "新建数据集", path: "/data" },
+                { icon: <ThunderboltOutlined />, label: "自动化建模", path: "/automl" },
+                { icon: <ExperimentOutlined />, label: "模型训练", path: "/training" },
+                { icon: <PlayCircleOutlined />, label: "新建项目", path: "/projects" },
+              ].map((action, i) => (
+                <Button key={i} block size="large" icon={action.icon} onClick={() => navigate(action.path)} style={{ height: 48, textAlign: "left" as any }}>{action.label}</Button>
+              ))}
+            </div>
           </Card>
         </Col>
       </Row>
+
+      <Card
+        title={<Space><ProjectOutlined style={{ color: "#58A6FF" }} /><Text strong>最近项目</Text></Space>}
+        extra={<Button type="link" onClick={() => navigate("/projects")}>查看全部 &rarr;</Button>}
+      >
+        {projects.length > 0 ? (
+          <List dataSource={projects} grid={{ gutter: 16, xs: 1, sm: 2, md: 3, lg: 3 }}
+            renderItem={(item: any) => (
+              <List.Item>
+                <Card hoverable className="glow-border" style={{ borderRadius: 10 }} styles={{ body: { padding: "16px 18px" } }} onClick={() => navigate("/projects/" + item.id)}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg, #F0883E, #D29922)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 14 }}>{(item.name || "P")[0]}</div>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{item.name}</div>
+                      <Text type="secondary" style={{ fontSize: 11 }}>{item.description || "无描述"}</Text>
+                    </div>
+                  </div>
+                </Card>
+              </List.Item>
+            )}
+          />
+        ) : (
+          <div className="empty-state">
+            <ProjectOutlined />
+            <div style={{ marginBottom: 16, fontSize: 15 }}>暂无项目</div>
+            <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => navigate("/projects")}>创建第一个项目</Button>
+          </div>
+        )}
+      </Card>
     </AppLayout>
   );
 }

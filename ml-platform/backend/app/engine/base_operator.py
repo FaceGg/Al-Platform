@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.engine.operator_contract import OperatorContext, OperatorResult
 
 
 @dataclass
@@ -29,16 +33,18 @@ class BaseOperator(ABC):
     category: str = ""
     description: str = ""
     version: str = "1.0"
-    inputs: list[PortSpec] = field(default_factory=list)
-    outputs: list[PortSpec] = field(default_factory=list)
-    parameters: list[ParamSpec] = field(default_factory=list)
+    inputs: list[PortSpec] = []
+    outputs: list[PortSpec] = []
+    parameters: list[ParamSpec] = []
 
     @abstractmethod
     def validate(self, inputs: dict) -> bool:
         ...
 
     @abstractmethod
-    def execute(self, inputs: dict, params: dict) -> dict:
+    def execute(
+        self, context: "OperatorContext", inputs: dict, params: dict,
+    ) -> "OperatorResult":
         ...
 
     def get_preview(self, outputs: dict) -> dict:

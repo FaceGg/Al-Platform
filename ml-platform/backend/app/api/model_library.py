@@ -1,4 +1,4 @@
-﻿"""Model library API - CRUD for trained models."""
+"""Model library API - CRUD for trained models."""
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -142,3 +142,30 @@ def model_stats(db: Session = Depends(get_db)):
             for m in top
         ],
     }
+
+
+from pydantic import BaseModel
+from typing import List
+
+class BatchDeleteRequest(BaseModel):
+    ids: List[str]
+
+@router.post("/batch-delete", status_code=200)
+def batch_delete_models(
+    data: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    deleted = 0
+    for mid_str in data.ids:
+        try:
+            uid = uuid.UUID(mid_str)
+        except ValueError:
+            continue
+        model = db.query(ModelLibrary).filter(ModelLibrary.id == uid).first()
+        if not model:
+            continue
+        db.delete(model)
+        deleted += 1
+    db.commit()
+    return {"deleted": deleted}

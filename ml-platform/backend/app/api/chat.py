@@ -1,4 +1,4 @@
-﻿"""LLM Chat API - standalone AI chat endpoint."""
+"""LLM Chat API - standalone AI chat endpoint."""
 from fastapi import APIRouter, Depends, Body
 from app.config import settings
 from app.models.user import User

@@ -1,4 +1,4 @@
-﻿"""Dataset, annotation, and orchestration app ORM models."""
+"""Dataset, annotation, and orchestration app ORM models."""
 import uuid
 from sqlalchemy import Column, String, Text, Float, DateTime, JSON, Boolean, ForeignKey, Integer, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -11,7 +11,7 @@ class Dataset(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(256), nullable=False)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     dataset_type = Column(String(32), default="training")  # training, test, validation
     data_modality = Column(String(32), default="image")  # image, text, audio, tabular
@@ -79,7 +79,7 @@ class OrchestrationApp(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(256), nullable=False)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True)
     description = Column(Text, default="")
