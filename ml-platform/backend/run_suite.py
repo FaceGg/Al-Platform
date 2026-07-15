@@ -99,10 +99,11 @@ for mod in test_modules:
             print(f"  First errors:")
             for el in error_lines[:8]:
                 print(f"    {el}")
-        # Show stderr briefly
+        # Preserve the import traceback so CI failures remain actionable.
         if result.stderr.strip():
-            stderr_short = "\n".join(result.stderr.strip().split("\n")[:5])
-            print(f"  STDERR: {stderr_short}")
+            print("  STDERR:")
+            for stderr_line in result.stderr.rstrip().splitlines():
+                print(f"    {stderr_line}")
 
 # Cleanup
 shutil.rmtree(DB_DIR, ignore_errors=True)

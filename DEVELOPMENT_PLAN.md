@@ -378,3 +378,4 @@
 - 验证方式：后端 31/31 模块通过且数据库路径位于 `temp_test/test-suite`；前端 9/9 文件、26/26 用例通过；生产构建输出位于 `temp_test/frontend-dist`；Playwright Chromium 1/1 通过；Windows/Linux 脚本语法检查通过；旧临时路径核对为空。
 - 预防措施：新增项目临时输出必须优先使用 `ML_PLATFORM_TEMP_DIR` 或 `temp_test` 子目录；不得在源码目录新增临时数据库、日志、报告和构建目录。
 - 遗留事项：系统库内部创建并自动回收的短生命周期临时文件仍由操作系统管理，不作为项目持久临时文件保留。
+- 2026-07-15 CI 记录：Windows/Ubuntu Actions 中 26 个导入 app.main 的测试在收集阶段失败，5 个独立模块通过。run_suite.py 原先只输出 stderr 前 5 行，隐藏了 unittest traceback；已改为输出完整 stderr。当前根因仍待 CI 新日志确认，不据此猜测业务修复。
