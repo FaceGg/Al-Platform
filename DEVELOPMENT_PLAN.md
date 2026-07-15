@@ -380,3 +380,5 @@
 - 遗留事项：系统库内部创建并自动回收的短生命周期临时文件仍由操作系统管理，不作为项目持久临时文件保留。
 - 2026-07-15 CI 记录：Windows/Ubuntu Actions 中 26 个导入 app.main 的测试在收集阶段失败，5 个独立模块通过。run_suite.py 原先只输出 stderr 前 5 行，隐藏了 unittest traceback；已改为输出完整 stderr。当前根因仍待 CI 新日志确认，不据此猜测业务修复。
 - 2026-07-15 CI 修复：完整 traceback 确认 `app/engine/orchestrator.py` 导入 `requests`，但后端 requirements 未声明，导致两平台导入阶段失败。已补充 `requests==2.32.*`，需通过本地完整回归和远程 Windows/Ubuntu/Chromium 检查后再关闭该问题。
+- 2026-07-15 CI 后续问题：补充 `requests` 后，远程 CI 已从 26 个导入失败收敛为 1 个模块失败；Ubuntu 中 `test_operators_extended` 的 4 个断言失败，原因是未安装可选 PyTorch 时 `dl_operators.py` 不注册 `mlp_classifier`、`mlp_regressor` 和 `cnn1d_classifier`。尝试增加 scikit-learn CPU 回退注册，但代码插入位置与原 PyTorch 类定义边界冲突，当前本地修复草稿出现重复类/注册和抽象类未实现 `validate` 问题，尚未完成，已按要求暂停。恢复时应先清理 `dl_operators.py` 的重复定义，明确 `TORCH_AVAILABLE` 分支，并为回退类实现完整 `validate` 与测试。
+- 2026-07-15 CI 修复更新：已清理并恢复 `dl_operators.py` 到提交基线，放弃未充分验证的源码回退实现；改为在 Windows/Ubuntu 质量任务和 Chromium 验收任务中显式安装 CPU 版 PyTorch。生产 `requirements.txt` 保持轻量，应用源码仍使用原始 PyTorch 算子实现。待本地回归及远程 CI 全部通过后关闭该问题。
