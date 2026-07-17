@@ -121,7 +121,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
-- 第 6 周进行中：后端 Experiment/Run、普通训练/恢复、AutoML 和隔离 TensorBoard 已完成；待完成前端、Compose/CI 真实生产集成和最终验收。
+- 第 6 周进行中：后端实验训练闭环与前端 typed clients 已完成；待完成实验/训练运维 UI、Compose/CI 真实生产集成和最终验收。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -717,3 +717,11 @@
 - 平台授权：owned TrainingJob 且存在 MLflow Run 才签发短期 token；返回平台 backend proxy URL。平台代理与 gateway 都重新验签，篡改 token 在内部服务访问前返回 403。
 - TDD 与验证：gateway 包缺失 RED；返回 URL 初次访问 404 后补充真实 proxy 契约；最终 token、遍历、复用、Run 隔离、清理、owner 授权和 proxy 6/6 GREEN，gateway import smoke 成功。
 - 遗留事项：gateway 容器、共享日志卷、真实 TensorBoard 子进程/HTTP 由 Task 12 WSL Docker 验收；前端打开操作在 Task 11 完成。
+
+### 2026-07-17：第六周任务 10 前端 Experiment/Training API 完成
+
+- 新增 `api/experiments.ts`：Experiment 创建/列表/详情、Run 分页和 2–10 Run 比较，提供 ExperimentRun、MetricPoint、RunComparison 等类型。
+- 扩展 `api/training.ts`：严格 TrainingJobCreate、checkpoint 列表、stop、resume 和 TensorBoard session 类型/方法；列表只兼容 array 或 `{items}` 两种既有响应。
+- 契约修正：前端按实施计划发送 `checkpoint_path`；后端在 owned source Run 的 artifact 列表内解析相对 path，并生成持久 checkpoint URI，不接受任意本地路径。
+- TDD 与验证：Experiment 模块缺失、Training 控制函数缺失先 RED；typed client 5/5 GREEN；前端 manifest 先因新测试未归属 RED，随后登记 Week 6 且不重复归属历史 training 测试。
+- 遗留事项：TrainingJobsPage 仍是旧单表布局，Task 11 将改为 Experiment/Training 双 Tab、比较、停止、恢复和 TensorBoard 操作。

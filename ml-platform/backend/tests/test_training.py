@@ -265,7 +265,7 @@ class TestTrainingAPI(unittest.TestCase):
         source_id = self._create_source_job(status="cancelled")
         response = self.client.post(
             f"/api/training/jobs/{source_id}/resume",
-            json={},
+            json={"checkpoint_path": "checkpoints/latest.joblib"},
             headers=self.owner_headers,
         )
 

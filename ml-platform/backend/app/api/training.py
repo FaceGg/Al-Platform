@@ -44,6 +44,7 @@ class TrainingRunRequest(BaseModel):
 
 class ResumeRequest(BaseModel):
     checkpoint_uri: str | None = None
+    checkpoint_path: str | None = None
     total_epochs: int | None = Field(default=None, ge=1, le=10000)
 
 
@@ -281,7 +282,11 @@ def resume_training_job(
     checkpoint_uri = data.checkpoint_uri or source.latest_checkpoint_uri
     if not checkpoint_uri or not source.mlflow_run_id:
         raise HTTPException(409, _error("CHECKPOINT_NOT_FOUND", "Checkpoint not found"))
-    checkpoint_path = _checkpoint_path(checkpoint_uri)
+    checkpoint_path = (
+        _checkpoint_path(data.checkpoint_path)
+        if data.checkpoint_path
+        else _checkpoint_path(checkpoint_uri)
+    )
     tracking = get_experiment_tracking(request)
     try:
         available = {
@@ -337,7 +342,11 @@ def resume_training_job(
         restore_best=source.restore_best,
         resumed_from_job_id=source.id,
         resumed_from_run_id=source.mlflow_run_id,
-        resume_checkpoint_uri=checkpoint_uri,
+        resume_checkpoint_uri=(
+            _replace_checkpoint_path(checkpoint_uri, checkpoint_path)
+            if data.checkpoint_path
+            else checkpoint_uri
+        ),
         attempt=0,
     )
     db.add(resumed)
@@ -579,6 +588,14 @@ def _checkpoint_path(uri: str) -> str:
     if index < 0 or ".." in uri[index:].split("/"):
         raise HTTPException(400, _error("CHECKPOINT_INVALID", "Checkpoint URI is invalid"))
     return uri[index:]
+
+
+def _replace_checkpoint_path(uri: str, path: str) -> str:
+    marker = "checkpoints/"
+    index = uri.find(marker)
+    if index < 0:
+        raise HTTPException(400, _error("CHECKPOINT_INVALID", "Checkpoint URI is invalid"))
+    return f"{uri[:index]}{path}"
 
 
 def _run_artifact_uri(job: TrainingJob, path: str) -> str:

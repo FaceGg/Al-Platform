@@ -1,29 +1,41 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "./client";
-import { createTrainingJob, getTrainingJob, listTrainingJobs } from "./training";
+import {
+  createTensorBoardSession,
+  createTrainingJob,
+  getTrainingJob,
+  listTrainingCheckpoints,
+  listTrainingJobs,
+  resumeTrainingJob,
+  stopTrainingJob,
+} from "./training";
 
 describe("training API", () => {
   beforeEach(() => vi.restoreAllMocks());
 
   it("creates training from a dataset artifact", async () => {
     const post = vi.spyOn(apiClient, "post").mockResolvedValue({
-      data: { job_id: "job-1", status: "started" },
+      data: { job_id: "job-1", status: "queued" },
     });
 
     await createTrainingJob({
       project_id: "project-1",
+      experiment_id: "experiment-1",
       dataset_artifact_id: "artifact-1",
       name: "weld-quality",
-      operator_id: "random_forest",
-      params: { target_column: "quality" },
+      target_column: "quality",
+      task: "classification",
+      total_epochs: 20,
     });
 
     expect(post).toHaveBeenCalledWith("/training/run", {
       project_id: "project-1",
+      experiment_id: "experiment-1",
       dataset_artifact_id: "artifact-1",
       name: "weld-quality",
-      operator_id: "random_forest",
-      params: { target_column: "quality" },
+      target_column: "quality",
+      task: "classification",
+      total_epochs: 20,
     });
   });
 
@@ -47,5 +59,24 @@ describe("training API", () => {
     expect(await getTrainingJob("job-1")).toEqual(job);
     expect(get).toHaveBeenNthCalledWith(1, "/training/jobs", { params: undefined });
     expect(get).toHaveBeenNthCalledWith(2, "/training/jobs/job-1");
+  });
+
+  it("uses job-scoped checkpoint and control endpoints", async () => {
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({
+      data: { checkpoints: [{ path: "checkpoints/best.joblib", uri: "mlflow-artifacts:/best" }] },
+    });
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({ data: {} });
+
+    expect(await listTrainingCheckpoints("job-1")).toHaveLength(1);
+    await stopTrainingJob("job-1");
+    await resumeTrainingJob("job-1", "checkpoints/best.joblib");
+    await createTensorBoardSession("job-1");
+
+    expect(get).toHaveBeenCalledWith("/training/jobs/job-1/checkpoints");
+    expect(post).toHaveBeenNthCalledWith(1, "/training/jobs/job-1/stop");
+    expect(post).toHaveBeenNthCalledWith(2, "/training/jobs/job-1/resume", {
+      checkpoint_path: "checkpoints/best.joblib",
+    });
+    expect(post).toHaveBeenNthCalledWith(3, "/training/jobs/job-1/tensorboard-session");
   });
 });

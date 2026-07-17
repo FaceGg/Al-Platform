@@ -513,7 +513,7 @@ git commit -m "feat: add isolated tensorboard gateway"
 - Modify: `ml-platform/frontend/src/api/training.test.ts`
 - Modify: `ml-platform/frontend/src/weekAcceptance.test.ts`
 
-- [ ] **Step 1: Write failing client tests**
+- [x] **Step 1: Write failing client tests**
 
 Assert exact endpoints and typed payloads for create/list/detail/runs/compare, checkpoint list, stop, resume, and TensorBoard session:
 
@@ -528,21 +528,21 @@ expect(post).toHaveBeenCalledWith("/training/jobs/job-1/resume", {
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `npm test -- src/api/experiments.test.ts src/api/training.test.ts`
 Expected: FAIL because clients are absent.
 
-- [ ] **Step 3: Implement typed clients**
+- [x] **Step 3: Implement typed clients**
 
 Define Experiment, ExperimentRun, MetricPoint, RunComparison, TrainingCheckpoint, and TensorBoardSession types. Keep unknown MLflow params JSON-safe and normalize API collections from either arrays or `{items}` only where existing API compatibility requires it.
 
-- [ ] **Step 4: Verify GREEN and register Week 6 ownership**
+- [x] **Step 4: Verify GREEN and register Week 6 ownership**
 
 Run: `npm test -- src/api/experiments.test.ts src/api/training.test.ts`
 Expected: all API contract tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add ml-platform/frontend/src/api/experiments.ts ml-platform/frontend/src/api/experiments.test.ts ml-platform/frontend/src/api/training.ts ml-platform/frontend/src/api/training.test.ts ml-platform/frontend/src/weekAcceptance.test.ts
