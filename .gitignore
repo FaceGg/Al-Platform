@@ -11,6 +11,7 @@ dist/
 .runtime/
 .playwright-artifacts/
 .superpowers/
+.worktrees/
 *.pid
 temp_test/*
 !temp_test/.gitkeep
