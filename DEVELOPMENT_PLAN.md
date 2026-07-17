@@ -608,3 +608,13 @@
 - 测试与验证：新增 `test_ci_workflow`，先确认旧配置 2/2 断言失败，再修改 workflow 后 2/2 通过；YAML 解析和 `git diff --check` 通过；第五周 runner 更新为 13/13 模块通过。
 - 遗留事项：修复提交仍需取得新的 GitHub Actions `production-integration` 4/4 成功证据；成功前第五周继续保持“进行中”。
 - 预防措施：进程启动门禁优先使用进程自身可观测状态，远程控制能力由后续功能测试验证；CI shell 脚本只能依赖 runner 基线命令或显式安装工具，并为关键脚本增加静态契约测试。
+
+### 2026-07-17：循环外键迁移保持更新时间修复
+
+- 当前周次：第 5 周，远程质量门禁修复中。
+- 问题现象：Run `29548417472` 的 production-integration 4/4 通过，但 Ubuntu 全量质量 job 在循环外键迁移回归中发现目标 `updated_at` 比源值晚 1 秒；本地执行常因两次操作落在同一秒而通过。
+- 根因：循环外键采用第二阶段 UPDATE 修复，语句使用带 `onupdate=func.now()` 的 ORM Table；只显式更新外键时 SQLAlchemy 自动注入当前时间，破坏源数据时间戳。
+- 解决方法：第二阶段仍使用 ORM 列类型保证 SQLite/PostgreSQL UUID 转换，但同时把所有声明 `onupdate` 的字段按源行原值显式写入，阻止隐式刷新。
+- TDD 与验证：先把源 `updated_at` 固定为历史时间，确认旧实现稳定覆盖为当前时间；首次尝试使用反射表因 SQLite UUID 被反射为数值型而失败，依据类型处理证据调整为显式保留 onupdate 字段；最终聚焦用例、迁移模块 9/9 和第五周 13/13 通过。
+- 遗留事项：需推送修复并取得新的 Windows/Ubuntu/production-integration/Chromium 全绿 Run 后再完成第五周状态更新。
+- 预防措施：数据迁移 UPDATE 必须审计 Python-side default/onupdate；时间戳保真测试应使用固定历史值，不依赖同秒执行碰巧相等；反射表与 ORM Table 切换前必须验证自定义 UUID/JSON 类型处理器。

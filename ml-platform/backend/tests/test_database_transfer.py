@@ -189,6 +189,7 @@ class TestRealOrmUuidTransfer(TestCase):
             user_id, project_id = uuid4(), uuid4()
             model_id, training_id = uuid4(), uuid4()
             created_at = datetime(2026, 7, 16, 12, 34, 56)
+            updated_at = datetime(2026, 7, 16, 13, 45, 7)
             with sessionmaker(bind=source_engine)() as session:
                 session.add(User(id=user_id, username="cycle-user", password_hash="hash"))
                 session.add(Project(id=project_id, name="cycle-project", owner_id=user_id))
@@ -207,11 +208,15 @@ class TestRealOrmUuidTransfer(TestCase):
                 )
                 session.add(TrainingJob(id=training_id, name="cycle-job", project_id=project_id, user_id=user_id))
                 session.commit()
-                session.query(ModelLibrary).filter_by(id=model_id).update({"training_job_id": training_id})
+                session.query(ModelLibrary).filter_by(id=model_id).update({
+                    "training_job_id": training_id,
+                    "updated_at": updated_at,
+                })
                 session.query(TrainingJob).filter_by(id=training_id).update({"model_library_id": model_id})
                 session.commit()
                 source_model = session.query(ModelLibrary).filter_by(id=model_id).one()
                 source_updated_at = source_model.updated_at
+                self.assertEqual(source_updated_at, updated_at)
             first = copy_database(source_engine, target_engine)
             second = copy_database(source_engine, target_engine)
             with sessionmaker(bind=target_engine)() as session:

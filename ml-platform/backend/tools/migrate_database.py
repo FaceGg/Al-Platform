@@ -225,8 +225,23 @@ def copy_database(source_engine: Engine, target_engine: Engine) -> dict[str, Tab
                 }
                 for column in source_table.columns:
                     if (name, column.name) in cyclic_keys:
+                        repair_values = {
+                            column.name: _write_value(
+                                source_row[column.name],
+                                write_table.c[column.name],
+                            ),
+                        }
+                        repair_values.update({
+                            target_column.name: _write_value(
+                                source_row[target_column.name],
+                                target_column,
+                            )
+                            for target_column in write_table.columns
+                            if target_column.onupdate is not None
+                            and target_column.name in source_row
+                        })
                         pending_updates.append(
-                            (write_table, {column.name: _write_value(source_row[column.name], write_table.c[column.name])}, source_row)
+                            (write_table, repair_values, source_row)
                         )
                         values[column.name] = None
                 target_connection.execute(write_table.insert().values(values))
