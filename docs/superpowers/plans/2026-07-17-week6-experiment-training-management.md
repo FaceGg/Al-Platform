@@ -463,7 +463,7 @@ git commit -m "feat: track automl trials in mlflow"
 - Modify: `ml-platform/backend/app/api/training.py`
 - Create: `ml-platform/backend/tests/test_tensorboard_gateway.py`
 
-- [ ] **Step 1: Write failing security and lifecycle tests**
+- [x] **Step 1: Write failing security and lifecycle tests**
 
 Cover valid token, tampering, expiry, traversal, run mismatch, process reuse, idle cleanup, fixed root containment, and backend owner authorization:
 
@@ -477,16 +477,16 @@ with self.assertRaises(SessionPathInvalid):
     manager.resolve_logdir("../other-project")
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest tests.test_tensorboard_gateway -v`
 Expected: FAIL because gateway modules do not exist.
 
-- [ ] **Step 3: Implement gateway and platform proxy contract**
+- [x] **Step 3: Implement gateway and platform proxy contract**
 
 Use URL-safe base64 JSON plus HMAC-SHA256 and constant-time comparison. Process manager allocates localhost ports, launches `python -m tensorboard.main` with fixed logdir and path prefix, records last access, reuses only matching Run sessions, and terminates expired processes. Gateway exposes internal session creation and proxy paths; platform creates signed sessions only after job ownership validation and returns a backend proxy URL. Never accept an absolute logdir or shell string.
 
-- [ ] **Step 4: Verify GREEN and import smoke**
+- [x] **Step 4: Verify GREEN and import smoke**
 
 Run:
 
@@ -497,7 +497,7 @@ python -c "from app.tensorboard_gateway.app import app; assert app"
 
 Expected: all isolation/lifecycle tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add ml-platform/backend/app/tensorboard_gateway ml-platform/backend/app/api/training.py ml-platform/backend/tests/test_tensorboard_gateway.py

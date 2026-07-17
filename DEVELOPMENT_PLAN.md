@@ -121,7 +121,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
-- 第 6 周进行中：生产配置、实验追踪、普通训练/恢复和 Artifact AutoML child Run 已完成；待完成隔离 TensorBoard、前端和生产集成验收。
+- 第 6 周进行中：后端 Experiment/Run、普通训练/恢复、AutoML 和隔离 TensorBoard 已完成；待完成前端、Compose/CI 真实生产集成和最终验收。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -708,3 +708,12 @@
 - 选择与血缘：最高有限分获胜，同分按原候选顺序稳定选择；winner 全量拟合后登记模型 Artifact、ModelLibrary、Dataset/Job/parent Run 血缘，并在 parent tags 记录 best child/artifact。
 - TDD 与验证：服务缺失时 RED；首次 API 测试因普通内存 SQLite 跨线程丢表暴露测试环境问题，改为 StaticPool 后 AutoML 与既有训练血缘 7/7 GREEN；新测试清单归属先 RED。
 - 遗留事项：候选集合为第六周确定性有限版本，不含分布式/贝叶斯搜索；TensorBoard、前端和生产服务验收尚未完成。
+
+### 2026-07-17：第六周任务 9 隔离 TensorBoard Gateway 完成
+
+- Token：URL-safe base64 JSON + HMAC-SHA256，使用 constant-time compare；claims 仅含 session/run/受控相对 logdir/expiry，覆盖篡改、过期和字段校验。
+- 进程隔离：固定 root 下 resolve，拒绝绝对路径、反斜杠和 `..`；TensorBoard 只监听 127.0.0.1，使用 argv 启动并固定 `--logdir/--path_prefix`，不接受 shell 字符串。
+- 生命周期：相同 session 仅在 Run/logdir 匹配时复用，Run mismatch 拒绝；按 token expiry 或 idle timeout terminate/kill 清理。
+- 平台授权：owned TrainingJob 且存在 MLflow Run 才签发短期 token；返回平台 backend proxy URL。平台代理与 gateway 都重新验签，篡改 token 在内部服务访问前返回 403。
+- TDD 与验证：gateway 包缺失 RED；返回 URL 初次访问 404 后补充真实 proxy 契约；最终 token、遍历、复用、Run 隔离、清理、owner 授权和 proxy 6/6 GREEN，gateway import smoke 成功。
+- 遗留事项：gateway 容器、共享日志卷、真实 TensorBoard 子进程/HTTP 由 Task 12 WSL Docker 验收；前端打开操作在 Task 11 完成。

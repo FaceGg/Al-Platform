@@ -4,7 +4,9 @@ import tempfile
 import uuid
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -18,6 +20,7 @@ from app.models.user import User
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.services.experiment_tracking import TrackingError
 from app.services.iterative_training import IncompatibleCheckpoint, TrainingCheckpoint, TrainingConfig
+from app.tensorboard_gateway.tokens import SessionSigner, SessionTokenInvalid
 
 
 router = APIRouter(prefix="/api/training", tags=["training"])
@@ -97,6 +100,23 @@ def get_automl_dispatcher(request: Request):
 def get_artifact_service(request: Request, db: Session):
     factory = getattr(request.app.state, "artifact_service_factory", None)
     return factory(db) if factory is not None else build_artifact_service(db)
+
+
+def get_tensorboard_signer(request: Request):
+    configured = getattr(request.app.state, "tensorboard_signer", None)
+    if configured is not None:
+        return configured
+    from app.config import settings
+
+    secret = settings.resolved_tensorboard_session_secret
+    if secret is None:
+        raise HTTPException(503, _error(
+            "TENSORBOARD_UNAVAILABLE",
+            "TensorBoard sessions are not configured",
+        ))
+    configured = SessionSigner(secret.get_secret_value())
+    request.app.state.tensorboard_signer = configured
+    return configured
 
 
 @router.post("/run", status_code=202)
@@ -325,6 +345,105 @@ def resume_training_job(
     db.refresh(resumed)
     _enqueue_job(db, resumed, get_training_dispatcher(request))
     return {"job_id": str(resumed.id), "status": "queued", "task_id": resumed.task_id}
+
+
+@router.post("/jobs/{job_id}/tensorboard-session", status_code=201)
+def create_tensorboard_session(
+    job_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    job = _owned_job(db, job_id, current_user.id)
+    if job is None:
+        raise HTTPException(404, _error("TRAINING_JOB_NOT_FOUND", "Training job not found"))
+    if not job.mlflow_run_id:
+        raise HTTPException(409, _error(
+            "TENSORBOARD_RUN_UNAVAILABLE",
+            "Training job has no tracked Run",
+        ))
+    signer = get_tensorboard_signer(request)
+    session_id = uuid.uuid4().hex
+    ttl = int(getattr(
+        request.app.state,
+        "tensorboard_session_ttl_seconds",
+        300,
+    ))
+    expires_at = int(signer.clock()) + ttl
+    relative_logdir = f"{job.project_id}/{job.mlflow_run_id}"
+    try:
+        token = signer.issue(
+            session_id=session_id,
+            run_id=job.mlflow_run_id,
+            relative_logdir=relative_logdir,
+            expires_at=expires_at,
+        )
+    except SessionTokenInvalid as error:
+        raise HTTPException(500, _error(
+            "TENSORBOARD_SESSION_INVALID",
+            "TensorBoard session could not be created",
+        )) from error
+    return {
+        "session_id": session_id,
+        "run_id": job.mlflow_run_id,
+        "expires_at": expires_at,
+        "token": token,
+        "url": f"/api/training/tensorboard/{token}/",
+    }
+
+
+@router.api_route(
+    "/tensorboard/{token}/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+)
+async def proxy_tensorboard(token: str, path: str, request: Request):
+    signer = get_tensorboard_signer(request)
+    try:
+        claims = signer.verify(token)
+    except SessionTokenInvalid as error:
+        raise HTTPException(403, _error(
+            "TENSORBOARD_SESSION_INVALID",
+            "TensorBoard session is invalid or expired",
+        )) from error
+    injected = getattr(request.app.state, "tensorboard_proxy_handler", None)
+    if injected is not None:
+        return await injected(claims, path, request)
+
+    from app.config import settings
+
+    gateway_url = getattr(
+        request.app.state,
+        "tensorboard_gateway_url",
+        settings.tensorboard_gateway_url,
+    )
+    if not gateway_url:
+        raise HTTPException(503, _error(
+            "TENSORBOARD_UNAVAILABLE",
+            "TensorBoard gateway is unavailable",
+        ))
+    target = (
+        f"{str(gateway_url).rstrip('/')}/sessions/"
+        f"{claims.session_id}/{path.lstrip('/')}"
+    )
+    async with httpx.AsyncClient() as client:
+        upstream = await client.request(
+            request.method,
+            target,
+            params={**request.query_params, "token": token},
+            content=await request.body(),
+            headers={
+                key: value for key, value in request.headers.items()
+                if key.lower() in {"accept", "content-type", "range"}
+            },
+        )
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers={
+            key: value for key, value in upstream.headers.items()
+            if key.lower() in {"content-type", "content-range", "accept-ranges", "location"}
+        },
+    )
 
 
 @router.post("/automl/run", status_code=202)
