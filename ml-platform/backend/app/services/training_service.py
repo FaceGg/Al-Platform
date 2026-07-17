@@ -31,8 +31,14 @@ class TrainingService:
             dataset = self.artifact_service.resolve(
                 job.dataset_artifact_id, job.project_id, expected_type="dataset",
             )
-            path = Path(dataset.storage_path)
-            frame = pd.read_excel(path) if path.suffix.lower() in {".xls", ".xlsx"} else pd.read_csv(path)
+            with self.artifact_service.materialize(
+                dataset.id, job.project_id, expected_type="dataset",
+            ) as path:
+                frame = (
+                    pd.read_excel(path)
+                    if path.suffix.lower() in {".xls", ".xlsx"}
+                    else pd.read_csv(path)
+                )
             params = job.params or {}
             target_column = params.get("target_column")
             if not target_column or target_column not in frame.columns:
@@ -104,7 +110,7 @@ class TrainingService:
                 backbone=type(model).__name__,
                 metrics=metrics,
                 params=params,
-                model_path=artifact.storage_path,
+                model_path=self.artifact_service.storage_reference(artifact),
                 file_size=artifact.file_size or 0,
                 format="joblib",
                 training_job_id=job.id,
@@ -113,8 +119,8 @@ class TrainingService:
             )
             self.db.add(model_entry)
             self.db.flush()
-            job.dataset_path = dataset.storage_path
-            job.model_path = artifact.storage_path
+            job.dataset_path = self.artifact_service.storage_reference(dataset)
+            job.model_path = self.artifact_service.storage_reference(artifact)
             job.model_artifact_id = artifact.id
             job.model_library_id = model_entry.id
             job.feature_schema = feature_schema

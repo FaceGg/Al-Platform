@@ -408,3 +408,11 @@
 - 前端 14/14 文件、35/35 测试通过，并新增生产模块导入和工作区端口映射回归。
 - TypeScript/Vite 生产构建、npm 安全审计（0 漏洞）和 Playwright Chromium 主流程 1/1 通过。
 - WSL2 前端依赖安装、测试和构建已执行；后端 32/33 模块通过，唯一环境缺口为 `/home/jingms/venv` 未安装可选 PyTorch，深度学习算子复测仍待完成。
+
+## 十四、2026-07-17 第五周生产基础设施验收进展
+
+- PostgreSQL 16 与 Alembic `20260715_03`、SQLite 幂等迁移、MinIO URI、Celery Worker、Redis 事件桥接和生产配置已形成闭环。
+- WSL2 Docker 29.6.2 / Compose 5.3.1 完成镜像构建、自动迁移、bucket 初始化、双进程 API、非 root Worker 和四项 readiness。
+- 真实生产集成 4/4 通过，覆盖跨方言重复迁移、MinIO、真实工作流、重复投递、Redis 事件、节点超时、失联/取消恢复和 readiness。
+- 本地全量后端 45/45、第五周 12/12、前端 35/35、构建、Chromium 1/1、npm audit 0 漏洞和 Alembic check 均通过。
+- 第五周状态仍为“进行中”；取得 GitHub Actions `production-integration` 成功 URL 并完成最终文档提交后方可标记完成。

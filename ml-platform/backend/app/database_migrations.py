@@ -11,6 +11,10 @@ _SQLITE_COLUMNS = {
         "logs": "JSON",
         "cancel_requested_at": "DATETIME",
         "cancelled_at": "DATETIME",
+        "task_id": "VARCHAR(128)",
+        "queue_name": "VARCHAR(64)",
+        "worker_id": "VARCHAR(128)",
+        "heartbeat_at": "DATETIME",
     },
     "node_runs": {
         "attempt": "INTEGER NOT NULL DEFAULT 1",
@@ -34,6 +38,9 @@ _SQLITE_COLUMNS = {
         "training_job_id": "CHAR(32)",
         "dataset_artifact_id": "CHAR(32)",
         "model_artifact_id": "CHAR(32)",
+    },
+    "artifacts": {
+        "storage_uri": "TEXT",
     },
 }
 

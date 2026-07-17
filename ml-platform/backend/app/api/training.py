@@ -17,7 +17,7 @@ from app.models.project import Project
 from app.models.artifact import Artifact
 from app.models.user import User
 from app.api.auth import get_current_user
-from app.services.artifact_service import ArtifactAccessError, ArtifactService
+from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.services.training_service import TrainingService
 
 router = APIRouter(prefix="/api/training", tags=["training"])
@@ -54,9 +54,7 @@ def start_training(
             "code": "DATASET_ARTIFACT_REQUIRED",
             "message": "dataset_artifact_id is required",
         })
-    artifact_service = ArtifactService(
-        db, os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifact_store"),
-    )
+    artifact_service = build_artifact_service(db)
     try:
         dataset = artifact_service.resolve(
             UUID(dataset_artifact_id), UUID(project_id), expected_type="dataset",
@@ -73,7 +71,7 @@ def start_training(
         operator_id=data.get("operator_id"),
         params=data.get("params", {}),
         dataset_artifact_id=dataset.id,
-        dataset_path=dataset.storage_path,
+        dataset_path=artifact_service.storage_reference(dataset),
         status="pending",
     )
     db.add(job)
@@ -268,9 +266,7 @@ def _get_db_session() -> Session:
 def _run_training_artifact(job_id: str):
     db = _get_db_session()
     try:
-        artifact_service = ArtifactService(
-            db, os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifact_store"),
-        )
+        artifact_service = build_artifact_service(db)
         TrainingService(db, artifact_service).run(UUID(job_id))
     finally:
         db.close()

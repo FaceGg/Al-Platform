@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.db
+*.db-*
+.env
+.venv/
+artifact_store/
+exports/
+uploads/
+data/
+temp_test/
+.coverage
+.pytest_cache/

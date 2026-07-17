@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.main import app
+from app.database_migrations import ensure_schema_compatibility
 
 client = TestClient(app)
 
@@ -27,7 +28,10 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(settings.database_url, expected)
 
     def test_default_secret_key(self):
-        self.assertEqual(settings.secret_key, "change-me-in-production")
+        self.assertEqual(
+            settings.secret_key.get_secret_value(),
+            "change-me-in-production",
+        )
 
     def test_default_algorithm(self):
         self.assertEqual(settings.algorithm, "HS256")
@@ -68,6 +72,7 @@ class TestModels(unittest.TestCase):
             conn.exec_driver_sql("PRAGMA foreign_keys = ON")
             conn.commit()
         Base.metadata.create_all(bind=engine)
+        ensure_schema_compatibility(engine)
         cls.SessionLocal = SessionLocal
 
     @classmethod

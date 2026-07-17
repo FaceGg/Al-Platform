@@ -550,9 +550,13 @@ API需要配置环境变量 `LLM_API_KEY`。对话接口返回"LLM not configure
 
 ### Q: 测试覆盖率如何？
 
-后端标准 runner 当前 31/31 模块通过。运行 `python run_suite.py` 查看逐模块结果。
+后端标准 runner 当前 45/45 模块通过，第五周入口为 12/12。运行 `python run_suite.py` 或 `python run_suite.py --week 5` 查看逐模块结果。
+
+### Q: 如何启动生产基础设施？
+
+在仓库根目录设置生产数据库、JWT、Redis 和 MinIO 环境变量后，运行 `docker compose up -d postgres redis minio minio-init migrate backend worker`。`migrate` 成功退出后 API 和 Worker 才会启动；使用 `/api/health` 检查进程，使用 `/api/ready` 检查 PostgreSQL/Alembic、Redis、Celery 和 MinIO。迁移、回滚和错误码见 `docs/delivery/PRODUCTION_INFRASTRUCTURE.md`。
 
 ---
 
-> **文档版本**: 0.2.0 | **最后更新**: 2026-07-14
+> **文档版本**: 0.3.0 | **最后更新**: 2026-07-17
 > **问题反馈**: 提交Issue或联系平台管理员

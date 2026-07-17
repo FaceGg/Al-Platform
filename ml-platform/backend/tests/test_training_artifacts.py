@@ -10,6 +10,7 @@ from app.models.training import TrainingJob
 from app.models.user import User
 from app.services.artifact_service import ArtifactService
 from app.services.training_service import TrainingService
+from app.storage.local import LocalStorage
 
 
 Base.metadata.create_all(bind=engine)
@@ -33,7 +34,7 @@ class TestTrainingArtifactLoop(unittest.TestCase):
         ]
         source.write_text("\n".join(rows), encoding="utf-8")
         self.artifact_service = ArtifactService(
-            self.db, Path(self.temp_dir.name) / "artifact-store",
+            self.db, LocalStorage(Path(self.temp_dir.name) / "artifact-store"),
         )
         self.dataset = self.artifact_service.create_dataset(self.project_id, source, "weld.csv")
 

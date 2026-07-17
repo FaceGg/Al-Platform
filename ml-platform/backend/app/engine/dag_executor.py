@@ -189,12 +189,23 @@ class DAGExecutor:
             except Exception as e:
                 raise RuntimeError(f"Execution failed for node '{node_id}': {e}") from e
 
+            # Persist declared artifacts before exposing a completed node.
+            artifact_refs = []
+            if op_id not in ("loop",):
+                artifact_refs = self._persist_artifacts(
+                    operator_result,
+                    run_id=run_id,
+                    node_id=node_id,
+                )
+
             # Save outputs
             node_results: dict[str, str] = {}
             for port_name, data in outputs.items():
                 path = DataBus.save_data(run_id, node_id, port_name, data)
                 node_results[port_name] = path
             results[node_id] = node_results
+            if artifact_refs:
+                node_results["artifacts"] = artifact_refs
 
             # Handle condition branching
             if op_id in ("condition",) and "false" in outputs:
@@ -236,6 +247,34 @@ class DAGExecutor:
             )
 
         return results
+
+    def _persist_artifacts(
+        self,
+        result: OperatorResult,
+        *,
+        run_id: str,
+        node_id: str,
+    ) -> list[dict[str, Any]]:
+        if not result.artifacts:
+            return []
+        if self._artifact_service is None or not self._project_id:
+            raise RuntimeError(
+                "Artifact drafts require an artifact service and project context"
+            )
+        references = []
+        for draft in result.artifacts:
+            artifact = self._artifact_service.create_from_draft(
+                draft,
+                project_id=self._project_id,
+                run_id=run_id,
+                node_id=node_id,
+            )
+            references.append({
+                "artifact_id": str(artifact.id),
+                "uri": artifact.storage_uri,
+                "size": artifact.file_size,
+            })
+        return references
 
     @staticmethod
     def _emit_status(status_callback, run_id, node_id, status, result=None, metadata=None):

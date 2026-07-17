@@ -14,15 +14,11 @@ from app.models.project import Project
 from app.models.artifact import Artifact
 from app.models.user import User
 from app.api.auth import get_current_user
-from app.services.artifact_service import ArtifactService
+from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 
 router = APIRouter(prefix="/api", tags=["datasets"])
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
-ARTIFACT_DIR = os.getenv(
-    "ARTIFACT_STORAGE_DIR",
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifact_store"),
-)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
@@ -31,9 +27,31 @@ def _store_uploaded_dataset(db: Session, project_id, file: UploadFile) -> Artifa
     staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
     staging_path.write_bytes(file.file.read())
     try:
-        return ArtifactService(db, ARTIFACT_DIR).create_dataset(project_id, staging_path, safe_name)
+        return _create_dataset_artifact(
+            build_artifact_service(db), project_id, staging_path, safe_name,
+        )
     finally:
         staging_path.unlink(missing_ok=True)
+
+
+def _create_dataset_artifact(service, project_id, source: Path, name: str) -> Artifact:
+    if source.suffix.lower() in {".csv", ".xls", ".xlsx"}:
+        return service.create_dataset(project_id, source, name)
+    return service.create_from_file(
+        project_id,
+        source,
+        name,
+        "dataset",
+        metadata={"source": "upload"},
+    )
+
+
+def _read_dataset(path: Path):
+    import pandas as pd
+
+    if path.suffix.lower() in {".xls", ".xlsx"}:
+        return pd.read_excel(path)
+    return pd.read_csv(path)
 
 
 @router.get("/projects/{project_id}/datasets")
@@ -84,7 +102,7 @@ def upload_dataset(
     metadata = artifact.metadata_ or {}
     return {
         "id": str(artifact.id), "artifact_id": str(artifact.id),
-        "name": artifact.name, "storage_path": artifact.storage_path,
+        "name": artifact.name,
         "row_count": metadata.get("row_count", 0),
         "schema": metadata.get("schema", []),
         "sha256": metadata.get("sha256", ""),
@@ -152,18 +170,15 @@ def export_dataset(
         raise HTTPException(404, "No datasets found in project")
 
     import pandas as pd
+    artifact_service = build_artifact_service(db)
     all_dfs = []
     for artifact in artifacts:
-        file_path = artifact.storage_path
-        if not os.path.exists(file_path):
-            continue
         try:
-            if file_path.endswith((".xls", ".xlsx")):
-                df = pd.read_excel(file_path)
-            else:
-                df = pd.read_csv(file_path)
-            all_dfs.append(df)
-        except Exception:
+            with artifact_service.materialize(
+                artifact.id, artifact.project_id, expected_type="dataset",
+            ) as path:
+                all_dfs.append(_read_dataset(path))
+        except (ArtifactAccessError, OSError, ValueError):
             continue
 
     if not all_dfs:
@@ -206,20 +221,21 @@ def export_single_dataset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    artifact = db.query(Artifact).filter(Artifact.id == UUID(dataset_id)).first()
+    artifact = db.query(Artifact).join(Project).filter(
+        Artifact.id == UUID(dataset_id),
+        Artifact.type == "dataset",
+        Project.owner_id == current_user.id,
+    ).first()
     if not artifact:
         raise HTTPException(404, "Dataset not found")
 
-    file_path = artifact.storage_path
-    if not os.path.exists(file_path):
-        raise HTTPException(404, "File not found on disk")
-
-    import pandas as pd
     try:
-        if file_path.endswith((".xls", ".xlsx")):
-            df = pd.read_excel(file_path)
-        else:
-            df = pd.read_csv(file_path)
+        with build_artifact_service(db).materialize(
+            artifact.id, artifact.project_id, expected_type="dataset",
+        ) as path:
+            df = _read_dataset(path)
+    except ArtifactAccessError as e:
+        raise HTTPException(404, str(e)) from e
     except Exception as e:
         raise HTTPException(400, f"Failed to read file: {e}")
 
@@ -266,23 +282,27 @@ async def batch_upload_dataset(
     if not project:
         raise HTTPException(404, "Project not found")
     artifacts = []
+    artifact_service = build_artifact_service(db)
     for file in files:
         content = await file.read()
-        storage_path = os.path.join(UPLOAD_DIR, str(uuid.uuid4()), file.filename)
-        os.makedirs(os.path.dirname(storage_path), exist_ok=True)
-        with open(storage_path, "wb") as f:
-            f.write(content)
-        ext = os.path.splitext(file.filename)[1].lower()
+        safe_name = Path(file.filename or "uploaded_file").name
+        staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
+        staging_path.write_bytes(content)
+        ext = staging_path.suffix.lower()
         fmt_map = {".csv": "csv", ".xlsx": "xlsx", ".xls": "xls", ".txt": "txt",
                    ".json": "json", ".png": "png", ".jpg": "jpg"}
-        artifact = Artifact(
-            project_id=UUID(project_id), name=file.filename, type="dataset",
-            storage_path=storage_path, file_size=len(content),
-            format=fmt_map.get(ext, ext.lstrip(".")),
-        )
-        db.add(artifact)
-        artifacts.append({"name": file.filename, "size": len(content), "format": fmt_map.get(ext, "")})
-    db.commit()
+        try:
+            artifact = _create_dataset_artifact(
+                artifact_service, UUID(project_id), staging_path, safe_name,
+            )
+        finally:
+            staging_path.unlink(missing_ok=True)
+        artifacts.append({
+            "artifact_id": str(artifact.id),
+            "name": safe_name,
+            "size": len(content),
+            "format": fmt_map.get(ext, ""),
+        })
     return {"message": f"Uploaded {len(artifacts)} files", "files": artifacts}
 
 
@@ -302,6 +322,7 @@ async def import_zip_dataset(
         raise HTTPException(404, "Project not found")
     content = await file.read()
     artifacts = []
+    artifact_service = build_artifact_service(db)
     with tempfile.TemporaryDirectory() as tmpdir:
         zip_path = os.path.join(tmpdir, file.filename)
         with open(zip_path, "wb") as f:
@@ -312,21 +333,17 @@ async def import_zip_dataset(
                     continue
                 extracted = zf.read(member)
                 fname = os.path.basename(member)
-                storage_path = os.path.join(UPLOAD_DIR, str(uuid.uuid4()), fname)
-                os.makedirs(os.path.dirname(storage_path), exist_ok=True)
-                with open(storage_path, "wb") as f:
-                    f.write(extracted)
+                staging_path = Path(tmpdir) / f"{uuid.uuid4()}_{fname}"
+                staging_path.write_bytes(extracted)
                 ext = os.path.splitext(fname)[1].lower()
-                fmt_map = {".csv": "csv", ".xlsx": "xlsx", ".xls": "xls",
-                           ".txt": "txt", ".json": "json", ".png": "png", ".jpg": "jpg"}
-                artifact = Artifact(
-                    project_id=UUID(project_id), name=fname, type="dataset",
-                    storage_path=storage_path, file_size=len(extracted),
-                    format=fmt_map.get(ext, ext.lstrip(".")),
+                artifact = _create_dataset_artifact(
+                    artifact_service, UUID(project_id), staging_path, fname,
                 )
-                db.add(artifact)
-                artifacts.append({"name": fname, "size": len(extracted)})
-        db.commit()
+                artifacts.append({
+                    "artifact_id": str(artifact.id),
+                    "name": fname,
+                    "size": len(extracted),
+                })
     return {"message": f"Imported {len(artifacts)} files from ZIP", "files": artifacts}
 @router.get("/datasets/{dataset_id}/preview")
 def preview_dataset(
@@ -334,26 +351,27 @@ def preview_dataset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    artifact = db.query(Artifact).filter(Artifact.id == UUID(dataset_id)).first()
+    artifact = db.query(Artifact).join(Project).filter(
+        Artifact.id == UUID(dataset_id),
+        Artifact.type == "dataset",
+        Project.owner_id == current_user.id,
+    ).first()
     if not artifact:
         raise HTTPException(404, "Dataset not found")
 
-    import pandas as pd
-    file_path = artifact.storage_path
-    if not os.path.exists(file_path):
-        raise HTTPException(404, "File not found on disk")
-
     try:
-        if file_path.endswith((".xls", ".xlsx")):
-            df = pd.read_excel(file_path)
-        else:
-            df = pd.read_csv(file_path)
+        with build_artifact_service(db).materialize(
+            artifact.id, artifact.project_id, expected_type="dataset",
+        ) as path:
+            df = _read_dataset(path)
         return {
             "columns": list(df.columns),
             "preview": df.head(10).to_dict(orient="records"),
             "total_rows": len(df),
             "dtypes": {str(k): str(v) for k, v in df.dtypes.items()},
         }
+    except ArtifactAccessError as e:
+        raise HTTPException(404, str(e)) from e
     except Exception as e:
         raise HTTPException(400, f"Failed to read file: {e}")
 

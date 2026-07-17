@@ -1,5 +1,6 @@
 ﻿import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +46,7 @@ class DataBus:
         if configured:
             default = Path(configured)
         else:
-            default = Path(__file__).resolve().parents[4] / "temp_test" / "data"
+            default = Path(tempfile.gettempdir()) / "ml_platform_data"
         try:
             default.mkdir(parents=True, exist_ok=True)
             probe = default / ".write_test"
@@ -53,7 +54,6 @@ class DataBus:
             probe.unlink()
             cls._base_dir = default
         except (OSError, PermissionError):
-            import tempfile
             cls._base_dir = Path(tempfile.gettempdir()) / "ml_platform_data"
         cls._base_dir.mkdir(parents=True, exist_ok=True)
         return cls._base_dir

@@ -1,7 +1,7 @@
 # 汽车焊接工业 AI 平台开发文档
 
 > 文档状态：持续维护
-> 最近更新：2026-07-15
+> 最近更新：2026-07-16
 > 适用项目：`E:\codex_workspace\agent_spot_welding`
 > 总周期：20 周，共计 5 个月
 
@@ -89,7 +89,7 @@
 | 第 2 周 | 已完成 | 工作流与执行可靠性 | 已完成发布快照版本、前置运行校验、协作取消、节点超时/重试、尝试历史、有限日志、结构化错误、画布和进度状态同步 | 稳定工作流主链路、冻结状态机、后端 25 模块与前端 19 用例 |
 | 第 3 周 | 已完成 | 数据、算子与训练闭环 | 已统一 79 个运行时算子协议；完成数据 Artifact、训练评估、模型保存、模型库登记和血缘展示 | 严格算子协议、数据训练闭环；后端 28/28 模块、前端 22/22 测试和生产构建通过 |
 | 第 4 周 | 已完成 | 工业模板与首版交付 | 已完成真实数据准备、四套模板执行闭环、Artifact 向导、Playwright 主流程、Windows/Linux 脚本、跨平台 CI 和交付文档；GitHub Ubuntu 22.04 质量门禁与 Chromium 验收通过 | 稳定可交付版、首月验收报告 |
-| 第 5 周 | 未开始 | 生产存储与异步任务 | PostgreSQL、Alembic、Redis/Celery、MinIO、制品 URI、配置和密钥管理 | 生产数据层、对象存储、异步任务框架 |
+| 第 5 周 | 进行中 | 生产存储与异步任务 | PostgreSQL、Alembic、Redis/Celery、MinIO、制品 URI、配置和密钥管理；已完成双模式渐进迁移设计确认 | 生产数据层、对象存储、异步任务框架 |
 | 第 6 周 | 未开始 | 实验与训练管理 | 实验、Run、参数、指标、日志、制品、检查点、恢复、早停和 TensorBoard | 企业基础版、实验训练追踪 |
 | 第 7 周 | 未开始 | Pipeline 调度与权限 | Cron、补录、依赖、并发、超时、重试、暂停恢复、项目角色和审计 | 调度器、实例管理、权限审计 |
 | 第 8 周 | 未开始 | 模型注册与基础推理 | 模型版本、指标、审批、基础推理、在线测试、健康检查和服务启停 | 模型注册中心、基础推理服务 |
@@ -122,7 +122,7 @@
 - 2026-07-14 已完成临时文件分类清理；正式源码和测试仍有大量未提交修改，需在发布前按范围审查并提交。
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
-- 第 5 周需以 Celery/独立进程替换线程适配器，解决服务重启恢复和超时算子强制终止。
+- 第 5 周本地与 WSL 生产栈实现、测试和文档已完成；GitHub Actions `production-integration` 成功证据和最终状态提交仍待完成。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -423,3 +423,168 @@
 - 跨平台结果：WSL2 前端独立 Linux 依赖已安装，单元测试后进入并完成生产构建；后端 32/33 模块通过，`test_operators_extended` 因 `/home/jingms/venv` 未安装可选 PyTorch 而缺少三个深度学习算子注册。该问题与既有 CI 前置依赖结论一致，不修改业务代码或跳过断言。
 - 预防措施：新增测试必须在周次清单中唯一归属；新增生产模块必须通过全模块导入；完整算子验收环境必须显式安装 PyTorch CPU；Linux 前端依赖不得复用 Windows `node_modules`。
 - 未完成：在 WSL2 执行 `/home/jingms/venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu` 后，重跑第三周或全量后端测试，取得本地 33/33 证据。
+
+### 2026-07-15：第五周生产存储与异步任务设计确认
+
+- 当前周次：第 5 周，状态调整为进行中。
+- 已确认方案：保留 SQLite、本地文件和线程执行作为本地回退；生产模式使用 PostgreSQL/Alembic、Redis/Celery 和 MinIO，并以适配器隔离业务代码。
+- 已确认验收：生产集成使用 GitHub Actions Ubuntu 服务容器；Celery 本周只迁移工作流运行；MinIO 对新制品使用 URI 并提供历史迁移命令；密钥使用环境变量或 Secret 文件。
+- 设计文档：`docs/superpowers/specs/2026-07-15-week5-production-storage-async-tasks-design.md`。
+- 实施计划：`docs/superpowers/plans/2026-07-15-week5-production-storage-async-tasks.md`，共 13 个任务，按配置、数据库、存储、队列、事件、集成测试和交付验收顺序执行。
+- 风险控制：生产 Schema 只允许 Alembic 修改；Worker 事件通过 Redis 转发；数据库和对象存储迁移必须可重复执行并完成数量、大小与哈希校验；不得通过降低断言规避真实基础设施测试。
+- 未完成：书面规范审阅、详细实施计划、代码实现、自动化测试、生产集成 CI 和交付文档。
+
+### 2026-07-15：第五周开发暂停记录
+
+- 暂停原因：用户要求保存当前开发进度并暂停开发。
+- 已完成：第五周设计规范和 13 项实施计划已经用户确认并完成自审；实施任务 1 已完成配置模型、Secret 文件读取、生产模式校验、第五周测试清单和 `.env.example` 的代码修改。
+- 任务 1 安全修复：JWT 密钥保持 `SecretStr`，只在认证签发/解析边界读取明文；生产 PostgreSQL URL 使用 SQLAlchemy 解析并校验 host/database；空 MinIO bucket 被拒绝；配置摘要移除 URL userinfo、query 和 fragment；敏感字段从标准序列化排除。
+- 当前验证证据：开始实现前后端标准 runner 为 33/33；任务 1 实现代理最后报告 `tests.test_config tests.test_suite_manifest tests.test_app tests.test_api_users` 共 34/34 通过，`git diff --check` 通过。用户暂停后未由主流程再次独立运行测试。
+- 审查状态：任务 1 初次规范审查已通过；初次代码质量审查发现五项安全问题，修复已写入工作区，但修复后的最终代码质量复审尚未执行，因此任务 1 仍保持进行中，不标记完成。
+- 未开始：实施计划任务 2 至任务 13，包括 Alembic/PostgreSQL、SQLite 数据迁移、Local/MinIO 存储、Artifact 调用点迁移、Celery、Redis 事件桥接、readiness、真实生产集成 CI、容器与交付文档。
+- 恢复顺序：先运行任务 1 的 34 项聚焦测试并执行代码质量复审；复审通过后更新任务状态，再从任务 2 的失败测试开始实施。
+- 工作区状态：所有修改只保存在当前工作区，未创建提交、未推送；所有子代理和测试进程均已停止。
+- 保护事项：根目录删除项、Word 文档、`docs2` 和 `docs/build_project_brief.py` 属于用户原有修改，恢复开发时不得回退或覆盖。
+
+### 2026-07-16：第五周任务 1 完成
+
+- 开发内容：完成双模式 Settings、Secret 文件解析、生产配置校验、配置脱敏、第五周测试清单和 `.env.example`。
+- 安全修复：Pydantic 默认 `ValidationError.errors()/json()` 的输入统一替换为 `[redacted]`；JWT 维持纯 `SecretStr` 并只在认证边界取值；原始数据库、MinIO 和 LLM URL 不进入 repr/model_dump，安全摘要移除 userinfo、query 和 fragment。
+- 验证方式：主流程执行配置、清单、应用和用户 API 聚焦测试 34/34 通过；安全补充后实现代理与独立质量复审执行 35/35 通过；`git diff --check` 通过。
+- 审查结论：规范审查和最终代码质量审查均通过，未发现剩余中高风险问题。
+- 当前状态：实施计划任务 1 已完成，开始任务 2 PostgreSQL/Alembic 基线。
+
+### 2026-07-16：第五周任务 2 PostgreSQL 与 Alembic 基线完成
+
+- 开发内容：数据库 Engine 按方言配置，SQLite 保留跨线程兼容参数，PostgreSQL 使用连接预检查和 Task1 的连接池参数；新增只读 Alembic revision 检查，生产启动只校验 schema head，本地启动继续执行 `create_all` 和兼容迁移。
+- Alembic 基线：revision `20260715_01` 使用静态 `op.create_table`、`op.create_index` 和外键操作覆盖当前 30 张业务表、59 条外键与 2 个显式索引，不调用 `Base.metadata.create_all/drop_all`，不自动执行 upgrade。
+- 问题现象：初次 autogenerate 检测到 `model_library.training_job_id` 与 `training_jobs.model_library_id` 形成双向外键环，默认顺序会让 PostgreSQL 引用尚未创建的表；升级后的 SQLite 执行 `alembic check` 时又将 UUID 反射成 NUMERIC，产生全量伪类型差异。
+- 根因：环形外键不能全部以内联约束参与拓扑建表；SQLite 不保留 PostgreSQL/SQLAlchemy UUID 的原始类型信息，Alembic 类型比较无法从反射结果恢复 UUID 语义。
+- 解决方法：迁移环境只为环中一条命名外键设置 `use_alter`，baseline 在所有表创建后显式补建该约束，SQLite 使用 batch alter、PostgreSQL 使用 `create_foreign_key`；在线 Alembic 环境仅对 SQLite 关闭类型比较，PostgreSQL 继续检查类型漂移。
+- TDD 与验证：聚焦测试先因缺少 `engine_options` 明确 RED；实现后 10/10 GREEN。补充 `alembic check` 断言再次因 UUID 反射 RED，方言修正后 GREEN 并输出 `No new upgrade operations detected`。组合回归 35/35 通过，第五周 runner 2/2 模块通过。
+- 预防措施：生产 schema 只能通过 Alembic 变更；新增模型后必须运行空库双次 `upgrade head`、`alembic check`、表/索引/revision 检查；出现外键环时必须命名并后置约束，不能依赖 autogenerate 的警告顺序；SQLite 类型反射结果不能替代 PostgreSQL 类型验收。
+- 当前状态：实施计划任务 2 完成；任务 3 SQLite 到 PostgreSQL 数据复制尚未开始，本任务未实现任何数据复制逻辑。
+
+### 2026-07-16：第五周任务 2 质量复审修复
+
+- 审查问题：内存 SQLite 使用默认连接池时，主线程建表写入后子线程会获得独立连接并报 `no such table`；`initialize_database` 默认参数及 lifespan 的 session/dispose 绑定模块级对象，导致测试或嵌入应用注入数据库后仍可能访问全局数据库。
+- 根因：SQLite 内存数据库状态属于单个 DBAPI 连接；Python 默认参数在函数定义时求值，且 lifespan 内部硬编码导入 `SessionLocal`、关闭全局 `engine`，绕过了运行时应用状态。
+- 解决方法：仅对 `sqlite://`、`:memory:`、`file::memory:` 和 `mode=memory` URL 增加 `StaticPool`，文件 SQLite 保持默认池；`initialize_database` 改为 `None` 默认并在调用时解析，新增 `configure_runtime_dependencies` 将 settings、engine、session factory 注入 `app.state`，lifespan 按注入优先、模块级回退执行初始化、admin seed 和 shutdown dispose。
+- TDD 验证：真实跨线程测试先 RED，子线程报 `sqlite3.OperationalError: no such table: shared_data`，加入 `StaticPool` 后 GREEN；真实 lifespan 测试先 RED 于缺少运行时注入 helper，实现后在独立 `temp_test` SQLite 中完成 schema 和 admin seed，并确认全局 `SessionLocal/engine` 未调用。
+- 回归结果：`tests.test_database_production` 13/13，通过关联测试 48/48，第五周 runner 2/2 模块通过。
+- 预防措施：内存 SQLite 测试必须验证跨线程真实读写而非只检查 options；生命周期依赖必须从应用状态解析，默认参数不得捕获可替换运行时对象；seed 与 shutdown 必须使用同一组解析后的数据库依赖。
+
+### 2026-07-16：完成任务 2 后暂停
+
+- 暂停要求：用户要求完成 Task 2 后保存开发进度并暂停。
+- 已完成范围：第五周 Task 1 配置与密钥管理、Task 2 PostgreSQL/Alembic 基线均已完成实现、TDD、规范审查、质量审查和主流程复验。
+- 最新验证：Task 2 关联测试 48/48 通过；第五周 runner 当前 2/2 模块通过；Alembic 空库双次升级、revision、30 张业务表和关键索引检查通过。
+- 未开始范围：Task 3 SQLite 到 PostgreSQL 数据迁移工具及 Task 4-13 均未开始，本次未创建任何 Task 3 源码或测试。
+- 恢复顺序：从实施计划 Task 3 的失败测试开始，不重复或回退 Task 1/2；真实 PostgreSQL 连接验收仍保留到 production-integration 任务。
+- 工作区状态：所有进度保存在当前工作区，未提交、未推送；用户原有删除项、Word 文档、`docs2` 和 `docs/build_project_brief.py` 保持不动。
+
+### 2026-07-16：第五周任务 3 SQLite 到 PostgreSQL 数据迁移工具完成
+
+- 开发内容：新增 `tools/migrate_database.py`，提供 `TableTransferResult`、`copy_database` 和安全 CLI；新增 `tests/test_database_transfer.py` 并加入第五周测试清单。
+- 迁移行为：按外键依赖顺序复制默认 Schema 业务表；保留主键、UUID、datetime、JSON 和空值；相同主键且内容相同则跳过，相同主键内容不同则记录 mismatch 且不覆盖；目标额外记录通过计数差异使 CLI 失败；重复执行新增数为 0。
+- 循环外键：`model_library.training_job_id` 与 `training_jobs.model_library_id` 以及自引用可空外键采用首阶段置空、第二阶段回填；真实 ORM UUID 主键和双方外键均经过回归验证。
+- 安全边界：跳过 `alembic_version`，不覆盖目标 revision；CLI 固定使用 `--source-url` 和 `--target-url`，输出移除凭据、query 和 fragment；源目标相同、记录冲突或计数差异均返回退出码 1。
+- 问题与根因：SQLite 将 PostgreSQL UUID 列反射为 NUMERIC，直接使用反射类型读取会报 `TypeError: must be real number, not str`；循环外键回填若在 UUID 主键条件中继续使用原始字符串，会报 `str has no attribute hex`。
+- 解决方法：源端使用经过标识符引用的原始 DBAPI 行读取，写入、比较和回填条件统一按应用或目标列类型规范化；表和列标识符通过 SQLAlchemy dialect preparer 引用，默认 PostgreSQL `public` Schema 契约保持不变。
+- TDD 与审查：先因缺少迁移模块形成 RED；随后真实 ORM UUID 读取和双向循环回填分别形成 RED 并修复。规范审查补充真实 ORM JSON、datetime、null 覆盖后通过；代码质量审查修复 schema-qualified 原始读取后通过。
+- 验证结果：`tests.test_database_transfer` 9/9 通过；迁移、生产数据库与清单组合测试 23/23 通过；`python run_suite.py --week 5` 为 3/3 模块通过；`git diff --check` 通过。
+- 遗留风险：本任务使用两个隔离 SQLite 和真实 ORM Schema 验证通用逻辑；真实 SQLite 到 PostgreSQL 连接迁移仍按计划在 Task 11 production-integration 中验收，未提前标记完成。
+
+### 2026-07-16：完成任务 3 后暂停
+
+- 暂停要求：用户要求完成 Task 3 后保存开发进度并暂停。
+- 已完成范围：第五周 Task 1 配置与密钥管理、Task 2 PostgreSQL/Alembic 基线、Task 3 SQLite 到 PostgreSQL 数据迁移工具均已完成实现、TDD、规范审查、代码质量审查和主流程复验。
+- 未开始范围：Task 4 至 Task 13 尚未开始，本次未实现 Local/MinIO、Artifact 调用点迁移、Celery、Redis 事件桥接、readiness、生产集成 CI、容器或交付文档。
+- 恢复顺序：从实施计划 Task 4 的失败测试开始；不得重复或回退 Task 1-3；真实 PostgreSQL 数据迁移验收保留到 Task 11。
+- 工作区状态：所有开发进度保存在当前工作区，未提交、未推送；用户原有删除项、Word 文档、`docs2` 和 `docs/build_project_brief.py` 保持不动。
+
+### 2026-07-16：第五周任务 4 Local/MinIO 存储适配器完成
+
+- 当前周次：第 5 周。
+- 开发内容：新增统一 `ArtifactStorage` 协议、`LocalStorage`、`MinioStorage` 和配置 factory；增加 MinIO 7.2 客户端依赖，并将存储测试唯一归属第五周。
+- 问题现象：当前环境首次运行新测试时缺少 `minio` 包；调用链审查还发现工业模板不能把 MinIO 物化后的短期路径持久化到工作流节点。
+- 根因：新增生产依赖尚未安装到本地 Python 环境；物化路径只在上下文内有效，无法跨进程或跨任务重用。
+- 解决方法：安装与 `requirements.txt` 一致的 `minio==7.2.*`；本地存储使用根目录约束、同卷临时文件和原子替换，MinIO 使用固定 `projects/{project_id}/artifacts/{artifact_id}/{filename}` key、已知长度流上传、完整性校验、失败补偿删除和自动回收缓存。Task 5 将模板节点改为持久化 Artifact ID，并在算子执行时物化。
+- 验证方式：`python -m unittest tests.test_storage -v` 6/6 通过；`python run_suite.py --week 5` 4/4 模块通过；`python -m unittest tests.test_module_imports -v` 2/2 通过；实际检查 MinIO 7.2.20 `put_object` 签名与适配器调用一致。
+- 影响范围：后端依赖、制品存储协议、本地制品目录、MinIO 对象键和第五周测试清单；尚未迁移现有 Artifact 业务调用点。
+- 预防措施：所有对象键片段必须由服务端校验和组装；外部对象写入成功而后续失败时必须补偿删除；临时物化路径不得写入数据库或工作流快照。
+- 遗留事项：Task 5 至 Task 13 尚未完成；真实 MinIO 网络和生产组合验收保留到 Task 11。
+
+### 2026-07-16：第五周任务 5 制品 URI 与业务调用点迁移完成
+
+- 当前周次：第 5 周。
+- 开发内容：Artifact 增加 `storage_uri` 和 Alembic revision `20260715_02`；ArtifactService 统一通过 Local/MinIO 存储、支持数据库失败补偿删除和旧 `storage_path` 读取；Dataset、Model、Template、Training 和后台 DAG 执行改用 Artifact ID/URI。
+- 问题现象：第一次真实后台工作流回归中，CSVImport 按 Artifact ID 查询 SQLite UUID 列时报 `str has no attribute hex`，运行状态被错误收敛为失败。
+- 根因：工作流节点参数来自 JSON 字符串，而 SQLAlchemy UUID 类型绑定要求 `uuid.UUID` 实例；单元测试只验证了服务内部 UUID，没有覆盖跨线程 JSON 到 ORM 查询的边界。
+- 解决方法：ArtifactService 在查询边界统一将字符串 ID 转换为 UUID；CSVImport 在执行时通过 `materialize()` 读取，模板节点只持久化 `source=artifact` 和 `dataset_artifact_id`，不保存临时文件路径。
+- 验证方式：Task 5 关联测试 58/58 通过；完整后端 runner 38/38 模块通过；Alembic 空库双次升级、`alembic check` 和 `20260715_02` 字段/索引检查通过；真实后台工作流 `test_api_runs` 3/3 通过；`git diff --check` 通过。
+- 影响范围：制品模型、数据库迁移、本地/MinIO 业务适配、数据集 API、模型 API、训练闭环、工业模板和工作流运行。
+- 预防措施：所有外部 JSON ID 在 ORM 查询边界显式规范化；稳定 Artifact ID/URI 与短期物化路径分离；新增跨进程调用必须包含真实后台执行回归。
+- 遗留事项：Task 6 至 Task 13 尚未开始；旧批量训练接口仍保留历史 `dataset_path` 参数，需在后续调度/训练治理任务中继续收口；真实 PostgreSQL/Redis/MinIO/Celery 集成保留到 Task 11。
+
+### 2026-07-16：第五周任务 6 算子制品持久化与历史迁移完成
+
+- 当前周次：第 5 周。
+- 开发内容：DAGExecutor 统一消费 `OperatorResult.artifacts`；ArtifactService 新增 `create_from_draft`；新增 `app/services/artifact_migration.py` 和 `tools/migrate_artifacts.py`，支持项目筛选、dry-run、SHA-256/大小校验、单条事务更新和幂等跳过。
+- 问题现象：初始实现中 Draft bytes 被执行器完全丢弃；历史迁移入口若只实现 CLI 会导致测试和应用无法复用核心逻辑；重复迁移统计未计入已迁移记录。
+- 根因：执行器只处理 `OperatorResult.outputs`；工具层和业务层没有稳定服务边界；迁移查询只筛选 `storage_uri IS NULL`，无法统计已存在 URI 的跳过记录。
+- 解决方法：节点完成前持久化每个 Draft，返回 Artifact ID、URI 和大小引用，持久化失败则节点失败；迁移核心逻辑放入服务模块，CLI 仅做参数解析；迁移结果显式统计 candidates/migrated/skipped/failed，失败保留旧 `storage_path`。
+- 验证方式：Task 6 聚焦测试 3/3 通过；第五周 runner 7/7 模块通过；第一周单独重跑 16/16 通过；`git diff --check` 通过。一次并行启动完整 runner 出现 `test_api_users` SQLite `unable to open database file`，单独重跑证明业务代码通过，记录为测试环境并行资源冲突，未据此修改数据库逻辑。
+- 影响范围：DAGExecutor、ArtifactService、历史 Artifact 文件、第五周测试清单和迁移 CLI；未开始 Task 7 Celery/Local Dispatcher。
+- 预防措施：执行器只允许稳定 Artifact 引用进入节点结果，不允许原始 bytes 穿透；迁移命令必须提供可复用函数并验证重复执行；涉及共享临时根目录的完整 runner 不应并行启动多个实例。
+- 遗留事项：Task 7 至 Task 13 尚未开始；真实 PostgreSQL/Redis/MinIO/Celery 集成仍保留到 Task 11。
+
+### 2026-07-16：第五周任务 7 至 10 基础设施代码完成
+
+- 当前周次：第 5 周。
+- 开发内容：新增 LocalTaskDispatcher、Celery app/任务领取逻辑、WorkflowRun 任务元数据迁移 `20260715_03`、Redis JSON 事件 publisher、readiness 服务与 `/api/ready` 路由；新增 production integration skip 测试、Ubuntu 服务容器 CI job、生产 Compose、Worker 镜像和迁移运维文档。
+- 验证方式：第五周 runner 12/12 通过；基础设施聚焦测试 17/17 通过；生产集成测试本地明确 skip；Alembic head `20260715_03` 双次升级和 `alembic check` 通过；`git diff --check` 通过。
+- 当前状态：Task 7–10 已完成本地实现和测试；Task 11 已建立 CI 验收 job，但尚未取得真实 GitHub Actions production-integration 成功证据，因此第五周整体仍为“进行中”。
+- 已知限制：Celery 任务当前使用独立执行服务占位回调，真实 Worker 与 Redis 事件订阅的端到端执行必须在 CI 服务栈中继续验收；readiness 本地模式通过，生产依赖检查需真实服务验证。
+- 遗留事项：Task 11 远程生产集成、Task 13 全量前后端/浏览器验收和最终文档收尾尚未完成。
+
+### 2026-07-16：第五周任务 11-13 状态审计
+
+- 当前周次：第 5 周，状态仍为进行中。
+- 已完成：Task 1-10 的本地实现、迁移链、存储适配、制品迁移、Local Dispatcher、Celery claim 基础、Redis publisher、readiness、Compose/Worker 镜像和运维文档；第五周本地 runner 12/12 通过。
+- 未完成：Task 11 真实 PostgreSQL/Redis/MinIO/Celery 集成测试尚未取得 GitHub Actions 证据；Task 13 全量后端、前端、Playwright、npm audit 和远程 production-integration 尚未完成。
+- 阻塞与原因：当前机器未提供 Docker 服务栈，且 production integration 测试仍需补齐真实 Celery Worker 执行、Redis 订阅恢复、MinIO round-trip 和取消/超时断言；不能用本地 skip 代替生产验收。
+- 当前验证：第五周 `python run_suite.py --week 5` 为 12/12；基础设施聚焦测试 30 个用例通过、生产集成 1 个用例明确 skip；Alembic `20260715_03` 双次升级和 `alembic check` 通过；`git diff --check` 通过。
+- 恢复顺序：先完善 `tests/test_production_stack.py` 的真实服务断言和 Worker 启动步骤，运行 GitHub Actions `production-integration`；成功后执行 Task 13 全量验收并决定是否将第五周改为已完成。
+
+### 2026-07-16：第五周剩余本地任务补齐
+
+- 开发内容：完成 Task 8 恢复扫描、硬超时收敛和 Celery revoke；完成 Task 9 Redis 订阅器，对非法 JSON 丢弃、合法事件转发 WebSocket manager；补齐 Task 11 本地 skip 门禁和 CI 入口。
+- 验证方式：Task 8/9 聚焦测试 7/7 通过；第五周 runner 12/12 通过；生产集成测试本地明确 skip；模块清单、Alembic 和 diff 检查通过。
+- 当前状态：第五周所有可在当前环境完成的代码任务已完成；Task 11 远程 production-integration 和 Task 13 最终全量验收仍待 GitHub Actions 服务容器证据。
+- 补充验证：Task 8 恢复扫描/硬超时和取消、Task 9 Redis 订阅器已补齐，新增聚焦测试 7/7 通过；第五周 runner 仍为 12/12。完整 runner 并行执行时唯一失败为 `test_api_users` SQLite `unable to open database file`，单独运行该模块已通过，属于共享临时目录资源冲突。
+
+### 2026-07-16：第五周生产集成 job 收尾补充
+
+- 开发内容：生产集成测试增加真实 PostgreSQL `SELECT 1` 和 MinIO round-trip；CI job 增加 Celery worker 启动、失败日志脱敏扫描和证据上传。
+- 当前验证：本地 `RUN_PRODUCTION_INTEGRATION` 未启用时测试明确 skip；第五周本地 runner 仍为 12/12。真实 PostgreSQL/Redis/MinIO/Celery 结果仍需远程 Actions 运行确认。
+- 遗留事项：Task 11 Step 5、Task 12 Step 4 和 Task 13 Step 5-7 依赖远程 job 与最终全量验收，未提前标记完成。
+
+### 2026-07-16：第五周本地最终验收完成
+
+- 验证结果：后端完整 runner 45/45 模块通过；前端 Vitest 14/14 文件、35/35 用例通过；前端生产构建成功；Chromium Playwright 1/1 通过；`npm audit` 报告 0 vulnerabilities；隔离数据库 Alembic 双次升级、`alembic current`/`alembic check` 测试通过；`git diff --check` 通过。
+- 问题现象：直接在当前默认开发 SQLite 上执行 `alembic upgrade head` 报 `table algorithms already exists`，随后 `Target database is not up to date`。
+- 根因：该开发库由本地模式 `create_all + ensure_schema_compatibility` 创建，没有 `alembic_version`；生产 Alembic baseline 只适用于新库或已有 revision 的数据库，不能覆盖未标记的旧开发库。
+- 解决结果：不覆盖或重置用户开发库；使用隔离临时数据库完成 Alembic 真实升级验证，并保留现有本地兼容迁移路径。
+- 当前状态：本地 Task 13 Step 1-4、6-7 已完成；Task 11 Step 5、Task 13 Step 5 仍依赖 GitHub Actions `production-integration` 远程成功证据。第五周暂不标记为最终完成。
+
+### 2026-07-17：第五周真实生产栈与异步执行缺口修复
+
+- 当前周次：第 5 周，状态仍为进行中。
+- 开发内容：将工作流完整执行逻辑从 API 移入 `workflow_execution`，Local/Celery 共用服务；生产 dispatcher 使用真实 Celery task，Worker 显式注册完整算子；增加 PostgreSQL 行锁领取、心跳、绑定 Celery app 的 revoke、取消/失联恢复和 Redis client 回收；FastAPI lifespan 启停 Redis subscriber；readiness 增加 Alembic head 与真实 Redis/Celery/MinIO 依赖。
+- 问题现象：原 Worker 领取后调用空 lambda 并错误返回完成；独立 Worker 未加载算子；Redis subscriber 未启动；真实 SQLite→PostgreSQL 第二次迁移因 UUID 32 位/连字符表示不同而重复插入；容器 DataBus 固定访问 `parents[4]` 报 `IndexError`；双 Uvicorn worker 并发种子触发管理员唯一键冲突；Docker 构建上下文包含 1.66 GB 开发数据库；Compose 5 将 MinIO 初始化字符串拆参导致裸 `mc` 执行。
+- 根因：本地线程路径未真正抽取；应用初始化副作用只存在于 FastAPI main；跨方言主键未先规范化；运行路径和构建上下文隐含本地目录结构；种子流程是先查后插且没有处理并发唯一冲突；Compose shell 命令未固定为单一 `sh -c` 参数。
+- 解决方法：建立共享执行服务和集中算子注册入口；任务 publisher/heartbeat 使用明确生命周期；主键构造调用方言规范化；DataBus 默认使用系统临时目录且生产显式设置 `ML_PLATFORM_TEMP_DIR`；增加 `.dockerignore`、非 root 命名用户、自动迁移服务、可移植 MinIO entrypoint 和并发安全种子；生产 CI 等待 Worker ready 并只上传脱敏日志。
+- WSL 验证：Docker 29.6.2、Compose 5.3.1、PostgreSQL 16、Redis 7、Celery 5.4、MinIO 真实组合启动；`/api/ready` 的 database/redis/celery/storage 全部 `OK`；`tests.test_production_stack` 4/4 通过，覆盖数据库幂等迁移、MinIO、真实工作流、重复投递、Redis 事件、节点超时、失联和取消恢复。
+- 完整验证：第五周 12/12、后端 45/45、前端 14 文件 35/35、生产构建、Chromium 1/1、npm audit 0 漏洞、隔离 Alembic 双次 upgrade/current/check、compileall、凭据扫描和 `git diff --check` 通过。
+- 遗留事项：Task 11 Step 5 与 Task 13 Step 5 仍需 GitHub Actions `production-integration` 成功 URL；远程成功和最终文档提交前第五周不标记为完成。

@@ -25,6 +25,10 @@ class WorkflowRun(Base):
     cancel_requested_at = Column(DateTime)
     cancelled_at = Column(DateTime)
     triggered_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    task_id = Column(String(128), index=True)
+    queue_name = Column(String(64))
+    worker_id = Column(String(128))
+    heartbeat_at = Column(DateTime)
 
     workflow = relationship("Workflow", back_populates="runs")
     triggered_by_user = relationship("User", back_populates="triggered_runs")
