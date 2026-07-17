@@ -137,16 +137,6 @@ jobs:
         options: >-
           --health-cmd="redis-cli ping"
           --health-interval 5s --health-timeout 5s --health-retries 20
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin-secret
-        ports: ["9000:9000"]
-        options: >-
-          --health-cmd="curl -f http://localhost:9000/minio/health/live"
-          --health-interval 5s --health-timeout 5s --health-retries 20
-        command: server /data
     env:
       APP_MODE: production
       DATABASE_URL: postgresql+psycopg://postgres:test-password@127.0.0.1:5432/ml_platform
@@ -160,7 +150,6 @@ jobs:
       MINIO_BUCKET: ml-platform-test
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin-secret
-      ML_PLATFORM_TEMP_DIR: ${{ runner.temp }}/ml-platform-production
       RUN_PRODUCTION_INTEGRATION: "1"
     steps:
       - uses: actions/checkout@v5
@@ -172,6 +161,23 @@ jobs:
       - name: Install backend dependencies
         working-directory: ml-platform/backend
         run: python -m pip install -r requirements.txt
+      - name: Start MinIO
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --detach --name ml-platform-minio \
+            --publish 9000:9000 \
+            --env MINIO_ROOT_USER="$MINIO_ACCESS_KEY" \
+            --env MINIO_ROOT_PASSWORD="$MINIO_SECRET_KEY" \
+            minio/minio:latest server /data
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs ml-platform-minio
+          exit 1
       - name: Create MinIO bucket
         run: |
           curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
@@ -187,6 +193,8 @@ jobs:
           alembic check
       - name: Start Celery worker
         working-directory: ml-platform/backend
+        env:
+          ML_PLATFORM_TEMP_DIR: ${{ runner.temp }}/ml-platform-production
         run: |
           nohup celery -A app.tasks.celery_app:celery_app worker --loglevel=INFO --concurrency=2 > "$RUNNER_TEMP/celery.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/celery.pid"
@@ -209,6 +217,8 @@ jobs:
           exit 1
       - name: Run production integration tests
         working-directory: ml-platform/backend
+        env:
+          ML_PLATFORM_TEMP_DIR: ${{ runner.temp }}/ml-platform-production
         run: python -m unittest tests.test_production_stack -v
       - name: Scan and upload production failure evidence
         if: failure()
@@ -219,6 +229,7 @@ jobs:
           for file in "$RUNNER_TEMP/celery.log" "$RUNNER_TEMP/celery.pid"; do
             if [ -f "$file" ]; then cp "$file" "$RUNNER_TEMP/production-evidence/"; fi
           done
+          docker logs ml-platform-minio > "$RUNNER_TEMP/production-evidence/minio.log" 2>&1 || true
           sed -i 's/test-password/[redacted]/g; s/minioadmin-secret/[redacted]/g; s/ci-production-secret-key-with-at-least-32-characters/[redacted]/g' "$RUNNER_TEMP/production-evidence"/* 2>/dev/null || true
           if rg -n -i 'test-password|minioadmin-secret|ci-production-secret-key|redis://[^/@[:space:]]+@' "$RUNNER_TEMP/production-evidence"; then
             echo 'Sensitive value found in production evidence.'
@@ -239,3 +250,4 @@ jobs:
           if [ -f "$RUNNER_TEMP/celery.pid" ]; then
             kill "$(cat "$RUNNER_TEMP/celery.pid")" 2>/dev/null || true
           fi
+          docker rm --force ml-platform-minio 2>/dev/null || true

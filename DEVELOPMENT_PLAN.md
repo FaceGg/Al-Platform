@@ -588,3 +588,12 @@
 - WSL 验证：Docker 29.6.2、Compose 5.3.1、PostgreSQL 16、Redis 7、Celery 5.4、MinIO 真实组合启动；`/api/ready` 的 database/redis/celery/storage 全部 `OK`；`tests.test_production_stack` 4/4 通过，覆盖数据库幂等迁移、MinIO、真实工作流、重复投递、Redis 事件、节点超时、失联和取消恢复。
 - 完整验证：第五周 12/12、后端 45/45、前端 14 文件 35/35、生产构建、Chromium 1/1、npm audit 0 漏洞、隔离 Alembic 双次 upgrade/current/check、compileall、凭据扫描和 `git diff --check` 通过。
 - 遗留事项：Task 11 Step 5 与 Task 13 Step 5 仍需 GitHub Actions `production-integration` 成功 URL；远程成功和最终文档提交前第五周不标记为完成。
+
+### 2026-07-17：GitHub Actions 生产服务声明修复
+
+- 当前周次：第 5 周，远程验收修复中。
+- 问题现象：首次推送 Run `29547284623` 在创建任何 job 前失败，`jobs=[]` 且没有步骤日志。
+- 根因：GitHub Actions 的 `services` schema 不支持 `command` 字段，本地通用 YAML 解析只能验证语法，无法发现 Actions 语义错误；MinIO 官方镜像又必须接收 `server /data` 参数。
+- 解决方法：从 service containers 移除 MinIO，改在 job 步骤中使用 `docker run ... minio/minio:latest server /data`，轮询 live health；失败证据收集 MinIO 日志，`always()` 清理容器；`runner.temp` 只在 Worker/测试步骤环境中解析。
+- 验证方式：本地 YAML 解析和 `git diff --check` 通过；等待修复提交后的 GitHub Actions 实际 job 创建和运行结果。
+- 预防措施：Actions 配置变更除 YAML parser 外必须以真实 Run 验证；第三方 service 需要自定义命令时使用显式 `docker run` 步骤，不写未受支持的 schema 字段。
