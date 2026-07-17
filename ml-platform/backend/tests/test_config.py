@@ -23,6 +23,13 @@ class TestSettings(unittest.TestCase):
             "minio_endpoint": "minio:9000",
             "minio_access_key": "minio-access-value",
             "minio_secret_key": "minio-secret-value",
+            "mlflow_tracking_uri": "http://mlflow:5000",
+            "mlflow_backend_store_uri": (
+                "postgresql+psycopg://mlflow:mlflow-db-password@db/mlflow"
+            ),
+            "mlflow_artifact_root": "s3://ml-platform/mlflow",
+            "tensorboard_gateway_url": "http://tensorboard-gateway:6006",
+            "tensorboard_session_secret": "tensorboard-session-secret-value-1234",
         }
         values.update(overrides)
         return values
@@ -145,6 +152,8 @@ class TestSettings(unittest.TestCase):
             "events-password",
             "minio-access-value",
             "minio-secret-value",
+            "mlflow-db-password",
+            "tensorboard-session-secret-value-1234",
             "legacy-llm-secret",
         )
         protected_settings = Settings(
@@ -185,6 +194,8 @@ class TestSettings(unittest.TestCase):
             "broker-password",
             "events-password",
             "minio-secret-value",
+            "mlflow-db-password",
+            "tensorboard-session-secret-value-1234",
             "legacy-llm-secret",
             "minio-url-password",
             "minio-query-token",

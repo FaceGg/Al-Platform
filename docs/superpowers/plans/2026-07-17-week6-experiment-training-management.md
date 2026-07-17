@@ -38,7 +38,7 @@
 - Modify: `ml-platform/backend/requirements.txt`
 - Create: `ml-platform/backend/tests/test_experiment_config.py`
 
-- [ ] **Step 1: Add failing configuration tests**
+- [x] **Step 1: Add failing configuration tests**
 
 Create tests that construct `Settings` in local and production modes and assert typed defaults plus production validation:
 
@@ -68,12 +68,12 @@ class TestExperimentConfiguration(unittest.TestCase):
             )
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest tests.test_experiment_config -v`
 Expected: FAIL because MLflow/TensorBoard settings do not exist.
 
-- [ ] **Step 3: Add settings and dependencies**
+- [x] **Step 3: Add settings and dependencies**
 
 Add fields with these exact semantics:
 
@@ -92,7 +92,7 @@ training_stale_after_seconds: int = Field(default=300, ge=30, le=86400)
 
 Production validation must require tracking URI, artifact root, gateway URL, and a resolved session secret. Add `mlflow==3.1.*` and `tensorboard==2.19.*` to requirements and document every variable in `.env.example` without real credentials.
 
-- [ ] **Step 4: Register and run tests**
+- [x] **Step 4: Register and run tests**
 
 Add `test_experiment_config` as the first Week 6 module. Run:
 
@@ -103,7 +103,7 @@ python run_suite.py --week 5
 
 Expected: configuration tests pass and Week 5 remains 13/13.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add ml-platform/backend/app/config.py ml-platform/backend/.env.example ml-platform/backend/requirements.txt ml-platform/backend/tests/test_experiment_config.py ml-platform/backend/tests/week_manifest.py

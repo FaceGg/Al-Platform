@@ -79,6 +79,19 @@ class Settings(BaseSettings):
     )
     minio_secure: bool = False
 
+    mlflow_tracking_uri: str | None = None
+    mlflow_backend_store_uri: SecretStr | None = Field(default=None, exclude=True)
+    mlflow_artifact_root: str | None = None
+    tensorboard_gateway_url: str | None = None
+    tensorboard_session_secret: SecretStr | None = Field(default=None, exclude=True)
+    tensorboard_session_secret_file: str | None = Field(
+        default=None, repr=False, exclude=True
+    )
+    tensorboard_session_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+    tensorboard_idle_timeout_seconds: int = Field(default=600, ge=60, le=86400)
+    training_checkpoint_interval_epochs: int = Field(default=5, ge=1, le=1000)
+    training_stale_after_seconds: int = Field(default=300, ge=30, le=86400)
+
     # LLM / RAG settings
     llm_api_url: str = Field(
         default="https://api.openai.com/v1/chat/completions",
@@ -91,6 +104,7 @@ class Settings(BaseSettings):
     _resolved_secret_key: SecretStr = PrivateAttr()
     _resolved_minio_access_key: SecretStr | None = PrivateAttr(default=None)
     _resolved_minio_secret_key: SecretStr | None = PrivateAttr(default=None)
+    _resolved_tensorboard_session_secret: SecretStr | None = PrivateAttr(default=None)
 
     @property
     def resolved_secret_key(self) -> SecretStr:
@@ -104,6 +118,10 @@ class Settings(BaseSettings):
     def resolved_minio_secret_key(self) -> SecretStr | None:
         return self._resolved_minio_secret_key
 
+    @property
+    def resolved_tensorboard_session_secret(self) -> SecretStr | None:
+        return self._resolved_tensorboard_session_secret
+
     @model_validator(mode="after")
     def validate_runtime(self) -> "Settings":
         resolved_secret = self._resolve_secret_pair(
@@ -116,6 +134,9 @@ class Settings(BaseSettings):
         )
         self._resolved_minio_secret_key = self._resolve_secret_pair(
             "minio_secret_key", "minio_secret_key_file"
+        )
+        self._resolved_tensorboard_session_secret = self._resolve_secret_pair(
+            "tensorboard_session_secret", "tensorboard_session_secret_file"
         )
 
         if self.app_mode == "production":
@@ -169,6 +190,16 @@ class Settings(BaseSettings):
             raise ValueError("Production mode requires MINIO_ACCESS_KEY")
         if not self._has_secret(self.resolved_minio_secret_key):
             raise ValueError("Production mode requires MINIO_SECRET_KEY")
+        if not self.mlflow_tracking_uri or not self.mlflow_tracking_uri.strip():
+            raise ValueError("Production mode requires MLFLOW_TRACKING_URI")
+        if not self._has_secret(self.mlflow_backend_store_uri):
+            raise ValueError("Production mode requires MLFLOW_BACKEND_STORE_URI")
+        if not self.mlflow_artifact_root or not self.mlflow_artifact_root.strip():
+            raise ValueError("Production mode requires MLFLOW_ARTIFACT_ROOT")
+        if not self.tensorboard_gateway_url or not self.tensorboard_gateway_url.strip():
+            raise ValueError("Production mode requires TENSORBOARD_GATEWAY_URL")
+        if not self._has_secret(self.resolved_tensorboard_session_secret):
+            raise ValueError("Production mode requires TENSORBOARD_SESSION_SECRET")
 
         jwt_secret = self.resolved_secret_key.get_secret_value()
         if jwt_secret == DEFAULT_SECRET_KEY or len(jwt_secret) < 32:
@@ -229,6 +260,21 @@ class Settings(BaseSettings):
                 self.resolved_minio_secret_key
             ),
             "minio_secure": self.minio_secure,
+            "mlflow_tracking_uri": self._sanitize_url(self.mlflow_tracking_uri),
+            "mlflow_backend_store_configured": self._has_secret(
+                self.mlflow_backend_store_uri
+            ),
+            "mlflow_artifact_root": self._sanitize_url(self.mlflow_artifact_root),
+            "tensorboard_gateway_url": self._sanitize_url(
+                self.tensorboard_gateway_url
+            ),
+            "tensorboard_session_secret_configured": self._has_secret(
+                self.resolved_tensorboard_session_secret
+            ),
+            "tensorboard_session_ttl_seconds": self.tensorboard_session_ttl_seconds,
+            "tensorboard_idle_timeout_seconds": self.tensorboard_idle_timeout_seconds,
+            "training_checkpoint_interval_epochs": self.training_checkpoint_interval_epochs,
+            "training_stale_after_seconds": self.training_stale_after_seconds,
             "jwt_secret_configured": self._has_secret(self.resolved_secret_key),
             "algorithm": self.algorithm,
             "access_token_expire_minutes": self.access_token_expire_minutes,

@@ -636,3 +636,12 @@
 - 规范文档：`docs/superpowers/specs/2026-07-17-week6-experiment-training-management-design.md`。
 - 验收门禁：本地/远程全量回归、真实 MLflow/PostgreSQL/MinIO/Celery/TensorBoard 集成、前端比较与恢复流程、Chromium 和安全扫描全部通过后方可标记第六周完成。
 - 遗留事项：详细实施计划、TDD 代码实现、迁移、容器、前端和生产验收尚未开始。
+
+### 2026-07-17：第六周任务 1 生产配置完成
+
+- 开发内容：新增 MLflow tracking/backend/artifact、TensorBoard gateway/会话 Secret、会话超时、checkpoint 间隔和训练失联阈值配置；补充 MLflow/TensorBoard 依赖与 `.env.example`。
+- TDD 证据：新增配置测试先因字段不存在和生产校验缺失 RED；实现后新测试 7/7、配置组合 24/24 GREEN，第五周 runner 13/13 无回归。
+- 安全边界：TensorBoard 会话 Secret 支持文件读取，MLflow backend URI 与会话 Secret 不进入标准 dump、repr 或安全摘要；摘要只暴露是否配置及清洗后的服务地址。
+- 影响范围：配置模型、生产启动门禁、依赖、环境变量示例和第六周测试清单。
+- 遗留事项：Experiment/TrainingJob Schema、MLflow adapter、训练执行、TensorBoard gateway 和生产服务尚未实现。
+- 预防措施：生产 fixture 必须与新增强制配置同步；所有跨服务凭据使用 `SecretStr`/Secret 文件并加入泄露回归。
