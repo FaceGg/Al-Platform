@@ -121,7 +121,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
-- 第 6 周进行中：生产配置与 Experiment/TrainingJob 持久化已完成；待完成 MLflow adapter、项目鉴权 API、Celery 训练、指标/检查点/恢复、AutoML Trial、隔离 TensorBoard、前端和生产集成验收。
+- 第 6 周进行中：生产配置、Experiment/TrainingJob 持久化和 MLflow adapter 已完成；待完成项目鉴权 API、Celery 训练、指标/检查点/恢复、AutoML Trial、隔离 TensorBoard、前端和生产集成验收。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -654,3 +654,12 @@
 - 验证结果：模型与生产迁移 19/19、数据库迁移回归 9/9、降级聚焦 1/1 通过；双次 upgrade、`alembic check`、降级到 `20260715_03` 均有自动化覆盖。
 - 遗留事项：MLflow adapter、项目鉴权 Experiment API、训练执行与后续生产集成尚未实现；第六周保持进行中。
 - 预防措施：新增 Alembic revision 必须同时验证空库双次升级、autogenerate check 和真实 downgrade；开发 SQLite 兼容迁移与生产外键迁移分层实现。
+
+### 2026-07-17：第六周任务 3 MLflow Tracking Adapter 完成
+
+- 开发内容：新增无导入副作用的 `ExperimentTracking` 协议与 `MlflowExperimentTracking`；支持 Experiment 复用、parent/child Run、参数/指标/标签、搜索/比较、指标历史、制品上传/列出/下载和 Run 终态。
+- 数据契约：`TrackedRun`、`TrackedMetric`、`TrackedArtifact` 使用 frozen DTO；Run 的 params/metrics/tags 复制为只读映射，参数统一字符串化，指标拒绝 bool、非数值和 NaN/Infinity，step 保持整数。
+- TDD 证据：测试先因 adapter 模块不存在 RED；补充 `set_tags` 契约时先撤掉具体实现并确认 AttributeError RED；测试清单先确认新模块未归属 Week 6。
+- 测试边界：有状态内存 fake 返回 MLflow 3.1.4 官方 `Experiment/Run/RunData/Metric/FileInfo` 实体，验证可见状态而非调用次数；MLflow not-found 与基础设施异常分别映射为稳定领域错误。
+- 当前验证：adapter 6/6 通过，不需要网络 MLflow 服务；真实 MLflow/PostgreSQL/MinIO 组合留到 Task 12 验收。
+- 遗留事项：项目权限 API、训练执行、AutoML、TensorBoard、前端和生产集成仍未实现；第六周保持进行中。

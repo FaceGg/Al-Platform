@@ -182,7 +182,7 @@ git commit -m "feat: add experiment and training tracking schema"
 - Create: `ml-platform/backend/app/services/experiment_tracking.py`
 - Create: `ml-platform/backend/tests/test_experiment_tracking.py`
 
-- [ ] **Step 1: Write failing adapter contract tests**
+- [x] **Step 1: Write failing adapter contract tests**
 
 Use an in-memory fake client object and assert stable DTOs and errors:
 
@@ -201,21 +201,21 @@ self.assertEqual(tracking.get_metric_history(run.run_id, "val_accuracy")[0].step
 
 Cover parent/child runs, list/search filters, batch compare, artifact listing/download, terminal statuses, non-finite metric rejection, and conversion of MLflow exceptions to `TrackingUnavailable` or `TrackingNotFound`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest tests.test_experiment_tracking -v`
 Expected: FAIL because the adapter module is absent.
 
-- [ ] **Step 3: Implement protocol and MLflow adapter**
+- [x] **Step 3: Implement protocol and MLflow adapter**
 
 Define immutable DTOs `TrackedRun`, `TrackedMetric`, and `TrackedArtifact`, plus protocol methods used by later tasks. The concrete adapter receives an `MlflowClient`; module import must not connect to MLflow. Normalize params to strings, accept only finite numeric metrics, and preserve integer steps.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `python -m unittest tests.test_experiment_tracking -v`
 Expected: all adapter contract tests pass without a network service.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add ml-platform/backend/app/services/experiment_tracking.py ml-platform/backend/tests/test_experiment_tracking.py
