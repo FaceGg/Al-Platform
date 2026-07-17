@@ -88,7 +88,7 @@
 | 第 3 周 | 已完成 | 数据、算子与训练闭环 | 已统一 79 个运行时算子协议；完成数据 Artifact、训练评估、模型保存、模型库登记和血缘展示 | 严格算子协议、数据训练闭环；后端 28/28 模块、前端 22/22 测试和生产构建通过 |
 | 第 4 周 | 已完成 | 工业模板与首版交付 | 已完成真实数据准备、四套模板执行闭环、Artifact 向导、Playwright 主流程、Windows/Linux 脚本、跨平台 CI 和交付文档；GitHub Ubuntu 22.04 质量门禁与 Chromium 验收通过 | 稳定可交付版、首月验收报告 |
 | 第 5 周 | 已完成 | 生产存储与异步任务 | 已完成 PostgreSQL/Alembic、Redis/Celery、MinIO、制品 URI、配置密钥、迁移工具、生产容器和真实服务验收 | 生产数据层、对象存储、异步任务框架；Actions Run 29548916619 全绿 |
-| 第 6 周 | 未开始 | 实验与训练管理 | 实验、Run、参数、指标、日志、制品、检查点、恢复、早停和 TensorBoard | 企业基础版、实验训练追踪 |
+| 第 6 周 | 进行中 | 实验与训练管理 | 已确认平台编排 + MLflow 追踪架构；实施实验、Run、参数、指标、日志、制品、检查点、恢复、早停、AutoML Trial 和隔离 TensorBoard | 企业基础版、实验训练追踪 |
 | 第 7 周 | 未开始 | Pipeline 调度与权限 | Cron、补录、依赖、并发、超时、重试、暂停恢复、项目角色和审计 | 调度器、实例管理、权限审计 |
 | 第 8 周 | 未开始 | 模型注册与基础推理 | 模型版本、指标、审批、基础推理、在线测试、健康检查和服务启停 | 模型注册中心、基础推理服务 |
 | 第 9 周 | 未开始 | 推理服务生产化 | 多版本发布、滚动升级、回滚、密钥、限流、服务日志和运行指标 | 生产级推理服务、版本发布回滚 |
@@ -121,6 +121,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
+- 第 6 周进行中：设计已确认，待完成 MLflow 服务、Experiment/Run、Celery 训练、指标/检查点/恢复、AutoML Trial、隔离 TensorBoard、前端和生产集成验收。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -625,3 +626,13 @@
 - 本地验证：后端全量 46/46、第五周 13/13；WSL Docker 生产栈 4/4；前端 14 文件 35/35、生产构建、Chromium 1/1、npm audit 0 漏洞和 Alembic check 均通过。
 - 完成范围：生产配置与密钥、PostgreSQL/Alembic、幂等 SQLite 迁移、Local/MinIO 存储、制品 URI/历史迁移、Local/Celery 分发、Redis 事件桥接、任务领取/心跳/取消/失联恢复、readiness、Compose 镜像、运维文档和跨平台 CI 已闭环。
 - 后续工作：训练任务 Celery 化、实验追踪/检查点、周期性恢复调度、节点级断点续跑、备份恢复和性能压测按第 6 周及后续计划推进，不属于第五周遗留未完成项。
+
+### 2026-07-17：第六周实验与训练管理设计确认
+
+- 当前周次：第 6 周，状态调整为进行中。
+- 设计结论：允许新增 MLflow；平台 PostgreSQL 保留权限、TrainingJob 状态和 MLflow ID，MLflow 作为 Experiment/Run/参数/指标/实验制品的事实来源；最终模型继续登记平台 Artifact 和模型库。
+- 训练范围：普通训练与 AutoML 统一迁移到 Celery；新增 scikit-learn 迭代训练器，支持真实 epoch 指标、早停、checkpoint、恢复、取消和失联恢复；PyTorch checkpoint 延后。
+- TensorBoard：采用受平台鉴权的隔离网关，每个会话只访问目标 Run，不暴露可浏览全部日志的公共实例。
+- 规范文档：`docs/superpowers/specs/2026-07-17-week6-experiment-training-management-design.md`。
+- 验收门禁：本地/远程全量回归、真实 MLflow/PostgreSQL/MinIO/Celery/TensorBoard 集成、前端比较与恢复流程、Chromium 和安全扫描全部通过后方可标记第六周完成。
+- 遗留事项：详细实施计划、TDD 代码实现、迁移、容器、前端和生产验收尚未开始。
