@@ -419,7 +419,7 @@ git commit -m "feat: add training checkpoint recovery"
 - Modify: `ml-platform/backend/app/api/training.py`
 - Create: `ml-platform/backend/tests/test_automl_tracking.py`
 
-- [ ] **Step 1: Write failing AutoML tests**
+- [x] **Step 1: Write failing AutoML tests**
 
 Assert dataset paths are rejected, parent and child Run relationships, partial candidate failure, all-failed behavior, deterministic best selection, and final model lineage:
 
@@ -432,21 +432,21 @@ self.assertEqual(fake_tracking.failed_child_count, 1)
 self.assertEqual(fake_tracking.parent_tags["platform.best_child_run_id"], working_candidate.run_id)
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest tests.test_automl_tracking -v`
 Expected: FAIL because the AutoML service is absent and old API accepts paths.
 
-- [ ] **Step 3: Implement finite candidate execution**
+- [x] **Step 3: Implement finite candidate execution**
 
 Use Dataset Artifact materialization and candidates RandomForest, GradientBoosting, LogisticRegression/LinearRegression with deterministic 5-fold scoring. Start one child Run per candidate, log params/score/duration/error, continue after individual failure, select highest finite score, train the winner, then register final model through ArtifactService and ModelLibrary. Dispatch through task `ml_platform.execute_automl`.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `python -m unittest tests.test_automl_tracking tests.test_training_artifacts -v`
 Expected: all AutoML tracking and existing lineage tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add ml-platform/backend/app/services/automl_execution.py ml-platform/backend/app/tasks/training_tasks.py ml-platform/backend/app/api/training.py ml-platform/backend/tests/test_automl_tracking.py

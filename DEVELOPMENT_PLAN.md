@@ -121,7 +121,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
-- 第 6 周进行中：生产配置、实验追踪、增量训练、Celery 执行、checkpoint 恢复/停止/失联恢复已完成；待完成 AutoML Trial、隔离 TensorBoard、前端和生产集成验收。
+- 第 6 周进行中：生产配置、实验追踪、普通训练/恢复和 Artifact AutoML child Run 已完成；待完成隔离 TensorBoard、前端和生产集成验收。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -699,3 +699,12 @@
 - readiness：Celery ping 之外还必须确认 `ml_platform.execute_training` 已注册，防止“Worker 在线但不能训练”误判 ready。
 - TDD 与验证：旧接口下 checkpoint/resume/stop 404、start 走旧 Artifact 路径及 recovery 模块缺失均 RED；Worker resume 暂时移除后明确从 `[1,2,3,4,5]` 错误重启，恢复后只记录 `[4,5]`；聚焦 17/17 GREEN。
 - 遗留事项：AutoML 暂返回稳定 `AUTOML_MIGRATION_PENDING`，将在 Task 8 实现；TensorBoard、前端和真实生产服务验收尚未完成。
+
+### 2026-07-17：第六周任务 8 Artifact AutoML 与 child Run 完成
+
+- API/调度：AutoML 只接受 owned Experiment + Dataset Artifact，Pydantic `extra=forbid` 明确拒绝历史 `dataset_path`；创建 operator=`automl` Job 并投递 `ml_platform.execute_automl`。
+- 候选执行：分类固定 RandomForest/GradientBoosting/LogisticRegression，回归固定 RandomForest/GradientBoosting/LinearRegression；使用 random_state=42 的 5-fold scoring。
+- Tracking：一个 parent Run、每候选一个 child Run；记录候选参数、有限 cv score、duration 和失败类型/消息；单个失败继续，全部失败才写 `AUTOML_ALL_CANDIDATES_FAILED`。
+- 选择与血缘：最高有限分获胜，同分按原候选顺序稳定选择；winner 全量拟合后登记模型 Artifact、ModelLibrary、Dataset/Job/parent Run 血缘，并在 parent tags 记录 best child/artifact。
+- TDD 与验证：服务缺失时 RED；首次 API 测试因普通内存 SQLite 跨线程丢表暴露测试环境问题，改为 StaticPool 后 AutoML 与既有训练血缘 7/7 GREEN；新测试清单归属先 RED。
+- 遗留事项：候选集合为第六周确定性有限版本，不含分布式/贝叶斯搜索；TensorBoard、前端和生产服务验收尚未完成。

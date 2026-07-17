@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -44,6 +44,17 @@ class ResumeRequest(BaseModel):
     total_epochs: int | None = Field(default=None, ge=1, le=10000)
 
 
+class AutoMLRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: uuid.UUID
+    experiment_id: uuid.UUID
+    dataset_artifact_id: uuid.UUID
+    target_column: str = Field(min_length=1)
+    task: str = "classification"
+    name: str = Field(default="automl-job", min_length=1, max_length=128)
+
+
 class BatchDeleteRequest(BaseModel):
     ids: list[str]
 
@@ -69,6 +80,17 @@ def get_training_dispatcher(request: Request):
 
     configured = CeleryTrainingDispatcher(execute_training_task)
     request.app.state.training_dispatcher = configured
+    return configured
+
+
+def get_automl_dispatcher(request: Request):
+    configured = getattr(request.app.state, "automl_dispatcher", None)
+    if configured is not None:
+        return configured
+    from app.tasks.training_tasks import execute_automl_task
+
+    configured = CeleryTrainingDispatcher(execute_automl_task)
+    request.app.state.automl_dispatcher = configured
     return configured
 
 
@@ -305,12 +327,48 @@ def resume_training_job(
     return {"job_id": str(resumed.id), "status": "queued", "task_id": resumed.task_id}
 
 
-@router.post("/automl/run")
-def automl_pending():
-    raise HTTPException(501, _error(
-        "AUTOML_MIGRATION_PENDING",
-        "Artifact-based AutoML is not available until migration completes",
-    ))
+@router.post("/automl/run", status_code=202)
+def start_automl(
+    data: AutoMLRunRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    experiment = _owned_experiment(
+        db,
+        data.experiment_id,
+        data.project_id,
+        current_user.id,
+    )
+    if experiment is None:
+        raise HTTPException(404, _error("EXPERIMENT_NOT_FOUND", "Experiment not found"))
+    if data.task not in {"classification", "regression"}:
+        raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", "Invalid AutoML task"))
+    artifact_service = get_artifact_service(request, db)
+    try:
+        dataset = artifact_service.resolve(
+            data.dataset_artifact_id,
+            data.project_id,
+            expected_type="dataset",
+        )
+    except (ValueError, ArtifactAccessError) as error:
+        raise HTTPException(400, _error("DATASET_ARTIFACT_INVALID", str(error))) from error
+    job = TrainingJob(
+        project_id=data.project_id,
+        user_id=current_user.id,
+        experiment_id=experiment.id,
+        name=data.name,
+        operator_id="automl",
+        params={"target_column": data.target_column, "task": data.task},
+        dataset_artifact_id=dataset.id,
+        dataset_path=artifact_service.storage_reference(dataset),
+        status="pending",
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    _enqueue_job(db, job, get_automl_dispatcher(request))
+    return {"job_id": str(job.id), "status": "queued", "task_id": job.task_id}
 
 
 @router.get("/automl/jobs")

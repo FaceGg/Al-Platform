@@ -63,6 +63,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_iterative_training",
         "test_training_tasks",
         "test_training_recovery",
+        "test_automl_tracking",
     ],
 }
 
