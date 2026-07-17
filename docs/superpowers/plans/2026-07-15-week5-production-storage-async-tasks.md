@@ -817,7 +817,7 @@ Secret key 和 MinIO credentials 使用 GitHub job env 中的测试值，并确�
 
 失败时上传 Celery、API 和 migration 日志；上传前运行脱敏扫描，发现测试密码或 Secret 时使 job 失败且不上传原日志。
 
-- [ ] **Step 5: 验证远程 job**
+- [x] **Step 5: 验证远程 job**
 
 Run: 推送分支或更新 PR 后等待 `production-integration`。
 Expected: PostgreSQL、Redis、MinIO、Celery 全部健康，集成测试退出码 0。
@@ -856,7 +856,7 @@ CMD ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=IN
 
 文档必须给出：配置清单、Secret 文件示例、`alembic upgrade head`、SQLite 数据迁移、Artifact dry-run/执行、切换顺序、回滚到 SQLite/Local/Thread、常见错误码和日志位置。不得写真实密码。
 
-- [ ] **Step 4: 更新项目状态但不提前标记完成**
+- [x] **Step 4: 更新项目状态但不提前标记完成**
 
 只有 production-integration 和全部本地回归均通过后，才把第五周从“进行中”改为“已完成”。否则记录具体未完成项和恢复命令。
 
@@ -905,7 +905,7 @@ git diff --check
 
 Expected: revision 为 head；正式文件无真实凭据；diff check 通过。
 
-- [ ] **Step 5: 确认远程生产集成结果**
+- [x] **Step 5: 确认远程生产集成结果**
 
 记录 GitHub Actions Run URL、Ubuntu job 结论、PostgreSQL/Redis/MinIO/Celery 版本和关键测试计数。远程 job 未通过时不得标记第五周完成。
 

@@ -356,8 +356,8 @@
 | FastAPI 路由 | 145 条运行时路由；140 个业务端点声明 |
 | 持久化模型 | 30 个 SQLAlchemy 模型类 |
 | 算子 | 80 个完整应用运行时注册算子，ID 全部唯一 |
-| 后端测试 | `python run_suite.py`：31/31 隔离模块通过 |
-| 前端测试 | `npm test`：11/11 文件、30/30 测试通过 |
+| 后端测试 | `python run_suite.py`：46/46 隔离模块通过 |
+| 前端测试 | `npm test`：14/14 文件、35/35 测试通过 |
 | 前端构建 | TypeScript 与 Vite 生产构建通过 |
 
 ### 已完成并有自动化验证
@@ -373,13 +373,12 @@
 ### 部分完成
 
 - 数据管理：单文件和主要批量上传已接入 Artifact；ZIP 和部分历史入口尚未统一。
-- 工作流可靠性：单进程重试、等待超时和协作取消可用；服务重启恢复和进程级硬终止未完成。
-- 训练管理：基础训练闭环可用；持久任务队列、检查点、实验追踪和原子完成事务未完成。
+- 工作流可靠性：Local/Celery 共用执行服务，持久投递、心跳、取消、硬超时和失联恢复可用；节点级断点续跑和周期性恢复调度未完成。
+- 训练管理：基础训练闭环可用；训练任务 Celery 化、检查点、实验追踪和原子完成事务未完成。
 - 知识库、标注、监控、计算资源、API 市场和智能体已有页面/API，但仍以基础 CRUD 或本地实现为主。
 
 ### 未实现或未验收
 
-- PostgreSQL + 完整 Alembic 迁移链、Redis/Celery、MinIO 和生产级配置管理。
 - 模型部署、灰度发布、回滚、在线推理治理和完整模型注册审批。
 - 完整 RBAC、SSO、审计、企业通知、Kubernetes、Notebook、GPU 和多集群治理。
 - 更广泛的浏览器 E2E、性能、安全、备份恢复、升级和 Docker 镜像验收；焊接质量主流程 E2E 已通过。
@@ -399,7 +398,7 @@
 - 第四周能力已形成可追溯提交和 PR #1，但 PR 仍为 Draft、尚未合并到 `main`。
 - 前端测试环境告警已清理；工作流参数标签、分类和端口预览双语已补齐。
 - 路由懒加载后首屏依赖块均低于 500 kB；ECharts 懒加载 chunk 约 1.13 MB，后续继续按图表能力裁剪。
-- 当前机器未完成 Docker 验收，不能将 Compose 文件存在等同于容器交付完成。
+- WSL2 已完成 Docker Compose 生产栈与真实服务验收；备份恢复和性能压测仍按后续周次执行。
 
 ## 十三、2026-07-15 第一至第四周全模块回归
 
@@ -409,10 +408,10 @@
 - TypeScript/Vite 生产构建、npm 安全审计（0 漏洞）和 Playwright Chromium 主流程 1/1 通过。
 - WSL2 前端依赖安装、测试和构建已执行；后端 32/33 模块通过，唯一环境缺口为 `/home/jingms/venv` 未安装可选 PyTorch，深度学习算子复测仍待完成。
 
-## 十四、2026-07-17 第五周生产基础设施验收进展
+## 十四、2026-07-17 第五周生产基础设施验收完成
 
 - PostgreSQL 16 与 Alembic `20260715_03`、SQLite 幂等迁移、MinIO URI、Celery Worker、Redis 事件桥接和生产配置已形成闭环。
 - WSL2 Docker 29.6.2 / Compose 5.3.1 完成镜像构建、自动迁移、bucket 初始化、双进程 API、非 root Worker 和四项 readiness。
 - 真实生产集成 4/4 通过，覆盖跨方言重复迁移、MinIO、真实工作流、重复投递、Redis 事件、节点超时、失联/取消恢复和 readiness。
-- 本地全量后端 45/45、第五周 12/12、前端 35/35、构建、Chromium 1/1、npm audit 0 漏洞和 Alembic check 均通过。
-- 第五周状态仍为“进行中”；取得 GitHub Actions `production-integration` 成功 URL 并完成最终文档提交后方可标记完成。
+- 本地全量后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、npm audit 0 漏洞和 Alembic check 均通过。
+- [GitHub Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619) 的 Windows/Ubuntu 质量、生产集成 4/4 和 Chromium 1/1 全部成功，第五周状态为“已完成”。

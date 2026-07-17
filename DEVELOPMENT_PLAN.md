@@ -1,7 +1,7 @@
 # 汽车焊接工业 AI 平台开发文档
 
 > 文档状态：持续维护
-> 最近更新：2026-07-16
+> 最近更新：2026-07-17
 > 适用项目：`E:\codex_workspace\agent_spot_welding`
 > 总周期：20 周，共计 5 个月
 
@@ -64,10 +64,8 @@
 
 以下功能尚未达到稳定或生产可用状态：
 
-- 工作流导入导出、多人协作编辑，以及跨进程恢复和断点续跑；发布快照、版本恢复已完成。
-- 持久任务队列、进程级硬超时和服务重启恢复；线程内重试、等待超时和协作取消已完成。
-- PostgreSQL、Alembic 完整迁移链、Redis/Celery 和 MinIO。
-- 数据集版本、完整生命周期和对象存储 Artifact 管理；基础 Schema、哈希和训练血缘已完成。
+- 工作流导入导出、多人协作编辑和节点级断点续跑；发布快照、版本恢复、Celery 持久任务、硬超时及失联恢复已完成。
+- 数据集版本、完整生命周期和 ZIP 等历史入口统一；基础 Schema、哈希、训练血缘和对象存储 Artifact 已完成。
 - 实验跟踪、训练检查点、指标对比、AutoML Trial 和 TensorBoard。
 - Pipeline 定时、补录、依赖、并发、优先级、暂停和恢复。
 - 模型注册、模型版本、审批、部署关联和模型卡。
@@ -89,7 +87,7 @@
 | 第 2 周 | 已完成 | 工作流与执行可靠性 | 已完成发布快照版本、前置运行校验、协作取消、节点超时/重试、尝试历史、有限日志、结构化错误、画布和进度状态同步 | 稳定工作流主链路、冻结状态机、后端 25 模块与前端 19 用例 |
 | 第 3 周 | 已完成 | 数据、算子与训练闭环 | 已统一 79 个运行时算子协议；完成数据 Artifact、训练评估、模型保存、模型库登记和血缘展示 | 严格算子协议、数据训练闭环；后端 28/28 模块、前端 22/22 测试和生产构建通过 |
 | 第 4 周 | 已完成 | 工业模板与首版交付 | 已完成真实数据准备、四套模板执行闭环、Artifact 向导、Playwright 主流程、Windows/Linux 脚本、跨平台 CI 和交付文档；GitHub Ubuntu 22.04 质量门禁与 Chromium 验收通过 | 稳定可交付版、首月验收报告 |
-| 第 5 周 | 进行中 | 生产存储与异步任务 | PostgreSQL、Alembic、Redis/Celery、MinIO、制品 URI、配置和密钥管理；已完成双模式渐进迁移设计确认 | 生产数据层、对象存储、异步任务框架 |
+| 第 5 周 | 已完成 | 生产存储与异步任务 | 已完成 PostgreSQL/Alembic、Redis/Celery、MinIO、制品 URI、配置密钥、迁移工具、生产容器和真实服务验收 | 生产数据层、对象存储、异步任务框架；Actions Run 29548916619 全绿 |
 | 第 6 周 | 未开始 | 实验与训练管理 | 实验、Run、参数、指标、日志、制品、检查点、恢复、早停和 TensorBoard | 企业基础版、实验训练追踪 |
 | 第 7 周 | 未开始 | Pipeline 调度与权限 | Cron、补录、依赖、并发、超时、重试、暂停恢复、项目角色和审计 | 调度器、实例管理、权限审计 |
 | 第 8 周 | 未开始 | 模型注册与基础推理 | 模型版本、指标、审批、基础推理、在线测试、健康检查和服务启停 | 模型注册中心、基础推理服务 |
@@ -122,7 +120,7 @@
 - 2026-07-14 已完成临时文件分类清理；正式源码和测试仍有大量未提交修改，需在发布前按范围审查并提交。
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
-- 第 5 周本地与 WSL 生产栈实现、测试和文档已完成；GitHub Actions `production-integration` 成功证据和最终状态提交仍待完成。
+- 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -618,3 +616,12 @@
 - TDD 与验证：先把源 `updated_at` 固定为历史时间，确认旧实现稳定覆盖为当前时间；首次尝试使用反射表因 SQLite UUID 被反射为数值型而失败，依据类型处理证据调整为显式保留 onupdate 字段；最终聚焦用例、迁移模块 9/9 和第五周 13/13 通过。
 - 遗留事项：需推送修复并取得新的 Windows/Ubuntu/production-integration/Chromium 全绿 Run 后再完成第五周状态更新。
 - 预防措施：数据迁移 UPDATE 必须审计 Python-side default/onupdate；时间戳保真测试应使用固定历史值，不依赖同秒执行碰巧相等；反射表与 ORM Table 切换前必须验证自定义 UUID/JSON 类型处理器。
+
+### 2026-07-17：第五周最终验收完成
+
+- 当前周次：第 5 周，状态更新为已完成。
+- 远程证据：[GitHub Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619) 全绿；`Quality (windows-latest)`、`Quality (ubuntu-22.04)`、`Production integration (Ubuntu)` 和 `Chromium acceptance (Ubuntu)` 均成功。
+- 生产版本与计数：PostgreSQL 16.14、Redis 7.4.9、Celery 5.4.0、MinIO `RELEASE.2025-09-07T16-13-09Z`；远程生产集成 4/4，Chromium 1/1。
+- 本地验证：后端全量 46/46、第五周 13/13；WSL Docker 生产栈 4/4；前端 14 文件 35/35、生产构建、Chromium 1/1、npm audit 0 漏洞和 Alembic check 均通过。
+- 完成范围：生产配置与密钥、PostgreSQL/Alembic、幂等 SQLite 迁移、Local/MinIO 存储、制品 URI/历史迁移、Local/Celery 分发、Redis 事件桥接、任务领取/心跳/取消/失联恢复、readiness、Compose 镜像、运维文档和跨平台 CI 已闭环。
+- 后续工作：训练任务 Celery 化、实验追踪/检查点、周期性恢复调度、节点级断点续跑、备份恢复和性能压测按第 6 周及后续计划推进，不属于第五周遗留未完成项。

@@ -99,4 +99,4 @@ RUN_PRODUCTION_INTEGRATION=1 python -m unittest tests.test_production_stack -v
 - Ubuntu 验收以真实 GitHub Actions 为准；Run `29381233328` 的 Ubuntu 22.04 质量门禁和 Chromium 验收均成功，第四周已完成。
 - WSL2 补充验证中，前端 Linux 依赖安装、35 个测试和生产构建已执行；后端 32/33 模块通过，唯一失败为本地虚拟环境未安装可选 PyTorch，安装上述 CPU 包后需重跑 `python run_suite.py --week 3` 或全量入口。
 - 测试数据库、上传目录和临时制品不得复用生产数据。
-- 当前第五周验证：后端 45/45、第五周 12/12、WSL 生产栈 4/4、前端 35/35、构建、Chromium 1/1、npm audit 0 漏洞。GitHub Actions `production-integration` 成功证据仍是周完成门禁。
+- 当前第五周验证：后端 46/46、第五周 13/13、WSL 生产栈 4/4、前端 35/35、构建、Chromium 1/1、npm audit 0 漏洞；[Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619) 的 Windows/Ubuntu 质量、production-integration 和 Chromium 全部成功。

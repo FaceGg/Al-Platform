@@ -13,7 +13,7 @@
 | API 端点声明 | 143 | 路由装饰器静态统计，不含框架内建路由 |
 | SQLAlchemy 持久化模型 | 30 | `backend/app/models/*.py` 中继承 `Base` 的类 |
 | 注册算子 | 80 | 导入 `app.main` 后读取 `OperatorRegistry.list_all()`，80 个 ID 全部唯一 |
-| 后端测试文件 | 45 | `backend/tests/test_*.py`；标准套件执行 45 个隔离模块 |
+| 后端测试文件 | 46 | `backend/tests/test_*.py`；标准套件执行 46 个隔离模块 |
 | 前端测试文件 | 14 | Vitest 共 35 个测试 |
 
 算子数量以完整应用启动后的运行时注册表为准。2026-07-14 已验证 80 个算子且 ID 唯一；仅导入部分算子包不能作为平台总数口径。
@@ -45,16 +45,17 @@
 | 知识库、RAG、知识图谱 | 原型 | Knowledge API、向量存储测试通过 | 权限过滤、检索评估、生产向量库未实现 |
 | 标注、监控、计算资源、API 市场 | 原型 | 对应 API 模块测试通过、页面可构建 | 多数为本地数据或基础 CRUD，无生产集成 |
 | 智能体与应用编排 | 原型 | Orchestrator/Agent 测试通过 | 可靠队列、工具沙箱、人工审核持久化未实现 |
-| Docker Compose 部署 | 功能可用 | WSL2 完成生产镜像、迁移、bucket、API/Worker 和 readiness 验收 | 远程 Actions 证据待取得 |
-| PostgreSQL/Redis/Celery/MinIO | 功能可用 | Alembic、幂等数据迁移、对象往返、真实 Worker/事件/恢复和 4/4 生产集成通过 | 远程 Actions 门禁待通过；备份恢复演练在后续周次 |
+| Docker Compose 部署 | 可交付 | WSL2 完成生产镜像、迁移、bucket、API/Worker 和 readiness；远程 Actions 通过 | 备份恢复和升级演练在后续周次 |
+| PostgreSQL/Redis/Celery/MinIO | 可交付 | Alembic、幂等数据迁移、对象往返、真实 Worker/事件/恢复和远程 4/4 生产集成通过 | 备份恢复演练在后续周次 |
 | Kubernetes/Notebook/GPU 调度 | 未实现 | 计划中定义 | 无生产实现与验收用例 |
 
 ## 本次验证
 
-- 后端：`python run_suite.py` 全量 45/45 模块通过；第五周 12/12 模块通过。
+- 后端：`python run_suite.py` 全量 46/46 模块通过；第五周 13/13 模块通过。
 - 前端：`npm test`，14/14 文件、35/35 测试通过；测试清单和生产模块导入检查通过。
 - 前端：`npm run build`，TypeScript 与 Vite 构建通过。
 - 浏览器：`npx playwright test --project=chromium`，焊接主流程 1/1 通过并重复验证。
 - 构建：页面已按路由拆包，首屏依赖块均低于 500 kB；ECharts 懒加载 chunk 约 1.13 MB，后续使用 `echarts/core` 继续裁剪。
 - Docker：WSL2 Docker 29.6.2 / Compose 5.3.1 完成生产栈构建和 4/4 真实服务集成验证。
+- 远程：[Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619) 的 Windows/Ubuntu 质量、生产集成和 Chromium 全部成功。
 - WSL2：前端 Linux 依赖安装、测试和构建已执行；后端 32/33 模块通过，本地虚拟环境缺少可选 PyTorch，深度学习算子模块待补依赖复测。
