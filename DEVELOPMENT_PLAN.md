@@ -121,7 +121,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
-- 第 6 周进行中：设计已确认，待完成 MLflow 服务、Experiment/Run、Celery 训练、指标/检查点/恢复、AutoML Trial、隔离 TensorBoard、前端和生产集成验收。
+- 第 6 周进行中：生产配置与 Experiment/TrainingJob 持久化已完成；待完成 MLflow adapter、项目鉴权 API、Celery 训练、指标/检查点/恢复、AutoML Trial、隔离 TensorBoard、前端和生产集成验收。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -645,3 +645,12 @@
 - 影响范围：配置模型、生产启动门禁、依赖、环境变量示例和第六周测试清单。
 - 遗留事项：Experiment/TrainingJob Schema、MLflow adapter、训练执行、TensorBoard gateway 和生产服务尚未实现。
 - 预防措施：生产 fixture 必须与新增强制配置同步；所有跨服务凭据使用 `SecretStr`/Secret 文件并加入泄露回归。
+
+### 2026-07-17：第六周任务 2 实验与训练持久化完成
+
+- 开发内容：新增项目级 `Experiment` 模型与 MLflow Experiment 唯一绑定；扩展 `TrainingJob` 的 Run、Celery、心跳、恢复血缘、checkpoint、epoch、监控和早停字段。
+- TDD 证据：模型测试先因 `app.models.experiment` 缺失 RED，Alembic 测试先因 head 仍为 `20260715_03` 且业务表仅 30 张 RED；完整 downgrade 测试先确认空回滚会残留表和列；Week 6 归属测试先确认新模块未登记。
+- 迁移策略：Alembic `20260717_04` 创建 `experiments`、训练列/索引/外键和完整 downgrade；本地 SQLite 兼容层只为旧表幂等补充 nullable 列和索引，不重建旧表或伪造外键。
+- 验证结果：模型与生产迁移 19/19、数据库迁移回归 9/9、降级聚焦 1/1 通过；双次 upgrade、`alembic check`、降级到 `20260715_03` 均有自动化覆盖。
+- 遗留事项：MLflow adapter、项目鉴权 Experiment API、训练执行与后续生产集成尚未实现；第六周保持进行中。
+- 预防措施：新增 Alembic revision 必须同时验证空库双次升级、autogenerate check 和真实 downgrade；开发 SQLite 兼容迁移与生产外键迁移分层实现。

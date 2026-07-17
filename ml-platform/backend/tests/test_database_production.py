@@ -33,7 +33,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20260715_03"
+HEAD_REVISION = "20260717_04"
 
 
 class TestDatabaseEngineOptions(TestCase):
@@ -282,7 +282,7 @@ class TestAlembicBaseline(TestCase):
             try:
                 inspector = inspect(db_engine)
                 business_tables = set(inspector.get_table_names()) - {"alembic_version"}
-                self.assertEqual(len(business_tables), 30)
+                self.assertEqual(len(business_tables), 31)
                 self.assertTrue(
                     {
                         "users",
@@ -290,6 +290,7 @@ class TestAlembicBaseline(TestCase):
                         "workflows",
                         "workflow_versions",
                         "artifacts",
+                        "experiments",
                         "training_jobs",
                     }.issubset(business_tables)
                 )
@@ -317,11 +318,56 @@ class TestAlembicBaseline(TestCase):
                     model_library_foreign_keys[("training_job_id",)],
                     "training_jobs",
                 )
+                experiment_uniques = {
+                    tuple(item["column_names"])
+                    for item in inspector.get_unique_constraints("experiments")
+                }
+                self.assertIn(("project_id", "name"), experiment_uniques)
+                training_columns = {
+                    item["name"] for item in inspector.get_columns("training_jobs")
+                }
+                self.assertTrue({
+                    "experiment_id",
+                    "mlflow_run_id",
+                    "task_id",
+                    "heartbeat_at",
+                    "latest_checkpoint_uri",
+                    "current_epoch",
+                    "total_epochs",
+                }.issubset(training_columns))
                 with db_engine.connect() as connection:
                     revision = connection.scalar(
                         text("SELECT version_num FROM alembic_version")
                     )
                 self.assertEqual(revision, HEAD_REVISION)
+            finally:
+                db_engine.dispose()
+
+    def test_experiment_tracking_revision_has_complete_downgrade(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "head")
+                command.downgrade(config, "20260715_03")
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                inspector = inspect(db_engine)
+                self.assertNotIn("experiments", inspector.get_table_names())
+                training_columns = {
+                    item["name"] for item in inspector.get_columns("training_jobs")
+                }
+                self.assertNotIn("experiment_id", training_columns)
+                with db_engine.connect() as connection:
+                    revision = connection.scalar(
+                        text("SELECT version_num FROM alembic_version")
+                    )
+                self.assertEqual(revision, "20260715_03")
             finally:
                 db_engine.dispose()
 

@@ -41,5 +41,40 @@ class TrainingJob(Base):
     epochs_completed = Column(Integer, default=0)
     best_metric_value = Column(Float)
 
+    experiment_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("experiments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    mlflow_run_id = Column(String(64), nullable=True, index=True)
+    task_id = Column(String(128), nullable=True, index=True)
+    worker_id = Column(String(128), nullable=True)
+    heartbeat_at = Column(DateTime, nullable=True, index=True)
+    attempt = Column(Integer, nullable=False, default=0)
+    resumed_from_job_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("training_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    resumed_from_run_id = Column(String(64), nullable=True)
+    resume_checkpoint_uri = Column(String(1024), nullable=True)
+    latest_checkpoint_uri = Column(String(1024), nullable=True)
+    best_checkpoint_uri = Column(String(1024), nullable=True)
+    current_epoch = Column(Integer, nullable=False, default=0)
+    total_epochs = Column(Integer, nullable=True)
+    monitor_name = Column(String(64), nullable=True)
+    monitor_mode = Column(String(8), nullable=True)
+    early_stopping_patience = Column(Integer, nullable=True)
+    early_stopping_min_delta = Column(Float, nullable=True)
+    restore_best = Column(Boolean, nullable=False, default=True)
+
     project = relationship("Project", backref="training_jobs")
     user = relationship("User", backref="training_jobs")
+    experiment = relationship("Experiment", back_populates="training_jobs")
+    resumed_from_job = relationship(
+        "TrainingJob",
+        remote_side=[id],
+        foreign_keys=[resumed_from_job_id],
+        backref="resumed_jobs",
+    )

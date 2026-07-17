@@ -121,7 +121,7 @@ git commit -m "feat: add experiment tracking configuration"
 - Create: `ml-platform/backend/tests/test_experiment_models.py`
 - Modify: `ml-platform/backend/tests/test_database_production.py`
 
-- [ ] **Step 1: Write failing ORM and migration tests**
+- [x] **Step 1: Write failing ORM and migration tests**
 
 Test project-scoped uniqueness, relationships, nullable compatibility for legacy jobs, indexes, SQLite compatibility, and Alembic head:
 
@@ -147,18 +147,18 @@ self.assertEqual(job.experiment, experiment)
 self.assertEqual(job.attempt, 0)
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest tests.test_experiment_models tests.test_database_production -v`
 Expected: FAIL because the model, columns, and revision are absent.
 
-- [ ] **Step 3: Implement models and migration**
+- [x] **Step 3: Implement models and migration**
 
 Create Experiment with `UniqueConstraint("project_id", "name")` and indexes on project and MLflow ID. Extend TrainingJob with the fields frozen in the design. Use UUID foreign keys with `ondelete="SET NULL"` for Experiment and resume source, UTC-naive database timestamps consistent with existing models, `attempt` default 0, and `current_epoch` default 0.
 
 The Alembic revision must create `experiments`, add TrainingJob columns and indexes, and define a complete downgrade. SQLite compatibility must add the same nullable columns without attempting foreign-key table rebuilds.
 
-- [ ] **Step 4: Verify GREEN and migration idempotency**
+- [x] **Step 4: Verify GREEN and migration idempotency**
 
 Run:
 
@@ -169,7 +169,7 @@ python -m unittest tests.test_database_transfer -v
 
 Expected: all pass, including two consecutive Alembic upgrades and `alembic check`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add ml-platform/backend/app/models ml-platform/backend/app/database_migrations.py ml-platform/backend/alembic/versions/20260717_04_experiment_training_tracking.py ml-platform/backend/tests/test_experiment_models.py ml-platform/backend/tests/test_database_production.py
