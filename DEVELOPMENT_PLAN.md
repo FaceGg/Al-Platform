@@ -597,3 +597,4 @@
 - 解决方法：从 service containers 移除 MinIO，改在 job 步骤中使用 `docker run ... minio/minio:latest server /data`，轮询 live health；失败证据收集 MinIO 日志，`always()` 清理容器；`runner.temp` 只在 Worker/测试步骤环境中解析。
 - 验证方式：本地 YAML 解析和 `git diff --check` 通过；等待修复提交后的 GitHub Actions 实际 job 创建和运行结果。
 - 预防措施：Actions 配置变更除 YAML parser 外必须以真实 Run 验证；第三方 service 需要自定义命令时使用显式 `docker run` 步骤，不写未受支持的 schema 字段。
+- 后续更正：修复 schema 后 Run `29547439929` 已创建并运行全部 jobs；production-integration 的 Worker 日志确认任务注册、Redis 连接和 ready，失败根因是 Celery CLI 将 `inspect` 的 `--timeout` 错放在子命令 `ping` 之后。命令已改为 `inspect --timeout=2 ping`，等待下一 Run 验证。

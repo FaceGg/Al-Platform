@@ -204,7 +204,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in {1..30}; do
-            if celery -A app.tasks.celery_app:celery_app inspect ping --timeout=2 | grep -q pong; then
+            if celery -A app.tasks.celery_app:celery_app inspect --timeout=2 ping | grep -q pong; then
               exit 0
             fi
             if ! kill -0 "$(cat "$RUNNER_TEMP/celery.pid")" 2>/dev/null; then
