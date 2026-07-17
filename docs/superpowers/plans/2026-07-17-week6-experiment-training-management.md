@@ -378,7 +378,7 @@ git commit -m "feat: execute training through celery"
 - Create: `ml-platform/backend/tests/test_training_recovery.py`
 - Modify: `ml-platform/backend/tests/test_training.py`
 
-- [ ] **Step 1: Replace permissive legacy assertions with failing contracts**
+- [x] **Step 1: Replace permissive legacy assertions with failing contracts**
 
 Require exact success/error results for stop, checkpoint list, and resume. Add stale recovery tests:
 
@@ -390,21 +390,21 @@ self.assertEqual(stale.status, "pending")
 self.assertEqual(stale.attempt, 1)
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest tests.test_training tests.test_training_recovery -v`
 Expected: FAIL because legacy routes are missing or accept 404.
 
-- [ ] **Step 3: Implement strict APIs and reconciliation**
+- [x] **Step 3: Implement strict APIs and reconciliation**
 
 Replace global filesystem checkpoint listing with job-scoped MLflow artifacts. Resume creates a new job copying immutable dataset/config fields and recording source lineage; it validates checkpoint ownership and format before enqueue. Stop changes only active jobs to `cancel_requested` and revokes the task. Reconciliation follows the exact three-branch design for checkpoint, no checkpoint, and cancellation.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `python -m unittest tests.test_training tests.test_training_recovery -v`
 Expected: no permissive status-code assertions remain and all cases pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add ml-platform/backend/app/api/training.py ml-platform/backend/app/tasks/training_recovery.py ml-platform/backend/app/services/readiness_service.py ml-platform/backend/tests/test_training.py ml-platform/backend/tests/test_training_recovery.py

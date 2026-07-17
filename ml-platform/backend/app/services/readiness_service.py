@@ -46,6 +46,11 @@ class ReadinessService:
         if self.settings.task_backend != "celery":
             return {"ready": True, "code": "LOCAL_MODE"}
         try:
+            if (
+                self.celery_app is None
+                or "ml_platform.execute_training" not in self.celery_app.tasks
+            ):
+                raise RuntimeError
             workers = self.celery_app.control.inspect().ping() if self.celery_app else None
             if not workers:
                 raise RuntimeError

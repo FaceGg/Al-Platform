@@ -20,7 +20,7 @@ from app.services.experiment_tracking import (
     TrackingError,
     TrackingUnavailable,
 )
-from app.services.iterative_training import IterativeTrainer, TrainingConfig
+from app.services.iterative_training import IterativeTrainer, TrainingCheckpoint, TrainingConfig
 
 
 @dataclass(frozen=True)
@@ -166,6 +166,17 @@ def execute_training_job(
 
         with tempfile.TemporaryDirectory() as temporary:
             temporary_path = Path(temporary)
+            resume_from = None
+            if job.resume_checkpoint_uri:
+                if not job.resumed_from_run_id:
+                    raise ValueError("Resume source Run is missing")
+                checkpoint_path = _checkpoint_artifact_path(job.resume_checkpoint_uri)
+                downloaded = tracking.download_artifact(
+                    job.resumed_from_run_id,
+                    checkpoint_path,
+                    temporary_path,
+                )
+                resume_from = TrainingCheckpoint.loads(Path(downloaded).read_bytes())
 
             def metric_callback(epoch_metrics):
                 tracking.log_metrics(
@@ -225,6 +236,7 @@ def execute_training_job(
                 metric_callback=metric_callback,
                 checkpoint_callback=checkpoint_callback,
                 cancel_requested=cancel_requested,
+                resume_from=resume_from,
                 dataset_artifact_id=str(job.dataset_artifact_id),
                 source_job_id=str(job.id),
                 source_run_id=run.run_id,
@@ -347,3 +359,11 @@ def _run_artifact_uri(artifact_uri: str | None, path: str) -> str:
     if not artifact_uri:
         raise TrackingUnavailable("Run artifact URI is unavailable")
     return f"{artifact_uri.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _checkpoint_artifact_path(uri: str) -> str:
+    marker = "checkpoints/"
+    index = uri.find(marker)
+    if index < 0 or ".." in uri[index:].split("/"):
+        raise ValueError("Resume checkpoint URI is invalid")
+    return uri[index:]

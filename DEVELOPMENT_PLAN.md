@@ -121,7 +121,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
-- 第 6 周进行中：生产配置、Experiment/TrainingJob、MLflow adapter、项目鉴权 API、增量训练核心和 Celery 训练执行已完成；待完成恢复 API、AutoML Trial、隔离 TensorBoard、前端和生产集成验收。
+- 第 6 周进行中：生产配置、实验追踪、增量训练、Celery 执行、checkpoint 恢复/停止/失联恢复已完成；待完成 AutoML Trial、隔离 TensorBoard、前端和生产集成验收。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -690,3 +690,12 @@
 - 事务边界：指标与 checkpoint 回调使用独立短 session，避免长训练事务持锁；completed 只在模型 Artifact、ModelLibrary、tracking tags/终态均成功后提交。
 - TDD 与验证：服务缺失时模块导入 RED；补充完整训练配置审计时先因 MLflow params 缺少 total_epochs RED；最终训练执行 5/5、既有 Celery/dispatcher 10/10、任务注册 smoke 通过。
 - 遗留事项：恢复 checkpoint 下载与新 Job 创建、stop/stale recovery API 留到 Task 7；旧 `/api/training/run` 线程入口尚待 Task 7 严格替换。
+
+### 2026-07-17：第六周任务 7 checkpoint 恢复、停止与失联恢复完成
+
+- API 替换：`/api/training/run` 现在必须绑定 owned Experiment 和 Dataset Artifact，创建 queued Job 并投递 Celery，不再启动 API 进程内线程；jobs/detail 返回追踪、epoch、checkpoint 和恢复血缘。
+- checkpoint/恢复：列表改为 owned Job + MLflow artifacts；resume 在 API 层下载并验证格式、Dataset/Job 血缘和总 epoch，创建新 Job/Run 血缘后投递；Worker 执行时再次从源 Run 下载持久 checkpoint 并从下一 epoch 继续。
+- 停止与恢复扫描：stop 只允许 pending/queued/running，写 cancel_requested 后 revoke；stale scan 对 checkpoint、无 checkpoint、cancel_requested 分别执行 pending+attempt、`TRAINING_WORKER_LOST`、cancelled。
+- readiness：Celery ping 之外还必须确认 `ml_platform.execute_training` 已注册，防止“Worker 在线但不能训练”误判 ready。
+- TDD 与验证：旧接口下 checkpoint/resume/stop 404、start 走旧 Artifact 路径及 recovery 模块缺失均 RED；Worker resume 暂时移除后明确从 `[1,2,3,4,5]` 错误重启，恢复后只记录 `[4,5]`；聚焦 17/17 GREEN。
+- 遗留事项：AutoML 暂返回稳定 `AUTOML_MIGRATION_PENDING`，将在 Task 8 实现；TensorBoard、前端和真实生产服务验收尚未完成。

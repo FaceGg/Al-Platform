@@ -61,6 +61,7 @@ class FakeTracking:
         self.params = {}
         self.metrics = []
         self.artifacts = []
+        self.payloads = {}
         self.tags = {}
         self.terminated = []
         self.fail_start = False
@@ -101,6 +102,13 @@ class FakeTracking:
             Path(local_path).name,
             Path(local_path).read_bytes(),
         ))
+        relative = f"{artifact_path.rstrip('/')}/{Path(local_path).name}"
+        self.payloads[(run_id, relative)] = Path(local_path).read_bytes()
+
+    def download_artifact(self, run_id, path, destination):
+        target = Path(destination) / Path(path).name
+        target.write_bytes(self.payloads[(run_id, path)])
+        return target
 
     def set_tags(self, run_id, tags):
         self.tags.setdefault(run_id, {}).update(tags)
@@ -217,6 +225,49 @@ class TestTrainingExecution(unittest.TestCase):
         self.assertEqual(first.status, "completed")
         self.assertEqual(second.status, "skipped")
         self.assertEqual(len(self.tracking.runs), 1)
+
+    def test_resumed_job_continues_from_checkpoint_epoch(self):
+        self.assertEqual(self.execute().status, "completed")
+        with self.Session() as db:
+            source = db.query(TrainingJob).filter(TrainingJob.id == self.job_id).one()
+            resumed = TrainingJob(
+                project_id=source.project_id,
+                user_id=source.user_id,
+                experiment_id=source.experiment_id,
+                dataset_artifact_id=source.dataset_artifact_id,
+                name="resumed-classifier",
+                operator_id=source.operator_id,
+                params=dict(source.params),
+                status="pending",
+                total_epochs=5,
+                monitor_name=source.monitor_name,
+                monitor_mode=source.monitor_mode,
+                early_stopping_patience=source.early_stopping_patience,
+                early_stopping_min_delta=source.early_stopping_min_delta,
+                restore_best=source.restore_best,
+                resumed_from_job_id=source.id,
+                resumed_from_run_id=source.mlflow_run_id,
+                resume_checkpoint_uri=source.latest_checkpoint_uri,
+            )
+            db.add(resumed)
+            db.commit()
+            resumed_id = resumed.id
+
+        outcome = execute_training_job(
+            resumed_id,
+            session_factory=self.Session,
+            artifact_service_factory=lambda _db: self.artifacts,
+            tracking_factory=lambda: self.tracking,
+            worker_id="worker-2",
+            task_id="task-2",
+            checkpoint_interval=2,
+        )
+
+        self.assertEqual(outcome.status, "completed")
+        self.assertEqual(
+            [step for run_id, step, _values in self.tracking.metrics if run_id == "run-2"],
+            [4, 5],
+        )
 
     def test_tracking_failure_maps_job_to_failed(self):
         self.tracking.fail_start = True
