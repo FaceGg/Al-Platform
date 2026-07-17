@@ -598,3 +598,13 @@
 - 验证方式：本地 YAML 解析和 `git diff --check` 通过；等待修复提交后的 GitHub Actions 实际 job 创建和运行结果。
 - 预防措施：Actions 配置变更除 YAML parser 外必须以真实 Run 验证；第三方 service 需要自定义命令时使用显式 `docker run` 步骤，不写未受支持的 schema 字段。
 - 后续更正：修复 schema 后 Run `29547439929` 已创建并运行全部 jobs；production-integration 的 Worker 日志确认任务注册、Redis 连接和 ready，失败根因是 Celery CLI 将 `inspect` 的 `--timeout` 错放在子命令 `ping` 之后。命令已改为 `inspect --timeout=2 ping`，等待下一 Run 验证。
+
+### 2026-07-17：GitHub Actions Worker 启动门禁二次修复
+
+- 当前周次：第 5 周，远程验收修复中。
+- 问题现象：Run `29547692020` 的 Worker 在 4 秒内完成 Redis 连接、任务注册并输出 `ready.`，但 `celery inspect --timeout=2 ping` 前两次返回 `No nodes replied`，第三次异常挂住，导致等待循环在约 104 秒后超时，生产集成测试未执行。
+- 根因：将 Celery remote-control CLI 用作进程启动门禁会引入独立的 pidbox 响应与 CLI 阻塞路径，无法保证循环按时推进；失败证据扫描还调用了 Ubuntu 22.04 runner 未预装的 `rg`，扫描实际没有执行。
+- 解决方法：启动门禁改为轮询 Worker 自身 `celery.log` 的 `ready.` 信号，并保留 PID 存活和超时日志；真实生产测试继续通过任务消费、结果读取及 `ReadinessService` 的 `inspect().ping()` 验证 Celery；敏感信息扫描改用 runner 自带的 `grep -E`。
+- 测试与验证：新增 `test_ci_workflow`，先确认旧配置 2/2 断言失败，再修改 workflow 后 2/2 通过；YAML 解析和 `git diff --check` 通过；第五周 runner 更新为 13/13 模块通过。
+- 遗留事项：修复提交仍需取得新的 GitHub Actions `production-integration` 4/4 成功证据；成功前第五周继续保持“进行中”。
+- 预防措施：进程启动门禁优先使用进程自身可观测状态，远程控制能力由后续功能测试验证；CI shell 脚本只能依赖 runner 基线命令或显式安装工具，并为关键脚本增加静态契约测试。
