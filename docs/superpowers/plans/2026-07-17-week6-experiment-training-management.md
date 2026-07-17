@@ -324,7 +324,7 @@ git commit -m "feat: add resumable incremental trainer"
 - Modify: `ml-platform/backend/app/tasks/celery_app.py`
 - Create: `ml-platform/backend/tests/test_training_tasks.py`
 
-- [ ] **Step 1: Write failing orchestration tests**
+- [x] **Step 1: Write failing orchestration tests**
 
 Use real SQLite ORM plus fake ArtifactService/tracking and the real iterative trainer. Assert atomic claim, MLflow Run binding, epoch heartbeat, latest/best checkpoint upload, final Artifact/ModelLibrary lineage, duplicate delivery skip, failure mapping, and cancellation:
 
@@ -342,16 +342,16 @@ self.assertTrue(job.latest_checkpoint_uri.startswith("mlflow-artifacts:/"))
 self.assertIsNotNone(job.model_artifact_id)
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest tests.test_training_tasks -v`
 Expected: FAIL because execution service and task are absent.
 
-- [ ] **Step 3: Implement execution and Celery entrypoint**
+- [x] **Step 3: Implement execution and Celery entrypoint**
 
 Claim pending jobs with a row lock on PostgreSQL and conditional update fallback on SQLite. Start or resume a tracked Run, materialize Dataset Artifact, delegate to iterative trainer, upload checkpoints through tracking, and register the final model through ArtifactService. Commit terminal database state only after final artifacts and ModelLibrary are valid. Register task name `ml_platform.execute_training` and enable late ack plus worker-lost rejection inherited from Celery config.
 
-- [ ] **Step 4: Verify GREEN and worker import**
+- [x] **Step 4: Verify GREEN and worker import**
 
 Run:
 
@@ -362,7 +362,7 @@ python -c "from app.tasks.celery_app import celery_app; assert 'ml_platform.exec
 
 Expected: all tests pass and task is registered.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add ml-platform/backend/app/services/training_execution.py ml-platform/backend/app/tasks/training_tasks.py ml-platform/backend/app/tasks/celery_app.py ml-platform/backend/tests/test_training_tasks.py

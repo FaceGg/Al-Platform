@@ -121,7 +121,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
-- 第 6 周进行中：生产配置、Experiment/TrainingJob、MLflow adapter、项目鉴权 API 和可恢复增量训练核心已完成；待完成 Celery 编排、恢复 API、AutoML Trial、隔离 TensorBoard、前端和生产集成验收。
+- 第 6 周进行中：生产配置、Experiment/TrainingJob、MLflow adapter、项目鉴权 API、增量训练核心和 Celery 训练执行已完成；待完成恢复 API、AutoML Trial、隔离 TensorBoard、前端和生产集成验收。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -681,3 +681,12 @@
 - 边界：核心模块不导入 SQLAlchemy、Celery、ArtifactService 或 MLflow；指标、checkpoint、取消均通过回调交给外层编排。
 - TDD 与验证：模块缺失时测试 RED；最终分类、回归、早停、restore-best、取消、间隔 checkpoint、序列化版本和恢复 patience 共 8/8 GREEN；Week 6 清单先确认新模块未登记。
 - 遗留事项：checkpoint 尚未上传 MLflow/MinIO，最终模型尚未登记 Artifact/ModelLibrary；这些由 Task 6 执行服务完成。
+
+### 2026-07-17：第六周任务 6 Celery 训练执行完成
+
+- 开发内容：新增 `execute_training_job` 与 `ml_platform.execute_training`；SQLite 使用状态条件 UPDATE 原子领取，PostgreSQL 路径使用 `FOR UPDATE SKIP LOCKED`，重复投递返回 skipped。
+- 执行闭环：绑定 MLflow Run 并记录最终生效训练配置；逐 epoch 写指标、current epoch 和 heartbeat；上传 epoch/latest/best checkpoint；完成后登记模型 Artifact 和 ModelLibrary 血缘，最后结束 Run 并提交 completed。
+- 失败与取消：tracking/训练异常写入稳定 error code、exception type 和日志，Run 标记 FAILED；cancel_requested 在 epoch 边界协作停止，保留 latest checkpoint，Run 标记 KILLED，且不登记最终模型。
+- 事务边界：指标与 checkpoint 回调使用独立短 session，避免长训练事务持锁；completed 只在模型 Artifact、ModelLibrary、tracking tags/终态均成功后提交。
+- TDD 与验证：服务缺失时模块导入 RED；补充完整训练配置审计时先因 MLflow params 缺少 total_epochs RED；最终训练执行 5/5、既有 Celery/dispatcher 10/10、任务注册 smoke 通过。
+- 遗留事项：恢复 checkpoint 下载与新 Job 创建、stop/stale recovery API 留到 Task 7；旧 `/api/training/run` 线程入口尚待 Task 7 严格替换。

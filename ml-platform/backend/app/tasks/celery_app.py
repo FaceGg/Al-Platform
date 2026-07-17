@@ -7,7 +7,7 @@ from app.config import settings
 
 celery_app = Celery(
     "ml_platform",
-    include=["app.tasks.workflow_tasks"],
+    include=["app.tasks.workflow_tasks", "app.tasks.training_tasks"],
     broker=(settings.celery_broker_url.get_secret_value() if settings.celery_broker_url else None),
     backend=(settings.celery_result_backend.get_secret_value() if settings.celery_result_backend else None),
 )
@@ -23,3 +23,6 @@ celery_app.conf.update(
     task_soft_time_limit=settings.task_soft_timeout_seconds,
     task_time_limit=settings.task_hard_timeout_seconds,
 )
+
+# Register tasks for CLI/import smoke checks as well as worker include discovery.
+from app.tasks import training_tasks  # noqa: E402,F401
