@@ -556,7 +556,7 @@ git commit -m "feat: add experiment tracking frontend api"
 - Modify: `ml-platform/frontend/src/pages/TrainingJobsPage.test.tsx`
 - Modify: `ml-platform/frontend/src/i18n/index.tsx`
 
-- [ ] **Step 1: Write failing interaction tests**
+- [x] **Step 1: Write failing interaction tests**
 
 Mock API clients and test Experiment/Job tabs, create experiment, select 2 Runs, comparison rendering, checkpoint resume, stop confirmation, and TensorBoard open:
 
@@ -570,16 +570,16 @@ expect(await screen.findByText("val_accuracy")).toBeInTheDocument();
 expect(screen.getByText("0.94")).toBeInTheDocument();
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `npm test -- src/pages/TrainingJobsPage.test.tsx`
 Expected: FAIL because tabs and actions are absent.
 
-- [ ] **Step 3: Implement the operational UI**
+- [x] **Step 3: Implement the operational UI**
 
 Use Ant Design Tabs, compact Tables, Drawer/Modal, Progress, Select, and icon buttons. Render metric history with existing ECharts dependency. Keep stable table dimensions, responsive modal width, no nested cards, and no direct MLflow/TensorBoard URL construction. Add complete Chinese and English translation keys with identical structure.
 
-- [ ] **Step 4: Verify GREEN and build**
+- [x] **Step 4: Verify GREEN and build**
 
 Run:
 
@@ -590,7 +590,7 @@ npm run build
 
 Expected: interaction tests and TypeScript/Vite build pass without text overflow warnings.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add ml-platform/frontend/src/pages/TrainingJobsPage.tsx ml-platform/frontend/src/pages/TrainingJobsPage.test.tsx ml-platform/frontend/src/i18n/index.tsx
