@@ -275,7 +275,7 @@ git commit -m "feat: add project experiment api"
 - Create: `ml-platform/backend/app/services/iterative_training.py`
 - Create: `ml-platform/backend/tests/test_iterative_training.py`
 
-- [ ] **Step 1: Write deterministic failing trainer tests**
+- [x] **Step 1: Write deterministic failing trainer tests**
 
 Generate fixed classification and regression frames. Cover metrics per epoch, early stop, `restore_best`, cancellation callback, checkpoint interval, serialization round trip, incompatible checkpoint version, and resumed patience:
 
@@ -295,21 +295,21 @@ restored = TrainingCheckpoint.loads(checkpoints[-1].payload)
 self.assertEqual(restored.format_version, 1)
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest tests.test_iterative_training -v`
 Expected: FAIL because trainer types do not exist.
 
-- [ ] **Step 3: Implement the pure training core**
+- [x] **Step 3: Implement the pure training core**
 
 Implement frozen `TrainingConfig`, `EpochMetrics`, `CheckpointEnvelope`, and `TrainingResult`. Use fixed train/validation split and StandardScaler. Use `SGDClassifier(loss="log_loss", random_state=42)` or `SGDRegressor(random_state=42)`, one `partial_fit` per epoch, finite float metrics, and joblib bytes. The core receives callbacks and has no SQLAlchemy, Celery, ArtifactService, or MLflow imports.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `python -m unittest tests.test_iterative_training -v`
 Expected: all deterministic trainer tests pass on CPU.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add ml-platform/backend/app/services/iterative_training.py ml-platform/backend/tests/test_iterative_training.py
