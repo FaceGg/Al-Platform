@@ -121,7 +121,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
-- 第 6 周进行中：生产配置、Experiment/TrainingJob 持久化和 MLflow adapter 已完成；待完成项目鉴权 API、Celery 训练、指标/检查点/恢复、AutoML Trial、隔离 TensorBoard、前端和生产集成验收。
+- 第 6 周进行中：生产配置、Experiment/TrainingJob 持久化、MLflow adapter 和项目鉴权 Experiment API 已完成；待完成 Celery 训练、指标/检查点/恢复、AutoML Trial、隔离 TensorBoard、前端和生产集成验收。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -663,3 +663,12 @@
 - 测试边界：有状态内存 fake 返回 MLflow 3.1.4 官方 `Experiment/Run/RunData/Metric/FileInfo` 实体，验证可见状态而非调用次数；MLflow not-found 与基础设施异常分别映射为稳定领域错误。
 - 当前验证：adapter 6/6 通过，不需要网络 MLflow 服务；真实 MLflow/PostgreSQL/MinIO 组合留到 Task 12 验收。
 - 遗留事项：项目权限 API、训练执行、AutoML、TensorBoard、前端和生产集成仍未实现；第六周保持进行中。
+
+### 2026-07-17：第六周任务 4 项目鉴权 Experiment API 完成
+
+- 开发内容：新增 Experiment 创建/列表/详情、Run 分页和 2–10 Run 比较 API；创建使用 `project/<project_uuid>/<experiment_uuid>` 稳定 MLflow namespace，展示名称只保存在平台模型。
+- 权限边界：所有资源查询先通过平台 Project owner 过滤，再解析或访问 tracking 服务；跨用户 Experiment、未配置 tracking 下的跨项目请求以及跨 Experiment Run 统一隐藏为 404。
+- 一致性策略：重名在调用 MLflow 前返回 409；MLflow 失败回滚平台 session 且不留平台记录；MLflow 已创建后数据库失败返回 `EXPERIMENT_PERSISTENCE_FAILED`，保留远端历史且不尝试不可逆删除。
+- 比较契约：保持请求 Run 顺序，参数/指标键排序；每个 Run 返回 params、latest metrics、metric history、状态、时间戳、显式 null 和 missing 列表。
+- TDD 与验证：路由缺失时 6/6 以 404 RED；补充安全/数据库一致性用例时分别以错误 503 和通用 500 RED；最终 API 8/8 GREEN，Week 6 清单先确认新模块未登记。
+- 遗留事项：训练提交仍是旧线程路径，将在 Task 6 迁移 Celery；checkpoint/恢复、AutoML、TensorBoard、前端与真实 MLflow 集成尚未完成。

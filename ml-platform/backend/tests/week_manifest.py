@@ -59,6 +59,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_experiment_config",
         "test_experiment_models",
         "test_experiment_tracking",
+        "test_api_experiments",
     ],
 }
 

@@ -230,7 +230,7 @@ git commit -m "feat: add mlflow experiment tracking adapter"
 - Modify: `ml-platform/backend/app/main.py`
 - Create: `ml-platform/backend/tests/test_api_experiments.py`
 
-- [ ] **Step 1: Write failing API tests**
+- [x] **Step 1: Write failing API tests**
 
 Cover create/list/detail, duplicate name, owner isolation, MLflow failure rollback, Run pagination, and 2-to-10 Run comparison:
 
@@ -248,21 +248,21 @@ self.assertEqual(
 )
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest tests.test_api_experiments -v`
 Expected: FAIL with 404 routes.
 
-- [ ] **Step 3: Implement schemas and routes**
+- [x] **Step 3: Implement schemas and routes**
 
 Use Pydantic models for create and compare. Resolve the owned Project before creating MLflow state. If database commit fails after MLflow creation, retain the MLflow experiment but return a structured database error; do not attempt irreversible MLflow deletion. Compare returns a deterministic matrix containing each selected Run's params, latest metrics, metric history, status, timestamps, and missing-value markers.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `python -m unittest tests.test_api_experiments -v`
 Expected: all authorization and comparison tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add ml-platform/backend/app/schemas/experiment.py ml-platform/backend/app/api/experiments.py ml-platform/backend/app/main.py ml-platform/backend/tests/test_api_experiments.py
