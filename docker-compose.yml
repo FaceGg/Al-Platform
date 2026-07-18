@@ -176,6 +176,24 @@ services:
       tensorboard-gateway:
         condition: service_healthy
 
+  scheduler:
+    build:
+      context: ./ml-platform/backend
+      dockerfile: Dockerfile.worker
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app:celery_app
+      - beat
+      - --loglevel=INFO
+      - --schedule=/tmp/celerybeat-schedule
+    environment: *production-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
   frontend:
     build:
       context: ./ml-platform/frontend

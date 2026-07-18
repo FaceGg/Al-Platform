@@ -1,9 +1,12 @@
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
+COMPOSE_FILE = REPOSITORY_ROOT / "docker-compose.yml"
 
 
 class TestProductionIntegrationWorkflow(unittest.TestCase):
@@ -28,6 +31,23 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
 
         self.assertIn("grep -Eni", evidence_step)
         self.assertNotIn("rg -n", evidence_step)
+
+    def test_compose_has_dedicated_celery_beat_scheduler(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+        scheduler = compose["services"]["scheduler"]
+        self.assertIn("beat", " ".join(scheduler["command"]))
+        self.assertEqual(scheduler["environment"], compose["services"]["worker"]["environment"])
+        self.assertEqual(
+            scheduler["depends_on"]["migrate"]["condition"],
+            "service_completed_successfully",
+        )
+        self.assertEqual(scheduler["depends_on"]["redis"]["condition"], "service_healthy")
+
+    def test_experiment_ci_starts_scheduler_service(self):
+        parsed = yaml.safe_load(self.workflow)
+        steps = parsed["jobs"]["experiment-integration"]["steps"]
+        start = next(step for step in steps if step.get("name") == "Start production experiment stack")
+        self.assertIn("scheduler", start["run"])
 
 
 if __name__ == "__main__":

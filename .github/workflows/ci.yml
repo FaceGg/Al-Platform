@@ -291,7 +291,7 @@ jobs:
       - name: Build experiment services
         run: docker compose build backend worker tensorboard-gateway
       - name: Start production experiment stack
-        run: docker compose up --detach --wait postgres redis minio minio-init mlflow tensorboard-gateway migrate backend worker
+        run: docker compose up --detach --wait postgres redis minio minio-init mlflow tensorboard-gateway migrate backend worker scheduler
       - name: Verify migrations and real experiment lifecycle
         run: |
           docker compose exec -T backend alembic upgrade head
@@ -306,7 +306,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/experiment-evidence"
           docker compose ps > "$RUNNER_TEMP/experiment-evidence/compose-ps.txt" 2>&1 || true
-          docker compose logs --no-color backend worker mlflow tensorboard-gateway migrate > "$RUNNER_TEMP/experiment-evidence/services.log" 2>&1 || true
+          docker compose logs --no-color backend worker scheduler mlflow tensorboard-gateway migrate > "$RUNNER_TEMP/experiment-evidence/services.log" 2>&1 || true
           sed -i \
             -e 's/ci-postgres-password/[redacted]/g' \
             -e 's/ci-minio-root-password/[redacted]/g' \
