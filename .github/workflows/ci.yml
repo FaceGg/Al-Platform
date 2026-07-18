@@ -145,6 +145,7 @@ jobs:
       APP_MODE: production
       DATABASE_URL: postgresql+psycopg://postgres:test-password@127.0.0.1:5432/ml_platform
       SECRET_KEY: ci-production-secret-key-with-at-least-32-characters
+      MLFLOW_TRACKING_URI: http://127.0.0.1:5000
       TASK_BACKEND: celery
       CELERY_BROKER_URL: redis://127.0.0.1:6379/0
       CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/0
@@ -277,6 +278,7 @@ jobs:
       MINIO_SECRET_KEY: ci-minio-root-password
       MLFLOW_BACKEND_STORE_URI: postgresql+psycopg://ml_platform:ci-postgres-password@postgres:5432/mlflow
       MLFLOW_ARTIFACT_ROOT: s3://ml-platform/mlflow
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       TENSORBOARD_SESSION_SECRET: ci-tensorboard-session-secret-at-least-32-bytes
     steps:
       - uses: actions/checkout@v5

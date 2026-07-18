@@ -143,7 +143,7 @@ services:
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
     volumes:
       - ./ml-platform/backend/data:/app/data
-      - ./ml-platform/backend/uploads:/app/uploads
+      - ./ml-platform/backend/uploads:/app/app/uploads
     restart: unless-stopped
     depends_on:
       migrate:

@@ -6,7 +6,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --retries 10 --timeout 120 -r requirements.txt
 RUN groupadd --gid 1000 app && useradd --uid 1000 --gid app --create-home app
 COPY . .
-RUN mkdir -p data uploads /tmp/ml-platform && chown -R app:app data uploads /tmp/ml-platform
+RUN mkdir -p data app/uploads /tmp/ml-platform && chown -R app:app data app/uploads /tmp/ml-platform
 
 EXPOSE 8000
 ENV MPLCONFIGDIR=/tmp/matplotlib

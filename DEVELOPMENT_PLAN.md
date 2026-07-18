@@ -752,3 +752,11 @@
 - 外部阻塞：`git push -u origin codex/week-6-experiment-training` 因当前机器经代理连接 `github.com:443` 失败，尚未获得 GitHub Actions 远程 Run URL；不是代码或测试失败。
 - 解除方式：恢复可用的 GitHub 网络/代理后，在本分支执行 push，等待 experiment integration、Chromium、quality 和 audit job 完成，再将 Run URL 追加到本记录并把第六周状态改为已完成。
 - 遗留事项：远程 CI 证据和远程分支推送仍待外部网络恢复。
+
+### 2026-07-18：第六周远程 CI 首轮失败修复
+
+- 现象：Actions Run `29630372947` 的生产迁移 job 在导入配置时因缺少 `MLFLOW_TRACKING_URI` 被拒绝；实验 Compose job 中 backend 因非 root 用户无法创建 `/app/app/uploads` 而反复重启。
+- 根因：生产 integration job 的环境变量未随生产配置新增项更新；Compose 将宿主上传目录挂载到 `/app/uploads`，而数据集 API 使用 `/app/app/uploads`。
+- 处理：为两个 CI job 显式设置 MLflow tracking URI；将 Compose 上传卷改挂到 `/app/app/uploads`，并在 backend 镜像构建阶段创建并授权该目录。
+- 验证：`git diff --check` 和后端实验集成测试入口通过；等待新 Actions Run 完成生产迁移、Compose readiness 和真实实验生命周期验收。
+- 遗留风险：本机无 Docker CLI，无法复现 Ubuntu runner 的容器权限环境；远程 CI 仍是本次修复的强制验收门禁。
