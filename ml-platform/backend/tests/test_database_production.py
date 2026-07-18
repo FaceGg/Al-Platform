@@ -33,7 +33,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20260718_06"
+HEAD_REVISION = "20260718_07"
 
 
 class TestDatabaseEngineOptions(TestCase):
@@ -282,7 +282,7 @@ class TestAlembicBaseline(TestCase):
             try:
                 inspector = inspect(db_engine)
                 business_tables = set(inspector.get_table_names()) - {"alembic_version"}
-                self.assertEqual(len(business_tables), 33)
+                self.assertEqual(len(business_tables), 35)
                 self.assertTrue(
                     {
                         "users",
@@ -294,6 +294,8 @@ class TestAlembicBaseline(TestCase):
                         "training_jobs",
                         "pipeline_schedules",
                         "pipeline_schedule_runs",
+                        "project_members",
+                        "audit_events",
                     }.issubset(business_tables)
                 )
                 self.assertIn(
@@ -329,6 +331,14 @@ class TestAlembicBaseline(TestCase):
                         item["name"]
                         for item in inspector.get_indexes("pipeline_schedule_runs")
                     },
+                )
+                self.assertIn(
+                    "ix_project_members_user_project",
+                    {item["name"] for item in inspector.get_indexes("project_members")},
+                )
+                self.assertIn(
+                    "ix_audit_events_project_created",
+                    {item["name"] for item in inspector.get_indexes("audit_events")},
                 )
                 model_library_foreign_keys = {
                     tuple(item["constrained_columns"]): item["referred_table"]
@@ -379,6 +389,8 @@ class TestAlembicBaseline(TestCase):
             try:
                 inspector = inspect(db_engine)
                 self.assertNotIn("experiments", inspector.get_table_names())
+                self.assertNotIn("project_members", inspector.get_table_names())
+                self.assertNotIn("audit_events", inspector.get_table_names())
                 training_columns = {
                     item["name"] for item in inspector.get_columns("training_jobs")
                 }

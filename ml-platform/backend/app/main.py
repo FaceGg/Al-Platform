@@ -27,6 +27,7 @@ from app.models import api_model as api_models  # noqa: F401 (register models)
 from app.models import compute as compute_models  # noqa: F401 (register models)
 from app.models import agent as agent_models  # noqa: F401 (register models)
 from app.models import platform_models as pm  # noqa: F401 (register models)
+from app.models import access as access_models  # noqa: F401 (register models)
 
 import app.operators.io_operators  # noqa: F401
 import app.operators.processing  # noqa: F401

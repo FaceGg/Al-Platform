@@ -804,3 +804,11 @@
 - TDD 证据：目标模块缺失时请求关联/脱敏 4/4 RED；实现后 4/4 GREEN，既有 `test_app` 7/7 通过。
 - 安全边界：无效调用方 request ID 被替换；来源 IP 只读取直接连接地址，不信任未配置的转发头；password/token/secret/credential/authorization/cookie/content/data/path 键递归脱敏。
 - 遗留事项：审计 ORM、权限矩阵、事务与 API 尚未实现，将按 Task 2-8 顺序推进。
+
+### 2026-07-18：第七周角色审计 Task 2 持久模型与迁移完成
+
+- 开发内容：新增 `ProjectMember` 与 append-only `AuditEvent`，成员角色/审计结果检查约束、成员唯一约束、查询索引和历史保留外键；Alembic head 更新为 `20260718_07`。
+- 数据边界：owner 仍只来自 `Project.owner_id`；成员 project/user 删除级联，创建者和审计 project/actor 删除使用 `SET NULL` 保留业务/审计历史。
+- TDD 证据：模型缺失和 33/35 表差异先 RED；实现后模型/完整迁移/降级 5/5 GREEN。
+- 验证方式：独立临时 SQLite 双次 upgrade、current=`20260718_07`、`alembic check` 无待生成操作，`git diff --check` 通过。
+- 遗留事项：权限矩阵、审计事务和 API 尚未实现。

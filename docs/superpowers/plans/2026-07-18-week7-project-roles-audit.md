@@ -76,23 +76,23 @@ git commit -m "feat: add audit request correlation and redaction"
 - Modify: `ml-platform/backend/tests/test_project_access.py`
 - Modify: `ml-platform/backend/tests/test_database_production.py`
 
-- [ ] **Step 1: Write model/migration tests**
+- [x] **Step 1: Write model/migration tests**
 
 Assert tables, unique `(project_id, user_id)`, role/result checks, user-project and audit query indexes, audit `SET NULL` foreign keys, head `20260718_07`, 35 business tables, and downgrade to `20260718_06`.
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 ```powershell
 python -m unittest tests.test_project_access.TestAccessModels tests.test_database_production.TestAlembicBaseline -v
 ```
 
-- [ ] **Step 3: Implement models and migration**
+- [x] **Step 3: Implement models and migration**
 
 Define `PROJECT_MEMBER_ROLES = ("editor", "operator", "viewer")` and `AUDIT_RESULTS = ("success", "denied", "failed")`. `ProjectMember` uses UUID `id/project_id/user_id/created_by`, `String(16)` role, server timestamps, named unique/check constraints, and the user-project index. `AuditEvent` uses UUID `id/request_id`, nullable UUID `project_id/actor_id`, `String` snapshots/action/resource/result/source/error`, JSON changes, server timestamp, and the four specified query indexes.
 
 The owner has no member row. Membership references cascade; audit references use `SET NULL`. Downgrade drops indexes before tables.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```powershell
 python -m unittest tests.test_project_access.TestAccessModels tests.test_database_production -v
