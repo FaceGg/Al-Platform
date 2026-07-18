@@ -782,3 +782,11 @@
 - 生产证据：Beat 日志在 60 秒周期发送 `ml_platform.scheduler_tick` 与 `ml_platform.recover_pipeline_schedules`；Worker 注册全部调度/执行任务并完成定时与补录两次真实工作流。
 - 已知问题：`macro` 算子会返回未声明输出端口，在严格执行协议下失败；生产集成已改用已验证的 `mechanism_thermal`，该算子问题保留为独立技术债。
 - 遗留事项：GitHub 远程 CI 尚未运行；第七周第二阶段项目角色与审计尚未设计和实现；两项完成前不得把第七周标记为已完成。
+
+### 2026-07-18：第七周项目角色与审计设计确认
+
+- 范围：采用 `owner/editor/operator/viewer` 四角色；owner 固定为项目创建者，成员通过现有用户名加入，不实现邮件邀请、所有权转移或多 owner。
+- 权限：owner 管理项目和成员；editor 管理项目资源和调度定义；operator 执行运行、训练与调度操作；viewer 只读；审计日志仅 owner 可读。
+- 审计：覆盖项目资源所有写操作，记录 success/denied/failed、请求关联 ID、资源与脱敏变更摘要；禁止持久化密码、Token、Secret、凭据、原始文件和训练数据。
+- 设计文档：`docs/superpowers/specs/2026-07-18-week7-project-roles-audit-design.md`。
+- 当前状态：设计已确认，等待书面规格审阅；实施计划、迁移、代码、测试和生产验收尚未开始。
