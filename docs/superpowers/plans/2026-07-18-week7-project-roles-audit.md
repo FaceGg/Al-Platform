@@ -142,23 +142,23 @@ git commit -m "feat: centralize project role permissions"
 - Modify: `ml-platform/backend/app/services/audit.py`
 - Modify: `ml-platform/backend/tests/test_project_access.py`
 
-- [ ] **Step 1: Write transaction RED tests**
+- [x] **Step 1: Write transaction RED tests**
 
 Cover success row/event in one commit, rollback removing both, visible permission denial event, outsider hidden denial without event, failed event through an injected short session, and audit persistence failure aborting business success.
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 ```powershell
 python -m unittest tests.test_project_access.TestAuditedProjectAction -v
 ```
 
-- [ ] **Step 3: Implement one context-managed boundary**
+- [x] **Step 3: Implement one context-managed boundary**
 
 Define frozen `AuditIntent(project_id, action, resource_type, resource_id, changes)` and `AuditService.project_action(db, request, actor, access, permission, intent, allowed_changes)` as a `@contextmanager`. It calls the access check before yielding, adds a redacted success event and commits after the body, rolls back and records a visible denial, and on other exceptions rolls back, records a normalized failed event through the injected session factory, then re-raises.
 
 Entry checks permission. Success adds the audit row before the only commit. Denied visible access commits a denied event. Unexpected exceptions roll back, write a normalized failed event in `session_factory`, and re-raise.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```powershell
 python -m unittest tests.test_project_access.TestAuditedProjectAction -v

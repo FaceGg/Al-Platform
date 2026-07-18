@@ -1,5 +1,6 @@
 import uuid
 import unittest
+from types import SimpleNamespace
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
@@ -199,6 +200,184 @@ class TestProjectPermissionMatrix(unittest.TestCase):
 
         self.assertEqual(access.role.value, "owner")
         self.assertEqual([project.id for project in projects], [self.project.id])
+
+
+class TestAuditedProjectAction(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.session_factory = sessionmaker(bind=self.engine)
+        self.db = self.session_factory()
+        self.owner = User(username="audit-owner", password_hash="hash")
+        self.viewer = User(username="audit-viewer", password_hash="hash")
+        self.db.add_all([self.owner, self.viewer])
+        self.db.flush()
+        self.project = Project(name="Audited project", owner_id=self.owner.id)
+        self.db.add(self.project)
+        self.db.flush()
+        self.db.add(ProjectMember(
+            project_id=self.project.id,
+            user_id=self.viewer.id,
+            role="viewer",
+            created_by=self.owner.id,
+        ))
+        self.db.commit()
+        self.request = SimpleNamespace(
+            state=SimpleNamespace(request_id=uuid.uuid4()),
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def _intent(self):
+        from app.services.audit import AuditIntent
+
+        return AuditIntent(
+            project_id=self.project.id,
+            action="project.update",
+            resource_type="project",
+            resource_id=str(self.project.id),
+            changes={"description": "updated", "token": "hidden"},
+        )
+
+    def test_success_commits_business_change_and_audit_together(self):
+        from app.models.access import AuditEvent
+        from app.services.audit import AuditService
+        from app.services.project_access import ProjectAccessService
+
+        access = ProjectAccessService().resolve(
+            self.db,
+            self.project.id,
+            self.owner.id,
+        )
+        with AuditService(self.session_factory).project_action(
+            self.db,
+            request=self.request,
+            actor=self.owner,
+            access=access,
+            permission="project.update",
+            intent=self._intent(),
+            allowed_changes={"description", "token"},
+        ):
+            self.project.description = "updated"
+
+        event = self.db.query(AuditEvent).one()
+        self.assertEqual(self.project.description, "updated")
+        self.assertEqual(event.result, "success")
+        self.assertEqual(event.changes["token"], "[REDACTED]")
+        self.assertEqual(event.request_id, self.request.state.request_id)
+
+    def test_failure_rolls_back_business_change_and_records_failed_event(self):
+        from app.models.access import AuditEvent
+        from app.services.audit import AuditService
+        from app.services.project_access import ProjectAccessService
+
+        access = ProjectAccessService().resolve(
+            self.db,
+            self.project.id,
+            self.owner.id,
+        )
+        with self.assertRaises(RuntimeError):
+            with AuditService(self.session_factory).project_action(
+                self.db,
+                request=self.request,
+                actor=self.owner,
+                access=access,
+                permission="project.update",
+                intent=self._intent(),
+                allowed_changes={"description"},
+            ):
+                self.project.description = "must-roll-back"
+                raise RuntimeError("database url must not be stored")
+
+        self.db.expire_all()
+        event = self.db.query(AuditEvent).one()
+        self.assertEqual(self.project.description, "")
+        self.assertEqual(event.result, "failed")
+        self.assertEqual(event.error_code, "PROJECT_ACTION_FAILED")
+
+    def test_visible_denial_is_recorded_but_hidden_access_is_not(self):
+        from app.models.access import AuditEvent
+        from app.services.audit import AuditService
+        from app.services.project_access import (
+            ProjectAccessError,
+            ProjectAccessService,
+        )
+
+        service = AuditService(self.session_factory)
+        viewer_access = ProjectAccessService().resolve(
+            self.db,
+            self.project.id,
+            self.viewer.id,
+        )
+        with self.assertRaises(ProjectAccessError) as visible:
+            with service.project_action(
+                self.db,
+                request=self.request,
+                actor=self.viewer,
+                access=viewer_access,
+                permission="project.update",
+                intent=self._intent(),
+                allowed_changes={"description"},
+            ):
+                self.fail("denied action body must not execute")
+        self.assertFalse(visible.exception.hidden)
+        self.assertEqual(self.db.query(AuditEvent).one().result, "denied")
+
+        with self.assertRaises(ProjectAccessError) as hidden:
+            with service.project_action(
+                self.db,
+                request=self.request,
+                actor=self.viewer,
+                access=None,
+                permission="project.read",
+                intent=self._intent(),
+                allowed_changes=set(),
+            ):
+                self.fail("hidden action body must not execute")
+        self.assertTrue(hidden.exception.hidden)
+        self.assertEqual(self.db.query(AuditEvent).count(), 1)
+
+    def test_audit_commit_failure_aborts_business_change(self):
+        from unittest.mock import Mock
+
+        from app.models.access import AuditEvent
+        from app.services.audit import AuditService
+        from app.services.project_access import ProjectAccessService
+
+        access = ProjectAccessService().resolve(
+            self.db,
+            self.project.id,
+            self.owner.id,
+        )
+        original_commit = self.db.commit
+        self.db.commit = Mock(side_effect=RuntimeError("audit persistence failed"))
+        try:
+            with self.assertRaises(RuntimeError):
+                with AuditService(self.session_factory).project_action(
+                    self.db,
+                    request=self.request,
+                    actor=self.owner,
+                    access=access,
+                    permission="project.update",
+                    intent=self._intent(),
+                    allowed_changes={"description"},
+                ):
+                    self.project.description = "must-not-commit"
+        finally:
+            self.db.commit = original_commit
+
+        self.db.expire_all()
+        self.assertEqual(self.project.description, "")
+        event = self.db.query(AuditEvent).one()
+        self.assertEqual(event.result, "failed")
+        self.assertEqual(event.error_code, "PROJECT_ACTION_FAILED")
 
 
 class TestRequestCorrelation(unittest.TestCase):

@@ -820,3 +820,11 @@
 - TDD 证据：服务缺失时矩阵 3/3 RED；实现后矩阵/owner 优先/admin 不绕过/查询去重和模型回归 5/5 GREEN。
 - 安全边界：全局 `User.role=admin` 不自动获得项目访问；无成员关系保持隐藏 404 语义，已有成员权限不足使用显式 403 领域码。
 - 遗留事项：HTTP 映射、审计事务和成员 API 尚待后续任务。
+
+### 2026-07-18：第七周角色审计 Task 4 审计事务边界完成
+
+- 开发内容：新增冻结 `AuditIntent` 和 `AuditService.project_action` 上下文，集中处理权限检查、脱敏、success/denied/failed 事件和事务。
+- 一致性：成功业务行与 success 事件一次提交；visible denial 单独提交 denied；异常回滚业务后由注入的短 session 写 failed；hidden outsider 不产生项目可见审计。
+- 安全：失败仅记录稳定 error code，不记录异常文本；进入上下文前冻结 actor/request 信息，避免 rollback 后 ORM 过期读取。
+- TDD 与验证：AuditService 缺失时 3/3 RED；实现后事务/脱敏/矩阵 7/7，补充审计提交失败回滚业务后事务用例 4/4 通过。
+- 遗留事项：成员与审计查询 API、现有项目写路由接入尚未完成。
