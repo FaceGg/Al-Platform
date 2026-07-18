@@ -761,3 +761,4 @@
 - 验证：`git diff --check` 和后端实验集成测试入口通过；等待新 Actions Run 完成生产迁移、Compose readiness 和真实实验生命周期验收。
 - 遗留风险：本机无 Docker CLI，无法复现 Ubuntu runner 的容器权限环境；远程 CI 仍是本次修复的强制验收门禁。
 - 补充：第三次 Run `29631098923` 已通过迁移、Celery、Redis 和 MinIO，旧 Week 5 readiness 用例因未启动第六周新增的两个 HTTP 服务而失败；该用例现对非本任务范围的 MLflow/TensorBoard 探针注入健康响应，真实服务仍由 `Production experiment integration` 独立验收。
+- 补充：第四次 Run `29631294252` 的 Compose backend 继续因 `app.api.operators` 使用旧 `/app/uploads` 路径而不健康；已补充路径一致性回归测试并统一到 `/app/app/uploads`，等待下一次完整实验栈验收。
