@@ -8,6 +8,7 @@ _SQLITE_COLUMNS = {
         "error_details": "JSON",
         "workflow_version": "INTEGER",
         "workflow_snapshot": "JSON",
+        "timeout_seconds": "INTEGER",
         "logs": "JSON",
         "cancel_requested_at": "DATETIME",
         "cancelled_at": "DATETIME",

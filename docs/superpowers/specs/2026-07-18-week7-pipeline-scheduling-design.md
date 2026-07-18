@@ -1,6 +1,6 @@
 # Week 7 Pipeline Scheduling Design
 
-**Status:** Draft for review
+**Status:** Implemented; local production acceptance complete, remote CI pending
 
 **Goal:** Add a durable, idempotent Pipeline scheduler based on Celery Beat and PostgreSQL, while reusing the existing `WorkflowRun` execution contract.
 

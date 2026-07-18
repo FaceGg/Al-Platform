@@ -33,7 +33,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20260717_04"
+HEAD_REVISION = "20260718_06"
 
 
 class TestDatabaseEngineOptions(TestCase):
@@ -282,7 +282,7 @@ class TestAlembicBaseline(TestCase):
             try:
                 inspector = inspect(db_engine)
                 business_tables = set(inspector.get_table_names()) - {"alembic_version"}
-                self.assertEqual(len(business_tables), 31)
+                self.assertEqual(len(business_tables), 33)
                 self.assertTrue(
                     {
                         "users",
@@ -292,6 +292,8 @@ class TestAlembicBaseline(TestCase):
                         "artifacts",
                         "experiments",
                         "training_jobs",
+                        "pipeline_schedules",
+                        "pipeline_schedule_runs",
                     }.issubset(business_tables)
                 )
                 self.assertIn(
@@ -309,6 +311,24 @@ class TestAlembicBaseline(TestCase):
                 self.assertIn(
                     "ix_artifacts_storage_uri",
                     {item["name"] for item in inspector.get_indexes("artifacts")},
+                )
+                self.assertIn(
+                    "timeout_seconds",
+                    {item["name"] for item in inspector.get_columns("workflow_runs")},
+                )
+                self.assertIn(
+                    "next_attempt_at",
+                    {
+                        item["name"]
+                        for item in inspector.get_columns("pipeline_schedule_runs")
+                    },
+                )
+                self.assertIn(
+                    "ix_pipeline_schedule_runs_retry",
+                    {
+                        item["name"]
+                        for item in inspector.get_indexes("pipeline_schedule_runs")
+                    },
                 )
                 model_library_foreign_keys = {
                     tuple(item["constrained_columns"]): item["referred_table"]

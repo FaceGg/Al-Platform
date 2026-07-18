@@ -85,6 +85,7 @@ class ScheduleRunResponse(BaseModel):
     workflow_run_id: UUID | None
     scheduled_for: datetime
     claimed_at: datetime | None
+    next_attempt_at: datetime | None
     finished_at: datetime | None
     status: str
     attempt: int

@@ -52,7 +52,6 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_celery_workflows",
         "test_event_bridge",
         "test_readiness",
-        "test_ci_workflow",
         "test_production_stack",
     ],
     6: [
@@ -67,6 +66,11 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_tensorboard_gateway",
         "test_experiment_production_stack",
         "test_upload_paths",
+    ],
+    7: [
+        "test_pipeline_scheduler",
+        "test_api_schedules",
+        "test_ci_workflow",
     ],
 }
 

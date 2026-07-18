@@ -1,7 +1,7 @@
 # 汽车焊接工业 AI 平台开发文档
 
 > 文档状态：持续维护
-> 最近更新：2026-07-17
+> 最近更新：2026-07-18
 > 适用项目：`E:\codex_workspace\agent_spot_welding`
 > 总周期：20 周，共计 5 个月
 
@@ -67,7 +67,7 @@
 - 工作流导入导出、多人协作编辑和节点级断点续跑；发布快照、版本恢复、Celery 持久任务、硬超时及失联恢复已完成。
 - 数据集版本、完整生命周期和 ZIP 等历史入口统一；基础 Schema、哈希、训练血缘和对象存储 Artifact 已完成。
 - 实验跟踪、训练检查点、指标对比、AutoML Trial 和 TensorBoard。
-- Pipeline 定时、补录、依赖、并发、优先级、暂停和恢复。
+- Pipeline 定时、补录、依赖、并发、超时、重试、暂停和恢复已完成本地生产验收；优先级仍未实现。
 - 模型注册、模型版本、审批、部署关联和模型卡。
 - 推理服务、在线测试、滚动升级、灰度、限流、监控和回滚。
 - 完整 RBAC、项目角色、SSO、操作审计和企业消息通知。
@@ -89,7 +89,7 @@
 | 第 4 周 | 已完成 | 工业模板与首版交付 | 已完成真实数据准备、四套模板执行闭环、Artifact 向导、Playwright 主流程、Windows/Linux 脚本、跨平台 CI 和交付文档；GitHub Ubuntu 22.04 质量门禁与 Chromium 验收通过 | 稳定可交付版、首月验收报告 |
 | 第 5 周 | 已完成 | 生产存储与异步任务 | 已完成 PostgreSQL/Alembic、Redis/Celery、MinIO、制品 URI、配置密钥、迁移工具、生产容器和真实服务验收 | 生产数据层、对象存储、异步任务框架；Actions Run 29548916619 全绿 |
 | 第 6 周 | 已完成 | 实验与训练管理 | 已完成实验、Run、参数、指标、日志、制品、检查点、恢复、早停、AutoML Trial、隔离 TensorBoard、真实 Compose 集成与跨平台验收 | 企业基础版、实验训练追踪 |
-| 第 7 周 | 未开始 | Pipeline 调度与权限 | Cron、补录、依赖、并发、超时、重试、暂停恢复、项目角色和审计 | 调度器、实例管理、权限审计 |
+| 第 7 周 | 进行中 | Pipeline 调度与权限 | Cron、补录、依赖、并发、超时、重试、暂停恢复已完成本地生产验收；项目角色和审计待第二阶段 | 调度器、实例管理、权限审计 |
 | 第 8 周 | 未开始 | 模型注册与基础推理 | 模型版本、指标、审批、基础推理、在线测试、健康检查和服务启停 | 模型注册中心、基础推理服务 |
 | 第 9 周 | 未开始 | 推理服务生产化 | 多版本发布、滚动升级、回滚、密钥、限流、服务日志和运行指标 | 生产级推理服务、版本发布回滚 |
 | 第 10 周 | 未开始 | 权限、审计与通知 | 项目角色、资源权限、关键操作审计和企业消息通知 | 权限矩阵、审计日志、告警通知 |
@@ -122,6 +122,7 @@
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
 - 第 6 周已完成：后端实验训练闭环、前端 typed clients、实验/训练运维 UI、Compose/CI 真实生产集成及运行文档均已完成；远程 CI、Chromium、迁移、生产栈和实验栈验收全部通过。
+- 第 7 周调度子系统已完成本地实现与验收：后端 59/59、Week 7 3/3、Alembic `20260718_06`、WSL PostgreSQL/Redis/Celery Worker/Beat 真实集成通过；远程 CI 和项目角色/审计仍未完成，因此第七周保持“进行中”。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -769,3 +770,15 @@
 - Actions Run：`29631795297`，URL 已记录在 `PLATFORM_STATUS.md`。
 - 结果：Quality Ubuntu、Quality Windows、Production integration、Production experiment integration、Chromium acceptance 全部成功；真实实验生命周期、MLflow/MinIO artifact round-trip、TensorBoard session、迁移双次 upgrade/current/check 和浏览器主流程均通过。
 - 状态：第六周 Task 1-13 全部完成，之前记录的远程阻塞已解除；后续工作转入第七周 Pipeline 调度与权限。
+
+### 2026-07-18：第七周 Pipeline 调度子系统本地验收完成
+
+- 当前周次：第 7 周，整体状态仍为进行中。
+- 开发内容：新增五字段 Cron/IANA 时区、持久 schedule/occurrence、唯一 occurrence 幂等、工作流快照绑定、依赖/并发 skip、暂停恢复、限量补录、持久指数退避、单任务硬超时、终态同步、Celery Beat 和独立 Compose scheduler。
+- 问题现象：初版退避在同一 tick 内立即重试，`timeout_seconds` 未进入 WorkflowRun/Celery metadata，occurrence 不随 WorkflowRun 终态更新；全量回归还发现 Celery 循环导入、Alembic head/表数断言和历史 SQLite 兼容列未同步。
+- 根因：调度策略只落配置未形成下一次尝试时间；执行元数据、恢复任务和两条数据库升级路径未同时扩展；scheduler task 在模块加载时反向导入 workflow task。
+- 解决方法：新增 `next_attempt_at` 与 `WorkflowRun.timeout_seconds`、Alembic `20260718_06`、到期重投查询和 occurrence reconciliation；Celery 按稳定任务名 `send_task` 解耦；本地 SQLite 兼容层、生产 head 检查和迁移结构断言同步更新。
+- 验证方式：调度/API/CI/manifest 聚焦 25/25，相关回归 54/54，Week 7 runner 3/3，全量后端 59/59；干净 SQLite 双次 upgrade/current/check 通过；WSL scheduler 镜像从阿里云 PyPI 源构建；真实 PostgreSQL/Redis/Worker/Beat 集成 1/1，两个 WorkflowRun 均完成并同步 occurrence。
+- 生产证据：Beat 日志在 60 秒周期发送 `ml_platform.scheduler_tick` 与 `ml_platform.recover_pipeline_schedules`；Worker 注册全部调度/执行任务并完成定时与补录两次真实工作流。
+- 已知问题：`macro` 算子会返回未声明输出端口，在严格执行协议下失败；生产集成已改用已验证的 `mechanism_thermal`，该算子问题保留为独立技术债。
+- 遗留事项：GitHub 远程 CI 尚未运行；第七周第二阶段项目角色与审计尚未设计和实现；两项完成前不得把第七周标记为已完成。

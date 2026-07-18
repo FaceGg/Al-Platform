@@ -1,4 +1,7 @@
+import os
+import time
 import unittest
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
@@ -10,7 +13,7 @@ from app.models.project import Project
 from app.models.run import WorkflowRun
 from app.models.schedule import PipelineSchedule, PipelineScheduleRun
 from app.models.user import User
-from app.models.workflow import Workflow
+from app.models.workflow import Workflow, WorkflowNode
 
 class TestScheduleModels(unittest.TestCase):
     def test_schedule_models_register_tables_and_constraints(self):
@@ -37,6 +40,7 @@ class TestScheduleModels(unittest.TestCase):
         history_indexes = {index.name for index in Base.metadata.tables["pipeline_schedule_runs"].indexes}
         self.assertIn("ix_pipeline_schedules_due", due_indexes)
         self.assertIn("ix_pipeline_schedule_runs_history", history_indexes)
+        self.assertIn("ix_pipeline_schedule_runs_retry", history_indexes)
 
 
 class TestScheduleCalendar(unittest.TestCase):
@@ -110,13 +114,18 @@ class TestSchedulerClaims(unittest.TestCase):
         from app.services.pipeline_scheduler import PipelineScheduler
 
         enqueued = []
-        scheduler = PipelineScheduler(enqueue=lambda run_id: enqueued.append(run_id) or "task-1")
+        scheduler = PipelineScheduler(
+            enqueue=lambda run_id, timeout_seconds=None: enqueued.append(
+                (run_id, timeout_seconds)
+            ) or "task-1"
+        )
         first = scheduler.tick(self.db, now=self.now)
         second = scheduler.tick(self.db, now=self.now)
 
         self.assertEqual(len(first), 1)
         self.assertEqual(second, [])
         self.assertEqual(len(enqueued), 1)
+        self.assertEqual(enqueued[0][1], None)
         self.assertEqual(self.db.query(PipelineScheduleRun).count(), 1)
         self.assertEqual(self.db.query(WorkflowRun).count(), 1)
         self.assertEqual(self.db.query(PipelineScheduleRun).one().status, "claimed")
@@ -131,7 +140,7 @@ class TestSchedulerPolicies(TestSchedulerClaims):
     def test_pause_and_resume_block_then_recalculate_future_occurrence(self):
         from app.services.pipeline_scheduler import PipelineScheduler
 
-        scheduler = PipelineScheduler(enqueue=lambda run_id: "unused")
+        scheduler = PipelineScheduler(enqueue=lambda run_id, timeout_seconds=None: "unused")
         scheduler.pause(self.db, self.schedule)
         self.assertIsNotNone(self.schedule.paused_at)
         self.assertEqual(scheduler.tick(self.db, now=self.now), [])
@@ -143,7 +152,9 @@ class TestSchedulerPolicies(TestSchedulerClaims):
     def test_backfill_is_bounded_and_duplicate_occurrences_are_suppressed(self):
         from app.services.pipeline_scheduler import PipelineScheduler
 
-        scheduler = PipelineScheduler(enqueue=lambda run_id: "backfill-task")
+        scheduler = PipelineScheduler(
+            enqueue=lambda run_id, timeout_seconds=None: "backfill-task"
+        )
         occurrence = datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc)
         results = scheduler.backfill(
             self.db,
@@ -173,7 +184,9 @@ class TestSchedulerPolicies(TestSchedulerClaims):
         self.schedule.dependencies = [str(dependency.id)]
         self.db.commit()
 
-        result = PipelineScheduler(enqueue=lambda run_id: "unused").tick(
+        result = PipelineScheduler(
+            enqueue=lambda run_id, timeout_seconds=None: "unused"
+        ).tick(
             self.db,
             now=self.now,
         )[0]
@@ -182,24 +195,99 @@ class TestSchedulerPolicies(TestSchedulerClaims):
         self.assertEqual(result["skip_reason"], "DEPENDENCY_NOT_READY")
         self.assertEqual(self.db.query(WorkflowRun).count(), 0)
 
-    def test_dispatch_retries_with_bounded_attempts(self):
+    def test_dispatch_retry_waits_for_persisted_backoff_deadline(self):
         from app.services.pipeline_scheduler import PipelineScheduler
 
         attempts = []
 
-        def enqueue(run_id):
-            attempts.append(run_id)
+        def enqueue(run_id, timeout_seconds=None):
+            attempts.append((run_id, timeout_seconds))
             if len(attempts) == 1:
                 raise RuntimeError("temporary broker failure")
             return "retry-task"
 
-        self.schedule.retry_policy = {"max_attempts": 2, "backoff_seconds": 0}
+        self.schedule.retry_policy = {
+            "max_attempts": 2,
+            "backoff_seconds": 30,
+            "max_backoff_seconds": 60,
+        }
         self.db.commit()
-        result = PipelineScheduler(enqueue=enqueue).tick(self.db, now=self.now)[0]
+        scheduler = PipelineScheduler(enqueue=enqueue)
+        first = scheduler.tick(self.db, now=self.now)[0]
+        before_deadline = scheduler.tick(
+            self.db,
+            now=self.now + timedelta(seconds=29),
+        )
+        after_deadline = scheduler.tick(
+            self.db,
+            now=self.now + timedelta(seconds=30),
+        )[0]
 
-        self.assertEqual(result["status"], "claimed")
-        self.assertEqual(result["attempt"], 2)
+        self.assertEqual(first["status"], "retrying")
+        self.assertEqual(before_deadline, [])
+        self.assertEqual(after_deadline["status"], "claimed")
+        self.assertEqual(after_deadline["attempt"], 2)
         self.assertEqual(len(attempts), 2)
+
+    def test_timeout_is_persisted_and_passed_to_dispatcher(self):
+        from app.services.pipeline_scheduler import PipelineScheduler
+
+        dispatched = []
+        self.schedule.timeout_seconds = 90
+        self.db.commit()
+
+        result = PipelineScheduler(
+            enqueue=lambda run_id, timeout_seconds=None: dispatched.append(
+                (run_id, timeout_seconds)
+            ) or "timeout-task"
+        ).tick(self.db, now=self.now)[0]
+
+        workflow_run = self.db.query(WorkflowRun).one()
+        self.assertEqual(result["status"], "claimed")
+        self.assertEqual(workflow_run.timeout_seconds, 90)
+        self.assertEqual(dispatched, [(str(workflow_run.id), 90)])
+
+    def test_malformed_persisted_retry_policy_fails_only_its_occurrence(self):
+        from app.services.pipeline_scheduler import PipelineScheduler
+
+        self.schedule.retry_policy = {
+            "max_attempts": "not-an-integer",
+            "backoff_seconds": 30,
+        }
+        self.db.commit()
+        dispatched = []
+
+        result = PipelineScheduler(
+            enqueue=lambda run_id, timeout_seconds=None: dispatched.append(run_id)
+        ).tick(self.db, now=self.now)[0]
+
+        occurrence = self.db.query(PipelineScheduleRun).one()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "SCHEDULE_INVALID_RETRY_POLICY")
+        self.assertEqual(occurrence.error_code, "SCHEDULE_INVALID_RETRY_POLICY")
+        self.assertEqual(dispatched, [])
+
+    def test_terminal_workflow_state_is_reconciled_to_occurrence(self):
+        from app.services.pipeline_scheduler import (
+            PipelineScheduler,
+            reconcile_schedule_runs,
+        )
+
+        PipelineScheduler(
+            enqueue=lambda run_id, timeout_seconds=None: "terminal-task"
+        ).tick(self.db, now=self.now)
+        workflow_run = self.db.query(WorkflowRun).one()
+        workflow_run.status = "failed"
+        workflow_run.error_code = "TASK_HARD_TIMEOUT"
+        workflow_run.error_message = "Workflow task exceeded its time limit"
+        workflow_run.finished_at = self.now.replace(tzinfo=None)
+        self.db.commit()
+
+        self.assertEqual(reconcile_schedule_runs(self.db, now=self.now), 1)
+        occurrence = self.db.query(PipelineScheduleRun).one()
+        self.assertEqual(occurrence.status, "failed")
+        self.assertEqual(occurrence.error_code, "TASK_HARD_TIMEOUT")
+        self.assertEqual(occurrence.finished_at, self.now.replace(tzinfo=None))
 
     def test_stale_pending_occurrence_is_released_for_recovery(self):
         from app.services.pipeline_scheduler import recover_stale_schedule_runs
@@ -238,12 +326,34 @@ class TestSchedulerPolicies(TestSchedulerClaims):
         )
         self.db.commit()
 
-        scheduler = PipelineScheduler(enqueue=lambda run_id: "unused")
+        scheduler = PipelineScheduler(enqueue=lambda run_id, timeout_seconds=None: "unused")
         result = scheduler.tick(self.db, now=self.now)
 
         self.assertEqual(result[0]["status"], "skipped")
         self.assertEqual(result[0]["skip_reason"], "CONCURRENCY_LIMIT")
         self.assertEqual(self.db.query(WorkflowRun).count(), 1)
+
+    def test_existing_occurrence_suppresses_competing_tick(self):
+        from app.services.pipeline_scheduler import PipelineScheduler
+
+        self.db.add(
+            PipelineScheduleRun(
+                schedule_id=self.schedule.id,
+                scheduled_for=datetime(2026, 7, 18, 12, 0),
+                status="claimed",
+            )
+        )
+        self.db.commit()
+        enqueued = []
+
+        result = PipelineScheduler(
+            enqueue=lambda run_id, timeout_seconds=None: enqueued.append(run_id) or "duplicate"
+        ).tick(self.db, now=self.now)
+
+        self.assertEqual(result[0]["status"], "skipped")
+        self.assertEqual(result[0]["skip_reason"], "DUPLICATE_OCCURRENCE")
+        self.assertEqual(enqueued, [])
+        self.assertEqual(self.db.query(PipelineScheduleRun).count(), 1)
 
 
 class TestSchedulerTasks(unittest.TestCase):
@@ -260,6 +370,132 @@ class TestSchedulerTasks(unittest.TestCase):
         from app.tasks.scheduler_tasks import scheduler_tick
 
         self.assertEqual(scheduler_tick.name, "ml_platform.scheduler_tick")
+
+    def test_celery_dispatch_applies_schedule_timeout(self):
+        from unittest.mock import patch
+
+        from app.tasks.scheduler_tasks import _enqueue_workflow
+
+        with patch(
+            "app.tasks.scheduler_tasks.celery_app.send_task"
+        ) as send_task:
+            send_task.return_value.id = "scheduled-task"
+            task_id = _enqueue_workflow("run-1", 90)
+
+        self.assertEqual(task_id, "scheduled-task")
+        send_task.assert_called_once_with(
+            "ml_platform.execute_workflow",
+            args=["run-1"],
+            time_limit=90,
+        )
+
+
+@unittest.skipUnless(
+    os.getenv("RUN_SCHEDULER_INTEGRATION") == "1",
+    "RUN_SCHEDULER_INTEGRATION is not enabled",
+)
+class TestSchedulerProductionStack(unittest.TestCase):
+    def test_postgres_redis_worker_schedule_lifecycle(self):
+        from app.database import SessionLocal
+        from app.services.pipeline_scheduler import (
+            PipelineScheduler,
+            reconcile_schedule_runs,
+        )
+        from app.tasks.scheduler_tasks import _enqueue_workflow
+
+        unique = uuid.uuid4().hex
+        now = datetime.now(timezone.utc)
+        with SessionLocal() as db:
+            user = User(
+                username=f"scheduler-integration-{unique}",
+                password_hash="integration-only-hash",
+            )
+            db.add(user)
+            db.flush()
+            project = Project(
+                name=f"Scheduler integration {unique}",
+                owner_id=user.id,
+            )
+            db.add(project)
+            db.flush()
+            workflow = Workflow(
+                project_id=project.id,
+                name="Scheduled mechanism workflow",
+                created_by=user.id,
+            )
+            db.add(workflow)
+            db.flush()
+            db.add(WorkflowNode(
+                workflow_id=workflow.id,
+                operator_id="mechanism_thermal",
+                label="Integration mechanism",
+                position_x=0,
+                position_y=0,
+                params={},
+            ))
+            schedule = PipelineSchedule(
+                project_id=project.id,
+                workflow_id=workflow.id,
+                created_by=user.id,
+                name="Integration schedule",
+                cron_expression="0 0 * * *",
+                timezone="UTC",
+                next_run_at=(now - timedelta(seconds=1)).replace(tzinfo=None),
+            )
+            db.add(schedule)
+            db.commit()
+            schedule_id = schedule.id
+
+            scheduler = PipelineScheduler(enqueue=_enqueue_workflow)
+            first = scheduler.tick(db, now=now)
+            second = scheduler.tick(db, now=now)
+            self.assertEqual(first[0]["status"], "claimed")
+            self.assertEqual(second, [])
+            self.assertEqual(
+                db.query(PipelineScheduleRun).filter(
+                    PipelineScheduleRun.schedule_id == schedule_id,
+                ).count(),
+                1,
+            )
+
+            first_run_id = uuid.UUID(first[0]["workflow_run_id"])
+            self._wait_for_run(db, first_run_id, "completed")
+            self.assertEqual(reconcile_schedule_runs(db), 1)
+
+            scheduler.pause(db, schedule)
+            self.assertEqual(scheduler.tick(db, now=now), [])
+            scheduler.resume(db, schedule, now=now)
+            backfill_at = now - timedelta(days=1)
+            backfill = scheduler.backfill(db, schedule, [backfill_at], now=now)
+            self.assertEqual(backfill[0]["status"], "claimed")
+            self._wait_for_run(
+                db,
+                uuid.UUID(backfill[0]["workflow_run_id"]),
+                "completed",
+            )
+            self.assertEqual(reconcile_schedule_runs(db), 1)
+            self.assertEqual(
+                db.query(PipelineScheduleRun).filter(
+                    PipelineScheduleRun.schedule_id == schedule_id,
+                    PipelineScheduleRun.status == "completed",
+                ).count(),
+                2,
+            )
+
+    @staticmethod
+    def _wait_for_run(db, run_id, expected_status: str, timeout: float = 30) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            db.expire_all()
+            status = db.query(WorkflowRun.status).filter(
+                WorkflowRun.id == run_id,
+            ).scalar()
+            if status == expected_status:
+                return
+            if status in {"failed", "cancelled"}:
+                raise AssertionError(f"Workflow run ended as {status}")
+            time.sleep(0.2)
+        raise AssertionError(f"Workflow run did not reach {expected_status}")
 
 if __name__ == "__main__":
     unittest.main()

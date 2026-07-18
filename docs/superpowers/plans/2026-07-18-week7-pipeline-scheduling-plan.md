@@ -8,6 +8,8 @@
 
 **Tech Stack:** FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, PostgreSQL/SQLite, Celery 5, Redis, `croniter`, Python `zoneinfo`, unittest.
 
+**Execution status (2026-07-18):** Tasks 1-8 are implemented and locally verified. The reliability follow-up added Alembic head `20260718_06` for persisted dispatch backoff and workflow timeout metadata. Local backend 59/59, Week 7 3/3, clean SQLite migration, scheduler image build, Beat 60-second dispatch, and PostgreSQL/Redis/Worker lifecycle integration 1/1 pass. Remote CI remains the only open gate for this scheduling subsystem.
+
 ---
 
 ## File Map
@@ -314,22 +316,22 @@ git commit -m "ci: deploy pipeline scheduler with Celery Beat"
 - Modify: `PLATFORM_STATUS.md`
 - Modify: `C:\Users\17723\.codex\DEVELOPMENT_EXPERIENCE.md`
 
-- [ ] **Step 1: Add real integration coverage**
+- [x] **Step 1: Add real integration coverage**
 
 Run a PostgreSQL/Redis/Celery smoke path that creates a schedule, ticks it twice, verifies one occurrence and one workflow task, then pauses/resumes and backfills one bounded occurrence.
 
-- [ ] **Step 2: Register new Week 7 test modules**
+- [x] **Step 2: Register new Week 7 test modules**
 
 Add `test_pipeline_scheduler`, `test_api_schedules`, and `test_ci_workflow` to `WEEK_TEST_MODULES[7]`; keep `test_ci_workflow` assigned only once so the manifest remains complete.
 
-- [ ] **Step 3: Run focused and Week 7 suites**
+- [x] **Step 3: Run focused and Week 7 suites**
 
 ```powershell
 python -m unittest tests.test_pipeline_scheduler tests.test_api_schedules tests.test_ci_workflow -v
 python run_suite.py --week 7
 ```
 
-- [ ] **Step 4: Run migration and full regressions**
+- [x] **Step 4: Run migration and full regressions**
 
 ```powershell
 alembic upgrade head
@@ -340,7 +342,7 @@ python run_suite.py
 git diff --check
 ```
 
-- [ ] **Step 5: Update status and reusable experience**
+- [x] **Step 5: Update status and reusable experience**
 
 Record completed tasks, test counts, remote CI URL, unresolved risks, and any scheduler-specific root causes in `DEVELOPMENT_PLAN.md`, `PLATFORM_STATUS.md`, and the shared experience file. Do not mark Week 7 complete until local tests, production integration, and remote CI all pass.
 
@@ -353,11 +355,11 @@ git commit -m "feat: complete week 7 pipeline scheduling"
 
 ## Verification Checklist
 
-- [ ] `test_pipeline_scheduler` passes, including concurrent claim and stale recovery cases.
-- [ ] `test_api_schedules` passes with project ownership isolation.
-- [ ] `test_ci_workflow` passes with scheduler service assertions.
-- [ ] Week 7 manifest has one owner for every new test module.
-- [ ] Alembic double upgrade/current/check passes.
-- [ ] `docker compose config --quiet` and scheduler build pass in Docker-capable CI.
-- [ ] Existing Week 1-6 suites remain green.
+- [x] `test_pipeline_scheduler` passes, including concurrent claim and stale recovery cases.
+- [x] `test_api_schedules` passes with project ownership isolation.
+- [x] `test_ci_workflow` passes with scheduler service assertions.
+- [x] Week 7 manifest has one owner for every new test module.
+- [x] Alembic double upgrade/current/check passes.
+- [x] `docker compose config --quiet` and scheduler build pass in a Docker-capable WSL environment.
+- [x] Existing Week 1-6 suites remain green.
 - [ ] Final remote quality, production, experiment, and browser acceptance jobs are green.

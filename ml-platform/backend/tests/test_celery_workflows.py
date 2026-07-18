@@ -148,5 +148,27 @@ class TestCeleryWorkflowClaims(unittest.TestCase):
         self.assertIsNotNone(run.heartbeat_at)
         stop_event.wait.assert_called_once_with(0.01)
 
+    @patch("app.tasks.workflow_tasks.SessionLocal")
+    def test_heartbeat_resolves_default_session_factory_at_call_time(
+        self,
+        session_local,
+    ):
+        run = FakeRun("running", "task-1", "worker-1", None)
+        db = FakeDB(run)
+        session_local.return_value.__enter__.return_value = db
+        stop_event = MagicMock()
+        stop_event.is_set.return_value = False
+        stop_event.wait.return_value = True
+
+        heartbeat_run(
+            uuid.uuid4(),
+            "task-1",
+            stop_event,
+            interval_seconds=0.01,
+        )
+
+        session_local.assert_called_once_with()
+        self.assertIsNotNone(run.heartbeat_at)
+
 
 if __name__ == "__main__": unittest.main()

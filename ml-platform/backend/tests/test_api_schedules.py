@@ -112,7 +112,9 @@ class TestScheduleAPI(unittest.TestCase):
         self.assertEqual(updated.status_code, 200, updated.text)
         self.assertEqual(updated.json()["max_concurrency"], 2)
 
-        scheduler = PipelineScheduler(enqueue=lambda run_id: "api-backfill-task")
+        scheduler = PipelineScheduler(
+            enqueue=lambda run_id, timeout_seconds=None: "api-backfill-task"
+        )
         with patch("app.api.schedules._scheduler", return_value=scheduler):
             backfilled = self.client.post(
                 f"/api/schedules/{self.schedule_id}/backfill",

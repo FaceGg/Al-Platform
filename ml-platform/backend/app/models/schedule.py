@@ -62,6 +62,7 @@ class PipelineScheduleRun(Base):
             name="uq_pipeline_schedule_runs_schedule_time",
         ),
         Index("ix_pipeline_schedule_runs_history", "schedule_id", "scheduled_for"),
+        Index("ix_pipeline_schedule_runs_retry", "status", "next_attempt_at"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -77,6 +78,7 @@ class PipelineScheduleRun(Base):
     )
     scheduled_for = Column(DateTime, nullable=False)
     claimed_at = Column(DateTime, nullable=True)
+    next_attempt_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
     status = Column(String(16), nullable=False, default="pending")
     attempt = Column(Integer, nullable=False, default=1)

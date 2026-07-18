@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import CroniterBadCronError, croniter
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from app.engine.run_state import TERMINAL_RUN_STATUSES
 from app.models.run import WorkflowRun
@@ -68,11 +69,15 @@ def _workflow_snapshot(workflow) -> dict:
 class PipelineScheduler:
     """Claim due schedules and delegate execution to the workflow dispatcher."""
 
-    def __init__(self, enqueue: Callable[[str], str]):
+    def __init__(self, enqueue: Callable[[str, int | None], str]):
         self.enqueue = enqueue
 
     def tick(self, db, *, now: datetime | None = None, limit: int = 100) -> list[dict]:
         current_naive = _utc_naive(now or datetime.now(timezone.utc))
+        results = self._retry_due_dispatches(db, current_naive, limit)
+        remaining = max(0, limit - len(results))
+        if remaining == 0:
+            return results
         schedules = (
             db.query(PipelineSchedule)
             .filter(
@@ -82,13 +87,54 @@ class PipelineScheduler:
             )
             .order_by(PipelineSchedule.next_run_at, PipelineSchedule.id)
             .with_for_update()
+            .limit(remaining)
+            .all()
+        )
+        for schedule in schedules:
+            scheduled_for = _utc_naive(schedule.next_run_at)
+            try:
+                results.append(self._process_due_schedule(db, schedule, current_naive))
+            except IntegrityError:
+                db.rollback()
+                duplicate = db.query(PipelineScheduleRun).filter(
+                    PipelineScheduleRun.schedule_id == schedule.id,
+                    PipelineScheduleRun.scheduled_for == scheduled_for,
+                ).first()
+                if duplicate is None:
+                    raise
+                refreshed = db.query(PipelineSchedule).filter(
+                    PipelineSchedule.id == schedule.id,
+                ).one()
+                if _utc_naive(refreshed.next_run_at) <= scheduled_for:
+                    refreshed.next_run_at = next_occurrence(
+                        refreshed.cron_expression,
+                        refreshed.timezone,
+                        scheduled_for.replace(tzinfo=timezone.utc),
+                    ).replace(tzinfo=None)
+                    db.commit()
+                results.append({
+                    "status": "skipped",
+                    "schedule_id": str(schedule.id),
+                    "scheduled_for": scheduled_for.isoformat(),
+                    "skip_reason": "DUPLICATE_OCCURRENCE",
+                })
+        return results
+
+    def _retry_due_dispatches(self, db, now_naive: datetime, limit: int) -> list[dict]:
+        occurrences = (
+            db.query(PipelineScheduleRun)
+            .filter(
+                PipelineScheduleRun.status == "pending",
+                PipelineScheduleRun.workflow_run_id.is_not(None),
+                PipelineScheduleRun.next_attempt_at.is_not(None),
+                PipelineScheduleRun.next_attempt_at <= now_naive,
+            )
+            .order_by(PipelineScheduleRun.next_attempt_at, PipelineScheduleRun.id)
+            .with_for_update()
             .limit(limit)
             .all()
         )
-        return [
-            self._process_due_schedule(db, schedule, current_naive)
-            for schedule in schedules
-        ]
+        return [self._attempt_dispatch(db, occurrence, now_naive) for occurrence in occurrences]
 
     def _process_due_schedule(self, db, schedule, now_naive: datetime) -> dict:
         scheduled_for = _utc_naive(schedule.next_run_at)
@@ -155,6 +201,7 @@ class PipelineScheduler:
             triggered_by=schedule.created_by,
             workflow_version=schedule.workflow_version,
             workflow_snapshot=_workflow_snapshot(schedule.workflow),
+            timeout_seconds=schedule.timeout_seconds,
             logs=[{"level": "info", "message": "Run created by pipeline schedule"}],
         )
         occurrence = PipelineScheduleRun(
@@ -162,46 +209,100 @@ class PipelineScheduler:
             workflow_run=workflow_run,
             scheduled_for=scheduled_for,
             status="pending",
+            attempt=0,
         )
         db.add(occurrence)
         db.commit()
 
+        return self._attempt_dispatch(db, occurrence, now_naive)
+
+    def _attempt_dispatch(self, db, occurrence, now_naive) -> dict:
+        schedule = occurrence.schedule
+        workflow_run = occurrence.workflow_run
         policy = schedule.retry_policy or {}
-        max_attempts = max(1, int(policy.get("max_attempts", 1)))
-        last_error = None
-        for attempt in range(1, max_attempts + 1):
-            occurrence.attempt = attempt
-            try:
-                task_id = self.enqueue(str(workflow_run.id))
-                workflow_run.status = "queued"
-                workflow_run.task_id = task_id
-                occurrence.status = "claimed"
-                occurrence.claimed_at = now_naive
+        try:
+            max_attempts = max(1, min(10, int(policy.get("max_attempts", 1))))
+            backoff_seconds = max(
+                0.0,
+                min(3600.0, float(policy.get("backoff_seconds", 0))),
+            )
+            max_backoff_seconds = max(
+                0.0,
+                min(86400.0, float(policy.get("max_backoff_seconds", 3600))),
+            )
+        except (TypeError, ValueError, OverflowError):
+            occurrence.status = "failed"
+            occurrence.finished_at = now_naive
+            occurrence.error_code = "SCHEDULE_INVALID_RETRY_POLICY"
+            occurrence.error_message = "Persisted retry policy is invalid"
+            workflow_run.status = "failed"
+            workflow_run.finished_at = now_naive
+            workflow_run.error_code = "SCHEDULE_INVALID_RETRY_POLICY"
+            workflow_run.error_message = "Scheduled workflow retry policy is invalid"
+            schedule.last_error_code = "SCHEDULE_INVALID_RETRY_POLICY"
+            db.commit()
+            return {
+                "status": "failed",
+                "schedule_id": str(schedule.id),
+                "scheduled_for": occurrence.scheduled_for.isoformat(),
+                "error_code": "SCHEDULE_INVALID_RETRY_POLICY",
+                "attempt": occurrence.attempt,
+            }
+        attempt = occurrence.attempt + 1
+        occurrence.attempt = attempt
+        occurrence.next_attempt_at = None
+
+        try:
+            task_id = self.enqueue(str(workflow_run.id), workflow_run.timeout_seconds)
+            workflow_run.status = "queued"
+            workflow_run.task_id = task_id
+            occurrence.status = "claimed"
+            occurrence.claimed_at = now_naive
+            occurrence.error_code = None
+            occurrence.error_message = None
+            schedule.last_error_code = None
+            db.commit()
+            return {
+                "status": "claimed",
+                "schedule_id": str(schedule.id),
+                "scheduled_for": occurrence.scheduled_for.isoformat(),
+                "workflow_run_id": str(workflow_run.id),
+                "task_id": task_id,
+                "attempt": attempt,
+            }
+        except Exception as error:
+            occurrence.error_code = "SCHEDULE_DISPATCH_FAILED"
+            occurrence.error_message = str(error)
+            schedule.last_error_code = "SCHEDULE_DISPATCH_FAILED"
+            if attempt < max_attempts:
+                delay = min(
+                    backoff_seconds * (2 ** (attempt - 1)),
+                    max_backoff_seconds,
+                )
+                occurrence.next_attempt_at = now_naive + timedelta(seconds=delay)
                 db.commit()
                 return {
-                    "status": "claimed",
+                    "status": "retrying",
                     "schedule_id": str(schedule.id),
-                    "scheduled_for": scheduled_for.isoformat(),
-                    "workflow_run_id": str(workflow_run.id),
-                    "task_id": task_id,
+                    "scheduled_for": occurrence.scheduled_for.isoformat(),
+                    "error_code": "SCHEDULE_DISPATCH_FAILED",
                     "attempt": attempt,
+                    "next_attempt_at": occurrence.next_attempt_at.isoformat(),
                 }
-            except Exception as error:
-                last_error = error
 
         occurrence.status = "failed"
-        occurrence.error_code = "SCHEDULE_DISPATCH_FAILED"
-        occurrence.error_message = str(last_error)
+        occurrence.finished_at = now_naive
         workflow_run.status = "failed"
         workflow_run.error_code = "SCHEDULE_DISPATCH_FAILED"
         workflow_run.error_message = "Scheduled workflow dispatch failed"
+        workflow_run.finished_at = now_naive
         db.commit()
         return {
             "status": "failed",
             "schedule_id": str(schedule.id),
-            "scheduled_for": scheduled_for.isoformat(),
+            "scheduled_for": occurrence.scheduled_for.isoformat(),
             "error_code": "SCHEDULE_DISPATCH_FAILED",
-            "attempt": max_attempts,
+            "attempt": attempt,
         }
 
     def pause(self, db, schedule):
@@ -279,3 +380,34 @@ def recover_stale_schedule_runs(
         occurrence.claimed_at = None
     db.commit()
     return len(stale)
+
+
+def reconcile_schedule_runs(
+    db,
+    *,
+    now: datetime | None = None,
+    limit: int = 100,
+) -> int:
+    current = _utc_naive(now or datetime.now(timezone.utc))
+    occurrences = (
+        db.query(PipelineScheduleRun)
+        .join(WorkflowRun, WorkflowRun.id == PipelineScheduleRun.workflow_run_id)
+        .filter(
+            PipelineScheduleRun.status == "claimed",
+            WorkflowRun.status.in_(TERMINAL_RUN_STATUSES),
+        )
+        .order_by(PipelineScheduleRun.claimed_at, PipelineScheduleRun.id)
+        .with_for_update()
+        .limit(limit)
+        .all()
+    )
+    for occurrence in occurrences:
+        workflow_run = occurrence.workflow_run
+        occurrence.status = (
+            "completed" if workflow_run.status == "completed" else "failed"
+        )
+        occurrence.finished_at = workflow_run.finished_at or current
+        occurrence.error_code = workflow_run.error_code
+        occurrence.error_message = workflow_run.error_message
+    db.commit()
+    return len(occurrences)

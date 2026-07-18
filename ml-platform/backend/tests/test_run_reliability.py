@@ -62,6 +62,7 @@ class TestSchemaCompatibility(unittest.TestCase):
         node_columns = {column["name"] for column in inspector.get_columns("node_runs")}
         self.assertIn("error_code", run_columns)
         self.assertIn("cancel_requested_at", run_columns)
+        self.assertIn("timeout_seconds", run_columns)
         self.assertIn("attempt", node_columns)
         self.assertIn("duration_ms", node_columns)
 
