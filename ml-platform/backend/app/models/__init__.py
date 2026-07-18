@@ -7,6 +7,7 @@ from app.models.artifact import Artifact
 from app.models.knowledge import KnowledgeBase, Document, Chunk, GraphEntity, GraphRelation
 from app.models.training import TrainingJob
 from app.models.experiment import Experiment
+from app.models.schedule import PipelineSchedule, PipelineScheduleRun
 from app.models.agent import Agent, AgentTask, AgentMessage
 from app.models.algorithm import Algorithm
 from app.models.model_library import ModelLibrary
@@ -31,6 +32,8 @@ __all__ = [
     "GraphRelation",
     "TrainingJob",
     "Experiment",
+    "PipelineSchedule",
+    "PipelineScheduleRun",
     "Agent",
     "AgentTask",
     "AgentMessage",

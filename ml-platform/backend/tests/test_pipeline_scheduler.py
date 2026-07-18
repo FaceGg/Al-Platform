@@ -1,6 +1,32 @@
 import unittest
 from datetime import datetime, timezone
 
+class TestScheduleModels(unittest.TestCase):
+    def test_schedule_models_register_tables_and_constraints(self):
+        from app.database import Base
+        from app.models.schedule import PipelineSchedule, PipelineScheduleRun
+
+        self.assertEqual(PipelineSchedule.__tablename__, "pipeline_schedules")
+        self.assertEqual(PipelineScheduleRun.__tablename__, "pipeline_schedule_runs")
+        self.assertIn("pipeline_schedules", Base.metadata.tables)
+        self.assertIn("pipeline_schedule_runs", Base.metadata.tables)
+        constraints = Base.metadata.tables["pipeline_schedule_runs"].constraints
+        self.assertTrue(
+            any(
+                constraint.name == "uq_pipeline_schedule_runs_schedule_time"
+                for constraint in constraints
+            )
+        )
+
+    def test_schedule_tables_have_due_and_history_indexes(self):
+        from app.database import Base
+        from app.models.schedule import PipelineSchedule, PipelineScheduleRun  # noqa: F401
+
+        due_indexes = {index.name for index in Base.metadata.tables["pipeline_schedules"].indexes}
+        history_indexes = {index.name for index in Base.metadata.tables["pipeline_schedule_runs"].indexes}
+        self.assertIn("ix_pipeline_schedules_due", due_indexes)
+        self.assertIn("ix_pipeline_schedule_runs_history", history_indexes)
+
 
 class TestScheduleCalendar(unittest.TestCase):
     def test_next_occurrence_uses_cron_and_utc(self):
