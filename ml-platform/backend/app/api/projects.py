@@ -1,5 +1,5 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.project import Project
@@ -7,6 +7,12 @@ from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectList
 from app.api.auth import get_current_user
 from app.services.project_access import ProjectAccessService
+from app.services.audit import AuditIntent
+from app.api.project_security import (
+    audit_service,
+    require_project_access,
+    resolve_project_access,
+)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -33,12 +39,30 @@ def list_projects(
 @router.post("", response_model=ProjectResponse, status_code=201)
 def create_project(
     data: ProjectCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     project = Project(name=data.name, description=data.description, owner_id=current_user.id)
     db.add(project)
-    db.commit()
+    db.flush()
+    access = resolve_project_access(db, project.id, current_user.id)
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="project.update",
+        intent=AuditIntent(
+            project_id=project.id,
+            action="project.create",
+            resource_type="project",
+            resource_id=str(project.id),
+            changes={"name": data.name, "description": data.description},
+        ),
+        allowed_changes={"name", "description"},
+    ):
+        pass
     db.refresh(project)
     return project
 
@@ -49,27 +73,39 @@ def get_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = db.query(Project).filter(Project.id == uuid.UUID(project_id), Project.owner_id == current_user.id).first()
-    if not project:
-        raise HTTPException(404, "Project not found")
-    return project
+    return require_project_access(db, project_id, current_user.id, "project.read").project
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
 def update_project(
     project_id: str,
     data: ProjectUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = db.query(Project).filter(Project.id == uuid.UUID(project_id), Project.owner_id == current_user.id).first()
-    if not project:
-        raise HTTPException(404, "Project not found")
-    if data.name is not None:
-        project.name = data.name
-    if data.description is not None:
-        project.description = data.description
-    db.commit()
+    access = resolve_project_access(db, project_id, current_user.id)
+    project = access.project if access is not None else None
+    intent_id = project.id if project is not None else uuid.UUID(project_id)
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="project.update",
+        intent=AuditIntent(
+            project_id=intent_id,
+            action="project.update",
+            resource_type="project",
+            resource_id=str(intent_id),
+            changes=data.model_dump(exclude_none=True),
+        ),
+        allowed_changes={"name", "description"},
+    ):
+        if data.name is not None:
+            project.name = data.name
+        if data.description is not None:
+            project.description = data.description
     db.refresh(project)
     return project
 
@@ -77,20 +113,34 @@ def update_project(
 @router.delete("/{project_id}", status_code=204)
 def delete_project(
     project_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = db.query(Project).filter(Project.id == uuid.UUID(project_id), Project.owner_id == current_user.id).first()
-    if not project:
-        raise HTTPException(404, "Project not found")
+    access = resolve_project_access(db, project_id, current_user.id)
+    project = access.project if access is not None else None
+    intent_id = project.id if project is not None else uuid.UUID(project_id)
     # Manually clean up related records for existing DB schema compatibility
     from app.models.training import TrainingJob
     from app.models.platform_models import Dataset, OrchestrationApp
-    db.query(TrainingJob).filter(TrainingJob.project_id == project.id).delete()
-    db.query(Dataset).filter(Dataset.project_id == project.id).update({"project_id": None})
-    db.query(OrchestrationApp).filter(OrchestrationApp.project_id == project.id).update({"project_id": None})
-    db.delete(project)
-    db.commit()
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="project.delete",
+        intent=AuditIntent(
+            project_id=intent_id,
+            action="project.delete",
+            resource_type="project",
+            resource_id=str(intent_id),
+        ),
+        allowed_changes=set(),
+    ):
+        db.query(TrainingJob).filter(TrainingJob.project_id == project.id).delete()
+        db.query(Dataset).filter(Dataset.project_id == project.id).update({"project_id": None})
+        db.query(OrchestrationApp).filter(OrchestrationApp.project_id == project.id).update({"project_id": None})
+        db.delete(project)
 
 
 from pydantic import BaseModel
@@ -102,6 +152,7 @@ class BatchDeleteRequest(BaseModel):
 @router.post("/batch-delete", status_code=200)
 def batch_delete_projects(
     data: BatchDeleteRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -113,15 +164,27 @@ def batch_delete_projects(
             uid = uuid.UUID(pid_str)
         except ValueError:
             continue
-        project = db.query(Project).filter(
-            Project.id == uid, Project.owner_id == current_user.id
-        ).first()
-        if not project:
+        access = resolve_project_access(db, uid, current_user.id)
+        if access is None:
             continue
-        db.query(TrainingJob).filter(TrainingJob.project_id == project.id).delete()
-        db.query(Dataset).filter(Dataset.project_id == project.id).update({"project_id": None})
-        db.query(OrchestrationApp).filter(OrchestrationApp.project_id == project.id).update({"project_id": None})
-        db.delete(project)
+        project = access.project
+        with audit_service(db).project_action(
+            db,
+            request=request,
+            actor=current_user,
+            access=access,
+            permission="project.delete",
+            intent=AuditIntent(
+                project_id=project.id,
+                action="project.batch_delete",
+                resource_type="project",
+                resource_id=str(project.id),
+            ),
+            allowed_changes=set(),
+        ):
+            db.query(TrainingJob).filter(TrainingJob.project_id == project.id).delete()
+            db.query(Dataset).filter(Dataset.project_id == project.id).update({"project_id": None})
+            db.query(OrchestrationApp).filter(OrchestrationApp.project_id == project.id).update({"project_id": None})
+            db.delete(project)
         deleted += 1
-    db.commit()
     return {"deleted": deleted}

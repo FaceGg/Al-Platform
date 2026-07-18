@@ -13,6 +13,8 @@ from app.engine.registry import OperatorRegistry
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.templates.contract import TemplateContractError, validate_template
 from app.templates.industrial import INDUSTRIAL_TEMPLATES
+from app.api.project_security import audit_service, resolve_project_access
+from app.services.audit import AuditIntent
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
 
@@ -280,15 +282,58 @@ def instantiate_template(
             raise HTTPException(400, {
                 "code": "TEMPLATE_REQUEST_INVALID", "message": "JSON request body is required",
             })
-        return _instantiate_industrial_template(template_id, data, db, current_user)
-    if template_id not in TEMPLATES:
+        try:
+            target_project_id = uuid.UUID(data.project_id)
+        except ValueError as exc:
+            raise HTTPException(400, {
+                "code": "TEMPLATE_REQUEST_INVALID", "message": "Invalid project or Artifact ID",
+            }) from exc
+    elif template_id in TEMPLATES:
+        if not project_id:
+            raise HTTPException(400, "project_id is required")
+        try:
+            target_project_id = uuid.UUID(project_id)
+        except ValueError as exc:
+            raise HTTPException(404, {"code": "PROJECT_NOT_FOUND"}) from exc
+    else:
         raise HTTPException(404, "Template not found")
-    if not project_id:
-        raise HTTPException(400, "project_id is required")
+
+    access = resolve_project_access(db, target_project_id, current_user.id)
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="resource.create",
+        intent=AuditIntent(
+            project_id=target_project_id,
+            action="workflow.template_instantiate",
+            resource_type="workflow",
+            changes={"template_id": template_id},
+        ),
+        allowed_changes={"template_id"},
+    ):
+        if template_id in INDUSTRIAL_TEMPLATES:
+            result = _instantiate_industrial_template(
+                template_id, data, db, current_user,
+            )
+        else:
+            result = _instantiate_free_template(
+                template_id, request, target_project_id, db, current_user,
+            )
+    return result
+
+
+def _instantiate_free_template(template_id, request, project_id, db, current_user):
     tmpl = TEMPLATES[template_id]
-    wf = Workflow(project_id=uuid.UUID(project_id), name=tmpl["name"] + " (copy)", type="free", created_by=current_user.id)
+    wf = Workflow(
+        project_id=project_id,
+        name=tmpl["name"] + " (copy)",
+        type="free",
+        created_by=current_user.id,
+    )
     db.add(wf)
-    db.commit()
+    db.flush()
 
     node_map = {}
     for i, ndef in enumerate(tmpl["nodes"]):
@@ -343,13 +388,10 @@ def instantiate_template(
         )
         db.add(edge)
 
-    db.commit()
     return {"workflow_id": str(wf.id), "message": "Template instantiated"}
 
 
 def _instantiate_industrial_template(template_id, data, db, current_user):
-    from app.models.project import Project
-
     try:
         project_uuid = uuid.UUID(data.project_id)
         artifact_uuid = uuid.UUID(data.dataset_artifact_id)
@@ -357,12 +399,6 @@ def _instantiate_industrial_template(template_id, data, db, current_user):
         raise HTTPException(400, {
             "code": "TEMPLATE_REQUEST_INVALID", "message": "Invalid project or Artifact ID",
         }) from exc
-    project = db.query(Project).filter(
-        Project.id == project_uuid, Project.owner_id == current_user.id,
-    ).first()
-    if not project:
-        raise HTTPException(404, "Project not found")
-
     try:
         artifact = build_artifact_service(db).resolve(
             artifact_uuid, project_uuid, expected_type="dataset",
@@ -406,33 +442,28 @@ def _instantiate_industrial_template(template_id, data, db, current_user):
             "code": "TEMPLATE_PARAMETER_INVALID", "message": str(exc),
         }) from exc
 
-    try:
-        workflow = Workflow(
-            project_id=project_uuid, name=template.name + " (copy)", type="industrial",
-            created_by=current_user.id,
+    workflow = Workflow(
+        project_id=project_uuid, name=template.name + " (copy)", type="industrial",
+        created_by=current_user.id,
+    )
+    db.add(workflow)
+    db.flush()
+    node_map = {}
+    for node_spec in template.nodes:
+        node = WorkflowNode(
+            workflow_id=workflow.id, operator_id=node_spec.operator_id,
+            label=node_spec.label, position_x=node_spec.position_x,
+            position_y=node_spec.position_y, params=node_params[node_spec.key],
         )
-        db.add(workflow)
+        db.add(node)
         db.flush()
-        node_map = {}
-        for node_spec in template.nodes:
-            node = WorkflowNode(
-                workflow_id=workflow.id, operator_id=node_spec.operator_id,
-                label=node_spec.label, position_x=node_spec.position_x,
-                position_y=node_spec.position_y, params=node_params[node_spec.key],
-            )
-            db.add(node)
-            db.flush()
-            node_map[node_spec.key] = node.id
-        for edge_spec in template.edges:
-            db.add(WorkflowEdge(
-                workflow_id=workflow.id,
-                source_node_id=node_map[edge_spec.source], source_port=edge_spec.source_port,
-                target_node_id=node_map[edge_spec.target], target_port=edge_spec.target_port,
-            ))
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+        node_map[node_spec.key] = node.id
+    for edge_spec in template.edges:
+        db.add(WorkflowEdge(
+            workflow_id=workflow.id,
+            source_node_id=node_map[edge_spec.source], source_port=edge_spec.source_port,
+            target_node_id=node_map[edge_spec.target], target_port=edge_spec.target_port,
+        ))
     return {
         "workflow_id": str(workflow.id), "template_id": template_id,
         "dataset_artifact_id": str(artifact.id), "message": "Template instantiated",

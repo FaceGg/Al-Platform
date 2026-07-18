@@ -217,21 +217,21 @@ git commit -m "feat: expose project membership and audit APIs"
 - Modify: `ml-platform/backend/tests/test_api_runs.py`
 - Modify: `ml-platform/backend/tests/test_api_project_access.py`
 
-- [ ] **Step 1: Add role/audit RED tests**
+- [x] **Step 1: Add role/audit RED tests**
 
 Assert viewer reads; editor edits definitions but not project metadata; operator starts/cancels runs only; viewer cannot execute; owner alone updates/deletes projects and manages batch delete. Assert success and denied events.
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 ```powershell
 python -m unittest tests.test_api_projects tests.test_api_workflows tests.test_workflow_versions tests.test_api_runs tests.test_api_project_access -v
 ```
 
-- [ ] **Step 3: Apply access and audit boundaries**
+- [x] **Step 3: Apply access and audit boundaries**
 
 Use project read/update/delete, resource create/update/delete, and execution operate. Resolve indirect workflow/run resources to project before authorization. Action names are `project.create/update/delete/batch_delete`, `workflow.create/update/delete/publish/restore/template_instantiate`, and `workflow_run.start/cancel`.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```powershell
 python -m unittest tests.test_api_projects tests.test_api_workflows tests.test_workflow_versions tests.test_api_runs tests.test_api_project_access -v

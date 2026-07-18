@@ -4,8 +4,9 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 import asyncio
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from redis import asyncio as redis_async
 from sqlalchemy.exc import IntegrityError
 
@@ -16,6 +17,7 @@ from app.database_schema import require_current_schema
 from app.events.subscriber import RedisRunEventSubscriber
 from app.middleware.request_id import RequestIdMiddleware
 from app.websocket.manager import manager
+from app.services.project_access import ProjectAccessError
 
 # Import all operators so they register themselves
 # Import models (must happen before create_all)
@@ -178,6 +180,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(ProjectAccessError)
+async def project_access_exception_handler(
+    request: Request, error: ProjectAccessError,
+):
+    status = 404 if error.hidden else 403
+    return JSONResponse(
+        status_code=status,
+        content={"detail": {"code": error.code, "message": str(error)}},
+    )
 app.add_middleware(RequestIdMiddleware)
 
 # Register routers

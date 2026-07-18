@@ -1,4 +1,5 @@
 import unittest
+import uuid
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -6,11 +7,14 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.auth import get_current_user
+from app.api.runs import get_task_dispatcher
 from app.database import Base, get_db
 from app.main import app
-from app.models.access import ProjectMember
+from app.models.access import AuditEvent, ProjectMember
 from app.models.project import Project
+from app.models.run import WorkflowRun
 from app.models.user import User
+from app.models.workflow import Workflow, WorkflowNode
 
 
 class TestProjectAccessAPI(unittest.TestCase):
@@ -112,6 +116,187 @@ class TestProjectAccessAPI(unittest.TestCase):
         self.assertGreaterEqual(payload["total"], 1)
         self.assertTrue(all(item["action"] == "project.member.add" for item in payload["items"]))
         self.assertTrue(all(item["result"] == "success" for item in payload["items"]))
+
+
+class TestProjectRoleResourceAPI(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        cls.Session = sessionmaker(bind=cls.engine, expire_on_commit=False)
+        Base.metadata.create_all(cls.engine)
+        cls.db = cls.Session()
+        cls.users = {
+            role: User(username=f"api-role-{role}", password_hash="hash")
+            for role in ("owner", "editor", "operator", "viewer", "outsider")
+        }
+        cls.db.add_all(cls.users.values())
+        cls.db.flush()
+        cls.project = Project(name="Role resource project", owner_id=cls.users["owner"].id)
+        cls.db.add(cls.project)
+        cls.db.flush()
+        cls.db.add_all([
+            ProjectMember(
+                project_id=cls.project.id,
+                user_id=cls.users[role].id,
+                role=role,
+                created_by=cls.users["owner"].id,
+            )
+            for role in ("editor", "operator", "viewer")
+        ])
+        cls.workflow = Workflow(
+            project_id=cls.project.id,
+            name="Role workflow",
+            created_by=cls.users["owner"].id,
+        )
+        cls.db.add(cls.workflow)
+        cls.db.flush()
+        cls.db.add(WorkflowNode(
+            workflow_id=cls.workflow.id,
+            operator_id="mechanism_thermal",
+            label="Thermal",
+            position_x=10,
+            position_y=20,
+            params={},
+        ))
+        cls.db.commit()
+        cls.current_user = cls.users["owner"]
+        cls.dispatch_calls = []
+        dispatcher = type("Dispatcher", (), {
+            "enqueue_workflow": lambda self, run_id: cls.dispatch_calls.append(("enqueue", run_id)),
+            "cancel": lambda self, task_id, terminate=False: cls.dispatch_calls.append(
+                ("cancel", task_id, terminate)
+            ),
+        })()
+        app.dependency_overrides[get_db] = lambda: cls.db
+        app.dependency_overrides[get_current_user] = lambda: cls.current_user
+        app.dependency_overrides[get_task_dispatcher] = lambda: dispatcher
+        cls.client = TestClient(app)
+
+    @classmethod
+    def tearDownClass(cls):
+        app.dependency_overrides.clear()
+        cls.db.close()
+        cls.engine.dispose()
+
+    def _as(self, role):
+        self.__class__.current_user = self.users[role]
+
+    def test_all_members_can_read_project_and_workflow_but_outsider_is_hidden(self):
+        for role in ("owner", "editor", "operator", "viewer"):
+            with self.subTest(role=role):
+                self._as(role)
+                project = self.client.get(f"/api/projects/{self.project.id}")
+                workflow = self.client.get(f"/api/workflows/{self.workflow.id}")
+                self.assertEqual(project.status_code, 200, project.text)
+                self.assertEqual(workflow.status_code, 200, workflow.text)
+
+        self._as("outsider")
+        self.assertEqual(self.client.get(f"/api/projects/{self.project.id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/workflows/{self.workflow.id}").status_code, 404)
+
+    def test_only_owner_can_update_project_metadata(self):
+        self._as("editor")
+        denied = self.client.put(
+            f"/api/projects/{self.project.id}", json={"description": "editor denied"},
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+        self.assertEqual(denied.json()["detail"]["code"], "PROJECT_PERMISSION_DENIED")
+
+        self._as("owner")
+        updated = self.client.put(
+            f"/api/projects/{self.project.id}", json={"description": "owner updated"},
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertEqual(updated.json()["description"], "owner updated")
+
+    def test_editor_can_create_save_publish_restore_and_delete_workflow(self):
+        self._as("editor")
+        created = self.client.post(
+            f"/api/projects/{self.project.id}/workflows",
+            json={"name": "Editor workflow", "nodes": [], "edges": []},
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        workflow_id = created.json()["id"]
+
+        saved = self.client.put(
+            f"/api/workflows/{workflow_id}",
+            json={
+                "name": "Editor saved workflow",
+                "nodes": [{
+                    "id": "thermal", "operator_id": "mechanism_thermal", "label": "Thermal",
+                    "position": {"x": 10, "y": 20}, "params": {},
+                }],
+                "edges": [],
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        published = self.client.post(f"/api/workflows/{workflow_id}/publish")
+        self.assertEqual(published.status_code, 201, published.text)
+        restored = self.client.post(f"/api/workflows/{workflow_id}/versions/1/restore")
+        self.assertEqual(restored.status_code, 200, restored.text)
+        deleted = self.client.delete(f"/api/workflows/{workflow_id}")
+        self.assertEqual(deleted.status_code, 204, deleted.text)
+
+        self._as("operator")
+        denied = self.client.put(
+            f"/api/workflows/{self.workflow.id}",
+            json={"name": "Operator denied", "nodes": [], "edges": []},
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+
+    def test_operator_can_start_cancel_and_read_run_while_viewer_cannot_execute(self):
+        self._as("operator")
+        started = self.client.post(f"/api/workflows/{self.workflow.id}/run")
+        self.assertEqual(started.status_code, 201, started.text)
+        run_id = started.json()["run_id"]
+        run = self.db.query(WorkflowRun).filter(WorkflowRun.id == uuid.UUID(run_id)).one()
+        run.task_id = "role-task"
+        self.db.commit()
+        cancelled = self.client.post(f"/api/runs/{run_id}/cancel")
+        self.assertEqual(cancelled.status_code, 200, cancelled.text)
+        self.assertEqual(cancelled.json()["status"], "cancel_requested")
+        self.assertEqual(self.client.get(f"/api/runs/{run_id}").status_code, 200)
+
+        self._as("viewer")
+        denied = self.client.post(f"/api/workflows/{self.workflow.id}/run")
+        self.assertEqual(denied.status_code, 403, denied.text)
+
+        self._as("outsider")
+        self.assertEqual(self.client.get(f"/api/runs/{run_id}").status_code, 404)
+
+    def test_template_instantiation_uses_definition_permissions(self):
+        self._as("editor")
+        created = self.client.post(
+            "/api/templates/condition_branch/instantiate",
+            params={"project_id": str(self.project.id)},
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+
+        self._as("operator")
+        denied = self.client.post(
+            "/api/templates/condition_branch/instantiate",
+            params={"project_id": str(self.project.id)},
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+
+    def test_z_success_and_denied_writes_are_audited(self):
+        actions = {
+            (event.action, event.result)
+            for event in self.db.query(AuditEvent).filter(AuditEvent.project_id == self.project.id)
+        }
+        self.assertIn(("project.update", "success"), actions)
+        self.assertIn(("project.update", "denied"), actions)
+        self.assertIn(("workflow.create", "success"), actions)
+        self.assertIn(("workflow.update", "denied"), actions)
+        self.assertIn(("workflow_run.start", "success"), actions)
+        self.assertIn(("workflow_run.start", "denied"), actions)
+        self.assertIn(("workflow_run.cancel", "success"), actions)
+        self.assertIn(("workflow.template_instantiate", "success"), actions)
+        self.assertIn(("workflow.template_instantiate", "denied"), actions)
 
 
 if __name__ == "__main__":
