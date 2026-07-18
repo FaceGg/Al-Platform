@@ -11,6 +11,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    volumes:
+      - ./docker/postgres/init-mlflow.sql:/docker-entrypoint-initdb.d/10-init-mlflow.sql:ro
   redis:
     image: redis:7
     healthcheck:
@@ -60,10 +62,73 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?set MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY}
       MINIO_SECURE: ${MINIO_SECURE:-false}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?set MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY}
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL:-http://minio:9000}
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+      MLFLOW_BACKEND_STORE_URI: ${MLFLOW_BACKEND_STORE_URI:?set MLFLOW_BACKEND_STORE_URI}
+      MLFLOW_ARTIFACT_ROOT: ${MLFLOW_ARTIFACT_ROOT:-s3://ml-platform/mlflow}
+      TENSORBOARD_GATEWAY_URL: ${TENSORBOARD_GATEWAY_URL:-http://tensorboard-gateway:6006}
+      TENSORBOARD_SESSION_SECRET: ${TENSORBOARD_SESSION_SECRET:?set TENSORBOARD_SESSION_SECRET}
+      TENSORBOARD_LOG_ROOT: /var/lib/tensorboard/runs
       ML_PLATFORM_TEMP_DIR: /tmp/ml-platform
     depends_on:
       postgres:
         condition: service_healthy
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.2.0
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+        && pip install --retries 10 --timeout 120 "psycopg[binary]"
+        &&
+        mlflow server
+        --host 0.0.0.0
+        --port 5000
+        --backend-store-uri "$$MLFLOW_BACKEND_STORE_URI"
+        --artifacts-destination "$$MLFLOW_ARTIFACT_ROOT"
+    environment:
+      MLFLOW_BACKEND_STORE_URI: ${MLFLOW_BACKEND_STORE_URI:?set MLFLOW_BACKEND_STORE_URI}
+      MLFLOW_ARTIFACT_ROOT: ${MLFLOW_ARTIFACT_ROOT:-s3://ml-platform/mlflow}
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL:-http://minio:9000}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?set MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY}
+    expose:
+      - "5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  tensorboard-gateway:
+    build:
+      context: ./ml-platform/backend
+      dockerfile: Dockerfile.tensorboard
+    environment:
+      TENSORBOARD_SESSION_SECRET: ${TENSORBOARD_SESSION_SECRET:?set TENSORBOARD_SESSION_SECRET}
+      TENSORBOARD_SESSION_TTL_SECONDS: ${TENSORBOARD_SESSION_TTL_SECONDS:-300}
+      TENSORBOARD_IDLE_TIMEOUT_SECONDS: ${TENSORBOARD_IDLE_TIMEOUT_SECONDS:-600}
+      TENSORBOARD_LOG_ROOT: /var/lib/tensorboard/runs
+    volumes:
+      - tensorboard-events:/var/lib/tensorboard/runs
+    expose:
+      - "6006"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6006/openapi.json', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
 
   backend:
     build:
@@ -87,12 +152,18 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      mlflow:
+        condition: service_healthy
+      tensorboard-gateway:
+        condition: service_healthy
 
   worker:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.worker
     environment: *production-environment
+    volumes:
+      - tensorboard-events:/var/lib/tensorboard/runs
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -100,6 +171,10 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      mlflow:
+        condition: service_healthy
+      tensorboard-gateway:
+        condition: service_healthy
 
   frontend:
     build:
@@ -121,3 +196,6 @@ services:
       - backend
       - frontend
     restart: unless-stopped
+
+volumes:
+  tensorboard-events:

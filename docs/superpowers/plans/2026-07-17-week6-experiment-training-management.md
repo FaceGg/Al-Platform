@@ -608,11 +608,11 @@ git commit -m "feat: add experiment and training operations ui"
 - Create: `ml-platform/backend/tests/test_experiment_production_stack.py`
 - Modify: `.github/workflows/ci.yml`
 
-- [ ] **Step 1: Write failing readiness and integration tests**
+- [x] **Step 1: Write failing readiness and integration tests**
 
 Readiness must report `mlflow` and `tensorboard`; real integration, gated by `RUN_EXPERIMENT_INTEGRATION=1`, must create Experiment/Run, log metrics, upload/download checkpoint, execute Celery training, resume, compare, and create an isolated TensorBoard session.
 
-- [ ] **Step 2: Verify RED/local skip**
+- [x] **Step 2: Verify RED/local skip**
 
 Run:
 
@@ -623,11 +623,11 @@ python -m unittest tests.test_experiment_production_stack -v
 
 Expected: readiness fails new assertions; production module skips only because the environment gate is disabled.
 
-- [ ] **Step 3: Add deployable services and CI**
+- [x] **Step 3: Add deployable services and CI**
 
 Create MLflow database during PostgreSQL initialization, start `mlflow server --host 0.0.0.0 --port 5000` with PostgreSQL backend and `s3://<bucket>/mlflow`, add MinIO credentials and endpoint, add non-root TensorBoard gateway on the internal network, and mount only the controlled event cache volume. Backend and Worker depend on healthy MLflow/gateway. CI starts identical services, runs Alembic twice/check, starts Worker, runs the real module, redacts logs, and always cleans up.
 
-- [ ] **Step 4: Verify WSL Docker production stack**
+- [x] **Step 4: Verify WSL Docker production stack**
 
 Run in WSL:
 
@@ -642,7 +642,7 @@ docker compose down
 
 Expected: real integration passes; readiness reports database, Redis, Celery, storage, MLflow, and TensorBoard ready.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add docker-compose.yml ml-platform/backend/Dockerfile ml-platform/backend/Dockerfile.tensorboard ml-platform/backend/app/services/readiness_service.py ml-platform/backend/tests/test_readiness.py ml-platform/backend/tests/test_experiment_production_stack.py .github/workflows/ci.yml

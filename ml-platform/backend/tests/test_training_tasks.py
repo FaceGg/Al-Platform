@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 from app.database import Base
 from app.models.experiment import Experiment
@@ -169,6 +170,7 @@ class TestTrainingExecution(unittest.TestCase):
             self.job_id = job.id
         self.artifacts = FakeArtifactService(self.dataset_path, self.dataset_id)
         self.tracking = FakeTracking()
+        self.tensorboard_root = Path(self.temporary.name) / "tensorboard-runs"
 
     def tearDown(self):
         self.engine.dispose()
@@ -183,6 +185,7 @@ class TestTrainingExecution(unittest.TestCase):
             worker_id="worker-1",
             task_id="task-1",
             checkpoint_interval=2,
+            tensorboard_root=self.tensorboard_root,
         )
 
     def test_claimed_job_tracks_metrics_checkpoints_and_final_lineage(self):
@@ -210,6 +213,13 @@ class TestTrainingExecution(unittest.TestCase):
         names = {item[2] for item in self.tracking.artifacts}
         self.assertTrue({"latest.joblib", "best.joblib"}.issubset(names))
         self.assertEqual(self.tracking.terminated, [("run-1", "FINISHED")])
+        event_dir = self.tensorboard_root / str(job.project_id) / "run-1"
+        accumulator = EventAccumulator(str(event_dir)).Reload()
+        self.assertIn("val_accuracy", accumulator.Tags()["scalars"])
+        self.assertEqual(
+            [event.step for event in accumulator.Scalars("val_accuracy")],
+            [1, 2, 3],
+        )
 
     def test_duplicate_delivery_is_skipped(self):
         first = self.execute()

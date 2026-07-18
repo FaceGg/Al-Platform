@@ -1,10 +1,12 @@
 FROM python:3.11-slim
 WORKDIR /app
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --retries 10 --timeout 120 -r requirements.txt
 RUN groupadd --gid 1000 app && useradd --uid 1000 --gid app --create-home app
 COPY . .
-RUN mkdir -p data uploads && chown -R app:app data uploads
+RUN mkdir -p data uploads /tmp/ml-platform && chown -R app:app data uploads /tmp/ml-platform
 
 EXPOSE 8000
 ENV MPLCONFIGDIR=/tmp/matplotlib

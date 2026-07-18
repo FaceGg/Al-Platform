@@ -1,6 +1,8 @@
 """Durable TrainingJob execution across ORM, tracking, and artifacts."""
 
+import os
 import tempfile
+import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -8,6 +10,9 @@ from pathlib import Path
 
 import joblib
 import pandas as pd
+from tensorboard.compat.proto.event_pb2 import Event
+from tensorboard.compat.proto.summary_pb2 import Summary
+from tensorboard.summary.writer.event_file_writer import EventFileWriter
 
 from app.config import settings
 from app.database import SessionLocal
@@ -84,6 +89,7 @@ def execute_training_job(
     worker_id: str,
     task_id: str,
     checkpoint_interval: int | None = None,
+    tensorboard_root: str | Path | None = None,
 ) -> TrainingExecutionOutcome:
     job_uuid = uuid.UUID(str(job_id))
     with session_factory() as claim_db:
@@ -97,6 +103,7 @@ def execute_training_job(
 
     tracking = None
     run = None
+    tensorboard_writer = None
     db = session_factory()
     try:
         job = db.query(TrainingJob).filter(TrainingJob.id == job_uuid).one()
@@ -118,6 +125,16 @@ def execute_training_job(
         job.mlflow_run_id = run.run_id
         job.logs = [*(job.logs or []), {"level": "info", "message": "Training started"}]
         db.commit()
+        event_root = Path(
+            tensorboard_root
+            or os.environ.get(
+                "TENSORBOARD_LOG_ROOT",
+                str(Path(tempfile.gettempdir()) / "tensorboard-runs"),
+            )
+        )
+        tensorboard_writer = EventFileWriter(
+            str(event_root / str(job.project_id) / run.run_id)
+        )
 
         artifact_service = artifact_service_factory(db)
         dataset = artifact_service.resolve(
@@ -184,6 +201,15 @@ def execute_training_job(
                     epoch_metrics.values,
                     step=epoch_metrics.epoch,
                 )
+                tensorboard_writer.add_event(Event(
+                    wall_time=time.time(),
+                    step=epoch_metrics.epoch,
+                    summary=Summary(value=[
+                        Summary.Value(tag=str(key), simple_value=float(value))
+                        for key, value in epoch_metrics.values.items()
+                    ]),
+                ))
+                tensorboard_writer.flush()
                 with session_factory() as metric_db:
                     current = metric_db.query(TrainingJob).filter(
                         TrainingJob.id == job_uuid,
@@ -352,6 +378,8 @@ def execute_training_job(
                 failed_db.commit()
         return TrainingExecutionOutcome(str(job_uuid), "failed", error_code)
     finally:
+        if tensorboard_writer is not None:
+            tensorboard_writer.close()
         db.close()
 
 

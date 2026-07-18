@@ -121,7 +121,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
-- 第 6 周进行中：后端实验训练闭环、前端 typed clients 及实验/训练运维 UI 已完成；待完成 Compose/CI 真实生产集成和最终验收。
+- 第 6 周进行中：后端实验训练闭环、前端 typed clients、实验/训练运维 UI 及 Compose/CI 真实生产集成已完成；待完成最终全量验收与运行文档。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -734,3 +734,13 @@
 - 可访问性修正：Ant Design 图标会进入按钮 accessible name，关键图标按钮显式设置业务 `aria-label`；停止确认文案放在真正的确认按钮上。
 - TDD 与验证：旧页面缺少双 Tab 时 2/2 RED；实现后定向 2/2、完整前端 15 文件 39/39 和 TypeScript/Vite 生产构建通过。构建仍报告既有 ECharts 大 chunk 警告，不影响本任务验收。
 - 遗留事项：真实 MLflow/TensorBoard 页面数据与浏览器主流程将在 Task 12 生产栈和 Task 13 E2E 中验收。
+
+### 2026-07-18：第六周任务 12 Compose、Readiness 与真实生产集成完成
+
+- 部署：Compose 新增 PostgreSQL MLflow 数据库初始化、MLflow 3.2.0 服务、非 root TensorBoard Gateway、受控 TensorBoard event volume；Backend/Worker 依赖 MLflow/Gateway 健康后启动。
+- 训练事件：Worker 在 `project_id/run_id` 受控目录写入每个 epoch 的 TensorBoard scalar event，Gateway 使用同一卷启动隔离会话。
+- Readiness：`/api/ready` 新增 `mlflow` 与 `tensorboard` 探针，未配置时返回 `LOCAL_MODE`，失败时使用 `MLFLOW_UNAVAILABLE`/`TENSORBOARD_UNAVAILABLE` 且不回显凭据。
+- 依赖与配置：后端镜像和 CI 使用 `pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/`；增加 `boto3` 以支持 MLflow S3/MinIO artifact；MLflow 官方镜像启动时同样使用该源安装 psycopg。
+- TDD 与验证：Readiness 初始 2 条新断言 RED；训练 TensorBoard event 初始因参数缺失 RED；修复后后端相关回归 13/13、WSL `docker compose config`、三个目标镜像构建、全栈健康和真实生产集成 1/1 GREEN。
+- 问题记录：MLflow 3.1.4 PostgreSQL adapter 将字符串 Experiment ID 绑定为 VARCHAR，升级 3.2.x 后由服务端 `int(experiment_id)` 修复；官方镜像缺少 psycopg、平台 requirements 缺少 boto3、Worker 缺少 MinIO AWS 环境变量均已按真实日志补齐。
+- 遗留事项：CI GitHub Actions 尚未远程运行；Task 13 需执行全量后端/前端/浏览器/迁移/安全验收并记录运行证据。
