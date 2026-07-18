@@ -146,6 +146,10 @@ jobs:
       DATABASE_URL: postgresql+psycopg://postgres:test-password@127.0.0.1:5432/ml_platform
       SECRET_KEY: ci-production-secret-key-with-at-least-32-characters
       MLFLOW_TRACKING_URI: http://127.0.0.1:5000
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg://postgres:test-password@127.0.0.1:5432/ml_platform
+      MLFLOW_ARTIFACT_ROOT: s3://ml-platform-test/mlflow
+      TENSORBOARD_GATEWAY_URL: http://127.0.0.1:6006
+      TENSORBOARD_SESSION_SECRET: ci-tensorboard-session-secret-at-least-32-bytes
       TASK_BACKEND: celery
       CELERY_BROKER_URL: redis://127.0.0.1:6379/0
       CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/0
