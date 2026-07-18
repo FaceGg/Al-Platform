@@ -812,3 +812,11 @@
 - TDD 证据：模型缺失和 33/35 表差异先 RED；实现后模型/完整迁移/降级 5/5 GREEN。
 - 验证方式：独立临时 SQLite 双次 upgrade、current=`20260718_07`、`alembic check` 无待生成操作，`git diff --check` 通过。
 - 遗留事项：权限矩阵、审计事务和 API 尚未实现。
+
+### 2026-07-18：第七周角色审计 Task 3 集中权限矩阵完成
+
+- 开发内容：新增 `ProjectRole`、冻结权限集合、owner-first `ProjectAccessService`、隐藏/可见领域错误和 owned/joined 项目去重查询。
+- 权限结果：owner 全权限；editor 可读、资源 CRUD、执行和调度管理/操作；operator 只读、执行和调度操作；viewer 只读。
+- TDD 证据：服务缺失时矩阵 3/3 RED；实现后矩阵/owner 优先/admin 不绕过/查询去重和模型回归 5/5 GREEN。
+- 安全边界：全局 `User.role=admin` 不自动获得项目访问；无成员关系保持隐藏 404 语义，已有成员权限不足使用显式 403 领域码。
+- 遗留事项：HTTP 映射、审计事务和成员 API 尚待后续任务。

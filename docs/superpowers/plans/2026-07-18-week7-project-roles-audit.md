@@ -112,23 +112,23 @@ git commit -m "feat: persist project members and audit events"
 - Create: `ml-platform/backend/app/services/project_access.py`
 - Modify: `ml-platform/backend/tests/test_project_access.py`
 
-- [ ] **Step 1: Write the full matrix tests**
+- [x] **Step 1: Write the full matrix tests**
 
 Table-drive `owner/editor/operator/viewer` against `project.read`, project update/delete, member manage, resource create/update/delete, execution operate, schedule manage/operate, and audit read. Assert owner precedence, missing membership as hidden, and no global-admin bypass.
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 ```powershell
 python -m unittest tests.test_project_access.TestProjectPermissionMatrix -v
 ```
 
-- [ ] **Step 3: Implement the service**
+- [x] **Step 3: Implement the service**
 
 Define `ProjectRole(str, Enum)` with `OWNER/EDITOR/OPERATOR/VIEWER`, and frozen `ProjectAccess(project: Project, role: ProjectRole)`. `ProjectAccessService.resolve(db, project_id, user_id)` checks owner first and then membership. `ProjectAccessService.require(db, project_id, user_id, permission)` returns access when the role matrix contains the permission, otherwise raises hidden `PROJECT_NOT_FOUND` or visible `PROJECT_PERMISSION_DENIED`. `accessible_project_query(db, user_id)` uses an outer membership join with an owner-or-member predicate and `distinct(Project.id)`.
 
 Use `ProjectAccessError(code, hidden)` for stable 404/403 translation. The accessible query returns owner/member union without duplicates.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```powershell
 python -m unittest tests.test_project_access.TestProjectPermissionMatrix -v

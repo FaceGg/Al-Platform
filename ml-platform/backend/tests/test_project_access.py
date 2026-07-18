@@ -3,6 +3,14 @@ import unittest
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.database import Base
+from app.models.access import ProjectMember
+from app.models.project import Project
+from app.models.user import User
 
 
 class TestAccessModels(unittest.TestCase):
@@ -41,6 +49,156 @@ class TestAccessModels(unittest.TestCase):
         }
         self.assertEqual(foreign_keys[("project_id",)], "SET NULL")
         self.assertEqual(foreign_keys[("actor_id",)], "SET NULL")
+
+
+class TestProjectPermissionMatrix(unittest.TestCase):
+    PERMISSIONS = {
+        "project.read",
+        "project.update",
+        "project.delete",
+        "member.manage",
+        "resource.create",
+        "resource.update",
+        "resource.delete",
+        "execution.operate",
+        "schedule.manage",
+        "schedule.operate",
+        "audit.read",
+    }
+    GRANTS = {
+        "owner": PERMISSIONS,
+        "editor": {
+            "project.read",
+            "resource.create",
+            "resource.update",
+            "resource.delete",
+            "execution.operate",
+            "schedule.manage",
+            "schedule.operate",
+        },
+        "operator": {
+            "project.read",
+            "execution.operate",
+            "schedule.operate",
+        },
+        "viewer": {"project.read"},
+    }
+
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine)()
+        self.users = {
+            role: User(
+                username=f"access-{role}",
+                password_hash="hash",
+                role="admin" if role == "outsider" else "engineer",
+            )
+            for role in ("owner", "editor", "operator", "viewer", "outsider")
+        }
+        self.db.add_all(self.users.values())
+        self.db.flush()
+        self.project = Project(
+            name="Permission matrix",
+            owner_id=self.users["owner"].id,
+        )
+        self.db.add(self.project)
+        self.db.flush()
+        for role in ("editor", "operator", "viewer"):
+            self.db.add(ProjectMember(
+                project_id=self.project.id,
+                user_id=self.users[role].id,
+                role=role,
+                created_by=self.users["owner"].id,
+            ))
+        self.db.commit()
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def test_every_role_matches_the_frozen_permission_matrix(self):
+        from app.services.project_access import (
+            ProjectAccessError,
+            ProjectAccessService,
+        )
+
+        service = ProjectAccessService()
+        for role, granted in self.GRANTS.items():
+            for permission in self.PERMISSIONS:
+                with self.subTest(role=role, permission=permission):
+                    if permission in granted:
+                        access = service.require(
+                            self.db,
+                            self.project.id,
+                            self.users[role].id,
+                            permission,
+                        )
+                        self.assertEqual(access.role.value, role)
+                    else:
+                        with self.assertRaises(ProjectAccessError) as raised:
+                            service.require(
+                                self.db,
+                                self.project.id,
+                                self.users[role].id,
+                                permission,
+                            )
+                        self.assertFalse(raised.exception.hidden)
+                        self.assertEqual(
+                            raised.exception.code,
+                            "PROJECT_PERMISSION_DENIED",
+                        )
+
+    def test_outsider_is_hidden_and_global_admin_does_not_bypass_membership(self):
+        from app.services.project_access import (
+            ProjectAccessError,
+            ProjectAccessService,
+        )
+
+        service = ProjectAccessService()
+        self.assertIsNone(service.resolve(
+            self.db,
+            self.project.id,
+            self.users["outsider"].id,
+        ))
+        with self.assertRaises(ProjectAccessError) as raised:
+            service.require(
+                self.db,
+                self.project.id,
+                self.users["outsider"].id,
+                "project.read",
+            )
+        self.assertTrue(raised.exception.hidden)
+        self.assertEqual(raised.exception.code, "PROJECT_NOT_FOUND")
+
+    def test_owner_precedence_and_accessible_projects_are_not_duplicated(self):
+        from app.services.project_access import ProjectAccessService
+
+        self.db.add(ProjectMember(
+            project_id=self.project.id,
+            user_id=self.users["owner"].id,
+            role="viewer",
+            created_by=self.users["owner"].id,
+        ))
+        self.db.commit()
+        service = ProjectAccessService()
+
+        access = service.resolve(
+            self.db,
+            self.project.id,
+            self.users["owner"].id,
+        )
+        projects = service.accessible_project_query(
+            self.db,
+            self.users["owner"].id,
+        ).all()
+
+        self.assertEqual(access.role.value, "owner")
+        self.assertEqual([project.id for project in projects], [self.project.id])
 
 
 class TestRequestCorrelation(unittest.TestCase):
