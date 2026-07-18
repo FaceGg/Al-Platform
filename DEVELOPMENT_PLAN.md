@@ -744,3 +744,11 @@
 - TDD 与验证：Readiness 初始 2 条新断言 RED；训练 TensorBoard event 初始因参数缺失 RED；修复后后端相关回归 13/13、WSL `docker compose config`、三个目标镜像构建、全栈健康和真实生产集成 1/1 GREEN。
 - 问题记录：MLflow 3.1.4 PostgreSQL adapter 将字符串 Experiment ID 绑定为 VARCHAR，升级 3.2.x 后由服务端 `int(experiment_id)` 修复；官方镜像缺少 psycopg、平台 requirements 缺少 boto3、Worker 缺少 MinIO AWS 环境变量均已按真实日志补齐。
 - 遗留事项：CI GitHub Actions 尚未远程运行；Task 13 需执行全量后端/前端/浏览器/迁移/安全验收并记录运行证据。
+
+### 2026-07-18：第六周任务 13 本地验收完成，远程推送受网络阻塞
+
+- 本地验收：后端全量 56/56、Week 6 10/10、前端 15/15 文件 39/39、生产构建、Chromium 1/1、npm audit 0 vulnerabilities、Alembic 双次 upgrade/current/check、WSL `/api/ready` 六项 OK、真实实验集成 1/1。
+- 文档交付：新增 `docs/delivery/EXPERIMENT_TRAINING_OPERATIONS.md`，并更新使用说明、生产基础设施、功能台账、构建基线和平台状态。
+- 外部阻塞：`git push -u origin codex/week-6-experiment-training` 因当前机器经代理连接 `github.com:443` 失败，尚未获得 GitHub Actions 远程 Run URL；不是代码或测试失败。
+- 解除方式：恢复可用的 GitHub 网络/代理后，在本分支执行 push，等待 experiment integration、Chromium、quality 和 audit job 完成，再将 Run URL 追加到本记录并把第六周状态改为已完成。
+- 遗留事项：远程 CI 证据和远程分支推送仍待外部网络恢复。
