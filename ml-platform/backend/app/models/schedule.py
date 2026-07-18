@@ -34,6 +34,7 @@ class PipelineSchedule(Base):
     enabled = Column(Boolean, nullable=False, default=True)
     paused_at = Column(DateTime, nullable=True)
     max_concurrency = Column(Integer, nullable=False, default=1)
+    dependencies = Column(JSON, nullable=False, default=list)
     retry_policy = Column(JSON, nullable=False, default=dict)
     timeout_seconds = Column(Integer, nullable=True)
     workflow_version = Column(Integer, nullable=True)
@@ -49,6 +50,7 @@ class PipelineSchedule(Base):
         back_populates="schedule",
         cascade="all, delete-orphan",
     )
+    workflow = relationship("Workflow")
 
 
 class PipelineScheduleRun(Base):

@@ -22,6 +22,7 @@ def upgrade() -> None:
         sa.Column("enabled", sa.Boolean(), nullable=False),
         sa.Column("paused_at", sa.DateTime(), nullable=True),
         sa.Column("max_concurrency", sa.Integer(), nullable=False),
+        sa.Column("dependencies", sa.JSON(), nullable=False),
         sa.Column("retry_policy", sa.JSON(), nullable=False),
         sa.Column("timeout_seconds", sa.Integer(), nullable=True),
         sa.Column("workflow_version", sa.Integer(), nullable=True),

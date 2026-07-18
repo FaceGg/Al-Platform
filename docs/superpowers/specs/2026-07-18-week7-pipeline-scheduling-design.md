@@ -37,6 +37,7 @@ Celery Beat -> scheduler_tick -> PipelineSchedule/PipelineScheduleRun
 - `enabled`: whether the schedule may create new instances
 - `paused_at`: nullable pause timestamp
 - `max_concurrency`: positive integer, default 1
+- `dependencies`: JSON list of prerequisite schedule UUIDs
 - `retry_policy`: JSON containing max attempts, backoff base, and maximum delay
 - `timeout_seconds`: nullable positive workflow timeout override
 - `workflow_version`: nullable fixed version
@@ -131,4 +132,3 @@ TDD coverage must include:
 - Arbitrary Cron dialects beyond standard five-field expressions.
 - Project roles, audit log storage, SSO, or enterprise notifications; these belong to the second Week 7 subsystem.
 - Replacing the existing workflow executor or training scheduler.
-
