@@ -50,7 +50,7 @@ from app.api import auth, projects, workflows, runs, operators, datasets, workfl
 from app.api import users, models as model_api
 from app.api import knowledge, monitor, labeling, training, orchestration
 from app.api import algorithm as algo_api, platform_api, compute, annotations as annot_api, chat as chat_api
-from app.api import model_library as model_lib_api, dashboard as dash_api, readiness, experiments
+from app.api import model_library as model_lib_api, dashboard as dash_api, readiness, experiments, schedules
 
 
 def initialize_database(app_settings=None, db_engine=None) -> None:
@@ -202,6 +202,7 @@ app.include_router(model_lib_api.router)
 app.include_router(dash_api.router)
 app.include_router(readiness.router)
 app.include_router(experiments.router)
+app.include_router(schedules.router)
 
 
 @app.get("/api/health")
