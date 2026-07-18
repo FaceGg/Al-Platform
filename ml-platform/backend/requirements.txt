@@ -10,6 +10,7 @@ pydantic==2.12.*
 pydantic-settings==2.12.*
 networkx==3.6.*
 celery==5.4.*
+croniter==6.*
 redis==5.0.*
 minio==7.2.*
 boto3==1.35.*
