@@ -30,7 +30,7 @@
 - Create: `ml-platform/backend/tests/test_project_access.py`
 - Modify: `ml-platform/backend/app/main.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Test missing, valid, and invalid `X-Request-ID` values. Add recursive redaction coverage:
 
@@ -44,7 +44,7 @@ self.assertEqual(
 )
 ```
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 ```powershell
 python -m unittest tests.test_project_access.TestRequestCorrelation tests.test_project_access.TestAuditRedaction -v
@@ -52,13 +52,13 @@ python -m unittest tests.test_project_access.TestRequestCorrelation tests.test_p
 
 Expected: middleware/service imports do not exist.
 
-- [ ] **Step 3: Implement the stable interfaces**
+- [x] **Step 3: Implement the stable interfaces**
 
 `RequestIdMiddleware.dispatch` parses the request header with `uuid.UUID`; on missing/invalid input it uses `uuid.uuid4()`, stores the UUID as `request.state.request_id`, invokes `call_next`, and writes the same UUID to the response header. `redact_changes(value, allowed)` copies only top-level allowlisted keys and recursively replaces sensitive-key values with `[REDACTED]`. `audit_request_context(request)` returns the state UUID and `request.client.host` when available.
 
 Sensitive key fragments are `password`, `token`, `secret`, `credential`, `authorization`, `cookie`, `content`, `data`, and `path`. Source IP uses `request.client.host`; do not trust forwarding headers without a trusted-proxy configuration.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 ```powershell
 python -m unittest tests.test_project_access.TestRequestCorrelation tests.test_project_access.TestAuditRedaction -v

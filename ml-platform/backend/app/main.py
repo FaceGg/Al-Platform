@@ -14,6 +14,7 @@ from app.database import Base, SessionLocal, engine
 from app.database_migrations import ensure_schema_compatibility
 from app.database_schema import require_current_schema
 from app.events.subscriber import RedisRunEventSubscriber
+from app.middleware.request_id import RequestIdMiddleware
 from app.websocket.manager import manager
 
 # Import all operators so they register themselves
@@ -175,6 +176,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(RequestIdMiddleware)
 
 # Register routers
 app.include_router(auth.router)

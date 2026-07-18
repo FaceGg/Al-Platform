@@ -797,3 +797,10 @@
 - 执行顺序：请求关联/脱敏、持久模型与迁移、权限矩阵、审计事务、成员与审计 API、核心资源路由迁移、完整写路由盘点、生产与远程验收。
 - TDD 门禁：每个行为先观察 RED，再实现最小 GREEN；新增测试模块只归属 Week 7 一次。
 - 当前状态：实施计划已完成，尚未开始角色/审计生产代码。
+
+### 2026-07-18：第七周角色审计 Task 1 请求关联与脱敏完成
+
+- 开发内容：新增 UUID `X-Request-ID` middleware、请求上下文提取和 allowlist + 递归敏感键脱敏；主 FastAPI 应用已注册 middleware。
+- TDD 证据：目标模块缺失时请求关联/脱敏 4/4 RED；实现后 4/4 GREEN，既有 `test_app` 7/7 通过。
+- 安全边界：无效调用方 request ID 被替换；来源 IP 只读取直接连接地址，不信任未配置的转发头；password/token/secret/credential/authorization/cookie/content/data/path 键递归脱敏。
+- 遗留事项：审计 ORM、权限矩阵、事务与 API 尚未实现，将按 Task 2-8 顺序推进。
