@@ -1,5 +1,7 @@
 # AI模型训练编排平台 - 需求与开发进度总览
 
+> 第六周远程验收：GitHub Actions [Run 29631795297](https://github.com/FaceGg/Al-Platform/actions/runs/29631795297) 全部通过（Linux/Windows quality、Production integration、Production experiment integration、Chromium）。
+
 > 最后更新: 2026-07-18 | 当前版本: 0.3.0
 
 ---

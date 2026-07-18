@@ -88,7 +88,7 @@
 | 第 3 周 | 已完成 | 数据、算子与训练闭环 | 已统一 79 个运行时算子协议；完成数据 Artifact、训练评估、模型保存、模型库登记和血缘展示 | 严格算子协议、数据训练闭环；后端 28/28 模块、前端 22/22 测试和生产构建通过 |
 | 第 4 周 | 已完成 | 工业模板与首版交付 | 已完成真实数据准备、四套模板执行闭环、Artifact 向导、Playwright 主流程、Windows/Linux 脚本、跨平台 CI 和交付文档；GitHub Ubuntu 22.04 质量门禁与 Chromium 验收通过 | 稳定可交付版、首月验收报告 |
 | 第 5 周 | 已完成 | 生产存储与异步任务 | 已完成 PostgreSQL/Alembic、Redis/Celery、MinIO、制品 URI、配置密钥、迁移工具、生产容器和真实服务验收 | 生产数据层、对象存储、异步任务框架；Actions Run 29548916619 全绿 |
-| 第 6 周 | 进行中 | 实验与训练管理 | 已确认平台编排 + MLflow 追踪架构；实施实验、Run、参数、指标、日志、制品、检查点、恢复、早停、AutoML Trial 和隔离 TensorBoard | 企业基础版、实验训练追踪 |
+| 第 6 周 | 已完成 | 实验与训练管理 | 已完成实验、Run、参数、指标、日志、制品、检查点、恢复、早停、AutoML Trial、隔离 TensorBoard、真实 Compose 集成与跨平台验收 | 企业基础版、实验训练追踪 |
 | 第 7 周 | 未开始 | Pipeline 调度与权限 | Cron、补录、依赖、并发、超时、重试、暂停恢复、项目角色和审计 | 调度器、实例管理、权限审计 |
 | 第 8 周 | 未开始 | 模型注册与基础推理 | 模型版本、指标、审批、基础推理、在线测试、健康检查和服务启停 | 模型注册中心、基础推理服务 |
 | 第 9 周 | 未开始 | 推理服务生产化 | 多版本发布、滚动升级、回滚、密钥、限流、服务日志和运行指标 | 生产级推理服务、版本发布回滚 |
@@ -121,7 +121,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
-- 第 6 周进行中：后端实验训练闭环、前端 typed clients、实验/训练运维 UI、Compose/CI 真实生产集成及运行文档已完成；待完成远程 CI 和最终交付审计，Chromium/npm audit 本地已通过。
+- 第 6 周已完成：后端实验训练闭环、前端 typed clients、实验/训练运维 UI、Compose/CI 真实生产集成及运行文档均已完成；远程 CI、Chromium、迁移、生产栈和实验栈验收全部通过。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -763,3 +763,9 @@
 - 补充：第三次 Run `29631098923` 已通过迁移、Celery、Redis 和 MinIO，旧 Week 5 readiness 用例因未启动第六周新增的两个 HTTP 服务而失败；该用例现对非本任务范围的 MLflow/TensorBoard 探针注入健康响应，真实服务仍由 `Production experiment integration` 独立验收。
 - 补充：第四次 Run `29631294252` 的 Compose backend 继续因 `app.api.operators` 使用旧 `/app/uploads` 路径而不健康；已补充路径一致性回归测试并统一到 `/app/app/uploads`，等待下一次完整实验栈验收。
 - 补充：第五次 Run `29631567092` 的 Linux 质量门禁发现新增 `test_upload_paths` 未登记周归属；已将其登记到 Week 6 manifest，功能测试本身通过。
+
+### 2026-07-18：第六周全部远程验收完成
+
+- Actions Run：`29631795297`，URL 已记录在 `PLATFORM_STATUS.md`。
+- 结果：Quality Ubuntu、Quality Windows、Production integration、Production experiment integration、Chromium acceptance 全部成功；真实实验生命周期、MLflow/MinIO artifact round-trip、TensorBoard session、迁移双次 upgrade/current/check 和浏览器主流程均通过。
+- 状态：第六周 Task 1-13 全部完成，之前记录的远程阻塞已解除；后续工作转入第七周 Pipeline 调度与权限。
