@@ -1,6 +1,6 @@
 # AI模型训练编排平台 - 需求与开发进度总览
 
-> 最后更新: 2026-07-15 | 当前版本: 0.2.0
+> 最后更新: 2026-07-18 | 当前版本: 0.3.0
 
 ---
 
@@ -415,3 +415,11 @@
 - 真实生产集成 4/4 通过，覆盖跨方言重复迁移、MinIO、真实工作流、重复投递、Redis 事件、节点超时、失联/取消恢复和 readiness。
 - 本地全量后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、npm audit 0 漏洞和 Alembic check 均通过。
 - [GitHub Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619) 的 Windows/Ubuntu 质量、生产集成 4/4 和 Chromium 1/1 全部成功，第五周状态为“已完成”。
+
+### 十五、2026-07-18 第六周实验训练管理验收
+
+- Experiment/Run、MLflow adapter、指标历史、checkpoint、早停恢复、AutoML child Run 和隔离 TensorBoard Gateway 已完成。
+- `/training` 已改为 Experiment/Training 双 Tab，支持 Run 比较、停止、checkpoint 恢复和平台 TensorBoard 会话，中文/英文键结构一致。
+- WSL2 真实生产栈使用 MLflow 3.2.0、独立 MLflow PostgreSQL database、MinIO S3 artifact、Celery Worker 和非 root Gateway；`/api/ready` 六项全部 OK。
+- 本地证据：后端全量 56/56、Week 6 10/10、前端 15/15 文件 39/39、生产构建、Alembic 双 upgrade/check、真实实验集成 1/1。
+- 待远程证据：GitHub Actions 第六周生产 integration、Chromium 实验页面主流程和 npm audit 需要在最终文档提交后运行。

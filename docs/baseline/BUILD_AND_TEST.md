@@ -5,7 +5,7 @@
 - Python 3.11+，依赖见 `ml-platform/backend/requirements.txt`。
 - 深度学习算子验收需额外安装 PyTorch CPU；CI 使用 `python -m pip install torch --index-url https://download.pytorch.org/whl/cpu`。
 - Node.js 20+ 与 npm，依赖以 `ml-platform/frontend/package-lock.json` 为准。
-- Docker Compose 为可选部署验收依赖；当前开发机未安装。
+- Docker Compose 为生产部署验收依赖；WSL2 Docker Engine 29.6.2 / Compose 5.3.1 已安装并验证。
 
 ## 后端
 
@@ -24,6 +24,8 @@ python run_suite.py --week 1
 python run_suite.py --week 2
 python run_suite.py --week 3
 python run_suite.py --week 4
+python run_suite.py --week 5
+python run_suite.py --week 6
 ```
 
 当前周次结果依次为 16/16、7/7、7/7、3/3。`tests/test_suite_manifest.py` 保证每个后端测试模块恰好归属一个周次，`tests/test_module_imports.py` 导入全部 `app.*` 模块并检查已移除的框架 API。
@@ -82,10 +84,10 @@ docker compose up -d
 Invoke-RestMethod http://127.0.0.1:8000/api/health
 ```
 
-2026-07-17 已在 WSL2 Docker 29.6.2 / Compose 5.3.1 验证生产镜像构建、Alembic 迁移、MinIO bucket 初始化、API/Worker 启动和四项 readiness。生产栈聚焦验收命令为：
+2026-07-18 已在 WSL2 Docker 29.6.2 / Compose 5.3.1 验证生产镜像构建、MLflow/Gateway 健康、Alembic 迁移、MinIO bucket 初始化、API/Worker 启动和六项 readiness。生产实验栈聚焦验收命令为：
 
 ```bash
-RUN_PRODUCTION_INTEGRATION=1 python -m unittest tests.test_production_stack -v
+RUN_EXPERIMENT_INTEGRATION=1 python -m unittest tests.test_experiment_production_stack -v
 ```
 
 该入口会清空目标数据库业务表，只能连接专用测试数据库。普通 `python run_suite.py --week 5` 会明确跳过真实服务测试。

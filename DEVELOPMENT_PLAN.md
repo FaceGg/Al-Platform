@@ -121,7 +121,7 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
-- 第 6 周进行中：后端实验训练闭环、前端 typed clients、实验/训练运维 UI 及 Compose/CI 真实生产集成已完成；待完成最终全量验收与运行文档。
+- 第 6 周进行中：后端实验训练闭环、前端 typed clients、实验/训练运维 UI、Compose/CI 真实生产集成及运行文档已完成；待完成远程 CI 和最终交付审计，Chromium/npm audit 本地已通过。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表

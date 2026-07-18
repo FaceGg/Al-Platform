@@ -41,7 +41,7 @@
 | 四套焊接工业模板 | 可交付 | 真实 Fault 数据四模板后端 E2E、Artifact 向导、浏览器主流程及 Ubuntu Chromium CI 通过 | 更广泛的浏览器、性能和安全场景待后续覆盖 |
 | Windows 本地部署脚本 | 可交付 | 启动、健康、登录、停止和端口释放通过 | 服务化、自动升级未实现 |
 | Ubuntu 本地部署脚本 | 可交付 | Bash 语法、GitHub Ubuntu 22.04 服务冒烟、后端/前端质量门禁通过 | WSL2 本地完整启动需安装 Linux Node.js 18+ |
-| 训练、AutoML、模型库 | 功能可用 | Artifact 输入、训练评估、模型保存、模型库登记和血缘 UI 测试通过 | 持久队列、检查点、实验追踪、原子完成事务和审批部署未实现 |
+| 训练、AutoML、模型库 | 功能可用 | Artifact 输入、Celery 持久训练、MLflow Experiment/Run、指标历史、checkpoint/恢复、AutoML child Run、TensorBoard 隔离会话、模型库登记和血缘 UI 及 WSL 真实集成通过 | 审批部署、在线推理和灰度发布未实现 |
 | 知识库、RAG、知识图谱 | 原型 | Knowledge API、向量存储测试通过 | 权限过滤、检索评估、生产向量库未实现 |
 | 标注、监控、计算资源、API 市场 | 原型 | 对应 API 模块测试通过、页面可构建 | 多数为本地数据或基础 CRUD，无生产集成 |
 | 智能体与应用编排 | 原型 | Orchestrator/Agent 测试通过 | 可靠队列、工具沙箱、人工审核持久化未实现 |
