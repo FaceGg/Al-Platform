@@ -22,7 +22,18 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_soft_time_limit=settings.task_soft_timeout_seconds,
     task_time_limit=settings.task_hard_timeout_seconds,
+    beat_schedule={
+        "pipeline-scheduler-tick": {
+            "task": "ml_platform.scheduler_tick",
+            "schedule": 60.0,
+        },
+        "pipeline-scheduler-recovery": {
+            "task": "ml_platform.recover_pipeline_schedules",
+            "schedule": 60.0,
+        },
+    },
 )
 
 # Register tasks for CLI/import smoke checks as well as worker include discovery.
 from app.tasks import training_tasks  # noqa: E402,F401
+from app.tasks import scheduler_tasks  # noqa: E402,F401

@@ -246,5 +246,20 @@ class TestSchedulerPolicies(TestSchedulerClaims):
         self.assertEqual(self.db.query(WorkflowRun).count(), 1)
 
 
+class TestSchedulerTasks(unittest.TestCase):
+    def test_scheduler_tasks_are_registered_and_beat_is_configured(self):
+        from app.tasks.celery_app import celery_app
+
+        self.assertIn("ml_platform.scheduler_tick", celery_app.tasks)
+        self.assertIn("ml_platform.recover_pipeline_schedules", celery_app.tasks)
+        beat_entries = celery_app.conf.beat_schedule.values()
+        task_names = {entry["task"] for entry in beat_entries}
+        self.assertIn("ml_platform.scheduler_tick", task_names)
+
+    def test_scheduler_tick_uses_short_lived_scheduler_service(self):
+        from app.tasks.scheduler_tasks import scheduler_tick
+
+        self.assertEqual(scheduler_tick.name, "ml_platform.scheduler_tick")
+
 if __name__ == "__main__":
     unittest.main()
