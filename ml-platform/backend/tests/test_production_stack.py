@@ -5,6 +5,7 @@ import unittest
 import uuid
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import Mock
 
 from redis import Redis
 from sqlalchemy import create_engine, inspect
@@ -237,18 +238,22 @@ class TestProductionStack(unittest.TestCase):
             self.assertEqual(stale.error_code, "TASK_HARD_TIMEOUT")
             self.assertEqual(cancelled.status, "cancelled")
 
+        http_client = Mock()
+        http_client.get.return_value.status_code = 200
         readiness = ReadinessService(
             engine,
             settings,
             redis_client=self.redis,
             celery_app=celery_app,
             storage=self.storage,
+            http_client=http_client,
         ).check_all()
         self.assertTrue(readiness["ready"], readiness)
         self.assertTrue(all(
             readiness[name]["ready"]
             for name in ("database", "redis", "celery", "storage")
         ))
+        self.assertEqual(http_client.get.call_count, 2)
 
 
 if __name__ == "__main__":
