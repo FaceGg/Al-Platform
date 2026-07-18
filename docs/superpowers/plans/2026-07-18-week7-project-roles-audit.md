@@ -176,25 +176,25 @@ git commit -m "feat: enforce audited project transactions"
 - Modify: `ml-platform/backend/app/schemas/project.py`
 - Modify: `ml-platform/backend/app/main.py`
 
-- [ ] **Step 1: Write membership/API RED tests**
+- [x] **Step 1: Write membership/API RED tests**
 
 Cover synthetic owner list entry, add by username, duplicate/unknown user, role change/removal, strict payloads, owner immutability, outsider hidden 404, visible non-owner 403, owned/joined project union, no duplicates, and `project_role`.
 
-- [ ] **Step 2: Write audit-query RED tests**
+- [x] **Step 2: Write audit-query RED tests**
 
 Assert owner-only newest-first bounded pagination and action/resource/actor/result/time filters. Assert no audit POST/PATCH/DELETE route exists.
 
-- [ ] **Step 3: Confirm RED**
+- [x] **Step 3: Confirm RED**
 
 ```powershell
 python -m unittest tests.test_api_project_access -v
 ```
 
-- [ ] **Step 4: Implement strict schemas and routes**
+- [x] **Step 4: Implement strict schemas and routes**
 
 Use `ConfigDict(extra="forbid")`, UUID fields, `Literal["editor", "operator", "viewer"]`, offset `ge=0`, and limit `1..200`. Membership actions are `project.member.add`, `project.member.role_change`, and `project.member.remove`.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```powershell
 python -m unittest tests.test_api_project_access tests.test_api_projects -v

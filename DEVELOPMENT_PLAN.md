@@ -828,3 +828,11 @@
 - 安全：失败仅记录稳定 error code，不记录异常文本；进入上下文前冻结 actor/request 信息，避免 rollback 后 ORM 过期读取。
 - TDD 与验证：AuditService 缺失时 3/3 RED；实现后事务/脱敏/矩阵 7/7，补充审计提交失败回滚业务后事务用例 4/4 通过。
 - 遗留事项：成员与审计查询 API、现有项目写路由接入尚未完成。
+
+### 2026-07-18：第七周角色审计 Task 5 成员与审计 API 完成
+
+- 开发内容：新增严格成员 schema、owner 合成成员列表、按现有用户名添加、改角、移除；新增 owner-only 审计筛选/分页 API；项目列表返回 owned/joined 去重结果和 `project_role`。
+- 权限语义：成员管理/audit.read 仅 owner；visible member 返回 `PROJECT_PERMISSION_DENIED` 403，outsider 保持隐藏 404；owner 不允许作为普通成员。
+- 审计动作：成员 add/role_change/remove 使用统一事务边界，查询接口只读且无写路由。
+- TDD 证据：路由 404 与 joined project 缺失先 RED；实现后新 API、既有项目 CRUD 与领域服务 29/29 GREEN，`git diff --check` 通过。
+- 遗留事项：项目 CRUD、工作流、数据、训练和调度写路由仍需接入集中权限/审计。

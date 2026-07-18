@@ -6,6 +6,7 @@ from app.models.project import Project
 from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectList
 from app.api.auth import get_current_user
+from app.services.project_access import ProjectAccessService
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -15,7 +16,17 @@ def list_projects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    items = db.query(Project).filter(Project.owner_id == current_user.id).all()
+    service = ProjectAccessService()
+    projects = service.accessible_project_query(db, current_user.id).all()
+    items = [{
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "owner_id": project.owner_id,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+        "project_role": service.resolve(db, project.id, current_user.id).role.value,
+    } for project in projects]
     return {"items": items, "total": len(items)}
 
 
