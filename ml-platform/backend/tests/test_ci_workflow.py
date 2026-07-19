@@ -49,6 +49,18 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         start = next(step for step in steps if step.get("name") == "Start production experiment stack")
         self.assertIn("scheduler", start["run"])
 
+    def test_experiment_image_build_retries_transient_mirror_failures(self):
+        parsed = yaml.safe_load(self.workflow)
+        steps = parsed["jobs"]["experiment-integration"]["steps"]
+        build = next(step for step in steps if step.get("name") == "Build experiment services")
+
+        self.assertIn("for attempt in {1..3}", build["run"])
+        self.assertIn(
+            "if docker compose build backend worker tensorboard-gateway; then",
+            build["run"],
+        )
+        self.assertIn("exit 1", build["run"])
+
 
 if __name__ == "__main__":
     unittest.main()

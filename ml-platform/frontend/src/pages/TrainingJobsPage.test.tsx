@@ -112,7 +112,7 @@ describe("TrainingJobsPage", () => {
     expect(await screen.findByText("val_accuracy")).toBeInTheDocument();
     expect(screen.getByText("0.94")).toBeInTheDocument();
     expect(screen.getByTestId("metric-chart")).toBeInTheDocument();
-  });
+  }, 10_000);
 
   it("stops, resumes, and opens TensorBoard through platform actions", async () => {
     const open = vi.spyOn(window, "open").mockImplementation(() => null);

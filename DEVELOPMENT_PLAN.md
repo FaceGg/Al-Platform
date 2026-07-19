@@ -875,3 +875,11 @@
 - WSL 生产：独立 Docker network + PostgreSQL 16 + production backend image；空库迁移到 `20260718_07`，真实四角色解析、outsider 隐藏、success/denied 审计和业务原子更新 1/1 通过；trap 仅清理隔离容器/网络，默认 Compose 未修改。
 - CI：production integration job 已增加 `RUN_PROJECT_ACCESS_INTEGRATION=1` 门禁；本地 `test_ci_workflow` 4/4 通过。
 - 当前状态：本地开发与生产验收全部完成；提交推送并取得远程 GitHub Actions 全绿后，更新 Run URL 并把第七周改为“已完成”。
+
+### 2026-07-19：第七周远程 CI 首轮稳定性修复
+
+- 现象：Actions Run `29667386137` 的 production experiment image build 从阿里云 PyPI 下载依赖时发生 `ReadTimeoutError`；Windows quality 的 Experiment/Run 页面集成测试耗时 5710ms，超过 Vitest 默认 5000ms。
+- 根因：Dockerfile 内 pip 已配置 10 次重试和 120 秒超时，但单次 BuildKit 构建仍会因镜像下载中断失败；页面测试包含多轮 Ant Design 异步交互，Windows runner 性能波动超出通用单测默认时限，业务断言本身未失败。
+- 修复：production experiment job 最多重试三次完整 `docker compose build`，保留 BuildKit/pip 缓存；只将该页面集成测试的超时设为 10 秒，不放宽全局测试门禁。
+- 验证：CI workflow 新契约先 RED 后 5/5 GREEN；目标前端测试连续三轮 6/6、完整前端 39/39、生产构建、Week 7 runner 5/5 和 `git diff --check` 通过。
+- 遗留事项：等待新 Actions Run 全部成功；成功后记录 Run URL、完成第七周状态收口，再开始第八周。
