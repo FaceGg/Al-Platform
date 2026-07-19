@@ -89,7 +89,7 @@
 | 第 4 周 | 已完成 | 工业模板与首版交付 | 已完成真实数据准备、四套模板执行闭环、Artifact 向导、Playwright 主流程、Windows/Linux 脚本、跨平台 CI 和交付文档；GitHub Ubuntu 22.04 质量门禁与 Chromium 验收通过 | 稳定可交付版、首月验收报告 |
 | 第 5 周 | 已完成 | 生产存储与异步任务 | 已完成 PostgreSQL/Alembic、Redis/Celery、MinIO、制品 URI、配置密钥、迁移工具、生产容器和真实服务验收 | 生产数据层、对象存储、异步任务框架；Actions Run 29548916619 全绿 |
 | 第 6 周 | 已完成 | 实验与训练管理 | 已完成实验、Run、参数、指标、日志、制品、检查点、恢复、早停、AutoML Trial、隔离 TensorBoard、真实 Compose 集成与跨平台验收 | 企业基础版、实验训练追踪 |
-| 第 7 周 | 进行中 | Pipeline 调度与权限 | 调度、角色审计、全量与 WSL 生产验收完成；仅待远程 CI | 调度器、实例管理、权限审计 |
+| 第 7 周 | 已完成 | Pipeline 调度与权限 | 调度、角色审计、全量、WSL 生产验收与远程 CI 全部通过 | 调度器、实例管理、权限审计 |
 | 第 8 周 | 未开始 | 模型注册与基础推理 | 模型版本、指标、审批、基础推理、在线测试、健康检查和服务启停 | 模型注册中心、基础推理服务 |
 | 第 9 周 | 未开始 | 推理服务生产化 | 多版本发布、滚动升级、回滚、密钥、限流、服务日志和运行指标 | 生产级推理服务、版本发布回滚 |
 | 第 10 周 | 未开始 | 权限、审计与通知 | 项目角色、资源权限、关键操作审计和企业消息通知 | 权限矩阵、审计日志、告警通知 |
@@ -122,7 +122,7 @@
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
 - 第 6 周已完成：后端实验训练闭环、前端 typed clients、实验/训练运维 UI、Compose/CI 真实生产集成及运行文档均已完成；远程 CI、Chromium、迁移、生产栈和实验栈验收全部通过。
-- 第 7 周调度、角色审计、61/61 全量模块、Alembic `20260718_07` 和 WSL PostgreSQL 生产验收均完成；仅待本次 GitHub Actions 远程全绿，因此暂保持“进行中”。
+- 第 7 周已完成：调度、角色审计、61/61 全量模块、Alembic `20260718_07`、WSL PostgreSQL 生产验收和 [Actions Run 29667952189](https://github.com/FaceGg/Al-Platform/actions/runs/29667952189) 全部通过。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -883,3 +883,9 @@
 - 修复：production experiment job 最多重试三次完整 `docker compose build`，保留 BuildKit/pip 缓存；只将该页面集成测试的超时设为 10 秒，不放宽全局测试门禁。
 - 验证：CI workflow 新契约先 RED 后 5/5 GREEN；目标前端测试连续三轮 6/6、完整前端 39/39、生产构建、Week 7 runner 5/5 和 `git diff --check` 通过。
 - 遗留事项：等待新 Actions Run 全部成功；成功后记录 Run URL、完成第七周状态收口，再开始第八周。
+
+### 2026-07-19：第七周全部远程验收完成
+
+- Actions Run：`29667952189`，五个 job 全部成功。
+- 远程证据：Windows/Ubuntu quality、PostgreSQL/Redis/MinIO/Celery production integration、MLflow/TensorBoard production experiment integration 与 Chromium acceptance 全绿。
+- 状态：第七周 Pipeline 调度、项目角色/审计、迁移、本地全量、WSL 生产集成和远程 CI 全部完成；开发队列转入第八周模型注册与基础推理。

@@ -348,7 +348,7 @@ Migrate clean PostgreSQL to `20260718_07`, run owner/editor/operator/viewer and 
 
 Record exact test counts, migration head, Docker evidence, audit coverage, risks, and the remote run URL. Week 7 becomes complete only when scheduler, roles/audit, local production integration, and remote CI are green.
 
-- [ ] **Step 6: Commit, push, and monitor CI**
+- [x] **Step 6: Commit, push, and monitor CI**
 
 ```powershell
 git add .github/workflows/ci.yml ml-platform/backend/tests DEVELOPMENT_PLAN.md PLATFORM_STATUS.md
@@ -360,11 +360,11 @@ Monitor GitHub Actions to completion and append any corrective evidence rather t
 
 ## Verification Checklist
 
-- [ ] Four roles match the frozen matrix; owner is immutable and derived from `Project.owner_id`.
-- [ ] Owned/joined projects appear once with `project_role`.
-- [ ] All classified project writes use centralized permission and audit boundaries.
-- [ ] Business success cannot commit without its success audit event.
-- [ ] Denied/failed events are redacted and do not leak outsider project existence.
-- [ ] Audit query is owner-only, filtered, paginated, and append-only.
-- [ ] Alembic `20260718_07` double upgrade/current/check and downgrade pass.
-- [ ] Week 1-6, scheduler, PostgreSQL integration, and remote CI are green.
+- [x] Four roles match the frozen matrix; owner is immutable and derived from `Project.owner_id`.
+- [x] Owned/joined projects appear once with `project_role`.
+- [x] All classified project writes use centralized permission and audit boundaries.
+- [x] Business success cannot commit without its success audit event.
+- [x] Denied/failed events are redacted and do not leak outsider project existence.
+- [x] Audit query is owner-only, filtered, paginated, and append-only.
+- [x] Alembic `20260718_07` double upgrade/current/check and downgrade pass.
+- [x] Week 1-6, scheduler, PostgreSQL integration, and remote CI are green: Actions Run `29667952189`.
