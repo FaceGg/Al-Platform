@@ -230,7 +230,10 @@ jobs:
         working-directory: ml-platform/backend
         env:
           ML_PLATFORM_TEMP_DIR: ${{ runner.temp }}/ml-platform-production
-        run: python -m unittest tests.test_production_stack -v
+          RUN_PROJECT_ACCESS_INTEGRATION: "1"
+        run: |
+          python -m unittest tests.test_production_stack -v
+          python -m unittest tests.test_project_access.TestProjectAccessProductionStack -v
       - name: Scan and upload production failure evidence
         if: failure()
         shell: bash

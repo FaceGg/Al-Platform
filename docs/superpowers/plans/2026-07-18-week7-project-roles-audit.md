@@ -316,18 +316,18 @@ git commit -m "feat: complete project write audit coverage"
 - Modify: `.github/workflows/ci.yml` when adding the production access integration entry
 - Modify: `DEVELOPMENT_PLAN.md`, `PLATFORM_STATUS.md`, and shared experience
 
-- [ ] **Step 1: Register tests under Week 7**
+- [x] **Step 1: Register tests under Week 7**
 
 Add `test_project_access` and `test_api_project_access` exactly once. Observe manifest RED before registration and GREEN afterward.
 
-- [ ] **Step 2: Run focused and Week 7 suites**
+- [x] **Step 2: Run focused and Week 7 suites**
 
 ```powershell
 python -m unittest tests.test_project_access tests.test_api_project_access tests.test_pipeline_scheduler tests.test_api_schedules tests.test_suite_manifest -v
 python run_suite.py --week 7
 ```
 
-- [ ] **Step 3: Run migration and full regressions**
+- [x] **Step 3: Run migration and full regressions**
 
 ```powershell
 $db = Join-Path $env:TEMP ("week7-final-" + [guid]::NewGuid().ToString("N") + ".db")
@@ -340,11 +340,11 @@ python run_suite.py
 git diff --check
 ```
 
-- [ ] **Step 4: Run isolated WSL production integration**
+- [x] **Step 4: Run isolated WSL production integration**
 
 Migrate clean PostgreSQL to `20260718_07`, run owner/editor/operator/viewer and audit transaction checks through the production image, inspect evidence, and remove only the isolated Compose project. Do not modify the user's default stack.
 
-- [ ] **Step 5: Update docs and shared experience**
+- [x] **Step 5: Update docs and shared experience**
 
 Record exact test counts, migration head, Docker evidence, audit coverage, risks, and the remote run URL. Week 7 becomes complete only when scheduler, roles/audit, local production integration, and remote CI are green.
 

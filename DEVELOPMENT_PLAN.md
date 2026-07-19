@@ -89,7 +89,7 @@
 | 第 4 周 | 已完成 | 工业模板与首版交付 | 已完成真实数据准备、四套模板执行闭环、Artifact 向导、Playwright 主流程、Windows/Linux 脚本、跨平台 CI 和交付文档；GitHub Ubuntu 22.04 质量门禁与 Chromium 验收通过 | 稳定可交付版、首月验收报告 |
 | 第 5 周 | 已完成 | 生产存储与异步任务 | 已完成 PostgreSQL/Alembic、Redis/Celery、MinIO、制品 URI、配置密钥、迁移工具、生产容器和真实服务验收 | 生产数据层、对象存储、异步任务框架；Actions Run 29548916619 全绿 |
 | 第 6 周 | 已完成 | 实验与训练管理 | 已完成实验、Run、参数、指标、日志、制品、检查点、恢复、早停、AutoML Trial、隔离 TensorBoard、真实 Compose 集成与跨平台验收 | 企业基础版、实验训练追踪 |
-| 第 7 周 | 进行中 | Pipeline 调度与权限 | 调度已完成本地生产验收；角色审计 Task 1-6 已完成，数据/训练/调度及其余项目写路由待迁移 | 调度器、实例管理、权限审计 |
+| 第 7 周 | 进行中 | Pipeline 调度与权限 | 调度、角色审计、全量与 WSL 生产验收完成；仅待远程 CI | 调度器、实例管理、权限审计 |
 | 第 8 周 | 未开始 | 模型注册与基础推理 | 模型版本、指标、审批、基础推理、在线测试、健康检查和服务启停 | 模型注册中心、基础推理服务 |
 | 第 9 周 | 未开始 | 推理服务生产化 | 多版本发布、滚动升级、回滚、密钥、限流、服务日志和运行指标 | 生产级推理服务、版本发布回滚 |
 | 第 10 周 | 未开始 | 权限、审计与通知 | 项目角色、资源权限、关键操作审计和企业消息通知 | 权限矩阵、审计日志、告警通知 |
@@ -122,7 +122,7 @@
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
 - 第 6 周已完成：后端实验训练闭环、前端 typed clients、实验/训练运维 UI、Compose/CI 真实生产集成及运行文档均已完成；远程 CI、Chromium、迁移、生产栈和实验栈验收全部通过。
-- 第 7 周调度子系统已完成本地实现与验收；角色审计 Task 1-6 已完成，Alembic head 为 `20260718_07`。数据/训练/调度及其余项目写路由、最终生产验收和远程 CI 尚未完成，因此第七周保持“进行中”。
+- 第 7 周调度、角色审计、61/61 全量模块、Alembic `20260718_07` 和 WSL PostgreSQL 生产验收均完成；仅待本次 GitHub Actions 远程全绿，因此暂保持“进行中”。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
@@ -866,3 +866,12 @@
 - TDD 证据：14 个模块清单缺失、viewer 模型 404、operator 越权更新 ModelLibrary、字符串 workflow UUID 写入失败、outsider 任务列表泄露均先 RED；实现后角色/清单/导入/旧 ModelLibrary/PlatformAPI 34/34 GREEN。
 - 验证方式：`python -m compileall -q app`、`git diff --check` 通过。
 - 遗留事项：仅剩 Task 9 manifest、全量、迁移、WSL 生产集成、远程 CI 和最终文档状态。
+
+### 2026-07-18：第七周 Task 9 本地最终验收完成
+
+- Manifest：`test_project_access` 与 `test_api_project_access` 仅归属 Week 7 一次；manifest RED 明确显示两模块缺失，登记后 GREEN。
+- 测试：角色/调度/manifest 聚焦 55 项通过（生产门禁本地按环境跳过 1 项）；Week 7 runner 5/5；全后端 61/61 模块通过。
+- 迁移：干净 SQLite 双 upgrade、current=`20260718_07`、`alembic check` 无差异。
+- WSL 生产：独立 Docker network + PostgreSQL 16 + production backend image；空库迁移到 `20260718_07`，真实四角色解析、outsider 隐藏、success/denied 审计和业务原子更新 1/1 通过；trap 仅清理隔离容器/网络，默认 Compose 未修改。
+- CI：production integration job 已增加 `RUN_PROJECT_ACCESS_INTEGRATION=1` 门禁；本地 `test_ci_workflow` 4/4 通过。
+- 当前状态：本地开发与生产验收全部完成；提交推送并取得远程 GitHub Actions 全绿后，更新 Run URL 并把第七周改为“已完成”。

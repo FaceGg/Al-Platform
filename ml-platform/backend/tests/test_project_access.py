@@ -1,5 +1,6 @@
 import uuid
 import unittest
+import os
 from types import SimpleNamespace
 
 from fastapi import FastAPI, Request
@@ -448,6 +449,100 @@ class TestAuditRedaction(unittest.TestCase):
             },
         )
 
+
+@unittest.skipUnless(
+    os.getenv("RUN_PROJECT_ACCESS_INTEGRATION") == "1",
+    "RUN_PROJECT_ACCESS_INTEGRATION is not enabled",
+)
+class TestProjectAccessProductionStack(unittest.TestCase):
+    def test_postgres_roles_and_audit_transactions(self):
+        from app.database import SessionLocal, engine
+        from app.models.access import AuditEvent
+        from app.services.audit import AuditIntent, AuditService
+        from app.services.project_access import ProjectAccessError, ProjectAccessService
+
+        self.assertEqual(engine.dialect.name, "postgresql")
+        suffix = uuid.uuid4().hex
+        with SessionLocal() as db:
+            users = {
+                role: User(username=f"production-access-{role}-{suffix}", password_hash="hash")
+                for role in ("owner", "editor", "operator", "viewer", "outsider")
+            }
+            db.add_all(users.values())
+            db.flush()
+            project = Project(name=f"Production access {suffix}", owner_id=users["owner"].id)
+            db.add(project)
+            db.flush()
+            db.add_all([
+                ProjectMember(
+                    project_id=project.id,
+                    user_id=users[role].id,
+                    role=role,
+                    created_by=users["owner"].id,
+                )
+                for role in ("editor", "operator", "viewer")
+            ])
+            db.commit()
+            project_id = project.id
+            user_ids = [user.id for user in users.values()]
+
+            service = ProjectAccessService()
+            self.assertEqual(service.resolve(db, project_id, users["editor"].id).role.value, "editor")
+            self.assertEqual(service.resolve(db, project_id, users["operator"].id).role.value, "operator")
+            self.assertEqual(service.resolve(db, project_id, users["viewer"].id).role.value, "viewer")
+            self.assertIsNone(service.resolve(db, project_id, users["outsider"].id))
+
+            request = SimpleNamespace(
+                state=SimpleNamespace(request_id=uuid.uuid4()),
+                client=SimpleNamespace(host="127.0.0.1"),
+            )
+            audit = AuditService(SessionLocal)
+            with audit.project_action(
+                db,
+                request=request,
+                actor=users["editor"],
+                access=service.resolve(db, project_id, users["editor"].id),
+                permission="resource.update",
+                intent=AuditIntent(
+                    project_id=project_id,
+                    action="production_access.update",
+                    resource_type="project",
+                    resource_id=str(project_id),
+                    changes={"description": "postgres verified"},
+                ),
+                allowed_changes={"description"},
+            ):
+                project.description = "postgres verified"
+
+            with self.assertRaises(ProjectAccessError):
+                with audit.project_action(
+                    db,
+                    request=request,
+                    actor=users["viewer"],
+                    access=service.resolve(db, project_id, users["viewer"].id),
+                    permission="resource.update",
+                    intent=AuditIntent(
+                        project_id=project_id,
+                        action="production_access.update",
+                        resource_type="project",
+                        resource_id=str(project_id),
+                    ),
+                    allowed_changes=set(),
+                ):
+                    pass
+
+            events = db.query(AuditEvent).filter(
+                AuditEvent.project_id == project_id,
+                AuditEvent.action == "production_access.update",
+            ).all()
+            self.assertEqual({event.result for event in events}, {"success", "denied"})
+            self.assertEqual(project.description, "postgres verified")
+
+            db.query(AuditEvent).filter(AuditEvent.project_id == project_id).delete()
+            db.delete(project)
+            db.flush()
+            db.query(User).filter(User.id.in_(user_ids)).delete(synchronize_session=False)
+            db.commit()
 
 if __name__ == "__main__":
     unittest.main()

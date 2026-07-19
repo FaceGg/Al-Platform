@@ -70,6 +70,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
     7: [
         "test_pipeline_scheduler",
         "test_api_schedules",
+        "test_project_access",
+        "test_api_project_access",
         "test_ci_workflow",
     ],
 }

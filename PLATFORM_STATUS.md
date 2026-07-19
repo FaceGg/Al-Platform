@@ -2,7 +2,7 @@
 
 > 第六周远程验收：GitHub Actions [Run 29631795297](https://github.com/FaceGg/Al-Platform/actions/runs/29631795297) 全部通过（Linux/Windows quality、Production integration、Production experiment integration、Chromium）。
 
-> 第七周调度子系统：本地代码、迁移与 WSL PostgreSQL/Redis/Celery Worker/Beat 生产集成已通过；远程 CI 与项目角色/审计仍待完成。
+> 第七周：调度、项目角色/审计、迁移、全量与 WSL 生产集成已通过；仅待本次远程 CI。
 
 > 最后更新: 2026-07-18 | 当前版本: 0.3.0
 
@@ -432,7 +432,9 @@
 
 - 已实现五字段 Cron、IANA 时区、持久 schedule/occurrence、唯一 occurrence 幂等、依赖和并发策略、暂停恢复、限量补录、持久指数退避、单任务 timeout、终态同步与 stale recovery。
 - Celery Beat 作为独立 scheduler 服务每 60 秒发送 tick/recovery，工作流继续复用快照绑定的 `WorkflowRun` 和既有 Worker 执行器。
-- 数据库 head 为 `20260718_06`；干净 SQLite 双次 upgrade/current/check 与真实 PostgreSQL 空库迁移均通过。
-- 本地验证：后端全量 59/59、Week 7 3/3；WSL scheduler 镜像构建通过，依赖从 `https://mirrors.aliyun.com/pypi/simple/` 安装。
+- 数据库 head 为 `20260718_07`；干净 SQLite 双次 upgrade/current/check 与真实 PostgreSQL 空库迁移均通过。
+- 本地验证：后端全量 61/61、Week 7 5/5；WSL scheduler 镜像构建通过，依赖从 `https://mirrors.aliyun.com/pypi/simple/` 安装。
 - 真实集成：PostgreSQL + Redis + Worker + Beat 运行 1/1，通过双 tick 唯一 occurrence、真实定时执行、暂停/恢复、补录和两个 occurrence completed 同步。
-- 状态限制：第七周仍为进行中；项目角色/审计和 GitHub Actions 远程验收完成后才可关闭本周。
+- 项目协作：owner/editor/operator/viewer、成员管理、joined project、集中权限、项目写审计、请求关联和脱敏已覆盖 14 个 project-write 模块。
+- 角色生产验收：独立 PostgreSQL 16 空库迁移后，四角色、outsider 隐藏、success/denied 审计和原子提交 1/1 通过。
+- 状态限制：第七周仅待 GitHub Actions 远程验收；全绿后关闭本周。
