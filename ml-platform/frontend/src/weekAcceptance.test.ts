@@ -26,6 +26,10 @@ const weekTestFiles: Record<number, string[]> = {
   6: [
     "./api/experiments.test.ts",
   ],
+  8: [
+    "./api/modelRegistry.test.ts",
+    "./pages/ModelLibraryPage.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(
@@ -40,7 +44,7 @@ describe("frontend acceptance manifest", () => {
   });
 
   it("keeps every completed week represented", () => {
-    for (const week of [1, 2, 3, 4, 6]) {
+    for (const week of [1, 2, 3, 4, 6, 8]) {
       expect(weekTestFiles[week].length).toBeGreaterThan(0);
     }
   });

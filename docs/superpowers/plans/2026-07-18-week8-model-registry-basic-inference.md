@@ -498,17 +498,17 @@ git commit -m "ci: deploy ONNX inference runtime"
 - Create: `ml-platform/frontend/src/pages/ModelLibraryPage.test.tsx`
 - Modify: `ml-platform/frontend/src/i18n/index.tsx`
 
-- [ ] **Step 1: Write RED typed-client tests**
+- [x] **Step 1: Write RED typed-client tests**
 
 Assert exact URLs and payloads for model/version/deployment lists, platform registration, ONNX multipart upload, approval/rejection, create/start/stop, and predict. Normalize only array and `{items}` list responses.
 
-- [ ] **Step 2: Write RED page interaction tests**
+- [x] **Step 2: Write RED page interaction tests**
 
 Mock typed clients and verify project selection, two tabs, registration flow, version Drawer, role-aware approval, deployment creation, operator start/stop, schema-generated input, direct JSON records, predictions/probabilities/version/duration, empty/loading/denied/runtime-failed states, and accessible icon names.
 
 The main test must select the mocked project, register a mocked platform source, approve returned version 1, create and start the returned deployment, submit `{records: [{current: 1.2, voltage: 3.4}]}`, and assert prediction `1`, probability `0.92`, version `1`, and the typed client call payloads.
 
-- [ ] **Step 3: Confirm frontend RED**
+- [x] **Step 3: Confirm frontend RED**
 
 ```powershell
 npm test -- src/api/modelRegistry.test.ts src/pages/ModelLibraryPage.test.tsx
@@ -516,19 +516,19 @@ npm test -- src/api/modelRegistry.test.ts src/pages/ModelLibraryPage.test.tsx
 
 Expected: missing client and old page controls.
 
-- [ ] **Step 4: Implement typed client**
+- [x] **Step 4: Implement typed client**
 
 Define exact discriminated unions for source kind, approval status, desired/observed state, feature schema, version, deployment, and prediction. Keep transport normalization inside `modelRegistry.ts`; pages receive typed domain objects.
 
-- [ ] **Step 5: Replace model page**
+- [x] **Step 5: Replace model page**
 
 Use a project filter and compact `Registered models`/`Deployments` tabs. Use tables for scan-heavy state, Drawers for version history and online test, Modal/Form for commands, status Tags, progress only while starting/stopping, and explicit accessible labels for icon buttons. Do not nest cards or preserve the old broken Artifact/list response assumptions.
 
-- [ ] **Step 6: Add symmetric Chinese and English translations**
+- [x] **Step 6: Add symmetric Chinese and English translations**
 
 Add identical `modelRegistry` key trees for tabs, fields, actions, lifecycle states, empty states, stable error messages, validation, and confirmations. Avoid hardcoded visible Chinese/English strings in the new page.
 
-- [ ] **Step 7: Verify frontend GREEN and build**
+- [x] **Step 7: Verify frontend GREEN and build**
 
 ```powershell
 npm test -- src/api/modelRegistry.test.ts src/pages/ModelLibraryPage.test.tsx
@@ -536,7 +536,7 @@ npm test
 npm run build
 ```
 
-- [ ] **Step 8: Commit frontend operations**
+- [x] **Step 8: Commit frontend operations**
 
 ```powershell
 git add ml-platform/frontend/src/api/modelRegistry.ts ml-platform/frontend/src/api/modelRegistry.test.ts ml-platform/frontend/src/pages/ModelLibraryPage.tsx ml-platform/frontend/src/pages/ModelLibraryPage.test.tsx ml-platform/frontend/src/i18n/index.tsx

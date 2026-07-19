@@ -970,3 +970,13 @@
 - 生产问题 2：MinIO generator context manager 的宽泛异常捕获跨越 `yield`，把转换领域错误误包装成 Artifact 不可用；只包装下载和落盘阶段，消费者异常原样传播，并新增回归。
 - 验证：Windows 聚焦 46 项通过、2 项按生产/Linux 门禁跳过；Linux ONNX/Storage 15/15；隔离生产生命周期 1/1；Alembic head=`20260718_08` 且 check 无差异；runtime 健康；隔离资源全清理，默认 Compose 容器未变。
 - 遗留事项：Task 8 前端模型运维页、Task 9 Chromium 验收、Task 10 全量/文档/远程 CI 尚未完成。
+
+### 2026-07-18：第八周 Task 8 模型运维前端完成
+
+- Typed client：新增注册模型、版本、ONNX multipart、审批、部署启停与 named-record 推理的严格 TypeScript 类型和 URL/payload 契约；列表只归一数组或 `{items}`。
+- 页面：`/models` 替换旧 Artifact 下载/批删页面，改为项目角色感知的注册模型/部署双 tab；提供逻辑模型、平台 joblib/直接 ONNX 版本注册、版本审批/拒绝、部署创建/启停、schema 生成 records、直接 JSON 推理和结果/概率/版本/耗时展示。
+- 状态：表格支持 loading/empty/error；starting/stopping 显示 progress；failed 展示稳定 error code；viewer 只读，owner/editor 管理版本与部署，operator 操作推理。
+- 可访问性与响应式：图标命令使用明确 `aria-label`，项目选择有可访问名称；表格使用稳定横向 scroll，Drawer/Modal 承载细节与命令，无嵌套卡片。
+- 国际化：新增完全对称中英 `modelRegistry` 树，页面无硬编码可见中英文命令。
+- 验证：新客户端/页面 5/5；全前端 17 文件、44/44；TypeScript/Vite production build；官方 npm registry audit 0 漏洞。开发镜像 npm mirror 不支持 audit endpoint，审计显式使用官方只读 endpoint。
+- 遗留事项：Task 9 真实 Chromium 登录与完整 UI lifecycle，Task 10 后端/迁移/生产/远程 CI 和交付文档。
