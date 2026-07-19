@@ -65,7 +65,7 @@
 - Create: `ml-platform/backend/app/services/onnx_worker.py`
 - Create: `ml-platform/backend/tests/test_onnx_conversion.py`
 
-- [ ] **Step 1: Add RED conversion contract tests**
+- [x] **Step 1: Add RED conversion contract tests**
 
 Test a platform-produced `LogisticRegression` package containing `model`, optional `scaler`, `feature_schema`, and `target_schema`. Assert conversion returns input/output names, opset, SHA-256, and a loadable `.onnx` file. Add explicit cases for unsupported estimator, malformed package, conversion timeout, invalid output, and synthetic smoke inference failure.
 
@@ -85,7 +85,7 @@ def test_unknown_estimator_is_rejected(self):
         convert_platform_joblib(self.unknown_source, self.destination)
 ```
 
-- [ ] **Step 2: Run tests and confirm missing-module RED**
+- [x] **Step 2: Run tests and confirm missing-module RED**
 
 ```powershell
 python -m unittest tests.test_onnx_conversion -v
@@ -93,7 +93,7 @@ python -m unittest tests.test_onnx_conversion -v
 
 Expected: import failure for `app.services.onnx_conversion`.
 
-- [ ] **Step 3: Configure the required pip source and install pinned dependencies**
+- [x] **Step 3: Configure the required pip source and install pinned dependencies**
 
 ```powershell
 python -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
@@ -102,7 +102,7 @@ python -m pip install "onnx==1.18.*" "onnxruntime==1.22.*" "skl2onnx==1.19.*"
 
 Add the same pins to `requirements.txt`. Do not replace the configured Aliyun source.
 
-- [ ] **Step 4: Implement parent conversion and validation API**
+- [x] **Step 4: Implement parent conversion and validation API**
 
 Expose a stable boundary:
 
@@ -127,11 +127,11 @@ Implement `convert_platform_joblib(source: Path, destination: Path, *, timeout_s
 
 The parent launches `python -m app.services.onnx_worker` in a private temporary directory, sends only fixed JSON arguments, applies the timeout, and maps exit results to stable codes. Validation runs `onnx.checker`, creates an ONNX Runtime CPU session, checks manifest names/shapes, and executes one schema-derived synthetic record.
 
-- [ ] **Step 5: Implement the allowlisted worker**
+- [x] **Step 5: Implement the allowlisted worker**
 
 The worker loads only a provenance-checked platform Artifact passed by the parent. Accept `LogisticRegression`, `LinearRegression`, `RandomForestClassifier`, `RandomForestRegressor`, `GradientBoostingClassifier`, and `GradientBoostingRegressor`, plus an optional fitted `StandardScaler`. Build a `Pipeline` when the scaler exists and call `skl2onnx.convert_sklearn` with a single `FloatTensorType([None, feature_count])` input named `features`. Reject all other types before conversion.
 
-- [ ] **Step 6: Verify RED-to-GREEN and dependency health**
+- [x] **Step 6: Verify RED-to-GREEN and dependency health**
 
 ```powershell
 python -m unittest tests.test_onnx_conversion -v
@@ -140,7 +140,7 @@ python -m pip check
 
 Expected: all conversion cases pass; `pip check` reports no broken requirements.
 
-- [ ] **Step 7: Commit conversion boundary**
+- [x] **Step 7: Commit conversion boundary**
 
 ```powershell
 git add ml-platform/backend/requirements.txt ml-platform/backend/app/services/onnx_conversion.py ml-platform/backend/app/services/onnx_worker.py ml-platform/backend/tests/test_onnx_conversion.py

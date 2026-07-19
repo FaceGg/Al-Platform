@@ -905,3 +905,12 @@
 - 顺序：安全 ONNX 转换、注册持久化、版本服务、独立运行时、部署编排、审计 API、生产 Compose、前端运维、Chromium、全量验收。
 - 门禁：每项生产行为先观察 RED；依赖安装先配置阿里云 PyPI；默认 WSL Compose 不得被测试改动；远程 CI 全绿前保持第八周“进行中”。
 - 当前状态：书面规格与实施计划已完成；生产代码尚未开始。
+
+### 2026-07-18：第八周 Task 1 安全 ONNX 转换边界完成
+
+- TDD：`app.services.onnx_conversion` 缺失时目标模块 RED；实现后转换、unsupported、畸形包、timeout、无效 ONNX、Schema 宽度与无效 worker 结果 7/7 GREEN。
+- 实现：固定 sklearn allowlist；受信任 joblib 仅在受控子进程反序列化；父进程使用私有临时目录、固定参数与 120 秒超时；ONNX checker、CPU session 和 synthetic inference 全部通过后才返回制品元数据。
+- 依赖：按要求先配置 `https://mirrors.aliyun.com/pypi/simple/`，锁定 `onnx 1.18.*`、`onnxruntime 1.22.*`、`skl2onnx 1.19.*`；本机使用仓库固定 `scikit-learn 1.7.2` 验证。
+- 验证：ONNX 与 iterative training 回归 15/15、compileall、`git diff --check` 通过。
+- 环境说明：全局 Python 同时安装非项目依赖 `sktime` 与 `mlxtend`，两者对 sklearn 的版本要求互斥，因此全局 `pip check` 不能作为仓库依赖结论；干净 GitHub Actions/容器环境继续作为强制依赖门禁。
+- 遗留事项：Task 2 注册模型、不可变版本与部署持久化尚未开始。
