@@ -443,11 +443,11 @@ git commit -m "feat: expose audited model registry APIs"
 - Create: `ml-platform/backend/tests/test_inference_production_stack.py`
 - Modify: `ml-platform/backend/tests/test_ci_workflow.py`
 
-- [ ] **Step 1: Write RED Compose and production integration assertions**
+- [x] **Step 1: Write RED Compose and production integration assertions**
 
 Assert non-root runtime user, no public port, health check, MinIO dependency, internal secret requirement, backend/worker/scheduler environment parity where required, Beat task registration, runtime image build in CI, and production integration gate `RUN_INFERENCE_INTEGRATION=1`.
 
-- [ ] **Step 2: Confirm composition RED**
+- [x] **Step 2: Confirm composition RED**
 
 ```powershell
 python -m unittest tests.test_ci_workflow tests.test_inference_production_stack -v
@@ -456,21 +456,21 @@ docker compose config --quiet
 
 Expected: missing service/build/task assertions; production integration skips unless gated.
 
-- [ ] **Step 3: Add non-root runtime image and Compose service**
+- [x] **Step 3: Add non-root runtime image and Compose service**
 
 `Dockerfile.inference` must configure the required Aliyun pip source before installing requirements, create `/var/lib/ml-platform/inference-cache`, grant it to UID/GID 1000, expose only container port 7000, and run one Uvicorn worker for the process-local session cache.
 
 Compose adds `inference-runtime` with `expose: ["7000"]`, health check `/health`, no host port, production environment, cache volume, and MinIO initialization dependency. Backend depends on runtime health. Worker and scheduler receive the runtime URL/secret for reconciliation.
 
-- [ ] **Step 4: Add real production lifecycle test**
+- [x] **Step 4: Add real production lifecycle test**
 
 The gated test uses PostgreSQL and MinIO to create a project training source, register/approve an ONNX version, start a deployment, predict deterministic named records, restart or clear runtime sessions, run reconciliation, predict again, stop, and verify `DEPLOYMENT_NOT_READY`. It asserts audit events contain no record values, paths, tokens, or exception messages.
 
-- [ ] **Step 5: Extend CI production experiment job**
+- [x] **Step 5: Extend CI production experiment job**
 
 Build `inference-runtime` with the existing three-attempt cached Compose build loop. Start it with the production stack, set a 32+ character internal secret, run the gated integration test, include runtime logs in redacted failure evidence, and scan for the secret before artifact upload.
 
-- [ ] **Step 6: Verify WSL production path without changing default stack**
+- [x] **Step 6: Verify WSL production path without changing default stack**
 
 Use a unique Compose project/network and cleanup trap. Before any install, run:
 
@@ -480,7 +480,7 @@ python -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
 
 Then build the runtime image, migrate a clean PostgreSQL database to `20260718_08`, run the gated test, inspect health and logs, and remove only isolated resources.
 
-- [ ] **Step 7: Commit production deployment**
+- [x] **Step 7: Commit production deployment**
 
 ```powershell
 git add ml-platform/backend/Dockerfile.inference docker-compose.yml .github/workflows/ci.yml ml-platform/backend/tests/test_inference_production_stack.py ml-platform/backend/tests/test_ci_workflow.py

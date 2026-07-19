@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -42,7 +43,14 @@ def _apply_resource_limits() -> None:
     try:
         import resource
 
-        memory_limit = 2 * 1024 * 1024 * 1024
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        current_virtual_memory = int(
+            Path("/proc/self/statm").read_text(encoding="ascii").split()[0]
+        ) * page_size
+        memory_limit = max(
+            4 * 1024 * 1024 * 1024,
+            current_virtual_memory + 2 * 1024 * 1024 * 1024,
+        )
         resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
         resource.setrlimit(resource.RLIMIT_CPU, (110, 110))
     except (ImportError, OSError, ValueError):

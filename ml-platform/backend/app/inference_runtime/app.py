@@ -106,3 +106,17 @@ def create_runtime_app(*, registry: RuntimeRegistry, internal_token: str) -> Fas
         return registry.predict(deployment_id, payload["records"])
 
     return app
+
+
+def build_runtime_app():
+    from app.config import settings
+    from app.storage.factory import create_artifact_storage
+
+    secret = settings.resolved_inference_internal_secret
+    if secret is None:
+        raise RuntimeError("INFERENCE_INTERNAL_SECRET is required")
+    registry = RuntimeRegistry(create_artifact_storage(settings))
+    return create_runtime_app(
+        registry=registry,
+        internal_token=secret.get_secret_value(),
+    )

@@ -1,4 +1,5 @@
 import hashlib
+import os
 import subprocess
 import tempfile
 import unittest
@@ -16,6 +17,7 @@ from app.services.onnx_conversion import (
     convert_platform_joblib,
     validate_onnx,
 )
+from app.services.onnx_worker import _apply_resource_limits
 
 
 class TestOnnxConversion(unittest.TestCase):
@@ -173,6 +175,24 @@ class TestOnnxConversion(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "MODEL_CONVERSION_FAILED")
         self.assertFalse(self.destination.exists())
+
+    @unittest.skipIf(os.name == "nt", "POSIX resource limits only")
+    def test_worker_memory_limit_preserves_current_virtual_memory(self):
+        import resource
+
+        before = resource.getrlimit(resource.RLIMIT_AS)
+        with patch("resource.setrlimit") as set_limit:
+            _apply_resource_limits()
+
+        address_space = next(
+            call.args[1] for call in set_limit.call_args_list
+            if call.args[0] == resource.RLIMIT_AS
+        )
+        current_virtual_bytes = int(
+            Path("/proc/self/statm").read_text(encoding="ascii").split()[0]
+        ) * os.sysconf("SC_PAGE_SIZE")
+        self.assertGreater(address_space[0], current_virtual_bytes)
+        self.assertEqual(resource.getrlimit(resource.RLIMIT_AS), before)
 
 
 if __name__ == "__main__":

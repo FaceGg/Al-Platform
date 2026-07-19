@@ -960,3 +960,13 @@
 - Saga：start/stop 审计定义为“命令已授权并接受”，持久审计后再调用 runtime；远程结果由 desired/observed 状态记录。平台转换生成外部 ONNX 对象在审计 commit 异常时显式补偿。
 - TDD：路由缺失先 RED；动态 action 拼接使完整性门禁 RED，改为显式字面 action 后通过；API/历史项目权限/旧 ModelLibrary/import 回归 34/34 GREEN。
 - 遗留事项：Task 7 runtime 镜像、Compose/CI 和真实 PostgreSQL+MinIO lifecycle 尚未开始。
+
+### 2026-07-18：第八周 Task 7 生产推理服务完成
+
+- 部署：新增 UID/GID 1000 非 root `Dockerfile.inference`，使用阿里云 PyPI、单 Uvicorn worker、内部 `expose: 7000`、健康探针和独立 cache volume；Backend/Worker/Scheduler 获得统一 runtime URL/secret，Backend 等待 runtime 健康。
+- CI：experiment integration 三次缓存构建包含 `inference-runtime`，生产栈启动并执行 `RUN_INFERENCE_INTEGRATION=1`；失败证据收集 runtime 日志，对 internal secret 脱敏并扫描泄漏。
+- 真实生命周期：隔离 WSL Compose 项目使用 PostgreSQL 16、MinIO、真实 joblib-to-ONNX 转换、公共 API 注册/批准/创建/启停/预测；清空 runtime session 后 reconciliation 重载，预测一致，停止后返回 `DEPLOYMENT_NOT_READY`，审计存在且不含 records、S3 URI、secret 或 traceback。
+- 生产问题 1：Linux 进程导入科学计算库后虚拟地址空间已超过固定 2 GiB，worker 再设置 `RLIMIT_AS=2 GiB` 导致 skl2onnx `MemoryError: std::bad_alloc`；改为 `max(4 GiB, current virtual memory + 2 GiB)`，保留 CPU 110 秒上限，并新增 Linux 回归。
+- 生产问题 2：MinIO generator context manager 的宽泛异常捕获跨越 `yield`，把转换领域错误误包装成 Artifact 不可用；只包装下载和落盘阶段，消费者异常原样传播，并新增回归。
+- 验证：Windows 聚焦 46 项通过、2 项按生产/Linux 门禁跳过；Linux ONNX/Storage 15/15；隔离生产生命周期 1/1；Alembic head=`20260718_08` 且 check 无差异；runtime 健康；隔离资源全清理，默认 Compose 容器未变。
+- 遗留事项：Task 8 前端模型运维页、Task 9 Chromium 验收、Task 10 全量/文档/远程 CI 尚未完成。

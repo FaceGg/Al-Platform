@@ -56,10 +56,40 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
 
         self.assertIn("for attempt in {1..3}", build["run"])
         self.assertIn(
-            "if docker compose build backend worker tensorboard-gateway; then",
+            "if docker compose build backend worker tensorboard-gateway inference-runtime; then",
             build["run"],
         )
         self.assertIn("exit 1", build["run"])
+
+    def test_compose_has_internal_non_root_inference_runtime(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+        runtime = compose["services"]["inference-runtime"]
+        self.assertEqual(runtime["build"]["dockerfile"], "Dockerfile.inference")
+        self.assertNotIn("ports", runtime)
+        self.assertEqual(runtime["expose"], ["7000"])
+        self.assertIn("INFERENCE_INTERNAL_SECRET", runtime["environment"])
+        self.assertEqual(
+            runtime["depends_on"]["minio-init"]["condition"],
+            "service_completed_successfully",
+        )
+        self.assertEqual(
+            compose["services"]["backend"]["depends_on"]["inference-runtime"]["condition"],
+            "service_healthy",
+        )
+
+    def test_experiment_ci_builds_starts_and_verifies_inference_runtime(self):
+        parsed = yaml.safe_load(self.workflow)
+        steps = parsed["jobs"]["experiment-integration"]["steps"]
+        build = next(step for step in steps if step.get("name") == "Build experiment services")
+        start = next(step for step in steps if step.get("name") == "Start production experiment stack")
+        verify = next(step for step in steps if step.get("name") == "Verify migrations and real experiment lifecycle")
+        evidence = next(step for step in steps if step.get("name") == "Collect redacted experiment failure evidence")
+        self.assertIn("inference-runtime", build["run"])
+        self.assertIn("inference-runtime", start["run"])
+        self.assertIn("RUN_INFERENCE_INTEGRATION=1", verify["run"])
+        self.assertIn("tests.test_inference_production_stack", verify["run"])
+        self.assertIn("inference-runtime", evidence["run"])
+        self.assertIn("ci-inference-internal-secret", evidence["run"])
 
 
 if __name__ == "__main__":

@@ -71,6 +71,8 @@ services:
       TENSORBOARD_GATEWAY_URL: ${TENSORBOARD_GATEWAY_URL:-http://tensorboard-gateway:6006}
       TENSORBOARD_SESSION_SECRET: ${TENSORBOARD_SESSION_SECRET:?set TENSORBOARD_SESSION_SECRET}
       TENSORBOARD_LOG_ROOT: /var/lib/tensorboard/runs
+      INFERENCE_RUNTIME_URL: ${INFERENCE_RUNTIME_URL:-http://inference-runtime:7000}
+      INFERENCE_INTERNAL_SECRET: ${INFERENCE_INTERNAL_SECRET:?set INFERENCE_INTERNAL_SECRET}
       ML_PLATFORM_TEMP_DIR: /tmp/ml-platform
     depends_on:
       postgres:
@@ -130,6 +132,52 @@ services:
       retries: 20
     restart: unless-stopped
 
+  inference-runtime:
+    build:
+      context: ./ml-platform/backend
+      dockerfile: Dockerfile.inference
+    environment:
+      APP_MODE: production
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
+      TASK_BACKEND: celery
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:?set CELERY_BROKER_URL}
+      REDIS_EVENTS_URL: ${REDIS_EVENTS_URL:?set REDIS_EVENTS_URL}
+      ARTIFACT_STORAGE_BACKEND: minio
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_BUCKET: ${MINIO_BUCKET:-ml-platform}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?set MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY}
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+      MLFLOW_BACKEND_STORE_URI: ${MLFLOW_BACKEND_STORE_URI:?set MLFLOW_BACKEND_STORE_URI}
+      MLFLOW_ARTIFACT_ROOT: ${MLFLOW_ARTIFACT_ROOT:-s3://ml-platform/mlflow}
+      TENSORBOARD_GATEWAY_URL: ${TENSORBOARD_GATEWAY_URL:-http://tensorboard-gateway:6006}
+      TENSORBOARD_SESSION_SECRET: ${TENSORBOARD_SESSION_SECRET:?set TENSORBOARD_SESSION_SECRET}
+      INFERENCE_RUNTIME_URL: ${INFERENCE_RUNTIME_URL:-http://inference-runtime:7000}
+      INFERENCE_INTERNAL_SECRET: ${INFERENCE_INTERNAL_SECRET:?set INFERENCE_INTERNAL_SECRET}
+      ML_PLATFORM_TEMP_DIR: /tmp/ml-platform
+    expose:
+      - "7000"
+    volumes:
+      - inference-cache:/var/lib/ml-platform/inference-cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      mlflow:
+        condition: service_healthy
+      tensorboard-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   backend:
     build:
       context: ./ml-platform/backend
@@ -155,6 +203,8 @@ services:
       mlflow:
         condition: service_healthy
       tensorboard-gateway:
+        condition: service_healthy
+      inference-runtime:
         condition: service_healthy
 
   worker:
@@ -217,3 +267,4 @@ services:
 
 volumes:
   tensorboard-events:
+  inference-cache:
