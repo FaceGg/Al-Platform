@@ -21,6 +21,9 @@ from app.services.artifact_service import ArtifactAccessError, build_artifact_se
 from app.services.experiment_tracking import TrackingError
 from app.services.iterative_training import IncompatibleCheckpoint, TrainingCheckpoint, TrainingConfig
 from app.tensorboard_gateway.tokens import SessionSigner, SessionTokenInvalid
+from app.api.project_security import audit_service, require_project_access, resolve_project_access
+from app.services.audit import AuditIntent
+from app.services.project_access import ProjectAccessService
 
 
 router = APIRouter(prefix="/api/training", tags=["training"])
@@ -127,7 +130,7 @@ def start_training(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    experiment = _owned_experiment(
+    experiment, access = _visible_experiment(
         db,
         data.experiment_id,
         data.project_id,
@@ -135,60 +138,55 @@ def start_training(
     )
     if experiment is None:
         raise HTTPException(404, _error("EXPERIMENT_NOT_FOUND", "Experiment not found"))
-    artifact_service = get_artifact_service(request, db)
-    try:
-        dataset = artifact_service.resolve(
-            data.dataset_artifact_id,
-            data.project_id,
-            expected_type="dataset",
-        )
-    except (ValueError, ArtifactAccessError) as error:
-        raise HTTPException(400, _error("DATASET_ARTIFACT_INVALID", str(error))) from error
+    job_id = uuid.uuid4()
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="execution.operate",
+        intent=AuditIntent(
+            project_id=data.project_id, action="training_job.start",
+            resource_type="training_job", resource_id=str(job_id),
+            changes={"name": data.name, "task": data.task, "total_epochs": data.total_epochs},
+        ),
+        allowed_changes={"name", "task", "total_epochs"},
+    ):
+        artifact_service = get_artifact_service(request, db)
+        try:
+            dataset = artifact_service.resolve(
+                data.dataset_artifact_id, data.project_id, expected_type="dataset",
+            )
+        except (ValueError, ArtifactAccessError) as error:
+            raise HTTPException(400, _error("DATASET_ARTIFACT_INVALID", str(error))) from error
 
-    monitor = data.monitor or (
-        "val_r2" if data.task == "regression" else "val_accuracy"
-    )
-    try:
-        TrainingConfig(
-            task=data.task,
-            total_epochs=data.total_epochs,
-            monitor=monitor,
-            mode=data.mode,
-            patience=data.patience,
-            min_delta=data.min_delta,
-            restore_best=data.restore_best,
-            checkpoint_interval=data.checkpoint_interval or 5,
+        monitor = data.monitor or (
+            "val_r2" if data.task == "regression" else "val_accuracy"
         )
-    except ValueError as error:
-        raise HTTPException(400, _error("TRAINING_CONFIG_INVALID", str(error))) from error
+        try:
+            TrainingConfig(
+                task=data.task, total_epochs=data.total_epochs, monitor=monitor,
+                mode=data.mode, patience=data.patience, min_delta=data.min_delta,
+                restore_best=data.restore_best,
+                checkpoint_interval=data.checkpoint_interval or 5,
+            )
+        except ValueError as error:
+            raise HTTPException(400, _error("TRAINING_CONFIG_INVALID", str(error))) from error
 
-    params = {
-        "target_column": data.target_column,
-        "task": data.task,
-    }
-    if data.checkpoint_interval is not None:
-        params["checkpoint_interval"] = data.checkpoint_interval
-    job = TrainingJob(
-        project_id=data.project_id,
-        user_id=current_user.id,
-        experiment_id=experiment.id,
-        name=data.name,
-        operator_id="incremental_sgd",
-        params=params,
-        dataset_artifact_id=dataset.id,
-        dataset_path=artifact_service.storage_reference(dataset),
-        status="pending",
-        total_epochs=data.total_epochs,
-        monitor_name=monitor,
-        monitor_mode=data.mode,
-        early_stopping_patience=data.patience,
-        early_stopping_min_delta=data.min_delta,
-        restore_best=data.restore_best,
-    )
-    db.add(job)
-    db.commit()
+        params = {"target_column": data.target_column, "task": data.task}
+        if data.checkpoint_interval is not None:
+            params["checkpoint_interval"] = data.checkpoint_interval
+        job = TrainingJob(
+            id=job_id, project_id=data.project_id, user_id=current_user.id,
+            experiment_id=experiment.id, name=data.name, operator_id="incremental_sgd",
+            params=params, dataset_artifact_id=dataset.id,
+            dataset_path=artifact_service.storage_reference(dataset), status="pending",
+            total_epochs=data.total_epochs, monitor_name=monitor, monitor_mode=data.mode,
+            early_stopping_patience=data.patience,
+            early_stopping_min_delta=data.min_delta, restore_best=data.restore_best,
+        )
+        db.add(job)
     db.refresh(job)
-    _enqueue_job(db, job, get_training_dispatcher(request))
+    _dispatch_job(
+        db, job, get_training_dispatcher(request), request, current_user, access,
+    )
     return {"job_id": str(job.id), "status": "queued", "task_id": job.task_id}
 
 
@@ -198,11 +196,15 @@ def list_training_jobs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(TrainingJob).join(Project, Project.id == TrainingJob.project_id).filter(
-        Project.owner_id == current_user.id,
-    )
     if project_id is not None:
-        query = query.filter(TrainingJob.project_id == project_id)
+        require_project_access(db, project_id, current_user.id, "project.read")
+        query = db.query(TrainingJob).filter(TrainingJob.project_id == project_id)
+    else:
+        project_ids = [
+            project.id for project in ProjectAccessService()
+            .accessible_project_query(db, current_user.id).all()
+        ]
+        query = db.query(TrainingJob).filter(TrainingJob.project_id.in_(project_ids))
     return [_job_to_dict(job) for job in query.order_by(TrainingJob.created_at.desc()).all()]
 
 
@@ -212,7 +214,7 @@ def get_training_job(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    job = _owned_job(db, job_id, current_user.id)
+    job, _ = _visible_job(db, job_id, current_user.id)
     if job is None:
         raise HTTPException(404, _error("TRAINING_JOB_NOT_FOUND", "Training job not found"))
     return _job_to_dict(job)
@@ -225,7 +227,7 @@ def list_checkpoints(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    job = _owned_job(db, job_id, current_user.id)
+    job, _ = _visible_job(db, job_id, current_user.id)
     if job is None:
         raise HTTPException(404, _error("TRAINING_JOB_NOT_FOUND", "Training job not found"))
     if not job.mlflow_run_id:
@@ -256,13 +258,22 @@ def stop_training_job(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    job = _owned_job(db, job_id, current_user.id)
+    job, access = _visible_job(db, job_id, current_user.id)
     if job is None:
         raise HTTPException(404, _error("TRAINING_JOB_NOT_FOUND", "Training job not found"))
-    if job.status not in {"pending", "queued", "running"}:
-        raise HTTPException(409, _error("TRAINING_NOT_ACTIVE", "Training job is not active"))
-    job.status = "cancel_requested"
-    db.commit()
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="execution.operate",
+        intent=AuditIntent(
+            project_id=job.project_id, action="training_job.stop",
+            resource_type="training_job", resource_id=str(job.id),
+            changes={"previous_status": job.status},
+        ),
+        allowed_changes={"previous_status"},
+    ):
+        if job.status not in {"pending", "queued", "running"}:
+            raise HTTPException(409, _error("TRAINING_NOT_ACTIVE", "Training job is not active"))
+        job.status = "cancel_requested"
     if job.task_id:
         get_training_dispatcher(request).cancel(job.task_id)
     return {"job_id": str(job.id), "status": "cancel_requested"}
@@ -276,83 +287,82 @@ def resume_training_job(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    source = _owned_job(db, job_id, current_user.id)
+    source, access = _visible_job(db, job_id, current_user.id)
     if source is None:
         raise HTTPException(404, _error("TRAINING_JOB_NOT_FOUND", "Training job not found"))
-    checkpoint_uri = data.checkpoint_uri or source.latest_checkpoint_uri
-    if not checkpoint_uri or not source.mlflow_run_id:
-        raise HTTPException(409, _error("CHECKPOINT_NOT_FOUND", "Checkpoint not found"))
-    checkpoint_path = (
-        _checkpoint_path(data.checkpoint_path)
-        if data.checkpoint_path
-        else _checkpoint_path(checkpoint_uri)
-    )
-    tracking = get_experiment_tracking(request)
-    try:
-        available = {
-            item.path for item in tracking.list_artifacts(source.mlflow_run_id, "checkpoints")
-            if not item.is_dir
-        }
-        if checkpoint_path not in available:
-            raise HTTPException(404, _error("CHECKPOINT_NOT_FOUND", "Checkpoint not found"))
-        with tempfile.TemporaryDirectory() as temporary:
-            downloaded = tracking.download_artifact(
-                source.mlflow_run_id,
-                checkpoint_path,
-                temporary,
-            )
-            checkpoint = TrainingCheckpoint.loads(Path(downloaded).read_bytes())
-    except HTTPException:
-        raise
-    except IncompatibleCheckpoint as error:
-        raise HTTPException(400, _error("CHECKPOINT_INCOMPATIBLE", str(error))) from error
-    except (TrackingError, KeyError) as error:
-        raise HTTPException(503, _error("TRACKING_UNAVAILABLE", str(error))) from error
-
-    if (
-        checkpoint.dataset_artifact_id != str(source.dataset_artifact_id)
-        or checkpoint.source_job_id != str(source.id)
-    ):
-        raise HTTPException(400, _error(
-            "CHECKPOINT_INCOMPATIBLE",
-            "Checkpoint lineage does not match the training job",
-        ))
-    total_epochs = data.total_epochs or source.total_epochs or checkpoint.epoch + 1
-    if total_epochs <= checkpoint.epoch:
-        raise HTTPException(400, _error(
-            "CHECKPOINT_INCOMPATIBLE",
-            "Total epochs must exceed the checkpoint epoch",
-        ))
-
-    resumed = TrainingJob(
-        project_id=source.project_id,
-        user_id=current_user.id,
-        experiment_id=source.experiment_id,
-        name=f"{source.name}-resume",
-        operator_id=source.operator_id,
-        params=dict(source.params or {}),
-        dataset_artifact_id=source.dataset_artifact_id,
-        dataset_path=source.dataset_path,
-        status="pending",
-        total_epochs=total_epochs,
-        monitor_name=source.monitor_name,
-        monitor_mode=source.monitor_mode,
-        early_stopping_patience=source.early_stopping_patience,
-        early_stopping_min_delta=source.early_stopping_min_delta,
-        restore_best=source.restore_best,
-        resumed_from_job_id=source.id,
-        resumed_from_run_id=source.mlflow_run_id,
-        resume_checkpoint_uri=(
-            _replace_checkpoint_path(checkpoint_uri, checkpoint_path)
-            if data.checkpoint_path
-            else checkpoint_uri
+    resumed_id = uuid.uuid4()
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="execution.operate",
+        intent=AuditIntent(
+            project_id=source.project_id, action="training_job.resume",
+            resource_type="training_job", resource_id=str(resumed_id),
+            changes={"source_job_id": str(source.id), "total_epochs": data.total_epochs},
         ),
-        attempt=0,
-    )
-    db.add(resumed)
-    db.commit()
+        allowed_changes={"source_job_id", "total_epochs"},
+    ):
+        checkpoint_uri = data.checkpoint_uri or source.latest_checkpoint_uri
+        if not checkpoint_uri or not source.mlflow_run_id:
+            raise HTTPException(409, _error("CHECKPOINT_NOT_FOUND", "Checkpoint not found"))
+        checkpoint_path = (
+            _checkpoint_path(data.checkpoint_path)
+            if data.checkpoint_path else _checkpoint_path(checkpoint_uri)
+        )
+        tracking = get_experiment_tracking(request)
+        try:
+            available = {
+                item.path for item in tracking.list_artifacts(source.mlflow_run_id, "checkpoints")
+                if not item.is_dir
+            }
+            if checkpoint_path not in available:
+                raise HTTPException(404, _error("CHECKPOINT_NOT_FOUND", "Checkpoint not found"))
+            with tempfile.TemporaryDirectory() as temporary:
+                downloaded = tracking.download_artifact(
+                    source.mlflow_run_id, checkpoint_path, temporary,
+                )
+                checkpoint = TrainingCheckpoint.loads(Path(downloaded).read_bytes())
+        except HTTPException:
+            raise
+        except IncompatibleCheckpoint as error:
+            raise HTTPException(400, _error("CHECKPOINT_INCOMPATIBLE", str(error))) from error
+        except (TrackingError, KeyError) as error:
+            raise HTTPException(503, _error("TRACKING_UNAVAILABLE", str(error))) from error
+
+        if (
+            checkpoint.dataset_artifact_id != str(source.dataset_artifact_id)
+            or checkpoint.source_job_id != str(source.id)
+        ):
+            raise HTTPException(400, _error(
+                "CHECKPOINT_INCOMPATIBLE", "Checkpoint lineage does not match the training job",
+            ))
+        total_epochs = data.total_epochs or source.total_epochs or checkpoint.epoch + 1
+        if total_epochs <= checkpoint.epoch:
+            raise HTTPException(400, _error(
+                "CHECKPOINT_INCOMPATIBLE", "Total epochs must exceed the checkpoint epoch",
+            ))
+
+        resumed = TrainingJob(
+            id=resumed_id, project_id=source.project_id, user_id=current_user.id,
+            experiment_id=source.experiment_id, name=f"{source.name}-resume",
+            operator_id=source.operator_id, params=dict(source.params or {}),
+            dataset_artifact_id=source.dataset_artifact_id, dataset_path=source.dataset_path,
+            status="pending", total_epochs=total_epochs, monitor_name=source.monitor_name,
+            monitor_mode=source.monitor_mode,
+            early_stopping_patience=source.early_stopping_patience,
+            early_stopping_min_delta=source.early_stopping_min_delta,
+            restore_best=source.restore_best, resumed_from_job_id=source.id,
+            resumed_from_run_id=source.mlflow_run_id,
+            resume_checkpoint_uri=(
+                _replace_checkpoint_path(checkpoint_uri, checkpoint_path)
+                if data.checkpoint_path else checkpoint_uri
+            ),
+            attempt=0,
+        )
+        db.add(resumed)
     db.refresh(resumed)
-    _enqueue_job(db, resumed, get_training_dispatcher(request))
+    _dispatch_job(
+        db, resumed, get_training_dispatcher(request), request, current_user, access,
+    )
     return {"job_id": str(resumed.id), "status": "queued", "task_id": resumed.task_id}
 
 
@@ -363,7 +373,7 @@ def create_tensorboard_session(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    job = _owned_job(db, job_id, current_user.id)
+    job, _ = _visible_job(db, job_id, current_user.id)
     if job is None:
         raise HTTPException(404, _error("TRAINING_JOB_NOT_FOUND", "Training job not found"))
     if not job.mlflow_run_id:
@@ -462,7 +472,7 @@ def start_automl(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    experiment = _owned_experiment(
+    experiment, access = _visible_experiment(
         db,
         data.experiment_id,
         data.project_id,
@@ -470,32 +480,38 @@ def start_automl(
     )
     if experiment is None:
         raise HTTPException(404, _error("EXPERIMENT_NOT_FOUND", "Experiment not found"))
-    if data.task not in {"classification", "regression"}:
-        raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", "Invalid AutoML task"))
-    artifact_service = get_artifact_service(request, db)
-    try:
-        dataset = artifact_service.resolve(
-            data.dataset_artifact_id,
-            data.project_id,
-            expected_type="dataset",
+    job_id = uuid.uuid4()
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="execution.operate",
+        intent=AuditIntent(
+            project_id=data.project_id, action="training_job.automl_start",
+            resource_type="training_job", resource_id=str(job_id),
+            changes={"name": data.name, "task": data.task},
+        ),
+        allowed_changes={"name", "task"},
+    ):
+        if data.task not in {"classification", "regression"}:
+            raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", "Invalid AutoML task"))
+        artifact_service = get_artifact_service(request, db)
+        try:
+            dataset = artifact_service.resolve(
+                data.dataset_artifact_id, data.project_id, expected_type="dataset",
+            )
+        except (ValueError, ArtifactAccessError) as error:
+            raise HTTPException(400, _error("DATASET_ARTIFACT_INVALID", str(error))) from error
+        job = TrainingJob(
+            id=job_id, project_id=data.project_id, user_id=current_user.id,
+            experiment_id=experiment.id, name=data.name, operator_id="automl",
+            params={"target_column": data.target_column, "task": data.task},
+            dataset_artifact_id=dataset.id,
+            dataset_path=artifact_service.storage_reference(dataset), status="pending",
         )
-    except (ValueError, ArtifactAccessError) as error:
-        raise HTTPException(400, _error("DATASET_ARTIFACT_INVALID", str(error))) from error
-    job = TrainingJob(
-        project_id=data.project_id,
-        user_id=current_user.id,
-        experiment_id=experiment.id,
-        name=data.name,
-        operator_id="automl",
-        params={"target_column": data.target_column, "task": data.task},
-        dataset_artifact_id=dataset.id,
-        dataset_path=artifact_service.storage_reference(dataset),
-        status="pending",
-    )
-    db.add(job)
-    db.commit()
+        db.add(job)
     db.refresh(job)
-    _enqueue_job(db, job, get_automl_dispatcher(request))
+    _dispatch_job(
+        db, job, get_automl_dispatcher(request), request, current_user, access,
+    )
     return {"job_id": str(job.id), "status": "queued", "task_id": job.task_id}
 
 
@@ -504,8 +520,12 @@ def list_automl_jobs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    jobs = db.query(TrainingJob).join(Project, Project.id == TrainingJob.project_id).filter(
-        Project.owner_id == current_user.id,
+    project_ids = [
+        project.id for project in ProjectAccessService()
+        .accessible_project_query(db, current_user.id).all()
+    ]
+    jobs = db.query(TrainingJob).filter(
+        TrainingJob.project_id.in_(project_ids),
         TrainingJob.operator_id == "automl",
     ).order_by(TrainingJob.created_at.desc()).all()
     return [_job_to_dict(job) for job in jobs]
@@ -517,12 +537,9 @@ def list_model_versions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = db.query(Project).filter(
-        Project.id == project_id,
-        Project.owner_id == current_user.id,
-    ).first()
-    if project is None:
-        raise HTTPException(404, _error("PROJECT_NOT_FOUND", "Project not found"))
+    project = require_project_access(
+        db, project_id, current_user.id, "project.read",
+    ).project
     jobs = db.query(TrainingJob).filter(
         TrainingJob.project_id == project.id,
         TrainingJob.status == "completed",
@@ -533,6 +550,7 @@ def list_model_versions(
 @router.post("/batch-delete")
 def batch_delete_training_jobs(
     data: BatchDeleteRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -542,44 +560,75 @@ def batch_delete_training_jobs(
             job_id = uuid.UUID(value)
         except ValueError:
             continue
-        job = _owned_job(db, job_id, current_user.id)
-        if job is not None and job.status not in {"running", "queued", "cancel_requested"}:
+        job, access = _visible_job(db, job_id, current_user.id)
+        if job is None or job.status in {"running", "queued", "cancel_requested"}:
+            continue
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="resource.delete",
+            intent=AuditIntent(
+                project_id=job.project_id, action="training_job.delete",
+                resource_type="training_job", resource_id=str(job.id),
+            ),
+            allowed_changes=set(),
+        ):
             db.delete(job)
-            deleted += 1
-    db.commit()
+        deleted += 1
     return {"deleted": deleted}
 
 
-def _enqueue_job(db: Session, job: TrainingJob, dispatcher) -> None:
+def _dispatch_job(db, job, dispatcher, request, actor, access) -> None:
     try:
         task_id = dispatcher.enqueue(job.id)
     except Exception as error:
-        job.status = "failed"
-        job.error_code = "TRAINING_DISPATCH_FAILED"
-        job.error_message = str(error)
-        db.commit()
+        with audit_service(db).project_action(
+            db, request=request, actor=actor, access=access,
+            permission="execution.operate",
+            intent=AuditIntent(
+                project_id=job.project_id, action="training_job.dispatch_failed",
+                resource_type="training_job", resource_id=str(job.id),
+                changes={"status": "failed", "error_code": "TRAINING_DISPATCH_FAILED"},
+            ),
+            allowed_changes={"status", "error_code"},
+        ):
+            job.status = "failed"
+            job.error_code = "TRAINING_DISPATCH_FAILED"
+            job.error_message = "Training task could not be queued"
         raise HTTPException(503, _error(
             "TRAINING_DISPATCH_FAILED",
             "Training task could not be queued",
         )) from error
-    job.status = "queued"
-    job.task_id = task_id
-    db.commit()
+    with audit_service(db).project_action(
+        db, request=request, actor=actor, access=access,
+        permission="execution.operate",
+        intent=AuditIntent(
+            project_id=job.project_id, action="training_job.dispatch",
+            resource_type="training_job", resource_id=str(job.id),
+            changes={"status": "queued"},
+        ),
+        allowed_changes={"status"},
+    ):
+        job.status = "queued"
+        job.task_id = task_id
 
 
-def _owned_experiment(db, experiment_id, project_id, user_id):
-    return db.query(Experiment).join(Project, Project.id == Experiment.project_id).filter(
+def _visible_experiment(db, experiment_id, project_id, user_id):
+    experiment = db.query(Experiment).filter(
         Experiment.id == experiment_id,
         Experiment.project_id == project_id,
-        Project.owner_id == user_id,
     ).first()
+    if experiment is None:
+        return None, None
+    access = resolve_project_access(db, project_id, user_id)
+    return (experiment, access) if access is not None else (None, None)
 
 
-def _owned_job(db, job_id, user_id):
-    return db.query(TrainingJob).join(Project, Project.id == TrainingJob.project_id).filter(
-        TrainingJob.id == job_id,
-        Project.owner_id == user_id,
-    ).first()
+def _visible_job(db, job_id, user_id):
+    job = db.query(TrainingJob).filter(TrainingJob.id == job_id).first()
+    if job is None:
+        return None, None
+    access = resolve_project_access(db, job.project_id, user_id)
+    return (job, access) if access is not None else (None, None)
 
 
 def _checkpoint_path(uri: str) -> str:

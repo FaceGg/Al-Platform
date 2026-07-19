@@ -252,21 +252,21 @@ git commit -m "feat: enforce project roles on workflows and runs"
 - Modify: `ml-platform/backend/tests/test_api_schedules.py`
 - Modify: `ml-platform/backend/tests/test_api_project_access.py`
 
-- [ ] **Step 1: Add role/audit RED tests**
+- [x] **Step 1: Add role/audit RED tests**
 
 Cover editor definition writes, operator execution/stop/resume and schedule pause/resume/backfill, viewer reads, and outsider 404 for each resource family. Assert redacted audit actions.
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 ```powershell
 python -m unittest tests.test_api_datasets tests.test_api_experiments tests.test_training tests.test_api_schedules tests.test_api_project_access -v
 ```
 
-- [ ] **Step 3: Apply permissions and audited actions**
+- [x] **Step 3: Apply permissions and audited actions**
 
 Use resource permissions for data/experiment/training definitions, execution operate for submit/resume/stop, schedule manage for create/update, and schedule operate for pause/resume/backfill/tick. Action prefixes are `dataset`, `experiment`, `training_job`, and `schedule`.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```powershell
 python -m unittest tests.test_api_datasets tests.test_api_experiments tests.test_training tests.test_api_schedules tests.test_api_project_access -v

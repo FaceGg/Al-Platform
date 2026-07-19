@@ -12,6 +12,7 @@ from app.database import Base, get_db
 from app.main import app
 from app.models.experiment import Experiment
 from app.models.project import Project
+from app.models.access import AuditEvent, ProjectMember
 from app.models.user import User
 from app.services.experiment_tracking import (
     TrackedMetric,
@@ -90,13 +91,33 @@ class TestExperimentAPI(unittest.TestCase):
 
         with cls.Session() as db:
             cls.owner = User(username="experiment-owner", password_hash="hash")
+            cls.editor = User(username="experiment-editor", password_hash="hash")
+            cls.operator = User(username="experiment-operator", password_hash="hash")
+            cls.viewer = User(username="experiment-viewer", password_hash="hash")
             cls.other = User(username="experiment-other", password_hash="hash")
-            db.add_all([cls.owner, cls.other])
+            db.add_all([cls.owner, cls.editor, cls.operator, cls.viewer, cls.other])
             db.flush()
             cls.owner_id = cls.owner.id
+            cls.editor_id = cls.editor.id
+            cls.operator_id = cls.operator.id
+            cls.viewer_id = cls.viewer.id
             cls.other_id = cls.other.id
             project = Project(name="Weld project", owner_id=cls.owner_id)
             db.add(project)
+            db.flush()
+            db.add_all([
+                ProjectMember(
+                    project_id=project.id,
+                    user_id=user.id,
+                    role=role,
+                    created_by=cls.owner_id,
+                )
+                for role, user in (
+                    ("editor", cls.editor),
+                    ("operator", cls.operator),
+                    ("viewer", cls.viewer),
+                )
+            ])
             db.commit()
             cls.project_id = project.id
 
@@ -113,6 +134,9 @@ class TestExperimentAPI(unittest.TestCase):
         app.state.experiment_tracking = cls.tracking
         cls.client = TestClient(app)
         cls.owner_headers = cls._headers(cls.owner_id)
+        cls.editor_headers = cls._headers(cls.editor_id)
+        cls.operator_headers = cls._headers(cls.operator_id)
+        cls.viewer_headers = cls._headers(cls.viewer_id)
         cls.other_headers = cls._headers(cls.other_id)
 
     @classmethod
@@ -180,6 +204,45 @@ class TestExperimentAPI(unittest.TestCase):
         self.assertEqual(duplicate.status_code, 409)
         self.assertEqual(duplicate.json()["detail"]["code"], "EXPERIMENT_NAME_CONFLICT")
         self.assertEqual(len(self.tracking.experiment_names), tracking_count)
+
+    def test_project_roles_create_read_and_audit_experiments(self):
+        created = self.client.post(
+            "/api/experiments",
+            json={
+                "project_id": str(self.project_id),
+                "name": f"Editor experiment {uuid.uuid4().hex}",
+            },
+            headers=self.editor_headers,
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+
+        listed = self.client.get(
+            "/api/experiments",
+            params={"project_id": str(self.project_id)},
+            headers=self.viewer_headers,
+        )
+        detail = self.client.get(
+            f"/api/experiments/{created.json()['id']}", headers=self.viewer_headers,
+        )
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual(detail.status_code, 200, detail.text)
+
+        denied = self.client.post(
+            "/api/experiments",
+            json={
+                "project_id": str(self.project_id),
+                "name": f"Operator denied {uuid.uuid4().hex}",
+            },
+            headers=self.operator_headers,
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+        with self.Session() as db:
+            actions = {
+                (event.action, event.result)
+                for event in db.query(AuditEvent).filter(AuditEvent.project_id == self.project_id)
+            }
+        self.assertIn(("experiment.create", "success"), actions)
+        self.assertIn(("experiment.create", "denied"), actions)
 
     def test_tracking_failure_rolls_back_platform_record(self):
         self.tracking.fail_ensure = True

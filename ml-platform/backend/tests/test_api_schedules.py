@@ -10,6 +10,7 @@ from app.api.auth import get_current_user
 from app.database import Base, get_db
 from app.main import app
 from app.models.project import Project
+from app.models.access import AuditEvent, ProjectMember
 from app.models.user import User
 from app.models.workflow import Workflow
 
@@ -26,8 +27,11 @@ class TestScheduleAPI(unittest.TestCase):
         Base.metadata.create_all(cls.engine)
         with cls.Session() as db:
             cls.owner = User(username="schedule-api-owner", password_hash="hash")
+            cls.editor = User(username="schedule-api-editor", password_hash="hash")
+            cls.operator = User(username="schedule-api-operator", password_hash="hash")
+            cls.viewer = User(username="schedule-api-viewer", password_hash="hash")
             cls.other = User(username="schedule-api-other", password_hash="hash")
-            db.add_all([cls.owner, cls.other])
+            db.add_all([cls.owner, cls.editor, cls.operator, cls.viewer, cls.other])
             db.flush()
             cls.project = Project(name="Schedule API project", owner_id=cls.owner.id)
             cls.other_project = Project(name="Other project", owner_id=cls.other.id)
@@ -39,6 +43,19 @@ class TestScheduleAPI(unittest.TestCase):
                 created_by=cls.owner.id,
             )
             db.add(cls.workflow)
+            db.add_all([
+                ProjectMember(
+                    project_id=cls.project.id,
+                    user_id=user.id,
+                    role=role,
+                    created_by=cls.owner.id,
+                )
+                for role, user in (
+                    ("editor", cls.editor),
+                    ("operator", cls.operator),
+                    ("viewer", cls.viewer),
+                )
+            ])
             db.commit()
             cls.project_id = str(cls.project.id)
             cls.workflow_id = str(cls.workflow.id)
@@ -128,6 +145,64 @@ class TestScheduleAPI(unittest.TestCase):
         )
         self.assertEqual(history.status_code, 200, history.text)
         self.assertEqual(history.json()["total"], 1)
+
+    def test_role_permissions_and_schedule_audit(self):
+        app.dependency_overrides[get_current_user] = lambda: self.editor
+        created = self.client.post(
+            f"/api/projects/{self.project_id}/schedules",
+            json={
+                "name": "Editor schedule",
+                "workflow_id": self.workflow_id,
+                "cron_expression": "15 * * * *",
+                "timezone": "UTC",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        schedule_id = created.json()["id"]
+        updated = self.client.patch(
+            f"/api/schedules/{schedule_id}", json={"max_concurrency": 2},
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+
+        app.dependency_overrides[get_current_user] = lambda: self.operator
+        create_denied = self.client.post(
+            f"/api/projects/{self.project_id}/schedules",
+            json={
+                "name": "Operator denied",
+                "workflow_id": self.workflow_id,
+                "cron_expression": "20 * * * *",
+                "timezone": "UTC",
+            },
+        )
+        self.assertEqual(create_denied.status_code, 403, create_denied.text)
+        self.assertEqual(self.client.post(f"/api/schedules/{schedule_id}/pause").status_code, 200)
+        self.assertEqual(self.client.post(f"/api/schedules/{schedule_id}/resume").status_code, 200)
+
+        scheduler = __import__(
+            "app.services.pipeline_scheduler", fromlist=["PipelineScheduler"],
+        ).PipelineScheduler(enqueue=lambda run_id, timeout_seconds=None: "role-task")
+        with patch("app.api.schedules._scheduler", return_value=scheduler):
+            backfilled = self.client.post(
+                f"/api/schedules/{schedule_id}/backfill",
+                json={"occurrences": ["2026-07-17T13:00:00Z"]},
+            )
+        self.assertEqual(backfilled.status_code, 200, backfilled.text)
+
+        app.dependency_overrides[get_current_user] = lambda: self.viewer
+        self.assertEqual(self.client.get(f"/api/schedules/{schedule_id}").status_code, 200)
+        self.assertEqual(self.client.post(f"/api/schedules/{schedule_id}/pause").status_code, 403)
+
+        actions = {
+            (event.action, event.result)
+            for event in self.db.query(AuditEvent).filter(AuditEvent.project_id == self.project.id)
+        }
+        self.assertIn(("schedule.create", "success"), actions)
+        self.assertIn(("schedule.create", "denied"), actions)
+        self.assertIn(("schedule.update", "success"), actions)
+        self.assertIn(("schedule.pause", "success"), actions)
+        self.assertIn(("schedule.pause", "denied"), actions)
+        self.assertIn(("schedule.backfill", "success"), actions)
+        app.dependency_overrides[get_current_user] = lambda: self.owner
 
 
 if __name__ == "__main__":

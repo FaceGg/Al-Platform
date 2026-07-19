@@ -305,14 +305,17 @@ class PipelineScheduler:
             "attempt": attempt,
         }
 
-    def pause(self, db, schedule):
+    def pause(self, db, schedule, *, commit: bool = True):
         if schedule.paused_at is not None:
             raise ScheduleError("SCHEDULE_ALREADY_PAUSED", "Schedule is already paused")
         schedule.paused_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        db.commit()
+        if commit:
+            db.commit()
         return schedule
 
-    def resume(self, db, schedule, *, now: datetime | None = None):
+    def resume(
+        self, db, schedule, *, now: datetime | None = None, commit: bool = True,
+    ):
         if schedule.paused_at is None:
             raise ScheduleError("SCHEDULE_NOT_PAUSED", "Schedule is not paused")
         current = now or datetime.now(timezone.utc)
@@ -323,7 +326,8 @@ class PipelineScheduler:
             schedule.timezone,
             current,
         ).replace(tzinfo=None)
-        db.commit()
+        if commit:
+            db.commit()
         return schedule
 
     def backfill(self, db, schedule, occurrences, *, now: datetime | None = None) -> list[dict]:

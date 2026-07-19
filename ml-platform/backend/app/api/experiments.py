@@ -25,6 +25,8 @@ from app.services.experiment_tracking import (
     TrackingNotFound,
     TrackingUnavailable,
 )
+from app.api.project_security import audit_service, require_project_access, resolve_project_access
+from app.services.audit import AuditIntent
 
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
@@ -57,47 +59,50 @@ def create_experiment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = _owned_project(db, data.project_id, current_user.id)
-    if project is None:
-        raise HTTPException(404, _error("PROJECT_NOT_FOUND", "Project not found"))
-    duplicate = db.query(Experiment).filter(
-        Experiment.project_id == project.id,
-        Experiment.name == data.name,
-    ).first()
-    if duplicate is not None:
-        raise HTTPException(409, _error(
-            "EXPERIMENT_NAME_CONFLICT",
-            "Experiment name already exists in project",
-        ))
-    tracking = get_experiment_tracking(request)
+    access = resolve_project_access(db, data.project_id, current_user.id)
 
     experiment = Experiment(
         id=uuid.uuid4(),
-        project_id=project.id,
+        project_id=data.project_id,
         created_by=current_user.id,
         name=data.name,
         description=data.description,
         mlflow_experiment_id="pending",
     )
-    namespace = f"project/{project.id}/{experiment.id}"
     try:
-        experiment.mlflow_experiment_id = tracking.ensure_experiment(namespace)
-    except (TrackingUnavailable, TrackingNotFound) as error:
-        db.rollback()
-        raise _tracking_error(error) from error
-
-    db.add(experiment)
-    try:
-        db.commit()
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="resource.create",
+            intent=AuditIntent(
+                project_id=data.project_id, action="experiment.create",
+                resource_type="experiment", resource_id=str(experiment.id),
+                changes={"name": data.name, "description": data.description},
+            ),
+            allowed_changes={"name", "description"},
+        ):
+            duplicate = db.query(Experiment).filter(
+                Experiment.project_id == data.project_id,
+                Experiment.name == data.name,
+            ).first()
+            if duplicate is not None:
+                raise HTTPException(409, _error(
+                    "EXPERIMENT_NAME_CONFLICT",
+                    "Experiment name already exists in project",
+                ))
+            tracking = get_experiment_tracking(request)
+            namespace = f"project/{data.project_id}/{experiment.id}"
+            try:
+                experiment.mlflow_experiment_id = tracking.ensure_experiment(namespace)
+            except (TrackingUnavailable, TrackingNotFound) as error:
+                raise _tracking_error(error) from error
+            db.add(experiment)
         db.refresh(experiment)
     except IntegrityError as error:
-        db.rollback()
         raise HTTPException(409, _error(
             "EXPERIMENT_PERSISTENCE_FAILED",
             "Experiment tracking state exists but platform persistence failed",
         )) from error
     except SQLAlchemyError as error:
-        db.rollback()
         raise HTTPException(500, _error(
             "EXPERIMENT_PERSISTENCE_FAILED",
             "Experiment tracking state exists but platform persistence failed",
@@ -111,9 +116,9 @@ def list_experiments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = _owned_project(db, project_id, current_user.id)
-    if project is None:
-        raise HTTPException(404, _error("PROJECT_NOT_FOUND", "Project not found"))
+    project = require_project_access(
+        db, project_id, current_user.id, "project.read",
+    ).project
     items = db.query(Experiment).filter(
         Experiment.project_id == project.id,
     ).order_by(Experiment.created_at.desc(), Experiment.id).all()
@@ -127,7 +132,7 @@ def get_experiment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    experiment = _owned_experiment(db, experiment_id, current_user.id)
+    experiment = _visible_experiment(db, experiment_id, current_user.id)
     if experiment is None:
         raise HTTPException(404, _error("EXPERIMENT_NOT_FOUND", "Experiment not found"))
     tracking = get_experiment_tracking(request)
@@ -147,7 +152,7 @@ def list_experiment_runs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    experiment = _owned_experiment(db, experiment_id, current_user.id)
+    experiment = _visible_experiment(db, experiment_id, current_user.id)
     if experiment is None:
         raise HTTPException(404, _error("EXPERIMENT_NOT_FOUND", "Experiment not found"))
     tracking = get_experiment_tracking(request)
@@ -171,7 +176,7 @@ def compare_experiment_runs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    experiment = _owned_experiment(db, experiment_id, current_user.id)
+    experiment = _visible_experiment(db, experiment_id, current_user.id)
     if experiment is None:
         raise HTTPException(404, _error("EXPERIMENT_NOT_FOUND", "Experiment not found"))
     tracking = get_experiment_tracking(request)
@@ -223,20 +228,13 @@ def compare_experiment_runs(
     }
 
 
-def _owned_project(db: Session, project_id, user_id):
-    return db.query(Project).filter(
-        Project.id == project_id,
-        Project.owner_id == user_id,
-    ).first()
-
-
-def _owned_experiment(db: Session, experiment_id, user_id):
-    return db.query(Experiment).join(
-        Project, Project.id == Experiment.project_id,
-    ).filter(
-        Experiment.id == experiment_id,
-        Project.owner_id == user_id,
-    ).first()
+def _visible_experiment(db: Session, experiment_id, user_id):
+    experiment = db.query(Experiment).filter(Experiment.id == experiment_id).first()
+    if experiment is None:
+        return None
+    if resolve_project_access(db, experiment.project_id, user_id) is None:
+        return None
+    return experiment
 
 
 def _experiment_payload(experiment: Experiment, *, run_count: int = 0) -> dict:

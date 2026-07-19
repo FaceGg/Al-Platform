@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -21,6 +21,8 @@ from app.schemas.schedule import (
     ScheduleUpdate,
 )
 from app.services.pipeline_scheduler import PipelineScheduler, ScheduleError, next_occurrence
+from app.api.project_security import audit_service, require_project_access, resolve_project_access
+from app.services.audit import AuditIntent
 
 
 router = APIRouter(tags=["schedules"])
@@ -30,17 +32,14 @@ def _error(code: str, message: str) -> dict:
     return {"code": code, "message": message}
 
 
-def _owned_project(db, project_id, owner_id):
-    return db.query(Project).filter(Project.id == project_id, Project.owner_id == owner_id).first()
-
-
-def _owned_schedule(db, schedule_id, owner_id):
-    return (
-        db.query(PipelineSchedule)
-        .join(Project, Project.id == PipelineSchedule.project_id)
-        .filter(PipelineSchedule.id == schedule_id, Project.owner_id == owner_id)
-        .first()
-    )
+def _schedule_access(db, schedule_id, user_id):
+    schedule = db.query(PipelineSchedule).filter(PipelineSchedule.id == schedule_id).first()
+    if schedule is None:
+        raise HTTPException(404, _error("SCHEDULE_NOT_FOUND", "Schedule not found"))
+    access = resolve_project_access(db, schedule.project_id, user_id)
+    if access is None:
+        raise HTTPException(404, _error("SCHEDULE_NOT_FOUND", "Schedule not found"))
+    return schedule, access
 
 
 def _scheduler() -> PipelineScheduler:
@@ -65,27 +64,27 @@ def _validate_calendar(expression: str, timezone_name: str, base: datetime) -> d
 def create_schedule(
     project_id: uuid.UUID,
     data: ScheduleCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = _owned_project(db, project_id, current_user.id)
-    if project is None:
-        raise HTTPException(404, _error("PROJECT_NOT_FOUND", "Project not found"))
+    access = resolve_project_access(db, project_id, current_user.id)
+    project = access.project if access is not None else None
     workflow = db.query(Workflow).filter(
         Workflow.id == data.workflow_id,
-        Workflow.project_id == project.id,
+        Workflow.project_id == project_id,
     ).first()
     if workflow is None:
         raise HTTPException(404, _error("WORKFLOW_NOT_FOUND", "Workflow not found"))
     duplicate = db.query(PipelineSchedule).filter(
-        PipelineSchedule.project_id == project.id,
+        PipelineSchedule.project_id == project_id,
         PipelineSchedule.name == data.name,
     ).first()
     if duplicate is not None:
         raise HTTPException(409, _error("SCHEDULE_NAME_CONFLICT", "Schedule name already exists"))
     now = datetime.now(timezone.utc)
     schedule = PipelineSchedule(
-        project_id=project.id,
+        project_id=project_id,
         workflow_id=workflow.id,
         created_by=current_user.id,
         name=data.name,
@@ -98,8 +97,24 @@ def create_schedule(
         workflow_version=data.workflow_version,
         next_run_at=_validate_calendar(data.cron_expression, data.timezone, now).replace(tzinfo=None),
     )
-    db.add(schedule)
-    db.commit()
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="schedule.manage",
+        intent=AuditIntent(
+            project_id=project_id,
+            action="schedule.create",
+            resource_type="schedule",
+            changes=data.model_dump(mode="json"),
+        ),
+        allowed_changes={
+            "name", "workflow_id", "cron_expression", "timezone",
+            "max_concurrency", "dependencies", "retry_policy", "timeout_seconds",
+        },
+    ):
+        db.add(schedule)
     db.refresh(schedule)
     return schedule
 
@@ -110,9 +125,9 @@ def list_schedules(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = _owned_project(db, project_id, current_user.id)
-    if project is None:
-        raise HTTPException(404, _error("PROJECT_NOT_FOUND", "Project not found"))
+    project = require_project_access(
+        db, project_id, current_user.id, "project.read",
+    ).project
     items = db.query(PipelineSchedule).filter(
         PipelineSchedule.project_id == project.id,
     ).order_by(PipelineSchedule.created_at.desc(), PipelineSchedule.id).all()
@@ -125,9 +140,7 @@ def get_schedule(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    schedule = _owned_schedule(db, schedule_id, current_user.id)
-    if schedule is None:
-        raise HTTPException(404, _error("SCHEDULE_NOT_FOUND", "Schedule not found"))
+    schedule, _ = _schedule_access(db, schedule_id, current_user.id)
     return schedule
 
 
@@ -135,12 +148,11 @@ def get_schedule(
 def update_schedule(
     schedule_id: uuid.UUID,
     data: ScheduleUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    schedule = _owned_schedule(db, schedule_id, current_user.id)
-    if schedule is None:
-        raise HTTPException(404, _error("SCHEDULE_NOT_FOUND", "Schedule not found"))
+    schedule, access = _schedule_access(db, schedule_id, current_user.id)
     values = data.model_dump(exclude_unset=True)
     if "dependencies" in values:
         values["dependencies"] = [str(value) for value in values["dependencies"]]
@@ -154,9 +166,26 @@ def update_schedule(
             timezone_name,
             datetime.now(timezone.utc),
         ).replace(tzinfo=None)
-    for key, value in values.items():
-        setattr(schedule, key, value)
-    db.commit()
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="schedule.manage",
+        intent=AuditIntent(
+            project_id=schedule.project_id,
+            action="schedule.update",
+            resource_type="schedule",
+            resource_id=str(schedule.id),
+            changes=data.model_dump(exclude_unset=True, mode="json"),
+        ),
+        allowed_changes={
+            "name", "cron_expression", "timezone", "max_concurrency",
+            "dependencies", "retry_policy", "timeout_seconds",
+        },
+    ):
+        for key, value in values.items():
+            setattr(schedule, key, value)
     db.refresh(schedule)
     return schedule
 
@@ -164,14 +193,23 @@ def update_schedule(
 @router.post("/api/schedules/{schedule_id}/pause", response_model=ScheduleResponse)
 def pause_schedule(
     schedule_id: uuid.UUID,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    schedule = _owned_schedule(db, schedule_id, current_user.id)
-    if schedule is None:
-        raise HTTPException(404, _error("SCHEDULE_NOT_FOUND", "Schedule not found"))
+    schedule, access = _schedule_access(db, schedule_id, current_user.id)
     try:
-        return _scheduler().pause(db, schedule)
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="schedule.operate",
+            intent=AuditIntent(
+                project_id=schedule.project_id, action="schedule.pause",
+                resource_type="schedule", resource_id=str(schedule.id),
+            ),
+            allowed_changes=set(),
+        ):
+            result = _scheduler().pause(db, schedule, commit=False)
+        return result
     except ScheduleError as error:
         raise HTTPException(409, _error(error.code, str(error))) from error
 
@@ -179,14 +217,23 @@ def pause_schedule(
 @router.post("/api/schedules/{schedule_id}/resume", response_model=ScheduleResponse)
 def resume_schedule(
     schedule_id: uuid.UUID,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    schedule = _owned_schedule(db, schedule_id, current_user.id)
-    if schedule is None:
-        raise HTTPException(404, _error("SCHEDULE_NOT_FOUND", "Schedule not found"))
+    schedule, access = _schedule_access(db, schedule_id, current_user.id)
     try:
-        return _scheduler().resume(db, schedule)
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="schedule.operate",
+            intent=AuditIntent(
+                project_id=schedule.project_id, action="schedule.resume",
+                resource_type="schedule", resource_id=str(schedule.id),
+            ),
+            allowed_changes=set(),
+        ):
+            result = _scheduler().resume(db, schedule, commit=False)
+        return result
     except ScheduleError as error:
         raise HTTPException(409, _error(error.code, str(error))) from error
 
@@ -195,12 +242,22 @@ def resume_schedule(
 def backfill_schedule(
     schedule_id: uuid.UUID,
     data: BackfillRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    schedule = _owned_schedule(db, schedule_id, current_user.id)
-    if schedule is None:
-        raise HTTPException(404, _error("SCHEDULE_NOT_FOUND", "Schedule not found"))
+    schedule, access = _schedule_access(db, schedule_id, current_user.id)
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="schedule.operate",
+        intent=AuditIntent(
+            project_id=schedule.project_id, action="schedule.backfill",
+            resource_type="schedule", resource_id=str(schedule.id),
+            changes={"occurrence_count": len(data.occurrences)},
+        ),
+        allowed_changes={"occurrence_count"},
+    ):
+        pass
     return {"items": _scheduler().backfill(db, schedule, data.occurrences)}
 
 
@@ -212,9 +269,7 @@ def list_schedule_runs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    schedule = _owned_schedule(db, schedule_id, current_user.id)
-    if schedule is None:
-        raise HTTPException(404, _error("SCHEDULE_NOT_FOUND", "Schedule not found"))
+    schedule, _ = _schedule_access(db, schedule_id, current_user.id)
     query = db.query(PipelineScheduleRun).filter(PipelineScheduleRun.schedule_id == schedule.id)
     total = query.count()
     items = query.order_by(PipelineScheduleRun.scheduled_for.desc()).offset(offset).limit(limit).all()

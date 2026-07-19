@@ -17,6 +17,7 @@ from app.database import Base, get_db
 from app.main import app
 from app.models.experiment import Experiment
 from app.models.project import Project
+from app.models.access import AuditEvent, ProjectMember
 from app.models.training import TrainingJob
 from app.models.user import User
 from app.services.experiment_tracking import TrackedArtifact
@@ -82,15 +83,32 @@ class TestTrainingAPI(unittest.TestCase):
         cls.dataset_id = uuid.uuid4()
         with cls.Session() as db:
             owner = User(username="training-owner", password_hash="hash")
+            editor = User(username="training-editor", password_hash="hash")
+            operator = User(username="training-operator", password_hash="hash")
+            viewer = User(username="training-viewer", password_hash="hash")
             other = User(username="training-other", password_hash="hash")
-            db.add_all([owner, other])
+            db.add_all([owner, editor, operator, viewer, other])
             db.flush()
             cls.owner_id = owner.id
+            cls.editor_id = editor.id
+            cls.operator_id = operator.id
+            cls.viewer_id = viewer.id
             cls.other_id = other.id
             project = Project(name="Training project", owner_id=owner.id)
             db.add(project)
             db.flush()
             cls.project_id = project.id
+            db.add_all([
+                ProjectMember(
+                    project_id=project.id,
+                    user_id=user.id,
+                    role=role,
+                    created_by=owner.id,
+                )
+                for role, user in (
+                    ("editor", editor), ("operator", operator), ("viewer", viewer),
+                )
+            ])
             experiment = Experiment(
                 project_id=project.id,
                 created_by=owner.id,
@@ -117,6 +135,9 @@ class TestTrainingAPI(unittest.TestCase):
         app.state.training_dispatcher = cls.dispatcher
         cls.client = TestClient(app)
         cls.owner_headers = cls._headers(cls.owner_id)
+        cls.editor_headers = cls._headers(cls.editor_id)
+        cls.operator_headers = cls._headers(cls.operator_id)
+        cls.viewer_headers = cls._headers(cls.viewer_id)
         cls.other_headers = cls._headers(cls.other_id)
 
     @classmethod
@@ -225,6 +246,53 @@ class TestTrainingAPI(unittest.TestCase):
             "target_column": "quality",
         }, headers=self.other_headers)
         self.assertEqual(response.status_code, 404)
+
+    def test_project_roles_execute_read_stop_and_audit_training(self):
+        started = self.client.post("/api/training/run", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "name": "operator-training",
+            "target_column": "quality",
+            "task": "classification",
+            "total_epochs": 3,
+        }, headers=self.operator_headers)
+        self.assertEqual(started.status_code, 202, started.text)
+        job_id = started.json()["job_id"]
+
+        listed = self.client.get(
+            "/api/training/jobs",
+            params={"project_id": str(self.project_id)},
+            headers=self.viewer_headers,
+        )
+        detail = self.client.get(
+            f"/api/training/jobs/{job_id}", headers=self.viewer_headers,
+        )
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual(detail.status_code, 200, detail.text)
+
+        stopped = self.client.post(
+            f"/api/training/jobs/{job_id}/stop", headers=self.operator_headers,
+        )
+        self.assertEqual(stopped.status_code, 200, stopped.text)
+        denied = self.client.post(
+            f"/api/training/jobs/{job_id}/stop", headers=self.viewer_headers,
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+        self.assertEqual(
+            self.client.get(f"/api/training/jobs/{job_id}", headers=self.other_headers).status_code,
+            404,
+        )
+
+        with self.Session() as db:
+            actions = {
+                (event.action, event.result)
+                for event in db.query(AuditEvent).filter(AuditEvent.project_id == self.project_id)
+            }
+        self.assertIn(("training_job.start", "success"), actions)
+        self.assertIn(("training_job.dispatch", "success"), actions)
+        self.assertIn(("training_job.stop", "success"), actions)
+        self.assertIn(("training_job.stop", "denied"), actions)
 
     def test_checkpoint_list_is_job_scoped_and_exact(self):
         job_id = self._create_source_job()

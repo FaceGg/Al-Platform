@@ -1,5 +1,6 @@
 import unittest
 import uuid
+import io
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -283,6 +284,34 @@ class TestProjectRoleResourceAPI(unittest.TestCase):
         )
         self.assertEqual(denied.status_code, 403, denied.text)
 
+    def test_dataset_roles_cover_upload_read_and_hidden_access(self):
+        self._as("editor")
+        uploaded = self.client.post(
+            f"/api/projects/{self.project.id}/datasets/upload",
+            files={"file": ("roles.csv", io.BytesIO(b"x,y\n1,2\n"), "text/csv")},
+        )
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        artifact_id = uploaded.json()["artifact_id"]
+
+        self._as("viewer")
+        listed = self.client.get(f"/api/projects/{self.project.id}/datasets")
+        preview = self.client.get(f"/api/datasets/{artifact_id}/preview")
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual(preview.status_code, 200, preview.text)
+
+        self._as("operator")
+        denied = self.client.post(
+            f"/api/projects/{self.project.id}/datasets/upload",
+            files={"file": ("denied.csv", io.BytesIO(b"x\n1\n"), "text/csv")},
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+
+        self._as("outsider")
+        self.assertEqual(
+            self.client.get(f"/api/projects/{self.project.id}/datasets").status_code,
+            404,
+        )
+
     def test_z_success_and_denied_writes_are_audited(self):
         actions = {
             (event.action, event.result)
@@ -297,6 +326,8 @@ class TestProjectRoleResourceAPI(unittest.TestCase):
         self.assertIn(("workflow_run.cancel", "success"), actions)
         self.assertIn(("workflow.template_instantiate", "success"), actions)
         self.assertIn(("workflow.template_instantiate", "denied"), actions)
+        self.assertIn(("dataset.upload", "success"), actions)
+        self.assertIn(("dataset.upload", "denied"), actions)
 
 
 if __name__ == "__main__":

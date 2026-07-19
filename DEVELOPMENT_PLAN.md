@@ -846,3 +846,13 @@
 - 问题与修正：工业模板 ID 同时存在于新旧模板字典，非互斥分支把 JSON 工业请求错误地再次校验为查询参数请求；真实工业 API/E2E 回归稳定复现 400 后，改为互斥 `if/elif/else` 并恢复 11/11。
 - 验证方式：`python -m compileall -q app`、`git diff --check` 通过；六个目标路由文件不再包含直接提交。
 - 遗留事项：Task 7 数据集、实验、训练、调度路由，Task 8 其余项目级写路由盘点，以及 Task 9 全量/迁移/WSL/远程验收仍待完成。
+
+### 2026-07-18：第七周角色审计 Task 7 数据、实验、训练与调度迁移完成
+
+- 开发内容：数据集上传/批量/ZIP 与读取、Experiment 创建与查询、训练/恢复/停止/AutoML/删除、Schedule 创建/更新/暂停/恢复/补录及历史均使用项目角色解析和稳定隐藏语义。
+- 权限结果：editor 可创建数据/实验并管理 schedule；operator 可训练、停止、恢复及操作 schedule；viewer 可读取数据、实验、训练和调度；outsider 的间接资源探测保持 404。
+- 事务边界：ArtifactService 增加默认兼容的外层事务模式，使用 savepoint 隔离单文件失败，并在审计提交失败时按 URI 补偿对象存储；训练 job 创建与 broker dispatch 状态分成两个均有审计的持久步骤；pause/resume 由外层审计统一提交。
+- 编排边界：schedule backfill 是跨 occurrence/broker 的多事务命令，先以 `schedule.backfill` 记录“已授权并接受”，审计持久化成功后才执行补录副作用。
+- TDD 证据：editor/operator 原先被 owner-only 404、viewer 无法读取、操作员可越权上传等行为先 RED；Task 7 计划套件 41/41 GREEN，ArtifactService 相关回归随数据集模块额外通过。
+- 验证方式：四个目标 API 文件无直接 `db.commit()`，`python -m compileall -q app`、`git diff --check` 通过。
+- 遗留事项：Task 8 全项目写路由分类与剩余 project-bound 路由迁移、Task 9 全量/迁移/生产/远程验收尚待完成。
