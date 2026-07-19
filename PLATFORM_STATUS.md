@@ -4,6 +4,8 @@
 
 > 第七周远程验收：GitHub Actions [Run 29667952189](https://github.com/FaceGg/Al-Platform/actions/runs/29667952189) 全部通过（Linux/Windows quality、Production integration、Production experiment integration、Chromium）。
 
+> 第八周：ONNX 模型注册中心与独立基础推理运行时设计已确认，等待书面规格审阅后实施。
+
 > 最后更新: 2026-07-19 | 当前版本: 0.3.0
 
 ---

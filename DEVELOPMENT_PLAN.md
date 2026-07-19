@@ -90,7 +90,7 @@
 | 第 5 周 | 已完成 | 生产存储与异步任务 | 已完成 PostgreSQL/Alembic、Redis/Celery、MinIO、制品 URI、配置密钥、迁移工具、生产容器和真实服务验收 | 生产数据层、对象存储、异步任务框架；Actions Run 29548916619 全绿 |
 | 第 6 周 | 已完成 | 实验与训练管理 | 已完成实验、Run、参数、指标、日志、制品、检查点、恢复、早停、AutoML Trial、隔离 TensorBoard、真实 Compose 集成与跨平台验收 | 企业基础版、实验训练追踪 |
 | 第 7 周 | 已完成 | Pipeline 调度与权限 | 调度、角色审计、全量、WSL 生产验收与远程 CI 全部通过 | 调度器、实例管理、权限审计 |
-| 第 8 周 | 未开始 | 模型注册与基础推理 | 模型版本、指标、审批、基础推理、在线测试、健康检查和服务启停 | 模型注册中心、基础推理服务 |
+| 第 8 周 | 进行中 | 模型注册与基础推理 | ONNX 注册中心与独立推理运行时设计已确认；等待规格审阅后实施 | 模型注册中心、基础推理服务 |
 | 第 9 周 | 未开始 | 推理服务生产化 | 多版本发布、滚动升级、回滚、密钥、限流、服务日志和运行指标 | 生产级推理服务、版本发布回滚 |
 | 第 10 周 | 未开始 | 权限、审计与通知 | 项目角色、资源权限、关键操作审计和企业消息通知 | 权限矩阵、审计日志、告警通知 |
 | 第 11 周 | 未开始 | 系统联调与性能优化 | 联调数据、Pipeline、实验、模型和服务；完成核心性能优化 | 全链路版本、性能基线、问题清单 |
@@ -889,3 +889,12 @@
 - Actions Run：`29667952189`，五个 job 全部成功。
 - 远程证据：Windows/Ubuntu quality、PostgreSQL/Redis/MinIO/Celery production integration、MLflow/TensorBoard production experiment integration 与 Chromium acceptance 全绿。
 - 状态：第七周 Pipeline 调度、项目角色/审计、迁移、本地全量、WSL 生产集成和远程 CI 全部完成；开发队列转入第八周模型注册与基础推理。
+
+### 2026-07-18：第八周模型注册与基础推理设计确认
+
+- 架构：平台 PostgreSQL 保存逻辑模型、不可变版本、审批与部署状态；独立 `inference-runtime` 使用 ONNX Runtime 执行数据面推理。
+- 注册：受信任平台 joblib 在注册时隔离转换为 ONNX；已转换 ONNX 可携带显式 Schema 注册；验证或提交失败执行 Artifact 补偿。
+- 权限：owner/editor 注册、批准和创建部署；operator 启停与调用；viewer 只读；所有项目写操作接入第七周审计边界。
+- 推理：严格命名 JSON records，1 MiB/100 records 上限，返回预测、可选概率、版本和耗时；运行时仅开放内部鉴权接口。
+- 规格：`docs/superpowers/specs/2026-07-18-week8-model-registry-basic-inference-design.md`。
+- 当前状态：设计已确认并写入规格，等待书面规格审阅；实施计划、迁移、代码和测试尚未开始。
