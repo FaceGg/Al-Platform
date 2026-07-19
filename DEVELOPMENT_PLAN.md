@@ -932,3 +932,12 @@
 - 事务修正：`ArtifactService(commit=False)` 改为只 flush，不再内部开启 SAVEPOINT；批量数据 API 在单文件容错边界显式 `begin_nested()`，确保审计/注册外层 rollback 真正回滚 Artifact 元数据。
 - TDD：服务模块缺失先 RED；补偿用例暴露 SQLite SAVEPOINT 成为实际外层事务的持久化问题；修复后服务/Artifact/Storage/Dataset 回归 30/30 GREEN。
 - 遗留事项：Task 4 独立 ONNX Runtime 服务尚未开始；PostgreSQL 并发版本分配将在生产集成重复验证。
+
+### 2026-07-18：第八周 Task 4 独立 ONNX Runtime 完成
+
+- 运行时：新增内部 FastAPI 服务与锁保护的 process-local session cache；加载前验证 Artifact SHA-256/size，使用 CPUExecutionProvider，精确匹配冻结 input/output names。
+- 安全：所有 `/internal` 路由使用 `X-Inference-Internal-Token` 和 `hmac.compare_digest`；稳定错误响应不含 token、URI、样本或异常文本；`/health` 单独用于容器探针。
+- 推理：严格按冻结特征名排序，拒绝缺失/额外字段、bool 冒充数字、非有限值；限制 1-100 records 与 1 MiB body；返回 exact deployment/version、prediction、可选 probabilities 和 duration。
+- 并发：predict 在锁内取得不可变 loaded reference 后释放锁，unload 不破坏已开始的 inference；重复 load/unload 幂等，冲突规格返回 `DEPLOYMENT_SPEC_CONFLICT`。
+- TDD：runtime 包缺失先 RED；非有限值测试首次被 httpx 严格 JSON serializer 提前拒绝，改用原始非标准 JSON body 验证服务防御；runtime + conversion 14/14 GREEN。
+- 遗留事项：Task 5 Backend runtime client、部署 saga、周期 reconciliation、配置与 readiness 尚未开始。

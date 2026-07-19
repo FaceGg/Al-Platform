@@ -266,23 +266,23 @@ git commit -m "feat: register immutable ONNX model versions"
 - Create: `ml-platform/backend/app/inference_runtime/app.py`
 - Create: `ml-platform/backend/tests/test_inference_runtime.py`
 
-- [ ] **Step 1: Write RED runtime tests**
+- [x] **Step 1: Write RED runtime tests**
 
 Cover missing/invalid internal token, ONNX load, repeated load idempotency, conflicting spec rejection, unload idempotency, exact feature validation, 1-100 record limits, 1 MiB request limit, NaN/infinity rejection, prediction output, optional probabilities, duration/version identity, and concurrent prediction during unload.
 
 Name the focused cases `test_internal_routes_require_constant_time_token_auth`, `test_load_and_unload_are_idempotent`, `test_predict_orders_named_features_by_frozen_schema`, and `test_predict_rejects_unknown_missing_and_non_finite_values`. Generate a tiny real ONNX fixture and assert actual ONNX Runtime results rather than mocking the session.
 
-- [ ] **Step 2: Confirm missing-runtime RED**
+- [x] **Step 2: Confirm missing-runtime RED**
 
 ```powershell
 python -m unittest tests.test_inference_runtime -v
 ```
 
-- [ ] **Step 3: Implement session cache and tensor execution**
+- [x] **Step 3: Implement session cache and tensor execution**
 
 `RuntimeRegistry` owns a lock-protected mapping of deployment UUID to immutable `LoadedDeployment` records. Materialize only controlled Artifact URIs through `ArtifactStorage`, validate SHA-256/size before `onnxruntime.InferenceSession`, and use CPUExecutionProvider. Convert ordered records to NumPy tensors according to frozen schema. Acquire a loaded record reference before inference so unload cannot invalidate an active call.
 
-- [ ] **Step 4: Implement internal FastAPI routes**
+- [x] **Step 4: Implement internal FastAPI routes**
 
 ```text
 GET    /health
@@ -294,14 +294,14 @@ POST   /internal/deployments/{deployment_id}/predict
 
 Protect every `/internal` route with `X-Inference-Internal-Token` and `hmac.compare_digest`. Return stable codes without paths, tokens, URI credentials, record values, or exception text.
 
-- [ ] **Step 5: Verify runtime GREEN**
+- [x] **Step 5: Verify runtime GREEN**
 
 ```powershell
 python -m unittest tests.test_inference_runtime -v
 python -m compileall -q app/inference_runtime
 ```
 
-- [ ] **Step 6: Commit runtime**
+- [x] **Step 6: Commit runtime**
 
 ```powershell
 git add ml-platform/backend/app/inference_runtime ml-platform/backend/tests/test_inference_runtime.py
