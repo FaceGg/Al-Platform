@@ -980,3 +980,13 @@
 - 国际化：新增完全对称中英 `modelRegistry` 树，页面无硬编码可见中英文命令。
 - 验证：新客户端/页面 5/5；全前端 17 文件、44/44；TypeScript/Vite production build；官方 npm registry audit 0 漏洞。开发镜像 npm mirror 不支持 audit endpoint，审计显式使用官方只读 endpoint。
 - 遗留事项：Task 9 真实 Chromium 登录与完整 UI lifecycle，Task 10 后端/迁移/生产/远程 CI 和交付文档。
+
+### 2026-07-18：第八周 Task 9 Chromium 模型推理验收完成
+
+- Fixture：新增独立 Python fixture 脚本，直接使用生产 ORM/ArtifactService 在浏览器创建的项目内写入真实 TrainingJob、joblib Artifact 与 ModelLibrary provenance；未增加生产测试路由或授权绕过。
+- 运行环境：Playwright Backend、fixture 与单 worker inference runtime 共享隔离 SQLite URL、local Artifact 目录和 32+ 字符 internal token。
+- E2E：管理员真实登录，公共 API 创建项目，UI 新建逻辑模型、注册平台版本、批准 v1、创建/启动部署、提交 named records、验证概率与实际 v1、停止并验证 desired/observed 双状态。
+- 可访问性修正：Ant Design 中文 Modal/Drawer 按钮因视觉字距产生 `创 建`/`推 理` accessible name；关键确认按钮显式设置业务 `aria-label`，自动化与屏幕阅读器不再依赖样式化文本拆分。
+- TDD：fixture 缺失 RED；随后逐次通过 DOM snapshot 收窄 modal/drawer/row locator，无固定 sleep。
+- 验证：目标 Chromium 1/1（17.8 秒）；完整 Chromium 2/2，新模型推理与既有焊接模板均通过。
+- 遗留事项：Task 10 Week 8 最终 manifest 核对、全后端、迁移、隔离 WSL 生产、交付文档、推送和远程 CI。

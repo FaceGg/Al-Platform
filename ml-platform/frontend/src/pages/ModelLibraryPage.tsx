@@ -266,7 +266,7 @@ export default function ModelLibraryPage() {
       </Space>
     </section>
 
-    <Modal title={copy.registerVersion} open={Boolean(registerModel)} onCancel={() => setRegisterModel(undefined)} onOk={() => void submitVersion()} okText={copy.registerVersion}>
+    <Modal title={copy.registerVersion} open={Boolean(registerModel)} onCancel={() => setRegisterModel(undefined)} onOk={() => void submitVersion()} okText={copy.registerVersion} okButtonProps={{ "aria-label": copy.registerVersion }}>
       <Select aria-label={copy.sourceKind} value={registerSource} onChange={setRegisterSource} style={{ width: "100%", marginBottom: 16 }} options={[{ value: "platform_joblib", label: copy.platformSource }, { value: "onnx_artifact", label: copy.onnxSource }]} />
       <Form form={registerForm} layout="vertical">
         {registerSource === "platform_joblib" ? <Form.Item name="source_model_library_id" label={copy.sourceLibraryId} rules={[{ required: true }]}><Input /></Form.Item> : <>
@@ -276,7 +276,7 @@ export default function ModelLibraryPage() {
         </>}
       </Form>
     </Modal>
-    <Modal title={copy.register} open={modelOpen} onCancel={() => setModelOpen(false)} onOk={() => void submitModel()} okText={t.common.create}>
+    <Modal title={copy.register} open={modelOpen} onCancel={() => setModelOpen(false)} onOk={() => void submitModel()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
       <Form form={modelForm} layout="vertical">
         <Form.Item name="name" label={copy.name} rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item name="description" label={copy.description}><Input.TextArea rows={3} /></Form.Item>
@@ -290,10 +290,10 @@ export default function ModelLibraryPage() {
         { title: t.model.actions, render: (_: unknown, row: ModelVersion) => versionModel && canRegister && row.approval_status === "pending" ? <Space><Button icon={<CheckOutlined />} aria-label={`${copy.approve} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => void approve(versionModel, row)}>{copy.approve}</Button><Button danger aria-label={`${copy.reject} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => reject(versionModel, row)}>{copy.reject}</Button></Space> : null },
       ]} />
     </Drawer>
-    <Modal title={copy.createDeployment} open={deploymentOpen} onCancel={() => setDeploymentOpen(false)} onOk={() => void submitDeployment()} okText={t.common.create}>
+    <Modal title={copy.createDeployment} open={deploymentOpen} onCancel={() => setDeploymentOpen(false)} onOk={() => void submitDeployment()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
       <Form form={deploymentForm} layout="vertical"><Form.Item name="name" label={copy.name} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="model_version_id" label={copy.version} rules={[{ required: true }]}><Select options={approvedVersions.map(({ model, version }) => ({ value: version.id, label: `${model.name} v${version.version_number}` }))} /></Form.Item></Form>
     </Modal>
-    <Drawer title={testDeployment ? `${copy.onlineTest}: ${testDeployment.name}` : copy.onlineTest} open={Boolean(testDeployment)} onClose={() => setTestDeployment(undefined)} width={620} extra={<Button type="primary" onClick={() => void submitPrediction()}>{copy.predict}</Button>}>
+    <Drawer title={testDeployment ? `${copy.onlineTest}: ${testDeployment.name}` : copy.onlineTest} open={Boolean(testDeployment)} onClose={() => setTestDeployment(undefined)} width={620} extra={<Button type="primary" aria-label={copy.predict} onClick={() => void submitPrediction()}>{copy.predict}</Button>}>
       <Form form={predictionForm} layout="vertical"><Form.Item name="records" label={copy.recordsJson} rules={[{ required: true }]}><Input.TextArea rows={8} /></Form.Item></Form>
       {prediction && <Descriptions bordered size="small" column={1}>
         <Descriptions.Item label={copy.version}>v{prediction.version_number}</Descriptions.Item>

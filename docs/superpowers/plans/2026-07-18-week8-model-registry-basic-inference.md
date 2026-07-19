@@ -551,28 +551,28 @@ git commit -m "feat: operate registered models and inference"
 - Create: `ml-platform/frontend/e2e/model-inference.spec.ts`
 - Modify: frontend/backend browser fixtures only when needed for deterministic seeded model data.
 
-- [ ] **Step 1: Write browser RED path**
+- [x] **Step 1: Write browser RED path**
 
 The test logs in, selects a project, opens Models, registers a seeded trusted platform model, approves version 1, creates and starts a deployment, submits named weld records, verifies prediction and actual version, stops the deployment, and verifies the stopped state. Use role/name selectors and no fixed sleeps.
 
-- [ ] **Step 2: Run Chromium and confirm missing-flow RED**
+- [x] **Step 2: Run Chromium and confirm missing-flow RED**
 
 ```powershell
 npm run test:e2e -- --project=chromium --grep "model registry inference"
 ```
 
-- [ ] **Step 3: Add deterministic fixture setup**
+- [x] **Step 3: Add deterministic fixture setup**
 
 Seed through public authenticated APIs or a test-only fixture script run before the browser. Do not add production test bypass routes. The fixture must create a real project-owned training Artifact with platform provenance and deterministic feature schema.
 
-- [ ] **Step 4: Verify Chromium GREEN**
+- [x] **Step 4: Verify Chromium GREEN**
 
 ```powershell
 npm run test:e2e -- --project=chromium --grep "model registry inference"
 npm run test:e2e -- --project=chromium
 ```
 
-- [ ] **Step 5: Commit browser acceptance**
+- [x] **Step 5: Commit browser acceptance**
 
 ```powershell
 git add ml-platform/frontend/e2e/model-inference.spec.ts ml-platform/frontend/e2e/fixtures
