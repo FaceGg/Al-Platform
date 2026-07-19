@@ -19,6 +19,12 @@ from app.api.project_security import audit_service, require_project_access, reso
 from app.services.audit import AuditIntent
 
 router = APIRouter(prefix="/api", tags=["datasets"])
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/datasets/upload": "dataset.upload",
+    "POST /api/projects/{project_id}/datasets/batch": "dataset.batch_upload",
+    "POST /api/projects/{project_id}/datasets/batch-upload": "dataset.batch_upload",
+    "POST /api/projects/{project_id}/datasets/import-zip": "dataset.import_zip",
+}
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)

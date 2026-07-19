@@ -11,6 +11,10 @@ from app.api.project_security import audit_service, resolve_workflow_access
 from app.services.audit import AuditIntent
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows_direct"])
+PROJECT_WRITE_ACTIONS = {
+    "PUT /api/workflows/{workflow_id}": "workflow.update",
+    "DELETE /api/workflows/{workflow_id}": "workflow.delete",
+}
 
 
 def _to_uuid(value: str, id_map: dict[str, UUID]) -> UUID:

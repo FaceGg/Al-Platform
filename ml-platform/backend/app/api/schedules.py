@@ -26,6 +26,13 @@ from app.services.audit import AuditIntent
 
 
 router = APIRouter(tags=["schedules"])
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/schedules": "schedule.create",
+    "PATCH /api/schedules/{schedule_id}": "schedule.update",
+    "POST /api/schedules/{schedule_id}/pause": "schedule.pause",
+    "POST /api/schedules/{schedule_id}/resume": "schedule.resume",
+    "POST /api/schedules/{schedule_id}/backfill": "schedule.backfill",
+}
 
 
 def _error(code: str, message: str) -> dict:

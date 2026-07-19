@@ -1,6 +1,7 @@
 import unittest
 import uuid
 import io
+import importlib
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -16,6 +17,8 @@ from app.models.project import Project
 from app.models.run import WorkflowRun
 from app.models.user import User
 from app.models.workflow import Workflow, WorkflowNode
+from app.models.artifact import Artifact
+from app.models.model_library import ModelLibrary
 
 
 class TestProjectAccessAPI(unittest.TestCase):
@@ -312,6 +315,90 @@ class TestProjectRoleResourceAPI(unittest.TestCase):
             404,
         )
 
+    def test_project_model_artifacts_use_resource_permissions(self):
+        artifact = Artifact(
+            project_id=self.project.id,
+            name="Role model",
+            type="model",
+            storage_path="",
+            storage_uri="file:///missing/role-model.bin",
+            file_size=1,
+            format="bin",
+        )
+        self.db.add(artifact)
+        self.db.commit()
+
+        self._as("viewer")
+        self.assertEqual(
+            self.client.get(f"/api/projects/{self.project.id}/models").status_code,
+            200,
+        )
+        self._as("operator")
+        denied = self.client.delete(f"/api/models/{artifact.id}")
+        self.assertEqual(denied.status_code, 403, denied.text)
+        self._as("editor")
+        deleted = self.client.delete(f"/api/models/{artifact.id}")
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+
+    def test_project_model_library_uses_member_roles(self):
+        self._as("editor")
+        created = self.client.post("/api/model-library", json={
+            "name": "Member model", "project_id": str(self.project.id),
+        })
+        self.assertEqual(created.status_code, 200, created.text)
+        model_id = created.json()["id"]
+
+        self._as("viewer")
+        self.assertEqual(self.client.get(f"/api/model-library/{model_id}").status_code, 200)
+        self._as("operator")
+        denied = self.client.put(
+            f"/api/model-library/{model_id}", json={"description": "denied"},
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+        self._as("editor")
+        self.assertEqual(
+            self.client.put(
+                f"/api/model-library/{model_id}", json={"description": "updated"},
+            ).status_code,
+            200,
+        )
+        self.assertEqual(self.client.delete(f"/api/model-library/{model_id}").status_code, 200)
+
+    def test_workflow_agent_tasks_use_execution_roles(self):
+        self._as("operator")
+        created = self.client.post("/api/orchestration/tasks", json={
+            "name": "Role agent task", "workflow_id": str(self.workflow.id),
+        })
+        self.assertEqual(created.status_code, 200, created.text)
+        task_id = created.json()["id"]
+        sent = self.client.post(
+            f"/api/orchestration/tasks/{task_id}/messages",
+            json={"content": "operator message"},
+        )
+        self.assertEqual(sent.status_code, 200, sent.text)
+
+        self._as("viewer")
+        self.assertEqual(self.client.get(f"/api/orchestration/tasks/{task_id}").status_code, 200)
+        self.assertEqual(
+            self.client.get(
+                "/api/orchestration/tasks", params={"workflow_id": str(self.workflow.id)},
+            ).status_code,
+            200,
+        )
+        denied = self.client.post(
+            f"/api/orchestration/tasks/{task_id}/messages",
+            json={"content": "viewer denied"},
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+        self._as("outsider")
+        self.assertEqual(self.client.get(f"/api/orchestration/tasks/{task_id}").status_code, 404)
+        self.assertEqual(
+            self.client.get(
+                "/api/orchestration/tasks", params={"workflow_id": str(self.workflow.id)},
+            ).status_code,
+            404,
+        )
+
     def test_z_success_and_denied_writes_are_audited(self):
         actions = {
             (event.action, event.result)
@@ -328,6 +415,59 @@ class TestProjectRoleResourceAPI(unittest.TestCase):
         self.assertIn(("workflow.template_instantiate", "denied"), actions)
         self.assertIn(("dataset.upload", "success"), actions)
         self.assertIn(("dataset.upload", "denied"), actions)
+        self.assertIn(("model.delete", "success"), actions)
+        self.assertIn(("model.delete", "denied"), actions)
+        self.assertIn(("model_library.create", "success"), actions)
+        self.assertIn(("model_library.update", "denied"), actions)
+        self.assertIn(("agent_task.create", "success"), actions)
+        self.assertIn(("agent_task.message", "success"), actions)
+        self.assertIn(("agent_task.message", "denied"), actions)
+
+
+class TestProjectWriteAuditCompleteness(unittest.TestCase):
+    EXPECTED = {
+        "projects": {"project.create", "project.update", "project.delete", "project.batch_delete"},
+        "project_access": {
+            "project.member.add", "project.member.role_change", "project.member.remove",
+        },
+        "workflows": {"workflow.create", "workflow.update", "workflow.delete"},
+        "workflows_direct": {"workflow.update", "workflow.delete"},
+        "workflow_versions": {"workflow.publish", "workflow.restore"},
+        "templates": {"workflow.template_instantiate"},
+        "runs": {"workflow_run.start", "workflow_run.cancel"},
+        "datasets": {
+            "dataset.upload", "dataset.batch_upload", "dataset.import_zip",
+        },
+        "experiments": {"experiment.create"},
+        "training": {
+            "training_job.start", "training_job.stop", "training_job.resume",
+            "training_job.automl_start", "training_job.delete",
+        },
+        "schedules": {
+            "schedule.create", "schedule.update", "schedule.pause",
+            "schedule.resume", "schedule.backfill",
+        },
+        "models": {"model.delete"},
+        "model_library": {
+            "model_library.create", "model_library.update",
+            "model_library.delete", "model_library.batch_delete",
+        },
+        "orchestration": {
+            "agent_task.review", "agent_task.message", "agent_task.update",
+            "agent_task.delete", "agent_task.create", "agent_task.batch_delete",
+        },
+    }
+
+    def test_every_project_write_module_declares_audited_actions(self):
+        for module_name, expected_actions in self.EXPECTED.items():
+            with self.subTest(module=module_name):
+                module = importlib.import_module(f"app.api.{module_name}")
+                mapping = getattr(module, "PROJECT_WRITE_ACTIONS", None)
+                self.assertIsInstance(mapping, dict)
+                self.assertEqual(set(mapping.values()), expected_actions)
+                source = __import__("inspect").getsource(module)
+                for action in expected_actions:
+                    self.assertGreaterEqual(source.count(f'"{action}"'), 2, action)
 
 
 if __name__ == "__main__":

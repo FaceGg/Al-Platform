@@ -284,7 +284,7 @@ git commit -m "feat: enforce project roles on data training and schedules"
 - Modify: `ml-platform/backend/tests/test_api_project_access.py`
 - Modify: `ml-platform/backend/tests/test_module_imports.py`
 
-- [ ] **Step 1: Inventory writes**
+- [x] **Step 1: Inventory writes**
 
 ```powershell
 rg -n "@(router|app)\.(post|put|patch|delete)" ml-platform/backend/app/api
@@ -293,15 +293,15 @@ rg -n "Project\.owner_id|project_id" ml-platform/backend/app/api
 
 Classify every write as project-scoped, global admin, authentication, or non-project. Add reviewed project route/action pairs to the completeness test; no unclassified project write remains.
 
-- [ ] **Step 2: Add a failing completeness test**
+- [x] **Step 2: Add a failing completeness test**
 
 Assert every classified project write appears in its module's `PROJECT_WRITE_ACTIONS` mapping and uses the centralized access/audit boundary.
 
-- [ ] **Step 3: Migrate the classified project writes**
+- [x] **Step 3: Migrate the classified project writes**
 
 Apply helpers to project-bound model-library/model/orchestration routes. Do not change global admin, authentication, compute-owner, knowledge-base-owner, or annotation-owner semantics unless the resource is actually project-bound.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```powershell
 python -m unittest tests.test_api_project_access tests.test_module_imports -v

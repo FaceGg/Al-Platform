@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 _main_loop = None
 
 router = APIRouter(tags=["runs"])
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/workflows/{workflow_id}/run": "workflow_run.start",
+    "POST /api/runs/{run_id}/cancel": "workflow_run.cancel",
+}
 
 
 def get_task_dispatcher() -> TaskDispatcher:

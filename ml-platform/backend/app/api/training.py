@@ -27,6 +27,13 @@ from app.services.project_access import ProjectAccessService
 
 
 router = APIRouter(prefix="/api/training", tags=["training"])
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/training/run": "training_job.start",
+    "POST /api/training/jobs/{job_id}/stop": "training_job.stop",
+    "POST /api/training/jobs/{job_id}/resume": "training_job.resume",
+    "POST /api/training/automl/run": "training_job.automl_start",
+    "POST /api/training/batch-delete": "training_job.delete",
+}
 
 
 class TrainingRunRequest(BaseModel):

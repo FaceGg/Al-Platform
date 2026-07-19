@@ -17,6 +17,9 @@ from app.api.project_security import audit_service, resolve_project_access
 from app.services.audit import AuditIntent
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/templates/{template_id}/instantiate": "workflow.template_instantiate",
+}
 
 TEMPLATES = {
     "weld_quality": {

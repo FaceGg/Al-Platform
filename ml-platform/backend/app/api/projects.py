@@ -15,6 +15,12 @@ from app.api.project_security import (
 )
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects": "project.create",
+    "PUT /api/projects/{project_id}": "project.update",
+    "DELETE /api/projects/{project_id}": "project.delete",
+    "POST /api/projects/batch-delete": "project.batch_delete",
+}
 
 
 @router.get("", response_model=ProjectList)

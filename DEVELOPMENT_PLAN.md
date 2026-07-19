@@ -856,3 +856,13 @@
 - TDD 证据：editor/operator 原先被 owner-only 404、viewer 无法读取、操作员可越权上传等行为先 RED；Task 7 计划套件 41/41 GREEN，ArtifactService 相关回归随数据集模块额外通过。
 - 验证方式：四个目标 API 文件无直接 `db.commit()`，`python -m compileall -q app`、`git diff --check` 通过。
 - 遗留事项：Task 8 全项目写路由分类与剩余 project-bound 路由迁移、Task 9 全量/迁移/生产/远程验收尚待完成。
+
+### 2026-07-18：第七周角色审计 Task 8 项目写路由完整性完成
+
+- 盘点结果：全量扫描 `app/api` 写路由；14 个 project-write 模块声明 `PROJECT_WRITE_ACTIONS`，测试校验动作集合且每个动作同时出现在真实审计调用。PlatformAPI、Agent 本体、compute/knowledge/annotation 等保留全局或用户私有授权域。
+- 新增迁移：模型 Artifact 读删、带 `project_id` 的 ModelLibrary CRUD/批删、绑定 workflow 的 AgentTask review/message/update/delete/create/批删接入集中权限与审计；间接读取同步使用 hidden 404。
+- 权限语义：viewer 可读项目模型与任务；editor 管理模型资源；operator 操作 workflow-bound AgentTask；outsider 不能按 model/task ID 或 workflow 过滤探测项目资源。
+- 外部存储：模型 Artifact 先原子提交 DB 删除与 `model.delete` 审计，再做幂等对象清理，审计失败不会先丢模型内容。
+- TDD 证据：14 个模块清单缺失、viewer 模型 404、operator 越权更新 ModelLibrary、字符串 workflow UUID 写入失败、outsider 任务列表泄露均先 RED；实现后角色/清单/导入/旧 ModelLibrary/PlatformAPI 34/34 GREEN。
+- 验证方式：`python -m compileall -q app`、`git diff --check` 通过。
+- 遗留事项：仅剩 Task 9 manifest、全量、迁移、WSL 生产集成、远程 CI 和最终文档状态。

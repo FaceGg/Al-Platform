@@ -22,6 +22,11 @@ from app.services.project_access import ProjectAccessError, ProjectAccessService
 
 
 router = APIRouter(tags=["project-access"])
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/members": "project.member.add",
+    "PATCH /api/projects/{project_id}/members/{user_id}": "project.member.role_change",
+    "DELETE /api/projects/{project_id}/members/{user_id}": "project.member.remove",
+}
 
 
 def _http_access(error: ProjectAccessError):

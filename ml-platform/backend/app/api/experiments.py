@@ -30,6 +30,9 @@ from app.services.audit import AuditIntent
 
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/experiments": "experiment.create",
+}
 
 
 def get_experiment_tracking(request: Request):

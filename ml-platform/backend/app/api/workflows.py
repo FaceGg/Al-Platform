@@ -11,6 +11,11 @@ from app.api.project_security import audit_service, require_project_access, reso
 from app.services.audit import AuditIntent
 
 router = APIRouter(prefix="/api/projects", tags=["workflows"])
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/workflows": "workflow.create",
+    "PUT /api/projects/{project_id}/workflows/{workflow_id}": "workflow.update",
+    "DELETE /api/projects/{project_id}/workflows/{workflow_id}": "workflow.delete",
+}
 
 
 def _build_workflow_response(workflow: Workflow) -> WorkflowResponse:

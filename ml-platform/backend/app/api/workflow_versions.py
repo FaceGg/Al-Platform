@@ -14,6 +14,10 @@ from app.services.audit import AuditIntent
 
 
 router = APIRouter(prefix="/api/workflows", tags=["workflow_versions"])
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/workflows/{workflow_id}/publish": "workflow.publish",
+    "POST /api/workflows/{workflow_id}/versions/{version_number}/restore": "workflow.restore",
+}
 
 
 def _get_workflow(db: Session, workflow_id: str) -> Workflow:
