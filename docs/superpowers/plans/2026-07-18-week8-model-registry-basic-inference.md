@@ -389,11 +389,11 @@ git commit -m "feat: operate ONNX inference deployments"
 - Modify: `ml-platform/backend/tests/test_api_project_access.py`
 - Modify: `ml-platform/backend/tests/test_module_imports.py`
 
-- [ ] **Step 1: Write RED API and role tests**
+- [x] **Step 1: Write RED API and role tests**
 
 Cover all routes in the design: lists/details, streamed upload, create logical model, platform/ONNX version registration, approve/reject/archive, deployment create/detail/list/start/stop/predict. Assert `extra="forbid"`, UUID parsing, request limits, hidden outsider 404, visible 403, role matrix, immutable fields, stable domain codes, and audit success/denied/failed redaction.
 
-- [ ] **Step 2: Confirm route RED**
+- [x] **Step 2: Confirm route RED**
 
 ```powershell
 python -m unittest tests.test_api_model_registry tests.test_api_project_access tests.test_module_imports -v
@@ -401,7 +401,7 @@ python -m unittest tests.test_api_model_registry tests.test_api_project_access t
 
 Expected: route 404 and missing action mappings.
 
-- [ ] **Step 3: Implement strict schemas**
+- [x] **Step 3: Implement strict schemas**
 
 All write schemas inherit a strict base:
 
@@ -415,17 +415,17 @@ class PredictRequest(StrictSchema):
 
 Use separate schemas for model creation, platform registration, ONNX registration, approval, rejection, deployment creation, and response projections. Never expose internal tokens or storage credentials.
 
-- [ ] **Step 4: Implement router and audit action inventory**
+- [x] **Step 4: Implement router and audit action inventory**
 
 Declare `PROJECT_WRITE_ACTIONS` for every write route. Use new fine-grained permissions and `AuditService.project_action`; keep cross-service saga result events separate from command-acceptance events. Add safe 413 handling for upload/request byte limits. Register the router in `app/main.py`.
 
-- [ ] **Step 5: Verify API GREEN and existing model compatibility**
+- [x] **Step 5: Verify API GREEN and existing model compatibility**
 
 ```powershell
 python -m unittest tests.test_api_model_registry tests.test_api_project_access tests.test_api_model_library tests.test_module_imports -v
 ```
 
-- [ ] **Step 6: Commit APIs**
+- [x] **Step 6: Commit APIs**
 
 ```powershell
 git add ml-platform/backend/app/schemas/model_registry.py ml-platform/backend/app/api/model_registry.py ml-platform/backend/app/main.py ml-platform/backend/tests/test_api_model_registry.py ml-platform/backend/tests/test_api_project_access.py ml-platform/backend/tests/test_module_imports.py

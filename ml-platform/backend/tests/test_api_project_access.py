@@ -456,6 +456,13 @@ class TestProjectWriteAuditCompleteness(unittest.TestCase):
             "agent_task.review", "agent_task.message", "agent_task.update",
             "agent_task.delete", "agent_task.create", "agent_task.batch_delete",
         },
+        "model_registry": {
+            "registered_model.create", "model_artifact.upload",
+            "model_version.register", "model_version.approve",
+            "model_version.reject", "model_version.archive",
+            "inference_deployment.create", "inference_deployment.start",
+            "inference_deployment.stop",
+        },
     }
 
     def test_every_project_write_module_declares_audited_actions(self):

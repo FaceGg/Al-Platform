@@ -951,3 +951,12 @@
 - Readiness：新增 inference_runtime 探针；未配置 local 返回 LOCAL_MODE，失败返回 INFERENCE_RUNTIME_UNAVAILABLE。
 - TDD/验证：缺失服务、extra config、unknown permission、readiness key 均先 RED；实现后配置/权限/部署/readiness/Celery 51 通过、1 生产门禁 skip，compileall 与 diff check 通过。
 - 遗留事项：Task 6 严格 Pydantic schemas、项目权限、审计与完整公共 API 尚未开始。
+
+### 2026-07-18：第八周 Task 6 严格审计 API 完成
+
+- API：实现逻辑模型/版本/部署列表详情、ONNX 流式上传、平台或 ONNX 注册、批准/拒绝/归档、部署创建/启停和预测；所有写 schema `extra=forbid`，列表统一 `{items,total}`。
+- 权限：owner/editor 注册、审批和创建部署；operator 启停/预测；viewer 只读；间接 ID 先解析所属项目，outsider 隐藏 404，visible denial 403。
+- 审计：15 个 project-write 模块机器清单新增 9 个 model registry actions；注册、上传、审批、部署命令 success/denied/failed 均经统一事务边界，预测样本不入审计。
+- Saga：start/stop 审计定义为“命令已授权并接受”，持久审计后再调用 runtime；远程结果由 desired/observed 状态记录。平台转换生成外部 ONNX 对象在审计 commit 异常时显式补偿。
+- TDD：路由缺失先 RED；动态 action 拼接使完整性门禁 RED，改为显式字面 action 后通过；API/历史项目权限/旧 ModelLibrary/import 回归 34/34 GREEN。
+- 遗留事项：Task 7 runtime 镜像、Compose/CI 和真实 PostgreSQL+MinIO lifecycle 尚未开始。
