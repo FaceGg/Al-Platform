@@ -219,13 +219,13 @@ git commit -m "feat: add model registry persistence"
 - Create: `ml-platform/backend/app/services/model_registry.py`
 - Create: `ml-platform/backend/tests/test_model_registry_service.py`
 
-- [ ] **Step 1: Write RED service behavior tests**
+- [x] **Step 1: Write RED service behavior tests**
 
 Test streamed ONNX upload with SHA-256 and 256 MiB limit, upload compensation, trusted platform provenance, hidden cross-project source, monotonic concurrent version allocation, conversion compensation, immutable version snapshots, approve/reject/archive transitions, rejection comment requirement, and idempotent same-state approval.
 
 Name the focused cases `test_registration_compensates_onnx_when_commit_fails`, `test_platform_source_requires_training_provenance`, `test_versions_allocate_monotonically_under_concurrency`, and `test_approved_version_snapshot_is_immutable`. Use real temporary storage and database transactions; only inject the converter or commit failure where the external failure is the behavior under test.
 
-- [ ] **Step 2: Confirm service RED**
+- [x] **Step 2: Confirm service RED**
 
 ```powershell
 python -m unittest tests.test_model_registry_service -v
@@ -233,23 +233,23 @@ python -m unittest tests.test_model_registry_service -v
 
 Expected: missing `ModelRegistryService` and stream upload API.
 
-- [ ] **Step 3: Add bounded stream persistence**
+- [x] **Step 3: Add bounded stream persistence**
 
 Add `ArtifactService.create_from_stream(project_id, stream, filename, artifact_type, metadata, max_bytes, commit=False)`. Copy in 1 MiB chunks to a private temporary file, reject once cumulative bytes exceed `max_bytes`, then delegate to `create_from_file`. Always delete the temporary file. Use the existing storage compensation path.
 
-- [ ] **Step 4: Implement registry domain service**
+- [x] **Step 4: Implement registry domain service**
 
 Expose explicit methods `create_registered_model(db, *, project_id, actor_id, name, description)`, `register_platform_version(db, *, model_id, source_model_library_id)`, `register_onnx_version(db, *, model_id, source_artifact_id, feature_schema, output_schema)`, `approve(db, version_id, actor_id, comment="")`, `reject(db, version_id, actor_id, comment)`, and `archive(db, version_id, actor_id, comment="")` on `ModelRegistryService`.
 
 Lock the `RegisteredModel` row before calculating `max(version_number)+1`. Freeze source descriptors and metrics. Registration stores the ONNX Artifact before the registry transaction and deletes it on transaction failure. Domain exceptions expose only the stable codes from the design.
 
-- [ ] **Step 5: Verify service GREEN and Artifact regressions**
+- [x] **Step 5: Verify service GREEN and Artifact regressions**
 
 ```powershell
 python -m unittest tests.test_model_registry_service tests.test_artifact_service tests.test_storage -v
 ```
 
-- [ ] **Step 6: Commit registry service**
+- [x] **Step 6: Commit registry service**
 
 ```powershell
 git add ml-platform/backend/app/services/artifact_service.py ml-platform/backend/app/services/model_registry.py ml-platform/backend/tests/test_model_registry_service.py

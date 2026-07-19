@@ -69,9 +69,8 @@ class ArtifactService:
                 self.db.commit()
                 self.db.refresh(artifact)
             else:
-                with self.db.begin_nested():
-                    self.db.add(artifact)
-                    self.db.flush()
+                self.db.add(artifact)
+                self.db.flush()
         except Exception:
             if commit:
                 self.db.rollback()
@@ -140,6 +139,51 @@ class ArtifactService:
             },
             commit=commit,
         )
+
+    def create_from_stream(
+        self,
+        project_id,
+        stream,
+        filename: str,
+        artifact_type: str,
+        metadata: dict | None = None,
+        *,
+        max_bytes: int,
+        commit: bool = True,
+    ) -> Artifact:
+        if max_bytes <= 0:
+            raise ArtifactAccessError("Artifact size limit must be positive")
+        import tempfile
+
+        safe_filename = Path(filename).name
+        if not safe_filename or safe_filename != filename:
+            raise ArtifactAccessError("Invalid artifact filename")
+        temporary = Path(tempfile.gettempdir()) / (
+            f"artifact-upload-{uuid.uuid4().hex}-{safe_filename}"
+        )
+        size = 0
+        try:
+            with temporary.open("xb") as output:
+                while True:
+                    chunk = stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    if not isinstance(chunk, (bytes, bytearray)):
+                        raise ArtifactAccessError("Artifact stream must be binary")
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise ArtifactAccessError("Artifact exceeds size limit")
+                    output.write(chunk)
+            return self.create_from_file(
+                project_id,
+                temporary,
+                safe_filename,
+                artifact_type,
+                metadata={**(metadata or {}), "uploaded_size": size},
+                commit=commit,
+            )
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def resolve(self, artifact_id, project_id, expected_type: str | None = None) -> Artifact:
         artifact_id = self._coerce_uuid(artifact_id)

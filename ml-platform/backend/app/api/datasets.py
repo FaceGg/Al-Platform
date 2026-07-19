@@ -171,7 +171,10 @@ def batch_import(
         ):
             for file in files:
                 try:
-                    artifact = _store_uploaded_dataset(db, project_uuid, file, commit=False)
+                    with db.begin_nested():
+                        artifact = _store_uploaded_dataset(
+                            db, project_uuid, file, commit=False,
+                        )
                     storage_uris.append(artifact.storage_uri)
                     metadata = artifact.metadata_ or {}
 

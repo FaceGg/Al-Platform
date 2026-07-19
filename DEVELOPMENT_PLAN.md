@@ -923,3 +923,12 @@
 - TDD：模型模块缺失与 35/38 表差异先 RED；实现后 ORM 9/9、完整生产数据库与迁移 25/25 GREEN。
 - 验证：干净 SQLite 双 upgrade、current=`20260718_08`、`alembic check`、downgrade、compileall 和 `git diff --check` 通过。
 - 遗留事项：Task 3 流式上传、版本注册、并发分配、审批与补偿服务尚未开始。
+
+### 2026-07-18：第八周 Task 3 注册与审批服务完成
+
+- 流式制品：`ArtifactService.create_from_stream` 使用 1 MiB 分块、调用方上限、私有临时文件、SHA-256 和既有存储补偿；文件名拒绝路径片段。
+- 注册：平台源必须同项目、completed TrainingJob/ModelLibrary、关联同一 Artifact 且 metadata source 为 training/automl；生成独立 ONNX Artifact并冻结 Schema、指标、转换信息。直接 ONNX 注册要求同项目 model Artifact 和 format=onnx。
+- 生命周期：版本按锁定逻辑模型行后取 max+1；pending 可批准/拒绝/归档，同状态幂等，冲突终态返回稳定错误码，拒绝必须有评论。
+- 事务修正：`ArtifactService(commit=False)` 改为只 flush，不再内部开启 SAVEPOINT；批量数据 API 在单文件容错边界显式 `begin_nested()`，确保审计/注册外层 rollback 真正回滚 Artifact 元数据。
+- TDD：服务模块缺失先 RED；补偿用例暴露 SQLite SAVEPOINT 成为实际外层事务的持久化问题；修复后服务/Artifact/Storage/Dataset 回归 30/30 GREEN。
+- 遗留事项：Task 4 独立 ONNX Runtime 服务尚未开始；PostgreSQL 并发版本分配将在生产集成重复验证。
