@@ -158,13 +158,13 @@ git commit -m "feat: add safe ONNX model conversion"
 - Create: `ml-platform/backend/tests/test_model_registry_models.py`
 - Modify: `ml-platform/backend/tests/test_database_production.py`
 
-- [ ] **Step 1: Write RED ORM constraint and migration tests**
+- [x] **Step 1: Write RED ORM constraint and migration tests**
 
 Cover project/name uniqueness, per-model version uniqueness, valid source/approval/deployment state checks, exact Artifact foreign keys, `SET NULL` actor history, cascade ownership, and immutable version fields at the service boundary. Update expected production head to `20260718_08` and business table count from 35 to 38.
 
 Name the focused cases `test_registered_model_name_is_unique_per_project`, `test_version_number_is_unique_per_registered_model`, `test_deployment_requires_exact_model_version`, and `test_model_registry_revision_has_complete_downgrade`. Each must create real SQLAlchemy rows or execute the real Alembic revision rather than mock constraints.
 
-- [ ] **Step 2: Run model and migration tests for RED**
+- [x] **Step 2: Run model and migration tests for RED**
 
 ```powershell
 python -m unittest tests.test_model_registry_models tests.test_database_production -v
@@ -172,7 +172,7 @@ python -m unittest tests.test_model_registry_models tests.test_database_producti
 
 Expected: missing model module, head mismatch, and table-count failures.
 
-- [ ] **Step 3: Implement ORM entities**
+- [x] **Step 3: Implement ORM entities**
 
 Create `RegisteredModel`, `ModelVersion`, and `InferenceDeployment` with named unique/check constraints and indexes. Use these frozen state values:
 
@@ -185,11 +185,11 @@ OBSERVED_STATES = ("stopped", "starting", "running", "stopping", "failed")
 
 Store `feature_schema`, `output_schema`, `metrics`, and `conversion_metadata` as non-null JSON with empty defaults. Add relationships only where they clarify ownership; do not add mutable backrefs to immutable versions.
 
-- [ ] **Step 4: Add Alembic revision `20260718_08`**
+- [x] **Step 4: Add Alembic revision `20260718_08`**
 
 Create all three tables, constraints, and query indexes. Downgrade removes indexes and tables in dependency order. Update `HEAD_REVISION` and exact table assertions.
 
-- [ ] **Step 5: Verify ORM and clean migration**
+- [x] **Step 5: Verify ORM and clean migration**
 
 ```powershell
 $db = Join-Path $env:TEMP ("week8-models-" + [guid]::NewGuid().ToString("N") + ".db")
@@ -203,7 +203,7 @@ python -m unittest tests.test_model_registry_models tests.test_database_producti
 
 Expected: current revision `20260718_08`; no new upgrade operations; downgrade test passes.
 
-- [ ] **Step 6: Commit persistence**
+- [x] **Step 6: Commit persistence**
 
 ```powershell
 git add ml-platform/backend/app/models ml-platform/backend/alembic/versions/20260718_08_model_registry_inference.py ml-platform/backend/tests/test_model_registry_models.py ml-platform/backend/tests/test_database_production.py

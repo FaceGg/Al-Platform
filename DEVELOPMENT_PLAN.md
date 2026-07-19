@@ -914,3 +914,12 @@
 - 验证：ONNX 与 iterative training 回归 15/15、compileall、`git diff --check` 通过。
 - 环境说明：全局 Python 同时安装非项目依赖 `sktime` 与 `mlxtend`，两者对 sklearn 的版本要求互斥，因此全局 `pip check` 不能作为仓库依赖结论；干净 GitHub Actions/容器环境继续作为强制依赖门禁。
 - 遗留事项：Task 2 注册模型、不可变版本与部署持久化尚未开始。
+
+### 2026-07-18：第八周 Task 2 注册中心持久化完成
+
+- 模型：新增 `RegisteredModel`、不可变 `ModelVersion` 与 `InferenceDeployment`，覆盖项目/name、模型/version、状态、来源引用、查询索引和历史 actor `SET NULL` 约束。
+- 迁移：Alembic head 更新为 `20260718_08`，生产业务表从 35 增至 38；三表完整 downgrade 到 `20260718_07`。
+- 删除语义：Artifact/ModelLibrary/ModelVersion 引用使用 `DEFERRABLE INITIALLY DEFERRED`；单独删除受引用制品在 commit 时失败，删除整个 project 时交叉级联可在事务末统一通过。
+- TDD：模型模块缺失与 35/38 表差异先 RED；实现后 ORM 9/9、完整生产数据库与迁移 25/25 GREEN。
+- 验证：干净 SQLite 双 upgrade、current=`20260718_08`、`alembic check`、downgrade、compileall 和 `git diff --check` 通过。
+- 遗留事项：Task 3 流式上传、版本注册、并发分配、审批与补偿服务尚未开始。

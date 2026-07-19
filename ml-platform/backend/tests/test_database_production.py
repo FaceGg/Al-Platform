@@ -33,7 +33,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20260718_07"
+HEAD_REVISION = "20260718_08"
 
 
 class TestDatabaseEngineOptions(TestCase):
@@ -282,7 +282,7 @@ class TestAlembicBaseline(TestCase):
             try:
                 inspector = inspect(db_engine)
                 business_tables = set(inspector.get_table_names()) - {"alembic_version"}
-                self.assertEqual(len(business_tables), 35)
+                self.assertEqual(len(business_tables), 38)
                 self.assertTrue(
                     {
                         "users",
@@ -296,6 +296,9 @@ class TestAlembicBaseline(TestCase):
                         "pipeline_schedule_runs",
                         "project_members",
                         "audit_events",
+                        "registered_models",
+                        "model_versions",
+                        "inference_deployments",
                     }.issubset(business_tables)
                 )
                 self.assertIn(
@@ -400,6 +403,34 @@ class TestAlembicBaseline(TestCase):
                         text("SELECT version_num FROM alembic_version")
                     )
                 self.assertEqual(revision, "20260715_03")
+            finally:
+                db_engine.dispose()
+
+    def test_model_registry_revision_has_complete_downgrade(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "head")
+                command.downgrade(config, "20260718_07")
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                inspector = inspect(db_engine)
+                tables = set(inspector.get_table_names())
+                self.assertNotIn("registered_models", tables)
+                self.assertNotIn("model_versions", tables)
+                self.assertNotIn("inference_deployments", tables)
+                self.assertIn("audit_events", tables)
+                with db_engine.connect() as connection:
+                    revision = connection.scalar(
+                        text("SELECT version_num FROM alembic_version")
+                    )
+                self.assertEqual(revision, "20260718_07")
             finally:
                 db_engine.dispose()
 

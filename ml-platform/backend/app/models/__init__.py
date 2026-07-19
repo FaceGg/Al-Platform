@@ -12,6 +12,7 @@ from app.models.access import ProjectMember, AuditEvent
 from app.models.agent import Agent, AgentTask, AgentMessage
 from app.models.algorithm import Algorithm
 from app.models.model_library import ModelLibrary
+from app.models.model_registry import RegisteredModel, ModelVersion, InferenceDeployment
 from app.models.api_model import PlatformAPI
 from app.models.compute import ComputeNode, EdgeDevice
 from app.models.platform_models import Dataset, AnnotationTask, AnnotationResult, OrchestrationApp, OrchestrationVersion
@@ -42,6 +43,9 @@ __all__ = [
     "AgentMessage",
     "Algorithm",
     "ModelLibrary",
+    "RegisteredModel",
+    "ModelVersion",
+    "InferenceDeployment",
     "PlatformAPI",
     "ComputeNode",
     "EdgeDevice",
