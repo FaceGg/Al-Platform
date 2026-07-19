@@ -898,3 +898,10 @@
 - 推理：严格命名 JSON records，1 MiB/100 records 上限，返回预测、可选概率、版本和耗时；运行时仅开放内部鉴权接口。
 - 规格：`docs/superpowers/specs/2026-07-18-week8-model-registry-basic-inference-design.md`。
 - 当前状态：设计已确认并写入规格，等待书面规格审阅；实施计划、迁移、代码和测试尚未开始。
+
+### 2026-07-18：第八周实施计划完成
+
+- 计划：`docs/superpowers/plans/2026-07-18-week8-model-registry-basic-inference.md`。
+- 顺序：安全 ONNX 转换、注册持久化、版本服务、独立运行时、部署编排、审计 API、生产 Compose、前端运维、Chromium、全量验收。
+- 门禁：每项生产行为先观察 RED；依赖安装先配置阿里云 PyPI；默认 WSL Compose 不得被测试改动；远程 CI 全绿前保持第八周“进行中”。
+- 当前状态：书面规格与实施计划已完成；生产代码尚未开始。
