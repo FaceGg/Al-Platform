@@ -30,6 +30,8 @@ class TestSettings(unittest.TestCase):
             "mlflow_artifact_root": "s3://ml-platform/mlflow",
             "tensorboard_gateway_url": "http://tensorboard-gateway:6006",
             "tensorboard_session_secret": "tensorboard-session-secret-value-1234",
+            "inference_runtime_url": "http://inference-runtime:7000",
+            "inference_internal_secret": "inference-internal-secret-value-1234",
         }
         values.update(overrides)
         return values
@@ -102,20 +104,32 @@ class TestSettings(unittest.TestCase):
             "j" * 32,
         )
 
+    def test_production_requires_inference_runtime_and_secret(self):
+        for override in (
+            {"inference_runtime_url": None},
+            {"inference_internal_secret": None},
+        ):
+            with self.subTest(override=override):
+                with self.assertRaises(ValidationError):
+                    Settings(**self.production_values(**override))
+
     def test_secret_files_are_resolved(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             jwt_file = root / "jwt"
             access_file = root / "minio-access"
             secret_file = root / "minio-secret"
+            inference_file = root / "inference-secret"
             jwt_file.write_text("f" * 32 + "\n", encoding="utf-8")
             access_file.write_text("file-access\n", encoding="utf-8")
             secret_file.write_text("file-secret\n", encoding="utf-8")
+            inference_file.write_text("i" * 32 + "\n", encoding="utf-8")
 
             file_settings = Settings(
                 secret_key_file=str(jwt_file),
                 minio_access_key_file=str(access_file),
                 minio_secret_key_file=str(secret_file),
+                inference_internal_secret_file=str(inference_file),
             )
 
         self.assertEqual(
@@ -126,6 +140,10 @@ class TestSettings(unittest.TestCase):
         )
         self.assertEqual(
             file_settings.resolved_minio_secret_key.get_secret_value(), "file-secret"
+        )
+        self.assertEqual(
+            file_settings.resolved_inference_internal_secret.get_secret_value(),
+            "i" * 32,
         )
 
     def test_direct_value_and_file_conflict(self):
@@ -154,6 +172,7 @@ class TestSettings(unittest.TestCase):
             "minio-secret-value",
             "mlflow-db-password",
             "tensorboard-session-secret-value-1234",
+            "inference-internal-secret-value-1234",
             "legacy-llm-secret",
         )
         protected_settings = Settings(

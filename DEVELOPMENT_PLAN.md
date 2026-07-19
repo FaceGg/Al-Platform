@@ -941,3 +941,13 @@
 - 并发：predict 在锁内取得不可变 loaded reference 后释放锁，unload 不破坏已开始的 inference；重复 load/unload 幂等，冲突规格返回 `DEPLOYMENT_SPEC_CONFLICT`。
 - TDD：runtime 包缺失先 RED；非有限值测试首次被 httpx 严格 JSON serializer 提前拒绝，改用原始非标准 JSON body 验证服务防御；runtime + conversion 14/14 GREEN。
 - 遗留事项：Task 5 Backend runtime client、部署 saga、周期 reconciliation、配置与 readiness 尚未开始。
+
+### 2026-07-18：第八周 Task 5 部署控制面完成
+
+- 配置：production 强制 `INFERENCE_RUNTIME_URL` 与 32+ 字符 direct/file internal secret；新增转换/加载/推理 timeout，repr/dump/summary 不泄漏密钥或 URL 凭据。
+- 权限：冻结矩阵新增 model.register/model.approve/deployment.create/inference.operate；owner/editor 全部，operator 仅 inference.operate，viewer 只读。
+- Saga：approved-only 创建；start/stop 先持久 desired + transitional observed，再调用 runtime，最后持久 running/stopped 或 failed + 稳定码；重复操作幂等且失败可重试。
+- 恢复：Celery Beat 每 60 秒运行 `ml_platform.reconcile_inference_deployments`，按数据库 desired state reload runtime 重启后缺失 session、卸载多余 session，不擅自改变 desired state。
+- Readiness：新增 inference_runtime 探针；未配置 local 返回 LOCAL_MODE，失败返回 INFERENCE_RUNTIME_UNAVAILABLE。
+- TDD/验证：缺失服务、extra config、unknown permission、readiness key 均先 RED；实现后配置/权限/部署/readiness/Celery 51 通过、1 生产门禁 skip，compileall 与 diff check 通过。
+- 遗留事项：Task 6 严格 Pydantic schemas、项目权限、审计与完整公共 API 尚未开始。

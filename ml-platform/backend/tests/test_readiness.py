@@ -18,6 +18,7 @@ class TestReadiness(unittest.TestCase):
                 artifact_storage_backend="local",
                 mlflow_tracking_uri="http://mlflow:5000",
                 tensorboard_gateway_url="http://tensorboard-gateway:6006",
+                inference_runtime_url="http://inference-runtime:7000",
             ),
             http_client=http_client,
         )
@@ -27,10 +28,14 @@ class TestReadiness(unittest.TestCase):
 
         self.assertTrue(result["mlflow"]["ready"])
         self.assertTrue(result["tensorboard"]["ready"])
+        self.assertTrue(result["inference_runtime"]["ready"])
         http_client.get.assert_any_call("http://mlflow:5000/health", timeout=3.0)
         http_client.get.assert_any_call(
             "http://tensorboard-gateway:6006/openapi.json",
             timeout=3.0,
+        )
+        http_client.get.assert_any_call(
+            "http://inference-runtime:7000/health", timeout=3.0,
         )
 
     def test_experiment_service_failures_use_stable_redacted_codes(self):

@@ -28,6 +28,10 @@ PERMISSIONS = frozenset({
     "schedule.manage",
     "schedule.operate",
     "audit.read",
+    "model.register",
+    "model.approve",
+    "deployment.create",
+    "inference.operate",
 })
 
 ROLE_PERMISSIONS = {
@@ -40,11 +44,16 @@ ROLE_PERMISSIONS = {
         "execution.operate",
         "schedule.manage",
         "schedule.operate",
+        "model.register",
+        "model.approve",
+        "deployment.create",
+        "inference.operate",
     }),
     ProjectRole.OPERATOR: frozenset({
         "project.read",
         "execution.operate",
         "schedule.operate",
+        "inference.operate",
     }),
     ProjectRole.VIEWER: frozenset({"project.read"}),
 }

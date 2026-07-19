@@ -31,6 +31,7 @@ class ReadinessService:
             "storage": self._storage(),
             "mlflow": self._mlflow(),
             "tensorboard": self._tensorboard(),
+            "inference_runtime": self._inference_runtime(),
         }
         return {"ready": all(item["ready"] for item in checks.values()), **checks}
 
@@ -92,6 +93,13 @@ class ReadinessService:
             getattr(self.settings, "tensorboard_gateway_url", None),
             "/openapi.json",
             "TENSORBOARD_UNAVAILABLE",
+        )
+
+    def _inference_runtime(self):
+        return self._http_service(
+            getattr(self.settings, "inference_runtime_url", None),
+            "/health",
+            "INFERENCE_RUNTIME_UNAVAILABLE",
         )
 
     def _http_service(self, base_url, path, unavailable_code):

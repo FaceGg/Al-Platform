@@ -41,6 +41,18 @@ class FakeDB:
 
 
 class TestCeleryWorkflowClaims(unittest.TestCase):
+    def test_inference_reconciliation_is_registered_with_beat(self):
+        from app.tasks.celery_app import celery_app
+
+        self.assertIn(
+            "ml_platform.reconcile_inference_deployments",
+            celery_app.tasks,
+        )
+        self.assertEqual(
+            celery_app.conf.beat_schedule["inference-deployment-reconciliation"]["task"],
+            "ml_platform.reconcile_inference_deployments",
+        )
+
     def test_worker_import_registers_builtin_operators(self):
         command = (
             "import app.tasks.workflow_tasks; "

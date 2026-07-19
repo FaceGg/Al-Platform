@@ -66,6 +66,10 @@ class TestProjectPermissionMatrix(unittest.TestCase):
         "schedule.manage",
         "schedule.operate",
         "audit.read",
+        "model.register",
+        "model.approve",
+        "deployment.create",
+        "inference.operate",
     }
     GRANTS = {
         "owner": PERMISSIONS,
@@ -77,11 +81,16 @@ class TestProjectPermissionMatrix(unittest.TestCase):
             "execution.operate",
             "schedule.manage",
             "schedule.operate",
+            "model.register",
+            "model.approve",
+            "deployment.create",
+            "inference.operate",
         },
         "operator": {
             "project.read",
             "execution.operate",
             "schedule.operate",
+            "inference.operate",
         },
         "viewer": {"project.read"},
     }

@@ -31,9 +31,14 @@ celery_app.conf.update(
             "task": "ml_platform.recover_pipeline_schedules",
             "schedule": 60.0,
         },
+        "inference-deployment-reconciliation": {
+            "task": "ml_platform.reconcile_inference_deployments",
+            "schedule": 60.0,
+        },
     },
 )
 
 # Register tasks for CLI/import smoke checks as well as worker include discovery.
 from app.tasks import training_tasks  # noqa: E402,F401
 from app.tasks import scheduler_tasks  # noqa: E402,F401
+from app.tasks import inference_tasks  # noqa: E402,F401

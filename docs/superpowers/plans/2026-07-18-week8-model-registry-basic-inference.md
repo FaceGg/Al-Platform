@@ -326,17 +326,17 @@ git commit -m "feat: add authenticated ONNX inference runtime"
 - Modify: `ml-platform/backend/tests/test_readiness.py`
 - Modify: `ml-platform/backend/tests/test_celery_workflows.py`
 
-- [ ] **Step 1: Write RED configuration and deployment tests**
+- [x] **Step 1: Write RED configuration and deployment tests**
 
 Require `INFERENCE_RUNTIME_URL` and an internal secret/direct-file pair in production; redact both from settings errors and summaries. Test owner/editor create permission, operator start/stop/predict permission, approved-only deployment, state saga success/failure, repeated command idempotency, 30-second predict timeout, safe error persistence, and reconciliation after an empty runtime restart.
 
-- [ ] **Step 2: Confirm focused RED**
+- [x] **Step 2: Confirm focused RED**
 
 ```powershell
 python -m unittest tests.test_config tests.test_readiness tests.test_inference_deployment tests.test_celery_workflows -v
 ```
 
-- [ ] **Step 3: Add settings and permissions**
+- [x] **Step 3: Add settings and permissions**
 
 Add:
 
@@ -351,26 +351,26 @@ inference_predict_timeout_seconds: int = Field(default=30, ge=1, le=120)
 
 Resolve the secret pair like existing TensorBoard secrets. Add `model.register`, `model.approve`, `deployment.create`, and `inference.operate` to the frozen project permission matrix with the confirmed role assignments.
 
-- [ ] **Step 4: Implement runtime client and deployment service**
+- [x] **Step 4: Implement runtime client and deployment service**
 
 The client sends the internal token, uses exact timeouts, and maps network/status failures to stable domain codes. `InferenceDeploymentService` exposes create/start/stop/predict/reconcile methods. Commit command acceptance and desired/starting state before the remote call; persist observed result afterward in a new transaction. Never persist raw records or predictions.
 
-- [ ] **Step 5: Register periodic reconciliation**
+- [x] **Step 5: Register periodic reconciliation**
 
 Register `ml_platform.reconcile_inference_deployments` and add it to Beat at 60 seconds. Include `app.tasks.inference_tasks` in worker discovery without creating a Celery import cycle.
 
-- [ ] **Step 6: Add readiness probe**
+- [x] **Step 6: Add readiness probe**
 
 Include `inference_runtime` in `check_all`. Unconfigured local mode returns `LOCAL_MODE`; production failures return `INFERENCE_RUNTIME_UNAVAILABLE`. `build_readiness_service` shares the configured HTTP client behavior without logging the secret.
 
-- [ ] **Step 7: Verify focused GREEN**
+- [x] **Step 7: Verify focused GREEN**
 
 ```powershell
 python -m unittest tests.test_config tests.test_readiness tests.test_inference_deployment tests.test_celery_workflows -v
 python -m compileall -q app
 ```
 
-- [ ] **Step 8: Commit deployment control plane**
+- [x] **Step 8: Commit deployment control plane**
 
 ```powershell
 git add ml-platform/backend/app/config.py ml-platform/backend/app/services/project_access.py ml-platform/backend/app/services/inference_runtime_client.py ml-platform/backend/app/services/inference_deployment.py ml-platform/backend/app/tasks ml-platform/backend/app/services/readiness_service.py ml-platform/backend/app/api/readiness.py ml-platform/backend/tests

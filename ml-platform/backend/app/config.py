@@ -91,6 +91,14 @@ class Settings(BaseSettings):
     tensorboard_idle_timeout_seconds: int = Field(default=600, ge=60, le=86400)
     training_checkpoint_interval_epochs: int = Field(default=5, ge=1, le=1000)
     training_stale_after_seconds: int = Field(default=300, ge=30, le=86400)
+    inference_runtime_url: str | None = None
+    inference_internal_secret: SecretStr | None = Field(default=None, exclude=True)
+    inference_internal_secret_file: str | None = Field(
+        default=None, repr=False, exclude=True
+    )
+    inference_conversion_timeout_seconds: int = Field(default=120, ge=10, le=600)
+    inference_load_timeout_seconds: int = Field(default=60, ge=5, le=300)
+    inference_predict_timeout_seconds: int = Field(default=30, ge=1, le=120)
 
     # LLM / RAG settings
     llm_api_url: str = Field(
@@ -105,6 +113,7 @@ class Settings(BaseSettings):
     _resolved_minio_access_key: SecretStr | None = PrivateAttr(default=None)
     _resolved_minio_secret_key: SecretStr | None = PrivateAttr(default=None)
     _resolved_tensorboard_session_secret: SecretStr | None = PrivateAttr(default=None)
+    _resolved_inference_internal_secret: SecretStr | None = PrivateAttr(default=None)
 
     @property
     def resolved_secret_key(self) -> SecretStr:
@@ -122,6 +131,10 @@ class Settings(BaseSettings):
     def resolved_tensorboard_session_secret(self) -> SecretStr | None:
         return self._resolved_tensorboard_session_secret
 
+    @property
+    def resolved_inference_internal_secret(self) -> SecretStr | None:
+        return self._resolved_inference_internal_secret
+
     @model_validator(mode="after")
     def validate_runtime(self) -> "Settings":
         resolved_secret = self._resolve_secret_pair(
@@ -137,6 +150,9 @@ class Settings(BaseSettings):
         )
         self._resolved_tensorboard_session_secret = self._resolve_secret_pair(
             "tensorboard_session_secret", "tensorboard_session_secret_file"
+        )
+        self._resolved_inference_internal_secret = self._resolve_secret_pair(
+            "inference_internal_secret", "inference_internal_secret_file"
         )
 
         if self.app_mode == "production":
@@ -200,6 +216,14 @@ class Settings(BaseSettings):
             raise ValueError("Production mode requires TENSORBOARD_GATEWAY_URL")
         if not self._has_secret(self.resolved_tensorboard_session_secret):
             raise ValueError("Production mode requires TENSORBOARD_SESSION_SECRET")
+        if not self.inference_runtime_url or not self.inference_runtime_url.strip():
+            raise ValueError("Production mode requires INFERENCE_RUNTIME_URL")
+        if not self._has_secret(self.resolved_inference_internal_secret):
+            raise ValueError("Production mode requires INFERENCE_INTERNAL_SECRET")
+        if len(self.resolved_inference_internal_secret.get_secret_value()) < 32:
+            raise ValueError(
+                "Production inference internal secret must contain at least 32 characters"
+            )
 
         jwt_secret = self.resolved_secret_key.get_secret_value()
         if jwt_secret == DEFAULT_SECRET_KEY or len(jwt_secret) < 32:
@@ -275,6 +299,13 @@ class Settings(BaseSettings):
             "tensorboard_idle_timeout_seconds": self.tensorboard_idle_timeout_seconds,
             "training_checkpoint_interval_epochs": self.training_checkpoint_interval_epochs,
             "training_stale_after_seconds": self.training_stale_after_seconds,
+            "inference_runtime_url": self._sanitize_url(self.inference_runtime_url),
+            "inference_internal_secret_configured": self._has_secret(
+                self.resolved_inference_internal_secret
+            ),
+            "inference_conversion_timeout_seconds": self.inference_conversion_timeout_seconds,
+            "inference_load_timeout_seconds": self.inference_load_timeout_seconds,
+            "inference_predict_timeout_seconds": self.inference_predict_timeout_seconds,
             "jwt_secret_configured": self._has_secret(self.resolved_secret_key),
             "algorithm": self.algorithm,
             "access_token_expire_minutes": self.access_token_expire_minutes,
