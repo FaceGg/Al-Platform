@@ -77,13 +77,13 @@ export function formatResult(result: any, lang: "zh" | "en"): string {
 }
 
 function CustomNode({ data, selected }: NodeProps) {
-  const { lang } = useI18n();
+  const { lang, t } = useI18n();
   const status = (data.status as string) || "pending";
   const cfg = STATUS_CFG[status] || STATUS_CFG.pending;
   const progress = (data.progress as number) ?? undefined;
 
   const opId = data.operatorId as string || "";
-  const label = (data.label as string) || opId;
+  const label = (t as any).operator?.[opId] || (data.label as string) || opId;
   const nodeId = data.nodeId as string || "";
 
   const inputs = Array.isArray(data.inputs) ? data.inputs : [];

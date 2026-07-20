@@ -22,3 +22,7 @@ export async function restoreWorkflowVersion(workflowId: string, version: number
   const response = await apiClient.post(`/workflows/${workflowId}/versions/${version}/restore`);
   return response.data;
 }
+
+export async function deleteWorkflowVersion(workflowId: string, version: number) {
+  await apiClient.delete(`/workflows/${workflowId}/versions/${version}`);
+}

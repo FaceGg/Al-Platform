@@ -1,5 +1,6 @@
 import uuid
-from fastapi import APIRouter, Depends, Request
+
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.project import Project
@@ -25,11 +26,15 @@ PROJECT_WRITE_ACTIONS = {
 
 @router.get("", response_model=ProjectList)
 def list_projects(
+    sort_by: str = Query(default="created_at", pattern="^(name|created_at)$"),
+    sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     service = ProjectAccessService()
-    projects = service.accessible_project_query(db, current_user.id).all()
+    column = Project.name if sort_by == "name" else Project.created_at
+    ordering = column.asc() if sort_order == "asc" else column.desc()
+    projects = service.accessible_project_query(db, current_user.id).order_by(ordering).all()
     items = [{
         "id": project.id,
         "name": project.name,

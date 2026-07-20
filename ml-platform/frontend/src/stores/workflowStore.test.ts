@@ -77,4 +77,26 @@ describe("workflowStore", () => {
     useWorkflowStore.getState().setNodeStatus("n1", "running");
     expect(useWorkflowStore.getState().isRunning).toBe(false);
   });
+
+  it("copies and pastes the selected node with a new identity and offset", () => {
+    useWorkflowStore.getState().addNode("join", { x: 100, y: 200 }, { operatorId: "join", name: "Join" });
+    const source = useWorkflowStore.getState().nodes[0];
+    useWorkflowStore.getState().selectNode(source);
+    useWorkflowStore.getState().copySelectedNode();
+    useWorkflowStore.getState().pasteNode();
+    const nodes = useWorkflowStore.getState().nodes;
+    expect(nodes).toHaveLength(2);
+    expect(nodes[1].id).not.toBe(source.id);
+    expect(nodes[1].position).toEqual({ x: 140, y: 240 });
+    expect(nodes[1].data.params).toEqual(source.data.params);
+  });
+
+  it("keeps multiple upstream edges targeting the same input port", () => {
+    const store = useWorkflowStore.getState();
+    store.onConnect({ source: "source-a", sourceHandle: "data", target: "join", targetHandle: "left" });
+    store.onConnect({ source: "source-b", sourceHandle: "data", target: "join", targetHandle: "left" });
+    const edges = useWorkflowStore.getState().edges;
+    expect(edges).toHaveLength(2);
+    expect(edges.map((edge) => edge.source)).toEqual(["source-a", "source-b"]);
+  });
 });

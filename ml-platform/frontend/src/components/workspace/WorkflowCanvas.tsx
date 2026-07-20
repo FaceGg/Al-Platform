@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import ReactFlow, { Background, Controls, MiniMap } from "reactflow";
 import type { ReactFlowInstance } from "reactflow";
 import "reactflow/dist/style.css";
@@ -14,12 +14,30 @@ export default function WorkflowCanvas() {
     nodes, edges, onNodesChange, onEdgesChange, onConnect,
     selectNode, setReactFlowInstance, nodeStatuses, nodeProgress,
     operators,
+    copySelectedNode, pasteNode,
   } = useWorkflowStore();
 
   const onInit = useCallback(
     (instance: ReactFlowInstance) => setReactFlowInstance(instance),
     [setReactFlowInstance]
   );
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable='true']")) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        copySelectedNode();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
+        event.preventDefault();
+        pasteNode();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [copySelectedNode, pasteNode]);
 
   // ── Operator metadata lookup (guarantees ports even when data.inputs is empty) ──
   const opMeta = useMemo(() => {

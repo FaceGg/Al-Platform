@@ -1,8 +1,9 @@
 import { useEffect, useState, useRef } from "react";
-import { Card, Select, Button, InputNumber, Input, Typography, message, Table, Row, Col, Spin, Tag, Tabs } from "antd";
+import { App as AntApp, Card, Select, Button, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs } from "antd";
 import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient from "../api/client";
+import { getDatasetPreview, listDatasets } from "../api/datasets";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
 
@@ -10,10 +11,12 @@ const { Text, Title } = Typography;
 
 export default function AutoMLPage() {
   const { t } = useI18n();
+  const { message } = AntApp.useApp();
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [datasets, setDatasets] = useState<any[]>([]);
   const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
+  const [datasetColumns, setDatasetColumns] = useState<string[]>([]);
   const [targetColumn, setTargetColumn] = useState("");
   const [taskType, setTaskType] = useState("classification");
   const [timeBudget, setTimeBudget] = useState(60);
@@ -28,9 +31,20 @@ export default function AutoMLPage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedProject) { setDatasets([]); return; }
-    apiClient.get("/projects/" + selectedProject + "/datasets").then((res) => setDatasets(res.data.items || res.data || [])).catch(() => {});
+    if (!selectedProject) { setDatasets([]); setSelectedDataset(null); return; }
+    listDatasets(selectedProject).then(setDatasets).catch(() => setDatasets([]));
   }, [selectedProject]);
+
+  useEffect(() => {
+    if (!selectedDataset) { setDatasetColumns([]); setTargetColumn(""); return; }
+    getDatasetPreview(selectedDataset)
+      .then((data) => {
+        const columns = Array.isArray(data.columns) ? data.columns : [];
+        setDatasetColumns(columns);
+        setTargetColumn((current) => columns.includes(current) ? current : "");
+      })
+      .catch(() => { setDatasetColumns([]); message.error(t.common.error); });
+  }, [selectedDataset, t.common.error, message]);
 
   const allResults = results?.models || results?.all_results || [];
   const bestModel = results?.best_model || allResults[0];
@@ -104,17 +118,17 @@ export default function AutoMLPage() {
     setRunning(true);
     setResults(null);
     try {
-      const res = await apiClient.post("/automl/run", {
-        project_id: selectedProject, dataset_id: selectedDataset, target_column: targetColumn,
-        task_type: taskType, time_budget: timeBudget,
+      const res = await apiClient.post("/training/automl/run", {
+        project_id: selectedProject, dataset_artifact_id: selectedDataset, target_column: targetColumn,
+        task: taskType, time_budget: timeBudget,
       });
       const rid = res.data.run_id || res.data.id || res.data.job_id;
       const poll = setInterval(async () => {
         try {
-          const r = await apiClient.get("/automl/runs/" + rid);
+          const r = await apiClient.get("/training/jobs/" + rid);
           const d = r.data;
-          if (d.status === "completed" || d.status === "done" || d.best_model) {
-            clearInterval(poll); setResults(d); setRunning(false); message.success(t.common.success);
+          if (d.status === "completed" || d.status === "done") {
+            clearInterval(poll); setResults(d.metrics || d); setRunning(false); message.success(t.common.success);
           } else if (d.status === "failed") {
             clearInterval(poll); setRunning(false); message.error(t.common.error);
           }
@@ -146,9 +160,10 @@ export default function AutoMLPage() {
               options={projects.map((p: any) => ({ value: p.id, label: p.name }))} /></Col>
           <Col xs={24} sm={6}><Text strong>{t.automl?.select_dataset || "Dataset"}</Text>
             <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.select_dataset} value={selectedDataset} onChange={setSelectedDataset}
-              options={datasets.map((d: any) => ({ value: d.id, label: d.filename || d.name }))} /></Col>
+              options={datasets.map((d: any) => ({ value: d.id, label: d.name || d.filename }))} /></Col>
           <Col xs={24} sm={4}><Text strong>{t.automl?.target || "Target"}</Text>
-            <Input style={{ marginTop: 4 }} placeholder={t.automl?.target} value={targetColumn} onChange={(e) => setTargetColumn(e.target.value)} /></Col>
+            <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.target} value={targetColumn || undefined} onChange={setTargetColumn}
+              disabled={!selectedDataset} options={datasetColumns.map((column) => ({ value: column, label: column }))} /></Col>
           <Col xs={24} sm={4}><Text strong>{t.automl?.task || "Task"}</Text>
             <Select style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={setTaskType}
               options={[{ value: "classification", label: "Classification" }, { value: "regression", label: "Regression" }]} /></Col>

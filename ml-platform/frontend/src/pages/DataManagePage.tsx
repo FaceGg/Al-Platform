@@ -6,6 +6,7 @@ import {
   UploadOutlined, DownloadOutlined, DeleteOutlined, EyeOutlined, ImportOutlined, ExportOutlined
 } from "@ant-design/icons";
 import apiClient from "../api/client";
+import { getDatasetPreview, listDatasets } from "../api/datasets";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
 
@@ -27,14 +28,17 @@ export default function DataManagePage() {
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (!selectedProject) { setDatasets([]); return; }
+  const loadDatasets = (projectId: string | null) => {
     setLoading(true);
-    apiClient.get("/projects/" + selectedProject + "/datasets")
-      .then((res) => setDatasets(res.data.items || res.data || []))
+    listDatasets(projectId || undefined)
+      .then(setDatasets)
       .catch(() => message.error(t.common.error))
       .finally(() => setLoading(false));
-  }, [selectedProject, t]);
+  };
+
+  useEffect(() => {
+    loadDatasets(selectedProject);
+  }, [selectedProject]);
 
   const handleUpload = async (file: File) => {
     if (!selectedProject) { message.warning(t.automl.select_project); return false; }
@@ -46,8 +50,7 @@ export default function DataManagePage() {
       });
       message.success(t.common.success);
       // reload
-      apiClient.get("/projects/" + selectedProject + "/datasets")
-        .then((res) => setDatasets(res.data.items || res.data || []));
+      loadDatasets(selectedProject);
     } catch (e: any) {
       message.error(e.response?.data?.detail || t.common.error);
     }
@@ -61,7 +64,7 @@ export default function DataManagePage() {
       cancelText: t.common.cancel,
       onOk: async () => {
         try {
-          await apiClient.delete("/projects/" + selectedProject + "/datasets/" + dsId);
+          await apiClient.delete("/datasets/" + dsId);
           message.success(t.common.success);
           setDatasets((prev) => prev.filter((d) => d.id !== dsId));
         } catch (e: any) {
@@ -73,37 +76,52 @@ export default function DataManagePage() {
 
   const handlePreview = async (dsId: string) => {
     try {
-      const res = await apiClient.get("/projects/" + selectedProject + "/datasets/" + dsId + "/preview");
-      setPreviewData(res.data);
+      const data = await getDatasetPreview(dsId);
+      const columns = data.columns || [];
+      const rows = Array.isArray(data.preview)
+        ? data.preview.map((row: Record<string, unknown>) => columns.map((column: string) => row[column]))
+        : data.rows || [];
+      setPreviewData({ columns, rows });
       setPreviewOpen(true);
     } catch (e: any) {
       message.error(e.response?.data?.detail || t.common.error);
     }
   };
 
-  const handleDownload = (dsId: string) => {
-    const token = localStorage.getItem("token");
-    const url = "/api/projects/" + selectedProject + "/datasets/" + dsId + "/download";
-    const a = document.createElement("a");
-    a.href = url + "?token=" + token;
-    a.click();
+  const handleDownload = async (dsId: string) => {
+    try {
+      const response = await apiClient.get("/datasets/" + dsId + "/export", { responseType: "blob" });
+      const url = URL.createObjectURL(response.data);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "dataset.csv";
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || t.common.error);
+    }
   };
 
   const handleExport = async () => {
     if (!selectedProject) return;
     try {
-      await apiClient.post("/projects/" + selectedProject + "/datasets/export");
-      message.success(t.common.success);
+      const response = await apiClient.get("/projects/" + selectedProject + "/datasets/export", { responseType: "blob" });
+      const url = URL.createObjectURL(response.data);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "datasets.zip";
+      anchor.click();
+      URL.revokeObjectURL(url);
     } catch (e: any) {
       message.error(e.response?.data?.detail || t.common.error);
     }
   };
 
   const columns = [
-    { title: t.data.filename, dataIndex: "filename", key: "filename", ellipsis: true },
+    { title: t.data.filename, dataIndex: "name", key: "name", ellipsis: true },
     { title: t.data.format, dataIndex: "format", key: "format", width: 80,
       render: (v: string) => <Tag>{v || "csv"}</Tag> },
-    { title: t.data.size, dataIndex: "size_bytes", key: "size",
+    { title: t.data.size, dataIndex: "file_size", key: "size",
       render: (v: number) => v ? (v / 1024).toFixed(1) + " KB" : "-" },
     { title: t.data.rows, dataIndex: "row_count", key: "rows", width: 80 },
     { title: t.model.created, dataIndex: "created_at", key: "created_at", width: 160 },
@@ -151,7 +169,7 @@ export default function DataManagePage() {
           columns={columns}
           loading={loading}
           pagination={{ pageSize: 15 }}
-          locale={{ emptyText: t.automl.select_project }}
+          locale={{ emptyText: selectedProject ? t.common.no_data : t.common.no_data }}
         />
       </Card>
       <Modal

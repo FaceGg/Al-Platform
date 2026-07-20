@@ -100,6 +100,20 @@ export default function NodeConfigPanel() {
     if (isCSVImport && p.name === "file_path" && sourceValue !== "local") return null;
     if (isCSVImport && p.name === "url" && sourceValue !== "url") return null;
 
+    if (operator?.id === "join" && (p.name === "left_keys" || p.name === "right_keys")) {
+      const selected = String(value || "").split(",").map((column) => column.trim()).filter(Boolean);
+      return (
+        <Select
+          mode="multiple"
+          style={{ width: "100%" }}
+          value={selected}
+          onChange={(columns) => handleParamChange(p.name, columns.join(","))}
+          placeholder={getPortLabel("join", p.name, lang) || p.label || p.name}
+          options={upstreamColumns.map((column) => ({ label: column, value: column }))}
+        />
+      );
+    }
+
     const colName = isColumnParam(p.name);
     if (colName && upstreamColumns.length > 0 && (p.type === "str" || p.type === "select")) {
       const portLabel = getPortLabel(operator?.id, p.name, lang) || p.label || p.name;

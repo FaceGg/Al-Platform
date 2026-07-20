@@ -11,6 +11,7 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 async def chat(
     message: str = Body(...),
     system_prompt: str = Body(default="You are a helpful AI assistant for welding manufacturing."),
+    temperature: float = Body(default=0.7, ge=0, le=1),
     current_user: User = Depends(get_current_user),
 ):
     """Send a message to the configured LLM and get a response."""
@@ -32,7 +33,7 @@ async def chat(
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": message},
                     ],
-                    "temperature": 0.7,
+                    "temperature": temperature,
                     "max_tokens": 2000,
                 },
             )

@@ -14,7 +14,9 @@ const weekTestFiles: Record<number, string[]> = {
     "./stores/workflowStore.test.ts",
   ],
   3: [
+    "./api/datasets.test.ts",
     "./api/training.test.ts",
+    "./pages/DataManagePage.test.tsx",
     "./pages/TrainingJobsPage.test.tsx",
   ],
   4: [

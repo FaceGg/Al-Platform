@@ -9,6 +9,7 @@ export interface WorkflowState {
   nodes: Node[];
   edges: Edge[];
   selectedNode: Node | null;
+  copiedNode: Node | null;
   isRunning: boolean;
   currentRunId: string | null;
   workflowStatus: WorkflowRunStatus;
@@ -34,6 +35,8 @@ export interface WorkflowState {
   setNodeProgress: (nodeId: string, progress: number) => void;
   setReactFlowInstance: (instance: ReactFlowInstance | null) => void;
   removeEdge: (edgeId: string) => void;
+  copySelectedNode: () => void;
+  pasteNode: () => void;
   resetExecution: () => void;
   reset: () => void;
 }
@@ -50,6 +53,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   nodeProgress: {},
   operators: [],
   reactFlowInstance: null,
+  copiedNode: null as Node | null,
 
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
@@ -132,6 +136,23 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       edges: applyEdgeChanges([{ type: "remove", id: edgeId } as EdgeChange], state.edges),
       isDirty: true,
     })),
+
+  copySelectedNode: () => set((state) => ({
+    copiedNode: state.selectedNode ? structuredClone(state.selectedNode) : null,
+  })),
+
+  pasteNode: () => set((state) => {
+    if (!state.copiedNode) return {};
+    const source = state.copiedNode;
+    const node: Node = {
+      ...source,
+      id: "node_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+      position: { x: source.position.x + 40, y: source.position.y + 40 },
+      selected: true,
+      data: structuredClone(source.data),
+    };
+    return { nodes: [...state.nodes, node], selectedNode: node };
+  }),
 
   resetExecution: () =>
     set({

@@ -74,6 +74,27 @@ class TestDatasetsAPI(unittest.TestCase):
         self.assertTrue(all(item["project_id"] == self.project_id for item in data["items"]))
         self.assertTrue(all("storage_path" not in item for item in data["items"]))
 
+    def test_03b_list_all_owned_datasets_without_selecting_a_project(self):
+        r = client.get("/api/datasets", headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertGreaterEqual(data["total"], 2)
+        self.assertTrue(all(item["type"] == "dataset" for item in data["items"]))
+        self.assertTrue(all(item["project_id"] for item in data["items"]))
+
+    def test_03c_delete_dataset_removes_the_owned_artifact(self):
+        uploaded = client.post(
+            f"/api/projects/{self.project_id}/datasets/upload",
+            files={"file": ("delete-me.csv", self._make_csv(), "text/csv")},
+            headers=self.h,
+        )
+        self.assertEqual(uploaded.status_code, 200)
+        dataset_id = uploaded.json()["id"]
+        response = client.delete(f"/api/datasets/{dataset_id}", headers=self.h)
+        self.assertEqual(response.status_code, 204)
+        preview = client.get(f"/api/datasets/{dataset_id}/preview", headers=self.h)
+        self.assertEqual(preview.status_code, 404)
+
     def test_04_preview_nonexistent_dataset(self):
         r = client.get(f"/api/datasets/{uuid.uuid4()}/preview", headers=self.h)
         self.assertEqual(r.status_code, 404)

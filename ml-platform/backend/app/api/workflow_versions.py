@@ -134,6 +134,24 @@ def get_version(
     return _serialize(version, include_snapshot=True)
 
 
+@router.delete("/{workflow_id}/versions/{version_number}", status_code=204)
+def delete_version(
+    workflow_id: str,
+    version_number: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    workflow = _get_workflow(db, workflow_id)
+    version = db.query(WorkflowVersion).filter(
+        WorkflowVersion.workflow_id == workflow.id,
+        WorkflowVersion.version == version_number,
+    ).first()
+    if version is None:
+        raise HTTPException(404, "Workflow version not found")
+    db.delete(version)
+    db.commit()
+
+
 @router.post("/{workflow_id}/versions/{version_number}/restore")
 def restore_version(
     workflow_id: str,

@@ -15,13 +15,16 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<any[]>([]);
 
   useEffect(() => {
-    Promise.all([
+    const loadDashboard = () => Promise.all([
       apiGet("/dashboard/stats").catch(() => null),
       apiGet("/projects").catch(() => null),
     ]).then(([stats, proj]) => {
       setDashStats(stats);
       setProjects((proj?.items || []).slice(0, 6));
     }).finally(() => setLoading(false));
+    loadDashboard();
+    const timer = window.setInterval(loadDashboard, 15000);
+    return () => window.clearInterval(timer);
   }, []);
 
   if (loading) return <AppLayout><Spin size="large" style={{ display: "block", margin: "120px auto" }} /></AppLayout>;

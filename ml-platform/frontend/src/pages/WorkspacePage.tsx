@@ -12,7 +12,7 @@ import NodeConfigPanel from "../components/workspace/NodeConfigPanel";
 import ExecutionProgress from "../components/workspace/ExecutionProgress";
 import { useWorkflowStore } from "../stores/workflowStore";
 import type { NodeRunStatus, WorkflowRunStatus } from "../stores/workflowStore";
-import { listWorkflowVersions, publishWorkflow, restoreWorkflowVersion, WorkflowVersionSummary } from "../api/workflowVersions";
+import { deleteWorkflowVersion, listWorkflowVersions, publishWorkflow, restoreWorkflowVersion, WorkflowVersionSummary } from "../api/workflowVersions";
 
 const { Sider, Content } = Layout;
 
@@ -192,6 +192,17 @@ export default function WorkspacePage() {
     setVersionsOpen(false);
     loadWorkflow();
     message.success(`已恢复版本 v${version} 到草稿`);
+  };
+
+  const handleDeleteVersion = async (version: number) => {
+    if (!workflowId) return;
+    try {
+      await deleteWorkflowVersion(workflowId, version);
+      setVersions((current) => current.filter((item) => item.version !== version));
+      message.success(`已删除版本 v${version}`);
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || "删除版本失败");
+    }
   };
 
   const handleStop = async () => {
@@ -387,7 +398,14 @@ export default function WorkspacePage() {
                   content: "当前草稿将被该版本覆盖，已发布历史不会删除。",
                   onOk: () => handleRestoreVersion(item.version),
                 });
-              }}>恢复</Button>]}>
+              }}>恢复</Button>, <Button key="delete" size="small" danger onClick={() => {
+                Modal.confirm({
+                  title: `删除版本 v${item.version}？`,
+                  content: "此操作不可撤销。",
+                  okType: "danger",
+                  onOk: () => handleDeleteVersion(item.version),
+                });
+              }}>删除</Button>]}>
                 <List.Item.Meta
                   title={<Space><Tag color="blue">v{item.version}</Tag>{item.name}</Space>}
                   description={item.published_at ? new Date(item.published_at).toLocaleString() : ""}
