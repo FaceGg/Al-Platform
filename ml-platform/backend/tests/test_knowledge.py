@@ -49,6 +49,19 @@ class TestKnowledgeAPI(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         client.delete(f"/api/knowledge/bases/{kbid}", headers=h)
 
+    def test_03b_upload_and_delete_document_use_canonical_routes(self):
+        h = login_headers()
+        kb = client.post("/api/knowledge/bases", json={"name": "Document route test"}, headers=h).json()
+        uploaded = client.post(
+            f"/api/knowledge/bases/{kb['id']}/documents",
+            files={"file": ("weld.txt", b"Spot welding process knowledge.", "text/plain")},
+            headers=h,
+        )
+        self.assertEqual(uploaded.status_code, 200)
+        deleted = client.delete(f"/api/knowledge/documents/{uploaded.json()['id']}", headers=h)
+        self.assertEqual(deleted.status_code, 200)
+        client.delete(f"/api/knowledge/bases/{kb['id']}", headers=h)
+
     def test_04_add_entity_and_graph(self):
         h = login_headers()
         r = client.post("/api/knowledge/bases", json={

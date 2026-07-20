@@ -76,6 +76,41 @@ def _read_dataset(path: Path):
     return pd.read_csv(path)
 
 
+def _serialize_dataset(artifact: Artifact) -> dict:
+    metadata = artifact.metadata_ or {}
+    return {
+        "id": str(artifact.id),
+        "artifact_id": str(artifact.id),
+        "project_id": str(artifact.project_id),
+        "name": artifact.name,
+        "filename": artifact.name,
+        "type": artifact.type,
+        "format": artifact.format,
+        "file_size": artifact.file_size,
+        "size_bytes": artifact.file_size,
+        "row_count": metadata.get("row_count", 0),
+        "schema": metadata.get("schema", []),
+        "created_at": artifact.created_at,
+    }
+
+
+@router.get("/datasets")
+def list_owned_datasets(
+    project_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    query = (
+        db.query(Artifact)
+        .join(Project, Artifact.project_id == Project.id)
+        .filter(Artifact.type == "dataset", Project.owner_id == current_user.id)
+    )
+    if project_id:
+        query = query.filter(Artifact.project_id == UUID(project_id))
+    artifacts = query.order_by(Artifact.created_at.desc()).all()
+    return {"items": [_serialize_dataset(artifact) for artifact in artifacts], "total": len(artifacts)}
+
+
 @router.get("/projects/{project_id}/datasets")
 def list_project_datasets(
     project_id: str,
@@ -89,21 +124,7 @@ def list_project_datasets(
     artifacts = db.query(Artifact).filter(
         Artifact.project_id == project.id, Artifact.type == "dataset",
     ).order_by(Artifact.created_at.desc()).all()
-    items = []
-    for artifact in artifacts:
-        metadata = artifact.metadata_ or {}
-        items.append({
-            "id": str(artifact.id),
-            "artifact_id": str(artifact.id),
-            "project_id": str(artifact.project_id),
-            "name": artifact.name,
-            "type": artifact.type,
-            "format": artifact.format,
-            "file_size": artifact.file_size,
-            "row_count": metadata.get("row_count", 0),
-            "schema": metadata.get("schema", []),
-            "created_at": artifact.created_at,
-        })
+    items = [_serialize_dataset(artifact) for artifact in artifacts]
     return {"items": items, "total": len(items)}
 
 
@@ -310,6 +331,27 @@ def export_single_dataset(
         media_type=media_type,
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.delete("/datasets/{dataset_id}", status_code=204)
+def delete_dataset(
+    dataset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    artifact = db.query(Artifact).join(Project).filter(
+        Artifact.id == UUID(dataset_id),
+        Artifact.type == "dataset",
+        Project.owner_id == current_user.id,
+    ).first()
+    if not artifact:
+        raise HTTPException(404, "Dataset not found")
+    try:
+        build_artifact_service(db).delete_content(artifact)
+    except ArtifactAccessError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    db.delete(artifact)
+    db.commit()
 
 
 

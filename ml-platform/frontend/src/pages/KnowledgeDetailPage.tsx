@@ -88,7 +88,7 @@ export default function KnowledgeDetailPage() {
   const uploadDoc = async (file: File) => {
     const formData = new FormData(); formData.append("file", file);
     try {
-      await apiClient.post("/knowledge/bases/" + kbId + "/documents/upload", formData, { headers: { "Content-Type": "multipart/form-data" } });
+      await apiClient.post("/knowledge/bases/" + kbId + "/documents", formData, { headers: { "Content-Type": "multipart/form-data" } });
       message.success(t.common.success); loadDocs(); loadVectorStats();
     } catch (e: any) { message.error(e.response?.data?.detail || t.common.error); }
     return false;
@@ -97,7 +97,7 @@ export default function KnowledgeDetailPage() {
   const deleteDoc = (docId: string) => {
     Modal.confirm({ title: t.common.delete + "?", okType: "danger", cancelText: t.common.cancel,
       onOk: async () => {
-        try { await apiClient.delete("/knowledge/bases/" + kbId + "/documents/" + docId); message.success(t.common.success); loadDocs(); loadVectorStats(); }
+        try { await apiClient.delete("/knowledge/documents/" + docId); message.success(t.common.success); loadDocs(); loadVectorStats(); }
         catch (e: any) { message.error(e.response?.data?.detail || t.common.error); }
       },
     });

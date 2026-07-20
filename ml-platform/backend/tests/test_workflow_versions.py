@@ -97,6 +97,21 @@ class TestWorkflowVersions(unittest.TestCase):
         )
         self.assertEqual(detail.json()["workflow_version"], published["version"])
 
+    def test_04_delete_a_published_version(self):
+        published = self.client.post(
+            f"/api/workflows/{self.workflow_id}/publish", headers=self.headers,
+        )
+        self.assertEqual(published.status_code, 201)
+        version_number = published.json()["version"]
+        response = self.client.delete(
+            f"/api/workflows/{self.workflow_id}/versions/{version_number}", headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 204)
+        versions = self.client.get(
+            f"/api/workflows/{self.workflow_id}/versions", headers=self.headers,
+        )
+        self.assertNotIn(version_number, [item["version"] for item in versions.json()["items"]])
+
 
 if __name__ == "__main__":
     unittest.main()

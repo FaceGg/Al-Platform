@@ -19,23 +19,23 @@ export default function ComputeResourcePage() {
 
   const fetchData = async () => {
     setLoading(true);
-    try { const res: any = await apiGet("/api/compute/nodes"); setData(res.items || []); }
+    try { const res: any = await apiGet("/compute/nodes"); setData(res.items || []); }
     finally { setLoading(false); }
   };
 
   const handleSubmit = async (values: any) => {
     if (editing) {
-      await apiPut("/api/compute/nodes/" + editing.id, values);
+      await apiPut("/compute/nodes/" + editing.id, values);
       message.success("更新成功");
     } else {
-      await apiPost("/api/compute/nodes", values);
+      await apiPost("/compute/nodes", values);
       message.success("创建成功");
     }
     setShowModal(false); setEditing(null); form.resetFields(); fetchData();
   };
 
   const handleDelete = async (id: string) => {
-    await apiDelete("/api/compute/nodes/" + id);
+    await apiDelete("/compute/nodes/" + id);
     message.success("删除成功"); fetchData();
   };
 

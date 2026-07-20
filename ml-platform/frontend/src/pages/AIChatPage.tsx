@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
-import { Card, Input, Button, Typography, Space, Spin, Tag, Empty, Divider } from "antd";
-import { SendOutlined, RobotOutlined, UserOutlined, ClearOutlined } from "@ant-design/icons";
+import { Card, Input, Button, Typography, Space, Spin, Tag, Empty, Divider, Modal, Slider } from "antd";
+import { SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
@@ -15,6 +15,9 @@ export default function AIChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<any>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem("chat.systemPrompt") || "你是汽车焊接制造领域的智能助手。");
+  const [temperature, setTemperature] = useState(() => Number(localStorage.getItem("chat.temperature") || "0.7"));
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -33,7 +36,7 @@ export default function AIChatPage() {
     setInput("");
     setLoading(true);
     try {
-      const res = await apiClient.post("/chat", { message: text });
+      const res = await apiClient.post("/chat", { message: text, system_prompt: systemPrompt, temperature });
       const reply = res.data.reply || "No response.";
       setMessages(prev => [...prev, { role: "assistant", content: reply, time: new Date().toLocaleTimeString() }]);
     } catch (e: any) {
@@ -50,9 +53,10 @@ export default function AIChatPage() {
   return (
     <AppLayout>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}><RobotOutlined /> AI Chat</Title>
+        <Title level={4} style={{ margin: 0 }}><RobotOutlined /> {t.ai_chat.title}</Title>
         <Space>
           {status?.configured ? <Tag color="green">Connected: {status.model}</Tag> : <Tag color="red">{t.ai_chat.not_configured}</Tag>}
+          <Button icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)}>配置</Button>
           <Button icon={<ClearOutlined />} onClick={() => setMessages([])} disabled={messages.length === 0}>{t.ai_chat.clear}</Button>
         </Space>
       </div>
@@ -94,6 +98,16 @@ export default function AIChatPage() {
           </Space.Compact>
         </div>
       </Card>
+      <Modal title="对话配置" open={settingsOpen} onCancel={() => setSettingsOpen(false)} onOk={() => {
+        localStorage.setItem("chat.systemPrompt", systemPrompt);
+        localStorage.setItem("chat.temperature", String(temperature));
+        setSettingsOpen(false);
+      }}>
+        <Text strong>系统提示词</Text>
+        <Input.TextArea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={5} style={{ marginTop: 8, marginBottom: 16 }} />
+        <Text strong>生成随机度：{temperature.toFixed(1)}</Text>
+        <Slider min={0} max={1} step={0.1} value={temperature} onChange={setTemperature} />
+      </Modal>
     </AppLayout>
   );
 }

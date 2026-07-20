@@ -52,6 +52,12 @@ class TestMonitorAPI(unittest.TestCase):
         self.assertIn("free", disk)
         self.assertIn("percent", disk)
 
+    def test_04a_host_memory_and_disk_are_available_without_wmic(self):
+        r = client.get("/api/monitor/current", headers=self.h)
+        data = r.json()
+        self.assertGreater(data["memory"]["total_bytes"], 0)
+        self.assertGreater(data["disk"]["total"], 0)
+
     def test_05_gpu_metrics_format(self):
         r = client.get("/api/monitor/current", headers=self.h)
         self.assertIn("gpu", r.json())

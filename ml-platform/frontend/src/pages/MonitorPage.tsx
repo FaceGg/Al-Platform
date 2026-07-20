@@ -63,7 +63,11 @@ export default function MonitorPage() {
         gpu: [...prev.gpu.slice(-HISTORY_LENGTH + 1), mapped.gpu?.usage_percent ?? 0],
       }));
       setLoading(false);
-    } catch { /* silently ignore */ }
+    } catch {
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
