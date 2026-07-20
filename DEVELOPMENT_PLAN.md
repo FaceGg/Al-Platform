@@ -1006,3 +1006,11 @@
 - 修复内容：在对应 GitHub Actions job 环境中补齐两个变量；新增 CI workflow 契约测试，防止必需运行时配置遗漏。
 - 验证方式：CI 契约测试 9/9 通过；本地 `git diff --check` 通过；本机未安装 Docker，Compose 真实运行验证保留给远程 Actions。
 - 当前状态：修复待推送并取得 PR #3 新一轮 Ubuntu、Windows、生产实验集成和生产集成全绿证据；取得证据后再合并 PR #3。
+
+### 2026-07-20：第八周生产 readiness 回归修正
+
+- 问题现象：补齐生产任务的 `INFERENCE_RUNTIME_URL` 后，生产栈测试的 HTTP 探针次数从 2 增至 3。
+- 已验证根因：ReadinessService 已包含 inference runtime 检查；旧测试依赖 URL 缺失时该检查被跳过，未显式验证第三个探针。
+- 修复内容：将测试改为验证 MLflow、TensorBoard 和 inference runtime 三个明确 URL，不再只依赖旧调用次数。
+- 验证方式：readiness 和 CI workflow 相关测试 14/14、`compileall`、`git diff --check` 通过。
+- 当前状态：修复待推送并以远程 production-integration 重新验收。

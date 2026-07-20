@@ -253,7 +253,10 @@ class TestProductionStack(unittest.TestCase):
             readiness[name]["ready"]
             for name in ("database", "redis", "celery", "storage")
         ))
-        self.assertEqual(http_client.get.call_count, 2)
+        self.assertEqual(http_client.get.call_count, 3)
+        http_client.get.assert_any_call("http://127.0.0.1:5000/health", timeout=3.0)
+        http_client.get.assert_any_call("http://127.0.0.1:6006/openapi.json", timeout=3.0)
+        http_client.get.assert_any_call("http://127.0.0.1:7000/health", timeout=3.0)
 
 
 if __name__ == "__main__":
