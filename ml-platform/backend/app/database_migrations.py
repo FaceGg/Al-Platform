@@ -8,6 +8,7 @@ _SQLITE_COLUMNS = {
         "error_details": "JSON",
         "workflow_version": "INTEGER",
         "workflow_snapshot": "JSON",
+        "timeout_seconds": "INTEGER",
         "logs": "JSON",
         "cancel_requested_at": "DATETIME",
         "cancelled_at": "DATETIME",
@@ -33,6 +34,24 @@ _SQLITE_COLUMNS = {
         "error_code": "VARCHAR(64)",
         "error_details": "JSON",
         "logs": "JSON",
+        "experiment_id": "CHAR(32)",
+        "mlflow_run_id": "VARCHAR(64)",
+        "task_id": "VARCHAR(128)",
+        "worker_id": "VARCHAR(128)",
+        "heartbeat_at": "DATETIME",
+        "attempt": "INTEGER NOT NULL DEFAULT 0",
+        "resumed_from_job_id": "CHAR(32)",
+        "resumed_from_run_id": "VARCHAR(64)",
+        "resume_checkpoint_uri": "VARCHAR(1024)",
+        "latest_checkpoint_uri": "VARCHAR(1024)",
+        "best_checkpoint_uri": "VARCHAR(1024)",
+        "current_epoch": "INTEGER NOT NULL DEFAULT 0",
+        "total_epochs": "INTEGER",
+        "monitor_name": "VARCHAR(64)",
+        "monitor_mode": "VARCHAR(8)",
+        "early_stopping_patience": "INTEGER",
+        "early_stopping_min_delta": "FLOAT",
+        "restore_best": "BOOLEAN NOT NULL DEFAULT 1",
     },
     "model_library": {
         "training_job_id": "CHAR(32)",
@@ -41,6 +60,15 @@ _SQLITE_COLUMNS = {
     },
     "artifacts": {
         "storage_uri": "TEXT",
+    },
+}
+
+_SQLITE_INDEXES = {
+    "training_jobs": {
+        "ix_training_jobs_experiment_id": "experiment_id",
+        "ix_training_jobs_mlflow_run_id": "mlflow_run_id",
+        "ix_training_jobs_task_id": "task_id",
+        "ix_training_jobs_heartbeat_at": "heartbeat_at",
     },
 }
 
@@ -59,4 +87,14 @@ def ensure_schema_compatibility(engine: Engine) -> None:
                 if column not in existing:
                     connection.execute(text(
                         f'ALTER TABLE "{table}" ADD COLUMN "{column}" {definition}'
+                    ))
+        refreshed = inspect(engine)
+        for table, indexes in _SQLITE_INDEXES.items():
+            if table not in tables:
+                continue
+            existing_indexes = {item["name"] for item in refreshed.get_indexes(table)}
+            for index_name, column in indexes.items():
+                if index_name not in existing_indexes:
+                    connection.execute(text(
+                        f'CREATE INDEX "{index_name}" ON "{table}" ("{column}")'
                     ))

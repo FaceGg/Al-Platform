@@ -88,11 +88,12 @@ class MinioStorage:
             response = self.open(uri)
             with target.open("xb") as output:
                 shutil.copyfileobj(response, output, 1024 * 1024)
-            yield target
         except StorageError:
             raise
         except Exception as error:
             raise StorageError("Could not materialize MinIO artifact") from error
+        try:
+            yield target
         finally:
             if response is not None:
                 response.close()

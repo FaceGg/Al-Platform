@@ -1,13 +1,22 @@
 """Model library API - CRUD for trained models."""
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.model_library import ModelLibrary
 from app.models.user import User
 from app.api.auth import get_current_user
+from app.api.project_security import audit_service, resolve_project_access
+from app.services.audit import AuditIntent
+from app.services.project_access import ProjectAccessService
 
 router = APIRouter(prefix="/api/model-library", tags=["model_library"])
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/model-library": "model_library.create",
+    "PUT /api/model-library/{model_id}": "model_library.update",
+    "DELETE /api/model-library/{model_id}": "model_library.delete",
+    "POST /api/model-library/batch-delete": "model_library.batch_delete",
+}
 
 
 @router.get("")
@@ -18,7 +27,15 @@ def list_models(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    q = db.query(ModelLibrary)
+    accessible = [
+        project.id for project in ProjectAccessService()
+        .accessible_project_query(db, current_user.id).all()
+    ]
+    q = db.query(ModelLibrary).filter(
+        (ModelLibrary.owner_id == current_user.id)
+        | (ModelLibrary.project_id.in_(accessible))
+        | (ModelLibrary.is_public.is_(True))
+    )
     if status:
         q = q.filter(ModelLibrary.status == status)
     if framework:
@@ -55,6 +72,11 @@ def get_model(model_id: str, db: Session = Depends(get_db), current_user: User =
     m = db.query(ModelLibrary).filter(ModelLibrary.id == uuid.UUID(model_id)).first()
     if not m:
         raise HTTPException(404, "Model not found")
+    if m.project_id is not None:
+        if resolve_project_access(db, m.project_id, current_user.id) is None:
+            raise HTTPException(404, "Model not found")
+    elif m.owner_id != current_user.id and not m.is_public:
+        raise HTTPException(404, "Model not found")
     return {
         "id": str(m.id),
         "name": m.name,
@@ -79,11 +101,18 @@ def get_model(model_id: str, db: Session = Depends(get_db), current_user: User =
 
 
 @router.post("")
-def create_model(data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def create_model(
+    data: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project_id = uuid.UUID(data["project_id"]) if data.get("project_id") else None
     model = ModelLibrary(
+        id=uuid.uuid4(),
         name=data["name"],
         algorithm_id=uuid.UUID(data["algorithm_id"]) if data.get("algorithm_id") else None,
-        project_id=uuid.UUID(data["project_id"]) if data.get("project_id") else None,
+        project_id=project_id,
         owner_id=current_user.id,
         version=data.get("version", "v1"),
         framework=data.get("framework", ""),
@@ -92,31 +121,89 @@ def create_model(data: dict, db: Session = Depends(get_db), current_user: User =
         params=data.get("params", {}),
         tags=data.get("tags", []),
     )
-    db.add(model)
-    db.commit()
+    if project_id is None:
+        db.add(model)
+        db.commit()
+    else:
+        access = resolve_project_access(db, project_id, current_user.id)
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="resource.create",
+            intent=AuditIntent(
+                project_id=project_id, action="model_library.create",
+                resource_type="model_library", resource_id=str(model.id),
+                changes={"name": model.name, "version": model.version},
+            ),
+            allowed_changes={"name", "version"},
+        ):
+            db.add(model)
     db.refresh(model)
     return {"id": str(model.id), "name": model.name}
 
 
 @router.put("/{model_id}")
-def update_model(model_id: str, data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def update_model(
+    model_id: str,
+    data: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     m = db.query(ModelLibrary).filter(ModelLibrary.id == uuid.UUID(model_id)).first()
     if not m:
         raise HTTPException(404)
-    for key in ["name", "status", "description", "version", "metrics", "progress", "is_public", "tags"]:
-        if key in data:
-            setattr(m, key, data[key])
-    db.commit()
+    keys = {"name", "status", "description", "version", "metrics", "progress", "is_public", "tags"}
+    if m.project_id is None:
+        if m.owner_id != current_user.id:
+            raise HTTPException(404)
+        for key in keys:
+            if key in data:
+                setattr(m, key, data[key])
+        db.commit()
+    else:
+        access = resolve_project_access(db, m.project_id, current_user.id)
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="resource.update",
+            intent=AuditIntent(
+                project_id=m.project_id, action="model_library.update",
+                resource_type="model_library", resource_id=str(m.id), changes=data,
+            ),
+            allowed_changes=keys,
+        ):
+            for key in keys:
+                if key in data:
+                    setattr(m, key, data[key])
     return {"status": "ok"}
 
 
 @router.delete("/{model_id}")
-def delete_model(model_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def delete_model(
+    model_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     m = db.query(ModelLibrary).filter(ModelLibrary.id == uuid.UUID(model_id)).first()
     if not m:
         raise HTTPException(404)
-    db.delete(m)
-    db.commit()
+    if m.project_id is None:
+        if m.owner_id != current_user.id:
+            raise HTTPException(404)
+        db.delete(m)
+        db.commit()
+    else:
+        access = resolve_project_access(db, m.project_id, current_user.id)
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="resource.delete",
+            intent=AuditIntent(
+                project_id=m.project_id, action="model_library.delete",
+                resource_type="model_library", resource_id=str(m.id),
+            ),
+            allowed_changes=set(),
+        ):
+            db.delete(m)
     return {"status": "deleted"}
 
 
@@ -153,6 +240,7 @@ class BatchDeleteRequest(BaseModel):
 @router.post("/batch-delete", status_code=200)
 def batch_delete_models(
     data: BatchDeleteRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -165,7 +253,23 @@ def batch_delete_models(
         model = db.query(ModelLibrary).filter(ModelLibrary.id == uid).first()
         if not model:
             continue
-        db.delete(model)
+        if model.project_id is None:
+            if model.owner_id != current_user.id:
+                continue
+            db.delete(model)
+        else:
+            access = resolve_project_access(db, model.project_id, current_user.id)
+            with audit_service(db).project_action(
+                db, request=request, actor=current_user, access=access,
+                permission="resource.delete",
+                intent=AuditIntent(
+                    project_id=model.project_id, action="model_library.batch_delete",
+                    resource_type="model_library", resource_id=str(model.id),
+                ),
+                allowed_changes=set(),
+            ):
+                db.delete(model)
         deleted += 1
-    db.commit()
+    if db.new or db.dirty or db.deleted:
+        db.commit()
     return {"deleted": deleted}

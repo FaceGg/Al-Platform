@@ -8,6 +8,60 @@ from app.services.readiness_service import ReadinessService
 
 
 class TestReadiness(unittest.TestCase):
+    def test_experiment_services_are_included_in_readiness(self):
+        http_client = MagicMock()
+        http_client.get.return_value.status_code = 200
+        service = ReadinessService(
+            engine=MagicMock(),
+            settings=SimpleNamespace(
+                task_backend="local",
+                artifact_storage_backend="local",
+                mlflow_tracking_uri="http://mlflow:5000",
+                tensorboard_gateway_url="http://tensorboard-gateway:6006",
+                inference_runtime_url="http://inference-runtime:7000",
+            ),
+            http_client=http_client,
+        )
+        service._database = lambda: {"ready": True, "code": "OK"}
+
+        result = service.check_all()
+
+        self.assertTrue(result["mlflow"]["ready"])
+        self.assertTrue(result["tensorboard"]["ready"])
+        self.assertTrue(result["inference_runtime"]["ready"])
+        http_client.get.assert_any_call("http://mlflow:5000/health", timeout=3.0)
+        http_client.get.assert_any_call(
+            "http://tensorboard-gateway:6006/openapi.json",
+            timeout=3.0,
+        )
+        http_client.get.assert_any_call(
+            "http://inference-runtime:7000/health", timeout=3.0,
+        )
+
+    def test_experiment_service_failures_use_stable_redacted_codes(self):
+        http_client = MagicMock()
+        http_client.get.side_effect = OSError("connection includes secret-value")
+        service = ReadinessService(
+            engine=MagicMock(),
+            settings=SimpleNamespace(
+                task_backend="local",
+                artifact_storage_backend="local",
+                mlflow_tracking_uri="http://user:password@mlflow:5000",
+                tensorboard_gateway_url="http://tensorboard-gateway:6006",
+            ),
+            http_client=http_client,
+        )
+        service._database = lambda: {"ready": True, "code": "OK"}
+
+        result = service.check_all()
+
+        self.assertEqual(result["mlflow"], {"ready": False, "code": "MLFLOW_UNAVAILABLE"})
+        self.assertEqual(
+            result["tensorboard"],
+            {"ready": False, "code": "TENSORBOARD_UNAVAILABLE"},
+        )
+        self.assertNotIn("password", json.dumps(result).lower())
+
     def test_database_readiness_requires_current_alembic_revision(self):
         connection = MagicMock()
         engine = MagicMock()

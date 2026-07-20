@@ -1,6 +1,12 @@
 # AI模型训练编排平台 - 需求与开发进度总览
 
-> 最后更新: 2026-07-15 | 当前版本: 0.2.0
+> 第六周远程验收：GitHub Actions [Run 29631795297](https://github.com/FaceGg/Al-Platform/actions/runs/29631795297) 全部通过（Linux/Windows quality、Production integration、Production experiment integration、Chromium）。
+
+> 第七周远程验收：GitHub Actions [Run 29667952189](https://github.com/FaceGg/Al-Platform/actions/runs/29667952189) 全部通过（Linux/Windows quality、Production integration、Production experiment integration、Chromium）。
+
+> 第八周：ONNX 模型注册中心、独立基础推理运行时、运维 UI、生产 Compose、本地验收和远程 CI 已完成。
+
+> 最后更新: 2026-07-20 | 当前版本: 0.3.0
 
 ---
 
@@ -415,3 +421,32 @@
 - 真实生产集成 4/4 通过，覆盖跨方言重复迁移、MinIO、真实工作流、重复投递、Redis 事件、节点超时、失联/取消恢复和 readiness。
 - 本地全量后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、npm audit 0 漏洞和 Alembic check 均通过。
 - [GitHub Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619) 的 Windows/Ubuntu 质量、生产集成 4/4 和 Chromium 1/1 全部成功，第五周状态为“已完成”。
+
+### 十五、2026-07-18 第六周实验训练管理验收
+
+- Experiment/Run、MLflow adapter、指标历史、checkpoint、早停恢复、AutoML child Run 和隔离 TensorBoard Gateway 已完成。
+- `/training` 已改为 Experiment/Training 双 Tab，支持 Run 比较、停止、checkpoint 恢复和平台 TensorBoard 会话，中文/英文键结构一致。
+- WSL2 真实生产栈使用 MLflow 3.2.0、独立 MLflow PostgreSQL database、MinIO S3 artifact、Celery Worker 和非 root Gateway；`/api/ready` 六项全部 OK。
+- 本地证据：后端全量 56/56、Week 6 10/10、前端 15/15 文件 39/39、生产构建、Alembic 双 upgrade/check、真实实验集成 1/1。
+- 待远程证据：GitHub Actions 第六周生产 integration、Chromium 实验页面主流程和 npm audit 需要在最终文档提交后运行。
+
+### 十六、2026-07-18 第七周 Pipeline 调度本地验收
+
+- 已实现五字段 Cron、IANA 时区、持久 schedule/occurrence、唯一 occurrence 幂等、依赖和并发策略、暂停恢复、限量补录、持久指数退避、单任务 timeout、终态同步与 stale recovery。
+- Celery Beat 作为独立 scheduler 服务每 60 秒发送 tick/recovery，工作流继续复用快照绑定的 `WorkflowRun` 和既有 Worker 执行器。
+- 数据库 head 为 `20260718_07`；干净 SQLite 双次 upgrade/current/check 与真实 PostgreSQL 空库迁移均通过。
+- 本地验证：后端全量 61/61、Week 7 5/5；WSL scheduler 镜像构建通过，依赖从 `https://mirrors.aliyun.com/pypi/simple/` 安装。
+- 真实集成：PostgreSQL + Redis + Worker + Beat 运行 1/1，通过双 tick 唯一 occurrence、真实定时执行、暂停/恢复、补录和两个 occurrence completed 同步。
+- 项目协作：owner/editor/operator/viewer、成员管理、joined project、集中权限、项目写审计、请求关联和脱敏已覆盖 14 个 project-write 模块。
+- 角色生产验收：独立 PostgreSQL 16 空库迁移后，四角色、outsider 隐藏、success/denied 审计和原子提交 1/1 通过。
+- 远程验收：Actions Run `29667952189` 的 Windows/Ubuntu quality、生产权限审计集成、实验生产栈和 Chromium 主流程全部成功；第七周关闭。
+
+### 十七、2026-07-18 第八周模型注册与基础推理本地验收
+
+- 新增项目级 RegisteredModel、不可变 ModelVersion 与 InferenceDeployment；Alembic head 为 `20260718_08`，业务表 38 张。
+- 受信任平台 joblib 在受控子进程转换为 allowlisted ONNX；直接 ONNX 上传支持显式 Schema、SHA-256、256 MiB 流式上限和失败补偿。
+- 独立非 root ONNX Runtime 服务只开放内部 7000 端口；constant-time token、session cache、strict named records、1 MiB/100 records 与有限数值校验完成。
+- owner/editor 注册审批和创建部署；operator 启停推理；viewer 只读。写命令进入第七周事务审计，预测 records/结果不持久化。
+- `/models` 已改为注册模型/部署运维双 Tab，支持平台/ONNX 注册、审批拒绝、部署、schema records、预测概率/版本/耗时和完整中英文本。
+- 本地证据：Task 7 聚焦 46 项、Linux ONNX/Storage 15/15、隔离 PostgreSQL/MinIO inference lifecycle 1/1；前端 44/44、production build、npm audit 0；Chromium 2/2。
+- 当前状态：Task 10 全量后端、最终迁移/隔离生产复验和远程 CI 尚在执行，第八周保持“进行中”。

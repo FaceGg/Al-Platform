@@ -33,6 +33,8 @@ class ArtifactService:
         name: str,
         artifact_type: str,
         metadata: dict | None = None,
+        *,
+        commit: bool = True,
     ) -> Artifact:
         source = Path(source_path)
         if not source.is_file():
@@ -62,11 +64,16 @@ class ArtifactService:
             metadata_=artifact_metadata,
         )
         try:
-            self.db.add(artifact)
-            self.db.commit()
-            self.db.refresh(artifact)
+            if commit:
+                self.db.add(artifact)
+                self.db.commit()
+                self.db.refresh(artifact)
+            else:
+                self.db.add(artifact)
+                self.db.flush()
         except Exception:
-            self.db.rollback()
+            if commit:
+                self.db.rollback()
             try:
                 self.storage.delete(stored.uri)
             except Exception:
@@ -103,7 +110,9 @@ class ArtifactService:
         safe_name = Path(name).name or "artifact.bin"
         return str(Path(tempfile.gettempdir()) / f"artifact-draft-{uuid.uuid4().hex}-{safe_name}")
 
-    def create_dataset(self, project_id, source_path: str | Path, name: str) -> Artifact:
+    def create_dataset(
+        self, project_id, source_path: str | Path, name: str, *, commit: bool = True,
+    ) -> Artifact:
         source = Path(source_path)
         if source.suffix.lower() in {".xls", ".xlsx"}:
             frame = pd.read_excel(source)
@@ -128,7 +137,53 @@ class ArtifactService:
                 "column_count": int(len(frame.columns)),
                 "schema": schema,
             },
+            commit=commit,
         )
+
+    def create_from_stream(
+        self,
+        project_id,
+        stream,
+        filename: str,
+        artifact_type: str,
+        metadata: dict | None = None,
+        *,
+        max_bytes: int,
+        commit: bool = True,
+    ) -> Artifact:
+        if max_bytes <= 0:
+            raise ArtifactAccessError("Artifact size limit must be positive")
+        import tempfile
+
+        safe_filename = Path(filename).name
+        if not safe_filename or safe_filename != filename:
+            raise ArtifactAccessError("Invalid artifact filename")
+        temporary = Path(tempfile.gettempdir()) / (
+            f"artifact-upload-{uuid.uuid4().hex}-{safe_filename}"
+        )
+        size = 0
+        try:
+            with temporary.open("xb") as output:
+                while True:
+                    chunk = stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    if not isinstance(chunk, (bytes, bytearray)):
+                        raise ArtifactAccessError("Artifact stream must be binary")
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise ArtifactAccessError("Artifact exceeds size limit")
+                    output.write(chunk)
+            return self.create_from_file(
+                project_id,
+                temporary,
+                safe_filename,
+                artifact_type,
+                metadata={**(metadata or {}), "uploaded_size": size},
+                commit=commit,
+            )
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def resolve(self, artifact_id, project_id, expected_type: str | None = None) -> Artifact:
         artifact_id = self._coerce_uuid(artifact_id)

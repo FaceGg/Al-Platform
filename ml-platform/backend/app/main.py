@@ -4,8 +4,9 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 import asyncio
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from redis import asyncio as redis_async
 from sqlalchemy.exc import IntegrityError
 
@@ -14,7 +15,9 @@ from app.database import Base, SessionLocal, engine
 from app.database_migrations import ensure_schema_compatibility
 from app.database_schema import require_current_schema
 from app.events.subscriber import RedisRunEventSubscriber
+from app.middleware.request_id import RequestIdMiddleware
 from app.websocket.manager import manager
+from app.services.project_access import ProjectAccessError
 
 # Import all operators so they register themselves
 # Import models (must happen before create_all)
@@ -26,6 +29,7 @@ from app.models import api_model as api_models  # noqa: F401 (register models)
 from app.models import compute as compute_models  # noqa: F401 (register models)
 from app.models import agent as agent_models  # noqa: F401 (register models)
 from app.models import platform_models as pm  # noqa: F401 (register models)
+from app.models import access as access_models  # noqa: F401 (register models)
 
 import app.operators.io_operators  # noqa: F401
 import app.operators.processing  # noqa: F401
@@ -50,7 +54,9 @@ from app.api import auth, projects, workflows, runs, operators, datasets, workfl
 from app.api import users, models as model_api
 from app.api import knowledge, monitor, labeling, training, orchestration
 from app.api import algorithm as algo_api, platform_api, compute, annotations as annot_api, chat as chat_api
-from app.api import model_library as model_lib_api, dashboard as dash_api, readiness
+from app.api import model_library as model_lib_api, dashboard as dash_api, readiness, experiments, schedules
+from app.api import project_access as project_access_api
+from app.api import model_registry as model_registry_api
 
 
 def initialize_database(app_settings=None, db_engine=None) -> None:
@@ -176,8 +182,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.exception_handler(ProjectAccessError)
+async def project_access_exception_handler(
+    request: Request, error: ProjectAccessError,
+):
+    status = 404 if error.hidden else 403
+    return JSONResponse(
+        status_code=status,
+        content={"detail": {"code": error.code, "message": str(error)}},
+    )
+app.add_middleware(RequestIdMiddleware)
+
 # Register routers
 app.include_router(auth.router)
+app.include_router(project_access_api.router)
 app.include_router(projects.router)
 app.include_router(workflows.router)
 app.include_router(runs.router)
@@ -201,6 +220,9 @@ app.include_router(chat_api.router)
 app.include_router(model_lib_api.router)
 app.include_router(dash_api.router)
 app.include_router(readiness.router)
+app.include_router(experiments.router)
+app.include_router(schedules.router)
+app.include_router(model_registry_api.router)
 
 
 @app.get("/api/health")

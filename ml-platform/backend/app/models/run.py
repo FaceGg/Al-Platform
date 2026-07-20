@@ -21,6 +21,7 @@ class WorkflowRun(Base):
     error_details = Column(JSON)
     workflow_version = Column(Integer)
     workflow_snapshot = Column(JSON)
+    timeout_seconds = Column(Integer)
     logs = Column(JSON, default=list)
     cancel_requested_at = Column(DateTime)
     cancelled_at = Column(DateTime)

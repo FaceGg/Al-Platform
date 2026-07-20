@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
@@ -16,6 +16,8 @@ from app.events.local import LocalRunEventPublisher
 from app.services.workflow_execution import execute_workflow_run
 from app.tasks.dispatcher import CeleryTaskDispatcher, LocalTaskDispatcher, TaskDispatcher
 from app.websocket.manager import manager
+from app.api.project_security import audit_service, resolve_run_access, resolve_workflow_access
+from app.services.audit import AuditIntent
 import asyncio
 import logging
 
@@ -23,6 +25,10 @@ logger = logging.getLogger(__name__)
 _main_loop = None
 
 router = APIRouter(tags=["runs"])
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/workflows/{workflow_id}/run": "workflow_run.start",
+    "POST /api/runs/{run_id}/cancel": "workflow_run.cancel",
+}
 
 
 def get_task_dispatcher() -> TaskDispatcher:
@@ -100,56 +106,63 @@ def _run_workflow(workflow_run_id: str, main_loop):
 @router.post("/api/workflows/{workflow_id}/run", status_code=201)
 def start_run(
     workflow_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     dispatcher: TaskDispatcher = Depends(get_task_dispatcher),
 ):
-    workflow = db.query(Workflow).filter(Workflow.id == uuid.UUID(workflow_id)).first()
-    if not workflow:
-        raise HTTPException(404, "Workflow not found")
+    workflow, access = resolve_workflow_access(db, workflow_id, current_user.id)
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="execution.operate",
+        intent=AuditIntent(
+            project_id=workflow.project_id,
+            action="workflow_run.start",
+            resource_type="workflow_run",
+            changes={"workflow_id": str(workflow.id)},
+        ),
+        allowed_changes={"workflow_id"},
+    ):
+        nodes = db.query(WorkflowNode).filter(WorkflowNode.workflow_id == workflow.id).all()
+        edges = db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == workflow.id).all()
+        if not nodes:
+            raise HTTPException(400, {
+                "code": "WORKFLOW_EMPTY", "message": "Workflow must contain at least one node",
+            })
+        validation_nodes = [{
+            "id": str(node.id), "operator_id": node.operator_id,
+            "label": node.label or "", "params": node.params or {},
+        } for node in nodes]
+        validation_edges = [{
+            "source": str(edge.source_node_id), "target": str(edge.target_node_id),
+            "source_port": edge.source_port or "", "target_port": edge.target_port or "",
+        } for edge in edges]
+        validation_errors = DAGExecutor(validation_nodes, validation_edges).validate()
+        if validation_errors:
+            raise HTTPException(400, {
+                "code": "WORKFLOW_INVALID", "message": "Workflow validation failed",
+                "errors": validation_errors,
+            })
 
-    nodes = db.query(WorkflowNode).filter(WorkflowNode.workflow_id == workflow.id).all()
-    edges = db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == workflow.id).all()
-    if not nodes:
-        raise HTTPException(400, {
-            "code": "WORKFLOW_EMPTY", "message": "Workflow must contain at least one node",
-        })
-    validation_nodes = [{
-        "id": str(node.id), "operator_id": node.operator_id,
-        "label": node.label or "", "params": node.params or {},
-    } for node in nodes]
-    validation_edges = [{
-        "source": str(edge.source_node_id), "target": str(edge.target_node_id),
-        "source_port": edge.source_port or "", "target_port": edge.target_port or "",
-    } for edge in edges]
-    validation_errors = DAGExecutor(validation_nodes, validation_edges).validate()
-    if validation_errors:
-        raise HTTPException(400, {
-            "code": "WORKFLOW_INVALID", "message": "Workflow validation failed",
-            "errors": validation_errors,
-        })
-
-    workflow_run = WorkflowRun(
-        workflow_id=uuid.UUID(workflow_id),
-        status="pending",
-        triggered_by=current_user.id,
-        workflow_version=_matching_workflow_version(db, workflow.id, nodes, edges),
-        workflow_snapshot={"nodes": validation_nodes, "edges": validation_edges},
-        logs=[{"level": "info", "message": "Run created"}],
-    )
-    db.add(workflow_run)
-    db.commit()
+        workflow_run = WorkflowRun(
+            workflow_id=workflow.id,
+            status="pending",
+            triggered_by=current_user.id,
+            workflow_version=_matching_workflow_version(db, workflow.id, nodes, edges),
+            workflow_snapshot={"nodes": validation_nodes, "edges": validation_edges},
+            logs=[{"level": "info", "message": "Run created"}],
+        )
+        db.add(workflow_run)
+        db.flush()
     db.refresh(workflow_run)
 
     try:
         dispatcher.enqueue_workflow(str(workflow_run.id))
     except Exception as error:
-        workflow_run.logs = [*(workflow_run.logs or []), {
-            "level": "error",
-            "message": str(error),
-            "code": "TASK_ENQUEUE_FAILED",
-        }]
-        db.commit()
+        logger.exception("Failed to enqueue workflow run %s", workflow_run.id)
 
     return {"run_id": str(workflow_run.id), "status": workflow_run.status}
 
@@ -160,29 +173,38 @@ def get_run(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    run = db.query(WorkflowRun).filter(WorkflowRun.id == uuid.UUID(run_id)).first()
-    if not run:
-        raise HTTPException(404, "Run not found")
+    run, _ = resolve_run_access(db, run_id, current_user.id)
     return run
 
 
 @router.post("/api/runs/{run_id}/cancel")
 def cancel_run(
     run_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     dispatcher: TaskDispatcher = Depends(get_task_dispatcher),
 ):
-    run = db.query(WorkflowRun).filter(WorkflowRun.id == uuid.UUID(run_id)).first()
-    if run is None:
-        raise HTTPException(404, "Run not found")
-    if run.status in TERMINAL_RUN_STATUSES:
-        return {"run_id": str(run.id), "status": run.status}
-    if run.status != "cancel_requested":
-        run.status = transition_run_status(run.status, "cancel_requested")
-        run.cancel_requested_at = datetime.now(timezone.utc)
-        run.logs = [*(run.logs or []), {"level": "info", "message": "Cancellation requested"}]
-        db.commit()
+    run, access = resolve_run_access(db, run_id, current_user.id)
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="execution.operate",
+        intent=AuditIntent(
+            project_id=run.workflow.project_id,
+            action="workflow_run.cancel",
+            resource_type="workflow_run",
+            resource_id=str(run.id),
+            changes={"previous_status": run.status},
+        ),
+        allowed_changes={"previous_status"},
+    ):
+        if run.status not in TERMINAL_RUN_STATUSES and run.status != "cancel_requested":
+            run.status = transition_run_status(run.status, "cancel_requested")
+            run.cancel_requested_at = datetime.now(timezone.utc)
+            run.logs = [*(run.logs or []), {"level": "info", "message": "Cancellation requested"}]
     task_id = run.task_id
     if task_id:
         try:

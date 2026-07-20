@@ -19,6 +19,7 @@ class ProjectResponse(BaseModel):
     owner_id: UUID
     created_at: datetime
     updated_at: datetime
+    project_role: str | None = None
 
 class ProjectList(BaseModel):
     items: list[ProjectResponse]

@@ -1,188 +1,306 @@
-import { useEffect, useState } from 'react'
-import { Card, Table, Select, Button, Space, message, Modal, Tag, Row, Col, List } from 'antd'
-import { DownloadOutlined, DeleteOutlined, EyeOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
-import { useNavigate } from 'react-router-dom'
-import apiClient from '../api/client'
-import AppLayout from '../components/AppLayout'
-import { useI18n } from '../i18n'
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Alert, Button, Descriptions, Drawer, Empty, Form, Input, Modal, Progress,
+  Select, Space, Table, Tabs, Tag, Typography, Upload, message,
+} from "antd";
+import {
+  CheckOutlined, CloudServerOutlined, EyeOutlined, PlayCircleOutlined,
+  PlusOutlined, ReloadOutlined, StopOutlined,
+} from "@ant-design/icons";
+import apiClient, { formatApiError } from "../api/client";
+import {
+  approveModelVersion, createDeployment, createRegisteredModel,
+  type InferenceDeployment, type InferenceRecord, listDeployments,
+  listModelVersions, listRegisteredModels, type ModelVersion,
+  predictDeployment, type PredictionResult, type ProjectOption,
+  type RegisteredModel, registerOnnxVersion, registerPlatformVersion, rejectModelVersion,
+  startDeployment, stopDeployment, uploadOnnxArtifact,
+} from "../api/modelRegistry";
+import AppLayout from "../components/AppLayout";
+import { useI18n } from "../i18n";
 
-interface Model {
-  id: number
-  name: string
-  model_type: string
-  created_at: string
-  project_id: number
-  project_name?: string
-}
-
-interface Project {
-  id: number
-  name: string
-}
+const { Text, Title } = Typography;
 
 export default function ModelLibraryPage() {
-  const { t } = useI18n()
-  const navigate = useNavigate()
-  const [projects, setProjects] = useState<Project[]>([])
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
-  const [models, setModels] = useState<Model[]>([])
-  const [loading, setLoading] = useState(false)
-  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
+  const { t } = useI18n();
+  const copy = t.modelRegistry;
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [projectId, setProjectId] = useState<string>();
+  const [tab, setTab] = useState("models");
+  const [models, setModels] = useState<RegisteredModel[]>([]);
+  const [deployments, setDeployments] = useState<InferenceDeployment[]>([]);
+  const [versions, setVersions] = useState<Record<string, ModelVersion[]>>({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
+  const [registerModel, setRegisterModel] = useState<RegisteredModel>();
+  const [modelOpen, setModelOpen] = useState(false);
+  const [versionModel, setVersionModel] = useState<RegisteredModel>();
+  const [deploymentOpen, setDeploymentOpen] = useState(false);
+  const [testDeployment, setTestDeployment] = useState<InferenceDeployment>();
+  const [prediction, setPrediction] = useState<PredictionResult>();
+  const [busyId, setBusyId] = useState<string>();
+  const [registerSource, setRegisterSource] = useState<"platform_joblib" | "onnx_artifact">("platform_joblib");
+  const [registerForm] = Form.useForm();
+  const [modelForm] = Form.useForm();
+  const [deploymentForm] = Form.useForm();
+  const [predictionForm] = Form.useForm();
+
+  const selectedProject = projects.find((item) => item.id === projectId);
+  const role = selectedProject?.project_role;
+  const canRegister = role === "owner" || role === "editor";
+  const canOperate = canRegister || role === "operator";
 
   useEffect(() => {
-    apiClient.get('/projects').then((res) => {
-      setProjects(res.data.items || [])
-    }).catch(() => {})
-  }, [])
+    apiClient.get("/projects").then((response) => {
+      const items = Array.isArray(response.data) ? response.data : response.data?.items;
+      setProjects(Array.isArray(items) ? items : []);
+    }).catch((cause) => setError(formatApiError(cause, copy.loadFailed)));
+  }, [copy.loadFailed]);
 
-  useEffect(() => {
-    if (!selectedProjectId) return
-    setLoading(true)
-    apiClient.get('/projects/' + selectedProjectId + '/models')
-      .then((res) => {
-        setModels(res.data.items || res.data.models || [])
-      })
-      .catch(() => {
-        message.error(t.common.error)
-      })
-      .finally(() => setLoading(false))
-  }, [selectedProjectId])
-
-  const handleBatchDelete = () => {
-    if (selectedRowKeys.length === 0) return
-    Modal.confirm({
-      title: '批量删除选中的 ' + selectedRowKeys.length + ' 个模型？',
-      icon: <ExclamationCircleOutlined />,
-      content: '删除后不可恢复，请谨慎操作。',
-      okText: '确认删除',
-      okType: 'danger',
-      cancelText: '取消',
-      onOk: async () => {
-        try {
-          await apiClient.post('/model-library/batch-delete', { ids: selectedRowKeys })
-          message.success('成功删除 ' + selectedRowKeys.length + ' 个模型')
-          setSelectedRowKeys([])
-          setModels((prev) => prev.filter((m) => selectedRowKeys.includes(m.id)))
-        } catch {
-          message.error('批量删除失败')
-        }
-      },
-    })
-  }
-
-    const handleDownload = async (modelId: number) => {
+  const loadProject = useCallback(async (selected: string) => {
+    setLoading(true);
+    setError(undefined);
     try {
-      const res = await apiClient.get('/models/' + modelId + '/download', { responseType: 'blob' })
-      const url = URL.createObjectURL(res.data)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'model-' + modelId + '.bin'
-      a.click()
-      URL.revokeObjectURL(url)
-      message.success(t.common.success)
-    } catch {
-      message.error(t.common.error)
+      const [modelItems, deploymentItems] = await Promise.all([
+        listRegisteredModels(selected), listDeployments(selected),
+      ]);
+      setModels(modelItems);
+      setDeployments(deploymentItems);
+      const entries = await Promise.all(modelItems.map(async (model) => [
+        model.id, await listModelVersions(model.id),
+      ] as const));
+      setVersions(Object.fromEntries(entries));
+    } catch (cause) {
+      setError(formatApiError(cause, copy.loadFailed));
+      setModels([]);
+      setDeployments([]);
+    } finally {
+      setLoading(false);
     }
-  }
+  }, [copy.loadFailed]);
 
-  const handleDelete = (modelId: number) => {
+  useEffect(() => {
+    if (projectId) void loadProject(projectId);
+  }, [loadProject, projectId]);
+
+  const statusLabel = (status: string) => {
+    const labels = copy as Record<string, string>;
+    return labels[status] || status;
+  };
+  const statusColor = (status: string) => {
+    if (status === "approved" || status === "running") return "success";
+    if (status === "pending" || status === "starting" || status === "stopping") return "processing";
+    if (status === "rejected" || status === "failed") return "error";
+    return "default";
+  };
+
+  const approvedVersions = useMemo(() => models.flatMap((model) =>
+    (versions[model.id] || []).filter((version) => version.approval_status === "approved")
+      .map((version) => ({ model, version }))), [models, versions]);
+
+  const submitVersion = async () => {
+    if (!registerModel) return;
+    try {
+      const values = await registerForm.validateFields();
+      let created: ModelVersion;
+      if (registerSource === "platform_joblib") {
+        created = await registerPlatformVersion(registerModel.id, values.source_model_library_id.trim());
+      } else {
+        const uploaded = await uploadOnnxArtifact(projectId!, values.onnx_file[0].originFileObj);
+        created = await registerOnnxVersion(registerModel.id, {
+          source_artifact_id: uploaded.id,
+          feature_schema: JSON.parse(values.feature_schema),
+          output_schema: JSON.parse(values.output_schema),
+        });
+      }
+      setVersions((current) => ({
+        ...current,
+        [registerModel.id]: [created, ...(current[registerModel.id] || [])],
+      }));
+      setModels((current) => current.map((item) => item.id === registerModel.id ? {
+        ...item, latest_version: created.version_number,
+        latest_approval_status: created.approval_status,
+      } : item));
+      setRegisterModel(undefined);
+      registerForm.resetFields();
+    } catch (cause) {
+      if (!(cause as { errorFields?: unknown }).errorFields) message.error(formatApiError(cause, copy.commandFailed));
+    }
+  };
+
+  const submitModel = async () => {
+    if (!projectId) return;
+    try {
+      const values = await modelForm.validateFields();
+      const created = await createRegisteredModel(projectId, {
+        name: values.name.trim(), description: values.description?.trim() || "",
+      });
+      setModels((current) => [created, ...current]);
+      setVersions((current) => ({ ...current, [created.id]: [] }));
+      setModelOpen(false);
+      modelForm.resetFields();
+    } catch (cause) {
+      if (!(cause as { errorFields?: unknown }).errorFields) message.error(formatApiError(cause, copy.commandFailed));
+    }
+  };
+
+  const approve = async (model: RegisteredModel, version: ModelVersion) => {
+    try {
+      const updated = await approveModelVersion(version.id, "");
+      setVersions((current) => ({
+        ...current,
+        [model.id]: (current[model.id] || []).map((item) => item.id === updated.id ? updated : item),
+      }));
+      setModels((current) => current.map((item) => item.id === model.id ? {
+        ...item, latest_approval_status: updated.approval_status,
+      } : item));
+    } catch (cause) {
+      message.error(formatApiError(cause, copy.commandFailed));
+    }
+  };
+
+  const reject = (model: RegisteredModel, version: ModelVersion) => {
+    let rejectionComment = "";
     Modal.confirm({
-      title: t.common.confirm,
-      content: '确定删除此模型？',
+      title: copy.reject,
+      content: <Input.TextArea aria-label={copy.comment} onChange={(event) => { rejectionComment = event.target.value; }} />,
       onOk: async () => {
-        try {
-          await apiClient.delete('/models/' + modelId)
-          message.success(t.common.success)
-          setModels((prev) => prev.filter((m) => m.id !== modelId))
-        } catch {
-          message.error(t.common.error)
-        }
+      const comment = rejectionComment.trim();
+      if (!comment) throw new Error(copy.commentRequired);
+      const updated = await rejectModelVersion(version.id, comment);
+      setVersions((current) => ({ ...current, [model.id]: (current[model.id] || []).map((item) => item.id === updated.id ? updated : item) }));
       },
-    })
-  }
+    });
+  };
 
-  const rowSelection = {
-    selectedRowKeys,
-    onChange: (newSelectedRowKeys: React.Key[]) => {
-      setSelectedRowKeys(newSelectedRowKeys)
-    },
-  }
+  const submitDeployment = async () => {
+    if (!projectId) return;
+    try {
+      const values = await deploymentForm.validateFields();
+      const created = await createDeployment(projectId, {
+        name: values.name.trim(), model_version_id: values.model_version_id,
+      });
+      setDeployments((current) => [created, ...current]);
+      setDeploymentOpen(false);
+      deploymentForm.resetFields();
+    } catch (cause) {
+      if (!(cause as { errorFields?: unknown }).errorFields) message.error(formatApiError(cause, copy.commandFailed));
+    }
+  };
 
-    const columns = [
-    { title: t.model.title, dataIndex: 'name', key: 'name' },
-    { title: '类型', dataIndex: 'model_type', key: 'model_type' },
-    { title: t.model.created, dataIndex: 'created_at', key: 'created_at' },
-    {
-      title: t.model.actions,
-      key: 'actions',
-      render: (_: unknown, record: Model) => (
-        <Space>
-          <Button icon={<DownloadOutlined />} size="small" onClick={() => handleDownload(record.id)}>
-            {'下载'}
-          </Button>
-          <Button icon={<DeleteOutlined />} size="small" danger onClick={() => handleDelete(record.id)}>
-            {t.common.delete}
-          </Button>
-        </Space>
-      ),
-    },
-  ]
+  const operate = async (deployment: InferenceDeployment, action: "start" | "stop") => {
+    setBusyId(deployment.id);
+    try {
+      const updated = action === "start"
+        ? await startDeployment(deployment.id)
+        : await stopDeployment(deployment.id);
+      setDeployments((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (cause) {
+      message.error(formatApiError(cause, copy.runtimeFailed));
+    } finally {
+      setBusyId(undefined);
+    }
+  };
 
-  return (
-    <AppLayout>
-      <Card title={t.model.title}>
-        <Row gutter={16} style={{ marginBottom: 16 }}>
-          <Col span={8}>
-            <Select
-              style={{ width: '100%' }}
-              placeholder={selectedProjectId ? '' : (t.common.loading === '加载中...' ? '请选择项目' : 'Select Project')}
-              value={selectedProjectId}
-              onChange={(val) => setSelectedProjectId(val)}
-              options={projects.map((p) => ({ value: p.id, label: p.name }))}
-              allowClear
-            />
-          </Col>
-        </Row>
+  const submitPrediction = async () => {
+    if (!testDeployment) return;
+    try {
+      const values = await predictionForm.validateFields();
+      const parsed = JSON.parse(values.records) as unknown;
+      if (!Array.isArray(parsed) || parsed.length === 0 || parsed.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
+        throw new Error(copy.invalidRecords);
+      }
+      setPrediction(await predictDeployment(testDeployment.id, parsed as InferenceRecord[]));
+    } catch (cause) {
+      message.error(formatApiError(cause, copy.runtimeFailed));
+    }
+  };
 
-        {!selectedProjectId ? (
-          <List
-            header={<div>{t.project.list}</div>}
-            dataSource={projects}
-            renderItem={(item: Project) => (
-              <List.Item
-                actions={[
-                  <Button type="link" onClick={() => setSelectedProjectId(item.id)}>
-                    {t.model.title}
-                  </Button>,
-                ]}
-              >
-                <List.Item.Meta title={item.name} />
-              </List.Item>
-            )}
-          />
-        ) : (
-          <>
-            {selectedRowKeys.length > 0 && (
-            <Row gutter={16} style={{ marginBottom: 16 }}>
-              <Col>
-                <Button icon={<DeleteOutlined />} danger type='primary' onClick={handleBatchDelete}>
-                  批量删除 ({selectedRowKeys.length})
-                </Button>
-              </Col>
-            </Row>
-          )}
-            <Table
-            dataSource={models}
-            columns={columns}
-            rowKey="id"
-          rowSelection={rowSelection}
-            loading={loading}
-            pagination={{ pageSize: 10 }}
-          />
-          </>
-        )}
-      </Card>
-    </AppLayout>
-  )
+  const modelColumns = [
+    { title: copy.name, dataIndex: "name", key: "name", render: (value: string, row: RegisteredModel) => <Space direction="vertical" size={0}><Text strong>{value}</Text><Text type="secondary">{row.description}</Text></Space> },
+    { title: copy.latestVersion, dataIndex: "latest_version", key: "latest_version", width: 140, render: (value: number | null) => value ? `v${value}` : "-" },
+    { title: copy.status, dataIndex: "latest_approval_status", key: "status", width: 140, render: (value: string | null) => value ? <Tag color={statusColor(value)}>{statusLabel(value)}</Tag> : "-" },
+    { title: t.model.actions, key: "actions", width: 260, render: (_: unknown, row: RegisteredModel) => <Space wrap>
+      <Button icon={<EyeOutlined />} aria-label={`${copy.versions} ${row.name}`} onClick={() => setVersionModel(row)}>{copy.versions}</Button>
+      {canRegister && <Button icon={<PlusOutlined />} aria-label={`${copy.registerVersion} ${row.name}`} onClick={() => setRegisterModel(row)}>{copy.registerVersion}</Button>}
+    </Space> },
+  ];
+
+  const deploymentColumns = [
+    { title: copy.name, dataIndex: "name", key: "name", render: (value: string, row: InferenceDeployment) => <Space direction="vertical" size={0}><Text strong>{value}</Text>{row.last_error_code && <Text type="danger">{row.last_error_code}</Text>}</Space> },
+    { title: copy.desiredState, dataIndex: "desired_state", key: "desired", width: 120, render: (value: string) => <Tag>{statusLabel(value)}</Tag> },
+    { title: copy.observedState, dataIndex: "observed_state", key: "observed", width: 150, render: (value: string) => <Space direction="vertical" size={2}><Tag color={statusColor(value)}>{statusLabel(value)}</Tag>{["starting", "stopping"].includes(value) && <Progress percent={50} showInfo={false} size="small" />}</Space> },
+    { title: t.model.actions, key: "actions", width: 300, render: (_: unknown, row: InferenceDeployment) => <Space wrap>
+      {canOperate && row.desired_state === "stopped" && <Button icon={<PlayCircleOutlined />} loading={busyId === row.id} aria-label={`${copy.start} ${row.name}`} onClick={() => void operate(row, "start")}>{copy.start}</Button>}
+      {canOperate && row.desired_state === "running" && <Button icon={<StopOutlined />} loading={busyId === row.id} aria-label={`${copy.stop} ${row.name}`} onClick={() => void operate(row, "stop")}>{copy.stop}</Button>}
+      {canOperate && <Button icon={<CloudServerOutlined />} aria-label={`${copy.onlineTest} ${row.name}`} disabled={row.observed_state !== "running"} onClick={() => {
+        const version = Object.values(versions).flat().find((item) => item.id === row.model_version_id);
+        const record = Object.fromEntries((version?.feature_schema || []).map((field) => [field.name, 0]));
+        setTestDeployment(row);
+        setPrediction(undefined);
+        predictionForm.setFieldValue("records", JSON.stringify([record], null, 2));
+      }}>{copy.onlineTest}</Button>}
+    </Space> },
+  ];
+
+  return <AppLayout>
+    <section style={{ maxWidth: 1440, margin: "0 auto" }}>
+      <Space direction="vertical" size={20} style={{ width: "100%" }}>
+        <div>
+          <Title level={3} style={{ marginBottom: 12 }}>{copy.title}</Title>
+          <Select aria-label={copy.project} placeholder={copy.selectProject} value={projectId} onChange={setProjectId} style={{ width: "min(420px, 100%)" }} options={projects.map((item) => ({ value: item.id, label: `${item.name} (${statusLabel(item.project_role)})` }))} />
+        </div>
+        {!projectId ? <Empty description={copy.selectHint} /> : <>
+          {error && <Alert type="error" showIcon message={error} action={<Button icon={<ReloadOutlined />} onClick={() => void loadProject(projectId)}>{t.common.refresh}</Button>} />}
+          <Tabs activeKey={tab} onChange={setTab} items={[
+            { key: "models", label: copy.models, children: <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              {canRegister && <Button type="primary" icon={<PlusOutlined />} aria-label={copy.register} onClick={() => setModelOpen(true)}>{copy.register}</Button>}
+              <Table rowKey="id" loading={loading} dataSource={models} columns={modelColumns} locale={{ emptyText: <Empty description={copy.emptyModels} /> }} scroll={{ x: 760 }} pagination={false} />
+            </Space> },
+            { key: "deployments", label: copy.deployments, children: <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              {canRegister && <Button type="primary" icon={<PlusOutlined />} aria-label={copy.createDeployment} onClick={() => setDeploymentOpen(true)}>{copy.createDeployment}</Button>}
+              <Table rowKey="id" loading={loading} dataSource={deployments} columns={deploymentColumns} locale={{ emptyText: <Empty description={copy.emptyDeployments} /> }} scroll={{ x: 800 }} pagination={false} />
+            </Space> },
+          ]} />
+        </>}
+      </Space>
+    </section>
+
+    <Modal title={copy.registerVersion} open={Boolean(registerModel)} onCancel={() => setRegisterModel(undefined)} onOk={() => void submitVersion()} okText={copy.registerVersion} okButtonProps={{ "aria-label": copy.registerVersion }}>
+      <Select aria-label={copy.sourceKind} value={registerSource} onChange={setRegisterSource} style={{ width: "100%", marginBottom: 16 }} options={[{ value: "platform_joblib", label: copy.platformSource }, { value: "onnx_artifact", label: copy.onnxSource }]} />
+      <Form form={registerForm} layout="vertical">
+        {registerSource === "platform_joblib" ? <Form.Item name="source_model_library_id" label={copy.sourceLibraryId} rules={[{ required: true }]}><Input /></Form.Item> : <>
+          <Form.Item name="onnx_file" label={copy.onnxFile} valuePropName="fileList" getValueFromEvent={(event) => event?.fileList} rules={[{ required: true }]}><Upload beforeUpload={() => false} maxCount={1} accept=".onnx"><Button>{copy.selectOnnxFile}</Button></Upload></Form.Item>
+          <Form.Item name="feature_schema" label={copy.featureSchema} rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
+          <Form.Item name="output_schema" label={copy.outputSchema} rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
+        </>}
+      </Form>
+    </Modal>
+    <Modal title={copy.register} open={modelOpen} onCancel={() => setModelOpen(false)} onOk={() => void submitModel()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
+      <Form form={modelForm} layout="vertical">
+        <Form.Item name="name" label={copy.name} rules={[{ required: true }]}><Input /></Form.Item>
+        <Form.Item name="description" label={copy.description}><Input.TextArea rows={3} /></Form.Item>
+      </Form>
+    </Modal>
+    <Drawer title={versionModel ? `${versionModel.name} ${copy.versions}` : copy.versions} open={Boolean(versionModel)} onClose={() => setVersionModel(undefined)} width={680}>
+      <Table rowKey="id" pagination={false} dataSource={versionModel ? versions[versionModel.id] || [] : []} columns={[
+        { title: copy.version, dataIndex: "version_number", render: (value: number) => `v${value}` },
+        { title: copy.status, dataIndex: "approval_status", render: (value: string) => <Tag color={statusColor(value)}>{statusLabel(value)}</Tag> },
+        { title: copy.framework, dataIndex: "framework" },
+        { title: t.model.actions, render: (_: unknown, row: ModelVersion) => versionModel && canRegister && row.approval_status === "pending" ? <Space><Button icon={<CheckOutlined />} aria-label={`${copy.approve} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => void approve(versionModel, row)}>{copy.approve}</Button><Button danger aria-label={`${copy.reject} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => reject(versionModel, row)}>{copy.reject}</Button></Space> : null },
+      ]} />
+    </Drawer>
+    <Modal title={copy.createDeployment} open={deploymentOpen} onCancel={() => setDeploymentOpen(false)} onOk={() => void submitDeployment()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
+      <Form form={deploymentForm} layout="vertical"><Form.Item name="name" label={copy.name} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="model_version_id" label={copy.version} rules={[{ required: true }]}><Select options={approvedVersions.map(({ model, version }) => ({ value: version.id, label: `${model.name} v${version.version_number}` }))} /></Form.Item></Form>
+    </Modal>
+    <Drawer title={testDeployment ? `${copy.onlineTest}: ${testDeployment.name}` : copy.onlineTest} open={Boolean(testDeployment)} onClose={() => setTestDeployment(undefined)} width={620} extra={<Button type="primary" aria-label={copy.predict} onClick={() => void submitPrediction()}>{copy.predict}</Button>}>
+      <Form form={predictionForm} layout="vertical"><Form.Item name="records" label={copy.recordsJson} rules={[{ required: true }]}><Input.TextArea rows={8} /></Form.Item></Form>
+      {prediction && <Descriptions bordered size="small" column={1}>
+        <Descriptions.Item label={copy.version}>v{prediction.version_number}</Descriptions.Item>
+        <Descriptions.Item label={copy.predictions}><pre>{JSON.stringify(prediction.predictions, null, 2)}</pre></Descriptions.Item>
+        {prediction.probabilities && <Descriptions.Item label={copy.probabilities}><pre>{JSON.stringify(prediction.probabilities, null, 2)}</pre></Descriptions.Item>}
+        <Descriptions.Item label={copy.duration}>{prediction.duration_ms} ms</Descriptions.Item>
+      </Descriptions>}
+    </Drawer>
+  </AppLayout>;
 }
-

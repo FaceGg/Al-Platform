@@ -1,7 +1,7 @@
 # 汽车焊接工业 AI 平台开发文档
 
 > 文档状态：持续维护
-> 最近更新：2026-07-17
+> 最近更新：2026-07-20
 > 适用项目：`E:\codex_workspace\agent_spot_welding`
 > 总周期：20 周，共计 5 个月
 
@@ -67,7 +67,7 @@
 - 工作流导入导出、多人协作编辑和节点级断点续跑；发布快照、版本恢复、Celery 持久任务、硬超时及失联恢复已完成。
 - 数据集版本、完整生命周期和 ZIP 等历史入口统一；基础 Schema、哈希、训练血缘和对象存储 Artifact 已完成。
 - 实验跟踪、训练检查点、指标对比、AutoML Trial 和 TensorBoard。
-- Pipeline 定时、补录、依赖、并发、优先级、暂停和恢复。
+- Pipeline 定时、补录、依赖、并发、超时、重试、暂停和恢复已完成本地生产验收；优先级仍未实现。
 - 模型注册、模型版本、审批、部署关联和模型卡。
 - 推理服务、在线测试、滚动升级、灰度、限流、监控和回滚。
 - 完整 RBAC、项目角色、SSO、操作审计和企业消息通知。
@@ -88,9 +88,9 @@
 | 第 3 周 | 已完成 | 数据、算子与训练闭环 | 已统一 79 个运行时算子协议；完成数据 Artifact、训练评估、模型保存、模型库登记和血缘展示 | 严格算子协议、数据训练闭环；后端 28/28 模块、前端 22/22 测试和生产构建通过 |
 | 第 4 周 | 已完成 | 工业模板与首版交付 | 已完成真实数据准备、四套模板执行闭环、Artifact 向导、Playwright 主流程、Windows/Linux 脚本、跨平台 CI 和交付文档；GitHub Ubuntu 22.04 质量门禁与 Chromium 验收通过 | 稳定可交付版、首月验收报告 |
 | 第 5 周 | 已完成 | 生产存储与异步任务 | 已完成 PostgreSQL/Alembic、Redis/Celery、MinIO、制品 URI、配置密钥、迁移工具、生产容器和真实服务验收 | 生产数据层、对象存储、异步任务框架；Actions Run 29548916619 全绿 |
-| 第 6 周 | 未开始 | 实验与训练管理 | 实验、Run、参数、指标、日志、制品、检查点、恢复、早停和 TensorBoard | 企业基础版、实验训练追踪 |
-| 第 7 周 | 未开始 | Pipeline 调度与权限 | Cron、补录、依赖、并发、超时、重试、暂停恢复、项目角色和审计 | 调度器、实例管理、权限审计 |
-| 第 8 周 | 未开始 | 模型注册与基础推理 | 模型版本、指标、审批、基础推理、在线测试、健康检查和服务启停 | 模型注册中心、基础推理服务 |
+| 第 6 周 | 已完成 | 实验与训练管理 | 已完成实验、Run、参数、指标、日志、制品、检查点、恢复、早停、AutoML Trial、隔离 TensorBoard、真实 Compose 集成与跨平台验收 | 企业基础版、实验训练追踪 |
+| 第 7 周 | 已完成 | Pipeline 调度与权限 | 调度、角色审计、全量、WSL 生产验收与远程 CI 全部通过 | 调度器、实例管理、权限审计 |
+| 第 8 周 | 已完成 | 模型注册与基础推理 | ONNX 注册中心、独立推理运行时、运维 UI、生产 Compose 与远程验收全部完成 | 模型注册中心、基础推理服务 |
 | 第 9 周 | 未开始 | 推理服务生产化 | 多版本发布、滚动升级、回滚、密钥、限流、服务日志和运行指标 | 生产级推理服务、版本发布回滚 |
 | 第 10 周 | 未开始 | 权限、审计与通知 | 项目角色、资源权限、关键操作审计和企业消息通知 | 权限矩阵、审计日志、告警通知 |
 | 第 11 周 | 未开始 | 系统联调与性能优化 | 联调数据、Pipeline、实验、模型和服务；完成核心性能优化 | 全链路版本、性能基线、问题清单 |
@@ -121,19 +121,22 @@
 - 当前开发文档与共享经验文档已建立，后续开发必须持续维护。
 - 第 2 周核心代码和自动化测试已完成；第四周已补充 Playwright 焊接质量主流程。
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
+- 第 6 周已完成：后端实验训练闭环、前端 typed clients、实验/训练运维 UI、Compose/CI 真实生产集成及运行文档均已完成；远程 CI、Chromium、迁移、生产栈和实验栈验收全部通过。
+- 第 7 周已完成：调度、角色审计、61/61 全量模块、Alembic `20260718_07`、WSL PostgreSQL 生产验收和 [Actions Run 29667952189](https://github.com/FaceGg/Al-Platform/actions/runs/29667952189) 全部通过。
+- 第 8 周已完成：7/7 Week 8 后端模块、前端 44/44 测试与生产构建、Chromium 2/2、Alembic `20260718_08`、隔离 WSL 全栈实验/推理生命周期和 readiness 全部通过；远程 CI 待推送后取得最终 Run URL。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
 
-- [ ] 本周范围与验收条件已冻结。
-- [ ] 代码已完成审查并合并。
-- [ ] 单元测试、API 集成测试和相关 E2E 已通过。
-- [ ] 数据库、配置和接口变化已更新迁移与文档。
-- [ ] 测试环境能够独立部署和演示。
-- [ ] 日志、指标和错误信息能够支持问题定位。
-- [ ] 未完成项已转入下一周并记录原因。
-- [ ] 本周问题已追加到本文档末尾。
-- [ ] 可复用经验已追加到共享经验文档。
+- [x] 本周范围与验收条件已冻结。
+- [x] 代码已完成审查并合并。
+- [x] 单元测试、API 集成测试和相关 E2E 已通过。
+- [x] 数据库、配置和接口变化已更新迁移与文档。
+- [x] 测试环境能够独立部署和演示。
+- [x] 日志、指标和错误信息能够支持问题定位。
+- [x] 未完成项已转入下一周并记录原因。
+- [x] 本周问题已追加到本文档末尾。
+- [x] 可复用经验已追加到共享经验文档。
 
 ## 7. 已知风险与开发注意事项
 
@@ -625,3 +628,389 @@
 - 本地验证：后端全量 46/46、第五周 13/13；WSL Docker 生产栈 4/4；前端 14 文件 35/35、生产构建、Chromium 1/1、npm audit 0 漏洞和 Alembic check 均通过。
 - 完成范围：生产配置与密钥、PostgreSQL/Alembic、幂等 SQLite 迁移、Local/MinIO 存储、制品 URI/历史迁移、Local/Celery 分发、Redis 事件桥接、任务领取/心跳/取消/失联恢复、readiness、Compose 镜像、运维文档和跨平台 CI 已闭环。
 - 后续工作：训练任务 Celery 化、实验追踪/检查点、周期性恢复调度、节点级断点续跑、备份恢复和性能压测按第 6 周及后续计划推进，不属于第五周遗留未完成项。
+
+### 2026-07-17：第六周实验与训练管理设计确认
+
+- 当前周次：第 6 周，状态调整为进行中。
+- 设计结论：允许新增 MLflow；平台 PostgreSQL 保留权限、TrainingJob 状态和 MLflow ID，MLflow 作为 Experiment/Run/参数/指标/实验制品的事实来源；最终模型继续登记平台 Artifact 和模型库。
+- 训练范围：普通训练与 AutoML 统一迁移到 Celery；新增 scikit-learn 迭代训练器，支持真实 epoch 指标、早停、checkpoint、恢复、取消和失联恢复；PyTorch checkpoint 延后。
+- TensorBoard：采用受平台鉴权的隔离网关，每个会话只访问目标 Run，不暴露可浏览全部日志的公共实例。
+- 规范文档：`docs/superpowers/specs/2026-07-17-week6-experiment-training-management-design.md`。
+- 验收门禁：本地/远程全量回归、真实 MLflow/PostgreSQL/MinIO/Celery/TensorBoard 集成、前端比较与恢复流程、Chromium 和安全扫描全部通过后方可标记第六周完成。
+- 遗留事项：详细实施计划、TDD 代码实现、迁移、容器、前端和生产验收尚未开始。
+
+### 2026-07-17：第六周任务 1 生产配置完成
+
+- 开发内容：新增 MLflow tracking/backend/artifact、TensorBoard gateway/会话 Secret、会话超时、checkpoint 间隔和训练失联阈值配置；补充 MLflow/TensorBoard 依赖与 `.env.example`。
+- TDD 证据：新增配置测试先因字段不存在和生产校验缺失 RED；实现后新测试 7/7、配置组合 24/24 GREEN，第五周 runner 13/13 无回归。
+- 安全边界：TensorBoard 会话 Secret 支持文件读取，MLflow backend URI 与会话 Secret 不进入标准 dump、repr 或安全摘要；摘要只暴露是否配置及清洗后的服务地址。
+- 影响范围：配置模型、生产启动门禁、依赖、环境变量示例和第六周测试清单。
+- 遗留事项：Experiment/TrainingJob Schema、MLflow adapter、训练执行、TensorBoard gateway 和生产服务尚未实现。
+- 预防措施：生产 fixture 必须与新增强制配置同步；所有跨服务凭据使用 `SecretStr`/Secret 文件并加入泄露回归。
+
+### 2026-07-17：第六周任务 2 实验与训练持久化完成
+
+- 开发内容：新增项目级 `Experiment` 模型与 MLflow Experiment 唯一绑定；扩展 `TrainingJob` 的 Run、Celery、心跳、恢复血缘、checkpoint、epoch、监控和早停字段。
+- TDD 证据：模型测试先因 `app.models.experiment` 缺失 RED，Alembic 测试先因 head 仍为 `20260715_03` 且业务表仅 30 张 RED；完整 downgrade 测试先确认空回滚会残留表和列；Week 6 归属测试先确认新模块未登记。
+- 迁移策略：Alembic `20260717_04` 创建 `experiments`、训练列/索引/外键和完整 downgrade；本地 SQLite 兼容层只为旧表幂等补充 nullable 列和索引，不重建旧表或伪造外键。
+- 验证结果：模型与生产迁移 19/19、数据库迁移回归 9/9、降级聚焦 1/1 通过；双次 upgrade、`alembic check`、降级到 `20260715_03` 均有自动化覆盖。
+- 遗留事项：MLflow adapter、项目鉴权 Experiment API、训练执行与后续生产集成尚未实现；第六周保持进行中。
+- 预防措施：新增 Alembic revision 必须同时验证空库双次升级、autogenerate check 和真实 downgrade；开发 SQLite 兼容迁移与生产外键迁移分层实现。
+
+### 2026-07-17：第六周任务 3 MLflow Tracking Adapter 完成
+
+- 开发内容：新增无导入副作用的 `ExperimentTracking` 协议与 `MlflowExperimentTracking`；支持 Experiment 复用、parent/child Run、参数/指标/标签、搜索/比较、指标历史、制品上传/列出/下载和 Run 终态。
+- 数据契约：`TrackedRun`、`TrackedMetric`、`TrackedArtifact` 使用 frozen DTO；Run 的 params/metrics/tags 复制为只读映射，参数统一字符串化，指标拒绝 bool、非数值和 NaN/Infinity，step 保持整数。
+- TDD 证据：测试先因 adapter 模块不存在 RED；补充 `set_tags` 契约时先撤掉具体实现并确认 AttributeError RED；测试清单先确认新模块未归属 Week 6。
+- 测试边界：有状态内存 fake 返回 MLflow 3.1.4 官方 `Experiment/Run/RunData/Metric/FileInfo` 实体，验证可见状态而非调用次数；MLflow not-found 与基础设施异常分别映射为稳定领域错误。
+- 当前验证：adapter 6/6 通过，不需要网络 MLflow 服务；真实 MLflow/PostgreSQL/MinIO 组合留到 Task 12 验收。
+- 遗留事项：项目权限 API、训练执行、AutoML、TensorBoard、前端和生产集成仍未实现；第六周保持进行中。
+
+### 2026-07-17：第六周任务 4 项目鉴权 Experiment API 完成
+
+- 开发内容：新增 Experiment 创建/列表/详情、Run 分页和 2–10 Run 比较 API；创建使用 `project/<project_uuid>/<experiment_uuid>` 稳定 MLflow namespace，展示名称只保存在平台模型。
+- 权限边界：所有资源查询先通过平台 Project owner 过滤，再解析或访问 tracking 服务；跨用户 Experiment、未配置 tracking 下的跨项目请求以及跨 Experiment Run 统一隐藏为 404。
+- 一致性策略：重名在调用 MLflow 前返回 409；MLflow 失败回滚平台 session 且不留平台记录；MLflow 已创建后数据库失败返回 `EXPERIMENT_PERSISTENCE_FAILED`，保留远端历史且不尝试不可逆删除。
+- 比较契约：保持请求 Run 顺序，参数/指标键排序；每个 Run 返回 params、latest metrics、metric history、状态、时间戳、显式 null 和 missing 列表。
+- TDD 与验证：路由缺失时 6/6 以 404 RED；补充安全/数据库一致性用例时分别以错误 503 和通用 500 RED；最终 API 8/8 GREEN，Week 6 清单先确认新模块未登记。
+- 遗留事项：训练提交仍是旧线程路径，将在 Task 6 迁移 Celery；checkpoint/恢复、AutoML、TensorBoard、前端与真实 MLflow 集成尚未完成。
+
+### 2026-07-17：第六周任务 5 可恢复增量训练核心完成
+
+- 开发内容：新增纯 `IterativeTrainer`，分类使用 `SGDClassifier(loss="log_loss")`，回归使用 `SGDRegressor`；固定划分与 StandardScaler，每 epoch 只执行一次 `partial_fit`。
+- 指标与早停：分类记录 train/val loss 与 val accuracy；回归记录 train/val loss、val r2 和 val rmse；所有指标强制有限浮点，支持 min/max、patience、min_delta 和 restore_best。
+- checkpoint：joblib bytes 保存当前/最佳模型、Scaler、完成 epoch、best epoch/metric、无改善计数、类别、feature/target schema、配置、Dataset/Job/Run 来源和格式版本 1；恢复允许增加 total epochs，但不重置 patience。
+- 边界：核心模块不导入 SQLAlchemy、Celery、ArtifactService 或 MLflow；指标、checkpoint、取消均通过回调交给外层编排。
+- TDD 与验证：模块缺失时测试 RED；最终分类、回归、早停、restore-best、取消、间隔 checkpoint、序列化版本和恢复 patience 共 8/8 GREEN；Week 6 清单先确认新模块未登记。
+- 遗留事项：checkpoint 尚未上传 MLflow/MinIO，最终模型尚未登记 Artifact/ModelLibrary；这些由 Task 6 执行服务完成。
+
+### 2026-07-17：第六周任务 6 Celery 训练执行完成
+
+- 开发内容：新增 `execute_training_job` 与 `ml_platform.execute_training`；SQLite 使用状态条件 UPDATE 原子领取，PostgreSQL 路径使用 `FOR UPDATE SKIP LOCKED`，重复投递返回 skipped。
+- 执行闭环：绑定 MLflow Run 并记录最终生效训练配置；逐 epoch 写指标、current epoch 和 heartbeat；上传 epoch/latest/best checkpoint；完成后登记模型 Artifact 和 ModelLibrary 血缘，最后结束 Run 并提交 completed。
+- 失败与取消：tracking/训练异常写入稳定 error code、exception type 和日志，Run 标记 FAILED；cancel_requested 在 epoch 边界协作停止，保留 latest checkpoint，Run 标记 KILLED，且不登记最终模型。
+- 事务边界：指标与 checkpoint 回调使用独立短 session，避免长训练事务持锁；completed 只在模型 Artifact、ModelLibrary、tracking tags/终态均成功后提交。
+- TDD 与验证：服务缺失时模块导入 RED；补充完整训练配置审计时先因 MLflow params 缺少 total_epochs RED；最终训练执行 5/5、既有 Celery/dispatcher 10/10、任务注册 smoke 通过。
+- 遗留事项：恢复 checkpoint 下载与新 Job 创建、stop/stale recovery API 留到 Task 7；旧 `/api/training/run` 线程入口尚待 Task 7 严格替换。
+
+### 2026-07-17：第六周任务 7 checkpoint 恢复、停止与失联恢复完成
+
+- API 替换：`/api/training/run` 现在必须绑定 owned Experiment 和 Dataset Artifact，创建 queued Job 并投递 Celery，不再启动 API 进程内线程；jobs/detail 返回追踪、epoch、checkpoint 和恢复血缘。
+- checkpoint/恢复：列表改为 owned Job + MLflow artifacts；resume 在 API 层下载并验证格式、Dataset/Job 血缘和总 epoch，创建新 Job/Run 血缘后投递；Worker 执行时再次从源 Run 下载持久 checkpoint 并从下一 epoch 继续。
+- 停止与恢复扫描：stop 只允许 pending/queued/running，写 cancel_requested 后 revoke；stale scan 对 checkpoint、无 checkpoint、cancel_requested 分别执行 pending+attempt、`TRAINING_WORKER_LOST`、cancelled。
+- readiness：Celery ping 之外还必须确认 `ml_platform.execute_training` 已注册，防止“Worker 在线但不能训练”误判 ready。
+- TDD 与验证：旧接口下 checkpoint/resume/stop 404、start 走旧 Artifact 路径及 recovery 模块缺失均 RED；Worker resume 暂时移除后明确从 `[1,2,3,4,5]` 错误重启，恢复后只记录 `[4,5]`；聚焦 17/17 GREEN。
+- 遗留事项：AutoML 暂返回稳定 `AUTOML_MIGRATION_PENDING`，将在 Task 8 实现；TensorBoard、前端和真实生产服务验收尚未完成。
+
+### 2026-07-17：第六周任务 8 Artifact AutoML 与 child Run 完成
+
+- API/调度：AutoML 只接受 owned Experiment + Dataset Artifact，Pydantic `extra=forbid` 明确拒绝历史 `dataset_path`；创建 operator=`automl` Job 并投递 `ml_platform.execute_automl`。
+- 候选执行：分类固定 RandomForest/GradientBoosting/LogisticRegression，回归固定 RandomForest/GradientBoosting/LinearRegression；使用 random_state=42 的 5-fold scoring。
+- Tracking：一个 parent Run、每候选一个 child Run；记录候选参数、有限 cv score、duration 和失败类型/消息；单个失败继续，全部失败才写 `AUTOML_ALL_CANDIDATES_FAILED`。
+- 选择与血缘：最高有限分获胜，同分按原候选顺序稳定选择；winner 全量拟合后登记模型 Artifact、ModelLibrary、Dataset/Job/parent Run 血缘，并在 parent tags 记录 best child/artifact。
+- TDD 与验证：服务缺失时 RED；首次 API 测试因普通内存 SQLite 跨线程丢表暴露测试环境问题，改为 StaticPool 后 AutoML 与既有训练血缘 7/7 GREEN；新测试清单归属先 RED。
+- 遗留事项：候选集合为第六周确定性有限版本，不含分布式/贝叶斯搜索；TensorBoard、前端和生产服务验收尚未完成。
+
+### 2026-07-17：第六周任务 9 隔离 TensorBoard Gateway 完成
+
+- Token：URL-safe base64 JSON + HMAC-SHA256，使用 constant-time compare；claims 仅含 session/run/受控相对 logdir/expiry，覆盖篡改、过期和字段校验。
+- 进程隔离：固定 root 下 resolve，拒绝绝对路径、反斜杠和 `..`；TensorBoard 只监听 127.0.0.1，使用 argv 启动并固定 `--logdir/--path_prefix`，不接受 shell 字符串。
+- 生命周期：相同 session 仅在 Run/logdir 匹配时复用，Run mismatch 拒绝；按 token expiry 或 idle timeout terminate/kill 清理。
+- 平台授权：owned TrainingJob 且存在 MLflow Run 才签发短期 token；返回平台 backend proxy URL。平台代理与 gateway 都重新验签，篡改 token 在内部服务访问前返回 403。
+- TDD 与验证：gateway 包缺失 RED；返回 URL 初次访问 404 后补充真实 proxy 契约；最终 token、遍历、复用、Run 隔离、清理、owner 授权和 proxy 6/6 GREEN，gateway import smoke 成功。
+- 遗留事项：gateway 容器、共享日志卷、真实 TensorBoard 子进程/HTTP 由 Task 12 WSL Docker 验收；前端打开操作在 Task 11 完成。
+
+### 2026-07-17：第六周任务 10 前端 Experiment/Training API 完成
+
+- 新增 `api/experiments.ts`：Experiment 创建/列表/详情、Run 分页和 2–10 Run 比较，提供 ExperimentRun、MetricPoint、RunComparison 等类型。
+- 扩展 `api/training.ts`：严格 TrainingJobCreate、checkpoint 列表、stop、resume 和 TensorBoard session 类型/方法；列表只兼容 array 或 `{items}` 两种既有响应。
+- 契约修正：前端按实施计划发送 `checkpoint_path`；后端在 owned source Run 的 artifact 列表内解析相对 path，并生成持久 checkpoint URI，不接受任意本地路径。
+- TDD 与验证：Experiment 模块缺失、Training 控制函数缺失先 RED；typed client 5/5 GREEN；前端 manifest 先因新测试未归属 RED，随后登记 Week 6 且不重复归属历史 training 测试。
+- 遗留事项：TrainingJobsPage 仍是旧单表布局，Task 11 将改为 Experiment/Training 双 Tab、比较、停止、恢复和 TensorBoard 操作。
+
+### 2026-07-17：第六周任务 11 实验与训练运维界面完成
+
+- 运维工作区：按项目筛选 Experiment 与 Training Job，使用紧凑双 Tab 表格、状态色和 epoch 进度轨展示高频操作信息，详情使用 Drawer，避免页面区块卡片嵌套。
+- Experiment 操作：支持创建、查看 Run、选择 2–10 个 Run、对比指标表和 ECharts 指标历史；Run checkbox 使用稳定可访问名称。
+- Training 操作：新建任务使用 Experiment/Dataset/target/task/epoch 契约；运行任务可确认停止，终态任务可从 owned Run checkpoint 恢复，TensorBoard 仅打开平台 API 返回 URL。
+- 可访问性修正：Ant Design 图标会进入按钮 accessible name，关键图标按钮显式设置业务 `aria-label`；停止确认文案放在真正的确认按钮上。
+- TDD 与验证：旧页面缺少双 Tab 时 2/2 RED；实现后定向 2/2、完整前端 15 文件 39/39 和 TypeScript/Vite 生产构建通过。构建仍报告既有 ECharts 大 chunk 警告，不影响本任务验收。
+- 遗留事项：真实 MLflow/TensorBoard 页面数据与浏览器主流程将在 Task 12 生产栈和 Task 13 E2E 中验收。
+
+### 2026-07-18：第六周任务 12 Compose、Readiness 与真实生产集成完成
+
+- 部署：Compose 新增 PostgreSQL MLflow 数据库初始化、MLflow 3.2.0 服务、非 root TensorBoard Gateway、受控 TensorBoard event volume；Backend/Worker 依赖 MLflow/Gateway 健康后启动。
+- 训练事件：Worker 在 `project_id/run_id` 受控目录写入每个 epoch 的 TensorBoard scalar event，Gateway 使用同一卷启动隔离会话。
+- Readiness：`/api/ready` 新增 `mlflow` 与 `tensorboard` 探针，未配置时返回 `LOCAL_MODE`，失败时使用 `MLFLOW_UNAVAILABLE`/`TENSORBOARD_UNAVAILABLE` 且不回显凭据。
+- 依赖与配置：后端镜像和 CI 使用 `pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/`；增加 `boto3` 以支持 MLflow S3/MinIO artifact；MLflow 官方镜像启动时同样使用该源安装 psycopg。
+- TDD 与验证：Readiness 初始 2 条新断言 RED；训练 TensorBoard event 初始因参数缺失 RED；修复后后端相关回归 13/13、WSL `docker compose config`、三个目标镜像构建、全栈健康和真实生产集成 1/1 GREEN。
+- 问题记录：MLflow 3.1.4 PostgreSQL adapter 将字符串 Experiment ID 绑定为 VARCHAR，升级 3.2.x 后由服务端 `int(experiment_id)` 修复；官方镜像缺少 psycopg、平台 requirements 缺少 boto3、Worker 缺少 MinIO AWS 环境变量均已按真实日志补齐。
+- 遗留事项：CI GitHub Actions 尚未远程运行；Task 13 需执行全量后端/前端/浏览器/迁移/安全验收并记录运行证据。
+
+### 2026-07-18：第六周任务 13 本地验收完成，远程推送受网络阻塞
+
+- 本地验收：后端全量 56/56、Week 6 10/10、前端 15/15 文件 39/39、生产构建、Chromium 1/1、npm audit 0 vulnerabilities、Alembic 双次 upgrade/current/check、WSL `/api/ready` 六项 OK、真实实验集成 1/1。
+- 文档交付：新增 `docs/delivery/EXPERIMENT_TRAINING_OPERATIONS.md`，并更新使用说明、生产基础设施、功能台账、构建基线和平台状态。
+- 外部阻塞：`git push -u origin codex/week-6-experiment-training` 因当前机器经代理连接 `github.com:443` 失败，尚未获得 GitHub Actions 远程 Run URL；不是代码或测试失败。
+- 解除方式：恢复可用的 GitHub 网络/代理后，在本分支执行 push，等待 experiment integration、Chromium、quality 和 audit job 完成，再将 Run URL 追加到本记录并把第六周状态改为已完成。
+- 遗留事项：远程 CI 证据和远程分支推送仍待外部网络恢复。
+
+### 2026-07-18：第六周远程 CI 首轮失败修复
+
+- 现象：Actions Run `29630372947` 的生产迁移 job 在导入配置时因缺少 `MLFLOW_TRACKING_URI` 被拒绝；实验 Compose job 中 backend 因非 root 用户无法创建 `/app/app/uploads` 而反复重启。
+- 根因：生产 integration job 的环境变量未随生产配置新增项更新；Compose 将宿主上传目录挂载到 `/app/uploads`，而数据集 API 使用 `/app/app/uploads`。
+- 处理：为两个 CI job 显式设置 MLflow tracking URI，并为旧生产 integration 补齐 MLflow backend/artifact 与 TensorBoard 全套生产必填配置；将 Compose 上传卷改挂到 `/app/app/uploads`，并在 backend 镜像构建阶段创建并授权该目录。
+- 验证：`git diff --check` 和后端实验集成测试入口通过；等待新 Actions Run 完成生产迁移、Compose readiness 和真实实验生命周期验收。
+- 遗留风险：本机无 Docker CLI，无法复现 Ubuntu runner 的容器权限环境；远程 CI 仍是本次修复的强制验收门禁。
+- 补充：第三次 Run `29631098923` 已通过迁移、Celery、Redis 和 MinIO，旧 Week 5 readiness 用例因未启动第六周新增的两个 HTTP 服务而失败；该用例现对非本任务范围的 MLflow/TensorBoard 探针注入健康响应，真实服务仍由 `Production experiment integration` 独立验收。
+- 补充：第四次 Run `29631294252` 的 Compose backend 继续因 `app.api.operators` 使用旧 `/app/uploads` 路径而不健康；已补充路径一致性回归测试并统一到 `/app/app/uploads`，等待下一次完整实验栈验收。
+- 补充：第五次 Run `29631567092` 的 Linux 质量门禁发现新增 `test_upload_paths` 未登记周归属；已将其登记到 Week 6 manifest，功能测试本身通过。
+
+### 2026-07-18：第六周全部远程验收完成
+
+- Actions Run：`29631795297`，URL 已记录在 `PLATFORM_STATUS.md`。
+- 结果：Quality Ubuntu、Quality Windows、Production integration、Production experiment integration、Chromium acceptance 全部成功；真实实验生命周期、MLflow/MinIO artifact round-trip、TensorBoard session、迁移双次 upgrade/current/check 和浏览器主流程均通过。
+- 状态：第六周 Task 1-13 全部完成，之前记录的远程阻塞已解除；后续工作转入第七周 Pipeline 调度与权限。
+
+### 2026-07-18：第七周 Pipeline 调度子系统本地验收完成
+
+- 当前周次：第 7 周，整体状态仍为进行中。
+- 开发内容：新增五字段 Cron/IANA 时区、持久 schedule/occurrence、唯一 occurrence 幂等、工作流快照绑定、依赖/并发 skip、暂停恢复、限量补录、持久指数退避、单任务硬超时、终态同步、Celery Beat 和独立 Compose scheduler。
+- 问题现象：初版退避在同一 tick 内立即重试，`timeout_seconds` 未进入 WorkflowRun/Celery metadata，occurrence 不随 WorkflowRun 终态更新；全量回归还发现 Celery 循环导入、Alembic head/表数断言和历史 SQLite 兼容列未同步。
+- 根因：调度策略只落配置未形成下一次尝试时间；执行元数据、恢复任务和两条数据库升级路径未同时扩展；scheduler task 在模块加载时反向导入 workflow task。
+- 解决方法：新增 `next_attempt_at` 与 `WorkflowRun.timeout_seconds`、Alembic `20260718_06`、到期重投查询和 occurrence reconciliation；Celery 按稳定任务名 `send_task` 解耦；本地 SQLite 兼容层、生产 head 检查和迁移结构断言同步更新。
+- 验证方式：调度/API/CI/manifest 聚焦 25/25，相关回归 54/54，Week 7 runner 3/3，全量后端 59/59；干净 SQLite 双次 upgrade/current/check 通过；WSL scheduler 镜像从阿里云 PyPI 源构建；真实 PostgreSQL/Redis/Worker/Beat 集成 1/1，两个 WorkflowRun 均完成并同步 occurrence。
+- 生产证据：Beat 日志在 60 秒周期发送 `ml_platform.scheduler_tick` 与 `ml_platform.recover_pipeline_schedules`；Worker 注册全部调度/执行任务并完成定时与补录两次真实工作流。
+- 已知问题：`macro` 算子会返回未声明输出端口，在严格执行协议下失败；生产集成已改用已验证的 `mechanism_thermal`，该算子问题保留为独立技术债。
+- 遗留事项：GitHub 远程 CI 尚未运行；第七周第二阶段项目角色与审计尚未设计和实现；两项完成前不得把第七周标记为已完成。
+
+### 2026-07-18：第七周项目角色与审计设计确认
+
+- 范围：采用 `owner/editor/operator/viewer` 四角色；owner 固定为项目创建者，成员通过现有用户名加入，不实现邮件邀请、所有权转移或多 owner。
+- 权限：owner 管理项目和成员；editor 管理项目资源和调度定义；operator 执行运行、训练与调度操作；viewer 只读；审计日志仅 owner 可读。
+- 审计：覆盖项目资源所有写操作，记录 success/denied/failed、请求关联 ID、资源与脱敏变更摘要；禁止持久化密码、Token、Secret、凭据、原始文件和训练数据。
+- 设计文档：`docs/superpowers/specs/2026-07-18-week7-project-roles-audit-design.md`。
+- 当前状态：设计已确认，等待书面规格审阅；实施计划、迁移、代码、测试和生产验收尚未开始。
+
+### 2026-07-18：第七周项目角色与审计实施计划完成
+
+- 计划文档：`docs/superpowers/plans/2026-07-18-week7-project-roles-audit.md`。
+- 执行顺序：请求关联/脱敏、持久模型与迁移、权限矩阵、审计事务、成员与审计 API、核心资源路由迁移、完整写路由盘点、生产与远程验收。
+- TDD 门禁：每个行为先观察 RED，再实现最小 GREEN；新增测试模块只归属 Week 7 一次。
+- 当前状态：实施计划已完成，尚未开始角色/审计生产代码。
+
+### 2026-07-18：第七周角色审计 Task 1 请求关联与脱敏完成
+
+- 开发内容：新增 UUID `X-Request-ID` middleware、请求上下文提取和 allowlist + 递归敏感键脱敏；主 FastAPI 应用已注册 middleware。
+- TDD 证据：目标模块缺失时请求关联/脱敏 4/4 RED；实现后 4/4 GREEN，既有 `test_app` 7/7 通过。
+- 安全边界：无效调用方 request ID 被替换；来源 IP 只读取直接连接地址，不信任未配置的转发头；password/token/secret/credential/authorization/cookie/content/data/path 键递归脱敏。
+- 遗留事项：审计 ORM、权限矩阵、事务与 API 尚未实现，将按 Task 2-8 顺序推进。
+
+### 2026-07-18：第七周角色审计 Task 2 持久模型与迁移完成
+
+- 开发内容：新增 `ProjectMember` 与 append-only `AuditEvent`，成员角色/审计结果检查约束、成员唯一约束、查询索引和历史保留外键；Alembic head 更新为 `20260718_07`。
+- 数据边界：owner 仍只来自 `Project.owner_id`；成员 project/user 删除级联，创建者和审计 project/actor 删除使用 `SET NULL` 保留业务/审计历史。
+- TDD 证据：模型缺失和 33/35 表差异先 RED；实现后模型/完整迁移/降级 5/5 GREEN。
+- 验证方式：独立临时 SQLite 双次 upgrade、current=`20260718_07`、`alembic check` 无待生成操作，`git diff --check` 通过。
+- 遗留事项：权限矩阵、审计事务和 API 尚未实现。
+
+### 2026-07-18：第七周角色审计 Task 3 集中权限矩阵完成
+
+- 开发内容：新增 `ProjectRole`、冻结权限集合、owner-first `ProjectAccessService`、隐藏/可见领域错误和 owned/joined 项目去重查询。
+- 权限结果：owner 全权限；editor 可读、资源 CRUD、执行和调度管理/操作；operator 只读、执行和调度操作；viewer 只读。
+- TDD 证据：服务缺失时矩阵 3/3 RED；实现后矩阵/owner 优先/admin 不绕过/查询去重和模型回归 5/5 GREEN。
+- 安全边界：全局 `User.role=admin` 不自动获得项目访问；无成员关系保持隐藏 404 语义，已有成员权限不足使用显式 403 领域码。
+- 遗留事项：HTTP 映射、审计事务和成员 API 尚待后续任务。
+
+### 2026-07-18：第七周角色审计 Task 4 审计事务边界完成
+
+- 开发内容：新增冻结 `AuditIntent` 和 `AuditService.project_action` 上下文，集中处理权限检查、脱敏、success/denied/failed 事件和事务。
+- 一致性：成功业务行与 success 事件一次提交；visible denial 单独提交 denied；异常回滚业务后由注入的短 session 写 failed；hidden outsider 不产生项目可见审计。
+- 安全：失败仅记录稳定 error code，不记录异常文本；进入上下文前冻结 actor/request 信息，避免 rollback 后 ORM 过期读取。
+- TDD 与验证：AuditService 缺失时 3/3 RED；实现后事务/脱敏/矩阵 7/7，补充审计提交失败回滚业务后事务用例 4/4 通过。
+- 遗留事项：成员与审计查询 API、现有项目写路由接入尚未完成。
+
+### 2026-07-18：第七周角色审计 Task 5 成员与审计 API 完成
+
+- 开发内容：新增严格成员 schema、owner 合成成员列表、按现有用户名添加、改角、移除；新增 owner-only 审计筛选/分页 API；项目列表返回 owned/joined 去重结果和 `project_role`。
+- 权限语义：成员管理/audit.read 仅 owner；visible member 返回 `PROJECT_PERMISSION_DENIED` 403，outsider 保持隐藏 404；owner 不允许作为普通成员。
+- 审计动作：成员 add/role_change/remove 使用统一事务边界，查询接口只读且无写路由。
+- TDD 证据：路由 404 与 joined project 缺失先 RED；实现后新 API、既有项目 CRUD 与领域服务 29/29 GREEN，`git diff --check` 通过。
+- 遗留事项：项目 CRUD、工作流、数据、训练和调度写路由仍需接入集中权限/审计。
+
+### 2026-07-18：第七周角色审计 Task 6 项目、工作流与运行迁移完成
+
+- 开发内容：项目 CRUD/批量删除、嵌套与直接工作流、发布/恢复、自由/工业模板实例化、运行创建/读取/取消均接入集中项目权限；新增共享 HTTP 适配器和全局 `ProjectAccessError` 404/403 转换。
+- 权限语义：owner 管理项目元数据；editor 可管理工作流定义、版本与模板；operator 可启动/取消运行；viewer 只读；间接 workflow/run 探测先解析所属项目，outsider 始终返回隐藏 404。
+- 审计一致性：目标路由移除内部 `db.commit()`，项目/工作流/版本/模板/运行写入与 success 审计一次提交；visible denial 记录 denied，动作使用冻结的 `project.*`、`workflow.*` 和 `workflow_run.*` 名称。
+- TDD 证据：成员读取 404、工作流越权读取、编辑者创建失败、操作员模板越权和审计缺失均先 RED；角色 API 6/6、Task 6 相关模块 40/40、工业模板契约/E2E 11/11 GREEN。
+- 问题与修正：工业模板 ID 同时存在于新旧模板字典，非互斥分支把 JSON 工业请求错误地再次校验为查询参数请求；真实工业 API/E2E 回归稳定复现 400 后，改为互斥 `if/elif/else` 并恢复 11/11。
+- 验证方式：`python -m compileall -q app`、`git diff --check` 通过；六个目标路由文件不再包含直接提交。
+- 遗留事项：Task 7 数据集、实验、训练、调度路由，Task 8 其余项目级写路由盘点，以及 Task 9 全量/迁移/WSL/远程验收仍待完成。
+
+### 2026-07-18：第七周角色审计 Task 7 数据、实验、训练与调度迁移完成
+
+- 开发内容：数据集上传/批量/ZIP 与读取、Experiment 创建与查询、训练/恢复/停止/AutoML/删除、Schedule 创建/更新/暂停/恢复/补录及历史均使用项目角色解析和稳定隐藏语义。
+- 权限结果：editor 可创建数据/实验并管理 schedule；operator 可训练、停止、恢复及操作 schedule；viewer 可读取数据、实验、训练和调度；outsider 的间接资源探测保持 404。
+- 事务边界：ArtifactService 增加默认兼容的外层事务模式，使用 savepoint 隔离单文件失败，并在审计提交失败时按 URI 补偿对象存储；训练 job 创建与 broker dispatch 状态分成两个均有审计的持久步骤；pause/resume 由外层审计统一提交。
+- 编排边界：schedule backfill 是跨 occurrence/broker 的多事务命令，先以 `schedule.backfill` 记录“已授权并接受”，审计持久化成功后才执行补录副作用。
+- TDD 证据：editor/operator 原先被 owner-only 404、viewer 无法读取、操作员可越权上传等行为先 RED；Task 7 计划套件 41/41 GREEN，ArtifactService 相关回归随数据集模块额外通过。
+- 验证方式：四个目标 API 文件无直接 `db.commit()`，`python -m compileall -q app`、`git diff --check` 通过。
+- 遗留事项：Task 8 全项目写路由分类与剩余 project-bound 路由迁移、Task 9 全量/迁移/生产/远程验收尚待完成。
+
+### 2026-07-18：第七周角色审计 Task 8 项目写路由完整性完成
+
+- 盘点结果：全量扫描 `app/api` 写路由；14 个 project-write 模块声明 `PROJECT_WRITE_ACTIONS`，测试校验动作集合且每个动作同时出现在真实审计调用。PlatformAPI、Agent 本体、compute/knowledge/annotation 等保留全局或用户私有授权域。
+- 新增迁移：模型 Artifact 读删、带 `project_id` 的 ModelLibrary CRUD/批删、绑定 workflow 的 AgentTask review/message/update/delete/create/批删接入集中权限与审计；间接读取同步使用 hidden 404。
+- 权限语义：viewer 可读项目模型与任务；editor 管理模型资源；operator 操作 workflow-bound AgentTask；outsider 不能按 model/task ID 或 workflow 过滤探测项目资源。
+- 外部存储：模型 Artifact 先原子提交 DB 删除与 `model.delete` 审计，再做幂等对象清理，审计失败不会先丢模型内容。
+- TDD 证据：14 个模块清单缺失、viewer 模型 404、operator 越权更新 ModelLibrary、字符串 workflow UUID 写入失败、outsider 任务列表泄露均先 RED；实现后角色/清单/导入/旧 ModelLibrary/PlatformAPI 34/34 GREEN。
+- 验证方式：`python -m compileall -q app`、`git diff --check` 通过。
+- 遗留事项：仅剩 Task 9 manifest、全量、迁移、WSL 生产集成、远程 CI 和最终文档状态。
+
+### 2026-07-18：第七周 Task 9 本地最终验收完成
+
+- Manifest：`test_project_access` 与 `test_api_project_access` 仅归属 Week 7 一次；manifest RED 明确显示两模块缺失，登记后 GREEN。
+- 测试：角色/调度/manifest 聚焦 55 项通过（生产门禁本地按环境跳过 1 项）；Week 7 runner 5/5；全后端 61/61 模块通过。
+- 迁移：干净 SQLite 双 upgrade、current=`20260718_07`、`alembic check` 无差异。
+- WSL 生产：独立 Docker network + PostgreSQL 16 + production backend image；空库迁移到 `20260718_07`，真实四角色解析、outsider 隐藏、success/denied 审计和业务原子更新 1/1 通过；trap 仅清理隔离容器/网络，默认 Compose 未修改。
+- CI：production integration job 已增加 `RUN_PROJECT_ACCESS_INTEGRATION=1` 门禁；本地 `test_ci_workflow` 4/4 通过。
+- 当前状态：本地开发与生产验收全部完成；提交推送并取得远程 GitHub Actions 全绿后，更新 Run URL 并把第七周改为“已完成”。
+
+### 2026-07-19：第七周远程 CI 首轮稳定性修复
+
+- 现象：Actions Run `29667386137` 的 production experiment image build 从阿里云 PyPI 下载依赖时发生 `ReadTimeoutError`；Windows quality 的 Experiment/Run 页面集成测试耗时 5710ms，超过 Vitest 默认 5000ms。
+- 根因：Dockerfile 内 pip 已配置 10 次重试和 120 秒超时，但单次 BuildKit 构建仍会因镜像下载中断失败；页面测试包含多轮 Ant Design 异步交互，Windows runner 性能波动超出通用单测默认时限，业务断言本身未失败。
+- 修复：production experiment job 最多重试三次完整 `docker compose build`，保留 BuildKit/pip 缓存；只将该页面集成测试的超时设为 10 秒，不放宽全局测试门禁。
+- 验证：CI workflow 新契约先 RED 后 5/5 GREEN；目标前端测试连续三轮 6/6、完整前端 39/39、生产构建、Week 7 runner 5/5 和 `git diff --check` 通过。
+- 遗留事项：等待新 Actions Run 全部成功；成功后记录 Run URL、完成第七周状态收口，再开始第八周。
+
+### 2026-07-19：第七周全部远程验收完成
+
+- Actions Run：`29667952189`，五个 job 全部成功。
+- 远程证据：Windows/Ubuntu quality、PostgreSQL/Redis/MinIO/Celery production integration、MLflow/TensorBoard production experiment integration 与 Chromium acceptance 全绿。
+- 状态：第七周 Pipeline 调度、项目角色/审计、迁移、本地全量、WSL 生产集成和远程 CI 全部完成；开发队列转入第八周模型注册与基础推理。
+
+### 2026-07-18：第八周模型注册与基础推理设计确认
+
+- 架构：平台 PostgreSQL 保存逻辑模型、不可变版本、审批与部署状态；独立 `inference-runtime` 使用 ONNX Runtime 执行数据面推理。
+- 注册：受信任平台 joblib 在注册时隔离转换为 ONNX；已转换 ONNX 可携带显式 Schema 注册；验证或提交失败执行 Artifact 补偿。
+- 权限：owner/editor 注册、批准和创建部署；operator 启停与调用；viewer 只读；所有项目写操作接入第七周审计边界。
+- 推理：严格命名 JSON records，1 MiB/100 records 上限，返回预测、可选概率、版本和耗时；运行时仅开放内部鉴权接口。
+- 规格：`docs/superpowers/specs/2026-07-18-week8-model-registry-basic-inference-design.md`。
+- 当前状态：设计已确认并写入规格，等待书面规格审阅；实施计划、迁移、代码和测试尚未开始。
+
+### 2026-07-18：第八周实施计划完成
+
+- 计划：`docs/superpowers/plans/2026-07-18-week8-model-registry-basic-inference.md`。
+- 顺序：安全 ONNX 转换、注册持久化、版本服务、独立运行时、部署编排、审计 API、生产 Compose、前端运维、Chromium、全量验收。
+- 门禁：每项生产行为先观察 RED；依赖安装先配置阿里云 PyPI；默认 WSL Compose 不得被测试改动；远程 CI 全绿前保持第八周“进行中”。
+- 当前状态：书面规格与实施计划已完成；生产代码尚未开始。
+
+### 2026-07-18：第八周 Task 1 安全 ONNX 转换边界完成
+
+- TDD：`app.services.onnx_conversion` 缺失时目标模块 RED；实现后转换、unsupported、畸形包、timeout、无效 ONNX、Schema 宽度与无效 worker 结果 7/7 GREEN。
+- 实现：固定 sklearn allowlist；受信任 joblib 仅在受控子进程反序列化；父进程使用私有临时目录、固定参数与 120 秒超时；ONNX checker、CPU session 和 synthetic inference 全部通过后才返回制品元数据。
+- 依赖：按要求先配置 `https://mirrors.aliyun.com/pypi/simple/`，锁定 `onnx 1.18.*`、`onnxruntime 1.22.*`、`skl2onnx 1.19.*`；本机使用仓库固定 `scikit-learn 1.7.2` 验证。
+- 验证：ONNX 与 iterative training 回归 15/15、compileall、`git diff --check` 通过。
+- 环境说明：全局 Python 同时安装非项目依赖 `sktime` 与 `mlxtend`，两者对 sklearn 的版本要求互斥，因此全局 `pip check` 不能作为仓库依赖结论；干净 GitHub Actions/容器环境继续作为强制依赖门禁。
+- 遗留事项：Task 2 注册模型、不可变版本与部署持久化尚未开始。
+
+### 2026-07-18：第八周 Task 2 注册中心持久化完成
+
+- 模型：新增 `RegisteredModel`、不可变 `ModelVersion` 与 `InferenceDeployment`，覆盖项目/name、模型/version、状态、来源引用、查询索引和历史 actor `SET NULL` 约束。
+- 迁移：Alembic head 更新为 `20260718_08`，生产业务表从 35 增至 38；三表完整 downgrade 到 `20260718_07`。
+- 删除语义：Artifact/ModelLibrary/ModelVersion 引用使用 `DEFERRABLE INITIALLY DEFERRED`；单独删除受引用制品在 commit 时失败，删除整个 project 时交叉级联可在事务末统一通过。
+- TDD：模型模块缺失与 35/38 表差异先 RED；实现后 ORM 9/9、完整生产数据库与迁移 25/25 GREEN。
+- 验证：干净 SQLite 双 upgrade、current=`20260718_08`、`alembic check`、downgrade、compileall 和 `git diff --check` 通过。
+- 遗留事项：Task 3 流式上传、版本注册、并发分配、审批与补偿服务尚未开始。
+
+### 2026-07-18：第八周 Task 3 注册与审批服务完成
+
+- 流式制品：`ArtifactService.create_from_stream` 使用 1 MiB 分块、调用方上限、私有临时文件、SHA-256 和既有存储补偿；文件名拒绝路径片段。
+- 注册：平台源必须同项目、completed TrainingJob/ModelLibrary、关联同一 Artifact 且 metadata source 为 training/automl；生成独立 ONNX Artifact并冻结 Schema、指标、转换信息。直接 ONNX 注册要求同项目 model Artifact 和 format=onnx。
+- 生命周期：版本按锁定逻辑模型行后取 max+1；pending 可批准/拒绝/归档，同状态幂等，冲突终态返回稳定错误码，拒绝必须有评论。
+- 事务修正：`ArtifactService(commit=False)` 改为只 flush，不再内部开启 SAVEPOINT；批量数据 API 在单文件容错边界显式 `begin_nested()`，确保审计/注册外层 rollback 真正回滚 Artifact 元数据。
+- TDD：服务模块缺失先 RED；补偿用例暴露 SQLite SAVEPOINT 成为实际外层事务的持久化问题；修复后服务/Artifact/Storage/Dataset 回归 30/30 GREEN。
+- 遗留事项：Task 4 独立 ONNX Runtime 服务尚未开始；PostgreSQL 并发版本分配将在生产集成重复验证。
+
+### 2026-07-18：第八周 Task 4 独立 ONNX Runtime 完成
+
+- 运行时：新增内部 FastAPI 服务与锁保护的 process-local session cache；加载前验证 Artifact SHA-256/size，使用 CPUExecutionProvider，精确匹配冻结 input/output names。
+- 安全：所有 `/internal` 路由使用 `X-Inference-Internal-Token` 和 `hmac.compare_digest`；稳定错误响应不含 token、URI、样本或异常文本；`/health` 单独用于容器探针。
+- 推理：严格按冻结特征名排序，拒绝缺失/额外字段、bool 冒充数字、非有限值；限制 1-100 records 与 1 MiB body；返回 exact deployment/version、prediction、可选 probabilities 和 duration。
+- 并发：predict 在锁内取得不可变 loaded reference 后释放锁，unload 不破坏已开始的 inference；重复 load/unload 幂等，冲突规格返回 `DEPLOYMENT_SPEC_CONFLICT`。
+- TDD：runtime 包缺失先 RED；非有限值测试首次被 httpx 严格 JSON serializer 提前拒绝，改用原始非标准 JSON body 验证服务防御；runtime + conversion 14/14 GREEN。
+- 遗留事项：Task 5 Backend runtime client、部署 saga、周期 reconciliation、配置与 readiness 尚未开始。
+
+### 2026-07-18：第八周 Task 5 部署控制面完成
+
+- 配置：production 强制 `INFERENCE_RUNTIME_URL` 与 32+ 字符 direct/file internal secret；新增转换/加载/推理 timeout，repr/dump/summary 不泄漏密钥或 URL 凭据。
+- 权限：冻结矩阵新增 model.register/model.approve/deployment.create/inference.operate；owner/editor 全部，operator 仅 inference.operate，viewer 只读。
+- Saga：approved-only 创建；start/stop 先持久 desired + transitional observed，再调用 runtime，最后持久 running/stopped 或 failed + 稳定码；重复操作幂等且失败可重试。
+- 恢复：Celery Beat 每 60 秒运行 `ml_platform.reconcile_inference_deployments`，按数据库 desired state reload runtime 重启后缺失 session、卸载多余 session，不擅自改变 desired state。
+- Readiness：新增 inference_runtime 探针；未配置 local 返回 LOCAL_MODE，失败返回 INFERENCE_RUNTIME_UNAVAILABLE。
+- TDD/验证：缺失服务、extra config、unknown permission、readiness key 均先 RED；实现后配置/权限/部署/readiness/Celery 51 通过、1 生产门禁 skip，compileall 与 diff check 通过。
+- 遗留事项：Task 6 严格 Pydantic schemas、项目权限、审计与完整公共 API 尚未开始。
+
+### 2026-07-18：第八周 Task 6 严格审计 API 完成
+
+- API：实现逻辑模型/版本/部署列表详情、ONNX 流式上传、平台或 ONNX 注册、批准/拒绝/归档、部署创建/启停和预测；所有写 schema `extra=forbid`，列表统一 `{items,total}`。
+- 权限：owner/editor 注册、审批和创建部署；operator 启停/预测；viewer 只读；间接 ID 先解析所属项目，outsider 隐藏 404，visible denial 403。
+- 审计：15 个 project-write 模块机器清单新增 9 个 model registry actions；注册、上传、审批、部署命令 success/denied/failed 均经统一事务边界，预测样本不入审计。
+- Saga：start/stop 审计定义为“命令已授权并接受”，持久审计后再调用 runtime；远程结果由 desired/observed 状态记录。平台转换生成外部 ONNX 对象在审计 commit 异常时显式补偿。
+- TDD：路由缺失先 RED；动态 action 拼接使完整性门禁 RED，改为显式字面 action 后通过；API/历史项目权限/旧 ModelLibrary/import 回归 34/34 GREEN。
+- 遗留事项：Task 7 runtime 镜像、Compose/CI 和真实 PostgreSQL+MinIO lifecycle 尚未开始。
+
+### 2026-07-18：第八周 Task 7 生产推理服务完成
+
+- 部署：新增 UID/GID 1000 非 root `Dockerfile.inference`，使用阿里云 PyPI、单 Uvicorn worker、内部 `expose: 7000`、健康探针和独立 cache volume；Backend/Worker/Scheduler 获得统一 runtime URL/secret，Backend 等待 runtime 健康。
+- CI：experiment integration 三次缓存构建包含 `inference-runtime`，生产栈启动并执行 `RUN_INFERENCE_INTEGRATION=1`；失败证据收集 runtime 日志，对 internal secret 脱敏并扫描泄漏。
+- 真实生命周期：隔离 WSL Compose 项目使用 PostgreSQL 16、MinIO、真实 joblib-to-ONNX 转换、公共 API 注册/批准/创建/启停/预测；清空 runtime session 后 reconciliation 重载，预测一致，停止后返回 `DEPLOYMENT_NOT_READY`，审计存在且不含 records、S3 URI、secret 或 traceback。
+- 生产问题 1：Linux 进程导入科学计算库后虚拟地址空间已超过固定 2 GiB，worker 再设置 `RLIMIT_AS=2 GiB` 导致 skl2onnx `MemoryError: std::bad_alloc`；改为 `max(4 GiB, current virtual memory + 2 GiB)`，保留 CPU 110 秒上限，并新增 Linux 回归。
+- 生产问题 2：MinIO generator context manager 的宽泛异常捕获跨越 `yield`，把转换领域错误误包装成 Artifact 不可用；只包装下载和落盘阶段，消费者异常原样传播，并新增回归。
+- 验证：Windows 聚焦 46 项通过、2 项按生产/Linux 门禁跳过；Linux ONNX/Storage 15/15；隔离生产生命周期 1/1；Alembic head=`20260718_08` 且 check 无差异；runtime 健康；隔离资源全清理，默认 Compose 容器未变。
+- 遗留事项：Task 8 前端模型运维页、Task 9 Chromium 验收、Task 10 全量/文档/远程 CI 尚未完成。
+
+### 2026-07-18：第八周 Task 8 模型运维前端完成
+
+- Typed client：新增注册模型、版本、ONNX multipart、审批、部署启停与 named-record 推理的严格 TypeScript 类型和 URL/payload 契约；列表只归一数组或 `{items}`。
+- 页面：`/models` 替换旧 Artifact 下载/批删页面，改为项目角色感知的注册模型/部署双 tab；提供逻辑模型、平台 joblib/直接 ONNX 版本注册、版本审批/拒绝、部署创建/启停、schema 生成 records、直接 JSON 推理和结果/概率/版本/耗时展示。
+- 状态：表格支持 loading/empty/error；starting/stopping 显示 progress；failed 展示稳定 error code；viewer 只读，owner/editor 管理版本与部署，operator 操作推理。
+- 可访问性与响应式：图标命令使用明确 `aria-label`，项目选择有可访问名称；表格使用稳定横向 scroll，Drawer/Modal 承载细节与命令，无嵌套卡片。
+- 国际化：新增完全对称中英 `modelRegistry` 树，页面无硬编码可见中英文命令。
+- 验证：新客户端/页面 5/5；全前端 17 文件、44/44；TypeScript/Vite production build；官方 npm registry audit 0 漏洞。开发镜像 npm mirror 不支持 audit endpoint，审计显式使用官方只读 endpoint。
+- 遗留事项：Task 9 真实 Chromium 登录与完整 UI lifecycle，Task 10 后端/迁移/生产/远程 CI 和交付文档。
+
+### 2026-07-18：第八周 Task 9 Chromium 模型推理验收完成
+
+- Fixture：新增独立 Python fixture 脚本，直接使用生产 ORM/ArtifactService 在浏览器创建的项目内写入真实 TrainingJob、joblib Artifact 与 ModelLibrary provenance；未增加生产测试路由或授权绕过。
+- 运行环境：Playwright Backend、fixture 与单 worker inference runtime 共享隔离 SQLite URL、local Artifact 目录和 32+ 字符 internal token。
+- E2E：管理员真实登录，公共 API 创建项目，UI 新建逻辑模型、注册平台版本、批准 v1、创建/启动部署、提交 named records、验证概率与实际 v1、停止并验证 desired/observed 双状态。
+- 可访问性修正：Ant Design 中文 Modal/Drawer 按钮因视觉字距产生 `创 建`/`推 理` accessible name；关键确认按钮显式设置业务 `aria-label`，自动化与屏幕阅读器不再依赖样式化文本拆分。
+- TDD：fixture 缺失 RED；随后逐次通过 DOM snapshot 收窄 modal/drawer/row locator，无固定 sleep。
+- 验证：目标 Chromium 1/1（17.8 秒）；完整 Chromium 2/2，新模型推理与既有焊接模板均通过。
+- 遗留事项：Task 10 Week 8 最终 manifest 核对、全后端、迁移、隔离 WSL 生产、交付文档、推送和远程 CI。
+
+### 2026-07-20：第八周 Task 10 最终验收完成
+
+- 本地验证：Week 8 7/7 模块通过；配置回归 7/7；前端 17 个测试文件、44/44 用例、TypeScript/Vite 构建和官方 npm audit 通过；Chromium 2/2 通过。
+- 隔离 WSL Compose：PostgreSQL 16、Redis/Celery、MinIO、MLflow、TensorBoard、inference-runtime、migrate、backend、worker、scheduler 全部健康；Alembic `20260718_08` upgrade/current/check 通过；实验恢复/TensorBoard 1/1、模型注册/推理运行时重启协调/停止 1/1；`/api/ready` 的 database、redis、celery、storage、mlflow、tensorboard、inference_runtime 均为 `OK`。
+- 验收修正：首次手工 Compose 命令遗漏 `CELERY_RESULT_BACKEND`，造成 Celery `No result backend is configured`；按 CI 同等生产配置补齐后重跑通过。隔离项目及卷已由 trap 清理，默认 Compose 未修改。
+- 当前状态：第八周代码、测试、文档和本地生产验收完成；待提交推送并取得远程 Actions 全绿证据后关闭发布流程。
+
+### 2026-07-20：第八周远程 CI 合并前门禁修复
+
+- 问题现象：PR #3 的实验生产集成在 Compose 插值阶段失败，生产集成在 Alembic 启动阶段失败。
+- 已验证根因：实验任务未声明 Compose `migrate` 服务要求的 `INFERENCE_INTERNAL_SECRET`；生产迁移任务使用 `APP_MODE=production`，但未声明配置校验要求的 `INFERENCE_RUNTIME_URL`。
+- 修复内容：在对应 GitHub Actions job 环境中补齐两个变量；新增 CI workflow 契约测试，防止必需运行时配置遗漏。
+- 验证方式：CI 契约测试 9/9 通过；本地 `git diff --check` 通过；本机未安装 Docker，Compose 真实运行验证保留给远程 Actions。
+- 当前状态：修复待推送并取得 PR #3 新一轮 Ubuntu、Windows、生产实验集成和生产集成全绿证据；取得证据后再合并 PR #3。
+
+### 2026-07-20：第八周生产 readiness 回归修正
+
+- 问题现象：补齐生产任务的 `INFERENCE_RUNTIME_URL` 后，生产栈测试的 HTTP 探针次数从 2 增至 3。
+- 已验证根因：ReadinessService 已包含 inference runtime 检查；旧测试依赖 URL 缺失时该检查被跳过，未显式验证第三个探针。
+- 修复内容：将测试改为验证 MLflow、TensorBoard 和 inference runtime 三个明确 URL，不再只依赖旧调用次数。
+- 验证方式：readiness 和 CI workflow 相关测试 14/14、`compileall`、`git diff --check` 通过。
+- 当前状态：修复待推送并以远程 production-integration 重新验收。

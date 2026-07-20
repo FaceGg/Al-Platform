@@ -89,6 +89,20 @@ class TestArtifactService(unittest.TestCase):
 
         self.assertEqual(storage.deleted, ["file:///uploaded/model.bin"])
 
+    def test_outer_rollback_removes_uncommitted_artifact_metadata(self):
+        artifact = self.service.create_from_file(
+            project_id=self.project_id,
+            source_path=self.source,
+            name="model",
+            artifact_type="model",
+            commit=False,
+        )
+        artifact_id = artifact.id
+
+        self.db.rollback()
+
+        self.assertIsNone(self.db.query(Artifact).filter_by(id=artifact_id).first())
+
     def test_materialize_falls_back_to_legacy_storage_path(self):
         artifact = Artifact(
             project_id=self.project_id,

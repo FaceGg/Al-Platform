@@ -57,9 +57,11 @@ def heartbeat_run(
     task_id: str,
     stop_event,
     *,
-    session_factory=SessionLocal,
+    session_factory=None,
     interval_seconds: float = 30.0,
 ) -> None:
+    if session_factory is None:
+        session_factory = SessionLocal
     while not stop_event.is_set():
         with session_factory() as db:
             run = db.query(WorkflowRun).filter(

@@ -62,8 +62,9 @@ AI模型训练编排平台定位为专属AI模型 **"智造工厂"**，提供覆
 ### 2.2 安装依赖
 
 ```bash
-# 后端
+# 后端（生产/WSL 安装使用阿里云 PyPI 源）
 cd ml-platform/backend
+pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 pip install -r requirements.txt
 
 # 前端
@@ -554,7 +555,7 @@ API需要配置环境变量 `LLM_API_KEY`。对话接口返回"LLM not configure
 
 ### Q: 如何启动生产基础设施？
 
-在仓库根目录设置生产数据库、JWT、Redis 和 MinIO 环境变量后，运行 `docker compose up -d postgres redis minio minio-init migrate backend worker`。`migrate` 成功退出后 API 和 Worker 才会启动；使用 `/api/health` 检查进程，使用 `/api/ready` 检查 PostgreSQL/Alembic、Redis、Celery 和 MinIO。迁移、回滚和错误码见 `docs/delivery/PRODUCTION_INFRASTRUCTURE.md`。
+在仓库根目录设置 PostgreSQL、JWT、Redis、MinIO、MLflow 和 TensorBoard secret 后，运行 `docker compose up -d postgres redis minio minio-init mlflow tensorboard-gateway migrate backend worker`。`migrate` 成功退出后 API 和 Worker 才会启动；使用 `/api/health` 检查进程，使用 `/api/ready` 检查六项依赖。实验/训练操作见 `docs/delivery/EXPERIMENT_TRAINING_OPERATIONS.md`，基础设施回滚见 `docs/delivery/PRODUCTION_INFRASTRUCTURE.md`。
 
 ---
 

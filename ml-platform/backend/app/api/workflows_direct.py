@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -7,8 +7,14 @@ from app.models.workflow import Workflow, WorkflowNode, WorkflowEdge
 from app.models.user import User
 from app.schemas.workflow import WorkflowSave
 from app.api.auth import get_current_user
+from app.api.project_security import audit_service, resolve_workflow_access
+from app.services.audit import AuditIntent
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows_direct"])
+PROJECT_WRITE_ACTIONS = {
+    "PUT /api/workflows/{workflow_id}": "workflow.update",
+    "DELETE /api/workflows/{workflow_id}": "workflow.delete",
+}
 
 
 def _to_uuid(value: str, id_map: dict[str, UUID]) -> UUID:
@@ -29,9 +35,7 @@ def get_workflow_direct(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    wf = db.query(Workflow).filter(Workflow.id == UUID(workflow_id)).first()
-    if not wf:
-        raise HTTPException(404, "Workflow not found")
+    wf, _ = resolve_workflow_access(db, workflow_id, current_user.id)
     nodes = db.query(WorkflowNode).filter(WorkflowNode.workflow_id == UUID(workflow_id)).all()
     edges = db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == UUID(workflow_id)).all()
     return {
@@ -57,61 +61,85 @@ def get_workflow_direct(
 def save_workflow_direct(
     workflow_id: str,
     data: WorkflowSave,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    wf = db.query(Workflow).filter(Workflow.id == UUID(workflow_id)).first()
-    if not wf:
-        raise HTTPException(404, "Workflow not found")
-    if data.name:
-        wf.name = data.name
+    wf, access = resolve_workflow_access(db, workflow_id, current_user.id)
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="resource.update",
+        intent=AuditIntent(
+            project_id=wf.project_id,
+            action="workflow.update",
+            resource_type="workflow",
+            resource_id=str(wf.id),
+            changes=data.model_dump(exclude_none=True),
+        ),
+        allowed_changes={"name", "description"},
+    ):
+        if data.name:
+            wf.name = data.name
+        if data.description is not None:
+            wf.description = data.description
 
-    # Delete existing nodes and edges
-    db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == UUID(workflow_id)).delete()
-    db.query(WorkflowNode).filter(WorkflowNode.workflow_id == UUID(workflow_id)).delete()
-    db.flush()
-
-    # Create new nodes, track client-id -> UUID mapping
-    id_map: dict[str, UUID] = {}
-    for n in data.nodes:
-        node = WorkflowNode(
-            workflow_id=UUID(workflow_id),
-            operator_id=n.operator_id,
-            label=n.label,
-            position_x=n.position.x,
-            position_y=n.position.y,
-            params=n.params or {},
-        )
-        db.add(node)
+        db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == wf.id).delete()
+        db.query(WorkflowNode).filter(WorkflowNode.workflow_id == wf.id).delete()
         db.flush()
-        id_map[n.id] = node.id
 
-    # Create edges using id_map for resolution
-    for e in data.edges:
-        edge = WorkflowEdge(
-            workflow_id=UUID(workflow_id),
-            source_node_id=_to_uuid(e.source, id_map),
-            source_port=e.source_port,
-            target_node_id=_to_uuid(e.target, id_map),
-            target_port=e.target_port,
-        )
-        db.add(edge)
+        id_map: dict[str, UUID] = {}
+        for n in data.nodes:
+            node = WorkflowNode(
+                workflow_id=wf.id,
+                operator_id=n.operator_id,
+                label=n.label,
+                position_x=n.position.x,
+                position_y=n.position.y,
+                params=n.params or {},
+            )
+            db.add(node)
+            db.flush()
+            id_map[n.id] = node.id
 
-    db.commit()
+        for e in data.edges:
+            edge = WorkflowEdge(
+                workflow_id=wf.id,
+                source_node_id=_to_uuid(e.source, id_map),
+                source_port=e.source_port,
+                target_node_id=_to_uuid(e.target, id_map),
+                target_port=e.target_port,
+            )
+            db.add(edge)
+
     return {"message": "Workflow saved"}
 
 
 @router.delete("/{workflow_id}", status_code=204)
 def delete_workflow_direct(
     workflow_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    wf = db.query(Workflow).filter(Workflow.id == UUID(workflow_id)).first()
-    if not wf:
-        raise HTTPException(404, "Workflow not found")
-    db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == UUID(workflow_id)).delete()
-    db.query(WorkflowNode).filter(WorkflowNode.workflow_id == UUID(workflow_id)).delete()
-    db.delete(wf)
-    db.commit()
+    wf, access = resolve_workflow_access(db, workflow_id, current_user.id)
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="resource.delete",
+        intent=AuditIntent(
+            project_id=wf.project_id,
+            action="workflow.delete",
+            resource_type="workflow",
+            resource_id=str(wf.id),
+        ),
+        allowed_changes=set(),
+    ):
+        db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == wf.id).delete()
+        db.query(WorkflowNode).filter(WorkflowNode.workflow_id == wf.id).delete()
+        db.delete(wf)
     return Response(status_code=204)

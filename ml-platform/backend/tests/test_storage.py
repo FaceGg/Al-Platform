@@ -159,6 +159,13 @@ class TestMinioStorage(unittest.TestCase):
         with self.assertRaises(StorageError):
             self.storage.put(self.source, "project", "artifact", "../model.bin")
 
+    def test_minio_materialize_preserves_consumer_exceptions(self):
+        stored = self.storage.put(self.source, "project", "artifact", "model.bin")
+
+        with self.assertRaisesRegex(ValueError, "consumer failed"):
+            with self.storage.materialize(stored.uri):
+                raise ValueError("consumer failed")
+
 
 if __name__ == "__main__":
     unittest.main()
