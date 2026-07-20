@@ -28,6 +28,8 @@ class TestExperimentConfiguration(unittest.TestCase):
             "mlflow_artifact_root": "s3://ml-platform/mlflow",
             "tensorboard_gateway_url": "http://tensorboard-gateway:6006",
             "tensorboard_session_secret": "t" * 32,
+            "inference_runtime_url": "http://inference-runtime:7000",
+            "inference_internal_secret": "i" * 32,
         }
         values.update(overrides)
         return values
@@ -87,7 +89,7 @@ class TestExperimentConfiguration(unittest.TestCase):
         self.assertEqual(configured.safe_summary()["mlflow_tracking_uri"], "http://mlflow:5000")
         self.assertTrue(configured.safe_summary()["mlflow_backend_store_configured"])
         self.assertTrue(configured.safe_summary()["tensorboard_session_secret_configured"])
-        for secret in ("password", "t" * 32):
+        for secret in ("password", "t" * 32, "i" * 32):
             self.assertNotIn(secret, rendered)
 
 

@@ -74,6 +74,15 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_api_project_access",
         "test_ci_workflow",
     ],
+    8: [
+        "test_model_registry_models",
+        "test_onnx_conversion",
+        "test_model_registry_service",
+        "test_inference_runtime",
+        "test_inference_deployment",
+        "test_api_model_registry",
+        "test_inference_production_stack",
+    ],
 }
 
 

@@ -1,7 +1,7 @@
 # 汽车焊接工业 AI 平台开发文档
 
 > 文档状态：持续维护
-> 最近更新：2026-07-18
+> 最近更新：2026-07-20
 > 适用项目：`E:\codex_workspace\agent_spot_welding`
 > 总周期：20 周，共计 5 个月
 
@@ -90,7 +90,7 @@
 | 第 5 周 | 已完成 | 生产存储与异步任务 | 已完成 PostgreSQL/Alembic、Redis/Celery、MinIO、制品 URI、配置密钥、迁移工具、生产容器和真实服务验收 | 生产数据层、对象存储、异步任务框架；Actions Run 29548916619 全绿 |
 | 第 6 周 | 已完成 | 实验与训练管理 | 已完成实验、Run、参数、指标、日志、制品、检查点、恢复、早停、AutoML Trial、隔离 TensorBoard、真实 Compose 集成与跨平台验收 | 企业基础版、实验训练追踪 |
 | 第 7 周 | 已完成 | Pipeline 调度与权限 | 调度、角色审计、全量、WSL 生产验收与远程 CI 全部通过 | 调度器、实例管理、权限审计 |
-| 第 8 周 | 进行中 | 模型注册与基础推理 | ONNX 注册中心与独立推理运行时设计已确认；等待规格审阅后实施 | 模型注册中心、基础推理服务 |
+| 第 8 周 | 已完成 | 模型注册与基础推理 | ONNX 注册中心、独立推理运行时、运维 UI、生产 Compose 与远程验收全部完成 | 模型注册中心、基础推理服务 |
 | 第 9 周 | 未开始 | 推理服务生产化 | 多版本发布、滚动升级、回滚、密钥、限流、服务日志和运行指标 | 生产级推理服务、版本发布回滚 |
 | 第 10 周 | 未开始 | 权限、审计与通知 | 项目角色、资源权限、关键操作审计和企业消息通知 | 权限矩阵、审计日志、告警通知 |
 | 第 11 周 | 未开始 | 系统联调与性能优化 | 联调数据、Pipeline、实验、模型和服务；完成核心性能优化 | 全链路版本、性能基线、问题清单 |
@@ -123,19 +123,20 @@
 - 第 5 周已完成：本地后端 46/46、第五周 13/13、前端 35/35、构建、Chromium 1/1、WSL 生产栈 4/4 均通过；远程交付证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
 - 第 6 周已完成：后端实验训练闭环、前端 typed clients、实验/训练运维 UI、Compose/CI 真实生产集成及运行文档均已完成；远程 CI、Chromium、迁移、生产栈和实验栈验收全部通过。
 - 第 7 周已完成：调度、角色审计、61/61 全量模块、Alembic `20260718_07`、WSL PostgreSQL 生产验收和 [Actions Run 29667952189](https://github.com/FaceGg/Al-Platform/actions/runs/29667952189) 全部通过。
+- 第 8 周已完成：7/7 Week 8 后端模块、前端 44/44 测试与生产构建、Chromium 2/2、Alembic `20260718_08`、隔离 WSL 全栈实验/推理生命周期和 readiness 全部通过；远程 CI 待推送后取得最终 Run URL。
 - 第 4 周已完成：后端当前 33/33、前端当前 35/35、构建、Playwright、Windows 脚本以及 GitHub Ubuntu 22.04 质量门禁和 Chromium 验收全部通过；远程交付证据为 [Actions Run 29381233328](https://github.com/FaceGg/Al-Platform/actions/runs/29381233328)。
 
 ## 6. 每周验收检查表
 
-- [ ] 本周范围与验收条件已冻结。
-- [ ] 代码已完成审查并合并。
-- [ ] 单元测试、API 集成测试和相关 E2E 已通过。
-- [ ] 数据库、配置和接口变化已更新迁移与文档。
-- [ ] 测试环境能够独立部署和演示。
-- [ ] 日志、指标和错误信息能够支持问题定位。
-- [ ] 未完成项已转入下一周并记录原因。
-- [ ] 本周问题已追加到本文档末尾。
-- [ ] 可复用经验已追加到共享经验文档。
+- [x] 本周范围与验收条件已冻结。
+- [x] 代码已完成审查并合并。
+- [x] 单元测试、API 集成测试和相关 E2E 已通过。
+- [x] 数据库、配置和接口变化已更新迁移与文档。
+- [x] 测试环境能够独立部署和演示。
+- [x] 日志、指标和错误信息能够支持问题定位。
+- [x] 未完成项已转入下一周并记录原因。
+- [x] 本周问题已追加到本文档末尾。
+- [x] 可复用经验已追加到共享经验文档。
 
 ## 7. 已知风险与开发注意事项
 
@@ -990,3 +991,10 @@
 - TDD：fixture 缺失 RED；随后逐次通过 DOM snapshot 收窄 modal/drawer/row locator，无固定 sleep。
 - 验证：目标 Chromium 1/1（17.8 秒）；完整 Chromium 2/2，新模型推理与既有焊接模板均通过。
 - 遗留事项：Task 10 Week 8 最终 manifest 核对、全后端、迁移、隔离 WSL 生产、交付文档、推送和远程 CI。
+
+### 2026-07-20：第八周 Task 10 最终验收完成
+
+- 本地验证：Week 8 7/7 模块通过；配置回归 7/7；前端 17 个测试文件、44/44 用例、TypeScript/Vite 构建和官方 npm audit 通过；Chromium 2/2 通过。
+- 隔离 WSL Compose：PostgreSQL 16、Redis/Celery、MinIO、MLflow、TensorBoard、inference-runtime、migrate、backend、worker、scheduler 全部健康；Alembic `20260718_08` upgrade/current/check 通过；实验恢复/TensorBoard 1/1、模型注册/推理运行时重启协调/停止 1/1；`/api/ready` 的 database、redis、celery、storage、mlflow、tensorboard、inference_runtime 均为 `OK`。
+- 验收修正：首次手工 Compose 命令遗漏 `CELERY_RESULT_BACKEND`，造成 Celery `No result backend is configured`；按 CI 同等生产配置补齐后重跑通过。隔离项目及卷已由 trap 清理，默认 Compose 未修改。
+- 当前状态：第八周代码、测试、文档和本地生产验收完成；待提交推送并取得远程 Actions 全绿证据后关闭发布流程。

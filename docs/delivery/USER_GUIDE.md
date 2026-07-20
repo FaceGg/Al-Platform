@@ -52,3 +52,14 @@
 - 本地模式默认使用进程内线程；生产模式使用 PostgreSQL、Celery/Redis 和 MinIO，支持持久投递、硬超时、取消与失联恢复。节点级断点续跑和周期性恢复调度仍未实现。
 - 本地模式默认使用 SQLite 和本地文件；多实例部署必须按生产基础设施文档切换到 PostgreSQL 和 MinIO。
 - `execute_python` 和表达式算子只应运行可信输入。
+
+## 注册模型与在线推理
+
+1. 进入“模型库”，选择项目。项目名称旁显示当前 owner/editor/operator/viewer 角色。
+2. owner/editor 创建逻辑注册模型，点击“注册版本”。平台来源填写已完成训练模型 ID；ONNX 来源选择文件并填写 feature/output Schema JSON。
+3. 在“版本”中检查 framework、状态和版本号；owner/editor 批准 pending 版本，拒绝时必须填写意见。
+4. 切换“推理部署”，选择 approved 版本创建部署。owner/editor/operator 可启动或停止。
+5. 运行中点击“在线测试”。页面按冻结 Schema 生成 records 模板，也可直接粘贴 1-100 条 JSON records。
+6. 查看 predictions、probabilities、精确版本和毫秒耗时。停止后不可继续推理。
+
+viewer 只能查看。operator 不能注册或审批，但可启停和推理。records 必须字段完全匹配且数值有限；单请求最大 1 MiB。详细错误码和生产配置见 `MODEL_REGISTRY_INFERENCE.md`。

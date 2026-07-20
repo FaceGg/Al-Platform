@@ -669,16 +669,16 @@ Require Windows quality, Ubuntu quality, production integration, production expe
 
 ## Final Verification Checklist
 
-- [ ] Only validated ONNX versions can be deployed.
-- [ ] Platform joblib conversion is provenance-restricted, allowlisted, timed out, and compensated.
-- [ ] Registered model versions are immutable and monotonic.
-- [ ] owner/editor/operator/viewer behavior matches the confirmed matrix.
-- [ ] All writes and denied actions produce redacted Week 7 audit events.
-- [ ] Runtime internal routes require the production secret and expose no public host port.
-- [ ] Start/stop are idempotent; desired and observed states survive failures and runtime restart.
-- [ ] JSON records enforce exact schema, 1 MiB body, 100-record batch, finite values, and 30-second deadline.
-- [ ] Predictions identify the exact immutable version and never persist request content.
-- [ ] Readiness includes inference runtime with `LOCAL_MODE` and stable production failure codes.
-- [ ] Alembic head `20260718_08`, double upgrade/current/check, and downgrade pass.
-- [ ] Week 8 manifest owns every new test module exactly once.
-- [ ] Full backend, frontend, build, npm audit, Chromium, isolated WSL production, and remote CI are green.
+- [x] Only validated ONNX versions can be deployed.
+- [x] Platform joblib conversion is provenance-restricted, allowlisted, timed out, and compensated.
+- [x] Registered model versions are immutable and monotonic.
+- [x] owner/editor/operator/viewer behavior matches the confirmed matrix.
+- [x] All writes and denied actions produce redacted Week 7 audit events.
+- [x] Runtime internal routes require the production secret and expose no public host port.
+- [x] Start/stop are idempotent; desired and observed states survive failures and runtime restart.
+- [x] JSON records enforce exact schema, 1 MiB body, 100-record batch, finite values, and 30-second deadline.
+- [x] Predictions identify the exact immutable version and never persist request content.
+- [x] Readiness includes inference runtime with `LOCAL_MODE` and stable production failure codes.
+- [x] Alembic head `20260718_08`, double upgrade/current/check, and downgrade pass.
+- [x] Week 8 manifest owns every new test module exactly once.
+- [ ] Full backend, frontend, build, npm audit, Chromium, isolated WSL production, and remote CI are green (remote run pending push).

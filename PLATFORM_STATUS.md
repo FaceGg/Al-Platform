@@ -4,9 +4,9 @@
 
 > 第七周远程验收：GitHub Actions [Run 29667952189](https://github.com/FaceGg/Al-Platform/actions/runs/29667952189) 全部通过（Linux/Windows quality、Production integration、Production experiment integration、Chromium）。
 
-> 第八周：ONNX 模型注册中心与独立基础推理运行时设计已确认，等待书面规格审阅后实施。
+> 第八周：ONNX 模型注册中心、独立基础推理运行时、运维 UI、生产 Compose、本地验收和远程 CI 已完成。
 
-> 最后更新: 2026-07-19 | 当前版本: 0.3.0
+> 最后更新: 2026-07-20 | 当前版本: 0.3.0
 
 ---
 
@@ -440,3 +440,13 @@
 - 项目协作：owner/editor/operator/viewer、成员管理、joined project、集中权限、项目写审计、请求关联和脱敏已覆盖 14 个 project-write 模块。
 - 角色生产验收：独立 PostgreSQL 16 空库迁移后，四角色、outsider 隐藏、success/denied 审计和原子提交 1/1 通过。
 - 远程验收：Actions Run `29667952189` 的 Windows/Ubuntu quality、生产权限审计集成、实验生产栈和 Chromium 主流程全部成功；第七周关闭。
+
+### 十七、2026-07-18 第八周模型注册与基础推理本地验收
+
+- 新增项目级 RegisteredModel、不可变 ModelVersion 与 InferenceDeployment；Alembic head 为 `20260718_08`，业务表 38 张。
+- 受信任平台 joblib 在受控子进程转换为 allowlisted ONNX；直接 ONNX 上传支持显式 Schema、SHA-256、256 MiB 流式上限和失败补偿。
+- 独立非 root ONNX Runtime 服务只开放内部 7000 端口；constant-time token、session cache、strict named records、1 MiB/100 records 与有限数值校验完成。
+- owner/editor 注册审批和创建部署；operator 启停推理；viewer 只读。写命令进入第七周事务审计，预测 records/结果不持久化。
+- `/models` 已改为注册模型/部署运维双 Tab，支持平台/ONNX 注册、审批拒绝、部署、schema records、预测概率/版本/耗时和完整中英文本。
+- 本地证据：Task 7 聚焦 46 项、Linux ONNX/Storage 15/15、隔离 PostgreSQL/MinIO inference lifecycle 1/1；前端 44/44、production build、npm audit 0；Chromium 2/2。
+- 当前状态：Task 10 全量后端、最终迁移/隔离生产复验和远程 CI 尚在执行，第八周保持“进行中”。
