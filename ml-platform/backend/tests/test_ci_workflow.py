@@ -32,6 +32,16 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn("grep -Eni", evidence_step)
         self.assertNotIn("rg -n", evidence_step)
 
+    def test_experiment_integration_declares_compose_required_runtime_secret(self):
+        experiment_job = yaml.safe_load(self.workflow)["jobs"]["experiment-integration"]
+
+        self.assertIn("INFERENCE_INTERNAL_SECRET", experiment_job["env"])
+
+    def test_production_integration_declares_runtime_url_for_production_settings(self):
+        production_job = yaml.safe_load(self.workflow)["jobs"]["production-integration"]
+
+        self.assertIn("INFERENCE_RUNTIME_URL", production_job["env"])
+
     def test_compose_has_dedicated_celery_beat_scheduler(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
         scheduler = compose["services"]["scheduler"]

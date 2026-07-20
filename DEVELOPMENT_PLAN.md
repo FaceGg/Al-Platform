@@ -998,3 +998,11 @@
 - 隔离 WSL Compose：PostgreSQL 16、Redis/Celery、MinIO、MLflow、TensorBoard、inference-runtime、migrate、backend、worker、scheduler 全部健康；Alembic `20260718_08` upgrade/current/check 通过；实验恢复/TensorBoard 1/1、模型注册/推理运行时重启协调/停止 1/1；`/api/ready` 的 database、redis、celery、storage、mlflow、tensorboard、inference_runtime 均为 `OK`。
 - 验收修正：首次手工 Compose 命令遗漏 `CELERY_RESULT_BACKEND`，造成 Celery `No result backend is configured`；按 CI 同等生产配置补齐后重跑通过。隔离项目及卷已由 trap 清理，默认 Compose 未修改。
 - 当前状态：第八周代码、测试、文档和本地生产验收完成；待提交推送并取得远程 Actions 全绿证据后关闭发布流程。
+
+### 2026-07-20：第八周远程 CI 合并前门禁修复
+
+- 问题现象：PR #3 的实验生产集成在 Compose 插值阶段失败，生产集成在 Alembic 启动阶段失败。
+- 已验证根因：实验任务未声明 Compose `migrate` 服务要求的 `INFERENCE_INTERNAL_SECRET`；生产迁移任务使用 `APP_MODE=production`，但未声明配置校验要求的 `INFERENCE_RUNTIME_URL`。
+- 修复内容：在对应 GitHub Actions job 环境中补齐两个变量；新增 CI workflow 契约测试，防止必需运行时配置遗漏。
+- 验证方式：CI 契约测试 9/9 通过；本地 `git diff --check` 通过；本机未安装 Docker，Compose 真实运行验证保留给远程 Actions。
+- 当前状态：修复待推送并取得 PR #3 新一轮 Ubuntu、Windows、生产实验集成和生产集成全绿证据；取得证据后再合并 PR #3。

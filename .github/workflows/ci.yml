@@ -151,6 +151,7 @@ jobs:
       TENSORBOARD_GATEWAY_URL: http://127.0.0.1:6006
       TENSORBOARD_SESSION_SECRET: ci-tensorboard-session-secret-at-least-32-bytes
       INFERENCE_INTERNAL_SECRET: ci-inference-internal-secret-at-least-32-bytes
+      INFERENCE_RUNTIME_URL: http://127.0.0.1:7000
       TASK_BACKEND: celery
       CELERY_BROKER_URL: redis://127.0.0.1:6379/0
       CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/0
@@ -288,6 +289,7 @@ jobs:
       MLFLOW_ARTIFACT_ROOT: s3://ml-platform/mlflow
       MLFLOW_TRACKING_URI: http://mlflow:5000
       TENSORBOARD_SESSION_SECRET: ci-tensorboard-session-secret-at-least-32-bytes
+      INFERENCE_INTERNAL_SECRET: ci-inference-internal-secret-at-least-32-bytes
     steps:
       - uses: actions/checkout@v5
       - name: Validate production composition
