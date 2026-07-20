@@ -4,7 +4,7 @@
 
 > 第七周远程验收：GitHub Actions [Run 29667952189](https://github.com/FaceGg/Al-Platform/actions/runs/29667952189) 全部通过（Linux/Windows quality、Production integration、Production experiment integration、Chromium）。
 
-> 第八周：ONNX 模型注册中心、独立基础推理运行时、运维 UI、生产 Compose、本地验收和远程 CI 已完成。
+> 第八周：ONNX 模型注册中心、独立基础推理运行时、运维 UI、生产 Compose、本地与远程验收已完成；已随 PR #3 合并到 `main`。
 
 > 最后更新: 2026-07-20 | 当前版本: 0.3.0
 
@@ -379,14 +379,14 @@
 ### 部分完成
 
 - 数据管理：单文件和主要批量上传已接入 Artifact；ZIP 和部分历史入口尚未统一。
-- 工作流可靠性：Local/Celery 共用执行服务，持久投递、心跳、取消、硬超时和失联恢复可用；节点级断点续跑和周期性恢复调度未完成。
-- 训练管理：基础训练闭环可用；训练任务 Celery 化、检查点、实验追踪和原子完成事务未完成。
+- 工作流可靠性：Local/Celery 共用执行服务，持久投递、心跳、取消、硬超时和失联恢复可用；节点级断点续跑未完成。
+- 训练管理：训练 Celery 化、检查点、实验追踪、AutoML Trial、TensorBoard 与原子完成事务已完成；PyTorch checkpoint 和更深度的训练恢复策略仍待扩展。
 - 知识库、标注、监控、计算资源、API 市场和智能体已有页面/API，但仍以基础 CRUD 或本地实现为主。
 
 ### 未实现或未验收
 
-- 模型部署、灰度发布、回滚、在线推理治理和完整模型注册审批。
-- 完整 RBAC、SSO、审计、企业通知、Kubernetes、Notebook、GPU 和多集群治理。
+- 模型灰度发布、滚动升级、回滚、限流和在线推理治理；基础模型注册、审批、部署与推理已完成。
+- SSO、企业通知、Kubernetes、Notebook、GPU 和多集群治理；项目角色和关键写操作审计已完成。
 - 更广泛的浏览器 E2E、性能、安全、备份恢复、升级和 Docker 镜像验收；焊接质量主流程 E2E 已通过。
 
 ## 十二、2026-07-14 第四周交付审计
@@ -401,7 +401,7 @@
 
 ### 当前风险
 
-- 第四周能力已形成可追溯提交和 PR #1，但 PR 仍为 Draft、尚未合并到 `main`。
+- 第 1 至第 8 周能力已通过 PR #1、#2、#3 合并到 `main`；第 8 周最终远程验收为 [Actions Run 29714469437](https://github.com/FaceGg/Al-Platform/actions/runs/29714469437)。
 - 前端测试环境告警已清理；工作流参数标签、分类和端口预览双语已补齐。
 - 路由懒加载后首屏依赖块均低于 500 kB；ECharts 懒加载 chunk 约 1.13 MB，后续继续按图表能力裁剪。
 - WSL2 已完成 Docker Compose 生产栈与真实服务验收；备份恢复和性能压测仍按后续周次执行。
@@ -449,4 +449,4 @@
 - owner/editor 注册审批和创建部署；operator 启停推理；viewer 只读。写命令进入第七周事务审计，预测 records/结果不持久化。
 - `/models` 已改为注册模型/部署运维双 Tab，支持平台/ONNX 注册、审批拒绝、部署、schema records、预测概率/版本/耗时和完整中英文本。
 - 本地证据：Task 7 聚焦 46 项、Linux ONNX/Storage 15/15、隔离 PostgreSQL/MinIO inference lifecycle 1/1；前端 44/44、production build、npm audit 0；Chromium 2/2。
-- 当前状态：Task 10 全量后端、最终迁移/隔离生产复验和远程 CI 尚在执行，第八周保持“进行中”。
+- 最终状态：Task 10 已完成。Actions Run `29714469437` 的 Ubuntu/Windows 质量、生产集成、实验集成和 Chromium acceptance 全部通过；PR #3 已合并，提交 `ba3ca98`。
