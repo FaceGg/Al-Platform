@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN groupadd --gid 1000 app && useradd --uid 1000 --gid app --create-home app
+COPY . .
+ENV MPLCONFIGDIR=/tmp/matplotlib
+USER app
+CMD ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]

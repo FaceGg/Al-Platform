@@ -6,6 +6,7 @@ from app.models.project import Project
 from app.models.artifact import Artifact
 from app.models.user import User
 from app.api.auth import get_current_user
+from app.services.artifact_service import build_artifact_service
 
 router = APIRouter(prefix="/api", tags=["models"])
 
@@ -28,7 +29,6 @@ def list_project_models(
             "id": str(a.id),
             "name": a.name,
             "type": a.type,
-            "storage_path": a.storage_path,
             "file_size": a.file_size,
             "format": a.format,
             "created_at": a.created_at.isoformat() if a.created_at else None,
@@ -43,7 +43,11 @@ def get_model_detail(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    artifact = db.query(Artifact).filter(Artifact.id == UUID(model_id), Artifact.type == "model").first()
+    artifact = db.query(Artifact).join(Project).filter(
+        Artifact.id == UUID(model_id),
+        Artifact.type == "model",
+        Project.owner_id == current_user.id,
+    ).first()
     if not artifact:
         raise HTTPException(404, "Model not found")
     return {
@@ -51,7 +55,6 @@ def get_model_detail(
         "project_id": str(artifact.project_id),
         "name": artifact.name,
         "type": artifact.type,
-        "storage_path": artifact.storage_path,
         "file_size": artifact.file_size,
         "format": artifact.format,
         "metadata": artifact.metadata_,
@@ -65,12 +68,14 @@ def delete_model(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    artifact = db.query(Artifact).filter(Artifact.id == UUID(model_id), Artifact.type == "model").first()
+    artifact = db.query(Artifact).join(Project).filter(
+        Artifact.id == UUID(model_id),
+        Artifact.type == "model",
+        Project.owner_id == current_user.id,
+    ).first()
     if not artifact:
         raise HTTPException(404, "Model not found")
-    import os
-    if os.path.exists(artifact.storage_path):
-        os.remove(artifact.storage_path)
+    build_artifact_service(db).delete_content(artifact)
     db.delete(artifact)
     db.commit()
     return {"message": "Model deleted"}

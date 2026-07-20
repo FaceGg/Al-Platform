@@ -16,6 +16,7 @@ class Artifact(Base):
     name = Column(String(256), nullable=False)
     type = Column(String(32), nullable=False)
     storage_path = Column(String(512), nullable=False)
+    storage_uri = Column(String(1024), nullable=True, index=True)
     file_size = Column(BigInteger)
     format = Column(String(32))
     metadata_ = Column("metadata", JSON, default=dict)

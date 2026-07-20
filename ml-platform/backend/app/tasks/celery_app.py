@@ -1,0 +1,25 @@
+"""Celery application configuration."""
+
+from celery import Celery
+
+from app.config import settings
+
+
+celery_app = Celery(
+    "ml_platform",
+    include=["app.tasks.workflow_tasks"],
+    broker=(settings.celery_broker_url.get_secret_value() if settings.celery_broker_url else None),
+    backend=(settings.celery_result_backend.get_secret_value() if settings.celery_result_backend else None),
+)
+celery_app.conf.update(
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    task_serializer="json",
+    result_serializer="json",
+    accept_content=["json"],
+    enable_utc=True,
+    broker_connection_retry_on_startup=True,
+    worker_prefetch_multiplier=1,
+    task_soft_time_limit=settings.task_soft_timeout_seconds,
+    task_time_limit=settings.task_hard_timeout_seconds,
+)

@@ -1,5 +1,6 @@
 ﻿"""DAG Executor, Operator Registry, and DataBus tests."""
 import sys, os, json, unittest
+from unittest.mock import patch
 sys.path.insert(0, ".")
 
 # Import main to trigger operator registration
@@ -107,3 +108,21 @@ class TestDataBus(unittest.TestCase):
     def test_load_nonexistent(self):
         result = DataBus.load_data("/nonexistent/path.json")
         self.assertIsNone(result)
+
+    def test_default_directory_does_not_depend_on_source_path_depth(self):
+        import tempfile
+
+        DataBus._base_dir = None
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ,
+            {"ML_PLATFORM_TEMP_DIR": ""},
+        ), patch(
+            "tempfile.gettempdir",
+            return_value=directory,
+        ), patch(
+            "app.engine.data_bus.__file__",
+            "/app/app/engine/data_bus.py",
+        ):
+            base = DataBus._ensure_base_dir()
+
+        self.assertEqual(base, __import__("pathlib").Path(directory) / "ml_platform_data")

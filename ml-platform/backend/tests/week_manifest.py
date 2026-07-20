@@ -40,6 +40,21 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_industrial_templates",
         "test_industrial_template_e2e",
     ],
+    5: [
+        "test_config",
+        "test_database_production",
+        "test_database_transfer",
+        "test_storage",
+        "test_artifact_storage_integration",
+        "test_operator_artifacts",
+        "test_artifact_migration",
+        "test_task_dispatcher",
+        "test_celery_workflows",
+        "test_event_bridge",
+        "test_readiness",
+        "test_ci_workflow",
+        "test_production_stack",
+    ],
 }
 
 

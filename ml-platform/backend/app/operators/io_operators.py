@@ -5,6 +5,7 @@ import pandas as pd
 import os
 import tempfile
 import urllib.request
+from pathlib import Path
 
 
 @register_operator
@@ -16,8 +17,12 @@ class CSVImport(BaseOperator):
     inputs = []
     outputs = [PortSpec("data", "DataTable", "Output Data")]
     parameters = [
-        ParamSpec("source", "select", "local", "Source", options=["local", "url"]),
+        ParamSpec(
+            "source", "select", "local", "Source",
+            options=["local", "url", "artifact"],
+        ),
         ParamSpec("file_path", "file", "", "Data File"),
+        ParamSpec("dataset_artifact_id", "str", "", "Dataset Artifact ID"),
         ParamSpec("url", "str", "", "File URL"),
         ParamSpec("delimiter", "str", ",", "Delimiter"),
         ParamSpec("has_header", "boolean", True, "Has Header Row"),
@@ -44,6 +49,20 @@ class CSVImport(BaseOperator):
         has_header = params.get("has_header", True)
         header_arg = 0 if has_header else None
 
+        if source == "artifact":
+            artifact_id = params.get("dataset_artifact_id", "")
+            if not artifact_id or context.artifact_service is None or not context.project_id:
+                raise RuntimeError("Dataset Artifact ID and project context are required")
+            try:
+                with context.artifact_service.materialize(
+                    artifact_id,
+                    context.project_id,
+                    expected_type="dataset",
+                ) as artifact_path:
+                    df = self._read_frame(artifact_path, delimiter, header_arg)
+                return OperatorResult(outputs={"data": df.to_dict(orient="records")})
+            except Exception as e:
+                raise RuntimeError(f"Failed to import Artifact: {e}") from e
         if source == "url":
             url = params.get("url", "")
             if not url:
@@ -56,16 +75,19 @@ class CSVImport(BaseOperator):
             raise RuntimeError("File path or URL is required")
 
         try:
-            if file_path.endswith((".xls", ".xlsx")):
-                df = pd.read_excel(file_path, header=header_arg)
-            else:
-                df = pd.read_csv(file_path, delimiter=delimiter, header=header_arg)
+            df = self._read_frame(Path(file_path), delimiter, header_arg)
             return OperatorResult(outputs={"data": df.to_dict(orient="records")})
         except Exception as e:
             raise RuntimeError(f"Failed to import file: {e}")
         finally:
             if source == "url" and os.path.exists(file_path):
                 os.unlink(file_path)
+
+    @staticmethod
+    def _read_frame(path: Path, delimiter: str, header_arg):
+        if path.suffix.lower() in (".xls", ".xlsx"):
+            return pd.read_excel(path, header=header_arg)
+        return pd.read_csv(path, delimiter=delimiter, header=header_arg)
 
     def get_preview(self, outputs):
         data = outputs.get("data", [])

@@ -151,7 +151,9 @@ class TestIndustrialTemplateAPI(unittest.TestCase):
                 WorkflowNode.workflow_id == uuid.UUID(response.json()["workflow_id"]),
                 WorkflowNode.operator_id == "csv_import",
             ).one()
-            self.assertTrue(source.params["file_path"].endswith(".csv"))
+            self.assertEqual(source.params["source"], "artifact")
+            self.assertEqual(source.params["dataset_artifact_id"], self.artifact_id)
+            self.assertNotIn("file_path", source.params)
 
     def test_invalid_artifact_creates_no_workflow(self):
         with SessionLocal() as db:

@@ -82,7 +82,13 @@ docker compose up -d
 Invoke-RestMethod http://127.0.0.1:8000/api/health
 ```
 
-Docker 命令当前未在本机验证，不能据 Compose 文件存在声明容器交付完成。
+2026-07-17 已在 WSL2 Docker 29.6.2 / Compose 5.3.1 验证生产镜像构建、Alembic 迁移、MinIO bucket 初始化、API/Worker 启动和四项 readiness。生产栈聚焦验收命令为：
+
+```bash
+RUN_PRODUCTION_INTEGRATION=1 python -m unittest tests.test_production_stack -v
+```
+
+该入口会清空目标数据库业务表，只能连接专用测试数据库。普通 `python run_suite.py --week 5` 会明确跳过真实服务测试。
 
 ## 验收口径
 
@@ -93,3 +99,4 @@ Docker 命令当前未在本机验证，不能据 Compose 文件存在声明容�
 - Ubuntu 验收以真实 GitHub Actions 为准；Run `29381233328` 的 Ubuntu 22.04 质量门禁和 Chromium 验收均成功，第四周已完成。
 - WSL2 补充验证中，前端 Linux 依赖安装、35 个测试和生产构建已执行；后端 32/33 模块通过，唯一失败为本地虚拟环境未安装可选 PyTorch，安装上述 CPU 包后需重跑 `python run_suite.py --week 3` 或全量入口。
 - 测试数据库、上传目录和临时制品不得复用生产数据。
+- 当前第五周验证：后端 46/46、第五周 13/13、WSL 生产栈 4/4、前端 35/35、构建、Chromium 1/1、npm audit 0 漏洞；[Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619) 的 Windows/Ubuntu 质量、production-integration 和 Chromium 全部成功。

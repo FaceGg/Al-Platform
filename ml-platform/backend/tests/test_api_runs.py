@@ -7,6 +7,7 @@ from app.main import app
 from app.database import Base, engine
 from app.database import SessionLocal
 from app.models.run import WorkflowRun
+from app.api.runs import get_task_dispatcher
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
@@ -37,7 +38,8 @@ class TestRunsAPI(unittest.TestCase):
             files={"file": ("run_test.csv", csv, "text/csv")},
             headers=cls.h,
         )
-        cls.csv_path = r.json()["storage_path"]
+        cls.dataset_artifact_id = r.json()["artifact_id"]
+        assert "storage_path" not in r.json()
 
         # Create workflow
         r = client.post(f"/api/projects/{cls.project_id}/workflows", json={
@@ -45,11 +47,14 @@ class TestRunsAPI(unittest.TestCase):
         }, headers=cls.h)
         cls.workflow_id = r.json()["id"]
 
-        # Save workflow with real file path
+        # Save workflow with a stable Artifact reference.
         r = client.put(f"/api/projects/{cls.project_id}/workflows/{cls.workflow_id}", json={
             "nodes": [
                 {"id": "n1", "operator_id": "csv_import", "label": "Import",
-                 "position": {"x": 100, "y": 100}, "params": {"file_path": cls.csv_path}},
+                 "position": {"x": 100, "y": 100}, "params": {
+                     "source": "artifact",
+                     "dataset_artifact_id": cls.dataset_artifact_id,
+                 }},
                 {"id": "n2", "operator_id": "scaler", "label": "Scale",
                  "position": {"x": 300, "y": 100}, "params": {"method": "standard"}},
             ],
@@ -71,9 +76,9 @@ class TestRunsAPI(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         data = r.json()
         self.assertIn("status", data)
-        if data["status"] == "completed":
-            self.assertTrue(data["node_runs"])
-            self.assertTrue(all(node["status"] == "completed" for node in data["node_runs"]))
+        self.assertEqual(data["status"], "completed", data)
+        self.assertTrue(data["node_runs"])
+        self.assertTrue(all(node["status"] == "completed" for node in data["node_runs"]))
 
     def test_03_start_run_invalid_workflow(self):
         r = client.post(f"/api/workflows/{uuid.uuid4()}/run", headers=self.h)
@@ -124,12 +129,29 @@ class TestRunCancellation(unittest.TestCase):
             cls.run_id = str(run.id)
 
     def test_cancel_is_idempotent(self):
-        first = client.post(f"/api/runs/{self.run_id}/cancel", headers=self.headers)
-        second = client.post(f"/api/runs/{self.run_id}/cancel", headers=self.headers)
+        calls = []
+        dispatcher = type("Dispatcher", (), {
+            "cancel": lambda self, task_id, terminate=False: calls.append(
+                (task_id, terminate),
+            ),
+        })()
+        with SessionLocal() as db:
+            run = db.query(WorkflowRun).filter(
+                WorkflowRun.id == uuid.UUID(self.run_id),
+            ).one()
+            run.task_id = "celery-task-1"
+            db.commit()
+        app.dependency_overrides[get_task_dispatcher] = lambda: dispatcher
+        try:
+            first = client.post(f"/api/runs/{self.run_id}/cancel", headers=self.headers)
+            second = client.post(f"/api/runs/{self.run_id}/cancel", headers=self.headers)
+        finally:
+            app.dependency_overrides.pop(get_task_dispatcher, None)
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 200)
         self.assertEqual(second.json()["status"], "cancel_requested")
+        self.assertEqual(calls, [("celery-task-1", True), ("celery-task-1", True)])
 
 
 if __name__ == "__main__":

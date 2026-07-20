@@ -1,6 +1,5 @@
 import uuid
 from dataclasses import asdict
-from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -11,7 +10,7 @@ from app.models.user import User
 from app.api.auth import get_current_user
 from app.engine.operator_contract import validate_operator_params
 from app.engine.registry import OperatorRegistry
-from app.services.artifact_service import ArtifactAccessError, ArtifactService
+from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.templates.contract import TemplateContractError, validate_template
 from app.templates.industrial import INDUSTRIAL_TEMPLATES
 
@@ -364,9 +363,8 @@ def _instantiate_industrial_template(template_id, data, db, current_user):
     if not project:
         raise HTTPException(404, "Project not found")
 
-    artifact_root = Path(__file__).resolve().parents[1] / "artifact_store"
     try:
-        artifact = ArtifactService(db, artifact_root).resolve(
+        artifact = build_artifact_service(db).resolve(
             artifact_uuid, project_uuid, expected_type="dataset",
         )
     except (ArtifactAccessError, ValueError) as exc:
@@ -392,12 +390,17 @@ def _instantiate_industrial_template(template_id, data, db, current_user):
             })
         for node_key, param_name in parameter.node_params:
             node_params[node_key][param_name] = value
-    node_params["import"].update({"source": "local", "file_path": artifact.storage_path})
+    node_params["import"].pop("file_path", None)
+    node_params["import"].update({
+        "source": "artifact",
+        "dataset_artifact_id": str(artifact.id),
+    })
 
     try:
         for node in template.nodes:
             operator = OperatorRegistry.get(node.operator_id)
             node_params[node.key] = validate_operator_params(operator.parameters, node_params[node.key])
+        node_params["import"].pop("file_path", None)
     except Exception as exc:
         raise HTTPException(400, {
             "code": "TEMPLATE_PARAMETER_INVALID", "message": str(exc),

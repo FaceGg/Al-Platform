@@ -1,7 +1,8 @@
 fastapi==0.115.0
 uvicorn[standard]==0.31.0
 sqlalchemy==2.0.*
-alembic==1.13.*
+psycopg[binary]==3.2.*
+alembic==1.16.*
 python-jose[cryptography]==3.3.*
 passlib[bcrypt]==1.7.*
 python-multipart==0.0.29
@@ -10,6 +11,7 @@ pydantic-settings==2.12.*
 networkx==3.6.*
 celery==5.4.*
 redis==5.0.*
+minio==7.2.*
 scikit-learn==1.7.*
 xgboost==3.2.*
 pandas==2.3.*

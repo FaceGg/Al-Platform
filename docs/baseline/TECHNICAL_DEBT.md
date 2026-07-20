@@ -6,7 +6,7 @@
 |---|---|---|---|
 | P0 | Join 的 DataFrame 判空与复合键语义 | 已由两个回归测试复现并修复 | Week 1 已完成 |
 | P0 | 前端依赖不完整、i18n 类型缺口 | 初始测试找不到 Vitest，构建存在缺失键/导入；现已恢复 | Week 1 已完成 |
-| P1 | 工作流执行仍为后台线程 | 已有协作取消、重试和等待超时，但服务重启仍丢任务，线程超时不能强杀算子 | Week 5 |
+| 已完成 | 工作流生产执行仍为后台线程 | Celery Worker、领取锁、心跳、重复投递、取消/失联恢复和 Redis 事件已通过本地及远程真实服务验收；本地线程仅作回退 | Week 5 已完成 |
 | 已完成 | 工作流状态机统一 | 后端、WebSocket、store 和节点/进度组件已支持取消、超时和跳过 | Week 2 完成 |
 | P1 | WebSocket 依赖固定 0.5 秒等待 | 慢客户端仍可能遗漏早期事件 | Week 2 |
 | P1 | API 错误码仅覆盖工作流主链路 | 其他 API 仍主要依赖 detail 文本，且存在乱码 | Week 3-4 |
@@ -15,14 +15,14 @@
 | P1 | 默认密钥可用于启动 | `change-me-in-production` 不应进入生产 | Week 4 部署门禁 |
 | P2 | 算子注册依赖导入顺序 | 新模块遗漏导入会静默缺失算子 | Week 3 |
 | 已完成 | 算子数量文档漂移 | 历史静态计数为 76；2026-07-13 运行时注册表确认 79 个且 ID 唯一 | Week 3 已统一为运行时统计口径 |
-| P2 | SQLite 与临时目录依赖工作目录 | 不同启动目录可能连接不同数据库/制品目录 | Week 1 文档化，Week 5 生产化 |
+| 已完成 | SQLite 与临时目录依赖工作目录 | 数据库、Artifact 和 DataBus 路径均可配置；容器浅路径回归已覆盖 | Week 5 |
 | P2 | 前端覆盖率低 | 已增至 5 个测试文件/19 个测试，仍缺浏览器 WebSocket 主链路 | Week 3-4 |
 | 已完成 | 后端标准 runner 未覆盖新增可靠性测试 | runner 已扩展为 25 个隔离模块 | Week 2 完成 |
 | 已解决 | 前端测试环境告警 | Router future、React `act` 和 jsdom `getComputedStyle` 告警已清理 | 2026-07-15 |
 | P2 | 大量未跟踪修复脚本、日志和运行数据 | 难区分源码、测试资产和临时产物 | 按所有权分类清理，不自动删除 |
 | P3 | ECharts 懒加载 chunk 约 1.13 MB | 已不进入首屏，仍增加图表页面首次加载体积 | Week 11 |
-| P3 | Compose `version` 字段老化 | 新版 Compose 可忽略但会产生提示 | Week 4 |
-| 受阻 | Docker 构建未验证 | 当前 Windows 环境没有 `docker` 命令 | 提供 Docker 环境后执行 Week 1 补充验收 |
+| 已完成 | Compose `version` 字段老化 | 已移除并通过 Compose 5.3.1 配置及启动验证 | Week 5 |
+| 已完成 | Docker 构建未验证 | WSL2 已完成 39-90 KB 隔离上下文构建、迁移和生产集成；`.dockerignore` 排除 1.66 GB 开发数据库 | Week 5 |
 
 ## 清理原则
 
@@ -51,3 +51,11 @@
 - 已解决：XGBoost 已删除无效的 `use_label_encoder` 参数并增加源码回归约束。
 - 已解决：前端 jsdom/React/Router 测试告警已清理，当前 30 项测试通过。
 - 已缓解：页面已按路由懒加载；继续保留 ECharts 按需注册任务。
+
+## 2026-07-17 Week 5 技术债更正与新增
+
+- 已完成：生产 Worker 使用与本地相同的工作流执行服务和完整算子注册入口，不再调用占位回调。
+- 已完成：Redis subscriber 纳入 FastAPI lifespan，readiness 检查 Alembic head、Redis、Celery Worker 和 MinIO bucket。
+- 已完成：PostgreSQL 行锁领取、心跳、重复投递、节点超时、取消及失联恢复已由 WSL 真实服务验证。
+- 已完成：容器构建排除本地数据库/Artifact，使用非 root 命名用户并自动执行迁移。
+- 后续：节点级断点续跑、周期性恢复调度、生产备份恢复和性能压测分别纳入后续工作周。
