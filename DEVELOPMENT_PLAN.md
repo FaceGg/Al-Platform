@@ -1075,3 +1075,14 @@
 - 验收边界：第 11 周最终性能结论等待第 9-10 周接口冻结；第 12 周最终验收等待第 9-11 周全部门禁通过。并行启动不代表可提前标记完成。
 - 验证方式：第 7 周后端清单 `5/5`、第 8 周后端清单 `7/7`、模型注册前端聚焦用例 `5/5` 通过；设计规格已完成占位符、矛盾、依赖和验收映射自审。真实 Compose 本次设计阶段未启动。
 - 未完成：等待用户审阅正式设计规格；之后编写逐任务实施计划，并按 TDD 开始生产代码、迁移、前端、集成和验收实现。
+
+### 2026-07-20：第 9 至第 12 周实施计划完成
+
+- 规格状态：用户已审阅并确认 `docs/superpowers/specs/2026-07-20-week9-12-mlops-core-design.md`，设计提交为 `03c4a09`。
+- 第 9 周计划：`docs/superpowers/plans/2026-07-20-week9-production-inference.md`，共 11 个任务、63 个 TDD 微步骤；迁移固定为 `20260720_09_production_inference`，线性继承 `20260718_08`。
+- 第 10 周计划：`docs/superpowers/plans/2026-07-20-week10-security-notifications.md`，共 12 个任务、72 个 TDD 微步骤；迁移固定为 `20260720_10_security_notifications`，线性继承第 9 周 revision。
+- 第 11-12 周计划：`docs/superpowers/plans/2026-07-20-week11-12-integration-acceptance.md`，共 14 个任务、60 个微步骤；Task 1-6 可立即执行，依赖冻结和最终验收任务保留明确门禁。
+- 跨轨契约：第 9 周在 `app/events/domain.py` 定义冻结的 `DomainEvent` 和 `DomainEventRecorder.record(db, event)`；第 10 周 Outbox 实现只 add/flush，不拥有提交；第 11-12 周只消费冻结路由和迁移版本。
+- 自审修正：统一第 10 周任务标题格式；将验收计划中的临时推理和通知测试路径修正为第 9/10 周精确 API；确认 37 个任务编号连续、195 个步骤、代码围栏成对、无实现省略号或禁用占位内容。
+- 验证方式：三份计划 `git diff --check`、迁移链、事件签名、四通知通道、模型卡、性能/备份/升级/安全/E2E 规格映射检查通过。计划阶段未修改生产代码，未运行真实 Compose。
+- 未完成：按选定执行模式进入 TDD 实现；第 9/10 周功能轨和第 11-12 周独立工具轨可并行，公共 CI、Compose、manifest、Alembic 链和状态文档由主线串行集成。
