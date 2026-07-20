@@ -85,6 +85,15 @@ function CustomNode({ data, selected }: NodeProps) {
   const opId = data.operatorId as string || "";
   const label = (t as any).operator?.[opId] || (data.label as string) || opId;
   const nodeId = data.nodeId as string || "";
+  const statusLabel = {
+    completed: lang === "zh" ? "已完成" : "Completed",
+    running: lang === "zh" ? "运行中" : "Running",
+    failed: lang === "zh" ? "失败" : "Failed",
+    timed_out: lang === "zh" ? "已超时" : "Timed out",
+    cancelled: lang === "zh" ? "已取消" : "Cancelled",
+    skipped: lang === "zh" ? "已跳过" : "Skipped",
+    pending: lang === "zh" ? "待运行" : "Pending",
+  }[status] || status;
 
   const inputs = Array.isArray(data.inputs) ? data.inputs : [];
   const outputs = Array.isArray(data.outputs) ? data.outputs : [];
@@ -160,12 +169,7 @@ function CustomNode({ data, selected }: NodeProps) {
       </div>
 
       <Tag color={cfg.tagColor} style={{ fontSize: 10, lineHeight: "14px", marginBottom: 4 }}>
-        {status === "completed" ? "\u5df2\u5b8c\u6210" :
-         status === "running" ? "\u8fd0\u884c\u4e2d" :
-         status === "failed" ? "\u5931\u8d25" :
-         status === "timed_out" ? "\u5df2\u8d85\u65f6" :
-         status === "cancelled" ? "\u5df2\u53d6\u6d88" :
-         status === "skipped" ? "\u5df2\u8df3\u8fc7" : "\u5f85\u8fd0\u884c"}
+        {statusLabel}
       </Tag>
 
       {status === "failed" && (data as any).error && (

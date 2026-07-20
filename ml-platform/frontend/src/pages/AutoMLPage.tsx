@@ -14,6 +14,8 @@ export default function AutoMLPage() {
   const { message } = AntApp.useApp();
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [experiments, setExperiments] = useState<any[]>([]);
+  const [selectedExperiment, setSelectedExperiment] = useState<string | null>(null);
   const [datasets, setDatasets] = useState<any[]>([]);
   const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
   const [datasetColumns, setDatasetColumns] = useState<string[]>([]);
@@ -31,8 +33,19 @@ export default function AutoMLPage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedProject) { setDatasets([]); setSelectedDataset(null); return; }
+    if (!selectedProject) {
+      setDatasets([]); setSelectedDataset(null);
+      setExperiments([]); setSelectedExperiment(null);
+      return;
+    }
     listDatasets(selectedProject).then(setDatasets).catch(() => setDatasets([]));
+    apiClient.get("/experiments", { params: { project_id: selectedProject } })
+      .then((res) => {
+        const items = res.data.items || [];
+        setExperiments(items);
+        setSelectedExperiment(items[0]?.id || null);
+      })
+      .catch(() => { setExperiments([]); setSelectedExperiment(null); });
   }, [selectedProject]);
 
   useEffect(() => {
@@ -111,7 +124,7 @@ export default function AutoMLPage() {
   }, [results]);
 
   const handleRun = async () => {
-    if (!selectedProject || !selectedDataset || !targetColumn) {
+    if (!selectedProject || !selectedExperiment || !selectedDataset || !targetColumn) {
       message.warning((t.automl?.select_project || "Project") + " / " + (t.automl?.select_dataset || "Dataset") + " / " + (t.automl?.target || "Target"));
       return;
     }
@@ -119,7 +132,8 @@ export default function AutoMLPage() {
     setResults(null);
     try {
       const res = await apiClient.post("/training/automl/run", {
-        project_id: selectedProject, dataset_artifact_id: selectedDataset, target_column: targetColumn,
+        project_id: selectedProject, experiment_id: selectedExperiment,
+        dataset_artifact_id: selectedDataset, target_column: targetColumn,
         task: taskType, time_budget: timeBudget,
       });
       const rid = res.data.run_id || res.data.id || res.data.job_id;
@@ -161,6 +175,10 @@ export default function AutoMLPage() {
           <Col xs={24} sm={6}><Text strong>{t.automl?.select_dataset || "Dataset"}</Text>
             <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.select_dataset} value={selectedDataset} onChange={setSelectedDataset}
               options={datasets.map((d: any) => ({ value: d.id, label: d.name || d.filename }))} /></Col>
+          <Col xs={24} sm={4}><Text strong>{t.training?.experiments || "Experiment"}</Text>
+            <Select style={{ width: "100%", marginTop: 4 }} value={selectedExperiment || undefined} onChange={setSelectedExperiment}
+              disabled={!selectedProject} placeholder={t.training?.experiments || "Experiment"}
+              options={experiments.map((item: any) => ({ value: item.id, label: item.name }))} /></Col>
           <Col xs={24} sm={4}><Text strong>{t.automl?.target || "Target"}</Text>
             <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.target} value={targetColumn || undefined} onChange={setTargetColumn}
               disabled={!selectedDataset} options={datasetColumns.map((column) => ({ value: column, label: column }))} /></Col>

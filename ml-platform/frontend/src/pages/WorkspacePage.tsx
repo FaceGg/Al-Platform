@@ -13,6 +13,7 @@ import ExecutionProgress from "../components/workspace/ExecutionProgress";
 import { useWorkflowStore } from "../stores/workflowStore";
 import type { NodeRunStatus, WorkflowRunStatus } from "../stores/workflowStore";
 import { deleteWorkflowVersion, listWorkflowVersions, publishWorkflow, restoreWorkflowVersion, WorkflowVersionSummary } from "../api/workflowVersions";
+import { useI18n } from "../i18n";
 
 const { Sider, Content } = Layout;
 
@@ -26,6 +27,24 @@ export function resolvePort(handleId: string, portList: {name:string}[]): string
 
 export default function WorkspacePage() {
   const { message } = AntApp.useApp();
+  const { lang } = useI18n();
+  const text = lang === "zh" ? {
+    loadFailed: "工作流加载失败", saved: "已保存", saveFailed: "保存失败，请重试", publishFailed: "发布失败",
+    historyFailed: "版本历史加载失败", cancelled: "已请求取消，当前节点结束后停止", cancelFailed: "取消失败",
+    restored: "无法恢复运行状态", runFailed: "运行失败", runComplete: "工作流运行完成", runCancelled: "工作流已取消",
+    liveClosed: "实时连接已关闭，正在恢复运行状态", deleteFailed: "删除失败，请重试", history: "版本历史",
+    noVersions: "暂无已发布版本", restore: "恢复", delete: "删除", operatorPanel: "算子面板", nodeConfig: "节点配置",
+    back: "返回", save: "保存", publish: "发布", version: "版本", run: "运行", stop: "终止",
+    confirmDelete: "确认删除", cancel: "取消", deletePrompt: "确定要删除工作流", irreversible: "此操作不可撤销。",
+  } : {
+    loadFailed: "Failed to load workflow", saved: "Saved", saveFailed: "Save failed. Please retry.", publishFailed: "Publish failed",
+    historyFailed: "Failed to load version history", cancelled: "Cancellation requested; the current node will stop safely.", cancelFailed: "Cancellation failed",
+    restored: "Unable to recover run status", runFailed: "Workflow run failed", runComplete: "Workflow run completed", runCancelled: "Workflow run cancelled",
+    liveClosed: "Live connection closed; recovering run status", deleteFailed: "Delete failed. Please retry.", history: "Version history",
+    noVersions: "No published versions", restore: "Restore", delete: "Delete", operatorPanel: "Operator panel", nodeConfig: "Node configuration",
+    back: "Back", save: "Save", publish: "Publish", version: "Versions", run: "Run", stop: "Stop",
+    confirmDelete: "Confirm deletion", cancel: "Cancel", deletePrompt: "Delete workflow", irreversible: "This action cannot be undone.",
+  };
   const { workflowId } = useParams<{ workflowId: string }>();
   const navigate = useNavigate();
   const {
@@ -91,7 +110,7 @@ export default function WorkspacePage() {
         }
       })
       .catch(() => {
-        message.warning("工作流加载失败");
+        message.warning(text.loadFailed);
       });
   };
 
@@ -148,9 +167,9 @@ export default function WorkspacePage() {
     if (!workflowId) return;
     try {
       await apiClient.put("/workflows/" + workflowId, buildPayload());
-      message.success("已保存");
+      message.success(text.saved);
     } catch {
-      message.error("保存失败，请重试");
+      message.error(text.saveFailed);
     }
   };
 
@@ -169,7 +188,7 @@ export default function WorkspacePage() {
       const version = await publishWorkflow(workflowId);
       message.success(`已发布版本 v${version.version}`);
     } catch (error: any) {
-      message.error(error.response?.data?.detail || "发布失败");
+      message.error(error.response?.data?.detail || text.publishFailed);
     }
   };
 
@@ -180,7 +199,7 @@ export default function WorkspacePage() {
     try {
       setVersions(await listWorkflowVersions(workflowId));
     } catch {
-      message.error("版本历史加载失败");
+      message.error(text.historyFailed);
     } finally {
       setVersionsLoading(false);
     }
@@ -211,9 +230,9 @@ export default function WorkspacePage() {
       const response = await apiClient.post("/runs/" + currentRunId + "/cancel");
       setWorkflowStatus(response.data.status as WorkflowRunStatus);
       setNodeStatus("__wf__", "cancelled");
-      message.info("已请求取消，当前节点结束后停止");
+      message.info(text.cancelled);
     } catch (error: any) {
-      message.error(error.response?.data?.detail || "取消失败");
+      message.error(error.response?.data?.detail || text.cancelFailed);
     }
   };
 
@@ -386,11 +405,11 @@ export default function WorkspacePage() {
   return (
     <ReactFlowProvider>
       <Layout style={{ height: "100vh" }}>
-        <Drawer title="版本历史" open={versionsOpen} onClose={() => setVersionsOpen(false)} width={420}>
+        <Drawer title={text.history} open={versionsOpen} onClose={() => setVersionsOpen(false)} width={420}>
           <List
             loading={versionsLoading}
             dataSource={versions}
-            locale={{ emptyText: "暂无已发布版本" }}
+            locale={{ emptyText: text.noVersions }}
             renderItem={(item) => (
               <List.Item actions={[<Button key="restore" size="small" onClick={() => {
                 Modal.confirm({
@@ -398,14 +417,14 @@ export default function WorkspacePage() {
                   content: "当前草稿将被该版本覆盖，已发布历史不会删除。",
                   onOk: () => handleRestoreVersion(item.version),
                 });
-              }}>恢复</Button>, <Button key="delete" size="small" danger onClick={() => {
+              }}>{text.restore}</Button>, <Button key="delete" size="small" danger onClick={() => {
                 Modal.confirm({
                   title: `删除版本 v${item.version}？`,
                   content: "此操作不可撤销。",
                   okType: "danger",
                   onOk: () => handleDeleteVersion(item.version),
                 });
-              }}>删除</Button>]}>
+              }}>{text.delete}</Button>]}>
                 <List.Item.Meta
                   title={<Space><Tag color="blue">v{item.version}</Tag>{item.name}</Space>}
                   description={item.published_at ? new Date(item.published_at).toLocaleString() : ""}
@@ -416,7 +435,7 @@ export default function WorkspacePage() {
         </Drawer>
         <Sider width={210} style={{ background: "#fff", borderRight: "1px solid #e8e8e8", overflow: "auto" }}>
           <div style={{ padding: "10px 14px", borderBottom: "1px solid #f0f0f0", fontWeight: 600, fontSize: 14, background: "#fafafa" }}>
-            算子面板
+            {text.operatorPanel}
           </div>
           <OperatorPanel />
         </Sider>
@@ -446,44 +465,44 @@ export default function WorkspacePage() {
 
           <Space style={{ position: "absolute", top: 10, right: 10, zIndex: 10 }}>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} style={{ borderRadius: 6 }}>
-              返回
+              {text.back}
             </Button>
             <Button icon={<SaveOutlined />} onClick={handleSave} style={{ borderRadius: 6 }}>
-              保存
+              {text.save}
             </Button>
             <Button icon={<CloudUploadOutlined />} onClick={handlePublish} style={{ borderRadius: 6 }}>
-              发布
+              {text.publish}
             </Button>
             <Button icon={<HistoryOutlined />} onClick={openVersions} style={{ borderRadius: 6 }}>
-              版本
+              {text.version}
             </Button>
             {isRunning ? (
               <Button danger icon={<PauseCircleOutlined />} onClick={handleRun} style={{ borderRadius: 6, fontWeight: 600 }}>
-                终止
+                {text.stop}
               </Button>
             ) : (
               <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRun} style={{ borderRadius: 6, fontWeight: 600 }}>
-                运行
+                {text.run}
               </Button>
             )}
             <Button danger icon={<DeleteOutlined />} onClick={() => setDeleteOpen(true)} style={{ borderRadius: 6 }}>
-              删除
+              {text.delete}
             </Button>
           </Space>
         </Content>
 
         <Sider width={290} style={{ background: "#fff", borderLeft: "1px solid #e8e8e8", overflow: "auto" }}>
           <div style={{ padding: "10px 14px", borderBottom: "1px solid #f0f0f0", fontWeight: 600, fontSize: 14, background: "#fafafa" }}>
-            节点配置
+            {text.nodeConfig}
           </div>
           <NodeConfigPanel />
         </Sider>
       </Layout>
 
-      <Modal title="确认删除" open={deleteOpen} onOk={handleDeleteWorkflow}
+      <Modal title={text.confirmDelete} open={deleteOpen} onOk={handleDeleteWorkflow}
         onCancel={() => setDeleteOpen(false)} confirmLoading={deleting}
-        okText="确认删除" cancelText="取消" okButtonProps={{ danger: true }}>
-        <p>确定要删除工作流 <b>{wfName || "untitled"}</b> 吗？此操作不可撤销。</p>
+        okText={text.delete} cancelText={text.cancel} okButtonProps={{ danger: true }}>
+        <p>{text.deletePrompt} <b>{wfName || "untitled"}</b>? {text.irreversible}</p>
       </Modal>
     </ReactFlowProvider>
   );

@@ -160,9 +160,19 @@ def start_run(
     db.refresh(workflow_run)
 
     try:
-        dispatcher.enqueue_workflow(str(workflow_run.id))
+        workflow_run.task_id = dispatcher.enqueue_workflow(str(workflow_run.id))
+        db.commit()
     except Exception as error:
         logger.exception("Failed to enqueue workflow run %s", workflow_run.id)
+        workflow_run.status = "failed"
+        workflow_run.error_code = "WORKFLOW_DISPATCH_FAILED"
+        workflow_run.error_message = "Workflow task could not be queued"
+        workflow_run.finished_at = datetime.now(timezone.utc)
+        db.commit()
+        raise HTTPException(503, {
+            "code": "WORKFLOW_DISPATCH_FAILED",
+            "message": "Workflow task could not be queued",
+        }) from error
 
     return {"run_id": str(workflow_run.id), "status": workflow_run.status}
 
