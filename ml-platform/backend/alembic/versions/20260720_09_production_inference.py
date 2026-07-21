@@ -184,7 +184,7 @@ def upgrade() -> None:
         sa.Column("api_key_id", sa.UUID(), nullable=True),
         sa.Column("batch_size", sa.Integer(), nullable=False),
         sa.Column("duration_ms", sa.Integer(), nullable=False),
-        sa.Column("status", sa.String(length=16), nullable=False, server_default=sa.text("'success'")),
+        sa.Column("status", sa.String(length=16), nullable=False),
         sa.Column("error_code", sa.String(length=64), nullable=True),
         sa.Column("occurred_at", sa.DateTime(), nullable=False),
         sa.Column("expires_at", sa.DateTime(), nullable=False),

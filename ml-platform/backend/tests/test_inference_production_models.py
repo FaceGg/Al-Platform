@@ -253,6 +253,12 @@ class TestInferenceProductionModels(unittest.TestCase):
         }
         self.assertIn(("deployment_id", "bucket_start"), indexed_columns)
 
+    def test_request_log_status_requires_explicit_domain_outcome(self):
+        column = InferenceRequestLog.__table__.c.status
+        self.assertIsNone(column.default)
+        self.assertIsNone(column.server_default)
+        self.assertFalse(column.nullable)
+
     def test_model_card_has_one_safe_snapshot_per_model_version(self):
         card_columns = {
             column["name"]

@@ -519,6 +519,29 @@ class TestAlembicBaseline(TestCase):
             finally:
                 db_engine.dispose()
 
+    def test_production_inference_request_status_has_no_server_default(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "head")
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                status_column = next(
+                    column
+                    for column in inspect(db_engine).get_columns("inference_request_logs")
+                    if column["name"] == "status"
+                )
+                self.assertFalse(status_column["nullable"])
+                self.assertIsNone(status_column.get("default"))
+            finally:
+                db_engine.dispose()
+
     def test_experiment_tracking_revision_has_complete_downgrade(self):
         TEMP_ROOT.mkdir(parents=True, exist_ok=True)
         with _TemporaryDatabase() as database_url:

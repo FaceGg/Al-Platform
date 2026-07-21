@@ -484,7 +484,7 @@ class InferenceRequestLog(Base):
     )
     batch_size = Column(Integer, nullable=False)
     duration_ms = Column(Integer, nullable=False)
-    status = Column(String(16), nullable=False, default="success")
+    status = Column(String(16), nullable=False)
     error_code = Column(String(64), nullable=True)
     occurred_at = Column(DateTime, nullable=False)
     expires_at = Column(DateTime, nullable=False)
