@@ -1,11 +1,13 @@
 """Production database and Alembic baseline tests."""
 
+import json
 from pathlib import Path
 from queue import Queue
 from threading import Thread
 from types import SimpleNamespace
 from unittest import TestCase, mock
 import tempfile
+import uuid
 
 from alembic import command
 from alembic.config import Config
@@ -25,6 +27,9 @@ from app.database_schema import (
     schema_status,
 )
 from app.main import initialize_database
+from app.models.artifact import Artifact
+from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
+from app.models.project import Project
 from app.models.user import User
 
 
@@ -33,7 +38,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20260718_08"
+HEAD_REVISION = "20260720_09_production_inference"
+WEEK9_TABLES = {
+    "deployment_revisions",
+    "deployment_targets",
+    "deployment_rollouts",
+    "inference_api_keys",
+    "inference_request_logs",
+    "inference_metric_buckets",
+    "model_cards",
+}
 
 
 class TestDatabaseEngineOptions(TestCase):
@@ -282,7 +296,7 @@ class TestAlembicBaseline(TestCase):
             try:
                 inspector = inspect(db_engine)
                 business_tables = set(inspector.get_table_names()) - {"alembic_version"}
-                self.assertEqual(len(business_tables), 38)
+                self.assertEqual(len(business_tables), 45)
                 self.assertTrue(
                     {
                         "users",
@@ -300,6 +314,21 @@ class TestAlembicBaseline(TestCase):
                         "model_versions",
                         "inference_deployments",
                     }.issubset(business_tables)
+                )
+                self.assertTrue(WEEK9_TABLES.issubset(business_tables))
+                self.assertIn(
+                    "uq_deployment_rollouts_active",
+                    {
+                        item["name"]
+                        for item in inspector.get_indexes("deployment_rollouts")
+                    },
+                )
+                self.assertIn(
+                    "uq_inference_metric_buckets_deployment_minute",
+                    {
+                        item["name"]
+                        for item in inspector.get_indexes("inference_metric_buckets")
+                    },
                 )
                 self.assertIn(
                     "ix_users_username",
@@ -376,6 +405,118 @@ class TestAlembicBaseline(TestCase):
             finally:
                 db_engine.dispose()
 
+    def test_production_inference_revision_backfills_legacy_registry_rows(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "20260718_08")
+                db_engine = create_engine(database_url)
+                try:
+                    seeded = self._seed_legacy_registry(db_engine)
+                finally:
+                    db_engine.dispose()
+                command.upgrade(config, "head")
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                with db_engine.connect() as connection:
+                    revision = connection.execute(text(
+                        "SELECT id, deployment_id, revision_number, strategy, status "
+                        "FROM deployment_revisions"
+                    )).mappings().one()
+                    target = connection.execute(text(
+                        "SELECT revision_id, model_version_id, weight_bps, role "
+                        "FROM deployment_targets"
+                    )).mappings().one()
+                    card = connection.execute(text(
+                        "SELECT id, model_version_id, training_data_lineage, "
+                        "approval_status, release_status "
+                        "FROM model_cards"
+                    )).mappings().one()
+                    card_count = connection.scalar(text("SELECT COUNT(*) FROM model_cards"))
+
+                self.assertEqual(self._as_uuid(revision["id"]), seeded["deployment_id"])
+                self.assertEqual(
+                    self._as_uuid(revision["deployment_id"]),
+                    seeded["deployment_id"],
+                )
+                self.assertEqual(revision["revision_number"], 1)
+                self.assertEqual(revision["strategy"], "immediate")
+                self.assertEqual(revision["status"], "stable")
+                self.assertEqual(
+                    self._as_uuid(target["revision_id"]),
+                    seeded["deployment_id"],
+                )
+                self.assertEqual(
+                    self._as_uuid(target["model_version_id"]),
+                    seeded["model_version_id"],
+                )
+                self.assertEqual(target["weight_bps"], 10000)
+                self.assertEqual(target["role"], "stable")
+                self.assertEqual(self._as_uuid(card["id"]), seeded["model_version_id"])
+                self.assertEqual(
+                    self._as_uuid(card["model_version_id"]),
+                    seeded["model_version_id"],
+                )
+                self.assertEqual(card["approval_status"], "approved")
+                self.assertEqual(card["release_status"], "released")
+                lineage = card["training_data_lineage"]
+                if isinstance(lineage, str):
+                    lineage = json.loads(lineage)
+                self.assertEqual(lineage, {"dataset_artifact_id": "legacy-dataset"})
+                self.assertEqual(card_count, 1)
+            finally:
+                db_engine.dispose()
+
+    def test_production_inference_revision_has_complete_downgrade(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "20260718_08")
+                db_engine = create_engine(database_url)
+                try:
+                    seeded = self._seed_legacy_registry(db_engine)
+                finally:
+                    db_engine.dispose()
+                command.upgrade(config, "head")
+                command.downgrade(config, "20260718_08")
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                inspector = inspect(db_engine)
+                tables = set(inspector.get_table_names())
+                self.assertTrue(WEEK9_TABLES.isdisjoint(tables))
+                self.assertTrue({
+                    "registered_models",
+                    "model_versions",
+                    "inference_deployments",
+                }.issubset(tables))
+                with db_engine.connect() as connection:
+                    revision = connection.scalar(
+                        text("SELECT version_num FROM alembic_version")
+                    )
+                    deployment_count = connection.scalar(text(
+                        "SELECT COUNT(*) FROM inference_deployments WHERE id = :id"
+                    ), {"id": seeded["deployment_id"].hex})
+                    version_count = connection.scalar(text(
+                        "SELECT COUNT(*) FROM model_versions WHERE id = :id"
+                    ), {"id": seeded["model_version_id"].hex})
+                self.assertEqual(revision, "20260718_08")
+                self.assertEqual(deployment_count, 1)
+                self.assertEqual(version_count, 1)
+            finally:
+                db_engine.dispose()
+
     def test_experiment_tracking_revision_has_complete_downgrade(self):
         TEMP_ROOT.mkdir(parents=True, exist_ok=True)
         with _TemporaryDatabase() as database_url:
@@ -433,6 +574,80 @@ class TestAlembicBaseline(TestCase):
                 self.assertEqual(revision, "20260718_07")
             finally:
                 db_engine.dispose()
+
+    @staticmethod
+    def _as_uuid(value):
+        return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+
+    @staticmethod
+    def _seed_legacy_registry(db_engine):
+        db = sessionmaker(bind=db_engine, expire_on_commit=False)()
+        try:
+            owner = User(username=f"legacy-{uuid.uuid4().hex}", password_hash="hash")
+            db.add(owner)
+            db.flush()
+            project = Project(name="Legacy production inference", owner_id=owner.id)
+            db.add(project)
+            db.flush()
+            artifact = Artifact(
+                project_id=project.id,
+                name="legacy.onnx",
+                type="model",
+                storage_path="",
+                storage_uri="s3://models/legacy.onnx",
+                file_size=12,
+                format="onnx",
+                metadata_={
+                    "dataset_artifact_id": "legacy-dataset",
+                    "credentials": "must-not-migrate",
+                    "storage_uri": "s3://private/source.csv",
+                },
+            )
+            db.add(artifact)
+            db.flush()
+            registered = RegisteredModel(
+                project_id=project.id,
+                name="Legacy classifier",
+                created_by_id=owner.id,
+            )
+            db.add(registered)
+            db.flush()
+            version = ModelVersion(
+                registered_model_id=registered.id,
+                version_number=1,
+                source_kind="onnx_artifact",
+                source_artifact_id=artifact.id,
+                onnx_artifact_id=artifact.id,
+                framework="onnx",
+                algorithm="classifier",
+                feature_schema=[{"name": "current", "dtype": "float64"}],
+                output_schema={"name": "fault", "dtype": "int64"},
+                metrics={"accuracy": 0.95},
+                conversion_metadata={"sha256": "a" * 64},
+                approval_status="approved",
+                approval_comment="validated",
+                approved_by_id=owner.id,
+                approved_at=None,
+                created_by_id=owner.id,
+            )
+            db.add(version)
+            db.flush()
+            deployment = InferenceDeployment(
+                project_id=project.id,
+                name="legacy-primary",
+                model_version_id=version.id,
+                desired_state="running",
+                observed_state="running",
+                created_by_id=owner.id,
+            )
+            db.add(deployment)
+            db.commit()
+            return {
+                "deployment_id": deployment.id,
+                "model_version_id": version.id,
+            }
+        finally:
+            db.close()
 
 
 class _TemporaryDatabase:

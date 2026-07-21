@@ -7,12 +7,17 @@ from sqlalchemy.orm import sessionmaker
 from app.database import Base
 from app.models.artifact import Artifact
 from app.models.model_registry import (
+    REVISION_STATES,
+    REVISION_STRATEGIES,
+    ROLLOUT_STATES,
     DeploymentRevision,
+    DeploymentRollout,
     DeploymentTarget,
     InferenceApiKey,
     InferenceMetricBucket,
     InferenceRequestLog,
     InferenceDeployment,
+    ModelCard,
     ModelVersion,
     RegisteredModel,
 )
@@ -106,6 +111,39 @@ class TestInferenceProductionModels(unittest.TestCase):
         with self.assertRaises(IntegrityError):
             self.db.commit()
 
+    def test_production_inference_state_constants_are_frozen(self):
+        self.assertEqual(
+            REVISION_STRATEGIES,
+            ("immediate", "canary", "rolling"),
+        )
+        self.assertEqual(
+            REVISION_STATES,
+            ("draft", "candidate", "stable", "superseded", "failed"),
+        )
+        self.assertEqual(
+            ROLLOUT_STATES,
+            (
+                "pending",
+                "preloading",
+                "progressing",
+                "paused",
+                "completed",
+                "failed",
+                "rolled_back",
+            ),
+        )
+
+    def test_revision_strategy_status_and_positive_number_are_enforced(self):
+        self.db.add(DeploymentRevision(
+            deployment_id=self.deployment.id,
+            revision_number=0,
+            strategy="blue_green",
+            status="publishing",
+            created_by_id=self.user.id,
+        ))
+        with self.assertRaises(IntegrityError):
+            self.db.commit()
+
     def test_target_weight_range_is_enforced_by_database(self):
         revision = self.make_revision()
         self.db.add(DeploymentTarget(
@@ -114,6 +152,44 @@ class TestInferenceProductionModels(unittest.TestCase):
             weight_bps=10001,
             role="stable",
         ))
+        with self.assertRaises(IntegrityError):
+            self.db.commit()
+
+    def test_target_model_is_unique_per_revision_and_role_is_frozen(self):
+        revision = self.make_revision()
+        self.db.add_all([
+            DeploymentTarget(
+                revision_id=revision.id,
+                model_version_id=self.deployment.model_version_id,
+                weight_bps=5000,
+                role="stable",
+            ),
+            DeploymentTarget(
+                revision_id=revision.id,
+                model_version_id=self.deployment.model_version_id,
+                weight_bps=5000,
+                role="candidate",
+            ),
+        ])
+        with self.assertRaises(IntegrityError):
+            self.db.commit()
+
+    def test_only_one_active_rollout_exists_per_deployment(self):
+        revision = self.make_revision()
+        self.db.add_all([
+            DeploymentRollout(
+                deployment_id=self.deployment.id,
+                from_revision_id=revision.id,
+                to_revision_id=revision.id,
+                state="pending",
+            ),
+            DeploymentRollout(
+                deployment_id=self.deployment.id,
+                from_revision_id=revision.id,
+                to_revision_id=revision.id,
+                state="paused",
+            ),
+        ])
         with self.assertRaises(IntegrityError):
             self.db.commit()
 
@@ -138,6 +214,17 @@ class TestInferenceProductionModels(unittest.TestCase):
         self.assertNotIn("secret_value", api_key_columns)
         self.assertNotIn("encrypted_secret", api_key_columns)
         self.assertNotIn("plaintext", api_key_columns)
+
+    def test_api_key_prefix_must_be_exactly_twelve_characters(self):
+        self.db.add(InferenceApiKey(
+            deployment_id=self.deployment.id,
+            prefix="too-short",
+            secret_hash="pbkdf2_sha256$fixture",
+            scopes=["inference.predict"],
+            created_by_id=self.user.id,
+        ))
+        with self.assertRaises(IntegrityError):
+            self.db.commit()
 
     def test_request_log_columns_are_an_exact_safe_allowlist(self):
         request_columns = {
@@ -165,6 +252,49 @@ class TestInferenceProductionModels(unittest.TestCase):
             tuple(index.get("column_names", [])) for index in indexes
         }
         self.assertIn(("deployment_id", "bucket_start"), indexed_columns)
+
+    def test_model_card_has_one_safe_snapshot_per_model_version(self):
+        card_columns = {
+            column["name"]
+            for column in inspect(self.engine).get_columns("model_cards")
+        }
+        self.assertEqual(card_columns, {
+            "id",
+            "model_version_id",
+            "training_data_lineage",
+            "source_artifact_ids",
+            "input_schema",
+            "output_schema",
+            "metrics",
+            "approval_history",
+            "approval_status",
+            "release_status",
+            "risk_notes",
+            "operational_guidance",
+            "guidance_revision",
+            "created_at",
+            "updated_at",
+        })
+        self.db.add_all([
+            ModelCard(model_version_id=self.deployment.model_version_id),
+            ModelCard(model_version_id=self.deployment.model_version_id),
+        ])
+        with self.assertRaises(IntegrityError):
+            self.db.commit()
+
+    def test_all_week9_models_are_publicly_exported(self):
+        from app import models
+
+        expected = {
+            "DeploymentRevision",
+            "DeploymentTarget",
+            "DeploymentRollout",
+            "InferenceApiKey",
+            "InferenceRequestLog",
+            "InferenceMetricBucket",
+            "ModelCard",
+        }
+        self.assertTrue(expected.issubset(set(models.__all__)))
 
 
 if __name__ == "__main__":

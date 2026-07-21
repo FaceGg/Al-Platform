@@ -89,7 +89,7 @@ class TestInferenceObservability(unittest.TestCase):
         ))
         self.api_key = InferenceApiKey(
             deployment_id=self.deployment.id,
-            prefix="wpk_test",
+            prefix="wpk_test_001",
             secret_hash="not-plaintext",
             scopes=["inference.predict"],
             created_by_id=actor.id,
