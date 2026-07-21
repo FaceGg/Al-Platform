@@ -384,7 +384,7 @@ git commit -m "feat: define safe inference domain events"
 - Modify: `ml-platform/backend/tests/test_inference_api_keys.py`
 - Modify: `ml-platform/backend/tests/test_inference_rate_limit.py`
 
-- [ ] **Step 1: Write failing key-lifecycle tests**
+- [x] **Step 1: Write failing key-lifecycle tests**
 
 ```python
 def test_create_returns_plaintext_once_and_persists_only_hash(self):
@@ -409,7 +409,7 @@ def test_rotation_revokes_old_key_in_same_transaction(self):
 
 Cover unknown scope, expiry, revocation, wrong deployment, wrong secret, and list serialization without `secret_hash` or plaintext.
 
-- [ ] **Step 2: Write failing limiter tests and run RED**
+- [x] **Step 2: Write failing limiter tests and run RED**
 
 ```python
 def test_redis_failure_never_becomes_allow(self):
@@ -433,7 +433,7 @@ python -m unittest tests.test_inference_api_keys tests.test_inference_rate_limit
 
 Expected: RED because both service modules are absent.
 
-- [ ] **Step 3: Implement one-time keys with PBKDF2**
+- [x] **Step 3: Implement one-time keys with PBKDF2**
 
 ```python
 class InferenceApiKeyService:
@@ -459,7 +459,7 @@ class InferenceApiKeyService:
 
 `verify` selects by the 12-character prefix, verifies PBKDF2 in constant-time library code, checks expiry/revocation/scope/deployment, updates only `last_used_at`, and raises stable `INFERENCE_API_KEY_INVALID`, `INFERENCE_API_KEY_EXPIRED`, `INFERENCE_API_KEY_REVOKED`, or `INFERENCE_API_KEY_OUT_OF_SCOPE` codes. `rotate` revokes then creates in the caller's transaction.
 
-- [ ] **Step 4: Implement one atomic Redis script**
+- [x] **Step 4: Implement one atomic Redis script**
 
 Use one Lua `EVAL` to refill, consume, store token count/update time, and set TTL. `consume(key, capacity, refill_per_second)` returns `RateLimitDecision(allowed, remaining, retry_after_seconds)`. Redis connection, timeout, or script failures raise `RateLimitBackendUnavailable("RATE_LIMIT_BACKEND_UNAVAILABLE")`; production never falls back to memory.
 
@@ -472,7 +472,7 @@ inference_log_retention_days: int = Field(default=30, ge=1, le=365)
 inference_rollout_observation_seconds: int = Field(default=60, ge=10, le=3600)
 ```
 
-- [ ] **Step 5: Run GREEN and scan for secret exposure**
+- [x] **Step 5: Run GREEN and scan for secret exposure**
 
 ```powershell
 python -m unittest tests.test_inference_api_keys tests.test_inference_rate_limit tests.test_config -v
@@ -481,7 +481,7 @@ rg -n "plaintext|secret_hash|mli_|X-Inference-Api-Key" app/services app/models a
 
 Expected: all lifecycle and limiter tests pass; plaintext appears only in the one-time result and response path, never in logs, audit changes, repr, summaries, or exports.
 
-- [ ] **Step 6: Commit key and limiter services**
+- [x] **Step 6: Commit key and limiter services**
 
 ```powershell
 git add ml-platform/backend/app/services/inference_api_keys.py ml-platform/backend/app/services/inference_rate_limit.py ml-platform/backend/app/config.py ml-platform/backend/tests/test_inference_api_keys.py ml-platform/backend/tests/test_inference_rate_limit.py

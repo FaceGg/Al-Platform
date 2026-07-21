@@ -1094,6 +1094,13 @@
 - 验证：domain smoke、模型/数据库 `32/32`、compileall、diff check 通过；完整 rollout 测试待 Task 6 服务落地后复跑。
 - 后续：Task 4 实现 API Key 生命周期与 Redis 失败关闭限流。
 
+### 2026-07-21：第 9 周 Task 4 API Key 与失败关闭限流完成
+
+- 完成：PBKDF2 单次展示 API Key、部署/范围/过期/撤销校验、同事务轮换及安全列表 DTO；Redis 单 Lua 令牌桶使用 Redis 时间、原子 refill/consume/TTL 和 retry-after。
+- 安全：Redis 连接、超时及脚本异常统一为 `RATE_LIMIT_BACKEND_UNAVAILABLE`，无内存降级或默认放行；公开列表不含密钥哈希或明文。
+- 验证：`test_inference_api_keys`、`test_inference_rate_limit`、`test_config` `27/27` 通过；扩展聚焦集 `40/40`、compileall、diff check 通过，规格与质量双审通过。
+- 后续：Task 5 建设请求脱敏日志、分钟指标、留存与模型卡。
+
 ### 2026-07-21：第 9 周 Task 1 RED 合同边界完成
 
 - 开发环境：在 `.worktrees/week9-12-mlops-core` 的 `codex/week9-12-mlops-core` 隔离分支执行；基线后端 `68/68` 模块、前端 `19/19` 文件 `50/50` 用例和生产构建通过。本机 Python 3.13/Node 24 与 CI Python 3.11/Node 20 的差异保留为后续远程门禁。
