@@ -130,7 +130,7 @@ class TestModelCards(unittest.TestCase):
         self.assertEqual(exported["intended_use"], "")
         self.assertEqual(exported["limitations"], "")
         self.assertEqual(exported["guidance_revision"], 2)
-        serialized = json.dumps(exported, default=str)
+        serialized = json.dumps(exported)
         for forbidden in (
             "storage_uri", "raw_exception", "credentials", "records", "predictions",
         ):

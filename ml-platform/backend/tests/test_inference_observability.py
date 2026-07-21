@@ -191,6 +191,10 @@ class TestInferenceObservability(unittest.TestCase):
         self.assertEqual(bucket.error_count, 1)
         self.assertEqual(bucket.limited_count, 1)
 
+        summary = service.summarize_metrics(buckets)
+        self.assertEqual(summary["traffic_weights"], {str(self.version.id): 10000})
+        self.assertEqual(summary["p95_latency_ms"], 50)
+
     def test_prune_removes_logs_expiring_at_the_boundary_only(self):
         service = InferenceObservability()
         boundary = datetime(2026, 7, 20, 12, 34, tzinfo=timezone.utc)

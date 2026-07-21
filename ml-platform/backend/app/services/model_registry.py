@@ -13,6 +13,7 @@ from app.models.model_library import ModelLibrary
 from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.training import TrainingJob
 from app.services.artifact_service import ArtifactService
+from app.services.model_cards import ModelCardService
 from app.services.onnx_conversion import convert_platform_joblib, validate_onnx
 
 
@@ -39,6 +40,7 @@ class ModelRegistryService:
         self.converter = converter
         self.validator = validator
         self.conversion_timeout_seconds = conversion_timeout_seconds
+        self.model_cards = ModelCardService()
 
     def compensate_version_artifact(self, storage_uri: str | None) -> None:
         if storage_uri:
@@ -184,6 +186,7 @@ class ModelRegistryService:
                 created_by_id=actor_id,
             )
             db.add(version)
+            self.model_cards.ensure_for_version(db, version)
             try:
                 if commit:
                     db.commit()
@@ -238,6 +241,7 @@ class ModelRegistryService:
             created_by_id=actor_id,
         )
         db.add(version)
+        self.model_cards.ensure_for_version(db, version)
         if commit:
             db.commit()
             db.refresh(version)
@@ -268,6 +272,7 @@ class ModelRegistryService:
         version.approval_comment = str(comment or "").strip()
         version.approved_by_id = actor_id
         version.approved_at = utcnow()
+        self.model_cards.ensure_for_version(db, version)
         self._finish(db, version, commit)
         return version
 
@@ -284,6 +289,7 @@ class ModelRegistryService:
         version.approval_comment = normalized
         version.approved_by_id = actor_id
         version.approved_at = utcnow()
+        self.model_cards.ensure_for_version(db, version)
         self._finish(db, version, commit)
         return version
 
@@ -295,6 +301,7 @@ class ModelRegistryService:
         version.approval_comment = str(comment or "").strip()
         version.approved_by_id = actor_id
         version.approved_at = utcnow()
+        self.model_cards.ensure_for_version(db, version)
         self._finish(db, version, commit)
         return version
 
