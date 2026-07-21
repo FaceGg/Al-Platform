@@ -1095,6 +1095,14 @@
 - 审查修正：统一 API Key 稳定错误码和请求头；补齐错误密钥、作用域、过期、撤销、轮换和安全 DTO；可观测状态固定为 `success/error/limited`；日志与 API Key 持久字段、公开序列化改用精确 allowlist；模型卡补齐血缘、制品、发布状态和安全导出合同。
 - 审查结论：规格审查通过；代码质量复审无 Critical、Important 或 Minor 问题，最终提交为 `63b7e3c`。
 - 未完成：Task 2 根据 RED 合同实现七张生产推理表和线性 Alembic `20260720_09_production_inference`；当前第 9 周整体保持进行中。
+
+### 2026-07-21：第 9 周 Task 2 生产推理持久化完成
+
+- 完成内容：新增 `DeploymentRevision`、`DeploymentTarget`、`DeploymentRollout`、`InferenceApiKey`、`InferenceRequestLog`、`InferenceMetricBucket` 和 `ModelCard` 七张表及 ORM 导出；迁移 `20260720_09_production_inference` 线性继承 `20260718_08`。
+- 数据迁移：确定性回填每个旧部署的稳定 revision/10000 基点 target 和每个模型版本的 model card；空库、 populated DB、双次 upgrade、`alembic check`、完整 downgrade 均通过，Week 8 行未被破坏。
+- 安全边界：API Key 只保留 PBKDF2 hash 和生命周期元数据；日志列为精确 allowlist；ModelCard lineage 只保留安全 ID/Schema/指标/审批字段，不复制 credentials 或 storage URI；`InferenceRequestLog.status` 不设置默认值，必须显式写入 `success/error/limited`。
+- 验证方式：模型/迁移聚焦回归 `32/32`、compileall、API model-registry/project-access 回归通过；独立规格审查和质量审查均通过。`tests.test_model_cards` 暂因 Task 1 的 `app.services.model_cards` 尚未实现而无法导入，这是已知下游依赖，不计为 Task 2 失败。
+- 提交：实现 `d60dc19`，ModelCard/default 修复 `c922980`，显式状态修复 `6f4b57e`；当前第 9 周整体保持进行中。
 ### 2026-07-21：第九周 Task 2 模型卡持久化复审修正
 
 - 发现：模型卡缺少批准设计要求的 `intended_use` 与 `limitations`，且 Week 9 迁移中多个 ORM 默认值未落到数据库服务器默认。

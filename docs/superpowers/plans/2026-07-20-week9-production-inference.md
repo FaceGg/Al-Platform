@@ -144,15 +144,15 @@ git commit -m "test: freeze week 9 inference contracts"
 - Modify: `ml-platform/backend/tests/test_inference_production_models.py`
 - Modify: `ml-platform/backend/tests/test_database_production.py`
 
-- [ ] **Step 1: Add revision strategy/state constants (2–5 min)**
+- [x] **Step 1: Add revision strategy/state constants (2–5 min)**
 
 Add `REVISION_STRATEGIES`, `REVISION_STATES`, and `ROLLOUT_STATES`; import no model yet.
 
-- [ ] **Step 2: Add `DeploymentRevision` (2–5 min)**
+- [x] **Step 2: Add `DeploymentRevision` (2–5 min)**
 
 Add the revision class from the following block and export it from `app.models`.
 
-- [ ] **Step 3: Add `DeploymentTarget` (2–5 min)**
+- [x] **Step 3: Add `DeploymentTarget` (2–5 min)**
 
 Add the target class from the following block and its `DeploymentRevision.targets` relationship.
 
@@ -193,27 +193,27 @@ class DeploymentTarget(Base):
     role = Column(String(16), nullable=False)
 ```
 
-- [ ] **Step 4: Add `DeploymentRollout` (2–5 min)**
+- [x] **Step 4: Add `DeploymentRollout` (2–5 min)**
 
 Add `DeploymentRollout` with the frozen states, `from_revision_id`, `to_revision_id`, `current_step`, `lock_version`, JSON `step_schedule`, JSON `thresholds`, `last_error_code`, and timestamps. Add a PostgreSQL partial unique index that permits only one `pending`, `preloading`, `progressing`, or `paused` rollout per deployment; service row locking enforces the same rule in SQLite tests.
 
-- [ ] **Step 5: Add `InferenceApiKey` (2–5 min)**
+- [x] **Step 5: Add `InferenceApiKey` (2–5 min)**
 
 Add `InferenceApiKey` with `deployment_id`, 12-character `prefix`, PBKDF2 `secret_hash`, JSON scopes, expiry, revocation, last-used, actor, and timestamps.
 
-- [ ] **Step 6: Add `InferenceRequestLog` (2–5 min)**
+- [x] **Step 6: Add `InferenceRequestLog` (2–5 min)**
 
 Add request/deployment/revision/version/key IDs, batch size, integer duration, constrained status, stable error code, occurrence and expiry.
 
-- [ ] **Step 7: Add `InferenceMetricBucket` (2–5 min)**
+- [x] **Step 7: Add `InferenceMetricBucket` (2–5 min)**
 
 Add unique deployment/minute, request/success/error/limited/load-failure counts, `batch_size_sum`, latency sum/max, fixed-boundary `latency_buckets` JSON, and `traffic_weights` JSON.
 
-- [ ] **Step 8: Add `ModelCard` and exports (2–5 min)**
+- [x] **Step 8: Add `ModelCard` and exports (2–5 min)**
 
 Add one card per model version with generated lineage/schema/metrics/approval fields, risk text, operational guidance, and `guidance_revision`; export all seven classes from `app.models.__init__`.
 
-- [ ] **Step 9: Write migration tests before the revision (2–5 min)**
+- [x] **Step 9: Write migration tests before the revision (2–5 min)**
 
 Set `HEAD_REVISION = "20260720_09_production_inference"`. Assert 45 business tables, all seven table names, named indexes, backfilled one stable revision and 10000-basis-point target for every Week 8 deployment, one model card per version, and complete downgrade to `20260718_08`.
 
@@ -225,7 +225,7 @@ python -m unittest tests.test_inference_production_models tests.test_database_pr
 
 Expected: RED because the revision file and tables are absent.
 
-- [ ] **Step 10: Create the revision header and seven tables (2–5 min)**
+- [x] **Step 10: Create the revision header and seven tables (2–5 min)**
 
 The revision header must be:
 
@@ -238,15 +238,15 @@ depends_on = None
 
 Create tables in dependency order with the exact ORM constraint/index names.
 
-- [ ] **Step 11: Add deterministic backfill (2–5 min)**
+- [x] **Step 11: Add deterministic backfill (2–5 min)**
 
 Backfill with SQLAlchemy `sa.table` plus `op.bulk_insert`/connection queries so UUID handling works on PostgreSQL and SQLite. Use each legacy deployment ID as its initial stable revision ID and each model-version ID as its initial model-card ID.
 
-- [ ] **Step 12: Add complete downgrade (2–5 min)**
+- [x] **Step 12: Add complete downgrade (2–5 min)**
 
 Drop only Week 9 tables and indexes in reverse dependency order and leave all legacy rows untouched.
 
-- [ ] **Step 13: Run migration GREEN**
+- [x] **Step 13: Run migration GREEN**
 
 ```powershell
 python -m unittest tests.test_inference_production_models tests.test_database_production -v
@@ -255,7 +255,7 @@ python -m compileall -q app alembic
 
 Expected: clean database upgrades twice, `alembic check` passes, current head is `20260720_09_production_inference`, backfills match, and downgrade returns to `20260718_08`.
 
-- [ ] **Step 14: Commit models and migration (2–5 min)**
+- [x] **Step 14: Commit models and migration (2–5 min)**
 
 ```powershell
 git add ml-platform/backend/app/models ml-platform/backend/alembic/versions/20260720_09_production_inference.py ml-platform/backend/tests/test_inference_production_models.py ml-platform/backend/tests/test_database_production.py
