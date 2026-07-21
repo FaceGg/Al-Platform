@@ -1,4 +1,7 @@
 import unittest
+from datetime import datetime, timezone
+from unittest.mock import Mock
+from uuid import uuid4
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -15,6 +18,12 @@ from app.models.model_registry import (
 from app.models.project import Project
 from app.models.user import User
 from app.services.inference_rollout import InferenceRolloutError, InferenceRolloutService
+from app.events.domain import (
+    SAFE_PAYLOAD_KEYS,
+    DomainEvent,
+    NullDomainEventRecorder,
+    create_domain_event,
+)
 
 
 class FakeRuntime:
@@ -138,6 +147,41 @@ class TestInferenceRollout(unittest.TestCase):
             set(event.payload),
             {"revision_id", "deployment_id", "model_version_ids"},
         )
+
+    def test_null_domain_event_recorder_does_not_commit(self):
+        db = Mock()
+        NullDomainEventRecorder().record(db, safe_event())
+        db.commit.assert_not_called()
+
+    def test_domain_event_filters_payload_to_safe_keys(self):
+        event = create_domain_event(
+            idempotency_key="rollout:1:completed:1",
+            event_type="rollout.completed",
+            severity="info",
+            occurred_at=datetime.now(timezone.utc),
+            project_id=uuid4(),
+            actor_id=uuid4(),
+            resource_type="deployment",
+            resource_id="deployment-1",
+            payload={"revision_id": "revision-1", "secret": "redacted"},
+        )
+        self.assertEqual(set(event.payload), {"revision_id"})
+        self.assertTrue(set(event.payload) <= SAFE_PAYLOAD_KEYS)
+
+
+def safe_event() -> DomainEvent:
+    return DomainEvent(
+        event_id=uuid4(),
+        idempotency_key="rollout:1:completed:1",
+        event_type="rollout.completed",
+        severity="info",
+        occurred_at=datetime.now(timezone.utc),
+        project_id=None,
+        actor_id=None,
+        resource_type="deployment",
+        resource_id=None,
+        payload={},
+    )
 
 
 if __name__ == "__main__":

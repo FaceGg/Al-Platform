@@ -15,6 +15,7 @@ from app.database import Base, SessionLocal, engine
 from app.database_migrations import ensure_schema_compatibility
 from app.database_schema import require_current_schema
 from app.events.subscriber import RedisRunEventSubscriber
+from app.events.domain import DomainEventRecorder, NullDomainEventRecorder
 from app.middleware.request_id import RequestIdMiddleware
 from app.websocket.manager import manager
 from app.services.project_access import ProjectAccessError
@@ -78,11 +79,15 @@ def configure_runtime_dependencies(
     app_settings=None,
     db_engine=None,
     session_factory=None,
+    domain_event_recorder: DomainEventRecorder | None = None,
 ) -> None:
     """Configure optional runtime database dependencies for an application."""
     target_app.state.settings = app_settings
     target_app.state.engine = db_engine
     target_app.state.session_factory = session_factory
+    target_app.state.domain_event_recorder = (
+        NullDomainEventRecorder() if domain_event_recorder is None else domain_event_recorder
+    )
 
 
 def _runtime_dependencies(target_app: FastAPI):
@@ -173,6 +178,7 @@ app = FastAPI(
     version="0.2.0",
     lifespan=lifespan,
 )
+app.state.domain_event_recorder = NullDomainEventRecorder()
 
 app.add_middleware(
     CORSMiddleware,
