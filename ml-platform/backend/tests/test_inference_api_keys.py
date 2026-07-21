@@ -16,7 +16,11 @@ from app.models.model_registry import (
 )
 from app.models.project import Project
 from app.models.user import User
-from app.services.inference_api_keys import InferenceApiKeyError, InferenceApiKeyService
+from app.services.inference_api_keys import (
+    ApiKeyView,
+    InferenceApiKeyError,
+    InferenceApiKeyService,
+)
 
 
 class TestInferenceApiKeys(unittest.TestCase):
@@ -90,23 +94,12 @@ class TestInferenceApiKeys(unittest.TestCase):
         self.assertNotIn(created.plaintext, repr(persisted.__dict__))
         listed = self.service.list_for_deployment(self.db, self.deployment.id)
         self.assertEqual(len(listed), 1)
+        self.assertIsInstance(listed[0], ApiKeyView)
         safe_fields = {
             "id", "prefix", "scopes", "expires_at", "last_used_at",
             "revoked_at", "created_at",
         }
-        item = listed[0]
-        if isinstance(item, dict):
-            serialized = item
-        elif hasattr(item, "model_dump"):
-            serialized = item.model_dump()
-        elif hasattr(item, "__dataclass_fields__"):
-            serialized = asdict(item)
-        else:
-            serialized = {
-                key: value
-                for key, value in vars(item).items()
-                if not key.startswith("_")
-            }
+        serialized = asdict(listed[0])
         self.assertEqual(set(serialized), safe_fields)
         self.assertNotIn("secret_hash", serialized)
         self.assertNotIn("plaintext", serialized)
@@ -185,11 +178,23 @@ class TestInferenceApiKeys(unittest.TestCase):
             ["inference.predict"],
             None,
         )
-        revoked.record.revoked_at = datetime.now(timezone.utc)
+        revoked_record = self.service.revoke(
+            self.db,
+            revoked.record.id,
+            self.actor.id,
+        )
         self.db.commit()
+        self.assertIsNotNone(revoked_record.revoked_at)
         with self.assertRaises(InferenceApiKeyError) as raised:
             self.service.verify(self.db, revoked.plaintext)
         self.assertEqual(raised.exception.code, "INFERENCE_API_KEY_REVOKED")
+        repeated = self.service.revoke(
+            self.db,
+            revoked.record.id,
+            self.actor.id,
+        )
+        self.assertEqual(repeated.id, revoked_record.id)
+        self.assertEqual(repeated.revoked_at, revoked_record.revoked_at)
 
     def test_rotation_invalidates_the_previous_plaintext(self):
         created = self.service.create(

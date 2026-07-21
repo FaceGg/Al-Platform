@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from sqlalchemy import create_engine
@@ -72,6 +73,15 @@ class TestModelCards(unittest.TestCase):
         self.assertEqual(persisted.output_schema, self.version.output_schema)
         self.assertEqual(persisted.metrics, self.version.metrics)
         self.assertTrue(persisted.approval_history)
+        self.assertEqual(
+            persisted.training_data_lineage["dataset_artifact_id"],
+            "dataset-1",
+        )
+        self.assertEqual(
+            persisted.source_artifact_ids,
+            [str(self.version.source_artifact_id)],
+        )
+        self.assertEqual(persisted.release_status, "unreleased")
 
     def test_human_guidance_can_change_without_mutating_system_fields(self):
         card = self.service.ensure_for_version(self.db, self.version)
@@ -91,6 +101,34 @@ class TestModelCards(unittest.TestCase):
         self.assertEqual(updated.metrics, original_metrics)
         self.assertEqual(updated.input_schema, original_input_schema)
         self.assertEqual(updated.output_schema, original_output_schema)
+
+    def test_export_contains_lineage_and_guidance_but_omits_sensitive_runtime_data(self):
+        card = self.service.ensure_for_version(self.db, self.version)
+        self.service.update_guidance(
+            self.db,
+            card.id,
+            "Use for spot-weld fault screening with calibrated sensors.",
+        )
+        exported = self.service.export(self.db, card.id)
+        self.assertEqual(
+            exported["source_artifact_ids"],
+            [str(self.version.source_artifact_id)],
+        )
+        self.assertEqual(
+            exported["training_data_lineage"]["dataset_artifact_id"],
+            "dataset-1",
+        )
+        self.assertEqual(exported["release_status"], "unreleased")
+        self.assertEqual(
+            exported["operational_guidance"],
+            "Use for spot-weld fault screening with calibrated sensors.",
+        )
+        self.assertEqual(exported["guidance_revision"], 2)
+        serialized = json.dumps(exported, default=str)
+        for forbidden in (
+            "storage_uri", "raw_exception", "credentials", "records", "predictions",
+        ):
+            self.assertNotIn(forbidden, serialized)
 
     def test_public_update_rejects_system_generated_fields(self):
         card = self.service.ensure_for_version(self.db, self.version)

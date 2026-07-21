@@ -122,7 +122,21 @@ class TestInferenceProductionModels(unittest.TestCase):
             column["name"]
             for column in inspect(self.engine).get_columns("inference_api_keys")
         }
-        self.assertNotIn("secret", api_key_columns)
+        self.assertEqual(api_key_columns, {
+            "id",
+            "deployment_id",
+            "prefix",
+            "secret_hash",
+            "scopes",
+            "expires_at",
+            "revoked_at",
+            "last_used_at",
+            "created_by_id",
+            "created_at",
+        })
+        self.assertNotIn("raw_secret", api_key_columns)
+        self.assertNotIn("secret_value", api_key_columns)
+        self.assertNotIn("encrypted_secret", api_key_columns)
         self.assertNotIn("plaintext", api_key_columns)
 
     def test_request_log_columns_are_an_exact_safe_allowlist(self):

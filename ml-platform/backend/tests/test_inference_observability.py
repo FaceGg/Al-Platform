@@ -140,11 +140,25 @@ class TestInferenceObservability(unittest.TestCase):
             error_code="INFERENCE_RUNTIME_UNAVAILABLE",
         )
         view = safe_request_log(log)
+        self.assertEqual(set(view), {
+            "id",
+            "request_id",
+            "deployment_id",
+            "revision_id",
+            "model_version_id",
+            "api_key_id",
+            "batch_size",
+            "duration_ms",
+            "status",
+            "error_code",
+            "occurred_at",
+            "expires_at",
+        })
         self.assertEqual(view["error_code"], "INFERENCE_RUNTIME_UNAVAILABLE")
-        self.assertFalse(
-            {"records", "input", "predictions", "secret", "secret_hash", "payload"}
-            & set(view)
-        )
+        for forbidden in (
+            "storage_uri", "raw_exception", "request_body", "predictions", "secret",
+        ):
+            self.assertNotIn(forbidden, view)
 
     def test_record_request_upserts_exact_minute_bucket_counts(self):
         service = InferenceObservability()
