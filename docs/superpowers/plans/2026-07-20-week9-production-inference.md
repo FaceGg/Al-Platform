@@ -78,7 +78,7 @@
 - Create: `ml-platform/backend/tests/test_api_inference_production.py`
 - Modify: `ml-platform/backend/tests/week_manifest.py`
 
-- [ ] **Step 1: Write the first failing model and event tests**
+- [x] **Step 1: Write the first failing model and event tests**
 
 ```python
 def test_target_weights_must_total_10000(self):
@@ -101,7 +101,7 @@ def test_rollout_event_contains_only_safe_payload(self):
 
 Use real SQLAlchemy sessions and a fake recorder. Do not mock constraints.
 
-- [ ] **Step 2: Run the seven modules and verify RED**
+- [x] **Step 2: Run the seven modules and verify RED**
 
 ```powershell
 cd ml-platform/backend
@@ -110,7 +110,7 @@ python -m unittest tests.test_inference_production_models tests.test_inference_r
 
 Expected: import failures name the missing Week 9 model and service modules.
 
-- [ ] **Step 3: Register the exact Week 9 modules**
+- [x] **Step 3: Register the exact Week 9 modules**
 
 Add this list to `WEEK_TEST_MODULES`:
 
@@ -128,7 +128,7 @@ Add this list to `WEEK_TEST_MODULES`:
 
 Run `python -m unittest tests.test_suite_manifest -v`. Expected: every file is assigned once; failures are limited to the missing production implementation.
 
-- [ ] **Step 4: Commit the RED contract tests**
+- [x] **Step 4: Commit the RED contract tests**
 
 ```powershell
 git add ml-platform/backend/tests
