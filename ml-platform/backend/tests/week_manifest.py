@@ -83,6 +83,15 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_api_model_registry",
         "test_inference_production_stack",
     ],
+    9: [
+        "test_inference_production_models",
+        "test_inference_rollout",
+        "test_inference_api_keys",
+        "test_inference_rate_limit",
+        "test_inference_observability",
+        "test_model_cards",
+        "test_api_inference_production",
+    ],
 }
 
 
