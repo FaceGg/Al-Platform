@@ -200,6 +200,37 @@ class TestInferenceRollout(unittest.TestCase):
         with self.assertRaises(TypeError):
             event.payload["step"] = 2
 
+    def test_domain_event_deep_freezes_nested_payload_values(self):
+        model_version_ids = ["version-1", "version-2"]
+        nested_step = {"name": "canary"}
+        event = create_domain_event(
+            idempotency_key="rollout:1:completed:1",
+            event_type="rollout.completed",
+            severity="info",
+            occurred_at=datetime.now(timezone.utc),
+            project_id=None,
+            actor_id=None,
+            resource_type="deployment",
+            resource_id=None,
+            payload={
+                "model_version_ids": model_version_ids,
+                "step": nested_step,
+            },
+        )
+
+        model_version_ids.append("version-3")
+        nested_step["name"] = "promoted"
+
+        self.assertEqual(
+            event.payload["model_version_ids"],
+            ("version-1", "version-2"),
+        )
+        self.assertEqual(event.payload["step"]["name"], "canary")
+        with self.assertRaises(TypeError):
+            event.payload["model_version_ids"][0] = "mutated"
+        with self.assertRaises(TypeError):
+            event.payload["step"]["name"] = "mutated"
+
     def test_runtime_dependencies_default_and_custom_domain_recorder(self):
         target = FastAPI()
         recorder = RecordingEventRecorder()

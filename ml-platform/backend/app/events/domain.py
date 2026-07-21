@@ -1,5 +1,6 @@
 """Safe domain-event contract for production inference workflows."""
 
+from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
@@ -28,6 +29,15 @@ SAFE_PAYLOAD_KEYS = frozenset({
 })
 
 
+def _deep_freeze(value: object) -> object:
+    """Copy nested payload values into immutable containers."""
+    if isinstance(value, MappingABC):
+        return MappingProxyType({key: _deep_freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(item) for item in value)
+    return value
+
+
 @dataclass(frozen=True)
 class DomainEvent:
     event_id: UUID
@@ -45,7 +55,9 @@ class DomainEvent:
         if self.event_type not in SAFE_EVENT_TYPES:
             raise ValueError("DOMAIN_EVENT_TYPE_INVALID")
         safe_payload = {
-            key: value for key, value in self.payload.items() if key in SAFE_PAYLOAD_KEYS
+            key: _deep_freeze(value)
+            for key, value in self.payload.items()
+            if key in SAFE_PAYLOAD_KEYS
         }
         object.__setattr__(self, "payload", MappingProxyType(safe_payload))
 

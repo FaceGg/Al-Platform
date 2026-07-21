@@ -1109,3 +1109,13 @@
 - 修复：新增非空 4000 字符字段并以空字符串回填；为发布状态、rollout 状态/版本、API Key scopes、请求日志状态、指标计数/JSON 和模型卡 JSON/文本字段补齐服务器默认；回填路径显式写入模型卡字段。
 - 验证：生产推理模型测试 12/12、数据库生产测试 18/18、迁移升级/降级/幂等和 legacy backfill 通过；`compileall`、`git diff --check` 通过。模型卡服务合同仍依赖 Task 1 后续实现。
 - 未完成：Task 2 代码需由主线合并后与模型卡服务和完整 Week 9 测试联调。
+
+### 2026-07-21：第 9 周 Task 3 领域事件 payload 深冻结修正
+
+- 问题现象：`DomainEvent` 仅冻结顶层 `MappingProxyType`；调用方保留的 `model_version_ids` 列表或嵌套字典仍可变，可能在事件创建后改变已记录 payload。
+- 根因：payload 过滤只复制顶层字典，没有递归复制和冻结嵌套容器。
+- 解决结果：增加递归 `_deep_freeze`；嵌套 Mapping 转不可变 mapping、list/tuple 转 tuple，标量保持原值；新增列表来源变更和事件嵌套写入回归测试。
+- 验证方式：独立 domain deep-freeze contract 通过；模型/数据库聚焦回归 32/32；`compileall` 和 `git diff --check` 通过。`test_inference_rollout` 仍因 Task 4 `app.services.inference_rollout` 尚未实现而无法收集，属于已知下游依赖。
+- 影响范围：第 9 周领域事件安全 payload，不改变事件类型白名单或安全键过滤。
+- 预防措施：不可变事件必须递归复制所有嵌套 Mapping 和序列；新增 payload 字段同时覆盖来源对象和事件对象两侧 mutation 测试。
+- 遗留事项：待 Task 4 rollout 服务完成后运行完整 `test_inference_rollout` 和 Week 9 套件。
