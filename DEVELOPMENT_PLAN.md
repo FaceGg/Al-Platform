@@ -1095,3 +1095,9 @@
 - 审查修正：统一 API Key 稳定错误码和请求头；补齐错误密钥、作用域、过期、撤销、轮换和安全 DTO；可观测状态固定为 `success/error/limited`；日志与 API Key 持久字段、公开序列化改用精确 allowlist；模型卡补齐血缘、制品、发布状态和安全导出合同。
 - 审查结论：规格审查通过；代码质量复审无 Critical、Important 或 Minor 问题，最终提交为 `63b7e3c`。
 - 未完成：Task 2 根据 RED 合同实现七张生产推理表和线性 Alembic `20260720_09_production_inference`；当前第 9 周整体保持进行中。
+### 2026-07-21：第九周 Task 2 模型卡持久化复审修正
+
+- 发现：模型卡缺少批准设计要求的 `intended_use` 与 `limitations`，且 Week 9 迁移中多个 ORM 默认值未落到数据库服务器默认。
+- 修复：新增非空 4000 字符字段并以空字符串回填；为发布状态、rollout 状态/版本、API Key scopes、请求日志状态、指标计数/JSON 和模型卡 JSON/文本字段补齐服务器默认；回填路径显式写入模型卡字段。
+- 验证：生产推理模型测试 12/12、数据库生产测试 18/18、迁移升级/降级/幂等和 legacy backfill 通过；`compileall`、`git diff --check` 通过。模型卡服务合同仍依赖 Task 1 后续实现。
+- 未完成：Task 2 代码需由主线合并后与模型卡服务和完整 Week 9 测试联调。

@@ -435,7 +435,7 @@ class TestAlembicBaseline(TestCase):
                     )).mappings().one()
                     card = connection.execute(text(
                         "SELECT id, model_version_id, training_data_lineage, "
-                        "approval_status, release_status "
+                        "approval_status, release_status, intended_use, limitations "
                         "FROM model_cards"
                     )).mappings().one()
                     card_count = connection.scalar(text("SELECT COUNT(*) FROM model_cards"))
@@ -465,6 +465,8 @@ class TestAlembicBaseline(TestCase):
                 )
                 self.assertEqual(card["approval_status"], "approved")
                 self.assertEqual(card["release_status"], "released")
+                self.assertEqual(card["intended_use"], "")
+                self.assertEqual(card["limitations"], "")
                 lineage = card["training_data_lineage"]
                 if isinstance(lineage, str):
                     lineage = json.loads(lineage)

@@ -270,6 +270,8 @@ class TestInferenceProductionModels(unittest.TestCase):
             "approval_status",
             "release_status",
             "risk_notes",
+            "intended_use",
+            "limitations",
             "operational_guidance",
             "guidance_revision",
             "created_at",

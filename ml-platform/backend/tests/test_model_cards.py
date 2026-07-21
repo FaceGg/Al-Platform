@@ -82,6 +82,8 @@ class TestModelCards(unittest.TestCase):
             [str(self.version.source_artifact_id)],
         )
         self.assertEqual(persisted.release_status, "unreleased")
+        self.assertEqual(persisted.intended_use, "")
+        self.assertEqual(persisted.limitations, "")
 
     def test_human_guidance_can_change_without_mutating_system_fields(self):
         card = self.service.ensure_for_version(self.db, self.version)
@@ -98,6 +100,8 @@ class TestModelCards(unittest.TestCase):
             "Use for spot-weld fault screening with calibrated sensors.",
         )
         self.assertEqual(updated.guidance_revision, 2)
+        self.assertEqual(updated.intended_use, "")
+        self.assertEqual(updated.limitations, "")
         self.assertEqual(updated.metrics, original_metrics)
         self.assertEqual(updated.input_schema, original_input_schema)
         self.assertEqual(updated.output_schema, original_output_schema)
@@ -123,6 +127,8 @@ class TestModelCards(unittest.TestCase):
             exported["operational_guidance"],
             "Use for spot-weld fault screening with calibrated sensors.",
         )
+        self.assertEqual(exported["intended_use"], "")
+        self.assertEqual(exported["limitations"], "")
         self.assertEqual(exported["guidance_revision"], 2)
         serialized = json.dumps(exported, default=str)
         for forbidden in (
