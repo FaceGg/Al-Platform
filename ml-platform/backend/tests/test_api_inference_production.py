@@ -29,7 +29,18 @@ class TestProductionInferenceApi(unittest.TestCase):
             json={"records": [{"current": 1.0}]},
         )
         self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json()["detail"]["code"], "INFERENCE_API_KEY_REQUIRED")
+        self.assertEqual(response.json()["detail"]["code"], "INFERENCE_API_KEY_INVALID")
+
+    def test_production_route_uses_the_frozen_api_key_header(self):
+        operation = self.app.openapi()["paths"][
+            "/api/v1/inference/{deployment_id}/predict"
+        ]["post"]
+        header_parameters = {
+            parameter["name"]
+            for parameter in operation.get("parameters", [])
+            if parameter.get("in") == "header"
+        }
+        self.assertIn("X-Inference-Api-Key", header_parameters)
 
     def test_prediction_request_schema_rejects_unknown_fields(self):
         schemas = self.app.openapi().get("components", {}).get("schemas", {})
