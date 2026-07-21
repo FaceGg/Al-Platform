@@ -1,6 +1,6 @@
 import unittest
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -18,7 +18,11 @@ from app.models.model_registry import (
 )
 from app.models.project import Project
 from app.models.user import User
-from app.services.inference_observability import InferenceObservability, safe_request_log
+from app.services.inference_observability import (
+    InferenceObservability,
+    InferenceObservabilityError,
+    safe_request_log,
+)
 
 
 class TestInferenceObservability(unittest.TestCase):
@@ -109,7 +113,7 @@ class TestInferenceObservability(unittest.TestCase):
             self.api_key.id,
             2,
             13,
-            "succeeded",
+            "success",
             occurred_at=occurred_at,
         )
         self.db.commit()
@@ -132,7 +136,7 @@ class TestInferenceObservability(unittest.TestCase):
             self.api_key.id,
             1,
             7,
-            "failed",
+            "error",
             error_code="INFERENCE_RUNTIME_UNAVAILABLE",
         )
         view = safe_request_log(log)
@@ -141,6 +145,92 @@ class TestInferenceObservability(unittest.TestCase):
             {"records", "input", "predictions", "secret", "secret_hash", "payload"}
             & set(view)
         )
+
+    def test_record_request_upserts_exact_minute_bucket_counts(self):
+        service = InferenceObservability()
+        minute = datetime(2026, 7, 20, 12, 34, tzinfo=timezone.utc)
+        for index, status in enumerate(("success", "error", "limited")):
+            service.record_request(
+                self.db,
+                f"request-{status}",
+                self.deployment.id,
+                self.revision.id,
+                self.version.id,
+                self.api_key.id,
+                index + 1,
+                (index + 1) * 10,
+                status,
+                error_code=None if status == "success" else f"INFERENCE_{status.upper()}",
+                occurred_at=minute + timedelta(seconds=index),
+            )
+        self.db.commit()
+        buckets = service.query_metrics(
+            self.db,
+            self.deployment.id,
+            minute,
+            minute + timedelta(minutes=1),
+        )
+        self.assertEqual(len(buckets), 1)
+        bucket = buckets[0]
+        self.assertEqual(bucket.request_count, 3)
+        self.assertEqual(bucket.success_count, 1)
+        self.assertEqual(bucket.error_count, 1)
+        self.assertEqual(bucket.limited_count, 1)
+
+    def test_prune_removes_logs_expiring_at_the_boundary_only(self):
+        service = InferenceObservability()
+        boundary = datetime(2026, 7, 20, 12, 34, tzinfo=timezone.utc)
+        expired = service.record_request(
+            self.db,
+            "request-expired",
+            self.deployment.id,
+            self.revision.id,
+            self.version.id,
+            self.api_key.id,
+            1,
+            10,
+            "success",
+            occurred_at=boundary - timedelta(days=31),
+        )
+        retained = service.record_request(
+            self.db,
+            "request-retained",
+            self.deployment.id,
+            self.revision.id,
+            self.version.id,
+            self.api_key.id,
+            1,
+            10,
+            "success",
+            occurred_at=boundary - timedelta(days=30),
+        )
+        expired.expires_at = boundary
+        retained.expires_at = boundary + timedelta(microseconds=1)
+        self.db.commit()
+        self.assertEqual(service.prune(self.db, boundary), 1)
+        self.db.commit()
+        self.assertIsNone(self.db.get(InferenceRequestLog, expired.id))
+        self.assertIsNotNone(self.db.get(InferenceRequestLog, retained.id))
+
+    def test_log_query_rejects_over_31_days_and_page_sizes_over_200(self):
+        service = InferenceObservability()
+        since = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        with self.assertRaises(InferenceObservabilityError):
+            service.query_logs(
+                self.db,
+                self.deployment.id,
+                since,
+                since + timedelta(days=31, microseconds=1),
+            )
+        with self.assertRaises(InferenceObservabilityError):
+            service.query_logs(
+                self.db,
+                self.deployment.id,
+                since,
+                since + timedelta(days=1),
+                page=1,
+                page_size=201,
+            )
 
 
 if __name__ == "__main__":

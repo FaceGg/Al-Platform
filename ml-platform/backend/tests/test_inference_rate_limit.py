@@ -32,7 +32,16 @@ class TestInferenceRateLimit(unittest.TestCase):
         self.assertEqual(decision.remaining, 4)
         self.assertEqual(decision.retry_after_seconds, 0)
         self.assertTrue(redis.calls)
-        self.assertIn("deployment:abc:key:def", redis.calls[0][2])
+        self.assertEqual(redis.calls[0][1], 1)
+        self.assertEqual(redis.calls[0][2][0], "deployment:abc:key:def")
+
+    def test_denied_decision_returns_retry_after(self):
+        redis = FakeRedis(result=[0, 0, 2])
+        decision = RedisTokenBucket(redis).consume(
+            "deployment:abc:key:def", capacity=1, refill_per_second=1,
+        )
+        self.assertFalse(decision.allowed)
+        self.assertGreaterEqual(decision.retry_after_seconds, 1)
 
     def test_backend_failure_is_fail_closed_with_stable_error(self):
         bucket = RedisTokenBucket(FakeRedis(error=ConnectionError("redis down")))

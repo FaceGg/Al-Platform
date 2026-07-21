@@ -76,22 +76,27 @@ class TestModelCards(unittest.TestCase):
     def test_human_guidance_can_change_without_mutating_system_fields(self):
         card = self.service.ensure_for_version(self.db, self.version)
         original_metrics = dict(card.metrics)
+        original_input_schema = list(card.input_schema)
+        original_output_schema = dict(card.output_schema)
         updated = self.service.update_guidance(
             self.db,
             card.id,
-            {
-                "intended_use": "Spot-weld fault screening",
-                "limitations": "Requires calibrated current sensors",
-                "risk_notes": "Do not use as the sole safety interlock",
-            },
+            "Use for spot-weld fault screening with calibrated sensors.",
         )
-        self.assertEqual(updated.guidance["intended_use"], "Spot-weld fault screening")
+        self.assertEqual(
+            updated.operational_guidance,
+            "Use for spot-weld fault screening with calibrated sensors.",
+        )
+        self.assertEqual(updated.guidance_revision, 2)
         self.assertEqual(updated.metrics, original_metrics)
+        self.assertEqual(updated.input_schema, original_input_schema)
+        self.assertEqual(updated.output_schema, original_output_schema)
 
     def test_public_update_rejects_system_generated_fields(self):
         card = self.service.ensure_for_version(self.db, self.version)
-        with self.assertRaisesRegex(ModelCardError, "MODEL_CARD_SYSTEM_FIELDS_IMMUTABLE"):
+        with self.assertRaises(ModelCardError) as raised:
             self.service.update(self.db, card.id, {"metrics": {"accuracy": 1.0}})
+        self.assertEqual(raised.exception.code, "MODEL_CARD_SYSTEM_FIELD_IMMUTABLE")
 
 
 if __name__ == "__main__":

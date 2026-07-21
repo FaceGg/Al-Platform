@@ -1,5 +1,7 @@
 import unittest
 import uuid
+from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -79,11 +81,35 @@ class TestInferenceApiKeys(unittest.TestCase):
             None,
         )
         self.db.commit()
-        persisted = self.db.query(InferenceApiKey).filter_by(id=created.record.id).one()
+        persisted = self.db.query(InferenceApiKey).filter_by(
+            id=created.record.id,
+        ).one()
         self.assertTrue(created.plaintext)
         self.assertNotEqual(persisted.secret_hash, created.plaintext)
         self.assertTrue(created.plaintext.startswith(persisted.prefix))
         self.assertNotIn(created.plaintext, repr(persisted.__dict__))
+        listed = self.service.list_for_deployment(self.db, self.deployment.id)
+        self.assertEqual(len(listed), 1)
+        safe_fields = {
+            "id", "prefix", "scopes", "expires_at", "last_used_at",
+            "revoked_at", "created_at",
+        }
+        item = listed[0]
+        if isinstance(item, dict):
+            serialized = item
+        elif hasattr(item, "model_dump"):
+            serialized = item.model_dump()
+        elif hasattr(item, "__dataclass_fields__"):
+            serialized = asdict(item)
+        else:
+            serialized = {
+                key: value
+                for key, value in vars(item).items()
+                if not key.startswith("_")
+            }
+        self.assertEqual(set(serialized), safe_fields)
+        self.assertNotIn("secret_hash", serialized)
+        self.assertNotIn("plaintext", serialized)
 
     def test_verify_is_deployment_and_scope_bound(self):
         created = self.service.create(
@@ -101,13 +127,69 @@ class TestInferenceApiKeys(unittest.TestCase):
             scope="inference.predict",
         )
         self.assertEqual(verified.id, created.record.id)
-        with self.assertRaisesRegex(InferenceApiKeyError, "API_KEY_INVALID"):
+        with self.assertRaises(InferenceApiKeyError) as raised:
             self.service.verify(
                 self.db,
                 created.plaintext,
                 deployment_id=uuid.uuid4(),
                 scope="inference.predict",
             )
+        self.assertEqual(raised.exception.code, "INFERENCE_API_KEY_INVALID")
+
+        with self.assertRaises(InferenceApiKeyError) as raised:
+            self.service.verify(
+                self.db,
+                created.plaintext + "wrong",
+                deployment_id=self.deployment.id,
+                scope="inference.predict",
+            )
+        self.assertEqual(raised.exception.code, "INFERENCE_API_KEY_INVALID")
+
+        with self.assertRaises(InferenceApiKeyError) as raised:
+            self.service.verify(
+                self.db,
+                created.plaintext,
+                deployment_id=self.deployment.id,
+                scope="inference.admin",
+            )
+        self.assertEqual(raised.exception.code, "INFERENCE_API_KEY_OUT_OF_SCOPE")
+
+    def test_unknown_scope_expiry_and_explicit_revocation_have_distinct_codes(self):
+        with self.assertRaises(InferenceApiKeyError) as raised:
+            self.service.create(
+                self.db,
+                self.deployment.id,
+                self.actor.id,
+                ["inference.unknown"],
+                None,
+            )
+        self.assertEqual(raised.exception.code, "INFERENCE_API_KEY_SCOPE_INVALID")
+        self.db.rollback()
+
+        expired = self.service.create(
+            self.db,
+            self.deployment.id,
+            self.actor.id,
+            ["inference.predict"],
+            datetime.now(timezone.utc) - timedelta(minutes=1),
+        )
+        self.db.commit()
+        with self.assertRaises(InferenceApiKeyError) as raised:
+            self.service.verify(self.db, expired.plaintext)
+        self.assertEqual(raised.exception.code, "INFERENCE_API_KEY_EXPIRED")
+
+        revoked = self.service.create(
+            self.db,
+            self.deployment.id,
+            self.actor.id,
+            ["inference.predict"],
+            None,
+        )
+        revoked.record.revoked_at = datetime.now(timezone.utc)
+        self.db.commit()
+        with self.assertRaises(InferenceApiKeyError) as raised:
+            self.service.verify(self.db, revoked.plaintext)
+        self.assertEqual(raised.exception.code, "INFERENCE_API_KEY_REVOKED")
 
     def test_rotation_invalidates_the_previous_plaintext(self):
         created = self.service.create(
@@ -121,8 +203,9 @@ class TestInferenceApiKeys(unittest.TestCase):
         rotated = self.service.rotate(self.db, created.record.id, self.actor.id)
         self.db.commit()
         self.assertNotEqual(rotated.plaintext, created.plaintext)
-        with self.assertRaisesRegex(InferenceApiKeyError, "API_KEY_INVALID"):
+        with self.assertRaises(InferenceApiKeyError) as raised:
             self.service.verify(self.db, created.plaintext)
+        self.assertEqual(raised.exception.code, "INFERENCE_API_KEY_REVOKED")
 
 
 if __name__ == "__main__":

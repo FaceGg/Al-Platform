@@ -117,20 +117,33 @@ class TestInferenceProductionModels(unittest.TestCase):
         with self.assertRaises(IntegrityError):
             self.db.commit()
 
-    def test_secret_and_payload_columns_are_not_persisted(self):
+    def test_api_key_schema_never_persists_plaintext(self):
         api_key_columns = {
             column["name"]
             for column in inspect(self.engine).get_columns("inference_api_keys")
         }
+        self.assertNotIn("secret", api_key_columns)
+        self.assertNotIn("plaintext", api_key_columns)
+
+    def test_request_log_columns_are_an_exact_safe_allowlist(self):
         request_columns = {
             column["name"]
             for column in inspect(self.engine).get_columns("inference_request_logs")
         }
-        self.assertNotIn("secret", api_key_columns)
-        self.assertNotIn("plaintext", api_key_columns)
-        self.assertNotIn("input", request_columns)
-        self.assertNotIn("prediction", request_columns)
-        self.assertNotIn("payload", request_columns)
+        self.assertEqual(request_columns, {
+            "id",
+            "request_id",
+            "deployment_id",
+            "revision_id",
+            "model_version_id",
+            "api_key_id",
+            "batch_size",
+            "duration_ms",
+            "status",
+            "error_code",
+            "occurred_at",
+            "expires_at",
+        })
 
     def test_metric_buckets_are_indexed_by_deployment_and_minute(self):
         indexes = inspect(self.engine).get_indexes("inference_metric_buckets")
