@@ -1,4 +1,5 @@
 import json
+import math
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import Mock
@@ -281,13 +282,13 @@ class TestInferenceRollout(unittest.TestCase):
                 "revision_id": "revision-1",
                 "deployment_id": None,
                 "model_version_ids": ("version-1",),
-                "step": 2,
+                "step": 2.5,
             },
         )
         self.assertEqual(event.payload["revision_id"], "revision-1")
         self.assertIsNone(event.payload["deployment_id"])
         self.assertEqual(event.payload["model_version_ids"], ("version-1",))
-        self.assertEqual(event.payload["step"], 2)
+        self.assertEqual(event.payload["step"], 2.5)
 
     def test_domain_event_rejects_non_json_payload_values(self):
         class UnsupportedValue:
@@ -313,6 +314,23 @@ class TestInferenceRollout(unittest.TestCase):
                     resource_type="deployment",
                     resource_id=None,
                     payload=payload,
+                )
+
+    def test_domain_event_rejects_nonfinite_float_payload_values(self):
+        for value in (math.nan, math.inf, -math.inf):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError, "DOMAIN_EVENT_PAYLOAD_INVALID"
+            ):
+                create_domain_event(
+                    idempotency_key="rollout:1:completed:1",
+                    event_type="rollout.completed",
+                    severity="info",
+                    occurred_at=datetime.now(timezone.utc),
+                    project_id=None,
+                    actor_id=None,
+                    resource_type="deployment",
+                    resource_id=None,
+                    payload={"step": value},
                 )
 
     def test_runtime_dependencies_default_and_custom_domain_recorder(self):

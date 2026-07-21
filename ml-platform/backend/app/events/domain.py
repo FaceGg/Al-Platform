@@ -3,6 +3,7 @@
 from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass
 from datetime import datetime
+import math
 from types import MappingProxyType
 from typing import Mapping, Protocol
 from uuid import UUID, uuid4
@@ -39,6 +40,8 @@ def _deep_freeze(value: object) -> object:
 
 
 def _validate_json_value(value: object) -> None:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("DOMAIN_EVENT_PAYLOAD_INVALID")
     if value is None or isinstance(value, (bool, int, float, str)):
         return
     if isinstance(value, MappingABC):

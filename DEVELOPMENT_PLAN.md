@@ -1137,3 +1137,11 @@
 - 验证方式：新增有效字符串 ID/int step 和 UUID/set/非字符串键/自定义对象拒绝回归；domain smoke、模型/数据库 `32/32`、compileall、diff check 通过。
 - 影响范围：第 9 周事件构造和第 10 周 Outbox 输入契约；不改变事件类型白名单或存储 thaw API。
 - 遗留事项：Task 4 完成后运行完整 rollout 和 Week 9 套件，确认所有生产事件使用 JSON-native payload。
+
+### 2026-07-21：第 9 周 Task 3 非有限浮点 payload 修正
+
+- 问题现象：Python `float` 值域包含 NaN、正无穷和负无穷；这些值会通过基本 float 类型校验，但不是严格 JSON 值。
+- 根因：JSON-native 类型校验没有同时约束 float 的有限性。
+- 解决结果：使用 `math.isfinite` 在冻结前拒绝 NaN、正无穷和负无穷，统一返回 `DOMAIN_EVENT_PAYLOAD_INVALID`；有限 float 继续允许。
+- 验证方式：三种非有限值及有限 `2.5` 回归，domain smoke、模型/数据库 `32/32`、compileall 和 diff check 通过。
+- 遗留事项：Task 4 完成后运行完整 rollout 和 Week 9 套件。
