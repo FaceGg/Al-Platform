@@ -147,6 +147,21 @@ class TestInferenceApiKeys(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, "INFERENCE_API_KEY_OUT_OF_SCOPE")
 
+    def test_successful_verification_updates_only_last_used_at(self):
+        created = self.service.create(
+            self.db,
+            self.deployment.id,
+            self.actor.id,
+            ["inference.predict"],
+            None,
+        )
+        self.db.commit()
+
+        verified = self.service.verify(self.db, created.plaintext)
+
+        self.assertIsNotNone(verified.last_used_at)
+        self.assertEqual(verified.secret_hash, created.record.secret_hash)
+
     def test_unknown_scope_expiry_and_explicit_revocation_have_distinct_codes(self):
         with self.assertRaises(InferenceApiKeyError) as raised:
             self.service.create(

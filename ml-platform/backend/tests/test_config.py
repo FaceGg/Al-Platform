@@ -53,6 +53,21 @@ class TestSettings(unittest.TestCase):
             local_settings.task_hard_timeout_seconds,
             local_settings.task_soft_timeout_seconds,
         )
+        self.assertEqual(local_settings.inference_rate_limit_capacity, 100)
+        self.assertEqual(local_settings.inference_rate_limit_refill_per_second, 10.0)
+        self.assertEqual(local_settings.inference_log_retention_days, 30)
+        self.assertEqual(local_settings.inference_rollout_observation_seconds, 60)
+
+    def test_inference_limits_are_bounded(self):
+        for field_name, invalid_value in (
+            ("inference_rate_limit_capacity", 0),
+            ("inference_rate_limit_refill_per_second", 0),
+            ("inference_log_retention_days", 0),
+            ("inference_rollout_observation_seconds", 9),
+        ):
+            with self.subTest(field_name=field_name):
+                with self.assertRaises(ValidationError):
+                    Settings(**{field_name: invalid_value})
 
     def test_production_rejects_sqlite(self):
         with self.assertRaisesRegex(ValidationError, "PostgreSQL"):

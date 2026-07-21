@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     inference_conversion_timeout_seconds: int = Field(default=120, ge=10, le=600)
     inference_load_timeout_seconds: int = Field(default=60, ge=5, le=300)
     inference_predict_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    inference_rate_limit_capacity: int = Field(default=100, ge=1, le=100000)
+    inference_rate_limit_refill_per_second: float = Field(
+        default=10.0, gt=0, le=10000
+    )
+    inference_log_retention_days: int = Field(default=30, ge=1, le=365)
+    inference_rollout_observation_seconds: int = Field(default=60, ge=10, le=3600)
 
     # LLM / RAG settings
     llm_api_url: str = Field(
@@ -306,6 +312,10 @@ class Settings(BaseSettings):
             "inference_conversion_timeout_seconds": self.inference_conversion_timeout_seconds,
             "inference_load_timeout_seconds": self.inference_load_timeout_seconds,
             "inference_predict_timeout_seconds": self.inference_predict_timeout_seconds,
+            "inference_rate_limit_capacity": self.inference_rate_limit_capacity,
+            "inference_rate_limit_refill_per_second": self.inference_rate_limit_refill_per_second,
+            "inference_log_retention_days": self.inference_log_retention_days,
+            "inference_rollout_observation_seconds": self.inference_rollout_observation_seconds,
             "jwt_secret_configured": self._has_secret(self.resolved_secret_key),
             "algorithm": self.algorithm,
             "access_token_expire_minutes": self.access_token_expire_minutes,
