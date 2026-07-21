@@ -1087,6 +1087,13 @@
 - 验证方式：三份计划 `git diff --check`、迁移链、事件签名、四通知通道、模型卡、性能/备份/升级/安全/E2E 规格映射检查通过。计划阶段未修改生产代码，未运行真实 Compose。
 - 未完成：按选定执行模式进入 TDD 实现；第 9/10 周功能轨和第 11-12 周独立工具轨可并行，公共 CI、Compose、manifest、Alembic 链和状态文档由主线串行集成。
 
+### 2026-07-21：第 9 周 Task 3 安全领域事件契约完成
+
+- 完成：`DomainEvent` 冻结协议、空记录器、事件类型/载荷 allowlist、递归深冻结及存储序列化边界；默认记录器不提交事务。
+- 修复：事件载荷拒绝 UUID、自定义对象、集合、非字符串键及 `NaN`/`+Inf`/`-Inf`，避免异步存储阶段序列化失败或产生非标准 JSON。
+- 验证：domain smoke、模型/数据库 `32/32`、compileall、diff check 通过；完整 rollout 测试待 Task 6 服务落地后复跑。
+- 后续：Task 4 实现 API Key 生命周期与 Redis 失败关闭限流。
+
 ### 2026-07-21：第 9 周 Task 1 RED 合同边界完成
 
 - 开发环境：在 `.worktrees/week9-12-mlops-core` 的 `codex/week9-12-mlops-core` 隔离分支执行；基线后端 `68/68` 模块、前端 `19/19` 文件 `50/50` 用例和生产构建通过。本机 Python 3.13/Node 24 与 CI Python 3.11/Node 20 的差异保留为后续远程门禁。

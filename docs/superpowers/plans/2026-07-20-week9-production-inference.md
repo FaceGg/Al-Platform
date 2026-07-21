@@ -269,7 +269,7 @@ git commit -m "feat: add production inference persistence"
 - Modify: `ml-platform/backend/app/main.py`
 - Modify: `ml-platform/backend/tests/test_inference_rollout.py`
 
-- [ ] **Step 1: Write the exact protocol test**
+- [x] **Step 1: Write the exact protocol test**
 
 ```python
 class RecordingEventRecorder:
@@ -287,7 +287,7 @@ def test_null_recorder_does_not_commit(self):
 
 Run `python -m unittest tests.test_inference_rollout -v`. Expected: RED because `app.events.domain` is absent.
 
-- [ ] **Step 2: Implement the frozen public contract**
+- [x] **Step 2: Implement the frozen public contract**
 
 ```python
 from dataclasses import dataclass
@@ -359,7 +359,7 @@ def create_domain_event(
 
 Inject `NullDomainEventRecorder` by default. The recorder never calls commit; the caller owns the transaction. Rollout idempotency keys use `rollout:{rollout_id}:{state}:{lock_version}` so a repeated Celery delivery records the same logical event in Week 10's future outbox.
 
-- [ ] **Step 3: Verify no notification implementation leaked into Week 9**
+- [x] **Step 3: Verify no notification implementation leaked into Week 9**
 
 ```powershell
 python -m unittest tests.test_inference_rollout -v
@@ -368,7 +368,7 @@ rg -n "notification|outbox|smtp|wecom|webhook" app/events/domain.py alembic/vers
 
 Expected: event tests pass and the search returns no notification table, provider, or network sender.
 
-- [ ] **Step 4: Commit the event contract**
+- [x] **Step 4: Commit the event contract**
 
 ```powershell
 git add ml-platform/backend/app/events ml-platform/backend/app/main.py ml-platform/backend/tests/test_inference_rollout.py
