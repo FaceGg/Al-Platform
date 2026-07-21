@@ -1,3 +1,4 @@
+import json
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import Mock
@@ -24,6 +25,7 @@ from app.events.domain import (
     DomainEvent,
     NullDomainEventRecorder,
     create_domain_event,
+    to_storage_payload,
 )
 from app.main import configure_runtime_dependencies
 
@@ -230,6 +232,40 @@ class TestInferenceRollout(unittest.TestCase):
             event.payload["model_version_ids"][0] = "mutated"
         with self.assertRaises(TypeError):
             event.payload["step"]["name"] = "mutated"
+
+    def test_storage_payload_thaws_without_mutating_domain_event(self):
+        event = create_domain_event(
+            idempotency_key="rollout:1:completed:1",
+            event_type="rollout.completed",
+            severity="info",
+            occurred_at=datetime.now(timezone.utc),
+            project_id=None,
+            actor_id=None,
+            resource_type="deployment",
+            resource_id=None,
+            payload={
+                "model_version_ids": ["version-1", "version-2"],
+                "step": {"name": "canary"},
+            },
+        )
+
+        storage_payload = to_storage_payload(event.payload)
+
+        self.assertEqual(
+            storage_payload,
+            {
+                "model_version_ids": ["version-1", "version-2"],
+                "step": {"name": "canary"},
+            },
+        )
+        json.dumps(storage_payload)
+        storage_payload["model_version_ids"].append("version-3")
+        storage_payload["step"]["name"] = "promoted"
+        self.assertEqual(
+            event.payload["model_version_ids"],
+            ("version-1", "version-2"),
+        )
+        self.assertEqual(event.payload["step"]["name"], "canary")
 
     def test_runtime_dependencies_default_and_custom_domain_recorder(self):
         target = FastAPI()

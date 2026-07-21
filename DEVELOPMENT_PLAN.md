@@ -1119,3 +1119,12 @@
 - 影响范围：第 9 周领域事件安全 payload，不改变事件类型白名单或安全键过滤。
 - 预防措施：不可变事件必须递归复制所有嵌套 Mapping 和序列；新增 payload 字段同时覆盖来源对象和事件对象两侧 mutation 测试。
 - 遗留事项：待 Task 4 rollout 服务完成后运行完整 `test_inference_rollout` 和 Week 9 套件。
+
+### 2026-07-21：第 9 周 Task 3 事件存储序列化补充
+
+- 问题现象：递归冻结后 `MappingProxyType` 和 tuple 不能直接由 `json.dumps` 或 SQLAlchemy JSON 绑定，Outbox/持久化消费者缺少明确转换入口。
+- 根因：事件 payload 的内存不可变表示与 JSON/数据库所需的可变纯容器表示不同，不能直接复用冻结对象。
+- 解决结果：新增 `to_storage_payload` 公共递归序列化器；Mapping 转新 dict，list/tuple 转新 list，标量保持原值；输出不共享事件内部引用。
+- 验证方式：新增 serializer contract，检查 plain dict/list、`json.dumps`、修改 serializer 结果不影响事件；domain contract、模型/数据库 `32/32`、compileall 和 diff check 通过。
+- 影响范围：第 9 周事件 Outbox/存储边界；不会放松 DomainEvent 的深不可变约束。
+- 遗留事项：Task 4 完成后需在真实事件记录器测试中使用 `to_storage_payload`，禁止直接将 `event.payload` 交给 JSON/SQLAlchemy。

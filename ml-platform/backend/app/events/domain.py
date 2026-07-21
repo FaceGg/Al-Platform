@@ -38,6 +38,22 @@ def _deep_freeze(value: object) -> object:
     return value
 
 
+def _thaw_for_storage(value: object) -> object:
+    if isinstance(value, MappingABC):
+        return {key: _thaw_for_storage(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_thaw_for_storage(item) for item in value]
+    return value
+
+
+def to_storage_payload(payload: Mapping[str, object]) -> dict[str, object]:
+    """Return a detached JSON-compatible payload for Outbox and storage writers."""
+    return {
+        key: _thaw_for_storage(value)
+        for key, value in payload.items()
+    }
+
+
 @dataclass(frozen=True)
 class DomainEvent:
     event_id: UUID
