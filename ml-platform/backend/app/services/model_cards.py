@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import math
 import uuid
 
 from app.models.artifact import Artifact
@@ -82,11 +83,16 @@ class ModelCardService:
         artifact = db.get(Artifact, version.source_artifact_id)
         metadata = artifact.metadata_ if artifact is not None else {}
         metadata = metadata if isinstance(metadata, dict) else {}
-        return {
-            key: deepcopy(metadata[key])
-            for key in _LINEAGE_FIELDS
-            if key in metadata
-        }
+        lineage = {}
+        for key in _LINEAGE_FIELDS:
+            if key not in metadata:
+                continue
+            value = metadata.get(key)
+            if isinstance(value, float) and not math.isfinite(value):
+                continue
+            if value is None or isinstance(value, (str, int, float, bool)):
+                lineage[key] = deepcopy(value)
+        return lineage
 
     @staticmethod
     def _source_artifact_ids(version: ModelVersion) -> list[str]:

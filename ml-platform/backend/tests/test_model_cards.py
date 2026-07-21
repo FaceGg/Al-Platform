@@ -142,6 +142,25 @@ class TestModelCards(unittest.TestCase):
             self.service.update(self.db, card.id, {"metrics": {"accuracy": 1.0}})
         self.assertEqual(raised.exception.code, "MODEL_CARD_SYSTEM_FIELD_IMMUTABLE")
 
+    def test_nested_artifact_metadata_cannot_leak_into_card_export(self):
+        artifact = self.db.get(Artifact, self.version.source_artifact_id)
+        artifact.metadata_ = {
+            "dataset_artifact_id": "dataset-1",
+            "source": {"storage_uri": "s3://private/model.onnx"},
+            "experiment_id": {"credentials": "do-not-export"},
+        }
+        self.db.commit()
+
+        card = self.service.ensure_for_version(self.db, self.version)
+        exported = self.service.export(self.db, card.id)
+
+        self.assertEqual(exported["training_data_lineage"], {
+            "dataset_artifact_id": "dataset-1",
+        })
+        serialized = json.dumps(exported)
+        self.assertNotIn("storage_uri", serialized)
+        self.assertNotIn("credentials", serialized)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,7 @@ from app.models.model_registry import (
     DeploymentTarget,
     InferenceApiKey,
     InferenceDeployment,
+    InferenceMetricBucket,
     InferenceRequestLog,
     ModelVersion,
     RegisteredModel,
@@ -249,6 +250,63 @@ class TestInferenceObservability(unittest.TestCase):
                 page=1,
                 page_size=201,
             )
+
+    def test_bucket_creation_recovers_from_concurrent_first_insert(self):
+        minute = datetime(2026, 7, 20, 12, 34)
+        existing = InferenceMetricBucket(
+            deployment_id=self.deployment.id,
+            bucket_start=minute,
+            latency_buckets={},
+            traffic_weights={},
+        )
+        self.db.add(existing)
+        self.db.commit()
+
+        class RacingQuery:
+            def __init__(self, query):
+                self.query = query
+                self.first_call = True
+
+            def filter(self, *criteria):
+                self.query = self.query.filter(*criteria)
+                return self
+
+            def with_for_update(self):
+                self.query = self.query.with_for_update()
+                return self
+
+            def first(self):
+                if self.first_call:
+                    self.first_call = False
+                    return None
+                return self.query.first()
+
+        class RacingSession:
+            def __init__(self, db):
+                self.db = db
+                self.racing_query = None
+
+            def query(self, model):
+                query = self.db.query(model)
+                if model is InferenceMetricBucket:
+                    if self.racing_query is None:
+                        self.racing_query = RacingQuery(query)
+                    return self.racing_query
+                return query
+
+            def __getattr__(self, name):
+                return getattr(self.db, name)
+
+        bucket = InferenceObservability()._bucket(
+            RacingSession(self.db), self.deployment.id, minute,
+        )
+        self.assertEqual(bucket.id, existing.id)
+        self.assertEqual(
+            self.db.query(InferenceMetricBucket).filter_by(
+                deployment_id=self.deployment.id, bucket_start=minute,
+            ).count(),
+            1,
+        )
 
 
 if __name__ == "__main__":

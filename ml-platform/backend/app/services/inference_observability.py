@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 import math
 import re
 
+from sqlalchemy.exc import IntegrityError
+
 from app.models.model_registry import (
     DeploymentTarget,
     InferenceMetricBucket,
@@ -131,14 +133,24 @@ class InferenceObservability:
             InferenceMetricBucket.bucket_start == minute,
         ).with_for_update().first()
         if bucket is None:
-            bucket = InferenceMetricBucket(
-                deployment_id=deployment_id,
-                bucket_start=minute,
-                latency_buckets=self._empty_histogram(),
-                traffic_weights={},
-            )
-            db.add(bucket)
-            db.flush()
+            try:
+                # A savepoint preserves the caller transaction when another worker wins.
+                with db.begin_nested():
+                    bucket = InferenceMetricBucket(
+                        deployment_id=deployment_id,
+                        bucket_start=minute,
+                        latency_buckets=self._empty_histogram(),
+                        traffic_weights={},
+                    )
+                    db.add(bucket)
+                    db.flush()
+            except IntegrityError:
+                bucket = db.query(InferenceMetricBucket).filter(
+                    InferenceMetricBucket.deployment_id == deployment_id,
+                    InferenceMetricBucket.bucket_start == minute,
+                ).with_for_update().first()
+                if bucket is None:
+                    raise
         return bucket
 
     def record_request(
