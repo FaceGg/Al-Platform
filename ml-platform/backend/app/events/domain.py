@@ -38,6 +38,22 @@ def _deep_freeze(value: object) -> object:
     return value
 
 
+def _validate_json_value(value: object) -> None:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return
+    if isinstance(value, MappingABC):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("DOMAIN_EVENT_PAYLOAD_INVALID")
+        for item in value.values():
+            _validate_json_value(item)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_json_value(item)
+        return
+    raise ValueError("DOMAIN_EVENT_PAYLOAD_INVALID")
+
+
 def _thaw_for_storage(value: object) -> object:
     if isinstance(value, MappingABC):
         return {key: _thaw_for_storage(item) for key, item in value.items()}
@@ -71,11 +87,17 @@ class DomainEvent:
         if self.event_type not in SAFE_EVENT_TYPES:
             raise ValueError("DOMAIN_EVENT_TYPE_INVALID")
         safe_payload = {
-            key: _deep_freeze(value)
+            key: value
             for key, value in self.payload.items()
             if key in SAFE_PAYLOAD_KEYS
         }
-        object.__setattr__(self, "payload", MappingProxyType(safe_payload))
+        for value in safe_payload.values():
+            _validate_json_value(value)
+        frozen_payload = {
+            key: _deep_freeze(value)
+            for key, value in safe_payload.items()
+        }
+        object.__setattr__(self, "payload", MappingProxyType(frozen_payload))
 
 
 class DomainEventRecorder(Protocol):

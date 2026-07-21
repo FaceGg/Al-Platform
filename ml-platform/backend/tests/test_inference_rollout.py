@@ -267,6 +267,54 @@ class TestInferenceRollout(unittest.TestCase):
         )
         self.assertEqual(event.payload["step"]["name"], "canary")
 
+    def test_domain_event_accepts_json_native_payload_values(self):
+        event = create_domain_event(
+            idempotency_key="rollout:1:completed:1",
+            event_type="rollout.completed",
+            severity="info",
+            occurred_at=datetime.now(timezone.utc),
+            project_id=None,
+            actor_id=None,
+            resource_type="deployment",
+            resource_id=None,
+            payload={
+                "revision_id": "revision-1",
+                "deployment_id": None,
+                "model_version_ids": ("version-1",),
+                "step": 2,
+            },
+        )
+        self.assertEqual(event.payload["revision_id"], "revision-1")
+        self.assertIsNone(event.payload["deployment_id"])
+        self.assertEqual(event.payload["model_version_ids"], ("version-1",))
+        self.assertEqual(event.payload["step"], 2)
+
+    def test_domain_event_rejects_non_json_payload_values(self):
+        class UnsupportedValue:
+            pass
+
+        invalid_payloads = (
+            {"step": uuid4()},
+            {"model_version_ids": {"version-1"}},
+            {"step": {1: "non-string-key"}},
+            {"step": UnsupportedValue()},
+        )
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload), self.assertRaisesRegex(
+                ValueError, "DOMAIN_EVENT_PAYLOAD_INVALID"
+            ):
+                create_domain_event(
+                    idempotency_key="rollout:1:completed:1",
+                    event_type="rollout.completed",
+                    severity="info",
+                    occurred_at=datetime.now(timezone.utc),
+                    project_id=None,
+                    actor_id=None,
+                    resource_type="deployment",
+                    resource_id=None,
+                    payload=payload,
+                )
+
     def test_runtime_dependencies_default_and_custom_domain_recorder(self):
         target = FastAPI()
         recorder = RecordingEventRecorder()

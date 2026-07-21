@@ -1128,3 +1128,12 @@
 - 验证方式：新增 serializer contract，检查 plain dict/list、`json.dumps`、修改 serializer 结果不影响事件；domain contract、模型/数据库 `32/32`、compileall 和 diff check 通过。
 - 影响范围：第 9 周事件 Outbox/存储边界；不会放松 DomainEvent 的深不可变约束。
 - 遗留事项：Task 4 完成后需在真实事件记录器测试中使用 `to_storage_payload`，禁止直接将 `event.payload` 交给 JSON/SQLAlchemy。
+
+### 2026-07-21：第 9 周 Task 3 payload JSON 类型校验
+
+- 问题现象：冻结事件虽可安全存储，但 UUID、set、自定义对象等非 JSON 值仍可能进入 payload，直到 Outbox 序列化阶段才失败。
+- 根因：深冻结只处理容器可变性，没有冻结 payload 的值域和 Mapping key 类型。
+- 解决结果：增加递归 JSON-native 校验；允许 None/bool/int/float/str、字符串键 Mapping、list/tuple，其他值统一抛出 `DOMAIN_EVENT_PAYLOAD_INVALID`；保留安全键过滤。
+- 验证方式：新增有效字符串 ID/int step 和 UUID/set/非字符串键/自定义对象拒绝回归；domain smoke、模型/数据库 `32/32`、compileall、diff check 通过。
+- 影响范围：第 9 周事件构造和第 10 周 Outbox 输入契约；不改变事件类型白名单或存储 thaw API。
+- 遗留事项：Task 4 完成后运行完整 rollout 和 Week 9 套件，确认所有生产事件使用 JSON-native payload。
