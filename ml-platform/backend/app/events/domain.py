@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from types import MappingProxyType
+from typing import Mapping, Protocol
 from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
@@ -38,7 +39,15 @@ class DomainEvent:
     actor_id: UUID | None
     resource_type: str
     resource_id: str | None
-    payload: dict
+    payload: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        if self.event_type not in SAFE_EVENT_TYPES:
+            raise ValueError("DOMAIN_EVENT_TYPE_INVALID")
+        safe_payload = {
+            key: value for key, value in self.payload.items() if key in SAFE_PAYLOAD_KEYS
+        }
+        object.__setattr__(self, "payload", MappingProxyType(safe_payload))
 
 
 class DomainEventRecorder(Protocol):
@@ -61,12 +70,9 @@ def create_domain_event(
     actor_id: UUID | None,
     resource_type: str,
     resource_id: str | None,
-    payload: dict,
+    payload: Mapping[str, object],
 ) -> DomainEvent:
     """Create an immutable event while filtering payload to safe fields."""
-    if event_type not in SAFE_EVENT_TYPES:
-        raise ValueError("DOMAIN_EVENT_TYPE_INVALID")
-    safe_payload = {key: value for key, value in payload.items() if key in SAFE_PAYLOAD_KEYS}
     return DomainEvent(
         event_id=uuid4(),
         idempotency_key=idempotency_key,
@@ -77,5 +83,5 @@ def create_domain_event(
         actor_id=actor_id,
         resource_type=resource_type,
         resource_id=resource_id,
-        payload=safe_payload,
+        payload=payload,
     )

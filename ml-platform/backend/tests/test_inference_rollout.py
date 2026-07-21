@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import Mock
 from uuid import uuid4
+from fastapi import FastAPI
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -24,6 +25,7 @@ from app.events.domain import (
     NullDomainEventRecorder,
     create_domain_event,
 )
+from app.main import configure_runtime_dependencies
 
 
 class FakeRuntime:
@@ -167,6 +169,44 @@ class TestInferenceRollout(unittest.TestCase):
         )
         self.assertEqual(set(event.payload), {"revision_id"})
         self.assertTrue(set(event.payload) <= SAFE_PAYLOAD_KEYS)
+
+    def test_domain_event_direct_constructor_rejects_unknown_type(self):
+        with self.assertRaisesRegex(ValueError, "DOMAIN_EVENT_TYPE_INVALID"):
+            DomainEvent(
+                event_id=uuid4(),
+                idempotency_key="unknown:1",
+                event_type="unknown.event",
+                severity="info",
+                occurred_at=datetime.now(timezone.utc),
+                project_id=None,
+                actor_id=None,
+                resource_type="deployment",
+                resource_id=None,
+                payload={},
+            )
+
+    def test_domain_event_payload_is_immutable(self):
+        event = create_domain_event(
+            idempotency_key="rollout:1:completed:1",
+            event_type="rollout.completed",
+            severity="info",
+            occurred_at=datetime.now(timezone.utc),
+            project_id=None,
+            actor_id=None,
+            resource_type="deployment",
+            resource_id=None,
+            payload={"step": 1},
+        )
+        with self.assertRaises(TypeError):
+            event.payload["step"] = 2
+
+    def test_runtime_dependencies_default_and_custom_domain_recorder(self):
+        target = FastAPI()
+        recorder = RecordingEventRecorder()
+        configure_runtime_dependencies(target, domain_event_recorder=recorder)
+        self.assertIs(target.state.domain_event_recorder, recorder)
+        configure_runtime_dependencies(target, domain_event_recorder=None)
+        self.assertIsInstance(target.state.domain_event_recorder, NullDomainEventRecorder)
 
 
 def safe_event() -> DomainEvent:
