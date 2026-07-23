@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 import math
+import re
 import uuid
 
 from app.models.artifact import Artifact
@@ -32,6 +33,10 @@ _EXPORT_FIELDS = (
 _LINEAGE_FIELDS = frozenset({
     "source", "training_job_id", "dataset_artifact_id", "experiment_id",
 })
+_PROVENANCE_SOURCES = frozenset({
+    "training", "automl", "upload", "model_registry_conversion",
+})
+_SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]{1,256}$")
 
 
 def _as_text(value) -> str:
@@ -88,7 +93,13 @@ class ModelCardService:
             if key not in metadata:
                 continue
             value = metadata.get(key)
+            if key == "source":
+                if isinstance(value, str) and value in _PROVENANCE_SOURCES:
+                    lineage[key] = value
+                continue
             if isinstance(value, float) and not math.isfinite(value):
+                continue
+            if isinstance(value, str) and not _SAFE_ID.fullmatch(value):
                 continue
             if value is None or isinstance(value, (str, int, float, bool)):
                 lineage[key] = deepcopy(value)

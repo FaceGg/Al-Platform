@@ -161,6 +161,22 @@ class TestModelCards(unittest.TestCase):
         self.assertNotIn("storage_uri", serialized)
         self.assertNotIn("credentials", serialized)
 
+    def test_lineage_rejects_scalar_uri_and_unknown_source_values(self):
+        artifact = self.db.get(Artifact, self.version.source_artifact_id)
+        artifact.metadata_ = {
+            "source": "https://user:token@example.invalid/model.onnx",
+            "dataset_artifact_id": "s3://private/dataset.csv",
+            "experiment_id": "experiment-1",
+        }
+        self.db.commit()
+
+        card = self.service.ensure_for_version(self.db, self.version)
+        exported = self.service.export(self.db, card.id)
+
+        self.assertEqual(exported["training_data_lineage"], {
+            "experiment_id": "experiment-1",
+        })
+
 
 if __name__ == "__main__":
     unittest.main()
