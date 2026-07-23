@@ -5,6 +5,7 @@ from functools import wraps
 from typing import Any
 
 from app.engine.base_operator import BaseOperator, PortSpec
+from app.engine.operator_contract import OperatorResult
 
 
 class OperatorRegistry:
@@ -65,6 +66,8 @@ def _with_raw_outputs(op: BaseOperator) -> BaseOperator:
         # transform data. Keep a second copy for execution so the snapshot
         # remains untouched even when an operator mutates its argument.
         result = original_execute(context, copy.deepcopy(snapshot), params)
+        if not isinstance(result, OperatorResult):
+            return result
         if op.category == "processing":
             raw_outputs = {"raw_data": copy.deepcopy(snapshot.get("data", []))}
         else:

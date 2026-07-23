@@ -5,6 +5,7 @@ from app.main import app
 from app.engine.base_operator import BaseOperator, PortSpec
 from app.engine.operator_contract import (
     ArtifactDraft,
+    OperatorContractError,
     OperatorResult,
     validate_operator_result,
 )
@@ -31,6 +32,21 @@ class _RawOutputMetadataOperator(BaseOperator):
             artifacts=[ArtifactDraft(name="test", type="data", data=b"data")],
             logs=[{"level": "info", "message": "test"}],
         )
+
+
+@register_operator
+class _InvalidRawOutputOperator(BaseOperator):
+    id = "__test_invalid_raw_output"
+    name = "Invalid Raw Output Test"
+    category = "processing"
+    inputs = [PortSpec("data", "DataTable", "Input Data")]
+    outputs = [PortSpec("data", "DataTable", "Processed Data")]
+
+    def validate(self, inputs):
+        return True
+
+    def execute(self, context, inputs, params):
+        return None
 
 
 class TestOperatorRawOutputs(unittest.TestCase):
@@ -105,6 +121,13 @@ class TestOperatorRawOutputs(unittest.TestCase):
         self.assertEqual(result.artifacts[0].name, "test")
         self.assertEqual(result.logs, [{"level": "info", "message": "test"}])
         validate_operator_result(operator.outputs, result)
+
+    def test_invalid_result_reaches_contract_validator(self):
+        operator = OperatorRegistry.get("__test_invalid_raw_output")
+
+        with self.assertRaisesRegex(OperatorContractError, "OPERATOR_RESULT_INVALID"):
+            result = operator.execute(operator_context(), {"data": []}, {})
+            validate_operator_result(operator.outputs, result)
 
 
 if __name__ == "__main__":
