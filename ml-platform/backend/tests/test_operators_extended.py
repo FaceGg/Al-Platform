@@ -196,13 +196,17 @@ class TestControlOperators(unittest.TestCase):
 class TestBlendingOperators(unittest.TestCase):
     def test_join_accepts_empty_dataframe_input(self):
         op = OperatorRegistry.get("join")
+        left = pd.DataFrame()
+        right = [{"id": 1}]
 
         result = execute_operator(op,
-            {"left": pd.DataFrame(), "right": [{"id": 1}]},
+            {"left": left, "right": right},
             {"left_keys": "id", "right_keys": "id"},
         )
 
-        self.assertEqual(result, {"data": [{"id": 1}]})
+        self.assertEqual(result["data"], [{"id": 1}])
+        pd.testing.assert_frame_equal(result["raw_left"], left)
+        self.assertEqual(result["raw_right"], right)
 
     def test_join_matches_composite_keys_in_one_merge(self):
         op = OperatorRegistry.get("join")
