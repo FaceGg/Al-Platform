@@ -982,6 +982,130 @@ html body {
 .node-config-panel__status--running { --node-config-status: var(--accent-primary); }
 .node-config-panel__status--failed { --node-config-status: var(--accent-error); }
 
+.node-result-panel {
+  display: grid;
+  gap: 18px;
+  color: var(--text-primary);
+}
+
+.node-result-panel__section {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+}
+
+.node-result-panel__section h3,
+.node-result-panel__output h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.node-result-panel__output {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.node-result-panel__chart {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  border: 1px solid var(--border-default);
+  border-radius: 9px;
+  background: var(--bg-elevated);
+}
+
+.node-result-panel__table-wrap {
+  overflow: auto;
+  border: 1px solid var(--border-default);
+  border-radius: 9px;
+}
+
+.node-result-panel__table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.node-result-panel__table th,
+.node-result-panel__table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+  white-space: pre-wrap;
+}
+
+.node-result-panel__table th {
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  font-weight: 700;
+}
+
+.node-result-panel__table tr:last-child td {
+  border-bottom: 0;
+}
+
+.node-result-panel__json,
+.node-result-panel__log {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  padding: 9px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 9px;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  font: 11px/1.55 "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.node-result-panel__log {
+  border-left: 3px solid var(--accent-primary);
+}
+
+.node-result-panel__metrics {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.node-result-panel__metrics > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  font-size: 12px;
+}
+
+.node-result-panel__metrics dt {
+  color: var(--text-secondary);
+}
+
+.node-result-panel__metrics dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-weight: 700;
+}
+
+.node-result-panel__empty,
+.node-result-panel__limit {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
 .execution-progress {
   --execution-progress-accent: var(--accent-warning);
   position: absolute;

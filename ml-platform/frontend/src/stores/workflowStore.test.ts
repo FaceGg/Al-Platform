@@ -50,6 +50,28 @@ describe("workflowStore", () => {
     expect(useWorkflowStore.getState().nodeStatuses["n1"]).toBe("running");
   });
 
+  it("opens and closes a completed visualization node result", () => {
+    useWorkflowStore.setState({
+      nodes: [{
+        id: "viz-1",
+        type: "custom",
+        position: { x: 0, y: 0 },
+        data: { operatorId: "line_chart", category: "visualization" },
+      } as any],
+      nodeStatuses: { "viz-1": "completed" },
+      nodeResults: { "viz-1": { chart: "iVBORw0KGgo=" } },
+    });
+
+    useWorkflowStore.getState().openNodeResult("viz-1");
+    expect(useWorkflowStore.getState().resultPanelNodeId).toBe("viz-1");
+    useWorkflowStore.getState().closeNodeResult();
+    expect(useWorkflowStore.getState().resultPanelNodeId).toBeNull();
+
+    useWorkflowStore.getState().openNodeResult("viz-1");
+    useWorkflowStore.getState().setNodeStatus("viz-1", "running");
+    expect(useWorkflowStore.getState().resultPanelNodeId).toBeNull();
+  });
+
   it("stores node errors without overwriting status or result", () => {
     useWorkflowStore.getState().setNodeStatus("n1", "failed");
     useWorkflowStore.getState().setNodeResult("n1", { data: [{ id: 1 }] });

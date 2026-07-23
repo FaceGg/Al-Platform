@@ -8,7 +8,7 @@ import apiClient from "../api/client";
 import { formatApiError } from "../api/client";
 import OperatorPanel from "../components/workspace/OperatorPanel";
 import WorkflowCanvas from "../components/workspace/WorkflowCanvas";
-import NodeConfigPanel from "../components/workspace/NodeConfigPanel";
+import NodeConfigPanel, { NodeResultPanel } from "../components/workspace/NodeConfigPanel";
 import ExecutionProgress from "../components/workspace/ExecutionProgress";
 import { normalizeNodeError, normalizeWorkflowHandle, useWorkflowStore } from "../stores/workflowStore";
 import type { NodeRunStatus, WorkflowRunStatus } from "../stores/workflowStore";
@@ -71,7 +71,7 @@ export default function WorkspacePage() {
   const { workflowId } = useParams<{ workflowId: string }>();
   const navigate = useNavigate();
   const {
-    operators, setOperators, setNodes, setEdges,
+    operators, setOperators, setNodes, setEdges, closeNodeResult,
     isRunning, setIsRunning, setNodeStatus, setNodeResult, setNodeError, setNodeProgress, resetExecution,
     currentRunId, setCurrentRunId, setWorkflowStatus,
     reset,
@@ -141,8 +141,9 @@ export default function WorkspacePage() {
       });
     return () => {
       if (wsRef.current) wsRef.current.close();
+      closeNodeResult();
     };
-  }, [workflowId]);
+  }, [workflowId, closeNodeResult]);
 
   const buildPayload = () => {
     const store = useWorkflowStore.getState();
@@ -301,8 +302,17 @@ export default function WorkspacePage() {
         const nodeId = String(nodeRun.node_id);
         const status = nodeRun.status as NodeRunStatus;
         setNodeStatus(nodeId, status);
-        if (nodeRun.result !== undefined && nodeRun.result !== null) {
-          setNodeResult(nodeId, nodeRun.result);
+        if (nodeRun.result !== undefined && nodeRun.result !== null || nodeRun.metrics || nodeRun.logs) {
+          const baseResult = nodeRun.result && typeof nodeRun.result === "object" && !Array.isArray(nodeRun.result)
+            ? { ...nodeRun.result }
+            : (nodeRun.result === undefined || nodeRun.result === null ? {} : { value: nodeRun.result });
+          if (nodeRun.metrics && (!baseResult.metrics || Object.keys(baseResult.metrics).length === 0)) {
+            baseResult.metrics = nodeRun.metrics;
+          }
+          if (Array.isArray(nodeRun.logs) && (!Array.isArray(baseResult.logs) || baseResult.logs.length === 0)) {
+            baseResult.logs = nodeRun.logs;
+          }
+          setNodeResult(nodeId, baseResult);
         }
         const resultError = nodeRun.result && typeof nodeRun.result === "object"
           ? nodeRun.result
@@ -529,6 +539,8 @@ export default function WorkspacePage() {
           <NodeConfigPanel />
         </Sider>
       </Layout>
+
+      <NodeResultPanel />
 
       <Modal title={text.confirmDelete} open={deleteOpen} onOk={handleDeleteWorkflow}
         onCancel={() => setDeleteOpen(false)} confirmLoading={deleting}

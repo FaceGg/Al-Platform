@@ -9,10 +9,16 @@ import { useWorkflowStore } from "../../stores/workflowStore";
 const nodeTypes = { custom: CustomNode };
 const edgeTypes = { custom: CustomEdge };
 
+export function isVisualizationResultNode(node: any, status?: string, operators: any[] = []): boolean {
+  if (!node || status !== "completed") return false;
+  const operator = operators.find((candidate) => candidate.id === node.data?.operatorId);
+  return (node.data?.category || operator?.category) === "visualization";
+}
+
 export default function WorkflowCanvas() {
   const {
     nodes, edges, onNodesChange, onEdgesChange, onConnect,
-    selectNode, setReactFlowInstance, nodeStatuses, nodeProgress,
+    selectNode, openNodeResult, setReactFlowInstance, nodeStatuses, nodeProgress,
     operators,
     copySelectedNode, pasteNode,
   } = useWorkflowStore();
@@ -79,6 +85,13 @@ export default function WorkflowCanvas() {
   // Convert edges to custom type
   const edgesWithType = edges.map((e) => ({ ...e, type: e.type || "custom" }));
 
+  const handleNodeClick = useCallback((_: React.MouseEvent, node: any) => {
+    selectNode(node);
+    if (isVisualizationResultNode(node, nodeStatuses[node.id], operators)) {
+      openNodeResult(node.id);
+    }
+  }, [openNodeResult, operators, nodeStatuses, selectNode]);
+
   return (
     <div className="workflow-canvas-surface">
       <ReactFlow
@@ -88,7 +101,7 @@ export default function WorkflowCanvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
-        onNodeClick={(_, node) => selectNode(node)}
+        onNodeClick={handleNodeClick}
         onPaneClick={() => selectNode(null)}
         onInit={onInit}
         nodeTypes={nodeTypes}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hydrateWorkflowEdges, resolvePort } from "./WorkspacePage";
+import { isVisualizationResultNode } from "../components/workspace/WorkflowCanvas";
 
 describe("workspace port persistence", () => {
   const ports = [{ name: "data" }, { name: "predictions" }];
@@ -81,5 +82,24 @@ describe("workspace port persistence", () => {
         targetHandle: "input",
       },
     ]);
+  });
+});
+
+describe("visualization result click gating", () => {
+  const node = {
+    id: "viz-1",
+    data: { operatorId: "line_chart", category: "visualization" },
+  };
+
+  it("allows canvas result opening only for completed visualization nodes", () => {
+    expect(isVisualizationResultNode(node, "completed")).toBe(true);
+    expect(isVisualizationResultNode(node, "running")).toBe(false);
+    expect(isVisualizationResultNode({ ...node, data: { ...node.data, category: "processing" } }, "completed")).toBe(false);
+  });
+
+  it("falls back to operator metadata when a node has no category", () => {
+    expect(isVisualizationResultNode({ id: "viz-2", data: { operatorId: "line_chart" } }, "completed", [
+      { id: "line_chart", category: "visualization" },
+    ])).toBe(true);
   });
 });

@@ -60,6 +60,7 @@ export interface WorkflowState {
   edges: Edge[];
   selectedNode: Node | null;
   copiedNode: Node | null;
+  resultPanelNodeId: string | null;
   isRunning: boolean;
   currentRunId: string | null;
   workflowStatus: WorkflowRunStatus;
@@ -76,6 +77,8 @@ export interface WorkflowState {
   onConnect: (connection: Connection) => void;
   addNode: (type: string, position: { x: number; y: number }, operatorData: any) => void;
   selectNode: (node: Node | null) => void;
+  openNodeResult: (nodeId: string) => void;
+  closeNodeResult: () => void;
   updateNodeParams: (nodeId: string, params: any) => void;
   setOperators: (ops: any[]) => void;
   setIsRunning: (v: boolean) => void;
@@ -98,6 +101,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   edges: [],
   selectedNode: null,
   isRunning: false,
+  resultPanelNodeId: null,
   currentRunId: null,
   workflowStatus: "pending",
   nodeStatuses: {},
@@ -169,6 +173,18 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   selectNode: (node) => set({ selectedNode: node }),
 
+  openNodeResult: (nodeId) =>
+    set((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === nodeId);
+      if (!node || state.nodeStatuses[nodeId] !== "completed") return {};
+      const operator = state.operators.find((candidate: any) => candidate.id === node.data?.operatorId);
+      const category = node.data?.category || operator?.category;
+      if (category !== "visualization") return {};
+      return { resultPanelNodeId: nodeId };
+    }),
+
+  closeNodeResult: () => set({ resultPanelNodeId: null }),
+
   updateNodeParams: (nodeId, params) =>
     set((state) => ({
       nodes: state.nodes.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, params } } : n)),
@@ -182,6 +198,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   setNodeStatus: (nodeId, status) =>
     set((state) => ({
       nodeStatuses: { ...state.nodeStatuses, [nodeId]: status },
+      ...(state.resultPanelNodeId === nodeId && status !== "completed"
+        ? { resultPanelNodeId: null }
+        : {}),
     })),
 
   setNodeResult: (nodeId, result) =>
@@ -236,6 +255,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       nodeResults: {},
       nodeErrors: {},
       nodeProgress: {},
+      resultPanelNodeId: null,
       isRunning: false,
       currentRunId: null,
       workflowStatus: "pending",
@@ -250,6 +270,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       nodeResults: {},
       nodeErrors: {},
       nodeProgress: {},
+      resultPanelNodeId: null,
       isRunning: false,
       currentRunId: null,
       workflowStatus: "pending",

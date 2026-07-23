@@ -1,4 +1,4 @@
-import { Input, InputNumber, Select, Switch, Form, Divider, Button, message, Upload, Typography } from "antd";
+import { Input, InputNumber, Select, Switch, Form, Divider, Button, Drawer, message, Upload, Typography } from "antd";
 import { MinusCircleOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import { useI18n } from "../../i18n";
 import { useWorkflowStore } from "../../stores/workflowStore";
@@ -7,6 +7,170 @@ import { useEffect, useState, useMemo } from "react";
 import apiClient from "../../api/client";
 
 const { Text } = Typography;
+
+const RESULT_JSON_LIMIT = 5000;
+const RESULT_TABLE_LIMIT = 20;
+
+type ResultRecord = Record<string, any>;
+
+function isResultRecord(value: unknown): value is ResultRecord {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function formatBoundedResultJson(value: unknown, maxLength = RESULT_JSON_LIMIT): string {
+  const seen = new WeakSet<object>();
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value, (_key, nested) => {
+      if (nested && typeof nested === "object") {
+        if (seen.has(nested)) return "[Circular]";
+        seen.add(nested);
+      }
+      return nested;
+    }, 2) ?? String(value);
+  } catch {
+    serialized = String(value);
+  }
+  return serialized.length > maxLength ? `${serialized.slice(0, maxLength)}...` : serialized;
+}
+
+function chartImageSource(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) {
+    const trimmed = value.trim();
+    return trimmed.startsWith("data:image/")
+      ? trimmed
+      : `data:image/png;base64,${trimmed}`;
+  }
+  if (isResultRecord(value)) {
+    const base64 = value.base64 ?? value.data ?? value.content;
+    if (typeof base64 === "string" && base64.trim()) {
+      const mime = String(value.mime_type ?? value.mimeType ?? "image/png");
+      return base64.startsWith("data:image/") ? base64 : `data:${mime};base64,${base64}`;
+    }
+  }
+  return null;
+}
+
+function resultRows(value: unknown): Array<ResultRecord> | null {
+  const source = isResultRecord(value) && Array.isArray(value.data) ? value.data : value;
+  if (!Array.isArray(source)) return null;
+  if (source.length === 0) return [];
+  if (source.every((row) => isResultRecord(row))) return source as Array<ResultRecord>;
+  if (source.every((row) => Array.isArray(row))) {
+    return source.map((row) => Object.fromEntries((row as unknown[]).map((cell, index) => [`column_${index + 1}`, cell])));
+  }
+  return source.map((row, index) => ({ index, value: row }));
+}
+
+function isChartOutput(name: string, value: unknown): boolean {
+  return name.toLowerCase().includes("chart") && chartImageSource(value) !== null;
+}
+
+function renderResultCell(value: unknown): string {
+  if (value == null) return "-";
+  if (typeof value === "object") return formatBoundedResultJson(value, 400);
+  return String(value);
+}
+
+function ResultTable({ value }: { value: unknown }) {
+  const rows = resultRows(value);
+  if (!rows) return null;
+  const visibleRows = rows.slice(0, RESULT_TABLE_LIMIT);
+  const columns = [...new Set(visibleRows.flatMap((row) => Object.keys(row)))];
+  return (
+    <div className="node-result-panel__table-wrap" data-testid="node-result-table">
+      {columns.length ? (
+        <table className="node-result-panel__table">
+          <thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
+          <tbody>
+            {visibleRows.map((row, rowIndex) => (
+              <tr key={rowIndex}>{columns.map((column) => <td key={column}>{renderResultCell(row[column])}</td>)}</tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <span className="node-result-panel__empty">No rows</span>
+      )}
+      {rows.length > RESULT_TABLE_LIMIT && (
+        <span className="node-result-panel__limit">Showing first {RESULT_TABLE_LIMIT} rows of {rows.length}</span>
+      )}
+    </div>
+  );
+}
+
+export function NodeResultPanel() {
+  const { lang } = useI18n();
+  const resultPanelNodeId = useWorkflowStore((state) => state.resultPanelNodeId);
+  const closeNodeResult = useWorkflowStore((state) => state.closeNodeResult);
+  const node = useWorkflowStore((state) => state.nodes.find((candidate) => candidate.id === state.resultPanelNodeId));
+  const result = useWorkflowStore((state) => resultPanelNodeId ? state.nodeResults[resultPanelNodeId] : undefined);
+
+  if (!resultPanelNodeId || !node) return null;
+
+  const labels = lang === "zh"
+    ? { title: "可视化结果", outputs: "输出", metrics: "指标", logs: "日志", empty: "暂无结果" }
+    : { title: "Visualization result", outputs: "Outputs", metrics: "Metrics", logs: "Logs", empty: "No results" };
+  const resultObject = isResultRecord(result) ? result : { value: result };
+  const outputs = isResultRecord(resultObject.outputs) ? resultObject.outputs : resultObject;
+  const outputEntries = Object.entries(outputs).filter(([name]) => !["outputs", "metrics", "logs"].includes(name));
+  const metrics = isResultRecord(resultObject.metrics) ? resultObject.metrics : {};
+  const logs = Array.isArray(resultObject.logs) ? resultObject.logs : [];
+  const operatorLabel = node.data?.label || node.data?.operatorId || node.id;
+
+  return (
+    <Drawer
+      title={`${labels.title}: ${operatorLabel}`}
+      open
+      onClose={closeNodeResult}
+      width={560}
+      destroyOnClose
+    >
+      <div className="node-result-panel" data-testid="node-result-panel">
+        <section className="node-result-panel__section">
+          <h3>{labels.outputs}</h3>
+          {outputEntries.length === 0 ? <p className="node-result-panel__empty">{labels.empty}</p> : outputEntries.map(([name, value]) => {
+            const image = isChartOutput(name, value) ? chartImageSource(value) : null;
+            const rows = resultRows(value);
+            return (
+              <div className="node-result-panel__output" key={name}>
+                <h4>{name}</h4>
+                {image ? (
+                  <img className="node-result-panel__chart" data-testid="node-result-chart" src={image} alt={name} />
+                ) : rows ? (
+                  <ResultTable value={value} />
+                ) : (
+                  <pre className="node-result-panel__json" data-testid="node-result-json">
+                    {formatBoundedResultJson(value)}
+                  </pre>
+                )}
+              </div>
+            );
+          })}
+        </section>
+
+        <section className="node-result-panel__section" data-testid="node-result-metrics">
+          <h3>{labels.metrics}</h3>
+          {Object.keys(metrics).length === 0 ? <p className="node-result-panel__empty">{labels.empty}</p> : (
+            <dl className="node-result-panel__metrics">
+              {Object.entries(metrics).map(([name, value]) => (
+                <div key={name}><dt>{name}</dt><dd>{renderResultCell(value)}</dd></div>
+              ))}
+            </dl>
+          )}
+        </section>
+
+        <section className="node-result-panel__section" data-testid="node-result-logs">
+          <h3>{labels.logs}</h3>
+          {logs.length === 0 ? <p className="node-result-panel__empty">{labels.empty}</p> : logs.map((entry, index) => (
+            <pre className="node-result-panel__log" key={index}>
+              {typeof entry === "string" ? entry : entry?.message ? String(entry.message) : formatBoundedResultJson(entry, 1000)}
+            </pre>
+          ))}
+        </section>
+      </div>
+    </Drawer>
+  );
+}
 
 type JoinKeyPair = { left: string; right: string };
 
