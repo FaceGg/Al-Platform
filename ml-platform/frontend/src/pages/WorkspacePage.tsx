@@ -27,19 +27,25 @@ export function resolvePort(handleId: string, portList: {name:string}[]): string
 }
 
 export function hydrateWorkflowEdges(edges: any[]) {
-  return edges.map((edge: any) => {
-    const source = String(edge.source_node_id ?? edge.source);
-    const target = String(edge.target_node_id ?? edge.target);
-    const sourcePort = normalizeWorkflowHandle(edge.source_port || edge.sourceHandle || "out-0") || "out-0";
-    const targetPort = normalizeWorkflowHandle(edge.target_port || edge.targetHandle || "in-0") || "in-0";
-    return {
+  return edges.reduce<any[]>((hydrated, edge: any) => {
+    const normalized = {
       id: String(edge.id),
-      source,
-      target,
-      sourceHandle: sourcePort,
-      targetHandle: targetPort,
+      source: String(edge.source_node_id ?? edge.source),
+      target: String(edge.target_node_id ?? edge.target),
+      sourceHandle: normalizeWorkflowHandle(edge.source_port || edge.sourceHandle || "out-0") || "out-0",
+      targetHandle: normalizeWorkflowHandle(edge.target_port || edge.targetHandle || "in-0") || "in-0",
     };
-  });
+    const survivors = hydrated.filter((existing) => (
+      !(
+        existing.source === normalized.source &&
+        existing.sourceHandle === normalized.sourceHandle
+      ) && !(
+        existing.target === normalized.target &&
+        existing.targetHandle === normalized.targetHandle
+      )
+    ));
+    return [...survivors, normalized];
+  }, []);
 }
 
 export default function WorkspacePage() {

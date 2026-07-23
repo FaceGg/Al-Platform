@@ -34,4 +34,52 @@ describe("workspace port persistence", () => {
       targetHandle: "in",
     });
   });
+
+  it("keeps only the latest edge for each normalized source or target endpoint", () => {
+    expect(hydrateWorkflowEdges([
+      {
+        id: "source-first",
+        source: "source-a",
+        target: "target-a",
+        source_port: "data__slot_0",
+        target_port: "input__slot_0",
+      },
+      {
+        id: "source-latest",
+        source: "source-a",
+        target: "target-b",
+        source_port: "data__slot_1",
+        target_port: "input__slot_0",
+      },
+      {
+        id: "target-first",
+        source: "source-c",
+        target: "target-c",
+        source_port: "data__slot_0",
+        target_port: "input__slot_0",
+      },
+      {
+        id: "target-latest",
+        source: "source-d",
+        target: "target-c",
+        source_port: "data__slot_0",
+        target_port: "input__slot_1",
+      },
+    ])).toEqual([
+      {
+        id: "source-latest",
+        source: "source-a",
+        target: "target-b",
+        sourceHandle: "data",
+        targetHandle: "input",
+      },
+      {
+        id: "target-latest",
+        source: "source-d",
+        target: "target-c",
+        sourceHandle: "data",
+        targetHandle: "input",
+      },
+    ]);
+  });
 });
