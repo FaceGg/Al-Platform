@@ -16,7 +16,7 @@ from app.api.model_registry import build_model_registry_router
 from app.database import Base, get_db
 from app.models.access import AuditEvent, ProjectMember
 from app.models.artifact import Artifact
-from app.models.model_registry import ModelVersion, RegisteredModel
+from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
 from app.models.project import Project
 from app.models.user import User
 from app.services.inference_deployment import InferenceDeploymentService
@@ -193,6 +193,7 @@ class TestModelRegistryAPI(unittest.TestCase):
         )
         self.assertEqual(deployment.status_code, 201)
         deployment_id = deployment.json()["id"]
+        self.__class__.deployment_id = deployment_id
         self.as_role("operator")
         started = self.client.post(f"/api/inference-deployments/{deployment_id}/start")
         self.assertEqual(started.json()["observed_state"], "running")
@@ -235,6 +236,38 @@ class TestModelRegistryAPI(unittest.TestCase):
         self.assertNotIn("onnx-content", encoded)
         self.assertNotIn("current", encoded)
 
+    def test_06_owner_cannot_delete_registered_model_with_deployment(self):
+        self.as_role("owner")
+
+        response = self.client.delete(
+            f"/api/registered-models/{self.model_id}"
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"]["code"], "MODEL_DEPLOYMENT_EXISTS")
+
+        self.as_role("owner")
+
+        deleted_deployment = self.client.delete(
+            f"/api/inference-deployments/{self.deployment_id}"
+        )
+        self.assertEqual(deleted_deployment.status_code, 200)
+        self.assertEqual(deleted_deployment.json()["id"], self.deployment_id)
+        self.assertIsNone(self.db.query(InferenceDeployment).filter(
+            InferenceDeployment.id == uuid.UUID(self.deployment_id)
+        ).first())
+
+        deleted_model = self.client.delete(
+            f"/api/registered-models/{self.model_id}"
+        )
+        self.assertEqual(deleted_model.status_code, 200)
+        self.assertEqual(deleted_model.json()["id"], self.model_id)
+        self.assertIsNone(self.db.query(RegisteredModel).filter(
+            RegisteredModel.id == uuid.UUID(self.model_id)
+        ).first())
+        self.assertIsNone(self.db.query(ModelVersion).filter(
+            ModelVersion.id == uuid.UUID(self.version_id)
+        ).first())
 
 if __name__ == "__main__":
     unittest.main()

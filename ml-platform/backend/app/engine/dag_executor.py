@@ -42,7 +42,9 @@ class DAGExecutor:
     ):
         self._nodes = nodes
         self._edges = edges
-        self._graph: nx.DiGraph = nx.DiGraph()
+        # Different output ports may legitimately connect the same two nodes.
+        # A DiGraph overwrites the earlier edge in that case, losing its port map.
+        self._graph: nx.MultiDiGraph = nx.MultiDiGraph()
         self._artifact_service = artifact_service
         self._project_id = project_id
 
@@ -98,13 +100,12 @@ class DAGExecutor:
                 continue
             if len(op.inputs) == 1 and len(predecessors) == 1:
                 continue
-            incoming_ports: set[str] = set()
-            for src, tgt in self._graph.in_edges(node_id):
-                try:
-                    edge_data = self._graph.edges[src, tgt]
-                    incoming_ports.add(edge_data.get("target_port", ""))
-                except (KeyError, TypeError):
-                    pass
+            incoming_ports = {
+                edge_data.get("target_port", "")
+                for _, _, _, edge_data in self._graph.in_edges(
+                    node_id, keys=True, data=True,
+                )
+            }
             for port in op.inputs:
                 if port.name not in incoming_ports:
                     errors.append(f"Node '{node_id}': missing required input '{port.name}'")
@@ -143,8 +144,8 @@ class DAGExecutor:
                 raise RuntimeError(f"Operator '{op_id}' not found for node '{node_id}'")
 
             # Check if any predecessor was skipped
-            in_edges = [(src, tgt) for src, tgt in self._graph.in_edges(node_id)]
-            all_preds_skipped = all(src in skipped for src, tgt in in_edges) if in_edges else False
+            in_edges = list(self._graph.in_edges(node_id, keys=True, data=True))
+            all_preds_skipped = all(src in skipped for src, _, _, _ in in_edges) if in_edges else False
             if all_preds_skipped:
                 skipped.add(node_id)
                 if status_callback:
@@ -154,10 +155,9 @@ class DAGExecutor:
 
             # Collect inputs
             inputs: dict[str, Any] = {}
-            for src, tgt in in_edges:
+            for src, _, _, edge_data in in_edges:
                 if src in skipped:
                     continue
-                edge_data = self._graph.edges.get((src, tgt), {})
                 target_port = edge_data.get("target_port", "")
                 source_port = edge_data.get("source_port", "")
                 src_results = results.get(src, {})
@@ -214,15 +214,13 @@ class DAGExecutor:
                               (isinstance(false_data, dict) and len(false_data) == 0) or \
                               (false_data is None or false_data == "")
                 if false_empty:
-                    for src, tgt in self._graph.out_edges(node_id):
-                        try:
-                            edge_data = self._graph.edges[src, tgt]
-                            if edge_data.get("source_port", "") == "false":
-                                skipped.add(tgt)
-                                descendants = list(nx.descendants(self._graph, tgt))
-                                skipped.update(descendants)
-                        except (KeyError, TypeError):
-                            pass
+                    for _, target, _, edge_data in self._graph.out_edges(
+                        node_id, keys=True, data=True,
+                    ):
+                        if edge_data.get("source_port", "") == "false":
+                            skipped.add(target)
+                            descendants = list(nx.descendants(self._graph, target))
+                            skipped.update(descendants)
 
             # Build preview
             preview: dict[str, Any] = {}
@@ -416,9 +414,10 @@ class DAGExecutor:
                     body_inputs[f"iter_{pn}"] = pv
 
                 # Also check regular predecessors
-                for src, tgt in self._graph.in_edges(body_node_id):
+                for src, _, _, edge_data in self._graph.in_edges(
+                    body_node_id, keys=True, data=True,
+                ):
                     if src in results:
-                        edge_data = self._graph.edges.get((src, tgt), {})
                         target_port = edge_data.get("target_port", "")
                         if target_port:
                             body_inputs[target_port] = results[src]

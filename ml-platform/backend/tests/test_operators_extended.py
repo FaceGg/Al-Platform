@@ -28,6 +28,9 @@ class TestIOOperators(unittest.TestCase):
         op = OperatorRegistry.get("csv_import")
         self.assertGreater(len(op.outputs), 0)
 
+    def test_duplicate_read_excel_operator_is_not_registered(self):
+        self.assertIsNone(OperatorRegistry.get("read_excel"))
+
 
 class TestProcessingOperators(unittest.TestCase):
     """Test Data Processing operators."""
@@ -224,6 +227,18 @@ class TestBlendingOperators(unittest.TestCase):
         self.assertEqual(len(result["data"]), 1)
         self.assertEqual(result["data"][0]["left_value"], "match")
         self.assertEqual(result["data"][0]["right_value"], "joined")
+
+    def test_join_rejects_unpaired_key_lists(self):
+        op = OperatorRegistry.get("join")
+        with self.assertRaisesRegex(ValueError, "count mismatch"):
+            execute_operator(
+                op,
+                {
+                    "left": [{"plant": "A", "part": 1}],
+                    "right": [{"site": "A", "part_id": 1}],
+                },
+                {"left_keys": "plant", "right_keys": "site,part_id"},
+            )
 
 
 class TestOperatorCategories(unittest.TestCase):

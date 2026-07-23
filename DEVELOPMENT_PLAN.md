@@ -1086,3 +1086,141 @@
 - 自审修正：统一第 10 周任务标题格式；将验收计划中的临时推理和通知测试路径修正为第 9/10 周精确 API；确认 37 个任务编号连续、195 个步骤、代码围栏成对、无实现省略号或禁用占位内容。
 - 验证方式：三份计划 `git diff --check`、迁移链、事件签名、四通知通道、模型卡、性能/备份/升级/安全/E2E 规格映射检查通过。计划阶段未修改生产代码，未运行真实 Compose。
 - 未完成：按选定执行模式进入 TDD 实现；第 9/10 周功能轨和第 11-12 周独立工具轨可并行，公共 CI、Compose、manifest、Alembic 链和状态文档由主线串行集成。
+
+### 2026-07-22：产品壳层 UI 方向预览
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 开发内容：为汽车焊接工业 AI 平台生成三个可比较的完整产品壳层预览，包含侧栏、顶栏、数据驾驶舱和项目列表。
+- 问题现象：现有产品页面使用稳定的功能语义，但尚未有不影响生产路由的可视化方向比较入口。
+- 根因：生产 React 组件、认证、API 和主题令牌直接耦合，不适合在未选定方向前直接替换。
+- 解决方法：新增 `ml-platform/frontend/ui-previews/index.html` 作为自包含静态预览，以共享内容模型切换冷黑工业、纸张实验室和午夜电蓝三种视觉方向。
+- 验证方式：通过本地静态服务器检查三种方向和窄屏预览；确认 `ml-platform/frontend/src/` 未被修改。
+- 影响范围：仅新增预览和设计记录，不影响生产前端、路由、API 或部署配置。
+- 预防措施：最终视觉方向必须由用户选择后再进入独立的生产改造任务，并保持 IA、路由和已有可访问性契约稳定。
+- 遗留事项：等待用户选择方向或提出混合调整后，再设计生产实施范围。
+
+
+### 2026-07-22：UI 方向预览迭代 - 圆润科技控制台
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 开发内容：根据反馈将预览重构为更具科技感和圆润感的未来工业控制台。
+- 解决方法：统一采用蓝青色状态语汇、20px 左右的模块圆角、半透明层叠面板、柔和边界和栅格背景；三套方案更新为智能光舱、白色未来和夜航脉冲。
+- 验证方式：浏览器验证主题切换、窄屏 560px 重排、无水平溢出及零控制台错误。
+- 影响范围：仅修改独立预览 HTML，不影响生产 React 代码、路由、API 或部署配置。
+- 遗留事项：等待用户确认最终方向或提出组合调整。
+
+### 2026-07-22：全项目测试覆盖缺口补全（只测不改）
+
+- 开发内容：在不修改任何源代码的前提下，分析 `ml-platform/backend` 测试套件覆盖缺口，新增 12 个测试模块共 153 个测试用例，覆盖优化算子、工具算子、可视化算子执行、存储工厂、事件发布、推理任务、工作流执行服务、WebSocket 管理器、标注 API、工作流直接 API、Pydantic schemas 校验、ORM 模型自引用关系。
+- 新增测试文件：
+  - `tests/test_operators_optimization.py`（8 项，GridSearchCV/RandomizedSearchCV/Optuna 算子契约与超参输出）
+  - `tests/test_operators_utility.py`（ExecutePython/Collect/Macro/WriteAsText 数据流转与文件落盘）
+  - `tests/test_operators_visualization_execution.py`（ROC/特征重要性/分布/散点/直方/折线/混淆矩阵/数据表/统计算子执行并产出 base64 图表）
+  - `tests/test_storage_factory.py`（5 项，StorageFactory 根据配置返回 LocalStorage/MinIOStorage 且单实例缓存）
+  - `tests/test_events_local.py`（8 项，LocalRunEventPublisher 顺序回调、异常隔离、取消传播、NullRunEventPublisher 空实现）
+  - `tests/test_inference_tasks.py`（5 项，InferenceTaskRepository CRUD 与按状态过滤）
+  - `tests/test_workflow_execution_service.py`（8 项，WorkflowExecutionService 拓扑排序、参数合并、事件发布、循环/孤立节点容错）
+  - `tests/test_websocket_manager.py`（连接/断开/广播/失败连接清理）
+  - `tests/test_api_annotations.py`（标注任务 CRUD、样本列表、auto-label 流程、删除）
+  - `tests/test_api_workflows_direct.py`（直接工作流 GET/PUT/DELETE 与 owner/editor/viewer/outsider 权限边界）
+  - `tests/test_schemas_validation.py`（39 项，ProjectCreate/Update、WorkflowCreate/Save、UserCreate/Update 等 Pydantic 校验规则）
+  - `tests/test_models_misc.py`（AgentTask 自引用关系、ProjectMember 唯一约束等 ORM 行为）
+- 问题与解决：
+  1. `ExecutePython` 算子将输入转为 DataFrame 注入脚本命名空间，`inp[0]` 是列访问而非行访问，KeyError: 0 → 改用 `inp.copy(); out['x'] = out['x'] + 5` 的 DataFrame 操作。
+  2. `WriteAsText` 的 json 格式使用 `df.to_json(orient="records", indent=2)`，产出 `"a":1`（无空格）而非 `"a": 1` → 断言改为匹配实际输出格式。
+  3. `ConnectionManager.broadcast` 中失败连接被清理但 good 连接保留，`run-1` key 不会删除 → 断言改为 good 保留、bad 被移除。
+  4. `AgentTask.children = relationship("AgentTask", backref="parent", remote_side="AgentTask.id")` 中 `remote_side` 设为 PK，导致 `children` 实际是 many-to-one（返回父级），`parent` backref 是 one-to-many（返回子级集合）→ 断言方向修正。
+  5. `AnnotationResult.task_id` 是 `UUID(as_uuid=True)` 列，传字符串触发 `'str' object has no attribute 'hex'` → 用 `uuid.UUID(self.task_id)` 转换并添加 `import uuid`。
+  6. SQLite 不强制 `ON DELETE CASCADE` 且 ORM 关系无 `cascade="delete-orphan"`，删除 AnnotationTask 时 SQLAlchemy 尝试将子记录 `task_id` 设为 NULL 触发 NOT NULL 约束 → 在删除 task 前手动删除子 AnnotationResult 记录。
+  7. `resolve_workflow_access` 对非项目成员返回 404 "hidden"（`ProjectAccessError(hidden=True)`），只有项目成员但权限不足才返回 403 → viewer 必须先通过 `ProjectMember(role="viewer")` 成为项目成员才能触发 403 权限拒绝路径。
+  8. `ConfusionMatrixPlot` 算子从 `per_label[0]` 构建 2x2 矩阵，但 `labels` 从所有 `per_label` 条目派生；只有 1 个条目时 labels 有 1 项但矩阵有 2 列，matplotlib `set_xticklabels` 报 FixedLocator 数量不匹配 → 补充第二个 `per_label` 条目使 labels 数量匹配 2x2 矩阵维度。
+- 潜在问题：
+  - SQLite 与 PostgreSQL 在外键级联行为上存在差异（SQLite 默认不强制 ON DELETE CASCADE），测试中需手动清理子记录；生产 PostgreSQL 环境下行为可能不同，迁移时需关注。
+  - `ConfusionMatrixPlot` 算子的 labels 派生逻辑与矩阵构建逻辑维度不一致是源代码层面的潜在缺陷，当前仅在测试侧通过补齐 per_label 条目规避；后续可考虑在源码侧修正 labels 派生或矩阵构建逻辑。
+  - `AgentTask` 的 `children`/`parent` 命名与实际关系方向不符（`children` 返回父级，`parent` 返回子级集合），是源码命名层面的易混淆点，使用时需特别注意。
+- 验证方式：`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_operators_optimization tests.test_operators_utility tests.test_operators_visualization_execution tests.test_storage_factory tests.test_events_local tests.test_inference_tasks tests.test_workflow_execution_service tests.test_websocket_manager tests.test_api_annotations tests.test_api_workflows_direct tests.test_schemas_validation tests.test_models_misc -v` → `Ran 153 tests in 49.860s OK`，全部通过。
+- 影响范围：未修改任何源代码；测试覆盖扩展到 12 个新模块，源代码行为契约通过测试得到固化，为后续重构提供回归保障。
+- 遗留事项：无；如需进一步提升覆盖，可考虑补充 ProjectAccessService 直接单元测试、AuditService 事务回滚路径测试、生产 PostgreSQL 级联行为集成测试。
+
+
+### 2026-07-22：生产界面圆润科技视觉改造
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 开发内容：在保留现有路由、认证、数据请求和 Ant Design 组件结构的前提下，升级全局主题、应用侧栏与顶栏为圆润科技控制台风格。
+- 问题现象：原界面以直角卡片、橙色高亮和 GitHub 风格深色面板为主，跨页面视觉层级不够统一。
+- 解决方法：更新 Ant Design 双主题令牌为电蓝主强调、绿色成功态和中性工业背景；将全局表面、菜单、卡片、按钮、标签、弹窗和空状态统一为 10 至 20px 圆角，并为顶栏引入克制的半透明层次。
+- 验证方式：前端 npm run build 通过；npm test -- src/components/AppLayout.test.tsx 3/3 通过；Vite 本地服务的 /login 入口返回 HTTP 200。
+- 影响范围：ml-platform/frontend/src/App.tsx、components/AppLayout.tsx 和 styles/global.css；不改动路由、API、认证、状态管理或业务页面数据逻辑。
+- 遗留事项：全量视觉验收需要使用已授权真实账号遍历受保护业务页面；当前未在本次任务中改变身份数据或登录状态。
+
+
+### 2026-07-22：核心页面圆润科技视觉扩展
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 开发内容：继续将圆润科技视觉规范落到登录、注册和数据驾驶舱，并修复非 AppLayout 页面主题变量无法稳定继承的问题。
+- 问题现象：入口页保留橙色或紫色渐变及装饰圆形；数据驾驶舱的统计卡、图表和项目标记仍直接使用旧橙紫色；ThemeProvider 未同步根 DOM 主题属性。
+- 根因：共享视觉令牌未覆盖硬编码页面样式，主题状态仅存在于 React Context，缺少 CSS 变量所需的根属性。
+- 解决方法：以电蓝为主强调、青绿和琥珀为状态色重构入口页和驾驶舱；ThemeProvider 将当前主题同步到 document.documentElement；新增主题同步回归测试。
+- 验证方式：npm test 运行 themeContext 和 AppLayout 用例，共 4/4 通过；npm run build 通过；Playwright 分别截取加载完成的登录和注册页面并完成视觉检查。
+- 影响范围：全局主题、入口页、数据驾驶舱和 ThemeProvider，不改动认证接口、路由、统计 API、轮询或项目跳转逻辑。
+- 遗留事项：受保护业务页面的最终视觉遍历仍需在用户已授权的真实会话下执行。
+
+
+### 2026-07-22：核心业务页圆润科技视觉扩展（第二批）
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 开发内容：将项目列表、数据管理、模型库和工作流编辑器接入已确认的电蓝圆润工业控制台视觉系统。
+- 问题现象：共享主题已升级，但高频业务页仍使用裸表格、直角工作流工具栏以及硬编码白色或灰色画布，导致与登录、驾驶舱和应用壳层的层次不一致。
+- 根因：共享 Ant Design token 无法覆盖页面内联表面样式；业务页缺少统一的标题区、表格容器和工作台类名。
+- 解决方法：新增页面壳、标题区、表格表面、数据预览表和工作流工作台 CSS 类；将工作流左右面板、浮层和操作区改为主题变量驱动的圆角半透明层级；保留所有路由、接口、表格列、权限、i18n、工作流端口槽位和按钮事件逻辑。
+- 验证方式：前端 `npm test -- src/pages/DataManagePage.test.tsx src/pages/WorkspacePage.test.ts src/components/AppLayout.test.tsx` 共 3 个文件、7 项通过；`npm run build` 通过；Playwright 在公开登录页完成桌面及 iPhone 13 截图检查，未出现空白、重叠或横向溢出。
+- 影响范围：`ml-platform/frontend/src/styles/global.css`、`pages/ProjectListPage.tsx`、`pages/DataManagePage.tsx`、`pages/ModelLibraryPage.tsx` 和 `pages/WorkspacePage.tsx` 的呈现层，不更改 API、状态、认证或工作流执行行为。
+- 预防措施：后续业务页接入共享主题时先增加语义化容器类，再替换内联硬编码颜色；对已有并行逻辑文件只使用精确视觉锚点替换并在构建前复核 diff。
+- 遗留事项：受保护业务页的最终人工视觉遍历需要用户已授权的真实会话；本次未读取、写入或伪造浏览器身份数据。
+
+### 2026-07-23：工作流画布与算子圆润科技视觉重构
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 任务状态：工作流视觉实现、聚焦回归和生产构建已完成；受保护工作流路由的真实会话视觉遍历仍待用户授权。
+- 开发内容：重构画布网格、缩放控件、缩略图、连线、算子面板、节点外观、参数面板和执行进度浮层，使其接入已确认的电蓝圆润工业控制台视觉系统。
+- 问题现象：工作区壳层已经使用圆润科技风格，但算子节点、端口、连线和侧栏仍保留较直角、浅色且层级割裂的旧外观。
+- 根因：ReactFlow 节点、边和多个浮层各自使用局部样式，通用主题令牌无法覆盖节点状态、动态端口与画布控件。
+- 解决方法：为节点提供分类图标、运行状态、算子 ID 与输入输出信号行；为动态端口保持原有 slot/port ID 和定位逻辑；统一画布、面板、边、缩放控件与进度层的主题变量、圆角、边界和状态色；增加节点视觉 DOM 合同与算子面板折叠默认态回归测试。
+- 验证方式：`npm test -- src/components/workspace/CustomNode.test.tsx src/components/workspace/CustomNode.test.ts src/components/workspace/OperatorPanel.test.tsx src/components/workspace/NodeConfigPanel.test.tsx src/pages/WorkspacePage.test.ts` 为 5 个文件、10 项通过；`npm run build` 成功；相关文件 `git diff --check` 成功。构建仅保留既有 ECharts chunk 大小警告。
+- 影响范围：`ml-platform/frontend/src/components/workspace/`、`styles/global.css` 和新增工作流组件测试；未改动工作流 API、Zustand 状态模型、端口 ID、连线水合、认证或执行语义。
+- 预防措施：视觉改造涉及 ReactFlow 时，动态端口的 ID、handle 位置和边水合必须作为回归契约；共享样式只通过语义类承接，不以视觉替换改写执行逻辑。
+- 遗留事项：`NodeConfigPanel.join.test.tsx` 是并行新增且与基线通用多选配置行为不匹配的 Join 键对 UI 测试，本次不扩展功能以使其通过；该需求需单独确认。受保护工作流的真实桌面/移动视觉验收需在用户授权的现有会话中完成。
+
+### 2026-07-23：Bug 清单修复后的前端验收收口
+
+- 任务状态：已完成本轮剩余自动化门禁修复；现有用户未提交修改均保留。
+- 问题现象：前端全量测试最初有两项失败：新增测试文件未登记到周次 manifest；Join 配置测试找不到“添加键对”，页面仍以左右两个独立多选框表达键列，无法显式表达左右键配对。
+- 根因：前端周次清单是显式维护的静态映射；Join 后端虽然使用 `left_keys/right_keys` 逗号列表，但前端控件没有提供成对编辑模型。
+- 解决方法：为 Join 配置增加左右键列成对选择、添加和删除交互，按目标端口从上游运行结果提取左右数据列，并以一次状态更新同步写回 `left_keys/right_keys`；将新增页面、主题、工作流和 Join 测试分别登记到第 1、4、6 周清单。
+- 验证方式：聚焦前端 3 个文件、5/5 用例通过；全量 `npm test -- --run` 为 27 个测试文件、64/64 用例通过；`npm run build`（TypeScript 检查和 Vite 生产构建）通过；`git diff --check` 通过。构建仅保留既有 ECharts 大 chunk 警告。
+- 影响范围：`ml-platform/frontend/src/components/workspace/NodeConfigPanel.tsx`、`src/weekAcceptance.test.ts` 和前端测试说明；未改变 Join 后端参数协议、工作流端口 ID、连线水合或执行器语义。
+- 纠正前条记录：此前记录的 Join 键对测试遗留已在本次实现并通过验证，不再作为未完成项。
+- 当前未完成：本地线程调度器无法安全强制终止和 GPU 指标依赖宿主 `nvidia-smi` 的既有限制仍保留；受保护页面真实会话视觉验收仍需授权，不在本次自动化修复范围内。
+
+### 2026-07-23：工作流算子文字与密度微调
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 任务状态：已完成本次节点可读性与密度微调；工作流端口、边水合、执行状态和 API 未改动。
+- 开发内容：提高画布算子标题、算子 ID、状态和输入输出信号的字号，并减少节点最小高度、内边距、信号区与错误/进度区的留白。
+- 问题现象：前一轮圆润科技视觉重构后，节点标题为 13px，辅助信息和状态为 10px，而 142px 的最小高度和信号区间距使节点在常用缩放级别下显得文字偏小、内部偏松。
+- 根因：初版节点设计优先保证状态信息和端口的视觉呼吸感，未将画布算子高频阅读场景的文字密度作为独立约束。
+- 解决方法：标题调整为 14px，算子 ID、状态、信号和错误信息调整为 11px；节点最小高度调整为 128px，内边距、标题区图标尺寸和信号/错误/进度间距同步收紧；新增 CSS 密度回归契约，继续覆盖动态端口槽位。
+- 验证方式：先新增视觉密度测试并确认旧 CSS 在 `142px` 和旧字号下失败，再更新样式；`npm test -- src/components/workspace/CustomNode.test.tsx src/components/workspace/CustomNode.test.ts src/components/workspace/OperatorPanel.test.tsx src/components/workspace/NodeConfigPanel.test.tsx src/pages/WorkspacePage.test.ts` 为 5 个文件、11 项通过；`npm run build` 成功。
+- 影响范围：`ml-platform/frontend/src/styles/global.css` 与 `components/workspace/CustomNode.test.tsx`；不改动 JSX 结构、ReactFlow handle ID/位置、边水合或工作流执行语义。
+- 预防措施：工作流节点视觉验收同时检查文字最小可读字号与容器空白比例；修改视觉密度时以 CSS 契约和动态端口测试共同防止将样式调整扩散到连接协议。
+- 遗留事项：受保护工作流路由的真实桌面与移动视觉遍历仍需用户授权会话；本次不读取、写入或伪造身份状态。
+
+### 2026-07-23：本地开发代理连接拒绝恢复
+
+- 任务状态：已完成本地前后端开发服务恢复，不涉及业务代码或代理配置变更。
+- 问题现象：Vite 对 `/api/dashboard/stats` 和 `/api/projects` 的代理请求连续报 `AggregateError [ECONNREFUSED]`。
+- 根因：FastAPI 后端没有稳定监听 `127.0.0.1:8000`，Vite 无法建立代理连接；后续检查还发现前端开发服务器没有监听 `5173`。该错误发生在代理传输层，不是仪表盘或项目接口业务错误。
+- 解决方法：在 `ml-platform/backend` 启动 `python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`，在 `ml-platform/frontend` 启动 `npm run dev -- --host 127.0.0.1`，保持现有 Vite `/api` 与 `/ws` 代理配置不变。
+- 验证方式：后端 `/api/health` 直连返回 `200`；经 `http://localhost:5173/api/health` 代理返回 `200`；`/api/dashboard/stats` 返回 `200`；`/api/projects` 返回预期的 `401 Not authenticated`，证明请求已到达鉴权层而非连接拒绝。
+- 预防措施：本地联调前先检查 `127.0.0.1:8000/api/health`，再启动前端；若页面显示代理 `ECONNREFUSED`，先检查端口监听和后端启动日志，不应先修改页面接口代码。
+- 遗留事项：无新增功能遗留；后台开发服务依赖当前本机进程，终端或系统重启后需按上述命令重新启动。

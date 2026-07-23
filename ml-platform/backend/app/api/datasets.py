@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models.project import Project
@@ -76,12 +76,15 @@ def _read_dataset(path: Path):
     return pd.read_csv(path)
 
 
-def _serialize_dataset(artifact: Artifact) -> dict:
+def _serialize_dataset(artifact: Artifact, *, project_name: str | None = None) -> dict:
     metadata = artifact.metadata_ or {}
     return {
         "id": str(artifact.id),
         "artifact_id": str(artifact.id),
         "project_id": str(artifact.project_id),
+        "project_name": project_name if project_name is not None else (
+            artifact.project.name if artifact.project else None
+        ),
         "name": artifact.name,
         "filename": artifact.name,
         "type": artifact.type,
@@ -102,6 +105,7 @@ def list_owned_datasets(
 ):
     query = (
         db.query(Artifact)
+        .options(joinedload(Artifact.project))
         .join(Project, Artifact.project_id == Project.id)
         .filter(Artifact.type == "dataset", Project.owner_id == current_user.id)
     )
@@ -124,7 +128,7 @@ def list_project_datasets(
     artifacts = db.query(Artifact).filter(
         Artifact.project_id == project.id, Artifact.type == "dataset",
     ).order_by(Artifact.created_at.desc()).all()
-    items = [_serialize_dataset(artifact) for artifact in artifacts]
+    items = [_serialize_dataset(artifact, project_name=project.name) for artifact in artifacts]
     return {"items": items, "total": len(items)}
 
 
