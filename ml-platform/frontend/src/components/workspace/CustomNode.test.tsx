@@ -17,7 +17,7 @@ function cssRule(selector: string): string {
   return start === -1 || end === -1 ? "" : workflowStyles.slice(start, end + 1);
 }
 
-describe("CustomNode dynamic port slots", () => {
+describe("CustomNode stable logical port handles", () => {
   beforeEach(() => {
     useWorkflowStore.getState().reset();
     useWorkflowStore.setState({
@@ -40,7 +40,7 @@ describe("CustomNode dynamic port slots", () => {
     });
   });
 
-  it("renders one distinct handle for every connected slot and the next available slot", () => {
+  it("renders exactly one stable handle for every declared port", () => {
     render(
       <ReactFlowProvider>
         <CustomNode
@@ -63,10 +63,10 @@ describe("CustomNode dynamic port slots", () => {
       </ReactFlowProvider>,
     );
 
-    expect(screen.getByTestId("port-in-left__slot_0")).toBeInTheDocument();
-    expect(screen.getByTestId("port-in-left__slot_1")).toBeInTheDocument();
-    expect(screen.getByTestId("port-in-left__slot_2")).toBeInTheDocument();
-    expect(screen.getByTestId("port-out-data__slot_0")).toBeInTheDocument();
+    expect(screen.getByTestId("port-in-left")).toBeInTheDocument();
+    expect(screen.getByTestId("port-out-data")).toBeInTheDocument();
+    expect(screen.queryByTestId("port-in-left__slot_0")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("port-in-left__slot_1")).not.toBeInTheDocument();
   });
 });
 
@@ -102,8 +102,8 @@ describe("CustomNode visual structure", () => {
     expect(screen.getByTestId("workflow-node")).toBeInTheDocument();
     expect(screen.getByTestId("workflow-node-category")).toBeInTheDocument();
     expect(screen.getByTestId("workflow-node-status")).toBeInTheDocument();
-    expect(screen.getByTestId("port-in-source__slot_0")).toBeInTheDocument();
-    expect(screen.getByTestId("port-out-data__slot_0")).toBeInTheDocument();
+    expect(screen.getByTestId("port-in-source")).toBeInTheDocument();
+    expect(screen.getByTestId("port-out-data")).toBeInTheDocument();
   });
 });
 describe("CustomNode visual density", () => {

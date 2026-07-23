@@ -6,7 +6,7 @@ import {
   CloseCircleFilled, DatabaseOutlined, ExperimentOutlined, FilterOutlined,
   FundOutlined, LoadingOutlined, PlayCircleOutlined, ThunderboltOutlined, ToolOutlined,
 } from "@ant-design/icons";
-import { useWorkflowStore } from "../../stores/workflowStore";
+import { normalizeWorkflowHandle, useWorkflowStore } from "../../stores/workflowStore";
 import { useI18n } from "../../i18n";
 
 const STATUS_CFG: Record<string, { icon: React.ReactNode }> = {
@@ -40,26 +40,19 @@ function normalizeCategory(category?: string): keyof typeof CATEGORY_ICONS {
 }
 
 function logicalPortName(handleId?: string | null): string {
-  return String(handleId || "").replace(/__slot_\d+$/, "");
+  return normalizeWorkflowHandle(handleId) || "";
 }
 
 export function getPortSlots(
-  nodeId: string,
+  _nodeId: string,
   ports: any[],
-  direction: "in" | "out",
-  edges: any[],
+  _direction: "in" | "out",
+  _edges: any[],
 ) {
-  return ports.flatMap((port) => {
-    const connectionCount = edges.filter((edge) => (
-      direction === "in"
-        ? edge.target === nodeId && logicalPortName(edge.targetHandle) === port.name
-        : edge.source === nodeId && logicalPortName(edge.sourceHandle) === port.name
-    )).length;
-    return Array.from({ length: Math.max(1, connectionCount + 1) }, (_, slot) => ({
-      port,
-      handleId: `${port.name}__slot_${slot}`,
-    }));
-  });
+  return ports.map((port) => ({
+    port,
+    handleId: String(port.name),
+  }));
 }
 
 function buildPortPreview(

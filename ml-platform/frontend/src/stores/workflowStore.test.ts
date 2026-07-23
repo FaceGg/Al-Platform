@@ -91,12 +91,31 @@ describe("workflowStore", () => {
     expect(nodes[1].data.params).toEqual(source.data.params);
   });
 
-  it("keeps multiple upstream edges targeting the same input port", () => {
+  it("replaces edges sharing a logical source or target endpoint", () => {
     const store = useWorkflowStore.getState();
     store.onConnect({ source: "source-a", sourceHandle: "data", target: "join", targetHandle: "left" });
     store.onConnect({ source: "source-b", sourceHandle: "data", target: "join", targetHandle: "left" });
+    store.onConnect({ source: "source-b", sourceHandle: "other", target: "join", targetHandle: "right" });
+    store.onConnect({ source: "source-c", sourceHandle: "data", target: "join", targetHandle: "right" });
+    store.onConnect({ source: "source-b", sourceHandle: "data", target: "other", targetHandle: "input" });
     const edges = useWorkflowStore.getState().edges;
     expect(edges).toHaveLength(2);
-    expect(edges.map((edge) => edge.source)).toEqual(["source-a", "source-b"]);
+    expect(edges.map((edge) => ({ source: edge.source, sourceHandle: edge.sourceHandle, targetHandle: edge.targetHandle }))).toEqual([
+      { source: "source-c", sourceHandle: "data", targetHandle: "right" },
+      { source: "source-b", sourceHandle: "data", targetHandle: "input" },
+    ]);
+  });
+
+  it("normalizes legacy slot suffixes when connecting", () => {
+    useWorkflowStore.getState().onConnect({
+      source: "source",
+      sourceHandle: "data__slot_3",
+      target: "target",
+      targetHandle: "input__slot_2",
+    });
+    expect(useWorkflowStore.getState().edges[0]).toMatchObject({
+      sourceHandle: "data",
+      targetHandle: "input",
+    });
   });
 });

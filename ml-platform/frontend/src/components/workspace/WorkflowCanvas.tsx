@@ -52,23 +52,6 @@ export default function WorkflowCanvas() {
     return map;
   }, [operators]);
 
-  // Compute connection counts per node for dynamic port display
-  const inputCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const e of edges) {
-      counts[e.target] = (counts[e.target] || 0) + 1;
-    }
-    return counts;
-  }, [edges]);
-
-  const outputCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const e of edges) {
-      counts[e.source] = (counts[e.source] || 0) + 1;
-    }
-    return counts;
-  }, [edges]);
-
   const nodesWithStatus = nodes.map((n) => {
     const opId = n.data.operatorId as string || "";
     const meta = opMeta[opId] || { inputs: [], outputs: [], category: "utility" };
@@ -76,9 +59,6 @@ export default function WorkflowCanvas() {
     // Prefer operator metadata for inputs/outputs, fall back to data
     const totalInputs = (n.data.inputs as any[])?.length ? (n.data.inputs as any[]) : meta.inputs;
     const totalOutputs = (n.data.outputs as any[])?.length ? (n.data.outputs as any[]) : meta.outputs;
-    const usedInputs = inputCounts[n.id] || 0;
-    const usedOutputs = outputCounts[n.id] || 0;
-
     return {
       ...n,
       data: {
@@ -90,9 +70,6 @@ export default function WorkflowCanvas() {
         // Use operator metadata for port definitions
         inputs: totalInputs,
         outputs: totalOutputs,
-        // Show 1 + usedPorts, capped by total available
-        visibleInputs: Math.min(totalInputs.length, Math.max(1, usedInputs + (totalInputs.length > 0 ? 1 : 0))),
-        visibleOutputs: Math.min(totalOutputs.length, Math.max(1, usedOutputs + (totalOutputs.length > 0 ? 1 : 0))),
         totalInputs: totalInputs.length,
         totalOutputs: totalOutputs.length,
       },

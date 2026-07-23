@@ -5,6 +5,16 @@ import type { ReactFlowInstance } from "reactflow";
 export type WorkflowRunStatus = "pending" | "running" | "cancel_requested" | "completed" | "failed" | "cancelled";
 export type NodeRunStatus = "pending" | "running" | "completed" | "failed" | "timed_out" | "cancelled" | "skipped";
 
+/** Strip the legacy dynamic-slot suffix while preserving the logical handle name. */
+export function normalizeWorkflowHandle(handle?: string | null): string | null {
+  if (handle == null) return null;
+  return String(handle).replace(/__slot_\d+$/, "");
+}
+
+function workflowEndpoint(nodeId: string | null | undefined, handle?: string | null): string {
+  return `${String(nodeId ?? "")}:${normalizeWorkflowHandle(handle) ?? ""}`;
+}
+
 export interface WorkflowState {
   nodes: Node[];
   edges: Edge[];
@@ -69,9 +79,21 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     })),
 
   onConnect: (connection) =>
-    set((state) => ({
-      edges: addEdge({ ...connection, type: "custom" }, state.edges),
-    })),
+    set((state) => {
+      const normalizedConnection = {
+        ...connection,
+        sourceHandle: normalizeWorkflowHandle(connection.sourceHandle),
+        targetHandle: normalizeWorkflowHandle(connection.targetHandle),
+        type: "custom",
+      };
+      const sourceEndpoint = workflowEndpoint(connection.source, normalizedConnection.sourceHandle);
+      const targetEndpoint = workflowEndpoint(connection.target, normalizedConnection.targetHandle);
+      const remainingEdges = state.edges.filter((edge) =>
+        workflowEndpoint(edge.source, edge.sourceHandle) !== sourceEndpoint &&
+        workflowEndpoint(edge.target, edge.targetHandle) !== targetEndpoint
+      );
+      return { edges: addEdge(normalizedConnection, remainingEdges) };
+    }),
 
   addNode: (type, position, operatorData) =>
     set((state) => {

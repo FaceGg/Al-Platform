@@ -10,7 +10,7 @@ import OperatorPanel from "../components/workspace/OperatorPanel";
 import WorkflowCanvas from "../components/workspace/WorkflowCanvas";
 import NodeConfigPanel from "../components/workspace/NodeConfigPanel";
 import ExecutionProgress from "../components/workspace/ExecutionProgress";
-import { useWorkflowStore } from "../stores/workflowStore";
+import { normalizeWorkflowHandle, useWorkflowStore } from "../stores/workflowStore";
 import type { NodeRunStatus, WorkflowRunStatus } from "../stores/workflowStore";
 import { deleteWorkflowVersion, listWorkflowVersions, publishWorkflow, restoreWorkflowVersion, WorkflowVersionSummary } from "../api/workflowVersions";
 import { useI18n } from "../i18n";
@@ -19,37 +19,25 @@ const { Sider, Content } = Layout;
 
 export function resolvePort(handleId: string, portList: {name:string}[]): string {
   if (!handleId) return "";
-  const logicalHandle = handleId.replace(/__slot_\d+$/, "");
+  const logicalHandle = normalizeWorkflowHandle(handleId) || "";
   // Already a port name (e.g., "data", "left") — pass through
   if (!/^(in|out)-\d+$/.test(logicalHandle)) return logicalHandle;
   const idx = parseInt(logicalHandle.replace(/^(in|out)-/, ""), 10);
   return (!isNaN(idx) && idx < portList.length) ? portList[idx].name : logicalHandle;
 }
 
-export function withPortSlot(portName: string, slot: number): string {
-  return `${portName}__slot_${slot}`;
-}
-
 export function hydrateWorkflowEdges(edges: any[]) {
-  const sourceSlots = new Map<string, number>();
-  const targetSlots = new Map<string, number>();
   return edges.map((edge: any) => {
     const source = String(edge.source_node_id ?? edge.source);
     const target = String(edge.target_node_id ?? edge.target);
-    const sourcePort = edge.source_port || edge.sourceHandle || "out-0";
-    const targetPort = edge.target_port || edge.targetHandle || "in-0";
-    const sourceKey = `${source}:${sourcePort}`;
-    const targetKey = `${target}:${targetPort}`;
-    const sourceSlot = sourceSlots.get(sourceKey) || 0;
-    const targetSlot = targetSlots.get(targetKey) || 0;
-    sourceSlots.set(sourceKey, sourceSlot + 1);
-    targetSlots.set(targetKey, targetSlot + 1);
+    const sourcePort = normalizeWorkflowHandle(edge.source_port || edge.sourceHandle || "out-0") || "out-0";
+    const targetPort = normalizeWorkflowHandle(edge.target_port || edge.targetHandle || "in-0") || "in-0";
     return {
       id: String(edge.id),
       source,
       target,
-      sourceHandle: withPortSlot(sourcePort, sourceSlot),
-      targetHandle: withPortSlot(targetPort, targetSlot),
+      sourceHandle: sourcePort,
+      targetHandle: targetPort,
     };
   });
 }
