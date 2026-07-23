@@ -16,6 +16,23 @@ from app.engine.operator_contract import (
 
 
 _EXECUTION_POLICY_PARAMS = {"timeout_seconds", "max_retries", "retry_delay_seconds"}
+_PREVIEW_MAX_STRING_LENGTH = 500
+_PREVIEW_STRING_PREFIX_LENGTH = 200
+
+
+def _preview_value(port_name: str, raw_data: Any) -> Any:
+    """Bound text previews without corrupting chart/image payloads."""
+    if isinstance(raw_data, str):
+        if len(raw_data) > _PREVIEW_MAX_STRING_LENGTH:
+            is_chart = str(port_name).lower() == "chart"
+            is_data_image = raw_data.lstrip().lower().startswith("data:image/")
+            if is_chart or is_data_image:
+                return raw_data
+            return raw_data[:_PREVIEW_STRING_PREFIX_LENGTH] + f"...({len(raw_data)} chars)"
+        return raw_data
+    if isinstance(raw_data, (list, dict)):
+        return raw_data
+    return str(raw_data)[:_PREVIEW_MAX_STRING_LENGTH]
 
 
 class _OperatorLogger:
@@ -225,12 +242,7 @@ class DAGExecutor:
             # Build preview
             preview: dict[str, Any] = {}
             for port_name, raw_data in outputs.items():
-                if isinstance(raw_data, str) and len(raw_data) > 500:
-                    preview[port_name] = raw_data[:200] + f"...({len(raw_data)} chars)"
-                elif isinstance(raw_data, (list, dict)):
-                    preview[port_name] = raw_data
-                else:
-                    preview[port_name] = str(raw_data)[:500]
+                preview[port_name] = _preview_value(port_name, raw_data)
 
             completion = preview
             if op_id not in ("loop",):
