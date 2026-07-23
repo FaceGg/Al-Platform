@@ -1224,3 +1224,15 @@
 - 验证方式：后端 `/api/health` 直连返回 `200`；经 `http://localhost:5173/api/health` 代理返回 `200`；`/api/dashboard/stats` 返回 `200`；`/api/projects` 返回预期的 `401 Not authenticated`，证明请求已到达鉴权层而非连接拒绝。
 - 预防措施：本地联调前先检查 `127.0.0.1:8000/api/health`，再启动前端；若页面显示代理 `ECONNREFUSED`，先检查端口监听和后端启动日志，不应先修改页面接口代码。
 - 遗留事项：无新增功能遗留；后台开发服务依赖当前本机进程，终端或系统重启后需按上述命令重新启动。
+
+### 2026-07-23：Bug 清单四项复核与页面防回归
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 任务状态：已完成清单复核、前端防回归实现和后端删除用户回归验证。
+- 问题现象：清单记录自动建模路由空白、模型库缺少注册/部署删除按钮、数据管理删除按钮出界、管理员删除用户触发 `model_library.owner_id` 非空约束。当前基线已包含模型库操作按钮和用户资源转移修复，但 AutoML 缺少运行时异常兜底，数据表操作列在窄屏缺少固定布局约束。
+- 根因：懒加载或渲染异常未被页面边界捕获时会让路由只剩空白；操作列使用固定总宽但未锁定右侧列和按钮不换行，窄屏下可视区域不稳定。用户删除问题的根因是删除关联资源时将非空用户外键更新为 `NULL`，现有实现已统一转移到管理员。
+- 解决方法：新增可复用 `PageErrorBoundary` 并接入 `/automl`，提供错误提示和重新加载入口；数据管理操作列固定右侧、按钮禁止换行、表格改为 `max-content` 横向滚动；保留模型库已有注册模型/推理部署删除按钮和用户资源转移逻辑。
+- 验证方式：先新增边界失败测试并确认模块缺失导致失败，再实现并通过；前端 `npm test -- --run src/components/PageErrorBoundary.test.tsx src/pages/AutoMLPage.test.tsx src/pages/ModelLibraryPage.test.tsx src/pages/DataManagePage.test.tsx` 为 4 个文件、7/7 通过；`npm run build` 通过；后端用户删除转移回归 1/1 通过；真实登录浏览器访问 `/automl` 可见完整页面而非空白。
+- 影响范围：`ml-platform/frontend/src/App.tsx`、`src/components/PageErrorBoundary.*`、`src/pages/DataManagePage.tsx`、`src/styles/global.css`；后端 `users.py` 未新增行为变更，仅验证已有修复。
+- 预防措施：所有高风险懒加载业务路由需有可恢复错误边界；数据表操作列必须设置稳定宽度、右侧固定和窄屏滚动；管理员删除用户必须覆盖所有非空用户外键的替换策略并保留集成回归。
+- 遗留事项：Vite 构建仍报告既有 ECharts 大 chunk 警告；模型库和用户删除清单项已由现有基线实现并通过验证，无新增遗留。

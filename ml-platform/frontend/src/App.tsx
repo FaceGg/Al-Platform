@@ -3,6 +3,7 @@ import { lazy, Suspense } from "react";
 import { ConfigProvider, theme as antTheme, App as AntApp, Spin } from "antd";
 import { useTheme } from "./stores/themeContext";
 import ProtectedRoute from "./components/ProtectedRoute";
+import PageErrorBoundary from "./components/PageErrorBoundary";
 
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const RegisterPage = lazy(() => import("./pages/RegisterPage"));
@@ -89,7 +90,7 @@ function AppContent() {
             <Route path="/knowledge" element={<ProtectedRoute><KnowledgeBasePage /></ProtectedRoute>} />
             <Route path="/knowledge/:kbId" element={<ProtectedRoute><KnowledgeDetailPage /></ProtectedRoute>} />
             <Route path="/knowledge-graph" element={<ProtectedRoute><KnowledgeGraphPage /></ProtectedRoute>} />
-            <Route path="/automl" element={<ProtectedRoute><AutoMLPage /></ProtectedRoute>} />
+            <Route path="/automl" element={<ProtectedRoute><PageErrorBoundary pageName="自动建模"><AutoMLPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/training" element={<ProtectedRoute><TrainingJobsPage /></ProtectedRoute>} />
             <Route path="/monitor" element={<ProtectedRoute><MonitorPage /></ProtectedRoute>} />
             <Route path="/algorithms" element={<ProtectedRoute><AlgorithmCatalogPage /></ProtectedRoute>} />

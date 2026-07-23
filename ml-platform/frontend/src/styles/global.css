@@ -329,6 +329,16 @@ html body {
   background: color-mix(in srgb, var(--accent-primary) 7%, var(--bg-surface)) !important;
 }
 
+.dataset-table-actions {
+  display: inline-flex !important;
+  flex-wrap: nowrap !important;
+  white-space: nowrap;
+}
+
+.dataset-table-actions .ant-btn {
+  flex: 0 0 30px;
+}
+
 .model-library-tabs .ant-tabs-nav {
   margin: 0 0 14px !important;
   padding: 0 4px;

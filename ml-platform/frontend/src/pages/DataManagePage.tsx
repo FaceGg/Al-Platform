@@ -128,9 +128,9 @@ export default function DataManagePage() {
     { title: t.data.rows, dataIndex: "row_count", key: "rows", width: 80 },
     { title: t.model.created, dataIndex: "created_at", key: "created_at", width: 160 },
     {
-      title: t.model.actions, key: "actions", width: 144, align: "center" as const,
+      title: t.model.actions, key: "actions", width: 132, fixed: "right" as const, align: "center" as const,
       render: (_: any, record: any) => (
-        <Space className="dataset-table-actions" size={2}>
+        <Space className="dataset-table-actions" size={2} wrap={false}>
           <Tooltip title={`${t.data.preview} ${record.name}`}><Button type="text" size="small" icon={<EyeOutlined />} aria-label={`${t.data.preview} ${record.name}`} onClick={() => handlePreview(record.id)} /></Tooltip>
           <Tooltip title={`${t.data.download} ${record.name}`}><Button type="text" size="small" icon={<DownloadOutlined />} aria-label={`${t.data.download} ${record.name}`} onClick={() => handleDownload(record.id)} /></Tooltip>
           <Tooltip title={`${t.common.delete} ${record.name}`}><Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label={`${t.common.delete} ${record.name}`} onClick={() => handleDelete(record.id)} /></Tooltip>
@@ -172,7 +172,7 @@ export default function DataManagePage() {
             loading={loading}
             pagination={{ pageSize: 15 }}
             locale={{ emptyText: selectedProject ? t.common.no_data : t.common.no_data }}
-            scroll={{ x: 880 }}
+            scroll={{ x: "max-content" }}
           />
         </Card>
       </div>
