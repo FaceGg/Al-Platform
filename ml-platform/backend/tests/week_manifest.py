@@ -30,6 +30,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_operator_contract",
         "test_operator_raw_outputs",
         "test_operators_extended",
+        "test_evaluation_operator_execution",
         "test_operators_mechanism",
         "test_artifact_service",
         "test_api_datasets",

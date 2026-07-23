@@ -374,11 +374,11 @@ class CrossValidation(BaseOperator):
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         from sklearn.model_selection import StratifiedKFold, KFold
         from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-        from sklearn.tree import DecisionTreeClassifier
-        from sklearn.linear_model import LogisticRegression
+        from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+        from sklearn.linear_model import LinearRegression, LogisticRegression
         from sklearn.svm import SVC, SVR
         from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, mean_squared_error, mean_absolute_error, r2_score
-        import numpy as np
+        from sklearn.base import clone
 
         data = inputs.get("data", [])
         target = params.get("target_column", "target")
@@ -404,40 +404,34 @@ class CrossValidation(BaseOperator):
             cv = KFold(n_splits=n_folds, shuffle=True, random_state=random_seed)
 
         model_map = {
-            "random_forest": (RandomForestClassifier(n_estimators=100, random_state=random_seed),
-                             RandomForestRegressor(n_estimators=100, random_state=random_seed)),
-            "decision_tree": (DecisionTreeClassifier(random_state=random_seed),
-                             None),
-            "logistic_regression": (LogisticRegression(random_state=random_seed, max_iter=1000),
-                                    None),
-            "svm": (SVC(random_state=random_seed),
-                    SVR()),
+            "random_forest": {
+                "classification": RandomForestClassifier(n_estimators=100, random_state=random_seed),
+                "regression": RandomForestRegressor(n_estimators=100, random_state=random_seed),
+            },
+            "decision_tree": {
+                "classification": DecisionTreeClassifier(random_state=random_seed),
+                "regression": DecisionTreeRegressor(random_state=random_seed),
+            },
+            "logistic_regression": {
+                "classification": LogisticRegression(random_state=random_seed, max_iter=1000),
+                "regression": LinearRegression(),
+            },
+            "svm": {
+                "classification": SVC(random_state=random_seed),
+                "regression": SVR(),
+            },
         }
-
-        clf, reg = model_map.get(model_type, (RandomForestClassifier(n_estimators=100, random_state=random_seed), None))
-        if task == "regression" and reg is not None:
-            model = reg
-        elif task == "classification" and clf is not None:
-            model = clf
-        else:
-            model = clf
+        task_models = model_map.get(model_type, model_map["random_forest"])
+        model = task_models[task]
 
         fold_results = []
-        all_y_true = []
-        all_y_pred = []
-
         for fold, (train_idx, test_idx) in enumerate(cv.split(X, y)):
             X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
             y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
 
-            model_clone = model
-            from sklearn.base import clone
             m = clone(model)
             m.fit(X_train, y_train)
             y_pred = m.predict(X_test)
-
-            all_y_true.extend(y_test.tolist())
-            all_y_pred.extend(y_pred.tolist())
 
             if task == "classification":
                 fold_results.append({
