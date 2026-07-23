@@ -1,12 +1,12 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
-import { Progress, Tooltip } from "antd";
+import { Modal, Progress, Tooltip } from "antd";
 import {
   AppstoreOutlined, ApartmentOutlined, BarChartOutlined, CheckCircleFilled,
   CloseCircleFilled, DatabaseOutlined, ExperimentOutlined, FilterOutlined,
   FundOutlined, LoadingOutlined, PlayCircleOutlined, ThunderboltOutlined, ToolOutlined,
 } from "@ant-design/icons";
-import { normalizeWorkflowHandle, useWorkflowStore } from "../../stores/workflowStore";
+import { normalizeNodeError, normalizeWorkflowHandle, useWorkflowStore } from "../../stores/workflowStore";
 import { useI18n } from "../../i18n";
 
 const STATUS_CFG: Record<string, { icon: React.ReactNode }> = {
@@ -55,37 +55,65 @@ export function getPortSlots(
   }));
 }
 
-function buildPortPreview(
+function resolvePortValue(
   nodeId: string,
   portName: string,
   portDirection: "in" | "out",
-  nodes: any[],
   edges: any[],
   nodeResults: Record<string, any>,
-  lang: "zh" | "en"
-): string {
+): any {
   if (portDirection === "in") {
     // For input ports: show data from the connected upstream source port
     const incEdge = edges.find(e => (
       e.target === nodeId && (logicalPortName(e.targetHandle) === portName || e.targetHandle === "in-0")
     ));
-    if (incEdge && nodeResults[incEdge.source]) {
+    if (incEdge && nodeResults[incEdge.source] !== undefined) {
       const upstream = nodeResults[incEdge.source];
-      return formatResult(upstream[portName] ?? upstream, lang);
+      const sourcePort = logicalPortName(incEdge.sourceHandle);
+      if (upstream && typeof upstream === "object" && sourcePort && sourcePort in upstream) {
+        return upstream[sourcePort];
+      }
+      if (upstream && typeof upstream === "object" && portName in upstream) {
+        return upstream[portName];
+      }
+      return upstream;
     }
   } else {
     // For output ports: show this node's result
-    if (nodeResults[nodeId]) {
+    if (nodeResults[nodeId] !== undefined) {
       const result = nodeResults[nodeId];
-      return formatResult(result[portName] ?? result, lang);
+      if (result && typeof result === "object" && portName in result) return result[portName];
+      return result;
     }
   }
-  return "";
+  return undefined;
+}
+
+export function inferDataFormat(value: any, declaredFormat?: string): string {
+  if (declaredFormat) return declaredFormat;
+  if (value == null) return "unknown";
+  if (Array.isArray(value)) return "records";
+  if (typeof value === "object") {
+    if (Array.isArray(value.data)) return "records";
+    return "object";
+  }
+  return typeof value;
+}
+
+export function formatSample(value: any): string {
+  if (value == null) return "-";
+  try {
+    const sample = Array.isArray(value) ? value.slice(0, 2) : value;
+    const serialized = JSON.stringify(sample, null, 2);
+    return serialized === undefined ? String(sample) : serialized.slice(0, 500);
+  } catch {
+    return String(value).slice(0, 500);
+  }
 }
 
 export function formatResult(result: any, lang: "zh" | "en"): string {
   const noData = lang === "zh" ? "暂无数据" : "No data available";
-  if (!result) return noData;
+  if (result === null || result === undefined || result === "") return noData;
   try {
     // If result has data array
     if (Array.isArray(result) && result.length > 0) {
@@ -115,11 +143,40 @@ export function formatResult(result: any, lang: "zh" | "en"): string {
   }
 }
 
+function portMetadata(port: any, value: any, lang: "zh" | "en") {
+  const type = port.type || port.data_type || port.dataType || "unknown";
+  const declaredFormat = port.format || port.data_format || port.dataFormat;
+  const format = inferDataFormat(value, declaredFormat);
+  const summary = port.summary || port.description || formatResult(value, lang);
+  const sampleValue = port.sample ?? port.example ?? port.preview ?? value;
+  return { type: String(type), format: String(format), summary: String(summary), sample: formatSample(sampleValue) };
+}
+
+function PortTooltipContent({ port, value, lang }: { port: any; value: any; lang: "zh" | "en" }) {
+  const metadata = portMetadata(port, value, lang);
+  const labels = lang === "zh"
+    ? { type: "类型", format: "格式", summary: "摘要", sample: "样例" }
+    : { type: "Type", format: "Format", summary: "Summary", sample: "Sample" };
+  return (
+    <div className="workflow-port-tooltip" data-testid={`workflow-port-preview-${String(port.name)}`}>
+      <div className="workflow-port-tooltip__title">{port.label || port.name}</div>
+      <div className="workflow-port-tooltip__meta"><span>{labels.type}</span>{metadata.type}</div>
+      <div className="workflow-port-tooltip__meta"><span>{labels.format}</span>{metadata.format}</div>
+      <div className="workflow-port-tooltip__section-label">{labels.summary}</div>
+      <div className="workflow-port-tooltip__preview">{metadata.summary}</div>
+      <div className="workflow-port-tooltip__section-label">{labels.sample}</div>
+      <pre className="workflow-port-tooltip__sample">{metadata.sample}</pre>
+    </div>
+  );
+}
+
 function CustomNode({ data, selected }: NodeProps) {
   const { lang, t } = useI18n();
   const status = (data.status as string) || "pending";
   const cfg = STATUS_CFG[status] || STATUS_CFG.pending;
   const progress = (data.progress as number) ?? undefined;
+  const [activePreview, setActivePreview] = useState<string | null>(null);
+  const [errorOpen, setErrorOpen] = useState(false);
 
   const opId = data.operatorId as string || "";
   const label = (t as any).operator?.[opId] || (data.label as string) || opId;
@@ -141,10 +198,29 @@ function CustomNode({ data, selected }: NodeProps) {
 
   // Get node results and edges from store for port preview
   const nodeResults = useWorkflowStore((s) => s.nodeResults);
+  const storedNodeError = useWorkflowStore((s) => s.nodeErrors[nodeId]);
   const allEdges = useWorkflowStore((s) => s.edges);
-  const allNodes = useWorkflowStore((s) => s.nodes);
   const inputSlots = getPortSlots(nodeId, inputs, "in", allEdges);
   const outputSlots = getPortSlots(nodeId, outputs, "out", allEdges);
+  const dataNodeError = normalizeNodeError(nodeId, (data as any).error);
+  const nodeError = storedNodeError || dataNodeError;
+  const errorStatus = status === "failed" || status === "timed_out";
+  const canOpenError = errorStatus;
+
+  const openErrorDetails = (event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    if (canOpenError) setErrorOpen(true);
+  };
+
+  const previewProps = (previewKey: string) => ({
+    open: activePreview === previewKey,
+    onMouseEnter: () => setActivePreview(previewKey),
+    onMouseLeave: () => setActivePreview((current) => current === previewKey ? null : current),
+    onClick: (event: React.MouseEvent) => {
+      event.stopPropagation();
+      setActivePreview(null);
+    },
+  });
 
   const portStyle = (index: number, total: number, side: "left" | "right"): React.CSSProperties => ({
     top: total <= 1 ? "50%" : ((index + 0.5) / total) * 100 + "%",
@@ -157,24 +233,17 @@ function CustomNode({ data, selected }: NodeProps) {
       data-testid="workflow-node"
     >
       {inputSlots.map(({ port: p, handleId }, i: number) => {
-        const preview = buildPortPreview(nodeId, p.name, "in", allNodes, allEdges, nodeResults, lang);
-        const portLabel = (p.label || p.name) + (p.type ? " (" + p.type + ")" : "");
-        const tooltipContent = (
-          <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>{portLabel}</div>
-            {preview ? (
-              <div className="workflow-port-tooltip__preview">
-                {preview}
-              </div>
-            ) : (
-              <div className="workflow-port-tooltip__empty">
-                {lang === "zh" ? "暂无数据" : "No data available"}
-              </div>
-            )}
-          </div>
-        );
+        const previewKey = `in:${handleId}`;
+        const value = resolvePortValue(nodeId, p.name, "in", allEdges, nodeResults);
         return (
-          <Tooltip title={tooltipContent} placement="left" mouseEnterDelay={0.3} key={"tt-in-" + handleId}>
+          <Tooltip
+            title={<PortTooltipContent port={p} value={value} lang={lang} />}
+            placement="left"
+            mouseEnterDelay={0}
+            destroyOnHidden
+            key={"tt-in-" + handleId}
+            {...previewProps(previewKey)}
+          >
             <Handle
               type="target"
               position={Position.Left}
@@ -182,6 +251,7 @@ function CustomNode({ data, selected }: NodeProps) {
               data-testid={"port-in-" + handleId}
               className="workflow-node-handle workflow-node-handle--input"
               style={portStyle(i, inputSlots.length, "left")}
+              {...previewProps(previewKey)}
             />
           </Tooltip>
         );
@@ -195,10 +265,23 @@ function CustomNode({ data, selected }: NodeProps) {
           <span className="workflow-node__title" title={label}>{label}</span>
           <span className="workflow-node__operator-id">{opId}</span>
         </div>
-        <span className="workflow-node__status" data-testid="workflow-node-status">
-          <span className="workflow-node__status-icon">{cfg.icon}</span>
-          {statusLabel}
-        </span>
+        {canOpenError ? (
+          <button
+            type="button"
+            className="workflow-node__status workflow-node__status--interactive"
+            data-testid="workflow-node-status"
+            onClick={openErrorDetails}
+            aria-label={lang === "zh" ? `${statusLabel}，查看错误详情` : `${statusLabel}, view error details`}
+          >
+            <span className="workflow-node__status-icon">{cfg.icon}</span>
+            {statusLabel}
+          </button>
+        ) : (
+          <span className="workflow-node__status" data-testid="workflow-node-status">
+            <span className="workflow-node__status-icon">{cfg.icon}</span>
+            {statusLabel}
+          </span>
+        )}
       </div>
 
       <div className="workflow-node__signals" aria-hidden="true">
@@ -206,13 +289,26 @@ function CustomNode({ data, selected }: NodeProps) {
         <span>OUT {outputs.length}</span>
       </div>
 
-      {status === "failed" && (data as any).error && (
-        <Tooltip title={String((data as any).error)}>
-          <div className="workflow-node__error">
-            {String((data as any).error).slice(0, 60)}
-          </div>
-        </Tooltip>
+      {errorStatus && nodeError && (
+        <button type="button" className="workflow-node__error workflow-node__error--interactive" onClick={openErrorDetails}>
+          {(nodeError.message || nodeError.code || (lang === "zh" ? "节点执行失败" : "Node execution failed")).slice(0, 60)}
+        </button>
       )}
+
+      <Modal
+        title={lang === "zh" ? "节点错误详情" : "Node error details"}
+        open={errorOpen}
+        onCancel={() => setErrorOpen(false)}
+        footer={null}
+        destroyOnHidden
+      >
+        <div className="workflow-node__error-details" data-testid="workflow-node-error-modal">
+          <div><span>{lang === "zh" ? "错误码" : "Error code"}</span><code>{nodeError?.code || "-"}</code></div>
+          <div><span>{lang === "zh" ? "错误消息" : "Message"}</span><p>{nodeError?.message || "-"}</p></div>
+          <div><span>{lang === "zh" ? "节点 ID" : "Node ID"}</span><code>{nodeError?.nodeId || nodeId}</code></div>
+          <div><span>{lang === "zh" ? "尝试次数" : "Attempt"}</span><code>{nodeError?.attempt ?? "-"}</code></div>
+        </div>
+      </Modal>
 
       {status === "running" && (
         <Progress className="workflow-node__progress" percent={progress} size="small" status="active"
@@ -220,24 +316,17 @@ function CustomNode({ data, selected }: NodeProps) {
       )}
 
       {outputSlots.map(({ port: p, handleId }, i: number) => {
-        const preview = buildPortPreview(nodeId, p.name, "out", allNodes, allEdges, nodeResults, lang);
-        const portLabel = (p.label || p.name) + (p.type ? " (" + p.type + ")" : "");
-        const tooltipContent = (
-          <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>{portLabel}</div>
-            {preview ? (
-              <div className="workflow-port-tooltip__preview">
-                {preview}
-              </div>
-            ) : (
-              <div className="workflow-port-tooltip__empty">
-                {lang === "zh" ? "暂无数据" : "No data available"}
-              </div>
-            )}
-          </div>
-        );
+        const previewKey = `out:${handleId}`;
+        const value = resolvePortValue(nodeId, p.name, "out", allEdges, nodeResults);
         return (
-          <Tooltip title={tooltipContent} placement="right" mouseEnterDelay={0.3} key={"tt-out-" + handleId}>
+          <Tooltip
+            title={<PortTooltipContent port={p} value={value} lang={lang} />}
+            placement="right"
+            mouseEnterDelay={0}
+            destroyOnHidden
+            key={"tt-out-" + handleId}
+            {...previewProps(previewKey)}
+          >
             <Handle
               type="source"
               position={Position.Right}
@@ -245,6 +334,7 @@ function CustomNode({ data, selected }: NodeProps) {
               data-testid={"port-out-" + handleId}
               className="workflow-node-handle workflow-node-handle--output"
               style={portStyle(i, outputSlots.length, "right")}
+              {...previewProps(previewKey)}
             />
           </Tooltip>
         );

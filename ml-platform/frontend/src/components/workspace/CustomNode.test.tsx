@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ReactFlowProvider } from "reactflow";
 import { beforeEach, describe, expect, it } from "vitest";
 import CustomNode from "./CustomNode";
@@ -104,6 +104,91 @@ describe("CustomNode visual structure", () => {
     expect(screen.getByTestId("workflow-node-status")).toBeInTheDocument();
     expect(screen.getByTestId("port-in-source")).toBeInTheDocument();
     expect(screen.getByTestId("port-out-data")).toBeInTheDocument();
+  });
+
+  it("shows endpoint metadata and data preview, hides on click, and reopens after re-hover", async () => {
+    useWorkflowStore.setState({
+      nodeResults: { "node-preview": { data: [{ id: 1, value: "ok" }] } },
+      edges: [],
+    });
+
+    render(
+      <ReactFlowProvider>
+        <CustomNode
+          id="node-preview"
+          type="custom"
+          selected={false}
+          dragging={false}
+          zIndex={0}
+          isConnectable
+          xPos={0}
+          yPos={0}
+          data={{
+            nodeId: "node-preview",
+            operatorId: "csv_import",
+            label: "CSV Import",
+            outputs: [{ name: "data", label: "Data", type: "DataTable", format: "records" }],
+            inputs: [],
+          }}
+        />
+      </ReactFlowProvider>,
+    );
+
+    const endpoint = screen.getByTestId("port-out-data");
+    fireEvent.mouseEnter(endpoint);
+    expect(await screen.findByText("DataTable")).toBeInTheDocument();
+    expect(screen.getByText("records")).toBeInTheDocument();
+    expect(screen.getByText(/2 列 × 1 行/)).toBeInTheDocument();
+    expect(screen.getAllByText(/id/).length).toBeGreaterThan(0);
+
+    fireEvent.click(endpoint);
+    await waitFor(() => expect(screen.queryByText("DataTable")).not.toBeInTheDocument());
+
+    fireEvent.mouseLeave(endpoint);
+    fireEvent.mouseEnter(endpoint);
+    expect(await screen.findByText("DataTable")).toBeInTheDocument();
+  });
+
+  it("opens failed node error details from the status label", async () => {
+    useWorkflowStore.setState({
+      nodeErrors: {
+        "node-failed": {
+          code: "NODE_EXECUTION_FAILED",
+          message: "operator failed",
+          nodeId: "node-failed",
+          attempt: 2,
+        },
+      },
+    });
+
+    render(
+      <ReactFlowProvider>
+        <CustomNode
+          id="node-failed"
+          type="custom"
+          selected={false}
+          dragging={false}
+          zIndex={0}
+          isConnectable
+          xPos={0}
+          yPos={0}
+          data={{
+            nodeId: "node-failed",
+            operatorId: "csv_import",
+            label: "CSV Import",
+            status: "failed",
+            outputs: [],
+            inputs: [],
+          }}
+        />
+      </ReactFlowProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId("workflow-node-status"));
+    expect(await screen.findByText("NODE_EXECUTION_FAILED")).toBeInTheDocument();
+    expect(screen.getAllByText("operator failed").length).toBeGreaterThan(0);
+    expect(screen.getByText("node-failed")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
   });
 });
 describe("CustomNode visual density", () => {

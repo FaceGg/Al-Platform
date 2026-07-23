@@ -596,6 +596,25 @@ html body {
   white-space: nowrap;
 }
 
+.workflow-node__status--interactive,
+.workflow-node__error--interactive {
+  font: inherit;
+  cursor: pointer;
+}
+
+.workflow-node__status--interactive {
+  appearance: none;
+  text-align: left;
+}
+
+.workflow-node__status--interactive:hover,
+.workflow-node__status--interactive:focus-visible,
+.workflow-node__error--interactive:hover,
+.workflow-node__error--interactive:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
+
 .workflow-node__status-icon {
   display: inline-flex;
   font-size: 11px;
@@ -628,6 +647,43 @@ html body {
   white-space: nowrap;
 }
 
+.workflow-node__error--interactive {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.workflow-node__error-details {
+  display: grid;
+  gap: 12px;
+}
+
+.workflow-node__error-details > div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.workflow-node__error-details span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.workflow-node__error-details code,
+.workflow-node__error-details p {
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.workflow-node__error-details code {
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+}
+
 .workflow-node__progress {
   margin-top: 7px;
 }
@@ -655,6 +711,48 @@ html body {
   font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
   white-space: pre-wrap;
+}
+
+.workflow-port-tooltip {
+  min-width: 190px;
+  max-width: 320px;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workflow-port-tooltip__title {
+  margin-bottom: 5px;
+  font-weight: 700;
+}
+
+.workflow-port-tooltip__meta {
+  display: flex;
+  gap: 7px;
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.workflow-port-tooltip__meta span,
+.workflow-port-tooltip__section-label {
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.workflow-port-tooltip__section-label {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.workflow-port-tooltip__sample {
+  max-width: 100%;
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.84);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .workflow-port-tooltip__empty {

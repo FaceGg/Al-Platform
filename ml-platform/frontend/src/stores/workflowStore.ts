@@ -5,6 +5,46 @@ import type { ReactFlowInstance } from "reactflow";
 export type WorkflowRunStatus = "pending" | "running" | "cancel_requested" | "completed" | "failed" | "cancelled";
 export type NodeRunStatus = "pending" | "running" | "completed" | "failed" | "timed_out" | "cancelled" | "skipped";
 
+export interface NodeErrorDetails {
+  code: string | null;
+  message: string;
+  nodeId: string;
+  attempt: number | null;
+  details?: Record<string, any> | null;
+}
+
+export type NodeErrorInput = Partial<NodeErrorDetails> & {
+  error?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  error_details?: Record<string, any> | null;
+  node_id?: string | null;
+};
+
+/** Convert run/WebSocket error payloads to one stable shape for the canvas. */
+export function normalizeNodeError(
+  nodeId: string,
+  input?: NodeErrorInput | string | null,
+): NodeErrorDetails | null {
+  if (input == null) return null;
+  const payload: NodeErrorInput = typeof input === "string" ? { message: input } : input;
+  const code = payload.code ?? payload.errorCode ?? payload.error_code ?? null;
+  const message = payload.message ?? payload.errorMessage ?? payload.error_message ?? payload.error ?? "";
+  const details = payload.details ?? payload.error_details ?? null;
+  if (!code && !message && !details) return null;
+  const attemptValue = payload.attempt;
+  const attempt = attemptValue == null ? null : Number(attemptValue);
+  return {
+    code: code ? String(code) : null,
+    message: String(message || ""),
+    nodeId: String(payload.nodeId ?? payload.node_id ?? nodeId),
+    attempt: Number.isFinite(attempt) ? attempt : null,
+    ...(details ? { details } : {}),
+  };
+}
+
 /** Strip the legacy dynamic-slot suffix while preserving the logical handle name. */
 export function normalizeWorkflowHandle(handle?: string | null): string | null {
   if (handle == null) return null;
@@ -25,6 +65,7 @@ export interface WorkflowState {
   workflowStatus: WorkflowRunStatus;
   nodeStatuses: Record<string, NodeRunStatus>;
   nodeResults: Record<string, any>;
+  nodeErrors: Record<string, NodeErrorDetails>;
   nodeProgress: Record<string, number>;
   operators: any[];
   reactFlowInstance: ReactFlowInstance | null;
@@ -42,6 +83,7 @@ export interface WorkflowState {
   setWorkflowStatus: (status: WorkflowRunStatus) => void;
   setNodeStatus: (nodeId: string, status: NodeRunStatus) => void;
   setNodeResult: (nodeId: string, result: any) => void;
+  setNodeError: (nodeId: string, error: NodeErrorInput | string | null) => void;
   setNodeProgress: (nodeId: string, progress: number) => void;
   setReactFlowInstance: (instance: ReactFlowInstance | null) => void;
   removeEdge: (edgeId: string) => void;
@@ -60,6 +102,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   workflowStatus: "pending",
   nodeStatuses: {},
   nodeResults: {},
+  nodeErrors: {},
   nodeProgress: {},
   operators: [],
   reactFlowInstance: null,
@@ -146,6 +189,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       nodeResults: { ...state.nodeResults, [nodeId]: result },
     })),
 
+  setNodeError: (nodeId, error) =>
+    set((state) => {
+      const normalized = normalizeNodeError(nodeId, error);
+      if (!normalized) {
+        const nodeErrors = { ...state.nodeErrors };
+        delete nodeErrors[nodeId];
+        return { nodeErrors };
+      }
+      return { nodeErrors: { ...state.nodeErrors, [nodeId]: normalized } };
+    }),
+
   setNodeProgress: (nodeId, progress) =>
     set((state) => ({
       nodeProgress: { ...state.nodeProgress, [nodeId]: progress },
@@ -180,6 +234,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({
       nodeStatuses: {},
       nodeResults: {},
+      nodeErrors: {},
       nodeProgress: {},
       isRunning: false,
       currentRunId: null,
@@ -193,6 +248,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       selectedNode: null,
       nodeStatuses: {},
       nodeResults: {},
+      nodeErrors: {},
       nodeProgress: {},
       isRunning: false,
       currentRunId: null,

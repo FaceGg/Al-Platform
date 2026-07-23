@@ -10,7 +10,7 @@ import OperatorPanel from "../components/workspace/OperatorPanel";
 import WorkflowCanvas from "../components/workspace/WorkflowCanvas";
 import NodeConfigPanel from "../components/workspace/NodeConfigPanel";
 import ExecutionProgress from "../components/workspace/ExecutionProgress";
-import { normalizeWorkflowHandle, useWorkflowStore } from "../stores/workflowStore";
+import { normalizeNodeError, normalizeWorkflowHandle, useWorkflowStore } from "../stores/workflowStore";
 import type { NodeRunStatus, WorkflowRunStatus } from "../stores/workflowStore";
 import { deleteWorkflowVersion, listWorkflowVersions, publishWorkflow, restoreWorkflowVersion, WorkflowVersionSummary } from "../api/workflowVersions";
 import { useI18n } from "../i18n";
@@ -72,7 +72,7 @@ export default function WorkspacePage() {
   const navigate = useNavigate();
   const {
     operators, setOperators, setNodes, setEdges,
-    isRunning, setIsRunning, setNodeStatus, setNodeResult, setNodeProgress, resetExecution,
+    isRunning, setIsRunning, setNodeStatus, setNodeResult, setNodeError, setNodeProgress, resetExecution,
     currentRunId, setCurrentRunId, setWorkflowStatus,
     reset,
   } = useWorkflowStore();
@@ -297,6 +297,29 @@ export default function WorkspacePage() {
       setCurrentRunId(runId);
       setWorkflowStatus("pending");
 
+      const persistNodeRun = (nodeRun: any) => {
+        const nodeId = String(nodeRun.node_id);
+        const status = nodeRun.status as NodeRunStatus;
+        setNodeStatus(nodeId, status);
+        if (nodeRun.result !== undefined && nodeRun.result !== null) {
+          setNodeResult(nodeId, nodeRun.result);
+        }
+        const resultError = nodeRun.result && typeof nodeRun.result === "object"
+          ? nodeRun.result
+          : undefined;
+        const explicitError = nodeRun.error || nodeRun.error_code || nodeRun.error_message ||
+          nodeRun.error_details || resultError?.error || resultError?.error_code || resultError?.error_message;
+        if (explicitError && nodeId !== "__wf__") {
+          const nodeError = normalizeNodeError(nodeId, {
+            ...nodeRun,
+            error: nodeRun.error ?? resultError?.error,
+            error_code: nodeRun.error_code ?? resultError?.error_code,
+            error_message: nodeRun.error_message ?? resultError?.error_message ?? resultError?.error,
+          });
+          if (nodeError) setNodeError(nodeId, nodeError);
+        }
+      };
+
       const reconcileRun = async () => {
         try {
           const response = await apiClient.get("/runs/" + runId);
@@ -304,8 +327,7 @@ export default function WorkspacePage() {
           setWorkflowStatus(run.status as WorkflowRunStatus);
           setIsRunning(["pending", "running", "cancel_requested"].includes(run.status));
           for (const nodeRun of run.node_runs || []) {
-            setNodeStatus(String(nodeRun.node_id), nodeRun.status as NodeRunStatus);
-            if (nodeRun.result) setNodeResult(String(nodeRun.node_id), nodeRun.result);
+            persistNodeRun(nodeRun);
           }
         } catch {
           message.warning("无法恢复运行状态");
@@ -319,6 +341,7 @@ export default function WorkspacePage() {
           const failedAttempt = (run.node_runs || []).find((item: any) =>
             ["failed", "timed_out"].includes(item.status)
           );
+          if (failedAttempt) persistNodeRun(failedAttempt);
           const lines = [
             run.error_code ? `错误码：${run.error_code}` : "",
             run.error_message || fallback,
@@ -339,9 +362,15 @@ export default function WorkspacePage() {
       ws.onmessage = (event: MessageEvent) => {
         const msg = JSON.parse(event.data);
         if (msg.type === "node_status") {
-          setNodeStatus(msg.node_id, msg.status as NodeRunStatus);
+          persistNodeRun({
+            ...msg,
+            node_id: msg.node_id,
+            error: msg.error,
+            error_code: msg.error_code,
+            error_message: msg.error_message,
+            error_details: msg.error_details,
+          });
           if (msg.node_id === "__wf__") setWorkflowStatus(msg.status as WorkflowRunStatus);
-          if (msg.result) setNodeResult(msg.node_id, msg.result);
           if (msg.progress != null) setNodeProgress(msg.node_id, msg.progress);
         } else if (msg.type === "run_completed") {
           setIsRunning(false);

@@ -1,5 +1,5 @@
 ﻿import { describe, it, expect, beforeEach } from "vitest";
-import { useWorkflowStore } from "./workflowStore";
+import { normalizeNodeError, useWorkflowStore } from "./workflowStore";
 
 describe("workflowStore", () => {
   beforeEach(() => {
@@ -12,6 +12,7 @@ describe("workflowStore", () => {
       workflowStatus: "pending",
       nodeStatuses: {},
       nodeResults: {},
+      nodeErrors: {},
       nodeProgress: {},
     });
   });
@@ -47,6 +48,42 @@ describe("workflowStore", () => {
   it("setNodeStatus changes a node status", () => {
     useWorkflowStore.getState().setNodeStatus("n1", "running");
     expect(useWorkflowStore.getState().nodeStatuses["n1"]).toBe("running");
+  });
+
+  it("stores node errors without overwriting status or result", () => {
+    useWorkflowStore.getState().setNodeStatus("n1", "failed");
+    useWorkflowStore.getState().setNodeResult("n1", { data: [{ id: 1 }] });
+    useWorkflowStore.getState().setNodeError("n1", {
+      code: "NODE_EXECUTION_FAILED",
+      message: "operator failed",
+      nodeId: "n1",
+      attempt: 2,
+    });
+
+    const state = useWorkflowStore.getState();
+    expect(state.nodeStatuses["n1"]).toBe("failed");
+    expect(state.nodeResults["n1"]).toEqual({ data: [{ id: 1 }] });
+    expect(state.nodeErrors["n1"]).toEqual({
+      code: "NODE_EXECUTION_FAILED",
+      message: "operator failed",
+      nodeId: "n1",
+      attempt: 2,
+    });
+  });
+
+  it("normalizes persisted and websocket error fields", () => {
+    expect(normalizeNodeError("n1", {
+      error_code: "NODE_TIMED_OUT",
+      error_message: "deadline exceeded",
+      error_details: { node_id: "n1" },
+      attempt: 3,
+    })).toEqual({
+      code: "NODE_TIMED_OUT",
+      message: "deadline exceeded",
+      nodeId: "n1",
+      attempt: 3,
+      details: { node_id: "n1" },
+    });
   });
 
   it("setIsRunning updates running state", () => {
