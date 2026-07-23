@@ -12,10 +12,14 @@ async def chat(
     message: str = Body(...),
     system_prompt: str = Body(default="You are a helpful AI assistant for welding manufacturing."),
     temperature: float = Body(default=0.7, ge=0, le=1),
+    api_key: str | None = Body(default=None, max_length=512),
+    model: str | None = Body(default=None, max_length=256),
     current_user: User = Depends(get_current_user),
 ):
     """Send a message to the configured LLM and get a response."""
-    if not settings.llm_api_key:
+    resolved_api_key = (api_key or settings.llm_api_key or "").strip()
+    resolved_model = (model or settings.llm_model or "").strip()
+    if not resolved_api_key:
         return {"reply": "LLM API key not configured. Please set LLM_API_KEY in environment.", "type": "error"}
 
     try:
@@ -24,11 +28,11 @@ async def chat(
             resp = await client.post(
                 settings.llm_api_url,
                 headers={
-                    "Authorization": f"Bearer {settings.llm_api_key}",
+                    "Authorization": f"Bearer {resolved_api_key}",
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": settings.llm_model,
+                    "model": resolved_model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": message},

@@ -1,10 +1,12 @@
 """Monitor & Resource API integration tests."""
 import sys, os, unittest
+from unittest.mock import patch
 sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
 from app.main import app
 from app.database import Base, engine
+from app.api import monitor
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
@@ -62,6 +64,13 @@ class TestMonitorAPI(unittest.TestCase):
         r = client.get("/api/monitor/current", headers=self.h)
         self.assertIn("gpu", r.json())
         self.assertIsInstance(r.json()["gpu"], list)
+
+    @patch("app.api.monitor.Path.is_file", return_value=True)
+    @patch("app.api.monitor.shutil.which", return_value=None)
+    @patch("app.api.monitor.os.name", "nt")
+    def test_windows_gpu_uses_default_nvsm_path_when_not_on_path(self, _which, _is_file):
+        executable = monitor.resolve_nvidia_smi_executable()
+        self.assertTrue(executable.lower().endswith("nvidia-smi.exe"))
 
     def test_06_history_metrics(self):
         r = client.get("/api/monitor/history?limit=10", headers=self.h)

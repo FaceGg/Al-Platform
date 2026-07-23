@@ -37,31 +37,26 @@ export default function ExecutionProgress() {
   const nodeUnit = "\u4e2a\u8282\u70b9"; // 个节点
 
   return (
-    <div data-testid="execution-progress" data-status={progressStatus} style={{
-      position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)",
-      background: "#fff", padding: "8px 16px", borderRadius: 8,
-      boxShadow: "0 2px 8px rgba(0,0,0,0.15)", zIndex: 10,
-      minWidth: 300, maxWidth: "80%",
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-        <span style={{ fontSize: 12 }}>{progressLabel}</span>
-        <span style={{ fontSize: 12 }}>{finished}/{total} {nodeUnit}</span>
+    <div className={`execution-progress execution-progress--${progressStatus}`} data-testid="execution-progress" data-status={progressStatus}>
+      <div className="execution-progress__summary">
+        <span>{progressLabel}</span>
+        <span>{finished}/{total} {nodeUnit}</span>
       </div>
-      <Progress percent={percent} size="small"
+      <Progress className="execution-progress__bar" percent={percent} size="small"
         status={(failed + timedOut) > 0 && !isRunning ? "exception" : isRunning ? "active" : "success"} />
       {running > 0 && (
-        <div style={{ fontSize: 11, color: "#1890ff", marginTop: 2 }}>
+        <div className="execution-progress__running">
           {"\u8fd0\u884c\u4e2d"} {running} {nodeUnit}
         </div>
       )}
-      <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 4 }}>
+      <div className="execution-progress__tags">
         {nodeEntries.slice(0, 8).map(([id, status]) => (
           <Tag key={id} color={
             status === "completed" ? "success" :
             status === "running" ? "processing" :
             status === "failed" || status === "timed_out" ? "error" :
             status === "cancelled" ? "warning" : "default"
-          } style={{ fontSize: 11, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}>
+          } className="execution-progress__tag">
             {nodeLabelMap[id] || id.slice(0, 8)}
           </Tag>
         ))}

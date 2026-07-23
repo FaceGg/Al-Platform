@@ -24,6 +24,7 @@ from app.services.experiment_tracking import (
     MlflowExperimentTracking,
     TrackingNotFound,
     TrackingUnavailable,
+    resolve_tracking_configuration,
 )
 from app.api.project_security import audit_service, require_project_access, resolve_project_access
 from app.services.audit import AuditIntent
@@ -42,14 +43,16 @@ def get_experiment_tracking(request: Request):
     app_settings = getattr(request.app.state, "settings", None)
     if app_settings is None:
         from app.config import settings as app_settings
-    if not app_settings.mlflow_tracking_uri or not app_settings.mlflow_artifact_root:
+    try:
+        tracking_uri, artifact_root = resolve_tracking_configuration(app_settings)
+    except TrackingUnavailable as error:
         raise HTTPException(503, _error(
             "TRACKING_UNAVAILABLE",
-            "Experiment tracking is not configured",
-        ))
+            str(error),
+        )) from error
     configured = MlflowExperimentTracking(
-        client=MlflowClient(tracking_uri=app_settings.mlflow_tracking_uri),
-        artifact_root=app_settings.mlflow_artifact_root,
+        client=MlflowClient(tracking_uri=tracking_uri),
+        artifact_root=artifact_root,
     )
     request.app.state.experiment_tracking = configured
     return configured

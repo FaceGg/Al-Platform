@@ -1,5 +1,5 @@
 import { Input, InputNumber, Select, Switch, Form, Divider, Button, message, Upload, Typography } from "antd";
-import { UploadOutlined } from "@ant-design/icons";
+import { MinusCircleOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import { useI18n } from "../../i18n";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { extractColumnsFromResult, isColumnParam } from "./CustomNode";
@@ -7,6 +7,18 @@ import { useEffect, useState, useMemo } from "react";
 import apiClient from "../../api/client";
 
 const { Text } = Typography;
+
+type JoinKeyPair = { left: string; right: string };
+
+function parseJoinKeyPairs(leftValue: unknown, rightValue: unknown): JoinKeyPair[] {
+  const leftKeys = String(leftValue || "").split(",").map((key) => key.trim());
+  const rightKeys = String(rightValue || "").split(",").map((key) => key.trim());
+  const count = Math.max(leftKeys.filter(Boolean).length, rightKeys.filter(Boolean).length, 1);
+  return Array.from({ length: count }, (_, index) => ({
+    left: leftKeys[index] || "",
+    right: rightKeys[index] || "",
+  }));
+}
 
 function useUpstreamColumns(nodeId: string): string[] {
   const { edges, nodeResults } = useWorkflowStore();
@@ -44,12 +56,33 @@ export function getPortLabel(opId: string, paramName: string, lang: "zh" | "en")
 
 export default function NodeConfigPanel() {
   const { t, lang } = useI18n();
-  const { selectedNode, operators, updateNodeParams, nodeStatuses } = useWorkflowStore();
+  const { selectedNode, operators, updateNodeParams, nodeStatuses, edges, nodeResults } = useWorkflowStore();
   const [params, setParams] = useState<Record<string, any>>({});
   const [uploading, setUploading] = useState(false);
 
   const nodeId = selectedNode?.id || "";
   const upstreamColumns = useUpstreamColumns(nodeId);
+  const joinPairs = useMemo(
+    () => parseJoinKeyPairs(params.left_keys, params.right_keys),
+    [params.left_keys, params.right_keys],
+  );
+  const joinColumnsBySide = useMemo(() => {
+    const columns: Record<"left" | "right", string[]> = { left: [], right: [] };
+    edges
+      .filter((edge) => edge.target === nodeId)
+      .forEach((edge, index) => {
+        const side = edge.targetHandle?.startsWith("right")
+          ? "right"
+          : edge.targetHandle?.startsWith("left") || index === 0
+            ? "left"
+            : "right";
+        columns[side].push(...extractColumnsFromResult(nodeResults[edge.source]));
+      });
+    return {
+      left: [...new Set(columns.left.length ? columns.left : upstreamColumns)],
+      right: [...new Set(columns.right.length ? columns.right : upstreamColumns)],
+    };
+  }, [edges, nodeId, nodeResults, upstreamColumns]);
 
   useEffect(() => {
     if (selectedNode) setParams(selectedNode.data.params || {});
@@ -57,9 +90,9 @@ export default function NodeConfigPanel() {
 
   if (!selectedNode) {
     return (
-      <div style={{ padding: 16, color: "#999" }}>
+      <div className="node-config-panel node-config-panel--empty">
         <Divider>{t.workspace.node_properties}</Divider>
-        <p style={{ textAlign: "center", marginTop: 40 }}>{t.workspace.select_node_hint}</p>
+        <p>{t.workspace.select_node_hint}</p>
       </div>
     );
   }
@@ -71,6 +104,23 @@ export default function NodeConfigPanel() {
     const newParams = { ...params, [name]: value };
     setParams(newParams);
     updateNodeParams(selectedNode.id, newParams);
+  };
+
+  const handleJoinPairsChange = (pairs: JoinKeyPair[]) => {
+    const newParams = {
+      ...params,
+      left_keys: pairs.map((pair) => pair.left.trim()).join(","),
+      right_keys: pairs.map((pair) => pair.right.trim()).join(","),
+    };
+    setParams(newParams);
+    updateNodeParams(selectedNode.id, newParams);
+  };
+
+  const handleJoinPairChange = (index: number, side: "left" | "right", value: string) => {
+    const nextPairs = joinPairs.map((pair, pairIndex) => (
+      pairIndex === index ? { ...pair, [side]: value } : pair
+    ));
+    handleJoinPairsChange(nextPairs);
   };
 
   const handleFileUpload = async (file: File, paramName: string) => {
@@ -100,19 +150,7 @@ export default function NodeConfigPanel() {
     if (isCSVImport && p.name === "file_path" && sourceValue !== "local") return null;
     if (isCSVImport && p.name === "url" && sourceValue !== "url") return null;
 
-    if (operator?.id === "join" && (p.name === "left_keys" || p.name === "right_keys")) {
-      const selected = String(value || "").split(",").map((column) => column.trim()).filter(Boolean);
-      return (
-        <Select
-          mode="multiple"
-          style={{ width: "100%" }}
-          value={selected}
-          onChange={(columns) => handleParamChange(p.name, columns.join(","))}
-          placeholder={getPortLabel("join", p.name, lang) || p.label || p.name}
-          options={upstreamColumns.map((column) => ({ label: column, value: column }))}
-        />
-      );
-    }
+    if (operator?.id === "join" && (p.name === "left_keys" || p.name === "right_keys")) return null;
 
     const colName = isColumnParam(p.name);
     if (colName && upstreamColumns.length > 0 && (p.type === "str" || p.type === "select")) {
@@ -219,27 +257,84 @@ export default function NodeConfigPanel() {
   };
 
   return (
-    <div style={{ padding: 12, overflow: "auto", height: "100%" }}>
-      <Divider plain style={{ margin: "8px 0 12px" }}>
+    <div className="node-config-panel">
+      <Divider plain className="node-config-panel__title">
         {selectedNode.data.label || selectedNode.data.operatorId}
       </Divider>
 
       {upstreamColumns.length > 0 && (
-        <div style={{
-          marginBottom: 10, padding: "6px 8px",
-          background: "#f0f5ff", borderRadius: 6, fontSize: 11,
-          color: "#1d39c4", border: "1px solid #d6e4ff",
-        }}>
+        <div className="node-config-panel__data-hint">
           {"\u8f93\u5165\u6570\u636e\u5217: " + upstreamColumns.slice(0, 8).join(", ")}
           {upstreamColumns.length > 8 && " ...\u7b49" + upstreamColumns.length + "\u5217"}
         </div>
       )}
 
-      <h4 style={{ marginBottom: 8, fontSize: 13, fontWeight: 600 }}>
+      <h4 className="node-config-panel__section-title">
         {t.workspace.params_config}
       </h4>
       {operator?.parameters?.length > 0 ? (
-        <Form layout="vertical" size="small">
+        <Form className="node-config-panel__form" layout="vertical" size="small">
+          {operator?.id === "join" && (
+            <div className="node-config-panel__join-keys">
+              <div className="node-config-panel__join-keys-header">
+                <Text strong>{lang === "zh" ? "键列匹配" : "Key column matching"}</Text>
+                <Button
+                  type="dashed"
+                  size="small"
+                  icon={<PlusOutlined />}
+                  aria-label={lang === "zh" ? "添加键对" : "Add key pair"}
+                  onClick={() => handleJoinPairsChange([...joinPairs, { left: "", right: "" }])}
+                >
+                  {lang === "zh" ? "添加键对" : "Add key pair"}
+                </Button>
+              </div>
+              {joinPairs.map((pair, index) => {
+                const leftOptions = joinColumnsBySide.left.map((column) => ({ label: column, value: column }));
+                const rightOptions = joinColumnsBySide.right.map((column) => ({ label: column, value: column }));
+                return (
+                  <div className="node-config-panel__join-key-row" key={`join-key-${index}`}>
+                    <span className="node-config-panel__join-key-index">{index + 1}</span>
+                    <div className="node-config-panel__join-key-field">
+                      <Text>{lang === "zh" ? "左侧键列" : "Left key column"}</Text>
+                      <Select
+                        showSearch
+                        allowClear
+                        style={{ width: "100%" }}
+                        value={pair.left || undefined}
+                        onChange={(value) => handleJoinPairChange(index, "left", value || "")}
+                        placeholder={lang === "zh" ? "选择左侧键列" : "Select left key column"}
+                        options={leftOptions}
+                      />
+                    </div>
+                    <div className="node-config-panel__join-key-field">
+                      <Text>{lang === "zh" ? "右侧键列" : "Right key column"}</Text>
+                      <Select
+                        showSearch
+                        allowClear
+                        style={{ width: "100%" }}
+                        value={pair.right || undefined}
+                        onChange={(value) => handleJoinPairChange(index, "right", value || "")}
+                        placeholder={lang === "zh" ? "选择右侧键列" : "Select right key column"}
+                        options={rightOptions}
+                      />
+                    </div>
+                    <Button
+                      type="text"
+                      danger
+                      icon={<MinusCircleOutlined />}
+                      aria-label={lang === "zh" ? `删除第${index + 1}组键对` : `Remove key pair ${index + 1}`}
+                      title={lang === "zh" ? "删除键对" : "Remove key pair"}
+                      onClick={() => handleJoinPairsChange(
+                        joinPairs.length > 1
+                          ? joinPairs.filter((_, pairIndex) => pairIndex !== index)
+                          : [{ left: "", right: "" }],
+                      )}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {operator.parameters.map((p: any) => {
             const field = renderParamField(p);
             if (!field) return null;
@@ -255,7 +350,7 @@ export default function NodeConfigPanel() {
           })}
         </Form>
       ) : (
-        <p style={{ color: "#999", fontSize: 12 }}>{t.workspace.no_params}</p>
+        <p className="node-config-panel__empty-copy">{t.workspace.no_params}</p>
       )}
 
       {/* Execution status only - NO result preview */}
@@ -264,21 +359,9 @@ export default function NodeConfigPanel() {
           <Divider plain style={{ margin: "12px 0" }}>
             {t.workspace.execution_status}
           </Divider>
-          <div style={{
-            fontSize: 13, padding: "6px 10px", borderRadius: 6,
-            background:
-              status === "completed" ? "#f6ffed" :
-              status === "running" ? "#e6f7ff" :
-              status === "failed" ? "#fff2f0" : "#fafafa",
-          }}>
+          <div className={`node-config-panel__status node-config-panel__status--${status}`}>
             {t.workspace.status}{" "}
-            <span style={{
-              fontWeight: 600,
-              color:
-                status === "completed" ? "#52c41a" :
-                status === "running" ? "#1890ff" :
-                status === "failed" ? "#ff4d4f" : "#999",
-            }}>
+            <span>
               {status === "completed" ? "\u6210\u529f" :
                status === "running" ? "\u8fd0\u884c\u4e2d" :
                status === "failed" ? "\u5931\u8d25" : "\u5f85\u8fd0\u884c"}

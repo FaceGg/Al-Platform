@@ -62,6 +62,27 @@ class TestKnowledgeAPI(unittest.TestCase):
         self.assertEqual(deleted.status_code, 200)
         client.delete(f"/api/knowledge/bases/{kb['id']}", headers=h)
 
+    def test_03c_list_bases_returns_document_count(self):
+        h = login_headers()
+        kb = client.post(
+            "/api/knowledge/bases",
+            json={"name": "Document count test"},
+            headers=h,
+        ).json()
+        uploaded = client.post(
+            f"/api/knowledge/bases/{kb['id']}/documents",
+            data={"title": "Weld document", "content": "Spot welding knowledge."},
+            headers=h,
+        )
+        self.assertEqual(uploaded.status_code, 200)
+
+        listed = client.get("/api/knowledge/bases", headers=h)
+        self.assertEqual(listed.status_code, 200)
+        item = next(entry for entry in listed.json() if entry["id"] == kb["id"])
+        self.assertEqual(item["document_count"], 1)
+
+        client.delete(f"/api/knowledge/bases/{kb['id']}", headers=h)
+
     def test_04_add_entity_and_graph(self):
         h = login_headers()
         r = client.post("/api/knowledge/bases", json={

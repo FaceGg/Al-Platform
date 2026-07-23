@@ -4,6 +4,8 @@ import {
   approveModelVersion,
   createDeployment,
   createRegisteredModel,
+  deleteDeployment,
+  deleteRegisteredModel,
   listDeployments,
   listRegisteredModels,
   listModelVersions,
@@ -36,6 +38,7 @@ describe("modelRegistry client", () => {
 
   it("sends exact registry and lifecycle payloads", async () => {
     const post = vi.spyOn(apiClient, "post").mockResolvedValue({ data: { id: "ok" } });
+    const remove = vi.spyOn(apiClient, "delete").mockResolvedValue({ data: { id: "ok" } });
     await createRegisteredModel("p1", { name: "Weld", description: "Classifier" });
     await registerPlatformVersion("m1", "library-1");
     await registerOnnxVersion("m1", {
@@ -49,6 +52,8 @@ describe("modelRegistry client", () => {
     await startDeployment("d1");
     await stopDeployment("d1");
     await predictDeployment("d1", [{ current: 1.2, voltage: 3.4 }]);
+    await deleteRegisteredModel("m1");
+    await deleteDeployment("d1");
     expect(post.mock.calls).toEqual([
       ["/projects/p1/registered-models", { name: "Weld", description: "Classifier" }],
       ["/registered-models/m1/versions", { source_kind: "platform_joblib", source_model_library_id: "library-1" }],
@@ -59,6 +64,10 @@ describe("modelRegistry client", () => {
       ["/inference-deployments/d1/start"],
       ["/inference-deployments/d1/stop"],
       ["/inference-deployments/d1/predict", { records: [{ current: 1.2, voltage: 3.4 }] }],
+    ]);
+    expect(remove.mock.calls).toEqual([
+      ["/registered-models/m1"],
+      ["/inference-deployments/d1"],
     ]);
   });
 

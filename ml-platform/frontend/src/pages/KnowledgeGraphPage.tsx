@@ -44,9 +44,19 @@ export default function KnowledgeGraphPage() {
       .then((res) => {
         const data = res.data;
         const nodes = (data.nodes || []).map((n: any, i: number) => ({
-          ...n, x: Math.random() * 600 + 50, y: Math.random() * 400 + 50,
+          id: n.id,
+          label: n.label ?? n.name ?? n.id,
+          type: n.type ?? n.entity_type ?? "entity",
+          x: Math.random() * 600 + 50,
+          y: Math.random() * 400 + 50,
         }));
-        setGraphData({ nodes, edges: data.edges || [] });
+        const edges = (data.edges || []).map((edge: any) => ({
+          source: edge.source ?? edge.source_id,
+          target: edge.target ?? edge.target_id,
+          label: edge.label ?? edge.relation_type,
+          type: edge.type ?? edge.relation_type,
+        }));
+        setGraphData({ nodes, edges });
       })
       .catch(() => message.error(t.common.error))
       .finally(() => setLoading(false));
@@ -168,7 +178,7 @@ export default function KnowledgeGraphPage() {
 
   const addEntity = async (values: any) => {
     try {
-      await apiClient.post("/knowledge/bases/" + selectedKb + "/entities", values);
+      await apiClient.post("/knowledge/bases/" + selectedKb + "/graph/entities", values);
       message.success(t.common.success);
       form.resetFields();
       loadGraph();
@@ -179,7 +189,7 @@ export default function KnowledgeGraphPage() {
 
   const addRelation = async (values: any) => {
     try {
-      await apiClient.post("/knowledge/bases/" + selectedKb + "/relations", values);
+      await apiClient.post("/knowledge/bases/" + selectedKb + "/graph/relations", values);
       message.success(t.common.success);
       edgeForm.resetFields();
       loadGraph();
@@ -190,7 +200,7 @@ export default function KnowledgeGraphPage() {
 
   const deleteEntity = async (id: string) => {
     try {
-      await apiClient.delete("/knowledge/bases/" + selectedKb + "/entities/" + id);
+      await apiClient.delete("/knowledge/graph/entities/" + id);
       message.success(t.common.success);
       loadGraph();
     } catch (e: any) {
@@ -234,7 +244,7 @@ export default function KnowledgeGraphPage() {
               <Form.Item name="name" label={t.knowledge.entity_name} rules={[{ required: true }]}>
                 <Input />
               </Form.Item>
-              <Form.Item name="type" label={t.knowledge.entity_type}>
+              <Form.Item name="entity_type" label={t.knowledge.entity_type}>
                 <Input />
               </Form.Item>
               <Button type="primary" htmlType="submit" icon={<PlusOutlined />} block>
@@ -250,7 +260,7 @@ export default function KnowledgeGraphPage() {
               <Form.Item name="target_id" label="Target ID" rules={[{ required: true }]}>
                 <Input placeholder="target entity id" />
               </Form.Item>
-              <Form.Item name="type" label={t.knowledge.relation_type}>
+              <Form.Item name="relation_type" label={t.knowledge.relation_type}>
                 <Input />
               </Form.Item>
               <Button type="primary" htmlType="submit" icon={<PlusOutlined />} block>

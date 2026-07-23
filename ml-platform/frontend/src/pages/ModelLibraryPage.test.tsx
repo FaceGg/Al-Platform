@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   listRegisteredModels: vi.fn(), createRegisteredModel: vi.fn(), listModelVersions: vi.fn(),
   registerPlatformVersion: vi.fn(), approveModelVersion: vi.fn(), rejectModelVersion: vi.fn(),
   listDeployments: vi.fn(), createDeployment: vi.fn(), startDeployment: vi.fn(),
-  stopDeployment: vi.fn(), predictDeployment: vi.fn(),
+  stopDeployment: vi.fn(), predictDeployment: vi.fn(), deleteRegisteredModel: vi.fn(), deleteDeployment: vi.fn(),
 }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
@@ -20,7 +20,7 @@ vi.mock("../api/client", () => ({
   formatApiError: (_error: unknown, fallback: string) => fallback,
 }));
 vi.mock("../i18n", () => ({ useI18n: () => ({ t: {
-  common: { create: "Create", cancel: "Cancel", refresh: "Refresh", close: "Close" },
+  common: { create: "Create", cancel: "Cancel", delete: "Delete", refresh: "Refresh", close: "Close" },
   model: { actions: "Actions" },
   modelRegistry: {
     title: "Model operations", project: "Project", selectProject: "Select project",
@@ -113,3 +113,13 @@ describe("ModelLibraryPage", () => {
     expect(screen.queryByRole("button", { name: "Create deployment" })).not.toBeInTheDocument();
   });
 });
+  it("shows delete actions for registered models and stopped deployments", async () => {
+    mocks.listDeployments.mockResolvedValue([deployment]);
+    render(<AntApp><ModelLibraryPage /></AntApp>);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Project" }));
+    fireEvent.click(await screen.findByText("Weld line (owner)"));
+
+    expect(await screen.findByRole("button", { name: "Delete registered model Weld fault" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Deployments" }));
+    expect(await screen.findByRole("button", { name: "Delete deployment line-a" })).toBeInTheDocument();
+  });

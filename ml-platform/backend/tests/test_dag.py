@@ -47,6 +47,20 @@ class TestDAGValidation(unittest.TestCase):
         errors = ex.validate()
         self.assertTrue(any("nonexistent_op" in e for e in errors))
 
+    def test_preserves_multiple_ports_between_same_nodes(self):
+        nodes = [
+            {"id": "source", "operator_id": "csv_import", "label": "Source", "params": {}},
+            {"id": "join", "operator_id": "join", "label": "Join", "params": {}},
+        ]
+        edges = [
+            {"source": "source", "target": "join", "source_port": "data", "target_port": "left"},
+            {"source": "source", "target": "join", "source_port": "data", "target_port": "right"},
+        ]
+
+        errors = DAGExecutor(nodes, edges).validate()
+
+        self.assertFalse(any("missing required input" in error for error in errors))
+
 
 class TestOperatorRegistry(unittest.TestCase):
     def test_operator_count(self):

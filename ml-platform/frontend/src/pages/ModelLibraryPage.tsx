@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert, Button, Descriptions, Drawer, Empty, Form, Input, Modal, Progress,
-  Select, Space, Table, Tabs, Tag, Typography, Upload, message,
+  Select, Space, Table, Tabs, Tag, Tooltip, Typography, Upload, message,
 } from "antd";
 import {
-  CheckOutlined, CloudServerOutlined, EyeOutlined, PlayCircleOutlined,
+  CheckOutlined, CloudServerOutlined, DeleteOutlined, EyeOutlined, PlayCircleOutlined,
   PlusOutlined, ReloadOutlined, StopOutlined,
 } from "@ant-design/icons";
 import apiClient, { formatApiError } from "../api/client";
 import {
-  approveModelVersion, createDeployment, createRegisteredModel,
+  approveModelVersion, createDeployment, createRegisteredModel, deleteDeployment, deleteRegisteredModel,
   type InferenceDeployment, type InferenceRecord, listDeployments,
   listModelVersions, listRegisteredModels, type ModelVersion,
   predictDeployment, type PredictionResult, type ProjectOption,
@@ -202,6 +202,57 @@ export default function ModelLibraryPage() {
     }
   };
 
+  const confirmDeleteModel = (model: RegisteredModel) => {
+    const label = copy.deleteRegisteredModel || `${t.common.delete} registered model`;
+    Modal.confirm({
+      title: `${label} ${model.name}?`,
+      okText: t.common.delete,
+      okType: "danger",
+      cancelText: t.common.cancel,
+      onOk: async () => {
+        setBusyId(model.id);
+        try {
+          await deleteRegisteredModel(model.id);
+          setModels((current) => current.filter((item) => item.id !== model.id));
+          setVersions((current) => {
+            const next = { ...current };
+            delete next[model.id];
+            return next;
+          });
+          setVersionModel((current) => current?.id === model.id ? undefined : current);
+          message.success(t.common.success);
+        } catch (cause) {
+          message.error(formatApiError(cause, copy.commandFailed));
+        } finally {
+          setBusyId(undefined);
+        }
+      },
+    });
+  };
+
+  const confirmDeleteDeployment = (deployment: InferenceDeployment) => {
+    const label = copy.deleteDeployment || `${t.common.delete} deployment`;
+    Modal.confirm({
+      title: `${label} ${deployment.name}?`,
+      okText: t.common.delete,
+      okType: "danger",
+      cancelText: t.common.cancel,
+      onOk: async () => {
+        setBusyId(deployment.id);
+        try {
+          await deleteDeployment(deployment.id);
+          setDeployments((current) => current.filter((item) => item.id !== deployment.id));
+          setTestDeployment((current) => current?.id === deployment.id ? undefined : current);
+          message.success(t.common.success);
+        } catch (cause) {
+          message.error(formatApiError(cause, copy.commandFailed));
+        } finally {
+          setBusyId(undefined);
+        }
+      },
+    });
+  };
+
   const submitPrediction = async () => {
     if (!testDeployment) return;
     try {
@@ -220,9 +271,10 @@ export default function ModelLibraryPage() {
     { title: copy.name, dataIndex: "name", key: "name", render: (value: string, row: RegisteredModel) => <Space direction="vertical" size={0}><Text strong>{value}</Text><Text type="secondary">{row.description}</Text></Space> },
     { title: copy.latestVersion, dataIndex: "latest_version", key: "latest_version", width: 140, render: (value: number | null) => value ? `v${value}` : "-" },
     { title: copy.status, dataIndex: "latest_approval_status", key: "status", width: 140, render: (value: string | null) => value ? <Tag color={statusColor(value)}>{statusLabel(value)}</Tag> : "-" },
-    { title: t.model.actions, key: "actions", width: 260, render: (_: unknown, row: RegisteredModel) => <Space wrap>
+    { title: t.model.actions, key: "actions", width: 300, render: (_: unknown, row: RegisteredModel) => <Space wrap>
       <Button icon={<EyeOutlined />} aria-label={`${copy.versions} ${row.name}`} onClick={() => setVersionModel(row)}>{copy.versions}</Button>
       {canRegister && <Button icon={<PlusOutlined />} aria-label={`${copy.registerVersion} ${row.name}`} onClick={() => setRegisterModel(row)}>{copy.registerVersion}</Button>}
+      {canRegister && <Tooltip title={`${copy.deleteRegisteredModel || `${t.common.delete} registered model`} ${row.name}`}><Button danger type="text" icon={<DeleteOutlined />} loading={busyId === row.id} aria-label={`${copy.deleteRegisteredModel || `${t.common.delete} registered model`} ${row.name}`} onClick={() => confirmDeleteModel(row)} /></Tooltip>}
     </Space> },
   ];
 
@@ -240,27 +292,30 @@ export default function ModelLibraryPage() {
         setPrediction(undefined);
         predictionForm.setFieldValue("records", JSON.stringify([record], null, 2));
       }}>{copy.onlineTest}</Button>}
+      {canRegister && <Tooltip title={`${copy.deleteDeployment || `${t.common.delete} deployment`} ${row.name}`}><Button danger type="text" icon={<DeleteOutlined />} loading={busyId === row.id} disabled={row.desired_state !== "stopped" || row.observed_state !== "stopped"} aria-label={`${copy.deleteDeployment || `${t.common.delete} deployment`} ${row.name}`} onClick={() => confirmDeleteDeployment(row)} /></Tooltip>}
     </Space> },
   ];
 
   return <AppLayout>
-    <section style={{ maxWidth: 1440, margin: "0 auto" }}>
+    <section className="page-shell model-library-page fade-in">
       <Space direction="vertical" size={20} style={{ width: "100%" }}>
-        <div>
-          <Title level={3} style={{ marginBottom: 12 }}>{copy.title}</Title>
+        <div className="page-header page-header--stacked">
+          <div className="page-header-copy">
+            <Title level={3} className="page-title">{copy.title}</Title>
+          </div>
           <Select aria-label={copy.project} placeholder={copy.selectProject} value={projectId} onChange={setProjectId} style={{ width: "min(420px, 100%)" }} options={projects.map((item) => ({ value: item.id, label: `${item.name} (${statusLabel(item.project_role)})` }))} />
         </div>
         {!projectId ? <Empty description={copy.selectHint} /> : <>
           {error && <Alert type="error" showIcon message={error} action={<Button icon={<ReloadOutlined />} onClick={() => void loadProject(projectId)}>{t.common.refresh}</Button>} />}
-          <Tabs activeKey={tab} onChange={setTab} items={[
-            { key: "models", label: copy.models, children: <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Tabs className="model-library-tabs" activeKey={tab} onChange={setTab} items={[
+            { key: "models", label: copy.models, children: <div className="table-surface table-surface--padded"><Space direction="vertical" size={12} style={{ width: "100%" }}>
               {canRegister && <Button type="primary" icon={<PlusOutlined />} aria-label={copy.register} onClick={() => setModelOpen(true)}>{copy.register}</Button>}
               <Table rowKey="id" loading={loading} dataSource={models} columns={modelColumns} locale={{ emptyText: <Empty description={copy.emptyModels} /> }} scroll={{ x: 760 }} pagination={false} />
-            </Space> },
-            { key: "deployments", label: copy.deployments, children: <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            </Space></div> },
+            { key: "deployments", label: copy.deployments, children: <div className="table-surface table-surface--padded"><Space direction="vertical" size={12} style={{ width: "100%" }}>
               {canRegister && <Button type="primary" icon={<PlusOutlined />} aria-label={copy.createDeployment} onClick={() => setDeploymentOpen(true)}>{copy.createDeployment}</Button>}
               <Table rowKey="id" loading={loading} dataSource={deployments} columns={deploymentColumns} locale={{ emptyText: <Empty description={copy.emptyDeployments} /> }} scroll={{ x: 800 }} pagination={false} />
-            </Space> },
+            </Space></div> },
           ]} />
         </>}
       </Space>

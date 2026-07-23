@@ -3,9 +3,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.model_library import ModelLibrary
-from app.models.algorithm import Algorithm
 from app.models.api_model import PlatformAPI
-from app.models.platform_models import Dataset
+from app.models.artifact import Artifact
 from app.models.training import TrainingJob
 from app.models.project import Project
 from app.models.user import User
@@ -16,8 +15,14 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 @router.get("/stats")
 def get_dashboard_stats(db: Session = Depends(get_db)):
     """Get platform-wide statistics for the data cockpit."""
-    total_algorithms = db.query(Algorithm).count()
-    total_datasets = db.query(Dataset).count()
+    from collections import Counter
+
+    from app.engine.registry import OperatorRegistry
+
+    operators = OperatorRegistry.list_all()
+    datasets = db.query(Artifact).filter(Artifact.type == "dataset").all()
+    total_algorithms = len(operators)
+    total_datasets = len(datasets)
     total_models = db.query(ModelLibrary).count()
     total_apis = db.query(PlatformAPI).count()
     total_projects = db.query(Project).count()
@@ -25,8 +30,10 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     total_training_jobs = db.query(TrainingJob).count()
 
     # Dataset sample total
-    sample_total = db.query(Dataset).with_entities(Dataset.sample_count).all()
-    total_samples = sum(s[0] or 0 for s in sample_total)
+    total_samples = sum(
+        int((artifact.metadata_ or {}).get("row_count") or 0)
+        for artifact in datasets
+    )
 
     # API call stats
     api_calls = db.query(PlatformAPI).with_entities(
@@ -40,9 +47,10 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     model_completed = db.query(ModelLibrary).filter(ModelLibrary.status == "completed").count()
     model_published = db.query(ModelLibrary).filter(ModelLibrary.status == "published").count()
 
-    # Algorithm by category
-    from sqlalchemy import func
-    algo_categories = db.query(Algorithm.category, func.count()).group_by(Algorithm.category).all()
+    algorithm_categories = Counter(
+        getattr(operator, "category", "utility") or "utility"
+        for operator in operators
+    )
 
     return {
         "core_assets": {
@@ -65,8 +73,8 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             "published": model_published,
         },
         "algorithm_coverage": [
-            {"category": cat, "count": cnt}
-            for cat, cnt in algo_categories
+            {"category": category, "count": count}
+            for category, count in sorted(algorithm_categories.items())
         ],
     }
 

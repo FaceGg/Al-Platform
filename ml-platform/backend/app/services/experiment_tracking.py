@@ -25,6 +25,33 @@ class TrackingNotFound(TrackingError):
     """Raised when a requested tracking resource does not exist."""
 
 
+def resolve_tracking_configuration(settings) -> tuple[str, str]:
+    """Return configured tracking locations or managed local file locations.
+
+    Production always requires explicit MLflow infrastructure. Local development
+    uses a project-managed file backend so experiment creation and training work
+    without manually starting an MLflow service.
+    """
+    tracking_uri = str(getattr(settings, "mlflow_tracking_uri", "") or "").strip()
+    artifact_root = str(getattr(settings, "mlflow_artifact_root", "") or "").strip()
+
+    if tracking_uri and artifact_root:
+        return tracking_uri, artifact_root.rstrip("/")
+    if tracking_uri or artifact_root:
+        raise TrackingUnavailable(
+            "MLflow tracking URI and artifact root must be configured together"
+        )
+    if getattr(settings, "app_mode", "local") != "local":
+        raise TrackingUnavailable("Experiment tracking is not configured")
+
+    root = Path(getattr(settings, "artifact_storage_dir", "./artifact_store")).resolve()
+    tracking_path = root / "mlflow" / "tracking"
+    artifact_path = root / "mlflow" / "artifacts"
+    tracking_path.mkdir(parents=True, exist_ok=True)
+    artifact_path.mkdir(parents=True, exist_ok=True)
+    return tracking_path.as_uri(), artifact_path.as_uri()
+
+
 @dataclass(frozen=True)
 class TrackedMetric:
     key: str

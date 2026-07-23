@@ -19,10 +19,39 @@ const { Sider, Content } = Layout;
 
 export function resolvePort(handleId: string, portList: {name:string}[]): string {
   if (!handleId) return "";
+  const logicalHandle = handleId.replace(/__slot_\d+$/, "");
   // Already a port name (e.g., "data", "left") — pass through
-  if (!/^(in|out)-\d+$/.test(handleId)) return handleId;
-  const idx = parseInt(handleId.replace(/^(in|out)-/, ""), 10);
-  return (!isNaN(idx) && idx < portList.length) ? portList[idx].name : handleId;
+  if (!/^(in|out)-\d+$/.test(logicalHandle)) return logicalHandle;
+  const idx = parseInt(logicalHandle.replace(/^(in|out)-/, ""), 10);
+  return (!isNaN(idx) && idx < portList.length) ? portList[idx].name : logicalHandle;
+}
+
+export function withPortSlot(portName: string, slot: number): string {
+  return `${portName}__slot_${slot}`;
+}
+
+export function hydrateWorkflowEdges(edges: any[]) {
+  const sourceSlots = new Map<string, number>();
+  const targetSlots = new Map<string, number>();
+  return edges.map((edge: any) => {
+    const source = String(edge.source_node_id ?? edge.source);
+    const target = String(edge.target_node_id ?? edge.target);
+    const sourcePort = edge.source_port || edge.sourceHandle || "out-0";
+    const targetPort = edge.target_port || edge.targetHandle || "in-0";
+    const sourceKey = `${source}:${sourcePort}`;
+    const targetKey = `${target}:${targetPort}`;
+    const sourceSlot = sourceSlots.get(sourceKey) || 0;
+    const targetSlot = targetSlots.get(targetKey) || 0;
+    sourceSlots.set(sourceKey, sourceSlot + 1);
+    targetSlots.set(targetKey, targetSlot + 1);
+    return {
+      id: String(edge.id),
+      source,
+      target,
+      sourceHandle: withPortSlot(sourcePort, sourceSlot),
+      targetHandle: withPortSlot(targetPort, targetSlot),
+    };
+  });
 }
 
 export default function WorkspacePage() {
@@ -98,15 +127,7 @@ export default function WorkspacePage() {
           );
         }
         if (wf.edges) {
-          setEdges(
-            wf.edges.map((e: any) => ({
-              id: String(e.id),
-              source: String(e.source_node_id),
-              target: String(e.target_node_id),
-              sourceHandle: e.source_port || "out-0",
-              targetHandle: e.target_port || "in-0",
-            }))
-          );
+          setEdges(hydrateWorkflowEdges(wf.edges));
         }
       })
       .catch(() => {
@@ -274,15 +295,7 @@ export default function WorkspacePage() {
         );
       }
       if (wf.edges) {
-        setEdges(
-          wf.edges.map((e: any) => ({
-            id: String(e.id),
-            source: String(e.source_node_id),
-            target: String(e.target_node_id),
-            sourceHandle: e.source_port || "out-0",
-            targetHandle: e.target_port || "in-0",
-          }))
-        );
+        setEdges(hydrateWorkflowEdges(wf.edges));
       }
 
       const runRes = await apiClient.post("/workflows/" + workflowId + "/run");
@@ -404,7 +417,7 @@ export default function WorkspacePage() {
 
   return (
     <ReactFlowProvider>
-      <Layout style={{ height: "100vh" }}>
+      <Layout className="workspace-layout">
         <Drawer title={text.history} open={versionsOpen} onClose={() => setVersionsOpen(false)} width={420}>
           <List
             loading={versionsLoading}
@@ -433,20 +446,15 @@ export default function WorkspacePage() {
             )}
           />
         </Drawer>
-        <Sider width={210} style={{ background: "#fff", borderRight: "1px solid #e8e8e8", overflow: "auto" }}>
-          <div style={{ padding: "10px 14px", borderBottom: "1px solid #f0f0f0", fontWeight: 600, fontSize: 14, background: "#fafafa" }}>
+        <Sider className="workspace-sider workspace-sider--operators" width={210} style={{ background: "var(--bg-surface)", borderRight: "1px solid var(--border-default)", overflow: "auto" }}>
+          <div className="workspace-sider-header">
             {text.operatorPanel}
           </div>
           <OperatorPanel />
         </Sider>
 
-        <Content onDrop={onDrop} onDragOver={onDragOver} style={{ position: "relative", background: "#f5f5f5" }}>
-          <div style={{
-            position: "absolute", top: 10, left: 10, zIndex: 10,
-            background: "rgba(255,255,255,0.95)", borderRadius: 8, padding: "6px 14px",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.08)", display: "flex", alignItems: "center", gap: 8,
-            backdropFilter: "blur(8px)",
-          }}>
+        <Content className="workspace-canvas" onDrop={onDrop} onDragOver={onDragOver}>
+          <div className="workspace-title-chip">
             {editingName ? (
               <Input size="small" value={wfName} onChange={(e) => setWfName(e.target.value)}
                 onPressEnter={handleNameSave} onBlur={handleNameSave} autoFocus style={{ width: 180 }} />
@@ -463,36 +471,36 @@ export default function WorkspacePage() {
           <WorkflowCanvas />
           <ExecutionProgress />
 
-          <Space style={{ position: "absolute", top: 10, right: 10, zIndex: 10 }}>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} style={{ borderRadius: 6 }}>
+          <Space className="workspace-actions" wrap>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
               {text.back}
             </Button>
-            <Button icon={<SaveOutlined />} onClick={handleSave} style={{ borderRadius: 6 }}>
+            <Button icon={<SaveOutlined />} onClick={handleSave}>
               {text.save}
             </Button>
-            <Button icon={<CloudUploadOutlined />} onClick={handlePublish} style={{ borderRadius: 6 }}>
+            <Button icon={<CloudUploadOutlined />} onClick={handlePublish}>
               {text.publish}
             </Button>
-            <Button icon={<HistoryOutlined />} onClick={openVersions} style={{ borderRadius: 6 }}>
+            <Button icon={<HistoryOutlined />} onClick={openVersions}>
               {text.version}
             </Button>
             {isRunning ? (
-              <Button danger icon={<PauseCircleOutlined />} onClick={handleRun} style={{ borderRadius: 6, fontWeight: 600 }}>
+              <Button danger icon={<PauseCircleOutlined />} onClick={handleRun}>
                 {text.stop}
               </Button>
             ) : (
-              <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRun} style={{ borderRadius: 6, fontWeight: 600 }}>
+              <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRun}>
                 {text.run}
               </Button>
             )}
-            <Button danger icon={<DeleteOutlined />} onClick={() => setDeleteOpen(true)} style={{ borderRadius: 6 }}>
+            <Button danger icon={<DeleteOutlined />} onClick={() => setDeleteOpen(true)}>
               {text.delete}
             </Button>
           </Space>
         </Content>
 
-        <Sider width={290} style={{ background: "#fff", borderLeft: "1px solid #e8e8e8", overflow: "auto" }}>
-          <div style={{ padding: "10px 14px", borderBottom: "1px solid #f0f0f0", fontWeight: 600, fontSize: 14, background: "#fafafa" }}>
+        <Sider className="workspace-sider workspace-sider--config" width={290} style={{ background: "var(--bg-surface)", borderLeft: "1px solid var(--border-default)", overflow: "auto" }}>
+          <div className="workspace-sider-header">
             {text.nodeConfig}
           </div>
           <NodeConfigPanel />

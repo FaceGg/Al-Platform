@@ -66,10 +66,23 @@ def _task_action(db, task, request, actor, permission, action, changes=None):
 
 
 @router.post("/plan")
-def plan_task(data: dict = Body(...), current_user=Depends(get_current_user)):
+def plan_task(
+    data: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    task_description = str(data.get("task_description") or "").strip()
+    task_id = data.get("task_id")
+    if task_id:
+        task = _task_for_user(db, task_id, current_user)
+        if task is None:
+            raise HTTPException(404, "Task not found")
+        task_description = task_description or task.description.strip() or task.name.strip()
+    if not task_description:
+        raise HTTPException(422, "Task description is required")
     orch = get_orchestrator()
-    subtasks = orch.decompose_with_llm(data.get("task_description", ""))
-    return {"subtasks": subtasks}
+    subtasks = orch.decompose_with_llm(task_description)
+    return {"task_id": str(task_id) if task_id else None, "subtasks": subtasks}
 
 
 @router.get("/reviews")
@@ -172,9 +185,38 @@ def send_agent_message(
     return {"id": str(msg.id), "status": "sent"}
 
 
+def _agent_for_user(db: Session, agent_id: str, user_id):
+    try:
+        identifier = uuid.UUID(str(agent_id))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return db.query(Agent).filter(
+        Agent.id == identifier,
+        Agent.created_by == user_id,
+    ).first()
+
+
+def _delete_agent(db: Session, agent: Agent) -> None:
+    db.query(AgentTask).filter(AgentTask.assigned_agent_id == agent.id).update(
+        {AgentTask.assigned_agent_id: None}, synchronize_session=False,
+    )
+    db.query(AgentMessage).filter(AgentMessage.from_agent_id == agent.id).update(
+        {AgentMessage.from_agent_id: None}, synchronize_session=False,
+    )
+    db.query(AgentMessage).filter(AgentMessage.to_agent_id == agent.id).update(
+        {AgentMessage.to_agent_id: None}, synchronize_session=False,
+    )
+    db.delete(agent)
+
+
 @router.put("/agents/{agent_id}")
-def update_agent(agent_id: str, data: dict = Body(...), db=Depends(get_db)):
-    agent = db.query(Agent).filter(Agent.id == uuid.UUID(agent_id)).first()
+def update_agent(
+    agent_id: str,
+    data: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    agent = _agent_for_user(db, agent_id, current_user.id)
     if not agent:
         raise HTTPException(404, "Agent not found")
     for key in ["name", "description", "model_name", "is_active", "config"]:
@@ -185,11 +227,15 @@ def update_agent(agent_id: str, data: dict = Body(...), db=Depends(get_db)):
 
 
 @router.delete("/agents/{agent_id}")
-def delete_agent(agent_id: str, db=Depends(get_db)):
-    agent = db.query(Agent).filter(Agent.id == uuid.UUID(agent_id)).first()
+def delete_agent(
+    agent_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    agent = _agent_for_user(db, agent_id, current_user.id)
     if not agent:
         raise HTTPException(404, "Agent not found")
-    db.delete(agent)
+    _delete_agent(db, agent)
     db.commit()
     return {"status": "deleted"}
 
@@ -291,7 +337,17 @@ def list_agent_tasks(workflow_id: str = None, db=Depends(get_db), current_user=D
     if workflow_id is None:
         tasks = [task for task in tasks if _task_for_user(db, task.id, current_user)]
     return [
-        {"id": str(t.id), "name": t.name, "status": t.status, "review_status": t.review_status}
+        {
+            "id": str(t.id),
+            "name": t.name,
+            "description": t.description or "",
+            "status": t.status,
+            "review_status": t.review_status,
+            "priority": t.priority,
+            "assigned_agent_id": str(t.assigned_agent_id) if t.assigned_agent_id else None,
+            "requires_review": bool(t.requires_review),
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+        }
         for t in tasks
     ]
 
@@ -376,6 +432,7 @@ def batch_delete_agent_tasks(
 def batch_delete_agents(
     data: BatchDeleteRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     deleted = 0
     for aid_str in data.ids:
@@ -383,10 +440,13 @@ def batch_delete_agents(
             uid = uuid.UUID(aid_str)
         except ValueError:
             continue
-        agent = db.query(Agent).filter(Agent.id == uid).first()
+        agent = db.query(Agent).filter(
+            Agent.id == uid,
+            Agent.created_by == current_user.id,
+        ).first()
         if not agent:
             continue
-        db.delete(agent)
+        _delete_agent(db, agent)
         deleted += 1
     db.commit()
     return {"deleted": deleted}

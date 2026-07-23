@@ -12,4 +12,8 @@ describe("workspace port persistence", () => {
     expect(resolvePort("model", ports)).toBe("model");
     expect(resolvePort("out-9", ports)).toBe("out-9");
   });
+
+  it("maps dynamic handle slots back to their logical port", () => {
+    expect(resolvePort("data__slot_2", ports)).toBe("data");
+  });
 });

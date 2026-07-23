@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { App as AntApp, Card, Select, Button, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs } from "antd";
+import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form } from "antd";
 import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient from "../api/client";
@@ -25,6 +25,9 @@ export default function AutoMLPage() {
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<any>(null);
   const [activeTab, setActiveTab] = useState("results");
+  const [experimentModalOpen, setExperimentModalOpen] = useState(false);
+  const [experimentCreating, setExperimentCreating] = useState(false);
+  const [experimentForm] = Form.useForm();
   const barRef = useRef<HTMLDivElement>(null);
   const radarRef = useRef<HTMLDivElement>(null);
 
@@ -154,6 +157,28 @@ export default function AutoMLPage() {
     }
   };
 
+  const createExperiment = async (values: { name: string; description?: string }) => {
+    if (!selectedProject) return;
+    setExperimentCreating(true);
+    try {
+      const response = await apiClient.post("/experiments", {
+        project_id: selectedProject,
+        name: values.name,
+        description: values.description || "",
+      });
+      const experiment = response.data;
+      setExperiments((items) => [experiment, ...items]);
+      setSelectedExperiment(experiment.id);
+      experimentForm.resetFields();
+      setExperimentModalOpen(false);
+      message.success(t.common.success);
+    } catch (error: any) {
+      message.error(error.response?.data?.detail?.message || error.response?.data?.detail || t.common.error);
+    } finally {
+      setExperimentCreating(false);
+    }
+  };
+
   const resultColumns = [
     { title: t.knowledge?.name || "Name", dataIndex: "name", key: "name" },
     { title: t.automl?.score || "Score", dataIndex: "score", key: "score", render: (v: number) => v != null ? Number(v).toFixed(4) : "-" },
@@ -178,7 +203,12 @@ export default function AutoMLPage() {
           <Col xs={24} sm={4}><Text strong>{t.training?.experiments || "Experiment"}</Text>
             <Select style={{ width: "100%", marginTop: 4 }} value={selectedExperiment || undefined} onChange={setSelectedExperiment}
               disabled={!selectedProject} placeholder={t.training?.experiments || "Experiment"}
-              options={experiments.map((item: any) => ({ value: item.id, label: item.name }))} /></Col>
+              options={experiments.map((item: any) => ({ value: item.id, label: item.name }))} />
+            <Button type="link" size="small" style={{ padding: 0, marginTop: 3 }} disabled={!selectedProject}
+              onClick={() => setExperimentModalOpen(true)}>
+              {t.training?.new_experiment || "New Experiment"}
+            </Button>
+          </Col>
           <Col xs={24} sm={4}><Text strong>{t.automl?.target || "Target"}</Text>
             <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.target} value={targetColumn || undefined} onChange={setTargetColumn}
               disabled={!selectedDataset} options={datasetColumns.map((column) => ({ value: column, label: column }))} /></Col>
@@ -239,6 +269,22 @@ export default function AutoMLPage() {
           },
         ]} />
       )}
+      <Modal
+        title={t.training?.new_experiment || "New Experiment"}
+        open={experimentModalOpen}
+        onCancel={() => setExperimentModalOpen(false)}
+        onOk={() => experimentForm.submit()}
+        confirmLoading={experimentCreating}
+      >
+        <Form form={experimentForm} layout="vertical" onFinish={createExperiment}>
+          <Form.Item name="name" label={t.training?.experiment_name || "Experiment Name"} rules={[{ required: true }]}>
+            <Input autoFocus />
+          </Form.Item>
+          <Form.Item name="description" label={t.training?.description || "Description"}>
+            <Input.TextArea rows={3} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </AppLayout>
   );
 }
