@@ -24,7 +24,7 @@ export default function CustomEdge({
         style={{
           ...style,
           strokeWidth: hovered ? 3 : 2,
-          stroke: hovered ? "#ff4d4f" : (style.stroke || "#b1b1b7"),
+          stroke: hovered ? "var(--accent-error)" : (style.stroke || "var(--workflow-edge)"),
           cursor: "pointer",
           transition: "stroke 0.2s, stroke-width 0.2s",
         }}
@@ -53,21 +53,11 @@ export default function CustomEdge({
           }}
         >
           <div
+            className="workflow-edge-delete__button"
             onClick={(e) => { e.stopPropagation(); removeEdge(id); }}
-            style={{
-              background: "#ff4d4f",
-              borderRadius: "50%",
-              width: 22,
-              height: 22,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: "0 2px 6px rgba(255,77,79,0.5)",
-              cursor: "pointer",
-            }}
             title="\u5220\u9664\u8fde\u7ebf"
           >
-            <CloseOutlined style={{ color: "#fff", fontSize: 12, fontWeight: "bold" }} />
+            <CloseOutlined />
           </div>
         </div>
       </EdgeLabelRenderer>

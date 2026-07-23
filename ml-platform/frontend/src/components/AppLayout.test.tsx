@@ -21,4 +21,19 @@ describe("AppLayout", () => {
     );
     await waitFor(() => expect(document.querySelector(".ant-layout-sider")).toBeTruthy());
   });
+
+  it("selects the knowledge graph menu item for its route", async () => {
+    const { container } = render(
+      <MemoryRouter
+        initialEntries={["/knowledge-graph"]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <AppLayout><div>test</div></AppLayout>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".ant-menu-item-selected")?.textContent).toContain("知识图谱");
+    });
+  });
 });

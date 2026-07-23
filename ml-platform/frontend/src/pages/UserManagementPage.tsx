@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type Key } from 'react'
 import { Table, Tag, Button, Modal, Descriptions, Form, Input, message, Popconfirm, Space } from 'antd'
 import { EyeOutlined, LockOutlined, DeleteOutlined } from '@ant-design/icons'
 import apiClient from '../api/client'
@@ -23,6 +23,7 @@ export default function UserManagementPage() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
   const [pwdForm] = Form.useForm()
   const [pwdLoading, setPwdLoading] = useState(false)
+  const [selectedUserIds, setSelectedUserIds] = useState<Key[]>([])
 
   useEffect(() => {
     setCurrentUserRole(localStorage.getItem('role') || '')
@@ -69,6 +70,27 @@ export default function UserManagementPage() {
     }
   }
 
+  const batchDeleteUsers = () => {
+    const userIds = selectedUserIds.map(String)
+    if (userIds.length === 0) return
+    Modal.confirm({
+      title: `${t.common.batch_delete} (${userIds.length})`,
+      content: t.common.delete,
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          const response = await apiClient.post('/admin/users/batch-delete', { user_ids: userIds })
+          const deletedIds = new Set<string>(response.data?.deleted_ids || [])
+          setUsers(prev => prev.filter(user => !deletedIds.has(user.id)))
+          setSelectedUserIds([])
+          message.success(t.common.success)
+        } catch (error: any) {
+          message.error(error.response?.data?.detail || t.common.error)
+        }
+      },
+    })
+  }
+
   const columns = [
     { title: t.profile.username || '用户名', dataIndex: 'username', key: 'username' },
     {
@@ -101,8 +123,24 @@ export default function UserManagementPage() {
     <AppLayout>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <h3>{t.nav.users || '用户管理'}</h3>
+        {currentUserRole === 'admin' && selectedUserIds.length > 0 && (
+          <Button danger icon={<DeleteOutlined />} onClick={batchDeleteUsers}>
+            {t.common.batch_delete} ({selectedUserIds.length})
+          </Button>
+        )}
       </div>
-      <Table rowKey="id" dataSource={users} columns={columns} loading={loading} pagination={{ pageSize: 20 }} />
+      <Table
+        rowKey="id"
+        dataSource={users}
+        columns={columns}
+        loading={loading}
+        pagination={{ pageSize: 20 }}
+        rowSelection={currentUserRole === 'admin' ? {
+          selectedRowKeys: selectedUserIds,
+          onChange: setSelectedUserIds,
+          getCheckboxProps: (record: User) => ({ disabled: record.id === currentUserId }),
+        } : undefined}
+      />
 
       {/* 用户信息弹窗 */}
       <Modal title="用户信息" open={infoOpen} onCancel={() => setInfoOpen(false)} footer={null}>

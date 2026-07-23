@@ -155,6 +155,16 @@ export async function createDeployment(
   return response.data;
 }
 
+export async function deleteRegisteredModel(modelId: string): Promise<{ id: string }> {
+  const response = await apiClient.delete(`/registered-models/${modelId}`);
+  return response.data;
+}
+
+export async function deleteDeployment(deploymentId: string): Promise<{ id: string }> {
+  const response = await apiClient.delete(`/inference-deployments/${deploymentId}`);
+  return response.data;
+}
+
 export async function startDeployment(deploymentId: string): Promise<InferenceDeployment> {
   const response = await apiClient.post(`/inference-deployments/${deploymentId}/start`);
   return response.data;

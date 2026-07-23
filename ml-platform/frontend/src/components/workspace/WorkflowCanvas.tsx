@@ -103,8 +103,9 @@ export default function WorkflowCanvas() {
   const edgesWithType = edges.map((e) => ({ ...e, type: e.type || "custom" }));
 
   return (
-    <div style={{ width: "100%", height: "100%" }}>
+    <div className="workflow-canvas-surface">
       <ReactFlow
+        className="workflow-flow"
         nodes={nodesWithStatus}
         edges={edgesWithType}
         onNodesChange={onNodesChange}
@@ -120,16 +121,16 @@ export default function WorkflowCanvas() {
         snapToGrid
         snapGrid={[15, 15]}
         defaultEdgeOptions={{
-          style: { stroke: "#b1b1b7", strokeWidth: 2 },
+          style: { stroke: "var(--workflow-edge)", strokeWidth: 2 },
           animated: false,
         }}
       >
-        <Background color="#e8e8e8" gap={20} />
-        <Controls style={{ borderRadius: 8 }} />
+        <Background color="var(--workflow-grid)" gap={24} />
+        <Controls className="workflow-flow__controls" />
         <MiniMap
-          nodeStrokeWidth={3}
-          style={{ borderRadius: 8 }}
-          maskColor="rgba(0,0,0,0.08)"
+          className="workflow-flow__minimap"
+          nodeStrokeWidth={2}
+          maskColor="var(--workflow-minimap-mask)"
         />
       </ReactFlow>
     </div>

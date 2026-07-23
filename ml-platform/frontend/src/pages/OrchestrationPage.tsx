@@ -7,10 +7,28 @@ import { useI18n } from "../i18n";
 
 const { Title, Text, Paragraph } = Typography;
 const stColor: Record<string, string> = { pending: "default", running: "blue", completed: "green", failed: "red", in_progress: "processing" };
-const agentTypeNames: Record<string, string> = { planner: "待审核", llm: "LLM", executor: "待审核", reviewer: "待审核" };
+const agentTypeNames: Record<string, { zh: string; en: string }> = {
+  planner: { zh: "规划智能体", en: "Planner" },
+  llm: { zh: "大模型智能体", en: "LLM" },
+  executor: { zh: "执行智能体", en: "Executor" },
+  reviewer: { zh: "审核智能体", en: "Reviewer" },
+};
 
 export default function OrchestrationPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const text = lang === "zh" ? {
+    planCompleted: "规划完成", planFailed: "规划失败", deleteAgent: "删除智能体",
+    batchDeleteAgent: "批量删除智能体", agentDeleted: "智能体已删除",
+    deleteFailed: "删除失败", deleteSelectedAgents: "确定要删除选中的",
+    agents: "个智能体吗？", no: "否", active: "活跃", disabled: "禁用",
+    model: "模型", actions: "操作", type: "类型", status: "状态",
+  } : {
+    planCompleted: "Planning completed", planFailed: "Planning failed", deleteAgent: "Delete agent",
+    batchDeleteAgent: "Delete selected agents", agentDeleted: "Agents deleted",
+    deleteFailed: "Delete failed", deleteSelectedAgents: "Delete selected",
+    agents: "agents?", no: "No", active: "Active", disabled: "Disabled",
+    model: "Model", actions: "Actions", type: "Type", status: "Status",
+  };
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
@@ -65,10 +83,17 @@ export default function OrchestrationPage() {
     setShowAgent(false); agentForm.resetFields(); fetchAgents();
   };
 
-  const handlePlan = async (taskId: string) => {
-    await apiPost("/orchestration/plan", { task_id: taskId });
-    message.success("批量删除成功");
-    fetchData();
+  const handlePlan = async (task: any) => {
+    try {
+      await apiPost("/orchestration/plan", {
+        task_id: task.id,
+        task_description: task.description || task.name,
+      });
+      message.success(text.planCompleted);
+      fetchData();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || text.planFailed);
+    }
   };
 
   const handleReview = async (taskId: string, approved: boolean) => {
@@ -116,11 +141,29 @@ export default function OrchestrationPage() {
       onOk: async () => {
         try {
           await apiClient.post("/orchestration/agents/batch-delete", { ids: agentSelectedKeys });
-          message.success("智能体已删除");
+          message.success(text.agentDeleted);
           setAgentSelectedKeys([]);
-          fetchData();
+          fetchAgents();
         } catch {
-          message.error("删除失败");
+          message.error(text.deleteFailed);
+        }
+      },
+    });
+  };
+
+  const handleDeleteAgent = (agent: any) => {
+    Modal.confirm({
+      title: text.deleteAgent,
+      content: agent.name,
+      okType: "danger",
+      onOk: async () => {
+        try {
+          await apiDelete("/orchestration/agents/" + agent.id);
+          message.success(text.agentDeleted);
+          setAgentSelectedKeys((keys) => keys.filter((key) => key !== agent.id));
+          fetchAgents();
+        } catch (error: any) {
+          message.error(error.response?.data?.detail || text.deleteFailed);
         }
       },
     });
@@ -142,7 +185,7 @@ export default function OrchestrationPage() {
       render: (_: any, r: any) => (
         <Space size="small">
           <Button size="small" icon={<EyeOutlined />} onClick={() => { setSelected(r); setShowDetail(true); }} />
-          <Button size="small" icon={<SendOutlined />} onClick={() => handlePlan(r.id)}>{t.orchestration.plan}</Button>
+          <Button size="small" icon={<SendOutlined />} onClick={() => handlePlan(r)}>{t.orchestration.plan}</Button>
           <Button size="small" icon={<MessageOutlined />} onClick={() => { setSelected(r); fetchMessages(r.id); setShowMessages(true); }} />
           <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDeleteTask(r.id)} />
         </Space>
@@ -151,11 +194,14 @@ export default function OrchestrationPage() {
 
   const agentColumns = [
     { title: t.knowledge?.name || "名称", dataIndex: "name", key: "name" },
-    { title: t.knowledge?.entity_type || "类型", dataIndex: "agent_type", key: "agent_type",
-      render: (tp: string) => <Tag color={tp === "planner" ? "gold" : tp === "llm" ? "blue" : tp === "executor" ? "green" : "purple"}>{agentTypeNames[tp] || tp}</Tag> },
-    { title: "模型", dataIndex: "model_name", key: "model_name", render: (m: string) => <Tag color="blue">{m || "取消"}</Tag> },
-    { title: "状态", dataIndex: "is_active", key: "is_active",
-      render: (v: boolean) => <Badge status={v ? "success" : "error"} text={v ? "活跃" : "禁用"} /> },
+    { title: text.type, dataIndex: "agent_type", key: "agent_type",
+      render: (tp: string) => <Tag color={tp === "planner" ? "gold" : tp === "llm" ? "blue" : tp === "executor" ? "green" : "purple"}>{agentTypeNames[tp]?.[lang] || tp}</Tag> },
+    { title: text.model, dataIndex: "model_name", key: "model_name", render: (m: string) => <Tag color="blue">{m || "-"}</Tag> },
+    { title: text.status, dataIndex: "is_active", key: "is_active",
+      render: (v: boolean) => <Badge status={v ? "success" : "error"} text={v ? text.active : text.disabled} /> },
+    { title: text.actions, key: "actions", render: (_: any, agent: any) => (
+      <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDeleteAgent(agent)}>{t.common.delete}</Button>
+    ) },
   ];
 
   return (
@@ -175,9 +221,14 @@ export default function OrchestrationPage() {
 
         <Card title={<Title level={4}>{t.orchestration?.title || "多智能体编排"}</Title>}
           extra={<Space>
-            {selectedRowKeys.length > 0 && (
+            {activeTab === "tasks" && selectedRowKeys.length > 0 && (
               <Button danger icon={<DeleteOutlined />} onClick={handleBatchDelete}>
                 批量删除 ({selectedRowKeys.length})
+              </Button>
+            )}
+            {activeTab === "agents" && agentSelectedKeys.length > 0 && (
+              <Button danger icon={<DeleteOutlined />} onClick={handleBatchDeleteAgent}>
+                {text.batchDeleteAgent} ({agentSelectedKeys.length})
               </Button>
             )}
             <Button icon={<PlusOutlined />} onClick={() => setShowAgent(true)}>{t.orchestration?.new_agent || "新建智能体"}</Button>

@@ -38,7 +38,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { key: "/chat", icon: <MessageOutlined />, label: t.nav.chat },
     { type: "divider" as const },
     { key: "/monitor", icon: <MonitorOutlined />, label: t.nav.monitor },
-    { key: "/compute", icon: <CloudServerOutlined />, label: "Compute" },
+    { key: "/compute", icon: <CloudServerOutlined />, label: t.nav.compute },
     ...(role === "admin" ? [{ key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users }] : []),
   ];
 
@@ -53,10 +53,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     const p = location.pathname;
     if (p === "/") return "/";
     if (p.startsWith("/workspace") || p.startsWith("/template")) return "/projects";
-    for (const item of menuItems) {
-      if (typeof item.key === "string" && p.startsWith(item.key) && item.key !== "/") return item.key;
-    }
-    return "/";
+    const matchingKeys = menuItems
+      .map((item) => item.key)
+      .filter((key): key is string => (
+        typeof key === "string"
+        && key !== "/"
+        && (p === key || p.startsWith(key + "/"))
+      ))
+      .sort((left, right) => right.length - left.length);
+    return matchingKeys[0] || "/";
   })();
 
   const username = localStorage.getItem("userId") || "-";
@@ -68,13 +73,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <Layout style={{ minHeight: "100vh" }} data-theme={theme}>
         {/* Sidebar */}
         <Sider
+          className="app-sider"
           collapsible
           collapsed={collapsed}
           onCollapse={setCollapsed}
           trigger={null}
           width={220}
           style={{
-            background: "linear-gradient(180deg, #0D1117 0%, #161B22 100%)",
+            background: "var(--bg-sidebar)",
             borderRight: "1px solid var(--border-default)",
             overflow: "auto",
           }}
@@ -95,8 +101,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               style={{
                 width: 32,
                 height: 32,
-                borderRadius: 8,
-                background: "linear-gradient(135deg, #F0883E, #F5A623)",
+                borderRadius: 12,
+                background: "var(--accent-primary)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -129,15 +135,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <Layout>
           {/* Header */}
           <Header
+            className="app-header"
             style={{
-              background: "rgba(22, 27, 34, 0.95)",
+              background: "var(--bg-header)",
               backdropFilter: "blur(12px)",
               borderBottom: "1px solid var(--border-default)",
               padding: "0 24px",
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              height: 52,
+              height: 60,
               position: "sticky",
               top: 0,
               zIndex: 100,
@@ -170,7 +177,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 onClick={() => setLang("zh")}
                 style={{
                   fontWeight: 600,
-                  borderRadius: 4,
+                  borderRadius: 10,
                   minWidth: 32,
                   height: 28,
                   padding: "0 8px",
@@ -182,7 +189,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 size="small"
                 type={lang === "en" ? "primary" : "default"}
                 onClick={() => setLang("en")}
-                style={{fontWeight: 600, borderRadius: 4, minWidth: 32, height: 28, padding: "0 8px"}}
+                style={{fontWeight: 600, borderRadius: 10, minWidth: 32, height: 28, padding: "0 8px"}}
               >
                 EN
               </Button>
@@ -190,7 +197,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 size="small"
                 onClick={toggleTheme}
                 icon={theme === "dark" ? <SunOutlined /> : <MoonOutlined />}
-                style={{borderRadius: 4, minWidth: 32, height: 28, padding: "0 8px"}}
+                style={{borderRadius: 10, minWidth: 32, height: 28, padding: "0 8px"}}
               />
               <Dropdown menu={{ items: userMenuItems }}>
                 <Space style={{ cursor: "pointer" }}>
@@ -217,9 +224,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
           {/* Content */}
           <Content
+            className="app-content"
             style={{
               padding: 24,
-              minHeight: "calc(100vh - 52px)",
+              minHeight: "calc(100vh - 60px)",
             }}
           >
             <div className="fade-in">{children}</div>

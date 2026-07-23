@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Precision Forge / 企业级控制台</title>
+  <style>
+    :root {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --font-num: "SF Mono", "JetBrains Mono", "Consolas", monospace;
+      --bg: #0b0f14;
+      --bg-elev: #11161d;
+      --bg-panel: #141a22;
+      --bg-hover: #1a212b;
+      --border: #1f2731;
+      --border-strong: #2a3441;
+      --text: #e6edf3;
+      --text-secondary: #9aa6b2;
+      --text-tertiary: #6b7785;
+      --accent: #3b82f6;
+      --accent-hover: #60a5fa;
+      --accent-soft: rgba(59, 130, 246, 0.12);
+      --success: #16a34a;
+      --success-soft: rgba(22, 163, 74, 0.14);
+      --warning: #d97706;
+      --warning-soft: rgba(217, 119, 6, 0.14);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.2);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+    h1, h2, p { margin: 0; }
+    button { font: inherit; cursor: pointer; }
+
+    .lab { min-height: 100dvh; padding: 24px; }
+    .lab-head { max-width: 1440px; margin: 0 auto 20px; display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .lab-title { font-size: 16px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+    .lab-copy { margin-top: 4px; color: var(--text-tertiary); font-size: 13px; }
+    .controls { display: flex; gap: 8px; }
+    .controls button { min-height: 32px; border: 1px solid var(--border-strong); border-radius: 6px; padding: 0 12px; color: var(--text-secondary); background: var(--bg-elev); transition: all .15s ease; font-size: 13px; }
+    .controls button:hover { color: var(--text); background: var(--bg-hover); border-color: var(--text-tertiary); }
+    .controls button[aria-pressed="true"] { color: var(--text); background: var(--bg-hover); border-color: var(--accent); }
+
+    /* 应用骨架 */
+    .app {
+      max-width: 1440px; min-height: 820px; margin: 0 auto;
+      display: grid; grid-template-columns: 240px minmax(0,1fr);
+      border: 1px solid var(--border); border-radius: 10px;
+      background: var(--bg-elev); overflow: hidden;
+    }
+    .app.compact { max-width: 560px; grid-template-columns: 1fr; }
+
+    /* 侧栏 */
+    .side { padding: 18px 12px; background: var(--bg-elev); border-right: 1px solid var(--border); }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
+    .mark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; color: #fff; background: var(--accent); font-size: 12px; font-weight: 700; }
+    .brand b { font-size: 13px; font-weight: 600; }
+    .brand small { display: block; margin-top: 1px; color: var(--text-tertiary); font-size: 10px; letter-spacing: 0.04em; }
+    .nav { margin-top: 16px; }
+    .nav-title { margin: 0 8px 6px; color: var(--text-tertiary); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
+    .nav button { width: 100%; min-height: 32px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 6px; padding: 0 10px; color: var(--text-secondary); background: transparent; text-align: left; transition: all .12s ease; font-size: 13px; }
+    .nav button:hover { color: var(--text); background: var(--bg-hover); }
+    .nav button.active { color: var(--text); background: var(--accent-soft); font-weight: 500; }
+    .nav i { width: 15px; font-style: normal; text-align: center; color: var(--text-tertiary); font-size: 13px; }
+    .nav button.active i { color: var(--accent); }
+    .nav em { margin-left: auto; padding: 0 7px; border-radius: 4px; color: var(--text-secondary); background: var(--bg-hover); font-size: 11px; font-style: normal; font-weight: 500; font-family: var(--font-num); }
+
+    /* 顶栏 */
+    .work { min-width: 0; background: var(--bg); }
+    .bar { min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 24px; border-bottom: 1px solid var(--border); }
+    .crumb { display: flex; align-items: center; gap: 8px; color: var(--text-tertiary); font-size: 13px; }
+    .crumb b { color: var(--text); font-weight: 600; }
+    .crumb .sep { color: var(--text-tertiary); opacity: 0.6; }
+    .tools { display: flex; align-items: center; gap: 8px; }
+    .tool { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); font-size: 13px; background: transparent; }
+    .tool:hover { color: var(--text); background: var(--bg-hover); border-color: var(--border-strong); }
+    .user { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); padding-left: 4px; }
+    .avatar { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: var(--accent); font-size: 10px; font-weight: 600; }
+
+    /* 内容区 */
+    .dash { padding: 24px; }
+    .heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
+    .kicker { margin-bottom: 6px; color: var(--accent); font-size: 12px; font-weight: 500; font-family: var(--font-num); }
+    .heading h2 { font-size: 22px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; line-height: 1.2; }
+    .heading p { max-width: 520px; margin-top: 6px; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
+    .primary { min-height: 34px; border: 1px solid var(--accent); border-radius: 6px; padding: 0 14px; color: #fff; background: var(--accent); white-space: nowrap; font-size: 13px; font-weight: 500; transition: background .15s ease; }
+    .primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+    /* 指标卡 */
+    .metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+    .metric { min-width: 0; min-height: 96px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel); }
+    .metric small { color: var(--text-tertiary); font-size: 12px; font-weight: 500; }
+    .value { margin-top: 8px; font-size: 26px; font-weight: 600; color: var(--text); font-family: var(--font-num); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1.1; }
+    .metric p { margin-top: 6px; color: var(--success); font-size: 12px; display: flex; align-items: center; gap: 4px; }
+    .metric p.muted { color: var(--text-tertiary); }
+    .metric p .arrow { font-size: 10px; }
+    .metric p.muted .arrow { color: var(--warning); }
+
+    /* 双栏 */
+    .grid { display: grid; grid-template-columns: minmax(0,1.6fr) minmax(260px,.9fr); gap: 12px; margin-top: 12px; }
+    .panel { min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel); overflow: hidden; }
+    .panel-head { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+    .panel-head h2 { font-size: 13px; font-weight: 600; color: var(--text); }
+    .panel-head span { color: var(--text-tertiary); font-size: 12px; font-family: var(--font-num); }
+
+    /* 柱状图：实心单色，克制 */
+    .plot { height: 180px; display: grid; grid-template-columns: 28px 1fr; padding: 16px 16px 8px; }
+    .y { display: flex; flex-direction: column; justify-content: space-between; color: var(--text-tertiary); font-size: 11px; font-family: var(--font-num); padding-right: 6px; text-align: right; }
+    .chart { position: relative; border-bottom: 1px solid var(--border); }
+    .chart::before { content: ""; position: absolute; inset: 0; background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 44px, var(--border) 45px, transparent 46px); opacity: 0.6; }
+    .bars { position: absolute; inset: 0 0 0 4px; display: flex; align-items: end; justify-content: space-around; gap: 12px; padding: 0 8px; }
+    .bars div { position: relative; width: 12%; min-width: 14px; background: var(--accent); opacity: 0.85; border-radius: 3px 3px 0 0; }
+    .bars div:hover { opacity: 1; }
+    .bars div.today { background: var(--text); opacity: 1; }
+    .bars div::after { content: attr(data-v); position: absolute; top: -18px; left: 50%; transform: translateX(-50%); color: var(--text-tertiary); font-size: 10px; font-family: var(--font-num); opacity: 0; transition: opacity .12s ease; }
+    .bars div:hover::after { opacity: 1; }
+    .x { display: flex; justify-content: space-around; padding: 8px 6px 0 34px; color: var(--text-tertiary); font-size: 11px; font-family: var(--font-num); }
+    .x span.today { color: var(--text); font-weight: 500; }
+
+    /* 质量就绪度 */
+    .quality { padding: 16px; }
+    .score { display: flex; align-items: baseline; gap: 6px; padding: 4px 0 12px; }
+    .score strong { font-size: 32px; color: var(--text); font-family: var(--font-num); font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: -0.02em; }
+    .score span { color: var(--text-tertiary); font-size: 13px; font-family: var(--font-num); }
+    .score em { margin-left: auto; font-style: normal; font-size: 12px; color: var(--success); font-family: var(--font-num); }
+    .spark { height: 36px; margin: 0 0 12px; padding: 4px 0; }
+    .spark svg { width: 100%; height: 100%; display: block; }
+    .state { min-height: 34px; display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 10px; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-secondary); padding: 0 2px; }
+    .state i { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+    .state i.warn { background: var(--warning); }
+    .state b { color: var(--text); font-size: 13px; font-weight: 500; font-family: var(--font-num); }
+
+    /* 项目表 */
+    .projects { margin-top: 12px; }
+    .table { display: grid; grid-template-columns: 1.2fr .8fr .7fr .7fr; }
+    .table div { min-width: 0; padding: 12px 16px; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 13px; display: flex; align-items: center; }
+    .table div:last-child, .table div:nth-last-child(2), .table div:nth-last-child(3), .table div:nth-last-child(4) { border-bottom: 0; }
+    .table .thead { padding-top: 10px; padding-bottom: 10px; color: var(--text-tertiary); background: var(--bg-hover); font-size: 11px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; }
+    .table .name { color: var(--text); font-weight: 500; }
+    .table .name .dot { width: 6px; height: 6px; border-radius: 2px; background: var(--text-tertiary); margin-right: 10px; flex: 0 0 auto; }
+    .tag { display: inline-flex; align-items: center; gap: 5px; height: 22px; border-radius: 4px; padding: 0 8px; color: var(--success); background: var(--success-soft); font-size: 11px; font-weight: 500; }
+    .tag::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--success); }
+    .tag.warn { color: var(--warning); background: var(--warning-soft); }
+    .tag.warn::before { background: var(--warning); }
+
+    /* 响应式 */
+    @media(max-width:860px){
+      .lab{padding:16px}
+      .lab-head{align-items:flex-start;flex-direction:column}
+      .app{grid-template-columns:1fr}
+      .side{display:flex;align-items:center;gap:8px;padding:10px 12px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border)}
+      .brand{padding:0 10px 0 0;border:0;border-right:1px solid var(--border);white-space:nowrap}
+      .brand small,.nav-title,.nav button:nth-child(n+4){display:none}
+      .nav{display:contents;margin:0}
+      .nav button{width:auto;flex:0 0 auto;padding:0 10px;white-space:nowrap}
+      .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .grid{grid-template-columns:1fr}
+    }
+    @media(max-width:560px){
+      .bar{padding:0 16px}
+      .crumb .sep,.user span{display:none}
+      .dash{padding:18px}
+      .heading{align-items:flex-start;flex-direction:column}
+      .primary{width:100%}
+      .table{grid-template-columns:1fr .7fr}
+      .table div:nth-child(4n+2),.table div:nth-child(4n+4){display:none}
+    }
+  </style>
+</head>
+<body>
+  <main class="lab">
+    <header class="lab-head">
+      <div>
+        <h1 class="lab-title">Precision Forge / 企业级控制台</h1>
+        <p class="lab-copy">深石墨底 + 克制钢蓝，严格网格与信息层级，对标正式发布产品。此页独立于生产前端。</p>
+      </div>
+      <div class="controls">
+        <button id="width" aria-pressed="false">窄屏预览</button>
+      </div>
+    </header>
+
+    <section class="app" id="app">
+      <aside class="side">
+        <div class="brand"><div class="mark">PF</div><div><b>Precision Forge</b><small>WELDING AI PLATFORM</small></div></div>
+        <nav class="nav">
+          <p class="nav-title">工作空间</p>
+          <button class="active"><i>▦</i>数据驾驶舱</button>
+          <button><i>▱</i>项目与流程 <em>12</em></button>
+          <button><i>◫</i>数据资产</button>
+          <button><i>◇</i>模型中心</button>
+        </nav>
+        <nav class="nav">
+          <p class="nav-title">运行与治理</p>
+          <button><i>◌</i>训练任务</button>
+          <button><i>⌁</i>部署监控</button>
+          <button><i>⊞</i>知识与标注</button>
+        </nav>
+      </aside>
+
+      <section class="work">
+        <header class="bar">
+          <div class="crumb"><span>工作空间</span><span class="sep">/</span><b>运营总览</b></div>
+          <div class="tools">
+            <div class="tool">◦</div><div class="tool">?</div>
+            <div class="user"><div class="avatar">ZR</div><span>张锐</span></div>
+          </div>
+        </header>
+
+        <div class="dash">
+          <div class="heading">
+            <div>
+              <div class="kicker">PLANT 04 / LIVE OPERATIONS</div>
+              <h2>焊接 AI 运营总览</h2>
+              <p>聚焦当前产线的数据完整性、训练进度和模型交付状态。</p>
+            </div>
+            <button class="primary">进入项目工作区</button>
+          </div>
+
+          <section class="metrics">
+            <div class="metric"><small>活跃项目</small><div class="value">12</div><p><span class="arrow">↑</span>+2 本周新增</p></div>
+            <div class="metric"><small>数据集版本</small><div class="value">184</div><p><span class="arrow">↑</span>99.2% 可用</p></div>
+            <div class="metric"><small>运行中训练</small><div class="value">07</div><p class="muted"><span class="arrow">●</span>2 个等待资源</p></div>
+            <div class="metric"><small>已发布模型</small><div class="value">36</div><p><span class="arrow">↑</span>+5 本月交付</p></div>
+          </section>
+
+          <section class="grid">
+            <article class="panel">
+              <div class="panel-head"><h2>训练活动</h2><span>最近 7 天 / GPU 小时</span></div>
+              <div class="plot">
+                <div class="y"><span>80</span><span>40</span><span>0</span></div>
+                <div class="chart">
+                  <div class="bars">
+                    <div style="height:46%" data-v="31"></div>
+                    <div style="height:61%" data-v="42"></div>
+                    <div style="height:39%" data-v="27"></div>
+                    <div style="height:75%" data-v="52"></div>
+                    <div style="height:83%" data-v="58"></div>
+                    <div style="height:66%" data-v="46"></div>
+                    <div class="today" style="height:91%" data-v="64"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="x"><span>周一</span><span>周二</span><span>周三</span><span>周四</span><span>周五</span><span>周六</span><span class="today">今天</span></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head"><h2>质量就绪度</h2><span>实时</span></div>
+              <div class="quality">
+                <div class="score"><strong>94.8</strong><span>/ 100</span><em>+1.2</em></div>
+                <div class="spark">
+                  <svg viewBox="0 0 200 32" preserveAspectRatio="none">
+                    <path d="M0,24 L25,20 L50,22 L75,14 L100,16 L125,9 L150,11 L175,6 L200,4" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="200" cy="4" r="2" fill="#3b82f6"/>
+                  </svg>
+                </div>
+                <div class="state"><i></i><span>数据漂移检测</span><b>正常</b></div>
+                <div class="state"><i></i><span>在线推理服务</span><b>12 / 12</b></div>
+                <div class="state"><i class="warn"></i><span>待审核模型</span><b>03</b></div>
+              </div>
+            </article>
+          </section>
+
+          <section class="panel projects">
+            <div class="panel-head"><h2>最近项目</h2><span>查看全部</span></div>
+            <div class="table">
+              <div class="thead">项目</div><div class="thead">负责人</div><div class="thead">状态</div><div class="thead">最近更新</div>
+              <div class="name"><span class="dot"></span>车身焊点质量预测</div><div>张锐</div><div><span class="tag">运行正常</span></div><div>12 分钟前</div>
+              <div class="name"><span class="dot"></span>电极寿命建模</div><div>林安</div><div><span class="tag warn">训练中</span></div><div>38 分钟前</div>
+              <div class="name"><span class="dot"></span>白车身缺陷检测</div><div>陈丹</div><div><span class="tag">已发布</span></div><div>昨天</div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const width = document.getElementById('width');
+    const app = document.getElementById('app');
+    width.addEventListener('click', () => {
+      const compact = app.classList.toggle('compact');
+      width.setAttribute('aria-pressed', String(compact));
+      width.textContent = compact ? '桌面预览' : '窄屏预览';
+    });
+  </script>
+</body>
+</html>

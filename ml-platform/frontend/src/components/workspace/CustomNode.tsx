@@ -1,23 +1,66 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
-import { Progress, Tag, Tooltip } from "antd";
+import { Progress, Tooltip } from "antd";
 import {
-  LoadingOutlined, CheckCircleFilled, CloseCircleFilled, PlayCircleOutlined,
+  AppstoreOutlined, ApartmentOutlined, BarChartOutlined, CheckCircleFilled,
+  CloseCircleFilled, DatabaseOutlined, ExperimentOutlined, FilterOutlined,
+  FundOutlined, LoadingOutlined, PlayCircleOutlined, ThunderboltOutlined, ToolOutlined,
 } from "@ant-design/icons";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { useI18n } from "../../i18n";
 
-const STATUS_CFG: Record<string, {
-  bg: string; border: string; icon: React.ReactNode; tagColor: string;
-}> = {
-  pending:  { bg: "#fff7e6", border: "#fa8c16", icon: <PlayCircleOutlined style={{ color: "#fa8c16" }} />, tagColor: "orange" },
-  running:  { bg: "#e6f7ff", border: "#1890ff", icon: <LoadingOutlined style={{ color: "#1890ff" }} spin />, tagColor: "processing" },
-  completed:{ bg: "#f6ffed", border: "#52c41a", icon: <CheckCircleFilled style={{ color: "#52c41a" }} />, tagColor: "success" },
-  failed:   { bg: "#fff2f0", border: "#ff4d4f", icon: <CloseCircleFilled style={{ color: "#ff4d4f" }} />, tagColor: "error" },
-  timed_out:{ bg: "#fff2f0", border: "#cf1322", icon: <CloseCircleFilled style={{ color: "#cf1322" }} />, tagColor: "error" },
-  cancelled:{ bg: "#fffbe6", border: "#d48806", icon: <CloseCircleFilled style={{ color: "#d48806" }} />, tagColor: "warning" },
-  skipped:  { bg: "#fafafa", border: "#8c8c8c", icon: <PlayCircleOutlined style={{ color: "#8c8c8c" }} />, tagColor: "default" },
+const STATUS_CFG: Record<string, { icon: React.ReactNode }> = {
+  pending: { icon: <PlayCircleOutlined /> },
+  running: { icon: <LoadingOutlined spin /> },
+  completed: { icon: <CheckCircleFilled /> },
+  failed: { icon: <CloseCircleFilled /> },
+  timed_out: { icon: <CloseCircleFilled /> },
+  cancelled: { icon: <CloseCircleFilled /> },
+  skipped: { icon: <PlayCircleOutlined /> },
 };
+
+const CATEGORY_ICONS = {
+  data_io: DatabaseOutlined,
+  processing: FilterOutlined,
+  blending: ApartmentOutlined,
+  ml: ExperimentOutlined,
+  dl: ThunderboltOutlined,
+  evaluation: BarChartOutlined,
+  visualization: FundOutlined,
+  control: ApartmentOutlined,
+  mechanism: ToolOutlined,
+  optimization: ExperimentOutlined,
+  utility: AppstoreOutlined,
+};
+
+function normalizeCategory(category?: string): keyof typeof CATEGORY_ICONS {
+  if (category === "io") return "data_io";
+  if (category && category in CATEGORY_ICONS) return category as keyof typeof CATEGORY_ICONS;
+  return "utility";
+}
+
+function logicalPortName(handleId?: string | null): string {
+  return String(handleId || "").replace(/__slot_\d+$/, "");
+}
+
+export function getPortSlots(
+  nodeId: string,
+  ports: any[],
+  direction: "in" | "out",
+  edges: any[],
+) {
+  return ports.flatMap((port) => {
+    const connectionCount = edges.filter((edge) => (
+      direction === "in"
+        ? edge.target === nodeId && logicalPortName(edge.targetHandle) === port.name
+        : edge.source === nodeId && logicalPortName(edge.sourceHandle) === port.name
+    )).length;
+    return Array.from({ length: Math.max(1, connectionCount + 1) }, (_, slot) => ({
+      port,
+      handleId: `${port.name}__slot_${slot}`,
+    }));
+  });
+}
 
 function buildPortPreview(
   nodeId: string,
@@ -30,15 +73,18 @@ function buildPortPreview(
 ): string {
   if (portDirection === "in") {
     // For input ports: show data from the connected upstream source port
-    const incEdge = edges.find(e => e.target === nodeId && (e.targetHandle === portName || e.targetHandle === "in-0"));
+    const incEdge = edges.find(e => (
+      e.target === nodeId && (logicalPortName(e.targetHandle) === portName || e.targetHandle === "in-0")
+    ));
     if (incEdge && nodeResults[incEdge.source]) {
       const upstream = nodeResults[incEdge.source];
-      return formatResult(upstream, lang);
+      return formatResult(upstream[portName] ?? upstream, lang);
     }
   } else {
     // For output ports: show this node's result
     if (nodeResults[nodeId]) {
-      return formatResult(nodeResults[nodeId], lang);
+      const result = nodeResults[nodeId];
+      return formatResult(result[portName] ?? result, lang);
     }
   }
   return "";
@@ -85,6 +131,8 @@ function CustomNode({ data, selected }: NodeProps) {
   const opId = data.operatorId as string || "";
   const label = (t as any).operator?.[opId] || (data.label as string) || opId;
   const nodeId = data.nodeId as string || "";
+  const category = normalizeCategory(data.category as string);
+  const CategoryIcon = CATEGORY_ICONS[category];
   const statusLabel = {
     completed: lang === "zh" ? "已完成" : "Completed",
     running: lang === "zh" ? "运行中" : "Running",
@@ -102,121 +150,108 @@ function CustomNode({ data, selected }: NodeProps) {
   const nodeResults = useWorkflowStore((s) => s.nodeResults);
   const allEdges = useWorkflowStore((s) => s.edges);
   const allNodes = useWorkflowStore((s) => s.nodes);
+  const inputSlots = getPortSlots(nodeId, inputs, "in", allEdges);
+  const outputSlots = getPortSlots(nodeId, outputs, "out", allEdges);
 
-  const portStyle = (index: number, total: number): React.CSSProperties => ({
-    width: 14,
-    height: 14,
-    background: cfg.border,
-    border: "3px solid #fff",
+  const portStyle = (index: number, total: number, side: "left" | "right"): React.CSSProperties => ({
     top: total <= 1 ? "50%" : ((index + 0.5) / total) * 100 + "%",
+    ...(side === "left" ? { left: -9 } : { right: -9 }),
   });
 
   return (
     <div
-      style={{
-        padding: "6px 16px 8px",
-        borderRadius: 10,
-        border: "2px solid " + (selected ? "#1890ff" : cfg.border),
-        background: cfg.bg,
-        minWidth: 150,
-        maxWidth: 220,
-        boxShadow: selected ? "0 0 0 2px rgba(24,144,255,0.3)" : "0 1px 4px rgba(0,0,0,0.1)",
-        fontSize: 13,
-        transition: "all 0.2s ease",
-      }}
+      className={`workflow-node workflow-node--${status}${selected ? " workflow-node--selected" : ""}`}
+      data-testid="workflow-node"
     >
-      {inputs.map((p: any, i: number) => {
+      {inputSlots.map(({ port: p, handleId }, i: number) => {
         const preview = buildPortPreview(nodeId, p.name, "in", allNodes, allEdges, nodeResults, lang);
         const portLabel = (p.label || p.name) + (p.type ? " (" + p.type + ")" : "");
         const tooltipContent = (
           <div style={{ fontSize: 12, lineHeight: 1.6 }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>{portLabel}</div>
             {preview ? (
-              <div style={{
-                background: "rgba(255,255,255,0.08)", padding: "4px 8px",
-                borderRadius: 4, fontFamily: "monospace", fontSize: 11,
-                whiteSpace: "pre-wrap", maxWidth: 280,
-              }}>
+              <div className="workflow-port-tooltip__preview">
                 {preview}
               </div>
             ) : (
-              <div style={{ color: "rgba(255,255,255,0.45)", fontStyle: "italic" }}>
+              <div className="workflow-port-tooltip__empty">
                 {lang === "zh" ? "暂无数据" : "No data available"}
               </div>
             )}
           </div>
         );
         return (
-          <Tooltip title={tooltipContent} color="#1a1a2e" placement="left" mouseEnterDelay={0.3} key={"tt-in-" + p.name}>
+          <Tooltip title={tooltipContent} placement="left" mouseEnterDelay={0.3} key={"tt-in-" + handleId}>
             <Handle
               type="target"
               position={Position.Left}
-              id={p.name}
-              style={portStyle(i, inputs.length)}
+              id={handleId}
+              data-testid={"port-in-" + handleId}
+              className="workflow-node-handle workflow-node-handle--input"
+              style={portStyle(i, inputSlots.length, "left")}
             />
           </Tooltip>
         );
       })}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-        <span style={{ fontSize: 14 }}>{cfg.icon}</span>
-        <span style={{
-          fontWeight: 600, flex: 1, overflow: "hidden",
-          textOverflow: "ellipsis", whiteSpace: "nowrap",
-        }}>
-          {label}
+      <div className="workflow-node__header">
+        <span className="workflow-node__category" data-testid="workflow-node-category">
+          <CategoryIcon />
+        </span>
+        <div className="workflow-node__identity">
+          <span className="workflow-node__title" title={label}>{label}</span>
+          <span className="workflow-node__operator-id">{opId}</span>
+        </div>
+        <span className="workflow-node__status" data-testid="workflow-node-status">
+          <span className="workflow-node__status-icon">{cfg.icon}</span>
+          {statusLabel}
         </span>
       </div>
 
-      <Tag color={cfg.tagColor} style={{ fontSize: 10, lineHeight: "14px", marginBottom: 4 }}>
-        {statusLabel}
-      </Tag>
+      <div className="workflow-node__signals" aria-hidden="true">
+        <span>IN {inputs.length}</span>
+        <span>OUT {outputs.length}</span>
+      </div>
 
       {status === "failed" && (data as any).error && (
         <Tooltip title={String((data as any).error)}>
-          <div style={{
-            fontSize: 9, color: "#ff4d4f", marginTop: -2, marginBottom: 4,
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            maxWidth: 180,
-          }}>
+          <div className="workflow-node__error">
             {String((data as any).error).slice(0, 60)}
           </div>
         </Tooltip>
       )}
 
       {status === "running" && (
-        <Progress percent={progress} size="small" status="active"
-          showInfo={progress != null} style={{ marginTop: 2 }} />
+        <Progress className="workflow-node__progress" percent={progress} size="small" status="active"
+          showInfo={progress != null} />
       )}
 
-      {outputs.map((p: any, i: number) => {
+      {outputSlots.map(({ port: p, handleId }, i: number) => {
         const preview = buildPortPreview(nodeId, p.name, "out", allNodes, allEdges, nodeResults, lang);
         const portLabel = (p.label || p.name) + (p.type ? " (" + p.type + ")" : "");
         const tooltipContent = (
           <div style={{ fontSize: 12, lineHeight: 1.6 }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>{portLabel}</div>
             {preview ? (
-              <div style={{
-                background: "rgba(255,255,255,0.08)", padding: "4px 8px",
-                borderRadius: 4, fontFamily: "monospace", fontSize: 11,
-                whiteSpace: "pre-wrap", maxWidth: 280,
-              }}>
+              <div className="workflow-port-tooltip__preview">
                 {preview}
               </div>
             ) : (
-              <div style={{ color: "rgba(255,255,255,0.45)", fontStyle: "italic" }}>
+              <div className="workflow-port-tooltip__empty">
                 {lang === "zh" ? "暂无数据" : "No data available"}
               </div>
             )}
           </div>
         );
         return (
-          <Tooltip title={tooltipContent} color="#1a1a2e" placement="right" mouseEnterDelay={0.3} key={"tt-out-" + p.name}>
+          <Tooltip title={tooltipContent} placement="right" mouseEnterDelay={0.3} key={"tt-out-" + handleId}>
             <Handle
               type="source"
               position={Position.Right}
-              id={p.name}
-              style={portStyle(i, outputs.length)}
+              id={handleId}
+              data-testid={"port-out-" + handleId}
+              className="workflow-node-handle workflow-node-handle--output"
+              style={portStyle(i, outputSlots.length, "right")}
             />
           </Tooltip>
         );

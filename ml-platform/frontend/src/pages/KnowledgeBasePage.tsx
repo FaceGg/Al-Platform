@@ -47,11 +47,15 @@ export default function KnowledgeBasePage() {
 
   const createBase = async (values: any) => {
     try {
-      await apiClient.post("/knowledge/bases", values);
+      const response = await apiClient.post("/knowledge/bases", values);
       message.success(t.common.success);
       setModalOpen(false);
       form.resetFields();
-      load();
+      if (response.data?.id) {
+        navigate("/knowledge/" + response.data.id);
+      } else {
+        load();
+      }
     } catch (e: any) {
       message.error(e.response?.data?.detail || t.common.error);
     }
@@ -73,7 +77,7 @@ export default function KnowledgeBasePage() {
               loading={loading}
               actions={[
                 <Button type="link" key="enter" onClick={() => navigate("/knowledge/" + kb.id)}>
-                  {t.common.confirm}
+                  {t.common.edit}
                 </Button>,
                 <Button type="link" danger key="del" icon={<DeleteOutlined />}
                   onClick={(e) => { e.stopPropagation(); deleteBase(kb.id, kb.name); }}>
@@ -89,7 +93,7 @@ export default function KnowledgeBasePage() {
                     <Paragraph ellipsis={{ rows: 2 }} type="secondary">
                       {kb.description || "-"}
                     </Paragraph>
-                    <Text type="secondary">{t.knowledge.doc_count}: {kb.doc_count ?? 0}</Text>
+                    <Text type="secondary">{t.knowledge.doc_count}: {kb.document_count ?? 0}</Text>
                   </div>
                 }
               />

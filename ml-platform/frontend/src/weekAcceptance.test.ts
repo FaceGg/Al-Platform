@@ -5,7 +5,11 @@ const weekTestFiles: Record<number, string[]> = {
     "./api/auth.test.ts",
     "./api/client.test.ts",
     "./components/AppLayout.test.tsx",
+    "./pages/KnowledgeBasePage.test.tsx",
+    "./pages/KnowledgeGraphPage.test.tsx",
+    "./pages/UserManagementPage.test.tsx",
     "./moduleImports.test.ts",
+    "./stores/themeContext.test.tsx",
     "./weekAcceptance.test.ts",
   ],
   2: [
@@ -22,11 +26,15 @@ const weekTestFiles: Record<number, string[]> = {
   4: [
     "./api/templates.test.ts",
     "./components/workspace/CustomNode.test.ts",
+    "./components/workspace/CustomNode.test.tsx",
     "./components/workspace/NodeConfigPanel.test.tsx",
+    "./components/workspace/NodeConfigPanel.join.test.tsx",
+    "./components/workspace/OperatorPanel.test.tsx",
     "./pages/TemplateWizardPage.test.tsx",
   ],
   6: [
     "./api/experiments.test.ts",
+    "./pages/AutoMLPage.test.tsx",
   ],
   8: [
     "./api/modelRegistry.test.ts",

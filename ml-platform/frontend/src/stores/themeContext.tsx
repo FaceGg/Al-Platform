@@ -24,6 +24,9 @@ export function ThemeProvider({ children }: { children: any }) {
     }
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
   const ctx = useMemo<ThemeCtx>(
     () => ({
       theme,
