@@ -216,8 +216,12 @@ function CustomNode({ data, selected }: NodeProps) {
     open: activePreview === previewKey,
     onMouseEnter: () => setActivePreview(previewKey),
     onMouseLeave: () => setActivePreview((current) => current === previewKey ? null : current),
-    onClick: (event: React.MouseEvent) => {
-      event.stopPropagation();
+    onMouseDown: () => {
+      setActivePreview(null);
+    },
+    // ReactFlow short-circuits Handle's bubble handler when no node id is
+    // available (as in isolated tests); capture keeps dismissal deterministic.
+    onMouseDownCapture: () => {
       setActivePreview(null);
     },
   });

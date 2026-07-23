@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ReactFlowProvider } from "reactflow";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import CustomNode from "./CustomNode";
 import { useWorkflowStore } from "../../stores/workflowStore";
 
@@ -141,12 +141,46 @@ describe("CustomNode visual structure", () => {
     expect(screen.getByText(/2 列 × 1 行/)).toBeInTheDocument();
     expect(screen.getAllByText(/id/).length).toBeGreaterThan(0);
 
-    fireEvent.click(endpoint);
+    fireEvent.mouseDown(endpoint);
     await waitFor(() => expect(screen.queryByText("DataTable")).not.toBeInTheDocument());
 
     fireEvent.mouseLeave(endpoint);
     fireEvent.mouseEnter(endpoint);
     expect(await screen.findByText("DataTable")).toBeInTheDocument();
+  });
+
+  it("clears preview on pointer down without intercepting Handle click propagation", async () => {
+    const parentClick = vi.fn();
+    render(
+      <div onClick={parentClick}>
+        <ReactFlowProvider>
+          <CustomNode
+            id="node-connect"
+            type="custom"
+            selected={false}
+            dragging={false}
+            zIndex={0}
+            isConnectable
+            xPos={0}
+            yPos={0}
+            data={{
+              nodeId: "node-connect",
+              operatorId: "csv_import",
+              outputs: [{ name: "data", label: "Data", type: "DataTable", format: "records" }],
+              inputs: [],
+            }}
+          />
+        </ReactFlowProvider>
+      </div>,
+    );
+
+    const endpoint = screen.getByTestId("port-out-data");
+    fireEvent.mouseEnter(endpoint);
+    expect(await screen.findByText("DataTable")).toBeInTheDocument();
+    fireEvent.mouseDown(endpoint);
+    await waitFor(() => expect(screen.queryByText("DataTable")).not.toBeInTheDocument());
+    fireEvent.click(endpoint);
+    expect(parentClick).toHaveBeenCalled();
   });
 
   it("opens failed node error details from the status label", async () => {
