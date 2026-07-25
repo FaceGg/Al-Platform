@@ -708,10 +708,6 @@ class InferenceRolloutService:
                     to_revision=rollout.from_revision,
                 )
                 legacy_replaced = True
-            unload = getattr(self.runtime, "unload", None)
-            if callable(unload):
-                for target in rollout.to_revision.targets or ():
-                    unload(f"{rollout.to_revision.id}:{target.model_version_id}")
             self._transition(
                 db,
                 rollout,
@@ -771,6 +767,13 @@ class InferenceRolloutService:
             )
             db.commit()
             raise InferenceRolloutError("ROLLOUT_ROLLBACK_FAILED") from None
+        unload = getattr(self.runtime, "unload", None)
+        if callable(unload):
+            for target in rollout.to_revision.targets or ():
+                try:
+                    unload(f"{rollout.to_revision.id}:{target.model_version_id}")
+                except Exception:
+                    continue
         return rollout
 
     def reconcile(self, db):

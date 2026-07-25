@@ -78,6 +78,8 @@ class ConflictPreservingRuntime(FakeRuntime):
         self.fail_legacy_model_version_ids = set()
         self.raise_after_legacy_model_version_id = None
         self.legacy_runtime_key = None
+        self.fail_before_unload_runtime_keys = set()
+        self.fail_after_unload_runtime_keys = set()
 
     def load(self, runtime_key, specification):
         runtime_key = str(runtime_key)
@@ -101,6 +103,16 @@ class ConflictPreservingRuntime(FakeRuntime):
         ):
             raise InferenceRuntimeClientError("INFERENCE_RUNTIME_UNAVAILABLE")
         return loaded
+
+    def unload(self, runtime_key):
+        runtime_key = str(runtime_key)
+        self.calls.append(("unload", runtime_key))
+        if runtime_key in self.fail_before_unload_runtime_keys:
+            raise InferenceRuntimeClientError("INFERENCE_RUNTIME_UNAVAILABLE")
+        removed = self.loaded.pop(runtime_key, None) is not None
+        if runtime_key in self.fail_after_unload_runtime_keys:
+            raise InferenceRuntimeClientError("INFERENCE_RUNTIME_UNAVAILABLE")
+        return removed
 
 
 class RecordingEventRecorder:
@@ -592,6 +604,106 @@ class TestInferenceRollout(unittest.TestCase):
         )
         self.assertEqual(prediction["model_version_id"], str(self.version.id))
         self.assertEqual(candidate.status, "failed")
+
+    def test_completed_rollback_commits_old_stable_when_candidate_drain_fails_before_removal(self):
+        runtime = ConflictPreservingRuntime()
+        service, rollout, stable, candidate, candidate_key = (
+            self._rollout_ready_for_completion(runtime)
+        )
+        rollout = service.advance(
+            self.db,
+            rollout.id,
+            expected_lock_version=rollout.lock_version,
+            observation={"error_rate": 0.0, "p95_ms": 1},
+        )
+        self.deployment.desired_state = "running"
+        self.deployment.observed_state = "running"
+        self.db.commit()
+        runtime.fail_before_unload_runtime_keys.add(candidate_key)
+        error = None
+
+        try:
+            rolled_back = service.rollback(
+                self.db,
+                rollout.id,
+                expected_lock_version=rollout.lock_version,
+            )
+        except InferenceRolloutError as caught:
+            error = caught
+            rolled_back = None
+
+        self.assertIsNone(error)
+        self.assertEqual(rolled_back.state, "rolled_back")
+        self.db.refresh(rollout)
+        self.db.refresh(stable)
+        self.db.refresh(candidate)
+        self.assertEqual((rollout.state, rollout.current_step), ("rolled_back", 0))
+        self.assertEqual((stable.status, candidate.status), ("stable", "failed"))
+        self.assertEqual(
+            runtime.loaded[str(self.deployment.id)]["revision_id"],
+            str(stable.id),
+        )
+        self.assertIn(candidate_key, runtime.loaded)
+        self.assertEqual(
+            WeightedTargetRouter().select_active(self.deployment, "request-42").revision_id,
+            stable.id,
+        )
+        prediction = InferenceDeploymentService(runtime, None).predict(
+            self.db,
+            self.deployment.id,
+            [{"current": 8.0}],
+        )
+        self.assertEqual(prediction["model_version_id"], str(self.version.id))
+
+    def test_completed_rollback_commits_old_stable_when_candidate_drain_fails_after_removal(self):
+        runtime = ConflictPreservingRuntime()
+        service, rollout, stable, candidate, candidate_key = (
+            self._rollout_ready_for_completion(runtime)
+        )
+        rollout = service.advance(
+            self.db,
+            rollout.id,
+            expected_lock_version=rollout.lock_version,
+            observation={"error_rate": 0.0, "p95_ms": 1},
+        )
+        self.deployment.desired_state = "running"
+        self.deployment.observed_state = "running"
+        self.db.commit()
+        runtime.fail_after_unload_runtime_keys.add(candidate_key)
+        error = None
+
+        try:
+            rolled_back = service.rollback(
+                self.db,
+                rollout.id,
+                expected_lock_version=rollout.lock_version,
+            )
+        except InferenceRolloutError as caught:
+            error = caught
+            rolled_back = None
+
+        self.assertIsNone(error)
+        self.assertEqual(rolled_back.state, "rolled_back")
+        self.db.refresh(rollout)
+        self.db.refresh(stable)
+        self.db.refresh(candidate)
+        self.assertEqual((rollout.state, rollout.current_step), ("rolled_back", 0))
+        self.assertEqual((stable.status, candidate.status), ("stable", "failed"))
+        self.assertEqual(
+            runtime.loaded[str(self.deployment.id)]["revision_id"],
+            str(stable.id),
+        )
+        self.assertNotIn(candidate_key, runtime.loaded)
+        self.assertEqual(
+            WeightedTargetRouter().select_active(self.deployment, "request-42").revision_id,
+            stable.id,
+        )
+        prediction = InferenceDeploymentService(runtime, None).predict(
+            self.db,
+            self.deployment.id,
+            [{"current": 8.0}],
+        )
+        self.assertEqual(prediction["model_version_id"], str(self.version.id))
 
     def test_completed_rollback_keeps_candidate_when_legacy_restore_falls_back(self):
         runtime = ConflictPreservingRuntime()
