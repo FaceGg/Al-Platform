@@ -1166,3 +1166,15 @@
 - 解决结果：使用 `math.isfinite` 在冻结前拒绝 NaN、正无穷和负无穷，统一返回 `DOMAIN_EVENT_PAYLOAD_INVALID`；有限 float 继续允许。
 - 验证方式：三种非有限值及有限 `2.5` 回归，domain smoke、模型/数据库 `32/32`、compileall 和 diff check 通过。
 - 遗留事项：Task 4 完成后运行完整 rollout 和 Week 9 套件。
+
+### 2026-07-25：第 9 周 Task 6 加权路由与持久 Rollout 完成
+
+- 当前周次：第 9 至第 12 周并行开发；Task 6 已完成，第 9 周整体仍进行中。
+- 开发内容：完成 `WeightedTargetRouter` 稳定基点哈希和两阶段 revision/target 路由；完成 candidate 创建、预加载、健康阈值、0/10/50/100 流量步骤、暂停/恢复、CAS 推进、回滚和重启 reconcile；runtime 以 `runtime_key` 支持同一部署多 revision 共存，并保留 Week 8 legacy 兼容。
+- 问题现象：completed rollback 先恢复 legacy stable 后，candidate alias 清理失败会使事务回滚到 candidate stable；数据库路由、legacy runtime 和 candidate alias 可能不一致。远端已删除但客户端超时也会触发同一风险。
+- 根因：不可逆的 runtime alias drain 与 rollback 状态提交位于同一异常边界，清理失败被错误当作 rollback 失败处理。
+- 解决方法：先提交旧 stable revision、rollout `rolled_back` 和部署运行状态，再逐个 best-effort unload candidate alias；单个 drain 失败不回滚已提交的 stable 路由，后续由 reconcile 清理残留 alias。补充 drain 删除前失败和删除后超时回归。
+- 验证方式：`test_inference_rollout`、`test_inference_runtime`、`test_inference_deployment` 独立回归 `50/50`；扩展 Task 6 相关五模块（含生产模型和 Celery 兼容）`74/74`；`C:\Users\17723\miniconda3\python.exe -m compileall -q app` 通过；`git diff --check` 通过。Week 9 清单前 6 个模块通过，`test_api_inference_production` 因 Task 7 路由尚未实施而导入失败，属于已知下游门禁，不计为 Task 6 失败。规格复审无新增 P0-P2，代码质量复审无 Critical/Important/Minor。
+- 影响范围：`inference_rollout.py`、部署服务/runtime compatibility、rollout/runtime/deployment 测试，以及第 9 周实施计划和状态记录；未启动 Task 7 API、Task 8 Celery rollout、Task 9 UI、Task 10 生产/Chromium 或 Task 11 最终验收。
+- 预防措施：跨数据库与 runtime 的不可逆操作必须拆成可提交状态边界；候选 alias 清理只能是可重试补偿，不得决定已完成 rollback 的数据库状态；每个 runtime key 的删除前/删除后异常都要有回归，状态机命令继续使用单一 `lock_version` CAS。
+- 遗留事项：Task 7 严格控制面/生产预测 API 尚未开始，因此完整 Week 9、真实 PostgreSQL/Redis/MinIO/runtime、Chromium 和远程 CI 证据仍未完成；Task 7 完成前不标记第 9 周整体完成。

@@ -578,7 +578,7 @@ Expected: aggregation, retention, redaction, immutable fields, guidance versioni
 - Modify: `ml-platform/backend/tests/test_inference_runtime.py`
 - Modify: `ml-platform/backend/tests/test_inference_deployment.py`
 
-- [ ] **Step 1: Write failing deterministic-routing and CAS tests**
+- [x] **Step 1: Write failing deterministic-routing and CAS tests**
 
 ```python
 def test_weighted_router_is_stable(self):
@@ -608,7 +608,7 @@ def test_stale_rollout_command_is_rejected(self):
 
 Add cases for unapproved/cross-project/duplicate targets, total weights, concurrent active rollout, preload failure, threshold failure, restored stable weights, repeat rollback, and restart reconciliation.
 
-- [ ] **Step 2: Run the rollout tests and verify RED**
+- [x] **Step 2: Run the rollout tests and verify RED**
 
 ```powershell
 python -m unittest tests.test_inference_rollout tests.test_inference_runtime tests.test_inference_deployment -v
@@ -616,7 +616,7 @@ python -m unittest tests.test_inference_rollout tests.test_inference_runtime tes
 
 Expected: missing service/runtime-key behavior fails while existing Week 8 tests continue to execute.
 
-- [ ] **Step 3: Implement stable weighted selection**
+- [x] **Step 3: Implement stable weighted selection**
 
 ```python
 def select(self, revision, routing_key):
@@ -635,15 +635,15 @@ def select(self, revision, routing_key):
     raise InferenceRolloutError("TARGET_WEIGHTS_INVALID")
 ```
 
-- [ ] **Step 4: Implement the state machine and safe events**
+- [x] **Step 4: Implement the state machine and safe events**
 
 Expose `create_candidate`, `preload`, `advance`, `pause`, `resume`, `rollback`, and `reconcile`. Use default steps `[0, 1000, 5000, 10000]` and frozen thresholds `{"max_error_rate": 0.01, "max_p95_ms": 500}`. Route in two stages while a rollout progresses: use the current step to choose the stable or candidate revision, then use that revision's target weights to choose the actual model version. Lock the rollout row, compare `expected_lock_version`, increment it in the same update, and persist step/state/error/timestamps. Restore last-known stable weights before recording `paused`, `failed`, or `rolled_back`. Emit only the seven frozen safe events through `DomainEventRecorder`; never commit inside the recorder.
 
-- [ ] **Step 5: Extend the private runtime with compatibility**
+- [x] **Step 5: Extend the private runtime with compatibility**
 
 Add `runtime_key` to `LoadedDeployment`; when omitted, default to the Week 8 deployment ID. Index sessions by runtime key so `revision-1:model-a` and `revision-2:model-b` can coexist for one stable deployment. Internal list and prediction responses return `runtime_key`, `deployment_id`, `revision_id`, `model_version_id`, and version number. Keep `/internal/deployments/{runtime_key}` private behind `X-Inference-Internal-Token`; preserve Week 8 fields and `DEPLOYMENT_SPEC_CONFLICT` behavior.
 
-- [ ] **Step 6: Run GREEN and commit**
+- [x] **Step 6: Run GREEN and commit**
 
 ```powershell
 python -m unittest tests.test_inference_rollout tests.test_inference_runtime tests.test_inference_deployment -v
