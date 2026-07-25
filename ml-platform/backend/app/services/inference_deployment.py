@@ -6,6 +6,7 @@ import uuid
 from app.models.artifact import Artifact
 from app.models.model_registry import (
     DeploymentRevision,
+    DeploymentRollout,
     DeploymentTarget,
     InferenceDeployment,
     ModelVersion,
@@ -217,14 +218,21 @@ class InferenceDeploymentService:
         desired = db.query(InferenceDeployment).all()
         loaded = unloaded = failed = 0
         desired_ids = {str(item.id) for item in desired if item.desired_state == "running"}
-        expected_ids = {
-            str(item.id): str(item.id)
-            for item in desired
-            if item.desired_state == "running"
-        }
+        expected_runtime_ids = set(desired_ids)
+        active_rollouts = db.query(DeploymentRollout).filter(
+            DeploymentRollout.state.in_(("pending", "preloading", "progressing", "paused")),
+        ).all()
+        for rollout in active_rollouts:
+            if str(rollout.deployment_id) not in desired_ids:
+                continue
+            revision = rollout.to_revision
+            expected_runtime_ids.update(
+                f"{revision.id}:{target.model_version_id}"
+                for target in revision.targets or ()
+            )
         for deployment in desired:
             try:
-                expected_runtime_key = expected_ids.get(str(deployment.id), str(deployment.id))
+                expected_runtime_key = str(deployment.id)
                 if deployment.desired_state == "running" and expected_runtime_key not in runtime_ids:
                     self.runtime.load(deployment.id, self._specification(db, deployment))
                     deployment.observed_state = "running"
@@ -241,7 +249,7 @@ class InferenceDeploymentService:
                 deployment.last_error_code = self._runtime_code(error)
                 deployment.last_checked_at = utcnow()
                 failed += 1
-        for orphan_id in runtime_ids - desired_ids:
+        for orphan_id in runtime_ids - expected_runtime_ids:
             if not any(str(item.id) == orphan_id for item in desired):
                 try:
                     self.runtime.unload(orphan_id)

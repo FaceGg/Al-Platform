@@ -400,8 +400,10 @@ class InferenceRolloutService:
         revision = revision or rollout.to_revision
         preload = getattr(self.runtime, "preload", None)
         if callable(preload):
-            preload(rollout.deployment_id, revision.id)
-            return
+            return preload(rollout.deployment_id, revision.id)
+        loader = getattr(self.runtime, "load", None)
+        if not callable(loader):
+            return None
         for target in revision.targets or ():
             version = db.query(ModelVersion).filter(ModelVersion.id == target.model_version_id).one()
             artifact = db.query(Artifact).filter(Artifact.id == version.onnx_artifact_id).one()
@@ -420,7 +422,7 @@ class InferenceRolloutService:
                 "input_names": metadata.get("input_names", []),
                 "output_names": metadata.get("output_names", []),
             }
-            self.runtime.load(specification["runtime_key"], specification)
+            loader(specification["runtime_key"], specification)
 
     def preload(self, db, rollout_id, expected_lock_version=None):
         rollout = self._rollout(db, rollout_id, lock=True)
@@ -473,7 +475,10 @@ class InferenceRolloutService:
         for name in ("observe", "health", "metrics"):
             method = getattr(runtime, name, None)
             if callable(method):
-                value = method(rollout)
+                try:
+                    value = method(rollout)
+                except TypeError:
+                    value = method()
                 if isinstance(value, Mapping):
                     return value
         return {"error_rate": 0.0, "p95_ms": 0.0}
