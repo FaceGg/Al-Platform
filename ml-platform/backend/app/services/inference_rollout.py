@@ -542,6 +542,33 @@ class InferenceRolloutService:
             return rollout
         next_step = int(next_steps[0])
         if next_step >= 10000:
+            self._check_expected(rollout, expected_lock_version)
+            deployment = self._deployment(db, rollout.deployment_id)
+            try:
+                self._replace_legacy_runtime(
+                    db,
+                    deployment,
+                    from_revision=rollout.from_revision,
+                    to_revision=rollout.to_revision,
+                )
+            except InferenceRolloutError:
+                self._transition(
+                    db,
+                    rollout,
+                    rollout.lock_version,
+                    state="paused",
+                    current_step=0,
+                    last_error_code="ROLLOUT_LEGACY_REFRESH_FAILED",
+                )
+                self._record(
+                    db,
+                    deployment,
+                    rollout,
+                    "rollout.failed",
+                    error_code="ROLLOUT_LEGACY_REFRESH_FAILED",
+                )
+                db.commit()
+                raise
             self._transition(
                 db,
                 rollout,
@@ -554,8 +581,6 @@ class InferenceRolloutService:
             rollout.to_revision.status = "stable"
             rollout.to_revision.activated_at = self.clock()
             rollout.from_revision.status = "superseded"
-            deployment = self._deployment(db, rollout.deployment_id)
-            self._refresh_legacy_runtime(db, deployment)
             self._record(db, deployment, rollout, "rollout.completed")
         else:
             self._transition(
@@ -569,17 +594,45 @@ class InferenceRolloutService:
         db.commit()
         return rollout
 
-    def _refresh_legacy_runtime(self, db, deployment):
-        """Point legacy deployment runtime key at newest stable revision."""
+    def _replace_legacy_runtime(
+        self,
+        db,
+        deployment,
+        *,
+        from_revision,
+        to_revision,
+    ):
+        """Replace legacy key while retaining a stable fallback on load failure."""
         loader = getattr(self.runtime, "load", None)
         if not callable(loader):
             return
+        unloader = getattr(self.runtime, "unload", None)
+        if not callable(unloader):
+            raise InferenceRolloutError("INFERENCE_RUNTIME_UNAVAILABLE")
+        if from_revision is None or to_revision is None:
+            raise InferenceRolloutError("STABLE_REVISION_NOT_FOUND")
         from app.services.inference_deployment import InferenceDeploymentService
 
-        loader(
-            deployment.id,
-            InferenceDeploymentService._specification(db, deployment),
+        previous_specification = InferenceDeploymentService._specification(
+            db,
+            deployment,
+            revision=from_revision,
         )
+        replacement_specification = InferenceDeploymentService._specification(
+            db,
+            deployment,
+            revision=to_revision,
+        )
+        try:
+            unloader(deployment.id)
+            loader(deployment.id, replacement_specification)
+        except Exception:
+            try:
+                unloader(deployment.id)
+                loader(deployment.id, previous_specification)
+            except Exception:
+                pass
+            raise InferenceRolloutError("ROLLOUT_LEGACY_REFRESH_FAILED") from None
 
     def pause(self, db, rollout_id, expected_lock_version=None):
         rollout = self._rollout(db, rollout_id, lock=True)

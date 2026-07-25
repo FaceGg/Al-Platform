@@ -27,6 +27,8 @@ from app.services.inference_rollout import (
     InferenceRolloutService,
     WeightedTargetRouter,
 )
+from app.services.inference_deployment import InferenceDeploymentService
+from app.services.inference_runtime_client import InferenceRuntimeClientError
 from app.events.domain import (
     SAFE_PAYLOAD_KEYS,
     DomainEvent,
@@ -51,6 +53,39 @@ class FakeRuntime:
     def load(self, runtime_key, specification):
         self.calls.append(("load", str(runtime_key)))
         self.loaded[str(runtime_key)] = specification
+
+    def unload(self, runtime_key):
+        self.calls.append(("unload", str(runtime_key)))
+        return self.loaded.pop(str(runtime_key), None) is not None
+
+
+class ConflictPreservingRuntime(FakeRuntime):
+    """Match RuntimeRegistry behavior: a key cannot change identity in place."""
+
+    def __init__(self):
+        super().__init__()
+        self.fail_legacy_model_version_id = None
+        self.raise_after_legacy_model_version_id = None
+        self.legacy_runtime_key = None
+
+    def load(self, runtime_key, specification):
+        runtime_key = str(runtime_key)
+        existing = self.loaded.get(runtime_key)
+        if existing is not None and existing != specification:
+            raise InferenceRuntimeClientError("DEPLOYMENT_SPEC_CONFLICT")
+        if (
+            runtime_key == self.legacy_runtime_key
+            and specification["model_version_id"] == self.fail_legacy_model_version_id
+        ):
+            raise InferenceRuntimeClientError("MODEL_LOAD_FAILED")
+        loaded = super().load(runtime_key, specification)
+        if (
+            runtime_key == self.legacy_runtime_key
+            and specification["model_version_id"]
+            == self.raise_after_legacy_model_version_id
+        ):
+            raise InferenceRuntimeClientError("INFERENCE_RUNTIME_UNAVAILABLE")
+        return loaded
 
 
 class RecordingEventRecorder:
@@ -369,6 +404,136 @@ class TestInferenceRollout(unittest.TestCase):
             legacy_specification["revision_id"],
             str(rollout.to_revision_id),
         )
+
+    def _rollout_ready_for_completion(self, runtime):
+        service = InferenceRolloutService(runtime)
+        rollout = service.create_candidate(
+            self.db,
+            self.deployment.id,
+            self.actor.id,
+            [{"model_version_id": self.candidate_version.id, "weight_bps": 10000}],
+        )
+        rollout = service.preload(
+            self.db,
+            rollout.id,
+            expected_lock_version=rollout.lock_version,
+        )
+        for _ in (1000, 5000):
+            rollout = service.advance(
+                self.db,
+                rollout.id,
+                expected_lock_version=rollout.lock_version,
+                observation={"error_rate": 0.0, "p95_ms": 1},
+            )
+        stable = self.db.query(DeploymentRevision).filter_by(
+            deployment_id=self.deployment.id,
+            status="stable",
+        ).one()
+        candidate = rollout.to_revision
+        candidate_target = candidate.targets[0]
+        runtime.load(
+            self.deployment.id,
+            InferenceDeploymentService._specification(self.db, self.deployment),
+        )
+        candidate_key = f"{candidate.id}:{candidate_target.model_version_id}"
+        runtime.load(
+            candidate_key,
+            InferenceDeploymentService._target_specification(
+                self.db,
+                self.deployment,
+                candidate,
+                candidate_target,
+            ),
+        )
+        return service, rollout, stable, candidate, candidate_key
+
+    def test_completion_replaces_conflicting_legacy_key_and_keeps_candidate_alias(self):
+        runtime = ConflictPreservingRuntime()
+        service, rollout, _stable, candidate, candidate_key = (
+            self._rollout_ready_for_completion(runtime)
+        )
+
+        completed = service.advance(
+            self.db,
+            rollout.id,
+            expected_lock_version=rollout.lock_version,
+            observation={"error_rate": 0.0, "p95_ms": 1},
+        )
+
+        self.assertEqual(completed.state, "completed")
+        self.assertEqual(
+            runtime.loaded[str(self.deployment.id)]["model_version_id"],
+            str(self.candidate_version.id),
+        )
+        self.assertEqual(
+            runtime.loaded[str(self.deployment.id)]["revision_id"],
+            str(candidate.id),
+        )
+        self.assertIn(candidate_key, runtime.loaded)
+        self.assertEqual(candidate.status, "stable")
+
+    def test_legacy_replacement_failure_restores_stable_and_pauses_rollout(self):
+        runtime = ConflictPreservingRuntime()
+        service, rollout, stable, candidate, candidate_key = (
+            self._rollout_ready_for_completion(runtime)
+        )
+        runtime.legacy_runtime_key = str(self.deployment.id)
+        runtime.fail_legacy_model_version_id = str(self.candidate_version.id)
+
+        with self.assertRaisesRegex(
+            InferenceRolloutError,
+            "ROLLOUT_LEGACY_REFRESH_FAILED",
+        ):
+            service.advance(
+                self.db,
+                rollout.id,
+                expected_lock_version=rollout.lock_version,
+                observation={"error_rate": 0.0, "p95_ms": 1},
+            )
+
+        self.db.refresh(rollout)
+        self.db.refresh(stable)
+        self.db.refresh(candidate)
+        self.assertEqual((rollout.state, rollout.current_step), ("paused", 0))
+        self.assertEqual(rollout.last_error_code, "ROLLOUT_LEGACY_REFRESH_FAILED")
+        self.assertEqual(stable.status, "stable")
+        self.assertEqual(candidate.status, "candidate")
+        self.assertEqual(
+            runtime.loaded[str(self.deployment.id)]["model_version_id"],
+            str(self.version.id),
+        )
+        self.assertIn(candidate_key, runtime.loaded)
+
+    def test_ambiguous_legacy_load_failure_restores_stable_before_pausing(self):
+        runtime = ConflictPreservingRuntime()
+        service, rollout, stable, candidate, candidate_key = (
+            self._rollout_ready_for_completion(runtime)
+        )
+        runtime.legacy_runtime_key = str(self.deployment.id)
+        runtime.raise_after_legacy_model_version_id = str(self.candidate_version.id)
+
+        with self.assertRaisesRegex(
+            InferenceRolloutError,
+            "ROLLOUT_LEGACY_REFRESH_FAILED",
+        ):
+            service.advance(
+                self.db,
+                rollout.id,
+                expected_lock_version=rollout.lock_version,
+                observation={"error_rate": 0.0, "p95_ms": 1},
+            )
+
+        self.db.refresh(rollout)
+        self.db.refresh(stable)
+        self.db.refresh(candidate)
+        self.assertEqual((rollout.state, rollout.current_step), ("paused", 0))
+        self.assertEqual(stable.status, "stable")
+        self.assertEqual(candidate.status, "candidate")
+        self.assertEqual(
+            runtime.loaded[str(self.deployment.id)]["model_version_id"],
+            str(self.version.id),
+        )
+        self.assertIn(candidate_key, runtime.loaded)
 
     def test_preload_fails_closed_without_runtime_preload_or_load(self):
         candidate = self.make_candidate_revision((9000, 1000))

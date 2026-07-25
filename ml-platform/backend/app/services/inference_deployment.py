@@ -111,11 +111,12 @@ class InferenceDeploymentService:
         return deployment
 
     @staticmethod
-    def _specification(db, deployment):
-        revision = db.query(DeploymentRevision).filter(
-            DeploymentRevision.deployment_id == deployment.id,
-            DeploymentRevision.status == "stable",
-        ).order_by(DeploymentRevision.revision_number.desc()).first()
+    def _specification(db, deployment, revision=None):
+        if revision is None:
+            revision = db.query(DeploymentRevision).filter(
+                DeploymentRevision.deployment_id == deployment.id,
+                DeploymentRevision.status == "stable",
+            ).order_by(DeploymentRevision.revision_number.desc()).first()
         model_version_id = deployment.model_version_id
         if revision is not None and revision.targets:
             model_version_id = sorted(
