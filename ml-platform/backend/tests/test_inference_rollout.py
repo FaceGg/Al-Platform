@@ -13,6 +13,7 @@ from app.database import Base
 from app.models.artifact import Artifact
 from app.models.model_registry import (
     DeploymentRevision,
+    DeploymentRollout,
     DeploymentTarget,
     InferenceDeployment,
     ModelVersion,
@@ -20,7 +21,11 @@ from app.models.model_registry import (
 )
 from app.models.project import Project
 from app.models.user import User
-from app.services.inference_rollout import InferenceRolloutError, InferenceRolloutService
+from app.services.inference_rollout import (
+    InferenceRolloutError,
+    InferenceRolloutService,
+    WeightedTargetRouter,
+)
 from app.events.domain import (
     SAFE_PAYLOAD_KEYS,
     DomainEvent,
@@ -34,8 +39,11 @@ from app.main import configure_runtime_dependencies
 class FakeRuntime:
     def __init__(self):
         self.calls = []
+        self.fail_preload = False
 
     def preload(self, deployment_id, revision_id):
+        if self.fail_preload:
+            raise RuntimeError("INFERENCE_RUNTIME_UNAVAILABLE")
         self.calls.append(("preload", str(deployment_id), str(revision_id)))
 
 
@@ -94,6 +102,28 @@ class TestInferenceRollout(unittest.TestCase):
         )
         self.db.add(self.version)
         self.db.flush()
+        candidate_artifact = Artifact(
+            project_id=self.project.id,
+            name="candidate.onnx",
+            type="model",
+            storage_path="",
+            storage_uri="s3://models/candidate.onnx",
+            file_size=1,
+            format="onnx",
+        )
+        self.db.add(candidate_artifact)
+        self.db.flush()
+        self.candidate_version = ModelVersion(
+            registered_model_id=registered.id,
+            version_number=2,
+            source_kind="onnx_artifact",
+            source_artifact_id=candidate_artifact.id,
+            onnx_artifact_id=candidate_artifact.id,
+            approval_status="approved",
+            created_by_id=self.actor.id,
+        )
+        self.db.add(self.candidate_version)
+        self.db.flush()
         self.deployment = InferenceDeployment(
             project_id=self.project.id,
             name="primary",
@@ -101,6 +131,22 @@ class TestInferenceRollout(unittest.TestCase):
             created_by_id=self.actor.id,
         )
         self.db.add(self.deployment)
+        self.db.commit()
+        self.stable_revision = DeploymentRevision(
+            deployment_id=self.deployment.id,
+            revision_number=1,
+            strategy="immediate",
+            status="stable",
+            created_by_id=self.actor.id,
+        )
+        self.db.add(self.stable_revision)
+        self.db.flush()
+        self.db.add(DeploymentTarget(
+            revision_id=self.stable_revision.id,
+            model_version_id=self.version.id,
+            weight_bps=10000,
+            role="stable",
+        ))
         self.db.commit()
 
     def tearDown(self):
@@ -110,13 +156,41 @@ class TestInferenceRollout(unittest.TestCase):
     def make_revision(self):
         revision = DeploymentRevision(
             deployment_id=self.deployment.id,
-            revision_number=1,
+            revision_number=3,
             strategy="canary",
             status="candidate",
             created_by_id=self.actor.id,
         )
         self.db.add(revision)
         self.db.flush()
+        return revision
+
+    def make_candidate_revision(self, weights=(7000, 3000)):
+        revision = DeploymentRevision(
+            deployment_id=self.deployment.id,
+            revision_number=2,
+            strategy="canary",
+            status="candidate",
+            created_by_id=self.actor.id,
+        )
+        self.db.add(revision)
+        self.db.flush()
+        self.db.add_all([
+            DeploymentTarget(
+                revision_id=revision.id,
+                model_version_id=self.version.id,
+                weight_bps=weights[0],
+                role="stable",
+            ),
+            DeploymentTarget(
+                revision_id=revision.id,
+                model_version_id=self.candidate_version.id,
+                weight_bps=weights[1],
+                role="candidate",
+            ),
+        ])
+        self.db.commit()
+        self.db.refresh(revision)
         return revision
 
     def make_target(self, revision, weight_bps):
@@ -133,6 +207,227 @@ class TestInferenceRollout(unittest.TestCase):
         self.db.commit()
         with self.assertRaisesRegex(InferenceRolloutError, "TARGET_WEIGHTS_INVALID"):
             InferenceRolloutService(FakeRuntime()).validate_targets(self.db, revision.id)
+
+    def test_weighted_router_is_stable_and_sorted_by_model_id(self):
+        revision = self.make_candidate_revision((7000, 3000))
+        router = WeightedTargetRouter()
+        first = router.select(revision, "request-42")
+        second = router.select(revision, "request-42")
+        self.assertEqual(first, second)
+        self.assertEqual(first.revision_id, revision.id)
+        self.assertIn(first.model_version_id, {
+            self.version.id,
+            self.candidate_version.id,
+        })
+
+    def test_active_rollout_selects_revision_then_target(self):
+        candidate = self.make_candidate_revision((9000, 1000))
+        rollout = DeploymentRollout(
+            deployment_id=self.deployment.id,
+            from_revision_id=self.stable_revision.id,
+            to_revision_id=candidate.id,
+            state="progressing",
+            current_step=1000,
+            lock_version=1,
+            step_schedule=[0, 1000, 5000, 10000],
+            thresholds={"max_error_rate": 0.01, "max_p95_ms": 500},
+        )
+        self.db.add(rollout)
+        self.db.commit()
+        self.db.refresh(self.deployment)
+        routed = WeightedTargetRouter().select_active(self.deployment, "request-42")
+        self.assertIn(routed.revision_id, {
+            self.stable_revision.id,
+            candidate.id,
+        })
+
+    def test_create_candidate_rejects_unapproved_cross_project_and_duplicate_targets(self):
+        service = InferenceRolloutService(FakeRuntime())
+        self.version.approval_status = "pending"
+        self.db.commit()
+        with self.assertRaisesRegex(InferenceRolloutError, "MODEL_VERSION_NOT_APPROVED"):
+            service.create_candidate(
+                self.db,
+                self.deployment.id,
+                self.actor.id,
+                [{"model_version_id": self.version.id, "weight_bps": 10000}],
+            )
+        self.version.approval_status = "approved"
+        self.db.commit()
+        other_project = Project(name="Other rollout project", owner_id=self.actor.id)
+        self.db.add(other_project)
+        self.db.flush()
+        foreign_artifact = Artifact(
+            project_id=other_project.id,
+            name="foreign.onnx",
+            type="model",
+            storage_path="",
+            storage_uri="s3://models/foreign.onnx",
+            file_size=1,
+            format="onnx",
+        )
+        self.db.add(foreign_artifact)
+        self.db.flush()
+        foreign_model = RegisteredModel(
+            project_id=other_project.id,
+            name="Foreign model",
+            created_by_id=self.actor.id,
+        )
+        self.db.add(foreign_model)
+        self.db.flush()
+        foreign_version = ModelVersion(
+            registered_model_id=foreign_model.id,
+            version_number=1,
+            source_kind="onnx_artifact",
+            source_artifact_id=foreign_artifact.id,
+            onnx_artifact_id=foreign_artifact.id,
+            approval_status="approved",
+            created_by_id=self.actor.id,
+        )
+        self.db.add(foreign_version)
+        self.db.commit()
+        with self.assertRaisesRegex(InferenceRolloutError, "MODEL_VERSION_NOT_FOUND"):
+            service.create_candidate(
+                self.db,
+                self.deployment.id,
+                self.actor.id,
+                [{"model_version_id": foreign_version.id, "weight_bps": 10000}],
+            )
+        with self.assertRaisesRegex(InferenceRolloutError, "TARGET_DUPLICATE"):
+            service.create_candidate(
+                self.db,
+                self.deployment.id,
+                self.actor.id,
+                [
+                    {"model_version_id": self.candidate_version.id, "weight_bps": 5000},
+                    {"model_version_id": self.candidate_version.id, "weight_bps": 5000},
+                ],
+            )
+
+    def test_only_one_active_rollout_is_allowed(self):
+        service = InferenceRolloutService(FakeRuntime())
+        service.create_candidate(
+            self.db,
+            self.deployment.id,
+            self.actor.id,
+            [{"model_version_id": self.candidate_version.id, "weight_bps": 10000}],
+        )
+        with self.assertRaisesRegex(InferenceRolloutError, "ROLLOUT_ALREADY_ACTIVE"):
+            service.create_candidate(
+                self.db,
+                self.deployment.id,
+                self.actor.id,
+                [{"model_version_id": self.candidate_version.id, "weight_bps": 10000}],
+            )
+
+    def test_preload_and_advance_persist_default_steps_until_completion(self):
+        service = InferenceRolloutService(FakeRuntime())
+        rollout = service.create_candidate(
+            self.db,
+            self.deployment.id,
+            self.actor.id,
+            [{"model_version_id": self.candidate_version.id, "weight_bps": 10000}],
+        )
+        rollout = service.preload(
+            self.db, rollout.id, expected_lock_version=rollout.lock_version,
+        )
+        self.assertEqual((rollout.state, rollout.current_step), ("progressing", 0))
+        for expected_step in (1000, 5000, 10000):
+            rollout = service.advance(
+                self.db,
+                rollout.id,
+                expected_lock_version=rollout.lock_version,
+                observation={"error_rate": 0.0, "p95_ms": 1},
+            )
+            self.assertEqual(rollout.current_step, expected_step)
+        self.assertEqual(rollout.state, "completed")
+
+    def test_stale_rollout_command_is_rejected(self):
+        candidate = self.make_candidate_revision((9000, 1000))
+        rollout = DeploymentRollout(
+            deployment_id=self.deployment.id,
+            from_revision_id=self.stable_revision.id,
+            to_revision_id=candidate.id,
+            state="progressing",
+            current_step=1000,
+            lock_version=2,
+            step_schedule=[0, 1000, 5000, 10000],
+            thresholds={"max_error_rate": 0.01, "max_p95_ms": 500},
+        )
+        self.db.add(rollout)
+        self.db.commit()
+        with self.assertRaisesRegex(InferenceRolloutError, "ROLLOUT_REVISION_CONFLICT"):
+            InferenceRolloutService(FakeRuntime()).advance(
+                self.db, rollout.id, expected_lock_version=1,
+            )
+
+    def test_preload_failure_marks_rollout_failed_and_restores_stable_step(self):
+        candidate = self.make_candidate_revision((9000, 1000))
+        runtime = FakeRuntime()
+        runtime.fail_preload = True
+        service = InferenceRolloutService(runtime)
+        rollout = DeploymentRollout(
+            deployment_id=self.deployment.id,
+            from_revision_id=self.stable_revision.id,
+            to_revision_id=candidate.id,
+            state="pending",
+            current_step=0,
+            lock_version=1,
+            step_schedule=[0, 1000, 5000, 10000],
+            thresholds={"max_error_rate": 0.01, "max_p95_ms": 500},
+        )
+        self.db.add(rollout)
+        self.db.commit()
+        with self.assertRaisesRegex(InferenceRolloutError, "ROLLOUT_PRELOAD_FAILED"):
+            service.preload(self.db, rollout.id, expected_lock_version=1)
+        self.db.refresh(rollout)
+        self.assertEqual((rollout.state, rollout.current_step), ("failed", 0))
+
+    def test_threshold_failure_restores_stable_weights_before_pause(self):
+        candidate = self.make_candidate_revision((9000, 1000))
+        runtime = FakeRuntime()
+        service = InferenceRolloutService(runtime)
+        rollout = DeploymentRollout(
+            deployment_id=self.deployment.id,
+            from_revision_id=self.stable_revision.id,
+            to_revision_id=candidate.id,
+            state="progressing",
+            current_step=1000,
+            lock_version=1,
+            step_schedule=[0, 1000, 5000, 10000],
+            thresholds={"max_error_rate": 0.01, "max_p95_ms": 500},
+        )
+        self.db.add(rollout)
+        self.db.commit()
+        with self.assertRaisesRegex(InferenceRolloutError, "ROLLOUT_HEALTH_THRESHOLD_EXCEEDED"):
+            service.advance(
+                self.db,
+                rollout.id,
+                expected_lock_version=1,
+                observation={"error_rate": 0.02, "p95_ms": 100},
+            )
+        self.db.refresh(rollout)
+        self.assertEqual((rollout.state, rollout.current_step), ("paused", 0))
+
+    def test_rollback_is_idempotent_and_restores_stable_revision(self):
+        candidate = self.make_candidate_revision((9000, 1000))
+        rollout = DeploymentRollout(
+            deployment_id=self.deployment.id,
+            from_revision_id=self.stable_revision.id,
+            to_revision_id=candidate.id,
+            state="completed",
+            current_step=10000,
+            lock_version=2,
+            step_schedule=[0, 1000, 5000, 10000],
+            thresholds={"max_error_rate": 0.01, "max_p95_ms": 500},
+        )
+        self.db.add(rollout)
+        self.db.commit()
+        service = InferenceRolloutService(FakeRuntime())
+        first = service.rollback(self.db, rollout.id, expected_lock_version=2)
+        second = service.rollback(self.db, rollout.id, expected_lock_version=first.lock_version)
+        self.assertEqual(first.id, second.id)
+        self.assertEqual((second.state, second.current_step), ("rolled_back", 0))
 
     def test_rollout_event_contains_only_safe_payload(self):
         revision = self.make_revision()

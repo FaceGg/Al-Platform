@@ -111,6 +111,17 @@ class TestInferenceDeploymentService(unittest.TestCase):
             self.service.predict(self.db, deployment.id, [{"current": 8.0}])
         self.assertEqual(raised.exception.code, "DEPLOYMENT_NOT_READY")
 
+    def test_runtime_spec_includes_legacy_runtime_key_and_revision_identity(self):
+        deployment = self.service.create(
+            self.db, project_id=self.project.id, version_id=self.version.id,
+            actor_id=self.user.id, name="revision-aware",
+        )
+        self.service.start(self.db, deployment.id)
+        specification = self.runtime.loaded[str(deployment.id)]
+        self.assertEqual(specification["runtime_key"], str(deployment.id))
+        self.assertEqual(specification["deployment_id"], str(deployment.id))
+        self.assertIsNotNone(specification["revision_id"])
+
     def test_runtime_failure_persists_only_stable_code_and_can_retry(self):
         deployment = self.service.create(
             self.db, project_id=self.project.id, version_id=self.version.id,

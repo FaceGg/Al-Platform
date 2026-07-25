@@ -4,7 +4,12 @@ from datetime import datetime, timezone
 import uuid
 
 from app.models.artifact import Artifact
-from app.models.model_registry import InferenceDeployment, ModelVersion
+from app.models.model_registry import (
+    DeploymentRevision,
+    DeploymentTarget,
+    InferenceDeployment,
+    ModelVersion,
+)
 from app.services.inference_runtime_client import InferenceRuntimeClientError
 
 
@@ -52,12 +57,43 @@ class InferenceDeploymentService:
             created_by_id=actor_id,
         )
         db.add(deployment)
+        db.flush()
+        self._ensure_stable_revision(db, deployment, actor_id)
         if commit:
             db.commit()
             db.refresh(deployment)
         else:
             db.flush()
         return deployment
+
+    @staticmethod
+    def _ensure_stable_revision(db, deployment, actor_id=None):
+        revision = db.query(DeploymentRevision).filter(
+            DeploymentRevision.deployment_id == deployment.id,
+            DeploymentRevision.status == "stable",
+        ).order_by(DeploymentRevision.revision_number.desc()).first()
+        if revision is not None:
+            return revision
+        latest = db.query(DeploymentRevision.revision_number).filter(
+            DeploymentRevision.deployment_id == deployment.id,
+        ).order_by(DeploymentRevision.revision_number.desc()).first()
+        revision = DeploymentRevision(
+            deployment_id=deployment.id,
+            revision_number=(int(latest[0]) if latest else 0) + 1,
+            strategy="immediate",
+            status="stable",
+            created_by_id=actor_id,
+        )
+        db.add(revision)
+        db.flush()
+        db.add(DeploymentTarget(
+            revision_id=revision.id,
+            model_version_id=deployment.model_version_id,
+            weight_bps=10000,
+            role="stable",
+        ))
+        db.flush()
+        return revision
 
     def _deployment(self, db, deployment_id, lock=False):
         deployment_uuid = self._uuid(
@@ -82,8 +118,14 @@ class InferenceDeploymentService:
             Artifact.id == version.onnx_artifact_id,
         ).one()
         metadata = version.conversion_metadata or {}
+        revision = db.query(DeploymentRevision).filter(
+            DeploymentRevision.deployment_id == deployment.id,
+            DeploymentRevision.status == "stable",
+        ).order_by(DeploymentRevision.revision_number.desc()).first()
         return {
+            "runtime_key": str(deployment.id),
             "deployment_id": str(deployment.id),
+            "revision_id": str(revision.id) if revision is not None else None,
             "model_version_id": str(version.id),
             "version_number": version.version_number,
             "storage_uri": artifact.storage_uri,
@@ -151,26 +193,39 @@ class InferenceDeploymentService:
         db.refresh(deployment)
         return deployment
 
-    def predict(self, db, deployment_id, records):
+    def predict(self, db, deployment_id, records, routing_key=None):
         deployment = self._deployment(db, deployment_id)
         if deployment.desired_state != "running" or deployment.observed_state != "running":
             raise InferenceDeploymentError("DEPLOYMENT_NOT_READY")
         try:
-            return self.runtime.predict(deployment.id, records)
+            runtime_key = deployment.id
+            if routing_key is not None:
+                from app.services.inference_rollout import WeightedTargetRouter
+
+                routed = WeightedTargetRouter().select_active(deployment, routing_key)
+                runtime_key = f"{routed.revision_id}:{routed.model_version_id}"
+            return self.runtime.predict(runtime_key, records)
         except (InferenceRuntimeClientError, InferenceDeploymentError) as error:
             raise InferenceDeploymentError(self._runtime_code(error)) from None
 
     def reconcile(self, db):
+        runtime_items = self.runtime.list().get("items", [])
         runtime_ids = {
-            str(item["deployment_id"])
-            for item in self.runtime.list().get("items", [])
+            str(item.get("runtime_key") or item["deployment_id"])
+            for item in runtime_items
         }
         desired = db.query(InferenceDeployment).all()
         loaded = unloaded = failed = 0
         desired_ids = {str(item.id) for item in desired if item.desired_state == "running"}
+        expected_ids = {
+            str(item.id): str(item.id)
+            for item in desired
+            if item.desired_state == "running"
+        }
         for deployment in desired:
             try:
-                if deployment.desired_state == "running" and str(deployment.id) not in runtime_ids:
+                expected_runtime_key = expected_ids.get(str(deployment.id), str(deployment.id))
+                if deployment.desired_state == "running" and expected_runtime_key not in runtime_ids:
                     self.runtime.load(deployment.id, self._specification(db, deployment))
                     deployment.observed_state = "running"
                     deployment.last_error_code = None
