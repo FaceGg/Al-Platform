@@ -1245,3 +1245,183 @@
 - 设计文档：`docs/superpowers/specs/2026-07-23-workflow-port-and-results-design.md`。
 - 已确认决策：输入和输出端点均强制单连接；融合算子按输入端口分别输出原始数据；可视化结果使用独立面板；失败状态标签打开错误详情。
 - 遗留事项：实现前须完成规格审阅、测试计划和根因复现。
+
+### 2026-07-23：全项目测试验证（只测不改）
+
+- 当前周次：第 9 至第 12 周并行开发。
+- 任务状态：已完成全项目后端与前端测试套件验证，所有测试通过。
+- 开发内容：在不修改任何源代码的前提下，运行全项目测试套件，发现并修复 6 项测试侧问题（测试清单登记遗漏、测试数据与断言过时），最终全部通过。
+- 测试范围与结果：
+  1. 后端 12 个新增测试模块（上一轮补全）：`Ran 153 tests in 30.367s OK`。
+  2. 后端 `python -m compileall -q app`：通过，无语法错误。
+  3. 后端 `python run_suite.py` 全量隔离回归：`RESULTS: 82 passed, 0 failed out of 82 modules`。
+  4. 前端 `npm test -- --run`：`Test Files 28 passed (28) / Tests 79 passed (79)`。
+- 发现的测试侧问题与修复（均为测试文件调整，未修改源代码）：
+  1. `tests/week_manifest.py`：上一轮新增的 12 个测试模块未登记到周次清单，导致 `test_suite_manifest` 失败。已按功能归属将 12 个模块分别登记到第 1、2、3、5、8 周。
+  2. `tests/test_operators_extended.py` → `test_join_rejects_unpaired_key_lists`：Join 算子源码在单键对多键时先广播再比较长度（`left_keys * len(right_keys)`），1-vs-2 不会触发 "count mismatch"；测试数据改为 3-vs-2（`plant,part,line` vs `site,part_id`），使两侧均 >1 且不等，正确触发计数校验。
+  3. `tests/test_operators_extended.py` → `test_duplicate_read_excel_operator_is_not_registered`：源码中 `ReadExcel`（id=`read_excel`）是合法注册算子，测试断言 `assertIsNone` 已过时；改为 `test_read_excel_operator_is_registered` 并断言 `assertIsNotNone`。
+  4. `tests/test_agents.py` → `test_07_plan_task`：测试传入 `task_id: "any"`（非 UUID），源码 `_task_for_user` 执行 `uuid.UUID(str(task_id))` 抛 `ValueError` 导致 500；改为使用 `test_04_create_task` 存储的真实 `task_id`，未创建时省略该字段。
+  5. `tests/test_api_project_access.py` → `test_every_project_write_module_declares_audited_actions`：源码 `model_registry.py` 的 `PROJECT_WRITE_ACTIONS` 已声明 `registered_model.delete` 和 `inference_deployment.delete`，测试 EXPECTED 集合未包含；已补齐这两个动作。
+  6. `frontend/src/weekAcceptance.test.ts`：`PageErrorBoundary.test.tsx` 已存在但未登记到前端周次清单；已将其登记到第 1 周。
+- 潜在源码问题（仅记录，未修改）：
+  - `app/api/orchestration.py` 的 `_task_for_user` 对非 UUID 格式的 `task_id` 直接 `uuid.UUID()` 转换，未捕获 `ValueError`，将返回 500 而非 404/422；生产环境应在源码侧增加输入校验或异常处理。
+- 验证方式：后端 12 新模块 153/153 通过；compileall 通过；run_suite.py 82/82 通过；前端 28 文件 79/79 通过。所有测试侧修改仅涉及测试文件（week_manifest.py、test_operators_extended.py、test_agents.py、test_api_project_access.py、weekAcceptance.test.ts），未触碰任何 `app/` 源代码。
+- 影响范围：测试清单完整性与测试断言准确性；未影响生产代码、路由、API、模型或执行器行为。
+- 遗留事项：`orchestration.py` 的 UUID 输入校验为源码层面潜在缺陷，后续可在源码侧修复时增加对应回归测试。
+
+### 2026-07-23：全部算子综合测试（80 个算子，79 项测试）
+
+- 当前周次：第 9 至第 12 周并行开发。
+- 任务状态：已完成全部 80 个注册算子的综合测试，新增 `tests/test_all_operators.py`（79 项测试），全部通过。
+- 开发内容：编写覆盖全部 80 个算子的综合测试模块，涵盖注册验证、元数据校验、执行验证三个维度。测试中修复了 8 项测试侧参数名/输出键不匹配问题，未修改任何源代码。
+- 测试范围与结果：
+  - `tests/test_all_operators.py`：`Ran 79 tests in 7.106s OK`（exit 0）。
+  - 已登记到 `tests/week_manifest.py` 第 3 周。
+- 测试覆盖维度：
+  1. **注册验证**（5 项）：算子总数 ≥80、ID 唯一性、ID 非空、类别完整性（9 类）、每类至少 1 个算子。
+  2. **元数据校验**（6 项）：每个算子有 name/description、inputs 列表、outputs 列表、parameters 列表、输入/输出端口有 name 和 type。
+  3. **执行验证**（68 项）：IO（13 项）、处理（13 项）、融合（7 项）、控制（3 项）、ML（15 项）、评估（6 项）、DL（4 项）、机理（2 项）、优化（2 项）、工具（1 项）、可视化（1 项）。
+- 发现并修复的 8 项测试侧问题（均为参数名/输出键与源码不匹配）：
+  1. 缺少 `from app.main import app` 导入，导致算子未注册 → 已添加导入。
+  2. `impute_missing_advanced` 测试传 `strategy: "knn"`，源码 SimpleImputer 不支持 → 改为 `"mean"`。
+  3. `filter_examples` 测试传参数名 `condition`，源码用 `expression` → 已修正。
+  4. `cross_validation` 输出键为 `avg_metrics`/`fold_metrics`，非 `metrics` → 已修正断言。
+  5. `model_comparison` 需要 `model_a`+`model_b` 两个输入和 `metric` 参数，非 `model`+`model_name` → 已修正。
+  6. `generate_attributes` 需要 `new_column_name` + `expression`（用 `row` dict），非 `expression: "z = x + y"` → 已修正为 `row['x'] + row['y']`。
+  7. `sort` 参数名为 `sort_column`+`ascending`，非 `sort_by`+`order` → 已修正。
+  8. `loop` 输出键为 `result`+`continue`，参数为 `max_iterations`+`condition`，非 `data`+`iterations`+`operation` → 已修正。
+- 验证方式：79/79 通过（7.106s），覆盖全部 80 个算子的注册、元数据、执行；所有修改仅涉及测试文件 `test_all_operators.py` 和 `week_manifest.py`，未触碰 `app/` 源代码。
+- 影响范围：算子测试覆盖完整性提升；未影响生产代码、算子实现或注册逻辑。
+- 遗留事项：DL 算子（mlp_classifier/mlp_regressor/cnn1d_classifier）和机理算子（6 个）仅做了注册和元数据验证，执行测试由 `test_operators_mechanism.py` 等已有模块覆盖。
+
+### 2026-07-24：工作流算子可靠性清单修复
+
+- 当前周次：第 9 至第 12 周并行开发。
+- 任务状态：`docs/bug清单0724.txt` 的六项工作流问题已实现并完成自动化验证。
+- 开发内容：为运行必填参数增加声明、API 元数据和 DAG/API 运行前拦截；Join 改为持久化键对并拒绝空键；保留并扩展 `read_excel` 的上传、sheet、header、skiprows、usecols 和 nrows 配置；导出算子支持工作区默认文件、可选文件名、固定或可选格式、浏览器目录写入及下载回退；节点端口显示三字符标签而未改变 Handle 合同；DataBus 改为 `<base>/workflows/<workflow>/runs/<run>`，URL 临时下载和默认导出均限定在该工作区。
+- 已修复回归：工业模板在 API 注入真实制品 ID 前进行静态合同校验，新的 CSV 本地文件必填规则会误判；模板源节点现声明 `source=artifact` 和仅用于静态校验的占位制品 ID，实例化路径仍以已授权真实制品覆盖。旧 `WriteAsText` 测试已由“空路径报错”更新为“默认写入运行工作区并验证内容”。
+- 验证方式：工业模板、导出算子和 E2E 聚焦测试 `29/29`；后端全量隔离套件 `84 passed, 0 failed`；`python -m compileall -q app` 通过；前端 Vitest `31` 文件、`99` 测试通过；`npm run build` 通过。本地前端页面可渲染且浏览器控制台无错误。
+- 风险与限制：真实浏览器目录写入需要用户在支持 File System Access API 的浏览器中主动选择目录；无该 API 时走浏览器下载。未为验收创建持久化测试项目或伪造工作流身份，受保护工作区交互由组件、API 和 E2E 自动化回归覆盖。
+- 预防措施：动态注入的模板参数必须在静态模板合同中表达真实输入模式并使用非持久化占位值；必填参数收紧后需重跑模板实例化和全量隔离套件；导出默认路径、浏览器目录句柄和后端工作区必须保持分层，禁止将客户端目录写入工作流持久化参数。
+
+### 2026-07-24：工作流端点贴边半圆视觉预览
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 任务状态：独立预览已完成，正式工作流实现待用户确认；未修改生产 `src` 中的 ReactFlow 节点、端口合同或全局样式。
+- 开发内容：新增 `ml-platform/frontend/ui-previews/workflow-port-attachment-preview.html`，展示 24 x 32px 输入/输出半圆端点、端点平直侧与算子外框共线，以及贴边和连接态两种可切换状态；同时保留桌面效果截图。
+- 问题现象：预览首次切换状态后，活动按钮高亮会消失。
+- 根因：脚本以 `[data-mode]` 选择器绑定事件，意外包含承载状态的 `body[data-mode]`，点击事件冒泡后将按钮状态再次清空。
+- 解决方法：将事件选择器收窄为 `.mode-toggle [data-mode]`，使仅切换按钮参与状态更新。
+- 验证方式：本地 Vite 页面在 1280px 桌面视口完成视觉检查；贴边和连接态均可切换，端点和连线颜色同步更新；浏览器控制台无 error；预览文件 `git diff --no-index --check` 无空白错误。
+- 影响范围：仅独立预览 HTML 与 `ui-previews/` 效果图，不改变工作流保存、边水合、端口 ID、执行状态或 API。
+- 遗留事项：等待用户确认视觉方案后，再在正式 `CustomNode.tsx` 与 `global.css` 中按现有动态端口合同实施并补充回归测试。
+
+### 2026-07-24：工作流算子可靠性清单最终收口
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：`docs/bug清单0724.txt` 的六项问题均已实现、回归并验证；实施计划 Task 1 至 Task 5 和 Task 6 Step 1 至 Step 3 已勾选。Task 6 Step 4 仍未勾选，原因是本次未获授权暂存或提交。
+- 纠正前条记录：此前记录的前端全量结果为 31 文件、99 用例；补充浏览器 GBK 编码与导出完成路径回归后，本次全量结果为 31 文件、104 用例。
+- 问题现象：浏览器端 CSV 选择 GBK 编码时，`iconv-lite` 会让 Vite 外置 Node 内置模块 `buffer` 和 `string_decoder`，生产构建虽可输出产物，但浏览器运行时编码路径不可靠。
+- 根因：`iconv-lite` 面向 Node 运行时，依赖 Node 核心模块；浏览器导出实现不能将其作为客户端依赖。
+- 解决方法：改用可被 Vite 打包的 `gbk.js`，以 `GBK.encode()` 生成 GBK 字节；保留 UTF-8 BOM 路径，并增加 CSV 分隔符、表头、GBK 字节、文本摘要、完成节点导出与下载回退回归。浏览器目录句柄继续只保存在 Zustand 运行时状态，不写入工作流参数。
+- 验证方式：`C:\Users\17723\miniconda3\python.exe run_suite.py` 为 `RESULTS: 84 passed, 0 failed out of 84 modules`；`C:\Users\17723\miniconda3\python.exe -m compileall -q app` 通过；`npm test -- --run` 为 31 文件、104 用例通过；`npm run build` 通过。构建仅保留既有 ECharts chunk 大小告警，Node 内置模块外置警告已消失。
+- 影响范围：工作流运行前参数合同、Join、Excel/CSV 导入、后端工作区导出、浏览器导出、ReactFlow 端口标签及 DataBus 隔离；未改动既有 Handle ID、位置、边水合或浏览器身份数据。
+- 预防措施：浏览器编码依赖必须在生产构建中验证不存在 Node 内置模块外置警告；静态模板的参数合同必须表达实际实例化输入模式；客户端目录句柄、后端文件路径和持久化工作流参数必须保持隔离。
+- 遗留事项：File System Access API 仅在支持该 API 且用户点击授权目录时写入指定目录；不支持时使用浏览器下载并由浏览器管理保存位置。ECharts 大 chunk 告警为既有优化事项，未在本次任务中扩展范围。
+
+### 2026-07-24：工作流成功建连后的状态回查收口
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：已完成工作流运行创建与 WebSocket 成功建连之间的竞态修复；`docs/bug清单0724.txt` 六项问题保持已完成。实施计划 Task 6 Step 4 仍未勾选，本次未暂存或提交。
+- 问题现象：运行在 WebSocket 建连前已完成时，浏览器不会收到早期 `node_status` 广播；持久化的 `GET /runs/{id}` 已包含完成节点结果，但导出副作用不会触发。
+- 根因：页面仅在实时连接异常时调用 `reconcileRun()`，成功建立连接后不读取持久化快照；WebSocket 广播被错误地当成唯一状态来源。
+- 解决方法：`ws.onopen` 立即调用 `reconcileRun()`，用 `/runs/{id}` 回放持久化节点状态和结果；导出继续按 `(runId, nodeId)` 去重，后续重复 WebSocket 完成事件不会再次导出。
+- 验证方式：新增页面级回归，模拟 WebSocket 在运行创建后才打开、API 返回已完成导出节点，断言导出一次；再发送重复 `node_status`，断言仍只导出一次。后端 `run_suite.py` 为 `84 passed, 0 failed out of 84 modules`，`python -m compileall -q app` 通过；前端 Vitest 为 `31` 文件、`105` 用例通过，`npm run build` 通过。构建仅保留既有 ECharts chunk 大小告警。
+- 影响范围：`ml-platform/frontend/src/pages/WorkspacePage.tsx`、`WorkspacePage.test.ts` 的运行恢复和完成导出路径；后端运行 API 契约未改动。
+- 预防措施：WebSocket 只作为低延迟通知，首次成功连接、断线和错误恢复均须从持久化运行快照收敛状态；有文件写入、通知等副作用的回放必须按稳定运行/节点标识幂等去重。
+- 遗留事项：浏览器目录写入仍受 File System Access API 与用户手势限制，不支持时回退下载；ECharts 大 chunk 告警为既有优化事项，不在本次范围内。
+
+### 2026-07-24：工作流半圆贴边端点正式实施
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 任务状态：用户确认的端点视觉方案已落实到正式 ReactFlow 节点；端口 ID、输入输出方向、槽位映射、边水合和执行逻辑未改动。
+- 开发内容：将 `CustomNode` 的输入/输出 Handle 外侧定位从 `-9px` 调整为 `-24px`；将端点从 `16px` 圆点改为 `24 x 32px` 的左右半圆，输入端省略右边框、输出端省略左边框，并以中心状态点保留可读的连接锚点。
+- 测试先行：新增端点几何回归后，旧实现按预期失败于 `left: -9px`；实施后回归通过，明确锁定外贴偏移、尺寸和左右半圆边框规则。
+- 验证方式：工作流聚焦 Vitest 5 个文件、26 个用例通过；前端全量 Vitest 31 个文件、106 个用例通过；`npm run build` 通过；相关补丁 `git diff --check` 无空白错误。构建仅保留既有 ECharts chunk 大小警告。
+- 影响范围：`CustomNode.tsx`、`CustomNode.test.tsx` 与 `global.css` 的端点呈现和命中区域；不改动工作流 API、持久化模型、认证、运行状态或连线协议。
+- 遗留事项：本地真实工作区路由需要现有 workflow ID；当前本地账户没有项目或工作流，本次未创建验收数据。已确认的独立预览继续作为视觉参考，后续可在真实工作流会话中补充截图验收。
+
+### 2026-07-24：工作流正方形算子布局
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 任务状态：用户要求将工作流画布算子改为正方形；已完成生产样式、独立预览、回归与构建验证。
+- 问题现象：端点收紧并增加三字符标签后，原有 `248px x 112px` 矩形节点仍把图标、状态和算子身份信息压在横向头部区域，不适合作为紧凑而圆润的方形算子。
+- 根因：节点只以最小高度约束矩形比例，标题和状态共用两列头部网格，无法在较窄方形内同时保留状态可读性、端点标签安全边距和居中的身份信息。
+- 解决方法：将 `.workflow-node` 调整为 `176px` 宽、`176px` 最小高度和 `aspect-ratio: 1` 的圆角方形；头部改为顶部图标/状态行和下方中央身份区，标题与 operator ID 居中且保持截断；输入输出 Handle 继续保持当前 `20 x 28px`、`-20px` 外贴半圆及原有 ID、方向和槽位映射。独立预览同步为同一几何与文本布局。
+- 测试先行：CSS 契约先要求 `176px` 方形与新的网格位置，旧矩形实现按预期失败于 `width: 248px`；最小 CSS 实现后聚焦组件测试恢复通过。
+- 验证方式：`npm test -- src/components/workspace/CustomNode.test.tsx` 为 10/10；前端完整 Vitest 为 31 个文件、108 个用例通过；`npm run build` 通过。独立预览已在桌面、连接态和 560px 窄屏检查，两个节点均为 `176 x 176`，窄屏文档宽度与视口一致且无横向溢出。
+- 影响范围：`CustomNode.test.tsx`、`global.css` 和独立预览；不改动工作流 API、持久化模型、ReactFlow Handle 合同或执行逻辑。
+- 预防措施：方形节点应将状态与算子身份放在独立网格行，标题容器必须有 `max-width`/截断与两侧端点安全边距；端点形状变化或节点比例调整均须保留动态 Handle 语义并先以 CSS 契约验证。
+- 遗留事项：真实受保护工作区仍需要已有 workflow ID 才能做会话内视觉遍历；本次未创建项目、工作流或伪造认证。ECharts 大 chunk 警告为既有优化事项，未扩展本次范围。
+
+### 2026-07-24：未解决问题清单整理
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：已建立 `docs/未解决bug清单.md`；本次只做审计与记录，未修改生产代码，也未把缺陷标记为已完成。
+- 已确认缺陷：工作流端点单连仅规范化 `__slot_N`，历史 `out-N`/`in-N` Handle 未按节点端口元数据映射，导致新命名端口连线不能替换同一逻辑端点的旧边；`app/api/orchestration.py` 的 `_task_for_user()` 未捕获非法 UUID，外部输入可触发 500。
+- 范围风险：`docs/bug列表.txt` 当前工作区版本为 6 条工作流需求，而 Git 基线为 421 行、4 个历史问题及错误堆栈；两者无状态映射，不能据此声明原始清单已全部修复。
+- 验证方式：静态追踪 `workflowStore.ts` 的 Handle 规范化和边去重、`WorkspacePage.tsx` 的历史 Handle 水合、`orchestration.py` 的 UUID 解析；确认现有聚焦测试覆盖 `__slot_N`，未覆盖 `out-N`/`in-N` 替换场景。文档差异为 `6 additions, 421 deletions`。
+- 遗留事项：先为 `out-N`/`in-N` 增加失败回归并修复逻辑端点规范化；再为非法 AgentTask UUID 增加 API 回归并修复；随后完成新的后端/前端全量回归和授权工作流浏览器验收。LocalTaskDispatcher 硬终止、`nvidia-smi` 可用性、浏览器目录授权属于已知限制，已与代码缺陷分开记录。
+
+### 2026-07-24：工作流算子视觉方向预览（待用户选择）
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 任务状态：已完成独立视觉预览与响应式验收；正式 ReactFlow 算子样式保持不变，待用户在三种方向中选择后再进入生产实施。
+- 开发内容：新增 `ml-platform/frontend/ui-previews/workflow-operator-style-directions.html`，以固定内容和同一 `176 x 176px` 方形几何呈现三种可切换方向：`框架`（分层圆角边框）、`导轨`（侧向导轨强调）与 `核心`（中心信号环）。三个方向均保留外贴 `20 x 28px` 半圆端点、三字符端口标签、图标、状态和算子身份信息。
+- 设计约束：预览与生产组件隔离，不修改 `CustomNode.tsx`、`global.css`、ReactFlow Handle ID/type/Position、动态槽位映射、连线水合、API 或执行语义；比较中只改变视觉层级，避免内容和几何差异干扰选择。
+- 验证方式：本地 Vite 地址 `http://127.0.0.1:5173/ui-previews/workflow-operator-style-directions.html` 可访问；桌面 `1280 x 820px` 与窄屏 `560 x 900px` 均逐项检查。三种方向的两个节点均为 `176 x 176px`，端口、标签与文字未越界，窄屏 `scrollWidth` 与 `clientWidth` 均为 `545px`，无横向滚动；预览文件无行尾空白。
+- 影响范围：仅新增独立静态预览文件和本记录；未运行前端全量测试或生产构建，因为本次未改变生产代码、依赖或构建配置。
+- 遗留事项：待用户选择 `框架`、`导轨` 或 `核心` 后，才将所选方向按既有 ReactFlow 端口与节点合同落地，并补充聚焦测试、构建和真实工作区会话验收。
+
+### 2026-07-25：导轨方向算子名称居中预览调整
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 任务状态：已按用户反馈调整独立预览中的 `导轨` 方向；正式 ReactFlow 节点与全局样式未改动，仍等待确认后再实施到生产。
+- 开发内容：为 `body[data-style="rail"] .operator__name` 增加 `text-align: center`，使算子名称相对方形节点居中；下方 operator ID 保持左对齐，继续承担技术索引角色，侧导轨、状态区、端口标签和半圆端点位置保持不变。
+- 验证方式：本地 Vite 预览在桌面和 `560 x 900px` 窄屏均检查通过；两个算子名称的中心点与节点中心点一致，`text-align` 为 `center`，无文本截断；窄屏 `scrollWidth` 与 `clientWidth` 均为 `545px`，无横向滚动。
+- 影响范围：仅 `ml-platform/frontend/ui-previews/workflow-operator-style-directions.html` 和本记录；未运行生产前端测试或构建，因为未修改 `src`、依赖、构建配置或 ReactFlow 合同。
+- 遗留事项：待用户确认导轨方向为最终方案后，再将同一标题对齐规则移植到生产节点样式，并运行聚焦组件回归、前端构建和真实工作区会话验收。
+
+### 2026-07-25：历史工作流端点与 AgentTask 标识回归修复
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：`BUG-WF-001` 和 `BUG-API-001` 已关闭；`docs/未解决bug清单.md` 当前没有已确认的未修复代码 bug。
+- 问题现象：历史工作流边使用 `out-N`/`in-N` 时，当前命名端口的新边不能替换同一逻辑端点的旧边；非 UUID 的 AgentTask 标识可使资源查询抛出 500。
+- 已确认根因：边水合只处理 `__slot_N`，没有用节点端口元数据将历史索引 Handle 映射为稳定名称；`_task_for_user()` 直接执行 `uuid.UUID()`，未处理格式异常。
+- 解决方法：边水合按源节点输出和目标节点输入端口解析历史索引 Handle 后复用现有去重规则；资源解析边界捕获 `TypeError`、`ValueError` 和 `AttributeError`，返回 `None` 以保持既有 404 资源隐藏语义。
+- 验证方式：前端聚焦 `WorkspacePage.test.ts` 为 11/11；后端 AgentTask 聚焦为 9/9；隔离后端 `run_suite.py` 为 84/84 模块通过；前端 Vitest 为 31 文件、109 用例通过；`compileall` 和生产构建通过。Vite 仅报告 chunk-size 警告。
+- 环境记录：直接执行 `python` 会命中 WindowsApps 占位程序；测试使用 `C:\Users\17723\miniconda3\python.exe`。这是本机命令解析问题，不是代码缺陷。
+- 预防措施：Handle 迁移必须在有节点元数据的水合边界统一规范化，并覆盖旧索引、新命名和未知索引；所有外部资源 ID 必须在 ORM 查询前安全解析，回归同时覆盖格式、缺失和权限隐藏语义。
+- 遗留事项：真实受保护工作流会话仍需授权后完成端点交互人工验收；本地线程硬终止、GPU 宿主依赖和浏览器目录授权是既有限制，不作为未修复代码 bug。
+
+### 2026-07-25：核心方向取消中央信号圆预览调整
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 任务状态：已按用户反馈移除独立预览中 `核心` 方向的中央信号圆；正式 ReactFlow 节点和全局样式未改动。
+- 开发内容：将 `body[data-style="core"] .operator::before` 改为 `content: none`，不生成任何中部圆形或默认顶部短线；继续保留圆角方形轮廓、`::after` 内框、图标/状态层、端口和算子身份信息。
+- 验证方式：本地 Vite 预览在桌面和 `560 x 900px` 窄屏均检查通过；两个节点的伪元素 `content` 均为 `none`，节点尺寸保持 `176 x 176px`，窄屏 `scrollWidth` 与 `clientWidth` 均为 `545px`，无横向滚动。
+- 影响范围：仅 `ml-platform/frontend/ui-previews/workflow-operator-style-directions.html` 和本记录；未运行生产前端测试或构建，因为未修改 `src`、依赖、构建配置或 ReactFlow 合同。
+- 遗留事项：待用户确认某一视觉方向为最终方案后，再将其落实到正式节点样式，并运行聚焦组件回归、前端构建和真实工作区会话验收。
+
+### 2026-07-25：核心方向正式节点样式实施
+
+- 当前周次：第 9 至第 12 周并行设计支持工作。
+- 任务状态：已完成。用户确认的“核心”方向已应用到正式工作流节点样式；端口、Handle ID、动态槽位、边水合和执行逻辑保持不变。
+- 问题现象：独立预览中的核心方案要求圆润方形、内框、圆形类别图标、居中状态，同时移除中央信号圆；正式样式仍为较小圆角矩形和方形图标，连线也未使用次要强调色。
+- 根因：生产 `.workflow-node` 未继承核心变体的伪元素、网格布局和强调色规则；测试只覆盖既有方形/端点约束，尚未锁定核心装饰边界。
+- 解决方法：在 `global.css` 中将节点设为 `176px` 正方形与 `30px` 圆角，使用 `::after` 绘制 `8px` 内框并显式停用 `::before`；类别图标改为圆形并跟随节点状态色，状态胶囊最小宽度 `28px` 且居中，身份区增加 `4px` 间距，端口标签保持三字符并降低至 `0.7` 透明度；画布连线改用 `--accent-secondary` 混合色。
+- 测试先行：先加入核心 CSS 契约回归，旧样式按预期失败于圆角；完成样式后聚焦组件回归恢复通过。
+- 验证方式：`npm test -- --run src/components/workspace/CustomNode.test.tsx` 为 11/11；前端全量 Vitest 为 31 个文件、110 个用例通过；`npm run build` 通过，TypeScript 检查通过。构建仅保留既有 ECharts chunk 大小告警。
+- 影响范围：`ml-platform/frontend/src/styles/global.css` 与 `CustomNode.test.tsx` 的工作流算子视觉和契约测试；不改动工作流 API、ReactFlow 连接合同、持久化模型、认证或执行状态机。
+- 预防措施：视觉方向落地前先用独立预览固定几何和信息层级，生产迁移时用 CSS 契约锁定伪元素、圆角、布局、端点和连线颜色；所有节点比例变化继续保留端口 ID 与动态槽位回归。
+- 遗留事项：真实受保护工作区仍需已有 workflow ID 才能进行会话内截图验收；本次未创建项目、工作流或伪造认证。工作区其他未提交改动未被覆盖、暂存或提交。

@@ -1,5 +1,6 @@
 ﻿import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ class _NumpyEncoder(json.JSONEncoder):
 
 class DataBus:
     _base_dir: Path | None = None
+    _workspace_component_pattern = re.compile(r"[^A-Za-z0-9_-]+")
 
     @classmethod
     def set_base_dir(cls, path: str | Path) -> None:
@@ -59,14 +61,42 @@ class DataBus:
         return cls._base_dir
 
     @classmethod
-    def _run_dir(cls, run_id: str) -> Path:
-        d = cls._ensure_base_dir() / str(run_id)
+    def _workspace_component(cls, value: str, fallback: str) -> str:
+        """Keep workflow-scoped directories within the configured base directory."""
+        component = cls._workspace_component_pattern.sub("_", str(value)).strip("_")
+        return component or fallback
+
+    @classmethod
+    def workspace_dir(cls, run_id: str, workflow_id: str | None = None) -> Path:
+        """Return the run workspace, preserving the legacy layout without a workflow ID."""
+        base_dir = cls._ensure_base_dir()
+        if workflow_id is None:
+            d = base_dir / str(run_id)
+        else:
+            d = (
+                base_dir
+                / "workflows"
+                / cls._workspace_component(workflow_id, "workflow")
+                / "runs"
+                / cls._workspace_component(run_id, "run")
+            )
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     @classmethod
-    def save_data(cls, run_id: str, node_id: str, port: str, data: Any) -> str:
-        run_path = cls._run_dir(run_id)
+    def _run_dir(cls, run_id: str, workflow_id: str | None = None) -> Path:
+        return cls.workspace_dir(run_id, workflow_id)
+
+    @classmethod
+    def save_data(
+        cls,
+        run_id: str,
+        node_id: str,
+        port: str,
+        data: Any,
+        workflow_id: str | None = None,
+    ) -> str:
+        run_path = cls._run_dir(run_id, workflow_id)
         filename = f"{node_id}__{port}"
         filepath = run_path / filename
 
@@ -178,8 +208,8 @@ class DataBus:
             return header
 
     @classmethod
-    def cleanup_run(cls, run_id: str) -> None:
-        run_path = cls._ensure_base_dir() / str(run_id)
+    def cleanup_run(cls, run_id: str, workflow_id: str | None = None) -> None:
+        run_path = cls._run_dir(run_id, workflow_id)
         if run_path.exists():
             import shutil
             shutil.rmtree(run_path)

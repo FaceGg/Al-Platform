@@ -457,11 +457,12 @@ class TestProjectWriteAuditCompleteness(unittest.TestCase):
             "agent_task.delete", "agent_task.create", "agent_task.batch_delete",
         },
         "model_registry": {
-            "registered_model.create", "model_artifact.upload",
+            "registered_model.create", "registered_model.delete",
+            "model_artifact.upload",
             "model_version.register", "model_version.approve",
             "model_version.reject", "model_version.archive",
             "inference_deployment.create", "inference_deployment.start",
-            "inference_deployment.stop",
+            "inference_deployment.stop", "inference_deployment.delete",
         },
     }
 

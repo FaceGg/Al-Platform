@@ -11,7 +11,8 @@ from app.engine.registry import OperatorRegistry
 from app.engine.run_control import RunCancelled, RunControl
 from app.engine.run_state import ExecutionPolicy
 from app.engine.operator_contract import (
-    OperatorContext, OperatorResult, validate_operator_params, validate_operator_result,
+    OperatorContext, OperatorContractError, OperatorResult, validate_operator_params,
+    validate_operator_result,
 )
 
 
@@ -56,6 +57,7 @@ class DAGExecutor:
     def __init__(
         self, nodes: list[dict], edges: list[dict], artifact_service=None,
         project_id: str | None = None,
+        workflow_id: str | None = None,
     ):
         self._nodes = nodes
         self._edges = edges
@@ -64,6 +66,7 @@ class DAGExecutor:
         self._graph: nx.MultiDiGraph = nx.MultiDiGraph()
         self._artifact_service = artifact_service
         self._project_id = project_id
+        self._workflow_id = workflow_id
 
         for node in nodes:
             self._graph.add_node(
@@ -110,6 +113,14 @@ class DAGExecutor:
             op = OperatorRegistry.get(op_id)
             if op is None:
                 continue
+            operator_params = {
+                key: value for key, value in data.get("params", {}).items()
+                if key not in _EXECUTION_POLICY_PARAMS
+            }
+            try:
+                validate_operator_params(op.parameters, operator_params)
+            except OperatorContractError as error:
+                errors.append(f"Node '{node_id}': {error}")
             if not op.inputs:
                 continue
             predecessors = list(self._graph.predecessors(node_id))
@@ -218,7 +229,13 @@ class DAGExecutor:
             # Save outputs
             node_results: dict[str, str] = {}
             for port_name, data in outputs.items():
-                path = DataBus.save_data(run_id, node_id, port_name, data)
+                path = DataBus.save_data(
+                    run_id,
+                    node_id,
+                    port_name,
+                    data,
+                    workflow_id=self._workflow_id,
+                )
                 node_results[port_name] = path
             results[node_id] = node_results
             if artifact_refs:
@@ -314,6 +331,7 @@ class DAGExecutor:
                 artifact_service=self._artifact_service,
                 cancel_requested=run_control.is_cancel_requested,
                 logger=logger,
+                workspace_dir=DataBus.workspace_dir(run_id, self._workflow_id),
             )
             pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"node-{node_id}")
             future = pool.submit(op.execute, context, inputs, validated_params)
@@ -450,7 +468,12 @@ class DAGExecutor:
                 body_node_results: dict[str, str] = {}
                 for pn, data in body_outputs.items():
                     path = DataBus.save_data(
-                        run_id, f"{body_node_id}_iter{iteration}", pn, data)
+                        run_id,
+                        f"{body_node_id}_iter{iteration}",
+                        pn,
+                        data,
+                        workflow_id=self._workflow_id,
+                    )
                     body_node_results[pn] = path
                 results[body_node_id] = body_node_results
 

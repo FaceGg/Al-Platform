@@ -10,6 +10,12 @@ import OperatorPanel from "../components/workspace/OperatorPanel";
 import WorkflowCanvas from "../components/workspace/WorkflowCanvas";
 import NodeConfigPanel, { NodeResultPanel } from "../components/workspace/NodeConfigPanel";
 import ExecutionProgress from "../components/workspace/ExecutionProgress";
+import {
+  exportCompletedWorkflowNode,
+  isWorkflowExportOperator,
+  markRunNodeExported,
+  type WorkflowExportOutcome,
+} from "../components/workspace/workflowExport";
 import { normalizeNodeError, normalizeWorkflowHandle, useWorkflowStore } from "../stores/workflowStore";
 import type { NodeRunStatus, WorkflowRunStatus } from "../stores/workflowStore";
 import { deleteWorkflowVersion, listWorkflowVersions, publishWorkflow, restoreWorkflowVersion, WorkflowVersionSummary } from "../api/workflowVersions";
@@ -26,14 +32,23 @@ export function resolvePort(handleId: string, portList: {name:string}[]): string
   return (!isNaN(idx) && idx < portList.length) ? portList[idx].name : logicalHandle;
 }
 
-export function hydrateWorkflowEdges(edges: any[]) {
+export function hydrateWorkflowEdges(edges: any[], nodes: any[] = []) {
+  const nodesById = new Map(nodes.map((node) => [String(node.id), node]));
   return edges.reduce<any[]>((hydrated, edge: any) => {
+    const source = String(edge.source_node_id ?? edge.source);
+    const target = String(edge.target_node_id ?? edge.target);
     const normalized = {
       id: String(edge.id),
-      source: String(edge.source_node_id ?? edge.source),
-      target: String(edge.target_node_id ?? edge.target),
-      sourceHandle: normalizeWorkflowHandle(edge.source_port || edge.sourceHandle || "out-0") || "out-0",
-      targetHandle: normalizeWorkflowHandle(edge.target_port || edge.targetHandle || "in-0") || "in-0",
+      source,
+      target,
+      sourceHandle: resolvePort(
+        edge.source_port || edge.sourceHandle || "out-0",
+        nodesById.get(source)?.data?.outputs || [],
+      ) || "out-0",
+      targetHandle: resolvePort(
+        edge.target_port || edge.targetHandle || "in-0",
+        nodesById.get(target)?.data?.inputs || [],
+      ) || "in-0",
     };
     const survivors = hydrated.filter((existing) => (
       !(
@@ -46,6 +61,15 @@ export function hydrateWorkflowEdges(edges: any[]) {
     ));
     return [...survivors, normalized];
   }, []);
+}
+
+export function notifyWorkflowExportOutcome(
+  outcome: WorkflowExportOutcome,
+  lang: "zh" | "en",
+  message: { info: (content: string) => unknown },
+): void {
+  if (outcome !== "downloaded") return;
+  message.info(lang === "zh" ? "\u6d4f\u89c8\u5668\u5c06\u7ba1\u7406\u4fdd\u5b58\u4f4d\u7f6e" : "Your browser manages the save location.");
 }
 
 export default function WorkspacePage() {
@@ -84,6 +108,7 @@ export default function WorkspacePage() {
   const [versions, setVersions] = useState<WorkflowVersionSummary[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const exportedRunNodesRef = useRef(new Set<string>());
 
   // ── Build operator lookup ──
   function getOpMeta() {
@@ -100,28 +125,27 @@ export default function WorkspacePage() {
       .then((res) => {
         const wf = res.data;
         setWfName(wf.name || "untitled");
+        const workflowNodes = (wf.nodes || []).map((n: any) => {
+          const op = meta[n.operator_id] || {};
+          return {
+            id: String(n.id),
+            type: "custom",
+            position: { x: n.position_x || 200, y: n.position_y || 200 },
+            data: {
+              operatorId: n.operator_id,
+              label: n.label || "",
+              params: n.params || {},
+              category: op.category || "utility",
+              inputs: op.inputs || [],
+              outputs: op.outputs || [],
+            },
+          };
+        });
         if (wf.nodes) {
-          setNodes(
-            wf.nodes.map((n: any) => {
-              const op = meta[n.operator_id] || {};
-              return {
-                id: String(n.id),
-                type: "custom",
-                position: { x: n.position_x || 200, y: n.position_y || 200 },
-                data: {
-                  operatorId: n.operator_id,
-                  label: n.label || "",
-                  params: n.params || {},
-                  category: op.category || "utility",
-                  inputs: op.inputs || [],
-                  outputs: op.outputs || [],
-                },
-              };
-            })
-          );
+          setNodes(workflowNodes);
         }
         if (wf.edges) {
-          setEdges(hydrateWorkflowEdges(wf.edges));
+          setEdges(hydrateWorkflowEdges(wf.edges, workflowNodes));
         }
       })
       .catch(() => {
@@ -261,36 +285,36 @@ export default function WorkspacePage() {
     }
 
     // Reset execution state before starting new run
+    exportedRunNodesRef.current.clear();
     resetExecution();
     setIsRunning(true);
     setNodeStatus("__wf__", "pending");
     try {
       await apiClient.put("/workflows/" + workflowId, buildPayload());
       const reload = await apiClient.get("/workflows/" + workflowId);
-      const meta = getOpMeta();
-      const wf = reload.data;
-      if (wf.nodes) {
-        setNodes(
-          wf.nodes.map((n: any) => {
-            const op = meta[n.operator_id] || {};
-            return {
-              id: String(n.id),
-              type: "custom",
-              position: { x: n.position_x || 200, y: n.position_y || 200 },
-              data: {
-                operatorId: n.operator_id,
-                label: n.label || "",
-                params: n.params || {},
-                category: op.category || "utility",
-                inputs: op.inputs || [],
-                outputs: op.outputs || [],
-              },
-            };
-          })
-        );
-      }
-      if (wf.edges) {
-        setEdges(hydrateWorkflowEdges(wf.edges));
+        const meta = getOpMeta();
+        const wf = reload.data;
+        const workflowNodes = (wf.nodes || []).map((n: any) => {
+          const op = meta[n.operator_id] || {};
+          return {
+            id: String(n.id),
+            type: "custom",
+            position: { x: n.position_x || 200, y: n.position_y || 200 },
+            data: {
+              operatorId: n.operator_id,
+              label: n.label || "",
+              params: n.params || {},
+              category: op.category || "utility",
+              inputs: op.inputs || [],
+              outputs: op.outputs || [],
+            },
+          };
+        });
+        if (wf.nodes) {
+          setNodes(workflowNodes);
+        }
+        if (wf.edges) {
+          setEdges(hydrateWorkflowEdges(wf.edges, workflowNodes));
       }
 
       const runRes = await apiClient.post("/workflows/" + workflowId + "/run");
@@ -328,6 +352,26 @@ export default function WorkspacePage() {
           });
           if (nodeError) setNodeError(nodeId, nodeError);
         }
+
+        if (status !== "completed") return;
+        const state = useWorkflowStore.getState();
+        const node = state.nodes.find((candidate) => candidate.id === nodeId);
+        const operatorId = node?.data?.operatorId;
+        const result = nodeRun.result ?? state.nodeResults[nodeId];
+        if (!operatorId || result == null || !isWorkflowExportOperator(operatorId)) return;
+        if (!markRunNodeExported(exportedRunNodesRef.current, runId, nodeId)) return;
+
+        void exportCompletedWorkflowNode({
+          operatorId,
+          nodeId,
+          params: node.data?.params || {},
+          result,
+          directory: state.exportDirectories[nodeId]?.handle,
+        })
+          .then((outcome) => notifyWorkflowExportOutcome(outcome, lang, message))
+          .catch(() => {
+            message.error(lang === "zh" ? "导出失败" : "Export failed");
+          });
       };
 
       const reconcileRun = async () => {
@@ -368,7 +412,9 @@ export default function WorkspacePage() {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
-      ws.onopen = () => { /* connected */ };
+      ws.onopen = () => {
+        void reconcileRun();
+      };
       ws.onmessage = (event: MessageEvent) => {
         const msg = JSON.parse(event.data);
         if (msg.type === "node_status") {

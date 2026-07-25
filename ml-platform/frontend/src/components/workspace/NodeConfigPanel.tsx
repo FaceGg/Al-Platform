@@ -1,10 +1,11 @@
 import { Input, InputNumber, Select, Switch, Form, Divider, Button, Drawer, message, Upload, Typography } from "antd";
-import { MinusCircleOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
+import { FolderOpenOutlined, MinusCircleOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import { useI18n } from "../../i18n";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { extractColumnsFromResult, isColumnParam } from "./CustomNode";
 import { useEffect, useState, useMemo } from "react";
 import apiClient from "../../api/client";
+import { isWorkflowExportOperator, type BrowserDirectoryHandle } from "./workflowExport";
 
 const { Text } = Typography;
 
@@ -12,6 +13,9 @@ const RESULT_JSON_LIMIT = 5000;
 const RESULT_TABLE_LIMIT = 20;
 
 type ResultRecord = Record<string, any>;
+type DirectoryPickerWindow = Window & {
+  showDirectoryPicker?: (options: { mode: "readwrite" }) => Promise<BrowserDirectoryHandle>;
+};
 
 function isResultRecord(value: unknown): value is ResultRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -174,10 +178,25 @@ export function NodeResultPanel() {
 
 type JoinKeyPair = { left: string; right: string };
 
+function isParamRequired(
+  param: any,
+  params: Record<string, any>,
+  parameterSpecs: any[] = [],
+): boolean {
+  if (!param?.required) return false;
+  const conditions = param.required_when as Record<string, string | string[]> | undefined;
+  if (!conditions) return true;
+  return Object.entries(conditions).every(([name, expected]) => {
+    const allowed = Array.isArray(expected) ? expected : [expected];
+    const controller = parameterSpecs.find((spec) => spec.name === name);
+    return allowed.includes(params[name] ?? controller?.default);
+  });
+}
+
 function parseJoinKeyPairs(leftValue: unknown, rightValue: unknown): JoinKeyPair[] {
   const leftKeys = String(leftValue || "").split(",").map((key) => key.trim());
   const rightKeys = String(rightValue || "").split(",").map((key) => key.trim());
-  const count = Math.max(leftKeys.filter(Boolean).length, rightKeys.filter(Boolean).length, 1);
+  const count = Math.max(leftKeys.length, rightKeys.length, 1);
   return Array.from({ length: count }, (_, index) => ({
     left: leftKeys[index] || "",
     right: rightKeys[index] || "",
@@ -220,7 +239,16 @@ export function getPortLabel(opId: string, paramName: string, lang: "zh" | "en")
 
 export default function NodeConfigPanel() {
   const { t, lang } = useI18n();
-  const { selectedNode, operators, updateNodeParams, nodeStatuses, edges, nodeResults } = useWorkflowStore();
+  const {
+    selectedNode,
+    operators,
+    updateNodeParams,
+    nodeStatuses,
+    edges,
+    nodeResults,
+    exportDirectories,
+    setExportDirectory,
+  } = useWorkflowStore();
   const [params, setParams] = useState<Record<string, any>>({});
   const [uploading, setUploading] = useState(false);
 
@@ -263,6 +291,15 @@ export default function NodeConfigPanel() {
 
   const operator = operators.find((op: any) => op.id === selectedNode.data.operatorId);
   const status = nodeStatuses[selectedNode.id];
+  const isExportOperator = isWorkflowExportOperator(operator?.id);
+  const selectedExportDirectory = exportDirectories[selectedNode.id];
+  const supportsDirectoryPicker = typeof window !== "undefined" &&
+    typeof (window as DirectoryPickerWindow).showDirectoryPicker === "function";
+  const isJoinKeyRequired = (name: string) => isParamRequired(
+    operator?.parameters?.find((param: any) => param.name === name),
+    params,
+    operator?.parameters,
+  );
 
   const handleParamChange = (name: string, value: any) => {
     const newParams = { ...params, [name]: value };
@@ -285,6 +322,17 @@ export default function NodeConfigPanel() {
       pairIndex === index ? { ...pair, [side]: value } : pair
     ));
     handleJoinPairsChange(nextPairs);
+  };
+
+  const handleExportDirectoryPick = async () => {
+    const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
+    if (!picker) return;
+    try {
+      const handle = await picker({ mode: "readwrite" });
+      setExportDirectory(selectedNode.id, { name: handle.name, handle });
+    } catch (error: any) {
+      if (error?.name !== "AbortError") message.error(lang === "zh" ? "无法选择保存文件夹" : "Unable to select save folder");
+    }
   };
 
   const handleFileUpload = async (file: File, paramName: string) => {
@@ -312,9 +360,11 @@ export default function NodeConfigPanel() {
     const value = params[p.name] ?? p.default;
 
     if (isCSVImport && p.name === "file_path" && sourceValue !== "local") return null;
+    if (isCSVImport && p.name === "dataset_artifact_id" && sourceValue !== "artifact") return null;
     if (isCSVImport && p.name === "url" && sourceValue !== "url") return null;
 
     if (operator?.id === "join" && (p.name === "left_keys" || p.name === "right_keys")) return null;
+    if (isExportOperator && p.name === "file_path") return null;
 
     const colName = isColumnParam(p.name);
     if (colName && upstreamColumns.length > 0 && (p.type === "str" || p.type === "select")) {
@@ -331,16 +381,16 @@ export default function NodeConfigPanel() {
       );
     }
 
-    if (p.name === "file_path" && isCSVImport) {
+    if (p.type === "file") {
       return (
         <div>
           <Input
-            placeholder="E:/data/welding.csv"
+            placeholder={isCSVImport ? "E:/data/welding.csv" : undefined}
             value={value || ""}
-            onChange={(e) => handleParamChange("file_path", e.target.value)}
+            onChange={(e) => handleParamChange(p.name, e.target.value)}
             style={{ marginBottom: 4 }}
           />
-          <Upload beforeUpload={(f) => handleFileUpload(f, "file_path")} showUploadList={false}>
+          <Upload beforeUpload={(f) => handleFileUpload(f, p.name)} showUploadList={false}>
             <Button icon={<UploadOutlined />} loading={uploading} size="small" block>
               {"\u6d4f\u89c8\u672c\u5730\u6587\u4ef6"}
             </Button>
@@ -369,6 +419,7 @@ export default function NodeConfigPanel() {
           options={[
             { label: "\u672c\u5730\u6587\u4ef6", value: "local" },
             { label: "URL", value: "url" },
+            { label: "\u6570\u636e\u96c6\u5236\u54c1", value: "artifact" },
           ]}
         />
       );
@@ -402,6 +453,9 @@ export default function NodeConfigPanel() {
           />
         );
       case "select":
+        if (isExportOperator && p.name === "format" && Array.isArray(p.options) && p.options.length === 1) {
+          return <Input disabled value={String(value ?? p.options[0])} />;
+        }
         return (
           <Select
             style={{ width: "100%" }}
@@ -438,6 +492,20 @@ export default function NodeConfigPanel() {
       </h4>
       {operator?.parameters?.length > 0 ? (
         <Form className="node-config-panel__form" layout="vertical" size="small">
+          {isExportOperator && (
+            <Form.Item label={<span style={{ fontSize: 12 }}>{lang === "zh" ? "保存位置" : "Save location"}</span>} style={{ marginBottom: 12 }}>
+              <Button
+                icon={<FolderOpenOutlined />}
+                onClick={handleExportDirectoryPick}
+                disabled={!supportsDirectoryPicker}
+                aria-label={"\u9009\u62e9\u4fdd\u5b58\u6587\u4ef6\u5939"}
+                title={supportsDirectoryPicker ? undefined : (lang === "zh" ? "浏览器将使用下载保存文件" : "This browser will download the file")}
+              >
+                {"\u9009\u62e9\u4fdd\u5b58\u6587\u4ef6\u5939"}
+              </Button>
+              {selectedExportDirectory && <Text type="secondary" style={{ marginLeft: 8 }}>{selectedExportDirectory.name}</Text>}
+            </Form.Item>
+          )}
           {operator?.id === "join" && (
             <div className="node-config-panel__join-keys">
               <div className="node-config-panel__join-keys-header">
@@ -459,28 +527,58 @@ export default function NodeConfigPanel() {
                   <div className="node-config-panel__join-key-row" key={`join-key-${index}`}>
                     <span className="node-config-panel__join-key-index">{index + 1}</span>
                     <div className="node-config-panel__join-key-field">
-                      <Text>{lang === "zh" ? "左侧键列" : "Left key column"}</Text>
-                      <Select
-                        showSearch
-                        allowClear
-                        style={{ width: "100%" }}
-                        value={pair.left || undefined}
-                        onChange={(value) => handleJoinPairChange(index, "left", value || "")}
-                        placeholder={lang === "zh" ? "选择左侧键列" : "Select left key column"}
-                        options={leftOptions}
-                      />
+                      <Text>
+                        {lang === "zh" ? "左侧键列" : "Left key column"}
+                        {isJoinKeyRequired("left_keys") && (
+                          <span className="node-config-panel__required" data-testid="required-param-left_keys" aria-label="required">*</span>
+                        )}
+                      </Text>
+                      {leftOptions.length > 0 ? (
+                        <Select
+                          showSearch
+                          allowClear
+                          aria-label={lang === "zh" ? "左侧键列" : "Left key column"}
+                          style={{ width: "100%" }}
+                          value={pair.left || undefined}
+                          onChange={(value) => handleJoinPairChange(index, "left", value || "")}
+                          placeholder={lang === "zh" ? "选择左侧键列" : "Select left key column"}
+                          options={leftOptions}
+                        />
+                      ) : (
+                        <Input
+                          aria-label={lang === "zh" ? "左侧键列" : "Left key column"}
+                          value={pair.left}
+                          onChange={(event) => handleJoinPairChange(index, "left", event.target.value)}
+                          placeholder={lang === "zh" ? "输入左侧键列" : "Enter left key column"}
+                        />
+                      )}
                     </div>
                     <div className="node-config-panel__join-key-field">
-                      <Text>{lang === "zh" ? "右侧键列" : "Right key column"}</Text>
-                      <Select
-                        showSearch
-                        allowClear
-                        style={{ width: "100%" }}
-                        value={pair.right || undefined}
-                        onChange={(value) => handleJoinPairChange(index, "right", value || "")}
-                        placeholder={lang === "zh" ? "选择右侧键列" : "Select right key column"}
-                        options={rightOptions}
-                      />
+                      <Text>
+                        {lang === "zh" ? "右侧键列" : "Right key column"}
+                        {isJoinKeyRequired("right_keys") && (
+                          <span className="node-config-panel__required" data-testid="required-param-right_keys" aria-label="required">*</span>
+                        )}
+                      </Text>
+                      {rightOptions.length > 0 ? (
+                        <Select
+                          showSearch
+                          allowClear
+                          aria-label={lang === "zh" ? "右侧键列" : "Right key column"}
+                          style={{ width: "100%" }}
+                          value={pair.right || undefined}
+                          onChange={(value) => handleJoinPairChange(index, "right", value || "")}
+                          placeholder={lang === "zh" ? "选择右侧键列" : "Select right key column"}
+                          options={rightOptions}
+                        />
+                      ) : (
+                        <Input
+                          aria-label={lang === "zh" ? "右侧键列" : "Right key column"}
+                          value={pair.right}
+                          onChange={(event) => handleJoinPairChange(index, "right", event.target.value)}
+                          placeholder={lang === "zh" ? "输入右侧键列" : "Enter right key column"}
+                        />
+                      )}
                     </div>
                     <Button
                       type="text"
@@ -502,10 +600,13 @@ export default function NodeConfigPanel() {
           {operator.parameters.map((p: any) => {
             const field = renderParamField(p);
             if (!field) return null;
+            const required = isParamRequired(p, params, operator?.parameters);
             return (
               <Form.Item
                 key={p.name}
-                label={<span style={{ fontSize: 12 }}>{p.label || p.name}</span>}
+                label={<span style={{ fontSize: 12 }}>{p.label || p.name}{required && (
+                  <span className="node-config-panel__required" data-testid={`required-param-${p.name}`} aria-label="required">*</span>
+                )}</span>}
                 style={{ marginBottom: 12 }}
               >
                 {field}

@@ -1,9 +1,15 @@
 import { create } from "zustand";
 import { Node, Edge, applyNodeChanges, applyEdgeChanges, addEdge, Connection, NodeChange, EdgeChange } from "reactflow";
 import type { ReactFlowInstance } from "reactflow";
+import type { BrowserDirectoryHandle } from "../components/workspace/workflowExport";
 
 export type WorkflowRunStatus = "pending" | "running" | "cancel_requested" | "completed" | "failed" | "cancelled";
 export type NodeRunStatus = "pending" | "running" | "completed" | "failed" | "timed_out" | "cancelled" | "skipped";
+
+export interface WorkflowExportDirectory {
+  name: string;
+  handle: BrowserDirectoryHandle;
+}
 
 export interface NodeErrorDetails {
   code: string | null;
@@ -68,6 +74,7 @@ export interface WorkflowState {
   nodeResults: Record<string, any>;
   nodeErrors: Record<string, NodeErrorDetails>;
   nodeProgress: Record<string, number>;
+  exportDirectories: Record<string, WorkflowExportDirectory>;
   operators: any[];
   reactFlowInstance: ReactFlowInstance | null;
   setNodes: (nodes: Node[]) => void;
@@ -88,6 +95,7 @@ export interface WorkflowState {
   setNodeResult: (nodeId: string, result: any) => void;
   setNodeError: (nodeId: string, error: NodeErrorInput | string | null) => void;
   setNodeProgress: (nodeId: string, progress: number) => void;
+  setExportDirectory: (nodeId: string, directory: WorkflowExportDirectory) => void;
   setReactFlowInstance: (instance: ReactFlowInstance | null) => void;
   removeEdge: (edgeId: string) => void;
   copySelectedNode: () => void;
@@ -108,6 +116,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   nodeResults: {},
   nodeErrors: {},
   nodeProgress: {},
+  exportDirectories: {},
   operators: [],
   reactFlowInstance: null,
   copiedNode: null as Node | null,
@@ -188,6 +197,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   updateNodeParams: (nodeId, params) =>
     set((state) => ({
       nodes: state.nodes.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, params } } : n)),
+      selectedNode: state.selectedNode?.id === nodeId
+        ? { ...state.selectedNode, data: { ...state.selectedNode.data, params } }
+        : state.selectedNode,
     })),
 
   setOperators: (ops) => set({ operators: ops }),
@@ -222,6 +234,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   setNodeProgress: (nodeId, progress) =>
     set((state) => ({
       nodeProgress: { ...state.nodeProgress, [nodeId]: progress },
+    })),
+
+  setExportDirectory: (nodeId, directory) =>
+    set((state) => ({
+      exportDirectories: { ...state.exportDirectories, [nodeId]: directory },
     })),
 
   setReactFlowInstance: (instance) => set({ reactFlowInstance: instance }),
@@ -270,6 +287,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       nodeResults: {},
       nodeErrors: {},
       nodeProgress: {},
+      exportDirectories: {},
       resultPanelNodeId: null,
       isRunning: false,
       currentRunId: null,

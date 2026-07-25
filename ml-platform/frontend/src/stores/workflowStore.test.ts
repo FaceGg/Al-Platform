@@ -14,6 +14,7 @@ describe("workflowStore", () => {
       nodeResults: {},
       nodeErrors: {},
       nodeProgress: {},
+      exportDirectories: {},
     });
   });
 
@@ -131,6 +132,23 @@ describe("workflowStore", () => {
     expect(state.nodeStatuses).toEqual({});
   });
 
+  it("retains the selected export directory when a new run resets execution state", () => {
+    const directory = {
+      name: "exports",
+      getFileHandle: async () => ({
+        createWritable: async () => ({ write: async () => {}, close: async () => {} }),
+      }),
+    };
+    useWorkflowStore.getState().setExportDirectory("export-1", { name: directory.name, handle: directory });
+
+    useWorkflowStore.getState().resetExecution();
+
+    expect(useWorkflowStore.getState().exportDirectories["export-1"]).toEqual({
+      name: "exports",
+      handle: directory,
+    });
+  });
+
   it("reset clears state", () => {
     useWorkflowStore.getState().addNode("test", { x: 0, y: 0 }, { operatorId: "test", label: "Test" });
     useWorkflowStore.getState().setNodeStatus("n1", "running");
@@ -162,6 +180,51 @@ describe("workflowStore", () => {
     expect(edges.map((edge) => ({ source: edge.source, sourceHandle: edge.sourceHandle, targetHandle: edge.targetHandle }))).toEqual([
       { source: "source-c", sourceHandle: "data", targetHandle: "right" },
       { source: "source-b", sourceHandle: "data", targetHandle: "input" },
+    ]);
+  });
+
+  it("replaces legacy slot edges at normalized source and target endpoints", () => {
+    useWorkflowStore.setState({
+      edges: [
+        {
+          id: "legacy-source",
+          source: "source",
+          sourceHandle: "data__slot_4",
+          target: "old-target",
+          targetHandle: "input",
+        },
+        {
+          id: "legacy-target",
+          source: "old-source",
+          sourceHandle: "other",
+          target: "target",
+          targetHandle: "data__slot_9",
+        },
+        {
+          id: "unrelated",
+          source: "other-source",
+          sourceHandle: "data",
+          target: "other-target",
+          targetHandle: "input",
+        },
+      ],
+    });
+
+    useWorkflowStore.getState().onConnect({
+      source: "source",
+      sourceHandle: "data",
+      target: "target",
+      targetHandle: "data",
+    });
+
+    expect(useWorkflowStore.getState().edges).toEqual([
+      expect.objectContaining({ id: "unrelated" }),
+      expect.objectContaining({
+        source: "source",
+        sourceHandle: "data",
+        target: "target",
+        targetHandle: "data",
+      }),
     ]);
   });
 

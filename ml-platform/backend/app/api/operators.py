@@ -32,6 +32,10 @@ def list_operators():
                 default=p.default,
                 label=p.label,
                 options=p.options,
+                range_min=p.range_min,
+                range_max=p.range_max,
+                required=p.required,
+                required_when=p.required_when,
             ) for p in op.parameters],
         ))
     return result

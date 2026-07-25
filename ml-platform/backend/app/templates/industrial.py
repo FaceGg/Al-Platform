@@ -8,6 +8,7 @@ from app.templates.contract import (
 
 
 IDENTITY_AND_TARGET = ("Car Body", "Welding Spot", "Date", "Fault")
+TEMPLATE_DATASET_ARTIFACT_ID = "__injected_at_instantiation__"
 
 
 def node(key, operator_id, label, x, y, **params):
@@ -18,7 +19,10 @@ def edge(source, source_port, target, target_port):
     return TemplateEdge(source, source_port, target, target_port)
 
 
-COMMON_IMPORT = node("import", "csv_import", "导入焊接特征", 40, 140)
+COMMON_IMPORT = node(
+    "import", "csv_import", "导入焊接特征", 40, 140,
+    source="artifact", dataset_artifact_id=TEMPLATE_DATASET_ARTIFACT_ID,
+)
 COMMON_CLEAN = node("clean", "missing_value_handler", "缺失值处理", 250, 140, strategy="median", fill_value="", columns="")
 COMMON_SCALE = node("scale", "scaler", "特征缩放", 460, 140, method="standard", columns="", target_column="Fault")
 COMMON_SPLIT = node(

@@ -42,6 +42,39 @@ class TestOperatorContract(unittest.TestCase):
         with self.assertRaisesRegex(OperatorContractError, "OPERATOR_PARAM_INVALID"):
             validate_operator_params(specs, {"count": 0, "mode": "a"})
 
+    def test_required_parameter_rejects_missing_and_whitespace(self):
+        spec = ParamSpec("dataset", "str", "", required=True)
+
+        for params in ({}, {"dataset": "   "}):
+            with self.assertRaisesRegex(OperatorContractError, "OPERATOR_PARAM_REQUIRED"):
+                validate_operator_params([spec], params)
+
+    def test_required_string_parameter_rejects_none(self):
+        spec = ParamSpec("dataset", "str", "", required=True)
+
+        with self.assertRaisesRegex(OperatorContractError, "OPERATOR_PARAM_REQUIRED"):
+            validate_operator_params([spec], {"dataset": None})
+
+    def test_required_select_parameter_rejects_none(self):
+        spec = ParamSpec("source", "select", "local", options=["local", "url"], required=True)
+
+        with self.assertRaisesRegex(OperatorContractError, "OPERATOR_PARAM_REQUIRED"):
+            validate_operator_params([spec], {"source": None})
+
+    def test_conditionally_required_parameter_only_applies_for_selected_source(self):
+        source = ParamSpec("source", "select", "local", options=["local", "url"])
+        spec = ParamSpec(
+            "file_path", "file", "", required=True,
+            required_when={"source": "local"},
+        )
+
+        self.assertEqual(
+            validate_operator_params([source, spec], {"file_path": "", "source": "url"}),
+            {"source": "url", "file_path": ""},
+        )
+        with self.assertRaisesRegex(OperatorContractError, "OPERATOR_PARAM_REQUIRED"):
+            validate_operator_params([source, spec], {"file_path": "", "source": "local"})
+
     def test_result_validation_rejects_unknown_output(self):
         result = OperatorResult(outputs={"other": 1})
         with self.assertRaisesRegex(OperatorContractError, "OPERATOR_RESULT_INVALID"):

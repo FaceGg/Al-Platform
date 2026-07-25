@@ -79,12 +79,22 @@ class TestAgentAPI(unittest.TestCase):
             r = client.get(f"/api/orchestration/tasks/{tid}/messages", headers=h)
             self.assertEqual(r.status_code, 200)
 
+    def test_07_invalid_task_id_returns_not_found(self):
+        with TestClient(app, raise_server_exceptions=False) as error_client:
+            response = error_client.get(
+                "/api/orchestration/tasks/not-a-uuid/messages",
+                headers=login_headers(),
+            )
+
+        self.assertEqual(response.status_code, 404)
+
     def test_07_plan_task(self):
         h = login_headers()
-        r = client.post("/api/orchestration/plan", json={
-            "task_description": "Predict weld quality",
-            "task_id": "any",
-        }, headers=h)
+        payload = {"task_description": "Predict weld quality"}
+        task_id = getattr(self.__class__, "task_id", None)
+        if task_id:
+            payload["task_id"] = task_id
+        r = client.post("/api/orchestration/plan", json=payload, headers=h)
         self.assertEqual(r.status_code, 200)
 
     def test_08_delete_agent_and_task(self):

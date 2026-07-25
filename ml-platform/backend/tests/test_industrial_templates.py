@@ -20,6 +20,12 @@ from app.templates.industrial import INDUSTRIAL_TEMPLATES
 
 
 class TestIndustrialTemplateContract(unittest.TestCase):
+    def test_industrial_import_declares_artifact_input_contract(self):
+        for template in INDUSTRIAL_TEMPLATES.values():
+            source = next(node for node in template.nodes if node.key == "import")
+            self.assertEqual(source.params.get("source"), "artifact")
+            self.assertTrue(source.params.get("dataset_artifact_id"))
+
     def test_four_approved_templates_have_fault_contracts(self):
         self.assertEqual(set(INDUSTRIAL_TEMPLATES), {
             "weld_quality",

@@ -455,13 +455,13 @@ html body {
 
 .workflow-canvas-surface,
 .workflow-flow {
+  --workflow-edge: color-mix(in srgb, var(--accent-secondary) 58%, var(--border-default));
   width: 100%;
   height: 100%;
 }
 
 .workflow-flow {
   --workflow-grid: color-mix(in srgb, var(--accent-primary) 18%, transparent);
-  --workflow-edge: color-mix(in srgb, var(--accent-primary) 42%, var(--border-default));
   --workflow-minimap-mask: color-mix(in srgb, var(--bg-primary) 38%, transparent);
   background: transparent;
 }
@@ -505,16 +505,34 @@ html body {
 
 .workflow-node {
   --workflow-node-accent: var(--accent-warning);
+  position: relative;
   box-sizing: border-box;
-  width: 248px;
-  min-height: 128px;
-  padding: 10px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  width: 176px;
+  min-height: 176px;
+  aspect-ratio: 1;
+  padding: 12px 28px;
   border: 1px solid color-mix(in srgb, var(--workflow-node-accent) 48%, var(--border-default));
-  border-radius: 18px;
+  border-radius: 30px;
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--bg-surface) 94%, var(--workflow-node-accent));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 24px rgba(2, 26, 34, 0.12);
+  background: color-mix(in srgb, var(--bg-surface) 88%, var(--workflow-node-accent));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 18px 34px rgba(1, 13, 24, 0.24);
   transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.workflow-node::before {
+  content: none;
+}
+
+.workflow-node::after {
+  position: absolute;
+  z-index: 0;
+  inset: 8px;
+  border: 1px solid color-mix(in srgb, var(--workflow-node-accent) 14%, transparent);
+  border-radius: 22px;
+  content: "";
+  pointer-events: none;
 }
 
 .workflow-node:hover {
@@ -537,32 +555,47 @@ html body {
 .workflow-node--skipped { --workflow-node-accent: var(--text-tertiary); }
 
 .workflow-node__header {
+  position: relative;
+  z-index: 1;
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: 26px minmax(0, 1fr);
+  grid-template-rows: 26px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 8px;
+  row-gap: 6px;
 }
 
 .workflow-node__category {
+  grid-column: 1;
+  grid-row: 1;
   width: 26px;
   height: 26px;
   display: grid;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 38%, var(--border-default));
-  border-radius: 10px;
-  color: var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--workflow-node-accent) 52%, var(--border-default));
+  border-radius: 50%;
+  color: var(--workflow-node-accent);
+  background: color-mix(in srgb, var(--workflow-node-accent) 12%, transparent);
   font-size: 14px;
 }
 
 .workflow-node__identity {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  align-self: center;
+  width: 100%;
   min-width: 0;
   display: grid;
-  gap: 0;
+  gap: 4px;
+  justify-items: center;
+  text-align: center;
 }
 
 .workflow-node__title {
   overflow: hidden;
+  max-width: 100%;
   color: var(--text-primary);
   font-size: 14px;
   font-weight: 720;
@@ -573,6 +606,7 @@ html body {
 
 .workflow-node__operator-id {
   overflow: hidden;
+  max-width: 100%;
   color: var(--text-tertiary);
   font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
@@ -582,8 +616,12 @@ html body {
 }
 
 .workflow-node__status {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
   display: inline-flex;
   align-items: center;
+  min-width: 28px;
   gap: 4px;
   padding: 3px 6px;
   border: 1px solid color-mix(in srgb, var(--workflow-node-accent) 38%, transparent);
@@ -593,6 +631,7 @@ html body {
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
+  justify-content: center;
   white-space: nowrap;
 }
 
@@ -620,23 +659,9 @@ html body {
   font-size: 11px;
 }
 
-.workflow-node__signals {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 9px;
-  padding-top: 7px;
-  border-top: 1px solid var(--border-subtle);
-  color: var(--text-tertiary);
-  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.workflow-node__signals span:last-child {
-  color: var(--workflow-node-accent);
-}
-
 .workflow-node__error {
+  position: relative;
+  z-index: 1;
   overflow: hidden;
   max-width: 100%;
   margin-top: 6px;
@@ -685,21 +710,71 @@ html body {
 }
 
 .workflow-node__progress {
+  position: relative;
+  z-index: 1;
   margin-top: 7px;
 }
 
 .workflow-node-handle.react-flow__handle {
-  width: 16px !important;
-  height: 16px !important;
-  border: 3px solid var(--bg-elevated) !important;
-  border-radius: 50% !important;
-  background: var(--workflow-node-accent) !important;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #ffffff 36%, transparent);
+  z-index: 2;
+  width: 20px !important;
+  height: 28px !important;
+  border: 1px solid color-mix(in srgb, var(--workflow-node-accent) 74%, var(--border-default)) !important;
+  background: color-mix(in srgb, var(--workflow-node-accent) 18%, var(--bg-elevated)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 0 1px color-mix(in srgb, var(--workflow-node-accent) 12%, transparent);
   transform: translateY(-50%);
+}
+
+.workflow-node-handle.react-flow__handle::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--workflow-node-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg-elevated) 84%, transparent);
+  content: "";
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.workflow-node-handle--input.react-flow__handle {
+  border-right: 0 !important;
+  border-radius: 14px 0 0 14px !important;
+}
+
+.workflow-node-handle--output.react-flow__handle {
+  border-left: 0 !important;
+  border-radius: 0 14px 14px 0 !important;
 }
 
 .workflow-node-handle.react-flow__handle:hover {
   transform: translateY(-50%) scale(1.12);
+}
+
+.workflow-node__port-label {
+  position: absolute;
+  z-index: 1;
+  width: 22px;
+  color: var(--text-tertiary);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+  opacity: 0.7;
+  text-align: center;
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+
+.workflow-node__port-label--input {
+  left: 5px;
+}
+
+.workflow-node__port-label--output {
+  right: 5px;
 }
 
 .workflow-port-tooltip__preview {
@@ -1173,10 +1248,6 @@ html body {
 }
 
 @media (max-width: 980px) {
-  .workflow-node {
-    width: 220px;
-  }
-
   .execution-progress {
     min-width: min(316px, calc(100% - 28px));
   }

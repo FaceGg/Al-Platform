@@ -28,8 +28,8 @@ class TestIOOperators(unittest.TestCase):
         op = OperatorRegistry.get("csv_import")
         self.assertGreater(len(op.outputs), 0)
 
-    def test_duplicate_read_excel_operator_is_not_registered(self):
-        self.assertIsNone(OperatorRegistry.get("read_excel"))
+    def test_read_excel_operator_is_registered(self):
+        self.assertIsNotNone(OperatorRegistry.get("read_excel"))
 
 
 class TestProcessingOperators(unittest.TestCase):
@@ -238,10 +238,10 @@ class TestBlendingOperators(unittest.TestCase):
             execute_operator(
                 op,
                 {
-                    "left": [{"plant": "A", "part": 1}],
+                    "left": [{"plant": "A", "part": 1, "line": "L1"}],
                     "right": [{"site": "A", "part_id": 1}],
                 },
-                {"left_keys": "plant", "right_keys": "site,part_id"},
+                {"left_keys": "plant,part,line", "right_keys": "site,part_id"},
             )
 
 

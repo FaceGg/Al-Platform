@@ -61,6 +61,15 @@ class TestDAGValidation(unittest.TestCase):
 
         self.assertFalse(any("missing required input" in error for error in errors))
 
+    def test_validates_required_parameters_before_execution(self):
+        executor = DAGExecutor([
+            {"id": "join", "operator_id": "join", "label": "Join", "params": {}},
+        ], [])
+
+        errors = executor.validate()
+
+        self.assertTrue(any("OPERATOR_PARAM_REQUIRED" in error for error in errors))
+
 
 class TestOperatorRegistry(unittest.TestCase):
     def test_operator_count(self):
@@ -118,6 +127,18 @@ class TestDataBus(unittest.TestCase):
         self.assertTrue(os.path.exists(path))
         loaded = DataBus.load_data(path)
         self.assertEqual(loaded, data)
+
+    def test_same_run_data_is_isolated_by_workflow(self):
+        left = DataBus.save_data(
+            "same-run", "node", "data", {"side": "left"}, workflow_id="workflow-a",
+        )
+        right = DataBus.save_data(
+            "same-run", "node", "data", {"side": "right"}, workflow_id="workflow-b",
+        )
+
+        self.assertNotEqual(left, right)
+        self.assertEqual(DataBus.load_data(left), {"side": "left"})
+        self.assertEqual(DataBus.load_data(right), {"side": "right"})
 
     def test_load_nonexistent(self):
         result = DataBus.load_data("/nonexistent/path.json")

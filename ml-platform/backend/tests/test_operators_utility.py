@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, ".")
@@ -13,7 +14,7 @@ sys.path.insert(0, ".")
 # Import via app.main to trigger operator registration
 from app.main import app  # noqa: F401
 from app.engine.registry import OperatorRegistry
-from tests.operator_test_utils import execute_operator
+from tests.operator_test_utils import execute_operator, operator_context
 
 
 class TestExecutePythonOperator(unittest.TestCase):
@@ -168,10 +169,14 @@ class TestWriteAsTextOperator(unittest.TestCase):
         content = Path(path).read_text(encoding="utf-8")
         self.assertIn("a,b", content)
 
-    def test_missing_file_path_raises(self):
+    def test_empty_file_path_uses_workspace_export_default(self):
         op = OperatorRegistry.get("write_as_text")
-        with self.assertRaises(ValueError):
-            execute_operator(op, {"data": [{"a": 1}]}, {"file_path": "", "format": "text"})
+        context = replace(operator_context(), workspace_dir=Path(self.tmpdir.name))
+        op.execute(context, {"data": [{"a": 1}]}, {"file_path": "", "format": "text"})
+
+        path = Path(self.tmpdir.name) / "exports" / "write_as_text_test-node.txt"
+        self.assertTrue(path.is_file())
+        self.assertIn("Rows: 1", path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

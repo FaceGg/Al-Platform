@@ -2,6 +2,7 @@
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
+from app.engine.export_paths import resolve_export_path
 import pandas as pd
 import os as os_mod
 
@@ -15,7 +16,7 @@ class ExecutePython(BaseOperator):
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("data", "DataTable", "Output Data")]
     parameters = [
-        ParamSpec("script", "str", "", "Python Script (multi-line)"),
+        ParamSpec("script", "str", "", "Python Script (multi-line)", required=True),
         ParamSpec("input_var", "str", "data", "Input Variable Name"),
         ParamSpec("output_var", "str", "result", "Output Variable Name"),
     ]
@@ -111,7 +112,8 @@ class WriteAsText(BaseOperator):
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("data", "DataTable", "Passthrough Data")]
     parameters = [
-        ParamSpec("file_path", "str", "", "Output File Path"),
+        ParamSpec("file_path", "str", "", "Legacy output file path"),
+        ParamSpec("file_name", "str", "", "File Name"),
         ParamSpec("format", "select", "text", "Output Format",
                   options=["json", "csv", "text"]),
     ]
@@ -121,15 +123,15 @@ class WriteAsText(BaseOperator):
 
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         data = inputs.get("data", [])
-        file_path = params.get("file_path", "")
         fmt = params.get("format", "text")
-
-        if not file_path:
-            raise ValueError("WriteAsText: file_path is required")
-
-        dir_name = os_mod.path.dirname(file_path)
-        if dir_name:
-            os_mod.makedirs(dir_name, exist_ok=True)
+        extension = {"json": "json", "csv": "csv", "text": "txt"}[fmt]
+        file_path = resolve_export_path(
+            context,
+            self.id,
+            params.get("file_name"),
+            extension,
+            legacy_file_path=params.get("file_path"),
+        )
 
         df = pd.DataFrame(data)
 
@@ -147,5 +149,7 @@ class WriteAsText(BaseOperator):
 
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
+
+        context.logger.info("Export written", path=str(file_path), format=fmt)
 
         return OperatorResult(outputs={"data": data})

@@ -25,6 +25,8 @@ class ParamSpec:
     options: list[str] | None = None
     range_min: float | None = None
     range_max: float | None = None
+    required: bool = False
+    required_when: dict[str, Any] | None = None
 
 
 class BaseOperator(ABC):

@@ -21,6 +21,7 @@ class OperatorContext:
     artifact_service: Any
     cancel_requested: Callable[[], bool]
     logger: Any
+    workspace_dir: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,8 @@ class OperatorResult:
 
 def _coerce_value(spec: ParamSpec, value: Any) -> Any:
     try:
+        if value is None and spec.type in {"str", "select"}:
+            return None
         if spec.type == "int":
             return int(value)
         if spec.type == "float":
@@ -63,6 +66,22 @@ def _coerce_value(spec: ParamSpec, value: Any) -> Any:
         ) from exc
 
 
+def _is_blank(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _requirement_applies(spec: ParamSpec, params: dict[str, Any]) -> bool:
+    if not spec.required:
+        return False
+    if not spec.required_when:
+        return True
+    for dependency, expected in spec.required_when.items():
+        allowed = expected if isinstance(expected, (list, tuple, set)) else (expected,)
+        if params.get(dependency) not in allowed:
+            return False
+    return True
+
+
 def validate_operator_params(specs: list[ParamSpec], params: dict[str, Any]) -> dict[str, Any]:
     known = {spec.name for spec in specs}
     unknown = set(params) - known
@@ -73,6 +92,16 @@ def validate_operator_params(specs: list[ParamSpec], params: dict[str, Any]) -> 
     validated = {}
     for spec in specs:
         value = _coerce_value(spec, params.get(spec.name, spec.default))
+        validated[spec.name] = value
+
+    for spec in specs:
+        if _requirement_applies(spec, validated) and _is_blank(validated[spec.name]):
+            raise OperatorContractError(
+                "OPERATOR_PARAM_REQUIRED", f"Parameter '{spec.name}' is required",
+            )
+
+    for spec in specs:
+        value = validated[spec.name]
         if spec.options is not None and value not in spec.options:
             raise OperatorContractError(
                 "OPERATOR_PARAM_INVALID", f"Parameter '{spec.name}' is not an allowed option",
@@ -85,7 +114,6 @@ def validate_operator_params(specs: list[ParamSpec], params: dict[str, Any]) -> 
             raise OperatorContractError(
                 "OPERATOR_PARAM_INVALID", f"Parameter '{spec.name}' is above maximum",
             )
-        validated[spec.name] = value
     return validated
 
 

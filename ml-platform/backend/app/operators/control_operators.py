@@ -17,9 +17,9 @@ class ConditionOperator(BaseOperator):
         PortSpec("false_branch", "DataTable", "False Branch"),
     ]
     parameters = [
-        ParamSpec("column", "str", "", "Column to Check"),
+        ParamSpec("column", "str", "", "Column to Check", required=True),
         ParamSpec("operator", "select", ">", "Operator", options=[">", "<", ">=", "<=", "==", "!=", "contains"]),
-        ParamSpec("value", "str", "", "Compare Value"),
+        ParamSpec("value", "str", "", "Compare Value", required=True),
     ]
 
     def validate(self, inputs):
@@ -74,7 +74,10 @@ class MergeOperator(BaseOperator):
     parameters = [
         ParamSpec("merge_type", "select", "concat_rows", "Merge Type",
                   options=["concat_rows", "concat_columns", "inner_join", "outer_join"]),
-        ParamSpec("key_column", "str", "", "Join Key Column (for join types)"),
+        ParamSpec(
+            "key_column", "str", "", "Join Key Column (for join types)", required=True,
+            required_when={"merge_type": ["inner_join", "outer_join"]},
+        ),
     ]
 
     def validate(self, inputs):

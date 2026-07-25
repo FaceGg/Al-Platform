@@ -19,8 +19,8 @@ class JoinOp(BaseOperator):
     outputs = [PortSpec("data", "DataTable", "Joined Data")]
     parameters = [
         ParamSpec("join_type", "select", "inner", "Join Type", options=["inner", "left", "right", "outer"]),
-        ParamSpec("left_keys", "str", "", "Left Key Columns"),
-        ParamSpec("right_keys", "str", "", "Right Key Columns"),
+        ParamSpec("left_keys", "str", "", "Left Key Columns", required=True),
+        ParamSpec("right_keys", "str", "", "Right Key Columns", required=True),
     ]
 
     def validate(self, inputs):
@@ -32,8 +32,16 @@ class JoinOp(BaseOperator):
         join_type = params.get("join_type", "inner")
         left_keys_str = params.get("left_keys", "")
         right_keys_str = params.get("right_keys", "")
-        left_keys = [k.strip() for k in left_keys_str.split(",") if k.strip()]
-        right_keys = [k.strip() for k in right_keys_str.split(",") if k.strip()]
+        left_keys = left_keys_str.split(",") if isinstance(left_keys_str, str) else []
+        right_keys = right_keys_str.split(",") if isinstance(right_keys_str, str) else []
+        left_keys = [key.strip() for key in left_keys]
+        right_keys = [key.strip() for key in right_keys]
+
+        if not left_keys or not right_keys or any(not key for key in left_keys + right_keys):
+            raise ValueError("Join key pairs are required")
+
+        if len(left_keys) != len(right_keys):
+            raise ValueError(f"left_keys ({len(left_keys)}) and right_keys ({len(right_keys)}) count mismatch")
 
         left_empty = data_left.empty if isinstance(data_left, pd.DataFrame) else not data_left
         right_empty = data_right.empty if isinstance(data_right, pd.DataFrame) else not data_right
@@ -46,33 +54,12 @@ class JoinOp(BaseOperator):
         df_left = pd.DataFrame(data_left)
         df_right = pd.DataFrame(data_right)
 
-                # Auto-detect common columns if keys not specified
-        if not left_keys and not right_keys:
-            common = [c for c in df_left.columns if c in df_right.columns]
-            if common:
-                left_keys = [common[0]]
-                right_keys = [common[0]]
-            else:
-                raise ValueError(
-                    "左侧和右侧没有共同列，请手动指定 join key\n"
-                    + "左侧列: " + ", ".join(list(df_left.columns)) + "\n"
-                    + "右侧列: " + ", ".join(list(df_right.columns))
-                )
-
         for lk in left_keys:
             if lk not in df_left.columns:
                 raise ValueError(f"左侧中找不到 '{lk}'列: " + ", ".join(list(df_left.columns)))
         for rk in right_keys:
             if rk not in df_right.columns:
                 raise ValueError(f"右侧中找不到 '{rk}'列: " + ", ".join(list(df_right.columns)))
-
-        if len(left_keys) == 1 and len(right_keys) > 1:
-            left_keys = left_keys * len(right_keys)
-        elif len(right_keys) == 1 and len(left_keys) > 1:
-            right_keys = right_keys * len(left_keys)
-
-        if len(left_keys) != len(right_keys):
-            raise ValueError(f"left_keys ({len(left_keys)}) and right_keys ({len(right_keys)}) count mismatch")
 
         result = pd.merge(
             df_left,
@@ -139,8 +126,8 @@ class AggregateOp(BaseOperator):
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("data", "DataTable", "Aggregated Data")]
     parameters = [
-        ParamSpec("group_by", "str", "", "Group-by Columns (comma-separated)"),
-        ParamSpec("aggregations", "str", "", "Aggregations, e.g. col1:mean,col2:sum"),
+        ParamSpec("group_by", "str", "", "Group-by Columns (comma-separated)", required=True),
+        ParamSpec("aggregations", "str", "", "Aggregations, e.g. col1:mean,col2:sum", required=True),
     ]
 
     def validate(self, inputs):
@@ -209,9 +196,9 @@ class PivotOp(BaseOperator):
         PortSpec("preprocessing_model", "Model", "Pivot Metadata (for inverse)"),
     ]
     parameters = [
-        ParamSpec("index", "str", "", "Index Column (row dimension)"),
-        ParamSpec("columns", "str", "", "Columns Column (pivoted to headers)"),
-        ParamSpec("values", "str", "", "Values Column"),
+        ParamSpec("index", "str", "", "Index Column (row dimension)", required=True),
+        ParamSpec("columns", "str", "", "Columns Column (pivoted to headers)", required=True),
+        ParamSpec("values", "str", "", "Values Column", required=True),
         ParamSpec("agg_function", "select", "mean", "Aggregation Function", options=["mean", "sum", "count", "min", "max"]),
     ]
 
@@ -288,8 +275,8 @@ class GenerateAttributesOp(BaseOperator):
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("data", "DataTable", "Data with New Column")]
     parameters = [
-        ParamSpec("new_column_name", "str", "", "New Column Name"),
-        ParamSpec("expression", "str", "", "Python Expression (use 'row' dict)"),
+        ParamSpec("new_column_name", "str", "", "New Column Name", required=True),
+        ParamSpec("expression", "str", "", "Python Expression (use 'row' dict)", required=True),
     ]
 
     def validate(self, inputs):
@@ -334,7 +321,7 @@ class SortOp(BaseOperator):
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("data", "DataTable", "Sorted Data")]
     parameters = [
-        ParamSpec("sort_column", "str", "", "Sort Column"),
+        ParamSpec("sort_column", "str", "", "Sort Column", required=True),
         ParamSpec("ascending", "boolean", True, "Ascending Order"),
     ]
 

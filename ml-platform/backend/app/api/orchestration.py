@@ -35,7 +35,11 @@ def get_orchestrator():
 
 
 def _task_for_user(db, task_id, user):
-    task = db.query(AgentTask).filter(AgentTask.id == uuid.UUID(str(task_id))).first()
+    try:
+        identifier = uuid.UUID(str(task_id))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    task = db.query(AgentTask).filter(AgentTask.id == identifier).first()
     if task is None:
         return None
     if task.workflow_id is not None:

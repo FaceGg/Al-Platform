@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { Fragment, memo, useState } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
 import { Modal, Progress, Tooltip } from "antd";
 import {
@@ -53,6 +53,10 @@ export function getPortSlots(
     port,
     handleId: String(port.name),
   }));
+}
+
+export function abbreviatePortName(portName?: string | null): string {
+  return Array.from(portName ?? "").slice(0, 3).join("").toUpperCase();
 }
 
 function resolvePortValue(
@@ -228,7 +232,7 @@ function CustomNode({ data, selected }: NodeProps) {
 
   const portStyle = (index: number, total: number, side: "left" | "right"): React.CSSProperties => ({
     top: total <= 1 ? "50%" : ((index + 0.5) / total) * 100 + "%",
-    ...(side === "left" ? { left: -9 } : { right: -9 }),
+    ...(side === "left" ? { left: -20 } : { right: -20 }),
   });
 
   return (
@@ -240,24 +244,34 @@ function CustomNode({ data, selected }: NodeProps) {
         const previewKey = `in:${handleId}`;
         const value = resolvePortValue(nodeId, p.name, "in", allEdges, nodeResults);
         return (
-          <Tooltip
-            title={<PortTooltipContent port={p} value={value} lang={lang} />}
-            placement="left"
-            mouseEnterDelay={0}
-            destroyOnHidden
-            key={"tt-in-" + handleId}
-            {...previewProps(previewKey)}
-          >
-            <Handle
-              type="target"
-              position={Position.Left}
-              id={handleId}
-              data-testid={"port-in-" + handleId}
-              className="workflow-node-handle workflow-node-handle--input"
-              style={portStyle(i, inputSlots.length, "left")}
+          <Fragment key={"in-" + handleId}>
+            <span
+              className="workflow-node__port-label workflow-node__port-label--input"
+              data-testid={"port-label-in-" + handleId}
+              aria-label={handleId}
+              style={{ top: portStyle(i, inputSlots.length, "left").top }}
+            >
+              {abbreviatePortName(handleId)}
+            </span>
+            <Tooltip
+              title={<PortTooltipContent port={p} value={value} lang={lang} />}
+              placement="left"
+              mouseEnterDelay={0}
+              destroyOnHidden
+              key={"tt-in-" + handleId}
               {...previewProps(previewKey)}
-            />
-          </Tooltip>
+            >
+              <Handle
+                type="target"
+                position={Position.Left}
+                id={handleId}
+                data-testid={"port-in-" + handleId}
+                className="workflow-node-handle workflow-node-handle--input"
+                style={portStyle(i, inputSlots.length, "left")}
+                {...previewProps(previewKey)}
+              />
+            </Tooltip>
+          </Fragment>
         );
       })}
 
@@ -286,11 +300,6 @@ function CustomNode({ data, selected }: NodeProps) {
             {statusLabel}
           </span>
         )}
-      </div>
-
-      <div className="workflow-node__signals" aria-hidden="true">
-        <span>IN {inputs.length}</span>
-        <span>OUT {outputs.length}</span>
       </div>
 
       {errorStatus && nodeError && (
@@ -323,24 +332,34 @@ function CustomNode({ data, selected }: NodeProps) {
         const previewKey = `out:${handleId}`;
         const value = resolvePortValue(nodeId, p.name, "out", allEdges, nodeResults);
         return (
-          <Tooltip
-            title={<PortTooltipContent port={p} value={value} lang={lang} />}
-            placement="right"
-            mouseEnterDelay={0}
-            destroyOnHidden
-            key={"tt-out-" + handleId}
-            {...previewProps(previewKey)}
-          >
-            <Handle
-              type="source"
-              position={Position.Right}
-              id={handleId}
-              data-testid={"port-out-" + handleId}
-              className="workflow-node-handle workflow-node-handle--output"
-              style={portStyle(i, outputSlots.length, "right")}
+          <Fragment key={"out-" + handleId}>
+            <span
+              className="workflow-node__port-label workflow-node__port-label--output"
+              data-testid={"port-label-out-" + handleId}
+              aria-label={handleId}
+              style={{ top: portStyle(i, outputSlots.length, "right").top }}
+            >
+              {abbreviatePortName(handleId)}
+            </span>
+            <Tooltip
+              title={<PortTooltipContent port={p} value={value} lang={lang} />}
+              placement="right"
+              mouseEnterDelay={0}
+              destroyOnHidden
+              key={"tt-out-" + handleId}
               {...previewProps(previewKey)}
-            />
-          </Tooltip>
+            >
+              <Handle
+                type="source"
+                position={Position.Right}
+                id={handleId}
+                data-testid={"port-out-" + handleId}
+                className="workflow-node-handle workflow-node-handle--output"
+                style={portStyle(i, outputSlots.length, "right")}
+                {...previewProps(previewKey)}
+              />
+            </Tooltip>
+          </Fragment>
         );
       })}
     </div>

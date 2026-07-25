@@ -7,6 +7,7 @@ import sys
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 sys.path.insert(0, ".")
 
@@ -123,6 +124,49 @@ class TestExecuteWorkflowRunErrors(unittest.TestCase):
         completed = [e for e in events if e["payload"].get("type") == "run_completed"]
         self.assertEqual(len(completed), 1)
         self.assertEqual(completed[0]["payload"]["status"], "failed")
+
+    def test_passes_persisted_workflow_id_to_executor(self):
+        from app.models.run import WorkflowRun
+        from app.models.workflow import Workflow, WorkflowNode
+
+        with self.Session() as db:
+            workflow = Workflow(
+                project_id=self.project.id,
+                name="WFE executor workflow",
+                created_by=self.user.id,
+            )
+            db.add(workflow)
+            db.flush()
+            node = WorkflowNode(
+                workflow_id=workflow.id,
+                operator_id="csv_import",
+                label="Import",
+                position_x=0,
+                position_y=0,
+                params={},
+            )
+            workflow_run = WorkflowRun(
+                workflow_id=workflow.id,
+                status="pending",
+                triggered_by=self.user.id,
+            )
+            db.add_all([node, workflow_run])
+            db.commit()
+            run_id = str(workflow_run.id)
+            workflow_id = str(workflow.id)
+
+        with patch("app.services.workflow_execution.DAGExecutor") as executor_class:
+            executor_class.return_value.execute.return_value = {}
+            execute_workflow_run(
+                run_id,
+                session_factory=self.Session,
+                event_publisher=_CapturingPublisher([]),
+            )
+
+        self.assertEqual(
+            executor_class.call_args.kwargs["workflow_id"],
+            workflow_id,
+        )
 
 
 class _CapturingPublisher:

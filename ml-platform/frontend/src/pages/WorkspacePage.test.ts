@@ -1,6 +1,138 @@
-import { describe, expect, it } from "vitest";
-import { hydrateWorkflowEdges, resolvePort } from "./WorkspacePage";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { App as AntApp, ConfigProvider } from "antd";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { createElement } from "react";
+import * as workspacePage from "./WorkspacePage";
+import WorkspacePage, { hydrateWorkflowEdges, resolvePort } from "./WorkspacePage";
 import { isVisualizationResultNode } from "../components/workspace/WorkflowCanvas";
+import { LangProvider } from "../i18n";
+import { useWorkflowStore } from "../stores/workflowStore";
+
+const apiClientMock = vi.hoisted(() => ({
+  get: vi.fn(),
+  post: vi.fn(),
+  put: vi.fn(),
+  delete: vi.fn(),
+}));
+const workflowExportMock = vi.hoisted(() => ({
+  exportCompletedWorkflowNode: vi.fn(),
+}));
+
+vi.mock("../api/client", () => ({
+  default: apiClientMock,
+  formatApiError: (_error: unknown, fallback: string) => fallback,
+}));
+vi.mock("../components/workspace/OperatorPanel", () => ({ default: () => null }));
+vi.mock("../components/workspace/ExecutionProgress", () => ({ default: () => null }));
+vi.mock("../components/workspace/NodeConfigPanel", () => ({
+  default: () => null,
+  NodeResultPanel: () => null,
+}));
+vi.mock("../components/workspace/WorkflowCanvas", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../components/workspace/WorkflowCanvas")>()),
+  default: () => null,
+}));
+vi.mock("../components/workspace/workflowExport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../components/workspace/workflowExport")>()),
+  exportCompletedWorkflowNode: workflowExportMock.exportCompletedWorkflowNode,
+}));
+
+class TestWebSocket {
+  static instances: TestWebSocket[] = [];
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  close = vi.fn();
+
+  constructor(readonly url: string) {
+    TestWebSocket.instances.push(this);
+  }
+
+  open(): void {
+    this.onopen?.(new Event("open"));
+  }
+
+  message(payload: unknown): void {
+    this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(payload) }));
+  }
+}
+
+function renderWorkspacePage(): void {
+  render(
+    createElement(
+      ConfigProvider,
+      null,
+      createElement(
+        AntApp,
+        null,
+        createElement(
+          LangProvider,
+          null,
+          createElement(
+            MemoryRouter,
+            { initialEntries: ["/workspace/workflow-1"] },
+            createElement(
+              Routes,
+              null,
+              createElement(Route, { path: "/workspace/:workflowId", element: createElement(WorkspacePage) }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+beforeEach(() => {
+  useWorkflowStore.getState().reset();
+  TestWebSocket.instances = [];
+  vi.stubGlobal("WebSocket", TestWebSocket);
+  workflowExportMock.exportCompletedWorkflowNode.mockReset().mockResolvedValue("saved");
+  apiClientMock.get.mockReset().mockImplementation((url: string) => {
+    if (url === "/operators") {
+      return Promise.resolve({ data: [{ id: "csv_export", category: "utility", inputs: [], outputs: [{ name: "data" }] }] });
+    }
+    if (url === "/workflows/workflow-1") {
+      return Promise.resolve({
+        data: {
+          name: "Export workflow",
+          nodes: [{
+            id: "export-1",
+            operator_id: "csv_export",
+            label: "CSV export",
+            params: {},
+            position_x: 0,
+            position_y: 0,
+          }],
+          edges: [],
+        },
+      });
+    }
+    if (url === "/runs/run-1") {
+      return Promise.resolve({
+        data: {
+          status: "completed",
+          node_runs: [{
+            node_id: "export-1",
+            status: "completed",
+            result: { outputs: { data: [{ id: 1, status: "ok" }] } },
+            metrics: null,
+            logs: [],
+          }],
+        },
+      });
+    }
+    return Promise.reject(new Error(`Unexpected GET ${url}`));
+  });
+  apiClientMock.put.mockReset().mockResolvedValue({ data: {} });
+  apiClientMock.post.mockReset().mockResolvedValue({ data: { run_id: "run-1", status: "pending" } });
+  apiClientMock.delete.mockReset();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("workspace port persistence", () => {
   const ports = [{ name: "data" }, { name: "predictions" }];
@@ -34,6 +166,36 @@ describe("workspace port persistence", () => {
       sourceHandle: "data",
       targetHandle: "in",
     });
+  });
+
+  it("maps indexed legacy handles to named ports before deduplicating", () => {
+    const hydrateWithNodes = hydrateWorkflowEdges as unknown as (edges: any[], nodes: any[]) => any[];
+
+    expect(hydrateWithNodes([
+      {
+        id: "legacy",
+        source: "source",
+        target: "target",
+        source_port: "out-0",
+        target_port: "in-0",
+      },
+      {
+        id: "replacement",
+        source: "source",
+        target: "target",
+        source_port: "data",
+        target_port: "input",
+      },
+    ], [
+      { id: "source", data: { outputs: [{ name: "data" }] } },
+      { id: "target", data: { inputs: [{ name: "input" }] } },
+    ])).toEqual([
+      expect.objectContaining({
+        id: "replacement",
+        sourceHandle: "data",
+        targetHandle: "input",
+      }),
+    ]);
   });
 
   it("keeps only the latest edge for each normalized source or target endpoint", () => {
@@ -101,5 +263,52 @@ describe("visualization result click gating", () => {
     expect(isVisualizationResultNode({ id: "viz-2", data: { operatorId: "line_chart" } }, "completed", [
       { id: "line_chart", category: "visualization" },
     ])).toBe(true);
+  });
+});
+
+describe("workflow browser download notices", () => {
+  it("localizes the browser-managed save location notice for downloaded exports", () => {
+    const notifyWorkflowExportOutcome = (workspacePage as any).notifyWorkflowExportOutcome;
+    expect(typeof notifyWorkflowExportOutcome).toBe("function");
+
+    const info = vi.fn();
+    notifyWorkflowExportOutcome("downloaded", "zh", { info });
+    expect(info).toHaveBeenLastCalledWith("\u6d4f\u89c8\u5668\u5c06\u7ba1\u7406\u4fdd\u5b58\u4f4d\u7f6e");
+
+    notifyWorkflowExportOutcome("downloaded", "en", { info });
+    expect(info).toHaveBeenLastCalledWith("Your browser manages the save location.");
+  });
+
+  it("keeps skipped exports silent", () => {
+    const notifyWorkflowExportOutcome = (workspacePage as any).notifyWorkflowExportOutcome;
+    expect(typeof notifyWorkflowExportOutcome).toBe("function");
+
+    const info = vi.fn();
+    notifyWorkflowExportOutcome("skipped", "zh", { info });
+
+    expect(info).not.toHaveBeenCalled();
+  });
+});
+
+describe("workflow socket recovery", () => {
+  it("exports a pre-connect completed node once and deduplicates its later socket event", async () => {
+    renderWorkspacePage();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /运行/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /运行/ }));
+
+    await waitFor(() => expect(TestWebSocket.instances).toHaveLength(1));
+    TestWebSocket.instances[0].open();
+
+    await waitFor(() => expect(workflowExportMock.exportCompletedWorkflowNode).toHaveBeenCalledOnce());
+    TestWebSocket.instances[0].message({
+      type: "node_status",
+      node_id: "export-1",
+      status: "completed",
+      result: { outputs: { data: [{ id: 1, status: "ok" }] } },
+    });
+
+    await Promise.resolve();
+    expect(workflowExportMock.exportCompletedWorkflowNode).toHaveBeenCalledOnce();
   });
 });

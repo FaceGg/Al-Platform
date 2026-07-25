@@ -15,7 +15,7 @@ class MissingValueHandler(BaseOperator):
     outputs = [PortSpec("data", "DataTable", "Cleaned Data")]
     parameters = [
         ParamSpec("strategy", "select", "drop", "Strategy", options=["drop", "mean", "median", "most_frequent", "constant"]),
-        ParamSpec("fill_value", "str", "", "Fill Value"),
+        ParamSpec("fill_value", "str", "", "Fill Value", required=True, required_when={"strategy": "constant"}),
         ParamSpec("columns", "str", "", "Columns (comma-separated)"),
     ]
 
@@ -154,7 +154,7 @@ class TrainTestSplit(BaseOperator):
     parameters = [
         ParamSpec("test_size", "float", 0.2, "Test Size"),
         ParamSpec("random_seed", "int", 42, "Random Seed"),
-        ParamSpec("target_column", "str", "", "Target Column"),
+        ParamSpec("target_column", "str", "", "Target Column", required=True, required_when={"stratify": True}),
         ParamSpec("stratify", "boolean", False, "Stratified Split"),
     ]
 
@@ -396,7 +396,7 @@ class SetRoleOp(BaseOperator):
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("data", "DataTable", "Data with role metadata")]
     parameters = [
-        ParamSpec("column", "str", "", "Target Column"),
+        ParamSpec("column", "str", "", "Target Column", required=True),
         ParamSpec("role", "select", "label", "Role", options=["label", "id", "weight", "feature", "ignore"]),
     ]
     def validate(self, inputs): return True
@@ -410,7 +410,7 @@ class FilterExamples(BaseOperator):
     description = "Filter rows by expression"
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("data", "DataTable", "Filtered Data")]
-    parameters = [ParamSpec("expression", "str", "", "Filter expression (e.g., column > 0)")]
+    parameters = [ParamSpec("expression", "str", "", "Filter expression (e.g., column > 0)", required=True)]
     def validate(self, inputs): return True
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         data = inputs.get("data", []); df = pd.DataFrame(data)
