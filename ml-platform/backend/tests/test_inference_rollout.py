@@ -2,6 +2,7 @@ import json
 import math
 import unittest
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import uuid4
 from fastapi import FastAPI
@@ -40,11 +41,16 @@ class FakeRuntime:
     def __init__(self):
         self.calls = []
         self.fail_preload = False
+        self.loaded = {}
 
     def preload(self, deployment_id, revision_id):
         if self.fail_preload:
             raise RuntimeError("INFERENCE_RUNTIME_UNAVAILABLE")
         self.calls.append(("preload", str(deployment_id), str(revision_id)))
+
+    def load(self, runtime_key, specification):
+        self.calls.append(("load", str(runtime_key)))
+        self.loaded[str(runtime_key)] = specification
 
 
 class RecordingEventRecorder:
@@ -220,6 +226,18 @@ class TestInferenceRollout(unittest.TestCase):
             self.candidate_version.id,
         })
 
+    def test_weighted_router_rejects_non_integer_weights(self):
+        revision = SimpleNamespace(
+            id=uuid4(),
+            deployment_id=self.deployment.id,
+            targets=[
+                SimpleNamespace(model_version_id=self.version.id, weight_bps=9999.5),
+                SimpleNamespace(model_version_id=self.candidate_version.id, weight_bps=0.5),
+            ],
+        )
+        with self.assertRaisesRegex(InferenceRolloutError, "TARGET_WEIGHTS_INVALID"):
+            WeightedTargetRouter().select(revision, "request-42")
+
     def test_active_rollout_selects_revision_then_target(self):
         candidate = self.make_candidate_revision((9000, 1000))
         rollout = DeploymentRollout(
@@ -321,7 +339,8 @@ class TestInferenceRollout(unittest.TestCase):
             )
 
     def test_preload_and_advance_persist_default_steps_until_completion(self):
-        service = InferenceRolloutService(FakeRuntime())
+        runtime = FakeRuntime()
+        service = InferenceRolloutService(runtime)
         rollout = service.create_candidate(
             self.db,
             self.deployment.id,
@@ -341,6 +360,38 @@ class TestInferenceRollout(unittest.TestCase):
             )
             self.assertEqual(rollout.current_step, expected_step)
         self.assertEqual(rollout.state, "completed")
+        legacy_specification = runtime.loaded[str(self.deployment.id)]
+        self.assertEqual(
+            legacy_specification["model_version_id"],
+            str(self.candidate_version.id),
+        )
+        self.assertEqual(
+            legacy_specification["revision_id"],
+            str(rollout.to_revision_id),
+        )
+
+    def test_preload_fails_closed_without_runtime_preload_or_load(self):
+        candidate = self.make_candidate_revision((9000, 1000))
+        rollout = DeploymentRollout(
+            deployment_id=self.deployment.id,
+            from_revision_id=self.stable_revision.id,
+            to_revision_id=candidate.id,
+            state="pending",
+            current_step=0,
+            lock_version=1,
+            step_schedule=[0, 1000, 5000, 10000],
+            thresholds={"max_error_rate": 0.01, "max_p95_ms": 500},
+        )
+        self.db.add(rollout)
+        self.db.commit()
+        with self.assertRaisesRegex(InferenceRolloutError, "ROLLOUT_PRELOAD_FAILED"):
+            InferenceRolloutService(object()).preload(
+                self.db,
+                rollout.id,
+                expected_lock_version=1,
+            )
+        self.db.refresh(rollout)
+        self.assertEqual(rollout.last_error_code, "ROLLOUT_PRELOAD_FAILED")
 
     def test_stale_rollout_command_is_rejected(self):
         candidate = self.make_candidate_revision((9000, 1000))

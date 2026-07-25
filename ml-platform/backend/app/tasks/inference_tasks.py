@@ -3,6 +3,7 @@
 from app.config import settings
 from app.database import SessionLocal
 from app.services.inference_deployment import InferenceDeploymentService
+from app.services.inference_rollout import InferenceRolloutService
 from app.services.inference_runtime_client import InferenceRuntimeClient
 from app.tasks.celery_app import celery_app
 
@@ -23,4 +24,13 @@ def build_inference_deployment_service():
 @celery_app.task(name="ml_platform.reconcile_inference_deployments")
 def reconcile_inference_deployments():
     with SessionLocal() as db:
-        return build_inference_deployment_service().reconcile(db)
+        deployment_service = build_inference_deployment_service()
+        deployment_result = deployment_service.reconcile(db)
+        rollout_result = InferenceRolloutService(
+            deployment_service.runtime,
+        ).reconcile(db)
+        return {
+            **deployment_result,
+            "rollout_loaded": rollout_result.get("loaded", 0),
+            "rollout_failed": rollout_result.get("failed", 0),
+        }

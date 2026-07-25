@@ -64,7 +64,16 @@ class WeightedTargetRouter:
     def _targets(revision):
         targets = list(getattr(revision, "targets", ()) or ())
         targets.sort(key=lambda item: str(item.model_version_id))
-        if not targets or sum(int(item.weight_bps) for item in targets) != 10000:
+        if not targets:
+            raise InferenceRolloutError("TARGET_WEIGHTS_INVALID")
+        weights = [getattr(item, "weight_bps", None) for item in targets]
+        if any(
+            isinstance(weight, bool)
+            or not isinstance(weight, int)
+            or weight < 0
+            or weight > 10000
+            for weight in weights
+        ) or sum(weights) != 10000:
             raise InferenceRolloutError("TARGET_WEIGHTS_INVALID")
         return targets
 
@@ -215,7 +224,14 @@ class InferenceRolloutService:
         targets = db.query(DeploymentTarget).filter(
             DeploymentTarget.revision_id == revision_uuid,
         ).all()
-        if not targets or sum(int(item.weight_bps) for item in targets) != 10000:
+        weights = [getattr(item, "weight_bps", None) for item in targets]
+        if not targets or any(
+            isinstance(weight, bool)
+            or not isinstance(weight, int)
+            or weight < 0
+            or weight > 10000
+            for weight in weights
+        ) or sum(weights) != 10000:
             raise InferenceRolloutError("TARGET_WEIGHTS_INVALID")
         if len({str(item.model_version_id) for item in targets}) != len(targets):
             raise InferenceRolloutError("TARGET_DUPLICATE")
@@ -403,7 +419,7 @@ class InferenceRolloutService:
             return preload(rollout.deployment_id, revision.id)
         loader = getattr(self.runtime, "load", None)
         if not callable(loader):
-            return None
+            raise InferenceRolloutError("INFERENCE_RUNTIME_UNAVAILABLE")
         for target in revision.targets or ():
             version = db.query(ModelVersion).filter(ModelVersion.id == target.model_version_id).one()
             artifact = db.query(Artifact).filter(Artifact.id == version.onnx_artifact_id).one()
@@ -539,6 +555,7 @@ class InferenceRolloutService:
             rollout.to_revision.activated_at = self.clock()
             rollout.from_revision.status = "superseded"
             deployment = self._deployment(db, rollout.deployment_id)
+            self._refresh_legacy_runtime(db, deployment)
             self._record(db, deployment, rollout, "rollout.completed")
         else:
             self._transition(
@@ -551,6 +568,18 @@ class InferenceRolloutService:
             )
         db.commit()
         return rollout
+
+    def _refresh_legacy_runtime(self, db, deployment):
+        """Point legacy deployment runtime key at newest stable revision."""
+        loader = getattr(self.runtime, "load", None)
+        if not callable(loader):
+            return
+        from app.services.inference_deployment import InferenceDeploymentService
+
+        loader(
+            deployment.id,
+            InferenceDeploymentService._specification(db, deployment),
+        )
 
     def pause(self, db, rollout_id, expected_lock_version=None):
         rollout = self._rollout(db, rollout_id, lock=True)

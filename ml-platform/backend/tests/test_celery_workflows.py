@@ -53,6 +53,35 @@ class TestCeleryWorkflowClaims(unittest.TestCase):
             "ml_platform.reconcile_inference_deployments",
         )
 
+    @patch("app.tasks.inference_tasks.InferenceRolloutService")
+    @patch("app.tasks.inference_tasks.build_inference_deployment_service")
+    @patch("app.tasks.inference_tasks.SessionLocal")
+    def test_inference_reconciliation_also_reconciles_rollouts(
+        self,
+        session_local,
+        build_deployment_service,
+        rollout_service,
+    ):
+        from app.tasks.inference_tasks import reconcile_inference_deployments
+
+        db = MagicMock()
+        session_local.return_value.__enter__.return_value = db
+        deployment_service = build_deployment_service.return_value
+        deployment_service.runtime = object()
+        deployment_service.reconcile.return_value = {
+            "loaded": 1, "unloaded": 0, "failed": 0,
+        }
+        rollout_service.return_value.reconcile.return_value = {
+            "loaded": 2, "failed": 0,
+        }
+
+        result = reconcile_inference_deployments.run()
+
+        deployment_service.reconcile.assert_called_once_with(db)
+        rollout_service.assert_called_once_with(deployment_service.runtime)
+        rollout_service.return_value.reconcile.assert_called_once_with(db)
+        self.assertEqual(result["rollout_loaded"], 2)
+
     def test_worker_import_registers_builtin_operators(self):
         command = (
             "import app.tasks.workflow_tasks; "
