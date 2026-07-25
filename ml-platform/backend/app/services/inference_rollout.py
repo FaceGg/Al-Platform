@@ -32,6 +32,8 @@ DEFAULT_STEP_SCHEDULE = (0, 1000, 5000, 10000)
 DEFAULT_THRESHOLDS = {"max_error_rate": 0.01, "max_p95_ms": 500}
 ACTIVE_ROLLOUT_STATES = frozenset({"pending", "preloading", "progressing", "paused"})
 TERMINAL_ROLLOUT_STATES = frozenset({"completed", "failed", "rolled_back"})
+LEGACY_REFRESH_FAILED = "ROLLOUT_LEGACY_REFRESH_FAILED"
+LEGACY_RECOVERY_FAILED = "ROLLOUT_LEGACY_RECOVERY_FAILED"
 
 
 def utcnow() -> datetime:
@@ -551,23 +553,13 @@ class InferenceRolloutService:
                     from_revision=rollout.from_revision,
                     to_revision=rollout.to_revision,
                 )
-            except InferenceRolloutError:
-                self._transition(
+            except InferenceRolloutError as error:
+                self._persist_legacy_replacement_failure(
                     db,
                     rollout,
-                    rollout.lock_version,
-                    state="paused",
-                    current_step=0,
-                    last_error_code="ROLLOUT_LEGACY_REFRESH_FAILED",
-                )
-                self._record(
-                    db,
                     deployment,
-                    rollout,
-                    "rollout.failed",
-                    error_code="ROLLOUT_LEGACY_REFRESH_FAILED",
+                    error,
                 )
-                db.commit()
                 raise
             self._transition(
                 db,
@@ -594,6 +586,30 @@ class InferenceRolloutService:
         db.commit()
         return rollout
 
+    def _persist_legacy_replacement_failure(self, db, rollout, deployment, error):
+        fallback_restored = error.code == LEGACY_REFRESH_FAILED
+        error_code = error.code
+        self._transition(
+            db,
+            rollout,
+            rollout.lock_version,
+            state="paused" if fallback_restored else "failed",
+            current_step=0,
+            last_error_code=error_code,
+        )
+        if not fallback_restored:
+            deployment.observed_state = "failed"
+            deployment.last_error_code = error_code
+            deployment.last_checked_at = self.clock()
+        self._record(
+            db,
+            deployment,
+            rollout,
+            "rollout.failed",
+            error_code=error_code,
+        )
+        db.commit()
+
     def _replace_legacy_runtime(
         self,
         db,
@@ -605,7 +621,7 @@ class InferenceRolloutService:
         """Replace legacy key while retaining a stable fallback on load failure."""
         loader = getattr(self.runtime, "load", None)
         if not callable(loader):
-            return
+            raise InferenceRolloutError("INFERENCE_RUNTIME_UNAVAILABLE")
         unloader = getattr(self.runtime, "unload", None)
         if not callable(unloader):
             raise InferenceRolloutError("INFERENCE_RUNTIME_UNAVAILABLE")
@@ -631,8 +647,8 @@ class InferenceRolloutService:
                 unloader(deployment.id)
                 loader(deployment.id, previous_specification)
             except Exception:
-                pass
-            raise InferenceRolloutError("ROLLOUT_LEGACY_REFRESH_FAILED") from None
+                raise InferenceRolloutError(LEGACY_RECOVERY_FAILED) from None
+            raise InferenceRolloutError(LEGACY_REFRESH_FAILED) from None
 
     def pause(self, db, rollout_id, expected_lock_version=None):
         rollout = self._rollout(db, rollout_id, lock=True)
@@ -679,6 +695,19 @@ class InferenceRolloutService:
         self._check_expected(rollout, expected_lock_version)
         try:
             self._preload_revision(db, rollout, revision=rollout.from_revision)
+            deployment = self._deployment(db, rollout.deployment_id)
+            legacy_replaced = False
+            if rollout.state == "completed" or rollout.last_error_code in {
+                LEGACY_REFRESH_FAILED,
+                LEGACY_RECOVERY_FAILED,
+            }:
+                self._replace_legacy_runtime(
+                    db,
+                    deployment,
+                    from_revision=rollout.to_revision,
+                    to_revision=rollout.from_revision,
+                )
+                legacy_replaced = True
             unload = getattr(self.runtime, "unload", None)
             if callable(unload):
                 for target in rollout.to_revision.targets or ():
@@ -694,7 +723,10 @@ class InferenceRolloutService:
             )
             rollout.to_revision.status = "failed"
             rollout.from_revision.status = "stable"
-            deployment = self._deployment(db, rollout.deployment_id)
+            if legacy_replaced and deployment.desired_state == "running":
+                deployment.observed_state = "running"
+                deployment.last_error_code = None
+                deployment.last_checked_at = self.clock()
             self._record(db, deployment, rollout, "rollback.completed")
             db.commit()
         except InferenceRolloutError as error:
@@ -702,16 +734,30 @@ class InferenceRolloutService:
             if error.code == "ROLLOUT_REVISION_CONFLICT":
                 raise
             rollout = self._rollout(db, rollout_id, lock=True)
+            deployment = self._deployment(db, rollout.deployment_id)
+            error_code = (
+                error.code
+                if error.code in {
+                    LEGACY_REFRESH_FAILED,
+                    LEGACY_RECOVERY_FAILED,
+                    "INFERENCE_RUNTIME_UNAVAILABLE",
+                }
+                else "ROLLOUT_ROLLBACK_FAILED"
+            )
             self._transition(
                 db,
                 rollout,
                 rollout.lock_version,
                 state="failed",
                 current_step=0,
-                last_error_code="ROLLOUT_ROLLBACK_FAILED",
+                last_error_code=error_code,
             )
+            if error_code == LEGACY_RECOVERY_FAILED:
+                deployment.observed_state = "failed"
+                deployment.last_error_code = LEGACY_RECOVERY_FAILED
+                deployment.last_checked_at = self.clock()
             db.commit()
-            raise InferenceRolloutError("ROLLOUT_ROLLBACK_FAILED") from None
+            raise InferenceRolloutError(error_code) from None
         except Exception:
             db.rollback()
             rollout = self._rollout(db, rollout_id, lock=True)
