@@ -497,7 +497,7 @@ git commit -m "feat: secure production inference access"
 - Modify: `ml-platform/backend/tests/test_inference_observability.py`
 - Modify: `ml-platform/backend/tests/test_model_cards.py`
 
-- [ ] **Step 1: Write the redaction and aggregation tests**
+- [x] **Step 1: Write the redaction and aggregation tests**
 
 ```python
 def test_request_log_has_no_payload_fields(self):
@@ -527,11 +527,11 @@ def test_two_requests_increment_one_minute_bucket(self):
 
 Run `python -m unittest tests.test_inference_observability -v`. Expected: RED because the service is absent.
 
-- [ ] **Step 2: Implement log writing and bounded metric queries**
+- [x] **Step 2: Implement log writing and bounded metric queries**
 
 Round occurrence time to the minute. Insert the allowlisted request log and upsert its bucket in the caller's transaction. Store duration as a non-negative integer, status from `success/error/limited`, stable code only, and retention expiry. Accumulate batch size, the active revision weights, and fixed latency histogram boundaries `[5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000]`; calculate p50/p95/p99 from those bucket counts without scanning raw logs. Expose average/max/histogram percentiles, counts, average batch size, traffic weights, and load failures. Reject query windows over 31 days and page sizes over 200. A retention task deletes expired logs and old buckets, never cards.
 
-- [ ] **Step 3: Write the generated-card tests**
+- [x] **Step 3: Write the generated-card tests**
 
 ```python
 def test_card_system_fields_are_generated_and_guidance_versions(self):
@@ -552,11 +552,11 @@ def test_card_update_rejects_system_fields(self):
 
 Run `python -m unittest tests.test_model_cards -v`. Expected: RED because `ModelCardService` is absent.
 
-- [ ] **Step 4: Implement card generation and export**
+- [x] **Step 4: Implement card generation and export**
 
 `ensure_for_version` copies immutable feature/output schema, frozen metrics, source artifact and training lineage by stable IDs, approval status/actor/time/comment, and current release references. `update_guidance` changes only `operational_guidance` and increments `guidance_revision`. JSON export omits storage URIs, credentials, request records, predictions, and raw exceptions. Call `ensure_for_version` after version registration and after approval-history changes without overwriting human guidance.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
 ```powershell
 python -m unittest tests.test_inference_observability tests.test_model_cards tests.test_model_registry_service -v

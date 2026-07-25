@@ -1101,6 +1101,13 @@
 - 验证：`test_inference_api_keys`、`test_inference_rate_limit`、`test_config` `27/27` 通过；扩展聚焦集 `40/40`、compileall、diff check 通过，规格与质量双审通过。
 - 后续：Task 5 建设请求脱敏日志、分钟指标、留存与模型卡。
 
+### 2026-07-25：第 9 周 Task 5 可观测性与模型卡完成
+
+- 完成：请求日志 allowlist 脱敏、分钟指标桶、固定延迟直方图/百分位、查询边界、留存清理，以及模型卡生成、系统字段保护、指导版本化和安全导出。
+- 修复：分钟桶首次写入采用保存点冲突恢复，避免并发请求在唯一键上失败；模型卡 lineage 仅接受稳定标量，拒绝嵌套数据、URI、凭据和未知来源值。
+- 验证：`test_inference_observability`、`test_model_cards`、`test_model_registry_service` `24/24` 通过；compileall、diff check 通过；规格复核缺陷已修复。
+- 当前状态：Task 5 完成；Task 6 开始实现加权路由和持久 rollout CAS。
+
 ### 2026-07-21：第 9 周 Task 1 RED 合同边界完成
 
 - 开发环境：在 `.worktrees/week9-12-mlops-core` 的 `codex/week9-12-mlops-core` 隔离分支执行；基线后端 `68/68` 模块、前端 `19/19` 文件 `50/50` 用例和生产构建通过。本机 Python 3.13/Node 24 与 CI Python 3.11/Node 20 的差异保留为后续远程门禁。
