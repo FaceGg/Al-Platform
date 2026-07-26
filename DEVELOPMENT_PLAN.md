@@ -1190,3 +1190,15 @@
 - 影响范围：production inference API、model registry rollout/key routes、rollout runtime reconciliation，以及对应 API/角色/服务回归；不修改第 10 周 Outbox、通知或迁移链。
 - 预防措施：任何审计拥有提交权而 runtime 已发生外部变更的命令，必须从持久数据库状态恢复 legacy key 与全部可路由 aliases；回归应同时覆盖审计提交失败、runtime compatibility key 和 revision target routing。
 - 遗留事项：Task 8 Celery rollout/retention、Task 9 前端、Task 10 真实生产/Chromium、Task 11 文档和远程 CI 未开始；第 9 周不得提前标记完成。
+
+### 2026-07-26：第 9 周 Task 8 Celery Rollout 与 Telemetry Retention 完成
+
+- 当前周次：第 9 至第 12 周并行开发；Task 8 已完成，第 9 周整体仍进行中。
+- 开发内容：新增稳定 Celery 任务 `ml_platform.advance_inference_rollout`、`ml_platform.rollback_inference_rollout`、`ml_platform.reconcile_inference_rollouts` 和 `ml_platform.prune_inference_telemetry`；新增 60 秒 rollout reconciliation 与每日 telemetry retention Beat。
+- 问题现象：原 `reconcile_inference_deployments` 同时执行 deployment 和 rollout reconciliation；新增独立 rollout Beat 后会在同一周期重复预加载或推进 rollout。telemetry 清理任务也会忽略部署环境覆盖的日志留存配置。
+- 根因：deployment recovery 与 release lifecycle 使用同一个周期任务，且 retention service 的默认值没有在异步任务边界显式接收 Settings。
+- 解决结果：deployment Beat 只恢复 deployment runtime；rollout Beat 仅对 pending/preloading 状态执行恢复，再对 progressing 状态按持久 `lock_version` CAS 推进 0/10/50/100，冲突投递返回数据库持久状态且不吞未知异常。清理任务以 `settings.inference_log_retention_days` 初始化 `InferenceObservability` 并在删除后提交。
+- 验证方式：稳定任务/Beat RED 后 GREEN；新增配置留存 RED 后 GREEN。`tests.test_celery_workflows tests.test_inference_deployment tests.test_inference_observability` 为 34/34；`python run_suite.py --week 9` 为 7/7 模块；生产模块导入 2/2、`compileall`、`git diff --check` 通过。实现提交为 `ba65509`，配置一致性修复待本任务文档提交一并保存。
+- 影响范围：Celery Worker/Beat 注册、生产推理 rollout 生命周期和日志/指标定期删除；不修改 rollout 数据模型、公共 API、Week 10 Outbox 或 Alembic 链。
+- 预防措施：不同事实源的 reconciliation 必须拆成独立周期任务；任何会触发 runtime 副作用的 rollout 命令必须携带数据库 CAS 版本；后台留存任务必须显式传入与 API 相同的 Settings 值。
+- 遗留事项：Task 9 前端生产运维、Task 10 隔离生产栈/Chromium、Task 11 最终文档和远程 CI 未开始；第 9 周不能提前标记完成。

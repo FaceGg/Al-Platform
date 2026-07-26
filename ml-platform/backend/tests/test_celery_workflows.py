@@ -261,6 +261,23 @@ class TestCeleryWorkflowClaims(unittest.TestCase):
         db.commit.assert_called_once_with()
         self.assertEqual(result, {"pruned": 3})
 
+    def test_prune_telemetry_task_uses_configured_log_retention(self):
+        from app.tasks.inference_tasks import prune_inference_telemetry
+
+        db = MagicMock()
+        with patch("app.tasks.inference_tasks.SessionLocal") as session_local, patch(
+            "app.tasks.inference_tasks.InferenceObservability",
+        ) as observability, patch(
+            "app.tasks.inference_tasks.settings.inference_log_retention_days",
+            17,
+        ):
+            session_local.return_value.__enter__.return_value = db
+            observability.return_value.prune.return_value = 0
+
+            prune_inference_telemetry.run()
+
+        observability.assert_called_once_with(log_retention_days=17)
+
     def test_worker_import_registers_builtin_operators(self):
         command = (
             "import app.tasks.workflow_tasks; "

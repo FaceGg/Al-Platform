@@ -128,6 +128,8 @@ def reconcile_inference_rollouts():
 @celery_app.task(name="ml_platform.prune_inference_telemetry")
 def prune_inference_telemetry():
     with SessionLocal() as db:
-        pruned = InferenceObservability().prune(db)
+        pruned = InferenceObservability(
+            log_retention_days=settings.inference_log_retention_days,
+        ).prune(db)
         db.commit()
         return {"pruned": pruned}
