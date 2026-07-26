@@ -41,6 +41,26 @@ class FakeDB:
 
 
 class TestCeleryWorkflowClaims(unittest.TestCase):
+    def test_week9_rollout_tasks_are_registered_with_beat_schedules(self):
+        from app.tasks.celery_app import celery_app
+
+        for task_name in (
+            "ml_platform.advance_inference_rollout",
+            "ml_platform.rollback_inference_rollout",
+            "ml_platform.reconcile_inference_rollouts",
+            "ml_platform.prune_inference_telemetry",
+        ):
+            with self.subTest(task_name=task_name):
+                self.assertIn(task_name, celery_app.tasks)
+        self.assertEqual(
+            celery_app.conf.beat_schedule["inference-rollout-reconciliation"]["schedule"],
+            60.0,
+        )
+        self.assertEqual(
+            celery_app.conf.beat_schedule["inference-telemetry-retention"]["task"],
+            "ml_platform.prune_inference_telemetry",
+        )
+
     def test_inference_reconciliation_is_registered_with_beat(self):
         from app.tasks.celery_app import celery_app
 
@@ -53,14 +73,14 @@ class TestCeleryWorkflowClaims(unittest.TestCase):
             "ml_platform.reconcile_inference_deployments",
         )
 
-    @patch("app.tasks.inference_tasks.InferenceRolloutService")
     @patch("app.tasks.inference_tasks.build_inference_deployment_service")
     @patch("app.tasks.inference_tasks.SessionLocal")
-    def test_inference_reconciliation_also_reconciles_rollouts(
+    @patch("app.tasks.inference_tasks.InferenceRolloutService")
+    def test_inference_deployment_reconciliation_does_not_duplicate_rollout_work(
         self,
+        rollout_service,
         session_local,
         build_deployment_service,
-        rollout_service,
     ):
         from app.tasks.inference_tasks import reconcile_inference_deployments
 
@@ -71,16 +91,175 @@ class TestCeleryWorkflowClaims(unittest.TestCase):
         deployment_service.reconcile.return_value = {
             "loaded": 1, "unloaded": 0, "failed": 0,
         }
-        rollout_service.return_value.reconcile.return_value = {
-            "loaded": 2, "failed": 0,
-        }
 
         result = reconcile_inference_deployments.run()
 
         deployment_service.reconcile.assert_called_once_with(db)
-        rollout_service.assert_called_once_with(deployment_service.runtime)
-        rollout_service.return_value.reconcile.assert_called_once_with(db)
-        self.assertEqual(result["rollout_loaded"], 2)
+        rollout_service.assert_not_called()
+        self.assertEqual(result, {"loaded": 1, "unloaded": 0, "failed": 0})
+
+    def test_advance_rollout_task_returns_persisted_state_for_duplicate_delivery(self):
+        from app.services.inference_rollout import InferenceRolloutError
+        from app.tasks.inference_tasks import advance_inference_rollout
+
+        rollout = SimpleNamespace(
+            id=uuid.uuid4(), state="progressing", lock_version=4,
+        )
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = rollout
+        with patch("app.tasks.inference_tasks.SessionLocal") as session_local, patch(
+            "app.tasks.inference_tasks.build_inference_rollout_service",
+        ) as build_rollout_service:
+            session_local.return_value.__enter__.return_value = db
+            rollout_service = build_rollout_service.return_value
+            rollout_service.advance.side_effect = [
+                rollout,
+                InferenceRolloutError("ROLLOUT_REVISION_CONFLICT"),
+            ]
+
+            first = advance_inference_rollout.run(str(rollout.id), 3)
+            second = advance_inference_rollout.run(str(rollout.id), 3)
+
+        expected = {
+            "id": str(rollout.id),
+            "state": "progressing",
+            "lock_version": 4,
+        }
+        self.assertEqual(first, expected)
+        self.assertEqual(second, expected)
+
+    def test_advance_rollout_task_does_not_hide_unexpected_errors(self):
+        from app.tasks.inference_tasks import advance_inference_rollout
+
+        db = MagicMock()
+        with patch("app.tasks.inference_tasks.SessionLocal") as session_local, patch(
+            "app.tasks.inference_tasks.build_inference_rollout_service",
+        ) as build_rollout_service:
+            session_local.return_value.__enter__.return_value = db
+            build_rollout_service.return_value.advance.side_effect = RuntimeError(
+                "unexpected runtime failure",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "unexpected runtime failure"):
+                advance_inference_rollout.run(str(uuid.uuid4()), 1)
+
+    def test_rollback_rollout_task_returns_persisted_state(self):
+        from app.tasks.inference_tasks import rollback_inference_rollout
+
+        rollout = SimpleNamespace(
+            id=uuid.uuid4(), state="rolled_back", lock_version=5,
+        )
+        db = MagicMock()
+        with patch("app.tasks.inference_tasks.SessionLocal") as session_local, patch(
+            "app.tasks.inference_tasks.build_inference_rollout_service",
+        ) as build_rollout_service:
+            session_local.return_value.__enter__.return_value = db
+            build_rollout_service.return_value.rollback.return_value = rollout
+
+            result = rollback_inference_rollout.run(str(rollout.id), 4)
+
+        self.assertEqual(
+            result,
+            {"id": str(rollout.id), "state": "rolled_back", "lock_version": 5},
+        )
+
+    def test_rollback_rollout_task_returns_only_known_stable_domain_error(self):
+        from app.services.inference_rollout import InferenceRolloutError
+        from app.tasks.inference_tasks import rollback_inference_rollout
+
+        rollout_id = str(uuid.uuid4())
+        db = MagicMock()
+        with patch("app.tasks.inference_tasks.SessionLocal") as session_local, patch(
+            "app.tasks.inference_tasks.build_inference_rollout_service",
+        ) as build_rollout_service:
+            session_local.return_value.__enter__.return_value = db
+            build_rollout_service.return_value.rollback.side_effect = (
+                InferenceRolloutError("ROLLOUT_NOT_FOUND")
+            )
+
+            result = rollback_inference_rollout.run(rollout_id, 1)
+
+        self.assertEqual(result, {"id": rollout_id, "error_code": "ROLLOUT_NOT_FOUND"})
+
+    def test_rollout_reconciliation_recovers_pending_then_advances(self):
+        from app.tasks.inference_tasks import reconcile_inference_rollouts
+
+        pending = SimpleNamespace(
+            id=uuid.uuid4(), state="pending", lock_version=4,
+        )
+        progressing = SimpleNamespace(
+            id=pending.id, state="progressing", lock_version=5,
+        )
+        db = MagicMock()
+        db.query.return_value.filter.return_value.all.side_effect = [
+            [pending], [progressing],
+        ]
+        with patch("app.tasks.inference_tasks.SessionLocal") as session_local, patch(
+            "app.tasks.inference_tasks.build_inference_rollout_service",
+        ) as build_rollout_service:
+            session_local.return_value.__enter__.return_value = db
+            rollout_service = build_rollout_service.return_value
+            rollout_service.reconcile.return_value = {"loaded": 1, "failed": 0}
+            rollout_service.advance.return_value = SimpleNamespace(
+                id=progressing.id, state="progressing", lock_version=6,
+            )
+
+            result = reconcile_inference_rollouts.run()
+
+        rollout_service.reconcile.assert_called_once_with(db)
+        rollout_service.advance.assert_called_once_with(
+            db, progressing.id, expected_lock_version=5,
+        )
+        self.assertEqual(
+            result,
+            {"loaded": 1, "failed": 0, "advanced": 1, "advance_failed": 0},
+        )
+
+    def test_rollout_reconciliation_does_not_preload_progressing_rollout(self):
+        from app.tasks.inference_tasks import reconcile_inference_rollouts
+
+        rollout = SimpleNamespace(
+            id=uuid.uuid4(), state="progressing", lock_version=4,
+        )
+        db = MagicMock()
+        db.query.return_value.filter.return_value.all.side_effect = [
+            [], [rollout],
+        ]
+        with patch("app.tasks.inference_tasks.SessionLocal") as session_local, patch(
+            "app.tasks.inference_tasks.build_inference_rollout_service",
+        ) as build_rollout_service:
+            session_local.return_value.__enter__.return_value = db
+            rollout_service = build_rollout_service.return_value
+            rollout_service.advance.return_value = SimpleNamespace(
+                id=rollout.id, state="progressing", lock_version=5,
+            )
+
+            result = reconcile_inference_rollouts.run()
+
+        rollout_service.reconcile.assert_not_called()
+        rollout_service.advance.assert_called_once_with(
+            db, rollout.id, expected_lock_version=4,
+        )
+        self.assertEqual(
+            result,
+            {"loaded": 0, "failed": 0, "advanced": 1, "advance_failed": 0},
+        )
+
+    def test_prune_telemetry_task_commits_retention_result(self):
+        from app.tasks.inference_tasks import prune_inference_telemetry
+
+        db = MagicMock()
+        with patch("app.tasks.inference_tasks.SessionLocal") as session_local, patch(
+            "app.tasks.inference_tasks.InferenceObservability",
+        ) as observability:
+            session_local.return_value.__enter__.return_value = db
+            observability.return_value.prune.return_value = 3
+
+            result = prune_inference_telemetry.run()
+
+        observability.return_value.prune.assert_called_once_with(db)
+        db.commit.assert_called_once_with()
+        self.assertEqual(result, {"pruned": 3})
 
     def test_worker_import_registers_builtin_operators(self):
         command = (
