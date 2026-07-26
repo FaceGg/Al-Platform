@@ -10,21 +10,34 @@ from app.api.auth import get_current_user
 from app.api.project_security import audit_service, require_project_access, resolve_project_access
 from app.database import SessionLocal, get_db
 from app.models.artifact import Artifact
-from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
+from app.models.model_registry import (
+    DeploymentRollout, InferenceDeployment, ModelCard,
+    ModelVersion, RegisteredModel,
+)
 from app.models.user import User
 from app.schemas.model_registry import (
     DeploymentCreate,
+    ApiKeyCreate,
     LifecycleComment,
+    MetricQuery,
+    ModelCardGuidanceUpdate,
     OnnxVersionCreate,
     PlatformVersionCreate,
     PredictRequest,
+    RequestLogQuery,
     RegisteredModelCreate,
+    RolloutCommand,
+    RolloutCreate,
     VersionCreate,
 )
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.services.audit import AuditIntent
 from app.services.inference_deployment import InferenceDeploymentError, InferenceDeploymentService
+from app.services.inference_api_keys import InferenceApiKeyError, InferenceApiKeyService
+from app.services.inference_observability import InferenceObservability, InferenceObservabilityError
+from app.services.inference_rollout import InferenceRolloutError, InferenceRolloutService
 from app.services.inference_runtime_client import InferenceRuntimeClient
+from app.services.model_cards import ModelCardError, ModelCardService
 from app.services.model_registry import ModelRegistryError, ModelRegistryService
 
 
@@ -91,6 +104,37 @@ def _deployment_view(deployment):
         "last_error_code": deployment.last_error_code,
         "last_checked_at": deployment.last_checked_at.isoformat() if deployment.last_checked_at else None,
         "created_at": deployment.created_at.isoformat() if deployment.created_at else None,
+    }
+
+
+def _release_view(release):
+    return {
+        "id": str(release.id), "deployment_id": str(release.deployment_id),
+        "from_revision_id": str(release.from_revision_id) if release.from_revision_id else None,
+        "to_revision_id": str(release.to_revision_id), "state": release.state,
+        "current_step": release.current_step, "lock_version": release.lock_version,
+        "step_schedule": release.step_schedule, "thresholds": release.thresholds,
+        "last_error_code": release.last_error_code,
+        "created_at": release.created_at, "started_at": release.started_at,
+        "completed_at": release.completed_at,
+    }
+
+
+def _api_key_view(key):
+    return {
+        "id": str(key.id), "prefix": key.prefix, "scopes": list(key.scopes),
+        "expires_at": key.expires_at, "last_used_at": key.last_used_at,
+        "revoked_at": key.revoked_at, "created_at": key.created_at,
+    }
+
+
+def _card_view(card):
+    return {
+        "id": str(card.id), "model_version_id": str(card.model_version_id),
+        "operational_guidance": card.operational_guidance,
+        "guidance_revision": card.guidance_revision,
+        "approval_status": card.approval_status, "release_status": card.release_status,
+        "created_at": card.created_at, "updated_at": card.updated_at,
     }
 
 
@@ -349,6 +393,215 @@ def build_model_registry_router(
             return deployment_service_value.predict(db, deployment.id, data.records)
         except InferenceDeploymentError as error:
             _error(error)
+
+    def rollout_service_for(db):
+        _, deployment_service_value = services(db)
+        if deployment_service_value is None:
+            raise HTTPException(503, {"code": "INFERENCE_RUNTIME_UNAVAILABLE"})
+        return InferenceRolloutService(deployment_service_value.runtime)
+
+    def release_access(db, deployment_id, release_id, user_id):
+        deployment, access = _deployment_access(db, deployment_id, user_id)
+        try:
+            release_uuid = UUID(str(release_id))
+        except (TypeError, ValueError, AttributeError):
+            raise HTTPException(404, {"code": "ROLLOUT_NOT_FOUND"})
+        release = db.query(DeploymentRollout).filter(
+            DeploymentRollout.id == release_uuid,
+            DeploymentRollout.deployment_id == deployment.id,
+        ).first()
+        if release is None:
+            raise HTTPException(404, {"code": "ROLLOUT_NOT_FOUND"})
+        return deployment, access, release
+
+    def rollout_error(error):
+        code = error.code
+        status = 404 if code.endswith("NOT_FOUND") else 409
+        raise HTTPException(status, {"code": code, "message": code})
+
+    @router.get("/api/inference-deployments/{deployment_id}/releases")
+    def list_releases(deployment_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        deployment, _access = _deployment_access(db, deployment_id, current_user.id)
+        require_project_access(db, deployment.project_id, current_user.id, "project.read")
+        releases = db.query(DeploymentRollout).filter(
+            DeploymentRollout.deployment_id == deployment.id,
+        ).order_by(DeploymentRollout.created_at.desc()).all()
+        return {"items": [_release_view(item) for item in releases], "total": len(releases)}
+
+    @router.get("/api/inference-deployments/{deployment_id}/releases/{release_id}")
+    def release_detail(deployment_id: str, release_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        deployment, _access, release = release_access(db, deployment_id, release_id, current_user.id)
+        require_project_access(db, deployment.project_id, current_user.id, "project.read")
+        return _release_view(release)
+
+    @router.post("/api/inference-deployments/{deployment_id}/releases", status_code=201)
+    def create_release(deployment_id: str, data: RolloutCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        deployment, access = _deployment_access(db, deployment_id, current_user.id)
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="inference.operate",
+            intent=AuditIntent(project_id=deployment.project_id, action="inference_release.create", resource_type="deployment_rollout", resource_id=str(deployment.id), changes={"strategy": data.strategy}),
+            allowed_changes={"strategy"},
+        ):
+            try:
+                release = rollout_service_for(db).create_candidate(
+                    db, deployment.id, current_user.id,
+                    [item.model_dump() for item in data.targets], data.strategy,
+                    data.step_schedule,
+                    {key: value for key, value in {
+                        "max_error_rate": data.max_error_rate, "max_p95_ms": data.max_p95_ms,
+                    }.items() if value is not None} or None,
+                )
+            except InferenceRolloutError as error:
+                rollout_error(error)
+        return _release_view(release)
+
+    def command_release(deployment_id, release_id, data, request, db, current_user, command):
+        deployment, access, release = release_access(db, deployment_id, release_id, current_user.id)
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="inference.operate",
+            intent=AuditIntent(project_id=deployment.project_id, action=f"inference_release.{command}", resource_type="deployment_rollout", resource_id=str(release.id), changes={}),
+            allowed_changes=set(),
+        ):
+            try:
+                release = getattr(rollout_service_for(db), command)(
+                    db, release.id, data.expected_lock_version,
+                )
+            except InferenceRolloutError as error:
+                rollout_error(error)
+        return _release_view(release)
+
+    @router.post("/api/inference-deployments/{deployment_id}/releases/{release_id}/pause")
+    def pause_release(deployment_id: str, release_id: str, data: RolloutCommand, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        return command_release(deployment_id, release_id, data, request, db, current_user, "pause")
+
+    @router.post("/api/inference-deployments/{deployment_id}/releases/{release_id}/resume")
+    def resume_release(deployment_id: str, release_id: str, data: RolloutCommand, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        return command_release(deployment_id, release_id, data, request, db, current_user, "resume")
+
+    @router.post("/api/inference-deployments/{deployment_id}/releases/{release_id}/rollback")
+    def rollback_release(deployment_id: str, release_id: str, data: RolloutCommand, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        return command_release(deployment_id, release_id, data, request, db, current_user, "rollback")
+
+    @router.get("/api/inference-deployments/{deployment_id}/api-keys")
+    def list_api_keys(deployment_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        deployment, _access = _deployment_access(db, deployment_id, current_user.id)
+        require_project_access(db, deployment.project_id, current_user.id, "inference.operate")
+        items = InferenceApiKeyService().list_for_deployment(db, deployment.id)
+        return {"items": [_api_key_view(item) for item in items], "total": len(items)}
+
+    @router.post("/api/inference-deployments/{deployment_id}/api-keys", status_code=201)
+    def create_api_key(deployment_id: str, data: ApiKeyCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        deployment, access = _deployment_access(db, deployment_id, current_user.id)
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="inference.operate",
+            intent=AuditIntent(project_id=deployment.project_id, action="inference_api_key.create", resource_type="inference_api_key", resource_id=str(deployment.id), changes={"scopes": data.scopes}),
+            allowed_changes={"scopes"},
+        ):
+            try:
+                created = InferenceApiKeyService().create(db, deployment.id, current_user.id, data.scopes, data.expires_at)
+            except InferenceApiKeyError as error:
+                raise HTTPException(422, {"code": error.code, "message": error.code})
+        return {**_api_key_view(created.record), "plaintext": created.plaintext}
+
+    def key_access(db, key_id, user_id):
+        try:
+            key_uuid = UUID(str(key_id))
+        except (TypeError, ValueError, AttributeError):
+            raise HTTPException(404, {"code": "INFERENCE_API_KEY_NOT_FOUND"})
+        from app.models.model_registry import InferenceApiKey
+        key = db.query(InferenceApiKey).filter(InferenceApiKey.id == key_uuid).first()
+        if key is None:
+            raise HTTPException(404, {"code": "INFERENCE_API_KEY_NOT_FOUND"})
+        deployment, access = _deployment_access(db, key.deployment_id, user_id)
+        return key, deployment, access
+
+    @router.post("/api/inference-api-keys/{key_id}/rotate")
+    def rotate_api_key(key_id: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        key, deployment, access = key_access(db, key_id, current_user.id)
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access, permission="inference.operate",
+            intent=AuditIntent(project_id=deployment.project_id, action="inference_api_key.rotate", resource_type="inference_api_key", resource_id=str(key.id), changes={}), allowed_changes=set(),
+        ):
+            created = InferenceApiKeyService().rotate(db, key.id, current_user.id)
+        return {**_api_key_view(created.record), "plaintext": created.plaintext}
+
+    @router.post("/api/inference-api-keys/{key_id}/revoke")
+    def revoke_api_key(key_id: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        key, deployment, access = key_access(db, key_id, current_user.id)
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access, permission="inference.operate",
+            intent=AuditIntent(project_id=deployment.project_id, action="inference_api_key.revoke", resource_type="inference_api_key", resource_id=str(key.id), changes={}), allowed_changes=set(),
+        ):
+            record = InferenceApiKeyService().revoke(db, key.id, current_user.id)
+        return _api_key_view(record)
+
+    @router.get("/api/inference-deployments/{deployment_id}/request-logs")
+    def request_logs(deployment_id: str, query: RequestLogQuery = Depends(), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        deployment, _access = _deployment_access(db, deployment_id, current_user.id)
+        require_project_access(db, deployment.project_id, current_user.id, "project.read")
+        try:
+            items = InferenceObservability().query_logs(db, deployment.id, query.since, query.until, page=query.page, page_size=query.page_size)
+        except InferenceObservabilityError as error:
+            raise HTTPException(422, {"code": error.code, "message": error.code})
+        return {"items": items, "page": query.page, "page_size": query.page_size}
+
+    @router.get("/api/inference-deployments/{deployment_id}/metrics")
+    def metrics(deployment_id: str, query: MetricQuery = Depends(), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        deployment, _access = _deployment_access(db, deployment_id, current_user.id)
+        require_project_access(db, deployment.project_id, current_user.id, "project.read")
+        observer = InferenceObservability()
+        try:
+            buckets = observer.query_metrics(db, deployment.id, query.since, query.until, page=query.page, page_size=query.page_size)
+        except InferenceObservabilityError as error:
+            raise HTTPException(422, {"code": error.code, "message": error.code})
+        return {"items": [
+            {"bucket_start": item.bucket_start, "request_count": item.request_count, "success_count": item.success_count, "error_count": item.error_count, "limited_count": item.limited_count, "load_failure_count": item.load_failure_count, "latency_buckets": item.latency_buckets, "traffic_weights": item.traffic_weights}
+            for item in buckets
+        ], "summary": observer.summarize_metrics(buckets), "page": query.page, "page_size": query.page_size}
+
+    def card_access(db, card_id, user_id):
+        try:
+            card_uuid = UUID(str(card_id))
+        except (TypeError, ValueError, AttributeError):
+            raise HTTPException(404, {"code": "MODEL_CARD_NOT_FOUND"})
+        card = db.query(ModelCard).filter(ModelCard.id == card_uuid).first()
+        if card is None:
+            raise HTTPException(404, {"code": "MODEL_CARD_NOT_FOUND"})
+        version, access = _version_access(db, card.model_version_id, user_id)
+        return card, version, access
+
+    @router.get("/api/model-versions/{version_id}/model-card")
+    def model_card(version_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        version, _access = _version_access(db, version_id, current_user.id)
+        require_project_access(db, version.registered_model.project_id, current_user.id, "project.read")
+        card = ModelCardService().ensure_for_version(db, version)
+        db.commit()
+        return _card_view(card)
+
+    @router.patch("/api/model-cards/{card_id}/guidance")
+    def update_model_card_guidance(card_id: str, data: ModelCardGuidanceUpdate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        card, version, access = card_access(db, card_id, current_user.id)
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access, permission="model.approve",
+            intent=AuditIntent(project_id=version.registered_model.project_id, action="model_card.guidance.update", resource_type="model_card", resource_id=str(card.id), changes={"operational_guidance": data.operational_guidance}), allowed_changes={"operational_guidance"},
+        ):
+            try:
+                card = ModelCardService().update_guidance(db, card.id, data.operational_guidance)
+            except ModelCardError as error:
+                raise HTTPException(422, {"code": error.code, "message": error.code})
+        return _card_view(card)
+
+    @router.get("/api/model-cards/{card_id}/export")
+    def export_model_card(card_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        card, version, _access = card_access(db, card_id, current_user.id)
+        require_project_access(db, version.registered_model.project_id, current_user.id, "project.read")
+        try:
+            return ModelCardService().export(db, card.id)
+        except ModelCardError as error:
+            raise HTTPException(404, {"code": error.code, "message": error.code})
 
     return router
 

@@ -1,0 +1,191 @@
+"""Deployment-scoped API-key inference endpoint."""
+
+from __future__ import annotations
+
+from time import perf_counter
+from uuid import UUID, uuid4
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+
+from app.config import settings
+from app.database import SessionLocal, get_db
+from app.models.model_registry import InferenceDeployment, ModelVersion
+from app.schemas.model_registry import ProductionPredictRequest, ProductionPredictResponse
+from app.services.inference_api_keys import InferenceApiKeyError, InferenceApiKeyService
+from app.services.inference_deployment import InferenceDeploymentError, InferenceDeploymentService
+from app.services.inference_observability import InferenceObservability
+from app.services.inference_rate_limit import RateLimitBackendUnavailable, RedisTokenBucket
+from app.services.inference_rollout import InferenceRolloutError, WeightedTargetRouter
+from app.services.inference_runtime_client import InferenceRuntimeClient
+
+
+def _error(status: int, code: str, *, headers=None):
+    return JSONResponse(
+        status_code=status,
+        content={"detail": {"code": code, "message": code}},
+        headers=headers,
+    )
+
+
+def _runtime_error(error) -> str:
+    code = getattr(error, "code", "INFERENCE_RUNTIME_UNAVAILABLE")
+    allowed = {
+        "DEPLOYMENT_NOT_READY", "MODEL_VERSION_NOT_FOUND",
+        "STABLE_REVISION_NOT_FOUND", "TARGET_WEIGHTS_INVALID",
+    }
+    return code if isinstance(code, str) and (code.startswith("INFERENCE_") or code in allowed) else "INFERENCE_RUNTIME_UNAVAILABLE"
+
+
+def _default_deployment_service():
+    secret = settings.resolved_inference_internal_secret
+    if not settings.inference_runtime_url or secret is None:
+        return None
+    return InferenceDeploymentService(
+        InferenceRuntimeClient(
+            settings.inference_runtime_url,
+            secret.get_secret_value(),
+            load_timeout_seconds=settings.inference_load_timeout_seconds,
+            predict_timeout_seconds=settings.inference_predict_timeout_seconds,
+        ),
+        SessionLocal,
+    )
+
+
+def _default_rate_limiter():
+    url = settings.redis_events_url
+    if url is None:
+        return None
+    try:
+        from redis import Redis
+        return RedisTokenBucket(Redis.from_url(url.get_secret_value(), decode_responses=True))
+    except Exception:
+        return None
+
+
+def build_inference_production_router(
+    *,
+    api_key_service=None,
+    rate_limiter=None,
+    observability=None,
+    deployment_service=None,
+):
+    router = APIRouter(tags=["inference_production"])
+
+    def dependencies():
+        return (
+            api_key_service or InferenceApiKeyService(),
+            rate_limiter if rate_limiter is not None else _default_rate_limiter(),
+            observability or InferenceObservability(
+                log_retention_days=settings.inference_log_retention_days,
+            ),
+            deployment_service or _default_deployment_service(),
+        )
+
+    @router.post(
+        "/api/v1/inference/{deployment_id}/predict",
+        response_model=ProductionPredictResponse,
+    )
+    def predict(
+        deployment_id: UUID,
+        data: ProductionPredictRequest,
+        request: Request,
+        x_inference_api_key: str | None = Header(default=None, alias="X-Inference-Api-Key"),
+        x_request_id: str | None = Header(default=None, alias="X-Request-ID"),
+        db: Session = Depends(get_db),
+    ):
+        key_service, limiter, observation, deployment_service_value = dependencies()
+        try:
+            api_key = key_service.verify(
+                db, x_inference_api_key, deployment_id=deployment_id,
+                scope="inference.predict",
+            )
+        except InferenceApiKeyError:
+            return _error(401, "INFERENCE_API_KEY_INVALID")
+        deployment = db.query(InferenceDeployment).filter(
+            InferenceDeployment.id == deployment_id,
+        ).first()
+        if deployment is None:
+            return _error(404, "INFERENCE_DEPLOYMENT_NOT_FOUND")
+        request_id = getattr(request.state, "request_id", None)
+        if request_id is None:
+            try:
+                request_id = UUID(x_request_id) if x_request_id else uuid4()
+            except (TypeError, ValueError, AttributeError):
+                request_id = uuid4()
+        request_id = str(request_id)
+        if len(data.records) > 100:
+            return _error(413, "INFERENCE_LIMIT_EXCEEDED")
+        if limiter is None:
+            return _error(503, "RATE_LIMIT_BACKEND_UNAVAILABLE")
+        try:
+            decision = limiter.consume(
+                f"inference:{deployment_id}:{api_key.id}",
+                capacity=settings.inference_rate_limit_capacity,
+                refill_per_second=settings.inference_rate_limit_refill_per_second,
+            )
+        except RateLimitBackendUnavailable:
+            return _error(503, "RATE_LIMIT_BACKEND_UNAVAILABLE")
+        if not decision.allowed:
+            try:
+                observation.record_request(
+                    db, request_id, deployment.id, None, None, api_key.id,
+                    len(data.records), 0, "limited", "INFERENCE_RATE_LIMITED",
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+            return _error(429, "INFERENCE_RATE_LIMITED", headers={"Retry-After": str(decision.retry_after_seconds)})
+        if deployment_service_value is None:
+            return _error(503, "INFERENCE_RUNTIME_UNAVAILABLE")
+        started = perf_counter()
+        revision_id = model_version_id = None
+        try:
+            if deployment.desired_state != "running" or deployment.observed_state != "running":
+                raise InferenceDeploymentError("DEPLOYMENT_NOT_READY")
+            routed = WeightedTargetRouter().select_active(deployment, request_id)
+            revision_id, model_version_id = routed.revision_id, routed.model_version_id
+            version = db.query(ModelVersion).filter(ModelVersion.id == model_version_id).first()
+            if version is None:
+                raise InferenceDeploymentError("MODEL_VERSION_NOT_FOUND")
+            result = deployment_service_value.runtime.predict(
+                f"{revision_id}:{model_version_id}", data.records,
+            )
+            duration_ms = max(0, int((perf_counter() - started) * 1000))
+            observation.record_request(
+                db, request_id, deployment.id, revision_id, model_version_id, api_key.id,
+                len(data.records), duration_ms, "success",
+            )
+            db.commit()
+            return {
+                "request_id": request_id,
+                "deployment_id": str(deployment.id),
+                "revision_id": str(revision_id),
+                "model_version_id": str(model_version_id),
+                "version_number": int(version.version_number),
+                "predictions": result.get("predictions"),
+                "probabilities": result.get("probabilities"),
+                "duration_ms": result.get("duration_ms", duration_ms),
+            }
+        except InferenceDeploymentError as error:
+            code = _runtime_error(error)
+        except InferenceRolloutError as error:
+            code = error.code
+        except Exception:
+            code = "INFERENCE_RUNTIME_UNAVAILABLE"
+        duration_ms = max(0, int((perf_counter() - started) * 1000))
+        try:
+            observation.record_request(
+                db, request_id, deployment.id, revision_id, model_version_id, api_key.id,
+                len(data.records), duration_ms, "error", code,
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+        return _error(503 if code == "INFERENCE_RUNTIME_UNAVAILABLE" else 409, code)
+
+    return router
+
+
+router = build_inference_production_router()
