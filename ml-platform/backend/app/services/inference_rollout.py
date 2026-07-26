@@ -34,6 +34,7 @@ ACTIVE_ROLLOUT_STATES = frozenset({"pending", "preloading", "progressing", "paus
 TERMINAL_ROLLOUT_STATES = frozenset({"completed", "failed", "rolled_back"})
 LEGACY_REFRESH_FAILED = "ROLLOUT_LEGACY_REFRESH_FAILED"
 LEGACY_RECOVERY_FAILED = "ROLLOUT_LEGACY_RECOVERY_FAILED"
+AUDIT_RECOVERY_FAILED = "ROLLOUT_AUDIT_RECOVERY_FAILED"
 
 
 def utcnow() -> datetime:
@@ -319,6 +320,7 @@ class InferenceRolloutService:
         strategy="canary",
         step_schedule=None,
         thresholds=None,
+        commit=True,
     ):
         deployment = self._deployment(db, deployment_id, lock=True)
         if strategy not in {"immediate", "canary", "rolling"}:
@@ -381,10 +383,12 @@ class InferenceRolloutService:
         try:
             db.flush()
             self._record(db, deployment, rollout, "rollout.started", actor_id=actor_id)
-            db.commit()
+            if commit:
+                db.commit()
             db.refresh(rollout)
         except IntegrityError:
-            db.rollback()
+            if commit:
+                db.rollback()
             raise InferenceRolloutError("ROLLOUT_ALREADY_ACTIVE") from None
         return rollout
 
@@ -650,7 +654,7 @@ class InferenceRolloutService:
                 raise InferenceRolloutError(LEGACY_RECOVERY_FAILED) from None
             raise InferenceRolloutError(LEGACY_REFRESH_FAILED) from None
 
-    def pause(self, db, rollout_id, expected_lock_version=None):
+    def pause(self, db, rollout_id, expected_lock_version=None, *, commit=True):
         rollout = self._rollout(db, rollout_id, lock=True)
         if rollout.state in {"paused", "failed", "rolled_back", "completed"}:
             return rollout
@@ -664,10 +668,11 @@ class InferenceRolloutService:
             current_step=0,
             last_error_code=None,
         )
-        db.commit()
+        if commit:
+            db.commit()
         return rollout
 
-    def resume(self, db, rollout_id, expected_lock_version=None):
+    def resume(self, db, rollout_id, expected_lock_version=None, *, commit=True):
         rollout = self._rollout(db, rollout_id, lock=True)
         if rollout.state == "progressing":
             return rollout
@@ -681,10 +686,11 @@ class InferenceRolloutService:
             current_step=0,
             last_error_code=None,
         )
-        db.commit()
+        if commit:
+            db.commit()
         return rollout
 
-    def rollback(self, db, rollout_id, expected_lock_version=None):
+    def rollback(self, db, rollout_id, expected_lock_version=None, *, commit=True):
         rollout = self._rollout(db, rollout_id, lock=True)
         if rollout.state == "rolled_back":
             return rollout
@@ -693,6 +699,24 @@ class InferenceRolloutService:
         }:
             raise InferenceRolloutError("ROLLOUT_INVALID_STATE")
         self._check_expected(rollout, expected_lock_version)
+
+        def fail_without_commit(error_code):
+            failed_rollout = self._rollout(db, rollout_id, lock=True)
+            deployment = self._deployment(db, failed_rollout.deployment_id)
+            self._transition(
+                db,
+                failed_rollout,
+                failed_rollout.lock_version,
+                state="failed",
+                current_step=0,
+                last_error_code=error_code,
+            )
+            if error_code == LEGACY_RECOVERY_FAILED:
+                deployment.observed_state = "failed"
+                deployment.last_error_code = LEGACY_RECOVERY_FAILED
+                deployment.last_checked_at = self.clock()
+            raise InferenceRolloutError(error_code) from None
+
         try:
             self._preload_revision(db, rollout, revision=rollout.from_revision)
             deployment = self._deployment(db, rollout.deployment_id)
@@ -724,8 +748,22 @@ class InferenceRolloutService:
                 deployment.last_error_code = None
                 deployment.last_checked_at = self.clock()
             self._record(db, deployment, rollout, "rollback.completed")
-            db.commit()
+            if commit:
+                db.commit()
         except InferenceRolloutError as error:
+            if not commit:
+                if error.code == "ROLLOUT_REVISION_CONFLICT":
+                    raise
+                error_code = (
+                    error.code
+                    if error.code in {
+                        LEGACY_REFRESH_FAILED,
+                        LEGACY_RECOVERY_FAILED,
+                        "INFERENCE_RUNTIME_UNAVAILABLE",
+                    }
+                    else "ROLLOUT_ROLLBACK_FAILED"
+                )
+                fail_without_commit(error_code)
             db.rollback()
             if error.code == "ROLLOUT_REVISION_CONFLICT":
                 raise
@@ -755,6 +793,8 @@ class InferenceRolloutService:
             db.commit()
             raise InferenceRolloutError(error_code) from None
         except Exception:
+            if not commit:
+                fail_without_commit("ROLLOUT_ROLLBACK_FAILED")
             db.rollback()
             rollout = self._rollout(db, rollout_id, lock=True)
             self._transition(
@@ -775,6 +815,54 @@ class InferenceRolloutService:
                 except Exception:
                     continue
         return rollout
+
+    def reconcile_persisted_runtime(self, db, deployment_id, *, commit=True):
+        """Restore all runtime entries required by the revision durable in the database."""
+        deployment = self._deployment(db, deployment_id, lock=True)
+        stable = db.query(DeploymentRevision).filter(
+            DeploymentRevision.deployment_id == deployment.id,
+            DeploymentRevision.status == "stable",
+        ).order_by(DeploymentRevision.revision_number.desc()).first()
+        if stable is None:
+            deployment.observed_state = "failed"
+            deployment.last_error_code = AUDIT_RECOVERY_FAILED
+            deployment.last_checked_at = self.clock()
+            if commit:
+                db.commit()
+            return False
+        try:
+            from app.services.inference_deployment import InferenceDeploymentService
+
+            unloader = getattr(self.runtime, "unload", None)
+            loader = getattr(self.runtime, "load", None)
+            if not callable(unloader) or not callable(loader):
+                raise InferenceRolloutError("INFERENCE_RUNTIME_UNAVAILABLE")
+            # A failed audit commit can leave the legacy key switched while a
+            # completed rollback has drained the durable revision's aliases.
+            # Restore aliases first so weighted routing is valid before the
+            # public compatibility key points back to the durable revision.
+            for target in stable.targets or ():
+                loader(
+                    f"{stable.id}:{target.model_version_id}",
+                    InferenceDeploymentService._target_specification(
+                        db, deployment, stable, target,
+                    ),
+                )
+            unloader(deployment.id)
+            loader(
+                deployment.id,
+                InferenceDeploymentService._specification(
+                    db, deployment, revision=stable,
+                ),
+            )
+        except Exception:
+            deployment.observed_state = "failed"
+            deployment.last_error_code = AUDIT_RECOVERY_FAILED
+            deployment.last_checked_at = self.clock()
+            if commit:
+                db.commit()
+            return False
+        return True
 
     def reconcile(self, db):
         loaded = 0

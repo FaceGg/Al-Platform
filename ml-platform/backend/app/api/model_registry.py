@@ -51,6 +51,20 @@ PROJECT_WRITE_ACTIONS = {
     "POST /api/projects/{project_id}/inference-deployments": "inference_deployment.create",
     "POST /api/inference-deployments/{deployment_id}/start": "inference_deployment.start",
     "POST /api/inference-deployments/{deployment_id}/stop": "inference_deployment.stop",
+    "POST /api/inference-deployments/{deployment_id}/rollouts": "inference_rollout.create",
+    "POST /api/inference-deployments/{deployment_id}/rollouts/{rollout_id}/pause": "inference_rollout.pause",
+    "POST /api/inference-deployments/{deployment_id}/rollouts/{rollout_id}/resume": "inference_rollout.resume",
+    "POST /api/inference-deployments/{deployment_id}/rollouts/{rollout_id}/rollback": "inference_rollout.rollback",
+    "POST /api/inference-deployments/{deployment_id}/api-keys": "inference_api_key.create",
+    "POST /api/inference-api-keys/{key_id}/rotate": "inference_api_key.rotate",
+    "POST /api/inference-api-keys/{key_id}/revoke": "inference_api_key.revoke",
+    "PATCH /api/model-cards/{card_id}/guidance": "model_card.guidance.update",
+}
+
+ROLLOUT_AUDIT_ACTIONS = {
+    "pause": "inference_rollout.pause",
+    "resume": "inference_rollout.resume",
+    "rollback": "inference_rollout.rollback",
 }
 
 
@@ -117,6 +131,10 @@ def _release_view(release):
         "last_error_code": release.last_error_code,
         "created_at": release.created_at, "started_at": release.started_at,
         "completed_at": release.completed_at,
+        "targets": [
+            {"model_version_id": str(target.model_version_id), "weight_bps": target.weight_bps}
+            for target in (release.to_revision.targets or ())
+        ],
     }
 
 
@@ -136,6 +154,22 @@ def _card_view(card):
         "approval_status": card.approval_status, "release_status": card.release_status,
         "created_at": card.created_at, "updated_at": card.updated_at,
     }
+
+
+def _strict_query(request: Request, schema):
+    values = dict(request.query_params)
+    unknown = set(values) - set(schema.model_fields)
+    if unknown:
+        raise HTTPException(422, {"code": "INFERENCE_QUERY_INVALID"})
+    try:
+        return schema.model_validate(values)
+    except Exception:
+        raise HTTPException(422, {"code": "INFERENCE_QUERY_INVALID"}) from None
+
+
+def _require_role(access, allowed):
+    if access.role.value not in allowed:
+        raise HTTPException(403, {"code": "PROJECT_PERMISSION_DENIED"})
 
 
 def _registry_access(db, model_id, user_id):
@@ -419,7 +453,7 @@ def build_model_registry_router(
         status = 404 if code.endswith("NOT_FOUND") else 409
         raise HTTPException(status, {"code": code, "message": code})
 
-    @router.get("/api/inference-deployments/{deployment_id}/releases")
+    @router.get("/api/inference-deployments/{deployment_id}/rollouts")
     def list_releases(deployment_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         deployment, _access = _deployment_access(db, deployment_id, current_user.id)
         require_project_access(db, deployment.project_id, current_user.id, "project.read")
@@ -428,21 +462,22 @@ def build_model_registry_router(
         ).order_by(DeploymentRollout.created_at.desc()).all()
         return {"items": [_release_view(item) for item in releases], "total": len(releases)}
 
-    @router.get("/api/inference-deployments/{deployment_id}/releases/{release_id}")
+    @router.get("/api/inference-deployments/{deployment_id}/rollouts/{release_id}")
     def release_detail(deployment_id: str, release_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         deployment, _access, release = release_access(db, deployment_id, release_id, current_user.id)
         require_project_access(db, deployment.project_id, current_user.id, "project.read")
         return _release_view(release)
 
-    @router.post("/api/inference-deployments/{deployment_id}/releases", status_code=201)
+    @router.post("/api/inference-deployments/{deployment_id}/rollouts", status_code=201)
     def create_release(deployment_id: str, data: RolloutCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         deployment, access = _deployment_access(db, deployment_id, current_user.id)
         with audit_service(db).project_action(
             db, request=request, actor=current_user, access=access,
             permission="inference.operate",
-            intent=AuditIntent(project_id=deployment.project_id, action="inference_release.create", resource_type="deployment_rollout", resource_id=str(deployment.id), changes={"strategy": data.strategy}),
+            intent=AuditIntent(project_id=deployment.project_id, action="inference_rollout.create", resource_type="deployment_rollout", resource_id=str(deployment.id), changes={"strategy": data.strategy}),
             allowed_changes={"strategy"},
         ):
+            _require_role(access, {"owner", "editor"})
             try:
                 release = rollout_service_for(db).create_candidate(
                     db, deployment.id, current_user.id,
@@ -451,6 +486,7 @@ def build_model_registry_router(
                     {key: value for key, value in {
                         "max_error_rate": data.max_error_rate, "max_p95_ms": data.max_p95_ms,
                     }.items() if value is not None} or None,
+                    commit=False,
                 )
             except InferenceRolloutError as error:
                 rollout_error(error)
@@ -458,35 +494,53 @@ def build_model_registry_router(
 
     def command_release(deployment_id, release_id, data, request, db, current_user, command):
         deployment, access, release = release_access(db, deployment_id, release_id, current_user.id)
-        with audit_service(db).project_action(
-            db, request=request, actor=current_user, access=access,
-            permission="inference.operate",
-            intent=AuditIntent(project_id=deployment.project_id, action=f"inference_release.{command}", resource_type="deployment_rollout", resource_id=str(release.id), changes={}),
-            allowed_changes=set(),
-        ):
-            try:
-                release = getattr(rollout_service_for(db), command)(
-                    db, release.id, data.expected_lock_version,
-                )
-            except InferenceRolloutError as error:
-                rollout_error(error)
+        service = rollout_service_for(db)
+        runtime_mutated = False
+        failure_code = None
+        try:
+            with audit_service(db).project_action(
+                db, request=request, actor=current_user, access=access,
+                permission="inference.operate",
+                intent=AuditIntent(project_id=deployment.project_id, action=ROLLOUT_AUDIT_ACTIONS[command], resource_type="deployment_rollout", resource_id=str(release.id), changes={}),
+                allowed_changes=set(),
+            ):
+                try:
+                    release = getattr(service, command)(
+                        db, release.id, data.expected_lock_version, commit=False,
+                    )
+                    runtime_mutated = command == "rollback"
+                except InferenceRolloutError as error:
+                    if command == "rollback" and error.code in {
+                        "ROLLOUT_ROLLBACK_FAILED", "ROLLOUT_LEGACY_REFRESH_FAILED",
+                        "ROLLOUT_LEGACY_RECOVERY_FAILED", "INFERENCE_RUNTIME_UNAVAILABLE",
+                    }:
+                        failure_code = error.code
+                    else:
+                        rollout_error(error)
+        except Exception:
+            if command == "rollback" and runtime_mutated:
+                service.reconcile_persisted_runtime(db, deployment.id)
+            raise
+        if failure_code is not None:
+            rollout_error(InferenceRolloutError(failure_code))
         return _release_view(release)
 
-    @router.post("/api/inference-deployments/{deployment_id}/releases/{release_id}/pause")
+    @router.post("/api/inference-deployments/{deployment_id}/rollouts/{release_id}/pause")
     def pause_release(deployment_id: str, release_id: str, data: RolloutCommand, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         return command_release(deployment_id, release_id, data, request, db, current_user, "pause")
 
-    @router.post("/api/inference-deployments/{deployment_id}/releases/{release_id}/resume")
+    @router.post("/api/inference-deployments/{deployment_id}/rollouts/{release_id}/resume")
     def resume_release(deployment_id: str, release_id: str, data: RolloutCommand, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         return command_release(deployment_id, release_id, data, request, db, current_user, "resume")
 
-    @router.post("/api/inference-deployments/{deployment_id}/releases/{release_id}/rollback")
+    @router.post("/api/inference-deployments/{deployment_id}/rollouts/{release_id}/rollback")
     def rollback_release(deployment_id: str, release_id: str, data: RolloutCommand, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         return command_release(deployment_id, release_id, data, request, db, current_user, "rollback")
 
     @router.get("/api/inference-deployments/{deployment_id}/api-keys")
     def list_api_keys(deployment_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         deployment, _access = _deployment_access(db, deployment_id, current_user.id)
+        _require_role(_access, {"owner", "editor"})
         require_project_access(db, deployment.project_id, current_user.id, "inference.operate")
         items = InferenceApiKeyService().list_for_deployment(db, deployment.id)
         return {"items": [_api_key_view(item) for item in items], "total": len(items)}
@@ -494,6 +548,7 @@ def build_model_registry_router(
     @router.post("/api/inference-deployments/{deployment_id}/api-keys", status_code=201)
     def create_api_key(deployment_id: str, data: ApiKeyCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         deployment, access = _deployment_access(db, deployment_id, current_user.id)
+        _require_role(access, {"owner", "editor"})
         with audit_service(db).project_action(
             db, request=request, actor=current_user, access=access,
             permission="inference.operate",
@@ -521,6 +576,7 @@ def build_model_registry_router(
     @router.post("/api/inference-api-keys/{key_id}/rotate")
     def rotate_api_key(key_id: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         key, deployment, access = key_access(db, key_id, current_user.id)
+        _require_role(access, {"owner", "editor"})
         with audit_service(db).project_action(
             db, request=request, actor=current_user, access=access, permission="inference.operate",
             intent=AuditIntent(project_id=deployment.project_id, action="inference_api_key.rotate", resource_type="inference_api_key", resource_id=str(key.id), changes={}), allowed_changes=set(),
@@ -531,6 +587,7 @@ def build_model_registry_router(
     @router.post("/api/inference-api-keys/{key_id}/revoke")
     def revoke_api_key(key_id: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         key, deployment, access = key_access(db, key_id, current_user.id)
+        _require_role(access, {"owner", "editor"})
         with audit_service(db).project_action(
             db, request=request, actor=current_user, access=access, permission="inference.operate",
             intent=AuditIntent(project_id=deployment.project_id, action="inference_api_key.revoke", resource_type="inference_api_key", resource_id=str(key.id), changes={}), allowed_changes=set(),
@@ -539,9 +596,10 @@ def build_model_registry_router(
         return _api_key_view(record)
 
     @router.get("/api/inference-deployments/{deployment_id}/request-logs")
-    def request_logs(deployment_id: str, query: RequestLogQuery = Depends(), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    def request_logs(deployment_id: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         deployment, _access = _deployment_access(db, deployment_id, current_user.id)
         require_project_access(db, deployment.project_id, current_user.id, "project.read")
+        query = _strict_query(request, RequestLogQuery)
         try:
             items = InferenceObservability().query_logs(db, deployment.id, query.since, query.until, page=query.page, page_size=query.page_size)
         except InferenceObservabilityError as error:
@@ -549,9 +607,10 @@ def build_model_registry_router(
         return {"items": items, "page": query.page, "page_size": query.page_size}
 
     @router.get("/api/inference-deployments/{deployment_id}/metrics")
-    def metrics(deployment_id: str, query: MetricQuery = Depends(), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    def metrics(deployment_id: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         deployment, _access = _deployment_access(db, deployment_id, current_user.id)
         require_project_access(db, deployment.project_id, current_user.id, "project.read")
+        query = _strict_query(request, MetricQuery)
         observer = InferenceObservability()
         try:
             buckets = observer.query_metrics(db, deployment.id, query.since, query.until, page=query.page, page_size=query.page_size)

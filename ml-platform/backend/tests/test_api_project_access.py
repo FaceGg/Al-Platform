@@ -462,6 +462,10 @@ class TestProjectWriteAuditCompleteness(unittest.TestCase):
             "model_version.reject", "model_version.archive",
             "inference_deployment.create", "inference_deployment.start",
             "inference_deployment.stop",
+            "inference_rollout.create", "inference_rollout.pause",
+            "inference_rollout.resume", "inference_rollout.rollback",
+            "inference_api_key.create", "inference_api_key.rotate",
+            "inference_api_key.revoke", "model_card.guidance.update",
         },
     }
 

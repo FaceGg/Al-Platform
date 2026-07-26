@@ -276,6 +276,53 @@ class TestInferenceRollout(unittest.TestCase):
         with self.assertRaisesRegex(InferenceRolloutError, "TARGET_WEIGHTS_INVALID"):
             InferenceRolloutService(FakeRuntime()).validate_targets(self.db, revision.id)
 
+    def test_caller_owned_rollback_failure_is_stable_and_persistable(self):
+        candidate = self.make_candidate_revision()
+        rollout = DeploymentRollout(
+            deployment_id=self.deployment.id,
+            from_revision_id=self.stable_revision.id,
+            to_revision_id=candidate.id,
+            state="progressing",
+            current_step=1000,
+            lock_version=1,
+        )
+        self.db.add(rollout)
+        self.db.commit()
+        runtime = FakeRuntime()
+        runtime.fail_preload = True
+
+        with self.assertRaisesRegex(InferenceRolloutError, "ROLLOUT_ROLLBACK_FAILED"):
+            InferenceRolloutService(runtime).rollback(
+                self.db, rollout.id, expected_lock_version=1, commit=False,
+            )
+
+        self.assertEqual((rollout.state, rollout.last_error_code), ("failed", "ROLLOUT_ROLLBACK_FAILED"))
+        self.db.commit()
+        self.db.expire_all()
+        persisted = self.db.get(DeploymentRollout, rollout.id)
+        self.assertEqual((persisted.state, persisted.last_error_code), ("failed", "ROLLOUT_ROLLBACK_FAILED"))
+
+    def test_reconcile_persisted_runtime_restores_the_database_stable_revision(self):
+        candidate = self.make_candidate_revision()
+        runtime = ConflictPreservingRuntime()
+        runtime.legacy_runtime_key = str(self.deployment.id)
+        runtime.load(
+            self.deployment.id,
+            InferenceDeploymentService._specification(
+                self.db, self.deployment, revision=candidate,
+            ),
+        )
+
+        restored = InferenceRolloutService(runtime).reconcile_persisted_runtime(
+            self.db, self.deployment.id,
+        )
+
+        self.assertTrue(restored)
+        self.assertEqual(
+            runtime.loaded[str(self.deployment.id)]["revision_id"],
+            str(self.stable_revision.id),
+        )
+
     def test_weighted_router_is_stable_and_sorted_by_model_id(self):
         revision = self.make_candidate_revision((7000, 3000))
         router = WeightedTargetRouter()

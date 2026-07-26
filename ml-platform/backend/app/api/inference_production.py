@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -19,6 +20,36 @@ from app.services.inference_observability import InferenceObservability
 from app.services.inference_rate_limit import RateLimitBackendUnavailable, RedisTokenBucket
 from app.services.inference_rollout import InferenceRolloutError, WeightedTargetRouter
 from app.services.inference_runtime_client import InferenceRuntimeClient
+
+
+MAX_PREDICTION_BODY_BYTES = 1024 * 1024
+
+
+class PredictionBodyLimitRoute(APIRoute):
+    """Reject oversized requests before FastAPI attempts JSON parsing."""
+
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def limited(request):
+            raw_length = request.headers.get("content-length")
+            try:
+                if raw_length is not None and int(raw_length) > MAX_PREDICTION_BODY_BYTES:
+                    return _error(413, "INFERENCE_LIMIT_EXCEEDED")
+            except ValueError:
+                return _error(413, "INFERENCE_LIMIT_EXCEEDED")
+
+            chunks = []
+            received = 0
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > MAX_PREDICTION_BODY_BYTES:
+                    return _error(413, "INFERENCE_LIMIT_EXCEEDED")
+                chunks.append(chunk)
+            request._body = b"".join(chunks)
+            return await handler(request)
+
+        return limited
 
 
 def _error(status: int, code: str, *, headers=None):
@@ -36,6 +67,16 @@ def _runtime_error(error) -> str:
         "STABLE_REVISION_NOT_FOUND", "TARGET_WEIGHTS_INVALID",
     }
     return code if isinstance(code, str) and (code.startswith("INFERENCE_") or code in allowed) else "INFERENCE_RUNTIME_UNAVAILABLE"
+
+
+def _runtime_status(code: str) -> int:
+    if code == "INFERENCE_SCHEMA_MISMATCH":
+        return 422
+    if code == "INFERENCE_LIMIT_EXCEEDED":
+        return 413
+    if code == "DEPLOYMENT_NOT_READY":
+        return 409
+    return 503
 
 
 def _default_deployment_service():
@@ -71,7 +112,7 @@ def build_inference_production_router(
     observability=None,
     deployment_service=None,
 ):
-    router = APIRouter(tags=["inference_production"])
+    router = APIRouter(tags=["inference_production"], route_class=PredictionBodyLimitRoute)
 
     def dependencies():
         return (
@@ -101,8 +142,12 @@ def build_inference_production_router(
                 db, x_inference_api_key, deployment_id=deployment_id,
                 scope="inference.predict",
             )
-        except InferenceApiKeyError:
-            return _error(401, "INFERENCE_API_KEY_INVALID")
+        except InferenceApiKeyError as error:
+            code = error.code if error.code in {
+                "INFERENCE_API_KEY_INVALID", "INFERENCE_API_KEY_EXPIRED",
+                "INFERENCE_API_KEY_REVOKED", "INFERENCE_API_KEY_OUT_OF_SCOPE",
+            } else "INFERENCE_API_KEY_INVALID"
+            return _error(401, code)
         deployment = db.query(InferenceDeployment).filter(
             InferenceDeployment.id == deployment_id,
         ).first()
@@ -172,8 +217,8 @@ def build_inference_production_router(
             code = _runtime_error(error)
         except InferenceRolloutError as error:
             code = error.code
-        except Exception:
-            code = "INFERENCE_RUNTIME_UNAVAILABLE"
+        except Exception as error:
+            code = _runtime_error(error)
         duration_ms = max(0, int((perf_counter() - started) * 1000))
         try:
             observation.record_request(
@@ -183,7 +228,7 @@ def build_inference_production_router(
             db.commit()
         except Exception:
             db.rollback()
-        return _error(503 if code == "INFERENCE_RUNTIME_UNAVAILABLE" else 409, code)
+        return _error(_runtime_status(code), code)
 
     return router
 
