@@ -218,7 +218,7 @@ class TestInferenceDeploymentService(unittest.TestCase):
         with self.assertRaises(InferenceDeploymentError):
             self.runtime.predict(candidate_key, [{"current": 8.0}])
 
-    def test_reconcile_reloads_missing_active_candidate_session(self):
+    def test_reconcile_leaves_active_candidate_alias_recovery_to_rollout_service(self):
         deployment = self.service.create(
             self.db, project_id=self.project.id, version_id=self.version.id,
             actor_id=self.user.id, name="candidate-restart",
@@ -258,6 +258,22 @@ class TestInferenceDeploymentService(unittest.TestCase):
         self.runtime.load(str(deployment.id), self.service._specification(self.db, deployment))
         result = self.service.reconcile(self.db)
         self.assertEqual(result["failed"], 0)
+        self.assertEqual(result["loaded"], 0)
+        self.assertNotIn(
+            f"{candidate.id}:{self.version.id}",
+            self.runtime.loaded,
+        )
+
+        self.runtime.load(
+            f"{candidate.id}:{self.version.id}",
+            self.service._target_specification(
+                self.db, deployment, candidate, candidate.targets[0],
+            ),
+        )
+        loaded_before_reconcile = list(self.runtime.loaded)
+        second_result = self.service.reconcile(self.db)
+        self.assertEqual(second_result["loaded"], 0)
+        self.assertEqual(loaded_before_reconcile, list(self.runtime.loaded))
         self.assertIn(
             f"{candidate.id}:{self.version.id}",
             self.runtime.loaded,

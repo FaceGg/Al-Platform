@@ -4,7 +4,7 @@ import subprocess
 import sys
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 from app.tasks.workflow_tasks import (
     claim_run,
@@ -94,7 +94,9 @@ class TestCeleryWorkflowClaims(unittest.TestCase):
 
         result = reconcile_inference_deployments.run()
 
-        deployment_service.reconcile.assert_called_once_with(db)
+        deployment_service.reconcile.assert_called_once_with(
+            db, include_rollout_aliases=False,
+        )
         rollout_service.assert_not_called()
         self.assertEqual(result, {"loaded": 1, "unloaded": 0, "failed": 0})
 
@@ -181,19 +183,23 @@ class TestCeleryWorkflowClaims(unittest.TestCase):
 
         self.assertEqual(result, {"id": rollout_id, "error_code": "ROLLOUT_NOT_FOUND"})
 
-    def test_rollout_reconciliation_recovers_pending_then_advances(self):
+    def test_rollout_reconciliation_recovers_before_advancing_progressing_rollout(self):
         from app.tasks.inference_tasks import reconcile_inference_rollouts
 
-        pending = SimpleNamespace(
-            id=uuid.uuid4(), state="pending", lock_version=4,
-        )
         progressing = SimpleNamespace(
-            id=pending.id, state="progressing", lock_version=5,
+            id=uuid.uuid4(), state="progressing", lock_version=5,
         )
         db = MagicMock()
-        db.query.return_value.filter.return_value.all.side_effect = [
-            [pending], [progressing],
-        ]
+
+        def query_for_state(*criteria):
+            query = MagicMock()
+            state_filter = criteria[0].right.value
+            query.all.return_value = (
+                [] if isinstance(state_filter, list) else [progressing]
+            )
+            return query
+
+        db.query.return_value.filter.side_effect = query_for_state
         with patch("app.tasks.inference_tasks.SessionLocal") as session_local, patch(
             "app.tasks.inference_tasks.build_inference_rollout_service",
         ) as build_rollout_service:
@@ -206,43 +212,16 @@ class TestCeleryWorkflowClaims(unittest.TestCase):
 
             result = reconcile_inference_rollouts.run()
 
-        rollout_service.reconcile.assert_called_once_with(db)
-        rollout_service.advance.assert_called_once_with(
-            db, progressing.id, expected_lock_version=5,
+        self.assertEqual(
+            rollout_service.method_calls,
+            [
+                call.reconcile(db),
+                call.advance(db, progressing.id, expected_lock_version=5),
+            ],
         )
         self.assertEqual(
             result,
             {"loaded": 1, "failed": 0, "advanced": 1, "advance_failed": 0},
-        )
-
-    def test_rollout_reconciliation_does_not_preload_progressing_rollout(self):
-        from app.tasks.inference_tasks import reconcile_inference_rollouts
-
-        rollout = SimpleNamespace(
-            id=uuid.uuid4(), state="progressing", lock_version=4,
-        )
-        db = MagicMock()
-        db.query.return_value.filter.return_value.all.side_effect = [
-            [], [rollout],
-        ]
-        with patch("app.tasks.inference_tasks.SessionLocal") as session_local, patch(
-            "app.tasks.inference_tasks.build_inference_rollout_service",
-        ) as build_rollout_service:
-            session_local.return_value.__enter__.return_value = db
-            rollout_service = build_rollout_service.return_value
-            rollout_service.advance.return_value = SimpleNamespace(
-                id=rollout.id, state="progressing", lock_version=5,
-            )
-
-            result = reconcile_inference_rollouts.run()
-
-        rollout_service.reconcile.assert_not_called()
-        rollout_service.advance.assert_called_once_with(
-            db, rollout.id, expected_lock_version=4,
-        )
-        self.assertEqual(
-            result,
-            {"loaded": 0, "failed": 0, "advanced": 1, "advance_failed": 0},
         )
 
     def test_prune_telemetry_task_commits_retention_result(self):

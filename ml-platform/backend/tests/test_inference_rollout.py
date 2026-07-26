@@ -58,6 +58,14 @@ class FakeRuntime:
         self.calls.append(("unload", str(runtime_key)))
         return self.loaded.pop(str(runtime_key), None) is not None
 
+    def list(self):
+        return {
+            "items": [
+                {"runtime_key": key}
+                for key in self.loaded
+            ],
+        }
+
     def predict(self, runtime_key, records):
         specification = self.loaded.get(str(runtime_key))
         if specification is None:
@@ -478,6 +486,41 @@ class TestInferenceRollout(unittest.TestCase):
             legacy_specification["revision_id"],
             str(rollout.to_revision_id),
         )
+
+    def test_reconcile_restores_missing_progressing_alias_before_advance(self):
+        runtime = FakeRuntime()
+        service = InferenceRolloutService(runtime)
+        candidate = self.make_candidate_revision((9000, 1000))
+        rollout = DeploymentRollout(
+            deployment_id=self.deployment.id,
+            from_revision_id=self.stable_revision.id,
+            to_revision_id=candidate.id,
+            state="progressing",
+            current_step=1000,
+            lock_version=1,
+            step_schedule=[0, 1000, 5000, 10000],
+            thresholds={"max_error_rate": 0.01, "max_p95_ms": 500},
+        )
+        self.db.add(rollout)
+        self.db.commit()
+
+        result = service.reconcile(self.db)
+
+        self.assertEqual(result, {"loaded": 2, "failed": 0})
+        self.assertEqual(
+            {
+                f"{candidate.id}:{target.model_version_id}"
+                for target in candidate.targets
+            },
+            set(runtime.loaded),
+        )
+        advanced = service.advance(
+            self.db,
+            rollout.id,
+            expected_lock_version=rollout.lock_version,
+            observation={"error_rate": 0.0, "p95_ms": 1},
+        )
+        self.assertEqual(advanced.current_step, 5000)
 
     def _rollout_ready_for_completion(self, runtime):
         service = InferenceRolloutService(runtime)

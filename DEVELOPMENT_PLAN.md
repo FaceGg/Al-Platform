@@ -1202,3 +1202,13 @@
 - 影响范围：Celery Worker/Beat 注册、生产推理 rollout 生命周期和日志/指标定期删除；不修改 rollout 数据模型、公共 API、Week 10 Outbox 或 Alembic 链。
 - 预防措施：不同事实源的 reconciliation 必须拆成独立周期任务；任何会触发 runtime 副作用的 rollout 命令必须携带数据库 CAS 版本；后台留存任务必须显式传入与 API 相同的 Settings 值。
 - 遗留事项：Task 9 前端生产运维、Task 10 隔离生产栈/Chromium、Task 11 最终文档和远程 CI 未开始；第 9 周不能提前标记完成。
+
+### 2026-07-26：第 9 周 Task 8 复审纠正：Rollout alias 恢复所有权
+
+- 问题现象：Task 8 初版虽然拆出 deployment 与 rollout Beat，但 deployment service 仍会加载 active rollout candidate alias；progressing rollout 在 candidate alias 丢失时也可能直接进入下一流量步骤，导致 runtime key 不存在。
+- 根因：两个状态机共享 deployment service 的 runtime 加载副作用；rollout Beat 只在 pending/preloading 行存在时调用 reconcile，未把 progressing 行的 alias 清单恢复作为 advance 前置条件。
+- 解决结果：`InferenceDeploymentService.reconcile(..., include_rollout_aliases=False)` 默认只恢复 legacy/stable deployment runtime，candidate alias 保留在 expected 集合但不加载；`InferenceRolloutService.reconcile` 读取 runtime `list()`，仅加载缺失 target alias，并在恢复失败时将 rollout 置为 failed；rollout Beat 每 tick 先 reconcile，再查询并推进仍为 progressing 的记录。
+- TDD 与验证：deployment Beat 参数、Beat 调用顺序、candidate alias 所有权和 progressing alias 恢复回归均先 RED；随后 `tests.test_celery_workflows tests.test_inference_deployment tests.test_inference_rollout tests.test_inference_observability` 为 `69/69`，`compileall`、`git diff --check` 通过。
+- 影响范围：`ml-platform/backend/app/tasks/inference_tasks.py`、`app/services/inference_deployment.py`、`app/services/inference_rollout.py` 及三组后端回归；不修改 Week 10 通知、迁移、公共 API 或前端 Task 9 文件。
+- 预防措施：周期任务必须按状态机明确 runtime 副作用所有者；任何会影响 weighted routing 的 progressing rollout，在 advance 前必须以 runtime 清单恢复全部可路由 alias；已存在 alias 的 reconciliation 必须验证零重复 load。
+- 遗留事项：Task 9 前端生产运维、Task 10 隔离生产栈/Chromium、Task 11 最终文档和远程 CI 未开始；第 9 周整体仍不能提前标记完成。

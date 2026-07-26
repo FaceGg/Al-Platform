@@ -59,7 +59,9 @@ def _known_rollout_error_result(db, rollout_id, error):
 def reconcile_inference_deployments():
     with SessionLocal() as db:
         deployment_service = build_inference_deployment_service()
-        return deployment_service.reconcile(db)
+        return deployment_service.reconcile(
+            db, include_rollout_aliases=False,
+        )
 
 
 @celery_app.task(name="ml_platform.advance_inference_rollout")
@@ -94,14 +96,7 @@ def rollback_inference_rollout(rollout_id, expected_lock_version):
 def reconcile_inference_rollouts():
     with SessionLocal() as db:
         rollout_service = build_inference_rollout_service()
-        recovering = db.query(DeploymentRollout).filter(
-            DeploymentRollout.state.in_(("pending", "preloading")),
-        ).all()
-        result = (
-            rollout_service.reconcile(db)
-            if recovering
-            else {"loaded": 0, "failed": 0}
-        )
+        result = rollout_service.reconcile(db)
         advanced = 0
         advance_failed = 0
         progressing = db.query(DeploymentRollout).filter(

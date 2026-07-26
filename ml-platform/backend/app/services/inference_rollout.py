@@ -864,6 +864,40 @@ class InferenceRolloutService:
             return False
         return True
 
+    def _reconcile_revision_runtime(self, db, rollout):
+        lister = getattr(self.runtime, "list", None)
+        loader = getattr(self.runtime, "load", None)
+        if not callable(lister) or not callable(loader):
+            raise InferenceRolloutError("INFERENCE_RUNTIME_UNAVAILABLE")
+        response = lister()
+        items = response.get("items", []) if isinstance(response, Mapping) else []
+        runtime_keys = {
+            str(runtime_key)
+            for item in items
+            if isinstance(item, Mapping)
+            for runtime_key in (
+                item.get("runtime_key") or item.get("deployment_id"),
+            )
+            if runtime_key
+        }
+        from app.services.inference_deployment import InferenceDeploymentService
+
+        loaded = 0
+        revision = rollout.to_revision
+        for target in revision.targets or ():
+            runtime_key = f"{revision.id}:{target.model_version_id}"
+            if runtime_key in runtime_keys:
+                continue
+            loader(
+                runtime_key,
+                InferenceDeploymentService._target_specification(
+                    db, rollout.deployment, revision, target,
+                ),
+            )
+            runtime_keys.add(runtime_key)
+            loaded += 1
+        return loaded
+
     def reconcile(self, db):
         loaded = 0
         failed = 0
@@ -872,7 +906,7 @@ class InferenceRolloutService:
         ).all()
         for rollout in active:
             try:
-                self._preload_revision(db, rollout)
+                loaded += self._reconcile_revision_runtime(db, rollout)
                 if rollout.state in {"pending", "preloading"}:
                     locked = self._rollout(db, rollout.id, lock=True)
                     self._transition(
@@ -883,7 +917,6 @@ class InferenceRolloutService:
                         started_at=locked.started_at or self.clock(),
                         last_error_code=None,
                     )
-                loaded += 1
             except Exception:
                 rollout = self._rollout(db, rollout.id, lock=True)
                 self._transition(

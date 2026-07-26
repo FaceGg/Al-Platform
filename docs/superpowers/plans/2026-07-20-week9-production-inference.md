@@ -726,7 +726,7 @@ Expected: strict bodies, roles, hidden outsider behavior, one-time key output, w
 - Modify: `ml-platform/backend/tests/test_celery_workflows.py`
 - Modify: `ml-platform/backend/tests/test_inference_deployment.py`
 
-- [ ] **Step 1: Write failing task registration tests**
+- [x] **Step 1: Write failing task registration tests**
 
 ```python
 def test_week9_task_names_are_stable(self):
@@ -748,7 +748,7 @@ def test_duplicate_step_does_not_duplicate_runtime_load(self):
 
 Run `python -m unittest tests.test_celery_workflows tests.test_inference_deployment -v`. Expected: RED on missing task names or duplicate side effects.
 
-- [ ] **Step 2: Implement tasks with database-owned idempotency**
+- [x] **Step 2: Implement tasks with database-owned idempotency**
 
 Register these exact names:
 
@@ -769,7 +769,7 @@ def reconcile_inference_rollouts():
 
 Add analogous rollback and telemetry-prune tasks. Each opens its own session, catches only known stable domain errors, and relies on persisted rollout state/lock version before a runtime side effect. Repeated delivery with the same expected version returns the persisted state without loading twice. Add 60-second rollout reconciliation and daily telemetry pruning to Beat.
 
-- [ ] **Step 3: Run GREEN and commit**
+- [x] **Step 3: Run GREEN and commit**
 
 ```powershell
 python -m unittest tests.test_celery_workflows tests.test_inference_deployment tests.test_inference_observability -v

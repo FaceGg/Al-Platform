@@ -306,7 +306,7 @@ class InferenceDeploymentService:
         except (InferenceRuntimeClientError, InferenceDeploymentError) as error:
             raise InferenceDeploymentError(self._runtime_code(error)) from None
 
-    def reconcile(self, db):
+    def reconcile(self, db, *, include_rollout_aliases=False):
         runtime_items = self.runtime.list().get("items", [])
         runtime_ids = {
             str(item.get("runtime_key") or item["deployment_id"])
@@ -339,6 +339,8 @@ class InferenceDeploymentService:
                 f"{revision.id}:{target.model_version_id}"
                 for target in revision.targets or ()
             )
+            if not include_rollout_aliases:
+                continue
             for target in revision.targets or ():
                 runtime_key = f"{revision.id}:{target.model_version_id}"
                 if runtime_key in runtime_ids:
