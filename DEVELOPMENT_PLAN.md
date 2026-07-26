@@ -1178,3 +1178,15 @@
 - 影响范围：`inference_rollout.py`、部署服务/runtime compatibility、rollout/runtime/deployment 测试，以及第 9 周实施计划和状态记录；未启动 Task 7 API、Task 8 Celery rollout、Task 9 UI、Task 10 生产/Chromium 或 Task 11 最终验收。
 - 预防措施：跨数据库与 runtime 的不可逆操作必须拆成可提交状态边界；候选 alias 清理只能是可重试补偿，不得决定已完成 rollback 的数据库状态；每个 runtime key 的删除前/删除后异常都要有回归，状态机命令继续使用单一 `lock_version` CAS。
 - 遗留事项：Task 7 严格控制面/生产预测 API 尚未开始，因此完整 Week 9、真实 PostgreSQL/Redis/MinIO/runtime、Chromium 和远程 CI 证据仍未完成；Task 7 完成前不标记第 9 周整体完成。
+
+### 2026-07-26：第 9 周 Task 7 严格控制面与生产预测 API 完成
+
+- 当前周次：第 9 至第 12 周并行开发；Task 7 已完成，第 9 周整体仍进行中。
+- 开发内容：完成 canonical `/rollouts` 控制面、严格请求/查询模型、API Key 生命周期管理、生产预测 API 的 1 MiB 实际字节上限、稳定错误映射、项目角色边界和机器可检验审计动作清单。
+- 问题现象：completed rollback 在 runtime 已切回旧 revision 并 drain candidate alias 后，若审计事务提交失败，数据库回滚会保留 candidate 为 stable，但补偿只恢复 legacy runtime key，生产加权路由会指向缺失的 durable candidate alias。
+- 根因：审计提交回滚属于数据库与 runtime 的跨边界失败；legacy compatibility key 和 revision-target aliases 被当作同一 runtime 状态，但原补偿只恢复了前者。
+- 解决结果：回滚命令使用 caller-owned transaction，运行时变更后的审计提交失败触发 durable-state reconciliation；该补偿先预加载数据库 stable revision 的全部 target aliases，再恢复 legacy key。API Key 仅 owner/editor 管理；owner/editor 创建 rollout，operator 可暂停、恢复和回滚，符合已冻结的 Week 9 权限矩阵。
+- 验证方式：新增真实 HTTP 审计提交失败回归，先 RED 于 candidate alias 缺失，再 GREEN；`test_inference_rollout`、`test_api_model_registry`、`test_api_project_access`、`test_api_inference_production` 组合 `69/69` 通过；`python run_suite.py --week 9` 为 `7/7` 模块通过；生产模块导入 `2/2`、`compileall`、`git diff --check` 通过。已提交 `1c04d4f`。
+- 影响范围：production inference API、model registry rollout/key routes、rollout runtime reconciliation，以及对应 API/角色/服务回归；不修改第 10 周 Outbox、通知或迁移链。
+- 预防措施：任何审计拥有提交权而 runtime 已发生外部变更的命令，必须从持久数据库状态恢复 legacy key 与全部可路由 aliases；回归应同时覆盖审计提交失败、runtime compatibility key 和 revision target routing。
+- 遗留事项：Task 8 Celery rollout/retention、Task 9 前端、Task 10 真实生产/Chromium、Task 11 文档和远程 CI 未开始；第 9 周不得提前标记完成。
