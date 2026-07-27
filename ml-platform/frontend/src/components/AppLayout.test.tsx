@@ -6,7 +6,7 @@ import AppLayout from "./AppLayout";
 describe("AppLayout", () => {
   it("renders without crashing", async () => {
     const { container } = render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <AppLayout><div>test</div></AppLayout>
       </MemoryRouter>
     );
@@ -15,7 +15,7 @@ describe("AppLayout", () => {
 
   it("renders sidebar navigation", async () => {
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <AppLayout><div>test</div></AppLayout>
       </MemoryRouter>
     );

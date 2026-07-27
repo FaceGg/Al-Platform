@@ -290,16 +290,21 @@ jobs:
       MLFLOW_TRACKING_URI: http://mlflow:5000
       TENSORBOARD_SESSION_SECRET: ci-tensorboard-session-secret-at-least-32-bytes
       INFERENCE_INTERNAL_SECRET: ci-inference-internal-secret-at-least-32-bytes
+      INFERENCE_RUNTIME_URL: http://inference-runtime:7000
+      INFERENCE_RATE_LIMIT_CAPACITY: "5"
+      INFERENCE_RATE_LIMIT_REFILL_PER_SECOND: "0.01"
+      INFERENCE_ROLLOUT_OBSERVATION_SECONDS: "10"
+      COMPOSE_PROJECT_NAME: ci-inference-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v5
       - name: Validate production composition
-        run: docker compose config --quiet
+        run: docker compose --project-name "$COMPOSE_PROJECT_NAME" config --quiet
       - name: Build experiment services
         shell: bash
         run: |
           set -euo pipefail
           for attempt in {1..3}; do
-            if docker compose build backend worker tensorboard-gateway inference-runtime; then
+            if docker compose --project-name "$COMPOSE_PROJECT_NAME" build backend worker tensorboard-gateway inference-runtime; then
               exit 0
             fi
             if [ "$attempt" -lt 3 ]; then
@@ -309,36 +314,77 @@ jobs:
           done
           exit 1
       - name: Start production experiment stack
-        run: docker compose up --detach --wait postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler
+        run: docker compose --project-name "$COMPOSE_PROJECT_NAME" up --detach --wait postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler
       - name: Verify migrations and real experiment lifecycle
         run: |
-          docker compose exec -T backend alembic upgrade head
-          docker compose exec -T backend alembic check
-          docker compose exec -T \
+          set -euo pipefail
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T backend alembic upgrade 20260720_09_production_inference
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T backend alembic current
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T backend alembic check
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T \
             -e RUN_EXPERIMENT_INTEGRATION=1 \
             backend python -m unittest tests.test_experiment_production_stack -v
-          docker compose exec -T \
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T \
             -e RUN_INFERENCE_INTEGRATION=1 \
-            backend python -m unittest tests.test_inference_production_stack -v
+            -e INFERENCE_INTEGRATION_CONTEXT_PATH=/tmp/inference-lifecycle-context.json \
+            backend python -m unittest tests.test_inference_production_stack.TestInferenceProductionStack -v
           curl --fail --silent http://127.0.0.1:8000/api/ready
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" cp \
+            backend:/tmp/inference-lifecycle-context.json \
+            "$RUNNER_TEMP/inference-lifecycle-context.json"
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" stop redis inference-runtime
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T \
+            -e RUN_INFERENCE_INTEGRATION=1 \
+            -e INFERENCE_INTEGRATION_CONTEXT_PATH=/tmp/inference-lifecycle-context.json \
+            backend python -m unittest tests.test_inference_production_stack.TestInferenceProductionRedisOutage -v
       - name: Collect redacted experiment failure evidence
         if: failure()
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/experiment-evidence"
-          docker compose ps > "$RUNNER_TEMP/experiment-evidence/compose-ps.txt" 2>&1 || true
-          docker compose logs --no-color backend worker scheduler mlflow tensorboard-gateway inference-runtime migrate > "$RUNNER_TEMP/experiment-evidence/services.log" 2>&1 || true
+          set -euo pipefail
+          INFERENCE_EVIDENCE_RAW="$(mktemp -d "$RUNNER_TEMP/experiment-evidence-raw.XXXXXX")"
+          INFERENCE_EVIDENCE_REDACTED="$RUNNER_TEMP/experiment-evidence"
+
+          cleanup_experiment_evidence() {
+            rm -rf "$INFERENCE_EVIDENCE_RAW" "$INFERENCE_EVIDENCE_REDACTED"
+          }
+          trap cleanup_experiment_evidence EXIT
+
+          rm -rf "$INFERENCE_EVIDENCE_REDACTED"
+          mkdir -p "$INFERENCE_EVIDENCE_REDACTED"
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" ps > "$INFERENCE_EVIDENCE_RAW/compose-ps.txt" 2>&1 || true
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" logs --no-color backend worker scheduler mlflow tensorboard-gateway inference-runtime migrate > "$INFERENCE_EVIDENCE_RAW/services.log" 2>&1 || true
+          INFERENCE_CREATED_TEST_KEY=""
+          INFERENCE_INTEGRATION_CONTEXT_PATH="$RUNNER_TEMP/inference-lifecycle-context.json"
+          if [ -f "$INFERENCE_INTEGRATION_CONTEXT_PATH" ]; then
+            INFERENCE_CREATED_TEST_KEY="$(sed -n 's/.*"plaintext": *"\([^"]*\)".*/\1/p' "$INFERENCE_INTEGRATION_CONTEXT_PATH")"
+          fi
+          if grep -REal 'ci-postgres-password|ci-minio-root-password|ci-experiment-secret-key|ci-tensorboard-session-secret|ci-inference-internal-secret' "$INFERENCE_EVIDENCE_RAW"; then
+            echo 'Sensitive value found in experiment evidence.'
+            rm -rf "$INFERENCE_EVIDENCE_RAW" "$INFERENCE_EVIDENCE_REDACTED"
+            exit 1
+          fi
+          if grep -REal 'mli_[A-Za-z0-9_-]+' "$INFERENCE_EVIDENCE_RAW"; then
+            echo 'Sensitive value found in experiment evidence.'
+            rm -rf "$INFERENCE_EVIDENCE_RAW" "$INFERENCE_EVIDENCE_REDACTED"
+            exit 1
+          fi
+          if [ -n "$INFERENCE_CREATED_TEST_KEY" ] && grep -RFl -- "$INFERENCE_CREATED_TEST_KEY" "$INFERENCE_EVIDENCE_RAW"; then
+            echo 'Sensitive value found in experiment evidence.'
+            rm -rf "$INFERENCE_EVIDENCE_RAW" "$INFERENCE_EVIDENCE_REDACTED"
+            exit 1
+          fi
+          cp "$INFERENCE_EVIDENCE_RAW"/* "$INFERENCE_EVIDENCE_REDACTED"/
           sed -i \
             -e 's/ci-postgres-password/[redacted]/g' \
             -e 's/ci-minio-root-password/[redacted]/g' \
             -e 's/ci-experiment-secret-key-with-at-least-32-characters/[redacted]/g' \
             -e 's/ci-tensorboard-session-secret-at-least-32-bytes/[redacted]/g' \
             -e 's/ci-inference-internal-secret-at-least-32-bytes/[redacted]/g' \
-            "$RUNNER_TEMP/experiment-evidence"/*
-          if grep -REni 'ci-postgres-password|ci-minio-root-password|ci-experiment-secret-key|ci-tensorboard-session-secret|ci-inference-internal-secret' "$RUNNER_TEMP/experiment-evidence"; then
-            rm -rf "$RUNNER_TEMP/experiment-evidence"
-            exit 1
-          fi
+            -E 's/mli_[A-Za-z0-9_-]+/[redacted]/g' \
+            "$INFERENCE_EVIDENCE_REDACTED"/*
+          rm -rf "$INFERENCE_EVIDENCE_RAW"
+          trap - EXIT
       - name: Upload experiment failure evidence
         if: failure()
         uses: actions/upload-artifact@v4
@@ -348,4 +394,7 @@ jobs:
           if-no-files-found: ignore
       - name: Stop production experiment stack
         if: always()
-        run: docker compose down --volumes --remove-orphans
+        shell: bash
+        run: |
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" down --volumes --remove-orphans
+          rm -f "$RUNNER_TEMP/inference-lifecycle-context.json"

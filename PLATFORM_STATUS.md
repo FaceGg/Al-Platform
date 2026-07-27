@@ -450,3 +450,12 @@
 - `/models` 已改为注册模型/部署运维双 Tab，支持平台/ONNX 注册、审批拒绝、部署、schema records、预测概率/版本/耗时和完整中英文本。
 - 本地证据：Task 7 聚焦 46 项、Linux ONNX/Storage 15/15、隔离 PostgreSQL/MinIO inference lifecycle 1/1；前端 44/44、production build、npm audit 0；Chromium 2/2。
 - 最终状态：Task 10 已完成。Actions Run `29714469437` 的 Ubuntu/Windows 质量、生产集成、实验集成和 Chromium acceptance 全部通过；PR #3 已合并，提交 `ba3ca98`。
+
+### 十八、2026-07-27 第九周生产推理本地验收
+
+- 多 revision weighted rollout、pause/resume/rollback、部署 API Key、Redis fail-closed limit、脱敏 telemetry、模型卡和 runtime recovery 已在 `codex/week9-12-mlops-core` 完成。
+- WSL Docker Server `29.6.2` / Compose `v5.3.1` 已在隔离项目中通过 PostgreSQL migration `20260720_09_production_inference`、实验集成 `1/1`、推理 lifecycle `1/1` 和 Redis fail-closed `1/1`。
+- `/api/ready` 的 database、redis、celery、storage、mlflow、tensorboard、inference_runtime 均返回 ready；测试完成后隔离网络和 volumes 已销毁，未影响现有服务。
+- CI failure evidence 在 raw copy 上拒绝配置 secret 与任意 `mli_` token，只上传 redacted copy；copy/redaction 异常时 EXIT trap 同时删除 raw/redacted 目录；对应 workflow 回归 `12/12` 通过。
+- 前端 `npm audit --audit-level=high` 当前保留 2 个 React Router RSC Mode CSRF high；应用为 `BrowserRouter` Vite SPA，未启用 RSC/SSR/server handler。强制降级到 7.11.0 会产生 14 个更早 high；受限例外和复核条件已记录在 Week 9 验收文档，不将 audit 表述为通过。
+- 当前状态：第九周仍为“进行中”。远程 GitHub Actions、最终全量安全/前端 gate、提交和合并前不关闭本周。

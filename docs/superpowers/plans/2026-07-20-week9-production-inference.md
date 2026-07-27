@@ -850,7 +850,7 @@ git commit -m "feat: add inference release operations UI"
 - Modify: `ml-platform/.github/workflows/ci.yml`
 - Modify: `ml-platform/frontend/e2e/model-inference.spec.ts`
 
-- [ ] **Step 1: Add the gated real-service acceptance case**
+- [x] **Step 1: Add the gated real-service acceptance case**
 
 ```python
 @unittest.skipUnless(
@@ -874,7 +874,7 @@ def test_rollout_key_restart_and_rollback(self):
 
 Also exhaust a low-capacity Redis bucket and assert 429 plus `Retry-After`, stop Redis and assert stable 503 without runtime invocation, then inspect database logs/events for forbidden values.
 
-- [ ] **Step 2: Run the local gate and verify expected skip/RED**
+- [x] **Step 2: Run the local gate and verify expected skip/RED**
 
 ```powershell
 cd ml-platform/backend
@@ -883,15 +883,15 @@ python -m unittest tests.test_inference_production_stack tests.test_ci_workflow 
 
 Expected: the real-service case is explicitly skipped without `RUN_INFERENCE_INTEGRATION`; configuration assertions fail until Compose/CI settings are wired.
 
-- [ ] **Step 3: Update isolated Compose and CI**
+- [x] **Step 3: Update isolated Compose and CI**
 
-Keep `inference-runtime` on `expose: ["7000"]` with no host port. Pass the existing 32-character runtime secret and URL plus rate/rollout settings consistently to backend, worker, scheduler, runtime, and test process. In CI use a unique Compose project and temporary volumes, upgrade PostgreSQL to `20260720_09_production_inference`, run `RUN_INFERENCE_INTEGRATION=1`, collect logs only after existing redaction, scan for the known internal secret and created test key, and upload results. Never stop or recreate the user's default Compose stack.
+Keep `inference-runtime` on `expose: ["7000"]` with no host port. Pass the existing 32-character runtime secret and URL plus rate/rollout settings consistently to backend, worker, scheduler, runtime, and test process. In CI use a unique Compose project and temporary volumes, upgrade PostgreSQL to `20260720_09_production_inference`, run `RUN_INFERENCE_INTEGRATION=1`, capture failure evidence in a temporary raw directory, reject configured secrets and every `mli_` token before copying, redact only the copied artifact, then delete raw evidence before upload. Never stop or recreate the user's default Compose stack.
 
-- [ ] **Step 4: Extend browser acceptance without fixed sleeps**
+- [x] **Step 4: Extend browser acceptance without fixed sleeps**
 
 Use real login and public APIs to prepare two approved versions. Through `/models`, start a canary, inspect revision/weight metadata, create a key and confirm plaintext is shown once, pause/resume, finish, predict actual v2, rollback to v1, and verify viewer controls are absent. Use accessible roles/names and response or state predicates.
 
-- [ ] **Step 5: Run local GREEN checks**
+- [x] **Step 5: Run local GREEN checks**
 
 ```powershell
 python -m unittest tests.test_suite_manifest tests.test_ci_workflow tests.test_inference_production_stack -v
@@ -905,7 +905,7 @@ Expected: local configuration and Chromium checks pass; real service result must
 - [ ] **Step 6: Commit delivery integration**
 
 ```powershell
-git add ml-platform/backend/tests ml-platform/docker-compose.yml ml-platform/.github/workflows/ci.yml ml-platform/frontend/e2e/model-inference.spec.ts
+git add ml-platform/backend/tests ml-platform/docker-compose.yml ml-platform/.github/workflows/ci.yml ml-platform/frontend/e2e/model-inference.spec.ts ml-platform/frontend/e2e/fixtures/seed_inference_model.py ml-platform/frontend/e2e/fixtures/advance_inference_rollout.py
 git commit -m "test: verify production inference lifecycle"
 ```
 
@@ -920,7 +920,7 @@ git commit -m "test: verify production inference lifecycle"
 - Modify: `PLATFORM_STATUS.md`
 - Modify: `C:/Users/17723/.codex/DEVELOPMENT_EXPERIENCE.md`
 
-- [ ] **Step 1: Run the Week 9 and compatibility backend suites**
+- [x] **Step 1: Run the Week 9 and compatibility backend suites**
 
 ```powershell
 cd ml-platform/backend
@@ -951,7 +951,9 @@ Expected: frontend tests/build/audit pass, migration double-upgrade/current/chec
 
 Build from the same Git commit, use isolated PostgreSQL/Redis/MinIO/runtime resources, and run the gated lifecycle. Record image digest, migration head, readiness, rollout/rollback results, rate-limit 429/503 results, runtime restart reconciliation, redaction scan, Chromium trace, and remote Actions URL. Clean only the isolated project and volumes.
 
-- [ ] **Step 4: Write operations and acceptance evidence**
+2026-07-27 local WSL portion completed with Docker Server `29.6.2` / Compose `v5.3.1`: PostgreSQL migration head/current/check, experiment stack, rollout/restart/rollback/rate-limit lifecycle, Redis fail-closed case, and readiness all passed in an isolated project and its volumes were removed. GitHub Actions remains required.
+
+- [x] **Step 4: Write operations and acceptance evidence**
 
 Document revision states, 0/10/50/100 flow, pause/resume/rollback, runtime-key privacy, API-key creation/rotation/revocation, 429/503 behavior, log/metric retention, card fields/export, stable errors, recovery, and verification commands. The acceptance record includes exact counts and evidence but no credentials, keys, model input, predictions, storage paths, customer data, or raw exceptions.
 

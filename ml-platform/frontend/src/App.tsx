@@ -70,7 +70,7 @@ function AppContent() {
     >
       <AntApp>
         <Suspense fallback={<div style={{ display: "grid", minHeight: "100vh", placeItems: "center" }}><Spin size="large" /></div>}>
-          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <BrowserRouter>
             <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />

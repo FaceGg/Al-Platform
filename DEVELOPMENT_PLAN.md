@@ -118,8 +118,28 @@
 - 第 5 周生产基础设施远程证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
 - 第 7 周远程验收证据为 [Actions Run 29667952189](https://github.com/FaceGg/Al-Platform/actions/runs/29667952189)。
 - 第 8 周最终远程验收为 [Actions Run 29714469437](https://github.com/FaceGg/Al-Platform/actions/runs/29714469437)，Ubuntu、Windows、生产集成、实验集成和 Chromium acceptance 全部通过；合并提交为 `ba3ca98`。
-- 第 9 至第 12 周已完成并行范围审计和设计确认，正式规格为 `docs/superpowers/specs/2026-07-20-week9-12-mlops-core-design.md`；实施计划和生产代码尚未开始。
+- 第 9 至第 12 周已完成并行范围审计和设计确认，正式规格为 `docs/superpowers/specs/2026-07-20-week9-12-mlops-core-design.md`。第 9 周 Task 1-10 已完成本地实现、测试、Chromium 和验收文档；Task 11 的本地 WSL 生产栈已通过，远程 CI 和最终全量证据仍未完成。第 10 周安全/通知代码与第 11-12 周最终工具继续按依赖推进。
 - 第 11 周最终性能结论依赖第 9-10 周接口、Schema 和发布行为冻结；第 12 周最终验收依赖第 9-11 周门禁通过，不得因并行启动提前标记完成。
+
+### 2026-07-27：第 9 周 Task 10 生产栈门禁与 Chromium 验收完成
+
+- 开发内容：补齐隔离 Compose 项目、生产推理环境变量、迁移/生产生命周期测试、Redis outage 门禁、runtime 重启/回滚测试、脱敏失败证据扫描和模型推理 Chromium 发布流程；模型注册服务在 `autoflush=False` 下显式 flush 版本后再生成 ModelCard。
+- 问题现象：模型版本尚未 flush 时，模型卡服务在 SQLAlchemy `autoflush=False` 会拿不到版本 ID；前端全量测试在与 Vite build 并行执行时曾有一个 15 秒测试超时；默认 Windows `python` 别名使 Playwright webServer 以 9009 退出。
+- 根因：注册服务依赖隐式 autoflush；并行构建造成本机资源竞争；WindowsApps 占位解释器不是真实 Python。
+- 解决结果：两个注册路径均在 ModelCard 创建前显式 `db.flush()` 并加入回归；拆开复跑后前端恢复全绿；E2E 使用 Miniconda Python，Playwright 配置、fixture 与 CI 保留真实 interpreter 调用，不增加测试绕过。
+- 验证方式：Week 8 `7/7`、Week 9 `7/7`、Task 10 focused backend `29` 项、前端 `19` 文件 `64` 项、生产构建、`compileall`、`git diff --check`、Chromium `3/3` 通过。Docker 未安装，生产 Compose integration 仍显式 skip，待远程 CI。
+- 未完成：Week 9 Task 11 的远程生产栈、远程 CI、完整证据归档及最终周状态；Week 10-12 继续按冻结依赖推进。
+- 预防措施：ORM 生成依赖实体主键时显式 flush；CPU 密集构建与测试分开执行；Windows E2E 文档和 CI 固定可用 Python 解释器；本地 skip 与远程生产通过必须分开记录。
+
+### 2026-07-27：第 9 周 Task 11 本地 WSL 生产推理验收
+
+- 开发内容：在 WSL Docker Server `29.6.2` / Compose `v5.3.1` 中以独立项目启动 PostgreSQL、Redis、MinIO、Celery、MLflow、TensorBoard gateway、inference runtime 和 backend；执行 migration head/current/check、实验集成、发布/恢复/回滚/限流生命周期、Redis outage 和 readiness。
+- 问题现象：宿主 `8000` 已被现有 Week 6 栈使用；本桌面环境中分离的 WSL Compose 命令结束后会停止隔离服务，后续命令在 backend 内解析不到 `postgres`。
+- 根因：端口是已有独立 Compose 项目占用；WSL/Docker 命令生命周期会终止本次隔离项目，不能把启动与真实服务验证拆成多个 shell 调用。
+- 解决结果：临时将本次 backend 映射隔离到 `18000`，并在同一 WSL shell 内完成启动、迁移、所有真实服务测试、Redis/runtime 停止验证和 `down --volumes --remove-orphans`；临时 override 已删除，未影响现有 Week 6 栈。
+- 验证方式：Alembic current/head 为 `20260720_09_production_inference` 且 check 无新操作；实验集成 `1/1`、推理 rollout/restart/rollback/rate-limit `1/1`、Redis fail-closed `1/1` 通过；`/api/ready` 的 database、redis、celery、storage、mlflow、tensorboard、inference_runtime 全部 ready。
+- 未完成：CI 原始失败证据扫描已修复并通过 `tests.test_ci_workflow`，但远程 GitHub Actions、最终全量本地 gate、提交和合并仍未完成；第 9 周保持“进行中”。
+- 预防措施：共享 Docker 主机上始终使用唯一项目名和非冲突宿主端口；在此 WSL 环境验证 Compose 生命周期时，把启动、验证和 teardown 放在同一个 shell，并仅销毁本项目 volumes；失败证据必须先扫描 raw copy，再只上传 redacted copy。
 
 ## 6. 每周验收检查表
 
@@ -1235,3 +1255,23 @@
 - 影响范围：仅 `ModelLibraryPage` 短生命周期运维状态；不改变 API Key 后端生命周期或服务端密钥记录。
 - 预防措施：资源抽屉关闭与资源切换都必须取消或失效所有异步世代，并删除与该资源绑定的一次性凭据状态。
 - 遗留事项：仍需完成 Task 10 真实栈/Chromium，以及 Task 11 文档和远程 CI 门禁。
+
+### 2026-07-27：第 9 周 Task 11 前端依赖审计受限例外
+
+- 当前周次：第 9 周，整体仍为进行中。
+- 问题现象：官方 registry 的 `npm audit --audit-level=high` 在 `react-router-dom@7.18.1` 下报告 2 个 React Router RSC Mode CSRF high；audit 建议强制降级至 `7.11.0`。
+- 根因：React Router advisories 的受影响范围互相跨版本；实际安装 `7.11.0` 后 audit 报告 14 个更早 high，不能把降级当成安全修复。当前前端是 Vite `BrowserRouter` SPA，源码不包含 React Router server/RSC/SSR 导入或 Action/Server Action 路径。
+- 解决方法：保留 7.18.1，记录严格受限例外；任何 RSC、SSR、prerender、server handler 或 Action/Server Action 引入必须先重新评估依赖。出现不含这些 advisories 的兼容版本后，恢复 audit 零 high 门禁。
+- 验证方式：`npm ls react-router react-router-dom` 确认均为 `7.18.1`；源码扫描仅命中 `BrowserRouter` 和普通客户端导航 API；全量 Vitest、production build 和 Chromium 仍作为依赖变更后的强制回归。
+- 影响范围：仅前端依赖审计状态；不改变 FastAPI 服务端、推理 API 或生产运行时安全边界。
+- 遗留事项：本地 audit 不计为通过；远程 CI、完整回归、提交和合并仍是第 9 周完成门禁。
+
+### 2026-07-27：第 9 周 Task 11 失败证据异常路径复审修正
+
+- 当前周次：第 9 周，整体仍为进行中。
+- 问题现象：CI 原始日志已在复制前完成敏感扫描，但 `cp` 或 `sed` 失败时 EXIT trap 只删除 raw 目录；redacted 目录可能保留未脱敏副本并被后续 `if: failure()` artifact 上传。
+- 根因：失败清理只覆盖原始目录，没有把“复制已发生、脱敏未完成”的中间目录视为敏感边界。
+- 解决方法：`cleanup_experiment_evidence` 在异常退出时同时删除 raw 和 redacted 目录；成功路径仅在 raw 删除后解除 trap，保留已经完成脱敏的 artifact。
+- 验证方式：先增加 trap 清理契约，旧 workflow 稳定 RED；修复后 `tests.test_ci_workflow` 12/12 GREEN，YAML/Bash 静态检查和 `git diff --check` 待本次提交前复验。
+- 预防措施：任何“copy then redact”工作流都必须把目标目录在 redaction 成功前视为敏感临时数据；上传条件不能只依赖 job failure，必须保证失败清理覆盖所有可上传目录。
+- 遗留事项：远程 GitHub Actions 仍需以真实失败证据路径验证。

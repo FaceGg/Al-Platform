@@ -206,6 +206,20 @@ class TestModelRegistryService(unittest.TestCase):
         self.db.commit()
         self.assertEqual(version.metrics, {"accuracy": 0.95})
 
+    def test_platform_registration_flushes_version_before_model_card(self):
+        library, _artifact = self._platform_source()
+        self.db.autoflush = False
+
+        version = self.service.register_platform_version(
+            self.db,
+            model_id=self.model.id,
+            source_model_library_id=library.id,
+            actor_id=self.owner.id,
+        )
+
+        card = self.db.query(ModelCard).filter_by(model_version_id=version.id).one()
+        self.assertEqual(card.model_version_id, version.id)
+
     def test_registration_compensates_onnx_when_commit_fails(self):
         library, _artifact = self._platform_source()
         original_commit = self.db.commit
@@ -274,6 +288,7 @@ class TestModelRegistryService(unittest.TestCase):
             self.project.id, source, source.name, "model",
             metadata={"source": "upload", "dataset_artifact_id": "dataset-1"},
         )
+        self.db.autoflush = False
         version = self.service.register_onnx_version(
             self.db, model_id=self.model.id, source_artifact_id=artifact.id,
             actor_id=self.owner.id,

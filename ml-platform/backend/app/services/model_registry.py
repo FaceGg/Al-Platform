@@ -186,6 +186,7 @@ class ModelRegistryService:
                 created_by_id=actor_id,
             )
             db.add(version)
+            db.flush()
             self.model_cards.ensure_for_version(db, version)
             try:
                 if commit:
@@ -241,6 +242,7 @@ class ModelRegistryService:
             created_by_id=actor_id,
         )
         db.add(version)
+        db.flush()
         self.model_cards.ensure_for_version(db, version)
         if commit:
             db.commit()
