@@ -1212,3 +1212,26 @@
 - 影响范围：`ml-platform/backend/app/tasks/inference_tasks.py`、`app/services/inference_deployment.py`、`app/services/inference_rollout.py` 及三组后端回归；不修改 Week 10 通知、迁移、公共 API 或前端 Task 9 文件。
 - 预防措施：周期任务必须按状态机明确 runtime 副作用所有者；任何会影响 weighted routing 的 progressing rollout，在 advance 前必须以 runtime 清单恢复全部可路由 alias；已存在 alias 的 reconciliation 必须验证零重复 load。
 - 遗留事项：Task 9 前端生产运维、Task 10 隔离生产栈/Chromium、Task 11 最终文档和远程 CI 未开始；第 9 周整体仍不能提前标记完成。
+
+### 2026-07-27：第 9 周 Task 9 前端生产运维本地完成
+
+- 当前周次：第 9 至第 12 周并行开发；Task 9 已完成本地实现与验证，第 9 周整体仍进行中。
+- 开发内容：模型运维页新增发布操作抽屉、加权目标和进度、暂停/恢复/回滚确认、一次性 API Key 创建与轮换展示、24 小时指标汇总、脱敏请求日志分页及模型卡查看、导出和指导更新；typed client 覆盖 rollout、API Key、metrics、logs 和 model card 合同。
+- 问题现象：异步切换两个 deployment 时，较慢的旧请求可覆盖新抽屉数据；省略 CAS 版本时 FastAPI command body 为空会返回 422；指标只读取首个 100 分钟页；API Key 轮换的旧记录和新 ID 容易错误替换；创建 key 的迟到响应可在新抽屉显示旧明文；已过期 key 被显示为有效；发布 `pending` 复用模型审批的中文状态词。
+- 根因：操作抽屉缺少所有异步命令的请求世代保护，客户端把可选 command payload 省略为无 body，遥测和轮换 UI 误把分页或生命周期视为单条本地状态，key 状态只判断撤销而未判断 expiry，通用和生产状态词由同一 renderer 选择。
+- 解决方法：以 deployment/request generation 拒绝过期异步结果；无 lock version 时发送 `{}`；24 小时窗口汇总所有 metric pages；轮换后保留一次性明文并刷新服务端 key metadata；创建 key 仅在当前 generation 写入 UI；空日志探测页保持前页；过期 key 标记并禁用轮换；rollout/log 专用 renderer 使用 production statusLabels，模型审批和部署继续使用通用状态词，并补齐中英文 pending/failed/expired 词条。viewer 只读，operator 可操作现有发布，owner/editor 仍独占发布创建和 API Key 管理。
+- 验证方式：新增竞态、空 command body、metrics 全分页、key distinct ID、过期 key、日志分页边界、角色显示、状态翻译、rollback、一次性密钥和模型卡回归；聚焦 Vitest `18/18`，前端全量 Vitest `19/19` 文件、`63/63` 用例，TypeScript/Vite production build，`git diff --check` 均通过。构建仍有既有 ECharts chunk 大小警告。
+- 影响范围：`frontend/src/api/modelRegistry.ts`、ModelLibraryPage、对应 Vitest 与 i18n；未修改 Week 10 Outbox、Alembic、Compose 或 CI。
+- 预防措施：跨 deployment 异步视图必须携带请求世代；可选 JSON command body 仍发送空对象；分页时间窗口的聚合不得使用单页 summary；同名状态在不同领域必须由对应 renderer 选择专属 i18n namespace；一次性密钥永不写入日志或持久状态，过期 key 不得被呈现为可轮换。
+- 遗留事项：Task 10 真实 PostgreSQL/Redis/MinIO/runtime 生命周期和 Chromium 验收、Task 11 交付文档及远程 CI 仍未开始；本地前端验证不能代替真实生产栈或远程门禁。
+
+### 2026-07-27：第 9 周 Task 9 复审纠正：关闭运维抽屉的密钥竞态
+
+- 当前周次：第 9 至第 12 周并行开发；Task 9 仍仅完成本地前端实现与验证。
+- 问题现象：点击创建 API Key 后关闭发布运维抽屉，若创建响应在关闭后才返回，一次性明文仍会在抽屉外弹出。
+- 根因：抽屉关闭没有使 `operationsRequestRef` 失效，创建命令持有的 generation 仍被视为当前；`createdKey` 也没有在该资源边界清除。
+- 解决方法：抽屉 `onClose` 递增请求 generation 并清除 `createdKey`，使加载、创建和轮换的迟到响应不能写入已关闭的资源视图。
+- 验证方式：新增 deferred API Key 创建回归，旧实现稳定显示 `closed-once-only` 而 RED；修复后 `ModelLibraryPage.test.tsx` 13/13 通过。
+- 影响范围：仅 `ModelLibraryPage` 短生命周期运维状态；不改变 API Key 后端生命周期或服务端密钥记录。
+- 预防措施：资源抽屉关闭与资源切换都必须取消或失效所有异步世代，并删除与该资源绑定的一次性凭据状态。
+- 遗留事项：仍需完成 Task 10 真实栈/Chromium，以及 Task 11 文档和远程 CI 门禁。

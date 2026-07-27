@@ -1,20 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert, Button, Descriptions, Drawer, Empty, Form, Input, Modal, Progress,
   Select, Space, Table, Tabs, Tag, Typography, Upload, message,
 } from "antd";
 import {
-  CheckOutlined, CloudServerOutlined, EyeOutlined, PlayCircleOutlined,
-  PlusOutlined, ReloadOutlined, StopOutlined,
+  CheckOutlined, CloudServerOutlined, DownloadOutlined, EyeOutlined, KeyOutlined,
+  PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined,
+  RollbackOutlined, StopOutlined, SyncOutlined,
 } from "@ant-design/icons";
 import apiClient, { formatApiError } from "../api/client";
 import {
   approveModelVersion, createDeployment, createRegisteredModel,
-  type InferenceDeployment, type InferenceRecord, listDeployments,
-  listModelVersions, listRegisteredModels, type ModelVersion,
+  createInferenceApiKey, createRollout, type CreatedInferenceApiKey,
+  type DeploymentRollout, type InferenceApiKey, type InferenceDeployment,
+  type InferenceMetricPage, type InferenceRecord, type InferenceRequestLogPage,
+  listDeployments, listInferenceApiKeys, listInferenceMetricWindow, listInferenceRequestLogs,
+  getModelCard, listModelVersions, listRegisteredModels, listRollouts, type ModelCard, type ModelVersion,
   predictDeployment, type PredictionResult, type ProjectOption,
   type RegisteredModel, registerOnnxVersion, registerPlatformVersion, rejectModelVersion,
-  startDeployment, stopDeployment, uploadOnnxArtifact,
+  rollbackRollout, rotateInferenceApiKey, startDeployment, stopDeployment,
+  pauseRollout, resumeRollout, revokeInferenceApiKey, updateModelCardGuidance,
+  exportModelCard, uploadOnnxArtifact,
 } from "../api/modelRegistry";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
@@ -24,6 +30,7 @@ const { Text, Title } = Typography;
 export default function ModelLibraryPage() {
   const { t } = useI18n();
   const copy = t.modelRegistry;
+  const production = copy.production;
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [projectId, setProjectId] = useState<string>();
   const [tab, setTab] = useState("models");
@@ -39,16 +46,39 @@ export default function ModelLibraryPage() {
   const [testDeployment, setTestDeployment] = useState<InferenceDeployment>();
   const [prediction, setPrediction] = useState<PredictionResult>();
   const [busyId, setBusyId] = useState<string>();
+  const [operationsDeployment, setOperationsDeployment] = useState<InferenceDeployment>();
+  const [rollouts, setRollouts] = useState<DeploymentRollout[]>([]);
+  const [apiKeys, setApiKeys] = useState<InferenceApiKey[]>([]);
+  const [metrics, setMetrics] = useState<InferenceMetricPage>();
+  const [requestLogs, setRequestLogs] = useState<InferenceRequestLogPage>();
+  const [modelCard, setModelCard] = useState<ModelCard>();
+  const [modelCardOpen, setModelCardOpen] = useState(false);
+  const [operationsLoading, setOperationsLoading] = useState(false);
+  const [operationsError, setOperationsError] = useState<string>();
+  const [createdKey, setCreatedKey] = useState<CreatedInferenceApiKey>();
+  const [guidance, setGuidance] = useState("");
+  const [rolloutBusyId, setRolloutBusyId] = useState<string>();
+  const [rolloutOpen, setRolloutOpen] = useState(false);
+  const [lastLogPage, setLastLogPage] = useState<number>();
+  const operationsRequestRef = useRef(0);
   const [registerSource, setRegisterSource] = useState<"platform_joblib" | "onnx_artifact">("platform_joblib");
   const [registerForm] = Form.useForm();
   const [modelForm] = Form.useForm();
   const [deploymentForm] = Form.useForm();
   const [predictionForm] = Form.useForm();
+  const [rolloutForm] = Form.useForm();
 
   const selectedProject = projects.find((item) => item.id === projectId);
   const role = selectedProject?.project_role;
   const canRegister = role === "owner" || role === "editor";
   const canOperate = canRegister || role === "operator";
+
+  const metricWindow = useMemo(() => {
+    const until = new Date();
+    const since = new Date(until.getTime() - 24 * 60 * 60 * 1000);
+    return { since: since.toISOString(), until: until.toISOString() };
+  }, [operationsDeployment?.id]);
+  const logQuery = useMemo(() => ({ ...metricWindow, page: 1, page_size: 100 }), [metricWindow]);
 
   useEffect(() => {
     apiClient.get("/projects").then((response) => {
@@ -84,13 +114,15 @@ export default function ModelLibraryPage() {
   }, [loadProject, projectId]);
 
   const statusLabel = (status: string) => {
-    const labels = copy as Record<string, string>;
-    return labels[status] || status;
+    const label = copy[status as keyof typeof copy];
+    return typeof label === "string" ? label : status;
   };
+  const productionStatusLabel = (status: string) =>
+    production.statusLabels[status as keyof typeof production.statusLabels] || statusLabel(status);
   const statusColor = (status: string) => {
-    if (status === "approved" || status === "running") return "success";
-    if (status === "pending" || status === "starting" || status === "stopping") return "processing";
-    if (status === "rejected" || status === "failed") return "error";
+    if (["approved", "running", "completed", "stable", "active"].includes(status)) return "success";
+    if (["pending", "preloading", "progressing", "paused", "starting", "stopping"].includes(status)) return "processing";
+    if (["rejected", "failed", "rolled_back", "revoked"].includes(status)) return "error";
     return "default";
   };
 
@@ -216,6 +248,193 @@ export default function ModelLibraryPage() {
     }
   };
 
+  const openOperations = async (deployment: InferenceDeployment) => {
+    const requestId = operationsRequestRef.current + 1;
+    operationsRequestRef.current = requestId;
+    setOperationsDeployment(deployment);
+    setOperationsLoading(true);
+    setOperationsError(undefined);
+    setRollouts([]);
+    setApiKeys([]);
+    setMetrics(undefined);
+    setRequestLogs(undefined);
+    setModelCard(undefined);
+    setModelCardOpen(false);
+    setGuidance("");
+    setLastLogPage(undefined);
+    const results = await Promise.allSettled([
+      listRollouts(deployment.id),
+      canRegister ? listInferenceApiKeys(deployment.id) : Promise.resolve({ items: [], total: 0 }),
+      listInferenceMetricWindow(deployment.id, metricWindow),
+      listInferenceRequestLogs(deployment.id, logQuery),
+      getModelCard(deployment.model_version_id),
+    ]);
+    if (requestId !== operationsRequestRef.current) return;
+    const [rolloutResult, keyResult, metricResult, logResult, cardResult] = results;
+    if (rolloutResult.status === "fulfilled") setRollouts(rolloutResult.value.items);
+    if (keyResult.status === "fulfilled") setApiKeys(keyResult.value.items);
+    if (metricResult.status === "fulfilled") setMetrics(metricResult.value);
+    if (logResult.status === "fulfilled") {
+      setRequestLogs(logResult.value);
+      setLastLogPage(logResult.value.items.length < logResult.value.page_size ? logResult.value.page : undefined);
+    }
+    if (cardResult.status === "fulfilled") {
+      setModelCard(cardResult.value);
+      setGuidance(cardResult.value.operational_guidance || "");
+    }
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed && failed.status === "rejected") setOperationsError(formatApiError(failed.reason, copy.commandFailed));
+    setOperationsLoading(false);
+  };
+
+  const loadRequestLogPage = async (page: number) => {
+    if (!operationsDeployment) return;
+    const requestId = operationsRequestRef.current;
+    try {
+      const next = await listInferenceRequestLogs(operationsDeployment.id, { ...logQuery, page });
+      if (requestId !== operationsRequestRef.current) return;
+      if (page > 1 && next.items.length === 0) {
+        setLastLogPage(page - 1);
+        return;
+      }
+      setRequestLogs(next);
+      setLastLogPage(next.items.length < next.page_size ? next.page : undefined);
+    } catch (cause) {
+      if (requestId === operationsRequestRef.current) message.error(formatApiError(cause, copy.commandFailed));
+    }
+  };
+
+  const operateRollout = async (rollout: DeploymentRollout, action: "pause" | "resume" | "rollback") => {
+    if (!operationsDeployment) return;
+    setRolloutBusyId(rollout.id);
+    try {
+      const updated = action === "pause"
+        ? await pauseRollout(operationsDeployment.id, rollout.id, rollout.lock_version)
+        : action === "resume"
+          ? await resumeRollout(operationsDeployment.id, rollout.id, rollout.lock_version)
+          : await rollbackRollout(operationsDeployment.id, rollout.id, rollout.lock_version);
+      setRollouts((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (cause) {
+      message.error(formatApiError(cause, copy.commandFailed));
+    } finally {
+      setRolloutBusyId(undefined);
+    }
+  };
+
+  const confirmRollback = (rollout: DeploymentRollout) => {
+    Modal.confirm({
+      title: production.rollbackConfirmation,
+      content: rollout.last_error_code || production.releaseState,
+      okText: production.confirmRollback,
+      cancelText: t.common.cancel,
+      okButtonProps: { "aria-label": production.confirmRollback },
+      onOk: () => operateRollout(rollout, "rollback"),
+    });
+  };
+
+  const confirmRolloutCommand = (rollout: DeploymentRollout, action: "pause" | "resume") => {
+    const isPause = action === "pause";
+    Modal.confirm({
+      title: isPause ? production.pauseConfirmation : production.resumeConfirmation,
+      okText: isPause ? production.confirmPause : production.confirmResume,
+      cancelText: t.common.cancel,
+      okButtonProps: { "aria-label": isPause ? production.confirmPause : production.confirmResume },
+      onOk: () => operateRollout(rollout, action),
+    });
+  };
+
+  const handleCreateApiKey = async () => {
+    if (!operationsDeployment) return;
+    const requestId = operationsRequestRef.current;
+    try {
+      const created = await createInferenceApiKey(operationsDeployment.id, { scopes: ["inference.predict"] });
+      if (requestId !== operationsRequestRef.current) return;
+      const { plaintext: _plaintext, ...metadata } = created;
+      setApiKeys((current) => [metadata, ...current]);
+      setCreatedKey(created);
+    } catch (cause) {
+      message.error(formatApiError(cause, copy.commandFailed));
+    }
+  };
+
+  const handleRotateApiKey = async (key: InferenceApiKey) => {
+    if (!operationsDeployment) return;
+    const requestId = operationsRequestRef.current;
+    try {
+      const created = await rotateInferenceApiKey(key.id);
+      const { plaintext: _plaintext, ...metadata } = created;
+      if (requestId !== operationsRequestRef.current) return;
+      setCreatedKey(created);
+      setApiKeys((current) => [
+        metadata,
+        ...current.map((item) => item.id === key.id ? { ...item, revoked_at: new Date().toISOString() } : item),
+      ]);
+      const refreshed = await listInferenceApiKeys(operationsDeployment.id);
+      if (requestId !== operationsRequestRef.current) return;
+      setApiKeys(refreshed.items);
+    } catch (cause) {
+      if (requestId === operationsRequestRef.current) {
+        message.error(formatApiError(cause, copy.commandFailed));
+      }
+    }
+  };
+
+  const handleRevokeApiKey = async (key: InferenceApiKey) => {
+    try {
+      const updated = await revokeInferenceApiKey(key.id);
+      setApiKeys((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (cause) {
+      message.error(formatApiError(cause, copy.commandFailed));
+    }
+  };
+
+  const submitRollout = async () => {
+    if (!operationsDeployment) return;
+    try {
+      const values = await rolloutForm.validateFields();
+      const created = await createRollout(operationsDeployment.id, {
+        strategy: values.strategy,
+        targets: [{ model_version_id: values.target_version_id, weight_bps: Number(values.target_weight) }],
+      });
+      setRollouts((current) => [created, ...current]);
+      setRolloutOpen(false);
+      rolloutForm.resetFields();
+    } catch (cause) {
+      if (!(cause as { errorFields?: unknown }).errorFields) message.error(formatApiError(cause, copy.commandFailed));
+    }
+  };
+
+  const saveGuidance = async () => {
+    if (!modelCard || !canRegister) return;
+    try {
+      const updated = await updateModelCardGuidance(modelCard.id, guidance);
+      setModelCard(updated);
+      setGuidance(updated.operational_guidance || "");
+      message.success(production.guidanceUpdated);
+    } catch (cause) {
+      message.error(formatApiError(cause, copy.commandFailed));
+    }
+  };
+
+  const downloadCard = async () => {
+    if (!modelCard) return;
+    try {
+      const exported = await exportModelCard(modelCard.id);
+      const content = typeof exported.content === "string" ? exported.content : JSON.stringify(exported, null, 2);
+      if (typeof URL.createObjectURL === "function") {
+        const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `model-card-${modelCard.model_version_id}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+      }
+      message.success(production.cardExported);
+    } catch (cause) {
+      message.error(formatApiError(cause, copy.commandFailed));
+    }
+  };
+
   const modelColumns = [
     { title: copy.name, dataIndex: "name", key: "name", render: (value: string, row: RegisteredModel) => <Space direction="vertical" size={0}><Text strong>{value}</Text><Text type="secondary">{row.description}</Text></Space> },
     { title: copy.latestVersion, dataIndex: "latest_version", key: "latest_version", width: 140, render: (value: number | null) => value ? `v${value}` : "-" },
@@ -240,7 +459,38 @@ export default function ModelLibraryPage() {
         setPrediction(undefined);
         predictionForm.setFieldValue("records", JSON.stringify([record], null, 2));
       }}>{copy.onlineTest}</Button>}
+      <Button icon={<EyeOutlined />} aria-label={`${production.releaseOperations} ${row.name}`} onClick={() => void openOperations(row)}>{production.releaseOperations}</Button>
     </Space> },
+  ];
+
+  const isApiKeyExpired = (key: InferenceApiKey) => {
+    if (!key.expires_at) return false;
+    const expiresAt = new Date(key.expires_at).getTime();
+    return Number.isFinite(expiresAt) && expiresAt <= Date.now();
+  };
+
+  const rolloutColumns = [
+    { title: production.releaseState, dataIndex: "state", key: "state", width: 170, render: (value: string, row: DeploymentRollout) => <Space direction="vertical" size={0}><Tag color={statusColor(value)}>{productionStatusLabel(value)}</Tag>{["pending", "preloading", "progressing", "paused"].includes(value) && <Progress percent={Math.min(100, Math.max(0, row.current_step / 100))} size="small" showInfo />}{row.last_error_code && <Text type="danger">{row.last_error_code}</Text>}</Space> },
+    { title: production.targetWeights, key: "targets", render: (_: unknown, row: DeploymentRollout) => row.targets?.map((target) => `${target.model_version_id}: ${target.weight_bps / 100}%`).join(", ") || "-" },
+    { title: t.model.actions, key: "actions", width: 300, render: (_: unknown, row: DeploymentRollout) => <Space wrap>
+      {canOperate && ["pending", "preloading", "progressing"].includes(row.state) && <Button icon={<PauseCircleOutlined />} loading={rolloutBusyId === row.id} aria-label={`${production.pause} ${production.release} ${row.id}`} onClick={() => confirmRolloutCommand(row, "pause")}>{production.pause}</Button>}
+      {canOperate && row.state === "paused" && <Button icon={<PlayCircleOutlined />} loading={rolloutBusyId === row.id} aria-label={`${production.resume} ${production.release} ${row.id}`} onClick={() => confirmRolloutCommand(row, "resume")}>{production.resume}</Button>}
+      {canOperate && ["pending", "preloading", "progressing", "paused", "completed", "failed"].includes(row.state) && <Button danger icon={<RollbackOutlined />} loading={rolloutBusyId === row.id} aria-label={`${production.rollback} ${production.release} ${row.id}`} onClick={() => confirmRollback(row)}>{production.rollback}</Button>}
+    </Space> },
+  ];
+
+  const keyColumns = [
+    { title: production.keyPrefix, dataIndex: "prefix", key: "prefix" },
+    { title: production.keyStatus, key: "status", render: (_: unknown, row: InferenceApiKey) => row.revoked_at ? <Tag color="error">{production.revoked}</Tag> : isApiKeyExpired(row) ? <Tag color="warning">{production.expired}</Tag> : <Tag color="success">{production.active}</Tag> },
+    { title: t.model.actions, key: "actions", width: 250, render: (_: unknown, row: InferenceApiKey) => canRegister && !row.revoked_at ? <Space wrap><Button icon={<SyncOutlined />} disabled={isApiKeyExpired(row)} aria-label={`${production.rotateApiKey} ${row.prefix}`} onClick={() => void handleRotateApiKey(row)}>{production.rotateApiKey}</Button><Button danger icon={<StopOutlined />} aria-label={`${production.revokeApiKey} ${row.prefix}`} onClick={() => void handleRevokeApiKey(row)}>{production.revokeApiKey}</Button></Space> : null },
+  ];
+
+  const logColumns = [
+    { title: production.logStatus, dataIndex: "status", key: "status", render: (value: string) => <Tag color={statusColor(value)}>{productionStatusLabel(value)}</Tag> },
+    { title: production.logDuration, dataIndex: "duration_ms", key: "duration" },
+    { title: production.logBatch, dataIndex: "batch_size", key: "batch" },
+    { title: production.logError, dataIndex: "error_code", key: "error", render: (value: string | null) => value || "-" },
+    { title: production.logOccurred, dataIndex: "occurred_at", key: "occurred" },
   ];
 
   return <AppLayout>
@@ -302,5 +552,126 @@ export default function ModelLibraryPage() {
         <Descriptions.Item label={copy.duration}>{prediction.duration_ms} ms</Descriptions.Item>
       </Descriptions>}
     </Drawer>
+    <Drawer
+      title={operationsDeployment ? `${production.releaseOperations}: ${operationsDeployment.name}` : production.releaseOperations}
+      open={Boolean(operationsDeployment)}
+      onClose={() => {
+        operationsRequestRef.current += 1;
+        setOperationsDeployment(undefined);
+        setModelCardOpen(false);
+        setCreatedKey(undefined);
+      }}
+      width="min(960px, 100%)"
+    >
+      {operationsError && <Alert type="error" showIcon message={operationsError} style={{ marginBottom: 16 }} />}
+      {!canRegister && <Alert type="info" showIcon message={copy.permissionDenied} style={{ marginBottom: 16 }} />}
+      <Space direction="vertical" size={20} style={{ width: "100%" }}>
+        <section aria-labelledby="release-operations-heading">
+          <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+            <Title id="release-operations-heading" level={5} style={{ margin: 0 }}>{production.releases}</Title>
+            {canRegister && <Button type="primary" icon={<PlusOutlined />} aria-label={production.createRollout} onClick={() => setRolloutOpen(true)}>{production.createRollout}</Button>}
+          </Space>
+          <div style={{ overflowX: "auto" }}>
+            <Table
+              rowKey="id"
+              loading={operationsLoading}
+              dataSource={rollouts}
+              columns={rolloutColumns}
+              pagination={false}
+              scroll={{ x: 700 }}
+              locale={{ emptyText: <Empty description={production.emptyRollouts} /> }}
+            />
+          </div>
+        </section>
+
+        <section aria-labelledby="api-keys-heading">
+          <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+            <Title id="api-keys-heading" level={5} style={{ margin: 0 }}><KeyOutlined /> {production.apiKeys}</Title>
+            {canRegister && <Button icon={<KeyOutlined />} aria-label={production.createApiKey} onClick={() => void handleCreateApiKey()}>{production.createApiKey}</Button>}
+          </Space>
+          <div style={{ overflowX: "auto" }}>
+            <Table
+              rowKey="id"
+              loading={operationsLoading}
+              dataSource={apiKeys}
+              columns={keyColumns}
+              pagination={false}
+              scroll={{ x: 600 }}
+              locale={{ emptyText: <Empty description={canRegister ? production.emptyApiKeys : copy.permissionDenied} /> }}
+            />
+          </div>
+        </section>
+
+        <section aria-labelledby="metrics-heading">
+          <Title id="metrics-heading" level={5}>{production.metrics} <Text type="secondary">{production.last24Hours}</Text></Title>
+          {!metrics ? <Table loading={operationsLoading} dataSource={[]} columns={[]} pagination={false} /> : metrics.items.length === 0 ? <Empty description={production.emptyMetrics} /> : <Descriptions bordered size="small" column={{ xs: 1, sm: 3 }}>
+            <Descriptions.Item label={production.throughput}>{metrics.summary.request_count}</Descriptions.Item>
+            <Descriptions.Item label={production.errorRate}>{metrics.summary.request_count ? `${((metrics.summary.error_count / metrics.summary.request_count) * 100).toFixed(2)}%` : "0%"}</Descriptions.Item>
+            <Descriptions.Item label={production.latency}>{metrics.summary.p95_latency_ms ?? metrics.summary.average_latency_ms ?? 0} ms</Descriptions.Item>
+          </Descriptions>}
+        </section>
+
+        <section aria-labelledby="request-logs-heading">
+          <Title id="request-logs-heading" level={5}>{production.requestLogs}</Title>
+          <div style={{ overflowX: "auto" }}>
+            <Table
+              rowKey="id"
+              loading={operationsLoading}
+              dataSource={requestLogs?.items || []}
+              columns={logColumns}
+              pagination={requestLogs ? {
+                current: requestLogs.page,
+                pageSize: requestLogs.page_size,
+                pageSizeOptions: ["25", "50", "100"],
+                showSizeChanger: false,
+                total: (lastLogPage ?? requestLogs.page + 1) * requestLogs.page_size,
+                onChange: (page) => {
+                  void loadRequestLogPage(page);
+                },
+              } : false}
+              scroll={{ x: 700 }}
+              locale={{ emptyText: <Empty description={production.emptyRequestLogs} /> }}
+            />
+          </div>
+        </section>
+
+        <section aria-labelledby="model-card-heading">
+          <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+            <Title id="model-card-heading" level={5}>{production.modelCard}</Title>
+            <Button icon={<EyeOutlined />} aria-label={production.openModelCard} disabled={!modelCard} onClick={() => setModelCardOpen(true)}>{production.modelCard}</Button>
+          </Space>
+          {!modelCard && <Empty description={operationsLoading ? t.common.loading : production.emptyModelCard} />}
+        </section>
+      </Space>
+    </Drawer>
+    <Drawer
+      title={production.modelCard}
+      aria-label={production.modelCard}
+      open={modelCardOpen}
+      onClose={() => setModelCardOpen(false)}
+      width="min(680px, 100%)"
+    >
+      {!modelCard ? <Empty description={production.emptyModelCard} /> : <Space direction="vertical" style={{ width: "100%" }}>
+        <Button icon={<DownloadOutlined />} aria-label={production.exportModelCard} onClick={() => void downloadCard()}>{production.exportModelCard}</Button>
+        <Input.TextArea aria-label={production.operationalGuidance} value={guidance} onChange={(event) => setGuidance(event.target.value)} rows={5} disabled={!canRegister} />
+        {canRegister && <Button type="primary" aria-label={production.saveGuidance} onClick={() => void saveGuidance()}>{production.saveGuidance}</Button>}
+      </Space>}
+    </Drawer>
+    {createdKey && <Modal
+      title={production.keyCreated}
+      open
+      destroyOnHidden
+      onCancel={() => setCreatedKey(undefined)}
+      footer={<Button icon={<KeyOutlined />} aria-label={production.closeCreatedKey} onClick={() => setCreatedKey(undefined)}>{t.common.close}</Button>}
+    >
+      <Input.Password aria-label={production.keyPlaintext} readOnly value={createdKey.plaintext} />
+    </Modal>}
+    <Modal title={production.createRollout} open={rolloutOpen} onCancel={() => setRolloutOpen(false)} onOk={() => void submitRollout()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
+      <Form form={rolloutForm} layout="vertical">
+        <Form.Item name="strategy" label={production.strategy} initialValue="canary" rules={[{ required: true }]}><Select options={[{ value: "immediate", label: production.immediate }, { value: "canary", label: production.canary }, { value: "rolling", label: production.rolling }]} /></Form.Item>
+        <Form.Item name="target_version_id" label={production.targetVersion} rules={[{ required: true }]}><Select options={approvedVersions.map(({ model, version }) => ({ value: version.id, label: `${model.name} v${version.version_number}` }))} /></Form.Item>
+        <Form.Item name="target_weight" label={production.targetWeight} initialValue={10000} rules={[{ required: true }]}><Input type="number" min={0} max={10000} /></Form.Item>
+      </Form>
+    </Modal>
   </AppLayout>;
 }
