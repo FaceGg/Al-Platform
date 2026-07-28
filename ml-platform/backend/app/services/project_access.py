@@ -32,6 +32,8 @@ PERMISSIONS = frozenset({
     "model.approve",
     "deployment.create",
     "inference.operate",
+    "notification.read",
+    "notification.manage",
 })
 
 ROLE_PERMISSIONS = {
@@ -48,14 +50,17 @@ ROLE_PERMISSIONS = {
         "model.approve",
         "deployment.create",
         "inference.operate",
+        "notification.read",
+        "notification.manage",
     }),
     ProjectRole.OPERATOR: frozenset({
         "project.read",
         "execution.operate",
         "schedule.operate",
         "inference.operate",
+        "notification.read",
     }),
-    ProjectRole.VIEWER: frozenset({"project.read"}),
+    ProjectRole.VIEWER: frozenset({"project.read", "notification.read"}),
 }
 
 

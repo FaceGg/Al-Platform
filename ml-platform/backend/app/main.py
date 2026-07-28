@@ -64,6 +64,7 @@ from app.api import project_access as project_access_api
 from app.api import model_registry as model_registry_api
 from app.api import inference_production as inference_production_api
 from app.api import platform_security as platform_security_api
+from app.api import notifications as notifications_api
 
 
 def initialize_database(app_settings=None, db_engine=None) -> None:
@@ -247,6 +248,7 @@ app.include_router(schedules.router)
 app.include_router(model_registry_api.router)
 app.include_router(inference_production_api.router)
 app.include_router(platform_security_api.router)
+app.include_router(notifications_api.router)
 
 
 @app.get("/api/health")

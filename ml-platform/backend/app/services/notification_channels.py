@@ -13,10 +13,12 @@ import re
 import smtplib
 import ssl
 from typing import Literal, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from pydantic import SecretStr
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -64,7 +66,7 @@ class NotificationAdapter(Protocol):
         endpoint: NotificationEndpoint,
         event: DomainEvent,
         delivery_key: str,
-        recipient_user_ids: Iterable[UUID] = (),
+        recipient_user_ids: Iterable[UUID] | None = None,
     ) -> DeliveryResult: ...
 
 
@@ -124,6 +126,12 @@ def _normalized_recipient_ids(values: Iterable[UUID]) -> tuple[UUID, ...]:
     return tuple(normalized)
 
 
+def _in_app_deduplication_key(delivery_key: str, recipient_user_id: UUID) -> str:
+    return hashlib.sha256(
+        f"{delivery_key}:{recipient_user_id}".encode("utf-8")
+    ).hexdigest()
+
+
 class InAppNotificationAdapter:
     def __init__(self, db: Session, config: Mapping[str, object]) -> None:
         self.db = db
@@ -135,26 +143,42 @@ class InAppNotificationAdapter:
         endpoint: NotificationEndpoint,
         event: DomainEvent,
         delivery_key: str,
-        recipient_user_ids: Iterable[UUID] = (),
+        recipient_user_ids: Iterable[UUID] | None = None,
     ) -> DeliveryResult:
         configured_recipients = self.config.get("recipient_user_ids", [])
-        source = recipient_user_ids or configured_recipients
+        source = configured_recipients if recipient_user_ids is None else recipient_user_ids
         if not isinstance(source, Iterable) or isinstance(source, (str, bytes)):
             return DeliveryResult("failed", "NOTIFICATION_RECIPIENT_INVALID")
         recipients = _normalized_recipient_ids(source)
         if not recipients:
             return DeliveryResult("failed", "NOTIFICATION_RECIPIENT_INVALID")
         payload = to_storage_payload(event.payload)
+        dialect_name = self.db.get_bind().dialect.name
+        if dialect_name == "postgresql":
+            statement_factory = postgresql_insert
+        elif dialect_name == "sqlite":
+            statement_factory = sqlite_insert
+        else:
+            return DeliveryResult("failed", "NOTIFICATION_DELIVERY_STORAGE_UNSUPPORTED")
         for recipient_user_id in recipients:
-            self.db.add(InAppNotification(
-                recipient_user_id=recipient_user_id,
-                project_id=event.project_id,
-                event_id=event.event_id,
-                event_type=event.event_type,
-                severity=event.severity,
-                title=_event_title(event),
-                body=_event_body(event),
-                payload=payload,
+            values = {
+                "id": uuid4(),
+                "recipient_user_id": recipient_user_id,
+                "project_id": event.project_id,
+                "event_id": event.event_id,
+                "event_type": event.event_type,
+                "deduplication_key": _in_app_deduplication_key(
+                    delivery_key,
+                    recipient_user_id,
+                ),
+                "severity": event.severity,
+                "title": _event_title(event),
+                "body": _event_body(event),
+                "payload": payload,
+            }
+            statement = statement_factory(InAppNotification).values(**values)
+            self.db.execute(statement.on_conflict_do_nothing(
+                index_elements=[InAppNotification.deduplication_key],
             ))
         self.db.flush()
         return DeliveryResult("sent")
@@ -217,7 +241,7 @@ class WebhookNotificationAdapter:
         endpoint: NotificationEndpoint,
         event: DomainEvent,
         delivery_key: str,
-        recipient_user_ids: Iterable[UUID] = (),
+        recipient_user_ids: Iterable[UUID] | None = None,
     ) -> DeliveryResult:
         del endpoint, recipient_user_ids
         url = self.config.get("url")
@@ -271,7 +295,7 @@ class WeComNotificationAdapter:
         endpoint: NotificationEndpoint,
         event: DomainEvent,
         delivery_key: str,
-        recipient_user_ids: Iterable[UUID] = (),
+        recipient_user_ids: Iterable[UUID] | None = None,
     ) -> DeliveryResult:
         del endpoint, recipient_user_ids
         url = self.config.get("url")
@@ -349,7 +373,7 @@ class EmailNotificationAdapter:
         endpoint: NotificationEndpoint,
         event: DomainEvent,
         delivery_key: str,
-        recipient_user_ids: Iterable[UUID] = (),
+        recipient_user_ids: Iterable[UUID] | None = None,
     ) -> DeliveryResult:
         del endpoint, delivery_key, recipient_user_ids
         try:
@@ -441,7 +465,7 @@ class NotificationChannelRouter:
         endpoint: NotificationEndpoint,
         event: DomainEvent,
         delivery_key: str,
-        recipient_user_ids: Iterable[UUID] = (),
+        recipient_user_ids: Iterable[UUID] | None = None,
     ) -> DeliveryResult:
         config, configuration_error = self._config(endpoint)
         if config is None:

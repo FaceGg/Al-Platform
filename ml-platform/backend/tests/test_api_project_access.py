@@ -467,6 +467,12 @@ class TestProjectWriteAuditCompleteness(unittest.TestCase):
             "inference_api_key.create", "inference_api_key.rotate",
             "inference_api_key.revoke", "model_card.guidance.update",
         },
+        "notifications": {
+            "notification.endpoint.create", "notification.endpoint.update",
+            "notification.endpoint.delete", "notification.endpoint.test",
+            "notification.subscription.create", "notification.subscription.update",
+            "notification.subscription.delete",
+        },
     }
 
     def test_every_project_write_module_declares_audited_actions(self):

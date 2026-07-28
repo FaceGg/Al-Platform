@@ -1358,3 +1358,14 @@
 - 修复：PostgreSQL 在 delivery 终态更新后以 `FOR UPDATE` 锁定 Outbox，再读取当前 delivery 集合并重算状态、最早 retry 时间及未解决 retry/dead-letter/failed 的稳定错误码；SQLite 保留原有串行写入语义。fan-out 并发合同同步点移至实际 `INSERT INTO notification_deliveries` 前并断言两个 worker 都到达原子插入边界。
 - 验证方式：新增 PostgreSQL 锁调用合同、双 session `retry` 后 `sent` 的聚合回归和真实插入 barrier；`C:\\Users\\17723\\miniconda3\\python.exe -m unittest tests.test_security_hardening tests.test_platform_audit tests.test_api_users tests.test_api_compute tests.test_api_platform tests.test_notification_models tests.test_notification_channels tests.test_notification_outbox tests.test_celery_workflows tests.test_inference_rollout tests.test_api_inference_production -v` 为 `160/160`，`compileall -q app` 与 `git diff --check` 通过。
 - 当前状态与边界：Task 8 本地实现、回归和复审完成，下一项为 Task 9 通知 API；此结果不替代 Task 11 的真实 PostgreSQL、Redis/Celery/Beat 或受控四通道接收器验证。
+
+### 2026-07-28：第 10 周 Task 9 通知 API 复审缺陷修正
+
+- 当前周次：第 10 周整体仍为进行中；Task 9 API 已完成本地实现、回归与复审修正，未提前替代 Task 11 生产栈门禁。
+- 问题现象：同项目同名 notification endpoint 的创建或重命名将数据库唯一键冲突暴露为 500；重复站内 endpoint `/test` 会为同一收件人写入多条通知；已删除 ProjectMember 被 role/explicit selector 过滤为空后，adapter 又回退到 endpoint 中的旧加密收件人；endpoint `/test` 未在发送前复验该加密收件人的当前成员资格。
+- 根因：API 未将精确 `(project_id, name)` 唯一约束映射为稳定领域冲突；`recipient_user_ids or configured_recipients` 把“未传 selector”和“worker 已解析为空”混为同一 falsey 状态；普通站内通知没有 per-recipient 的持久去重键，测试路由也未在解密后重新执行成员校验。
+- 解决方法：仅将 `None` 解释为 endpoint 测试的配置回退，显式空 tuple/list 直接失败；用 `sha256(delivery_key + recipient UUID)` 生成 64 字符去重键，并在 SQLite/PostgreSQL 通过 `ON CONFLICT DO NOTHING` 原子写入；endpoint `/test` 经同一加密 router 解密后复验 in-app 成员；精确 endpoint 名称约束统一返回 409 `NOTIFICATION_ENDPOINT_NAME_CONFLICT`。Webhook 测试继续经过相同解密、SSRF、签名和 provider-body redaction 边界。
+- TDD 证据：先观察 create/rename 500、重复 `/test` 生成两条记录、已删除收件人 endpoint `/test` 返回 200、worker fan-out 返回 sent 的 RED；修正 selector 回归后临时恢复旧 fallback 表达式，确认同一 worker 用例稳定 RED，再恢复实现 GREEN。Webhook 安全回归在修复前已 GREEN，证明既有安全边界未被绕过；管理员 retry 两项既有合同保持 GREEN。
+- 验证方式：`tests.test_api_notifications tests.test_notification_channels tests.test_notification_outbox` 为 55/55；原 104 项 notification/access 组合因新增 6 项 API 回归扩展为 110/110，`RUN_PROJECT_ACCESS_INTEGRATION` 未启用的 PostgreSQL 用例按预期 skip 1 项；`C:\Users\17723\miniconda3\python.exe -m compileall -q app` 通过。
+- 影响范围：`app/api/notifications.py`、`app/services/notification_channels.py` 与 `tests/test_api_notifications.py`；未修改 retry 状态机、迁移、Celery 调度或 Webhook provider 协议。
+- 遗留事项：真实 PostgreSQL conflict/upsert、Redis/Celery/Beat 和受控 WeCom/邮件/Webhook 接收器尚未验证；仍属于 Task 11，不能将本地 SQLite 回归描述为生产栈验收。

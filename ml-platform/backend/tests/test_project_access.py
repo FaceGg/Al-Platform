@@ -70,6 +70,8 @@ class TestProjectPermissionMatrix(unittest.TestCase):
         "model.approve",
         "deployment.create",
         "inference.operate",
+        "notification.read",
+        "notification.manage",
     }
     GRANTS = {
         "owner": PERMISSIONS,
@@ -85,14 +87,17 @@ class TestProjectPermissionMatrix(unittest.TestCase):
             "model.approve",
             "deployment.create",
             "inference.operate",
+            "notification.read",
+            "notification.manage",
         },
         "operator": {
             "project.read",
             "execution.operate",
             "schedule.operate",
             "inference.operate",
+            "notification.read",
         },
-        "viewer": {"project.read"},
+        "viewer": {"project.read", "notification.read"},
     }
 
     def setUp(self):
