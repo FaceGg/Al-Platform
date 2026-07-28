@@ -17,13 +17,16 @@ from uuid import UUID, uuid4
 
 import httpx
 from pydantic import SecretStr
+from sqlalchemy import literal, or_, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.events.domain import DomainEvent, to_storage_payload
+from app.models.access import ProjectMember
 from app.models.notifications import InAppNotification, NotificationEndpoint
+from app.models.project import Project
 from app.services.notification_crypto import NotificationCredentialError, decrypt_config
 from app.services.webhook_security import (
     WebhookSecurityError,
@@ -160,6 +163,7 @@ class InAppNotificationAdapter:
             statement_factory = sqlite_insert
         else:
             return DeliveryResult("failed", "NOTIFICATION_DELIVERY_STORAGE_UNSUPPORTED")
+        delivered = False
         for recipient_user_id in recipients:
             values = {
                 "id": uuid4(),
@@ -176,10 +180,53 @@ class InAppNotificationAdapter:
                 "body": _event_body(event),
                 "payload": payload,
             }
-            statement = statement_factory(InAppNotification).values(**values)
-            self.db.execute(statement.on_conflict_do_nothing(
-                index_elements=[InAppNotification.deduplication_key],
-            ))
+            membership_exists = (
+                select(ProjectMember.id)
+                .where(
+                    ProjectMember.project_id == Project.id,
+                    ProjectMember.user_id == recipient_user_id,
+                )
+                .exists()
+            )
+            recipient_is_authorized = (
+                select(Project.id)
+                .where(
+                    Project.id == event.project_id,
+                    or_(
+                        Project.owner_id == recipient_user_id,
+                        membership_exists,
+                    ),
+                )
+                .exists()
+            )
+            statement = statement_factory(InAppNotification).from_select(
+                list(values),
+                select(
+                    *(
+                        literal(
+                            value,
+                            type_=InAppNotification.__table__.c[column].type,
+                        )
+                        for column, value in values.items()
+                    )
+                ).where(recipient_is_authorized),
+            )
+            self.db.execute(
+                statement.on_conflict_do_nothing(
+                    index_elements=[InAppNotification.deduplication_key],
+                )
+            )
+            delivered = delivered or (
+                self.db.query(InAppNotification.id)
+                .filter(
+                    InAppNotification.deduplication_key == values["deduplication_key"],
+                    InAppNotification.recipient_user_id == recipient_user_id,
+                )
+                .first()
+                is not None
+            )
+        if not delivered:
+            return DeliveryResult("failed", "NOTIFICATION_RECIPIENT_INVALID")
         self.db.flush()
         return DeliveryResult("sent")
 

@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import Settings
 from app.database import Base
 from app.events.domain import DomainEvent
+from app.models.access import ProjectMember
 from app.models.notifications import InAppNotification, NotificationEndpoint
 from app.models.project import Project
 from app.models.user import User
@@ -260,6 +261,76 @@ class TestNotificationAdapters(unittest.TestCase):
         self.assertEqual(row.recipient_user_id, self.user.id)
         self.assertEqual(row.payload, {"revision_id": "revision-1"})
         self.assertNotIn("must-not-send", json.dumps(row.payload))
+
+    def test_in_app_adapter_rechecks_current_membership_at_insert(self):
+        recipient = User(
+            username=f"revoked-notification-recipient-{uuid4().hex}",
+            password_hash="hash",
+        )
+        self.db.add(recipient)
+        self.db.flush()
+        membership = ProjectMember(
+            project_id=self.project.id,
+            user_id=recipient.id,
+            role="operator",
+            created_by=self.user.id,
+        )
+        self.db.add(membership)
+        self.db.commit()
+
+        endpoint = self._endpoint("in_app", {})
+        stale_recipients = (recipient.id,)
+        membership_revoked = False
+
+        @event.listens_for(self.engine, "before_cursor_execute")
+        def revoke_member_before_notification_insert(
+            connection,
+            _cursor,
+            statement,
+            _parameters,
+            _context,
+            _executemany,
+        ):
+            nonlocal membership_revoked
+            normalized_statement = " ".join(statement.lower().split())
+            if (
+                membership_revoked
+                or not normalized_statement.startswith("insert into in_app_notifications")
+            ):
+                return
+            membership_revoked = True
+            connection.execute(
+                ProjectMember.__table__.delete().where(
+                    ProjectMember.project_id == self.project.id,
+                    ProjectMember.user_id == recipient.id,
+                )
+            )
+
+        try:
+            result = NotificationChannelRouter(self.db, self.settings).send(
+                endpoint=endpoint,
+                event=self.event,
+                delivery_key="delivery-revoked-recipient",
+                recipient_user_ids=stale_recipients,
+            )
+        finally:
+            event.remove(
+                self.engine,
+                "before_cursor_execute",
+                revoke_member_before_notification_insert,
+            )
+
+        self.assertTrue(membership_revoked)
+        self.assertEqual(
+            (result.status, result.error_code),
+            ("failed", "NOTIFICATION_RECIPIENT_INVALID"),
+        )
+        self.assertEqual(
+            self.db.query(InAppNotification)
+            .filter(InAppNotification.recipient_user_id == recipient.id)
+            .count(),
+            0,
+        )
 
     def test_missing_master_key_has_unavailable_error_code(self):
         endpoint = self._endpoint("in_app", {})
