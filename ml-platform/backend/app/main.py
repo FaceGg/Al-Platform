@@ -19,6 +19,8 @@ from app.events.domain import DomainEventRecorder, NullDomainEventRecorder
 from app.middleware.request_id import RequestIdMiddleware
 from app.websocket.manager import manager
 from app.services.project_access import ProjectAccessError
+from app.services.resource_access import ResourceAccessError
+from app.services.notification_outbox import OutboxDomainEventRecorder
 
 # Import all operators so they register themselves
 # Import models (must happen before create_all)
@@ -31,6 +33,8 @@ from app.models import compute as compute_models  # noqa: F401 (register models)
 from app.models import agent as agent_models  # noqa: F401 (register models)
 from app.models import platform_models as pm  # noqa: F401 (register models)
 from app.models import access as access_models  # noqa: F401 (register models)
+from app.models import platform_audit as platform_audit_models  # noqa: F401 (register models)
+from app.models import notifications as notification_models  # noqa: F401 (register models)
 
 import app.operators.io_operators  # noqa: F401
 import app.operators.processing  # noqa: F401
@@ -59,6 +63,7 @@ from app.api import model_library as model_lib_api, dashboard as dash_api, readi
 from app.api import project_access as project_access_api
 from app.api import model_registry as model_registry_api
 from app.api import inference_production as inference_production_api
+from app.api import platform_security as platform_security_api
 
 
 def initialize_database(app_settings=None, db_engine=None) -> None:
@@ -179,7 +184,7 @@ app = FastAPI(
     version="0.2.0",
     lifespan=lifespan,
 )
-app.state.domain_event_recorder = NullDomainEventRecorder()
+app.state.domain_event_recorder = OutboxDomainEventRecorder()
 
 app.add_middleware(
     CORSMiddleware,
@@ -197,6 +202,16 @@ async def project_access_exception_handler(
     status = 404 if error.hidden else 403
     return JSONResponse(
         status_code=status,
+        content={"detail": {"code": error.code, "message": str(error)}},
+    )
+
+
+@app.exception_handler(ResourceAccessError)
+async def resource_access_exception_handler(
+    request: Request, error: ResourceAccessError,
+):
+    return JSONResponse(
+        status_code=404,
         content={"detail": {"code": error.code, "message": str(error)}},
     )
 app.add_middleware(RequestIdMiddleware)
@@ -231,6 +246,7 @@ app.include_router(experiments.router)
 app.include_router(schedules.router)
 app.include_router(model_registry_api.router)
 app.include_router(inference_production_api.router)
+app.include_router(platform_security_api.router)
 
 
 @app.get("/api/health")

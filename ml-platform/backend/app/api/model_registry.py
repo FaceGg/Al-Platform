@@ -428,11 +428,18 @@ def build_model_registry_router(
         except InferenceDeploymentError as error:
             _error(error)
 
-    def rollout_service_for(db):
+    def rollout_service_for(db, request):
         _, deployment_service_value = services(db)
         if deployment_service_value is None:
             raise HTTPException(503, {"code": "INFERENCE_RUNTIME_UNAVAILABLE"})
-        return InferenceRolloutService(deployment_service_value.runtime)
+        return InferenceRolloutService(
+            deployment_service_value.runtime,
+            event_recorder=getattr(
+                request.app.state,
+                "domain_event_recorder",
+                None,
+            ),
+        )
 
     def release_access(db, deployment_id, release_id, user_id):
         deployment, access = _deployment_access(db, deployment_id, user_id)
@@ -479,7 +486,7 @@ def build_model_registry_router(
         ):
             _require_role(access, {"owner", "editor"})
             try:
-                release = rollout_service_for(db).create_candidate(
+                release = rollout_service_for(db, request).create_candidate(
                     db, deployment.id, current_user.id,
                     [item.model_dump() for item in data.targets], data.strategy,
                     data.step_schedule,
@@ -494,7 +501,7 @@ def build_model_registry_router(
 
     def command_release(deployment_id, release_id, data, request, db, current_user, command):
         deployment, access, release = release_access(db, deployment_id, release_id, current_user.id)
-        service = rollout_service_for(db)
+        service = rollout_service_for(db, request)
         runtime_mutated = False
         failure_code = None
         try:

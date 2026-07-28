@@ -38,7 +38,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20260720_09_production_inference"
+HEAD_REVISION = "20260720_10_security_notifications"
 WEEK9_TABLES = {
     "deployment_revisions",
     "deployment_targets",
@@ -47,6 +47,14 @@ WEEK9_TABLES = {
     "inference_request_logs",
     "inference_metric_buckets",
     "model_cards",
+}
+WEEK10_TABLES = {
+    "platform_audit_events",
+    "notification_endpoints",
+    "notification_subscriptions",
+    "notification_outbox",
+    "notification_deliveries",
+    "in_app_notifications",
 }
 
 
@@ -296,7 +304,7 @@ class TestAlembicBaseline(TestCase):
             try:
                 inspector = inspect(db_engine)
                 business_tables = set(inspector.get_table_names()) - {"alembic_version"}
-                self.assertEqual(len(business_tables), 45)
+                self.assertEqual(len(business_tables), 51)
                 self.assertTrue(
                     {
                         "users",
@@ -316,6 +324,7 @@ class TestAlembicBaseline(TestCase):
                     }.issubset(business_tables)
                 )
                 self.assertTrue(WEEK9_TABLES.issubset(business_tables))
+                self.assertTrue(WEEK10_TABLES.issubset(business_tables))
                 self.assertIn(
                     "uq_deployment_rollouts_active",
                     {

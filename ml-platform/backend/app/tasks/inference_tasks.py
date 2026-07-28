@@ -9,6 +9,7 @@ from app.services.inference_deployment import InferenceDeploymentService
 from app.services.inference_observability import InferenceObservability
 from app.services.inference_rollout import InferenceRolloutError, InferenceRolloutService
 from app.services.inference_runtime_client import InferenceRuntimeClient
+from app.services.notification_outbox import OutboxDomainEventRecorder
 from app.tasks.celery_app import celery_app
 
 
@@ -26,7 +27,10 @@ def build_inference_deployment_service():
 
 
 def build_inference_rollout_service():
-    return InferenceRolloutService(build_inference_deployment_service().runtime)
+    return InferenceRolloutService(
+        build_inference_deployment_service().runtime,
+        event_recorder=OutboxDomainEventRecorder(),
+    )
 
 
 def _rollout_result(rollout):

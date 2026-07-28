@@ -32,6 +32,7 @@ class TestSettings(unittest.TestCase):
             "tensorboard_session_secret": "tensorboard-session-secret-value-1234",
             "inference_runtime_url": "http://inference-runtime:7000",
             "inference_internal_secret": "inference-internal-secret-value-1234",
+            "notification_master_key": "bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm4=",
         }
         values.update(overrides)
         return values
@@ -188,6 +189,7 @@ class TestSettings(unittest.TestCase):
             "mlflow-db-password",
             "tensorboard-session-secret-value-1234",
             "inference-internal-secret-value-1234",
+            "bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm4=",
             "legacy-llm-secret",
         )
         protected_settings = Settings(
@@ -230,6 +232,7 @@ class TestSettings(unittest.TestCase):
             "minio-secret-value",
             "mlflow-db-password",
             "tensorboard-session-secret-value-1234",
+            "bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm4=",
             "legacy-llm-secret",
             "minio-url-password",
             "minio-query-token",

@@ -1275,3 +1275,78 @@
 - 验证方式：先增加 trap 清理契约，旧 workflow 稳定 RED；修复后 `tests.test_ci_workflow` 12/12 GREEN，YAML/Bash 静态检查和 `git diff --check` 待本次提交前复验。
 - 预防措施：任何“copy then redact”工作流都必须把目标目录在 redaction 成功前视为敏感临时数据；上传条件不能只依赖 job failure，必须保证失败清理覆盖所有可上传目录。
 - 遗留事项：远程 GitHub Actions 仍需以真实失败证据路径验证。
+
+### 2026-07-27：第 10 周 Task 1 安全回归合同冻结（RED）
+
+- 当前周次：第 10 周，整体仍为进行中；本项只冻结后续硬化必须满足的回归边界。
+- 开发内容：新增隔离 SQLite 的 `test_security_hardening`，覆盖公开注册 role 注入、默认 engineer、Compute/Annotation/Platform API 的 owner/outsider 访问矩阵、Annotation sample/auto-label 隐藏语义，以及 Platform API 列表认证与私有行隔离；现有 Week 1 用户、计算和 API Marketplace fixture 改为直接数据库 bootstrap admin，不再依赖公开注册创建管理员。
+- 问题现象：公开注册仍接受 `role=admin`；Compute、Annotation 和 Platform API 的外部资源路径未统一在业务访问前按 owner 过滤；Platform API 列表可匿名读取私有记录。
+- 根因：注册路由以独立 Body 参数暴露 platform role，用户私有资源路由各自查询目标行，缺少集中 fail-closed resolver；遗留测试 fixture 将公开注册误作管理员初始化入口。
+- 解决方法：本 Task 先以测试合同固定行为，生产修复留给 Task 2 的严格注册/平台审计和 Task 3 的 `ResourceAccessService`，避免在 RED 阶段混入实现。
+- 验证方式：`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_security_hardening tests.test_api_users tests.test_api_compute tests.test_api_platform -v` 独立复跑为 36 项，其中 10 个预期 RED（role 注入、未认证列表、私有泄露、外部资源越权及缺少 detail 路由），26 项既有兼容测试通过；`git diff --check` 通过。
+- 影响范围：仅四个后端测试文件；无生产代码、迁移、通知、Compose 或 CI 变更。
+- 预防措施：公开注册与平台 bootstrap 必须分离；每个用户私有资源新增或修改路由时，先以 owner/outsider 表驱动合同冻结 200/404 语义，再实现访问控制。
+- 遗留事项：Task 2-3 必须使本合同 GREEN，并补齐平台 audit 模型、线性 migration 和集中资源解析；Week 10 不能在此之前标记完成。
+
+### 2026-07-27：第 10 周 Task 5 通知设置、持久化模型与线性迁移完成
+
+- 当前周次：第 10 周，整体仍为进行中；Task 5 已完成，后续进入 Task 6 加密、SSRF 防护和通道适配器。
+- 开发内容：增加生产必需的 Fernet 通知主密钥及文件解析、SMTP/投递/安全 Webhook 配置；新增 `NotificationEndpoint`、`NotificationSubscription`、`NotificationOutbox`、`NotificationDelivery` 和 `InAppNotification` 模型；线性 Alembic `20260720_10_security_notifications` 同时持久化平台安全审计和五张通知表。
+- 安全边界：通知主密钥、SMTP 用户名和密码均为排除序列化的 `SecretStr`；生产模式验证 Fernet 密钥；公开环境样例不含真实密钥、邮箱、企业微信 Token 或回调地址；端点种类、严重级别、状态、尝试次数、唯一事件/投递键及删除语义均由模型和迁移约束。
+- 问题现象：既有生产配置脱敏测试把通用字符串 `password` 当作凭据值；新增安全摘要合法包含字段名 `smtp_password_configured` 后产生假失败。
+- 根因：测试用过于通用的子串验证“不泄漏”，无法区分真实值与安全元数据的字段名。
+- 解决方法：使用唯一测试凭据标记，并显式覆盖 SMTP 用户名/密码在 `repr`、`model_dump` 和安全摘要中不泄漏；未弱化任何生产脱敏字段。
+- 验证方式：Task 5 初始 RED 为 3 个预期失败和 3 个 skip；GREEN 后 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_notification_models tests.test_config tests.test_experiment_config tests.test_database_production -v` 为 51/51，通过空库 upgrade/check/downgrade/re-upgrade，`alembic check` 输出 `No new upgrade operations detected`。
+- 遗留事项：Task 6 必须实现加密配置、WeCom/邮件/Webhook SSRF 边界和适配器；Task 7 负责将冻结 Week 9 事件写入 Outbox，且记录器只 add/flush，不拥有提交。
+
+### 2026-07-27：第 10 周 Task 6 加密、SSRF 防护与四通道适配器完成
+
+- 当前周次：第 10 周，整体仍为进行中；Task 6 已完成，后续进入 Task 7 领域事件与事务 Outbox。
+- 开发内容：新增 Fernet endpoint 配置加密/解密边界、严格 HTTPS DNS/IP Webhook 策略、官方 WeCom 目标校验、确定性 JSON/HMAC 签名、TLS SMTP 邮件和站内通知适配器；通道路由只接受冻结 `DomainEvent` 的安全信封。
+- 安全边界：拒绝 loopback、私网、link-local、metadata、userinfo、fragment、非 443 端口和重定向；私网 relay 只能由精确平台 allowlist 放行；请求体限制 64 KiB；Webhook 自定义 header 不能覆盖 Content-Type、Idempotency-Key 或签名；端点密文、SMTP 凭据、签名密钥、provider body 和原始异常均不记录。
+- 问题现象：初版允许自定义 header 覆盖路由保留的幂等键，也把抄送地址并入 `To` 而没有保留 RFC `Cc` 语义；缺少通知主密钥也与损坏密文共用同一错误码。
+- 根因：自定义 header 未区分协议保留字段；邮件模型只汇总最终收件人；路由解密边界未区分环境缺失和数据损坏。
+- 解决方法：冻结保留 header 集并以失败结果阻止发送；保留独立 To/Cc header 而仍向两者投递；主密钥缺失返回 `NOTIFICATION_CREDENTIAL_UNAVAILABLE`，损坏密文保留 `NOTIFICATION_CREDENTIAL_INVALID`。
+- 验证方式：初始 RED 为 1 个模块可用性失败、11 个 skip；随后追加 header、Cc 和错误码 RED 后分别 GREEN。`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_notification_channels -v` 为 14/14，通知/配置/实验配置/生产迁移组合为 65/65，`compileall` 与 `git diff --check` 通过。
+- 遗留事项：Task 7 将 `DomainEvent` 安全载荷写入同一业务事务的 Outbox；记录器只 add/flush，不能 commit 或直接投递 Celery。
+
+### 2026-07-27：第 10 周 Task 7 Week 9 事件记录器与事务 Outbox 完成
+
+- 当前周次：第 10 周，整体仍为进行中；Task 7 已完成本地实现与验证，Task 8 的领取、投递、重试和死信处理尚未开始。
+- 开发内容：新增 `OutboxDomainEventRecorder`，将冻结 `DomainEvent` 的存储副本以同一调用方事务写入 `NotificationOutbox`；API rollout 工厂从应用状态注入记录器，Celery rollout 工厂使用具体记录器，生产应用默认配置具体记录器。
+- 问题现象：Week 9 rollout 失败事件使用 `severity="error"`，而已冻结的通知表只允许 `info`、`warning`、`critical`；同时 Outbox 的重复检查不能触发调用方尚未决定提交的业务状态 autoflush。
+- 根因：Week 9 事件协议未限制 severity 枚举，通知持久化模型采用了更严格的订阅严重度集合；普通 ORM 查询默认 autoflush，会越过可组合服务的调用方事务边界。
+- 解决方法：记录器在 `no_autoflush` 边界内仅查询完全相同的 `event_id + idempotency_key`，只抑制该精确重复；其他唯一约束错误继续抛出。随后只 `add`/`flush` 安全 thaw payload，不 commit、不创建 savepoint、不投递 Celery；仅在持久化边界将遗留 `error` 规范化为 `critical`，不改 Week 9 payload 或 rollout 状态机。
+- 验证方式：先新增 Outbox 合同，模块缺失时 7/7 预期 RED；GREEN 后 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_notification_outbox tests.test_notification_models tests.test_inference_rollout tests.test_celery_workflows tests.test_api_inference_production -v` 为 78/78；`python -m compileall -q app`、具体应用记录器断言和 `git diff --check` 通过。
+- 影响范围：`notification_outbox`、rollout API/任务构造器、应用记录器装配和 Outbox 回归；不修改通知通道、rollout 状态转换、运行时调用或 Celery 投递策略。
+- 预防措施：跨领域事件先在 immutable DomainEvent 边界做 allowlist、JSON 值域与深冻结，再经显式 storage thaw 写入 JSON 列；可组合 Outbox 记录器不得 commit、dispatch 或创建持久 savepoint，重复抑制必须同时匹配全部幂等身份字段。
+- 遗留事项：并发的完全重复插入仍可由数据库唯一约束报错，不能为吞掉该竞态而破坏调用方事务；Task 8 将在独立领取事务中处理 worker 幂等、重试和死信。
+
+### 2026-07-27：第 10 周 Task 1-4 安全硬化与平台审计验证完成
+
+- 当前周次：第 10 周，整体仍进行中；Task 1-7 已完成本地实现与针对性验证，下一项为 Task 8 通知领取、投递、重试和死信。
+- 开发内容：公开注册采用严格 schema 且固定创建 engineer；平台管理员角色操作写入独立安全审计流；`ResourceAccessService` 为 Compute、Annotation 和 Platform API 提供 owner/间接 owner 的 fail-closed 解析；平台审计模型、线性迁移和管理员筛选查询接口已接入。
+- 安全边界：跨用户私有资源在读取 payload、调用 provider 或执行写操作前隐藏为 404；平台 API 列表必须认证且仅返回自己的私有项或公共项；项目成员权限先于目标用户/成员查询；平台安全审计只允许管理员读取，且不暴露原始敏感数据。
+- 问题现象：共享 SQLite fixture 中的 actor 删除回归先插入一条 `platform.user.role_change`，后续管理员角色变更回归只按 action 查询，错误假设该 action 全库唯一而导致 `MultipleResultsFound`。
+- 根因：该测试类在 `setUpClass` 中复用数据库；审计流按 action 本来允许多行，测试没有以资源身份和结果限定预期事件。
+- 解决方法：管理员角色变更断言同时匹配 action、目标 `resource_id` 和 `success` 结果，不改变生产审计写入语义。
+- 验证方式：先复现 actor 删除后角色变更的确定性失败；修复后该配对 2/2 通过，`tests.test_security_hardening tests.test_platform_audit tests.test_api_users tests.test_api_compute tests.test_api_platform` 为 48/48 通过，`git diff --check` 通过。
+- 遗留事项：Task 8 仍必须以独立领取事务实现单赢家、投递幂等、可重试退避与单次死信告警；Week 10 不得在 API、前端、浏览器和生产栈门禁完成前标记完成。
+
+### 2026-07-28：第 10 周 Task 8 通知领取、投递、重试与死信完成
+
+- 当前周次：第 10 周整体仍为进行中；Task 1-8 已完成本地实现、回归和规格复审，下一项为 Task 9 通知 API。
+- 开发内容：新增稳定 Celery 任务 `ml_platform.deliver_notifications` 与 `ml_platform.enqueue_due_notifications`；Outbox 采用 PostgreSQL `SKIP LOCKED`/SQLite 条件更新领取，按订阅扇出确定性 delivery key，并持久化重试退避、终态和错误码。
+- 并发修复：`NotificationDelivery` 追加 `claim_token`、`claimed_at`；worker 每次领取生成新的 token，结果写入必须同时匹配 `id + processing + claim_token`。超时回收后的旧 worker 只能读取持久状态，不能覆盖新 worker 的 `sent`、`retry` 或 `failed` 终态。
+- 死信修复：`InAppNotification.deduplication_key` 为可空唯一键；死信告警使用 `notification.dead_letter:<event_id>`，SQLite/PostgreSQL 均以 `ON CONFLICT DO NOTHING` 原子去重，不影响正常多收件人站内通知。
+- TDD 与复审：新增 lease、stale-finalizer、回收和死信唯一键合同，初始 4 项均按预期 RED；规格复审确认两项并发缺陷关闭，未发现其他 P0-P2 Task 8 缺口。代码静态复核未发现额外问题。
+- 验证方式：`tests.test_notification_models tests.test_notification_outbox tests.test_notification_channels tests.test_inference_rollout tests.test_celery_workflows tests.test_api_inference_production` 为 `108/108`；`tests.test_security_hardening tests.test_platform_audit tests.test_api_users tests.test_api_compute tests.test_api_platform` 为 `48/48`；`C:\\Users\\17723\\miniconda3\\python.exe -m compileall -q app` 与 `git diff --check` 通过。
+- 未完成与边界：真实 PostgreSQL `SKIP LOCKED`、Redis/Celery/Beat、四通道受控接收器和 `test_notification_production_stack.py` 尚未实现或验证，严格保留给 Task 11；不得把 SQLite/局部回归描述为生产栈验收。
+
+### 2026-07-28：第 10 周 Task 8 代码质量复审更正
+
+- 复审发现：初版每次 `execute_notification_delivery` 只在入口捕获一个时间戳，多个 delivery 排队处理时后续 lease 已接近超时，retry 时间也可能过期；fan-out 以查询后插入创建 delivery，两个恢复 worker 可同时观察空行而使其中一个因唯一键冲突中止。
+- 根因：领取/完成时间被错误视为一次 task 级输入，而非 delivery 生命周期边界；唯一约束存在但没有作为 fan-out 的原子同步原语使用。
+- 修复：新增可注入 `clock`，生产路径在每个 delivery 的领取前和 adapter 返回后分别采样，已有 `now` 参数继续提供冻结测试时间；fan-out 改为 PostgreSQL/SQLite `INSERT ... ON CONFLICT DO NOTHING`，随后查询同一 Outbox 的实际 delivery。
+- TDD 与验证：两项新合同先分别以缺少 `clock` 与文件 SQLite 双 session 唯一键 `IntegrityError` RED；修复后两项 GREEN。最终组合 `tests.test_security_hardening tests.test_platform_audit tests.test_api_users tests.test_api_compute tests.test_api_platform tests.test_notification_models tests.test_notification_channels tests.test_notification_outbox tests.test_celery_workflows tests.test_inference_rollout tests.test_api_inference_production` 为 `158/158`；`compileall`、`git diff --check` 通过。
+- 当前状态：Task 8 仅以本地 SQLite/单元和服务组合验证完成；质量复审 P1 已关闭。真实 PostgreSQL `SKIP LOCKED`、Redis/Celery/Beat、受控 WeCom/邮件/Webhook 接收器仍属于 Task 11，Week 10 继续保持进行中。

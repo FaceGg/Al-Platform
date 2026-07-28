@@ -4,10 +4,26 @@ sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import Base, engine
+from app.api.auth import pwd_context
+from app.database import Base, SessionLocal, engine
+from app.models.user import User
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
+
+
+def ensure_admin():
+    db = SessionLocal()
+    try:
+        if db.query(User).filter(User.username == "admin").first() is None:
+            db.add(User(
+                username="admin",
+                password_hash=pwd_context.hash("admin123"),
+                role="admin",
+            ))
+            db.commit()
+    finally:
+        db.close()
 
 
 def admin_login():
@@ -18,10 +34,7 @@ def admin_login():
 class TestUsersAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Ensure admin user exists
-        r = client.post("/api/auth/register", json={
-            "username": "admin", "password": "admin123", "role": "admin"
-        })
+        ensure_admin()
         cls.admin_h = admin_login()
 
     def test_01_health_accessible_without_auth(self):
@@ -50,7 +63,6 @@ class TestUsersAPI(unittest.TestCase):
         r = client.post("/api/auth/register", json={
             "username": uname,
             "password": "newpass123",
-            "role": "engineer",
         })
         self.assertIn(r.status_code, [200, 201])
 
@@ -58,7 +70,6 @@ class TestUsersAPI(unittest.TestCase):
         r = client.post("/api/auth/register", json={
             "username": "admin",
             "password": "somepass123",
-            "role": "engineer",
         })
         self.assertIn(r.status_code, [400, 409])
 

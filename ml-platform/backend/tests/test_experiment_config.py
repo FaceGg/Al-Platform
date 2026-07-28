@@ -14,7 +14,7 @@ class TestExperimentConfiguration(unittest.TestCase):
     def production_values(**overrides):
         values = {
             "app_mode": "production",
-            "database_url": "postgresql+psycopg://app:password@db/ml_platform",
+            "database_url": "postgresql+psycopg://app:experiment-db-secret@db/ml_platform",
             "secret_key": "s" * 32,
             "task_backend": "celery",
             "celery_broker_url": "redis://redis:6379/0",
@@ -24,12 +24,15 @@ class TestExperimentConfiguration(unittest.TestCase):
             "minio_access_key": "access-key",
             "minio_secret_key": "secret-key",
             "mlflow_tracking_uri": "http://mlflow:5000",
-            "mlflow_backend_store_uri": "postgresql+psycopg://mlflow:password@db/mlflow",
+            "mlflow_backend_store_uri": "postgresql+psycopg://mlflow:experiment-mlflow-secret@db/mlflow",
             "mlflow_artifact_root": "s3://ml-platform/mlflow",
             "tensorboard_gateway_url": "http://tensorboard-gateway:6006",
             "tensorboard_session_secret": "t" * 32,
             "inference_runtime_url": "http://inference-runtime:7000",
             "inference_internal_secret": "i" * 32,
+            "notification_master_key": "bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm4=",
+            "smtp_username": "smtp-user-secret",
+            "smtp_password": "smtp-password-secret",
         }
         values.update(overrides)
         return values
@@ -89,7 +92,16 @@ class TestExperimentConfiguration(unittest.TestCase):
         self.assertEqual(configured.safe_summary()["mlflow_tracking_uri"], "http://mlflow:5000")
         self.assertTrue(configured.safe_summary()["mlflow_backend_store_configured"])
         self.assertTrue(configured.safe_summary()["tensorboard_session_secret_configured"])
-        for secret in ("password", "t" * 32, "i" * 32):
+        self.assertTrue(configured.safe_summary()["smtp_username_configured"])
+        self.assertTrue(configured.safe_summary()["smtp_password_configured"])
+        for secret in (
+            "experiment-db-secret",
+            "experiment-mlflow-secret",
+            "smtp-user-secret",
+            "smtp-password-secret",
+            "t" * 32,
+            "i" * 32,
+        ):
             self.assertNotIn(secret, rendered)
 
 

@@ -90,22 +90,6 @@ def add_member(
     access = ProjectAccessService().resolve(db, project_id, current_user.id)
     if access is None:
         _http_access(ProjectAccessError("PROJECT_NOT_FOUND", hidden=True))
-    target = db.query(User).filter(User.username == data.username).first()
-    if target is None:
-        raise HTTPException(404, {"code": "PROJECT_MEMBER_USER_NOT_FOUND"})
-    if target.id == access.project.owner_id:
-        raise HTTPException(409, {"code": "PROJECT_OWNER_MEMBERSHIP_IMMUTABLE"})
-    if db.query(ProjectMember).filter(
-        ProjectMember.project_id == project_id,
-        ProjectMember.user_id == target.id,
-    ).first() is not None:
-        raise HTTPException(409, {"code": "PROJECT_MEMBER_EXISTS"})
-    member = ProjectMember(
-        project_id=project_id,
-        user_id=target.id,
-        role=data.role,
-        created_by=current_user.id,
-    )
     with _audit_service(db).project_action(
         db,
         request=request,
@@ -116,11 +100,27 @@ def add_member(
             project_id=project_id,
             action="project.member.add",
             resource_type="project_member",
-            resource_id=str(target.id),
-            changes={"username": target.username, "role": data.role},
+            resource_id=data.username,
+            changes={"username": data.username, "role": data.role},
         ),
         allowed_changes={"username", "role"},
     ):
+        target = db.query(User).filter(User.username == data.username).first()
+        if target is None:
+            raise HTTPException(404, {"code": "PROJECT_MEMBER_USER_NOT_FOUND"})
+        if target.id == access.project.owner_id:
+            raise HTTPException(409, {"code": "PROJECT_OWNER_MEMBERSHIP_IMMUTABLE"})
+        if db.query(ProjectMember).filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == target.id,
+        ).first() is not None:
+            raise HTTPException(409, {"code": "PROJECT_MEMBER_EXISTS"})
+        member = ProjectMember(
+            project_id=project_id,
+            user_id=target.id,
+            role=data.role,
+            created_by=current_user.id,
+        )
         db.add(member)
     db.refresh(member)
     return {
@@ -146,18 +146,6 @@ def update_member(
     access = ProjectAccessService().resolve(db, project_id, current_user.id)
     if access is None:
         _http_access(ProjectAccessError("PROJECT_NOT_FOUND", hidden=True))
-    if user_id == access.project.owner_id:
-        raise HTTPException(409, {"code": "PROJECT_OWNER_MEMBERSHIP_IMMUTABLE"})
-    row = (
-        db.query(ProjectMember, User)
-        .join(User, User.id == ProjectMember.user_id)
-        .filter(ProjectMember.project_id == project_id, ProjectMember.user_id == user_id)
-        .first()
-    )
-    if row is None:
-        raise HTTPException(404, {"code": "PROJECT_MEMBER_NOT_FOUND"})
-    member, target = row
-    previous = member.role
     with _audit_service(db).project_action(
         db,
         request=request,
@@ -169,10 +157,21 @@ def update_member(
             action="project.member.role_change",
             resource_type="project_member",
             resource_id=str(user_id),
-            changes={"previous_role": previous, "role": data.role},
+            changes={"role": data.role},
         ),
-        allowed_changes={"previous_role", "role"},
+        allowed_changes={"role"},
     ):
+        if user_id == access.project.owner_id:
+            raise HTTPException(409, {"code": "PROJECT_OWNER_MEMBERSHIP_IMMUTABLE"})
+        row = (
+            db.query(ProjectMember, User)
+            .join(User, User.id == ProjectMember.user_id)
+            .filter(ProjectMember.project_id == project_id, ProjectMember.user_id == user_id)
+            .first()
+        )
+        if row is None:
+            raise HTTPException(404, {"code": "PROJECT_MEMBER_NOT_FOUND"})
+        member, target = row
         member.role = data.role
     return {
         "user_id": target.id,
@@ -196,14 +195,6 @@ def remove_member(
     access = ProjectAccessService().resolve(db, project_id, current_user.id)
     if access is None:
         _http_access(ProjectAccessError("PROJECT_NOT_FOUND", hidden=True))
-    if user_id == access.project.owner_id:
-        raise HTTPException(409, {"code": "PROJECT_OWNER_MEMBERSHIP_IMMUTABLE"})
-    member = db.query(ProjectMember).filter(
-        ProjectMember.project_id == project_id,
-        ProjectMember.user_id == user_id,
-    ).first()
-    if member is None:
-        raise HTTPException(404, {"code": "PROJECT_MEMBER_NOT_FOUND"})
     with _audit_service(db).project_action(
         db,
         request=request,
@@ -215,10 +206,18 @@ def remove_member(
             action="project.member.remove",
             resource_type="project_member",
             resource_id=str(user_id),
-            changes={"role": member.role},
+            changes={},
         ),
-        allowed_changes={"role"},
+        allowed_changes=set(),
     ):
+        if user_id == access.project.owner_id:
+            raise HTTPException(409, {"code": "PROJECT_OWNER_MEMBERSHIP_IMMUTABLE"})
+        member = db.query(ProjectMember).filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == user_id,
+        ).first()
+        if member is None:
+            raise HTTPException(404, {"code": "PROJECT_MEMBER_NOT_FOUND"})
         db.delete(member)
     return Response(status_code=204)
 
