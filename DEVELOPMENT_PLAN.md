@@ -1350,3 +1350,11 @@
 - 修复：新增可注入 `clock`，生产路径在每个 delivery 的领取前和 adapter 返回后分别采样，已有 `now` 参数继续提供冻结测试时间；fan-out 改为 PostgreSQL/SQLite `INSERT ... ON CONFLICT DO NOTHING`，随后查询同一 Outbox 的实际 delivery。
 - TDD 与验证：两项新合同先分别以缺少 `clock` 与文件 SQLite 双 session 唯一键 `IntegrityError` RED；修复后两项 GREEN。最终组合 `tests.test_security_hardening tests.test_platform_audit tests.test_api_users tests.test_api_compute tests.test_api_platform tests.test_notification_models tests.test_notification_channels tests.test_notification_outbox tests.test_celery_workflows tests.test_inference_rollout tests.test_api_inference_production` 为 `158/158`；`compileall`、`git diff --check` 通过。
 - 当前状态：Task 8 仅以本地 SQLite/单元和服务组合验证完成；质量复审 P1 已关闭。真实 PostgreSQL `SKIP LOCKED`、Redis/Celery/Beat、受控 WeCom/邮件/Webhook 接收器仍属于 Task 11，Week 10 继续保持进行中。
+
+### 2026-07-28：第 10 周 Task 8 Outbox 聚合重算复审更正
+
+- 复审发现：两个不同 delivery 近同时完成时，二者各自的终态更新虽受 claim token 围栏保护，但若不串行化同一 Outbox 的聚合重算，较晚提交的旧快照可把仍有 retry 的 Outbox 写回 `processing` 且清除 `next_attempt_at`；retry 已提交后另一个 sent 终态还可能清空聚合错误码。
+- 根因：delivery 行围栏只保护单行所有权，不能保护多个 delivery 汇总到一个 Outbox 行的状态派生；聚合状态未从持久化 delivery 集合重新派生错误码。
+- 修复：PostgreSQL 在 delivery 终态更新后以 `FOR UPDATE` 锁定 Outbox，再读取当前 delivery 集合并重算状态、最早 retry 时间及未解决 retry/dead-letter/failed 的稳定错误码；SQLite 保留原有串行写入语义。fan-out 并发合同同步点移至实际 `INSERT INTO notification_deliveries` 前并断言两个 worker 都到达原子插入边界。
+- 验证方式：新增 PostgreSQL 锁调用合同、双 session `retry` 后 `sent` 的聚合回归和真实插入 barrier；`C:\\Users\\17723\\miniconda3\\python.exe -m unittest tests.test_security_hardening tests.test_platform_audit tests.test_api_users tests.test_api_compute tests.test_api_platform tests.test_notification_models tests.test_notification_channels tests.test_notification_outbox tests.test_celery_workflows tests.test_inference_rollout tests.test_api_inference_production -v` 为 `160/160`，`compileall -q app` 与 `git diff --check` 通过。
+- 当前状态与边界：Task 8 本地实现、回归和复审完成，下一项为 Task 9 通知 API；此结果不替代 Task 11 的真实 PostgreSQL、Redis/Celery/Beat 或受控四通道接收器验证。

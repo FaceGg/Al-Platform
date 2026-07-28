@@ -340,6 +340,10 @@ def _reconcile_outbox_status(
             if row.next_attempt_at is not None
         ]
         outbox.next_attempt_at = min(retry_times) if retry_times else None
+        outbox.last_error_code = next(
+            (row.last_error_code for row in retry_rows if row.last_error_code),
+            None,
+        )
         return outbox.status
     if any(row.status in {"pending", "processing"} for row in deliveries):
         outbox.status = "processing"
@@ -348,11 +352,39 @@ def _reconcile_outbox_status(
     outbox.next_attempt_at = None
     if all(row.status == "sent" for row in deliveries):
         outbox.status = "sent"
+        outbox.last_error_code = None
     elif any(row.status == "dead_letter" for row in deliveries):
         outbox.status = "dead_letter"
+        outbox.last_error_code = next(
+            (
+                row.last_error_code
+                for row in deliveries
+                if row.status == "dead_letter" and row.last_error_code
+            ),
+            None,
+        )
     else:
         outbox.status = "failed"
+        outbox.last_error_code = next(
+            (
+                row.last_error_code
+                for row in deliveries
+                if row.status == "failed" and row.last_error_code
+            ),
+            None,
+        )
     return outbox.status
+
+
+def _lock_outbox_for_reconciliation(
+    db: Session,
+    outbox_id: UUID,
+) -> NotificationOutbox | None:
+    """Serialize PostgreSQL delivery finalizers before deriving outbox state."""
+    query = db.query(NotificationOutbox).filter(NotificationOutbox.id == outbox_id)
+    if _dialect_name(db) == "postgresql":
+        query = query.with_for_update()
+    return query.one_or_none()
 
 
 def _prepare_deliveries(
@@ -586,7 +618,7 @@ def _record_result(
 
     db.expire_all()
     current_delivery = db.get(NotificationDelivery, delivery_id)
-    current_outbox = db.get(NotificationOutbox, outbox_id)
+    current_outbox = _lock_outbox_for_reconciliation(db, outbox_id)
     if current_delivery is None or current_outbox is None:
         db.rollback()
         return "failed"

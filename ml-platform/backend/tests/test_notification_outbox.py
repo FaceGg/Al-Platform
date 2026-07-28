@@ -50,16 +50,18 @@ try:
         _claim_delivery,
         _create_dead_letter_alert,
         _fan_out_deliveries,
+        _lock_outbox_for_reconciliation,
         _record_result,
         claim_outbox,
         deliver_notifications_task,
         execute_notification_delivery,
         next_retry_at,
     )
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
     _claim_delivery = None
     _create_dead_letter_alert = None
     _fan_out_deliveries = None
+    _lock_outbox_for_reconciliation = None
     _record_result = None
     claim_outbox = None
     deliver_notifications_task = None
@@ -575,6 +577,90 @@ class TestNotificationOutbox(unittest.TestCase):
         self.assertIsNone(persisted_delivery.last_error_code)
         self.assertEqual(persisted_outbox.status, "sent")
 
+    def test_reconciliation_locks_the_outbox_row_on_postgresql(self):
+        self.assertIsNotNone(
+            _lock_outbox_for_reconciliation,
+            "outbox reconciliation lock must be available",
+        )
+        outbox = self.create_outbox()
+        query = MagicMock()
+        filtered = query.filter.return_value
+        locked = filtered.with_for_update.return_value
+        locked.one_or_none.return_value = outbox
+        db = MagicMock()
+        db.query.return_value = query
+
+        with patch(
+            "app.tasks.notification_tasks._dialect_name",
+            return_value="postgresql",
+        ):
+            result = _lock_outbox_for_reconciliation(db, outbox.id)
+
+        self.assertIs(result, outbox)
+        filtered.with_for_update.assert_called_once_with()
+        locked.one_or_none.assert_called_once_with()
+
+    def test_mixed_sent_and_retry_results_keep_the_outbox_due(self):
+        self.assertIsNotNone(_record_result, "notification result recorder must be available")
+        endpoint, subscription = self.create_subscription()
+        second_endpoint, second_subscription = self.create_subscription()
+        outbox = self.create_outbox()
+        sent_delivery = NotificationDelivery(
+            outbox_id=outbox.id,
+            subscription_id=subscription.id,
+            endpoint_id=endpoint.id,
+            idempotency_key="mixed-sent-delivery",
+            status="processing",
+            attempts=1,
+            claim_token="sent-worker",
+            claimed_at=datetime(2026, 7, 28, 10, 0, 0),
+        )
+        retry_delivery = NotificationDelivery(
+            outbox_id=outbox.id,
+            subscription_id=second_subscription.id,
+            endpoint_id=second_endpoint.id,
+            idempotency_key="mixed-retry-delivery",
+            status="processing",
+            attempts=1,
+            claim_token="retry-worker",
+            claimed_at=datetime(2026, 7, 28, 10, 0, 0),
+        )
+        self.db.add_all([sent_delivery, retry_delivery])
+        self.db.commit()
+
+        with self.session_factory() as retry_worker:
+            self.assertEqual(
+                _record_result(
+                    retry_worker,
+                    retry_worker.get(NotificationDelivery, retry_delivery.id),
+                    retry_worker.get(NotificationOutbox, outbox.id),
+                    DeliveryResult("retry", "WEBHOOK_TIMEOUT"),
+                    claim_token="retry-worker",
+                    now=datetime(2026, 7, 28, 10, 0, 1),
+                    jitter=0.0,
+                ),
+                "pending",
+            )
+        with self.session_factory() as sent_worker:
+            self.assertEqual(
+                _record_result(
+                    sent_worker,
+                    sent_worker.get(NotificationDelivery, sent_delivery.id),
+                    sent_worker.get(NotificationOutbox, outbox.id),
+                    DeliveryResult("sent"),
+                    claim_token="sent-worker",
+                    now=datetime(2026, 7, 28, 10, 0, 2),
+                    jitter=0.0,
+                ),
+                "pending",
+            )
+
+        self.db.expire_all()
+        persisted = self.db.get(NotificationOutbox, outbox.id)
+        self.assertEqual(persisted.status, "pending")
+        self.assertEqual(persisted.next_attempt_at, datetime(2026, 7, 28, 10, 0, 2))
+        self.assertEqual(persisted.last_error_code, "WEBHOOK_TIMEOUT")
+
     def test_dead_letter_alert_ignores_existing_deduplication_key_conflict(self):
         self.assertIsNotNone(
             _create_dead_letter_alert,
@@ -764,12 +850,12 @@ class TestNotificationOutbox(unittest.TestCase):
                     setup_db.commit()
                     outbox_id = outbox.id
 
-                select_barrier = threading.Barrier(2, timeout=10)
-                seen_fanout_selects = 0
+                insert_barrier = threading.Barrier(2, timeout=10)
+                seen_fanout_inserts = 0
                 listener_lock = threading.Lock()
 
-                @event.listens_for(engine, "after_cursor_execute")
-                def synchronize_unique_check(
+                @event.listens_for(engine, "before_cursor_execute")
+                def synchronize_delivery_insert(
                     _connection,
                     _cursor,
                     statement,
@@ -777,18 +863,15 @@ class TestNotificationOutbox(unittest.TestCase):
                     _context,
                     _executemany,
                 ):
-                    nonlocal seen_fanout_selects
+                    nonlocal seen_fanout_inserts
                     normalized = " ".join(statement.lower().split())
-                    if (
-                        "from notification_deliveries" not in normalized
-                        or "where notification_deliveries.idempotency_key" not in normalized
-                    ):
+                    if not normalized.startswith("insert into notification_deliveries"):
                         return
                     with listener_lock:
-                        seen_fanout_selects += 1
-                        should_wait = seen_fanout_selects <= 2
+                        seen_fanout_inserts += 1
+                        should_wait = seen_fanout_inserts <= 2
                     if should_wait:
-                        select_barrier.wait()
+                        insert_barrier.wait()
 
                 worker_errors = []
                 worker_ids = []
@@ -815,6 +898,7 @@ class TestNotificationOutbox(unittest.TestCase):
                 self.assertFalse(any(worker.is_alive() for worker in workers))
                 self.assertEqual(worker_errors, [])
                 self.assertEqual(len(worker_ids), 2)
+                self.assertEqual(seen_fanout_inserts, 2)
                 with session_factory() as verify_db:
                     self.assertEqual(
                         verify_db.query(NotificationDelivery).filter(
