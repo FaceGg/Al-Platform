@@ -1369,3 +1369,22 @@
 - 验证方式：`tests.test_api_notifications tests.test_notification_channels tests.test_notification_outbox` 为 55/55；原 104 项 notification/access 组合因新增 6 项 API 回归扩展为 110/110，`RUN_PROJECT_ACCESS_INTEGRATION` 未启用的 PostgreSQL 用例按预期 skip 1 项；`C:\Users\17723\miniconda3\python.exe -m compileall -q app` 通过。
 - 影响范围：`app/api/notifications.py`、`app/services/notification_channels.py` 与 `tests/test_api_notifications.py`；未修改 retry 状态机、迁移、Celery 调度或 Webhook provider 协议。
 - 遗留事项：真实 PostgreSQL conflict/upsert、Redis/Celery/Beat 和受控 WeCom/邮件/Webhook 接收器尚未验证；仍属于 Task 11，不能将本地 SQLite 回归描述为生产栈验收。
+
+### 2026-07-28：第 10 周 Task 9 站内通知成员撤销插入边界复审修正
+
+- 当前周次：第 10 周，整体仍为进行中；本项仅修复 Task 9 的站内通知收件人授权竞态，不替代 Task 11 生产栈门禁。
+- 问题现象：worker 先按项目角色解析收件人，随后 `InAppNotificationAdapter` 使用无条件 `INSERT ... VALUES` 写入。成员在解析后、写入前被移除时，仍可能收到新的站内通知。
+- 已验证根因：成员资格只在 selector 层检查，没有作为站内通知持久化语句的条件；确定性去重键只能避免重复，不能授权收件人。
+- 解决方法：SQLite/PostgreSQL 均改为 `INSERT ... SELECT ... WHERE EXISTS`，在同一写入语句中要求目标用户是事件项目 owner 或当前 `ProjectMember`，并保留每个 delivery/recipient 的 SHA-256 去重键与 `ON CONFLICT DO NOTHING`。owner 不要求存在 `ProjectMember`。
+- TDD 与验证：新回归在 `before_cursor_execute` 中恰好于 `in_app_notifications` 插入前撤销成员，旧无条件写入稳定返回 `sent` 并写入一行（RED）；修复后返回 `NOTIFICATION_RECIPIENT_INVALID` 且写入 0 行（GREEN）。`tests.test_notification_channels` 15/15、`tests.test_notification_outbox` 26/26、`tests.test_api_notifications` 15/15、`tests.test_notification_models` 8/8、`python -m compileall -q app` 和 `git diff --check` 均通过。
+- 影响范围：仅通知通道适配器与其回归；未修改成员 selector、Outbox 状态机、迁移、Celery 调度或外部 provider 协议。
+- 预防措施：任何可在异步解析后被撤销的项目授权，必须成为最终持久化 statement 的 predicate；冲突安全去重不能代替授权。SQLite 的插入边界合同不替代 Task 11 的真实 PostgreSQL/Celery/受控接收器验收。
+- 遗留事项：真实 PostgreSQL `INSERT ... SELECT` 并发时序、Redis/Celery/Beat 和四通道受控接收器仍按 Task 11 验收，Week 10 不提前标记完成。
+
+### 2026-07-28：第 10 周 Task 10 前端治理收尾暂停
+
+- 当前状态：按用户要求保存并暂停。Task 10 未完成，Week 10 整体仍为进行中；不得启动 Task 11 或 Task 12，也不得将当前本地进度描述为完整验收。
+- 已保存范围：前端已具备通知中心、项目治理页、端点/订阅基础管理、收件人安全目录、审计与管理员投递分页、项目详情调用者角色传递，以及相关后端授权回归。
+- 已验证问题：`npm test -- --run src/pages/ProjectGovernanceTabs.test.tsx` 运行 11 项，9 项通过、2 项 RED。端点编辑尚不能安全替换 Webhook/邮件/企业微信/站内配置；订阅表尚不向 `notification.manage` 用户显示已配置的角色或安全成员名称。
+- 暂停原因：补齐上述两个闭环后仍需运行前端全量、构建、后端回归和文档验收，无法在本次快速收尾中诚实标记 Task 10 完成。
+- 恢复顺序：先使两条 RED 合同 GREEN，禁止回显存储密钥或历史端点配置；再运行 Task 10 聚焦/全量验证、更新共享经验并提交完成记录。`ModelLibraryPage.test.tsx` 的既有分页 mock 修改不属于本任务，继续保留未提交。

@@ -84,7 +84,10 @@ def get_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return require_project_access(db, project_id, current_user.id, "project.read").project
+    access = require_project_access(db, project_id, current_user.id, "project.read")
+    return ProjectResponse.model_validate(access.project).model_copy(
+        update={"project_role": access.role.value},
+    )
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)

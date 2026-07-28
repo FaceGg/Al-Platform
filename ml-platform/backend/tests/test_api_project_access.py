@@ -202,6 +202,19 @@ class TestProjectRoleResourceAPI(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/projects/{self.project.id}").status_code, 404)
         self.assertEqual(self.client.get(f"/api/workflows/{self.workflow.id}").status_code, 404)
 
+    def test_project_detail_returns_only_callers_resolved_role(self):
+        for role in ("owner", "editor", "operator", "viewer"):
+            with self.subTest(role=role):
+                self._as(role)
+
+                response = self.client.get(f"/api/projects/{self.project.id}")
+
+                self.assertEqual(response.status_code, 200, response.text)
+                payload = response.json()
+                self.assertEqual(payload["project_role"], role)
+                self.assertNotIn("members", payload)
+                self.assertNotIn("member_roles", payload)
+
     def test_only_owner_can_update_project_metadata(self):
         self._as("editor")
         denied = self.client.put(

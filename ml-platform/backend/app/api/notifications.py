@@ -37,6 +37,7 @@ from app.schemas.notifications import (
     NotificationEndpointResponse,
     NotificationEndpointTestResponse,
     NotificationEndpointUpdate,
+    NotificationRecipientDirectory,
     NotificationSubscriptionCreate,
     NotificationSubscriptionList,
     NotificationSubscriptionResponse,
@@ -321,6 +322,47 @@ def _subscription_for_project(
     if subscription is None:
         raise _not_found("NOTIFICATION_SUBSCRIPTION_NOT_FOUND")
     return subscription
+
+
+@router.get(
+    "/api/projects/{project_id}/notification-recipients",
+    response_model=NotificationRecipientDirectory,
+)
+def list_notification_recipients(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    access = _require_project(db, project_id, current_user.id, "notification.manage")
+    owner = db.get(User, access.project.owner_id)
+    items: dict[UUID, dict[str, object]] = {}
+    if owner is not None:
+        items[owner.id] = {
+            "user_id": owner.id,
+            "username": owner.username,
+            "role": "owner",
+        }
+    for member_id, username, role in (
+        db.query(ProjectMember.user_id, User.username, ProjectMember.role)
+        .join(User, User.id == ProjectMember.user_id)
+        .filter(ProjectMember.project_id == project_id)
+        .order_by(User.username, ProjectMember.user_id)
+        .all()
+    ):
+        items.setdefault(
+            member_id,
+            {"user_id": member_id, "username": username, "role": role},
+        )
+    return {
+        "items": sorted(
+            items.values(),
+            key=lambda item: (
+                item["role"] != "owner",
+                str(item["username"]).lower(),
+                str(item["user_id"]),
+            ),
+        )
+    }
 
 
 @router.get(

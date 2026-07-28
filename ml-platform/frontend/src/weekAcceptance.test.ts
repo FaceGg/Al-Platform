@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { translations } from "./i18n";
 
 const weekTestFiles: Record<number, string[]> = {
   1: [
@@ -32,6 +33,12 @@ const weekTestFiles: Record<number, string[]> = {
     "./api/modelRegistry.test.ts",
     "./pages/ModelLibraryPage.test.tsx",
   ],
+  10: [
+    "./api/securityNotifications.test.ts",
+    "./components/NotificationCenter.test.tsx",
+    "./pages/ProjectDetailPage.test.tsx",
+    "./pages/ProjectGovernanceTabs.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(
@@ -46,8 +53,24 @@ describe("frontend acceptance manifest", () => {
   });
 
   it("keeps every completed week represented", () => {
-    for (const week of [1, 2, 3, 4, 6, 8]) {
+    for (const week of [1, 2, 3, 4, 6, 8, 10]) {
       expect(weekTestFiles[week].length).toBeGreaterThan(0);
+    }
+  });
+
+  it("keeps security notification and project governance translations symmetric", () => {
+    const paths = (value: Record<string, unknown>, prefix = ""): string[] => Object.entries(value)
+      .flatMap(([key, child]) => {
+        const path = prefix ? `${prefix}.${key}` : key;
+        return child && typeof child === "object" && !Array.isArray(child)
+          ? paths(child as Record<string, unknown>, path)
+          : [path];
+      })
+      .sort();
+
+    for (const section of ["securityNotifications", "projectGovernance"] as const) {
+      expect(translations.zh[section]).toBeDefined();
+      expect(paths(translations.zh[section])).toEqual(paths(translations.en[section]));
     }
   });
 });

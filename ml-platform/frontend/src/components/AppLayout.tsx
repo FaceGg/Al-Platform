@@ -11,6 +11,7 @@ import {
 import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
+import NotificationCenter from "./NotificationCenter";
 
 const { Header, Sider, Content } = Layout;
 
@@ -156,6 +157,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </Space>
 
             <Space size={12}>
+              <NotificationCenter />
               <Tooltip title="AI智能对话">
                 <Button
                   type="text"

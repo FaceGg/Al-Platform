@@ -178,6 +178,16 @@ class NotificationEndpointList(BaseModel):
     total: int
 
 
+class NotificationRecipientResponse(BaseModel):
+    user_id: UUID
+    username: str
+    role: NotificationRecipientRole
+
+
+class NotificationRecipientDirectory(BaseModel):
+    items: list[NotificationRecipientResponse]
+
+
 class NotificationSubscriptionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

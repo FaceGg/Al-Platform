@@ -276,6 +276,58 @@ class TestNotificationAPI(unittest.TestCase):
         )
         self.assertEqual(admin_hidden.status_code, 404, admin_hidden.text)
 
+    def test_notification_recipient_directory_is_manage_scoped_and_hides_outsiders(self):
+        self._as("editor")
+        members = self.client.get(f"/api/projects/{self.project.id}/members")
+        self.assertEqual(members.status_code, 403, members.text)
+
+        directory = self.client.get(
+            f"/api/projects/{self.project.id}/notification-recipients"
+        )
+        self.assertEqual(directory.status_code, 200, directory.text)
+        items = directory.json()["items"]
+        self.assertEqual(
+            {
+                (item["user_id"], item["username"], item["role"])
+                for item in items
+            },
+            {
+                (str(self.users["owner"].id), self.users["owner"].username, "owner"),
+                (str(self.users["editor"].id), self.users["editor"].username, "editor"),
+                (str(self.users["operator"].id), self.users["operator"].username, "operator"),
+                (str(self.users["viewer"].id), self.users["viewer"].username, "viewer"),
+            },
+        )
+        self.assertTrue(all(set(item) == {"user_id", "username", "role"} for item in items))
+        self.assertNotIn(str(self.users["outsider"].id), {item["user_id"] for item in items})
+
+        selected_editor_id = next(
+            item["user_id"] for item in items if item["role"] == "editor"
+        )
+        created = self.client.post(
+            f"/api/projects/{self.project.id}/notification-endpoints",
+            json={
+                "kind": "in_app",
+                "name": "editor-directory-endpoint",
+                "config": {"recipient_user_ids": [selected_editor_id]},
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+
+        for role in ("operator", "viewer"):
+            with self.subTest(role=role):
+                self._as(role)
+                denied = self.client.get(
+                    f"/api/projects/{self.project.id}/notification-recipients"
+                )
+                self.assertEqual(denied.status_code, 403, denied.text)
+
+        self._as("outsider")
+        hidden = self.client.get(
+            f"/api/projects/{self.project.id}/notification-recipients"
+        )
+        self.assertEqual(hidden.status_code, 404, hidden.text)
+
     def test_endpoint_create_name_conflict_returns_stable_409(self):
         self._create_endpoint("duplicate-endpoint-name")
         conflict = self._request_without_server_exceptions(
