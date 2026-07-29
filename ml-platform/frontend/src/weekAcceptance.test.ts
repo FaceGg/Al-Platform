@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { translations } from "./i18n";
 
@@ -72,5 +74,47 @@ describe("frontend acceptance manifest", () => {
       expect(translations.zh[section]).toBeDefined();
       expect(paths(translations.zh[section])).toEqual(paths(translations.en[section]));
     }
+  });
+
+  it("uses an explicit, overrideable Python command for browser acceptance", () => {
+    const config = readFileSync(resolve(process.cwd(), "playwright.config.ts"), "utf-8");
+    const resolver = readFileSync(
+      resolve(process.cwd(), "e2e", "pythonExecutable.ts"),
+      "utf-8",
+    );
+
+    expect(resolver).toContain("ML_PLATFORM_PYTHON");
+    expect(config).toContain("const pythonCommand");
+    expect(config).toContain("`${pythonCommand} -m uvicorn app.main:app");
+    expect(config).toContain("`${pythonCommand} -m uvicorn app.inference_runtime.app");
+  });
+
+  it("uses one overrideable Python resolver for browser services and fixtures", () => {
+    const config = readFileSync(resolve(process.cwd(), "playwright.config.ts"), "utf-8");
+    const fixture = readFileSync(
+      resolve(process.cwd(), "e2e", "model-inference.spec.ts"),
+      "utf-8",
+    );
+
+    expect(config).toContain('from "./e2e/pythonExecutable"');
+    expect(fixture).toContain('from "./pythonExecutable"');
+    expect(fixture).toContain("resolveE2ePython()");
+    expect(fixture).not.toContain('execFileSync("python"');
+  });
+
+  it("uses an explicit external Week 12 stack without starting local browser services", () => {
+    const config = readFileSync(resolve(process.cwd(), "playwright.config.ts"), "utf-8");
+
+    expect(config).toContain(
+      'const externalAcceptanceBaseUrl = process.env.WEEK12_ACCEPTANCE_BASE_URL?.trim();',
+    );
+    expect(config).toContain(
+      'const useExternalAcceptanceStack = process.env.RUN_WEEK12_BROWSER_ACCEPTANCE === "1"',
+    );
+    expect(config).toContain("webServer: useExternalAcceptanceStack ? undefined : [");
+    expect(config).toContain('outputDir: externalAcceptanceEvidenceDir');
+    expect(config).toContain('trace: useExternalAcceptanceStack ? "on" : "on-first-retry"');
+    expect(config).toContain('const externalAcceptanceReportPath = path.join(');
+    expect(config).toContain('["json", { outputFile: externalAcceptanceReportPath }]');
   });
 });

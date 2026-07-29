@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import re
 from typing import TypeVar
 from urllib.parse import urlsplit
@@ -82,10 +83,15 @@ BodyModel = TypeVar("BodyModel", bound=BaseModel)
 async def _strict_body(request: Request, model_type: type[BodyModel]) -> BodyModel:
     """Keep Pydantic strictness without echoing a rejected credential body."""
     try:
-        payload = await request.json()
+        body = await request.body()
+        if len(body) > _runtime_settings(request).notification_max_payload_bytes:
+            raise HTTPException(413, {"code": "NOTIFICATION_REQUEST_TOO_LARGE"})
+        payload = json.loads(body)
         if not isinstance(payload, dict):
             raise ValueError
         return model_type.model_validate(payload)
+    except HTTPException:
+        raise
     except (TypeError, ValueError, ValidationError):
         raise HTTPException(422, {"code": "NOTIFICATION_REQUEST_INVALID"}) from None
 

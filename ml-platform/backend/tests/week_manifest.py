@@ -92,6 +92,25 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_model_cards",
         "test_api_inference_production",
     ],
+    10: [
+        "test_security_hardening",
+        "test_platform_audit",
+        "test_notification_models",
+        "test_notification_outbox",
+        "test_notification_channels",
+        "test_api_notifications",
+        "test_notification_production_stack",
+    ],
+    11: [
+        "test_week11_12_tools",
+        "test_week11_contracts",
+    ],
+    12: [
+        "test_week12_security_gates",
+        "test_evidence_manifest",
+        "test_acceptance_environment",
+        "test_notification_receiver_acceptance",
+    ],
 }
 
 

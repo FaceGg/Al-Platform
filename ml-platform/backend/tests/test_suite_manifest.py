@@ -41,6 +41,42 @@ class TestSuiteManifest(unittest.TestCase):
         self.assertIn("production inference integration disabled", result.stderr)
         self.assertIn("skipped", result.stderr)
 
+    def test_notification_production_stack_is_explicitly_gated_without_opt_in(self):
+        environment = os.environ.copy()
+        environment.pop("RUN_NOTIFICATION_INTEGRATION", None)
+        backend_root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "unittest",
+                "tests.test_notification_production_stack",
+                "-v",
+            ],
+            cwd=backend_root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("RUN_NOTIFICATION_INTEGRATION is not enabled", result.stderr)
+        self.assertIn("skipped", result.stderr)
+
+    def test_week11_12_modules_are_owned_by_their_delivery_week(self):
+        expected = {
+            11: {"test_week11_12_tools", "test_week11_contracts"},
+            12: {
+                "test_week12_security_gates",
+                "test_evidence_manifest",
+                "test_acceptance_environment",
+            },
+        }
+        for week, modules in expected.items():
+            with self.subTest(week=week):
+                self.assertTrue(modules.issubset(WEEK_TEST_MODULES[week]))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { resolveE2ePython } from "./pythonExecutable";
 
 type SeededInferenceSources = {
   model_library_ids: string[];
@@ -13,7 +14,7 @@ type RolloutFixtureResult = {
 
 function runInferenceFixture<T>(name: string, ...args: string[]): T {
   const script = path.resolve(import.meta.dirname, "fixtures", name);
-  return JSON.parse(execFileSync("python", [script, ...args], {
+  return JSON.parse(execFileSync(resolveE2ePython(), [script, ...args], {
     encoding: "utf-8",
     env: {
       ...process.env,

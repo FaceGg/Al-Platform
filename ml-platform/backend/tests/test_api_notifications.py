@@ -212,6 +212,24 @@ class TestNotificationAPI(unittest.TestCase):
         )
         self.assertNotIn("test-webhook-secret", json.dumps(webhook_audit.changes))
 
+    def test_notification_endpoint_rejects_declared_oversized_json_request(self):
+        payload = json.dumps(
+            {
+                "kind": "in_app",
+                "name": "oversized-json-request",
+                "config": {"recipient_user_ids": [str(self.users["owner"].id)]},
+            },
+        ) + (" " * (self.settings.notification_max_payload_bytes + 1))
+
+        response = self.client.post(
+            f"/api/projects/{self.project.id}/notification-endpoints",
+            content=payload,
+            headers={"Content-Type": "application/json"},
+        )
+
+        self.assertEqual(response.status_code, 413, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "NOTIFICATION_REQUEST_TOO_LARGE")
+
     def test_owner_and_editor_manage_while_other_members_are_read_only(self):
         owner_endpoint = self._create_endpoint("owner-managed")
 

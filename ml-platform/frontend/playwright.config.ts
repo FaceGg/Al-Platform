@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import path from "node:path";
+import { resolveE2ePython } from "./e2e/pythonExecutable";
 
 const frontendDir = import.meta.dirname;
 const backendDir = path.resolve(frontendDir, "../backend");
@@ -7,6 +8,20 @@ const tempTestDir = path.resolve(frontendDir, "../../temp_test");
 const e2eDatabaseUrl = `sqlite:///${path.join(tempTestDir, "playwright_e2e.db").replaceAll("\\", "/")}`;
 const e2eArtifactDir = path.join(tempTestDir, "playwright-artifacts");
 const e2eInferenceSecret = "playwright-inference-secret-at-least-32-bytes";
+const e2eNotificationMasterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+const pythonExecutable = resolveE2ePython();
+const pythonCommand = `"${pythonExecutable.replaceAll('"', '""')}"`;
+const externalAcceptanceBaseUrl = process.env.WEEK12_ACCEPTANCE_BASE_URL?.trim();
+const useExternalAcceptanceStack = process.env.RUN_WEEK12_BROWSER_ACCEPTANCE === "1";
+const externalAcceptanceEvidenceDir = path.join(tempTestDir, "week11-12", "playwright");
+const externalAcceptanceReportPath = path.join(
+  externalAcceptanceEvidenceDir,
+  "playwright-report.json",
+);
+
+if (useExternalAcceptanceStack && !externalAcceptanceBaseUrl) {
+  throw new Error("WEEK12_ACCEPTANCE_BASE_URL is required for external Week 12 acceptance");
+}
 
 process.env.DATABASE_URL = e2eDatabaseUrl;
 process.env.ARTIFACT_STORAGE_DIR = e2eArtifactDir;
@@ -18,17 +33,19 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? "github" : "list",
-  outputDir: path.join(tempTestDir, "playwright-test-results"),
+  reporter: useExternalAcceptanceStack
+    ? [["list"], ["json", { outputFile: externalAcceptanceReportPath }]]
+    : process.env.CI ? "github" : "list",
+  outputDir: externalAcceptanceEvidenceDir,
   use: {
-    baseURL: "http://127.0.0.1:5173",
-    trace: "on-first-retry",
+    baseURL: externalAcceptanceBaseUrl || "http://127.0.0.1:5173",
+    trace: useExternalAcceptanceStack ? "on" : "on-first-retry",
     screenshot: "only-on-failure",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  webServer: [
+  webServer: useExternalAcceptanceStack ? undefined : [
     {
-      command: "python -m uvicorn app.main:app --host 127.0.0.1 --port 8000",
+      command: `${pythonCommand} -m uvicorn app.main:app --host 127.0.0.1 --port 8000`,
       cwd: backendDir,
       url: "http://127.0.0.1:8000/api/health",
       reuseExistingServer: !process.env.CI,
@@ -39,10 +56,11 @@ export default defineConfig({
         ARTIFACT_STORAGE_DIR: e2eArtifactDir,
         INFERENCE_RUNTIME_URL: "http://127.0.0.1:7000",
         INFERENCE_INTERNAL_SECRET: e2eInferenceSecret,
+        NOTIFICATION_MASTER_KEY: e2eNotificationMasterKey,
       },
     },
     {
-      command: "python -m uvicorn app.inference_runtime.app:build_runtime_app --factory --host 127.0.0.1 --port 7000 --workers 1",
+      command: `${pythonCommand} -m uvicorn app.inference_runtime.app:build_runtime_app --factory --host 127.0.0.1 --port 7000 --workers 1`,
       cwd: backendDir,
       url: "http://127.0.0.1:7000/health",
       reuseExistingServer: !process.env.CI,

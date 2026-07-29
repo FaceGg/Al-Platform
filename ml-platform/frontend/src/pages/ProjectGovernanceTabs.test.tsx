@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { App as AntApp } from "antd";
 import { LangProvider } from "../i18n";
 import ProjectGovernanceTabs from "./ProjectGovernanceTabs";
 
@@ -54,9 +55,9 @@ describe("ProjectGovernanceTabs", () => {
 
   it("keeps notification write controls hidden from viewers and never renders endpoint configuration", async () => {
     render(
-      <LangProvider>
+      <AntApp><LangProvider>
         <ProjectGovernanceTabs projectId="project-1" projectRole="viewer" />
-      </LangProvider>,
+      </LangProvider></AntApp>,
     );
 
     fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
@@ -69,9 +70,9 @@ describe("ProjectGovernanceTabs", () => {
 
   it("shows notification configuration commands for owners", async () => {
     render(
-      <LangProvider>
+      <AntApp><LangProvider>
         <ProjectGovernanceTabs projectId="project-1" projectRole="owner" />
-      </LangProvider>,
+      </LangProvider></AntApp>,
     );
 
     fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
@@ -98,7 +99,7 @@ describe("ProjectGovernanceTabs", () => {
       offset: 0,
       limit: 50,
     });
-    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="owner" /></LangProvider>);
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="owner" /></LangProvider></AntApp>);
 
     fireEvent.click(screen.getByRole("tab", { name: "Audit" }));
     await screen.findByText("project.update");
@@ -126,7 +127,7 @@ describe("ProjectGovernanceTabs", () => {
       offset: 0,
       limit: 50,
     });
-    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="owner" isPlatformAdmin /></LangProvider>);
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="owner" isPlatformAdmin /></LangProvider></AntApp>);
 
     fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
     await screen.findAllByText("receiver.example.invalid");
@@ -138,7 +139,7 @@ describe("ProjectGovernanceTabs", () => {
   });
 
   it("lets an editor create an in-app endpoint from the recipient selector", async () => {
-    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider>);
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider></AntApp>);
 
     fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add endpoint" }));
@@ -174,7 +175,7 @@ describe("ProjectGovernanceTabs", () => {
       }],
       total: 1,
     });
-    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider>);
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider></AntApp>);
 
     fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit endpoint" }));
@@ -214,7 +215,7 @@ describe("ProjectGovernanceTabs", () => {
       }],
       total: 1,
     });
-    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider>);
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider></AntApp>);
 
     fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit subscription" }));
@@ -235,7 +236,7 @@ describe("ProjectGovernanceTabs", () => {
   });
 
   it("lets an editor replace an endpoint configuration without revealing the stored secret", async () => {
-    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider>);
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider></AntApp>);
 
     fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit endpoint" }));
@@ -273,7 +274,7 @@ describe("ProjectGovernanceTabs", () => {
       }],
       total: 1,
     });
-    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider>);
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider></AntApp>);
 
     fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit endpoint" }));
@@ -309,7 +310,7 @@ describe("ProjectGovernanceTabs", () => {
       }],
       total: 1,
     });
-    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider>);
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider></AntApp>);
 
     fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit endpoint" }));
@@ -348,7 +349,7 @@ describe("ProjectGovernanceTabs", () => {
       }],
       total: 1,
     });
-    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider>);
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider></AntApp>);
 
     fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit endpoint" }));
@@ -385,7 +386,7 @@ describe("ProjectGovernanceTabs", () => {
       }],
       total: 1,
     });
-    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider>);
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider></AntApp>);
 
     fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
 
@@ -394,7 +395,7 @@ describe("ProjectGovernanceTabs", () => {
   });
 
   it("shows the specific invalid headers message for malformed webhook JSON", async () => {
-    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider>);
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider></AntApp>);
 
     fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add endpoint" }));
@@ -405,6 +406,28 @@ describe("ProjectGovernanceTabs", () => {
 
     expect(await screen.findByText("Headers must be a JSON object")).toBeVisible();
     expect(governanceMocks.createEndpoint).not.toHaveBeenCalled();
+  });
+
+  it("uses the configured message context for endpoint test feedback", async () => {
+    governanceMocks.testEndpoint.mockResolvedValue({ status: "sent", error_code: null });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      render(
+        <AntApp>
+          <LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="owner" /></LangProvider>
+        </AntApp>,
+      );
+
+      fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Test endpoint" }));
+      await waitFor(() => expect(governanceMocks.testEndpoint).toHaveBeenCalledWith("project-1", "endpoint-1"));
+
+      expect(consoleError.mock.calls.flat().join(" ")).not.toContain(
+        "Static function can not consume context",
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("localizes audit, severity, and delivery state labels in Chinese", async () => {
@@ -457,7 +480,7 @@ describe("ProjectGovernanceTabs", () => {
       offset: 0,
       limit: 50,
     });
-    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="owner" isPlatformAdmin /></LangProvider>);
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="owner" isPlatformAdmin /></LangProvider></AntApp>);
 
     fireEvent.click(screen.getByRole("tab", { name: "审计" }));
     expect(await screen.findByText("失败")).toBeVisible();

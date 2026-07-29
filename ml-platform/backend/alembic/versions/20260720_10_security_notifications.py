@@ -10,7 +10,41 @@ branch_labels = None
 depends_on = None
 
 
+def _set_alembic_version_column_length(*, existing_length: int, length: int) -> None:
+    if op.get_bind().dialect.name == "sqlite":
+        with op.batch_alter_table("alembic_version") as batch_op:
+            batch_op.alter_column(
+                "version_num",
+                existing_type=sa.String(length=existing_length),
+                type_=sa.String(length=length),
+                existing_nullable=False,
+            )
+        return
+
+    op.alter_column(
+        "alembic_version",
+        "version_num",
+        existing_type=sa.String(length=existing_length),
+        type_=sa.String(length=length),
+        existing_nullable=False,
+    )
+
+
+def _restore_alembic_version_column_after_downgrade(*, ctx, step, heads, run_args) -> None:
+    if (
+        step.is_upgrade
+        or step.up_revision_id != revision
+        or step.down_revision_ids != (down_revision,)
+        or set(heads) != {down_revision}
+    ):
+        return
+    _set_alembic_version_column_length(existing_length=64, length=32)
+
+
 def upgrade() -> None:
+    # Alembic creates this table with VARCHAR(32), but this revision is 34 chars.
+    _set_alembic_version_column_length(existing_length=32, length=64)
+
     op.create_table(
         "platform_audit_events",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -332,3 +366,8 @@ def downgrade() -> None:
     )
     op.drop_index("ix_platform_audit_created", table_name="platform_audit_events")
     op.drop_table("platform_audit_events")
+
+    migration_context = op.get_context()
+    callbacks = list(migration_context.on_version_apply_callbacks)
+    callbacks.append(_restore_alembic_version_column_after_downgrade)
+    migration_context.on_version_apply_callbacks = callbacks

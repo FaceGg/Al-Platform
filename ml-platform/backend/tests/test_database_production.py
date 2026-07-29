@@ -414,6 +414,63 @@ class TestAlembicBaseline(TestCase):
             finally:
                 db_engine.dispose()
 
+    def test_notification_revision_expands_alembic_version_column(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "20260720_09_production_inference")
+                command.upgrade(config, HEAD_REVISION)
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                version_column = next(
+                    column
+                    for column in inspect(db_engine).get_columns("alembic_version")
+                    if column["name"] == "version_num"
+                )
+                with db_engine.connect() as connection:
+                    revision = connection.scalar(
+                        text("SELECT version_num FROM alembic_version")
+                    )
+                self.assertEqual(version_column["type"].length, 64)
+                self.assertEqual(revision, HEAD_REVISION)
+            finally:
+                db_engine.dispose()
+
+    def test_notification_revision_downgrade_restores_alembic_version_column(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "20260720_09_production_inference")
+                command.upgrade(config, HEAD_REVISION)
+                command.downgrade(config, "20260720_09_production_inference")
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                version_column = next(
+                    column
+                    for column in inspect(db_engine).get_columns("alembic_version")
+                    if column["name"] == "version_num"
+                )
+                with db_engine.connect() as connection:
+                    revision = connection.scalar(
+                        text("SELECT version_num FROM alembic_version")
+                    )
+                self.assertEqual(version_column["type"].length, 32)
+                self.assertEqual(revision, "20260720_09_production_inference")
+            finally:
+                db_engine.dispose()
+
     def test_production_inference_revision_backfills_legacy_registry_rows(self):
         TEMP_ROOT.mkdir(parents=True, exist_ok=True)
         with _TemporaryDatabase() as database_url:

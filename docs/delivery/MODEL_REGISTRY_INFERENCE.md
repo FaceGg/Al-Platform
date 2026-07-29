@@ -40,7 +40,7 @@
 
 ## 生产验证与排障
 
-- `docker compose config --quiet` 验证必填 secret 与内部依赖。
+- `docker compose config -q` 验证必填 secret 与内部依赖。
 - `docker compose build inference-runtime` 必须显示阿里云 PyPI 源并以非 root 用户运行。
 - `RUN_INFERENCE_INTEGRATION=1 python -m unittest tests.test_inference_production_stack -v` 只在隔离 PostgreSQL/MinIO 项目执行。
 - 失败证据可收集 backend、scheduler、inference-runtime 日志；先替换 secret，再扫描原值，禁止上传未脱敏日志。

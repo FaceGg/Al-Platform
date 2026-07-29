@@ -16,7 +16,7 @@ import {
   Tag,
   Tooltip,
   Typography,
-  message,
+  App as AntApp,
 } from "antd";
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined, SendOutlined } from "@ant-design/icons";
 import {
@@ -224,6 +224,7 @@ function NotificationSettingsPanel({
   canManage: boolean;
   isPlatformAdmin: boolean;
 }) {
+  const { message } = AntApp.useApp();
   const { t } = useI18n();
   const copy = t.securityNotifications;
   const [endpoints, setEndpoints] = useState<NotificationEndpoint[]>([]);
