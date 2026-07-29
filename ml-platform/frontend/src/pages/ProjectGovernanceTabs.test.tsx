@@ -258,6 +258,116 @@ describe("ProjectGovernanceTabs", () => {
     ));
   });
 
+  it("keeps the in-app form when replacing an in-app endpoint configuration", async () => {
+    governanceMocks.listEndpoints.mockResolvedValue({
+      items: [{
+        id: "endpoint-1",
+        project_id: "project-1",
+        kind: "in_app",
+        name: "Operations inbox",
+        destination_hint: "in-app recipients",
+        enabled: true,
+        created_by_id: "owner-1",
+        created_at: null,
+        updated_at: null,
+      }],
+      total: 1,
+    });
+    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider>);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit endpoint" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Replace configuration" }));
+
+    expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole("combobox"));
+    fireEvent.click(await screen.findByText("editor-user (Editor)"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(governanceMocks.updateEndpoint).toHaveBeenCalledWith(
+      "project-1",
+      "endpoint-1",
+      {
+        name: "Operations inbox",
+        config: { recipient_user_ids: ["editor-1"] },
+      },
+    ));
+  });
+
+  it("keeps the email form when replacing an email endpoint configuration", async () => {
+    governanceMocks.listEndpoints.mockResolvedValue({
+      items: [{
+        id: "endpoint-1",
+        project_id: "project-1",
+        kind: "email",
+        name: "Operations email",
+        destination_hint: "email recipients",
+        enabled: true,
+        created_by_id: "owner-1",
+        created_at: null,
+        updated_at: null,
+      }],
+      total: 1,
+    });
+    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider>);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit endpoint" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Replace configuration" }));
+
+    fireEvent.change(screen.getByLabelText("Recipients"), { target: { value: "ops@example.invalid" } });
+    fireEvent.change(screen.getByLabelText("Cc recipients"), { target: { value: "backup@example.invalid" } });
+    expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(governanceMocks.updateEndpoint).toHaveBeenCalledWith(
+      "project-1",
+      "endpoint-1",
+      {
+        name: "Operations email",
+        config: {
+          to: ["ops@example.invalid"],
+          cc: ["backup@example.invalid"],
+        },
+      },
+    ));
+  });
+
+  it("keeps the WeCom form when replacing a WeCom endpoint configuration", async () => {
+    governanceMocks.listEndpoints.mockResolvedValue({
+      items: [{
+        id: "endpoint-1",
+        project_id: "project-1",
+        kind: "wecom",
+        name: "Operations WeCom",
+        destination_hint: "wecom.example.invalid",
+        enabled: true,
+        created_by_id: "owner-1",
+        created_at: null,
+        updated_at: null,
+      }],
+      total: 1,
+    });
+    render(<LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider>);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit endpoint" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Replace configuration" }));
+
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send" } });
+    expect(screen.queryByLabelText("Custom headers JSON")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(governanceMocks.updateEndpoint).toHaveBeenCalledWith(
+      "project-1",
+      "endpoint-1",
+      {
+        name: "Operations WeCom",
+        config: { url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send" },
+      },
+    ));
+  });
+
   it("shows configured subscription recipients to notification managers", async () => {
     governanceMocks.listSubscriptions.mockResolvedValue({
       items: [{

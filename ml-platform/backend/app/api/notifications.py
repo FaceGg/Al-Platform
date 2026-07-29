@@ -54,7 +54,7 @@ from app.services.notification_channels import (
 )
 from app.services.notification_crypto import encrypt_config
 from app.services.platform_audit import PlatformAuditIntent, record_platform_event
-from app.services.project_access import ProjectAccessService
+from app.services.project_access import ProjectAccessService, ProjectRole
 from app.services.webhook_security import (
     WebhookSecurityError,
     validate_wecom_url,
@@ -154,7 +154,11 @@ def _endpoint_response(endpoint: NotificationEndpoint) -> dict[str, object]:
     }
 
 
-def _subscription_response(subscription: NotificationSubscription) -> dict[str, object]:
+def _subscription_response(
+    subscription: NotificationSubscription,
+    *,
+    include_recipient_user_ids: bool = True,
+) -> dict[str, object]:
     return {
         "id": subscription.id,
         "project_id": subscription.project_id,
@@ -162,7 +166,9 @@ def _subscription_response(subscription: NotificationSubscription) -> dict[str, 
         "event_types": subscription.event_types,
         "minimum_severity": subscription.minimum_severity,
         "recipient_roles": subscription.recipient_roles,
-        "recipient_user_ids": subscription.recipient_user_ids,
+        "recipient_user_ids": (
+            subscription.recipient_user_ids if include_recipient_user_ids else []
+        ),
         "enabled": subscription.enabled,
         "created_by_id": subscription.created_by_id,
         "created_at": subscription.created_at,
@@ -613,12 +619,22 @@ def list_notification_subscriptions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_project(db, project_id, current_user.id, "notification.read")
+    access = _require_project(db, project_id, current_user.id, "notification.read")
     query = db.query(NotificationSubscription).filter(
         NotificationSubscription.project_id == project_id
     )
     items = query.order_by(NotificationSubscription.created_at, NotificationSubscription.id).all()
-    return {"items": [_subscription_response(item) for item in items], "total": len(items)}
+    include_recipient_user_ids = access.role in {ProjectRole.OWNER, ProjectRole.EDITOR}
+    return {
+        "items": [
+            _subscription_response(
+                item,
+                include_recipient_user_ids=include_recipient_user_ids,
+            )
+            for item in items
+        ],
+        "total": len(items),
+    }
 
 
 @router.post(

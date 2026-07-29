@@ -428,6 +428,47 @@ class TestNotificationAPI(unittest.TestCase):
             "notification.subscription.delete",
         }.issubset(subscription_actions))
 
+    def test_subscription_recipient_ids_are_manage_scoped(self):
+        endpoint = self._create_endpoint("recipient-privacy-endpoint")
+        created = self.client.post(
+            f"/api/projects/{self.project.id}/notification-subscriptions",
+            json={
+                "endpoint_id": endpoint["id"],
+                "event_types": ["inference.rollout.failed"],
+                "recipient_user_ids": [str(self.users["editor"].id)],
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        created_id = created.json()["id"]
+
+        for role in ("operator", "viewer"):
+            with self.subTest(role=role):
+                self._as(role)
+                response = self.client.get(
+                    f"/api/projects/{self.project.id}/notification-subscriptions"
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                subscription = next(
+                    item for item in response.json()["items"] if item["id"] == created_id
+                )
+                self.assertEqual(subscription["recipient_user_ids"], [])
+                self.assertNotIn(str(self.users["editor"].id), response.text)
+
+        self._as("editor")
+        manager_response = self.client.get(
+            f"/api/projects/{self.project.id}/notification-subscriptions"
+        )
+        self.assertEqual(manager_response.status_code, 200, manager_response.text)
+        manager_subscription = next(
+            item
+            for item in manager_response.json()["items"]
+            if item["id"] == created_id
+        )
+        self.assertEqual(
+            manager_subscription["recipient_user_ids"],
+            [str(self.users["editor"].id)],
+        )
+
     def test_external_subscriptions_do_not_require_in_app_recipient_selectors(self):
         with patch(
             "app.services.webhook_security._resolve_host",

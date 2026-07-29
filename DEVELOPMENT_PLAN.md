@@ -1388,3 +1388,24 @@
 - 已验证问题：`npm test -- --run src/pages/ProjectGovernanceTabs.test.tsx` 运行 11 项，9 项通过、2 项 RED。端点编辑尚不能安全替换 Webhook/邮件/企业微信/站内配置；订阅表尚不向 `notification.manage` 用户显示已配置的角色或安全成员名称。
 - 暂停原因：补齐上述两个闭环后仍需运行前端全量、构建、后端回归和文档验收，无法在本次快速收尾中诚实标记 Task 10 完成。
 - 恢复顺序：先使两条 RED 合同 GREEN，禁止回显存储密钥或历史端点配置；再运行 Task 10 聚焦/全量验证、更新共享经验并提交完成记录。`ModelLibraryPage.test.tsx` 的既有分页 mock 修改不属于本任务，继续保留未提交。
+
+### 2026-07-29：第 10 周 Task 10 前端治理与通知体验完成
+
+- 当前状态：Task 10 已完成本地实现与自动化验证；Week 10 整体仍为进行中，Task 11 的 Chromium 与真实生产栈验收尚未开始。
+- 开发内容：端点编辑支持安全重配开关；仅在管理员主动开启后显示空白的同通道配置表单，并以 `{ name, config }` 更新。订阅表为 owner/editor 显示收件角色和授权收件人目录中的用户名；只读角色不获取该列或目录。
+- 问题现象：原有端点编辑只能重命名，无法更新通道配置；订阅虽保存 `recipient_roles` 和 `recipient_user_ids`，管理员表格无法确认目标收件人。
+- 已验证根因：编辑弹窗没有保存 endpoint `kind`、重配状态或配置提交路径；订阅表没有消费已授权目录映射。直接拼接角色与用户名还会使可访问文本查询和扫描不稳定。
+- 解决方法：编辑启动时重置所有表单字段，仅保留端点名称、种类和非敏感默认值；`replace_config` 开关未开启时只提交名称，开启后才根据安全空表单构建 config。订阅收件人按独立 Tag 渲染角色和目录用户名，找不到目录项时不泄露原始用户 ID。
+- 验证方式：先复现 `ProjectGovernanceTabs` 11 项中的 2 项 RED；修复后该模块 `11/11`、Task 10 前端聚焦 `22/22`、前端全量 `82/82`、`npm run build`、后端 `tests.test_api_notifications tests.test_api_project_access` `32/32`、`compileall -q app` 与 `git diff --check` 全部通过。
+- 遗留事项：Task 11 仍需实现并执行 Chromium 项目治理流、受控四通道接收器、PostgreSQL/Redis/Celery/Beat 生产栈测试和 Week 10 manifest 注册；不得以本地单元/API 验证替代这些门禁。
+- 预防措施：安全端点的修改 UI 必须把“重命名”和“重录凭据”分为显式操作，且任何编辑会话先清空非公开字段；目录受限的收件人展示必须只使用已授权映射，并保持每个可扫描身份为独立可访问节点。
+
+### 2026-07-29：第 10 周 Task 10 复核修正与本地门禁完成
+
+- 当前状态：Task 10 已完成本地实现、复核、文档和自动化门禁；第 10 周整体仍为进行中，Task 11 的 Chromium、真实生产栈和 Week 10 manifest 尚未完成。
+- 复核修正：编辑端点从 `editingEndpoint.kind` 派生真实通道，避免 `in_app`、`email`、`wecom` 重配时回退为 `webhook`；只读订阅 API 对 operator/viewer 返回空 `recipient_user_ids`，owner/editor 才能读取管理范围内的 selector。
+- 测试修正：共享 SQLite fixture 的订阅回归按本次创建的 subscription ID 断言，避免历史记录改变 `items[0]`；Ant Design `Select` 的透明 search input 不再使用错误的 `toBeVisible()` 断言，改由无 URL 字段、下拉选项和最终 API payload 验证 in-app 分支。
+- 验证方式：`ProjectGovernanceTabs` 14/14；Task 10 前端组合 6 文件、25/25；前端全量 23 文件、85/85；`npm run build` 成功；通知/项目访问后端 33/33；`compileall -q app` 和 `git diff --check` 通过。
+- 影响范围：`ProjectGovernanceTabs` 编辑/订阅 UI、通知订阅列表 DTO、对应回归和本地开发记录；未泄露历史密钥或只读用户原始收件人 ID。
+- 未完成与边界：Task 11 仍需注册 Week 10 模块、执行 Chromium 治理流、PostgreSQL/Redis/Celery/Beat 生产测试和四通道受控接收器；Task 12 及第 11-12 周最终工具依赖这些门禁，不能提前标记完成。
+- 预防措施：敏感编辑回归必须覆盖每种通道的 `kind` 保真；API 脱敏必须在服务端执行而非依赖前端隐藏列；共享 append-only fixture 断言必须按完整资源身份定位；Ant Design 测试断言可见业务行为，不断言内部透明输入。

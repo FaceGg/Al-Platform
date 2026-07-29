@@ -43,6 +43,7 @@ interface ProjectGovernanceTabsProps {
 interface EndpointFormValues {
   name: string;
   kind?: NotificationEndpointKind;
+  replace_config?: boolean;
   recipient_user_ids?: string[];
   to?: string;
   cc?: string;
@@ -238,7 +239,9 @@ function NotificationSettingsPanel({
   const [editingSubscription, setEditingSubscription] = useState<NotificationSubscription | null>(null);
   const [endpointForm] = Form.useForm<EndpointFormValues>();
   const [subscriptionForm] = Form.useForm<SubscriptionFormValues>();
-  const endpointKind = Form.useWatch("kind", endpointForm) || "webhook";
+  const selectedEndpointKind = Form.useWatch("kind", endpointForm);
+  const endpointKind = editingEndpoint?.kind || selectedEndpointKind || "webhook";
+  const replaceEndpointConfiguration = Form.useWatch("replace_config", endpointForm) === true;
 
   const load = useCallback(async (deliveryOffset = 0, deliveryLimit = PAGE_SIZE) => {
     setLoading(true);
@@ -287,7 +290,12 @@ function NotificationSettingsPanel({
   const saveEndpoint = async (values: EndpointFormValues) => {
     try {
       if (editingEndpoint) {
-        await notificationsApi.updateEndpoint(projectId, editingEndpoint.id, { name: values.name.trim() });
+        await notificationsApi.updateEndpoint(projectId, editingEndpoint.id, {
+          name: values.name.trim(),
+          ...(values.replace_config
+            ? { config: endpointPayload({ ...values, kind: editingEndpoint.kind }).config }
+            : {}),
+        });
       } else {
         await notificationsApi.createEndpoint(projectId, endpointPayload(values));
       }
@@ -347,13 +355,31 @@ function NotificationSettingsPanel({
   const openEndpointCreate = () => {
     setEditingEndpoint(null);
     endpointForm.resetFields();
+    endpointForm.setFieldsValue({ kind: "webhook", signature_mode: "none", replace_config: false });
     setEndpointModalOpen(true);
   };
 
   const openEndpointEdit = (endpoint: NotificationEndpoint) => {
     setEditingEndpoint(endpoint);
-    endpointForm.setFieldsValue({ name: endpoint.name });
+    endpointForm.resetFields();
+    endpointForm.setFieldsValue({
+      name: endpoint.name,
+      kind: endpoint.kind,
+      signature_mode: "none",
+      replace_config: false,
+    });
     setEndpointModalOpen(true);
+  };
+
+  const subscriptionRecipients = (subscription: NotificationSubscription) => {
+    const usernames = subscription.recipient_user_ids
+      .map((userId) => recipients.find((recipient) => recipient.user_id === userId)?.username)
+      .filter((username): username is string => Boolean(username));
+    if (subscription.recipient_roles.length === 0 && usernames.length === 0) return "-";
+    return <Space size={[4, 4]} wrap>
+      {subscription.recipient_roles.map((role) => <Tag key={`role-${role}`}>{t.modelRegistry[role]}</Tag>)}
+      {usernames.map((username) => <Tag key={`user-${username}`}>{username}</Tag>)}
+    </Space>;
   };
 
   const openSubscriptionCreate = () => {
@@ -479,6 +505,10 @@ function NotificationSettingsPanel({
             dataIndex: "minimum_severity",
             render: (severity: string) => <Tag>{stateLabel(copy.severityLabels as Record<string, string>, severity)}</Tag>,
           },
+          ...(canManage ? [{
+            title: copy.recipients,
+            render: (_: unknown, subscription: NotificationSubscription) => subscriptionRecipients(subscription),
+          }] : []),
           {
             title: copy.status,
             dataIndex: "enabled",
@@ -542,9 +572,11 @@ function NotificationSettingsPanel({
       onOk={() => endpointForm.submit()}
       destroyOnHidden
     >
-      <Form<EndpointFormValues> form={endpointForm} layout="vertical" initialValues={{ kind: "webhook", signature_mode: "none" }} onFinish={saveEndpoint}>
+      <Form<EndpointFormValues> form={endpointForm} layout="vertical" initialValues={{ kind: "webhook", signature_mode: "none", replace_config: false }} onFinish={saveEndpoint}>
         <Form.Item name="name" label={copy.endpointName} rules={[{ required: true }]}><Input /></Form.Item>
-        {!editingEndpoint ? <>
+        {editingEndpoint ? <Form.Item name="replace_config" label={copy.replaceConfiguration} valuePropName="checked"><Switch aria-label={copy.replaceConfiguration} /></Form.Item> : null}
+        {!editingEndpoint || replaceEndpointConfiguration ? <>
+          {!editingEndpoint ? <>
           <Form.Item name="kind" label={copy.channel} rules={[{ required: true }]}>
             <Select options={[
               { value: "in_app", label: copy.inApp },
@@ -553,6 +585,7 @@ function NotificationSettingsPanel({
               { value: "webhook", label: copy.webhook },
             ]} />
           </Form.Item>
+          </> : null}
           {endpointKind === "in_app" ? <Form.Item name="recipient_user_ids" label={copy.recipientUsers} rules={[{ required: true }]}><Select mode="multiple" options={recipientOptions} /></Form.Item> : null}
           {endpointKind === "email" ? <>
             <Form.Item name="to" label={copy.recipients} rules={[{ required: true }]}><Input /></Form.Item>
