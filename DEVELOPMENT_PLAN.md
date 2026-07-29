@@ -1418,3 +1418,9 @@
 - 验证方式：新增目录占用合同先 RED 为 `PermissionError`，最小修复后 GREEN；`tests.test_week11_12_tools` 为 87/87，`UpgradeFixtureTests` 为 11/11，冻结 API 契约为 5/5，安全门禁为 26/26，环境清单为 1/1，manifest/CI 合同为 26/26；`compileall -q tools tests` 与 `git diff --check` 通过（仅现有 CRLF 提示）。
 - WSL 证据：Docker 29.6.2 / Compose 5.3.1 的独立项目完成迁移 head/check、实验 1/1、推理 1/1、站内/企业微信/邮件/Webhook 通知 6/6，以及 Redis 失效关闭 1/1；退出后确认对应容器、volume 和 network 均已清理。
 - 未完成与风险：当前 Docker 主机为 22 vCPU / 16.5 GiB，不符合固定 4 vCPU / 8 GiB 三轮性能基线，不能输出 Week 11 性能结论；真实 N-1 数据库升级、完整 Chromium 四角色验收、最终证据 manifest 和远程 GitHub Actions 仍是未完成门禁。
+
+### 2026-07-29：第 12 周备份回执来源约束待修复
+
+- 当前状态：暂停前审计发现新的安全门禁；未修改实现，不能将备份恢复验收标记为完整。
+- 风险：`manifest.json`、pending/final 回执和证据枚举仍以 `Path.is_file()`/直接路径写入处理；有效符号链接、Windows reparse point 或同卷硬链接可使签名证据读取或写入落在回执根目录外。
+- 恢复顺序：集中以 `lstat()` 拒绝链接/reparse 证据，采用根目录内临时文件加原子替换写入，并补充外部 sentinel、有效链接回执和同卷硬链接回归；完成后重新执行 `tests.test_week11_12_tools` 及相关安全门禁。
