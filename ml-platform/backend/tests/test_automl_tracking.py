@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 import uuid
 from contextlib import contextmanager
@@ -13,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.auth import create_access_token
+from app.api.training import get_automl_dispatcher
 from app.database import Base, get_db
 from app.main import app
 from app.models.experiment import Experiment
@@ -27,6 +29,7 @@ from app.services.automl_execution import (
 )
 from app.services.experiment_tracking import TrackedRun
 from app.tasks.celery_app import celery_app
+from app.tasks.training_tasks import LocalTrainingDispatcher
 
 
 class FailingEstimator:
@@ -224,6 +227,11 @@ class TestAutoMLTracking(unittest.TestCase):
             self.assertEqual(job.status, "completed")
             self.assertEqual(model.model_artifact_id, job.model_artifact_id)
             self.assertEqual(model.dataset_artifact_id, self.dataset_id)
+            self.assertEqual(job.metrics["best_model"]["name"], "logistic")
+            self.assertEqual(
+                [result["name"] for result in job.metrics["all_results"]],
+                ["logistic"],
+            )
 
     def test_all_failed_marks_parent_and_job_failed(self):
         job_id = self.create_job()
@@ -327,6 +335,37 @@ class TestAutoMLAPI(unittest.TestCase):
         self.assertEqual(response.json()["status"], "queued")
         self.assertEqual(self.dispatcher.enqueued, [response.json()["job_id"]])
 
+    def test_deferred_local_dispatch_starts_after_queue_commit(self):
+        class DeferredDispatcher(FakeDispatcher):
+            def __init__(self):
+                super().__init__()
+                self.observed_status = None
+
+            def start(self, task_id):
+                with TestAutoMLAPI.Session() as db:
+                    job = db.query(TrainingJob).filter(
+                        TrainingJob.id == uuid.UUID(self.enqueued[0]),
+                    ).one()
+                    self.observed_status = (job.status, job.task_id, task_id)
+
+        dispatcher = DeferredDispatcher()
+        app.state.automl_dispatcher = dispatcher
+        try:
+            response = self.client.post("/api/training/automl/run", json={
+                "project_id": str(self.project_id),
+                "experiment_id": str(self.experiment_id),
+                "dataset_artifact_id": str(self.dataset_id),
+                "target_column": "quality",
+            }, headers=self.headers)
+        finally:
+            app.state.automl_dispatcher = self.dispatcher
+
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(
+            dispatcher.observed_status,
+            ("queued", "automl-task-1", "automl-task-1"),
+        )
+
     def test_automl_budget_is_accepted_and_persisted(self):
         response = self.client.post("/api/training/automl/run", json={
             "project_id": str(self.project_id),
@@ -342,6 +381,46 @@ class TestAutoMLAPI(unittest.TestCase):
                 TrainingJob.id == uuid.UUID(response.json()["job_id"])
             ).one()
             self.assertEqual(job.params["time_budget"], 60)
+
+
+class TestAutoMLDispatcherSelection(unittest.TestCase):
+    def test_local_task_backend_uses_local_dispatcher(self):
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    settings=SimpleNamespace(task_backend="local"),
+                ),
+            ),
+        )
+
+        dispatcher = get_automl_dispatcher(request)
+
+        self.assertEqual(type(dispatcher).__name__, "LocalTrainingDispatcher")
+
+    def test_missing_app_settings_uses_default_local_dispatcher(self):
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+
+        dispatcher = get_automl_dispatcher(request)
+
+        self.assertEqual(type(dispatcher).__name__, "LocalTrainingDispatcher")
+
+
+class TestLocalTrainingDispatcher(unittest.TestCase):
+    def test_execution_waits_until_task_id_is_persisted(self):
+        started = threading.Event()
+        executed = []
+
+        def execute(job_id, task_id):
+            executed.append((job_id, task_id))
+            started.set()
+
+        dispatcher = LocalTrainingDispatcher(execute)
+        task_id = dispatcher.enqueue("job-1")
+
+        self.assertFalse(started.wait(0.1))
+        dispatcher.start(task_id)
+        self.assertTrue(started.wait(1))
+        self.assertEqual(executed, [("job-1", task_id)])
 
 
 if __name__ == "__main__":

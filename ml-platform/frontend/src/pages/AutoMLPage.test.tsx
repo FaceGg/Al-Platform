@@ -5,11 +5,22 @@ import { MemoryRouter } from "react-router-dom";
 
 import AutoMLPage from "./AutoMLPage";
 
+const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
+const datasets = vi.hoisted(() => ({ listDatasets: vi.fn(), getDatasetPreview: vi.fn() }));
 const quality = vi.hoisted(() => ({ createQualityRun: vi.fn(), getQualityRun: vi.fn() }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
-vi.mock("../api/client", () => ({ default: { get: vi.fn().mockResolvedValue({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } }), post: vi.fn() } }));
-vi.mock("../api/datasets", () => ({ listDatasets: vi.fn().mockResolvedValue([{ id: "dataset-1", name: "weld.csv", format: "csv" }]), getDatasetPreview: vi.fn().mockResolvedValue({ columns: [], preview: [] }) }));
+vi.mock("../api/client", () => ({
+  default: api,
+  formatApiError: (error: any, fallback: string) => {
+    const detail = error?.response?.data?.detail;
+    if (detail && typeof detail === "object") {
+      return `${detail.code}: ${detail.message}`;
+    }
+    return String(detail || fallback);
+  },
+}));
+vi.mock("../api/datasets", () => datasets);
 vi.mock("../api/spotWeldQuality", () => quality);
 vi.mock("../i18n", () => ({
   useI18n: () => ({
@@ -27,6 +38,18 @@ vi.mock("../i18n", () => ({
 
 describe("AutoMLPage", () => {
   beforeEach(() => {
+    api.get.mockReset();
+    api.post.mockReset();
+    datasets.listDatasets.mockReset();
+    datasets.getDatasetPreview.mockReset();
+    api.get.mockImplementation((url: string) => {
+      if (url === "/experiments") {
+        return Promise.resolve({ data: { items: [{ id: "experiment-1", name: "Experiment 1" }] } });
+      }
+      return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
+    });
+    datasets.listDatasets.mockResolvedValue([{ id: "dataset-1", name: "weld.csv", format: "csv" }]);
+    datasets.getDatasetPreview.mockResolvedValue({ columns: ["feature", "quality"], preview: [] });
     quality.createQualityRun.mockReset();
     quality.getQualityRun.mockReset();
     quality.createQualityRun.mockResolvedValue({ id: "run-1", status: "queued" });
@@ -54,5 +77,32 @@ describe("AutoMLPage", () => {
       dataset_artifact_id: "dataset-1",
       field_mapping: {},
     }));
+  });
+
+  it("keeps AutoML visible when a structured dispatch error is returned", async () => {
+    api.post.mockRejectedValue({
+      response: {
+        data: {
+          detail: {
+            code: "TRAINING_DISPATCH_FAILED",
+            message: "Training task could not be queued",
+          },
+        },
+      },
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    fireEvent.mouseDown(comboboxes[3]);
+    fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    expect(await screen.findByText("TRAINING_DISPATCH_FAILED: Training task could not be queued")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "AutoML" })).toBeInTheDocument();
   });
 });

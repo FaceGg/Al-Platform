@@ -3,7 +3,7 @@ import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Ta
 import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import { useNavigate } from "react-router-dom";
-import apiClient from "../api/client";
+import apiClient, { formatApiError } from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
 import { createQualityRun, getQualityRun, type QualityRun } from "../api/spotWeldQuality";
 import AppLayout from "../components/AppLayout";
@@ -158,7 +158,7 @@ export default function AutoMLPage() {
         } catch { /* continue */ }
       }, 3000);
     } catch (e: any) {
-      message.error(e.response?.data?.detail || t.common.error);
+      message.error(formatApiError(e, t.common.error));
       setRunning(false);
     }
   };
