@@ -280,6 +280,35 @@ class TestExperimentAPI(unittest.TestCase):
         self.assertIn(("experiment.delete", "denied"), actions)
         self.assertIn(("experiment.delete", "success"), actions)
 
+    def test_delete_rejects_experiments_with_active_training_jobs(self):
+        for status in ("pending", "queued", "running", "cancel_requested"):
+            created = self._create_experiment(f"Active {status} {uuid.uuid4().hex}")
+            experiment_id = uuid.UUID(created["id"])
+            with self.Session() as db:
+                job = TrainingJob(
+                    project_id=self.project_id,
+                    user_id=self.owner_id,
+                    experiment_id=experiment_id,
+                    name=f"active-{status}",
+                    status=status,
+                )
+                db.add(job)
+                db.commit()
+                job_id = job.id
+
+            blocked = self.client.delete(
+                f"/api/experiments/{experiment_id}", headers=self.editor_headers,
+            )
+
+            self.assertEqual(blocked.status_code, 409, blocked.text)
+            self.assertEqual(
+                blocked.json()["detail"]["code"],
+                "EXPERIMENT_HAS_ACTIVE_TRAINING_JOB",
+            )
+            with self.Session() as db:
+                self.assertIsNotNone(db.get(Experiment, experiment_id))
+                self.assertEqual(db.get(TrainingJob, job_id).experiment_id, experiment_id)
+
     def test_tracking_failure_rolls_back_platform_record(self):
         self.tracking.fail_ensure = True
         name = f"Offline {uuid.uuid4().hex}"

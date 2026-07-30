@@ -1474,3 +1474,15 @@
 - 验证方式：聚焦回归 2/2、后端 `run_suite.py` 84/84、前端 Vitest 31 文件 113 用例、`npm run build` 和 Chromium Playwright 3/3 均通过。
 - 预防措施：模拟异平台行为时不得实例化宿主相关 `Path`；生产集成夹具的默认工作流节点必须先通过当前算子参数合同。
 - 遗留事项：生产 Celery/Redis/MinIO 实际执行和 Ubuntu 路径回归仍以远程 CI 全绿为最终证据。
+
+### 2026-07-30：实验与训练活动态删除保护补充
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：本地修复与回归已完成；等待无品牌发布分支的远程 CI 验证和合并。
+- 问题现象：Experiment 仍关联 `pending`、`queued`、`running` 或 `cancel_requested` TrainingJob 时可被删除，外键会将任务的 `experiment_id` 置空；训练 worker 随后按该 ID 查询 Experiment 会失败。TrainingJob 批删和训练页也将 `pending` 误判为可删除。
+- 已确认根因：Experiment 删除没有按训练生命周期检查关联任务；TrainingJob 批删和前端仅排除了三个显式活动状态，而不是仅允许终态。
+- 解决方法：集中定义 `completed`、`failed`、`cancelled` 为训练终态。Experiment 删除在授权与审计事务内拒绝存在任何非终态或空状态关联任务的请求，并返回 `409 EXPERIMENT_HAS_ACTIVE_TRAINING_JOB`；批删和 UI 只对终态训练任务显示或执行删除，Experiment 的关联活动任务存在时不显示删除入口。
+- 测试先行：四种活动 Experiment 状态、`pending` 批删和前端活动关联删除入口均先稳定 RED；最小修复后定向后端 2/2 和训练页 4/4 GREEN。
+- 验证方式：后端 `run_suite.py` 84/84、前端 Vitest 31 文件 114 用例、`npm run build` 和 Playwright 3/3 通过；构建仅保留既有 chunk-size 警告。
+- 预防措施：所有删除路径必须定义正向终态集合，不能通过列举少数已知活动状态推导可删除性；关联异步 worker 读取的父资源，删除前必须在服务端事务中检查其任务生命周期，UI 仅作为同步提示。
+- 遗留事项：GitHub Actions 的 Ubuntu、生产集成和 Chromium 检查仍需在新 PR 上全绿后才可声明远端交付完成。

@@ -68,6 +68,7 @@ const statusColors: Record<string, string> = {
   FAILED: "#cf1322",
   RUNNING: "#fa8c16",
 };
+const TERMINAL_TRAINING_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 interface ProjectOption {
   id: string;
@@ -313,6 +314,11 @@ export default function TrainingJobsPage() {
     };
   }, [comparison, labels.epoch]);
 
+  const activeExperimentIds = useMemo(() => new Set(
+    jobs.filter((job) => !TERMINAL_TRAINING_STATUSES.has(job.status || ""))
+      .flatMap((job) => job.experiment_id ? [job.experiment_id] : []),
+  ), [jobs]);
+
   const experimentColumns = [
     { title: labels.experiment_name, dataIndex: "name", key: "name" },
     { title: labels.description, dataIndex: "description", key: "description", render: (value: string) => value || "-" },
@@ -326,7 +332,7 @@ export default function TrainingJobsPage() {
       align: "center" as const,
       render: (_: unknown, experiment: Experiment) => <Space size={2} wrap={false}>
         <Button aria-label={labels.runs} icon={<BarChartOutlined />} onClick={() => void openRuns(experiment)}>{labels.runs}</Button>
-        <Popconfirm
+        {!activeExperimentIds.has(experiment.id) && <Popconfirm
           title={`${t.common.delete} ${experiment.name}?`}
           okText={t.common.delete}
           cancelText={t.common.cancel}
@@ -337,6 +343,7 @@ export default function TrainingJobsPage() {
             <Button danger type="text" size="small" icon={<DeleteOutlined />} aria-label={`${t.common.delete} ${experiment.name}`} />
           </Tooltip>
         </Popconfirm>
+        }
       </Space>,
     },
   ];
@@ -378,7 +385,7 @@ export default function TrainingJobsPage() {
         </Popconfirm>}
         {job.status !== "running" && <Button aria-label={`${labels.resume} ${job.name}`} icon={<PlayCircleOutlined />} onClick={() => void openResume(job)} />}
         {job.mlflow_run_id && <Button aria-label={`${labels.tensorboard} ${job.name}`} icon={<BarChartOutlined />} onClick={() => void openTensorBoard(job)} />}
-        {!['running', 'queued', 'cancel_requested'].includes(job.status || 'pending') && <Popconfirm
+        {TERMINAL_TRAINING_STATUSES.has(job.status || "") && <Popconfirm
           title={`${t.common.delete} ${job.name}?`}
           okText={t.common.delete}
           cancelText={t.common.cancel}

@@ -3,6 +3,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from sqlalchemy import or_
 from mlflow.tracking import MlflowClient
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -11,6 +12,7 @@ from app.api.auth import get_current_user
 from app.database import get_db
 from app.models.experiment import Experiment
 from app.models.project import Project
+from app.models.training import TERMINAL_TRAINING_STATUSES, TrainingJob
 from app.models.user import User
 from app.schemas.experiment import (
     ExperimentCreate,
@@ -154,6 +156,18 @@ def delete_experiment(
         ),
         allowed_changes=set(),
     ):
+        active_job = db.query(TrainingJob.id).filter(
+            TrainingJob.experiment_id == experiment.id,
+            or_(
+                TrainingJob.status.is_(None),
+                TrainingJob.status.notin_(TERMINAL_TRAINING_STATUSES),
+            ),
+        ).first()
+        if active_job is not None:
+            raise HTTPException(409, _error(
+                "EXPERIMENT_HAS_ACTIVE_TRAINING_JOB",
+                "Experiment has an active training job",
+            ))
         db.delete(experiment)
     return Response(status_code=204)
 

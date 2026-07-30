@@ -151,4 +151,24 @@ describe("TrainingJobsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     await waitFor(() => expect(mocks.deleteTrainingJob).toHaveBeenCalledWith("job-2"));
   });
+
+  it("hides deletion for Experiments and Training Jobs with active training", async () => {
+    mocks.listExperiments.mockResolvedValue([
+      {
+        id: "active-experiment", project_id: "p1", created_by: "u1", name: "Active baseline", description: "",
+        mlflow_experiment_id: "active-m1", created_at: "2026-07-17", updated_at: "2026-07-17", run_count: 0,
+      },
+    ]);
+    mocks.listTrainingJobs.mockResolvedValue([
+      { id: "pending-job", experiment_id: "active-experiment", name: "pending-job", status: "pending" },
+    ]);
+    render(<TrainingJobsPage />);
+
+    expect(await screen.findByText("Active baseline")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete Active baseline" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Training jobs" }));
+    expect(await screen.findByText("pending-job")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete pending-job" })).not.toBeInTheDocument();
+  });
 });
