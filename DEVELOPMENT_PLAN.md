@@ -1425,3 +1425,52 @@
 - 影响范围：`ml-platform/frontend/src/styles/global.css` 与 `CustomNode.test.tsx` 的工作流算子视觉和契约测试；不改动工作流 API、ReactFlow 连接合同、持久化模型、认证或执行状态机。
 - 预防措施：视觉方向落地前先用独立预览固定几何和信息层级，生产迁移时用 CSS 契约锁定伪元素、圆角、布局、端点和连线颜色；所有节点比例变化继续保留端口 ID 与动态槽位回归。
 - 遗留事项：真实受保护工作区仍需已有 workflow ID 才能进行会话内截图验收；本次未创建项目、工作流或伪造认证。工作区其他未提交改动未被覆盖、暂存或提交。
+
+### 2026-07-30：项目删除关联 Experiment 非空约束修复
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：已完成。删除包含 Experiment 的项目不再返回 500，单删和批删均已覆盖。
+- 问题现象：`DELETE /api/projects/{project_id}` 在项目含实验记录时提交失败，SQLite 报 `NOT NULL constraint failed: experiments.project_id`。
+- 已确认根因：`Experiment.project` 的普通 ORM backref 在 `Project` 删除前将关联外键设为 `NULL`；数据库声明的 `ON DELETE CASCADE` 未能阻止这条 ORM 更新。
+- 解决方法：在项目删除事务中、删除 Project 前显式删除关联 Experiment；保持 TrainingJob 删除、Dataset/OrchestrationApp 脱钩和审计事务的既有行为。
+- 测试先行：单删和批删 API 回归均先得到 500；最小修复后分别恢复为 204 和 200，且确认 Experiment 记录已删除。
+- 验证方式：`tests.test_api_projects` 14/14、`tests.test_api_project_access` 15/15、`tests.test_api_experiments` 9/9、后端 `run_suite.py` 84/84 模块通过。
+- 预防措施：删除项目时，除检查数据库 `ON DELETE` 外，还要审计 ORM relationship/backref 的删除策略；每个非空项目外键都须有单删和批删回归。
+- 遗留事项：训练页删除按钮使用已有批量删除 API 的交互规则等待用户确认；未修改用户已有前端品牌改动。
+
+### 2026-07-30：实验与训练任务删除控制
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：已完成。训练页现在可删除 Experiment 和终态 Training Job；运行中、排队中和取消请求中的任务不显示删除操作。
+- 问题现象：实验和训练任务列表缺少单项删除入口；项目删除修复后，用户仍无法在不删除项目的情况下清理实验记录。
+- 已确认根因：Experiment 没有删除路由或审计动作，前端只有训练任务批量删除 API，训练页也没有把现有能力以受确认保护的单项操作暴露出来。
+- 解决方法：新增受 `resource.delete` 授权保护的 `DELETE /api/experiments/{experiment_id}`，在同一事务记录 `experiment.delete` 审计。删除平台 Experiment 时保留 TrainingJob，并按既有外键契约将其 `experiment_id` 置空；MLflow 历史因缺少事务安全删除契约而保留。训练页使用现有单 ID 批删接口，并在两个表中提供 tooltip、无障碍名称和确认弹窗的图标删除按钮。
+- 测试先行：Experiment 路由、前端客户端和页面删除控件均先观察到预期 RED；恢复实现后，授权删除、拒绝审计、TrainingJob 保留、精确 HTTP 请求和终态任务控制均恢复 GREEN。
+- 验证方式：后端 Experiment/项目授权/训练组合 32/32、Week 6 11/11、Week 7 5/5 及全量隔离套件 84/84 通过；前端完整 Vitest 32 文件、121 用例、完整 Playwright 3/3 和生产构建通过。
+- 影响范围：Experiment 生命周期 API 与审计、训练页表格操作、前端客户端和相关回归；不删除 MLflow 实验历史，不修改训练任务执行、检查点或模型血缘。
+- 预防措施：删除聚合成员时必须先明确子资源保留、外键空值、外部系统一致性和审计语义；UI 的删除可见性只能作为预防性提示，服务端仍须在状态变化后的确认请求中作为最终裁决。
+- 遗留事项：远程 CI、Compose 和生产环境验证不由本地回归替代。
+
+### 2026-07-30：Windows Playwright 解释器解析修复
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：已完成。Playwright 的后端、推理服务和模型 seed fixture 现在使用同一可解析的 Python 可执行文件。
+- 问题现象：Windows 上 `npm run test:e2e` 在服务启动时以退出码 9009 失败；修复服务启动后，模型推理 E2E 的 seed fixture 仍因裸 `python` 失败。
+- 已确认根因：PATH 中的 WindowsApps Python 占位程序优先于安装了 `uvicorn`、模型依赖的 Miniconda 解释器，且配置与 fixture 分别硬编码裸命令。
+- 解决方法：新增共享 `e2e/python.ts` 解析器，优先接受 `E2E_PYTHON`，Windows 自动跳过 WindowsApps 候选，其他系统默认 `python3`；Playwright web server 与模型 fixture 均复用该解析器。
+- 验证方式：TypeScript 检查通过；模型推理定向 E2E 1/1 通过；完整 Playwright 3/3 通过，覆盖品牌导航、模型推理和焊接质量主流程。
+- 影响范围：仅本地/CI 浏览器验收服务启动与 fixture 解释器选择；不改动后端运行时、Docker 镜像或生产 Python 配置。
+- 预防措施：跨进程 E2E 所有 Python 调用必须从同一可配置解析器获得命令，不能在配置、fixture 和脚本中混用裸 `python`；Windows 环境测试要显式检查 WindowsApps 占位程序优先级。
+- 遗留事项：本次复用现有本地 Vite 服务进行浏览器回归；远程 Windows CI 需要在后续提交后单独观察。
+
+### 2026-07-30：跨平台监控路径与生产集成夹具 CI 修复
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：本地修复和完整回归已完成，等待更新 PR 后的远程 GitHub Actions 验证。
+- 问题现象：Ubuntu Quality 在模拟 Windows GPU 路径时抛出 `NotImplementedError: cannot instantiate 'WindowsPath' on your system`；Production integration 的默认 `condition` 节点因缺少必填参数而进入 `failed`。
+- 已确认根因：监控路由在 `os.name` 被 mock 为 `nt` 时以宿主相关 `Path` 构造 Windows 路径；生产夹具默认参数为空，但 `condition` 算子要求 `column` 和 `value`。
+- 解决方法：Windows fallback 使用 `PureWindowsPath` 生成路径并通过 `os.path.isfile` 检查；生产夹具使用满足算子合同的默认参数，并新增独立合同回归。
+- 测试先行：新增路径回归先因调用 `Path` 失败，默认参数回归先因常量缺失失败；最小修复后两项均通过。
+- 验证方式：聚焦回归 2/2、后端 `run_suite.py` 84/84、前端 Vitest 31 文件 113 用例、`npm run build` 和 Chromium Playwright 3/3 均通过。
+- 预防措施：模拟异平台行为时不得实例化宿主相关 `Path`；生产集成夹具的默认工作流节点必须先通过当前算子参数合同。
+- 遗留事项：生产 Celery/Redis/MinIO 实际执行和 Ubuntu 路径回归仍以远程 CI 全绿为最终证据。

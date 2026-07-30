@@ -3,6 +3,7 @@ import apiClient from "./client";
 import {
   createTensorBoardSession,
   createTrainingJob,
+  deleteTrainingJob,
   getTrainingJob,
   listTrainingCheckpoints,
   listTrainingJobs,
@@ -78,5 +79,13 @@ describe("training API", () => {
       checkpoint_path: "checkpoints/best.joblib",
     });
     expect(post).toHaveBeenNthCalledWith(3, "/training/jobs/job-1/tensorboard-session");
+  });
+
+  it("wraps a single Training Job deletion in the batch-delete contract", async () => {
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({ data: { deleted: 1 } });
+
+    await deleteTrainingJob("job-1");
+
+    expect(post).toHaveBeenCalledWith("/training/batch-delete", { ids: ["job-1"] });
   });
 });

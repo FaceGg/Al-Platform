@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.models.experiment import Experiment
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectList
@@ -149,6 +150,7 @@ def delete_project(
         allowed_changes=set(),
     ):
         db.query(TrainingJob).filter(TrainingJob.project_id == project.id).delete()
+        db.query(Experiment).filter(Experiment.project_id == project.id).delete()
         db.query(Dataset).filter(Dataset.project_id == project.id).update({"project_id": None})
         db.query(OrchestrationApp).filter(OrchestrationApp.project_id == project.id).update({"project_id": None})
         db.delete(project)
@@ -194,6 +196,7 @@ def batch_delete_projects(
             allowed_changes=set(),
         ):
             db.query(TrainingJob).filter(TrainingJob.project_id == project.id).delete()
+            db.query(Experiment).filter(Experiment.project_id == project.id).delete()
             db.query(Dataset).filter(Dataset.project_id == project.id).update({"project_id": None})
             db.query(OrchestrationApp).filter(OrchestrationApp.project_id == project.id).update({"project_id": None})
             db.delete(project)
