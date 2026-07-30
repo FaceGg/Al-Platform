@@ -1436,3 +1436,63 @@
 - 验证方式：后端质量域聚焦 28 项通过；`C:\Users\17723\miniconda3\python.exe run_suite.py` 为 89/89 模块通过；`python -m unittest tests.test_database_production -v` 为 16/16 通过；`python -m compileall -q app tests` 通过；`alembic upgrade head`、`alembic current` 和 `alembic check` 通过，head 为 `20260730_09`。前端 `npm test -- --run` 为 35 文件、128 用例通过，`npm run build` 通过；仅保留既有 ECharts chunk-size 警告。
 - 风险与限制：未伪造浏览器身份、项目或受保护路由状态；真实账号会话下的上传、运行、审核和下载人工验收仍待执行。远程 CI、Compose/Celery/Redis/MinIO 真实运行未由本地结果替代。
 - 预防措施：每次 Alembic head 增加业务表时，同时更新 head 版本、业务表计数和关键表集合测试；页面按项目/运行加载的异步响应必须在写状态前验证请求上下文；声明 CSV/XLS/XLSX 支持时，依赖、解析错误映射和真实 legacy XLS 用例必须一并覆盖。
+### 2026-07-30：项目删除关联 Experiment 非空约束修复
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：已完成。删除包含 Experiment 的项目不再返回 500，单删和批删均已覆盖。
+- 问题现象：`DELETE /api/projects/{project_id}` 在项目含实验记录时提交失败，SQLite 报 `NOT NULL constraint failed: experiments.project_id`。
+- 已确认根因：`Experiment.project` 的普通 ORM backref 在 `Project` 删除前将关联外键设为 `NULL`；数据库声明的 `ON DELETE CASCADE` 未能阻止这条 ORM 更新。
+- 解决方法：在项目删除事务中、删除 Project 前显式删除关联 Experiment；保持 TrainingJob 删除、Dataset/OrchestrationApp 脱钩和审计事务的既有行为。
+- 测试先行：单删和批删 API 回归均先得到 500；最小修复后分别恢复为 204 和 200，且确认 Experiment 记录已删除。
+- 验证方式：`tests.test_api_projects` 14/14、`tests.test_api_project_access` 15/15、`tests.test_api_experiments` 9/9、后端 `run_suite.py` 84/84 模块通过。
+- 预防措施：删除项目时，除检查数据库 `ON DELETE` 外，还要审计 ORM relationship/backref 的删除策略；每个非空项目外键都须有单删和批删回归。
+- 遗留事项：训练页删除按钮使用已有批量删除 API 的交互规则等待用户确认；未修改用户已有前端品牌改动。
+
+### 2026-07-30：实验与训练任务删除控制
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：已完成。训练页现在可删除 Experiment 和终态 Training Job；运行中、排队中和取消请求中的任务不显示删除操作。
+- 问题现象：实验和训练任务列表缺少单项删除入口；项目删除修复后，用户仍无法在不删除项目的情况下清理实验记录。
+- 已确认根因：Experiment 没有删除路由或审计动作，前端只有训练任务批量删除 API，训练页也没有把现有能力以受确认保护的单项操作暴露出来。
+- 解决方法：新增受 `resource.delete` 授权保护的 `DELETE /api/experiments/{experiment_id}`，在同一事务记录 `experiment.delete` 审计。删除平台 Experiment 时保留 TrainingJob，并按既有外键契约将其 `experiment_id` 置空；MLflow 历史因缺少事务安全删除契约而保留。训练页使用现有单 ID 批删接口，并在两个表中提供 tooltip、无障碍名称和确认弹窗的图标删除按钮。
+- 测试先行：Experiment 路由、前端客户端和页面删除控件均先观察到预期 RED；恢复实现后，授权删除、拒绝审计、TrainingJob 保留、精确 HTTP 请求和终态任务控制均恢复 GREEN。
+- 验证方式：后端 Experiment/项目授权/训练组合 32/32、Week 6 11/11、Week 7 5/5 及全量隔离套件 84/84 通过；前端完整 Vitest 32 文件、121 用例、完整 Playwright 3/3 和生产构建通过。
+- 影响范围：Experiment 生命周期 API 与审计、训练页表格操作、前端客户端和相关回归；不删除 MLflow 实验历史，不修改训练任务执行、检查点或模型血缘。
+- 预防措施：删除聚合成员时必须先明确子资源保留、外键空值、外部系统一致性和审计语义；UI 的删除可见性只能作为预防性提示，服务端仍须在状态变化后的确认请求中作为最终裁决。
+- 遗留事项：远程 CI、Compose 和生产环境验证不由本地回归替代。
+
+### 2026-07-30：Windows Playwright 解释器解析修复
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：已完成。Playwright 的后端、推理服务和模型 seed fixture 现在使用同一可解析的 Python 可执行文件。
+- 问题现象：Windows 上 `npm run test:e2e` 在服务启动时以退出码 9009 失败；修复服务启动后，模型推理 E2E 的 seed fixture 仍因裸 `python` 失败。
+- 已确认根因：PATH 中的 WindowsApps Python 占位程序优先于安装了 `uvicorn`、模型依赖的 Miniconda 解释器，且配置与 fixture 分别硬编码裸命令。
+- 解决方法：新增共享 `e2e/python.ts` 解析器，优先接受 `E2E_PYTHON`，Windows 自动跳过 WindowsApps 候选，其他系统默认 `python3`；Playwright web server 与模型 fixture 均复用该解析器。
+- 验证方式：TypeScript 检查通过；模型推理定向 E2E 1/1 通过；完整 Playwright 3/3 通过，覆盖品牌导航、模型推理和焊接质量主流程。
+- 影响范围：仅本地/CI 浏览器验收服务启动与 fixture 解释器选择；不改动后端运行时、Docker 镜像或生产 Python 配置。
+- 预防措施：跨进程 E2E 所有 Python 调用必须从同一可配置解析器获得命令，不能在配置、fixture 和脚本中混用裸 `python`；Windows 环境测试要显式检查 WindowsApps 占位程序优先级。
+- 遗留事项：本次复用现有本地 Vite 服务进行浏览器回归；远程 Windows CI 需要在后续提交后单独观察。
+
+### 2026-07-30：跨平台监控路径与生产集成夹具 CI 修复
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：本地修复和完整回归已完成，等待更新 PR 后的远程 GitHub Actions 验证。
+- 问题现象：Ubuntu Quality 在模拟 Windows GPU 路径时抛出 `NotImplementedError: cannot instantiate 'WindowsPath' on your system`；Production integration 的默认 `condition` 节点因缺少必填参数而进入 `failed`。
+- 已确认根因：监控路由在 `os.name` 被 mock 为 `nt` 时以宿主相关 `Path` 构造 Windows 路径；生产夹具默认参数为空，但 `condition` 算子要求 `column` 和 `value`。
+- 解决方法：Windows fallback 使用 `PureWindowsPath` 生成路径并通过 `os.path.isfile` 检查；生产夹具使用满足算子合同的默认参数，并新增独立合同回归。
+- 测试先行：新增路径回归先因调用 `Path` 失败，默认参数回归先因常量缺失失败；最小修复后两项均通过。
+- 验证方式：聚焦回归 2/2、后端 `run_suite.py` 84/84、前端 Vitest 31 文件 113 用例、`npm run build` 和 Chromium Playwright 3/3 均通过。
+- 预防措施：模拟异平台行为时不得实例化宿主相关 `Path`；生产集成夹具的默认工作流节点必须先通过当前算子参数合同。
+- 遗留事项：生产 Celery/Redis/MinIO 实际执行和 Ubuntu 路径回归仍以远程 CI 全绿为最终证据。
+
+### 2026-07-30：实验与训练活动态删除保护补充
+
+- 当前周次：第 9 至第 12 周并行开发支持工作。
+- 任务状态：本地修复与回归已完成；等待无品牌发布分支的远程 CI 验证和合并。
+- 问题现象：Experiment 仍关联 `pending`、`queued`、`running` 或 `cancel_requested` TrainingJob 时可被删除，外键会将任务的 `experiment_id` 置空；训练 worker 随后按该 ID 查询 Experiment 会失败。TrainingJob 批删和训练页也将 `pending` 误判为可删除。
+- 已确认根因：Experiment 删除没有按训练生命周期检查关联任务；TrainingJob 批删和前端仅排除了三个显式活动状态，而不是仅允许终态。
+- 解决方法：集中定义 `completed`、`failed`、`cancelled` 为训练终态。Experiment 删除在授权与审计事务内拒绝存在任何非终态或空状态关联任务的请求，并返回 `409 EXPERIMENT_HAS_ACTIVE_TRAINING_JOB`；批删和 UI 只对终态训练任务显示或执行删除，Experiment 的关联活动任务存在时不显示删除入口。
+- 测试先行：四种活动 Experiment 状态、`pending` 批删和前端活动关联删除入口均先稳定 RED；最小修复后定向后端 2/2 和训练页 4/4 GREEN。
+- 验证方式：后端 `run_suite.py` 84/84、前端 Vitest 31 文件 114 用例、`npm run build` 和 Playwright 3/3 通过；构建仅保留既有 chunk-size 警告。
+- 预防措施：所有删除路径必须定义正向终态集合，不能通过列举少数已知活动状态推导可删除性；关联异步 worker 读取的父资源，删除前必须在服务端事务中检查其任务生命周期，UI 仅作为同步提示。
+- 遗留事项：GitHub Actions 的 Ubuntu、生产集成和 Chromium 检查仍需在新 PR 上全绿后才可声明远端交付完成。

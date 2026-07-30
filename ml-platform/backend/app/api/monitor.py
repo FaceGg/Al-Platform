@@ -6,7 +6,7 @@ import subprocess
 import shutil
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from collections import deque
 from datetime import datetime, timezone
 
@@ -126,11 +126,11 @@ def resolve_nvidia_smi_executable() -> str | None:
 
     candidates = [
         os.getenv("NVIDIA_SMI_PATH"),
-        str(Path(os.getenv("ProgramW6432", r"C:\\Program Files")) / "NVIDIA Corporation" / "NVSMI" / "nvidia-smi.exe"),
-        str(Path(os.getenv("ProgramFiles", r"C:\\Program Files")) / "NVIDIA Corporation" / "NVSMI" / "nvidia-smi.exe"),
+        str(PureWindowsPath(os.getenv("ProgramW6432", r"C:\\Program Files")) / "NVIDIA Corporation" / "NVSMI" / "nvidia-smi.exe"),
+        str(PureWindowsPath(os.getenv("ProgramFiles", r"C:\\Program Files")) / "NVIDIA Corporation" / "NVSMI" / "nvidia-smi.exe"),
     ]
     for candidate in candidates:
-        if candidate and Path(candidate).is_file():
+        if candidate and os.path.isfile(candidate):
             return candidate
     return None
 

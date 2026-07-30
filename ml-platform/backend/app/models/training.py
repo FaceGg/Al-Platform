@@ -8,6 +8,9 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 
 
+TERMINAL_TRAINING_STATUSES = frozenset({"completed", "failed", "cancelled"})
+
+
 class TrainingJob(Base):
     __tablename__ = "training_jobs"
 
