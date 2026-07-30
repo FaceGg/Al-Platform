@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import path from "node:path";
+import { resolveE2EPython } from "./e2e/python";
 
 const frontendDir = import.meta.dirname;
 const backendDir = path.resolve(frontendDir, "../backend");
@@ -7,6 +8,8 @@ const tempTestDir = path.resolve(frontendDir, "../../temp_test");
 const e2eDatabaseUrl = `sqlite:///${path.join(tempTestDir, "playwright_e2e.db").replaceAll("\\", "/")}`;
 const e2eArtifactDir = path.join(tempTestDir, "playwright-artifacts");
 const e2eInferenceSecret = "playwright-inference-secret-at-least-32-bytes";
+
+const e2ePython = resolveE2EPython();
 
 process.env.DATABASE_URL = e2eDatabaseUrl;
 process.env.ARTIFACT_STORAGE_DIR = e2eArtifactDir;
@@ -28,7 +31,7 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: [
     {
-      command: "python -m uvicorn app.main:app --host 127.0.0.1 --port 8000",
+      command: `"${e2ePython}" -m uvicorn app.main:app --host 127.0.0.1 --port 8000`,
       cwd: backendDir,
       url: "http://127.0.0.1:8000/api/health",
       reuseExistingServer: !process.env.CI,
@@ -42,7 +45,7 @@ export default defineConfig({
       },
     },
     {
-      command: "python -m uvicorn app.inference_runtime.app:build_runtime_app --factory --host 127.0.0.1 --port 7000 --workers 1",
+      command: `"${e2ePython}" -m uvicorn app.inference_runtime.app:build_runtime_app --factory --host 127.0.0.1 --port 7000 --workers 1`,
       cwd: backendDir,
       url: "http://127.0.0.1:7000/health",
       reuseExistingServer: !process.env.CI,

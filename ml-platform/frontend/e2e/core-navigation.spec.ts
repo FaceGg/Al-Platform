@@ -23,7 +23,7 @@ test("loads every core authenticated route without redirecting or blank renderin
   ]) {
     await page.goto(route);
     await expect(page).toHaveURL(new RegExp(`${route === "/" ? "" : route}$`));
-    await expect(page.locator("#root")).toContainText("AI模型训练编排平台");
+    await expect(page.locator("#root")).toContainText("智擎");
     await expect(page.locator("#root")).not.toContainText("Something went wrong");
   }
 

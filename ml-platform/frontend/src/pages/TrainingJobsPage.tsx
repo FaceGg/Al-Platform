@@ -14,12 +14,14 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
   message,
   type CheckboxProps,
 } from "antd";
 import {
   BarChartOutlined,
+  DeleteOutlined,
   EyeOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
@@ -32,6 +34,7 @@ import apiClient, { formatApiError } from "../api/client";
 import {
   compareExperimentRuns,
   createExperiment,
+  deleteExperiment,
   listExperimentRuns,
   listExperiments,
   type Experiment,
@@ -41,6 +44,7 @@ import {
 import {
   createTensorBoardSession,
   createTrainingJob,
+  deleteTrainingJob,
   getTrainingJob,
   listTrainingCheckpoints,
   listTrainingJobs,
@@ -165,6 +169,16 @@ export default function TrainingJobsPage() {
     }
   };
 
+  const removeExperiment = async (experiment: Experiment) => {
+    try {
+      await deleteExperiment(experiment.id);
+      message.success(t.common.success);
+      await loadExperiments(projectId);
+    } catch (error) {
+      message.error(formatApiError(error, t.common.error));
+    }
+  };
+
   const openRuns = async (experiment: Experiment) => {
     setActiveExperiment(experiment);
     setRunsOpen(true);
@@ -243,6 +257,17 @@ export default function TrainingJobsPage() {
     }
   };
 
+  const removeTrainingJob = async (job: TrainingJob) => {
+    try {
+      const result = await deleteTrainingJob(job.id);
+      if (result.deleted !== 1) message.error(t.common.error);
+      else message.success(t.common.success);
+      await loadJobs(projectId);
+    } catch (error) {
+      message.error(formatApiError(error, t.common.error));
+    }
+  };
+
   const openResume = async (job: TrainingJob) => {
     try {
       setCheckpoints(await listTrainingCheckpoints(job.id));
@@ -296,8 +321,23 @@ export default function TrainingJobsPage() {
     {
       title: t.model.actions,
       key: "actions",
-      width: 110,
-      render: (_: unknown, experiment: Experiment) => <Button aria-label={labels.runs} icon={<BarChartOutlined />} onClick={() => void openRuns(experiment)}>{labels.runs}</Button>,
+      width: 160,
+      fixed: "right" as const,
+      align: "center" as const,
+      render: (_: unknown, experiment: Experiment) => <Space size={2} wrap={false}>
+        <Button aria-label={labels.runs} icon={<BarChartOutlined />} onClick={() => void openRuns(experiment)}>{labels.runs}</Button>
+        <Popconfirm
+          title={`${t.common.delete} ${experiment.name}?`}
+          okText={t.common.delete}
+          cancelText={t.common.cancel}
+          okButtonProps={{ danger: true }}
+          onConfirm={() => void removeExperiment(experiment)}
+        >
+          <Tooltip title={`${t.common.delete} ${experiment.name}`}>
+            <Button danger type="text" size="small" icon={<DeleteOutlined />} aria-label={`${t.common.delete} ${experiment.name}`} />
+          </Tooltip>
+        </Popconfirm>
+      </Space>,
     },
   ];
 
@@ -329,13 +369,26 @@ export default function TrainingJobsPage() {
       title: t.model.actions,
       key: "actions",
       width: 260,
-      render: (_: unknown, job: TrainingJob) => <Space wrap>
+      fixed: "right" as const,
+      align: "center" as const,
+      render: (_: unknown, job: TrainingJob) => <Space size={2} wrap={false}>
         <Button aria-label={`${labels.details} ${job.name}`} icon={<EyeOutlined />} onClick={() => void showDetail(job.id)} />
         {job.status === "running" && <Popconfirm title={`${labels.stop} ${job.name}?`} onConfirm={() => void stopJob(job)} okText={labels.confirm_stop}>
           <Button danger aria-label={`${labels.stop} ${job.name}`} icon={<PauseCircleOutlined />} />
         </Popconfirm>}
         {job.status !== "running" && <Button aria-label={`${labels.resume} ${job.name}`} icon={<PlayCircleOutlined />} onClick={() => void openResume(job)} />}
         {job.mlflow_run_id && <Button aria-label={`${labels.tensorboard} ${job.name}`} icon={<BarChartOutlined />} onClick={() => void openTensorBoard(job)} />}
+        {!['running', 'queued', 'cancel_requested'].includes(job.status || 'pending') && <Popconfirm
+          title={`${t.common.delete} ${job.name}?`}
+          okText={t.common.delete}
+          cancelText={t.common.cancel}
+          okButtonProps={{ danger: true }}
+          onConfirm={() => void removeTrainingJob(job)}
+        >
+          <Tooltip title={`${t.common.delete} ${job.name}`}>
+            <Button danger type="text" size="small" icon={<DeleteOutlined />} aria-label={`${t.common.delete} ${job.name}`} />
+          </Tooltip>
+        </Popconfirm>}
       </Space>,
     },
   ];

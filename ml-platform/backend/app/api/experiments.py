@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from mlflow.tracking import MlflowClient
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -33,6 +33,7 @@ from app.services.audit import AuditIntent
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 PROJECT_WRITE_ACTIONS = {
     "POST /api/experiments": "experiment.create",
+    "DELETE /api/experiments/{experiment_id}": "experiment.delete",
 }
 
 
@@ -129,6 +130,32 @@ def list_experiments(
         Experiment.project_id == project.id,
     ).order_by(Experiment.created_at.desc(), Experiment.id).all()
     return {"items": items, "total": len(items)}
+
+
+@router.delete("/{experiment_id}", status_code=204)
+def delete_experiment(
+    experiment_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    experiment = _visible_experiment(db, experiment_id, current_user.id)
+    if experiment is None:
+        raise HTTPException(404, _error("EXPERIMENT_NOT_FOUND", "Experiment not found"))
+    access = resolve_project_access(db, experiment.project_id, current_user.id)
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="resource.delete",
+        intent=AuditIntent(
+            project_id=experiment.project_id,
+            action="experiment.delete",
+            resource_type="experiment",
+            resource_id=str(experiment.id),
+        ),
+        allowed_changes=set(),
+    ):
+        db.delete(experiment)
+    return Response(status_code=204)
 
 
 @router.get("/{experiment_id}", response_model=ExperimentResponse)

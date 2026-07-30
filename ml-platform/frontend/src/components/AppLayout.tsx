@@ -113,8 +113,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </div>
             {!collapsed && (
               <div>
-                <div style={{ color: "#E6EDF3", fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>Precision Forge</div>
-                <div style={{ color: "#8B949E", fontSize: 10 }}>AI Training Platform</div>
+                <div style={{ color: theme === "light" ? "#000000" : "#E6EDF3", fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>智擎</div>
+                <div style={{ color: "#8B949E", fontSize: 10 }}>工业智能平台</div>
               </div>
             )}
           </div>

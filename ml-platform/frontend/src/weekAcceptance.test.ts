@@ -4,6 +4,7 @@ const weekTestFiles: Record<number, string[]> = {
   1: [
     "./api/auth.test.ts",
     "./api/client.test.ts",
+    "./branding.test.ts",
     "./components/AppLayout.test.tsx",
     "./components/PageErrorBoundary.test.tsx",
     "./pages/KnowledgeBasePage.test.tsx",
