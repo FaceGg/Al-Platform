@@ -3,6 +3,7 @@ import apiClient from "./client";
 import {
   compareExperimentRuns,
   createExperiment,
+  deleteExperiment,
   getExperiment,
   listExperimentRuns,
   listExperiments,
@@ -43,5 +44,13 @@ describe("experiment tracking API", () => {
     expect(post).toHaveBeenCalledWith("/experiments/experiment-1/compare", {
       run_ids: ["run-1", "run-2"],
     });
+  });
+
+  it("deletes a platform Experiment without constructing tracking URLs", async () => {
+    const remove = vi.spyOn(apiClient, "delete").mockResolvedValue({ data: undefined });
+
+    await deleteExperiment("experiment-1");
+
+    expect(remove).toHaveBeenCalledWith("/experiments/experiment-1");
   });
 });

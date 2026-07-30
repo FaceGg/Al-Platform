@@ -15,7 +15,7 @@ from app.api.experiments import get_experiment_tracking
 from app.database import get_db
 from app.models.experiment import Experiment
 from app.models.project import Project
-from app.models.training import TrainingJob
+from app.models.training import TERMINAL_TRAINING_STATUSES, TrainingJob
 from app.models.user import User
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.services.experiment_tracking import TrackingError
@@ -568,7 +568,7 @@ def batch_delete_training_jobs(
         except ValueError:
             continue
         job, access = _visible_job(db, job_id, current_user.id)
-        if job is None or job.status in {"running", "queued", "cancel_requested"}:
+        if job is None or job.status not in TERMINAL_TRAINING_STATUSES:
             continue
         with audit_service(db).project_action(
             db, request=request, actor=current_user, access=access,

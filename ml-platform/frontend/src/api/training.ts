@@ -92,6 +92,11 @@ export async function stopTrainingJob(jobId: string): Promise<{ job_id: string; 
   return response.data;
 }
 
+export async function deleteTrainingJob(jobId: string): Promise<{ deleted: number }> {
+  const response = await apiClient.post("/training/batch-delete", { ids: [jobId] });
+  return response.data as { deleted: number };
+}
+
 export async function resumeTrainingJob(
   jobId: string,
   checkpointPath?: string,

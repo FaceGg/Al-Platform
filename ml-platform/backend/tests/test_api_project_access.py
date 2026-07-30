@@ -438,7 +438,7 @@ class TestProjectWriteAuditCompleteness(unittest.TestCase):
         "datasets": {
             "dataset.upload", "dataset.batch_upload", "dataset.import_zip",
         },
-        "experiments": {"experiment.create"},
+        "experiments": {"experiment.create", "experiment.delete"},
         "training": {
             "training_job.start", "training_job.stop", "training_job.resume",
             "training_job.automl_start", "training_job.delete",

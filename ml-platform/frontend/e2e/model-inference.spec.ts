@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { resolveE2EPython } from "./python";
 
 test("model registry inference lifecycle", async ({ page }) => {
   const unique = Date.now();
@@ -23,7 +24,7 @@ test("model registry inference lifecycle", async ({ page }) => {
     return response.json();
   }, projectName);
   const fixtureScript = path.resolve(import.meta.dirname, "fixtures/seed_inference_model.py");
-  const fixture = JSON.parse(execFileSync("python", [fixtureScript, String(seeded.id)], {
+  const fixture = JSON.parse(execFileSync(resolveE2EPython(), [fixtureScript, String(seeded.id)], {
     encoding: "utf-8",
     env: process.env,
   }));

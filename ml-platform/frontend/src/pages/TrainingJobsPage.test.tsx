@@ -4,12 +4,14 @@ import TrainingJobsPage from "./TrainingJobsPage";
 
 const mocks = vi.hoisted(() => ({
   createExperiment: vi.fn(),
+  deleteExperiment: vi.fn(),
   listExperiments: vi.fn(),
   listExperimentRuns: vi.fn(),
   compareExperimentRuns: vi.fn(),
   listTrainingJobs: vi.fn(),
   getTrainingJob: vi.fn(),
   createTrainingJob: vi.fn(),
+  deleteTrainingJob: vi.fn(),
   listTrainingCheckpoints: vi.fn(),
   stopTrainingJob: vi.fn(),
   resumeTrainingJob: vi.fn(),
@@ -21,7 +23,7 @@ vi.mock("../i18n", () => ({
   useI18n: () => ({
     language: "en",
     t: {
-      common: { create: "Create", error: "Error", no_data: "No data", refresh: "Refresh", confirm: "Confirm" },
+      common: { create: "Create", error: "Error", no_data: "No data", refresh: "Refresh", confirm: "Confirm", cancel: "Cancel", delete: "Delete", success: "Success" },
       training: {
         title: "Training operations", experiments: "Experiments", jobs: "Training jobs",
         new_experiment: "New experiment", experiment_name: "Experiment name", description: "Description",
@@ -37,6 +39,7 @@ vi.mock("../i18n", () => ({
 }));
 vi.mock("../api/experiments", () => ({
   createExperiment: mocks.createExperiment,
+  deleteExperiment: mocks.deleteExperiment,
   listExperiments: mocks.listExperiments,
   listExperimentRuns: mocks.listExperimentRuns,
   compareExperimentRuns: mocks.compareExperimentRuns,
@@ -45,6 +48,7 @@ vi.mock("../api/training", () => ({
   listTrainingJobs: mocks.listTrainingJobs,
   getTrainingJob: mocks.getTrainingJob,
   createTrainingJob: mocks.createTrainingJob,
+  deleteTrainingJob: mocks.deleteTrainingJob,
   listTrainingCheckpoints: mocks.listTrainingCheckpoints,
   stopTrainingJob: mocks.stopTrainingJob,
   resumeTrainingJob: mocks.resumeTrainingJob,
@@ -130,5 +134,41 @@ describe("TrainingJobsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "TensorBoard completed-job" }));
     await waitFor(() => expect(open).toHaveBeenCalledWith("/api/training/tensorboard/token/", "_blank", "noopener,noreferrer"));
+  });
+
+  it("deletes Experiments and terminal Training Jobs, but not running jobs", async () => {
+    mocks.deleteExperiment.mockResolvedValue(undefined);
+    mocks.deleteTrainingJob.mockResolvedValue({ deleted: 1 });
+    render(<TrainingJobsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Weld baseline" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(mocks.deleteExperiment).toHaveBeenCalledWith("e1"));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Training jobs" }));
+    expect(screen.queryByRole("button", { name: "Delete running-job" })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete completed-job" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(mocks.deleteTrainingJob).toHaveBeenCalledWith("job-2"));
+  });
+
+  it("hides deletion for Experiments and Training Jobs with active training", async () => {
+    mocks.listExperiments.mockResolvedValue([
+      {
+        id: "active-experiment", project_id: "p1", created_by: "u1", name: "Active baseline", description: "",
+        mlflow_experiment_id: "active-m1", created_at: "2026-07-17", updated_at: "2026-07-17", run_count: 0,
+      },
+    ]);
+    mocks.listTrainingJobs.mockResolvedValue([
+      { id: "pending-job", experiment_id: "active-experiment", name: "pending-job", status: "pending" },
+    ]);
+    render(<TrainingJobsPage />);
+
+    expect(await screen.findByText("Active baseline")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete Active baseline" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Training jobs" }));
+    expect(await screen.findByText("pending-job")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete pending-job" })).not.toBeInTheDocument();
   });
 });

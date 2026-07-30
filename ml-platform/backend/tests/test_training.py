@@ -329,6 +329,20 @@ class TestTrainingAPI(unittest.TestCase):
         self.assertEqual(again.status_code, 409)
         self.assertEqual(again.json()["detail"]["code"], "TRAINING_NOT_ACTIVE")
 
+    def test_batch_delete_retains_pending_training_job(self):
+        job_id = self._create_source_job(status="pending", checkpoint=False)
+
+        deleted = self.client.post(
+            "/api/training/batch-delete",
+            json={"ids": [str(job_id)]},
+            headers=self.owner_headers,
+        )
+
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertEqual(deleted.json(), {"deleted": 0})
+        with self.Session() as db:
+            self.assertIsNotNone(db.get(TrainingJob, job_id))
+
     def test_resume_validates_checkpoint_and_creates_lineage(self):
         source_id = self._create_source_job(status="cancelled")
         response = self.client.post(

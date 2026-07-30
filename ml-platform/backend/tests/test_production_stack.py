@@ -18,12 +18,29 @@ from app.models.project import Project
 from app.models.run import WorkflowRun
 from app.models.user import User
 from app.models.workflow import Workflow, WorkflowNode
+from app.engine.operator_contract import validate_operator_params
+from app.engine.registry import OperatorRegistry
 from app.services.readiness_service import ReadinessService
 from app.storage.minio import MinioStorage
 from app.tasks.celery_app import celery_app
 from app.tasks.recovery import reconcile_stale_runs
 from app.tasks.workflow_tasks import execute_workflow_task, utcnow
 from tools.migrate_database import copy_database
+
+DEFAULT_CONDITION_PARAMS = {
+    "column": "value",
+    "operator": ">",
+    "value": "0",
+}
+
+
+class TestProductionStackDefaults(unittest.TestCase):
+    def test_default_condition_parameters_satisfy_operator_contract(self):
+        condition = OperatorRegistry.get("condition")
+        self.assertEqual(
+            validate_operator_params(condition.parameters, DEFAULT_CONDITION_PARAMS),
+            DEFAULT_CONDITION_PARAMS,
+        )
 
 
 @unittest.skipUnless(
@@ -106,6 +123,8 @@ class TestProductionStack(unittest.TestCase):
 
     @classmethod
     def _create_run(cls, operator_id="condition", params=None):
+        if params is None:
+            params = dict(DEFAULT_CONDITION_PARAMS) if operator_id == "condition" else {}
         with SessionLocal() as db:
             project = Project(
                 name=f"production-project-{uuid.uuid4().hex}",
@@ -126,7 +145,7 @@ class TestProductionStack(unittest.TestCase):
                 label="Production node",
                 position_x=0,
                 position_y=0,
-                params=params or {},
+                params=params,
             )
             db.add(node)
             run = WorkflowRun(

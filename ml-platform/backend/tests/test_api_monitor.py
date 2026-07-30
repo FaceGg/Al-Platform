@@ -65,10 +65,14 @@ class TestMonitorAPI(unittest.TestCase):
         self.assertIn("gpu", r.json())
         self.assertIsInstance(r.json()["gpu"], list)
 
-    @patch("app.api.monitor.Path.is_file", return_value=True)
+    @patch("app.api.monitor.os.path.isfile", return_value=True)
+    @patch(
+        "app.api.monitor.Path",
+        side_effect=AssertionError("Windows fallback must not construct host Path"),
+    )
     @patch("app.api.monitor.shutil.which", return_value=None)
     @patch("app.api.monitor.os.name", "nt")
-    def test_windows_gpu_uses_default_nvsm_path_when_not_on_path(self, _which, _is_file):
+    def test_windows_gpu_uses_default_nvsm_path_when_not_on_path(self, _which, _path, _is_file):
         executable = monitor.resolve_nvidia_smi_executable()
         self.assertTrue(executable.lower().endswith("nvidia-smi.exe"))
 

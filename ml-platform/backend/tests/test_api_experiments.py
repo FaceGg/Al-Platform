@@ -12,6 +12,7 @@ from app.database import Base, get_db
 from app.main import app
 from app.models.experiment import Experiment
 from app.models.project import Project
+from app.models.training import TrainingJob
 from app.models.access import AuditEvent, ProjectMember
 from app.models.user import User
 from app.services.experiment_tracking import (
@@ -243,6 +244,70 @@ class TestExperimentAPI(unittest.TestCase):
             }
         self.assertIn(("experiment.create", "success"), actions)
         self.assertIn(("experiment.create", "denied"), actions)
+
+    def test_delete_retains_training_job_and_audits_permissions(self):
+        created = self._create_experiment()
+        with self.Session() as db:
+            job = TrainingJob(
+                project_id=self.project_id,
+                user_id=self.owner_id,
+                experiment_id=uuid.UUID(created["id"]),
+                name="retained-job",
+                status="completed",
+            )
+            db.add(job)
+            db.commit()
+            job_id = job.id
+
+        denied = self.client.delete(
+            f"/api/experiments/{created['id']}", headers=self.operator_headers,
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+        deleted = self.client.delete(
+            f"/api/experiments/{created['id']}", headers=self.editor_headers,
+        )
+        self.assertEqual(deleted.status_code, 204, deleted.text)
+
+        with self.Session() as db:
+            self.assertIsNone(db.get(Experiment, uuid.UUID(created["id"])))
+            self.assertIsNone(db.get(TrainingJob, job_id).experiment_id)
+            actions = {
+                (event.action, event.result)
+                for event in db.query(AuditEvent).filter(
+                    AuditEvent.project_id == self.project_id,
+                )
+            }
+        self.assertIn(("experiment.delete", "denied"), actions)
+        self.assertIn(("experiment.delete", "success"), actions)
+
+    def test_delete_rejects_experiments_with_active_training_jobs(self):
+        for status in ("pending", "queued", "running", "cancel_requested"):
+            created = self._create_experiment(f"Active {status} {uuid.uuid4().hex}")
+            experiment_id = uuid.UUID(created["id"])
+            with self.Session() as db:
+                job = TrainingJob(
+                    project_id=self.project_id,
+                    user_id=self.owner_id,
+                    experiment_id=experiment_id,
+                    name=f"active-{status}",
+                    status=status,
+                )
+                db.add(job)
+                db.commit()
+                job_id = job.id
+
+            blocked = self.client.delete(
+                f"/api/experiments/{experiment_id}", headers=self.editor_headers,
+            )
+
+            self.assertEqual(blocked.status_code, 409, blocked.text)
+            self.assertEqual(
+                blocked.json()["detail"]["code"],
+                "EXPERIMENT_HAS_ACTIVE_TRAINING_JOB",
+            )
+            with self.Session() as db:
+                self.assertIsNotNone(db.get(Experiment, experiment_id))
+                self.assertEqual(db.get(TrainingJob, job_id).experiment_id, experiment_id)
 
     def test_tracking_failure_rolls_back_platform_record(self):
         self.tracking.fail_ensure = True
