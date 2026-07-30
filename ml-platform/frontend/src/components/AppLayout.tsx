@@ -6,7 +6,7 @@ import {
   DatabaseOutlined, AppstoreOutlined, TeamOutlined, ApartmentOutlined,
   CloudUploadOutlined, ThunderboltOutlined, ExperimentOutlined, ApiOutlined,
   CloudServerOutlined, RobotOutlined, MessageOutlined, MenuFoldOutlined,
-  MenuUnfoldOutlined, MonitorOutlined, SafetyOutlined, ToolOutlined,
+  MenuUnfoldOutlined, MonitorOutlined, SafetyOutlined, TagsOutlined, ToolOutlined,
 } from "@ant-design/icons";
 import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
@@ -27,6 +27,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { key: "/", icon: <DashboardOutlined />, label: t.nav.dashboard },
     { key: "/projects", icon: <ProjectOutlined />, label: t.nav.projects },
     { key: "/models", icon: <AppstoreOutlined />, label: t.nav.models },
+    { key: "/data-annotation", icon: <TagsOutlined />, label: t.nav.data_annotation },
     { key: "/data", icon: <CloudUploadOutlined />, label: t.nav.data },
     { type: "divider" as const },
     { key: "/automl", icon: <ThunderboltOutlined />, label: t.nav.automl },

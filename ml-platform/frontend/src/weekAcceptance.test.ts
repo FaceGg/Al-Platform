@@ -44,6 +44,9 @@ const weekTestFiles: Record<number, string[]> = {
     "./api/modelRegistry.test.ts",
     "./pages/ModelLibraryPage.test.tsx",
   ],
+  17: [
+    "./pages/DataAnnotationPage.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(

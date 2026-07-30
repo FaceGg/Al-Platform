@@ -24,6 +24,7 @@ const MonitorPage = lazy(() => import("./pages/MonitorPage"));
 const AlgorithmCatalogPage = lazy(() => import("./pages/AlgorithmCatalogPage"));
 const APIMarketplacePage = lazy(() => import("./pages/APIMarketplacePage"));
 const AnnotationPage = lazy(() => import("./pages/AnnotationPage"));
+const DataAnnotationPage = lazy(() => import("./pages/DataAnnotationPage"));
 const OrchestrationPage = lazy(() => import("./pages/OrchestrationPage"));
 const ComputeResourcePage = lazy(() => import("./pages/ComputeResourcePage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
@@ -96,6 +97,7 @@ function AppContent() {
             <Route path="/algorithms" element={<ProtectedRoute><AlgorithmCatalogPage /></ProtectedRoute>} />
             <Route path="/api-marketplace" element={<ProtectedRoute><APIMarketplacePage /></ProtectedRoute>} />
             <Route path="/annotations" element={<ProtectedRoute><AnnotationPage /></ProtectedRoute>} />
+            <Route path="/data-annotation" element={<ProtectedRoute><DataAnnotationPage /></ProtectedRoute>} />
             <Route path="/orchestration" element={<ProtectedRoute><OrchestrationPage /></ProtectedRoute>} />
             <Route path="/compute" element={<ProtectedRoute><ComputeResourcePage /></ProtectedRoute>} />
             <Route path="/chat" element={<ProtectedRoute><AIChatPage /></ProtectedRoute>} />
