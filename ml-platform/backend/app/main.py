@@ -169,7 +169,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="AI模型训练编排平台",
+    title="智擎",
     description="Web-based visual AI model training orchestration platform",
     version="0.2.0",
     lifespan=lifespan,

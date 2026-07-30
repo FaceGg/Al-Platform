@@ -31,8 +31,8 @@ export default function LoginPage() {
           <div className="auth-mark">
             <ThunderboltOutlined />
           </div>
-          <Title level={3}>AI模型训练编排平台</Title>
-          <Text type="secondary">Precision Forge · 工业智能平台</Text>
+          <Title level={3}>智擎</Title>
+          <Text type="secondary">工业智能平台</Text>
         </div>
 
         <Form onFinish={onFinish} size="large">

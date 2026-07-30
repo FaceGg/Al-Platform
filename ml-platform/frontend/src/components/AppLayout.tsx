@@ -25,9 +25,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   const menuItems = [
     { key: "/", icon: <DashboardOutlined />, label: t.nav.dashboard },
+    { key: "/data-annotation", icon: <TagsOutlined />, label: t.nav.data_annotation },
     { key: "/projects", icon: <ProjectOutlined />, label: t.nav.projects },
     { key: "/models", icon: <AppstoreOutlined />, label: t.nav.models },
-    { key: "/data-annotation", icon: <TagsOutlined />, label: t.nav.data_annotation },
     { key: "/data", icon: <CloudUploadOutlined />, label: t.nav.data },
     { type: "divider" as const },
     { key: "/automl", icon: <ThunderboltOutlined />, label: t.nav.automl },
@@ -114,8 +114,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </div>
             {!collapsed && (
               <div>
-                <div style={{ color: "#E6EDF3", fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>Precision Forge</div>
-                <div style={{ color: "#8B949E", fontSize: 10 }}>AI Training Platform</div>
+                <div style={{ color: theme === "dark" ? "#E6EDF3" : "#000000", fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>智擎</div>
+                <div style={{ color: theme === "dark" ? "#8B949E" : "#4B5563", fontSize: 10 }}>工业智能平台</div>
               </div>
             )}
           </div>

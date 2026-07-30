@@ -4,7 +4,7 @@ type Lang = "zh" | "en";
 
 const ZH = {
   app: {
-    title: "\u0041\u0049\u6a21\u578b\u8bad\u7ec3\u7f16\u6392\u5e73\u53f0",
+    title: "智擎",
     login: "\u767b\u5f55",
     register: "\u6ce8\u518c",
     logout: "\u9000\u51fa",
@@ -351,7 +351,7 @@ const ZH = {
 };
 
 const EN: Record<string, any> = {
-  app: { title: "AI Model Training Platform", login: "Login", register: "Register", logout: "Logout", success: "Success", error: "Error", confirm: "Confirm" },
+  app: { title: "智擎", login: "Login", register: "Register", logout: "Logout", success: "Success", error: "Error", confirm: "Confirm" },
   nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources" },
   common: { success: "Success", error: "Error", confirm: "Confirm", cancel: "Cancel", delete: "Delete", save: "Save", back: "Back", run: "Run", stop: "Stop", create: "Create", edit: "Edit", search: "Search", export: "Export", import: "Import", refresh: "Refresh", close: "Close", more: "More", batch_delete: "Batch Delete", select_all: "Select All", no_data: "No Data", loading: "Loading..." },
   project: { create: "New Project", name: "Project Name", desc: "Description", list: "Project List", workflow_count: "Workflows", last_modified: "Last Modified", delete_confirm: "Delete this project?" },
