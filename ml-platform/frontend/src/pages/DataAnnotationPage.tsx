@@ -99,7 +99,9 @@ export default function DataAnnotationPage() {
         if (!active) return;
         const items = (response.data.items || response.data || []) as ProjectOption[];
         setProjects(items);
-        setProjectId((current) => current || items[0]?.id || "");
+        setProjectId((current) => (
+          items.some((item) => item.id === current) ? current : items[0]?.id || ""
+        ));
       })
       .catch(() => { if (active) setProjects([]); })
       .finally(() => { if (active) setLoadingProjects(false); });
@@ -107,6 +109,12 @@ export default function DataAnnotationPage() {
   }, []);
 
   useEffect(() => {
+    if (loadingProjects || !projects.some((project) => project.id === projectId)) {
+      runsRequestId.current += 1;
+      setRuns([]);
+      setRunId("");
+      return;
+    }
     if (!projectId) { runsRequestId.current += 1; setRuns([]); setRunId(""); return; }
     let active = true;
     const expectedProjectId = projectId;
@@ -129,7 +137,7 @@ export default function DataAnnotationPage() {
         }
       });
     return () => { active = false; };
-  }, [projectId, message]);
+  }, [loadingProjects, projects, projectId, message]);
 
   useEffect(() => {
     setSearchParams((current) => {
