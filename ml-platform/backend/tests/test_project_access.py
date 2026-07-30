@@ -70,6 +70,8 @@ class TestProjectPermissionMatrix(unittest.TestCase):
         "model.approve",
         "deployment.create",
         "inference.operate",
+        "quality.label",
+        "quality.review",
     }
     GRANTS = {
         "owner": PERMISSIONS,
@@ -85,12 +87,15 @@ class TestProjectPermissionMatrix(unittest.TestCase):
             "model.approve",
             "deployment.create",
             "inference.operate",
+            "quality.label",
+            "quality.review",
         },
         "operator": {
             "project.read",
             "execution.operate",
             "schedule.operate",
             "inference.operate",
+            "quality.label",
         },
         "viewer": {"project.read"},
     }

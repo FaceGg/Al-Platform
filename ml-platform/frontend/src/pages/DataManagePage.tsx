@@ -3,8 +3,9 @@ import {
   App as AntApp, Card, Table, Button, Upload, Select, Space, Modal, Tooltip, Typography, Row, Col, Tag
 } from "antd";
 import {
-  UploadOutlined, DownloadOutlined, DeleteOutlined, EyeOutlined, ImportOutlined, ExportOutlined
+  UploadOutlined, DownloadOutlined, DeleteOutlined, EyeOutlined, ImportOutlined, ExportOutlined, TagsOutlined
 } from "@ant-design/icons";
+import { useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
 import AppLayout from "../components/AppLayout";
@@ -13,6 +14,7 @@ import { useI18n } from "../i18n";
 const { Text } = Typography;
 
 export default function DataManagePage() {
+  const navigate = useNavigate();
   const { message } = AntApp.useApp();
   const { t } = useI18n();
   const [projects, setProjects] = useState<any[]>([]);
@@ -131,6 +133,9 @@ export default function DataManagePage() {
       title: t.model.actions, key: "actions", width: 132, fixed: "right" as const, align: "center" as const,
       render: (_: any, record: any) => (
         <Space className="dataset-table-actions" size={2} wrap={false}>
+          {["csv", "xls", "xlsx"].includes(String(record.format || "").toLowerCase()) && record.project_id && (
+            <Tooltip title={`质量感知 ${record.name}`}><Button type="text" size="small" icon={<TagsOutlined />} aria-label={`质量感知 ${record.name}`} onClick={() => navigate(`/data-annotation?projectId=${encodeURIComponent(record.project_id)}&datasetId=${encodeURIComponent(record.id)}`)} /></Tooltip>
+          )}
           <Tooltip title={`${t.data.preview} ${record.name}`}><Button type="text" size="small" icon={<EyeOutlined />} aria-label={`${t.data.preview} ${record.name}`} onClick={() => handlePreview(record.id)} /></Tooltip>
           <Tooltip title={`${t.data.download} ${record.name}`}><Button type="text" size="small" icon={<DownloadOutlined />} aria-label={`${t.data.download} ${record.name}`} onClick={() => handleDownload(record.id)} /></Tooltip>
           <Tooltip title={`${t.common.delete} ${record.name}`}><Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label={`${t.common.delete} ${record.name}`} onClick={() => handleDelete(record.id)} /></Tooltip>
@@ -155,11 +160,11 @@ export default function DataManagePage() {
               options={projects.map((p: any) => ({ value: p.id, label: p.name }))}
               allowClear
             />
-            <Upload beforeUpload={(file) => { handleUpload(file); return false; }} accept=".csv,.xlsx,.json,.parquet" maxCount={1} showUploadList={false}>
+            <Upload beforeUpload={(file) => { handleUpload(file); return false; }} accept=".csv,.xls,.xlsx,.json,.parquet" maxCount={1} showUploadList={false}>
               <Button icon={<UploadOutlined />}>{t.data.upload_file}</Button>
             </Upload>
             <Button icon={<ExportOutlined />} onClick={handleExport}>{t.data.export}</Button>
-            <Upload beforeUpload={(file) => { handleUpload(file); return false; }} accept=".csv,.xlsx" maxCount={99} showUploadList={false} multiple>
+            <Upload beforeUpload={(file) => { handleUpload(file); return false; }} accept=".csv,.xls,.xlsx" maxCount={99} showUploadList={false} multiple>
               <Button icon={<ImportOutlined />}>{t.data.batch}</Button>
             </Upload>
           </Space>

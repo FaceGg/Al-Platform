@@ -30,6 +30,7 @@ from app.models import compute as compute_models  # noqa: F401 (register models)
 from app.models import agent as agent_models  # noqa: F401 (register models)
 from app.models import platform_models as pm  # noqa: F401 (register models)
 from app.models import access as access_models  # noqa: F401 (register models)
+from app.models import spot_weld_quality as spot_weld_quality_models  # noqa: F401 (register models)
 
 import app.operators.io_operators  # noqa: F401
 import app.operators.processing  # noqa: F401
@@ -57,6 +58,7 @@ from app.api import algorithm as algo_api, platform_api, compute, annotations as
 from app.api import model_library as model_lib_api, dashboard as dash_api, readiness, experiments, schedules
 from app.api import project_access as project_access_api
 from app.api import model_registry as model_registry_api
+from app.api import spot_weld_quality as spot_weld_quality_api
 
 
 def initialize_database(app_settings=None, db_engine=None) -> None:
@@ -168,7 +170,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="AI模型训练编排平台",
+    title="智擎",
     description="Web-based visual AI model training orchestration platform",
     version="0.2.0",
     lifespan=lifespan,
@@ -223,6 +225,7 @@ app.include_router(readiness.router)
 app.include_router(experiments.router)
 app.include_router(schedules.router)
 app.include_router(model_registry_api.router)
+app.include_router(spot_weld_quality_api.router)
 
 
 @app.get("/api/health")

@@ -6,7 +6,7 @@ import {
   DatabaseOutlined, AppstoreOutlined, TeamOutlined, ApartmentOutlined,
   CloudUploadOutlined, ThunderboltOutlined, ExperimentOutlined, ApiOutlined,
   CloudServerOutlined, RobotOutlined, MessageOutlined, MenuFoldOutlined,
-  MenuUnfoldOutlined, MonitorOutlined, SafetyOutlined, ToolOutlined,
+  MenuUnfoldOutlined, MonitorOutlined, SafetyOutlined, TagsOutlined, ToolOutlined,
 } from "@ant-design/icons";
 import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
@@ -24,6 +24,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const role = localStorage.getItem("role");
 
   const menuItems = [
+    { key: "/data-annotation", icon: <TagsOutlined />, label: t.nav.data_annotation },
     { key: "/", icon: <DashboardOutlined />, label: t.nav.dashboard },
     { key: "/projects", icon: <ProjectOutlined />, label: t.nav.projects },
     { key: "/models", icon: <AppstoreOutlined />, label: t.nav.models },
@@ -113,8 +114,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </div>
             {!collapsed && (
               <div>
-                <div style={{ color: "#E6EDF3", fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>Precision Forge</div>
-                <div style={{ color: "#8B949E", fontSize: 10 }}>AI Training Platform</div>
+                <div style={{ color: theme === "dark" ? "#E6EDF3" : "#000000", fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>智擎</div>
+                <div style={{ color: theme === "dark" ? "#8B949E" : "#4B5563", fontSize: 10 }}>工业智能平台</div>
               </div>
             )}
           </div>

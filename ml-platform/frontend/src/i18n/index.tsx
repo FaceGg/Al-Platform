@@ -4,7 +4,7 @@ type Lang = "zh" | "en";
 
 const ZH = {
   app: {
-    title: "\u0041\u0049\u6a21\u578b\u8bad\u7ec3\u7f16\u6392\u5e73\u53f0",
+    title: "智擎",
     login: "\u767b\u5f55",
     register: "\u6ce8\u518c",
     logout: "\u9000\u51fa",
@@ -18,6 +18,7 @@ const ZH = {
     models: "\u6a21\u578b\u5e93",
     users: "\u7528\u6237\u7ba1\u7406",
     data: "\u6570\u636e\u7ba1\u7406",
+    data_annotation: "\u6570\u636e\u6807\u6ce8",
     knowledge: "\u77e5\u8bc6\u5e93",
     training: "\u6a21\u578b\u8bad\u7ec3",
     monitor: "\u8d44\u6e90\u76d1\u63a7",
@@ -139,6 +140,14 @@ const ZH = {
     datasets: "\u6570\u636e\u96c6",
     samples: "\u6837\u672c",
     project: "\u9879\u76ee",
+  },
+  spotWeld: {
+    title: "\u6570\u636e\u6807\u6ce8",
+    project: "\u9879\u76ee",
+    queue: "\u6837\u672c\u961f\u5217",
+    waveforms: "\u56db\u901a\u9053\u6ce2\u5f62",
+    review: "\u6807\u6ce8\u4e0e\u5ba1\u6838",
+    noRun: "\u6682\u65e0\u8d28\u91cf\u8fd0\u884c",
   },
   knowledge: {
     title: "\u77e5\u8bc6\u5e93",
@@ -342,8 +351,8 @@ const ZH = {
 };
 
 const EN: Record<string, any> = {
-  app: { title: "AI Model Training Platform", login: "Login", register: "Register", logout: "Logout", success: "Success", error: "Error", confirm: "Confirm" },
-  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources" },
+  app: { title: "智擎", login: "Login", register: "Register", logout: "Logout", success: "Success", error: "Error", confirm: "Confirm" },
+  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources" },
   common: { success: "Success", error: "Error", confirm: "Confirm", cancel: "Cancel", delete: "Delete", save: "Save", back: "Back", run: "Run", stop: "Stop", create: "Create", edit: "Edit", search: "Search", export: "Export", import: "Import", refresh: "Refresh", close: "Close", more: "More", batch_delete: "Batch Delete", select_all: "Select All", no_data: "No Data", loading: "Loading..." },
   project: { create: "New Project", name: "Project Name", desc: "Description", list: "Project List", workflow_count: "Workflows", last_modified: "Last Modified", delete_confirm: "Delete this project?" },
   workflow: { create: "New Workflow", name: "Workflow Name", run: "Run", stop: "Stop", save: "Save", delete: "Delete Workflow", save_success: "Saved", save_failed: "Save Failed", run_failed: "Run Failed", run_success: "Run Success", running: "Running", pending: "Pending", completed: "Completed", failed: "Failed" },
@@ -367,6 +376,7 @@ const EN: Record<string, any> = {
     running: "Running", stopped: "Stopped", starting: "Starting", stopping: "Stopping", failed: "Failed",
   },
   data: { title: "Data Management", filename: "Filename", format: "Format", size: "Size", rows: "Rows", preview: "Preview", download: "Download", upload_file: "Upload", export: "Export", batch: "Batch Import", delete_file: "Delete", datasets: "Datasets", samples: "Samples", project: "Project" },
+  spotWeld: { title: "Data Annotation", project: "Project", queue: "Sample Queue", waveforms: "Four-channel Waveforms", review: "Annotation and Review", noRun: "No quality runs yet" },
   knowledge: { title: "Knowledge Base", graph: "Knowledge Graph", rag: "RAG Search", documents: "Documents", import: "Import", chunks: "Chunks", search: "Search" },
   automl: { title: "AutoML", new_task: "New Task", select_project: "Select Project", score: "Score", params: "Parameters", results: "Results", select_dataset: "Select Dataset", target: "Target Column", name: "Task Name", all_results: "All Results" },
   training: { title: "Experiment and Training Operations", experiments: "Experiments", jobs: "Training Jobs", new_experiment: "New Experiment", experiment_name: "Experiment Name", description: "Description", runs: "Runs", compare: "Compare", new_job: "New Training", name: "Job Name", project: "Project", dataset_artifact: "Dataset Artifact", target_column: "Target Column", model_artifact: "Model Artifact", model_library: "Model Library Entry", feature_schema: "Feature Schema", target_schema: "Target Schema", preprocessing: "Preprocessing", logs: "Logs", error_code: "Error", details: "Details", status: "Status", start: "Start", stop: "Stop", confirm_stop: "Confirm Stop", resume: "Resume", tensorboard: "TensorBoard", checkpoints: "Checkpoints", epoch: "Epoch", progress: "Progress", task: "Task Type", total_epochs: "Total Epochs", metrics: "Metrics", operator: "Operator", started: "Started", restore: "Restore" },

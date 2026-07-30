@@ -1,4 +1,4 @@
-/* ===== Precision Forge Design System - Rounded Industrial Technology ===== */
+/* ===== 智擎 Design System - Rounded Industrial Technology ===== */
 
 [data-theme="dark"],
 [data-theme="dark"] body {
@@ -1250,5 +1250,403 @@ html body {
 @media (max-width: 980px) {
   .execution-progress {
     min-width: min(316px, calc(100% - 28px));
+  }
+}
+
+.spot-weld-annotation__project {
+  min-width: 220px;
+}
+
+.spot-weld-annotation__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.spot-weld-annotation__actions .ant-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+}
+
+.spot-weld-annotation__actions .ant-btn-icon-only {
+  justify-content: center;
+  width: 32px;
+  padding: 0;
+}
+
+.spot-weld-annotation__controls {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr);
+  align-items: center;
+  gap: 7px 10px;
+  min-width: 360px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.spot-weld-annotation__controls select,
+.spot-weld-annotation__review select,
+.spot-weld-annotation__review textarea,
+.spot-weld-annotation__training input {
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  font: inherit;
+}
+
+.spot-weld-annotation__controls select,
+.spot-weld-annotation__review select {
+  min-height: 32px;
+  padding: 4px 9px;
+}
+
+.spot-weld-annotation__controls select:focus,
+.spot-weld-annotation__review select:focus,
+.spot-weld-annotation__review textarea:focus,
+.spot-weld-annotation__training input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 35%, transparent);
+  outline-offset: 1px;
+}
+
+.spot-weld-annotation__region-head,
+.spot-weld-annotation__sample-meta,
+.spot-weld-annotation__review-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.spot-weld-annotation__sample-list {
+  display: grid;
+  gap: 6px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.spot-weld-annotation__sample {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.spot-weld-annotation__sample:hover,
+.spot-weld-annotation__sample.is-selected {
+  border-color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-elevated));
+}
+
+.spot-weld-annotation__sample span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.spot-weld-annotation__sample small,
+.spot-weld-annotation__status {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.spot-weld-annotation__waveforms {
+  min-width: 0;
+}
+
+.spot-weld-waveform-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  overflow: auto;
+}
+
+.spot-weld-waveform-panel__channel {
+  min-width: 0;
+}
+
+.spot-weld-waveform-panel__channel h4 {
+  margin: 0 0 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.spot-weld-waveform-panel__chart {
+  width: 100%;
+  height: 150px;
+  min-height: 150px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+
+.spot-weld-annotation__review {
+  align-content: start;
+}
+
+.spot-weld-annotation__review > label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.spot-weld-annotation__review textarea {
+  width: 100%;
+  min-height: 66px;
+  resize: vertical;
+  padding: 7px 9px;
+}
+
+.spot-weld-annotation__review .ant-btn {
+  min-height: 32px;
+}
+
+.spot-weld-annotation__review-divider {
+  height: 1px;
+  margin: 5px 0;
+  background: var(--border-subtle);
+}
+
+.spot-weld-annotation__review-actions {
+  justify-content: flex-start;
+}
+
+.spot-weld-annotation__training {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.spot-weld-annotation__training-head,
+.spot-weld-annotation__training-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.spot-weld-annotation__training h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.spot-weld-annotation__training label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.spot-weld-annotation__training input {
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 9px;
+}
+
+.spot-weld-annotation__training-result {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+
+.spot-weld-annotation__training-result > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.spot-weld-annotation__training-result small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.spot-weld-annotation__training-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.monitor-quality-warnings {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.monitor-quality-warnings__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.monitor-quality-warnings__head h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.monitor-quality-warnings__counts {
+  min-height: 24px;
+}
+
+@media (max-width: 640px) {
+  .monitor-quality-warnings__head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+.spot-weld-annotation__evidence {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.spot-weld-annotation__evidence span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  font-size: 10px;
+}
+
+.spot-weld-annotation__evidence strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spot-weld-annotation__rules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 24px;
+}
+
+.spot-weld-annotation__rules small {
+  color: var(--text-tertiary);
+}
+
+.spot-weld-annotation__details {
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.spot-weld-annotation__details summary {
+  padding: 7px 0;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.spot-weld-annotation__details > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  padding-bottom: 4px;
+}
+
+.spot-weld-annotation__details span {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 5px;
+  background: var(--bg-surface);
+}
+
+.spot-weld-annotation__details small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spot-weld-annotation__details strong {
+  color: var(--text-primary);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.spot-weld-annotation__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.spot-weld-annotation__workspace {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(420px, 1.6fr) minmax(260px, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.spot-weld-annotation__region {
+  display: flex;
+  min-height: 360px;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.spot-weld-annotation__region h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.spot-weld-annotation__region .ant-empty,
+.spot-weld-annotation__region .ant-spin {
+  margin: auto;
+}
+
+@media (max-width: 900px) {
+  .spot-weld-annotation__workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .spot-weld-annotation__project {
+    width: 100%;
+  }
+
+  .spot-weld-annotation__controls {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .spot-weld-annotation__actions {
+    width: 100%;
   }
 }

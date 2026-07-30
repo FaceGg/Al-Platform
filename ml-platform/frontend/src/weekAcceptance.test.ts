@@ -44,6 +44,12 @@ const weekTestFiles: Record<number, string[]> = {
     "./api/modelRegistry.test.ts",
     "./pages/ModelLibraryPage.test.tsx",
   ],
+  17: [
+    "./api/spotWeldQuality.test.ts",
+    "./components/spotWeld/WaveformPanel.test.tsx",
+    "./pages/DataAnnotationPage.test.tsx",
+    "./pages/MonitorPage.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(

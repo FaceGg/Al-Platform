@@ -1,9 +1,11 @@
 import { useEffect, useState, useRef } from "react";
-import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form } from "antd";
+import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space } from "antd";
 import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
+import { useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
+import { createQualityRun, getQualityRun, type QualityRun } from "../api/spotWeldQuality";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
 
@@ -12,6 +14,7 @@ const { Text, Title } = Typography;
 export default function AutoMLPage() {
   const { t } = useI18n();
   const { message } = AntApp.useApp();
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [experiments, setExperiments] = useState<any[]>([]);
@@ -25,6 +28,9 @@ export default function AutoMLPage() {
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<any>(null);
   const [activeTab, setActiveTab] = useState("results");
+  const [recipeTab, setRecipeTab] = useState("general");
+  const [qualityRunning, setQualityRunning] = useState(false);
+  const [qualityRun, setQualityRun] = useState<QualityRun | null>(null);
   const [experimentModalOpen, setExperimentModalOpen] = useState(false);
   const [experimentCreating, setExperimentCreating] = useState(false);
   const [experimentForm] = Form.useForm();
@@ -179,6 +185,42 @@ export default function AutoMLPage() {
     }
   };
 
+  const handleQualityRun = async () => {
+    if (!selectedProject || !selectedDataset) {
+      message.warning("请选择项目和点焊报告数据");
+      return;
+    }
+    setQualityRunning(true);
+    try {
+      const run = await createQualityRun(selectedProject, {
+        dataset_artifact_id: selectedDataset,
+        field_mapping: {},
+      });
+      setQualityRun(run);
+      message.success("点焊质量运行已创建");
+    } catch (error: any) {
+      message.error(error.response?.data?.detail?.message || error.response?.data?.detail || t.common.error);
+    } finally {
+      setQualityRunning(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedProject || !qualityRun || !["queued", "validating", "running"].includes(String(qualityRun.status))) return;
+    let active = true;
+    const refreshQualityRun = async () => {
+      try {
+        const latest = await getQualityRun(selectedProject, qualityRun.id);
+        if (active) setQualityRun(latest);
+      } catch {
+        // Annotation workspace remains the recovery path when a queued task is no longer readable.
+      }
+    };
+    void refreshQualityRun();
+    const timer = window.setInterval(() => { void refreshQualityRun(); }, 1500);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [qualityRun?.id, qualityRun?.status, selectedProject]);
+
   const resultColumns = [
     { title: t.knowledge?.name || "Name", dataIndex: "name", key: "name" },
     { title: t.automl?.score || "Score", dataIndex: "score", key: "score", render: (v: number) => v != null ? Number(v).toFixed(4) : "-" },
@@ -188,10 +230,29 @@ export default function AutoMLPage() {
 
   const featureEntries = Object.entries(features).sort((a: any, b: any) => b[1] - a[1]);
   const maxImp = featureEntries.length > 0 ? (featureEntries[0][1] as number) : 1;
+  const qualityCandidates = Array.isArray(qualityRun?.automl_results) ? qualityRun.automl_results : [];
+  const qualityCluster = qualityRun?.clustering_results || {};
+  const qualityKSearch = Object.entries((qualityCluster.silhouette_scores || {}) as Record<string, number>);
+  const qualityPca = Array.isArray(qualityCluster.pca_coordinates) ? qualityCluster.pca_coordinates : [];
+  const qualityCandidateColumns = [
+    { title: "候选模型", dataIndex: "name", key: "name" },
+    { title: "AUC", dataIndex: "auc", key: "auc", render: (value: number | null) => value == null ? "-" : Number(value).toFixed(4) },
+    { title: "F1", dataIndex: "f1", key: "f1", render: (value: number | null) => value == null ? "-" : Number(value).toFixed(4) },
+    { title: "训练耗时", dataIndex: "training_time_seconds", key: "time", render: (value: number | null) => value == null ? "-" : `${Number(value).toFixed(1)}s` },
+  ];
 
   return (
     <AppLayout>
       <h3>{t.automl?.title || "AutoML"}</h3>
+      <Tabs
+        activeKey={recipeTab}
+        onChange={setRecipeTab}
+        items={[
+          { key: "general", label: t.automl?.title || "AutoML" },
+          { key: "spot-weld-quality", label: "点焊质量感知" },
+        ]}
+      />
+      {recipeTab === "general" && <>
       <Card style={{ marginBottom: 16 }}>
         <Row gutter={[16, 16]} align="middle">
           <Col xs={24} sm={6}><Text strong>{t.automl?.select_project || "Project"}</Text>
@@ -285,6 +346,53 @@ export default function AutoMLPage() {
           </Form.Item>
         </Form>
       </Modal>
+      </>}
+      {recipeTab === "spot-weld-quality" && <section className="spot-weld-recipe">
+        <Card>
+          <Row gutter={[16, 16]} align="middle">
+            <Col xs={24} md={8}>
+              <Text strong>项目</Text>
+              <Select
+                aria-label="质量感知项目"
+                style={{ width: "100%", marginTop: 4 }}
+                value={selectedProject}
+                onChange={setSelectedProject}
+                placeholder="选择项目"
+                options={projects.map((project: any) => ({ value: project.id, label: project.name }))}
+              />
+            </Col>
+            <Col xs={24} md={10}>
+              <Text strong>报告数据</Text>
+              <Select
+                aria-label="质量感知数据"
+                style={{ width: "100%", marginTop: 4 }}
+                value={selectedDataset}
+                onChange={setSelectedDataset}
+                disabled={!selectedProject}
+                placeholder="CSV / XLS / XLSX"
+                options={datasets.filter((dataset: any) => ["csv", "xls", "xlsx"].includes(String(dataset.format || "").toLowerCase())).map((dataset: any) => ({ value: dataset.id, label: dataset.name || dataset.filename }))}
+              />
+            </Col>
+            <Col xs={24} md={6}>
+              <Button type="primary" icon={<ThunderboltOutlined />} aria-label="运行质量感知" onClick={() => void handleQualityRun()} loading={qualityRunning} disabled={!selectedProject || !selectedDataset} block style={{ marginTop: 22 }}>运行质量感知</Button>
+            </Col>
+          </Row>
+        </Card>
+        {qualityRun && <Card style={{ marginTop: 16 }}>
+          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 4 }}>
+              <Descriptions.Item label="运行"><Tag color={qualityRun.status === "completed" ? "green" : "blue"}>{qualityRun.status}</Tag></Descriptions.Item>
+              <Descriptions.Item label="样本">{qualityRun.sample_count ?? "-"}</Descriptions.Item>
+              <Descriptions.Item label="特征版本">{qualityRun.feature_version || "report_v1"}</Descriptions.Item>
+              <Descriptions.Item label="聚类 K">{String(qualityCluster.best_k ?? "-")}</Descriptions.Item>
+              <Descriptions.Item label="K 搜索">{qualityKSearch.length ? qualityKSearch.map(([k, score]) => `K=${k}: ${Number(score).toFixed(3)}`).join(" · ") : "-"}</Descriptions.Item>
+              <Descriptions.Item label="PCA">{qualityPca.length ? `${qualityPca.length} x 2` : "-"}</Descriptions.Item>
+            </Descriptions>
+            {qualityCandidates.length > 0 && <Table rowKey={(row: any) => row.name} size="small" columns={qualityCandidateColumns} dataSource={qualityCandidates} pagination={false} scroll={{ x: 600 }} />}
+            <Button onClick={() => navigate(`/data-annotation?projectId=${encodeURIComponent(selectedProject || "")}&datasetId=${encodeURIComponent(selectedDataset || "")}&runId=${encodeURIComponent(qualityRun.id)}`)}>打开数据标注</Button>
+          </Space>
+        </Card>}
+      </section>}
     </AppLayout>
   );
 }
