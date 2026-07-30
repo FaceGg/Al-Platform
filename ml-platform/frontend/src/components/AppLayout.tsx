@@ -24,8 +24,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const role = localStorage.getItem("role");
 
   const menuItems = [
-    { key: "/", icon: <DashboardOutlined />, label: t.nav.dashboard },
     { key: "/data-annotation", icon: <TagsOutlined />, label: t.nav.data_annotation },
+    { key: "/", icon: <DashboardOutlined />, label: t.nav.dashboard },
     { key: "/projects", icon: <ProjectOutlined />, label: t.nav.projects },
     { key: "/models", icon: <AppstoreOutlined />, label: t.nav.models },
     { key: "/data", icon: <CloudUploadOutlined />, label: t.nav.data },

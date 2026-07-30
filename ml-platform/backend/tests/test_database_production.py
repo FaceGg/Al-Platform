@@ -33,7 +33,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20260718_08"
+HEAD_REVISION = "20260730_09"
 
 
 class TestDatabaseEngineOptions(TestCase):
@@ -282,7 +282,7 @@ class TestAlembicBaseline(TestCase):
             try:
                 inspector = inspect(db_engine)
                 business_tables = set(inspector.get_table_names()) - {"alembic_version"}
-                self.assertEqual(len(business_tables), 38)
+                self.assertEqual(len(business_tables), 43)
                 self.assertTrue(
                     {
                         "users",
@@ -295,6 +295,11 @@ class TestAlembicBaseline(TestCase):
                         "pipeline_schedules",
                         "pipeline_schedule_runs",
                         "project_members",
+                        "spot_weld_quality_runs",
+                        "spot_weld_quality_samples",
+                        "spot_weld_quality_rule_sets",
+                        "spot_weld_label_revisions",
+                        "spot_weld_label_snapshots",
                         "audit_events",
                         "registered_models",
                         "model_versions",

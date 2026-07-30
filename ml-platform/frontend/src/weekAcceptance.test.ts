@@ -48,6 +48,7 @@ const weekTestFiles: Record<number, string[]> = {
     "./api/spotWeldQuality.test.ts",
     "./components/spotWeld/WaveformPanel.test.tsx",
     "./pages/DataAnnotationPage.test.tsx",
+    "./pages/MonitorPage.test.tsx",
   ],
 };
 

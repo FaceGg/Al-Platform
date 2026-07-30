@@ -1,5 +1,5 @@
 import { App as AntApp } from "antd";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,7 +18,7 @@ describe("DataAnnotationPage", () => {
     get.mockReset();
     post.mockResolvedValue({ data: {} });
     get.mockImplementation((url: string) => {
-      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "焊装线" }] } });
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "焊装线", project_role: "owner" }] } });
       if (url === "/projects/project-1/spot-weld/runs") return Promise.resolve({ data: { items: [{ id: "run-1", status: "completed", sample_count: 1 }] } });
       if (url.endsWith("/samples")) return Promise.resolve({ data: { items: [{ id: "sample-1", display_id: "W-0001", review_status: "pending_review", warning_level: "none" }] } });
       if (url.endsWith("/samples/sample-1")) return Promise.resolve({ data: { id: "sample-1", display_id: "W-0001", review_status: "pending_review", waveforms: { current: [1], voltage: [2], resistance: [3], power: [4] } } });
@@ -55,5 +55,97 @@ describe("DataAnnotationPage", () => {
       "/projects/project-1/spot-weld/runs/run-1/samples/sample-1/labels",
       { label: "power_fluctuation", note: "" },
     ));
+  });
+
+  it("ignores a sample detail that returns after switching projects", async () => {
+    let resolveOldDetail: (value: unknown) => void = () => undefined;
+    const oldDetail = new Promise((resolve) => { resolveOldDetail = resolve; });
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [
+        { id: "project-1", name: "焊装线 A", project_role: "owner" },
+        { id: "project-2", name: "焊装线 B", project_role: "owner" },
+      ] } });
+      if (url === "/projects/project-1/spot-weld/runs") return Promise.resolve({ data: { items: [{ id: "run-1", status: "completed" }] } });
+      if (url === "/projects/project-2/spot-weld/runs") return Promise.resolve({ data: { items: [{ id: "run-2", status: "completed" }] } });
+      if (url.endsWith("/runs/run-1/samples")) return Promise.resolve({ data: { items: [{ id: "sample-1", display_id: "W-0001", review_status: "pending_review" }] } });
+      if (url.endsWith("/runs/run-2/samples")) return Promise.resolve({ data: { items: [] } });
+      if (url.endsWith("/runs/run-1/samples/sample-1")) return oldDetail;
+      return Promise.resolve({ data: { items: [] } });
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?projectId=project-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "W-0001" }));
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/projects/project-1/spot-weld/runs/run-1/samples/sample-1"));
+    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "project-2" } });
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/projects/project-2/spot-weld/runs"));
+    expect(await screen.findByText("暂无样本")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveOldDetail({ data: {
+        id: "sample-1", display_id: "W-0001", review_status: "pending_review",
+        waveforms: { current: [1], voltage: [2], resistance: [3], power: [4] },
+      } });
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("电流")).not.toBeInTheDocument();
+    expect(screen.getByText("选择样本查看波形")).toBeInTheDocument();
+  });
+
+  it("uploads a report and queues a validated quality run", async () => {
+    post.mockImplementation((url: string) => {
+      if (url === "/projects/project-1/datasets/upload") return Promise.resolve({ data: { artifact_id: "artifact-1" } });
+      if (url.endsWith("/spot-weld/validate")) return Promise.resolve({ data: { valid_rows: 12, errors: [] } });
+      if (url.endsWith("/spot-weld/runs")) return Promise.resolve({ data: { id: "run-uploaded", status: "queued" } });
+      return Promise.resolve({ data: {} });
+    });
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?projectId=project-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    const file = new File(["report"], "spot-weld.csv", { type: "text/csv" });
+    fireEvent.change(await screen.findByLabelText("上传点焊报告"), { target: { files: [file] } });
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/projects/project-1/spot-weld/runs",
+      { dataset_artifact_id: "artifact-1", field_mapping: {} },
+    ));
+  });
+
+  it("freezes approved labels before training and exposes the resulting quality model", async () => {
+    post.mockImplementation((url: string) => {
+      if (url.endsWith("/label-snapshots")) return Promise.resolve({ data: { id: "snapshot-1", name: "approved-labels", sample_count: 10 } });
+      if (url.endsWith("/label-snapshots/snapshot-1/train")) return Promise.resolve({ data: {
+        snapshot_id: "snapshot-1",
+        model: { id: "quality-model-1", name: "点焊质量模型", params: { feature_version: "report_v1" } },
+        output_artifacts: { report: "report-1" },
+      } });
+      return Promise.resolve({ data: {} });
+    });
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?projectId=project-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "创建训练快照" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/projects/project-1/spot-weld/runs/run-1/label-snapshots",
+      { name: "approved-labels" },
+    ));
+    fireEvent.change(screen.getByLabelText("训练标签快照"), { target: { value: "snapshot-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "训练快照" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/projects/project-1/spot-weld/runs/run-1/label-snapshots/snapshot-1/train",
+    ));
+    expect(await screen.findByText("点焊质量模型")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下载质量报告" })).toBeInTheDocument();
   });
 });

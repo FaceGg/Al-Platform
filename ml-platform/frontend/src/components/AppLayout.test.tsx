@@ -46,4 +46,19 @@ describe("AppLayout", () => {
 
     expect(await screen.findByText("数据标注")).toBeInTheDocument();
   });
+
+  it("保持数据标注位于侧边栏首个工作项", async () => {
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AppLayout><div>test</div></AppLayout>
+      </MemoryRouter>,
+    );
+
+    const annotationItem = (await screen.findByText("数据标注")).closest(".ant-menu-item");
+    const dashboardItem = screen.getByText("工作台").closest(".ant-menu-item");
+
+    expect(annotationItem?.parentElement?.children).toBeTruthy();
+    expect(Array.from(annotationItem!.parentElement!.children).indexOf(annotationItem!))
+      .toBeLessThan(Array.from(dashboardItem!.parentElement!.children).indexOf(dashboardItem!));
+  });
 });

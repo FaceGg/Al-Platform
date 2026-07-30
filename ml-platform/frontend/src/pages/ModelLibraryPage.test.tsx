@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App as AntApp } from "antd";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import ModelLibraryPage from "./ModelLibraryPage";
 
 const mocks = vi.hoisted(() => ({
@@ -8,10 +9,12 @@ const mocks = vi.hoisted(() => ({
   registerPlatformVersion: vi.fn(), approveModelVersion: vi.fn(), rejectModelVersion: vi.fn(),
   listDeployments: vi.fn(), createDeployment: vi.fn(), startDeployment: vi.fn(),
   stopDeployment: vi.fn(), predictDeployment: vi.fn(), deleteRegisteredModel: vi.fn(), deleteDeployment: vi.fn(),
+  listQualityModels: vi.fn(),
 }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
 vi.mock("../api/modelRegistry", () => mocks);
+vi.mock("../api/spotWeldQuality", () => ({ listQualityModels: mocks.listQualityModels }));
 vi.mock("../api/client", () => ({
   default: { get: vi.fn().mockResolvedValue({ data: { items: [
     { id: "p1", name: "Weld line", project_role: "owner" },
@@ -51,6 +54,10 @@ const deployment = {
   last_checked_at: null, created_at: null,
 };
 
+function renderPage() {
+  return render(<MemoryRouter><AntApp><ModelLibraryPage /></AntApp></MemoryRouter>);
+}
+
 describe("ModelLibraryPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -64,10 +71,17 @@ describe("ModelLibraryPage", () => {
     mocks.startDeployment.mockResolvedValue({ ...deployment, desired_state: "running", observed_state: "running" });
     mocks.stopDeployment.mockResolvedValue(deployment);
     mocks.predictDeployment.mockResolvedValue({ deployment_id: "d1", model_version_id: "v1", version_number: 1, predictions: [1], probabilities: [[0.08, 0.92]], duration_ms: 2.4 });
+    mocks.listQualityModels.mockResolvedValue([{
+      id: "quality-1", name: "Spot quality v1", version: "report_v1", status: "completed",
+      framework: "lightgbm", backbone: "LGB_v2", metrics: { auc: 0.99, f1: 0.98 },
+      params: {
+        quality_run_id: "run-1", label_snapshot_id: "snapshot-1", feature_version: "report_v1", rule_set_version: "report_v1",
+      }, tags: ["spot_weld_quality"],
+    }]);
   });
 
   it("registers, approves, deploys, starts, and predicts named records", async () => {
-    render(<AntApp><ModelLibraryPage /></AntApp>);
+    renderPage();
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Project" }));
     fireEvent.click(await screen.findByText("Weld line (owner)"));
     expect(await screen.findByText("Weld fault")).toBeInTheDocument();
@@ -105,17 +119,30 @@ describe("ModelLibraryPage", () => {
 
   it("keeps viewer read-only and shows runtime failure state", async () => {
     mocks.listDeployments.mockResolvedValue([{ ...deployment, observed_state: "failed", last_error_code: "MODEL_LOAD_FAILED" }]);
-    render(<AntApp><ModelLibraryPage /></AntApp>);
+    renderPage();
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Project" }));
     fireEvent.click(await screen.findByText("Read only (viewer)"));
     fireEvent.click(screen.getByRole("tab", { name: "Deployments" }));
     expect(await screen.findByText("MODEL_LOAD_FAILED")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create deployment" })).not.toBeInTheDocument();
   });
+
+  it("shows generated quality models with frozen training lineage", async () => {
+    renderPage();
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Project" }));
+    fireEvent.click(await screen.findByText("Weld line (owner)"));
+
+    fireEvent.click(await screen.findByRole("tab", { name: "质量模型" }));
+    expect(await screen.findByText("Spot quality v1")).toBeInTheDocument();
+    expect(screen.getByText("quality_run_id: run-1")).toBeInTheDocument();
+    expect(screen.getByText("label_snapshot_id: snapshot-1")).toBeInTheDocument();
+    expect(screen.getByText("feature_version: report_v1")).toBeInTheDocument();
+    expect(screen.getByText("rule_set_version: report_v1")).toBeInTheDocument();
+  });
 });
   it("shows delete actions for registered models and stopped deployments", async () => {
     mocks.listDeployments.mockResolvedValue([deployment]);
-    render(<AntApp><ModelLibraryPage /></AntApp>);
+    renderPage();
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Project" }));
     fireEvent.click(await screen.findByText("Weld line (owner)"));
 

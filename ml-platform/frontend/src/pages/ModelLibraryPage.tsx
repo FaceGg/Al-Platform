@@ -16,20 +16,25 @@ import {
   type RegisteredModel, registerOnnxVersion, registerPlatformVersion, rejectModelVersion,
   startDeployment, stopDeployment, uploadOnnxArtifact,
 } from "../api/modelRegistry";
+import { listQualityModels, type QualityModel } from "../api/spotWeldQuality";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
+import { useSearchParams } from "react-router-dom";
 
 const { Text, Title } = Typography;
 
 export default function ModelLibraryPage() {
   const { t } = useI18n();
   const copy = t.modelRegistry;
+  const [searchParams] = useSearchParams();
+  const requestedProjectId = searchParams.get("projectId") || undefined;
   const [projects, setProjects] = useState<ProjectOption[]>([]);
-  const [projectId, setProjectId] = useState<string>();
+  const [projectId, setProjectId] = useState<string | undefined>(requestedProjectId);
   const [tab, setTab] = useState("models");
   const [models, setModels] = useState<RegisteredModel[]>([]);
   const [deployments, setDeployments] = useState<InferenceDeployment[]>([]);
   const [versions, setVersions] = useState<Record<string, ModelVersion[]>>({});
+  const [qualityModels, setQualityModels] = useState<QualityModel[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
   const [registerModel, setRegisterModel] = useState<RegisteredModel>();
@@ -57,15 +62,20 @@ export default function ModelLibraryPage() {
     }).catch((cause) => setError(formatApiError(cause, copy.loadFailed)));
   }, [copy.loadFailed]);
 
+  useEffect(() => {
+    if (requestedProjectId && requestedProjectId !== projectId) setProjectId(requestedProjectId);
+  }, [projectId, requestedProjectId]);
+
   const loadProject = useCallback(async (selected: string) => {
     setLoading(true);
     setError(undefined);
     try {
-      const [modelItems, deploymentItems] = await Promise.all([
-        listRegisteredModels(selected), listDeployments(selected),
+      const [modelItems, deploymentItems, qualityModelItems] = await Promise.all([
+        listRegisteredModels(selected), listDeployments(selected), listQualityModels(selected),
       ]);
       setModels(modelItems);
       setDeployments(deploymentItems);
+      setQualityModels(qualityModelItems);
       const entries = await Promise.all(modelItems.map(async (model) => [
         model.id, await listModelVersions(model.id),
       ] as const));
@@ -74,6 +84,7 @@ export default function ModelLibraryPage() {
       setError(formatApiError(cause, copy.loadFailed));
       setModels([]);
       setDeployments([]);
+      setQualityModels([]);
     } finally {
       setLoading(false);
     }
@@ -88,7 +99,7 @@ export default function ModelLibraryPage() {
     return labels[status] || status;
   };
   const statusColor = (status: string) => {
-    if (status === "approved" || status === "running") return "success";
+    if (status === "approved" || status === "running" || status === "completed") return "success";
     if (status === "pending" || status === "starting" || status === "stopping") return "processing";
     if (status === "rejected" || status === "failed") return "error";
     return "default";
@@ -296,6 +307,13 @@ export default function ModelLibraryPage() {
     </Space> },
   ];
 
+  const qualityModelColumns = [
+    { title: "模型", dataIndex: "name", key: "name", render: (value: string, row: QualityModel) => <Space direction="vertical" size={0}><Text strong>{value}</Text><Text type="secondary">{row.backbone || row.framework || "spot_weld_quality"}</Text></Space> },
+    { title: "状态", dataIndex: "status", key: "status", width: 120, render: (value: string | undefined) => value ? <Tag color={statusColor(value)}>{statusLabel(value)}</Tag> : "-" },
+    { title: "指标", key: "metrics", width: 180, render: (_: unknown, row: QualityModel) => <Text type="secondary">{Object.entries(row.metrics || {}).map(([name, value]) => `${name}: ${value == null ? "-" : Number(value).toFixed(4)}`).join(" · ") || "-"}</Text> },
+    { title: "训练血缘", key: "lineage", render: (_: unknown, row: QualityModel) => <Space size={[4, 4]} wrap>{["quality_run_id", "label_snapshot_id", "feature_version", "rule_set_version"].map((key) => row.params?.[key] ? <Tag key={key}>{key}: {row.params[key]}</Tag> : null)}</Space> },
+  ];
+
   return <AppLayout>
     <section className="page-shell model-library-page fade-in">
       <Space direction="vertical" size={20} style={{ width: "100%" }}>
@@ -316,6 +334,7 @@ export default function ModelLibraryPage() {
               {canRegister && <Button type="primary" icon={<PlusOutlined />} aria-label={copy.createDeployment} onClick={() => setDeploymentOpen(true)}>{copy.createDeployment}</Button>}
               <Table rowKey="id" loading={loading} dataSource={deployments} columns={deploymentColumns} locale={{ emptyText: <Empty description={copy.emptyDeployments} /> }} scroll={{ x: 800 }} pagination={false} />
             </Space></div> },
+            { key: "quality-models", label: "质量模型", children: <div className="table-surface table-surface--padded"><Table rowKey="id" loading={loading} dataSource={qualityModels} columns={qualityModelColumns} locale={{ emptyText: <Empty description="暂无质量模型" /> }} scroll={{ x: 860 }} pagination={false} /></div> },
           ]} />
         </>}
       </Space>
