@@ -40,6 +40,18 @@ describe("DataAnnotationPage", () => {
     expect(screen.getByText("标注与审核")).toBeInTheDocument();
   });
 
+  it("falls back to an accessible project when the URL project is stale", async () => {
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?projectId=missing-project"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/projects/project-1/spot-weld/runs"));
+    expect(get).not.toHaveBeenCalledWith("/projects/missing-project/spot-weld/runs");
+    expect(screen.getByLabelText("Project")).toHaveValue("project-1");
+  });
+
   it("loads a sample waveform and submits an operator label", async () => {
     render(
       <MemoryRouter initialEntries={["/data-annotation?projectId=project-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>

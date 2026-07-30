@@ -327,6 +327,22 @@ class TestAutoMLAPI(unittest.TestCase):
         self.assertEqual(response.json()["status"], "queued")
         self.assertEqual(self.dispatcher.enqueued, [response.json()["job_id"]])
 
+    def test_automl_budget_is_accepted_and_persisted(self):
+        response = self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "time_budget": 60,
+        }, headers=self.headers)
+
+        self.assertEqual(response.status_code, 202, response.text)
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(
+                TrainingJob.id == uuid.UUID(response.json()["job_id"])
+            ).one()
+            self.assertEqual(job.params["time_budget"], 60)
+
 
 if __name__ == "__main__":
     unittest.main()

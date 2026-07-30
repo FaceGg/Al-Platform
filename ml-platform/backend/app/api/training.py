@@ -66,6 +66,7 @@ class AutoMLRunRequest(BaseModel):
     dataset_artifact_id: uuid.UUID
     target_column: str = Field(min_length=1)
     task: str = "classification"
+    time_budget: int = Field(default=60, ge=10, le=3600)
     name: str = Field(default="automl-job", min_length=1, max_length=128)
 
 
@@ -510,7 +511,11 @@ def start_automl(
         job = TrainingJob(
             id=job_id, project_id=data.project_id, user_id=current_user.id,
             experiment_id=experiment.id, name=data.name, operator_id="automl",
-            params={"target_column": data.target_column, "task": data.task},
+            params={
+                "target_column": data.target_column,
+                "task": data.task,
+                "time_budget": data.time_budget,
+            },
             dataset_artifact_id=dataset.id,
             dataset_path=artifact_service.storage_reference(dataset), status="pending",
         )
