@@ -1519,3 +1519,15 @@
 - 影响范围：本地服务进程、数据标注项目选择恢复、AutoML 请求模型及相关测试；不修改点焊数据处理、质量模型算法或远端环境。
 - 预防措施：前端深链接 ID 在依赖资源列表返回后必须校验可访问性；带 `extra=forbid` 的 API 每次新增 UI 参数都要同步登记到请求模型与持久化参数；本地前端代理升级前先从 OpenAPI 核验目标后端路由。
 - 远端 CI：PR #12 已合并。GitHub Actions `30525464925` 的四个检查均在 3 至 5 秒内失败、没有任何步骤或 runner；检查注释确认账号付款或消费限额阻止任务启动。该限制未执行本次代码，不能作为远端测试结果；本地及浏览器验证仍是当前可用性证据。
+
+### 2026-07-30：本地 AutoML 投递竞态与结果页修复
+
+- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量与数据标注提前交付后的本地可用性修复。
+- 任务状态：本地实现、自动化回归和真实浏览器运行已完成；远程 CI、Celery/Redis/MinIO 生产投递仍待外部环境恢复后验证。
+- 问题现象：本地 AutoML 点击运行曾返回 `TRAINING_DISPATCH_FAILED`，或任务长期停留在 `pending`；即使任务完成，结果页也可能没有最佳模型和候选结果。
+- 已确认根因：`task_backend=local` 仍选择 Celery dispatcher；本地线程在队列状态和任务 ID 提交前启动，触发 SQLite 锁竞争；完成任务只持久化通用指标，而前端结果区读取 `best_model` 和 `all_results`。
+- 解决方法：按应用设置选择 `LocalTrainingDispatcher` 或 Celery dispatcher；本地 dispatcher 先生成并登记任务 ID，API 在审计事务中提交 `queued/task_id` 后再启动线程；AutoML 完成时同时保存 `best_model`、`all_results`、`best_score` 和 `best_candidate`；前端结构化错误统一经 `formatApiError` 展示，避免异常对象导致页面空白。
+- 验证方式：后端 `tests.test_automl_tracking tests.test_training_tasks` 17/17；前端 `AutoMLPage.test.tsx` 3/3；`npm run build` 和 `git diff --check` 通过。浏览器以“点焊质量示例项目”与 `spot-weld-report-demo.csv`、目标列 `wld1c`、`Regression` 实际运行，结果区显示 `linear_regression`、`random_forest`、`gradient_boosting`，最佳分数 `0.8685`。
+- 影响范围：本地训练/AutoML dispatcher、训练任务状态提交、AutoML 结果持久化、AutoML 页面错误和结果展示；不修改 Celery 生产任务合同。
+- 预防措施：本地异步执行必须先持久化可查询的队列状态再启动线程；每个前端结果字段都要有后端持久化回归；结构化 API 错误必须覆盖异常路径的页面可见性测试。
+- 遗留事项：远程 GitHub Actions 仍可能因账号付款或消费限额无法启动；该限制解除后需重新执行远程检查，不能以本地结果替代。

@@ -256,7 +256,21 @@ def execute_automl_job(
         db.add(model_entry)
         db.flush()
         job.status = "completed"
-        job.metrics = {"best_score": best_score, "best_candidate": best_candidate.name}
+        job.metrics = {
+            "best_score": best_score,
+            "best_candidate": best_candidate.name,
+            "best_model": {
+                "name": best_candidate.name,
+                "score": best_score,
+            },
+            "all_results": [
+                {"name": candidate.name, "score": score}
+                for score, index, candidate, _child_run_id in sorted(
+                    successes,
+                    key=lambda item: (-item[0], item[1]),
+                )
+            ],
+        }
         job.model_path = artifact_service.storage_reference(model_artifact)
         job.model_artifact_id = model_artifact.id
         job.model_library_id = model_entry.id

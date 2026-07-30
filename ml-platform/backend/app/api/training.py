@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.api.experiments import get_experiment_tracking
+from app.config import settings
 from app.database import get_db
 from app.models.experiment import Experiment
 from app.models.project import Project
@@ -91,9 +92,15 @@ def get_training_dispatcher(request: Request):
     configured = getattr(request.app.state, "training_dispatcher", None)
     if configured is not None:
         return configured
-    from app.tasks.training_tasks import execute_training_task
+    app_settings = getattr(request.app.state, "settings", None) or settings
+    if app_settings.task_backend == "celery":
+        from app.tasks.training_tasks import execute_training_task
 
-    configured = CeleryTrainingDispatcher(execute_training_task)
+        configured = CeleryTrainingDispatcher(execute_training_task)
+    else:
+        from app.tasks.training_tasks import LocalTrainingDispatcher, execute_local_training_task
+
+        configured = LocalTrainingDispatcher(execute_local_training_task)
     request.app.state.training_dispatcher = configured
     return configured
 
@@ -102,9 +109,15 @@ def get_automl_dispatcher(request: Request):
     configured = getattr(request.app.state, "automl_dispatcher", None)
     if configured is not None:
         return configured
-    from app.tasks.training_tasks import execute_automl_task
+    app_settings = getattr(request.app.state, "settings", None) or settings
+    if app_settings.task_backend == "celery":
+        from app.tasks.training_tasks import execute_automl_task
 
-    configured = CeleryTrainingDispatcher(execute_automl_task)
+        configured = CeleryTrainingDispatcher(execute_automl_task)
+    else:
+        from app.tasks.training_tasks import LocalTrainingDispatcher, execute_local_automl_task
+
+        configured = LocalTrainingDispatcher(execute_local_automl_task)
     request.app.state.automl_dispatcher = configured
     return configured
 
@@ -592,6 +605,21 @@ def batch_delete_training_jobs(
 def _dispatch_job(db, job, dispatcher, request, actor, access) -> None:
     try:
         task_id = dispatcher.enqueue(job.id)
+        start = getattr(dispatcher, "start", None)
+        with audit_service(db).project_action(
+            db, request=request, actor=actor, access=access,
+            permission="execution.operate",
+            intent=AuditIntent(
+                project_id=job.project_id, action="training_job.dispatch",
+                resource_type="training_job", resource_id=str(job.id),
+                changes={"status": "queued"},
+            ),
+            allowed_changes={"status"},
+        ):
+            job.status = "queued"
+            job.task_id = task_id
+        if callable(start):
+            start(task_id)
     except Exception as error:
         with audit_service(db).project_action(
             db, request=request, actor=actor, access=access,
@@ -610,18 +638,6 @@ def _dispatch_job(db, job, dispatcher, request, actor, access) -> None:
             "TRAINING_DISPATCH_FAILED",
             "Training task could not be queued",
         )) from error
-    with audit_service(db).project_action(
-        db, request=request, actor=actor, access=access,
-        permission="execution.operate",
-        intent=AuditIntent(
-            project_id=job.project_id, action="training_job.dispatch",
-            resource_type="training_job", resource_id=str(job.id),
-            changes={"status": "queued"},
-        ),
-        allowed_changes={"status"},
-    ):
-        job.status = "queued"
-        job.task_id = task_id
 
 
 def _visible_experiment(db, experiment_id, project_id, user_id):
