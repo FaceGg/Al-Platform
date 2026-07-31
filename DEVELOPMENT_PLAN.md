@@ -1557,3 +1557,17 @@
 - 影响范围：既有点焊质量 API、质量服务、AutoML 和数据标注配置控件及其回归；不新增页面、表、迁移、调度器或平行训练服务。
 - 预防措施：标签来源只要可进入训练血缘，就必须拒绝无法持久化来源的空快照；自动标签查询须同时校验非空和允许值；共享请求模型的每个入口都要执行同一语义校验，且拒绝非法大载荷必须发生在审计写入之前。
 - 遗留事项：Task 3 至 Task 5 尚未开始；模拟 1875 条实际质量运行、浏览器验收、Compose/Celery 和远程 CI 需在后续分别记录，不能由本地聚焦测试替代。
+
+### 2026-07-31：报告复现 Task 3 工作流特征工程算子
+
+- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
+- 任务状态：已完成。工作流画布可使用 `spot_weld_feature_engineering` 复用报告的四通道波形解码和固定 73 维特征契约。
+- 开发内容：在既有 processing 注册表增加无参数薄包装算子，输入 `data`，输出 `features`、`schema` 与 `statistics`；仅调用 `build_feature_frame()`，不复制解码或公式，不捕获 `QualityPipelineError`。
+- 问题现象：初始注册表中没有该算子，执行测试取得 `None` 并在调用 `execute` 时失败；代码审查还发现回归未直接锁定 DataFrame 输入和异常透明性。
+- 已确认根因：报告特征能力只存在于质量服务路径，尚未暴露为工作流算子；初始测试仅覆盖 records 的成功路径。
+- 解决方法：注册薄包装并实现抽象基类要求的最小 `validate()`；增加 12 行报告 records、DataFrame 和非法 Base64 三类合同，后者断言 `QualityPipelineError` 的类型、code、row_index 与 field_name 原样保留。
+- 测试先行：算子不存在时的初始合同稳定 RED；审查后新增的两个覆盖项在已实现行为上直接 GREEN，未为了制造 RED 回退生产代码。
+- 验证方式：主流程后端 `tests.test_all_operators tests.test_spot_weld_features -v` 为 88/88；`git diff --check af130ea b190bff` 通过。未执行真实工作流运行、浏览器、Compose/Celery 或远程 CI。
+- 影响范围：processing 算子注册与算子回归；不改工作流状态、DataBus、制品、数据库、迁移或质量服务算法。
+- 预防措施：将已有领域计算能力暴露为工作流节点时必须只保留一个算法事实来源；薄包装测试同时覆盖 records/DataFrame 两种输入和稳定领域错误透传。
+- 遗留事项：Task 4 至 Task 5 尚未开始；真实画布工作流执行及远程验证留待后续验收。

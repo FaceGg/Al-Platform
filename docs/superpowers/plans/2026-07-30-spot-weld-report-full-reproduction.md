@@ -170,7 +170,7 @@ Expected: a 1875-row report-structured simulated dataset can use all ten or a se
 
 **Files:** `backend/app/operators/processing.py`, `backend/tests/test_all_operators.py`.
 
-- [ ] **Step 1: Write a failing operator test**
+- [x] **Step 1: Write a failing operator test**
 
 ```python
 def test_spot_weld_feature_engineering_reuses_report_feature_contract(self):
@@ -184,7 +184,7 @@ def test_spot_weld_feature_engineering_reuses_report_feature_contract(self):
     self.assertEqual(outputs["statistics"]["feature_count"], 73)
 ```
 
-- [ ] **Step 2: Verify the red state**
+- [x] **Step 2: Verify the red state**
 
 ```powershell
 Set-Location E:/codex_workspace/agent_spot_welding/.worktrees/spot-weld-quality/ml-platform/backend
@@ -193,7 +193,7 @@ Set-Location E:/codex_workspace/agent_spot_welding/.worktrees/spot-weld-quality/
 
 Expected: `OperatorRegistry.get("spot_weld_feature_engineering")` is absent.
 
-- [ ] **Step 3: Implement the thin operator wrapper**
+- [x] **Step 3: Implement the thin operator wrapper**
 
 Append this class to `processing.py`; do not duplicate decoding or formulas:
 
@@ -225,7 +225,7 @@ class SpotWeldFeatureEngineering(BaseOperator):
 
 Import `build_feature_frame` at module scope. Let its stable `QualityPipelineError` propagate through the existing workflow error path; do not invent an alternate report parser or state store.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```powershell
 & C:/Users/17723/miniconda3/python.exe -m unittest tests.test_all_operators tests.test_spot_weld_features -v
