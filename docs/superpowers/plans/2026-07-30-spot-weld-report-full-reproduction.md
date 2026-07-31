@@ -108,7 +108,7 @@ Expected: omitted selections retain current behavior, selected IDs remain ordere
 
 **Files:** `backend/app/services/spot_weld_quality.py`, `backend/app/api/spot_weld_quality.py`, `frontend/src/api/spotWeldQuality.ts`, `AutoMLPage.tsx`, `DataAnnotationPage.tsx`, quality tests.
 
-- [ ] **Step 1: Write failing quality-contract tests**
+- [x] **Step 1: Write failing quality-contract tests**
 
 ```python
 def test_quality_run_persists_selected_report_candidates(self):
@@ -128,7 +128,7 @@ def test_automatic_snapshot_keeps_saved_rule_labels_distinct_from_human_labels(s
     self.assertTrue(all(item["source"] == "automatic" for item in snapshot.labels))
 ```
 
-- [ ] **Step 2: Verify the red state**
+- [x] **Step 2: Verify the red state**
 
 ```powershell
 Set-Location E:/codex_workspace/agent_spot_welding/.worktrees/spot-weld-quality/ml-platform/backend
@@ -137,23 +137,23 @@ Set-Location E:/codex_workspace/agent_spot_welding/.worktrees/spot-weld-quality/
 
 Expected: a quality request accepts no candidate selection and a snapshot can only select human-approved labels.
 
-- [ ] **Step 3: Persist the quality run configuration without a migration**
+- [x] **Step 3: Persist the quality run configuration without a migration**
 
 Add `candidate_ids` to the existing `DatasetQualityRequest`. In `spot_weld_quality.py`, add `select_automl_configs(candidate_ids)` which validates a unique ordered subset of `AUTOML_CONFIGS`, returning all ten configurations for an empty list. Pass `candidate_ids` through `create_quality_run_record()` and store it in the existing `input_fingerprint` JSON as `selected_candidate_ids`; add the same value to `_serialize_run()`.
 
 In `execute_quality_run()`, resolve `run.input_fingerprint.get("selected_candidate_ids")` and pass the result as the existing `configs=` argument to `run_automl()`. Keep `_fit_candidate_model()` on the canonical `AUTOML_CONFIGS` lookup so its persisted best candidate is reproducible. This requires no table, migration or dispatcher change.
 
-- [ ] **Step 4: Reuse snapshots for the report's four-model training stage**
+- [x] **Step 4: Reuse snapshots for the report's four-model training stage**
 
 Extend `SnapshotRequest` with `label_source: Literal["approved", "automatic"] = "approved"`. Preserve the current approved-only query for `approved`; for `automatic`, query completed samples with non-null `automatic_label`, write each existing label into `SpotWeldLabelSnapshot.labels` with `source: "automatic"`, and retain `revision_id: null`. Add `label_source` to the existing audit changes and to the model/report lineage derived from the snapshot JSON.
 
 The existing `run_snapshot_training()` and `_write_snapshot_report()` already run `AutoML(LGB_v2)`, two fusion MLPs and the table-only MLP with 5-fold validation, create the model, and write all eight required sheets. Do not create a second deep-learning service. The UI must label automatic snapshots “报告复现自动标签”, never “已人工审核”.
 
-- [ ] **Step 5: Add only configuration controls to existing pages**
+- [x] **Step 5: Add only configuration controls to existing pages**
 
 In the point-weld tab of `AutoMLPage.tsx`, add a multi-select labelled “报告候选算法” with the ten names from `AUTOML_CONFIGS`; send `candidate_ids` only to `createQualityRun()`. In `DataAnnotationPage.tsx`, add a select labelled “快照标签来源” beside the existing snapshot name: `approved` defaults to the current audited-label behavior; `automatic` is the explicit report-reproduction route. Change the existing “模拟数据” control into a compact menu that calls the existing `createQualityDemoDataset(projectId, 60)` for a quick sample or `createQualityDemoDataset(projectId, 1875)` for report reproduction; the existing API limit already permits both values. Use the existing quality run table, monitor warning counts, model-library quality tab and 8-sheet report download instead of a new dashboard.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```powershell
 Set-Location E:/codex_workspace/agent_spot_welding/.worktrees/spot-weld-quality/ml-platform/backend
