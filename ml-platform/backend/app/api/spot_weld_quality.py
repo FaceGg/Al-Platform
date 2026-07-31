@@ -29,6 +29,7 @@ from app.services.artifact_service import ArtifactAccessError, build_artifact_se
 from app.services.audit import AuditIntent
 from app.services.spot_weld_features import QualityPipelineError
 from app.services.spot_weld_quality import (
+    build_annotation_export,
     create_demo_quality_dataset,
     create_quality_run_record,
     resolve_dataset_frame,
@@ -415,6 +416,33 @@ def get_run(
 ):
     require_project_access(db, project_id, current_user.id, "project.read")
     return _serialize_run(_run_or_404(db, project_id, run_id))
+
+
+@router.get("/runs/{run_id}/annotations/export")
+def export_annotations(
+    project_id: uuid.UUID,
+    run_id: str,
+    format: str = Query(default="xlsx"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, current_user.id, "project.read")
+    run = _run_or_404(db, project_id, run_id)
+    try:
+        content = build_annotation_export(run, db, format)
+    except QualityPipelineError as error:
+        _quality_error(error)
+    media_type = {
+        "csv": "text/csv",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }[format]
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="spot-weld-annotations-{run.id}.{format}"',
+        },
+    )
 
 
 @router.get("/runs/{run_id}/samples")

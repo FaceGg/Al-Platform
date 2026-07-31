@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { App as AntApp } from "antd";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -38,6 +40,19 @@ describe("DataAnnotationPage", () => {
     expect(screen.getByText("样本队列")).toBeInTheDocument();
     expect(screen.getByText("四通道波形")).toBeInTheDocument();
     expect(screen.getByText("标注与审核")).toBeInTheDocument();
+  });
+
+  it("offers annotation export after a project and run are selected", async () => {
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?projectId=project-1&runId=run-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole("button", { name: "导出标注" })).toBeInTheDocument();
+    const styles = readFileSync(resolve(process.cwd(), "src/styles/global.css"), "utf8");
+    expect(styles).toContain(".spot-weld-annotation__sample-list");
+    expect(styles).toContain("overflow-y: auto");
   });
 
   it("falls back to an accessible project when the URL project is stale", async () => {

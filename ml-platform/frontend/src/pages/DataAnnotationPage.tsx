@@ -9,6 +9,7 @@ import {
   createQualityDemoDataset,
   createQualityLabelSnapshot,
   createQualityRun,
+  downloadQualityAnnotationExport,
   downloadQualityArtifact,
   getQualityModel,
   getQualityRun,
@@ -71,6 +72,7 @@ export default function DataAnnotationPage() {
   const [qualityArtifacts, setQualityArtifacts] = useState<Record<string, string>>({});
   const [trainingSnapshot, setTrainingSnapshot] = useState(false);
   const [downloadingReport, setDownloadingReport] = useState(false);
+  const [downloadingAnnotationExport, setDownloadingAnnotationExport] = useState(false);
   const [label, setLabel] = useState("");
   const [note, setNote] = useState("");
   const [reviewComment, setReviewComment] = useState("");
@@ -388,6 +390,24 @@ export default function DataAnnotationPage() {
     }
   };
 
+  const downloadAnnotations = async (format: "csv" | "xlsx") => {
+    if (!projectId || !runId) return;
+    setDownloadingAnnotationExport(true);
+    try {
+      const blob = await downloadQualityAnnotationExport(projectId, runId, format);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `spot-weld-annotations-${runId.slice(0, 8)}.${format}`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      message.error(formatApiError(error, "标注导出失败"));
+    } finally {
+      setDownloadingAnnotationExport(false);
+    }
+  };
+
   useEffect(() => {
     if (!projectId || !runId || !["queued", "validating", "running"].includes(String(selectedRun?.status || ""))) return;
     const timer = window.setInterval(() => { void refreshRuns(); }, 1500);
@@ -446,6 +466,21 @@ export default function DataAnnotationPage() {
                 </button>
               </Tooltip>
             </Dropdown>
+            {projectId && selectedRun && <Dropdown
+              trigger={["click"]}
+              disabled={downloadingAnnotationExport}
+              menu={{
+                items: [
+                  { key: "csv", label: "CSV" },
+                  { key: "xlsx", label: "XLSX" },
+                ],
+                onClick: ({ key }) => { void downloadAnnotations(key as "csv" | "xlsx"); },
+              }}
+            >
+              <button type="button" className="ant-btn" aria-label="导出标注" disabled={downloadingAnnotationExport}>
+                <DownloadOutlined />导出标注
+              </button>
+            </Dropdown>}
             {datasetArtifactId && <Tooltip title="使用数据管理中选择的报告启动质量运行">
               <button type="button" className="ant-btn ant-btn-primary" onClick={handleSelectedDataset} disabled={!canCreate || preparingRun}>
                 运行已选数据

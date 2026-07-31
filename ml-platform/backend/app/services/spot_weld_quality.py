@@ -6,6 +6,7 @@ import base64
 from collections import Counter
 from dataclasses import dataclass, field
 import json
+from io import BytesIO
 from pathlib import Path
 import tempfile
 import time
@@ -25,6 +26,7 @@ from sklearn.preprocessing import StandardScaler
 
 from app.models.model_library import ModelLibrary
 from app.models.spot_weld_quality import (
+    SpotWeldLabelRevision,
     SpotWeldLabelSnapshot,
     SpotWeldQualityRuleSet,
     SpotWeldQualityRun,
@@ -62,6 +64,137 @@ def select_automl_configs(candidate_ids: Sequence[str] | None = None) -> tuple[d
     if len(set(requested)) != len(requested) or any(candidate_id not in catalog for candidate_id in requested):
         raise QualityPipelineError("QUALITY_AUTOML_CONFIG_INVALID")
     return tuple(catalog[candidate_id] for candidate_id in requested) if requested else AUTOML_CONFIGS
+
+
+ANNOTATION_SAMPLE_EXPORT_FIELDS = (
+    "source_row_index",
+    "display_id",
+    "automatic_label",
+    "current_label",
+    "current_note",
+    "review_status",
+    "warning_level",
+    "defect_probability",
+    "cluster_id",
+    "rule_hits",
+    "current_revision_id",
+)
+ANNOTATION_REVISION_EXPORT_FIELDS = (
+    "revision_id",
+    "sample_id",
+    "author_id",
+    "label",
+    "note",
+    "action",
+    "decision",
+    "review_comment",
+    "parent_revision_id",
+    "created_at",
+)
+ANNOTATION_SNAPSHOT_EXPORT_FIELDS = (
+    "snapshot_id",
+    "name",
+    "label_source",
+    "sample_id",
+    "label",
+    "revision_id",
+    "created_at",
+)
+
+
+def _export_identifier(value: Any) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _export_json(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value)
+
+
+def build_annotation_export(run: SpotWeldQualityRun, db, format: str = "xlsx") -> bytes:
+    """Build a transient CSV/XLSX export from persisted annotation lineage."""
+    if format not in {"csv", "xlsx"}:
+        raise QualityPipelineError("QUALITY_ANNOTATION_EXPORT_FORMAT_INVALID")
+
+    samples = db.query(SpotWeldQualitySample).filter(
+        SpotWeldQualitySample.run_id == run.id,
+    ).order_by(SpotWeldQualitySample.source_row_index, SpotWeldQualitySample.id).all()
+    revisions = db.query(SpotWeldLabelRevision).filter(
+        SpotWeldLabelRevision.run_id == run.id,
+    ).order_by(SpotWeldLabelRevision.created_at, SpotWeldLabelRevision.id).all()
+    snapshots = db.query(SpotWeldLabelSnapshot).filter(
+        SpotWeldLabelSnapshot.run_id == run.id,
+    ).order_by(SpotWeldLabelSnapshot.created_at, SpotWeldLabelSnapshot.id).all()
+
+    sample_frame = pd.DataFrame([
+        {
+            "source_row_index": sample.source_row_index,
+            "display_id": sample.display_id,
+            "automatic_label": sample.automatic_label,
+            "current_label": sample.current_label,
+            "current_note": sample.current_note,
+            "review_status": sample.review_status,
+            "warning_level": sample.warning_level,
+            "defect_probability": sample.defect_probability,
+            "cluster_id": sample.cluster_id,
+            "rule_hits": _export_json(sample.rule_hits or []),
+            "current_revision_id": _export_identifier(sample.current_revision_id),
+        }
+        for sample in samples
+    ], columns=ANNOTATION_SAMPLE_EXPORT_FIELDS)
+    revision_frame = pd.DataFrame([
+        {
+            "revision_id": _export_identifier(revision.id),
+            "sample_id": _export_identifier(revision.sample_id),
+            "author_id": _export_identifier(revision.author_id),
+            "label": revision.label,
+            "note": revision.note,
+            "action": revision.action,
+            "decision": revision.decision,
+            "review_comment": revision.review_comment,
+            "parent_revision_id": _export_identifier(revision.parent_revision_id),
+            "created_at": revision.created_at.isoformat() if revision.created_at else None,
+        }
+        for revision in revisions
+    ], columns=ANNOTATION_REVISION_EXPORT_FIELDS)
+    snapshot_rows: list[dict[str, Any]] = []
+    for snapshot in snapshots:
+        labels = snapshot.labels or []
+        if not labels:
+            snapshot_rows.append({
+                "snapshot_id": _export_identifier(snapshot.id),
+                "name": snapshot.name,
+                "label_source": "approved",
+                "sample_id": None,
+                "label": None,
+                "revision_id": None,
+                "created_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
+            })
+            continue
+        for label in labels:
+            snapshot_rows.append({
+                "snapshot_id": _export_identifier(snapshot.id),
+                "name": snapshot.name,
+                "label_source": str(label.get("source") or "approved"),
+                "sample_id": _export_identifier(label.get("sample_id")),
+                "label": label.get("label"),
+                "revision_id": _export_identifier(label.get("revision_id")),
+                "created_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
+            })
+    snapshot_frame = pd.DataFrame(snapshot_rows, columns=ANNOTATION_SNAPSHOT_EXPORT_FIELDS)
+
+    output = BytesIO()
+    if format == "csv":
+        sample_frame.to_csv(output, index=False, encoding="utf-8-sig")
+        return output.getvalue()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        sample_frame.to_excel(writer, sheet_name="标注样本", index=False)
+        revision_frame.to_excel(writer, sheet_name="标签修订", index=False)
+        snapshot_frame.to_excel(writer, sheet_name="标签快照", index=False)
+    return output.getvalue()
 
 
 SNAPSHOT_TRAINING_CONFIGS: tuple[dict[str, Any], ...] = (

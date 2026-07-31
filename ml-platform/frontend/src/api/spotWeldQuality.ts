@@ -241,6 +241,20 @@ export async function downloadQualityArtifact(
   return response.data as Blob;
 }
 
+export type QualityAnnotationExportFormat = "csv" | "xlsx";
+
+export async function downloadQualityAnnotationExport(
+  projectId: string,
+  runId: string,
+  format: QualityAnnotationExportFormat,
+): Promise<Blob> {
+  const response = await apiClient.get(
+    `/projects/${projectId}/spot-weld/runs/${runId}/annotations/export`,
+    { params: { format }, responseType: "blob" },
+  );
+  return response.data as Blob;
+}
+
 export async function createQualityRun(
   projectId: string,
   payload: { dataset_artifact_id: string; field_mapping?: Record<string, string>; candidate_ids?: string[] },

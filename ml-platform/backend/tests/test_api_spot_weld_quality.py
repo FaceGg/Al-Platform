@@ -1,4 +1,5 @@
 import base64
+from io import BytesIO
 import unittest
 import uuid
 from pathlib import Path
@@ -20,6 +21,7 @@ from app.models.project import Project
 from app.models.user import User
 from app.models.artifact import Artifact
 from app.models.spot_weld_quality import (
+    SpotWeldLabelRevision,
     SpotWeldLabelSnapshot,
     SpotWeldQualityRun,
     SpotWeldQualitySample,
@@ -118,8 +120,22 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
             )
             self.db.add(sample)
             self.db.flush()
+            revision = SpotWeldLabelRevision(
+                project_id=self.project.id,
+                run_id=run.id,
+                sample_id=sample.id,
+                author_id=self.owner.id,
+                label=label,
+                note=f"fixture note {index}",
+                action="submitted",
+                decision="approved",
+                review_comment=f"fixture review {index}",
+            )
+            self.db.add(revision)
+            self.db.flush()
+            sample.current_revision_id = revision.id
             samples.append(sample)
-            labels.append({"sample_id": str(sample.id), "label": label, "revision_id": None})
+            labels.append({"sample_id": str(sample.id), "label": label, "revision_id": str(revision.id), "source": "approved"})
         snapshot = SpotWeldLabelSnapshot(
             project_id=self.project.id,
             run_id=run.id,
@@ -131,6 +147,50 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         self.db.add(snapshot)
         self.db.commit()
         return run, snapshot
+
+    def test_annotation_export_xlsx_contains_samples_revisions_and_snapshots(self):
+        run, snapshot = self._create_approved_snapshot()
+
+        response = self.client.get(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/annotations/export?format=xlsx",
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            response.headers["content-type"].split(";", 1)[0],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn("attachment;", response.headers["content-disposition"])
+        workbook = pd.ExcelFile(BytesIO(response.content), engine="openpyxl")
+        self.assertEqual(workbook.sheet_names, ["标注样本", "标签修订", "标签快照"])
+        sample_frame = pd.read_excel(BytesIO(response.content), sheet_name="标注样本", engine="openpyxl")
+        self.assertIn("current_label", sample_frame.columns)
+        self.assertEqual(sample_frame.iloc[0]["current_label"], "normal")
+        revision_frame = pd.read_excel(BytesIO(response.content), sheet_name="标签修订", engine="openpyxl")
+        self.assertEqual(len(revision_frame), 10)
+        self.assertEqual(set(revision_frame["label"]), {"normal", "strong_splatter"})
+        snapshot_frame = pd.read_excel(BytesIO(response.content), sheet_name="标签快照", engine="openpyxl")
+        self.assertEqual(snapshot_frame.iloc[0]["snapshot_id"], str(snapshot.id))
+        self.assertEqual(snapshot_frame.iloc[0]["label_source"], "approved")
+
+    def test_annotation_export_is_project_scoped(self):
+        run, _snapshot = self._create_approved_snapshot()
+
+        response = self.client.get(
+            f"/api/projects/{self.other.id}/spot-weld/runs/{run.id}/annotations/export?format=xlsx",
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_annotation_export_rejects_invalid_format(self):
+        run, _snapshot = self._create_approved_snapshot()
+
+        response = self.client.get(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/annotations/export?format=pdf",
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "QUALITY_ANNOTATION_EXPORT_FORMAT_INVALID")
 
     def test_validate_and_create_run_are_project_scoped(self):
         payload = {"dataset_artifact_id": str(self.artifact.id), "field_mapping": {}, "candidate_ids": ["RF_v1", "GBDT_v1"]}
