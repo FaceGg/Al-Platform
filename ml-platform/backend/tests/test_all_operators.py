@@ -13,7 +13,7 @@ import unittest
 
 from app.engine.registry import OperatorRegistry
 from app.engine.operator_contract import OperatorContext, OperatorResult
-from app.services.spot_weld_features import FEATURE_SCHEMA
+from app.services.spot_weld_features import FEATURE_SCHEMA, QualityPipelineError
 from app.services.spot_weld_quality import build_demo_report_frame
 from tests.operator_test_utils import execute_operator, operator_context
 
@@ -301,6 +301,30 @@ class TestProcessingOperatorsExecution(unittest.TestCase):
         self.assertEqual(outputs["schema"]["columns"], list(FEATURE_SCHEMA))
         self.assertEqual(len(outputs["schema"]["columns"]), 73)
         self.assertEqual(outputs["statistics"]["feature_count"], 73)
+
+    def test_spot_weld_feature_engineering_accepts_dataframe(self):
+        frame = build_demo_report_frame(12)
+
+        outputs = execute_operator(
+            OperatorRegistry.get("spot_weld_feature_engineering"),
+            {"data": frame}, {})
+
+        self.assertEqual(len(outputs["features"]), 12)
+
+    def test_spot_weld_feature_engineering_propagates_waveform_error(self):
+        frame = build_demo_report_frame(12)
+        frame.loc[0, "cvei"] = "not-base64"
+
+        with self.assertRaises(QualityPipelineError) as raised:
+            execute_operator(
+                OperatorRegistry.get("spot_weld_feature_engineering"),
+                {"data": frame}, {})
+
+        error = raised.exception
+        self.assertIs(type(error), QualityPipelineError)
+        self.assertEqual(error.code, "QUALITY_WAVEFORM_INVALID_BASE64")
+        self.assertEqual(error.row_index, 0)
+        self.assertEqual(error.field_name, "cvei")
 
     def test_normalize(self):
         outputs = execute_operator(
