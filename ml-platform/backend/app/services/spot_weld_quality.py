@@ -384,8 +384,12 @@ def run_clustering(
     scaler = StandardScaler()
     scaled = scaler.fit_transform(X)
     importances = np.asarray(list(feature_importance), dtype=float).reshape(-1)
-    if len(importances) != X.shape[1] or not np.isfinite(importances).all() or importances.sum() <= 0:
+    if len(importances) != X.shape[1] or not np.isfinite(importances).all():
         importances = np.ones(X.shape[1], dtype=float)
+    else:
+        importances = np.maximum(importances, 0.0)
+        if importances.sum() <= 0:
+            importances = np.ones(X.shape[1], dtype=float)
     weights = importances / importances.sum()
     weighted = scaled * np.sqrt(weights)
     max_k = min(8, len(X) - 1)
@@ -518,9 +522,17 @@ def build_demo_report_frame(row_count: int = 60) -> pd.DataFrame:
     generator = np.random.default_rng(42)
     time = np.linspace(0.0, 1.0, 870, endpoint=False)
 
-    def encode_waveform(baseline: float, amplitude: float, phase: float) -> str:
+    def encode_waveform(
+        baseline: float,
+        amplitude: float,
+        phase: float,
+        *,
+        jump_strength: float = 0.0,
+    ) -> str:
         values = baseline + amplitude * np.sin(2.0 * np.pi * (4.0 * time + phase))
         values += generator.normal(0.0, max(1.0, amplitude * 0.025), size=time.shape)
+        if jump_strength > 0:
+            values[len(values) // 2:] += jump_strength
         encoded = np.clip(np.rint(values), -30000, 30000).astype(">i2")
         return base64.b64encode(encoded.tobytes()).decode("ascii")
 
@@ -531,6 +543,11 @@ def build_demo_report_frame(row_count: int = 60) -> pd.DataFrame:
         splatter = (0.0, 2.0, 3.0, 1.0)[pattern]
         diameter = (5.4, 5.0, 5.2, 1.6)[pattern]
         phase = index / max(row_count, 1)
+        current_jump = (
+            350.0 + 2.0 * (index // 16)
+            if row_count >= 1000 and pattern == 0 and index % 16 == 0
+            else 0.0
+        )
         rows.append({
             "wld1c": 8.0 + 0.18 * pattern + generator.normal(0.0, 0.06),
             "wld2c": 10.0 + 0.22 * pattern + generator.normal(0.0, 0.06),
@@ -546,7 +563,12 @@ def build_demo_report_frame(row_count: int = 60) -> pd.DataFrame:
             "spotdiameter": diameter + generator.normal(0.0, 0.08),
             "spotposition": 1.0 + 0.1 * pattern + generator.normal(0.0, 0.02),
             "spattercode": float(pattern * 10),
-            "cvei": encode_waveform(1180.0 + 90.0 * defect_scale, 240.0 + 45.0 * defect_scale, phase),
+            "cvei": encode_waveform(
+                1180.0 + 90.0 * defect_scale,
+                240.0 + 45.0 * defect_scale,
+                phase,
+                jump_strength=current_jump,
+            ),
             "cvev": encode_waveform(420.0 + 34.0 * defect_scale, 88.0 + 18.0 * defect_scale, phase + 0.12),
             "cver": encode_waveform(54.0 + 12.0 * defect_scale, 15.0 + 7.0 * defect_scale, phase + 0.24),
             "cvep": encode_waveform(520.0 + 125.0 * defect_scale, 130.0 + 52.0 * defect_scale, phase + 0.36),

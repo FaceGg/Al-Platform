@@ -90,6 +90,25 @@ class TestSpotWeldQualityService(unittest.TestCase):
         self.assertEqual(len(result.cluster_ids), len(features))
         self.assertEqual(result.pca_coordinates.shape, (16, 2))
 
+    def test_clustering_ignores_tiny_negative_importance_residuals(self):
+        features = np.vstack([
+            np.random.default_rng(42).normal(0, 0.2, (8, 3)),
+            np.random.default_rng(7).normal(4, 0.2, (8, 3)),
+        ])
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = run_clustering(
+                features,
+                feature_names=["power_std", "energy_dev", "spatter_total"],
+                feature_importance=np.array([1.0, -1e-12, 2.0]),
+            )
+
+        self.assertTrue(np.isfinite(result.pca_coordinates).all())
+        self.assertTrue(np.isfinite(result.weights).all())
+        self.assertTrue(all(weight >= 0 for weight in result.weights))
+        self.assertFalse(any("invalid value encountered in sqrt" in str(item.message) for item in caught))
+
     def test_demo_dataset_is_report_compatible_and_has_multiple_label_groups(self):
         frame = build_demo_report_frame(24)
         features, schema, _ = build_feature_frame(frame)
@@ -102,6 +121,21 @@ class TestSpotWeldQualityService(unittest.TestCase):
         self.assertEqual(len(schema), 73)
         self.assertGreaterEqual(sum(label == "normal" for label in labels), 3)
         self.assertGreaterEqual(sum(label != "normal" for label in labels), 3)
+
+    def test_report_reproduction_demo_has_enough_automatic_labels_for_five_fold_training(self):
+        frame = build_demo_report_frame(1875)
+        features, _, _ = build_feature_frame(frame)
+        thresholds = {
+            "energy_dev_abs": 2.5,
+            "current_max_diff_p95": float(np.percentile(features["current_max_diff"], 95)),
+            "power_std_p95": float(np.percentile(features["power_std"], 95)),
+        }
+        labels = [
+            apply_report_v1_rules(record, thresholds=thresholds).primary_label
+            for record in features.to_dict(orient="records")
+        ]
+
+        self.assertGreaterEqual(min(Counter(labels).values()), 5)
 
     def test_validation_counts_only_rows_that_fail_feature_extraction(self):
         frame = build_demo_report_frame(12)

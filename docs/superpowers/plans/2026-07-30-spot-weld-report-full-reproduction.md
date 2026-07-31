@@ -239,7 +239,7 @@ Expected: the operator exposes exactly 73 ordered feature columns and existing i
 
 **Files:** `backend/app/services/spot_weld_quality.py`, `backend/app/api/spot_weld_quality.py`, `frontend/src/api/spotWeldQuality.ts`, `DataAnnotationPage.tsx`, `global.css`, quality API/page tests.
 
-- [ ] **Step 1: Write failing export and layout tests**
+- [x] **Step 1: Write failing export and layout tests**
 
 ```python
 def test_annotation_export_contains_current_labels_and_revision_history(self):
@@ -260,7 +260,7 @@ expect(globalCss).toContain(".spot-weld-annotation__sample-list");
 expect(globalCss).toContain("overflow-y: auto");
 ```
 
-- [ ] **Step 2: Verify the red state**
+- [x] **Step 2: Verify the red state**
 
 ```powershell
 Set-Location E:/codex_workspace/agent_spot_welding/.worktrees/spot-weld-quality/ml-platform/backend
@@ -271,7 +271,7 @@ Set-Location ../frontend
 
 Expected: the export route and export control are absent; the list has no constrained vertical scroll region.
 
-- [ ] **Step 3: Build export content from existing persistence**
+- [x] **Step 3: Build export content from existing persistence**
 
 In `spot_weld_quality.py`, add `build_annotation_export(run, db, format)` that queries existing `SpotWeldQualitySample`, `SpotWeldLabelRevision`, and `SpotWeldLabelSnapshot` rows. Emit:
 
@@ -287,7 +287,7 @@ For CSV, export `标注样本` only. For XLSX, write the three named sheets with
 
 Add `GET /runs/{run_id}/annotations/export?format=csv|xlsx` to `spot_weld_quality.py` API after the existing project-read check. Return a `StreamingResponse` with a fixed content type and `Content-Disposition`; reject every other format with `QUALITY_ANNOTATION_EXPORT_FORMAT_INVALID`.
 
-- [ ] **Step 4: Add a compact existing-page download action**
+- [x] **Step 4: Add a compact existing-page download action**
 
 Add `downloadQualityAnnotationExport(projectId, runId, format)` to `spotWeldQuality.ts`. In `DataAnnotationPage.tsx`, use one `DownloadOutlined` “导出标注” button with an Ant Design `Dropdown` menu containing CSV and XLSX. Download through a Blob URL and revoke it after clicking. Show it only after a project and run are selected; keep all labels sourced from the existing run, never from client-side state.
 
@@ -307,7 +307,7 @@ Set the existing list style to a bounded scrolling region:
 
 Add the existing narrow-screen media override only if a test screenshot shows the queue exceeding the viewport; it must retain vertical scrolling rather than growing the page indefinitely.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```powershell
 Set-Location E:/codex_workspace/agent_spot_welding/.worktrees/spot-weld-quality/ml-platform/backend
@@ -325,11 +325,11 @@ Expected: exported labels include the current state and immutable history, cross
 
 **Files:** existing tests, `DEVELOPMENT_PLAN.md`, `C:/Users/17723/.codex/DEVELOPMENT_EXPERIENCE.md`.
 
-- [ ] **Step 1: Create or upload the report-compatible input**
+- [x] **Step 1: Create or upload the report-compatible input**
 
 Use existing “模拟数据” request with `row_count=1875` for a synthetic flow, or upload the authorized report-structured CSV/XLSX through data management. The required input is the currently enforced table fields plus `cvei`, `cvev`, `cver`, `cvep`; additional source columns are retained in the uploaded Artifact but do not require a new parser.
 
-- [ ] **Step 2: Run the platform flow**
+- [x] **Step 2: Run the platform flow**
 
 1. Select project and dataset in the existing point-weld AutoML recipe.
 2. Select all ten candidates or an explicit subset, then start the existing quality run.
@@ -337,7 +337,7 @@ Use existing “模拟数据” request with `row_count=1875` for a synthetic fl
 4. Create an `automatic` report-reproduction snapshot, train it with the existing snapshot route, and download its existing 8 Sheet XLSX/model artifacts.
 5. Export annotations as CSV and XLSX from the data-labeling page.
 
-- [ ] **Step 3: Run focused and full local validation**
+- [x] **Step 3: Run focused and full local validation**
 
 ```powershell
 Set-Location E:/codex_workspace/agent_spot_welding/.worktrees/spot-weld-quality/ml-platform/backend
@@ -350,7 +350,7 @@ Set-Location ../frontend
 
 Expected: all focused tests pass; a synthetic 1875 run has 73 features, selected candidate count, persisted labels, an eight-sheet training report, and both annotation exports. Local test success must be recorded separately from browser/Compose/remote CI evidence.
 
-- [ ] **Step 4: Update records only after evidence exists**
+- [x] **Step 4: Update records only after evidence exists**
 
 Append to `DEVELOPMENT_PLAN.md` and the shared development experience only after implementation and validation. Record input type (`synthetic` or uploaded), row count, selected candidate IDs, test commands/results, browser result, and remaining original-data/remote-CI gates. Do not record private data paths, credentials, tokens or copied source rows.
 
