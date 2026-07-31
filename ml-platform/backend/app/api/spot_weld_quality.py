@@ -32,6 +32,7 @@ from app.services.spot_weld_quality import (
     create_demo_quality_dataset,
     create_quality_run_record,
     resolve_dataset_frame,
+    select_automl_configs,
     train_label_snapshot,
     validate_report_frame,
 )
@@ -225,6 +226,7 @@ def validate_dataset(
 ):
     require_project_access(db, project_id, current_user.id, "resource.create")
     try:
+        select_automl_configs(data.candidate_ids)
         _, frame = resolve_dataset_frame(
             db,
             get_quality_artifact_service(request, db),
@@ -246,6 +248,7 @@ def create_run(
 ):
     access = require_project_access(db, project_id, current_user.id, "resource.create")
     try:
+        select_automl_configs(data.candidate_ids)
         with audit_service(db).project_action(
             db,
             request=request,
@@ -529,10 +532,14 @@ def create_snapshot(
     access = require_project_access(db, project_id, current_user.id, "quality.review")
     run = _run_or_404(db, project_id, run_id)
     if data.label_source == "automatic":
-        samples = [] if run.status != "completed" else db.query(SpotWeldQualitySample).filter(
+        if run.status != "completed":
+            _quality_error(QualityPipelineError("QUALITY_AUTOMATIC_LABELS_UNAVAILABLE"))
+        samples = db.query(SpotWeldQualitySample).filter(
             SpotWeldQualitySample.run_id == run.id,
-            SpotWeldQualitySample.automatic_label.isnot(None),
+            SpotWeldQualitySample.automatic_label.in_(VALID_LABELS),
         ).order_by(SpotWeldQualitySample.source_row_index).all()
+        if not samples:
+            _quality_error(QualityPipelineError("QUALITY_AUTOMATIC_LABELS_UNAVAILABLE"))
         labels = [
             {"sample_id": str(sample.id), "label": sample.automatic_label, "revision_id": None, "source": "automatic"}
             for sample in samples

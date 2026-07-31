@@ -329,6 +329,8 @@ class TestSpotWeldQualityService(unittest.TestCase):
                         ])
                         summary = dict(workbook["总览"].iter_rows(min_row=2, values_only=True))
                         self.assertEqual(summary["标签来源"], "approved")
+                        self.assertEqual(summary["训练标签样本"], len(snapshot.labels))
+                        self.assertNotIn("已审核样本", summary)
                     finally:
                         workbook.close()
             finally:

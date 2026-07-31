@@ -927,7 +927,7 @@ def _write_snapshot_report(
         {"指标": "标签快照", "值": str(snapshot.id)},
         {"指标": "标签来源", "值": label_source},
         {"指标": "特征版本", "值": "report_v1"},
-        {"指标": "已审核样本", "值": len(snapshot_samples)},
+        {"指标": "训练标签样本", "值": len(snapshot_samples)},
         {"指标": "全量样本", "值": len(all_samples)},
         {"指标": "最优模型", "值": next((item.name for item in candidates if item.error_code is None and item.auc == max((candidate.auc or -1) for candidate in candidates)), "-")},
     ])

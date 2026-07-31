@@ -149,8 +149,11 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
 
     def test_quality_run_rejects_unknown_or_duplicate_report_candidates(self):
         url = f"/api/projects/{self.project.id}/spot-weld/runs"
-        for candidate_ids in (["unknown"], ["RF_v1", "RF_v1"]):
+        for candidate_ids in (["unknown"], ["RF_v1", "RF_v1"], [f"unknown-{index}" for index in range(256)]):
             with self.subTest(candidate_ids=candidate_ids):
+                audit_count = self.db.query(AuditEvent).filter(
+                    AuditEvent.action == "spot_weld_quality.run.create",
+                ).count()
                 response = self.client.post(url, json={
                     "dataset_artifact_id": str(self.artifact.id),
                     "field_mapping": {},
@@ -158,6 +161,25 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
                 })
                 self.assertEqual(response.status_code, 400, response.text)
                 self.assertEqual(response.json()["detail"]["code"], "QUALITY_AUTOML_CONFIG_INVALID")
+                self.assertEqual(
+                    self.db.query(AuditEvent).filter(
+                        AuditEvent.action == "spot_weld_quality.run.create",
+                    ).count(),
+                    audit_count,
+                )
+
+    def test_quality_validation_rejects_invalid_report_candidates(self):
+        response = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/validate",
+            json={
+                "dataset_artifact_id": str(self.artifact.id),
+                "field_mapping": {},
+                "candidate_ids": ["unknown"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "QUALITY_AUTOML_CONFIG_INVALID")
 
     def test_invalid_waveform_returns_stable_quality_code(self):
         frame = report_frame(1)
@@ -249,7 +271,7 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         )
         self.db.add(run)
         self.db.flush()
-        for index, label in enumerate(("normal", "strong_splatter")):
+        for index, label in enumerate(("normal", "strong_splatter", None, "", "   ", "not-a-quality-label")):
             self.db.add(SpotWeldQualitySample(
                 run_id=run.id,
                 source_row_index=index,
@@ -283,6 +305,52 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         )
         self.assertEqual(listed.status_code, 200, listed.text)
         self.assertEqual(listed.json()["items"][0]["label_source"], "automatic")
+
+    def test_automatic_snapshot_rejects_incomplete_runs_and_runs_without_valid_labels(self):
+        url_template = f"/api/projects/{self.project.id}/spot-weld/runs/{{run_id}}/label-snapshots"
+        cases = (("running", "normal"), ("completed", "   "))
+        for index, (status, automatic_label) in enumerate(cases):
+            with self.subTest(status=status, automatic_label=automatic_label):
+                run = SpotWeldQualityRun(
+                    project_id=self.project.id,
+                    dataset_artifact_id=self.artifact.id,
+                    created_by_id=self.owner.id,
+                    status=status,
+                    feature_schema=list(FEATURE_SCHEMA),
+                    rule_set_version="report_v1",
+                )
+                self.db.add(run)
+                self.db.flush()
+                self.db.add(SpotWeldQualitySample(
+                    run_id=run.id,
+                    source_row_index=0,
+                    display_id=f"W-EMPTY-{index}",
+                    automatic_label=automatic_label,
+                    review_status="pending_review",
+                    warning_level="none",
+                ))
+                self.db.commit()
+                audit_count = self.db.query(AuditEvent).filter(
+                    AuditEvent.action == "spot_weld_quality.snapshot.create",
+                ).count()
+
+                response = self.client.post(
+                    url_template.format(run_id=run.id),
+                    json={"name": f"automatic-empty-{index}", "label_source": "automatic"},
+                )
+
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertEqual(response.json()["detail"]["code"], "QUALITY_AUTOMATIC_LABELS_UNAVAILABLE")
+                self.assertEqual(
+                    self.db.query(SpotWeldLabelSnapshot).filter_by(run_id=run.id).count(),
+                    0,
+                )
+                self.assertEqual(
+                    self.db.query(AuditEvent).filter(
+                        AuditEvent.action == "spot_weld_quality.snapshot.create",
+                    ).count(),
+                    audit_count,
+                )
 
     def test_quality_model_listing_and_warning_targets_stay_project_scoped(self):
         run, snapshot = self._create_approved_snapshot()
