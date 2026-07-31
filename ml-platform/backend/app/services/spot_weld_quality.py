@@ -10,7 +10,7 @@ from pathlib import Path
 import tempfile
 import time
 import uuid
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 import joblib
 import numpy as np
@@ -54,6 +54,15 @@ AUTOML_CONFIGS: tuple[dict[str, Any], ...] = (
     {"name": "ET_v1", "type": "extra", "params": {"n_estimators": 300, "max_depth": None}},
     {"name": "HGB_v1", "type": "histgb", "params": {"max_iter": 300, "learning_rate": 0.05}},
 )
+
+
+def select_automl_configs(candidate_ids: Sequence[str] | None = None) -> tuple[dict[str, Any], ...]:
+    requested = tuple(candidate_ids or ())
+    catalog = {str(config["name"]): config for config in AUTOML_CONFIGS}
+    if len(set(requested)) != len(requested) or any(candidate_id not in catalog for candidate_id in requested):
+        raise QualityPipelineError("QUALITY_AUTOML_CONFIG_INVALID")
+    return tuple(catalog[candidate_id] for candidate_id in requested) if requested else AUTOML_CONFIGS
+
 
 SNAPSHOT_TRAINING_CONFIGS: tuple[dict[str, Any], ...] = (
     {"name": "AutoML(LGB_v2)", "type": "lgb", "params": dict(AUTOML_CONFIGS[1]["params"]), "feature_scope": "fusion"},
@@ -517,8 +526,10 @@ def create_quality_run_record(
     user_id,
     dataset_artifact_id,
     field_mapping: Mapping[str, str] | None = None,
+    candidate_ids: Sequence[str] | None = None,
     artifact_service: ArtifactService | None = None,
 ) -> SpotWeldQualityRun:
+    selected_configs = select_automl_configs(candidate_ids)
     artifact_service = artifact_service or build_artifact_service(db)
     artifact, frame = resolve_dataset_frame(db, artifact_service, project_id, dataset_artifact_id)
     features, schema, statistics = build_feature_frame(frame, field_mapping=field_mapping)
@@ -533,6 +544,7 @@ def create_quality_run_record(
             "artifact_id": str(artifact.id),
             "sha256": (artifact.metadata_ or {}).get("sha256"),
             "row_count": len(frame),
+            "selected_candidate_ids": [str(config["name"]) for config in selected_configs],
         },
         statistics={**statistics, "valid_rows": len(features)},
         rule_set_version="report_v1",
@@ -656,7 +668,12 @@ def execute_quality_run(
         }
         preliminary = [apply_report_v1_rules(record, thresholds=thresholds) for record in records]
         binary_labels = np.asarray([result.primary_label != "normal" for result in preliminary], dtype=int)
-        candidate_results, best_candidate = run_automl(features.to_numpy(dtype=np.float64), binary_labels)
+        selected_configs = select_automl_configs(
+            (run.input_fingerprint or {}).get("selected_candidate_ids"),
+        )
+        candidate_results, best_candidate = run_automl(
+            features.to_numpy(dtype=np.float64), binary_labels, configs=selected_configs,
+        )
         clustering = run_clustering(
             features.to_numpy(dtype=np.float64),
             feature_names=schema,
@@ -740,6 +757,15 @@ def _snapshot_or_error(db, snapshot_id) -> SpotWeldLabelSnapshot:
     if snapshot is None:
         raise QualityPipelineError("QUALITY_LABEL_SNAPSHOT_NOT_FOUND")
     return snapshot
+
+
+def _snapshot_label_source(snapshot: SpotWeldLabelSnapshot) -> str:
+    sources = {str(item.get("source", "approved")) for item in (snapshot.labels or [])}
+    if not sources:
+        return "approved"
+    if len(sources) != 1 or not sources.issubset({"approved", "automatic"}):
+        raise QualityPipelineError("QUALITY_LABEL_SNAPSHOT_INVALID")
+    return sources.pop()
 
 
 def _training_feature_indexes(config: Mapping[str, Any], feature_names: list[str]) -> list[int]:
@@ -895,9 +921,11 @@ def _write_snapshot_report(
     probabilities: np.ndarray,
     classes: np.ndarray,
 ) -> None:
+    label_source = _snapshot_label_source(snapshot)
     summary = pd.DataFrame([
         {"指标": "质量运行", "值": str(run.id)},
         {"指标": "标签快照", "值": str(snapshot.id)},
+        {"指标": "标签来源", "值": label_source},
         {"指标": "特征版本", "值": "report_v1"},
         {"指标": "已审核样本", "值": len(snapshot_samples)},
         {"指标": "全量样本", "值": len(all_samples)},
@@ -912,6 +940,7 @@ def _write_snapshot_report(
             "label": label,
             "review_status": sample.review_status,
             "revision_id": next((item.get("revision_id") for item in (snapshot.labels or []) if item.get("sample_id") == str(sample.id)), None),
+            "source": next((item.get("source", "approved") for item in (snapshot.labels or []) if item.get("sample_id") == str(sample.id)), label_source),
         }
         for sample, label in zip(snapshot_samples, labels)
     ])
@@ -977,7 +1006,7 @@ def train_label_snapshot(
     artifact_service: ArtifactService | None = None,
     commit: bool = True,
 ) -> QualityTrainingOutcome:
-    """Train only from immutable approved-label snapshots and generated feature data."""
+    """Train from immutable approved or explicitly sourced automatic-label snapshots."""
     snapshot = _snapshot_or_error(db, snapshot_id)
     run = db.query(SpotWeldQualityRun).filter(
         SpotWeldQualityRun.id == snapshot.run_id,
@@ -986,6 +1015,7 @@ def train_label_snapshot(
     if run is None:
         raise QualityPipelineError("QUALITY_RUN_NOT_FOUND")
     artifact_service = artifact_service or build_artifact_service(db)
+    label_source = _snapshot_label_source(snapshot)
     features, labels, feature_names, snapshot_samples = _snapshot_training_data(db, snapshot, run)
     candidates, best_candidate, classes = run_snapshot_training(features, labels, feature_names)
     model, scaler, encoded_labels, indexes = _fit_snapshot_model(features, labels, feature_names, best_candidate)
@@ -1026,6 +1056,7 @@ def train_label_snapshot(
         "source": "spot_weld_quality",
         "quality_run_id": str(run.id),
         "label_snapshot_id": str(snapshot.id),
+        "label_source": label_source,
         "feature_version": "report_v1",
         "rule_set_version": run.rule_set_version,
     }
@@ -1041,12 +1072,14 @@ def train_label_snapshot(
             "classes": classes.tolist(),
             "feature_version": "report_v1",
             "label_snapshot_id": str(snapshot.id),
+            "label_source": label_source,
         }, model_path)
         schema_path.write_text(json.dumps({
             "feature_schema": selected_feature_names,
             "classes": classes.tolist(),
             "metrics": best_metrics,
             "feature_importance": feature_importance,
+            "label_source": label_source,
         }, ensure_ascii=False), encoding="utf-8")
         _write_snapshot_report(
             report_path,
@@ -1079,12 +1112,13 @@ def train_label_snapshot(
         status="completed",
         framework="scikit-learn",
         backbone=best_candidate.name,
-        description="基于已审核点焊标签快照的质量感知模型",
+        description=("基于报告复现自动标签快照的质量感知模型" if label_source == "automatic" else "基于已审核点焊标签快照的质量感知模型"),
         metrics=best_metrics,
         params={
             "source": "spot_weld_quality",
             "quality_run_id": str(run.id),
             "label_snapshot_id": str(snapshot.id),
+            "label_source": label_source,
             "feature_version": "report_v1",
             "rule_set_version": run.rule_set_version,
             "schema_artifact_id": str(schema_artifact.id),
@@ -1108,6 +1142,7 @@ def train_label_snapshot(
     run.statistics = {
         **(run.statistics or {}),
         "label_snapshot_id": str(snapshot.id),
+        "label_source": label_source,
         "model_library_id": str(model_library.id),
         "training_warning_counts": dict(Counter(sample.warning_level for sample in all_samples)),
     }

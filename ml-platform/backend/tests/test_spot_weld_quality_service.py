@@ -29,6 +29,7 @@ from app.services.spot_weld_quality import (
     read_report_dataset,
     run_automl,
     run_clustering,
+    select_automl_configs,
     select_best_candidate,
     train_label_snapshot,
     validate_report_frame,
@@ -39,6 +40,16 @@ from app.storage.local import LocalStorage
 
 
 class TestSpotWeldQualityService(unittest.TestCase):
+    def test_report_candidate_selection_preserves_order_and_rejects_invalid_sets(self):
+        selected = select_automl_configs(["RF_v1", "GBDT_v1"])
+        self.assertEqual([item["name"] for item in selected], ["RF_v1", "GBDT_v1"])
+        self.assertEqual(select_automl_configs([]), AUTOML_CONFIGS)
+        for candidate_ids in (["RF_v1", "RF_v1"], ["does-not-exist"]):
+            with self.subTest(candidate_ids=candidate_ids):
+                with self.assertRaises(QualityPipelineError) as raised:
+                    select_automl_configs(candidate_ids)
+                self.assertEqual(raised.exception.code, "QUALITY_AUTOML_CONFIG_INVALID")
+
     def test_candidate_selection_orders_auc_then_f1_then_index(self):
         results = [
             CandidateResult("lgb", "lgb", auc=0.91, f1=0.80, config_index=0),
@@ -205,6 +216,50 @@ class TestSpotWeldQualityService(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_quality_run_persists_selected_report_candidates(self):
+        with tempfile.TemporaryDirectory(prefix="quality-candidate-test-") as directory:
+            engine = create_engine(
+                "sqlite://",
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+            )
+            Session = sessionmaker(bind=engine)
+            Base.metadata.create_all(engine)
+            db = Session()
+            try:
+                owner = User(username=f"quality-candidates-{uuid.uuid4().hex}", password_hash="hash")
+                db.add(owner)
+                db.flush()
+                project = Project(name="Quality candidates", owner_id=owner.id)
+                db.add(project)
+                db.commit()
+                artifacts = ArtifactService(db, LocalStorage(Path(directory) / "artifacts"))
+                dataset = create_demo_quality_dataset(
+                    db,
+                    project_id=project.id,
+                    row_count=24,
+                    artifact_service=artifacts,
+                )
+                db.commit()
+
+                run = create_quality_run_record(
+                    db,
+                    project_id=project.id,
+                    user_id=owner.id,
+                    dataset_artifact_id=dataset.id,
+                    candidate_ids=["RF_v1", "GBDT_v1"],
+                    artifact_service=artifacts,
+                )
+                db.commit()
+
+                self.assertEqual(run.input_fingerprint["selected_candidate_ids"], ["RF_v1", "GBDT_v1"])
+                self.assertEqual(execute_quality_run(db, run.id, artifact_service=artifacts).status, "completed")
+                db.refresh(run)
+                self.assertEqual([item["name"] for item in run.automl_results], ["RF_v1", "GBDT_v1"])
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_approved_snapshot_trains_a_quality_model_and_writes_report_workbook(self):
         with tempfile.TemporaryDirectory(prefix="quality-training-test-") as directory:
             engine = create_engine(
@@ -244,7 +299,7 @@ class TestSpotWeldQualityService(unittest.TestCase):
                 for sample in samples:
                     sample.current_label = sample.automatic_label
                     sample.review_status = "approved"
-                    labels.append({"sample_id": str(sample.id), "label": sample.current_label, "revision_id": None})
+                    labels.append({"sample_id": str(sample.id), "label": sample.current_label, "revision_id": None, "source": "approved"})
                 counts = Counter(item["label"] for item in labels)
                 self.assertGreaterEqual(min(counts.values()), 5)
                 snapshot = SpotWeldLabelSnapshot(
@@ -263,6 +318,7 @@ class TestSpotWeldQualityService(unittest.TestCase):
                 self.assertEqual(outcome.model_library.params["label_snapshot_id"], str(snapshot.id))
                 self.assertEqual(outcome.model_library.params["feature_version"], "report_v1")
                 self.assertEqual(outcome.model_library.params["quality_run_id"], str(run.id))
+                self.assertEqual(outcome.model_library.params["label_source"], "approved")
                 self.assertIn("report", outcome.output_artifacts)
                 with artifacts.materialize(outcome.output_artifacts["report"], project.id, expected_type="quality_report") as report_path:
                     workbook = load_workbook(report_path, read_only=True)
@@ -271,6 +327,8 @@ class TestSpotWeldQualityService(unittest.TestCase):
                             "总览", "AutoML选型", "深度学习对比", "缺陷标签",
                             "聚类画像", "特征重要性", "推理结果", "多分类评估",
                         ])
+                        summary = dict(workbook["总览"].iter_rows(min_row=2, values_only=True))
+                        self.assertEqual(summary["标签来源"], "approved")
                     finally:
                         workbook.close()
             finally:

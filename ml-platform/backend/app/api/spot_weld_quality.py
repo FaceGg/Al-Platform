@@ -6,6 +6,7 @@ import io
 import uuid
 from collections import Counter
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -51,6 +52,7 @@ QUALITY_OUTPUT_ARTIFACT_TYPES = {
 class DatasetQualityRequest(BaseModel):
     dataset_artifact_id: uuid.UUID
     field_mapping: dict[str, str] = Field(default_factory=dict)
+    candidate_ids: list[str] = Field(default_factory=list)
 
 
 class LabelRequest(BaseModel):
@@ -65,6 +67,7 @@ class ReviewRequest(BaseModel):
 
 class SnapshotRequest(BaseModel):
     name: str = "approved-labels"
+    label_source: Literal["approved", "automatic"] = "approved"
 
 
 class DemoDatasetRequest(BaseModel):
@@ -156,6 +159,7 @@ def _serialize_run(run: SpotWeldQualityRun, *, include_results: bool = True) -> 
         "sample_count": len(run.samples),
         "feature_version": (run.statistics or {}).get("feature_version", "report_v1"),
         "rule_set_version": run.rule_set_version,
+        "selected_candidate_ids": list((run.input_fingerprint or {}).get("selected_candidate_ids") or []),
         "statistics": run.statistics or {},
         "error_code": run.error_code,
         "error_details": run.error_details or {},
@@ -252,9 +256,9 @@ def create_run(
                 project_id=project_id,
                 action="spot_weld_quality.run.create",
                 resource_type="spot_weld_quality_run",
-                changes={"dataset_artifact_id": str(data.dataset_artifact_id), "feature_version": "report_v1"},
+                changes={"dataset_artifact_id": str(data.dataset_artifact_id), "feature_version": "report_v1", "candidate_ids": data.candidate_ids},
             ),
-            allowed_changes={"dataset_artifact_id", "feature_version"},
+            allowed_changes={"dataset_artifact_id", "feature_version", "candidate_ids"},
         ):
             run = create_quality_run_record(
                 db,
@@ -262,6 +266,7 @@ def create_run(
                 user_id=current_user.id,
                 dataset_artifact_id=data.dataset_artifact_id,
                 field_mapping=data.field_mapping,
+                candidate_ids=data.candidate_ids,
                 artifact_service=get_quality_artifact_service(request, db),
             )
     except QualityPipelineError as error:
@@ -523,23 +528,41 @@ def create_snapshot(
 ):
     access = require_project_access(db, project_id, current_user.id, "quality.review")
     run = _run_or_404(db, project_id, run_id)
-    approved = db.query(SpotWeldQualitySample).filter(
-        SpotWeldQualitySample.run_id == run.id,
-        SpotWeldQualitySample.review_status == "approved",
-        SpotWeldQualitySample.current_label.isnot(None),
-    ).order_by(SpotWeldQualitySample.source_row_index).all()
-    labels = [{"sample_id": str(sample.id), "label": sample.current_label, "revision_id": str(sample.current_revision_id) if sample.current_revision_id else None} for sample in approved]
+    if data.label_source == "automatic":
+        samples = [] if run.status != "completed" else db.query(SpotWeldQualitySample).filter(
+            SpotWeldQualitySample.run_id == run.id,
+            SpotWeldQualitySample.automatic_label.isnot(None),
+        ).order_by(SpotWeldQualitySample.source_row_index).all()
+        labels = [
+            {"sample_id": str(sample.id), "label": sample.automatic_label, "revision_id": None, "source": "automatic"}
+            for sample in samples
+        ]
+    else:
+        samples = db.query(SpotWeldQualitySample).filter(
+            SpotWeldQualitySample.run_id == run.id,
+            SpotWeldQualitySample.review_status == "approved",
+            SpotWeldQualitySample.current_label.isnot(None),
+        ).order_by(SpotWeldQualitySample.source_row_index).all()
+        labels = [
+            {
+                "sample_id": str(sample.id),
+                "label": sample.current_label,
+                "revision_id": str(sample.current_revision_id) if sample.current_revision_id else None,
+                "source": "approved",
+            }
+            for sample in samples
+        ]
     snapshot = SpotWeldLabelSnapshot(
-        project_id=project_id, run_id=run.id, created_by_id=current_user.id, name=data.name,
+        id=uuid.uuid4(), project_id=project_id, run_id=run.id, created_by_id=current_user.id, name=data.name,
         labels=labels, label_counts=dict(Counter(item["label"] for item in labels)),
     )
     with audit_service(db).project_action(
         db, request=request, actor=current_user, access=access, permission="quality.review",
-        intent=AuditIntent(project_id=project_id, action="spot_weld_quality.snapshot.create", resource_type="spot_weld_label_snapshot", resource_id=str(snapshot.id), changes={"name": data.name, "approved_count": len(labels)}),
-        allowed_changes={"name", "approved_count"},
+        intent=AuditIntent(project_id=project_id, action="spot_weld_quality.snapshot.create", resource_type="spot_weld_label_snapshot", resource_id=str(snapshot.id), changes={"name": data.name, "label_source": data.label_source, "sample_count": len(labels)}),
+        allowed_changes={"name", "label_source", "sample_count"},
     ):
         db.add(snapshot)
-    return {"id": str(snapshot.id), "name": snapshot.name, "label_counts": snapshot.label_counts, "sample_count": len(labels)}
+    return {"id": str(snapshot.id), "name": snapshot.name, "label_source": data.label_source, "label_counts": snapshot.label_counts, "sample_count": len(labels)}
 
 
 @router.get("/runs/{run_id}/label-snapshots")
@@ -552,7 +575,7 @@ def list_snapshots(
     require_project_access(db, project_id, current_user.id, "project.read")
     run = _run_or_404(db, project_id, run_id)
     snapshots = db.query(SpotWeldLabelSnapshot).filter(SpotWeldLabelSnapshot.run_id == run.id).order_by(SpotWeldLabelSnapshot.created_at.desc()).all()
-    return {"items": [{"id": str(item.id), "name": item.name, "label_counts": item.label_counts, "sample_count": len(item.labels or []), "created_at": item.created_at.isoformat() if item.created_at else None} for item in snapshots], "total": len(snapshots)}
+    return {"items": [{"id": str(item.id), "name": item.name, "label_source": next((label.get("source", "approved") for label in (item.labels or [])), "approved"), "label_counts": item.label_counts, "sample_count": len(item.labels or []), "created_at": item.created_at.isoformat() if item.created_at else None} for item in snapshots], "total": len(snapshots)}
 
 
 @router.post("/runs/{run_id}/label-snapshots/{snapshot_id}/train")

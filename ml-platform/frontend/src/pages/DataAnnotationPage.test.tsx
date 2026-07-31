@@ -150,7 +150,7 @@ describe("DataAnnotationPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "创建训练快照" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/projects/project-1/spot-weld/runs/run-1/label-snapshots",
-      { name: "approved-labels" },
+      { name: "approved-labels", label_source: "approved" },
     ));
     fireEvent.change(screen.getByLabelText("训练标签快照"), { target: { value: "snapshot-1" } });
     fireEvent.click(screen.getByRole("button", { name: "训练快照" }));
@@ -159,5 +159,52 @@ describe("DataAnnotationPage", () => {
     ));
     expect(await screen.findByText("点焊质量模型")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "下载质量报告" })).toBeInTheDocument();
+  });
+
+  it("creates a clearly sourced automatic-label snapshot", async () => {
+    post.mockImplementation((url: string) => {
+      if (url.endsWith("/label-snapshots")) return Promise.resolve({ data: {
+        id: "snapshot-auto", name: "report-auto", label_source: "automatic", sample_count: 10,
+      } });
+      return Promise.resolve({ data: {} });
+    });
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?projectId=project-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("快照名称"), { target: { value: "report-auto" } });
+    fireEvent.change(screen.getByLabelText("快照标签来源"), { target: { value: "automatic" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建训练快照" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/projects/project-1/spot-weld/runs/run-1/label-snapshots",
+      { name: "report-auto", label_source: "automatic" },
+    ));
+    expect(screen.getByRole("option", { name: "report-auto · 报告复现自动标签 · 10 条" })).toBeInTheDocument();
+  });
+
+  it("offers 60-row and 1875-row simulated report datasets", async () => {
+    post.mockImplementation((url: string, payload: any) => {
+      if (url.endsWith("/demo-dataset")) return Promise.resolve({ data: { artifact_id: `artifact-${payload.row_count}` } });
+      if (url.endsWith("/validate")) return Promise.resolve({ data: { valid_rows: 12, errors: [] } });
+      if (url.endsWith("/runs")) return Promise.resolve({ data: { id: "run-demo", status: "queued" } });
+      return Promise.resolve({ data: {} });
+    });
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?projectId=project-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /模拟数据/ }));
+    expect(await screen.findByText("快速样本（60 条）")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("报告复现（1875 条）"));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/projects/project-1/spot-weld/demo-dataset",
+      { row_count: 1875 },
+    ));
   });
 });

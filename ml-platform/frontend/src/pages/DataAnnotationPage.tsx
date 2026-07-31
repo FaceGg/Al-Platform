@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { App as AntApp, Empty, Spin, Tag, Tooltip } from "antd";
+import { App as AntApp, Dropdown, Empty, Spin, Tag, Tooltip } from "antd";
 import { DownloadOutlined, ExperimentOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
@@ -66,6 +66,7 @@ export default function DataAnnotationPage() {
   const [snapshots, setSnapshots] = useState<QualityLabelSnapshot[]>([]);
   const [snapshotId, setSnapshotId] = useState("");
   const [snapshotName, setSnapshotName] = useState("approved-labels");
+  const [snapshotLabelSource, setSnapshotLabelSource] = useState<"approved" | "automatic">("approved");
   const [qualityModel, setQualityModel] = useState<QualityModel | null>(null);
   const [qualityArtifacts, setQualityArtifacts] = useState<Record<string, string>>({});
   const [trainingSnapshot, setTrainingSnapshot] = useState(false);
@@ -270,11 +271,11 @@ export default function DataAnnotationPage() {
     }
   };
 
-  const handleCreateDemo = async () => {
+  const handleCreateDemo = async (rowCount: number) => {
     if (!projectId || !canCreate) return;
     setPreparingRun(true);
     try {
-      const artifact = await createQualityDemoDataset(projectId);
+      const artifact = await createQualityDemoDataset(projectId, rowCount);
       await startQualityRun(artifact.artifact_id);
     } catch (error) {
       message.error(formatApiError(error, "模拟数据创建或质量运行启动失败"));
@@ -336,10 +337,15 @@ export default function DataAnnotationPage() {
   const createSnapshot = async () => {
     if (!projectId || !runId || !canReview) return;
     try {
-      const snapshot = await createQualityLabelSnapshot(projectId, runId, snapshotName.trim() || "approved-labels");
+      const snapshot = await createQualityLabelSnapshot(
+        projectId,
+        runId,
+        snapshotName.trim() || (snapshotLabelSource === "automatic" ? "report-auto-labels" : "approved-labels"),
+        snapshotLabelSource,
+      );
       setSnapshots((current) => [snapshot, ...current.filter((item) => item.id !== snapshot.id)]);
       setSnapshotId(snapshot.id);
-      message.success("已冻结审核标签快照");
+      message.success(snapshotLabelSource === "automatic" ? "已冻结报告复现自动标签快照" : "已冻结审核标签快照");
     } catch (error) {
       message.error(formatApiError(error, "创建标签快照失败"));
     }
@@ -423,11 +429,23 @@ export default function DataAnnotationPage() {
                 <UploadOutlined />上传报告
               </button>
             </Tooltip>
-            <Tooltip title="创建报告结构的模拟数据并启动质量运行">
-              <button type="button" className="ant-btn" onClick={handleCreateDemo} disabled={!canCreate || preparingRun}>
-                <ExperimentOutlined />模拟数据
-              </button>
-            </Tooltip>
+            <Dropdown
+              trigger={["click"]}
+              disabled={!canCreate || preparingRun}
+              menu={{
+                items: [
+                  { key: "60", label: "快速样本（60 条）" },
+                  { key: "1875", label: "报告复现（1875 条）" },
+                ],
+                onClick: ({ key }) => { void handleCreateDemo(Number(key)); },
+              }}
+            >
+              <Tooltip title="创建报告结构的模拟数据并启动质量运行">
+                <button type="button" className="ant-btn" disabled={!canCreate || preparingRun}>
+                  <ExperimentOutlined />模拟数据
+                </button>
+              </Tooltip>
+            </Dropdown>
             {datasetArtifactId && <Tooltip title="使用数据管理中选择的报告启动质量运行">
               <button type="button" className="ant-btn ant-btn-primary" onClick={handleSelectedDataset} disabled={!canCreate || preparingRun}>
                 运行已选数据
@@ -496,11 +514,16 @@ export default function DataAnnotationPage() {
               </div>
               <label htmlFor="quality-snapshot-name">快照名称</label>
               <input id="quality-snapshot-name" aria-label="快照名称" value={snapshotName} onChange={(event) => setSnapshotName(event.target.value)} disabled={!canReview} />
+              <label htmlFor="quality-snapshot-source">快照标签来源</label>
+              <select id="quality-snapshot-source" aria-label="快照标签来源" value={snapshotLabelSource} onChange={(event) => setSnapshotLabelSource(event.target.value as "approved" | "automatic")} disabled={!canReview}>
+                <option value="approved">已人工审核</option>
+                <option value="automatic">报告复现自动标签</option>
+              </select>
               <button type="button" className="ant-btn" onClick={createSnapshot} disabled={!canReview}>创建训练快照</button>
               <label htmlFor="quality-training-snapshot">训练标签快照</label>
               <select id="quality-training-snapshot" aria-label="训练标签快照" value={snapshotId} onChange={(event) => setSnapshotId(event.target.value)} disabled={!canReview || snapshots.length === 0}>
                 <option value="">选择已冻结快照</option>
-                {snapshots.map((snapshot) => <option value={snapshot.id} key={snapshot.id}>{snapshot.name} · {snapshot.sample_count} 条</option>)}
+                {snapshots.map((snapshot) => <option value={snapshot.id} key={snapshot.id}>{snapshot.name} · {snapshot.label_source === "automatic" ? "报告复现自动标签" : "已人工审核"} · {snapshot.sample_count} 条</option>)}
               </select>
               <button type="button" className="ant-btn ant-btn-primary" onClick={trainSnapshot} disabled={!canReview || !snapshotId || trainingSnapshot}>{trainingSnapshot ? "训练中..." : "训练快照"}</button>
               {qualityModel && <div className="spot-weld-annotation__training-result">

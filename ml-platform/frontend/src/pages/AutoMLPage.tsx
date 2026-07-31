@@ -24,6 +24,11 @@ const AUTOML_CANDIDATE_OPTIONS: Record<string, Array<{ value: string; label: str
   ],
 };
 
+const REPORT_CANDIDATE_OPTIONS = [
+  "LGB_v1", "LGB_v2", "XGB_v1", "XGB_v2", "CAT_v1",
+  "CAT_v2", "GBDT_v1", "RF_v1", "ET_v1", "HGB_v1",
+].map((value) => ({ value, label: value }));
+
 export default function AutoMLPage() {
   const { t } = useI18n();
   const { message } = AntApp.useApp();
@@ -44,6 +49,7 @@ export default function AutoMLPage() {
   const [activeTab, setActiveTab] = useState("results");
   const [recipeTab, setRecipeTab] = useState("general");
   const [qualityRunning, setQualityRunning] = useState(false);
+  const [qualityCandidateIds, setQualityCandidateIds] = useState<string[]>([]);
   const [qualityRun, setQualityRun] = useState<QualityRun | null>(null);
   const [experimentModalOpen, setExperimentModalOpen] = useState(false);
   const [experimentCreating, setExperimentCreating] = useState(false);
@@ -218,6 +224,7 @@ export default function AutoMLPage() {
       const run = await createQualityRun(selectedProject, {
         dataset_artifact_id: selectedDataset,
         field_mapping: {},
+        candidate_ids: qualityCandidateIds,
       });
       setQualityRun(run);
       message.success("点焊质量运行已创建");
@@ -384,7 +391,7 @@ export default function AutoMLPage() {
       {recipeTab === "spot-weld-quality" && <section className="spot-weld-recipe">
         <Card>
           <Row gutter={[16, 16]} align="middle">
-            <Col xs={24} md={8}>
+            <Col xs={24} md={6}>
               <Text strong>项目</Text>
               <Select
                 aria-label="质量感知项目"
@@ -395,7 +402,7 @@ export default function AutoMLPage() {
                 options={projects.map((project: any) => ({ value: project.id, label: project.name }))}
               />
             </Col>
-            <Col xs={24} md={10}>
+            <Col xs={24} md={7}>
               <Text strong>报告数据</Text>
               <Select
                 aria-label="质量感知数据"
@@ -407,7 +414,19 @@ export default function AutoMLPage() {
                 options={datasets.filter((dataset: any) => ["csv", "xls", "xlsx"].includes(String(dataset.format || "").toLowerCase())).map((dataset: any) => ({ value: dataset.id, label: dataset.name || dataset.filename }))}
               />
             </Col>
-            <Col xs={24} md={6}>
+            <Col xs={24} md={7}>
+              <Text strong>报告候选算法</Text>
+              <Select
+                mode="multiple"
+                aria-label="报告候选算法"
+                style={{ width: "100%", marginTop: 4 }}
+                value={qualityCandidateIds}
+                onChange={setQualityCandidateIds}
+                placeholder="留空使用全部 10 项"
+                options={REPORT_CANDIDATE_OPTIONS}
+              />
+            </Col>
+            <Col xs={24} md={4}>
               <Button type="primary" icon={<ThunderboltOutlined />} aria-label="运行质量感知" onClick={() => void handleQualityRun()} loading={qualityRunning} disabled={!selectedProject || !selectedDataset} block style={{ marginTop: 22 }}>运行质量感知</Button>
             </Col>
           </Row>

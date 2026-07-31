@@ -15,6 +15,7 @@ export interface QualityRun {
   clustering_results?: Record<string, unknown>;
   output_artifacts?: Record<string, string>;
   error_code?: string | null;
+  selected_candidate_ids?: string[];
 }
 
 export interface QualityLabelSnapshot {
@@ -23,6 +24,7 @@ export interface QualityLabelSnapshot {
   sample_count: number;
   label_counts?: Record<string, number>;
   created_at?: string | null;
+  label_source?: "approved" | "automatic";
 }
 
 export interface QualityModel {
@@ -177,10 +179,11 @@ export async function createQualityLabelSnapshot(
   projectId: string,
   runId: string,
   name: string,
+  labelSource: "approved" | "automatic" = "approved",
 ): Promise<QualityLabelSnapshot> {
   const response = await apiClient.post(
     `/projects/${projectId}/spot-weld/runs/${runId}/label-snapshots`,
-    { name },
+    { name, label_source: labelSource },
   );
   return response.data as QualityLabelSnapshot;
 }
@@ -240,7 +243,7 @@ export async function downloadQualityArtifact(
 
 export async function createQualityRun(
   projectId: string,
-  payload: { dataset_artifact_id: string; field_mapping?: Record<string, string> },
+  payload: { dataset_artifact_id: string; field_mapping?: Record<string, string>; candidate_ids?: string[] },
 ) {
   const response = await apiClient.post(`/projects/${projectId}/spot-weld/runs`, payload);
   return response.data as QualityRun;
