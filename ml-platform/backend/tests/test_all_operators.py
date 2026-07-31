@@ -13,6 +13,8 @@ import unittest
 
 from app.engine.registry import OperatorRegistry
 from app.engine.operator_contract import OperatorContext, OperatorResult
+from app.services.spot_weld_features import FEATURE_SCHEMA
+from app.services.spot_weld_quality import build_demo_report_frame
 from tests.operator_test_utils import execute_operator, operator_context
 
 # Importing app triggers operator registration via module side effects.
@@ -287,6 +289,18 @@ class TestProcessingOperatorsExecution(unittest.TestCase):
             OperatorRegistry.get("auto_feature_engineering"),
             {"data": REGRESSION_DATA}, {"operations": "poly", "degree": 2})
         self.assertGreater(len(outputs["data"]), 0)
+
+    def test_spot_weld_feature_engineering_preserves_report_feature_contract(self):
+        frame = build_demo_report_frame(12)
+
+        outputs = execute_operator(
+            OperatorRegistry.get("spot_weld_feature_engineering"),
+            {"data": frame.to_dict(orient="records")}, {})
+
+        self.assertEqual(len(outputs["features"]), 12)
+        self.assertEqual(outputs["schema"]["columns"], list(FEATURE_SCHEMA))
+        self.assertEqual(len(outputs["schema"]["columns"]), 73)
+        self.assertEqual(outputs["statistics"]["feature_count"], 73)
 
     def test_normalize(self):
         outputs = execute_operator(
