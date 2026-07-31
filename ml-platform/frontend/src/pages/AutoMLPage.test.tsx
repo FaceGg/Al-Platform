@@ -105,4 +105,51 @@ describe("AutoMLPage", () => {
     expect(await screen.findByText("TRAINING_DISPATCH_FAILED: Training task could not be queued")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "AutoML" })).toBeInTheDocument();
   });
+
+  it("submits the selected AutoML candidate IDs", async () => {
+    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    fireEvent.mouseDown(comboboxes[3]);
+    fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "算法集合" }));
+    fireEvent.click(await screen.findByText("Logistic Regression"));
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/training/automl/run", expect.objectContaining({
+      candidate_ids: ["logistic_regression"],
+    })));
+  });
+
+  it("removes candidate IDs that are invalid for a new task", async () => {
+    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    fireEvent.mouseDown(comboboxes[3]);
+    fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "算法集合" }));
+    fireEvent.click(await screen.findByText("Logistic Regression"));
+    fireEvent.mouseDown(comboboxes[4]);
+    fireEvent.click(await screen.findByText("Regression"));
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/training/automl/run", expect.objectContaining({
+      task: "regression",
+      candidate_ids: [],
+    })));
+  });
 });

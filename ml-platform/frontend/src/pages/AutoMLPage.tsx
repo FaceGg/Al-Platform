@@ -11,6 +11,19 @@ import { useI18n } from "../i18n";
 
 const { Text, Title } = Typography;
 
+const AUTOML_CANDIDATE_OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
+  classification: [
+    { value: "random_forest", label: "Random Forest" },
+    { value: "gradient_boosting", label: "Gradient Boosting" },
+    { value: "logistic_regression", label: "Logistic Regression" },
+  ],
+  regression: [
+    { value: "random_forest", label: "Random Forest" },
+    { value: "gradient_boosting", label: "Gradient Boosting" },
+    { value: "linear_regression", label: "Linear Regression" },
+  ],
+};
+
 export default function AutoMLPage() {
   const { t } = useI18n();
   const { message } = AntApp.useApp();
@@ -24,6 +37,7 @@ export default function AutoMLPage() {
   const [datasetColumns, setDatasetColumns] = useState<string[]>([]);
   const [targetColumn, setTargetColumn] = useState("");
   const [taskType, setTaskType] = useState("classification");
+  const [candidateIds, setCandidateIds] = useState<string[]>([]);
   const [timeBudget, setTimeBudget] = useState(60);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<any>(null);
@@ -71,6 +85,15 @@ export default function AutoMLPage() {
   const allResults = results?.models || results?.all_results || [];
   const bestModel = results?.best_model || allResults[0];
   const features = results?.feature_importance || results?.features || {};
+  const candidateOptions = AUTOML_CANDIDATE_OPTIONS[taskType] || [];
+
+  const handleTaskTypeChange = (task: string) => {
+    const validCandidateIds = new Set(
+      (AUTOML_CANDIDATE_OPTIONS[task] || []).map((candidate) => candidate.value),
+    );
+    setTaskType(task);
+    setCandidateIds((current) => current.filter((candidateId) => validCandidateIds.has(candidateId)));
+  };
 
   useEffect(() => {
     if (!results || allResults.length === 0) return;
@@ -143,7 +166,7 @@ export default function AutoMLPage() {
       const res = await apiClient.post("/training/automl/run", {
         project_id: selectedProject, experiment_id: selectedExperiment,
         dataset_artifact_id: selectedDataset, target_column: targetColumn,
-        task: taskType, time_budget: timeBudget,
+        task: taskType, candidate_ids: candidateIds, time_budget: timeBudget,
       });
       const rid = res.data.run_id || res.data.id || res.data.job_id;
       const poll = setInterval(async () => {
@@ -274,8 +297,19 @@ export default function AutoMLPage() {
             <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.target} value={targetColumn || undefined} onChange={setTargetColumn}
               disabled={!selectedDataset} options={datasetColumns.map((column) => ({ value: column, label: column }))} /></Col>
           <Col xs={24} sm={4}><Text strong>{t.automl?.task || "Task"}</Text>
-            <Select style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={setTaskType}
+            <Select aria-label="任务类型" style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={handleTaskTypeChange}
               options={[{ value: "classification", label: "Classification" }, { value: "regression", label: "Regression" }]} /></Col>
+          <Col xs={24} sm={4}><Text strong>算法集合</Text>
+            <Select
+              aria-label="算法集合"
+              mode="multiple"
+              allowClear
+              style={{ width: "100%", marginTop: 4 }}
+              placeholder="默认全部算法"
+              value={candidateIds}
+              onChange={(ids: string[]) => setCandidateIds(ids)}
+              options={candidateOptions}
+            /></Col>
           <Col xs={24} sm={2}><Text strong>{t.automl?.budget || "Budget"}</Text>
             <InputNumber style={{ width: "100%", marginTop: 4 }} min={10} max={3600} value={timeBudget} onChange={(v) => setTimeBudget(v ?? 60)} /></Col>
           <Col xs={24} sm={2}><Button type="primary" icon={<ThunderboltOutlined />} onClick={handleRun} loading={running} block style={{ marginTop: 22 }}>{t.automl?.run || "Run"}</Button></Col>

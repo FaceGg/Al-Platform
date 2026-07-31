@@ -89,6 +89,19 @@ def default_candidates(task: str) -> tuple[AutoMLCandidate, ...]:
     )
 
 
+def resolve_candidates(
+    task: str,
+    candidate_ids: Sequence[str] | None = None,
+) -> tuple[AutoMLCandidate, ...]:
+    if task not in {"classification", "regression"}:
+        raise ValueError("AUTOML_CONFIG_INVALID")
+    catalog = {candidate.name: candidate for candidate in default_candidates(task)}
+    requested = tuple(candidate_ids or ())
+    if len(set(requested)) != len(requested) or any(name not in catalog for name in requested):
+        raise ValueError("AUTOML_CONFIG_INVALID")
+    return tuple(catalog[name] for name in requested) if requested else tuple(catalog.values())
+
+
 def execute_automl_job(
     job_id,
     *,
@@ -154,7 +167,11 @@ def execute_automl_job(
         if features.empty or len(features) < 10:
             raise ValueError("AutoML requires numeric features and at least ten rows")
 
-        configured_candidates = tuple(candidates or default_candidates(task))
+        configured_candidates = (
+            tuple(candidates)
+            if candidates is not None
+            else resolve_candidates(task, params.get("candidate_ids"))
+        )
         if not configured_candidates:
             raise ValueError("AutoML requires at least one candidate")
         cv = (
