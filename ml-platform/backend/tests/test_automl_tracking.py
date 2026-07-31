@@ -370,6 +370,25 @@ class TestAutoMLAPI(unittest.TestCase):
         self.assertEqual(response.json()["detail"]["code"], "AUTOML_CONFIG_INVALID")
         self.assertEqual(self.dispatcher.enqueued, [])
 
+    def test_four_candidate_ids_are_validated_by_the_automl_resolver(self):
+        response = self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "task": "classification",
+            "candidate_ids": [
+                "random_forest",
+                "gradient_boosting",
+                "logistic_regression",
+                "does_not_exist",
+            ],
+        }, headers=self.headers)
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "AUTOML_CONFIG_INVALID")
+        self.assertEqual(self.dispatcher.enqueued, [])
+
     def test_duplicate_candidate_ids_are_rejected_before_queueing(self):
         response = self.client.post("/api/training/automl/run", json={
             "project_id": str(self.project_id),

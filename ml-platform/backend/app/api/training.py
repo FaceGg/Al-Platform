@@ -68,7 +68,7 @@ class AutoMLRunRequest(BaseModel):
     dataset_artifact_id: uuid.UUID
     target_column: str = Field(min_length=1)
     task: str = "classification"
-    candidate_ids: list[str] = Field(default_factory=list, max_length=3)
+    candidate_ids: list[str] = Field(default_factory=list)
     time_budget: int = Field(default=60, ge=10, le=3600)
     name: str = Field(default="automl-job", min_length=1, max_length=128)
 
