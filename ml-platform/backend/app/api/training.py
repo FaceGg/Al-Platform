@@ -18,6 +18,7 @@ from app.models.experiment import Experiment
 from app.models.project import Project
 from app.models.training import TERMINAL_TRAINING_STATUSES, TrainingJob
 from app.models.user import User
+from app.services.automl_execution import resolve_candidates
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.services.experiment_tracking import TrackingError
 from app.services.iterative_training import IncompatibleCheckpoint, TrainingCheckpoint, TrainingConfig
@@ -67,6 +68,7 @@ class AutoMLRunRequest(BaseModel):
     dataset_artifact_id: uuid.UUID
     target_column: str = Field(min_length=1)
     task: str = "classification"
+    candidate_ids: list[str] = Field(default_factory=list)
     time_budget: int = Field(default=60, ge=10, le=3600)
     name: str = Field(default="automl-job", min_length=1, max_length=128)
 
@@ -514,6 +516,10 @@ def start_automl(
     ):
         if data.task not in {"classification", "regression"}:
             raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", "Invalid AutoML task"))
+        try:
+            resolve_candidates(data.task, data.candidate_ids)
+        except ValueError as error:
+            raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
         artifact_service = get_artifact_service(request, db)
         try:
             dataset = artifact_service.resolve(
@@ -527,6 +533,7 @@ def start_automl(
             params={
                 "target_column": data.target_column,
                 "task": data.task,
+                "candidate_ids": data.candidate_ids,
                 "time_budget": data.time_budget,
             },
             dataset_artifact_id=dataset.id,

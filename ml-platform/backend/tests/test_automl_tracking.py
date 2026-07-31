@@ -179,7 +179,7 @@ class TestAutoMLTracking(unittest.TestCase):
         self.engine.dispose()
         self.temporary.cleanup()
 
-    def create_job(self):
+    def create_job(self, *, params=None):
         with self.Session() as db:
             job = TrainingJob(
                 project_id=self.project_id,
@@ -188,14 +188,14 @@ class TestAutoMLTracking(unittest.TestCase):
                 dataset_artifact_id=self.dataset_id,
                 name=f"automl-{uuid.uuid4().hex}",
                 operator_id="automl",
-                params={"target_column": "quality", "task": "classification"},
+                params=params or {"target_column": "quality", "task": "classification"},
                 status="pending",
             )
             db.add(job)
             db.commit()
             return job.id
 
-    def execute(self, job_id, candidates):
+    def execute(self, job_id, candidates=None):
         return execute_automl_job(
             job_id,
             candidates=candidates,
@@ -256,6 +256,23 @@ class TestAutoMLTracking(unittest.TestCase):
         self.assertEqual(result.best_candidate, "first")
         self.assertEqual(self.tracking.parent_tags["platform.best_child_run_id"], "run-2")
 
+    def test_persisted_candidate_subset_is_used_when_no_override_is_supplied(self):
+        job_id = self.create_job(params={
+            "target_column": "quality",
+            "task": "classification",
+            "candidate_ids": ["logistic_regression"],
+        })
+
+        result = self.execute(job_id)
+
+        self.assertEqual(result.status, "completed")
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
+            self.assertEqual(
+                [item["name"] for item in job.metrics["all_results"]],
+                ["logistic_regression"],
+            )
+
     def test_celery_automl_task_is_registered(self):
         self.assertIn("ml_platform.execute_automl", celery_app.tasks)
 
@@ -314,6 +331,10 @@ class TestAutoMLAPI(unittest.TestCase):
                 delattr(app.state, name)
         cls.engine.dispose()
 
+    def setUp(self):
+        self.dispatcher.enqueued.clear()
+        app.state.automl_dispatcher = self.dispatcher
+
     def test_dataset_path_is_rejected(self):
         response = self.client.post("/api/training/automl/run", json={
             "project_id": str(self.project_id),
@@ -334,6 +355,73 @@ class TestAutoMLAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 202, response.text)
         self.assertEqual(response.json()["status"], "queued")
         self.assertEqual(self.dispatcher.enqueued, [response.json()["job_id"]])
+
+    def test_unknown_candidate_id_is_rejected_before_queueing(self):
+        response = self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "task": "classification",
+            "candidate_ids": ["does_not_exist"],
+        }, headers=self.headers)
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "AUTOML_CONFIG_INVALID")
+        self.assertEqual(self.dispatcher.enqueued, [])
+
+    def test_four_candidate_ids_are_validated_by_the_automl_resolver(self):
+        response = self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "task": "classification",
+            "candidate_ids": [
+                "random_forest",
+                "gradient_boosting",
+                "logistic_regression",
+                "does_not_exist",
+            ],
+        }, headers=self.headers)
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "AUTOML_CONFIG_INVALID")
+        self.assertEqual(self.dispatcher.enqueued, [])
+
+    def test_duplicate_candidate_ids_are_rejected_before_queueing(self):
+        response = self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "task": "classification",
+            "candidate_ids": ["random_forest", "random_forest"],
+        }, headers=self.headers)
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "AUTOML_CONFIG_INVALID")
+        self.assertEqual(self.dispatcher.enqueued, [])
+
+    def test_candidate_ids_are_persisted_in_request_order(self):
+        response = self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "task": "classification",
+            "candidate_ids": ["logistic_regression", "random_forest"],
+        }, headers=self.headers)
+
+        self.assertEqual(response.status_code, 202, response.text)
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(
+                TrainingJob.id == uuid.UUID(response.json()["job_id"])
+            ).one()
+            self.assertEqual(
+                job.params["candidate_ids"],
+                ["logistic_regression", "random_forest"],
+            )
 
     def test_deferred_local_dispatch_starts_after_queue_commit(self):
         class DeferredDispatcher(FakeDispatcher):

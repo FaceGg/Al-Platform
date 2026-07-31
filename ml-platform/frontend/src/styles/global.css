@@ -1327,7 +1327,10 @@ html body {
 .spot-weld-annotation__sample-list {
   display: grid;
   gap: 6px;
-  overflow: auto;
+  max-block-size: min(62vh, 680px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding-right: 2px;
 }
 

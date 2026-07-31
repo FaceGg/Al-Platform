@@ -1531,3 +1531,69 @@
 - 影响范围：本地训练/AutoML dispatcher、训练任务状态提交、AutoML 结果持久化、AutoML 页面错误和结果展示；不修改 Celery 生产任务合同。
 - 预防措施：本地异步执行必须先持久化可查询的队列状态再启动线程；每个前端结果字段都要有后端持久化回归；结构化 API 错误必须覆盖异常路径的页面可见性测试。
 - 遗留事项：远程 GitHub Actions 仍可能因账号付款或消费限额无法启动；该限制解除后需重新执行远程检查，不能以本地结果替代。
+
+### 2026-07-31：报告复现 Task 1 AutoML 候选集合选择
+
+- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
+- 任务状态：已完成。通用 AutoML 可选择当前任务对应的候选算法集合；空选择保留既有默认集合。
+- 问题现象：`candidate_ids` 未被请求模型接受，已保存的候选集合不会传入执行器；超过三项的无效集合会被 Pydantic 提前返回 `422`，无法使用统一的业务错误码。
+- 已确认根因：执行器仅使用注入候选或默认目录，未从 `TrainingJob.params` 读取；请求模型没有语义解析边界，字段长度约束抢在候选目录校验之前执行。
+- 解决方法：新增任务相关候选解析器，在创建任务前校验未知、重复和任务不兼容 ID，将有序集合持久化到既有 `params`，执行器未注入候选时解析该字段；移除长度抢占校验，使所有无效集合统一返回 `400 AUTOML_CONFIG_INVALID`；AutoML 页面增加“算法集合”多选，并在任务切换时移除失效选择。
+- 验证方式：RED 覆盖未知、重复、超长无效集合与已保存子集被忽略；GREEN 后端 `tests.test_automl_tracking tests.test_training_tasks -v` 为 22/22，前端 `vitest run src/pages/AutoMLPage.test.tsx` 为 5/5，`pnpm run build` 通过。sklearn/Jose 弃用警告和 Vite chunk-size 警告均为既有告警，未在本任务处理。
+- 影响范围：通用 AutoML 请求、训练任务参数、执行器候选目录和 AutoML 页面；不改训练调度、数据集选择、实验创建或点焊质量算法。
+- 预防措施：业务 API 的结构校验不得抢占需返回稳定业务码的语义校验；每个可持久化运行配置都应有“请求入库”和“执行器读取”两类回归。
+- 遗留事项：Task 2 至 Task 5 尚未开始；浏览器、Compose/Celery/Redis/MinIO 和远程 CI 验证须在全部实现完成后单独记录。
+
+### 2026-07-31：报告复现 Task 2 质量候选与自动标签快照
+
+- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
+- 任务状态：已完成。点焊质量运行可选择十组报告候选的有序子集，自动规则标签可明确创建为“报告复现自动标签”快照，并进入既有四模型训练、模型库血缘和八 Sheet XLSX。
+- 开发内容：在既有质量运行 `input_fingerprint` 持久化选中候选；运行执行复用该集合；自动快照记录 `source=automatic` 和空修订 ID；模型、模型制品、Schema、XLSX 和运行统计均携带 `label_source`；现有 AutoML 与数据标注页面增加候选集合、快照来源及 60/1875 条模拟数据入口。
+- 问题现象：初次自动快照实现允许未完成运行创建空快照，重新列出时会被错误显示为人工审核；空白或非法自动标签可被纳入；XLSX 将自动标签称为“已审核样本”；质量验证入口可绕过候选语义校验，失败创建请求会将超长无效候选写入审计。
+- 已确认根因：来源只保存在标签数组，空数组不能表达来源；查询仅排除 NULL；报表摘要沿用人工快照文本；候选解析在验证入口缺失且创建入口位于审计上下文之后。
+- 解决方法：自动快照仅接受已完成运行中的 `VALID_LABELS`，无有效标签返回 `400 QUALITY_AUTOMATIC_LABELS_UNAVAILABLE` 且不创建快照/审计；候选解析在 `/validate` 与 `/runs` 审计前统一执行；报表使用中性“训练标签样本”字段。
+- 测试先行：新增空自动快照、无效标签、自动报表字段、验证入口无效候选和失败审计不落库回归；旧实现稳定出现 7 failures 与 1 error，修复后恢复通过。
+- 验证方式：主流程后端 `tests.test_spot_weld_quality_service tests.test_api_spot_weld_quality -v` 为 25/25；前端 `vitest run src/pages/AutoMLPage.test.tsx src/pages/DataAnnotationPage.test.tsx` 为 14/14；`python -m compileall -q app tests`、`git diff --check 22f4863 HEAD` 通过。浏览器、Compose/Celery/Redis/MinIO 和远程 CI 未执行。
+- 影响范围：既有点焊质量 API、质量服务、AutoML 和数据标注配置控件及其回归；不新增页面、表、迁移、调度器或平行训练服务。
+- 预防措施：标签来源只要可进入训练血缘，就必须拒绝无法持久化来源的空快照；自动标签查询须同时校验非空和允许值；共享请求模型的每个入口都要执行同一语义校验，且拒绝非法大载荷必须发生在审计写入之前。
+- 遗留事项：Task 3 至 Task 5 尚未开始；模拟 1875 条实际质量运行、浏览器验收、Compose/Celery 和远程 CI 需在后续分别记录，不能由本地聚焦测试替代。
+
+### 2026-07-31：报告复现 Task 3 工作流特征工程算子
+
+- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
+- 任务状态：已完成。工作流画布可使用 `spot_weld_feature_engineering` 复用报告的四通道波形解码和固定 73 维特征契约。
+- 开发内容：在既有 processing 注册表增加无参数薄包装算子，输入 `data`，输出 `features`、`schema` 与 `statistics`；仅调用 `build_feature_frame()`，不复制解码或公式，不捕获 `QualityPipelineError`。
+- 问题现象：初始注册表中没有该算子，执行测试取得 `None` 并在调用 `execute` 时失败；代码审查还发现回归未直接锁定 DataFrame 输入和异常透明性。
+- 已确认根因：报告特征能力只存在于质量服务路径，尚未暴露为工作流算子；初始测试仅覆盖 records 的成功路径。
+- 解决方法：注册薄包装并实现抽象基类要求的最小 `validate()`；增加 12 行报告 records、DataFrame 和非法 Base64 三类合同，后者断言 `QualityPipelineError` 的类型、code、row_index 与 field_name 原样保留。
+- 测试先行：算子不存在时的初始合同稳定 RED；审查后新增的两个覆盖项在已实现行为上直接 GREEN，未为了制造 RED 回退生产代码。
+- 验证方式：主流程后端 `tests.test_all_operators tests.test_spot_weld_features -v` 为 88/88；`git diff --check af130ea b190bff` 通过。未执行真实工作流运行、浏览器、Compose/Celery 或远程 CI。
+- 影响范围：processing 算子注册与算子回归；不改工作流状态、DataBus、制品、数据库、迁移或质量服务算法。
+- 预防措施：将已有领域计算能力暴露为工作流节点时必须只保留一个算法事实来源；薄包装测试同时覆盖 records/DataFrame 两种输入和稳定领域错误透传。
+- 遗留事项：Task 4 至 Task 5 尚未开始；真实画布工作流执行及远程验证留待后续验收。
+
+### 2026-07-31：报告复现 Task 4 标注导出与样本队列滚动
+
+- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
+- 任务状态：已完成。数据标注页可从当前质量运行导出带标签血缘的 CSV/XLSX，样本队列限制在可滚动区域内。
+- 开发内容：复用 `SpotWeldQualitySample`、`SpotWeldLabelRevision` 和 `SpotWeldLabelSnapshot` 生成 CSV 的“标注样本”以及 XLSX 的“标注样本”“标签修订”“标签快照”三张表；新增项目范围导出路由、Blob 下载菜单和 bounded vertical scroll 样式。
+- 问题现象：此前页面没有导出入口，用户只能在页面内查看当前标签；样本数量变大时队列会持续撑高页面。
+- 已确认根因：导出数据未形成既有质量运行持久化的统一视图，列表样式缺少最大高度和纵向溢出约束。
+- 解决方法：导出服务按运行 ID 查询现有持久化行并保留当前标签、修订历史和快照来源；非法格式返回 `QUALITY_ANNOTATION_EXPORT_FORMAT_INVALID`；路由先执行项目权限和运行归属校验；前端使用 CSV/XLSX 下拉菜单并对样本列表设置 `max-block-size`、`overflow-y: auto`。
+- 验证方式：后端 `tests.test_api_spot_weld_quality tests.test_spot_weld_quality_service -v` 为 28/28；前端 `vitest run src/pages/DataAnnotationPage.test.tsx` 为 9/9；`pnpm run build`、`git diff --check` 通过。导出回归确认 XLSX 三个中文工作表、当前标签、10 条修订和快照来源；跨项目请求返回 404，非法格式返回 400 稳定错误码。
+- 影响范围：既有点焊质量服务/API、数据标注页和全局样式；不新增页面、数据库表、迁移、Artifact 或训练服务。
+- 预防措施：下载数据必须从服务端持久化血缘生成，不能拼接前端状态；项目范围路由应同时校验 project_id 与 run_id；大队列组件必须设置稳定尺寸和独立纵向滚动。
+- 遗留事项：Task 5 仍需执行 1875 条模拟数据的完整质量、自动标签快照训练、8 Sheet 报告和两种标注导出流程；浏览器真实操作、Compose/Celery/Redis/MinIO 与远程 CI 证据需单独记录。
+
+### 2026-07-31：报告复现 Task 5 1875 条模拟数据全流程验收
+
+- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
+- 任务状态：本地完整流程和全量自动化验证完成。原始报告数据未提供，因此本记录仅证明模拟报告结构数据上的算法与平台流程，不宣称复现原报告数值。
+- 输入与流程：通过既有 `POST /demo-dataset` 生成带 `spot_weld_demo` 来源的 1875 条 CSV；经既有 `/runs` 创建使用全十组候选的质量运行，执行 73 维特征、AutoML、加权聚类、规则弱监督和四级预警；随后经既有自动标签快照、训练和下载路由生成模型、Schema、8 Sheet XLSX、CSV 标注和三 Sheet XLSX 标注导出。
+- 集成验证结果：运行状态 `completed`，样本数 1875、特征数 73、候选数 10；自动快照来源为 `automatic` 且含 1875 条，标签计数为 normal 376、weak_splatter 469、strong_splatter 469、spot_too_small 468、current_jump 93；快照训练成功，8 Sheet 为“总览、AutoML选型、深度学习对比、缺陷标签、聚类画像、特征重要性、推理结果、多分类评估”；CSV 有 1875 行，标注 XLSX 的“标注样本”和“标签快照”各 1875 行并保留 automatic 来源。
+- 问题现象与根因：完整规模运行中，GBDT 交叉验证重要性平均出现约 `-3.8e-17` 残差，权重开方生成 NaN；自动标签中的 `current_jump` 主类别只有 2 条，不满足既有 5 折训练契约。
+- 解决方法：聚类权重在归一化前将有限重要性裁剪为非负，零总和仍回退全 1；仅报告复现规模（至少 1000 行）的模拟数据注入递增电流阶跃，使无其他缺陷规则的样本产生足量 `current_jump` 主标签。训练折数和“每类至少五条”的稳定错误契约未改动。
+- 验证方式：完整 API/服务集成流程耗时约 107 秒，快照训练约 48 秒；`run_suite.py` 89/89 模块通过；前端 Vitest 35 文件、140 用例通过；`pnpm run build`、`python -m compileall -q app tests` 和 `git diff --check` 通过。新增聚类负残差与 1875 自动标签五折可训练性回归均先 RED 后 GREEN。
+- 影响范围：点焊质量模拟数据和聚类数值防御及服务测试；不新增服务、页面、表、迁移、独立训练栈或私有数据适配器。
+- 预防措施：大规模模拟数据必须在生成阶段验证其下游交叉验证类别下限；来自交叉验证平均值的权重在调用根号、距离或概率运算前必须消除浮点符号残差并保持有限性。
+- 遗留事项：尚未在真实浏览器登录会话中完成手工 1875 条页面操作，也未执行 Compose/Celery/Redis/MinIO 或远程 GitHub Actions；这些环境证据不能由本地 TestClient、单元测试或构建替代。拿到原报告结构 CSV/XLSX 后，需经数据管理上传入口重跑并只比较可验证数值。
