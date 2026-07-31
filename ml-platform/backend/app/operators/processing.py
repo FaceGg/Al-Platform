@@ -1,6 +1,7 @@
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
+from app.services.spot_weld_features import build_feature_frame
 import pandas as pd
 import numpy as np
 
@@ -182,6 +183,34 @@ class TrainTestSplit(BaseOperator):
         train = outputs.get("train", [])
         test = outputs.get("test", [])
         return {"train": train[:10], "test": test[:10], "train_rows": len(train), "test_rows": len(test)}
+
+
+@register_operator
+class SpotWeldFeatureEngineering(BaseOperator):
+    id = "spot_weld_feature_engineering"
+    name = "Spot Weld Feature Engineering"
+    category = "processing"
+    description = "Decode four report waveforms and produce the fixed 73-feature schema"
+    inputs = [PortSpec("data", "DataTable", "Report Data")]
+    outputs = [
+        PortSpec("features", "DataTable", "73 Feature Data"),
+        PortSpec("schema", "JSON", "Feature Schema"),
+        PortSpec("statistics", "JSON", "Feature Statistics"),
+    ]
+    parameters = []
+
+    def validate(self, inputs):
+        return True
+
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        data = inputs.get("data", [])
+        frame = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
+        features, schema, statistics = build_feature_frame(frame)
+        return OperatorResult(outputs={
+            "features": features.to_dict(orient="records"),
+            "schema": {"columns": schema},
+            "statistics": statistics,
+        })
 
 
 

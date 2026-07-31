@@ -6,11 +6,12 @@ import base64
 from collections import Counter
 from dataclasses import dataclass, field
 import json
+from io import BytesIO
 from pathlib import Path
 import tempfile
 import time
 import uuid
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 import joblib
 import numpy as np
@@ -25,6 +26,7 @@ from sklearn.preprocessing import StandardScaler
 
 from app.models.model_library import ModelLibrary
 from app.models.spot_weld_quality import (
+    SpotWeldLabelRevision,
     SpotWeldLabelSnapshot,
     SpotWeldQualityRuleSet,
     SpotWeldQualityRun,
@@ -54,6 +56,146 @@ AUTOML_CONFIGS: tuple[dict[str, Any], ...] = (
     {"name": "ET_v1", "type": "extra", "params": {"n_estimators": 300, "max_depth": None}},
     {"name": "HGB_v1", "type": "histgb", "params": {"max_iter": 300, "learning_rate": 0.05}},
 )
+
+
+def select_automl_configs(candidate_ids: Sequence[str] | None = None) -> tuple[dict[str, Any], ...]:
+    requested = tuple(candidate_ids or ())
+    catalog = {str(config["name"]): config for config in AUTOML_CONFIGS}
+    if len(set(requested)) != len(requested) or any(candidate_id not in catalog for candidate_id in requested):
+        raise QualityPipelineError("QUALITY_AUTOML_CONFIG_INVALID")
+    return tuple(catalog[candidate_id] for candidate_id in requested) if requested else AUTOML_CONFIGS
+
+
+ANNOTATION_SAMPLE_EXPORT_FIELDS = (
+    "source_row_index",
+    "display_id",
+    "automatic_label",
+    "current_label",
+    "current_note",
+    "review_status",
+    "warning_level",
+    "defect_probability",
+    "cluster_id",
+    "rule_hits",
+    "current_revision_id",
+)
+ANNOTATION_REVISION_EXPORT_FIELDS = (
+    "revision_id",
+    "sample_id",
+    "author_id",
+    "label",
+    "note",
+    "action",
+    "decision",
+    "review_comment",
+    "parent_revision_id",
+    "created_at",
+)
+ANNOTATION_SNAPSHOT_EXPORT_FIELDS = (
+    "snapshot_id",
+    "name",
+    "label_source",
+    "sample_id",
+    "label",
+    "revision_id",
+    "created_at",
+)
+
+
+def _export_identifier(value: Any) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _export_json(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value)
+
+
+def build_annotation_export(run: SpotWeldQualityRun, db, format: str = "xlsx") -> bytes:
+    """Build a transient CSV/XLSX export from persisted annotation lineage."""
+    if format not in {"csv", "xlsx"}:
+        raise QualityPipelineError("QUALITY_ANNOTATION_EXPORT_FORMAT_INVALID")
+
+    samples = db.query(SpotWeldQualitySample).filter(
+        SpotWeldQualitySample.run_id == run.id,
+    ).order_by(SpotWeldQualitySample.source_row_index, SpotWeldQualitySample.id).all()
+    revisions = db.query(SpotWeldLabelRevision).filter(
+        SpotWeldLabelRevision.run_id == run.id,
+    ).order_by(SpotWeldLabelRevision.created_at, SpotWeldLabelRevision.id).all()
+    snapshots = db.query(SpotWeldLabelSnapshot).filter(
+        SpotWeldLabelSnapshot.run_id == run.id,
+    ).order_by(SpotWeldLabelSnapshot.created_at, SpotWeldLabelSnapshot.id).all()
+
+    sample_frame = pd.DataFrame([
+        {
+            "source_row_index": sample.source_row_index,
+            "display_id": sample.display_id,
+            "automatic_label": sample.automatic_label,
+            "current_label": sample.current_label,
+            "current_note": sample.current_note,
+            "review_status": sample.review_status,
+            "warning_level": sample.warning_level,
+            "defect_probability": sample.defect_probability,
+            "cluster_id": sample.cluster_id,
+            "rule_hits": _export_json(sample.rule_hits or []),
+            "current_revision_id": _export_identifier(sample.current_revision_id),
+        }
+        for sample in samples
+    ], columns=ANNOTATION_SAMPLE_EXPORT_FIELDS)
+    revision_frame = pd.DataFrame([
+        {
+            "revision_id": _export_identifier(revision.id),
+            "sample_id": _export_identifier(revision.sample_id),
+            "author_id": _export_identifier(revision.author_id),
+            "label": revision.label,
+            "note": revision.note,
+            "action": revision.action,
+            "decision": revision.decision,
+            "review_comment": revision.review_comment,
+            "parent_revision_id": _export_identifier(revision.parent_revision_id),
+            "created_at": revision.created_at.isoformat() if revision.created_at else None,
+        }
+        for revision in revisions
+    ], columns=ANNOTATION_REVISION_EXPORT_FIELDS)
+    snapshot_rows: list[dict[str, Any]] = []
+    for snapshot in snapshots:
+        labels = snapshot.labels or []
+        if not labels:
+            snapshot_rows.append({
+                "snapshot_id": _export_identifier(snapshot.id),
+                "name": snapshot.name,
+                "label_source": "approved",
+                "sample_id": None,
+                "label": None,
+                "revision_id": None,
+                "created_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
+            })
+            continue
+        for label in labels:
+            snapshot_rows.append({
+                "snapshot_id": _export_identifier(snapshot.id),
+                "name": snapshot.name,
+                "label_source": str(label.get("source") or "approved"),
+                "sample_id": _export_identifier(label.get("sample_id")),
+                "label": label.get("label"),
+                "revision_id": _export_identifier(label.get("revision_id")),
+                "created_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
+            })
+    snapshot_frame = pd.DataFrame(snapshot_rows, columns=ANNOTATION_SNAPSHOT_EXPORT_FIELDS)
+
+    output = BytesIO()
+    if format == "csv":
+        sample_frame.to_csv(output, index=False, encoding="utf-8-sig")
+        return output.getvalue()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        sample_frame.to_excel(writer, sheet_name="标注样本", index=False)
+        revision_frame.to_excel(writer, sheet_name="标签修订", index=False)
+        snapshot_frame.to_excel(writer, sheet_name="标签快照", index=False)
+    return output.getvalue()
+
 
 SNAPSHOT_TRAINING_CONFIGS: tuple[dict[str, Any], ...] = (
     {"name": "AutoML(LGB_v2)", "type": "lgb", "params": dict(AUTOML_CONFIGS[1]["params"]), "feature_scope": "fusion"},
@@ -242,8 +384,12 @@ def run_clustering(
     scaler = StandardScaler()
     scaled = scaler.fit_transform(X)
     importances = np.asarray(list(feature_importance), dtype=float).reshape(-1)
-    if len(importances) != X.shape[1] or not np.isfinite(importances).all() or importances.sum() <= 0:
+    if len(importances) != X.shape[1] or not np.isfinite(importances).all():
         importances = np.ones(X.shape[1], dtype=float)
+    else:
+        importances = np.maximum(importances, 0.0)
+        if importances.sum() <= 0:
+            importances = np.ones(X.shape[1], dtype=float)
     weights = importances / importances.sum()
     weighted = scaled * np.sqrt(weights)
     max_k = min(8, len(X) - 1)
@@ -376,9 +522,17 @@ def build_demo_report_frame(row_count: int = 60) -> pd.DataFrame:
     generator = np.random.default_rng(42)
     time = np.linspace(0.0, 1.0, 870, endpoint=False)
 
-    def encode_waveform(baseline: float, amplitude: float, phase: float) -> str:
+    def encode_waveform(
+        baseline: float,
+        amplitude: float,
+        phase: float,
+        *,
+        jump_strength: float = 0.0,
+    ) -> str:
         values = baseline + amplitude * np.sin(2.0 * np.pi * (4.0 * time + phase))
         values += generator.normal(0.0, max(1.0, amplitude * 0.025), size=time.shape)
+        if jump_strength > 0:
+            values[len(values) // 2:] += jump_strength
         encoded = np.clip(np.rint(values), -30000, 30000).astype(">i2")
         return base64.b64encode(encoded.tobytes()).decode("ascii")
 
@@ -389,6 +543,11 @@ def build_demo_report_frame(row_count: int = 60) -> pd.DataFrame:
         splatter = (0.0, 2.0, 3.0, 1.0)[pattern]
         diameter = (5.4, 5.0, 5.2, 1.6)[pattern]
         phase = index / max(row_count, 1)
+        current_jump = (
+            350.0 + 2.0 * (index // 16)
+            if row_count >= 1000 and pattern == 0 and index % 16 == 0
+            else 0.0
+        )
         rows.append({
             "wld1c": 8.0 + 0.18 * pattern + generator.normal(0.0, 0.06),
             "wld2c": 10.0 + 0.22 * pattern + generator.normal(0.0, 0.06),
@@ -404,7 +563,12 @@ def build_demo_report_frame(row_count: int = 60) -> pd.DataFrame:
             "spotdiameter": diameter + generator.normal(0.0, 0.08),
             "spotposition": 1.0 + 0.1 * pattern + generator.normal(0.0, 0.02),
             "spattercode": float(pattern * 10),
-            "cvei": encode_waveform(1180.0 + 90.0 * defect_scale, 240.0 + 45.0 * defect_scale, phase),
+            "cvei": encode_waveform(
+                1180.0 + 90.0 * defect_scale,
+                240.0 + 45.0 * defect_scale,
+                phase,
+                jump_strength=current_jump,
+            ),
             "cvev": encode_waveform(420.0 + 34.0 * defect_scale, 88.0 + 18.0 * defect_scale, phase + 0.12),
             "cver": encode_waveform(54.0 + 12.0 * defect_scale, 15.0 + 7.0 * defect_scale, phase + 0.24),
             "cvep": encode_waveform(520.0 + 125.0 * defect_scale, 130.0 + 52.0 * defect_scale, phase + 0.36),
@@ -517,8 +681,10 @@ def create_quality_run_record(
     user_id,
     dataset_artifact_id,
     field_mapping: Mapping[str, str] | None = None,
+    candidate_ids: Sequence[str] | None = None,
     artifact_service: ArtifactService | None = None,
 ) -> SpotWeldQualityRun:
+    selected_configs = select_automl_configs(candidate_ids)
     artifact_service = artifact_service or build_artifact_service(db)
     artifact, frame = resolve_dataset_frame(db, artifact_service, project_id, dataset_artifact_id)
     features, schema, statistics = build_feature_frame(frame, field_mapping=field_mapping)
@@ -533,6 +699,7 @@ def create_quality_run_record(
             "artifact_id": str(artifact.id),
             "sha256": (artifact.metadata_ or {}).get("sha256"),
             "row_count": len(frame),
+            "selected_candidate_ids": [str(config["name"]) for config in selected_configs],
         },
         statistics={**statistics, "valid_rows": len(features)},
         rule_set_version="report_v1",
@@ -656,7 +823,12 @@ def execute_quality_run(
         }
         preliminary = [apply_report_v1_rules(record, thresholds=thresholds) for record in records]
         binary_labels = np.asarray([result.primary_label != "normal" for result in preliminary], dtype=int)
-        candidate_results, best_candidate = run_automl(features.to_numpy(dtype=np.float64), binary_labels)
+        selected_configs = select_automl_configs(
+            (run.input_fingerprint or {}).get("selected_candidate_ids"),
+        )
+        candidate_results, best_candidate = run_automl(
+            features.to_numpy(dtype=np.float64), binary_labels, configs=selected_configs,
+        )
         clustering = run_clustering(
             features.to_numpy(dtype=np.float64),
             feature_names=schema,
@@ -740,6 +912,15 @@ def _snapshot_or_error(db, snapshot_id) -> SpotWeldLabelSnapshot:
     if snapshot is None:
         raise QualityPipelineError("QUALITY_LABEL_SNAPSHOT_NOT_FOUND")
     return snapshot
+
+
+def _snapshot_label_source(snapshot: SpotWeldLabelSnapshot) -> str:
+    sources = {str(item.get("source", "approved")) for item in (snapshot.labels or [])}
+    if not sources:
+        return "approved"
+    if len(sources) != 1 or not sources.issubset({"approved", "automatic"}):
+        raise QualityPipelineError("QUALITY_LABEL_SNAPSHOT_INVALID")
+    return sources.pop()
 
 
 def _training_feature_indexes(config: Mapping[str, Any], feature_names: list[str]) -> list[int]:
@@ -895,11 +1076,13 @@ def _write_snapshot_report(
     probabilities: np.ndarray,
     classes: np.ndarray,
 ) -> None:
+    label_source = _snapshot_label_source(snapshot)
     summary = pd.DataFrame([
         {"指标": "质量运行", "值": str(run.id)},
         {"指标": "标签快照", "值": str(snapshot.id)},
+        {"指标": "标签来源", "值": label_source},
         {"指标": "特征版本", "值": "report_v1"},
-        {"指标": "已审核样本", "值": len(snapshot_samples)},
+        {"指标": "训练标签样本", "值": len(snapshot_samples)},
         {"指标": "全量样本", "值": len(all_samples)},
         {"指标": "最优模型", "值": next((item.name for item in candidates if item.error_code is None and item.auc == max((candidate.auc or -1) for candidate in candidates)), "-")},
     ])
@@ -912,6 +1095,7 @@ def _write_snapshot_report(
             "label": label,
             "review_status": sample.review_status,
             "revision_id": next((item.get("revision_id") for item in (snapshot.labels or []) if item.get("sample_id") == str(sample.id)), None),
+            "source": next((item.get("source", "approved") for item in (snapshot.labels or []) if item.get("sample_id") == str(sample.id)), label_source),
         }
         for sample, label in zip(snapshot_samples, labels)
     ])
@@ -977,7 +1161,7 @@ def train_label_snapshot(
     artifact_service: ArtifactService | None = None,
     commit: bool = True,
 ) -> QualityTrainingOutcome:
-    """Train only from immutable approved-label snapshots and generated feature data."""
+    """Train from immutable approved or explicitly sourced automatic-label snapshots."""
     snapshot = _snapshot_or_error(db, snapshot_id)
     run = db.query(SpotWeldQualityRun).filter(
         SpotWeldQualityRun.id == snapshot.run_id,
@@ -986,6 +1170,7 @@ def train_label_snapshot(
     if run is None:
         raise QualityPipelineError("QUALITY_RUN_NOT_FOUND")
     artifact_service = artifact_service or build_artifact_service(db)
+    label_source = _snapshot_label_source(snapshot)
     features, labels, feature_names, snapshot_samples = _snapshot_training_data(db, snapshot, run)
     candidates, best_candidate, classes = run_snapshot_training(features, labels, feature_names)
     model, scaler, encoded_labels, indexes = _fit_snapshot_model(features, labels, feature_names, best_candidate)
@@ -1026,6 +1211,7 @@ def train_label_snapshot(
         "source": "spot_weld_quality",
         "quality_run_id": str(run.id),
         "label_snapshot_id": str(snapshot.id),
+        "label_source": label_source,
         "feature_version": "report_v1",
         "rule_set_version": run.rule_set_version,
     }
@@ -1041,12 +1227,14 @@ def train_label_snapshot(
             "classes": classes.tolist(),
             "feature_version": "report_v1",
             "label_snapshot_id": str(snapshot.id),
+            "label_source": label_source,
         }, model_path)
         schema_path.write_text(json.dumps({
             "feature_schema": selected_feature_names,
             "classes": classes.tolist(),
             "metrics": best_metrics,
             "feature_importance": feature_importance,
+            "label_source": label_source,
         }, ensure_ascii=False), encoding="utf-8")
         _write_snapshot_report(
             report_path,
@@ -1079,12 +1267,13 @@ def train_label_snapshot(
         status="completed",
         framework="scikit-learn",
         backbone=best_candidate.name,
-        description="基于已审核点焊标签快照的质量感知模型",
+        description=("基于报告复现自动标签快照的质量感知模型" if label_source == "automatic" else "基于已审核点焊标签快照的质量感知模型"),
         metrics=best_metrics,
         params={
             "source": "spot_weld_quality",
             "quality_run_id": str(run.id),
             "label_snapshot_id": str(snapshot.id),
+            "label_source": label_source,
             "feature_version": "report_v1",
             "rule_set_version": run.rule_set_version,
             "schema_artifact_id": str(schema_artifact.id),
@@ -1108,6 +1297,7 @@ def train_label_snapshot(
     run.statistics = {
         **(run.statistics or {}),
         "label_snapshot_id": str(snapshot.id),
+        "label_source": label_source,
         "model_library_id": str(model_library.id),
         "training_warning_counts": dict(Counter(sample.warning_level for sample in all_samples)),
     }

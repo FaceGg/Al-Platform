@@ -76,6 +76,27 @@ describe("AutoMLPage", () => {
     await waitFor(() => expect(quality.createQualityRun).toHaveBeenCalledWith("project-1", {
       dataset_artifact_id: "dataset-1",
       field_mapping: {},
+      candidate_ids: [],
+    }));
+  });
+
+  it("submits the selected report candidate IDs in order", async () => {
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "点焊质量感知" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知项目" }));
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
+    fireEvent.click(await screen.findByText("weld.csv"));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "报告候选算法" }));
+    fireEvent.click(await screen.findByText("RF_v1"));
+    fireEvent.click(await screen.findByText("GBDT_v1"));
+    fireEvent.click(screen.getByRole("button", { name: "运行质量感知" }));
+
+    await waitFor(() => expect(quality.createQualityRun).toHaveBeenCalledWith("project-1", {
+      dataset_artifact_id: "dataset-1",
+      field_mapping: {},
+      candidate_ids: ["RF_v1", "GBDT_v1"],
     }));
   });
 
@@ -104,5 +125,52 @@ describe("AutoMLPage", () => {
 
     expect(await screen.findByText("TRAINING_DISPATCH_FAILED: Training task could not be queued")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "AutoML" })).toBeInTheDocument();
+  });
+
+  it("submits the selected AutoML candidate IDs", async () => {
+    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    fireEvent.mouseDown(comboboxes[3]);
+    fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "算法集合" }));
+    fireEvent.click(await screen.findByText("Logistic Regression"));
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/training/automl/run", expect.objectContaining({
+      candidate_ids: ["logistic_regression"],
+    })));
+  });
+
+  it("removes candidate IDs that are invalid for a new task", async () => {
+    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    fireEvent.mouseDown(comboboxes[3]);
+    fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "算法集合" }));
+    fireEvent.click(await screen.findByText("Logistic Regression"));
+    fireEvent.mouseDown(comboboxes[4]);
+    fireEvent.click(await screen.findByText("Regression"));
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/training/automl/run", expect.objectContaining({
+      task: "regression",
+      candidate_ids: [],
+    })));
   });
 });

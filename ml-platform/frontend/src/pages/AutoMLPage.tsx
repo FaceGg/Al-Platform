@@ -11,6 +11,24 @@ import { useI18n } from "../i18n";
 
 const { Text, Title } = Typography;
 
+const AUTOML_CANDIDATE_OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
+  classification: [
+    { value: "random_forest", label: "Random Forest" },
+    { value: "gradient_boosting", label: "Gradient Boosting" },
+    { value: "logistic_regression", label: "Logistic Regression" },
+  ],
+  regression: [
+    { value: "random_forest", label: "Random Forest" },
+    { value: "gradient_boosting", label: "Gradient Boosting" },
+    { value: "linear_regression", label: "Linear Regression" },
+  ],
+};
+
+const REPORT_CANDIDATE_OPTIONS = [
+  "LGB_v1", "LGB_v2", "XGB_v1", "XGB_v2", "CAT_v1",
+  "CAT_v2", "GBDT_v1", "RF_v1", "ET_v1", "HGB_v1",
+].map((value) => ({ value, label: value }));
+
 export default function AutoMLPage() {
   const { t } = useI18n();
   const { message } = AntApp.useApp();
@@ -24,12 +42,14 @@ export default function AutoMLPage() {
   const [datasetColumns, setDatasetColumns] = useState<string[]>([]);
   const [targetColumn, setTargetColumn] = useState("");
   const [taskType, setTaskType] = useState("classification");
+  const [candidateIds, setCandidateIds] = useState<string[]>([]);
   const [timeBudget, setTimeBudget] = useState(60);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<any>(null);
   const [activeTab, setActiveTab] = useState("results");
   const [recipeTab, setRecipeTab] = useState("general");
   const [qualityRunning, setQualityRunning] = useState(false);
+  const [qualityCandidateIds, setQualityCandidateIds] = useState<string[]>([]);
   const [qualityRun, setQualityRun] = useState<QualityRun | null>(null);
   const [experimentModalOpen, setExperimentModalOpen] = useState(false);
   const [experimentCreating, setExperimentCreating] = useState(false);
@@ -71,6 +91,15 @@ export default function AutoMLPage() {
   const allResults = results?.models || results?.all_results || [];
   const bestModel = results?.best_model || allResults[0];
   const features = results?.feature_importance || results?.features || {};
+  const candidateOptions = AUTOML_CANDIDATE_OPTIONS[taskType] || [];
+
+  const handleTaskTypeChange = (task: string) => {
+    const validCandidateIds = new Set(
+      (AUTOML_CANDIDATE_OPTIONS[task] || []).map((candidate) => candidate.value),
+    );
+    setTaskType(task);
+    setCandidateIds((current) => current.filter((candidateId) => validCandidateIds.has(candidateId)));
+  };
 
   useEffect(() => {
     if (!results || allResults.length === 0) return;
@@ -143,7 +172,7 @@ export default function AutoMLPage() {
       const res = await apiClient.post("/training/automl/run", {
         project_id: selectedProject, experiment_id: selectedExperiment,
         dataset_artifact_id: selectedDataset, target_column: targetColumn,
-        task: taskType, time_budget: timeBudget,
+        task: taskType, candidate_ids: candidateIds, time_budget: timeBudget,
       });
       const rid = res.data.run_id || res.data.id || res.data.job_id;
       const poll = setInterval(async () => {
@@ -195,6 +224,7 @@ export default function AutoMLPage() {
       const run = await createQualityRun(selectedProject, {
         dataset_artifact_id: selectedDataset,
         field_mapping: {},
+        candidate_ids: qualityCandidateIds,
       });
       setQualityRun(run);
       message.success("点焊质量运行已创建");
@@ -274,8 +304,19 @@ export default function AutoMLPage() {
             <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.target} value={targetColumn || undefined} onChange={setTargetColumn}
               disabled={!selectedDataset} options={datasetColumns.map((column) => ({ value: column, label: column }))} /></Col>
           <Col xs={24} sm={4}><Text strong>{t.automl?.task || "Task"}</Text>
-            <Select style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={setTaskType}
+            <Select aria-label="任务类型" style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={handleTaskTypeChange}
               options={[{ value: "classification", label: "Classification" }, { value: "regression", label: "Regression" }]} /></Col>
+          <Col xs={24} sm={4}><Text strong>算法集合</Text>
+            <Select
+              aria-label="算法集合"
+              mode="multiple"
+              allowClear
+              style={{ width: "100%", marginTop: 4 }}
+              placeholder="默认全部算法"
+              value={candidateIds}
+              onChange={(ids: string[]) => setCandidateIds(ids)}
+              options={candidateOptions}
+            /></Col>
           <Col xs={24} sm={2}><Text strong>{t.automl?.budget || "Budget"}</Text>
             <InputNumber style={{ width: "100%", marginTop: 4 }} min={10} max={3600} value={timeBudget} onChange={(v) => setTimeBudget(v ?? 60)} /></Col>
           <Col xs={24} sm={2}><Button type="primary" icon={<ThunderboltOutlined />} onClick={handleRun} loading={running} block style={{ marginTop: 22 }}>{t.automl?.run || "Run"}</Button></Col>
@@ -350,7 +391,7 @@ export default function AutoMLPage() {
       {recipeTab === "spot-weld-quality" && <section className="spot-weld-recipe">
         <Card>
           <Row gutter={[16, 16]} align="middle">
-            <Col xs={24} md={8}>
+            <Col xs={24} md={6}>
               <Text strong>项目</Text>
               <Select
                 aria-label="质量感知项目"
@@ -361,7 +402,7 @@ export default function AutoMLPage() {
                 options={projects.map((project: any) => ({ value: project.id, label: project.name }))}
               />
             </Col>
-            <Col xs={24} md={10}>
+            <Col xs={24} md={7}>
               <Text strong>报告数据</Text>
               <Select
                 aria-label="质量感知数据"
@@ -373,7 +414,19 @@ export default function AutoMLPage() {
                 options={datasets.filter((dataset: any) => ["csv", "xls", "xlsx"].includes(String(dataset.format || "").toLowerCase())).map((dataset: any) => ({ value: dataset.id, label: dataset.name || dataset.filename }))}
               />
             </Col>
-            <Col xs={24} md={6}>
+            <Col xs={24} md={7}>
+              <Text strong>报告候选算法</Text>
+              <Select
+                mode="multiple"
+                aria-label="报告候选算法"
+                style={{ width: "100%", marginTop: 4 }}
+                value={qualityCandidateIds}
+                onChange={setQualityCandidateIds}
+                placeholder="留空使用全部 10 项"
+                options={REPORT_CANDIDATE_OPTIONS}
+              />
+            </Col>
+            <Col xs={24} md={4}>
               <Button type="primary" icon={<ThunderboltOutlined />} aria-label="运行质量感知" onClick={() => void handleQualityRun()} loading={qualityRunning} disabled={!selectedProject || !selectedDataset} block style={{ marginTop: 22 }}>运行质量感知</Button>
             </Col>
           </Row>
