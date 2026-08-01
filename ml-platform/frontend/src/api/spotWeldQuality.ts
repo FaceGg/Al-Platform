@@ -1,6 +1,31 @@
 import apiClient from "./client";
 
 export type QualityRunStatus = "queued" | "validating" | "running" | "completed" | "failed";
+export type QualityLabelMode = "automatic" | "manual";
+
+export interface QualityAnnotationProgress {
+  annotated_count: number;
+  total_count: number;
+  percent: number;
+}
+
+export interface QualityEvaluationConfig {
+  cross_validation_enabled: boolean;
+  cross_validation_folds: 3 | 4 | 5 | null;
+}
+
+export interface QualityRuleConfig {
+  strong_splatter_min: number;
+  weak_splatter_value: number;
+  spotdiameter_small_min: number;
+  spotdiameter_small_max: number;
+  spotdiameter_large_min: number;
+  energy_dev_sigma: number;
+  current_max_diff_percentile: number;
+  power_std_percentile: number;
+  spatter_cluster_id: number;
+  spatter_cluster_min_strength: number;
+}
 
 export interface QualityRun {
   id: string;
@@ -16,6 +41,12 @@ export interface QualityRun {
   output_artifacts?: Record<string, string>;
   error_code?: string | null;
   selected_candidate_ids?: string[];
+  target_column?: string | null;
+  input_columns?: string[];
+  evaluation?: QualityEvaluationConfig;
+  label_mode?: QualityLabelMode;
+  rule_config?: Partial<QualityRuleConfig>;
+  annotation_progress?: QualityAnnotationProgress;
 }
 
 export interface QualityLabelSnapshot {
@@ -255,9 +286,41 @@ export async function downloadQualityAnnotationExport(
   return response.data as Blob;
 }
 
+export interface SavedLabeledDataset {
+  id: string;
+  artifact_id: string;
+  name: string;
+  format?: string;
+  row_count?: number;
+  source_dataset_artifact_id?: string;
+  quality_run_id?: string;
+}
+
+export async function saveLabeledDataset(
+  projectId: string,
+  runId: string,
+  labelSource: "current" | "automatic" = "current",
+): Promise<SavedLabeledDataset> {
+  const response = await apiClient.post(
+    `/projects/${projectId}/spot-weld/runs/${runId}/save-labeled-dataset`,
+    { label_source: labelSource },
+  );
+  return response.data as SavedLabeledDataset;
+}
+
 export async function createQualityRun(
   projectId: string,
-  payload: { dataset_artifact_id: string; field_mapping?: Record<string, string>; candidate_ids?: string[] },
+  payload: {
+    dataset_artifact_id: string;
+    field_mapping?: Record<string, string>;
+    candidate_ids?: string[];
+    target_column?: string;
+    input_columns?: string[];
+    cross_validation_enabled?: boolean;
+    cross_validation_folds?: 3 | 4 | 5 | null;
+    label_mode?: QualityLabelMode;
+    rule_config?: Partial<QualityRuleConfig>;
+  },
 ) {
   const response = await apiClient.post(`/projects/${projectId}/spot-weld/runs`, payload);
   return response.data as QualityRun;
@@ -274,10 +337,20 @@ export async function validateQualityDataset(
   projectId: string,
   datasetArtifactId: string,
   fieldMapping: Record<string, string> = {},
+  options: {
+    label_mode?: QualityLabelMode;
+    rule_config?: Partial<QualityRuleConfig>;
+    candidate_ids?: string[];
+    target_column?: string;
+    input_columns?: string[];
+    cross_validation_enabled?: boolean;
+    cross_validation_folds?: 3 | 4 | 5 | null;
+  } = {},
 ): Promise<QualityDatasetValidation> {
   const response = await apiClient.post(`/projects/${projectId}/spot-weld/validate`, {
     dataset_artifact_id: datasetArtifactId,
     field_mapping: fieldMapping,
+    ...options,
   });
   return response.data;
 }

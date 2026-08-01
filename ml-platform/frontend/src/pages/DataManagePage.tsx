@@ -5,7 +5,7 @@ import {
 import {
   UploadOutlined, DownloadOutlined, DeleteOutlined, EyeOutlined, ImportOutlined, ExportOutlined, TagsOutlined
 } from "@ant-design/icons";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import apiClient from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
 import AppLayout from "../components/AppLayout";
@@ -15,10 +15,11 @@ const { Text } = Typography;
 
 export default function DataManagePage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { message } = AntApp.useApp();
   const { t } = useI18n();
   const [projects, setProjects] = useState<any[]>([]);
-  const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [selectedProject, setSelectedProject] = useState<string | null>(searchParams.get("projectId"));
   const [datasets, setDatasets] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [previewData, setPreviewData] = useState<{ columns: string[]; rows: any[][] } | null>(null);
@@ -27,8 +28,12 @@ export default function DataManagePage() {
   useEffect(() => {
     apiClient.get("/projects").then((res) => {
       setProjects(res.data.items || res.data || []);
+      const requestedProject = searchParams.get("projectId");
+      if (requestedProject && (res.data.items || res.data || []).some((project: any) => project.id === requestedProject)) {
+        setSelectedProject(requestedProject);
+      }
     }).catch(() => {});
-  }, []);
+  }, [searchParams]);
 
   const loadDatasets = (projectId: string | null) => {
     setLoading(true);
@@ -119,6 +124,14 @@ export default function DataManagePage() {
     }
   };
 
+  const handleAutomaticLabeling = (record: any) => {
+    if (!record.project_id) {
+      message.warning("请先为数据选择项目");
+      return;
+    }
+    navigate(`/data-annotation?type=spot-weld&view=setup&mode=automatic&projectId=${encodeURIComponent(record.project_id)}&datasetId=${encodeURIComponent(record.id)}`);
+  };
+
   const columns = [
     { title: t.data.filename, dataIndex: "name", key: "name", ellipsis: true },
     { title: t.data.project, dataIndex: "project_name", key: "project_name", ellipsis: true,
@@ -130,11 +143,11 @@ export default function DataManagePage() {
     { title: t.data.rows, dataIndex: "row_count", key: "rows", width: 80 },
     { title: t.model.created, dataIndex: "created_at", key: "created_at", width: 160 },
     {
-      title: t.model.actions, key: "actions", width: 132, fixed: "right" as const, align: "center" as const,
+      title: t.model.actions, key: "actions", width: 160, fixed: "right" as const, align: "center" as const,
       render: (_: any, record: any) => (
         <Space className="dataset-table-actions" size={2} wrap={false}>
           {["csv", "xls", "xlsx"].includes(String(record.format || "").toLowerCase()) && record.project_id && (
-            <Tooltip title={`质量感知 ${record.name}`}><Button type="text" size="small" icon={<TagsOutlined />} aria-label={`质量感知 ${record.name}`} onClick={() => navigate(`/data-annotation?projectId=${encodeURIComponent(record.project_id)}&datasetId=${encodeURIComponent(record.id)}`)} /></Tooltip>
+            <Tooltip title={`自动标注 ${record.name}`}><Button type="text" size="small" icon={<TagsOutlined />} aria-label={`自动标注 ${record.name}`} onClick={() => handleAutomaticLabeling(record)} /></Tooltip>
           )}
           <Tooltip title={`${t.data.preview} ${record.name}`}><Button type="text" size="small" icon={<EyeOutlined />} aria-label={`${t.data.preview} ${record.name}`} onClick={() => handlePreview(record.id)} /></Tooltip>
           <Tooltip title={`${t.data.download} ${record.name}`}><Button type="text" size="small" icon={<DownloadOutlined />} aria-label={`${t.data.download} ${record.name}`} onClick={() => handleDownload(record.id)} /></Tooltip>

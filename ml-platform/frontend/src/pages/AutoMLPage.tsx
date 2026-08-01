@@ -1,11 +1,11 @@
 import { useEffect, useState, useRef } from "react";
-import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space } from "antd";
-import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined } from "@ant-design/icons";
+import { App as AntApp, Card, Select, Button, Input, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
+import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import { useNavigate } from "react-router-dom";
 import apiClient, { formatApiError } from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
-import { createQualityRun, getQualityRun, type QualityRun } from "../api/spotWeldQuality";
+import { createQualityRun, downloadQualityArtifact, getQualityRun, type QualityRun } from "../api/spotWeldQuality";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
 
@@ -13,14 +13,28 @@ const { Text, Title } = Typography;
 
 const AUTOML_CANDIDATE_OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
   classification: [
-    { value: "random_forest", label: "Random Forest" },
-    { value: "gradient_boosting", label: "Gradient Boosting" },
-    { value: "logistic_regression", label: "Logistic Regression" },
+    { value: "LGB_v1", label: "LGB_v1 · LightGBM" },
+    { value: "LGB_v2", label: "LGB_v2 · LightGBM" },
+    { value: "XGB_v1", label: "XGB_v1 · XGBoost" },
+    { value: "XGB_v2", label: "XGB_v2 · XGBoost" },
+    { value: "CAT_v1", label: "CAT_v1 · CatBoost" },
+    { value: "CAT_v2", label: "CAT_v2 · CatBoost" },
+    { value: "GBDT_v1", label: "GBDT_v1 · GBDT" },
+    { value: "RF_v1", label: "RF_v1 · Random Forest" },
+    { value: "ET_v1", label: "ET_v1 · Extra Trees" },
+    { value: "HGB_v1", label: "HGB_v1 · HistGradientBoosting" },
   ],
   regression: [
-    { value: "random_forest", label: "Random Forest" },
-    { value: "gradient_boosting", label: "Gradient Boosting" },
-    { value: "linear_regression", label: "Linear Regression" },
+    { value: "LGB_v1", label: "LGB_v1 · LightGBM" },
+    { value: "LGB_v2", label: "LGB_v2 · LightGBM" },
+    { value: "XGB_v1", label: "XGB_v1 · XGBoost" },
+    { value: "XGB_v2", label: "XGB_v2 · XGBoost" },
+    { value: "CAT_v1", label: "CAT_v1 · CatBoost" },
+    { value: "CAT_v2", label: "CAT_v2 · CatBoost" },
+    { value: "GBDT_v1", label: "GBDT_v1 · GBDT" },
+    { value: "RF_v1", label: "RF_v1 · Random Forest" },
+    { value: "ET_v1", label: "ET_v1 · Extra Trees" },
+    { value: "HGB_v1", label: "HGB_v1 · HistGradientBoosting" },
   ],
 };
 
@@ -40,17 +54,25 @@ export default function AutoMLPage() {
   const [datasets, setDatasets] = useState<any[]>([]);
   const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
   const [datasetColumns, setDatasetColumns] = useState<string[]>([]);
+  const [numericInputColumns, setNumericInputColumns] = useState<string[]>([]);
+  const [inputColumns, setInputColumns] = useState<string[]>([]);
   const [targetColumn, setTargetColumn] = useState("");
   const [taskType, setTaskType] = useState("classification");
   const [candidateIds, setCandidateIds] = useState<string[]>([]);
-  const [timeBudget, setTimeBudget] = useState(60);
+  const [crossValidationEnabled, setCrossValidationEnabled] = useState(true);
+  const [crossValidationFolds, setCrossValidationFolds] = useState<3 | 4 | 5>(5);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<any>(null);
   const [activeTab, setActiveTab] = useState("results");
   const [recipeTab, setRecipeTab] = useState("general");
   const [qualityRunning, setQualityRunning] = useState(false);
   const [qualityCandidateIds, setQualityCandidateIds] = useState<string[]>([]);
+  const [qualityTargetColumn, setQualityTargetColumn] = useState("");
+  const [qualityInputColumns, setQualityInputColumns] = useState<string[]>([]);
+  const [qualityCrossValidationEnabled, setQualityCrossValidationEnabled] = useState(true);
+  const [qualityCrossValidationFolds, setQualityCrossValidationFolds] = useState<3 | 4 | 5>(3);
   const [qualityRun, setQualityRun] = useState<QualityRun | null>(null);
+  const [downloadingQualityReport, setDownloadingQualityReport] = useState(false);
   const [experimentModalOpen, setExperimentModalOpen] = useState(false);
   const [experimentCreating, setExperimentCreating] = useState(false);
   const [experimentForm] = Form.useForm();
@@ -78,15 +100,43 @@ export default function AutoMLPage() {
   }, [selectedProject]);
 
   useEffect(() => {
-    if (!selectedDataset) { setDatasetColumns([]); setTargetColumn(""); return; }
+    if (!selectedDataset) {
+      setDatasetColumns([]);
+      setNumericInputColumns([]);
+      setInputColumns([]);
+      setTargetColumn("");
+      setQualityInputColumns([]);
+      setQualityTargetColumn("");
+      return;
+    }
     getDatasetPreview(selectedDataset)
       .then((data) => {
-        const columns = Array.isArray(data.columns) ? data.columns : [];
+        const columns: string[] = Array.isArray(data.columns)
+          ? data.columns.filter((column: unknown): column is string => typeof column === "string")
+          : [];
+        const dtypes = data.dtypes && typeof data.dtypes === "object" ? data.dtypes : {};
         setDatasetColumns(columns);
-        setTargetColumn((current) => columns.includes(current) ? current : "");
+        setNumericInputColumns(columns.filter((column) => /^(?:u?int|float|complex)/i.test(String(dtypes[column] || ""))));
+        setTargetColumn((current) => columns.includes(current) ? current : (columns.includes("label") ? "label" : ""));
       })
-      .catch(() => { setDatasetColumns([]); message.error(t.common.error); });
+      .catch(() => { setDatasetColumns([]); setNumericInputColumns([]); setInputColumns([]); message.error(t.common.error); });
   }, [selectedDataset, t.common.error, message]);
+
+  useEffect(() => {
+    const allowed = numericInputColumns.filter((column) => column !== targetColumn);
+    setInputColumns((current) => {
+      const retained = current.filter((column) => allowed.includes(column));
+      return retained.length ? retained : allowed;
+    });
+  }, [numericInputColumns, targetColumn]);
+
+  useEffect(() => {
+    const allowed = datasetColumns.filter((column) => column !== qualityTargetColumn);
+    setQualityInputColumns((current) => {
+      const retained = current.filter((column) => allowed.includes(column));
+      return retained.length ? retained : allowed;
+    });
+  }, [datasetColumns, qualityTargetColumn]);
 
   const allResults = results?.models || results?.all_results || [];
   const bestModel = results?.best_model || allResults[0];
@@ -162,7 +212,7 @@ export default function AutoMLPage() {
   }, [results]);
 
   const handleRun = async () => {
-    if (!selectedProject || !selectedExperiment || !selectedDataset || !targetColumn) {
+    if (!selectedProject || !selectedExperiment || !selectedDataset || !targetColumn || inputColumns.length === 0) {
       message.warning((t.automl?.select_project || "Project") + " / " + (t.automl?.select_dataset || "Dataset") + " / " + (t.automl?.target || "Target"));
       return;
     }
@@ -172,7 +222,11 @@ export default function AutoMLPage() {
       const res = await apiClient.post("/training/automl/run", {
         project_id: selectedProject, experiment_id: selectedExperiment,
         dataset_artifact_id: selectedDataset, target_column: targetColumn,
-        task: taskType, candidate_ids: candidateIds, time_budget: timeBudget,
+        input_columns: inputColumns,
+        task: taskType,
+        candidate_ids: candidateIds,
+        cross_validation_enabled: crossValidationEnabled,
+        cross_validation_folds: crossValidationEnabled ? crossValidationFolds : null,
       });
       const rid = res.data.run_id || res.data.id || res.data.job_id;
       const poll = setInterval(async () => {
@@ -215,8 +269,8 @@ export default function AutoMLPage() {
   };
 
   const handleQualityRun = async () => {
-    if (!selectedProject || !selectedDataset) {
-      message.warning("请选择项目和点焊报告数据");
+    if (!selectedProject || !selectedDataset || qualityInputColumns.length === 0) {
+      message.warning("请选择项目、点焊报告数据和输入列");
       return;
     }
     setQualityRunning(true);
@@ -225,6 +279,10 @@ export default function AutoMLPage() {
         dataset_artifact_id: selectedDataset,
         field_mapping: {},
         candidate_ids: qualityCandidateIds,
+        target_column: qualityTargetColumn || undefined,
+        input_columns: qualityInputColumns,
+        cross_validation_enabled: qualityCrossValidationEnabled,
+        cross_validation_folds: qualityCrossValidationEnabled ? qualityCrossValidationFolds : null,
       });
       setQualityRun(run);
       message.success("点焊质量运行已创建");
@@ -251,6 +309,25 @@ export default function AutoMLPage() {
     return () => { active = false; window.clearInterval(timer); };
   }, [qualityRun?.id, qualityRun?.status, selectedProject]);
 
+  const downloadQualityReport = async () => {
+    if (!selectedProject || !qualityRun?.id || !qualityRun.output_artifacts?.report) return;
+    setDownloadingQualityReport(true);
+    try {
+      const blob = await downloadQualityArtifact(selectedProject, qualityRun.id, "report");
+      if (typeof URL.createObjectURL !== "function") return;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `spot-weld-quality-report-${qualityRun.id.slice(0, 8)}.xlsx`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      message.error(formatApiError(error, "质量报告下载失败"));
+    } finally {
+      setDownloadingQualityReport(false);
+    }
+  };
+
   const resultColumns = [
     { title: t.knowledge?.name || "Name", dataIndex: "name", key: "name" },
     { title: t.automl?.score || "Score", dataIndex: "score", key: "score", render: (v: number) => v != null ? Number(v).toFixed(4) : "-" },
@@ -264,6 +341,11 @@ export default function AutoMLPage() {
   const qualityCluster = qualityRun?.clustering_results || {};
   const qualityKSearch = Object.entries((qualityCluster.silhouette_scores || {}) as Record<string, number>);
   const qualityPca = Array.isArray(qualityCluster.pca_coordinates) ? qualityCluster.pca_coordinates : [];
+  const qualityBestCandidate = qualityCandidates.find((candidate) => candidate.error_code == null) || qualityCandidates[0];
+  const formatQualityMetric = (key: string) => {
+    const value = qualityBestCandidate?.[key];
+    return typeof value === "number" && Number.isFinite(value) ? value.toFixed(4) : "-";
+  };
   const qualityCandidateColumns = [
     { title: "候选模型", dataIndex: "name", key: "name" },
     { title: "AUC", dataIndex: "auc", key: "auc", render: (value: number | null) => value == null ? "-" : Number(value).toFixed(4) },
@@ -301,8 +383,21 @@ export default function AutoMLPage() {
             </Button>
           </Col>
           <Col xs={24} sm={4}><Text strong>{t.automl?.target || "Target"}</Text>
-            <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.target} value={targetColumn || undefined} onChange={setTargetColumn}
+            <Select aria-label="目标列" style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.target} value={targetColumn || undefined} onChange={setTargetColumn}
               disabled={!selectedDataset} options={datasetColumns.map((column) => ({ value: column, label: column }))} /></Col>
+          <Col xs={24} sm={6}><Text strong>输入列</Text>
+            <Select
+              aria-label="输入列"
+              mode="multiple"
+              allowClear
+              maxTagCount="responsive"
+              style={{ width: "100%", marginTop: 4 }}
+              placeholder="选择数值输入列"
+              value={inputColumns}
+              onChange={(columns: string[]) => setInputColumns(columns.filter((column) => column !== targetColumn))}
+              disabled={!selectedDataset}
+              options={numericInputColumns.filter((column) => column !== targetColumn).map((column) => ({ value: column, label: column }))}
+            /></Col>
           <Col xs={24} sm={4}><Text strong>{t.automl?.task || "Task"}</Text>
             <Select aria-label="任务类型" style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={handleTaskTypeChange}
               options={[{ value: "classification", label: "Classification" }, { value: "regression", label: "Regression" }]} /></Col>
@@ -317,8 +412,17 @@ export default function AutoMLPage() {
               onChange={(ids: string[]) => setCandidateIds(ids)}
               options={candidateOptions}
             /></Col>
-          <Col xs={24} sm={2}><Text strong>{t.automl?.budget || "Budget"}</Text>
-            <InputNumber style={{ width: "100%", marginTop: 4 }} min={10} max={3600} value={timeBudget} onChange={(v) => setTimeBudget(v ?? 60)} /></Col>
+          <Col xs={12} sm={3}><Text strong>交叉验证</Text>
+            <div style={{ marginTop: 7 }}><Switch aria-label="启用交叉验证" checked={crossValidationEnabled} onChange={setCrossValidationEnabled} /></div></Col>
+          <Col xs={12} sm={3}><Text strong>折数</Text>
+            <Select
+              aria-label="交叉验证折数"
+              style={{ width: "100%", marginTop: 4 }}
+              value={crossValidationFolds}
+              disabled={!crossValidationEnabled}
+              onChange={(folds: 3 | 4 | 5) => setCrossValidationFolds(folds)}
+              options={[3, 4, 5].map((folds) => ({ value: folds, label: `${folds} 折` }))}
+            /></Col>
           <Col xs={24} sm={2}><Button type="primary" icon={<ThunderboltOutlined />} onClick={handleRun} loading={running} block style={{ marginTop: 22 }}>{t.automl?.run || "Run"}</Button></Col>
         </Row>
       </Card>
@@ -391,7 +495,7 @@ export default function AutoMLPage() {
       {recipeTab === "spot-weld-quality" && <section className="spot-weld-recipe">
         <Card>
           <Row gutter={[16, 16]} align="middle">
-            <Col xs={24} md={6}>
+            <Col xs={24} md={5}>
               <Text strong>项目</Text>
               <Select
                 aria-label="质量感知项目"
@@ -402,7 +506,7 @@ export default function AutoMLPage() {
                 options={projects.map((project: any) => ({ value: project.id, label: project.name }))}
               />
             </Col>
-            <Col xs={24} md={7}>
+            <Col xs={24} md={5}>
               <Text strong>报告数据</Text>
               <Select
                 aria-label="质量感知数据"
@@ -414,7 +518,37 @@ export default function AutoMLPage() {
                 options={datasets.filter((dataset: any) => ["csv", "xls", "xlsx"].includes(String(dataset.format || "").toLowerCase())).map((dataset: any) => ({ value: dataset.id, label: dataset.name || dataset.filename }))}
               />
             </Col>
-            <Col xs={24} md={7}>
+            <Col xs={24} md={4}>
+              <Text strong>目标列</Text>
+              <Select
+                aria-label="质量感知目标列"
+                allowClear
+                style={{ width: "100%", marginTop: 4 }}
+                value={qualityTargetColumn || undefined}
+                onChange={(column: string | undefined) => setQualityTargetColumn(column || "")}
+                disabled={!selectedDataset}
+                placeholder="可选监督标签"
+                options={datasetColumns.map((column) => ({ value: column, label: column }))}
+              />
+            </Col>
+            <Col xs={24} md={10}>
+              <Text strong>输入列</Text>
+              <Select
+                aria-label="质量感知输入列"
+                mode="multiple"
+                allowClear
+                maxTagCount="responsive"
+                style={{ width: "100%", marginTop: 4 }}
+                value={qualityInputColumns}
+                onChange={(columns: string[]) => setQualityInputColumns(columns.filter((column) => column !== qualityTargetColumn))}
+                disabled={!selectedDataset}
+                placeholder="至少保留报告所需字段和波形列"
+                options={datasetColumns.filter((column) => column !== qualityTargetColumn).map((column) => ({ value: column, label: column }))}
+              />
+            </Col>
+          </Row>
+          <Row gutter={[16, 16]} align="middle" style={{ marginTop: 16 }}>
+            <Col xs={24} md={8}>
               <Text strong>报告候选算法</Text>
               <Select
                 mode="multiple"
@@ -426,8 +560,23 @@ export default function AutoMLPage() {
                 options={REPORT_CANDIDATE_OPTIONS}
               />
             </Col>
+            <Col xs={12} md={4}>
+              <Text strong>交叉验证</Text>
+              <div style={{ marginTop: 7 }}><Switch aria-label="质量感知启用交叉验证" checked={qualityCrossValidationEnabled} onChange={setQualityCrossValidationEnabled} /></div>
+            </Col>
+            <Col xs={12} md={4}>
+              <Text strong>折数</Text>
+              <Select
+                aria-label="质量感知交叉验证折数"
+                style={{ width: "100%", marginTop: 4 }}
+                value={qualityCrossValidationFolds}
+                disabled={!qualityCrossValidationEnabled}
+                onChange={(folds: 3 | 4 | 5) => setQualityCrossValidationFolds(folds)}
+                options={[3, 4, 5].map((folds) => ({ value: folds, label: `${folds} 折` }))}
+              />
+            </Col>
             <Col xs={24} md={4}>
-              <Button type="primary" icon={<ThunderboltOutlined />} aria-label="运行质量感知" onClick={() => void handleQualityRun()} loading={qualityRunning} disabled={!selectedProject || !selectedDataset} block style={{ marginTop: 22 }}>运行质量感知</Button>
+              <Button type="primary" icon={<ThunderboltOutlined />} aria-label="运行质量感知" onClick={() => void handleQualityRun()} loading={qualityRunning} disabled={!selectedProject || !selectedDataset || qualityInputColumns.length === 0} block style={{ marginTop: 22 }}>运行质量感知</Button>
             </Col>
           </Row>
         </Card>
@@ -442,7 +591,19 @@ export default function AutoMLPage() {
               <Descriptions.Item label="PCA">{qualityPca.length ? `${qualityPca.length} x 2` : "-"}</Descriptions.Item>
             </Descriptions>
             {qualityCandidates.length > 0 && <Table rowKey={(row: any) => row.name} size="small" columns={qualityCandidateColumns} dataSource={qualityCandidates} pagination={false} scroll={{ x: 600 }} />}
-            <Button onClick={() => navigate(`/data-annotation?projectId=${encodeURIComponent(selectedProject || "")}&datasetId=${encodeURIComponent(selectedDataset || "")}&runId=${encodeURIComponent(qualityRun.id)}`)}>打开数据标注</Button>
+            {qualityRun.status === "completed" && <Card size="small" title="主要报告">
+              <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 4 }}>
+                <Descriptions.Item label="评估">{qualityRun.evaluation?.cross_validation_enabled ? `${qualityRun.evaluation.cross_validation_folds} 折交叉验证` : "固定留出集"}</Descriptions.Item>
+                <Descriptions.Item label="目标列">{qualityRun.target_column || "未选择"}</Descriptions.Item>
+                <Descriptions.Item label="最佳 AUC">{formatQualityMetric("auc")}</Descriptions.Item>
+                <Descriptions.Item label="最佳 F1">{formatQualityMetric("f1")}</Descriptions.Item>
+              </Descriptions>
+              <Space style={{ marginTop: 12 }}>
+                <Button icon={<DownloadOutlined />} aria-label="下载完整报告" onClick={() => void downloadQualityReport()} loading={downloadingQualityReport} disabled={!qualityRun.output_artifacts?.report}>下载完整报告</Button>
+                <Button onClick={() => navigate(`/data-annotation?projectId=${encodeURIComponent(selectedProject || "")}&datasetId=${encodeURIComponent(selectedDataset || "")}&runId=${encodeURIComponent(qualityRun.id)}`)}>打开数据标注</Button>
+              </Space>
+            </Card>}
+            {qualityRun.status !== "completed" && <Button onClick={() => navigate(`/data-annotation?projectId=${encodeURIComponent(selectedProject || "")}&datasetId=${encodeURIComponent(selectedDataset || "")}&runId=${encodeURIComponent(qualityRun.id)}`)}>打开数据标注</Button>}
           </Space>
         </Card>}
       </section>}

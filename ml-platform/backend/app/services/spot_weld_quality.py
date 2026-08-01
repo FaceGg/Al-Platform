@@ -20,7 +20,7 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.ensemble import ExtraTreesClassifier, GradientBoostingClassifier, HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, f1_score, roc_auc_score, silhouette_score
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 
@@ -38,6 +38,7 @@ from app.services.spot_weld_features import (
     QualityPipelineError,
     REPORT_TABLE_FIELDS,
     TABLE_FEATURES,
+    WAVEFORM_FIELDS,
     build_feature_frame,
     canonicalize_report_frame,
     decode_report_waveforms,
@@ -57,6 +58,89 @@ AUTOML_CONFIGS: tuple[dict[str, Any], ...] = (
     {"name": "HGB_v1", "type": "histgb", "params": {"max_iter": 300, "learning_rate": 0.05}},
 )
 
+REPORT_RULE_ENERGY_SIGMA = 2.5
+REPORT_RULE_SPATTER_CLUSTER_ID = 1
+REPORT_RULESET_VERSION = "report_v2"
+QUALITY_LABEL_MODES = frozenset({"automatic", "manual"})
+DEFAULT_REPORT_RULE_CONFIG: dict[str, float | int] = {
+    "strong_splatter_min": 3,
+    "weak_splatter_value": 2,
+    "spotdiameter_small_min": 0,
+    "spotdiameter_small_max": 2,
+    "spotdiameter_large_min": 80,
+    "energy_dev_sigma": REPORT_RULE_ENERGY_SIGMA,
+    "current_max_diff_percentile": 95,
+    "power_std_percentile": 95,
+    "spatter_cluster_id": REPORT_RULE_SPATTER_CLUSTER_ID,
+    "spatter_cluster_min_strength": 2,
+}
+
+
+def normalize_report_rule_config(rule_config: Mapping[str, Any] | None = None) -> dict[str, float | int]:
+    """Validate the editable annotation rules before they enter a run record."""
+    if rule_config is not None and not isinstance(rule_config, Mapping):
+        raise QualityPipelineError("QUALITY_RULE_CONFIG_INVALID")
+    supplied = dict(rule_config or {})
+    if set(supplied) - set(DEFAULT_REPORT_RULE_CONFIG):
+        raise QualityPipelineError("QUALITY_RULE_CONFIG_INVALID")
+
+    normalized = dict(DEFAULT_REPORT_RULE_CONFIG)
+    integer_keys = {
+        "strong_splatter_min",
+        "weak_splatter_value",
+        "spatter_cluster_id",
+        "spatter_cluster_min_strength",
+    }
+    for key, raw_value in supplied.items():
+        if isinstance(raw_value, bool):
+            raise QualityPipelineError("QUALITY_RULE_CONFIG_INVALID")
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError) as error:
+            raise QualityPipelineError("QUALITY_RULE_CONFIG_INVALID") from error
+        if not np.isfinite(value):
+            raise QualityPipelineError("QUALITY_RULE_CONFIG_INVALID")
+        if key in integer_keys:
+            if not value.is_integer():
+                raise QualityPipelineError("QUALITY_RULE_CONFIG_INVALID")
+            normalized[key] = int(value)
+        else:
+            normalized[key] = value
+
+    if (
+        normalized["strong_splatter_min"] < 0
+        or normalized["weak_splatter_value"] < 0
+        or normalized["spatter_cluster_id"] < 0
+        or normalized["spatter_cluster_min_strength"] < 0
+        or normalized["spotdiameter_small_min"] < 0
+        or normalized["spotdiameter_small_min"] >= normalized["spotdiameter_small_max"]
+        or normalized["spotdiameter_large_min"] <= normalized["spotdiameter_small_max"]
+        or normalized["energy_dev_sigma"] <= 0
+        or not 0 < normalized["current_max_diff_percentile"] <= 100
+        or not 0 < normalized["power_std_percentile"] <= 100
+    ):
+        raise QualityPipelineError("QUALITY_RULE_CONFIG_INVALID")
+    return normalized
+
+
+def build_runtime_rule_thresholds(
+    features: pd.DataFrame,
+    rule_config: Mapping[str, Any] | None = None,
+) -> dict[str, float | int]:
+    """Persist both editable rule values and the run-scoped percentile cutoffs."""
+    normalized = normalize_report_rule_config(rule_config)
+    return {
+        **normalized,
+        "current_max_diff_p95": float(np.percentile(
+            features["current_max_diff"],
+            float(normalized["current_max_diff_percentile"]),
+        )),
+        "power_std_p95": float(np.percentile(
+            features["power_std"],
+            float(normalized["power_std_percentile"]),
+        )),
+    }
+
 
 def select_automl_configs(candidate_ids: Sequence[str] | None = None) -> tuple[dict[str, Any], ...]:
     requested = tuple(candidate_ids or ())
@@ -64,6 +148,136 @@ def select_automl_configs(candidate_ids: Sequence[str] | None = None) -> tuple[d
     if len(set(requested)) != len(requested) or any(candidate_id not in catalog for candidate_id in requested):
         raise QualityPipelineError("QUALITY_AUTOML_CONFIG_INVALID")
     return tuple(catalog[candidate_id] for candidate_id in requested) if requested else AUTOML_CONFIGS
+
+
+QUALITY_CROSS_VALIDATION_FOLDS = frozenset({3, 4, 5})
+
+
+def normalize_quality_evaluation_config(
+    cross_validation_enabled: bool = True,
+    cross_validation_folds: int | None = 3,
+) -> dict[str, bool | int | None]:
+    if not isinstance(cross_validation_enabled, bool):
+        raise QualityPipelineError("QUALITY_EVALUATION_CONFIG_INVALID")
+    if not cross_validation_enabled:
+        return {
+            "cross_validation_enabled": False,
+            "cross_validation_folds": None,
+        }
+    if (
+        isinstance(cross_validation_folds, bool)
+        or cross_validation_folds not in QUALITY_CROSS_VALIDATION_FOLDS
+    ):
+        raise QualityPipelineError("QUALITY_EVALUATION_CONFIG_INVALID")
+    return {
+        "cross_validation_enabled": True,
+        "cross_validation_folds": int(cross_validation_folds),
+    }
+
+
+def _quality_required_input_columns(field_mapping: Mapping[str, str] | None = None) -> list[str]:
+    mapping = {name: name for name in (*REPORT_TABLE_FIELDS, *WAVEFORM_FIELDS)}
+    if field_mapping:
+        mapping.update({str(name): str(source) for name, source in field_mapping.items()})
+    return [mapping[name] for name in (*REPORT_TABLE_FIELDS, *WAVEFORM_FIELDS)]
+
+
+def _resolve_quality_input_schema(
+    frame: pd.DataFrame,
+    *,
+    field_mapping: Mapping[str, str] | None,
+    target_column: str | None,
+    input_columns: Sequence[str] | None,
+) -> tuple[list[str], list[dict[str, str]]]:
+    frame_columns = [str(column) for column in frame.columns]
+    if input_columns is None:
+        selected = [column for column in frame_columns if column != target_column]
+    else:
+        if isinstance(input_columns, (str, bytes)):
+            raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
+        selected = [str(column) for column in input_columns]
+        if not selected or len(selected) != len(set(selected)):
+            raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
+        if target_column is not None and target_column in selected:
+            raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
+        if any(column not in frame_columns for column in selected):
+            raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
+        required = _quality_required_input_columns(field_mapping)
+        if any(column not in selected for column in required):
+            raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
+    if not selected:
+        raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
+    return selected, [
+        {"name": column, "dtype": str(frame[column].dtype)}
+        for column in selected
+    ]
+
+
+def _resolve_quality_target_schema(
+    frame: pd.DataFrame,
+    target_column: str | None,
+    evaluation: Mapping[str, Any],
+) -> tuple[np.ndarray | None, dict[str, Any] | None]:
+    if target_column is None:
+        return None, None
+    if not isinstance(target_column, str) or target_column not in frame.columns:
+        raise QualityPipelineError("QUALITY_TARGET_COLUMN_INVALID", field_name=str(target_column or ""))
+    raw_labels = frame[target_column]
+    if raw_labels.isna().any():
+        raise QualityPipelineError("QUALITY_TARGET_COLUMN_INVALID", field_name=target_column)
+    labels = raw_labels.astype(str).str.strip().to_numpy(dtype=str)
+    if not len(labels) or not np.all(labels):
+        raise QualityPipelineError("QUALITY_TARGET_COLUMN_INVALID", field_name=target_column)
+    classes, encoded = np.unique(labels, return_inverse=True)
+    counts = np.bincount(encoded)
+    if len(classes) < 2:
+        raise QualityPipelineError("QUALITY_TARGET_COLUMN_INVALID", field_name=target_column)
+    minimum_count = (
+        int(evaluation["cross_validation_folds"])
+        if evaluation["cross_validation_enabled"]
+        else 2
+    )
+    if int(counts.min()) < minimum_count:
+        raise QualityPipelineError("QUALITY_TARGET_COLUMN_INVALID", field_name=target_column)
+    return labels, {
+        "name": target_column,
+        "dtype": str(raw_labels.dtype),
+        "classes": classes.tolist(),
+        "class_count": int(len(classes)),
+    }
+
+
+def resolve_quality_run_configuration(
+    frame: pd.DataFrame,
+    *,
+    field_mapping: Mapping[str, str] | None = None,
+    target_column: str | None = None,
+    input_columns: Sequence[str] | None = None,
+    cross_validation_enabled: bool = True,
+    cross_validation_folds: int | None = 3,
+) -> tuple[dict[str, Any], np.ndarray | None]:
+    evaluation = normalize_quality_evaluation_config(
+        cross_validation_enabled,
+        cross_validation_folds,
+    )
+    selected_inputs, input_schema = _resolve_quality_input_schema(
+        frame,
+        field_mapping=field_mapping,
+        target_column=target_column,
+        input_columns=input_columns,
+    )
+    labels, target_schema = _resolve_quality_target_schema(
+        frame,
+        target_column,
+        evaluation,
+    )
+    return {
+        "target_column": target_column,
+        "input_columns": selected_inputs,
+        "input_schema": input_schema,
+        "target_schema": target_schema,
+        "evaluation": evaluation,
+    }, labels
 
 
 ANNOTATION_SAMPLE_EXPORT_FIELDS = (
@@ -197,12 +411,93 @@ def build_annotation_export(run: SpotWeldQualityRun, db, format: str = "xlsx") -
     return output.getvalue()
 
 
+def save_labeled_dataset(
+    db,
+    run: SpotWeldQualityRun,
+    *,
+    artifact_service: ArtifactService | None = None,
+    label_source: str = "current",
+):
+    """Persist the reviewed labels beside the original dataset as a new artifact.
+
+    ``current`` keeps a manual label when present and falls back to the persisted
+    automatic label so an operator can confirm unchanged samples without editing
+    every row.  The source columns stay in their original order and ``label`` is
+    always the final column.
+    """
+    if label_source not in {"current", "automatic"}:
+        raise QualityPipelineError("QUALITY_LABEL_SOURCE_INVALID")
+    artifact_service = artifact_service or build_artifact_service(db)
+    source_artifact, frame = resolve_dataset_frame(
+        db, artifact_service, run.project_id, run.dataset_artifact_id,
+    )
+    samples = db.query(SpotWeldQualitySample).filter(
+        SpotWeldQualitySample.run_id == run.id,
+    ).order_by(SpotWeldQualitySample.source_row_index, SpotWeldQualitySample.id).all()
+    labels_by_row = {
+        int(sample.source_row_index): (
+            sample.automatic_label
+            if label_source == "automatic"
+            else (sample.current_label or sample.automatic_label)
+        )
+        for sample in samples
+    }
+    missing_rows = [
+        index for index in range(len(frame))
+        if not str(labels_by_row.get(index) or "").strip()
+    ]
+    if missing_rows:
+        raise QualityPipelineError(
+            "QUALITY_LABELS_INCOMPLETE",
+            message=f"Missing labels for {len(missing_rows)} row(s)",
+            row_index=missing_rows[0],
+        )
+
+    labeled_frame = frame.drop(columns=["label"], errors="ignore").copy()
+    labeled_frame["label"] = [labels_by_row[index] for index in range(len(frame))]
+    source_suffix = Path(source_artifact.name or "dataset.csv").suffix.lower()
+    output_suffix = ".xlsx" if source_suffix in {".xls", ".xlsx"} else ".csv"
+    source_stem = Path(source_artifact.name or "dataset").stem or "dataset"
+    output_name = f"{source_stem}-labeled{output_suffix}"
+    metadata = {
+        "source": "spot_weld_labeling",
+        "source_dataset_artifact_id": str(source_artifact.id),
+        "quality_run_id": str(run.id),
+        "label_source": label_source,
+        "row_count": int(len(labeled_frame)),
+        "column_count": int(len(labeled_frame.columns)),
+        "schema": [
+            {
+                "name": str(column),
+                "dtype": str(labeled_frame[column].dtype),
+                "null_count": int(labeled_frame[column].isna().sum()),
+            }
+            for column in labeled_frame.columns
+        ],
+    }
+    with tempfile.TemporaryDirectory(prefix="spot-weld-labeled-") as directory:
+        output_path = Path(directory) / output_name
+        if output_suffix == ".xlsx":
+            labeled_frame.to_excel(output_path, index=False, engine="openpyxl")
+        else:
+            labeled_frame.to_csv(output_path, index=False, encoding="utf-8-sig")
+        return artifact_service.create_from_file(
+            run.project_id,
+            output_path,
+            output_name,
+            "dataset",
+            metadata=metadata,
+            commit=False,
+        )
+
+
 SNAPSHOT_TRAINING_CONFIGS: tuple[dict[str, Any], ...] = (
     {"name": "AutoML(LGB_v2)", "type": "lgb", "params": dict(AUTOML_CONFIGS[1]["params"]), "feature_scope": "fusion"},
     {"name": "MLP_128-64-32", "type": "mlp", "params": {"hidden_layer_sizes": (128, 64, 32), "alpha": 0.001, "max_iter": 350, "early_stopping": False}, "feature_scope": "fusion"},
     {"name": "MLP_256-128-64", "type": "mlp", "params": {"hidden_layer_sizes": (256, 128, 64), "alpha": 0.0005, "max_iter": 350, "early_stopping": False}, "feature_scope": "fusion"},
     {"name": "MLP_仅表格", "type": "mlp", "params": {"hidden_layer_sizes": (128, 64, 32), "alpha": 0.001, "max_iter": 350, "early_stopping": False}, "feature_scope": "table"},
 )
+SNAPSHOT_TRAINING_CV_FOLDS = 5
 
 
 @dataclass
@@ -299,23 +594,62 @@ def _estimator_matrix(values: np.ndarray) -> pd.DataFrame:
     return pd.DataFrame(matrix, columns=[f"feature_{index}" for index in range(matrix.shape[1])])
 
 
+def _quality_automl_auc(y_true: np.ndarray, probabilities: np.ndarray, class_count: int) -> float:
+    if class_count == 2:
+        return float(roc_auc_score(y_true, probabilities[:, 1]))
+    return float(roc_auc_score(
+        y_true,
+        probabilities,
+        labels=np.arange(class_count),
+        multi_class="ovr",
+        average="macro",
+    ))
+
+
 def run_automl(
     features: np.ndarray,
     labels: Iterable[Any],
     *,
     configs: tuple[Mapping[str, Any], ...] = AUTOML_CONFIGS,
+    evaluation: Mapping[str, Any] | None = None,
 ) -> tuple[list[CandidateResult], CandidateResult]:
     X = np.asarray(features, dtype=np.float64)
     y_raw = np.asarray(list(labels))
     if X.ndim != 2 or len(X) != len(y_raw):
         raise QualityPipelineError("QUALITY_AUTOML_INPUT_INVALID")
     unique, y = np.unique(y_raw, return_inverse=True)
-    if len(unique) != 2:
-        raise QualityPipelineError("QUALITY_AUTOML_BINARY_LABELS_REQUIRED")
-    counts = np.bincount(y)
-    if len(counts) < 2 or int(counts.min()) < 3:
+    if len(unique) < 2:
         raise QualityPipelineError("QUALITY_AUTOML_INSUFFICIENT_LABELS")
-    splitter = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+    evaluation_config = normalize_quality_evaluation_config(
+        (evaluation or {}).get("cross_validation_enabled", True),
+        (evaluation or {}).get("cross_validation_folds", 3),
+    )
+    counts = np.bincount(y)
+    minimum_count = (
+        int(evaluation_config["cross_validation_folds"])
+        if evaluation_config["cross_validation_enabled"]
+        else 2
+    )
+    if len(counts) < 2 or int(counts.min()) < minimum_count:
+        raise QualityPipelineError("QUALITY_AUTOML_INSUFFICIENT_LABELS")
+    if evaluation_config["cross_validation_enabled"]:
+        splitter = StratifiedKFold(
+            n_splits=int(evaluation_config["cross_validation_folds"]),
+            shuffle=True,
+            random_state=42,
+        )
+        splits = tuple(splitter.split(X, y))
+    else:
+        try:
+            train_index, test_index = train_test_split(
+                np.arange(len(y)),
+                test_size=0.2,
+                random_state=42,
+                stratify=y,
+            )
+        except ValueError as error:
+            raise QualityPipelineError("QUALITY_AUTOML_INSUFFICIENT_LABELS") from error
+        splits = ((train_index, test_index),)
     results: list[CandidateResult] = []
     for config_index, config in enumerate(configs):
         result = CandidateResult(
@@ -326,16 +660,21 @@ def run_automl(
         f1s: list[float] = []
         importances: list[np.ndarray] = []
         try:
-            for train_index, test_index in splitter.split(X, y):
+            for train_index, test_index in splits:
                 scaler = StandardScaler()
                 train = scaler.fit_transform(X[train_index])
                 test = scaler.transform(X[test_index])
                 model = _build_estimator(config)
                 model.fit(_estimator_matrix(train), y[train_index])
-                probabilities = model.predict_proba(_estimator_matrix(test))[:, 1]
-                predictions = (probabilities >= 0.5).astype(int)
-                aucs.append(float(roc_auc_score(y[test_index], probabilities)))
-                f1s.append(float(f1_score(y[test_index], predictions, zero_division=0)))
+                probabilities = model.predict_proba(_estimator_matrix(test))
+                predictions = model.predict(_estimator_matrix(test))
+                aucs.append(_quality_automl_auc(y[test_index], probabilities, len(unique)))
+                f1s.append(float(f1_score(
+                    y[test_index],
+                    predictions,
+                    average="macro",
+                    zero_division=0,
+                )))
                 importances.append(_feature_importance(model, X.shape[1]))
             result.auc = float(np.mean(aucs))
             result.f1 = float(np.mean(f1s))
@@ -453,6 +792,10 @@ def apply_report_v1_rules(
     cluster_id: int | None = None,
     anomaly_cluster: int | None = None,
 ) -> RuleResult:
+    # Kept as a compatibility input for existing callers. Report v1 labels use
+    # the fixed cluster=1 rule supplied by the process specification.
+    _ = anomaly_cluster
+
     def number(name: str, default: float = 0.0) -> float:
         value = values.get(name, default)
         try:
@@ -463,22 +806,30 @@ def apply_report_v1_rules(
     hits: list[RuleHit] = []
     splatter = number("wld_spatter_strength")
     diameter = number("spotdiameter")
-    if splatter >= 3:
-        hits.append(RuleHit("strong_splatter", "strong_splatter", "wld_spatter_strength >= 3"))
-    elif splatter == 2:
-        hits.append(RuleHit("weak_splatter", "weak_splatter", "wld_spatter_strength = 2"))
-    if 0 < diameter < 2:
-        hits.append(RuleHit("spot_too_small", "spot_too_small", "0 < spotdiameter < 2"))
-    if diameter > 80:
-        hits.append(RuleHit("spot_too_large", "spot_too_large", "spotdiameter > 80"))
-    if abs(number("energy_dev")) > float(thresholds.get("energy_dev_abs", 2.5)):
-        hits.append(RuleHit("energy_anomaly", "energy_anomaly", "abs(energy_dev) > threshold"))
+    strong_min = float(thresholds.get("strong_splatter_min", DEFAULT_REPORT_RULE_CONFIG["strong_splatter_min"]))
+    weak_value = float(thresholds.get("weak_splatter_value", DEFAULT_REPORT_RULE_CONFIG["weak_splatter_value"]))
+    small_min = float(thresholds.get("spotdiameter_small_min", DEFAULT_REPORT_RULE_CONFIG["spotdiameter_small_min"]))
+    small_max = float(thresholds.get("spotdiameter_small_max", DEFAULT_REPORT_RULE_CONFIG["spotdiameter_small_max"]))
+    large_min = float(thresholds.get("spotdiameter_large_min", DEFAULT_REPORT_RULE_CONFIG["spotdiameter_large_min"]))
+    cluster_rule_id = int(thresholds.get("spatter_cluster_id", DEFAULT_REPORT_RULE_CONFIG["spatter_cluster_id"]))
+    cluster_min_strength = float(thresholds.get("spatter_cluster_min_strength", DEFAULT_REPORT_RULE_CONFIG["spatter_cluster_min_strength"]))
+    if splatter >= strong_min:
+        hits.append(RuleHit("strong_splatter", "strong_splatter", f"wld_spatter_strength >= {strong_min:g}"))
+    elif splatter == weak_value:
+        hits.append(RuleHit("weak_splatter", "weak_splatter", f"wld_spatter_strength = {weak_value:g}"))
+    if small_min < diameter < small_max:
+        hits.append(RuleHit("spot_too_small", "spot_too_small", f"{small_min:g} < spotdiameter < {small_max:g}"))
+    if diameter > large_min:
+        hits.append(RuleHit("spot_too_large", "spot_too_large", f"spotdiameter > {large_min:g}"))
+    energy_sigma = float(thresholds.get("energy_dev_sigma", thresholds.get("energy_dev_abs", REPORT_RULE_ENERGY_SIGMA)))
+    if abs(number("energy_dev")) > energy_sigma:
+        hits.append(RuleHit("energy_anomaly", "energy_anomaly", f"|energy_dev| > {energy_sigma:g}σ"))
     if number("current_max_diff") > float(thresholds.get("current_max_diff_p95", np.inf)):
         hits.append(RuleHit("current_jump", "current_jump", "current_max_diff > P95"))
     if number("power_std") > float(thresholds.get("power_std_p95", np.inf)):
         hits.append(RuleHit("power_fluctuation", "power_fluctuation", "power_std > P95"))
-    if anomaly_cluster is not None and cluster_id == anomaly_cluster and splatter >= 2:
-        hits.append(RuleHit("anomaly_cluster", "anomaly_cluster", "cluster=anomaly and splatter >= 2"))
+    if cluster_id == cluster_rule_id and splatter >= cluster_min_strength:
+        hits.append(RuleHit("anomaly_cluster", "anomaly_cluster", f"cluster={cluster_rule_id} 且 飞溅等级 >= {cluster_min_strength:g}"))
     if not hits:
         hits.append(RuleHit("normal", "normal", "no report_v1 rule matched"))
     return RuleResult(primary_label=hits[0].label, hits=tuple(hits))
@@ -682,12 +1033,29 @@ def create_quality_run_record(
     dataset_artifact_id,
     field_mapping: Mapping[str, str] | None = None,
     candidate_ids: Sequence[str] | None = None,
+    target_column: str | None = None,
+    input_columns: Sequence[str] | None = None,
+    cross_validation_enabled: bool = True,
+    cross_validation_folds: int | None = 3,
+    label_mode: str = "automatic",
+    rule_config: Mapping[str, Any] | None = None,
     artifact_service: ArtifactService | None = None,
 ) -> SpotWeldQualityRun:
+    if not isinstance(label_mode, str) or label_mode not in QUALITY_LABEL_MODES:
+        raise QualityPipelineError("QUALITY_LABEL_MODE_INVALID")
     selected_configs = select_automl_configs(candidate_ids)
+    normalized_rule_config = normalize_report_rule_config(rule_config)
     artifact_service = artifact_service or build_artifact_service(db)
     artifact, frame = resolve_dataset_frame(db, artifact_service, project_id, dataset_artifact_id)
     features, schema, statistics = build_feature_frame(frame, field_mapping=field_mapping)
+    run_configuration, _ = resolve_quality_run_configuration(
+        frame,
+        field_mapping=field_mapping,
+        target_column=target_column,
+        input_columns=input_columns,
+        cross_validation_enabled=cross_validation_enabled,
+        cross_validation_folds=cross_validation_folds,
+    )
     run = SpotWeldQualityRun(
         project_id=project_id,
         dataset_artifact_id=artifact.id,
@@ -700,9 +1068,12 @@ def create_quality_run_record(
             "sha256": (artifact.metadata_ or {}).get("sha256"),
             "row_count": len(frame),
             "selected_candidate_ids": [str(config["name"]) for config in selected_configs],
+            "label_mode": label_mode,
+            "rule_config": normalized_rule_config,
+            **run_configuration,
         },
-        statistics={**statistics, "valid_rows": len(features)},
-        rule_set_version="report_v1",
+        statistics={**statistics, "valid_rows": len(features), **run_configuration},
+        rule_set_version=REPORT_RULESET_VERSION,
         automl_results=[],
         clustering_results={},
         output_artifacts={},
@@ -747,6 +1118,16 @@ def claim_quality_run(
     return db.query(SpotWeldQualityRun).filter(SpotWeldQualityRun.id == run_id).first()
 
 
+def _annotation_progress(annotated_count: int, total_count: int) -> dict[str, int | float]:
+    total = max(int(total_count), 0)
+    annotated = min(max(int(annotated_count), 0), total) if total else 0
+    return {
+        "annotated_count": annotated,
+        "total_count": total,
+        "percent": round((annotated / total) * 100, 2) if total else 0.0,
+    }
+
+
 def _fit_candidate_model(features: np.ndarray, labels: Iterable[Any], candidate: CandidateResult):
     config = next((item for item in AUTOML_CONFIGS if item["name"] == candidate.name), None)
     if config is None:
@@ -759,36 +1140,216 @@ def _fit_candidate_model(features: np.ndarray, labels: Iterable[Any], candidate:
     return scaler, model
 
 
+def _write_quality_run_report(
+    path: Path,
+    *,
+    run: SpotWeldQualityRun,
+    features: pd.DataFrame,
+    samples: list[SpotWeldQualitySample],
+    candidates: list[CandidateResult],
+    best_candidate: CandidateResult | None,
+    clustering: ClusterResult | None,
+) -> None:
+    """Write the report available immediately after a quality run completes."""
+    run_input = run.input_fingerprint or {}
+    run_statistics = run.statistics or {}
+    target_schema = run_statistics.get("target_schema") or run_input.get("target_schema") or {}
+    if not isinstance(target_schema, Mapping):
+        target_schema = {}
+    input_columns = run_statistics.get("input_columns") or run_input.get("input_columns") or [
+        item.get("name")
+        for item in run_statistics.get("input_schema") or []
+        if isinstance(item, Mapping) and item.get("name")
+    ]
+    evaluation = run_statistics.get("evaluation") or run_input.get("evaluation") or {
+        "cross_validation_enabled": True,
+        "cross_validation_folds": 3,
+    }
+    evaluation_summary = (
+        f"cross_validation: {evaluation.get('cross_validation_folds')} folds"
+        if evaluation.get("cross_validation_enabled")
+        else "deterministic_holdout"
+    )
+    summary = pd.DataFrame([
+        {"指标": "质量运行", "值": str(run.id)},
+        {"指标": "特征版本", "值": "report_v1"},
+        {"指标": "规则集版本", "值": run.rule_set_version},
+        {"指标": "标注模式", "值": run_statistics.get("label_mode") or run_input.get("label_mode") or "automatic"},
+        {"指标": "目标列", "值": target_schema.get("name") or "-"},
+        {"指标": "输入列", "值": ", ".join(str(column) for column in input_columns) or "-"},
+        {"指标": "评估配置", "值": evaluation_summary},
+        {"指标": "样本数", "值": len(samples)},
+        {"指标": "特征数", "值": len(features.columns)},
+        {"指标": "最优模型", "值": best_candidate.name if best_candidate is not None else "-"},
+        {"指标": "最优AUC", "值": best_candidate.auc if best_candidate is not None else None},
+        {"指标": "最优F1", "值": best_candidate.f1 if best_candidate is not None else None},
+    ])
+    automl = pd.DataFrame([
+        {
+            "候选模型": item.name,
+            "模型类型": item.model_type,
+            "AUC": item.auc,
+            "AUC标准差": item.auc_std,
+            "F1": item.f1,
+            "F1标准差": item.f1_std,
+            "训练耗时(秒)": item.training_time_seconds,
+            "错误码": item.error_code,
+            "参数": _export_json(item.params),
+        }
+        for item in candidates
+    ], columns=[
+        "候选模型", "模型类型", "AUC", "AUC标准差", "F1", "F1标准差", "训练耗时(秒)", "错误码", "参数",
+    ])
+    labels_frame = pd.DataFrame([
+        {
+            "sample_id": str(sample.id),
+            "display_id": sample.display_id,
+            "automatic_label": sample.automatic_label,
+            "current_label": sample.current_label,
+            "review_status": sample.review_status,
+            "rule_hits": _export_json(sample.rule_hits or []),
+        }
+        for sample in samples
+    ], columns=[
+        "sample_id", "display_id", "automatic_label", "current_label", "review_status", "rule_hits",
+    ])
+    grouped_samples: dict[int | None, list[SpotWeldQualitySample]] = {}
+    for sample in samples:
+        grouped_samples.setdefault(sample.cluster_id, []).append(sample)
+    cluster_frame = pd.DataFrame([
+        {
+            "cluster_id": cluster_id,
+            "sample_count": len(group),
+            "avg_defect_probability": float(np.mean([
+                sample.defect_probability or 0.0 for sample in group
+            ])),
+            "critical_count": sum(sample.warning_level == "critical" for sample in group),
+            "best_k": clustering.best_k if clustering is not None else None,
+            "silhouette_score": (
+                clustering.silhouette_scores.get(clustering.best_k)
+                if clustering is not None else None
+            ),
+            "anomaly_cluster": clustering.anomaly_cluster if clustering is not None else None,
+        }
+        for cluster_id, group in sorted(
+            grouped_samples.items(),
+            key=lambda item: (-1 if item[0] is None else int(item[0])),
+        )
+    ], columns=[
+        "cluster_id", "sample_count", "avg_defect_probability", "critical_count", "best_k", "silhouette_score", "anomaly_cluster",
+    ])
+    importance_values = (
+        best_candidate.feature_importance
+        if best_candidate is not None and len(best_candidate.feature_importance) == len(features.columns)
+        else []
+    )
+    importance_frame = pd.DataFrame([
+        {
+            "特征": feature_name,
+            "重要性": float(importance),
+            "类型": "表格" if feature_name in TABLE_FEATURES else "波形",
+        }
+        for feature_name, importance in sorted(
+            zip(features.columns, importance_values), key=lambda item: item[1], reverse=True,
+        )
+    ], columns=["特征", "重要性", "类型"])
+    coordinates = (
+        clustering.pca_coordinates
+        if clustering is not None and len(clustering.pca_coordinates) == len(samples)
+        else None
+    )
+    inference_frame = pd.DataFrame([
+        {
+            "display_id": sample.display_id,
+            "automatic_label": sample.automatic_label,
+            "current_label": sample.current_label,
+            "defect_probability": sample.defect_probability,
+            "warning_level": sample.warning_level,
+            "cluster_id": sample.cluster_id,
+            "pca_x": float(coordinates[index, 0]) if coordinates is not None else None,
+            "pca_y": float(coordinates[index, 1]) if coordinates is not None else None,
+        }
+        for index, sample in enumerate(samples)
+    ], columns=[
+        "display_id", "automatic_label", "current_label", "defect_probability", "warning_level", "cluster_id", "pca_x", "pca_y",
+    ])
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        summary.to_excel(writer, sheet_name="总览", index=False)
+        automl.to_excel(writer, sheet_name="AutoML选型", index=False)
+        labels_frame.to_excel(writer, sheet_name="缺陷标签", index=False)
+        cluster_frame.to_excel(writer, sheet_name="聚类画像", index=False)
+        importance_frame.to_excel(writer, sheet_name="特征重要性", index=False)
+        inference_frame.to_excel(writer, sheet_name="推理结果", index=False)
+
+
 def _generated_artifacts(
     db,
     artifact_service: ArtifactService,
     run: SpotWeldQualityRun,
     features: pd.DataFrame,
     samples: list[SpotWeldQualitySample],
+    candidates: list[CandidateResult],
+    best_candidate: CandidateResult | None,
+    clustering: ClusterResult | None,
 ) -> dict[str, str]:
     with tempfile.TemporaryDirectory(prefix="spot-weld-quality-") as directory:
         root = Path(directory)
         feature_path = root / "spot_weld_quality_features.csv"
         result_path = root / "spot_weld_quality_results.json"
+        report_path = root / "spot_weld_quality_report.xlsx"
         features.to_csv(feature_path, index=False)
-        result_path.write_text(json.dumps([
-            {
-                "sample_id": str(sample.id), "display_id": sample.display_id,
-                "automatic_label": sample.automatic_label,
-                "defect_probability": sample.defect_probability,
-                "warning_level": sample.warning_level,
-                "cluster_id": sample.cluster_id,
-            }
-            for sample in samples
-        ], ensure_ascii=False), encoding="utf-8")
-        metadata = {"source": "spot_weld_quality", "quality_run_id": str(run.id), "feature_version": "report_v1"}
+        run_statistics = run.statistics or {}
+        candidate_results = [candidate.to_dict() for candidate in candidates]
+        result_path.write_text(json.dumps({
+            "run_id": str(run.id),
+            "target_schema": run_statistics.get("target_schema"),
+            "input_schema": run_statistics.get("input_schema") or [],
+            "evaluation": run_statistics.get("evaluation") or {},
+            "candidate_results": candidate_results,
+            "samples": [
+                {
+                    "sample_id": str(sample.id), "display_id": sample.display_id,
+                    "automatic_label": sample.automatic_label,
+                    "defect_probability": sample.defect_probability,
+                    "warning_level": sample.warning_level,
+                    "cluster_id": sample.cluster_id,
+                }
+                for sample in samples
+            ],
+        }, ensure_ascii=False), encoding="utf-8")
+        _write_quality_run_report(
+            report_path,
+            run=run,
+            features=features,
+            samples=samples,
+            candidates=candidates,
+            best_candidate=best_candidate,
+            clustering=clustering,
+        )
+        metadata = {
+            "source": "spot_weld_quality",
+            "quality_run_id": str(run.id),
+            "feature_version": "report_v1",
+            "rule_set_version": run.rule_set_version,
+            "target_column": run_statistics.get("target_column"),
+            "input_columns": run_statistics.get("input_columns") or [],
+            "evaluation": run_statistics.get("evaluation") or {},
+            "candidate_results": candidate_results,
+        }
         features_artifact = artifact_service.create_from_file(
             run.project_id, feature_path, f"spot-weld-{run.id}-features.csv", "quality_features", metadata, commit=False,
         )
         results_artifact = artifact_service.create_from_file(
             run.project_id, result_path, f"spot-weld-{run.id}-results.json", "quality_results", metadata, commit=False,
         )
-    return {"features": str(features_artifact.id), "results": str(results_artifact.id)}
+        report_artifact = artifact_service.create_from_file(
+            run.project_id, report_path, f"spot-weld-{run.id}-report.xlsx", "quality_report", metadata, commit=False,
+        )
+    return {
+        "features": str(features_artifact.id),
+        "results": str(results_artifact.id),
+        "report": str(report_artifact.id),
+    }
 
 
 def execute_quality_run(
@@ -816,42 +1377,124 @@ def execute_quality_run(
         canonical = canonicalize_report_frame(frame, run.field_mapping or None)
         waveforms = decode_report_waveforms(frame, run.field_mapping or None)
         records = features.to_dict(orient="records")
-        thresholds = {
-            "energy_dev_abs": 2.5,
-            "current_max_diff_p95": float(np.percentile(features["current_max_diff"], 95)),
-            "power_std_p95": float(np.percentile(features["power_std"], 95)),
-        }
-        preliminary = [apply_report_v1_rules(record, thresholds=thresholds) for record in records]
-        binary_labels = np.asarray([result.primary_label != "normal" for result in preliminary], dtype=int)
+        run_input = run.input_fingerprint or {}
+        label_mode = run_input.get("label_mode", "automatic")
+        if not isinstance(label_mode, str) or label_mode not in QUALITY_LABEL_MODES:
+            raise QualityPipelineError("QUALITY_LABEL_MODE_INVALID")
+        normalized_rule_config = normalize_report_rule_config(run_input.get("rule_config"))
+        thresholds = build_runtime_rule_thresholds(features, normalized_rule_config)
         selected_configs = select_automl_configs(
-            (run.input_fingerprint or {}).get("selected_candidate_ids"),
+            run_input.get("selected_candidate_ids"),
         )
-        candidate_results, best_candidate = run_automl(
-            features.to_numpy(dtype=np.float64), binary_labels, configs=selected_configs,
+        run_configuration, supervised_labels = resolve_quality_run_configuration(
+            frame,
+            field_mapping=run.field_mapping or None,
+            target_column=run_input.get("target_column"),
+            input_columns=run_input.get("input_columns"),
+            cross_validation_enabled=(run_input.get("evaluation") or {}).get(
+                "cross_validation_enabled",
+                True,
+            ),
+            cross_validation_folds=(run_input.get("evaluation") or {}).get(
+                "cross_validation_folds",
+                3,
+            ),
         )
-        clustering = run_clustering(
-            features.to_numpy(dtype=np.float64),
-            feature_names=schema,
-            feature_importance=np.asarray(best_candidate.feature_importance, dtype=float),
-        )
-        final_rules = [
-            apply_report_v1_rules(
-                record, thresholds=thresholds, cluster_id=clustering.cluster_ids[index], anomaly_cluster=clustering.anomaly_cluster,
+        evaluation = run_configuration["evaluation"]
+        best_candidate: CandidateResult | None = None
+        if supervised_labels is not None:
+            candidate_results, best_candidate = run_automl(
+                features.to_numpy(dtype=np.float64),
+                supervised_labels,
+                configs=selected_configs,
+                evaluation=evaluation,
             )
-            for index, record in enumerate(records)
-        ]
-        scaler, model = _fit_candidate_model(features.to_numpy(dtype=np.float64), binary_labels, best_candidate)
-        probabilities = model.predict_proba(_estimator_matrix(
-            scaler.transform(features.to_numpy(dtype=np.float64)),
-        ))[:, 1]
+            clustering = run_clustering(
+                features.to_numpy(dtype=np.float64),
+                feature_names=schema,
+                feature_importance=np.asarray(best_candidate.feature_importance, dtype=float),
+            )
+            final_rules = (
+                [
+                    apply_report_v1_rules(
+                        record,
+                        thresholds=thresholds,
+                        cluster_id=clustering.cluster_ids[index],
+                    )
+                    for index, record in enumerate(records)
+                ]
+                if label_mode == "automatic"
+                else [None] * len(records)
+            )
+            scaler, model = _fit_candidate_model(
+                features.to_numpy(dtype=np.float64),
+                supervised_labels,
+                best_candidate,
+            )
+            probabilities_by_class = model.predict_proba(_estimator_matrix(
+                scaler.transform(features.to_numpy(dtype=np.float64)),
+            ))
+            supervised_classes = np.unique(supervised_labels)
+            normal_indexes = np.where(supervised_classes == "normal")[0]
+            probabilities = (
+                1.0 - probabilities_by_class[:, int(normal_indexes[0])]
+                if len(normal_indexes)
+                else np.max(probabilities_by_class, axis=1)
+            )
+            cluster_ids: list[int | None] = list(clustering.cluster_ids)
+        elif label_mode == "automatic":
+            preliminary = [apply_report_v1_rules(record, thresholds=thresholds) for record in records]
+            binary_labels = np.asarray([result.primary_label != "normal" for result in preliminary], dtype=int)
+            candidate_results, best_candidate = run_automl(
+                features.to_numpy(dtype=np.float64),
+                binary_labels,
+                configs=selected_configs,
+                evaluation=evaluation,
+            )
+            clustering = run_clustering(
+                features.to_numpy(dtype=np.float64),
+                feature_names=schema,
+                feature_importance=np.asarray(best_candidate.feature_importance, dtype=float),
+            )
+            final_rules = [
+                apply_report_v1_rules(
+                    record, thresholds=thresholds, cluster_id=clustering.cluster_ids[index],
+                )
+                for index, record in enumerate(records)
+            ]
+            scaler, model = _fit_candidate_model(features.to_numpy(dtype=np.float64), binary_labels, best_candidate)
+            probabilities = model.predict_proba(_estimator_matrix(
+                scaler.transform(features.to_numpy(dtype=np.float64)),
+            ))[:, 1]
+            cluster_ids: list[int | None] = list(clustering.cluster_ids)
+        else:
+            candidate_results = []
+            clustering = None
+            final_rules = [None] * len(records)
+            probabilities = [None] * len(records)
+            cluster_ids = [None] * len(records)
+        total_count = len(records)
+        run.rule_set_version = REPORT_RULESET_VERSION
         db.query(SpotWeldQualitySample).filter(SpotWeldQualitySample.run_id == run.id).delete(synchronize_session=False)
         db.query(SpotWeldQualityRuleSet).filter(SpotWeldQualityRuleSet.run_id == run.id).delete(synchronize_session=False)
         db.flush()
         db.add(SpotWeldQualityRuleSet(
-            project_id=run.project_id, run_id=run.id, version="report_v1", thresholds=thresholds,
+            project_id=run.project_id, run_id=run.id, version=REPORT_RULESET_VERSION, thresholds=thresholds,
         ))
+        run.statistics = {
+            **statistics,
+            "valid_rows": len(features),
+            "label_mode": label_mode,
+            **run_configuration,
+            "annotation_progress": _annotation_progress(0, total_count),
+        }
+        db.commit()
         samples: list[SpotWeldQualitySample] = []
-        for index, (record, waveform, rule_result, probability) in enumerate(zip(records, waveforms, final_rules, probabilities)):
+        batch: list[SpotWeldQualitySample] = []
+        batch_size = 100
+        for index, (record, waveform) in enumerate(zip(records, waveforms)):
+            rule_result = final_rules[index]
+            probability = probabilities[index]
             table_values = {
                 key: float(canonical.iloc[index][key]) for key in REPORT_TABLE_FIELDS
             }
@@ -862,22 +1505,52 @@ def execute_quality_run(
                 table_values=table_values,
                 feature_values={key: float(value) for key, value in record.items()},
                 waveforms=waveform,
-                automatic_label=rule_result.primary_label,
-                rule_hits=[item.to_dict() for item in rule_result.hits],
-                cluster_id=clustering.cluster_ids[index],
-                defect_probability=float(probability),
-                warning_level=warning_level(float(probability)),
+                automatic_label=rule_result.primary_label if rule_result is not None else None,
+                rule_hits=[item.to_dict() for item in rule_result.hits] if rule_result is not None else [],
+                cluster_id=cluster_ids[index],
+                defect_probability=float(probability) if probability is not None else None,
+                warning_level=warning_level(float(probability)) if probability is not None else "none",
                 review_status="pending_review",
             )
             db.add(sample)
             samples.append(sample)
-        db.flush()
-        output_artifacts = _generated_artifacts(db, artifact_service, run, features, samples)
+            batch.append(sample)
+            if len(batch) >= batch_size or index == total_count - 1:
+                db.flush()
+                annotated_count = sum(
+                    1 for item in samples
+                    if (item.automatic_label if label_mode == "automatic" else item.current_label)
+                )
+                run.statistics = {
+                    **(run.statistics or {}),
+                    "annotation_progress": _annotation_progress(annotated_count, total_count),
+                }
+                db.commit()
+                batch.clear()
+        samples = db.query(SpotWeldQualitySample).filter(
+            SpotWeldQualitySample.run_id == run.id,
+        ).order_by(SpotWeldQualitySample.source_row_index).all()
+        output_artifacts = _generated_artifacts(
+            db,
+            artifact_service,
+            run,
+            features,
+            samples,
+            candidate_results,
+            best_candidate,
+            clustering,
+        )
         run.status = "completed"
         run.feature_schema = schema
-        run.statistics = {**statistics, "valid_rows": len(features), "warning_counts": dict(Counter(sample.warning_level for sample in samples))}
+        run.statistics = {
+            **statistics,
+            "valid_rows": len(features),
+            "label_mode": label_mode,
+            **run_configuration,
+            "warning_counts": dict(Counter(sample.warning_level for sample in samples)),
+        }
         run.automl_results = [item.to_dict() for item in candidate_results]
-        run.clustering_results = clustering.to_dict()
+        run.clustering_results = clustering.to_dict() if clustering is not None else {}
         run.output_artifacts = output_artifacts
         run.error_code = None
         run.error_details = {}
@@ -984,7 +1657,7 @@ def _snapshot_auc(y_true: np.ndarray, probabilities: np.ndarray, class_count: in
         probabilities,
         labels=np.arange(class_count),
         multi_class="ovr",
-        average="weighted",
+        average="macro",
     ))
 
 
@@ -999,7 +1672,11 @@ def run_snapshot_training(
     counts = np.bincount(encoded)
     if len(classes) < 2 or int(counts.min()) < 5:
         raise QualityPipelineError("QUALITY_LABELS_INSUFFICIENT_FOR_5_FOLD")
-    splitter = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    splitter = StratifiedKFold(
+        n_splits=SNAPSHOT_TRAINING_CV_FOLDS,
+        shuffle=True,
+        random_state=42,
+    )
     results: list[CandidateResult] = []
     for config_index, config in enumerate(configs):
         result = CandidateResult(
@@ -1023,7 +1700,7 @@ def run_snapshot_training(
                 probabilities = model.predict_proba(_estimator_matrix(test))
                 predictions = model.predict(_estimator_matrix(test))
                 aucs.append(_snapshot_auc(encoded[test_index], probabilities, len(classes)))
-                f1s.append(float(f1_score(encoded[test_index], predictions, average="weighted", zero_division=0)))
+                f1s.append(float(f1_score(encoded[test_index], predictions, average="macro", zero_division=0)))
                 expanded = np.zeros(len(feature_names), dtype=float)
                 expanded[indexes] = _feature_importance(model, len(indexes))
                 importances.append(expanded)
@@ -1077,11 +1754,33 @@ def _write_snapshot_report(
     classes: np.ndarray,
 ) -> None:
     label_source = _snapshot_label_source(snapshot)
+    run_input = run.input_fingerprint or {}
+    run_statistics = run.statistics or {}
+    target_schema = run_statistics.get("target_schema") or run_input.get("target_schema") or {}
+    input_columns = run_input.get("input_columns") or [
+        item.get("name")
+        for item in run_statistics.get("input_schema") or []
+        if isinstance(item, Mapping) and item.get("name")
+    ]
+    evaluation = run_statistics.get("evaluation") or run_input.get("evaluation") or {
+        "cross_validation_enabled": True,
+        "cross_validation_folds": 3,
+    }
+    run_evaluation_summary = (
+        f"cross_validation: {evaluation.get('cross_validation_folds')} folds"
+        if evaluation.get("cross_validation_enabled")
+        else "deterministic_holdout"
+    )
+    snapshot_evaluation_summary = f"cross_validation: {SNAPSHOT_TRAINING_CV_FOLDS} folds"
     summary = pd.DataFrame([
         {"指标": "质量运行", "值": str(run.id)},
         {"指标": "标签快照", "值": str(snapshot.id)},
         {"指标": "标签来源", "值": label_source},
         {"指标": "特征版本", "值": "report_v1"},
+        {"指标": "源数据目标列", "值": target_schema.get("name") or "-"},
+        {"指标": "源数据输入列", "值": ", ".join(str(column) for column in input_columns) or "-"},
+        {"指标": "质量运行评估配置", "值": run_evaluation_summary},
+        {"指标": "快照训练评估配置", "值": snapshot_evaluation_summary},
         {"指标": "训练标签样本", "值": len(snapshot_samples)},
         {"指标": "全量样本", "值": len(all_samples)},
         {"指标": "最优模型", "值": next((item.name for item in candidates if item.error_code is None and item.auc == max((candidate.auc or -1) for candidate in candidates)), "-")},

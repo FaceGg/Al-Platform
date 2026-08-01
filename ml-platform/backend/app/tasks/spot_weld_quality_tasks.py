@@ -39,16 +39,34 @@ class LocalQualityDispatcher:
 
     def __init__(self, execute: Callable[..., dict] = _execute_task):
         self.execute = execute
+        self._pending: dict[str, str] = {}
         self._threads: dict[str, threading.Thread] = {}
 
     def enqueue(self, run_id: str) -> str:
         task_id = f"local:{uuid.uuid4()}"
+        self._pending[task_id] = str(run_id)
+        return task_id
+
+    def start(self, task_id: str) -> None:
+        run_id = self._pending.pop(task_id)
         thread = threading.Thread(
-            target=self.execute,
-            args=(str(run_id),),
-            kwargs={"worker_id": "local", "task_id": task_id},
+            target=self._execute,
+            args=(run_id, task_id),
             daemon=True,
         )
         self._threads[task_id] = thread
-        thread.start()
-        return task_id
+        try:
+            thread.start()
+        except Exception:
+            self._threads.pop(task_id, None)
+            raise
+
+    def _execute(self, run_id: str, task_id: str) -> None:
+        try:
+            self.execute(
+                run_id,
+                worker_id="local",
+                task_id=task_id,
+            )
+        finally:
+            self._threads.pop(task_id, None)

@@ -1552,8 +1552,16 @@ html body {
   min-height: 24px;
 }
 
+.spot-weld-annotation__rule {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  max-width: 100%;
+}
+
 .spot-weld-annotation__rules small {
   color: var(--text-tertiary);
+  white-space: normal;
 }
 
 .spot-weld-annotation__details {
@@ -1610,6 +1618,296 @@ html body {
   grid-template-columns: minmax(220px, 0.8fr) minmax(420px, 1.6fr) minmax(260px, 1fr);
   gap: 16px;
   align-items: stretch;
+}
+
+.data-annotation__catalog {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 980px;
+}
+
+.data-annotation__type {
+  display: grid;
+  gap: 7px;
+  min-height: 132px;
+  padding: 20px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.data-annotation__type:hover,
+.data-annotation__type.is-available:focus-visible {
+  border-color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 7%, var(--bg-elevated));
+  outline: none;
+}
+
+.data-annotation__type strong {
+  font-size: 16px;
+}
+
+.data-annotation__type span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.data-annotation__type .ant-tag {
+  justify-self: start;
+  margin: 0;
+}
+
+.data-annotation__type.is-disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.data-annotation__tasks {
+  display: grid;
+  gap: 8px;
+  max-width: 1080px;
+}
+
+.data-annotation__task {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 0.55fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 68px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.data-annotation__task-main,
+.data-annotation__task-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.data-annotation__task-main strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-annotation__task-main > span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.data-annotation__task-progress {
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.data-annotation__task-progress strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.data-annotation__task-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.data-annotation__setup {
+  display: grid;
+  gap: 18px;
+  max-width: 1080px;
+  padding: 20px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.data-annotation__setup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.data-annotation__setup-field,
+.data-annotation__existing-run {
+  display: grid;
+  gap: 6px;
+}
+
+.data-annotation__setup-field label,
+.data-annotation__existing-run label,
+.data-annotation__rule-table label > span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.data-annotation__setup select,
+.data-annotation__setup input[type="number"] {
+  min-width: 0;
+  min-height: 34px;
+  box-sizing: border-box;
+  padding: 5px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.data-annotation__source-actions,
+.data-annotation__setup-footer,
+.data-annotation__rules-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.data-annotation__mode-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.data-annotation__mode-picker label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.data-annotation__mode-picker label.is-selected {
+  border-color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 7%, var(--bg-surface));
+}
+
+.data-annotation__mode-picker input {
+  grid-row: span 2;
+  margin-top: 2px;
+}
+
+.data-annotation__mode-picker small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.data-annotation__rules {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.data-annotation__rules h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.data-annotation__rules p {
+  margin: 4px 0 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.data-annotation__rule-table {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.data-annotation__rule-table label {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) minmax(110px, 0.8fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.data-annotation__rule-table label > div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.data-annotation__rule-table input {
+  width: 100%;
+}
+
+.data-annotation__rule-table small {
+  min-width: 18px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.data-annotation__rule-reference {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.data-annotation__rule-reference span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.data-annotation__rule-reference small {
+  color: var(--text-tertiary);
+}
+
+.data-annotation__manual-note {
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 7%, var(--bg-surface));
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.data-annotation__existing-run {
+  min-width: min(320px, 100%);
+}
+
+@media (max-width: 720px) {
+  .data-annotation__catalog,
+  .data-annotation__setup-grid,
+  .data-annotation__mode-picker,
+  .data-annotation__rule-table {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .data-annotation__setup {
+    padding: 14px;
+  }
+
+  .data-annotation__task {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .data-annotation__task-progress {
+    grid-column: 1 / -1;
+  }
+
+  .data-annotation__rule-table label {
+    grid-template-columns: minmax(120px, 1fr) minmax(100px, 0.8fr);
+  }
 }
 
 .spot-weld-annotation__region {
