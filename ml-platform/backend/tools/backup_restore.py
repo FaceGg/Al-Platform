@@ -277,6 +277,8 @@ def _write_operation_receipt(
     completed = completed_at or datetime.now(timezone.utc)
     if completed.tzinfo is None:
         raise ValueError("operation completion time must be timezone-aware")
+    if not _is_regular_evidence_file(manifest_path):
+        raise ValueError("backup manifest must be a regular evidence file")
     payload = {
         "evidence_version": _EVIDENCE_VERSION,
         "operation": operation,
@@ -287,15 +289,20 @@ def _write_operation_receipt(
     }
     receipt = {**payload, "signature": _signed_evidence(payload)}
     receipt_path = manifest_path.parent / receipt_name
-    if not _is_regular_evidence_file(manifest_path):
-        raise ValueError("backup manifest must be a regular evidence file")
     return _write_evidence_json(receipt_path, receipt)
 
 
 def _backup_evidence_entry(root: Path, path: Path) -> dict[str, object]:
+    try:
+        relative_path = path.relative_to(root)
+    except ValueError as error:
+        raise ValueError("backup evidence must remain inside the receipt root") from error
+    if not _is_regular_evidence_file(path):
+        raise ValueError("backup evidence must be a regular unlinked file")
+    metadata = path.lstat()
     return {
-        "path": path.relative_to(root).as_posix(),
-        "size": path.stat().st_size,
+        "path": relative_path.as_posix(),
+        "size": metadata.st_size,
         "sha256": _sha256_file(path),
     }
 
@@ -436,6 +443,11 @@ def _read_pending_operation_receipt(
 def _backup_manifest_entries(root: Path) -> list[dict[str, object]]:
     entries = []
     for path in sorted(root.rglob("*")):
+        # These names are control evidence written atomically by this tool.  They
+        # are never backup payload entries, and a pre-existing hard link must be
+        # replaced rather than followed when a new manifest is produced.
+        if path.name in _EVIDENCE_FILENAMES and path.parent == root:
+            continue
         try:
             metadata = path.lstat()
         except OSError as error:
@@ -451,8 +463,6 @@ def _backup_manifest_entries(root: Path) -> list[dict[str, object]]:
             continue
         if metadata.st_nlink != 1:
             raise ValueError("backup evidence must not contain linked files")
-        if path.name in _EVIDENCE_FILENAMES and path.parent == root:
-            continue
         entries.append(_backup_evidence_entry(root, path))
     return entries
 
@@ -700,16 +710,20 @@ def create_backup_manifest(
     finalized = _read_finalized_backup_state(root, pending_receipts)
     if finalized is not None:
         return _recover_finalized_backup_state(root, pending_receipts, *finalized)
-    if any(path.is_file() for path in pending_paths) and not all(
-        path.is_file() for path in pending_paths
-    ):
-        raise ValueError("both signed backup pending records are required before manifest finalization")
+    pending_path_occupied = [
+        path.exists() or path.is_symlink() for path in pending_paths
+    ]
+    pending_path_regular = [
+        _is_regular_evidence_file(path) for path in pending_paths
+    ]
+    if any(pending_path_occupied) and not all(pending_path_regular):
+        raise ValueError("backup pending records must be valid and signed")
     pending = (
         [
             _read_pending_operation_receipt(receipt_path, operation)
             for receipt_path, operation, _ in pending_receipts
         ]
-        if all(path.is_file() for path in pending_paths)
+        if all(pending_path_regular)
         else None
     )
     if pending is not None and any(receipt is None for receipt in pending):

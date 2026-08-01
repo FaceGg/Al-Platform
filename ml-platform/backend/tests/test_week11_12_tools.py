@@ -1255,6 +1255,67 @@ class BackupUpgradeHardeningRegressionTests(unittest.TestCase):
         self.assertNotIn("manifest_sha256", receipt)
         self.assertEqual(mirror.call_args.args[0][:3], ["mc", "mirror", "--overwrite"])
 
+    def test_mirror_minio_rejects_hard_linked_object_before_signing_pending_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            postgres_output = root / "postgres.dump"
+            minio_source = root / "source"
+            minio_destination = root / "minio"
+            external_artifact = root / "external-artifact.bin"
+            external_artifact.write_bytes(b"external artifact")
+            probe_link = root / "hard-link-probe.bin"
+            try:
+                os.link(external_artifact, probe_link)
+            except OSError as error:
+                self.skipTest(f"hard links are unavailable: {error}")
+            probe_link.unlink()
+            database_url = "postgresql://user:password@db/default"
+
+            def complete_backup(command, _environment=None):
+                if command[0] == "pg_dump":
+                    postgres_output.write_bytes(b"postgres backup")
+                else:
+                    minio_destination.mkdir(parents=True, exist_ok=True)
+                    os.link(external_artifact, minio_destination / "artifact.bin")
+                return {"returncode": 0, "stdout": "", "stderr": ""}
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "DATABASE_URL": database_url,
+                        "BACKUP_ACCEPTANCE_MINIO_DESTINATION": str(minio_destination),
+                        "BACKUP_ACCEPTANCE_ISOLATED": "1",
+                        "BACKUP_RESTORE_EVIDENCE_KEY": self._EVIDENCE_KEY,
+                    },
+                    clear=True,
+                ),
+                patch(
+                    "tools.backup_restore.run_backup_command",
+                    side_effect=complete_backup,
+                ),
+            ):
+                backup_postgres(database_url, postgres_output)
+                with self.assertRaisesRegex(ValueError, "linked"):
+                    mirror_minio(
+                        str(minio_source),
+                        str(minio_destination),
+                        root / "minio-backup-operation.json",
+                    )
+
+            self.assertEqual(external_artifact.read_bytes(), b"external artifact")
+            self.assertFalse((root / "minio-backup-pending.json").exists())
+
+    def test_manifest_creation_rejects_an_occupied_invalid_pending_receipt_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "postgres-backup-pending.json").mkdir()
+
+            with self.assertRaisesRegex(ValueError, "pending records"):
+                create_backup_manifest(root)
+
+            self.assertFalse((root / "manifest.json").exists())
+
     def test_backup_flow_finalizes_both_receipts_against_final_minio_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1786,6 +1847,39 @@ class BackupUpgradeHardeningRegressionTests(unittest.TestCase):
                 receipt_path.read_text(encoding="utf-8"),
                 "external receipt",
             )
+
+    def test_operation_receipt_rejects_a_linked_manifest_before_hashing_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            root = parent / "backup"
+            root.mkdir()
+            external_manifest = parent / "external-manifest.json"
+            external_manifest.write_text("external manifest", encoding="utf-8")
+            manifest_path = root / "manifest.json"
+            try:
+                os.link(external_manifest, manifest_path)
+            except OSError as error:
+                self.skipTest(f"hard links are unavailable: {error}")
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {"BACKUP_RESTORE_EVIDENCE_KEY": self._EVIDENCE_KEY},
+                    clear=True,
+                ),
+                patch(
+                    "tools.backup_restore._sha256_file",
+                    side_effect=AssertionError("linked manifest was hashed"),
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, "regular evidence file"):
+                    _write_operation_receipt(
+                        manifest_path,
+                        "restore-operation.json",
+                        "restore-postgres",
+                        0,
+                        1.0,
+                    )
 
     def test_final_manifest_rejects_new_pending_records_after_finalization(self):
         with tempfile.TemporaryDirectory() as directory:

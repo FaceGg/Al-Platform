@@ -1424,3 +1424,14 @@
 - 当前状态：暂停前审计发现新的安全门禁；未修改实现，不能将备份恢复验收标记为完整。
 - 风险：`manifest.json`、pending/final 回执和证据枚举仍以 `Path.is_file()`/直接路径写入处理；有效符号链接、Windows reparse point 或同卷硬链接可使签名证据读取或写入落在回执根目录外。
 - 恢复顺序：集中以 `lstat()` 拒绝链接/reparse 证据，采用根目录内临时文件加原子替换写入，并补充外部 sentinel、有效链接回执和同卷硬链接回归；完成后重新执行 `tests.test_week11_12_tools` 及相关安全门禁。
+
+### 2026-08-01：第 12 周备份证据来源约束修复
+
+- 当前状态：本地备份证据来源加固已完成并通过回归；第 11、12 周仍为“进行中”，本项不替代真实备份恢复 RTO/RPO、固定资源性能、完整 Chromium、N-1 升级、扫描汇总或远程 CI 门禁。
+- 问题现象：已有 manifest 硬链接外部 sentinel 时，控制文件枚举先将其当作备份 payload 拒绝，阻断本应安全的原子替换；`mirror_minio` 只用 `Path.is_file()` 收集对象，会把同卷硬链接对象签入 MinIO pending 回执；目录占用 pending 路径会被误作缺失；回执写入在拒绝链接 manifest 前已计算其哈希。
+- 已确认根因：原子写入目标和已接收的签名证据没有区分处理；普通文件判断没有统一应用到 pending 证据条目和 pending 路径状态，且 manifest 信任校验位于哈希读取之后。
+- 解决方法：控制 manifest/receipt 名称在 payload 枚举前排除，并继续由 in-root 临时文件和 `os.replace()` 原子替换；`_backup_evidence_entry` 统一要求路径在 receipt root 内、`lstat()` 为普通非链接文件且 link count 为 1；已占用 pending 路径必须全部为可信普通证据文件；`_write_operation_receipt` 在哈希前验证 manifest。
+- 验证方式：新增 MinIO 硬链接对象、非法 pending 目录占位、链接 manifest 不能在哈希前读取三条回归，均先 RED 后 GREEN；`C:\\Users\\17723\\miniconda3\\python.exe -m unittest tests.test_week11_12_tools tests.test_week12_security_gates tests.test_week11_contracts -v` 为 125/125，通过 `python -m compileall -q tools tests` 和 `git diff --check`（仅 CRLF 工作树提示）。外部 sentinel 在硬链接写入/拒绝回归中保持字节不变。
+- 影响范围：仅 `backend/tools/backup_restore.py` 与 Week 11-12 工具回归；不修改生产数据库、MinIO bucket、Compose、CI 或用户的前端测试修改。
+- 预防措施：文件系统安全控制必须将“新建原子写入目标”和“已存在、将被读取的证据”分为不同状态；所有 pending/manifest/final receipt 接受路径统一使用 `lstat()`、重解析点和 link-count 检查，任何已占用但无效的控制路径均失败关闭。
+- 遗留事项：仍需在隔离 PostgreSQL/MinIO 环境执行真实备份恢复和 RTO/RPO；当前 22 vCPU/16.5 GiB Docker 主机不满足 4 vCPU/8 GiB 三轮性能基线，不能生成 Week 11 性能结论。
