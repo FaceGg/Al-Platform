@@ -18,7 +18,12 @@ from app.models.experiment import Experiment
 from app.models.project import Project
 from app.models.training import TERMINAL_TRAINING_STATUSES, TrainingJob
 from app.models.user import User
-from app.services.automl_execution import resolve_candidates
+from app.services.automl_execution import (
+    normalize_evaluation_config,
+    read_automl_dataset,
+    resolve_automl_feature_columns,
+    resolve_candidates,
+)
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.services.experiment_tracking import TrackingError
 from app.services.iterative_training import IncompatibleCheckpoint, TrainingCheckpoint, TrainingConfig
@@ -67,8 +72,11 @@ class AutoMLRunRequest(BaseModel):
     experiment_id: uuid.UUID
     dataset_artifact_id: uuid.UUID
     target_column: str = Field(min_length=1)
+    input_columns: list[str] | None = None
     task: str = "classification"
     candidate_ids: list[str] = Field(default_factory=list)
+    cross_validation_enabled: bool = True
+    cross_validation_folds: int | None = 5
     time_budget: int = Field(default=60, ge=10, le=3600)
     name: str = Field(default="automl-job", min_length=1, max_length=128)
 
@@ -518,6 +526,10 @@ def start_automl(
             raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", "Invalid AutoML task"))
         try:
             resolve_candidates(data.task, data.candidate_ids)
+            evaluation = normalize_evaluation_config(
+                data.cross_validation_enabled,
+                data.cross_validation_folds,
+            )
         except ValueError as error:
             raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
         artifact_service = get_artifact_service(request, db)
@@ -527,13 +539,29 @@ def start_automl(
             )
         except (ValueError, ArtifactAccessError) as error:
             raise HTTPException(400, _error("DATASET_ARTIFACT_INVALID", str(error))) from error
+        try:
+            with artifact_service.materialize(
+                dataset.id,
+                data.project_id,
+                expected_type="dataset",
+            ) as dataset_path:
+                frame = read_automl_dataset(dataset_path)
+            resolve_automl_feature_columns(
+                frame,
+                data.target_column,
+                data.input_columns,
+            )
+        except (OSError, ValueError) as error:
+            raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
         job = TrainingJob(
             id=job_id, project_id=data.project_id, user_id=current_user.id,
             experiment_id=experiment.id, name=data.name, operator_id="automl",
             params={
                 "target_column": data.target_column,
+                "input_columns": list(data.input_columns) if data.input_columns is not None else None,
                 "task": data.task,
                 "candidate_ids": data.candidate_ids,
+                **evaluation,
                 "time_budget": data.time_budget,
             },
             dataset_artifact_id=dataset.id,

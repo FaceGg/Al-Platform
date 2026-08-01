@@ -9,7 +9,7 @@ const { get } = vi.hoisted(() => ({ get: vi.fn() }));
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
-vi.mock("../api/client", () => ({ default: { get } }));
+vi.mock("../api/client", () => ({ default: { get }, formatApiError: (_error: unknown, fallback: string) => fallback }));
 vi.mock("react-router-dom", async () => ({
   ...(await vi.importActual<typeof import("react-router-dom")>("react-router-dom")),
   useNavigate: () => navigate,
@@ -62,12 +62,12 @@ describe("DataManagePage", () => {
     expect(document.querySelectorAll(".dataset-table-actions")).toHaveLength(1);
   });
 
-  it("opens point-weld datasets in the dedicated annotation workspace", async () => {
+  it("opens the selected file in point-weld automatic-label setup", async () => {
     render(<MemoryRouter><AntApp><DataManagePage /></AntApp></MemoryRouter>);
 
-    fireEvent.click(await screen.findByLabelText("质量感知 weld.csv"));
+    fireEvent.click(await screen.findByLabelText("自动标注 weld.csv"));
 
-    expect(navigate).toHaveBeenCalledWith("/data-annotation?projectId=project-1&datasetId=dataset-1");
+    expect(navigate).toHaveBeenCalledWith("/data-annotation?type=spot-weld&view=setup&mode=automatic&projectId=project-1&datasetId=dataset-1");
   });
 
   it("accepts legacy XLS report uploads alongside CSV and XLSX", async () => {

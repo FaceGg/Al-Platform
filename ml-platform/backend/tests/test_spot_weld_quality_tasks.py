@@ -25,7 +25,7 @@ class TestSpotWeldQualityTasks(unittest.TestCase):
         self.assertEqual(outcome["status"], "failed")
         self.assertEqual(outcome["error_code"], "QUALITY_RUN_NOT_FOUND")
 
-    def test_local_dispatcher_runs_quality_work_with_a_stable_task_id(self):
+    def test_local_dispatcher_waits_for_explicit_start_after_queue_commit(self):
         from app.tasks.spot_weld_quality_tasks import LocalQualityDispatcher
 
         completed = Event()
@@ -40,6 +40,8 @@ class TestSpotWeldQualityTasks(unittest.TestCase):
         task_id = dispatcher.enqueue("run-1")
 
         self.assertTrue(task_id.startswith("local:"))
+        self.assertFalse(completed.wait(0.1))
+        dispatcher.start(task_id)
         self.assertTrue(completed.wait(1))
         self.assertEqual(calls, [("run-1", "local", task_id)])
 
