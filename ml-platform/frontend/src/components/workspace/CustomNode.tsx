@@ -232,7 +232,7 @@ function CustomNode({ data, selected }: NodeProps) {
 
   const portStyle = (index: number, total: number, side: "left" | "right"): React.CSSProperties => ({
     top: total <= 1 ? "50%" : ((index + 0.5) / total) * 100 + "%",
-    ...(side === "left" ? { left: -20 } : { right: -20 }),
+    ...(side === "left" ? { left: -16 } : { right: -16 }),
   });
 
   return (

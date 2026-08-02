@@ -308,7 +308,7 @@ describe("CustomNode visual structure", () => {
     expect(screen.getByTestId("port-in-left")).toHaveAttribute("data-handleid", "left");
   });
 
-  it("anchors compact semi-circle handles to the outer node edges without aggregate counts", () => {
+  it("anchors 20 percent smaller semi-circle handles to the outer node edges without aggregate counts", () => {
     render(
       <ReactFlowProvider>
         <CustomNode
@@ -330,16 +330,18 @@ describe("CustomNode visual structure", () => {
       </ReactFlowProvider>,
     );
 
-    expect(screen.getByTestId("port-in-left")).toHaveStyle({ left: "-20px" });
-    expect(screen.getByTestId("port-out-data")).toHaveStyle({ right: "-20px" });
+    expect(screen.getByTestId("port-in-left")).toHaveStyle({ left: "-16px" });
+    expect(screen.getByTestId("port-out-data")).toHaveStyle({ right: "-16px" });
     expect(screen.queryByText("IN 1")).not.toBeInTheDocument();
     expect(screen.queryByText("OUT 1")).not.toBeInTheDocument();
-    expect(cssRule(".workflow-node-handle.react-flow__handle")).toContain("width: 20px !important;");
-    expect(cssRule(".workflow-node-handle.react-flow__handle")).toContain("height: 28px !important;");
+    expect(cssRule(".workflow-node-handle.react-flow__handle")).toContain("width: 16px !important;");
+    expect(cssRule(".workflow-node-handle.react-flow__handle")).toContain("height: 22.4px !important;");
+    expect(cssRule(".workflow-node-handle.react-flow__handle::after")).toContain("width: 4.8px;");
+    expect(cssRule(".workflow-node-handle.react-flow__handle::after")).toContain("height: 4.8px;");
     expect(cssRule(".workflow-node-handle--input.react-flow__handle")).toContain("border-right: 0 !important;");
-    expect(cssRule(".workflow-node-handle--input.react-flow__handle")).toContain("border-radius: 14px 0 0 14px !important;");
+    expect(cssRule(".workflow-node-handle--input.react-flow__handle")).toContain("border-radius: 11.2px 0 0 11.2px !important;");
     expect(cssRule(".workflow-node-handle--output.react-flow__handle")).toContain("border-left: 0 !important;");
-    expect(cssRule(".workflow-node-handle--output.react-flow__handle")).toContain("border-radius: 0 14px 14px 0 !important;");
+    expect(cssRule(".workflow-node-handle--output.react-flow__handle")).toContain("border-radius: 0 11.2px 11.2px 0 !important;");
   });
 });
 describe("CustomNode visual density", () => {
