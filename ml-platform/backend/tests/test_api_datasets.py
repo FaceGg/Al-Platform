@@ -65,6 +65,14 @@ class TestDatasetsAPI(unittest.TestCase):
         self.assertIn("preview", data)
         self.assertIn("total_rows", data)
 
+    def test_03_raw_download_matches_stored_dataset_bytes(self):
+        aid = self.artifact_ids[0]
+        response = client.get(f"/api/datasets/{aid}/download", headers=self.h)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.content, b"col1,col2\n1,2\n3,4\n5,6\n")
+        self.assertIn("test.csv", response.headers["content-disposition"])
+
     def test_03a_list_project_dataset_artifacts(self):
         r = client.get(f"/api/projects/{self.project_id}/datasets", headers=self.h)
         self.assertEqual(r.status_code, 200)

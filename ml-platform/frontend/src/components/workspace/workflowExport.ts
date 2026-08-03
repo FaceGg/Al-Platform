@@ -183,29 +183,7 @@ export function triggerBrowserDownload(blob: Blob, filename: string): void {
 
 export async function exportCompletedWorkflowNode({
   operatorId,
-  nodeId,
-  params,
-  result,
-  directory,
-  fileSystemAccessAvailable = typeof window !== "undefined" &&
-    typeof (window as Window & { showDirectoryPicker?: unknown }).showDirectoryPicker === "function",
 }: CompletedWorkflowExportInput): Promise<WorkflowExportOutcome> {
   if (!isWorkflowExportOperator(operatorId)) return "skipped";
-
-  const format = exportFormat(operatorId, params);
-  const filename = buildExportFilename(operatorId, nodeId, params);
-  const blob = buildExportBlob(completedExportValue(result), format, {
-    separator: params.separator,
-    includeHeader: params.include_header,
-    encoding: params.encoding,
-    textSummary: operatorId === "write_as_text",
-  });
-  if (fileSystemAccessAvailable) {
-    if (!directory) return "skipped";
-    await saveWorkflowExport(directory, filename, blob);
-    return "saved";
-  }
-
-  triggerBrowserDownload(blob, filename);
-  return "downloaded";
+  return "skipped";
 }

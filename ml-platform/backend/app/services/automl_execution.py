@@ -394,6 +394,15 @@ def execute_automl_job(
                 )
             )
         successes = []
+        candidate_results: list[dict] = []
+        total_candidates = len(configured_candidates)
+        job.metrics = {
+            "evaluation": evaluation,
+            "progress": {"completed": 0, "total": total_candidates, "percent": 0},
+            "all_results": [],
+        }
+        job.heartbeat_at = utcnow()
+        db.commit()
         for index, candidate in enumerate(configured_candidates):
             child = tracking.start_run(
                 experiment.mlflow_experiment_id,
@@ -434,6 +443,12 @@ def execute_automl_job(
                 tracking.set_tags(child.run_id, {"platform.duration_seconds": duration})
                 tracking.end_run(child.run_id, "FINISHED")
                 successes.append((score, index, candidate, child.run_id))
+                candidate_results.append({
+                    "name": candidate.name,
+                    "score": score,
+                    "training_time_seconds": duration,
+                    "status": "completed",
+                })
             except Exception as error:
                 duration = time.perf_counter() - started
                 tracking.set_tags(child.run_id, {
@@ -442,6 +457,26 @@ def execute_automl_job(
                     "platform.error_message": str(error),
                 })
                 tracking.end_run(child.run_id, "FAILED")
+                candidate_results.append({
+                    "name": candidate.name,
+                    "score": None,
+                    "training_time_seconds": duration,
+                    "status": "failed",
+                    "error_code": type(error).__name__,
+                    "error_message": str(error),
+                })
+            completed_candidates = index + 1
+            job.metrics = {
+                "evaluation": evaluation,
+                "progress": {
+                    "completed": completed_candidates,
+                    "total": total_candidates,
+                    "percent": round((completed_candidates / total_candidates) * 100, 2),
+                },
+                "all_results": candidate_results,
+            }
+            job.heartbeat_at = utcnow()
+            db.commit()
 
         if not successes:
             raise AllCandidatesFailed("All AutoML candidates failed")
@@ -501,21 +536,25 @@ def execute_automl_job(
         db.add(model_entry)
         db.flush()
         job.status = "completed"
+        final_results = [
+            result for result in candidate_results if result.get("status") == "completed"
+        ]
+        final_results.sort(
+            key=lambda item: (
+                -float(item["score"]),
+                next(index for index, candidate in enumerate(configured_candidates) if candidate.name == item["name"]),
+            ),
+        )
         job.metrics = {
             "best_score": best_score,
             "best_candidate": best_candidate.name,
             "evaluation": evaluation,
+            "progress": {"completed": total_candidates, "total": total_candidates, "percent": 100},
             "best_model": {
                 "name": best_candidate.name,
                 "score": best_score,
             },
-            "all_results": [
-                {"name": candidate.name, "score": score}
-                for score, index, candidate, _child_run_id in sorted(
-                    successes,
-                    key=lambda item: (-item[0], item[1]),
-                )
-            ],
+            "all_results": final_results,
         }
         job.model_path = artifact_service.storage_reference(model_artifact)
         job.model_artifact_id = model_artifact.id

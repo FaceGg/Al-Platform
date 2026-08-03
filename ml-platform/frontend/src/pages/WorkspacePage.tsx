@@ -10,12 +10,6 @@ import OperatorPanel from "../components/workspace/OperatorPanel";
 import WorkflowCanvas from "../components/workspace/WorkflowCanvas";
 import NodeConfigPanel, { NodeResultPanel } from "../components/workspace/NodeConfigPanel";
 import ExecutionProgress from "../components/workspace/ExecutionProgress";
-import {
-  exportCompletedWorkflowNode,
-  isWorkflowExportOperator,
-  markRunNodeExported,
-  type WorkflowExportOutcome,
-} from "../components/workspace/workflowExport";
 import { normalizeNodeError, normalizeWorkflowHandle, useWorkflowStore } from "../stores/workflowStore";
 import type { NodeRunStatus, WorkflowRunStatus } from "../stores/workflowStore";
 import { deleteWorkflowVersion, listWorkflowVersions, publishWorkflow, restoreWorkflowVersion, WorkflowVersionSummary } from "../api/workflowVersions";
@@ -63,15 +57,6 @@ export function hydrateWorkflowEdges(edges: any[], nodes: any[] = []) {
   }, []);
 }
 
-export function notifyWorkflowExportOutcome(
-  outcome: WorkflowExportOutcome,
-  lang: "zh" | "en",
-  message: { info: (content: string) => unknown },
-): void {
-  if (outcome !== "downloaded") return;
-  message.info(lang === "zh" ? "\u6d4f\u89c8\u5668\u5c06\u7ba1\u7406\u4fdd\u5b58\u4f4d\u7f6e" : "Your browser manages the save location.");
-}
-
 export default function WorkspacePage() {
   const { message } = AntApp.useApp();
   const { lang } = useI18n();
@@ -101,6 +86,7 @@ export default function WorkspacePage() {
     reset,
   } = useWorkflowStore();
   const [wfName, setWfName] = useState("");
+  const [workflowProjectId, setWorkflowProjectId] = useState<string | undefined>();
   const [editingName, setEditingName] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -108,7 +94,6 @@ export default function WorkspacePage() {
   const [versions, setVersions] = useState<WorkflowVersionSummary[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
-  const exportedRunNodesRef = useRef(new Set<string>());
 
   // ── Build operator lookup ──
   function getOpMeta() {
@@ -125,6 +110,7 @@ export default function WorkspacePage() {
       .then((res) => {
         const wf = res.data;
         setWfName(wf.name || "untitled");
+        setWorkflowProjectId(wf.project_id || undefined);
         const workflowNodes = (wf.nodes || []).map((n: any) => {
           const op = meta[n.operator_id] || {};
           return {
@@ -285,7 +271,6 @@ export default function WorkspacePage() {
     }
 
     // Reset execution state before starting new run
-    exportedRunNodesRef.current.clear();
     resetExecution();
     setIsRunning(true);
     setNodeStatus("__wf__", "pending");
@@ -353,25 +338,6 @@ export default function WorkspacePage() {
           if (nodeError) setNodeError(nodeId, nodeError);
         }
 
-        if (status !== "completed") return;
-        const state = useWorkflowStore.getState();
-        const node = state.nodes.find((candidate) => candidate.id === nodeId);
-        const operatorId = node?.data?.operatorId;
-        const result = nodeRun.result ?? state.nodeResults[nodeId];
-        if (!operatorId || result == null || !isWorkflowExportOperator(operatorId)) return;
-        if (!markRunNodeExported(exportedRunNodesRef.current, runId, nodeId)) return;
-
-        void exportCompletedWorkflowNode({
-          operatorId,
-          nodeId,
-          params: node.data?.params || {},
-          result,
-          directory: state.exportDirectories[nodeId]?.handle,
-        })
-          .then((outcome) => notifyWorkflowExportOutcome(outcome, lang, message))
-          .catch(() => {
-            message.error(lang === "zh" ? "导出失败" : "Export failed");
-          });
       };
 
       const reconcileRun = async () => {
@@ -582,7 +548,7 @@ export default function WorkspacePage() {
           <div className="workspace-sider-header">
             {text.nodeConfig}
           </div>
-          <NodeConfigPanel />
+          <NodeConfigPanel projectId={workflowProjectId} />
         </Sider>
       </Layout>
 

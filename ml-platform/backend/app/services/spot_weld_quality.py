@@ -11,7 +11,7 @@ from pathlib import Path
 import tempfile
 import time
 import uuid
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import joblib
 import numpy as np
@@ -62,6 +62,9 @@ REPORT_RULE_ENERGY_SIGMA = 2.5
 REPORT_RULE_SPATTER_CLUSTER_ID = 1
 REPORT_RULESET_VERSION = "report_v2"
 QUALITY_LABEL_MODES = frozenset({"automatic", "manual"})
+LOCAL_QUALITY_TASK_PREFIX = "local:"
+LOCAL_QUALITY_RECOVERABLE_STATUSES = ("queued", "validating", "running")
+LOCAL_QUALITY_WORKER_RESTARTED_CODE = "QUALITY_RUN_LOCAL_WORKER_RESTARTED"
 DEFAULT_REPORT_RULE_CONFIG: dict[str, float | int] = {
     "strong_splatter_min": 3,
     "weak_splatter_value": 2,
@@ -199,12 +202,23 @@ def _resolve_quality_input_schema(
         if not selected or len(selected) != len(set(selected)):
             raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
         if target_column is not None and target_column in selected:
-            raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
-        if any(column not in frame_columns for column in selected):
-            raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
+            raise QualityPipelineError(
+                "QUALITY_INPUT_COLUMNS_INVALID",
+                message=f"点焊质量感知目标列不能同时作为输入列：{target_column}",
+            )
+        unknown_columns = [column for column in selected if column not in frame_columns]
+        if unknown_columns:
+            raise QualityPipelineError(
+                "QUALITY_INPUT_COLUMNS_INVALID",
+                message=f"点焊质量感知输入列不存在：{', '.join(unknown_columns)}",
+            )
         required = _quality_required_input_columns(field_mapping)
-        if any(column not in selected for column in required):
-            raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
+        missing_columns = [column for column in required if column not in selected]
+        if missing_columns:
+            raise QualityPipelineError(
+                "QUALITY_INPUT_COLUMNS_INVALID",
+                message=f"点焊质量感知输入列缺少必需字段：{', '.join(missing_columns)}",
+            )
     if not selected:
         raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
     return selected, [
@@ -612,6 +626,7 @@ def run_automl(
     *,
     configs: tuple[Mapping[str, Any], ...] = AUTOML_CONFIGS,
     evaluation: Mapping[str, Any] | None = None,
+    progress_callback: Callable[[int, int, CandidateResult], None] | None = None,
 ) -> tuple[list[CandidateResult], CandidateResult]:
     X = np.asarray(features, dtype=np.float64)
     y_raw = np.asarray(list(labels))
@@ -659,6 +674,7 @@ def run_automl(
         aucs: list[float] = []
         f1s: list[float] = []
         importances: list[np.ndarray] = []
+        started = time.perf_counter()
         try:
             for train_index, test_index in splits:
                 scaler = StandardScaler()
@@ -687,7 +703,10 @@ def run_automl(
         except Exception as error:  # candidate failures stay visible in the result table
             result.error_code = "QUALITY_AUTOML_CANDIDATE_FAILED"
             result.error_message = str(error)
+        result.training_time_seconds = time.perf_counter() - started
         results.append(result)
+        if progress_callback is not None:
+            progress_callback(config_index + 1, len(configs), result)
     return results, select_best_candidate(results)
 
 
@@ -1118,6 +1137,24 @@ def claim_quality_run(
     return db.query(SpotWeldQualityRun).filter(SpotWeldQualityRun.id == run_id).first()
 
 
+def recover_orphaned_local_quality_runs(db) -> int:
+    """Fail local tasks left non-terminal when their in-process worker restarts."""
+    runs = db.query(SpotWeldQualityRun).filter(
+        SpotWeldQualityRun.task_id.like(f"{LOCAL_QUALITY_TASK_PREFIX}%"),
+        SpotWeldQualityRun.status.in_(LOCAL_QUALITY_RECOVERABLE_STATUSES),
+    ).all()
+    for run in runs:
+        run.status = "failed"
+        run.error_code = LOCAL_QUALITY_WORKER_RESTARTED_CODE
+        run.error_details = {
+            "code": LOCAL_QUALITY_WORKER_RESTARTED_CODE,
+            "message": "Local quality worker stopped during service restart; rerun this task.",
+        }
+    if runs:
+        db.commit()
+    return len(runs)
+
+
 def _annotation_progress(annotated_count: int, total_count: int) -> dict[str, int | float]:
     total = max(int(total_count), 0)
     annotated = min(max(int(annotated_count), 0), total) if total else 0
@@ -1126,6 +1163,125 @@ def _annotation_progress(annotated_count: int, total_count: int) -> dict[str, in
         "total_count": total,
         "percent": round((annotated / total) * 100, 2) if total else 0.0,
     }
+
+
+def _modeling_progress(completed_count: int, total_count: int) -> dict[str, int | float]:
+    total = max(int(total_count), 0)
+    completed = min(max(int(completed_count), 0), total) if total else 0
+    return {
+        "completed_count": completed,
+        "total_count": total,
+        "percent": round((completed / total) * 100, 2) if total else 0.0,
+    }
+
+
+def update_quality_run_rules(
+    db,
+    run: SpotWeldQualityRun,
+    rule_config: Mapping[str, Any] | None,
+    *,
+    batch_size: int = 10,
+    progress_callback: Callable[[dict[str, int | float]], None] | None = None,
+) -> SpotWeldQualityRun:
+    """Persist edited rules and recalculate automatic labels in-place."""
+    if run.status in LOCAL_QUALITY_RECOVERABLE_STATUSES:
+        raise QualityPipelineError("QUALITY_RUN_ACTIVE")
+    if run.status not in {"completed", "failed", "cancelled"}:
+        raise QualityPipelineError("QUALITY_RUN_NOT_RECALCULABLE")
+    normalized = normalize_report_rule_config(rule_config)
+    run_input = dict(run.input_fingerprint or {})
+    label_mode = run_input.get("label_mode", "automatic")
+    if label_mode not in QUALITY_LABEL_MODES:
+        raise QualityPipelineError("QUALITY_LABEL_MODE_INVALID")
+    run.input_fingerprint = {**run_input, "rule_config": normalized}
+
+    samples = db.query(SpotWeldQualitySample).filter(
+        SpotWeldQualitySample.run_id == run.id,
+    ).order_by(SpotWeldQualitySample.source_row_index).all()
+    combined_records = [
+        {**(sample.table_values or {}), **(sample.feature_values or {})}
+        for sample in samples
+    ]
+    feature_frame = pd.DataFrame(combined_records)
+    thresholds: dict[str, float | int] = dict(normalized)
+    if not feature_frame.empty and {"current_max_diff", "power_std"}.issubset(feature_frame.columns):
+        thresholds = build_runtime_rule_thresholds(feature_frame, normalized)
+
+    rule_set = db.query(SpotWeldQualityRuleSet).filter(
+        SpotWeldQualityRuleSet.run_id == run.id,
+        SpotWeldQualityRuleSet.version == REPORT_RULESET_VERSION,
+    ).one_or_none()
+    if rule_set is None:
+        rule_set = SpotWeldQualityRuleSet(
+            project_id=run.project_id,
+            run_id=run.id,
+            version=REPORT_RULESET_VERSION,
+            thresholds=thresholds,
+        )
+        db.add(rule_set)
+    else:
+        rule_set.thresholds = thresholds
+    run.rule_set_version = REPORT_RULESET_VERSION
+
+    if label_mode == "manual":
+        db.commit()
+        db.refresh(run)
+        return run
+
+    total_count = len(samples)
+    run.status = "running"
+    run.error_code = None
+    run.error_details = {}
+    run.statistics = {
+        **(run.statistics or {}),
+        "annotation_progress": _annotation_progress(0, total_count),
+    }
+    db.commit()
+    if progress_callback:
+        progress_callback(run.statistics["annotation_progress"])
+
+    commit_size = max(1, int(batch_size))
+    for index, (sample, record) in enumerate(zip(samples, combined_records), start=1):
+        result = apply_report_v1_rules(record, thresholds=thresholds, cluster_id=sample.cluster_id)
+        sample.automatic_label = result.primary_label
+        sample.rule_hits = [hit.to_dict() for hit in result.hits]
+        if index % commit_size == 0 or index == total_count:
+            run.statistics = {
+                **(run.statistics or {}),
+                "annotation_progress": _annotation_progress(index, total_count),
+            }
+            db.commit()
+            if progress_callback:
+                progress_callback(run.statistics["annotation_progress"])
+
+    run.status = "completed"
+    run.statistics = {
+        **(run.statistics or {}),
+        "annotation_progress": _annotation_progress(total_count, total_count),
+    }
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def _json_value(value: Any) -> Any:
+    """Keep the source row JSON-safe without narrowing its original column set."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return [_json_value(item) for item in value.tolist()]
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    if pd.isna(value):
+        return None
+    return str(value)
+
+
+def _source_row_values(frame: pd.DataFrame, row_index: int) -> dict[str, Any]:
+    row = frame.iloc[row_index]
+    return {str(column): _json_value(row[column]) for column in frame.columns}
 
 
 def _fit_candidate_model(features: np.ndarray, labels: Iterable[Any], candidate: CandidateResult):
@@ -1140,6 +1296,124 @@ def _fit_candidate_model(features: np.ndarray, labels: Iterable[Any], candidate:
     return scaler, model
 
 
+QUALITY_REPORT_CHART_KEYS = (
+    "model_comparison_chart",
+    "cluster_pca_chart",
+    "feature_importance_chart",
+    "warning_distribution_chart",
+    "waveform_comparison_chart",
+)
+
+
+def _write_quality_run_charts(
+    directory: Path,
+    *,
+    features: pd.DataFrame,
+    samples: list[SpotWeldQualitySample],
+    candidates: list[CandidateResult],
+    best_candidate: CandidateResult | None,
+    clustering: ClusterResult | None,
+) -> dict[str, Path]:
+    """Generate the five report figures once so XLSX and UI use identical artifacts."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    paths = {key: directory / f"{key}.png" for key in QUALITY_REPORT_CHART_KEYS}
+
+    def save(key: str, figure) -> None:
+        figure.tight_layout()
+        figure.savefig(paths[key], dpi=140, bbox_inches="tight")
+        plt.close(figure)
+
+    names = [item.name for item in candidates]
+    aucs = [float(item.auc or 0.0) for item in candidates]
+    f1s = [float(item.f1 or 0.0) for item in candidates]
+    figure, axis = plt.subplots(figsize=(9, 4.8))
+    positions = np.arange(len(names))
+    axis.bar(positions - 0.18, aucs, width=0.36, label="AUC")
+    axis.bar(positions + 0.18, f1s, width=0.36, label="F1")
+    axis.set_title("AutoML Model Comparison")
+    axis.set_xticks(positions, names, rotation=35, ha="right")
+    axis.set_ylim(0, max(1.0, *(aucs or [0.0]), *(f1s or [0.0])))
+    axis.legend()
+    save("model_comparison_chart", figure)
+
+    figure, axis = plt.subplots(figsize=(7.2, 5.2))
+    if clustering is not None and len(clustering.pca_coordinates):
+        coordinates = np.asarray(clustering.pca_coordinates, dtype=float)
+        scatter = axis.scatter(
+            coordinates[:, 0],
+            coordinates[:, 1],
+            c=clustering.cluster_ids,
+            cmap="tab10",
+            s=22,
+            alpha=0.85,
+        )
+        axis.figure.colorbar(scatter, ax=axis, label="Cluster")
+    else:
+        axis.text(0.5, 0.5, "No clustering result", ha="center", va="center")
+    axis.set_title("Cluster PCA Visualization")
+    axis.set_xlabel("PC1")
+    axis.set_ylabel("PC2")
+    save("cluster_pca_chart", figure)
+
+    importance = (
+        list(best_candidate.feature_importance)
+        if best_candidate is not None and len(best_candidate.feature_importance) == len(features.columns)
+        else []
+    )
+    top_features = sorted(zip(features.columns, importance), key=lambda item: item[1], reverse=True)[:20]
+    figure, axis = plt.subplots(figsize=(8.5, 6.2))
+    if top_features:
+        feature_names, values = zip(*reversed(top_features))
+        axis.barh(feature_names, values, color="#1677ff")
+    else:
+        axis.text(0.5, 0.5, "No feature importance", ha="center", va="center")
+    axis.set_title("Feature Importance Top 20")
+    save("feature_importance_chart", figure)
+
+    warning_counts = Counter(sample.warning_level or "none" for sample in samples)
+    warning_levels = ["critical", "warning", "notice", "none"]
+    figure, axis = plt.subplots(figsize=(7.2, 4.8))
+    axis.bar(
+        warning_levels,
+        [warning_counts.get(level, 0) for level in warning_levels],
+        color=["#cf1322", "#fa8c16", "#d4b106", "#52c41a"],
+    )
+    axis.set_title("Defect Warning Distribution")
+    axis.set_ylabel("Samples")
+    save("warning_distribution_chart", figure)
+
+    normal_waveforms = [
+        np.asarray((sample.waveforms or {}).get("current", []), dtype=float)
+        for sample in samples
+        if sample.automatic_label == "normal"
+    ]
+    defect_waveforms = [
+        np.asarray((sample.waveforms or {}).get("current", []), dtype=float)
+        for sample in samples
+        if sample.automatic_label and sample.automatic_label != "normal"
+    ]
+    figure, axis = plt.subplots(figsize=(9, 4.8))
+    if normal_waveforms and defect_waveforms:
+        point_count = min(
+            min(len(values) for values in normal_waveforms),
+            min(len(values) for values in defect_waveforms),
+        )
+        axis.plot(np.mean([values[:point_count] for values in normal_waveforms], axis=0), label="Normal current")
+        axis.plot(np.mean([values[:point_count] for values in defect_waveforms], axis=0), label="Defect current")
+        axis.legend()
+    else:
+        axis.text(0.5, 0.5, "No normal/defect waveform pair", ha="center", va="center")
+    axis.set_title("Normal vs Defect Waveform")
+    axis.set_xlabel("Sample point")
+    axis.set_ylabel("Current")
+    save("waveform_comparison_chart", figure)
+    return paths
+
+
 def _write_quality_run_report(
     path: Path,
     *,
@@ -1149,6 +1423,9 @@ def _write_quality_run_report(
     candidates: list[CandidateResult],
     best_candidate: CandidateResult | None,
     clustering: ClusterResult | None,
+    chart_paths: Mapping[str, Path],
+    evaluation_actual_labels: list[str],
+    evaluation_predicted_labels: list[str],
 ) -> None:
     """Write the report available immediately after a quality run completes."""
     run_input = run.input_fingerprint or {}
@@ -1200,6 +1477,12 @@ def _write_quality_run_report(
     ], columns=[
         "候选模型", "模型类型", "AUC", "AUC标准差", "F1", "F1标准差", "训练耗时(秒)", "错误码", "参数",
     ])
+    deep_learning = pd.DataFrame([
+        {
+            "模型": "未启用独立深度学习比较",
+            "说明": "本次点焊质量运行使用所选 AutoML 候选模型。",
+        },
+    ], columns=["模型", "说明"])
     labels_frame = pd.DataFrame([
         {
             "sample_id": str(sample.id),
@@ -1263,6 +1546,11 @@ def _write_quality_run_report(
             "display_id": sample.display_id,
             "automatic_label": sample.automatic_label,
             "current_label": sample.current_label,
+            "predicted_label": (
+                evaluation_predicted_labels[index]
+                if index < len(evaluation_predicted_labels)
+                else None
+            ),
             "defect_probability": sample.defect_probability,
             "warning_level": sample.warning_level,
             "cluster_id": sample.cluster_id,
@@ -1271,15 +1559,48 @@ def _write_quality_run_report(
         }
         for index, sample in enumerate(samples)
     ], columns=[
-        "display_id", "automatic_label", "current_label", "defect_probability", "warning_level", "cluster_id", "pca_x", "pca_y",
+        "display_id", "automatic_label", "current_label", "predicted_label", "defect_probability", "warning_level", "cluster_id", "pca_x", "pca_y",
     ])
+    actual_labels = [str(label) for label in evaluation_actual_labels]
+    predicted_labels = [str(label) for label in evaluation_predicted_labels]
+    if actual_labels and len(actual_labels) == len(predicted_labels):
+        labels = sorted(set(actual_labels) | set(predicted_labels))
+        evaluation_frame = pd.DataFrame(classification_report(
+            actual_labels,
+            predicted_labels,
+            labels=labels,
+            target_names=labels,
+            output_dict=True,
+            zero_division=0,
+        )).transpose().reset_index().rename(columns={"index": "label"})
+    else:
+        evaluation_frame = pd.DataFrame(columns=["label", "precision", "recall", "f1-score", "support"])
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
         summary.to_excel(writer, sheet_name="总览", index=False)
         automl.to_excel(writer, sheet_name="AutoML选型", index=False)
+        deep_learning.to_excel(writer, sheet_name="深度学习对比", index=False)
         labels_frame.to_excel(writer, sheet_name="缺陷标签", index=False)
         cluster_frame.to_excel(writer, sheet_name="聚类画像", index=False)
         importance_frame.to_excel(writer, sheet_name="特征重要性", index=False)
         inference_frame.to_excel(writer, sheet_name="推理结果", index=False)
+        evaluation_frame.to_excel(writer, sheet_name="多分类评估", index=False)
+        from openpyxl.drawing.image import Image as ExcelImage
+
+        chart_sheets = {
+            "model_comparison_chart": "AutoML选型",
+            "cluster_pca_chart": "聚类画像",
+            "feature_importance_chart": "特征重要性",
+            "warning_distribution_chart": "推理结果",
+            "waveform_comparison_chart": "总览",
+        }
+        for chart_key, sheet_name in chart_sheets.items():
+            chart_path = chart_paths.get(chart_key)
+            if chart_path is None or not chart_path.is_file():
+                continue
+            image = ExcelImage(str(chart_path))
+            image.width = 620
+            image.height = 360
+            writer.book[sheet_name].add_image(image, "K2")
 
 
 def _generated_artifacts(
@@ -1291,6 +1612,8 @@ def _generated_artifacts(
     candidates: list[CandidateResult],
     best_candidate: CandidateResult | None,
     clustering: ClusterResult | None,
+    evaluation_actual_labels: list[str],
+    evaluation_predicted_labels: list[str],
 ) -> dict[str, str]:
     with tempfile.TemporaryDirectory(prefix="spot-weld-quality-") as directory:
         root = Path(directory)
@@ -1310,13 +1633,26 @@ def _generated_artifacts(
                 {
                     "sample_id": str(sample.id), "display_id": sample.display_id,
                     "automatic_label": sample.automatic_label,
+                    "predicted_label": (
+                        evaluation_predicted_labels[index]
+                        if index < len(evaluation_predicted_labels)
+                        else None
+                    ),
                     "defect_probability": sample.defect_probability,
                     "warning_level": sample.warning_level,
                     "cluster_id": sample.cluster_id,
                 }
-                for sample in samples
+                for index, sample in enumerate(samples)
             ],
         }, ensure_ascii=False), encoding="utf-8")
+        chart_paths = _write_quality_run_charts(
+            root,
+            features=features,
+            samples=samples,
+            candidates=candidates,
+            best_candidate=best_candidate,
+            clustering=clustering,
+        )
         _write_quality_run_report(
             report_path,
             run=run,
@@ -1325,6 +1661,9 @@ def _generated_artifacts(
             candidates=candidates,
             best_candidate=best_candidate,
             clustering=clustering,
+            chart_paths=chart_paths,
+            evaluation_actual_labels=evaluation_actual_labels,
+            evaluation_predicted_labels=evaluation_predicted_labels,
         )
         metadata = {
             "source": "spot_weld_quality",
@@ -1345,10 +1684,22 @@ def _generated_artifacts(
         report_artifact = artifact_service.create_from_file(
             run.project_id, report_path, f"spot-weld-{run.id}-report.xlsx", "quality_report", metadata, commit=False,
         )
+        chart_artifacts = {
+            chart_key: artifact_service.create_from_file(
+                run.project_id,
+                chart_path,
+                f"spot-weld-{run.id}-{chart_key}.png",
+                "quality_report_chart",
+                {**metadata, "report_chart": chart_key},
+                commit=False,
+            )
+            for chart_key, chart_path in chart_paths.items()
+        }
     return {
         "features": str(features_artifact.id),
         "results": str(results_artifact.id),
         "report": str(report_artifact.id),
+        **{chart_key: str(artifact.id) for chart_key, artifact in chart_artifacts.items()},
     }
 
 
@@ -1401,13 +1752,77 @@ def execute_quality_run(
             ),
         )
         evaluation = run_configuration["evaluation"]
+        total_count = len(records)
+        preliminary_rules = (
+            [apply_report_v1_rules(record, thresholds=thresholds) for record in records]
+            if label_mode == "automatic"
+            else [None] * total_count
+        )
+        run.rule_set_version = REPORT_RULESET_VERSION
+        db.query(SpotWeldQualitySample).filter(SpotWeldQualitySample.run_id == run.id).delete(synchronize_session=False)
+        db.query(SpotWeldQualityRuleSet).filter(SpotWeldQualityRuleSet.run_id == run.id).delete(synchronize_session=False)
+        db.flush()
+        db.add(SpotWeldQualityRuleSet(
+            project_id=run.project_id, run_id=run.id, version=REPORT_RULESET_VERSION, thresholds=thresholds,
+        ))
+        run.statistics = {
+            **statistics,
+            "valid_rows": len(features),
+            "label_mode": label_mode,
+            **run_configuration,
+            "annotation_progress": _annotation_progress(0, total_count),
+            "modeling_progress": _modeling_progress(0, len(selected_configs) if label_mode == "automatic" or supervised_labels is not None else 0),
+        }
+        db.commit()
+
+        samples: list[SpotWeldQualitySample] = []
+        batch_size = 10
+        annotated_count = 0
+        for index, (record, waveform) in enumerate(zip(records, waveforms)):
+            rule_result = preliminary_rules[index]
+            sample = SpotWeldQualitySample(
+                run_id=run.id,
+                source_row_index=index,
+                display_id=f"W-{index + 1:04d}",
+                table_values=_source_row_values(frame, index),
+                feature_values={key: float(value) for key, value in record.items()},
+                waveforms=waveform,
+                automatic_label=rule_result.primary_label if rule_result is not None else None,
+                rule_hits=[item.to_dict() for item in rule_result.hits] if rule_result is not None else [],
+                cluster_id=None,
+                defect_probability=None,
+                warning_level="none",
+                review_status="pending_review",
+            )
+            db.add(sample)
+            samples.append(sample)
+            if label_mode == "automatic" and sample.automatic_label is not None:
+                annotated_count += 1
+            if (index + 1) % batch_size == 0 or index == total_count - 1:
+                db.flush()
+                run.statistics = {
+                    **(run.statistics or {}),
+                    "annotation_progress": _annotation_progress(annotated_count, total_count),
+                }
+                db.commit()
+
+        def update_model_progress(completed_count: int, candidate_total: int, _result: CandidateResult) -> None:
+            run.statistics = {
+                **(run.statistics or {}),
+                "modeling_progress": _modeling_progress(completed_count, candidate_total),
+            }
+            db.commit()
+
         best_candidate: CandidateResult | None = None
+        evaluation_actual_labels: list[str] = []
+        evaluation_predicted_labels: list[str] = []
         if supervised_labels is not None:
             candidate_results, best_candidate = run_automl(
                 features.to_numpy(dtype=np.float64),
                 supervised_labels,
                 configs=selected_configs,
                 evaluation=evaluation,
+                progress_callback=update_model_progress,
             )
             clustering = run_clustering(
                 features.to_numpy(dtype=np.float64),
@@ -1435,21 +1850,29 @@ def execute_quality_run(
                 scaler.transform(features.to_numpy(dtype=np.float64)),
             ))
             supervised_classes = np.unique(supervised_labels)
+            prediction_codes = np.asarray(model.predict(_estimator_matrix(
+                scaler.transform(features.to_numpy(dtype=np.float64)),
+            ))).reshape(-1)
             normal_indexes = np.where(supervised_classes == "normal")[0]
             probabilities = (
                 1.0 - probabilities_by_class[:, int(normal_indexes[0])]
                 if len(normal_indexes)
                 else np.max(probabilities_by_class, axis=1)
             )
+            evaluation_actual_labels = [str(label) for label in supervised_labels]
+            evaluation_predicted_labels = [
+                str(supervised_classes[int(code)]) for code in prediction_codes
+            ]
             cluster_ids: list[int | None] = list(clustering.cluster_ids)
         elif label_mode == "automatic":
             preliminary = [apply_report_v1_rules(record, thresholds=thresholds) for record in records]
-            binary_labels = np.asarray([result.primary_label != "normal" for result in preliminary], dtype=int)
+            automatic_labels = np.asarray([result.primary_label for result in preliminary], dtype=str)
             candidate_results, best_candidate = run_automl(
                 features.to_numpy(dtype=np.float64),
-                binary_labels,
+                automatic_labels,
                 configs=selected_configs,
                 evaluation=evaluation,
+                progress_callback=update_model_progress,
             )
             clustering = run_clustering(
                 features.to_numpy(dtype=np.float64),
@@ -1460,12 +1883,26 @@ def execute_quality_run(
                 apply_report_v1_rules(
                     record, thresholds=thresholds, cluster_id=clustering.cluster_ids[index],
                 )
-                for index, record in enumerate(records)
+                    for index, record in enumerate(records)
             ]
-            scaler, model = _fit_candidate_model(features.to_numpy(dtype=np.float64), binary_labels, best_candidate)
-            probabilities = model.predict_proba(_estimator_matrix(
+            scaler, model = _fit_candidate_model(features.to_numpy(dtype=np.float64), automatic_labels, best_candidate)
+            probabilities_by_class = model.predict_proba(_estimator_matrix(
                 scaler.transform(features.to_numpy(dtype=np.float64)),
-            ))[:, 1]
+            ))
+            automatic_classes = np.unique(automatic_labels)
+            prediction_codes = np.asarray(model.predict(_estimator_matrix(
+                scaler.transform(features.to_numpy(dtype=np.float64)),
+            ))).reshape(-1)
+            normal_indexes = np.where(automatic_classes == "normal")[0]
+            probabilities = (
+                1.0 - probabilities_by_class[:, int(normal_indexes[0])]
+                if len(normal_indexes)
+                else np.max(probabilities_by_class, axis=1)
+            )
+            evaluation_actual_labels = [str(label) for label in automatic_labels]
+            evaluation_predicted_labels = [
+                str(automatic_classes[int(code)]) for code in prediction_codes
+            ]
             cluster_ids: list[int | None] = list(clustering.cluster_ids)
         else:
             candidate_results = []
@@ -1473,60 +1910,27 @@ def execute_quality_run(
             final_rules = [None] * len(records)
             probabilities = [None] * len(records)
             cluster_ids = [None] * len(records)
-        total_count = len(records)
-        run.rule_set_version = REPORT_RULESET_VERSION
-        db.query(SpotWeldQualitySample).filter(SpotWeldQualitySample.run_id == run.id).delete(synchronize_session=False)
-        db.query(SpotWeldQualityRuleSet).filter(SpotWeldQualityRuleSet.run_id == run.id).delete(synchronize_session=False)
-        db.flush()
-        db.add(SpotWeldQualityRuleSet(
-            project_id=run.project_id, run_id=run.id, version=REPORT_RULESET_VERSION, thresholds=thresholds,
-        ))
-        run.statistics = {
-            **statistics,
-            "valid_rows": len(features),
-            "label_mode": label_mode,
-            **run_configuration,
-            "annotation_progress": _annotation_progress(0, total_count),
-        }
-        db.commit()
-        samples: list[SpotWeldQualitySample] = []
-        batch: list[SpotWeldQualitySample] = []
-        batch_size = 100
-        for index, (record, waveform) in enumerate(zip(records, waveforms)):
+        # Model-progress commits expire the initial batch objects. Reload once before
+        # updating per-sample predictions so assignments do not trigger N single-row reads.
+        samples = db.query(SpotWeldQualitySample).filter(
+            SpotWeldQualitySample.run_id == run.id,
+        ).order_by(SpotWeldQualitySample.source_row_index).all()
+        for index, sample in enumerate(samples):
             rule_result = final_rules[index]
             probability = probabilities[index]
-            table_values = {
-                key: float(canonical.iloc[index][key]) for key in REPORT_TABLE_FIELDS
-            }
-            sample = SpotWeldQualitySample(
-                run_id=run.id,
-                source_row_index=index,
-                display_id=f"W-{index + 1:04d}",
-                table_values=table_values,
-                feature_values={key: float(value) for key, value in record.items()},
-                waveforms=waveform,
-                automatic_label=rule_result.primary_label if rule_result is not None else None,
-                rule_hits=[item.to_dict() for item in rule_result.hits] if rule_result is not None else [],
-                cluster_id=cluster_ids[index],
-                defect_probability=float(probability) if probability is not None else None,
-                warning_level=warning_level(float(probability)) if probability is not None else "none",
-                review_status="pending_review",
-            )
-            db.add(sample)
-            samples.append(sample)
-            batch.append(sample)
-            if len(batch) >= batch_size or index == total_count - 1:
-                db.flush()
-                annotated_count = sum(
-                    1 for item in samples
-                    if (item.automatic_label if label_mode == "automatic" else item.current_label)
-                )
-                run.statistics = {
-                    **(run.statistics or {}),
-                    "annotation_progress": _annotation_progress(annotated_count, total_count),
-                }
-                db.commit()
-                batch.clear()
+            sample.automatic_label = rule_result.primary_label if rule_result is not None else None
+            sample.rule_hits = [item.to_dict() for item in rule_result.hits] if rule_result is not None else []
+            sample.cluster_id = cluster_ids[index]
+            sample.defect_probability = float(probability) if probability is not None else None
+            sample.warning_level = warning_level(float(probability)) if probability is not None else "none"
+        db.flush()
+        annotated_count = total_count if label_mode == "automatic" else 0
+        run.statistics = {
+            **(run.statistics or {}),
+            "annotation_progress": _annotation_progress(annotated_count, total_count),
+            "modeling_progress": _modeling_progress(len(candidate_results), len(candidate_results)),
+        }
+        db.commit()
         samples = db.query(SpotWeldQualitySample).filter(
             SpotWeldQualitySample.run_id == run.id,
         ).order_by(SpotWeldQualitySample.source_row_index).all()
@@ -1539,6 +1943,8 @@ def execute_quality_run(
             candidate_results,
             best_candidate,
             clustering,
+            evaluation_actual_labels,
+            evaluation_predicted_labels,
         )
         run.status = "completed"
         run.feature_schema = schema
@@ -1547,6 +1953,8 @@ def execute_quality_run(
             "valid_rows": len(features),
             "label_mode": label_mode,
             **run_configuration,
+            "annotation_progress": _annotation_progress(annotated_count, total_count),
+            "modeling_progress": _modeling_progress(len(candidate_results), len(candidate_results)),
             "warning_counts": dict(Counter(sample.warning_level for sample in samples)),
         }
         run.automl_results = [item.to_dict() for item in candidate_results]

@@ -3,7 +3,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App as AntApp, ConfigProvider } from "antd";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { createElement } from "react";
-import * as workspacePage from "./WorkspacePage";
 import WorkspacePage, { hydrateWorkflowEdges, resolvePort } from "./WorkspacePage";
 import { isVisualizationResultNode } from "../components/workspace/WorkflowCanvas";
 import { LangProvider } from "../i18n";
@@ -14,9 +13,6 @@ const apiClientMock = vi.hoisted(() => ({
   post: vi.fn(),
   put: vi.fn(),
   delete: vi.fn(),
-}));
-const workflowExportMock = vi.hoisted(() => ({
-  exportCompletedWorkflowNode: vi.fn(),
 }));
 
 vi.mock("../api/client", () => ({
@@ -32,10 +28,6 @@ vi.mock("../components/workspace/NodeConfigPanel", () => ({
 vi.mock("../components/workspace/WorkflowCanvas", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/workspace/WorkflowCanvas")>()),
   default: () => null,
-}));
-vi.mock("../components/workspace/workflowExport", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../components/workspace/workflowExport")>()),
-  exportCompletedWorkflowNode: workflowExportMock.exportCompletedWorkflowNode,
 }));
 
 class TestWebSocket {
@@ -88,7 +80,6 @@ beforeEach(() => {
   useWorkflowStore.getState().reset();
   TestWebSocket.instances = [];
   vi.stubGlobal("WebSocket", TestWebSocket);
-  workflowExportMock.exportCompletedWorkflowNode.mockReset().mockResolvedValue("saved");
   apiClientMock.get.mockReset().mockImplementation((url: string) => {
     if (url === "/operators") {
       return Promise.resolve({ data: [{ id: "csv_export", category: "utility", inputs: [], outputs: [{ name: "data" }] }] });
@@ -116,7 +107,10 @@ beforeEach(() => {
           node_runs: [{
             node_id: "export-1",
             status: "completed",
-            result: { outputs: { data: [{ id: 1, status: "ok" }] } },
+            result: {
+              data: [{ id: 1, status: "ok" }],
+              artifacts: [{ artifact_id: "artifact-1", name: "export.csv", format: "csv" }],
+            },
             metrics: null,
             logs: [],
           }],
@@ -266,32 +260,8 @@ describe("visualization result click gating", () => {
   });
 });
 
-describe("workflow browser download notices", () => {
-  it("localizes the browser-managed save location notice for downloaded exports", () => {
-    const notifyWorkflowExportOutcome = (workspacePage as any).notifyWorkflowExportOutcome;
-    expect(typeof notifyWorkflowExportOutcome).toBe("function");
-
-    const info = vi.fn();
-    notifyWorkflowExportOutcome("downloaded", "zh", { info });
-    expect(info).toHaveBeenLastCalledWith("\u6d4f\u89c8\u5668\u5c06\u7ba1\u7406\u4fdd\u5b58\u4f4d\u7f6e");
-
-    notifyWorkflowExportOutcome("downloaded", "en", { info });
-    expect(info).toHaveBeenLastCalledWith("Your browser manages the save location.");
-  });
-
-  it("keeps skipped exports silent", () => {
-    const notifyWorkflowExportOutcome = (workspacePage as any).notifyWorkflowExportOutcome;
-    expect(typeof notifyWorkflowExportOutcome).toBe("function");
-
-    const info = vi.fn();
-    notifyWorkflowExportOutcome("skipped", "zh", { info });
-
-    expect(info).not.toHaveBeenCalled();
-  });
-});
-
 describe("workflow socket recovery", () => {
-  it("exports a pre-connect completed node once and deduplicates its later socket event", async () => {
+  it("stores the completed export artifact without starting an automatic download", async () => {
     renderWorkspacePage();
 
     await waitFor(() => expect(screen.getByRole("button", { name: /运行/ })).toBeInTheDocument());
@@ -300,15 +270,20 @@ describe("workflow socket recovery", () => {
     await waitFor(() => expect(TestWebSocket.instances).toHaveLength(1));
     TestWebSocket.instances[0].open();
 
-    await waitFor(() => expect(workflowExportMock.exportCompletedWorkflowNode).toHaveBeenCalledOnce());
+    await waitFor(() => expect(useWorkflowStore.getState().nodeResults["export-1"]?.artifacts).toEqual([
+      { artifact_id: "artifact-1", name: "export.csv", format: "csv" },
+    ]));
     TestWebSocket.instances[0].message({
       type: "node_status",
       node_id: "export-1",
       status: "completed",
-      result: { outputs: { data: [{ id: 1, status: "ok" }] } },
+      result: {
+        data: [{ id: 1, status: "ok" }],
+        artifacts: [{ artifact_id: "artifact-1", name: "export.csv", format: "csv" }],
+      },
     });
 
     await Promise.resolve();
-    expect(workflowExportMock.exportCompletedWorkflowNode).toHaveBeenCalledOnce();
+    expect(useWorkflowStore.getState().nodeResults["export-1"]?.artifacts).toHaveLength(1);
   });
 });

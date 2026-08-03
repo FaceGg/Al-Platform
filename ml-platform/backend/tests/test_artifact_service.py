@@ -68,6 +68,19 @@ class TestArtifactService(unittest.TestCase):
         self.assertTrue(artifact.storage_uri.startswith("file://"))
         self.assertEqual(artifact.storage_path, "")
 
+    def test_create_from_file_normalizes_string_project_id_for_workflow_artifacts(self):
+        artifact = self.service.create_from_file(
+            str(self.project_id),
+            self.source,
+            "workflow-export.csv",
+            "dataset",
+            metadata={"source": "workflow_export"},
+        )
+
+        self.assertEqual(artifact.project_id, self.project_id)
+        self.assertEqual(artifact.type, "dataset")
+        self.assertEqual(artifact.metadata_["source"], "workflow_export")
+
     def test_resolve_rejects_cross_project_artifact(self):
         artifact = self.service.create_dataset(self.project_id, self.source, "weld.csv")
 

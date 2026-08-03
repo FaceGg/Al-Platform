@@ -73,6 +73,15 @@ class TestSpotWeldFeatures(unittest.TestCase):
         self.assertEqual(len(features), 1)
         self.assertAlmostEqual(float(features.iloc[0]["wld1c"]), 8.0)
 
+    def test_mapping_accepts_bom_and_whitespace_padded_report_headers(self):
+        frame = report_like_frame(1)
+        frame.columns = [f"\ufeff  {column}  " for column in frame.columns]
+
+        features, _, _ = build_feature_frame(frame)
+
+        self.assertEqual(len(features), 1)
+        self.assertAlmostEqual(float(features.iloc[0]["wld1c"]), 8.0)
+
     def test_nonfinite_numeric_input_fails_instead_of_imputation(self):
         frame = report_like_frame(1)
         frame.loc[0, "wld1c"] = 0.0

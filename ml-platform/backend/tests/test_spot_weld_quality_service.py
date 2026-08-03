@@ -11,7 +11,7 @@ import numpy as np
 from openpyxl import load_workbook
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -36,6 +36,7 @@ from app.services.spot_weld_quality import (
     create_quality_run_record,
     execute_quality_run,
     read_report_dataset,
+    recover_orphaned_local_quality_runs,
     run_automl,
     run_clustering,
     run_snapshot_training,
@@ -43,6 +44,7 @@ from app.services.spot_weld_quality import (
     select_automl_configs,
     select_best_candidate,
     train_label_snapshot,
+    update_quality_run_rules,
     validate_report_frame,
     warning_level,
 )
@@ -51,6 +53,96 @@ from app.storage.local import LocalStorage
 
 
 class TestSpotWeldQualityService(unittest.TestCase):
+    def test_automatic_rule_update_recalculates_labels_and_preserves_manual_labels(self):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Session = sessionmaker(bind=engine)
+        Base.metadata.create_all(engine)
+        db = Session()
+        try:
+            owner = User(username=f"quality-rules-{uuid.uuid4().hex}", password_hash="hash")
+            db.add(owner); db.flush()
+            project = Project(name="Quality rules", owner_id=owner.id)
+            db.add(project); db.flush()
+            artifact = Artifact(
+                project_id=project.id, name="rules.csv", type="dataset", storage_path="rules.csv",
+                format="csv", file_size=1, metadata_={"row_count": 2},
+            )
+            db.add(artifact); db.flush()
+            run = SpotWeldQualityRun(
+                project_id=project.id, dataset_artifact_id=artifact.id, created_by_id=owner.id,
+                status="completed", input_fingerprint={"label_mode": "automatic", "rule_config": {}},
+                statistics={"annotation_progress": {"annotated_count": 2, "total_count": 2, "percent": 100.0}},
+            )
+            db.add(run); db.flush()
+            samples = [
+                SpotWeldQualitySample(
+                    run_id=run.id, source_row_index=0, display_id="W-0001",
+                    feature_values={"wld_spatter_strength": 3, "spotdiameter": 5, "energy_dev": 0,
+                                    "current_max_diff": 1, "power_std": 1},
+                    automatic_label="strong_splatter", current_label="spot_too_small",
+                    rule_hits=[{"code": "strong_splatter"}], cluster_id=0,
+                ),
+                SpotWeldQualitySample(
+                    run_id=run.id, source_row_index=1, display_id="W-0002",
+                    feature_values={"wld_spatter_strength": 1, "spotdiameter": 5, "energy_dev": 0,
+                                    "current_max_diff": 2, "power_std": 2},
+                    automatic_label="normal", current_label=None, rule_hits=[], cluster_id=0,
+                ),
+            ]
+            db.add_all(samples); db.commit()
+            progress = []
+
+            updated = update_quality_run_rules(
+                db,
+                run,
+                {"strong_splatter_min": 4, "weak_splatter_value": 2},
+                batch_size=1,
+                progress_callback=lambda value: progress.append(value["annotated_count"]),
+            )
+
+            db.refresh(samples[0]); db.refresh(samples[1])
+            self.assertEqual(updated.status, "completed")
+            self.assertEqual(samples[0].automatic_label, "normal")
+            self.assertEqual(samples[0].current_label, "spot_too_small")
+            self.assertEqual(progress, [0, 1, 2])
+            self.assertEqual(updated.input_fingerprint["rule_config"]["strong_splatter_min"], 4)
+        finally:
+            db.close(); engine.dispose()
+
+    def test_manual_rule_update_saves_configuration_without_changing_labels(self):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Session = sessionmaker(bind=engine)
+        Base.metadata.create_all(engine)
+        db = Session()
+        try:
+            owner = User(username=f"quality-manual-rules-{uuid.uuid4().hex}", password_hash="hash")
+            db.add(owner); db.flush()
+            project = Project(name="Manual rules", owner_id=owner.id)
+            db.add(project); db.flush()
+            artifact = Artifact(project_id=project.id, name="rules.csv", type="dataset", storage_path="rules.csv", format="csv", file_size=1)
+            db.add(artifact); db.flush()
+            run = SpotWeldQualityRun(
+                project_id=project.id, dataset_artifact_id=artifact.id, created_by_id=owner.id,
+                status="completed", input_fingerprint={"label_mode": "manual", "rule_config": {}}, statistics={},
+            )
+            db.add(run); db.flush()
+            sample = SpotWeldQualitySample(
+                run_id=run.id, source_row_index=0, display_id="W-0001",
+                feature_values={"wld_spatter_strength": 3}, automatic_label=None,
+                current_label="weak_splatter", rule_hits=[],
+            )
+            db.add(sample); db.commit()
+
+            updated = update_quality_run_rules(db, run, {"strong_splatter_min": 4})
+
+            db.refresh(sample)
+            self.assertEqual(updated.status, "completed")
+            self.assertEqual(updated.input_fingerprint["rule_config"]["strong_splatter_min"], 4)
+            self.assertIsNone(sample.automatic_label)
+            self.assertEqual(sample.current_label, "weak_splatter")
+        finally:
+            db.close(); engine.dispose()
+
     def test_snapshot_candidate_metrics_use_macro_multiclass_auc_and_f1(self):
         class BiasedClassifier:
             feature_importances_ = np.ones(3, dtype=float)
@@ -414,6 +506,60 @@ class TestSpotWeldQualityService(unittest.TestCase):
             db.close()
             engine.dispose()
 
+    def test_local_run_recovery_marks_pre_restart_non_terminal_runs_failed(self):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Session = sessionmaker(bind=engine)
+        Base.metadata.create_all(engine)
+        db = Session()
+        try:
+            local_runs = [
+                SpotWeldQualityRun(
+                    project_id=uuid.uuid4(),
+                    dataset_artifact_id=uuid.uuid4(),
+                    created_by_id=uuid.uuid4(),
+                    status=status,
+                    task_id=f"local:quality-{status}",
+                    worker_id="local",
+                )
+                for status in ("queued", "validating", "running")
+            ]
+            external_run = SpotWeldQualityRun(
+                project_id=uuid.uuid4(),
+                dataset_artifact_id=uuid.uuid4(),
+                created_by_id=uuid.uuid4(),
+                status="running",
+                task_id="celery:quality-running",
+                worker_id="worker-a",
+            )
+            completed_local_run = SpotWeldQualityRun(
+                project_id=uuid.uuid4(),
+                dataset_artifact_id=uuid.uuid4(),
+                created_by_id=uuid.uuid4(),
+                status="completed",
+                task_id="local:quality-completed",
+                worker_id="local",
+            )
+            db.add_all([*local_runs, external_run, completed_local_run])
+            db.commit()
+
+            recovered = recover_orphaned_local_quality_runs(db)
+
+            self.assertEqual(recovered, 3)
+            db.expire_all()
+            for run in local_runs:
+                stored = db.get(SpotWeldQualityRun, run.id)
+                self.assertEqual(stored.status, "failed")
+                self.assertEqual(stored.error_code, "QUALITY_RUN_LOCAL_WORKER_RESTARTED")
+                self.assertEqual(stored.error_details, {
+                    "code": "QUALITY_RUN_LOCAL_WORKER_RESTARTED",
+                    "message": "Local quality worker stopped during service restart; rerun this task.",
+                })
+            self.assertEqual(db.get(SpotWeldQualityRun, external_run.id).status, "running")
+            self.assertEqual(db.get(SpotWeldQualityRun, completed_local_run.id).status, "completed")
+        finally:
+            db.close()
+            engine.dispose()
+
     def test_demo_quality_run_persists_samples_and_generated_artifacts(self):
         with tempfile.TemporaryDirectory(prefix="quality-service-test-") as directory:
             engine = create_engine(
@@ -451,19 +597,49 @@ class TestSpotWeldQualityService(unittest.TestCase):
                 run.rule_set_version = "report_v1"
                 db.commit()
 
-                outcome = execute_quality_run(db, run.id, artifact_service=artifacts)
+                committed_annotation_counts = []
+
+                def capture_annotation_progress(session):
+                    progress = (run.statistics or {}).get("annotation_progress") or {}
+                    if "annotated_count" in progress:
+                        committed_annotation_counts.append(progress["annotated_count"])
+
+                event.listen(db, "before_commit", capture_annotation_progress)
+
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always", DeprecationWarning)
+                    try:
+                        outcome = execute_quality_run(db, run.id, artifact_service=artifacts)
+                    finally:
+                        event.remove(db, "before_commit", capture_annotation_progress)
                 db.refresh(run)
 
                 self.assertEqual(outcome.status, "completed")
                 self.assertEqual(run.status, "completed")
+                self.assertFalse(any(
+                    "Conversion of an array with ndim" in str(item.message)
+                    for item in caught
+                ))
                 self.assertEqual(run.rule_set_version, "report_v2")
+                self.assertTrue(any(0 < count < 24 for count in committed_annotation_counts))
                 self.assertEqual(
                     db.query(SpotWeldQualitySample).filter(SpotWeldQualitySample.run_id == run.id).count(),
                     24,
                 )
                 self.assertEqual(len(run.automl_results), 10)
                 self.assertFalse(any(result["error_code"] for result in run.automl_results))
-                self.assertEqual(set(run.output_artifacts), {"features", "results", "report"})
+                self.assertEqual(
+                    set(run.output_artifacts),
+                    {
+                        "features", "results", "report",
+                        "model_comparison_chart", "cluster_pca_chart", "feature_importance_chart",
+                        "warning_distribution_chart", "waveform_comparison_chart",
+                    },
+                )
+                self.assertTrue(all(
+                    float(result["training_time_seconds"]) > 0
+                    for result in run.automl_results
+                ))
                 report_artifact = db.query(Artifact).filter(
                     Artifact.id == uuid.UUID(run.output_artifacts["report"]),
                 ).one()
@@ -491,10 +667,10 @@ class TestSpotWeldQualityService(unittest.TestCase):
                     project.id,
                     expected_type="quality_report",
                 ) as report_path:
-                    workbook = load_workbook(report_path, read_only=True)
+                    workbook = load_workbook(report_path)
                     try:
                         self.assertEqual(workbook.sheetnames, [
-                            "总览", "AutoML选型", "缺陷标签", "聚类画像", "特征重要性", "推理结果",
+                            "总览", "AutoML选型", "深度学习对比", "缺陷标签", "聚类画像", "特征重要性", "推理结果", "多分类评估",
                         ])
                         summary = dict(workbook["总览"].iter_rows(min_row=2, values_only=True))
                         self.assertEqual(summary["规则集版本"], "report_v2")
@@ -503,6 +679,14 @@ class TestSpotWeldQualityService(unittest.TestCase):
                         self.assertEqual(workbook["缺陷标签"].max_row, 25)
                         self.assertEqual(workbook["特征重要性"].max_row, len(run.feature_schema) + 1)
                         self.assertEqual(workbook["推理结果"].max_row, 25)
+                        evaluation_labels = {
+                            str(row[0])
+                            for row in workbook["多分类评估"].iter_rows(min_row=2, values_only=True)
+                            if row[0] is not None
+                        }
+                        self.assertIn("strong_splatter", evaluation_labels)
+                        self.assertIn("weak_splatter", evaluation_labels)
+                        self.assertEqual(sum(len(sheet._images) for sheet in workbook.worksheets), 5)
                     finally:
                         workbook.close()
                 rule_set = db.query(SpotWeldQualityRuleSet).filter(
@@ -512,6 +696,57 @@ class TestSpotWeldQualityService(unittest.TestCase):
                 self.assertEqual(rule_set.thresholds["energy_dev_sigma"], 2.5)
                 self.assertNotIn("energy_dev_abs", rule_set.thresholds)
                 self.assertEqual(rule_set.thresholds["spatter_cluster_id"], 1)
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_annotation_progress_does_not_reload_each_committed_sample(self):
+        with tempfile.TemporaryDirectory(prefix="quality-progress-query-test-") as directory:
+            engine = create_engine(
+                "sqlite://",
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+            )
+            Session = sessionmaker(bind=engine)
+            Base.metadata.create_all(engine)
+            db = Session()
+            try:
+                owner = User(username=f"quality-progress-{uuid.uuid4().hex}", password_hash="hash")
+                db.add(owner)
+                db.flush()
+                project = Project(name="Quality progress", owner_id=owner.id)
+                db.add(project)
+                db.commit()
+                artifacts = ArtifactService(db, LocalStorage(Path(directory) / "artifacts"))
+                dataset = create_demo_quality_dataset(
+                    db,
+                    project_id=project.id,
+                    row_count=24,
+                    artifact_service=artifacts,
+                )
+                db.commit()
+                run = create_quality_run_record(
+                    db,
+                    project_id=project.id,
+                    user_id=owner.id,
+                    dataset_artifact_id=dataset.id,
+                    artifact_service=artifacts,
+                )
+                db.commit()
+                sample_selects = []
+
+                def capture_sample_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+                    if statement.lstrip().upper().startswith("SELECT") and "spot_weld_quality_samples" in statement:
+                        sample_selects.append(statement)
+
+                event.listen(engine, "before_cursor_execute", capture_sample_selects)
+                try:
+                    outcome = execute_quality_run(db, run.id, artifact_service=artifacts)
+                finally:
+                    event.remove(engine, "before_cursor_execute", capture_sample_selects)
+
+                self.assertEqual(outcome.status, "completed")
+                self.assertLessEqual(len(sample_selects), 2, sample_selects)
             finally:
                 db.close()
                 engine.dispose()

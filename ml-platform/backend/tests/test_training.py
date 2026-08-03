@@ -247,6 +247,76 @@ class TestTrainingAPI(unittest.TestCase):
         }, headers=self.other_headers)
         self.assertEqual(response.status_code, 404)
 
+    def test_automl_job_list_filters_to_requested_project(self):
+        with self.Session() as db:
+            other_project = Project(
+                name=f"Other owned project {uuid.uuid4().hex}",
+                owner_id=self.owner_id,
+            )
+            db.add(other_project)
+            db.flush()
+            other_experiment = Experiment(
+                project_id=other_project.id,
+                created_by=self.owner_id,
+                name="Other AutoML experiment",
+                mlflow_experiment_id=f"other-automl-{uuid.uuid4().hex}",
+            )
+            db.add(other_experiment)
+            db.flush()
+            selected_job = TrainingJob(
+                project_id=self.project_id,
+                user_id=self.owner_id,
+                experiment_id=self.experiment_id,
+                dataset_artifact_id=self.dataset_id,
+                name="selected-project-automl",
+                operator_id="automl",
+                params={"target_column": "quality", "task": "classification"},
+                status="completed",
+            )
+            other_job = TrainingJob(
+                project_id=other_project.id,
+                user_id=self.owner_id,
+                experiment_id=other_experiment.id,
+                dataset_artifact_id=self.dataset_id,
+                name="other-project-automl",
+                operator_id="automl",
+                params={"target_column": "quality", "task": "classification"},
+                status="completed",
+            )
+            db.add_all([selected_job, other_job])
+            db.commit()
+            selected_job_id = str(selected_job.id)
+            other_job_id = str(other_job.id)
+
+        response = self.client.get(
+            "/api/training/automl/jobs",
+            params={"project_id": str(self.project_id)},
+            headers=self.owner_headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        job_ids = {item["id"] for item in response.json()}
+        self.assertIn(selected_job_id, job_ids)
+        self.assertNotIn(other_job_id, job_ids)
+
+    def test_automl_job_list_rejects_unreadable_requested_project(self):
+        with self.Session() as db:
+            hidden_project = Project(
+                name=f"Hidden project {uuid.uuid4().hex}",
+                owner_id=self.other_id,
+            )
+            db.add(hidden_project)
+            db.commit()
+            hidden_project_id = str(hidden_project.id)
+
+        response = self.client.get(
+            "/api/training/automl/jobs",
+            params={"project_id": hidden_project_id},
+            headers=self.owner_headers,
+        )
+
+        self.assertEqual(response.status_code, 404, response.text)
+
     def test_project_roles_execute_read_stop_and_audit_training(self):
         started = self.client.post("/api/training/run", json={
             "project_id": str(self.project_id),

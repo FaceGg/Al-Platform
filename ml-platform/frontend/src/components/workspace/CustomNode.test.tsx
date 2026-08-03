@@ -192,6 +192,38 @@ describe("CustomNode visual structure", () => {
     expect(await screen.findByText("DataTable")).toBeInTheDocument();
   });
 
+  it("shows all required source columns for point-weld feature engineering inputs", async () => {
+    render(
+      <ReactFlowProvider>
+        <CustomNode
+          id="spot-weld-features"
+          type="custom"
+          selected={false}
+          dragging={false}
+          zIndex={0}
+          isConnectable
+          xPos={0}
+          yPos={0}
+          data={{
+            nodeId: "spot-weld-features",
+            operatorId: "spot_weld_feature_engineering",
+            label: "Spot Weld Feature Engineering",
+            inputs: [{
+              name: "data",
+              label: "Report Data",
+              type: "DataTable",
+              required_columns: ["wld1c", "cvei", "cvev", "cver", "cvep"],
+            }],
+            outputs: [],
+          }}
+        />
+      </ReactFlowProvider>,
+    );
+
+    fireEvent.mouseEnter(screen.getByTestId("port-in-data"));
+    expect(await screen.findByText(/wld1c, cvei, cvev, cver, cvep/)).toBeInTheDocument();
+  });
+
   it("clears preview on pointer down without intercepting Handle click propagation", async () => {
     const parentClick = vi.fn();
     render(

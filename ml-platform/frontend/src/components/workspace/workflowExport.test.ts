@@ -63,52 +63,7 @@ describe("workflow export serialization", () => {
     expect((await readBlobText(blob)).startsWith("Rows: 2, Columns: ['id', 'status']\n")).toBe(true);
   });
 
-  it("writes a completed export node's output into the chosen directory", async () => {
-    const exportCompletedWorkflowNode = (workflowExport as any).exportCompletedWorkflowNode;
-    expect(typeof exportCompletedWorkflowNode).toBe("function");
-
-    const write = vi.fn().mockResolvedValue(undefined);
-    const close = vi.fn().mockResolvedValue(undefined);
-    const createWritable = vi.fn().mockResolvedValue({ write, close });
-    const getFileHandle = vi.fn().mockResolvedValue({ createWritable });
-
-    await expect(exportCompletedWorkflowNode({
-      operatorId: "write_as_text",
-      nodeId: "export-1",
-      params: { format: "json", file_name: "quality-report" },
-      result: { outputs: { data: [{ id: 1, status: "ok" }] } },
-      directory: { name: "exports", getFileHandle },
-      fileSystemAccessAvailable: true,
-    })).resolves.toBe("saved");
-
-    expect(getFileHandle).toHaveBeenCalledWith("quality-report.json", { create: true });
-    expect(createWritable).toHaveBeenCalledOnce();
-    expect(write).toHaveBeenCalledOnce();
-    expect(close).toHaveBeenCalledOnce();
-    expect((write.mock.calls[0][0] as Blob).type).toContain("application/json");
-  });
-
-  it("passes CSV options through the completed export path", async () => {
-    const write = vi.fn().mockResolvedValue(undefined);
-    const close = vi.fn().mockResolvedValue(undefined);
-    const createWritable = vi.fn().mockResolvedValue({ write, close });
-    const getFileHandle = vi.fn().mockResolvedValue({ createWritable });
-
-    await expect(workflowExport.exportCompletedWorkflowNode({
-      operatorId: "csv_export",
-      nodeId: "export-1",
-      params: { separator: ";", include_header: false, encoding: "gbk" },
-      result: { outputs: { data: [{ id: 1, status: "\u710a\u63a5" }] } },
-      directory: { name: "exports", getFileHandle },
-      fileSystemAccessAvailable: true,
-    })).resolves.toBe("saved");
-
-    expect(await readBlobBytes(write.mock.calls[0][0] as Blob)).toEqual([
-      0x31, 0x3b, 0xba, 0xb8, 0xbd, 0xd3,
-    ]);
-  });
-
-  it("does not fall back to a browser download while the file system API is available", async () => {
+  it("does not download a completed export payload automatically", async () => {
     const exportCompletedWorkflowNode = (workflowExport as any).exportCompletedWorkflowNode;
     expect(typeof exportCompletedWorkflowNode).toBe("function");
 
@@ -123,39 +78,6 @@ describe("workflow export serialization", () => {
 
     expect(click).not.toHaveBeenCalled();
     click.mockRestore();
-  });
-
-  it("falls back to a browser download only when the file system API is unavailable", async () => {
-    const exportCompletedWorkflowNode = (workflowExport as any).exportCompletedWorkflowNode;
-    expect(typeof exportCompletedWorkflowNode).toBe("function");
-
-    const createObjectURL = vi.fn().mockReturnValue("blob:workflow-export");
-    const revokeObjectURL = vi.fn();
-    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-    const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
-    const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
-    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
-    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
-
-    try {
-      await expect(exportCompletedWorkflowNode({
-        operatorId: "csv_export",
-        nodeId: "export-1",
-        params: {},
-        result: { data: [{ id: 1 }] },
-        fileSystemAccessAvailable: false,
-      })).resolves.toBe("downloaded");
-
-      expect(click).toHaveBeenCalledOnce();
-      expect(createObjectURL).toHaveBeenCalledOnce();
-      expect(revokeObjectURL).toHaveBeenCalledWith("blob:workflow-export");
-    } finally {
-      click.mockRestore();
-      if (originalCreateObjectURL) Object.defineProperty(URL, "createObjectURL", originalCreateObjectURL);
-      else delete (URL as any).createObjectURL;
-      if (originalRevokeObjectURL) Object.defineProperty(URL, "revokeObjectURL", originalRevokeObjectURL);
-      else delete (URL as any).revokeObjectURL;
-    }
   });
 
   it("deduplicates completed export attempts by run and node", () => {

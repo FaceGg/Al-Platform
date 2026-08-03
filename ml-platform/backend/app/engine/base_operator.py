@@ -14,6 +14,7 @@ class PortSpec:
     name: str
     type: str
     label: str
+    required_columns: tuple[str, ...] = ()
 
 
 @dataclass

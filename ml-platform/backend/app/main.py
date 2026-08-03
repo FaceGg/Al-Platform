@@ -18,6 +18,7 @@ from app.events.subscriber import RedisRunEventSubscriber
 from app.middleware.request_id import RequestIdMiddleware
 from app.websocket.manager import manager
 from app.services.project_access import ProjectAccessError
+from app.services.spot_weld_quality import recover_orphaned_local_quality_runs
 
 # Import all operators so they register themselves
 # Import models (must happen before create_all)
@@ -155,6 +156,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app_settings, db_engine, session_factory = _runtime_dependencies(app)
     initialize_database(app_settings, db_engine)
     ensure_default_admin(session_factory)
+    with session_factory() as db:
+        recover_orphaned_local_quality_runs(db)
     # Capture event loop for background thread WebSocket broadcast
     import app.api.runs as runs_mod
     runs_mod._main_loop = asyncio.get_running_loop()

@@ -1,7 +1,12 @@
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
-from app.services.spot_weld_features import build_feature_frame
+from app.services.spot_weld_features import (
+    REPORT_TABLE_FIELDS,
+    WAVEFORM_FIELDS,
+    build_feature_frame,
+    canonicalize_report_frame,
+)
 import pandas as pd
 import numpy as np
 
@@ -191,7 +196,10 @@ class SpotWeldFeatureEngineering(BaseOperator):
     name = "Spot Weld Feature Engineering"
     category = "processing"
     description = "Decode four report waveforms and produce the fixed 73-feature schema"
-    inputs = [PortSpec("data", "DataTable", "Report Data")]
+    inputs = [PortSpec(
+        "data", "DataTable", "Report Data",
+        required_columns=REPORT_TABLE_FIELDS + WAVEFORM_FIELDS,
+    )]
     outputs = [
         PortSpec("features", "DataTable", "73 Feature Data"),
         PortSpec("schema", "JSON", "Feature Schema"),
@@ -206,8 +214,14 @@ class SpotWeldFeatureEngineering(BaseOperator):
         data = inputs.get("data", [])
         frame = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
         features, schema, statistics = build_feature_frame(frame)
+        # Keep the encoded source waveforms alongside derived features so the
+        # operator output remains traceable to the original report row.
+        canonical = canonicalize_report_frame(frame)
+        enriched = features.copy()
+        for field in WAVEFORM_FIELDS:
+            enriched[field] = canonical[field].to_numpy()
         return OperatorResult(outputs={
-            "features": features.to_dict(orient="records"),
+            "features": enriched.to_dict(orient="records"),
             "schema": {"columns": schema},
             "statistics": statistics,
         })

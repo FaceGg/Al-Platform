@@ -1,10 +1,19 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import NodeConfigPanel from "./NodeConfigPanel";
 import { useWorkflowStore } from "../../stores/workflowStore";
 
+const datasets = vi.hoisted(() => vi.fn());
+
+vi.mock("../../api/datasets", () => ({ listDatasets: datasets }));
+
 describe("NodeConfigPanel required parameters", () => {
   beforeEach(() => {
+    datasets.mockReset();
+    datasets.mockResolvedValue([
+      { id: "weld-csv", artifact_id: "weld-csv", name: "weld.csv", format: "csv" },
+      { id: "image", artifact_id: "image", name: "weld.png", format: "png" },
+    ]);
     useWorkflowStore.getState().reset();
     const selectedNode = {
       id: "excel-1",
@@ -124,7 +133,7 @@ describe("NodeConfigPanel required parameters", () => {
     expect(screen.queryByText("File URL")).not.toBeInTheDocument();
   });
 
-  it("offers the artifact source for CSV imports", () => {
+  it("offers compatible project dataset artifacts through a selector for CSV imports", async () => {
     const selectedNode = {
       id: "csv-1",
       type: "custom",
@@ -145,12 +154,14 @@ describe("NodeConfigPanel required parameters", () => {
       }],
     });
 
-    render(<NodeConfigPanel />);
+    render(<NodeConfigPanel projectId="project-1" />);
 
-    expect(screen.getByText("Dataset Artifact ID")).toBeInTheDocument();
+    expect((await screen.findAllByText("数据集制品")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Data File")).not.toBeInTheDocument();
     expect(screen.queryByText("File URL")).not.toBeInTheDocument();
-    fireEvent.mouseDown(screen.getByRole("combobox"));
-    expect(screen.getAllByText("数据集制品")).toHaveLength(2);
+    expect(datasets).toHaveBeenCalledWith("project-1");
+    fireEvent.mouseDown(screen.getAllByRole("combobox")[1]);
+    expect(await screen.findByText("weld.csv")).toBeInTheDocument();
+    expect(screen.queryByText("weld.png")).not.toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, Dropdown, Empty, Spin, Tag, Tooltip } from "antd";
-import { DownloadOutlined, ExperimentOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
+import { DeleteOutlined, DownloadOutlined, ExperimentOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import AppLayout from "../components/AppLayout";
@@ -8,31 +8,24 @@ import { formatApiError, default as apiClient } from "../api/client";
 import { listDatasets } from "../api/datasets";
 import {
   createQualityDemoDataset,
-  createQualityLabelSnapshot,
   createQualityRun,
+  deleteQualityRun,
   downloadQualityAnnotationExport,
-  downloadQualityArtifact,
-  getQualityModel,
-  getQualityRun,
   getQualitySample,
-  listQualityLabelSnapshots,
+  getQualityRun,
   listQualityRuns,
   listQualitySamples,
   saveLabeledDataset,
-  reviewQualityLabel,
   submitQualityLabel,
   type QualityRun,
   type QualityLabelMode,
-  type QualityLabelSnapshot,
-  type QualityModel,
   type QualityRuleConfig,
   type QualitySample,
   type QualitySampleDetail,
-  trainQualityLabelSnapshot,
   uploadQualityDataset,
+  updateQualityRunRules,
   validateQualityDataset,
 } from "../api/spotWeldQuality";
-import WaveformPanel from "../components/spotWeld/WaveformPanel";
 import { useI18n } from "../i18n";
 
 interface ProjectOption { id: string; name: string; project_role?: string; }
@@ -110,10 +103,6 @@ function qualityLabelText(value: string | null | undefined): string {
   return LABEL_TEXT[value] || value;
 }
 
-function qualityRuleText(rule: { code: string; reason?: string }): string | undefined {
-  return RULE_TEXT[rule.code] || rule.reason;
-}
-
 function annotationProgressText(run: QualityRun): string {
   const progress = run.annotation_progress;
   if (!progress) return "0/0 0%";
@@ -127,6 +116,55 @@ function runModeText(run: QualityRun): string {
 const warningColor: Record<string, string> = {
   critical: "red", warning: "orange", notice: "gold", none: "green",
 };
+
+const WAVEFORM_FIELD_CHANNELS: Record<string, keyof NonNullable<QualitySampleDetail["waveforms"]>> = {
+  cvei: "current",
+  cvev: "voltage",
+  cver: "resistance",
+  cvep: "power",
+};
+
+function fullSampleValue(name: string, value: unknown, waveforms: QualitySampleDetail["waveforms"]): string {
+  const channel = WAVEFORM_FIELD_CHANNELS[name];
+  const displayValue = channel ? waveforms?.[channel] : value;
+  if (typeof displayValue === "string") return displayValue;
+  if (displayValue == null) return "-";
+  if (Array.isArray(displayValue)) return `[${displayValue.map((item) => String(item)).join(", ")}]`;
+  if (typeof displayValue === "object") return JSON.stringify(displayValue);
+  return String(displayValue);
+}
+
+function sampleRuleState(
+  name: string,
+  detail: QualitySampleDetail,
+  run: QualityRun | undefined,
+): "matched" | "unmatched" | null {
+  const source = detail.table_values || {};
+  const featureValues = detail.feature_values || {};
+  const rules = run?.rule_config || DEFAULT_RULE_CONFIG;
+  const numeric = Number(source[name]);
+  if (name === "wld_spatter_strength") {
+    return numeric >= Number(rules.strong_splatter_min ?? 3) || numeric === Number(rules.weak_splatter_value ?? 2)
+      ? "matched" : "unmatched";
+  }
+  if (name === "spotdiameter") {
+    return (numeric > Number(rules.spotdiameter_small_min ?? 0) && numeric < Number(rules.spotdiameter_small_max ?? 2))
+      || numeric > Number(rules.spotdiameter_large_min ?? 80) ? "matched" : "unmatched";
+  }
+  if (name === "energy") {
+    return Math.abs(Number(featureValues.energy_dev)) > Number(rules.energy_dev_sigma ?? 2.5) ? "matched" : "unmatched";
+  }
+  if (name === "energy_dev") {
+    return Math.abs(Number(source[name] ?? featureValues.energy_dev)) > Number(rules.energy_dev_sigma ?? 2.5) ? "matched" : "unmatched";
+  }
+  if (name === "cvei" || name === "current_max_diff") {
+    return (detail.rule_hits || []).some((rule) => rule.code === "current_jump") ? "matched" : "unmatched";
+  }
+  if (name === "cvep" || name === "power_std") {
+    return (detail.rule_hits || []).some((rule) => rule.code === "power_fluctuation") ? "matched" : "unmatched";
+  }
+  return null;
+}
 
 export default function DataAnnotationPage() {
   const { t } = useI18n();
@@ -147,20 +185,13 @@ export default function DataAnnotationPage() {
   const [loadingDatasets, setLoadingDatasets] = useState(false);
   const [loadingSamples, setLoadingSamples] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [snapshots, setSnapshots] = useState<QualityLabelSnapshot[]>([]);
-  const [snapshotId, setSnapshotId] = useState("");
-  const [snapshotName, setSnapshotName] = useState("approved-labels");
-  const [snapshotLabelSource, setSnapshotLabelSource] = useState<"approved" | "automatic">("approved");
-  const [qualityModel, setQualityModel] = useState<QualityModel | null>(null);
-  const [qualityArtifacts, setQualityArtifacts] = useState<Record<string, string>>({});
-  const [trainingSnapshot, setTrainingSnapshot] = useState(false);
-  const [downloadingReport, setDownloadingReport] = useState(false);
   const [downloadingAnnotationExport, setDownloadingAnnotationExport] = useState(false);
   const [savingLabeledDataset, setSavingLabeledDataset] = useState(false);
   const [label, setLabel] = useState("");
-  const [note, setNote] = useState("");
-  const [reviewComment, setReviewComment] = useState("");
+  const [savingLabel, setSavingLabel] = useState(false);
   const [preparingRun, setPreparingRun] = useState(false);
+  const [deletingRunId, setDeletingRunId] = useState("");
+  const [savingRules, setSavingRules] = useState(false);
   const [labelMode, setLabelMode] = useState<QualityLabelMode>(searchParams.get("mode") === "manual" ? "manual" : "automatic");
   const [ruleConfig, setRuleConfig] = useState<QualityRuleConfig>({ ...DEFAULT_RULE_CONFIG });
   const [workspaceMode, setWorkspaceMode] = useState(Boolean(searchParams.get("runId")));
@@ -168,6 +199,7 @@ export default function DataAnnotationPage() {
   const activeContextRef = useRef({ projectId, runId });
   const detailRequestId = useRef(0);
   const runsRequestId = useRef(0);
+  const skipUrlStateSyncRef = useRef(false);
   activeContextRef.current = { projectId, runId };
 
   const isCurrentContext = (expectedProjectId: string, expectedRunId: string) => (
@@ -190,6 +222,11 @@ export default function DataAnnotationPage() {
   const canCreate = ["owner", "editor"].includes(projectRole);
   const canLabel = ["owner", "editor", "operator"].includes(projectRole);
   const canReview = ["owner", "editor"].includes(projectRole);
+
+  useEffect(() => {
+    if (!selectedRun) return;
+    setRuleConfig({ ...DEFAULT_RULE_CONFIG, ...(selectedRun.rule_config || {}) });
+  }, [selectedRun?.id, selectedRun?.rule_config]);
 
   useEffect(() => {
     setLabelMode(searchParams.get("mode") === "manual" ? "manual" : "automatic");
@@ -270,6 +307,10 @@ export default function DataAnnotationPage() {
   }, [isSetup, requestedView, loadingProjects, projectId, message]);
 
   useEffect(() => {
+    if (skipUrlStateSyncRef.current) {
+      skipUrlStateSyncRef.current = false;
+      return;
+    }
     setSearchParams((current) => {
       if (projectId) current.set("projectId", projectId); else current.delete("projectId");
       if (datasetArtifactId) current.set("datasetId", datasetArtifactId); else current.delete("datasetId");
@@ -291,34 +332,6 @@ export default function DataAnnotationPage() {
     return () => { active = false; };
   }, [projectId, runId, selectedRun?.status, message]);
 
-  useEffect(() => {
-    if (!projectId || !runId || selectedRun?.status !== "completed") {
-      setSnapshots([]);
-      setSnapshotId("");
-      setQualityModel(null);
-      setQualityArtifacts({});
-      return;
-    }
-    let active = true;
-    Promise.all([
-      listQualityLabelSnapshots(projectId, runId),
-      getQualityRun(projectId, runId),
-      getQualityModel(projectId, runId).catch(() => null),
-    ]).then(([nextSnapshots, run, model]) => {
-      if (!active) return;
-      setSnapshots(nextSnapshots);
-      setSnapshotId((current) => nextSnapshots.some((item) => item.id === current) ? current : nextSnapshots[0]?.id || "");
-      setQualityArtifacts(run.output_artifacts || {});
-      setQualityModel(model);
-    }).catch(() => {
-      if (!active) return;
-      setSnapshots([]);
-      setQualityModel(null);
-      setQualityArtifacts({});
-    });
-    return () => { active = false; };
-  }, [projectId, runId, selectedRun?.status]);
-
   const selectSample = async (sample: QualitySample) => {
     if (!projectId || !runId) return;
     const expectedProjectId = projectId;
@@ -329,8 +342,7 @@ export default function DataAnnotationPage() {
       const detail = await getQualitySample(projectId, runId, sample.id);
       if (detailRequestId.current !== requestId || !isCurrentContext(expectedProjectId, expectedRunId)) return;
       setSelected(detail);
-      setLabel(detail.current_label || detail.automatic_label || "");
-      setNote(detail.current_note || "");
+      setLabel(detail.current_label || "");
     } catch (error) {
       if (detailRequestId.current === requestId && isCurrentContext(expectedProjectId, expectedRunId)) {
         message.error(formatApiError(error, "样本详情加载失败"));
@@ -473,6 +485,7 @@ export default function DataAnnotationPage() {
       return;
     }
     setWorkspaceMode(false);
+    setDatasetArtifactId("");
     setRunId("");
     setSearchParams((current) => {
       current.set("type", "spot-weld");
@@ -496,6 +509,22 @@ export default function DataAnnotationPage() {
       current.delete("runId");
       return current;
     }, { replace: true });
+  };
+
+  const returnToTaskList = () => {
+    detailRequestId.current += 1;
+    skipUrlStateSyncRef.current = true;
+    setWorkspaceMode(false);
+    setDatasetArtifactId("");
+    setRunId("");
+    setSelected(null);
+    setLabel("");
+    const next = new URLSearchParams();
+    next.set("type", "spot-weld");
+    next.set("view", "tasks");
+    if (projectId) next.set("projectId", projectId);
+    next.set("mode", labelMode);
+    setSearchParams(next, { replace: true });
   };
 
   const openRunWorkspace = (run: QualityRun, mode: QualityLabelMode = run.label_mode || "automatic") => {
@@ -539,75 +568,77 @@ export default function DataAnnotationPage() {
     }
   };
 
-  const submitLabel = async () => {
-    if (!projectId || !runId || !selected || !label) return;
+  const saveLabel = async (nextLabel: string) => {
+    if (!projectId || !runId || !selected || !nextLabel || savingLabel) return;
+    const sampleId = selected.id;
+    const previousLabel = label;
+    setLabel(nextLabel);
+    setSavingLabel(true);
     try {
-      await submitQualityLabel(projectId, runId, selected.id, { label, note });
-      message.success("标签已提交，等待审核");
-      await refreshSamples(selected.id);
-    } catch (error) { message.error(formatApiError(error, "标签提交失败")); }
-  };
-
-  const review = async (decision: "approved" | "returned") => {
-    if (!projectId || !runId || !selected) return;
-    try {
-      await reviewQualityLabel(projectId, runId, selected.id, { decision, comment: reviewComment });
-      message.success(decision === "approved" ? "审核已通过" : "已退回复核");
-      await refreshSamples(selected.id);
-    } catch (error) { message.error(formatApiError(error, "审核失败")); }
-  };
-
-  const createSnapshot = async () => {
-    if (!projectId || !runId || !canReview) return;
-    try {
-      const snapshot = await createQualityLabelSnapshot(
-        projectId,
-        runId,
-        snapshotName.trim() || (snapshotLabelSource === "automatic" ? "report-auto-labels" : "approved-labels"),
-        snapshotLabelSource,
-      );
-      setSnapshots((current) => [snapshot, ...current.filter((item) => item.id !== snapshot.id)]);
-      setSnapshotId(snapshot.id);
-      message.success(snapshotLabelSource === "automatic" ? "已冻结报告复现自动标签快照" : "已冻结审核标签快照");
+      const saved = await submitQualityLabel(projectId, runId, sampleId, { label: nextLabel, note: "" });
+      setSelected((current) => current?.id === sampleId ? { ...current, ...saved } : current);
+      setSamples((current) => current.map((sample) => sample.id === sampleId ? { ...sample, ...saved } : sample));
+      message.success("标签已保存");
     } catch (error) {
-      message.error(formatApiError(error, "创建标签快照失败"));
+      setLabel(previousLabel);
+      message.error(formatApiError(error, "标签保存失败"));
+    } finally {
+      setSavingLabel(false);
     }
   };
 
-  const trainSnapshot = async () => {
-    if (!projectId || !runId || !snapshotId || !canReview) return;
-    setTrainingSnapshot(true);
+  const refreshActiveWorkspace = async () => {
+    if (!projectId || !runId) return;
+    const expectedProjectId = projectId;
+    const expectedRunId = runId;
+    const [latestRun, latestSamples] = await Promise.all([
+      getQualityRun(expectedProjectId, expectedRunId),
+      listQualitySamples(expectedProjectId, expectedRunId),
+    ]);
+    if (!isCurrentContext(expectedProjectId, expectedRunId)) return;
+    setRuns((current) => current.map((item) => item.id === latestRun.id ? latestRun : item));
+    setSamples(latestSamples);
+    const selectedSample = selected && latestSamples.find((item) => item.id === selected.id);
+    if (selectedSample) await selectSample(selectedSample);
+  };
+
+  const removeRun = async (run: QualityRun) => {
+    if (!projectId || deletingRunId || !window.confirm(`确认删除标注任务 ${run.id}？`)) return;
+    setDeletingRunId(run.id);
     try {
-      const result = await trainQualityLabelSnapshot(projectId, runId, snapshotId);
-      setQualityModel(result.model);
-      setQualityArtifacts(result.output_artifacts);
-      setRuns((current) => current.map((run) => run.id === runId ? {
-        ...run,
-        output_artifacts: result.output_artifacts,
-      } : run));
-      message.success("质量模型与报告已生成");
+      await deleteQualityRun(projectId, run.id);
+      setRuns((current) => current.filter((item) => item.id !== run.id));
+      message.success("标注任务已删除");
     } catch (error) {
-      message.error(formatApiError(error, "标签快照训练失败"));
+      message.error(formatApiError(error, "标注任务删除失败"));
     } finally {
-      setTrainingSnapshot(false);
+      setDeletingRunId("");
     }
   };
 
-  const downloadReport = async () => {
-    if (!projectId || !runId || !qualityArtifacts.report) return;
-    setDownloadingReport(true);
+  const saveRuleConfiguration = async () => {
+    if (!projectId || !runId || !selectedRun || savingRules) return;
+    setSavingRules(true);
     try {
-      const blob = await downloadQualityArtifact(projectId, runId, "report");
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = "spot-weld-quality-report.xlsx";
-      anchor.click();
-      URL.revokeObjectURL(url);
+      const updated = await updateQualityRunRules(projectId, runId, ruleConfig);
+      setRuns((current) => current.map((item) => item.id === updated.id ? updated : item));
+      await refreshActiveWorkspace();
+      message.success(selectedRun.label_mode === "manual" ? "标注规则已保存" : "规则已保存，自动标签已重新计算");
     } catch (error) {
-      message.error(formatApiError(error, "质量报告下载失败"));
+      message.error(formatApiError(error, "标注规则保存失败"));
     } finally {
-      setDownloadingReport(false);
+      setSavingRules(false);
+    }
+  };
+
+  const submitRunForReview = async () => {
+    if (!projectId || !runId || !canLabel) return;
+    try {
+      const response = await apiClient.post(`/projects/${projectId}/spot-weld/runs/${runId}/submit-review`);
+      message.success(`已提交 ${response.data?.submitted_count ?? 0} 条标注复核`);
+      await refreshSamples(selected?.id || "");
+    } catch (error) {
+      message.error(formatApiError(error, "提交复核失败"));
     }
   };
 
@@ -645,9 +676,11 @@ export default function DataAnnotationPage() {
 
   useEffect(() => {
     if (!projectId || !runId || !["queued", "validating", "running"].includes(String(selectedRun?.status || ""))) return;
-    const timer = window.setInterval(() => { void refreshRuns(); }, 1500);
+    const timer = window.setInterval(() => {
+      void refreshActiveWorkspace().catch((error) => message.error(formatApiError(error, "标注进度刷新失败")));
+    }, 1000);
     return () => window.clearInterval(timer);
-  }, [projectId, runId, selectedRun?.status]);
+  }, [projectId, runId, selectedRun?.status, selected?.id, message]);
 
   const catalogView = (
     <>
@@ -700,14 +733,19 @@ export default function DataAnnotationPage() {
             <div className="data-annotation__task-progress" aria-label={`标注进度 ${run.id}`}>
               <span>标注进度</span><strong>{annotationProgressText(run)}</strong>
             </div>
-            <button
-              type="button"
-              className="ant-btn"
-              aria-label={`${run.label_mode === "manual" ? "手工标注" : "查看标注"} ${run.id}`}
-              onClick={() => openRunWorkspace(run)}
-            >
-              {run.label_mode === "manual" ? "手工标注" : "查看标注"}
-            </button>
+            <div className="data-annotation__task-buttons">
+              <button
+                type="button"
+                className="ant-btn"
+                aria-label={`${run.label_mode === "manual" ? "手工标注" : "查看标注"} ${run.id}`}
+                onClick={() => openRunWorkspace(run)}
+              >
+                {run.label_mode === "manual" ? "手工标注" : "查看标注"}
+              </button>
+              {["completed", "failed", "cancelled"].includes(String(run.status)) && <Tooltip title="删除标注任务">
+                <button type="button" className="ant-btn ant-btn-icon-only" aria-label={`删除标注任务 ${run.id}`} onClick={() => void removeRun(run)} disabled={deletingRunId === run.id}><DeleteOutlined /></button>
+              </Tooltip>}
+            </div>
           </article>
         ))}
       </section>
@@ -722,7 +760,7 @@ export default function DataAnnotationPage() {
           <h2 className="page-title">点焊标注配置</h2>
           <p className="page-subtitle">先选择报告数据和标注方式，再进入样本队列复核</p>
         </div>
-        <button type="button" className="ant-btn" onClick={() => { setWorkspaceMode(false); setRunId(""); navigate("/data-annotation?type=spot-weld&view=tasks"); }}>返回任务列表</button>
+        <button type="button" className="ant-btn" onClick={returnToTaskList}>返回任务列表</button>
       </div>
       <section className="data-annotation__setup" aria-label="点焊标注配置">
         <div className="data-annotation__setup-grid">
@@ -828,7 +866,7 @@ export default function DataAnnotationPage() {
         <div className="page-header-copy">
           <p className="page-kicker">QUALITY / LABELING</p>
           <h2 className="page-title">{labels.title || "数据标注"}</h2>
-          <p className="page-subtitle">{selectedProject?.name || "选择项目后开始审核点焊波形"}</p>
+          <p className="page-subtitle">{selectedProject?.name || "点焊样本逐条标注"}</p>
         </div>
         <div className="spot-weld-annotation__controls">
           <label htmlFor="spot-weld-annotation-project">Project</label>
@@ -836,65 +874,63 @@ export default function DataAnnotationPage() {
             <option value="">选择项目</option>
             {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
           </select>
-          <label htmlFor="spot-weld-quality-run">质量运行</label>
-          <select id="spot-weld-quality-run" className="spot-weld-annotation__run" aria-label="质量运行" value={runId} onChange={(event) => setRunId(event.target.value)} disabled={!projectId || loadingRuns}>
-            <option value="">选择运行</option>
-            {runs.map((run) => <option value={run.id} key={run.id}>{run.id.slice(0, 8)} · {run.status}</option>)}
-          </select>
         </div>
         <div className="spot-weld-annotation__actions">
-          <Dropdown trigger={["click"]} disabled={!canCreate || preparingRun} menu={{ items: [{ key: "60", label: "快速样本（60 条）" }, { key: "1875", label: "报告复现（1875 条）" }], onClick: ({ key }) => { void handleCreateDemo(Number(key)); } }}>
-            <Tooltip title="准备报告结构的模拟数据"><button type="button" className="ant-btn" disabled={!canCreate || preparingRun}><ExperimentOutlined />模拟数据</button></Tooltip>
-          </Dropdown>
+          <button type="button" className="ant-btn" aria-label="返回任务列表" onClick={returnToTaskList}>返回任务列表</button>
+          <button type="button" className="ant-btn ant-btn-primary" aria-label="提交复核" onClick={() => void submitRunForReview()} disabled={!canLabel || !runId}>提交复核</button>
           {projectId && selectedRun && <Dropdown trigger={["click"]} disabled={downloadingAnnotationExport} menu={{ items: [{ key: "csv", label: "CSV" }, { key: "xlsx", label: "XLSX" }], onClick: ({ key }) => { void downloadAnnotations(key as "csv" | "xlsx"); } }}>
             <button type="button" className="ant-btn" aria-label="导出标注" disabled={downloadingAnnotationExport}><DownloadOutlined />导出标注</button>
           </Dropdown>}
-          {projectId && selectedRun?.status === "completed" && <button type="button" className="ant-btn ant-btn-primary" aria-label="保存到数据管理" onClick={() => void saveToDataManagement()} disabled={!canLabel || savingLabeledDataset}>{savingLabeledDataset ? "保存中..." : "保存到数据管理"}</button>}
-          <Tooltip title="刷新质量运行"><button type="button" className="ant-btn ant-btn-icon-only" aria-label="刷新质量运行" onClick={() => { void refreshRuns(); }} disabled={!projectId || loadingRuns}><ReloadOutlined /></button></Tooltip>
+          {projectId && selectedRun?.status === "completed" && <button type="button" className="ant-btn" aria-label="保存到数据管理" onClick={() => void saveToDataManagement()} disabled={!canLabel || savingLabeledDataset}>{savingLabeledDataset ? "保存中..." : "保存到数据管理"}</button>}
+          <Tooltip title="刷新标注任务"><button type="button" className="ant-btn ant-btn-icon-only" aria-label="刷新标注任务" onClick={() => { void refreshRuns(); }} disabled={!projectId || loadingRuns}><ReloadOutlined /></button></Tooltip>
         </div>
       </div>
-      <div className="spot-weld-annotation__workspace">
+      <div className="spot-weld-annotation__workspace spot-weld-annotation__workspace--detail">
         <section className="spot-weld-annotation__region spot-weld-annotation__queue" aria-labelledby="spot-weld-queue-title">
-          <div className="spot-weld-annotation__region-head"><h3 id="spot-weld-queue-title">{labels.queue || "样本队列"}</h3><div className="spot-weld-annotation__queue-meta"><Tag>{samples.length} samples</Tag>{selectedRun && <Tag color="blue">{annotationProgressText(selectedRun)}</Tag>}</div></div>
+          <div className="spot-weld-annotation__region-head"><h3 id="spot-weld-queue-title">{labels.queue || "样本队列"}</h3><div className="spot-weld-annotation__queue-meta"><Tag>{samples.length} 条</Tag>{selectedRun && <Tag color="blue">{annotationProgressText(selectedRun)}</Tag>}</div></div>
           {loadingRuns || loadingSamples ? <Spin /> : samples.length === 0 ? <Empty description="暂无样本" /> : (
             <div className="spot-weld-annotation__sample-list">
               {samples.map((sample) => <button type="button" className={`spot-weld-annotation__sample ${selected?.id === sample.id ? "is-selected" : ""}`} key={sample.id} onClick={() => selectSample(sample)} aria-label={sample.display_id}>
-                <span><strong>{sample.display_id}</strong><small>row {sample.source_row_index ?? "-"}</small></span>
-                <Tag color={warningColor[sample.warning_level || "none"]}>{sample.warning_level || "none"}</Tag>
+                <span><strong>{sample.display_id}</strong><small>第 {sample.source_row_index ?? "-"} 行</small></span>
+                <Tag color={warningColor[sample.warning_level || "none"]}>{qualityLabelText(sample.current_label || sample.automatic_label) || "未标注"}</Tag>
               </button>)}
             </div>
           )}
         </section>
-        <section className="spot-weld-annotation__region spot-weld-annotation__waveforms" aria-labelledby="spot-weld-waveform-title">
-          <div className="spot-weld-annotation__region-head"><h3 id="spot-weld-waveform-title">{labels.waveforms || "四通道波形"}</h3>{selectedRun && <Tag color={selectedRun.status === "completed" ? "green" : "blue"}>{selectedRun.status}</Tag>}</div>
-          {loadingDetail ? <Spin /> : selected ? <WaveformPanel waveforms={selected.waveforms} /> : <Empty description="选择样本查看波形" />}
-        </section>
-        <section className="spot-weld-annotation__region spot-weld-annotation__review" aria-labelledby="spot-weld-review-title">
-          <h3 id="spot-weld-review-title">{labels.review || "标注与审核"}</h3>
-          {selected ? <>
-            <div className="spot-weld-annotation__sample-meta"><strong>{selected.display_id}</strong><Tag color={warningColor[selected.warning_level || "none"]}>{selected.warning_level || "none"}</Tag><span>{selected.defect_probability == null ? "-" : `${(selected.defect_probability * 100).toFixed(1)}% defect`}</span></div>
-            {selectedRun?.label_mode !== "manual" && <>
-              <div className="spot-weld-annotation__evidence"><span>自动标签 <strong>{qualityLabelText(selected.automatic_label)}</strong></span><span>聚类 <strong>{selected.cluster_id == null ? "-" : selected.cluster_id}</strong></span><span>特征 <strong>{Object.keys(selected.feature_values || {}).length || "-"}</strong></span></div>
-              <div className="spot-weld-annotation__rules" aria-label="规则命中">{(selected.rule_hits || []).length ? selected.rule_hits?.map((rule) => <span className="spot-weld-annotation__rule" key={rule.code}><Tag color="blue">{qualityLabelText(rule.label)}</Tag>{qualityRuleText(rule) && <small>{qualityRuleText(rule)}</small>}</span>) : <small>无规则命中</small>}</div>
-            </>}
-            <details className="spot-weld-annotation__details"><summary>工艺参数</summary><div>{Object.entries(selected.table_values || {}).map(([name, value]) => <span key={name}><small>{name}</small><strong>{typeof value === "number" ? value.toFixed(3) : String(value)}</strong></span>)}</div></details>
-            <label htmlFor="quality-label">人工标签</label>
-            <select id="quality-label" aria-label="人工标签" value={label} onChange={(event) => setLabel(event.target.value)} disabled={!canLabel}><option value="">请选择</option>{LABEL_OPTIONS.map(([value, text]) => <option value={value} key={value}>{text}</option>)}</select>
-            <label htmlFor="quality-note">备注</label><textarea id="quality-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="记录工艺判断" disabled={!canLabel} />
-            <button type="button" className="ant-btn ant-btn-primary" onClick={submitLabel} disabled={!canLabel || !label}>提交复核</button>
-            <div className="spot-weld-annotation__review-divider" /><label htmlFor="quality-review-comment">审核意见</label><textarea id="quality-review-comment" value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="审核说明" disabled={!canReview} />
-            <div className="spot-weld-annotation__review-actions"><button type="button" className="ant-btn ant-btn-primary" onClick={() => review("approved")} disabled={!canReview}>通过审核</button><button type="button" className="ant-btn" onClick={() => review("returned")} disabled={!canReview}>退回</button></div>
-            <small className="spot-weld-annotation__status">状态：{selected.review_status}</small>
-          </> : <Empty description="选择样本进行标注" />}
-          {runId && selectedRun?.status === "completed" && <section className="spot-weld-annotation__training" aria-label="审核标签训练">
-            <div className="spot-weld-annotation__training-head"><h4>审核标签训练</h4><Tag>{snapshots.length} 快照</Tag></div>
-            <label htmlFor="quality-snapshot-name">快照名称</label><input id="quality-snapshot-name" aria-label="快照名称" value={snapshotName} onChange={(event) => setSnapshotName(event.target.value)} disabled={!canReview} />
-            <label htmlFor="quality-snapshot-source">快照标签来源</label><select id="quality-snapshot-source" aria-label="快照标签来源" value={snapshotLabelSource} onChange={(event) => setSnapshotLabelSource(event.target.value as "approved" | "automatic")} disabled={!canReview}><option value="approved">已人工审核</option><option value="automatic">报告复现自动标签</option></select>
-            <button type="button" className="ant-btn" onClick={createSnapshot} disabled={!canReview}>创建训练快照</button>
-            <label htmlFor="quality-training-snapshot">训练标签快照</label><select id="quality-training-snapshot" aria-label="训练标签快照" value={snapshotId} onChange={(event) => setSnapshotId(event.target.value)} disabled={!canReview || snapshots.length === 0}><option value="">选择已冻结快照</option>{snapshots.map((snapshot) => <option value={snapshot.id} key={snapshot.id}>{snapshot.name} · {snapshot.label_source === "automatic" ? "报告复现自动标签" : "已人工审核"} · {snapshot.sample_count} 条</option>)}</select>
-            <button type="button" className="ant-btn ant-btn-primary" onClick={trainSnapshot} disabled={!canReview || !snapshotId || trainingSnapshot}>{trainingSnapshot ? "训练中..." : "训练快照"}</button>
-            {qualityModel && <div className="spot-weld-annotation__training-result"><div><strong>{qualityModel.name}</strong><small>{qualityModel.backbone || qualityModel.framework || "质量模型"}</small></div><div className="spot-weld-annotation__training-actions">{qualityArtifacts.report && <button type="button" className="ant-btn" aria-label="下载质量报告" onClick={downloadReport} disabled={downloadingReport}><DownloadOutlined />下载质量报告</button>}<button type="button" className="ant-btn" onClick={() => navigate(`/models?projectId=${encodeURIComponent(projectId)}`)}>查看模型库</button></div></div>}
-          </section>}
+        <section className="spot-weld-annotation__region spot-weld-annotation__detail" aria-labelledby="spot-weld-detail-title">
+          <div className="spot-weld-annotation__region-head"><h3 id="spot-weld-detail-title">样本详情</h3>{selectedRun && <Tag color={selectedRun.status === "completed" ? "green" : "blue"}>{selectedRun.status}</Tag>}</div>
+          {loadingDetail ? <Spin /> : !selected ? <Empty description="选择样本查看详情" /> : <>
+            <section className="spot-weld-annotation__annotation-rules" aria-labelledby="spot-weld-rule-list-title">
+              <div className="spot-weld-annotation__subhead"><h4 id="spot-weld-rule-list-title">{selectedRun?.label_mode === "manual" ? "标注规则" : "自动标注规则"}</h4><small>{selectedRun?.label_mode === "manual" ? "仅作为人工判断参考" : "保存后重新计算全部自动标签"}</small></div>
+              <div className="data-annotation__rule-table">
+                {RULE_CONFIG_FIELDS.map((field) => <label key={field.key} htmlFor={`quality-detail-rule-${field.key}`}>
+                  <span>{field.label}</span>
+                  <div><input id={`quality-detail-rule-${field.key}`} aria-label={field.label} type="number" step="any" value={ruleConfig[field.key]} onChange={(event) => updateRuleConfig(field.key, event.target.value)} disabled={!canCreate || savingRules} /><small>{field.suffix}</small></div>
+                </label>)}
+              </div>
+              <div className="spot-weld-annotation__rule-list">
+                {LABEL_OPTIONS.map(([value, text]) => <div className="spot-weld-annotation__rule-item" key={value}><Tag color={value === "normal" ? "green" : "blue"}>{text}</Tag><span>{RULE_TEXT[value]}</span></div>)}
+              </div>
+              <button type="button" className="ant-btn ant-btn-primary" aria-label="保存标注规则" onClick={() => void saveRuleConfiguration()} disabled={!canCreate || savingRules}>{savingRules ? "保存中..." : "保存标注规则"}</button>
+            </section>
+            <section className="spot-weld-annotation__raw-data" aria-labelledby="spot-weld-raw-data-title">
+              <div className="spot-weld-annotation__subhead"><h4 id="spot-weld-raw-data-title">当前样本数据</h4><small>{Object.keys(selected.table_values || {}).length} 个真实字段</small></div>
+              <div className="spot-weld-annotation__raw-data-list">
+                {Object.entries(selected.table_values || {}).map(([name, value]) => {
+                  const state = sampleRuleState(name, selected, selectedRun);
+                  return <div className={`spot-weld-annotation__raw-data-row ${state ? `is-${state}` : ""}`} key={name}><span>{name}</span><strong>{fullSampleValue(name, value, selected.waveforms)}</strong></div>;
+                })}
+                <div className={`spot-weld-annotation__raw-data-row ${label ? "is-label-selected" : ""}`}><span>label</span><strong>{label ? qualityLabelText(label) : "未标注"}</strong></div>
+              </div>
+            </section>
+            <section className="spot-weld-annotation__label-editor" aria-label="人工标签">
+              <div className="spot-weld-annotation__subhead"><h4>人工标签</h4><small>{savingLabel ? "保存中..." : label ? "已选择并自动保存" : "未选择标签"}</small></div>
+              <div className="spot-weld-annotation__label-options">
+                {LABEL_OPTIONS.map(([value, text]) => <button type="button" className={`spot-weld-annotation__label-option ${label === value ? "is-selected" : ""}`} aria-pressed={label === value} key={value} onClick={() => void saveLabel(value)} disabled={!canLabel || savingLabel}>{text}</button>)}
+              </div>
+              <small className="spot-weld-annotation__status">当前状态：{selected.review_status || "pending_review"}</small>
+            </section>
+          </>}
         </section>
       </div>
     </>

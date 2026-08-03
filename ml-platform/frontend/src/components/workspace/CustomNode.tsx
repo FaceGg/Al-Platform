@@ -158,9 +158,12 @@ function portMetadata(port: any, value: any, lang: "zh" | "en") {
 
 function PortTooltipContent({ port, value, lang }: { port: any; value: any; lang: "zh" | "en" }) {
   const metadata = portMetadata(port, value, lang);
+  const requiredColumns = Array.isArray(port.required_columns)
+    ? port.required_columns.filter((column: unknown): column is string => typeof column === "string" && Boolean(column.trim()))
+    : [];
   const labels = lang === "zh"
-    ? { type: "类型", format: "格式", summary: "摘要", sample: "样例" }
-    : { type: "Type", format: "Format", summary: "Summary", sample: "Sample" };
+    ? { type: "类型", format: "格式", summary: "摘要", sample: "样例", required: "必需原始列" }
+    : { type: "Type", format: "Format", summary: "Summary", sample: "Sample", required: "Required source columns" };
   return (
     <div className="workflow-port-tooltip" data-testid={`workflow-port-preview-${String(port.name)}`}>
       <div className="workflow-port-tooltip__title">{port.label || port.name}</div>
@@ -168,6 +171,12 @@ function PortTooltipContent({ port, value, lang }: { port: any; value: any; lang
       <div className="workflow-port-tooltip__meta"><span>{labels.format}</span>{metadata.format}</div>
       <div className="workflow-port-tooltip__section-label">{labels.summary}</div>
       <div className="workflow-port-tooltip__preview">{metadata.summary}</div>
+      {requiredColumns.length > 0 && (
+        <>
+          <div className="workflow-port-tooltip__section-label">{labels.required}</div>
+          <div className="workflow-port-tooltip__preview">{requiredColumns.join(", ")}</div>
+        </>
+      )}
       <div className="workflow-port-tooltip__section-label">{labels.sample}</div>
       <pre className="workflow-port-tooltip__sample">{metadata.sample}</pre>
     </div>

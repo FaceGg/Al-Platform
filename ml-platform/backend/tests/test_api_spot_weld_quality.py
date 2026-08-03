@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import numpy as np
 import pandas as pd
@@ -15,6 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api import spot_weld_quality as quality_api
 from app.database import Base, get_db
 from app.main import app
 from app.models.access import AuditEvent, ProjectMember
@@ -286,6 +287,21 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         self.assertEqual(payload.get("label_mode"), "manual")
         self.assertEqual(payload.get("rule_config", {}).get("strong_splatter_min"), 4)
 
+    def test_annotation_modes_accept_bom_and_whitespace_padded_headers(self):
+        frame = report_frame(2)
+        frame.columns = [f"\ufeff  {column}  " for column in frame.columns]
+        artifact = self._create_dataset_artifact("padded-weld.csv", frame)
+        url = f"/api/projects/{self.project.id}/spot-weld/runs"
+
+        for mode in ("automatic", "manual"):
+            with self.subTest(mode=mode):
+                response = self.client.post(url, json={
+                    "dataset_artifact_id": str(artifact.id),
+                    "field_mapping": {},
+                    "label_mode": mode,
+                })
+                self.assertEqual(response.status_code, 202, response.text)
+
     def test_quality_run_persists_supervised_input_target_and_evaluation_configuration(self):
         frame = report_frame(15)
         frame["label"] = ["normal", "strong_splatter", "spot_too_small"] * 5
@@ -317,6 +333,23 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         self.assertEqual(payload["statistics"]["target_schema"]["classes"], [
             "normal", "spot_too_small", "strong_splatter",
         ])
+
+    def test_quality_run_identifies_omitted_required_input_column(self):
+        selected_columns = [column for column in report_frame().columns if column != "wld1c"]
+
+        response = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/runs",
+            json={
+                "dataset_artifact_id": str(self.artifact.id),
+                "field_mapping": {},
+                "input_columns": selected_columns,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        detail = response.json()["detail"]
+        self.assertEqual(detail["code"], "QUALITY_INPUT_COLUMNS_INVALID")
+        self.assertIn("wld1c", detail["message"])
 
     def test_quality_run_rejects_missing_target_and_invalid_enabled_fold_settings(self):
         frame = report_frame(15)
@@ -460,6 +493,225 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
                     response.json()["annotation_progress"],
                     {"annotated_count": 2, "total_count": 4, "percent": 50.0},
                 )
+
+    def test_run_uses_persisted_progress_without_loading_large_sample_rows(self):
+        run = SpotWeldQualityRun(
+            id=uuid.uuid4(),
+            project_id=self.project.id,
+            dataset_artifact_id=self.artifact.id,
+            created_by_id=self.owner.id,
+            status="running",
+            input_fingerprint={"label_mode": "automatic"},
+            statistics={"annotation_progress": {"annotated_count": 10, "total_count": 20}},
+        )
+
+        with patch.object(SpotWeldQualityRun, "samples", new_callable=PropertyMock) as samples:
+            samples.side_effect = AssertionError("run detail must not load every sample")
+            payload = quality_api._serialize_run(run, include_results=False)
+
+        self.assertEqual(payload["sample_count"], 20)
+        self.assertEqual(payload["annotation_progress"], {
+            "annotated_count": 10,
+            "total_count": 20,
+            "percent": 50.0,
+        })
+
+    def test_sample_queue_omits_large_detail_payloads(self):
+        run = SpotWeldQualityRun(
+            project_id=self.project.id,
+            dataset_artifact_id=self.artifact.id,
+            created_by_id=self.owner.id,
+            status="completed",
+        )
+        self.db.add(run)
+        self.db.flush()
+        sample = SpotWeldQualitySample(
+            run_id=run.id,
+            source_row_index=0,
+            display_id="W-0001",
+            table_values={"cvei": "large-source-waveform"},
+            feature_values={"current_mean": 1.0},
+            waveforms={"current": [1, 2, 3]},
+            automatic_label="normal",
+            rule_hits=[{"code": "normal"}],
+            review_status="pending_review",
+        )
+        self.db.add(sample)
+        self.db.commit()
+
+        response = self.client.get(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/samples",
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        item = response.json()["items"][0]
+        self.assertNotIn("table_values", item)
+        self.assertNotIn("feature_values", item)
+        self.assertNotIn("waveforms", item)
+        detail = self.client.get(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/samples/{sample.id}",
+        )
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(detail.json()["table_values"], {"cvei": "large-source-waveform"})
+
+    def test_manual_override_keeps_automatic_annotation_progress_complete(self):
+        run = SpotWeldQualityRun(
+            project_id=self.project.id,
+            dataset_artifact_id=self.artifact.id,
+            created_by_id=self.owner.id,
+            status="completed",
+            input_fingerprint={"label_mode": "automatic"},
+            statistics={"annotation_progress": {"annotated_count": 2, "total_count": 2, "percent": 100.0}},
+        )
+        self.db.add(run)
+        self.db.flush()
+        samples = [
+            SpotWeldQualitySample(
+                run_id=run.id,
+                source_row_index=index,
+                display_id=f"W-{index + 1:04d}",
+                automatic_label=label,
+                review_status="pending_review",
+            )
+            for index, label in enumerate(("normal", "strong_splatter"))
+        ]
+        self.db.add_all(samples)
+        self.db.commit()
+
+        response = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/samples/{samples[0].id}/labels",
+            json={"label": "spot_too_small", "note": "manual override"},
+        )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        detail = self.client.get(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}",
+        )
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(detail.json()["annotation_progress"], {
+            "annotated_count": 2,
+            "total_count": 2,
+            "percent": 100.0,
+        })
+
+    def test_submit_run_for_review_updates_only_labeled_samples(self):
+        run = SpotWeldQualityRun(
+            project_id=self.project.id,
+            dataset_artifact_id=self.artifact.id,
+            created_by_id=self.owner.id,
+            status="running",
+        )
+        self.db.add(run)
+        self.db.flush()
+        labeled_pending = SpotWeldQualitySample(
+            run_id=run.id,
+            source_row_index=0,
+            display_id="W-0001",
+            current_label="normal",
+            review_status="pending_review",
+        )
+        labeled_submitted = SpotWeldQualitySample(
+            run_id=run.id,
+            source_row_index=1,
+            display_id="W-0002",
+            current_label="strong_splatter",
+            review_status="submitted",
+        )
+        unlabeled = SpotWeldQualitySample(
+            run_id=run.id,
+            source_row_index=2,
+            display_id="W-0003",
+            current_label=None,
+            review_status="pending_review",
+        )
+        self.db.add_all([labeled_pending, labeled_submitted, unlabeled])
+        self.db.commit()
+
+        response = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/submit-review",
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            response.json(),
+            {
+                "run_id": str(run.id),
+                "submitted_count": 1,
+                "labeled_count": 2,
+            },
+        )
+        self.db.expire_all()
+        self.assertEqual(self.db.get(SpotWeldQualitySample, labeled_pending.id).review_status, "submitted")
+        self.assertEqual(self.db.get(SpotWeldQualitySample, labeled_submitted.id).review_status, "submitted")
+        self.assertEqual(self.db.get(SpotWeldQualitySample, unlabeled.id).review_status, "pending_review")
+
+    def test_terminal_quality_run_can_be_deleted(self):
+        run = SpotWeldQualityRun(
+            project_id=self.project.id,
+            dataset_artifact_id=self.artifact.id,
+            created_by_id=self.owner.id,
+            status="completed",
+        )
+        self.db.add(run)
+        self.db.flush()
+        sample = SpotWeldQualitySample(
+            run_id=run.id,
+            source_row_index=0,
+            display_id="W-0001",
+            current_label="normal",
+        )
+        self.db.add(sample)
+        self.db.commit()
+        run_id = run.id
+        sample_id = sample.id
+
+        response = self.client.delete(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run_id}",
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"deleted": 1, "run_id": str(run_id)})
+        self.assertIsNone(self.db.get(SpotWeldQualityRun, run_id))
+        self.assertIsNone(self.db.get(SpotWeldQualitySample, sample_id))
+
+    def test_active_quality_run_cannot_be_deleted(self):
+        run = SpotWeldQualityRun(
+            project_id=self.project.id,
+            dataset_artifact_id=self.artifact.id,
+            created_by_id=self.owner.id,
+            status="running",
+        )
+        self.db.add(run)
+        self.db.commit()
+
+        response = self.client.delete(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}",
+        )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "QUALITY_RUN_ACTIVE")
+        self.assertIsNotNone(self.db.get(SpotWeldQualityRun, run.id))
+
+    def test_completed_run_rules_can_be_updated(self):
+        run = SpotWeldQualityRun(
+            project_id=self.project.id,
+            dataset_artifact_id=self.artifact.id,
+            created_by_id=self.owner.id,
+            status="completed",
+            input_fingerprint={"label_mode": "manual", "rule_config": {}},
+            statistics={},
+        )
+        self.db.add(run); self.db.commit()
+
+        response = self.client.put(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/rules",
+            json={"rule_config": {"strong_splatter_min": 4}},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["rule_config"]["strong_splatter_min"], 4)
+        self.db.refresh(run)
+        self.assertEqual(run.input_fingerprint["rule_config"]["strong_splatter_min"], 4)
 
     def test_quality_run_rejects_unknown_or_duplicate_report_candidates(self):
         url = f"/api/projects/{self.project.id}/spot-weld/runs"

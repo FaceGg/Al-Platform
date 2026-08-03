@@ -265,6 +265,7 @@ class DAGExecutor:
             if op_id not in ("loop",):
                 completion = {
                     **preview,
+                    "artifacts": artifact_refs,
                     "metrics": operator_result.metrics,
                     "logs": operator_result.logs,
                 }
@@ -298,6 +299,8 @@ class DAGExecutor:
             )
             references.append({
                 "artifact_id": str(artifact.id),
+                "name": artifact.name,
+                "format": artifact.format,
                 "uri": artifact.storage_uri,
                 "size": artifact.file_size,
             })

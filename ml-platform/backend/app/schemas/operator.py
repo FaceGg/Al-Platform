@@ -1,10 +1,12 @@
 from pydantic import BaseModel
 from typing import Any
+from pydantic import Field
 
 class PortSpecSchema(BaseModel):
     name: str
     type: str
     label: str
+    required_columns: list[str] = Field(default_factory=list)
 
 class ParamSpecSchema(BaseModel):
     name: str

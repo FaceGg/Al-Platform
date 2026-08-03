@@ -40,6 +40,7 @@ export interface QualityRun {
   clustering_results?: Record<string, unknown>;
   output_artifacts?: Record<string, string>;
   error_code?: string | null;
+  error_details?: { code?: string; message?: string; [key: string]: unknown } | null;
   selected_candidate_ids?: string[];
   target_column?: string | null;
   input_columns?: string[];
@@ -47,6 +48,11 @@ export interface QualityRun {
   label_mode?: QualityLabelMode;
   rule_config?: Partial<QualityRuleConfig>;
   annotation_progress?: QualityAnnotationProgress;
+  modeling_progress?: {
+    completed?: number;
+    total?: number;
+    percent?: number;
+  };
 }
 
 export interface QualityLabelSnapshot {
@@ -157,6 +163,28 @@ export async function getQualityRun(projectId: string, runId: string): Promise<Q
   return response.data as QualityRun;
 }
 
+export async function deleteQualityRun(projectId: string, runId: string): Promise<{ deleted: number; run_id: string }> {
+  const response = await apiClient.delete(`/projects/${projectId}/spot-weld/runs/${runId}`);
+  return response.data as { deleted: number; run_id: string };
+}
+
+export async function updateQualityRunRules(
+  projectId: string,
+  runId: string,
+  ruleConfig: QualityRuleConfig,
+): Promise<QualityRun> {
+  const response = await apiClient.put(
+    `/projects/${projectId}/spot-weld/runs/${runId}/rules`,
+    { rule_config: ruleConfig },
+  );
+  return response.data as QualityRun;
+}
+
+export async function submitQualityRunForReview(projectId: string, runId: string): Promise<{ run_id: string; submitted_count: number; labeled_count: number }> {
+  const response = await apiClient.post(`/projects/${projectId}/spot-weld/runs/${runId}/submit-review`);
+  return response.data as { run_id: string; submitted_count: number; labeled_count: number };
+}
+
 export async function listQualitySamples(
   projectId: string,
   runId: string,
@@ -263,7 +291,7 @@ export async function listQualityModels(projectId: string): Promise<QualityModel
 export async function downloadQualityArtifact(
   projectId: string,
   runId: string,
-  artifactKey: "report" | "schema" | "model",
+  artifactKey: "report" | "schema" | "model" | "model_comparison_chart" | "cluster_pca_chart" | "feature_importance_chart" | "warning_distribution_chart" | "waveform_comparison_chart",
 ): Promise<Blob> {
   const response = await apiClient.get(
     `/projects/${projectId}/spot-weld/runs/${runId}/artifacts/${artifactKey}/download`,

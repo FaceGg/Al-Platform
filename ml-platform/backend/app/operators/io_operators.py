@@ -1,4 +1,4 @@
-from app.engine.operator_contract import OperatorContext, OperatorResult
+from app.engine.operator_contract import ArtifactDraft, OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
 from app.engine.export_paths import resolve_export_path
@@ -7,6 +7,33 @@ import os
 import tempfile
 import urllib.request
 from pathlib import Path
+
+
+def _dataset_export_result(data, frame: pd.DataFrame, path: Path) -> OperatorResult:
+    """Expose workflow CSV outputs as project-scoped datasets as well as files."""
+    schema = [
+        {
+            "name": str(column),
+            "dtype": str(frame[column].dtype),
+            "null_count": int(frame[column].isna().sum()),
+        }
+        for column in frame.columns
+    ]
+    return OperatorResult(
+        outputs={"data": data},
+        artifacts=[ArtifactDraft(
+            name=path.name,
+            type="dataset",
+            data=path,
+            format="csv",
+            metadata={
+                "source": "workflow_export",
+                "row_count": int(len(frame)),
+                "column_count": int(len(frame.columns)),
+                "schema": schema,
+            },
+        )],
+    )
 
 
 @register_operator
@@ -138,7 +165,7 @@ class CSVExport(BaseOperator):
             encoding=params.get('encoding', 'utf-8'),
         )
         context.logger.info('Export written', path=str(path), format='csv')
-        return OperatorResult(outputs={'data': data})
+        return _dataset_export_result(data, df, path)
 
 @register_operator
 class ImageImport(BaseOperator):
@@ -309,7 +336,7 @@ class WriteCSV(BaseOperator):
             encoding=params.get('encoding', 'utf-8'),
         )
         context.logger.info('Export written', path=str(path), format='csv')
-        return OperatorResult(outputs={'data': data})
+        return _dataset_export_result(data, df, path)
 
 @register_operator
 class Retrieve(BaseOperator):

@@ -11,7 +11,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.api.auth import get_current_user
 from app.api.project_security import audit_service, require_project_access
@@ -21,6 +21,7 @@ from app.models.model_library import ModelLibrary
 from app.models.spot_weld_quality import (
     SpotWeldLabelRevision,
     SpotWeldLabelSnapshot,
+    SpotWeldQualityRuleSet,
     SpotWeldQualityRun,
     SpotWeldQualitySample,
 )
@@ -29,6 +30,7 @@ from app.services.artifact_service import ArtifactAccessError, build_artifact_se
 from app.services.audit import AuditIntent
 from app.services.spot_weld_features import QualityPipelineError
 from app.services.spot_weld_quality import (
+    _annotation_progress,
     build_annotation_export,
     create_demo_quality_dataset,
     create_quality_run_record,
@@ -38,6 +40,7 @@ from app.services.spot_weld_quality import (
     save_labeled_dataset,
     select_automl_configs,
     train_label_snapshot,
+    update_quality_run_rules,
     validate_report_frame,
     resolve_quality_run_configuration,
 )
@@ -52,6 +55,11 @@ QUALITY_OUTPUT_ARTIFACT_TYPES = {
     "model": "model",
     "schema": "quality_schema",
     "report": "quality_report",
+    "model_comparison_chart": "quality_report_chart",
+    "cluster_pca_chart": "quality_report_chart",
+    "feature_importance_chart": "quality_report_chart",
+    "warning_distribution_chart": "quality_report_chart",
+    "waveform_comparison_chart": "quality_report_chart",
 }
 
 
@@ -86,6 +94,12 @@ class SnapshotRequest(BaseModel):
 
 class SaveLabeledDatasetRequest(BaseModel):
     label_source: Literal["current", "automatic"] = "current"
+
+
+class UpdateRulesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rule_config: dict[str, float | int]
 
 
 class DemoDatasetRequest(BaseModel):
@@ -178,12 +192,12 @@ def _serialize_run(run: SpotWeldQualityRun, *, include_results: bool = True) -> 
         or len(run.samples)
         or 0
     )
-    if label_mode == "manual":
+    if stored_progress and total_count:
+        annotated_count = int(stored_progress.get("annotated_count") or 0)
+    elif label_mode == "manual":
         annotated_count = sum(1 for sample in run.samples if sample.current_label)
     else:
         annotated_count = sum(1 for sample in run.samples if sample.automatic_label)
-    if not run.samples and stored_progress:
-        annotated_count = int(stored_progress.get("annotated_count") or 0)
     percent = round((annotated_count / total_count) * 100, 2) if total_count else 0.0
     payload = {
         "id": str(run.id),
@@ -192,7 +206,7 @@ def _serialize_run(run: SpotWeldQualityRun, *, include_results: bool = True) -> 
         "status": run.status,
         "task_id": run.task_id,
         "worker_id": run.worker_id,
-        "sample_count": len(run.samples),
+        "sample_count": total_count or len(run.samples),
         "feature_version": (run.statistics or {}).get("feature_version", "report_v1"),
         "rule_set_version": run.rule_set_version,
         "selected_candidate_ids": list(input_fingerprint.get("selected_candidate_ids") or []),
@@ -210,6 +224,7 @@ def _serialize_run(run: SpotWeldQualityRun, *, include_results: bool = True) -> 
             "total_count": total_count,
             "percent": percent,
         },
+        "modeling_progress": dict(statistics.get("modeling_progress") or {}),
         "statistics": statistics,
         "error_code": run.error_code,
         "error_details": run.error_details or {},
@@ -518,6 +533,76 @@ def get_run(
     return _serialize_run(_run_or_404(db, project_id, run_id))
 
 
+@router.put("/runs/{run_id}/rules")
+def update_run_rules(
+    project_id: uuid.UUID,
+    run_id: str,
+    data: UpdateRulesRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    access = require_project_access(db, project_id, current_user.id, "resource.create")
+    run = _run_or_404(db, project_id, run_id)
+    try:
+        normalized = normalize_report_rule_config(data.rule_config)
+        with audit_service(db).project_action(
+            db,
+            request=request,
+            actor=current_user,
+            access=access,
+            permission="resource.create",
+            intent=AuditIntent(
+                project_id=project_id,
+                action="spot_weld_quality.run.rules.update",
+                resource_type="spot_weld_quality_run",
+                resource_id=str(run.id),
+                changes={"rule_config": normalized},
+            ),
+            allowed_changes={"rule_config"},
+        ):
+            update_quality_run_rules(db, run, normalized)
+    except QualityPipelineError as error:
+        _quality_error(error, status=409 if error.code in {"QUALITY_RUN_ACTIVE", "QUALITY_RUN_NOT_RECALCULABLE"} else 400)
+    return _serialize_run(run)
+
+
+@router.delete("/runs/{run_id}")
+def delete_run(
+    project_id: uuid.UUID,
+    run_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    access = require_project_access(db, project_id, current_user.id, "resource.delete")
+    run = _run_or_404(db, project_id, run_id)
+    if run.status not in {"completed", "failed", "cancelled"}:
+        raise HTTPException(409, detail={"code": "QUALITY_RUN_ACTIVE", "message": "Only terminal quality runs can be deleted"})
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="resource.delete",
+        intent=AuditIntent(
+            project_id=project_id,
+            action="spot_weld_quality.run.delete",
+            resource_type="spot_weld_quality_run",
+            resource_id=str(run.id),
+        ),
+        allowed_changes=set(),
+    ):
+        # Delete dependent rows explicitly so SQLite and production databases
+        # have the same behavior even when foreign-key cascades are disabled.
+        db.query(SpotWeldLabelSnapshot).filter(SpotWeldLabelSnapshot.run_id == run.id).delete(synchronize_session=False)
+        db.query(SpotWeldLabelRevision).filter(SpotWeldLabelRevision.run_id == run.id).delete(synchronize_session=False)
+        db.query(SpotWeldQualitySample).filter(SpotWeldQualitySample.run_id == run.id).delete(synchronize_session=False)
+        db.query(SpotWeldQualityRuleSet).filter(SpotWeldQualityRuleSet.run_id == run.id).delete(synchronize_session=False)
+        db.delete(run)
+    return {"deleted": 1, "run_id": str(run.id)}
+
+
 @router.get("/runs/{run_id}/annotations/export")
 def export_annotations(
     project_id: uuid.UUID,
@@ -621,8 +706,34 @@ def list_samples(
         query = query.filter(SpotWeldQualitySample.current_label == label)
     if q:
         query = query.filter(SpotWeldQualitySample.display_id.contains(q))
-    samples = query.order_by(SpotWeldQualitySample.source_row_index).all()
-    return {"items": [_serialize_sample(sample) for sample in samples], "total": len(samples)}
+    samples = query.options(load_only(
+        SpotWeldQualitySample.id,
+        SpotWeldQualitySample.display_id,
+        SpotWeldQualitySample.source_row_index,
+        SpotWeldQualitySample.automatic_label,
+        SpotWeldQualitySample.current_label,
+        SpotWeldQualitySample.review_status,
+        SpotWeldQualitySample.warning_level,
+        SpotWeldQualitySample.defect_probability,
+        SpotWeldQualitySample.cluster_id,
+    )).order_by(SpotWeldQualitySample.source_row_index).all()
+    return {
+        "items": [
+            {
+                "id": str(sample.id),
+                "display_id": sample.display_id,
+                "source_row_index": sample.source_row_index,
+                "automatic_label": sample.automatic_label,
+                "current_label": sample.current_label,
+                "review_status": sample.review_status,
+                "warning_level": sample.warning_level,
+                "defect_probability": sample.defect_probability,
+                "cluster_id": sample.cluster_id,
+            }
+            for sample in samples
+        ],
+        "total": len(samples),
+    }
 
 
 @router.get("/runs/{run_id}/samples/{sample_id}")
@@ -666,7 +777,64 @@ def submit_label(
         sample.current_note = data.note
         sample.review_status = "submitted"
         sample.current_revision_id = revision.id
+        statistics = dict(run.statistics or {})
+        stored_progress = dict(statistics.get("annotation_progress") or {})
+        label_mode = (run.input_fingerprint or {}).get("label_mode", "automatic")
+        total_count = int(stored_progress.get("total_count") or db.query(
+            SpotWeldQualitySample.id,
+        ).filter(SpotWeldQualitySample.run_id == run.id).count())
+        annotation_column = (
+            SpotWeldQualitySample.automatic_label
+            if label_mode == "automatic"
+            else SpotWeldQualitySample.current_label
+        )
+        annotated_count = db.query(SpotWeldQualitySample.id).filter(
+            SpotWeldQualitySample.run_id == run.id,
+            annotation_column.isnot(None),
+        ).count()
+        run.statistics = {
+            **statistics,
+            "annotation_progress": _annotation_progress(annotated_count, total_count),
+        }
     return _serialize_sample(sample)
+
+
+@router.post("/runs/{run_id}/submit-review")
+def submit_run_for_review(
+    project_id: uuid.UUID,
+    run_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Submit every currently labeled sample in one run for review."""
+    access = require_project_access(db, project_id, current_user.id, "quality.label")
+    run = _run_or_404(db, project_id, run_id)
+    samples = db.query(SpotWeldQualitySample).filter(
+        SpotWeldQualitySample.run_id == run.id,
+        SpotWeldQualitySample.current_label.isnot(None),
+    ).all()
+    submitted_count = 0
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="quality.label",
+        intent=AuditIntent(
+            project_id=project_id,
+            action="spot_weld_quality.run.submit_review",
+            resource_type="spot_weld_quality_run",
+            resource_id=str(run.id),
+            changes={"submitted_count": len(samples)},
+        ),
+        allowed_changes={"submitted_count"},
+    ):
+        for sample in samples:
+            if sample.review_status != "submitted":
+                sample.review_status = "submitted"
+                submitted_count += 1
+    return {"run_id": str(run.id), "submitted_count": submitted_count, "labeled_count": len(samples)}
 
 
 @router.post("/runs/{run_id}/samples/{sample_id}/review")
@@ -859,10 +1027,11 @@ def download_quality_artifact(
     except (ArtifactAccessError, OSError, ValueError):
         raise HTTPException(404, detail={"code": "QUALITY_OUTPUT_ARTIFACT_NOT_FOUND"})
     media_type = {
-        "report": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "schema": "application/json",
+        "quality_report": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "quality_schema": "application/json",
         "model": "application/octet-stream",
-    }[artifact_key]
+        "quality_report_chart": "image/png",
+    }[expected_type]
     return StreamingResponse(
         io.BytesIO(content),
         media_type=media_type,

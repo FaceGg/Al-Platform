@@ -5,6 +5,13 @@ import { MemoryRouter } from "react-router-dom";
 
 import AutoMLPage from "./AutoMLPage";
 
+const QUALITY_REPORT_COLUMNS = [
+  "wld1c", "wld2c", "tipv1", "tipv2", "wres", "energy",
+  "wld_spatter_strength", "wld1_spatter_strength", "wld2_spatter_strength",
+  "spatterpos_wld", "spatterpos_pre", "spotdiameter", "spotposition", "spattercode",
+  "cvei", "cvev", "cver", "cvep",
+];
+
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 const datasets = vi.hoisted(() => ({ listDatasets: vi.fn(), getDatasetPreview: vi.fn() }));
 const quality = vi.hoisted(() => ({
@@ -78,6 +85,103 @@ describe("AutoMLPage", () => {
     expect(screen.queryByText("Budget")).not.toBeInTheDocument();
   });
 
+  it("renders the measured training time returned by ordinary AutoML", async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === "/training/jobs/job-1") return Promise.resolve({ data: {
+        status: "completed",
+        metrics: {
+          best_model: { name: "LGB_v1", score: 0.91 },
+          all_results: [{ name: "LGB_v1", score: 0.91, training_time_seconds: 1.234 }],
+        },
+      } });
+      if (url === "/experiments") return Promise.resolve({ data: { items: [{ id: "experiment-1", name: "Experiment 1" }] } });
+      return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
+    });
+    api.post.mockResolvedValue({ data: {
+      run_id: "job-1",
+      best_model: { name: "LGB_v1", score: 0.91 },
+      all_results: [{ name: "LGB_v1", score: 0.91, training_time_seconds: 1.234 }],
+    } });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    fireEvent.mouseDown(comboboxes[3]);
+    fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    expect(await screen.findByText("1.2s", {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+
+  it("shows a unified modeling task list with ordinary and point-weld task types", async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === "/training/automl/jobs") return Promise.resolve({ data: [{
+        id: "automl-1", project_id: "project-1", name: "general", status: "completed",
+        metrics: { progress: { completed: 10, total: 10, percent: 100 } },
+      }] });
+      if (url === "/projects/project-1/spot-weld/runs") return Promise.resolve({ data: { items: [{
+        id: "quality-1", status: "running", statistics: { modeling_progress: { completed: 3, total: 10, percent: 30 } },
+      }] } });
+      if (url === "/experiments") return Promise.resolve({ data: { items: [{ id: "experiment-1", name: "Experiment 1" }] } });
+      return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.mouseDown(await screen.findAllByRole("combobox").then((items) => items[0]));
+    fireEvent.click(await screen.findByText("Weld line"));
+
+    expect(await screen.findByText("普通建模")).toBeInTheDocument();
+    expect(screen.getByText("点焊建模")).toBeInTheDocument();
+    expect(screen.getByText("10/10 100%")).toBeInTheDocument();
+    expect(screen.getByText("3/10 30%")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建" })).toBeInTheDocument();
+  });
+
+  it("shows the local worker restart error for a failed point-weld task", async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === "/training/automl/jobs") return Promise.resolve({ data: [] });
+      if (url === "/projects/project-1/spot-weld/runs") return Promise.resolve({ data: { items: [{
+        id: "quality-restarted", status: "failed",
+        error_code: "QUALITY_RUN_LOCAL_WORKER_RESTARTED",
+        error_details: {
+          message: "Local quality worker stopped during service restart; rerun this task.",
+        },
+      }] } });
+      if (url === "/experiments") return Promise.resolve({ data: { items: [] } });
+      return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.mouseDown(await screen.findAllByRole("combobox").then((items) => items[0]));
+    fireEvent.click(await screen.findByText("Weld line"));
+
+    expect(await screen.findByText("QUALITY_RUN_LOCAL_WORKER_RESTARTED")).toBeInTheDocument();
+    expect(screen.getByText("Local quality worker stopped during service restart; rerun this task.")).toBeInTheDocument();
+  });
+
+  it("does not render ordinary AutoML jobs returned for another project", async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === "/training/automl/jobs") return Promise.resolve({ data: [
+        { id: "automl-current", project_id: "project-1", name: "current-project-automl", status: "completed" },
+        { id: "automl-other", project_id: "project-2", name: "other-project-automl", status: "completed" },
+      ] });
+      if (url === "/projects/project-1/spot-weld/runs") return Promise.resolve({ data: { items: [] } });
+      if (url === "/experiments") return Promise.resolve({ data: { items: [] } });
+      return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.mouseDown(await screen.findAllByRole("combobox").then((items) => items[0]));
+    fireEvent.click(await screen.findByText("Weld line"));
+
+    expect(await screen.findByText("current-project-automl")).toBeInTheDocument();
+    expect(screen.queryByText("other-project-automl")).not.toBeInTheDocument();
+  });
+
   it("submits the selected generic cross-validation configuration without a budget", async () => {
     api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
@@ -137,6 +241,11 @@ describe("AutoMLPage", () => {
   });
 
   it("starts a quality run from the spot-weld quality recipe", async () => {
+    datasets.getDatasetPreview.mockResolvedValue({
+      columns: QUALITY_REPORT_COLUMNS,
+      dtypes: Object.fromEntries(QUALITY_REPORT_COLUMNS.map((column) => [column, "float64"])),
+      preview: [],
+    });
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("tab", { name: "点焊质量感知" }));
@@ -152,13 +261,70 @@ describe("AutoMLPage", () => {
       field_mapping: {},
       candidate_ids: [],
       target_column: undefined,
-      input_columns: ["feature", "force", "quality"],
+      input_columns: QUALITY_REPORT_COLUMNS,
       cross_validation_enabled: true,
       cross_validation_folds: 3,
     }));
   });
 
+  it("blocks a report-incompatible dataset before it submits a quality run", async () => {
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "点焊质量感知" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知项目" }));
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+
+    const runButton = screen.getByRole("button", { name: "运行质量感知" });
+    expect(runButton).toBeDisabled();
+    fireEvent.click(runButton);
+    expect(quality.createQualityRun).not.toHaveBeenCalled();
+  });
+
+  it("disables quality runs while the newly selected dataset preview is pending", async () => {
+    datasets.listDatasets.mockResolvedValue([
+      { id: "dataset-1", name: "weld.csv", format: "csv" },
+      { id: "dataset-2", name: "other.csv", format: "csv" },
+    ]);
+    let resolveSecondPreview: ((value: unknown) => void) | undefined;
+    const secondPreview = new Promise((resolve) => {
+      resolveSecondPreview = resolve;
+    });
+    datasets.getDatasetPreview.mockImplementation((datasetId: string) => {
+      if (datasetId === "dataset-1") {
+        return Promise.resolve({
+          columns: QUALITY_REPORT_COLUMNS,
+          dtypes: Object.fromEntries(QUALITY_REPORT_COLUMNS.map((column) => [column, "float64"])),
+          preview: [],
+        });
+      }
+      return secondPreview;
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "点焊质量感知" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知项目" }));
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "运行质量感知" })).not.toBeDisabled());
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知数据" }));
+    fireEvent.click(await screen.findByText("other.csv"));
+
+    expect(screen.getByRole("button", { name: "运行质量感知" })).toBeDisabled();
+    resolveSecondPreview?.({ columns: [], dtypes: {}, preview: [] });
+  });
+
   it("configures the quality recipe target, inputs, cross-validation, and full report download", async () => {
+    datasets.getDatasetPreview.mockResolvedValue({
+      columns: [...QUALITY_REPORT_COLUMNS, "quality"],
+      dtypes: Object.fromEntries([...QUALITY_REPORT_COLUMNS, "quality"].map((column) => [column, "float64"])),
+      preview: [],
+    });
     quality.getQualityRun.mockResolvedValue({
       id: "run-1",
       status: "completed",
@@ -177,6 +343,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("weld.csv"));
     await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知目标列" }));
+    expect(screen.queryByText("wld1c", { selector: ".ant-select-item-option-content" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知交叉验证折数" }));
     fireEvent.click(await screen.findByText("4 折"));
@@ -187,7 +354,7 @@ describe("AutoMLPage", () => {
       field_mapping: {},
       candidate_ids: [],
       target_column: "quality",
-      input_columns: ["feature", "force"],
+      input_columns: QUALITY_REPORT_COLUMNS,
       cross_validation_enabled: true,
       cross_validation_folds: 4,
     }));
@@ -198,6 +365,11 @@ describe("AutoMLPage", () => {
   });
 
   it("submits the selected report candidate IDs in order", async () => {
+    datasets.getDatasetPreview.mockResolvedValue({
+      columns: QUALITY_REPORT_COLUMNS,
+      dtypes: Object.fromEntries(QUALITY_REPORT_COLUMNS.map((column) => [column, "float64"])),
+      preview: [],
+    });
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("tab", { name: "点焊质量感知" }));
@@ -216,7 +388,7 @@ describe("AutoMLPage", () => {
       field_mapping: {},
       candidate_ids: ["RF_v1", "GBDT_v1"],
       target_column: undefined,
-      input_columns: ["feature", "force", "quality"],
+      input_columns: QUALITY_REPORT_COLUMNS,
       cross_validation_enabled: true,
       cross_validation_folds: 3,
     }));

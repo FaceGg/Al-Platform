@@ -18,6 +18,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.main as main_module
 from app.config import settings
+from app import database as database_module
 from app.database import engine_options
 from app.database_schema import (
     DatabaseSchemaError,
@@ -99,6 +100,28 @@ class TestDatabaseEngineOptions(TestCase):
                 "pool_timeout": 19,
             },
         )
+
+    def test_file_sqlite_allows_writer_while_reader_transaction_is_open(self):
+        """Long annotation polling must not block local SQLite progress commits."""
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            db_engine = create_engine(database_url, **engine_options(database_url))
+            database_module.configure_sqlite_engine(db_engine)
+            try:
+                with db_engine.begin() as connection:
+                    connection.execute(text("CREATE TABLE lock_probe (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)"))
+                    connection.execute(text("INSERT INTO lock_probe (id, value) VALUES (1, 0)"))
+
+                with db_engine.connect() as reader, db_engine.connect() as writer:
+                    self.assertEqual(reader.scalar(text("PRAGMA journal_mode")), "wal")
+                    self.assertGreaterEqual(int(reader.scalar(text("PRAGMA busy_timeout"))), 30_000)
+                    reader.execute(text("BEGIN"))
+                    reader.execute(text("SELECT value FROM lock_probe")).all()
+                    writer.execute(text("UPDATE lock_probe SET value = 1 WHERE id = 1"))
+                    writer.commit()
+                    reader.rollback()
+            finally:
+                db_engine.dispose()
 
 
 class TestDatabaseSchemaStatus(TestCase):
@@ -255,6 +278,29 @@ class TestDatabaseLifespan(TestCase):
                 global_session_factory.assert_not_called()
                 global_engine.dispose.assert_not_called()
                 dispose.assert_called_once_with()
+
+    def test_lifespan_recovers_orphaned_local_quality_runs_with_injected_session_factory(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            db_engine = create_engine(database_url, **engine_options(database_url))
+            session_factory = sessionmaker(
+                autocommit=False,
+                autoflush=False,
+                bind=db_engine,
+            )
+            test_app = FastAPI(lifespan=main_module.lifespan)
+            main_module.configure_runtime_dependencies(
+                test_app,
+                app_settings=SimpleNamespace(app_mode="local"),
+                db_engine=db_engine,
+                session_factory=session_factory,
+            )
+
+            with mock.patch.object(main_module, "recover_orphaned_local_quality_runs") as recover:
+                with TestClient(test_app):
+                    recover.assert_called_once()
+                    recovered_session = recover.call_args.args[0]
+                    self.assertEqual(recovered_session.bind, db_engine)
 
 
 class TestAlembicBaseline(TestCase):

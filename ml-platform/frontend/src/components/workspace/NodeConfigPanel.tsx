@@ -1,11 +1,12 @@
 import { Input, InputNumber, Select, Switch, Form, Divider, Button, Drawer, message, Upload, Typography } from "antd";
-import { FolderOpenOutlined, MinusCircleOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
+import { DownloadOutlined, MinusCircleOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import { useI18n } from "../../i18n";
+import { downloadDatasetArtifact, listDatasets } from "../../api/datasets";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { extractColumnsFromResult, isColumnParam } from "./CustomNode";
 import { useEffect, useState, useMemo } from "react";
 import apiClient from "../../api/client";
-import { isWorkflowExportOperator, type BrowserDirectoryHandle } from "./workflowExport";
+import { isWorkflowExportOperator } from "./workflowExport";
 
 const { Text } = Typography;
 
@@ -13,10 +14,14 @@ const RESULT_JSON_LIMIT = 5000;
 const RESULT_TABLE_LIMIT = 20;
 
 type ResultRecord = Record<string, any>;
-type DirectoryPickerWindow = Window & {
-  showDirectoryPicker?: (options: { mode: "readwrite" }) => Promise<BrowserDirectoryHandle>;
+type DatasetArtifactOption = {
+  id?: string;
+  artifact_id?: string;
+  name?: string;
+  filename?: string;
+  format?: string;
+  row_count?: number;
 };
-
 function isResultRecord(value: unknown): value is ResultRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -237,7 +242,19 @@ export function getPortLabel(opId: string, paramName: string, lang: "zh" | "en")
   return portMappings[opId]?.[paramName]?.[lang] || null;
 }
 
-export default function NodeConfigPanel() {
+function compatibleDatasetFormats(operatorId?: string): string[] {
+  if (operatorId === "csv_import") return ["csv", "xls", "xlsx"];
+  return [];
+}
+
+function isCompatibleDatasetArtifact(operatorId: string | undefined, dataset: DatasetArtifactOption): boolean {
+  const supported = compatibleDatasetFormats(operatorId);
+  if (!supported.length) return false;
+  const format = String(dataset.format || dataset.name?.split(".").pop() || dataset.filename?.split(".").pop() || "").toLowerCase();
+  return supported.includes(format);
+}
+
+export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
   const { t, lang } = useI18n();
   const {
     selectedNode,
@@ -246,13 +263,15 @@ export default function NodeConfigPanel() {
     nodeStatuses,
     edges,
     nodeResults,
-    exportDirectories,
-    setExportDirectory,
   } = useWorkflowStore();
   const [params, setParams] = useState<Record<string, any>>({});
   const [uploading, setUploading] = useState(false);
+  const [datasetArtifacts, setDatasetArtifacts] = useState<DatasetArtifactOption[]>([]);
+  const [loadingDatasetArtifacts, setLoadingDatasetArtifacts] = useState(false);
+  const [downloadingExport, setDownloadingExport] = useState(false);
 
   const nodeId = selectedNode?.id || "";
+  const operator = operators.find((op: any) => op.id === selectedNode?.data?.operatorId);
   const upstreamColumns = useUpstreamColumns(nodeId);
   const joinPairs = useMemo(
     () => parseJoinKeyPairs(params.left_keys, params.right_keys),
@@ -280,6 +299,30 @@ export default function NodeConfigPanel() {
     if (selectedNode) setParams(selectedNode.data.params || {});
   }, [selectedNode]);
 
+  useEffect(() => {
+    const supportsArtifactDataset = Boolean(
+      projectId
+      && operator?.parameters?.some((param: any) => param.name === "dataset_artifact_id"),
+    );
+    if (!supportsArtifactDataset) {
+      setDatasetArtifacts([]);
+      setLoadingDatasetArtifacts(false);
+      return;
+    }
+    let active = true;
+    setLoadingDatasetArtifacts(true);
+    listDatasets(projectId)
+      .then((items) => {
+        if (!active) return;
+        setDatasetArtifacts((items as DatasetArtifactOption[]).filter((item) => (
+          isCompatibleDatasetArtifact(operator?.id, item)
+        )));
+      })
+      .catch(() => { if (active) setDatasetArtifacts([]); })
+      .finally(() => { if (active) setLoadingDatasetArtifacts(false); });
+    return () => { active = false; };
+  }, [projectId, operator?.id, operator?.parameters]);
+
   if (!selectedNode) {
     return (
       <div className="node-config-panel node-config-panel--empty">
@@ -289,12 +332,12 @@ export default function NodeConfigPanel() {
     );
   }
 
-  const operator = operators.find((op: any) => op.id === selectedNode.data.operatorId);
   const status = nodeStatuses[selectedNode.id];
   const isExportOperator = isWorkflowExportOperator(operator?.id);
-  const selectedExportDirectory = exportDirectories[selectedNode.id];
-  const supportsDirectoryPicker = typeof window !== "undefined" &&
-    typeof (window as DirectoryPickerWindow).showDirectoryPicker === "function";
+  const exportArtifacts = Array.isArray(nodeResults[selectedNode.id]?.artifacts)
+    ? nodeResults[selectedNode.id].artifacts
+    : [];
+  const exportArtifact = exportArtifacts.find((artifact: any) => artifact?.artifact_id);
   const isJoinKeyRequired = (name: string) => isParamRequired(
     operator?.parameters?.find((param: any) => param.name === name),
     params,
@@ -324,17 +367,6 @@ export default function NodeConfigPanel() {
     handleJoinPairsChange(nextPairs);
   };
 
-  const handleExportDirectoryPick = async () => {
-    const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
-    if (!picker) return;
-    try {
-      const handle = await picker({ mode: "readwrite" });
-      setExportDirectory(selectedNode.id, { name: handle.name, handle });
-    } catch (error: any) {
-      if (error?.name !== "AbortError") message.error(lang === "zh" ? "无法选择保存文件夹" : "Unable to select save folder");
-    }
-  };
-
   const handleFileUpload = async (file: File, paramName: string) => {
     setUploading(true);
     try {
@@ -351,6 +383,21 @@ export default function NodeConfigPanel() {
       setUploading(false);
     }
     return false;
+  };
+
+  const handleExportDownload = async () => {
+    if (!exportArtifact?.artifact_id) return;
+    setDownloadingExport(true);
+    try {
+      await downloadDatasetArtifact(
+        String(exportArtifact.artifact_id),
+        String(exportArtifact.name || `${operator?.id || "dataset"}.csv`),
+      );
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || (lang === "zh" ? "下载失败" : "Download failed"));
+    } finally {
+      setDownloadingExport(false);
+    }
   };
 
   const isCSVImport = operator?.id === "csv_import";
@@ -405,6 +452,30 @@ export default function NodeConfigPanel() {
           placeholder="https://example.com/data.csv"
           value={value || ""}
           onChange={(e) => handleParamChange("url", e.target.value)}
+        />
+      );
+    }
+
+    if (p.name === "dataset_artifact_id" && isCSVImport) {
+      return (
+        <Select
+          aria-label={lang === "zh" ? "数据集制品" : "Dataset artifact"}
+          style={{ width: "100%" }}
+          value={value || undefined}
+          onChange={(artifactId) => handleParamChange(p.name, artifactId)}
+          placeholder={lang === "zh" ? "选择兼容的数据集制品" : "Select a compatible dataset artifact"}
+          loading={loadingDatasetArtifacts}
+          disabled={!projectId}
+          allowClear
+          options={datasetArtifacts.map((dataset) => {
+            const artifactId = dataset.artifact_id || dataset.id || "";
+            return {
+              value: artifactId,
+              label: dataset.row_count == null
+                ? (dataset.name || dataset.filename || artifactId)
+                : `${dataset.name || dataset.filename || artifactId} · ${dataset.row_count} 行`,
+            };
+          })}
         />
       );
     }
@@ -492,20 +563,6 @@ export default function NodeConfigPanel() {
       </h4>
       {operator?.parameters?.length > 0 ? (
         <Form className="node-config-panel__form" layout="vertical" size="small">
-          {isExportOperator && (
-            <Form.Item label={<span style={{ fontSize: 12 }}>{lang === "zh" ? "保存位置" : "Save location"}</span>} style={{ marginBottom: 12 }}>
-              <Button
-                icon={<FolderOpenOutlined />}
-                onClick={handleExportDirectoryPick}
-                disabled={!supportsDirectoryPicker}
-                aria-label={"\u9009\u62e9\u4fdd\u5b58\u6587\u4ef6\u5939"}
-                title={supportsDirectoryPicker ? undefined : (lang === "zh" ? "浏览器将使用下载保存文件" : "This browser will download the file")}
-              >
-                {"\u9009\u62e9\u4fdd\u5b58\u6587\u4ef6\u5939"}
-              </Button>
-              {selectedExportDirectory && <Text type="secondary" style={{ marginLeft: 8 }}>{selectedExportDirectory.name}</Text>}
-            </Form.Item>
-          )}
           {operator?.id === "join" && (
             <div className="node-config-panel__join-keys">
               <div className="node-config-panel__join-keys-header">
@@ -604,7 +661,9 @@ export default function NodeConfigPanel() {
             return (
               <Form.Item
                 key={p.name}
-                label={<span style={{ fontSize: 12 }}>{p.label || p.name}{required && (
+                label={<span style={{ fontSize: 12 }}>{p.name === "dataset_artifact_id"
+                  ? (lang === "zh" ? "数据集制品" : "Dataset artifact")
+                  : (p.label || p.name)}{required && (
                   <span className="node-config-panel__required" data-testid={`required-param-${p.name}`} aria-label="required">*</span>
                 )}</span>}
                 style={{ marginBottom: 12 }}
@@ -632,6 +691,18 @@ export default function NodeConfigPanel() {
                status === "failed" ? "\u5931\u8d25" : "\u5f85\u8fd0\u884c"}
             </span>
           </div>
+          {isExportOperator && status === "completed" && exportArtifact && (
+            <Button
+              block
+              icon={<DownloadOutlined />}
+              loading={downloadingExport}
+              onClick={handleExportDownload}
+              aria-label={lang === "zh" ? "下载导出文件" : "Download exported file"}
+              style={{ marginTop: 10 }}
+            >
+              {lang === "zh" ? "下载" : "Download"}
+            </Button>
+          )}
         </>
       )}
     </div>

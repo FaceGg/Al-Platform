@@ -577,17 +577,21 @@ def start_automl(
 
 @router.get("/automl/jobs")
 def list_automl_jobs(
+    project_id: uuid.UUID | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project_ids = [
-        project.id for project in ProjectAccessService()
-        .accessible_project_query(db, current_user.id).all()
-    ]
-    jobs = db.query(TrainingJob).filter(
-        TrainingJob.project_id.in_(project_ids),
-        TrainingJob.operator_id == "automl",
-    ).order_by(TrainingJob.created_at.desc()).all()
+    query = db.query(TrainingJob).filter(TrainingJob.operator_id == "automl")
+    if project_id is not None:
+        require_project_access(db, project_id, current_user.id, "project.read")
+        query = query.filter(TrainingJob.project_id == project_id)
+    else:
+        project_ids = [
+            project.id for project in ProjectAccessService()
+            .accessible_project_query(db, current_user.id).all()
+        ]
+        query = query.filter(TrainingJob.project_id.in_(project_ids))
+    jobs = query.order_by(TrainingJob.created_at.desc()).all()
     return [_job_to_dict(job) for job in jobs]
 
 

@@ -1,9 +1,11 @@
 import os
 import io
+import mimetypes
 from typing import List, Optional
 from uuid import UUID
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import StreamingResponse
@@ -334,6 +336,39 @@ def export_single_dataset(
         output,
         media_type=media_type,
         headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/datasets/{dataset_id}/download")
+def download_dataset_artifact(
+    dataset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    artifact = db.query(Artifact).filter(
+        Artifact.id == UUID(dataset_id),
+        Artifact.type == "dataset",
+    ).first()
+    if not artifact:
+        raise HTTPException(404, "Dataset not found")
+    require_project_access(db, artifact.project_id, current_user.id, "project.read")
+
+    try:
+        with build_artifact_service(db).materialize(
+            artifact.id, artifact.project_id, expected_type="dataset",
+        ) as path:
+            payload = path.read_bytes()
+    except ArtifactAccessError as error:
+        raise HTTPException(404, str(error)) from error
+
+    filename = Path(artifact.name or "dataset.csv").name
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return StreamingResponse(
+        io.BytesIO(payload),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=utf-8''{quote(filename)}",
+        },
     )
 
 

@@ -24,8 +24,8 @@ def list_operators():
             category=op.category,
             description=op.description,
             version=op.version,
-            inputs=[PortSpecSchema(name=p.name, type=p.type, label=p.label) for p in op.inputs],
-            outputs=[PortSpecSchema(name=p.name, type=p.type, label=p.label) for p in op.outputs],
+            inputs=[PortSpecSchema(name=p.name, type=p.type, label=p.label, required_columns=list(p.required_columns)) for p in op.inputs],
+            outputs=[PortSpecSchema(name=p.name, type=p.type, label=p.label, required_columns=list(p.required_columns)) for p in op.outputs],
             parameters=[ParamSpecSchema(
                 name=p.name,
                 type=p.type,

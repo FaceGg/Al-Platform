@@ -301,6 +301,23 @@ class TestProcessingOperatorsExecution(unittest.TestCase):
         self.assertEqual(outputs["schema"]["columns"], list(FEATURE_SCHEMA))
         self.assertEqual(len(outputs["schema"]["columns"]), 73)
         self.assertEqual(outputs["statistics"]["feature_count"], 73)
+        self.assertEqual(
+            [outputs["features"][0][name] for name in ("cvei", "cvev", "cver", "cvep")],
+            [frame.iloc[0][name] for name in ("cvei", "cvev", "cver", "cvep")],
+        )
+
+    def test_spot_weld_feature_engineering_declares_all_report_source_columns(self):
+        operator = OperatorRegistry.get("spot_weld_feature_engineering")
+        source_columns = next(port.required_columns for port in operator.inputs if port.name == "data")
+        self.assertEqual(
+            source_columns,
+            (
+                "wld1c", "wld2c", "tipv1", "tipv2", "wres", "energy",
+                "wld_spatter_strength", "wld1_spatter_strength", "wld2_spatter_strength",
+                "spatterpos_wld", "spatterpos_pre", "spotdiameter", "spotposition", "spattercode",
+                "cvei", "cvev", "cver", "cvep",
+            ),
+        )
 
     def test_spot_weld_feature_engineering_accepts_dataframe(self):
         frame = build_demo_report_frame(12)

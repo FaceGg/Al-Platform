@@ -88,14 +88,30 @@ def canonicalize_report_frame(
 ) -> pd.DataFrame:
     if not isinstance(frame, pd.DataFrame):
         raise QualityPipelineError("QUALITY_DATASET_INVALID", message="Dataset must be a dataframe")
+    # CSV/XLSX readers may preserve a UTF-8 BOM or accidental surrounding
+    # whitespace in headers. Keep exact names authoritative, then use a
+    # normalized alias only when the exact source column is absent.
+    normalized_columns: dict[str, str] = {}
+    for column in frame.columns:
+        normalized = str(column).lstrip("\ufeff").strip()
+        if normalized and normalized not in normalized_columns:
+            normalized_columns[normalized] = column
     mapping = {name: name for name in (*REPORT_TABLE_FIELDS, *WAVEFORM_FIELDS)}
     if field_mapping:
-        mapping.update({str(key): str(value) for key, value in field_mapping.items()})
+        mapping.update({str(key).lstrip("\ufeff").strip(): str(value) for key, value in field_mapping.items()})
     required = (*REPORT_TABLE_FIELDS, *WAVEFORM_FIELDS)
-    missing = [name for name in required if mapping.get(name) not in frame.columns]
+    sources: list[str] = []
+    missing: list[str] = []
+    for name in required:
+        source = mapping.get(name, name)
+        if source not in frame.columns:
+            source = normalized_columns.get(str(source).lstrip("\ufeff").strip(), source)
+        if source not in frame.columns:
+            missing.append(name)
+        else:
+            sources.append(source)
     if missing:
         raise QualityPipelineError("QUALITY_FIELD_MAPPING_INVALID", message=f"Missing fields: {', '.join(missing)}")
-    sources = [mapping[name] for name in required]
     if len(sources) != len(set(sources)):
         raise QualityPipelineError("QUALITY_FIELD_MAPPING_INVALID", message="Field mapping contains duplicate source columns")
     selected = frame.loc[:, sources].copy()
