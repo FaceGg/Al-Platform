@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.database import Base, engine
 from app.main import app
+from tests.auth_test_support import ensure_admin
 
 
 Base.metadata.create_all(bind=engine)
@@ -14,9 +15,7 @@ class TestWorkflowVersions(unittest.TestCase):
     def setUpClass(cls):
         cls.client_context = TestClient(app)
         cls.client = cls.client_context.__enter__()
-        cls.client.post("/api/auth/register", json={
-            "username": "version_admin", "password": "admin123", "role": "admin",
-        })
+        ensure_admin(username="version_admin")
         login = cls.client.post("/api/auth/login", data={
             "username": "version_admin", "password": "admin123",
         })

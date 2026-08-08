@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 
@@ -8,6 +9,15 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
 COMPOSE_FILE = REPOSITORY_ROOT / "docker-compose.yml"
 ACCEPTANCE_COMPOSE_FILE = REPOSITORY_ROOT / "docker-compose.acceptance.yml"
+FRONTEND_DOCKERFILE = REPOSITORY_ROOT / "ml-platform" / "frontend" / "Dockerfile"
+NPM_AUDIT_EXCEPTION = (
+    REPOSITORY_ROOT / "docs" / "security" / "react-router-rsc-mode-exception.json"
+)
+PRODUCTION_INFRASTRUCTURE = (
+    REPOSITORY_ROOT / "docs" / "delivery" / "PRODUCTION_INFRASTRUCTURE.md"
+)
+USER_GUIDE = REPOSITORY_ROOT / "docs" / "delivery" / "USER_GUIDE.md"
+PLATFORM_STATUS = REPOSITORY_ROOT / "PLATFORM_STATUS.md"
 NOTIFICATION_STACK_TEST = (
     REPOSITORY_ROOT / "ml-platform" / "backend" / "tests" / "test_notification_production_stack.py"
 )
@@ -86,11 +96,101 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             "http://mailpit:8025/api/v1/messages",
         )
 
+    def test_primary_compose_passes_smtp_authentication_without_literal_credentials(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+
+        for service_name in ("migrate", "backend", "worker", "scheduler"):
+            with self.subTest(service=service_name):
+                environment = compose["services"][service_name]["environment"]
+                self.assertEqual(environment["SMTP_USERNAME"], "${SMTP_USERNAME:-}")
+                self.assertEqual(environment["SMTP_PASSWORD"], "${SMTP_PASSWORD:-}")
+
+    def test_week11_12_ci_installs_and_executes_real_redacted_security_scanners(self):
+        parsed = yaml.safe_load(self.workflow)
+        job = parsed["jobs"]["week11-12-verification"]
+        steps = job["steps"]
+        install = next(
+            step for step in steps if step.get("name") == "Install security scanners"
+        )
+        scan = next(step for step in steps if step.get("name") == "Run security scans")
+
+        self.assertIn("pip-audit==2.", install["run"])
+        self.assertIn("bandit==1.", install["run"])
+        self.assertIn("v0.60.0", install["run"])
+        self.assertIn("v8.24.2", install["run"])
+        self.assertEqual(
+            scan["env"]["ACCEPTANCE_IMAGE"],
+            "ml-platform-backend:week11-12-${{ github.sha }}",
+        )
+        self.assertIn("tools.security_scans all", scan["run"])
+        self.assertIn("--npm-audit-exception", scan["run"])
+        self.assertIn("security/security.json", scan["run"])
+
+    def test_week11_12_ci_runs_web_gate_on_frozen_stack_then_summarizes_security_evidence(self):
+        parsed = yaml.safe_load(self.workflow)
+        steps = parsed["jobs"]["week11-12-verification"]["steps"]
+        rendered_steps = "\n".join(str(step.get("run", "")) for step in steps)
+
+        self.assertIn("tools.acceptance_environment web-context", rendered_steps)
+        self.assertIn("tools.security_scans web", rendered_steps)
+        self.assertIn("--base-url http://backend:8000", rendered_steps)
+        self.assertIn("security/web.json", rendered_steps)
+        self.assertIn("tools.acceptance_environment web-context-cleanup", rendered_steps)
+        self.assertIn("WEB_SECURITY_GATE_NOT_RUN", rendered_steps)
+        self.assertIn("tools.security_scans summarize", rendered_steps)
+        self.assertIn("security/summary.json", rendered_steps)
+        self.assertIn("docker compose --project-name", rendered_steps)
+
+    def test_react_router_audit_exception_is_scoped_time_bound_and_owned(self):
+        exception = json.loads(NPM_AUDIT_EXCEPTION.read_text(encoding="utf-8"))
+
+        self.assertEqual(exception["schema_version"], 1)
+        self.assertEqual(exception["id"], "react-router-rsc-mode-csrf")
+        self.assertEqual(exception["owner"], "ml-platform-maintainers")
+        self.assertEqual(exception["expires_on"], "2026-09-01")
+        self.assertEqual(
+            exception["package_versions"],
+            {"react-router": "7.18.1", "react-router-dom": "7.18.1"},
+        )
+        self.assertEqual(exception["advisory_sources"], [1124282])
+        self.assertIn("BrowserRouter", exception["mitigation"])
+
+    def test_delivery_docs_cover_four_notification_channels_and_evidence_boundary(self):
+        infrastructure = PRODUCTION_INFRASTRUCTURE.read_text(encoding="utf-8")
+        guide = USER_GUIDE.read_text(encoding="utf-8")
+        status = PLATFORM_STATUS.read_text(encoding="utf-8")
+
+        for marker in (
+            "MLflow 3.15.0",
+            "NOTIFICATION_CRYPTO_SECRET_FILE",
+            "SMTP_USERNAME",
+            "SMTP_PASSWORD",
+            "notification_crypto_configured",
+            "notification_worker_registered",
+            "RUN_NOTIFICATION_INTEGRATION=1",
+        ):
+            with self.subTest(infrastructure_marker=marker):
+                self.assertIn(marker, infrastructure)
+        for marker in ("通知中心", "站内通知", "企业微信", "邮件", "通用 Webhook"):
+            with self.subTest(guide_marker=marker):
+                self.assertIn(marker, guide)
+        for marker in (
+            "第十周",
+            "20260720_10_security_notifications",
+            "本地 WSL",
+            "远程 GitHub Actions 尚未执行",
+        ):
+            with self.subTest(status_marker=marker):
+                self.assertIn(marker, status)
+
     def test_acceptance_receiver_preserves_production_wecom_and_webhook_boundaries(self):
         acceptance = yaml.safe_load(ACCEPTANCE_COMPOSE_FILE.read_text(encoding="utf-8"))
         receiver = acceptance["services"]["notification-receiver"]
         proxy = acceptance["services"]["notification-proxy"]
 
+        self.assertNotIn("user", receiver)
+        self.assertEqual(receiver["cap_drop"], ["ALL"])
+        self.assertEqual(receiver["cap_add"], ["NET_BIND_SERVICE"])
         self.assertEqual(
             receiver["command"][:3],
             ["python", "-m", "tools.notification_receiver"],
@@ -144,6 +244,12 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             acceptance["services"]["inference-runtime"]["ports"],
             ["127.0.0.1:${WEEK12_INFERENCE_RUNTIME_PORT:-17000}:7000"],
         )
+
+    def test_frontend_healthcheck_uses_ipv4_loopback(self):
+        dockerfile = FRONTEND_DOCKERFILE.read_text(encoding="utf-8")
+
+        self.assertIn("wget -qO- http://127.0.0.1/", dockerfile)
+        self.assertNotIn("wget -qO- http://localhost/", dockerfile)
 
     def test_production_ci_generates_and_runs_notification_acceptance(self):
         parsed = yaml.safe_load(self.workflow)

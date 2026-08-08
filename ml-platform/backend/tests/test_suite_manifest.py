@@ -69,6 +69,7 @@ class TestSuiteManifest(unittest.TestCase):
             11: {"test_week11_12_tools", "test_week11_contracts"},
             12: {
                 "test_week12_security_gates",
+                "test_auth_jwt_migration",
                 "test_evidence_manifest",
                 "test_acceptance_environment",
             },

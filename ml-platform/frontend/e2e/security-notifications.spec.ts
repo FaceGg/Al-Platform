@@ -15,8 +15,8 @@ const UI = {
   unread: /(?:\u901a\u77e5.*\u672a\u8bfb|Notifications.*unread)/,
 };
 
-async function loginAs(page: Page, credentials: Credentials, absolute = false) {
-  await page.goto(absolute ? "http://127.0.0.1:5173/login" : "/login");
+async function loginAs(page: Page, credentials: Credentials) {
+  await page.goto("/login");
   await page.getByPlaceholder(/(?:\u7528\u6237\u540d|Username)/).fill(credentials.username);
   await page.getByPlaceholder(/(?:\u5bc6\u7801|Password)/).fill(credentials.password);
   await page.locator('button[type="submit"]').click();
@@ -151,11 +151,12 @@ test("project governance and notification delivery", async ({ page, browser }) =
   await expect(notificationItem).toContainText(/(?:\u672a\u8bfb|Unread)/);
   expect(staticMessageWarnings).toEqual([]);
 
-  const viewerContext = await browser.newContext();
-  const outsiderContext = await browser.newContext();
+  const acceptanceBaseUrl = new URL(page.url()).origin;
+  const viewerContext = await browser.newContext({ baseURL: acceptanceBaseUrl });
+  const outsiderContext = await browser.newContext({ baseURL: acceptanceBaseUrl });
   try {
     const viewerPage = await viewerContext.newPage();
-    await loginAs(viewerPage, viewer, true);
+    await loginAs(viewerPage, viewer);
     expect((await api(viewerPage, `/api/projects/${projectId}/notification-endpoints`, "GET")).status).toBe(200);
     expect((await api(viewerPage, `/api/projects/${projectId}/notification-endpoints`, "POST", {
       kind: "webhook",
@@ -168,7 +169,7 @@ test("project governance and notification delivery", async ({ page, browser }) =
     })).status).toBe(403);
 
     const outsiderPage = await outsiderContext.newPage();
-    await loginAs(outsiderPage, outsider, true);
+    await loginAs(outsiderPage, outsider);
     expect((await api(outsiderPage, `/api/projects/${projectId}/notification-endpoints`, "GET")).status).toBe(404);
   } finally {
     await viewerContext.close();

@@ -6,7 +6,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 
-from jose import jwt, JWTError
+import jwt
+from jwt import InvalidTokenError
 
 from passlib.context import CryptContext
 
@@ -71,16 +72,15 @@ def get_current_user(
         )
 
         user_id = payload.get("sub")
+        if not isinstance(user_id, str):
+            raise ValueError("JWT subject must be a UUID string")
+        user_id = uuid.UUID(user_id)
 
-        if user_id is None:
-
-            raise HTTPException(401, "Invalid token")
-
-    except JWTError:
+    except (InvalidTokenError, TypeError, ValueError, AttributeError):
 
         raise HTTPException(401, "Invalid token")
 
-    user = db.query(User).filter(User.id == uuid.UUID(user_id)).first()
+    user = db.query(User).filter(User.id == user_id).first()
 
     if user is None:
 

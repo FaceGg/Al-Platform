@@ -498,15 +498,8 @@ def generate(
         raise FileNotFoundError(f"missing required evidence: {missing}")
 
     _assert_safe_metadata(remote_ci_run_url, image_digest)
-    commit = _git_commit()
     environment_path = evidence_dir / "environment.json"
     environment = _load_required_json(environment_path)
-    _validate_environment(
-        environment_path,
-        environment,
-        commit=commit,
-        image_digest=image_digest,
-    )
     evidence = {
         relative: _load_required_json(evidence_dir / relative)
         for relative in REQUIRED_GATE_EVIDENCE
@@ -517,6 +510,13 @@ def generate(
     }
     if any(status != "passed" for status in statuses.values()):
         raise RuntimeError(f"required evidence did not pass: {statuses}")
+    commit = _git_commit()
+    _validate_environment(
+        environment_path,
+        environment,
+        commit=commit,
+        image_digest=image_digest,
+    )
     _validate_performance(
         Path("performance/summary.json"),
         evidence[Path("performance/summary.json")],

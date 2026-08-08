@@ -6,7 +6,7 @@
 
 > 第八周：ONNX 模型注册中心、独立基础推理运行时、运维 UI、生产 Compose、本地与远程验收已完成；已随 PR #3 合并到 `main`。
 
-> 最后更新: 2026-07-20 | 当前版本: 0.3.0
+> 最后更新: 2026-08-02 | 当前版本: 0.3.0
 
 ---
 
@@ -385,8 +385,8 @@
 
 ### 未实现或未验收
 
-- 模型灰度发布、滚动升级、回滚、限流和在线推理治理；基础模型注册、审批、部署与推理已完成。
-- SSO、企业通知、Kubernetes、Notebook、GPU 和多集群治理；项目角色和关键写操作审计已完成。
+- 模型灰度发布、滚动升级、回滚、限流和在线推理治理已完成本地实现；远程 GitHub Actions 与最终生产证据仍未完成。
+- SSO、Kubernetes、Notebook、GPU 和多集群治理；项目角色、关键写操作审计与四通道企业通知已完成本地实现，远程验收仍待执行。
 - 更广泛的浏览器 E2E、性能、安全、备份恢复、升级和 Docker 镜像验收；焊接质量主流程 E2E 已通过。
 
 ## 十二、2026-07-14 第四周交付审计
@@ -459,3 +459,11 @@
 - CI failure evidence 在 raw copy 上拒绝配置 secret 与任意 `mli_` token，只上传 redacted copy；copy/redaction 异常时 EXIT trap 同时删除 raw/redacted 目录；对应 workflow 回归 `12/12` 通过。
 - 前端 `npm audit --audit-level=high` 当前保留 2 个 React Router RSC Mode CSRF high；应用为 `BrowserRouter` Vite SPA，未启用 RSC/SSR/server handler。强制降级到 7.11.0 会产生 14 个更早 high；受限例外和复核条件已记录在 Week 9 验收文档，不将 audit 表述为通过。
 - 当前状态：第九周仍为“进行中”。远程 GitHub Actions、最终全量安全/前端 gate、提交和合并前不关闭本周。
+
+### 十九、2026-08-02 第十周安全、审计与四通道通知本地验收
+
+- 第十周在既有 owner/editor/operator/viewer 项目角色和项目写审计基础上完成公开注册角色注入防护、Compute/Annotation/Platform API 的 fail-closed 归属解析，以及独立的平台安全审计流。
+- Alembic 线性 head 为 `20260720_10_security_notifications`。事务 Outbox、持久 delivery lease/retry/dead-letter 与站内通知、企业微信、邮件、通用 Webhook 四通道已实现；端点配置加密保存，API 与页面不回显凭据或服务商原始响应。
+- 本地 WSL Docker 29.6.2 / Compose 5.3.1 隔离栈已验证 PostgreSQL、Redis、Celery、Mailpit、受控企业微信/Webhook 接收器、迁移 current/check、通知生产用例 `6/6` 和目标 Chromium `1/1`；隔离容器、网络和卷已清理。
+- CI 配置已增加固定版本的 pip-audit、Bandit、Trivy 与 Gitleaks 扫描，并将结果写入 Week 11-12 evidence。`npm audit` 仍报告 React Router RSC Mode 的两个 high；仅在 `docs/security/react-router-rsc-mode-exception.json` 的精确版本、单一 advisory、BrowserRouter 客户端范围和 2026-09-01 到期约束全部成立时才受限通过，任一条件变化即失败。
+- 当前状态：Task 12 正在完成共享 Compose、CI、文档与本地质量门禁；远程 GitHub Actions 尚未执行，不能将本地 WSL 或静态合同当作远程验收。固定 4 vCPU/8 GiB 三轮性能、真实备份恢复 RTO/RPO、N-1 升级、完整外部 Chromium、最终证据清单也仍是第 11-12 周未完成门禁。

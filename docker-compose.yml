@@ -80,6 +80,8 @@ services:
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
       ML_PLATFORM_TEMP_DIR: /tmp/ml-platform
     depends_on:
@@ -89,7 +91,7 @@ services:
       - notification_master_key
 
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v3.2.0
+    image: ghcr.io/mlflow/mlflow:v3.15.0
     command:
       - /bin/sh
       - -c

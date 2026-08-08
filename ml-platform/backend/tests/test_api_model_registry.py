@@ -245,14 +245,11 @@ class TestModelRegistryAPI(unittest.TestCase):
         self.assertNotIn("current", encoded)
 
     def test_06_rollout_routes_use_the_frozen_canonical_path(self):
-        routes = {
-            (route.path, method)
-            for route in self.app.routes
-            for method in getattr(route, "methods", set())
-        }
-        self.assertIn(("/api/inference-deployments/{deployment_id}/rollouts", "GET"), routes)
-        self.assertIn(("/api/inference-deployments/{deployment_id}/rollouts", "POST"), routes)
-        self.assertNotIn(("/api/inference-deployments/{deployment_id}/releases", "GET"), routes)
+        paths = self.app.openapi()["paths"]
+        rollout_operations = paths["/api/inference-deployments/{deployment_id}/rollouts"]
+        self.assertIn("get", rollout_operations)
+        self.assertIn("post", rollout_operations)
+        self.assertNotIn("/api/inference-deployments/{deployment_id}/releases", paths)
 
     def test_07_metric_and_log_queries_reject_unknown_parameters(self):
         self.as_role("owner")

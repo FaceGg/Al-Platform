@@ -117,4 +117,20 @@ describe("frontend acceptance manifest", () => {
     expect(config).toContain('const externalAcceptanceReportPath = path.join(');
     expect(config).toContain('["json", { outputFile: externalAcceptanceReportPath }]');
   });
+
+  it("keeps every secondary notification role context on the configured acceptance stack", () => {
+    const spec = readFileSync(
+      resolve(process.cwd(), "e2e", "security-notifications.spec.ts"),
+      "utf-8",
+    );
+
+    expect(spec).not.toContain("http://127.0.0.1:5173");
+    expect(spec).toContain("const acceptanceBaseUrl = new URL(page.url()).origin;");
+    expect(spec).toContain(
+      "const viewerContext = await browser.newContext({ baseURL: acceptanceBaseUrl });",
+    );
+    expect(spec).toContain(
+      "const outsiderContext = await browser.newContext({ baseURL: acceptanceBaseUrl });",
+    );
+  });
 });

@@ -1435,3 +1435,40 @@
 - 影响范围：仅 `backend/tools/backup_restore.py` 与 Week 11-12 工具回归；不修改生产数据库、MinIO bucket、Compose、CI 或用户的前端测试修改。
 - 预防措施：文件系统安全控制必须将“新建原子写入目标”和“已存在、将被读取的证据”分为不同状态；所有 pending/manifest/final receipt 接受路径统一使用 `lstat()`、重解析点和 link-count 检查，任何已占用但无效的控制路径均失败关闭。
 - 遗留事项：仍需在隔离 PostgreSQL/MinIO 环境执行真实备份恢复和 RTO/RPO；当前 22 vCPU/16.5 GiB Docker 主机不满足 4 vCPU/8 GiB 三轮性能基线，不能生成 Week 11 性能结论。
+
+### 2026-08-02：第 10 周 Task 11 浏览器、清单与生产栈验收完成
+
+- 当前状态：Task 11 已完成本地实现、回归、隔离 WSL 生产栈和目标 Chromium 验收；第 10 周整体仍为“进行中”，Task 12 的共享生产文件、完整本地收口与远程 GitHub Actions 尚未完成。
+- 开发内容：修复外部 Chromium 次级角色上下文固定回 `127.0.0.1:5173` 的问题；通知受控接收器恢复镜像默认非 root `app` 用户；前端镜像健康检查改用显式 IPv4 loopback；为三项部署/浏览器边界增加静态回归。
+- 问题现象与根因：接收器以 `user: "0:0"` 运行并同时 `cap_drop: ALL` 时，root 不再拥有 DAC override，不能读取 Compose 以 UID 1000、0600 挂载的 TLS 私钥，`load_cert_chain` 抛出 `PermissionError`。前端镜像自定义 Nginx 配置仅监听 IPv4，Alpine `localhost` 解析到 `::1`，健康检查连接被拒绝，导致完整栈无法等待 frontend healthy。外部 E2E 的 Windows `cmd.exe` 链中 `/s` 加带引号路径会产生无效目录语法，且 `set VAR=value &&` 会把分隔符前空格写入变量，令严格的 `RUN_WEEK12_BROWSER_ACCEPTANCE === "1"` 判断失败。
+- 解决方法：删除接收器的 root 覆写，保留 `cap_drop: ALL` 与 `NET_BIND_SERVICE`；将前端健康检查改为 `127.0.0.1`；E2E 从主页面 origin 派生 viewer/outsider `baseURL`，并在保持 WSL Compose shell 存活时以无 `/s`、无分隔空格的 Windows Node Playwright CLI 执行外部用例。
+- TDD 与验证：接收器非 root 契约和 IPv4 健康检查契约均先 RED 后 GREEN；`tests.test_ci_workflow` 23/23、`src/weekAcceptance.test.ts` 7/7、`run_suite.py --week 10` 7/7 模块通过，`git diff --check` 通过。WSL Docker 29.6.2 / Compose 5.3.1 的唯一项目完成迁移 `20260720_10_security_notifications` current/check、PostgreSQL/Redis/Celery/Mailpit/受控 Webhook-WeCom 接收器全健康、`test_notification_production_stack` 6/6 和外部 Chromium `security-notifications.spec.ts` 1/1；项目容器、网络和卷均已按精确标签清理。
+- 影响范围：`docker-compose.acceptance.yml`、前端 Dockerfile、通知浏览器验收和 CI/Compose 静态契约；不改变通知协议、业务数据或用户的 `ModelLibraryPage.test.tsx` 修改。
+- 遗留事项：Task 12 仍需收口共享 Compose/CI/交付状态、完整本地质量/依赖/扫描门禁与远程 CI；Week 11-12 的固定 4 vCPU/8 GiB 三轮性能、真实备份恢复 RTO/RPO、N-1 升级、完整外部 Chromium、最终证据清单和远程门禁继续保持未完成。
+
+### 2026-08-02：第 10 周 Task 11 外部角色 Context 回归与双审闭环
+
+- 当前状态：Task 11 的本地验收、静态回归、规格审查和代码质量审查均已闭环；第 10 周仍为“进行中”，不把本地 WSL 证据升级为远程 CI 结论。
+- 问题现象：初始静态回归只检查通用 context 片段和固定登录 URL，viewer 或 outsider 任一角色退回裸 `browser.newContext()` 时可能漏检。
+- 解决方法：分别锁定 viewer/outsider 使用 `baseURL: acceptanceBaseUrl`，禁止完整固定 `http://127.0.0.1:5173` origin；验收 origin 继续从主页面 `page.url()` 派生。
+- 验证方式：`src/weekAcceptance.test.ts` 先在 viewer 回退裸 context 时按预期 1 项失败、其余 6 项通过；恢复后 7/7 通过。规格审查和代码质量审查均无 P0-P2；`git diff --check` 通过。共享经验已追加外部 Chromium context 的根因、修复、WSL 验证与远程 CI 边界。
+- 遗留事项：Task 12 的共享生产配置、CI、交付文档和完整本地门禁继续按计划执行；第 11-12 周固定资源性能、真实备份恢复、N-1、完整浏览器、证据清单和远程 CI 仍未完成。
+
+### 2026-08-02：第 12 周 Task 13 安全扫描门禁暂停检查点
+
+- 当前状态：用户要求立即保存并停止；第 12 周和 Task 13 保持“进行中”，不得将安全扫描或 Week 11-12 最终验收标记为完成。
+- 已保存范围：安全扫描封装器、CI 静态契约、受限 React Router 审计例外、原始报告相对路径绑定及对应回归均保留在未提交工作树；`ModelLibraryPage.test.tsx` 的用户既有修改未触碰。
+- 已验证证据：暂停前主流程独立运行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_week12_security_gates tests.test_ci_workflow -v` 为 76/76；`python -m compileall -q app tools tests` 与 `git diff --check` 退出码为 0，后者仅输出既有 CRLF 工作树提示。
+- 未关闭缺口：规格复审确认路由 action 的成员表达式和对象 shorthand 仍可绕过；提供静态 gate 的 `security.json` 尚未在解析前完成普通文件、单链接、非 reparse 和根目录约束校验；不安全证据错误码仍需统一为 `SECURITY_EVIDENCE_INVALID`。实现代理在这些修复及复验完成前被停止。
+- 恢复顺序：先检查 `security_scans.py` 与 `test_week12_security_gates.py` 的保存差异，按 RED→GREEN 补齐上述三项回归；随后重跑目标测试、编译和 diff 检查，再完成规格复审与独立代码质量复审。仅在真实扫描、冻结 Web 栈及远程 CI 取得独立证据后，才可关闭 Task 13 或 Week 12。
+
+### 2026-08-08：第 12 周 Task 13 安全证据解析缺口修复
+
+- 当前状态：Task 13 的静态安全证据解析缺口已完成 RED→GREEN；第 11-12 周仍为“进行中”，真实扫描、固定资源性能、备份恢复 RTO/RPO、N-1、完整 Chromium、最终证据清单和远程 GitHub Actions 仍未完成。
+- 问题现象：React Router 例外扫描会误报 TypeScript `action: string` 类型字段，并漏检成员表达式与带类型注解的对象 shorthand；汇总器可能在校验 `security.json`/`web.json` 来源前读取状态，且不安全证据错误码不稳定。
+- 根因：静态正则没有区分类型声明与运行时 route action；汇总流程先依赖候选计数再验证文件来源；web 缺失/非法分支复用了非证据错误码。
+- 解决方法：增加类型声明局部屏蔽并覆盖成员表达式、类型注解 shorthand；所有影响汇总状态的 JSON 在解析前执行根目录 containment、`lstat()`、普通文件、非 reparse、单硬链接校验；统一不安全证据错误码为 `SECURITY_EVIDENCE_INVALID`。
+- 验证方式：新增回归先 RED 后 GREEN；独立运行 `C:\\Users\\17723\\miniconda3\\python.exe -m unittest tests.test_week12_security_gates tests.test_ci_workflow -v` 为 83/83，`C:\\Users\\17723\\miniconda3\\python.exe -m compileall -q app tools tests` 通过，`git diff --check` 通过（仅既有 CRLF 提示）。
+- 影响范围：`ml-platform/backend/tools/security_scans.py`、`ml-platform/backend/tests/test_week12_security_gates.py`；未修改用户既有 `ModelLibraryPage.test.tsx`。
+- 预防措施：安全证据必须先验证来源再解析任何状态；静态扫描回归同时覆盖运行时语法、类型声明和 fail-closed 错误码；复杂 TypeScript 语法保持保守拒绝，后续若引入 AST 扫描需追加等价安全合同。
+- 遗留事项：必须在独立 WSL/Compose 栈完成真实 scanner、固定 4 vCPU/8 GiB 性能、备份恢复、N-1 与完整浏览器验收，并取得远程 CI 证据后才能关闭 Task 13/Week 12。

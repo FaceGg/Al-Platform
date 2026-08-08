@@ -12,6 +12,7 @@ from app.main import app
 from app.models.run import NodeRun, WorkflowRun
 from app.models.workflow import WorkflowNode
 from app.templates.industrial import INDUSTRIAL_TEMPLATES
+from tests.auth_test_support import ensure_admin
 
 
 class TestIndustrialTemplateE2E(unittest.TestCase):
@@ -20,9 +21,7 @@ class TestIndustrialTemplateE2E(unittest.TestCase):
         cls.client_context = TestClient(app)
         cls.client = cls.client_context.__enter__()
         username = f"industrial_e2e_{uuid.uuid4().hex[:8]}"
-        cls.client.post("/api/auth/register", json={
-            "username": username, "password": "admin123", "role": "admin",
-        })
+        ensure_admin(username=username)
         login = cls.client.post("/api/auth/login", data={
             "username": username, "password": "admin123",
         })

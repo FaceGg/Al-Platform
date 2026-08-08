@@ -93,12 +93,8 @@ class TestProductionInferenceApi(unittest.TestCase):
         cls.engine.dispose()
 
     def test_production_route_is_versioned_and_requires_api_key(self):
-        routes = {
-            (route.path, method)
-            for route in self.app.routes
-            for method in getattr(route, "methods", set())
-        }
-        self.assertIn(("/api/v1/inference/{deployment_id}/predict", "POST"), routes)
+        paths = self.app.openapi()["paths"]
+        self.assertIn("post", paths["/api/v1/inference/{deployment_id}/predict"])
         response = self.client.post(
             "/api/v1/inference/00000000-0000-0000-0000-000000000001/predict",
             json={"records": [{"current": 1.0}]},
