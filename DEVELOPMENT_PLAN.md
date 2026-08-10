@@ -1472,3 +1472,92 @@
 - 影响范围：`ml-platform/backend/tools/security_scans.py`、`ml-platform/backend/tests/test_week12_security_gates.py`；未修改用户既有 `ModelLibraryPage.test.tsx`。
 - 预防措施：安全证据必须先验证来源再解析任何状态；静态扫描回归同时覆盖运行时语法、类型声明和 fail-closed 错误码；复杂 TypeScript 语法保持保守拒绝，后续若引入 AST 扫描需追加等价安全合同。
 - 遗留事项：必须在独立 WSL/Compose 栈完成真实 scanner、固定 4 vCPU/8 GiB 性能、备份恢复、N-1 与完整浏览器验收，并取得远程 CI 证据后才能关闭 Task 13/Week 12。
+
+### 2026-08-08：第 12 周 React Router 审计例外语法闭合修正
+
+- 当前状态：React Router 受限 npm-audit 例外的新增静态语法缺口已按 RED→GREEN 修复；Task 13 和第 11-12 周继续保持“进行中”，不得将本地静态回归替代真实 scanner、生产栈或远程 CI。
+- 问题现象：独立安全复审发现注释分隔 import、Route 的括号/嵌套括号别名、可选 factory call 与 `.bind()` factory alias 可使 Action route 绕过例外扫描并错误返回 `passed`；第二轮复审补充发现 alias/factory 中的注释和嵌套括号同样可绕过。
+- 根因：命名 import、alias assignment 与 factory call 的正则只接受部分空白语法，未将 JavaScript/TypeScript 的 comment trivia、括号包装和 bound factory reference 归一到同一识别边界。
+- 解决方法：import/re-export/local binding 扫描统一接受 comment trivia；Route/factory alias 归一化移除 comment、空白和任意外层括号，并识别 `.bind` 基础 factory；factory call 支持 comment trivia、optional call 与 parenthesized reference。
+- TDD 与验证：新增 6 个回归先稳定 RED，覆盖 comment-separated import、单层/嵌套 Route alias、optional call、bound factory 与 comment/nested factory；实现后 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_week12_security_gates tests.test_ci_workflow -v` 为 123/123，`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 与 `git diff --check` 通过（仅既有 CRLF 提示）。
+- 影响范围：仅 `ml-platform/backend/tools/security_scans.py`、`ml-platform/backend/tests/test_week12_security_gates.py`；用户的 `ModelLibraryPage.test.tsx` 仍未触碰。
+- 预防措施：受限依赖例外的静态 gate 需将注释、括号、local alias、re-export、optional/bound call 视为同类语法边界并分别保留 RED 回归；无法安全证明客户端-only 语义时保持失败关闭，复杂语法应迁移至 AST 检查。
+- 遗留事项：需继续执行真实 scanner、冻结 Web 栈、固定资源性能、备份恢复、N-1 升级、完整 Chromium、最终 evidence manifest 与远程 GitHub Actions，才可关闭 Task 13/Week 12。
+
+### 2026-08-08：第 12 周 React Router 例外语义绑定复审升级
+
+- 当前状态：前两轮语法回归已通过且当前安全/CI 静态套件为 123/123；第三轮独立复审仍确认条件表达式和 `import * as Router` 后的 destructuring 可构造 Action/factory alias 并错误放行，因此本项继续受阻，不能把前一条局部语法修正表述为完整闭合。
+- 已验证问题：`const R = true ? Route : Route`、`const { Route: R } = Router`、等价的 factory 条件/解构绑定均可在现有正则模型外建立可用 Action route 或 router factory。
+- 根因：基于局部正则的 alias 传播只能覆盖有限语法，无法证明任意 JavaScript/TypeScript binding expression 与 React Router runtime export 的等价关系；继续逐例扩展会保留新的 fail-open 表面。
+- 处理边界：停止第四轮正则补丁。待确认后采用其一：A. 对任何未建模的 React Router `Route`/router-factory/namespace binding 直接拒绝 npm-audit 例外（推荐，当前真实 BrowserRouter 前端不受影响）；B. 引入 TypeScript AST/符号绑定扫描并为新依赖与跨版本 parser 行为建立完整合同。
+- 已保留证据：新增 six RED→GREEN 语法回归和 123/123 静态通过记录有效，但仅证明已覆盖形式；未解决的条件/namespace binding 仍为阻断合并的 P1。
+- 遗留事项：取得上述架构决策并完成对应 RED→GREEN、独立复审后，才可进入真实 scanner、生产栈、固定资源性能、备份恢复、N-1、完整 Chromium、evidence manifest 和远程 CI 门禁。
+
+### 2026-08-10：第 12 周 Task 13 保守绑定收敛与全量回归检查点
+
+- 当前状态：已采用原方案 A：任何未被扫描器证明为安全的 React Router `Route`、router-factory、namespace、动态加载或别名传播，一律拒绝 npm-audit 例外；第 11、12 周仍为“进行中”，不将本地回归或局部扫描结果表述为最终验收。
+- 已验证根因与处理：局部正则无法可靠证明条件表达式、解构、动态模块加载及跨运行时别名与 React Router 导出的等价关系。扫描器现只接受受限的命名导入和已建模的直接绑定，遇到条件绑定、namespace 解构、默认/混合导入、动态 `import`/`require`、对象或调用传播时失败关闭。真实客户端 BrowserRouter 前端仍被允许。
+- 验证方式：`C:\\Users\\17723\\miniconda3\\python.exe -m unittest tests.test_week12_security_gates tests.test_ci_workflow -v` 为 138/138；`C:\\Users\\17723\\miniconda3\\python.exe run_suite.py` 为 89/89 模块；前端 `npm test -- --run` 为 23 个文件、90/90；`npm run build` 通过，仍有 ECharts 约 1.13 MB chunk 警告；`compileall -q app tools tests` 与 `git diff --check` 通过（后者仅有既有 CRLF 提示）。本地 Chromium 的四项可运行用例通过，外部 Week 12 栈用例按设计跳过；Windows Playwright 完成后未自动退出的本轮测试进程已按 PID 精确终止。
+- 安全扫描证据：官方 npm registry audit 重新生成且为 0 vulnerabilities；Bandit HIGH 门槛为 0。pip-audit 的同日原始报告仍发现 `cryptography 49.0.0` 的 `PYSEC-2026-3552` / `CVE-2026-69247`，修复版为 50.0.0；该升级需要连同锁定的 MLflow 3.15 依赖链重新解析和全量兼容验证，当前不能宣称 Python 依赖门禁通过。
+- 外部环境阻塞：Windows 与 WSL 均无 Trivy/Gitleaks；WSL Docker 29.6.2、Compose 5.3.1 可用，但主机为 22 vCPU / 15.4 GiB，未满足固定 4 vCPU / 8 GiB 三轮性能基线。重新拉取 `ghcr.io/mlflow/mlflow:v3.15.0` 在首层长期无进度后中止，未以旧 3.2.0 镜像替代或伪造真实生产栈结果。
+- 后续顺序：取得冻结 MLflow 镜像和 Trivy/Gitleaks 后，在隔离 WSL Compose 栈执行真实备份恢复、N-1、完整外部 Chromium、web/security 汇总和固定资源性能；随后生成 evidence manifest、最终验收报告及远程 GitHub Actions 证据，再决定 Week 11-12 完成状态。
+
+### 2026-08-10：第 12 周 CI 安全密钥注释导致 YAML 缩进回归
+
+- 当前周次：第 12 周 Task 13 安全扫描门禁。
+- 问题现象：为让 Gitleaks 忽略受控 CI 测试密钥而追加行尾注释时，两处 `INFERENCE_INTERNAL_SECRET` 行多出一个空格，GitHub Actions 工作流无法被 PyYAML 解析；目标套件出现 15 个连锁解析错误。
+- 根因：手工编辑 YAML 映射项时没有保持同一 `env` 缩进层级；行尾注释本身不是问题，缩进漂移才是语法错误。
+- 解决方法：将两处变量恢复到与相邻 `env` 键相同的缩进，仅保留 `# gitleaks:allow` 注释。
+- 验证方式：修复前 `tests.test_ci_workflow` 29 项中 15 项错误；修复后 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_ci_workflow -v` 为 29/29，`git diff --check` 通过（仅 CRLF 工作树提示）。
+- 影响范围：`.github/workflows/ci.yml` 受控测试环境变量；不改变运行时密钥、业务协议或用户既有前端测试修改。
+- 预防措施：修改 GitHub Actions YAML 后必须先用 PyYAML/工作流合同解析，再运行行为断言；密钥扫描注释应与原始缩进一起做最小差异审查。
+- 遗留事项：Trivy 漏洞数据库、冻结 MLflow 镜像、固定资源性能、真实备份恢复、N-1、完整外部 Chromium 和远程 CI 仍需独立证据。
+
+### 2026-08-10：第 12 周真实 Trivy/Gitleaks 扫描证据
+
+- 当前周次：第 12 周 Task 13 安全扫描门禁。
+- Trivy 环境：WSL Docker 29.6.2 已有 `aquasec/trivy:0.67.2`；`trivy-cache` 中已有约 1.2 GB 漏洞数据库，可用 `--skip-db-update` 离线复用。
+- 文件系统扫描：对当前工作树执行 HIGH/CRITICAL 漏洞、密钥和错误配置扫描，结果 `trivy-fs.json` 为 0 vulnerabilities、0 secrets、0 misconfigurations，扫描命令返回 0。
+- 镜像扫描：当前 `codex-week12-20260810-a1-backend:latest`（MLflow 3.15.1、cryptography 49.0.0）发现 26 项 HIGH/CRITICAL，其中 22 HIGH、4 CRITICAL；4 项 CRITICAL 来自 Debian `perl-base`，另有 `cryptography 49.0.0` 的 `CVE-2026-69247` 受控兼容例外。镜像门禁仍为失败，不得以旧 `week9-12-mlops-core-backend` 结果替代当前栈。
+- Gitleaks：worktree 根目录的 no-git 扫描曾命中 18 项，根因是 `tmp/` 缓存、临时私钥/脚本和 Trivy 报告生成物；在不含运行时临时目录的 `ml-platform` 应用源码和 `.github` CI 目录分别执行 no-git 脱敏扫描，均为 0 leaks。历史仓库扫描此前已验证无泄漏；临时报告不纳入提交。
+- 验证方式：后端 `run_suite.py` 89/89；安全与 CI 目标套件 146/146；前端 23 文件、90/90；`npm run build`、Python `compileall`、`git diff --check` 通过。Trivy/Gitleaks 原始 JSON 仅保存在 `tmp/security-20260810/`。
+- 遗留事项：镜像基础层待升级到无 HIGH/CRITICAL 的可发布版本；`cryptography` 50.0.0 与 MLflow 3.15 兼容性仍需独立解析验证；远程 CI、固定资源性能、真实备份恢复、N-1、完整外部 Chromium 和最终证据清单未闭合。
+
+### 2026-08-10：第 12 周 Trivy 基础镜像重建复核
+
+- 当前周次：第 12 周 Task 13 安全扫描门禁。
+- 问题现象：当前后端镜像 Trivy 仍报告 Debian 13.6 基础包（含 `perl-base`）的 HIGH/CRITICAL CVE，不能仅用 MLflow/cryptography 例外解释。
+- 处理结果：使用当前 Dockerfile 和 `docker build --pull` 重建 `codex-week12-20260810-a2-backend:latest`；Docker 解析到相同 `python:3.11-slim` digest，Trivy 结果仍为 26 项（22 HIGH、4 CRITICAL），无 secrets/misconfigurations。
+- 验证方式：重建成功；同一 `trivy-cache`、同一 HIGH/CRITICAL 参数复扫并取得 `trivy-image-a2.json`。未修改业务依赖或将基础层 CVE 写入例外。
+- 预防措施：发布前固定基础镜像 digest 并由镜像维护者提供已修复层；只有有明确补丁版本和兼容验证时才升级基础镜像或 Python 包。
+- 遗留事项：等待可用的无阻断基础镜像/上游修复；远程 CI 与 Week 11-12 其他最终门禁仍未闭合。
+
+### 2026-08-10：第 12 周 Trivy 基础镜像重建复核
+
+- 当前周次：第 12 周 Task 13 安全扫描门禁。
+- 问题现象：当前后端镜像 Trivy 仍报告 Debian 13.6 基础包（含 `perl-base`）的 HIGH/CRITICAL CVE，不能仅用 MLflow/cryptography 例外解释。
+- 处理结果：使用当前 Dockerfile 和 `docker build --pull` 重建 `codex-week12-20260810-a2-backend:latest`；Docker 解析到相同 `python:3.11-slim` digest，Trivy 结果仍为 26 项（22 HIGH、4 CRITICAL），无 secrets/misconfigurations。
+- 验证方式：重建成功；同一 `trivy-cache`、同一 HIGH/CRITICAL 参数复扫并取得 `trivy-image-a2.json`。未修改业务依赖或将基础层 CVE 写入例外。
+- 预防措施：发布前固定基础镜像 digest 并由镜像维护者提供已修复层；只有有明确补丁版本和兼容验证时才升级基础镜像或 Python 包。
+- 遗留事项：等待可用的无阻断基础镜像/上游修复；远程 CI 与 Week 11-12 其他最终门禁仍未闭合。
+
+### 2026-08-10：第 12 周真实 Trivy/Gitleaks 扫描证据
+
+- 当前周次：第 12 周 Task 13 安全扫描门禁。
+- Trivy 环境：WSL Docker 29.6.2 已有 `aquasec/trivy:0.67.2`；`trivy-cache` 中已有约 1.2 GB 漏洞数据库，可用 `--skip-db-update` 离线复用。
+- 文件系统扫描：对当前工作树执行 HIGH/CRITICAL 漏洞、密钥和错误配置扫描，结果 `trivy-fs.json` 为 0 vulnerabilities、0 secrets、0 misconfigurations，扫描命令返回 0。
+- 镜像扫描：当前 `codex-week12-20260810-a1-backend:latest`（MLflow 3.15.1、cryptography 49.0.0）发现 26 项 HIGH/CRITICAL，其中 22 HIGH、4 CRITICAL；4 项 CRITICAL 来自 Debian `perl-base`，另有 `cryptography 49.0.0` 的 `CVE-2026-69247` 受控兼容例外。镜像门禁仍为失败，不得以旧 `week9-12-mlops-core-backend` 结果替代当前栈。
+- Gitleaks：worktree 根目录的 no-git 扫描曾命中 18 项，根因是 `tmp/` 缓存、临时私钥/脚本和 Trivy 报告生成物；在不含运行时临时目录的 `ml-platform` 应用源码和 `.github` CI 目录分别执行 no-git 脱敏扫描，均为 0 leaks。历史仓库扫描此前已验证无泄漏；临时报告不纳入提交。
+- 验证方式：后端 `run_suite.py` 89/89；安全与 CI 目标套件 146/146；前端 23 文件、90/90；`npm run build`、Python `compileall`、`git diff --check` 通过。Trivy/Gitleaks 原始 JSON 仅保存在 `tmp/security-20260810/`。
+- 遗留事项：镜像基础层待升级到无 HIGH/CRITICAL 的可发布版本；`cryptography` 50.0.0 与 MLflow 3.15 兼容性仍需独立解析验证；远程 CI、固定资源性能、真实备份恢复、N-1、完整外部 Chromium 和最终证据清单未闭合。
+
+### 2026-08-10：第 12 周 CI 安全密钥注释导致 YAML 缩进回归
+
+- 当前周次：第 12 周 Task 13 安全扫描门禁。
+- 问题现象：为让 Gitleaks 忽略受控 CI 测试密钥而追加行尾注释时，两处 `INFERENCE_INTERNAL_SECRET` 行多出一个空格，GitHub Actions 工作流无法被 PyYAML 解析；目标套件出现 15 个连锁解析错误。
+- 根因：手工编辑 YAML 映射项时没有保持同一 `env` 缩进层级；行尾注释本身不是问题，缩进漂移才是语法错误。
+- 解决方法：将两处变量恢复到与相邻 `env` 键相同的缩进，仅保留 `# gitleaks:allow` 注释。
+- 验证方式：修复前 `tests.test_ci_workflow` 29 项中 15 项错误；修复后 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_ci_workflow -v` 为 29/29，`git diff --check` 通过（仅 CRLF 工作树提示）。
+- 影响范围：`.github/workflows/ci.yml` 受控测试环境变量；不改变运行时密钥、业务协议或用户既有前端测试修改。
+- 预防措施：修改 GitHub Actions YAML 后必须先用 PyYAML/工作流合同解析，再运行行为断言；密钥扫描注释应与原始缩进一起做最小差异审查。
+- 遗留事项：Trivy 漏洞数据库、冻结 MLflow 镜像、固定资源性能、真实备份恢复、N-1、完整外部 Chromium 和远程 CI 仍需独立证据。

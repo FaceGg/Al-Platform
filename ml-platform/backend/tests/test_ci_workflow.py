@@ -13,6 +13,9 @@ FRONTEND_DOCKERFILE = REPOSITORY_ROOT / "ml-platform" / "frontend" / "Dockerfile
 NPM_AUDIT_EXCEPTION = (
     REPOSITORY_ROOT / "docs" / "security" / "react-router-rsc-mode-exception.json"
 )
+PIP_AUDIT_EXCEPTION = (
+    REPOSITORY_ROOT / "docs" / "security" / "cryptography-pkcs7-mlflow-exception.json"
+)
 PRODUCTION_INFRASTRUCTURE = (
     REPOSITORY_ROOT / "docs" / "delivery" / "PRODUCTION_INFRASTRUCTURE.md"
 )
@@ -124,6 +127,8 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         )
         self.assertIn("tools.security_scans all", scan["run"])
         self.assertIn("--npm-audit-exception", scan["run"])
+        self.assertIn("--pip-audit-exception", scan["run"])
+        self.assertIn("cryptography-pkcs7-mlflow-exception.json", scan["run"])
         self.assertIn("security/security.json", scan["run"])
 
     def test_week11_12_ci_runs_web_gate_on_frozen_stack_then_summarizes_security_evidence(self):
@@ -147,13 +152,30 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertEqual(exception["schema_version"], 1)
         self.assertEqual(exception["id"], "react-router-rsc-mode-csrf")
         self.assertEqual(exception["owner"], "ml-platform-maintainers")
-        self.assertEqual(exception["expires_on"], "2026-09-01")
+        self.assertEqual(exception["expires_on"], "2026-09-10")
         self.assertEqual(
             exception["package_versions"],
-            {"react-router": "7.18.1", "react-router-dom": "7.18.1"},
+            {"react-router": "7.18.2", "react-router-dom": "7.18.2"},
         )
-        self.assertEqual(exception["advisory_sources"], [1124282])
+        self.assertEqual(exception["advisory_sources"], [1138769])
         self.assertIn("BrowserRouter", exception["mitigation"])
+
+    def test_cryptography_audit_exception_is_scoped_to_frozen_mlflow_constraint(self):
+        exception = json.loads(PIP_AUDIT_EXCEPTION.read_text(encoding="utf-8"))
+
+        self.assertEqual(exception["schema_version"], 1)
+        self.assertEqual(exception["id"], "cryptography-pkcs7-mlflow-constraint")
+        self.assertEqual(exception["owner"], "ml-platform-maintainers")
+        self.assertEqual(exception["expires_on"], "2026-08-24")
+        self.assertEqual(
+            exception["package_versions"],
+            {"cryptography": "49.0.0", "mlflow": "3.15.1"},
+        )
+        self.assertEqual(
+            exception["advisory_ids"],
+            ["PYSEC-2026-3552", "CVE-2026-69247"],
+        )
+        self.assertIn("PKCS#7", exception["mitigation"])
 
     def test_delivery_docs_cover_four_notification_channels_and_evidence_boundary(self):
         infrastructure = PRODUCTION_INFRASTRUCTURE.read_text(encoding="utf-8")

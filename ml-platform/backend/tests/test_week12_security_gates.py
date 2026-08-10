@@ -1,6 +1,8 @@
 import json
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import date
@@ -13,6 +15,7 @@ from tools.security_scans import (
     REQUIRED_SCAN_GATES,
     WEB_SECURITY_GATE_NAMES,
     evaluate_npm_audit_exception,
+    evaluate_pip_audit_exception,
     main as security_scans_main,
     redact_scan_output,
     run_all,
@@ -23,13 +26,237 @@ from tools.security_scans import (
 
 class SecurityGateTests(unittest.TestCase):
     @staticmethod
+    def _cryptography_pip_audit_report():
+        return {
+            "dependencies": [
+                {
+                    "name": "cryptography",
+                    "version": "49.0.0",
+                    "vulns": [
+                        {
+                            "id": "PYSEC-2026-3552",
+                            "aliases": ["CVE-2026-69247"],
+                            "fix_versions": ["50.0.0"],
+                        },
+                    ],
+                },
+                {"name": "mlflow", "version": "3.15.1", "vulns": []},
+            ],
+        }
+
+    @staticmethod
+    def _write_cryptography_exception(
+        path: Path,
+        *,
+        reviewed_at: str = "2026-08-10",
+        expires_on: str = "2026-08-24",
+    ):
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "id": "cryptography-pkcs7-mlflow-constraint",
+                    "owner": "ml-platform-maintainers",
+                    "reviewed_at": reviewed_at,
+                    "expires_on": expires_on,
+                    "package_versions": {
+                        "cryptography": "49.0.0",
+                        "mlflow": "3.15.1",
+                    },
+                    "advisory_ids": ["PYSEC-2026-3552", "CVE-2026-69247"],
+                    "mitigation": "MLflow 3.15.1 requires cryptography<50; app has no PKCS#7 handling.",
+                },
+            ),
+            encoding="utf-8",
+        )
+
+    def test_cryptography_pip_audit_exception_requires_exact_mlflow_constraint_and_no_pkcs7_usage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            requirements_path = root / "requirements.txt"
+            application_directory = root / "app"
+            application_directory.mkdir()
+            (application_directory / "crypto.py").write_text(
+                "from cryptography.fernet import Fernet\n",
+                encoding="utf-8",
+            )
+            requirements_path.write_text(
+                "cryptography==49.0.*\nmlflow==3.15.*\n",
+                encoding="utf-8",
+            )
+            self._write_cryptography_exception(exception_path)
+
+            result = evaluate_pip_audit_exception(
+                self._cryptography_pip_audit_report(),
+                exception_path=exception_path,
+                requirements_path=requirements_path,
+                application_directory=application_directory,
+                today=date(2026, 8, 10),
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["exception"]["id"], "cryptography-pkcs7-mlflow-constraint")
+
+    def test_cryptography_pip_audit_exception_rejects_any_other_vulnerability(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            requirements_path = root / "requirements.txt"
+            application_directory = root / "app"
+            application_directory.mkdir()
+            (application_directory / "crypto.py").write_text(
+                "from cryptography.fernet import Fernet\n",
+                encoding="utf-8",
+            )
+            requirements_path.write_text(
+                "cryptography==49.0.*\nmlflow==3.15.*\n",
+                encoding="utf-8",
+            )
+            self._write_cryptography_exception(exception_path)
+            report = self._cryptography_pip_audit_report()
+            report["dependencies"].append(
+                {
+                    "name": "requests",
+                    "version": "2.34.2",
+                    "vulns": [{"id": "UNREVIEWED"}],
+                },
+            )
+
+            result = evaluate_pip_audit_exception(
+                report,
+                exception_path=exception_path,
+                requirements_path=requirements_path,
+                application_directory=application_directory,
+                today=date(2026, 8, 10),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "PIP_AUDIT_EXCEPTION_ADVISORY_MISMATCH")
+
+    def test_cryptography_pip_audit_exception_rejects_pkcs7_runtime_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            requirements_path = root / "requirements.txt"
+            application_directory = root / "app"
+            application_directory.mkdir()
+            (application_directory / "crypto.py").write_text(
+                "from cryptography.hazmat.primitives.serialization import pkcs7\n",
+                encoding="utf-8",
+            )
+            requirements_path.write_text(
+                "cryptography==49.0.*\nmlflow==3.15.*\n",
+                encoding="utf-8",
+            )
+            self._write_cryptography_exception(exception_path)
+
+            result = evaluate_pip_audit_exception(
+                self._cryptography_pip_audit_report(),
+                exception_path=exception_path,
+                requirements_path=requirements_path,
+                application_directory=application_directory,
+                today=date(2026, 8, 10),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "PIP_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_cryptography_pip_audit_exception_rejects_changed_frozen_dependency_constraint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            requirements_path = root / "requirements.txt"
+            application_directory = root / "app"
+            application_directory.mkdir()
+            (application_directory / "crypto.py").write_text(
+                "from cryptography.fernet import Fernet\n",
+                encoding="utf-8",
+            )
+            requirements_path.write_text(
+                "cryptography==50.0.*\nmlflow==3.15.*\n",
+                encoding="utf-8",
+            )
+            self._write_cryptography_exception(exception_path)
+
+            result = evaluate_pip_audit_exception(
+                self._cryptography_pip_audit_report(),
+                exception_path=exception_path,
+                requirements_path=requirements_path,
+                application_directory=application_directory,
+                today=date(2026, 8, 10),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "PIP_AUDIT_EXCEPTION_VERSION_MISMATCH")
+
+    def test_cryptography_pip_audit_exception_fails_closed_for_malformed_advisory_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            requirements_path = root / "requirements.txt"
+            application_directory = root / "app"
+            application_directory.mkdir()
+            (application_directory / "crypto.py").write_text(
+                "from cryptography.fernet import Fernet\n",
+                encoding="utf-8",
+            )
+            requirements_path.write_text(
+                "cryptography==49.0.*\nmlflow==3.15.*\n",
+                encoding="utf-8",
+            )
+            self._write_cryptography_exception(exception_path)
+            exception = json.loads(exception_path.read_text(encoding="utf-8"))
+            exception["advisory_ids"] = [{"id": "PYSEC-2026-3552"}]
+            exception_path.write_text(json.dumps(exception), encoding="utf-8")
+
+            result = evaluate_pip_audit_exception(
+                self._cryptography_pip_audit_report(),
+                exception_path=exception_path,
+                requirements_path=requirements_path,
+                application_directory=application_directory,
+                today=date(2026, 8, 10),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "PIP_AUDIT_EXCEPTION_INVALID")
+
+    def test_cryptography_pip_audit_exception_fails_closed_for_non_object_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            requirements_path = root / "requirements.txt"
+            application_directory = root / "app"
+            application_directory.mkdir()
+            (application_directory / "crypto.py").write_text(
+                "from cryptography.fernet import Fernet\n",
+                encoding="utf-8",
+            )
+            requirements_path.write_text(
+                "cryptography==49.0.*\nmlflow==3.15.*\n",
+                encoding="utf-8",
+            )
+            self._write_cryptography_exception(exception_path)
+
+            result = evaluate_pip_audit_exception(
+                [],
+                exception_path=exception_path,
+                requirements_path=requirements_path,
+                application_directory=application_directory,
+                today=date(2026, 8, 10),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "PIP_AUDIT_REPORT_INVALID")
+
+    @staticmethod
     def _react_router_audit_report():
         return {
             "vulnerabilities": {
                 "react-router": {
                     "name": "react-router",
                     "severity": "high",
-                    "via": [{"source": 1124282, "severity": "high"}],
+                    "via": [{"source": 1138769, "severity": "high"}],
                 },
                 "react-router-dom": {
                     "name": "react-router-dom",
@@ -47,20 +274,25 @@ class SecurityGateTests(unittest.TestCase):
         }
 
     @staticmethod
-    def _write_react_router_exception(path: Path, *, expires_on: str = "2026-09-01"):
+    def _write_react_router_exception(
+        path: Path,
+        *,
+        reviewed_at: str = "2026-08-01",
+        expires_on: str = "2026-09-10",
+    ):
         path.write_text(
             json.dumps(
                 {
                     "schema_version": 1,
                     "id": "react-router-rsc-mode-csrf",
                     "owner": "ml-platform-maintainers",
-                    "reviewed_at": "2026-08-02",
+                    "reviewed_at": reviewed_at,
                     "expires_on": expires_on,
                     "package_versions": {
-                        "react-router": "7.18.1",
-                        "react-router-dom": "7.18.1",
+                        "react-router": "7.18.2",
+                        "react-router-dom": "7.18.2",
                     },
-                    "advisory_sources": [1124282],
+                    "advisory_sources": [1138769],
                     "mitigation": "BrowserRouter SPA with no RSC, SSR, server handler, or Action routes.",
                 },
             ),
@@ -75,8 +307,8 @@ class SecurityGateTests(unittest.TestCase):
             json.dumps(
                 {
                     "packages": {
-                        "node_modules/react-router": {"version": "7.18.1"},
-                        "node_modules/react-router-dom": {"version": "7.18.1"},
+                        "node_modules/react-router": {"version": "7.18.2"},
+                        "node_modules/react-router-dom": {"version": "7.18.2"},
                     },
                 },
             ),
@@ -113,7 +345,7 @@ class SecurityGateTests(unittest.TestCase):
                 / "react-router-rsc-mode-exception.json"
             ),
             frontend_directory=repository_root / "ml-platform" / "frontend",
-            today=date(2026, 8, 2),
+            today=date(2026, 8, 10),
         )
 
         self.assertEqual(result["status"], "passed")
@@ -255,6 +487,31 @@ class SecurityGateTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
 
+    def test_react_router_audit_exception_rejects_jsx_route_action(self):
+        sources = (
+            "export const app = <Routes><Route path='/' action={routeActions.submit} /></Routes>;",
+            "export const app = <Routes><Route /* comment */ action={routeActions.submit} /></Routes>;",
+            "export const app = <Routes><Route/* comment */action={routeActions.submit} /></Routes>;",
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend)
+                (frontend / "routes.tsx").write_text(source, encoding="utf-8")
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
     def test_react_router_audit_exception_rejects_empty_server_entry(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -365,6 +622,95 @@ class SecurityGateTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
 
+    def test_react_router_audit_exception_rejects_computed_and_optional_route_actions(self):
+        for expression in ('routeActions["submit"]', "routeActions?.submit"):
+            with self.subTest(expression=expression), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend)
+                (frontend / "routes.ts").write_text(
+                    f"export const routes = [{{ action: {expression} }}];",
+                    encoding="utf-8",
+                )
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 2),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_comment_separated_computed_route_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.ts").write_text(
+                'export const routes = [{ action: routeActions /* comment */ ["submit"] }];',
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_parenthesized_route_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.ts").write_text(
+                "export const routes = [{ action: (routeActions.submit) }];",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_non_null_asserted_route_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.ts").write_text(
+                "export const routes = [{ action: routeActions.submit! }];",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
     def test_react_router_audit_exception_rejects_shorthand_route_action(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -388,6 +734,536 @@ class SecurityGateTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
 
+    def test_react_router_audit_exception_rejects_parenthesized_route_array_shorthand(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.ts").write_text(
+                "const action = routeActions.submit;\n"
+                "export const routes: RouteObject[] = ([{ action }]);",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_comment_separated_route_array_shorthand(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.ts").write_text(
+                "const action = routeActions.submit;\n"
+                "export const routes: RouteObject[] = /* route config */ ([{ action }]);",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_route_action_methods_and_escaped_keys(self):
+        sources = (
+            "export const routes = [{ action() { return null; } }];",
+            "export const routes = [{ async action() { return null; } }];",
+            "export const routes = [{ get action() { return null; } }];",
+            "export const routes = [{ async ['action']() { return null; } }];",
+            "export const routes = [{ children: [{ action() { return null; } }] }];",
+            r"export const routes = [{ \u0061ction() { return null; } }];",
+            r"export const routes = [{ act\u0069on() { return null; } }];",
+            r"export const routes = [{ child\u0072en: [{ action() { return null; } }] }];",
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend)
+                (frontend / "routes.ts").write_text(source, encoding="utf-8")
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_imported_jsx_route_alias_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.tsx").write_text(
+                'import { Route as AppRoute } from "react-router-dom";\n'
+                "export const app = <AppRoute action={routeActions.submit} />;",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_comment_separated_route_import_action(self):
+        sources = (
+            'import /* router */ { Route as R } from "react-router-dom";\n'
+            "export const app = <R action={async () => null} />;",
+            'import { Route as R } /* router */ from /* package */ "react-router-dom";\n'
+            "export const app = <R action={async () => null} />;",
+        )
+        for source in sources:
+            with self.subTest(source=source):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    exception_path = root / "exception.json"
+                    frontend = root / "frontend"
+                    self._write_react_router_exception(exception_path)
+                    self._write_frontend_fixture(frontend, source)
+
+                    result = evaluate_npm_audit_exception(
+                        self._react_router_audit_report(),
+                        exception_path=exception_path,
+                        frontend_directory=frontend,
+                        today=date(2026, 8, 8),
+                    )
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_parenthesized_route_alias_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(
+                frontend,
+                'import { Route } from "react-router-dom";\n'
+                "const R = (Route);\n"
+                "export const app = <R action={async () => null} />;",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_trivia_and_nested_route_alias_actions(self):
+        sources = (
+            'import { Route } from "react-router-dom";\n'
+            "const R = (/* alias */ Route);\n"
+            "export const app = <R action={async () => null} />;",
+            'import { Route } from "react-router-dom";\n'
+            "const R = ((Route));\n"
+            "export const app = <R action={async () => null} />;",
+        )
+        for source in sources:
+            with self.subTest(source=source):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    exception_path = root / "exception.json"
+                    frontend = root / "frontend"
+                    self._write_react_router_exception(exception_path)
+                    self._write_frontend_fixture(frontend, source)
+
+                    result = evaluate_npm_audit_exception(
+                        self._react_router_audit_report(),
+                        exception_path=exception_path,
+                        frontend_directory=frontend,
+                        today=date(2026, 8, 8),
+                    )
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_optional_router_factory_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(
+                frontend,
+                'import { createBrowserRouter } from "react-router-dom";\n'
+                "export const router = createBrowserRouter?.([\n"
+                "  { action<T>() { return null; } },\n"
+                "]);",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_trivia_and_nested_router_factory_actions(self):
+        sources = (
+            'import { createBrowserRouter } from "react-router-dom";\n'
+            "export const router = createBrowserRouter /* opt */ ?. ([\n"
+            "  { action<T>() { return null; } },\n"
+            "]);",
+            'import { createBrowserRouter } from "react-router-dom";\n'
+            "export const router = ((createBrowserRouter))([\n"
+            "  { *action() { yield null; } },\n"
+            "]);",
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend, source)
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_bound_router_factory_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(
+                frontend,
+                'import { createBrowserRouter } from "react-router-dom";\n'
+                "const makeRouter = createBrowserRouter.bind(null);\n"
+                "export const router = makeRouter([{ *action() { yield null; } }]);",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_cross_file_reexported_jsx_route_alias_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routeAlias.ts").write_text(
+                'export { Route as R } from "react-router-dom";\n',
+                encoding="utf-8",
+            )
+            (frontend / "routes.tsx").write_text(
+                'import { R } from "./routeAlias";\n'
+                'import { Routes } from "react-router-dom";\n'
+                "export const app = <Routes><R action={async () => null} /></Routes>;\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_transitive_reexported_jsx_route_alias_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routeAlias.ts").write_text(
+                'export { Route as R } from "react-router-dom";\n',
+                encoding="utf-8",
+            )
+            (frontend / "routeBarrel.ts").write_text(
+                'export { R } from "./routeAlias";\n',
+                encoding="utf-8",
+            )
+            (frontend / "routes.tsx").write_text(
+                'import { R } from "./routeBarrel";\n'
+                "export const app = <R action={async () => null} />;\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_generic_and_generator_route_actions(self):
+        sources = (
+            "export const routes = [{ action<T>() { return null; } }];",
+            "export const routes = [{ *action() { yield null; } }];",
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend)
+                (frontend / "routes.ts").write_text(source, encoding="utf-8")
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_locally_aliased_jsx_route_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.tsx").write_text(
+                'import { Route } from "react-router-dom";\n'
+                "const R = Route;\n"
+                "export const app = <R action={routeActions.submit} />;",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_extracted_route_action_shorthand(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.ts").write_text(
+                "const protectedRoute: RouteObject = { action };\n"
+                "export const routes: RouteObject[] = [protectedRoute];",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 2),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_extracted_shorthand_before_nested_handle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.ts").write_text(
+                'const protectedRoute: RouteObject = { action, handle: { title: "x" } };\n'
+                "export const routes: RouteObject[] = [protectedRoute];",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_extracted_shorthand_in_router_factory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.ts").write_text(
+                'const protectedRoute: RouteObject = { action, handle: { title: "x" } };\n'
+                "export const router = createBrowserRouter([protectedRoute]);",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_nested_route_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.ts").write_text(
+                "export const routes = [{ children: [{ action: (routeActions.submit) }] }];",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_unresolved_router_factory_routes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.ts").write_text(
+                "const routeDefinitions = loadRoutes();\n"
+                "export const router = createBrowserRouter(routeDefinitions);",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_fails_closed_for_spread_and_non_identifier_route_keys(self):
+        sources = (
+            "const protectedRoute = { action };\n"
+            "export const router = createBrowserRouter([{ ...protectedRoute }]);",
+            'export const router = createBrowserRouter([{ "action": routeActions.submit }]);',
+            'export const router = createBrowserRouter([{ ["action"]: routeActions.submit }]);',
+            "export const router = createBrowserRouter([{ `action`: routeActions.submit }]);",
+            'export const router = createBrowserRouter([{ "children": [{ action }] }]);',
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend)
+                (frontend / "routes.ts").write_text(source, encoding="utf-8")
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_unresolved_route_object_syntax(self):
+        sources = (
+            "const protectedRoute = { action };\n"
+            "export const router = createBrowserRouter([{ ...protectedRoute }]);",
+            'export const router = createBrowserRouter([{ "action": routeActions.submit }]);',
+            'export const router = createBrowserRouter([{ ["action"]: routeActions.submit }]);',
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend)
+                (frontend / "routes.ts").write_text(source, encoding="utf-8")
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(
+                result["error_code"],
+                "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION",
+            )
+
     def test_react_router_audit_exception_allows_typescript_action_type_fields(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -406,6 +1282,54 @@ class SecurityGateTests(unittest.TestCase):
                 exception_path=exception_path,
                 frontend_directory=frontend,
                 today=date(2026, 8, 2),
+            )
+
+        self.assertEqual(result["status"], "passed")
+
+    def test_react_router_audit_exception_does_not_mask_route_action_from_type_text_in_strings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.ts").write_text(
+                'const marker = "type Fake = {";\n'
+                "const action = routeActions.submit;\n"
+                "export const routes: RouteObject[] = [{ action }];\n"
+                'const closeMarker = "}";\n',
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_allows_route_loop_comparisons(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "navigation.ts").write_text(
+                "for (const route of ['/']) {\n"
+                "  const isRoot = route === '/';\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
             )
 
         self.assertEqual(result["status"], "passed")
@@ -439,7 +1363,7 @@ class SecurityGateTests(unittest.TestCase):
             frontend = root / "frontend"
             self._write_react_router_exception(exception_path)
             exception = json.loads(exception_path.read_text(encoding="utf-8"))
-            exception["advisory_sources"] = [{"source": 1124282}]
+            exception["advisory_sources"] = [{"source": 1138769}]
             exception_path.write_text(json.dumps(exception), encoding="utf-8")
             self._write_frontend_fixture(frontend)
 
@@ -452,6 +1376,737 @@ class SecurityGateTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_INVALID")
+
+    def test_react_router_audit_exception_rejects_unresolved_local_route_alias_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.tsx").write_text(
+                'import { R } from "./missingRoute";\n'
+                "export const app = <R action={async () => null} />;\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_comment_separated_route_alias_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.tsx").write_text(
+                'import { Route /* binding */ as R } from "react-router-dom";\n'
+                "export const app = <R action={async () => null} />;\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_scans_mts_route_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(
+                frontend,
+                'import { router } from "../routes.mts";\n'
+                "export const app = <RouterProvider router={router} />;\n",
+            )
+            (frontend / "routes.mts").write_text(
+                'import { createBrowserRouter } from "react-router-dom";\n'
+                "export const router = createBrowserRouter([{ action<T>() { return null; } }]);\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_aliased_router_factory_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routes.ts").write_text(
+                'import { createBrowserRouter as makeRouter } from "react-router-dom";\n'
+                "export const router = makeRouter([{ *action() { yield null; } }]);\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_reparse_candidates_before_reading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            linked = frontend / "linked"
+            candidate = linked / "routes.ts"
+            linked.mkdir()
+            candidate.write_text(
+                "export const routes = [{ action: handler }];",
+                encoding="utf-8",
+            )
+            external = root / "external" / "routes.ts"
+            external.parent.mkdir()
+            external.write_text(candidate.read_text(encoding="utf-8"), encoding="utf-8")
+
+            original_lstat = os.lstat
+            original_resolve = Path.resolve
+            original_read_text = Path.read_text
+            reads: list[Path] = []
+
+            def unsafe_lstat(path):
+                if Path(path) in {linked, candidate}:
+                    return SimpleNamespace(
+                        st_mode=stat.S_IFLNK,
+                        st_nlink=1,
+                        st_file_attributes=0,
+                    )
+                return original_lstat(path)
+
+            def linked_resolve(path, strict=False):
+                if path == linked:
+                    return external.parent.resolve()
+                if path == candidate:
+                    return external.resolve()
+                return original_resolve(path, strict=strict)
+
+            def guarded_read_text(path, *args, **kwargs):
+                if path == candidate:
+                    reads.append(path)
+                return original_read_text(path, *args, **kwargs)
+
+            with (
+                patch("tools.security_scans.os.lstat", side_effect=unsafe_lstat),
+                patch.object(Path, "resolve", autospec=True, side_effect=linked_resolve),
+                patch.object(Path, "read_text", autospec=True, side_effect=guarded_read_text),
+            ):
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+        self.assertEqual(reads, [])
+
+    def test_react_router_audit_exception_allows_type_only_local_named_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(
+                frontend,
+                'import { type Notification } from "../types";\n'
+                "export const app = 'BrowserRouter';\n",
+            )
+            (frontend / "types.ts").write_text(
+                "export interface Notification { readonly id: string; }\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "passed")
+
+    def test_react_router_audit_exception_allows_type_only_react_router_bindings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(
+                frontend,
+                'import type { Route, createBrowserRouter } from "react-router-dom";\n'
+                "export const app = 'BrowserRouter';\n",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "passed")
+
+    def test_react_router_audit_exception_allows_type_query_react_router_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(
+                frontend,
+                'const actual = await vi.importActual<typeof import("react-router-dom")>(\n'
+                '  "react-router-dom",\n'
+                ");\n"
+                "export const app = actual;\n",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "passed")
+
+    def test_react_router_audit_exception_allows_type_only_router_queries_and_reexports(self):
+        sources = (
+            'type Router = typeof import("react-router-dom");\n'
+            "export const app = 'BrowserRouter';\n",
+            'export { type Route } from "react-router-dom";\n'
+            "export const app = 'BrowserRouter';\n",
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend, source)
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+            self.assertEqual(result["status"], "passed")
+
+    def test_react_router_audit_exception_rejects_unmodeled_runtime_route_indirection(self):
+        sources = (
+            'import { Route } from "react-router-dom";\n'
+            "let R;\n"
+            "R = Route;\n"
+            "export const app = <R action={async () => null} />;\n",
+            'import { Route } from "react-router-dom";\n'
+            "const get = () => Route;\n"
+            "const R = get();\n"
+            "export const app = <R action={async () => null} />;\n",
+            'import { Route } from "react-router-dom";\n'
+            "const R = (() => Route)();\n"
+            "export const app = <R action={async () => null} />;\n",
+            'import { Route } from "react-router-dom";\n'
+            "function get() { return Route; }\n"
+            "const R = get();\n"
+            "export const app = <R action={async () => null} />;\n",
+            'import { Route } from "react-router-dom";\n'
+            "const holder = {};\n"
+            "holder.R = Route;\n"
+            "const R = holder.R;\n"
+            "export const app = <R action={async () => null} />;\n",
+            'import { Route } from "react-router-dom";\n'
+            "class Holder { static R = Route; }\n"
+            "export const app = <Holder.R action={async () => null} />;\n",
+            'import { Route } from "react-router-dom";\n'
+            "const holder = {};\n"
+            "Object.assign(holder, { R: Route });\n"
+            "const R = holder.R;\n"
+            "export const app = <R action={async () => null} />;\n",
+            'import { Route } from "react-router-dom";\n'
+            "const aliases = [];\n"
+            "aliases.push(Route);\n"
+            "const R = aliases[0];\n"
+            "export const app = <R action={async () => null} />;\n",
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend, source)
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_nested_runtime_alias_transfers(self):
+        sources = (
+            'import { Route } from "react-router-dom";\n'
+            "const holder = {};\n"
+            "Object.assign(holder, { R: condition ? Route : other });\n"
+            "const R = holder.R;\n"
+            "export const app = <R action={async () => null} />;\n",
+            'import { Route } from "react-router-dom";\n'
+            "const aliases = [];\n"
+            "aliases.push(Route ? other : other);\n"
+            "const R = aliases[0];\n"
+            "export const app = <R action={async () => null} />;\n",
+            'import { Route } from "react-router-dom";\n'
+            "function wrap(value = Route ? other : other) { return value; }\n"
+            "export const app = wrap();\n",
+            'import { createBrowserRouter } from "react-router-dom";\n'
+            "const holder = {};\n"
+            "Object.assign(holder, { f: condition ? createBrowserRouter : other });\n"
+            "const f = holder.f;\n"
+            "export const router = f([]);\n",
+            'import { createBrowserRouter } from "react-router-dom";\n'
+            "const aliases = [];\n"
+            "aliases.push(condition ? createBrowserRouter : other);\n"
+            "const f = aliases[0];\n"
+            "export const router = f([]);\n",
+            'import { Route } from "react-router-dom";\n'
+            "export default { R: condition ? Route : other };\n",
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend, source)
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_allows_type_only_import_equals_and_queries(self):
+        sources = (
+            'import type Router = require("react-router-dom");\n'
+            "export const app = 'BrowserRouter';\n",
+            'const x: typeof import("react-router-dom") = {};\n'
+            "export const app = 'BrowserRouter';\n",
+            'declare const x: typeof import("react-router-dom");\n'
+            "export const app = 'BrowserRouter';\n",
+            'function useRouter(value: typeof import("react-router-dom")) { return value; }\n'
+            "export const app = 'BrowserRouter';\n",
+            'const x: /* type-only */ typeof import("react-router-dom") = {};\n'
+            "export const app = 'BrowserRouter';\n",
+            'declare const x: /* type-only */ typeof import("react-router-dom");\n'
+            "export const app = 'BrowserRouter';\n",
+            'function useRouter(value: /* type-only */ typeof import("react-router-dom")) { return value; }\n'
+            "export const app = 'BrowserRouter';\n",
+            'const x: typeof /* type-only */ import("react-router-dom") = {};\n'
+            "export const app = 'BrowserRouter';\n",
+            'declare const x: typeof /* type-only */ import("react-router-dom");\n'
+            "export const app = 'BrowserRouter';\n",
+            'function useRouter(value: typeof /* type-only */ import("react-router-dom")) { return value; }\n'
+            "export const app = 'BrowserRouter';\n",
+            'const useRouter = (value: typeof /* type-only */ import("react-router-dom")) => value;\n'
+            "export const app = 'BrowserRouter';\n",
+            'const x: import("react-router-dom").Route | null = null;\n'
+            "export const app = 'BrowserRouter';\n",
+            'declare const x: import("react-router-dom").Route;\n'
+            "export const app = 'BrowserRouter';\n",
+            'function useRoute(value: import("react-router-dom").Route) { return value; }\n'
+            "export const app = 'BrowserRouter';\n",
+            'const x: /* type-only */ import("react-router-dom").Route | null = null;\n'
+            "export const app = 'BrowserRouter';\n",
+            'declare const x: /* type-only */ import("react-router-dom").Route;\n'
+            "export const app = 'BrowserRouter';\n",
+            'function useRoute(value: /* type-only */ import("react-router-dom").Route) { return value; }\n'
+            "export const app = 'BrowserRouter';\n",
+            'const useRoute = (value: /* type-only */ import("react-router-dom").Route) => value;\n'
+            "export const app = 'BrowserRouter';\n",
+            'export { type Route };\n'
+            "export const app = 'BrowserRouter';\n",
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend, source)
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+            self.assertEqual(result["status"], "passed")
+
+    def test_react_router_audit_exception_allows_comment_trivia_type_import_without_hanging(self):
+        source = (
+            'import /* type-only */ type Router = require("react-router-dom");\n'
+            "export const app = 'BrowserRouter';\n"
+        )
+        script = "\n".join(
+            (
+                "from datetime import date",
+                "from pathlib import Path",
+                "import tempfile",
+                "from tests.test_week12_security_gates import SecurityGateTests",
+                "from tools.security_scans import evaluate_npm_audit_exception",
+                f"source = {source!r}",
+                "helper = SecurityGateTests()",
+                "with tempfile.TemporaryDirectory() as directory:",
+                "    root = Path(directory)",
+                "    exception_path = root / 'exception.json'",
+                "    frontend = root / 'frontend'",
+                "    helper._write_react_router_exception(exception_path)",
+                "    helper._write_frontend_fixture(frontend, source)",
+                "    result = evaluate_npm_audit_exception(",
+                "        helper._react_router_audit_report(),",
+                "        exception_path=exception_path,",
+                "        frontend_directory=frontend,",
+                "        today=date(2026, 8, 9),",
+                "    )",
+                "print(result['status'])",
+            ),
+        )
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True,
+                cwd=Path(__file__).parent.parent,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            self.fail("type-only import scanner did not terminate within two seconds")
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), "passed")
+
+    def test_react_router_audit_exception_rejects_runtime_typeof_dynamic_import_in_javascript(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "src" / "runtime.js").write_text(
+                'export const routerType = typeof import("react-router-dom");\n',
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_runtime_dynamic_imports_in_typescript(self):
+        sources = (
+            'export const routerType = typeof import("react-router-dom");\n',
+            'export const runtime = value < typeof import("react-router-dom");\n',
+            'export const runtime = { load: import("react-router-dom") };\n',
+            'export const runtime = { load: import("react-router-dom").then(() => null) };\n',
+            'loadRouter: import("react-router-dom").then(() => null);\n',
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend)
+                (frontend / "src" / "case.ts").write_text(source, encoding="utf-8")
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 9),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_typescript_jsx_dynamic_import_bypass(self):
+        source = (
+            'export const runtime = { load: import("react-router-dom").then('
+            '({ Route: R }) => <R action={async () => null} />) };\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "src" / "bypass.tsx").write_text(source, encoding="utf-8")
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 9),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_parenthesized_runtime_type_queries(self):
+        sources = (
+            'export const runtime = (flag ? fallback : import("react-router-dom").then('
+            '({ Route: R }) => <R action={async () => null} />));\n',
+            'export const runtime = (flag ? fallback : typeof import("react-router-dom"));\n',
+            'export const runtime = (flag ? fallback : import("react-router-dom").Route);\n',
+            'export const runtime = (flag ? fallback : /* runtime */ typeof import('
+            '"react-router-dom"));\n',
+            'export const runtime = (flag ? fallback : /* runtime */ import('
+            '"react-router-dom").Route);\n',
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend)
+                (frontend / "src" / "bypass.tsx").write_text(source, encoding="utf-8")
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 9),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_unresolved_dynamic_imports(self):
+        sources = (
+            "const router = await import(`react-router-dom`);\n"
+            "export const app = router;\n",
+            'const router = await import("react-" + "router-dom");\n'
+            "export const app = router;\n",
+            "const specifier = 'react-router-dom';\n"
+            "const router = await import(specifier);\n"
+            "export const app = router;\n",
+            "const router = require(`react-router-dom`);\n"
+            "export const app = router;\n",
+            'const router = require("react-" + "router-dom");\n'
+            "export const app = router;\n",
+            "const specifier = 'react-router-dom';\n"
+            "const router = require(specifier);\n"
+            "export const app = router;\n",
+        )
+        for source in sources:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend, source)
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_local_default_runtime_router_exports(self):
+        cases = (
+            (
+                'import { Route } from "react-router-dom";\n'
+                "export default Route;\n",
+                'import R from "./routeAlias";\n'
+                "export const app = <R action={async () => null} />;\n",
+            ),
+            (
+                'import { createBrowserRouter } from "react-router-dom";\n'
+                "export default createBrowserRouter;\n",
+                'import createRouter from "./routeAlias";\n'
+                "export const router = createRouter([]);\n",
+            ),
+            (
+                'import { Route } from "react-router-dom";\n'
+                "export default Route.bind(null);\n",
+                'import R from "./routeAlias";\n'
+                "export const app = <R action={async () => null} />;\n",
+            ),
+            (
+                'export { Route as default } from "react-router-dom";\n',
+                'import R from "./routeAlias";\n'
+                "export const app = <R action={async () => null} />;\n",
+            ),
+        )
+        for alias_source, consumer_source in cases:
+            with self.subTest(alias_source=alias_source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                exception_path = root / "exception.json"
+                frontend = root / "frontend"
+                self._write_react_router_exception(exception_path)
+                self._write_frontend_fixture(frontend, consumer_source)
+                (frontend / "routeAlias.ts").write_text(alias_source, encoding="utf-8")
+
+                result = evaluate_npm_audit_exception(
+                    self._react_router_audit_report(),
+                    exception_path=exception_path,
+                    frontend_directory=frontend,
+                    today=date(2026, 8, 8),
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_unmodeled_runtime_router_bindings(self):
+        sources = (
+            'import { Route } from "react-router-dom";\n'
+            "const R = true ? Route : Route;\n"
+            "export const app = <R action={async () => null} />;\n",
+            'import * as Router from "react-router-dom";\n'
+            "const { Route: R } = Router;\n"
+            "export const app = <R action={async () => null} />;\n",
+            'import { createBrowserRouter } from "react-router-dom";\n'
+            "const R = true ? createBrowserRouter : createBrowserRouter;\n"
+            "export const router = R([]);\n",
+            'import * as Router from "react-router-dom";\n'
+            "const { createBrowserRouter: R } = Router;\n"
+            "export const router = R([]);\n",
+            'import Router from "react-router-dom";\n'
+            "export const app = <Router />;\n",
+            'import Router, { BrowserRouter } from "react-router-dom";\n'
+            "export const app = <BrowserRouter />;\n",
+            'const Router = await import("react-router-dom");\n'
+            "export const app = <Router.Route />;\n",
+            'const Router = require("react-router-dom");\n'
+            "export const app = <Router.Route />;\n",
+        )
+        for source in sources:
+            with self.subTest(source=source):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    exception_path = root / "exception.json"
+                    frontend = root / "frontend"
+                    self._write_react_router_exception(exception_path)
+                    self._write_frontend_fixture(frontend, source)
+
+                    result = evaluate_npm_audit_exception(
+                        self._react_router_audit_report(),
+                        exception_path=exception_path,
+                        frontend_directory=frontend,
+                        today=date(2026, 8, 8),
+                    )
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_local_route_alias_export(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routeAlias.ts").write_text(
+                'import { Route } from "react-router-dom";\n'
+                "const R = Route;\n"
+                "export { R };\n",
+                encoding="utf-8",
+            )
+            (frontend / "routes.tsx").write_text(
+                'import { R } from "./routeAlias";\n'
+                "export const app = <R action={async () => null} />;\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
+
+    def test_react_router_audit_exception_rejects_local_namespace_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            frontend = root / "frontend"
+            self._write_react_router_exception(exception_path)
+            self._write_frontend_fixture(frontend)
+            (frontend / "routeAlias.ts").write_text(
+                'export { Route as R } from "react-router-dom";\n',
+                encoding="utf-8",
+            )
+            (frontend / "routes.tsx").write_text(
+                'import * as routes from "./routeAlias";\n'
+                "export const app = <routes.R action={async () => null} />;\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_npm_audit_exception(
+                self._react_router_audit_report(),
+                exception_path=exception_path,
+                frontend_directory=frontend,
+                today=date(2026, 8, 8),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "NPM_AUDIT_EXCEPTION_SCOPE_VIOLATION")
 
     def test_scan_failure_is_preserved_as_failed_gate(self):
         with patch("tools.security_scans.subprocess.run") as run:
@@ -517,6 +2172,26 @@ class SecurityGateTests(unittest.TestCase):
         self.assertNotIn("token=abc", serialized)
         self.assertNotIn("u:p@", serialized)
 
+    def test_run_scan_resolves_windows_command_shims_without_changing_evidence(self):
+        with (
+            patch("tools.security_scans.os.name", "nt"),
+            patch(
+                "tools.security_scans.shutil.which",
+                return_value=r"C:\Program Files\nodejs\npm.CMD",
+            ),
+            patch("tools.security_scans.subprocess.run") as run,
+        ):
+            run.return_value.returncode = 0
+            run.return_value.stdout = "clean"
+            run.return_value.stderr = ""
+            result = run_scan(["npm", "--version"])
+
+        self.assertEqual(
+            run.call_args.args[0][0],
+            r"C:\Program Files\nodejs\npm.CMD",
+        )
+        self.assertEqual(result["command"][0], "npm")
+
     def test_scan_redacts_before_truncating_large_secret_values(self):
         with patch("tools.security_scans.subprocess.run") as run:
             run.return_value.returncode = 1
@@ -563,8 +2238,8 @@ class SecurityGateTests(unittest.TestCase):
                 patch(
                     "tools.security_scans._frontend_package_versions",
                     return_value={
-                        "react-router": "7.18.1",
-                        "react-router-dom": "7.18.1",
+                        "react-router": "7.18.2",
+                        "react-router-dom": "7.18.2",
                     },
                 ),
                 patch(
@@ -582,7 +2257,57 @@ class SecurityGateTests(unittest.TestCase):
             result["gates"]["frontend_dependencies"]["exception"]["id"],
             "react-router-rsc-mode-csrf",
         )
-        self.assertEqual(run.call_args.args[0][0], "npm")
+        self.assertIn(
+            Path(run.call_args.args[0][0]).name.casefold(),
+            {"npm", "npm.cmd"},
+        )
+
+    def test_run_all_allows_only_the_reviewed_pip_audit_exception(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exception_path = root / "exception.json"
+            output = root / "security.json"
+            self._write_cryptography_exception(exception_path)
+
+            def scanner(command, **_kwargs):
+                if "pip_audit" in command:
+                    report_path = Path(command[command.index("--output") + 1])
+                    report_path.write_text(
+                        json.dumps(self._cryptography_pip_audit_report()),
+                        encoding="utf-8",
+                    )
+                    return SimpleNamespace(returncode=1, stdout="", stderr="")
+                if command and Path(command[0]).name.casefold() in {"npm", "npm.cmd"}:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps({"vulnerabilities": {}, "metadata": {}}),
+                        stderr="",
+                    )
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with (
+                patch.dict(
+                    "tools.security_scans.os.environ",
+                    {"ACCEPTANCE_IMAGE": "ml-platform-backend:test"},
+                    clear=False,
+                ),
+                patch(
+                    "tools.security_scans.run_scan",
+                    return_value={"status": "passed"},
+                ),
+                patch("tools.security_scans.subprocess.run", side_effect=scanner),
+            ):
+                result = run_all(
+                    output,
+                    npm_audit_exception=exception_path,
+                    pip_audit_exception=exception_path,
+                )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(
+            result["gates"]["python_dependencies"]["exception"]["id"],
+            "cryptography-pkcs7-mlflow-constraint",
+        )
 
     def test_frontend_scan_runs_from_frontend_package_directory(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -849,6 +2574,116 @@ class SecurityGateTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["gates"]["container_image"]["evidence_path"], "trivy-image.json")
         self.assertEqual(result["gates"]["container_image"]["error_code"], "SECURITY_EVIDENCE_MISSING")
+
+    def test_summary_rejects_stale_gate_summary_when_canonical_security_aggregate_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            (root / "security.json").unlink()
+            (root / "stale-summary.json").write_text(
+                json.dumps(
+                    {
+                        "status": "passed",
+                        "gates": {
+                            name: {"status": "passed"}
+                            for name in REQUIRED_SCAN_GATES
+                            if name != "web_security"
+                        },
+                    },
+                ),
+                encoding="utf-8",
+            )
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                ["summarize", "--input-dir", str(root), "--output", str(output)],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["python_dependencies"]["error_code"],
+            "SECURITY_EVIDENCE_MISSING",
+        )
+
+    def test_summary_rejects_non_object_aggregate_evidence_with_stable_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            (root / "security.json").write_text("[]", encoding="utf-8")
+            (root / "web.json").write_text("[]", encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                ["summarize", "--input-dir", str(root), "--output", str(output)],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["python_dependencies"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+        self.assertEqual(
+            result["gates"]["web_security"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_failed_aggregate_status_when_all_gates_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            aggregate_path = root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            aggregate["status"] = "failed"
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                ["summarize", "--input-dir", str(root), "--output", str(output)],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["python_dependencies"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_inconsistent_security_aggregate_status(self):
+        cases = (
+            ("failed", {}),
+            ("passed", {"source_bandit": "failed"}),
+            (None, {}),
+        )
+        for status, gate_statuses in cases:
+            with self.subTest(status=status, gate_statuses=gate_statuses), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_complete_security_evidence(root)
+                aggregate = json.loads((root / "security.json").read_text(encoding="utf-8"))
+                if status is None:
+                    aggregate.pop("status")
+                else:
+                    aggregate["status"] = status
+                for name, gate_status in gate_statuses.items():
+                    aggregate["gates"][name]["status"] = gate_status
+                (root / "security.json").write_text(
+                    json.dumps(aggregate),
+                    encoding="utf-8",
+                )
+                output = root / "summary.json"
+                exit_code = security_scans_main(
+                    ["summarize", "--input-dir", str(root), "--output", str(output)],
+                )
+                result = json.loads(output.read_text(encoding="utf-8"))
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(result["status"], "failed")
+            for name in REQUIRED_SCAN_GATES - {"web_security"}:
+                self.assertEqual(
+                    result["gates"][name]["error_code"],
+                    "SECURITY_EVIDENCE_INVALID",
+                )
 
     def test_summary_rejects_raw_evidence_symlinked_outside_input_directory(self):
         with tempfile.TemporaryDirectory() as directory:

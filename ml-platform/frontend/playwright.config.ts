@@ -7,8 +7,8 @@ const backendDir = path.resolve(frontendDir, "../backend");
 const tempTestDir = path.resolve(frontendDir, "../../temp_test");
 const e2eDatabaseUrl = `sqlite:///${path.join(tempTestDir, "playwright_e2e.db").replaceAll("\\", "/")}`;
 const e2eArtifactDir = path.join(tempTestDir, "playwright-artifacts");
-const e2eInferenceSecret = "playwright-inference-secret-at-least-32-bytes";
-const e2eNotificationMasterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+const e2eInferenceSecret = "playwright-inference-secret-at-least-32-bytes"; // gitleaks:allow
+const e2eNotificationMasterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="; // gitleaks:allow
 const pythonExecutable = resolveE2ePython();
 const pythonCommand = `"${pythonExecutable.replaceAll('"', '""')}"`;
 const externalAcceptanceBaseUrl = process.env.WEEK12_ACCEPTANCE_BASE_URL?.trim();
