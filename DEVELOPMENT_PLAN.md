@@ -1523,26 +1523,6 @@
 - 验证方式：后端 `run_suite.py` 89/89；安全与 CI 目标套件 146/146；前端 23 文件、90/90；`npm run build`、Python `compileall`、`git diff --check` 通过。Trivy/Gitleaks 原始 JSON 仅保存在 `tmp/security-20260810/`。
 - 遗留事项：镜像基础层待升级到无 HIGH/CRITICAL 的可发布版本；`cryptography` 50.0.0 与 MLflow 3.15 兼容性仍需独立解析验证；远程 CI、固定资源性能、真实备份恢复、N-1、完整外部 Chromium 和最终证据清单未闭合。
 
-### 2026-08-11：第 12 周镜像与 Python 依赖修复阻塞复核
-
-- 当前状态：Task 13 与第 11-12 周继续保持“进行中”；安全合同仍为 RED，未关闭镜像、Python 依赖或 Week 12 最终门禁。
-- 问题现象：四个生产 Dockerfile 仍使用可变的 `python:3.11-slim`；正式 PyPI 最新 MLflow 为 `3.15.1`，其元数据要求 `cryptography<50`；`cryptography 50.0.0` 是 `CVE-2026-69247`/`PYSEC-2026-3552` 的修复版本，故把直接 pin 提升到 50 会使解析失败。当前 `python:3.11-slim-trixie` digest `sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff` 的基础层仍报告 4 项 CRITICAL、21 项 HIGH；`apt-get dist-upgrade` 无可用修复版本。
-- 已确认根因：应用依赖冲突来自已发布 MLflow 的上游版本约束，不是本仓库 resolver 或代码问题；镜像风险来自 Debian 基础包尚未发布可用修复层，重建或仅改标签不会改变 digest。Alpine 虽然 OS 漏洞为 0，但当前 `scikit-learn==1.7.*` 没有可用 musllinux wheel，不能宣称科学计算栈兼容；未发布 MLflow 开发提交也不能作为稳定生产依赖。
-- 处理结果：复核 PyPI 元数据、候选 digest、Trivy 基础层报告和干净 resolver 结果；保留 RED 合同、原始扫描与解析证据，不删除 cryptography 例外、不强制安装 50、不强制移除 Debian 包、不修改生产配置。
-- 验证方式：PowerShell 7 `Invoke-RestMethod` 查询 PyPI；同一 Trivy 数据库和 HIGH/CRITICAL 参数复核 Trixie digest；既有完整镜像扫描保持 22 HIGH、4 CRITICAL；MLflow 3.15.1 + cryptography 50 的解析失败与当前 requirements 约束一致。
-- 预防措施：依赖修复必须同时满足正式发行元数据、干净 resolver、运行时回归和无例外 pip-audit；基础镜像必须以实际 digest 和同参数 Trivy 结果选定，重建成功或 mutable tag 变化不能替代漏洞修复证据。
-- 遗留事项：需由项目负责人在“等待正式 MLflow/基础镜像修复”和“批准维护经过测试的内部 MLflow backport/镜像方案”之间作出长期决策；决策前不得继续生产依赖改动、四镜像最终扫描、Week 12 安全门禁关闭、推送或合并。
-
-### 2026-08-11：第 12 周独立 Python 依赖 pin 的局部修复
-
-- 当前状态：`jaraco.context` 与 `wheel` 的直接 pin 已完成；Task 13 仍未完成，cryptography 例外、基础镜像风险和最终安全门禁继续保持未关闭。
-- 问题现象：当前镜像中的 `jaraco.context 5.3.0` 与 `wheel 0.45.1` 分别对应 Trivy 报告的 `CVE-2026-23949` 和 `CVE-2026-24049`。
-- 已确认根因：两个漏洞包没有被应用的顶层 requirements 固定，解析结果可落到旧版本；它们不受 MLflow 的 cryptography 上限约束。
-- 解决方法：在 `ml-platform/backend/requirements.txt` 增加 `jaraco.context==6.1.0` 和 `wheel==0.46.2`；不改变 `cryptography==49.0.*`、`mlflow==3.15.*` 或安全例外。
-- 验证方式：使用 PowerShell 7、阿里云 PyPI 镜像执行 `pip install --dry-run --report ... -r requirements.txt jaraco.context==6.1.0 wheel==0.46.2`，解析退出码为 0；随后原始 `pip-audit -r requirements.txt` 因 `pypi.org` TLS `UNEXPECTED_EOF_WHILE_READING` 中断，未产生可作为通过证据的报告。
-- 预防措施：独立 pin 只有在干净 resolver 和原始 pip-audit 都成功后才能标记为已修复；网络或漏洞数据库不可用时记录为 blocked，不用 dry-run 或旧 JSON 冒充扫描通过。
-- 遗留事项：需在可访问 PyPI advisory 服务的环境复跑无例外 pip-audit，并等待正式 MLflow/基础镜像修复或获得内部 backport 方案批准后再处理 cryptography 和四个生产镜像。
-
 ### 2026-08-10：第 12 周 Trivy 基础镜像重建复核
 
 - 当前周次：第 12 周 Task 13 安全扫描门禁。
@@ -1581,3 +1561,23 @@
 - 影响范围：`.github/workflows/ci.yml` 受控测试环境变量；不改变运行时密钥、业务协议或用户既有前端测试修改。
 - 预防措施：修改 GitHub Actions YAML 后必须先用 PyYAML/工作流合同解析，再运行行为断言；密钥扫描注释应与原始缩进一起做最小差异审查。
 - 遗留事项：Trivy 漏洞数据库、冻结 MLflow 镜像、固定资源性能、真实备份恢复、N-1、完整外部 Chromium 和远程 CI 仍需独立证据。
+
+### 2026-08-11：第 12 周镜像与 Python 依赖修复阻塞复核
+
+- 当前状态：Task 13 与第 11-12 周继续保持“进行中”；安全合同仍为 RED，未关闭镜像、Python 依赖或 Week 12 最终门禁。
+- 问题现象：四个生产 Dockerfile 仍使用可变的 `python:3.11-slim`；正式 PyPI 最新 MLflow 为 `3.15.1`，其元数据要求 `cryptography<50`；`cryptography 50.0.0` 是 `CVE-2026-69247`/`PYSEC-2026-3552` 的修复版本，故把直接 pin 提升到 50 会使解析失败。当前 `python:3.11-slim-trixie` digest `sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff` 的基础层仍报告 4 项 CRITICAL、21 项 HIGH；`apt-get dist-upgrade` 无可用修复版本。
+- 已确认根因：应用依赖冲突来自已发布 MLflow 的上游版本约束，不是本仓库 resolver 或代码问题；镜像风险来自 Debian 基础包尚未发布可用修复层，重建或仅改标签不会改变 digest。Alpine 虽然 OS 漏洞为 0，但当前 `scikit-learn==1.7.*` 没有可用 musllinux wheel，不能宣称科学计算栈兼容；未发布 MLflow 开发提交也不能作为稳定生产依赖。
+- 处理结果：复核 PyPI 元数据、候选 digest、Trivy 基础层报告和干净 resolver 结果；保留 RED 合同、原始扫描与解析证据，不删除 cryptography 例外、不强制安装 50、不强制移除 Debian 包、不修改生产配置。
+- 验证方式：PowerShell 7 `Invoke-RestMethod` 查询 PyPI；同一 Trivy 数据库和 HIGH/CRITICAL 参数复核 Trixie digest；既有完整镜像扫描保持 22 HIGH、4 CRITICAL；MLflow 3.15.1 + cryptography 50 的解析失败与当前 requirements 约束一致。
+- 预防措施：依赖修复必须同时满足正式发行元数据、干净 resolver、运行时回归和无例外 pip-audit；基础镜像必须以实际 digest 和同参数 Trivy 结果选定，重建成功或 mutable tag 变化不能替代漏洞修复证据。
+- 遗留事项：需由项目负责人在“等待正式 MLflow/基础镜像修复”和“批准维护经过测试的内部 MLflow backport/镜像方案”之间作出长期决策；决策前不得继续生产依赖改动、四镜像最终扫描、Week 12 安全门禁关闭、推送或合并。
+
+### 2026-08-11：第 12 周独立 Python 依赖 pin 的局部修复
+
+- 当前状态：`jaraco.context` 与 `wheel` 的直接 pin 已完成；Task 13 仍未完成，cryptography 例外、基础镜像风险和最终安全门禁继续保持未关闭。
+- 问题现象：当前镜像中的 `jaraco.context 5.3.0` 与 `wheel 0.45.1` 分别对应 Trivy 报告的 `CVE-2026-23949` 和 `CVE-2026-24049`。
+- 已确认根因：两个漏洞包没有被应用的顶层 requirements 固定，解析结果可落到旧版本；它们不受 MLflow 的 cryptography 上限约束。
+- 解决方法：在 `ml-platform/backend/requirements.txt` 增加 `jaraco.context==6.1.0` 和 `wheel==0.46.2`；不改变 `cryptography==49.0.*`、`mlflow==3.15.*` 或安全例外。
+- 验证方式：使用 PowerShell 7、阿里云 PyPI 镜像执行 `pip install --dry-run --report ... -r requirements.txt jaraco.context==6.1.0 wheel==0.46.2`，解析退出码为 0；随后原始 `pip-audit -r requirements.txt` 因 `pypi.org` TLS `UNEXPECTED_EOF_WHILE_READING` 中断，未产生可作为通过证据的报告。
+- 预防措施：独立 pin 只有在干净 resolver 和原始 pip-audit 都成功后才能标记为已修复；网络或漏洞数据库不可用时记录为 blocked，不用 dry-run 或旧 JSON 冒充扫描通过。
+- 遗留事项：需在可访问 PyPI advisory 服务的环境复跑无例外 pip-audit，并等待正式 MLflow/基础镜像修复或获得内部 backport 方案批准后再处理 cryptography 和四个生产镜像。
