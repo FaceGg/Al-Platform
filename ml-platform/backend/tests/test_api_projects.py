@@ -48,6 +48,11 @@ class TestProjectsCRUD(unittest.TestCase):
         self.assertIn("items", data)
         self.assertIn("total", data)
         self.assertGreaterEqual(data["total"], 2)
+        created = next(
+            item for item in data["items"]
+            if item["name"] == "TestProject_CRUD"
+        )
+        self.assertEqual(created["creator_username"], "admin")
 
     def test_04_get_project(self):
         pid = self.created_ids[0]

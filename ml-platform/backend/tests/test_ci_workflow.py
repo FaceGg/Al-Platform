@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+import re
 
 import yaml
 
@@ -7,6 +8,7 @@ import yaml
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
 COMPOSE_FILE = REPOSITORY_ROOT / "docker-compose.yml"
+UBUNTU_ENV_TEMPLATE = REPOSITORY_ROOT / "docs" / "delivery" / "ubuntu24.production.env.example"
 
 
 class TestProductionIntegrationWorkflow(unittest.TestCase):
@@ -86,6 +88,34 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             compose["services"]["backend"]["depends_on"]["inference-runtime"]["condition"],
             "service_healthy",
         )
+
+    def test_compose_persists_postgres_and_minio_data(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+
+        self.assertIn("postgres-data:/var/lib/postgresql/data", compose["services"]["postgres"]["volumes"])
+        self.assertIn("minio-data:/data", compose["services"]["minio"]["volumes"])
+        self.assertIn("postgres-data", compose["volumes"])
+        self.assertIn("minio-data", compose["volumes"])
+
+    def test_compose_binds_management_ports_to_loopback_by_default(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+
+        self.assertIn("${BACKEND_BIND_ADDRESS:-127.0.0.1}:8000:8000", compose["services"]["backend"]["ports"])
+        self.assertIn("${FRONTEND_BIND_ADDRESS:-127.0.0.1}:5173:80", compose["services"]["frontend"]["ports"])
+        self.assertIn("${MINIO_BIND_ADDRESS:-127.0.0.1}:9000:9000", compose["services"]["minio"]["ports"])
+        self.assertIn("${MINIO_BIND_ADDRESS:-127.0.0.1}:9001:9001", compose["services"]["minio"]["ports"])
+
+    def test_ubuntu_environment_template_covers_required_compose_variables(self):
+        compose_text = COMPOSE_FILE.read_text(encoding="utf-8")
+        required_variables = set(re.findall(r"\$\{([A-Z0-9_]+):\?set [^}]+\}", compose_text))
+        template_variables = {
+            line.partition("=")[0]
+            for line in UBUNTU_ENV_TEMPLATE.read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#") and "=" in line
+        }
+
+        self.assertTrue(required_variables)
+        self.assertTrue(required_variables.issubset(template_variables))
 
     def test_experiment_ci_builds_starts_and_verifies_inference_runtime(self):
         parsed = yaml.safe_load(self.workflow)

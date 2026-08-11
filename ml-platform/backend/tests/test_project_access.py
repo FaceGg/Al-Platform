@@ -112,10 +112,15 @@ class TestProjectPermissionMatrix(unittest.TestCase):
             role: User(
                 username=f"access-{role}",
                 password_hash="hash",
-                role="admin" if role == "outsider" else "engineer",
+                role="engineer",
             )
             for role in ("owner", "editor", "operator", "viewer", "outsider")
         }
+        self.users["admin"] = User(
+            username="access-admin",
+            password_hash="hash",
+            role="admin",
+        )
         self.db.add_all(self.users.values())
         self.db.flush()
         self.project = Project(
@@ -169,10 +174,11 @@ class TestProjectPermissionMatrix(unittest.TestCase):
                             "PROJECT_PERMISSION_DENIED",
                         )
 
-    def test_outsider_is_hidden_and_global_admin_does_not_bypass_membership(self):
+    def test_outsider_is_hidden_and_platform_admin_can_access_every_project(self):
         from app.services.project_access import (
             ProjectAccessError,
             ProjectAccessService,
+            ProjectRole,
         )
 
         service = ProjectAccessService()
@@ -190,6 +196,30 @@ class TestProjectPermissionMatrix(unittest.TestCase):
             )
         self.assertTrue(raised.exception.hidden)
         self.assertEqual(raised.exception.code, "PROJECT_NOT_FOUND")
+
+        admin_access = service.resolve(
+            self.db,
+            self.project.id,
+            self.users["admin"].id,
+        )
+        self.assertIsNotNone(admin_access)
+        self.assertEqual(admin_access.role, ProjectRole.OWNER)
+        self.assertEqual(
+            service.require(
+                self.db,
+                self.project.id,
+                self.users["admin"].id,
+                "project.read",
+            ).project.id,
+            self.project.id,
+        )
+        self.assertEqual(
+            [project.id for project in service.accessible_project_query(
+                self.db,
+                self.users["admin"].id,
+            ).all()],
+            [self.project.id],
+        )
 
     def test_owner_precedence_and_accessible_projects_are_not_duplicated(self):
         from app.services.project_access import ProjectAccessService

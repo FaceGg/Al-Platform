@@ -1,10 +1,12 @@
 """Model Library API integration tests."""
-import sys, os, unittest
+import sys, os, unittest, uuid
 sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import Base, engine
+from app.database import Base, engine, SessionLocal
+from app.models.model_library import ModelLibrary
+from app.models.user import User
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
@@ -116,6 +118,46 @@ class TestModelLibraryAPI(unittest.TestCase):
     def test_12_model_requires_auth(self):
         r = client.get("/api/model-library")
         self.assertEqual(r.status_code, 401)
+
+    def test_13_admin_can_view_private_standalone_models_from_other_users(self):
+        marker = f"admin-private-model-{uuid.uuid4().hex}"
+        with SessionLocal() as db:
+            owner = User(
+                username=f"{marker}-owner",
+                password_hash="hash",
+                role="engineer",
+            )
+            db.add(owner)
+            db.flush()
+            model = ModelLibrary(
+                name=f"{marker}-model",
+                owner_id=owner.id,
+                status="completed",
+                is_public=False,
+            )
+            db.add(model)
+            db.commit()
+            model_id = str(model.id)
+            owner_id = owner.id
+
+        try:
+            listed = client.get("/api/model-library", headers=self.h)
+            self.assertEqual(listed.status_code, 200)
+            self.assertIn(
+                model_id,
+                {item["id"] for item in listed.json()["items"]},
+            )
+            detail = client.get(f"/api/model-library/{model_id}", headers=self.h)
+            self.assertEqual(detail.status_code, 200)
+        finally:
+            with SessionLocal() as db:
+                db.query(ModelLibrary).filter(
+                    ModelLibrary.id == uuid.UUID(model_id),
+                ).delete(synchronize_session=False)
+                db.query(User).filter(User.id == owner_id).delete(
+                    synchronize_session=False,
+                )
+                db.commit()
 
 
 if __name__ == "__main__":

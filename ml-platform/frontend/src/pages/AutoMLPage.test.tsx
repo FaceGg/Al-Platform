@@ -85,6 +85,13 @@ describe("AutoMLPage", () => {
     expect(screen.queryByText("Budget")).not.toBeInTheDocument();
   });
 
+  it("keeps the modeling task list visible before a project is selected", async () => {
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    expect(await screen.findByText("建模任务")).toBeInTheDocument();
+    expect(screen.getByText("请选择项目后查看建模任务")).toBeInTheDocument();
+  });
+
   it("renders the measured training time returned by ordinary AutoML", async () => {
     api.get.mockImplementation((url: string) => {
       if (url === "/training/jobs/job-1") return Promise.resolve({ data: {

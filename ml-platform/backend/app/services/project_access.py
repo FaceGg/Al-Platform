@@ -7,6 +7,7 @@ from sqlalchemy import and_, or_
 
 from app.models.access import ProjectMember
 from app.models.project import Project
+from app.models.user import User
 
 
 class ProjectRole(str, Enum):
@@ -78,10 +79,24 @@ class ProjectAccess:
 
 
 class ProjectAccessService:
+    @staticmethod
+    def is_platform_admin(db, user_id) -> bool:
+        """Return whether the supplied user has platform-wide administrator access."""
+        if user_id is None:
+            return False
+        return (
+            db.query(User.id)
+            .filter(User.id == user_id, User.role == "admin")
+            .first()
+            is not None
+        )
+
     def resolve(self, db, project_id, user_id) -> ProjectAccess | None:
         project = db.query(Project).filter(Project.id == project_id).first()
         if project is None:
             return None
+        if self.is_platform_admin(db, user_id):
+            return ProjectAccess(project=project, role=ProjectRole.OWNER)
         if project.owner_id == user_id:
             return ProjectAccess(project=project, role=ProjectRole.OWNER)
         membership = db.query(ProjectMember).filter(
@@ -107,6 +122,8 @@ class ProjectAccessService:
 
     @staticmethod
     def accessible_project_query(db, user_id):
+        if ProjectAccessService.is_platform_admin(db, user_id):
+            return db.query(Project)
         return (
             db.query(Project)
             .outerjoin(

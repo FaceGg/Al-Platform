@@ -16,6 +16,7 @@ export default function LoginPage() {
       const result = await login(values.username, values.password);
       localStorage.setItem("token", result.access_token);
       localStorage.setItem("userId", result.user_id);
+      localStorage.setItem("username", values.username);
       localStorage.setItem("role", result.role);
       message.success("登录成功");
       navigate("/");

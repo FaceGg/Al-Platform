@@ -19,13 +19,14 @@ from sqlalchemy.pool import StaticPool
 import app.main as main_module
 from app.config import settings
 from app import database as database_module
-from app.database import engine_options
+from app.database import Base, engine_options
 from app.database_schema import (
     DatabaseSchemaError,
     require_current_schema,
     schema_status,
 )
 from app.main import initialize_database
+from app.models.project import Project
 from app.models.user import User
 
 
@@ -217,6 +218,44 @@ class TestDatabaseInitialization(TestCase):
 
 
 class TestDatabaseLifespan(TestCase):
+    def test_repair_orphaned_project_owners_assigns_only_invalid_projects_to_admin(self):
+        db_engine = create_engine("sqlite://", **engine_options("sqlite://"))
+        Base.metadata.create_all(db_engine)
+        session_factory = sessionmaker(bind=db_engine)
+        try:
+            with session_factory() as db:
+                admin = User(
+                    username="admin",
+                    password_hash="hash",
+                    role="admin",
+                )
+                owner = User(
+                    username="project-owner",
+                    password_hash="hash",
+                    role="engineer",
+                )
+                db.add_all([admin, owner])
+                db.flush()
+                valid_project = Project(name="valid-project", owner_id=owner.id)
+                orphaned_project = Project(name="orphaned-project")
+                db.add_all([valid_project, orphaned_project])
+                db.commit()
+
+                repaired = main_module.repair_orphaned_project_owners(db)
+                db.expire_all()
+
+                self.assertEqual(repaired, 1)
+                self.assertEqual(
+                    db.get(Project, orphaned_project.id).owner_id,
+                    admin.id,
+                )
+                self.assertEqual(
+                    db.get(Project, valid_project.id).owner_id,
+                    owner.id,
+                )
+        finally:
+            db_engine.dispose()
+
     def test_default_admin_seed_tolerates_concurrent_unique_insert(self):
         existing_user = SimpleNamespace(username="admin")
 

@@ -1,6 +1,8 @@
 """Dashboard / Data Cockpit API - aggregated platform stats."""
 from fastapi import APIRouter, Depends
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
+from app.api.auth import get_current_user
 from app.database import get_db
 from app.models.model_library import ModelLibrary
 from app.models.api_model import PlatformAPI
@@ -8,26 +10,61 @@ from app.models.artifact import Artifact
 from app.models.training import TrainingJob
 from app.models.project import Project
 from app.models.user import User
+from app.services.project_access import ProjectAccessService
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
 @router.get("/stats")
-def get_dashboard_stats(db: Session = Depends(get_db)):
-    """Get platform-wide statistics for the data cockpit."""
+def get_dashboard_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get statistics limited to the signed-in user's permitted resources."""
     from collections import Counter
 
     from app.engine.registry import OperatorRegistry
 
     operators = OperatorRegistry.list_all()
-    datasets = db.query(Artifact).filter(Artifact.type == "dataset").all()
+    access_service = ProjectAccessService()
+    is_platform_admin = access_service.is_platform_admin(db, current_user.id)
+    accessible_projects = access_service.accessible_project_query(
+        db,
+        current_user.id,
+    ).all()
+    accessible_project_ids = [project.id for project in accessible_projects]
+
+    datasets_query = db.query(Artifact).filter(Artifact.type == "dataset")
+    if not is_platform_admin:
+        datasets_query = datasets_query.filter(
+            Artifact.project_id.in_(accessible_project_ids),
+        )
+    datasets = datasets_query.all()
+
+    models_query = db.query(ModelLibrary)
+    apis_query = db.query(PlatformAPI)
+    training_jobs_query = db.query(TrainingJob)
+    if not is_platform_admin:
+        models_query = models_query.filter(or_(
+            ModelLibrary.owner_id == current_user.id,
+            ModelLibrary.project_id.in_(accessible_project_ids),
+            ModelLibrary.is_public.is_(True),
+        ))
+        apis_query = apis_query.filter(or_(
+            PlatformAPI.owner_id == current_user.id,
+            PlatformAPI.is_public.is_(True),
+        ))
+        training_jobs_query = training_jobs_query.filter(
+            TrainingJob.project_id.in_(accessible_project_ids),
+        )
+
     total_algorithms = len(operators)
     total_datasets = len(datasets)
-    total_models = db.query(ModelLibrary).count()
-    total_apis = db.query(PlatformAPI).count()
-    total_projects = db.query(Project).count()
-    total_users = db.query(User).count()
-    total_training_jobs = db.query(TrainingJob).count()
+    total_models = models_query.count()
+    total_apis = apis_query.count()
+    total_projects = len(accessible_projects)
+    total_users = db.query(User).count() if is_platform_admin else 1
+    total_training_jobs = training_jobs_query.count()
 
     # Dataset sample total
     total_samples = sum(
@@ -36,16 +73,16 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     )
 
     # API call stats
-    api_calls = db.query(PlatformAPI).with_entities(
+    api_calls = apis_query.with_entities(
         PlatformAPI.total_calls, PlatformAPI.success_calls
     ).all()
     total_api_calls = sum(c[0] or 0 for c in api_calls)
     total_success_calls = sum(c[1] or 0 for c in api_calls)
 
     # Model by status
-    model_training = db.query(ModelLibrary).filter(ModelLibrary.status == "training").count()
-    model_completed = db.query(ModelLibrary).filter(ModelLibrary.status == "completed").count()
-    model_published = db.query(ModelLibrary).filter(ModelLibrary.status == "published").count()
+    model_training = models_query.filter(ModelLibrary.status == "training").count()
+    model_completed = models_query.filter(ModelLibrary.status == "completed").count()
+    model_published = models_query.filter(ModelLibrary.status == "published").count()
 
     algorithm_categories = Counter(
         getattr(operator, "category", "utility") or "utility"

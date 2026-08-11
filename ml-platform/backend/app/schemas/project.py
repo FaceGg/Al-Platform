@@ -17,6 +17,7 @@ class ProjectResponse(BaseModel):
     name: str
     description: str
     owner_id: UUID
+    creator_username: str | None = None
     created_at: datetime
     updated_at: datetime
     project_role: str | None = None

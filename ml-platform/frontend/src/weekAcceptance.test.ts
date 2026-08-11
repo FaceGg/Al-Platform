@@ -44,6 +44,12 @@ const weekTestFiles: Record<number, string[]> = {
     "./api/modelRegistry.test.ts",
     "./pages/ModelLibraryPage.test.tsx",
   ],
+  10: [
+    "./components/AppLayoutUsername.test.tsx",
+    "./pages/DashboardPage.test.tsx",
+    "./pages/LoginPage.test.tsx",
+    "./pages/ProjectListPage.test.tsx",
+  ],
   17: [
     "./api/spotWeldQuality.test.ts",
     "./components/spotWeld/WaveformPanel.test.tsx",

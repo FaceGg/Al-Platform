@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from redis import asyncio as redis_async
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
@@ -150,6 +151,39 @@ def ensure_default_admin(session_factory) -> None:
         db.close()
 
 
+def repair_orphaned_project_owners(db) -> int:
+    """Transfer legacy projects without a valid owner to the platform admin."""
+    from app.models.project import Project
+    from app.models.user import User
+
+    admin = db.query(User).filter(
+        User.username == "admin",
+        User.role == "admin",
+    ).first()
+    if admin is None:
+        return 0
+
+    orphaned_project_ids = [
+        project_id
+        for (project_id,) in db.query(Project.id).outerjoin(
+            User,
+            Project.owner_id == User.id,
+        ).filter(or_(
+            Project.owner_id.is_(None),
+            User.id.is_(None),
+        )).all()
+    ]
+    if not orphaned_project_ids:
+        return 0
+
+    db.query(Project).filter(Project.id.in_(orphaned_project_ids)).update(
+        {Project.owner_id: admin.id},
+        synchronize_session=False,
+    )
+    db.commit()
+    return len(orphaned_project_ids)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Create database tables on startup and clean up on shutdown."""
@@ -157,6 +191,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     initialize_database(app_settings, db_engine)
     ensure_default_admin(session_factory)
     with session_factory() as db:
+        repair_orphaned_project_owners(db)
         recover_orphaned_local_quality_runs(db)
     # Capture event loop for background thread WebSocket broadcast
     import app.api.runs as runs_mod

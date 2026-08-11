@@ -90,6 +90,9 @@ export default function ProjectListPage() {
       render: (text: string, record: any) => <Link to={'/projects/' + record.id}>{text}</Link>
     },
     { title: '描述', dataIndex: 'description', key: 'description', ellipsis: true },
+    { title: '创建者', dataIndex: 'creator_username', key: 'creator_username',
+      render: (username: string | null | undefined) => username || '-'
+    },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at',
       render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm')
     },

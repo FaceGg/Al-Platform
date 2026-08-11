@@ -376,17 +376,27 @@ export default function AutoMLPage() {
       });
       void refreshModelingTasks();
       const rid = res.data.run_id || res.data.id || res.data.job_id;
-      const poll = setInterval(async () => {
+      let poll: number | undefined;
+      let isTerminal = false;
+      const pollJob = async () => {
         try {
           const r = await apiClient.get("/training/jobs/" + rid);
           const d = r.data;
           if (d.status === "completed" || d.status === "done") {
-            clearInterval(poll); setResults(d.metrics || d); setRunning(false); void refreshModelingTasks(); message.success(t.common.success);
+            isTerminal = true;
+            if (poll !== undefined) window.clearInterval(poll);
+            setResults(d.metrics || d); setRunning(false); void refreshModelingTasks(); message.success(t.common.success);
           } else if (d.status === "failed") {
-            clearInterval(poll); setRunning(false); void refreshModelingTasks(); message.error(t.common.error);
+            isTerminal = true;
+            if (poll !== undefined) window.clearInterval(poll);
+            setRunning(false); void refreshModelingTasks(); message.error(t.common.error);
           }
         } catch { /* continue */ }
-      }, 3000);
+      };
+      await pollJob();
+      if (!isTerminal) {
+        poll = window.setInterval(() => { void pollJob(); }, 3000);
+      }
     } catch (e: any) {
       message.error(formatApiError(e, t.common.error));
       setRunning(false);
@@ -560,9 +570,9 @@ export default function AutoMLPage() {
         <h3>{t.automl?.title || "AutoML"}</h3>
         <Button icon={<PlusOutlined />} aria-label="新建" onClick={() => { setRecipeTab("general"); setResults(null); }}>新建</Button>
       </div>
-      {selectedProject && <Card title="建模任务" style={{ marginBottom: 16 }} extra={<Button type="link" onClick={() => void refreshModelingTasks()} loading={loadingModelingTasks}>刷新</Button>}>
-        <Table<ModelingTask> rowKey={(task) => `${task.kind}-${task.id}`} size="small" columns={modelingTaskColumns} dataSource={modelingTasks} loading={loadingModelingTasks} pagination={false} locale={{ emptyText: "暂无建模任务" }} />
-      </Card>}
+      <Card title="建模任务" style={{ marginBottom: 16 }} extra={<Button type="link" onClick={() => void refreshModelingTasks()} loading={loadingModelingTasks} disabled={!selectedProject}>刷新</Button>}>
+        <Table<ModelingTask> rowKey={(task) => `${task.kind}-${task.id}`} size="small" columns={modelingTaskColumns} dataSource={modelingTasks} loading={loadingModelingTasks} pagination={false} locale={{ emptyText: selectedProject ? "暂无建模任务" : "请选择项目后查看建模任务" }} />
+      </Card>
       <Tabs
         activeKey={recipeTab}
         onChange={setRecipeTab}

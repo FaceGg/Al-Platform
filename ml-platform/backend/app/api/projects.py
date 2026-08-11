@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models.experiment import Experiment
 from app.models.project import Project
@@ -35,12 +35,18 @@ def list_projects(
     service = ProjectAccessService()
     column = Project.name if sort_by == "name" else Project.created_at
     ordering = column.asc() if sort_order == "asc" else column.desc()
-    projects = service.accessible_project_query(db, current_user.id).order_by(ordering).all()
+    projects = (
+        service.accessible_project_query(db, current_user.id)
+        .options(joinedload(Project.owner))
+        .order_by(ordering)
+        .all()
+    )
     items = [{
         "id": project.id,
         "name": project.name,
         "description": project.description,
         "owner_id": project.owner_id,
+        "creator_username": project.owner.username if project.owner is not None else None,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "project_role": service.resolve(db, project.id, current_user.id).role.value,
