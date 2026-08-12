@@ -16,15 +16,15 @@
 - Modify: `DEVELOPMENT_PLAN.md` only after a gate is actually verified
 - Modify: `C:\Users\17723\.codex\DEVELOPMENT_EXPERIENCE.md` only after a problem is resolved
 
-- [ ] **Step 1: Record repository and runtime baseline.**
+- [x] **Step 1: Record repository and runtime baseline.**
 
 Use PowerShell 7 with `$Root = 'E:\codex_workspace\agent_spot_welding\.worktrees\week9-12-mlops-core'` and record branch, commit, remotes, dirty paths, Docker/Compose versions, WSL distribution list, and existing evidence hashes. Do not stage or remove `ml-platform/frontend/src/pages/ModelLibraryPage.test.tsx`, `tmp/npm-cache/`, `tmp/pip-cache/`, or `tmp/security-20260810/`.
 
-- [ ] **Step 2: Create an isolated evidence directory and project name.**
+- [x] **Step 2: Create an isolated evidence directory and project name.**
 
 Use a timestamped directory under `$Root\temp_test\acceptance-20260810` and a unique Compose project name such as `spot-welding-acceptance-20260810`. Capture the generated project name, ports, database name, MinIO bucket, Redis namespace, and source commit in the evidence README. Never use a production project, bucket, database, or volume.
 
-- [ ] **Step 3: Add the evidence README contract.**
+- [x] **Step 3: Add the evidence README contract.**
 
 Document that every result must contain the exact command, start/end time, exit code, source commit, tool version, and artifact path. A failed or unavailable external service is recorded as `blocked` with output; it is never represented as `passed`.
 
@@ -167,4 +167,3 @@ Run `git fetch --prune`, compare `git rev-parse main` with `git rev-parse origin
 - Stop promotion on any failing test, scanner, migration, restore, browser, performance, or remote CI gate.
 - Treat Docker, WSL, registry, network, credential, and GitHub outages as externally blocked with reproducible evidence.
 - Never replace real evidence with a fabricated result, broaden an ignore rule, delete user files, or claim completion while a required gate is blocked.
-

@@ -24,6 +24,7 @@ PLATFORM_STATUS = REPOSITORY_ROOT / "PLATFORM_STATUS.md"
 NOTIFICATION_STACK_TEST = (
     REPOSITORY_ROOT / "ml-platform" / "backend" / "tests" / "test_notification_production_stack.py"
 )
+BACKEND_REQUIREMENTS = REPOSITORY_ROOT / "ml-platform" / "backend" / "requirements.txt"
 
 
 class TestProductionIntegrationWorkflow(unittest.TestCase):
@@ -39,6 +40,17 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
 
         self.assertIn('grep -q " ready\\." "$RUNNER_TEMP/celery.log"', wait_step)
         self.assertNotIn("celery -A", wait_step)
+
+    def test_python_security_stack_uses_skinny_mlflow_and_fixed_cryptography_without_exception(self):
+        requirements = BACKEND_REQUIREMENTS.read_text(encoding="utf-8")
+        self.assertIn("cryptography==50.0.*", requirements)
+        self.assertIn("mlflow-skinny==3.15.*", requirements)
+        self.assertNotIn("mlflow==3.15.*", requirements)
+
+        security_job = yaml.safe_load(self.workflow)["jobs"]["week11-12-verification"]
+        rendered_steps = "\n".join(str(step.get("run", "")) for step in security_job["steps"])
+        self.assertNotIn("--pip-audit-exception", rendered_steps)
+        self.assertFalse(PIP_AUDIT_EXCEPTION.exists())
 
     def test_failure_evidence_scan_uses_runner_available_grep(self):
         evidence_step = self.workflow.split(
@@ -127,8 +139,8 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         )
         self.assertIn("tools.security_scans all", scan["run"])
         self.assertIn("--npm-audit-exception", scan["run"])
-        self.assertIn("--pip-audit-exception", scan["run"])
-        self.assertIn("cryptography-pkcs7-mlflow-exception.json", scan["run"])
+        self.assertNotIn("--pip-audit-exception", scan["run"])
+        self.assertNotIn("cryptography-pkcs7-mlflow-exception.json", scan["run"])
         self.assertIn("security/security.json", scan["run"])
 
     def test_week11_12_ci_runs_web_gate_on_frozen_stack_then_summarizes_security_evidence(self):
@@ -159,23 +171,6 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         )
         self.assertEqual(exception["advisory_sources"], [1138769])
         self.assertIn("BrowserRouter", exception["mitigation"])
-
-    def test_cryptography_audit_exception_is_scoped_to_frozen_mlflow_constraint(self):
-        exception = json.loads(PIP_AUDIT_EXCEPTION.read_text(encoding="utf-8"))
-
-        self.assertEqual(exception["schema_version"], 1)
-        self.assertEqual(exception["id"], "cryptography-pkcs7-mlflow-constraint")
-        self.assertEqual(exception["owner"], "ml-platform-maintainers")
-        self.assertEqual(exception["expires_on"], "2026-08-24")
-        self.assertEqual(
-            exception["package_versions"],
-            {"cryptography": "49.0.0", "mlflow": "3.15.1"},
-        )
-        self.assertEqual(
-            exception["advisory_ids"],
-            ["PYSEC-2026-3552", "CVE-2026-69247"],
-        )
-        self.assertIn("PKCS#7", exception["mitigation"])
 
     def test_delivery_docs_cover_four_notification_channels_and_evidence_boundary(self):
         infrastructure = PRODUCTION_INFRASTRUCTURE.read_text(encoding="utf-8")

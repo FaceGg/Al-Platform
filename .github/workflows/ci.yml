@@ -571,7 +571,6 @@ jobs:
         run: |
           python -m tools.security_scans all \
             --npm-audit-exception "$GITHUB_WORKSPACE/docs/security/react-router-rsc-mode-exception.json" \
-            --pip-audit-exception "$GITHUB_WORKSPACE/docs/security/cryptography-pkcs7-mlflow-exception.json" \
             --output "$ML_PLATFORM_EVIDENCE_DIR/security/security.json"
       - name: Run frozen-stack web security gate
         shell: bash

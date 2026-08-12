@@ -400,181 +400,12 @@ def _npm_audit_exception_failure(error_code: str) -> dict[str, object]:
     return {"status": "failed", "error_code": error_code}
 
 
-def _pip_audit_exception_failure(error_code: str) -> dict[str, object]:
-    return {"status": "failed", "error_code": error_code}
-
-
 def _read_exception(path: Path) -> Mapping[str, object] | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
-
-
-_CRYPTOGRAPHY_EXCEPTION_ID = "cryptography-pkcs7-mlflow-constraint"
-_CRYPTOGRAPHY_EXCEPTION_PACKAGES = {
-    "cryptography": "49.0.0",
-    "mlflow": "3.15.1",
-}
-_CRYPTOGRAPHY_EXCEPTION_ADVISORIES = {
-    "PYSEC-2026-3552",
-    "CVE-2026-69247",
-}
-
-
-def _requirements_use_frozen_cryptography_constraint(path: Path) -> bool:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError):
-        return False
-    normalized = {
-        line.split("#", 1)[0].strip().casefold()
-        for line in lines
-        if line.split("#", 1)[0].strip()
-    }
-    return {
-        "cryptography==49.0.*",
-        "mlflow==3.15.*",
-    }.issubset(normalized)
-
-
-def _application_uses_pkcs7(application_directory: Path) -> bool:
-    """Fail closed when runtime source cannot be proven free of PKCS#7 use."""
-    if not application_directory.is_dir():
-        return True
-    try:
-        source_paths = sorted(application_directory.rglob("*.py"))
-    except OSError:
-        return True
-    for source_path in source_paths:
-        try:
-            source = source_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            return True
-        if "pkcs7" in source.casefold():
-            return True
-    return False
-
-
-def evaluate_pip_audit_exception(
-    audit_report: Mapping[str, object],
-    *,
-    exception_path: Path,
-    requirements_path: Path,
-    application_directory: Path,
-    today: date | None = None,
-) -> dict[str, object]:
-    """Allow only the reviewed MLflow/cryptography compatibility exception."""
-    if not isinstance(audit_report, dict):
-        return _pip_audit_exception_failure("PIP_AUDIT_REPORT_INVALID")
-    exception = _read_exception(exception_path)
-    if exception is None:
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_INVALID")
-    try:
-        schema_version = exception["schema_version"]
-        exception_id = exception["id"]
-        owner = exception["owner"]
-        reviewed_at = exception["reviewed_at"]
-        expires_on = exception["expires_on"]
-        package_versions = exception["package_versions"]
-        advisory_ids = exception["advisory_ids"]
-        mitigation = exception["mitigation"]
-    except KeyError:
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_INVALID")
-    if (
-        schema_version != 1
-        or exception_id != _CRYPTOGRAPHY_EXCEPTION_ID
-        or not isinstance(owner, str)
-        or not owner
-        or not isinstance(reviewed_at, str)
-        or not isinstance(expires_on, str)
-        or package_versions != _CRYPTOGRAPHY_EXCEPTION_PACKAGES
-        or not isinstance(advisory_ids, list)
-        or not all(isinstance(advisory_id, str) for advisory_id in advisory_ids)
-        or set(advisory_ids) != _CRYPTOGRAPHY_EXCEPTION_ADVISORIES
-        or len(advisory_ids) != len(_CRYPTOGRAPHY_EXCEPTION_ADVISORIES)
-        or not isinstance(mitigation, str)
-        or "MLflow 3.15.1" not in mitigation
-        or "cryptography<50" not in mitigation
-        or "PKCS#7" not in mitigation
-    ):
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_INVALID")
-    try:
-        review_date = date.fromisoformat(reviewed_at)
-        expiry_date = date.fromisoformat(expires_on)
-    except ValueError:
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_INVALID")
-    current_date = today or date.today()
-    if review_date > current_date or expiry_date < current_date:
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_EXPIRED")
-    if not _requirements_use_frozen_cryptography_constraint(requirements_path):
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_VERSION_MISMATCH")
-    if _application_uses_pkcs7(application_directory):
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_SCOPE_VIOLATION")
-
-    dependencies = audit_report.get("dependencies")
-    if not isinstance(dependencies, list):
-        return _pip_audit_exception_failure("PIP_AUDIT_REPORT_INVALID")
-    by_name: dict[str, Mapping[str, object]] = {}
-    for dependency in dependencies:
-        if not isinstance(dependency, dict):
-            return _pip_audit_exception_failure("PIP_AUDIT_REPORT_INVALID")
-        name = dependency.get("name")
-        version = dependency.get("version")
-        vulnerabilities = dependency.get("vulns")
-        if (
-            not isinstance(name, str)
-            or not name
-            or name.casefold() in by_name
-            or not isinstance(version, str)
-            or not isinstance(vulnerabilities, list)
-        ):
-            return _pip_audit_exception_failure("PIP_AUDIT_REPORT_INVALID")
-        by_name[name.casefold()] = dependency
-    expected_names = set(_CRYPTOGRAPHY_EXCEPTION_PACKAGES)
-    if not expected_names.issubset(by_name):
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_VERSION_MISMATCH")
-    if any(
-        dependency.get("vulns")
-        for name, dependency in by_name.items()
-        if name != "cryptography"
-    ):
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_ADVISORY_MISMATCH")
-
-    cryptography = by_name["cryptography"]
-    mlflow = by_name["mlflow"]
-    if (
-        cryptography.get("version") != _CRYPTOGRAPHY_EXCEPTION_PACKAGES["cryptography"]
-        or mlflow.get("version") != _CRYPTOGRAPHY_EXCEPTION_PACKAGES["mlflow"]
-        or mlflow.get("vulns") != []
-    ):
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_VERSION_MISMATCH")
-    vulnerabilities = cryptography.get("vulns")
-    if not isinstance(vulnerabilities, list) or len(vulnerabilities) != 1:
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_ADVISORY_MISMATCH")
-    vulnerability = vulnerabilities[0]
-    if not isinstance(vulnerability, dict):
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_ADVISORY_MISMATCH")
-    aliases = vulnerability.get("aliases")
-    fixes = vulnerability.get("fix_versions")
-    if (
-        vulnerability.get("id") != "PYSEC-2026-3552"
-        or not isinstance(aliases, list)
-        or "CVE-2026-69247" not in aliases
-        or not isinstance(fixes, list)
-        or "50.0.0" not in fixes
-    ):
-        return _pip_audit_exception_failure("PIP_AUDIT_EXCEPTION_ADVISORY_MISMATCH")
-    return {
-        "status": "passed",
-        "exception": {
-            "id": exception_id,
-            "owner": owner,
-            "reviewed_at": reviewed_at,
-            "expires_on": expires_on,
-        },
-    }
 
 
 def _frontend_package_versions(frontend_directory: Path) -> Mapping[str, str] | None:
@@ -2466,70 +2297,51 @@ def _run_frontend_dependency_scan(
     return result
 
 
-def _run_pip_dependency_scan(
-    command: list[str],
-    *,
-    exception_path: Path,
-    requirements_path: Path,
-    application_directory: Path,
-    evidence_path: Path,
-) -> dict[str, object]:
+def _canonical_distribution_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).casefold()
+
+
+_REQUIRED_PIP_AUDIT_PACKAGES = frozenset(
+    _canonical_distribution_name(name)
+    for name in ("cryptography", "jaraco.context", "wheel")
+)
+
+
+def _pip_audit_report_error(evidence_path: Path) -> str | None:
     try:
-        completed = subprocess.run(
-            _process_command(command),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError as error:
-        result = {
-            "command": _redact_command(command),
-            "status": "failed",
-            "returncode": None,
-            "stdout": "",
-            "stderr": redact_scan_output(str(error))[-10000:],
-        }
-        _persist_scan_evidence(evidence_path, result)
-        return result
-    result = {
-        "command": _redact_command(command),
-        "status": "passed" if completed.returncode == 0 else "failed",
-        "returncode": completed.returncode,
-        "stdout": redact_scan_output(completed.stdout or "")[-10000:],
-        "stderr": redact_scan_output(completed.stderr or "")[-10000:],
-    }
-    try:
-        audit_report = json.loads(evidence_path.read_text(encoding="utf-8"))
+        report = json.loads(evidence_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        result["error_code"] = "PIP_AUDIT_REPORT_INVALID"
-        _persist_scan_evidence(evidence_path, result)
-        return result
-    if not isinstance(audit_report, dict):
-        result["error_code"] = "PIP_AUDIT_REPORT_INVALID"
-        _persist_scan_evidence(evidence_path, result)
-        return result
-    _write_redacted_json(evidence_path, audit_report)
-    if completed.returncode == 0:
-        return result
-    exception = evaluate_pip_audit_exception(
-        audit_report,
-        exception_path=exception_path,
-        requirements_path=requirements_path,
-        application_directory=application_directory,
-    )
-    if exception["status"] != "passed":
-        result["error_code"] = exception["error_code"]
-        return result
-    result["status"] = "passed"
-    result["exception"] = exception["exception"]
-    return result
+        return "PIP_AUDIT_REPORT_INVALID"
+    if not isinstance(report, dict):
+        return "PIP_AUDIT_REPORT_INVALID"
+    dependencies = report.get("dependencies")
+    if not isinstance(dependencies, list):
+        return "PIP_AUDIT_REPORT_INVALID"
+    found_required_packages: set[str] = set()
+    for dependency in dependencies:
+        if not isinstance(dependency, dict):
+            return "PIP_AUDIT_REPORT_INVALID"
+        name = dependency.get("name")
+        vulnerabilities = dependency.get("vulns")
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(vulnerabilities, list)
+            or not all(isinstance(vulnerability, dict) for vulnerability in vulnerabilities)
+        ):
+            return "PIP_AUDIT_REPORT_INVALID"
+        found_required_packages.add(_canonical_distribution_name(name))
+        if vulnerabilities:
+            return "PIP_AUDIT_VULNERABILITIES_FOUND"
+    if not _REQUIRED_PIP_AUDIT_PACKAGES.issubset(found_required_packages):
+        return "PIP_AUDIT_REQUIRED_PACKAGE_MISSING"
+    return None
 
 
 def run_all(
     output: str | Path,
     *,
     npm_audit_exception: Path | None = None,
-    pip_audit_exception: Path | None = None,
 ) -> dict[str, object]:
     """Run required local scanner commands and persist one aggregate gate result."""
     image_ref = os.getenv("ACCEPTANCE_IMAGE", "")
@@ -2538,9 +2350,6 @@ def run_all(
     output_path = Path(output)
     evidence_directory = output_path.parent
     evidence_directory.mkdir(parents=True, exist_ok=True)
-    backend_directory = Path(__file__).resolve().parents[1]
-    requirements_path = backend_directory / "requirements.txt"
-    application_directory = backend_directory / "app"
     report_paths = {
         "python_dependencies": evidence_directory / "pip-audit.json",
         "source_bandit": evidence_directory / "bandit.json",
@@ -2586,17 +2395,12 @@ def run_all(
         "--output",
         str(report_paths["python_dependencies"]),
     ]
-    python_result = (
-        _run_pip_dependency_scan(
-            python_command,
-            exception_path=pip_audit_exception,
-            requirements_path=requirements_path,
-            application_directory=application_directory,
-            evidence_path=report_paths["python_dependencies"],
-        )
-        if pip_audit_exception is not None
-        else scanner_gate("python_dependencies", python_command)
-    )
+    python_result = scanner_gate("python_dependencies", python_command)
+    if (
+        error_code := _pip_audit_report_error(report_paths["python_dependencies"])
+    ) is not None:
+        python_result["status"] = "failed"
+        python_result["error_code"] = error_code
     gates = {
         "python_dependencies": python_result,
         "source_bandit": scanner_gate(
@@ -3153,7 +2957,6 @@ def main(argv: list[str] | None = None) -> int:
     all_scans = subparsers.add_parser("all")
     all_scans.add_argument("--output", type=Path, required=True)
     all_scans.add_argument("--npm-audit-exception", type=Path)
-    all_scans.add_argument("--pip-audit-exception", type=Path)
     summary = subparsers.add_parser("summarize")
     summary.add_argument("--input-dir", type=Path, required=True)
     summary.add_argument("--output", type=Path, required=True)
@@ -3166,7 +2969,6 @@ def main(argv: list[str] | None = None) -> int:
         result = run_all(
             args.output,
             npm_audit_exception=args.npm_audit_exception,
-            pip_audit_exception=args.pip_audit_exception,
         )
     elif args.command == "summarize":
         result = summarize_scans(args.input_dir, args.output)

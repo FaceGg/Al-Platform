@@ -1,7 +1,10 @@
 import json
 import re
+import tempfile
 import unittest
 from pathlib import Path
+
+from tools.security_scans import _pip_audit_report_error
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -18,6 +21,7 @@ DOCKERFILES = tuple(
 BASE_RECORD = ROOT / "docs" / "security" / "python-base-image.json"
 REQUIREMENTS = BACKEND / "requirements.txt"
 EXCEPTION = ROOT / "docs" / "security" / "cryptography-pkcs7-mlflow-exception.json"
+COMPOSE = ROOT / "docker-compose.yml"
 
 
 class ImageSecurityContractTests(unittest.TestCase):
@@ -28,6 +32,30 @@ class ImageSecurityContractTests(unittest.TestCase):
         for path in DOCKERFILES:
             first_line = path.read_text(encoding="utf-8").splitlines()[0]
             self.assertEqual(first_line, f"FROM {reference}", path.name)
+
+    def test_wolfi_images_install_recorded_python_and_keep_non_root_runtime(self):
+        record = json.loads(BASE_RECORD.read_text(encoding="utf-8"))
+        runtime = record["runtime"]
+        python_package = runtime["python_package"]
+        pip_package = runtime["pip_package"]
+        non_root_uid = runtime["non_root_uid"]
+        self.assertEqual(non_root_uid, 1000)
+        for path in DOCKERFILES:
+            content = path.read_text(encoding="utf-8")
+            self.assertIn("apk add --no-cache", content, path.name)
+            self.assertIn(python_package, content, path.name)
+            self.assertIn(pip_package, content, path.name)
+            self.assertNotIn("groupadd", content, path.name)
+            self.assertNotIn("useradd", content, path.name)
+            self.assertIn(f"USER {non_root_uid}:{non_root_uid}", content, path.name)
+
+    def test_backend_host_mounts_keep_the_established_numeric_identity(self):
+        compose = COMPOSE.read_text(encoding="utf-8")
+        backend = DOCKERFILES[0].read_text(encoding="utf-8")
+        self.assertIn("./ml-platform/backend/data:/app/data", compose)
+        self.assertIn("./ml-platform/backend/uploads:/app/app/uploads", compose)
+        self.assertIn("chown -R 1000:1000 data app/uploads /tmp/ml-platform", backend)
+        self.assertIn("USER 1000:1000", backend)
 
     def test_direct_security_dependencies_are_fixed(self):
         lines = {
@@ -41,6 +69,36 @@ class ImageSecurityContractTests(unittest.TestCase):
 
     def test_cryptography_exception_is_removed_after_clean_resolution(self):
         self.assertFalse(EXCEPTION.exists())
+
+    def test_generated_pip_audit_report_requires_all_clean_controlled_packages(self):
+        dependencies = [
+            {"name": "cryptography", "version": "50.0.0", "vulns": []},
+            {"name": "jaraco-context", "version": "6.1.0", "vulns": []},
+            {"name": "wheel", "version": "0.46.2", "vulns": []},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "pip-audit.json"
+            report_path.write_text(
+                json.dumps({"dependencies": dependencies}), encoding="utf-8"
+            )
+            self.assertIsNone(_pip_audit_report_error(report_path))
+
+            report_path.write_text(
+                json.dumps({"dependencies": dependencies[:-1]}), encoding="utf-8"
+            )
+            self.assertEqual(
+                _pip_audit_report_error(report_path),
+                "PIP_AUDIT_REQUIRED_PACKAGE_MISSING",
+            )
+
+            dependencies[0]["vulns"] = [{"id": "TEST-VULNERABILITY"}]
+            report_path.write_text(
+                json.dumps({"dependencies": dependencies}), encoding="utf-8"
+            )
+            self.assertEqual(
+                _pip_audit_report_error(report_path),
+                "PIP_AUDIT_VULNERABILITIES_FOUND",
+            )
 
 
 if __name__ == "__main__":

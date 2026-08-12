@@ -1581,3 +1581,21 @@
 - 验证方式：使用 PowerShell 7、阿里云 PyPI 镜像执行 `pip install --dry-run --report ... -r requirements.txt jaraco.context==6.1.0 wheel==0.46.2`，解析退出码为 0；随后原始 `pip-audit -r requirements.txt` 因 `pypi.org` TLS `UNEXPECTED_EOF_WHILE_READING` 中断，未产生可作为通过证据的报告。
 - 预防措施：独立 pin 只有在干净 resolver 和原始 pip-audit 都成功后才能标记为已修复；网络或漏洞数据库不可用时记录为 blocked，不用 dry-run 或旧 JSON 冒充扫描通过。
 - 遗留事项：需在可访问 PyPI advisory 服务的环境复跑无例外 pip-audit，并等待正式 MLflow/基础镜像修复或获得内部 backport 方案批准后再处理 cryptography 和四个生产镜像。
+
+### 2026-08-11：第 12 周无例外 pip-audit 真实报告名称规范化修复
+
+- 当前状态：Task 13 与第 11-12 周继续保持“进行中”。依赖审计已取得当前候选镜像内的零漏洞原始报告，但四个最终生产镜像的无缓存重建与 Trivy 扫描尚未完成，不能关闭安全或最终验收门禁。
+- 问题现象：真实 `pip-audit` JSON 把 requirements 中的 `jaraco.context==6.1.0` 记录为规范化分发名 `jaraco-context`。安全扫描器仅以 `casefold()` 比较名称，会把该干净报告错误标记为 `PIP_AUDIT_REQUIRED_PACKAGE_MISSING`。
+- 已确认根因：PyPI 分发名遵循 PEP 503，将连续的 `.`, `_` 和 `-` 归一化为 `-`；扫描器的受控包集合和报告名称没有在同一规范化边界比较。此前测试夹具使用了非真实的点号名称，未覆盖该输出。
+- 解决方法：在 `tools/security_scans.py` 增加 PEP 503 等价的名称规范化，并将受控包集合与报告依赖名称都归一化后比较；回归夹具改为真实的 `jaraco-context` 输出。未增加例外、忽略规则或放宽漏洞判断。
+- 验证方式：真实名称夹具先稳定 RED 为 `PIP_AUDIT_REQUIRED_PACKAGE_MISSING`，修复后 GREEN；`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts tests.test_week12_security_gates tests.test_ci_workflow -v` 为 148/148，`python -m compileall -q app tools tests` 通过。候选镜像 `codex-week12-ps7-backend:candidate` 内执行无例外 `pip-audit -r /app/requirements.txt` 退出码为 0，原始报告显示 `cryptography 50.0.0`、`jaraco-context 6.1.0`、`wheel 0.46.2` 均无漏洞。
+- 影响范围：仅 Week 12 依赖审计报告解析与安全回归；不改变 React Router 受限 npm 例外、通知协议、用户的 `ModelLibraryPage.test.tsx` 或临时缓存保护范围。
+- 预防措施：扫描器比较 Python 分发名称时必须采用 PEP 503 规范化；回归夹具应使用真实工具输出的名称格式，依赖门禁继续对任意漏洞和受控包缺失失败关闭。
+- 遗留事项：`docker build --pull --no-cache` 重建 `codex-week12-final-backend:latest` 在 904 秒上限内未完成，未生成可扫描的最终镜像。需在 Docker 构建网络可完成时按同一固定 digest 重建 backend、worker、inference、TensorBoard，并运行四个 Trivy HIGH/CRITICAL 扫描、`tools.security_scans all`、全量回归和远程 CI 后再决定提交、推送或合并。
+
+### 2026-08-12：第 11-12 周验收 Task 1 基线与证据工作区完成
+
+- 当前状态：在 `codex/week9-12-mlops-core`、提交 `82afc9cd6011cbb23fdfeca68dc99c6f2ad1514d` 上创建隔离的 `temp_test/acceptance-20260810/` 工作区和 README 合同；Docker 29.6.2、Compose 5.3.1、WSL Ubuntu 26.04 已记录。
+- 证据与保护：原 `%USERPROFILE%/.wslconfig` 已逐字节复制为 `baseline/wslconfig.original`，原文件和副本 SHA-256 均为 `A4AE25464FC82388F85AB6C9A3C8F1914DD24174EDC126EB465A77326BF7824B`；既有 `ModelLibraryPage.test.tsx`、`tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 未暂存、未删除。
+- 验证方式：PowerShell 7 记录分支、HEAD、remote、dirty paths；WSL `nproc`/`/proc/meminfo` 和 Docker `NCPU/MemTotal` 输出已保存，README 明确要求命令、时间、退出码、提交、工具版本、artifact 和脱敏状态。
+- 遗留事项：Task 2-5 性能、备份恢复、N-1、Chromium 和 Web 安全尚未执行；Task 6-7 的 manifest、远程 CI、提交/推送/合并继续保持未完成。

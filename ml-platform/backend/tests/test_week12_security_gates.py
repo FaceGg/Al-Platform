@@ -1,4 +1,5 @@
 import json
+import inspect
 import os
 import stat
 import subprocess
@@ -15,7 +16,6 @@ from tools.security_scans import (
     REQUIRED_SCAN_GATES,
     WEB_SECURITY_GATE_NAMES,
     evaluate_npm_audit_exception,
-    evaluate_pip_audit_exception,
     main as security_scans_main,
     redact_scan_output,
     run_all,
@@ -25,230 +25,6 @@ from tools.security_scans import (
 
 
 class SecurityGateTests(unittest.TestCase):
-    @staticmethod
-    def _cryptography_pip_audit_report():
-        return {
-            "dependencies": [
-                {
-                    "name": "cryptography",
-                    "version": "49.0.0",
-                    "vulns": [
-                        {
-                            "id": "PYSEC-2026-3552",
-                            "aliases": ["CVE-2026-69247"],
-                            "fix_versions": ["50.0.0"],
-                        },
-                    ],
-                },
-                {"name": "mlflow", "version": "3.15.1", "vulns": []},
-            ],
-        }
-
-    @staticmethod
-    def _write_cryptography_exception(
-        path: Path,
-        *,
-        reviewed_at: str = "2026-08-10",
-        expires_on: str = "2026-08-24",
-    ):
-        path.write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "id": "cryptography-pkcs7-mlflow-constraint",
-                    "owner": "ml-platform-maintainers",
-                    "reviewed_at": reviewed_at,
-                    "expires_on": expires_on,
-                    "package_versions": {
-                        "cryptography": "49.0.0",
-                        "mlflow": "3.15.1",
-                    },
-                    "advisory_ids": ["PYSEC-2026-3552", "CVE-2026-69247"],
-                    "mitigation": "MLflow 3.15.1 requires cryptography<50; app has no PKCS#7 handling.",
-                },
-            ),
-            encoding="utf-8",
-        )
-
-    def test_cryptography_pip_audit_exception_requires_exact_mlflow_constraint_and_no_pkcs7_usage(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            exception_path = root / "exception.json"
-            requirements_path = root / "requirements.txt"
-            application_directory = root / "app"
-            application_directory.mkdir()
-            (application_directory / "crypto.py").write_text(
-                "from cryptography.fernet import Fernet\n",
-                encoding="utf-8",
-            )
-            requirements_path.write_text(
-                "cryptography==49.0.*\nmlflow==3.15.*\n",
-                encoding="utf-8",
-            )
-            self._write_cryptography_exception(exception_path)
-
-            result = evaluate_pip_audit_exception(
-                self._cryptography_pip_audit_report(),
-                exception_path=exception_path,
-                requirements_path=requirements_path,
-                application_directory=application_directory,
-                today=date(2026, 8, 10),
-            )
-
-        self.assertEqual(result["status"], "passed")
-        self.assertEqual(result["exception"]["id"], "cryptography-pkcs7-mlflow-constraint")
-
-    def test_cryptography_pip_audit_exception_rejects_any_other_vulnerability(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            exception_path = root / "exception.json"
-            requirements_path = root / "requirements.txt"
-            application_directory = root / "app"
-            application_directory.mkdir()
-            (application_directory / "crypto.py").write_text(
-                "from cryptography.fernet import Fernet\n",
-                encoding="utf-8",
-            )
-            requirements_path.write_text(
-                "cryptography==49.0.*\nmlflow==3.15.*\n",
-                encoding="utf-8",
-            )
-            self._write_cryptography_exception(exception_path)
-            report = self._cryptography_pip_audit_report()
-            report["dependencies"].append(
-                {
-                    "name": "requests",
-                    "version": "2.34.2",
-                    "vulns": [{"id": "UNREVIEWED"}],
-                },
-            )
-
-            result = evaluate_pip_audit_exception(
-                report,
-                exception_path=exception_path,
-                requirements_path=requirements_path,
-                application_directory=application_directory,
-                today=date(2026, 8, 10),
-            )
-
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error_code"], "PIP_AUDIT_EXCEPTION_ADVISORY_MISMATCH")
-
-    def test_cryptography_pip_audit_exception_rejects_pkcs7_runtime_source(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            exception_path = root / "exception.json"
-            requirements_path = root / "requirements.txt"
-            application_directory = root / "app"
-            application_directory.mkdir()
-            (application_directory / "crypto.py").write_text(
-                "from cryptography.hazmat.primitives.serialization import pkcs7\n",
-                encoding="utf-8",
-            )
-            requirements_path.write_text(
-                "cryptography==49.0.*\nmlflow==3.15.*\n",
-                encoding="utf-8",
-            )
-            self._write_cryptography_exception(exception_path)
-
-            result = evaluate_pip_audit_exception(
-                self._cryptography_pip_audit_report(),
-                exception_path=exception_path,
-                requirements_path=requirements_path,
-                application_directory=application_directory,
-                today=date(2026, 8, 10),
-            )
-
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error_code"], "PIP_AUDIT_EXCEPTION_SCOPE_VIOLATION")
-
-    def test_cryptography_pip_audit_exception_rejects_changed_frozen_dependency_constraint(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            exception_path = root / "exception.json"
-            requirements_path = root / "requirements.txt"
-            application_directory = root / "app"
-            application_directory.mkdir()
-            (application_directory / "crypto.py").write_text(
-                "from cryptography.fernet import Fernet\n",
-                encoding="utf-8",
-            )
-            requirements_path.write_text(
-                "cryptography==50.0.*\nmlflow==3.15.*\n",
-                encoding="utf-8",
-            )
-            self._write_cryptography_exception(exception_path)
-
-            result = evaluate_pip_audit_exception(
-                self._cryptography_pip_audit_report(),
-                exception_path=exception_path,
-                requirements_path=requirements_path,
-                application_directory=application_directory,
-                today=date(2026, 8, 10),
-            )
-
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error_code"], "PIP_AUDIT_EXCEPTION_VERSION_MISMATCH")
-
-    def test_cryptography_pip_audit_exception_fails_closed_for_malformed_advisory_ids(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            exception_path = root / "exception.json"
-            requirements_path = root / "requirements.txt"
-            application_directory = root / "app"
-            application_directory.mkdir()
-            (application_directory / "crypto.py").write_text(
-                "from cryptography.fernet import Fernet\n",
-                encoding="utf-8",
-            )
-            requirements_path.write_text(
-                "cryptography==49.0.*\nmlflow==3.15.*\n",
-                encoding="utf-8",
-            )
-            self._write_cryptography_exception(exception_path)
-            exception = json.loads(exception_path.read_text(encoding="utf-8"))
-            exception["advisory_ids"] = [{"id": "PYSEC-2026-3552"}]
-            exception_path.write_text(json.dumps(exception), encoding="utf-8")
-
-            result = evaluate_pip_audit_exception(
-                self._cryptography_pip_audit_report(),
-                exception_path=exception_path,
-                requirements_path=requirements_path,
-                application_directory=application_directory,
-                today=date(2026, 8, 10),
-            )
-
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error_code"], "PIP_AUDIT_EXCEPTION_INVALID")
-
-    def test_cryptography_pip_audit_exception_fails_closed_for_non_object_report(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            exception_path = root / "exception.json"
-            requirements_path = root / "requirements.txt"
-            application_directory = root / "app"
-            application_directory.mkdir()
-            (application_directory / "crypto.py").write_text(
-                "from cryptography.fernet import Fernet\n",
-                encoding="utf-8",
-            )
-            requirements_path.write_text(
-                "cryptography==49.0.*\nmlflow==3.15.*\n",
-                encoding="utf-8",
-            )
-            self._write_cryptography_exception(exception_path)
-
-            result = evaluate_pip_audit_exception(
-                [],
-                exception_path=exception_path,
-                requirements_path=requirements_path,
-                application_directory=application_directory,
-                today=date(2026, 8, 10),
-            )
-
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error_code"], "PIP_AUDIT_REPORT_INVALID")
-
     @staticmethod
     def _react_router_audit_report():
         return {
@@ -2218,12 +1994,93 @@ class SecurityGateTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(serialized["status"], "failed")
 
+    def test_run_all_accepts_only_clean_pip_audit_reports(self):
+        clean_dependencies = [
+            {"name": "cryptography", "version": "50.0.0", "vulns": []},
+            {"name": "jaraco.context", "version": "6.1.0", "vulns": []},
+            {"name": "wheel", "version": "0.46.2", "vulns": []},
+        ]
+
+        def run_report(dependencies):
+            with tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "security.json"
+
+                def scanner(command):
+                    if "pip_audit" in command:
+                        report_path = Path(command[command.index("--output") + 1])
+                        report_path.write_text(
+                            json.dumps({"dependencies": dependencies}),
+                            encoding="utf-8",
+                        )
+                    return {"status": "passed"}
+
+                with (
+                    patch.dict(
+                        "tools.security_scans.os.environ",
+                        {"ACCEPTANCE_IMAGE": "ml-platform-backend:test"},
+                        clear=False,
+                    ),
+                    patch("tools.security_scans.run_scan", side_effect=scanner),
+                ):
+                    return run_all(output)
+
+        for package_name in ("cryptography", "jaraco.context", "wheel"):
+            with self.subTest(package=package_name):
+                dependencies = [dict(dependency) for dependency in clean_dependencies]
+                dependency = next(
+                    item for item in dependencies if item["name"] == package_name
+                )
+                dependency["vulns"] = [{"id": "TEST-VULNERABILITY"}]
+                result = run_report(dependencies)
+
+                self.assertEqual(result["gates"]["python_dependencies"]["status"], "failed")
+
+        missing_required = run_report(clean_dependencies[:-1])
+        self.assertEqual(
+            missing_required["gates"]["python_dependencies"]["status"], "failed"
+        )
+        self.assertEqual(
+            missing_required["gates"]["python_dependencies"].get("error_code"),
+            "PIP_AUDIT_REQUIRED_PACKAGE_MISSING",
+        )
+        self.assertEqual(run_report(clean_dependencies)["status"], "passed")
+
     def test_run_all_allows_only_the_reviewed_npm_audit_exception(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             exception_path = root / "exception.json"
             output = root / "security.json"
             self._write_react_router_exception(exception_path)
+
+            def scanner(command):
+                if "pip_audit" in command:
+                    report_path = Path(command[command.index("--output") + 1])
+                    report_path.write_text(
+                        json.dumps(
+                            {
+                                "dependencies": [
+                                    {
+                                        "name": "cryptography",
+                                        "version": "50.0.0",
+                                        "vulns": [],
+                                    },
+                                    {
+                                        "name": "jaraco.context",
+                                        "version": "6.1.0",
+                                        "vulns": [],
+                                    },
+                                    {
+                                        "name": "wheel",
+                                        "version": "0.46.2",
+                                        "vulns": [],
+                                    },
+                                ]
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                return {"status": "passed"}
+
             with (
                 patch.dict(
                     "tools.security_scans.os.environ",
@@ -2232,7 +2089,7 @@ class SecurityGateTests(unittest.TestCase):
                 ),
                 patch(
                     "tools.security_scans.run_scan",
-                    return_value={"status": "passed"},
+                    side_effect=scanner,
                 ),
                 patch("tools.security_scans.subprocess.run") as run,
                 patch(
@@ -2262,52 +2119,24 @@ class SecurityGateTests(unittest.TestCase):
             {"npm", "npm.cmd"},
         )
 
-    def test_run_all_allows_only_the_reviewed_pip_audit_exception(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            exception_path = root / "exception.json"
-            output = root / "security.json"
-            self._write_cryptography_exception(exception_path)
+    def test_run_all_does_not_expose_a_pip_audit_exception_override(self):
+        self.assertNotIn("pip_audit_exception", inspect.signature(run_all).parameters)
 
-            def scanner(command, **_kwargs):
-                if "pip_audit" in command:
-                    report_path = Path(command[command.index("--output") + 1])
-                    report_path.write_text(
-                        json.dumps(self._cryptography_pip_audit_report()),
-                        encoding="utf-8",
-                    )
-                    return SimpleNamespace(returncode=1, stdout="", stderr="")
-                if command and Path(command[0]).name.casefold() in {"npm", "npm.cmd"}:
-                    return SimpleNamespace(
-                        returncode=0,
-                        stdout=json.dumps({"vulnerabilities": {}, "metadata": {}}),
-                        stderr="",
-                    )
-                return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-            with (
-                patch.dict(
-                    "tools.security_scans.os.environ",
-                    {"ACCEPTANCE_IMAGE": "ml-platform-backend:test"},
-                    clear=False,
-                ),
-                patch(
-                    "tools.security_scans.run_scan",
-                    return_value={"status": "passed"},
-                ),
-                patch("tools.security_scans.subprocess.run", side_effect=scanner),
-            ):
-                result = run_all(
-                    output,
-                    npm_audit_exception=exception_path,
-                    pip_audit_exception=exception_path,
+    def test_cli_rejects_the_removed_pip_audit_exception_override(self):
+        with patch("tools.security_scans.run_all") as run_all_mock:
+            with self.assertRaises(SystemExit) as raised:
+                security_scans_main(
+                    [
+                        "all",
+                        "--output",
+                        "security.json",
+                        "--pip-audit-exception",
+                        "legacy-exception.json",
+                    ],
                 )
 
-        self.assertEqual(result["status"], "passed")
-        self.assertEqual(
-            result["gates"]["python_dependencies"]["exception"]["id"],
-            "cryptography-pkcs7-mlflow-constraint",
-        )
+        self.assertEqual(raised.exception.code, 2)
+        run_all_mock.assert_not_called()
 
     def test_frontend_scan_runs_from_frontend_package_directory(self):
         with tempfile.TemporaryDirectory() as directory:
