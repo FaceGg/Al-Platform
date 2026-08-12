@@ -363,6 +363,9 @@ def run_http_scenario(
 
 
 def _git_commit() -> str:
+    explicit = os.getenv("ACCEPTANCE_SOURCE_COMMIT", "").strip()
+    if _valid_commit(explicit):
+        return explicit
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "HEAD"],

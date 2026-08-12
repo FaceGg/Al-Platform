@@ -41,6 +41,7 @@ from tools.upgrade_fixture import (
 )
 from tools.week11_performance import (
     SCENARIO_EXPECTED_LOAD,
+    _git_commit,
     evaluate_thresholds,
     main as performance_main,
     percentile,
@@ -75,6 +76,12 @@ class PerformanceToolContractTests(unittest.TestCase):
                 json.loads(path.read_text(encoding="utf-8"))["status"],
                 "passed",
             )
+
+    @patch.dict(os.environ, {"ACCEPTANCE_SOURCE_COMMIT": "b" * 40}, clear=False)
+    @patch("tools.week11_performance.subprocess.run")
+    def test_explicit_source_commit_is_used_when_container_has_no_git(self, run):
+        self.assertEqual(_git_commit(), "b" * 40)
+        run.assert_not_called()
 
 
 class EnvironmentManifestTests(unittest.TestCase):
