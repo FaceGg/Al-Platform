@@ -8,6 +8,7 @@ import json
 import math
 import os
 import re
+import stat
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +16,13 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from tools.backup_restore import MAX_RPO_SECONDS
-from tools.security_scans import REQUIRED_SCAN_GATES
+from tools.security_scans import (
+    REQUIRED_SCAN_EVIDENCE_FILES,
+    REQUIRED_SCAN_GATES,
+    WEB_SECURITY_GATE_NAMES,
+    _raw_scan_report_error,
+    is_required_scan_command,
+)
 from tools.upgrade_fixture import EXPECTED_N_MINUS_ONE
 from tools.week11_performance import (
     SCENARIO_REQUIRED_ITERATIONS,
@@ -41,7 +48,16 @@ _SECRET_ASSIGNMENT = re.compile(
     r"\b(?:password|secret|token|authorization|api[-_]?key|access[-_]?key)\s*[:=]\s*(?!\[redacted\])[^\s,;]+",
     re.IGNORECASE,
 )
+_ABSOLUTE_PATH_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)[^\s\"'<>]*"
+    r"|(?<![:A-Za-z0-9+./-])/(?:[^\s\"'<>]+)",
+)
 _IMAGE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
+_PRODUCTION_IMAGE_REFERENCE = re.compile(
+    r"ml-platform-(backend|worker|inference|tensorboard):[^/@\s]+$",
+)
+_PRODUCTION_IMAGE_COMPONENTS = ("backend", "worker", "inference", "tensorboard")
 _NON_BUSINESS_UPGRADE_TABLES = frozenset(
     {
         "alembic_version",
@@ -75,6 +91,8 @@ def _git_commit() -> str:
 def _assert_safe_text(value: str, *, location: str) -> None:
     if _URL_USERINFO.search(value) or _SECRET_ASSIGNMENT.search(value):
         raise ValueError(f"sensitive value found in evidence: {location}")
+    if _absolute_path_argument(value):
+        raise ValueError(f"absolute path found in evidence: {location}")
 
 
 def _assert_safe_json(value: Any, *, location: str) -> None:
@@ -95,9 +113,62 @@ def _assert_safe_json(value: Any, *, location: str) -> None:
         _assert_safe_text(value, location=location)
 
 
-def _load_required_json(path: Path) -> dict[str, object]:
+def _absolute_path_argument(value: str) -> bool:
+    """Detect absolute Windows, UNC, and POSIX paths in evidence text."""
+    return _ABSOLUTE_PATH_TOKEN.search(value) is not None
+
+
+def _assert_command_has_no_absolute_path(
+    command: object,
+    *,
+    location: str,
+) -> None:
+    if not isinstance(command, list):
+        return
+    for item in command:
+        if isinstance(item, str) and _absolute_path_argument(item):
+            raise ValueError(f"absolute path found in evidence: {location}")
+
+
+def _is_reparse_or_link(metadata: os.stat_result) -> bool:
+    return bool(
+        stat.S_ISLNK(metadata.st_mode)
+        or getattr(metadata, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    )
+
+
+def _assert_safe_evidence_file(path: Path, root: Path) -> Path:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        resolved_root = root.resolve(strict=True)
+        parts = path.relative_to(root).parts
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"unsafe evidence file: {path.as_posix()}") from error
+    current = root
+    for index, part in enumerate(parts):
+        current /= part
+        try:
+            metadata = current.lstat()
+            resolved_current = current.resolve(strict=True)
+            resolved_current.relative_to(resolved_root)
+        except (OSError, ValueError) as error:
+            raise RuntimeError(f"unsafe evidence file: {path.as_posix()}") from error
+        if _is_reparse_or_link(metadata):
+            raise RuntimeError(f"unsafe evidence file: {path.as_posix()}")
+        if index < len(parts) - 1:
+            if not stat.S_ISDIR(metadata.st_mode):
+                raise RuntimeError(f"unsafe evidence file: {path.as_posix()}")
+            continue
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise RuntimeError(f"unsafe evidence file: {path.as_posix()}")
+        return resolved_current
+    raise RuntimeError(f"unsafe evidence file: {path.as_posix()}")
+
+
+def _load_required_json(path: Path, *, root: Path) -> dict[str, object]:
+    safe_path = _assert_safe_evidence_file(path, root)
+    try:
+        value = json.loads(safe_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError(f"invalid required evidence: {path.as_posix()}") from error
     _assert_safe_json(value, location=path.as_posix())
@@ -106,8 +177,23 @@ def _load_required_json(path: Path) -> dict[str, object]:
     return value
 
 
-def _load_required_status(path: Path) -> str:
-    value = _load_required_json(path)
+def _load_raw_security_json(path: Path, *, root: Path, gate_name: str) -> Any:
+    try:
+        safe_path = _assert_safe_evidence_file(path, root)
+    except RuntimeError as error:
+        raise RuntimeError(f"{gate_name} raw scanner evidence invalid") from error
+    try:
+        value = json.loads(safe_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise RuntimeError(f"{gate_name} raw scanner evidence invalid") from error
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"{gate_name} raw scanner evidence invalid") from error
+    _assert_safe_json(value, location=path.as_posix())
+    return value
+
+
+def _load_required_status(path: Path, *, root: Path) -> str:
+    value = _load_required_json(path, root=root)
     return str(value.get("status", ""))
 
 
@@ -253,7 +339,7 @@ def _validate_performance(
             raw_path.parent == performance_root.resolve() and raw_path.is_file(),
             "iteration raw result missing",
         )
-        raw_result = _load_required_json(raw_path)
+        raw_result = _load_required_json(raw_path, root=evidence_dir)
         embedded_raw_result = {
             key: value
             for key, value in item.items()
@@ -391,7 +477,13 @@ def _validate_upgrade(path: Path, result: Mapping[str, object]) -> None:
     )
 
 
-def _validate_security(path: Path, result: Mapping[str, object]) -> None:
+def _validate_security(
+    path: Path,
+    result: Mapping[str, object],
+    *,
+    evidence_dir: Path,
+    commit: str,
+) -> None:
     _require_contract(path, result.get("status") == "passed", "status is not passed")
     gates = result.get("gates")
     _require_contract(path, isinstance(gates, dict), "security gates missing")
@@ -412,21 +504,139 @@ def _validate_security(path: Path, result: Mapping[str, object]) -> None:
             _require_contract(
                 path,
                 isinstance(web_gates, dict)
-                and bool(web_gates)
+                and set(web_gates) == WEB_SECURITY_GATE_NAMES
                 and all(
                     isinstance(item, dict) and item.get("status") == "passed"
                     for item in web_gates.values()
                 ),
                 "web security checks missing",
             )
-        else:
-            _require_contract(
-                path,
-                gate.get("returncode") == 0
-                and isinstance(gate.get("command"), list)
-                and bool(gate["command"]),
-                f"{name} scanner receipt missing",
+            raw_web = _load_raw_security_json(
+                evidence_dir / "security" / REQUIRED_SCAN_EVIDENCE_FILES[name],
+                root=evidence_dir,
+                gate_name=name,
             )
+            if (
+                not isinstance(raw_web, dict)
+                or set(raw_web) != {"status", "gates"}
+                or raw_web.get("status") != "passed"
+                or not isinstance(raw_web.get("gates"), dict)
+                or set(raw_web["gates"]) != WEB_SECURITY_GATE_NAMES
+                or not all(
+                    isinstance(item, dict) and item.get("status") == "passed"
+                    for item in raw_web["gates"].values()
+                )
+            ):
+                _contract_failure(path, f"{name} raw scanner evidence invalid")
+        else:
+            if name == "container_image":
+                _validate_container_image_receipts(
+                    path,
+                    gate,
+                    evidence_dir=evidence_dir,
+                    commit=commit,
+                )
+            else:
+                command = gate.get("command")
+                if command is None:
+                    _contract_failure(path, f"{name} scanner receipt missing")
+                if (
+                    gate.get("returncode") != 0
+                    or not is_required_scan_command(name, command)
+                ):
+                    _contract_failure(path, f"{name} scanner receipt invalid")
+                _assert_command_has_no_absolute_path(
+                    command,
+                    location=f"{path.as_posix()}:{name}.command",
+                )
+                raw_path = evidence_dir / "security" / REQUIRED_SCAN_EVIDENCE_FILES[name]
+                raw_value = _load_raw_security_json(
+                    raw_path,
+                    root=evidence_dir,
+                    gate_name=name,
+                )
+                if _raw_scan_report_error(name, raw_value) is not None:
+                    _contract_failure(path, f"{name} raw scanner evidence invalid")
+
+
+def _validate_container_image_receipts(
+    path: Path,
+    gate: Mapping[str, object],
+    *,
+    evidence_dir: Path,
+    commit: str,
+) -> None:
+    source_commit = gate.get("source_commit")
+    images = gate.get("images")
+    if not isinstance(images, list) or len(images) != len(_PRODUCTION_IMAGE_COMPONENTS):
+        _contract_failure(path, "container_image scanner receipt missing")
+    receipt_keys = {
+        "component",
+        "reference",
+        "evidence_path",
+        "image_id",
+        "revision",
+        "command",
+        "returncode",
+        "status",
+    }
+    if any(not isinstance(image, dict) or set(image) != receipt_keys for image in images):
+        _contract_failure(path, "container_image scanner receipt missing")
+    if source_commit != commit:
+        _contract_failure(path, "container_image scanner receipt invalid")
+
+    for index, (component, image) in enumerate(
+        zip(_PRODUCTION_IMAGE_COMPONENTS, images),
+    ):
+        assert isinstance(image, dict)
+        expected_evidence_path = (
+            "trivy-image.json"
+            if index == 0
+            else f"trivy-image-{index}.json"
+        )
+        reference = image.get("reference")
+        command = image.get("command")
+        if (
+            image.get("component") != component
+            or not isinstance(reference, str)
+            or _PRODUCTION_IMAGE_REFERENCE.fullmatch(reference) is None
+            or not reference.startswith(f"ml-platform-{component}:")
+            or image.get("evidence_path") != expected_evidence_path
+            or not isinstance(image.get("image_id"), str)
+            or _IMAGE_ID.fullmatch(image["image_id"]) is None
+            or image.get("revision") != commit
+            or image.get("status") != "passed"
+            or image.get("returncode") != 0
+            or not is_required_scan_command(
+                "container_image",
+                command,
+                image_reference=reference,
+            )
+        ):
+            _contract_failure(path, "container_image scanner receipt invalid")
+        _assert_command_has_no_absolute_path(
+            command,
+            location=f"{path.as_posix()}:container_image.images[{index}].command",
+        )
+        try:
+            report = _load_required_json(
+                evidence_dir / "security" / expected_evidence_path,
+                root=evidence_dir,
+            )
+        except (RuntimeError, ValueError):
+            _contract_failure(path, "container_image scanner receipt invalid")
+        metadata = report.get("Metadata")
+        if (
+            report.get("SchemaVersion") != 2
+            or report.get("ArtifactName") != reference
+            or report.get("ArtifactType") != "container_image"
+            or not isinstance(metadata, dict)
+            or metadata.get("ImageID") != image["image_id"]
+            or not isinstance(report.get("Results"), list)
+        ):
+            _contract_failure(path, "container_image scanner receipt invalid")
+        if _raw_scan_report_error("container_image", report) is not None:
+            _contract_failure(path, "container_image scanner receipt invalid")
 
 
 def _validate_playwright(path: Path, result: Mapping[str, object]) -> None:
@@ -450,7 +660,8 @@ def _validate_playwright(path: Path, result: Mapping[str, object]) -> None:
 
 
 def _evidence_entry(path: Path, root: Path) -> dict[str, object]:
-    content = path.read_bytes()
+    safe_path = _assert_safe_evidence_file(path, root)
+    content = safe_path.read_bytes()
     try:
         decoded = content.decode("utf-8")
     except UnicodeDecodeError:
@@ -493,15 +704,21 @@ def generate(
 ) -> dict[str, object]:
     """Validate evidence gates then write a reproducible manifest with SHA-256s."""
     evidence_dir = evidence_dir.resolve()
-    missing = [str(relative) for relative in REQUIRED_EVIDENCE if not (evidence_dir / relative).is_file()]
+    missing = []
+    for relative in REQUIRED_EVIDENCE:
+        path = evidence_dir / relative
+        try:
+            _assert_safe_evidence_file(path, evidence_dir)
+        except RuntimeError:
+            missing.append(str(relative))
     if missing:
         raise FileNotFoundError(f"missing required evidence: {missing}")
 
     _assert_safe_metadata(remote_ci_run_url, image_digest)
     environment_path = evidence_dir / "environment.json"
-    environment = _load_required_json(environment_path)
+    environment = _load_required_json(environment_path, root=evidence_dir)
     evidence = {
-        relative: _load_required_json(evidence_dir / relative)
+        relative: _load_required_json(evidence_dir / relative, root=evidence_dir)
         for relative in REQUIRED_GATE_EVIDENCE
     }
     statuses = {
@@ -534,6 +751,8 @@ def generate(
     _validate_security(
         Path("security/summary.json"),
         evidence[Path("security/summary.json")],
+        evidence_dir=evidence_dir,
+        commit=commit,
     )
     _validate_playwright(
         Path("playwright/result.json"),

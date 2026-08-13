@@ -91,6 +91,45 @@ class SecurityGateTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    @staticmethod
+    def _production_scan_environment(source_commit: str = "a" * 40):
+        return {
+            "ACCEPTANCE_IMAGE": "ml-platform-backend:test",
+            "ACCEPTANCE_ADDITIONAL_IMAGES": (
+                "ml-platform-worker:test,"
+                "ml-platform-inference:test,"
+                "ml-platform-tensorboard:test"
+            ),
+            "ACCEPTANCE_SOURCE_COMMIT": source_commit,
+        }
+
+    @staticmethod
+    def _image_provenance(_reference: str, source_commit: str = "a" * 40):
+        return {
+            "image_id": "sha256:" + ("1" * 64),
+            "revision": source_commit,
+        }
+
+    @staticmethod
+    def _write_clean_trivy_image_report(command: list[str], image_id: str) -> None:
+        report_path = Path(command[command.index("--output") + 1])
+        report_path.write_text(
+            json.dumps(
+                {
+                    "SchemaVersion": 2,
+                    "ArtifactName": command[-1],
+                    "ArtifactType": "container_image",
+                    "Metadata": {"ImageID": image_id},
+                    "Results": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _passed_scan_result(command: list[str]) -> dict[str, object]:
+        return {"status": "passed", "returncode": 0, "command": command}
+
     def test_react_router_audit_exception_requires_exact_advisory_versions_and_client_scope(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1948,6 +1987,46 @@ class SecurityGateTests(unittest.TestCase):
         self.assertNotIn("token=abc", serialized)
         self.assertNotIn("u:p@", serialized)
 
+    def test_scan_record_redacts_absolute_command_arguments(self):
+        with patch("tools.security_scans.subprocess.run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = "clean"
+            run.return_value.stderr = ""
+            result = run_scan(
+                [
+                    "scanner",
+                    "--output",
+                    r"C:\acceptance\raw.json",
+                    "/tmp/acceptance/raw.json",
+                ]
+            )
+
+        self.assertEqual(
+            result["command"],
+            ["scanner", "--output", "[redacted-path]", "[redacted-path]"],
+        )
+
+    def test_redacted_json_evidence_removes_absolute_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "raw.json"
+            with patch("tools.security_scans.subprocess.run") as run:
+                run.return_value.returncode = 1
+                run.return_value.stdout = json.dumps(
+                    {"Target": r"C:\acceptance\source", "Results": []},
+                )
+                run.return_value.stderr = "scan failed at /tmp/acceptance/source"
+                result = run_scan(["scanner", "--output", str(output)])
+            from tools.security_scans import _persist_scan_evidence
+
+            output.write_text(str(result["stdout"]), encoding="utf-8")
+            _persist_scan_evidence(output, result)
+            serialized = output.read_text(encoding="utf-8")
+
+        self.assertNotIn(r"C:\acceptance\source", serialized)
+        self.assertNotIn("/tmp/acceptance/source", serialized)
+        self.assertIn("[redacted-path]", serialized)
+
     def test_run_scan_resolves_windows_command_shims_without_changing_evidence(self):
         with (
             patch("tools.security_scans.os.name", "nt"),
@@ -1981,13 +2060,7 @@ class SecurityGateTests(unittest.TestCase):
             output = Path(directory) / "security.json"
             with patch(
                 "tools.security_scans.run_scan",
-                side_effect=[
-                    {"status": "passed"},
-                    {"status": "failed"},
-                    {"status": "passed"},
-                    {"status": "passed"},
-                    {"status": "passed"},
-                ],
+                side_effect=lambda _command: {"status": "failed"},
             ):
                 result = run_all(output)
             serialized = json.loads(output.read_text(encoding="utf-8"))
@@ -2012,15 +2085,24 @@ class SecurityGateTests(unittest.TestCase):
                             json.dumps({"dependencies": dependencies}),
                             encoding="utf-8",
                         )
-                    return {"status": "passed"}
+                    if command[:2] == ["trivy", "image"]:
+                        self._write_clean_trivy_image_report(
+                            command,
+                            self._image_provenance(command[-1])["image_id"],
+                        )
+                    return self._passed_scan_result(command)
 
                 with (
                     patch.dict(
                         "tools.security_scans.os.environ",
-                        {"ACCEPTANCE_IMAGE": "ml-platform-backend:test"},
+                        self._production_scan_environment(),
                         clear=False,
                     ),
                     patch("tools.security_scans.run_scan", side_effect=scanner),
+                    patch(
+                        "tools.security_scans.inspect_image_provenance",
+                        side_effect=self._image_provenance,
+                    ),
                 ):
                     return run_all(output)
 
@@ -2079,12 +2161,17 @@ class SecurityGateTests(unittest.TestCase):
                         ),
                         encoding="utf-8",
                     )
-                return {"status": "passed"}
+                if command[:2] == ["trivy", "image"]:
+                    self._write_clean_trivy_image_report(
+                        command,
+                        self._image_provenance(command[-1])["image_id"],
+                    )
+                return self._passed_scan_result(command)
 
             with (
                 patch.dict(
                     "tools.security_scans.os.environ",
-                    {"ACCEPTANCE_IMAGE": "ml-platform-backend:test"},
+                    self._production_scan_environment(),
                     clear=False,
                 ),
                 patch(
@@ -2103,6 +2190,10 @@ class SecurityGateTests(unittest.TestCase):
                     "tools.security_scans._frontend_uses_react_router_server_api",
                     return_value=False,
                 ),
+                patch(
+                    "tools.security_scans.inspect_image_provenance",
+                    side_effect=self._image_provenance,
+                ),
             ):
                 run.return_value.returncode = 1
                 run.return_value.stdout = json.dumps(self._react_router_audit_report())
@@ -2113,6 +2204,11 @@ class SecurityGateTests(unittest.TestCase):
         self.assertEqual(
             result["gates"]["frontend_dependencies"]["exception"]["id"],
             "react-router-rsc-mode-csrf",
+        )
+        self.assertEqual(result["gates"]["frontend_dependencies"]["returncode"], 0)
+        self.assertEqual(
+            result["gates"]["frontend_dependencies"]["scanner_returncode"],
+            1,
         )
         self.assertIn(
             Path(run.call_args.args[0][0]).name.casefold(),
@@ -2180,16 +2276,32 @@ class SecurityGateTests(unittest.TestCase):
     def test_run_all_writes_redacted_json_evidence_for_each_required_scanner(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "security" / "security.json"
+
+            def scanner(command):
+                if command[:2] == ["trivy", "image"]:
+                    self._write_clean_trivy_image_report(
+                        command,
+                        self._image_provenance(command[-1])["image_id"],
+                    )
+                return {
+                    **self._passed_scan_result(command),
+                    "stdout": "token=must-not-appear",
+                }
+
             with (
                 patch.dict(
                     "tools.security_scans.os.environ",
-                    {"ACCEPTANCE_IMAGE": "ml-platform-backend:test"},
+                    self._production_scan_environment(),
                     clear=False,
                 ),
                 patch(
                     "tools.security_scans.run_scan",
-                    return_value={"status": "passed", "stdout": "token=must-not-appear"},
+                    side_effect=scanner,
                 ) as run_scan,
+                patch(
+                    "tools.security_scans.inspect_image_provenance",
+                    side_effect=self._image_provenance,
+                ),
             ):
                 run_all(output)
 
@@ -2200,6 +2312,9 @@ class SecurityGateTests(unittest.TestCase):
                 "npm-audit.json",
                 "trivy-fs.json",
                 "trivy-image.json",
+                "trivy-image-1.json",
+                "trivy-image-2.json",
+                "trivy-image-3.json",
                 "gitleaks.json",
             )
             report_paths = {name: evidence_dir / name for name in report_names}
@@ -2234,6 +2349,217 @@ class SecurityGateTests(unittest.TestCase):
         self.assertIn("--report-format", gitleaks)
         self.assertIn("json", gitleaks)
         self.assertIn("--report-path", gitleaks)
+
+    def test_run_all_scans_every_declared_production_image(self):
+        clean_dependencies = [
+            {"name": "cryptography", "version": "50.0.0", "vulns": []},
+            {"name": "jaraco.context", "version": "6.1.0", "vulns": []},
+            {"name": "wheel", "version": "0.46.2", "vulns": []},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "security.json"
+
+            def scanner(command):
+                if "pip_audit" in command:
+                    report_path = Path(command[command.index("--output") + 1])
+                    report_path.write_text(
+                        json.dumps({"dependencies": clean_dependencies}),
+                        encoding="utf-8",
+                    )
+                if command[:2] == ["trivy", "image"]:
+                    self._write_clean_trivy_image_report(
+                        command,
+                        self._image_provenance(command[-1])["image_id"],
+                    )
+                return self._passed_scan_result(command)
+
+            with (
+                patch.dict(
+                    "tools.security_scans.os.environ",
+                    self._production_scan_environment(),
+                    clear=False,
+                ),
+                patch("tools.security_scans.run_scan", side_effect=scanner) as run_scan,
+                patch(
+                    "tools.security_scans.inspect_image_provenance",
+                    side_effect=self._image_provenance,
+                ),
+            ):
+                result = run_all(output)
+
+            image_commands = [
+                call.args[0]
+                for call in run_scan.call_args_list
+                if call.args[0][:2] == ["trivy", "image"]
+            ]
+
+        self.assertEqual(result["gates"]["container_image"]["status"], "passed")
+        self.assertEqual(
+            [command[-1] for command in image_commands],
+            [
+                "ml-platform-backend:test",
+                "ml-platform-worker:test",
+                "ml-platform-inference:test",
+                "ml-platform-tensorboard:test",
+            ],
+        )
+
+    def test_run_all_binds_all_production_images_to_the_source_commit(self):
+        clean_dependencies = [
+            {"name": "cryptography", "version": "50.0.0", "vulns": []},
+            {"name": "jaraco.context", "version": "6.1.0", "vulns": []},
+            {"name": "wheel", "version": "0.46.2", "vulns": []},
+        ]
+        source_commit = "a" * 40
+        references = (
+            "ml-platform-backend:test",
+            "ml-platform-worker:test",
+            "ml-platform-inference:test",
+            "ml-platform-tensorboard:test",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "security.json"
+
+            def scanner(command):
+                if "pip_audit" in command:
+                    report_path = Path(command[command.index("--output") + 1])
+                    report_path.write_text(
+                        json.dumps({"dependencies": clean_dependencies}),
+                        encoding="utf-8",
+                    )
+                if command[:2] == ["trivy", "image"]:
+                    self._write_clean_trivy_image_report(
+                        command,
+                        f"sha256:{references.index(command[-1]) + 1:064x}",
+                    )
+                return self._passed_scan_result(command)
+
+            def provenance(reference):
+                return {
+                    "image_id": f"sha256:{references.index(reference) + 1:064x}",
+                    "revision": source_commit,
+                }
+
+            with (
+                patch.dict(
+                    "tools.security_scans.os.environ",
+                    {
+                        "ACCEPTANCE_IMAGE": references[0],
+                        "ACCEPTANCE_ADDITIONAL_IMAGES": ",".join(references[1:]),
+                        "ACCEPTANCE_SOURCE_COMMIT": source_commit,
+                    },
+                    clear=False,
+                ),
+                patch("tools.security_scans.run_scan", side_effect=scanner),
+                patch(
+                    "tools.security_scans.inspect_image_provenance",
+                    side_effect=provenance,
+                ),
+            ):
+                result = run_all(output)
+
+        container_gate = result["gates"]["container_image"]
+        self.assertEqual(container_gate["status"], "passed")
+        self.assertEqual(container_gate["source_commit"], source_commit)
+        self.assertEqual(
+            [image["component"] for image in container_gate["images"]],
+            ["backend", "worker", "inference", "tensorboard"],
+        )
+        self.assertEqual(
+            [image["reference"] for image in container_gate["images"]],
+            list(references),
+        )
+        self.assertTrue(
+            all(
+                image["revision"] == source_commit
+                and image["image_id"].startswith("sha256:")
+                for image in container_gate["images"]
+            )
+        )
+
+    def test_run_all_rejects_trivy_report_for_a_different_image_id(self):
+        clean_dependencies = [
+            {"name": "cryptography", "version": "50.0.0", "vulns": []},
+            {"name": "jaraco.context", "version": "6.1.0", "vulns": []},
+            {"name": "wheel", "version": "0.46.2", "vulns": []},
+        ]
+        source_commit = "a" * 40
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "security.json"
+
+            def scanner(command):
+                if "pip_audit" in command:
+                    report_path = Path(command[command.index("--output") + 1])
+                    report_path.write_text(
+                        json.dumps({"dependencies": clean_dependencies}),
+                        encoding="utf-8",
+                    )
+                if command[:2] == ["trivy", "image"]:
+                    report_path = Path(command[command.index("--output") + 1])
+                    report_path.write_text(
+                        json.dumps(
+                            {
+                                "SchemaVersion": 2,
+                                "ArtifactName": command[-1],
+                                "ArtifactType": "container_image",
+                                "Metadata": {"ImageID": "sha256:" + ("f" * 64)},
+                                "Results": [],
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                return {"status": "passed", "returncode": 0, "command": command}
+
+            with (
+                patch.dict(
+                    "tools.security_scans.os.environ",
+                    self._production_scan_environment(source_commit),
+                    clear=False,
+                ),
+                patch("tools.security_scans.run_scan", side_effect=scanner),
+                patch(
+                    "tools.security_scans.inspect_image_provenance",
+                    side_effect=self._image_provenance,
+                ),
+            ):
+                result = run_all(output)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["gates"]["container_image"]["status"], "failed")
+        self.assertTrue(
+            all(
+                image["status"] == "failed"
+                for image in result["gates"]["container_image"]["images"]
+            )
+        )
+
+    def test_run_all_rejects_an_incomplete_commit_bound_image_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "security.json"
+            with (
+                patch.dict(
+                    "tools.security_scans.os.environ",
+                    {
+                        "ACCEPTANCE_IMAGE": "ml-platform-backend:test",
+                        "ACCEPTANCE_ADDITIONAL_IMAGES": "ml-platform-worker:test",
+                        "ACCEPTANCE_SOURCE_COMMIT": "a" * 40,
+                    },
+                    clear=False,
+                ),
+                patch(
+                    "tools.security_scans.run_scan",
+                    return_value={"status": "failed"},
+                ),
+            ):
+                result = run_all(output)
+
+        container_gate = result["gates"]["container_image"]
+        self.assertEqual(container_gate["status"], "failed")
+        self.assertEqual(
+            container_gate["error_code"],
+            "ACCEPTANCE_IMAGE_SET_INVALID",
+        )
 
     def test_run_all_treats_high_bandit_findings_as_the_blocking_source_gate(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2322,6 +2648,17 @@ class SecurityGateTests(unittest.TestCase):
 
     @staticmethod
     def _write_complete_security_evidence(root: Path) -> None:
+        source_commit = "a" * 40
+        image_references = (
+            "ml-platform-backend:test",
+            "ml-platform-worker:test",
+            "ml-platform-inference:test",
+            "ml-platform-tensorboard:test",
+        )
+        image_ids = tuple(
+            f"sha256:{index:064x}"
+            for index in range(1, len(image_references) + 1)
+        )
         report_names = {
             "python_dependencies": "pip-audit.json",
             "source_bandit": "bandit.json",
@@ -2330,18 +2667,148 @@ class SecurityGateTests(unittest.TestCase):
             "container_image": "trivy-image.json",
             "secret_gitleaks": "gitleaks.json",
         }
+        raw_reports = {
+            "pip-audit.json": {
+                "dependencies": [
+                    {"name": "cryptography", "version": "50.0.0", "vulns": []},
+                    {"name": "jaraco.context", "version": "6.1.0", "vulns": []},
+                    {"name": "wheel", "version": "0.46.2", "vulns": []},
+                ],
+            },
+            "bandit.json": {"errors": [], "metrics": {"_totals": {}}, "results": []},
+            "npm-audit.json": {
+                "auditReportVersion": 2,
+                "metadata": {"vulnerabilities": {"high": 0, "critical": 0}},
+                "vulnerabilities": {},
+            },
+            "trivy-fs.json": {
+                "SchemaVersion": 2,
+                "ArtifactName": "repository",
+                "ArtifactType": "filesystem",
+                "Results": [],
+            },
+            "trivy-image.json": {
+                "SchemaVersion": 2,
+                "ArtifactName": image_references[0],
+                "ArtifactType": "container_image",
+                "Metadata": {"ImageID": image_ids[0]},
+                "Results": [],
+            },
+            "gitleaks.json": [],
+        }
         for filename in report_names.values():
-            (root / filename).write_text('{"scanner": "passed"}', encoding="utf-8")
+            (root / filename).write_text(
+                json.dumps(raw_reports[filename]),
+                encoding="utf-8",
+            )
+        for index, reference in enumerate(image_references[1:], start=1):
+            (root / f"trivy-image-{index}.json").write_text(
+                json.dumps(
+                    {
+                        "SchemaVersion": 2,
+                        "ArtifactName": reference,
+                        "ArtifactType": "container_image",
+                        "Metadata": {"ImageID": image_ids[index]},
+                        "Results": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
         (root / "security.json").write_text(
             json.dumps(
                 {
                     "status": "passed",
                     "gates": {
-                        name: {"status": "passed"}
-                        for name in report_names
+                        "python_dependencies": {
+                            "status": "passed",
+                            "returncode": 0,
+                            "command": [
+                                "python", "-m", "pip_audit", "-r", "requirements.txt",
+                                "--format", "json", "--output", "pip-audit.json",
+                            ],
+                        },
+                        "source_bandit": {
+                            "status": "passed",
+                            "returncode": 0,
+                            "command": [
+                                "bandit", "-r", "app", "-q", "-lll", "-f", "json",
+                                "-o", "bandit.json",
+                            ],
+                        },
+                        "frontend_dependencies": {
+                            "status": "passed",
+                            "returncode": 0,
+                            "command": [
+                                "npm", "--prefix", "ml-platform/frontend", "audit",
+                                "--audit-level=high", "--registry=https://registry.npmjs.org", "--json",
+                            ],
+                        },
+                        "filesystem_trivy": {
+                            "status": "passed",
+                            "returncode": 0,
+                            "command": [
+                                "trivy", "fs", "--exit-code", "1", "--severity", "HIGH,CRITICAL",
+                                "--format", "json", "--output", "trivy-fs.json", ".",
+                            ],
+                        },
+                        "secret_gitleaks": {
+                            "status": "passed",
+                            "returncode": 0,
+                            "command": [
+                                "gitleaks", "detect", "--no-banner", "--redact", "--report-format", "json",
+                                "--report-path", "gitleaks.json", "--source", ".",
+                            ],
+                        },
                     },
                 },
             ),
+            encoding="utf-8",
+        )
+        aggregate = json.loads((root / "security.json").read_text(encoding="utf-8"))
+        aggregate["gates"]["container_image"] = {
+            "status": "passed",
+            "source_commit": source_commit,
+            "images": [
+                {
+                    "component": component,
+                    "reference": reference,
+                    "evidence_path": (
+                        "trivy-image.json"
+                        if index == 0
+                        else f"trivy-image-{index}.json"
+                    ),
+                    "image_id": image_ids[index],
+                    "revision": source_commit,
+                    "command": [
+                        "trivy",
+                        "image",
+                        "--exit-code",
+                        "1",
+                        "--severity",
+                        "HIGH,CRITICAL",
+                        "--format",
+                        "json",
+                        "--output",
+                        (
+                            "trivy-image.json"
+                            if index == 0
+                            else f"trivy-image-{index}.json"
+                        ),
+                        reference,
+                    ],
+                    "returncode": 0,
+                    "status": "passed",
+                }
+                for index, (component, reference) in enumerate(
+                    zip(
+                        ("backend", "worker", "inference", "tensorboard"),
+                        image_references,
+                    ),
+                )
+            ],
+        }
+        (root / "security.json").write_text(
+            json.dumps(aggregate),
             encoding="utf-8",
         )
         (root / "web.json").write_text(
@@ -2363,7 +2830,15 @@ class SecurityGateTests(unittest.TestCase):
             self._write_complete_security_evidence(root)
             output = root / "summary.json"
             exit_code = security_scans_main(
-                ["summarize", "--input-dir", str(root), "--output", str(output)],
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
             )
             result = json.loads(output.read_text(encoding="utf-8"))
 
@@ -2387,6 +2862,668 @@ class SecurityGateTests(unittest.TestCase):
             expected_paths,
         )
         self.assertNotIn(str(root), json.dumps(result))
+
+    def test_summary_rejects_passing_scanner_gate_without_a_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            aggregate_path = root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            aggregate["gates"]["source_bandit"].pop("command")
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["source_bandit"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_passing_scanner_gate_with_nonzero_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            aggregate_path = root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            aggregate["gates"]["source_bandit"]["returncode"] = 1
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["source_bandit"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_weakened_passing_scanner_receipts(self):
+        mutations = (
+            ("source_bandit", lambda command: command.__setitem__(4, "-ll")),
+            ("filesystem_trivy", lambda command: command.__setitem__(5, "LOW")),
+            ("filesystem_trivy", lambda command: command.__setitem__(3, "0")),
+            ("container_image", lambda command: command.__setitem__(5, "LOW")),
+            ("container_image", lambda command: command.__setitem__(3, "0")),
+        )
+        for gate_name, mutate in mutations:
+            with self.subTest(gate_name=gate_name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_complete_security_evidence(root)
+                aggregate_path = root / "security.json"
+                aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+                if gate_name == "container_image":
+                    command = aggregate["gates"][gate_name]["images"][0]["command"]
+                else:
+                    command = aggregate["gates"][gate_name]["command"]
+                mutate(command)
+                aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+                output = root / "summary.json"
+                exit_code = security_scans_main(
+                    [
+                        "summarize",
+                        "--input-dir",
+                        str(root),
+                        "--output",
+                        str(output),
+                        "--source-commit",
+                        "a" * 40,
+                    ],
+                )
+                result = json.loads(output.read_text(encoding="utf-8"))
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(
+                result["gates"][gate_name]["error_code"],
+                "SECURITY_EVIDENCE_INVALID",
+            )
+
+    def test_summary_rejects_absolute_paths_in_scanner_receipts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            aggregate_path = root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            aggregate["gates"]["source_bandit"]["command"] = [
+                "bandit",
+                r"C:\acceptance\bandit.json",
+            ]
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["source_bandit"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_semantically_empty_raw_reports_when_aggregate_claims_passed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            for filename in (
+                "pip-audit.json",
+                "bandit.json",
+                "npm-audit.json",
+                "trivy-fs.json",
+                "trivy-image.json",
+                "gitleaks.json",
+            ):
+                (root / filename).write_text("{}", encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                ["summarize", "--input-dir", str(root), "--output", str(output)],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        for name in REQUIRED_SCAN_GATES - {"web_security"}:
+            self.assertEqual(
+                result["gates"][name]["error_code"],
+                "SECURITY_EVIDENCE_INVALID",
+            )
+
+    def test_summary_rejects_pip_audit_vulnerabilities_when_aggregate_claims_passed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            report = json.loads((root / "pip-audit.json").read_text(encoding="utf-8"))
+            report["dependencies"][0]["vulns"] = [{"id": "CVE-2026-0001"}]
+            (root / "pip-audit.json").write_text(json.dumps(report), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                ["summarize", "--input-dir", str(root), "--output", str(output)],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["python_dependencies"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_bandit_results_when_aggregate_claims_passed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            report = json.loads((root / "bandit.json").read_text(encoding="utf-8"))
+            report["results"] = [{"issue_severity": "HIGH", "test_id": "B000"}]
+            (root / "bandit.json").write_text(json.dumps(report), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                ["summarize", "--input-dir", str(root), "--output", str(output)],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["source_bandit"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_unapproved_npm_high_finding_when_aggregate_claims_passed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            (root / "npm-audit.json").write_text(
+                json.dumps(
+                    {
+                        "auditReportVersion": 2,
+                        "metadata": {
+                            "vulnerabilities": {"high": 1, "critical": 0},
+                        },
+                        "vulnerabilities": {
+                            "unapproved-package": {
+                                "name": "unapproved-package",
+                                "severity": "high",
+                                "via": [{"source": 1234567, "severity": "high"}],
+                            },
+                        },
+                    },
+                ),
+                encoding="utf-8",
+            )
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                ["summarize", "--input-dir", str(root), "--output", str(output)],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["frontend_dependencies"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_allows_only_the_reviewed_react_router_npm_exception(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            report = self._react_router_audit_report()
+            report["auditReportVersion"] = 2
+            (root / "npm-audit.json").write_text(json.dumps(report), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["gates"]["frontend_dependencies"]["status"], "passed")
+
+    def test_summary_rejects_trivy_filesystem_vulnerability_when_aggregate_claims_passed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            report = json.loads((root / "trivy-fs.json").read_text(encoding="utf-8"))
+            report["Results"] = [{"Vulnerabilities": [{"VulnerabilityID": "CVE-2026-0002"}]}]
+            (root / "trivy-fs.json").write_text(json.dumps(report), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                ["summarize", "--input-dir", str(root), "--output", str(output)],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["filesystem_trivy"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_trivy_primary_image_vulnerability_when_aggregate_claims_passed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            report = json.loads((root / "trivy-image.json").read_text(encoding="utf-8"))
+            report["Results"] = [{"Vulnerabilities": [{"VulnerabilityID": "CVE-2026-0003"}]}]
+            (root / "trivy-image.json").write_text(json.dumps(report), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                ["summarize", "--input-dir", str(root), "--output", str(output)],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_trivy_misconfigurations_and_secrets_when_present(self):
+        findings = {
+            "Misconfigurations": [{"ID": "DS001"}],
+            "Secrets": [{"RuleID": "private-key"}],
+        }
+        for finding_name, finding in findings.items():
+            with self.subTest(finding_name=finding_name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_complete_security_evidence(root)
+                report = json.loads((root / "trivy-fs.json").read_text(encoding="utf-8"))
+                report["Results"] = [{finding_name: finding}]
+                (root / "trivy-fs.json").write_text(json.dumps(report), encoding="utf-8")
+                output = root / "summary.json"
+                exit_code = security_scans_main(
+                    ["summarize", "--input-dir", str(root), "--output", str(output)],
+                )
+                result = json.loads(output.read_text(encoding="utf-8"))
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(
+                result["gates"]["filesystem_trivy"]["error_code"],
+                "SECURITY_EVIDENCE_INVALID",
+            )
+
+    def test_summary_rejects_gitleaks_findings_when_aggregate_claims_passed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            (root / "gitleaks.json").write_text(
+                json.dumps([{"RuleID": "generic-api-key"}]),
+                encoding="utf-8",
+            )
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                ["summarize", "--input-dir", str(root), "--output", str(output)],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["secret_gitleaks"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_findings_in_declared_additional_trivy_image_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            report = json.loads((root / "trivy-image-1.json").read_text(encoding="utf-8"))
+            report["Results"] = [{"Vulnerabilities": [{"VulnerabilityID": "CVE-2026-0004"}]}]
+            (root / "trivy-image-1.json").write_text(json.dumps(report), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_requires_declared_additional_trivy_image_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            (root / "trivy-image-3.json").unlink()
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_MISSING",
+        )
+
+    def test_summary_requires_source_commit_to_bind_production_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                ["summarize", "--input-dir", str(root), "--output", str(output)],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_source_commit_mismatch_for_production_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "b" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_image_revision_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            aggregate = json.loads((root / "security.json").read_text(encoding="utf-8"))
+            aggregate["gates"]["container_image"]["images"][1]["revision"] = "b" * 40
+            (root / "security.json").write_text(json.dumps(aggregate), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_passing_container_gate_with_failed_image_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            aggregate_path = root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            aggregate["gates"]["container_image"]["images"][1]["status"] = "failed"
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_repeated_image_component_references(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            aggregate_path = root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            aggregate["gates"]["container_image"]["images"][1]["reference"] = (
+                "ml-platform-backend:test"
+            )
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            report_path = root / "trivy-image-1.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report["ArtifactName"] = "ml-platform-backend:test"
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_registry_qualified_image_references(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            aggregate_path = root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            aggregate["gates"]["container_image"]["images"][0]["reference"] = (
+                "registry.invalid/ml-platform-backend:test"
+            )
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            report_path = root / "trivy-image.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report["ArtifactName"] = "registry.invalid/ml-platform-backend:test"
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_trivy_artifact_type_mismatch(self):
+        for report_name, artifact_type in (
+            ("trivy-fs.json", "container_image"),
+            ("trivy-image-1.json", "filesystem"),
+        ):
+            with self.subTest(report_name=report_name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_complete_security_evidence(root)
+                report_path = root / report_name
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                report["ArtifactType"] = artifact_type
+                report_path.write_text(json.dumps(report), encoding="utf-8")
+                output = root / "summary.json"
+                exit_code = security_scans_main(
+                    [
+                        "summarize",
+                        "--input-dir",
+                        str(root),
+                        "--output",
+                        str(output),
+                        "--source-commit",
+                        "a" * 40,
+                    ],
+                )
+                result = json.loads(output.read_text(encoding="utf-8"))
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(
+                result["gates"][
+                    "filesystem_trivy"
+                    if report_name == "trivy-fs.json"
+                    else "container_image"
+                ]["error_code"],
+                "SECURITY_EVIDENCE_INVALID",
+            )
+
+    def test_summary_rejects_image_artifact_name_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            report_path = root / "trivy-image-1.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report["ArtifactName"] = "ml-platform-mismatched:test"
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_summary_rejects_trivy_image_id_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            report_path = root / "trivy-image-1.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report["Metadata"]["ImageID"] = "sha256:" + ("f" * 64)
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
 
     def test_summary_fails_closed_when_a_required_raw_evidence_report_is_missing(self):
         with tempfile.TemporaryDirectory() as directory:

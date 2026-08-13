@@ -1608,3 +1608,14 @@
 - 提交边界：用户要求所有变更提交。任务范围内的源码、配置、测试、文档和 `ModelLibraryPage.test.tsx` 将被显式暂存并提交；`tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 是约 1.18 GiB 的生成缓存/raw scanner 产物，可能含 registry 元数据或未审核证据，不使用 `git add -A` 推送。安全、脱敏、相对路径的最终摘要另行纳入正式文档；共享 `DEVELOPMENT_EXPERIENCE.md` 位于仓库外，将更新但不能随 Git 提交。
 - 验证方式：当前工作树为 `codex/week9-12-mlops-core`，相对 `origin/codex/week9-12-mlops-core` 领先 7 个提交；`git diff --check` 通过。第 9 至第 12 周只有在所有本地、WSL、扫描、manifest 和远程 CI 门禁通过后才可改为“已完成”。
 - 遗留事项：按新计划先修复 evidence manifest 夹具，再诊断限流；任何扫描、构建、Compose、网络、迁移、浏览器或 CI 失败都阻断推送/合并结论并需保存可复现证据。
+
+### 2026-08-13：第 12 周 evidence manifest scanner receipt 回归修复
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”；Task 2 已完成代码与聚焦验证，但不代表最终安全或发布门禁完成。
+- 问题现象：新版安全汇总器要求 Bandit、Trivy、pip-audit、npm audit、Gitleaks 和四个容器镜像 receipt 使用精确命令/原始报告合同；旧测试夹具的容器 Trivy 命令缺少 `--output` 路径，导致 aggregate summary 被降级，弱化命令回归随后访问不到 `command`/`images` 并抛出 5 个 `KeyError`。完整安全测试还暴露两个旧夹具命令形状和两个 raw 报告缺失错误优先级问题。
+- 已确认根因：测试夹具没有跟随生产合同同步；manifest 对“receipt 字段缺失”和“receipt 存在但命令/返回码非法”使用同一宽泛检查，掩盖了真实语义。
+- 解决方法：补齐 `test_evidence_manifest.py` 与 `test_week12_security_gates.py` 的真实 Trivy `--output` receipt；保持生产 scanner fail-closed 规则不放宽；`tools/evidence_manifest.py` 先对缺失 `command` 报 `scanner receipt missing`，对非法命令/返回码报 `scanner receipt invalid`。
+- 验证方式：PowerShell 7 使用 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_evidence_manifest tests.test_week12_security_gates tests.test_ci_workflow tests.test_image_security_contracts -v`，结果 `203/203` 通过；`python -m compileall -q app tools tests` 通过；`git diff --check` 通过。
+- 影响范围：Week 12 证据 manifest 解析、测试夹具和安全回归；不改变业务 API、Redis 限流算法、通知通道或扫描例外。
+- 预防措施：安全证据夹具必须由真实 scanner 命令形状和原始 JSON 生成；manifest 合同变更时同时更新合法 baseline、缺失字段和弱化命令回归，并分别验证错误码。
+- 遗留事项：固定 4 vCPU/8 GiB 限流第 6 次请求仍待隔离 WSL 诊断；四镜像无缓存构建/Trivy、备份恢复、N-1、完整 Chromium、最终 manifest、远程 CI 和合并仍未闭合。

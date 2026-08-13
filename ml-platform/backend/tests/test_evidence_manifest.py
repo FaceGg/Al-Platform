@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +8,11 @@ from unittest.mock import patch
 
 from tools.evidence_manifest import MIGRATION_HEAD, generate
 from tools.playwright_evidence import summarize_report
-from tools.security_scans import REQUIRED_SCAN_GATES
+from tools.security_scans import (
+    REQUIRED_SCAN_GATES,
+    WEB_SECURITY_GATE_NAMES,
+    summarize_scans,
+)
 from tools.week11_performance import (
     SCENARIO_EXPECTED_LOAD,
     SCENARIO_REQUIRED_ITERATIONS,
@@ -43,6 +48,12 @@ class EvidenceManifestTests(unittest.TestCase):
         path = root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+
+    @staticmethod
+    def _replace_with_hard_link(path: Path, outside: Path) -> None:
+        outside.write_bytes(path.read_bytes())
+        path.unlink()
+        os.link(outside, path)
 
     def _write_semantic_evidence(self, root: Path) -> None:
         performance_root = root / "performance"
@@ -106,19 +117,7 @@ class EvidenceManifestTests(unittest.TestCase):
                 "after_table_counts": {"projects": 1, "notification_outbox": 0},
             },
         )
-        security_gates = {
-            name: (
-                {"status": "passed", "gates": {"access_boundary": {"status": "passed"}}}
-                if name == "web_security"
-                else {"status": "passed", "returncode": 0, "command": ["scanner", name]}
-            )
-            for name in REQUIRED_SCAN_GATES
-        }
-        self._write_json(
-            root,
-            "security/summary.json",
-            {"status": "passed", "gates": security_gates},
-        )
+        self._write_security_evidence(root)
         self._write_json(
             root,
             "playwright/result.json",
@@ -127,6 +126,156 @@ class EvidenceManifestTests(unittest.TestCase):
                 "project": "chromium",
                 "tests": {"total": 1, "passed": 1, "failed": 0},
             },
+        )
+
+    def _write_security_evidence(self, root: Path) -> None:
+        security_root = root / "security"
+        image_components = ("backend", "worker", "inference", "tensorboard")
+        image_references = tuple(
+            f"ml-platform-{component}:test" for component in image_components
+        )
+        image_ids = tuple(
+            f"sha256:{index:064x}"
+            for index in range(1, len(image_components) + 1)
+        )
+        image_receipts = [
+            {
+                "component": component,
+                "reference": reference,
+                "evidence_path": (
+                    "trivy-image.json"
+                    if index == 0
+                    else f"trivy-image-{index}.json"
+                ),
+                "image_id": image_ids[index],
+                "revision": self._COMMIT,
+                "command": [
+                    "trivy",
+                    "image",
+                    "--exit-code",
+                    "1",
+                    "--severity",
+                    "HIGH,CRITICAL",
+                    "--format",
+                    "json",
+                    "--output",
+                    str(
+                        "trivy-image.json"
+                        if index == 0
+                        else f"trivy-image-{index}.json"
+                    ),
+                    reference,
+                ],
+                "returncode": 0,
+                "status": "passed",
+            }
+            for index, (component, reference) in enumerate(
+                zip(image_components, image_references)
+            )
+        ]
+        scan_gates = {
+            "python_dependencies": {
+                "status": "passed",
+                "returncode": 0,
+                "command": [
+                    "python", "-m", "pip_audit", "-r", "requirements.txt",
+                    "--format", "json", "--output", "pip-audit.json",
+                ],
+            },
+            "source_bandit": {
+                "status": "passed",
+                "returncode": 0,
+                "command": [
+                    "bandit", "-r", "app", "-q", "-lll", "-f", "json",
+                    "-o", "bandit.json",
+                ],
+            },
+            "frontend_dependencies": {
+                "status": "passed",
+                "returncode": 0,
+                "command": [
+                    "npm", "--prefix", "ml-platform/frontend", "audit",
+                    "--audit-level=high", "--registry=https://registry.npmjs.org", "--json",
+                ],
+            },
+            "filesystem_trivy": {
+                "status": "passed",
+                "returncode": 0,
+                "command": [
+                    "trivy", "fs", "--exit-code", "1", "--severity", "HIGH,CRITICAL",
+                    "--format", "json", "--output", "trivy-fs.json", ".",
+                ],
+            },
+            "secret_gitleaks": {
+                "status": "passed",
+                "returncode": 0,
+                "command": [
+                    "gitleaks", "detect", "--no-banner", "--redact", "--report-format", "json",
+                    "--report-path", "gitleaks.json", "--source", ".",
+                ],
+            },
+        }
+        scan_gates["container_image"] = {
+            "status": "passed",
+            "source_commit": self._COMMIT,
+            "images": image_receipts,
+        }
+        self._write_json(
+            security_root,
+            "security.json",
+            {"status": "passed", "gates": scan_gates},
+        )
+        raw_reports = {
+            "pip-audit.json": {
+                "dependencies": [
+                    {"name": "cryptography", "version": "50.0.0", "vulns": []},
+                    {"name": "jaraco-context", "version": "6.1.0", "vulns": []},
+                    {"name": "wheel", "version": "0.46.2", "vulns": []},
+                ],
+            },
+            "bandit.json": {"errors": [], "metrics": {"_totals": {}}, "results": []},
+            "npm-audit.json": {
+                "auditReportVersion": 2,
+                "metadata": {"vulnerabilities": {"high": 0, "critical": 0}},
+                "vulnerabilities": {},
+            },
+            "trivy-fs.json": {
+                "SchemaVersion": 2,
+                "ArtifactName": "repository",
+                "ArtifactType": "filesystem",
+                "Results": [],
+            },
+            "gitleaks.json": [],
+        }
+        for relative_path, report in raw_reports.items():
+            self._write_json(security_root, relative_path, report)
+        for receipt in image_receipts:
+            self._write_json(
+                security_root,
+                str(receipt["evidence_path"]),
+                {
+                    "SchemaVersion": 2,
+                    "ArtifactName": receipt["reference"],
+                    "ArtifactType": "container_image",
+                    "Metadata": {"ImageID": receipt["image_id"]},
+                    "Results": [],
+                },
+            )
+        self._write_json(
+            security_root,
+            "web.json",
+            {
+                "status": "passed",
+                "gates": {
+                    name: {"status": "passed"}
+                    for name in WEB_SECURITY_GATE_NAMES
+                },
+            },
+        )
+        summarize_scans(
+            security_root,
+            security_root / "summary.json",
+            source_commit=self._COMMIT,
         )
 
     def _write_required_evidence(
@@ -260,8 +409,386 @@ class EvidenceManifestTests(unittest.TestCase):
                         evidence_dir,
                         output,
                         remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                    image_digest=self._IMAGE_DIGEST,
+                )
+
+    def test_generate_rejects_hard_linked_security_summary_and_raw_reports(self):
+        for relative_path in (
+            "security/summary.json",
+            "security/pip-audit.json",
+            "security/bandit.json",
+            "security/npm-audit.json",
+            "security/trivy-fs.json",
+            "security/gitleaks.json",
+            "security/web.json",
+        ):
+            with self.subTest(relative_path=relative_path), tempfile.TemporaryDirectory() as directory:
+                evidence_dir = Path(directory) / "evidence"
+                self._write_required_evidence(
+                    evidence_dir,
+                    include_environment=True,
+                    semantic=True,
+                )
+                path = evidence_dir / relative_path
+                self._replace_with_hard_link(path, Path(directory) / "outside.json")
+                output = Path(directory) / "manifest.json"
+
+                with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                    with self.assertRaises((FileNotFoundError, RuntimeError)):
+                        generate(
+                            evidence_dir,
+                            output,
+                            remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                            image_digest=self._IMAGE_DIGEST,
+                        )
+
+    def test_generate_rejects_hard_linked_container_image_receipts(self):
+        for relative_path in (
+            "security/trivy-image.json",
+            "security/trivy-image-1.json",
+            "security/trivy-image-2.json",
+            "security/trivy-image-3.json",
+        ):
+            with self.subTest(relative_path=relative_path), tempfile.TemporaryDirectory() as directory:
+                evidence_dir = Path(directory) / "evidence"
+                self._write_required_evidence(
+                    evidence_dir,
+                    include_environment=True,
+                    semantic=True,
+                )
+                path = evidence_dir / relative_path
+                self._replace_with_hard_link(path, Path(directory) / "outside.json")
+                output = Path(directory) / "manifest.json"
+
+                with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                    with self.assertRaises(RuntimeError):
+                        generate(
+                            evidence_dir,
+                            output,
+                            remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                            image_digest=self._IMAGE_DIGEST,
+                        )
+
+    def test_generate_rejects_weakened_security_scan_commands(self):
+        mutations = (
+            ("source_bandit", lambda command: command.__setitem__(4, "-ll")),
+            ("filesystem_trivy", lambda command: command.__setitem__(5, "LOW")),
+            ("filesystem_trivy", lambda command: command.__setitem__(3, "0")),
+            ("container_image", lambda command: command.__setitem__(5, "LOW")),
+            ("container_image", lambda command: command.__setitem__(3, "0")),
+        )
+        for gate_name, mutate in mutations:
+            with self.subTest(gate_name=gate_name), tempfile.TemporaryDirectory() as directory:
+                evidence_dir = Path(directory) / "evidence"
+                self._write_required_evidence(
+                    evidence_dir,
+                    include_environment=True,
+                    semantic=True,
+                )
+                security_path = evidence_dir / "security" / "summary.json"
+                security = json.loads(security_path.read_text(encoding="utf-8"))
+                if gate_name == "container_image":
+                    command = security["gates"][gate_name]["images"][0]["command"]
+                else:
+                    command = security["gates"][gate_name]["command"]
+                mutate(command)
+                security_path.write_text(json.dumps(security), encoding="utf-8")
+                output = Path(directory) / "manifest.json"
+
+                with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                    with self.assertRaisesRegex(RuntimeError, "scanner receipt invalid"):
+                        generate(
+                            evidence_dir,
+                            output,
+                            remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                            image_digest=self._IMAGE_DIGEST,
+                        )
+
+    def test_generate_rejects_container_gate_without_each_image_scanner_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_dir = Path(directory) / "evidence"
+            self._write_required_evidence(
+                evidence_dir,
+                include_environment=True,
+                semantic=True,
+            )
+            security_path = evidence_dir / "security" / "summary.json"
+            security = json.loads(security_path.read_text(encoding="utf-8"))
+            security["gates"]["container_image"]["images"] = [
+                {"component": component, "status": "passed"}
+                for component in ("backend", "worker", "inference", "tensorboard")
+            ]
+            security_path.write_text(json.dumps(security), encoding="utf-8")
+            output = Path(directory) / "manifest.json"
+
+            with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                with self.assertRaisesRegex(RuntimeError, "container_image scanner receipt missing"):
+                    generate(
+                        evidence_dir,
+                        output,
+                        remote_ci_run_url="https://github.example.invalid/actions/runs/1",
                         image_digest=self._IMAGE_DIGEST,
                     )
+
+    def test_generate_rejects_unbound_container_image_scanner_receipts(self):
+        mutations = (
+            ("component", "backend"),
+            ("reference", "ml-platform-backend:test"),
+            ("evidence_path", "trivy-image-9.json"),
+            ("image_id", "sha256:" + ("f" * 64)),
+            ("revision", "b" * 40),
+            ("command", "ml-platform-backend:test"),
+            ("source_commit", "b" * 40),
+        )
+        for field, value in mutations:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                evidence_dir = Path(directory) / "evidence"
+                self._write_required_evidence(
+                    evidence_dir,
+                    include_environment=True,
+                    semantic=True,
+                )
+                security_path = evidence_dir / "security" / "summary.json"
+                security = json.loads(security_path.read_text(encoding="utf-8"))
+                container_gate = security["gates"]["container_image"]
+                if field == "source_commit":
+                    container_gate[field] = value
+                elif field == "command":
+                    container_gate["images"][1]["command"][-1] = value
+                else:
+                    container_gate["images"][1][field] = value
+                security_path.write_text(json.dumps(security), encoding="utf-8")
+                output = Path(directory) / "manifest.json"
+
+                with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "container_image scanner receipt invalid",
+                    ):
+                        generate(
+                            evidence_dir,
+                            output,
+                            remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                            image_digest=self._IMAGE_DIGEST,
+                        )
+
+    def test_generate_rejects_absolute_paths_in_security_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_dir = Path(directory) / "evidence"
+            self._write_required_evidence(
+                evidence_dir,
+                include_environment=True,
+                semantic=True,
+            )
+            security_path = evidence_dir / "security" / "summary.json"
+            security = json.loads(security_path.read_text(encoding="utf-8"))
+            security["gates"]["source_bandit"]["command"] = [
+                "bandit",
+                r"C:\acceptance\bandit.json",
+            ]
+            security_path.write_text(json.dumps(security), encoding="utf-8")
+            output = Path(directory) / "manifest.json"
+
+            with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                with self.assertRaisesRegex(ValueError, "absolute path"):
+                    generate(
+                        evidence_dir,
+                        output,
+                        remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                    image_digest=self._IMAGE_DIGEST,
+                )
+
+    def test_generate_rejects_quoted_absolute_path_in_security_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_dir = Path(directory) / "evidence"
+            self._write_required_evidence(
+                evidence_dir,
+                include_environment=True,
+                semantic=True,
+            )
+            security_path = evidence_dir / "security" / "summary.json"
+            security = json.loads(security_path.read_text(encoding="utf-8"))
+            security["gates"]["source_bandit"]["command"] = [
+                "bandit",
+                r"--output='C:\acceptance\bandit.json'",
+            ]
+            security_path.write_text(json.dumps(security), encoding="utf-8")
+            output = Path(directory) / "manifest.json"
+
+            with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                with self.assertRaisesRegex(ValueError, "absolute path"):
+                    generate(
+                        evidence_dir,
+                        output,
+                        remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                        image_digest=self._IMAGE_DIGEST,
+                    )
+
+    def test_generate_rejects_missing_raw_scanner_evidence_after_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_dir = Path(directory) / "evidence"
+            self._write_required_evidence(
+                evidence_dir,
+                include_environment=True,
+                semantic=True,
+            )
+            (evidence_dir / "security" / "bandit.json").unlink()
+            output = Path(directory) / "manifest.json"
+
+            with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "source_bandit raw scanner evidence invalid",
+                ):
+                    generate(
+                        evidence_dir,
+                        output,
+                        remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                        image_digest=self._IMAGE_DIGEST,
+                    )
+
+    def test_generate_rejects_raw_trivy_finding_after_passing_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_dir = Path(directory) / "evidence"
+            self._write_required_evidence(
+                evidence_dir,
+                include_environment=True,
+                semantic=True,
+            )
+            self._write_json(
+                evidence_dir,
+                "security/trivy-fs.json",
+                {
+                    "SchemaVersion": 2,
+                    "ArtifactName": "repository",
+                    "ArtifactType": "filesystem",
+                    "Results": {
+                        "Vulnerabilities": [{"Severity": "HIGH"}],
+                    },
+                },
+            )
+            output = Path(directory) / "manifest.json"
+
+            with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "filesystem_trivy raw scanner evidence invalid",
+                ):
+                    generate(
+                        evidence_dir,
+                        output,
+                        remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                    image_digest=self._IMAGE_DIGEST,
+                )
+
+    def test_generate_rejects_container_raw_trivy_finding_after_passing_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_dir = Path(directory) / "evidence"
+            self._write_required_evidence(
+                evidence_dir,
+                include_environment=True,
+                semantic=True,
+            )
+            self._write_json(
+                evidence_dir,
+                "security/trivy-image-1.json",
+                {
+                    "SchemaVersion": 2,
+                    "ArtifactName": "ml-platform-worker:test",
+                    "ArtifactType": "container_image",
+                    "Metadata": {"ImageID": "sha256:" + ("2" * 64)},
+                    "Results": [{"Vulnerabilities": [{"Severity": "HIGH"}]}],
+                },
+            )
+            output = Path(directory) / "manifest.json"
+
+            with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "container_image scanner receipt invalid",
+                ):
+                    generate(
+                        evidence_dir,
+                        output,
+                        remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                        image_digest=self._IMAGE_DIGEST,
+                    )
+
+    def test_generate_rejects_incomplete_raw_web_gate_after_passing_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_dir = Path(directory) / "evidence"
+            self._write_required_evidence(
+                evidence_dir,
+                include_environment=True,
+                semantic=True,
+            )
+            raw_path = evidence_dir / "security" / "web.json"
+            raw = json.loads(raw_path.read_text(encoding="utf-8"))
+            raw["gates"].pop("viewer_read")
+            raw_path.write_text(json.dumps(raw), encoding="utf-8")
+            output = Path(directory) / "manifest.json"
+
+            with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "web_security raw scanner evidence invalid",
+                ):
+                    generate(
+                        evidence_dir,
+                        output,
+                        remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                        image_digest=self._IMAGE_DIGEST,
+                    )
+
+    def test_generate_rejects_absolute_paths_in_raw_security_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_dir = Path(directory) / "evidence"
+            self._write_required_evidence(
+                evidence_dir,
+                include_environment=True,
+                semantic=True,
+            )
+            raw_path = evidence_dir / "security" / "trivy-fs.json"
+            raw = json.loads(raw_path.read_text(encoding="utf-8"))
+            raw["ArtifactName"] = r"C:\acceptance\repository"
+            raw_path.write_text(json.dumps(raw), encoding="utf-8")
+            output = Path(directory) / "manifest.json"
+
+            with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                with self.assertRaisesRegex(ValueError, "absolute path"):
+                    generate(
+                        evidence_dir,
+                        output,
+                        remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                    image_digest=self._IMAGE_DIGEST,
+                )
+
+    def test_generate_rejects_embedded_absolute_paths_in_raw_security_evidence(self):
+        for artifact_name in (
+            "scan failed at /tmp/acceptance/repository",
+            r"scan failed at \\server\share\repository",
+        ):
+            with self.subTest(artifact_name=artifact_name), tempfile.TemporaryDirectory() as directory:
+                evidence_dir = Path(directory) / "evidence"
+                self._write_required_evidence(
+                    evidence_dir,
+                    include_environment=True,
+                    semantic=True,
+                )
+                raw_path = evidence_dir / "security" / "trivy-fs.json"
+                raw = json.loads(raw_path.read_text(encoding="utf-8"))
+                raw["ArtifactName"] = artifact_name
+                raw_path.write_text(json.dumps(raw), encoding="utf-8")
+                output = Path(directory) / "manifest.json"
+
+                with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                    with self.assertRaisesRegex(ValueError, "absolute path"):
+                        generate(
+                            evidence_dir,
+                            output,
+                            remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                            image_digest=self._IMAGE_DIGEST,
+                        )
 
     def test_generate_rejects_environment_metadata_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:
