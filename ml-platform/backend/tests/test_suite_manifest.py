@@ -72,6 +72,7 @@ class TestSuiteManifest(unittest.TestCase):
                 "test_auth_jwt_migration",
                 "test_evidence_manifest",
                 "test_acceptance_environment",
+                "test_image_security_contracts",
             },
         }
         for week, modules in expected.items():

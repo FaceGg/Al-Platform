@@ -110,6 +110,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_auth_jwt_migration",
         "test_evidence_manifest",
         "test_acceptance_environment",
+        "test_image_security_contracts",
         "test_notification_receiver_acceptance",
     ],
 }

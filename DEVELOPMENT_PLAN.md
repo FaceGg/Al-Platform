@@ -1656,3 +1656,12 @@
 - 验证过程：以 `--pull --no-cache` 从该提交重建 backend；基础 Wolfi 和 Python 层通过，pip 解析确认 `xgboost==3.2.*` 的 Linux 元数据声明 `nvidia-nccl-cu12`，随后阿里云源的 342 MB wheel 长时间传输停滞。旧镜像仍无 `449249a` revision，未被复用或重标记。
 - 结论：当前阻塞是外部 PyPI 大文件传输/WSL Docker 网络状态，不是依赖解析错误；项目后续 GPU 计划不允许未经评估地移除 NCCL 依赖。构建进程已停止，未生成可验收的新镜像。
 - 遗留事项：四个当前提交镜像的无缓存构建、非 root smoke、Trivy 扫描及其后的 frozen Compose/最终验收仍待在可稳定下载环境完成；本地代码与合同门禁可继续独立执行。
+
+### 2026-08-13：暂停检查点——补齐 Week 12 测试台账归属
+
+- 当前状态：用户要求保存进度并暂停修复；第 9 至第 12 周继续保持“进行中”。
+- 问题现象：恢复后首次运行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_suite_manifest -v`，`test_every_backend_test_module_has_one_week_owner` 失败，唯一未归属模块为 `test_image_security_contracts`。
+- 已确认根因：新增 Week 12 镜像安全合同测试已提交到 `tests/`，但未同步登记到 `tests/week_manifest.py`；显式 Week 11/12 归属断言也未包含该模块。完整 runner 因此在首个 manifest 门禁停止。
+- 已写入修复：将 `test_image_security_contracts` 唯一登记到 Week 12，并同步加入 `test_suite_manifest.py` 的 Week 12 归属断言；本次暂停前未重新运行该测试，故修复结果仍待验证。
+- 验证状态：修复前失败证据已保存；暂停前仅执行 `git diff --check`，通过（仅存在 CRLF 工作树提示）。未执行完整后端 runner、前端、Compose、镜像重建、扫描、Chromium、远程 CI 或推送。
+- 未完成与恢复顺序：恢复后先运行 `tests.test_suite_manifest` 确认 GREEN，再运行完整 `run_suite.py`；随后按既有计划执行完整环境 Compose、四镜像当前提交重建/扫描和其余 Week 11-12 门禁。不得把旧镜像或定向测试当作最终验收证据。
