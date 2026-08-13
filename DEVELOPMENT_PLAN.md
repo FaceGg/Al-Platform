@@ -1599,3 +1599,12 @@
 - 证据与保护：原 `%USERPROFILE%/.wslconfig` 已逐字节复制为 `baseline/wslconfig.original`，原文件和副本 SHA-256 均为 `A4AE25464FC82388F85AB6C9A3C8F1914DD24174EDC126EB465A77326BF7824B`；既有 `ModelLibraryPage.test.tsx`、`tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 未暂存、未删除。
 - 验证方式：PowerShell 7 记录分支、HEAD、remote、dirty paths；WSL `nproc`/`/proc/meminfo` 和 Docker `NCPU/MemTotal` 输出已保存，README 明确要求命令、时间、退出码、提交、工具版本、artifact 和脱敏状态。
 - 遗留事项：Task 2-5 性能、备份恢复、N-1、Chromium 和 Web 安全尚未执行；Task 6-7 的 manifest、远程 CI、提交/推送/合并继续保持未完成。
+
+### 2026-08-13：第 9-12 周高危修复与验收闭环计划冻结
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”。新增 `docs/superpowers/plans/2026-08-13-week9-12-high-risk-remediation-closure.md`，将高危修复、四生产镜像、固定资源性能、备份恢复、N-1、外部 Chromium、四通道通知、证据 manifest、远程 CI 与合并拆分为可验证任务；本记录不是任何门禁完成声明。
+- 已复现阻断一：`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_evidence_manifest.EvidenceManifestTests.test_generate_rejects_weakened_security_scan_commands -v` 产生 5 个 `KeyError`（`command` / `images`）。当前结论是 semantic evidence 测试夹具没有满足新版 scanner receipt 合同而被汇总器降级；必须先修正夹具使 baseline summary 真正为 `passed`，再验证弱化命令被 manifest 拒绝，不能放松生产合同。
+- 已复现阻断二：固定 4 vCPU / 8 GiB 性能验收的限流场景第 6 次请求得到 `200` 而非预期 `429`。尚未确认是 Compose 镜像/环境变量绑定、Redis key 身份、Lua 令牌桶逻辑或测试工件漂移；下一步必须在单个隔离 WSL Compose 生命周期中记录环境、settings、容器 image ID、OCI revision、Redis `HGETALL` 与每次请求状态后再写最小回归和修复。
+- 提交边界：用户要求所有变更提交。任务范围内的源码、配置、测试、文档和 `ModelLibraryPage.test.tsx` 将被显式暂存并提交；`tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 是约 1.18 GiB 的生成缓存/raw scanner 产物，可能含 registry 元数据或未审核证据，不使用 `git add -A` 推送。安全、脱敏、相对路径的最终摘要另行纳入正式文档；共享 `DEVELOPMENT_EXPERIENCE.md` 位于仓库外，将更新但不能随 Git 提交。
+- 验证方式：当前工作树为 `codex/week9-12-mlops-core`，相对 `origin/codex/week9-12-mlops-core` 领先 7 个提交；`git diff --check` 通过。第 9 至第 12 周只有在所有本地、WSL、扫描、manifest 和远程 CI 门禁通过后才可改为“已完成”。
+- 遗留事项：按新计划先修复 evidence manifest 夹具，再诊断限流；任何扫描、构建、Compose、网络、迁移、浏览器或 CI 失败都阻断推送/合并结论并需保存可复现证据。
