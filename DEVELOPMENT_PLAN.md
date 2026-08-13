@@ -1649,3 +1649,10 @@
 - 验证方式：新增合同先在旧命令上稳定 RED，再在四个 Dockerfile 修改后 GREEN；`tests.test_image_security_contracts` 7/7、`compileall -q app tools tests` 和 `git diff --check` 通过。WSL 从旧镜像确认 pip `26.2.1` 支持 `--resume-retries`。
 - 影响范围：仅生产镜像内 pip 下载恢复行为和镜像合同；不变更版本 pin、基础镜像 digest、运行用户、业务代码或安全阈值。
 - 遗留事项：必须以本次修复后的提交重新执行四个 `--pull --no-cache` 构建，收集 image ID/OCI revision、非 root smoke 和 Trivy HIGH/CRITICAL 报告后，才能继续 frozen Compose 与最终验收。
+
+### 2026-08-13：backend 镜像重建再次受外部大文件网络阻塞
+
+- 当前状态：提交 `449249ad3f61ef32bcc77b12c9653702eb5bbdf1` 已包含断点续传修复；第 9 至第 12 周继续保持“进行中”，不把旧镜像当作当前提交证据。
+- 验证过程：以 `--pull --no-cache` 从该提交重建 backend；基础 Wolfi 和 Python 层通过，pip 解析确认 `xgboost==3.2.*` 的 Linux 元数据声明 `nvidia-nccl-cu12`，随后阿里云源的 342 MB wheel 长时间传输停滞。旧镜像仍无 `449249a` revision，未被复用或重标记。
+- 结论：当前阻塞是外部 PyPI 大文件传输/WSL Docker 网络状态，不是依赖解析错误；项目后续 GPU 计划不允许未经评估地移除 NCCL 依赖。构建进程已停止，未生成可验收的新镜像。
+- 遗留事项：四个当前提交镜像的无缓存构建、非 root smoke、Trivy 扫描及其后的 frozen Compose/最终验收仍待在可稳定下载环境完成；本地代码与合同门禁可继续独立执行。
