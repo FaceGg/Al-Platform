@@ -32,3 +32,5 @@ httpx==0.28.*
 requests==2.34.*
 mlflow-skinny==3.15.*
 tensorboard==2.19.*
+# TensorBoard 2.19 imports pkg_resources, removed by setuptools 81+.
+setuptools==80.9.0

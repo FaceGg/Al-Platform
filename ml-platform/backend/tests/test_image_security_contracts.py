@@ -45,8 +45,12 @@ class ImageSecurityContractTests(unittest.TestCase):
             self.assertIn("apk add --no-cache", content, path.name)
             self.assertIn(python_package, content, path.name)
             self.assertIn(pip_package, content, path.name)
-            self.assertNotIn("groupadd", content, path.name)
-            self.assertNotIn("useradd", content, path.name)
+            self.assertRegex(
+                content,
+                r"addgroup\s+-S\s+-g\s+1000\s+app\s+&&\s+adduser.*-u\s+1000.*-G\s+app\s+app",
+                path.name,
+            )
+            self.assertIn("ENV HOME=/home/app", content, path.name)
             self.assertIn(f"USER {non_root_uid}:{non_root_uid}", content, path.name)
 
     def test_backend_host_mounts_keep_the_established_numeric_identity(self):
@@ -54,7 +58,7 @@ class ImageSecurityContractTests(unittest.TestCase):
         backend = DOCKERFILES[0].read_text(encoding="utf-8")
         self.assertIn("./ml-platform/backend/data:/app/data", compose)
         self.assertIn("./ml-platform/backend/uploads:/app/app/uploads", compose)
-        self.assertIn("chown -R 1000:1000 data app/uploads /tmp/ml-platform", backend)
+        self.assertIn("chown -R app:app /home/app data app/uploads /tmp/ml-platform", backend)
         self.assertIn("USER 1000:1000", backend)
 
     def test_direct_security_dependencies_are_fixed(self):
@@ -66,6 +70,15 @@ class ImageSecurityContractTests(unittest.TestCase):
         self.assertIn("cryptography==50.0.*", lines)
         self.assertIn("jaraco.context==6.1.0", lines)
         self.assertIn("wheel==0.46.2", lines)
+
+    def test_tensorboard_uses_a_setuptools_version_that_provides_pkg_resources(self):
+        lines = {
+            line.split("#", 1)[0].strip().casefold()
+            for line in REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+            if line.split("#", 1)[0].strip()
+        }
+        self.assertIn("tensorboard==2.19.*", lines)
+        self.assertIn("setuptools==80.9.0", lines)
 
     def test_cryptography_exception_is_removed_after_clean_resolution(self):
         self.assertFalse(EXCEPTION.exists())
