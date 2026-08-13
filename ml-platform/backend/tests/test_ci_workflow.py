@@ -128,7 +128,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             'gitleaks_version="$("$RUNNER_TEMP/bin/gitleaks" version)"',
             scanner_script,
         )
-        self.assertIn('test "$gitleaks_version" = "v8.24.2"', scanner_script)
+        self.assertIn('test "$gitleaks_version" = "8.24.2"', scanner_script)
         self.assertIn(
             'mc_version="$("$RUNNER_TEMP/bin/mc" --version | '
             "awk 'NR == 1 { print $2 }')\"",
