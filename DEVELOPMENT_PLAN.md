@@ -1639,3 +1639,13 @@
 - 影响范围：`.github/workflows/ci.yml`、CI 回归测试和当前执行计划；不改变业务 API、扫描失败关闭策略、通知协议或镜像内容。
 - 预防措施：CI 下载的可执行文件必须固定版本化发布资产并校验官方摘要；校验必须早于任何执行步骤；版本检查使用精确比较，禁止子串匹配、`curl | sh` 和可变分支安装器。
 - 遗留事项：四个生产镜像无缓存构建、非 root smoke、Trivy 全镜像扫描、真实冻结 Compose、固定资源性能、备份恢复、N-1、Chromium 四角色/四通道矩阵、最终 manifest、全量回归和远程 CI 仍待完成。
+
+### 2026-08-13：生产镜像大依赖断点续传门禁修复
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”；本条仅修复 Docker 构建对网络中断的恢复配置，四个当前提交镜像尚未重建完成，不能标记镜像或安全门禁通过。
+- 问题现象：在提交 `0f6e2c9aa9ce711d8ab542b35f8f9935cad3b31b` 的无缓存 backend 构建中，阿里云 PyPI 源下载 `nvidia-nccl-cu12 2.31.2`（342.1 MB）多次中断，pip 在第六次续传后以 `incomplete-download` 失败，已接收 332.4 MB。
+- 已确认根因：镜像命令只设置 `--retries 10`，该参数只控制新的 HTTP 连接；Wolfi 内的 pip `26.2.1` 对断点续传使用独立的 `--resume-retries`，默认值为 5，因此大文件网络中断未能使用预期的十次重连预算。
+- 解决方法：四个生产 Dockerfile 的 pip 安装命令统一使用 `--retries 10 --resume-retries 20 --timeout 120`；镜像合同测试锁定完整命令，防止日后删除续传配置。
+- 验证方式：新增合同先在旧命令上稳定 RED，再在四个 Dockerfile 修改后 GREEN；`tests.test_image_security_contracts` 7/7、`compileall -q app tools tests` 和 `git diff --check` 通过。WSL 从旧镜像确认 pip `26.2.1` 支持 `--resume-retries`。
+- 影响范围：仅生产镜像内 pip 下载恢复行为和镜像合同；不变更版本 pin、基础镜像 digest、运行用户、业务代码或安全阈值。
+- 遗留事项：必须以本次修复后的提交重新执行四个 `--pull --no-cache` 构建，收集 image ID/OCI revision、非 root smoke 和 Trivy HIGH/CRITICAL 报告后，才能继续 frozen Compose 与最终验收。

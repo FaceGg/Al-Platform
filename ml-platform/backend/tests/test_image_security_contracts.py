@@ -52,6 +52,12 @@ class ImageSecurityContractTests(unittest.TestCase):
             )
             self.assertIn("ENV HOME=/home/app", content, path.name)
             self.assertIn(f"USER {non_root_uid}:{non_root_uid}", content, path.name)
+            self.assertIn(
+                "python3.11 -m pip install --retries 10 --resume-retries 20 --timeout 120 "
+                "-r requirements.txt",
+                content,
+                path.name,
+            )
 
     def test_backend_host_mounts_keep_the_established_numeric_identity(self):
         compose = COMPOSE.read_text(encoding="utf-8")

@@ -6,7 +6,7 @@ RUN addgroup -S -g 1000 app && adduser -S -D -H -h /home/app -u 1000 -G app app
 RUN python3.11 -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python3.11 -m pip install --retries 10 --timeout 120 -r requirements.txt
+    python3.11 -m pip install --retries 10 --resume-retries 20 --timeout 120 -r requirements.txt
 COPY . .
 RUN mkdir -p /home/app /var/lib/tensorboard/runs /tmp/ml-platform \
     && chown -R app:app /home/app /var/lib/tensorboard/runs /tmp/ml-platform
