@@ -160,9 +160,9 @@ describe("ModelLibraryPage", () => {
     mocks.pauseRollout.mockResolvedValue({ id: "r0", state: "paused", lock_version: 6, current_step: 5000, step_schedule: [0, 5000, 10000], targets: [] });
     mocks.resumeRollout.mockResolvedValue({ id: "r0", state: "progressing", lock_version: 7, current_step: 5000, step_schedule: [0, 5000, 10000], targets: [] });
     mocks.listInferenceRequestLogs.mockResolvedValue({
-      items: Array.from({ length: 100 }, (_, index) => ({ id: `log-${index}`, status: "success", duration_ms: 4, batch_size: 1, error_code: null, occurred_at: "2026-07-20T00:00:00Z" })),
+      items: Array.from({ length: 2 }, (_, index) => ({ id: `log-${index}`, status: "success", duration_ms: 4, batch_size: 1, error_code: null, occurred_at: "2026-07-20T00:00:00Z" })),
       page: 1,
-      page_size: 100,
+      page_size: 2,
     });
     mocks.listRollouts.mockResolvedValue({ items: [
       { id: "r0", state: "progressing", lock_version: 5, current_step: 5000, step_schedule: [0, 5000, 10000], targets: [] },
