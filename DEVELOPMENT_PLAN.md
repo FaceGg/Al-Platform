@@ -1628,3 +1628,14 @@
 - 验证方式：在 `ml-platform/backend` 目录以 `PYTHONPATH=.` 运行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_acceptance_environment tests.test_evidence_manifest tests.test_ci_workflow tests.test_week12_security_gates tests.test_image_security_contracts -q`，结果 212 项通过；其中出现的 `--pip-audit-exception legacy-exception.json` usage 输出来自受控负向 CLI 测试。随后 `C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 退出码为 0。WSL Docker 29.6.2 / Compose v5.3.1 在完整 CI 等价占位环境变量下执行 `docker compose -f docker-compose.yml -f docker-compose.week12-security-images.yml config -q` 退出码为 0。
 - 暂停边界：未执行真实 frozen-stack `up/inspect/runtime-images/summarize/down` 生命周期，未生成最终 evidence manifest，未运行 GitHub Actions。CI scanner bootstrap 的可变下载/直接执行高危项（Trivy、Gitleaks、MinIO `mc`）尚未开始修改；恢复时先完成 RED 合同、固定 release asset SHA-256 与版本检查，再继续 WSL 验收。
 - 提交边界：本次提交纳入当前任务范围的 CI、Compose override、Python 工具、回归测试和本文件。`tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 为缓存或原始扫描证据，不纳入 Git。
+
+### 2026-08-13：CI 外部安全工具固定版本与摘要校验完成
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”；本条关闭 CI scanner bootstrap 的高危源代码问题，不代表四镜像扫描、最终验收或远程 CI 已完成。
+- 问题现象：CI 从 `raw.githubusercontent.com` 的可变 `main/master` 安装脚本或未校验地址获取 Trivy、Gitleaks 与 MinIO `mc`，下载内容未在执行前绑定不可变版本和 SHA-256。
+- 已确认根因：历史工作流只关注工具可用性，没有把发布资产来源、完整性校验顺序和精确运行版本纳入供应链安全合同。
+- 解决方法：固定 Trivy `v0.73.0`、Gitleaks `v8.24.2`、MinIO `mc` `RELEASE.2025-08-13T08-35-41Z` 的官方 GitHub Release 资产；强制 HTTPS/TLS 1.2，先做 SHA-256 严格校验，再解压、移动、授权或执行；统一安装到 `$RUNNER_TEMP/bin` 并精确比较实际版本。活动验收计划中的 Trivy 版本同步更新为 `0.73.0`，历史记录保持不变。
+- 验证方式：`tests.test_ci_workflow tests.test_week12_security_gates tests.test_image_security_contracts` 共 182 项通过；`compileall`、CI YAML 解析、禁止可变安装模式扫描与 `git diff --check` 通过。官方 checksum/API 与 WSL 真实工具版本交叉确认；Windows 直接下载曾因外部网络超时留下零字节临时文件，该结果不作为成功证据。
+- 影响范围：`.github/workflows/ci.yml`、CI 回归测试和当前执行计划；不改变业务 API、扫描失败关闭策略、通知协议或镜像内容。
+- 预防措施：CI 下载的可执行文件必须固定版本化发布资产并校验官方摘要；校验必须早于任何执行步骤；版本检查使用精确比较，禁止子串匹配、`curl | sh` 和可变分支安装器。
+- 遗留事项：四个生产镜像无缓存构建、非 root smoke、Trivy 全镜像扫描、真实冻结 Compose、固定资源性能、备份恢复、N-1、Chromium 四角色/四通道矩阵、最终 manifest、全量回归和远程 CI 仍待完成。

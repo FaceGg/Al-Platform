@@ -55,6 +55,90 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertNotIn("--pip-audit-exception", rendered_steps)
         self.assertFalse(PIP_AUDIT_EXCEPTION.exists())
 
+    def test_ci_downloaded_tools_use_pinned_verified_release_assets(self):
+        parsed = yaml.safe_load(self.workflow)
+        production_steps = parsed["jobs"]["production-integration"]["steps"]
+        verification_steps = parsed["jobs"]["week11-12-verification"]["steps"]
+        minio = next(step for step in production_steps if step.get("name") == "Create MinIO bucket")
+        scanners = next(
+            step for step in verification_steps if step.get("name") == "Install security scanners"
+        )
+        minio_script = minio["run"]
+        scanner_script = scanners["run"]
+        curl_flags = "--proto '=https' --tlsv1.2 --fail --location --silent --show-error"
+
+        self.assertNotIn("raw.githubusercontent.com", self.workflow)
+        self.assertNotRegex(self.workflow, r"curl[^\n|]*\|\s*(?:ba)?sh\b")
+        self.assertNotRegex(self.workflow, r"/(?:main|master)/[^\s]*install(?:\.sh)?")
+        self.assertNotIn("/tmp/mc", self.workflow)
+
+        expected_downloads = (
+            (
+                scanner_script,
+                "https://github.com/aquasecurity/trivy/releases/download/v0.73.0/"
+                "trivy_0.73.0_Linux-64bit.tar.gz",
+                "2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b",
+                "trivy_0.73.0_Linux-64bit.tar.gz",
+            ),
+            (
+                scanner_script,
+                "https://github.com/gitleaks/gitleaks/releases/download/v8.24.2/"
+                "gitleaks_8.24.2_linux_x64.tar.gz",
+                "fa0500f6b7e41d28791ebc680f5dd9899cd42b58629218a5f041efa899151a8e",
+                "gitleaks_8.24.2_linux_x64.tar.gz",
+            ),
+            (
+                minio_script,
+                "https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/"
+                "mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z",
+                "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891",
+                "mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z",
+            ),
+        )
+        for script, url, checksum, filename in expected_downloads:
+            with self.subTest(asset=filename):
+                self.assertIn(f"curl {curl_flags}", script)
+                self.assertIn(url, script)
+                self.assertIn(checksum, script)
+                download_index = script.index(url)
+                checksum_index = script.index("sha256sum --check --strict", download_index)
+                self.assertLess(download_index, checksum_index)
+                if filename.endswith("tar.gz"):
+                    self.assertLess(checksum_index, script.index("tar -xzf", checksum_index))
+                else:
+                    self.assertLess(checksum_index, script.index("chmod +x", checksum_index))
+
+        self.assertIn('mkdir -p "$RUNNER_TEMP/bin"', scanner_script)
+        self.assertIn('mkdir -p "$RUNNER_TEMP/bin"', minio_script)
+        self.assertIn(
+            'tar -xzf "$trivy_archive" -C "$RUNNER_TEMP/bin" trivy',
+            scanner_script,
+        )
+        self.assertIn(
+            'tar -xzf "$gitleaks_archive" -C "$RUNNER_TEMP/bin" gitleaks',
+            scanner_script,
+        )
+        self.assertIn(
+            'trivy_version="$("$RUNNER_TEMP/bin/trivy" --version | '
+            "sed -n '1s/^Version: //p')\"",
+            scanner_script,
+        )
+        self.assertIn('test "$trivy_version" = "0.73.0"', scanner_script)
+        self.assertIn(
+            'gitleaks_version="$("$RUNNER_TEMP/bin/gitleaks" version)"',
+            scanner_script,
+        )
+        self.assertIn('test "$gitleaks_version" = "v8.24.2"', scanner_script)
+        self.assertIn(
+            'mc_version="$("$RUNNER_TEMP/bin/mc" --version | '
+            "awk 'NR == 1 { print $2 }')\"",
+            minio_script,
+        )
+        self.assertIn(
+            'test "$mc_version" = "RELEASE.2025-08-13T08-35-41Z"',
+            minio_script,
+        )
+
     def test_failure_evidence_scan_uses_runner_available_grep(self):
         evidence_step = self.workflow.split(
             "- name: Scan and upload production failure evidence",
@@ -134,7 +218,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
 
         self.assertIn("pip-audit==2.", install["run"])
         self.assertIn("bandit==1.", install["run"])
-        self.assertIn("v0.67.2", install["run"])
+        self.assertIn("v0.73.0", install["run"])
         self.assertIn("v8.24.2", install["run"])
         self.assertEqual(
             scan["env"]["ACCEPTANCE_IMAGE"],

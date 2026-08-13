@@ -6,7 +6,7 @@
 
 **Architecture:** Preserve the existing fail-closed security contracts. Fix the evidence-manifest fixture so it supplies valid scanner receipts before testing weakened-command rejection; diagnose the fixed-resource rate-limit failure at every Compose/configuration/Redis boundary before changing production code. Build each production image from the same source commit and immutable Wolfi base, bind image IDs and OCI revision labels to scanner receipts, and make the release manifest reject any incomplete or mismatched evidence.
 
-**Tech Stack:** PowerShell 7, WSL2, Docker Compose, Chainguard Wolfi, Python 3.11, FastAPI, Redis Lua, PostgreSQL, MinIO, Playwright/Chromium, Trivy 0.67.2, pip-audit, Bandit, Gitleaks, `unittest`, Vitest, GitHub Actions.
+**Tech Stack:** PowerShell 7, WSL2, Docker Compose, Chainguard Wolfi, Python 3.11, FastAPI, Redis Lua, PostgreSQL, MinIO, Playwright/Chromium, Trivy 0.73.0, pip-audit, Bandit, Gitleaks, `unittest`, Vitest, GitHub Actions.
 
 ---
 
@@ -337,7 +337,7 @@ out=/mnt/e/codex_workspace/agent_spot_welding/.worktrees/week9-12-mlops-core/tem
 mkdir -p "$out"
 for image in backend worker inference tensorboard; do
   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache \
-    aquasec/trivy:0.67.2 image --skip-db-update --exit-code 1 \
+    aquasec/trivy:0.73.0 image --skip-db-update --exit-code 1 \
     --severity HIGH,CRITICAL --format json \
     --output "$out/trivy-image-${image}.json" "codex-week12-final-${image}:latest"
 done'
