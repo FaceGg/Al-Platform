@@ -131,7 +131,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
 
         self.assertIn("pip-audit==2.", install["run"])
         self.assertIn("bandit==1.", install["run"])
-        self.assertIn("v0.60.0", install["run"])
+        self.assertIn("v0.67.2", install["run"])
         self.assertIn("v8.24.2", install["run"])
         self.assertEqual(
             scan["env"]["ACCEPTANCE_IMAGE"],
@@ -142,6 +142,31 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertNotIn("--pip-audit-exception", scan["run"])
         self.assertNotIn("cryptography-pkcs7-mlflow-exception.json", scan["run"])
         self.assertIn("security/security.json", scan["run"])
+
+    def test_week11_12_ci_builds_and_scans_every_production_python_image_from_the_commit(self):
+        parsed = yaml.safe_load(self.workflow)
+        steps = parsed["jobs"]["week11-12-verification"]["steps"]
+        build = next(
+            step
+            for step in steps
+            if step.get("name") == "Build production images for security scan"
+        )
+        scan = next(step for step in steps if step.get("name") == "Run security scans")
+
+        self.assertIn("for image in backend worker inference tensorboard", build["run"])
+        self.assertIn("ml-platform-${image}:week11-12-${GITHUB_SHA}", build["run"])
+        self.assertIn("ACCEPTANCE_ADDITIONAL_IMAGES", scan["env"])
+        self.assertIn("ml-platform-worker:week11-12-${{ github.sha }}", scan["env"]["ACCEPTANCE_ADDITIONAL_IMAGES"])
+        self.assertIn("ml-platform-inference:week11-12-${{ github.sha }}", scan["env"]["ACCEPTANCE_ADDITIONAL_IMAGES"])
+        self.assertIn("ml-platform-tensorboard:week11-12-${{ github.sha }}", scan["env"]["ACCEPTANCE_ADDITIONAL_IMAGES"])
+        self.assertIn('dockerfile="Dockerfile"', build["run"])
+        self.assertIn('dockerfile="Dockerfile.$image"', build["run"])
+        self.assertIn('-f "$dockerfile"', build["run"])
+        self.assertIn("docker image inspect", build["run"])
+        self.assertIn("ACCEPTANCE_IMAGE_DIGEST", build["run"])
+        self.assertIn("ACCEPTANCE_ADDITIONAL_IMAGES", scan["env"])
+        self.assertIn("ACCEPTANCE_SOURCE_COMMIT", scan["env"])
+        self.assertEqual(scan["env"]["ACCEPTANCE_SOURCE_COMMIT"], "${{ github.sha }}")
 
     def test_week11_12_ci_runs_web_gate_on_frozen_stack_then_summarizes_security_evidence(self):
         parsed = yaml.safe_load(self.workflow)
@@ -156,6 +181,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn("WEB_SECURITY_GATE_NOT_RUN", rendered_steps)
         self.assertIn("tools.security_scans summarize", rendered_steps)
         self.assertIn("security/summary.json", rendered_steps)
+        self.assertIn('--source-commit "${GITHUB_SHA}"', rendered_steps)
         self.assertIn("docker compose --project-name", rendered_steps)
 
     def test_react_router_audit_exception_is_scoped_time_bound_and_owned(self):

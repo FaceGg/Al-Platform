@@ -34,6 +34,10 @@ _SENSITIVE_KEY_MARKERS = (
     "access-key",
     "accesskey",
 )
+_ABSOLUTE_PATH_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)[^\s\"'<>]*"
+    r"|(?<![:A-Za-z0-9+./-])/(?:[^\s\"'<>]+)",
+)
 REQUIRED_SCAN_GATES = frozenset(
     {
         "python_dependencies",
@@ -301,14 +305,144 @@ class _ProbeHttpClient:
 
 def redact_scan_output(value: str) -> str:
     """Redact credential-like strings while retaining useful scanner context."""
-    return redact_text(value)
+    return _ABSOLUTE_PATH_TOKEN.sub("[redacted-path]", redact_text(value))
+
+
+def _is_absolute_path_argument(value: str) -> bool:
+    """Recognize POSIX and Windows absolute paths independent of host platform."""
+    candidate = value.strip()
+    if len(candidate) >= 2 and candidate[0] in {"\"", "'"} and candidate[-1] == candidate[0]:
+        candidate = candidate[1:-1]
+    return (
+        candidate.startswith(("/", "\\"))
+        or re.match(r"^[A-Za-z]:[\\/]", candidate) is not None
+    )
+
+
+def _contains_absolute_command_path(value: str) -> bool:
+    """Recognize an absolute path supplied directly or as an option value."""
+    option_value = value.partition("=")[2] if "=" in value else ""
+    return _is_absolute_path_argument(value) or _is_absolute_path_argument(option_value)
+
+
+def _valid_redacted_command(command: object) -> bool:
+    """Accept only nonempty redacted command sequences suitable for a receipt."""
+    if isinstance(command, (str, bytes)) or not isinstance(command, Sequence) or not command:
+        return False
+    return all(
+        isinstance(item, str)
+        and bool(item)
+        and not _contains_absolute_command_path(item)
+        for item in command
+    )
+
+
+def is_required_scan_command(
+    name: str,
+    command: object,
+    *,
+    image_reference: str | None = None,
+) -> bool:
+    """Require the exact fail-closed command shape for a passed scanner receipt."""
+    if not _valid_redacted_command(command):
+        return False
+    assert isinstance(command, Sequence)
+    values = list(command)
+    if name == "python_dependencies":
+        return (
+            len(values) == 9
+            and values[1:8] == [
+                "-m",
+                "pip_audit",
+                "-r",
+                "requirements.txt",
+                "--format",
+                "json",
+                "--output",
+            ]
+        )
+    if name == "source_bandit":
+        return (
+            len(values) == 9
+            and values[:8] == [
+                "bandit",
+                "-r",
+                "app",
+                "-q",
+                "-lll",
+                "-f",
+                "json",
+                "-o",
+            ]
+        )
+    if name == "frontend_dependencies":
+        return (
+            len(values) == 7
+            and values[0] == "npm"
+            and values[1] == "--prefix"
+            and values[3:] == [
+                "audit",
+                "--audit-level=high",
+                "--registry=https://registry.npmjs.org",
+                "--json",
+            ]
+        )
+    if name == "filesystem_trivy":
+        return (
+            len(values) == 11
+            and values[:9] == [
+                "trivy",
+                "fs",
+                "--exit-code",
+                "1",
+                "--severity",
+                "HIGH,CRITICAL",
+                "--format",
+                "json",
+                "--output",
+            ]
+        )
+    if name == "container_image":
+        return (
+            isinstance(image_reference, str)
+            and len(values) == 11
+            and values[:9] == [
+                "trivy",
+                "image",
+                "--exit-code",
+                "1",
+                "--severity",
+                "HIGH,CRITICAL",
+                "--format",
+                "json",
+                "--output",
+            ]
+            and values[-1] == image_reference
+        )
+    if name == "secret_gitleaks":
+        return (
+            len(values) == 10
+            and values[:7] == [
+                "gitleaks",
+                "detect",
+                "--no-banner",
+                "--redact",
+                "--report-format",
+                "json",
+                "--report-path",
+            ]
+            and values[8] == "--source"
+        )
+    return False
 
 
 def _redact_command(command: Sequence[str]) -> list[str]:
     safe = []
     for index, item in enumerate(command):
         value = str(item)
-        if index == 0:
+        if _contains_absolute_command_path(value):
+            safe.append("[redacted-path]")
+        elif index == 0:
             safe.append(Path(value).name)
         elif "://" in value:
             safe.append("[redacted-url]")
@@ -2292,6 +2426,8 @@ def _run_frontend_dependency_scan(
     if exception["status"] != "passed":
         result["error_code"] = exception["error_code"]
         return result
+    result["scanner_returncode"] = completed.returncode
+    result["returncode"] = 0
     result["status"] = "passed"
     result["exception"] = exception["exception"]
     return result
@@ -2304,6 +2440,17 @@ def _canonical_distribution_name(name: str) -> str:
 _REQUIRED_PIP_AUDIT_PACKAGES = frozenset(
     _canonical_distribution_name(name)
     for name in ("cryptography", "jaraco.context", "wheel")
+)
+_PRODUCTION_IMAGE_COMPONENTS = (
+    "backend",
+    "worker",
+    "inference",
+    "tensorboard",
+)
+_GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+_IMAGE_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+_PRODUCTION_IMAGE_REFERENCE_PATTERN = re.compile(
+    r"^ml-platform-(backend|worker|inference|tensorboard):[^/@\s]+$",
 )
 
 
@@ -2338,6 +2485,178 @@ def _pip_audit_report_error(evidence_path: Path) -> str | None:
     return None
 
 
+def inspect_image_provenance(reference: str) -> dict[str, str] | None:
+    """Return immutable local image identity and OCI revision without output leaks."""
+    try:
+        completed = subprocess.run(
+            _process_command(["docker", "image", "inspect", reference]),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        details = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(details, list) or len(details) != 1:
+        return None
+    image = details[0]
+    if not isinstance(image, dict):
+        return None
+    image_id = image.get("Id")
+    config = image.get("Config")
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    revision = (
+        labels.get("org.opencontainers.image.revision")
+        if isinstance(labels, dict)
+        else None
+    )
+    if not isinstance(image_id, str) or not isinstance(revision, str):
+        return None
+    return {"image_id": image_id, "revision": revision}
+
+
+def _source_commit(value: str | None) -> str | None:
+    candidate = (value or "").strip()
+    return candidate if _GIT_COMMIT_PATTERN.fullmatch(candidate) else None
+
+
+def _production_image_components(image_references: Sequence[str]) -> tuple[str, ...] | None:
+    components: list[str] = []
+    for reference in image_references:
+        match = _PRODUCTION_IMAGE_REFERENCE_PATTERN.fullmatch(reference)
+        if match is None:
+            return None
+        components.append(match.group(1))
+    resolved = tuple(components)
+    return resolved if resolved == _PRODUCTION_IMAGE_COMPONENTS else None
+
+
+def _raw_scan_report_error(name: str, value: object) -> str | None:
+    """Reject raw scanner artifacts that cannot substantiate a passing gate."""
+    if name == "secret_gitleaks":
+        return (
+            None
+            if isinstance(value, list) and not value
+            else "SECURITY_EVIDENCE_INVALID"
+        )
+    if not isinstance(value, dict):
+        return "SECURITY_EVIDENCE_INVALID"
+    if name == "python_dependencies":
+        dependencies = value.get("dependencies")
+        if not isinstance(dependencies, list):
+            return "SECURITY_EVIDENCE_INVALID"
+        found_required_packages: set[str] = set()
+        for dependency in dependencies:
+            if not isinstance(dependency, dict):
+                return "SECURITY_EVIDENCE_INVALID"
+            package_name = dependency.get("name")
+            vulnerabilities = dependency.get("vulns")
+            if (
+                not isinstance(package_name, str)
+                or not package_name
+                or not isinstance(vulnerabilities, list)
+                or not all(isinstance(vulnerability, dict) for vulnerability in vulnerabilities)
+            ):
+                return "SECURITY_EVIDENCE_INVALID"
+            found_required_packages.add(_canonical_distribution_name(package_name))
+            if vulnerabilities:
+                return "SECURITY_EVIDENCE_INVALID"
+        return (
+            None
+            if _REQUIRED_PIP_AUDIT_PACKAGES.issubset(found_required_packages)
+            else "SECURITY_EVIDENCE_INVALID"
+        )
+    if name == "source_bandit":
+        return (
+            None
+            if isinstance(value.get("errors"), list)
+            and isinstance(value.get("metrics"), dict)
+            and isinstance(value.get("results"), list)
+            and not value["errors"]
+            and not value["results"]
+            else "SECURITY_EVIDENCE_INVALID"
+        )
+    if name == "frontend_dependencies":
+        metadata = value.get("metadata")
+        vulnerabilities = value.get("vulnerabilities")
+        counts = metadata.get("vulnerabilities") if isinstance(metadata, dict) else None
+        if (
+            value.get("auditReportVersion") != 2
+            or not isinstance(vulnerabilities, dict)
+            or not isinstance(counts, dict)
+        ):
+            return "SECURITY_EVIDENCE_INVALID"
+        reported_counts: dict[str, int] = {"high": 0, "critical": 0}
+        for severity in reported_counts:
+            count = counts.get(severity)
+            if type(count) is not int or count < 0:
+                return "SECURITY_EVIDENCE_INVALID"
+            reported_counts[severity] = count
+        observed_counts = {"high": 0, "critical": 0}
+        for vulnerability in vulnerabilities.values():
+            if not isinstance(vulnerability, dict):
+                return "SECURITY_EVIDENCE_INVALID"
+            severity = vulnerability.get("severity")
+            if not isinstance(severity, str):
+                return "SECURITY_EVIDENCE_INVALID"
+            if severity in observed_counts:
+                observed_counts[severity] += 1
+        if observed_counts != reported_counts:
+            return "SECURITY_EVIDENCE_INVALID"
+        if not any(observed_counts.values()):
+            return None
+        repository_root = Path(__file__).resolve().parents[3]
+        exception = evaluate_npm_audit_exception(
+            value,
+            exception_path=(
+                repository_root
+                / "docs"
+                / "security"
+                / "react-router-rsc-mode-exception.json"
+            ),
+            frontend_directory=repository_root / "ml-platform" / "frontend",
+        )
+        return None if exception["status"] == "passed" else "SECURITY_EVIDENCE_INVALID"
+    if name in {"filesystem_trivy", "container_image"}:
+        results = value.get("Results")
+        expected_artifact_type = (
+            "filesystem"
+            if name == "filesystem_trivy"
+            else "container_image"
+        )
+        if (
+            value.get("SchemaVersion") != 2
+            or not isinstance(value.get("ArtifactName"), str)
+            or not value["ArtifactName"]
+            or value.get("ArtifactType") != expected_artifact_type
+            or not isinstance(results, list)
+        ):
+            return "SECURITY_EVIDENCE_INVALID"
+        if name == "container_image":
+            metadata = value.get("Metadata")
+            image_id = metadata.get("ImageID") if isinstance(metadata, dict) else None
+            if (
+                not isinstance(image_id, str)
+                or _IMAGE_ID_PATTERN.fullmatch(image_id) is None
+            ):
+                return "SECURITY_EVIDENCE_INVALID"
+        for result in results:
+            if not isinstance(result, dict):
+                return "SECURITY_EVIDENCE_INVALID"
+            for finding_name in ("Vulnerabilities", "Misconfigurations", "Secrets"):
+                if finding_name in result and (
+                    not isinstance(result[finding_name], list) or result[finding_name]
+                ):
+                    return "SECURITY_EVIDENCE_INVALID"
+        return None
+    return "SECURITY_EVIDENCE_INVALID"
+
+
 def run_all(
     output: str | Path,
     *,
@@ -2345,6 +2664,12 @@ def run_all(
 ) -> dict[str, object]:
     """Run required local scanner commands and persist one aggregate gate result."""
     image_ref = os.getenv("ACCEPTANCE_IMAGE", "")
+    additional_image_refs = tuple(
+        image.strip()
+        for image in os.getenv("ACCEPTANCE_ADDITIONAL_IMAGES", "").split(",")
+        if image.strip()
+    )
+    source_commit = _source_commit(os.getenv("ACCEPTANCE_SOURCE_COMMIT"))
     repository_root = Path(__file__).resolve().parents[3]
     frontend_directory = Path(__file__).resolve().parents[2] / "frontend"
     output_path = Path(output)
@@ -2434,26 +2759,7 @@ def run_all(
                 str(repository_root),
             ],
         ),
-        "container_image": (
-            scanner_gate(
-                "container_image",
-                [
-                    "trivy",
-                    "image",
-                    "--exit-code",
-                    "1",
-                    "--severity",
-                    "HIGH,CRITICAL",
-                    "--format",
-                    "json",
-                    "--output",
-                    str(report_paths["container_image"]),
-                    image_ref,
-                ],
-            )
-            if image_ref
-            else {"status": "failed", "error_code": "ACCEPTANCE_IMAGE_REQUIRED"}
-        ),
+        "container_image": {"status": "failed", "error_code": "ACCEPTANCE_IMAGE_REQUIRED"},
         "secret_gitleaks": scanner_gate(
             "secret_gitleaks",
             [
@@ -2470,6 +2776,95 @@ def run_all(
             ],
         ),
     }
+    image_refs = (image_ref, *additional_image_refs) if image_ref else ()
+    image_components = _production_image_components(image_refs)
+    if image_ref and source_commit is None:
+        gates["container_image"] = {
+            "status": "failed",
+            "error_code": "ACCEPTANCE_SOURCE_COMMIT_INVALID",
+        }
+    elif image_ref and image_components is None:
+        gates["container_image"] = {
+            "status": "failed",
+            "error_code": "ACCEPTANCE_IMAGE_SET_INVALID",
+        }
+    elif image_ref:
+        image_reports: list[dict[str, object]] = []
+        for index, (component, reference) in enumerate(zip(image_components, image_refs)):
+            report_path = report_paths["container_image"].with_name(
+                "trivy-image.json" if index == 0 else f"trivy-image-{index}.json",
+            )
+            provenance_before = inspect_image_provenance(reference)
+            image_result = run_scan(
+                [
+                    "trivy",
+                    "image",
+                    "--exit-code",
+                    "1",
+                    "--severity",
+                    "HIGH,CRITICAL",
+                    "--format",
+                    "json",
+                    "--output",
+                    str(report_path),
+                    reference,
+                ],
+            )
+            _persist_scan_evidence(report_path, image_result)
+            provenance_after = inspect_image_provenance(reference)
+            try:
+                report_value = json.loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                report_value = None
+            report_image_id = (
+                report_value.get("Metadata", {}).get("ImageID")
+                if isinstance(report_value, dict)
+                and isinstance(report_value.get("Metadata"), dict)
+                else None
+            )
+            provenance_valid = (
+                provenance_before is not None
+                and provenance_after is not None
+                and provenance_before == provenance_after
+                and _IMAGE_ID_PATTERN.fullmatch(provenance_after["image_id"]) is not None
+                and provenance_after["revision"] == source_commit
+                and report_image_id == provenance_after["image_id"]
+            )
+            image_reports.append(
+                {
+                    "component": component,
+                    "reference": reference,
+                    "evidence_path": report_path.name,
+                    "image_id": (
+                        provenance_after["image_id"]
+                        if provenance_after is not None
+                        else None
+                    ),
+                    "revision": (
+                        provenance_after["revision"]
+                        if provenance_after is not None
+                        else None
+                    ),
+                    "command": image_result.get("command"),
+                    "returncode": image_result.get("returncode"),
+                    "status": (
+                        image_result["status"]
+                        if (
+                            provenance_valid
+                            and image_result.get("status") == "passed"
+                            and image_result.get("returncode") == 0
+                        )
+                        else "failed"
+                    ),
+                }
+            )
+        gates["container_image"] = {
+            "status": "passed"
+            if all(result["status"] == "passed" for result in image_reports)
+            else "failed",
+            "source_commit": source_commit,
+            "images": image_reports,
+        }
     if not image_ref:
         _persist_scan_evidence(report_paths["container_image"], gates["container_image"])
     result = {
@@ -2484,7 +2879,12 @@ def run_all(
     return result
 
 
-def summarize_scans(input_dir: Path, output: Path) -> dict[str, object]:
+def summarize_scans(
+    input_dir: Path,
+    output: Path,
+    *,
+    source_commit: str | None = None,
+) -> dict[str, object]:
     """Bind every raw scanner result into a single fail-closed status."""
     try:
         input_root = input_dir.resolve(strict=True)
@@ -2524,6 +2924,61 @@ def summarize_scans(input_dir: Path, output: Path) -> dict[str, object]:
     )
     aggregate_gate_names = REQUIRED_SCAN_GATES - {"web_security"}
 
+    def valid_passing_container_gate(gate: Mapping[str, object]) -> bool:
+        """Verify all production image receipts before accepting a passed container gate."""
+        if gate.get("status") != "passed":
+            return True
+        source_commit_value = gate.get("source_commit")
+        images = gate.get("images")
+        if (
+            not isinstance(source_commit_value, str)
+            or _source_commit(source_commit_value) is None
+            or not isinstance(images, list)
+            or len(images) != len(_PRODUCTION_IMAGE_COMPONENTS)
+        ):
+            return False
+        references: list[str] = []
+        for index, (component, image) in enumerate(
+            zip(_PRODUCTION_IMAGE_COMPONENTS, images),
+        ):
+            if (
+                not isinstance(image, dict)
+                or set(image)
+                != {
+                    "component",
+                    "reference",
+                    "evidence_path",
+                    "image_id",
+                    "revision",
+                    "command",
+                    "returncode",
+                    "status",
+                }
+                or image.get("component") != component
+                or not isinstance(image.get("reference"), str)
+                or not image["reference"]
+                or image.get("evidence_path")
+                != (
+                    "trivy-image.json"
+                    if index == 0
+                    else f"trivy-image-{index}.json"
+                )
+                or not isinstance(image.get("image_id"), str)
+                or _IMAGE_ID_PATTERN.fullmatch(image["image_id"]) is None
+                or image.get("revision") != source_commit_value
+                or not is_required_scan_command(
+                    "container_image",
+                    image.get("command"),
+                    image_reference=image["reference"],
+                )
+                or type(image.get("returncode")) is not int
+                or image["returncode"] != 0
+                or image.get("status") != "passed"
+            ):
+                return False
+            references.append(image["reference"])
+        return _production_image_components(tuple(references)) == _PRODUCTION_IMAGE_COMPONENTS
+
     def valid_security_aggregate(value: object) -> bool:
         if not isinstance(value, dict) or set(value) != {"status", "gates"}:
             return False
@@ -2534,6 +2989,15 @@ def summarize_scans(input_dir: Path, output: Path) -> dict[str, object]:
         for name in aggregate_gate_names:
             gate = gates[name]
             if not isinstance(gate, dict) or gate.get("status") not in {"passed", "failed"}:
+                return False
+            if name == "container_image":
+                if not valid_passing_container_gate(gate):
+                    return False
+            elif gate["status"] == "passed" and (
+                not is_required_scan_command(name, gate.get("command"))
+                or type(gate.get("returncode")) is not int
+                or gate["returncode"] != 0
+            ):
                 return False
             statuses.append(gate["status"])
         expected_status = "passed" if all(status == "passed" for status in statuses) else "failed"
@@ -2555,11 +3019,98 @@ def summarize_scans(input_dir: Path, output: Path) -> dict[str, object]:
         if error_code is not None or not isinstance(value, dict):
             invalid_web_evidence = True
 
-    def evidence_error(relative_path: str) -> str | None:
+    def additional_image_evidence_paths() -> tuple[str, ...] | None:
+        if not isinstance(aggregate_gates, dict):
+            return None
+        aggregate_gate = aggregate_gates.get("container_image")
+        if not isinstance(aggregate_gate, dict):
+            return None
+        images = aggregate_gate.get("images")
+        expected_source_commit = _source_commit(source_commit)
+        if (
+            expected_source_commit is None
+            or aggregate_gate.get("source_commit") != expected_source_commit
+            or not isinstance(images, list)
+            or len(images) != len(_PRODUCTION_IMAGE_COMPONENTS)
+        ):
+            return None
+        references = tuple(
+            image.get("reference")
+            for image in images
+            if isinstance(image, dict)
+        )
+        if _production_image_components(references) != _PRODUCTION_IMAGE_COMPONENTS:
+            return None
+        expected_paths: list[str] = []
+        for index, (component, image) in enumerate(
+            zip(_PRODUCTION_IMAGE_COMPONENTS, images),
+        ):
+            if (
+                not isinstance(image, dict)
+                or set(image)
+                != {
+                    "component",
+                    "reference",
+                    "evidence_path",
+                    "image_id",
+                    "revision",
+                    "command",
+                    "returncode",
+                    "status",
+                }
+                or image.get("component") != component
+                or not isinstance(image["reference"], str)
+                or not image["reference"]
+                or not isinstance(image["image_id"], str)
+                or _IMAGE_ID_PATTERN.fullmatch(image["image_id"]) is None
+                or image.get("revision") != expected_source_commit
+                or not is_required_scan_command(
+                    "container_image",
+                    image["command"],
+                    image_reference=image["reference"],
+                )
+                or image.get("returncode") != 0
+                or not isinstance(image["status"], str)
+                or image["status"] != "passed"
+            ):
+                return None
+            expected_path = (
+                "trivy-image.json"
+                if index == 0
+                else f"trivy-image-{index}.json"
+            )
+            if image.get("evidence_path") != expected_path:
+                return None
+            expected_paths.append(expected_path)
+        return tuple(expected_paths)
+
+    def evidence_error(name: str, relative_path: str) -> str | None:
         value, error_code = read_evidence(input_dir / relative_path)
         if error_code is not None:
             return error_code
-        return None if isinstance(value, (dict, list)) else "SECURITY_EVIDENCE_INVALID"
+        raw_error = _raw_scan_report_error(name, value)
+        if raw_error is not None:
+            return raw_error
+        if name != "container_image":
+            return None
+        image_paths = additional_image_evidence_paths()
+        if image_paths is None:
+            return "SECURITY_EVIDENCE_INVALID"
+        for index, image_path in enumerate(image_paths):
+            report_value, report_error = read_evidence(input_dir / image_path)
+            if report_error is not None:
+                return report_error
+            if (
+                report_error := _raw_scan_report_error("container_image", report_value)
+            ) is not None:
+                return report_error
+            image = aggregate_gates["container_image"]["images"][index]
+            if (
+                report_value.get("ArtifactName") != image["reference"]
+                or report_value["Metadata"]["ImageID"] != image["image_id"]
+            ):
+                return "SECURITY_EVIDENCE_INVALID"
+        return None
 
     gates = {}
     for name in sorted(REQUIRED_SCAN_GATES):
@@ -2576,7 +3127,9 @@ def summarize_scans(input_dir: Path, output: Path) -> dict[str, object]:
                 "error_code": web_error or "SECURITY_EVIDENCE_INVALID",
                 "evidence_path": relative_path,
             }
-        elif (error_code := evidence_error(relative_path)) is not None:
+        elif name != "web_security" and (
+            error_code := evidence_error(name, relative_path)
+        ) is not None:
             gates[name] = {
                 "status": "failed",
                 "error_code": error_code,
@@ -2960,6 +3513,7 @@ def main(argv: list[str] | None = None) -> int:
     summary = subparsers.add_parser("summarize")
     summary.add_argument("--input-dir", type=Path, required=True)
     summary.add_argument("--output", type=Path, required=True)
+    summary.add_argument("--source-commit")
     web = subparsers.add_parser("web")
     web.add_argument("--base-url", required=True)
     web.add_argument("--context", type=Path)
@@ -2971,7 +3525,11 @@ def main(argv: list[str] | None = None) -> int:
             npm_audit_exception=args.npm_audit_exception,
         )
     elif args.command == "summarize":
-        result = summarize_scans(args.input_dir, args.output)
+        result = summarize_scans(
+            args.input_dir,
+            args.output,
+            source_commit=args.source_commit or os.getenv("ACCEPTANCE_SOURCE_COMMIT"),
+        )
     else:
         try:
             environment = load_web_context(args.context) if args.context else None

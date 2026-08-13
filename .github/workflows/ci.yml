@@ -551,13 +551,28 @@ jobs:
           set -euo pipefail
           python -m pip install "pip-audit==2.*" "bandit==1.*"
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP/bin" v0.60.0
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP/bin" v0.67.2
           curl -sfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | sh -s -- -b "$RUNNER_TEMP/bin" v8.24.2
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Build backend image for security scan
+      - name: Build production images for security scan
         working-directory: ml-platform/backend
         shell: bash
-        run: docker build --tag "ml-platform-backend:week11-12-${GITHUB_SHA}" -f Dockerfile .
+        run: |
+          set -euo pipefail
+          for image in backend worker inference tensorboard; do
+            dockerfile="Dockerfile"
+            if [ "$image" != "backend" ]; then
+              dockerfile="Dockerfile.$image"
+            fi
+            docker build \
+              --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+              --tag "ml-platform-${image}:week11-12-${GITHUB_SHA}" \
+              -f "$dockerfile" .
+          done
+          docker image inspect \
+            "ml-platform-backend:week11-12-${GITHUB_SHA}" \
+            --format '{{.Id}}' > "$RUNNER_TEMP/week11-12-backend-image-digest.txt"
+          echo "ACCEPTANCE_IMAGE_DIGEST=$(cat "$RUNNER_TEMP/week11-12-backend-image-digest.txt")" >> "$GITHUB_ENV"
       - name: Run verification tools
         working-directory: ml-platform/backend
         run: |
@@ -568,6 +583,8 @@ jobs:
         continue-on-error: true
         env:
           ACCEPTANCE_IMAGE: ml-platform-backend:week11-12-${{ github.sha }}
+          ACCEPTANCE_ADDITIONAL_IMAGES: ml-platform-worker:week11-12-${{ github.sha }},ml-platform-inference:week11-12-${{ github.sha }},ml-platform-tensorboard:week11-12-${{ github.sha }}
+          ACCEPTANCE_SOURCE_COMMIT: ${{ github.sha }}
         run: |
           python -m tools.security_scans all \
             --npm-audit-exception "$GITHUB_WORKSPACE/docs/security/react-router-rsc-mode-exception.json" \
@@ -651,7 +668,8 @@ jobs:
         run: |
           python -m tools.security_scans summarize \
             --input-dir "$ML_PLATFORM_EVIDENCE_DIR/security" \
-            --output "$ML_PLATFORM_EVIDENCE_DIR/security/summary.json"
+            --output "$ML_PLATFORM_EVIDENCE_DIR/security/summary.json" \
+            --source-commit "${GITHUB_SHA}"
       - name: Upload verification evidence
         if: always()
         uses: actions/upload-artifact@v4
