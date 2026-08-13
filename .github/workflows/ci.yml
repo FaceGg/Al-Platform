@@ -526,7 +526,12 @@ jobs:
       TENSORBOARD_SESSION_SECRET: ci-week12-security-tensorboard-secret-at-least-32-bytes
       INFERENCE_INTERNAL_SECRET: ci-week12-security-inference-secret-at-least-32-bytes
       NOTIFICATION_CRYPTO_SECRET_FILE: ${{ runner.temp }}/week12-security-notification-master.key
-      COMPOSE_FILE: docker-compose.yml
+      ACCEPTANCE_SOURCE_COMMIT: ${{ github.sha }}
+      WEEK12_BACKEND_IMAGE: ml-platform-backend:week11-12-${{ github.sha }}
+      WEEK12_WORKER_IMAGE: ml-platform-worker:week11-12-${{ github.sha }}
+      WEEK12_INFERENCE_IMAGE: ml-platform-inference:week11-12-${{ github.sha }}
+      WEEK12_TENSORBOARD_IMAGE: ml-platform-tensorboard:week11-12-${{ github.sha }}
+      COMPOSE_FILE: docker-compose.yml:docker-compose.week12-security-images.yml
       COMPOSE_PROJECT_NAME: ci-week12-security-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v5
@@ -569,15 +574,29 @@ jobs:
               --tag "ml-platform-${image}:week11-12-${GITHUB_SHA}" \
               -f "$dockerfile" .
           done
-          docker image inspect \
+          backend_image_id="$(docker image inspect \
             "ml-platform-backend:week11-12-${GITHUB_SHA}" \
-            --format '{{.Id}}' > "$RUNNER_TEMP/week11-12-backend-image-digest.txt"
-          echo "ACCEPTANCE_IMAGE_DIGEST=$(cat "$RUNNER_TEMP/week11-12-backend-image-digest.txt")" >> "$GITHUB_ENV"
+            --format '{{.Id}}')"
+          worker_image_id="$(docker image inspect \
+            "ml-platform-worker:week11-12-${GITHUB_SHA}" \
+            --format '{{.Id}}')"
+          inference_image_id="$(docker image inspect \
+            "ml-platform-inference:week11-12-${GITHUB_SHA}" \
+            --format '{{.Id}}')"
+          tensorboard_image_id="$(docker image inspect \
+            "ml-platform-tensorboard:week11-12-${GITHUB_SHA}" \
+            --format '{{.Id}}')"
+          {
+            echo "WEEK12_BACKEND_IMAGE_ID=${backend_image_id}"
+            echo "WEEK12_WORKER_IMAGE_ID=${worker_image_id}"
+            echo "WEEK12_INFERENCE_IMAGE_ID=${inference_image_id}"
+            echo "WEEK12_TENSORBOARD_IMAGE_ID=${tensorboard_image_id}"
+            echo "ACCEPTANCE_IMAGE_DIGEST=${backend_image_id}"
+          } >> "$GITHUB_ENV"
       - name: Run verification tools
         working-directory: ml-platform/backend
         run: |
           python -m unittest tests.test_week11_12_tools tests.test_week11_contracts tests.test_week12_security_gates tests.test_evidence_manifest -v
-          python -m tools.acceptance_environment --output "$ML_PLATFORM_EVIDENCE_DIR/environment.json"
       - name: Run security scans
         working-directory: ml-platform/backend
         continue-on-error: true
@@ -648,8 +667,35 @@ jobs:
           trap cleanup EXIT
 
           docker compose --project-name "$COMPOSE_PROJECT_NAME" config -q
-          docker compose --project-name "$COMPOSE_PROJECT_NAME" up --detach --wait \
-            postgres redis minio minio-init mlflow tensorboard-gateway migrate backend
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" up --detach --wait --no-build \
+            postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler
+          verify_scanned_service_image() {
+            local service="$1"
+            local expected_image_id="$2"
+            local container_id actual_image_id actual_revision
+            container_id="$(docker compose --project-name "$COMPOSE_PROJECT_NAME" ps --all -q "$service")"
+            test -n "$container_id"
+            actual_image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
+            test "$actual_image_id" = "$expected_image_id"
+            actual_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$actual_image_id")"
+            test "$actual_revision" = "$GITHUB_SHA"
+          }
+          verify_scanned_service_image migrate "$WEEK12_BACKEND_IMAGE_ID"
+          verify_scanned_service_image backend "$WEEK12_BACKEND_IMAGE_ID"
+          verify_scanned_service_image worker "$WEEK12_WORKER_IMAGE_ID"
+          verify_scanned_service_image scheduler "$WEEK12_WORKER_IMAGE_ID"
+          verify_scanned_service_image tensorboard-gateway "$WEEK12_TENSORBOARD_IMAGE_ID"
+          verify_scanned_service_image inference-runtime "$WEEK12_INFERENCE_IMAGE_ID"
+          PYTHONPATH=ml-platform/backend python -m tools.acceptance_environment runtime-images \
+            --project-name "$COMPOSE_PROJECT_NAME" \
+            --source-commit "$GITHUB_SHA" \
+            --output "$ML_PLATFORM_EVIDENCE_DIR/security/runtime-images.json"
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T backend \
+            python -m tools.acceptance_environment environment \
+            --output /tmp/week12-environment.json
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" cp \
+            backend:/tmp/week12-environment.json \
+            "$ML_PLATFORM_EVIDENCE_DIR/environment.json"
           docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T backend \
             python -m tools.acceptance_environment web-context \
             --output /tmp/week12-web-security-context.json

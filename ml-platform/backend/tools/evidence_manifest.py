@@ -31,12 +31,17 @@ from tools.week11_performance import (
 
 
 MIGRATION_HEAD = "20260720_10_security_notifications"
-REQUIRED_GATE_EVIDENCE = (
+RUNTIME_IMAGE_PROVENANCE_EVIDENCE = Path("security/runtime-images.json")
+REQUIRED_STATUS_GATE_EVIDENCE = (
     Path("performance/summary.json"),
     Path("backup/restore-result.json"),
     Path("upgrade/result.json"),
     Path("security/summary.json"),
     Path("playwright/result.json"),
+)
+REQUIRED_GATE_EVIDENCE = (
+    *REQUIRED_STATUS_GATE_EVIDENCE,
+    RUNTIME_IMAGE_PROVENANCE_EVIDENCE,
 )
 REQUIRED_EVIDENCE = (Path("environment.json"), *REQUIRED_GATE_EVIDENCE)
 _SENSITIVE_KEY = re.compile(
@@ -58,6 +63,12 @@ _PRODUCTION_IMAGE_REFERENCE = re.compile(
     r"ml-platform-(backend|worker|inference|tensorboard):[^/@\s]+$",
 )
 _PRODUCTION_IMAGE_COMPONENTS = ("backend", "worker", "inference", "tensorboard")
+_RUNTIME_IMAGE_COMPONENT_SERVICES = {
+    "backend": ("migrate", "backend"),
+    "worker": ("worker", "scheduler"),
+    "inference": ("inference-runtime",),
+    "tensorboard": ("tensorboard-gateway",),
+}
 _NON_BUSINESS_UPGRADE_TABLES = frozenset(
     {
         "alembic_version",
@@ -483,7 +494,7 @@ def _validate_security(
     *,
     evidence_dir: Path,
     commit: str,
-) -> None:
+) -> dict[str, dict[str, str]]:
     _require_contract(path, result.get("status") == "passed", "status is not passed")
     gates = result.get("gates")
     _require_contract(path, isinstance(gates, dict), "security gates missing")
@@ -492,6 +503,7 @@ def _validate_security(
         REQUIRED_SCAN_GATES.issubset(gates),
         "security gate set incomplete",
     )
+    receipts: dict[str, dict[str, str]] | None = None
     for name in REQUIRED_SCAN_GATES:
         gate = gates[name]
         _require_contract(
@@ -530,7 +542,7 @@ def _validate_security(
                 _contract_failure(path, f"{name} raw scanner evidence invalid")
         else:
             if name == "container_image":
-                _validate_container_image_receipts(
+                receipts = _validate_container_image_receipts(
                     path,
                     gate,
                     evidence_dir=evidence_dir,
@@ -557,6 +569,9 @@ def _validate_security(
                 )
                 if _raw_scan_report_error(name, raw_value) is not None:
                     _contract_failure(path, f"{name} raw scanner evidence invalid")
+    if receipts is None:
+        _contract_failure(path, "container_image scanner receipt missing")
+    return receipts
 
 
 def _validate_container_image_receipts(
@@ -565,7 +580,7 @@ def _validate_container_image_receipts(
     *,
     evidence_dir: Path,
     commit: str,
-) -> None:
+) -> dict[str, dict[str, str]]:
     source_commit = gate.get("source_commit")
     images = gate.get("images")
     if not isinstance(images, list) or len(images) != len(_PRODUCTION_IMAGE_COMPONENTS):
@@ -585,6 +600,7 @@ def _validate_container_image_receipts(
     if source_commit != commit:
         _contract_failure(path, "container_image scanner receipt invalid")
 
+    receipts: dict[str, dict[str, str]] = {}
     for index, (component, image) in enumerate(
         zip(_PRODUCTION_IMAGE_COMPONENTS, images),
     ):
@@ -637,6 +653,51 @@ def _validate_container_image_receipts(
             _contract_failure(path, "container_image scanner receipt invalid")
         if _raw_scan_report_error("container_image", report) is not None:
             _contract_failure(path, "container_image scanner receipt invalid")
+        receipts[component] = {
+            "reference": str(reference),
+            "image_id": str(image["image_id"]),
+            "revision": str(image["revision"]),
+        }
+    return receipts
+
+
+def _validate_runtime_image_provenance(
+    path: Path,
+    provenance: Mapping[str, object],
+    *,
+    commit: str,
+    receipts: Mapping[str, Mapping[str, str]],
+) -> None:
+    expected_keys = {"schema_version", "source_commit", "components"}
+    if set(provenance) != expected_keys:
+        _contract_failure(path, "runtime image provenance invalid")
+    components = provenance.get("components")
+    if (
+        provenance.get("schema_version") != 1
+        or provenance.get("source_commit") != commit
+        or not isinstance(components, list)
+        or len(components) != len(_PRODUCTION_IMAGE_COMPONENTS)
+    ):
+        _contract_failure(path, "runtime image provenance invalid")
+
+    component_keys = {"component", "services", "reference", "image_id", "revision"}
+    for expected_component, entry in zip(_PRODUCTION_IMAGE_COMPONENTS, components):
+        if not isinstance(entry, dict) or set(entry) != component_keys:
+            _contract_failure(path, "runtime image provenance invalid")
+        services = entry.get("services")
+        if (
+            entry.get("component") != expected_component
+            or not isinstance(services, list)
+            or services != list(_RUNTIME_IMAGE_COMPONENT_SERVICES[expected_component])
+            or entry.get("revision") != commit
+        ):
+            _contract_failure(path, "runtime image provenance invalid")
+        receipt = receipts.get(expected_component)
+        if receipt is None or any(
+            entry.get(field) != receipt[field]
+            for field in ("reference", "image_id", "revision")
+        ):
+            _contract_failure(path, "runtime image provenance invalid")
 
 
 def _validate_playwright(path: Path, result: Mapping[str, object]) -> None:
@@ -712,7 +773,10 @@ def generate(
         except RuntimeError:
             missing.append(str(relative))
     if missing:
-        raise FileNotFoundError(f"missing required evidence: {missing}")
+        raise FileNotFoundError(
+            "missing required evidence: "
+            + str([relative.replace("\\", "/") for relative in missing]),
+        )
 
     _assert_safe_metadata(remote_ci_run_url, image_digest)
     environment_path = evidence_dir / "environment.json"
@@ -724,6 +788,7 @@ def generate(
     statuses = {
         relative.as_posix(): value.get("status")
         for relative, value in evidence.items()
+        if relative in REQUIRED_STATUS_GATE_EVIDENCE
     }
     if any(status != "passed" for status in statuses.values()):
         raise RuntimeError(f"required evidence did not pass: {statuses}")
@@ -748,11 +813,17 @@ def generate(
         Path("upgrade/result.json"),
         evidence[Path("upgrade/result.json")],
     )
-    _validate_security(
+    receipts = _validate_security(
         Path("security/summary.json"),
         evidence[Path("security/summary.json")],
         evidence_dir=evidence_dir,
         commit=commit,
+    )
+    _validate_runtime_image_provenance(
+        RUNTIME_IMAGE_PROVENANCE_EVIDENCE,
+        evidence[RUNTIME_IMAGE_PROVENANCE_EVIDENCE],
+        commit=commit,
+        receipts=receipts,
     )
     _validate_playwright(
         Path("playwright/result.json"),

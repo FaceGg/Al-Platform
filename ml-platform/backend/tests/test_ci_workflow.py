@@ -9,6 +9,9 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
 COMPOSE_FILE = REPOSITORY_ROOT / "docker-compose.yml"
 ACCEPTANCE_COMPOSE_FILE = REPOSITORY_ROOT / "docker-compose.acceptance.yml"
+WEEK12_SECURITY_IMAGES_COMPOSE_FILE = (
+    REPOSITORY_ROOT / "docker-compose.week12-security-images.yml"
+)
 FRONTEND_DOCKERFILE = REPOSITORY_ROOT / "ml-platform" / "frontend" / "Dockerfile"
 NPM_AUDIT_EXCEPTION = (
     REPOSITORY_ROOT / "docs" / "security" / "react-router-rsc-mode-exception.json"
@@ -167,6 +170,92 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn("ACCEPTANCE_ADDITIONAL_IMAGES", scan["env"])
         self.assertIn("ACCEPTANCE_SOURCE_COMMIT", scan["env"])
         self.assertEqual(scan["env"]["ACCEPTANCE_SOURCE_COMMIT"], "${{ github.sha }}")
+
+    def test_week11_12_frozen_stack_uses_the_exact_scanned_images_without_rebuild(self):
+        parsed = yaml.safe_load(self.workflow)
+        job = parsed["jobs"]["week11-12-verification"]
+        steps = job["steps"]
+        build = next(
+            step
+            for step in steps
+            if step.get("name") == "Build production images for security scan"
+        )
+        frozen_stack = next(
+            step for step in steps if step.get("name") == "Run frozen-stack web security gate"
+        )
+
+        self.assertEqual(
+            job["env"].get("COMPOSE_FILE"),
+            "docker-compose.yml:docker-compose.week12-security-images.yml",
+        )
+        expected_images = {
+            "WEEK12_BACKEND_IMAGE": "ml-platform-backend:week11-12-${{ github.sha }}",
+            "WEEK12_WORKER_IMAGE": "ml-platform-worker:week11-12-${{ github.sha }}",
+            "WEEK12_INFERENCE_IMAGE": "ml-platform-inference:week11-12-${{ github.sha }}",
+            "WEEK12_TENSORBOARD_IMAGE": "ml-platform-tensorboard:week11-12-${{ github.sha }}",
+        }
+        for variable, reference in expected_images.items():
+            with self.subTest(variable=variable):
+                self.assertEqual(job["env"].get(variable), reference)
+                self.assertIn(f"{variable}_ID=", build["run"])
+
+        self.assertIn("up --detach --wait --no-build", frozen_stack["run"])
+        self.assertIn(
+            "postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler",
+            frozen_stack["run"],
+        )
+        for marker in (
+            'verify_scanned_service_image migrate "$WEEK12_BACKEND_IMAGE_ID"',
+            'verify_scanned_service_image backend "$WEEK12_BACKEND_IMAGE_ID"',
+            'verify_scanned_service_image worker "$WEEK12_WORKER_IMAGE_ID"',
+            'verify_scanned_service_image scheduler "$WEEK12_WORKER_IMAGE_ID"',
+            'verify_scanned_service_image tensorboard-gateway "$WEEK12_TENSORBOARD_IMAGE_ID"',
+            'verify_scanned_service_image inference-runtime "$WEEK12_INFERENCE_IMAGE_ID"',
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, frozen_stack["run"])
+
+        runtime_images_command = "python -m tools.acceptance_environment runtime-images"
+        environment_command = "python -m tools.acceptance_environment environment"
+        self.assertIn(runtime_images_command, frozen_stack["run"])
+        self.assertIn(
+            '--output "$ML_PLATFORM_EVIDENCE_DIR/security/runtime-images.json"',
+            frozen_stack["run"],
+        )
+        self.assertIn(environment_command, frozen_stack["run"])
+        self.assertGreater(
+            frozen_stack["run"].index(runtime_images_command),
+            frozen_stack["run"].index(
+                'verify_scanned_service_image scheduler "$WEEK12_WORKER_IMAGE_ID"',
+            ),
+        )
+        self.assertGreater(
+            frozen_stack["run"].index(environment_command),
+            frozen_stack["run"].index(runtime_images_command),
+        )
+
+        self.assertTrue(WEEK12_SECURITY_IMAGES_COMPOSE_FILE.is_file())
+        if not WEEK12_SECURITY_IMAGES_COMPOSE_FILE.is_file():
+            return
+        image_override = yaml.safe_load(
+            WEEK12_SECURITY_IMAGES_COMPOSE_FILE.read_text(encoding="utf-8")
+        )
+        expected_services = {
+            "migrate": "WEEK12_BACKEND_IMAGE",
+            "backend": "WEEK12_BACKEND_IMAGE",
+            "notification-receiver": "WEEK12_BACKEND_IMAGE",
+            "notification-proxy": "WEEK12_BACKEND_IMAGE",
+            "worker": "WEEK12_WORKER_IMAGE",
+            "scheduler": "WEEK12_WORKER_IMAGE",
+            "inference-runtime": "WEEK12_INFERENCE_IMAGE",
+            "tensorboard-gateway": "WEEK12_TENSORBOARD_IMAGE",
+        }
+        for service, variable in expected_services.items():
+            with self.subTest(service=service):
+                self.assertEqual(
+                    image_override["services"][service]["image"],
+                    f"${{{variable}:?set {variable}}}",
+                )
 
     def test_week11_12_ci_runs_web_gate_on_frozen_stack_then_summarizes_security_evidence(self):
         parsed = yaml.safe_load(self.workflow)
@@ -472,7 +561,13 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn("tests.test_week11_contracts", run_tools["run"])
         self.assertIn("tests.test_week12_security_gates", run_tools["run"])
         self.assertIn("tests.test_evidence_manifest", run_tools["run"])
-        self.assertIn("tools.acceptance_environment", run_tools["run"])
+        self.assertNotIn("tools.acceptance_environment", run_tools["run"])
+
+        frozen_stack = next(
+            step for step in job["steps"] if step.get("name") == "Run frozen-stack web security gate"
+        )
+        self.assertIn("tools.acceptance_environment runtime-images", frozen_stack["run"])
+        self.assertIn("tools.acceptance_environment environment", frozen_stack["run"])
 
         upload = next(
             step for step in job["steps"] if step.get("name") == "Upload verification evidence"

@@ -1,0 +1,29 @@
+# CI-only override: runtime services must use the exact production images that
+# the Week 12 security scan has already bound to the current source revision.
+services:
+  migrate:
+    image: ${WEEK12_BACKEND_IMAGE:?set WEEK12_BACKEND_IMAGE}
+
+  backend:
+    image: ${WEEK12_BACKEND_IMAGE:?set WEEK12_BACKEND_IMAGE}
+    environment:
+      ACCEPTANCE_IMAGE_DIGEST: ${WEEK12_BACKEND_IMAGE_ID:?set WEEK12_BACKEND_IMAGE_ID}
+      ACCEPTANCE_SOURCE_COMMIT: ${ACCEPTANCE_SOURCE_COMMIT:?set ACCEPTANCE_SOURCE_COMMIT}
+
+  worker:
+    image: ${WEEK12_WORKER_IMAGE:?set WEEK12_WORKER_IMAGE}
+
+  scheduler:
+    image: ${WEEK12_WORKER_IMAGE:?set WEEK12_WORKER_IMAGE}
+
+  inference-runtime:
+    image: ${WEEK12_INFERENCE_IMAGE:?set WEEK12_INFERENCE_IMAGE}
+
+  tensorboard-gateway:
+    image: ${WEEK12_TENSORBOARD_IMAGE:?set WEEK12_TENSORBOARD_IMAGE}
+
+  notification-receiver:
+    image: ${WEEK12_BACKEND_IMAGE:?set WEEK12_BACKEND_IMAGE}
+
+  notification-proxy:
+    image: ${WEEK12_BACKEND_IMAGE:?set WEEK12_BACKEND_IMAGE}

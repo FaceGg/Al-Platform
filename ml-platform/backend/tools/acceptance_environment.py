@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +37,15 @@ PACKAGE_NAMES = ("fastapi", "sqlalchemy", "alembic", "celery")
 _WEB_CONTEXT_ROLES = ("owner", "editor", "operator", "viewer", "outsider")
 _WEB_CONTEXT_KEYS = frozenset(
     {"schema_version", "project_id", "endpoint_id", "user_ids", "tokens"},
+)
+_GIT_COMMIT = re.compile(r"[0-9a-f]{40}")
+_IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
+_RUNTIME_IMAGE_METADATA_KEYS = frozenset({"reference", "image_id", "revision"})
+_RUNTIME_IMAGE_COMPONENTS = (
+    ("backend", ("migrate", "backend")),
+    ("worker", ("worker", "scheduler")),
+    ("inference", ("inference-runtime",)),
+    ("tensorboard", ("tensorboard-gateway",)),
 )
 
 
@@ -78,6 +88,13 @@ def _package_versions() -> dict[str, str]:
     return versions
 
 
+def _environment_source_commit(values: Mapping[str, str]) -> str:
+    source_commit = str(values.get("ACCEPTANCE_SOURCE_COMMIT", "")).strip()
+    if _GIT_COMMIT.fullmatch(source_commit):
+        return source_commit
+    return _command_output(["git", "rev-parse", "HEAD"])
+
+
 def collect_environment(environment: Mapping[str, str] | None = None) -> dict[str, object]:
     """Collect only explicitly allowlisted configuration, never secret values."""
     values = environment if environment is not None else os.environ
@@ -94,13 +111,120 @@ def collect_environment(environment: Mapping[str, str] | None = None) -> dict[st
             "memory_bytes": _memory_bytes(),
         },
         "packages": _package_versions(),
-        "git": {"commit": _command_output(["git", "rev-parse", "HEAD"])},
+        "git": {"commit": _environment_source_commit(values)},
         "migration": {"current": _command_output(["alembic", "current"])},
         "container": {
             "image_digest": redact(values.get("ACCEPTANCE_IMAGE_DIGEST", "unavailable")),
             "compose": _command_output(["docker", "compose", "ps", "--format", "json"]),
         },
         "configuration": allowed,
+    }
+
+
+def _runtime_image_metadata(value: Mapping[str, object]) -> dict[str, str]:
+    if set(value) != _RUNTIME_IMAGE_METADATA_KEYS:
+        raise ValueError("runtime image service metadata invalid")
+    reference = value.get("reference")
+    image_id = value.get("image_id")
+    revision = value.get("revision")
+    if (
+        not isinstance(reference, str)
+        or not reference.strip()
+        or not isinstance(image_id, str)
+        or _IMAGE_ID.fullmatch(image_id) is None
+        or not isinstance(revision, str)
+        or _GIT_COMMIT.fullmatch(revision) is None
+    ):
+        raise ValueError("runtime image service metadata invalid")
+    return {
+        "reference": reference,
+        "image_id": image_id,
+        "revision": revision,
+    }
+
+
+def collect_runtime_image_provenance(
+    source_commit: str,
+    *,
+    inspect_service: Callable[[str], Mapping[str, object]],
+) -> dict[str, object]:
+    """Bind every frozen runtime service to its running image metadata."""
+    if _GIT_COMMIT.fullmatch(source_commit) is None:
+        raise ValueError("runtime image source commit is invalid")
+
+    components: list[dict[str, object]] = []
+    for component, services in _RUNTIME_IMAGE_COMPONENTS:
+        metadata: dict[str, str] | None = None
+        for service in services:
+            candidate = _runtime_image_metadata(inspect_service(service))
+            if metadata is None:
+                metadata = candidate
+            elif candidate != metadata:
+                raise ValueError("runtime image service metadata mismatch")
+        assert metadata is not None
+        if metadata["revision"] != source_commit:
+            raise ValueError("runtime image revision does not match source commit")
+        components.append(
+            {
+                "component": component,
+                "services": list(services),
+                **metadata,
+            },
+        )
+    return {
+        "schema_version": 1,
+        "source_commit": source_commit,
+        "components": components,
+    }
+
+
+def _required_command_output(command: list[str]) -> str:
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        raise RuntimeError("runtime image inspection unavailable") from error
+    output = completed.stdout.strip()
+    if completed.returncode != 0 or not output:
+        raise RuntimeError("runtime image inspection unavailable")
+    return redact(output)
+
+
+def _inspect_runtime_image_service(project_name: str, service: str) -> dict[str, str]:
+    container_id = _required_command_output(
+        [
+            "docker",
+            "compose",
+            "--project-name",
+            project_name,
+            "ps",
+            "--all",
+            "-q",
+            service,
+        ],
+    )
+    image_id = _required_command_output(
+        ["docker", "inspect", "--format", "{{.Image}}", container_id],
+    )
+    return {
+        "reference": _required_command_output(
+            ["docker", "inspect", "--format", "{{.Config.Image}}", container_id],
+        ),
+        "image_id": image_id,
+        "revision": _required_command_output(
+            [
+                "docker",
+                "image",
+                "inspect",
+                "--format",
+                '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+                image_id,
+            ],
+        ),
     }
 
 
@@ -267,12 +391,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=("environment", "web-context", "web-context-cleanup"),
+        choices=("environment", "runtime-images", "web-context", "web-context-cleanup"),
         nargs="?",
         default="environment",
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--context", type=Path)
+    parser.add_argument("--project-name")
+    parser.add_argument("--source-commit")
     args = parser.parse_args(argv)
     if args.command == "environment":
         if args.output is None:
@@ -281,6 +407,23 @@ def main(argv: list[str] | None = None) -> int:
         args.output.write_text(
             json.dumps(collect_environment(), ensure_ascii=True, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
+        )
+    elif args.command == "runtime-images":
+        if args.output is None:
+            parser.error("--output is required for runtime-images")
+        if args.project_name is None:
+            parser.error("--project-name is required for runtime-images")
+        if args.source_commit is None:
+            parser.error("--source-commit is required for runtime-images")
+        _write_private_json(
+            args.output,
+            collect_runtime_image_provenance(
+                args.source_commit,
+                inspect_service=lambda service: _inspect_runtime_image_service(
+                    args.project_name,
+                    service,
+                ),
+            ),
         )
     elif args.command == "web-context":
         if args.output is None:

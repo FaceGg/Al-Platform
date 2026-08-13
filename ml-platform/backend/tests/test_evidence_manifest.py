@@ -117,7 +117,30 @@ class EvidenceManifestTests(unittest.TestCase):
                 "after_table_counts": {"projects": 1, "notification_outbox": 0},
             },
         )
-        self._write_security_evidence(root)
+        image_receipts = self._write_security_evidence(root)
+        self._write_json(
+            root,
+            "security/runtime-images.json",
+            {
+                "schema_version": 1,
+                "source_commit": self._COMMIT,
+                "components": [
+                    {
+                        "component": receipt["component"],
+                        "services": {
+                            "backend": ["migrate", "backend"],
+                            "worker": ["worker", "scheduler"],
+                            "inference": ["inference-runtime"],
+                            "tensorboard": ["tensorboard-gateway"],
+                        }[str(receipt["component"])],
+                        "reference": receipt["reference"],
+                        "image_id": receipt["image_id"],
+                        "revision": receipt["revision"],
+                    }
+                    for receipt in image_receipts
+                ],
+            },
+        )
         self._write_json(
             root,
             "playwright/result.json",
@@ -128,7 +151,7 @@ class EvidenceManifestTests(unittest.TestCase):
             },
         )
 
-    def _write_security_evidence(self, root: Path) -> None:
+    def _write_security_evidence(self, root: Path) -> list[dict[str, object]]:
         security_root = root / "security"
         image_components = ("backend", "worker", "inference", "tensorboard")
         image_references = tuple(
@@ -277,6 +300,7 @@ class EvidenceManifestTests(unittest.TestCase):
             security_root / "summary.json",
             source_commit=self._COMMIT,
         )
+        return image_receipts
 
     def _write_required_evidence(
         self,
@@ -297,6 +321,15 @@ class EvidenceManifestTests(unittest.TestCase):
                 "playwright/result.json",
             ):
                 self._write_json(root, relative_path, {"status": status})
+            self._write_json(
+                root,
+                "security/runtime-images.json",
+                {
+                    "schema_version": 1,
+                    "source_commit": self._COMMIT,
+                    "components": [],
+                },
+            )
         if include_environment:
             self._write_json(root, "environment.json", self._environment())
 
@@ -366,7 +399,6 @@ class EvidenceManifestTests(unittest.TestCase):
                         remote_ci_run_url="https://github.example.invalid/actions/runs/1",
                         image_digest=self._IMAGE_DIGEST,
                     )
-
             (evidence_dir / "security" / "summary.json").unlink()
             with self.assertRaisesRegex(FileNotFoundError, "missing required evidence"):
                 generate(
@@ -375,6 +407,147 @@ class EvidenceManifestTests(unittest.TestCase):
                     remote_ci_run_url="https://github.example.invalid/actions/runs/1",
                     image_digest=self._IMAGE_DIGEST,
                 )
+
+    def test_generate_requires_runtime_image_provenance_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_dir = Path(directory) / "evidence"
+            self._write_required_evidence(
+                evidence_dir,
+                include_environment=True,
+                semantic=True,
+            )
+            (evidence_dir / "security" / "runtime-images.json").unlink()
+            output = Path(directory) / "manifest.json"
+
+            with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                with self.assertRaisesRegex(FileNotFoundError, "security/runtime-images.json"):
+                    generate(
+                        evidence_dir,
+                        output,
+                        remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                        image_digest=self._IMAGE_DIGEST,
+                    )
+
+    def test_generate_rejects_runtime_image_provenance_that_does_not_match_receipts(self):
+        for component, field, value in (
+            ("backend", "reference", "ml-platform-backend:tampered"),
+            ("worker", "image_id", "sha256:" + "f" * 64),
+            ("inference", "revision", "b" * 40),
+            ("tensorboard", "image_id", "sha256:" + "e" * 64),
+        ):
+            with self.subTest(component=component, field=field), tempfile.TemporaryDirectory() as directory:
+                evidence_dir = Path(directory) / "evidence"
+                self._write_required_evidence(
+                    evidence_dir,
+                    include_environment=True,
+                    semantic=True,
+                )
+                provenance_path = evidence_dir / "security" / "runtime-images.json"
+                provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+                entry = next(
+                    item
+                    for item in provenance["components"]
+                    if item["component"] == component
+                )
+                entry[field] = value
+                provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
+                output = Path(directory) / "manifest.json"
+
+                with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                    with self.assertRaisesRegex(RuntimeError, "runtime image provenance invalid"):
+                        generate(
+                            evidence_dir,
+                            output,
+                            remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                            image_digest=self._IMAGE_DIGEST,
+                        )
+
+    def test_generate_rejects_malformed_runtime_image_provenance(self):
+        cases = {
+            "wrong source commit": lambda value: value.__setitem__("source_commit", "b" * 40),
+            "extra component": lambda value: value["components"].append(
+                {
+                    "component": "unknown",
+                    "services": ["unknown"],
+                    "reference": "ml-platform-backend:test",
+                    "image_id": "sha256:" + "f" * 64,
+                    "revision": self._COMMIT,
+                },
+            ),
+            "duplicate component": lambda value: value["components"].__setitem__(
+                1,
+                {
+                    **value["components"][1],
+                    "component": "backend",
+                },
+            ),
+            "invalid worker services": lambda value: value["components"][1].__setitem__(
+                "services",
+                ["worker", "worker"],
+            ),
+            "uncontrolled field": lambda value: value["components"][0].__setitem__(
+                "unrecognized",
+                "value",
+            ),
+        }
+        for description, mutate in cases.items():
+            with self.subTest(description=description), tempfile.TemporaryDirectory() as directory:
+                evidence_dir = Path(directory) / "evidence"
+                self._write_required_evidence(
+                    evidence_dir,
+                    include_environment=True,
+                    semantic=True,
+                )
+                provenance_path = evidence_dir / "security" / "runtime-images.json"
+                provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+                mutate(provenance)
+                provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
+                output = Path(directory) / "manifest.json"
+
+                with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                    with self.assertRaisesRegex(RuntimeError, "runtime image provenance invalid"):
+                        generate(
+                            evidence_dir,
+                            output,
+                            remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                            image_digest=self._IMAGE_DIGEST,
+                        )
+
+    def test_generate_rejects_sensitive_or_absolute_runtime_image_provenance(self):
+        cases = {
+            "absolute reference": (
+                lambda value: value["components"][0].__setitem__("reference", "/tmp/image"),
+                ValueError,
+                "absolute path",
+            ),
+            "secret field": (
+                lambda value: value["components"][0].__setitem__("api_key", "secret"),
+                ValueError,
+                "sensitive value",
+            ),
+        }
+        for description, (mutate, error, message) in cases.items():
+            with self.subTest(description=description), tempfile.TemporaryDirectory() as directory:
+                evidence_dir = Path(directory) / "evidence"
+                self._write_required_evidence(
+                    evidence_dir,
+                    include_environment=True,
+                    semantic=True,
+                )
+                provenance_path = evidence_dir / "security" / "runtime-images.json"
+                provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+                mutate(provenance)
+                provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
+                output = Path(directory) / "manifest.json"
+
+                with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                    with self.assertRaisesRegex(error, message):
+                        generate(
+                            evidence_dir,
+                            output,
+                            remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                            image_digest=self._IMAGE_DIGEST,
+                        )
 
     def test_generate_rejects_sensitive_values_in_evidence_or_metadata(self):
         with tempfile.TemporaryDirectory() as directory:

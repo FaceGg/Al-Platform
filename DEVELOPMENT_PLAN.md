@@ -1619,3 +1619,12 @@
 - 影响范围：Week 12 证据 manifest 解析、测试夹具和安全回归；不改变业务 API、Redis 限流算法、通知通道或扫描例外。
 - 预防措施：安全证据夹具必须由真实 scanner 命令形状和原始 JSON 生成；manifest 合同变更时同时更新合法 baseline、缺失字段和弱化命令回归，并分别验证错误码。
 - 遗留事项：固定 4 vCPU/8 GiB 限流第 6 次请求仍待隔离 WSL 诊断；四镜像无缓存构建/Trivy、备份恢复、N-1、完整 Chromium、最终 manifest、远程 CI 和合并仍未闭合。
+
+### 2026-08-13：第 11-12 周运行态镜像 provenance 暂停检查点
+
+- 当前状态：用户要求保存进度并暂停修复。第 9 至第 12 周、Task 13 继续保持“进行中”；本条只保存已验证的本地合同与静态 Compose 结果，不将其表述为 frozen stack、最终安全门禁或远程 CI 通过。
+- 开发内容：为 Week 12 frozen-stack 增加受控的 `runtime-images` 证据采集和 manifest 校验。证据固定覆盖 backend（`migrate`、`backend`）、worker（`worker`、`scheduler`）、inference（`inference-runtime`）和 tensorboard（`tensorboard-gateway`）的 image reference、image ID、OCI revision 与 source commit；CI 通过 `docker-compose.week12-security-images.yml` 使用已扫描镜像并禁止运行阶段重新 build。
+- 已确认行为：同组件服务镜像 metadata 不一致、非法 image ID/revision、revision 与 source commit 不一致、缺少 runtime artifact、artifact 键/服务集合非法、artifact 与 Trivy receipt 映射不一致，以及绝对/敏感 runtime metadata，均由本地合同拒绝。`environment.json` 在容器内无 `.git` 时优先使用受控的 `ACCEPTANCE_SOURCE_COMMIT`。
+- 验证方式：在 `ml-platform/backend` 目录以 `PYTHONPATH=.` 运行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_acceptance_environment tests.test_evidence_manifest tests.test_ci_workflow tests.test_week12_security_gates tests.test_image_security_contracts -q`，结果 212 项通过；其中出现的 `--pip-audit-exception legacy-exception.json` usage 输出来自受控负向 CLI 测试。随后 `C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 退出码为 0。WSL Docker 29.6.2 / Compose v5.3.1 在完整 CI 等价占位环境变量下执行 `docker compose -f docker-compose.yml -f docker-compose.week12-security-images.yml config -q` 退出码为 0。
+- 暂停边界：未执行真实 frozen-stack `up/inspect/runtime-images/summarize/down` 生命周期，未生成最终 evidence manifest，未运行 GitHub Actions。CI scanner bootstrap 的可变下载/直接执行高危项（Trivy、Gitleaks、MinIO `mc`）尚未开始修改；恢复时先完成 RED 合同、固定 release asset SHA-256 与版本检查，再继续 WSL 验收。
+- 提交边界：本次提交纳入当前任务范围的 CI、Compose override、Python 工具、回归测试和本文件。`tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 为缓存或原始扫描证据，不纳入 Git。
