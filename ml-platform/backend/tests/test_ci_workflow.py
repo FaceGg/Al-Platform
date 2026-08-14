@@ -734,6 +734,15 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
                     expected_settings.issubset(compose["services"][service_name]["environment"]),
                 )
 
+    def test_minio_init_uses_the_backend_bucket_expression(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+        minio_init = compose["services"]["minio-init"]["environment"]
+        backend = compose["services"]["backend"]["environment"]
+
+        self.assertIn("MINIO_BUCKET", minio_init)
+        self.assertEqual(minio_init["MINIO_BUCKET"], "${MINIO_BUCKET:-ml-platform}")
+        self.assertEqual(minio_init["MINIO_BUCKET"], backend["MINIO_BUCKET"])
+
     def test_inference_lifecycle_ci_uses_an_isolated_compose_project(self):
         parsed = yaml.safe_load(self.workflow)
         job = parsed["jobs"]["experiment-integration"]

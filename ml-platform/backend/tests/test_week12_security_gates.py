@@ -3261,6 +3261,35 @@ class SecurityGateTests(unittest.TestCase):
             "SECURITY_EVIDENCE_MISSING",
         )
 
+    def test_summary_rejects_missing_required_container_image_receipt_as_invalid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            aggregate_path = root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            aggregate["gates"]["container_image"]["images"].pop()
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
     def test_summary_requires_source_commit_to_bind_production_images(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1709,3 +1709,22 @@
 - 验证方式：提交 `ae5c6c5d199a54ccf485ede105cef51bc1e0f688` 后，WSL Docker 29.6.2 / Compose v5.3.1 以 `--pull --no-cache` 重建四镜像；镜像 ID 分别为 `sha256:6cd1427f4c96ebc570ce0a6665b1ec077f9bf8a42424595786512540ba8362c4`、`sha256:537d894fbd9b80c862d05554e66c570cf0b209e893cf15cfe9fbf65965861ac`、`sha256:7f9fb0584865f078290776220d25edd5f0d686abf31a1bb2ed3bb485e93d0992`、`sha256:cb3900e966a768651b6f6325d018f29d0434e6ed916ce46087dd13628ac6c80a`，四个 `org.opencontainers.image.revision` 均精确匹配该 SHA；四镜像 smoke 均为 UID 1000、`HOME=/home/app`、Python 3.11.15；`tests.test_image_security_contracts` 为 7/7，`git diff --check` 通过。
 - 预防措施：PowerShell、WSL、Docker、容器 shell 多边界命令优先使用单层脚本或直接参数传递；先用单镜像最小命令验证 quoting，再运行批量循环。宿主 quoting 失败不得改写为镜像失败。
 - 遗留事项：Task 5 的四镜像 Trivy HIGH/CRITICAL receipts、完整 `tools.security_scans`、pip-audit/Bandit/Gitleaks/npm audit、frozen Compose、性能、备份恢复、N-1、Chromium、四通知通道、最终 manifest、远程 CI、推送和合并仍未闭合。
+
+### 2026-08-14：第 12 周 Task 5 容器镜像回执完整性回归
+
+- 当前状态：新增 fail-closed 回归已完成；第 9 至第 12 周、Task 13 继续保持“进行中”，不将该本地合同替代四镜像 Trivy、完整安全链或远程 CI。
+- 问题现象：聚合 `security.json` 的 `container_image.images` 若缺少任一已要求的镜像回执，汇总器必须明确拒绝；仅覆盖单个 `ArtifactName`、`Metadata.ImageID`、OCI revision 或 failed record 不能证明该 cardinality 边界。
+- 解决方法：在 `tests.test_week12_security_gates` 增加真实 `summarize` 路径回归：从有效 aggregate receipt 删除一项 image，断言退出码为 1、summary 状态为 `failed`、container image gate 错误码为 `SECURITY_EVIDENCE_INVALID`。未放宽生产扫描器或把必需镜像降级为可选。
+- 验证方式：`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_week12_security_gates.SecurityGateTests.test_summary_rejects_missing_required_container_image_receipt_as_invalid -v` 为 1/1 通过；代码差异只增加该回归。
+- 预防措施：任何 required image set 的变更同时覆盖缺回执、错误 artifact、错误 image ID、错误 OCI revision 与 failed receipt；汇总器对不完整 aggregate evidence 必须失败关闭。
+- 遗留事项：仍需对最终 HEAD 的 backend、worker、inference、tensorboard 重新构建并产生四份真实 Trivy receipt，再运行完整 `tools.security_scans` 与最终 manifest。
+
+### 2026-08-14：Task 3 Compose MinIO bucket 传播修复
+
+- 当前状态：已定位并修复限流诊断前的 Compose 配置缺陷；第 9 至第 12 周、Task 13 继续保持“进行中”，本条不代表最终生产栈或远程 CI 通过。
+- 问题现象：唯一 `MINIO_BUCKET` 隔离 Compose 生命周期中，backend/worker 使用该 bucket，而 `minio-init` 未接收变量并回退创建 `ml-platform`，造成应用对象写入 `NoSuchBucket`；该存储缺口会在限流请求前阻断诊断。
+- 已确认根因：`minio-init` 的 entrypoint 已使用 `$${MINIO_BUCKET:-ml-platform}`，但其 `environment` 仅传入 MinIO root 凭据，缺失对应变量；Docker Compose 因此无法把调用方的唯一 bucket 传入 initializer。
+- 解决方法：仅在 `minio-init.environment` 增加 `MINIO_BUCKET: ${MINIO_BUCKET:-ml-platform}`，保持 entrypoint 与限流生产代码不变；`test_ci_workflow` 新增回归，要求键存在、值严格匹配 fallback expression 且与 backend 相同。
+- 验证方式：修复前新合同因 `MINIO_BUCKET` 缺失稳定 RED；修复后主流程独立运行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_ci_workflow -v` 为 33/33，`git diff --check` 通过。此前同一隔离生命周期已在 capacity=5、refill=0.001 下得到 `200,200,200,200,200,429`，因此不修改 `inference_rate_limit.py`。
+- 预防措施：任何 Compose initializer 使用服务可覆盖的名称、bucket、schema 或 namespace 时，必须将同一变量显式传入 initializer，并以唯一资源值的静态合同和隔离 lifecycle 验证；配置阻断不得误归因于限流器或其他业务逻辑。
+- 遗留事项：提交后必须从新 HEAD 重建四镜像、重新进行非 root/Trivy/security receipt 验证；随后才可运行 frozen Compose、性能、备份恢复、N-1、完整 Chromium、最终 manifest 与远程 CI。
