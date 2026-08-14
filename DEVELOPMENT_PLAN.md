@@ -1738,3 +1738,12 @@
 - 验证方式：旧命令对 backend、worker、inference、tensorboard 均复现 output path 错误；仅增加 mount 的 backend 最小复验成功写入 JSON，schema 含 `ArtifactName`、`ArtifactType` 与 `Results`，Trivy scan exit 为 0。该单镜像结果仅验证路径修复，不构成最终四镜像安全结论。
 - 预防措施：任何在工具容器内使用 host output path 的命令，必须先映射 host directory 并使用 container-visible output path；在把非零退出码归因为安全 finding 前，先验证 raw report 文件存在、可解析且与预期 image ID/reference 绑定。
 - 遗留事项：提交后以新 HEAD 重新无缓存构建四镜像、非 root smoke、四份 Trivy HIGH/CRITICAL report 和完整 security chain；之后才可生成 receipt、frozen Compose 和最终 manifest。
+
+### 2026-08-14：Wolfi Python 3.11 滚动 APK 包版本修复
+
+- 当前状态：已完成镜像静态合同的最小 TDD 修复；本条不构成新 HEAD 的 Docker 构建、Trivy 或运行态验收。
+- 问题现象：四个 Python 3.11 镜像在 `apk add` 固定 `python-3.11=3.11.15-r9` 与 `py3.11-pip=26.2.1-r0`，但当前 Wolfi rolling APKINDEX 已不能解析这两个版本，导致镜像构建失败。
+- 已确认根因：不可变 wolfi-base digest 不会冻结滚动 APK repository 的 APKINDEX；当前可用精确值为 `python-3.11=3.11.14-r0` 和 `py3.11-pip=25.3-r3`。
+- 解决方法：只同步 `docs/security/python-base-image.json` 的 runtime 两项与 backend、worker、inference、tensorboard 四个 Dockerfile 的单一 `apk add` 行；新增 JSON runtime 精确 pin 回归，不改 base digest、retry、requirements 或安全门禁。
+- 验证方式：新增测试在旧 JSON 上以 `3.11.15-r9 != 3.11.14-r0` 预期 RED；修复后聚焦测试 1/1、`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts -v` 为 8/8、`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 退出 0、`git diff --check` 通过。
+- 预防措施：使用 rolling APK repository 的精确 package pin 必须在构建前用当前 APKINDEX 验证仍可解析，并将该值以 JSON 和所有生产 Dockerfile 的同一合同锁定；静态通过后仍须在新 HEAD 单独重建和重新生成安全证据。

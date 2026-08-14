@@ -4,8 +4,8 @@
   "reference": "cgr.dev/chainguard/wolfi-base:latest@sha256:30f03343947c7ae3581fda727a6e2aa7b8ce7009b7bfc2ab8d5c9483ace5812f",
   "architecture": "amd64",
   "runtime": {
-    "python_package": "python-3.11=3.11.15-r9",
-    "pip_package": "py3.11-pip=26.2.1-r0",
+    "python_package": "python-3.11=3.11.14-r0",
+    "pip_package": "py3.11-pip=25.3-r3",
     "non_root_uid": 1000
   },
   "scanner": "trivy 0.67.2",

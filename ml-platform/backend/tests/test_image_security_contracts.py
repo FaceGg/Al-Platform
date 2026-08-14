@@ -59,6 +59,12 @@ class ImageSecurityContractTests(unittest.TestCase):
                 path.name,
             )
 
+    def test_runtime_record_uses_available_wolfi_python_311_packages(self):
+        record = json.loads(BASE_RECORD.read_text(encoding="utf-8"))
+        runtime = record["runtime"]
+        self.assertEqual(runtime["python_package"], "python-3.11=3.11.14-r0")
+        self.assertEqual(runtime["pip_package"], "py3.11-pip=25.3-r3")
+
     def test_backend_host_mounts_keep_the_established_numeric_identity(self):
         compose = COMPOSE.read_text(encoding="utf-8")
         backend = DOCKERFILES[0].read_text(encoding="utf-8")
