@@ -1672,3 +1672,11 @@
 - 验证结果：`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_suite_manifest -v` 为 4/4；随后 `C:\Users\17723\miniconda3\python.exe run_suite.py` 为 90/90 模块通过，耗时约 548 秒，包含 `test_image_security_contracts`。
 - 交叉验证：`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 通过；前端 `npm test` 为 23 文件、90 用例通过；`npm run build` 成功。构建仍报告既有 ECharts chunk 大于 500 kB 警告，未在本任务中改变 bundle 策略。
 - 结论：唯一遗漏的 Week 12 测试归属已在完整 backend runner 中被覆盖。下一步是使用完整 CI 等价变量复验 Compose 配置，然后在稳定 WSL/Docker 网络中从当前提交重建四个生产镜像并收集 provenance 与 Trivy 证据。
+
+### 2026-08-14：当前提交 Wolfi 镜像重建的 BuildKit/APK 下载诊断检查点
+
+- 当前周次：第 12 周 Task 13 镜像安全门禁；第 9 至第 12 周继续保持“进行中”。
+- 已证实现象：从提交 `d060fa6997d99cc3cc7e81456b2d811325abca55` 对 backend 执行两次 `docker build --pull --no-cache`，均在固定 Wolfi `apk add` 层失败。第一次为 `APKINDEX` 请求超时后包被误报不存在；第二次为 `libbz2-1` 下载 `operation timed out`，最终返回 `rpc error: code = Unavailable desc = error reading from server: EOF`。
+- 已排除边界：固定 base digest 可拉取；`python-3.11=3.11.15-r9` 与 `py3.11-pip=26.2.1-r0` 仍可解析；WSL 直接读取 APK 索引返回 HTTP 200；同一 base 通过普通 `docker run` 执行相同 `apk add` 最终退出 0 并得到 Python 3.11.15 / pip 26.2.1。普通容器下载期间仍出现超时，说明链路并非稳定。
+- 当前判断：尚未证明 Dockerfile、基础镜像 digest 或固定包版本存在产品缺陷；证据指向 BuildKit/APK 外部下载链路间歇性失败。不得删除 XGBoost/NCCL、放宽 pin、复用旧 `codex-week12-final-*` 镜像或将旧镜像重标记为当前提交证据。
+- 后续顺序：先以最小固定 base/固定包 BuildKit 诊断只改变 build `--network` 模式，记录构建网络边界；仅在复现出确定性产品缺陷后按 RED→GREEN 修改实现。四个当前提交镜像全部重建、非 root smoke、Trivy、frozen Compose、性能、备份恢复、N-1、完整 Chromium 和远程 CI 仍为未完成门禁。
