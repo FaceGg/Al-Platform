@@ -84,7 +84,7 @@ class ImageSecurityContractTests(unittest.TestCase):
             if line.split("#", 1)[0].strip()
         }
         self.assertIn("tensorboard==2.19.*", lines)
-        self.assertIn("setuptools==80.9.0", lines)
+        self.assertIn("setuptools==80.10.2", lines)
 
     def test_cryptography_exception_is_removed_after_clean_resolution(self):
         self.assertFalse(EXCEPTION.exists())

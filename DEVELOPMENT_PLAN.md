@@ -1680,3 +1680,12 @@
 - 已排除边界：固定 base digest 可拉取；`python-3.11=3.11.15-r9` 与 `py3.11-pip=26.2.1-r0` 仍可解析；WSL 直接读取 APK 索引返回 HTTP 200；同一 base 通过普通 `docker run` 执行相同 `apk add` 最终退出 0 并得到 Python 3.11.15 / pip 26.2.1。普通容器下载期间仍出现超时，说明链路并非稳定。
 - 当前判断：尚未证明 Dockerfile、基础镜像 digest 或固定包版本存在产品缺陷；证据指向 BuildKit/APK 外部下载链路间歇性失败。不得删除 XGBoost/NCCL、放宽 pin、复用旧 `codex-week12-final-*` 镜像或将旧镜像重标记为当前提交证据。
 - 后续顺序：先以最小固定 base/固定包 BuildKit 诊断只改变 build `--network` 模式，记录构建网络边界；仅在复现出确定性产品缺陷后按 RED→GREEN 修改实现。四个当前提交镜像全部重建、非 root smoke、Trivy、frozen Compose、性能、备份恢复、N-1、完整 Chromium 和远程 CI 仍为未完成门禁。
+
+### 2026-08-14：第 12 周 setuptools vendor bundle 高危依赖最小修复
+
+- 当前状态：第 9 至第 12 周与 Task 13 继续保持“进行中”。本条只记录 `requirements.txt` 的最小依赖修复及本地合同/解析证据，不表示镜像、安全或发布门禁完成。
+- 问题现象：顶层 requirements 已固定 `jaraco.context==6.1.0` 和 `wheel==0.46.2`，但 `setuptools==80.9.0` 自带的 vendor bundle 仍含 `jaraco.context 5.3.0` 与 `wheel 0.45.1`，对应镜像安全报告中的 HIGH 风险。
+- 已确认根因：顶层分发包 pin 不会替换 `setuptools` wheel 内部随包携带的 vendor 副本；同时 TensorBoard 2.19 仍通过 `pkg_resources` 依赖 setuptools，不能直接跨到移除该接口的 setuptools 81+。
+- 解决方法：仅将 `setuptools` 固定版本从 `80.9.0` 升至 `80.10.2`，并同步镜像安全合同断言；保持现有 `jaraco.context`、`wheel`、TensorBoard、MLflow、cryptography、Dockerfile 与扫描例外不变。
+- 验证方式：在 `ml-platform/backend` 以 `PYTHONPATH=.` 执行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts tests.test_week12_security_gates tests.test_ci_workflow -v`，182/182 通过（11.399 秒）；`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 退出码为 0；使用阿里云 PyPI 镜像、`--ignore-installed --dry-run --no-cache-dir --report` 的干净解析生成 118 条安装记录，确认 `setuptools==80.10.2`、`jaraco.context==6.1.0`、`wheel==0.46.2`、`tensorboard==2.19.0`。Windows legacy GBK 控制台不能可靠承载 `pip --report -` 的 Unicode JSON，故 report 保存在系统临时目录而非 worktree。
+- 遗留事项：未运行 Docker 构建；当前 BuildKit/Wolfi APK 外部下载超时仍为独立阻塞。四个当前提交镜像重建、非 root smoke、Trivy HIGH/CRITICAL、无例外 pip-audit、frozen Compose、最终 evidence manifest、性能、备份恢复、N-1、Chromium、远程 CI、推送和合并均仍未闭合，不能宣称最终安全门禁通过。
