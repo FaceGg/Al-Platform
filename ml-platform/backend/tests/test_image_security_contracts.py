@@ -65,6 +65,26 @@ class ImageSecurityContractTests(unittest.TestCase):
         self.assertEqual(runtime["python_package"], "python-3.11=3.11.14-r0")
         self.assertEqual(runtime["pip_package"], "py3.11-pip=25.3-r3")
 
+    def test_wolfi_runtime_install_retries_transient_apk_download_failures(self):
+        runtime = json.loads(BASE_RECORD.read_text(encoding="utf-8"))["runtime"]
+        install_command = (
+            f"apk add --no-cache {runtime['python_package']} {runtime['pip_package']}"
+        )
+        expected_retry = (
+            "for attempt in 1 2 3; do\n"
+            f"        if {install_command}; then\n"
+            "            exit 0;\n"
+            "        fi;\n"
+            "        if [ \"$attempt\" -eq 3 ]; then\n"
+            "            exit 1;\n"
+            "        fi;\n"
+            "        sleep \"$attempt\";\n"
+            "    done"
+        )
+        for path in DOCKERFILES:
+            content = path.read_text(encoding="utf-8").replace(" \\\n", "\n")
+            self.assertIn(expected_retry, content, path.name)
+
     def test_backend_host_mounts_keep_the_established_numeric_identity(self):
         compose = COMPOSE.read_text(encoding="utf-8")
         backend = DOCKERFILES[0].read_text(encoding="utf-8")

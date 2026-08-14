@@ -1747,3 +1747,13 @@
 - 解决方法：只同步 `docs/security/python-base-image.json` 的 runtime 两项与 backend、worker、inference、tensorboard 四个 Dockerfile 的单一 `apk add` 行；新增 JSON runtime 精确 pin 回归，不改 base digest、retry、requirements 或安全门禁。
 - 验证方式：新增测试在旧 JSON 上以 `3.11.15-r9 != 3.11.14-r0` 预期 RED；修复后聚焦测试 1/1、`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts -v` 为 8/8、`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 退出 0、`git diff --check` 通过。
 - 预防措施：使用 rolling APK repository 的精确 package pin 必须在构建前用当前 APKINDEX 验证仍可解析，并将该值以 JSON 和所有生产 Dockerfile 的同一合同锁定；静态通过后仍须在新 HEAD 单独重建和重新生成安全证据。
+
+### 2026-08-14：Wolfi APK 瞬断重试修复
+
+- 当前状态：已完成静态合同和最小 Dockerfile 重试修复；此前 `204d0dc` 的 backend/worker 构建结果因本次提交将过期，不能用于最终 receipt、Trivy 或运行态验收。
+- 问题现象：`204d0dc` 的 backend/worker 无缓存构建已成功，但 inference 在同一 `apk add` 的 `libexpat1-2.8.3-r0` 下载阶段返回 `operation timed out`；该命令已解析当前 Python/Pip pin，失败不再是版本不可用。
+- 已确认根因：生产 Dockerfile 对 Chainguard APK 包下载只执行一次；rolling registry 的单个包下载瞬断会立即使单镜像构建失败，即使同一 source、base digest 和 package pin 的其他镜像已经成功。
+- 解决方法：保留不可变 base digest、精确 Python/Pip pin 和失败关闭语义，在四个 Dockerfile 的同一 `apk add` 外加入三次递增 sleep 的重试循环；第三次失败仍退出 1。新增合同要求四个生产镜像都保留精确三次重试结构。
+- 验证方式：新合同在未加循环时对 Dockerfile 稳定 RED；实现后聚焦 1/1、`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts -v` 为 9/9、`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 和 `git diff --check` 通过。
+- 预防措施：外部 APK 下载故障必须先与 package pin 不可用区分；确认是瞬断后，使用有限、可审计、失败关闭的重试，并在新提交无缓存重建全部镜像后才生成安全结论。
+- 遗留事项：提交后从该新 HEAD 重新无缓存构建 backend、worker、inference、tensorboard，验证非 root/OCI provenance，之后重新运行 Trivy 和完整 security chain。
