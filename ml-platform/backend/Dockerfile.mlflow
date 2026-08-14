@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+RUN pip install --no-cache-dir --retries 10 --timeout 120 \
+    "mlflow==3.2.*" \
+    "psycopg[binary]==3.2.*" \
+    "boto3==1.35.*" \
+    "numpy==2.3.5"
+
+EXPOSE 5000
+
+CMD ["mlflow", "server", "--host", "0.0.0.0", "--port", "5000"]

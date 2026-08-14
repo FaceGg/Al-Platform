@@ -52,12 +52,12 @@ sudo ufw status verbose
 
 ## 3. 获取代码与创建部署目录
 
-以下示例使用 `/srv/zhinqing`。部署时固定到已验证的 Git 提交或发布标签，不要直接把未检查的工作区上传到服务器。
+以下示例使用 `/srv/zhiqing`。部署时固定到已验证的 Git 提交或发布标签，不要直接把未检查的工作区上传到服务器。
 
 ```bash
-sudo install -d -m 0750 -o "$USER" -g "$USER" /srv/zhinqing
-git clone https://github.com/FaceGg/Al-Platform.git /srv/zhinqing
-cd /srv/zhinqing
+sudo install -d -m 0750 -o "$USER" -g "$USER" /srv/zhiqing
+git clone https://github.com/FaceGg/Al-Platform.git /srv/zhiqing
+cd /srv/zhiqing
 git checkout main
 git pull --ff-only
 
@@ -101,8 +101,8 @@ openssl rand -hex 32
 先让 Compose 渲染配置，缺少必填变量时会在这里失败：
 
 ```bash
-cd /srv/zhinqing
-docker compose --env-file .env config > /tmp/zhinqing-compose.yaml
+cd /srv/zhiqing
+docker compose --env-file .env config > /tmp/zhiqing-compose.yaml
 ```
 
 构建并启动全部服务：
@@ -112,7 +112,7 @@ docker compose --env-file .env up -d --build --remove-orphans
 docker compose --env-file .env ps
 ```
 
-首次启动需要拉取基础镜像、安装 Python 依赖并构建前端，耗时取决于服务器网络和 CPU。`migrate` 成功退出后，后端、Worker 和调度器才会进入可用状态。
+首次启动需要拉取基础镜像、安装 Python 依赖并构建前端，耗时取决于服务器网络和 CPU。Compose 默认使用 MinIO `cpuv1` 镜像，兼容不支持 `x86-64-v2` 的旧 CPU；支持新指令集的主机仍可在 `.env` 覆盖 `MINIO_IMAGE` 和 `MINIO_MC_IMAGE`。`migrate` 成功退出后，后端、Worker 和调度器才会进入可用状态。
 
 查看启动日志：
 
@@ -144,7 +144,7 @@ curl -fsS http://127.0.0.1/health
 ### 查看状态和日志
 
 ```bash
-cd /srv/zhinqing
+cd /srv/zhiqing
 docker compose --env-file .env ps
 docker compose --env-file .env logs --tail=200 backend worker scheduler
 docker compose --env-file .env logs -f backend
@@ -175,7 +175,7 @@ docker compose --env-file .env up -d
 升级前先完成备份。随后拉取已审核的代码版本，再由 `migrate` 服务执行 Alembic 迁移：
 
 ```bash
-cd /srv/zhinqing
+cd /srv/zhiqing
 git fetch origin
 git checkout main
 git pull --ff-only
@@ -192,7 +192,7 @@ curl -fsS http://127.0.0.1/api/ready
 PostgreSQL 逻辑备份：
 
 ```bash
-cd /srv/zhinqing
+cd /srv/zhiqing
 set -a
 . ./.env
 set +a
@@ -211,6 +211,10 @@ MinIO 制品备份可使用临时 `mc` 容器镜像进行 `mirror`；操作前�
 | `/api/ready` 返回 `DATABASE_SCHEMA_OUTDATED` | `migrate` 日志 | 等待或重跑迁移；确认数据库 URL 指向 Compose 内 `postgres`。 |
 | `/api/ready` 返回 `CELERY_UNAVAILABLE` | `worker`、Redis 日志 | 确认 Worker 正在运行且 `CELERY_BROKER_URL`、`REDIS_EVENTS_URL` 均为 `redis://redis:6379/...`。 |
 | `/api/ready` 返回 `MINIO_UNAVAILABLE` | `minio`、`minio-init` 日志 | 检查 MinIO 密钥是否一致、桶是否创建、`minio-data` 卷是否存在。 |
+| `Fatal glibc error: CPU does not support x86-64-v2` | `docker compose ... logs minio` | 确认 `.env` 未覆盖为普通 `latest` 镜像；使用 `MINIO_IMAGE` 和 `MINIO_MC_IMAGE` 的 `cpuv1` 标签后重建 MinIO。 |
+| MLflow 日志出现 `RuntimeError: NumPy was built with baseline optimizations (X86_V2)` | `docker compose ... logs mlflow` | 更新到包含 `numpy==2.3.5` 的 `Dockerfile.mlflow`，然后仅无缓存重建并重建 MLflow 容器；不要删除卷。 |
+| Nginx 日志出现 `unknown directive "﻿#"` | `nginx.conf` 的前 3 个字节 | 配置文件含 UTF-8 BOM。去除 BOM 后仅重建 `nginx` 服务；不要在宿主机另行安装 Nginx。 |
+| `frontend` 为 `unhealthy` 且健康检查显示 `wget: can't connect to remote host` | 前端 Dockerfile 健康检查 | 使用 `http://127.0.0.1/` 而不是 `localhost`，避免容器优先访问未监听的 IPv6 回环；无缓存重建 `frontend`。 |
 | 浏览器能打开页面但 API 报错 | `backend`、Nginx 日志 | 检查 `docker compose ps` 和 `curl http://127.0.0.1/api/health`。 |
 | 点焊自动标注一直进行中 | `worker` 日志、任务列表 | 生产模式应由 Celery 执行；检查 Worker 与 Redis，不要重启数据库卷。 |
 | 端口被占用 | `ss -ltnp` | 调整冲突服务或在 `.env` 设置仅供本机诊断的绑定地址；外部访问只使用 Nginx 入口。 |

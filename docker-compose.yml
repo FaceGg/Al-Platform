@@ -19,7 +19,8 @@ services:
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
   minio:
-    image: minio/minio:latest
+    # cpuv1 keeps hosts without x86-64-v2 support compatible with MinIO.
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1}
     command: server /data --console-address :9001
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
@@ -32,7 +33,7 @@ services:
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
   minio-init:
-    image: minio/mc:latest
+    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-07-21T05-28-08Z-cpuv1}
     depends_on:
       minio:
         condition: service_healthy
@@ -82,14 +83,14 @@ services:
         condition: service_healthy
 
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v3.2.0
+    build:
+      context: ./ml-platform/backend
+      dockerfile: Dockerfile.mlflow
     command:
       - /bin/sh
       - -c
       - >-
-        pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
-        && pip install --retries 10 --timeout 120 "psycopg[binary]"
-        &&
+        exec
         mlflow server
         --host 0.0.0.0
         --port 5000

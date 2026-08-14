@@ -1,4 +1,5 @@
 import unittest
+from codecs import BOM_UTF8
 from pathlib import Path
 import re
 
@@ -9,6 +10,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
 COMPOSE_FILE = REPOSITORY_ROOT / "docker-compose.yml"
 UBUNTU_ENV_TEMPLATE = REPOSITORY_ROOT / "docs" / "delivery" / "ubuntu24.production.env.example"
+NGINX_CONFIG = REPOSITORY_ROOT / "nginx.conf"
+FRONTEND_DOCKERFILE = REPOSITORY_ROOT / "ml-platform" / "frontend" / "Dockerfile"
 
 
 class TestProductionIntegrationWorkflow(unittest.TestCase):
@@ -68,7 +71,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
 
         self.assertIn("for attempt in {1..3}", build["run"])
         self.assertIn(
-            "if docker compose build backend worker tensorboard-gateway inference-runtime; then",
+            "if docker compose build backend worker mlflow tensorboard-gateway inference-runtime; then",
             build["run"],
         )
         self.assertIn("exit 1", build["run"])
@@ -97,6 +100,45 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn("postgres-data", compose["volumes"])
         self.assertIn("minio-data", compose["volumes"])
 
+    def test_compose_uses_cpuv1_minio_images_by_default(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+
+        minio_image = compose["services"]["minio"]["image"]
+        mc_image = compose["services"]["minio-init"]["image"]
+        self.assertIn("MINIO_IMAGE", minio_image)
+        self.assertIn("MINIO_MC_IMAGE", mc_image)
+        self.assertIn("-cpuv1", minio_image)
+        self.assertIn("-cpuv1", mc_image)
+        self.assertNotIn(":latest", minio_image)
+        self.assertNotIn(":latest", mc_image)
+
+    def test_compose_builds_mlflow_locally_without_runtime_package_install(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+        mlflow = compose["services"]["mlflow"]
+
+        self.assertEqual(mlflow["build"]["context"], "./ml-platform/backend")
+        self.assertEqual(mlflow["build"]["dockerfile"], "Dockerfile.mlflow")
+        self.assertNotIn("image", mlflow)
+        command = " ".join(mlflow["command"])
+        self.assertNotIn("pip install", command)
+
+        dockerfile = REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.mlflow"
+        self.assertTrue(dockerfile.exists())
+        dockerfile_text = dockerfile.read_text(encoding="utf-8")
+        for requirement in (
+            "mlflow==3.2.*",
+            'psycopg[binary]==3.2.*',
+            "boto3==1.35.*",
+            "numpy==2.3.5",
+        ):
+            self.assertIn(requirement, dockerfile_text)
+
+    def test_experiment_ci_builds_local_mlflow_image(self):
+        parsed = yaml.safe_load(self.workflow)
+        steps = parsed["jobs"]["experiment-integration"]["steps"]
+        build = next(step for step in steps if step.get("name") == "Build experiment services")
+        self.assertIn("mlflow", build["run"])
+
     def test_compose_binds_management_ports_to_loopback_by_default(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
 
@@ -104,6 +146,17 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn("${FRONTEND_BIND_ADDRESS:-127.0.0.1}:5173:80", compose["services"]["frontend"]["ports"])
         self.assertIn("${MINIO_BIND_ADDRESS:-127.0.0.1}:9000:9000", compose["services"]["minio"]["ports"])
         self.assertIn("${MINIO_BIND_ADDRESS:-127.0.0.1}:9001:9001", compose["services"]["minio"]["ports"])
+
+    def test_nginx_gateway_configuration_has_no_utf8_bom(self):
+        self.assertFalse(NGINX_CONFIG.read_bytes().startswith(BOM_UTF8))
+
+    def test_frontend_healthcheck_uses_ipv4_loopback(self):
+        frontend_dockerfile = FRONTEND_DOCKERFILE.read_text(encoding="utf-8")
+
+        self.assertIn("HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://127.0.0.1/ || exit 1", frontend_dockerfile)
+
+    def test_frontend_dockerfile_has_no_utf8_bom(self):
+        self.assertFalse(FRONTEND_DOCKERFILE.read_bytes().startswith(BOM_UTF8))
 
     def test_ubuntu_environment_template_covers_required_compose_variables(self):
         compose_text = COMPOSE_FILE.read_text(encoding="utf-8")

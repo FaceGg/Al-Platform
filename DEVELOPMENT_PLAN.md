@@ -1912,3 +1912,51 @@
 - 影响范围：前端 AutoML 首次状态刷新、测试验收清单和换行兼容断言；不改数据库 Schema、权限策略、建模算法或任务 API 契约。
 - 预防措施：新测试文件必须同时进入周度验收清单；跨平台文本断言应比较规范化换行或结构语义；轮询型异步任务应先发起一次即时状态读取，避免短任务的额外等待和测试时限竞态。
 - 遗留事项：生产 Compose、Celery、Redis、MinIO 和远程 GitHub Actions 尚未在本次工作站执行，需按现有部署验收流程独立验证。
+
+### 2026-08-13：本机 Compose `.env` 生成与静态校验
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：已完成本机部署配置生成与静态校验；真实容器构建与启动待具备 Docker 的 Ubuntu 24 主机执行。
+- 问题现象：仓库缺少可直接供 `docker compose --env-file .env up -d --build --remove-orphans` 使用的根目录 `.env`，手工替换模板可能造成 PostgreSQL URL、MinIO 凭据或内部服务密钥不一致。
+- 解决方法：从已提交的 Ubuntu 24 生产模板生成被 `.gitignore` 忽略的根目录 `.env`；为 PostgreSQL、应用签名、MinIO、TensorBoard 和推理服务生成独立随机十六进制密钥；保持 PostgreSQL URL 和 MinIO 双凭据组一致，显式设置全部 Compose 引用变量。
+- 验证方式：静态检查确认 Compose 引用 31 个变量、`.env` 覆盖 31 个变量、无占位值；`docker-compose.yml` 通过 PyYAML 解析；`.env` 被 `.gitignore` 忽略。当前 Windows 工作站没有 Docker CLI，未执行实际 `docker compose config`、构建或启动。
+- 影响范围：仅本机未跟踪部署密钥文件；不修改版本控制配置、应用代码、数据库或生产数据。
+- 预防措施：部署 `.env` 必须从受控模板生成，使用随机值并保持连接 URL/对应凭据同步；没有 Docker CLI 时只能声明静态配置校验，不能声明 Compose 运行通过。
+- 遗留事项：在 Ubuntu 24 服务器执行 `docker compose --env-file .env config` 和 `up -d --build --remove-orphans`，随后检查 `/api/ready`、服务状态与首个管理员登录。
+
+### 2026-08-13：旧 CPU MinIO 与 GHCR MLflow 部署阻塞修复
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 问题现象：Ubuntu 服务器执行 Compose 时 `minio` 以退出码 127 退出，日志为 `Fatal glibc error: CPU does not support x86-64-v2`；MLflow 服务仍硬编码 GHCR 镜像，网络受限主机无法拉取。
+- 已确认根因：`minio/minio:latest` 和 `minio/mc:latest` 使用要求 x86-64-v2 的基础镜像；MLflow 运行时依赖 `ghcr.io/mlflow/mlflow:v3.2.0`，并在启动阶段联网安装 psycopg。
+- 解决方法：MinIO 与 mc 默认固定到官方 `-cpuv1` 发布标签，并允许 `.env` 用 `MINIO_IMAGE`/`MINIO_MC_IMAGE` 覆盖；新增 `Dockerfile.mlflow`，在构建阶段从阿里云 PyPI 固定安装 MLflow 3.2、psycopg 和 boto3，Compose 改为本地 build，启动时不再 pip 联网；CI 同步构建 MLflow，并更新 Ubuntu 故障排查说明。
+- 验证方式：新增 Compose/CI 契约先 RED 后 GREEN；`tests.test_ci_workflow` 15/15 通过，Compose YAML 解析和 `git diff --check` 通过。当前 Windows 工作站无 Docker CLI，未执行真实镜像拉取、构建或服务启动；Ubuntu 目标机仍需完成运行态验收。
+- 影响范围：生产 Compose、实验 CI、MLflow 镜像构建和 Ubuntu 部署文档；不删除或重建 PostgreSQL/MinIO 数据卷，不改变业务 API 和数据库 Schema。
+- 预防措施：禁止基础设施镜像使用 `latest`；旧 CPU 主机必须显式使用 `cpuv1` 标签；生产服务依赖应在镜像构建阶段安装并在 CI 契约中断言，不在容器启动命令中联网安装。
+- 遗留事项：目标 Ubuntu 执行 `docker compose config`、拉取两个 `cpuv1` 镜像、构建 MLflow 并检查 `/api/ready`；若镜像仓库访问仍受限，需要配置 Docker registry/PyPI 代理或预加载镜像。
+
+### 2026-08-14：旧 CPU MLflow NumPy 指令集兼容修复
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：本地 Dockerfile、Compose 契约、部署文档和静态验证已完成；真实 Ubuntu 容器重建与运行态验收待目标服务器执行。
+- 问题现象：在 MinIO 修复后，MLflow 容器导入 `pyarrow` 间接导入 NumPy 时失败，日志为 `RuntimeError: NumPy was built with baseline optimizations: (X86_V2) but your machine doesn't support: (X86_V2)`。
+- 已确认根因：`Dockerfile.mlflow` 仅限制 MLflow、psycopg 和 boto3，pip 可解析到要求 x86-64-v2 的新 NumPy wheel；错误在 NumPy 二进制模块导入时发生，尚未进入 PyArrow 或 MLflow 业务逻辑。
+- 解决方法：在本地 MLflow 镜像构建阶段固定安装 `numpy==2.3.5`，保持其余依赖与运行命令不变；新增 Compose 镜像契约，要求 Dockerfile 明确包含该版本；部署和训练运维文档同步记录旧 CPU 原因与无损重建方向。
+- 测试先行：新增 `numpy==2.3.5` Dockerfile 契约后，针对 MLflow Compose 测试按预期失败；最小依赖固定后恢复 GREEN。
+- 验证方式：`C:\Users\17723\miniconda3\python.exe -m unittest ml-platform.backend.tests.test_ci_workflow -v` 为 15/15 通过；本机 `pip index versions numpy` 确认可获得并已安装 `2.3.5`；`docker-compose.yml` 的 PyYAML 解析和 `git diff --check` 通过。当前 Windows 工作站无 Docker CLI，未宣称镜像构建或 MLflow 启动通过。
+- 影响范围：仅 MLflow 构建依赖固定、部署故障说明和其 CI 静态契约；不修改 MLflow 参数、PostgreSQL、MinIO 卷、业务 API、数据库 Schema 或既有数据。
+- 预防措施：旧 CPU 兼容排障必须按真实失败的二进制模块逐层固定，不能先猜测更上层库；对镜像安装的关键二进制依赖应加入可读的版本契约；每次依赖基线变化后需在目标 CPU 构建、启动和探针验收。
+- 遗留事项：Ubuntu 目标主机从当前提交同步后，仅对 `mlflow` 执行 `build --no-cache` 和 `up -d --force-recreate`，检查其日志、容器状态和 `/api/ready`；不得执行 `docker compose down -v`。
+
+### 2026-08-14：Nginx UTF-8 BOM 启动失败与前端 IPv6 健康检查修复
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：根因已由 Ubuntu 目标服务日志确认；本地源文件、静态回归和部署文档已修复，目标服务器需按无损命令移除已部署文件的 BOM、重建 Nginx，并重建前端以加载 IPv4 健康检查。
+- 问题现象：后端和 MLflow 已健康，`127.0.0.1:80` 却没有监听；`nginx` 反复重启，`frontend` 显示 `unhealthy`。Nginx 日志稳定报 `unknown directive "﻿#" in /etc/nginx/nginx.conf:2`，前端健康检查稳定报 `wget: can't connect to remote host: Connection refused`。
+- 已确认根因：挂载到 Nginx 的根 `nginx.conf` 以 UTF-8 BOM 开头，Nginx 不把 BOM 视为注释的一部分，解析阶段直接退出；前端 Dockerfile 健康检查使用 `localhost`，容器中的 wget 优先连接未监听的 IPv6 回环 `::1`，而站点仅监听 IPv4。
+- 解决方法：移除 `nginx.conf` 和前端 Dockerfile 的 UTF-8 BOM；前端健康检查改为 `http://127.0.0.1/`。新增三项部署静态契约，分别锁定网关配置无 BOM、前端 Dockerfile 无 BOM 和 IPv4 健康检查。
+- 测试先行：三项新契约先分别因网关 BOM、前端 `localhost` 探针和前端 Dockerfile BOM 失败；最小修改后均恢复 GREEN。
+- 验证方式：针对性 `tests.test_ci_workflow` 3/3 通过；字节检查确认两个运行时文件均不以 `EF BB BF` 开头。目标服务器已确认后端/MLflow 健康，但尚未执行修复后的 Nginx/前端容器运行态验收。
+- 影响范围：Nginx 网关配置、前端镜像健康检查、部署故障说明和 CI 静态契约；不修改业务 API、前端页面、数据库、MinIO、MLflow 或持久化数据。
+- 预防措施：所有被运行时解释器直接读取的配置、Dockerfile 和 shell 文件必须使用 UTF-8 无 BOM；容器健康检查使用明确的 `127.0.0.1` 或 `::1`，不能依赖 `localhost` 的 IPv4/IPv6 解析顺序。
+- 遗留事项：服务器先移除 `nginx.conf` BOM 并重建 `nginx` 恢复 80 端口，再重建 `frontend` 消除健康检查误报；不执行 `docker compose down -v`。
