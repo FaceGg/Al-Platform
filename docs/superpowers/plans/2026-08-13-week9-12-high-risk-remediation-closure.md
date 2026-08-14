@@ -275,7 +275,7 @@ for dockerfile in DOCKERFILES:
     self.assertIn("USER 1000:1000", text)
     self.assertIn("ENV HOME=/home/app", text)
 self.assertIn("cryptography==50.0.*", requirements)
-self.assertIn("setuptools==80.9.0", requirements)
+self.assertIn("setuptools==80.10.2", requirements)
 ```
 
 Run this contract before implementation if coverage is missing; expected RED must identify the absent security behavior rather than a syntax error.
