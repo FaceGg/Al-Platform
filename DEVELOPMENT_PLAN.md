@@ -1728,3 +1728,13 @@
 - 验证方式：修复前新合同因 `MINIO_BUCKET` 缺失稳定 RED；修复后主流程独立运行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_ci_workflow -v` 为 33/33，`git diff --check` 通过。此前同一隔离生命周期已在 capacity=5、refill=0.001 下得到 `200,200,200,200,200,429`，因此不修改 `inference_rate_limit.py`。
 - 预防措施：任何 Compose initializer 使用服务可覆盖的名称、bucket、schema 或 namespace 时，必须将同一变量显式传入 initializer，并以唯一资源值的静态合同和隔离 lifecycle 验证；配置阻断不得误归因于限流器或其他业务逻辑。
 - 遗留事项：提交后必须从新 HEAD 重建四镜像、重新进行非 root/Trivy/security receipt 验证；随后才可运行 frozen Compose、性能、备份恢复、N-1、完整 Chromium、最终 manifest 与远程 CI。
+
+### 2026-08-14：第 12 周 Trivy 容器输出目录挂载修复
+
+- 当前状态：验收计划的 Trivy 命令已完成最小 RED/GREEN 纠正；四镜像、Trivy 和安全 receipt 继续保持未完成，因为本条提交会生成新的 source commit，不能使用此前 `8956585` 标签作为最终证据。
+- 问题现象：按计划在 WSL 中创建 host `temp_test` 输出目录后，`aquasec/trivy:0.73.0` 仍对四个镜像返回 exit 1，错误均为无法打开 `/mnt/e/.../trivy-image-*.json`；输出文件未产生，故该 exit code 不能解释为漏洞发现。
+- 已确认根因：Trivy 在独立容器中运行，只挂载 Docker socket 和 cache volume；host 的 `$out` 路径没有挂载到扫描容器，`--output` 指向了容器内不存在的目录。历史命令同样存在该路径边界缺口。
+- 解决方法：验收计划只增加 `-v "$out":/out`，并将 Trivy output 改为容器内 `/out/trivy-image-${image}.json`；Docker socket、Trivy version、cache、severity、exit-code、target image 与原始报告位置保持不变。
+- 验证方式：旧命令对 backend、worker、inference、tensorboard 均复现 output path 错误；仅增加 mount 的 backend 最小复验成功写入 JSON，schema 含 `ArtifactName`、`ArtifactType` 与 `Results`，Trivy scan exit 为 0。该单镜像结果仅验证路径修复，不构成最终四镜像安全结论。
+- 预防措施：任何在工具容器内使用 host output path 的命令，必须先映射 host directory 并使用 container-visible output path；在把非零退出码归因为安全 finding 前，先验证 raw report 文件存在、可解析且与预期 image ID/reference 绑定。
+- 遗留事项：提交后以新 HEAD 重新无缓存构建四镜像、非 root smoke、四份 Trivy HIGH/CRITICAL report 和完整 security chain；之后才可生成 receipt、frozen Compose 和最终 manifest。

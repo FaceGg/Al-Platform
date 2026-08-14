@@ -353,10 +353,10 @@ wsl.exe -e bash -lc 'set -euo pipefail
 out=/mnt/e/codex_workspace/agent_spot_welding/.worktrees/week9-12-mlops-core/temp_test/security-20260813
 mkdir -p "$out"
 for image in backend worker inference tensorboard; do
-  docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache \
+  docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache -v "$out":/out \
     aquasec/trivy:0.73.0 image --skip-db-update --exit-code 1 \
     --severity HIGH,CRITICAL --format json \
-    --output "$out/trivy-image-${image}.json" "codex-week12-final-${image}:latest"
+    --output "/out/trivy-image-${image}.json" "codex-week12-final-${image}:latest"
 done'
 ```
 
