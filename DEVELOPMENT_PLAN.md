@@ -1699,3 +1699,13 @@
 - 验证方式：PowerShell 读取的 23c14e0a990bfa45f2069aae97b29f1fda221475 经 wsl.exe -e env 到达 Bash，40 位格式断言通过；四个现有标签均已被明确检查为 revision 空值并排除。镜像静态合同 7/7 与 compileall -q app tools tests 通过；最小固定 APK 的 default 与 host BuildKit 构建均成功；Trivy 新鲜 DB 的离线 Alpine 扫描退出 0。
 - 预防措施：Windows/WSL 交界不得在 WSL 中假设链接 worktree 的 Git 元数据可解析；所有 provenance-sensitive 构建必须在 build 前验证 source SHA、在 build 后验证 OCI revision，空 label 与过期扫描一律失败关闭。
 - 遗留事项：须在本条文档提交后的新 HEAD 重新无缓存构建四个镜像、执行非 root smoke 和新鲜 Trivy HIGH/CRITICAL 扫描；再继续完整安全链、frozen Compose、性能、备份恢复、N-1、Chromium、远程 CI 和合并。
+
+### 2026-08-14：新 HEAD 四镜像 provenance、运行态与合同门禁完成
+
+- 当前周次：第 12 周 Task 13 镜像安全门禁；第 9 至第 12 周继续保持“进行中”。本条只关闭四镜像构建与运行态门禁，不表示 Trivy、完整安全链、frozen Compose、最终验收或远程 CI 通过。
+- 问题现象：首次执行四镜像非 root smoke 时，宿主 PowerShell 将嵌套 Bash 片段中的 `id`、`test`、`python3.11` 当作自身命令，出现 `The term 'id' is not recognized` 和 `syntax error: unexpected end of file`。
+- 已确认根因：WSL Bash 外层脚本与 Docker `sh -lc` 内层脚本使用过度嵌套的单引号转义；失败发生在宿主命令构造边界，不在镜像运行时。单镜像直接 `wsl.exe -e docker run ... -lc '...'` 可稳定复现成功。
+- 解决方法：不修改镜像或生产代码；逐镜像从 PowerShell 直接调用 `wsl.exe -e docker run`，把完整 smoke 命令作为单一参数交给容器 `sh -lc`。
+- 验证方式：提交 `ae5c6c5d199a54ccf485ede105cef51bc1e0f688` 后，WSL Docker 29.6.2 / Compose v5.3.1 以 `--pull --no-cache` 重建四镜像；镜像 ID 分别为 `sha256:6cd1427f4c96ebc570ce0a6665b1ec077f9bf8a42424595786512540ba8362c4`、`sha256:537d894fbd9b80c862d05554e66c570cf0b209e893cf15cfe9fbf65965861ac`、`sha256:7f9fb0584865f078290776220d25edd5f0d686abf31a1bb2ed3bb485e93d0992`、`sha256:cb3900e966a768651b6f6325d018f29d0434e6ed916ce46087dd13628ac6c80a`，四个 `org.opencontainers.image.revision` 均精确匹配该 SHA；四镜像 smoke 均为 UID 1000、`HOME=/home/app`、Python 3.11.15；`tests.test_image_security_contracts` 为 7/7，`git diff --check` 通过。
+- 预防措施：PowerShell、WSL、Docker、容器 shell 多边界命令优先使用单层脚本或直接参数传递；先用单镜像最小命令验证 quoting，再运行批量循环。宿主 quoting 失败不得改写为镜像失败。
+- 遗留事项：Task 5 的四镜像 Trivy HIGH/CRITICAL receipts、完整 `tools.security_scans`、pip-audit/Bandit/Gitleaks/npm audit、frozen Compose、性能、备份恢复、N-1、Chromium、四通知通道、最终 manifest、远程 CI、推送和合并仍未闭合。

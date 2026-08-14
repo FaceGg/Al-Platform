@@ -265,7 +265,7 @@ Expected: no commit occurs if the cause is external image/config drift; in that 
 - Modify: `ml-platform/backend/requirements.txt`
 - Modify: `ml-platform/backend/tests/test_image_security_contracts.py`
 
-- [ ] **Step 1: Add/confirm contract coverage before changing image behavior.**
+- [x] **Step 1: Add/confirm contract coverage before changing image behavior.**
 
 The test must require all four first `FROM` lines to equal the approved digest, require `USER 1000:1000`, require a non-root `app` account/home directory when package installation writes user state, and require the approved direct pins:
 
@@ -280,7 +280,7 @@ self.assertIn("setuptools==80.10.2", requirements)
 
 Run this contract before implementation if coverage is missing; expected RED must identify the absent security behavior rather than a syntax error.
 
-- [ ] **Step 2: Build every image without cache from the current source commit.**
+- [x] **Step 2: Build every image without cache from the current source commit.**
 
 ```powershell
 $Root = 'E:\codex_workspace\agent_spot_welding\.worktrees\week9-12-mlops-core'
@@ -312,7 +312,7 @@ done'
 
 Expected: four build IDs captured from exactly the current commit; registry/network failure is recorded as blocked, never passed.
 
-- [ ] **Step 3: Execute image runtime smoke checks as non-root.**
+- [x] **Step 3: Execute image runtime smoke checks as non-root.**
 
 ```bash
 for image in codex-week12-final-backend:latest codex-week12-final-worker:latest codex-week12-final-inference:latest codex-week12-final-tensorboard:latest; do
@@ -322,7 +322,7 @@ done
 
 Expected: all images prove UID 1000 and a writable application home; service-specific health checks are executed in the later Compose gate.
 
-- [ ] **Step 4: Run contracts and commit image/runtime changes.**
+- [x] **Step 4: Run contracts and commit image/runtime changes.**
 
 ```powershell
 Set-Location "$Root\ml-platform\backend"
