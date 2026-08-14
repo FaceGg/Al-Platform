@@ -1665,3 +1665,10 @@
 - 已写入修复：将 `test_image_security_contracts` 唯一登记到 Week 12，并同步加入 `test_suite_manifest.py` 的 Week 12 归属断言；本次暂停前未重新运行该测试，故修复结果仍待验证。
 - 验证状态：修复前失败证据已保存；暂停前仅执行 `git diff --check`，通过（仅存在 CRLF 工作树提示）。未执行完整后端 runner、前端、Compose、镜像重建、扫描、Chromium、远程 CI 或推送。
 - 未完成与恢复顺序：恢复后先运行 `tests.test_suite_manifest` 确认 GREEN，再运行完整 `run_suite.py`；随后按既有计划执行完整环境 Compose、四镜像当前提交重建/扫描和其余 Week 11-12 门禁。不得把旧镜像或定向测试当作最终验收证据。
+
+### 2026-08-13：Week 12 测试台账恢复验证
+
+- 当前状态：Week 12 测试台账归属修复已完成本地验证；第 9 至第 12 周仍保持“进行中”，不将本地回归表述为 Compose、镜像、安全扫描或远程 CI 通过。
+- 验证结果：`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_suite_manifest -v` 为 4/4；随后 `C:\Users\17723\miniconda3\python.exe run_suite.py` 为 90/90 模块通过，耗时约 548 秒，包含 `test_image_security_contracts`。
+- 交叉验证：`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 通过；前端 `npm test` 为 23 文件、90 用例通过；`npm run build` 成功。构建仍报告既有 ECharts chunk 大于 500 kB 警告，未在本任务中改变 bundle 策略。
+- 结论：唯一遗漏的 Week 12 测试归属已在完整 backend runner 中被覆盖。下一步是使用完整 CI 等价变量复验 Compose 配置，然后在稳定 WSL/Docker 网络中从当前提交重建四个生产镜像并收集 provenance 与 Trivy 证据。
