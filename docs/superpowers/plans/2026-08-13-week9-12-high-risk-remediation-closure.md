@@ -283,13 +283,30 @@ Run this contract before implementation if coverage is missing; expected RED mus
 - [ ] **Step 2: Build every image without cache from the current source commit.**
 
 ```powershell
-wsl.exe -e bash -lc 'set -euo pipefail
+$Root = 'E:\codex_workspace\agent_spot_welding\.worktrees\week9-12-mlops-core'
+$SourceCommit = (git -C $Root rev-parse HEAD).Trim()
+if ($SourceCommit -notmatch '^[0-9a-f]{40}$') {
+  throw "Invalid source commit: $SourceCommit"
+}
+wsl.exe -e env "ACCEPTANCE_SOURCE_COMMIT=$SourceCommit" bash -lc 'set -euo pipefail
+source_commit="${ACCEPTANCE_SOURCE_COMMIT:?ACCEPTANCE_SOURCE_COMMIT is required}"
+if ! [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Invalid source commit: $source_commit" >&2
+  exit 2
+fi
 cd /mnt/e/codex_workspace/agent_spot_welding/.worktrees/week9-12-mlops-core/ml-platform/backend
 for spec in backend:Dockerfile worker:Dockerfile.worker inference:Dockerfile.inference tensorboard:Dockerfile.tensorboard; do
   name=${spec%%:*}; dockerfile=${spec#*:}
   docker build --pull --no-cache \
-    --label org.opencontainers.image.revision="'"$(git rev-parse HEAD)"'" \
+    --label org.opencontainers.image.revision="$source_commit" \
     -t "codex-week12-final-${name}:latest" -f "$dockerfile" .
+  image_metadata=$(docker image inspect --format "{{.Id}} {{index .Config.Labels \"org.opencontainers.image.revision\"}}" "codex-week12-final-${name}:latest")
+  actual_revision=${image_metadata##* }
+  if [ "$actual_revision" != "$source_commit" ]; then
+    echo "OCI revision mismatch for $name: $actual_revision" >&2
+    exit 2
+  fi
+  printf "%s\\n" "$image_metadata"
 done'
 ```
 

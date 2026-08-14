@@ -1689,3 +1689,13 @@
 - 解决方法：仅将 `setuptools` 固定版本从 `80.9.0` 升至 `80.10.2`，并同步镜像安全合同断言；保持现有 `jaraco.context`、`wheel`、TensorBoard、MLflow、cryptography、Dockerfile 与扫描例外不变。
 - 验证方式：在 `ml-platform/backend` 以 `PYTHONPATH=.` 执行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts tests.test_week12_security_gates tests.test_ci_workflow -v`，182/182 通过（11.399 秒）；`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 退出码为 0；使用阿里云 PyPI 镜像、`--ignore-installed --dry-run --no-cache-dir --report` 的干净解析生成 118 条安装记录，确认 `setuptools==80.10.2`、`jaraco.context==6.1.0`、`wheel==0.46.2`、`tensorboard==2.19.0`。Windows legacy GBK 控制台不能可靠承载 `pip --report -` 的 Unicode JSON，故 report 保存在系统临时目录而非 worktree。
 - 遗留事项：未运行 Docker 构建；当前 BuildKit/Wolfi APK 外部下载超时仍为独立阻塞。四个当前提交镜像重建、非 root smoke、Trivy HIGH/CRITICAL、无例外 pip-audit、frozen Compose、最终 evidence manifest、性能、备份恢复、N-1、Chromium、远程 CI、推送和合并均仍未闭合，不能宣称最终安全门禁通过。
+
+### 2026-08-14：WSL 链接 worktree 镜像 provenance 传递修复
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”；本条修正当前提交镜像重建命令的 provenance 传递，不表示镜像、安全扫描或发布门禁通过。
+- 问题现象：初次按计划从提交 23c14e0a990bfa45f2069aae97b29f1fda221475 无缓存重建 backend、worker、inference、tensorboard 四个镜像均退出 0，但其 org.opencontainers.image.revision 全部为空，故四个标签均不可作为当前提交验收或 Trivy receipt 证据。
+- 已确认根因：WSL 中链接 worktree 的 .git 文件包含 Windows E:/... gitdir 路径，git -C /mnt/e/... rev-parse HEAD 解析为错误的嵌套路径；普通 PowerShell 环境变量也不会自动继承到 wsl.exe。构建脚本因未对 source commit 或实际 OCI label 做 fail-closed 校验而继续完成。
+- 解决方法：验收计划改为由 PowerShell 读取并验证 40 位 SHA，再使用 wsl.exe -e env ACCEPTANCE_SOURCE_COMMIT=<SHA> bash -lc 显式传递；Bash 在每次 build 前验证 SHA 格式，并在每个 image 后读取 OCI label，不匹配即退出。
+- 验证方式：PowerShell 读取的 23c14e0a990bfa45f2069aae97b29f1fda221475 经 wsl.exe -e env 到达 Bash，40 位格式断言通过；四个现有标签均已被明确检查为 revision 空值并排除。镜像静态合同 7/7 与 compileall -q app tools tests 通过；最小固定 APK 的 default 与 host BuildKit 构建均成功；Trivy 新鲜 DB 的离线 Alpine 扫描退出 0。
+- 预防措施：Windows/WSL 交界不得在 WSL 中假设链接 worktree 的 Git 元数据可解析；所有 provenance-sensitive 构建必须在 build 前验证 source SHA、在 build 后验证 OCI revision，空 label 与过期扫描一律失败关闭。
+- 遗留事项：须在本条文档提交后的新 HEAD 重新无缓存构建四个镜像、执行非 root smoke 和新鲜 Trivy HIGH/CRITICAL 扫描；再继续完整安全链、frozen Compose、性能、备份恢复、N-1、Chromium、远程 CI 和合并。
