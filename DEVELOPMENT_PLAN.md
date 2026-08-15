@@ -1768,3 +1768,14 @@
 - 影响范围：仅当前 WSL Docker image tags、构建缓存和验收记录；未修改应用代码、Dockerfile、requirements、生产 Compose 配置或持久化数据。
 - 预防措施：跨 Windows/WSL 的 linked-worktree build 不得在 WSL 内推导 Git SHA；每个构建必须独立验证 source commit、image ID 和 OCI revision。大 wheel 的瞬断只允许有限、可审计、失败关闭的续传，完成后仍需以新 image ID 重新扫描。
 - 遗留事项：Task 5 仍须从该四个 image ID 生成四份 Trivy HIGH/CRITICAL receipt，运行完整 `tools.security_scans` 与 fail-closed manifest；frozen Compose、性能、备份恢复、N-1、Chromium、四通道通知、远程 CI、推送与合并均未闭合。
+
+### 2026-08-15：第 12 周安全回执 P1 范围收口与进度整理
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”。本条仅收口 filesystem Trivy 与 Gitleaks 证据回执的本地 fail-closed P1；工作树中的 `.gitleaks.toml`、`tools/security_scans.py`、`tools/evidence_manifest.py` 和两份安全回归测试尚未提交，不能作为当前 HEAD 的镜像、扫描、Compose 或发布证据。
+- 问题现象：独立规格复审证明旧 receipt 合同可接受子目录 filesystem Trivy target、仅绑定 repository 路径而不绑定 Gitleaks 实际源树、在 Gitleaks 读取配置前产生 TOCTOU 窗口，并允许 `security/summary.json` 生成后直接篡改 Gitleaks binding 仍写出 passed manifest；snapshot 临时目录创建或清理失败也必须不能产生通过回执。
+- 已确认根因：命令/原始报告验证没有把执行根精确锁为 repository root；`execution_root_sha256` 没有覆盖被扫描的文件内容；配置的验证与 scanner 实际读取之间共享可变目录；manifest 只验证通用 receipt 形状而未复算 Gitleaks 专用 binding。
+- 解决方法：filesystem Trivy 固定以 repository root 为 `cwd`、最终 target 与原始 `ArtifactName` 均严格为 `.`；Gitleaks receipt 新增受控 `source_tree_sha256` 和 `isolated_read_only_snapshot` 上下文，在私有只读 source/config snapshot 内执行；summary 与 manifest 共享 live binding validator；硬链接、reparse、snapshot 创建或清理失败一律以 `GITLEAKS_SOURCE_SNAPSHOT_INVALID` 失败关闭。
+- 验证方式：主线程在 `ml-platform/backend` 以 `PYTHONPATH=.` 重新运行 9 项 P1 回归，覆盖 snapshot 执行、源/配置隔离、hard-link 拒绝、snapshot 创建失败、receipt/summary/manifest 篡改拒绝和 Trivy 子目录收窄，结果 `9/9` 通过（19.534 秒）；`C:\Users\17723\miniconda3\python.exe -m compileall -q tools tests` 与限定范围的 `git diff --check` 均退出 0。实现阶段另有 `tests.test_evidence_manifest tests.test_week12_security_gates -v` 的 `184/184` 本地回归记录（206.014 秒）；它是本地合同证据，不替代完整回归或真实 scanner 验收。
+- 影响范围：仅 Week 12 安全证据生成、汇总与 manifest 校验及相应回归；不改变业务 API、模型发布、通知通道、Compose 运行配置、Dockerfile 或依赖 pin。
+- 预防措施：scanner receipt 必须同时绑定命令、执行根、原始 artifact、实际 source/config 字节和执行上下文；所有影响 summary/manifest 的文件必须在读取前以安全文件规则验证，并在每个下游验证边界重算 binding，不能仅信任先前的 aggregate。
+- 遗留事项：最新未提交 source 会使此前四镜像 provenance、Trivy receipt 与运行态证据过期。后续仍需对提交后的新 HEAD 重建四生产镜像、运行四份 Trivy HIGH/CRITICAL、完整 `tools.security_scans` 与最终 manifest、完整后端/前端/Chromium 回归、frozen Compose、固定 4 vCPU/8 GiB 三轮性能、PostgreSQL/MinIO 备份恢复、真实 N-1 升降级、四角色/四通知通道 Web 验收、远程 CI、推送及 main 合并；这些完成前不得将 Week 9–12 标记为完成。

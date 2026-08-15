@@ -1,0 +1,13 @@
+title = "ML Platform reviewed source scan scope"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Exclude local caches and raw evidence outside the reviewed source scope."
+paths = [
+  '''(^|[\\/])tmp([\\/]|$)''',
+  '''(^|[\\/])temp_test([\\/]|$)''',
+  '''(^|[\\/])docs2([\\/]|$)''',
+  '''(^|[\\/])ml-platform[\\/]frontend[\\/]node_modules([\\/]|$)''',
+]

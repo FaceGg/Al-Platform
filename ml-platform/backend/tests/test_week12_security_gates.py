@@ -1,3 +1,4 @@
+import hashlib
 import json
 import inspect
 import os
@@ -5,6 +6,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from datetime import date
 from pathlib import Path
@@ -16,6 +18,7 @@ from tools.security_scans import (
     REQUIRED_SCAN_GATES,
     WEB_SECURITY_GATE_NAMES,
     evaluate_npm_audit_exception,
+    is_required_scan_command,
     main as security_scans_main,
     redact_scan_output,
     run_all,
@@ -25,6 +28,87 @@ from tools.security_scans import (
 
 
 class SecurityGateTests(unittest.TestCase):
+    @staticmethod
+    def _gitleaks_receipt_binding() -> dict[str, str]:
+        repository_root = Path(__file__).resolve().parents[3]
+        config_path = repository_root / ".gitleaks.toml"
+        return {
+            "execution_root": ".",
+            "execution_root_sha256": hashlib.sha256(
+                str(repository_root.resolve()).encode("utf-8")
+            ).hexdigest(),
+            "config_path": ".gitleaks.toml",
+            "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+            "source_tree_sha256": SecurityGateTests._gitleaks_source_scope_digest(
+                repository_root
+            ),
+            "scan_context": "isolated_read_only_snapshot",
+        }
+
+    @staticmethod
+    def _gitleaks_source_scope_digest(root: Path) -> str:
+        digest = hashlib.sha256()
+        digest.update(b"gitleaks-source-scope-v1\0")
+
+        def excluded(parts: tuple[str, ...]) -> bool:
+            return (
+                "tmp" in parts
+                or "temp_test" in parts
+                or "docs2" in parts
+                or any(
+                    parts[index : index + 3]
+                    == ("ml-platform", "frontend", "node_modules")
+                    for index in range(len(parts) - 2)
+                )
+            )
+
+        def record(kind: bytes, relative_path: Path, contents: bytes = b"") -> None:
+            digest.update(kind)
+            for value in (relative_path.as_posix().encode("utf-8"), contents):
+                digest.update(len(value).to_bytes(8, "big"))
+                digest.update(value)
+
+        def visit(directory: Path) -> None:
+            for candidate in sorted(directory.iterdir(), key=lambda item: item.name):
+                relative_path = candidate.relative_to(root)
+                if excluded(relative_path.parts):
+                    continue
+                metadata = candidate.lstat()
+                if stat.S_ISDIR(metadata.st_mode):
+                    record(b"D", relative_path)
+                    visit(candidate)
+                elif stat.S_ISREG(metadata.st_mode):
+                    record(b"F", relative_path, candidate.read_bytes())
+                else:
+                    raise AssertionError(f"unsafe test source: {candidate}")
+
+        visit(root)
+        return digest.hexdigest()
+
+    @classmethod
+    def _write_gitleaks_source_root(cls, root: Path) -> Path:
+        config_source = Path(__file__).resolve().parents[3] / ".gitleaks.toml"
+        root.mkdir(parents=True)
+        (root / ".gitleaks.toml").write_bytes(config_source.read_bytes())
+        source_path = root / "ml-platform" / "backend" / "app.py"
+        source_path.parent.mkdir(parents=True)
+        source_path.write_text("safe_value = 'before-scan'\n", encoding="utf-8")
+        return source_path
+
+    @classmethod
+    def _gitleaks_receipt_binding_for(cls, root: Path) -> dict[str, str]:
+        config_path = root / ".gitleaks.toml"
+        return {
+            "execution_root": ".",
+            "execution_root_sha256": hashlib.sha256(
+                str(root.resolve()).encode("utf-8")
+            ).hexdigest(),
+            "config_path": ".gitleaks.toml",
+            "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+            "source_tree_sha256": cls._gitleaks_source_scope_digest(root),
+            "scan_context": "isolated_read_only_snapshot",
+        }
+
     @staticmethod
     def _react_router_audit_report():
         return {
@@ -2060,7 +2144,7 @@ class SecurityGateTests(unittest.TestCase):
             output = Path(directory) / "security.json"
             with patch(
                 "tools.security_scans.run_scan",
-                side_effect=lambda _command: {"status": "failed"},
+                side_effect=lambda _command, **_kwargs: {"status": "failed"},
             ):
                 result = run_all(output)
             serialized = json.loads(output.read_text(encoding="utf-8"))
@@ -2078,7 +2162,7 @@ class SecurityGateTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / "security.json"
 
-                def scanner(command):
+                def scanner(command, **_kwargs):
                     if "pip_audit" in command:
                         report_path = Path(command[command.index("--output") + 1])
                         report_path.write_text(
@@ -2134,7 +2218,7 @@ class SecurityGateTests(unittest.TestCase):
             output = root / "security.json"
             self._write_react_router_exception(exception_path)
 
-            def scanner(command):
+            def scanner(command, **_kwargs):
                 if "pip_audit" in command:
                     report_path = Path(command[command.index("--output") + 1])
                     report_path.write_text(
@@ -2250,7 +2334,7 @@ class SecurityGateTests(unittest.TestCase):
         self.assertIn("--prefix", frontend_command)
         self.assertIn("frontend", frontend_command[frontend_command.index("--prefix") + 1])
 
-    def test_run_all_scans_the_repository_for_filesystem_and_secret_findings(self):
+    def test_run_all_scans_only_reviewed_source_scope_for_filesystem_and_secret_findings(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "security.json"
             with patch(
@@ -2261,23 +2345,387 @@ class SecurityGateTests(unittest.TestCase):
 
         repository_root = Path(__file__).resolve().parents[3]
         frontend_directory = repository_root / "ml-platform" / "frontend"
-        commands = [call.args[0] for call in run_scan.call_args_list]
-        filesystem_command = next(command for command in commands if command[:2] == ["trivy", "fs"])
-        gitleaks_command = next(command for command in commands if command[:2] == ["gitleaks", "detect"])
-        self.assertEqual(Path(filesystem_command[-1]).resolve(), repository_root)
-        self.assertNotIn("--skip-dirs", filesystem_command)
-        self.assertTrue(frontend_directory.is_dir())
-        self.assertIn("--source", gitleaks_command)
+        filesystem_call = next(
+            call
+            for call in run_scan.call_args_list
+            if call.args[0][:2] == ["trivy", "fs"]
+        )
+        filesystem_command = filesystem_call.args[0]
+        gitleaks_call = next(
+            call
+            for call in run_scan.call_args_list
+            if call.args[0][:2] == ["gitleaks", "detect"]
+        )
+        gitleaks_command = gitleaks_call.args[0]
+        self.assertEqual(filesystem_command[-1], ".")
+        self.assertEqual(filesystem_call.kwargs, {"cwd": repository_root})
         self.assertEqual(
-            Path(gitleaks_command[gitleaks_command.index("--source") + 1]).resolve(),
-            repository_root,
+            [
+                filesystem_command[index + 1]
+                for index, value in enumerate(filesystem_command)
+                if value == "--skip-dirs"
+            ],
+            ["tmp", "temp_test", "docs2", "ml-platform/frontend/node_modules"],
+        )
+        self.assertTrue(frontend_directory.is_dir())
+        self.assertEqual(
+            gitleaks_command[:8],
+            [
+                "gitleaks",
+                "detect",
+                "--no-git",
+                "--config",
+                ".gitleaks.toml",
+                "--no-banner",
+                "--redact",
+                "--report-format",
+            ],
+        )
+        self.assertEqual(gitleaks_command[-2:], ["--source", "."])
+        self.assertNotEqual(
+            Path(gitleaks_call.kwargs["cwd"]).resolve(),
+            repository_root.resolve(),
+        )
+
+    def test_run_all_executes_gitleaks_subprocess_from_isolated_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "security.json"
+            with (
+                patch.dict(
+                    "tools.security_scans.os.environ",
+                    {
+                        "ACCEPTANCE_IMAGE": "",
+                        "ACCEPTANCE_ADDITIONAL_IMAGES": "",
+                    },
+                    clear=False,
+                ),
+                patch("tools.security_scans.shutil.which", return_value=None),
+                patch("tools.security_scans.subprocess.run") as subprocess_run,
+            ):
+                subprocess_run.return_value.returncode = 0
+                subprocess_run.return_value.stdout = ""
+                subprocess_run.return_value.stderr = ""
+                result = run_all(output)
+
+        repository_root = Path(__file__).resolve().parents[3]
+        gitleaks_call = next(
+            call
+            for call in subprocess_run.call_args_list
+            if call.args[0][:2] == ["gitleaks", "detect"]
+        )
+        self.assertEqual(
+            gitleaks_call.args[0][:8],
+            [
+                "gitleaks",
+                "detect",
+                "--no-git",
+                "--config",
+                ".gitleaks.toml",
+                "--no-banner",
+                "--redact",
+                "--report-format",
+            ],
+        )
+        self.assertEqual(gitleaks_call.args[0][-2:], ["--source", "."])
+        self.assertNotEqual(
+            Path(gitleaks_call.kwargs["cwd"]).resolve(),
+            repository_root.resolve(),
+        )
+        self.assertEqual(
+            {
+                key: result["gates"]["secret_gitleaks"][key]
+                for key in self._gitleaks_receipt_binding()
+            },
+            self._gitleaks_receipt_binding(),
+        )
+        self.assertNotIn(str(repository_root), json.dumps(result))
+
+    def test_run_all_uses_isolated_snapshot_for_gitleaks_source_and_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository_root = Path(directory) / "repository"
+            source_path = self._write_gitleaks_source_root(repository_root)
+            config_path = repository_root / ".gitleaks.toml"
+            original_config = config_path.read_bytes()
+            original_source = source_path.read_bytes()
+            expected_binding = self._gitleaks_receipt_binding_for(repository_root)
+            observed: dict[str, object] = {}
+
+            def scanner(command, **kwargs):
+                if command[:2] == ["gitleaks", "detect"]:
+                    config_path.write_text(
+                        "title = 'relaxed'\n[extend]\nuseDefault = false\n",
+                        encoding="utf-8",
+                    )
+                    source_path.write_text(
+                        "api_key = 'changed-during-scan'\n",
+                        encoding="utf-8",
+                    )
+                    snapshot_root = Path(kwargs["cwd"])
+                    observed["cwd"] = snapshot_root
+                    observed["config"] = (snapshot_root / ".gitleaks.toml").read_bytes()
+                    observed["source"] = (
+                        snapshot_root / "ml-platform" / "backend" / "app.py"
+                    ).read_bytes()
+                return {"status": "passed", "returncode": 0}
+
+            module_path = (
+                repository_root
+                / "ml-platform"
+                / "backend"
+                / "tools"
+                / "security_scans.py"
+            )
+            with (
+                patch("tools.security_scans.__file__", str(module_path)),
+                patch("tools.security_scans.run_scan", side_effect=scanner),
+            ):
+                result = run_all(Path(directory) / "security.json")
+
+        self.assertNotEqual(observed["cwd"].resolve(), repository_root.resolve())
+        self.assertEqual(observed["config"], original_config)
+        self.assertEqual(observed["source"], original_source)
+        self.assertEqual(
+            result["gates"]["secret_gitleaks"]["scan_context"],
+            "isolated_read_only_snapshot",
+        )
+        self.assertEqual(
+            {
+                key: result["gates"]["secret_gitleaks"][key]
+                for key in expected_binding
+            },
+            expected_binding,
+        )
+
+    def test_summary_rejects_gitleaks_stale_source_tree_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository_root = Path(directory) / "repository"
+            source_path = self._write_gitleaks_source_root(repository_root)
+            evidence_root = Path(directory) / "security-evidence"
+            evidence_root.mkdir()
+            self._write_complete_security_evidence(evidence_root)
+            aggregate_path = evidence_root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            aggregate["gates"]["secret_gitleaks"].update(
+                self._gitleaks_receipt_binding_for(repository_root)
+            )
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            source_path.write_text(
+                "safe_value = 'changed-after-receipt'\n",
+                encoding="utf-8",
+            )
+            output = evidence_root / "summary.json"
+            module_path = (
+                repository_root
+                / "ml-platform"
+                / "backend"
+                / "tools"
+                / "security_scans.py"
+            )
+
+            with patch("tools.security_scans.__file__", str(module_path)):
+                exit_code = security_scans_main(
+                    [
+                        "summarize",
+                        "--input-dir",
+                        str(evidence_root),
+                        "--output",
+                        str(output),
+                        "--source-commit",
+                        "a" * 40,
+                    ]
+                )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["gates"]["secret_gitleaks"]["status"], "failed")
+        self.assertEqual(
+            result["gates"]["secret_gitleaks"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
+    def test_run_all_rejects_hard_linked_gitleaks_source_before_scanner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository_root = Path(directory) / "repository"
+            source_path = self._write_gitleaks_source_root(repository_root)
+            outside_source = Path(directory) / "outside-source.py"
+            outside_source.write_bytes(source_path.read_bytes())
+            source_path.unlink()
+            os.link(outside_source, source_path)
+            module_path = (
+                repository_root
+                / "ml-platform"
+                / "backend"
+                / "tools"
+                / "security_scans.py"
+            )
+
+            with (
+                patch("tools.security_scans.__file__", str(module_path)),
+                patch(
+                    "tools.security_scans.run_scan",
+                    return_value={"status": "passed", "returncode": 0},
+                ) as run_scan,
+            ):
+                result = run_all(Path(directory) / "security.json")
+
+        self.assertFalse(
+            any(
+                call.args[0][:2] == ["gitleaks", "detect"]
+                for call in run_scan.call_args_list
+            )
+        )
+        self.assertEqual(result["gates"]["secret_gitleaks"]["status"], "failed")
+        self.assertEqual(
+            result["gates"]["secret_gitleaks"]["error_code"],
+            "GITLEAKS_SOURCE_SNAPSHOT_INVALID",
+        )
+
+    def test_run_all_fails_closed_when_gitleaks_snapshot_cannot_be_created(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository_root = Path(directory) / "repository"
+            self._write_gitleaks_source_root(repository_root)
+            module_path = (
+                repository_root
+                / "ml-platform"
+                / "backend"
+                / "tools"
+                / "security_scans.py"
+            )
+
+            with (
+                patch("tools.security_scans.__file__", str(module_path)),
+                patch(
+                    "tools.security_scans.tempfile.mkdtemp",
+                    side_effect=OSError("temporary directory unavailable"),
+                ),
+                patch(
+                    "tools.security_scans.run_scan",
+                    return_value={"status": "passed", "returncode": 0},
+                ) as run_scan,
+            ):
+                result = run_all(Path(directory) / "security.json")
+
+        self.assertFalse(
+            any(
+                call.args[0][:2] == ["gitleaks", "detect"]
+                for call in run_scan.call_args_list
+            )
+        )
+        self.assertEqual(result["gates"]["secret_gitleaks"]["status"], "failed")
+        self.assertEqual(
+            result["gates"]["secret_gitleaks"]["error_code"],
+            "GITLEAKS_SOURCE_SNAPSHOT_INVALID",
+        )
+
+    def test_required_scanner_commands_reject_scope_weakening(self):
+        filesystem_command = [
+            "trivy",
+            "fs",
+            "--exit-code",
+            "1",
+            "--severity",
+            "HIGH,CRITICAL",
+            "--format",
+            "json",
+            "--skip-dirs",
+            "tmp",
+            "--skip-dirs",
+            "temp_test",
+            "--skip-dirs",
+            "docs2",
+            "--skip-dirs",
+            "ml-platform/frontend/node_modules",
+            "--output",
+            "trivy-fs.json",
+            ".",
+        ]
+        self.assertTrue(is_required_scan_command("filesystem_trivy", filesystem_command))
+        self.assertFalse(
+            is_required_scan_command(
+                "filesystem_trivy",
+                [*filesystem_command[:-1], "ml-platform/backend/app"],
+            )
+        )
+        self.assertFalse(
+            is_required_scan_command(
+                "filesystem_trivy",
+                [value for value in filesystem_command if value != "temp_test"],
+            )
+        )
+        self.assertFalse(
+            is_required_scan_command(
+                "filesystem_trivy",
+                [
+                    *filesystem_command[:8],
+                    "--skip-dirs",
+                    "ml-platform",
+                    *filesystem_command[10:],
+                ],
+            )
+        )
+
+        gitleaks_command = [
+            "gitleaks",
+            "detect",
+            "--no-git",
+            "--config",
+            ".gitleaks.toml",
+            "--no-banner",
+            "--redact",
+            "--report-format",
+            "json",
+            "--report-path",
+            "gitleaks.json",
+            "--source",
+            ".",
+        ]
+        self.assertTrue(is_required_scan_command("secret_gitleaks", gitleaks_command))
+        self.assertFalse(
+            is_required_scan_command(
+                "secret_gitleaks",
+                [value for value in gitleaks_command if value != "--no-git"],
+            )
+        )
+        self.assertFalse(
+            is_required_scan_command(
+                "secret_gitleaks",
+                [value for value in gitleaks_command if value != "--config"],
+            )
+        )
+        wrong_config = [
+            *gitleaks_command[:4],
+            ".gitleaks-relaxed.toml",
+            *gitleaks_command[5:],
+        ]
+        self.assertFalse(is_required_scan_command("secret_gitleaks", wrong_config))
+
+    def test_gitleaks_scope_config_extends_default_rules_and_excludes_only_generated_paths(self):
+        repository_root = Path(__file__).resolve().parents[3]
+        config_path = repository_root / ".gitleaks.toml"
+        self.assertTrue(config_path.is_file())
+        self.assertEqual(
+            tomllib.loads(config_path.read_text(encoding="utf-8")),
+            {
+                "title": "ML Platform reviewed source scan scope",
+                "extend": {"useDefault": True},
+                "allowlist": {
+                    "description": "Exclude local caches and raw evidence outside the reviewed source scope.",
+                    "paths": [
+                        r"(^|[\\/])tmp([\\/]|$)",
+                        r"(^|[\\/])temp_test([\\/]|$)",
+                        r"(^|[\\/])docs2([\\/]|$)",
+                        r"(^|[\\/])ml-platform[\\/]frontend[\\/]node_modules([\\/]|$)",
+                    ],
+                },
+            },
         )
 
     def test_run_all_writes_redacted_json_evidence_for_each_required_scanner(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "security" / "security.json"
 
-            def scanner(command):
+            def scanner(command, **_kwargs):
                 if command[:2] == ["trivy", "image"]:
                     self._write_clean_trivy_image_report(
                         command,
@@ -2349,6 +2797,9 @@ class SecurityGateTests(unittest.TestCase):
         self.assertIn("--report-format", gitleaks)
         self.assertIn("json", gitleaks)
         self.assertIn("--report-path", gitleaks)
+        self.assertIn("--no-git", gitleaks)
+        self.assertEqual(gitleaks[gitleaks.index("--config") + 1], ".gitleaks.toml")
+        self.assertEqual(gitleaks[-2:], ["--source", "."])
 
     def test_run_all_scans_every_declared_production_image(self):
         clean_dependencies = [
@@ -2359,7 +2810,7 @@ class SecurityGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "security.json"
 
-            def scanner(command):
+            def scanner(command, **_kwargs):
                 if "pip_audit" in command:
                     report_path = Path(command[command.index("--output") + 1])
                     report_path.write_text(
@@ -2420,7 +2871,7 @@ class SecurityGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "security.json"
 
-            def scanner(command):
+            def scanner(command, **_kwargs):
                 if "pip_audit" in command:
                     report_path = Path(command[command.index("--output") + 1])
                     report_path.write_text(
@@ -2488,7 +2939,7 @@ class SecurityGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "security.json"
 
-            def scanner(command):
+            def scanner(command, **_kwargs):
                 if "pip_audit" in command:
                     report_path = Path(command[command.index("--output") + 1])
                     report_path.write_text(
@@ -2628,7 +3079,15 @@ class SecurityGateTests(unittest.TestCase):
             (nested / "web.json").write_text('{"status": "passed"}', encoding="utf-8")
             output = root / "summary.json"
             exit_code = security_scans_main(
-                ["summarize", "--input-dir", str(root), "--output", str(output)],
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
             )
             result = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(exit_code, 1)
@@ -2683,7 +3142,7 @@ class SecurityGateTests(unittest.TestCase):
             },
             "trivy-fs.json": {
                 "SchemaVersion": 2,
-                "ArtifactName": "repository",
+                "ArtifactName": ".",
                 "ArtifactType": "filesystem",
                 "Results": [],
             },
@@ -2748,16 +3207,22 @@ class SecurityGateTests(unittest.TestCase):
                             "returncode": 0,
                             "command": [
                                 "trivy", "fs", "--exit-code", "1", "--severity", "HIGH,CRITICAL",
-                                "--format", "json", "--output", "trivy-fs.json", ".",
+                                "--format", "json",
+                                "--skip-dirs", "tmp",
+                                "--skip-dirs", "temp_test",
+                                "--skip-dirs", "docs2",
+                                "--skip-dirs", "ml-platform/frontend/node_modules",
+                                "--output", "trivy-fs.json", ".",
                             ],
                         },
                         "secret_gitleaks": {
                             "status": "passed",
                             "returncode": 0,
                             "command": [
-                                "gitleaks", "detect", "--no-banner", "--redact", "--report-format", "json",
+                                "gitleaks", "detect", "--no-git", "--config", ".gitleaks.toml", "--no-banner", "--redact", "--report-format", "json",
                                 "--report-path", "gitleaks.json", "--source", ".",
                             ],
+                            **SecurityGateTests._gitleaks_receipt_binding(),
                         },
                     },
                 },
@@ -2926,6 +3391,16 @@ class SecurityGateTests(unittest.TestCase):
             ("source_bandit", lambda command: command.__setitem__(4, "-ll")),
             ("filesystem_trivy", lambda command: command.__setitem__(5, "LOW")),
             ("filesystem_trivy", lambda command: command.__setitem__(3, "0")),
+            ("filesystem_trivy", lambda command: command.remove("temp_test")),
+            ("secret_gitleaks", lambda command: command.remove("--no-git")),
+            ("secret_gitleaks", lambda command: command.remove("--config")),
+            (
+                "secret_gitleaks",
+                lambda command: command.__setitem__(
+                    command.index(".gitleaks.toml"),
+                    ".gitleaks-relaxed.toml",
+                ),
+            ),
             ("container_image", lambda command: command.__setitem__(5, "LOW")),
             ("container_image", lambda command: command.__setitem__(3, "0")),
         )
@@ -2961,6 +3436,79 @@ class SecurityGateTests(unittest.TestCase):
                 result["gates"][gate_name]["error_code"],
                 "SECURITY_EVIDENCE_INVALID",
             )
+
+    def test_summary_rejects_tampered_gitleaks_execution_root_or_config_binding(self):
+        mutations = (
+            ("execution_root", "ml-platform"),
+            ("execution_root_sha256", "0" * 64),
+            ("config_path", "child/.gitleaks.toml"),
+            ("config_sha256", "0" * 64),
+            ("source_tree_sha256", "0" * 64),
+            ("scan_context", "live_repository"),
+        )
+        for field, value in mutations:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_complete_security_evidence(root)
+                aggregate_path = root / "security.json"
+                aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+                aggregate["gates"]["secret_gitleaks"][field] = value
+                aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+                output = root / "summary.json"
+                exit_code = security_scans_main(
+                    [
+                        "summarize",
+                        "--input-dir",
+                        str(root),
+                        "--output",
+                        str(output),
+                        "--source-commit",
+                        "a" * 40,
+                    ],
+                )
+                result = json.loads(output.read_text(encoding="utf-8"))
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(
+                result["gates"]["secret_gitleaks"]["error_code"],
+                "SECURITY_EVIDENCE_INVALID",
+            )
+
+    def test_summary_rejects_trivy_subdirectory_scope_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            aggregate_path = root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            aggregate["gates"]["filesystem_trivy"]["command"][-1] = (
+                "ml-platform/backend/app"
+            )
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            raw_path = root / "trivy-fs.json"
+            raw = json.loads(raw_path.read_text(encoding="utf-8"))
+            raw["ArtifactName"] = "ml-platform/backend/app"
+            raw_path.write_text(json.dumps(raw), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["filesystem_trivy"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
 
     def test_summary_rejects_absolute_paths_in_scanner_receipts(self):
         with tempfile.TemporaryDirectory() as directory:

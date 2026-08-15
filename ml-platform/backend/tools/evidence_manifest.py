@@ -21,6 +21,7 @@ from tools.security_scans import (
     REQUIRED_SCAN_GATES,
     WEB_SECURITY_GATE_NAMES,
     _raw_scan_report_error,
+    is_valid_gitleaks_receipt_binding,
     is_required_scan_command,
 )
 from tools.upgrade_fixture import EXPECTED_N_MINUS_ONE
@@ -555,6 +556,13 @@ def _validate_security(
                 if (
                     gate.get("returncode") != 0
                     or not is_required_scan_command(name, command)
+                    or (
+                        name == "secret_gitleaks"
+                        and not is_valid_gitleaks_receipt_binding(
+                            gate,
+                            Path(__file__).resolve().parents[3],
+                        )
+                    )
                 ):
                     _contract_failure(path, f"{name} scanner receipt invalid")
                 _assert_command_has_no_absolute_path(

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,87 @@ from tools.week11_performance import (
 class EvidenceManifestTests(unittest.TestCase):
     _COMMIT = "a" * 40
     _IMAGE_DIGEST = "sha256:" + "c" * 64
+
+    @staticmethod
+    def _gitleaks_receipt_binding() -> dict[str, str]:
+        repository_root = Path(__file__).resolve().parents[3]
+        config_path = repository_root / ".gitleaks.toml"
+        return {
+            "execution_root": ".",
+            "execution_root_sha256": hashlib.sha256(
+                str(repository_root.resolve()).encode("utf-8")
+            ).hexdigest(),
+            "config_path": ".gitleaks.toml",
+            "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+            "source_tree_sha256": EvidenceManifestTests._gitleaks_source_scope_digest(
+                repository_root
+            ),
+            "scan_context": "isolated_read_only_snapshot",
+        }
+
+    @staticmethod
+    def _gitleaks_source_scope_digest(root: Path) -> str:
+        digest = hashlib.sha256()
+        digest.update(b"gitleaks-source-scope-v1\0")
+
+        def excluded(parts: tuple[str, ...]) -> bool:
+            return (
+                "tmp" in parts
+                or "temp_test" in parts
+                or "docs2" in parts
+                or any(
+                    parts[index : index + 3]
+                    == ("ml-platform", "frontend", "node_modules")
+                    for index in range(len(parts) - 2)
+                )
+            )
+
+        def record(kind: bytes, relative_path: Path, contents: bytes = b"") -> None:
+            digest.update(kind)
+            for value in (relative_path.as_posix().encode("utf-8"), contents):
+                digest.update(len(value).to_bytes(8, "big"))
+                digest.update(value)
+
+        def visit(directory: Path) -> None:
+            for candidate in sorted(directory.iterdir(), key=lambda item: item.name):
+                relative_path = candidate.relative_to(root)
+                if excluded(relative_path.parts):
+                    continue
+                metadata = candidate.lstat()
+                if stat.S_ISDIR(metadata.st_mode):
+                    record(b"D", relative_path)
+                    visit(candidate)
+                elif stat.S_ISREG(metadata.st_mode):
+                    record(b"F", relative_path, candidate.read_bytes())
+                else:
+                    raise AssertionError(f"unsafe test source: {candidate}")
+
+        visit(root)
+        return digest.hexdigest()
+
+    @classmethod
+    def _write_gitleaks_source_root(cls, root: Path) -> Path:
+        config_source = Path(__file__).resolve().parents[3] / ".gitleaks.toml"
+        root.mkdir(parents=True)
+        (root / ".gitleaks.toml").write_bytes(config_source.read_bytes())
+        source_path = root / "ml-platform" / "backend" / "app.py"
+        source_path.parent.mkdir(parents=True)
+        source_path.write_text("safe_value = 'before-receipt'\n", encoding="utf-8")
+        return source_path
+
+    @classmethod
+    def _gitleaks_receipt_binding_for(cls, root: Path) -> dict[str, str]:
+        config_path = root / ".gitleaks.toml"
+        return {
+            "execution_root": ".",
+            "execution_root_sha256": hashlib.sha256(
+                str(root.resolve()).encode("utf-8")
+            ).hexdigest(),
+            "config_path": ".gitleaks.toml",
+            "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+            "source_tree_sha256": cls._gitleaks_source_scope_digest(root),
+            "scan_context": "isolated_read_only_snapshot",
+        }
 
     def _environment(
         self,
@@ -226,16 +308,22 @@ class EvidenceManifestTests(unittest.TestCase):
                 "returncode": 0,
                 "command": [
                     "trivy", "fs", "--exit-code", "1", "--severity", "HIGH,CRITICAL",
-                    "--format", "json", "--output", "trivy-fs.json", ".",
+                    "--format", "json",
+                    "--skip-dirs", "tmp",
+                    "--skip-dirs", "temp_test",
+                    "--skip-dirs", "docs2",
+                    "--skip-dirs", "ml-platform/frontend/node_modules",
+                    "--output", "trivy-fs.json", ".",
                 ],
             },
             "secret_gitleaks": {
                 "status": "passed",
                 "returncode": 0,
                 "command": [
-                    "gitleaks", "detect", "--no-banner", "--redact", "--report-format", "json",
+                    "gitleaks", "detect", "--no-git", "--config", ".gitleaks.toml", "--no-banner", "--redact", "--report-format", "json",
                     "--report-path", "gitleaks.json", "--source", ".",
                 ],
+                **self._gitleaks_receipt_binding(),
             },
         }
         scan_gates["container_image"] = {
@@ -264,7 +352,7 @@ class EvidenceManifestTests(unittest.TestCase):
             },
             "trivy-fs.json": {
                 "SchemaVersion": 2,
-                "ArtifactName": "repository",
+                "ArtifactName": ".",
                 "ArtifactType": "filesystem",
                 "Results": [],
             },
@@ -647,6 +735,16 @@ class EvidenceManifestTests(unittest.TestCase):
             ("source_bandit", lambda command: command.__setitem__(4, "-ll")),
             ("filesystem_trivy", lambda command: command.__setitem__(5, "LOW")),
             ("filesystem_trivy", lambda command: command.__setitem__(3, "0")),
+            ("filesystem_trivy", lambda command: command.remove("temp_test")),
+            ("secret_gitleaks", lambda command: command.remove("--no-git")),
+            ("secret_gitleaks", lambda command: command.remove("--config")),
+            (
+                "secret_gitleaks",
+                lambda command: command.__setitem__(
+                    command.index(".gitleaks.toml"),
+                    ".gitleaks-relaxed.toml",
+                ),
+            ),
             ("container_image", lambda command: command.__setitem__(5, "LOW")),
             ("container_image", lambda command: command.__setitem__(3, "0")),
         )
@@ -673,9 +771,162 @@ class EvidenceManifestTests(unittest.TestCase):
                         generate(
                             evidence_dir,
                             output,
+                        remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                        image_digest=self._IMAGE_DIGEST,
+                    )
+
+    def test_generate_rejects_trivy_subdirectory_scope_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_dir = Path(directory) / "evidence"
+            self._write_required_evidence(
+                evidence_dir,
+                include_environment=True,
+                semantic=True,
+            )
+            summary_path = evidence_dir / "security" / "summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary["gates"]["filesystem_trivy"]["command"][-1] = (
+                "ml-platform/backend/app"
+            )
+            summary_path.write_text(json.dumps(summary), encoding="utf-8")
+            raw_path = evidence_dir / "security" / "trivy-fs.json"
+            raw = json.loads(raw_path.read_text(encoding="utf-8"))
+            raw["ArtifactName"] = "ml-platform/backend/app"
+            raw_path.write_text(json.dumps(raw), encoding="utf-8")
+            output = Path(directory) / "manifest.json"
+
+            with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "filesystem_trivy scanner receipt invalid",
+                ):
+                    generate(
+                        evidence_dir,
+                        output,
+                        remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                        image_digest=self._IMAGE_DIGEST,
+                    )
+            self.assertFalse(output.exists())
+
+    def test_generate_rejects_tampered_gitleaks_root_or_config_binding_after_resummarize(self):
+        mutations = (
+            ("execution_root", "ml-platform"),
+            ("execution_root_sha256", "0" * 64),
+            ("config_path", "child/.gitleaks.toml"),
+            ("config_sha256", "0" * 64),
+            ("source_tree_sha256", "0" * 64),
+            ("scan_context", "live_repository"),
+        )
+        for field, value in mutations:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                evidence_dir = Path(directory) / "evidence"
+                self._write_required_evidence(
+                    evidence_dir,
+                    include_environment=True,
+                    semantic=True,
+                )
+                security_root = evidence_dir / "security"
+                security_path = security_root / "security.json"
+                security = json.loads(security_path.read_text(encoding="utf-8"))
+                security["gates"]["secret_gitleaks"][field] = value
+                security_path.write_text(json.dumps(security), encoding="utf-8")
+                summary = summarize_scans(
+                    security_root,
+                    security_root / "summary.json",
+                    source_commit=self._COMMIT,
+                )
+                output = Path(directory) / "manifest.json"
+
+                self.assertEqual(summary["status"], "failed")
+                with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                    with self.assertRaisesRegex(RuntimeError, "required evidence did not pass"):
+                        generate(
+                            evidence_dir,
+                            output,
+                        remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                        image_digest=self._IMAGE_DIGEST,
+                    )
+
+    def test_generate_rejects_directly_tampered_gitleaks_receipt_binding(self):
+        mutations = (
+            ("execution_root", "ml-platform"),
+            ("execution_root_sha256", "0" * 64),
+            ("config_path", "child/.gitleaks.toml"),
+            ("config_sha256", "0" * 64),
+            ("source_tree_sha256", "0" * 64),
+            ("scan_context", "live_repository"),
+        )
+        for field, value in mutations:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                evidence_dir = Path(directory) / "evidence"
+                self._write_required_evidence(
+                    evidence_dir,
+                    include_environment=True,
+                    semantic=True,
+                )
+                summary_path = evidence_dir / "security" / "summary.json"
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                summary["gates"]["secret_gitleaks"][field] = value
+                summary_path.write_text(json.dumps(summary), encoding="utf-8")
+                output = Path(directory) / "manifest.json"
+
+                with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "secret_gitleaks scanner receipt invalid",
+                    ):
+                        generate(
+                            evidence_dir,
+                            output,
                             remote_ci_run_url="https://github.example.invalid/actions/runs/1",
                             image_digest=self._IMAGE_DIGEST,
-                        )
+                )
+                self.assertFalse(output.exists())
+
+    def test_generate_rejects_gitleaks_stale_source_tree_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository_root = Path(directory) / "repository"
+            source_path = self._write_gitleaks_source_root(repository_root)
+            evidence_dir = Path(directory) / "evidence"
+            self._write_required_evidence(
+                evidence_dir,
+                include_environment=True,
+                semantic=True,
+            )
+            summary_path = evidence_dir / "security" / "summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary["gates"]["secret_gitleaks"].update(
+                self._gitleaks_receipt_binding_for(repository_root)
+            )
+            summary_path.write_text(json.dumps(summary), encoding="utf-8")
+            source_path.write_text(
+                "safe_value = 'changed-after-receipt'\n",
+                encoding="utf-8",
+            )
+            output = Path(directory) / "manifest.json"
+            module_path = (
+                repository_root
+                / "ml-platform"
+                / "backend"
+                / "tools"
+                / "evidence_manifest.py"
+            )
+
+            with (
+                patch("tools.evidence_manifest.__file__", str(module_path)),
+                patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT),
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    "secret_gitleaks scanner receipt invalid",
+                ),
+            ):
+                generate(
+                    evidence_dir,
+                    output,
+                    remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                    image_digest=self._IMAGE_DIGEST,
+                )
+            self.assertFalse(output.exists())
 
     def test_generate_rejects_container_gate_without_each_image_scanner_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -833,7 +1084,7 @@ class EvidenceManifestTests(unittest.TestCase):
                 "security/trivy-fs.json",
                 {
                     "SchemaVersion": 2,
-                    "ArtifactName": "repository",
+                    "ArtifactName": ".",
                     "ArtifactType": "filesystem",
                     "Results": {
                         "Vulnerabilities": [{"Severity": "HIGH"}],

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,8 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
+import tomllib
 from typing import Callable, Mapping, Sequence
 from uuid import uuid4
 
@@ -57,6 +60,24 @@ REQUIRED_SCAN_EVIDENCE_FILES = {
     "container_image": "trivy-image.json",
     "secret_gitleaks": "gitleaks.json",
     "web_security": "web.json",
+}
+_GITLEAKS_CONFIG_PATH = ".gitleaks.toml"
+_GITLEAKS_EXECUTION_ROOT = "."
+_GITLEAKS_SCAN_CONTEXT = "isolated_read_only_snapshot"
+_GITLEAKS_SOURCE_SCOPE_HEADER = b"gitleaks-source-scope-v1\0"
+_FILESYSTEM_TRIVY_EXECUTION_ROOT = "."
+_GITLEAKS_CONFIG_CONTRACT = {
+    "title": "ML Platform reviewed source scan scope",
+    "extend": {"useDefault": True},
+    "allowlist": {
+        "description": "Exclude local caches and raw evidence outside the reviewed source scope.",
+        "paths": [
+            r"(^|[\\/])tmp([\\/]|$)",
+            r"(^|[\\/])temp_test([\\/]|$)",
+            r"(^|[\\/])docs2([\\/]|$)",
+            r"(^|[\\/])ml-platform[\\/]frontend[\\/]node_modules([\\/]|$)",
+        ],
+    },
 }
 WEB_SECURITY_GATE_NAMES = frozenset(
     {
@@ -337,6 +358,271 @@ def _valid_redacted_command(command: object) -> bool:
     )
 
 
+def _is_reparse_point(metadata: os.stat_result) -> bool:
+    return bool(
+        getattr(metadata, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+def _gitleaks_source_metadata_signature(metadata: os.stat_result) -> tuple[int, ...]:
+    """Return the stable attributes that bind a source entry to its bytes."""
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+    )
+
+
+def _is_safe_gitleaks_source_directory(metadata: os.stat_result) -> bool:
+    return stat.S_ISDIR(metadata.st_mode) and not _is_reparse_point(metadata)
+
+
+def _is_safe_gitleaks_source_file(metadata: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_nlink == 1
+        and not _is_reparse_point(metadata)
+    )
+
+
+def _read_stable_gitleaks_source_file(path: Path) -> bytes | None:
+    """Read one reviewed regular file only when its identity stays stable."""
+    try:
+        before = os.lstat(path)
+        if not _is_safe_gitleaks_source_file(before):
+            return None
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(path, flags)
+        with os.fdopen(descriptor, "rb") as source_file:
+            opened = os.fstat(source_file.fileno())
+            if (
+                not _is_safe_gitleaks_source_file(opened)
+                or _gitleaks_source_metadata_signature(opened)
+                != _gitleaks_source_metadata_signature(before)
+            ):
+                return None
+            contents = source_file.read()
+        after = os.lstat(path)
+        if (
+            _gitleaks_source_metadata_signature(after)
+            != _gitleaks_source_metadata_signature(before)
+            or len(contents) != before.st_size
+        ):
+            return None
+        return contents
+    except OSError:
+        return None
+
+
+def _is_gitleaks_source_scope_excluded(relative_path: Path) -> bool:
+    parts = relative_path.parts
+    return (
+        "tmp" in parts
+        or "temp_test" in parts
+        or "docs2" in parts
+        or any(
+            parts[index : index + 3]
+            == ("ml-platform", "frontend", "node_modules")
+            for index in range(len(parts) - 2)
+        )
+    )
+
+
+def _gitleaks_source_scope_digest(
+    repository_root: Path,
+    *,
+    snapshot_root: Path | None = None,
+) -> str | None:
+    """Hash the exact no-git source scope and optionally copy it to a snapshot."""
+    try:
+        root_metadata = os.lstat(repository_root)
+        if not _is_safe_gitleaks_source_directory(root_metadata):
+            return None
+        root = repository_root.resolve(strict=True)
+        digest = hashlib.sha256()
+        digest.update(_GITLEAKS_SOURCE_SCOPE_HEADER)
+
+        def record(kind: bytes, relative_path: Path, contents: bytes = b"") -> bool:
+            try:
+                path_bytes = relative_path.as_posix().encode("utf-8")
+            except UnicodeEncodeError:
+                return False
+            digest.update(kind)
+            for value in (path_bytes, contents):
+                digest.update(len(value).to_bytes(8, "big"))
+                digest.update(value)
+            return True
+
+        def visit(directory: Path, destination: Path | None) -> bool:
+            before = os.lstat(directory)
+            if not _is_safe_gitleaks_source_directory(before):
+                return False
+            entries = sorted(directory.iterdir(), key=lambda item: item.name)
+            for candidate in entries:
+                relative_path = candidate.relative_to(root)
+                if _is_gitleaks_source_scope_excluded(relative_path):
+                    continue
+                metadata = os.lstat(candidate)
+                destination_path = (
+                    destination / candidate.name if destination is not None else None
+                )
+                if _is_safe_gitleaks_source_directory(metadata):
+                    if not record(b"D", relative_path):
+                        return False
+                    if destination_path is not None:
+                        destination_path.mkdir()
+                    if not visit(candidate, destination_path):
+                        return False
+                elif _is_safe_gitleaks_source_file(metadata):
+                    contents = _read_stable_gitleaks_source_file(candidate)
+                    if contents is None or not record(b"F", relative_path, contents):
+                        return False
+                    if destination_path is not None:
+                        destination_path.write_bytes(contents)
+                else:
+                    return False
+            after = os.lstat(directory)
+            return (
+                _is_safe_gitleaks_source_directory(after)
+                and _gitleaks_source_metadata_signature(after)
+                == _gitleaks_source_metadata_signature(before)
+            )
+
+        if snapshot_root is not None:
+            snapshot_metadata = os.lstat(snapshot_root)
+            if not _is_safe_gitleaks_source_directory(snapshot_metadata):
+                return None
+        return digest.hexdigest() if visit(root, snapshot_root) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _make_gitleaks_snapshot_read_only(snapshot_root: Path) -> bool:
+    """Remove write permission from every private Gitleaks snapshot entry."""
+    try:
+        entries = sorted(
+            snapshot_root.rglob("*"),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        )
+        for path in entries:
+            metadata = os.lstat(path)
+            if _is_safe_gitleaks_source_file(metadata):
+                os.chmod(path, stat.S_IRUSR)
+            elif _is_safe_gitleaks_source_directory(metadata):
+                os.chmod(path, stat.S_IRUSR | stat.S_IXUSR)
+            else:
+                return False
+        os.chmod(snapshot_root, stat.S_IRUSR | stat.S_IXUSR)
+        return True
+    except OSError:
+        return False
+
+
+def _remove_gitleaks_snapshot(snapshot_root: Path) -> bool:
+    """Restore private snapshot permissions before deleting the whole tree."""
+    def onerror(function: Callable[..., object], path: str, _exc_info: object) -> None:
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE | stat.S_IEXEC)
+        function(path)
+
+    try:
+        shutil.rmtree(snapshot_root, onerror=onerror)
+    except OSError:
+        return False
+    return not snapshot_root.exists()
+
+
+def _create_gitleaks_source_snapshot(
+    repository_root: Path,
+    binding: Mapping[str, object],
+) -> Path | None:
+    """Copy exactly the bound reviewed source scope into a private readonly tree."""
+    try:
+        snapshot_root = Path(tempfile.mkdtemp(prefix="ml-platform-gitleaks-"))
+    except OSError:
+        return None
+    try:
+        source_tree_sha256 = _gitleaks_source_scope_digest(
+            repository_root,
+            snapshot_root=snapshot_root,
+        )
+        snapshot_config = _read_stable_gitleaks_source_file(
+            snapshot_root / _GITLEAKS_CONFIG_PATH
+        )
+        snapshot_tree_sha256 = _gitleaks_source_scope_digest(snapshot_root)
+        if (
+            source_tree_sha256 is None
+            or source_tree_sha256 != binding.get("source_tree_sha256")
+            or snapshot_tree_sha256 != source_tree_sha256
+            or snapshot_config is None
+            or hashlib.sha256(snapshot_config).hexdigest()
+            != binding.get("config_sha256")
+            or not _make_gitleaks_snapshot_read_only(snapshot_root)
+        ):
+            raise OSError("Gitleaks source snapshot could not be verified")
+        return snapshot_root
+    except OSError:
+        _remove_gitleaks_snapshot(snapshot_root)
+        return None
+
+
+def _gitleaks_configuration_context(
+    repository_root: Path,
+) -> tuple[Path, bytes] | None:
+    """Validate and read the fixed Gitleaks configuration without source traversal."""
+    try:
+        root_metadata = os.lstat(repository_root)
+        if not _is_safe_gitleaks_source_directory(root_metadata):
+            return None
+        root = repository_root.resolve(strict=True)
+        config_path = root / _GITLEAKS_CONFIG_PATH
+        config_bytes = _read_stable_gitleaks_source_file(config_path)
+        if config_bytes is None:
+            return None
+        if tomllib.loads(config_bytes.decode("utf-8")) != _GITLEAKS_CONFIG_CONTRACT:
+            return None
+    except (OSError, UnicodeDecodeError, ValueError, tomllib.TOMLDecodeError):
+        return None
+    return root, config_bytes
+
+
+def _gitleaks_receipt_binding(repository_root: Path) -> dict[str, str] | None:
+    """Return a relative, integrity-bound Gitleaks execution receipt context."""
+    configuration = _gitleaks_configuration_context(repository_root)
+    if configuration is None:
+        return None
+    root, config_bytes = configuration
+    source_tree_sha256 = _gitleaks_source_scope_digest(root)
+    if source_tree_sha256 is None:
+        return None
+    return {
+        "execution_root": _GITLEAKS_EXECUTION_ROOT,
+        "execution_root_sha256": hashlib.sha256(
+            str(root).encode("utf-8")
+        ).hexdigest(),
+        "config_path": _GITLEAKS_CONFIG_PATH,
+        "config_sha256": hashlib.sha256(config_bytes).hexdigest(),
+        "source_tree_sha256": source_tree_sha256,
+        "scan_context": _GITLEAKS_SCAN_CONTEXT,
+    }
+
+
+def is_valid_gitleaks_receipt_binding(
+    gate: Mapping[str, object],
+    repository_root: Path,
+) -> bool:
+    expected = _gitleaks_receipt_binding(repository_root)
+    return expected is not None and all(
+        gate.get(key) == value
+        for key, value in expected.items()
+    )
+
+
 def is_required_scan_command(
     name: str,
     command: object,
@@ -389,8 +675,8 @@ def is_required_scan_command(
         )
     if name == "filesystem_trivy":
         return (
-            len(values) == 11
-            and values[:9] == [
+            len(values) == 19
+            and values[:17] == [
                 "trivy",
                 "fs",
                 "--exit-code",
@@ -399,8 +685,17 @@ def is_required_scan_command(
                 "HIGH,CRITICAL",
                 "--format",
                 "json",
+                "--skip-dirs",
+                "tmp",
+                "--skip-dirs",
+                "temp_test",
+                "--skip-dirs",
+                "docs2",
+                "--skip-dirs",
+                "ml-platform/frontend/node_modules",
                 "--output",
             ]
+            and values[-1] == _FILESYSTEM_TRIVY_EXECUTION_ROOT
         )
     if name == "container_image":
         return (
@@ -421,17 +716,20 @@ def is_required_scan_command(
         )
     if name == "secret_gitleaks":
         return (
-            len(values) == 10
-            and values[:7] == [
+            len(values) == 13
+            and values[:10] == [
                 "gitleaks",
                 "detect",
+                "--no-git",
+                "--config",
+                ".gitleaks.toml",
                 "--no-banner",
                 "--redact",
                 "--report-format",
                 "json",
                 "--report-path",
             ]
-            and values[8] == "--source"
+            and values[11:] == ["--source", "."]
         )
     return False
 
@@ -472,7 +770,11 @@ def _redact_json_value(value: object) -> object:
     return value
 
 
-def run_scan(command: list[str]) -> dict[str, object]:
+def run_scan(
+    command: list[str],
+    *,
+    cwd: str | Path | None = None,
+) -> dict[str, object]:
     """Capture a scanner outcome without allowing command output to leak secrets."""
     try:
         completed = subprocess.run(
@@ -480,6 +782,7 @@ def run_scan(command: list[str]) -> dict[str, object]:
             capture_output=True,
             text=True,
             check=False,
+            cwd=cwd,
         )
     except OSError as error:
         return {
@@ -2635,6 +2938,10 @@ def _raw_scan_report_error(name: str, value: object) -> str | None:
             or not value["ArtifactName"]
             or value.get("ArtifactType") != expected_artifact_type
             or not isinstance(results, list)
+            or (
+                name == "filesystem_trivy"
+                and value["ArtifactName"] != _FILESYSTEM_TRIVY_EXECUTION_ROOT
+            )
         ):
             return "SECURITY_EVIDENCE_INVALID"
         if name == "container_image":
@@ -2694,8 +3001,13 @@ def run_all(
         "--json",
     ]
 
-    def scanner_gate(name: str, command: list[str]) -> dict[str, object]:
-        result = run_scan(command)
+    def scanner_gate(
+        name: str,
+        command: list[str],
+        *,
+        cwd: str | Path | None = None,
+    ) -> dict[str, object]:
+        result = run_scan(command) if cwd is None else run_scan(command, cwd=cwd)
         _persist_scan_evidence(report_paths[name], result)
         return result
 
@@ -2726,6 +3038,67 @@ def run_all(
     ) is not None:
         python_result["status"] = "failed"
         python_result["error_code"] = error_code
+    gitleaks_command = [
+        "gitleaks",
+        "detect",
+        "--no-git",
+        "--config",
+        _GITLEAKS_CONFIG_PATH,
+        "--no-banner",
+        "--redact",
+        "--report-format",
+        "json",
+        "--report-path",
+        str(report_paths["secret_gitleaks"]),
+        "--source",
+        _GITLEAKS_EXECUTION_ROOT,
+    ]
+    gitleaks_binding = _gitleaks_receipt_binding(repository_root)
+    if gitleaks_binding is None:
+        binding_error = (
+            "GITLEAKS_CONFIG_INVALID"
+            if _gitleaks_configuration_context(repository_root) is None
+            else "GITLEAKS_SOURCE_SNAPSHOT_INVALID"
+        )
+        gitleaks_result = {
+            "command": _redact_command(gitleaks_command),
+            "status": "failed",
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+            "error_code": binding_error,
+        }
+        _persist_scan_evidence(report_paths["secret_gitleaks"], gitleaks_result)
+    else:
+        snapshot_root = _create_gitleaks_source_snapshot(
+            repository_root,
+            gitleaks_binding,
+        )
+        if snapshot_root is None:
+            gitleaks_result = {
+                "command": _redact_command(gitleaks_command),
+                "status": "failed",
+                "returncode": None,
+                "stdout": "",
+                "stderr": "",
+                "error_code": "GITLEAKS_SOURCE_SNAPSHOT_INVALID",
+            }
+        else:
+            try:
+                gitleaks_result = run_scan(gitleaks_command, cwd=snapshot_root)
+            finally:
+                snapshot_removed = _remove_gitleaks_snapshot(snapshot_root)
+            if not snapshot_removed:
+                gitleaks_result = {
+                    "command": _redact_command(gitleaks_command),
+                    "status": "failed",
+                    "returncode": None,
+                    "stdout": "",
+                    "stderr": "",
+                    "error_code": "GITLEAKS_SOURCE_SNAPSHOT_INVALID",
+                }
+        _persist_scan_evidence(report_paths["secret_gitleaks"], gitleaks_result)
+        gitleaks_result.update(gitleaks_binding)
     gates = {
         "python_dependencies": python_result,
         "source_bandit": scanner_gate(
@@ -2754,27 +3127,22 @@ def run_all(
                 "HIGH,CRITICAL",
                 "--format",
                 "json",
+                "--skip-dirs",
+                "tmp",
+                "--skip-dirs",
+                "temp_test",
+                "--skip-dirs",
+                "docs2",
+                "--skip-dirs",
+                "ml-platform/frontend/node_modules",
                 "--output",
                 str(report_paths["filesystem_trivy"]),
-                str(repository_root),
+                _FILESYSTEM_TRIVY_EXECUTION_ROOT,
             ],
+            cwd=repository_root,
         ),
         "container_image": {"status": "failed", "error_code": "ACCEPTANCE_IMAGE_REQUIRED"},
-        "secret_gitleaks": scanner_gate(
-            "secret_gitleaks",
-            [
-                "gitleaks",
-                "detect",
-                "--no-banner",
-                "--redact",
-                "--report-format",
-                "json",
-                "--report-path",
-                str(report_paths["secret_gitleaks"]),
-                "--source",
-                str(repository_root),
-            ],
-        ),
+        "secret_gitleaks": gitleaks_result,
     }
     image_refs = (image_ref, *additional_image_refs) if image_ref else ()
     image_components = _production_image_components(image_refs)
@@ -2923,6 +3291,7 @@ def summarize_scans(
         else None
     )
     aggregate_gate_names = REQUIRED_SCAN_GATES - {"web_security"}
+    repository_root = Path(__file__).resolve().parents[3]
 
     def valid_passing_container_gate(gate: Mapping[str, object]) -> bool:
         """Verify all production image receipts before accepting a passed container gate."""
@@ -2997,6 +3366,10 @@ def summarize_scans(
                 not is_required_scan_command(name, gate.get("command"))
                 or type(gate.get("returncode")) is not int
                 or gate["returncode"] != 0
+                or (
+                    name == "secret_gitleaks"
+                    and not is_valid_gitleaks_receipt_binding(gate, repository_root)
+                )
             ):
                 return False
             statuses.append(gate["status"])
