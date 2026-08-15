@@ -3,6 +3,7 @@ import { lazy, Suspense } from "react";
 import { ConfigProvider, theme as antTheme, App as AntApp, Spin } from "antd";
 import { useTheme } from "./stores/themeContext";
 import ProtectedRoute from "./components/ProtectedRoute";
+import PageErrorBoundary from "./components/PageErrorBoundary";
 
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const RegisterPage = lazy(() => import("./pages/RegisterPage"));
@@ -23,38 +24,43 @@ const MonitorPage = lazy(() => import("./pages/MonitorPage"));
 const AlgorithmCatalogPage = lazy(() => import("./pages/AlgorithmCatalogPage"));
 const APIMarketplacePage = lazy(() => import("./pages/APIMarketplacePage"));
 const AnnotationPage = lazy(() => import("./pages/AnnotationPage"));
+const DataAnnotationPage = lazy(() => import("./pages/DataAnnotationPage"));
 const OrchestrationPage = lazy(() => import("./pages/OrchestrationPage"));
 const ComputeResourcePage = lazy(() => import("./pages/ComputeResourcePage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
 
 const LIGHT_TOKENS = {
-  colorPrimary: "#F0883E",
-  colorSuccess: "#3FB950",
-  colorWarning: "#D29922",
-  colorError: "#F85149",
-  colorInfo: "#58A6FF",
-  borderRadius: 8,
+  colorPrimary: "#2F9BF5",
+  colorSuccess: "#47C3A0",
+  colorWarning: "#D9AC52",
+  colorError: "#E66F75",
+  colorInfo: "#2F9BF5",
+  borderRadius: 14,
+  borderRadiusLG: 20,
   fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif",
   colorBgContainer: "#FFFFFF",
-  colorBgElevated: "#F8F9FA",
-  colorBorder: "#E1E4E8",
-  colorText: "#24292F",
-  colorTextSecondary: "#57606A",
+  colorBgLayout: "#EDF5F7",
+  colorBgElevated: "#F5FAFB",
+  colorBorder: "rgba(45, 102, 119, 0.18)",
+  colorText: "#142A33",
+  colorTextSecondary: "#57707B",
 };
 
 const DARK_TOKENS = {
-  colorPrimary: "#F0883E",
-  colorSuccess: "#3FB950",
-  colorWarning: "#D29922",
-  colorError: "#F85149",
-  colorInfo: "#58A6FF",
-  borderRadius: 8,
+  colorPrimary: "#2F9BF5",
+  colorSuccess: "#47C3A0",
+  colorWarning: "#D9AC52",
+  colorError: "#E66F75",
+  colorInfo: "#2F9BF5",
+  borderRadius: 14,
+  borderRadiusLG: 20,
   fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif",
-  colorBgContainer: "#161B22",
-  colorBgElevated: "#1C2129",
-  colorBorder: "#30363D",
-  colorText: "#E6EDF3",
-  colorTextSecondary: "#8B949E",
+  colorBgContainer: "#10222C",
+  colorBgLayout: "#0C151C",
+  colorBgElevated: "#152C38",
+  colorBorder: "rgba(147, 190, 207, 0.20)",
+  colorText: "#EDF6FA",
+  colorTextSecondary: "#9BB2BF",
 };
 
 function AppContent() {
@@ -85,12 +91,13 @@ function AppContent() {
             <Route path="/knowledge" element={<ProtectedRoute><KnowledgeBasePage /></ProtectedRoute>} />
             <Route path="/knowledge/:kbId" element={<ProtectedRoute><KnowledgeDetailPage /></ProtectedRoute>} />
             <Route path="/knowledge-graph" element={<ProtectedRoute><KnowledgeGraphPage /></ProtectedRoute>} />
-            <Route path="/automl" element={<ProtectedRoute><AutoMLPage /></ProtectedRoute>} />
+            <Route path="/automl" element={<ProtectedRoute><PageErrorBoundary pageName="自动建模"><AutoMLPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/training" element={<ProtectedRoute><TrainingJobsPage /></ProtectedRoute>} />
             <Route path="/monitor" element={<ProtectedRoute><MonitorPage /></ProtectedRoute>} />
             <Route path="/algorithms" element={<ProtectedRoute><AlgorithmCatalogPage /></ProtectedRoute>} />
             <Route path="/api-marketplace" element={<ProtectedRoute><APIMarketplacePage /></ProtectedRoute>} />
             <Route path="/annotations" element={<ProtectedRoute><AnnotationPage /></ProtectedRoute>} />
+            <Route path="/data-annotation" element={<ProtectedRoute><DataAnnotationPage /></ProtectedRoute>} />
             <Route path="/orchestration" element={<ProtectedRoute><OrchestrationPage /></ProtectedRoute>} />
             <Route path="/compute" element={<ProtectedRoute><ComputeResourcePage /></ProtectedRoute>} />
             <Route path="/chat" element={<ProtectedRoute><AIChatPage /></ProtectedRoute>} />

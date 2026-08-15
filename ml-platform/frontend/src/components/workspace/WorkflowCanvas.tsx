@@ -9,10 +9,16 @@ import { useWorkflowStore } from "../../stores/workflowStore";
 const nodeTypes = { custom: CustomNode };
 const edgeTypes = { custom: CustomEdge };
 
+export function isVisualizationResultNode(node: any, status?: string, operators: any[] = []): boolean {
+  if (!node || status !== "completed") return false;
+  const operator = operators.find((candidate) => candidate.id === node.data?.operatorId);
+  return (node.data?.category || operator?.category) === "visualization";
+}
+
 export default function WorkflowCanvas() {
   const {
     nodes, edges, onNodesChange, onEdgesChange, onConnect,
-    selectNode, setReactFlowInstance, nodeStatuses, nodeProgress,
+    selectNode, openNodeResult, setReactFlowInstance, nodeStatuses, nodeProgress,
     operators,
     copySelectedNode, pasteNode,
   } = useWorkflowStore();
@@ -52,23 +58,6 @@ export default function WorkflowCanvas() {
     return map;
   }, [operators]);
 
-  // Compute connection counts per node for dynamic port display
-  const inputCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const e of edges) {
-      counts[e.target] = (counts[e.target] || 0) + 1;
-    }
-    return counts;
-  }, [edges]);
-
-  const outputCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const e of edges) {
-      counts[e.source] = (counts[e.source] || 0) + 1;
-    }
-    return counts;
-  }, [edges]);
-
   const nodesWithStatus = nodes.map((n) => {
     const opId = n.data.operatorId as string || "";
     const meta = opMeta[opId] || { inputs: [], outputs: [], category: "utility" };
@@ -76,9 +65,6 @@ export default function WorkflowCanvas() {
     // Prefer operator metadata for inputs/outputs, fall back to data
     const totalInputs = (n.data.inputs as any[])?.length ? (n.data.inputs as any[]) : meta.inputs;
     const totalOutputs = (n.data.outputs as any[])?.length ? (n.data.outputs as any[]) : meta.outputs;
-    const usedInputs = inputCounts[n.id] || 0;
-    const usedOutputs = outputCounts[n.id] || 0;
-
     return {
       ...n,
       data: {
@@ -90,9 +76,6 @@ export default function WorkflowCanvas() {
         // Use operator metadata for port definitions
         inputs: totalInputs,
         outputs: totalOutputs,
-        // Show 1 + usedPorts, capped by total available
-        visibleInputs: Math.min(totalInputs.length, Math.max(1, usedInputs + (totalInputs.length > 0 ? 1 : 0))),
-        visibleOutputs: Math.min(totalOutputs.length, Math.max(1, usedOutputs + (totalOutputs.length > 0 ? 1 : 0))),
         totalInputs: totalInputs.length,
         totalOutputs: totalOutputs.length,
       },
@@ -102,15 +85,23 @@ export default function WorkflowCanvas() {
   // Convert edges to custom type
   const edgesWithType = edges.map((e) => ({ ...e, type: e.type || "custom" }));
 
+  const handleNodeClick = useCallback((_: React.MouseEvent, node: any) => {
+    selectNode(node);
+    if (isVisualizationResultNode(node, nodeStatuses[node.id], operators)) {
+      openNodeResult(node.id);
+    }
+  }, [openNodeResult, operators, nodeStatuses, selectNode]);
+
   return (
-    <div style={{ width: "100%", height: "100%" }}>
+    <div className="workflow-canvas-surface">
       <ReactFlow
+        className="workflow-flow"
         nodes={nodesWithStatus}
         edges={edgesWithType}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
-        onNodeClick={(_, node) => selectNode(node)}
+        onNodeClick={handleNodeClick}
         onPaneClick={() => selectNode(null)}
         onInit={onInit}
         nodeTypes={nodeTypes}
@@ -120,16 +111,16 @@ export default function WorkflowCanvas() {
         snapToGrid
         snapGrid={[15, 15]}
         defaultEdgeOptions={{
-          style: { stroke: "#b1b1b7", strokeWidth: 2 },
+          style: { stroke: "var(--workflow-edge)", strokeWidth: 2 },
           animated: false,
         }}
       >
-        <Background color="#e8e8e8" gap={20} />
-        <Controls style={{ borderRadius: 8 }} />
+        <Background color="var(--workflow-grid)" gap={24} />
+        <Controls className="workflow-flow__controls" />
         <MiniMap
-          nodeStrokeWidth={3}
-          style={{ borderRadius: 8 }}
-          maskColor="rgba(0,0,0,0.08)"
+          className="workflow-flow__minimap"
+          nodeStrokeWidth={2}
+          maskColor="var(--workflow-minimap-mask)"
         />
       </ReactFlow>
     </div>

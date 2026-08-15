@@ -11,13 +11,20 @@ from typing import Callable, Sequence
 import joblib
 import pandas as pd
 from sklearn.ensemble import (
+    ExtraTreesClassifier,
+    ExtraTreesRegressor,
     GradientBoostingClassifier,
     GradientBoostingRegressor,
+    HistGradientBoostingClassifier,
+    HistGradientBoostingRegressor,
     RandomForestClassifier,
     RandomForestRegressor,
 )
 from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.model_selection import KFold, StratifiedKFold, cross_val_score
+from sklearn.metrics import get_scorer
+from sklearn.model_selection import KFold, StratifiedKFold, cross_val_score, train_test_split
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 from app.database import SessionLocal
 from app.models.experiment import Experiment
@@ -55,38 +62,237 @@ class AllCandidatesFailed(RuntimeError):
     pass
 
 
-def default_candidates(task: str) -> tuple[AutoMLCandidate, ...]:
-    if task == "classification":
-        return (
-            AutoMLCandidate(
-                "random_forest",
-                lambda: RandomForestClassifier(n_estimators=100, random_state=42),
-                {"n_estimators": 100, "random_state": 42},
-            ),
-            AutoMLCandidate(
-                "gradient_boosting",
-                lambda: GradientBoostingClassifier(random_state=42),
-                {"random_state": 42},
-            ),
-            AutoMLCandidate(
-                "logistic_regression",
-                lambda: LogisticRegression(max_iter=500, random_state=42),
-                {"max_iter": 500, "random_state": 42},
-            ),
-        )
+VALID_CROSS_VALIDATION_FOLDS = frozenset({3, 4, 5})
+
+
+def normalize_evaluation_config(
+    cross_validation_enabled: bool = True,
+    cross_validation_folds: int | None = 5,
+) -> dict[str, bool | int | None]:
+    """Return the persisted evaluation contract used by request and worker paths."""
+    if not isinstance(cross_validation_enabled, bool):
+        raise ValueError("AUTOML_CONFIG_INVALID")
+    if not cross_validation_enabled:
+        return {
+            "cross_validation_enabled": False,
+            "cross_validation_folds": None,
+        }
+    if (
+        isinstance(cross_validation_folds, bool)
+        or cross_validation_folds not in VALID_CROSS_VALIDATION_FOLDS
+    ):
+        raise ValueError("AUTOML_CONFIG_INVALID")
+    return {
+        "cross_validation_enabled": True,
+        "cross_validation_folds": int(cross_validation_folds),
+    }
+
+
+def _optional_boosting_factory(
+    task: str,
+    library: str,
+    overrides: dict | None = None,
+) -> Callable[[], object]:
+    """Use the requested library when installed and a deterministic sklearn fallback otherwise."""
+    def factory():
+        is_classifier = task == "classification"
+        if library == "lightgbm":
+            try:
+                from lightgbm import LGBMClassifier, LGBMRegressor
+                estimator = LGBMClassifier if is_classifier else LGBMRegressor
+                params = {
+                    "n_estimators": 160,
+                    "learning_rate": 0.05,
+                    "num_leaves": 31,
+                    "random_state": 42,
+                    "verbosity": -1,
+                }
+                params.update(overrides or {})
+                return estimator(**params)
+            except ImportError:
+                return GradientBoostingClassifier(random_state=42) if is_classifier else GradientBoostingRegressor(random_state=42)
+        if library == "xgboost":
+            try:
+                from xgboost import XGBClassifier, XGBRegressor
+                estimator = XGBClassifier if is_classifier else XGBRegressor
+                params = {
+                    "n_estimators": 160,
+                    "learning_rate": 0.05,
+                    "max_depth": 5,
+                    "subsample": 0.85,
+                    "colsample_bytree": 0.85,
+                    "random_state": 42,
+                    "n_jobs": 1,
+                }
+                params.update(overrides or {})
+                if is_classifier:
+                    params["eval_metric"] = "logloss"
+                else:
+                    params["objective"] = "reg:squarederror"
+                return estimator(**params)
+            except ImportError:
+                return GradientBoostingClassifier(random_state=42) if is_classifier else GradientBoostingRegressor(random_state=42)
+        if library == "catboost":
+            try:
+                from catboost import CatBoostClassifier, CatBoostRegressor
+                estimator = CatBoostClassifier if is_classifier else CatBoostRegressor
+                params = {
+                    "iterations": 160,
+                    "learning_rate": 0.05,
+                    "depth": 6,
+                    "random_seed": 42,
+                    "verbose": False,
+                    "allow_writing_files": False,
+                }
+                params.update(overrides or {})
+                return estimator(**params)
+            except ImportError:
+                return GradientBoostingClassifier(random_state=42) if is_classifier else GradientBoostingRegressor(random_state=42)
+        raise ValueError(f"Unknown optional AutoML library: {library}")
+    return factory
+
+
+def _legacy_candidates(task: str) -> tuple[AutoMLCandidate, ...]:
+    """Compatibility aliases for jobs created before the report candidate catalog."""
+    is_classifier = task == "classification"
     return (
         AutoMLCandidate(
             "random_forest",
-            lambda: RandomForestRegressor(n_estimators=100, random_state=42),
-            {"n_estimators": 100, "random_state": 42},
+            (lambda: RandomForestClassifier(n_estimators=160, random_state=42, n_jobs=1))
+            if is_classifier else (lambda: RandomForestRegressor(n_estimators=160, random_state=42, n_jobs=1)),
+            {"n_estimators": 160, "random_state": 42},
         ),
         AutoMLCandidate(
             "gradient_boosting",
-            lambda: GradientBoostingRegressor(random_state=42),
+            (lambda: GradientBoostingClassifier(random_state=42))
+            if is_classifier else (lambda: GradientBoostingRegressor(random_state=42)),
             {"random_state": 42},
         ),
-        AutoMLCandidate("linear_regression", LinearRegression, {}),
+        AutoMLCandidate(
+            "logistic_regression" if is_classifier else "linear_regression",
+            (lambda: make_pipeline(StandardScaler(), LogisticRegression(max_iter=500, random_state=42)))
+            if is_classifier else LinearRegression,
+            {"max_iter": 500, "random_state": 42} if is_classifier else {},
+        ),
     )
+
+
+def default_candidates(task: str) -> tuple[AutoMLCandidate, ...]:
+    if task not in {"classification", "regression"}:
+        raise ValueError("AUTOML_CONFIG_INVALID")
+    is_classifier = task == "classification"
+    return (
+        AutoMLCandidate(
+            "LGB_v1",
+            _optional_boosting_factory(task, "lightgbm", {"n_estimators": 200, "learning_rate": 0.05, "num_leaves": 31}),
+            {"n_estimators": 200, "learning_rate": 0.05, "num_leaves": 31},
+        ),
+        AutoMLCandidate(
+            "LGB_v2",
+            _optional_boosting_factory(task, "lightgbm", {"n_estimators": 500, "learning_rate": 0.03, "num_leaves": 63, "subsample": 0.7, "colsample_bytree": 0.7, "reg_alpha": 0.1, "reg_lambda": 0.1}),
+            {"n_estimators": 500, "learning_rate": 0.03, "num_leaves": 63, "subsample": 0.7, "colsample_bytree": 0.7, "reg_alpha": 0.1, "reg_lambda": 0.1},
+        ),
+        AutoMLCandidate(
+            "XGB_v1",
+            _optional_boosting_factory(task, "xgboost", {"n_estimators": 200, "learning_rate": 0.05, "max_depth": 5}),
+            {"n_estimators": 200, "learning_rate": 0.05, "max_depth": 5},
+        ),
+        AutoMLCandidate(
+            "XGB_v2",
+            _optional_boosting_factory(task, "xgboost", {"n_estimators": 500, "learning_rate": 0.03, "max_depth": 7}),
+            {"n_estimators": 500, "learning_rate": 0.03, "max_depth": 7},
+        ),
+        AutoMLCandidate(
+            "CAT_v1",
+            _optional_boosting_factory(task, "catboost", {"iterations": 200, "learning_rate": 0.05, "depth": 6}),
+            {"iterations": 200, "learning_rate": 0.05, "depth": 6},
+        ),
+        AutoMLCandidate(
+            "CAT_v2",
+            _optional_boosting_factory(task, "catboost", {"iterations": 500, "learning_rate": 0.03, "depth": 8}),
+            {"iterations": 500, "learning_rate": 0.03, "depth": 8},
+        ),
+        AutoMLCandidate(
+            "GBDT_v1",
+            (lambda: GradientBoostingClassifier(n_estimators=200, learning_rate=0.1, max_depth=5, random_state=42))
+            if is_classifier else (lambda: GradientBoostingRegressor(n_estimators=200, learning_rate=0.1, max_depth=5, random_state=42)),
+            {"n_estimators": 200, "learning_rate": 0.1, "max_depth": 5},
+        ),
+        AutoMLCandidate(
+            "RF_v1",
+            (lambda: RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=1))
+            if is_classifier else (lambda: RandomForestRegressor(n_estimators=300, random_state=42, n_jobs=1)),
+            {"n_estimators": 300},
+        ),
+        AutoMLCandidate(
+            "ET_v1",
+            (lambda: ExtraTreesClassifier(n_estimators=300, random_state=42, n_jobs=1))
+            if is_classifier else (lambda: ExtraTreesRegressor(n_estimators=300, random_state=42, n_jobs=1)),
+            {"n_estimators": 300},
+        ),
+        AutoMLCandidate(
+            "HGB_v1",
+            (lambda: HistGradientBoostingClassifier(max_iter=300, learning_rate=0.05, random_state=42))
+            if is_classifier else (lambda: HistGradientBoostingRegressor(max_iter=300, learning_rate=0.05, random_state=42)),
+            {"max_iter": 300, "learning_rate": 0.05},
+        ),
+    )
+
+
+def resolve_candidates(
+    task: str,
+    candidate_ids: Sequence[str] | None = None,
+) -> tuple[AutoMLCandidate, ...]:
+    if task not in {"classification", "regression"}:
+        raise ValueError("AUTOML_CONFIG_INVALID")
+    catalog = {
+        candidate.name: candidate
+        for candidate in (*default_candidates(task), *_legacy_candidates(task))
+    }
+    requested = tuple(candidate_ids or ())
+    if len(set(requested)) != len(requested) or any(name not in catalog for name in requested):
+        raise ValueError("AUTOML_CONFIG_INVALID")
+    return tuple(catalog[name] for name in requested) if requested else default_candidates(task)
+
+
+def read_automl_dataset(path: str | Path) -> pd.DataFrame:
+    return (
+        pd.read_excel(path)
+        if Path(path).suffix.lower() in {".xls", ".xlsx"}
+        else pd.read_csv(path)
+    )
+
+
+def resolve_automl_feature_columns(
+    frame: pd.DataFrame,
+    target_column: str | None,
+    requested_input_columns: Sequence[str] | None,
+) -> list[str]:
+    if not target_column or target_column not in frame.columns:
+        raise ValueError("AutoML target column is missing")
+    if requested_input_columns is None:
+        return frame.drop(columns=[target_column]).select_dtypes(include=["number"]).columns.tolist()
+    if not isinstance(requested_input_columns, (list, tuple)):
+        raise ValueError("AutoML input columns must be a list")
+    feature_columns = [str(column) for column in requested_input_columns]
+    if not feature_columns:
+        raise ValueError("AutoML requires at least one input column")
+    if len(set(feature_columns)) != len(feature_columns):
+        raise ValueError("AutoML input columns must be unique")
+    if target_column in feature_columns:
+        raise ValueError("AutoML target column cannot be an input column")
+    missing_columns = [column for column in feature_columns if column not in frame.columns]
+    if missing_columns:
+        raise ValueError(f"AutoML input columns are missing: {', '.join(missing_columns)}")
+    non_numeric_columns = [
+        column for column in feature_columns
+        if not pd.api.types.is_numeric_dtype(frame[column])
+    ]
+    if non_numeric_columns:
+        raise ValueError(
+            f"AutoML input columns must be numeric: {', '.join(non_numeric_columns)}",
+        )
+    return feature_columns
 
 
 def execute_automl_job(
@@ -136,34 +342,67 @@ def execute_automl_job(
             job.project_id,
             expected_type="dataset",
         ) as dataset_path:
-            frame = (
-                pd.read_excel(dataset_path)
-                if Path(dataset_path).suffix.lower() in {".xls", ".xlsx"}
-                else pd.read_csv(dataset_path)
-            )
+            frame = read_automl_dataset(dataset_path)
         params = dict(job.params or {})
         target_column = params.get("target_column")
         task = params.get("task", "classification")
         if task not in {"classification", "regression"}:
             raise ValueError("AutoML task must be classification or regression")
-        if not target_column or target_column not in frame.columns:
-            raise ValueError("AutoML target column is missing")
-        prepared = frame.dropna()
-        features = prepared.drop(columns=[target_column]).select_dtypes(include=["number"])
-        target = prepared.loc[features.index, target_column]
+        requested_input_columns = params.get("input_columns")
+        feature_columns = resolve_automl_feature_columns(
+            frame,
+            target_column,
+            requested_input_columns,
+        )
+        prepared = frame.dropna(subset=[target_column, *feature_columns])
+        features = prepared.loc[:, feature_columns]
+        target = prepared[target_column]
+        target_classes = None
+        if task == "classification":
+            encoder = LabelEncoder()
+            target = encoder.fit_transform(target.astype(str))
+            target_classes = encoder.classes_.tolist()
         if features.empty or len(features) < 10:
             raise ValueError("AutoML requires numeric features and at least ten rows")
 
-        configured_candidates = tuple(candidates or default_candidates(task))
+        configured_candidates = (
+            tuple(candidates)
+            if candidates is not None
+            else resolve_candidates(task, params.get("candidate_ids"))
+        )
         if not configured_candidates:
             raise ValueError("AutoML requires at least one candidate")
-        cv = (
-            StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-            if task == "classification"
-            else KFold(n_splits=5, shuffle=True, random_state=42)
+        evaluation = normalize_evaluation_config(
+            params.get("cross_validation_enabled", True),
+            params.get("cross_validation_folds", 5),
         )
         scoring = "accuracy" if task == "classification" else "r2"
+        scorer = get_scorer(scoring)
+        cv = None
+        if evaluation["cross_validation_enabled"]:
+            cv = (
+                StratifiedKFold(
+                    n_splits=int(evaluation["cross_validation_folds"]),
+                    shuffle=True,
+                    random_state=42,
+                )
+                if task == "classification"
+                else KFold(
+                    n_splits=int(evaluation["cross_validation_folds"]),
+                    shuffle=True,
+                    random_state=42,
+                )
+            )
         successes = []
+        candidate_results: list[dict] = []
+        total_candidates = len(configured_candidates)
+        job.metrics = {
+            "evaluation": evaluation,
+            "progress": {"completed": 0, "total": total_candidates, "percent": 0},
+            "all_results": [],
+        }
+        job.heartbeat_at = utcnow()
+        db.commit()
         for index, candidate in enumerate(configured_candidates):
             child = tracking.start_run(
                 experiment.mlflow_experiment_id,
@@ -174,23 +413,42 @@ def execute_automl_job(
             started = time.perf_counter()
             try:
                 estimator = candidate.factory()
-                tracking.log_params(child.run_id, candidate.params)
-                scores = cross_val_score(
-                    estimator,
-                    features,
-                    target,
-                    cv=cv,
-                    scoring=scoring,
-                    error_score="raise",
-                )
-                score = float(scores.mean())
+                tracking.log_params(child.run_id, {**candidate.params, **evaluation})
+                if cv is not None:
+                    scores = cross_val_score(
+                        estimator,
+                        features,
+                        target,
+                        cv=cv,
+                        scoring=scoring,
+                        error_score="raise",
+                    )
+                    score = float(scores.mean())
+                else:
+                    train_features, test_features, train_target, test_target = train_test_split(
+                        features,
+                        target,
+                        test_size=0.2,
+                        random_state=42,
+                        stratify=target if task == "classification" else None,
+                    )
+                    estimator.fit(train_features, train_target)
+                    score = float(scorer(estimator, test_features, test_target))
                 if not math.isfinite(score):
                     raise ValueError("Candidate score is not finite")
                 duration = time.perf_counter() - started
-                tracking.log_metrics(child.run_id, {"cv_score": score}, step=0)
+                tracking.log_metrics(child.run_id, {
+                    "cv_score" if cv is not None else "holdout_score": score,
+                }, step=0)
                 tracking.set_tags(child.run_id, {"platform.duration_seconds": duration})
                 tracking.end_run(child.run_id, "FINISHED")
                 successes.append((score, index, candidate, child.run_id))
+                candidate_results.append({
+                    "name": candidate.name,
+                    "score": score,
+                    "training_time_seconds": duration,
+                    "status": "completed",
+                })
             except Exception as error:
                 duration = time.perf_counter() - started
                 tracking.set_tags(child.run_id, {
@@ -199,6 +457,26 @@ def execute_automl_job(
                     "platform.error_message": str(error),
                 })
                 tracking.end_run(child.run_id, "FAILED")
+                candidate_results.append({
+                    "name": candidate.name,
+                    "score": None,
+                    "training_time_seconds": duration,
+                    "status": "failed",
+                    "error_code": type(error).__name__,
+                    "error_message": str(error),
+                })
+            completed_candidates = index + 1
+            job.metrics = {
+                "evaluation": evaluation,
+                "progress": {
+                    "completed": completed_candidates,
+                    "total": total_candidates,
+                    "percent": round((completed_candidates / total_candidates) * 100, 2),
+                },
+                "all_results": candidate_results,
+            }
+            job.heartbeat_at = utcnow()
+            db.commit()
 
         if not successes:
             raise AllCandidatesFailed("All AutoML candidates failed")
@@ -220,6 +498,7 @@ def execute_automl_job(
                     "name": target_column,
                     "dtype": str(target.dtype),
                     "task": task,
+                    "classes": target_classes,
                 },
             }, model_path)
             model_artifact = artifact_service.create_from_file(
@@ -234,6 +513,7 @@ def execute_automl_job(
                     "mlflow_run_id": parent.run_id,
                     "best_candidate": best_candidate.name,
                     "best_score": best_score,
+                    "evaluation": evaluation,
                 },
             )
 
@@ -244,7 +524,7 @@ def execute_automl_job(
             status="completed",
             framework="scikit-learn",
             backbone=type(winner).__name__,
-            metrics={"best_score": best_score},
+            metrics={"best_score": best_score, "evaluation": evaluation},
             params={**params, "best_candidate": best_candidate.name},
             model_path=artifact_service.storage_reference(model_artifact),
             file_size=model_artifact.file_size or 0,
@@ -256,7 +536,26 @@ def execute_automl_job(
         db.add(model_entry)
         db.flush()
         job.status = "completed"
-        job.metrics = {"best_score": best_score, "best_candidate": best_candidate.name}
+        final_results = [
+            result for result in candidate_results if result.get("status") == "completed"
+        ]
+        final_results.sort(
+            key=lambda item: (
+                -float(item["score"]),
+                next(index for index, candidate in enumerate(configured_candidates) if candidate.name == item["name"]),
+            ),
+        )
+        job.metrics = {
+            "best_score": best_score,
+            "best_candidate": best_candidate.name,
+            "evaluation": evaluation,
+            "progress": {"completed": total_candidates, "total": total_candidates, "percent": 100},
+            "best_model": {
+                "name": best_candidate.name,
+                "score": best_score,
+            },
+            "all_results": final_results,
+        }
         job.model_path = artifact_service.storage_reference(model_artifact)
         job.model_artifact_id = model_artifact.id
         job.model_library_id = model_entry.id

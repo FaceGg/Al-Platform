@@ -41,6 +41,28 @@ const weekTestFiles: Record<number, string[]> = {
     "./pages/ProjectDetailPage.test.tsx",
     "./pages/ProjectGovernanceTabs.test.tsx",
   ],
+  12: [
+    "./api/spotWeldQuality.test.ts",
+    "./components/AppLayoutUsername.test.tsx",
+    "./components/PageErrorBoundary.test.tsx",
+    "./components/spotWeld/WaveformPanel.test.tsx",
+    "./components/workspace/CustomNode.test.tsx",
+    "./components/workspace/NodeConfigPanel.export.test.tsx",
+    "./components/workspace/NodeConfigPanel.join.test.tsx",
+    "./components/workspace/NodeConfigPanel.required.test.tsx",
+    "./components/workspace/OperatorPanel.test.tsx",
+    "./components/workspace/workflowExport.test.ts",
+    "./pages/AutoMLPage.test.tsx",
+    "./pages/DashboardPage.test.tsx",
+    "./pages/DataAnnotationPage.test.tsx",
+    "./pages/KnowledgeBasePage.test.tsx",
+    "./pages/KnowledgeGraphPage.test.tsx",
+    "./pages/LoginPage.test.tsx",
+    "./pages/MonitorPage.test.tsx",
+    "./pages/ProjectListPage.test.tsx",
+    "./pages/UserManagementPage.test.tsx",
+    "./stores/themeContext.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(

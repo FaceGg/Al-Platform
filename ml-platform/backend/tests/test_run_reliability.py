@@ -134,12 +134,48 @@ class _ValidatedOperator(BaseOperator):
         return OperatorResult(outputs={"data": {"count": params["count"]}})
 
 
+class _PreviewOperator(BaseOperator):
+    id = "test_preview_operator"
+    inputs = []
+    outputs = [
+        PortSpec("chart", "Image", "Chart"),
+        PortSpec("image_payload", "Image", "Image payload"),
+        PortSpec("long_text", "Text", "Long text"),
+    ]
+
+    def validate(self, inputs):
+        return True
+
+    def execute(self, context, inputs, params):
+        return OperatorResult(outputs={
+            "chart": "data:image/png;base64," + ("A" * 1000),
+            "image_payload": "data:image/jpeg;base64," + ("C" * 1000),
+            "long_text": "B" * 1000,
+        })
+
+
 class TestReliableExecutor(unittest.TestCase):
     def setUp(self):
         self.retry_operator = _RetryOperator()
         OperatorRegistry.register(self.retry_operator)
         OperatorRegistry.register(_SlowOperator())
         OperatorRegistry.register(_ValidatedOperator())
+
+    def test_completion_preview_preserves_chart_and_bounds_ordinary_long_strings(self):
+        operator = _PreviewOperator()
+        OperatorRegistry.register(operator)
+        events = []
+        executor = DAGExecutor([{
+            "id": "node", "operator_id": operator.id, "params": {},
+        }], [])
+
+        executor.execute("preview-run", lambda *args: events.append(args), RunControl())
+
+        completed = [event for event in events if event[2] == "completed"][-1]
+        preview = completed[3]
+        self.assertEqual(preview["chart"], "data:image/png;base64," + ("A" * 1000))
+        self.assertEqual(preview["image_payload"], "data:image/jpeg;base64," + ("C" * 1000))
+        self.assertEqual(preview["long_text"], "B" * 200 + "...(1000 chars)")
 
     def test_failed_node_retries_and_records_attempts(self):
         events = []

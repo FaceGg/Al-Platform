@@ -1,21 +1,80 @@
 import { create } from "zustand";
 import { Node, Edge, applyNodeChanges, applyEdgeChanges, addEdge, Connection, NodeChange, EdgeChange } from "reactflow";
 import type { ReactFlowInstance } from "reactflow";
+import type { BrowserDirectoryHandle } from "../components/workspace/workflowExport";
 
 export type WorkflowRunStatus = "pending" | "running" | "cancel_requested" | "completed" | "failed" | "cancelled";
 export type NodeRunStatus = "pending" | "running" | "completed" | "failed" | "timed_out" | "cancelled" | "skipped";
+
+export interface WorkflowExportDirectory {
+  name: string;
+  handle: BrowserDirectoryHandle;
+}
+
+export interface NodeErrorDetails {
+  code: string | null;
+  message: string;
+  nodeId: string;
+  attempt: number | null;
+  details?: Record<string, any> | null;
+}
+
+export type NodeErrorInput = Partial<NodeErrorDetails> & {
+  error?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  error_details?: Record<string, any> | null;
+  node_id?: string | null;
+};
+
+/** Convert run/WebSocket error payloads to one stable shape for the canvas. */
+export function normalizeNodeError(
+  nodeId: string,
+  input?: NodeErrorInput | string | null,
+): NodeErrorDetails | null {
+  if (input == null) return null;
+  const payload: NodeErrorInput = typeof input === "string" ? { message: input } : input;
+  const code = payload.code ?? payload.errorCode ?? payload.error_code ?? null;
+  const message = payload.message ?? payload.errorMessage ?? payload.error_message ?? payload.error ?? "";
+  const details = payload.details ?? payload.error_details ?? null;
+  if (!code && !message && !details) return null;
+  const attemptValue = payload.attempt;
+  const attempt = attemptValue == null ? null : Number(attemptValue);
+  return {
+    code: code ? String(code) : null,
+    message: String(message || ""),
+    nodeId: String(payload.nodeId ?? payload.node_id ?? nodeId),
+    attempt: Number.isFinite(attempt) ? attempt : null,
+    ...(details ? { details } : {}),
+  };
+}
+
+/** Strip the legacy dynamic-slot suffix while preserving the logical handle name. */
+export function normalizeWorkflowHandle(handle?: string | null): string | null {
+  if (handle == null) return null;
+  return String(handle).replace(/__slot_\d+$/, "");
+}
+
+function workflowEndpoint(nodeId: string | null | undefined, handle?: string | null): string {
+  return `${String(nodeId ?? "")}:${normalizeWorkflowHandle(handle) ?? ""}`;
+}
 
 export interface WorkflowState {
   nodes: Node[];
   edges: Edge[];
   selectedNode: Node | null;
   copiedNode: Node | null;
+  resultPanelNodeId: string | null;
   isRunning: boolean;
   currentRunId: string | null;
   workflowStatus: WorkflowRunStatus;
   nodeStatuses: Record<string, NodeRunStatus>;
   nodeResults: Record<string, any>;
+  nodeErrors: Record<string, NodeErrorDetails>;
   nodeProgress: Record<string, number>;
+  exportDirectories: Record<string, WorkflowExportDirectory>;
   operators: any[];
   reactFlowInstance: ReactFlowInstance | null;
   setNodes: (nodes: Node[]) => void;
@@ -25,6 +84,8 @@ export interface WorkflowState {
   onConnect: (connection: Connection) => void;
   addNode: (type: string, position: { x: number; y: number }, operatorData: any) => void;
   selectNode: (node: Node | null) => void;
+  openNodeResult: (nodeId: string) => void;
+  closeNodeResult: () => void;
   updateNodeParams: (nodeId: string, params: any) => void;
   setOperators: (ops: any[]) => void;
   setIsRunning: (v: boolean) => void;
@@ -32,7 +93,9 @@ export interface WorkflowState {
   setWorkflowStatus: (status: WorkflowRunStatus) => void;
   setNodeStatus: (nodeId: string, status: NodeRunStatus) => void;
   setNodeResult: (nodeId: string, result: any) => void;
+  setNodeError: (nodeId: string, error: NodeErrorInput | string | null) => void;
   setNodeProgress: (nodeId: string, progress: number) => void;
+  setExportDirectory: (nodeId: string, directory: WorkflowExportDirectory) => void;
   setReactFlowInstance: (instance: ReactFlowInstance | null) => void;
   removeEdge: (edgeId: string) => void;
   copySelectedNode: () => void;
@@ -46,11 +109,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   edges: [],
   selectedNode: null,
   isRunning: false,
+  resultPanelNodeId: null,
   currentRunId: null,
   workflowStatus: "pending",
   nodeStatuses: {},
   nodeResults: {},
+  nodeErrors: {},
   nodeProgress: {},
+  exportDirectories: {},
   operators: [],
   reactFlowInstance: null,
   copiedNode: null as Node | null,
@@ -69,9 +135,21 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     })),
 
   onConnect: (connection) =>
-    set((state) => ({
-      edges: addEdge({ ...connection, type: "custom" }, state.edges),
-    })),
+    set((state) => {
+      const normalizedConnection = {
+        ...connection,
+        sourceHandle: normalizeWorkflowHandle(connection.sourceHandle),
+        targetHandle: normalizeWorkflowHandle(connection.targetHandle),
+        type: "custom",
+      };
+      const sourceEndpoint = workflowEndpoint(connection.source, normalizedConnection.sourceHandle);
+      const targetEndpoint = workflowEndpoint(connection.target, normalizedConnection.targetHandle);
+      const remainingEdges = state.edges.filter((edge) =>
+        workflowEndpoint(edge.source, edge.sourceHandle) !== sourceEndpoint &&
+        workflowEndpoint(edge.target, edge.targetHandle) !== targetEndpoint
+      );
+      return { edges: addEdge(normalizedConnection, remainingEdges) };
+    }),
 
   addNode: (type, position, operatorData) =>
     set((state) => {
@@ -104,9 +182,24 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   selectNode: (node) => set({ selectedNode: node }),
 
+  openNodeResult: (nodeId) =>
+    set((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === nodeId);
+      if (!node || state.nodeStatuses[nodeId] !== "completed") return {};
+      const operator = state.operators.find((candidate: any) => candidate.id === node.data?.operatorId);
+      const category = node.data?.category || operator?.category;
+      if (category !== "visualization") return {};
+      return { resultPanelNodeId: nodeId };
+    }),
+
+  closeNodeResult: () => set({ resultPanelNodeId: null }),
+
   updateNodeParams: (nodeId, params) =>
     set((state) => ({
       nodes: state.nodes.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, params } } : n)),
+      selectedNode: state.selectedNode?.id === nodeId
+        ? { ...state.selectedNode, data: { ...state.selectedNode.data, params } }
+        : state.selectedNode,
     })),
 
   setOperators: (ops) => set({ operators: ops }),
@@ -117,6 +210,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   setNodeStatus: (nodeId, status) =>
     set((state) => ({
       nodeStatuses: { ...state.nodeStatuses, [nodeId]: status },
+      ...(state.resultPanelNodeId === nodeId && status !== "completed"
+        ? { resultPanelNodeId: null }
+        : {}),
     })),
 
   setNodeResult: (nodeId, result) =>
@@ -124,9 +220,25 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       nodeResults: { ...state.nodeResults, [nodeId]: result },
     })),
 
+  setNodeError: (nodeId, error) =>
+    set((state) => {
+      const normalized = normalizeNodeError(nodeId, error);
+      if (!normalized) {
+        const nodeErrors = { ...state.nodeErrors };
+        delete nodeErrors[nodeId];
+        return { nodeErrors };
+      }
+      return { nodeErrors: { ...state.nodeErrors, [nodeId]: normalized } };
+    }),
+
   setNodeProgress: (nodeId, progress) =>
     set((state) => ({
       nodeProgress: { ...state.nodeProgress, [nodeId]: progress },
+    })),
+
+  setExportDirectory: (nodeId, directory) =>
+    set((state) => ({
+      exportDirectories: { ...state.exportDirectories, [nodeId]: directory },
     })),
 
   setReactFlowInstance: (instance) => set({ reactFlowInstance: instance }),
@@ -158,7 +270,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({
       nodeStatuses: {},
       nodeResults: {},
+      nodeErrors: {},
       nodeProgress: {},
+      resultPanelNodeId: null,
       isRunning: false,
       currentRunId: null,
       workflowStatus: "pending",
@@ -171,7 +285,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       selectedNode: null,
       nodeStatuses: {},
       nodeResults: {},
+      nodeErrors: {},
       nodeProgress: {},
+      exportDirectories: {},
+      resultPanelNodeId: null,
       isRunning: false,
       currentRunId: null,
       workflowStatus: "pending",

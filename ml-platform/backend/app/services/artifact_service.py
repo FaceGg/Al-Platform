@@ -39,6 +39,7 @@ class ArtifactService:
         source = Path(source_path)
         if not source.is_file():
             raise FileNotFoundError(str(source))
+        project_id = self._coerce_uuid(project_id)
 
         artifact_id = uuid.uuid4()
         stored = self.storage.put(

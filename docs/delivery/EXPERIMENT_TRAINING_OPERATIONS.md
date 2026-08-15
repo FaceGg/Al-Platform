@@ -6,7 +6,7 @@
 
 必须通过环境变量或 secret file 注入 `DATABASE_URL`、`SECRET_KEY`、`CELERY_BROKER_URL`、`REDIS_EVENTS_URL`、`MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY`、`MLFLOW_BACKEND_STORE_URI` 和 `TENSORBOARD_SESSION_SECRET`。常用地址为 `MLFLOW_TRACKING_URI=http://mlflow:5000`、`MLFLOW_ARTIFACT_ROOT=s3://ml-platform/mlflow`、`MLFLOW_S3_ENDPOINT_URL=http://minio:9000`、`TENSORBOARD_GATEWAY_URL=http://tensorboard-gateway:6006`。
 
-所有 Python 镜像和 CI 安装步骤固定使用 `https://mirrors.aliyun.com/pypi/simple/`；Backend/Worker 额外安装 `boto3`，MLflow 官方镜像启动时安装 `psycopg[binary]`。
+所有 Python 镜像和 CI 安装步骤固定使用 `https://mirrors.aliyun.com/pypi/simple/`；Backend/Worker 额外安装 `boto3`，MLflow 使用仓库内 `Dockerfile.mlflow` 在构建阶段固定安装 `mlflow==3.2.*`、`psycopg[binary]==3.2.*`、`boto3==1.35.*` 和 `numpy==2.3.5`，启动时不再联网安装依赖。最后一项避免 NumPy 2.4 及以上版本在不支持 `x86-64-v2` 的旧 CPU 上导入失败。
 
 ## Experiment 生命周期
 

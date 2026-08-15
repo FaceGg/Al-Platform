@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Precision Forge / UI 方向候选 v2</title>
+  <style>
+    /* ============ 共享基底 ============ */
+    :root { font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; }
+    h1, h2, p { margin: 0; }
+    button { font: inherit; cursor: pointer; }
+
+    .lab { min-height: 100dvh; padding: 26px; transition: background .3s ease, color .3s ease; }
+    .lab-head { max-width: 1440px; margin: 0 auto 18px; display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .lab-title { font-size: 19px; letter-spacing: .01em; }
+    .lab-copy { margin-top: 5px; font-size: 13px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; }
+    .controls button { min-height: 36px; border: 1px solid var(--c-line); border-radius: var(--c-radius-pill); padding: 0 14px; color: var(--c-muted); background: var(--c-surface); transition: all .2s ease; font-size: 12px; font-weight: 600; }
+    .controls button:hover { color: var(--c-text); background: var(--c-alt); }
+    .controls button[aria-pressed="true"] { color: #fff; background: var(--c-accent); border-color: var(--c-accent); box-shadow: var(--c-glow); }
+    #width { color: var(--c-muted); }
+
+    /* ============ 应用骨架 ============ */
+    .app {
+      max-width: 1440px; min-height: 780px; margin: 0 auto;
+      display: grid; grid-template-columns: 252px minmax(0,1fr);
+      overflow: hidden;
+      border: 1px solid var(--c-line); border-radius: var(--c-radius-lg);
+      color: var(--c-text); background: var(--c-page);
+      box-shadow: var(--c-shadow);
+      transition: max-width .25s, border-radius .25s;
+    }
+    .app.compact { max-width: 560px; grid-template-columns: 1fr; }
+
+    /* 侧栏 */
+    .side { padding: 20px 14px; background: var(--c-side); border-right: 1px solid var(--c-line); }
+    .brand { display: flex; align-items: center; gap: 11px; padding: 4px 8px 22px; border-bottom: 1px solid var(--c-line); }
+    .mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: var(--c-radius-md); color: #fff; background: var(--c-accent); font-size: 13px; font-weight: 800; box-shadow: var(--c-glow); }
+    .brand b { font-size: 13px; }
+    .brand small { display: block; margin-top: 2px; color: var(--c-muted); font-size: 10px; letter-spacing: .08em; }
+    .nav { margin-top: 20px; }
+    .nav-title { margin: 0 8px 8px; color: var(--c-muted); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+    .nav button { width: 100%; min-height: 38px; display: flex; align-items: center; gap: 10px; border: 0; border-left: 2px solid transparent; border-radius: var(--c-radius-sm); padding: 0 10px; color: var(--c-muted); background: transparent; text-align: left; transition: all .15s ease; }
+    .nav button:hover { color: var(--c-text); background: var(--c-surface); }
+    .nav button.active { border-left-color: var(--c-accent); color: var(--c-text); background: var(--c-accent-soft); font-weight: 700; }
+    .nav i { width: 16px; font-style: normal; text-align: center; }
+    .nav em { margin-left: auto; padding: 1px 7px; border-radius: var(--c-radius-pill); color: var(--c-accent); background: var(--c-accent-soft); font-size: 10px; font-style: normal; font-weight: 700; }
+
+    /* 顶栏 */
+    .work { min-width: 0; }
+    .bar { min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 24px; border-bottom: 1px solid var(--c-line); }
+    .crumb { display: flex; gap: 8px; color: var(--c-muted); font-size: 12px; }
+    .crumb b { color: var(--c-text); font-size: 13px; }
+    .tools { display: flex; align-items: center; gap: 10px; }
+    .tool { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--c-line); border-radius: var(--c-radius-sm); color: var(--c-muted); font-size: 13px; }
+    .user { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .avatar { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: var(--c-accent); font-size: 10px; font-weight: 800; }
+
+    /* 驾驶舱 */
+    .dash { padding: 26px; }
+    .heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+    .kicker { margin-bottom: 6px; color: var(--c-accent); font-size: 10px; font-weight: 800; letter-spacing: .1em; }
+    .heading h2 { font-size: 25px; line-height: 1.15; }
+    .heading p { max-width: 520px; margin-top: 7px; color: var(--c-muted); font-size: 12px; }
+    .primary { min-height: 38px; border: 0; border-radius: var(--c-radius-md); padding: 0 14px; color: #fff; background: var(--c-accent); white-space: nowrap; font-size: 12px; font-weight: 700; box-shadow: var(--c-glow); }
+
+    /* 指标卡 */
+    .metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: var(--c-gap); }
+    .metric { min-width: 0; min-height: 112px; padding: 17px; border: 1px solid var(--c-line); border-radius: var(--c-radius-md); background: var(--c-surface); }
+    .metric small { color: var(--c-muted); font-size: 11px; letter-spacing: .03em; }
+    .value { margin-top: 9px; font-size: 27px; font-weight: 800; }
+    .metric p { margin-top: 8px; color: var(--c-good); font-size: 11px; }
+    .metric p.muted { color: var(--c-muted); }
+
+    /* 双栏 */
+    .grid { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(250px,.9fr); gap: var(--c-gap); margin-top: 16px; }
+    .panel { min-width: 0; border: 1px solid var(--c-line); border-radius: var(--c-radius-md); background: var(--c-surface); overflow: hidden; }
+    .panel-head { min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 17px; border-bottom: 1px solid var(--c-line); }
+    .panel-head h2 { font-size: 13px; }
+    .panel-head span { color: var(--c-muted); font-size: 11px; }
+    .plot { height: 190px; display: grid; grid-template-columns: 30px 1fr; padding: 17px 17px 8px; }
+    .y { display: flex; flex-direction: column; justify-content: space-between; color: var(--c-muted); font-size: 10px; }
+    .chart { position: relative; border-bottom: 1px solid var(--c-line); background: var(--c-grid-bg); }
+    .bars { position: absolute; inset: 0 0 0 4px; display: flex; align-items: end; justify-content: space-around; gap: 13px; padding: 0 10px; }
+    .bars div { position: relative; width: 12%; min-width: 14px; background: var(--c-accent); opacity: .85; border-radius: var(--c-radius-bar); }
+    .bars div::after { content: attr(data-v); position: absolute; top: -17px; left: 50%; transform: translateX(-50%); color: var(--c-muted); font-size: 10px; }
+    .x { display: flex; justify-content: space-around; padding: 7px 6px 0 37px; color: var(--c-muted); font-size: 10px; }
+    .quality { padding: 17px; }
+    .score { display: flex; align-items: baseline; gap: 7px; padding: 10px 0 16px; }
+    .score strong { font-size: 35px; }
+    .score span, .state { color: var(--c-muted); font-size: 12px; }
+    .state { min-height: 34px; display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 9px; border-top: 1px solid var(--c-line); font-size: 11px; }
+    .state i { width: 7px; height: 7px; border-radius: 50%; background: var(--c-good); }
+    .state i.warn { background: var(--c-warn); }
+    .state b { color: var(--c-text); font-size: 11px; }
+
+    /* 项目表 */
+    .projects { margin-top: 16px; }
+    .table { display: grid; grid-template-columns: 1.15fr .85fr .65fr .7fr; }
+    .table div { min-width: 0; padding: 13px 17px; border-bottom: 1px solid var(--c-line); color: var(--c-muted); font-size: 12px; }
+    .table .thead { padding-top: 11px; padding-bottom: 11px; color: var(--c-muted); background: var(--c-alt); font-size: 10px; font-weight: 800; letter-spacing: .06em; }
+    .table .name { color: var(--c-text); font-weight: 700; }
+    .tag { display: inline-flex; min-height: 20px; align-items: center; border-radius: var(--c-radius-pill); padding: 0 8px; color: var(--c-good); background: var(--c-good-soft); font-size: 10px; font-weight: 700; }
+    .tag.warn { color: var(--c-warn); background: var(--c-warn-soft); }
+
+    /* ============ 主题 A：工程蓝图（Engineering Blueprint） ============ */
+    /* 深蓝图纸底 + 青蓝线条 + 等宽细节，工程制图档案感，硬朗直线 */
+    .lab[data-active="blueprint"] {
+      --c-page:#0a1626; --c-side:#0d1c30; --c-surface:#102540; --c-alt:#16314f; --c-line:#2a4a72; --c-muted:#7d9bbf; --c-text:#e6f1fb;
+      --c-accent:#3fb6e6; --c-accent-soft:rgba(63,182,230,.14); --c-good:#4fd1a5; --c-warn:#f0c361;
+      --c-good-soft:rgba(79,209,165,.12); --c-warn-soft:rgba(240,195,97,.12);
+      --c-grid-bg:repeating-linear-gradient(to bottom,transparent 0,transparent 45px,rgba(125,155,191,.12) 46px,transparent 47px);
+      --c-radius-sm:2px; --c-radius-md:3px; --c-radius-lg:4px; --c-radius-pill:2px; --c-radius-bar:0;
+      --c-gap:1px; --c-glow:0 0 0 transparent; --c-shadow:0 22px 70px rgba(0,0,0,.5);
+      background:#0a1626; color:#e6f1fb;
+      background-image:linear-gradient(rgba(63,182,230,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(63,182,230,.04) 1px,transparent 1px);
+      background-size:28px 28px;
+    }
+    .lab[data-active="blueprint"] .lab-copy { color:#7d9bbf; }
+    .lab[data-active="blueprint"] .mark { border-radius:2px; }
+    .lab[data-active="blueprint"] .metric, .lab[data-active="blueprint"] .panel { border-radius:3px; }
+    .lab[data-active="blueprint"] .bars div { border-radius:0; }
+
+    /* ============ 主题 B：暖砂橙陶（Warm Sand Terracotta） ============ */
+    /* 米白底 + 赤陶橙/暖棕，柔和哑光，胶囊圆角，材料质感温暖手作工业 */
+    .lab[data-active="terracotta"] {
+      --c-page:#f4ede1; --c-side:#efe6d4; --c-surface:#fbf6ec; --c-alt:#ebe0ca; --c-line:#d9c9a8; --c-muted:#8a7758; --c-text:#3a2c1c;
+      --c-accent:#c75d2e; --c-accent-soft:rgba(199,93,46,.12); --c-good:#5c8a3a; --c-warn:#b8860b;
+      --c-good-soft:rgba(92,138,58,.12); --c-warn-soft:rgba(184,134,11,.14);
+      --c-grid-bg:repeating-linear-gradient(to bottom,transparent 0,transparent 45px,rgba(138,119,88,.1) 46px,transparent 47px);
+      --c-radius-sm:10px; --c-radius-md:16px; --c-radius-lg:22px; --c-radius-pill:999px; --c-radius-bar:8px 8px 3px 3px;
+      --c-gap:14px; --c-glow:0 8px 20px rgba(199,93,46,.18); --c-shadow:0 22px 60px rgba(74,54,28,.18);
+      background:#f4ede1; color:#3a2c1c;
+    }
+    .lab[data-active="terracotta"] .lab-copy { color:#8a7758; }
+    .lab[data-active="terracotta"] .app { border-color:#d9c9a8; }
+    .lab[data-active="terracotta"] .bars div { background:linear-gradient(180deg,#d9743e,#c75d2e); }
+
+    /* ============ 主题 C：电浆青柠（Plasma Lime） ============ */
+    /* 近黑底 + 荧光青柠/电青，赛博高对比，发光描边，未来终端 */
+    .lab[data-active="plasma"] {
+      --c-page:#070a07; --c-side:#0b110b; --c-surface:#0f170f; --c-alt:#162216; --c-line:#2a3a2c; --c-muted:#7a9a7d; --c-text:#e8ffe8;
+      --c-accent:#a6ff3d; --c-accent-soft:rgba(166,255,61,.12); --c-good:#3dffb0; --c-warn:#ffd23d;
+      --c-good-soft:rgba(61,255,176,.1); --c-warn-soft:rgba(255,210,61,.12);
+      --c-grid-bg:repeating-linear-gradient(to bottom,transparent 0,transparent 45px,rgba(166,255,61,.1) 46px,transparent 47px);
+      --c-radius-sm:4px; --c-radius-md:8px; --c-radius-lg:12px; --c-radius-pill:999px; --c-radius-bar:3px 3px 0 0;
+      --c-gap:12px; --c-glow:0 0 18px rgba(166,255,61,.35); --c-shadow:0 22px 70px rgba(0,0,0,.7);
+      background:#070a07; color:#e8ffe8;
+      background-image:radial-gradient(circle at 20% 10%,rgba(166,255,61,.06),transparent 45%),radial-gradient(circle at 85% 90%,rgba(61,255,176,.05),transparent 45%);
+    }
+    .lab[data-active="plasma"] .lab-copy { color:#7a9a7d; }
+    .lab[data-active="plasma"] .mark, .lab[data-active="plasma"] .primary { box-shadow:0 0 18px rgba(166,255,61,.45); }
+    .lab[data-active="plasma"] .bars div { box-shadow:0 -6px 16px rgba(166,255,61,.3); }
+    .lab[data-active="plasma"] .nav button.active { box-shadow:inset 0 0 0 1px rgba(166,255,61,.4); }
+
+    /* ============ 主题 D：雾岭墨绿（Misty Ridge Teal） ============ */
+    /* 深墨绿底 + 雾灰/青铜金，低饱和沉稳，大留白，奢华工业仪表 */
+    .lab[data-active="ridge"] {
+      --c-page:#0e1b1a; --c-side:#13231f; --c-surface:#172926; --c-alt:#1e342f; --c-line:#2e463f; --c-muted:#8aa39d; --c-text:#e3efea;
+      --c-accent:#c9a35e; --c-accent-soft:rgba(201,163,94,.14); --c-good:#6fb89a; --c-warn:#d9a441;
+      --c-good-soft:rgba(111,184,154,.12); --c-warn-soft:rgba(217,164,65,.14);
+      --c-grid-bg:repeating-linear-gradient(to bottom,transparent 0,transparent 45px,rgba(138,163,157,.1) 46px,transparent 47px);
+      --c-radius-sm:6px; --c-radius-md:10px; --c-radius-lg:14px; --c-radius-pill:999px; --c-radius-bar:4px 4px 1px 1px;
+      --c-gap:16px; --c-glow:0 0 0 transparent; --c-shadow:0 24px 70px rgba(0,0,0,.5);
+      background:#0e1b1a; color:#e3efea;
+      background-image:linear-gradient(160deg,rgba(201,163,94,.04),transparent 40%);
+    }
+    .lab[data-active="ridge"] .lab-copy { color:#8aa39d; }
+    .lab[data-active="ridge"] .bars div { background:linear-gradient(180deg,#d9b674,#c9a35e); }
+    .lab[data-active="ridge"] .heading h2, .lab[data-active="ridge"] .score strong { letter-spacing:.005em; }
+
+    /* ============ 响应式 ============ */
+    @media(max-width:860px){
+      .lab{padding:16px}
+      .lab-head{align-items:flex-start;flex-direction:column}
+      .controls{justify-content:flex-start}
+      .app{grid-template-columns:1fr}
+      .side{display:flex;align-items:center;gap:8px;padding:10px 12px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--c-line)}
+      .brand{padding:0 10px 0 0;border:0;border-right:1px solid var(--c-line);white-space:nowrap}
+      .brand small,.nav-title,.nav button:nth-child(n+4){display:none}
+      .nav{display:contents;margin:0}
+      .nav button{width:auto;flex:0 0 auto;border-left:0;border-bottom:2px solid transparent;padding:0 8px;white-space:nowrap}
+      .nav button.active{border-bottom-color:var(--c-accent)}
+      .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .grid{grid-template-columns:1fr}
+    }
+    @media(max-width:560px){
+      .bar{padding:0 14px}
+      .crumb span,.user span{display:none}
+      .dash{padding:18px}
+      .heading{align-items:flex-start;flex-direction:column}
+      .heading h2{font-size:22px}
+      .primary{width:100%}
+      .metric{padding:14px}
+      .table{grid-template-columns:1fr .7fr}
+      .table div:nth-child(4n+2),.table div:nth-child(4n+4){display:none}
+    }
+  </style>
+</head>
+<body>
+  <main class="lab" data-active="blueprint">
+    <header class="lab-head">
+      <div>
+        <h1 class="lab-title">Precision Forge / UI 方向候选 v2</h1>
+        <p class="lab-copy">四组全新视觉方向，同一内容模型便于对比。此页独立于生产前端，不影响原项目。</p>
+      </div>
+      <div class="controls">
+        <button data-theme="blueprint" aria-pressed="true">A 工程蓝图</button>
+        <button data-theme="terracotta" aria-pressed="false">B 暖砂橙陶</button>
+        <button data-theme="plasma" aria-pressed="false">C 电浆青柠</button>
+        <button data-theme="ridge" aria-pressed="false">D 雾岭墨绿</button>
+        <button id="width" aria-pressed="false">窄屏预览</button>
+      </div>
+    </header>
+
+    <section class="app" id="app">
+      <aside class="side">
+        <div class="brand"><div class="mark">PF</div><div><b>Precision Forge</b><small>WELDING AI PLATFORM</small></div></div>
+        <nav class="nav">
+          <p class="nav-title">工作空间</p>
+          <button class="active"><i>▦</i>数据驾驶舱</button>
+          <button><i>▱</i>项目与流程 <em>12</em></button>
+          <button><i>◫</i>数据资产</button>
+          <button><i>◇</i>模型中心</button>
+        </nav>
+        <nav class="nav">
+          <p class="nav-title">运行与治理</p>
+          <button><i>◌</i>训练任务</button>
+          <button><i>⌁</i>部署监控</button>
+          <button><i>⊞</i>知识与标注</button>
+        </nav>
+      </aside>
+
+      <section class="work">
+        <header class="bar">
+          <div class="crumb"><span>工作空间</span><span>/</span><b>运营总览</b></div>
+          <div class="tools">
+            <div class="tool">◦</div><div class="tool">?</div>
+            <div class="user"><div class="avatar">ZR</div><span>张锐</span></div>
+          </div>
+        </header>
+
+        <div class="dash">
+          <div class="heading">
+            <div>
+              <div class="kicker">PLANT 04 / LIVE OPERATIONS</div>
+              <h2>焊接 AI 运营总览</h2>
+              <p>聚焦当前产线的数据完整性、训练进度和模型交付状态。</p>
+            </div>
+            <button class="primary">进入项目工作区</button>
+          </div>
+
+          <section class="metrics">
+            <div class="metric"><small>活跃项目</small><div class="value">12</div><p>+2 本周新增</p></div>
+            <div class="metric"><small>数据集版本</small><div class="value">184</div><p>99.2% 可用</p></div>
+            <div class="metric"><small>运行中训练</small><div class="value">07</div><p class="muted">2 个等待资源</p></div>
+            <div class="metric"><small>已发布模型</small><div class="value">36</div><p>+5 本月交付</p></div>
+          </section>
+
+          <section class="grid">
+            <article class="panel">
+              <div class="panel-head"><h2>训练活动</h2><span>最近 7 天 / GPU 小时</span></div>
+              <div class="plot">
+                <div class="y"><span>80</span><span>40</span><span>0</span></div>
+                <div class="chart">
+                  <div class="bars">
+                    <div style="height:46%" data-v="31"></div>
+                    <div style="height:61%" data-v="42"></div>
+                    <div style="height:39%" data-v="27"></div>
+                    <div style="height:75%" data-v="52"></div>
+                    <div style="height:83%" data-v="58"></div>
+                    <div style="height:66%" data-v="46"></div>
+                    <div style="height:91%" data-v="64"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="x"><span>周一</span><span>周二</span><span>周三</span><span>周四</span><span>周五</span><span>周六</span><span>今天</span></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head"><h2>质量就绪度</h2><span>实时</span></div>
+              <div class="quality">
+                <div class="score"><strong>94.8</strong><span>/ 100</span></div>
+                <div class="state"><i></i><span>数据漂移检测</span><b>正常</b></div>
+                <div class="state"><i></i><span>在线推理服务</span><b>12 / 12</b></div>
+                <div class="state"><i class="warn"></i><span>待审核模型</span><b>03</b></div>
+              </div>
+            </article>
+          </section>
+
+          <section class="panel projects">
+            <div class="panel-head"><h2>最近项目</h2><span>查看全部</span></div>
+            <div class="table">
+              <div class="thead">项目</div><div class="thead">负责人</div><div class="thead">状态</div><div class="thead">最近更新</div>
+              <div class="name">车身焊点质量预测</div><div>张锐</div><div><span class="tag">运行正常</span></div><div>12 分钟前</div>
+              <div class="name">电极寿命建模</div><div>林安</div><div><span class="tag warn">训练中</span></div><div>38 分钟前</div>
+              <div class="name">白车身缺陷检测</div><div>陈丹</div><div><span class="tag">已发布</span></div><div>昨天</div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const lab = document.querySelector('.lab');
+    const options = document.querySelectorAll('.controls [data-theme]');
+    const width = document.getElementById('width');
+    const app = document.getElementById('app');
+    options.forEach((option) => option.addEventListener('click', () => {
+      lab.dataset.active = option.dataset.theme;
+      options.forEach((item) => item.setAttribute('aria-pressed', String(item === option)));
+    }));
+    width.addEventListener('click', () => {
+      const compact = app.classList.toggle('compact');
+      width.setAttribute('aria-pressed', String(compact));
+      width.textContent = compact ? '桌面预览' : '窄屏预览';
+    });
+  </script>
+</body>
+</html>

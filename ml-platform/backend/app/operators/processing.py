@@ -1,6 +1,12 @@
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
+from app.services.spot_weld_features import (
+    REPORT_TABLE_FIELDS,
+    WAVEFORM_FIELDS,
+    build_feature_frame,
+    canonicalize_report_frame,
+)
 import pandas as pd
 import numpy as np
 
@@ -15,7 +21,7 @@ class MissingValueHandler(BaseOperator):
     outputs = [PortSpec("data", "DataTable", "Cleaned Data")]
     parameters = [
         ParamSpec("strategy", "select", "drop", "Strategy", options=["drop", "mean", "median", "most_frequent", "constant"]),
-        ParamSpec("fill_value", "str", "", "Fill Value"),
+        ParamSpec("fill_value", "str", "", "Fill Value", required=True, required_when={"strategy": "constant"}),
         ParamSpec("columns", "str", "", "Columns (comma-separated)"),
     ]
 
@@ -154,7 +160,7 @@ class TrainTestSplit(BaseOperator):
     parameters = [
         ParamSpec("test_size", "float", 0.2, "Test Size"),
         ParamSpec("random_seed", "int", 42, "Random Seed"),
-        ParamSpec("target_column", "str", "", "Target Column"),
+        ParamSpec("target_column", "str", "", "Target Column", required=True, required_when={"stratify": True}),
         ParamSpec("stratify", "boolean", False, "Stratified Split"),
     ]
 
@@ -182,6 +188,43 @@ class TrainTestSplit(BaseOperator):
         train = outputs.get("train", [])
         test = outputs.get("test", [])
         return {"train": train[:10], "test": test[:10], "train_rows": len(train), "test_rows": len(test)}
+
+
+@register_operator
+class SpotWeldFeatureEngineering(BaseOperator):
+    id = "spot_weld_feature_engineering"
+    name = "Spot Weld Feature Engineering"
+    category = "processing"
+    description = "Decode four report waveforms and produce the fixed 73-feature schema"
+    inputs = [PortSpec(
+        "data", "DataTable", "Report Data",
+        required_columns=REPORT_TABLE_FIELDS + WAVEFORM_FIELDS,
+    )]
+    outputs = [
+        PortSpec("features", "DataTable", "73 Feature Data"),
+        PortSpec("schema", "JSON", "Feature Schema"),
+        PortSpec("statistics", "JSON", "Feature Statistics"),
+    ]
+    parameters = []
+
+    def validate(self, inputs):
+        return True
+
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        data = inputs.get("data", [])
+        frame = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
+        features, schema, statistics = build_feature_frame(frame)
+        # Keep the encoded source waveforms alongside derived features so the
+        # operator output remains traceable to the original report row.
+        canonical = canonicalize_report_frame(frame)
+        enriched = features.copy()
+        for field in WAVEFORM_FIELDS:
+            enriched[field] = canonical[field].to_numpy()
+        return OperatorResult(outputs={
+            "features": enriched.to_dict(orient="records"),
+            "schema": {"columns": schema},
+            "statistics": statistics,
+        })
 
 
 
@@ -396,7 +439,7 @@ class SetRoleOp(BaseOperator):
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("data", "DataTable", "Data with role metadata")]
     parameters = [
-        ParamSpec("column", "str", "", "Target Column"),
+        ParamSpec("column", "str", "", "Target Column", required=True),
         ParamSpec("role", "select", "label", "Role", options=["label", "id", "weight", "feature", "ignore"]),
     ]
     def validate(self, inputs): return True
@@ -410,7 +453,7 @@ class FilterExamples(BaseOperator):
     description = "Filter rows by expression"
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("data", "DataTable", "Filtered Data")]
-    parameters = [ParamSpec("expression", "str", "", "Filter expression (e.g., column > 0)")]
+    parameters = [ParamSpec("expression", "str", "", "Filter expression (e.g., column > 0)", required=True)]
     def validate(self, inputs): return True
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         data = inputs.get("data", []); df = pd.DataFrame(data)

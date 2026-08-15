@@ -90,6 +90,9 @@ export default function ProjectListPage() {
       render: (text: string, record: any) => <Link to={'/projects/' + record.id}>{text}</Link>
     },
     { title: '描述', dataIndex: 'description', key: 'description', ellipsis: true },
+    { title: '创建者', dataIndex: 'creator_username', key: 'creator_username',
+      render: (username: string | null | undefined) => username || '-'
+    },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at',
       render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm')
     },
@@ -106,18 +109,24 @@ export default function ProjectListPage() {
 
   return (
     <AppLayout>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h3>项目列表</h3>
-        <Space>
-          {selectedRowKeys.length > 0 && (
-            <Button danger onClick={batchDelete}>
-              批量删除 ({`${selectedRowKeys.length}`})
-            </Button>
-          )}
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>新建项目</Button>
-        </Space>
+      <div className="page-shell fade-in">
+        <div className="page-header">
+          <div className="page-header-copy">
+            <h3 className="page-title">项目列表</h3>
+          </div>
+          <Space className="page-actions" wrap>
+            {selectedRowKeys.length > 0 && (
+              <Button danger onClick={batchDelete}>
+                批量删除 ({`${selectedRowKeys.length}`})
+              </Button>
+            )}
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>新建项目</Button>
+          </Space>
+        </div>
+        <div className="table-surface">
+          <Table rowKey="id" rowSelection={rowSelection} dataSource={projects} columns={columns} pagination={{ pageSize: 20 }} />
+        </div>
       </div>
-      <Table rowKey="id" rowSelection={rowSelection} dataSource={projects} columns={columns} pagination={{ pageSize: 20 }} />
       <Modal title="新建项目" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()}>
         <Form form={form} onFinish={createProject} layout="vertical">
           <Form.Item name="name" label="项目名称" rules={[{ required: true }]}>

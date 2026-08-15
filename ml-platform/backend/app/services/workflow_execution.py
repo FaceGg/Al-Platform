@@ -90,6 +90,7 @@ def _execute_loaded_workflow(db, workflow_run, publisher, session_factory) -> No
             dag_edges,
             artifact_service=build_artifact_service(db),
             project_id=str(workflow.project_id),
+            workflow_id=str(workflow.id),
         )
 
         def status_callback(

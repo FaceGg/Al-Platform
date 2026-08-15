@@ -28,6 +28,9 @@ class TestIOOperators(unittest.TestCase):
         op = OperatorRegistry.get("csv_import")
         self.assertGreater(len(op.outputs), 0)
 
+    def test_read_excel_operator_is_registered(self):
+        self.assertIsNotNone(OperatorRegistry.get("read_excel"))
+
 
 class TestProcessingOperators(unittest.TestCase):
     """Test Data Processing operators."""
@@ -193,13 +196,17 @@ class TestControlOperators(unittest.TestCase):
 class TestBlendingOperators(unittest.TestCase):
     def test_join_accepts_empty_dataframe_input(self):
         op = OperatorRegistry.get("join")
+        left = pd.DataFrame()
+        right = [{"id": 1}]
 
         result = execute_operator(op,
-            {"left": pd.DataFrame(), "right": [{"id": 1}]},
+            {"left": left, "right": right},
             {"left_keys": "id", "right_keys": "id"},
         )
 
-        self.assertEqual(result, {"data": [{"id": 1}]})
+        self.assertEqual(result["data"], [{"id": 1}])
+        pd.testing.assert_frame_equal(result["raw_left"], left)
+        self.assertEqual(result["raw_right"], right)
 
     def test_join_matches_composite_keys_in_one_merge(self):
         op = OperatorRegistry.get("join")
@@ -224,6 +231,18 @@ class TestBlendingOperators(unittest.TestCase):
         self.assertEqual(len(result["data"]), 1)
         self.assertEqual(result["data"][0]["left_value"], "match")
         self.assertEqual(result["data"][0]["right_value"], "joined")
+
+    def test_join_rejects_unpaired_key_lists(self):
+        op = OperatorRegistry.get("join")
+        with self.assertRaisesRegex(ValueError, "count mismatch"):
+            execute_operator(
+                op,
+                {
+                    "left": [{"plant": "A", "part": 1, "line": "L1"}],
+                    "right": [{"site": "A", "part_id": 1}],
+                },
+                {"left_keys": "plant,part,line", "right_keys": "site,part_id"},
+            )
 
 
 class TestOperatorCategories(unittest.TestCase):

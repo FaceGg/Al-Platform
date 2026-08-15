@@ -24,6 +24,7 @@ from app.services.experiment_tracking import (
     MlflowExperimentTracking,
     TrackingError,
     TrackingUnavailable,
+    resolve_tracking_configuration,
 )
 from app.services.iterative_training import IterativeTrainer, TrainingCheckpoint, TrainingConfig
 
@@ -40,13 +41,12 @@ def utcnow() -> datetime:
 
 
 def build_training_tracking():
-    if not settings.mlflow_tracking_uri or not settings.mlflow_artifact_root:
-        raise TrackingUnavailable("Experiment tracking is not configured")
     from mlflow.tracking import MlflowClient
 
+    tracking_uri, artifact_root = resolve_tracking_configuration(settings)
     return MlflowExperimentTracking(
-        client=MlflowClient(tracking_uri=settings.mlflow_tracking_uri),
-        artifact_root=settings.mlflow_artifact_root,
+        client=MlflowClient(tracking_uri=tracking_uri),
+        artifact_root=artifact_root,
     )
 
 

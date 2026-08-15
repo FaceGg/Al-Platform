@@ -1,5 +1,5 @@
 import { Layout, Menu, Avatar, Dropdown, Space, Button, Modal, Descriptions, Tag, Badge, Tooltip } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   DashboardOutlined, ProjectOutlined, LogoutOutlined, UserOutlined,
@@ -12,6 +12,7 @@ import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
 import NotificationCenter from "./NotificationCenter";
+import apiClient from "../api/client";
 
 const { Header, Sider, Content } = Layout;
 
@@ -60,7 +61,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     return "/";
   })();
 
-  const username = localStorage.getItem("userId") || "-";
+  const [username, setUsername] = useState(() => localStorage.getItem("username") || "");
+  useEffect(() => {
+    if (username || !localStorage.getItem("token")) return;
+    let active = true;
+    apiClient.get("/me").then((response) => {
+      const value = String(response.data?.username || "").trim();
+      if (active && value) {
+        localStorage.setItem("username", value);
+        setUsername(value);
+      }
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [username]);
+  const displayUsername = username || localStorage.getItem("userId") || "-";
   const roleLabel = role === "admin" ? t.profile.admin : role === "engineer" ? t.profile.engineer : t.profile.user;
   const roleColor = role === "admin" ? "red" : role === "engineer" ? "blue" : "green";
 
@@ -203,7 +217,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   />
                   <div>
                     <div style={{ color: "var(--text-primary)", fontSize: 13, fontWeight: 500, lineHeight: 1.2 }}>
-                      {username.slice(0, 12)}
+                      {displayUsername.slice(0, 12)}
                     </div>
                     <Tag
                       color={roleColor}
@@ -232,7 +246,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       {/* Profile Modal */}
       <Modal title="用户信息" open={profileOpen} onCancel={() => setProfileOpen(false)} footer={null}>
         <Descriptions column={1} bordered size="small">
-          <Descriptions.Item label="用户名">{username}</Descriptions.Item>
+          <Descriptions.Item label="用户名">{displayUsername}</Descriptions.Item>
           <Descriptions.Item label="角色">
             <Tag color={roleColor}>{roleLabel}</Tag>
           </Descriptions.Item>

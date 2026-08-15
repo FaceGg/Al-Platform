@@ -24,14 +24,18 @@ def list_operators():
             category=op.category,
             description=op.description,
             version=op.version,
-            inputs=[PortSpecSchema(name=p.name, type=p.type, label=p.label) for p in op.inputs],
-            outputs=[PortSpecSchema(name=p.name, type=p.type, label=p.label) for p in op.outputs],
+            inputs=[PortSpecSchema(name=p.name, type=p.type, label=p.label, required_columns=list(p.required_columns)) for p in op.inputs],
+            outputs=[PortSpecSchema(name=p.name, type=p.type, label=p.label, required_columns=list(p.required_columns)) for p in op.outputs],
             parameters=[ParamSpecSchema(
                 name=p.name,
                 type=p.type,
                 default=p.default,
                 label=p.label,
                 options=p.options,
+                range_min=p.range_min,
+                range_max=p.range_max,
+                required=p.required,
+                required_when=p.required_when,
             ) for p in op.parameters],
         ))
     return result

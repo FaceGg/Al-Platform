@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import {
-  App as AntApp, Card, Table, Button, Upload, Select, Space, Modal, Typography, Row, Col, Tag
+  App as AntApp, Card, Table, Button, Upload, Select, Space, Modal, Tooltip, Typography, Row, Col, Tag
 } from "antd";
 import {
-  UploadOutlined, DownloadOutlined, DeleteOutlined, EyeOutlined, ImportOutlined, ExportOutlined
+  UploadOutlined, DownloadOutlined, DeleteOutlined, EyeOutlined, ImportOutlined, ExportOutlined, TagsOutlined
 } from "@ant-design/icons";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import apiClient from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
 import AppLayout from "../components/AppLayout";
@@ -13,10 +14,12 @@ import { useI18n } from "../i18n";
 const { Text } = Typography;
 
 export default function DataManagePage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { message } = AntApp.useApp();
   const { t } = useI18n();
   const [projects, setProjects] = useState<any[]>([]);
-  const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [selectedProject, setSelectedProject] = useState<string | null>(searchParams.get("projectId"));
   const [datasets, setDatasets] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [previewData, setPreviewData] = useState<{ columns: string[]; rows: any[][] } | null>(null);
@@ -25,8 +28,12 @@ export default function DataManagePage() {
   useEffect(() => {
     apiClient.get("/projects").then((res) => {
       setProjects(res.data.items || res.data || []);
+      const requestedProject = searchParams.get("projectId");
+      if (requestedProject && (res.data.items || res.data || []).some((project: any) => project.id === requestedProject)) {
+        setSelectedProject(requestedProject);
+      }
     }).catch(() => {});
-  }, []);
+  }, [searchParams]);
 
   const loadDatasets = (projectId: string | null) => {
     setLoading(true);
@@ -117,8 +124,18 @@ export default function DataManagePage() {
     }
   };
 
+  const handleAutomaticLabeling = (record: any) => {
+    if (!record.project_id) {
+      message.warning("请先为数据选择项目");
+      return;
+    }
+    navigate(`/data-annotation?type=spot-weld&view=setup&mode=automatic&projectId=${encodeURIComponent(record.project_id)}&datasetId=${encodeURIComponent(record.id)}`);
+  };
+
   const columns = [
     { title: t.data.filename, dataIndex: "name", key: "name", ellipsis: true },
+    { title: t.data.project, dataIndex: "project_name", key: "project_name", ellipsis: true,
+      render: (value: string | null) => value || "-" },
     { title: t.data.format, dataIndex: "format", key: "format", width: 80,
       render: (v: string) => <Tag>{v || "csv"}</Tag> },
     { title: t.data.size, dataIndex: "file_size", key: "size",
@@ -126,15 +143,15 @@ export default function DataManagePage() {
     { title: t.data.rows, dataIndex: "row_count", key: "rows", width: 80 },
     { title: t.model.created, dataIndex: "created_at", key: "created_at", width: 160 },
     {
-      title: t.model.actions, key: "actions", width: 200,
+      title: t.model.actions, key: "actions", width: 160, fixed: "right" as const, align: "center" as const,
       render: (_: any, record: any) => (
-        <Space>
-          <Button type="link" size="small" icon={<EyeOutlined />}
-            onClick={() => handlePreview(record.id)}>{t.data.preview}</Button>
-          <Button type="link" size="small" icon={<DownloadOutlined />}
-            onClick={() => handleDownload(record.id)}>{t.data.download}</Button>
-          <Button type="link" size="small" danger icon={<DeleteOutlined />}
-            onClick={() => handleDelete(record.id)}>{t.common.delete}</Button>
+        <Space className="dataset-table-actions" size={2} wrap={false}>
+          {["csv", "xls", "xlsx"].includes(String(record.format || "").toLowerCase()) && record.project_id && (
+            <Tooltip title={`自动标注 ${record.name}`}><Button type="text" size="small" icon={<TagsOutlined />} aria-label={`自动标注 ${record.name}`} onClick={() => handleAutomaticLabeling(record)} /></Tooltip>
+          )}
+          <Tooltip title={`${t.data.preview} ${record.name}`}><Button type="text" size="small" icon={<EyeOutlined />} aria-label={`${t.data.preview} ${record.name}`} onClick={() => handlePreview(record.id)} /></Tooltip>
+          <Tooltip title={`${t.data.download} ${record.name}`}><Button type="text" size="small" icon={<DownloadOutlined />} aria-label={`${t.data.download} ${record.name}`} onClick={() => handleDownload(record.id)} /></Tooltip>
+          <Tooltip title={`${t.common.delete} ${record.name}`}><Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label={`${t.common.delete} ${record.name}`} onClick={() => handleDelete(record.id)} /></Tooltip>
         </Space>
       ),
     },
@@ -142,36 +159,41 @@ export default function DataManagePage() {
 
   return (
     <AppLayout>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16, alignItems: "center" }}>
-        <h3>{t.data.title}</h3>
-        <Space>
-          <Select
-            placeholder={t.automl.select_project}
-            style={{ width: 200 }}
-            value={selectedProject}
-            onChange={setSelectedProject}
-            options={projects.map((p: any) => ({ value: p.id, label: p.name }))}
-            allowClear
+      <div className="page-shell fade-in">
+        <div className="page-header">
+          <div className="page-header-copy">
+            <h3 className="page-title">{t.data.title}</h3>
+          </div>
+          <Space className="page-actions" wrap>
+            <Select
+              placeholder={t.automl.select_project}
+              style={{ width: 200 }}
+              value={selectedProject}
+              onChange={setSelectedProject}
+              options={projects.map((p: any) => ({ value: p.id, label: p.name }))}
+              allowClear
+            />
+            <Upload beforeUpload={(file) => { handleUpload(file); return false; }} accept=".csv,.xls,.xlsx,.json,.parquet" maxCount={1} showUploadList={false}>
+              <Button icon={<UploadOutlined />}>{t.data.upload_file}</Button>
+            </Upload>
+            <Button icon={<ExportOutlined />} onClick={handleExport}>{t.data.export}</Button>
+            <Upload beforeUpload={(file) => { handleUpload(file); return false; }} accept=".csv,.xls,.xlsx" maxCount={99} showUploadList={false} multiple>
+              <Button icon={<ImportOutlined />}>{t.data.batch}</Button>
+            </Upload>
+          </Space>
+        </div>
+        <Card className="table-surface" variant="borderless">
+          <Table
+            rowKey="id"
+            dataSource={datasets}
+            columns={columns}
+            loading={loading}
+            pagination={{ pageSize: 15 }}
+            locale={{ emptyText: selectedProject ? t.common.no_data : t.common.no_data }}
+            scroll={{ x: "max-content" }}
           />
-          <Upload beforeUpload={(file) => { handleUpload(file); return false; }} accept=".csv,.xlsx,.json,.parquet" maxCount={1} showUploadList={false}>
-            <Button icon={<UploadOutlined />}>{t.data.upload_file}</Button>
-          </Upload>
-          <Button icon={<ExportOutlined />} onClick={handleExport}>{t.data.export}</Button>
-          <Upload beforeUpload={(file) => { handleUpload(file); return false; }} accept=".csv,.xlsx" maxCount={99} showUploadList={false} multiple>
-            <Button icon={<ImportOutlined />}>{t.data.batch}</Button>
-          </Upload>
-        </Space>
+        </Card>
       </div>
-      <Card>
-        <Table
-          rowKey="id"
-          dataSource={datasets}
-          columns={columns}
-          loading={loading}
-          pagination={{ pageSize: 15 }}
-          locale={{ emptyText: selectedProject ? t.common.no_data : t.common.no_data }}
-        />
-      </Card>
       <Modal
         title={t.data.preview}
         open={previewOpen}
@@ -181,11 +203,11 @@ export default function DataManagePage() {
       >
         {previewData && (
           <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+            <table className="dataset-preview-table" style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
               <thead>
                 <tr>
                   {previewData.columns.map((col: string, i: number) => (
-                    <th key={i} style={{ border: "1px solid #f0f0f0", padding: "6px 8px", background: "#fafafa", textAlign: "left" }}>
+                    <th key={i} style={{ padding: "6px 8px", textAlign: "left" }}>
                       {col}
                     </th>
                   ))}
@@ -195,7 +217,7 @@ export default function DataManagePage() {
                 {previewData.rows.slice(0, 10).map((row: any[], ri: number) => (
                   <tr key={ri}>
                     {row.map((cell: any, ci: number) => (
-                      <td key={ci} style={{ border: "1px solid #f0f0f0", padding: "4px 8px", maxWidth: 200, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                      <td key={ci} style={{ padding: "4px 8px", maxWidth: 200, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
                         {String(cell ?? "")}
                       </td>
                     ))}

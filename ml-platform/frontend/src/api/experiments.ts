@@ -58,6 +58,10 @@ export async function createExperiment(payload: ExperimentCreate): Promise<Exper
   return response.data;
 }
 
+export async function deleteExperiment(experimentId: string): Promise<void> {
+  await apiClient.delete(`/experiments/${experimentId}`);
+}
+
 export async function listExperiments(projectId: string): Promise<Experiment[]> {
   const response = await apiClient.get("/experiments", { params: { project_id: projectId } });
   return normalizeItems<Experiment>(response.data);

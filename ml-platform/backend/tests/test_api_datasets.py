@@ -66,6 +66,14 @@ class TestDatasetsAPI(unittest.TestCase):
         self.assertIn("preview", data)
         self.assertIn("total_rows", data)
 
+    def test_03_raw_download_matches_stored_dataset_bytes(self):
+        aid = self.artifact_ids[0]
+        response = client.get(f"/api/datasets/{aid}/download", headers=self.h)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.content, b"col1,col2\n1,2\n3,4\n5,6\n")
+        self.assertIn("test.csv", response.headers["content-disposition"])
+
     def test_03a_list_project_dataset_artifacts(self):
         r = client.get(f"/api/projects/{self.project_id}/datasets", headers=self.h)
         self.assertEqual(r.status_code, 200)
@@ -83,6 +91,12 @@ class TestDatasetsAPI(unittest.TestCase):
         self.assertTrue(all(item["type"] == "dataset" for item in data["items"]))
         self.assertTrue(all(item["project_id"] for item in data["items"]))
 
+    def test_03b1_listed_dataset_includes_its_project_name(self):
+        r = client.get("/api/datasets", headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        item = next(entry for entry in r.json()["items"] if entry["id"] == self.artifact_ids[0])
+        self.assertEqual(item["project_name"], "DatasetTestProject")
+
     def test_03c_delete_dataset_removes_the_owned_artifact(self):
         uploaded = client.post(
             f"/api/projects/{self.project_id}/datasets/upload",
@@ -95,6 +109,18 @@ class TestDatasetsAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 204)
         preview = client.get(f"/api/datasets/{dataset_id}/preview", headers=self.h)
         self.assertEqual(preview.status_code, 404)
+
+    def test_03d_zero_row_dataset_can_be_deleted(self):
+        uploaded = client.post(
+            f"/api/projects/{self.project_id}/datasets/upload",
+            files={"file": ("empty.csv", self._make_csv("col1,col2\n"), "text/csv")},
+            headers=self.h,
+        )
+        self.assertEqual(uploaded.status_code, 200)
+        self.assertEqual(uploaded.json()["row_count"], 0)
+
+        deleted = client.delete(f"/api/datasets/{uploaded.json()['id']}", headers=self.h)
+        self.assertEqual(deleted.status_code, 204)
 
     def test_04_preview_nonexistent_dataset(self):
         r = client.get(f"/api/datasets/{uuid.uuid4()}/preview", headers=self.h)

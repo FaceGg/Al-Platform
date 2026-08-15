@@ -11,11 +11,29 @@ from app.engine.registry import OperatorRegistry
 from app.engine.run_control import RunCancelled, RunControl
 from app.engine.run_state import ExecutionPolicy
 from app.engine.operator_contract import (
-    OperatorContext, OperatorResult, validate_operator_params, validate_operator_result,
+    OperatorContext, OperatorContractError, OperatorResult, validate_operator_params,
+    validate_operator_result,
 )
 
 
 _EXECUTION_POLICY_PARAMS = {"timeout_seconds", "max_retries", "retry_delay_seconds"}
+_PREVIEW_MAX_STRING_LENGTH = 500
+_PREVIEW_STRING_PREFIX_LENGTH = 200
+
+
+def _preview_value(port_name: str, raw_data: Any) -> Any:
+    """Bound text previews without corrupting chart/image payloads."""
+    if isinstance(raw_data, str):
+        if len(raw_data) > _PREVIEW_MAX_STRING_LENGTH:
+            is_chart = str(port_name).lower() == "chart"
+            is_data_image = raw_data.lstrip().lower().startswith("data:image/")
+            if is_chart or is_data_image:
+                return raw_data
+            return raw_data[:_PREVIEW_STRING_PREFIX_LENGTH] + f"...({len(raw_data)} chars)"
+        return raw_data
+    if isinstance(raw_data, (list, dict)):
+        return raw_data
+    return str(raw_data)[:_PREVIEW_MAX_STRING_LENGTH]
 
 
 class _OperatorLogger:
@@ -39,12 +57,16 @@ class DAGExecutor:
     def __init__(
         self, nodes: list[dict], edges: list[dict], artifact_service=None,
         project_id: str | None = None,
+        workflow_id: str | None = None,
     ):
         self._nodes = nodes
         self._edges = edges
-        self._graph: nx.DiGraph = nx.DiGraph()
+        # Different output ports may legitimately connect the same two nodes.
+        # A DiGraph overwrites the earlier edge in that case, losing its port map.
+        self._graph: nx.MultiDiGraph = nx.MultiDiGraph()
         self._artifact_service = artifact_service
         self._project_id = project_id
+        self._workflow_id = workflow_id
 
         for node in nodes:
             self._graph.add_node(
@@ -91,6 +113,14 @@ class DAGExecutor:
             op = OperatorRegistry.get(op_id)
             if op is None:
                 continue
+            operator_params = {
+                key: value for key, value in data.get("params", {}).items()
+                if key not in _EXECUTION_POLICY_PARAMS
+            }
+            try:
+                validate_operator_params(op.parameters, operator_params)
+            except OperatorContractError as error:
+                errors.append(f"Node '{node_id}': {error}")
             if not op.inputs:
                 continue
             predecessors = list(self._graph.predecessors(node_id))
@@ -98,13 +128,12 @@ class DAGExecutor:
                 continue
             if len(op.inputs) == 1 and len(predecessors) == 1:
                 continue
-            incoming_ports: set[str] = set()
-            for src, tgt in self._graph.in_edges(node_id):
-                try:
-                    edge_data = self._graph.edges[src, tgt]
-                    incoming_ports.add(edge_data.get("target_port", ""))
-                except (KeyError, TypeError):
-                    pass
+            incoming_ports = {
+                edge_data.get("target_port", "")
+                for _, _, _, edge_data in self._graph.in_edges(
+                    node_id, keys=True, data=True,
+                )
+            }
             for port in op.inputs:
                 if port.name not in incoming_ports:
                     errors.append(f"Node '{node_id}': missing required input '{port.name}'")
@@ -143,8 +172,8 @@ class DAGExecutor:
                 raise RuntimeError(f"Operator '{op_id}' not found for node '{node_id}'")
 
             # Check if any predecessor was skipped
-            in_edges = [(src, tgt) for src, tgt in self._graph.in_edges(node_id)]
-            all_preds_skipped = all(src in skipped for src, tgt in in_edges) if in_edges else False
+            in_edges = list(self._graph.in_edges(node_id, keys=True, data=True))
+            all_preds_skipped = all(src in skipped for src, _, _, _ in in_edges) if in_edges else False
             if all_preds_skipped:
                 skipped.add(node_id)
                 if status_callback:
@@ -154,10 +183,9 @@ class DAGExecutor:
 
             # Collect inputs
             inputs: dict[str, Any] = {}
-            for src, tgt in in_edges:
+            for src, _, _, edge_data in in_edges:
                 if src in skipped:
                     continue
-                edge_data = self._graph.edges.get((src, tgt), {})
                 target_port = edge_data.get("target_port", "")
                 source_port = edge_data.get("source_port", "")
                 src_results = results.get(src, {})
@@ -201,7 +229,13 @@ class DAGExecutor:
             # Save outputs
             node_results: dict[str, str] = {}
             for port_name, data in outputs.items():
-                path = DataBus.save_data(run_id, node_id, port_name, data)
+                path = DataBus.save_data(
+                    run_id,
+                    node_id,
+                    port_name,
+                    data,
+                    workflow_id=self._workflow_id,
+                )
                 node_results[port_name] = path
             results[node_id] = node_results
             if artifact_refs:
@@ -214,30 +248,24 @@ class DAGExecutor:
                               (isinstance(false_data, dict) and len(false_data) == 0) or \
                               (false_data is None or false_data == "")
                 if false_empty:
-                    for src, tgt in self._graph.out_edges(node_id):
-                        try:
-                            edge_data = self._graph.edges[src, tgt]
-                            if edge_data.get("source_port", "") == "false":
-                                skipped.add(tgt)
-                                descendants = list(nx.descendants(self._graph, tgt))
-                                skipped.update(descendants)
-                        except (KeyError, TypeError):
-                            pass
+                    for _, target, _, edge_data in self._graph.out_edges(
+                        node_id, keys=True, data=True,
+                    ):
+                        if edge_data.get("source_port", "") == "false":
+                            skipped.add(target)
+                            descendants = list(nx.descendants(self._graph, target))
+                            skipped.update(descendants)
 
             # Build preview
             preview: dict[str, Any] = {}
             for port_name, raw_data in outputs.items():
-                if isinstance(raw_data, str) and len(raw_data) > 500:
-                    preview[port_name] = raw_data[:200] + f"...({len(raw_data)} chars)"
-                elif isinstance(raw_data, (list, dict)):
-                    preview[port_name] = raw_data
-                else:
-                    preview[port_name] = str(raw_data)[:500]
+                preview[port_name] = _preview_value(port_name, raw_data)
 
             completion = preview
             if op_id not in ("loop",):
                 completion = {
                     **preview,
+                    "artifacts": artifact_refs,
                     "metrics": operator_result.metrics,
                     "logs": operator_result.logs,
                 }
@@ -271,6 +299,8 @@ class DAGExecutor:
             )
             references.append({
                 "artifact_id": str(artifact.id),
+                "name": artifact.name,
+                "format": artifact.format,
                 "uri": artifact.storage_uri,
                 "size": artifact.file_size,
             })
@@ -304,6 +334,7 @@ class DAGExecutor:
                 artifact_service=self._artifact_service,
                 cancel_requested=run_control.is_cancel_requested,
                 logger=logger,
+                workspace_dir=DataBus.workspace_dir(run_id, self._workflow_id),
             )
             pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"node-{node_id}")
             future = pool.submit(op.execute, context, inputs, validated_params)
@@ -416,9 +447,10 @@ class DAGExecutor:
                     body_inputs[f"iter_{pn}"] = pv
 
                 # Also check regular predecessors
-                for src, tgt in self._graph.in_edges(body_node_id):
+                for src, _, _, edge_data in self._graph.in_edges(
+                    body_node_id, keys=True, data=True,
+                ):
                     if src in results:
-                        edge_data = self._graph.edges.get((src, tgt), {})
                         target_port = edge_data.get("target_port", "")
                         if target_port:
                             body_inputs[target_port] = results[src]
@@ -439,7 +471,12 @@ class DAGExecutor:
                 body_node_results: dict[str, str] = {}
                 for pn, data in body_outputs.items():
                     path = DataBus.save_data(
-                        run_id, f"{body_node_id}_iter{iteration}", pn, data)
+                        run_id,
+                        f"{body_node_id}_iter{iteration}",
+                        pn,
+                        data,
+                        workflow_id=self._workflow_id,
+                    )
                     body_node_results[pn] = path
                 results[body_node_id] = body_node_results
 

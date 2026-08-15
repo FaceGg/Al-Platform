@@ -12,11 +12,18 @@ from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.api.experiments import get_experiment_tracking
+from app.config import settings
 from app.database import get_db
 from app.models.experiment import Experiment
 from app.models.project import Project
-from app.models.training import TrainingJob
+from app.models.training import TERMINAL_TRAINING_STATUSES, TrainingJob
 from app.models.user import User
+from app.services.automl_execution import (
+    normalize_evaluation_config,
+    read_automl_dataset,
+    resolve_automl_feature_columns,
+    resolve_candidates,
+)
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.services.experiment_tracking import TrackingError
 from app.services.iterative_training import IncompatibleCheckpoint, TrainingCheckpoint, TrainingConfig
@@ -65,7 +72,12 @@ class AutoMLRunRequest(BaseModel):
     experiment_id: uuid.UUID
     dataset_artifact_id: uuid.UUID
     target_column: str = Field(min_length=1)
+    input_columns: list[str] | None = None
     task: str = "classification"
+    candidate_ids: list[str] = Field(default_factory=list)
+    cross_validation_enabled: bool = True
+    cross_validation_folds: int | None = 5
+    time_budget: int = Field(default=60, ge=10, le=3600)
     name: str = Field(default="automl-job", min_length=1, max_length=128)
 
 
@@ -90,9 +102,15 @@ def get_training_dispatcher(request: Request):
     configured = getattr(request.app.state, "training_dispatcher", None)
     if configured is not None:
         return configured
-    from app.tasks.training_tasks import execute_training_task
+    app_settings = getattr(request.app.state, "settings", None) or settings
+    if app_settings.task_backend == "celery":
+        from app.tasks.training_tasks import execute_training_task
 
-    configured = CeleryTrainingDispatcher(execute_training_task)
+        configured = CeleryTrainingDispatcher(execute_training_task)
+    else:
+        from app.tasks.training_tasks import LocalTrainingDispatcher, execute_local_training_task
+
+        configured = LocalTrainingDispatcher(execute_local_training_task)
     request.app.state.training_dispatcher = configured
     return configured
 
@@ -101,9 +119,15 @@ def get_automl_dispatcher(request: Request):
     configured = getattr(request.app.state, "automl_dispatcher", None)
     if configured is not None:
         return configured
-    from app.tasks.training_tasks import execute_automl_task
+    app_settings = getattr(request.app.state, "settings", None) or settings
+    if app_settings.task_backend == "celery":
+        from app.tasks.training_tasks import execute_automl_task
 
-    configured = CeleryTrainingDispatcher(execute_automl_task)
+        configured = CeleryTrainingDispatcher(execute_automl_task)
+    else:
+        from app.tasks.training_tasks import LocalTrainingDispatcher, execute_local_automl_task
+
+        configured = LocalTrainingDispatcher(execute_local_automl_task)
     request.app.state.automl_dispatcher = configured
     return configured
 
@@ -500,6 +524,14 @@ def start_automl(
     ):
         if data.task not in {"classification", "regression"}:
             raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", "Invalid AutoML task"))
+        try:
+            resolve_candidates(data.task, data.candidate_ids)
+            evaluation = normalize_evaluation_config(
+                data.cross_validation_enabled,
+                data.cross_validation_folds,
+            )
+        except ValueError as error:
+            raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
         artifact_service = get_artifact_service(request, db)
         try:
             dataset = artifact_service.resolve(
@@ -507,10 +539,31 @@ def start_automl(
             )
         except (ValueError, ArtifactAccessError) as error:
             raise HTTPException(400, _error("DATASET_ARTIFACT_INVALID", str(error))) from error
+        try:
+            with artifact_service.materialize(
+                dataset.id,
+                data.project_id,
+                expected_type="dataset",
+            ) as dataset_path:
+                frame = read_automl_dataset(dataset_path)
+            resolve_automl_feature_columns(
+                frame,
+                data.target_column,
+                data.input_columns,
+            )
+        except (OSError, ValueError) as error:
+            raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
         job = TrainingJob(
             id=job_id, project_id=data.project_id, user_id=current_user.id,
             experiment_id=experiment.id, name=data.name, operator_id="automl",
-            params={"target_column": data.target_column, "task": data.task},
+            params={
+                "target_column": data.target_column,
+                "input_columns": list(data.input_columns) if data.input_columns is not None else None,
+                "task": data.task,
+                "candidate_ids": data.candidate_ids,
+                **evaluation,
+                "time_budget": data.time_budget,
+            },
             dataset_artifact_id=dataset.id,
             dataset_path=artifact_service.storage_reference(dataset), status="pending",
         )
@@ -524,17 +577,21 @@ def start_automl(
 
 @router.get("/automl/jobs")
 def list_automl_jobs(
+    project_id: uuid.UUID | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project_ids = [
-        project.id for project in ProjectAccessService()
-        .accessible_project_query(db, current_user.id).all()
-    ]
-    jobs = db.query(TrainingJob).filter(
-        TrainingJob.project_id.in_(project_ids),
-        TrainingJob.operator_id == "automl",
-    ).order_by(TrainingJob.created_at.desc()).all()
+    query = db.query(TrainingJob).filter(TrainingJob.operator_id == "automl")
+    if project_id is not None:
+        require_project_access(db, project_id, current_user.id, "project.read")
+        query = query.filter(TrainingJob.project_id == project_id)
+    else:
+        project_ids = [
+            project.id for project in ProjectAccessService()
+            .accessible_project_query(db, current_user.id).all()
+        ]
+        query = query.filter(TrainingJob.project_id.in_(project_ids))
+    jobs = query.order_by(TrainingJob.created_at.desc()).all()
     return [_job_to_dict(job) for job in jobs]
 
 
@@ -568,7 +625,7 @@ def batch_delete_training_jobs(
         except ValueError:
             continue
         job, access = _visible_job(db, job_id, current_user.id)
-        if job is None or job.status in {"running", "queued", "cancel_requested"}:
+        if job is None or job.status not in TERMINAL_TRAINING_STATUSES:
             continue
         with audit_service(db).project_action(
             db, request=request, actor=current_user, access=access,
@@ -587,6 +644,21 @@ def batch_delete_training_jobs(
 def _dispatch_job(db, job, dispatcher, request, actor, access) -> None:
     try:
         task_id = dispatcher.enqueue(job.id)
+        start = getattr(dispatcher, "start", None)
+        with audit_service(db).project_action(
+            db, request=request, actor=actor, access=access,
+            permission="execution.operate",
+            intent=AuditIntent(
+                project_id=job.project_id, action="training_job.dispatch",
+                resource_type="training_job", resource_id=str(job.id),
+                changes={"status": "queued"},
+            ),
+            allowed_changes={"status"},
+        ):
+            job.status = "queued"
+            job.task_id = task_id
+        if callable(start):
+            start(task_id)
     except Exception as error:
         with audit_service(db).project_action(
             db, request=request, actor=actor, access=access,
@@ -605,18 +677,6 @@ def _dispatch_job(db, job, dispatcher, request, actor, access) -> None:
             "TRAINING_DISPATCH_FAILED",
             "Training task could not be queued",
         )) from error
-    with audit_service(db).project_action(
-        db, request=request, actor=actor, access=access,
-        permission="execution.operate",
-        intent=AuditIntent(
-            project_id=job.project_id, action="training_job.dispatch",
-            resource_type="training_job", resource_id=str(job.id),
-            changes={"status": "queued"},
-        ),
-        allowed_changes={"status"},
-    ):
-        job.status = "queued"
-        job.task_id = task_id
 
 
 def _visible_experiment(db, experiment_id, project_id, user_id):

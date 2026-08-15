@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from mlflow.entities import Experiment, FileInfo, Metric, Run, RunData, RunInfo, RunTag
 from mlflow.exceptions import MlflowException
@@ -10,6 +11,7 @@ from app.services.experiment_tracking import (
     MlflowExperimentTracking,
     TrackingNotFound,
     TrackingUnavailable,
+    resolve_tracking_configuration,
 )
 
 
@@ -259,6 +261,31 @@ class TestMlflowExperimentTracking(unittest.TestCase):
         self.client.failure_code = INTERNAL_ERROR
         with self.assertRaises(TrackingUnavailable):
             self.tracking.ensure_experiment("project/p1/e1")
+
+    def test_unconfigured_local_tracking_uses_managed_file_locations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tracking_uri, artifact_root = resolve_tracking_configuration(
+                SimpleNamespace(
+                    app_mode="local",
+                    mlflow_tracking_uri=None,
+                    mlflow_artifact_root=None,
+                    artifact_storage_dir=directory,
+                )
+            )
+
+            self.assertEqual(tracking_uri, (Path(directory) / "mlflow" / "tracking").resolve().as_uri())
+            self.assertEqual(artifact_root, (Path(directory) / "mlflow" / "artifacts").resolve().as_uri())
+
+    def test_unconfigured_non_local_tracking_is_rejected(self):
+        with self.assertRaises(TrackingUnavailable):
+            resolve_tracking_configuration(
+                SimpleNamespace(
+                    app_mode="production",
+                    mlflow_tracking_uri=None,
+                    mlflow_artifact_root=None,
+                    artifact_storage_dir="/unused",
+                )
+            )
 
 
 if __name__ == "__main__":

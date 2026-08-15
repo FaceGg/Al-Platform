@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import func, text
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
@@ -109,12 +109,21 @@ def list_bases(
     current_user: User = Depends(get_current_user),
 ):
     bases = db.query(KnowledgeBase).filter(KnowledgeBase.owner_id == current_user.id).all()
+    document_counts = {}
+    if bases:
+        document_counts = dict(
+            db.query(Document.kb_id, func.count(Document.id))
+            .filter(Document.kb_id.in_([base.id for base in bases]))
+            .group_by(Document.kb_id)
+            .all()
+        )
     return [
         {
             "id": str(b.id),
             "name": b.name,
             "description": b.description,
             "owner_id": str(b.owner_id),
+            "document_count": document_counts.get(b.id, 0),
             "created_at": b.created_at.isoformat() if b.created_at else None,
         }
         for b in bases

@@ -2,7 +2,8 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from sqlalchemy import or_
 from mlflow.tracking import MlflowClient
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -11,6 +12,7 @@ from app.api.auth import get_current_user
 from app.database import get_db
 from app.models.experiment import Experiment
 from app.models.project import Project
+from app.models.training import TERMINAL_TRAINING_STATUSES, TrainingJob
 from app.models.user import User
 from app.schemas.experiment import (
     ExperimentCreate,
@@ -24,6 +26,7 @@ from app.services.experiment_tracking import (
     MlflowExperimentTracking,
     TrackingNotFound,
     TrackingUnavailable,
+    resolve_tracking_configuration,
 )
 from app.api.project_security import audit_service, require_project_access, resolve_project_access
 from app.services.audit import AuditIntent
@@ -32,6 +35,7 @@ from app.services.audit import AuditIntent
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 PROJECT_WRITE_ACTIONS = {
     "POST /api/experiments": "experiment.create",
+    "DELETE /api/experiments/{experiment_id}": "experiment.delete",
 }
 
 
@@ -42,14 +46,16 @@ def get_experiment_tracking(request: Request):
     app_settings = getattr(request.app.state, "settings", None)
     if app_settings is None:
         from app.config import settings as app_settings
-    if not app_settings.mlflow_tracking_uri or not app_settings.mlflow_artifact_root:
+    try:
+        tracking_uri, artifact_root = resolve_tracking_configuration(app_settings)
+    except TrackingUnavailable as error:
         raise HTTPException(503, _error(
             "TRACKING_UNAVAILABLE",
-            "Experiment tracking is not configured",
-        ))
+            str(error),
+        )) from error
     configured = MlflowExperimentTracking(
-        client=MlflowClient(tracking_uri=app_settings.mlflow_tracking_uri),
-        artifact_root=app_settings.mlflow_artifact_root,
+        client=MlflowClient(tracking_uri=tracking_uri),
+        artifact_root=artifact_root,
     )
     request.app.state.experiment_tracking = configured
     return configured
@@ -126,6 +132,44 @@ def list_experiments(
         Experiment.project_id == project.id,
     ).order_by(Experiment.created_at.desc(), Experiment.id).all()
     return {"items": items, "total": len(items)}
+
+
+@router.delete("/{experiment_id}", status_code=204)
+def delete_experiment(
+    experiment_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    experiment = _visible_experiment(db, experiment_id, current_user.id)
+    if experiment is None:
+        raise HTTPException(404, _error("EXPERIMENT_NOT_FOUND", "Experiment not found"))
+    access = resolve_project_access(db, experiment.project_id, current_user.id)
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="resource.delete",
+        intent=AuditIntent(
+            project_id=experiment.project_id,
+            action="experiment.delete",
+            resource_type="experiment",
+            resource_id=str(experiment.id),
+        ),
+        allowed_changes=set(),
+    ):
+        active_job = db.query(TrainingJob.id).filter(
+            TrainingJob.experiment_id == experiment.id,
+            or_(
+                TrainingJob.status.is_(None),
+                TrainingJob.status.notin_(TERMINAL_TRAINING_STATUSES),
+            ),
+        ).first()
+        if active_job is not None:
+            raise HTTPException(409, _error(
+                "EXPERIMENT_HAS_ACTIVE_TRAINING_JOB",
+                "Experiment has an active training job",
+            ))
+        db.delete(experiment)
+    return Response(status_code=204)
 
 
 @router.get("/{experiment_id}", response_model=ExperimentResponse)

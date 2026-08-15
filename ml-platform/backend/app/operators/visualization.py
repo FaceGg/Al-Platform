@@ -490,8 +490,8 @@ class BarChart(BaseOperator):
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("chart", "Chart", "Bar Chart")]
     parameters = [
-        ParamSpec("x_column", "str", "", "X轴列"),
-        ParamSpec("y_column", "str", "", "Y轴列"),
+        ParamSpec("x_column", "str", "", "X轴列", required=True),
+        ParamSpec("y_column", "str", "", "Y轴列", required=True),
         ParamSpec("title", "str", "Bar Chart", "图表标题"),
     ]
 

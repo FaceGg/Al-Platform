@@ -8,9 +8,9 @@ import apiClient from "../api/client";
 import { formatApiError } from "../api/client";
 import OperatorPanel from "../components/workspace/OperatorPanel";
 import WorkflowCanvas from "../components/workspace/WorkflowCanvas";
-import NodeConfigPanel from "../components/workspace/NodeConfigPanel";
+import NodeConfigPanel, { NodeResultPanel } from "../components/workspace/NodeConfigPanel";
 import ExecutionProgress from "../components/workspace/ExecutionProgress";
-import { useWorkflowStore } from "../stores/workflowStore";
+import { normalizeNodeError, normalizeWorkflowHandle, useWorkflowStore } from "../stores/workflowStore";
 import type { NodeRunStatus, WorkflowRunStatus } from "../stores/workflowStore";
 import { deleteWorkflowVersion, listWorkflowVersions, publishWorkflow, restoreWorkflowVersion, WorkflowVersionSummary } from "../api/workflowVersions";
 import { useI18n } from "../i18n";
@@ -19,10 +19,42 @@ const { Sider, Content } = Layout;
 
 export function resolvePort(handleId: string, portList: {name:string}[]): string {
   if (!handleId) return "";
+  const logicalHandle = normalizeWorkflowHandle(handleId) || "";
   // Already a port name (e.g., "data", "left") — pass through
-  if (!/^(in|out)-\d+$/.test(handleId)) return handleId;
-  const idx = parseInt(handleId.replace(/^(in|out)-/, ""), 10);
-  return (!isNaN(idx) && idx < portList.length) ? portList[idx].name : handleId;
+  if (!/^(in|out)-\d+$/.test(logicalHandle)) return logicalHandle;
+  const idx = parseInt(logicalHandle.replace(/^(in|out)-/, ""), 10);
+  return (!isNaN(idx) && idx < portList.length) ? portList[idx].name : logicalHandle;
+}
+
+export function hydrateWorkflowEdges(edges: any[], nodes: any[] = []) {
+  const nodesById = new Map(nodes.map((node) => [String(node.id), node]));
+  return edges.reduce<any[]>((hydrated, edge: any) => {
+    const source = String(edge.source_node_id ?? edge.source);
+    const target = String(edge.target_node_id ?? edge.target);
+    const normalized = {
+      id: String(edge.id),
+      source,
+      target,
+      sourceHandle: resolvePort(
+        edge.source_port || edge.sourceHandle || "out-0",
+        nodesById.get(source)?.data?.outputs || [],
+      ) || "out-0",
+      targetHandle: resolvePort(
+        edge.target_port || edge.targetHandle || "in-0",
+        nodesById.get(target)?.data?.inputs || [],
+      ) || "in-0",
+    };
+    const survivors = hydrated.filter((existing) => (
+      !(
+        existing.source === normalized.source &&
+        existing.sourceHandle === normalized.sourceHandle
+      ) && !(
+        existing.target === normalized.target &&
+        existing.targetHandle === normalized.targetHandle
+      )
+    ));
+    return [...survivors, normalized];
+  }, []);
 }
 
 export default function WorkspacePage() {
@@ -48,12 +80,13 @@ export default function WorkspacePage() {
   const { workflowId } = useParams<{ workflowId: string }>();
   const navigate = useNavigate();
   const {
-    operators, setOperators, setNodes, setEdges,
-    isRunning, setIsRunning, setNodeStatus, setNodeResult, setNodeProgress, resetExecution,
+    operators, setOperators, setNodes, setEdges, closeNodeResult,
+    isRunning, setIsRunning, setNodeStatus, setNodeResult, setNodeError, setNodeProgress, resetExecution,
     currentRunId, setCurrentRunId, setWorkflowStatus,
     reset,
   } = useWorkflowStore();
   const [wfName, setWfName] = useState("");
+  const [workflowProjectId, setWorkflowProjectId] = useState<string | undefined>();
   const [editingName, setEditingName] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -77,36 +110,28 @@ export default function WorkspacePage() {
       .then((res) => {
         const wf = res.data;
         setWfName(wf.name || "untitled");
+        setWorkflowProjectId(wf.project_id || undefined);
+        const workflowNodes = (wf.nodes || []).map((n: any) => {
+          const op = meta[n.operator_id] || {};
+          return {
+            id: String(n.id),
+            type: "custom",
+            position: { x: n.position_x || 200, y: n.position_y || 200 },
+            data: {
+              operatorId: n.operator_id,
+              label: n.label || "",
+              params: n.params || {},
+              category: op.category || "utility",
+              inputs: op.inputs || [],
+              outputs: op.outputs || [],
+            },
+          };
+        });
         if (wf.nodes) {
-          setNodes(
-            wf.nodes.map((n: any) => {
-              const op = meta[n.operator_id] || {};
-              return {
-                id: String(n.id),
-                type: "custom",
-                position: { x: n.position_x || 200, y: n.position_y || 200 },
-                data: {
-                  operatorId: n.operator_id,
-                  label: n.label || "",
-                  params: n.params || {},
-                  category: op.category || "utility",
-                  inputs: op.inputs || [],
-                  outputs: op.outputs || [],
-                },
-              };
-            })
-          );
+          setNodes(workflowNodes);
         }
         if (wf.edges) {
-          setEdges(
-            wf.edges.map((e: any) => ({
-              id: String(e.id),
-              source: String(e.source_node_id),
-              target: String(e.target_node_id),
-              sourceHandle: e.source_port || "out-0",
-              targetHandle: e.target_port || "in-0",
-            }))
-          );
+          setEdges(hydrateWorkflowEdges(wf.edges, workflowNodes));
         }
       })
       .catch(() => {
@@ -126,8 +151,9 @@ export default function WorkspacePage() {
       });
     return () => {
       if (wsRef.current) wsRef.current.close();
+      closeNodeResult();
     };
-  }, [workflowId]);
+  }, [workflowId, closeNodeResult]);
 
   const buildPayload = () => {
     const store = useWorkflowStore.getState();
@@ -251,44 +277,68 @@ export default function WorkspacePage() {
     try {
       await apiClient.put("/workflows/" + workflowId, buildPayload());
       const reload = await apiClient.get("/workflows/" + workflowId);
-      const meta = getOpMeta();
-      const wf = reload.data;
-      if (wf.nodes) {
-        setNodes(
-          wf.nodes.map((n: any) => {
-            const op = meta[n.operator_id] || {};
-            return {
-              id: String(n.id),
-              type: "custom",
-              position: { x: n.position_x || 200, y: n.position_y || 200 },
-              data: {
-                operatorId: n.operator_id,
-                label: n.label || "",
-                params: n.params || {},
-                category: op.category || "utility",
-                inputs: op.inputs || [],
-                outputs: op.outputs || [],
-              },
-            };
-          })
-        );
-      }
-      if (wf.edges) {
-        setEdges(
-          wf.edges.map((e: any) => ({
-            id: String(e.id),
-            source: String(e.source_node_id),
-            target: String(e.target_node_id),
-            sourceHandle: e.source_port || "out-0",
-            targetHandle: e.target_port || "in-0",
-          }))
-        );
+        const meta = getOpMeta();
+        const wf = reload.data;
+        const workflowNodes = (wf.nodes || []).map((n: any) => {
+          const op = meta[n.operator_id] || {};
+          return {
+            id: String(n.id),
+            type: "custom",
+            position: { x: n.position_x || 200, y: n.position_y || 200 },
+            data: {
+              operatorId: n.operator_id,
+              label: n.label || "",
+              params: n.params || {},
+              category: op.category || "utility",
+              inputs: op.inputs || [],
+              outputs: op.outputs || [],
+            },
+          };
+        });
+        if (wf.nodes) {
+          setNodes(workflowNodes);
+        }
+        if (wf.edges) {
+          setEdges(hydrateWorkflowEdges(wf.edges, workflowNodes));
       }
 
       const runRes = await apiClient.post("/workflows/" + workflowId + "/run");
       const runId = runRes.data.run_id;
       setCurrentRunId(runId);
       setWorkflowStatus("pending");
+
+      const persistNodeRun = (nodeRun: any) => {
+        const nodeId = String(nodeRun.node_id);
+        const status = nodeRun.status as NodeRunStatus;
+        setNodeStatus(nodeId, status);
+        if (nodeRun.result !== undefined && nodeRun.result !== null || nodeRun.metrics || nodeRun.logs) {
+          const baseResult = nodeRun.result && typeof nodeRun.result === "object" && !Array.isArray(nodeRun.result)
+            ? { ...nodeRun.result }
+            : (nodeRun.result === undefined || nodeRun.result === null ? {} : { value: nodeRun.result });
+          if (nodeRun.metrics && (!baseResult.metrics || Object.keys(baseResult.metrics).length === 0)) {
+            baseResult.metrics = nodeRun.metrics;
+          }
+          if (Array.isArray(nodeRun.logs) && (!Array.isArray(baseResult.logs) || baseResult.logs.length === 0)) {
+            baseResult.logs = nodeRun.logs;
+          }
+          setNodeResult(nodeId, baseResult);
+        }
+        const resultError = nodeRun.result && typeof nodeRun.result === "object"
+          ? nodeRun.result
+          : undefined;
+        const explicitError = nodeRun.error || nodeRun.error_code || nodeRun.error_message ||
+          nodeRun.error_details || resultError?.error || resultError?.error_code || resultError?.error_message;
+        if (explicitError && nodeId !== "__wf__") {
+          const nodeError = normalizeNodeError(nodeId, {
+            ...nodeRun,
+            error: nodeRun.error ?? resultError?.error,
+            error_code: nodeRun.error_code ?? resultError?.error_code,
+            error_message: nodeRun.error_message ?? resultError?.error_message ?? resultError?.error,
+          });
+          if (nodeError) setNodeError(nodeId, nodeError);
+        }
+
+      };
 
       const reconcileRun = async () => {
         try {
@@ -297,8 +347,7 @@ export default function WorkspacePage() {
           setWorkflowStatus(run.status as WorkflowRunStatus);
           setIsRunning(["pending", "running", "cancel_requested"].includes(run.status));
           for (const nodeRun of run.node_runs || []) {
-            setNodeStatus(String(nodeRun.node_id), nodeRun.status as NodeRunStatus);
-            if (nodeRun.result) setNodeResult(String(nodeRun.node_id), nodeRun.result);
+            persistNodeRun(nodeRun);
           }
         } catch {
           message.warning("无法恢复运行状态");
@@ -312,6 +361,7 @@ export default function WorkspacePage() {
           const failedAttempt = (run.node_runs || []).find((item: any) =>
             ["failed", "timed_out"].includes(item.status)
           );
+          if (failedAttempt) persistNodeRun(failedAttempt);
           const lines = [
             run.error_code ? `错误码：${run.error_code}` : "",
             run.error_message || fallback,
@@ -328,13 +378,21 @@ export default function WorkspacePage() {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
-      ws.onopen = () => { /* connected */ };
+      ws.onopen = () => {
+        void reconcileRun();
+      };
       ws.onmessage = (event: MessageEvent) => {
         const msg = JSON.parse(event.data);
         if (msg.type === "node_status") {
-          setNodeStatus(msg.node_id, msg.status as NodeRunStatus);
+          persistNodeRun({
+            ...msg,
+            node_id: msg.node_id,
+            error: msg.error,
+            error_code: msg.error_code,
+            error_message: msg.error_message,
+            error_details: msg.error_details,
+          });
           if (msg.node_id === "__wf__") setWorkflowStatus(msg.status as WorkflowRunStatus);
-          if (msg.result) setNodeResult(msg.node_id, msg.result);
           if (msg.progress != null) setNodeProgress(msg.node_id, msg.progress);
         } else if (msg.type === "run_completed") {
           setIsRunning(false);
@@ -404,7 +462,7 @@ export default function WorkspacePage() {
 
   return (
     <ReactFlowProvider>
-      <Layout style={{ height: "100vh" }}>
+      <Layout className="workspace-layout">
         <Drawer title={text.history} open={versionsOpen} onClose={() => setVersionsOpen(false)} width={420}>
           <List
             loading={versionsLoading}
@@ -433,20 +491,15 @@ export default function WorkspacePage() {
             )}
           />
         </Drawer>
-        <Sider width={210} style={{ background: "#fff", borderRight: "1px solid #e8e8e8", overflow: "auto" }}>
-          <div style={{ padding: "10px 14px", borderBottom: "1px solid #f0f0f0", fontWeight: 600, fontSize: 14, background: "#fafafa" }}>
+        <Sider className="workspace-sider workspace-sider--operators" width={210} style={{ background: "var(--bg-surface)", borderRight: "1px solid var(--border-default)", overflow: "auto" }}>
+          <div className="workspace-sider-header">
             {text.operatorPanel}
           </div>
           <OperatorPanel />
         </Sider>
 
-        <Content onDrop={onDrop} onDragOver={onDragOver} style={{ position: "relative", background: "#f5f5f5" }}>
-          <div style={{
-            position: "absolute", top: 10, left: 10, zIndex: 10,
-            background: "rgba(255,255,255,0.95)", borderRadius: 8, padding: "6px 14px",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.08)", display: "flex", alignItems: "center", gap: 8,
-            backdropFilter: "blur(8px)",
-          }}>
+        <Content className="workspace-canvas" onDrop={onDrop} onDragOver={onDragOver}>
+          <div className="workspace-title-chip">
             {editingName ? (
               <Input size="small" value={wfName} onChange={(e) => setWfName(e.target.value)}
                 onPressEnter={handleNameSave} onBlur={handleNameSave} autoFocus style={{ width: 180 }} />
@@ -463,41 +516,43 @@ export default function WorkspacePage() {
           <WorkflowCanvas />
           <ExecutionProgress />
 
-          <Space style={{ position: "absolute", top: 10, right: 10, zIndex: 10 }}>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} style={{ borderRadius: 6 }}>
+          <Space className="workspace-actions" wrap>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
               {text.back}
             </Button>
-            <Button icon={<SaveOutlined />} onClick={handleSave} style={{ borderRadius: 6 }}>
+            <Button icon={<SaveOutlined />} onClick={handleSave}>
               {text.save}
             </Button>
-            <Button icon={<CloudUploadOutlined />} onClick={handlePublish} style={{ borderRadius: 6 }}>
+            <Button icon={<CloudUploadOutlined />} onClick={handlePublish}>
               {text.publish}
             </Button>
-            <Button icon={<HistoryOutlined />} onClick={openVersions} style={{ borderRadius: 6 }}>
+            <Button icon={<HistoryOutlined />} onClick={openVersions}>
               {text.version}
             </Button>
             {isRunning ? (
-              <Button danger icon={<PauseCircleOutlined />} onClick={handleRun} style={{ borderRadius: 6, fontWeight: 600 }}>
+              <Button danger icon={<PauseCircleOutlined />} onClick={handleRun}>
                 {text.stop}
               </Button>
             ) : (
-              <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRun} style={{ borderRadius: 6, fontWeight: 600 }}>
+              <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRun}>
                 {text.run}
               </Button>
             )}
-            <Button danger icon={<DeleteOutlined />} onClick={() => setDeleteOpen(true)} style={{ borderRadius: 6 }}>
+            <Button danger icon={<DeleteOutlined />} onClick={() => setDeleteOpen(true)}>
               {text.delete}
             </Button>
           </Space>
         </Content>
 
-        <Sider width={290} style={{ background: "#fff", borderLeft: "1px solid #e8e8e8", overflow: "auto" }}>
-          <div style={{ padding: "10px 14px", borderBottom: "1px solid #f0f0f0", fontWeight: 600, fontSize: 14, background: "#fafafa" }}>
+        <Sider className="workspace-sider workspace-sider--config" width={290} style={{ background: "var(--bg-surface)", borderLeft: "1px solid var(--border-default)", overflow: "auto" }}>
+          <div className="workspace-sider-header">
             {text.nodeConfig}
           </div>
-          <NodeConfigPanel />
+          <NodeConfigPanel projectId={workflowProjectId} />
         </Sider>
       </Layout>
+
+      <NodeResultPanel />
 
       <Modal title={text.confirmDelete} open={deleteOpen} onOk={handleDeleteWorkflow}
         onCancel={() => setDeleteOpen(false)} confirmLoading={deleting}

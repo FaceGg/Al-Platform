@@ -50,6 +50,8 @@ PROJECT_WRITE_ACTIONS = {
     "POST /api/model-versions/{version_id}/archive": "model_version.archive",
     "POST /api/projects/{project_id}/inference-deployments": "inference_deployment.create",
     "POST /api/inference-deployments/{deployment_id}/start": "inference_deployment.start",
+    "DELETE /api/registered-models/{model_id}": "registered_model.delete",
+    "DELETE /api/inference-deployments/{deployment_id}": "inference_deployment.delete",
     "POST /api/inference-deployments/{deployment_id}/stop": "inference_deployment.stop",
     "POST /api/inference-deployments/{deployment_id}/rollouts": "inference_rollout.create",
     "POST /api/inference-deployments/{deployment_id}/rollouts/{rollout_id}/pause": "inference_rollout.pause",
@@ -293,6 +295,32 @@ def build_model_registry_router(
         model, _access = _registry_access(db, model_id, current_user.id)
         return {**_model_view(model), "versions": [_version_view(item) for item in sorted(model.versions, key=lambda value: value.version_number, reverse=True)]}
 
+    @router.delete("/api/registered-models/{model_id}")
+    def delete_model(model_id: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        model, access = _registry_access(db, model_id, current_user.id)
+        deleted_model_id = str(model.id)
+        try:
+            with audit_service(db).project_action(
+                db, request=request, actor=current_user, access=access,
+                permission="model.register",
+                intent=AuditIntent(project_id=model.project_id, action="registered_model.delete", resource_type="registered_model", resource_id=deleted_model_id, changes={"name": model.name}),
+                allowed_changes={"name"},
+            ):
+                deployment_exists = (
+                    db.query(InferenceDeployment.id)
+                    .join(ModelVersion, InferenceDeployment.model_version_id == ModelVersion.id)
+                    .filter(ModelVersion.registered_model_id == model.id)
+                    .first()
+                )
+                if deployment_exists is not None:
+                    raise ModelRegistryError("MODEL_DEPLOYMENT_EXISTS")
+                for version in list(model.versions):
+                    db.delete(version)
+                db.delete(model)
+        except ModelRegistryError as error:
+            _error(error)
+        return {"id": deleted_model_id}
+
     @router.get("/api/registered-models/{model_id}/versions")
     def list_versions(model_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         model, _access = _registry_access(db, model_id, current_user.id)
@@ -389,6 +417,24 @@ def build_model_registry_router(
     def deployment_detail(deployment_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         deployment, _access = _deployment_access(db, deployment_id, current_user.id)
         return _deployment_view(deployment)
+
+    @router.delete("/api/inference-deployments/{deployment_id}")
+    def delete_deployment(deployment_id: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        deployment, access = _deployment_access(db, deployment_id, current_user.id)
+        deleted_deployment_id = str(deployment.id)
+        try:
+            with audit_service(db).project_action(
+                db, request=request, actor=current_user, access=access,
+                permission="deployment.create",
+                intent=AuditIntent(project_id=deployment.project_id, action="inference_deployment.delete", resource_type="inference_deployment", resource_id=deleted_deployment_id, changes={"name": deployment.name}),
+                allowed_changes={"name"},
+            ):
+                if deployment.desired_state != "stopped" or deployment.observed_state != "stopped":
+                    raise InferenceDeploymentError("DEPLOYMENT_NOT_STOPPED")
+                db.delete(deployment)
+        except InferenceDeploymentError as error:
+            _error(error)
+        return {"id": deleted_deployment_id}
 
     def operate(deployment_id, request, db, current_user, action, audit_action):
         deployment, access = _deployment_access(db, deployment_id, current_user.id)

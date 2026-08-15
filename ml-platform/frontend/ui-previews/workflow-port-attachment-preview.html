@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>正方形算子与贴边半圆预览</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --canvas: #08111e;
+      --surface: #101d2e;
+      --surface-strong: #15263c;
+      --line: #29435e;
+      --line-soft: #1d344d;
+      --text: #eef6ff;
+      --muted: #91a7c0;
+      --blue: #4ea9ff;
+      --teal: #4fd1b5;
+      --amber: #edbc64;
+      --danger: #e37b82;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-width: 320px;
+      min-height: 100dvh;
+      margin: 0;
+      color: var(--text);
+      background: #060d17;
+      font-family: "Satoshi", "Segoe UI", system-ui, sans-serif;
+    }
+
+    button { font: inherit; }
+
+    .preview-shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 30px 0 36px;
+    }
+
+    .preview-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 14px;
+    }
+
+    .eyebrow {
+      margin: 0 0 5px;
+      color: var(--blue);
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 720;
+      letter-spacing: 0;
+    }
+
+    .mode-toggle {
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #0c1828;
+    }
+
+    .mode-toggle button {
+      min-height: 30px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+    }
+
+    .mode-toggle button:hover { color: var(--text); }
+    .mode-toggle button:active { transform: scale(.98); }
+    .mode-toggle button.is-active { color: #06111e; background: var(--blue); }
+
+    .preview-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 248px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      overflow: hidden;
+      background: var(--canvas);
+    }
+
+    .canvas {
+      position: relative;
+      min-height: 580px;
+      padding: 28px;
+      overflow: hidden;
+      border-right: 1px solid var(--line);
+      background-color: var(--canvas);
+      background-image:
+        linear-gradient(rgba(73, 123, 173, .12) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(73, 123, 173, .12) 1px, transparent 1px);
+      background-size: 34px 34px;
+    }
+
+    .canvas-topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--muted);
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 11px;
+    }
+
+    .canvas-topline span:last-child { color: var(--teal); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 176px minmax(96px, 1fr) 176px;
+      justify-content: center;
+      align-items: center;
+      min-height: 454px;
+      padding: 42px 34px 24px;
+    }
+
+    .node {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      width: 176px;
+      min-height: 176px;
+      aspect-ratio: 1;
+      padding: 12px 28px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--surface);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), 0 14px 30px rgba(0, 0, 0, .18);
+    }
+
+    .node--selected { border-color: var(--blue); }
+
+    .node__header {
+      display: grid;
+      flex: 1;
+      min-height: 0;
+      grid-template-columns: 26px minmax(0, 1fr);
+      grid-template-rows: 26px minmax(0, 1fr);
+      align-items: start;
+      column-gap: 8px;
+      row-gap: 6px;
+    }
+
+    .node__icon {
+      display: grid;
+      grid-column: 1;
+      grid-row: 1;
+      width: 26px;
+      height: 26px;
+      place-items: center;
+      border: 1px solid rgba(78, 169, 255, .45);
+      border-radius: 9px;
+      color: var(--blue);
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .node__identity {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      align-self: center;
+      display: grid;
+      width: 100%;
+      min-width: 0;
+      justify-items: center;
+      text-align: center;
+    }
+
+    .node__name {
+      overflow: hidden;
+      max-width: 100%;
+      font-size: 14px;
+      font-weight: 720;
+      line-height: 1.25;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .node__id {
+      overflow: hidden;
+      margin-top: 1px;
+      max-width: 100%;
+      color: var(--muted);
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.25;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .node__state {
+      grid-column: 2;
+      grid-row: 1;
+      justify-self: end;
+      padding: 3px 6px;
+      border: 1px solid rgba(79, 209, 181, .38);
+      border-radius: 999px;
+      color: var(--teal);
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .port {
+      position: absolute;
+      top: var(--port-y);
+      z-index: 3;
+      display: grid;
+      width: 20px;
+      height: 28px;
+      place-items: center;
+      border: 1px solid var(--blue);
+      color: var(--blue);
+      background: var(--surface-strong);
+      transform: translateY(-50%);
+      transition: transform 180ms ease, background 180ms ease, border-color 180ms ease;
+    }
+
+    .port::after {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: inset 0 0 0 2px var(--surface-strong);
+      content: "";
+    }
+
+    .port--in {
+      left: -20px;
+      border-right: 0;
+      border-radius: 14px 0 0 14px;
+    }
+
+    .port--out {
+      right: -20px;
+      border-left: 0;
+      border-radius: 0 14px 14px 0;
+    }
+
+    .port--teal { color: var(--teal); border-color: var(--teal); }
+    .port--amber { color: var(--amber); border-color: var(--amber); }
+
+    .port:hover,
+    .node--selected .port {
+      background: #173452;
+      transform: translateY(-50%) scale(1.06);
+    }
+
+    .connection {
+      position: relative;
+      height: 250px;
+      overflow: visible;
+    }
+
+    .connection__line {
+      position: absolute;
+      top: 50%;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: #3e7eac;
+      transform: translateY(-50%);
+    }
+
+    .connection__line::after {
+      position: absolute;
+      top: 50%;
+      right: -1px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--blue);
+      content: "";
+      transform: translateY(-50%);
+    }
+
+    .connection__label {
+      position: absolute;
+      top: calc(50% - 27px);
+      left: 50%;
+      padding: 4px 7px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--muted);
+      background: #0b1725;
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 10px;
+      transform: translateX(-50%);
+    }
+
+    body[data-mode="connected"] .connection__line { background: var(--teal); }
+    body[data-mode="connected"] .connection__line::after { background: var(--teal); }
+    body[data-mode="connected"] .port { color: var(--teal); border-color: var(--teal); background: #143b3d; }
+
+    .inspector {
+      padding: 22px 18px;
+      background: #0b1725;
+    }
+
+    .inspector h2 {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .port-specimen {
+      position: relative;
+      width: 104px;
+      height: 100px;
+      margin: 0 auto 18px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+    }
+
+    .port-specimen::before {
+      position: absolute;
+      top: 50%;
+      left: -22px;
+      width: 22px;
+      height: 32px;
+      border: 1px solid var(--blue);
+      border-right: 0;
+      border-radius: 16px 0 0 16px;
+      background: var(--surface-strong);
+      content: "";
+      transform: translateY(-50%);
+    }
+
+    .port-specimen::after {
+      position: absolute;
+      top: 50%;
+      left: -14px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--blue);
+      content: "";
+      transform: translateY(-50%);
+    }
+
+    .spec-list { margin: 0; padding: 0; list-style: none; }
+    .spec-list li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 12px; }
+    .spec-list strong { color: var(--text); font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; font-weight: 700; }
+
+    .anchor-note {
+      margin-top: 22px;
+      padding: 12px;
+      border-left: 2px solid var(--blue);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    @media (max-width: 900px) {
+      .preview-grid { grid-template-columns: 1fr; }
+      .canvas { border-right: 0; border-bottom: 1px solid var(--line); }
+      .inspector { display: grid; grid-template-columns: 120px 1fr; gap: 18px; align-items: center; }
+      .inspector h2, .anchor-note { grid-column: 1 / -1; }
+      .port-specimen { margin: 0 auto; }
+    }
+
+    @media (max-width: 700px) {
+      .preview-shell { width: min(100% - 20px, 1180px); padding-top: 16px; }
+      .preview-header { align-items: flex-start; flex-direction: column; }
+      .flow { grid-template-columns: 1fr; gap: 74px; padding: 44px 34px 38px; }
+      .connection { display: none; }
+      .node { width: min(100%, 176px); justify-self: center; }
+      .node--selected { margin-top: 0; }
+      .canvas { min-height: 720px; }
+    }
+  </style>
+</head>
+<body data-mode="attached">
+  <main class="preview-shell">
+    <header class="preview-header">
+      <div>
+        <p class="eyebrow">WORKFLOW CANVAS / PORT ATTACHMENT</p>
+        <h1>正方形算子与贴边半圆</h1>
+      </div>
+      <div class="mode-toggle" aria-label="预览状态">
+        <button class="is-active" type="button" data-mode="attached">贴边</button>
+        <button type="button" data-mode="connected">连接态</button>
+      </div>
+    </header>
+
+    <section class="preview-grid" aria-label="工作流端点预览">
+      <section class="canvas" aria-label="工作流画布">
+        <div class="canvas-topline"><span>ASSEMBLY / WELD QUALITY PIPELINE</span><span>RUNNING</span></div>
+        <div class="flow">
+          <article class="node" aria-label="数据准备算子">
+            <span class="port port--in" style="--port-y: 38%" aria-label="原始数据输入端点"></span>
+            <span class="port port--in port--amber" style="--port-y: 70%" aria-label="参数输入端点"></span>
+            <span class="port port--out" style="--port-y: 50%" aria-label="特征输出端点"></span>
+            <div class="node__header">
+              <span class="node__icon">DP</span>
+              <div class="node__identity"><div class="node__name">焊接数据准备</div><div class="node__id">prepare_weld_dataset</div></div>
+              <span class="node__state">READY</span>
+            </div>
+          </article>
+
+          <div class="connection" aria-hidden="true">
+            <span class="connection__line"></span>
+            <span class="connection__label">features</span>
+          </div>
+
+          <article class="node node--selected" aria-label="质量预测算子">
+            <span class="port port--in port--teal" style="--port-y: 50%" aria-label="特征输入端点"></span>
+            <span class="port port--out port--teal" style="--port-y: 38%" aria-label="质量评分输出端点"></span>
+            <span class="port port--out" style="--port-y: 70%" aria-label="结果输出端点"></span>
+            <div class="node__header">
+              <span class="node__icon">QP</span>
+              <div class="node__identity"><div class="node__name">焊接质量预测</div><div class="node__id">quality_prediction</div></div>
+              <span class="node__state">RUN</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <aside class="inspector" aria-label="端点规格">
+        <h2>PORT PROFILE</h2>
+        <div class="port-specimen" aria-hidden="true"></div>
+        <ul class="spec-list">
+          <li><span>形状</span><strong>SEMI</strong></li>
+          <li><span>算子</span><strong>176 x 176</strong></li>
+          <li><span>尺寸</span><strong>20 x 28</strong></li>
+          <li><span>贴合</span><strong>OUTER EDGE</strong></li>
+          <li><span>命中区</span><strong>+50%</strong></li>
+        </ul>
+        <div class="anchor-note">端点平直侧与算子外框共线，连接线从半圆中心出入。</div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const buttons = document.querySelectorAll(".mode-toggle [data-mode]");
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => {
+        document.body.dataset.mode = button.dataset.mode;
+        buttons.forEach((item) => item.classList.toggle("is-active", item === button));
+      });
+    });
+  </script>
+</body>
+</html>

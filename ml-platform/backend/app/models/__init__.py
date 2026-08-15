@@ -35,6 +35,13 @@ from app.models.model_registry import (
 from app.models.api_model import PlatformAPI
 from app.models.compute import ComputeNode, EdgeDevice
 from app.models.platform_models import Dataset, AnnotationTask, AnnotationResult, OrchestrationApp, OrchestrationVersion
+from app.models.spot_weld_quality import (
+    SpotWeldQualityRun,
+    SpotWeldQualitySample,
+    SpotWeldQualityRuleSet,
+    SpotWeldLabelRevision,
+    SpotWeldLabelSnapshot,
+)
 
 __all__ = [
     "User",
@@ -86,4 +93,9 @@ __all__ = [
     "AnnotationResult",
     "OrchestrationApp",
     "OrchestrationVersion",
+    "SpotWeldQualityRun",
+    "SpotWeldQualitySample",
+    "SpotWeldQualityRuleSet",
+    "SpotWeldLabelRevision",
+    "SpotWeldLabelSnapshot",
 ]

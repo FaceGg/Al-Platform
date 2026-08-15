@@ -27,15 +27,17 @@ def list_models(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    accessible = [
-        project.id for project in ProjectAccessService()
-        .accessible_project_query(db, current_user.id).all()
-    ]
-    q = db.query(ModelLibrary).filter(
-        (ModelLibrary.owner_id == current_user.id)
-        | (ModelLibrary.project_id.in_(accessible))
-        | (ModelLibrary.is_public.is_(True))
-    )
+    q = db.query(ModelLibrary)
+    if current_user.role != "admin":
+        accessible = [
+            project.id for project in ProjectAccessService()
+            .accessible_project_query(db, current_user.id).all()
+        ]
+        q = q.filter(
+            (ModelLibrary.owner_id == current_user.id)
+            | (ModelLibrary.project_id.in_(accessible))
+            | (ModelLibrary.is_public.is_(True))
+        )
     if status:
         q = q.filter(ModelLibrary.status == status)
     if framework:
@@ -72,11 +74,12 @@ def get_model(model_id: str, db: Session = Depends(get_db), current_user: User =
     m = db.query(ModelLibrary).filter(ModelLibrary.id == uuid.UUID(model_id)).first()
     if not m:
         raise HTTPException(404, "Model not found")
-    if m.project_id is not None:
-        if resolve_project_access(db, m.project_id, current_user.id) is None:
+    if current_user.role != "admin":
+        if m.project_id is not None:
+            if resolve_project_access(db, m.project_id, current_user.id) is None:
+                raise HTTPException(404, "Model not found")
+        elif m.owner_id != current_user.id and not m.is_public:
             raise HTTPException(404, "Model not found")
-    elif m.owner_id != current_user.id and not m.is_public:
-        raise HTTPException(404, "Model not found")
     return {
         "id": str(m.id),
         "name": m.name,

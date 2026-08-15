@@ -4,7 +4,7 @@ type Lang = "zh" | "en";
 
 const ZH = {
   app: {
-    title: "\u0041\u0049\u6a21\u578b\u8bad\u7ec3\u7f16\u6392\u5e73\u53f0",
+    title: "智擎",
     login: "\u767b\u5f55",
     register: "\u6ce8\u518c",
     logout: "\u9000\u51fa",
@@ -18,6 +18,7 @@ const ZH = {
     models: "\u6a21\u578b\u5e93",
     users: "\u7528\u6237\u7ba1\u7406",
     data: "\u6570\u636e\u7ba1\u7406",
+    data_annotation: "\u6570\u636e\u6807\u6ce8",
     knowledge: "\u77e5\u8bc6\u5e93",
     training: "\u6a21\u578b\u8bad\u7ec3",
     monitor: "\u8d44\u6e90\u76d1\u63a7",
@@ -119,7 +120,7 @@ const ZH = {
     onlineTest: "\u5728\u7ebf\u6d4b\u8bd5", recordsJson: "JSON records", predict: "\u63a8\u7406", predictions: "\u9884\u6d4b\u7ed3\u679c",
     probabilities: "\u6982\u7387", duration: "\u8017\u65f6", framework: "\u6846\u67b6", emptyModels: "\u6682\u65e0\u6ce8\u518c\u6a21\u578b",
     emptyDeployments: "\u6682\u65e0\u63a8\u7406\u90e8\u7f72", selectHint: "\u8bf7\u5148\u9009\u62e9\u9879\u76ee", loadFailed: "\u52a0\u8f7d\u6a21\u578b\u8fd0\u7ef4\u6570\u636e\u5931\u8d25",
-    commandFailed: "\u64cd\u4f5c\u5931\u8d25", runtimeFailed: "\u63a8\u7406\u8fd0\u884c\u65f6\u5931\u8d25", permissionDenied: "\u65e0\u64cd\u4f5c\u6743\u9650", invalidRecords: "records \u5fc5\u987b\u662f\u975e\u7a7a\u5bf9\u8c61\u6570\u7ec4",
+    commandFailed: "\u64cd\u4f5c\u5931\u8d25", runtimeFailed: "\u63a8\u7406\u8fd0\u884c\u65f6\u5931\u8d25", permissionDenied: "\u65e0\u64cd\u4f5c\u6743\u9650", invalidRecords: "records \u5fc5\u987b\u662f\u975e\u7a7a\u5bf9\u8c61\u6570\u7ec4", deleteRegisteredModel: "\u5220\u9664\u6ce8\u518c\u6a21\u578b", deleteDeployment: "\u5220\u9664\u63a8\u7406\u90e8\u7f72",
     owner: "\u6240\u6709\u8005", editor: "\u7f16\u8f91\u8005", operator: "\u64cd\u4f5c\u5458", viewer: "\u67e5\u770b\u8005",
     pending: "\u5f85\u5ba1\u6279", approved: "\u5df2\u6279\u51c6", rejected: "\u5df2\u62d2\u7edd", archived: "\u5df2\u5f52\u6863",
     running: "\u8fd0\u884c\u4e2d", stopped: "\u5df2\u505c\u6b62", starting: "\u542f\u52a8\u4e2d", stopping: "\u505c\u6b62\u4e2d", failed: "\u5931\u8d25",
@@ -230,6 +231,14 @@ const ZH = {
     datasets: "\u6570\u636e\u96c6",
     samples: "\u6837\u672c",
     project: "\u9879\u76ee",
+  },
+  spotWeld: {
+    title: "\u6570\u636e\u6807\u6ce8",
+    project: "\u9879\u76ee",
+    queue: "\u6837\u672c\u961f\u5217",
+    waveforms: "\u56db\u901a\u9053\u6ce2\u5f62",
+    review: "\u6807\u6ce8\u4e0e\u5ba1\u6838",
+    noRun: "\u6682\u65e0\u8d28\u91cf\u8fd0\u884c",
   },
   knowledge: {
     title: "\u77e5\u8bc6\u5e93",
@@ -433,8 +442,8 @@ const ZH = {
 };
 
 const EN: Record<string, any> = {
-  app: { title: "AI Model Training Platform", login: "Login", register: "Register", logout: "Logout", success: "Success", error: "Error", confirm: "Confirm" },
-  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources" },
+  app: { title: "智擎", login: "Login", register: "Register", logout: "Logout", success: "Success", error: "Error", confirm: "Confirm" },
+  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources" },
   common: { success: "Success", error: "Error", confirm: "Confirm", cancel: "Cancel", delete: "Delete", save: "Save", back: "Back", run: "Run", stop: "Stop", create: "Create", edit: "Edit", search: "Search", export: "Export", import: "Import", refresh: "Refresh", close: "Close", more: "More", batch_delete: "Batch Delete", select_all: "Select All", no_data: "No Data", loading: "Loading..." },
   project: { create: "New Project", name: "Project Name", desc: "Description", list: "Project List", workflow_count: "Workflows", last_modified: "Last Modified", delete_confirm: "Delete this project?" },
   workflow: { create: "New Workflow", name: "Workflow Name", run: "Run", stop: "Stop", save: "Save", delete: "Delete Workflow", save_success: "Saved", save_failed: "Save Failed", run_failed: "Run Failed", run_success: "Run Success", running: "Running", pending: "Pending", completed: "Completed", failed: "Failed" },
@@ -452,7 +461,7 @@ const EN: Record<string, any> = {
     onlineTest: "Online test", recordsJson: "JSON records", predict: "Predict", predictions: "Predictions",
     probabilities: "Probabilities", duration: "Duration", framework: "Framework", emptyModels: "No registered models",
     emptyDeployments: "No deployments", selectHint: "Select a project", loadFailed: "Unable to load model operations",
-    commandFailed: "Command failed", runtimeFailed: "Inference runtime failed", permissionDenied: "Permission denied", invalidRecords: "Records must be a non-empty array of objects",
+    commandFailed: "Command failed", runtimeFailed: "Inference runtime failed", permissionDenied: "Permission denied", invalidRecords: "Records must be a non-empty array of objects", deleteRegisteredModel: "Delete registered model", deleteDeployment: "Delete deployment",
     owner: "Owner", editor: "Editor", operator: "Operator", viewer: "Viewer",
     pending: "Pending", approved: "Approved", rejected: "Rejected", archived: "Archived",
     running: "Running", stopped: "Stopped", starting: "Starting", stopping: "Stopping", failed: "Failed",
@@ -549,6 +558,7 @@ const EN: Record<string, any> = {
     auditResultLabels: { success: "Success", denied: "Denied", failed: "Failed" },
   },
   data: { title: "Data Management", filename: "Filename", format: "Format", size: "Size", rows: "Rows", preview: "Preview", download: "Download", upload_file: "Upload", export: "Export", batch: "Batch Import", delete_file: "Delete", datasets: "Datasets", samples: "Samples", project: "Project" },
+  spotWeld: { title: "Data Annotation", project: "Project", queue: "Sample Queue", waveforms: "Four-channel Waveforms", review: "Annotation and Review", noRun: "No quality runs yet" },
   knowledge: { title: "Knowledge Base", graph: "Knowledge Graph", rag: "RAG Search", documents: "Documents", import: "Import", chunks: "Chunks", search: "Search" },
   automl: { title: "AutoML", new_task: "New Task", select_project: "Select Project", score: "Score", params: "Parameters", results: "Results", select_dataset: "Select Dataset", target: "Target Column", name: "Task Name", all_results: "All Results" },
   training: { title: "Experiment and Training Operations", experiments: "Experiments", jobs: "Training Jobs", new_experiment: "New Experiment", experiment_name: "Experiment Name", description: "Description", runs: "Runs", compare: "Compare", new_job: "New Training", name: "Job Name", project: "Project", dataset_artifact: "Dataset Artifact", target_column: "Target Column", model_artifact: "Model Artifact", model_library: "Model Library Entry", feature_schema: "Feature Schema", target_schema: "Target Schema", preprocessing: "Preprocessing", logs: "Logs", error_code: "Error", details: "Details", status: "Status", start: "Start", stop: "Stop", confirm_stop: "Confirm Stop", resume: "Resume", tensorboard: "TensorBoard", checkpoints: "Checkpoints", epoch: "Epoch", progress: "Progress", task: "Task Type", total_epochs: "Total Epochs", metrics: "Metrics", operator: "Operator", started: "Started", restore: "Restore" },

@@ -6,7 +6,7 @@ import subprocess
 import shutil
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from collections import deque
 from datetime import datetime, timezone
 
@@ -116,12 +116,34 @@ def get_disk_usage():
         return {"total": 0, "used": 0, "free": 0, "percent": 0.0}
 
 
+def resolve_nvidia_smi_executable() -> str | None:
+    """Resolve NVIDIA's command on PATH and common Windows installations."""
+    executable = shutil.which("nvidia-smi")
+    if executable:
+        return executable
+    if os.name != "nt":
+        return None
+
+    candidates = [
+        os.getenv("NVIDIA_SMI_PATH"),
+        str(PureWindowsPath(os.getenv("ProgramW6432", r"C:\\Program Files")) / "NVIDIA Corporation" / "NVSMI" / "nvidia-smi.exe"),
+        str(PureWindowsPath(os.getenv("ProgramFiles", r"C:\\Program Files")) / "NVIDIA Corporation" / "NVSMI" / "nvidia-smi.exe"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def get_gpu_usage():
     """Get GPU usage via nvidia-smi if available."""
+    executable = resolve_nvidia_smi_executable()
+    if executable is None:
+        return []
     try:
         result = subprocess.run(
             [
-                "nvidia-smi",
+                executable,
                 "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
                 "--format=csv,noheader,nounits",
             ],
@@ -135,11 +157,17 @@ def get_gpu_usage():
                 continue
             parts = [p.strip() for p in line.split(",")]
             if len(parts) >= 4:
+                def numeric(value: str) -> float:
+                    try:
+                        return float(value)
+                    except (TypeError, ValueError):
+                        return 0.0
+
                 gpus.append({
-                    "gpu_util": float(parts[0]),
-                    "memory_used_mb": float(parts[1]),
-                    "memory_total_mb": float(parts[2]),
-                    "temperature_c": float(parts[3]),
+                    "gpu_util": numeric(parts[0]),
+                    "memory_used_mb": numeric(parts[1]),
+                    "memory_total_mb": numeric(parts[2]),
+                    "temperature_c": numeric(parts[3]),
                 })
             else:
                 gpus.append({

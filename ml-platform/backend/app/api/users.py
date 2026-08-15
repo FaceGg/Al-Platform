@@ -1,30 +1,61 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
+from sqlalchemy import delete, update
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import Base, get_db
 
 from app.models.user import User
+from app.models.model_library import ModelLibrary
 
 import uuid
 from app.api.auth import get_current_user
-from app.schemas.platform_audit import PLATFORM_ROLES
-from app.services.platform_audit import (
-    PlatformAuditIntent,
-    record_failed_platform_event,
-    record_platform_event,
-)
 
 
 
 router = APIRouter(prefix="/api", tags=["users"])
 
 
+class BatchDeleteUsersRequest(BaseModel):
+    user_ids: list[UUID] = Field(min_length=1)
 
 
 
+
+
+def _user_foreign_key_columns():
+    for table in Base.metadata.tables.values():
+        if table.name == User.__tablename__:
+            continue
+        for column in table.columns:
+            if any(
+                foreign_key.column.table.name == User.__tablename__
+                and foreign_key.column.name == "id"
+                for foreign_key in column.foreign_keys
+            ):
+                yield table, column
+
+
+def _delete_user_resources(db: Session, user_id: UUID, replacement_user_id: UUID) -> None:
+    db.query(ModelLibrary).filter(ModelLibrary.owner_id == user_id).update(
+        {ModelLibrary.owner_id: replacement_user_id}, synchronize_session=False
+    )
+    for table, column in _user_foreign_key_columns():
+        if table.name == "project_members" and column.name == "user_id":
+            db.execute(delete(table).where(column == user_id))
+            continue
+        replacement_user = (
+            replacement_user_id
+            if not column.nullable or column.name == "owner_id"
+            else None
+        )
+        db.execute(
+            update(table).where(column == user_id).values({column.name: replacement_user})
+        )
+    db.execute(delete(User).where(User.id == user_id))
 def get_current_admin(
 
     current_user: User = Depends(get_current_user),
@@ -75,6 +106,40 @@ def list_users(
 
 
 
+@router.post("/admin/users/batch-delete")
+def batch_delete_users(
+    data: BatchDeleteUsersRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    requested_ids = list(dict.fromkeys(data.user_ids))
+    users_by_id = {
+        user.id: user
+        for user in db.query(User).filter(User.id.in_(requested_ids)).all()
+    }
+
+    deleted_ids: list[str] = []
+    not_found_ids: list[str] = []
+    skipped_current_user = False
+    for user_id in requested_ids:
+        user = users_by_id.get(user_id)
+        if user is None:
+            not_found_ids.append(str(user_id))
+            continue
+        if user.id == admin.id:
+            skipped_current_user = True
+            continue
+        _delete_user_resources(db, user.id, admin.id)
+        deleted_ids.append(str(user_id))
+
+    db.commit()
+    return {
+        "deleted_ids": deleted_ids,
+        "not_found_ids": not_found_ids,
+        "skipped_current_user": skipped_current_user,
+    }
+
+
 @router.get("/admin/users/{user_id}")
 
 def get_user_detail(
@@ -117,76 +182,19 @@ def update_user_role(
 
     role: str,
 
-    request: Request,
-
     db: Session = Depends(get_db),
 
     admin: User = Depends(get_current_admin),
 
 ):
 
-    if role not in PLATFORM_ROLES:
-        record_failed_platform_event(
-            db,
-            actor=admin,
-            request=request,
-            intent=PlatformAuditIntent(
-                action="platform.user.role_change",
-                resource_type="user",
-                resource_id=user_id,
-                changes={"role": role},
-            ),
-            error_code="INVALID_PLATFORM_ROLE",
-        )
-        raise HTTPException(422, {"code": "INVALID_PLATFORM_ROLE"})
-
     user = db.query(User).filter(User.id == UUID(user_id)).first()
 
     if not user:
-        record_failed_platform_event(
-            db,
-            actor=admin,
-            request=request,
-            intent=PlatformAuditIntent(
-                action="platform.user.role_change",
-                resource_type="user",
-                resource_id=user_id,
-            ),
-            error_code="USER_NOT_FOUND",
-        )
+
         raise HTTPException(404, "User not found")
 
-    if user.id == admin.id and role != "admin":
-        record_failed_platform_event(
-            db,
-            actor=admin,
-            request=request,
-            intent=PlatformAuditIntent(
-                action="platform.user.role_change",
-                resource_type="user",
-                resource_id=str(user.id),
-                changes={"previous_role": user.role, "role": role},
-            ),
-            error_code="SELF_ROLE_CHANGE_FORBIDDEN",
-        )
-        raise HTTPException(400, {"code": "SELF_ROLE_CHANGE_FORBIDDEN"})
-
-    previous_role = user.role
-
     user.role = role
-
-    record_platform_event(
-        db,
-        actor=admin,
-        request=request,
-        intent=PlatformAuditIntent(
-            action="platform.user.role_change",
-            resource_type="user",
-            resource_id=str(user.id),
-            changes={"previous_role": previous_role, "role": role},
-        ),
-        result="success",
-    )
 
     db.commit()
 
@@ -196,50 +204,15 @@ def update_user_role(
 @router.delete("/admin/users/{user_id}")
 def delete_user(
     user_id: str,
-    request: Request,
     db: Session = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
     user = db.query(User).filter(User.id == UUID(user_id)).first()
     if not user:
-        record_failed_platform_event(
-            db,
-            actor=admin,
-            request=request,
-            intent=PlatformAuditIntent(
-                action="platform.user.delete",
-                resource_type="user",
-                resource_id=user_id,
-            ),
-            error_code="USER_NOT_FOUND",
-        )
         raise HTTPException(404, "User not found")
     if user.id == admin.id:
-        record_failed_platform_event(
-            db,
-            actor=admin,
-            request=request,
-            intent=PlatformAuditIntent(
-                action="platform.user.delete",
-                resource_type="user",
-                resource_id=str(user.id),
-                changes={"username": user.username},
-            ),
-            error_code="SELF_DELETE_FORBIDDEN",
-        )
-        raise HTTPException(400, {"code": "SELF_DELETE_FORBIDDEN"})
-    db.delete(user)
-    record_platform_event(
-        db,
-        actor=admin,
-        request=request,
-        intent=PlatformAuditIntent(
-            action="platform.user.delete",
-            resource_type="user",
-            resource_id=str(user.id),
-            changes={"username": user.username},
-        ),
-        result="success",
-    )
+        raise HTTPException(400, "Cannot delete the current administrator")
+    deleted_user_id = user.id
+    _delete_user_resources(db, deleted_user_id, admin.id)
     db.commit()
-    return {"message": "?????", "user_id": str(user.id)}
+    return {"message": "User deleted", "user_id": str(deleted_user_id)}

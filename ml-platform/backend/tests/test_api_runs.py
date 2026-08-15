@@ -82,6 +82,41 @@ class TestRunsAPI(unittest.TestCase):
         r = client.post(f"/api/workflows/{uuid.uuid4()}/run", headers=self.h)
         self.assertEqual(r.status_code, 404)
 
+    def test_04_rejects_missing_required_parameters_before_creating_or_queueing_run(self):
+        save = client.put(f"/api/projects/{self.project_id}/workflows/{self.workflow_id}", json={
+            "nodes": [
+                {"id": "n1", "operator_id": "csv_import", "label": "Import",
+                 "position": {"x": 100, "y": 100}, "params": {"source": "local"}},
+            ],
+            "edges": [],
+        }, headers=self.h)
+        self.assertEqual(save.status_code, 200)
+
+        calls = []
+        dispatcher = type("Dispatcher", (), {
+            "enqueue_workflow": lambda self, run_id: calls.append(run_id),
+        })()
+        app.dependency_overrides[get_task_dispatcher] = lambda: dispatcher
+        try:
+            with SessionLocal() as db:
+                before = db.query(WorkflowRun).filter(
+                    WorkflowRun.workflow_id == uuid.UUID(self.workflow_id),
+                ).count()
+            response = client.post(f"/api/workflows/{self.workflow_id}/run", headers=self.h)
+        finally:
+            app.dependency_overrides.pop(get_task_dispatcher, None)
+
+        self.assertEqual(response.status_code, 400)
+        detail = response.json()["detail"]
+        self.assertEqual(detail["code"], "WORKFLOW_INVALID")
+        self.assertTrue(any("OPERATOR_PARAM_REQUIRED" in error for error in detail["errors"]))
+        self.assertEqual(calls, [])
+        with SessionLocal() as db:
+            after = db.query(WorkflowRun).filter(
+                WorkflowRun.workflow_id == uuid.UUID(self.workflow_id),
+            ).count()
+        self.assertEqual(after, before)
+
 
 class TestRunEmptyWorkflow(unittest.TestCase):
     @classmethod
