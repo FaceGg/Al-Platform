@@ -1757,3 +1757,14 @@
 - 验证方式：新合同在未加循环时对 Dockerfile 稳定 RED；实现后聚焦 1/1、`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts -v` 为 9/9、`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 和 `git diff --check` 通过。
 - 预防措施：外部 APK 下载故障必须先与 package pin 不可用区分；确认是瞬断后，使用有限、可审计、失败关闭的重试，并在新提交无缓存重建全部镜像后才生成安全结论。
 - 遗留事项：提交后从该新 HEAD 重新无缓存构建 backend、worker、inference、tensorboard，验证非 root/OCI provenance，之后重新运行 Trivy 和完整 security chain。
+
+### 2026-08-15：第 12 周 Task 4 冻结提交四镜像重建与 provenance 验证
+
+- 当前周次：第 12 周 Task 4/5 镜像安全门禁；第 9 至第 12 周继续保持“进行中”。本条只关闭 `1a861a4e536c9a2ee4e597abe15e272f965348f0` 的四镜像构建、provenance 与 non-root runtime 门禁，不表示 Trivy、完整安全链、frozen Compose、最终验收或远程 CI 通过。
+- 问题现象：开始时四个 `codex-week12-final-*` 标签均存在，但 OCI revision 分别仍为旧提交 `204d0dc1960053d9bae432698c1df0a2195dd749` 或 `8956585d6ccdfe082b8328533ab0f5302fa45195`，不能用于当前冻结提交的 receipt 或发布证据。按原 Bash 脚本在 WSL 内执行 linked-worktree `git -C` 时又稳定报 Windows `gitdir` 路径被错误拼接。
+- 已确认根因：Windows 链接 worktree 的 `.git` 指向 `E:/...`，WSL Git 无法可靠解析该元数据；旧镜像标签是此前提交的构建产物。一次 TensorBoard 构建还遇到 XGBoost/NCCL wheel 连接中断，但 Dockerfile 的固定 `--resume-retries 20` 成功续传，未引入依赖漂移。
+- 解决方法：由 PowerShell 7 读取并验证 40 位 source SHA，以 `wsl.exe -e env ACCEPTANCE_SOURCE_COMMIT=<SHA>` 显式传入 WSL；Bash 仅校验传入 SHA 格式、以 `--pull --no-cache` 构建四个镜像，并在每次构建后立即用 `docker image inspect` 精确比较 OCI revision。non-root smoke 采用 PowerShell 逐镜像直接调用 `wsl.exe -e docker run`，避免 Bash/Docker shell 的多层 quoting。
+- 验证方式：WSL Docker `29.6.2` / Compose `v5.3.1` 下四个最终镜像分别得到 `sha256:4e0a3e1961ad3c370869bc24c6c084af28d391009d260ddfb7e0b2e1fcc71501`、`sha256:3778d0378b94bdf11792227e1f71fe79449c49f751adbe13fde04e3c326d4378`、`sha256:69aeaf9cb61e0649a65af2a65c26a7cf11ff1fbfe9edf45449f0d27cb56b7aca`、`sha256:0af77bace5af874a21944bba7c17f209f7835bd9aa37f5cbebe99b9f62e32e82`；四个 OCI revision 均精确匹配 `1a861a4...`，四个 smoke 均输出 UID `1000`、`HOME=/home/app`、Python `3.11.14`。`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts -v` 为 `9/9` 通过，`git diff --check` 通过。
+- 影响范围：仅当前 WSL Docker image tags、构建缓存和验收记录；未修改应用代码、Dockerfile、requirements、生产 Compose 配置或持久化数据。
+- 预防措施：跨 Windows/WSL 的 linked-worktree build 不得在 WSL 内推导 Git SHA；每个构建必须独立验证 source commit、image ID 和 OCI revision。大 wheel 的瞬断只允许有限、可审计、失败关闭的续传，完成后仍需以新 image ID 重新扫描。
+- 遗留事项：Task 5 仍须从该四个 image ID 生成四份 Trivy HIGH/CRITICAL receipt，运行完整 `tools.security_scans` 与 fail-closed manifest；frozen Compose、性能、备份恢复、N-1、Chromium、四通道通知、远程 CI、推送与合并均未闭合。
