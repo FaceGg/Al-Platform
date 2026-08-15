@@ -59,11 +59,11 @@ class ImageSecurityContractTests(unittest.TestCase):
                 path.name,
             )
 
-    def test_runtime_record_uses_available_wolfi_python_311_packages(self):
+    def test_runtime_record_uses_current_wolfi_python_311_security_pins(self):
         record = json.loads(BASE_RECORD.read_text(encoding="utf-8"))
         runtime = record["runtime"]
-        self.assertEqual(runtime["python_package"], "python-3.11=3.11.14-r0")
-        self.assertEqual(runtime["pip_package"], "py3.11-pip=25.3-r3")
+        self.assertEqual(runtime["python_package"], "python-3.11=3.11.16-r1")
+        self.assertEqual(runtime["pip_package"], "py3.11-pip=26.2.1-r0")
 
     def test_wolfi_runtime_install_retries_transient_apk_download_failures(self):
         runtime = json.loads(BASE_RECORD.read_text(encoding="utf-8"))["runtime"]

@@ -3,7 +3,7 @@ USER 0
 WORKDIR /app
 RUN set -eu; \
     for attempt in 1 2 3; do \
-        if apk add --no-cache python-3.11=3.11.14-r0 py3.11-pip=25.3-r3; then \
+        if apk add --no-cache python-3.11=3.11.16-r1 py3.11-pip=26.2.1-r0; then \
             exit 0; \
         fi; \
         if [ "$attempt" -eq 3 ]; then \
