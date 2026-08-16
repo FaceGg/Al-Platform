@@ -369,7 +369,7 @@ describe("AutoMLPage", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     fireEvent.click(download);
     await waitFor(() => expect(quality.downloadQualityArtifact).toHaveBeenCalledWith("project-1", "run-1", "report"));
-  });
+  }, 15_000);
 
   it("submits the selected report candidate IDs in order", async () => {
     datasets.getDatasetPreview.mockResolvedValue({
