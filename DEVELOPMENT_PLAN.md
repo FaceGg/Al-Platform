@@ -1789,3 +1789,13 @@
 - 验证方式：`tests.test_week12_security_gates` 为 `153/153`；`run_suite.py` 最终为 `111/111` 模块；前端 Vitest 为 `43/43` 文件、`203/203` 用例，生产构建通过；`tests.test_ci_workflow` 为 `33/33`；`alembic heads` 仅返回 `20260815_11 (head)`；`git diff --check` 通过。首次完整后端回归暴露 5 个模块失败，修复后第二轮仅发现 stale Gitleaks binding 的错误测试期望，恢复 `SECURITY_EVIDENCE_INVALID` 后安全模块和第三轮完整后端回归均通过。
 - 提交边界：只提交 Week 9-12 高危修复、对应回归和本记录；`tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 保持未跟踪且不推送。
 - 遗留事项：推送新提交到 `codex/week9-12-mlops-core`，等待 PR #17 的全部 GitHub Actions jobs 完成；任一 job 失败必须按精确日志继续修复。全部通过后方可合并到 `main` 并验证远端 main 包含合并提交。
+
+### 2026-08-16：PR #17 首轮远端 CI 跨平台与诊断链修复
+
+- 当前状态：Actions run `31917549971` 已确认 Ubuntu Quality、生产集成和实验集成失败；本轮修复已通过 Windows/Linux 聚焦回归及完整安全合同，但尚未推送，Week 9-12 与 PR #17 继续保持“进行中”。
+- 问题现象：MinIO client 已下载且 SHA-256 校验通过，却因版本字段读取错误中止；两个集成 job 的失败证据步骤把 `sed -E` 写成文件参数，导致原始容器日志未能保留。Ubuntu Quality 还出现 `WindowsPath` 在 POSIX 实例化、测试绑定特权端口 443、以及 pip/npm 单元测试被真实 Gitleaks 工作树快照状态干扰。
+- 已确认根因：`mc --version` 的 release 位于首行第 3 列；GNU sed 的扩展正则选项必须放在表达式前；命令解析与脱敏使用了会跟随被 mock 的 `os.name` 选择具体实现的 `Path`；通知验收未显式选择临时端口；依赖审计测试没有隔离不属于其断言目标的 Gitleaks 快照边界。Git checkout 的 `.git` 元数据也不属于 `--no-git` 产品源码范围，可能包含 checkout 管理的特殊文件。
+- 解决方法：CI 改为读取 `mc` 第 3 列并使用 `sed -E -i -e ...`；命令 shim 与脱敏改用 `PurePath`；通知接收器测试使用 `https_port=0`、`events_port=0`；Gitleaks 源快照与配置契约排除根 `.git`，仍对产品源码 symlink/reparse/hard-link 失败关闭；pip/npm 测试 mock 独立 Gitleaks 快照边界。
+- 验证方式：Windows 聚焦回归 `42/42`；Linux 后端镜像复现的原失败集合 `7/7`；`tests.test_week12_security_gates tests.test_ci_workflow tests.test_notification_receiver_acceptance` 完整回归 `190/190`。完整 runner 首轮为 `110/111`，唯一失败是 manifest 测试夹具仍计算旧 Gitleaks 范围；同步 `.git` 排除后 `tests.test_evidence_manifest` 为 `31/31`。UID 模拟未复现 migrate 读取密钥失败，Alembic 完整升级到 `20260815_11` 并退出 0，因此未引入无证据的权限放宽或 `chown`。
+- 预防措施：外部 CLI 的版本输出要用真实 runner 输出建立合同；failure-evidence 脚本必须自身可执行且先保存 raw log；跨平台测试不得通过修改全局 `os.name` 后实例化具体 `Path`；网络测试显式使用临时端口；单一门禁测试隔离无关安全 gate，同时保留对应 gate 的独立失败关闭回归。
+- 遗留事项：提交并推送本轮修复，等待新的 PR #17 Actions 全部结束；生产或实验集成若仍失败，使用已修复的 redacted evidence 读取精确容器日志后继续处理。全部远端门禁通过前不得合并或标记 Week 9-12 完成。

@@ -52,7 +52,8 @@ class SecurityGateTests(unittest.TestCase):
 
         def excluded(parts: tuple[str, ...]) -> bool:
             return (
-                "tmp" in parts
+                (parts and parts[0] == ".git")
+                or "tmp" in parts
                 or "temp_test" in parts
                 or "docs2" in parts
                 or any(
@@ -2184,6 +2185,18 @@ class SecurityGateTests(unittest.TestCase):
                     ),
                     patch("tools.security_scans.run_scan", side_effect=scanner),
                     patch(
+                        "tools.security_scans._gitleaks_receipt_binding",
+                        return_value={"source_tree_sha256": "a" * 64},
+                    ),
+                    patch(
+                        "tools.security_scans._create_gitleaks_source_snapshot",
+                        return_value=Path(directory),
+                    ),
+                    patch(
+                        "tools.security_scans._remove_gitleaks_snapshot",
+                        return_value=True,
+                    ),
+                    patch(
                         "tools.security_scans.inspect_image_provenance",
                         side_effect=self._image_provenance,
                     ),
@@ -2273,6 +2286,18 @@ class SecurityGateTests(unittest.TestCase):
                 patch(
                     "tools.security_scans._frontend_uses_react_router_server_api",
                     return_value=False,
+                ),
+                patch(
+                    "tools.security_scans._gitleaks_receipt_binding",
+                    return_value={"source_tree_sha256": "a" * 64},
+                ),
+                patch(
+                    "tools.security_scans._create_gitleaks_source_snapshot",
+                    return_value=root,
+                ),
+                patch(
+                    "tools.security_scans._remove_gitleaks_snapshot",
+                    return_value=True,
                 ),
                 patch(
                     "tools.security_scans.inspect_image_provenance",
@@ -2583,6 +2608,39 @@ class SecurityGateTests(unittest.TestCase):
             "GITLEAKS_SOURCE_SNAPSHOT_INVALID",
         )
 
+    def test_run_all_excludes_git_metadata_from_the_gitleaks_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository_root = Path(directory) / "repository"
+            self._write_gitleaks_source_root(repository_root)
+            git_directory = repository_root / ".git" / "objects"
+            git_directory.mkdir(parents=True)
+            outside_object = Path(directory) / "outside-object"
+            outside_object.write_bytes(b"git metadata may be hard linked by checkout")
+            os.link(outside_object, git_directory / "object")
+            module_path = (
+                repository_root
+                / "ml-platform"
+                / "backend"
+                / "tools"
+                / "security_scans.py"
+            )
+
+            with (
+                patch("tools.security_scans.__file__", str(module_path)),
+                patch(
+                    "tools.security_scans.run_scan",
+                    return_value={"status": "passed", "returncode": 0},
+                ) as run_scan,
+            ):
+                run_all(Path(directory) / "security.json")
+
+        self.assertTrue(
+            any(
+                call.args[0][:2] == ["gitleaks", "detect"]
+                for call in run_scan.call_args_list
+            )
+        )
+
     def test_run_all_fails_closed_when_gitleaks_snapshot_cannot_be_created(self):
         with tempfile.TemporaryDirectory() as directory:
             repository_root = Path(directory) / "repository"
@@ -2714,6 +2772,7 @@ class SecurityGateTests(unittest.TestCase):
                 "allowlist": {
                     "description": "Exclude local caches and raw evidence outside the reviewed source scope.",
                     "paths": [
+                        r"(^|[\\/])\.git([\\/]|$)",
                         r"(^|[\\/])tmp([\\/]|$)",
                         r"(^|[\\/])temp_test([\\/]|$)",
                         r"(^|[\\/])docs2([\\/]|$)",

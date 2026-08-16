@@ -76,7 +76,12 @@ class ControlledReceiverAcceptanceTests(unittest.TestCase):
     def test_wecom_tls_tunnel_preserves_official_hostname_and_records_safe_event(self):
         with tempfile.TemporaryDirectory() as directory:
             certificate, private_key = _write_test_certificate(Path(directory))
-            receiver = AcceptanceNotificationReceiver(certificate, private_key)
+            receiver = AcceptanceNotificationReceiver(
+                certificate,
+                private_key,
+                https_port=0,
+                events_port=0,
+            )
             with receiver.running() as endpoints:
                 proxy = ControlledConnectProxy(
                     target_host=endpoints.https_host,

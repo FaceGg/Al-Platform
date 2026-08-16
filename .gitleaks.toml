@@ -6,6 +6,7 @@ useDefault = true
 [allowlist]
 description = "Exclude local caches and raw evidence outside the reviewed source scope."
 paths = [
+  '''(^|[\\/])\.git([\\/]|$)''',
   '''(^|[\\/])tmp([\\/]|$)''',
   '''(^|[\\/])temp_test([\\/]|$)''',
   '''(^|[\\/])docs2([\\/]|$)''',

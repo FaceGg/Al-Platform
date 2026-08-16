@@ -131,7 +131,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn('test "$gitleaks_version" = "8.24.2"', scanner_script)
         self.assertIn(
             'mc_version="$("$RUNNER_TEMP/bin/mc" --version | '
-            "awk 'NR == 1 { print $2 }')\"",
+            "awk 'NR == 1 { print $3 }')\"",
             minio_script,
         )
         self.assertIn(
@@ -147,6 +147,21 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
 
         self.assertIn("grep -Eni", evidence_step)
         self.assertNotIn("rg -n", evidence_step)
+
+    def test_failure_evidence_redaction_passes_extended_regex_as_a_sed_option(self):
+        parsed = yaml.safe_load(self.workflow)
+        expected_steps = (
+            ("production-integration", "Scan and upload production failure evidence"),
+            ("experiment-integration", "Collect redacted experiment failure evidence"),
+        )
+
+        for job_name, step_name in expected_steps:
+            with self.subTest(job=job_name):
+                steps = parsed["jobs"][job_name]["steps"]
+                script = next(step for step in steps if step.get("name") == step_name)["run"]
+                self.assertIn("sed -E -i", script)
+                self.assertIn("-e 's/mli_[A-Za-z0-9_-]+/[redacted]/g'", script)
+                self.assertNotIn("-E 's/mli_[A-Za-z0-9_-]+/[redacted]/g'", script)
 
     def test_experiment_integration_declares_compose_required_runtime_secret(self):
         experiment_job = yaml.safe_load(self.workflow)["jobs"]["experiment-integration"]
@@ -821,7 +836,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         )
         created_key_scan_index = evidence_script.index("grep -RFl")
         copy_index = evidence_script.index('cp "$INFERENCE_EVIDENCE_RAW"/*')
-        redaction_index = evidence_script.index("sed -i")
+        redaction_index = evidence_script.index("sed -E -i")
         raw_cleanup_index = evidence_script.rindex('rm -rf "$INFERENCE_EVIDENCE_RAW"')
         trap_remove_index = evidence_script.index("trap - EXIT")
 

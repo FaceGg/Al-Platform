@@ -50,7 +50,8 @@ class EvidenceManifestTests(unittest.TestCase):
 
         def excluded(parts: tuple[str, ...]) -> bool:
             return (
-                "tmp" in parts
+                (parts and parts[0] == ".git")
+                or "tmp" in parts
                 or "temp_test" in parts
                 or "docs2" in parts
                 or any(

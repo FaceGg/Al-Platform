@@ -217,7 +217,7 @@ jobs:
             "$mc_asset" | sha256sum --check --strict
           mv "$mc_asset" "$RUNNER_TEMP/bin/mc"
           chmod +x "$RUNNER_TEMP/bin/mc"
-          mc_version="$("$RUNNER_TEMP/bin/mc" --version | awk 'NR == 1 { print $2 }')"
+          mc_version="$("$RUNNER_TEMP/bin/mc" --version | awk 'NR == 1 { print $3 }')"
           test "$mc_version" = "RELEASE.2025-08-13T08-35-41Z"
           "$RUNNER_TEMP/bin/mc" alias set local http://127.0.0.1:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
           "$RUNNER_TEMP/bin/mc" mb --ignore-existing local/$MINIO_BUCKET
@@ -308,11 +308,11 @@ jobs:
             exit 1
           fi
           cp "$PRODUCTION_EVIDENCE_RAW"/* "$PRODUCTION_EVIDENCE_REDACTED"/
-          sed -i \
+          sed -E -i \
             -e 's/test-password/[redacted]/g' \
             -e 's/minioadmin-secret/[redacted]/g' \
             -e 's/ci-production-secret-key-with-at-least-32-characters/[redacted]/g' \
-            -E 's/mli_[A-Za-z0-9_-]+/[redacted]/g' \
+            -e 's/mli_[A-Za-z0-9_-]+/[redacted]/g' \
             "$PRODUCTION_EVIDENCE_REDACTED"/*
           if grep -Eni 'test-password|minioadmin-secret|ci-production-secret-key|redis://[^/@[:space:]]+@|mli_[A-Za-z0-9_-]+' "$PRODUCTION_EVIDENCE_REDACTED"/*; then
             echo 'Sensitive value found in production evidence.'
@@ -487,13 +487,13 @@ jobs:
             exit 1
           fi
           cp "$INFERENCE_EVIDENCE_RAW"/* "$INFERENCE_EVIDENCE_REDACTED"/
-          sed -i \
+          sed -E -i \
             -e 's/ci-postgres-password/[redacted]/g' \
             -e 's/ci-minio-root-password/[redacted]/g' \
             -e 's/ci-experiment-secret-key-with-at-least-32-characters/[redacted]/g' \
             -e 's/ci-tensorboard-session-secret-at-least-32-bytes/[redacted]/g' \
             -e 's/ci-inference-internal-secret-at-least-32-bytes/[redacted]/g' \
-            -E 's/mli_[A-Za-z0-9_-]+/[redacted]/g' \
+            -e 's/mli_[A-Za-z0-9_-]+/[redacted]/g' \
             "$INFERENCE_EVIDENCE_REDACTED"/*
           rm -rf "$INFERENCE_EVIDENCE_RAW"
           trap - EXIT

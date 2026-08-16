@@ -8,7 +8,7 @@ from datetime import date, datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePath
 import re
 import shutil
 import stat
@@ -72,6 +72,7 @@ _GITLEAKS_CONFIG_CONTRACT = {
     "allowlist": {
         "description": "Exclude local caches and raw evidence outside the reviewed source scope.",
         "paths": [
+            r"(^|[\\/])\.git([\\/]|$)",
             r"(^|[\\/])tmp([\\/]|$)",
             r"(^|[\\/])temp_test([\\/]|$)",
             r"(^|[\\/])docs2([\\/]|$)",
@@ -422,7 +423,8 @@ def _read_stable_gitleaks_source_file(path: Path) -> bytes | None:
 def _is_gitleaks_source_scope_excluded(relative_path: Path) -> bool:
     parts = relative_path.parts
     return (
-        "tmp" in parts
+        (parts and parts[0] == ".git")
+        or "tmp" in parts
         or "temp_test" in parts
         or "docs2" in parts
         or any(
@@ -741,7 +743,7 @@ def _redact_command(command: Sequence[str]) -> list[str]:
         if _contains_absolute_command_path(value):
             safe.append("[redacted-path]")
         elif index == 0:
-            safe.append(Path(value).name)
+            safe.append(PurePath(value).name)
         elif "://" in value:
             safe.append("[redacted-url]")
         else:
@@ -807,7 +809,7 @@ def _process_command(command: Sequence[object]) -> list[str]:
     if not argv or os.name != "nt":
         return argv
     executable = argv[0]
-    if Path(executable).suffix:
+    if PurePath(executable).suffix:
         return argv
     resolved = shutil.which(executable)
     if resolved is None:
