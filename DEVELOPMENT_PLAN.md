@@ -1886,3 +1886,11 @@
 - 证据边界：Actions artifact 中的 `security/summary.json` 和上传成功证明 CI 安全链通过，但仓库中尚不存在计划要求的最终受审查 manifest/report，不能将 CI summary 重命名或复制为最终验收结论。工具合同、静态回归或单项受控接收器通过也不能替代固定资源、真实恢复和真实 N-1 状态化验收。
 - 工作树保护：主工作树存在用户未跟踪的 `OPTIMIZATION_PLAN.md`、`ml-platform/frontend/pnpm-lock.yaml` 和 `tmp/report-media-20260730/`，且本地 `main` 落后远端；发布核验没有自动拉取、删除或覆盖这些文件。后续若同步本地主工作树，应先单独检查未跟踪路径与远端树冲突。
 - 恢复顺序：先执行 Week 11 三项状态化验收，再运行最终综合矩阵和 `tools.evidence_manifest.generate`，审查相对路径、hash、source commit、工具版本、时间、退出码和脱敏状态；全部通过后再将 Week 11-12 更新为“已完成”。
+
+### 2026-08-16：开发文档状态同步发布受 GitHub Actions 计费阻塞
+
+- 当前状态：开发文档状态同步已提交为 `779464a3c28df67c84f5e51eecc83bacf6cc6b7e`，推送到 `codex/week9-12-status-sync` 并创建 PR #18；远端分支与本地提交一致。PR 尚未合并到 `main`。
+- 问题现象：Actions Run `31947488359` 的 Production integration、Production experiment integration、Ubuntu Quality 和 Windows Quality 均在 3-4 秒内失败，四个 job 的 steps 列表为空；Chromium 和 Week 11-12 verification 因依赖失败被跳过。
+- 已确认根因：四个 check-run annotation 均明确报告：`The job was not started because recent account payments have failed or your spending limit needs to be increased.` 失败发生在 GitHub Actions 调度/计费边界，任何仓库步骤均未启动，因此不能归因为本次 Markdown 内容、workflow YAML、测试或构建回归。
+- 处理方式：保留 PR #18 和远端文档分支，不修改业务代码、CI workflow 或 required checks，不使用管理员绕过、直接推送 `main` 或伪造成功结论。仓库外共享经验同步记录该阻塞。
+- 恢复条件：仓库/组织所有者在 GitHub `Billing & plans` 修复付款状态或提高 Actions spending limit 后，重新运行 PR #18 的失败 jobs；只有 required checks 实际执行并全部成功后，才合并文档 PR 并核验远端 `main`。
