@@ -64,6 +64,7 @@ REQUIRED_SCAN_EVIDENCE_FILES = {
 _GITLEAKS_CONFIG_PATH = ".gitleaks.toml"
 _GITLEAKS_EXECUTION_ROOT = "."
 _GITLEAKS_SCAN_CONTEXT = "isolated_read_only_snapshot"
+_NPM_AUDIT_REGISTRY_ARGUMENT = "--registry=https://registry.npmjs.org"
 _GITLEAKS_SOURCE_SCOPE_HEADER = b"gitleaks-source-scope-v1\0"
 _FILESYSTEM_TRIVY_EXECUTION_ROOT = "."
 _GITLEAKS_CONFIG_CONTRACT = {
@@ -685,7 +686,7 @@ def is_required_scan_command(
             and values[3:] == [
                 "audit",
                 "--audit-level=high",
-                "--registry=https://registry.npmjs.org",
+                _NPM_AUDIT_REGISTRY_ARGUMENT,
                 "--json",
             ]
         )
@@ -758,7 +759,7 @@ def _redact_command(command: Sequence[str]) -> list[str]:
             safe.append("[redacted-path]")
         elif index == 0:
             safe.append(PurePath(value).name)
-        elif "://" in value:
+        elif "://" in value and value != _NPM_AUDIT_REGISTRY_ARGUMENT:
             safe.append("[redacted-url]")
         else:
             safe.append(redact_scan_output(value))
@@ -2943,16 +2944,16 @@ def _raw_scan_report_error(name: str, value: object) -> str | None:
         return None if exception["status"] == "passed" else "SECURITY_EVIDENCE_INVALID"
     if name in {"filesystem_trivy", "container_image"}:
         results = value.get("Results")
-        expected_artifact_type = (
-            "filesystem"
+        expected_artifact_types = (
+            {"filesystem", "repository"}
             if name == "filesystem_trivy"
-            else "container_image"
+            else {"container_image"}
         )
         if (
             value.get("SchemaVersion") != 2
             or not isinstance(value.get("ArtifactName"), str)
             or not value["ArtifactName"]
-            or value.get("ArtifactType") != expected_artifact_type
+            or value.get("ArtifactType") not in expected_artifact_types
             or not isinstance(results, list)
             or (
                 name == "filesystem_trivy"
@@ -3013,7 +3014,7 @@ def run_all(
         str(frontend_directory),
         "audit",
         "--audit-level=high",
-        "--registry=https://registry.npmjs.org",
+        _NPM_AUDIT_REGISTRY_ARGUMENT,
         "--json",
     ]
 

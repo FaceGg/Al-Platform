@@ -1864,3 +1864,13 @@
 - 解决方法：只将精确运行时挂载 `ml-platform/backend/data` 加入 Gitleaks reviewed source scope、TOML 配置合同和两套证据夹具；不排除其他名为 `data` 的目录。回归同时断言该挂载在扫描后创建或写入不会改变摘要，而 `services/data` 等普通源码路径仍会改变摘要。
 - 验证方式：新增精确 digest 回归先 RED 后 GREEN，真实 `summarize` 生命周期回归通过；Week 12 security gates `158/158`、evidence manifest `31/31`、CI workflow `36/36` 通过。待完成 compile、diff 和提交范围审查后推送，并重新等待完整六门禁。
 - 遗留事项：新 Actions run 全部成功前不得合并或标记 Week 9-12 完成；若安全摘要仍失败，必须继续使用上传 artifact 对比具体 binding，不能扩大为通用 `data` 排除。
+
+### 2026-08-16：PR #17 scanner receipt 与 Trivy 0.73 报告合同修复
+
+- 当前状态：Actions run `31940235443` 的生产集成、实验集成、Ubuntu/Windows Quality 和 Chromium 验收均通过；`Week 11-12 verification` 仍在 `Summarize security evidence` 失败。已用 artifact `9262316127` 将失败隔离到两个确定的格式合同，本地修复和回归已完成，但新提交尚未推送，因此第 9 至第 12 周继续保持“进行中”，PR #17 未合并。
+- 问题现象：Gitleaks receipt 的 `source_tree_sha256=f166c64b...` 已与 merge commit `447d9f3` 的干净 checkout 精确匹配，但 summary 仍把六个 scanner gate 统一判为 `SECURITY_EVIDENCE_INVALID`。逐项绕过 Gitleaks binding 后，`frontend_dependencies` 的 passed receipt 命令校验失败；修正该格式重放后只剩 `filesystem_trivy` 失败。
+- 已确认根因：`run_scan` 会把任何含 `://` 的命令参数脱敏为 `[redacted-url]`，因此固定的 `--registry=https://registry.npmjs.org` 在落盘后不再满足 `is_required_scan_command` 的精确合同。真实 Trivy `0.73.0` 对 Git checkout 执行根目录 filesystem scan 时返回 `ArtifactName: "."`、`ArtifactType: "repository"`，而汇总器只接受旧形态 `filesystem`。
+- 解决方法：将固定 npm registry 参数提取为单一常量，并仅对这一公开、受审查参数保留原值；其他 URL 仍继续脱敏，命令校验仍要求精确官方 registry。filesystem Trivy 原始报告允许 `filesystem` 或 `repository` 两种合法类型，同时继续强制 repository-root 命令、literal `.` target、`ArtifactName == "."`、无 HIGH/CRITICAL 漏洞、无 misconfiguration/secret finding；container image 仍只接受 `container_image`。
+- 验证方式：两条回归均先在旧实现 RED，修复后 `2/2` 通过；将真实 run `31940235443` artifact 的 npm receipt 按新输出格式重放并仅隔离机器相关的 Gitleaks live path binding 后，七个 security gates 全部 passed。`tests.test_week12_security_gates tests.test_evidence_manifest tests.test_ci_workflow -v` 为 `227/227` 通过，另有 1 项 Windows 上按预期跳过的 POSIX 权限测试。
+- 预防措施：scanner receipt 的脱敏输出必须由同一生产 validator 接受，新增或修改命令参数时要覆盖“执行 -> 脱敏落盘 -> summarize”生命周期；外部 scanner 的 schema 合同必须用真实 pinned 版本 artifact 验证，不能只依赖手写旧格式 fixture。
+- 遗留事项：完成 compile、diff、提交范围审查后提交并推送；等待新 run 的六个 GitHub Actions jobs 全部成功。只有全绿后才合并 PR #17 到 `main`，并核验 PR 状态、merge commit、远端 `main` 和保留的未跟踪目录。

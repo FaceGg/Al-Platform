@@ -2079,6 +2079,27 @@ class SecurityGateTests(unittest.TestCase):
         self.assertNotIn("token=abc", serialized)
         self.assertNotIn("u:p@", serialized)
 
+    def test_npm_scan_receipt_preserves_reviewed_registry_command_contract(self):
+        command = [
+            "npm",
+            "--prefix",
+            "ml-platform/frontend",
+            "audit",
+            "--audit-level=high",
+            "--registry=https://registry.npmjs.org",
+            "--json",
+        ]
+        with patch("tools.security_scans.subprocess.run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = "clean"
+            run.return_value.stderr = ""
+            result = run_scan(command)
+
+        self.assertEqual(result["command"], command)
+        self.assertTrue(
+            is_required_scan_command("frontend_dependencies", result["command"]),
+        )
+
     def test_scan_record_redacts_absolute_command_arguments(self):
         with patch("tools.security_scans.subprocess.run") as run:
             run.return_value.returncode = 0
@@ -3654,6 +3675,32 @@ class SecurityGateTests(unittest.TestCase):
                 result["gates"]["secret_gitleaks"]["error_code"],
                 "SECURITY_EVIDENCE_INVALID",
             )
+
+    def test_summary_accepts_trivy_repository_report_for_root_filesystem_scan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            raw_path = root / "trivy-fs.json"
+            raw = json.loads(raw_path.read_text(encoding="utf-8"))
+            raw["ArtifactType"] = "repository"
+            raw_path.write_text(json.dumps(raw), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["gates"]["filesystem_trivy"]["status"], "passed")
 
     def test_summary_rejects_trivy_subdirectory_scope_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
