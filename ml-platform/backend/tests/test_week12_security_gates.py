@@ -19,6 +19,7 @@ from tools.security_scans import (
     WEB_SECURITY_GATE_NAMES,
     _make_gitleaks_snapshot_read_only,
     _remove_gitleaks_snapshot,
+    _gitleaks_source_scope_digest,
     evaluate_npm_audit_exception,
     is_required_scan_command,
     main as security_scans_main,
@@ -58,6 +59,9 @@ class SecurityGateTests(unittest.TestCase):
                 or "tmp" in parts
                 or "temp_test" in parts
                 or "docs2" in parts
+                or "__pycache__" in parts
+                or any(part in {"artifact_store", "uploads", "exports"} for part in parts)
+                or parts[-1].endswith((".db", ".db-shm", ".db-wal"))
                 or any(
                     parts[index : index + 3]
                     == ("ml-platform", "frontend", "node_modules")
@@ -2809,6 +2813,9 @@ class SecurityGateTests(unittest.TestCase):
                 "allowlist": {
                     "description": "Exclude local caches and raw evidence outside the reviewed source scope.",
                     "paths": [
+                        r"(^|[\\/])__pycache__([\\/]|$)",
+                        r"(^|[\\/])(artifact_store|uploads|exports)([\\/]|$)",
+                        r"(^|[\\/])[^\\/]+\\.db(?:-(?:shm|wal))?$",
                         r"(^|[\\/])\.git([\\/]|$)",
                         r"(^|[\\/])tmp([\\/]|$)",
                         r"(^|[\\/])temp_test([\\/]|$)",
@@ -2818,6 +2825,26 @@ class SecurityGateTests(unittest.TestCase):
                 },
             },
         )
+
+    def test_gitleaks_source_digest_ignores_runtime_outputs_that_change_after_scan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "reviewed.py").write_text("print('reviewed')\n", encoding="utf-8")
+            (root / "__pycache__").mkdir()
+            (root / "__pycache__" / "runtime.pyc").write_bytes(b"before")
+            (root / "artifact_store").mkdir()
+            (root / "artifact_store" / "model.bin").write_bytes(b"before")
+            (root / "ml_platform.db").write_bytes(b"before")
+            (root / "ml_platform.db-wal").write_bytes(b"before")
+            before = _gitleaks_source_scope_digest(root)
+
+            (root / "__pycache__" / "runtime.pyc").write_bytes(b"after")
+            (root / "artifact_store" / "model.bin").write_bytes(b"after")
+            (root / "ml_platform.db").write_bytes(b"after")
+            (root / "ml_platform.db-wal").write_bytes(b"after")
+
+            self.assertIsNotNone(before)
+            self.assertEqual(before, _gitleaks_source_scope_digest(root))
 
     def test_run_all_writes_redacted_json_evidence_for_each_required_scanner(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -6,6 +6,9 @@ useDefault = true
 [allowlist]
 description = "Exclude local caches and raw evidence outside the reviewed source scope."
 paths = [
+  '''(^|[\\/])__pycache__([\\/]|$)''',
+  '''(^|[\\/])(artifact_store|uploads|exports)([\\/]|$)''',
+  '''(^|[\\/])[^\\/]+\\.db(?:-(?:shm|wal))?$''',
   '''(^|[\\/])\.git([\\/]|$)''',
   '''(^|[\\/])tmp([\\/]|$)''',
   '''(^|[\\/])temp_test([\\/]|$)''',

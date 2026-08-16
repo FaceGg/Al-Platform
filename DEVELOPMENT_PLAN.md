@@ -1846,3 +1846,12 @@
 - 遗留事项：完成 compile/diff/范围审查后提交并推送 PR #17；等待新 run 的六个 job 全部成功，再通过 PR 合并到 `main` 并验证远端 `main`、merge commit 和工作树边界。不得提交 `tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 或 `tmp/ci-31926635306-week11-12-2/`。
 
 补充：run `31929782258` 已通过生产集成、实验集成和 Ubuntu Quality；Windows Quality 的后端 `111/111` 也通过，但 `AutoMLPage` 的“启动质量感知”测试在前端阶段断言 `createQualityRun` 调用次数为 0。根因是测试只等待 preview API 被调用，没有等待 preview Promise 完成并把输入列写入 React 状态；Windows runner 上按钮仍为 disabled，点击不会触发提交。用例现改为先等待“运行质量感知”按钮 enabled 再点击，不修改生产代码或 timeout；聚焦 `1/1`、完整 AutoMLPage `18/18` 通过，待新 run 全绿后再合并。
+
+### 2026-08-16：PR #17 Week 11-12 安全摘要 stale Gitleaks 回执修复
+
+- 当前状态：run `31931087538` 的五个 job 已通过，`Week 11-12 verification` 在 `Summarize security evidence` 失败；第 9 至第 12 周仍保持“进行中”，未合并。
+- 问题现象：扫描回执中的 Gitleaks `source_tree_sha256` 在冻结栈启动后的汇总阶段失效，所有安全门被统一标记为 `SECURITY_EVIDENCE_INVALID`。
+- 已确认根因：`run security scans` 在测试套件之后执行，工作树中已存在 `__pycache__`、SQLite `*.db*`、`artifact_store` 等被 `.gitignore` 忽略的运行时生成物；冻结栈迁移和服务启动会改变这些字节，而源树摘要原先仍把它们纳入绑定。
+- 解决方法：将 Gitleaks reviewed source scope 与 `.gitleaks.toml` 同步扩展为排除 `__pycache__`、`artifact_store`/`uploads`/`exports` 和 SQLite `*.db`/`*.db-shm`/`*.db-wal`；新增回归验证扫描后修改这些生成物不会改变摘要。未放宽源码、配置、快照或 manifest 的 fail-closed 校验。
+- 验证方式：新增 stale-runtime-output 回归 `1/1`；Week 12 security gates `157/157`、evidence manifest `31/31`、CI workflow `36/36` 通过，待提交后重新运行完整远端六门禁。
+- 遗留事项：完成 diff/compile 检查后提交并推送；等待新的双平台 Quality、生产/实验集成、Chromium 和 Week 11-12 verification 全部成功，再合并 `main`。
