@@ -1820,3 +1820,5 @@
 - 解决方法：证书生成后统一执行 `sudo chown 1000:1000` 与 `sudo chmod 0400`，保持 owner-only read；cleanup 统一用 `sudo rm -f`。失败证据服务列表永久包含 `notification-receiver` 和 `notification-proxy`，避免再次只得到 compose 退出码。
 - 验证方式：`C:\\Users\\17723\\miniconda3\\python.exe -m unittest tests.test_ci_workflow -q` 为 `35/35`，新增断言覆盖 TLS 文件 owner/mode，失败证据合同覆盖两个受控通知服务，`git diff --check` 通过。远端 CI 尚未对本次提交完成验证，因此不标记 Week 9-12 完成。
 - 预防措施：所有由 runner 生成并挂载给非 root 容器的 secret、证书和私钥必须共享 owner/mode/consumer UID/cleanup 合同；Compose 启动失败的 evidence 必须包含所有被 `depends_on` 或 healthcheck 阻断的服务日志。
+
+补充：修复 TLS 文件 owner 后，run `31921375165` 已证明 `notification-receiver` 为 healthy，生产集成仍通过；实验栈随后因 `notification-proxy` 显式禁用 healthcheck 而被 `docker compose up --wait` 拒绝。已为 proxy 增加 UID 1000 容器内的 `127.0.0.1:3128` TCP listener healthcheck，聚焦 CI/receiver 合同 `37/37` 通过，等待新远端 run 验证。

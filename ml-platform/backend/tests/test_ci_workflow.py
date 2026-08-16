@@ -477,7 +477,8 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn("qyapi.weixin.qq.com", " ".join(proxy["command"]))
         self.assertIn("3128", proxy["expose"])
         self.assertIn("127.0.0.1:8080/events", " ".join(receiver["healthcheck"]["test"]))
-        self.assertTrue(proxy["healthcheck"]["disable"])
+        self.assertIn("127.0.0.1", " ".join(proxy["healthcheck"]["test"]))
+        self.assertIn("3128", " ".join(proxy["healthcheck"]["test"]))
 
         self.assertIn("notification_acceptance_ca", acceptance["secrets"])
         for service_name in ("backend", "worker"):

@@ -137,7 +137,10 @@ services:
       notification-receiver:
         condition: service_started
     healthcheck:
-      disable: true
+      test: ["CMD", "python", "-c", "import socket; connection = socket.create_connection(('127.0.0.1', 3128), timeout=3); connection.close()"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: "no"
 
 secrets:
