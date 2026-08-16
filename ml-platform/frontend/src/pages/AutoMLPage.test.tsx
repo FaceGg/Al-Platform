@@ -261,7 +261,9 @@ describe("AutoMLPage", () => {
     fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
     fireEvent.click(await screen.findByText("weld.csv"));
     await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
-    fireEvent.click(screen.getByRole("button", { name: "运行质量感知" }));
+    const runButton = screen.getByRole("button", { name: "运行质量感知" });
+    await waitFor(() => expect(runButton).not.toBeDisabled());
+    fireEvent.click(runButton);
 
     await waitFor(() => expect(quality.createQualityRun).toHaveBeenCalledWith("project-1", {
       dataset_artifact_id: "dataset-1",

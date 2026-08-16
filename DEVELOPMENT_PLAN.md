@@ -1844,3 +1844,5 @@
 - 验证方式：三条回归均先在旧实现 RED；修复后 Windows 聚焦合同 `232/232` 通过、POSIX-only 用例 `1/1` 在 Linux 容器通过。完整 requirements 干净解析为 126 个安装项，包含 TensorBoard `2.21.0`、setuptools `83.0.0`、protobuf `6.33.6`、grpcio `1.83.0`；真实 `pip-audit` 审计 125 个依赖、0 漏洞；Gitleaks `v8.24.2` 对当前 reviewed source scope 扫描 0 leaks；TensorBoard 2.21/setuptools 83 overlay 下训练与 gateway 回归 `12/12` 通过。
 - 预防措施：只读安全快照的删除测试必须在 POSIX 上覆盖父目录权限；scanner 结果与快照 lifecycle 错误必须分别可诊断。打包工具安全升级若跨越移除 API 的版本，必须同步升级实际调用该 API 的上游依赖，并验证 resolver、真实 audit、导入路径和业务运行回归；部署示例中的应用密钥默认保持空值，生成方式写在注释中。
 - 遗留事项：完成 compile/diff/范围审查后提交并推送 PR #17；等待新 run 的六个 job 全部成功，再通过 PR 合并到 `main` 并验证远端 `main`、merge commit 和工作树边界。不得提交 `tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 或 `tmp/ci-31926635306-week11-12-2/`。
+
+补充：run `31929782258` 已通过生产集成、实验集成和 Ubuntu Quality；Windows Quality 的后端 `111/111` 也通过，但 `AutoMLPage` 的“启动质量感知”测试在前端阶段断言 `createQualityRun` 调用次数为 0。根因是测试只等待 preview API 被调用，没有等待 preview Promise 完成并把输入列写入 React 状态；Windows runner 上按钮仍为 disabled，点击不会触发提交。用例现改为先等待“运行质量感知”按钮 enabled 再点击，不修改生产代码或 timeout；聚焦 `1/1`、完整 AutoMLPage `18/18` 通过，待新 run 全绿后再合并。
