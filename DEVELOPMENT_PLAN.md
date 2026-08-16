@@ -1799,3 +1799,13 @@
 - 验证方式：Windows 聚焦回归 `42/42`；Linux 后端镜像复现的原失败集合 `7/7`；`tests.test_week12_security_gates tests.test_ci_workflow tests.test_notification_receiver_acceptance` 完整回归 `190/190`。完整 runner 首轮为 `110/111`，唯一失败是 manifest 测试夹具仍计算旧 Gitleaks 范围；同步 `.git` 排除后 `tests.test_evidence_manifest` 为 `31/31`。UID 模拟未复现 migrate 读取密钥失败，Alembic 完整升级到 `20260815_11` 并退出 0，因此未引入无证据的权限放宽或 `chown`。
 - 预防措施：外部 CLI 的版本输出要用真实 runner 输出建立合同；failure-evidence 脚本必须自身可执行且先保存 raw log；跨平台测试不得通过修改全局 `os.name` 后实例化具体 `Path`；网络测试显式使用临时端口；单一门禁测试隔离无关安全 gate，同时保留对应 gate 的独立失败关闭回归。
 - 遗留事项：提交并推送本轮修复，等待新的 PR #17 Actions 全部结束；生产或实验集成若仍失败，使用已修复的 redacted evidence 读取精确容器日志后继续处理。全部远端门禁通过前不得合并或标记 Week 9-12 完成。
+
+### 2026-08-16：PR #17 实验栈非 root 密钥挂载修复
+
+- 当前状态：Actions run `31919525599` 的生产集成已通过；实验集成失败证据已成功上传并确认根因。本轮权限修复尚未推送，双平台 Quality 的该 run 不再作为最终门禁。
+- 问题现象：实验 Compose 的 `migrate` 容器在导入配置时以 `NOTIFICATION_MASTER_KEY_FILE could not be read` 退出 1；证据中的 Pydantic traceback 已完成脱敏并保留。
+- 已确认根因：GitHub runner 以 UID 1001 创建宿主 `/tmp/notification-master.key` 且模式为 `0600`，Compose 将该文件只读挂载给 UID 1000 的非 root Python 容器；本地此前未改变 owner 的模拟没有覆盖该真实 UID 边界。
+- 解决方法：只对需要挂载进非 root 容器的实验 key 和 Week 11-12 frozen-stack key 执行 `sudo chown 1000:1000`、`sudo chmod 0400`；失败证据用 `sudo cat` 读取 key 进行泄漏扫描。宿主直接运行的 production key 保持 runner 所有，不修改 Compose 用户或放宽为 group/world readable。
+- 验证方式：`tests.test_ci_workflow` 为 `35/35`，workflow YAML 可解析，`git diff --check` 通过；WSL 中 UID/GID `1000:1000`、mode `0400` 的宿主文件由 `--user 1000:1000` 容器以只读 mount 成功读取。
+- 预防措施：CI 生成并 bind-mount 给非 root 容器的 secret 必须同时验证 owner、mode、容器 UID 和失败证据读取路径；本地权限模拟要断言实际 UID/GID，而不能只依赖 chmod。
+- 遗留事项：推送后等待新 Actions run 的实验集成、双平台 Quality、Chromium 和 Week 11-12 verification 全部通过，再合并 PR #17。

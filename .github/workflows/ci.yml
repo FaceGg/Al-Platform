@@ -385,6 +385,8 @@ jobs:
           target.write_bytes(Fernet.generate_key() + b"\n")
           target.chmod(0o600)
           PY
+          sudo chown 1000:1000 "$NOTIFICATION_CRYPTO_SECRET_FILE"
+          sudo chmod 0400 "$NOTIFICATION_CRYPTO_SECRET_FILE"
       - name: Generate notification receiver certificate
         shell: bash
         run: |
@@ -464,7 +466,7 @@ jobs:
           fi
           INFERENCE_NOTIFICATION_MASTER_KEY=""
           if [ -f "$NOTIFICATION_CRYPTO_SECRET_FILE" ]; then
-            INFERENCE_NOTIFICATION_MASTER_KEY="$(cat "$NOTIFICATION_CRYPTO_SECRET_FILE")"
+            INFERENCE_NOTIFICATION_MASTER_KEY="$(sudo cat "$NOTIFICATION_CRYPTO_SECRET_FILE")"
           fi
           if grep -REal 'ci-postgres-password|ci-minio-root-password|ci-experiment-secret-key|ci-tensorboard-session-secret|ci-inference-internal-secret' "$INFERENCE_EVIDENCE_RAW"; then
             echo 'Sensitive value found in experiment evidence.'
@@ -656,6 +658,8 @@ jobs:
           target.write_bytes(Fernet.generate_key() + b"\n")
           target.chmod(0o600)
           PY
+          sudo chown 1000:1000 "$NOTIFICATION_CRYPTO_SECRET_FILE"
+          sudo chmod 0400 "$NOTIFICATION_CRYPTO_SECRET_FILE"
 
           write_missing_web_evidence() {
             if [ -f "$ML_PLATFORM_EVIDENCE_DIR/security/web.json" ]; then

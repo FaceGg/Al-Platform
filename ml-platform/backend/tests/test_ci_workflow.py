@@ -168,6 +168,39 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
 
         self.assertIn("INFERENCE_INTERNAL_SECRET", experiment_job["env"])
 
+    def test_container_notification_keys_are_owned_by_the_non_root_runtime(self):
+        jobs = yaml.safe_load(self.workflow)["jobs"]
+        expected_steps = (
+            ("experiment-integration", "Generate notification test key"),
+            ("week11-12-verification", "Run frozen-stack web security gate"),
+        )
+
+        for job_name, step_name in expected_steps:
+            with self.subTest(job=job_name):
+                step = next(
+                    step
+                    for step in jobs[job_name]["steps"]
+                    if step.get("name") == step_name
+                )
+                self.assertIn(
+                    'sudo chown 1000:1000 "$NOTIFICATION_CRYPTO_SECRET_FILE"',
+                    step["run"],
+                )
+                self.assertIn(
+                    'sudo chmod 0400 "$NOTIFICATION_CRYPTO_SECRET_FILE"',
+                    step["run"],
+                )
+
+        experiment_evidence = next(
+            step
+            for step in jobs["experiment-integration"]["steps"]
+            if step.get("name") == "Collect redacted experiment failure evidence"
+        )
+        self.assertIn(
+            'sudo cat "$NOTIFICATION_CRYPTO_SECRET_FILE"',
+            experiment_evidence["run"],
+        )
+
     def test_production_integration_declares_runtime_url_for_production_settings(self):
         production_job = yaml.safe_load(self.workflow)["jobs"]["production-integration"]
 
