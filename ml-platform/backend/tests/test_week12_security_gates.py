@@ -62,6 +62,7 @@ class SecurityGateTests(unittest.TestCase):
                 or "__pycache__" in parts
                 or any(part in {"artifact_store", "uploads", "exports"} for part in parts)
                 or parts[-1].endswith((".db", ".db-shm", ".db-wal"))
+                or parts[:3] == ("ml-platform", "backend", "data")
                 or any(
                     parts[index : index + 3]
                     == ("ml-platform", "frontend", "node_modules")
@@ -2577,6 +2578,49 @@ class SecurityGateTests(unittest.TestCase):
             "SECURITY_EVIDENCE_INVALID",
         )
 
+    def test_summary_accepts_gitleaks_binding_after_compose_creates_runtime_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository_root = Path(directory) / "repository"
+            self._write_gitleaks_source_root(repository_root)
+            evidence_root = Path(directory) / "security-evidence"
+            evidence_root.mkdir()
+            self._write_complete_security_evidence(evidence_root)
+            aggregate_path = evidence_root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            aggregate["gates"]["secret_gitleaks"].update(
+                self._gitleaks_receipt_binding_for(repository_root)
+            )
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            runtime_data = repository_root / "ml-platform" / "backend" / "data"
+            runtime_data.mkdir()
+            (runtime_data / "compose-created.bin").write_bytes(b"runtime")
+            output = evidence_root / "summary.json"
+            module_path = (
+                repository_root
+                / "ml-platform"
+                / "backend"
+                / "tools"
+                / "security_scans.py"
+            )
+
+            with patch("tools.security_scans.__file__", str(module_path)):
+                exit_code = security_scans_main(
+                    [
+                        "summarize",
+                        "--input-dir",
+                        str(evidence_root),
+                        "--output",
+                        str(output),
+                        "--source-commit",
+                        "a" * 40,
+                    ]
+                )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["gates"]["secret_gitleaks"]["status"], "passed")
+
     def test_run_all_rejects_hard_linked_gitleaks_source_before_scanner(self):
         with tempfile.TemporaryDirectory() as directory:
             repository_root = Path(directory) / "repository"
@@ -2816,6 +2860,7 @@ class SecurityGateTests(unittest.TestCase):
                         r"(^|[\\/])__pycache__([\\/]|$)",
                         r"(^|[\\/])(artifact_store|uploads|exports)([\\/]|$)",
                         r"(^|[\\/])[^\\/]+\\.db(?:-(?:shm|wal))?$",
+                        r"(^|[\\/])ml-platform[\\/]backend[\\/]data([\\/]|$)",
                         r"(^|[\\/])\.git([\\/]|$)",
                         r"(^|[\\/])tmp([\\/]|$)",
                         r"(^|[\\/])temp_test([\\/]|$)",
@@ -2836,15 +2881,25 @@ class SecurityGateTests(unittest.TestCase):
             (root / "artifact_store" / "model.bin").write_bytes(b"before")
             (root / "ml_platform.db").write_bytes(b"before")
             (root / "ml_platform.db-wal").write_bytes(b"before")
+            runtime_parent = root / "ml-platform" / "backend"
+            runtime_parent.mkdir(parents=True)
+            runtime_data = runtime_parent / "data"
             before = _gitleaks_source_scope_digest(root)
 
             (root / "__pycache__" / "runtime.pyc").write_bytes(b"after")
             (root / "artifact_store" / "model.bin").write_bytes(b"after")
             (root / "ml_platform.db").write_bytes(b"after")
             (root / "ml_platform.db-wal").write_bytes(b"after")
+            runtime_data.mkdir(parents=True)
+            (runtime_data / "compose-created.bin").write_bytes(b"after")
 
             self.assertIsNotNone(before)
             self.assertEqual(before, _gitleaks_source_scope_digest(root))
+
+            reviewed_data = root / "services" / "data"
+            reviewed_data.mkdir(parents=True)
+            (reviewed_data / "reviewed.txt").write_text("reviewed\n", encoding="utf-8")
+            self.assertNotEqual(before, _gitleaks_source_scope_digest(root))
 
     def test_run_all_writes_redacted_json_evidence_for_each_required_scanner(self):
         with tempfile.TemporaryDirectory() as directory:

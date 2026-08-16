@@ -1855,3 +1855,12 @@
 - 解决方法：将 Gitleaks reviewed source scope 与 `.gitleaks.toml` 同步扩展为排除 `__pycache__`、`artifact_store`/`uploads`/`exports` 和 SQLite `*.db`/`*.db-shm`/`*.db-wal`；新增回归验证扫描后修改这些生成物不会改变摘要。未放宽源码、配置、快照或 manifest 的 fail-closed 校验。
 - 验证方式：新增 stale-runtime-output 回归 `1/1`；Week 12 security gates `157/157`、evidence manifest `31/31`、CI workflow `36/36` 通过，待提交后重新运行完整远端六门禁。
 - 遗留事项：完成 diff/compile 检查后提交并推送；等待新的双平台 Quality、生产/实验集成、Chromium 和 Week 11-12 verification 全部成功，再合并 `main`。
+
+### 2026-08-16：PR #17 frozen-stack data 挂载导致安全摘要漂移修复
+
+- 当前状态：Actions run `31937388470` 的生产集成、实验集成、Ubuntu/Windows Quality 和 Chromium 验收均通过；`Week 11-12 verification` 仍在 `Summarize security evidence` 失败，因此第 9 至第 12 周继续保持“进行中”，PR #17 未合并。
+- 问题现象：安全扫描阶段的 Gitleaks receipt 全部通过，但 frozen-stack 启动后汇总仍将六个 scanner gate 统一标记为 `SECURITY_EVIDENCE_INVALID`；上传证据确认 web security 独立通过。
+- 已确认根因：`docker-compose.yml` 将宿主 `./ml-platform/backend/data` 绑定到 `/app/data`。扫描时该宿主目录不存在，随后 `docker compose up` 会创建它；源树摘要会记录目录路径，因此即使目录为空也会使 `source_tree_sha256` 失效。上一轮仅排除了目录内常见数据库和 artifact 字节，没有覆盖 Compose 创建目录本身。
+- 解决方法：只将精确运行时挂载 `ml-platform/backend/data` 加入 Gitleaks reviewed source scope、TOML 配置合同和两套证据夹具；不排除其他名为 `data` 的目录。回归同时断言该挂载在扫描后创建或写入不会改变摘要，而 `services/data` 等普通源码路径仍会改变摘要。
+- 验证方式：新增精确 digest 回归先 RED 后 GREEN，真实 `summarize` 生命周期回归通过；Week 12 security gates `158/158`、evidence manifest `31/31`、CI workflow `36/36` 通过。待完成 compile、diff 和提交范围审查后推送，并重新等待完整六门禁。
+- 遗留事项：新 Actions run 全部成功前不得合并或标记 Week 9-12 完成；若安全摘要仍失败，必须继续使用上传 artifact 对比具体 binding，不能扩大为通用 `data` 排除。

@@ -75,6 +75,7 @@ _GITLEAKS_CONFIG_CONTRACT = {
             r"(^|[\\/])__pycache__([\\/]|$)",
             r"(^|[\\/])(artifact_store|uploads|exports)([\\/]|$)",
             r"(^|[\\/])[^\\/]+\\.db(?:-(?:shm|wal))?$",
+            r"(^|[\\/])ml-platform[\\/]backend[\\/]data([\\/]|$)",
             r"(^|[\\/])\.git([\\/]|$)",
             r"(^|[\\/])tmp([\\/]|$)",
             r"(^|[\\/])temp_test([\\/]|$)",
@@ -433,6 +434,7 @@ def _is_gitleaks_source_scope_excluded(relative_path: Path) -> bool:
         or "__pycache__" in parts
         or any(part in {"artifact_store", "uploads", "exports"} for part in parts)
         or relative_path.name.endswith((".db", ".db-shm", ".db-wal"))
+        or parts[:3] == ("ml-platform", "backend", "data")
         or any(
             parts[index : index + 3]
             == ("ml-platform", "frontend", "node_modules")

@@ -57,6 +57,7 @@ class EvidenceManifestTests(unittest.TestCase):
                 or "__pycache__" in parts
                 or any(part in {"artifact_store", "uploads", "exports"} for part in parts)
                 or parts[-1].endswith((".db", ".db-shm", ".db-wal"))
+                or parts[:3] == ("ml-platform", "backend", "data")
                 or any(
                     parts[index : index + 3]
                     == ("ml-platform", "frontend", "node_modules")
