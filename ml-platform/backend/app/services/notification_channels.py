@@ -442,7 +442,9 @@ class EmailNotificationAdapter:
 
         username = self.settings.smtp_username
         password = self.settings.smtp_password
-        if (username is None) != (password is None):
+        username_value = username.get_secret_value() if username is not None else ""
+        password_value = password.get_secret_value() if password is not None else ""
+        if bool(username_value) != bool(password_value):
             return DeliveryResult("failed", "NOTIFICATION_EMAIL_CREDENTIAL_INVALID")
 
         message = EmailMessage()
@@ -461,8 +463,8 @@ class EmailNotificationAdapter:
             ) as client:
                 if self.settings.smtp_use_tls:
                     client.starttls(context=ssl.create_default_context())
-                if username is not None and password is not None:
-                    client.login(username.get_secret_value(), password.get_secret_value())
+                if username_value and password_value:
+                    client.login(username_value, password_value)
                 client.sendmail(self.settings.smtp_from, recipients, message.as_string())
         except smtplib.SMTPAuthenticationError:
             return DeliveryResult("failed", "NOTIFICATION_EMAIL_AUTH_FAILED")

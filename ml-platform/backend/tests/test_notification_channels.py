@@ -468,6 +468,31 @@ class TestNotificationAdapters(unittest.TestCase):
             ("failed", "NOTIFICATION_EMAIL_RECIPIENT_LIMIT"),
         )
 
+    def test_email_treats_empty_compose_credentials_as_unconfigured(self):
+        smtp = RecordingSMTP()
+        settings = Settings(
+            _env_file=None,
+            notification_master_key=MASTER_KEY,
+            smtp_host="mailpit",
+            smtp_port=1025,
+            smtp_from="ml-platform-acceptance@localhost",
+            smtp_username="",
+            smtp_password="",
+            smtp_use_tls=False,
+        )
+        router = NotificationChannelRouter(
+            self.db,
+            settings,
+            smtp_factory=lambda _host, _port, timeout: smtp,
+        )
+        endpoint = self._endpoint("email", {"to": ["ops@example.invalid"], "cc": []})
+
+        result = router.send(endpoint=endpoint, event=self.event, delivery_key="delivery-email-no-auth")
+
+        self.assertEqual(result.status, "sent")
+        self.assertIsNone(smtp.login_args)
+        self.assertIsNotNone(smtp.sent)
+
 
 if __name__ == "__main__":
     unittest.main()

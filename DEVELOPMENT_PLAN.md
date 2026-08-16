@@ -1826,3 +1826,5 @@
 补充：run `31921710113` 已证明 receiver 和 proxy 均通过 `docker compose up --wait`，实验验证进入真实 MLflow 生命周期后因 `Host: mlflow:5000` 未在 MLflow 3.15 allowlist 中而返回 403。生产 Compose 已显式传入可配置的 `MLFLOW_ALLOWED_HOSTS`，默认仅允许内部 `mlflow:5000` 与 localhost/127.0.0.1 健康检查；CI 合同 `36/36` 通过，等待新远端 run 验证。
 
 补充：run `31921969798` 已证明 MLflow Host allowlist 生效，实验栈迁移完成到当前合并头 `20260815_11`；失败仅来自 `test_inference_production_stack` 仍断言旧的 `20260720_10_security_notifications`。已将运行态断言同步到当前单一 Alembic head，相关模块本地收集 `2` 项均跳过（缺少真实栈），等待新远端 run 验证。
+
+补充：run `31922307340` 已通过实验训练、推理发布/回滚、迁移 head、receiver/proxy 和 Webhook/企业微信验证；唯一失败为 Mailpit 邮件 outcome 返回 `retry`。根因是生产 Compose 将未配置的 SMTP 用户名/密码传为两个空字符串，Pydantic 解析为非 `None` SecretStr，适配器错误尝试空凭据 AUTH；现已把双空值规范化为无认证，仍对只配置一侧失败关闭。通知/生产栈/CI 聚焦回归 `58` 项通过、`6` 项无真实栈跳过，等待新远端 run 验证。
