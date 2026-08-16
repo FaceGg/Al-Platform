@@ -141,6 +141,12 @@ jobs:
         options: >-
           --health-cmd="redis-cli ping"
           --health-interval 5s --health-timeout 5s --health-retries 20
+      mailpit:
+        image: axllent/mailpit:v1.21
+        ports: ["1025:1025", "8025:8025"]
+        options: >-
+          --health-cmd="/mailpit readyz"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       APP_MODE: production
       DATABASE_URL: postgresql+psycopg://postgres:test-password@127.0.0.1:5432/ml_platform
@@ -150,7 +156,7 @@ jobs:
       MLFLOW_ARTIFACT_ROOT: s3://ml-platform-test/mlflow
       TENSORBOARD_GATEWAY_URL: http://127.0.0.1:6006
       TENSORBOARD_SESSION_SECRET: ci-tensorboard-session-secret-at-least-32-bytes
-      INFERENCE_INTERNAL_SECRET: ci-inference-internal-secret-at-least-32-bytes
+      INFERENCE_INTERNAL_SECRET: ci-inference-internal-secret-at-least-32-bytes # gitleaks:allow
       INFERENCE_RUNTIME_URL: http://127.0.0.1:7000
       TASK_BACKEND: celery
       CELERY_BROKER_URL: redis://127.0.0.1:6379/0
@@ -161,6 +167,12 @@ jobs:
       MINIO_BUCKET: ml-platform-test
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin-secret
+      NOTIFICATION_MASTER_KEY_FILE: /tmp/notification-master.key
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: "1025"
+      SMTP_FROM: ml-platform-ci@localhost
+      SMTP_USE_TLS: "false"
+      NOTIFICATION_TEST_SMTP_API_URL: http://127.0.0.1:8025/api/v1/messages
       RUN_PRODUCTION_INTEGRATION: "1"
     steps:
       - uses: actions/checkout@v5
@@ -182,7 +194,7 @@ jobs:
             --publish 9000:9000 \
             --env MINIO_ROOT_USER="$MINIO_ACCESS_KEY" \
             --env MINIO_ROOT_PASSWORD="$MINIO_SECRET_KEY" \
-            minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1 server /data
+            minio/minio:latest server /data
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
               exit 0
@@ -192,11 +204,37 @@ jobs:
           docker logs ml-platform-minio
           exit 1
       - name: Create MinIO bucket
+        shell: bash
         run: |
-          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
-          chmod +x /tmp/mc
-          /tmp/mc alias set local http://127.0.0.1:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
-          /tmp/mc mb --ignore-existing local/$MINIO_BUCKET
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          mc_asset="$RUNNER_TEMP/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+            --output "$mc_asset" \
+            https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z
+          printf '%s  %s\n' \
+            '01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891' \
+            "$mc_asset" | sha256sum --check --strict
+          mv "$mc_asset" "$RUNNER_TEMP/bin/mc"
+          chmod +x "$RUNNER_TEMP/bin/mc"
+          mc_version="$("$RUNNER_TEMP/bin/mc" --version | awk 'NR == 1 { print $2 }')"
+          test "$mc_version" = "RELEASE.2025-08-13T08-35-41Z"
+          "$RUNNER_TEMP/bin/mc" alias set local http://127.0.0.1:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+          "$RUNNER_TEMP/bin/mc" mb --ignore-existing local/$MINIO_BUCKET
+      - name: Generate notification test key
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from cryptography.fernet import Fernet
+
+          target = Path(os.environ["NOTIFICATION_MASTER_KEY_FILE"])
+          target.write_bytes(Fernet.generate_key() + b"\n")
+          target.chmod(0o600)
+          PY
       - name: Upgrade production schema
         working-directory: ml-platform/backend
         run: |
@@ -233,25 +271,55 @@ jobs:
         env:
           ML_PLATFORM_TEMP_DIR: ${{ runner.temp }}/ml-platform-production
           RUN_PROJECT_ACCESS_INTEGRATION: "1"
+          RUN_NOTIFICATION_INTEGRATION: "1"
         run: |
           python -m unittest tests.test_production_stack -v
           python -m unittest tests.test_project_access.TestProjectAccessProductionStack -v
+          python -m unittest tests.test_notification_production_stack -v
       - name: Scan and upload production failure evidence
         if: failure()
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/production-evidence"
+          PRODUCTION_EVIDENCE_RAW="$(mktemp -d "$RUNNER_TEMP/production-evidence-raw.XXXXXX")"
+          PRODUCTION_EVIDENCE_REDACTED="$RUNNER_TEMP/production-evidence"
+
+          cleanup_production_evidence() {
+            rm -rf "$PRODUCTION_EVIDENCE_RAW" "$PRODUCTION_EVIDENCE_REDACTED"
+          }
+          trap cleanup_production_evidence EXIT
+
+          rm -rf "$PRODUCTION_EVIDENCE_REDACTED"
+          mkdir -p "$PRODUCTION_EVIDENCE_REDACTED"
           for file in "$RUNNER_TEMP/celery.log" "$RUNNER_TEMP/celery.pid"; do
-            if [ -f "$file" ]; then cp "$file" "$RUNNER_TEMP/production-evidence/"; fi
+            if [ -f "$file" ]; then cp "$file" "$PRODUCTION_EVIDENCE_RAW/"; fi
           done
-          docker logs ml-platform-minio > "$RUNNER_TEMP/production-evidence/minio.log" 2>&1 || true
-          sed -i 's/test-password/[redacted]/g; s/minioadmin-secret/[redacted]/g; s/ci-production-secret-key-with-at-least-32-characters/[redacted]/g' "$RUNNER_TEMP/production-evidence"/* 2>/dev/null || true
-          if grep -Eni 'test-password|minioadmin-secret|ci-production-secret-key|redis://[^/@[:space:]]+@' "$RUNNER_TEMP/production-evidence"/*; then
+          docker logs ml-platform-minio > "$PRODUCTION_EVIDENCE_RAW/minio.log" 2>&1 || true
+          PRODUCTION_NOTIFICATION_MASTER_KEY=""
+          if [ -f "$NOTIFICATION_MASTER_KEY_FILE" ]; then
+            PRODUCTION_NOTIFICATION_MASTER_KEY="$(cat "$NOTIFICATION_MASTER_KEY_FILE")"
+          fi
+          if grep -REal 'test-password|minioadmin-secret|ci-production-secret-key|redis://[^/@[:space:]]+@|mli_[A-Za-z0-9_-]+' "$PRODUCTION_EVIDENCE_RAW"; then
             echo 'Sensitive value found in production evidence.'
-            rm -rf "$RUNNER_TEMP/production-evidence"
             exit 1
           fi
+          if [ -n "$PRODUCTION_NOTIFICATION_MASTER_KEY" ] && grep -RFl -- "$PRODUCTION_NOTIFICATION_MASTER_KEY" "$PRODUCTION_EVIDENCE_RAW"; then
+            echo 'Sensitive value found in production evidence.'
+            exit 1
+          fi
+          cp "$PRODUCTION_EVIDENCE_RAW"/* "$PRODUCTION_EVIDENCE_REDACTED"/
+          sed -i \
+            -e 's/test-password/[redacted]/g' \
+            -e 's/minioadmin-secret/[redacted]/g' \
+            -e 's/ci-production-secret-key-with-at-least-32-characters/[redacted]/g' \
+            -E 's/mli_[A-Za-z0-9_-]+/[redacted]/g' \
+            "$PRODUCTION_EVIDENCE_REDACTED"/*
+          if grep -Eni 'test-password|minioadmin-secret|ci-production-secret-key|redis://[^/@[:space:]]+@|mli_[A-Za-z0-9_-]+' "$PRODUCTION_EVIDENCE_REDACTED"/*; then
+            echo 'Sensitive value found in production evidence.'
+            exit 1
+          fi
+          rm -rf "$PRODUCTION_EVIDENCE_RAW"
+          trap - EXIT
       - name: Upload production failure evidence
         if: failure()
         uses: actions/upload-artifact@v4
@@ -267,6 +335,7 @@ jobs:
             kill "$(cat "$RUNNER_TEMP/celery.pid")" 2>/dev/null || true
           fi
           docker rm --force ml-platform-minio 2>/dev/null || true
+          rm -f "$NOTIFICATION_MASTER_KEY_FILE"
 
   experiment-integration:
     name: Production experiment integration (Ubuntu)
@@ -289,17 +358,52 @@ jobs:
       MLFLOW_ARTIFACT_ROOT: s3://ml-platform/mlflow
       MLFLOW_TRACKING_URI: http://mlflow:5000
       TENSORBOARD_SESSION_SECRET: ci-tensorboard-session-secret-at-least-32-bytes
-      INFERENCE_INTERNAL_SECRET: ci-inference-internal-secret-at-least-32-bytes
+      INFERENCE_INTERNAL_SECRET: ci-inference-internal-secret-at-least-32-bytes # gitleaks:allow
+      INFERENCE_RUNTIME_URL: http://inference-runtime:7000
+      INFERENCE_RATE_LIMIT_CAPACITY: "5"
+      INFERENCE_RATE_LIMIT_REFILL_PER_SECOND: "0.01"
+      INFERENCE_ROLLOUT_OBSERVATION_SECONDS: "10"
+      NOTIFICATION_CRYPTO_SECRET_FILE: /tmp/notification-master.key
+      NOTIFICATION_ACCEPTANCE_CA_FILE: /tmp/notification-acceptance-ca.pem
+      NOTIFICATION_RECEIVER_CERTIFICATE_FILE: /tmp/notification-receiver-cert.pem
+      NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE: /tmp/notification-receiver-key.pem
+      COMPOSE_FILE: docker-compose.yml:docker-compose.acceptance.yml
+      COMPOSE_PROJECT_NAME: ci-inference-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v5
+      - name: Generate notification test key
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from cryptography.fernet import Fernet
+
+          target = Path(os.environ["NOTIFICATION_CRYPTO_SECRET_FILE"])
+          target.write_bytes(Fernet.generate_key() + b"\n")
+          target.chmod(0o600)
+          PY
+      - name: Generate notification receiver certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+            -subj "/CN=qyapi.weixin.qq.com" \
+            -addext "subjectAltName=DNS:qyapi.weixin.qq.com,DNS:notification-receiver" \
+            -keyout "$NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE" \
+            -out "$NOTIFICATION_RECEIVER_CERTIFICATE_FILE"
+          cp "$NOTIFICATION_RECEIVER_CERTIFICATE_FILE" "$NOTIFICATION_ACCEPTANCE_CA_FILE"
+          chmod 600 "$NOTIFICATION_ACCEPTANCE_CA_FILE" "$NOTIFICATION_RECEIVER_CERTIFICATE_FILE" "$NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE"
       - name: Validate production composition
-        run: docker compose config --quiet
+        run: docker compose --project-name "$COMPOSE_PROJECT_NAME" config -q
       - name: Build experiment services
         shell: bash
         run: |
           set -euo pipefail
           for attempt in {1..3}; do
-            if docker compose build backend worker mlflow tensorboard-gateway inference-runtime; then
+            if docker compose --project-name "$COMPOSE_PROJECT_NAME" build backend worker tensorboard-gateway inference-runtime; then
               exit 0
             fi
             if [ "$attempt" -lt 3 ]; then
@@ -309,36 +413,90 @@ jobs:
           done
           exit 1
       - name: Start production experiment stack
-        run: docker compose up --detach --wait postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler
+        run: docker compose --project-name "$COMPOSE_PROJECT_NAME" up --detach --wait postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler mailpit notification-receiver notification-proxy
       - name: Verify migrations and real experiment lifecycle
         run: |
-          docker compose exec -T backend alembic upgrade head
-          docker compose exec -T backend alembic check
-          docker compose exec -T \
+          set -euo pipefail
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T backend alembic upgrade 20260720_09_production_inference
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T backend alembic current
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T backend alembic check
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T \
             -e RUN_EXPERIMENT_INTEGRATION=1 \
             backend python -m unittest tests.test_experiment_production_stack -v
-          docker compose exec -T \
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T \
             -e RUN_INFERENCE_INTEGRATION=1 \
-            backend python -m unittest tests.test_inference_production_stack -v
+            -e INFERENCE_INTEGRATION_CONTEXT_PATH=/tmp/inference-lifecycle-context.json \
+            backend python -m unittest tests.test_inference_production_stack.TestInferenceProductionStack -v
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T \
+            -e RUN_NOTIFICATION_INTEGRATION=1 \
+            -e RUN_NOTIFICATION_EXTERNAL_RECEIVER_INTEGRATION=1 \
+            backend python -m unittest tests.test_notification_production_stack -v
           curl --fail --silent http://127.0.0.1:8000/api/ready
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" cp \
+            backend:/tmp/inference-lifecycle-context.json \
+            "$RUNNER_TEMP/inference-lifecycle-context.json"
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" stop redis inference-runtime
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T \
+            -e RUN_INFERENCE_INTEGRATION=1 \
+            -e INFERENCE_INTEGRATION_CONTEXT_PATH=/tmp/inference-lifecycle-context.json \
+            backend python -m unittest tests.test_inference_production_stack.TestInferenceProductionRedisOutage -v
       - name: Collect redacted experiment failure evidence
         if: failure()
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/experiment-evidence"
-          docker compose ps > "$RUNNER_TEMP/experiment-evidence/compose-ps.txt" 2>&1 || true
-          docker compose logs --no-color backend worker scheduler mlflow tensorboard-gateway inference-runtime migrate > "$RUNNER_TEMP/experiment-evidence/services.log" 2>&1 || true
+          set -euo pipefail
+          INFERENCE_EVIDENCE_RAW="$(mktemp -d "$RUNNER_TEMP/experiment-evidence-raw.XXXXXX")"
+          INFERENCE_EVIDENCE_REDACTED="$RUNNER_TEMP/experiment-evidence"
+
+          cleanup_experiment_evidence() {
+            rm -rf "$INFERENCE_EVIDENCE_RAW" "$INFERENCE_EVIDENCE_REDACTED"
+          }
+          trap cleanup_experiment_evidence EXIT
+
+          rm -rf "$INFERENCE_EVIDENCE_REDACTED"
+          mkdir -p "$INFERENCE_EVIDENCE_REDACTED"
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" ps > "$INFERENCE_EVIDENCE_RAW/compose-ps.txt" 2>&1 || true
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" logs --no-color backend worker scheduler mlflow tensorboard-gateway inference-runtime migrate > "$INFERENCE_EVIDENCE_RAW/services.log" 2>&1 || true
+          INFERENCE_CREATED_TEST_KEY=""
+          INFERENCE_INTEGRATION_CONTEXT_PATH="$RUNNER_TEMP/inference-lifecycle-context.json"
+          if [ -f "$INFERENCE_INTEGRATION_CONTEXT_PATH" ]; then
+            INFERENCE_CREATED_TEST_KEY="$(sed -n 's/.*"plaintext": *"\([^"]*\)".*/\1/p' "$INFERENCE_INTEGRATION_CONTEXT_PATH")"
+          fi
+          INFERENCE_NOTIFICATION_MASTER_KEY=""
+          if [ -f "$NOTIFICATION_CRYPTO_SECRET_FILE" ]; then
+            INFERENCE_NOTIFICATION_MASTER_KEY="$(cat "$NOTIFICATION_CRYPTO_SECRET_FILE")"
+          fi
+          if grep -REal 'ci-postgres-password|ci-minio-root-password|ci-experiment-secret-key|ci-tensorboard-session-secret|ci-inference-internal-secret' "$INFERENCE_EVIDENCE_RAW"; then
+            echo 'Sensitive value found in experiment evidence.'
+            rm -rf "$INFERENCE_EVIDENCE_RAW" "$INFERENCE_EVIDENCE_REDACTED"
+            exit 1
+          fi
+          if grep -REal 'mli_[A-Za-z0-9_-]+' "$INFERENCE_EVIDENCE_RAW"; then
+            echo 'Sensitive value found in experiment evidence.'
+            rm -rf "$INFERENCE_EVIDENCE_RAW" "$INFERENCE_EVIDENCE_REDACTED"
+            exit 1
+          fi
+          if [ -n "$INFERENCE_CREATED_TEST_KEY" ] && grep -RFl -- "$INFERENCE_CREATED_TEST_KEY" "$INFERENCE_EVIDENCE_RAW"; then
+            echo 'Sensitive value found in experiment evidence.'
+            rm -rf "$INFERENCE_EVIDENCE_RAW" "$INFERENCE_EVIDENCE_REDACTED"
+            exit 1
+          fi
+          if [ -n "$INFERENCE_NOTIFICATION_MASTER_KEY" ] && grep -RFl -- "$INFERENCE_NOTIFICATION_MASTER_KEY" "$INFERENCE_EVIDENCE_RAW"; then
+            echo 'Sensitive value found in experiment evidence.'
+            rm -rf "$INFERENCE_EVIDENCE_RAW" "$INFERENCE_EVIDENCE_REDACTED"
+            exit 1
+          fi
+          cp "$INFERENCE_EVIDENCE_RAW"/* "$INFERENCE_EVIDENCE_REDACTED"/
           sed -i \
             -e 's/ci-postgres-password/[redacted]/g' \
             -e 's/ci-minio-root-password/[redacted]/g' \
             -e 's/ci-experiment-secret-key-with-at-least-32-characters/[redacted]/g' \
             -e 's/ci-tensorboard-session-secret-at-least-32-bytes/[redacted]/g' \
             -e 's/ci-inference-internal-secret-at-least-32-bytes/[redacted]/g' \
-            "$RUNNER_TEMP/experiment-evidence"/*
-          if grep -REni 'ci-postgres-password|ci-minio-root-password|ci-experiment-secret-key|ci-tensorboard-session-secret|ci-inference-internal-secret' "$RUNNER_TEMP/experiment-evidence"; then
-            rm -rf "$RUNNER_TEMP/experiment-evidence"
-            exit 1
-          fi
+            -E 's/mli_[A-Za-z0-9_-]+/[redacted]/g' \
+            "$INFERENCE_EVIDENCE_REDACTED"/*
+          rm -rf "$INFERENCE_EVIDENCE_RAW"
+          trap - EXIT
       - name: Upload experiment failure evidence
         if: failure()
         uses: actions/upload-artifact@v4
@@ -348,4 +506,252 @@ jobs:
           if-no-files-found: ignore
       - name: Stop production experiment stack
         if: always()
-        run: docker compose down --volumes --remove-orphans
+        shell: bash
+        run: |
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" down --volumes --remove-orphans
+          rm -f "$RUNNER_TEMP/inference-lifecycle-context.json"
+          rm -f "$NOTIFICATION_CRYPTO_SECRET_FILE"
+          rm -f "$NOTIFICATION_ACCEPTANCE_CA_FILE" "$NOTIFICATION_RECEIVER_CERTIFICATE_FILE" "$NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE"
+
+  week11-12-verification:
+    name: Week 11-12 verification (Ubuntu)
+    runs-on: ubuntu-22.04
+    needs: [quality, browser-acceptance, production-integration, experiment-integration]
+    timeout-minutes: 30
+    env:
+      ML_PLATFORM_EVIDENCE_DIR: ${{ github.workspace }}/temp_test/week11-12
+      POSTGRES_DB: ml_platform
+      POSTGRES_USER: ml_platform
+      POSTGRES_PASSWORD: ci-postgres-password
+      DATABASE_URL: postgresql+psycopg://ml_platform:ci-postgres-password@postgres:5432/ml_platform
+      SECRET_KEY: ci-week12-security-secret-key-with-at-least-32-characters
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      REDIS_EVENTS_URL: redis://redis:6379/1
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: ci-minio-root-password
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: ci-minio-root-password
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg://ml_platform:ci-postgres-password@postgres:5432/mlflow
+      MLFLOW_ARTIFACT_ROOT: s3://ml-platform/mlflow
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      TENSORBOARD_SESSION_SECRET: ci-week12-security-tensorboard-secret-at-least-32-bytes
+      INFERENCE_INTERNAL_SECRET: ci-week12-security-inference-secret-at-least-32-bytes
+      NOTIFICATION_CRYPTO_SECRET_FILE: /tmp/week12-security-notification-master.key
+      ACCEPTANCE_SOURCE_COMMIT: ${{ github.sha }}
+      WEEK12_BACKEND_IMAGE: ml-platform-backend:week11-12-${{ github.sha }}
+      WEEK12_WORKER_IMAGE: ml-platform-worker:week11-12-${{ github.sha }}
+      WEEK12_INFERENCE_IMAGE: ml-platform-inference:week11-12-${{ github.sha }}
+      WEEK12_TENSORBOARD_IMAGE: ml-platform-tensorboard:week11-12-${{ github.sha }}
+      COMPOSE_FILE: docker-compose.yml:docker-compose.week12-security-images.yml
+      COMPOSE_PROJECT_NAME: ci-week12-security-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: ml-platform/backend/requirements.txt
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ml-platform/frontend/package-lock.json
+      - name: Install backend dependencies
+        working-directory: ml-platform/backend
+        run: |
+          python -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+          python -m pip install -r requirements.txt
+      - name: Install security scanners
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "pip-audit==2.*" "bandit==1.*"
+          mkdir -p "$RUNNER_TEMP/bin"
+          trivy_archive="$RUNNER_TEMP/trivy_0.73.0_Linux-64bit.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+            --output "$trivy_archive" \
+            https://github.com/aquasecurity/trivy/releases/download/v0.73.0/trivy_0.73.0_Linux-64bit.tar.gz
+          printf '%s  %s\n' \
+            '2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b' \
+            "$trivy_archive" | sha256sum --check --strict
+          tar -xzf "$trivy_archive" -C "$RUNNER_TEMP/bin" trivy
+
+          gitleaks_archive="$RUNNER_TEMP/gitleaks_8.24.2_linux_x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+            --output "$gitleaks_archive" \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.24.2/gitleaks_8.24.2_linux_x64.tar.gz
+          printf '%s  %s\n' \
+            'fa0500f6b7e41d28791ebc680f5dd9899cd42b58629218a5f041efa899151a8e' \
+            "$gitleaks_archive" | sha256sum --check --strict
+          tar -xzf "$gitleaks_archive" -C "$RUNNER_TEMP/bin" gitleaks
+
+          trivy_version="$("$RUNNER_TEMP/bin/trivy" --version | sed -n '1s/^Version: //p')"
+          test "$trivy_version" = "0.73.0"
+          gitleaks_version="$("$RUNNER_TEMP/bin/gitleaks" version)"
+          test "$gitleaks_version" = "8.24.2"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Build production images for security scan
+        working-directory: ml-platform/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image in backend worker inference tensorboard; do
+            dockerfile="Dockerfile"
+            if [ "$image" != "backend" ]; then
+              dockerfile="Dockerfile.$image"
+            fi
+            docker build \
+              --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+              --tag "ml-platform-${image}:week11-12-${GITHUB_SHA}" \
+              -f "$dockerfile" .
+          done
+          backend_image_id="$(docker image inspect \
+            "ml-platform-backend:week11-12-${GITHUB_SHA}" \
+            --format '{{.Id}}')"
+          worker_image_id="$(docker image inspect \
+            "ml-platform-worker:week11-12-${GITHUB_SHA}" \
+            --format '{{.Id}}')"
+          inference_image_id="$(docker image inspect \
+            "ml-platform-inference:week11-12-${GITHUB_SHA}" \
+            --format '{{.Id}}')"
+          tensorboard_image_id="$(docker image inspect \
+            "ml-platform-tensorboard:week11-12-${GITHUB_SHA}" \
+            --format '{{.Id}}')"
+          {
+            echo "WEEK12_BACKEND_IMAGE_ID=${backend_image_id}"
+            echo "WEEK12_WORKER_IMAGE_ID=${worker_image_id}"
+            echo "WEEK12_INFERENCE_IMAGE_ID=${inference_image_id}"
+            echo "WEEK12_TENSORBOARD_IMAGE_ID=${tensorboard_image_id}"
+            echo "ACCEPTANCE_IMAGE_DIGEST=${backend_image_id}"
+          } >> "$GITHUB_ENV"
+      - name: Run verification tools
+        working-directory: ml-platform/backend
+        run: |
+          python -m unittest tests.test_week11_12_tools tests.test_week11_contracts tests.test_week12_security_gates tests.test_evidence_manifest -v
+      - name: Run security scans
+        working-directory: ml-platform/backend
+        continue-on-error: true
+        env:
+          ACCEPTANCE_IMAGE: ml-platform-backend:week11-12-${{ github.sha }}
+          ACCEPTANCE_ADDITIONAL_IMAGES: ml-platform-worker:week11-12-${{ github.sha }},ml-platform-inference:week11-12-${{ github.sha }},ml-platform-tensorboard:week11-12-${{ github.sha }}
+          ACCEPTANCE_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          python -m tools.security_scans all \
+            --npm-audit-exception "$GITHUB_WORKSPACE/docs/security/react-router-rsc-mode-exception.json" \
+            --output "$ML_PLATFORM_EVIDENCE_DIR/security/security.json"
+      - name: Run frozen-stack web security gate
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$ML_PLATFORM_EVIDENCE_DIR/security"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from cryptography.fernet import Fernet
+
+          target = Path(os.environ["NOTIFICATION_CRYPTO_SECRET_FILE"])
+          target.write_bytes(Fernet.generate_key() + b"\n")
+          target.chmod(0o600)
+          PY
+
+          write_missing_web_evidence() {
+            if [ -f "$ML_PLATFORM_EVIDENCE_DIR/security/web.json" ]; then
+              return
+            fi
+            python - "$ML_PLATFORM_EVIDENCE_DIR/security/web.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          output = Path(sys.argv[1])
+          output.write_text(
+              json.dumps(
+                  {
+                      "status": "failed",
+                      "gates": {
+                          "execution": {
+                              "status": "failed",
+                              "code": "WEB_SECURITY_GATE_NOT_RUN",
+                          },
+                      },
+                  },
+                  ensure_ascii=True,
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          }
+
+          cleanup() {
+            write_missing_web_evidence || true
+            docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T backend \
+              python -m tools.acceptance_environment web-context-cleanup \
+              --context /tmp/week12-web-security-context.json || true
+            docker compose --project-name "$COMPOSE_PROJECT_NAME" down --volumes --remove-orphans || true
+            rm -f "$NOTIFICATION_CRYPTO_SECRET_FILE"
+          }
+          trap cleanup EXIT
+
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" config -q
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" up --detach --wait --no-build \
+            postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler
+          verify_scanned_service_image() {
+            local service="$1"
+            local expected_image_id="$2"
+            local container_id actual_image_id actual_revision
+            container_id="$(docker compose --project-name "$COMPOSE_PROJECT_NAME" ps --all -q "$service")"
+            test -n "$container_id"
+            actual_image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
+            test "$actual_image_id" = "$expected_image_id"
+            actual_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$actual_image_id")"
+            test "$actual_revision" = "$GITHUB_SHA"
+          }
+          verify_scanned_service_image migrate "$WEEK12_BACKEND_IMAGE_ID"
+          verify_scanned_service_image backend "$WEEK12_BACKEND_IMAGE_ID"
+          verify_scanned_service_image worker "$WEEK12_WORKER_IMAGE_ID"
+          verify_scanned_service_image scheduler "$WEEK12_WORKER_IMAGE_ID"
+          verify_scanned_service_image tensorboard-gateway "$WEEK12_TENSORBOARD_IMAGE_ID"
+          verify_scanned_service_image inference-runtime "$WEEK12_INFERENCE_IMAGE_ID"
+          PYTHONPATH=ml-platform/backend python -m tools.acceptance_environment runtime-images \
+            --project-name "$COMPOSE_PROJECT_NAME" \
+            --source-commit "$GITHUB_SHA" \
+            --output "$ML_PLATFORM_EVIDENCE_DIR/security/runtime-images.json"
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T backend \
+            python -m tools.acceptance_environment environment \
+            --output /tmp/week12-environment.json
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" cp \
+            backend:/tmp/week12-environment.json \
+            "$ML_PLATFORM_EVIDENCE_DIR/environment.json"
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T backend \
+            python -m tools.acceptance_environment web-context \
+            --output /tmp/week12-web-security-context.json
+          web_status=0
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" exec -T backend \
+            python -m tools.security_scans web \
+              --base-url http://backend:8000 \
+              --context /tmp/week12-web-security-context.json \
+              --output /tmp/week12-web-security.json || web_status=$?
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" cp \
+            backend:/tmp/week12-web-security.json \
+            "$ML_PLATFORM_EVIDENCE_DIR/security/web.json" || true
+          exit "$web_status"
+      - name: Summarize security evidence
+        working-directory: ml-platform/backend
+        run: |
+          python -m tools.security_scans summarize \
+            --input-dir "$ML_PLATFORM_EVIDENCE_DIR/security" \
+            --output "$ML_PLATFORM_EVIDENCE_DIR/security/summary.json" \
+            --source-commit "${GITHUB_SHA}"
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: week11-12-verification-evidence
+          path: temp_test/week11-12
+          if-no-files-found: warn

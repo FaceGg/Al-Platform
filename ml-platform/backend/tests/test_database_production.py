@@ -38,7 +38,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20260720_10_security_notifications"
+HEAD_REVISION = "20260815_11"
+NOTIFICATION_REVISION = "20260720_10_security_notifications"
 WEEK9_TABLES = {
     "deployment_revisions",
     "deployment_targets",
@@ -304,7 +305,7 @@ class TestAlembicBaseline(TestCase):
             try:
                 inspector = inspect(db_engine)
                 business_tables = set(inspector.get_table_names()) - {"alembic_version"}
-                self.assertEqual(len(business_tables), 51)
+                self.assertEqual(len(business_tables), 56)
                 self.assertTrue(
                     {
                         "users",
@@ -422,7 +423,7 @@ class TestAlembicBaseline(TestCase):
             settings.database_url = database_url
             try:
                 command.upgrade(config, "20260720_09_production_inference")
-                command.upgrade(config, HEAD_REVISION)
+                command.upgrade(config, NOTIFICATION_REVISION)
             finally:
                 settings.database_url = original_database_url
 
@@ -438,7 +439,7 @@ class TestAlembicBaseline(TestCase):
                         text("SELECT version_num FROM alembic_version")
                     )
                 self.assertEqual(version_column["type"].length, 64)
-                self.assertEqual(revision, HEAD_REVISION)
+                self.assertEqual(revision, NOTIFICATION_REVISION)
             finally:
                 db_engine.dispose()
 
@@ -450,7 +451,7 @@ class TestAlembicBaseline(TestCase):
             settings.database_url = database_url
             try:
                 command.upgrade(config, "20260720_09_production_inference")
-                command.upgrade(config, HEAD_REVISION)
+                command.upgrade(config, NOTIFICATION_REVISION)
                 command.downgrade(config, "20260720_09_production_inference")
             finally:
                 settings.database_url = original_database_url

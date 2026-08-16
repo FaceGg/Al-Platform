@@ -2294,10 +2294,12 @@ class SecurityGateTests(unittest.TestCase):
             result["gates"]["frontend_dependencies"]["scanner_returncode"],
             1,
         )
-        self.assertIn(
-            Path(run.call_args.args[0][0]).name.casefold(),
-            {"npm", "npm.cmd"},
-        )
+        npm_calls = [
+            call
+            for call in run.call_args_list
+            if Path(call.args[0][0]).name.casefold() in {"npm", "npm.cmd"}
+        ]
+        self.assertEqual(len(npm_calls), 1)
 
     def test_run_all_does_not_expose_a_pip_audit_exception_override(self):
         self.assertNotIn("pip_audit_exception", inspect.signature(run_all).parameters)

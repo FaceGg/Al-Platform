@@ -13,7 +13,7 @@ const weekTestFiles: Record<number, string[]> = {
   ],
   2: [
     "./api/workflowVersions.test.ts",
-    "./pages/WorkspacePage.test.ts",
+    "./pages/WorkspacePage.test.tsx",
     "./stores/workflowStore.test.ts",
   ],
   3: [

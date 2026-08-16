@@ -5,6 +5,8 @@ sys.path.insert(0, ".")
 from fastapi.testclient import TestClient
 from app.main import app
 from app.database import Base, engine
+from app.database import SessionLocal
+from app.models.user import User
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
@@ -22,6 +24,10 @@ class TestUsersAPI(unittest.TestCase):
         r = client.post("/api/auth/register", json={
             "username": "admin", "password": "admin123"
         })
+        with SessionLocal() as db:
+            administrator = db.query(User).filter(User.username == "admin").one()
+            administrator.role = "admin"
+            db.commit()
         cls.admin_h = admin_login()
 
     def test_01_health_accessible_without_auth(self):

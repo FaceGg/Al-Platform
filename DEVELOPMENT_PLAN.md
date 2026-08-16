@@ -1779,3 +1779,13 @@
 - 影响范围：仅 Week 12 安全证据生成、汇总与 manifest 校验及相应回归；不改变业务 API、模型发布、通知通道、Compose 运行配置、Dockerfile 或依赖 pin。
 - 预防措施：scanner receipt 必须同时绑定命令、执行根、原始 artifact、实际 source/config 字节和执行上下文；所有影响 summary/manifest 的文件必须在读取前以安全文件规则验证，并在每个下游验证边界重算 binding，不能仅信任先前的 aggregate。
 - 遗留事项：最新未提交 source 会使此前四镜像 provenance、Trivy receipt 与运行态证据过期。后续仍需对提交后的新 HEAD 重建四生产镜像、运行四份 Trivy HIGH/CRITICAL、完整 `tools.security_scans` 与最终 manifest、完整后端/前端/Chromium 回归、frozen Compose、固定 4 vCPU/8 GiB 三轮性能、PostgreSQL/MinIO 备份恢复、真实 N-1 升降级、四角色/四通知通道 Web 验收、远程 CI、推送及 main 合并；这些完成前不得将 Week 9–12 标记为完成。
+
+### 2026-08-16：第 9-12 周高危合并回归本地收口
+
+- 当前状态：高危项的代码修复和本地完整回归已完成；第 9 至第 12 周仍保持“进行中”，直到 PR #17 的最新提交通过全部远端 CI 并合并到 `main`。旧 run `31869871802` 的失败不能作为当前通过证据。
+- 问题现象：主线合并后，完整 CI workflow 被缩减且 job-level `env` 使用了不允许的 `runner.temp` 上下文；生产与实验集成缺少通知加密密钥/证书。代码侧同时出现两个 Alembic head、点焊路由和恢复逻辑遗漏、平台用户审计与角色边界回退、管理员绕过项目成员隔离，以及 React Router 例外扫描对测试写法和 namespace import 的误报。
+- 已确认根因：跨分支合并只处理了文本冲突，没有重新验证 workflow 表达式上下文、迁移 DAG、路由注册、权限矩阵和审计动作的组合合同；测试夹具及前端导入形状也没有同步到合并后的安全扫描规则。
+- 解决方法：恢复生产、实验、通知、安全和 Week 11-12 完整 CI jobs，改用 `/tmp` 受控路径并在 job 内生成权限为 `0600` 的 Fernet key 与短期证书；新增 `20260815_11` merge revision 合并通知与点焊迁移 head；恢复点焊模型/路由、孤儿项目和本地质量任务修复、平台用户角色校验/自操作阻断/审计、通知权限，并保持平台管理员仅在全局 dashboard 拥有全局视图而不绕过项目成员隔离。前端测试改用真实 Router/JSX，抽离可视化节点判断并使用具名 import，保留 React Router 例外的 fail-closed 范围。
+- 验证方式：`tests.test_week12_security_gates` 为 `153/153`；`run_suite.py` 最终为 `111/111` 模块；前端 Vitest 为 `43/43` 文件、`203/203` 用例，生产构建通过；`tests.test_ci_workflow` 为 `33/33`；`alembic heads` 仅返回 `20260815_11 (head)`；`git diff --check` 通过。首次完整后端回归暴露 5 个模块失败，修复后第二轮仅发现 stale Gitleaks binding 的错误测试期望，恢复 `SECURITY_EVIDENCE_INVALID` 后安全模块和第三轮完整后端回归均通过。
+- 提交边界：只提交 Week 9-12 高危修复、对应回归和本记录；`tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 保持未跟踪且不推送。
+- 遗留事项：推送新提交到 `codex/week9-12-mlops-core`，等待 PR #17 的全部 GitHub Actions jobs 完成；任一 job 失败必须按精确日志继续修复。全部通过后方可合并到 `main` 并验证远端 main 包含合并提交。

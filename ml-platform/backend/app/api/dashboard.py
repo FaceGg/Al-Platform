@@ -28,10 +28,11 @@ def get_dashboard_stats(
     operators = OperatorRegistry.list_all()
     access_service = ProjectAccessService()
     is_platform_admin = access_service.is_platform_admin(db, current_user.id)
-    accessible_projects = access_service.accessible_project_query(
-        db,
-        current_user.id,
-    ).all()
+    accessible_projects = (
+        db.query(Project).all()
+        if is_platform_admin
+        else access_service.accessible_project_query(db, current_user.id).all()
+    )
     accessible_project_ids = [project.id for project in accessible_projects]
 
     datasets_query = db.query(Artifact).filter(Artifact.type == "dataset")

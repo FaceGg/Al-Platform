@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from redis import asyncio as redis_async
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
@@ -21,6 +22,7 @@ from app.websocket.manager import manager
 from app.services.project_access import ProjectAccessError
 from app.services.resource_access import ResourceAccessError
 from app.services.notification_outbox import OutboxDomainEventRecorder
+from app.services.spot_weld_quality import recover_orphaned_local_quality_runs
 
 # Import all operators so they register themselves
 # Import models (must happen before create_all)
@@ -35,6 +37,7 @@ from app.models import platform_models as pm  # noqa: F401 (register models)
 from app.models import access as access_models  # noqa: F401 (register models)
 from app.models import platform_audit as platform_audit_models  # noqa: F401 (register models)
 from app.models import notifications as notification_models  # noqa: F401 (register models)
+from app.models import spot_weld_quality as spot_weld_quality_models  # noqa: F401 (register models)
 
 import app.operators.io_operators  # noqa: F401
 import app.operators.processing  # noqa: F401
@@ -65,6 +68,7 @@ from app.api import model_registry as model_registry_api
 from app.api import inference_production as inference_production_api
 from app.api import platform_security as platform_security_api
 from app.api import notifications as notifications_api
+from app.api import spot_weld_quality as spot_weld_quality_api
 
 
 def initialize_database(app_settings=None, db_engine=None) -> None:
@@ -159,12 +163,48 @@ def ensure_default_admin(session_factory) -> None:
         db.close()
 
 
+def repair_orphaned_project_owners(db) -> int:
+    """Transfer legacy projects without a valid owner to the platform admin."""
+    from app.models.project import Project
+    from app.models.user import User
+
+    admin = db.query(User).filter(
+        User.username == "admin",
+        User.role == "admin",
+    ).first()
+    if admin is None:
+        return 0
+
+    orphaned_project_ids = [
+        project_id
+        for (project_id,) in db.query(Project.id).outerjoin(
+            User,
+            Project.owner_id == User.id,
+        ).filter(or_(
+            Project.owner_id.is_(None),
+            User.id.is_(None),
+        )).all()
+    ]
+    if not orphaned_project_ids:
+        return 0
+
+    db.query(Project).filter(Project.id.in_(orphaned_project_ids)).update(
+        {Project.owner_id: admin.id},
+        synchronize_session=False,
+    )
+    db.commit()
+    return len(orphaned_project_ids)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Create database tables on startup and clean up on shutdown."""
     app_settings, db_engine, session_factory = _runtime_dependencies(app)
     initialize_database(app_settings, db_engine)
     ensure_default_admin(session_factory)
+    with session_factory() as db:
+        repair_orphaned_project_owners(db)
+        recover_orphaned_local_quality_runs(db)
     # Capture event loop for background thread WebSocket broadcast
     import app.api.runs as runs_mod
     runs_mod._main_loop = asyncio.get_running_loop()
@@ -249,6 +289,7 @@ app.include_router(model_registry_api.router)
 app.include_router(inference_production_api.router)
 app.include_router(platform_security_api.router)
 app.include_router(notifications_api.router)
+app.include_router(spot_weld_quality_api.router)
 
 
 @app.get("/api/health")

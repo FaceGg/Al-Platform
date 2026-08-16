@@ -451,7 +451,7 @@ class TestProjectWriteAuditCompleteness(unittest.TestCase):
         "datasets": {
             "dataset.upload", "dataset.batch_upload", "dataset.import_zip",
         },
-        "experiments": {"experiment.create"},
+        "experiments": {"experiment.create", "experiment.delete"},
         "training": {
             "training_job.start", "training_job.stop", "training_job.resume",
             "training_job.automl_start", "training_job.delete",
@@ -470,11 +470,12 @@ class TestProjectWriteAuditCompleteness(unittest.TestCase):
             "agent_task.delete", "agent_task.create", "agent_task.batch_delete",
         },
         "model_registry": {
-            "registered_model.create", "model_artifact.upload",
+            "registered_model.create", "registered_model.delete",
+            "model_artifact.upload",
             "model_version.register", "model_version.approve",
             "model_version.reject", "model_version.archive",
             "inference_deployment.create", "inference_deployment.start",
-            "inference_deployment.stop",
+            "inference_deployment.stop", "inference_deployment.delete",
             "inference_rollout.create", "inference_rollout.pause",
             "inference_rollout.resume", "inference_rollout.rollback",
             "inference_api_key.create", "inference_api_key.rotate",

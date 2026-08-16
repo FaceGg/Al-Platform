@@ -31,6 +31,10 @@ class TestDashboardAPI(unittest.TestCase):
             "/api/auth/register",
             json={"username": "admin", "password": "admin123"},
         )
+        with SessionLocal() as db:
+            administrator = db.query(User).filter(User.username == "admin").one()
+            administrator.role = "admin"
+            db.commit()
         cls.admin_headers = login("admin", "admin123")
 
     def test_01_dashboard_stats(self):
