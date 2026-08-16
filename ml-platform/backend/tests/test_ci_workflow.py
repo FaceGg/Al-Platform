@@ -730,6 +730,16 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         )
         self.assertEqual(scheduler["depends_on"]["redis"]["condition"], "service_healthy")
 
+    def test_mlflow_allows_only_the_internal_service_and_loopback_hosts(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+        mlflow = compose["services"]["mlflow"]
+
+        self.assertIn('--allowed-hosts "$$MLFLOW_ALLOWED_HOSTS"', mlflow["command"][2])
+        self.assertEqual(
+            mlflow["environment"]["MLFLOW_ALLOWED_HOSTS"],
+            "${MLFLOW_ALLOWED_HOSTS:-mlflow:5000,localhost:*,127.0.0.1:*}",
+        )
+
     def test_experiment_ci_starts_scheduler_service(self):
         parsed = yaml.safe_load(self.workflow)
         steps = parsed["jobs"]["experiment-integration"]["steps"]

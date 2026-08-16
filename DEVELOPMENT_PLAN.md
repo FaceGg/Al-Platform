@@ -1822,3 +1822,5 @@
 - 预防措施：所有由 runner 生成并挂载给非 root 容器的 secret、证书和私钥必须共享 owner/mode/consumer UID/cleanup 合同；Compose 启动失败的 evidence 必须包含所有被 `depends_on` 或 healthcheck 阻断的服务日志。
 
 补充：修复 TLS 文件 owner 后，run `31921375165` 已证明 `notification-receiver` 为 healthy，生产集成仍通过；实验栈随后因 `notification-proxy` 显式禁用 healthcheck 而被 `docker compose up --wait` 拒绝。已为 proxy 增加 UID 1000 容器内的 `127.0.0.1:3128` TCP listener healthcheck，聚焦 CI/receiver 合同 `37/37` 通过，等待新远端 run 验证。
+
+补充：run `31921710113` 已证明 receiver 和 proxy 均通过 `docker compose up --wait`，实验验证进入真实 MLflow 生命周期后因 `Host: mlflow:5000` 未在 MLflow 3.15 allowlist 中而返回 403。生产 Compose 已显式传入可配置的 `MLFLOW_ALLOWED_HOSTS`，默认仅允许内部 `mlflow:5000` 与 localhost/127.0.0.1 健康检查；CI 合同 `36/36` 通过，等待新远端 run 验证。
