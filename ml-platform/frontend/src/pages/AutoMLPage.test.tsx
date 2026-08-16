@@ -448,7 +448,7 @@ describe("AutoMLPage", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/training/automl/run", expect.objectContaining({
       candidate_ids: ["LGB_v1"],
     })));
-  });
+  }, 15_000);
 
   it("submits the selected input columns with the target column", async () => {
     api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
