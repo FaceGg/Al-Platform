@@ -78,7 +78,10 @@ class TestReconcileInferenceDeploymentsTask(unittest.TestCase):
             result = inference_tasks.reconcile_inference_deployments()
 
             builder.assert_called_once()
-            fake_service.reconcile.assert_called_once_with(fake_session)
+            fake_service.reconcile.assert_called_once_with(
+                fake_session,
+                include_rollout_aliases=False,
+            )
             self.assertEqual(result, {"loaded": 1, "unloaded": 0, "failed": 0})
 
     def test_task_name_is_namespaced(self):

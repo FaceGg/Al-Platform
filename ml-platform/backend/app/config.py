@@ -1,11 +1,12 @@
 """Application configuration via pydantic-settings."""
 
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-from pydantic import Field, PrivateAttr, SecretStr, ValidationError, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from cryptography.fernet import Fernet
+from pydantic import Field, PrivateAttr, SecretStr, ValidationError, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
@@ -99,6 +100,29 @@ class Settings(BaseSettings):
     inference_conversion_timeout_seconds: int = Field(default=120, ge=10, le=600)
     inference_load_timeout_seconds: int = Field(default=60, ge=5, le=300)
     inference_predict_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    inference_rate_limit_capacity: int = Field(default=100, ge=1, le=100000)
+    inference_rate_limit_refill_per_second: float = Field(
+        default=10.0, gt=0, le=10000
+    )
+    inference_log_retention_days: int = Field(default=30, ge=1, le=365)
+    inference_rollout_observation_seconds: int = Field(default=60, ge=10, le=3600)
+
+    notification_master_key: SecretStr | None = Field(default=None, exclude=True)
+    notification_master_key_file: str | None = Field(
+        default=None, repr=False, exclude=True
+    )
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: SecretStr | None = Field(default=None, exclude=True)
+    smtp_password: SecretStr | None = Field(default=None, exclude=True)
+    smtp_from: str | None = None
+    smtp_use_tls: bool = True
+    notification_max_payload_bytes: int = Field(default=65536, ge=1024, le=1048576)
+    notification_delivery_max_attempts: int = Field(default=5, ge=1, le=20)
+    notification_webhook_timeout_seconds: int = Field(default=10, ge=1, le=30)
+    notification_webhook_allowlist: Annotated[list[str], NoDecode] = Field(
+        default_factory=list
+    )
 
     # LLM / RAG settings
     llm_api_url: str = Field(
@@ -114,6 +138,7 @@ class Settings(BaseSettings):
     _resolved_minio_secret_key: SecretStr | None = PrivateAttr(default=None)
     _resolved_tensorboard_session_secret: SecretStr | None = PrivateAttr(default=None)
     _resolved_inference_internal_secret: SecretStr | None = PrivateAttr(default=None)
+    _resolved_notification_master_key: SecretStr | None = PrivateAttr(default=None)
 
     @property
     def resolved_secret_key(self) -> SecretStr:
@@ -135,6 +160,19 @@ class Settings(BaseSettings):
     def resolved_inference_internal_secret(self) -> SecretStr | None:
         return self._resolved_inference_internal_secret
 
+    @property
+    def resolved_notification_master_key(self) -> SecretStr | None:
+        return self._resolved_notification_master_key
+
+    @field_validator("notification_webhook_allowlist", mode="before")
+    @classmethod
+    def normalize_notification_webhook_allowlist(cls, value):
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
     @model_validator(mode="after")
     def validate_runtime(self) -> "Settings":
         resolved_secret = self._resolve_secret_pair(
@@ -153,6 +191,9 @@ class Settings(BaseSettings):
         )
         self._resolved_inference_internal_secret = self._resolve_secret_pair(
             "inference_internal_secret", "inference_internal_secret_file"
+        )
+        self._resolved_notification_master_key = self._resolve_secret_pair(
+            "notification_master_key", "notification_master_key_file"
         )
 
         if self.app_mode == "production":
@@ -224,6 +265,14 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Production inference internal secret must contain at least 32 characters"
             )
+        if not self._has_secret(self.resolved_notification_master_key):
+            raise ValueError("Production mode requires NOTIFICATION_MASTER_KEY")
+        try:
+            Fernet(
+                self.resolved_notification_master_key.get_secret_value().encode("ascii")
+            )
+        except (UnicodeEncodeError, ValueError) as error:
+            raise ValueError("Production NOTIFICATION_MASTER_KEY must be a valid Fernet key") from error
 
         jwt_secret = self.resolved_secret_key.get_secret_value()
         if jwt_secret == DEFAULT_SECRET_KEY or len(jwt_secret) < 32:
@@ -306,6 +355,24 @@ class Settings(BaseSettings):
             "inference_conversion_timeout_seconds": self.inference_conversion_timeout_seconds,
             "inference_load_timeout_seconds": self.inference_load_timeout_seconds,
             "inference_predict_timeout_seconds": self.inference_predict_timeout_seconds,
+            "inference_rate_limit_capacity": self.inference_rate_limit_capacity,
+            "inference_rate_limit_refill_per_second": self.inference_rate_limit_refill_per_second,
+            "inference_log_retention_days": self.inference_log_retention_days,
+            "inference_rollout_observation_seconds": self.inference_rollout_observation_seconds,
+            "notification_master_key_configured": self._has_secret(
+                self.resolved_notification_master_key
+            ),
+            "smtp_host_configured": bool(self.smtp_host and self.smtp_host.strip()),
+            "smtp_username_configured": self._has_secret(self.smtp_username),
+            "smtp_password_configured": self._has_secret(self.smtp_password),
+            "smtp_from_configured": bool(self.smtp_from and self.smtp_from.strip()),
+            "smtp_use_tls": self.smtp_use_tls,
+            "notification_max_payload_bytes": self.notification_max_payload_bytes,
+            "notification_delivery_max_attempts": self.notification_delivery_max_attempts,
+            "notification_webhook_timeout_seconds": self.notification_webhook_timeout_seconds,
+            "notification_webhook_allowlist_count": len(
+                self.notification_webhook_allowlist
+            ),
             "jwt_secret_configured": self._has_secret(self.resolved_secret_key),
             "algorithm": self.algorithm,
             "access_token_expire_minutes": self.access_token_expire_minutes,

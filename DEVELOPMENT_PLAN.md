@@ -92,13 +92,13 @@
 | 第 8 周 | 已完成 | 模型注册与基础推理 | ONNX 注册中心、独立推理运行时、运维 UI、生产 Compose 与远程验收全部完成 | 模型注册中心、基础推理服务 |
 | 第 9 周 | 进行中 | 推理服务生产化 | 已完成范围审计并确认多版本发布、滚动升级、回滚、API 密钥、限流、服务日志、运行指标和模型卡设计 | 生产级推理服务、版本发布回滚 |
 | 第 10 周 | 进行中 | 权限、审计与通知 | 已确认复用第 7 周项目角色与审计，补齐资源越权防护、平台安全审计及站内、企业微信、邮件、通用 Webhook 通知 | 权限矩阵、审计日志、告警通知 |
-| 第 11 周 | 进行中 | 系统联调与性能优化 | 已开始独立性能工具、固定环境基线、备份升级夹具和联调验收设计；最终测量等待第 9-10 周接口冻结 | 全链路版本、性能基线、问题清单 |
-| 第 12 周 | 进行中 | MLOps 核心版验收 | 已开始安全、备份恢复、升级、E2E 和证据清单设计；最终验收等待第 9-11 周门禁通过 | 企业 MLOps 核心版、验收报告 |
+| 第 11 周 | 进行中 | 系统联调与性能优化 | 工具/恢复回归、N-1 契约和隔离 WSL 生产栈已验证；固定 4 vCPU/8 GiB 性能基线和真实 N-1 升级仍待执行 | 全链路版本、性能基线、问题清单 |
+| 第 12 周 | 进行中 | MLOps 核心版验收 | 安全/冻结契约/CI 清单与受控通知栈已验证；完整 Chromium、固定环境性能和最终证据清单仍待执行 | 企业 MLOps 核心版、验收报告 |
 | 第 13 周 | 未开始 | Kubernetes 基础接入 | 集群、命名空间、资源组、节点发现、访问凭据和连通性检查 | 集群管理基础、资源发现 API |
 | 第 14 周 | 未开始 | Kubernetes 执行器 | Job/Pod 提交、状态同步、日志、取消、超时和垃圾回收 | Kubernetes Executor 运行闭环 |
 | 第 15 周 | 未开始 | Notebook、镜像与 GPU | JupyterLab、VS Code、镜像目录、在线构建、GPU 规格和节点调度 | 在线开发、镜像管理、GPU 调度 |
 | 第 16 周 | 未开始 | 多集群与资源治理 | 多集群路由、存储挂载、资源配额、集群/节点/Pod/GPU 监控 | 云原生版、多集群资源管理 |
-| 第 17 周 | 进行中 | 数据探索与标注 | 已实现点焊数据标注、自动/手动标签、导出回流；本次补齐实时进度、终态任务删除和运行规则编辑，SQL Lab、通用数据探索与多模态标注仍待实施 | 数据探索、标注与训练数据闭环 |
+| 第 17 周 | 未开始 | 数据探索与标注 | SQL Lab、数据探索、质量报告、多模态标注、审核和数据回流 | 数据探索、标注与训练数据闭环 |
 | 第 18 周 | 未开始 | RAG 与工业智能体 | 文档解析、Embedding、召回重排、引用、权限、工具调用和人工审核 | 生产级 RAG、工业智能体闭环 |
 | 第 19 周 | 未开始 | LLM 网关与 AIHub | 模型路由、密钥、配额、限速、监控和统一资产目录 | LLM 网关、AIHub、一键开发部署 |
 | 第 20 周 | 未开始 | 全量验收与交付 | 全链路 E2E、性能、安全、备份恢复、升级、培训和文档 | 全功能版、验收报告、交付资料 |
@@ -118,8 +118,28 @@
 - 第 5 周生产基础设施远程证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
 - 第 7 周远程验收证据为 [Actions Run 29667952189](https://github.com/FaceGg/Al-Platform/actions/runs/29667952189)。
 - 第 8 周最终远程验收为 [Actions Run 29714469437](https://github.com/FaceGg/Al-Platform/actions/runs/29714469437)，Ubuntu、Windows、生产集成、实验集成和 Chromium acceptance 全部通过；合并提交为 `ba3ca98`。
-- 第 9 至第 12 周已完成并行范围审计和设计确认，正式规格为 `docs/superpowers/specs/2026-07-20-week9-12-mlops-core-design.md`；实施计划和生产代码尚未开始。
+- 第 9 至第 12 周已完成并行范围审计和设计确认，正式规格为 `docs/superpowers/specs/2026-07-20-week9-12-mlops-core-design.md`。第 9 周 Task 1-10 已完成本地实现、测试、Chromium 和验收文档；Task 11 的本地 WSL 生产栈已通过，远程 CI 和最终全量证据仍未完成。第 10 周安全/通知代码与第 11-12 周最终工具继续按依赖推进。
 - 第 11 周最终性能结论依赖第 9-10 周接口、Schema 和发布行为冻结；第 12 周最终验收依赖第 9-11 周门禁通过，不得因并行启动提前标记完成。
+
+### 2026-07-27：第 9 周 Task 10 生产栈门禁与 Chromium 验收完成
+
+- 开发内容：补齐隔离 Compose 项目、生产推理环境变量、迁移/生产生命周期测试、Redis outage 门禁、runtime 重启/回滚测试、脱敏失败证据扫描和模型推理 Chromium 发布流程；模型注册服务在 `autoflush=False` 下显式 flush 版本后再生成 ModelCard。
+- 问题现象：模型版本尚未 flush 时，模型卡服务在 SQLAlchemy `autoflush=False` 会拿不到版本 ID；前端全量测试在与 Vite build 并行执行时曾有一个 15 秒测试超时；默认 Windows `python` 别名使 Playwright webServer 以 9009 退出。
+- 根因：注册服务依赖隐式 autoflush；并行构建造成本机资源竞争；WindowsApps 占位解释器不是真实 Python。
+- 解决结果：两个注册路径均在 ModelCard 创建前显式 `db.flush()` 并加入回归；拆开复跑后前端恢复全绿；E2E 使用 Miniconda Python，Playwright 配置、fixture 与 CI 保留真实 interpreter 调用，不增加测试绕过。
+- 验证方式：Week 8 `7/7`、Week 9 `7/7`、Task 10 focused backend `29` 项、前端 `19` 文件 `64` 项、生产构建、`compileall`、`git diff --check`、Chromium `3/3` 通过。Docker 未安装，生产 Compose integration 仍显式 skip，待远程 CI。
+- 未完成：Week 9 Task 11 的远程生产栈、远程 CI、完整证据归档及最终周状态；Week 10-12 继续按冻结依赖推进。
+- 预防措施：ORM 生成依赖实体主键时显式 flush；CPU 密集构建与测试分开执行；Windows E2E 文档和 CI 固定可用 Python 解释器；本地 skip 与远程生产通过必须分开记录。
+
+### 2026-07-27：第 9 周 Task 11 本地 WSL 生产推理验收
+
+- 开发内容：在 WSL Docker Server `29.6.2` / Compose `v5.3.1` 中以独立项目启动 PostgreSQL、Redis、MinIO、Celery、MLflow、TensorBoard gateway、inference runtime 和 backend；执行 migration head/current/check、实验集成、发布/恢复/回滚/限流生命周期、Redis outage 和 readiness。
+- 问题现象：宿主 `8000` 已被现有 Week 6 栈使用；本桌面环境中分离的 WSL Compose 命令结束后会停止隔离服务，后续命令在 backend 内解析不到 `postgres`。
+- 根因：端口是已有独立 Compose 项目占用；WSL/Docker 命令生命周期会终止本次隔离项目，不能把启动与真实服务验证拆成多个 shell 调用。
+- 解决结果：临时将本次 backend 映射隔离到 `18000`，并在同一 WSL shell 内完成启动、迁移、所有真实服务测试、Redis/runtime 停止验证和 `down --volumes --remove-orphans`；临时 override 已删除，未影响现有 Week 6 栈。
+- 验证方式：Alembic current/head 为 `20260720_09_production_inference` 且 check 无新操作；实验集成 `1/1`、推理 rollout/restart/rollback/rate-limit `1/1`、Redis fail-closed `1/1` 通过；`/api/ready` 的 database、redis、celery、storage、mlflow、tensorboard、inference_runtime 全部 ready。
+- 未完成：CI 原始失败证据扫描已修复并通过 `tests.test_ci_workflow`，但远程 GitHub Actions、最终全量本地 gate、提交和合并仍未完成；第 9 周保持“进行中”。
+- 预防措施：共享 Docker 主机上始终使用唯一项目名和非冲突宿主端口；在此 WSL 环境验证 Compose 生命周期时，把启动、验证和 teardown 放在同一个 shell，并仅销毁本项目 volumes；失败证据必须先扫描 raw copy，再只上传 redacted copy。
 
 ## 6. 每周验收检查表
 
@@ -202,29 +222,6 @@
 - 影响范围：前端构建与组件测试、API 客户端、国际化类型、数据融合 Join、第一周交付文档。
 - 预防措施：CI 使用锁文件确定性安装；翻译键保持语言对象同构；组件测试集中维护浏览器 API mock；关系运算必须用代表标准语义的数据集回归。
 - 遗留事项：当前机器没有 Docker，Compose 配置和镜像构建未执行；React 测试仍有 `act` 告警；前端产物存在 2.6 MB 大包告警；24 个后端测试文件中标准 runner 固定执行 23 个，需继续统一入口。
-
-### 2026-08-02：点焊标注字段映射兼容
-
-- 当前周次：第 17 周数据标注缺陷回归。
-- 开发内容：修复自动标注和手动标注对 BOM/列名前后空格 CSV/XLSX 的字段映射失败。
-- 问题现象：两种标注入口均返回 `QUALITY_FIELD_MAPPING_INVALID`。
-- 根因：报告字段规范化只按原始列名完全匹配，未兼容导入文件常见的 UTF-8 BOM 和列名前后空格。
-- 解决方法：在点焊报告规范化阶段保留精确列名优先，并在精确列名缺失时使用去 BOM、去首尾空格的别名；增加服务和 API 双入口回归测试。
-- 验证方式：后端 `tests.test_spot_weld_features` 7/7 通过；新增 API 自动/手动标注测试通过。
-- 影响范围：点焊质量报告字段解析、数据标注创建与校验接口。
-- 预防措施：导入表头解析必须覆盖 BOM、空白和显式映射场景，错误码回归测试需覆盖自动与手动模式。
-
-### 2026-08-03：点焊标注实时进度、任务删除与规则编辑
-
-- 当前周次：第 17 周数据探索与标注。
-- 开发内容：详情页每秒同步运行和样本队列；任务列表增加终态删除；自动、手动任务详情支持修改规则；自动规则保存后重新计算全部自动标签。
-- 问题现象：详情页只刷新运行列表且周期为 1.5 秒，样本队列和进度可能滞后；24/60 条任务因后端 100 条批次直接从 0% 跳至 100%；已有删除 API 和规则配置能力未接入任务详情。
-- 根因：前端轮询没有获取单个运行详情和样本队列；后端进度提交批次大于常见数据量；详情页使用静态规则文本；任务列表未调用已有删除客户端。
-- 解决方法：活动任务每 1 秒并行获取运行详情和样本队列，终态停止；样本生成改为每 10 条提交一次进度；新增运行规则更新 API，自动模式分批重算 `automatic_label` 和 `rule_hits` 且保留 `current_label`，手动模式只保存规则；终态任务增加确认删除操作。
-- 验证方式：后端点焊服务/API 51/51；前端数据标注 22/22；TypeScript 与 Vite 生产构建通过；24 条进度提交回归在 100 条批次时 RED、10 条批次时 GREEN。
-- 影响范围：点焊质量运行、规则集、样本自动标签、数据标注任务列表和详情页。
-- 预防措施：异步任务进度必须按常见数据规模验证中间状态；详情轮询需同时更新父任务和子记录；规则重算不得覆盖人工标签；已有后端能力必须有前端可发现入口和回归测试。
-- 遗留事项：未执行真实浏览器连接本地后端的长任务观察；本次证据为本地自动化测试和生产构建，不代表远程 CI。
 
 ### 2026-07-12：功能数量口径纠正
 
@@ -1110,853 +1107,770 @@
 - 验证方式：三份计划 `git diff --check`、迁移链、事件签名、四通知通道、模型卡、性能/备份/升级/安全/E2E 规格映射检查通过。计划阶段未修改生产代码，未运行真实 Compose。
 - 未完成：按选定执行模式进入 TDD 实现；第 9/10 周功能轨和第 11-12 周独立工具轨可并行，公共 CI、Compose、manifest、Alembic 链和状态文档由主线串行集成。
 
-### 2026-07-22：产品壳层 UI 方向预览
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 开发内容：为汽车焊接工业 AI 平台生成三个可比较的完整产品壳层预览，包含侧栏、顶栏、数据驾驶舱和项目列表。
-- 问题现象：现有产品页面使用稳定的功能语义，但尚未有不影响生产路由的可视化方向比较入口。
-- 根因：生产 React 组件、认证、API 和主题令牌直接耦合，不适合在未选定方向前直接替换。
-- 解决方法：新增 `ml-platform/frontend/ui-previews/index.html` 作为自包含静态预览，以共享内容模型切换冷黑工业、纸张实验室和午夜电蓝三种视觉方向。
-- 验证方式：通过本地静态服务器检查三种方向和窄屏预览；确认 `ml-platform/frontend/src/` 未被修改。
-- 影响范围：仅新增预览和设计记录，不影响生产前端、路由、API 或部署配置。
-- 预防措施：最终视觉方向必须由用户选择后再进入独立的生产改造任务，并保持 IA、路由和已有可访问性契约稳定。
-- 遗留事项：等待用户选择方向或提出混合调整后，再设计生产实施范围。
-
-
-### 2026-07-22：UI 方向预览迭代 - 圆润科技控制台
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 开发内容：根据反馈将预览重构为更具科技感和圆润感的未来工业控制台。
-- 解决方法：统一采用蓝青色状态语汇、20px 左右的模块圆角、半透明层叠面板、柔和边界和栅格背景；三套方案更新为智能光舱、白色未来和夜航脉冲。
-- 验证方式：浏览器验证主题切换、窄屏 560px 重排、无水平溢出及零控制台错误。
-- 影响范围：仅修改独立预览 HTML，不影响生产 React 代码、路由、API 或部署配置。
-- 遗留事项：等待用户确认最终方向或提出组合调整。
-
-### 2026-07-22：全项目测试覆盖缺口补全（只测不改）
-
-- 开发内容：在不修改任何源代码的前提下，分析 `ml-platform/backend` 测试套件覆盖缺口，新增 12 个测试模块共 153 个测试用例，覆盖优化算子、工具算子、可视化算子执行、存储工厂、事件发布、推理任务、工作流执行服务、WebSocket 管理器、标注 API、工作流直接 API、Pydantic schemas 校验、ORM 模型自引用关系。
-- 新增测试文件：
-  - `tests/test_operators_optimization.py`（8 项，GridSearchCV/RandomizedSearchCV/Optuna 算子契约与超参输出）
-  - `tests/test_operators_utility.py`（ExecutePython/Collect/Macro/WriteAsText 数据流转与文件落盘）
-  - `tests/test_operators_visualization_execution.py`（ROC/特征重要性/分布/散点/直方/折线/混淆矩阵/数据表/统计算子执行并产出 base64 图表）
-  - `tests/test_storage_factory.py`（5 项，StorageFactory 根据配置返回 LocalStorage/MinIOStorage 且单实例缓存）
-  - `tests/test_events_local.py`（8 项，LocalRunEventPublisher 顺序回调、异常隔离、取消传播、NullRunEventPublisher 空实现）
-  - `tests/test_inference_tasks.py`（5 项，InferenceTaskRepository CRUD 与按状态过滤）
-  - `tests/test_workflow_execution_service.py`（8 项，WorkflowExecutionService 拓扑排序、参数合并、事件发布、循环/孤立节点容错）
-  - `tests/test_websocket_manager.py`（连接/断开/广播/失败连接清理）
-  - `tests/test_api_annotations.py`（标注任务 CRUD、样本列表、auto-label 流程、删除）
-  - `tests/test_api_workflows_direct.py`（直接工作流 GET/PUT/DELETE 与 owner/editor/viewer/outsider 权限边界）
-  - `tests/test_schemas_validation.py`（39 项，ProjectCreate/Update、WorkflowCreate/Save、UserCreate/Update 等 Pydantic 校验规则）
-  - `tests/test_models_misc.py`（AgentTask 自引用关系、ProjectMember 唯一约束等 ORM 行为）
-- 问题与解决：
-  1. `ExecutePython` 算子将输入转为 DataFrame 注入脚本命名空间，`inp[0]` 是列访问而非行访问，KeyError: 0 → 改用 `inp.copy(); out['x'] = out['x'] + 5` 的 DataFrame 操作。
-  2. `WriteAsText` 的 json 格式使用 `df.to_json(orient="records", indent=2)`，产出 `"a":1`（无空格）而非 `"a": 1` → 断言改为匹配实际输出格式。
-  3. `ConnectionManager.broadcast` 中失败连接被清理但 good 连接保留，`run-1` key 不会删除 → 断言改为 good 保留、bad 被移除。
-  4. `AgentTask.children = relationship("AgentTask", backref="parent", remote_side="AgentTask.id")` 中 `remote_side` 设为 PK，导致 `children` 实际是 many-to-one（返回父级），`parent` backref 是 one-to-many（返回子级集合）→ 断言方向修正。
-  5. `AnnotationResult.task_id` 是 `UUID(as_uuid=True)` 列，传字符串触发 `'str' object has no attribute 'hex'` → 用 `uuid.UUID(self.task_id)` 转换并添加 `import uuid`。
-  6. SQLite 不强制 `ON DELETE CASCADE` 且 ORM 关系无 `cascade="delete-orphan"`，删除 AnnotationTask 时 SQLAlchemy 尝试将子记录 `task_id` 设为 NULL 触发 NOT NULL 约束 → 在删除 task 前手动删除子 AnnotationResult 记录。
-  7. `resolve_workflow_access` 对非项目成员返回 404 "hidden"（`ProjectAccessError(hidden=True)`），只有项目成员但权限不足才返回 403 → viewer 必须先通过 `ProjectMember(role="viewer")` 成为项目成员才能触发 403 权限拒绝路径。
-  8. `ConfusionMatrixPlot` 算子从 `per_label[0]` 构建 2x2 矩阵，但 `labels` 从所有 `per_label` 条目派生；只有 1 个条目时 labels 有 1 项但矩阵有 2 列，matplotlib `set_xticklabels` 报 FixedLocator 数量不匹配 → 补充第二个 `per_label` 条目使 labels 数量匹配 2x2 矩阵维度。
-- 潜在问题：
-  - SQLite 与 PostgreSQL 在外键级联行为上存在差异（SQLite 默认不强制 ON DELETE CASCADE），测试中需手动清理子记录；生产 PostgreSQL 环境下行为可能不同，迁移时需关注。
-  - `ConfusionMatrixPlot` 算子的 labels 派生逻辑与矩阵构建逻辑维度不一致是源代码层面的潜在缺陷，当前仅在测试侧通过补齐 per_label 条目规避；后续可考虑在源码侧修正 labels 派生或矩阵构建逻辑。
-  - `AgentTask` 的 `children`/`parent` 命名与实际关系方向不符（`children` 返回父级，`parent` 返回子级集合），是源码命名层面的易混淆点，使用时需特别注意。
-- 验证方式：`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_operators_optimization tests.test_operators_utility tests.test_operators_visualization_execution tests.test_storage_factory tests.test_events_local tests.test_inference_tasks tests.test_workflow_execution_service tests.test_websocket_manager tests.test_api_annotations tests.test_api_workflows_direct tests.test_schemas_validation tests.test_models_misc -v` → `Ran 153 tests in 49.860s OK`，全部通过。
-- 影响范围：未修改任何源代码；测试覆盖扩展到 12 个新模块，源代码行为契约通过测试得到固化，为后续重构提供回归保障。
-- 遗留事项：无；如需进一步提升覆盖，可考虑补充 ProjectAccessService 直接单元测试、AuditService 事务回滚路径测试、生产 PostgreSQL 级联行为集成测试。
-
-
-### 2026-07-22：生产界面圆润科技视觉改造
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 开发内容：在保留现有路由、认证、数据请求和 Ant Design 组件结构的前提下，升级全局主题、应用侧栏与顶栏为圆润科技控制台风格。
-- 问题现象：原界面以直角卡片、橙色高亮和 GitHub 风格深色面板为主，跨页面视觉层级不够统一。
-- 解决方法：更新 Ant Design 双主题令牌为电蓝主强调、绿色成功态和中性工业背景；将全局表面、菜单、卡片、按钮、标签、弹窗和空状态统一为 10 至 20px 圆角，并为顶栏引入克制的半透明层次。
-- 验证方式：前端 npm run build 通过；npm test -- src/components/AppLayout.test.tsx 3/3 通过；Vite 本地服务的 /login 入口返回 HTTP 200。
-- 影响范围：ml-platform/frontend/src/App.tsx、components/AppLayout.tsx 和 styles/global.css；不改动路由、API、认证、状态管理或业务页面数据逻辑。
-- 遗留事项：全量视觉验收需要使用已授权真实账号遍历受保护业务页面；当前未在本次任务中改变身份数据或登录状态。
-
-
-### 2026-07-22：核心页面圆润科技视觉扩展
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 开发内容：继续将圆润科技视觉规范落到登录、注册和数据驾驶舱，并修复非 AppLayout 页面主题变量无法稳定继承的问题。
-- 问题现象：入口页保留橙色或紫色渐变及装饰圆形；数据驾驶舱的统计卡、图表和项目标记仍直接使用旧橙紫色；ThemeProvider 未同步根 DOM 主题属性。
-- 根因：共享视觉令牌未覆盖硬编码页面样式，主题状态仅存在于 React Context，缺少 CSS 变量所需的根属性。
-- 解决方法：以电蓝为主强调、青绿和琥珀为状态色重构入口页和驾驶舱；ThemeProvider 将当前主题同步到 document.documentElement；新增主题同步回归测试。
-- 验证方式：npm test 运行 themeContext 和 AppLayout 用例，共 4/4 通过；npm run build 通过；Playwright 分别截取加载完成的登录和注册页面并完成视觉检查。
-- 影响范围：全局主题、入口页、数据驾驶舱和 ThemeProvider，不改动认证接口、路由、统计 API、轮询或项目跳转逻辑。
-- 遗留事项：受保护业务页面的最终视觉遍历仍需在用户已授权的真实会话下执行。
-
-
-### 2026-07-22：核心业务页圆润科技视觉扩展（第二批）
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 开发内容：将项目列表、数据管理、模型库和工作流编辑器接入已确认的电蓝圆润工业控制台视觉系统。
-- 问题现象：共享主题已升级，但高频业务页仍使用裸表格、直角工作流工具栏以及硬编码白色或灰色画布，导致与登录、驾驶舱和应用壳层的层次不一致。
-- 根因：共享 Ant Design token 无法覆盖页面内联表面样式；业务页缺少统一的标题区、表格容器和工作台类名。
-- 解决方法：新增页面壳、标题区、表格表面、数据预览表和工作流工作台 CSS 类；将工作流左右面板、浮层和操作区改为主题变量驱动的圆角半透明层级；保留所有路由、接口、表格列、权限、i18n、工作流端口槽位和按钮事件逻辑。
-- 验证方式：前端 `npm test -- src/pages/DataManagePage.test.tsx src/pages/WorkspacePage.test.ts src/components/AppLayout.test.tsx` 共 3 个文件、7 项通过；`npm run build` 通过；Playwright 在公开登录页完成桌面及 iPhone 13 截图检查，未出现空白、重叠或横向溢出。
-- 影响范围：`ml-platform/frontend/src/styles/global.css`、`pages/ProjectListPage.tsx`、`pages/DataManagePage.tsx`、`pages/ModelLibraryPage.tsx` 和 `pages/WorkspacePage.tsx` 的呈现层，不更改 API、状态、认证或工作流执行行为。
-- 预防措施：后续业务页接入共享主题时先增加语义化容器类，再替换内联硬编码颜色；对已有并行逻辑文件只使用精确视觉锚点替换并在构建前复核 diff。
-- 遗留事项：受保护业务页的最终人工视觉遍历需要用户已授权的真实会话；本次未读取、写入或伪造浏览器身份数据。
-
-### 2026-07-23：工作流画布与算子圆润科技视觉重构
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 任务状态：工作流视觉实现、聚焦回归和生产构建已完成；受保护工作流路由的真实会话视觉遍历仍待用户授权。
-- 开发内容：重构画布网格、缩放控件、缩略图、连线、算子面板、节点外观、参数面板和执行进度浮层，使其接入已确认的电蓝圆润工业控制台视觉系统。
-- 问题现象：工作区壳层已经使用圆润科技风格，但算子节点、端口、连线和侧栏仍保留较直角、浅色且层级割裂的旧外观。
-- 根因：ReactFlow 节点、边和多个浮层各自使用局部样式，通用主题令牌无法覆盖节点状态、动态端口与画布控件。
-- 解决方法：为节点提供分类图标、运行状态、算子 ID 与输入输出信号行；为动态端口保持原有 slot/port ID 和定位逻辑；统一画布、面板、边、缩放控件与进度层的主题变量、圆角、边界和状态色；增加节点视觉 DOM 合同与算子面板折叠默认态回归测试。
-- 验证方式：`npm test -- src/components/workspace/CustomNode.test.tsx src/components/workspace/CustomNode.test.ts src/components/workspace/OperatorPanel.test.tsx src/components/workspace/NodeConfigPanel.test.tsx src/pages/WorkspacePage.test.ts` 为 5 个文件、10 项通过；`npm run build` 成功；相关文件 `git diff --check` 成功。构建仅保留既有 ECharts chunk 大小警告。
-- 影响范围：`ml-platform/frontend/src/components/workspace/`、`styles/global.css` 和新增工作流组件测试；未改动工作流 API、Zustand 状态模型、端口 ID、连线水合、认证或执行语义。
-- 预防措施：视觉改造涉及 ReactFlow 时，动态端口的 ID、handle 位置和边水合必须作为回归契约；共享样式只通过语义类承接，不以视觉替换改写执行逻辑。
-- 遗留事项：`NodeConfigPanel.join.test.tsx` 是并行新增且与基线通用多选配置行为不匹配的 Join 键对 UI 测试，本次不扩展功能以使其通过；该需求需单独确认。受保护工作流的真实桌面/移动视觉验收需在用户授权的现有会话中完成。
-
-### 2026-07-23：Bug 清单修复后的前端验收收口
-
-- 任务状态：已完成本轮剩余自动化门禁修复；现有用户未提交修改均保留。
-- 问题现象：前端全量测试最初有两项失败：新增测试文件未登记到周次 manifest；Join 配置测试找不到“添加键对”，页面仍以左右两个独立多选框表达键列，无法显式表达左右键配对。
-- 根因：前端周次清单是显式维护的静态映射；Join 后端虽然使用 `left_keys/right_keys` 逗号列表，但前端控件没有提供成对编辑模型。
-- 解决方法：为 Join 配置增加左右键列成对选择、添加和删除交互，按目标端口从上游运行结果提取左右数据列，并以一次状态更新同步写回 `left_keys/right_keys`；将新增页面、主题、工作流和 Join 测试分别登记到第 1、4、6 周清单。
-- 验证方式：聚焦前端 3 个文件、5/5 用例通过；全量 `npm test -- --run` 为 27 个测试文件、64/64 用例通过；`npm run build`（TypeScript 检查和 Vite 生产构建）通过；`git diff --check` 通过。构建仅保留既有 ECharts 大 chunk 警告。
-- 影响范围：`ml-platform/frontend/src/components/workspace/NodeConfigPanel.tsx`、`src/weekAcceptance.test.ts` 和前端测试说明；未改变 Join 后端参数协议、工作流端口 ID、连线水合或执行器语义。
-- 纠正前条记录：此前记录的 Join 键对测试遗留已在本次实现并通过验证，不再作为未完成项。
-- 当前未完成：本地线程调度器无法安全强制终止和 GPU 指标依赖宿主 `nvidia-smi` 的既有限制仍保留；受保护页面真实会话视觉验收仍需授权，不在本次自动化修复范围内。
-
-### 2026-07-23：工作流算子文字与密度微调
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 任务状态：已完成本次节点可读性与密度微调；工作流端口、边水合、执行状态和 API 未改动。
-- 开发内容：提高画布算子标题、算子 ID、状态和输入输出信号的字号，并减少节点最小高度、内边距、信号区与错误/进度区的留白。
-- 问题现象：前一轮圆润科技视觉重构后，节点标题为 13px，辅助信息和状态为 10px，而 142px 的最小高度和信号区间距使节点在常用缩放级别下显得文字偏小、内部偏松。
-- 根因：初版节点设计优先保证状态信息和端口的视觉呼吸感，未将画布算子高频阅读场景的文字密度作为独立约束。
-- 解决方法：标题调整为 14px，算子 ID、状态、信号和错误信息调整为 11px；节点最小高度调整为 128px，内边距、标题区图标尺寸和信号/错误/进度间距同步收紧；新增 CSS 密度回归契约，继续覆盖动态端口槽位。
-- 验证方式：先新增视觉密度测试并确认旧 CSS 在 `142px` 和旧字号下失败，再更新样式；`npm test -- src/components/workspace/CustomNode.test.tsx src/components/workspace/CustomNode.test.ts src/components/workspace/OperatorPanel.test.tsx src/components/workspace/NodeConfigPanel.test.tsx src/pages/WorkspacePage.test.ts` 为 5 个文件、11 项通过；`npm run build` 成功。
-- 影响范围：`ml-platform/frontend/src/styles/global.css` 与 `components/workspace/CustomNode.test.tsx`；不改动 JSX 结构、ReactFlow handle ID/位置、边水合或工作流执行语义。
-- 预防措施：工作流节点视觉验收同时检查文字最小可读字号与容器空白比例；修改视觉密度时以 CSS 契约和动态端口测试共同防止将样式调整扩散到连接协议。
-- 遗留事项：受保护工作流路由的真实桌面与移动视觉遍历仍需用户授权会话；本次不读取、写入或伪造身份状态。
-
-### 2026-07-23：本地开发代理连接拒绝恢复
-
-- 任务状态：已完成本地前后端开发服务恢复，不涉及业务代码或代理配置变更。
-- 问题现象：Vite 对 `/api/dashboard/stats` 和 `/api/projects` 的代理请求连续报 `AggregateError [ECONNREFUSED]`。
-- 根因：FastAPI 后端没有稳定监听 `127.0.0.1:8000`，Vite 无法建立代理连接；后续检查还发现前端开发服务器没有监听 `5173`。该错误发生在代理传输层，不是仪表盘或项目接口业务错误。
-- 解决方法：在 `ml-platform/backend` 启动 `python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`，在 `ml-platform/frontend` 启动 `npm run dev -- --host 127.0.0.1`，保持现有 Vite `/api` 与 `/ws` 代理配置不变。
-- 验证方式：后端 `/api/health` 直连返回 `200`；经 `http://localhost:5173/api/health` 代理返回 `200`；`/api/dashboard/stats` 返回 `200`；`/api/projects` 返回预期的 `401 Not authenticated`，证明请求已到达鉴权层而非连接拒绝。
-- 预防措施：本地联调前先检查 `127.0.0.1:8000/api/health`，再启动前端；若页面显示代理 `ECONNREFUSED`，先检查端口监听和后端启动日志，不应先修改页面接口代码。
-- 遗留事项：无新增功能遗留；后台开发服务依赖当前本机进程，终端或系统重启后需按上述命令重新启动。
-
-### 2026-07-23：Bug 清单四项复核与页面防回归
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 任务状态：已完成清单复核、前端防回归实现和后端删除用户回归验证。
-- 问题现象：清单记录自动建模路由空白、模型库缺少注册/部署删除按钮、数据管理删除按钮出界、管理员删除用户触发 `model_library.owner_id` 非空约束。当前基线已包含模型库操作按钮和用户资源转移修复，但 AutoML 缺少运行时异常兜底，数据表操作列在窄屏缺少固定布局约束。
-- 根因：懒加载或渲染异常未被页面边界捕获时会让路由只剩空白；操作列使用固定总宽但未锁定右侧列和按钮不换行，窄屏下可视区域不稳定。用户删除问题的根因是删除关联资源时将非空用户外键更新为 `NULL`，现有实现已统一转移到管理员。
-- 解决方法：新增可复用 `PageErrorBoundary` 并接入 `/automl`，提供错误提示和重新加载入口；数据管理操作列固定右侧、按钮禁止换行、表格改为 `max-content` 横向滚动；保留模型库已有注册模型/推理部署删除按钮和用户资源转移逻辑。
-- 验证方式：先新增边界失败测试并确认模块缺失导致失败，再实现并通过；前端 `npm test -- --run src/components/PageErrorBoundary.test.tsx src/pages/AutoMLPage.test.tsx src/pages/ModelLibraryPage.test.tsx src/pages/DataManagePage.test.tsx` 为 4 个文件、7/7 通过；`npm run build` 通过；后端用户删除转移回归 1/1 通过；真实登录浏览器访问 `/automl` 可见完整页面而非空白。
-- 影响范围：`ml-platform/frontend/src/App.tsx`、`src/components/PageErrorBoundary.*`、`src/pages/DataManagePage.tsx`、`src/styles/global.css`；后端 `users.py` 未新增行为变更，仅验证已有修复。
-- 预防措施：所有高风险懒加载业务路由需有可恢复错误边界；数据表操作列必须设置稳定宽度、右侧固定和窄屏滚动；管理员删除用户必须覆盖所有非空用户外键的替换策略并保留集成回归。
-- 遗留事项：Vite 构建仍报告既有 ECharts 大 chunk 警告；模型库和用户删除清单项已由现有基线实现并通过验证，无新增遗留。
-
-### 2026-07-23：工作流端口与结果交互修复设计
-
-- 当前周次：第 9 至第 12 周并行开发。
-- 任务状态：设计已确认，待用户审阅规格后进入实现。
-- 范围：端点唯一连接、处理与融合原始数据输出、端点预览、失败详情、评估算子执行、可视化结果独立面板。
-- 设计文档：`docs/superpowers/specs/2026-07-23-workflow-port-and-results-design.md`。
-- 已确认决策：输入和输出端点均强制单连接；融合算子按输入端口分别输出原始数据；可视化结果使用独立面板；失败状态标签打开错误详情。
-- 遗留事项：实现前须完成规格审阅、测试计划和根因复现。
-
-### 2026-07-23：全项目测试验证（只测不改）
-
-- 当前周次：第 9 至第 12 周并行开发。
-- 任务状态：已完成全项目后端与前端测试套件验证，所有测试通过。
-- 开发内容：在不修改任何源代码的前提下，运行全项目测试套件，发现并修复 6 项测试侧问题（测试清单登记遗漏、测试数据与断言过时），最终全部通过。
-- 测试范围与结果：
-  1. 后端 12 个新增测试模块（上一轮补全）：`Ran 153 tests in 30.367s OK`。
-  2. 后端 `python -m compileall -q app`：通过，无语法错误。
-  3. 后端 `python run_suite.py` 全量隔离回归：`RESULTS: 82 passed, 0 failed out of 82 modules`。
-  4. 前端 `npm test -- --run`：`Test Files 28 passed (28) / Tests 79 passed (79)`。
-- 发现的测试侧问题与修复（均为测试文件调整，未修改源代码）：
-  1. `tests/week_manifest.py`：上一轮新增的 12 个测试模块未登记到周次清单，导致 `test_suite_manifest` 失败。已按功能归属将 12 个模块分别登记到第 1、2、3、5、8 周。
-  2. `tests/test_operators_extended.py` → `test_join_rejects_unpaired_key_lists`：Join 算子源码在单键对多键时先广播再比较长度（`left_keys * len(right_keys)`），1-vs-2 不会触发 "count mismatch"；测试数据改为 3-vs-2（`plant,part,line` vs `site,part_id`），使两侧均 >1 且不等，正确触发计数校验。
-  3. `tests/test_operators_extended.py` → `test_duplicate_read_excel_operator_is_not_registered`：源码中 `ReadExcel`（id=`read_excel`）是合法注册算子，测试断言 `assertIsNone` 已过时；改为 `test_read_excel_operator_is_registered` 并断言 `assertIsNotNone`。
-  4. `tests/test_agents.py` → `test_07_plan_task`：测试传入 `task_id: "any"`（非 UUID），源码 `_task_for_user` 执行 `uuid.UUID(str(task_id))` 抛 `ValueError` 导致 500；改为使用 `test_04_create_task` 存储的真实 `task_id`，未创建时省略该字段。
-  5. `tests/test_api_project_access.py` → `test_every_project_write_module_declares_audited_actions`：源码 `model_registry.py` 的 `PROJECT_WRITE_ACTIONS` 已声明 `registered_model.delete` 和 `inference_deployment.delete`，测试 EXPECTED 集合未包含；已补齐这两个动作。
-  6. `frontend/src/weekAcceptance.test.ts`：`PageErrorBoundary.test.tsx` 已存在但未登记到前端周次清单；已将其登记到第 1 周。
-- 潜在源码问题（仅记录，未修改）：
-  - `app/api/orchestration.py` 的 `_task_for_user` 对非 UUID 格式的 `task_id` 直接 `uuid.UUID()` 转换，未捕获 `ValueError`，将返回 500 而非 404/422；生产环境应在源码侧增加输入校验或异常处理。
-- 验证方式：后端 12 新模块 153/153 通过；compileall 通过；run_suite.py 82/82 通过；前端 28 文件 79/79 通过。所有测试侧修改仅涉及测试文件（week_manifest.py、test_operators_extended.py、test_agents.py、test_api_project_access.py、weekAcceptance.test.ts），未触碰任何 `app/` 源代码。
-- 影响范围：测试清单完整性与测试断言准确性；未影响生产代码、路由、API、模型或执行器行为。
-- 遗留事项：`orchestration.py` 的 UUID 输入校验为源码层面潜在缺陷，后续可在源码侧修复时增加对应回归测试。
-
-### 2026-07-23：全部算子综合测试（80 个算子，79 项测试）
-
-- 当前周次：第 9 至第 12 周并行开发。
-- 任务状态：已完成全部 80 个注册算子的综合测试，新增 `tests/test_all_operators.py`（79 项测试），全部通过。
-- 开发内容：编写覆盖全部 80 个算子的综合测试模块，涵盖注册验证、元数据校验、执行验证三个维度。测试中修复了 8 项测试侧参数名/输出键不匹配问题，未修改任何源代码。
-- 测试范围与结果：
-  - `tests/test_all_operators.py`：`Ran 79 tests in 7.106s OK`（exit 0）。
-  - 已登记到 `tests/week_manifest.py` 第 3 周。
-- 测试覆盖维度：
-  1. **注册验证**（5 项）：算子总数 ≥80、ID 唯一性、ID 非空、类别完整性（9 类）、每类至少 1 个算子。
-  2. **元数据校验**（6 项）：每个算子有 name/description、inputs 列表、outputs 列表、parameters 列表、输入/输出端口有 name 和 type。
-  3. **执行验证**（68 项）：IO（13 项）、处理（13 项）、融合（7 项）、控制（3 项）、ML（15 项）、评估（6 项）、DL（4 项）、机理（2 项）、优化（2 项）、工具（1 项）、可视化（1 项）。
-- 发现并修复的 8 项测试侧问题（均为参数名/输出键与源码不匹配）：
-  1. 缺少 `from app.main import app` 导入，导致算子未注册 → 已添加导入。
-  2. `impute_missing_advanced` 测试传 `strategy: "knn"`，源码 SimpleImputer 不支持 → 改为 `"mean"`。
-  3. `filter_examples` 测试传参数名 `condition`，源码用 `expression` → 已修正。
-  4. `cross_validation` 输出键为 `avg_metrics`/`fold_metrics`，非 `metrics` → 已修正断言。
-  5. `model_comparison` 需要 `model_a`+`model_b` 两个输入和 `metric` 参数，非 `model`+`model_name` → 已修正。
-  6. `generate_attributes` 需要 `new_column_name` + `expression`（用 `row` dict），非 `expression: "z = x + y"` → 已修正为 `row['x'] + row['y']`。
-  7. `sort` 参数名为 `sort_column`+`ascending`，非 `sort_by`+`order` → 已修正。
-  8. `loop` 输出键为 `result`+`continue`，参数为 `max_iterations`+`condition`，非 `data`+`iterations`+`operation` → 已修正。
-- 验证方式：79/79 通过（7.106s），覆盖全部 80 个算子的注册、元数据、执行；所有修改仅涉及测试文件 `test_all_operators.py` 和 `week_manifest.py`，未触碰 `app/` 源代码。
-- 影响范围：算子测试覆盖完整性提升；未影响生产代码、算子实现或注册逻辑。
-
----
-
-## 2026-07-23 产品分析与竞品调研 + 优化方案制定
-
-### 完成内容
-1. **产品全面分析**：定位为"汽车焊接制造工艺智能体编排软件"，覆盖六大核心能力（AutoML/工作流编排/训练管理/模型注册推理/知识智能体/工业机理模型），80 个算子 9 类，技术栈 React+FastAPI+Celery+SQLAlchemy。
-2. **GitHub 竞品调研**：覆盖 4 类竞品 —— 国产一站式 ML 平台（Cube Studio/Dify/Bisheng）、MLOps 工作流（MLflow/Kubeflow/Flyte/Metaflow/Prefect）、Agent 编排（LangFlow/n8n/Coze）、工业 AI（无成熟开源竞品）。
-3. **差异化对比**：本产品处于"工业垂直 MLOps 平台"蓝海，6 个焊接机理算子为最独特壁垒，GitHub 无同类开源项目；最直接竞品为 Cube Studio。
-4. **可借鉴功能评估**：从 8 个竞品提炼 17 项可借鉴功能，按 SDK 直接复用（2 项 70-85%）/ 独立组件集成（3 项 50-80%）/ 协议借鉴（5 项 10-40%）/ 完全自研（7 项 0-20%）分类。
-5. **去除大模型能力重新评估**：按用户要求剔除第 18-20 周 LLM 相关功能，聚焦第 9-17 周传统 MLOps + 云原生基础设施，综合复用比 35%/65%。
-6. **优化方案文档化**：保存至 `OPTIMIZATION_PLAN.md`，包含功能清单、复用详解、落地优先级、核心结论、竞品来源。
-
-### 核心结论
-- **P0 优先做**：autolog（85% 复用，1 天）、模型阶段流转（10% 复用，2 天）、Label Studio 标注（80% 复用，3 天）
-- **完全自研但 ROI 高**：运行级缓存（0% 复用，170 行）、K8s Job 执行器（40% 复用，400 行）
-- **建议延后**：动态工作流、工作流代码生成、多集群路由
-- **总工作量**：15 项功能约 3200 行自研代码，2 人团队 6-8 周完成，与第 9-17 周规划节奏吻合
-
-### 产出文件
-- `OPTIMIZATION_PLAN.md`（新建，产品优化方案）
-
-### 验证方式
-- 竞品仓库 URL 已在方案中列出，可点击核验
-- 本产品现状结论基于实际核查 model_registry.py / training_execution.py / dag_executor.py / experiment_tracking.py 等源码接口
-
-### 潜在问题
-- Cube Studio 原 tencentmusic/cube-studio 仓库已于 2026-05 归档迁移至 data-infra/cube-studio，社区活跃度需持续观察
-- 工业垂直护城河有限，通用平台后期可能补齐行业算子包
-- 第 13 周前缺 K8s 能力是短期短板，但单机 Compose 部署对产线场景反而更易落地
-
-### 剩余工作
-- 方案为规划文档，具体功能实现按周次推进
-- 第 9 周 autolog 和模型阶段流转可作为首批落地项
-- 遗留事项：DL 算子（mlp_classifier/mlp_regressor/cnn1d_classifier）和机理算子（6 个）仅做了注册和元数据验证，执行测试由 `test_operators_mechanism.py` 等已有模块覆盖。
-
-### 2026-07-24：工作流算子可靠性清单修复
-
-- 当前周次：第 9 至第 12 周并行开发。
-- 任务状态：`docs/bug清单0724.txt` 的六项工作流问题已实现并完成自动化验证。
-- 开发内容：为运行必填参数增加声明、API 元数据和 DAG/API 运行前拦截；Join 改为持久化键对并拒绝空键；保留并扩展 `read_excel` 的上传、sheet、header、skiprows、usecols 和 nrows 配置；导出算子支持工作区默认文件、可选文件名、固定或可选格式、浏览器目录写入及下载回退；节点端口显示三字符标签而未改变 Handle 合同；DataBus 改为 `<base>/workflows/<workflow>/runs/<run>`，URL 临时下载和默认导出均限定在该工作区。
-- 已修复回归：工业模板在 API 注入真实制品 ID 前进行静态合同校验，新的 CSV 本地文件必填规则会误判；模板源节点现声明 `source=artifact` 和仅用于静态校验的占位制品 ID，实例化路径仍以已授权真实制品覆盖。旧 `WriteAsText` 测试已由“空路径报错”更新为“默认写入运行工作区并验证内容”。
-- 验证方式：工业模板、导出算子和 E2E 聚焦测试 `29/29`；后端全量隔离套件 `84 passed, 0 failed`；`python -m compileall -q app` 通过；前端 Vitest `31` 文件、`99` 测试通过；`npm run build` 通过。本地前端页面可渲染且浏览器控制台无错误。
-- 风险与限制：真实浏览器目录写入需要用户在支持 File System Access API 的浏览器中主动选择目录；无该 API 时走浏览器下载。未为验收创建持久化测试项目或伪造工作流身份，受保护工作区交互由组件、API 和 E2E 自动化回归覆盖。
-- 预防措施：动态注入的模板参数必须在静态模板合同中表达真实输入模式并使用非持久化占位值；必填参数收紧后需重跑模板实例化和全量隔离套件；导出默认路径、浏览器目录句柄和后端工作区必须保持分层，禁止将客户端目录写入工作流持久化参数。
-
-### 2026-07-24：工作流端点贴边半圆视觉预览
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 任务状态：独立预览已完成，正式工作流实现待用户确认；未修改生产 `src` 中的 ReactFlow 节点、端口合同或全局样式。
-- 开发内容：新增 `ml-platform/frontend/ui-previews/workflow-port-attachment-preview.html`，展示 24 x 32px 输入/输出半圆端点、端点平直侧与算子外框共线，以及贴边和连接态两种可切换状态；同时保留桌面效果截图。
-- 问题现象：预览首次切换状态后，活动按钮高亮会消失。
-- 根因：脚本以 `[data-mode]` 选择器绑定事件，意外包含承载状态的 `body[data-mode]`，点击事件冒泡后将按钮状态再次清空。
-- 解决方法：将事件选择器收窄为 `.mode-toggle [data-mode]`，使仅切换按钮参与状态更新。
-- 验证方式：本地 Vite 页面在 1280px 桌面视口完成视觉检查；贴边和连接态均可切换，端点和连线颜色同步更新；浏览器控制台无 error；预览文件 `git diff --no-index --check` 无空白错误。
-- 影响范围：仅独立预览 HTML 与 `ui-previews/` 效果图，不改变工作流保存、边水合、端口 ID、执行状态或 API。
-- 遗留事项：等待用户确认视觉方案后，再在正式 `CustomNode.tsx` 与 `global.css` 中按现有动态端口合同实施并补充回归测试。
-
-### 2026-07-24：工作流算子可靠性清单最终收口
-
-- 当前周次：第 9 至第 12 周并行开发支持工作。
-- 任务状态：`docs/bug清单0724.txt` 的六项问题均已实现、回归并验证；实施计划 Task 1 至 Task 5 和 Task 6 Step 1 至 Step 3 已勾选。Task 6 Step 4 仍未勾选，原因是本次未获授权暂存或提交。
-- 纠正前条记录：此前记录的前端全量结果为 31 文件、99 用例；补充浏览器 GBK 编码与导出完成路径回归后，本次全量结果为 31 文件、104 用例。
-- 问题现象：浏览器端 CSV 选择 GBK 编码时，`iconv-lite` 会让 Vite 外置 Node 内置模块 `buffer` 和 `string_decoder`，生产构建虽可输出产物，但浏览器运行时编码路径不可靠。
-- 根因：`iconv-lite` 面向 Node 运行时，依赖 Node 核心模块；浏览器导出实现不能将其作为客户端依赖。
-- 解决方法：改用可被 Vite 打包的 `gbk.js`，以 `GBK.encode()` 生成 GBK 字节；保留 UTF-8 BOM 路径，并增加 CSV 分隔符、表头、GBK 字节、文本摘要、完成节点导出与下载回退回归。浏览器目录句柄继续只保存在 Zustand 运行时状态，不写入工作流参数。
-- 验证方式：`C:\Users\17723\miniconda3\python.exe run_suite.py` 为 `RESULTS: 84 passed, 0 failed out of 84 modules`；`C:\Users\17723\miniconda3\python.exe -m compileall -q app` 通过；`npm test -- --run` 为 31 文件、104 用例通过；`npm run build` 通过。构建仅保留既有 ECharts chunk 大小告警，Node 内置模块外置警告已消失。
-- 影响范围：工作流运行前参数合同、Join、Excel/CSV 导入、后端工作区导出、浏览器导出、ReactFlow 端口标签及 DataBus 隔离；未改动既有 Handle ID、位置、边水合或浏览器身份数据。
-- 预防措施：浏览器编码依赖必须在生产构建中验证不存在 Node 内置模块外置警告；静态模板的参数合同必须表达实际实例化输入模式；客户端目录句柄、后端文件路径和持久化工作流参数必须保持隔离。
-- 遗留事项：File System Access API 仅在支持该 API 且用户点击授权目录时写入指定目录；不支持时使用浏览器下载并由浏览器管理保存位置。ECharts 大 chunk 告警为既有优化事项，未在本次任务中扩展范围。
-
-### 2026-07-24：工作流成功建连后的状态回查收口
-
-- 当前周次：第 9 至第 12 周并行开发支持工作。
-- 任务状态：已完成工作流运行创建与 WebSocket 成功建连之间的竞态修复；`docs/bug清单0724.txt` 六项问题保持已完成。实施计划 Task 6 Step 4 仍未勾选，本次未暂存或提交。
-- 问题现象：运行在 WebSocket 建连前已完成时，浏览器不会收到早期 `node_status` 广播；持久化的 `GET /runs/{id}` 已包含完成节点结果，但导出副作用不会触发。
-- 根因：页面仅在实时连接异常时调用 `reconcileRun()`，成功建立连接后不读取持久化快照；WebSocket 广播被错误地当成唯一状态来源。
-- 解决方法：`ws.onopen` 立即调用 `reconcileRun()`，用 `/runs/{id}` 回放持久化节点状态和结果；导出继续按 `(runId, nodeId)` 去重，后续重复 WebSocket 完成事件不会再次导出。
-- 验证方式：新增页面级回归，模拟 WebSocket 在运行创建后才打开、API 返回已完成导出节点，断言导出一次；再发送重复 `node_status`，断言仍只导出一次。后端 `run_suite.py` 为 `84 passed, 0 failed out of 84 modules`，`python -m compileall -q app` 通过；前端 Vitest 为 `31` 文件、`105` 用例通过，`npm run build` 通过。构建仅保留既有 ECharts chunk 大小告警。
-- 影响范围：`ml-platform/frontend/src/pages/WorkspacePage.tsx`、`WorkspacePage.test.ts` 的运行恢复和完成导出路径；后端运行 API 契约未改动。
-- 预防措施：WebSocket 只作为低延迟通知，首次成功连接、断线和错误恢复均须从持久化运行快照收敛状态；有文件写入、通知等副作用的回放必须按稳定运行/节点标识幂等去重。
-- 遗留事项：浏览器目录写入仍受 File System Access API 与用户手势限制，不支持时回退下载；ECharts 大 chunk 告警为既有优化事项，不在本次范围内。
-
-### 2026-07-24：工作流半圆贴边端点正式实施
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 任务状态：用户确认的端点视觉方案已落实到正式 ReactFlow 节点；端口 ID、输入输出方向、槽位映射、边水合和执行逻辑未改动。
-- 开发内容：将 `CustomNode` 的输入/输出 Handle 外侧定位从 `-9px` 调整为 `-24px`；将端点从 `16px` 圆点改为 `24 x 32px` 的左右半圆，输入端省略右边框、输出端省略左边框，并以中心状态点保留可读的连接锚点。
-- 测试先行：新增端点几何回归后，旧实现按预期失败于 `left: -9px`；实施后回归通过，明确锁定外贴偏移、尺寸和左右半圆边框规则。
-- 验证方式：工作流聚焦 Vitest 5 个文件、26 个用例通过；前端全量 Vitest 31 个文件、106 个用例通过；`npm run build` 通过；相关补丁 `git diff --check` 无空白错误。构建仅保留既有 ECharts chunk 大小警告。
-- 影响范围：`CustomNode.tsx`、`CustomNode.test.tsx` 与 `global.css` 的端点呈现和命中区域；不改动工作流 API、持久化模型、认证、运行状态或连线协议。
-- 遗留事项：本地真实工作区路由需要现有 workflow ID；当前本地账户没有项目或工作流，本次未创建验收数据。已确认的独立预览继续作为视觉参考，后续可在真实工作流会话中补充截图验收。
-
-### 2026-07-24：工作流正方形算子布局
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 任务状态：用户要求将工作流画布算子改为正方形；已完成生产样式、独立预览、回归与构建验证。
-- 问题现象：端点收紧并增加三字符标签后，原有 `248px x 112px` 矩形节点仍把图标、状态和算子身份信息压在横向头部区域，不适合作为紧凑而圆润的方形算子。
-- 根因：节点只以最小高度约束矩形比例，标题和状态共用两列头部网格，无法在较窄方形内同时保留状态可读性、端点标签安全边距和居中的身份信息。
-- 解决方法：将 `.workflow-node` 调整为 `176px` 宽、`176px` 最小高度和 `aspect-ratio: 1` 的圆角方形；头部改为顶部图标/状态行和下方中央身份区，标题与 operator ID 居中且保持截断；输入输出 Handle 继续保持当前 `20 x 28px`、`-20px` 外贴半圆及原有 ID、方向和槽位映射。独立预览同步为同一几何与文本布局。
-- 测试先行：CSS 契约先要求 `176px` 方形与新的网格位置，旧矩形实现按预期失败于 `width: 248px`；最小 CSS 实现后聚焦组件测试恢复通过。
-- 验证方式：`npm test -- src/components/workspace/CustomNode.test.tsx` 为 10/10；前端完整 Vitest 为 31 个文件、108 个用例通过；`npm run build` 通过。独立预览已在桌面、连接态和 560px 窄屏检查，两个节点均为 `176 x 176`，窄屏文档宽度与视口一致且无横向溢出。
-- 影响范围：`CustomNode.test.tsx`、`global.css` 和独立预览；不改动工作流 API、持久化模型、ReactFlow Handle 合同或执行逻辑。
-- 预防措施：方形节点应将状态与算子身份放在独立网格行，标题容器必须有 `max-width`/截断与两侧端点安全边距；端点形状变化或节点比例调整均须保留动态 Handle 语义并先以 CSS 契约验证。
-- 遗留事项：真实受保护工作区仍需要已有 workflow ID 才能做会话内视觉遍历；本次未创建项目、工作流或伪造认证。ECharts 大 chunk 警告为既有优化事项，未扩展本次范围。
-
-### 2026-07-24：未解决问题清单整理
-
-- 当前周次：第 9 至第 12 周并行开发支持工作。
-- 任务状态：已建立 `docs/未解决bug清单.md`；本次只做审计与记录，未修改生产代码，也未把缺陷标记为已完成。
-- 已确认缺陷：工作流端点单连仅规范化 `__slot_N`，历史 `out-N`/`in-N` Handle 未按节点端口元数据映射，导致新命名端口连线不能替换同一逻辑端点的旧边；`app/api/orchestration.py` 的 `_task_for_user()` 未捕获非法 UUID，外部输入可触发 500。
-- 范围风险：`docs/bug列表.txt` 当前工作区版本为 6 条工作流需求，而 Git 基线为 421 行、4 个历史问题及错误堆栈；两者无状态映射，不能据此声明原始清单已全部修复。
-- 验证方式：静态追踪 `workflowStore.ts` 的 Handle 规范化和边去重、`WorkspacePage.tsx` 的历史 Handle 水合、`orchestration.py` 的 UUID 解析；确认现有聚焦测试覆盖 `__slot_N`，未覆盖 `out-N`/`in-N` 替换场景。文档差异为 `6 additions, 421 deletions`。
-- 遗留事项：先为 `out-N`/`in-N` 增加失败回归并修复逻辑端点规范化；再为非法 AgentTask UUID 增加 API 回归并修复；随后完成新的后端/前端全量回归和授权工作流浏览器验收。LocalTaskDispatcher 硬终止、`nvidia-smi` 可用性、浏览器目录授权属于已知限制，已与代码缺陷分开记录。
-
-### 2026-07-24：工作流算子视觉方向预览（待用户选择）
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 任务状态：已完成独立视觉预览与响应式验收；正式 ReactFlow 算子样式保持不变，待用户在三种方向中选择后再进入生产实施。
-- 开发内容：新增 `ml-platform/frontend/ui-previews/workflow-operator-style-directions.html`，以固定内容和同一 `176 x 176px` 方形几何呈现三种可切换方向：`框架`（分层圆角边框）、`导轨`（侧向导轨强调）与 `核心`（中心信号环）。三个方向均保留外贴 `20 x 28px` 半圆端点、三字符端口标签、图标、状态和算子身份信息。
-- 设计约束：预览与生产组件隔离，不修改 `CustomNode.tsx`、`global.css`、ReactFlow Handle ID/type/Position、动态槽位映射、连线水合、API 或执行语义；比较中只改变视觉层级，避免内容和几何差异干扰选择。
-- 验证方式：本地 Vite 地址 `http://127.0.0.1:5173/ui-previews/workflow-operator-style-directions.html` 可访问；桌面 `1280 x 820px` 与窄屏 `560 x 900px` 均逐项检查。三种方向的两个节点均为 `176 x 176px`，端口、标签与文字未越界，窄屏 `scrollWidth` 与 `clientWidth` 均为 `545px`，无横向滚动；预览文件无行尾空白。
-- 影响范围：仅新增独立静态预览文件和本记录；未运行前端全量测试或生产构建，因为本次未改变生产代码、依赖或构建配置。
-- 遗留事项：待用户选择 `框架`、`导轨` 或 `核心` 后，才将所选方向按既有 ReactFlow 端口与节点合同落地，并补充聚焦测试、构建和真实工作区会话验收。
-
-### 2026-07-25：导轨方向算子名称居中预览调整
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 任务状态：已按用户反馈调整独立预览中的 `导轨` 方向；正式 ReactFlow 节点与全局样式未改动，仍等待确认后再实施到生产。
-- 开发内容：为 `body[data-style="rail"] .operator__name` 增加 `text-align: center`，使算子名称相对方形节点居中；下方 operator ID 保持左对齐，继续承担技术索引角色，侧导轨、状态区、端口标签和半圆端点位置保持不变。
-- 验证方式：本地 Vite 预览在桌面和 `560 x 900px` 窄屏均检查通过；两个算子名称的中心点与节点中心点一致，`text-align` 为 `center`，无文本截断；窄屏 `scrollWidth` 与 `clientWidth` 均为 `545px`，无横向滚动。
-- 影响范围：仅 `ml-platform/frontend/ui-previews/workflow-operator-style-directions.html` 和本记录；未运行生产前端测试或构建，因为未修改 `src`、依赖、构建配置或 ReactFlow 合同。
-- 遗留事项：待用户确认导轨方向为最终方案后，再将同一标题对齐规则移植到生产节点样式，并运行聚焦组件回归、前端构建和真实工作区会话验收。
-
-### 2026-07-25：历史工作流端点与 AgentTask 标识回归修复
-
-- 当前周次：第 9 至第 12 周并行开发支持工作。
-- 任务状态：`BUG-WF-001` 和 `BUG-API-001` 已关闭；`docs/未解决bug清单.md` 当前没有已确认的未修复代码 bug。
-- 问题现象：历史工作流边使用 `out-N`/`in-N` 时，当前命名端口的新边不能替换同一逻辑端点的旧边；非 UUID 的 AgentTask 标识可使资源查询抛出 500。
-- 已确认根因：边水合只处理 `__slot_N`，没有用节点端口元数据将历史索引 Handle 映射为稳定名称；`_task_for_user()` 直接执行 `uuid.UUID()`，未处理格式异常。
-- 解决方法：边水合按源节点输出和目标节点输入端口解析历史索引 Handle 后复用现有去重规则；资源解析边界捕获 `TypeError`、`ValueError` 和 `AttributeError`，返回 `None` 以保持既有 404 资源隐藏语义。
-- 验证方式：前端聚焦 `WorkspacePage.test.ts` 为 11/11；后端 AgentTask 聚焦为 9/9；隔离后端 `run_suite.py` 为 84/84 模块通过；前端 Vitest 为 31 文件、109 用例通过；`compileall` 和生产构建通过。Vite 仅报告 chunk-size 警告。
-- 环境记录：直接执行 `python` 会命中 WindowsApps 占位程序；测试使用 `C:\Users\17723\miniconda3\python.exe`。这是本机命令解析问题，不是代码缺陷。
-- 预防措施：Handle 迁移必须在有节点元数据的水合边界统一规范化，并覆盖旧索引、新命名和未知索引；所有外部资源 ID 必须在 ORM 查询前安全解析，回归同时覆盖格式、缺失和权限隐藏语义。
-- 遗留事项：真实受保护工作流会话仍需授权后完成端点交互人工验收；本地线程硬终止、GPU 宿主依赖和浏览器目录授权是既有限制，不作为未修复代码 bug。
-
-### 2026-07-25：核心方向取消中央信号圆预览调整
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 任务状态：已按用户反馈移除独立预览中 `核心` 方向的中央信号圆；正式 ReactFlow 节点和全局样式未改动。
-- 开发内容：将 `body[data-style="core"] .operator::before` 改为 `content: none`，不生成任何中部圆形或默认顶部短线；继续保留圆角方形轮廓、`::after` 内框、图标/状态层、端口和算子身份信息。
-- 验证方式：本地 Vite 预览在桌面和 `560 x 900px` 窄屏均检查通过；两个节点的伪元素 `content` 均为 `none`，节点尺寸保持 `176 x 176px`，窄屏 `scrollWidth` 与 `clientWidth` 均为 `545px`，无横向滚动。
-- 影响范围：仅 `ml-platform/frontend/ui-previews/workflow-operator-style-directions.html` 和本记录；未运行生产前端测试或构建，因为未修改 `src`、依赖、构建配置或 ReactFlow 合同。
-- 遗留事项：待用户确认某一视觉方向为最终方案后，再将其落实到正式节点样式，并运行聚焦组件回归、前端构建和真实工作区会话验收。
-
-### 2026-07-25：核心方向正式节点样式实施
-
-- 当前周次：第 9 至第 12 周并行设计支持工作。
-- 任务状态：已完成。用户确认的“核心”方向已应用到正式工作流节点样式；端口、Handle ID、动态槽位、边水合和执行逻辑保持不变。
-- 问题现象：独立预览中的核心方案要求圆润方形、内框、圆形类别图标、居中状态，同时移除中央信号圆；正式样式仍为较小圆角矩形和方形图标，连线也未使用次要强调色。
-- 根因：生产 `.workflow-node` 未继承核心变体的伪元素、网格布局和强调色规则；测试只覆盖既有方形/端点约束，尚未锁定核心装饰边界。
-- 解决方法：在 `global.css` 中将节点设为 `176px` 正方形与 `30px` 圆角，使用 `::after` 绘制 `8px` 内框并显式停用 `::before`；类别图标改为圆形并跟随节点状态色，状态胶囊最小宽度 `28px` 且居中，身份区增加 `4px` 间距，端口标签保持三字符并降低至 `0.7` 透明度；画布连线改用 `--accent-secondary` 混合色。
-- 测试先行：先加入核心 CSS 契约回归，旧样式按预期失败于圆角；完成样式后聚焦组件回归恢复通过。
-- 验证方式：`npm test -- --run src/components/workspace/CustomNode.test.tsx` 为 11/11；前端全量 Vitest 为 31 个文件、110 个用例通过；`npm run build` 通过，TypeScript 检查通过。构建仅保留既有 ECharts chunk 大小告警。
-- 影响范围：`ml-platform/frontend/src/styles/global.css` 与 `CustomNode.test.tsx` 的工作流算子视觉和契约测试；不改动工作流 API、ReactFlow 连接合同、持久化模型、认证或执行状态机。
-- 预防措施：视觉方向落地前先用独立预览固定几何和信息层级，生产迁移时用 CSS 契约锁定伪元素、圆角、布局、端点和连线颜色；所有节点比例变化继续保留端口 ID 与动态槽位回归。
-- 遗留事项：真实受保护工作区仍需已有 workflow ID 才能进行会话内截图验收；本次未创建项目、工作流或伪造认证。工作区其他未提交改动未被覆盖、暂存或提交。
-
-### 2026-07-30：点焊质量感知与首位数据标注交付
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；第 17 周的数据标注目标按本需求提前交付。
-- 任务状态：本地实现与自动化验证完成。左侧导航首项为独立的“数据标注”，登录后侧栏的“智擎”在浅色主题使用黑色，避免灰色文字不可见。
-- 开发内容：实现项目范围的点焊质量运行、CSV/XLS/XLSX 报告上传和报告结构模拟数据；严格解码四路波形并提取特征，执行候选模型评估、聚类/PCA、规则告警与异步运行。数据标注工作区支持样本队列、四通道波形、人工标注、审核、不可变标签快照、快照训练、模型库血缘和 XLSX 质量报告下载。
-- 页面联动：数据管理可将已选 CSV/XLS/XLSX 交给数据标注；AutoML 提供质量感知运行和指标摘要；模型库显示质量运行、特征版本、规则版本和标签快照；监控告警可定位到对应标注样本。
-- 可靠性修复：Celery 以状态条件更新原子领取质量任务；CSV/XLS/XLSX 解析错误统一为稳定业务错误；监控告警和标注详情的异步响应以当前项目/运行上下文保护，避免快速切换后旧响应覆盖新页面。Alembic 基线断言同步至 `20260730_09`、43 张业务表，并显式检查五张点焊质量表。
-- 验证方式：后端质量域聚焦 28 项通过；`C:\Users\17723\miniconda3\python.exe run_suite.py` 为 89/89 模块通过；`python -m unittest tests.test_database_production -v` 为 16/16 通过；`python -m compileall -q app tests` 通过；`alembic upgrade head`、`alembic current` 和 `alembic check` 通过，head 为 `20260730_09`。前端 `npm test -- --run` 为 35 文件、128 用例通过，`npm run build` 通过；仅保留既有 ECharts chunk-size 警告。
-- 风险与限制：未伪造浏览器身份、项目或受保护路由状态；真实账号会话下的上传、运行、审核和下载人工验收仍待执行。远程 CI、Compose/Celery/Redis/MinIO 真实运行未由本地结果替代。
-- 预防措施：每次 Alembic head 增加业务表时，同时更新 head 版本、业务表计数和关键表集合测试；页面按项目/运行加载的异步响应必须在写状态前验证请求上下文；声明 CSV/XLS/XLSX 支持时，依赖、解析错误映射和真实 legacy XLS 用例必须一并覆盖。
-### 2026-07-30：项目删除关联 Experiment 非空约束修复
-
-- 当前周次：第 9 至第 12 周并行开发支持工作。
-- 任务状态：已完成。删除包含 Experiment 的项目不再返回 500，单删和批删均已覆盖。
-- 问题现象：`DELETE /api/projects/{project_id}` 在项目含实验记录时提交失败，SQLite 报 `NOT NULL constraint failed: experiments.project_id`。
-- 已确认根因：`Experiment.project` 的普通 ORM backref 在 `Project` 删除前将关联外键设为 `NULL`；数据库声明的 `ON DELETE CASCADE` 未能阻止这条 ORM 更新。
-- 解决方法：在项目删除事务中、删除 Project 前显式删除关联 Experiment；保持 TrainingJob 删除、Dataset/OrchestrationApp 脱钩和审计事务的既有行为。
-- 测试先行：单删和批删 API 回归均先得到 500；最小修复后分别恢复为 204 和 200，且确认 Experiment 记录已删除。
-- 验证方式：`tests.test_api_projects` 14/14、`tests.test_api_project_access` 15/15、`tests.test_api_experiments` 9/9、后端 `run_suite.py` 84/84 模块通过。
-- 预防措施：删除项目时，除检查数据库 `ON DELETE` 外，还要审计 ORM relationship/backref 的删除策略；每个非空项目外键都须有单删和批删回归。
-- 遗留事项：训练页删除按钮使用已有批量删除 API 的交互规则等待用户确认；未修改用户已有前端品牌改动。
-
-### 2026-07-30：实验与训练任务删除控制
-
-- 当前周次：第 9 至第 12 周并行开发支持工作。
-- 任务状态：已完成。训练页现在可删除 Experiment 和终态 Training Job；运行中、排队中和取消请求中的任务不显示删除操作。
-- 问题现象：实验和训练任务列表缺少单项删除入口；项目删除修复后，用户仍无法在不删除项目的情况下清理实验记录。
-- 已确认根因：Experiment 没有删除路由或审计动作，前端只有训练任务批量删除 API，训练页也没有把现有能力以受确认保护的单项操作暴露出来。
-- 解决方法：新增受 `resource.delete` 授权保护的 `DELETE /api/experiments/{experiment_id}`，在同一事务记录 `experiment.delete` 审计。删除平台 Experiment 时保留 TrainingJob，并按既有外键契约将其 `experiment_id` 置空；MLflow 历史因缺少事务安全删除契约而保留。训练页使用现有单 ID 批删接口，并在两个表中提供 tooltip、无障碍名称和确认弹窗的图标删除按钮。
-- 测试先行：Experiment 路由、前端客户端和页面删除控件均先观察到预期 RED；恢复实现后，授权删除、拒绝审计、TrainingJob 保留、精确 HTTP 请求和终态任务控制均恢复 GREEN。
-- 验证方式：后端 Experiment/项目授权/训练组合 32/32、Week 6 11/11、Week 7 5/5 及全量隔离套件 84/84 通过；前端完整 Vitest 32 文件、121 用例、完整 Playwright 3/3 和生产构建通过。
-- 影响范围：Experiment 生命周期 API 与审计、训练页表格操作、前端客户端和相关回归；不删除 MLflow 实验历史，不修改训练任务执行、检查点或模型血缘。
-- 预防措施：删除聚合成员时必须先明确子资源保留、外键空值、外部系统一致性和审计语义；UI 的删除可见性只能作为预防性提示，服务端仍须在状态变化后的确认请求中作为最终裁决。
-- 遗留事项：远程 CI、Compose 和生产环境验证不由本地回归替代。
-
-### 2026-07-30：Windows Playwright 解释器解析修复
-
-- 当前周次：第 9 至第 12 周并行开发支持工作。
-- 任务状态：已完成。Playwright 的后端、推理服务和模型 seed fixture 现在使用同一可解析的 Python 可执行文件。
-- 问题现象：Windows 上 `npm run test:e2e` 在服务启动时以退出码 9009 失败；修复服务启动后，模型推理 E2E 的 seed fixture 仍因裸 `python` 失败。
-- 已确认根因：PATH 中的 WindowsApps Python 占位程序优先于安装了 `uvicorn`、模型依赖的 Miniconda 解释器，且配置与 fixture 分别硬编码裸命令。
-- 解决方法：新增共享 `e2e/python.ts` 解析器，优先接受 `E2E_PYTHON`，Windows 自动跳过 WindowsApps 候选，其他系统默认 `python3`；Playwright web server 与模型 fixture 均复用该解析器。
-- 验证方式：TypeScript 检查通过；模型推理定向 E2E 1/1 通过；完整 Playwright 3/3 通过，覆盖品牌导航、模型推理和焊接质量主流程。
-- 影响范围：仅本地/CI 浏览器验收服务启动与 fixture 解释器选择；不改动后端运行时、Docker 镜像或生产 Python 配置。
-- 预防措施：跨进程 E2E 所有 Python 调用必须从同一可配置解析器获得命令，不能在配置、fixture 和脚本中混用裸 `python`；Windows 环境测试要显式检查 WindowsApps 占位程序优先级。
-- 遗留事项：本次复用现有本地 Vite 服务进行浏览器回归；远程 Windows CI 需要在后续提交后单独观察。
-
-### 2026-07-30：跨平台监控路径与生产集成夹具 CI 修复
-
-- 当前周次：第 9 至第 12 周并行开发支持工作。
-- 任务状态：本地修复和完整回归已完成，等待更新 PR 后的远程 GitHub Actions 验证。
-- 问题现象：Ubuntu Quality 在模拟 Windows GPU 路径时抛出 `NotImplementedError: cannot instantiate 'WindowsPath' on your system`；Production integration 的默认 `condition` 节点因缺少必填参数而进入 `failed`。
-- 已确认根因：监控路由在 `os.name` 被 mock 为 `nt` 时以宿主相关 `Path` 构造 Windows 路径；生产夹具默认参数为空，但 `condition` 算子要求 `column` 和 `value`。
-- 解决方法：Windows fallback 使用 `PureWindowsPath` 生成路径并通过 `os.path.isfile` 检查；生产夹具使用满足算子合同的默认参数，并新增独立合同回归。
-- 测试先行：新增路径回归先因调用 `Path` 失败，默认参数回归先因常量缺失失败；最小修复后两项均通过。
-- 验证方式：聚焦回归 2/2、后端 `run_suite.py` 84/84、前端 Vitest 31 文件 113 用例、`npm run build` 和 Chromium Playwright 3/3 均通过。
-- 预防措施：模拟异平台行为时不得实例化宿主相关 `Path`；生产集成夹具的默认工作流节点必须先通过当前算子参数合同。
-- 遗留事项：生产 Celery/Redis/MinIO 实际执行和 Ubuntu 路径回归仍以远程 CI 全绿为最终证据。
-
-### 2026-07-30：实验与训练活动态删除保护补充
-
-- 当前周次：第 9 至第 12 周并行开发支持工作。
-- 任务状态：本地修复与回归已完成；等待无品牌发布分支的远程 CI 验证和合并。
-- 问题现象：Experiment 仍关联 `pending`、`queued`、`running` 或 `cancel_requested` TrainingJob 时可被删除，外键会将任务的 `experiment_id` 置空；训练 worker 随后按该 ID 查询 Experiment 会失败。TrainingJob 批删和训练页也将 `pending` 误判为可删除。
-- 已确认根因：Experiment 删除没有按训练生命周期检查关联任务；TrainingJob 批删和前端仅排除了三个显式活动状态，而不是仅允许终态。
-- 解决方法：集中定义 `completed`、`failed`、`cancelled` 为训练终态。Experiment 删除在授权与审计事务内拒绝存在任何非终态或空状态关联任务的请求，并返回 `409 EXPERIMENT_HAS_ACTIVE_TRAINING_JOB`；批删和 UI 只对终态训练任务显示或执行删除，Experiment 的关联活动任务存在时不显示删除入口。
-- 测试先行：四种活动 Experiment 状态、`pending` 批删和前端活动关联删除入口均先稳定 RED；最小修复后定向后端 2/2 和训练页 4/4 GREEN。
-- 验证方式：后端 `run_suite.py` 84/84、前端 Vitest 31 文件 114 用例、`npm run build` 和 Playwright 3/3 通过；构建仅保留既有 chunk-size 警告。
-- 预防措施：所有删除路径必须定义正向终态集合，不能通过列举少数已知活动状态推导可删除性；关联异步 worker 读取的父资源，删除前必须在服务端事务中检查其任务生命周期，UI 仅作为同步提示。
-- 遗留事项：GitHub Actions 的 Ubuntu、生产集成和 Chromium 检查仍需在新 PR 上全绿后才可声明远端交付完成。
-
-### 2026-07-30：数据标注导航排序调整
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；第 17 周数据标注提前交付后的可用性调整。
-- 任务状态：已完成。“数据标注”已从侧栏首项移动到“数据管理”正下方，保留独立导航和原有路由。
-- 问题现象：首项布局不符合实际数据工作流，用户难以按“数据管理后进行标注”的顺序查找功能。
-- 解决方法：仅调整 `AppLayout` 菜单数组中的两项顺序，并将组件回归由“首项”改为断言“数据管理”后紧邻“数据标注”。
-- 验证方式：`npm test -- --run src/components/AppLayout.test.tsx` 为 5/5 通过；`npm run build` 通过，TypeScript 检查通过。构建仅保留既有 ECharts chunk-size 警告。
-- 影响范围：仅前端侧栏展示顺序和其回归测试；不修改路由、认证、数据标注功能或后端接口。
-- 预防措施：涉及信息架构的排序调整应在测试中锁定相邻项关系，而非仅验证链接存在。
-
-### 2026-07-30：质量后端路由与 AutoML 请求契约恢复
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；第 17 周数据标注提前交付后的本地可用性修复。
-- 任务状态：已完成。质量分支后端已作为本地 `8000` 服务运行，数据标注路由与 AutoML 训练请求均可用。
-- 问题现象：浏览器通过 Vite 代理请求点焊质量运行时收到 `404`，普通 AutoML 提交收到 `422`；数据标注 URL 中遗留的项目 ID 会继续请求不可访问项目。
-- 已确认根因：`8000` 监听的是未注册质量路由的旧后端；前端发送 `time_budget`，但 `AutoMLRunRequest` 严格拒绝未知字段；项目加载逻辑保留了不在当前项目列表中的查询参数。
-- 解决方法：以包含质量路由的工作树后端替换旧服务；将 `time_budget` 纳入范围受限的 AutoML 请求并写入任务参数；只有项目列表加载完成且当前项目有效时才加载运行列表，失效 ID 自动回退至首个可访问项目。
-- 本地数据：空质量数据库中已创建“点焊质量示例项目”、60 条报告结构模拟数据和一条已完成质量运行，生成 60 个可标注样本。
-- 验证方式：实际登录、OpenAPI 路由和预算字段均已验证；浏览器显示“数据管理”下紧邻“数据标注”，示例运行、60 个样本及四通道波形均可见。`DataAnnotationPage.test.tsx` 6/6、`test_automl_tracking` 7/7、生产前端构建通过；仅保留既有构建 chunk-size 警告。
-- 影响范围：本地服务进程、数据标注项目选择恢复、AutoML 请求模型及相关测试；不修改点焊数据处理、质量模型算法或远端环境。
-- 预防措施：前端深链接 ID 在依赖资源列表返回后必须校验可访问性；带 `extra=forbid` 的 API 每次新增 UI 参数都要同步登记到请求模型与持久化参数；本地前端代理升级前先从 OpenAPI 核验目标后端路由。
-- 远端 CI：PR #12 已合并。GitHub Actions `30525464925` 的四个检查均在 3 至 5 秒内失败、没有任何步骤或 runner；检查注释确认账号付款或消费限额阻止任务启动。该限制未执行本次代码，不能作为远端测试结果；本地及浏览器验证仍是当前可用性证据。
-
-### 2026-07-30：本地 AutoML 投递竞态与结果页修复
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量与数据标注提前交付后的本地可用性修复。
-- 任务状态：本地实现、自动化回归和真实浏览器运行已完成；远程 CI、Celery/Redis/MinIO 生产投递仍待外部环境恢复后验证。
-- 问题现象：本地 AutoML 点击运行曾返回 `TRAINING_DISPATCH_FAILED`，或任务长期停留在 `pending`；即使任务完成，结果页也可能没有最佳模型和候选结果。
-- 已确认根因：`task_backend=local` 仍选择 Celery dispatcher；本地线程在队列状态和任务 ID 提交前启动，触发 SQLite 锁竞争；完成任务只持久化通用指标，而前端结果区读取 `best_model` 和 `all_results`。
-- 解决方法：按应用设置选择 `LocalTrainingDispatcher` 或 Celery dispatcher；本地 dispatcher 先生成并登记任务 ID，API 在审计事务中提交 `queued/task_id` 后再启动线程；AutoML 完成时同时保存 `best_model`、`all_results`、`best_score` 和 `best_candidate`；前端结构化错误统一经 `formatApiError` 展示，避免异常对象导致页面空白。
-- 验证方式：后端 `tests.test_automl_tracking tests.test_training_tasks` 17/17；前端 `AutoMLPage.test.tsx` 3/3；`npm run build` 和 `git diff --check` 通过。浏览器以“点焊质量示例项目”与 `spot-weld-report-demo.csv`、目标列 `wld1c`、`Regression` 实际运行，结果区显示 `linear_regression`、`random_forest`、`gradient_boosting`，最佳分数 `0.8685`。
-- 影响范围：本地训练/AutoML dispatcher、训练任务状态提交、AutoML 结果持久化、AutoML 页面错误和结果展示；不修改 Celery 生产任务合同。
-- 预防措施：本地异步执行必须先持久化可查询的队列状态再启动线程；每个前端结果字段都要有后端持久化回归；结构化 API 错误必须覆盖异常路径的页面可见性测试。
-- 遗留事项：远程 GitHub Actions 仍可能因账号付款或消费限额无法启动；该限制解除后需重新执行远程检查，不能以本地结果替代。
-
-### 2026-07-31：报告复现 Task 1 AutoML 候选集合选择
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
-- 任务状态：已完成。通用 AutoML 可选择当前任务对应的候选算法集合；空选择保留既有默认集合。
-- 问题现象：`candidate_ids` 未被请求模型接受，已保存的候选集合不会传入执行器；超过三项的无效集合会被 Pydantic 提前返回 `422`，无法使用统一的业务错误码。
-- 已确认根因：执行器仅使用注入候选或默认目录，未从 `TrainingJob.params` 读取；请求模型没有语义解析边界，字段长度约束抢在候选目录校验之前执行。
-- 解决方法：新增任务相关候选解析器，在创建任务前校验未知、重复和任务不兼容 ID，将有序集合持久化到既有 `params`，执行器未注入候选时解析该字段；移除长度抢占校验，使所有无效集合统一返回 `400 AUTOML_CONFIG_INVALID`；AutoML 页面增加“算法集合”多选，并在任务切换时移除失效选择。
-- 验证方式：RED 覆盖未知、重复、超长无效集合与已保存子集被忽略；GREEN 后端 `tests.test_automl_tracking tests.test_training_tasks -v` 为 22/22，前端 `vitest run src/pages/AutoMLPage.test.tsx` 为 5/5，`pnpm run build` 通过。sklearn/Jose 弃用警告和 Vite chunk-size 警告均为既有告警，未在本任务处理。
-- 影响范围：通用 AutoML 请求、训练任务参数、执行器候选目录和 AutoML 页面；不改训练调度、数据集选择、实验创建或点焊质量算法。
-- 预防措施：业务 API 的结构校验不得抢占需返回稳定业务码的语义校验；每个可持久化运行配置都应有“请求入库”和“执行器读取”两类回归。
-- 遗留事项：Task 2 至 Task 5 尚未开始；浏览器、Compose/Celery/Redis/MinIO 和远程 CI 验证须在全部实现完成后单独记录。
-
-### 2026-07-31：报告复现 Task 2 质量候选与自动标签快照
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
-- 任务状态：已完成。点焊质量运行可选择十组报告候选的有序子集，自动规则标签可明确创建为“报告复现自动标签”快照，并进入既有四模型训练、模型库血缘和八 Sheet XLSX。
-- 开发内容：在既有质量运行 `input_fingerprint` 持久化选中候选；运行执行复用该集合；自动快照记录 `source=automatic` 和空修订 ID；模型、模型制品、Schema、XLSX 和运行统计均携带 `label_source`；现有 AutoML 与数据标注页面增加候选集合、快照来源及 60/1875 条模拟数据入口。
-- 问题现象：初次自动快照实现允许未完成运行创建空快照，重新列出时会被错误显示为人工审核；空白或非法自动标签可被纳入；XLSX 将自动标签称为“已审核样本”；质量验证入口可绕过候选语义校验，失败创建请求会将超长无效候选写入审计。
-- 已确认根因：来源只保存在标签数组，空数组不能表达来源；查询仅排除 NULL；报表摘要沿用人工快照文本；候选解析在验证入口缺失且创建入口位于审计上下文之后。
-- 解决方法：自动快照仅接受已完成运行中的 `VALID_LABELS`，无有效标签返回 `400 QUALITY_AUTOMATIC_LABELS_UNAVAILABLE` 且不创建快照/审计；候选解析在 `/validate` 与 `/runs` 审计前统一执行；报表使用中性“训练标签样本”字段。
-- 测试先行：新增空自动快照、无效标签、自动报表字段、验证入口无效候选和失败审计不落库回归；旧实现稳定出现 7 failures 与 1 error，修复后恢复通过。
-- 验证方式：主流程后端 `tests.test_spot_weld_quality_service tests.test_api_spot_weld_quality -v` 为 25/25；前端 `vitest run src/pages/AutoMLPage.test.tsx src/pages/DataAnnotationPage.test.tsx` 为 14/14；`python -m compileall -q app tests`、`git diff --check 22f4863 HEAD` 通过。浏览器、Compose/Celery/Redis/MinIO 和远程 CI 未执行。
-- 影响范围：既有点焊质量 API、质量服务、AutoML 和数据标注配置控件及其回归；不新增页面、表、迁移、调度器或平行训练服务。
-- 预防措施：标签来源只要可进入训练血缘，就必须拒绝无法持久化来源的空快照；自动标签查询须同时校验非空和允许值；共享请求模型的每个入口都要执行同一语义校验，且拒绝非法大载荷必须发生在审计写入之前。
-- 遗留事项：Task 3 至 Task 5 尚未开始；模拟 1875 条实际质量运行、浏览器验收、Compose/Celery 和远程 CI 需在后续分别记录，不能由本地聚焦测试替代。
-
-### 2026-07-31：报告复现 Task 3 工作流特征工程算子
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
-- 任务状态：已完成。工作流画布可使用 `spot_weld_feature_engineering` 复用报告的四通道波形解码和固定 73 维特征契约。
-- 开发内容：在既有 processing 注册表增加无参数薄包装算子，输入 `data`，输出 `features`、`schema` 与 `statistics`；仅调用 `build_feature_frame()`，不复制解码或公式，不捕获 `QualityPipelineError`。
-- 问题现象：初始注册表中没有该算子，执行测试取得 `None` 并在调用 `execute` 时失败；代码审查还发现回归未直接锁定 DataFrame 输入和异常透明性。
-- 已确认根因：报告特征能力只存在于质量服务路径，尚未暴露为工作流算子；初始测试仅覆盖 records 的成功路径。
-- 解决方法：注册薄包装并实现抽象基类要求的最小 `validate()`；增加 12 行报告 records、DataFrame 和非法 Base64 三类合同，后者断言 `QualityPipelineError` 的类型、code、row_index 与 field_name 原样保留。
-- 测试先行：算子不存在时的初始合同稳定 RED；审查后新增的两个覆盖项在已实现行为上直接 GREEN，未为了制造 RED 回退生产代码。
-- 验证方式：主流程后端 `tests.test_all_operators tests.test_spot_weld_features -v` 为 88/88；`git diff --check af130ea b190bff` 通过。未执行真实工作流运行、浏览器、Compose/Celery 或远程 CI。
-- 影响范围：processing 算子注册与算子回归；不改工作流状态、DataBus、制品、数据库、迁移或质量服务算法。
-- 预防措施：将已有领域计算能力暴露为工作流节点时必须只保留一个算法事实来源；薄包装测试同时覆盖 records/DataFrame 两种输入和稳定领域错误透传。
-- 遗留事项：Task 4 至 Task 5 尚未开始；真实画布工作流执行及远程验证留待后续验收。
-
-### 2026-07-31：报告复现 Task 4 标注导出与样本队列滚动
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
-- 任务状态：已完成。数据标注页可从当前质量运行导出带标签血缘的 CSV/XLSX，样本队列限制在可滚动区域内。
-- 开发内容：复用 `SpotWeldQualitySample`、`SpotWeldLabelRevision` 和 `SpotWeldLabelSnapshot` 生成 CSV 的“标注样本”以及 XLSX 的“标注样本”“标签修订”“标签快照”三张表；新增项目范围导出路由、Blob 下载菜单和 bounded vertical scroll 样式。
-- 问题现象：此前页面没有导出入口，用户只能在页面内查看当前标签；样本数量变大时队列会持续撑高页面。
-- 已确认根因：导出数据未形成既有质量运行持久化的统一视图，列表样式缺少最大高度和纵向溢出约束。
-- 解决方法：导出服务按运行 ID 查询现有持久化行并保留当前标签、修订历史和快照来源；非法格式返回 `QUALITY_ANNOTATION_EXPORT_FORMAT_INVALID`；路由先执行项目权限和运行归属校验；前端使用 CSV/XLSX 下拉菜单并对样本列表设置 `max-block-size`、`overflow-y: auto`。
-- 验证方式：后端 `tests.test_api_spot_weld_quality tests.test_spot_weld_quality_service -v` 为 28/28；前端 `vitest run src/pages/DataAnnotationPage.test.tsx` 为 9/9；`pnpm run build`、`git diff --check` 通过。导出回归确认 XLSX 三个中文工作表、当前标签、10 条修订和快照来源；跨项目请求返回 404，非法格式返回 400 稳定错误码。
-- 影响范围：既有点焊质量服务/API、数据标注页和全局样式；不新增页面、数据库表、迁移、Artifact 或训练服务。
-- 预防措施：下载数据必须从服务端持久化血缘生成，不能拼接前端状态；项目范围路由应同时校验 project_id 与 run_id；大队列组件必须设置稳定尺寸和独立纵向滚动。
-- 遗留事项：Task 5 仍需执行 1875 条模拟数据的完整质量、自动标签快照训练、8 Sheet 报告和两种标注导出流程；浏览器真实操作、Compose/Celery/Redis/MinIO 与远程 CI 证据需单独记录。
-
-### 2026-07-31：报告复现 Task 5 1875 条模拟数据全流程验收
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
-- 任务状态：本地完整流程和全量自动化验证完成。原始报告数据未提供，因此本记录仅证明模拟报告结构数据上的算法与平台流程，不宣称复现原报告数值。
-- 输入与流程：通过既有 `POST /demo-dataset` 生成带 `spot_weld_demo` 来源的 1875 条 CSV；经既有 `/runs` 创建使用全十组候选的质量运行，执行 73 维特征、AutoML、加权聚类、规则弱监督和四级预警；随后经既有自动标签快照、训练和下载路由生成模型、Schema、8 Sheet XLSX、CSV 标注和三 Sheet XLSX 标注导出。
-- 集成验证结果：运行状态 `completed`，样本数 1875、特征数 73、候选数 10；自动快照来源为 `automatic` 且含 1875 条，标签计数为 normal 376、weak_splatter 469、strong_splatter 469、spot_too_small 468、current_jump 93；快照训练成功，8 Sheet 为“总览、AutoML选型、深度学习对比、缺陷标签、聚类画像、特征重要性、推理结果、多分类评估”；CSV 有 1875 行，标注 XLSX 的“标注样本”和“标签快照”各 1875 行并保留 automatic 来源。
-- 问题现象与根因：完整规模运行中，GBDT 交叉验证重要性平均出现约 `-3.8e-17` 残差，权重开方生成 NaN；自动标签中的 `current_jump` 主类别只有 2 条，不满足既有 5 折训练契约。
-- 解决方法：聚类权重在归一化前将有限重要性裁剪为非负，零总和仍回退全 1；仅报告复现规模（至少 1000 行）的模拟数据注入递增电流阶跃，使无其他缺陷规则的样本产生足量 `current_jump` 主标签。训练折数和“每类至少五条”的稳定错误契约未改动。
-- 验证方式：完整 API/服务集成流程耗时约 107 秒，快照训练约 48 秒；`run_suite.py` 89/89 模块通过；前端 Vitest 35 文件、140 用例通过；`pnpm run build`、`python -m compileall -q app tests` 和 `git diff --check` 通过。新增聚类负残差与 1875 自动标签五折可训练性回归均先 RED 后 GREEN。
-- 影响范围：点焊质量模拟数据和聚类数值防御及服务测试；不新增服务、页面、表、迁移、独立训练栈或私有数据适配器。
-- 预防措施：大规模模拟数据必须在生成阶段验证其下游交叉验证类别下限；来自交叉验证平均值的权重在调用根号、距离或概率运算前必须消除浮点符号残差并保持有限性。
-- 遗留事项：尚未在真实浏览器登录会话中完成手工 1875 条页面操作，也未执行 Compose/Celery/Redis/MinIO 或远程 GitHub Actions；这些环境证据不能由本地 TestClient、单元测试或构建替代。拿到原报告结构 CSV/XLSX 后，需经数据管理上传入口重跑并只比较可验证数值。
-
-### 2026-07-31：点焊质量感知算法报告复现操作指南
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现交付文档。
-- 任务状态：已完成。新增 `docs/点焊质量感知算法报告复现操作指南.md`，提供基于现有智擎平台的端到端操作步骤。
-- 问题现象：原始报告的六阶段流程、字段契约、候选模型、输出物分散在报告、数据管理、AutoML、数据标注和模型库中；使用者容易将 1875 条模拟数据的流程验收误解为历史报告数值复现。
-- 已确认根因：此前没有一份按报告章节顺序串联现有入口的操作文档，且没有在同一位置明确真实结构数据与模拟数据的可验证边界。
-- 解决方法：指南按数据准备、AutoML/聚类、弱监督标注、快照训练、报告/标注导出和预警验收组织步骤；列出 18 个必填源字段、四路波形编码约束、10 组候选、4 模型训练、8 Sheet 报告、三 Sheet 标注导出、工作流特征工程可选路径和稳定错误码处理。
-- 验证方式：逐项对照 `点焊质量感知算法报告.docx` 的章节、表格与平台实现，复核数据标注、AutoML、数据管理、质量服务与工作流算子的可见操作和输出合同；新增 Markdown 通过结构检查与 `git diff --check`。
-- 影响范围：仅新增操作文档和项目记录；不修改点焊算法、页面、API、数据库、任务调度或既有验证结论。
-- 预防措施：涉及报告复现的交付说明必须区分“流程/结构验收”与“原始数据数值复现”，并将每个报告阶段映射到一个实际平台入口和可下载输出。
-- 遗留事项：待获得原始报告结构 CSV/XLSX 后，按本指南重跑并记录与历史报告之间的可验证数值差异；远程 CI 与生产 Compose 证据仍按现有任务单独维护。
-
-### 2026-07-31：修正端到端主路线并接通标注回写
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；报告复现主流程纠偏。
-- 任务状态：已完成本地实现与自动化验证。主路线固定为“项目管理新建项目 → 数据管理选择项目上传报告 → 自动标注 → 数据标注逐条复核/修改 → 导出或保存 → 自动建模选择 `label` 并运行 10 组报告候选”。
-- 问题现象：数据管理原“质量感知”按钮只跳转页面，不创建质量运行；标注结果不能回写为数据管理中的数据集；通用 AutoML 前端只展示三种算法，无法按报告的 10 组候选训练。
-- 已确认根因：入口没有调用既有质量运行创建 API；标签只存在质量样本/修订表，没有原始制品增强服务；通用 AutoML 默认候选目录与报告候选目录分离。
-- 解决方法：数据管理 CSV/XLS/XLSX 行新增“自动标注”按钮，创建运行后携带 `projectId/datasetId/runId` 跳转；数据标注新增“保存到数据管理”，服务端保留原始列并在末尾追加 `label`，生成带血缘的新数据集制品；通用 AutoML 默认集合改为 `LGB_v1/LGB_v2/XGB_v1/XGB_v2/CAT_v1/CAT_v2/GBDT_v1/RF_v1/ET_v1/HGB_v1`，旧三种 ID 保留兼容解析；保存后回到带项目筛选的数据管理页。
-- 测试先行与验证：新增后端服务/API、前端数据管理/数据标注/AutoML 回归；后端质量保存与 10 候选聚焦 3/3，AutoML 全模块 18/18；默认 10 候选实际执行返回 10 条结果；前端三页面聚焦 21/21，TypeScript/Vite 生产构建通过，`compileall` 与 `git diff --check` 通过。
-- 影响范围：点焊质量 API/服务、数据管理与数据标注页面、通用 AutoML 候选目录和对应测试；不新增数据库表或迁移，不改任务调度器和现有质量特征算法。
-- 预防措施：用户主路线必须由入口级回归锁定，不以页面存在替代行为验证；保存标注数据只能从服务端样本事实生成并保留源制品血缘；报告候选集合应由单一默认目录驱动前后端，兼容别名不得混入默认集合。
-- 遗留事项：尚未在真实浏览器登录会话中完成完整人工逐条操作，也未执行 Compose/Celery/Redis/MinIO 或远程 GitHub Actions；这些环境证据不能由本地测试和构建替代。
-
-### 2026-07-31：自动标注规则按工艺判定表升级为 report_v2
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现规则校准。
-- 任务状态：本地实现、回归、Python 编译和前端生产构建均已完成。新建质量运行使用 `report_v2`，历史 `report_v1` 运行及其自动标签保持不变。
-- 问题现象：能量规则持久化为模糊的 `energy_dev_abs`，聚类规则按动态异常簇角色命中，和工艺判定表要求的 `|energy_dev| > 2.5σ`、`cluster=1` 且飞溅至少 2 级不一致；数据标注页也缺少电流波形异常和飞溅倾向簇的人工修正项，并直接显示英文内部标签。
-- 已确认根因：`energy_dev` 已在特征层计算为运行内 z-score，但规则阈值没有表达该语义；旧实现把聚类分析中的动态画像结果直接复用于标签判定；前端人工标签选项和自动规则 ID 缺少统一的中文展示映射。
-- 解决方法：运行阈值改存 `energy_dev_sigma=2.5`、当前运行 `current_max_diff`/`power_std` 的 P95 和 `spatter_cluster_id=1`；自动标签固定仅在原始 `cluster_id == 1` 且飞溅等级至少 2 时命中飞溅倾向簇；新增 `report_v2` 规则版本常量；数据标注页补齐全部 9 类标签、中文标签和规则说明。原有 `anomaly_cluster` 聚类画像仅保留为分析结果，不再决定自动标签。
-- 测试先行：新回归先稳定失败于 `cluster_id=1` 未命中、运行阈值不存在 `energy_dev_sigma`，以及新运行仍记录 `report_v1`；前端回归先显示内部 `anomaly_cluster` 而不是中文规则说明。最小修改后全部恢复 GREEN。
-- 验证方式：后端 `tests.test_spot_weld_quality_service tests.test_api_spot_weld_quality -v` 为 33/33；前端 `npm test` 为 35 个测试文件、143 个用例通过；`python -m compileall -q app tests`、`npm run build` 与 `git diff --check` 通过。构建仅保留既有 chunk-size 告警。
-- 影响范围：点焊质量规则执行、规则集血缘版本、数据标注标签/说明、操作指南和设计规格；不改 73 维特征计算、聚类求解、数据库模式、任务调度或历史质量运行。
-- 预防措施：弱监督标签规则发生语义变化时必须升级规则集版本，不能复用原版本号；统计量为 z-score、分位数或固定簇 ID 时必须在持久化阈值、规则说明和边界回归中显式表达；人工修改控件必须覆盖所有服务端允许的自动标签。
-- 遗留事项：尚未使用真实浏览器登录会话手工验收 `report_v2` 样本，也未执行 Compose/Celery/Redis/MinIO 或远程 GitHub Actions；这些环境证据需与本地回归独立记录。
-
-### 2026-08-01：报告复现改动收尾回归
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
-- 任务状态：本地代码、测试和构建收尾完成。完整前端 Vitest 为 35 个测试文件、146 个用例全部通过；此前质量后端、Python 编译、生产构建和差异检查均已通过。
-- 问题现象：新增数据标注、规则配置和 AutoML 选择改动完成后，需要确认跨页面测试未因异步路由加载和类型收紧产生回归。
-- 已确认根因：React Router v7 的 `v7_startTransition` 会使测试中的导航和数据加载异步化；AutoML 候选回调参数也需要显式类型，避免构建阶段隐式 `any`。
-- 解决方法：使用异步 `act` 等待导航及数据请求完成，补齐 AutoML 回调类型，并移除临时诊断日志；未改变生产行为或用户已有工作区修改。
-- 验证方式：`pnpm exec vitest run` 为 35/35 文件、146/146 用例；`run_suite.py --week 17` 为 5/5 后端质量模块，`pnpm run build`、`python -m compileall -q app tests` 和 `git diff --check` 通过。Vite 仅保留既有大 chunk 警告。
-- 影响范围：数据标注、数据管理、AutoML 测试稳定性和类型检查；不新增数据库表、迁移或调度器。
-- 预防措施：涉及路由加载的组件测试必须等待异步导航完成；新增回调参数先声明业务类型再运行 TypeScript/Vite 构建；临时诊断输出在提交前清理。
-- 遗留事项：尚未用真实浏览器登录会话完成完整人工逐条标注和 `report_v2` 操作，也未执行 Compose/Celery/Redis/MinIO 或远程 GitHub Actions；这些环境验证不能由本地测试替代。
-
-### 2026-08-01：监督自动标注进度与质量报告制品收口
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
-- 任务状态：本地实现和回归已完成。监督质量运行选择自动标注时，样本队列和运行详情现在显示实际规则标签进度；规则、运行和制品统一记录实际执行的 `report_v2`。
-- 问题现象：带已有 `label` 目标列的监督质量运行能够完成 AutoML 并产出 AUC/F1，但其自动标注样本的 `automatic_label` 和 `rule_hits` 为空，前端显示 `0/N`；遗留 queued 运行即使按 `report_v2` 规则执行，运行/规则表/XLSX/制品元数据仍可能写成 `report_v1`。报告制品和结果 JSON 也缺少完整有序的候选结果，难以复核十组算法。
-- 已确认根因：监督分支只使用选中目标列生成训练标签，没有在 `label_mode=automatic` 时再次按运行阈值计算并持久化规则标签；执行边界未覆盖创建时遗留的规则版本；制品序列化只保存了最佳候选和摘要。
-- 解决方法：监督自动标注分支在聚类完成后按同一运行阈值应用工艺规则并写入每条样本；在删除旧规则表和生成制品前将运行规则版本收敛为 `REPORT_RULESET_VERSION`；报告 XLSX 元数据和结果 JSON 均保存按运行顺序排列的 `candidate_results`。同时收紧通用 AutoML 的输入列校验到任务创建前，并在快照多分类报告中使用 macro AUC/F1，避免把加权指标误作报告主指标。
-- 验证方式：新增监督自动标注 API 回归确认目标列实际进入训练、所有样本具有自动标签/规则命中、`GET /runs/{id}` 返回 `N/N, 100%`，且 XLSX 下载为非空 200 响应；质量服务/API 42/42、AutoML/质量组合 67/67、第 17 周 5/5、Python `compileall`、前端 Vitest 35 文件 151 用例、Vite 生产构建和 `git diff --check` 均通过。构建仅保留既有 ECharts chunk-size 告警。
-- 影响范围：点焊质量运行、标注进度、规则/制品血缘、质量报告和通用 AutoML 请求校验；不新增数据库表、迁移、调度器或新的训练服务。
-- 预防措施：训练标签和自动标注标签是不同事实，任何可选监督训练路径都必须同时覆盖其样本持久化和 API 进度；规则集版本应在实际执行边界统一收敛后再写入规则表和制品；报告制品必须包含可排序的候选明细，并覆盖下载路由的 HTTP 语义。
-- 遗留事项：真实浏览器登录会话中的逐条标注、Compose/Celery/Redis/MinIO 和远程 GitHub Actions 尚未执行；上述本地验证不能替代这些环境验收。
-
-### 2026-08-02：工作流半圆端点缩小 20%
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；已确认的工作流核心节点视觉微调。
-- 任务状态：已完成。输入、输出端点的半圆形视觉尺寸已在正式 ReactFlow 节点中精确缩小 20%，端口合同和工作流执行行为不变。
-- 问题现象：当前外贴半圆端点为 `20 x 28px`，在 `176px` 核心方形节点上占用的横向和纵向视觉比重偏大。
-- 解决方法：端点缩至 `16 x 22.4px`，外贴定位从 `-20px` 同步为 `-16px`，左右半圆圆角从 `14px` 缩至 `11.2px`；中心连接点和其外圈同步按 80% 缩放。端口标签、Handle ID/type/Position、动态槽位、边水合、持久化和执行逻辑均未改动。
-- 测试先行：先将端点几何回归改为缩小后的值，旧实现按预期失败于 `left: -20px`；最小样式和定位修改后恢复 GREEN。
-- 验证方式：`npm test -- --run src/components/workspace/CustomNode.test.tsx` 为 11/11；前端全量 Vitest 为 35 个测试文件、151 个用例通过；`npm run build` 的 TypeScript 检查和 Vite 生产构建通过。构建仅保留既有 ECharts chunk-size 告警。
-- 影响范围：`CustomNode.tsx` 的 Handle 外贴定位、`global.css` 的半圆端点几何与 `CustomNode.test.tsx` 回归契约；不改动 API、认证、数据、工作流状态机或节点执行协议。
-- 预防措施：对外贴 ReactFlow Handle 的任何比例调整，都必须同时换算宽度、高度、边缘偏移、圆角和中心锚点，并以 DOM 定位与 CSS 几何回归锁定；不可只缩放 CSS 尺寸而遗留旧偏移。
-- 遗留事项：真实受保护工作区仍需已有 workflow ID 才能进行会话内截图验收；本次未伪造认证、项目或工作流数据，也未暂存、提交或覆盖其他工作区改动。
-
-### 2026-08-02：点焊质量运行复核与删除接口回归收口
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现最小改动实施。
-- 任务状态：已完成本地实现、接口回归、前端全量回归和构建验证。
-- 问题现象：新增的批量提交复核和终态运行删除接口缺少专门回归；SQLite 测试连接未启用外键时，删除终态运行后仍残留 `SpotWeldQualitySample` 孤儿记录。
-- 已确认根因：删除实现只依赖关系模型和数据库 `ON DELETE CASCADE`，而 SQLite 测试连接的外键级联未开启；规则集、标签快照和标签修订也没有统一的 ORM 父关系可依赖。
-- 解决方法：删除终态运行时在审计事务中显式按依赖顺序删除规则集、标签快照、标签修订和样本，再删除运行记录；保留输出制品，运行中及其他非终态仍返回 `409 QUALITY_RUN_ACTIVE`。新增批量提交复核回归，确保只提交已有 `current_label` 的样本且不重复计数。
-- 验证方式：新增 API 三条回归为 3/3；`run_suite.py --week 17` 为 5/5 模块通过；前端 `pnpm exec vitest run` 为 35 个测试文件、153 个用例通过；`pnpm run build`、`python -m compileall -q app tests` 和 `git diff --check` 通过。
-- 影响范围：点焊质量运行删除与批量复核 API、对应后端测试；不改前端页面契约、数据库表结构、输出制品或调度器。
-- 预防措施：删除跨数据库持久化实体时不能只依赖可能未开启的外键级联；必须在服务端事务中显式验证和清理所有子表，并用 SQLite 与生产数据库都能表达的回归锁定终态集合。
-- 遗留事项：真实浏览器登录会话中的逐条标注、Compose/Celery/Redis/MinIO 和远程 GitHub Actions 仍未执行；本地测试与构建证据不能替代这些环境验收。
-
-### 2026-08-02：本地点焊建模任务在服务重启后的遗留状态修复
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现稳定性修复。
-- 任务状态：已完成本地实现、数据库状态修复、后端启动路径回归和前端提示回归。
-- 问题现象：本地点焊建模使用进程内 daemon 线程。后端以开发重载模式重启或进程退出时线程会被终止，但数据库运行记录仍保持 `queued`、`validating` 或 `running`，页面无法得知任务已经中断。
-- 已确认根因：本地调度器不具备跨进程持久性，应用 lifespan 过去没有在启动时回收带 `local:` 任务 ID 的非终态点焊质量运行。
-- 解决方法：服务启动时显式扫描本地非终态点焊运行并原子标记为 `failed`，写入稳定错误码 `QUALITY_RUN_LOCAL_WORKER_RESTARTED` 和可见重跑说明；AutoML 任务列表和点焊运行详情展示错误码与错误详情。已将本地数据库中的遗留运行 `343bf64c391e4adc9fb2584270f5d4c8` 修正为失败状态。
-- 验证方式：`run_suite.py --week 17` 为 5/5 后端质量模块通过；`tests.test_database_production` 为 17/17，通过 lifespan 注入会话工厂的回收调用回归；`pnpm exec vitest run src/pages/AutoMLPage.test.tsx` 为 13/13；Python `compileall` 和 `git diff --check` 通过。
-- 影响范围：本地点焊质量任务的启动恢复、AutoML 任务列表和点焊运行错误详情；不改变 Celery 调度、模型算法、数据集、数据库表结构或输出制品。
-- 预防措施：本地线程调度只能作为开发环境实现，服务重启时必须将无法继续执行的本地任务收敛到明确失败状态；需要跨重启执行时应使用已支持的 Celery 持久任务后端。
-- 遗留事项：当前 `127.0.0.1:8000` 未监听，需启动后端后重新创建任务；历史中断任务不能续跑，应删除或忽略后新建运行。Compose/Celery 及远程 CI 未执行，不能由本地测试替代。
-
-### 2026-08-02：点焊质量感知输入列契约与数据集筛选修复
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现稳定性修复。
-- 任务状态：已完成本地实现、真实已上传数据契约验证、后端回归与前端构建验证。
-- 问题现象：用户在“点焊质量感知”中点击“运行质量感知”返回 `QUALITY_INPUT_COLUMNS_INVALID`。页面允许用户把 `wld1c` 等必需源字段设为目标列或从输入列移除，并允许选择项目中不符合 18 列点焊报告结构的数据集；服务端只返回错误码，未列出缺失字段。
-- 已确认根因：点焊特征工程固定依赖 14 个工艺表字段和 4 个波形字段，现有前端将其作为可任意删改的普通输入列；目标列下拉也包含这些源字段。当前项目中 `dataset (1).csv` 具有完整 18 列且 60/60 行有效，另一个 `data.csv` 不符合该契约。
-- 解决方法：前端锁定 18 个必需源字段为输入列，禁止将它们作为可选目标列；目标列仅显示额外的监督标签字段，无标签时明确使用自动标注。带 Schema 元数据但不兼容的数据集在下拉中禁用，预览后发现缺列时禁用运行按钮并显示缺失列。后端保持 `QUALITY_INPUT_COLUMNS_INVALID` 错误码，同时返回具体缺失或不存在的字段名。
-- 验证方式：新增后端遗漏 `wld1c` 回归先 RED 后 GREEN；新增前端不兼容数据禁用运行、必需源字段不作为目标列回归先 RED 后 GREEN。`run_suite.py --week 17` 为 5/5 模块通过，`pnpm exec vitest run src/pages/AutoMLPage.test.tsx` 为 14/14，`pnpm run build`、Python `compileall` 通过。真实 `dataset (1).csv` 验证为 18 个输入列、60/60 有效行、73 个特征、无监督标签。
-- 影响范围：点焊质量感知的项目数据集选择、目标列、输入列和输入校验错误信息；不修改特征工程公式、规则、模型候选、数据库表结构或任务调度。
-- 预防措施：领域特征工程依赖的源字段必须在 UI 和服务端同时约束，不能只靠后端通用错误码；可选监督目标列必须排除特征工程必需源字段；专用算法入口的数据集下拉需按已有 Schema 过滤或禁用不兼容项。
-- 遗留事项：后端已于本机 `127.0.0.1:8000` 重启并加载修复；前端 Vite 热更新已生效。Compose/Celery 与远程 CI 未执行，本地验证不能替代这些环境验收。
-
-### 2026-08-02：点焊质量感知切换数据集竞态修复
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现稳定性修复。
-- 任务状态：已完成本地实现、回归、构建和接口复核。
-- 问题现象：用户切换点焊数据集后，在新数据集预览尚未返回时点击“运行质量感知”，页面仍沿用上一个数据集的列状态，可能提交与实际数据集不匹配的输入列并返回 `QUALITY_INPUT_COLUMNS_INVALID`。
-- 已确认根因：数据集选择变化与预览请求异步进行，旧 `datasetColumns`、`qualityInputColumns` 在请求完成前未清空；运行按钮仅依赖旧列状态判断可用性。
-- 解决方法：开始加载新数据集预览时立即清空旧数据集列、目标列和质量输入列；待新预览返回后再恢复列选择和运行按钮状态。新增切换期间按钮禁用回归。
-- 验证方式：新增竞态回归先稳定 RED，修复后 `AutoMLPage.test.tsx` 15/15；`run_suite.py --week 17` 5/5；`pnpm run build`、`python -m compileall -q app tests` 和 `git diff --check` 通过。接口复核显示完整 `dataset (1).csv` 的 18 列输入校验 60/60 行通过；不兼容 `data.csv` 返回具体缺失字段。
-- 影响范围：仅 AutoML 点焊质量感知数据集切换期间的前端状态和按钮可用性；不修改质量特征公式、后端 API、数据库、调度器或模型候选。
-- 预防措施：所有依赖异步 Schema/预览的运行入口，在资源 ID 变化时必须先失效旧状态并禁用提交，不能使用旧资源的列配置作为新请求的授权依据。
-- 遗留事项：Compose/Celery 与远程 CI 未执行，本地验证不能替代这些环境验收；用户需刷新已打开的 `/automl` 页面后使用包含 18 列的 `dataset (1).csv`。
-
-### 2026-08-02：工作流点焊特征算子补齐原始字段元数据
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现稳定性修复。
-- 任务状态：已完成元数据、界面提示和回归测试。
-- 问题现象：工作流中的 Spot Weld Feature Engineering 输入端口未展示其依赖的 `cvei/cvev/cver/cvep` 等原始报告字段，用户无法确认输入数据契约。
-- 根因：PortSpec 只保留端口名称、类型和标签，API 与前端没有传递或渲染必需原始列信息。
-- 解决方法：为 PortSpec/API Schema 增加 `required_columns`，点焊特征算子声明 14 个工艺字段和 4 个波形字段；端口悬浮预览展示完整必需原始列。
-- 验证方式：后端 `tests.test_all_operators` 83/83；前端 `CustomNode.test.tsx` 12/12。
-- 影响范围：算子元数据 API、工作流节点端口提示和点焊特征算子声明；不改变特征计算和执行输出。
-- 遗留事项：远程 CI、Compose/Celery 未执行。
-- 预防措施：领域算子新增或变更必需字段时，同步更新算子元数据、API Schema、端口展示和回归测试，避免只在执行器内部隐式校验。
-
-### 2026-08-02：点焊特征输出保留原始波形字段
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊质量报告复现稳定性修复。
-- 任务状态：已完成实现与回归验证。
-- 问题现象：Spot Weld Feature Engineering 输入已声明 `cvei/cvev/cver/cvep`，但输出 `features` 记录只包含派生特征，原始波形字段无法追溯。
-- 根因：算子直接返回 `build_feature_frame()` 的 73 列结果，未把规范化后的原始波形列合并回输出记录。
-- 解决方法：执行时先规范化输入报告，再将四个波形源字段原样追加到 `features` 输出；保留原有 73 列特征 Schema 和统计口径，避免影响质量训练管线。
-- 验证方式：新增输出字段回归；后端点焊特征、质量 API 和全算子组合测试 116/116；Python 编译和 `git diff --check` 通过；前端生产构建通过。
-- 影响范围：仅工作流 Spot Weld Feature Engineering 的输出记录；不改变质量服务的 73 特征契约、模型训练输入或波形解码逻辑。
-- 预防措施：领域算子需要同时验证输入字段声明、输出字段可追溯性和 Schema 统计口径，避免只测试计算结果数量。
-- 遗留事项：远程 CI、Compose/Celery 未执行。
-
-### 2026-08-02：工作流导出制品与手动下载统一
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；工作流数据闭环修复。
-- 任务状态：已完成实现、回归和生产构建。
-- 问题现象：CSV/Excel 导出和写入 CSV 完成后自动下载；浏览器使用节点结果重新序列化，下载内容与数据集制品不一致，并可能缺少 `cvei/cvev/cver/cvep`。
-- 根因：节点完成事件未携带已持久化制品 ID，前端只能从结果预览重新生成文件；下载与制品形成两份独立数据源。
-- 解决方法：节点完成结果返回制品 ID、名称和格式；取消完成时自动下载；选中已完成导出算子后显示下载按钮；新增数据集原始制品下载 API，直接返回已保存字节。点焊特征输出到两个 CSV 算子的链路保留四个原始波形列。
-- 验证方式：后端相关组合 134/134；前端相关 34/34；点焊特征到两个 CSV 算子的制品字段回归通过；原始下载字节一致回归通过；Vite 生产构建、Python 编译和 `git diff --check` 通过。
-- 影响范围：工作流完成事件、CSV 导出/写入 CSV、数据集制品下载和节点配置面板；不修改已有数据集转换导出 API。
-- 预防措施：可下载制品必须以服务端持久化内容为单一事实来源，禁止用结果预览再次序列化；完成事件需携带可授权访问的制品引用。
-- 遗留事项：历史运行结果没有制品引用，需重新运行工作流后才显示下载按钮；远程 CI、Compose/Celery 未执行。
-
-### 2026-08-03：1875 条点焊自动标注真实浏览器长任务稳定性
-
-- 当前周次：第 9 至第 12 周并行开发支持工作；点焊报告复现真实浏览器验收。
-- 任务状态：已完成本地修复、回归和真实浏览器长任务。`spot-weld-report-demo.csv` 的 1875 条自动标注从页面启动，任务列表最终显示 `1875/1875 100%` 与 `completed`，并出现“保存到数据管理”。
-- 问题现象：旧运行在 `740/1875`、`39.47%` 失败，错误码为 `QUALITY_RUN_EXECUTION_FAILED`，原始数据库错误为 `sqlite3.OperationalError: database is locked`。
-- 已确认根因：本地文件 SQLite 使用 `delete` 日志模式和短忙等待；运行详情会懒加载全部样本，样本队列会读取每条大 JSON 波形。页面每秒并发轮询这两条读取，与每 10 条保存一次的自动标注写入竞争。
-- 解决方法：文件 SQLite 连接统一启用 `journal_mode=WAL` 与 30 秒 `busy_timeout`，内存 SQLite 保持原有共享池行为；运行详情优先读取持久化进度，不再为进度和样本数加载整批样本；样本队列只返回列表所需元数据，完整源字段和波形仅按单样本详情读取；人工保存标签同步写回持久化进度。
-- 验证方式：新增读事务保持时写事务仍可提交的 SQLite 回归，先因缺少连接配置失败后通过；新增运行详情不读取大样本、队列不携带详情大字段回归。后端质量/API/数据库 71/71、Week 17 五模块 5/5、Python `compileall`、前端 Vitest 35 文件 160 用例、Vite 生产构建和真实浏览器 1875 条全流程均通过。
-- 影响范围：仅本地 SQLite 连接策略、点焊运行进度序列化、样本队列负载和人工标签进度；不改生产 PostgreSQL、特征公式、规则语义、模型候选或数据库模式。
-- 预防措施：本地 SQLite 的后台大写入与前端轮询共存时，文件库必须显式配置 WAL/忙等待；列表接口不能加载详情大 JSON；已有持久化进度时不得为显示进度懒加载完整关系。
-- 遗留事项：Compose/Celery/Redis/MinIO 与远程 GitHub Actions 尚未验证；这些环境需要独立证据，不能由本地浏览器或回归替代。
-
-### 2026-08-03：真实浏览器长任务发布前复核更正
-
-- 当前周次：第 17 周数据探索与标注；点焊报告复现真实浏览器验收。
-- 任务状态：已完成本地发布前复核。真实浏览器最新运行显示 `completed`、`1875/1875 100%`，样本队列共 1875 条，控制台无页面错误。
-- 复核结果：前端全量 Vitest 为 35 个测试文件、161 个用例通过；`npm run build` 通过；`run_suite.py --week 17` 为 5/5 模块通过；Python 编译和 `git diff --check` 通过。此前记录中的 160 用例、71/71 后端数字为早期快照，以上述最新结果为准。
-- 发布范围：纳入本次点焊长任务、标注进度/规则编辑、AutoML 任务与报告、工作流制品导出修复涉及的跟踪代码、测试、`.gitignore` 和本计划；排除 `OPTIMIZATION_PLAN.md`、前端临时生成的 `pnpm-lock.yaml` 及 `tmp/report-media-20260730/`。
-- 遗留事项：本次只验证本地服务和真实浏览器；Compose/Celery/Redis/MinIO、远程 GitHub Actions 仍需独立验证，不能由本地证据替代。
-
-### 2026-08-03：普通 AutoML 训练耗时字段对齐
-
-- 当前周次：第 17 周数据探索与标注；AutoML 任务列表和结果展示。
-- 任务状态：已完成实现与回归验证。
-- 问题现象：普通 AutoML 后端已为每个候选模型保存 `training_time_seconds`，前端结果表仍读取旧字段 `training_time`，导致训练耗时显示为 `-`。
-- 解决方法：前端结果列优先读取 `training_time_seconds`，并兼容历史 `training_time` 数据；新增普通 AutoML 完成轮询后的真实耗时显示回归。
-- 验证方式：AutoML 页面聚焦测试 17/17；前端全量 Vitest 35/35 文件、162/162 用例；Vite 生产构建、Python 编译和 `git diff --check` 通过。
-- 遗留事项：报告自动模式的聚类前训练标签与聚类后持久化标签属于不同阶段口径，已由现有规则流程保持；若后续要求统一评估口径，需要单独设计无循环的聚类/训练顺序。
-
-### 2026-08-03：Ubuntu 24 单机 Compose 部署与平台操作指南
-
-- 当前周次：第 17 周数据探索与标注的交付文档补齐。
-- 任务状态：已完成本地文档、配置契约和静态校验；真实 Ubuntu Docker 部署验收待目标服务器执行。
-- 问题现象：原 Ubuntu 指南仍要求 Python、Vite 与 SQLite 双进程启动，与当前 PostgreSQL、Redis、Celery、MinIO、MLflow、TensorBoard Gateway、推理运行时和 Nginx 的生产 Compose 栈不一致；PostgreSQL 与 MinIO 也缺少明确的持久卷和默认本机管理端口边界。
-- 已确认根因：生产基础设施完成后，交付文档和 Compose 默认暴露策略没有同步收口；新增环境模板契约测试的正则多写一层反斜杠，未能识别正常的 Compose 必填变量表达式。
-- 解决方法：新增 PostgreSQL、MinIO 命名持久卷；后端、前端和 MinIO 管理端口默认只绑定 127.0.0.1，对外仅保留 Nginx 80；重写 Ubuntu 24 部署指南和平台操作指南，新增无真实密钥的生产 .env 模板；修正变量覆盖测试的匹配式。
-- 验证方式：C:\Users\17723\miniconda3\python.exe -m unittest tests.test_ci_workflow -v 为 12/12 通过，包含持久卷、回环绑定和环境模板变量覆盖；PyYAML 静态解析成功；git diff --check 通过。当前 Windows 工作站未安装 Docker CLI，未运行真实 docker compose config、镜像构建或服务启动。
-- 影响范围：docker-compose.yml、Ubuntu 24 部署指南、平台操作指南、生产环境模板和 CI 配置契约测试；不修改业务 API、数据库 Schema、前端功能或现有用户数据。
-- 预防措施：每次生产 Compose 服务、端口、持久卷或必填变量变更，必须同步更新部署模板、用户操作指南和静态覆盖测试；交付结论须明确区分本地静态验证、真实 Compose 验收和远程 CI。
-- 遗留事项：在 Ubuntu 24 目标主机执行文档中的 docker compose --env-file .env config、up -d --build、/api/ready 和首次登录验收；公网部署还需在 HTTP Nginx 之前配置 TLS。
-
-### 2026-08-11：AutoML 建模任务列表首次进入页可见性修复
-
-- 当前周次：第 17 周数据探索与标注；AutoML 任务入口可发现性缺陷修复。
-- 任务状态：已完成前端实现、RED/GREEN 回归和生产构建验证。
-- 问题现象：用户进入“自动建模”页面时看不到“建模任务”列表，只有在普通或点焊建模表单中手动选择项目后才会出现，造成任务记录看似丢失。
-- 已确认根因：任务卡片的 JSX 被 `selectedProject &&` 条件包裹；初始项目状态为 `null`，所以卡片和其空状态整体不渲染，而不是任务查询失败。
-- 解决方法：任务卡片始终渲染；未选项目时显示“请选择项目后查看建模任务”并禁用刷新，选定项目后继续使用既有项目隔离查询、轮询、普通/点焊类型和终态删除流程。
-- 验证方式：新增未选项目可见性回归先 RED（找不到“建模任务”），修复后 `npm test -- --run src/pages/AutoMLPage.test.tsx` 为 18/18；`npm run build` 通过。全量 Vitest 为 34 文件、162 用例通过，另有 `DataAnnotationPage.test.tsx` 的 1 个既有 CRLF/LF 文本断言失败；`global.css` 未在本次 diff 中修改。
-- 影响范围：仅 AutoML 页面任务列表的初始渲染与空状态、对应前端回归测试；不改变后端 API、项目权限、任务查询、删除逻辑或建模结果。
-- 预防措施：业务列表不得把唯一可发现入口完全隐藏在前置筛选条件后；无筛选条件时必须渲染可操作的空状态，并为首次进入页面保留回归测试。
-- 遗留事项：全量前端套件的标注页 CSS 文本断言应在独立范围内改为平台无关的换行匹配；本次不修改无关样式或测试。
-
-### 2026-08-11：工作台权限范围、管理员全量可见与历史项目归属修复
-
-- 当前周次：第 10 周权限、审计与通知；第 17 周点焊平台交付支持。
-- 开发内容：统一工作台、项目和模型库的可见范围；保留唯一 `admin` 管理员账号；修复历史无主项目导致管理员项目列表响应校验失败的问题。
-- 问题现象：工作台统计接口未鉴权并始终返回全库数据；项目访问服务把 `role=admin` 当作非项目成员；管理员启用全量项目查询后，历史 `owner_id` 为空的项目使 `/api/projects` 返回 500；管理员无法查看其他用户未归属项目的私有模型。
-- 已确认根因：项目访问服务只比较 owner/member 记录而没有平台管理员分支；工作台直接统计全部表记录；历史本地数据库由早期 ORM 建表路径留下了无 owner 项目，普通成员筛选此前掩盖了该数据完整性问题。
-- 解决方法：`ProjectAccessService` 识别 `role=admin` 并返回全量项目范围；工作台强制登录，非管理员按可访问项目、本人/公开模型与 API 统计，管理员保留全量统计；模型库管理员读取覆盖所有私有独立模型；应用启动时将无 owner 或 owner 已失效的历史项目归属到 `admin`；通过现有审计用户删除接口移除一个额外管理员并迁移其关联资源。
-- 验证方式：项目访问、工作台、模型库、项目 API 与数据库启动相关回归共 67 项通过、1 项 PostgreSQL 集成环境跳过；Python `compileall` 和 `git diff --check` 通过；清理本次测试的临时记录后，运行服务复核 `admin` 的工作台/项目列表均为 119 个项目，工作台/模型库均为 14 个模型，管理员列表仅剩 `admin`。
-- 影响范围：项目访问服务、工作台统计、模型库读取、应用启动数据修复、管理员账户与历史项目归属；普通用户写入权限不扩大，管理员沿用平台管理员权限。
-- 预防措施：任何全量管理员查询都必须回归覆盖历史无 owner 记录；工作台聚合接口必须显式鉴权并复用项目访问范围；用户删除必须转移项目 owner；资源列表与工作台统计须同时验证管理员和普通用户两种范围。
-- 遗留事项：生产 PostgreSQL/Compose 环境仍需在目标环境执行同等权限回归；当前本地 SQLite 修复已完成，后续生产数据库须在启动并确认 `admin` 存在后自动执行同一幂等修复。
-
-### 2026-08-11：工作台算子术语与项目创建者可见性补齐
-
-- 当前周次：第 10 周权限、审计与通知；第 17 周点焊平台交付支持。
-- 任务状态：已完成前后端实现、回归、生产构建与编译检查。
-- 问题现象：工作台把工作流算子数量显示为“内置算法”，项目管理列表没有显示项目创建者，管理员全量查看项目时无法辨识归属。
-- 已确认根因：工作台沿用了早期算法目录的翻译文案；项目列表 API 手工序列化响应时未读取 `Project.owner`，前端表格也没有对应列。
-- 解决方法：中文、英文工作台统计文案分别改为“内置算子”和 `Built-in Operators`；项目列表查询预加载 owner，返回可为空的 `creator_username`，项目管理表格显示创建者，历史缺失 owner 时显示 `-`。
-- 验证方式：新增 Dashboard 文案回归与项目列表创建者回归，前端聚焦测试 2/2 通过；独立临时 SQLite 数据库中项目 API 回归 14/14 通过；`npm run build`、`python -m compileall -q app` 和 `git diff --check` 通过。
-- 影响范围：工作台资产统计文案、项目列表 API 响应和表格展示；不改变项目权限、项目成员范围、创建者持久化逻辑或数据迁移。
-- 预防措施：统计术语变更必须同步覆盖顶部汇总和统计卡片；列表新增归属字段时，API Schema、查询加载策略、空历史数据回退和前端列表列需要一并回归。
-- 遗留事项：生产 PostgreSQL/Compose 环境仍需执行项目列表接口和页面验收；本次未改变该环境的数据或部署配置。
-
-### 2026-08-11：项目创建者与右上角用户名显示修复
-
-- 当前周次：第 10 周权限、审计与通知；第 17 周点焊平台交付支持。
-- 任务状态：已完成前端实现、后端运行时加载、回归、生产构建和本机接口复核。
-- 问题现象：项目创建者显示 `-`，右上角用户信息显示 UUID；尽管项目 owner 对应有效的 `admin` 用户，页面仍不能显示用户名。
-- 已确认根因：运行中的 8000 后端在创建者字段改动前启动，未加载新的关联查询；登录页只把 `user_id` 保存到 localStorage，布局直接把该 ID 当作用户名渲染，已有会话也没有用户名回填逻辑。
-- 解决方法：重启本机后端加载项目 owner 预取逻辑，项目 API 返回 `creator_username=admin`；登录成功时保存 `username`，布局优先显示该值，已有带 token 的会话在用户名缺失时请求 `/auth/me` 并回填本地存储。
-- 验证方式：重启后 `/api/ready` 返回 ready，真实 `/api/projects` 返回项目 `test` 的 `creator_username: admin`；用户名显示、登录存储、创建者列表和工作台文案前端回归 5/5 通过；`npm run build` 和 `git diff --check` 通过。
-- 影响范围：登录会话显示状态、顶部用户展示、项目列表创建者显示和本机后端运行进程；不改变认证 token、用户权限、项目 owner 数据或数据库 Schema。
-- 预防措施：界面显示身份必须使用稳定的用户名字段，UUID 只用于资源标识与 API 调用；会话扩展字段应同时覆盖新登录写入和旧会话惰性回填；依赖后端字段的 UI 验收前必须确认运行进程已加载当前代码。
-- 遗留事项：生产 PostgreSQL/Compose 环境仍需重启对应后端后执行同一登录、项目列表和页面验收；本机 Vite 已可热更新。
-
-### 2026-08-11：前端验收清单与 AutoML 首次状态查询收口
-
-- 当前周次：第 10 周权限、审计与通知；第 17 周点焊平台交付支持。
-- 任务状态：已完成本地实现、前后端回归、生产构建和编译验证。
-- 问题现象：完整前端 Vitest 首次复核有三项失败：四个新增身份与项目页面测试未登记到周度验收清单；标注页面样式断言只匹配 LF，Windows 工作区 `global.css` 使用 CRLF；普通 AutoML 训练耗时用例等待首个 3 秒轮询，加上表单交互后触及 Vitest 5 秒默认超时。
-- 已确认根因：验收清单不是测试文件自动发现后的唯一真相；文件内容断言未处理平台换行；提交建模任务后只创建定时器，未立即读取刚创建任务状态。
-- 解决方法：将新增测试归入第 10 周清单；样式读取后归一化 CRLF；普通 AutoML 提交成功后立即查询一次任务状态，未终态时才开始 3 秒轮询，保持原有终态结果、错误和任务列表刷新行为。
-- 验证方式：聚焦前端回归 42/42；完整 Vitest 39 个文件、168 个用例通过；`npm run build` 通过；隔离 SQLite 上 `unittest` 相关项目、权限、工作台、模型库、数据库和 CI 契约 79/79 通过，1 项 PostgreSQL 集成按环境配置跳过；Python `compileall` 通过。
-- 影响范围：前端 AutoML 首次状态刷新、测试验收清单和换行兼容断言；不改数据库 Schema、权限策略、建模算法或任务 API 契约。
-- 预防措施：新测试文件必须同时进入周度验收清单；跨平台文本断言应比较规范化换行或结构语义；轮询型异步任务应先发起一次即时状态读取，避免短任务的额外等待和测试时限竞态。
-- 遗留事项：生产 Compose、Celery、Redis、MinIO 和远程 GitHub Actions 尚未在本次工作站执行，需按现有部署验收流程独立验证。
-
-### 2026-08-13：本机 Compose `.env` 生成与静态校验
-
-- 当前周次：第 11 至第 12 周系统联调与验收支持。
-- 任务状态：已完成本机部署配置生成与静态校验；真实容器构建与启动待具备 Docker 的 Ubuntu 24 主机执行。
-- 问题现象：仓库缺少可直接供 `docker compose --env-file .env up -d --build --remove-orphans` 使用的根目录 `.env`，手工替换模板可能造成 PostgreSQL URL、MinIO 凭据或内部服务密钥不一致。
-- 解决方法：从已提交的 Ubuntu 24 生产模板生成被 `.gitignore` 忽略的根目录 `.env`；为 PostgreSQL、应用签名、MinIO、TensorBoard 和推理服务生成独立随机十六进制密钥；保持 PostgreSQL URL 和 MinIO 双凭据组一致，显式设置全部 Compose 引用变量。
-- 验证方式：静态检查确认 Compose 引用 31 个变量、`.env` 覆盖 31 个变量、无占位值；`docker-compose.yml` 通过 PyYAML 解析；`.env` 被 `.gitignore` 忽略。当前 Windows 工作站没有 Docker CLI，未执行实际 `docker compose config`、构建或启动。
-- 影响范围：仅本机未跟踪部署密钥文件；不修改版本控制配置、应用代码、数据库或生产数据。
-- 预防措施：部署 `.env` 必须从受控模板生成，使用随机值并保持连接 URL/对应凭据同步；没有 Docker CLI 时只能声明静态配置校验，不能声明 Compose 运行通过。
-- 遗留事项：在 Ubuntu 24 服务器执行 `docker compose --env-file .env config` 和 `up -d --build --remove-orphans`，随后检查 `/api/ready`、服务状态与首个管理员登录。
-
-### 2026-08-13：旧 CPU MinIO 与 GHCR MLflow 部署阻塞修复
-
-- 当前周次：第 11 至第 12 周系统联调与验收支持。
-- 问题现象：Ubuntu 服务器执行 Compose 时 `minio` 以退出码 127 退出，日志为 `Fatal glibc error: CPU does not support x86-64-v2`；MLflow 服务仍硬编码 GHCR 镜像，网络受限主机无法拉取。
-- 已确认根因：`minio/minio:latest` 和 `minio/mc:latest` 使用要求 x86-64-v2 的基础镜像；MLflow 运行时依赖 `ghcr.io/mlflow/mlflow:v3.2.0`，并在启动阶段联网安装 psycopg。
-- 解决方法：MinIO 与 mc 默认固定到官方 `-cpuv1` 发布标签，并允许 `.env` 用 `MINIO_IMAGE`/`MINIO_MC_IMAGE` 覆盖；新增 `Dockerfile.mlflow`，在构建阶段从阿里云 PyPI 固定安装 MLflow 3.2、psycopg 和 boto3，Compose 改为本地 build，启动时不再 pip 联网；CI 同步构建 MLflow，并更新 Ubuntu 故障排查说明。
-- 验证方式：新增 Compose/CI 契约先 RED 后 GREEN；`tests.test_ci_workflow` 15/15 通过，Compose YAML 解析和 `git diff --check` 通过。当前 Windows 工作站无 Docker CLI，未执行真实镜像拉取、构建或服务启动；Ubuntu 目标机仍需完成运行态验收。
-- 影响范围：生产 Compose、实验 CI、MLflow 镜像构建和 Ubuntu 部署文档；不删除或重建 PostgreSQL/MinIO 数据卷，不改变业务 API 和数据库 Schema。
-- 预防措施：禁止基础设施镜像使用 `latest`；旧 CPU 主机必须显式使用 `cpuv1` 标签；生产服务依赖应在镜像构建阶段安装并在 CI 契约中断言，不在容器启动命令中联网安装。
-- 遗留事项：目标 Ubuntu 执行 `docker compose config`、拉取两个 `cpuv1` 镜像、构建 MLflow 并检查 `/api/ready`；若镜像仓库访问仍受限，需要配置 Docker registry/PyPI 代理或预加载镜像。
-
-### 2026-08-14：旧 CPU MLflow NumPy 指令集兼容修复
-
-- 当前周次：第 11 至第 12 周系统联调与验收支持。
-- 任务状态：本地 Dockerfile、Compose 契约、部署文档和静态验证已完成；真实 Ubuntu 容器重建与运行态验收待目标服务器执行。
-- 问题现象：在 MinIO 修复后，MLflow 容器导入 `pyarrow` 间接导入 NumPy 时失败，日志为 `RuntimeError: NumPy was built with baseline optimizations: (X86_V2) but your machine doesn't support: (X86_V2)`。
-- 已确认根因：`Dockerfile.mlflow` 仅限制 MLflow、psycopg 和 boto3，pip 可解析到要求 x86-64-v2 的新 NumPy wheel；错误在 NumPy 二进制模块导入时发生，尚未进入 PyArrow 或 MLflow 业务逻辑。
-- 解决方法：在本地 MLflow 镜像构建阶段固定安装 `numpy==2.3.5`，保持其余依赖与运行命令不变；新增 Compose 镜像契约，要求 Dockerfile 明确包含该版本；部署和训练运维文档同步记录旧 CPU 原因与无损重建方向。
-- 测试先行：新增 `numpy==2.3.5` Dockerfile 契约后，针对 MLflow Compose 测试按预期失败；最小依赖固定后恢复 GREEN。
-- 验证方式：`C:\Users\17723\miniconda3\python.exe -m unittest ml-platform.backend.tests.test_ci_workflow -v` 为 15/15 通过；本机 `pip index versions numpy` 确认可获得并已安装 `2.3.5`；`docker-compose.yml` 的 PyYAML 解析和 `git diff --check` 通过。当前 Windows 工作站无 Docker CLI，未宣称镜像构建或 MLflow 启动通过。
-- 影响范围：仅 MLflow 构建依赖固定、部署故障说明和其 CI 静态契约；不修改 MLflow 参数、PostgreSQL、MinIO 卷、业务 API、数据库 Schema 或既有数据。
-- 预防措施：旧 CPU 兼容排障必须按真实失败的二进制模块逐层固定，不能先猜测更上层库；对镜像安装的关键二进制依赖应加入可读的版本契约；每次依赖基线变化后需在目标 CPU 构建、启动和探针验收。
-- 遗留事项：Ubuntu 目标主机从当前提交同步后，仅对 `mlflow` 执行 `build --no-cache` 和 `up -d --force-recreate`，检查其日志、容器状态和 `/api/ready`；不得执行 `docker compose down -v`。
-
-### 2026-08-14：Nginx UTF-8 BOM 启动失败与前端 IPv6 健康检查修复
-
-- 当前周次：第 11 至第 12 周系统联调与验收支持。
-- 任务状态：根因已由 Ubuntu 目标服务日志确认；本地源文件、静态回归和部署文档已修复，目标服务器需按无损命令移除已部署文件的 BOM、重建 Nginx，并重建前端以加载 IPv4 健康检查。
-- 问题现象：后端和 MLflow 已健康，`127.0.0.1:80` 却没有监听；`nginx` 反复重启，`frontend` 显示 `unhealthy`。Nginx 日志稳定报 `unknown directive "﻿#" in /etc/nginx/nginx.conf:2`，前端健康检查稳定报 `wget: can't connect to remote host: Connection refused`。
-- 已确认根因：挂载到 Nginx 的根 `nginx.conf` 以 UTF-8 BOM 开头，Nginx 不把 BOM 视为注释的一部分，解析阶段直接退出；前端 Dockerfile 健康检查使用 `localhost`，容器中的 wget 优先连接未监听的 IPv6 回环 `::1`，而站点仅监听 IPv4。
-- 解决方法：移除 `nginx.conf` 和前端 Dockerfile 的 UTF-8 BOM；前端健康检查改为 `http://127.0.0.1/`。新增三项部署静态契约，分别锁定网关配置无 BOM、前端 Dockerfile 无 BOM 和 IPv4 健康检查。
-- 测试先行：三项新契约先分别因网关 BOM、前端 `localhost` 探针和前端 Dockerfile BOM 失败；最小修改后均恢复 GREEN。
-- 验证方式：针对性 `tests.test_ci_workflow` 3/3 通过；字节检查确认两个运行时文件均不以 `EF BB BF` 开头。目标服务器已确认后端/MLflow 健康，但尚未执行修复后的 Nginx/前端容器运行态验收。
-- 影响范围：Nginx 网关配置、前端镜像健康检查、部署故障说明和 CI 静态契约；不修改业务 API、前端页面、数据库、MinIO、MLflow 或持久化数据。
-- 预防措施：所有被运行时解释器直接读取的配置、Dockerfile 和 shell 文件必须使用 UTF-8 无 BOM；容器健康检查使用明确的 `127.0.0.1` 或 `::1`，不能依赖 `localhost` 的 IPv4/IPv6 解析顺序。
-- 遗留事项：服务器先移除 `nginx.conf` BOM 并重建 `nginx` 恢复 80 端口，再重建 `frontend` 消除健康检查误报；不执行 `docker compose down -v`。
+### 2026-07-21：第 9 周 Task 3 安全领域事件契约完成
+
+- 完成：`DomainEvent` 冻结协议、空记录器、事件类型/载荷 allowlist、递归深冻结及存储序列化边界；默认记录器不提交事务。
+- 修复：事件载荷拒绝 UUID、自定义对象、集合、非字符串键及 `NaN`/`+Inf`/`-Inf`，避免异步存储阶段序列化失败或产生非标准 JSON。
+- 验证：domain smoke、模型/数据库 `32/32`、compileall、diff check 通过；完整 rollout 测试待 Task 6 服务落地后复跑。
+- 后续：Task 4 实现 API Key 生命周期与 Redis 失败关闭限流。
+
+### 2026-07-21：第 9 周 Task 4 API Key 与失败关闭限流完成
+
+- 完成：PBKDF2 单次展示 API Key、部署/范围/过期/撤销校验、同事务轮换及安全列表 DTO；Redis 单 Lua 令牌桶使用 Redis 时间、原子 refill/consume/TTL 和 retry-after。
+- 安全：Redis 连接、超时及脚本异常统一为 `RATE_LIMIT_BACKEND_UNAVAILABLE`，无内存降级或默认放行；公开列表不含密钥哈希或明文。
+- 验证：`test_inference_api_keys`、`test_inference_rate_limit`、`test_config` `27/27` 通过；扩展聚焦集 `40/40`、compileall、diff check 通过，规格与质量双审通过。
+- 后续：Task 5 建设请求脱敏日志、分钟指标、留存与模型卡。
+
+### 2026-07-25：第 9 周 Task 5 可观测性与模型卡完成
+
+- 完成：请求日志 allowlist 脱敏、分钟指标桶、固定延迟直方图/百分位、查询边界、留存清理，以及模型卡生成、系统字段保护、指导版本化和安全导出。
+- 修复：分钟桶首次写入采用保存点冲突恢复，避免并发请求在唯一键上失败；模型卡 lineage 仅接受稳定标量，拒绝嵌套数据、URI、凭据和未知来源值。
+- 验证：`test_inference_observability`、`test_model_cards`、`test_model_registry_service` `24/24` 通过；compileall、diff check 通过；规格复核缺陷已修复。
+- 当前状态：Task 5 完成；Task 6 开始实现加权路由和持久 rollout CAS。
+
+### 2026-07-21：第 9 周 Task 1 RED 合同边界完成
+
+- 开发环境：在 `.worktrees/week9-12-mlops-core` 的 `codex/week9-12-mlops-core` 隔离分支执行；基线后端 `68/68` 模块、前端 `19/19` 文件 `50/50` 用例和生产构建通过。本机 Python 3.13/Node 24 与 CI Python 3.11/Node 20 的差异保留为后续远程门禁。
+- 完成内容：新增第 9 周七个生产推理合同测试模块并登记 `week_manifest.py`，覆盖发布模型、滚动状态、API Key、Redis 限流、脱敏日志与指标、模型卡和生产推理 API。
+- TDD 证据：七个新模块均按预期 RED，失败原因仅为第 9 周生产实体、服务和路由尚未实现；`test_suite_manifest` `1/1`、`compileall` 和 `git diff --check` 通过。
+- 审查修正：统一 API Key 稳定错误码和请求头；补齐错误密钥、作用域、过期、撤销、轮换和安全 DTO；可观测状态固定为 `success/error/limited`；日志与 API Key 持久字段、公开序列化改用精确 allowlist；模型卡补齐血缘、制品、发布状态和安全导出合同。
+- 审查结论：规格审查通过；代码质量复审无 Critical、Important 或 Minor 问题，最终提交为 `63b7e3c`。
+- 未完成：Task 2 根据 RED 合同实现七张生产推理表和线性 Alembic `20260720_09_production_inference`；当前第 9 周整体保持进行中。
+
+### 2026-07-21：第 9 周 Task 2 生产推理持久化完成
+
+- 完成内容：新增 `DeploymentRevision`、`DeploymentTarget`、`DeploymentRollout`、`InferenceApiKey`、`InferenceRequestLog`、`InferenceMetricBucket` 和 `ModelCard` 七张表及 ORM 导出；迁移 `20260720_09_production_inference` 线性继承 `20260718_08`。
+- 数据迁移：确定性回填每个旧部署的稳定 revision/10000 基点 target 和每个模型版本的 model card；空库、 populated DB、双次 upgrade、`alembic check`、完整 downgrade 均通过，Week 8 行未被破坏。
+- 安全边界：API Key 只保留 PBKDF2 hash 和生命周期元数据；日志列为精确 allowlist；ModelCard lineage 只保留安全 ID/Schema/指标/审批字段，不复制 credentials 或 storage URI；`InferenceRequestLog.status` 不设置默认值，必须显式写入 `success/error/limited`。
+- 验证方式：模型/迁移聚焦回归 `32/32`、compileall、API model-registry/project-access 回归通过；独立规格审查和质量审查均通过。`tests.test_model_cards` 暂因 Task 1 的 `app.services.model_cards` 尚未实现而无法导入，这是已知下游依赖，不计为 Task 2 失败。
+- 提交：实现 `d60dc19`，ModelCard/default 修复 `c922980`，显式状态修复 `6f4b57e`；当前第 9 周整体保持进行中。
+### 2026-07-21：第九周 Task 2 模型卡持久化复审修正
+
+- 发现：模型卡缺少批准设计要求的 `intended_use` 与 `limitations`，且 Week 9 迁移中多个 ORM 默认值未落到数据库服务器默认。
+- 修复：新增非空 4000 字符字段并以空字符串回填；为发布状态、rollout 状态/版本、API Key scopes、请求日志状态、指标计数/JSON 和模型卡 JSON/文本字段补齐服务器默认；回填路径显式写入模型卡字段。
+- 验证：生产推理模型测试 12/12、数据库生产测试 18/18、迁移升级/降级/幂等和 legacy backfill 通过；`compileall`、`git diff --check` 通过。模型卡服务合同仍依赖 Task 1 后续实现。
+- 未完成：Task 2 代码需由主线合并后与模型卡服务和完整 Week 9 测试联调。
+
+### 2026-07-21：第 9 周 Task 3 领域事件 payload 深冻结修正
+
+- 问题现象：`DomainEvent` 仅冻结顶层 `MappingProxyType`；调用方保留的 `model_version_ids` 列表或嵌套字典仍可变，可能在事件创建后改变已记录 payload。
+- 根因：payload 过滤只复制顶层字典，没有递归复制和冻结嵌套容器。
+- 解决结果：增加递归 `_deep_freeze`；嵌套 Mapping 转不可变 mapping、list/tuple 转 tuple，标量保持原值；新增列表来源变更和事件嵌套写入回归测试。
+- 验证方式：独立 domain deep-freeze contract 通过；模型/数据库聚焦回归 32/32；`compileall` 和 `git diff --check` 通过。`test_inference_rollout` 仍因 Task 4 `app.services.inference_rollout` 尚未实现而无法收集，属于已知下游依赖。
+- 影响范围：第 9 周领域事件安全 payload，不改变事件类型白名单或安全键过滤。
+- 预防措施：不可变事件必须递归复制所有嵌套 Mapping 和序列；新增 payload 字段同时覆盖来源对象和事件对象两侧 mutation 测试。
+- 遗留事项：待 Task 4 rollout 服务完成后运行完整 `test_inference_rollout` 和 Week 9 套件。
+
+### 2026-07-21：第 9 周 Task 3 事件存储序列化补充
+
+- 问题现象：递归冻结后 `MappingProxyType` 和 tuple 不能直接由 `json.dumps` 或 SQLAlchemy JSON 绑定，Outbox/持久化消费者缺少明确转换入口。
+- 根因：事件 payload 的内存不可变表示与 JSON/数据库所需的可变纯容器表示不同，不能直接复用冻结对象。
+- 解决结果：新增 `to_storage_payload` 公共递归序列化器；Mapping 转新 dict，list/tuple 转新 list，标量保持原值；输出不共享事件内部引用。
+- 验证方式：新增 serializer contract，检查 plain dict/list、`json.dumps`、修改 serializer 结果不影响事件；domain contract、模型/数据库 `32/32`、compileall 和 diff check 通过。
+- 影响范围：第 9 周事件 Outbox/存储边界；不会放松 DomainEvent 的深不可变约束。
+- 遗留事项：Task 4 完成后需在真实事件记录器测试中使用 `to_storage_payload`，禁止直接将 `event.payload` 交给 JSON/SQLAlchemy。
+
+### 2026-07-21：第 9 周 Task 3 payload JSON 类型校验
+
+- 问题现象：冻结事件虽可安全存储，但 UUID、set、自定义对象等非 JSON 值仍可能进入 payload，直到 Outbox 序列化阶段才失败。
+- 根因：深冻结只处理容器可变性，没有冻结 payload 的值域和 Mapping key 类型。
+- 解决结果：增加递归 JSON-native 校验；允许 None/bool/int/float/str、字符串键 Mapping、list/tuple，其他值统一抛出 `DOMAIN_EVENT_PAYLOAD_INVALID`；保留安全键过滤。
+- 验证方式：新增有效字符串 ID/int step 和 UUID/set/非字符串键/自定义对象拒绝回归；domain smoke、模型/数据库 `32/32`、compileall、diff check 通过。
+- 影响范围：第 9 周事件构造和第 10 周 Outbox 输入契约；不改变事件类型白名单或存储 thaw API。
+- 遗留事项：Task 4 完成后运行完整 rollout 和 Week 9 套件，确认所有生产事件使用 JSON-native payload。
+
+### 2026-07-21：第 9 周 Task 3 非有限浮点 payload 修正
+
+- 问题现象：Python `float` 值域包含 NaN、正无穷和负无穷；这些值会通过基本 float 类型校验，但不是严格 JSON 值。
+- 根因：JSON-native 类型校验没有同时约束 float 的有限性。
+- 解决结果：使用 `math.isfinite` 在冻结前拒绝 NaN、正无穷和负无穷，统一返回 `DOMAIN_EVENT_PAYLOAD_INVALID`；有限 float 继续允许。
+- 验证方式：三种非有限值及有限 `2.5` 回归，domain smoke、模型/数据库 `32/32`、compileall 和 diff check 通过。
+- 遗留事项：Task 4 完成后运行完整 rollout 和 Week 9 套件。
+
+### 2026-07-25：第 9 周 Task 6 加权路由与持久 Rollout 完成
+
+- 当前周次：第 9 至第 12 周并行开发；Task 6 已完成，第 9 周整体仍进行中。
+- 开发内容：完成 `WeightedTargetRouter` 稳定基点哈希和两阶段 revision/target 路由；完成 candidate 创建、预加载、健康阈值、0/10/50/100 流量步骤、暂停/恢复、CAS 推进、回滚和重启 reconcile；runtime 以 `runtime_key` 支持同一部署多 revision 共存，并保留 Week 8 legacy 兼容。
+- 问题现象：completed rollback 先恢复 legacy stable 后，candidate alias 清理失败会使事务回滚到 candidate stable；数据库路由、legacy runtime 和 candidate alias 可能不一致。远端已删除但客户端超时也会触发同一风险。
+- 根因：不可逆的 runtime alias drain 与 rollback 状态提交位于同一异常边界，清理失败被错误当作 rollback 失败处理。
+- 解决方法：先提交旧 stable revision、rollout `rolled_back` 和部署运行状态，再逐个 best-effort unload candidate alias；单个 drain 失败不回滚已提交的 stable 路由，后续由 reconcile 清理残留 alias。补充 drain 删除前失败和删除后超时回归。
+- 验证方式：`test_inference_rollout`、`test_inference_runtime`、`test_inference_deployment` 独立回归 `50/50`；扩展 Task 6 相关五模块（含生产模型和 Celery 兼容）`74/74`；`C:\Users\17723\miniconda3\python.exe -m compileall -q app` 通过；`git diff --check` 通过。Week 9 清单前 6 个模块通过，`test_api_inference_production` 因 Task 7 路由尚未实施而导入失败，属于已知下游门禁，不计为 Task 6 失败。规格复审无新增 P0-P2，代码质量复审无 Critical/Important/Minor。
+- 影响范围：`inference_rollout.py`、部署服务/runtime compatibility、rollout/runtime/deployment 测试，以及第 9 周实施计划和状态记录；未启动 Task 7 API、Task 8 Celery rollout、Task 9 UI、Task 10 生产/Chromium 或 Task 11 最终验收。
+- 预防措施：跨数据库与 runtime 的不可逆操作必须拆成可提交状态边界；候选 alias 清理只能是可重试补偿，不得决定已完成 rollback 的数据库状态；每个 runtime key 的删除前/删除后异常都要有回归，状态机命令继续使用单一 `lock_version` CAS。
+- 遗留事项：Task 7 严格控制面/生产预测 API 尚未开始，因此完整 Week 9、真实 PostgreSQL/Redis/MinIO/runtime、Chromium 和远程 CI 证据仍未完成；Task 7 完成前不标记第 9 周整体完成。
+
+### 2026-07-26：第 9 周 Task 7 严格控制面与生产预测 API 完成
+
+- 当前周次：第 9 至第 12 周并行开发；Task 7 已完成，第 9 周整体仍进行中。
+- 开发内容：完成 canonical `/rollouts` 控制面、严格请求/查询模型、API Key 生命周期管理、生产预测 API 的 1 MiB 实际字节上限、稳定错误映射、项目角色边界和机器可检验审计动作清单。
+- 问题现象：completed rollback 在 runtime 已切回旧 revision 并 drain candidate alias 后，若审计事务提交失败，数据库回滚会保留 candidate 为 stable，但补偿只恢复 legacy runtime key，生产加权路由会指向缺失的 durable candidate alias。
+- 根因：审计提交回滚属于数据库与 runtime 的跨边界失败；legacy compatibility key 和 revision-target aliases 被当作同一 runtime 状态，但原补偿只恢复了前者。
+- 解决结果：回滚命令使用 caller-owned transaction，运行时变更后的审计提交失败触发 durable-state reconciliation；该补偿先预加载数据库 stable revision 的全部 target aliases，再恢复 legacy key。API Key 仅 owner/editor 管理；owner/editor 创建 rollout，operator 可暂停、恢复和回滚，符合已冻结的 Week 9 权限矩阵。
+- 验证方式：新增真实 HTTP 审计提交失败回归，先 RED 于 candidate alias 缺失，再 GREEN；`test_inference_rollout`、`test_api_model_registry`、`test_api_project_access`、`test_api_inference_production` 组合 `69/69` 通过；`python run_suite.py --week 9` 为 `7/7` 模块通过；生产模块导入 `2/2`、`compileall`、`git diff --check` 通过。已提交 `1c04d4f`。
+- 影响范围：production inference API、model registry rollout/key routes、rollout runtime reconciliation，以及对应 API/角色/服务回归；不修改第 10 周 Outbox、通知或迁移链。
+- 预防措施：任何审计拥有提交权而 runtime 已发生外部变更的命令，必须从持久数据库状态恢复 legacy key 与全部可路由 aliases；回归应同时覆盖审计提交失败、runtime compatibility key 和 revision target routing。
+- 遗留事项：Task 8 Celery rollout/retention、Task 9 前端、Task 10 真实生产/Chromium、Task 11 文档和远程 CI 未开始；第 9 周不得提前标记完成。
+
+### 2026-07-26：第 9 周 Task 8 Celery Rollout 与 Telemetry Retention 完成
+
+- 当前周次：第 9 至第 12 周并行开发；Task 8 已完成，第 9 周整体仍进行中。
+- 开发内容：新增稳定 Celery 任务 `ml_platform.advance_inference_rollout`、`ml_platform.rollback_inference_rollout`、`ml_platform.reconcile_inference_rollouts` 和 `ml_platform.prune_inference_telemetry`；新增 60 秒 rollout reconciliation 与每日 telemetry retention Beat。
+- 问题现象：原 `reconcile_inference_deployments` 同时执行 deployment 和 rollout reconciliation；新增独立 rollout Beat 后会在同一周期重复预加载或推进 rollout。telemetry 清理任务也会忽略部署环境覆盖的日志留存配置。
+- 根因：deployment recovery 与 release lifecycle 使用同一个周期任务，且 retention service 的默认值没有在异步任务边界显式接收 Settings。
+- 解决结果：deployment Beat 只恢复 deployment runtime；rollout Beat 仅对 pending/preloading 状态执行恢复，再对 progressing 状态按持久 `lock_version` CAS 推进 0/10/50/100，冲突投递返回数据库持久状态且不吞未知异常。清理任务以 `settings.inference_log_retention_days` 初始化 `InferenceObservability` 并在删除后提交。
+- 验证方式：稳定任务/Beat RED 后 GREEN；新增配置留存 RED 后 GREEN。`tests.test_celery_workflows tests.test_inference_deployment tests.test_inference_observability` 为 34/34；`python run_suite.py --week 9` 为 7/7 模块；生产模块导入 2/2、`compileall`、`git diff --check` 通过。实现提交为 `ba65509`，配置一致性修复待本任务文档提交一并保存。
+- 影响范围：Celery Worker/Beat 注册、生产推理 rollout 生命周期和日志/指标定期删除；不修改 rollout 数据模型、公共 API、Week 10 Outbox 或 Alembic 链。
+- 预防措施：不同事实源的 reconciliation 必须拆成独立周期任务；任何会触发 runtime 副作用的 rollout 命令必须携带数据库 CAS 版本；后台留存任务必须显式传入与 API 相同的 Settings 值。
+- 遗留事项：Task 9 前端生产运维、Task 10 隔离生产栈/Chromium、Task 11 最终文档和远程 CI 未开始；第 9 周不能提前标记完成。
+
+### 2026-07-26：第 9 周 Task 8 复审纠正：Rollout alias 恢复所有权
+
+- 问题现象：Task 8 初版虽然拆出 deployment 与 rollout Beat，但 deployment service 仍会加载 active rollout candidate alias；progressing rollout 在 candidate alias 丢失时也可能直接进入下一流量步骤，导致 runtime key 不存在。
+- 根因：两个状态机共享 deployment service 的 runtime 加载副作用；rollout Beat 只在 pending/preloading 行存在时调用 reconcile，未把 progressing 行的 alias 清单恢复作为 advance 前置条件。
+- 解决结果：`InferenceDeploymentService.reconcile(..., include_rollout_aliases=False)` 默认只恢复 legacy/stable deployment runtime，candidate alias 保留在 expected 集合但不加载；`InferenceRolloutService.reconcile` 读取 runtime `list()`，仅加载缺失 target alias，并在恢复失败时将 rollout 置为 failed；rollout Beat 每 tick 先 reconcile，再查询并推进仍为 progressing 的记录。
+- TDD 与验证：deployment Beat 参数、Beat 调用顺序、candidate alias 所有权和 progressing alias 恢复回归均先 RED；随后 `tests.test_celery_workflows tests.test_inference_deployment tests.test_inference_rollout tests.test_inference_observability` 为 `69/69`，`compileall`、`git diff --check` 通过。
+- 影响范围：`ml-platform/backend/app/tasks/inference_tasks.py`、`app/services/inference_deployment.py`、`app/services/inference_rollout.py` 及三组后端回归；不修改 Week 10 通知、迁移、公共 API 或前端 Task 9 文件。
+- 预防措施：周期任务必须按状态机明确 runtime 副作用所有者；任何会影响 weighted routing 的 progressing rollout，在 advance 前必须以 runtime 清单恢复全部可路由 alias；已存在 alias 的 reconciliation 必须验证零重复 load。
+- 遗留事项：Task 9 前端生产运维、Task 10 隔离生产栈/Chromium、Task 11 最终文档和远程 CI 未开始；第 9 周整体仍不能提前标记完成。
+
+### 2026-07-27：第 9 周 Task 9 前端生产运维本地完成
+
+- 当前周次：第 9 至第 12 周并行开发；Task 9 已完成本地实现与验证，第 9 周整体仍进行中。
+- 开发内容：模型运维页新增发布操作抽屉、加权目标和进度、暂停/恢复/回滚确认、一次性 API Key 创建与轮换展示、24 小时指标汇总、脱敏请求日志分页及模型卡查看、导出和指导更新；typed client 覆盖 rollout、API Key、metrics、logs 和 model card 合同。
+- 问题现象：异步切换两个 deployment 时，较慢的旧请求可覆盖新抽屉数据；省略 CAS 版本时 FastAPI command body 为空会返回 422；指标只读取首个 100 分钟页；API Key 轮换的旧记录和新 ID 容易错误替换；创建 key 的迟到响应可在新抽屉显示旧明文；已过期 key 被显示为有效；发布 `pending` 复用模型审批的中文状态词。
+- 根因：操作抽屉缺少所有异步命令的请求世代保护，客户端把可选 command payload 省略为无 body，遥测和轮换 UI 误把分页或生命周期视为单条本地状态，key 状态只判断撤销而未判断 expiry，通用和生产状态词由同一 renderer 选择。
+- 解决方法：以 deployment/request generation 拒绝过期异步结果；无 lock version 时发送 `{}`；24 小时窗口汇总所有 metric pages；轮换后保留一次性明文并刷新服务端 key metadata；创建 key 仅在当前 generation 写入 UI；空日志探测页保持前页；过期 key 标记并禁用轮换；rollout/log 专用 renderer 使用 production statusLabels，模型审批和部署继续使用通用状态词，并补齐中英文 pending/failed/expired 词条。viewer 只读，operator 可操作现有发布，owner/editor 仍独占发布创建和 API Key 管理。
+- 验证方式：新增竞态、空 command body、metrics 全分页、key distinct ID、过期 key、日志分页边界、角色显示、状态翻译、rollback、一次性密钥和模型卡回归；聚焦 Vitest `18/18`，前端全量 Vitest `19/19` 文件、`63/63` 用例，TypeScript/Vite production build，`git diff --check` 均通过。构建仍有既有 ECharts chunk 大小警告。
+- 影响范围：`frontend/src/api/modelRegistry.ts`、ModelLibraryPage、对应 Vitest 与 i18n；未修改 Week 10 Outbox、Alembic、Compose 或 CI。
+- 预防措施：跨 deployment 异步视图必须携带请求世代；可选 JSON command body 仍发送空对象；分页时间窗口的聚合不得使用单页 summary；同名状态在不同领域必须由对应 renderer 选择专属 i18n namespace；一次性密钥永不写入日志或持久状态，过期 key 不得被呈现为可轮换。
+- 遗留事项：Task 10 真实 PostgreSQL/Redis/MinIO/runtime 生命周期和 Chromium 验收、Task 11 交付文档及远程 CI 仍未开始；本地前端验证不能代替真实生产栈或远程门禁。
+
+### 2026-07-27：第 9 周 Task 9 复审纠正：关闭运维抽屉的密钥竞态
+
+- 当前周次：第 9 至第 12 周并行开发；Task 9 仍仅完成本地前端实现与验证。
+- 问题现象：点击创建 API Key 后关闭发布运维抽屉，若创建响应在关闭后才返回，一次性明文仍会在抽屉外弹出。
+- 根因：抽屉关闭没有使 `operationsRequestRef` 失效，创建命令持有的 generation 仍被视为当前；`createdKey` 也没有在该资源边界清除。
+- 解决方法：抽屉 `onClose` 递增请求 generation 并清除 `createdKey`，使加载、创建和轮换的迟到响应不能写入已关闭的资源视图。
+- 验证方式：新增 deferred API Key 创建回归，旧实现稳定显示 `closed-once-only` 而 RED；修复后 `ModelLibraryPage.test.tsx` 13/13 通过。
+- 影响范围：仅 `ModelLibraryPage` 短生命周期运维状态；不改变 API Key 后端生命周期或服务端密钥记录。
+- 预防措施：资源抽屉关闭与资源切换都必须取消或失效所有异步世代，并删除与该资源绑定的一次性凭据状态。
+- 遗留事项：仍需完成 Task 10 真实栈/Chromium，以及 Task 11 文档和远程 CI 门禁。
+
+### 2026-07-27：第 9 周 Task 11 前端依赖审计受限例外
+
+- 当前周次：第 9 周，整体仍为进行中。
+- 问题现象：官方 registry 的 `npm audit --audit-level=high` 在 `react-router-dom@7.18.1` 下报告 2 个 React Router RSC Mode CSRF high；audit 建议强制降级至 `7.11.0`。
+- 根因：React Router advisories 的受影响范围互相跨版本；实际安装 `7.11.0` 后 audit 报告 14 个更早 high，不能把降级当成安全修复。当前前端是 Vite `BrowserRouter` SPA，源码不包含 React Router server/RSC/SSR 导入或 Action/Server Action 路径。
+- 解决方法：保留 7.18.1，记录严格受限例外；任何 RSC、SSR、prerender、server handler 或 Action/Server Action 引入必须先重新评估依赖。出现不含这些 advisories 的兼容版本后，恢复 audit 零 high 门禁。
+- 验证方式：`npm ls react-router react-router-dom` 确认均为 `7.18.1`；源码扫描仅命中 `BrowserRouter` 和普通客户端导航 API；全量 Vitest、production build 和 Chromium 仍作为依赖变更后的强制回归。
+- 影响范围：仅前端依赖审计状态；不改变 FastAPI 服务端、推理 API 或生产运行时安全边界。
+- 遗留事项：本地 audit 不计为通过；远程 CI、完整回归、提交和合并仍是第 9 周完成门禁。
+
+### 2026-07-27：第 9 周 Task 11 失败证据异常路径复审修正
+
+- 当前周次：第 9 周，整体仍为进行中。
+- 问题现象：CI 原始日志已在复制前完成敏感扫描，但 `cp` 或 `sed` 失败时 EXIT trap 只删除 raw 目录；redacted 目录可能保留未脱敏副本并被后续 `if: failure()` artifact 上传。
+- 根因：失败清理只覆盖原始目录，没有把“复制已发生、脱敏未完成”的中间目录视为敏感边界。
+- 解决方法：`cleanup_experiment_evidence` 在异常退出时同时删除 raw 和 redacted 目录；成功路径仅在 raw 删除后解除 trap，保留已经完成脱敏的 artifact。
+- 验证方式：先增加 trap 清理契约，旧 workflow 稳定 RED；修复后 `tests.test_ci_workflow` 12/12 GREEN，YAML/Bash 静态检查和 `git diff --check` 待本次提交前复验。
+- 预防措施：任何“copy then redact”工作流都必须把目标目录在 redaction 成功前视为敏感临时数据；上传条件不能只依赖 job failure，必须保证失败清理覆盖所有可上传目录。
+- 遗留事项：远程 GitHub Actions 仍需以真实失败证据路径验证。
+
+### 2026-07-27：第 10 周 Task 1 安全回归合同冻结（RED）
+
+- 当前周次：第 10 周，整体仍为进行中；本项只冻结后续硬化必须满足的回归边界。
+- 开发内容：新增隔离 SQLite 的 `test_security_hardening`，覆盖公开注册 role 注入、默认 engineer、Compute/Annotation/Platform API 的 owner/outsider 访问矩阵、Annotation sample/auto-label 隐藏语义，以及 Platform API 列表认证与私有行隔离；现有 Week 1 用户、计算和 API Marketplace fixture 改为直接数据库 bootstrap admin，不再依赖公开注册创建管理员。
+- 问题现象：公开注册仍接受 `role=admin`；Compute、Annotation 和 Platform API 的外部资源路径未统一在业务访问前按 owner 过滤；Platform API 列表可匿名读取私有记录。
+- 根因：注册路由以独立 Body 参数暴露 platform role，用户私有资源路由各自查询目标行，缺少集中 fail-closed resolver；遗留测试 fixture 将公开注册误作管理员初始化入口。
+- 解决方法：本 Task 先以测试合同固定行为，生产修复留给 Task 2 的严格注册/平台审计和 Task 3 的 `ResourceAccessService`，避免在 RED 阶段混入实现。
+- 验证方式：`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_security_hardening tests.test_api_users tests.test_api_compute tests.test_api_platform -v` 独立复跑为 36 项，其中 10 个预期 RED（role 注入、未认证列表、私有泄露、外部资源越权及缺少 detail 路由），26 项既有兼容测试通过；`git diff --check` 通过。
+- 影响范围：仅四个后端测试文件；无生产代码、迁移、通知、Compose 或 CI 变更。
+- 预防措施：公开注册与平台 bootstrap 必须分离；每个用户私有资源新增或修改路由时，先以 owner/outsider 表驱动合同冻结 200/404 语义，再实现访问控制。
+- 遗留事项：Task 2-3 必须使本合同 GREEN，并补齐平台 audit 模型、线性 migration 和集中资源解析；Week 10 不能在此之前标记完成。
+
+### 2026-07-27：第 10 周 Task 5 通知设置、持久化模型与线性迁移完成
+
+- 当前周次：第 10 周，整体仍为进行中；Task 5 已完成，后续进入 Task 6 加密、SSRF 防护和通道适配器。
+- 开发内容：增加生产必需的 Fernet 通知主密钥及文件解析、SMTP/投递/安全 Webhook 配置；新增 `NotificationEndpoint`、`NotificationSubscription`、`NotificationOutbox`、`NotificationDelivery` 和 `InAppNotification` 模型；线性 Alembic `20260720_10_security_notifications` 同时持久化平台安全审计和五张通知表。
+- 安全边界：通知主密钥、SMTP 用户名和密码均为排除序列化的 `SecretStr`；生产模式验证 Fernet 密钥；公开环境样例不含真实密钥、邮箱、企业微信 Token 或回调地址；端点种类、严重级别、状态、尝试次数、唯一事件/投递键及删除语义均由模型和迁移约束。
+- 问题现象：既有生产配置脱敏测试把通用字符串 `password` 当作凭据值；新增安全摘要合法包含字段名 `smtp_password_configured` 后产生假失败。
+- 根因：测试用过于通用的子串验证“不泄漏”，无法区分真实值与安全元数据的字段名。
+- 解决方法：使用唯一测试凭据标记，并显式覆盖 SMTP 用户名/密码在 `repr`、`model_dump` 和安全摘要中不泄漏；未弱化任何生产脱敏字段。
+- 验证方式：Task 5 初始 RED 为 3 个预期失败和 3 个 skip；GREEN 后 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_notification_models tests.test_config tests.test_experiment_config tests.test_database_production -v` 为 51/51，通过空库 upgrade/check/downgrade/re-upgrade，`alembic check` 输出 `No new upgrade operations detected`。
+- 遗留事项：Task 6 必须实现加密配置、WeCom/邮件/Webhook SSRF 边界和适配器；Task 7 负责将冻结 Week 9 事件写入 Outbox，且记录器只 add/flush，不拥有提交。
+
+### 2026-07-27：第 10 周 Task 6 加密、SSRF 防护与四通道适配器完成
+
+- 当前周次：第 10 周，整体仍为进行中；Task 6 已完成，后续进入 Task 7 领域事件与事务 Outbox。
+- 开发内容：新增 Fernet endpoint 配置加密/解密边界、严格 HTTPS DNS/IP Webhook 策略、官方 WeCom 目标校验、确定性 JSON/HMAC 签名、TLS SMTP 邮件和站内通知适配器；通道路由只接受冻结 `DomainEvent` 的安全信封。
+- 安全边界：拒绝 loopback、私网、link-local、metadata、userinfo、fragment、非 443 端口和重定向；私网 relay 只能由精确平台 allowlist 放行；请求体限制 64 KiB；Webhook 自定义 header 不能覆盖 Content-Type、Idempotency-Key 或签名；端点密文、SMTP 凭据、签名密钥、provider body 和原始异常均不记录。
+- 问题现象：初版允许自定义 header 覆盖路由保留的幂等键，也把抄送地址并入 `To` 而没有保留 RFC `Cc` 语义；缺少通知主密钥也与损坏密文共用同一错误码。
+- 根因：自定义 header 未区分协议保留字段；邮件模型只汇总最终收件人；路由解密边界未区分环境缺失和数据损坏。
+- 解决方法：冻结保留 header 集并以失败结果阻止发送；保留独立 To/Cc header 而仍向两者投递；主密钥缺失返回 `NOTIFICATION_CREDENTIAL_UNAVAILABLE`，损坏密文保留 `NOTIFICATION_CREDENTIAL_INVALID`。
+- 验证方式：初始 RED 为 1 个模块可用性失败、11 个 skip；随后追加 header、Cc 和错误码 RED 后分别 GREEN。`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_notification_channels -v` 为 14/14，通知/配置/实验配置/生产迁移组合为 65/65，`compileall` 与 `git diff --check` 通过。
+- 遗留事项：Task 7 将 `DomainEvent` 安全载荷写入同一业务事务的 Outbox；记录器只 add/flush，不能 commit 或直接投递 Celery。
+
+### 2026-07-27：第 10 周 Task 7 Week 9 事件记录器与事务 Outbox 完成
+
+- 当前周次：第 10 周，整体仍为进行中；Task 7 已完成本地实现与验证，Task 8 的领取、投递、重试和死信处理尚未开始。
+- 开发内容：新增 `OutboxDomainEventRecorder`，将冻结 `DomainEvent` 的存储副本以同一调用方事务写入 `NotificationOutbox`；API rollout 工厂从应用状态注入记录器，Celery rollout 工厂使用具体记录器，生产应用默认配置具体记录器。
+- 问题现象：Week 9 rollout 失败事件使用 `severity="error"`，而已冻结的通知表只允许 `info`、`warning`、`critical`；同时 Outbox 的重复检查不能触发调用方尚未决定提交的业务状态 autoflush。
+- 根因：Week 9 事件协议未限制 severity 枚举，通知持久化模型采用了更严格的订阅严重度集合；普通 ORM 查询默认 autoflush，会越过可组合服务的调用方事务边界。
+- 解决方法：记录器在 `no_autoflush` 边界内仅查询完全相同的 `event_id + idempotency_key`，只抑制该精确重复；其他唯一约束错误继续抛出。随后只 `add`/`flush` 安全 thaw payload，不 commit、不创建 savepoint、不投递 Celery；仅在持久化边界将遗留 `error` 规范化为 `critical`，不改 Week 9 payload 或 rollout 状态机。
+- 验证方式：先新增 Outbox 合同，模块缺失时 7/7 预期 RED；GREEN 后 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_notification_outbox tests.test_notification_models tests.test_inference_rollout tests.test_celery_workflows tests.test_api_inference_production -v` 为 78/78；`python -m compileall -q app`、具体应用记录器断言和 `git diff --check` 通过。
+- 影响范围：`notification_outbox`、rollout API/任务构造器、应用记录器装配和 Outbox 回归；不修改通知通道、rollout 状态转换、运行时调用或 Celery 投递策略。
+- 预防措施：跨领域事件先在 immutable DomainEvent 边界做 allowlist、JSON 值域与深冻结，再经显式 storage thaw 写入 JSON 列；可组合 Outbox 记录器不得 commit、dispatch 或创建持久 savepoint，重复抑制必须同时匹配全部幂等身份字段。
+- 遗留事项：并发的完全重复插入仍可由数据库唯一约束报错，不能为吞掉该竞态而破坏调用方事务；Task 8 将在独立领取事务中处理 worker 幂等、重试和死信。
+
+### 2026-07-27：第 10 周 Task 1-4 安全硬化与平台审计验证完成
+
+- 当前周次：第 10 周，整体仍进行中；Task 1-7 已完成本地实现与针对性验证，下一项为 Task 8 通知领取、投递、重试和死信。
+- 开发内容：公开注册采用严格 schema 且固定创建 engineer；平台管理员角色操作写入独立安全审计流；`ResourceAccessService` 为 Compute、Annotation 和 Platform API 提供 owner/间接 owner 的 fail-closed 解析；平台审计模型、线性迁移和管理员筛选查询接口已接入。
+- 安全边界：跨用户私有资源在读取 payload、调用 provider 或执行写操作前隐藏为 404；平台 API 列表必须认证且仅返回自己的私有项或公共项；项目成员权限先于目标用户/成员查询；平台安全审计只允许管理员读取，且不暴露原始敏感数据。
+- 问题现象：共享 SQLite fixture 中的 actor 删除回归先插入一条 `platform.user.role_change`，后续管理员角色变更回归只按 action 查询，错误假设该 action 全库唯一而导致 `MultipleResultsFound`。
+- 根因：该测试类在 `setUpClass` 中复用数据库；审计流按 action 本来允许多行，测试没有以资源身份和结果限定预期事件。
+- 解决方法：管理员角色变更断言同时匹配 action、目标 `resource_id` 和 `success` 结果，不改变生产审计写入语义。
+- 验证方式：先复现 actor 删除后角色变更的确定性失败；修复后该配对 2/2 通过，`tests.test_security_hardening tests.test_platform_audit tests.test_api_users tests.test_api_compute tests.test_api_platform` 为 48/48 通过，`git diff --check` 通过。
+- 遗留事项：Task 8 仍必须以独立领取事务实现单赢家、投递幂等、可重试退避与单次死信告警；Week 10 不得在 API、前端、浏览器和生产栈门禁完成前标记完成。
+
+### 2026-07-28：第 10 周 Task 8 通知领取、投递、重试与死信完成
+
+- 当前周次：第 10 周整体仍为进行中；Task 1-8 已完成本地实现、回归和规格复审，下一项为 Task 9 通知 API。
+- 开发内容：新增稳定 Celery 任务 `ml_platform.deliver_notifications` 与 `ml_platform.enqueue_due_notifications`；Outbox 采用 PostgreSQL `SKIP LOCKED`/SQLite 条件更新领取，按订阅扇出确定性 delivery key，并持久化重试退避、终态和错误码。
+- 并发修复：`NotificationDelivery` 追加 `claim_token`、`claimed_at`；worker 每次领取生成新的 token，结果写入必须同时匹配 `id + processing + claim_token`。超时回收后的旧 worker 只能读取持久状态，不能覆盖新 worker 的 `sent`、`retry` 或 `failed` 终态。
+- 死信修复：`InAppNotification.deduplication_key` 为可空唯一键；死信告警使用 `notification.dead_letter:<event_id>`，SQLite/PostgreSQL 均以 `ON CONFLICT DO NOTHING` 原子去重，不影响正常多收件人站内通知。
+- TDD 与复审：新增 lease、stale-finalizer、回收和死信唯一键合同，初始 4 项均按预期 RED；规格复审确认两项并发缺陷关闭，未发现其他 P0-P2 Task 8 缺口。代码静态复核未发现额外问题。
+- 验证方式：`tests.test_notification_models tests.test_notification_outbox tests.test_notification_channels tests.test_inference_rollout tests.test_celery_workflows tests.test_api_inference_production` 为 `108/108`；`tests.test_security_hardening tests.test_platform_audit tests.test_api_users tests.test_api_compute tests.test_api_platform` 为 `48/48`；`C:\\Users\\17723\\miniconda3\\python.exe -m compileall -q app` 与 `git diff --check` 通过。
+- 未完成与边界：真实 PostgreSQL `SKIP LOCKED`、Redis/Celery/Beat、四通道受控接收器和 `test_notification_production_stack.py` 尚未实现或验证，严格保留给 Task 11；不得把 SQLite/局部回归描述为生产栈验收。
+
+### 2026-07-28：第 10 周 Task 8 代码质量复审更正
+
+- 复审发现：初版每次 `execute_notification_delivery` 只在入口捕获一个时间戳，多个 delivery 排队处理时后续 lease 已接近超时，retry 时间也可能过期；fan-out 以查询后插入创建 delivery，两个恢复 worker 可同时观察空行而使其中一个因唯一键冲突中止。
+- 根因：领取/完成时间被错误视为一次 task 级输入，而非 delivery 生命周期边界；唯一约束存在但没有作为 fan-out 的原子同步原语使用。
+- 修复：新增可注入 `clock`，生产路径在每个 delivery 的领取前和 adapter 返回后分别采样，已有 `now` 参数继续提供冻结测试时间；fan-out 改为 PostgreSQL/SQLite `INSERT ... ON CONFLICT DO NOTHING`，随后查询同一 Outbox 的实际 delivery。
+- TDD 与验证：两项新合同先分别以缺少 `clock` 与文件 SQLite 双 session 唯一键 `IntegrityError` RED；修复后两项 GREEN。最终组合 `tests.test_security_hardening tests.test_platform_audit tests.test_api_users tests.test_api_compute tests.test_api_platform tests.test_notification_models tests.test_notification_channels tests.test_notification_outbox tests.test_celery_workflows tests.test_inference_rollout tests.test_api_inference_production` 为 `158/158`；`compileall`、`git diff --check` 通过。
+- 当前状态：Task 8 仅以本地 SQLite/单元和服务组合验证完成；质量复审 P1 已关闭。真实 PostgreSQL `SKIP LOCKED`、Redis/Celery/Beat、受控 WeCom/邮件/Webhook 接收器仍属于 Task 11，Week 10 继续保持进行中。
+
+### 2026-07-28：第 10 周 Task 8 Outbox 聚合重算复审更正
+
+- 复审发现：两个不同 delivery 近同时完成时，二者各自的终态更新虽受 claim token 围栏保护，但若不串行化同一 Outbox 的聚合重算，较晚提交的旧快照可把仍有 retry 的 Outbox 写回 `processing` 且清除 `next_attempt_at`；retry 已提交后另一个 sent 终态还可能清空聚合错误码。
+- 根因：delivery 行围栏只保护单行所有权，不能保护多个 delivery 汇总到一个 Outbox 行的状态派生；聚合状态未从持久化 delivery 集合重新派生错误码。
+- 修复：PostgreSQL 在 delivery 终态更新后以 `FOR UPDATE` 锁定 Outbox，再读取当前 delivery 集合并重算状态、最早 retry 时间及未解决 retry/dead-letter/failed 的稳定错误码；SQLite 保留原有串行写入语义。fan-out 并发合同同步点移至实际 `INSERT INTO notification_deliveries` 前并断言两个 worker 都到达原子插入边界。
+- 验证方式：新增 PostgreSQL 锁调用合同、双 session `retry` 后 `sent` 的聚合回归和真实插入 barrier；`C:\\Users\\17723\\miniconda3\\python.exe -m unittest tests.test_security_hardening tests.test_platform_audit tests.test_api_users tests.test_api_compute tests.test_api_platform tests.test_notification_models tests.test_notification_channels tests.test_notification_outbox tests.test_celery_workflows tests.test_inference_rollout tests.test_api_inference_production -v` 为 `160/160`，`compileall -q app` 与 `git diff --check` 通过。
+- 当前状态与边界：Task 8 本地实现、回归和复审完成，下一项为 Task 9 通知 API；此结果不替代 Task 11 的真实 PostgreSQL、Redis/Celery/Beat 或受控四通道接收器验证。
+
+### 2026-07-28：第 10 周 Task 9 通知 API 复审缺陷修正
+
+- 当前周次：第 10 周整体仍为进行中；Task 9 API 已完成本地实现、回归与复审修正，未提前替代 Task 11 生产栈门禁。
+- 问题现象：同项目同名 notification endpoint 的创建或重命名将数据库唯一键冲突暴露为 500；重复站内 endpoint `/test` 会为同一收件人写入多条通知；已删除 ProjectMember 被 role/explicit selector 过滤为空后，adapter 又回退到 endpoint 中的旧加密收件人；endpoint `/test` 未在发送前复验该加密收件人的当前成员资格。
+- 根因：API 未将精确 `(project_id, name)` 唯一约束映射为稳定领域冲突；`recipient_user_ids or configured_recipients` 把“未传 selector”和“worker 已解析为空”混为同一 falsey 状态；普通站内通知没有 per-recipient 的持久去重键，测试路由也未在解密后重新执行成员校验。
+- 解决方法：仅将 `None` 解释为 endpoint 测试的配置回退，显式空 tuple/list 直接失败；用 `sha256(delivery_key + recipient UUID)` 生成 64 字符去重键，并在 SQLite/PostgreSQL 通过 `ON CONFLICT DO NOTHING` 原子写入；endpoint `/test` 经同一加密 router 解密后复验 in-app 成员；精确 endpoint 名称约束统一返回 409 `NOTIFICATION_ENDPOINT_NAME_CONFLICT`。Webhook 测试继续经过相同解密、SSRF、签名和 provider-body redaction 边界。
+- TDD 证据：先观察 create/rename 500、重复 `/test` 生成两条记录、已删除收件人 endpoint `/test` 返回 200、worker fan-out 返回 sent 的 RED；修正 selector 回归后临时恢复旧 fallback 表达式，确认同一 worker 用例稳定 RED，再恢复实现 GREEN。Webhook 安全回归在修复前已 GREEN，证明既有安全边界未被绕过；管理员 retry 两项既有合同保持 GREEN。
+- 验证方式：`tests.test_api_notifications tests.test_notification_channels tests.test_notification_outbox` 为 55/55；原 104 项 notification/access 组合因新增 6 项 API 回归扩展为 110/110，`RUN_PROJECT_ACCESS_INTEGRATION` 未启用的 PostgreSQL 用例按预期 skip 1 项；`C:\Users\17723\miniconda3\python.exe -m compileall -q app` 通过。
+- 影响范围：`app/api/notifications.py`、`app/services/notification_channels.py` 与 `tests/test_api_notifications.py`；未修改 retry 状态机、迁移、Celery 调度或 Webhook provider 协议。
+- 遗留事项：真实 PostgreSQL conflict/upsert、Redis/Celery/Beat 和受控 WeCom/邮件/Webhook 接收器尚未验证；仍属于 Task 11，不能将本地 SQLite 回归描述为生产栈验收。
+
+### 2026-07-28：第 10 周 Task 9 站内通知成员撤销插入边界复审修正
+
+- 当前周次：第 10 周，整体仍为进行中；本项仅修复 Task 9 的站内通知收件人授权竞态，不替代 Task 11 生产栈门禁。
+- 问题现象：worker 先按项目角色解析收件人，随后 `InAppNotificationAdapter` 使用无条件 `INSERT ... VALUES` 写入。成员在解析后、写入前被移除时，仍可能收到新的站内通知。
+- 已验证根因：成员资格只在 selector 层检查，没有作为站内通知持久化语句的条件；确定性去重键只能避免重复，不能授权收件人。
+- 解决方法：SQLite/PostgreSQL 均改为 `INSERT ... SELECT ... WHERE EXISTS`，在同一写入语句中要求目标用户是事件项目 owner 或当前 `ProjectMember`，并保留每个 delivery/recipient 的 SHA-256 去重键与 `ON CONFLICT DO NOTHING`。owner 不要求存在 `ProjectMember`。
+- TDD 与验证：新回归在 `before_cursor_execute` 中恰好于 `in_app_notifications` 插入前撤销成员，旧无条件写入稳定返回 `sent` 并写入一行（RED）；修复后返回 `NOTIFICATION_RECIPIENT_INVALID` 且写入 0 行（GREEN）。`tests.test_notification_channels` 15/15、`tests.test_notification_outbox` 26/26、`tests.test_api_notifications` 15/15、`tests.test_notification_models` 8/8、`python -m compileall -q app` 和 `git diff --check` 均通过。
+- 影响范围：仅通知通道适配器与其回归；未修改成员 selector、Outbox 状态机、迁移、Celery 调度或外部 provider 协议。
+- 预防措施：任何可在异步解析后被撤销的项目授权，必须成为最终持久化 statement 的 predicate；冲突安全去重不能代替授权。SQLite 的插入边界合同不替代 Task 11 的真实 PostgreSQL/Celery/受控接收器验收。
+- 遗留事项：真实 PostgreSQL `INSERT ... SELECT` 并发时序、Redis/Celery/Beat 和四通道受控接收器仍按 Task 11 验收，Week 10 不提前标记完成。
+
+### 2026-07-28：第 10 周 Task 10 前端治理收尾暂停
+
+- 当前状态：按用户要求保存并暂停。Task 10 未完成，Week 10 整体仍为进行中；不得启动 Task 11 或 Task 12，也不得将当前本地进度描述为完整验收。
+- 已保存范围：前端已具备通知中心、项目治理页、端点/订阅基础管理、收件人安全目录、审计与管理员投递分页、项目详情调用者角色传递，以及相关后端授权回归。
+- 已验证问题：`npm test -- --run src/pages/ProjectGovernanceTabs.test.tsx` 运行 11 项，9 项通过、2 项 RED。端点编辑尚不能安全替换 Webhook/邮件/企业微信/站内配置；订阅表尚不向 `notification.manage` 用户显示已配置的角色或安全成员名称。
+- 暂停原因：补齐上述两个闭环后仍需运行前端全量、构建、后端回归和文档验收，无法在本次快速收尾中诚实标记 Task 10 完成。
+- 恢复顺序：先使两条 RED 合同 GREEN，禁止回显存储密钥或历史端点配置；再运行 Task 10 聚焦/全量验证、更新共享经验并提交完成记录。`ModelLibraryPage.test.tsx` 的既有分页 mock 修改不属于本任务，继续保留未提交。
+
+### 2026-07-29：第 10 周 Task 10 前端治理与通知体验完成
+
+- 当前状态：Task 10 已完成本地实现与自动化验证；Week 10 整体仍为进行中，Task 11 的 Chromium 与真实生产栈验收尚未开始。
+- 开发内容：端点编辑支持安全重配开关；仅在管理员主动开启后显示空白的同通道配置表单，并以 `{ name, config }` 更新。订阅表为 owner/editor 显示收件角色和授权收件人目录中的用户名；只读角色不获取该列或目录。
+- 问题现象：原有端点编辑只能重命名，无法更新通道配置；订阅虽保存 `recipient_roles` 和 `recipient_user_ids`，管理员表格无法确认目标收件人。
+- 已验证根因：编辑弹窗没有保存 endpoint `kind`、重配状态或配置提交路径；订阅表没有消费已授权目录映射。直接拼接角色与用户名还会使可访问文本查询和扫描不稳定。
+- 解决方法：编辑启动时重置所有表单字段，仅保留端点名称、种类和非敏感默认值；`replace_config` 开关未开启时只提交名称，开启后才根据安全空表单构建 config。订阅收件人按独立 Tag 渲染角色和目录用户名，找不到目录项时不泄露原始用户 ID。
+- 验证方式：先复现 `ProjectGovernanceTabs` 11 项中的 2 项 RED；修复后该模块 `11/11`、Task 10 前端聚焦 `22/22`、前端全量 `82/82`、`npm run build`、后端 `tests.test_api_notifications tests.test_api_project_access` `32/32`、`compileall -q app` 与 `git diff --check` 全部通过。
+- 遗留事项：Task 11 仍需实现并执行 Chromium 项目治理流、受控四通道接收器、PostgreSQL/Redis/Celery/Beat 生产栈测试和 Week 10 manifest 注册；不得以本地单元/API 验证替代这些门禁。
+- 预防措施：安全端点的修改 UI 必须把“重命名”和“重录凭据”分为显式操作，且任何编辑会话先清空非公开字段；目录受限的收件人展示必须只使用已授权映射，并保持每个可扫描身份为独立可访问节点。
+
+### 2026-07-29：第 10 周 Task 10 复核修正与本地门禁完成
+
+- 当前状态：Task 10 已完成本地实现、复核、文档和自动化门禁；第 10 周整体仍为进行中，Task 11 的 Chromium、真实生产栈和 Week 10 manifest 尚未完成。
+- 复核修正：编辑端点从 `editingEndpoint.kind` 派生真实通道，避免 `in_app`、`email`、`wecom` 重配时回退为 `webhook`；只读订阅 API 对 operator/viewer 返回空 `recipient_user_ids`，owner/editor 才能读取管理范围内的 selector。
+- 测试修正：共享 SQLite fixture 的订阅回归按本次创建的 subscription ID 断言，避免历史记录改变 `items[0]`；Ant Design `Select` 的透明 search input 不再使用错误的 `toBeVisible()` 断言，改由无 URL 字段、下拉选项和最终 API payload 验证 in-app 分支。
+- 验证方式：`ProjectGovernanceTabs` 14/14；Task 10 前端组合 6 文件、25/25；前端全量 23 文件、85/85；`npm run build` 成功；通知/项目访问后端 33/33；`compileall -q app` 和 `git diff --check` 通过。
+- 影响范围：`ProjectGovernanceTabs` 编辑/订阅 UI、通知订阅列表 DTO、对应回归和本地开发记录；未泄露历史密钥或只读用户原始收件人 ID。
+- 未完成与边界：Task 11 仍需注册 Week 10 模块、执行 Chromium 治理流、PostgreSQL/Redis/Celery/Beat 生产测试和四通道受控接收器；Task 12 及第 11-12 周最终工具依赖这些门禁，不能提前标记完成。
+- 预防措施：敏感编辑回归必须覆盖每种通道的 `kind` 保真；API 脱敏必须在服务端执行而非依赖前端隐藏列；共享 append-only fixture 断言必须按完整资源身份定位；Ant Design 测试断言可见业务行为，不断言内部透明输入。
+
+### 2026-07-29：第 11-12 周恢复加固与隔离生产栈中间验证
+
+- 当前状态：第 11、12 周继续保持进行中；已完成备份恢复状态机加固、工具/契约/安全/CI 清单回归和隔离 WSL 生产栈验证，但未取得固定性能、完整 Chromium 或远程 CI 结论。
+- 问题现象：备份清单写入后、最终回执尚未全部写入时可以恢复；但已有最终回执签名无效，或最终回执路径被目录/断链占用时，原恢复入口可能将其误判为缺失并在失败前改写 `manifest.json`。
+- 根因与解决：恢复入口只以 `Path.is_file()` 判断最终状态，混淆“真正缺失”和“已存在但不可读/无效”；现在任何已存在或 symlink 的最终回执路径都会先进入失败关闭验证，只有路径真实缺失时才允许由已签名 pending 记录重建。新增签名篡改与目录占用回归均断言 manifest/pending 不变。
+- 验证方式：新增目录占用合同先 RED 为 `PermissionError`，最小修复后 GREEN；`tests.test_week11_12_tools` 为 87/87，`UpgradeFixtureTests` 为 11/11，冻结 API 契约为 5/5，安全门禁为 26/26，环境清单为 1/1，manifest/CI 合同为 26/26；`compileall -q tools tests` 与 `git diff --check` 通过（仅现有 CRLF 提示）。
+- WSL 证据：Docker 29.6.2 / Compose 5.3.1 的独立项目完成迁移 head/check、实验 1/1、推理 1/1、站内/企业微信/邮件/Webhook 通知 6/6，以及 Redis 失效关闭 1/1；退出后确认对应容器、volume 和 network 均已清理。
+- 未完成与风险：当前 Docker 主机为 22 vCPU / 16.5 GiB，不符合固定 4 vCPU / 8 GiB 三轮性能基线，不能输出 Week 11 性能结论；真实 N-1 数据库升级、完整 Chromium 四角色验收、最终证据 manifest 和远程 GitHub Actions 仍是未完成门禁。
+
+### 2026-07-29：第 12 周备份回执来源约束待修复
+
+- 当前状态：暂停前审计发现新的安全门禁；未修改实现，不能将备份恢复验收标记为完整。
+- 风险：`manifest.json`、pending/final 回执和证据枚举仍以 `Path.is_file()`/直接路径写入处理；有效符号链接、Windows reparse point 或同卷硬链接可使签名证据读取或写入落在回执根目录外。
+- 恢复顺序：集中以 `lstat()` 拒绝链接/reparse 证据，采用根目录内临时文件加原子替换写入，并补充外部 sentinel、有效链接回执和同卷硬链接回归；完成后重新执行 `tests.test_week11_12_tools` 及相关安全门禁。
+
+### 2026-08-01：第 12 周备份证据来源约束修复
+
+- 当前状态：本地备份证据来源加固已完成并通过回归；第 11、12 周仍为“进行中”，本项不替代真实备份恢复 RTO/RPO、固定资源性能、完整 Chromium、N-1 升级、扫描汇总或远程 CI 门禁。
+- 问题现象：已有 manifest 硬链接外部 sentinel 时，控制文件枚举先将其当作备份 payload 拒绝，阻断本应安全的原子替换；`mirror_minio` 只用 `Path.is_file()` 收集对象，会把同卷硬链接对象签入 MinIO pending 回执；目录占用 pending 路径会被误作缺失；回执写入在拒绝链接 manifest 前已计算其哈希。
+- 已确认根因：原子写入目标和已接收的签名证据没有区分处理；普通文件判断没有统一应用到 pending 证据条目和 pending 路径状态，且 manifest 信任校验位于哈希读取之后。
+- 解决方法：控制 manifest/receipt 名称在 payload 枚举前排除，并继续由 in-root 临时文件和 `os.replace()` 原子替换；`_backup_evidence_entry` 统一要求路径在 receipt root 内、`lstat()` 为普通非链接文件且 link count 为 1；已占用 pending 路径必须全部为可信普通证据文件；`_write_operation_receipt` 在哈希前验证 manifest。
+- 验证方式：新增 MinIO 硬链接对象、非法 pending 目录占位、链接 manifest 不能在哈希前读取三条回归，均先 RED 后 GREEN；`C:\\Users\\17723\\miniconda3\\python.exe -m unittest tests.test_week11_12_tools tests.test_week12_security_gates tests.test_week11_contracts -v` 为 125/125，通过 `python -m compileall -q tools tests` 和 `git diff --check`（仅 CRLF 工作树提示）。外部 sentinel 在硬链接写入/拒绝回归中保持字节不变。
+- 影响范围：仅 `backend/tools/backup_restore.py` 与 Week 11-12 工具回归；不修改生产数据库、MinIO bucket、Compose、CI 或用户的前端测试修改。
+- 预防措施：文件系统安全控制必须将“新建原子写入目标”和“已存在、将被读取的证据”分为不同状态；所有 pending/manifest/final receipt 接受路径统一使用 `lstat()`、重解析点和 link-count 检查，任何已占用但无效的控制路径均失败关闭。
+- 遗留事项：仍需在隔离 PostgreSQL/MinIO 环境执行真实备份恢复和 RTO/RPO；当前 22 vCPU/16.5 GiB Docker 主机不满足 4 vCPU/8 GiB 三轮性能基线，不能生成 Week 11 性能结论。
+
+### 2026-08-02：第 10 周 Task 11 浏览器、清单与生产栈验收完成
+
+- 当前状态：Task 11 已完成本地实现、回归、隔离 WSL 生产栈和目标 Chromium 验收；第 10 周整体仍为“进行中”，Task 12 的共享生产文件、完整本地收口与远程 GitHub Actions 尚未完成。
+- 开发内容：修复外部 Chromium 次级角色上下文固定回 `127.0.0.1:5173` 的问题；通知受控接收器恢复镜像默认非 root `app` 用户；前端镜像健康检查改用显式 IPv4 loopback；为三项部署/浏览器边界增加静态回归。
+- 问题现象与根因：接收器以 `user: "0:0"` 运行并同时 `cap_drop: ALL` 时，root 不再拥有 DAC override，不能读取 Compose 以 UID 1000、0600 挂载的 TLS 私钥，`load_cert_chain` 抛出 `PermissionError`。前端镜像自定义 Nginx 配置仅监听 IPv4，Alpine `localhost` 解析到 `::1`，健康检查连接被拒绝，导致完整栈无法等待 frontend healthy。外部 E2E 的 Windows `cmd.exe` 链中 `/s` 加带引号路径会产生无效目录语法，且 `set VAR=value &&` 会把分隔符前空格写入变量，令严格的 `RUN_WEEK12_BROWSER_ACCEPTANCE === "1"` 判断失败。
+- 解决方法：删除接收器的 root 覆写，保留 `cap_drop: ALL` 与 `NET_BIND_SERVICE`；将前端健康检查改为 `127.0.0.1`；E2E 从主页面 origin 派生 viewer/outsider `baseURL`，并在保持 WSL Compose shell 存活时以无 `/s`、无分隔空格的 Windows Node Playwright CLI 执行外部用例。
+- TDD 与验证：接收器非 root 契约和 IPv4 健康检查契约均先 RED 后 GREEN；`tests.test_ci_workflow` 23/23、`src/weekAcceptance.test.ts` 7/7、`run_suite.py --week 10` 7/7 模块通过，`git diff --check` 通过。WSL Docker 29.6.2 / Compose 5.3.1 的唯一项目完成迁移 `20260720_10_security_notifications` current/check、PostgreSQL/Redis/Celery/Mailpit/受控 Webhook-WeCom 接收器全健康、`test_notification_production_stack` 6/6 和外部 Chromium `security-notifications.spec.ts` 1/1；项目容器、网络和卷均已按精确标签清理。
+- 影响范围：`docker-compose.acceptance.yml`、前端 Dockerfile、通知浏览器验收和 CI/Compose 静态契约；不改变通知协议、业务数据或用户的 `ModelLibraryPage.test.tsx` 修改。
+- 遗留事项：Task 12 仍需收口共享 Compose/CI/交付状态、完整本地质量/依赖/扫描门禁与远程 CI；Week 11-12 的固定 4 vCPU/8 GiB 三轮性能、真实备份恢复 RTO/RPO、N-1 升级、完整外部 Chromium、最终证据清单和远程门禁继续保持未完成。
+
+### 2026-08-02：第 10 周 Task 11 外部角色 Context 回归与双审闭环
+
+- 当前状态：Task 11 的本地验收、静态回归、规格审查和代码质量审查均已闭环；第 10 周仍为“进行中”，不把本地 WSL 证据升级为远程 CI 结论。
+- 问题现象：初始静态回归只检查通用 context 片段和固定登录 URL，viewer 或 outsider 任一角色退回裸 `browser.newContext()` 时可能漏检。
+- 解决方法：分别锁定 viewer/outsider 使用 `baseURL: acceptanceBaseUrl`，禁止完整固定 `http://127.0.0.1:5173` origin；验收 origin 继续从主页面 `page.url()` 派生。
+- 验证方式：`src/weekAcceptance.test.ts` 先在 viewer 回退裸 context 时按预期 1 项失败、其余 6 项通过；恢复后 7/7 通过。规格审查和代码质量审查均无 P0-P2；`git diff --check` 通过。共享经验已追加外部 Chromium context 的根因、修复、WSL 验证与远程 CI 边界。
+- 遗留事项：Task 12 的共享生产配置、CI、交付文档和完整本地门禁继续按计划执行；第 11-12 周固定资源性能、真实备份恢复、N-1、完整浏览器、证据清单和远程 CI 仍未完成。
+
+### 2026-08-02：第 12 周 Task 13 安全扫描门禁暂停检查点
+
+- 当前状态：用户要求立即保存并停止；第 12 周和 Task 13 保持“进行中”，不得将安全扫描或 Week 11-12 最终验收标记为完成。
+- 已保存范围：安全扫描封装器、CI 静态契约、受限 React Router 审计例外、原始报告相对路径绑定及对应回归均保留在未提交工作树；`ModelLibraryPage.test.tsx` 的用户既有修改未触碰。
+- 已验证证据：暂停前主流程独立运行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_week12_security_gates tests.test_ci_workflow -v` 为 76/76；`python -m compileall -q app tools tests` 与 `git diff --check` 退出码为 0，后者仅输出既有 CRLF 工作树提示。
+- 未关闭缺口：规格复审确认路由 action 的成员表达式和对象 shorthand 仍可绕过；提供静态 gate 的 `security.json` 尚未在解析前完成普通文件、单链接、非 reparse 和根目录约束校验；不安全证据错误码仍需统一为 `SECURITY_EVIDENCE_INVALID`。实现代理在这些修复及复验完成前被停止。
+- 恢复顺序：先检查 `security_scans.py` 与 `test_week12_security_gates.py` 的保存差异，按 RED→GREEN 补齐上述三项回归；随后重跑目标测试、编译和 diff 检查，再完成规格复审与独立代码质量复审。仅在真实扫描、冻结 Web 栈及远程 CI 取得独立证据后，才可关闭 Task 13 或 Week 12。
+
+### 2026-08-08：第 12 周 Task 13 安全证据解析缺口修复
+
+- 当前状态：Task 13 的静态安全证据解析缺口已完成 RED→GREEN；第 11-12 周仍为“进行中”，真实扫描、固定资源性能、备份恢复 RTO/RPO、N-1、完整 Chromium、最终证据清单和远程 GitHub Actions 仍未完成。
+- 问题现象：React Router 例外扫描会误报 TypeScript `action: string` 类型字段，并漏检成员表达式与带类型注解的对象 shorthand；汇总器可能在校验 `security.json`/`web.json` 来源前读取状态，且不安全证据错误码不稳定。
+- 根因：静态正则没有区分类型声明与运行时 route action；汇总流程先依赖候选计数再验证文件来源；web 缺失/非法分支复用了非证据错误码。
+- 解决方法：增加类型声明局部屏蔽并覆盖成员表达式、类型注解 shorthand；所有影响汇总状态的 JSON 在解析前执行根目录 containment、`lstat()`、普通文件、非 reparse、单硬链接校验；统一不安全证据错误码为 `SECURITY_EVIDENCE_INVALID`。
+- 验证方式：新增回归先 RED 后 GREEN；独立运行 `C:\\Users\\17723\\miniconda3\\python.exe -m unittest tests.test_week12_security_gates tests.test_ci_workflow -v` 为 83/83，`C:\\Users\\17723\\miniconda3\\python.exe -m compileall -q app tools tests` 通过，`git diff --check` 通过（仅既有 CRLF 提示）。
+- 影响范围：`ml-platform/backend/tools/security_scans.py`、`ml-platform/backend/tests/test_week12_security_gates.py`；未修改用户既有 `ModelLibraryPage.test.tsx`。
+- 预防措施：安全证据必须先验证来源再解析任何状态；静态扫描回归同时覆盖运行时语法、类型声明和 fail-closed 错误码；复杂 TypeScript 语法保持保守拒绝，后续若引入 AST 扫描需追加等价安全合同。
+- 遗留事项：必须在独立 WSL/Compose 栈完成真实 scanner、固定 4 vCPU/8 GiB 性能、备份恢复、N-1 与完整浏览器验收，并取得远程 CI 证据后才能关闭 Task 13/Week 12。
+
+### 2026-08-08：第 12 周 React Router 审计例外语法闭合修正
+
+- 当前状态：React Router 受限 npm-audit 例外的新增静态语法缺口已按 RED→GREEN 修复；Task 13 和第 11-12 周继续保持“进行中”，不得将本地静态回归替代真实 scanner、生产栈或远程 CI。
+- 问题现象：独立安全复审发现注释分隔 import、Route 的括号/嵌套括号别名、可选 factory call 与 `.bind()` factory alias 可使 Action route 绕过例外扫描并错误返回 `passed`；第二轮复审补充发现 alias/factory 中的注释和嵌套括号同样可绕过。
+- 根因：命名 import、alias assignment 与 factory call 的正则只接受部分空白语法，未将 JavaScript/TypeScript 的 comment trivia、括号包装和 bound factory reference 归一到同一识别边界。
+- 解决方法：import/re-export/local binding 扫描统一接受 comment trivia；Route/factory alias 归一化移除 comment、空白和任意外层括号，并识别 `.bind` 基础 factory；factory call 支持 comment trivia、optional call 与 parenthesized reference。
+- TDD 与验证：新增 6 个回归先稳定 RED，覆盖 comment-separated import、单层/嵌套 Route alias、optional call、bound factory 与 comment/nested factory；实现后 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_week12_security_gates tests.test_ci_workflow -v` 为 123/123，`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 与 `git diff --check` 通过（仅既有 CRLF 提示）。
+- 影响范围：仅 `ml-platform/backend/tools/security_scans.py`、`ml-platform/backend/tests/test_week12_security_gates.py`；用户的 `ModelLibraryPage.test.tsx` 仍未触碰。
+- 预防措施：受限依赖例外的静态 gate 需将注释、括号、local alias、re-export、optional/bound call 视为同类语法边界并分别保留 RED 回归；无法安全证明客户端-only 语义时保持失败关闭，复杂语法应迁移至 AST 检查。
+- 遗留事项：需继续执行真实 scanner、冻结 Web 栈、固定资源性能、备份恢复、N-1 升级、完整 Chromium、最终 evidence manifest 与远程 GitHub Actions，才可关闭 Task 13/Week 12。
+
+### 2026-08-08：第 12 周 React Router 例外语义绑定复审升级
+
+- 当前状态：前两轮语法回归已通过且当前安全/CI 静态套件为 123/123；第三轮独立复审仍确认条件表达式和 `import * as Router` 后的 destructuring 可构造 Action/factory alias 并错误放行，因此本项继续受阻，不能把前一条局部语法修正表述为完整闭合。
+- 已验证问题：`const R = true ? Route : Route`、`const { Route: R } = Router`、等价的 factory 条件/解构绑定均可在现有正则模型外建立可用 Action route 或 router factory。
+- 根因：基于局部正则的 alias 传播只能覆盖有限语法，无法证明任意 JavaScript/TypeScript binding expression 与 React Router runtime export 的等价关系；继续逐例扩展会保留新的 fail-open 表面。
+- 处理边界：停止第四轮正则补丁。待确认后采用其一：A. 对任何未建模的 React Router `Route`/router-factory/namespace binding 直接拒绝 npm-audit 例外（推荐，当前真实 BrowserRouter 前端不受影响）；B. 引入 TypeScript AST/符号绑定扫描并为新依赖与跨版本 parser 行为建立完整合同。
+- 已保留证据：新增 six RED→GREEN 语法回归和 123/123 静态通过记录有效，但仅证明已覆盖形式；未解决的条件/namespace binding 仍为阻断合并的 P1。
+- 遗留事项：取得上述架构决策并完成对应 RED→GREEN、独立复审后，才可进入真实 scanner、生产栈、固定资源性能、备份恢复、N-1、完整 Chromium、evidence manifest 和远程 CI 门禁。
+
+### 2026-08-10：第 12 周 Task 13 保守绑定收敛与全量回归检查点
+
+- 当前状态：已采用原方案 A：任何未被扫描器证明为安全的 React Router `Route`、router-factory、namespace、动态加载或别名传播，一律拒绝 npm-audit 例外；第 11、12 周仍为“进行中”，不将本地回归或局部扫描结果表述为最终验收。
+- 已验证根因与处理：局部正则无法可靠证明条件表达式、解构、动态模块加载及跨运行时别名与 React Router 导出的等价关系。扫描器现只接受受限的命名导入和已建模的直接绑定，遇到条件绑定、namespace 解构、默认/混合导入、动态 `import`/`require`、对象或调用传播时失败关闭。真实客户端 BrowserRouter 前端仍被允许。
+- 验证方式：`C:\\Users\\17723\\miniconda3\\python.exe -m unittest tests.test_week12_security_gates tests.test_ci_workflow -v` 为 138/138；`C:\\Users\\17723\\miniconda3\\python.exe run_suite.py` 为 89/89 模块；前端 `npm test -- --run` 为 23 个文件、90/90；`npm run build` 通过，仍有 ECharts 约 1.13 MB chunk 警告；`compileall -q app tools tests` 与 `git diff --check` 通过（后者仅有既有 CRLF 提示）。本地 Chromium 的四项可运行用例通过，外部 Week 12 栈用例按设计跳过；Windows Playwright 完成后未自动退出的本轮测试进程已按 PID 精确终止。
+- 安全扫描证据：官方 npm registry audit 重新生成且为 0 vulnerabilities；Bandit HIGH 门槛为 0。pip-audit 的同日原始报告仍发现 `cryptography 49.0.0` 的 `PYSEC-2026-3552` / `CVE-2026-69247`，修复版为 50.0.0；该升级需要连同锁定的 MLflow 3.15 依赖链重新解析和全量兼容验证，当前不能宣称 Python 依赖门禁通过。
+- 外部环境阻塞：Windows 与 WSL 均无 Trivy/Gitleaks；WSL Docker 29.6.2、Compose 5.3.1 可用，但主机为 22 vCPU / 15.4 GiB，未满足固定 4 vCPU / 8 GiB 三轮性能基线。重新拉取 `ghcr.io/mlflow/mlflow:v3.15.0` 在首层长期无进度后中止，未以旧 3.2.0 镜像替代或伪造真实生产栈结果。
+- 后续顺序：取得冻结 MLflow 镜像和 Trivy/Gitleaks 后，在隔离 WSL Compose 栈执行真实备份恢复、N-1、完整外部 Chromium、web/security 汇总和固定资源性能；随后生成 evidence manifest、最终验收报告及远程 GitHub Actions 证据，再决定 Week 11-12 完成状态。
+
+### 2026-08-10：第 12 周 CI 安全密钥注释导致 YAML 缩进回归
+
+- 当前周次：第 12 周 Task 13 安全扫描门禁。
+- 问题现象：为让 Gitleaks 忽略受控 CI 测试密钥而追加行尾注释时，两处 `INFERENCE_INTERNAL_SECRET` 行多出一个空格，GitHub Actions 工作流无法被 PyYAML 解析；目标套件出现 15 个连锁解析错误。
+- 根因：手工编辑 YAML 映射项时没有保持同一 `env` 缩进层级；行尾注释本身不是问题，缩进漂移才是语法错误。
+- 解决方法：将两处变量恢复到与相邻 `env` 键相同的缩进，仅保留 `# gitleaks:allow` 注释。
+- 验证方式：修复前 `tests.test_ci_workflow` 29 项中 15 项错误；修复后 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_ci_workflow -v` 为 29/29，`git diff --check` 通过（仅 CRLF 工作树提示）。
+- 影响范围：`.github/workflows/ci.yml` 受控测试环境变量；不改变运行时密钥、业务协议或用户既有前端测试修改。
+- 预防措施：修改 GitHub Actions YAML 后必须先用 PyYAML/工作流合同解析，再运行行为断言；密钥扫描注释应与原始缩进一起做最小差异审查。
+- 遗留事项：Trivy 漏洞数据库、冻结 MLflow 镜像、固定资源性能、真实备份恢复、N-1、完整外部 Chromium 和远程 CI 仍需独立证据。
+
+### 2026-08-10：第 12 周真实 Trivy/Gitleaks 扫描证据
+
+- 当前周次：第 12 周 Task 13 安全扫描门禁。
+- Trivy 环境：WSL Docker 29.6.2 已有 `aquasec/trivy:0.67.2`；`trivy-cache` 中已有约 1.2 GB 漏洞数据库，可用 `--skip-db-update` 离线复用。
+- 文件系统扫描：对当前工作树执行 HIGH/CRITICAL 漏洞、密钥和错误配置扫描，结果 `trivy-fs.json` 为 0 vulnerabilities、0 secrets、0 misconfigurations，扫描命令返回 0。
+- 镜像扫描：当前 `codex-week12-20260810-a1-backend:latest`（MLflow 3.15.1、cryptography 49.0.0）发现 26 项 HIGH/CRITICAL，其中 22 HIGH、4 CRITICAL；4 项 CRITICAL 来自 Debian `perl-base`，另有 `cryptography 49.0.0` 的 `CVE-2026-69247` 受控兼容例外。镜像门禁仍为失败，不得以旧 `week9-12-mlops-core-backend` 结果替代当前栈。
+- Gitleaks：worktree 根目录的 no-git 扫描曾命中 18 项，根因是 `tmp/` 缓存、临时私钥/脚本和 Trivy 报告生成物；在不含运行时临时目录的 `ml-platform` 应用源码和 `.github` CI 目录分别执行 no-git 脱敏扫描，均为 0 leaks。历史仓库扫描此前已验证无泄漏；临时报告不纳入提交。
+- 验证方式：后端 `run_suite.py` 89/89；安全与 CI 目标套件 146/146；前端 23 文件、90/90；`npm run build`、Python `compileall`、`git diff --check` 通过。Trivy/Gitleaks 原始 JSON 仅保存在 `tmp/security-20260810/`。
+- 遗留事项：镜像基础层待升级到无 HIGH/CRITICAL 的可发布版本；`cryptography` 50.0.0 与 MLflow 3.15 兼容性仍需独立解析验证；远程 CI、固定资源性能、真实备份恢复、N-1、完整外部 Chromium 和最终证据清单未闭合。
+
+### 2026-08-10：第 12 周 Trivy 基础镜像重建复核
+
+- 当前周次：第 12 周 Task 13 安全扫描门禁。
+- 问题现象：当前后端镜像 Trivy 仍报告 Debian 13.6 基础包（含 `perl-base`）的 HIGH/CRITICAL CVE，不能仅用 MLflow/cryptography 例外解释。
+- 处理结果：使用当前 Dockerfile 和 `docker build --pull` 重建 `codex-week12-20260810-a2-backend:latest`；Docker 解析到相同 `python:3.11-slim` digest，Trivy 结果仍为 26 项（22 HIGH、4 CRITICAL），无 secrets/misconfigurations。
+- 验证方式：重建成功；同一 `trivy-cache`、同一 HIGH/CRITICAL 参数复扫并取得 `trivy-image-a2.json`。未修改业务依赖或将基础层 CVE 写入例外。
+- 预防措施：发布前固定基础镜像 digest 并由镜像维护者提供已修复层；只有有明确补丁版本和兼容验证时才升级基础镜像或 Python 包。
+- 遗留事项：等待可用的无阻断基础镜像/上游修复；远程 CI 与 Week 11-12 其他最终门禁仍未闭合。
+
+### 2026-08-10：第 12 周 Trivy 基础镜像重建复核
+
+- 当前周次：第 12 周 Task 13 安全扫描门禁。
+- 问题现象：当前后端镜像 Trivy 仍报告 Debian 13.6 基础包（含 `perl-base`）的 HIGH/CRITICAL CVE，不能仅用 MLflow/cryptography 例外解释。
+- 处理结果：使用当前 Dockerfile 和 `docker build --pull` 重建 `codex-week12-20260810-a2-backend:latest`；Docker 解析到相同 `python:3.11-slim` digest，Trivy 结果仍为 26 项（22 HIGH、4 CRITICAL），无 secrets/misconfigurations。
+- 验证方式：重建成功；同一 `trivy-cache`、同一 HIGH/CRITICAL 参数复扫并取得 `trivy-image-a2.json`。未修改业务依赖或将基础层 CVE 写入例外。
+- 预防措施：发布前固定基础镜像 digest 并由镜像维护者提供已修复层；只有有明确补丁版本和兼容验证时才升级基础镜像或 Python 包。
+- 遗留事项：等待可用的无阻断基础镜像/上游修复；远程 CI 与 Week 11-12 其他最终门禁仍未闭合。
+
+### 2026-08-10：第 12 周真实 Trivy/Gitleaks 扫描证据
+
+- 当前周次：第 12 周 Task 13 安全扫描门禁。
+- Trivy 环境：WSL Docker 29.6.2 已有 `aquasec/trivy:0.67.2`；`trivy-cache` 中已有约 1.2 GB 漏洞数据库，可用 `--skip-db-update` 离线复用。
+- 文件系统扫描：对当前工作树执行 HIGH/CRITICAL 漏洞、密钥和错误配置扫描，结果 `trivy-fs.json` 为 0 vulnerabilities、0 secrets、0 misconfigurations，扫描命令返回 0。
+- 镜像扫描：当前 `codex-week12-20260810-a1-backend:latest`（MLflow 3.15.1、cryptography 49.0.0）发现 26 项 HIGH/CRITICAL，其中 22 HIGH、4 CRITICAL；4 项 CRITICAL 来自 Debian `perl-base`，另有 `cryptography 49.0.0` 的 `CVE-2026-69247` 受控兼容例外。镜像门禁仍为失败，不得以旧 `week9-12-mlops-core-backend` 结果替代当前栈。
+- Gitleaks：worktree 根目录的 no-git 扫描曾命中 18 项，根因是 `tmp/` 缓存、临时私钥/脚本和 Trivy 报告生成物；在不含运行时临时目录的 `ml-platform` 应用源码和 `.github` CI 目录分别执行 no-git 脱敏扫描，均为 0 leaks。历史仓库扫描此前已验证无泄漏；临时报告不纳入提交。
+- 验证方式：后端 `run_suite.py` 89/89；安全与 CI 目标套件 146/146；前端 23 文件、90/90；`npm run build`、Python `compileall`、`git diff --check` 通过。Trivy/Gitleaks 原始 JSON 仅保存在 `tmp/security-20260810/`。
+- 遗留事项：镜像基础层待升级到无 HIGH/CRITICAL 的可发布版本；`cryptography` 50.0.0 与 MLflow 3.15 兼容性仍需独立解析验证；远程 CI、固定资源性能、真实备份恢复、N-1、完整外部 Chromium 和最终证据清单未闭合。
+
+### 2026-08-10：第 12 周 CI 安全密钥注释导致 YAML 缩进回归
+
+- 当前周次：第 12 周 Task 13 安全扫描门禁。
+- 问题现象：为让 Gitleaks 忽略受控 CI 测试密钥而追加行尾注释时，两处 `INFERENCE_INTERNAL_SECRET` 行多出一个空格，GitHub Actions 工作流无法被 PyYAML 解析；目标套件出现 15 个连锁解析错误。
+- 根因：手工编辑 YAML 映射项时没有保持同一 `env` 缩进层级；行尾注释本身不是问题，缩进漂移才是语法错误。
+- 解决方法：将两处变量恢复到与相邻 `env` 键相同的缩进，仅保留 `# gitleaks:allow` 注释。
+- 验证方式：修复前 `tests.test_ci_workflow` 29 项中 15 项错误；修复后 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_ci_workflow -v` 为 29/29，`git diff --check` 通过（仅 CRLF 工作树提示）。
+- 影响范围：`.github/workflows/ci.yml` 受控测试环境变量；不改变运行时密钥、业务协议或用户既有前端测试修改。
+- 预防措施：修改 GitHub Actions YAML 后必须先用 PyYAML/工作流合同解析，再运行行为断言；密钥扫描注释应与原始缩进一起做最小差异审查。
+- 遗留事项：Trivy 漏洞数据库、冻结 MLflow 镜像、固定资源性能、真实备份恢复、N-1、完整外部 Chromium 和远程 CI 仍需独立证据。
+
+### 2026-08-11：第 12 周镜像与 Python 依赖修复阻塞复核
+
+- 当前状态：Task 13 与第 11-12 周继续保持“进行中”；安全合同仍为 RED，未关闭镜像、Python 依赖或 Week 12 最终门禁。
+- 问题现象：四个生产 Dockerfile 仍使用可变的 `python:3.11-slim`；正式 PyPI 最新 MLflow 为 `3.15.1`，其元数据要求 `cryptography<50`；`cryptography 50.0.0` 是 `CVE-2026-69247`/`PYSEC-2026-3552` 的修复版本，故把直接 pin 提升到 50 会使解析失败。当前 `python:3.11-slim-trixie` digest `sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff` 的基础层仍报告 4 项 CRITICAL、21 项 HIGH；`apt-get dist-upgrade` 无可用修复版本。
+- 已确认根因：应用依赖冲突来自已发布 MLflow 的上游版本约束，不是本仓库 resolver 或代码问题；镜像风险来自 Debian 基础包尚未发布可用修复层，重建或仅改标签不会改变 digest。Alpine 虽然 OS 漏洞为 0，但当前 `scikit-learn==1.7.*` 没有可用 musllinux wheel，不能宣称科学计算栈兼容；未发布 MLflow 开发提交也不能作为稳定生产依赖。
+- 处理结果：复核 PyPI 元数据、候选 digest、Trivy 基础层报告和干净 resolver 结果；保留 RED 合同、原始扫描与解析证据，不删除 cryptography 例外、不强制安装 50、不强制移除 Debian 包、不修改生产配置。
+- 验证方式：PowerShell 7 `Invoke-RestMethod` 查询 PyPI；同一 Trivy 数据库和 HIGH/CRITICAL 参数复核 Trixie digest；既有完整镜像扫描保持 22 HIGH、4 CRITICAL；MLflow 3.15.1 + cryptography 50 的解析失败与当前 requirements 约束一致。
+- 预防措施：依赖修复必须同时满足正式发行元数据、干净 resolver、运行时回归和无例外 pip-audit；基础镜像必须以实际 digest 和同参数 Trivy 结果选定，重建成功或 mutable tag 变化不能替代漏洞修复证据。
+- 遗留事项：需由项目负责人在“等待正式 MLflow/基础镜像修复”和“批准维护经过测试的内部 MLflow backport/镜像方案”之间作出长期决策；决策前不得继续生产依赖改动、四镜像最终扫描、Week 12 安全门禁关闭、推送或合并。
+
+### 2026-08-11：第 12 周独立 Python 依赖 pin 的局部修复
+
+- 当前状态：`jaraco.context` 与 `wheel` 的直接 pin 已完成；Task 13 仍未完成，cryptography 例外、基础镜像风险和最终安全门禁继续保持未关闭。
+- 问题现象：当前镜像中的 `jaraco.context 5.3.0` 与 `wheel 0.45.1` 分别对应 Trivy 报告的 `CVE-2026-23949` 和 `CVE-2026-24049`。
+- 已确认根因：两个漏洞包没有被应用的顶层 requirements 固定，解析结果可落到旧版本；它们不受 MLflow 的 cryptography 上限约束。
+- 解决方法：在 `ml-platform/backend/requirements.txt` 增加 `jaraco.context==6.1.0` 和 `wheel==0.46.2`；不改变 `cryptography==49.0.*`、`mlflow==3.15.*` 或安全例外。
+- 验证方式：使用 PowerShell 7、阿里云 PyPI 镜像执行 `pip install --dry-run --report ... -r requirements.txt jaraco.context==6.1.0 wheel==0.46.2`，解析退出码为 0；随后原始 `pip-audit -r requirements.txt` 因 `pypi.org` TLS `UNEXPECTED_EOF_WHILE_READING` 中断，未产生可作为通过证据的报告。
+- 预防措施：独立 pin 只有在干净 resolver 和原始 pip-audit 都成功后才能标记为已修复；网络或漏洞数据库不可用时记录为 blocked，不用 dry-run 或旧 JSON 冒充扫描通过。
+- 遗留事项：需在可访问 PyPI advisory 服务的环境复跑无例外 pip-audit，并等待正式 MLflow/基础镜像修复或获得内部 backport 方案批准后再处理 cryptography 和四个生产镜像。
+
+### 2026-08-11：第 12 周无例外 pip-audit 真实报告名称规范化修复
+
+- 当前状态：Task 13 与第 11-12 周继续保持“进行中”。依赖审计已取得当前候选镜像内的零漏洞原始报告，但四个最终生产镜像的无缓存重建与 Trivy 扫描尚未完成，不能关闭安全或最终验收门禁。
+- 问题现象：真实 `pip-audit` JSON 把 requirements 中的 `jaraco.context==6.1.0` 记录为规范化分发名 `jaraco-context`。安全扫描器仅以 `casefold()` 比较名称，会把该干净报告错误标记为 `PIP_AUDIT_REQUIRED_PACKAGE_MISSING`。
+- 已确认根因：PyPI 分发名遵循 PEP 503，将连续的 `.`, `_` 和 `-` 归一化为 `-`；扫描器的受控包集合和报告名称没有在同一规范化边界比较。此前测试夹具使用了非真实的点号名称，未覆盖该输出。
+- 解决方法：在 `tools/security_scans.py` 增加 PEP 503 等价的名称规范化，并将受控包集合与报告依赖名称都归一化后比较；回归夹具改为真实的 `jaraco-context` 输出。未增加例外、忽略规则或放宽漏洞判断。
+- 验证方式：真实名称夹具先稳定 RED 为 `PIP_AUDIT_REQUIRED_PACKAGE_MISSING`，修复后 GREEN；`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts tests.test_week12_security_gates tests.test_ci_workflow -v` 为 148/148，`python -m compileall -q app tools tests` 通过。候选镜像 `codex-week12-ps7-backend:candidate` 内执行无例外 `pip-audit -r /app/requirements.txt` 退出码为 0，原始报告显示 `cryptography 50.0.0`、`jaraco-context 6.1.0`、`wheel 0.46.2` 均无漏洞。
+- 影响范围：仅 Week 12 依赖审计报告解析与安全回归；不改变 React Router 受限 npm 例外、通知协议、用户的 `ModelLibraryPage.test.tsx` 或临时缓存保护范围。
+- 预防措施：扫描器比较 Python 分发名称时必须采用 PEP 503 规范化；回归夹具应使用真实工具输出的名称格式，依赖门禁继续对任意漏洞和受控包缺失失败关闭。
+- 遗留事项：`docker build --pull --no-cache` 重建 `codex-week12-final-backend:latest` 在 904 秒上限内未完成，未生成可扫描的最终镜像。需在 Docker 构建网络可完成时按同一固定 digest 重建 backend、worker、inference、TensorBoard，并运行四个 Trivy HIGH/CRITICAL 扫描、`tools.security_scans all`、全量回归和远程 CI 后再决定提交、推送或合并。
+
+### 2026-08-12：第 11-12 周验收 Task 1 基线与证据工作区完成
+
+- 当前状态：在 `codex/week9-12-mlops-core`、提交 `82afc9cd6011cbb23fdfeca68dc99c6f2ad1514d` 上创建隔离的 `temp_test/acceptance-20260810/` 工作区和 README 合同；Docker 29.6.2、Compose 5.3.1、WSL Ubuntu 26.04 已记录。
+- 证据与保护：原 `%USERPROFILE%/.wslconfig` 已逐字节复制为 `baseline/wslconfig.original`，原文件和副本 SHA-256 均为 `A4AE25464FC82388F85AB6C9A3C8F1914DD24174EDC126EB465A77326BF7824B`；既有 `ModelLibraryPage.test.tsx`、`tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 未暂存、未删除。
+- 验证方式：PowerShell 7 记录分支、HEAD、remote、dirty paths；WSL `nproc`/`/proc/meminfo` 和 Docker `NCPU/MemTotal` 输出已保存，README 明确要求命令、时间、退出码、提交、工具版本、artifact 和脱敏状态。
+- 遗留事项：Task 2-5 性能、备份恢复、N-1、Chromium 和 Web 安全尚未执行；Task 6-7 的 manifest、远程 CI、提交/推送/合并继续保持未完成。
+
+### 2026-08-13：第 9-12 周高危修复与验收闭环计划冻结
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”。新增 `docs/superpowers/plans/2026-08-13-week9-12-high-risk-remediation-closure.md`，将高危修复、四生产镜像、固定资源性能、备份恢复、N-1、外部 Chromium、四通道通知、证据 manifest、远程 CI 与合并拆分为可验证任务；本记录不是任何门禁完成声明。
+- 已复现阻断一：`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_evidence_manifest.EvidenceManifestTests.test_generate_rejects_weakened_security_scan_commands -v` 产生 5 个 `KeyError`（`command` / `images`）。当前结论是 semantic evidence 测试夹具没有满足新版 scanner receipt 合同而被汇总器降级；必须先修正夹具使 baseline summary 真正为 `passed`，再验证弱化命令被 manifest 拒绝，不能放松生产合同。
+- 已复现阻断二：固定 4 vCPU / 8 GiB 性能验收的限流场景第 6 次请求得到 `200` 而非预期 `429`。尚未确认是 Compose 镜像/环境变量绑定、Redis key 身份、Lua 令牌桶逻辑或测试工件漂移；下一步必须在单个隔离 WSL Compose 生命周期中记录环境、settings、容器 image ID、OCI revision、Redis `HGETALL` 与每次请求状态后再写最小回归和修复。
+- 提交边界：用户要求所有变更提交。任务范围内的源码、配置、测试、文档和 `ModelLibraryPage.test.tsx` 将被显式暂存并提交；`tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 是约 1.18 GiB 的生成缓存/raw scanner 产物，可能含 registry 元数据或未审核证据，不使用 `git add -A` 推送。安全、脱敏、相对路径的最终摘要另行纳入正式文档；共享 `DEVELOPMENT_EXPERIENCE.md` 位于仓库外，将更新但不能随 Git 提交。
+- 验证方式：当前工作树为 `codex/week9-12-mlops-core`，相对 `origin/codex/week9-12-mlops-core` 领先 7 个提交；`git diff --check` 通过。第 9 至第 12 周只有在所有本地、WSL、扫描、manifest 和远程 CI 门禁通过后才可改为“已完成”。
+- 遗留事项：按新计划先修复 evidence manifest 夹具，再诊断限流；任何扫描、构建、Compose、网络、迁移、浏览器或 CI 失败都阻断推送/合并结论并需保存可复现证据。
+
+### 2026-08-13：第 12 周 evidence manifest scanner receipt 回归修复
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”；Task 2 已完成代码与聚焦验证，但不代表最终安全或发布门禁完成。
+- 问题现象：新版安全汇总器要求 Bandit、Trivy、pip-audit、npm audit、Gitleaks 和四个容器镜像 receipt 使用精确命令/原始报告合同；旧测试夹具的容器 Trivy 命令缺少 `--output` 路径，导致 aggregate summary 被降级，弱化命令回归随后访问不到 `command`/`images` 并抛出 5 个 `KeyError`。完整安全测试还暴露两个旧夹具命令形状和两个 raw 报告缺失错误优先级问题。
+- 已确认根因：测试夹具没有跟随生产合同同步；manifest 对“receipt 字段缺失”和“receipt 存在但命令/返回码非法”使用同一宽泛检查，掩盖了真实语义。
+- 解决方法：补齐 `test_evidence_manifest.py` 与 `test_week12_security_gates.py` 的真实 Trivy `--output` receipt；保持生产 scanner fail-closed 规则不放宽；`tools/evidence_manifest.py` 先对缺失 `command` 报 `scanner receipt missing`，对非法命令/返回码报 `scanner receipt invalid`。
+- 验证方式：PowerShell 7 使用 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_evidence_manifest tests.test_week12_security_gates tests.test_ci_workflow tests.test_image_security_contracts -v`，结果 `203/203` 通过；`python -m compileall -q app tools tests` 通过；`git diff --check` 通过。
+- 影响范围：Week 12 证据 manifest 解析、测试夹具和安全回归；不改变业务 API、Redis 限流算法、通知通道或扫描例外。
+- 预防措施：安全证据夹具必须由真实 scanner 命令形状和原始 JSON 生成；manifest 合同变更时同时更新合法 baseline、缺失字段和弱化命令回归，并分别验证错误码。
+- 遗留事项：固定 4 vCPU/8 GiB 限流第 6 次请求仍待隔离 WSL 诊断；四镜像无缓存构建/Trivy、备份恢复、N-1、完整 Chromium、最终 manifest、远程 CI 和合并仍未闭合。
+
+### 2026-08-13：第 11-12 周运行态镜像 provenance 暂停检查点
+
+- 当前状态：用户要求保存进度并暂停修复。第 9 至第 12 周、Task 13 继续保持“进行中”；本条只保存已验证的本地合同与静态 Compose 结果，不将其表述为 frozen stack、最终安全门禁或远程 CI 通过。
+- 开发内容：为 Week 12 frozen-stack 增加受控的 `runtime-images` 证据采集和 manifest 校验。证据固定覆盖 backend（`migrate`、`backend`）、worker（`worker`、`scheduler`）、inference（`inference-runtime`）和 tensorboard（`tensorboard-gateway`）的 image reference、image ID、OCI revision 与 source commit；CI 通过 `docker-compose.week12-security-images.yml` 使用已扫描镜像并禁止运行阶段重新 build。
+- 已确认行为：同组件服务镜像 metadata 不一致、非法 image ID/revision、revision 与 source commit 不一致、缺少 runtime artifact、artifact 键/服务集合非法、artifact 与 Trivy receipt 映射不一致，以及绝对/敏感 runtime metadata，均由本地合同拒绝。`environment.json` 在容器内无 `.git` 时优先使用受控的 `ACCEPTANCE_SOURCE_COMMIT`。
+- 验证方式：在 `ml-platform/backend` 目录以 `PYTHONPATH=.` 运行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_acceptance_environment tests.test_evidence_manifest tests.test_ci_workflow tests.test_week12_security_gates tests.test_image_security_contracts -q`，结果 212 项通过；其中出现的 `--pip-audit-exception legacy-exception.json` usage 输出来自受控负向 CLI 测试。随后 `C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 退出码为 0。WSL Docker 29.6.2 / Compose v5.3.1 在完整 CI 等价占位环境变量下执行 `docker compose -f docker-compose.yml -f docker-compose.week12-security-images.yml config -q` 退出码为 0。
+- 暂停边界：未执行真实 frozen-stack `up/inspect/runtime-images/summarize/down` 生命周期，未生成最终 evidence manifest，未运行 GitHub Actions。CI scanner bootstrap 的可变下载/直接执行高危项（Trivy、Gitleaks、MinIO `mc`）尚未开始修改；恢复时先完成 RED 合同、固定 release asset SHA-256 与版本检查，再继续 WSL 验收。
+- 提交边界：本次提交纳入当前任务范围的 CI、Compose override、Python 工具、回归测试和本文件。`tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 为缓存或原始扫描证据，不纳入 Git。
+
+### 2026-08-13：CI 外部安全工具固定版本与摘要校验完成
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”；本条关闭 CI scanner bootstrap 的高危源代码问题，不代表四镜像扫描、最终验收或远程 CI 已完成。
+- 问题现象：CI 从 `raw.githubusercontent.com` 的可变 `main/master` 安装脚本或未校验地址获取 Trivy、Gitleaks 与 MinIO `mc`，下载内容未在执行前绑定不可变版本和 SHA-256。
+- 已确认根因：历史工作流只关注工具可用性，没有把发布资产来源、完整性校验顺序和精确运行版本纳入供应链安全合同。
+- 解决方法：固定 Trivy `v0.73.0`、Gitleaks `v8.24.2`、MinIO `mc` `RELEASE.2025-08-13T08-35-41Z` 的官方 GitHub Release 资产；强制 HTTPS/TLS 1.2，先做 SHA-256 严格校验，再解压、移动、授权或执行；统一安装到 `$RUNNER_TEMP/bin` 并精确比较实际版本。活动验收计划中的 Trivy 版本同步更新为 `0.73.0`，历史记录保持不变。
+- 验证方式：`tests.test_ci_workflow tests.test_week12_security_gates tests.test_image_security_contracts` 共 182 项通过；`compileall`、CI YAML 解析、禁止可变安装模式扫描与 `git diff --check` 通过。官方 checksum/API 与 WSL 真实工具版本交叉确认；Gitleaks release tag 为 `v8.24.2`，但官方二进制 `version` 输出为 `8.24.2`，工作流按真实输出精确比较。Windows 直接下载曾因外部网络超时留下零字节临时文件，该结果不作为成功证据。
+- 影响范围：`.github/workflows/ci.yml`、CI 回归测试和当前执行计划；不改变业务 API、扫描失败关闭策略、通知协议或镜像内容。
+- 预防措施：CI 下载的可执行文件必须固定版本化发布资产并校验官方摘要；校验必须早于任何执行步骤；版本检查使用精确比较，禁止子串匹配、`curl | sh` 和可变分支安装器。
+- 遗留事项：四个生产镜像无缓存构建、非 root smoke、Trivy 全镜像扫描、真实冻结 Compose、固定资源性能、备份恢复、N-1、Chromium 四角色/四通道矩阵、最终 manifest、全量回归和远程 CI 仍待完成。
+
+### 2026-08-13：生产镜像大依赖断点续传门禁修复
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”；本条仅修复 Docker 构建对网络中断的恢复配置，四个当前提交镜像尚未重建完成，不能标记镜像或安全门禁通过。
+- 问题现象：在提交 `0f6e2c9aa9ce711d8ab542b35f8f9935cad3b31b` 的无缓存 backend 构建中，阿里云 PyPI 源下载 `nvidia-nccl-cu12 2.31.2`（342.1 MB）多次中断，pip 在第六次续传后以 `incomplete-download` 失败，已接收 332.4 MB。
+- 已确认根因：镜像命令只设置 `--retries 10`，该参数只控制新的 HTTP 连接；Wolfi 内的 pip `26.2.1` 对断点续传使用独立的 `--resume-retries`，默认值为 5，因此大文件网络中断未能使用预期的十次重连预算。
+- 解决方法：四个生产 Dockerfile 的 pip 安装命令统一使用 `--retries 10 --resume-retries 20 --timeout 120`；镜像合同测试锁定完整命令，防止日后删除续传配置。
+- 验证方式：新增合同先在旧命令上稳定 RED，再在四个 Dockerfile 修改后 GREEN；`tests.test_image_security_contracts` 7/7、`compileall -q app tools tests` 和 `git diff --check` 通过。WSL 从旧镜像确认 pip `26.2.1` 支持 `--resume-retries`。
+- 影响范围：仅生产镜像内 pip 下载恢复行为和镜像合同；不变更版本 pin、基础镜像 digest、运行用户、业务代码或安全阈值。
+- 遗留事项：必须以本次修复后的提交重新执行四个 `--pull --no-cache` 构建，收集 image ID/OCI revision、非 root smoke 和 Trivy HIGH/CRITICAL 报告后，才能继续 frozen Compose 与最终验收。
+
+### 2026-08-13：backend 镜像重建再次受外部大文件网络阻塞
+
+- 当前状态：提交 `449249ad3f61ef32bcc77b12c9653702eb5bbdf1` 已包含断点续传修复；第 9 至第 12 周继续保持“进行中”，不把旧镜像当作当前提交证据。
+- 验证过程：以 `--pull --no-cache` 从该提交重建 backend；基础 Wolfi 和 Python 层通过，pip 解析确认 `xgboost==3.2.*` 的 Linux 元数据声明 `nvidia-nccl-cu12`，随后阿里云源的 342 MB wheel 长时间传输停滞。旧镜像仍无 `449249a` revision，未被复用或重标记。
+- 结论：当前阻塞是外部 PyPI 大文件传输/WSL Docker 网络状态，不是依赖解析错误；项目后续 GPU 计划不允许未经评估地移除 NCCL 依赖。构建进程已停止，未生成可验收的新镜像。
+- 遗留事项：四个当前提交镜像的无缓存构建、非 root smoke、Trivy 扫描及其后的 frozen Compose/最终验收仍待在可稳定下载环境完成；本地代码与合同门禁可继续独立执行。
+
+### 2026-08-13：暂停检查点——补齐 Week 12 测试台账归属
+
+- 当前状态：用户要求保存进度并暂停修复；第 9 至第 12 周继续保持“进行中”。
+- 问题现象：恢复后首次运行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_suite_manifest -v`，`test_every_backend_test_module_has_one_week_owner` 失败，唯一未归属模块为 `test_image_security_contracts`。
+- 已确认根因：新增 Week 12 镜像安全合同测试已提交到 `tests/`，但未同步登记到 `tests/week_manifest.py`；显式 Week 11/12 归属断言也未包含该模块。完整 runner 因此在首个 manifest 门禁停止。
+- 已写入修复：将 `test_image_security_contracts` 唯一登记到 Week 12，并同步加入 `test_suite_manifest.py` 的 Week 12 归属断言；本次暂停前未重新运行该测试，故修复结果仍待验证。
+- 验证状态：修复前失败证据已保存；暂停前仅执行 `git diff --check`，通过（仅存在 CRLF 工作树提示）。未执行完整后端 runner、前端、Compose、镜像重建、扫描、Chromium、远程 CI 或推送。
+- 未完成与恢复顺序：恢复后先运行 `tests.test_suite_manifest` 确认 GREEN，再运行完整 `run_suite.py`；随后按既有计划执行完整环境 Compose、四镜像当前提交重建/扫描和其余 Week 11-12 门禁。不得把旧镜像或定向测试当作最终验收证据。
+
+### 2026-08-13：Week 12 测试台账恢复验证
+
+- 当前状态：Week 12 测试台账归属修复已完成本地验证；第 9 至第 12 周仍保持“进行中”，不将本地回归表述为 Compose、镜像、安全扫描或远程 CI 通过。
+- 验证结果：`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_suite_manifest -v` 为 4/4；随后 `C:\Users\17723\miniconda3\python.exe run_suite.py` 为 90/90 模块通过，耗时约 548 秒，包含 `test_image_security_contracts`。
+- 交叉验证：`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 通过；前端 `npm test` 为 23 文件、90 用例通过；`npm run build` 成功。构建仍报告既有 ECharts chunk 大于 500 kB 警告，未在本任务中改变 bundle 策略。
+- 结论：唯一遗漏的 Week 12 测试归属已在完整 backend runner 中被覆盖。下一步是使用完整 CI 等价变量复验 Compose 配置，然后在稳定 WSL/Docker 网络中从当前提交重建四个生产镜像并收集 provenance 与 Trivy 证据。
+
+### 2026-08-14：当前提交 Wolfi 镜像重建的 BuildKit/APK 下载诊断检查点
+
+- 当前周次：第 12 周 Task 13 镜像安全门禁；第 9 至第 12 周继续保持“进行中”。
+- 已证实现象：从提交 `d060fa6997d99cc3cc7e81456b2d811325abca55` 对 backend 执行两次 `docker build --pull --no-cache`，均在固定 Wolfi `apk add` 层失败。第一次为 `APKINDEX` 请求超时后包被误报不存在；第二次为 `libbz2-1` 下载 `operation timed out`，最终返回 `rpc error: code = Unavailable desc = error reading from server: EOF`。
+- 已排除边界：固定 base digest 可拉取；`python-3.11=3.11.15-r9` 与 `py3.11-pip=26.2.1-r0` 仍可解析；WSL 直接读取 APK 索引返回 HTTP 200；同一 base 通过普通 `docker run` 执行相同 `apk add` 最终退出 0 并得到 Python 3.11.15 / pip 26.2.1。普通容器下载期间仍出现超时，说明链路并非稳定。
+- 当前判断：尚未证明 Dockerfile、基础镜像 digest 或固定包版本存在产品缺陷；证据指向 BuildKit/APK 外部下载链路间歇性失败。不得删除 XGBoost/NCCL、放宽 pin、复用旧 `codex-week12-final-*` 镜像或将旧镜像重标记为当前提交证据。
+- 后续顺序：先以最小固定 base/固定包 BuildKit 诊断只改变 build `--network` 模式，记录构建网络边界；仅在复现出确定性产品缺陷后按 RED→GREEN 修改实现。四个当前提交镜像全部重建、非 root smoke、Trivy、frozen Compose、性能、备份恢复、N-1、完整 Chromium 和远程 CI 仍为未完成门禁。
+
+### 2026-08-14：第 12 周 setuptools vendor bundle 高危依赖最小修复
+
+- 当前状态：第 9 至第 12 周与 Task 13 继续保持“进行中”。本条只记录 `requirements.txt` 的最小依赖修复及本地合同/解析证据，不表示镜像、安全或发布门禁完成。
+- 问题现象：顶层 requirements 已固定 `jaraco.context==6.1.0` 和 `wheel==0.46.2`，但 `setuptools==80.9.0` 自带的 vendor bundle 仍含 `jaraco.context 5.3.0` 与 `wheel 0.45.1`，对应镜像安全报告中的 HIGH 风险。
+- 已确认根因：顶层分发包 pin 不会替换 `setuptools` wheel 内部随包携带的 vendor 副本；同时 TensorBoard 2.19 仍通过 `pkg_resources` 依赖 setuptools，不能直接跨到移除该接口的 setuptools 81+。
+- 解决方法：仅将 `setuptools` 固定版本从 `80.9.0` 升至 `80.10.2`，并同步镜像安全合同断言；保持现有 `jaraco.context`、`wheel`、TensorBoard、MLflow、cryptography、Dockerfile 与扫描例外不变。
+- 验证方式：在 `ml-platform/backend` 以 `PYTHONPATH=.` 执行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts tests.test_week12_security_gates tests.test_ci_workflow -v`，182/182 通过（11.399 秒）；`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 退出码为 0；使用阿里云 PyPI 镜像、`--ignore-installed --dry-run --no-cache-dir --report` 的干净解析生成 118 条安装记录，确认 `setuptools==80.10.2`、`jaraco.context==6.1.0`、`wheel==0.46.2`、`tensorboard==2.19.0`。Windows legacy GBK 控制台不能可靠承载 `pip --report -` 的 Unicode JSON，故 report 保存在系统临时目录而非 worktree。
+- 遗留事项：未运行 Docker 构建；当前 BuildKit/Wolfi APK 外部下载超时仍为独立阻塞。四个当前提交镜像重建、非 root smoke、Trivy HIGH/CRITICAL、无例外 pip-audit、frozen Compose、最终 evidence manifest、性能、备份恢复、N-1、Chromium、远程 CI、推送和合并均仍未闭合，不能宣称最终安全门禁通过。
+
+### 2026-08-14：WSL 链接 worktree 镜像 provenance 传递修复
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”；本条修正当前提交镜像重建命令的 provenance 传递，不表示镜像、安全扫描或发布门禁通过。
+- 问题现象：初次按计划从提交 23c14e0a990bfa45f2069aae97b29f1fda221475 无缓存重建 backend、worker、inference、tensorboard 四个镜像均退出 0，但其 org.opencontainers.image.revision 全部为空，故四个标签均不可作为当前提交验收或 Trivy receipt 证据。
+- 已确认根因：WSL 中链接 worktree 的 .git 文件包含 Windows E:/... gitdir 路径，git -C /mnt/e/... rev-parse HEAD 解析为错误的嵌套路径；普通 PowerShell 环境变量也不会自动继承到 wsl.exe。构建脚本因未对 source commit 或实际 OCI label 做 fail-closed 校验而继续完成。
+- 解决方法：验收计划改为由 PowerShell 读取并验证 40 位 SHA，再使用 wsl.exe -e env ACCEPTANCE_SOURCE_COMMIT=<SHA> bash -lc 显式传递；Bash 在每次 build 前验证 SHA 格式，并在每个 image 后读取 OCI label，不匹配即退出。
+- 验证方式：PowerShell 读取的 23c14e0a990bfa45f2069aae97b29f1fda221475 经 wsl.exe -e env 到达 Bash，40 位格式断言通过；四个现有标签均已被明确检查为 revision 空值并排除。镜像静态合同 7/7 与 compileall -q app tools tests 通过；最小固定 APK 的 default 与 host BuildKit 构建均成功；Trivy 新鲜 DB 的离线 Alpine 扫描退出 0。
+- 预防措施：Windows/WSL 交界不得在 WSL 中假设链接 worktree 的 Git 元数据可解析；所有 provenance-sensitive 构建必须在 build 前验证 source SHA、在 build 后验证 OCI revision，空 label 与过期扫描一律失败关闭。
+- 遗留事项：须在本条文档提交后的新 HEAD 重新无缓存构建四个镜像、执行非 root smoke 和新鲜 Trivy HIGH/CRITICAL 扫描；再继续完整安全链、frozen Compose、性能、备份恢复、N-1、Chromium、远程 CI 和合并。
+
+### 2026-08-14：新 HEAD 四镜像 provenance、运行态与合同门禁完成
+
+- 当前周次：第 12 周 Task 13 镜像安全门禁；第 9 至第 12 周继续保持“进行中”。本条只关闭四镜像构建与运行态门禁，不表示 Trivy、完整安全链、frozen Compose、最终验收或远程 CI 通过。
+- 问题现象：首次执行四镜像非 root smoke 时，宿主 PowerShell 将嵌套 Bash 片段中的 `id`、`test`、`python3.11` 当作自身命令，出现 `The term 'id' is not recognized` 和 `syntax error: unexpected end of file`。
+- 已确认根因：WSL Bash 外层脚本与 Docker `sh -lc` 内层脚本使用过度嵌套的单引号转义；失败发生在宿主命令构造边界，不在镜像运行时。单镜像直接 `wsl.exe -e docker run ... -lc '...'` 可稳定复现成功。
+- 解决方法：不修改镜像或生产代码；逐镜像从 PowerShell 直接调用 `wsl.exe -e docker run`，把完整 smoke 命令作为单一参数交给容器 `sh -lc`。
+- 验证方式：提交 `ae5c6c5d199a54ccf485ede105cef51bc1e0f688` 后，WSL Docker 29.6.2 / Compose v5.3.1 以 `--pull --no-cache` 重建四镜像；镜像 ID 分别为 `sha256:6cd1427f4c96ebc570ce0a6665b1ec077f9bf8a42424595786512540ba8362c4`、`sha256:537d894fbd9b80c862d05554e66c570cf0b209e893cf15cfe9fbf65965861ac`、`sha256:7f9fb0584865f078290776220d25edd5f0d686abf31a1bb2ed3bb485e93d0992`、`sha256:cb3900e966a768651b6f6325d018f29d0434e6ed916ce46087dd13628ac6c80a`，四个 `org.opencontainers.image.revision` 均精确匹配该 SHA；四镜像 smoke 均为 UID 1000、`HOME=/home/app`、Python 3.11.15；`tests.test_image_security_contracts` 为 7/7，`git diff --check` 通过。
+- 预防措施：PowerShell、WSL、Docker、容器 shell 多边界命令优先使用单层脚本或直接参数传递；先用单镜像最小命令验证 quoting，再运行批量循环。宿主 quoting 失败不得改写为镜像失败。
+- 遗留事项：Task 5 的四镜像 Trivy HIGH/CRITICAL receipts、完整 `tools.security_scans`、pip-audit/Bandit/Gitleaks/npm audit、frozen Compose、性能、备份恢复、N-1、Chromium、四通知通道、最终 manifest、远程 CI、推送和合并仍未闭合。
+
+### 2026-08-14：第 12 周 Task 5 容器镜像回执完整性回归
+
+- 当前状态：新增 fail-closed 回归已完成；第 9 至第 12 周、Task 13 继续保持“进行中”，不将该本地合同替代四镜像 Trivy、完整安全链或远程 CI。
+- 问题现象：聚合 `security.json` 的 `container_image.images` 若缺少任一已要求的镜像回执，汇总器必须明确拒绝；仅覆盖单个 `ArtifactName`、`Metadata.ImageID`、OCI revision 或 failed record 不能证明该 cardinality 边界。
+- 解决方法：在 `tests.test_week12_security_gates` 增加真实 `summarize` 路径回归：从有效 aggregate receipt 删除一项 image，断言退出码为 1、summary 状态为 `failed`、container image gate 错误码为 `SECURITY_EVIDENCE_INVALID`。未放宽生产扫描器或把必需镜像降级为可选。
+- 验证方式：`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_week12_security_gates.SecurityGateTests.test_summary_rejects_missing_required_container_image_receipt_as_invalid -v` 为 1/1 通过；代码差异只增加该回归。
+- 预防措施：任何 required image set 的变更同时覆盖缺回执、错误 artifact、错误 image ID、错误 OCI revision 与 failed receipt；汇总器对不完整 aggregate evidence 必须失败关闭。
+- 遗留事项：仍需对最终 HEAD 的 backend、worker、inference、tensorboard 重新构建并产生四份真实 Trivy receipt，再运行完整 `tools.security_scans` 与最终 manifest。
+
+### 2026-08-14：Task 3 Compose MinIO bucket 传播修复
+
+- 当前状态：已定位并修复限流诊断前的 Compose 配置缺陷；第 9 至第 12 周、Task 13 继续保持“进行中”，本条不代表最终生产栈或远程 CI 通过。
+- 问题现象：唯一 `MINIO_BUCKET` 隔离 Compose 生命周期中，backend/worker 使用该 bucket，而 `minio-init` 未接收变量并回退创建 `ml-platform`，造成应用对象写入 `NoSuchBucket`；该存储缺口会在限流请求前阻断诊断。
+- 已确认根因：`minio-init` 的 entrypoint 已使用 `$${MINIO_BUCKET:-ml-platform}`，但其 `environment` 仅传入 MinIO root 凭据，缺失对应变量；Docker Compose 因此无法把调用方的唯一 bucket 传入 initializer。
+- 解决方法：仅在 `minio-init.environment` 增加 `MINIO_BUCKET: ${MINIO_BUCKET:-ml-platform}`，保持 entrypoint 与限流生产代码不变；`test_ci_workflow` 新增回归，要求键存在、值严格匹配 fallback expression 且与 backend 相同。
+- 验证方式：修复前新合同因 `MINIO_BUCKET` 缺失稳定 RED；修复后主流程独立运行 `C:\Users\17723\miniconda3\python.exe -m unittest tests.test_ci_workflow -v` 为 33/33，`git diff --check` 通过。此前同一隔离生命周期已在 capacity=5、refill=0.001 下得到 `200,200,200,200,200,429`，因此不修改 `inference_rate_limit.py`。
+- 预防措施：任何 Compose initializer 使用服务可覆盖的名称、bucket、schema 或 namespace 时，必须将同一变量显式传入 initializer，并以唯一资源值的静态合同和隔离 lifecycle 验证；配置阻断不得误归因于限流器或其他业务逻辑。
+- 遗留事项：提交后必须从新 HEAD 重建四镜像、重新进行非 root/Trivy/security receipt 验证；随后才可运行 frozen Compose、性能、备份恢复、N-1、完整 Chromium、最终 manifest 与远程 CI。
+
+### 2026-08-14：第 12 周 Trivy 容器输出目录挂载修复
+
+- 当前状态：验收计划的 Trivy 命令已完成最小 RED/GREEN 纠正；四镜像、Trivy 和安全 receipt 继续保持未完成，因为本条提交会生成新的 source commit，不能使用此前 `8956585` 标签作为最终证据。
+- 问题现象：按计划在 WSL 中创建 host `temp_test` 输出目录后，`aquasec/trivy:0.73.0` 仍对四个镜像返回 exit 1，错误均为无法打开 `/mnt/e/.../trivy-image-*.json`；输出文件未产生，故该 exit code 不能解释为漏洞发现。
+- 已确认根因：Trivy 在独立容器中运行，只挂载 Docker socket 和 cache volume；host 的 `$out` 路径没有挂载到扫描容器，`--output` 指向了容器内不存在的目录。历史命令同样存在该路径边界缺口。
+- 解决方法：验收计划只增加 `-v "$out":/out`，并将 Trivy output 改为容器内 `/out/trivy-image-${image}.json`；Docker socket、Trivy version、cache、severity、exit-code、target image 与原始报告位置保持不变。
+- 验证方式：旧命令对 backend、worker、inference、tensorboard 均复现 output path 错误；仅增加 mount 的 backend 最小复验成功写入 JSON，schema 含 `ArtifactName`、`ArtifactType` 与 `Results`，Trivy scan exit 为 0。该单镜像结果仅验证路径修复，不构成最终四镜像安全结论。
+- 预防措施：任何在工具容器内使用 host output path 的命令，必须先映射 host directory 并使用 container-visible output path；在把非零退出码归因为安全 finding 前，先验证 raw report 文件存在、可解析且与预期 image ID/reference 绑定。
+- 遗留事项：提交后以新 HEAD 重新无缓存构建四镜像、非 root smoke、四份 Trivy HIGH/CRITICAL report 和完整 security chain；之后才可生成 receipt、frozen Compose 和最终 manifest。
+
+### 2026-08-14：Wolfi Python 3.11 滚动 APK 包版本修复
+
+- 当前状态：已完成镜像静态合同的最小 TDD 修复；本条不构成新 HEAD 的 Docker 构建、Trivy 或运行态验收。
+- 问题现象：四个 Python 3.11 镜像在 `apk add` 固定 `python-3.11=3.11.15-r9` 与 `py3.11-pip=26.2.1-r0`，但当前 Wolfi rolling APKINDEX 已不能解析这两个版本，导致镜像构建失败。
+- 已确认根因：不可变 wolfi-base digest 不会冻结滚动 APK repository 的 APKINDEX；当前可用精确值为 `python-3.11=3.11.14-r0` 和 `py3.11-pip=25.3-r3`。
+- 解决方法：只同步 `docs/security/python-base-image.json` 的 runtime 两项与 backend、worker、inference、tensorboard 四个 Dockerfile 的单一 `apk add` 行；新增 JSON runtime 精确 pin 回归，不改 base digest、retry、requirements 或安全门禁。
+- 验证方式：新增测试在旧 JSON 上以 `3.11.15-r9 != 3.11.14-r0` 预期 RED；修复后聚焦测试 1/1、`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts -v` 为 8/8、`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 退出 0、`git diff --check` 通过。
+- 预防措施：使用 rolling APK repository 的精确 package pin 必须在构建前用当前 APKINDEX 验证仍可解析，并将该值以 JSON 和所有生产 Dockerfile 的同一合同锁定；静态通过后仍须在新 HEAD 单独重建和重新生成安全证据。
+
+### 2026-08-14：Wolfi APK 瞬断重试修复
+
+- 当前状态：已完成静态合同和最小 Dockerfile 重试修复；此前 `204d0dc` 的 backend/worker 构建结果因本次提交将过期，不能用于最终 receipt、Trivy 或运行态验收。
+- 问题现象：`204d0dc` 的 backend/worker 无缓存构建已成功，但 inference 在同一 `apk add` 的 `libexpat1-2.8.3-r0` 下载阶段返回 `operation timed out`；该命令已解析当前 Python/Pip pin，失败不再是版本不可用。
+- 已确认根因：生产 Dockerfile 对 Chainguard APK 包下载只执行一次；rolling registry 的单个包下载瞬断会立即使单镜像构建失败，即使同一 source、base digest 和 package pin 的其他镜像已经成功。
+- 解决方法：保留不可变 base digest、精确 Python/Pip pin 和失败关闭语义，在四个 Dockerfile 的同一 `apk add` 外加入三次递增 sleep 的重试循环；第三次失败仍退出 1。新增合同要求四个生产镜像都保留精确三次重试结构。
+- 验证方式：新合同在未加循环时对 Dockerfile 稳定 RED；实现后聚焦 1/1、`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts -v` 为 9/9、`C:\Users\17723\miniconda3\python.exe -m compileall -q app tools tests` 和 `git diff --check` 通过。
+- 预防措施：外部 APK 下载故障必须先与 package pin 不可用区分；确认是瞬断后，使用有限、可审计、失败关闭的重试，并在新提交无缓存重建全部镜像后才生成安全结论。
+- 遗留事项：提交后从该新 HEAD 重新无缓存构建 backend、worker、inference、tensorboard，验证非 root/OCI provenance，之后重新运行 Trivy 和完整 security chain。
+
+### 2026-08-15：第 12 周 Task 4 冻结提交四镜像重建与 provenance 验证
+
+- 当前周次：第 12 周 Task 4/5 镜像安全门禁；第 9 至第 12 周继续保持“进行中”。本条只关闭 `1a861a4e536c9a2ee4e597abe15e272f965348f0` 的四镜像构建、provenance 与 non-root runtime 门禁，不表示 Trivy、完整安全链、frozen Compose、最终验收或远程 CI 通过。
+- 问题现象：开始时四个 `codex-week12-final-*` 标签均存在，但 OCI revision 分别仍为旧提交 `204d0dc1960053d9bae432698c1df0a2195dd749` 或 `8956585d6ccdfe082b8328533ab0f5302fa45195`，不能用于当前冻结提交的 receipt 或发布证据。按原 Bash 脚本在 WSL 内执行 linked-worktree `git -C` 时又稳定报 Windows `gitdir` 路径被错误拼接。
+- 已确认根因：Windows 链接 worktree 的 `.git` 指向 `E:/...`，WSL Git 无法可靠解析该元数据；旧镜像标签是此前提交的构建产物。一次 TensorBoard 构建还遇到 XGBoost/NCCL wheel 连接中断，但 Dockerfile 的固定 `--resume-retries 20` 成功续传，未引入依赖漂移。
+- 解决方法：由 PowerShell 7 读取并验证 40 位 source SHA，以 `wsl.exe -e env ACCEPTANCE_SOURCE_COMMIT=<SHA>` 显式传入 WSL；Bash 仅校验传入 SHA 格式、以 `--pull --no-cache` 构建四个镜像，并在每次构建后立即用 `docker image inspect` 精确比较 OCI revision。non-root smoke 采用 PowerShell 逐镜像直接调用 `wsl.exe -e docker run`，避免 Bash/Docker shell 的多层 quoting。
+- 验证方式：WSL Docker `29.6.2` / Compose `v5.3.1` 下四个最终镜像分别得到 `sha256:4e0a3e1961ad3c370869bc24c6c084af28d391009d260ddfb7e0b2e1fcc71501`、`sha256:3778d0378b94bdf11792227e1f71fe79449c49f751adbe13fde04e3c326d4378`、`sha256:69aeaf9cb61e0649a65af2a65c26a7cf11ff1fbfe9edf45449f0d27cb56b7aca`、`sha256:0af77bace5af874a21944bba7c17f209f7835bd9aa37f5cbebe99b9f62e32e82`；四个 OCI revision 均精确匹配 `1a861a4...`，四个 smoke 均输出 UID `1000`、`HOME=/home/app`、Python `3.11.14`。`C:\Users\17723\miniconda3\python.exe -m unittest tests.test_image_security_contracts -v` 为 `9/9` 通过，`git diff --check` 通过。
+- 影响范围：仅当前 WSL Docker image tags、构建缓存和验收记录；未修改应用代码、Dockerfile、requirements、生产 Compose 配置或持久化数据。
+- 预防措施：跨 Windows/WSL 的 linked-worktree build 不得在 WSL 内推导 Git SHA；每个构建必须独立验证 source commit、image ID 和 OCI revision。大 wheel 的瞬断只允许有限、可审计、失败关闭的续传，完成后仍需以新 image ID 重新扫描。
+- 遗留事项：Task 5 仍须从该四个 image ID 生成四份 Trivy HIGH/CRITICAL receipt，运行完整 `tools.security_scans` 与 fail-closed manifest；frozen Compose、性能、备份恢复、N-1、Chromium、四通道通知、远程 CI、推送与合并均未闭合。
+
+### 2026-08-15：第 12 周安全回执 P1 范围收口与进度整理
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”。本条仅收口 filesystem Trivy 与 Gitleaks 证据回执的本地 fail-closed P1；工作树中的 `.gitleaks.toml`、`tools/security_scans.py`、`tools/evidence_manifest.py` 和两份安全回归测试尚未提交，不能作为当前 HEAD 的镜像、扫描、Compose 或发布证据。
+- 问题现象：独立规格复审证明旧 receipt 合同可接受子目录 filesystem Trivy target、仅绑定 repository 路径而不绑定 Gitleaks 实际源树、在 Gitleaks 读取配置前产生 TOCTOU 窗口，并允许 `security/summary.json` 生成后直接篡改 Gitleaks binding 仍写出 passed manifest；snapshot 临时目录创建或清理失败也必须不能产生通过回执。
+- 已确认根因：命令/原始报告验证没有把执行根精确锁为 repository root；`execution_root_sha256` 没有覆盖被扫描的文件内容；配置的验证与 scanner 实际读取之间共享可变目录；manifest 只验证通用 receipt 形状而未复算 Gitleaks 专用 binding。
+- 解决方法：filesystem Trivy 固定以 repository root 为 `cwd`、最终 target 与原始 `ArtifactName` 均严格为 `.`；Gitleaks receipt 新增受控 `source_tree_sha256` 和 `isolated_read_only_snapshot` 上下文，在私有只读 source/config snapshot 内执行；summary 与 manifest 共享 live binding validator；硬链接、reparse、snapshot 创建或清理失败一律以 `GITLEAKS_SOURCE_SNAPSHOT_INVALID` 失败关闭。
+- 验证方式：主线程在 `ml-platform/backend` 以 `PYTHONPATH=.` 重新运行 9 项 P1 回归，覆盖 snapshot 执行、源/配置隔离、hard-link 拒绝、snapshot 创建失败、receipt/summary/manifest 篡改拒绝和 Trivy 子目录收窄，结果 `9/9` 通过（19.534 秒）；`C:\Users\17723\miniconda3\python.exe -m compileall -q tools tests` 与限定范围的 `git diff --check` 均退出 0。实现阶段另有 `tests.test_evidence_manifest tests.test_week12_security_gates -v` 的 `184/184` 本地回归记录（206.014 秒）；它是本地合同证据，不替代完整回归或真实 scanner 验收。
+- 影响范围：仅 Week 12 安全证据生成、汇总与 manifest 校验及相应回归；不改变业务 API、模型发布、通知通道、Compose 运行配置、Dockerfile 或依赖 pin。
+- 预防措施：scanner receipt 必须同时绑定命令、执行根、原始 artifact、实际 source/config 字节和执行上下文；所有影响 summary/manifest 的文件必须在读取前以安全文件规则验证，并在每个下游验证边界重算 binding，不能仅信任先前的 aggregate。
+- 遗留事项：最新未提交 source 会使此前四镜像 provenance、Trivy receipt 与运行态证据过期。后续仍需对提交后的新 HEAD 重建四生产镜像、运行四份 Trivy HIGH/CRITICAL、完整 `tools.security_scans` 与最终 manifest、完整后端/前端/Chromium 回归、frozen Compose、固定 4 vCPU/8 GiB 三轮性能、PostgreSQL/MinIO 备份恢复、真实 N-1 升降级、四角色/四通知通道 Web 验收、远程 CI、推送及 main 合并；这些完成前不得将 Week 9–12 标记为完成。
+
+### 2026-08-16：第 9-12 周高危合并回归本地收口
+
+- 当前状态：高危项的代码修复和本地完整回归已完成；第 9 至第 12 周仍保持“进行中”，直到 PR #17 的最新提交通过全部远端 CI 并合并到 `main`。旧 run `31869871802` 的失败不能作为当前通过证据。
+- 问题现象：主线合并后，完整 CI workflow 被缩减且 job-level `env` 使用了不允许的 `runner.temp` 上下文；生产与实验集成缺少通知加密密钥/证书。代码侧同时出现两个 Alembic head、点焊路由和恢复逻辑遗漏、平台用户审计与角色边界回退、管理员绕过项目成员隔离，以及 React Router 例外扫描对测试写法和 namespace import 的误报。
+- 已确认根因：跨分支合并只处理了文本冲突，没有重新验证 workflow 表达式上下文、迁移 DAG、路由注册、权限矩阵和审计动作的组合合同；测试夹具及前端导入形状也没有同步到合并后的安全扫描规则。
+- 解决方法：恢复生产、实验、通知、安全和 Week 11-12 完整 CI jobs，改用 `/tmp` 受控路径并在 job 内生成权限为 `0600` 的 Fernet key 与短期证书；新增 `20260815_11` merge revision 合并通知与点焊迁移 head；恢复点焊模型/路由、孤儿项目和本地质量任务修复、平台用户角色校验/自操作阻断/审计、通知权限，并保持平台管理员仅在全局 dashboard 拥有全局视图而不绕过项目成员隔离。前端测试改用真实 Router/JSX，抽离可视化节点判断并使用具名 import，保留 React Router 例外的 fail-closed 范围。
+- 验证方式：`tests.test_week12_security_gates` 为 `153/153`；`run_suite.py` 最终为 `111/111` 模块；前端 Vitest 为 `43/43` 文件、`203/203` 用例，生产构建通过；`tests.test_ci_workflow` 为 `33/33`；`alembic heads` 仅返回 `20260815_11 (head)`；`git diff --check` 通过。首次完整后端回归暴露 5 个模块失败，修复后第二轮仅发现 stale Gitleaks binding 的错误测试期望，恢复 `SECURITY_EVIDENCE_INVALID` 后安全模块和第三轮完整后端回归均通过。
+- 提交边界：只提交 Week 9-12 高危修复、对应回归和本记录；`tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 保持未跟踪且不推送。
+- 遗留事项：推送新提交到 `codex/week9-12-mlops-core`，等待 PR #17 的全部 GitHub Actions jobs 完成；任一 job 失败必须按精确日志继续修复。全部通过后方可合并到 `main` 并验证远端 main 包含合并提交。
+
+### 2026-08-16：PR #17 首轮远端 CI 跨平台与诊断链修复
+
+- 当前状态：Actions run `31917549971` 已确认 Ubuntu Quality、生产集成和实验集成失败；本轮修复已通过 Windows/Linux 聚焦回归及完整安全合同，但尚未推送，Week 9-12 与 PR #17 继续保持“进行中”。
+- 问题现象：MinIO client 已下载且 SHA-256 校验通过，却因版本字段读取错误中止；两个集成 job 的失败证据步骤把 `sed -E` 写成文件参数，导致原始容器日志未能保留。Ubuntu Quality 还出现 `WindowsPath` 在 POSIX 实例化、测试绑定特权端口 443、以及 pip/npm 单元测试被真实 Gitleaks 工作树快照状态干扰。
+- 已确认根因：`mc --version` 的 release 位于首行第 3 列；GNU sed 的扩展正则选项必须放在表达式前；命令解析与脱敏使用了会跟随被 mock 的 `os.name` 选择具体实现的 `Path`；通知验收未显式选择临时端口；依赖审计测试没有隔离不属于其断言目标的 Gitleaks 快照边界。Git checkout 的 `.git` 元数据也不属于 `--no-git` 产品源码范围，可能包含 checkout 管理的特殊文件。
+- 解决方法：CI 改为读取 `mc` 第 3 列并使用 `sed -E -i -e ...`；命令 shim 与脱敏改用 `PurePath`；通知接收器测试使用 `https_port=0`、`events_port=0`；Gitleaks 源快照与配置契约排除根 `.git`，仍对产品源码 symlink/reparse/hard-link 失败关闭；pip/npm 测试 mock 独立 Gitleaks 快照边界。
+- 验证方式：Windows 聚焦回归 `42/42`；Linux 后端镜像复现的原失败集合 `7/7`；`tests.test_week12_security_gates tests.test_ci_workflow tests.test_notification_receiver_acceptance` 完整回归 `190/190`。完整 runner 首轮为 `110/111`，唯一失败是 manifest 测试夹具仍计算旧 Gitleaks 范围；同步 `.git` 排除后 `tests.test_evidence_manifest` 为 `31/31`。UID 模拟未复现 migrate 读取密钥失败，Alembic 完整升级到 `20260815_11` 并退出 0，因此未引入无证据的权限放宽或 `chown`。
+- 预防措施：外部 CLI 的版本输出要用真实 runner 输出建立合同；failure-evidence 脚本必须自身可执行且先保存 raw log；跨平台测试不得通过修改全局 `os.name` 后实例化具体 `Path`；网络测试显式使用临时端口；单一门禁测试隔离无关安全 gate，同时保留对应 gate 的独立失败关闭回归。
+- 遗留事项：提交并推送本轮修复，等待新的 PR #17 Actions 全部结束；生产或实验集成若仍失败，使用已修复的 redacted evidence 读取精确容器日志后继续处理。全部远端门禁通过前不得合并或标记 Week 9-12 完成。
+
+### 2026-08-16：PR #17 实验栈非 root 密钥挂载修复
+
+- 当前状态：Actions run `31919525599` 的生产集成已通过；实验集成失败证据已成功上传并确认根因。本轮权限修复尚未推送，双平台 Quality 的该 run 不再作为最终门禁。
+- 问题现象：实验 Compose 的 `migrate` 容器在导入配置时以 `NOTIFICATION_MASTER_KEY_FILE could not be read` 退出 1；证据中的 Pydantic traceback 已完成脱敏并保留。
+- 已确认根因：GitHub runner 以 UID 1001 创建宿主 `/tmp/notification-master.key` 且模式为 `0600`，Compose 将该文件只读挂载给 UID 1000 的非 root Python 容器；本地此前未改变 owner 的模拟没有覆盖该真实 UID 边界。
+- 解决方法：只对需要挂载进非 root 容器的实验 key 和 Week 11-12 frozen-stack key 执行 `sudo chown 1000:1000`、`sudo chmod 0400`；失败证据用 `sudo cat` 读取 key 进行泄漏扫描。宿主直接运行的 production key 保持 runner 所有，不修改 Compose 用户或放宽为 group/world readable。
+- 验证方式：`tests.test_ci_workflow` 为 `35/35`，workflow YAML 可解析，`git diff --check` 通过；WSL 中 UID/GID `1000:1000`、mode `0400` 的宿主文件由 `--user 1000:1000` 容器以只读 mount 成功读取。
+- 预防措施：CI 生成并 bind-mount 给非 root 容器的 secret 必须同时验证 owner、mode、容器 UID 和失败证据读取路径；本地权限模拟要断言实际 UID/GID，而不能只依赖 chmod。
+- 遗留事项：推送后等待新 Actions run 的实验集成、双平台 Quality、Chromium 和 Week 11-12 verification 全部通过，再合并 PR #17。
+
+补充：run `31919874046` 的实验栈已完成镜像构建、migrate、backend、worker 和 runtime 启动；失败仅来自 runner UID 1001 在 cleanup 阶段直接删除 UID 1000 所有的 key。已将实验和 frozen-stack cleanup 改为 `sudo rm -f`，并把该清理路径加入 CI 合同测试。
+
+### 2026-08-16：PR #17 受控通知接收器证书权限修复
+
+- 当前状态：Actions run `31920999493` 的生产集成已通过；实验集成失败证据已补充 `notification-receiver` 与 `notification-proxy` 日志并确认精确根因。本轮修复本地合同已通过，仍需推送后等待新的双平台 Quality、生产/实验集成、Chromium 与 Week 11-12 verification 全部通过，之后才能合并 `main`。
+- 问题现象：实验栈的 migrate、backend、worker、scheduler、MLflow 与 inference runtime 均能启动，但 `notification-receiver` 在 `ssl.SSLContext.load_cert_chain()` 读取 `/run/secrets/notification_receiver_private_key` 时以 `PermissionError: [Errno 13] Permission denied` 退出，导致 `docker compose up --wait` 失败。
+- 已确认根因：CI runner 创建接收器证书、私钥和 CA 后仅执行 `chmod 600`，文件仍属于 runner UID；Compose 将其挂载给默认 UID 1000 的非 root backend 镜像。此前只修复了 notification master key 的 owner，未把同一非 root secret 合同应用到 TLS 文件。
+- 解决方法：证书生成后统一执行 `sudo chown 1000:1000` 与 `sudo chmod 0400`，保持 owner-only read；cleanup 统一用 `sudo rm -f`。失败证据服务列表永久包含 `notification-receiver` 和 `notification-proxy`，避免再次只得到 compose 退出码。
+- 验证方式：`C:\\Users\\17723\\miniconda3\\python.exe -m unittest tests.test_ci_workflow -q` 为 `35/35`，新增断言覆盖 TLS 文件 owner/mode，失败证据合同覆盖两个受控通知服务，`git diff --check` 通过。远端 CI 尚未对本次提交完成验证，因此不标记 Week 9-12 完成。
+- 预防措施：所有由 runner 生成并挂载给非 root 容器的 secret、证书和私钥必须共享 owner/mode/consumer UID/cleanup 合同；Compose 启动失败的 evidence 必须包含所有被 `depends_on` 或 healthcheck 阻断的服务日志。
+
+补充：修复 TLS 文件 owner 后，run `31921375165` 已证明 `notification-receiver` 为 healthy，生产集成仍通过；实验栈随后因 `notification-proxy` 显式禁用 healthcheck 而被 `docker compose up --wait` 拒绝。已为 proxy 增加 UID 1000 容器内的 `127.0.0.1:3128` TCP listener healthcheck，聚焦 CI/receiver 合同 `37/37` 通过，等待新远端 run 验证。
+
+补充：run `31921710113` 已证明 receiver 和 proxy 均通过 `docker compose up --wait`，实验验证进入真实 MLflow 生命周期后因 `Host: mlflow:5000` 未在 MLflow 3.15 allowlist 中而返回 403。生产 Compose 已显式传入可配置的 `MLFLOW_ALLOWED_HOSTS`，默认仅允许内部 `mlflow:5000` 与 localhost/127.0.0.1 健康检查；CI 合同 `36/36` 通过，等待新远端 run 验证。
+
+补充：run `31921969798` 已证明 MLflow Host allowlist 生效，实验栈迁移完成到当前合并头 `20260815_11`；失败仅来自 `test_inference_production_stack` 仍断言旧的 `20260720_10_security_notifications`。已将运行态断言同步到当前单一 Alembic head，相关模块本地收集 `2` 项均跳过（缺少真实栈），等待新远端 run 验证。
+
+补充：run `31922307340` 已通过实验训练、推理发布/回滚、迁移 head、receiver/proxy 和 Webhook/企业微信验证；唯一失败为 Mailpit 邮件 outcome 返回 `retry`。根因是生产 Compose 将未配置的 SMTP 用户名/密码传为两个空字符串，Pydantic 解析为非 `None` SecretStr，适配器错误尝试空凭据 AUTH；现已把双空值规范化为无认证，仍对只配置一侧失败关闭。通知/生产栈/CI 聚焦回归 `58` 项通过、`6` 项无真实栈跳过，等待新远端 run 验证。
+
+补充：run `31922736096` 已通过生产集成、实验集成、Ubuntu Quality 与双平台后端 `111/111`；Windows 前端仅两个长交互测试分别以 5.437 秒超过默认 5 秒、16.972 秒超过局部 15 秒而超时，未出现功能断言失败。仅将这两个测试的局部超时调整为 15 秒和 30 秒，聚焦 Vitest `2/2` 文件、`31/31` 用例通过，不放宽全局超时；等待新远端 run 全绿后再合并。
+
+补充：run `31923820309` 已再次通过两个集成 job、Ubuntu Quality 和双平台后端 `111/111`，前两个超时测试也已通过；Windows runner 仅暴露同一 AutoML 文件中另一个历史耗时 4.742 秒、当次 5.305 秒的质量报告交互测试超过默认 5 秒。该测试增加 15 秒局部 timeout 后，AutoMLPage 聚焦 `18/18` 通过；全局 timeout 保持不变，等待新远端 run。
+
+补充：run `31925024068` 的生产集成、实验集成和双平台 Quality 全部通过；Chromium 验收的应用和 11 个核心路由均已正常渲染，唯一失败是 `core-navigation.spec.ts` 仍断言已移除的 `AI模型训练编排平台`。历史提交 `babf6a7` 已将该验收标识更新为 `智擎`，但后续分支整合保留了旧 E2E 文件；现已恢复批准过的 `智擎` 断言，本地精确 Playwright 用例 `1/1` 通过，待推送后重跑完整 CI 和 Week 11-12 verification；新 run 全绿前仍不合并。
+
+### 2026-08-16：PR #17 新增 setuptools CVE 与 Gitleaks 快照清理修复
+
+- 当前状态：run `31926635306` 的生产集成、实验集成、Ubuntu/Windows Quality 和 Chromium 验收均通过；`Week 11-12 verification` 在安全汇总阶段失败。本轮已完成最小修复与本地真实扫描，但尚未推送；新 Actions run 的全部 job 成功前，第 9 至第 12 周继续保持“进行中”，PR #17 不合并。
+- 问题现象：真实 `pip-audit 2.10.1` 对 `setuptools==80.10.2` 报告 `CVE-2026-59890`，修复版本为 `83.0.0`；Gitleaks 原始报告在 Ubuntu 生产环境示例的三项应用密钥占位值上命中 `Generic API Key`，同时 aggregate receipt 被记录为 `GITLEAKS_SOURCE_SNAPSHOT_INVALID`，掩盖了真实 scanner return code。
+- 已确认根因：TensorBoard 2.19 依赖已被 setuptools 82 移除的 `pkg_resources`，所以不能只升级 setuptools；TensorBoard 2.21 已移除该运行时导入并可与 setuptools 83 配合。Gitleaks 快照被设为只读后，POSIX 删除失败发生在父目录缺少写权限；原 `shutil.rmtree` 回调只修改当前失败路径，清理失败后按 fail-closed 设计覆盖了 scanner findings。示例中的长大写占位字符串又满足 Generic API Key 规则。
+- 解决方法：将 TensorBoard 固定到 `2.21.*`、setuptools 固定到 `83.0.0`；生产环境示例的 `SECRET_KEY`、`TENSORBOARD_SESSION_SECRET`、`INFERENCE_INTERNAL_SECRET` 改为空值，继续由现有注释要求使用 `openssl rand -hex 32` 填充。快照删除回调仅在快照根内先恢复失败路径父目录的 owner `rwx`，再恢复当前路径并重试，不放宽 Gitleaks 规则、扫描范围或失败关闭语义。
+- 验证方式：三条回归均先在旧实现 RED；修复后 Windows 聚焦合同 `232/232` 通过、POSIX-only 用例 `1/1` 在 Linux 容器通过。完整 requirements 干净解析为 126 个安装项，包含 TensorBoard `2.21.0`、setuptools `83.0.0`、protobuf `6.33.6`、grpcio `1.83.0`；真实 `pip-audit` 审计 125 个依赖、0 漏洞；Gitleaks `v8.24.2` 对当前 reviewed source scope 扫描 0 leaks；TensorBoard 2.21/setuptools 83 overlay 下训练与 gateway 回归 `12/12` 通过。
+- 预防措施：只读安全快照的删除测试必须在 POSIX 上覆盖父目录权限；scanner 结果与快照 lifecycle 错误必须分别可诊断。打包工具安全升级若跨越移除 API 的版本，必须同步升级实际调用该 API 的上游依赖，并验证 resolver、真实 audit、导入路径和业务运行回归；部署示例中的应用密钥默认保持空值，生成方式写在注释中。
+- 遗留事项：完成 compile/diff/范围审查后提交并推送 PR #17；等待新 run 的六个 job 全部成功，再通过 PR 合并到 `main` 并验证远端 `main`、merge commit 和工作树边界。不得提交 `tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 或 `tmp/ci-31926635306-week11-12-2/`。
+
+补充：run `31929782258` 已通过生产集成、实验集成和 Ubuntu Quality；Windows Quality 的后端 `111/111` 也通过，但 `AutoMLPage` 的“启动质量感知”测试在前端阶段断言 `createQualityRun` 调用次数为 0。根因是测试只等待 preview API 被调用，没有等待 preview Promise 完成并把输入列写入 React 状态；Windows runner 上按钮仍为 disabled，点击不会触发提交。用例现改为先等待“运行质量感知”按钮 enabled 再点击，不修改生产代码或 timeout；聚焦 `1/1`、完整 AutoMLPage `18/18` 通过，待新 run 全绿后再合并。
+
+### 2026-08-16：PR #17 Week 11-12 安全摘要 stale Gitleaks 回执修复
+
+- 当前状态：run `31931087538` 的五个 job 已通过，`Week 11-12 verification` 在 `Summarize security evidence` 失败；第 9 至第 12 周仍保持“进行中”，未合并。
+- 问题现象：扫描回执中的 Gitleaks `source_tree_sha256` 在冻结栈启动后的汇总阶段失效，所有安全门被统一标记为 `SECURITY_EVIDENCE_INVALID`。
+- 已确认根因：`run security scans` 在测试套件之后执行，工作树中已存在 `__pycache__`、SQLite `*.db*`、`artifact_store` 等被 `.gitignore` 忽略的运行时生成物；冻结栈迁移和服务启动会改变这些字节，而源树摘要原先仍把它们纳入绑定。
+- 解决方法：将 Gitleaks reviewed source scope 与 `.gitleaks.toml` 同步扩展为排除 `__pycache__`、`artifact_store`/`uploads`/`exports` 和 SQLite `*.db`/`*.db-shm`/`*.db-wal`；新增回归验证扫描后修改这些生成物不会改变摘要。未放宽源码、配置、快照或 manifest 的 fail-closed 校验。
+- 验证方式：新增 stale-runtime-output 回归 `1/1`；Week 12 security gates `157/157`、evidence manifest `31/31`、CI workflow `36/36` 通过，待提交后重新运行完整远端六门禁。
+- 遗留事项：完成 diff/compile 检查后提交并推送；等待新的双平台 Quality、生产/实验集成、Chromium 和 Week 11-12 verification 全部成功，再合并 `main`。
+
+### 2026-08-16：PR #17 frozen-stack data 挂载导致安全摘要漂移修复
+
+- 当前状态：Actions run `31937388470` 的生产集成、实验集成、Ubuntu/Windows Quality 和 Chromium 验收均通过；`Week 11-12 verification` 仍在 `Summarize security evidence` 失败，因此第 9 至第 12 周继续保持“进行中”，PR #17 未合并。
+- 问题现象：安全扫描阶段的 Gitleaks receipt 全部通过，但 frozen-stack 启动后汇总仍将六个 scanner gate 统一标记为 `SECURITY_EVIDENCE_INVALID`；上传证据确认 web security 独立通过。
+- 已确认根因：`docker-compose.yml` 将宿主 `./ml-platform/backend/data` 绑定到 `/app/data`。扫描时该宿主目录不存在，随后 `docker compose up` 会创建它；源树摘要会记录目录路径，因此即使目录为空也会使 `source_tree_sha256` 失效。上一轮仅排除了目录内常见数据库和 artifact 字节，没有覆盖 Compose 创建目录本身。
+- 解决方法：只将精确运行时挂载 `ml-platform/backend/data` 加入 Gitleaks reviewed source scope、TOML 配置合同和两套证据夹具；不排除其他名为 `data` 的目录。回归同时断言该挂载在扫描后创建或写入不会改变摘要，而 `services/data` 等普通源码路径仍会改变摘要。
+- 验证方式：新增精确 digest 回归先 RED 后 GREEN，真实 `summarize` 生命周期回归通过；Week 12 security gates `158/158`、evidence manifest `31/31`、CI workflow `36/36` 通过。待完成 compile、diff 和提交范围审查后推送，并重新等待完整六门禁。
+- 遗留事项：新 Actions run 全部成功前不得合并或标记 Week 9-12 完成；若安全摘要仍失败，必须继续使用上传 artifact 对比具体 binding，不能扩大为通用 `data` 排除。
+
+### 2026-08-16：PR #17 scanner receipt 与 Trivy 0.73 报告合同修复
+
+- 当前状态：Actions run `31940235443` 的生产集成、实验集成、Ubuntu/Windows Quality 和 Chromium 验收均通过；`Week 11-12 verification` 仍在 `Summarize security evidence` 失败。已用 artifact `9262316127` 将失败隔离到两个确定的格式合同，本地修复和回归已完成，但新提交尚未推送，因此第 9 至第 12 周继续保持“进行中”，PR #17 未合并。
+- 问题现象：Gitleaks receipt 的 `source_tree_sha256=f166c64b...` 已与 merge commit `447d9f3` 的干净 checkout 精确匹配，但 summary 仍把六个 scanner gate 统一判为 `SECURITY_EVIDENCE_INVALID`。逐项绕过 Gitleaks binding 后，`frontend_dependencies` 的 passed receipt 命令校验失败；修正该格式重放后只剩 `filesystem_trivy` 失败。
+- 已确认根因：`run_scan` 会把任何含 `://` 的命令参数脱敏为 `[redacted-url]`，因此固定的 `--registry=https://registry.npmjs.org` 在落盘后不再满足 `is_required_scan_command` 的精确合同。真实 Trivy `0.73.0` 对 Git checkout 执行根目录 filesystem scan 时返回 `ArtifactName: "."`、`ArtifactType: "repository"`，而汇总器只接受旧形态 `filesystem`。
+- 解决方法：将固定 npm registry 参数提取为单一常量，并仅对这一公开、受审查参数保留原值；其他 URL 仍继续脱敏，命令校验仍要求精确官方 registry。filesystem Trivy 原始报告允许 `filesystem` 或 `repository` 两种合法类型，同时继续强制 repository-root 命令、literal `.` target、`ArtifactName == "."`、无 HIGH/CRITICAL 漏洞、无 misconfiguration/secret finding；container image 仍只接受 `container_image`。
+- 验证方式：两条回归均先在旧实现 RED，修复后 `2/2` 通过；将真实 run `31940235443` artifact 的 npm receipt 按新输出格式重放并仅隔离机器相关的 Gitleaks live path binding 后，七个 security gates 全部 passed。`tests.test_week12_security_gates tests.test_evidence_manifest tests.test_ci_workflow -v` 为 `227/227` 通过，另有 1 项 Windows 上按预期跳过的 POSIX 权限测试。
+- 预防措施：scanner receipt 的脱敏输出必须由同一生产 validator 接受，新增或修改命令参数时要覆盖“执行 -> 脱敏落盘 -> summarize”生命周期；外部 scanner 的 schema 合同必须用真实 pinned 版本 artifact 验证，不能只依赖手写旧格式 fixture。
+- 遗留事项：完成 compile、diff、提交范围审查后提交并推送；等待新 run 的六个 GitHub Actions jobs 全部成功。只有全绿后才合并 PR #17 到 `main`，并核验 PR 状态、merge commit、远端 `main` 和保留的未跟踪目录。

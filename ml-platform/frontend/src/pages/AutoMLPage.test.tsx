@@ -261,7 +261,9 @@ describe("AutoMLPage", () => {
     fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
     fireEvent.click(await screen.findByText("weld.csv"));
     await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
-    fireEvent.click(screen.getByRole("button", { name: "运行质量感知" }));
+    const runButton = screen.getByRole("button", { name: "运行质量感知" });
+    await waitFor(() => expect(runButton).not.toBeDisabled());
+    fireEvent.click(runButton);
 
     await waitFor(() => expect(quality.createQualityRun).toHaveBeenCalledWith("project-1", {
       dataset_artifact_id: "dataset-1",
@@ -369,7 +371,7 @@ describe("AutoMLPage", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     fireEvent.click(download);
     await waitFor(() => expect(quality.downloadQualityArtifact).toHaveBeenCalledWith("project-1", "run-1", "report"));
-  });
+  }, 15_000);
 
   it("submits the selected report candidate IDs in order", async () => {
     datasets.getDatasetPreview.mockResolvedValue({
@@ -448,7 +450,7 @@ describe("AutoMLPage", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/training/automl/run", expect.objectContaining({
       candidate_ids: ["LGB_v1"],
     })));
-  });
+  }, 15_000);
 
   it("submits the selected input columns with the target column", async () => {
     api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });

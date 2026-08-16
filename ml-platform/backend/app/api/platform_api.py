@@ -1,11 +1,13 @@
 """Platform API management (component marketplace)."""
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.api_model import PlatformAPI
 from app.models.user import User
 from app.api.auth import get_current_user
+from app.services.resource_access import ResourceAccessService
 
 router = APIRouter(prefix="/api/platform/apis", tags=["platform_apis"])
 
@@ -15,8 +17,12 @@ def list_apis(
     api_type: str = Query(None),
     status: str = Query(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    q = db.query(PlatformAPI)
+    q = db.query(PlatformAPI).filter(or_(
+        PlatformAPI.owner_id == current_user.id,
+        PlatformAPI.is_public.is_(True),
+    ))
     if api_type:
         q = q.filter(PlatformAPI.api_type == api_type)
     if status:
@@ -68,9 +74,12 @@ def create_api(data: dict, db: Session = Depends(get_db), current_user: User = D
 
 @router.put("/{api_id}")
 def update_api(api_id: str, data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    api = db.query(PlatformAPI).filter(PlatformAPI.id == uuid.UUID(api_id)).first()
-    if not api:
-        raise HTTPException(404)
+    api = ResourceAccessService().require_owned(
+        db,
+        PlatformAPI,
+        api_id,
+        current_user.id,
+    )
     for key in ["name", "status", "description", "endpoint", "is_public"]:
         if key in data:
             setattr(api, key, data[key])
@@ -80,19 +89,29 @@ def update_api(api_id: str, data: dict, db: Session = Depends(get_db), current_u
 
 @router.delete("/{api_id}")
 def delete_api(api_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    api = db.query(PlatformAPI).filter(PlatformAPI.id == uuid.UUID(api_id)).first()
-    if not api:
-        raise HTTPException(404)
+    api = ResourceAccessService().require_owned(
+        db,
+        PlatformAPI,
+        api_id,
+        current_user.id,
+    )
     db.delete(api)
     db.commit()
     return {"status": "deleted"}
 
 
 @router.get("/stats")
-def api_stats(db: Session = Depends(get_db)):
-    total = db.query(PlatformAPI).count()
-    published = db.query(PlatformAPI).filter(PlatformAPI.status == "published").count()
-    total_calls = db.query(PlatformAPI).with_entities(PlatformAPI.total_calls).all()
+def api_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    query = db.query(PlatformAPI).filter(or_(
+        PlatformAPI.owner_id == current_user.id,
+        PlatformAPI.is_public.is_(True),
+    ))
+    total = query.count()
+    published = query.filter(PlatformAPI.status == "published").count()
+    total_calls = query.with_entities(PlatformAPI.total_calls).all()
     return {
         "total_apis": total,
         "published": published,

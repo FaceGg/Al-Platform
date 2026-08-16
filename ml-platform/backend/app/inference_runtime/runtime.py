@@ -21,7 +21,9 @@ class RuntimeErrorCode(RuntimeError):
 
 @dataclass(frozen=True)
 class LoadedDeployment:
+    runtime_key: str
     deployment_id: str
+    revision_id: str | None
     model_version_id: str
     version_number: int
     storage_uri: str
@@ -35,6 +37,9 @@ class LoadedDeployment:
 
     def identity(self) -> tuple[object, ...]:
         return (
+            self.runtime_key,
+            self.deployment_id,
+            self.revision_id,
             self.model_version_id,
             self.version_number,
             self.storage_uri,
@@ -66,7 +71,8 @@ class RuntimeRegistry:
             "input_names",
             "output_names",
         }
-        if set(spec) != required:
+        optional = {"runtime_key", "revision_id"}
+        if not isinstance(spec, dict) or set(spec) - required - optional or not required <= set(spec):
             raise RuntimeErrorCode("DEPLOYMENT_SPEC_INVALID")
         features = spec["feature_schema"]
         if not isinstance(features, list) or not features:
@@ -84,8 +90,18 @@ class RuntimeRegistry:
             normalized_features.append({"name": name, "dtype": dtype})
         if not isinstance(spec["output_schema"], dict):
             raise RuntimeErrorCode("DEPLOYMENT_SPEC_INVALID")
+        runtime_key = str(spec.get("runtime_key") or spec["deployment_id"]).strip()
+        if not runtime_key or len(runtime_key) > 256:
+            raise RuntimeErrorCode("DEPLOYMENT_SPEC_INVALID")
+        revision_id = spec.get("revision_id")
+        if revision_id is not None:
+            revision_id = str(revision_id).strip()
+            if not revision_id or len(revision_id) > 128:
+                raise RuntimeErrorCode("DEPLOYMENT_SPEC_INVALID")
         return {
             **spec,
+            "runtime_key": runtime_key,
+            "revision_id": revision_id,
             "deployment_id": str(spec["deployment_id"]),
             "model_version_id": str(spec["model_version_id"]),
             "version_number": int(spec["version_number"]),
@@ -100,11 +116,15 @@ class RuntimeRegistry:
 
     def load(self, spec: dict) -> LoadedDeployment:
         normalized = self._normalized_spec(spec)
+        runtime_key = normalized["runtime_key"]
         deployment_id = normalized["deployment_id"]
         with self._lock:
-            existing = self._deployments.get(deployment_id)
+            existing = self._deployments.get(runtime_key)
         if existing is not None:
             candidate_identity = (
+                runtime_key,
+                deployment_id,
+                normalized["revision_id"],
                 normalized["model_version_id"],
                 normalized["version_number"],
                 normalized["storage_uri"],
@@ -141,7 +161,9 @@ class RuntimeRegistry:
         ):
             raise RuntimeErrorCode("MODEL_SCHEMA_INVALID")
         loaded = LoadedDeployment(
+            runtime_key=runtime_key,
             deployment_id=deployment_id,
+            revision_id=normalized["revision_id"],
             model_version_id=normalized["model_version_id"],
             version_number=normalized["version_number"],
             storage_uri=normalized["storage_uri"],
@@ -154,33 +176,35 @@ class RuntimeRegistry:
             session=session,
         )
         with self._lock:
-            concurrent = self._deployments.get(deployment_id)
+            concurrent = self._deployments.get(runtime_key)
             if concurrent is not None:
                 if concurrent.identity() != loaded.identity():
                     raise RuntimeErrorCode("DEPLOYMENT_SPEC_CONFLICT")
                 return concurrent
-            self._deployments[deployment_id] = loaded
+            self._deployments[runtime_key] = loaded
         return loaded
 
-    def unload(self, deployment_id: str) -> bool:
+    def unload(self, runtime_key: str) -> bool:
         with self._lock:
-            return self._deployments.pop(str(deployment_id), None) is not None
+            return self._deployments.pop(str(runtime_key), None) is not None
 
     def list(self) -> list[dict[str, object]]:
         with self._lock:
             values = tuple(self._deployments.values())
         return [
             {
+                "runtime_key": item.runtime_key,
                 "deployment_id": item.deployment_id,
+                "revision_id": item.revision_id,
                 "model_version_id": item.model_version_id,
                 "version_number": item.version_number,
             }
             for item in values
         ]
 
-    def _loaded(self, deployment_id: str) -> LoadedDeployment:
+    def _loaded(self, runtime_key: str) -> LoadedDeployment:
         with self._lock:
-            loaded = self._deployments.get(str(deployment_id))
+            loaded = self._deployments.get(str(runtime_key))
         if loaded is None:
             raise RuntimeErrorCode("DEPLOYMENT_NOT_READY")
         return loaded
@@ -222,8 +246,8 @@ class RuntimeRegistry:
             }
         return value
 
-    def predict(self, deployment_id: str, records: object) -> dict[str, object]:
-        loaded = self._loaded(deployment_id)
+    def predict(self, runtime_key: str, records: object) -> dict[str, object]:
+        loaded = self._loaded(runtime_key)
         matrix = self._records(loaded, records)
         started = perf_counter()
         try:
@@ -237,7 +261,9 @@ class RuntimeRegistry:
         if not outputs:
             raise RuntimeErrorCode("INFERENCE_FAILED")
         response = {
+            "runtime_key": loaded.runtime_key,
             "deployment_id": loaded.deployment_id,
+            "revision_id": loaded.revision_id,
             "model_version_id": loaded.model_version_id,
             "version_number": loaded.version_number,
             "predictions": self._json_value(outputs[0]),

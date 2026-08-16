@@ -8,15 +8,13 @@ from app.database import Base, engine
 from app.database import SessionLocal
 from app.models.run import WorkflowRun
 from app.api.runs import get_task_dispatcher
+from tests.auth_test_support import ensure_admin
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
 
 
 def login():
-    r = client.post("/api/auth/register", json={
-        "username": "admin", "password": "admin123", "role": "admin"
-    })
     r = client.post("/api/auth/login", data={"username": "admin", "password": "admin123"})
     return {"Authorization": "Bearer " + r.json()["access_token"]}
 
@@ -25,7 +23,7 @@ class TestRunsAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Ensure admin exists for fresh DB
-        client.post("/api/auth/register", json={"username": "admin", "password": "admin123", "role": "admin"})
+        ensure_admin()
         cls.h = login()
         # Create project
         r = client.post("/api/projects", json={"name": "RunTestProject"}, headers=cls.h)
@@ -124,7 +122,7 @@ class TestRunEmptyWorkflow(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Ensure admin exists for fresh DB
-        client.post("/api/auth/register", json={"username": "admin", "password": "admin123", "role": "admin"})
+        ensure_admin()
         cls.h = login()
         r = client.post("/api/projects", json={"name": "EmptyRunProject"}, headers=cls.h)
         cls.project_id = r.json()["id"]
@@ -142,9 +140,7 @@ class TestRunEmptyWorkflow(unittest.TestCase):
 class TestRunCancellation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        client.post("/api/auth/register", json={
-            "username": "cancel_admin", "password": "admin123", "role": "admin",
-        })
+        ensure_admin(username="cancel_admin")
         login_response = client.post(
             "/api/auth/login", data={"username": "cancel_admin", "password": "admin123"},
         )

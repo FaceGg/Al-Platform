@@ -37,47 +37,53 @@ def main() -> int:
     )
     with tempfile.TemporaryDirectory(prefix="inference-e2e-") as directory, SessionLocal() as db:
         project = db.query(Project).filter(Project.id == project_id).one()
-        job = TrainingJob(
-            project_id=project.id,
-            user_id=project.owner_id,
-            name=f"browser-source-{uuid.uuid4().hex[:8]}",
-            status="completed",
-            feature_schema=features,
-            target_schema=target,
-        )
-        db.add(job)
-        db.flush()
-        source = Path(directory) / "browser-source.joblib"
-        joblib.dump(
-            {"model": estimator, "feature_schema": features, "target_schema": target},
-            source,
-        )
-        artifact = build_artifact_service(db).create_from_file(
-            project.id,
-            source,
-            source.name,
-            "model",
-            metadata={"source": "training", "training_job_id": str(job.id)},
-            commit=False,
-        )
-        library = ModelLibrary(
-            name=job.name,
-            project_id=project.id,
-            owner_id=project.owner_id,
-            status="completed",
-            framework="scikit-learn",
-            backbone="LogisticRegression",
-            metrics={"accuracy": 1.0},
-            format="joblib",
-            training_job_id=job.id,
-            model_artifact_id=artifact.id,
-        )
-        db.add(library)
-        db.flush()
-        job.model_artifact_id = artifact.id
-        job.model_library_id = library.id
+        model_library_ids = []
+        for version in (1, 2):
+            job = TrainingJob(
+                project_id=project.id,
+                user_id=project.owner_id,
+                name=f"browser-source-v{version}-{uuid.uuid4().hex[:8]}",
+                status="completed",
+                feature_schema=features,
+                target_schema=target,
+            )
+            db.add(job)
+            db.flush()
+            source = Path(directory) / f"browser-source-v{version}.joblib"
+            joblib.dump(
+                {"model": estimator, "feature_schema": features, "target_schema": target},
+                source,
+            )
+            artifact = build_artifact_service(db).create_from_file(
+                project.id,
+                source,
+                source.name,
+                "model",
+                metadata={"source": "training", "training_job_id": str(job.id)},
+                commit=False,
+            )
+            library = ModelLibrary(
+                name=job.name,
+                project_id=project.id,
+                owner_id=project.owner_id,
+                status="completed",
+                framework="scikit-learn",
+                backbone="LogisticRegression",
+                metrics={"accuracy": 1.0},
+                format="joblib",
+                training_job_id=job.id,
+                model_artifact_id=artifact.id,
+            )
+            db.add(library)
+            db.flush()
+            job.model_artifact_id = artifact.id
+            job.model_library_id = library.id
+            model_library_ids.append(str(library.id))
         db.commit()
-        print(json.dumps({"model_library_id": str(library.id)}))
+        print(json.dumps({
+            "model_library_id": model_library_ids[0],
+            "model_library_ids": model_library_ids,
+        }))
     return 0
 
 

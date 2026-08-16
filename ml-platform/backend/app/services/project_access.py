@@ -33,6 +33,8 @@ PERMISSIONS = frozenset({
     "model.approve",
     "deployment.create",
     "inference.operate",
+    "notification.read",
+    "notification.manage",
     "quality.label",
     "quality.review",
 })
@@ -51,6 +53,8 @@ ROLE_PERMISSIONS = {
         "model.approve",
         "deployment.create",
         "inference.operate",
+        "notification.read",
+        "notification.manage",
         "quality.label",
         "quality.review",
     }),
@@ -59,9 +63,10 @@ ROLE_PERMISSIONS = {
         "execution.operate",
         "schedule.operate",
         "inference.operate",
+        "notification.read",
         "quality.label",
     }),
-    ProjectRole.VIEWER: frozenset({"project.read"}),
+    ProjectRole.VIEWER: frozenset({"project.read", "notification.read"}),
 }
 
 
@@ -95,8 +100,6 @@ class ProjectAccessService:
         project = db.query(Project).filter(Project.id == project_id).first()
         if project is None:
             return None
-        if self.is_platform_admin(db, user_id):
-            return ProjectAccess(project=project, role=ProjectRole.OWNER)
         if project.owner_id == user_id:
             return ProjectAccess(project=project, role=ProjectRole.OWNER)
         membership = db.query(ProjectMember).filter(
@@ -122,8 +125,6 @@ class ProjectAccessService:
 
     @staticmethod
     def accessible_project_query(db, user_id):
-        if ProjectAccessService.is_platform_admin(db, user_id):
-            return db.query(Project)
         return (
             db.query(Project)
             .outerjoin(

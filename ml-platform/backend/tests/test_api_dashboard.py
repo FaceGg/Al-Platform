@@ -29,8 +29,12 @@ class TestDashboardAPI(unittest.TestCase):
     def setUpClass(cls):
         client.post(
             "/api/auth/register",
-            json={"username": "admin", "password": "admin123", "role": "admin"},
+            json={"username": "admin", "password": "admin123"},
         )
+        with SessionLocal() as db:
+            administrator = db.query(User).filter(User.username == "admin").one()
+            administrator.role = "admin"
+            db.commit()
         cls.admin_headers = login("admin", "admin123")
 
     def test_01_dashboard_stats(self):
@@ -100,7 +104,6 @@ class TestDashboardAPI(unittest.TestCase):
             json={
                 "username": member_username,
                 "password": member_password,
-                "role": "engineer",
             },
         )
         self.assertEqual(registered.status_code, 200)

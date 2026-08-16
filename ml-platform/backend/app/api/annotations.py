@@ -6,8 +6,18 @@ from app.database import get_db
 from app.models.platform_models import AnnotationTask, AnnotationResult, Dataset
 from app.models.user import User
 from app.api.auth import get_current_user
+from app.services.resource_access import ResourceAccessService
 
 router = APIRouter(prefix="/api/annotations", tags=["annotations"])
+
+
+def _owned_task(db, task_id: str, user_id):
+    return ResourceAccessService().require_owned(
+        db,
+        AnnotationTask,
+        task_id,
+        user_id,
+    )
 
 
 @router.get("/tasks")
@@ -44,9 +54,15 @@ def list_tasks(
 
 @router.post("/tasks")
 def create_task(data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    dataset = ResourceAccessService().require_owned(
+        db,
+        Dataset,
+        data["dataset_id"],
+        current_user.id,
+    )
     task = AnnotationTask(
         name=data["name"],
-        dataset_id=uuid.UUID(data["dataset_id"]),
+        dataset_id=dataset.id,
         owner_id=current_user.id,
         annotation_type=data.get("annotation_type", "rectangle"),
         description=data.get("description", ""),
@@ -61,9 +77,7 @@ def create_task(data: dict, db: Session = Depends(get_db), current_user: User = 
 
 @router.get("/tasks/{task_id}")
 def get_task(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    t = db.query(AnnotationTask).filter(AnnotationTask.id == uuid.UUID(task_id)).first()
-    if not t:
-        raise HTTPException(404)
+    t = _owned_task(db, task_id, current_user.id)
     return {
         "id": str(t.id),
         "name": t.name,
@@ -82,9 +96,7 @@ def get_task(task_id: str, db: Session = Depends(get_db), current_user: User = D
 
 @router.put("/tasks/{task_id}")
 def update_task(task_id: str, data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    t = db.query(AnnotationTask).filter(AnnotationTask.id == uuid.UUID(task_id)).first()
-    if not t:
-        raise HTTPException(404)
+    t = _owned_task(db, task_id, current_user.id)
     for key in ["name", "status", "annotation_type", "description", "guidelines"]:
         if key in data:
             setattr(t, key, data[key])
@@ -98,9 +110,7 @@ def update_task(task_id: str, data: dict, db: Session = Depends(get_db), current
 
 @router.delete("/tasks/{task_id}")
 def delete_task(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    t = db.query(AnnotationTask).filter(AnnotationTask.id == uuid.UUID(task_id)).first()
-    if not t:
-        raise HTTPException(404)
+    t = _owned_task(db, task_id, current_user.id)
     db.delete(t)
     db.commit()
     return {"status": "deleted"}
@@ -108,7 +118,8 @@ def delete_task(task_id: str, db: Session = Depends(get_db), current_user: User 
 
 @router.get("/tasks/{task_id}/samples")
 def list_samples(task_id: str, status: str = Query(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    q = db.query(AnnotationResult).filter(AnnotationResult.task_id == uuid.UUID(task_id))
+    task = _owned_task(db, task_id, current_user.id)
+    q = db.query(AnnotationResult).filter(AnnotationResult.task_id == task.id)
     if status:
         q = q.filter(AnnotationResult.status == status)
     samples = q.order_by(AnnotationResult.sample_index).all()
@@ -131,28 +142,25 @@ def list_samples(task_id: str, status: str = Query(None), db: Session = Depends(
 
 @router.put("/samples/{sample_id}")
 def update_sample(sample_id: str, data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    s = db.query(AnnotationResult).filter(AnnotationResult.id == uuid.UUID(sample_id)).first()
-    if not s:
-        raise HTTPException(404)
+    s, task = ResourceAccessService().require_annotation_sample(
+        db,
+        sample_id,
+        current_user.id,
+    )
     if "annotations" in data:
         s.annotations = data["annotations"]
     if "status" in data:
         s.status = data["status"]
     s.labeled_by = current_user.id
+    task.labeled_samples = db.query(AnnotationResult).filter(
+        AnnotationResult.task_id == task.id,
+        AnnotationResult.status.in_(["labeled", "reviewed"])
+    ).count()
+    task.reviewed_samples = db.query(AnnotationResult).filter(
+        AnnotationResult.task_id == task.id,
+        AnnotationResult.status == "reviewed"
+    ).count()
     db.commit()
-
-    # Update task progress
-    task = db.query(AnnotationTask).filter(AnnotationTask.id == s.task_id).first()
-    if task:
-        task.labeled_samples = db.query(AnnotationResult).filter(
-            AnnotationResult.task_id == task.id,
-            AnnotationResult.status.in_(["labeled", "reviewed"])
-        ).count()
-        task.reviewed_samples = db.query(AnnotationResult).filter(
-            AnnotationResult.task_id == task.id,
-            AnnotationResult.status == "reviewed"
-        ).count()
-        db.commit()
 
     return {"status": "ok"}
 
@@ -160,12 +168,10 @@ def update_sample(sample_id: str, data: dict, db: Session = Depends(get_db), cur
 @router.post("/tasks/{task_id}/auto-label")
 def auto_label(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Trigger auto-labeling for pending samples."""
-    task = db.query(AnnotationTask).filter(AnnotationTask.id == uuid.UUID(task_id)).first()
-    if not task:
-        raise HTTPException(404)
+    task = _owned_task(db, task_id, current_user.id)
 
     unlabeled = db.query(AnnotationResult).filter(
-        AnnotationResult.task_id == uuid.UUID(task_id),
+        AnnotationResult.task_id == task.id,
         AnnotationResult.status == "unlabeled"
     ).all()
 

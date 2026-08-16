@@ -40,10 +40,10 @@
 
 ## 生产验证与排障
 
-- `docker compose config --quiet` 验证必填 secret 与内部依赖。
+- `docker compose config -q` 验证必填 secret 与内部依赖。
 - `docker compose build inference-runtime` 必须显示阿里云 PyPI 源并以非 root 用户运行。
 - `RUN_INFERENCE_INTEGRATION=1 python -m unittest tests.test_inference_production_stack -v` 只在隔离 PostgreSQL/MinIO 项目执行。
 - 失败证据可收集 backend、scheduler、inference-runtime 日志；先替换 secret，再扫描原值，禁止上传未脱敏日志。
 - `MODEL_CONVERSION_*` 检查来源、模型 allowlist、timeout 和资源限制；`MODEL_ARTIFACT_INTEGRITY_FAILED` 检查 MinIO 对象 size/SHA-256；`MODEL_LOAD_FAILED` 检查 ONNX Runtime 兼容性。
 
-第九周再实现 rolling upgrade、public key、资源配额、生产 telemetry、灰度/回滚和多副本 session 分发。本周不承诺这些能力。
+第九周已在本分支补齐 rolling/canary rollout、加权路由、API Key、失败关闭限流、生产 telemetry、灰度/回滚和多 revision session reconciliation；运维步骤见 [`docs/operations/inference.md`](../operations/inference.md)，验收证据见 [`docs/week9-production-inference-acceptance.md`](../week9-production-inference-acceptance.md)。真实 Compose/远程 CI 仍是周级完成门禁。

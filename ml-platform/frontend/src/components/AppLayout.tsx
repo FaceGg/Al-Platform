@@ -6,11 +6,12 @@ import {
   DatabaseOutlined, AppstoreOutlined, TeamOutlined, ApartmentOutlined,
   CloudUploadOutlined, ThunderboltOutlined, ExperimentOutlined, ApiOutlined,
   CloudServerOutlined, RobotOutlined, MessageOutlined, MenuFoldOutlined,
-  MenuUnfoldOutlined, MonitorOutlined, SafetyOutlined, TagsOutlined, ToolOutlined,
+  MenuUnfoldOutlined, MonitorOutlined, SafetyOutlined, ToolOutlined,
 } from "@ant-design/icons";
 import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
+import NotificationCenter from "./NotificationCenter";
 import apiClient from "../api/client";
 
 const { Header, Sider, Content } = Layout;
@@ -22,29 +23,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { theme, toggleTheme } = useTheme();
   const [collapsed, setCollapsed] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [username, setUsername] = useState(() => localStorage.getItem("username") || "");
   const role = localStorage.getItem("role");
-
-  useEffect(() => {
-    if (username || !localStorage.getItem("token")) return;
-
-    let active = true;
-    apiClient.get("/auth/me").then((response) => {
-      const currentUsername = response.data?.username;
-      if (!active || !currentUsername) return;
-      localStorage.setItem("username", currentUsername);
-      setUsername(currentUsername);
-    }).catch(() => {});
-
-    return () => { active = false; };
-  }, [username]);
 
   const menuItems = [
     { key: "/", icon: <DashboardOutlined />, label: t.nav.dashboard },
     { key: "/projects", icon: <ProjectOutlined />, label: t.nav.projects },
     { key: "/models", icon: <AppstoreOutlined />, label: t.nav.models },
     { key: "/data", icon: <CloudUploadOutlined />, label: t.nav.data },
-    { key: "/data-annotation", icon: <TagsOutlined />, label: t.nav.data_annotation },
     { type: "divider" as const },
     { key: "/automl", icon: <ThunderboltOutlined />, label: t.nav.automl },
     { key: "/training", icon: <ExperimentOutlined />, label: t.nav.training },
@@ -55,7 +40,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { key: "/chat", icon: <MessageOutlined />, label: t.nav.chat },
     { type: "divider" as const },
     { key: "/monitor", icon: <MonitorOutlined />, label: t.nav.monitor },
-    { key: "/compute", icon: <CloudServerOutlined />, label: t.nav.compute },
+    { key: "/compute", icon: <CloudServerOutlined />, label: "Compute" },
     ...(role === "admin" ? [{ key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users }] : []),
   ];
 
@@ -70,18 +55,26 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     const p = location.pathname;
     if (p === "/") return "/";
     if (p.startsWith("/workspace") || p.startsWith("/template")) return "/projects";
-    const matchingKeys = menuItems
-      .map((item) => item.key)
-      .filter((key): key is string => (
-        typeof key === "string"
-        && key !== "/"
-        && (p === key || p.startsWith(key + "/"))
-      ))
-      .sort((left, right) => right.length - left.length);
-    return matchingKeys[0] || "/";
+    for (const item of menuItems) {
+      if (typeof item.key === "string" && p.startsWith(item.key) && item.key !== "/") return item.key;
+    }
+    return "/";
   })();
 
-  const displayUsername = username || "-";
+  const [username, setUsername] = useState(() => localStorage.getItem("username") || "");
+  useEffect(() => {
+    if (username || !localStorage.getItem("token")) return;
+    let active = true;
+    apiClient.get("/me").then((response) => {
+      const value = String(response.data?.username || "").trim();
+      if (active && value) {
+        localStorage.setItem("username", value);
+        setUsername(value);
+      }
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [username]);
+  const displayUsername = username || localStorage.getItem("userId") || "-";
   const roleLabel = role === "admin" ? t.profile.admin : role === "engineer" ? t.profile.engineer : t.profile.user;
   const roleColor = role === "admin" ? "red" : role === "engineer" ? "blue" : "green";
 
@@ -90,14 +83,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <Layout style={{ minHeight: "100vh" }} data-theme={theme}>
         {/* Sidebar */}
         <Sider
-          className="app-sider"
           collapsible
           collapsed={collapsed}
           onCollapse={setCollapsed}
           trigger={null}
           width={220}
           style={{
-            background: "var(--bg-sidebar)",
+            background: "linear-gradient(180deg, #0D1117 0%, #161B22 100%)",
             borderRight: "1px solid var(--border-default)",
             overflow: "auto",
           }}
@@ -118,8 +110,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               style={{
                 width: 32,
                 height: 32,
-                borderRadius: 12,
-                background: "var(--accent-primary)",
+                borderRadius: 8,
+                background: "linear-gradient(135deg, #F0883E, #F5A623)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -130,8 +122,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </div>
             {!collapsed && (
               <div>
-                <div style={{ color: theme === "dark" ? "#E6EDF3" : "#000000", fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>智擎</div>
-                <div style={{ color: theme === "dark" ? "#8B949E" : "#4B5563", fontSize: 10 }}>工业智能平台</div>
+                <div style={{ color: "#E6EDF3", fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>Precision Forge</div>
+                <div style={{ color: "#8B949E", fontSize: 10 }}>AI Training Platform</div>
               </div>
             )}
           </div>
@@ -152,16 +144,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <Layout>
           {/* Header */}
           <Header
-            className="app-header"
             style={{
-              background: "var(--bg-header)",
+              background: "rgba(22, 27, 34, 0.95)",
               backdropFilter: "blur(12px)",
               borderBottom: "1px solid var(--border-default)",
               padding: "0 24px",
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              height: 60,
+              height: 52,
               position: "sticky",
               top: 0,
               zIndex: 100,
@@ -180,6 +171,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </Space>
 
             <Space size={12}>
+              <NotificationCenter />
               <Tooltip title="AI智能对话">
                 <Button
                   type="text"
@@ -194,7 +186,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 onClick={() => setLang("zh")}
                 style={{
                   fontWeight: 600,
-                  borderRadius: 10,
+                  borderRadius: 4,
                   minWidth: 32,
                   height: 28,
                   padding: "0 8px",
@@ -206,7 +198,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 size="small"
                 type={lang === "en" ? "primary" : "default"}
                 onClick={() => setLang("en")}
-                style={{fontWeight: 600, borderRadius: 10, minWidth: 32, height: 28, padding: "0 8px"}}
+                style={{fontWeight: 600, borderRadius: 4, minWidth: 32, height: 28, padding: "0 8px"}}
               >
                 EN
               </Button>
@@ -214,7 +206,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 size="small"
                 onClick={toggleTheme}
                 icon={theme === "dark" ? <SunOutlined /> : <MoonOutlined />}
-                style={{borderRadius: 10, minWidth: 32, height: 28, padding: "0 8px"}}
+                style={{borderRadius: 4, minWidth: 32, height: 28, padding: "0 8px"}}
               />
               <Dropdown menu={{ items: userMenuItems }}>
                 <Space style={{ cursor: "pointer" }}>
@@ -241,10 +233,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
           {/* Content */}
           <Content
-            className="app-content"
             style={{
               padding: 24,
-              minHeight: "calc(100vh - 60px)",
+              minHeight: "calc(100vh - 52px)",
             }}
           >
             <div className="fade-in">{children}</div>

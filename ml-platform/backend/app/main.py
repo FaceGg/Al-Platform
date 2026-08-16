@@ -16,9 +16,12 @@ from app.database import Base, SessionLocal, engine
 from app.database_migrations import ensure_schema_compatibility
 from app.database_schema import require_current_schema
 from app.events.subscriber import RedisRunEventSubscriber
+from app.events.domain import DomainEventRecorder, NullDomainEventRecorder
 from app.middleware.request_id import RequestIdMiddleware
 from app.websocket.manager import manager
 from app.services.project_access import ProjectAccessError
+from app.services.resource_access import ResourceAccessError
+from app.services.notification_outbox import OutboxDomainEventRecorder
 from app.services.spot_weld_quality import recover_orphaned_local_quality_runs
 
 # Import all operators so they register themselves
@@ -32,6 +35,8 @@ from app.models import compute as compute_models  # noqa: F401 (register models)
 from app.models import agent as agent_models  # noqa: F401 (register models)
 from app.models import platform_models as pm  # noqa: F401 (register models)
 from app.models import access as access_models  # noqa: F401 (register models)
+from app.models import platform_audit as platform_audit_models  # noqa: F401 (register models)
+from app.models import notifications as notification_models  # noqa: F401 (register models)
 from app.models import spot_weld_quality as spot_weld_quality_models  # noqa: F401 (register models)
 
 import app.operators.io_operators  # noqa: F401
@@ -60,6 +65,9 @@ from app.api import algorithm as algo_api, platform_api, compute, annotations as
 from app.api import model_library as model_lib_api, dashboard as dash_api, readiness, experiments, schedules
 from app.api import project_access as project_access_api
 from app.api import model_registry as model_registry_api
+from app.api import inference_production as inference_production_api
+from app.api import platform_security as platform_security_api
+from app.api import notifications as notifications_api
 from app.api import spot_weld_quality as spot_weld_quality_api
 
 
@@ -82,11 +90,15 @@ def configure_runtime_dependencies(
     app_settings=None,
     db_engine=None,
     session_factory=None,
+    domain_event_recorder: DomainEventRecorder | None = None,
 ) -> None:
     """Configure optional runtime database dependencies for an application."""
     target_app.state.settings = app_settings
     target_app.state.engine = db_engine
     target_app.state.session_factory = session_factory
+    target_app.state.domain_event_recorder = (
+        NullDomainEventRecorder() if domain_event_recorder is None else domain_event_recorder
+    )
 
 
 def _runtime_dependencies(target_app: FastAPI):
@@ -208,11 +220,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="智擎",
+    title="AI模型训练编排平台",
     description="Web-based visual AI model training orchestration platform",
     version="0.2.0",
     lifespan=lifespan,
 )
+app.state.domain_event_recorder = OutboxDomainEventRecorder()
 
 app.add_middleware(
     CORSMiddleware,
@@ -230,6 +243,16 @@ async def project_access_exception_handler(
     status = 404 if error.hidden else 403
     return JSONResponse(
         status_code=status,
+        content={"detail": {"code": error.code, "message": str(error)}},
+    )
+
+
+@app.exception_handler(ResourceAccessError)
+async def resource_access_exception_handler(
+    request: Request, error: ResourceAccessError,
+):
+    return JSONResponse(
+        status_code=404,
         content={"detail": {"code": error.code, "message": str(error)}},
     )
 app.add_middleware(RequestIdMiddleware)
@@ -263,6 +286,9 @@ app.include_router(readiness.router)
 app.include_router(experiments.router)
 app.include_router(schedules.router)
 app.include_router(model_registry_api.router)
+app.include_router(inference_production_api.router)
+app.include_router(platform_security_api.router)
+app.include_router(notifications_api.router)
 app.include_router(spot_weld_quality_api.router)
 
 

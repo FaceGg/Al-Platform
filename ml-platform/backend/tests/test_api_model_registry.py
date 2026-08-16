@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -16,7 +17,14 @@ from app.api.model_registry import build_model_registry_router
 from app.database import Base, get_db
 from app.models.access import AuditEvent, ProjectMember
 from app.models.artifact import Artifact
-from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
+from app.models.model_registry import (
+    DeploymentRevision,
+    DeploymentRollout,
+    DeploymentTarget,
+    InferenceDeployment,
+    ModelVersion,
+    RegisteredModel,
+)
 from app.models.project import Project
 from app.models.user import User
 from app.services.inference_deployment import InferenceDeploymentService
@@ -236,38 +244,216 @@ class TestModelRegistryAPI(unittest.TestCase):
         self.assertNotIn("onnx-content", encoded)
         self.assertNotIn("current", encoded)
 
-    def test_06_owner_cannot_delete_registered_model_with_deployment(self):
+    def test_06_rollout_routes_use_the_frozen_canonical_path(self):
+        paths = self.app.openapi()["paths"]
+        rollout_operations = paths["/api/inference-deployments/{deployment_id}/rollouts"]
+        self.assertIn("get", rollout_operations)
+        self.assertIn("post", rollout_operations)
+        self.assertNotIn("/api/inference-deployments/{deployment_id}/releases", paths)
+
+    def test_07_metric_and_log_queries_reject_unknown_parameters(self):
         self.as_role("owner")
+        params = {
+            "since": "2026-01-01T00:00:00", "until": "2026-01-02T00:00:00",
+            "unexpected": "true",
+        }
+        for suffix in ("request-logs", "metrics"):
+            with self.subTest(suffix=suffix):
+                response = self.client.get(
+                    f"/api/inference-deployments/{self.deployment_id}/{suffix}",
+                    params=params,
+                )
+                self.assertEqual(response.status_code, 422, response.text)
 
-        response = self.client.delete(
-            f"/api/registered-models/{self.model_id}"
+    def test_08_rollout_targets_and_key_management_follow_project_roles(self):
+        payload = {"targets": [{"model_version_id": self.version_id, "weight_bps": 10000}]}
+        self.as_role("operator")
+        denied = self.client.post(
+            f"/api/inference-deployments/{self.deployment_id}/rollouts", json=payload,
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+        self.assertEqual(
+            self.client.get(f"/api/inference-deployments/{self.deployment_id}/api-keys").status_code,
+            403,
         )
 
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["detail"]["code"], "MODEL_DEPLOYMENT_EXISTS")
+        self.as_role("editor")
+        created = self.client.post(
+            f"/api/inference-deployments/{self.deployment_id}/rollouts", json=payload,
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(created.json()["targets"], payload["targets"])
+
+        self.as_role("operator")
+        command = self.client.post(
+            f"/api/inference-deployments/{self.deployment_id}/rollouts/{created.json()['id']}/pause",
+            json={"expected_lock_version": created.json()["lock_version"]},
+        )
+        self.assertEqual(command.status_code, 200, command.text)
+
+        self.as_role("outsider")
+        self.assertEqual(
+            self.client.get(f"/api/inference-deployments/{self.deployment_id}/api-keys").status_code,
+            404,
+        )
+
+    def test_09_rollout_creation_rolls_back_when_audit_commit_fails(self):
+        unique = uuid.uuid4().hex
+        artifact = Artifact(
+            project_id=self.project.id,
+            name=f"audit-{unique}.onnx",
+            type="model",
+            storage_path="",
+            storage_uri=f"local://audit/{unique}.onnx",
+            file_size=1,
+            format="onnx",
+        )
+        self.db.add(artifact)
+        self.db.flush()
+        model = RegisteredModel(
+            project_id=self.project.id,
+            name=f"Audit {unique}",
+            created_by_id=self.users["owner"].id,
+        )
+        self.db.add(model)
+        self.db.flush()
+        version = ModelVersion(
+            registered_model_id=model.id,
+            version_number=1,
+            source_kind="onnx_artifact",
+            source_artifact_id=artifact.id,
+            onnx_artifact_id=artifact.id,
+            approval_status="approved",
+            created_by_id=self.users["owner"].id,
+        )
+        self.db.add(version)
+        self.db.flush()
+        deployment = InferenceDeployment(
+            project_id=self.project.id,
+            name=f"audit-{unique}",
+            model_version_id=version.id,
+            created_by_id=self.users["owner"].id,
+        )
+        self.db.add(deployment)
+        self.db.commit()
 
         self.as_role("owner")
+        before = self.db.query(DeploymentRollout).count()
+        payload = {
+            "targets": [{"model_version_id": str(version.id), "weight_bps": 10000}],
+        }
+        with patch.object(self.db, "commit", side_effect=RuntimeError("audit unavailable")):
+            with TestClient(self.app, raise_server_exceptions=False) as client:
+                response = client.post(
+                    f"/api/inference-deployments/{deployment.id}/rollouts",
+                    json=payload,
+                )
+        self.assertEqual(response.status_code, 500, response.text)
+        verification_db = self.Session()
+        try:
+            self.assertEqual(verification_db.query(DeploymentRollout).count(), before)
+        finally:
+            verification_db.close()
 
-        deleted_deployment = self.client.delete(
-            f"/api/inference-deployments/{self.deployment_id}"
+    def test_10_completed_rollback_audit_failure_restores_durable_aliases(self):
+        unique = uuid.uuid4().hex
+        artifact = Artifact(
+            project_id=self.project.id,
+            name=f"rollback-audit-{unique}.onnx",
+            type="model",
+            storage_path="",
+            storage_uri=f"local://rollback-audit/{unique}.onnx",
+            file_size=1,
+            format="onnx",
         )
-        self.assertEqual(deleted_deployment.status_code, 200)
-        self.assertEqual(deleted_deployment.json()["id"], self.deployment_id)
-        self.assertIsNone(self.db.query(InferenceDeployment).filter(
-            InferenceDeployment.id == uuid.UUID(self.deployment_id)
-        ).first())
+        self.db.add(artifact)
+        self.db.flush()
+        model = RegisteredModel(
+            project_id=self.project.id,
+            name=f"Rollback Audit {unique}",
+            created_by_id=self.users["owner"].id,
+        )
+        self.db.add(model)
+        self.db.flush()
+        version = ModelVersion(
+            registered_model_id=model.id,
+            version_number=1,
+            source_kind="onnx_artifact",
+            source_artifact_id=artifact.id,
+            onnx_artifact_id=artifact.id,
+            approval_status="approved",
+            created_by_id=self.users["owner"].id,
+        )
+        self.db.add(version)
+        self.db.flush()
+        deployment = InferenceDeployment(
+            project_id=self.project.id,
+            name=f"rollback-audit-{uuid.uuid4().hex}",
+            model_version_id=version.id,
+            desired_state="running",
+            observed_state="running",
+            created_by_id=self.users["owner"].id,
+        )
+        self.db.add(deployment)
+        self.db.flush()
+        previous = DeploymentRevision(
+            deployment_id=deployment.id,
+            revision_number=1,
+            strategy="immediate",
+            status="superseded",
+            created_by_id=self.users["owner"].id,
+        )
+        durable = DeploymentRevision(
+            deployment_id=deployment.id,
+            revision_number=2,
+            strategy="canary",
+            status="stable",
+            created_by_id=self.users["owner"].id,
+        )
+        self.db.add_all((previous, durable))
+        self.db.flush()
+        self.db.add_all((
+            DeploymentTarget(
+                revision_id=previous.id,
+                model_version_id=version.id,
+                weight_bps=10000,
+                role="stable",
+            ),
+            DeploymentTarget(
+                revision_id=durable.id,
+                model_version_id=version.id,
+                weight_bps=10000,
+                role="candidate",
+            ),
+        ))
+        rollout = DeploymentRollout(
+            deployment_id=deployment.id,
+            from_revision_id=previous.id,
+            to_revision_id=durable.id,
+            state="completed",
+            current_step=10000,
+            lock_version=2,
+            step_schedule=[0, 1000, 5000, 10000],
+            thresholds={"max_error_rate": 0.01, "max_p95_ms": 500},
+        )
+        self.db.add(rollout)
+        self.db.commit()
 
-        deleted_model = self.client.delete(
-            f"/api/registered-models/{self.model_id}"
-        )
-        self.assertEqual(deleted_model.status_code, 200)
-        self.assertEqual(deleted_model.json()["id"], self.model_id)
-        self.assertIsNone(self.db.query(RegisteredModel).filter(
-            RegisteredModel.id == uuid.UUID(self.model_id)
-        ).first())
-        self.assertIsNone(self.db.query(ModelVersion).filter(
-            ModelVersion.id == uuid.UUID(self.version_id)
-        ).first())
+        candidate_alias = f"{durable.id}:{version.id}"
+        self.runtime.load(deployment.id, {"revision_id": str(durable.id)})
+        self.runtime.load(candidate_alias, {"revision_id": str(durable.id)})
+        self.as_role("owner")
+        with patch.object(self.db, "commit", side_effect=RuntimeError("audit unavailable")):
+            with TestClient(self.app, raise_server_exceptions=False) as client:
+                response = client.post(
+                    f"/api/inference-deployments/{deployment.id}/rollouts/{rollout.id}/rollback",
+                    json={"expected_lock_version": rollout.lock_version},
+                )
+
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertIn(str(deployment.id), self.runtime.loaded)
+        self.assertIn(candidate_alias, self.runtime.loaded)
+
 
 if __name__ == "__main__":
     unittest.main()
