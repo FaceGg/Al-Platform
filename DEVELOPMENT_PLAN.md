@@ -1809,3 +1809,5 @@
 - 验证方式：`tests.test_ci_workflow` 为 `35/35`，workflow YAML 可解析，`git diff --check` 通过；WSL 中 UID/GID `1000:1000`、mode `0400` 的宿主文件由 `--user 1000:1000` 容器以只读 mount 成功读取。
 - 预防措施：CI 生成并 bind-mount 给非 root 容器的 secret 必须同时验证 owner、mode、容器 UID 和失败证据读取路径；本地权限模拟要断言实际 UID/GID，而不能只依赖 chmod。
 - 遗留事项：推送后等待新 Actions run 的实验集成、双平台 Quality、Chromium 和 Week 11-12 verification 全部通过，再合并 PR #17。
+
+补充：run `31919874046` 的实验栈已完成镜像构建、migrate、backend、worker 和 runtime 启动；失败仅来自 runner UID 1001 在 cleanup 阶段直接删除 UID 1000 所有的 key。已将实验和 frozen-stack cleanup 改为 `sudo rm -f`，并把该清理路径加入 CI 合同测试。

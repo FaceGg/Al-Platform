@@ -512,7 +512,7 @@ jobs:
         run: |
           docker compose --project-name "$COMPOSE_PROJECT_NAME" down --volumes --remove-orphans
           rm -f "$RUNNER_TEMP/inference-lifecycle-context.json"
-          rm -f "$NOTIFICATION_CRYPTO_SECRET_FILE"
+          sudo rm -f "$NOTIFICATION_CRYPTO_SECRET_FILE"
           rm -f "$NOTIFICATION_ACCEPTANCE_CA_FILE" "$NOTIFICATION_RECEIVER_CERTIFICATE_FILE" "$NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE"
 
   week11-12-verification:
@@ -698,7 +698,7 @@ jobs:
               python -m tools.acceptance_environment web-context-cleanup \
               --context /tmp/week12-web-security-context.json || true
             docker compose --project-name "$COMPOSE_PROJECT_NAME" down --volumes --remove-orphans || true
-            rm -f "$NOTIFICATION_CRYPTO_SECRET_FILE"
+            sudo rm -f "$NOTIFICATION_CRYPTO_SECRET_FILE"
           }
           trap cleanup EXIT
 

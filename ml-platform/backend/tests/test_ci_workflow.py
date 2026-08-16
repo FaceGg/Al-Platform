@@ -200,6 +200,15 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             'sudo cat "$NOTIFICATION_CRYPTO_SECRET_FILE"',
             experiment_evidence["run"],
         )
+        experiment_stop = next(
+            step
+            for step in jobs["experiment-integration"]["steps"]
+            if step.get("name") == "Stop production experiment stack"
+        )
+        self.assertIn(
+            'sudo rm -f "$NOTIFICATION_CRYPTO_SECRET_FILE"',
+            experiment_stop["run"],
+        )
 
     def test_production_integration_declares_runtime_url_for_production_settings(self):
         production_job = yaml.safe_load(self.workflow)["jobs"]["production-integration"]
