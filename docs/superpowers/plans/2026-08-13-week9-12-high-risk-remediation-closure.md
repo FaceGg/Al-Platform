@@ -8,6 +8,13 @@
 
 **Tech Stack:** PowerShell 7, WSL2, Docker Compose, Chainguard Wolfi, Python 3.11, FastAPI, Redis Lua, PostgreSQL, MinIO, Playwright/Chromium, Trivy 0.73.0, pip-audit, Bandit, Gitleaks, `unittest`, Vitest, GitHub Actions.
 
+## Current execution status (2026-08-16)
+
+- Completed: remediation checkpoint, scanner/manifest contract repair, rate-limit boundary diagnosis, four production image builds and non-root smoke, four-image and repository security scans, frozen-stack Web gate, full remote CI, PR publication, and merge to `main`.
+- Release evidence: commit `ee848f3daa58d598eda76eceeeb3fef3c13018be`; Actions Run `31942746922` passed Production integration, Production experiment integration, Ubuntu/Windows Quality, Chromium acceptance, and Week 11-12 verification; PR #17 merged as `79fb2f4c10c582d4f372929f173726a1e7cd5425`.
+- Remaining stateful acceptance: three fixed 4 vCPU / 8 GiB performance rounds, real PostgreSQL/MinIO backup and restore with RTO/RPO, real N-1 upgrade/downgrade, the consolidated four-role/four-channel matrix, and the reviewed final evidence manifest/report.
+- The checklist below preserves the original execution procedure. Checked items have current evidence; unchecked items remain required or include a deliverable that has not been produced. In particular, passing CI security summaries do not substitute for the final reviewed files under `docs/security/`.
+
 ---
 
 ## Working-tree and commit policy
@@ -38,7 +45,7 @@
 - Create: `docs/superpowers/plans/2026-08-13-week9-12-high-risk-remediation-closure.md`
 - Modify: `DEVELOPMENT_PLAN.md`
 
-- [ ] **Step 1: Record current branch, ancestry, dirty paths, and generated-artifact classification.**
+- [x] **Step 1: Record current branch, ancestry, dirty paths, and generated-artifact classification.**
 
 Run from the linked worktree:
 
@@ -52,11 +59,11 @@ Get-ChildItem "$Root\tmp\npm-cache", "$Root\tmp\pip-cache", "$Root\tmp\security-
 
 Expected: branch and user/test changes remain visible; no cache/raw scanner directory is staged.
 
-- [ ] **Step 2: Append a plan-frozen checkpoint to `DEVELOPMENT_PLAN.md`.**
+- [x] **Step 2: Append a plan-frozen checkpoint to `DEVELOPMENT_PLAN.md`.**
 
 Append only a dated record that names the two reproduced blockers: invalid semantic scanner fixture causing `KeyError` in `test_generate_rejects_weakened_security_scan_commands`, and fixed-resource rate-limit evidence returning `200` where `429` is required. State that neither blocker is closed by this checkpoint.
 
-- [ ] **Step 3: Self-review the plan and checkpoint.**
+- [x] **Step 3: Self-review the plan and checkpoint.**
 
 Run a literal-pattern scan whose patterns are assembled at runtime so the scan command itself is not a false positive:
 
@@ -71,7 +78,7 @@ git -C $Root diff --check
 
 Expected: no placeholder match and no whitespace error.
 
-- [ ] **Step 4: Commit the planning checkpoint.**
+- [x] **Step 4: Commit the planning checkpoint.**
 
 ```powershell
 git -C $Root add -- `
@@ -90,7 +97,7 @@ Expected: one documentation-only commit; no raw evidence or cache path appears i
 - Modify: `ml-platform/backend/tests/test_evidence_manifest.py`
 - Verify: `ml-platform/backend/tools/security_scans.py`, `ml-platform/backend/tools/evidence_manifest.py`
 
-- [ ] **Step 1: Reproduce and characterize the current failure.**
+- [x] **Step 1: Reproduce and characterize the current failure.**
 
 ```powershell
 Set-Location "$Root\ml-platform\backend"
@@ -101,11 +108,11 @@ $env:PYTHONPATH = '.'
 
 Expected RED: subtests fail with `KeyError: 'command'` or `KeyError: 'images'`, proving fixture summary was downgraded before mutation.
 
-- [ ] **Step 2: Trace the fixture-to-summary data flow before editing.**
+- [x] **Step 2: Trace the fixture-to-summary data flow before editing.**
 
 Inspect `_write_security_evidence`, `summarize_scans`, `_raw_scan_report_error`, `is_required_scan_command`, and `generate`. For each gate record the exact required receipt shape, raw report file, command flags, return code, image ID, image artifact name, OCI revision, and expected source commit. Do not weaken production validation to accommodate a test fixture.
 
-- [ ] **Step 3: Make the fixture produce a valid baseline receipt.**
+- [x] **Step 3: Make the fixture produce a valid baseline receipt.**
 
 Use one helper which writes a raw report and a corresponding receipt. The emitted structure must satisfy the production contract before the test mutates it:
 
@@ -130,7 +137,7 @@ image_receipt = {
 
 The matching raw Trivy reports must expose `ArtifactName == reference` and `Metadata.ImageID == image_id`; all non-container raw reports must use the real scanner result schema expected by `_raw_scan_report_error`.
 
-- [ ] **Step 4: Verify baseline semantic evidence before weakened-command mutations.**
+- [x] **Step 4: Verify baseline semantic evidence before weakened-command mutations.**
 
 Add a focused assertion inside the test fixture path:
 
@@ -142,11 +149,11 @@ self.assertEqual(summary["gates"]["container_image"]["status"], "passed")
 
 Run the new focused baseline test. Expected GREEN: the fixture contains every command/image field that the mutation loop accesses.
 
-- [ ] **Step 5: Mutate exactly one semantic command field per subtest and verify manifest rejection.**
+- [x] **Step 5: Mutate exactly one semantic command field per subtest and verify manifest rejection.**
 
 For Bandit remove `-lll`; for Trivy weaken `--severity HIGH,CRITICAL` or remove `--exit-code 1`; for the first container image perform the same mutations. Re-run `summarize_scans`, then call `generate`; assert the stable manifest error is the scanner-receipt failure, not an accidental `KeyError`.
 
-- [ ] **Step 6: Run focused security regression and commit.**
+- [x] **Step 6: Run focused security regression and commit.**
 
 ```powershell
 & 'C:\Users\17723\miniconda3\python.exe' -m unittest `
@@ -167,7 +174,7 @@ Expected: the original subtest reports expected manifest rejection for every wea
 - Modify: `ml-platform/backend/tests/test_inference_production_stack.py` only for a durable regression test
 - Generate local-only: `temp_test/acceptance-20260810/performance/`
 
-- [ ] **Step 1: Reproduce in one isolated WSL Compose lifecycle.**
+- [x] **Step 1: Reproduce in one isolated WSL Compose lifecycle.**
 
 Use a unique Compose project, ports, database, bucket, and Redis namespace. Start, execute rate-limit test, collect diagnostics, and tear down in the same `bash -lc` invocation. Never touch an existing Compose project.
 
@@ -204,7 +211,7 @@ compose up --detach --wait postgres redis minio minio-init mlflow tensorboard-ga
 
 Expected RED: record the current sixth-response status without changing code.
 
-- [ ] **Step 2: Collect configuration and state at each boundary.**
+- [x] **Step 2: Collect configuration and state at each boundary.**
 
 Before request 1 and after every request record, in a redacted local diagnostic log:
 
@@ -229,15 +236,15 @@ docker inspect --format '{{.Image}} {{index .Config.Labels "org.opencontainers.i
 
 The existing test context contains only the deployment ID and plaintext key. Add a diagnostic-only context field containing the created record ID (UUID) and an array of response status codes; never persist plaintext. The rate-limit key is then exactly `inference:{deployment_id}:{api_key_id}`. Record actual image IDs, Compose override image entries, request sequence, Redis key, token count and timestamp. Do not log full API keys or secrets.
 
-- [ ] **Step 3: Form and minimally test one hypothesis.**
+- [x] **Step 3: Form and minimally test one hypothesis.**
 
 Only after diagnostic evidence identifies a boundary mismatch, write the smallest failing regression test. Examples of valid hypotheses are: Compose runs the wrong image, environment overrides do not reach the runtime, request keys differ, or the Lua update permits an extra token. Change one variable only and prove the test fails for the exact observed reason.
 
-- [ ] **Step 4: Apply the minimal root-cause fix and verify GREEN.**
+- [x] **Step 4: Apply the minimal root-cause fix and verify GREEN.**
 
 Keep Redis failure behavior fail-closed with `RATE_LIMIT_BACKEND_UNAVAILABLE`. Re-run the focused production-stack rate-limit test and confirm capacity requests return `200`, the next request returns `429`, and retry-after remains valid.
 
-- [ ] **Step 5: Run relevant regressions and commit.**
+- [x] **Step 5: Run relevant regressions and commit.**
 
 ```powershell
 Set-Location "$Root\ml-platform\backend"
@@ -342,11 +349,11 @@ git -C $Root commit -m "build(security): harden Wolfi production images"
 - Modify: `ml-platform/backend/tests/test_ci_workflow.py`
 - Generate reviewed only: `docs/security/acceptance-20260813-manifest.json`, `docs/security/acceptance-20260813-report.md`
 
-- [ ] **Step 1: Add fail-closed tests for all four image receipts.**
+- [x] **Step 1: Add fail-closed tests for all four image receipts.**
 
 Add a test that removes one receipt, changes one `ArtifactName`, changes one `Metadata.ImageID`, or changes one OCI revision. It must assert `SECURITY_EVIDENCE_INVALID` and never silently downgrade a required image to optional. Verify RED against the previous behavior if the test describes a new gap.
 
-- [ ] **Step 2: Scan images with the same database and threshold.**
+- [x] **Step 2: Scan images with the same database and threshold.**
 
 ```powershell
 wsl.exe -e bash -lc 'set -euo pipefail
@@ -362,7 +369,7 @@ done'
 
 Expected: each command exits zero and each JSON has zero HIGH/CRITICAL. A nonzero scan blocks promotion.
 
-- [ ] **Step 3: Run complete security tool chain from current source.**
+- [x] **Step 3: Run complete security tool chain from current source.**
 
 Run `tools.security_scans all` with the pinned image receipt list and source commit, plus raw `pip-audit`, Trivy filesystem, Bandit, official npm registry audit, and scoped no-git Gitleaks. Preserve raw output under ignored `temp_test`; produce a redacted, relative-path manifest only after all gates pass.
 
@@ -450,7 +457,7 @@ For all remaining reviewed source/config/test/doc changes, stage explicit paths,
 **Files:**
 - Remote Git refs and GitHub Actions only after Task 7 passes
 
-- [ ] **Step 1: Fetch, re-evaluate ancestry, and push the complete branch.**
+- [x] **Step 1: Fetch, re-evaluate ancestry, and push the complete branch.**
 
 ```powershell
 git -C $Root fetch origin --prune
@@ -461,11 +468,11 @@ git -C $Root ls-remote --heads origin codex/week9-12-mlops-core
 
 Expected: local and remote feature heads match; do not push while any required local gate is failed.
 
-- [ ] **Step 2: Wait for the workflow attached to the pushed commit.**
+- [x] **Step 2: Wait for the workflow attached to the pushed commit.**
 
 Use GitHub CLI/API to identify the run where `head_sha` equals pushed `HEAD`, then wait for every required job. Capture run URL/ID and conclusions in the reviewed acceptance report. `queued`, `in_progress`, `cancelled`, `skipped`, and `neutral` are not a green release gate.
 
-- [ ] **Step 3: Merge through the repository’s protected-branch procedure only after all required checks pass.**
+- [x] **Step 3: Merge through the repository’s protected-branch procedure only after all required checks pass.**
 
 Before merge, fetch `origin/main`, compare merge base, rebase/merge only if the project’s protected-branch procedure permits it, and rerun required checks if the merge changes source. Never force-push.
 
