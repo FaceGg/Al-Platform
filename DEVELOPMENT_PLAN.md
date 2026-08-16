@@ -1834,3 +1834,13 @@
 补充：run `31923820309` 已再次通过两个集成 job、Ubuntu Quality 和双平台后端 `111/111`，前两个超时测试也已通过；Windows runner 仅暴露同一 AutoML 文件中另一个历史耗时 4.742 秒、当次 5.305 秒的质量报告交互测试超过默认 5 秒。该测试增加 15 秒局部 timeout 后，AutoMLPage 聚焦 `18/18` 通过；全局 timeout 保持不变，等待新远端 run。
 
 补充：run `31925024068` 的生产集成、实验集成和双平台 Quality 全部通过；Chromium 验收的应用和 11 个核心路由均已正常渲染，唯一失败是 `core-navigation.spec.ts` 仍断言已移除的 `AI模型训练编排平台`。历史提交 `babf6a7` 已将该验收标识更新为 `智擎`，但后续分支整合保留了旧 E2E 文件；现已恢复批准过的 `智擎` 断言，本地精确 Playwright 用例 `1/1` 通过，待推送后重跑完整 CI 和 Week 11-12 verification；新 run 全绿前仍不合并。
+
+### 2026-08-16：PR #17 新增 setuptools CVE 与 Gitleaks 快照清理修复
+
+- 当前状态：run `31926635306` 的生产集成、实验集成、Ubuntu/Windows Quality 和 Chromium 验收均通过；`Week 11-12 verification` 在安全汇总阶段失败。本轮已完成最小修复与本地真实扫描，但尚未推送；新 Actions run 的全部 job 成功前，第 9 至第 12 周继续保持“进行中”，PR #17 不合并。
+- 问题现象：真实 `pip-audit 2.10.1` 对 `setuptools==80.10.2` 报告 `CVE-2026-59890`，修复版本为 `83.0.0`；Gitleaks 原始报告在 Ubuntu 生产环境示例的三项应用密钥占位值上命中 `Generic API Key`，同时 aggregate receipt 被记录为 `GITLEAKS_SOURCE_SNAPSHOT_INVALID`，掩盖了真实 scanner return code。
+- 已确认根因：TensorBoard 2.19 依赖已被 setuptools 82 移除的 `pkg_resources`，所以不能只升级 setuptools；TensorBoard 2.21 已移除该运行时导入并可与 setuptools 83 配合。Gitleaks 快照被设为只读后，POSIX 删除失败发生在父目录缺少写权限；原 `shutil.rmtree` 回调只修改当前失败路径，清理失败后按 fail-closed 设计覆盖了 scanner findings。示例中的长大写占位字符串又满足 Generic API Key 规则。
+- 解决方法：将 TensorBoard 固定到 `2.21.*`、setuptools 固定到 `83.0.0`；生产环境示例的 `SECRET_KEY`、`TENSORBOARD_SESSION_SECRET`、`INFERENCE_INTERNAL_SECRET` 改为空值，继续由现有注释要求使用 `openssl rand -hex 32` 填充。快照删除回调仅在快照根内先恢复失败路径父目录的 owner `rwx`，再恢复当前路径并重试，不放宽 Gitleaks 规则、扫描范围或失败关闭语义。
+- 验证方式：三条回归均先在旧实现 RED；修复后 Windows 聚焦合同 `232/232` 通过、POSIX-only 用例 `1/1` 在 Linux 容器通过。完整 requirements 干净解析为 126 个安装项，包含 TensorBoard `2.21.0`、setuptools `83.0.0`、protobuf `6.33.6`、grpcio `1.83.0`；真实 `pip-audit` 审计 125 个依赖、0 漏洞；Gitleaks `v8.24.2` 对当前 reviewed source scope 扫描 0 leaks；TensorBoard 2.21/setuptools 83 overlay 下训练与 gateway 回归 `12/12` 通过。
+- 预防措施：只读安全快照的删除测试必须在 POSIX 上覆盖父目录权限；scanner 结果与快照 lifecycle 错误必须分别可诊断。打包工具安全升级若跨越移除 API 的版本，必须同步升级实际调用该 API 的上游依赖，并验证 resolver、真实 audit、导入路径和业务运行回归；部署示例中的应用密钥默认保持空值，生成方式写在注释中。
+- 遗留事项：完成 compile/diff/范围审查后提交并推送 PR #17；等待新 run 的六个 job 全部成功，再通过 PR 合并到 `main` 并验证远端 `main`、merge commit 和工作树边界。不得提交 `tmp/npm-cache/`、`tmp/pip-cache/`、`tmp/security-20260810/` 或 `tmp/ci-31926635306-week11-12-2/`。

@@ -103,14 +103,14 @@ class ImageSecurityContractTests(unittest.TestCase):
         self.assertIn("jaraco.context==6.1.0", lines)
         self.assertIn("wheel==0.46.2", lines)
 
-    def test_tensorboard_uses_a_setuptools_version_that_provides_pkg_resources(self):
+    def test_tensorboard_supports_the_patched_setuptools_release(self):
         lines = {
             line.split("#", 1)[0].strip().casefold()
             for line in REQUIREMENTS.read_text(encoding="utf-8").splitlines()
             if line.split("#", 1)[0].strip()
         }
-        self.assertIn("tensorboard==2.19.*", lines)
-        self.assertIn("setuptools==80.10.2", lines)
+        self.assertIn("tensorboard==2.21.*", lines)
+        self.assertIn("setuptools==83.0.0", lines)
 
     def test_cryptography_exception_is_removed_after_clean_resolution(self):
         self.assertFalse(EXCEPTION.exists())

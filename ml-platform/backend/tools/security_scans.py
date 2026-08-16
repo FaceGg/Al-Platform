@@ -529,7 +529,13 @@ def _make_gitleaks_snapshot_read_only(snapshot_root: Path) -> bool:
 def _remove_gitleaks_snapshot(snapshot_root: Path) -> bool:
     """Restore private snapshot permissions before deleting the whole tree."""
     def onerror(function: Callable[..., object], path: str, _exc_info: object) -> None:
-        os.chmod(path, stat.S_IREAD | stat.S_IWRITE | stat.S_IEXEC)
+        candidate = Path(path)
+        if candidate != snapshot_root:
+            if snapshot_root not in candidate.parents:
+                raise OSError("Gitleaks snapshot cleanup escaped its root")
+            parent = candidate.parent
+            os.chmod(parent, stat.S_IRWXU)
+        os.chmod(candidate, stat.S_IRWXU)
         function(path)
 
     try:

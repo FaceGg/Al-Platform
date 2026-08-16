@@ -17,6 +17,8 @@ from tools.security_scans import (
     HttpResponse,
     REQUIRED_SCAN_GATES,
     WEB_SECURITY_GATE_NAMES,
+    _make_gitleaks_snapshot_read_only,
+    _remove_gitleaks_snapshot,
     evaluate_npm_audit_exception,
     is_required_scan_command,
     main as security_scans_main,
@@ -2677,6 +2679,41 @@ class SecurityGateTests(unittest.TestCase):
             result["gates"]["secret_gitleaks"]["error_code"],
             "GITLEAKS_SOURCE_SNAPSHOT_INVALID",
         )
+
+    @unittest.skipUnless(os.name == "posix", "POSIX directory permissions required")
+    def test_read_only_gitleaks_snapshot_can_be_removed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot_root = Path(directory) / "snapshot"
+            source_directory = snapshot_root / "docs"
+            source_directory.mkdir(parents=True)
+            (source_directory / "source.txt").write_text("value", encoding="utf-8")
+
+            self.assertTrue(_make_gitleaks_snapshot_read_only(snapshot_root))
+            self.assertTrue(_remove_gitleaks_snapshot(snapshot_root))
+            self.assertFalse(snapshot_root.exists())
+
+    def test_production_env_application_secret_placeholders_are_empty(self):
+        repository_root = Path(__file__).resolve().parents[3]
+        example_path = (
+            repository_root
+            / "docs"
+            / "delivery"
+            / "ubuntu24.production.env.example"
+        )
+        values = {
+            key: value
+            for line in example_path.read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+            for key, separator, value in [line.partition("=")]
+            if separator
+        }
+
+        for key in (
+            "SECRET_KEY",
+            "TENSORBOARD_SESSION_SECRET",
+            "INFERENCE_INTERNAL_SECRET",
+        ):
+            self.assertEqual(values[key], "", key)
 
     def test_required_scanner_commands_reject_scope_weakening(self):
         filesystem_command = [
