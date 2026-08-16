@@ -458,7 +458,7 @@ jobs:
           rm -rf "$INFERENCE_EVIDENCE_REDACTED"
           mkdir -p "$INFERENCE_EVIDENCE_REDACTED"
           docker compose --project-name "$COMPOSE_PROJECT_NAME" ps > "$INFERENCE_EVIDENCE_RAW/compose-ps.txt" 2>&1 || true
-  docker compose --project-name "$COMPOSE_PROJECT_NAME" logs --no-color backend worker scheduler mlflow tensorboard-gateway inference-runtime migrate notification-receiver notification-proxy > "$INFERENCE_EVIDENCE_RAW/services.log" 2>&1 || true
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" logs --no-color backend worker scheduler mlflow tensorboard-gateway inference-runtime migrate notification-receiver notification-proxy > "$INFERENCE_EVIDENCE_RAW/services.log" 2>&1 || true
           INFERENCE_CREATED_TEST_KEY=""
           INFERENCE_INTEGRATION_CONTEXT_PATH="$RUNNER_TEMP/inference-lifecycle-context.json"
           if [ -f "$INFERENCE_INTEGRATION_CONTEXT_PATH" ]; then
