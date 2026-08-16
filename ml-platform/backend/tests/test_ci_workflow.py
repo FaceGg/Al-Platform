@@ -635,6 +635,8 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         )
         self.assertIn("subjectAltName=DNS:qyapi.weixin.qq.com,DNS:notification-receiver", receiver_certificate["run"])
         self.assertIn("NOTIFICATION_ACCEPTANCE_CA_FILE", receiver_certificate["run"])
+        self.assertIn("sudo chown 1000:1000", receiver_certificate["run"])
+        self.assertIn("sudo chmod 0400", receiver_certificate["run"])
 
     def test_experiment_ci_uses_the_portable_compose_validation_flag(self):
         parsed = yaml.safe_load(self.workflow)
@@ -843,7 +845,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             evidence_script,
         )
         self.assertIn(
-            'docker compose --project-name "$COMPOSE_PROJECT_NAME" logs --no-color backend worker scheduler mlflow tensorboard-gateway inference-runtime migrate > "$INFERENCE_EVIDENCE_RAW/services.log" 2>&1 || true',
+            'docker compose --project-name "$COMPOSE_PROJECT_NAME" logs --no-color backend worker scheduler mlflow tensorboard-gateway inference-runtime migrate notification-receiver notification-proxy > "$INFERENCE_EVIDENCE_RAW/services.log" 2>&1 || true',
             evidence_script,
         )
         self.assertIn(
@@ -870,7 +872,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             'docker compose --project-name "$COMPOSE_PROJECT_NAME" ps > "$INFERENCE_EVIDENCE_RAW/compose-ps.txt"',
         )
         logs_capture_index = evidence_script.index(
-            'docker compose --project-name "$COMPOSE_PROJECT_NAME" logs --no-color backend worker scheduler mlflow tensorboard-gateway inference-runtime migrate > "$INFERENCE_EVIDENCE_RAW/services.log"',
+            'docker compose --project-name "$COMPOSE_PROJECT_NAME" logs --no-color backend worker scheduler mlflow tensorboard-gateway inference-runtime migrate notification-receiver notification-proxy > "$INFERENCE_EVIDENCE_RAW/services.log"',
         )
         configured_secret_scan_index = evidence_script.index("grep -REal")
         mli_token_scan_index = evidence_script.index(
