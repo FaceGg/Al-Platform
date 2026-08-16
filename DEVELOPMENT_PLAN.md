@@ -90,10 +90,10 @@
 | 第 6 周 | 已完成 | 实验与训练管理 | 已完成实验、Run、参数、指标、日志、制品、检查点、恢复、早停、AutoML Trial、隔离 TensorBoard、真实 Compose 集成与跨平台验收 | 企业基础版、实验训练追踪 |
 | 第 7 周 | 已完成 | Pipeline 调度与权限 | 调度、角色审计、全量、WSL 生产验收与远程 CI 全部通过 | 调度器、实例管理、权限审计 |
 | 第 8 周 | 已完成 | 模型注册与基础推理 | ONNX 注册中心、独立推理运行时、运维 UI、生产 Compose 与远程验收全部完成 | 模型注册中心、基础推理服务 |
-| 第 9 周 | 进行中 | 推理服务生产化 | 已完成范围审计并确认多版本发布、滚动升级、回滚、API 密钥、限流、服务日志、运行指标和模型卡设计 | 生产级推理服务、版本发布回滚 |
-| 第 10 周 | 进行中 | 权限、审计与通知 | 已确认复用第 7 周项目角色与审计，补齐资源越权防护、平台安全审计及站内、企业微信、邮件、通用 Webhook 通知 | 权限矩阵、审计日志、告警通知 |
-| 第 11 周 | 进行中 | 系统联调与性能优化 | 工具/恢复回归、N-1 契约和隔离 WSL 生产栈已验证；固定 4 vCPU/8 GiB 性能基线和真实 N-1 升级仍待执行 | 全链路版本、性能基线、问题清单 |
-| 第 12 周 | 进行中 | MLOps 核心版验收 | 安全/冻结契约/CI 清单与受控通知栈已验证；完整 Chromium、固定环境性能和最终证据清单仍待执行 | 企业 MLOps 核心版、验收报告 |
+| 第 9 周 | 已完成 | 推理服务生产化 | 多版本发布、滚动升级、回滚、API 密钥、Redis 限流、服务日志、运行指标、模型卡、生产栈和 Chromium 验收均已完成 | 生产级推理服务、版本发布回滚；PR #17 与 Actions Run 31942746922 全绿 |
+| 第 10 周 | 已完成 | 权限、审计与通知 | 资源越权防护、平台安全审计、事务 Outbox，以及站内、企业微信、邮件、通用 Webhook 通知均已完成生产集成和受控接收器验收 | 权限矩阵、审计日志、四通道告警通知；PR #17 与 Actions Run 31942746922 全绿 |
+| 第 11 周 | 进行中 | 系统联调与性能优化 | 工具、恢复状态机、N-1 契约、真实安全扫描和隔离生产栈已验证；固定 4 vCPU/8 GiB 三轮性能、真实 PostgreSQL/MinIO 备份恢复和真实 N-1 升降级仍待执行 | 全链路版本、性能基线、备份恢复与升级问题清单 |
+| 第 12 周 | 进行中 | MLOps 核心版验收 | 六项远程 CI、四生产镜像、真实 scanner、frozen stack、受控通知集成和 Chromium 已通过；最终综合矩阵、evidence manifest 与正式验收报告仍待完成 | 企业 MLOps 核心版、最终证据清单与验收报告 |
 | 第 13 周 | 未开始 | Kubernetes 基础接入 | 集群、命名空间、资源组、节点发现、访问凭据和连通性检查 | 集群管理基础、资源发现 API |
 | 第 14 周 | 未开始 | Kubernetes 执行器 | Job/Pod 提交、状态同步、日志、取消、超时和垃圾回收 | Kubernetes Executor 运行闭环 |
 | 第 15 周 | 未开始 | Notebook、镜像与 GPU | JupyterLab、VS Code、镜像目录、在线构建、GPU 规格和节点调度 | 在线开发、镜像管理、GPU 调度 |
@@ -107,19 +107,20 @@
 
 ### 5.1 当前应优先处理
 
-1. 按已确认设计并行推进第 9 周生产推理和第 10 周权限、审计、通知实现，Alembic 保持单一线性历史。
-2. 第 11 周先行建设性能、备份恢复、升级和安全验收工具；第 12 周先行建设验收矩阵和证据清单，但最终结论等待上游接口冻结。
-3. 优先修复公开注册角色提升、Compute、Annotation、API Marketplace 和成员探测顺序的现存授权缺口。
-4. 持续执行跨平台 CI、生产栈和 Chromium 回归，控制已交付功能回归风险。
+1. 在固定 4 vCPU / 8 GiB 资源约束下执行三轮性能测试，冻结同一 source commit、镜像 ID、workload 和 seed，形成第 11 周性能基线。
+2. 在隔离 PostgreSQL/MinIO 环境执行真实备份恢复并记录 RTO/RPO，再执行真实 N-1 升级、降级、迁移一致性和业务数据保留验证。
+3. 汇总 owner/editor/operator/viewer 与站内、企业微信、邮件、通用 Webhook 的最终验收矩阵，生成受审查的相对路径 evidence manifest 和正式验收报告。
+4. 持续执行跨平台 CI、生产栈、安全扫描和 Chromium 回归，控制已交付 Week 9-10 功能回归风险。
 
 ### 5.2 当前未完成
 
-- 第 1 至第 8 周代码均已合并到 `main`：第 4 周 PR #1、第 5 周 PR #2、第 6 至第 8 周 PR #3。
+- 第 1 至第 10 周代码均已合并到远端 `main`：第 4 周 PR #1、第 5 周 PR #2、第 6 至第 8 周 PR #3，第 9-10 周随 PR #17 完成。
 - 第 5 周生产基础设施远程证据为 [Actions Run 29548916619](https://github.com/FaceGg/Al-Platform/actions/runs/29548916619)。
 - 第 7 周远程验收证据为 [Actions Run 29667952189](https://github.com/FaceGg/Al-Platform/actions/runs/29667952189)。
 - 第 8 周最终远程验收为 [Actions Run 29714469437](https://github.com/FaceGg/Al-Platform/actions/runs/29714469437)，Ubuntu、Windows、生产集成、实验集成和 Chromium acceptance 全部通过；合并提交为 `ba3ca98`。
-- 第 9 至第 12 周已完成并行范围审计和设计确认，正式规格为 `docs/superpowers/specs/2026-07-20-week9-12-mlops-core-design.md`。第 9 周 Task 1-10 已完成本地实现、测试、Chromium 和验收文档；Task 11 的本地 WSL 生产栈已通过，远程 CI 和最终全量证据仍未完成。第 10 周安全/通知代码与第 11-12 周最终工具继续按依赖推进。
-- 第 11 周最终性能结论依赖第 9-10 周接口、Schema 和发布行为冻结；第 12 周最终验收依赖第 9-11 周门禁通过，不得因并行启动提前标记完成。
+- 第 9-10 周功能、迁移、生产栈、权限审计、四通知通道、真实安全扫描、Chromium 和远程 CI 已由 [Actions Run 31942746922](https://github.com/FaceGg/Al-Platform/actions/runs/31942746922) 验证，并通过 PR #17 合并；功能提交为 `ee848f3daa58d598eda76eceeeb3fef3c13018be`，远端 `main` merge commit 为 `79fb2f4c10c582d4f372929f173726a1e7cd5425`。
+- 第 11 周仍缺固定 4 vCPU / 8 GiB 三轮性能、真实 PostgreSQL/MinIO 备份恢复 RTO/RPO、真实 N-1 升级与降级；相关工具和 fail-closed 契约通过不等于这些状态化验收已执行。
+- 第 12 周仍缺最终四角色/四通道综合矩阵、受审查的 evidence manifest 和正式验收报告；六项 CI、真实 scanner、frozen stack、Chromium、推送和合并已经完成，不再列为未完成项。
 
 ### 2026-07-27：第 9 周 Task 10 生产栈门禁与 Chromium 验收完成
 
@@ -1874,3 +1875,22 @@
 - 验证方式：两条回归均先在旧实现 RED，修复后 `2/2` 通过；将真实 run `31940235443` artifact 的 npm receipt 按新输出格式重放并仅隔离机器相关的 Gitleaks live path binding 后，七个 security gates 全部 passed。`tests.test_week12_security_gates tests.test_evidence_manifest tests.test_ci_workflow -v` 为 `227/227` 通过，另有 1 项 Windows 上按预期跳过的 POSIX 权限测试。
 - 预防措施：scanner receipt 的脱敏输出必须由同一生产 validator 接受，新增或修改命令参数时要覆盖“执行 -> 脱敏落盘 -> summarize”生命周期；外部 scanner 的 schema 合同必须用真实 pinned 版本 artifact 验证，不能只依赖手写旧格式 fixture。
 - 遗留事项：完成 compile、diff、提交范围审查后提交并推送；等待新 run 的六个 GitHub Actions jobs 全部成功。只有全绿后才合并 PR #17 到 `main`，并核验 PR 状态、merge commit、远端 `main` 和保留的未跟踪目录。
+
+### 2026-08-16：第 9-12 周合并后状态同步
+
+- 当前状态：第 9 周“推理服务生产化”和第 10 周“权限、审计与通知”更新为“已完成”；第 11 周“系统联调与性能优化”和第 12 周“MLOps 核心版验收”继续保持“进行中”。本条只同步已经取得的远端证据和剩余验收边界，不删除前述失败、修复及阶段性记录。
+- 完成证据：提交 `ee848f3daa58d598eda76eceeeb3fef3c13018be` 的 Actions Run `31942746922` 六项门禁全部成功：Production integration `5m19s`、Production experiment integration `7m53s`、Ubuntu Quality `18m21s`、Windows Quality `27m3s`、Chromium acceptance `6m17s`、Week 11-12 verification `18m47s`。最后一项完整通过四生产镜像构建、真实安全扫描、frozen-stack Web gate、security summary 和证据上传。
+- 发布证据：PR #17 于 2026-08-16 19:46:30 +08:00 合并；远端 `main` 指向 merge commit `79fb2f4c10c582d4f372929f173726a1e7cd5425`，其父提交包含原 `main` 的 `802e3b918795cce8c9cba68dd963e9232c420d75` 和功能提交 `ee848f3daa58d598eda76eceeeb3fef3c13018be`。远端功能分支按发布要求保留。
+- 周次判定：Week 9 的多版本发布、rollout/rollback、API Key、限流、可观测性、模型卡及生产推理链路已闭环；Week 10 的越权防护、平台审计、事务 Outbox、站内/企业微信/邮件/通用 Webhook 已闭环。二者不再因已完成的远程 CI、Chromium、扫描或合并继续保持“进行中”。
+- 未完成事项：Week 11 仍需固定 4 vCPU / 8 GiB 三轮性能、真实 PostgreSQL/MinIO 备份恢复及 RTO/RPO、真实 N-1 升级/降级与业务数据保留；Week 12 仍需整合四角色/四通道最终矩阵，并在这些状态化证据齐备后生成受审查的 `docs/security/` evidence manifest 和正式验收报告。
+- 证据边界：Actions artifact 中的 `security/summary.json` 和上传成功证明 CI 安全链通过，但仓库中尚不存在计划要求的最终受审查 manifest/report，不能将 CI summary 重命名或复制为最终验收结论。工具合同、静态回归或单项受控接收器通过也不能替代固定资源、真实恢复和真实 N-1 状态化验收。
+- 工作树保护：主工作树存在用户未跟踪的 `OPTIMIZATION_PLAN.md`、`ml-platform/frontend/pnpm-lock.yaml` 和 `tmp/report-media-20260730/`，且本地 `main` 落后远端；发布核验没有自动拉取、删除或覆盖这些文件。后续若同步本地主工作树，应先单独检查未跟踪路径与远端树冲突。
+- 恢复顺序：先执行 Week 11 三项状态化验收，再运行最终综合矩阵和 `tools.evidence_manifest.generate`，审查相对路径、hash、source commit、工具版本、时间、退出码和脱敏状态；全部通过后再将 Week 11-12 更新为“已完成”。
+
+### 2026-08-16：开发文档状态同步发布受 GitHub Actions 计费阻塞
+
+- 当前状态：开发文档状态同步已提交为 `779464a3c28df67c84f5e51eecc83bacf6cc6b7e`，推送到 `codex/week9-12-status-sync` 并创建 PR #18；远端分支与本地提交一致。PR 尚未合并到 `main`。
+- 问题现象：Actions Run `31947488359` 的 Production integration、Production experiment integration、Ubuntu Quality 和 Windows Quality 均在 3-4 秒内失败，四个 job 的 steps 列表为空；Chromium 和 Week 11-12 verification 因依赖失败被跳过。
+- 已确认根因：四个 check-run annotation 均明确报告：`The job was not started because recent account payments have failed or your spending limit needs to be increased.` 失败发生在 GitHub Actions 调度/计费边界，任何仓库步骤均未启动，因此不能归因为本次 Markdown 内容、workflow YAML、测试或构建回归。
+- 处理方式：保留 PR #18 和远端文档分支，不修改业务代码、CI workflow 或 required checks，不使用管理员绕过、直接推送 `main` 或伪造成功结论。仓库外共享经验同步记录该阻塞。
+- 恢复条件：仓库/组织所有者在 GitHub `Billing & plans` 修复付款状态或提高 Actions spending limit 后，重新运行 PR #18 的失败 jobs；只有 required checks 实际执行并全部成功后，才合并文档 PR 并核验远端 `main`。
