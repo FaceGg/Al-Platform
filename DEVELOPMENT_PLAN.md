@@ -1984,3 +1984,13 @@
 - 影响范围：`automl_catalog.py`、`automl_search.py`、`automl_execution.py`、训练 API、后端 AutoML 测试与清单、Optuna 依赖、AutoML 页面与页面测试；不修改点焊质量服务算法配置、数据库迁移、权限模型或推理 API。
 - 已知风险：传统估计器的多保真阶段会重新拟合而非强制依赖 warm start；已经开始的第三方估计器不能被当前线程安全强杀；选择全部七家族且试验预算较大时训练成本显著上升；Vite 仍报告既有 ECharts 大 chunk 警告。
 - 遗留事项：在真实 Celery/Redis/MLflow 环境验证长任务恢复、试验子运行和总时间预算；在 Ubuntu Compose 与远程 CI 验证依赖安装和跨平台行为；根据真实数据规模评估默认 `20` 次试验与 `600` 秒预算是否需要按项目配额调整。
+
+### 2026-08-17：点焊质量感知统一 Optuna 搜索设计
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：需求边界和架构设计已确认，生产代码尚未修改；GitHub 发布在点焊改造和 WSL/Compose 验收完成前暂停。
+- 设计范围：点焊质量感知和标签快照训练全部改用七类算法家族及网格、随机、贝叶斯、进化、多保真五种搜索；删除十套固定候选、`candidate_ids`、固定 `AutoML(LGB_v2)` 和三套固定 MLP 快照候选。
+- 架构决策：复用 `automl_catalog.py` 与 `automl_search.py`，点焊提供宏平均 AUC 搜索目标并记录宏平均 F1；家族最优按 AUC、F1、目录顺序决胜，快照训练沿用原质量任务的搜索配置重新搜索审核标签。
+- 数据边界：搜索合同、进度和家族结果继续写入现有 JSON 字段，不新增数据库迁移；旧固定候选记录不属于新执行和展示合同，不实现兼容分支。
+- 设计文档：`docs/superpowers/specs/2026-08-17-spot-weld-optuna-unification-design.md`。
+- 后续步骤：完成详细 TDD 实施计划，逐项观察 RED/GREEN，执行本地全量、WSL Linux、WSL Compose、远程 CI 和合并后远端 `main` 核验。
