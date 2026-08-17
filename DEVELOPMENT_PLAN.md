@@ -1874,3 +1874,76 @@
 - 验证方式：两条回归均先在旧实现 RED，修复后 `2/2` 通过；将真实 run `31940235443` artifact 的 npm receipt 按新输出格式重放并仅隔离机器相关的 Gitleaks live path binding 后，七个 security gates 全部 passed。`tests.test_week12_security_gates tests.test_evidence_manifest tests.test_ci_workflow -v` 为 `227/227` 通过，另有 1 项 Windows 上按预期跳过的 POSIX 权限测试。
 - 预防措施：scanner receipt 的脱敏输出必须由同一生产 validator 接受，新增或修改命令参数时要覆盖“执行 -> 脱敏落盘 -> summarize”生命周期；外部 scanner 的 schema 合同必须用真实 pinned 版本 artifact 验证，不能只依赖手写旧格式 fixture。
 - 遗留事项：完成 compile、diff、提交范围审查后提交并推送；等待新 run 的六个 GitHub Actions jobs 全部成功。只有全绿后才合并 PR #17 到 `main`，并核验 PR 状态、merge commit、远端 `main` 和保留的未跟踪目录。
+
+### 2026-08-17：AutoML 七类算法与五类超参数搜索实施计划
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：需求、架构、搜索执行、结果结构、前端交互和历史结果查看设计均已确认；详细 TDD 实施计划已完成，生产代码尚未修改。
+- 设计范围：通用 AutoML 算法选择从 10 套人工参数版本调整为 LightGBM、XGBoost、CatBoost、GBDT、Random Forest、Extra Trees、HistGradientBoosting 七个算法家族；新增基于 Optuna 的网格、随机、贝叶斯、进化和多保真五类搜索；任务列表新增普通 AutoML 与点焊质量任务的持久结果查看入口。
+- 兼容决策：新任务使用 `algorithm_ids`、`search_method`、`max_trials`、`time_budget` 和持久化 `search_contract=optuna_v1`；历史 `candidate_ids` 任务保留原执行路径；点焊报告复现继续使用既有 10 套固定候选配置；不修改数据库 Schema。
+- 设计文档：`docs/superpowers/specs/2026-08-16-automl-hyperparameter-search-design.md`，提交 `cb8e48d`。
+- 实施计划：`docs/superpowers/plans/2026-08-17-automl-hyperparameter-search.md`，按算法目录、Optuna 搜索服务、执行与 MLflow、API 兼容、前端搜索控件、历史结果查看、全量验收七个任务推进。
+- 计划验证：每项功能先运行失败测试，再做最小实现并恢复 GREEN；最终分别执行 AutoML 聚焦后端、聚焦前端、完整后端 `run_suite.py`、完整前端 Vitest、生产构建、浏览器结果回看和 `git diff --check`。
+- 已知风险：五类搜索会显著增加训练成本；多保真对传统估计器需按资源阶段重新训练；线程/Celery 当前不能安全强杀已开始的第三方估计器；本地通过不代表真实 Celery、Redis、MLflow、Ubuntu Compose 或远程 CI 已验收。
+- 遗留事项：等待用户选择实施方式后开始 TDD；实现完成前不得将此功能标记为完成，不得把计划或设计审阅当作运行态验收。
+
+### 2026-08-17：AutoML 七类算法、五类搜索与历史结果查看完成
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：本地功能实现、聚焦回归、完整后端隔离套件、完整前端测试和生产构建已完成；真实 Celery/Redis/MLflow、Ubuntu Compose、远程 CI 与长时多算法性能验收仍待独立执行。
+- 完成内容：新增七类不可变算法家族目录；通用 AutoML 支持网格、随机、贝叶斯、进化和多保真五类 Optuna 搜索；每个家族独立调参并比较家族最优模型；新增试验进度、预算状态、家族结果、最佳参数和 MLflow 试验子运行；前端算法框仅展示七类家族，并提供搜索方法、最大试验次数和总时间上限；建模任务列表支持恢复普通 AutoML 和点焊质量历史结果。
+- 兼容与安全：新请求通过显式 Pydantic 字段集识别并持久化 `search_contract=optuna_v1`；历史 `candidate_ids` 任务继续进入原有限候选路径；新旧字段混用在入队前返回 `AUTOML_SEARCH_CONFIG_INVALID`；LightGBM、XGBoost、CatBoost 缺失时明确标记不可用，不再静默替换算法；未修改数据库 Schema 或点焊报告固定候选契约。
+- 测试先行：算法目录测试先因模块缺失 RED；搜索服务测试先因模块缺失 RED；执行器测试先因缺少 `search` 指标 RED；API 测试先因严格模型拒绝新字段 RED；前端测试先因缺少七家族、五方法和结果按钮 RED；每项最小实现后恢复 GREEN。
+- 验证方式：AutoML 相关后端聚焦回归 48/48 通过，Python `compileall` 通过；后端 `run_suite.py` 为 91/91 模块通过；前端完整 Vitest 为 39 个文件、170/170 用例通过；`npm run build` 通过；`git diff --check` 在最终文档提交前再次执行。
+- 影响范围：`automl_catalog.py`、`automl_search.py`、`automl_execution.py`、训练 API、后端 AutoML 测试与清单、Optuna 依赖、AutoML 页面与页面测试；不修改点焊质量服务算法配置、数据库迁移、权限模型或推理 API。
+- 已知风险：传统估计器的多保真阶段会重新拟合而非强制依赖 warm start；已经开始的第三方估计器不能被当前线程安全强杀；选择全部七家族且试验预算较大时训练成本显著上升；Vite 仍报告既有 ECharts 大 chunk 警告。
+- 遗留事项：在真实 Celery/Redis/MLflow 环境验证长任务恢复、试验子运行和总时间预算；在 Ubuntu Compose 与远程 CI 验证依赖安装和跨平台行为；根据真实数据规模评估默认 `20` 次试验与 `600` 秒预算是否需要按项目配额调整。
+
+### 2026-08-17：点焊质量感知统一 Optuna 搜索设计
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：需求边界和架构设计已确认，生产代码尚未修改；GitHub 发布在点焊改造和 WSL/Compose 验收完成前暂停。
+- 设计范围：点焊质量感知和标签快照训练全部改用七类算法家族及网格、随机、贝叶斯、进化、多保真五种搜索；删除十套固定候选、`candidate_ids`、固定 `AutoML(LGB_v2)` 和三套固定 MLP 快照候选。
+- 架构决策：复用 `automl_catalog.py` 与 `automl_search.py`，点焊提供宏平均 AUC 搜索目标并记录宏平均 F1；家族最优按 AUC、F1、目录顺序决胜，快照训练沿用原质量任务的搜索配置重新搜索审核标签。
+- 数据边界：搜索合同、进度和家族结果继续写入现有 JSON 字段，不新增数据库迁移；旧固定候选记录不属于新执行和展示合同，不实现兼容分支。
+- 设计文档：`docs/superpowers/specs/2026-08-17-spot-weld-optuna-unification-design.md`。
+- 后续步骤：完成详细 TDD 实施计划，逐项观察 RED/GREEN，执行本地全量、WSL Linux、WSL Compose、远程 CI 和合并后远端 `main` 核验。
+
+### 2026-08-17：点焊质量感知统一 Optuna 搜索本地实现完成
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持；第 17 周点焊质量交付支持。
+- 任务状态：Windows 本地实现与自动化验证已完成；WSL Linux、WSL Docker Compose、GitHub Actions、PR 合并和远端 `main` 核验仍待执行，当前不得标记为最终发布完成。
+- 完成内容：点焊质量运行、自动感知和标签快照训练统一复用七类算法家族与五类 Optuna 搜索；API、持久化和前端统一使用 `algorithm_ids`、`search_method`、`max_trials`、`time_budget` 及 `search_contract=optuna_v1`；前端展示家族状态、宏平均 AUC/F1、最佳参数、完成/剪枝/失败试验数和训练耗时；历史点焊任务可通过“查看建模结果”恢复新结果结构。
+- 破坏性迁移：删除点焊十套固定候选、`candidate_ids`、固定 `AutoML(LGB_v2)`、固定估计器构造器和三套 MLP 快照候选；旧点焊运行不提供兼容执行或旧结果展示分支。通用 AutoML 的历史 `candidate_ids` 兼容路径保持不变。
+- 测试先行：共享搜索注入点评估、点焊家族搜索、API 严格字段、运行进度、快照训练、前端搜索控件和结果恢复均先观察 RED 后做最小实现；前端迁移还覆盖数据标注入口，确保所有新建点焊运行不再发送旧字段。
+- 验证方式：后端聚焦回归 100/100；Week 17 隔离套件 6/6；完整后端隔离套件 92/92 模块；Python `compileall` 通过；前端完整 Vitest 39 个文件、172/172 用例；TypeScript/Vite 生产构建和 `git diff --check` 通过。
+- 已解决问题：点焊 API 模块因重复搜索和报告生成实际耗时 149.278 秒，旧 `run_suite.py` 固定 120 秒会误判超时；将模块上限提升为 300 秒并增加运行器回归后，Week 17 和完整 92 模块套件均通过。
+- 影响范围：共享 AutoML 搜索评估器、点焊质量服务/API/任务、标签快照训练、AutoML 与数据标注前端、测试运行器和对应回归；不新增数据库迁移，不修改权限和推理 API。
+- 遗留事项：基于最新 `origin/main` 组装干净发布分支，在 WSL Linux 文件系统运行测试和 Compose；验证 `/api/ready` 及携带新字段的认证点焊请求；推送 GitHub、等待全部 required checks、合并 PR，并核对远端 `main`、合并提交与用户未跟踪文件保持不变。
+
+### 2026-08-17：点焊 Optuna 发布分支 WSL 验收受宿主文件系统阻塞
+
+- 当前状态：已从最新 `origin/main` 创建 `codex/spot-weld-optuna-unification` 并挑选 19 个已审查提交；Windows 发布树后端聚焦 104/104、前端 43 个文件 207/207 和生产构建通过。WSL 原生克隆提交与 Windows `HEAD=a9641ab` 一致，Linux 前端 43 个文件 207/207、生产构建、Python `compileall` 和带完整临时环境的 `docker compose config` 通过。
+- 问题现象：Compose 构建完成依赖下载后，在 containerd 解包后端镜像层时失败，错误为 `read-only file system`；随后 WSL 中 `/usr/bin/df` 和 `dmesg` 返回 `Input/output error`，根挂载显示 `/dev/sdd ... errors=remount-ro,emergency_ro`。执行 `wsl --shutdown` 和重启 `WslService` 后，Ubuntu 仍返回 `Wsl/Service/E_UNEXPECTED` 或 `CreateInstance/E_FAIL`。
+- 已确认边界：Docker 构建缓存约 134.2GB，其中约 92.98GB 可回收，但失败是 WSL ext4 紧急只读和服务无法重新挂载，不是应用断言、TypeScript、Python 编译、Compose 插值或镜像内依赖安装失败。
+- 处理决定：不自动对用户的 `ext4.vhdx` 执行 `fsck`、注销发行版或删除 Docker 数据；这些操作可能影响整个 WSL 环境，必须先完成宿主重启/备份或由用户明确授权。验证项目未执行 `down -v`。
+- 发布门禁：由于 Compose 服务健康、`/api/ready`、认证点焊新字段请求和响应中的 `optuna_v1` 尚未取得成功证据，本次不推送 GitHub、不创建/合并 PR、不更新远端 `main`。恢复 WSL 后从发布提交重新运行 Compose 生命周期，再继续远程 CI 和合并。
+
+### 2026-08-17：点焊 Optuna 发布分支 WSL/Compose 验收完成
+
+- 当前状态：WSL ext4 已恢复可写；在原生 Linux 克隆 `/home/jingms/codex-validation/spot-weld-optuna-e1d1428` 验证发布提交 `e1d14288236d72b798c1c86fbb57f378a6551aea`，Compose 项目 `spot-weld-optuna-validation` 已完成构建、启动、健康检查和真实认证点焊运行。GitHub 推送、required checks、PR 合并和远端 `main` 核验仍待执行。
+- 运行态验证：`docker compose config` 通过；完整镜像包含 Optuna、XGBoost、LightGBM 与 CatBoost；`/api/health` 返回 `status=ok`，`/api/ready` 的全部依赖为 `ready=true`，前端 `/health` 返回 `OK`。Celery worker inspect 确认注册 `ml_platform.execute_spot_weld_quality`。
+- 问题现象：首次真实点焊请求已由 API 成功入队，但 worker 报 `Received unregistered task of type 'ml_platform.execute_spot_weld_quality'`，运行无法进入完成态。
+- 已确认根因：`app/tasks/celery_app.py` 的 worker include 和显式导入遗漏 `app.tasks.spot_weld_quality_tasks`；API 调度器能生成任务名不代表 worker 已加载对应任务模块。
+- 解决结果：将点焊任务模块加入 Celery include 并显式导入；新增 worker discovery 回归，先确认旧实现 RED，再在修复后 GREEN。相关任务回归 `test_spot_weld_quality_tasks` 为 4/4，Celery 工作流与训练任务组合为 25/25。
+- 真实业务证据：认证运行 `b7908c5a-3a1e-4159-a9cd-77e0e1c889aa` 最终为 `completed`，算法为 `random_forest`，搜索合同为 `optuna_v1`，方法为 `multi_fidelity`，预算为 5 次试验和 60 秒；旧 `candidate_ids` 请求返回 HTTP 422，完成结果不包含旧候选字段。
+- 最新提交门禁：Windows 发布树完整后端 `run_suite.py` 为 114/114 模块，Python `compileall -q app tools tests` 通过；前端完整 Vitest 为 43 个文件、207/207 用例，TypeScript/Vite 生产构建通过。构建仍只有既有 ECharts chunk 大于 500 kB 警告。
+- 后续步骤：停止且仅停止本次 Compose 项目，不删除 volumes；清理临时 WSL 代理桥和 systemd 代理环境；fetch 并确认远端基线未漂移后推送发布分支、创建 PR，等待全部 required checks 成功后合并并核验远端 `main`。
+
+### 2026-08-17：PR #19 required checks 受 GitHub Actions 计费门禁阻塞
+
+- 当前状态：发布分支已推送，PR #19（`codex/spot-weld-optuna-unification` -> `main`）已创建；本地与 WSL 验收证据仍有效，但远程 required checks 尚未执行，禁止合并。
+- 问题现象：Actions run `32002623822` 的 Quality（Windows）、Quality（Ubuntu）、Production integration 和 Production experiment integration 均在 3 秒内失败且 `steps=[]`；Chromium 与 Week 11-12 verification 因依赖失败被跳过。
+- 已确认根因：四个失败 check-run annotations 均为 “recent account payments have failed or your spending limit needs to be increased”，GitHub runner 未启动，`gh run view --log-failed` 无 job log；这不是代码、YAML 或测试断言失败。
+- 处理决定：不修改代码、不循环 rerun、不降低 required checks、不合并 PR；保留 PR #19 和发布工作树，待仓库计费/消费限额恢复后重新运行全部门禁。
+- 后续验证：计费恢复后使用同一提交重新 rerun，确认四个前置 job、Chromium、Week 11-12 verification 全部 `success`，再执行 PR 合并及远端 `main` ancestry/tree 核验。

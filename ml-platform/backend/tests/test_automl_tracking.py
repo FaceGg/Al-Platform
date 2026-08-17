@@ -302,6 +302,34 @@ class TestAutoMLTracking(unittest.TestCase):
                 ["logistic_regression"],
             )
 
+    def test_optuna_job_searches_each_family_and_persists_results(self):
+        job_id = self.create_job(params={
+            "search_contract": "optuna_v1",
+            "target_column": "quality",
+            "input_columns": ["current", "force"],
+            "task": "classification",
+            "algorithm_ids": ["gbdt", "random_forest"],
+            "search_method": "random",
+            "max_trials": 5,
+            "time_budget": 60,
+            "cross_validation_enabled": False,
+            "cross_validation_folds": None,
+        })
+
+        result = self.execute(job_id)
+
+        self.assertEqual(result.status, "completed")
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
+            model = db.query(ModelLibrary).filter(ModelLibrary.training_job_id == job_id).one()
+            self.assertEqual(job.metrics["search"]["method"], "random")
+            self.assertEqual(
+                [item["algorithm_id"] for item in job.metrics["algorithm_results"]],
+                ["gbdt", "random_forest"],
+            )
+            self.assertIn(job.metrics["best_model"]["algorithm_id"], {"gbdt", "random_forest"})
+            self.assertEqual(model.params["best_algorithm"], job.metrics["best_model"]["algorithm_id"])
+
     def test_selected_input_columns_are_the_only_columns_used_for_automl(self):
         FeatureCapturingClassifier.seen_columns.clear()
         job_id = self.create_job(params={
@@ -540,6 +568,47 @@ class TestAutoMLAPI(unittest.TestCase):
                 TrainingJob.id == uuid.UUID(response.json()["job_id"])
             ).one()
             self.assertEqual(job.params["candidate_ids"], candidate_ids)
+
+    def test_new_search_request_persists_resolved_family_contract(self):
+        response = self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "task": "classification",
+            "algorithm_ids": ["gbdt", "random_forest"],
+            "search_method": "bayesian",
+            "max_trials": 20,
+            "time_budget": 600,
+        }, headers=self.headers)
+
+        self.assertEqual(response.status_code, 202, response.text)
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(
+                TrainingJob.id == uuid.UUID(response.json()["job_id"])
+            ).one()
+            self.assertEqual(job.params["search_contract"], "optuna_v1")
+            self.assertEqual(job.params["algorithm_ids"], ["gbdt", "random_forest"])
+            self.assertEqual(job.params["search_method"], "bayesian")
+            self.assertEqual(job.params["max_trials"], 20)
+
+    def test_new_and_legacy_algorithm_fields_are_mutually_exclusive(self):
+        response = self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "task": "classification",
+            "algorithm_ids": ["gbdt"],
+            "candidate_ids": ["GBDT_v1"],
+            "search_method": "grid",
+            "max_trials": 5,
+            "time_budget": 60,
+        }, headers=self.headers)
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "AUTOML_SEARCH_CONFIG_INVALID")
+        self.assertEqual(self.dispatcher.enqueued, [])
 
     def test_duplicate_candidate_ids_are_rejected_before_queueing(self):
         response = self.client.post("/api/training/automl/run", json={

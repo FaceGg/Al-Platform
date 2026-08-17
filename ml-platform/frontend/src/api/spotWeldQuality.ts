@@ -2,6 +2,40 @@ import apiClient from "./client";
 
 export type QualityRunStatus = "queued" | "validating" | "running" | "completed" | "failed";
 export type QualityLabelMode = "automatic" | "manual";
+export type QualityAlgorithmId =
+  | "lightgbm"
+  | "xgboost"
+  | "catboost"
+  | "gbdt"
+  | "random_forest"
+  | "extra_trees"
+  | "hist_gradient_boosting";
+export type QualitySearchMethod = "grid" | "random" | "bayesian" | "evolutionary" | "multi_fidelity";
+
+export interface QualitySearchConfig {
+  contract?: "optuna_v1" | string;
+  method: QualitySearchMethod;
+  max_trials: number;
+  time_budget: number;
+}
+
+export interface QualityFamilyResult {
+  algorithm_id: QualityAlgorithmId;
+  name: string;
+  status: string;
+  best_score?: number | null;
+  auc?: number | null;
+  f1?: number | null;
+  auc_std?: number | null;
+  f1_std?: number | null;
+  best_params?: Record<string, unknown>;
+  completed_trials?: number;
+  pruned_trials?: number;
+  failed_trials?: number;
+  training_time_seconds?: number | null;
+  error_code?: string | null;
+  error_message?: string | null;
+}
 
 export interface QualityAnnotationProgress {
   annotated_count: number;
@@ -36,12 +70,13 @@ export interface QualityRun {
   feature_version?: string;
   rule_set_version?: string;
   statistics?: Record<string, unknown>;
-  automl_results?: Array<Record<string, unknown>>;
+  automl_results?: QualityFamilyResult[];
   clustering_results?: Record<string, unknown>;
   output_artifacts?: Record<string, string>;
   error_code?: string | null;
   error_details?: { code?: string; message?: string; [key: string]: unknown } | null;
-  selected_candidate_ids?: string[];
+  selected_algorithm_ids?: QualityAlgorithmId[];
+  search?: QualitySearchConfig;
   target_column?: string | null;
   input_columns?: string[];
   evaluation?: QualityEvaluationConfig;
@@ -341,7 +376,10 @@ export async function createQualityRun(
   payload: {
     dataset_artifact_id: string;
     field_mapping?: Record<string, string>;
-    candidate_ids?: string[];
+    algorithm_ids?: QualityAlgorithmId[];
+    search_method?: QualitySearchMethod;
+    max_trials?: number;
+    time_budget?: number;
     target_column?: string;
     input_columns?: string[];
     cross_validation_enabled?: boolean;
@@ -368,7 +406,10 @@ export async function validateQualityDataset(
   options: {
     label_mode?: QualityLabelMode;
     rule_config?: Partial<QualityRuleConfig>;
-    candidate_ids?: string[];
+    algorithm_ids?: QualityAlgorithmId[];
+    search_method?: QualitySearchMethod;
+    max_trials?: number;
+    time_budget?: number;
     target_column?: string;
     input_columns?: string[];
     cross_validation_enabled?: boolean;

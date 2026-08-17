@@ -1,46 +1,48 @@
 import { useEffect, useState, useRef } from "react";
-import { App as AntApp, Card, Select, Button, Input, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
-import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, DeleteOutlined, PlusOutlined } from "@ant-design/icons";
+import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
+import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
-import { createQualityRun, downloadQualityArtifact, getQualityRun, type QualityRun } from "../api/spotWeldQuality";
+import {
+  createQualityRun,
+  downloadQualityArtifact,
+  getQualityRun,
+  type QualityAlgorithmId,
+  type QualityFamilyResult,
+  type QualityRun,
+  type QualitySearchMethod,
+} from "../api/spotWeldQuality";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
 
 const { Text, Title } = Typography;
 
-const AUTOML_CANDIDATE_OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
-  classification: [
-    { value: "LGB_v1", label: "LGB_v1 · LightGBM" },
-    { value: "LGB_v2", label: "LGB_v2 · LightGBM" },
-    { value: "XGB_v1", label: "XGB_v1 · XGBoost" },
-    { value: "XGB_v2", label: "XGB_v2 · XGBoost" },
-    { value: "CAT_v1", label: "CAT_v1 · CatBoost" },
-    { value: "CAT_v2", label: "CAT_v2 · CatBoost" },
-    { value: "GBDT_v1", label: "GBDT_v1 · GBDT" },
-    { value: "RF_v1", label: "RF_v1 · Random Forest" },
-    { value: "ET_v1", label: "ET_v1 · Extra Trees" },
-    { value: "HGB_v1", label: "HGB_v1 · HistGradientBoosting" },
-  ],
-  regression: [
-    { value: "LGB_v1", label: "LGB_v1 · LightGBM" },
-    { value: "LGB_v2", label: "LGB_v2 · LightGBM" },
-    { value: "XGB_v1", label: "XGB_v1 · XGBoost" },
-    { value: "XGB_v2", label: "XGB_v2 · XGBoost" },
-    { value: "CAT_v1", label: "CAT_v1 · CatBoost" },
-    { value: "CAT_v2", label: "CAT_v2 · CatBoost" },
-    { value: "GBDT_v1", label: "GBDT_v1 · GBDT" },
-    { value: "RF_v1", label: "RF_v1 · Random Forest" },
-    { value: "ET_v1", label: "ET_v1 · Extra Trees" },
-    { value: "HGB_v1", label: "HGB_v1 · HistGradientBoosting" },
-  ],
-};
+const AUTOML_ALGORITHM_OPTIONS = [
+  { value: "lightgbm", label: "LightGBM" },
+  { value: "xgboost", label: "XGBoost" },
+  { value: "catboost", label: "CatBoost" },
+  { value: "gbdt", label: "GBDT" },
+  { value: "random_forest", label: "Random Forest" },
+  { value: "extra_trees", label: "Extra Trees" },
+  { value: "hist_gradient_boosting", label: "HistGradientBoosting" },
+];
 
-const REPORT_CANDIDATE_OPTIONS = [
-  "LGB_v1", "LGB_v2", "XGB_v1", "XGB_v2", "CAT_v1",
-  "CAT_v2", "GBDT_v1", "RF_v1", "ET_v1", "HGB_v1",
-].map((value) => ({ value, label: value }));
+const AUTOML_SEARCH_OPTIONS = [
+  { value: "grid", label: "网格搜索" },
+  { value: "random", label: "随机搜索" },
+  { value: "bayesian", label: "贝叶斯优化" },
+  { value: "evolutionary", label: "进化算法" },
+  { value: "multi_fidelity", label: "多保真搜索" },
+];
+
+const QUALITY_SEARCH_LABELS: Record<QualitySearchMethod, string> = {
+  grid: "网格搜索",
+  random: "随机搜索",
+  bayesian: "贝叶斯优化",
+  evolutionary: "进化算法",
+  multi_fidelity: "多保真搜索",
+};
 
 const QUALITY_REQUIRED_SOURCE_COLUMNS = [
   "wld1c", "wld2c", "tipv1", "tipv2", "wres", "energy",
@@ -103,7 +105,10 @@ export default function AutoMLPage() {
   const [inputColumns, setInputColumns] = useState<string[]>([]);
   const [targetColumn, setTargetColumn] = useState("");
   const [taskType, setTaskType] = useState("classification");
-  const [candidateIds, setCandidateIds] = useState<string[]>([]);
+  const [algorithmIds, setAlgorithmIds] = useState<string[]>([]);
+  const [searchMethod, setSearchMethod] = useState("bayesian");
+  const [maxTrials, setMaxTrials] = useState(20);
+  const [timeBudget, setTimeBudget] = useState(600);
   const [crossValidationEnabled, setCrossValidationEnabled] = useState(true);
   const [crossValidationFolds, setCrossValidationFolds] = useState<3 | 4 | 5>(5);
   const [running, setRunning] = useState(false);
@@ -111,7 +116,10 @@ export default function AutoMLPage() {
   const [activeTab, setActiveTab] = useState("results");
   const [recipeTab, setRecipeTab] = useState("general");
   const [qualityRunning, setQualityRunning] = useState(false);
-  const [qualityCandidateIds, setQualityCandidateIds] = useState<string[]>([]);
+  const [qualityAlgorithmIds, setQualityAlgorithmIds] = useState<QualityAlgorithmId[]>([]);
+  const [qualitySearchMethod, setQualitySearchMethod] = useState<QualitySearchMethod>("bayesian");
+  const [qualityMaxTrials, setQualityMaxTrials] = useState(20);
+  const [qualityTimeBudget, setQualityTimeBudget] = useState(600);
   const [qualityTargetColumn, setQualityTargetColumn] = useState("");
   const [qualityInputColumns, setQualityInputColumns] = useState<string[]>([]);
   const [qualityCrossValidationEnabled, setQualityCrossValidationEnabled] = useState(true);
@@ -120,12 +128,14 @@ export default function AutoMLPage() {
   const [downloadingQualityReport, setDownloadingQualityReport] = useState(false);
   const [modelingTasks, setModelingTasks] = useState<ModelingTask[]>([]);
   const [loadingModelingTasks, setLoadingModelingTasks] = useState(false);
+  const [viewingTaskKey, setViewingTaskKey] = useState<string | null>(null);
   const [qualityChartUrls, setQualityChartUrls] = useState<Record<string, string>>({});
   const [experimentModalOpen, setExperimentModalOpen] = useState(false);
   const [experimentCreating, setExperimentCreating] = useState(false);
   const [experimentForm] = Form.useForm();
   const barRef = useRef<HTMLDivElement>(null);
   const radarRef = useRef<HTMLDivElement>(null);
+  const resultRegionRef = useRef<HTMLDivElement>(null);
   const qualityMissingSourceColumns = QUALITY_REQUIRED_SOURCE_COLUMNS.filter(
     (column) => !datasetColumns.includes(column),
   );
@@ -287,14 +297,30 @@ export default function AutoMLPage() {
   const allResults = results?.models || results?.all_results || [];
   const bestModel = results?.best_model || allResults[0];
   const features = results?.feature_importance || results?.features || {};
-  const candidateOptions = AUTOML_CANDIDATE_OPTIONS[taskType] || [];
-
   const handleTaskTypeChange = (task: string) => {
-    const validCandidateIds = new Set(
-      (AUTOML_CANDIDATE_OPTIONS[task] || []).map((candidate) => candidate.value),
-    );
     setTaskType(task);
-    setCandidateIds((current) => current.filter((candidateId) => validCandidateIds.has(candidateId)));
+  };
+
+  const viewModelingTask = async (task: ModelingTask) => {
+    if (!selectedProject) return;
+    const key = `${task.kind}-${task.id}`;
+    setViewingTaskKey(key);
+    try {
+      if (task.kind === "spot-weld") {
+        const detail = await getQualityRun(selectedProject, task.id);
+        setQualityRun(detail);
+        setRecipeTab("spot-weld-quality");
+      } else {
+        const response = await apiClient.get(`/training/jobs/${task.id}`);
+        setResults(response.data?.metrics || null);
+        setRecipeTab("general");
+        setActiveTab("results");
+      }
+    } catch (error) {
+      message.error(formatApiError(error, "建模结果加载失败"));
+    } finally {
+      setViewingTaskKey(null);
+    }
   };
 
   useEffect(() => {
@@ -370,7 +396,10 @@ export default function AutoMLPage() {
         dataset_artifact_id: selectedDataset, target_column: targetColumn,
         input_columns: inputColumns,
         task: taskType,
-        candidate_ids: candidateIds,
+        algorithm_ids: algorithmIds,
+        search_method: searchMethod,
+        max_trials: maxTrials,
+        time_budget: timeBudget,
         cross_validation_enabled: crossValidationEnabled,
         cross_validation_folds: crossValidationEnabled ? crossValidationFolds : null,
       });
@@ -444,7 +473,10 @@ export default function AutoMLPage() {
       const run = await createQualityRun(selectedProject, {
         dataset_artifact_id: selectedDataset,
         field_mapping: {},
-        candidate_ids: qualityCandidateIds,
+        algorithm_ids: qualityAlgorithmIds,
+        search_method: qualitySearchMethod,
+        max_trials: qualityMaxTrials,
+        time_budget: qualityTimeBudget,
         target_column: qualityTargetColumn || undefined,
         input_columns: normalizedInputs,
         cross_validation_enabled: qualityCrossValidationEnabled,
@@ -538,6 +570,17 @@ export default function AutoMLPage() {
       },
     },
   ];
+  const algorithmResults = Array.isArray(results?.algorithm_results) ? results.algorithm_results : [];
+  const formatParams = (value: unknown) => value && typeof value === "object"
+    ? Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${key}=${String(item)}`).join(", ")
+    : "-";
+  const algorithmResultColumns = [
+    { title: "算法", dataIndex: "name", key: "name", render: (value: string, row: any) => value || row.algorithm_id },
+    { title: "状态", dataIndex: "status", key: "status", render: (value: string) => <Tag color={value === "completed" ? "green" : value === "unavailable" ? "orange" : "red"}>{value}</Tag> },
+    { title: "最佳分数", dataIndex: "best_score", key: "score", render: (value: number | null) => value == null ? "-" : Number(value).toFixed(4) },
+    { title: "最佳参数", dataIndex: "best_params", key: "params", render: (value: unknown) => <Text title={formatParams(value)}>{formatParams(value)}</Text> },
+    { title: "完成/剪枝/失败", key: "trials", render: (_value: unknown, row: any) => `${row.completed_trials || 0}/${row.pruned_trials || 0}/${row.failed_trials || 0}` },
+  ];
 
   const featureEntries = Object.entries(features).sort((a: any, b: any) => b[1] - a[1]);
   const maxImp = featureEntries.length > 0 ? (featureEntries[0][1] as number) : 1;
@@ -546,14 +589,17 @@ export default function AutoMLPage() {
   const qualityKSearch = Object.entries((qualityCluster.silhouette_scores || {}) as Record<string, number>);
   const qualityPca = Array.isArray(qualityCluster.pca_coordinates) ? qualityCluster.pca_coordinates : [];
   const qualityBestCandidate = qualityCandidates.find((candidate) => candidate.error_code == null) || qualityCandidates[0];
-  const formatQualityMetric = (key: string) => {
+  const formatQualityMetric = (key: "auc" | "f1") => {
     const value = qualityBestCandidate?.[key];
     return typeof value === "number" && Number.isFinite(value) ? value.toFixed(4) : "-";
   };
   const qualityCandidateColumns = [
-    { title: "候选模型", dataIndex: "name", key: "name" },
+    { title: "算法家族", dataIndex: "name", key: "name", render: (value: string, row: QualityFamilyResult) => value || row.algorithm_id },
+    { title: "状态", dataIndex: "status", key: "status", render: (value: string) => <Tag color={value === "completed" ? "green" : value === "unavailable" ? "orange" : "red"}>{value}</Tag> },
     { title: "AUC", dataIndex: "auc", key: "auc", render: (value: number | null) => value == null ? "-" : Number(value).toFixed(4) },
     { title: "F1", dataIndex: "f1", key: "f1", render: (value: number | null) => value == null ? "-" : Number(value).toFixed(4) },
+    { title: "最佳参数", dataIndex: "best_params", key: "params", render: (value: unknown) => <Text title={formatParams(value)}>{formatParams(value)}</Text> },
+    { title: "完成/剪枝/失败", key: "trials", render: (_value: unknown, row: QualityFamilyResult) => `${row.completed_trials || 0}/${row.pruned_trials || 0}/${row.failed_trials || 0}` },
     { title: "训练耗时", dataIndex: "training_time_seconds", key: "time", render: (value: number | null) => value == null ? "-" : `${Number(value).toFixed(1)}s` },
   ];
   const modelingTaskColumns = [
@@ -561,7 +607,10 @@ export default function AutoMLPage() {
     { title: "状态", dataIndex: "status", key: "status", render: (value: string) => <Tag color={value === "completed" ? "green" : value === "failed" ? "red" : "blue"}>{value}</Tag> },
     { title: "建模进度", key: "progress", render: (_value: unknown, row: ModelingTask) => `${row.progress.completed}/${row.progress.total} ${row.progress.percent}%` },
     { title: "错误详情", key: "error", render: (_value: unknown, row: ModelingTask) => (row.errorCode || row.errorMessage) ? <Space direction="vertical" size={0}><Text type="danger">{row.errorCode}</Text>{row.errorMessage && <Text type="danger">{row.errorMessage}</Text>}</Space> : "-" },
-    { title: "操作", key: "actions", render: (_value: unknown, row: ModelingTask) => <Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除建模任务 ${row.id}`} onClick={() => void deleteModelingTask(row)} disabled={!['completed', 'failed', 'cancelled'].includes(String(row.status))}>删除</Button> },
+    { title: "操作", key: "actions", render: (_value: unknown, row: ModelingTask) => <Space size={4}>
+      {String(row.status) === "completed" && <Button type="text" icon={<EyeOutlined />} aria-label={`查看建模结果 ${row.id}`} loading={viewingTaskKey === `${row.kind}-${row.id}`} onClick={() => void viewModelingTask(row)}>查看建模结果</Button>}
+      <Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除建模任务 ${row.id}`} onClick={() => void deleteModelingTask(row)} disabled={!['completed', 'failed', 'cancelled'].includes(String(row.status))}>删除</Button>
+    </Space> },
   ];
 
   return (
@@ -618,17 +667,25 @@ export default function AutoMLPage() {
           <Col xs={24} sm={4}><Text strong>{t.automl?.task || "Task"}</Text>
             <Select aria-label="任务类型" style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={handleTaskTypeChange}
               options={[{ value: "classification", label: "Classification" }, { value: "regression", label: "Regression" }]} /></Col>
-          <Col xs={24} sm={4}><Text strong>算法集合</Text>
+          <Col xs={24} sm={6}><Text strong>算法家族</Text>
             <Select
-              aria-label="算法集合"
+              aria-label="算法家族"
               mode="multiple"
               allowClear
+              maxTagCount="responsive"
               style={{ width: "100%", marginTop: 4 }}
               placeholder="默认全部算法"
-              value={candidateIds}
-              onChange={(ids: string[]) => setCandidateIds(ids)}
-              options={candidateOptions}
+              value={algorithmIds}
+              onChange={setAlgorithmIds}
+              options={AUTOML_ALGORITHM_OPTIONS}
             /></Col>
+          <Col xs={24} sm={4}><Text strong>搜索方法</Text>
+            <Select aria-label="搜索方法" style={{ width: "100%", marginTop: 4 }} value={searchMethod} onChange={setSearchMethod}
+              options={AUTOML_SEARCH_OPTIONS} /></Col>
+          <Col xs={12} sm={3}><Text strong>最大试验次数</Text>
+            <InputNumber aria-label="最大试验次数" min={5} max={200} value={maxTrials} onChange={(value) => setMaxTrials(value ?? 20)} style={{ width: "100%", marginTop: 4 }} /></Col>
+          <Col xs={12} sm={3}><Text strong>总时间上限</Text>
+            <InputNumber aria-label="总时间上限" min={60} max={3600} value={timeBudget} onChange={(value) => setTimeBudget(value ?? 600)} style={{ width: "100%", marginTop: 4 }} /></Col>
           <Col xs={12} sm={3}><Text strong>交叉验证</Text>
             <div style={{ marginTop: 7 }}><Switch aria-label="启用交叉验证" checked={crossValidationEnabled} onChange={setCrossValidationEnabled} /></div></Col>
           <Col xs={12} sm={3}><Text strong>折数</Text>
@@ -647,6 +704,17 @@ export default function AutoMLPage() {
       {running && <Card style={{ textAlign: "center", padding: 40 }}><Spin size="large" /><p style={{ marginTop: 16 }}>{t.common.loading}</p></Card>}
 
       {results && (
+        <div ref={resultRegionRef}>
+        {results.search && <section style={{ marginBottom: 16 }}>
+          <Space wrap size="large" style={{ marginBottom: 10 }}>
+            <Text strong>{`搜索方法：${results.search.method}`}</Text>
+            <Text>{`最大试验：${results.search.max_trials}`}</Text>
+            <Text>{`时间上限：${results.search.time_budget} 秒`}</Text>
+            {results.search.budget_exhausted && <Tag color="orange">预算已耗尽</Tag>}
+          </Space>
+          {bestModel?.params && <div style={{ marginBottom: 10 }}><Text strong>最佳参数：</Text><Text>{formatParams(bestModel.params)}</Text></div>}
+          <Table rowKey={(row: any) => row.algorithm_id} dataSource={algorithmResults} columns={algorithmResultColumns} size="small" pagination={false} scroll={{ x: 760 }} />
+        </section>}
         <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
           { key: "results", label: "Results",
             children: (<>
@@ -691,6 +759,7 @@ export default function AutoMLPage() {
             ),
           },
         ]} />
+        </div>
       )}
       <Modal
         title={t.training?.new_experiment || "New Experiment"}
@@ -779,23 +848,41 @@ export default function AutoMLPage() {
             </Col>
           </Row>
           <Row gutter={[16, 16]} align="middle" style={{ marginTop: 16 }}>
-            <Col xs={24} md={8}>
-              <Text strong>报告候选算法</Text>
+            <Col xs={24} md={6}>
+              <Text strong>算法家族</Text>
               <Select
                 mode="multiple"
-                aria-label="报告候选算法"
+                aria-label="质量感知算法家族"
                 style={{ width: "100%", marginTop: 4 }}
-                value={qualityCandidateIds}
-                onChange={setQualityCandidateIds}
-                placeholder="留空使用全部 10 项"
-                options={REPORT_CANDIDATE_OPTIONS}
+                value={qualityAlgorithmIds}
+                onChange={setQualityAlgorithmIds}
+                placeholder="默认全部 7 类算法"
+                options={AUTOML_ALGORITHM_OPTIONS}
               />
             </Col>
-            <Col xs={12} md={4}>
+            <Col xs={24} md={4}>
+              <Text strong>搜索方法</Text>
+              <Select
+                aria-label="质量感知搜索方法"
+                style={{ width: "100%", marginTop: 4 }}
+                value={qualitySearchMethod}
+                onChange={setQualitySearchMethod}
+                options={AUTOML_SEARCH_OPTIONS}
+              />
+            </Col>
+            <Col xs={12} md={3}>
+              <Text strong>最大试验次数</Text>
+              <InputNumber aria-label="质量感知最大试验次数" min={5} max={200} value={qualityMaxTrials} onChange={(value) => setQualityMaxTrials(value ?? 20)} style={{ width: "100%", marginTop: 4 }} />
+            </Col>
+            <Col xs={12} md={3}>
+              <Text strong>总时间上限</Text>
+              <InputNumber aria-label="质量感知总时间上限" min={60} max={3600} value={qualityTimeBudget} onChange={(value) => setQualityTimeBudget(value ?? 600)} style={{ width: "100%", marginTop: 4 }} />
+            </Col>
+            <Col xs={12} md={2}>
               <Text strong>交叉验证</Text>
               <div style={{ marginTop: 7 }}><Switch aria-label="质量感知启用交叉验证" checked={qualityCrossValidationEnabled} onChange={setQualityCrossValidationEnabled} /></div>
             </Col>
-            <Col xs={12} md={4}>
+            <Col xs={12} md={2}>
               <Text strong>折数</Text>
               <Select
                 aria-label="质量感知交叉验证折数"
@@ -818,11 +905,14 @@ export default function AutoMLPage() {
               <Descriptions.Item label="样本">{qualityRun.sample_count ?? "-"}</Descriptions.Item>
               <Descriptions.Item label="特征版本">{qualityRun.feature_version || "report_v1"}</Descriptions.Item>
               <Descriptions.Item label="聚类 K">{String(qualityCluster.best_k ?? "-")}</Descriptions.Item>
+              <Descriptions.Item label="搜索方法">{qualityRun.search?.method ? QUALITY_SEARCH_LABELS[qualityRun.search.method] : "-"}</Descriptions.Item>
+              <Descriptions.Item label="搜索预算">{qualityRun.search ? `${qualityRun.search.max_trials} 次 / ${qualityRun.search.time_budget} 秒` : "-"}</Descriptions.Item>
+              <Descriptions.Item label="搜索契约">{qualityRun.search?.contract || "-"}</Descriptions.Item>
               <Descriptions.Item label="K 搜索">{qualityKSearch.length ? qualityKSearch.map(([k, score]) => `K=${k}: ${Number(score).toFixed(3)}`).join(" · ") : "-"}</Descriptions.Item>
               <Descriptions.Item label="PCA">{qualityPca.length ? `${qualityPca.length} x 2` : "-"}</Descriptions.Item>
               {qualityRun.status === "failed" && <Descriptions.Item label="错误详情" span={4}><Space direction="vertical" size={0}><Text type="danger">{qualityRun.error_code || "QUALITY_RUN_FAILED"}</Text>{qualityRun.error_details?.message && <Text type="danger">{qualityRun.error_details.message}</Text>}</Space></Descriptions.Item>}
             </Descriptions>
-            {qualityCandidates.length > 0 && <Table rowKey={(row: any) => row.name} size="small" columns={qualityCandidateColumns} dataSource={qualityCandidates} pagination={false} scroll={{ x: 600 }} />}
+            {qualityCandidates.length > 0 && <Table rowKey={(row: QualityFamilyResult) => row.algorithm_id} size="small" columns={qualityCandidateColumns} dataSource={qualityCandidates} pagination={false} scroll={{ x: 980 }} />}
             {qualityRun.status === "completed" && <Card size="small" title="主要报告">
               <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 4 }}>
                 <Descriptions.Item label="评估">{qualityRun.evaluation?.cross_validation_enabled ? `${qualityRun.evaluation.cross_validation_folds} 折交叉验证` : "固定留出集"}</Descriptions.Item>

@@ -12,6 +12,7 @@ from tests.week_manifest import ALL_TEST_MODULES, WEEK_TEST_MODULES
 
 BACKEND_DIR = os.path.dirname(__file__)
 PROJECT_DIR = os.path.dirname(os.path.dirname(BACKEND_DIR))
+MODULE_TIMEOUT_SECONDS = 300
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,7 +65,7 @@ def run_modules(test_modules: list[str]) -> int:
                 text=True,
                 cwd=BACKEND_DIR,
                 env=env,
-                timeout=120,
+                timeout=MODULE_TIMEOUT_SECONDS,
             )
 
             lines = result.stdout.splitlines()
