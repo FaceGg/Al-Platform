@@ -1939,3 +1939,11 @@
 - 真实业务证据：认证运行 `b7908c5a-3a1e-4159-a9cd-77e0e1c889aa` 最终为 `completed`，算法为 `random_forest`，搜索合同为 `optuna_v1`，方法为 `multi_fidelity`，预算为 5 次试验和 60 秒；旧 `candidate_ids` 请求返回 HTTP 422，完成结果不包含旧候选字段。
 - 最新提交门禁：Windows 发布树完整后端 `run_suite.py` 为 114/114 模块，Python `compileall -q app tools tests` 通过；前端完整 Vitest 为 43 个文件、207/207 用例，TypeScript/Vite 生产构建通过。构建仍只有既有 ECharts chunk 大于 500 kB 警告。
 - 后续步骤：停止且仅停止本次 Compose 项目，不删除 volumes；清理临时 WSL 代理桥和 systemd 代理环境；fetch 并确认远端基线未漂移后推送发布分支、创建 PR，等待全部 required checks 成功后合并并核验远端 `main`。
+
+### 2026-08-17：PR #19 required checks 受 GitHub Actions 计费门禁阻塞
+
+- 当前状态：发布分支已推送，PR #19（`codex/spot-weld-optuna-unification` -> `main`）已创建；本地与 WSL 验收证据仍有效，但远程 required checks 尚未执行，禁止合并。
+- 问题现象：Actions run `32002623822` 的 Quality（Windows）、Quality（Ubuntu）、Production integration 和 Production experiment integration 均在 3 秒内失败且 `steps=[]`；Chromium 与 Week 11-12 verification 因依赖失败被跳过。
+- 已确认根因：四个失败 check-run annotations 均为 “recent account payments have failed or your spending limit needs to be increased”，GitHub runner 未启动，`gh run view --log-failed` 无 job log；这不是代码、YAML 或测试断言失败。
+- 处理决定：不修改代码、不循环 rerun、不降低 required checks、不合并 PR；保留 PR #19 和发布工作树，待仓库计费/消费限额恢复后重新运行全部门禁。
+- 后续验证：计费恢复后使用同一提交重新 rerun，确认四个前置 job、Chromium、Week 11-12 verification 全部 `success`，再执行 PR 合并及远端 `main` ancestry/tree 核验。
