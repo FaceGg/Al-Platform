@@ -62,6 +62,28 @@ class TestAutoMLSearch(unittest.TestCase):
         self.assertIsNotNone(result.best_estimator)
         self.assertIsNotNone(result.best_score)
 
+    def test_family_search_uses_supplied_estimator_evaluator(self):
+        calls = []
+
+        def evaluator(estimator, *, task, features, target, evaluation):
+            calls.append((type(estimator).__name__, task, evaluation["marker"]))
+            return 0.8125
+
+        result = run_family_search(
+            family=get_algorithm_family("gbdt"),
+            task="classification",
+            features=self.features,
+            target=self.classification_target,
+            evaluation={"marker": "spot-weld"},
+            config=SearchConfig(method="random", max_trials=5, timeout_seconds=30),
+            catalog_index=3,
+            estimator_evaluator=evaluator,
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.best_score, 0.8125)
+        self.assertEqual(len(calls), 5)
+
     def test_multi_fidelity_records_resource_rungs(self):
         result = run_family_search(
             family=get_algorithm_family("hist_gradient_boosting"),
