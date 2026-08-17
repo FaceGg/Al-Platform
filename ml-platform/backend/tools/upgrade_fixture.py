@@ -15,8 +15,10 @@ from tools.backup_restore import (
 )
 
 
-EXPECTED_N_MINUS_ONE = "20260718_08"
-EXPECTED_HEAD = "20260720_10_security_notifications"
+# The current release head is an Alembic merge revision.  The notification
+# branch head is the supported N-1 starting point for a live upgrade.
+EXPECTED_N_MINUS_ONE = "20260720_10_security_notifications"
+EXPECTED_HEAD = "20260815_11"
 UPGRADE_ACCEPTANCE_DATABASE_URL_ENV = "UPGRADE_ACCEPTANCE_DATABASE_URL"
 UPGRADE_ACCEPTANCE_ISOLATED_ENV = "UPGRADE_ACCEPTANCE_ISOLATED"
 _REQUIRED_REPRESENTATIVE_TABLES = (

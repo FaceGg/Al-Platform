@@ -124,6 +124,19 @@ class _OkHandler(BaseHTTPRequestHandler):
         return
 
 
+class _InferenceApiKeyHandler(BaseHTTPRequestHandler):
+    observed_headers: dict[str, str] = {}
+
+    def do_POST(self):
+        self.__class__.observed_headers = dict(self.headers.items())
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"{}")
+
+    def log_message(self, *_args):
+        return
+
+
 class PerformanceScenarioTests(unittest.TestCase):
     _COMMIT = "a" * 40
 
@@ -183,6 +196,49 @@ class PerformanceScenarioTests(unittest.TestCase):
         self.assertEqual(result.get("requests_per_worker"), 3)
         self.assertIn("p95_ms", result)
         self.assertIn("p99_ms", result)
+
+    def test_api_key_cli_uses_the_frozen_inference_header(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _InferenceApiKeyHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory, patch.dict(
+                os.environ,
+                {"TEST_INFERENCE_API_KEY": "test-inference-key"},
+                clear=False,
+            ):
+                exit_code = performance_main(
+                    [
+                        "run",
+                        "--url",
+                        f"http://127.0.0.1:{server.server_port}/predict",
+                        "--concurrency",
+                        "1",
+                        "--requests-per-worker",
+                        "1",
+                        "--scenario",
+                        "cold-model-load",
+                        "--iteration",
+                        "1",
+                        "--method",
+                        "POST",
+                        "--api-key-env",
+                        "TEST_INFERENCE_API_KEY",
+                        "--output",
+                        str(Path(directory) / "result.json"),
+                    ],
+                )
+        finally:
+            server.shutdown()
+            thread.join(timeout=3)
+            server.server_close()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            _InferenceApiKeyHandler.observed_headers.get("X-Inference-Api-Key"),
+            "test-inference-key",
+        )
+        self.assertNotIn("X-API-Key", _InferenceApiKeyHandler.observed_headers)
 
     def test_summary_rejects_reduced_load_and_inconsistent_error_accounting(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2756,8 +2812,8 @@ class UpgradeFixtureTests(unittest.TestCase):
 
     def test_upgrade_result_requires_head_repeatability_and_no_data_loss(self):
         result = {
-            "from_revision": "20260718_08",
-            "to_revision": "20260720_10_security_notifications",
+            "from_revision": EXPECTED_N_MINUS_ONE,
+            "to_revision": EXPECTED_HEAD,
             "first_upgrade": "ok",
             "second_upgrade": "ok",
             "alembic_check": "ok",
@@ -2768,10 +2824,14 @@ class UpgradeFixtureTests(unittest.TestCase):
         }
         self.assertEqual(validate_upgrade_result(result)["status"], "passed")
 
+    def test_release_n_minus_one_contract_targets_current_merge_head(self):
+        self.assertEqual(EXPECTED_N_MINUS_ONE, "20260720_10_security_notifications")
+        self.assertEqual(EXPECTED_HEAD, "20260815_11")
+
     def test_wrong_target_revision_fails_closed(self):
         with self.assertRaises(ValueError):
             validate_upgrade_result(
-                {"from_revision": "20260718_08", "to_revision": "other"},
+                {"from_revision": EXPECTED_N_MINUS_ONE, "to_revision": "other"},
             )
 
     def test_upgrade_record_never_serializes_database_credentials(self):
@@ -2834,7 +2894,7 @@ class UpgradeFixtureTests(unittest.TestCase):
                                 "--database-url",
                                 database_url,
                                 "--target",
-                                "20260720_10_security_notifications",
+                                EXPECTED_HEAD,
                                 "--output",
                                 str(root / "result.json"),
                             ],
@@ -2852,12 +2912,12 @@ class UpgradeFixtureTests(unittest.TestCase):
             n_minus_one = type(
                 "Completed",
                 (),
-                {"returncode": 0, "stdout": "20260718_08"},
+                {"returncode": 0, "stdout": EXPECTED_N_MINUS_ONE},
             )()
             completed = type(
                 "Completed",
                 (),
-                {"returncode": 0, "stdout": "20260720_10_security_notifications (head)"},
+                {"returncode": 0, "stdout": f"{EXPECTED_HEAD} (head)"},
             )()
             snapshot = self._snapshot()
             with (
@@ -2873,7 +2933,7 @@ class UpgradeFixtureTests(unittest.TestCase):
             ):
                 result = execute_upgrade(
                     database_url,
-                    "20260720_10_security_notifications",
+                    EXPECTED_HEAD,
                     output,
                 )
             serialized = output.read_text(encoding="utf-8")
@@ -2888,12 +2948,12 @@ class UpgradeFixtureTests(unittest.TestCase):
             n_minus_one = type(
                 "Completed",
                 (),
-                {"returncode": 0, "stdout": "20260718_08"},
+                {"returncode": 0, "stdout": EXPECTED_N_MINUS_ONE},
             )()
             completed = type(
                 "Completed",
                 (),
-                {"returncode": 0, "stdout": "20260720_10_security_notifications (head)"},
+                {"returncode": 0, "stdout": f"{EXPECTED_HEAD} (head)"},
             )()
             before = self._snapshot()
             after = self._snapshot(notification_outbox=0)
@@ -2910,7 +2970,7 @@ class UpgradeFixtureTests(unittest.TestCase):
             ):
                 result = execute_upgrade(
                     database_url,
-                    "20260720_10_security_notifications",
+                    EXPECTED_HEAD,
                     output,
                 )
         self.assertEqual(result["status"], "passed")
@@ -2922,12 +2982,12 @@ class UpgradeFixtureTests(unittest.TestCase):
             n_minus_one = type(
                 "Completed",
                 (),
-                {"returncode": 0, "stdout": "20260718_08"},
+                {"returncode": 0, "stdout": EXPECTED_N_MINUS_ONE},
             )()
             completed = type(
                 "Completed",
                 (),
-                {"returncode": 0, "stdout": "20260720_10_security_notifications"},
+                {"returncode": 0, "stdout": EXPECTED_HEAD},
             )()
             empty_snapshot = {
                 "status": "passed",
@@ -2947,7 +3007,7 @@ class UpgradeFixtureTests(unittest.TestCase):
             ):
                 result = execute_upgrade(
                     database_url,
-                    "20260720_10_security_notifications",
+                    EXPECTED_HEAD,
                     output,
                 )
         self.assertEqual(result["status"], "failed")
@@ -2971,12 +3031,12 @@ class UpgradeFixtureTests(unittest.TestCase):
             n_minus_one = type(
                 "Completed",
                 (),
-                {"returncode": 0, "stdout": "20260718_08"},
+                {"returncode": 0, "stdout": EXPECTED_N_MINUS_ONE},
             )()
             completed = type(
                 "Completed",
                 (),
-                {"returncode": 0, "stdout": "20260720_10_security_notifications"},
+                {"returncode": 0, "stdout": EXPECTED_HEAD},
             )()
             snapshot = self._snapshot()
             with (

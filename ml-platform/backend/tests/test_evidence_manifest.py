@@ -14,6 +14,7 @@ from tools.security_scans import (
     WEB_SECURITY_GATE_NAMES,
     summarize_scans,
 )
+from tools.upgrade_fixture import EXPECTED_N_MINUS_ONE
 from tools.week11_performance import (
     SCENARIO_EXPECTED_LOAD,
     SCENARIO_REQUIRED_ITERATIONS,
@@ -190,7 +191,7 @@ class EvidenceManifestTests(unittest.TestCase):
             "upgrade/result.json",
             {
                 "status": "passed",
-                "from_revision": "20260718_08",
+                "from_revision": EXPECTED_N_MINUS_ONE,
                 "to_revision": MIGRATION_HEAD,
                 "first_upgrade": "ok",
                 "second_upgrade": "ok",
@@ -450,7 +451,7 @@ class EvidenceManifestTests(unittest.TestCase):
             payload = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(manifest["status"], "passed")
         self.assertEqual(payload["commit"], self._COMMIT)
-        self.assertEqual(payload["migration_head"], "20260720_10_security_notifications")
+        self.assertEqual(payload["migration_head"], "20260815_11")
         paths = [item["path"] for item in payload["files"]]
         self.assertEqual(paths, sorted(paths))
         self.assertIn("environment.json", paths)
@@ -459,6 +460,9 @@ class EvidenceManifestTests(unittest.TestCase):
             entry["sha256"],
             environment_hash,
         )
+
+    def test_manifest_targets_the_current_release_merge_head(self):
+        self.assertEqual(MIGRATION_HEAD, "20260815_11")
 
     def test_generate_fails_closed_for_missing_or_failed_required_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

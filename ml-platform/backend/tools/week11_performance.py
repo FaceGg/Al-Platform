@@ -517,7 +517,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.bearer_env:
         headers["Authorization"] = f"Bearer {os.environ[args.bearer_env]}"
     if args.api_key_env:
-        headers["X-API-Key"] = os.environ[args.api_key_env]
+        headers["X-Inference-Api-Key"] = os.environ[args.api_key_env]
     if args.warmup:
         run_http_scenario(
             args.url,

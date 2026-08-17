@@ -1909,6 +1909,18 @@
 - 设计文档：`docs/superpowers/specs/2026-08-17-spot-weld-optuna-unification-design.md`。
 - 后续步骤：完成详细 TDD 实施计划，逐项观察 RED/GREEN，执行本地全量、WSL Linux、WSL Compose、远程 CI 和合并后远端 `main` 核验。
 
+### 2026-08-17：Week 11-12 状态化验收合同纠正
+
+- 当前周次：第 11 至第 12 周系统联调与最终验收。
+- 任务状态：N-1 升级与性能工具合同修复、本地回归已完成；固定资源三轮性能、真实备份恢复、真实 N-1 数据升级、综合浏览器/通知矩阵和最终证据报告仍在进行中。
+- 问题现象：当前 Alembic 图已由 `20260720_10_security_notifications` 与 `20260730_09` 合并到 `20260815_11`，旧升级夹具和 manifest 仍把 `20260718_08 -> 20260720_10_security_notifications` 当作最终发布路径；性能 CLI 的 `--api-key-env` 发送 `X-API-Key`，而冻结推理 API 只接受 `X-Inference-Api-Key`。
+- 已确认根因：Week 9-12 分支合并后，状态化验收常量没有同步当前单一 merge head；性能工具沿用了设计阶段的通用 API Key 头名，没有由真实推理路由合同回归约束。
+- 解决方法：将受支持 N-1 固定为 `20260720_10_security_notifications`，目标 head 固定为 `20260815_11`，manifest 与升级测试共享同一常量；新增真实 HTTP 头捕获回归并将性能 CLI 改为发送 `X-Inference-Api-Key`。
+- 验证方式：N-1/manifest 两条合同先 RED 后 GREEN；推理头回归先稳定收到旧头并失败，最小修改后通过；`tests.test_week11_12_tools tests.test_evidence_manifest tests.test_week11_contracts` 共 134 项通过，前一轮 N-1/manifest 聚焦 44 项通过。
+- 影响范围：仅 Week 11-12 验收工具、对应测试和最终证据迁移头；不修改生产数据库、推理 API、业务 Schema 或默认工作树用户文件。
+- 预防措施：合并 Alembic head 后必须同时更新 N-1 起点、当前目标、manifest validator 和真实升级回归；任何负载工具的认证头必须通过本地真实 HTTP 接收器或冻结 API 路由合同验证。
+- 遗留事项：当前四个生产镜像仍绑定修复前提交，需在新提交冻结后全部重建并逐一校验 OCI revision；GitHub Actions 月度配额已耗尽，远端门禁保持未执行，不得写成 CI 通过。
+
 ### 2026-08-17：点焊质量感知统一 Optuna 搜索本地实现完成
 
 - 当前周次：第 11 至第 12 周系统联调与验收支持；第 17 周点焊质量交付支持。
