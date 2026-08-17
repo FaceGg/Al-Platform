@@ -82,7 +82,8 @@ describe("AutoMLPage", () => {
 
     expect(await screen.findByRole("heading", { name: "AutoML" })).toBeInTheDocument();
     expect(screen.getByText("Run")).toBeInTheDocument();
-    expect(screen.queryByText("Budget")).not.toBeInTheDocument();
+    expect(screen.getByText("最大试验次数")).toBeInTheDocument();
+    expect(screen.getByText("总时间上限")).toBeInTheDocument();
   });
 
   it("keeps the modeling task list visible before a project is selected", async () => {
@@ -209,7 +210,7 @@ describe("AutoMLPage", () => {
       cross_validation_enabled: true,
       cross_validation_folds: 3,
     })));
-    expect(api.post.mock.calls[0][1]).not.toHaveProperty("time_budget");
+    expect(api.post.mock.calls[0][1]).toHaveProperty("time_budget", 600);
   });
 
   it("submits holdout evaluation when generic cross-validation is disabled", async () => {
@@ -233,16 +234,21 @@ describe("AutoMLPage", () => {
     })));
   });
 
-  it("exposes ten algorithm candidates for generic AutoML", async () => {
+  it("exposes seven algorithm families and five search methods", async () => {
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
-    fireEvent.mouseDown(await screen.findByRole("combobox", { name: "算法集合" }));
+    fireEvent.mouseDown(await screen.findByRole("combobox", { name: "算法家族" }));
 
     for (const label of [
-      "LGB_v1 · LightGBM", "LGB_v2 · LightGBM", "XGB_v1 · XGBoost", "XGB_v2 · XGBoost",
-      "CAT_v1 · CatBoost", "CAT_v2 · CatBoost", "GBDT_v1 · GBDT", "RF_v1 · Random Forest",
-      "ET_v1 · Extra Trees", "HGB_v1 · HistGradientBoosting",
+      "LightGBM", "XGBoost", "CatBoost", "GBDT",
+      "Random Forest", "Extra Trees", "HistGradientBoosting",
     ]) {
+      expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
+    }
+    expect(screen.queryByText("LGB_v1 · LightGBM")).not.toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "搜索方法" }));
+    for (const label of ["网格搜索", "随机搜索", "贝叶斯优化", "进化算法", "多保真搜索"]) {
       expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
     }
   });
@@ -428,7 +434,7 @@ describe("AutoMLPage", () => {
     expect(screen.getByRole("heading", { name: "AutoML" })).toBeInTheDocument();
   });
 
-  it("submits the selected AutoML candidate IDs", async () => {
+  it("submits the selected algorithm families and search configuration", async () => {
     api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
@@ -441,13 +447,17 @@ describe("AutoMLPage", () => {
     fireEvent.mouseDown(comboboxes[3]);
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
 
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "算法集合" }));
-    fireEvent.click(await screen.findByText("LGB_v1 · LightGBM"));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "算法家族" }));
+    fireEvent.click(await screen.findByText("Random Forest"));
     fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/training/automl/run", expect.objectContaining({
-      candidate_ids: ["LGB_v1"],
+      algorithm_ids: ["random_forest"],
+      search_method: "bayesian",
+      max_trials: 20,
+      time_budget: 600,
     })));
+    expect(api.post.mock.calls[0][1]).not.toHaveProperty("candidate_ids");
   });
 
   it("submits the selected input columns with the target column", async () => {
@@ -474,7 +484,7 @@ describe("AutoMLPage", () => {
     })));
   });
 
-  it("keeps the report candidate selection when switching task type", async () => {
+  it("keeps the algorithm family selection when switching task type", async () => {
     api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
@@ -487,15 +497,15 @@ describe("AutoMLPage", () => {
     fireEvent.mouseDown(comboboxes[3]);
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
 
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "算法集合" }));
-    fireEvent.click(await screen.findByText("LGB_v1 · LightGBM"));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "算法家族" }));
+    fireEvent.click(await screen.findByText("LightGBM"));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务类型" }));
     fireEvent.click(await screen.findByText("Regression"));
     fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/training/automl/run", expect.objectContaining({
       task: "regression",
-      candidate_ids: ["LGB_v1"],
+      algorithm_ids: ["lightgbm"],
     })));
   });
 });
