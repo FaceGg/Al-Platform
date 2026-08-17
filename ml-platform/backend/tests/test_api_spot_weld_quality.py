@@ -122,6 +122,13 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
             status="completed",
             feature_schema=list(FEATURE_SCHEMA),
             rule_set_version="report_v1",
+            input_fingerprint={
+                "search_contract": "optuna_v1",
+                "algorithm_ids": ["gbdt"],
+                "search_method": "random",
+                "max_trials": 5,
+                "time_budget": 60,
+            },
         )
         self.db.add(run)
         self.db.flush()

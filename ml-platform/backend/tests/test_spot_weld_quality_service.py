@@ -28,8 +28,8 @@ from app.models.user import User
 from app.services.artifact_service import ArtifactService
 from app.services.automl_search import FamilySearchResult
 from app.services.spot_weld_quality import (
-    AUTOML_CONFIGS,
     CandidateResult,
+    _quality_estimator_metrics,
     apply_report_v1_rules,
     build_demo_report_frame,
     claim_quality_run,
@@ -42,8 +42,8 @@ from app.services.spot_weld_quality import (
     run_clustering,
     run_snapshot_training,
     save_labeled_dataset,
-    select_automl_configs,
     select_best_candidate,
+    normalize_quality_search_config,
     train_label_snapshot,
     update_quality_run_rules,
     validate_report_frame,
@@ -166,7 +166,6 @@ class TestSpotWeldQualityService(unittest.TestCase):
         features = np.eye(3, dtype=float)[raw_labels]
         labels = np.asarray(["normal", "weak_splatter", "strong_splatter"])[raw_labels]
         _, encoded_labels = np.unique(labels, return_inverse=True)
-        config = ({"name": "biased", "type": "test", "feature_scope": "fusion"},)
         macro_auc_values = []
         weighted_auc_values = []
         macro_f1_values = []
@@ -183,13 +182,17 @@ class TestSpotWeldQualityService(unittest.TestCase):
             macro_f1_values.append(f1_score(encoded_labels[test_index], predictions, average="macro", zero_division=0))
             weighted_f1_values.append(f1_score(encoded_labels[test_index], predictions, average="weighted", zero_division=0))
 
-        with patch("app.services.spot_weld_quality._build_estimator", return_value=BiasedClassifier()):
-            results, _best, _classes = run_snapshot_training(features, labels, ["feature_0", "feature_1", "feature_2"], configs=config)
+        metrics = _quality_estimator_metrics(
+            BiasedClassifier,
+            features=features,
+            target=encoded_labels,
+            evaluation={"cross_validation_enabled": True, "cross_validation_folds": 5},
+        )
 
-        self.assertAlmostEqual(results[0].auc, float(np.mean(macro_auc_values)))
-        self.assertAlmostEqual(results[0].f1, float(np.mean(macro_f1_values)))
-        self.assertNotAlmostEqual(results[0].auc, float(np.mean(weighted_auc_values)))
-        self.assertNotAlmostEqual(results[0].f1, float(np.mean(weighted_f1_values)))
+        self.assertAlmostEqual(metrics["auc"], float(np.mean(macro_auc_values)))
+        self.assertAlmostEqual(metrics["f1"], float(np.mean(macro_f1_values)))
+        self.assertNotAlmostEqual(metrics["auc"], float(np.mean(weighted_auc_values)))
+        self.assertNotAlmostEqual(metrics["f1"], float(np.mean(weighted_f1_values)))
 
     def test_save_labeled_dataset_appends_label_column_and_preserves_source_rows(self):
         with tempfile.TemporaryDirectory(prefix="quality-save-labels-") as directory:
@@ -253,23 +256,25 @@ class TestSpotWeldQualityService(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
-    def test_report_candidate_selection_preserves_order_and_rejects_invalid_sets(self):
-        selected = select_automl_configs(["RF_v1", "GBDT_v1"])
-        self.assertEqual([item["name"] for item in selected], ["RF_v1", "GBDT_v1"])
-        self.assertEqual(select_automl_configs([]), AUTOML_CONFIGS)
-        for candidate_ids in (["RF_v1", "RF_v1"], ["does-not-exist"]):
-            with self.subTest(candidate_ids=candidate_ids):
+    def test_quality_search_config_preserves_order_and_rejects_invalid_sets(self):
+        selected = normalize_quality_search_config(
+            ["random_forest", "gbdt"], "random", 5, 60,
+        )
+        self.assertEqual(selected["algorithm_ids"], ["random_forest", "gbdt"])
+        self.assertEqual(len(normalize_quality_search_config([], "bayesian", 20, 600)["algorithm_ids"]), 7)
+        for algorithm_ids in (["random_forest", "random_forest"], ["does-not-exist"]):
+            with self.subTest(algorithm_ids=algorithm_ids):
                 with self.assertRaises(QualityPipelineError) as raised:
-                    select_automl_configs(candidate_ids)
-                self.assertEqual(raised.exception.code, "QUALITY_AUTOML_CONFIG_INVALID")
+                    normalize_quality_search_config(algorithm_ids, "random", 5, 60)
+                self.assertEqual(raised.exception.code, "QUALITY_AUTOML_SEARCH_CONFIG_INVALID")
 
     def test_candidate_selection_orders_auc_then_f1_then_index(self):
         results = [
-            CandidateResult("lgb", "lgb", auc=0.91, f1=0.80, config_index=0),
-            CandidateResult("cat", "cat", auc=0.91, f1=0.82, config_index=1),
-            CandidateResult("rf", "rf", auc=0.91, f1=0.82, config_index=2),
+            CandidateResult("lightgbm", "LightGBM", "completed", 0, auc=0.91, f1=0.80),
+            CandidateResult("catboost", "CatBoost", "completed", 1, auc=0.91, f1=0.82),
+            CandidateResult("random_forest", "Random Forest", "completed", 2, auc=0.91, f1=0.82),
         ]
-        self.assertEqual(select_best_candidate(results).name, "cat")
+        self.assertEqual(select_best_candidate(results).algorithm_id, "catboost")
 
     def test_automl_searches_selected_algorithm_families(self):
         features = np.asarray([
@@ -540,7 +545,14 @@ class TestSpotWeldQualityService(unittest.TestCase):
 
         with warnings.catch_warnings(record=True) as captured:
             warnings.simplefilter("always")
-            run_automl(features.to_numpy(dtype=np.float64), labels, configs=(AUTOML_CONFIGS[0],))
+            run_automl(
+                features.to_numpy(dtype=np.float64),
+                labels,
+                algorithm_ids=["lightgbm"],
+                search_method="random",
+                max_trials=5,
+                time_budget=60,
+            )
 
         self.assertFalse(any("does not have valid feature names" in str(item.message) for item in captured))
 
@@ -1010,6 +1022,11 @@ class TestSpotWeldQualityService(unittest.TestCase):
                 self.assertEqual(outcome.model_library.params["feature_version"], "report_v1")
                 self.assertEqual(outcome.model_library.params["quality_run_id"], str(run.id))
                 self.assertEqual(outcome.model_library.params["label_source"], "approved")
+                self.assertEqual(outcome.model_library.backbone, "gbdt")
+                self.assertEqual(outcome.model_library.params["algorithm_id"], "gbdt")
+                self.assertEqual(outcome.model_library.params["algorithm_ids"], ["gbdt"])
+                self.assertEqual(outcome.model_library.params["search_method"], "random")
+                self.assertTrue(outcome.model_library.params["best_params"])
                 self.assertIn("report", outcome.output_artifacts)
                 with artifacts.materialize(outcome.output_artifacts["report"], project.id, expected_type="quality_report") as report_path:
                     workbook = load_workbook(report_path, read_only=True)
@@ -1024,6 +1041,12 @@ class TestSpotWeldQualityService(unittest.TestCase):
                         self.assertEqual(summary["快照训练评估配置"], "cross_validation: 5 folds")
                         self.assertEqual(summary["训练标签样本"], len(snapshot.labels))
                         self.assertNotIn("已审核样本", summary)
+                        self.assertEqual(workbook["AutoML选型"].max_row, 2)
+                        snapshot_names = [
+                            str(row[0])
+                            for row in workbook["AutoML选型"].iter_rows(min_row=2, values_only=True)
+                        ]
+                        self.assertFalse(any(name.startswith("AutoML(") or name.startswith("MLP_") for name in snapshot_names))
                     finally:
                         workbook.close()
             finally:
