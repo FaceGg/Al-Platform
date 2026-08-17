@@ -13,6 +13,7 @@ celery_app = Celery(
         "app.tasks.training_tasks",
         "app.tasks.inference_tasks",
         "app.tasks.notification_tasks",
+        "app.tasks.spot_weld_quality_tasks",
     ],
     broker=(settings.celery_broker_url.get_secret_value() if settings.celery_broker_url else None),
     backend=(settings.celery_result_backend.get_secret_value() if settings.celery_result_backend else None),
@@ -61,3 +62,4 @@ from app.tasks import training_tasks  # noqa: E402,F401
 from app.tasks import scheduler_tasks  # noqa: E402,F401
 from app.tasks import inference_tasks  # noqa: E402,F401
 from app.tasks import notification_tasks  # noqa: E402,F401
+from app.tasks import spot_weld_quality_tasks  # noqa: E402,F401
