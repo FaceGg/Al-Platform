@@ -33,6 +33,8 @@ from app.models.spot_weld_quality import (
     SpotWeldQualitySample,
 )
 from app.services.artifact_service import ArtifactAccessError, ArtifactService, build_artifact_service
+from app.services.automl_catalog import resolve_algorithm_families
+from app.services.automl_search import FamilySearchResult, SEARCH_METHODS, SearchConfig, run_family_search
 from app.services.spot_weld_features import (
     FEATURE_SCHEMA,
     QualityPipelineError,
@@ -528,6 +530,13 @@ class CandidateResult:
     error_message: str | None = None
     feature_importance: list[float] = field(default_factory=list)
     params: dict[str, Any] = field(default_factory=dict)
+    algorithm_id: str | None = None
+    status: str = "completed"
+    best_score: float | None = None
+    best_params: dict[str, Any] = field(default_factory=dict)
+    completed_trials: int = 0
+    pruned_trials: int = 0
+    failed_trials: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -543,6 +552,13 @@ class CandidateResult:
             "error_message": self.error_message,
             "feature_importance": self.feature_importance,
             "params": self.params,
+            "algorithm_id": self.algorithm_id,
+            "status": self.status,
+            "best_score": self.best_score,
+            "best_params": self.best_params,
+            "completed_trials": self.completed_trials,
+            "pruned_trials": self.pruned_trials,
+            "failed_trials": self.failed_trials,
         }
 
 
@@ -620,13 +636,95 @@ def _quality_automl_auc(y_true: np.ndarray, probabilities: np.ndarray, class_cou
     ))
 
 
+def _quality_automl_splits(
+    features: np.ndarray,
+    target: np.ndarray,
+    evaluation: Mapping[str, Any],
+) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    if evaluation["cross_validation_enabled"]:
+        splitter = StratifiedKFold(
+            n_splits=int(evaluation["cross_validation_folds"]),
+            shuffle=True,
+            random_state=42,
+        )
+        return tuple(splitter.split(features, target))
+    try:
+        train_index, test_index = train_test_split(
+            np.arange(len(target)),
+            test_size=0.2,
+            random_state=42,
+            stratify=target,
+        )
+    except ValueError as error:
+        raise QualityPipelineError("QUALITY_AUTOML_INSUFFICIENT_LABELS") from error
+    return ((train_index, test_index),)
+
+
+def _quality_estimator_metrics(
+    estimator_factory: Callable[[], Any],
+    *,
+    features: np.ndarray,
+    target: np.ndarray,
+    evaluation: Mapping[str, Any],
+) -> dict[str, Any]:
+    class_count = len(np.unique(target))
+    aucs: list[float] = []
+    f1s: list[float] = []
+    importances: list[np.ndarray] = []
+    for train_index, test_index in _quality_automl_splits(features, target, evaluation):
+        scaler = StandardScaler()
+        train = scaler.fit_transform(features[train_index])
+        test = scaler.transform(features[test_index])
+        estimator = estimator_factory()
+        estimator.fit(_estimator_matrix(train), target[train_index])
+        probabilities = estimator.predict_proba(_estimator_matrix(test))
+        predictions = estimator.predict(_estimator_matrix(test))
+        aucs.append(_quality_automl_auc(target[test_index], probabilities, class_count))
+        f1s.append(float(f1_score(
+            target[test_index], predictions, average="macro", zero_division=0,
+        )))
+        importances.append(_feature_importance(estimator, features.shape[1]))
+    return {
+        "auc": float(np.mean(aucs)),
+        "f1": float(np.mean(f1s)),
+        "auc_std": float(np.std(aucs)),
+        "f1_std": float(np.std(f1s)),
+        "feature_importance": np.mean(importances, axis=0).tolist(),
+    }
+
+
+def _evaluate_quality_estimator(
+    estimator,
+    *,
+    task: str,
+    features: np.ndarray,
+    target: np.ndarray,
+    evaluation: Mapping[str, Any],
+) -> float:
+    if task != "classification":
+        raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID")
+    metrics = _quality_estimator_metrics(
+        lambda: estimator,
+        features=features,
+        target=target,
+        evaluation=evaluation,
+    )
+    return float(metrics["auc"])
+
+
 def run_automl(
     features: np.ndarray,
     labels: Iterable[Any],
     *,
     configs: tuple[Mapping[str, Any], ...] = AUTOML_CONFIGS,
+    algorithm_ids: Sequence[str] | None = None,
+    search_method: str = "bayesian",
+    max_trials: int = 20,
+    time_budget: float = 600,
     evaluation: Mapping[str, Any] | None = None,
     progress_callback: Callable[[int, int, CandidateResult], None] | None = None,
+    family_search: Callable[..., FamilySearchResult] = run_family_search,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[list[CandidateResult], CandidateResult]:
     X = np.asarray(features, dtype=np.float64)
     y_raw = np.asarray(list(labels))
@@ -647,24 +745,82 @@ def run_automl(
     )
     if len(counts) < 2 or int(counts.min()) < minimum_count:
         raise QualityPipelineError("QUALITY_AUTOML_INSUFFICIENT_LABELS")
-    if evaluation_config["cross_validation_enabled"]:
-        splitter = StratifiedKFold(
-            n_splits=int(evaluation_config["cross_validation_folds"]),
-            shuffle=True,
-            random_state=42,
-        )
-        splits = tuple(splitter.split(X, y))
-    else:
+    splits = _quality_automl_splits(X, y, evaluation_config)
+    if algorithm_ids is not None:
+        if (
+            search_method not in SEARCH_METHODS
+            or isinstance(max_trials, bool)
+            or int(max_trials) < 1
+            or isinstance(time_budget, bool)
+            or float(time_budget) <= 0
+        ):
+            raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID")
         try:
-            train_index, test_index = train_test_split(
-                np.arange(len(y)),
-                test_size=0.2,
-                random_state=42,
-                stratify=y,
-            )
+            families = resolve_algorithm_families(list(algorithm_ids))
         except ValueError as error:
-            raise QualityPipelineError("QUALITY_AUTOML_INSUFFICIENT_LABELS") from error
-        splits = ((train_index, test_index),)
+            raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID") from error
+        deadline = monotonic() + float(time_budget)
+        results: list[CandidateResult] = []
+        for config_index, family in enumerate(families):
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                results.append(CandidateResult(
+                    name=family.display_name,
+                    model_type=family.id,
+                    algorithm_id=family.id,
+                    status="failed",
+                    config_index=config_index,
+                    error_code="QUALITY_AUTOML_BUDGET_EXHAUSTED",
+                    error_message="Point-weld AutoML time budget exhausted",
+                ))
+                continue
+            family_result = family_search(
+                family=family,
+                task="classification",
+                features=X,
+                target=y,
+                evaluation=evaluation_config,
+                config=SearchConfig(
+                    method=search_method,
+                    max_trials=int(max_trials),
+                    timeout_seconds=max(0.001, remaining / (len(families) - config_index)),
+                ),
+                catalog_index=config_index,
+                estimator_evaluator=_evaluate_quality_estimator,
+            )
+            result = CandidateResult(
+                name=family.display_name,
+                model_type=family.id,
+                algorithm_id=family.id,
+                status=family_result.status,
+                config_index=config_index,
+                best_score=family_result.best_score,
+                best_params=dict(family_result.best_params),
+                params=dict(family_result.best_params),
+                completed_trials=family_result.completed_trials,
+                pruned_trials=family_result.pruned_trials,
+                failed_trials=family_result.failed_trials,
+                training_time_seconds=family_result.training_time_seconds,
+                error_code=family_result.error_code,
+                error_message=family_result.error_message,
+            )
+            if family_result.status == "completed":
+                metrics = _quality_estimator_metrics(
+                    lambda family=family, params=result.best_params: family.build("classification", params),
+                    features=X,
+                    target=y,
+                    evaluation=evaluation_config,
+                )
+                result.auc = metrics["auc"]
+                result.f1 = metrics["f1"]
+                result.auc_std = metrics["auc_std"]
+                result.f1_std = metrics["f1_std"]
+                result.feature_importance = metrics["feature_importance"]
+            results.append(result)
+            if progress_callback is not None:
+                progress_callback(config_index + 1, len(families), result)
+        return results, select_best_candidate(results)
+
     results: list[CandidateResult] = []
     for config_index, config in enumerate(configs):
         result = CandidateResult(

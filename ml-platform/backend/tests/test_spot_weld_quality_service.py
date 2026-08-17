@@ -26,6 +26,7 @@ from app.models.spot_weld_quality import (
 )
 from app.models.user import User
 from app.services.artifact_service import ArtifactService
+from app.services.automl_search import FamilySearchResult
 from app.services.spot_weld_quality import (
     AUTOML_CONFIGS,
     CandidateResult,
@@ -265,6 +266,77 @@ class TestSpotWeldQualityService(unittest.TestCase):
             CandidateResult("rf", "rf", auc=0.91, f1=0.82, config_index=2),
         ]
         self.assertEqual(select_best_candidate(results).name, "cat")
+
+    def test_automl_searches_selected_algorithm_families(self):
+        features = np.asarray([
+            [index % 11, (index * 3) % 7, index % 5]
+            for index in range(60)
+        ], dtype=float)
+        labels = np.asarray([
+            int((index % 11) + ((index * 3) % 7) > 8)
+            for index in range(60)
+        ])
+
+        results, winner = run_automl(
+            features,
+            labels,
+            algorithm_ids=["gbdt", "random_forest"],
+            search_method="bayesian",
+            max_trials=5,
+            time_budget=60,
+            evaluation={"cross_validation_enabled": True, "cross_validation_folds": 3},
+        )
+
+        self.assertEqual([item.algorithm_id for item in results], ["gbdt", "random_forest"])
+        self.assertIn(winner.algorithm_id, {"gbdt", "random_forest"})
+        self.assertTrue(winner.best_params)
+        self.assertIsNotNone(winner.auc)
+        self.assertIsNotNone(winner.f1)
+
+    def test_automl_continues_after_an_unavailable_family(self):
+        features = np.asarray([
+            [index % 11, (index * 3) % 7, index % 5]
+            for index in range(60)
+        ], dtype=float)
+        labels = np.asarray([
+            int((index % 11) + ((index * 3) % 7) > 8)
+            for index in range(60)
+        ])
+
+        def family_search(**kwargs):
+            family = kwargs["family"]
+            if family.id == "gbdt":
+                return FamilySearchResult(
+                    algorithm_id=family.id,
+                    display_name=family.display_name,
+                    catalog_index=kwargs["catalog_index"],
+                    status="unavailable",
+                    error_code="AUTOML_ALGORITHM_UNAVAILABLE",
+                )
+            return FamilySearchResult(
+                algorithm_id=family.id,
+                display_name=family.display_name,
+                catalog_index=kwargs["catalog_index"],
+                status="completed",
+                best_score=0.8,
+                best_params=dict(family.default_params),
+                completed_trials=1,
+            )
+
+        results, winner = run_automl(
+            features,
+            labels,
+            algorithm_ids=["gbdt", "random_forest"],
+            search_method="random",
+            max_trials=5,
+            time_budget=60,
+            evaluation={"cross_validation_enabled": False, "cross_validation_folds": None},
+            family_search=family_search,
+        )
+
+        self.assertEqual(results[0].status, "unavailable")
+        self.assertEqual(results[0].error_code, "AUTOML_ALGORITHM_UNAVAILABLE")
+        self.assertEqual(winner.algorithm_id, "random_forest")
 
     def test_report_rules_keep_all_hits_in_table_order(self):
         result = apply_report_v1_rules(
