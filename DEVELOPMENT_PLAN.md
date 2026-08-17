@@ -1874,3 +1874,15 @@
 - 验证方式：两条回归均先在旧实现 RED，修复后 `2/2` 通过；将真实 run `31940235443` artifact 的 npm receipt 按新输出格式重放并仅隔离机器相关的 Gitleaks live path binding 后，七个 security gates 全部 passed。`tests.test_week12_security_gates tests.test_evidence_manifest tests.test_ci_workflow -v` 为 `227/227` 通过，另有 1 项 Windows 上按预期跳过的 POSIX 权限测试。
 - 预防措施：scanner receipt 的脱敏输出必须由同一生产 validator 接受，新增或修改命令参数时要覆盖“执行 -> 脱敏落盘 -> summarize”生命周期；外部 scanner 的 schema 合同必须用真实 pinned 版本 artifact 验证，不能只依赖手写旧格式 fixture。
 - 遗留事项：完成 compile、diff、提交范围审查后提交并推送；等待新 run 的六个 GitHub Actions jobs 全部成功。只有全绿后才合并 PR #17 到 `main`，并核验 PR 状态、merge commit、远端 `main` 和保留的未跟踪目录。
+
+### 2026-08-17：AutoML 七类算法与五类超参数搜索实施计划
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：需求、架构、搜索执行、结果结构、前端交互和历史结果查看设计均已确认；详细 TDD 实施计划已完成，生产代码尚未修改。
+- 设计范围：通用 AutoML 算法选择从 10 套人工参数版本调整为 LightGBM、XGBoost、CatBoost、GBDT、Random Forest、Extra Trees、HistGradientBoosting 七个算法家族；新增基于 Optuna 的网格、随机、贝叶斯、进化和多保真五类搜索；任务列表新增普通 AutoML 与点焊质量任务的持久结果查看入口。
+- 兼容决策：新任务使用 `algorithm_ids`、`search_method`、`max_trials`、`time_budget` 和持久化 `search_contract=optuna_v1`；历史 `candidate_ids` 任务保留原执行路径；点焊报告复现继续使用既有 10 套固定候选配置；不修改数据库 Schema。
+- 设计文档：`docs/superpowers/specs/2026-08-16-automl-hyperparameter-search-design.md`，提交 `cb8e48d`。
+- 实施计划：`docs/superpowers/plans/2026-08-17-automl-hyperparameter-search.md`，按算法目录、Optuna 搜索服务、执行与 MLflow、API 兼容、前端搜索控件、历史结果查看、全量验收七个任务推进。
+- 计划验证：每项功能先运行失败测试，再做最小实现并恢复 GREEN；最终分别执行 AutoML 聚焦后端、聚焦前端、完整后端 `run_suite.py`、完整前端 Vitest、生产构建、浏览器结果回看和 `git diff --check`。
+- 已知风险：五类搜索会显著增加训练成本；多保真对传统估计器需按资源阶段重新训练；线程/Celery 当前不能安全强杀已开始的第三方估计器；本地通过不代表真实 Celery、Redis、MLflow、Ubuntu Compose 或远程 CI 已验收。
+- 遗留事项：等待用户选择实施方式后开始 TDD；实现完成前不得将此功能标记为完成，不得把计划或设计审阅当作运行态验收。
