@@ -441,7 +441,10 @@ describe("DataAnnotationPage", () => {
       {
         dataset_artifact_id: "artifact-1",
         field_mapping: {},
-        candidate_ids: [],
+        algorithm_ids: [],
+        search_method: "bayesian",
+        max_trials: 20,
+        time_budget: 600,
         label_mode: "automatic",
         rule_config: {
           strong_splatter_min: 4,
@@ -479,7 +482,10 @@ describe("DataAnnotationPage", () => {
       {
         dataset_artifact_id: "dataset-report",
         field_mapping: {},
-        candidate_ids: [],
+        algorithm_ids: [],
+        search_method: "bayesian",
+        max_trials: 20,
+        time_budget: 600,
         label_mode: "manual",
       },
     ));

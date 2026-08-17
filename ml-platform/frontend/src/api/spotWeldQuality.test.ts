@@ -5,6 +5,7 @@ const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 vi.mock("./client", () => ({ default: { get, post } }));
 
 import {
+  createQualityRun,
   createQualityDemoDataset,
   getQualityModel,
   getQualitySample,
@@ -88,6 +89,27 @@ describe("spot weld quality API", () => {
       "/projects/project-1/spot-weld/demo-dataset",
       { row_count: 60 },
     );
+  });
+
+  it("creates quality runs with the shared Optuna search contract", async () => {
+    post.mockResolvedValueOnce({ data: { id: "run-1", status: "queued" } });
+
+    await createQualityRun("project-1", {
+      dataset_artifact_id: "artifact-1",
+      algorithm_ids: ["random_forest"],
+      search_method: "multi_fidelity",
+      max_trials: 20,
+      time_budget: 600,
+    });
+
+    expect(post).toHaveBeenCalledWith("/projects/project-1/spot-weld/runs", {
+      dataset_artifact_id: "artifact-1",
+      algorithm_ids: ["random_forest"],
+      search_method: "multi_fidelity",
+      max_trials: 20,
+      time_budget: 600,
+    });
+    expect(post.mock.calls[0][1]).not.toHaveProperty("candidate_ids");
   });
 
   it("loads generated models and warning summaries only through project-scoped routes", async () => {

@@ -382,7 +382,10 @@ export default function DataAnnotationPage() {
     const validation = await validateQualityDataset(projectId, nextDatasetArtifactId, {}, {
       label_mode: nextLabelMode,
       rule_config: nextLabelMode === "automatic" ? nextRuleConfig : {},
-      candidate_ids: [],
+      algorithm_ids: [],
+      search_method: "bayesian",
+      max_trials: 20,
+      time_budget: 600,
     });
     if (!validation.valid_rows || validation.errors.length) {
       const firstError = validation.errors[0];
@@ -392,7 +395,10 @@ export default function DataAnnotationPage() {
     const payload: Parameters<typeof createQualityRun>[1] = {
       dataset_artifact_id: nextDatasetArtifactId,
       field_mapping: {},
-      candidate_ids: [],
+      algorithm_ids: [],
+      search_method: "bayesian",
+      max_trials: 20,
+      time_budget: 600,
       label_mode: nextLabelMode,
     };
     if (nextLabelMode === "automatic") payload.rule_config = nextRuleConfig;

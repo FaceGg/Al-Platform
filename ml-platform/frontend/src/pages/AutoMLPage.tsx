@@ -4,7 +4,15 @@ import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlin
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
-import { createQualityRun, downloadQualityArtifact, getQualityRun, type QualityRun } from "../api/spotWeldQuality";
+import {
+  createQualityRun,
+  downloadQualityArtifact,
+  getQualityRun,
+  type QualityAlgorithmId,
+  type QualityFamilyResult,
+  type QualityRun,
+  type QualitySearchMethod,
+} from "../api/spotWeldQuality";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
 
@@ -28,10 +36,13 @@ const AUTOML_SEARCH_OPTIONS = [
   { value: "multi_fidelity", label: "多保真搜索" },
 ];
 
-const REPORT_CANDIDATE_OPTIONS = [
-  "LGB_v1", "LGB_v2", "XGB_v1", "XGB_v2", "CAT_v1",
-  "CAT_v2", "GBDT_v1", "RF_v1", "ET_v1", "HGB_v1",
-].map((value) => ({ value, label: value }));
+const QUALITY_SEARCH_LABELS: Record<QualitySearchMethod, string> = {
+  grid: "网格搜索",
+  random: "随机搜索",
+  bayesian: "贝叶斯优化",
+  evolutionary: "进化算法",
+  multi_fidelity: "多保真搜索",
+};
 
 const QUALITY_REQUIRED_SOURCE_COLUMNS = [
   "wld1c", "wld2c", "tipv1", "tipv2", "wres", "energy",
@@ -105,7 +116,10 @@ export default function AutoMLPage() {
   const [activeTab, setActiveTab] = useState("results");
   const [recipeTab, setRecipeTab] = useState("general");
   const [qualityRunning, setQualityRunning] = useState(false);
-  const [qualityCandidateIds, setQualityCandidateIds] = useState<string[]>([]);
+  const [qualityAlgorithmIds, setQualityAlgorithmIds] = useState<QualityAlgorithmId[]>([]);
+  const [qualitySearchMethod, setQualitySearchMethod] = useState<QualitySearchMethod>("bayesian");
+  const [qualityMaxTrials, setQualityMaxTrials] = useState(20);
+  const [qualityTimeBudget, setQualityTimeBudget] = useState(600);
   const [qualityTargetColumn, setQualityTargetColumn] = useState("");
   const [qualityInputColumns, setQualityInputColumns] = useState<string[]>([]);
   const [qualityCrossValidationEnabled, setQualityCrossValidationEnabled] = useState(true);
@@ -459,7 +473,10 @@ export default function AutoMLPage() {
       const run = await createQualityRun(selectedProject, {
         dataset_artifact_id: selectedDataset,
         field_mapping: {},
-        candidate_ids: qualityCandidateIds,
+        algorithm_ids: qualityAlgorithmIds,
+        search_method: qualitySearchMethod,
+        max_trials: qualityMaxTrials,
+        time_budget: qualityTimeBudget,
         target_column: qualityTargetColumn || undefined,
         input_columns: normalizedInputs,
         cross_validation_enabled: qualityCrossValidationEnabled,
@@ -572,14 +589,17 @@ export default function AutoMLPage() {
   const qualityKSearch = Object.entries((qualityCluster.silhouette_scores || {}) as Record<string, number>);
   const qualityPca = Array.isArray(qualityCluster.pca_coordinates) ? qualityCluster.pca_coordinates : [];
   const qualityBestCandidate = qualityCandidates.find((candidate) => candidate.error_code == null) || qualityCandidates[0];
-  const formatQualityMetric = (key: string) => {
+  const formatQualityMetric = (key: "auc" | "f1") => {
     const value = qualityBestCandidate?.[key];
     return typeof value === "number" && Number.isFinite(value) ? value.toFixed(4) : "-";
   };
   const qualityCandidateColumns = [
-    { title: "候选模型", dataIndex: "name", key: "name" },
+    { title: "算法家族", dataIndex: "name", key: "name", render: (value: string, row: QualityFamilyResult) => value || row.algorithm_id },
+    { title: "状态", dataIndex: "status", key: "status", render: (value: string) => <Tag color={value === "completed" ? "green" : value === "unavailable" ? "orange" : "red"}>{value}</Tag> },
     { title: "AUC", dataIndex: "auc", key: "auc", render: (value: number | null) => value == null ? "-" : Number(value).toFixed(4) },
     { title: "F1", dataIndex: "f1", key: "f1", render: (value: number | null) => value == null ? "-" : Number(value).toFixed(4) },
+    { title: "最佳参数", dataIndex: "best_params", key: "params", render: (value: unknown) => <Text title={formatParams(value)}>{formatParams(value)}</Text> },
+    { title: "完成/剪枝/失败", key: "trials", render: (_value: unknown, row: QualityFamilyResult) => `${row.completed_trials || 0}/${row.pruned_trials || 0}/${row.failed_trials || 0}` },
     { title: "训练耗时", dataIndex: "training_time_seconds", key: "time", render: (value: number | null) => value == null ? "-" : `${Number(value).toFixed(1)}s` },
   ];
   const modelingTaskColumns = [
@@ -828,23 +848,41 @@ export default function AutoMLPage() {
             </Col>
           </Row>
           <Row gutter={[16, 16]} align="middle" style={{ marginTop: 16 }}>
-            <Col xs={24} md={8}>
-              <Text strong>报告候选算法</Text>
+            <Col xs={24} md={6}>
+              <Text strong>算法家族</Text>
               <Select
                 mode="multiple"
-                aria-label="报告候选算法"
+                aria-label="质量感知算法家族"
                 style={{ width: "100%", marginTop: 4 }}
-                value={qualityCandidateIds}
-                onChange={setQualityCandidateIds}
-                placeholder="留空使用全部 10 项"
-                options={REPORT_CANDIDATE_OPTIONS}
+                value={qualityAlgorithmIds}
+                onChange={setQualityAlgorithmIds}
+                placeholder="默认全部 7 类算法"
+                options={AUTOML_ALGORITHM_OPTIONS}
               />
             </Col>
-            <Col xs={12} md={4}>
+            <Col xs={24} md={4}>
+              <Text strong>搜索方法</Text>
+              <Select
+                aria-label="质量感知搜索方法"
+                style={{ width: "100%", marginTop: 4 }}
+                value={qualitySearchMethod}
+                onChange={setQualitySearchMethod}
+                options={AUTOML_SEARCH_OPTIONS}
+              />
+            </Col>
+            <Col xs={12} md={3}>
+              <Text strong>最大试验次数</Text>
+              <InputNumber aria-label="质量感知最大试验次数" min={5} max={200} value={qualityMaxTrials} onChange={(value) => setQualityMaxTrials(value ?? 20)} style={{ width: "100%", marginTop: 4 }} />
+            </Col>
+            <Col xs={12} md={3}>
+              <Text strong>总时间上限</Text>
+              <InputNumber aria-label="质量感知总时间上限" min={60} max={3600} value={qualityTimeBudget} onChange={(value) => setQualityTimeBudget(value ?? 600)} style={{ width: "100%", marginTop: 4 }} />
+            </Col>
+            <Col xs={12} md={2}>
               <Text strong>交叉验证</Text>
               <div style={{ marginTop: 7 }}><Switch aria-label="质量感知启用交叉验证" checked={qualityCrossValidationEnabled} onChange={setQualityCrossValidationEnabled} /></div>
             </Col>
-            <Col xs={12} md={4}>
+            <Col xs={12} md={2}>
               <Text strong>折数</Text>
               <Select
                 aria-label="质量感知交叉验证折数"
@@ -867,11 +905,14 @@ export default function AutoMLPage() {
               <Descriptions.Item label="样本">{qualityRun.sample_count ?? "-"}</Descriptions.Item>
               <Descriptions.Item label="特征版本">{qualityRun.feature_version || "report_v1"}</Descriptions.Item>
               <Descriptions.Item label="聚类 K">{String(qualityCluster.best_k ?? "-")}</Descriptions.Item>
+              <Descriptions.Item label="搜索方法">{qualityRun.search?.method ? QUALITY_SEARCH_LABELS[qualityRun.search.method] : "-"}</Descriptions.Item>
+              <Descriptions.Item label="搜索预算">{qualityRun.search ? `${qualityRun.search.max_trials} 次 / ${qualityRun.search.time_budget} 秒` : "-"}</Descriptions.Item>
+              <Descriptions.Item label="搜索契约">{qualityRun.search?.contract || "-"}</Descriptions.Item>
               <Descriptions.Item label="K 搜索">{qualityKSearch.length ? qualityKSearch.map(([k, score]) => `K=${k}: ${Number(score).toFixed(3)}`).join(" · ") : "-"}</Descriptions.Item>
               <Descriptions.Item label="PCA">{qualityPca.length ? `${qualityPca.length} x 2` : "-"}</Descriptions.Item>
               {qualityRun.status === "failed" && <Descriptions.Item label="错误详情" span={4}><Space direction="vertical" size={0}><Text type="danger">{qualityRun.error_code || "QUALITY_RUN_FAILED"}</Text>{qualityRun.error_details?.message && <Text type="danger">{qualityRun.error_details.message}</Text>}</Space></Descriptions.Item>}
             </Descriptions>
-            {qualityCandidates.length > 0 && <Table rowKey={(row: any) => row.name} size="small" columns={qualityCandidateColumns} dataSource={qualityCandidates} pagination={false} scroll={{ x: 600 }} />}
+            {qualityCandidates.length > 0 && <Table rowKey={(row: QualityFamilyResult) => row.algorithm_id} size="small" columns={qualityCandidateColumns} dataSource={qualityCandidates} pagination={false} scroll={{ x: 980 }} />}
             {qualityRun.status === "completed" && <Card size="small" title="主要报告">
               <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 4 }}>
                 <Descriptions.Item label="评估">{qualityRun.evaluation?.cross_validation_enabled ? `${qualityRun.evaluation.cross_validation_folds} 折交叉验证` : "固定留出集"}</Descriptions.Item>
