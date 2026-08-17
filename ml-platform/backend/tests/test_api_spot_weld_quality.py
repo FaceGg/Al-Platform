@@ -256,7 +256,14 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         self.assertEqual(frame["label"].tolist(), ["normal", "spot_too_small"])
 
     def test_validate_and_create_run_are_project_scoped(self):
-        payload = {"dataset_artifact_id": str(self.artifact.id), "field_mapping": {}, "candidate_ids": ["RF_v1", "GBDT_v1"]}
+        payload = {
+            "dataset_artifact_id": str(self.artifact.id),
+            "field_mapping": {},
+            "algorithm_ids": ["gbdt", "random_forest"],
+            "search_method": "bayesian",
+            "max_trials": 20,
+            "time_budget": 600,
+        }
         response = self.client.post(f"/api/projects/{self.project.id}/spot-weld/validate", json=payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["valid_rows"], 2)
@@ -264,7 +271,14 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         self.assertEqual(created.status_code, 202)
         self.assertEqual(created.json()["status"], "queued")
         self.assertEqual(created.json()["task_id"], "quality-task-1")
-        self.assertEqual(created.json()["selected_candidate_ids"], ["RF_v1", "GBDT_v1"])
+        self.assertEqual(created.json()["selected_algorithm_ids"], ["gbdt", "random_forest"])
+        self.assertEqual(created.json()["search"], {
+            "contract": "optuna_v1",
+            "method": "bayesian",
+            "max_trials": 20,
+            "time_budget": 600,
+        })
+        self.assertNotIn("selected_candidate_ids", created.json())
         self.assertEqual(self.dispatcher.enqueued, [created.json()["id"]])
         hidden = self.client.post(f"/api/projects/{self.other.id}/spot-weld/runs", json=payload)
         self.assertEqual(hidden.status_code, 404)
@@ -276,7 +290,10 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
             json={
                 "dataset_artifact_id": str(self.artifact.id),
                 "field_mapping": {},
-                "candidate_ids": [],
+                "algorithm_ids": ["gbdt"],
+                "search_method": "random",
+                "max_trials": 5,
+                "time_budget": 60,
                 "label_mode": "manual",
                 "rule_config": {"strong_splatter_min": 4},
             },
@@ -313,7 +330,10 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
             json={
                 "dataset_artifact_id": str(artifact.id),
                 "field_mapping": {},
-                "candidate_ids": ["RF_v1"],
+                "algorithm_ids": ["random_forest"],
+                "search_method": "random",
+                "max_trials": 5,
+                "time_budget": 60,
                 "target_column": "label",
                 "input_columns": input_columns,
                 "cross_validation_enabled": True,
@@ -391,7 +411,10 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
             json={
                 "dataset_artifact_id": str(artifact.id),
                 "field_mapping": {},
-                "candidate_ids": ["RF_v1"],
+                "algorithm_ids": ["random_forest"],
+                "search_method": "random",
+                "max_trials": 5,
+                "time_budget": 60,
                 "target_column": "label",
                 "input_columns": input_columns,
                 "cross_validation_enabled": True,
@@ -713,20 +736,23 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         self.db.refresh(run)
         self.assertEqual(run.input_fingerprint["rule_config"]["strong_splatter_min"], 4)
 
-    def test_quality_run_rejects_unknown_or_duplicate_report_candidates(self):
+    def test_quality_run_rejects_unknown_or_duplicate_algorithm_families(self):
         url = f"/api/projects/{self.project.id}/spot-weld/runs"
-        for candidate_ids in (["unknown"], ["RF_v1", "RF_v1"], [f"unknown-{index}" for index in range(256)]):
-            with self.subTest(candidate_ids=candidate_ids):
+        for algorithm_ids in (["unknown"], ["random_forest", "random_forest"], [f"unknown-{index}" for index in range(256)]):
+            with self.subTest(algorithm_ids=algorithm_ids):
                 audit_count = self.db.query(AuditEvent).filter(
                     AuditEvent.action == "spot_weld_quality.run.create",
                 ).count()
                 response = self.client.post(url, json={
                     "dataset_artifact_id": str(self.artifact.id),
                     "field_mapping": {},
-                    "candidate_ids": candidate_ids,
+                    "algorithm_ids": algorithm_ids,
+                    "search_method": "bayesian",
+                    "max_trials": 20,
+                    "time_budget": 600,
                 })
                 self.assertEqual(response.status_code, 400, response.text)
-                self.assertEqual(response.json()["detail"]["code"], "QUALITY_AUTOML_CONFIG_INVALID")
+                self.assertEqual(response.json()["detail"]["code"], "QUALITY_AUTOML_SEARCH_CONFIG_INVALID")
                 self.assertEqual(
                     self.db.query(AuditEvent).filter(
                         AuditEvent.action == "spot_weld_quality.run.create",
@@ -734,18 +760,30 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
                     audit_count,
                 )
 
-    def test_quality_validation_rejects_invalid_report_candidates(self):
+    def test_quality_validation_rejects_invalid_algorithm_families(self):
         response = self.client.post(
             f"/api/projects/{self.project.id}/spot-weld/validate",
             json={
                 "dataset_artifact_id": str(self.artifact.id),
                 "field_mapping": {},
-                "candidate_ids": ["unknown"],
+                "algorithm_ids": ["unknown"],
             },
         )
 
         self.assertEqual(response.status_code, 400, response.text)
-        self.assertEqual(response.json()["detail"]["code"], "QUALITY_AUTOML_CONFIG_INVALID")
+        self.assertEqual(response.json()["detail"]["code"], "QUALITY_AUTOML_SEARCH_CONFIG_INVALID")
+
+    def test_quality_run_rejects_removed_candidate_ids_field(self):
+        response = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/runs",
+            json={
+                "dataset_artifact_id": str(self.artifact.id),
+                "field_mapping": {},
+                "candidate_ids": ["RF_v1"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 422, response.text)
 
     def test_invalid_waveform_returns_stable_quality_code(self):
         frame = report_frame(1)

@@ -158,6 +158,33 @@ def select_automl_configs(candidate_ids: Sequence[str] | None = None) -> tuple[d
 QUALITY_CROSS_VALIDATION_FOLDS = frozenset({3, 4, 5})
 
 
+def normalize_quality_search_config(
+    algorithm_ids: Sequence[str] | None = None,
+    search_method: str = "bayesian",
+    max_trials: int = 20,
+    time_budget: int = 600,
+) -> dict[str, Any]:
+    if (
+        search_method not in SEARCH_METHODS
+        or isinstance(max_trials, bool)
+        or not 5 <= int(max_trials) <= 200
+        or isinstance(time_budget, bool)
+        or not 60 <= int(time_budget) <= 3600
+    ):
+        raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID")
+    try:
+        families = resolve_algorithm_families(list(algorithm_ids or []))
+    except ValueError as error:
+        raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID") from error
+    return {
+        "search_contract": "optuna_v1",
+        "algorithm_ids": [family.id for family in families],
+        "search_method": search_method,
+        "max_trials": int(max_trials),
+        "time_budget": int(time_budget),
+    }
+
+
 def normalize_quality_evaluation_config(
     cross_validation_enabled: bool = True,
     cross_validation_folds: int | None = 3,
@@ -1207,7 +1234,10 @@ def create_quality_run_record(
     user_id,
     dataset_artifact_id,
     field_mapping: Mapping[str, str] | None = None,
-    candidate_ids: Sequence[str] | None = None,
+    algorithm_ids: Sequence[str] | None = None,
+    search_method: str = "bayesian",
+    max_trials: int = 20,
+    time_budget: int = 600,
     target_column: str | None = None,
     input_columns: Sequence[str] | None = None,
     cross_validation_enabled: bool = True,
@@ -1218,7 +1248,12 @@ def create_quality_run_record(
 ) -> SpotWeldQualityRun:
     if not isinstance(label_mode, str) or label_mode not in QUALITY_LABEL_MODES:
         raise QualityPipelineError("QUALITY_LABEL_MODE_INVALID")
-    selected_configs = select_automl_configs(candidate_ids)
+    search_config = normalize_quality_search_config(
+        algorithm_ids,
+        search_method,
+        max_trials,
+        time_budget,
+    )
     normalized_rule_config = normalize_report_rule_config(rule_config)
     artifact_service = artifact_service or build_artifact_service(db)
     artifact, frame = resolve_dataset_frame(db, artifact_service, project_id, dataset_artifact_id)
@@ -1242,7 +1277,7 @@ def create_quality_run_record(
             "artifact_id": str(artifact.id),
             "sha256": (artifact.metadata_ or {}).get("sha256"),
             "row_count": len(frame),
-            "selected_candidate_ids": [str(config["name"]) for config in selected_configs],
+            **search_config,
             "label_mode": label_mode,
             "rule_config": normalized_rule_config,
             **run_configuration,
