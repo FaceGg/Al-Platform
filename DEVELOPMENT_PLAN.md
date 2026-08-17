@@ -1908,3 +1908,15 @@
 - 数据边界：搜索合同、进度和家族结果继续写入现有 JSON 字段，不新增数据库迁移；旧固定候选记录不属于新执行和展示合同，不实现兼容分支。
 - 设计文档：`docs/superpowers/specs/2026-08-17-spot-weld-optuna-unification-design.md`。
 - 后续步骤：完成详细 TDD 实施计划，逐项观察 RED/GREEN，执行本地全量、WSL Linux、WSL Compose、远程 CI 和合并后远端 `main` 核验。
+
+### 2026-08-17：点焊质量感知统一 Optuna 搜索本地实现完成
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持；第 17 周点焊质量交付支持。
+- 任务状态：Windows 本地实现与自动化验证已完成；WSL Linux、WSL Docker Compose、GitHub Actions、PR 合并和远端 `main` 核验仍待执行，当前不得标记为最终发布完成。
+- 完成内容：点焊质量运行、自动感知和标签快照训练统一复用七类算法家族与五类 Optuna 搜索；API、持久化和前端统一使用 `algorithm_ids`、`search_method`、`max_trials`、`time_budget` 及 `search_contract=optuna_v1`；前端展示家族状态、宏平均 AUC/F1、最佳参数、完成/剪枝/失败试验数和训练耗时；历史点焊任务可通过“查看建模结果”恢复新结果结构。
+- 破坏性迁移：删除点焊十套固定候选、`candidate_ids`、固定 `AutoML(LGB_v2)`、固定估计器构造器和三套 MLP 快照候选；旧点焊运行不提供兼容执行或旧结果展示分支。通用 AutoML 的历史 `candidate_ids` 兼容路径保持不变。
+- 测试先行：共享搜索注入点评估、点焊家族搜索、API 严格字段、运行进度、快照训练、前端搜索控件和结果恢复均先观察 RED 后做最小实现；前端迁移还覆盖数据标注入口，确保所有新建点焊运行不再发送旧字段。
+- 验证方式：后端聚焦回归 100/100；Week 17 隔离套件 6/6；完整后端隔离套件 92/92 模块；Python `compileall` 通过；前端完整 Vitest 39 个文件、172/172 用例；TypeScript/Vite 生产构建和 `git diff --check` 通过。
+- 已解决问题：点焊 API 模块因重复搜索和报告生成实际耗时 149.278 秒，旧 `run_suite.py` 固定 120 秒会误判超时；将模块上限提升为 300 秒并增加运行器回归后，Week 17 和完整 92 模块套件均通过。
+- 影响范围：共享 AutoML 搜索评估器、点焊质量服务/API/任务、标签快照训练、AutoML 与数据标注前端、测试运行器和对应回归；不新增数据库迁移，不修改权限和推理 API。
+- 遗留事项：基于最新 `origin/main` 组装干净发布分支，在 WSL Linux 文件系统运行测试和 Compose；验证 `/api/ready` 及携带新字段的认证点焊请求；推送 GitHub、等待全部 required checks、合并 PR，并核对远端 `main`、合并提交与用户未跟踪文件保持不变。
