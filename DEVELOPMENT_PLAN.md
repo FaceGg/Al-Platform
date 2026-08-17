@@ -1947,3 +1947,10 @@
 - 已确认根因：四个失败 check-run annotations 均为 “recent account payments have failed or your spending limit needs to be increased”，GitHub runner 未启动，`gh run view --log-failed` 无 job log；这不是代码、YAML 或测试断言失败。
 - 处理决定：不修改代码、不循环 rerun、不降低 required checks、不合并 PR；保留 PR #19 和发布工作树，待仓库计费/消费限额恢复后重新运行全部门禁。
 - 后续验证：计费恢复后使用同一提交重新 rerun，确认四个前置 job、Chromium、Week 11-12 verification 全部 `success`，再执行 PR 合并及远端 `main` ancestry/tree 核验。
+
+### 2026-08-17：PR #19 经用户授权绕过 Actions 配额门禁并合并
+
+- 当前状态：用户确认本月 GitHub Actions 配额已耗尽，并明确授权直接合并。PR #19 已于 2026-08-17 14:55:26 +08:00 以管理员 merge 方式合并，merge commit 为 `4bf62c29b7274cfcf51f47e562ed294857ba72af`。
+- 合并边界：失败的远程 checks 仍保留为计费/消费限额导致的 runner 未启动证据，不改写为测试通过；本次发布依据为当前提交上的 Windows 完整自动化验证和 WSL/Compose 真实认证业务验收。
+- 合并核验：远端 `main` 已指向 `4bf62c2`，其两个父提交分别为原基线 `79fb2f4` 和发布分支 `2aa6904`；发布分支是远端 `main` 的祖先，PR 状态为 `MERGED`。
+- 保留状态：原始主工作树的 `OPTIMIZATION_PLAN.md`、`ml-platform/frontend/pnpm-lock.yaml` 和 `tmp/report-media-20260730/` 仍为未跟踪用户文件，未修改、未暂存、未删除。
