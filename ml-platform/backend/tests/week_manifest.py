@@ -78,6 +78,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_training_tasks",
         "test_training_recovery",
         "test_automl_tracking",
+        "test_automl_catalog",
         "test_tensorboard_gateway",
         "test_experiment_production_stack",
         "test_upload_paths",
