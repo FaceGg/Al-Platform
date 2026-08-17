@@ -1928,3 +1928,14 @@
 - 已确认边界：Docker 构建缓存约 134.2GB，其中约 92.98GB 可回收，但失败是 WSL ext4 紧急只读和服务无法重新挂载，不是应用断言、TypeScript、Python 编译、Compose 插值或镜像内依赖安装失败。
 - 处理决定：不自动对用户的 `ext4.vhdx` 执行 `fsck`、注销发行版或删除 Docker 数据；这些操作可能影响整个 WSL 环境，必须先完成宿主重启/备份或由用户明确授权。验证项目未执行 `down -v`。
 - 发布门禁：由于 Compose 服务健康、`/api/ready`、认证点焊新字段请求和响应中的 `optuna_v1` 尚未取得成功证据，本次不推送 GitHub、不创建/合并 PR、不更新远端 `main`。恢复 WSL 后从发布提交重新运行 Compose 生命周期，再继续远程 CI 和合并。
+
+### 2026-08-17：点焊 Optuna 发布分支 WSL/Compose 验收完成
+
+- 当前状态：WSL ext4 已恢复可写；在原生 Linux 克隆 `/home/jingms/codex-validation/spot-weld-optuna-e1d1428` 验证发布提交 `e1d14288236d72b798c1c86fbb57f378a6551aea`，Compose 项目 `spot-weld-optuna-validation` 已完成构建、启动、健康检查和真实认证点焊运行。GitHub 推送、required checks、PR 合并和远端 `main` 核验仍待执行。
+- 运行态验证：`docker compose config` 通过；完整镜像包含 Optuna、XGBoost、LightGBM 与 CatBoost；`/api/health` 返回 `status=ok`，`/api/ready` 的全部依赖为 `ready=true`，前端 `/health` 返回 `OK`。Celery worker inspect 确认注册 `ml_platform.execute_spot_weld_quality`。
+- 问题现象：首次真实点焊请求已由 API 成功入队，但 worker 报 `Received unregistered task of type 'ml_platform.execute_spot_weld_quality'`，运行无法进入完成态。
+- 已确认根因：`app/tasks/celery_app.py` 的 worker include 和显式导入遗漏 `app.tasks.spot_weld_quality_tasks`；API 调度器能生成任务名不代表 worker 已加载对应任务模块。
+- 解决结果：将点焊任务模块加入 Celery include 并显式导入；新增 worker discovery 回归，先确认旧实现 RED，再在修复后 GREEN。相关任务回归 `test_spot_weld_quality_tasks` 为 4/4，Celery 工作流与训练任务组合为 25/25。
+- 真实业务证据：认证运行 `b7908c5a-3a1e-4159-a9cd-77e0e1c889aa` 最终为 `completed`，算法为 `random_forest`，搜索合同为 `optuna_v1`，方法为 `multi_fidelity`，预算为 5 次试验和 60 秒；旧 `candidate_ids` 请求返回 HTTP 422，完成结果不包含旧候选字段。
+- 最新提交门禁：Windows 发布树完整后端 `run_suite.py` 为 114/114 模块，Python `compileall -q app tools tests` 通过；前端完整 Vitest 为 43 个文件、207/207 用例，TypeScript/Vite 生产构建通过。构建仍只有既有 ECharts chunk 大于 500 kB 警告。
+- 后续步骤：停止且仅停止本次 Compose 项目，不删除 volumes；清理临时 WSL 代理桥和 systemd 代理环境；fetch 并确认远端基线未漂移后推送发布分支、创建 PR，等待全部 required checks 成功后合并并核验远端 `main`。
