@@ -2000,3 +2000,10 @@
 - 当前状态：按用户明确要求以本地 `main` 为准，将 GitHub `main` 从 `130d1d3` 更新为本地历史；更新前已创建远端备份分支 `codex/backup-origin-main-20260817-before-local-sync` 保存原远端提交。
 - 安全边界：先 fetch 并比较 fetched/live remote SHA，再使用 `--force-with-lease=main:130d1d3...` 更新，只有远端未变化时才允许写入；未删除发布分支、备份分支或用户未跟踪文件。
 - 影响说明：原远端 127 个领先提交不再位于 `main`，但仍可从备份分支恢复；本地 11 个独有提交成为 GitHub `main` 历史。
+
+### 2026-08-17：放弃点焊质量感知 Optuna 新方案及后续残留
+
+- 当前状态：按用户要求放弃点焊质量感知 Optuna 新方案及其后续菜单/发布残留；当前本地与远端 `main=cbef56f` 保持旧版通用 AutoML 状态。
+- 清理结果：删除本地 `spot-weld-optuna-release`、`spot-weld-optuna-dev` 工作树及对应分支，删除本地合并备份分支；删除远端 `codex/spot-weld-optuna-unification` 和 `codex/backup-origin-main-20260817-before-local-sync`。
+- 保留边界：未修改当前 `main` 的用户未跟踪文件；旧版点焊质量分支和历史 PR 不属于本次被放弃的新 Optuna 方案，继续保留。
+- 验证方式：fetch 后确认本地/远端 `main` SHA 相同，点焊 Optuna 分支、远端备份分支和对应工作树均无残留。
