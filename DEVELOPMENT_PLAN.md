@@ -1920,3 +1920,11 @@
 - 已解决问题：点焊 API 模块因重复搜索和报告生成实际耗时 149.278 秒，旧 `run_suite.py` 固定 120 秒会误判超时；将模块上限提升为 300 秒并增加运行器回归后，Week 17 和完整 92 模块套件均通过。
 - 影响范围：共享 AutoML 搜索评估器、点焊质量服务/API/任务、标签快照训练、AutoML 与数据标注前端、测试运行器和对应回归；不新增数据库迁移，不修改权限和推理 API。
 - 遗留事项：基于最新 `origin/main` 组装干净发布分支，在 WSL Linux 文件系统运行测试和 Compose；验证 `/api/ready` 及携带新字段的认证点焊请求；推送 GitHub、等待全部 required checks、合并 PR，并核对远端 `main`、合并提交与用户未跟踪文件保持不变。
+
+### 2026-08-17：点焊 Optuna 发布分支 WSL 验收受宿主文件系统阻塞
+
+- 当前状态：已从最新 `origin/main` 创建 `codex/spot-weld-optuna-unification` 并挑选 19 个已审查提交；Windows 发布树后端聚焦 104/104、前端 43 个文件 207/207 和生产构建通过。WSL 原生克隆提交与 Windows `HEAD=a9641ab` 一致，Linux 前端 43 个文件 207/207、生产构建、Python `compileall` 和带完整临时环境的 `docker compose config` 通过。
+- 问题现象：Compose 构建完成依赖下载后，在 containerd 解包后端镜像层时失败，错误为 `read-only file system`；随后 WSL 中 `/usr/bin/df` 和 `dmesg` 返回 `Input/output error`，根挂载显示 `/dev/sdd ... errors=remount-ro,emergency_ro`。执行 `wsl --shutdown` 和重启 `WslService` 后，Ubuntu 仍返回 `Wsl/Service/E_UNEXPECTED` 或 `CreateInstance/E_FAIL`。
+- 已确认边界：Docker 构建缓存约 134.2GB，其中约 92.98GB 可回收，但失败是 WSL ext4 紧急只读和服务无法重新挂载，不是应用断言、TypeScript、Python 编译、Compose 插值或镜像内依赖安装失败。
+- 处理决定：不自动对用户的 `ext4.vhdx` 执行 `fsck`、注销发行版或删除 Docker 数据；这些操作可能影响整个 WSL 环境，必须先完成宿主重启/备份或由用户明确授权。验证项目未执行 `down -v`。
+- 发布门禁：由于 Compose 服务健康、`/api/ready`、认证点焊新字段请求和响应中的 `optuna_v1` 尚未取得成功证据，本次不推送 GitHub、不创建/合并 PR、不更新远端 `main`。恢复 WSL 后从发布提交重新运行 Compose 生命周期，再继续远程 CI 和合并。
