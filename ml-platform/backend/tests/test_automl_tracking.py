@@ -302,6 +302,34 @@ class TestAutoMLTracking(unittest.TestCase):
                 ["logistic_regression"],
             )
 
+    def test_optuna_job_searches_each_family_and_persists_results(self):
+        job_id = self.create_job(params={
+            "search_contract": "optuna_v1",
+            "target_column": "quality",
+            "input_columns": ["current", "force"],
+            "task": "classification",
+            "algorithm_ids": ["gbdt", "random_forest"],
+            "search_method": "random",
+            "max_trials": 5,
+            "time_budget": 60,
+            "cross_validation_enabled": False,
+            "cross_validation_folds": None,
+        })
+
+        result = self.execute(job_id)
+
+        self.assertEqual(result.status, "completed")
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
+            model = db.query(ModelLibrary).filter(ModelLibrary.training_job_id == job_id).one()
+            self.assertEqual(job.metrics["search"]["method"], "random")
+            self.assertEqual(
+                [item["algorithm_id"] for item in job.metrics["algorithm_results"]],
+                ["gbdt", "random_forest"],
+            )
+            self.assertIn(job.metrics["best_model"]["algorithm_id"], {"gbdt", "random_forest"})
+            self.assertEqual(model.params["best_algorithm"], job.metrics["best_model"]["algorithm_id"])
+
     def test_selected_input_columns_are_the_only_columns_used_for_automl(self):
         FeatureCapturingClassifier.seen_columns.clear()
         job_id = self.create_job(params={
