@@ -190,6 +190,55 @@ describe("AutoMLPage", () => {
     expect(screen.queryByText("other-project-automl")).not.toBeInTheDocument();
   });
 
+  it("reopens a completed generic AutoML result from the task table", async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === "/training/automl/jobs") return Promise.resolve({ data: [{
+        id: "automl-1", project_id: "project-1", name: "family-search", status: "completed",
+        metrics: { progress: { completed: 10, total: 10, percent: 100 } },
+      }] });
+      if (url === "/training/jobs/automl-1") return Promise.resolve({ data: {
+        status: "completed",
+        metrics: {
+          search: { method: "bayesian", max_trials: 20, time_budget: 600 },
+          best_model: { algorithm_id: "random_forest", name: "Random Forest", score: 0.93, params: { n_estimators: 420 } },
+          algorithm_results: [{ algorithm_id: "random_forest", name: "Random Forest", status: "completed", best_score: 0.93, best_params: { n_estimators: 420 }, completed_trials: 20, pruned_trials: 0, failed_trials: 0 }],
+          all_results: [{ name: "Random Forest", score: 0.93 }],
+        },
+      } });
+      if (url.includes("/spot-weld/runs")) return Promise.resolve({ data: { items: [] } });
+      if (url === "/experiments") return Promise.resolve({ data: { items: [{ id: "experiment-1", name: "Experiment 1" }] } });
+      return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.mouseDown((await screen.findAllByRole("combobox"))[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.click(await screen.findByRole("button", { name: "查看建模结果 automl-1" }));
+
+    expect(await screen.findByText("搜索方法：bayesian")).toBeInTheDocument();
+    expect(screen.getAllByText("Random Forest").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("n_estimators=420").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("reopens a completed spot-weld result from the task table", async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === "/training/automl/jobs") return Promise.resolve({ data: [] });
+      if (url.includes("/spot-weld/runs")) return Promise.resolve({ data: { items: [{ id: "quality-1", project_id: "project-1", status: "completed" }] } });
+      if (url === "/experiments") return Promise.resolve({ data: { items: [] } });
+      return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
+    });
+    quality.getQualityRun.mockResolvedValue({ id: "quality-1", status: "completed", automl_results: [{ name: "RF_v1", auc: 0.91, f1: 0.88 }] });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.mouseDown((await screen.findAllByRole("combobox"))[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.click(await screen.findByRole("button", { name: "查看建模结果 quality-1" }));
+
+    await waitFor(() => expect(quality.getQualityRun).toHaveBeenCalledWith("project-1", "quality-1"));
+    expect(screen.getByRole("tab", { name: "点焊质量感知" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("RF_v1")).toBeInTheDocument();
+  });
+
   it("submits the selected generic cross-validation configuration without a budget", async () => {
     api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
