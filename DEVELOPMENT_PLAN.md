@@ -1972,3 +1972,15 @@
 - 计划验证：每项功能先运行失败测试，再做最小实现并恢复 GREEN；最终分别执行 AutoML 聚焦后端、聚焦前端、完整后端 `run_suite.py`、完整前端 Vitest、生产构建、浏览器结果回看和 `git diff --check`。
 - 已知风险：五类搜索会显著增加训练成本；多保真对传统估计器需按资源阶段重新训练；线程/Celery 当前不能安全强杀已开始的第三方估计器；本地通过不代表真实 Celery、Redis、MLflow、Ubuntu Compose 或远程 CI 已验收。
 - 遗留事项：等待用户选择实施方式后开始 TDD；实现完成前不得将此功能标记为完成，不得把计划或设计审阅当作运行态验收。
+
+### 2026-08-17：AutoML 七类算法、五类搜索与历史结果查看完成
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：本地功能实现、聚焦回归、完整后端隔离套件、完整前端测试和生产构建已完成；真实 Celery/Redis/MLflow、Ubuntu Compose、远程 CI 与长时多算法性能验收仍待独立执行。
+- 完成内容：新增七类不可变算法家族目录；通用 AutoML 支持网格、随机、贝叶斯、进化和多保真五类 Optuna 搜索；每个家族独立调参并比较家族最优模型；新增试验进度、预算状态、家族结果、最佳参数和 MLflow 试验子运行；前端算法框仅展示七类家族，并提供搜索方法、最大试验次数和总时间上限；建模任务列表支持恢复普通 AutoML 和点焊质量历史结果。
+- 兼容与安全：新请求通过显式 Pydantic 字段集识别并持久化 `search_contract=optuna_v1`；历史 `candidate_ids` 任务继续进入原有限候选路径；新旧字段混用在入队前返回 `AUTOML_SEARCH_CONFIG_INVALID`；LightGBM、XGBoost、CatBoost 缺失时明确标记不可用，不再静默替换算法；未修改数据库 Schema 或点焊报告固定候选契约。
+- 测试先行：算法目录测试先因模块缺失 RED；搜索服务测试先因模块缺失 RED；执行器测试先因缺少 `search` 指标 RED；API 测试先因严格模型拒绝新字段 RED；前端测试先因缺少七家族、五方法和结果按钮 RED；每项最小实现后恢复 GREEN。
+- 验证方式：AutoML 相关后端聚焦回归 48/48 通过，Python `compileall` 通过；后端 `run_suite.py` 为 91/91 模块通过；前端完整 Vitest 为 39 个文件、170/170 用例通过；`npm run build` 通过；`git diff --check` 在最终文档提交前再次执行。
+- 影响范围：`automl_catalog.py`、`automl_search.py`、`automl_execution.py`、训练 API、后端 AutoML 测试与清单、Optuna 依赖、AutoML 页面与页面测试；不修改点焊质量服务算法配置、数据库迁移、权限模型或推理 API。
+- 已知风险：传统估计器的多保真阶段会重新拟合而非强制依赖 warm start；已经开始的第三方估计器不能被当前线程安全强杀；选择全部七家族且试验预算较大时训练成本显著上升；Vite 仍报告既有 ECharts 大 chunk 警告。
+- 遗留事项：在真实 Celery/Redis/MLflow 环境验证长任务恢复、试验子运行和总时间预算；在 Ubuntu Compose 与远程 CI 验证依赖安装和跨平台行为；根据真实数据规模评估默认 `20` 次试验与 `600` 秒预算是否需要按项目配额调整。
