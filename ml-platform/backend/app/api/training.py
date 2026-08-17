@@ -24,6 +24,8 @@ from app.services.automl_execution import (
     resolve_automl_feature_columns,
     resolve_candidates,
 )
+from app.services.automl_catalog import resolve_algorithm_families
+from app.services.automl_search import SEARCH_METHODS
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.services.experiment_tracking import TrackingError
 from app.services.iterative_training import IncompatibleCheckpoint, TrainingCheckpoint, TrainingConfig
@@ -75,6 +77,9 @@ class AutoMLRunRequest(BaseModel):
     input_columns: list[str] | None = None
     task: str = "classification"
     candidate_ids: list[str] = Field(default_factory=list)
+    algorithm_ids: list[str] = Field(default_factory=list)
+    search_method: str | None = None
+    max_trials: int | None = Field(default=None, ge=5, le=200)
     cross_validation_enabled: bool = True
     cross_validation_folds: int | None = 5
     time_budget: int = Field(default=60, ge=10, le=3600)
@@ -524,14 +529,31 @@ def start_automl(
     ):
         if data.task not in {"classification", "regression"}:
             raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", "Invalid AutoML task"))
+        new_fields = {"algorithm_ids", "search_method", "max_trials"}
+        uses_new_contract = bool(data.model_fields_set & new_fields)
         try:
-            resolve_candidates(data.task, data.candidate_ids)
+            resolved_algorithm_ids = None
+            if uses_new_contract:
+                if not new_fields.issubset(data.model_fields_set):
+                    raise ValueError("All AutoML search fields are required")
+                if "candidate_ids" in data.model_fields_set:
+                    raise ValueError("candidate_ids cannot be combined with algorithm_ids")
+                if data.search_method not in SEARCH_METHODS or data.max_trials is None:
+                    raise ValueError("Invalid AutoML search method")
+                if data.time_budget < 60:
+                    raise ValueError("AutoML search time budget must be at least 60 seconds")
+                resolved_algorithm_ids = [
+                    family.id for family in resolve_algorithm_families(data.algorithm_ids)
+                ]
+            else:
+                resolve_candidates(data.task, data.candidate_ids)
             evaluation = normalize_evaluation_config(
                 data.cross_validation_enabled,
                 data.cross_validation_folds,
             )
         except ValueError as error:
-            raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
+            code = "AUTOML_SEARCH_CONFIG_INVALID" if uses_new_contract else "AUTOML_CONFIG_INVALID"
+            raise HTTPException(400, _error(code, str(error))) from error
         artifact_service = get_artifact_service(request, db)
         try:
             dataset = artifact_service.resolve(
@@ -560,7 +582,16 @@ def start_automl(
                 "target_column": data.target_column,
                 "input_columns": list(data.input_columns) if data.input_columns is not None else None,
                 "task": data.task,
-                "candidate_ids": data.candidate_ids,
+                **(
+                    {
+                        "search_contract": "optuna_v1",
+                        "algorithm_ids": resolved_algorithm_ids,
+                        "search_method": data.search_method,
+                        "max_trials": data.max_trials,
+                    }
+                    if uses_new_contract
+                    else {"candidate_ids": data.candidate_ids}
+                ),
                 **evaluation,
                 "time_budget": data.time_budget,
             },
