@@ -221,6 +221,10 @@ class TestSpotWeldQualityService(unittest.TestCase):
                     project_id=project.id,
                     user_id=owner.id,
                     dataset_artifact_id=dataset.id,
+                    algorithm_ids=["gbdt"],
+                    search_method="random",
+                    max_trials=5,
+                    time_budget=60,
                     artifact_service=artifacts,
                 )
                 db.commit()
@@ -662,6 +666,10 @@ class TestSpotWeldQualityService(unittest.TestCase):
                     project_id=project.id,
                     user_id=owner.id,
                     dataset_artifact_id=dataset.id,
+                    algorithm_ids=["gbdt"],
+                    search_method="random",
+                    max_trials=5,
+                    time_budget=60,
                     artifact_service=artifacts,
                 )
                 # Queued runs created before the report_v2 rules must record the
@@ -698,7 +706,8 @@ class TestSpotWeldQualityService(unittest.TestCase):
                     db.query(SpotWeldQualitySample).filter(SpotWeldQualitySample.run_id == run.id).count(),
                     24,
                 )
-                self.assertEqual(len(run.automl_results), 10)
+                self.assertEqual(len(run.automl_results), 1)
+                self.assertEqual(run.automl_results[0]["algorithm_id"], "gbdt")
                 self.assertFalse(any(result["error_code"] for result in run.automl_results))
                 self.assertEqual(
                     set(run.output_artifacts),
@@ -718,7 +727,7 @@ class TestSpotWeldQualityService(unittest.TestCase):
                 self.assertEqual(report_artifact.type, "quality_report")
                 self.assertEqual(report_artifact.metadata_["rule_set_version"], "report_v2")
                 candidate_results = report_artifact.metadata_["candidate_results"]
-                self.assertEqual(len(candidate_results), 10)
+                self.assertEqual(len(candidate_results), 1)
                 self.assertEqual(
                     [item["name"] for item in candidate_results],
                     [item["name"] for item in run.automl_results],
@@ -729,7 +738,7 @@ class TestSpotWeldQualityService(unittest.TestCase):
                     expected_type="quality_results",
                 ) as results_path:
                     serialized_results = json.loads(results_path.read_text(encoding="utf-8"))["candidate_results"]
-                self.assertEqual(len(serialized_results), 10)
+                self.assertEqual(len(serialized_results), 1)
                 self.assertEqual(
                     [item["name"] for item in serialized_results],
                     [item["name"] for item in run.automl_results],
@@ -747,7 +756,13 @@ class TestSpotWeldQualityService(unittest.TestCase):
                         summary = dict(workbook["总览"].iter_rows(min_row=2, values_only=True))
                         self.assertEqual(summary["规则集版本"], "report_v2")
                         self.assertEqual(summary["评估配置"], "cross_validation: 3 folds")
-                        self.assertEqual(workbook["AutoML选型"].max_row, 11)
+                        self.assertEqual(workbook["AutoML选型"].max_row, 2)
+                        automl_headers = [
+                            cell.value for cell in workbook["AutoML选型"][1]
+                        ]
+                        self.assertIn("算法家族", automl_headers)
+                        self.assertIn("最佳参数", automl_headers)
+                        self.assertIn("完成试验", automl_headers)
                         self.assertEqual(workbook["缺陷标签"].max_row, 25)
                         self.assertEqual(workbook["特征重要性"].max_row, len(run.feature_schema) + 1)
                         self.assertEqual(workbook["推理结果"].max_row, 25)
@@ -802,6 +817,10 @@ class TestSpotWeldQualityService(unittest.TestCase):
                     project_id=project.id,
                     user_id=owner.id,
                     dataset_artifact_id=dataset.id,
+                    algorithm_ids=["gbdt"],
+                    search_method="random",
+                    max_trials=5,
+                    time_budget=60,
                     artifact_service=artifacts,
                 )
                 db.commit()
@@ -853,6 +872,10 @@ class TestSpotWeldQualityService(unittest.TestCase):
                     project_id=project.id,
                     user_id=owner.id,
                     dataset_artifact_id=dataset.id,
+                    algorithm_ids=["gbdt"],
+                    search_method="random",
+                    max_trials=5,
+                    time_budget=60,
                     artifact_service=artifacts,
                 )
                 run.input_fingerprint = {**(run.input_fingerprint or {}), "label_mode": "manual"}
@@ -869,7 +892,7 @@ class TestSpotWeldQualityService(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
-    def test_quality_run_persists_selected_report_candidates(self):
+    def test_quality_run_persists_and_executes_selected_algorithm_families(self):
         with tempfile.TemporaryDirectory(prefix="quality-candidate-test-") as directory:
             engine = create_engine(
                 "sqlite://",
@@ -900,15 +923,24 @@ class TestSpotWeldQualityService(unittest.TestCase):
                     project_id=project.id,
                     user_id=owner.id,
                     dataset_artifact_id=dataset.id,
-                    candidate_ids=["RF_v1", "GBDT_v1"],
+                    algorithm_ids=["gbdt", "random_forest"],
+                    search_method="random",
+                    max_trials=5,
+                    time_budget=60,
                     artifact_service=artifacts,
                 )
                 db.commit()
 
-                self.assertEqual(run.input_fingerprint["selected_candidate_ids"], ["RF_v1", "GBDT_v1"])
+                self.assertEqual(run.input_fingerprint["search_contract"], "optuna_v1")
+                self.assertEqual(run.input_fingerprint["algorithm_ids"], ["gbdt", "random_forest"])
                 self.assertEqual(execute_quality_run(db, run.id, artifact_service=artifacts).status, "completed")
                 db.refresh(run)
-                self.assertEqual([item["name"] for item in run.automl_results], ["RF_v1", "GBDT_v1"])
+                self.assertEqual(
+                    [item["algorithm_id"] for item in run.automl_results],
+                    ["gbdt", "random_forest"],
+                )
+                self.assertEqual(run.statistics["search"]["method"], "random")
+                self.assertEqual(run.statistics["modeling_progress"]["total_count"], 10)
             finally:
                 db.close()
                 engine.dispose()
@@ -945,6 +977,10 @@ class TestSpotWeldQualityService(unittest.TestCase):
                     dataset_artifact_id=dataset.id,
                     cross_validation_enabled=False,
                     cross_validation_folds=None,
+                    algorithm_ids=["gbdt"],
+                    search_method="random",
+                    max_trials=5,
+                    time_budget=60,
                     artifact_service=artifacts,
                 )
                 db.commit()

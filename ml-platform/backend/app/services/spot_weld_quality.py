@@ -33,7 +33,7 @@ from app.models.spot_weld_quality import (
     SpotWeldQualitySample,
 )
 from app.services.artifact_service import ArtifactAccessError, ArtifactService, build_artifact_service
-from app.services.automl_catalog import resolve_algorithm_families
+from app.services.automl_catalog import get_algorithm_family, resolve_algorithm_families
 from app.services.automl_search import FamilySearchResult, SEARCH_METHODS, SearchConfig, run_family_search
 from app.services.spot_weld_features import (
     FEATURE_SCHEMA,
@@ -1476,13 +1476,22 @@ def _source_row_values(frame: pd.DataFrame, row_index: int) -> dict[str, Any]:
 
 
 def _fit_candidate_model(features: np.ndarray, labels: Iterable[Any], candidate: CandidateResult):
-    config = next((item for item in AUTOML_CONFIGS if item["name"] == candidate.name), None)
-    if config is None:
+    if candidate.algorithm_id:
+        try:
+            family = get_algorithm_family(candidate.algorithm_id)
+        except ValueError as error:
+            raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID") from error
+        model = family.build("classification", candidate.best_params)
+    else:
+        config = next((item for item in AUTOML_CONFIGS if item["name"] == candidate.name), None)
+        if config is None:
+            raise QualityPipelineError("QUALITY_AUTOML_CONFIG_INVALID")
+        model = _build_estimator(config)
+    if candidate.error_code is not None:
         raise QualityPipelineError("QUALITY_AUTOML_CONFIG_INVALID")
     _, encoded = np.unique(np.asarray(list(labels)), return_inverse=True)
     scaler = StandardScaler()
     transformed = scaler.fit_transform(np.asarray(features, dtype=np.float64))
-    model = _build_estimator(config)
     model.fit(_estimator_matrix(transformed), encoded)
     return scaler, model
 
@@ -1654,24 +1663,31 @@ def _write_quality_run_report(
     ])
     automl = pd.DataFrame([
         {
-            "候选模型": item.name,
-            "模型类型": item.model_type,
+            "算法家族": item.algorithm_id or item.model_type,
+            "显示名称": item.name,
+            "状态": item.status,
+            "最佳分数": item.best_score,
             "AUC": item.auc,
             "AUC标准差": item.auc_std,
             "F1": item.f1,
             "F1标准差": item.f1_std,
+            "完成试验": item.completed_trials,
+            "剪枝试验": item.pruned_trials,
+            "失败试验": item.failed_trials,
             "训练耗时(秒)": item.training_time_seconds,
             "错误码": item.error_code,
-            "参数": _export_json(item.params),
+            "最佳参数": _export_json(item.best_params or item.params),
         }
         for item in candidates
     ], columns=[
-        "候选模型", "模型类型", "AUC", "AUC标准差", "F1", "F1标准差", "训练耗时(秒)", "错误码", "参数",
+        "算法家族", "显示名称", "状态", "最佳分数", "AUC", "AUC标准差",
+        "F1", "F1标准差", "完成试验", "剪枝试验", "失败试验",
+        "训练耗时(秒)", "错误码", "最佳参数",
     ])
     deep_learning = pd.DataFrame([
         {
             "模型": "未启用独立深度学习比较",
-            "说明": "本次点焊质量运行使用所选 AutoML 候选模型。",
+            "说明": "点焊质量运行统一使用七类算法家族的 Optuna 搜索。",
         },
     ], columns=["模型", "说明"])
     labels_frame = pd.DataFrame([
@@ -1819,6 +1835,7 @@ def _generated_artifacts(
             "target_schema": run_statistics.get("target_schema"),
             "input_schema": run_statistics.get("input_schema") or [],
             "evaluation": run_statistics.get("evaluation") or {},
+            "search": run_statistics.get("search") or {},
             "candidate_results": candidate_results,
             "samples": [
                 {
@@ -1925,8 +1942,11 @@ def execute_quality_run(
             raise QualityPipelineError("QUALITY_LABEL_MODE_INVALID")
         normalized_rule_config = normalize_report_rule_config(run_input.get("rule_config"))
         thresholds = build_runtime_rule_thresholds(features, normalized_rule_config)
-        selected_configs = select_automl_configs(
-            run_input.get("selected_candidate_ids"),
+        search_config = normalize_quality_search_config(
+            run_input.get("algorithm_ids"),
+            run_input.get("search_method", "bayesian"),
+            run_input.get("max_trials", 20),
+            run_input.get("time_budget", 600),
         )
         run_configuration, supervised_labels = resolve_quality_run_configuration(
             frame,
@@ -1962,7 +1982,19 @@ def execute_quality_run(
             "label_mode": label_mode,
             **run_configuration,
             "annotation_progress": _annotation_progress(0, total_count),
-            "modeling_progress": _modeling_progress(0, len(selected_configs) if label_mode == "automatic" or supervised_labels is not None else 0),
+            "search": {
+                "contract": search_config["search_contract"],
+                "method": search_config["search_method"],
+                "max_trials": search_config["max_trials"],
+                "time_budget": search_config["time_budget"],
+                "algorithm_ids": search_config["algorithm_ids"],
+                "budget_exhausted": False,
+            },
+            "modeling_progress": _modeling_progress(
+                0,
+                len(search_config["algorithm_ids"]) * search_config["max_trials"]
+                if label_mode == "automatic" or supervised_labels is not None else 0,
+            ),
         }
         db.commit()
 
@@ -1997,10 +2029,14 @@ def execute_quality_run(
                 }
                 db.commit()
 
-        def update_model_progress(completed_count: int, candidate_total: int, _result: CandidateResult) -> None:
+        def update_model_progress(completed_count: int, candidate_total: int, result: CandidateResult) -> None:
             run.statistics = {
                 **(run.statistics or {}),
                 "modeling_progress": _modeling_progress(completed_count, candidate_total),
+                "search": {
+                    **((run.statistics or {}).get("search") or {}),
+                    "current_algorithm": result.algorithm_id,
+                },
             }
             db.commit()
 
@@ -2011,7 +2047,10 @@ def execute_quality_run(
             candidate_results, best_candidate = run_automl(
                 features.to_numpy(dtype=np.float64),
                 supervised_labels,
-                configs=selected_configs,
+                algorithm_ids=search_config["algorithm_ids"],
+                search_method=search_config["search_method"],
+                max_trials=search_config["max_trials"],
+                time_budget=search_config["time_budget"],
                 evaluation=evaluation,
                 progress_callback=update_model_progress,
             )
@@ -2061,7 +2100,10 @@ def execute_quality_run(
             candidate_results, best_candidate = run_automl(
                 features.to_numpy(dtype=np.float64),
                 automatic_labels,
-                configs=selected_configs,
+                algorithm_ids=search_config["algorithm_ids"],
+                search_method=search_config["search_method"],
+                max_trials=search_config["max_trials"],
+                time_budget=search_config["time_budget"],
                 evaluation=evaluation,
                 progress_callback=update_model_progress,
             )
@@ -2116,10 +2158,22 @@ def execute_quality_run(
             sample.warning_level = warning_level(float(probability)) if probability is not None else "none"
         db.flush()
         annotated_count = total_count if label_mode == "automatic" else 0
+        completed_trials = sum(
+            item.completed_trials + item.pruned_trials + item.failed_trials
+            for item in candidate_results
+        )
+        planned_trials = len(search_config["algorithm_ids"]) * search_config["max_trials"]
         run.statistics = {
             **(run.statistics or {}),
             "annotation_progress": _annotation_progress(annotated_count, total_count),
-            "modeling_progress": _modeling_progress(len(candidate_results), len(candidate_results)),
+            "modeling_progress": _modeling_progress(completed_trials, planned_trials),
+            "search": {
+                **((run.statistics or {}).get("search") or {}),
+                "budget_exhausted": any(
+                    item.error_code == "QUALITY_AUTOML_BUDGET_EXHAUSTED"
+                    for item in candidate_results
+                ),
+            },
         }
         db.commit()
         samples = db.query(SpotWeldQualitySample).filter(
@@ -2145,7 +2199,14 @@ def execute_quality_run(
             "label_mode": label_mode,
             **run_configuration,
             "annotation_progress": _annotation_progress(annotated_count, total_count),
-            "modeling_progress": _modeling_progress(len(candidate_results), len(candidate_results)),
+            "modeling_progress": _modeling_progress(completed_trials, planned_trials),
+            "search": {
+                **((run.statistics or {}).get("search") or {}),
+                "budget_exhausted": any(
+                    item.error_code == "QUALITY_AUTOML_BUDGET_EXHAUSTED"
+                    for item in candidate_results
+                ),
+            },
             "warning_counts": dict(Counter(sample.warning_level for sample in samples)),
         }
         run.automl_results = [item.to_dict() for item in candidate_results]
