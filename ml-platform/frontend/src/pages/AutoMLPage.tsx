@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
-import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, DeleteOutlined, PlusOutlined } from "@ant-design/icons";
+import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
@@ -114,12 +114,14 @@ export default function AutoMLPage() {
   const [downloadingQualityReport, setDownloadingQualityReport] = useState(false);
   const [modelingTasks, setModelingTasks] = useState<ModelingTask[]>([]);
   const [loadingModelingTasks, setLoadingModelingTasks] = useState(false);
+  const [viewingTaskKey, setViewingTaskKey] = useState<string | null>(null);
   const [qualityChartUrls, setQualityChartUrls] = useState<Record<string, string>>({});
   const [experimentModalOpen, setExperimentModalOpen] = useState(false);
   const [experimentCreating, setExperimentCreating] = useState(false);
   const [experimentForm] = Form.useForm();
   const barRef = useRef<HTMLDivElement>(null);
   const radarRef = useRef<HTMLDivElement>(null);
+  const resultRegionRef = useRef<HTMLDivElement>(null);
   const qualityMissingSourceColumns = QUALITY_REQUIRED_SOURCE_COLUMNS.filter(
     (column) => !datasetColumns.includes(column),
   );
@@ -283,6 +285,28 @@ export default function AutoMLPage() {
   const features = results?.feature_importance || results?.features || {};
   const handleTaskTypeChange = (task: string) => {
     setTaskType(task);
+  };
+
+  const viewModelingTask = async (task: ModelingTask) => {
+    if (!selectedProject) return;
+    const key = `${task.kind}-${task.id}`;
+    setViewingTaskKey(key);
+    try {
+      if (task.kind === "spot-weld") {
+        const detail = await getQualityRun(selectedProject, task.id);
+        setQualityRun(detail);
+        setRecipeTab("spot-weld-quality");
+      } else {
+        const response = await apiClient.get(`/training/jobs/${task.id}`);
+        setResults(response.data?.metrics || null);
+        setRecipeTab("general");
+        setActiveTab("results");
+      }
+    } catch (error) {
+      message.error(formatApiError(error, "建模结果加载失败"));
+    } finally {
+      setViewingTaskKey(null);
+    }
   };
 
   useEffect(() => {
@@ -529,6 +553,17 @@ export default function AutoMLPage() {
       },
     },
   ];
+  const algorithmResults = Array.isArray(results?.algorithm_results) ? results.algorithm_results : [];
+  const formatParams = (value: unknown) => value && typeof value === "object"
+    ? Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${key}=${String(item)}`).join(", ")
+    : "-";
+  const algorithmResultColumns = [
+    { title: "算法", dataIndex: "name", key: "name", render: (value: string, row: any) => value || row.algorithm_id },
+    { title: "状态", dataIndex: "status", key: "status", render: (value: string) => <Tag color={value === "completed" ? "green" : value === "unavailable" ? "orange" : "red"}>{value}</Tag> },
+    { title: "最佳分数", dataIndex: "best_score", key: "score", render: (value: number | null) => value == null ? "-" : Number(value).toFixed(4) },
+    { title: "最佳参数", dataIndex: "best_params", key: "params", render: (value: unknown) => <Text title={formatParams(value)}>{formatParams(value)}</Text> },
+    { title: "完成/剪枝/失败", key: "trials", render: (_value: unknown, row: any) => `${row.completed_trials || 0}/${row.pruned_trials || 0}/${row.failed_trials || 0}` },
+  ];
 
   const featureEntries = Object.entries(features).sort((a: any, b: any) => b[1] - a[1]);
   const maxImp = featureEntries.length > 0 ? (featureEntries[0][1] as number) : 1;
@@ -552,7 +587,10 @@ export default function AutoMLPage() {
     { title: "状态", dataIndex: "status", key: "status", render: (value: string) => <Tag color={value === "completed" ? "green" : value === "failed" ? "red" : "blue"}>{value}</Tag> },
     { title: "建模进度", key: "progress", render: (_value: unknown, row: ModelingTask) => `${row.progress.completed}/${row.progress.total} ${row.progress.percent}%` },
     { title: "错误详情", key: "error", render: (_value: unknown, row: ModelingTask) => (row.errorCode || row.errorMessage) ? <Space direction="vertical" size={0}><Text type="danger">{row.errorCode}</Text>{row.errorMessage && <Text type="danger">{row.errorMessage}</Text>}</Space> : "-" },
-    { title: "操作", key: "actions", render: (_value: unknown, row: ModelingTask) => <Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除建模任务 ${row.id}`} onClick={() => void deleteModelingTask(row)} disabled={!['completed', 'failed', 'cancelled'].includes(String(row.status))}>删除</Button> },
+    { title: "操作", key: "actions", render: (_value: unknown, row: ModelingTask) => <Space size={4}>
+      {String(row.status) === "completed" && <Button type="text" icon={<EyeOutlined />} aria-label={`查看建模结果 ${row.id}`} loading={viewingTaskKey === `${row.kind}-${row.id}`} onClick={() => void viewModelingTask(row)}>查看建模结果</Button>}
+      <Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除建模任务 ${row.id}`} onClick={() => void deleteModelingTask(row)} disabled={!['completed', 'failed', 'cancelled'].includes(String(row.status))}>删除</Button>
+    </Space> },
   ];
 
   return (
@@ -627,7 +665,7 @@ export default function AutoMLPage() {
           <Col xs={12} sm={3}><Text strong>最大试验次数</Text>
             <InputNumber aria-label="最大试验次数" min={5} max={200} value={maxTrials} onChange={(value) => setMaxTrials(value ?? 20)} style={{ width: "100%", marginTop: 4 }} /></Col>
           <Col xs={12} sm={3}><Text strong>总时间上限</Text>
-            <InputNumber aria-label="总时间上限" min={60} max={3600} value={timeBudget} onChange={(value) => setTimeBudget(value ?? 600)} addonAfter="秒" style={{ width: "100%", marginTop: 4 }} /></Col>
+            <InputNumber aria-label="总时间上限" min={60} max={3600} value={timeBudget} onChange={(value) => setTimeBudget(value ?? 600)} style={{ width: "100%", marginTop: 4 }} /></Col>
           <Col xs={12} sm={3}><Text strong>交叉验证</Text>
             <div style={{ marginTop: 7 }}><Switch aria-label="启用交叉验证" checked={crossValidationEnabled} onChange={setCrossValidationEnabled} /></div></Col>
           <Col xs={12} sm={3}><Text strong>折数</Text>
@@ -646,6 +684,17 @@ export default function AutoMLPage() {
       {running && <Card style={{ textAlign: "center", padding: 40 }}><Spin size="large" /><p style={{ marginTop: 16 }}>{t.common.loading}</p></Card>}
 
       {results && (
+        <div ref={resultRegionRef}>
+        {results.search && <section style={{ marginBottom: 16 }}>
+          <Space wrap size="large" style={{ marginBottom: 10 }}>
+            <Text strong>{`搜索方法：${results.search.method}`}</Text>
+            <Text>{`最大试验：${results.search.max_trials}`}</Text>
+            <Text>{`时间上限：${results.search.time_budget} 秒`}</Text>
+            {results.search.budget_exhausted && <Tag color="orange">预算已耗尽</Tag>}
+          </Space>
+          {bestModel?.params && <div style={{ marginBottom: 10 }}><Text strong>最佳参数：</Text><Text>{formatParams(bestModel.params)}</Text></div>}
+          <Table rowKey={(row: any) => row.algorithm_id} dataSource={algorithmResults} columns={algorithmResultColumns} size="small" pagination={false} scroll={{ x: 760 }} />
+        </section>}
         <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
           { key: "results", label: "Results",
             children: (<>
@@ -690,6 +739,7 @@ export default function AutoMLPage() {
             ),
           },
         ]} />
+        </div>
       )}
       <Modal
         title={t.training?.new_experiment || "New Experiment"}
