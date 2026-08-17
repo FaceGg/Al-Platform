@@ -228,6 +228,7 @@ def run_family_search(
     config: SearchConfig,
     catalog_index: int,
     progress_callback: Callable[[TrialProgress], None] | None = None,
+    trial_callback: Callable[[TrialSummary], None] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> FamilySearchResult:
     """Optimize one selected algorithm family within a bounded wall-time slice."""
@@ -301,6 +302,8 @@ def run_family_search(
                 state=summary.state,
                 score=summary.score,
             ))
+        if trial_callback is not None:
+            trial_callback(summary)
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study.optimize(
