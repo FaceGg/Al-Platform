@@ -1994,3 +1994,9 @@
 - 数据边界：搜索合同、进度和家族结果继续写入现有 JSON 字段，不新增数据库迁移；旧固定候选记录不属于新执行和展示合同，不实现兼容分支。
 - 设计文档：`docs/superpowers/specs/2026-08-17-spot-weld-optuna-unification-design.md`。
 - 后续步骤：完成详细 TDD 实施计划，逐项观察 RED/GREEN，执行本地全量、WSL Linux、WSL Compose、远程 CI 和合并后远端 `main` 核验。
+
+### 2026-08-17：GitHub main 按本地 main 回退同步
+
+- 当前状态：按用户明确要求以本地 `main` 为准，将 GitHub `main` 从 `130d1d3` 更新为本地历史；更新前已创建远端备份分支 `codex/backup-origin-main-20260817-before-local-sync` 保存原远端提交。
+- 安全边界：先 fetch 并比较 fetched/live remote SHA，再使用 `--force-with-lease=main:130d1d3...` 更新，只有远端未变化时才允许写入；未删除发布分支、备份分支或用户未跟踪文件。
+- 影响说明：原远端 127 个领先提交不再位于 `main`，但仍可从备份分支恢复；本地 11 个独有提交成为 GitHub `main` 历史。
