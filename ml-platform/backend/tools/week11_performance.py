@@ -14,6 +14,7 @@ import subprocess
 import time
 from typing import Mapping, Sequence
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 
@@ -208,6 +209,52 @@ def _accounting_gate(result: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+def _workflow_completion_gate(result: Mapping[str, object]) -> dict[str, object]:
+    requests = result.get("requests")
+    completed_requests = result.get("completed_requests")
+    terminal_status_counts = result.get("terminal_status_counts")
+    completion_samples = result.get("completion_samples_ms")
+    duration_ms = result.get("duration_ms")
+    samples_valid = (
+        isinstance(completion_samples, list)
+        and _is_integer(requests)
+        and len(completion_samples) == requests
+        and all(_is_finite_number(value) and float(value) >= 0.0 for value in completion_samples)
+    )
+    max_completion_ms = max(completion_samples) if samples_valid else None
+    passed = (
+        _is_integer(requests)
+        and requests > 0
+        and completed_requests == requests
+        and terminal_status_counts == {"completed": requests}
+        and samples_valid
+        and _is_finite_number(duration_ms)
+        and math.isclose(
+            float(duration_ms),
+            float(max_completion_ms),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+    )
+    return {
+        "value": {
+            "completed_requests": completed_requests,
+            "terminal_status_counts": terminal_status_counts,
+            "completion_samples": len(completion_samples)
+            if isinstance(completion_samples, list)
+            else None,
+            "max_completion_ms": max_completion_ms,
+        },
+        "expected": {
+            "completed_requests": requests,
+            "terminal_status_counts": {"completed": requests} if _is_integer(requests) else None,
+            "completion_samples": requests,
+            "duration_ms": max_completion_ms,
+        },
+        "passed": passed,
+    }
+
+
 def _threshold_gates(
     result: Mapping[str, object],
     limits: Mapping[str, float],
@@ -246,6 +293,8 @@ def validate_iteration_evidence(result: Mapping[str, object]) -> dict[str, objec
         "value": result.get("commit"),
         "passed": _valid_commit(result.get("commit")),
     }
+    if scenario_name == "welding-e2e":
+        gates["workflow_completion"] = _workflow_completion_gate(result)
     return gates
 
 
@@ -359,6 +408,116 @@ def run_http_scenario(
         "p95_ms": percentile(latencies, 0.95),
         "p99_ms": percentile(latencies, 0.99),
         "samples_ms": latencies,
+    }
+
+
+def _json_request(
+    url: str,
+    timeout: float,
+    method: str,
+    body: bytes | None,
+    headers: Mapping[str, str],
+) -> tuple[int, dict[str, object] | None]:
+    try:
+        request_headers = {"User-Agent": "ml-platform-week11", **headers}
+        request = Request(url, data=body, headers=request_headers, method=method)
+        with urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read(65536).decode("utf-8"))
+            return response.status, payload if isinstance(payload, dict) else None
+    except HTTPError as error:
+        error.read(65536)
+        return error.code, None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return 599, None
+
+
+def run_workflow_scenario(
+    url: str,
+    completion_url_template: str,
+    requests_per_worker: int,
+    *,
+    timeout: float = 10.0,
+    completion_timeout: float = 90.0,
+    poll_interval: float = 0.2,
+    body: bytes | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    """Submit workflows sequentially and measure each terminal completion."""
+    if requests_per_worker < 1:
+        raise ValueError("requests_per_worker must be positive")
+    if timeout <= 0 or completion_timeout <= 0 or poll_interval <= 0:
+        raise ValueError("timeouts and poll interval must be positive")
+    if "{run_id}" not in completion_url_template:
+        raise ValueError("completion URL template must contain {run_id}")
+
+    request_headers = dict(headers or {})
+    completion_samples: list[float] = []
+    terminal_status_counts: dict[str, int] = {}
+    submission_status_counts: dict[str, int] = {}
+    started_all = time.perf_counter()
+    for _index in range(requests_per_worker):
+        started = time.perf_counter()
+        submission_status, submission = _json_request(
+            url,
+            timeout,
+            "POST",
+            body,
+            request_headers,
+        )
+        submission_key = str(submission_status)
+        submission_status_counts[submission_key] = (
+            submission_status_counts.get(submission_key, 0) + 1
+        )
+        run_id = submission.get("run_id") if submission is not None else None
+        terminal_status = "submission_failed"
+        if submission_status < 400 and isinstance(run_id, str) and run_id:
+            completion_url = completion_url_template.format(run_id=quote(run_id, safe=""))
+            deadline = time.monotonic() + completion_timeout
+            while time.monotonic() < deadline:
+                poll_status, payload = _json_request(
+                    completion_url,
+                    timeout,
+                    "GET",
+                    None,
+                    request_headers,
+                )
+                if poll_status >= 400 or payload is None:
+                    terminal_status = f"poll_http_{poll_status}"
+                    break
+                observed = payload.get("status")
+                if observed in {"completed", "failed", "cancelled"}:
+                    terminal_status = str(observed)
+                    break
+                time.sleep(poll_interval)
+            else:
+                terminal_status = "timeout"
+        terminal_status_counts[terminal_status] = (
+            terminal_status_counts.get(terminal_status, 0) + 1
+        )
+        completion_samples.append((time.perf_counter() - started) * 1000.0)
+
+    completed_requests = terminal_status_counts.get("completed", 0)
+    errors = requests_per_worker - completed_requests
+    return {
+        "concurrency": 1,
+        "requests_per_worker": requests_per_worker,
+        "requests": requests_per_worker,
+        "completed_requests": completed_requests,
+        "errors": errors,
+        "error_rate": errors / requests_per_worker,
+        "duration_ms": max(completion_samples),
+        "wall_duration_ms": (time.perf_counter() - started_all) * 1000.0,
+        "status_counts": {
+            "200": completed_requests,
+            "500": errors,
+        },
+        "submission_status_counts": submission_status_counts,
+        "terminal_status_counts": terminal_status_counts,
+        "p50_ms": percentile(completion_samples, 0.50),
+        "p95_ms": percentile(completion_samples, 0.95),
+        "p99_ms": percentile(completion_samples, 0.99),
+        "samples_ms": completion_samples,
+        "completion_samples_ms": completion_samples,
     }
 
 
@@ -502,6 +661,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--body-file", type=Path)
     run.add_argument("--bearer-env")
     run.add_argument("--api-key-env")
+    run.add_argument("--completion-url-template")
+    run.add_argument("--completion-timeout", type=float, default=90.0)
+    run.add_argument("--completion-poll-interval", type=float, default=0.2)
     run.add_argument("--output", type=Path, required=True)
     summary = subparsers.add_parser("summarize")
     summary.add_argument("--input-dir", type=Path, required=True)
@@ -518,23 +680,48 @@ def main(argv: list[str] | None = None) -> int:
         headers["Authorization"] = f"Bearer {os.environ[args.bearer_env]}"
     if args.api_key_env:
         headers["X-Inference-Api-Key"] = os.environ[args.api_key_env]
-    if args.warmup:
-        run_http_scenario(
+    if args.scenario == "welding-e2e":
+        if args.concurrency != 1 or not args.completion_url_template:
+            parser.error(
+                "welding-e2e requires concurrency 1 and --completion-url-template",
+            )
+        if args.warmup:
+            run_workflow_scenario(
+                args.url,
+                args.completion_url_template,
+                args.warmup,
+                completion_timeout=args.completion_timeout,
+                poll_interval=args.completion_poll_interval,
+                body=body,
+                headers=headers,
+            )
+        result = run_workflow_scenario(
+            args.url,
+            args.completion_url_template,
+            args.requests_per_worker,
+            completion_timeout=args.completion_timeout,
+            poll_interval=args.completion_poll_interval,
+            body=body,
+            headers=headers,
+        )
+    else:
+        if args.warmup:
+            run_http_scenario(
+                args.url,
+                args.concurrency,
+                args.warmup,
+                method=args.method,
+                body=body,
+                headers=headers,
+            )
+        result = run_http_scenario(
             args.url,
             args.concurrency,
-            args.warmup,
+            args.requests_per_worker,
             method=args.method,
             body=body,
             headers=headers,
         )
-    result = run_http_scenario(
-        args.url,
-        args.concurrency,
-        args.requests_per_worker,
-        method=args.method,
-        body=body,
-        headers=headers,
-    )
     result.update(
         {
             "scenario": args.scenario,

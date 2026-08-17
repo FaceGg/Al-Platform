@@ -163,7 +163,14 @@ class EvidenceManifestTests(unittest.TestCase):
                     "commit": self._COMMIT,
                 }
                 if scenario == "welding-e2e":
-                    result["duration_ms"] = 1000.0
+                    result.update(
+                        {
+                            "duration_ms": 1000.0,
+                            "completed_requests": requests,
+                            "terminal_status_counts": {"completed": requests},
+                            "completion_samples_ms": [1000.0] * requests,
+                        },
+                    )
                 write_result(performance_root / f"{scenario}-{iteration}.json", result)
         with patch("tools.week11_performance._git_commit", return_value=self._COMMIT):
             summarize_results(performance_root, performance_root / "summary.json")

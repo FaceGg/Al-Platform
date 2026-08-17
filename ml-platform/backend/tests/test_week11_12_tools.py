@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
+import tools.week11_performance as week11_performance
 from tools.acceptance_environment import collect_environment, redact
 from tools.backup_restore import (
     _write_operation_receipt,
@@ -137,6 +138,30 @@ class _InferenceApiKeyHandler(BaseHTTPRequestHandler):
         return
 
 
+class _WorkflowCompletionHandler(BaseHTTPRequestHandler):
+    submitted = 0
+
+    def do_POST(self):
+        self.__class__.submitted += 1
+        payload = json.dumps({"run_id": f"run-{self.submitted}"}).encode("utf-8")
+        self.send_response(201)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_GET(self):
+        payload = json.dumps({"status": "completed"}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *_args):
+        return
+
+
 class PerformanceScenarioTests(unittest.TestCase):
     _COMMIT = "a" * 40
 
@@ -168,6 +193,14 @@ class PerformanceScenarioTests(unittest.TestCase):
         }
         if duration_ms is not None:
             result["duration_ms"] = duration_ms
+        if scenario == "welding-e2e":
+            result.update(
+                {
+                    "completed_requests": requests,
+                    "terminal_status_counts": {"completed": requests},
+                    "completion_samples_ms": [duration_ms or 1000.0] * requests,
+                },
+            )
         return result
 
     def _summarize(self, root: Path, output: Path) -> int:
@@ -239,6 +272,33 @@ class PerformanceScenarioTests(unittest.TestCase):
             "test-inference-key",
         )
         self.assertNotIn("X-API-Key", _InferenceApiKeyHandler.observed_headers)
+
+    def test_welding_runner_waits_for_all_terminal_completions(self):
+        runner = getattr(week11_performance, "run_workflow_scenario", None)
+        self.assertIsNotNone(runner)
+        _WorkflowCompletionHandler.submitted = 0
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _WorkflowCompletionHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base_url = f"http://127.0.0.1:{server.server_port}"
+            result = runner(
+                f"{base_url}/workflows/test/run",
+                f"{base_url}/runs/{{run_id}}",
+                requests_per_worker=10,
+                poll_interval=0.01,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=3)
+            server.server_close()
+
+        self.assertEqual(result["requests"], 10)
+        self.assertEqual(result["completed_requests"], 10)
+        self.assertEqual(result["errors"], 0)
+        self.assertEqual(result["terminal_status_counts"], {"completed": 10})
+        self.assertEqual(len(result["completion_samples_ms"]), 10)
+        self.assertEqual(result["duration_ms"], max(result["completion_samples_ms"]))
 
     def test_summary_rejects_reduced_load_and_inconsistent_error_accounting(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -445,6 +505,25 @@ class PerformanceScenarioTests(unittest.TestCase):
             output = root / "summary.json"
             self._summarize(root, output)
             summary = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(summary["scenarios"]["welding-e2e"]["status"], "failed")
+
+    def test_summary_rejects_welding_submissions_without_completion_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = self._raw_result(
+                "welding-e2e",
+                1,
+                p99_ms=10.0,
+                duration_ms=1000.0,
+            )
+            result.pop("completed_requests")
+            result.pop("terminal_status_counts")
+            result.pop("completion_samples_ms")
+            write_result(root / "welding-e2e-1.json", result)
+            output = root / "summary.json"
+            self._summarize(root, output)
+            summary = json.loads(output.read_text(encoding="utf-8"))
+
         self.assertEqual(summary["scenarios"]["welding-e2e"]["status"], "failed")
 
     def test_summary_requires_all_ten_welding_runs(self):
