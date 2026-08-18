@@ -2016,6 +2016,15 @@
 - 处理决定：保留脱敏 Compose 日志、资源 envelope 和原始失败结果；下一次运行前必须先取得 WSL/Docker 生命周期证据或隔离宿主重启来源，再重新执行全量负载。固定资源门禁继续保持阻塞。
 - 远端门禁：GitHub Actions 本月配额仍耗尽，远端 CI 记录为未执行/计费阻塞；本分支只能提交和推送已审查文档，不能合并到 `main`。
 - 遗留事项：真实性能汇总、备份恢复、N-1 升级、浏览器/通知矩阵、最终 manifest、远端 required checks 和合并仍未完成。
+
+### 2026-08-18：PR #21 远端 required checks 继续受计费阻塞
+
+- 当前周次：第 11 至第 12 周系统联调与最终验收。
+- 发布状态：分支已与当前 `origin/main=2ea7489` 对齐并推送，PR #21 已创建，head 为 `eee90152496f3bcbecb3189d551933467f386cce`。
+- 远端现象：Actions run `32087321828` 中 Quality Windows、Quality Ubuntu、Production integration 和 Production experiment integration 均在约 2 秒内失败，`steps=[]`；Chromium acceptance 与 Week 11-12 verification 被跳过。
+- 已确认根因：check-run annotation 明确为 `The job was not started because recent account payments have failed or your spending limit needs to be increased.`，runner 没有启动；这不是代码、YAML 或测试断言失败。
+- 处理决定：PR #21 保持 OPEN，不 rerun、不降低 required checks、不管理员绕过合并；计费恢复后必须重新运行全部 required checks，并结合固定资源性能通过证据再决定合并。
+- 遗留事项：固定资源长负载的 Docker/WSL 生命周期原因、`welding-e2e`/summary、备份恢复、N-1、浏览器/通知矩阵和最终 manifest 仍未完成。
 ### 2026-08-18：合并远端主线后的历史记录
 - 当前周次：第 11 至第 12 周系统联调与验收支持。
 - 任务状态：根因已由 Ubuntu 目标服务日志确认；本地源文件、静态回归和部署文档已修复，目标服务器需按无损命令移除已部署文件的 BOM、重建 Nginx，并重建前端以加载 IPv4 健康检查。
