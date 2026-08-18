@@ -2083,3 +2083,9 @@
 - 清理结果：删除本地 `spot-weld-optuna-release`、`spot-weld-optuna-dev` 工作树及对应分支，删除本地合并备份分支；删除远端 `codex/spot-weld-optuna-unification` 和 `codex/backup-origin-main-20260817-before-local-sync`。
 - 保留边界：未修改当前 `main` 的用户未跟踪文件；旧版点焊质量分支和历史 PR 不属于本次被放弃的新 Optuna 方案，继续保留。
 - 验证方式：fetch 后确认本地/远端 `main` SHA 相同，点焊 Optuna 分支、远端备份分支和对应工作树均无残留。
+
+### 2026-08-18：Week 9/10 与 Week 11-12 最终验收状态口径更正
+
+- 状态更正：第 9 周和第 10 周的功能实现、迁移、权限/审计、模型卡、四通道通知及对应本地回归均已完成；“进行中”仅表示跨周的最终生产验收与发布门禁尚未闭合，不表示 Week 9 或 Week 10 的实现仍在重复修复。
+- 当前未完成范围：固定资源性能、当前 HEAD 镜像与安全回执、真实备份恢复、真实 N-1、外部 Chromium/四通道通知矩阵、最终 evidence manifest，以及远程 required checks 和合并。
+- 文档规则：后续状态报告必须分别列出“Week 9/10 实现状态”和“Week 11/12 最终验收状态”；历史记录中的“第 9 至第 12 周继续保持进行中”保留为历史快照，不再作为 Week 9/10 实现未完成的依据。

@@ -467,3 +467,9 @@
 - 本地 WSL Docker 29.6.2 / Compose 5.3.1 隔离栈已验证 PostgreSQL、Redis、Celery、Mailpit、受控企业微信/Webhook 接收器、迁移 current/check、通知生产用例 `6/6` 和目标 Chromium `1/1`；隔离容器、网络和卷已清理。
 - CI 配置已增加固定版本的 pip-audit、Bandit、Trivy 与 Gitleaks 扫描，并将结果写入 Week 11-12 evidence。`npm audit` 仍报告 React Router RSC Mode 的两个 high；仅在 `docs/security/react-router-rsc-mode-exception.json` 的精确版本、单一 advisory、BrowserRouter 客户端范围和 2026-09-01 到期约束全部成立时才受限通过，任一条件变化即失败。
 - 当前状态：Task 12 正在完成共享 Compose、CI、文档与本地质量门禁；远程 GitHub Actions 尚未执行，不能将本地 WSL 或静态合同当作远程验收。固定 4 vCPU/8 GiB 三轮性能、真实备份恢复 RTO/RPO、N-1 升级、完整外部 Chromium、最终证据清单也仍是第 11-12 周未完成门禁。
+
+### Week 9/10 状态口径（2026-08-18 更正）
+
+- Week 9：功能实现与本地回归已完成。
+- Week 10：权限、审计、模型卡、Outbox、站内/企业微信/邮件/Webhook 通知实现与本地回归已完成。
+- “Week 9-12 进行中”只表示 Week 11-12 最终运行态验收、证据 manifest、远程 required checks 和发布合并尚未完成，不表示 Week 9/10 代码工作仍在进行。
