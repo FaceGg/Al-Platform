@@ -37,6 +37,7 @@ from app.services.automl_search import (
     AllFamilySearchesFailed,
     SearchConfig,
     TrialSummary,
+    classification_metrics,
     choose_family_winner,
     run_family_search,
 )
@@ -312,6 +313,8 @@ def _family_summary(result) -> dict:
         "name": result.display_name,
         "status": result.status,
         "best_score": result.best_score,
+        "auc": result.auc,
+        "f1": result.f1,
         "best_params": result.best_params,
         "completed_trials": result.completed_trials,
         "pruned_trials": result.pruned_trials,
@@ -320,6 +323,17 @@ def _family_summary(result) -> dict:
         "error_code": result.error_code,
         "error_message": result.error_message,
         "budget_exhausted": result.budget_exhausted,
+        "trials": [
+            {
+                "number": trial.number,
+                "state": trial.state,
+                "score": trial.score,
+                "params": trial.params,
+                "duration_seconds": trial.duration_seconds,
+                "error_code": trial.error_code,
+            }
+            for trial in result.trials
+        ],
     }
 
 
@@ -434,6 +448,8 @@ def _execute_optuna_job(
                 "name": result.display_name,
                 "algorithm_id": result.algorithm_id,
                 "score": result.best_score,
+                "auc": result.auc,
+                "f1": result.f1,
                 "params": result.best_params,
                 "training_time_seconds": result.training_time_seconds,
                 "status": "completed",
@@ -468,7 +484,7 @@ def _execute_optuna_job(
         name=job.name, project_id=job.project_id, owner_id=job.user_id,
         status="completed", framework=type(winner.best_estimator).__module__.split(".")[0],
         backbone=type(winner.best_estimator).__name__,
-        metrics={"best_score": winner.best_score, "evaluation": evaluation, "search": method},
+        metrics={"best_score": winner.best_score, "auc": winner.auc, "f1": winner.f1, "evaluation": evaluation, "search": method},
         params={**params, "best_algorithm": winner.algorithm_id, "best_params": winner.best_params},
         model_path=artifact_service.storage_reference(model_artifact), file_size=model_artifact.file_size or 0,
         format="joblib", training_job_id=job.id, dataset_artifact_id=dataset.id,
@@ -484,7 +500,7 @@ def _execute_optuna_job(
         "search": {"method": method, "max_trials": max_trials, "time_budget": time_budget, "budget_exhausted": budget_exhausted},
         "progress": {"completed": completed_trials, "total": planned_trials, "percent": round((completed_trials / planned_trials) * 100, 2) if planned_trials else 100, "current_algorithm": winner.algorithm_id, "current_trial": None, "search_method": method, "budget_exhausted": budget_exhausted},
         "algorithm_results": [_family_summary(item) for item in family_results],
-        "best_model": {"algorithm_id": winner.algorithm_id, "name": winner.display_name, "score": winner.best_score, "params": winner.best_params},
+        "best_model": {"algorithm_id": winner.algorithm_id, "name": winner.display_name, "score": winner.best_score, "auc": winner.auc, "f1": winner.f1, "params": winner.best_params},
         "all_results": all_results,
         "feature_importance": dict(zip(features.columns, winner.feature_importance)),
     }
@@ -622,6 +638,7 @@ def execute_automl_job(
             )
         successes = []
         candidate_results: list[dict] = []
+        candidate_metrics: dict[str, tuple[float | None, float | None]] = {}
         total_candidates = len(configured_candidates)
         job.metrics = {
             "evaluation": evaluation,
@@ -663,6 +680,18 @@ def execute_automl_job(
                     score = float(scorer(estimator, test_features, test_target))
                 if not math.isfinite(score):
                     raise ValueError("Candidate score is not finite")
+                auc = f1 = None
+                if task == "classification":
+                    try:
+                        auc, f1 = classification_metrics(
+                            estimator,
+                            features=features.to_numpy() if hasattr(features, "to_numpy") else features,
+                            target=np.asarray(target),
+                            evaluation=evaluation,
+                        )
+                    except (TypeError, ValueError, RuntimeError):
+                        auc, f1 = None, None
+                    candidate_metrics[candidate.name] = (auc, f1)
                 duration = time.perf_counter() - started
                 tracking.log_metrics(child.run_id, {
                     "cv_score" if cv is not None else "holdout_score": score,
@@ -673,6 +702,8 @@ def execute_automl_job(
                 candidate_results.append({
                     "name": candidate.name,
                     "score": score,
+                    "auc": auc,
+                    "f1": f1,
                     "training_time_seconds": duration,
                     "status": "completed",
                 })
@@ -713,6 +744,7 @@ def execute_automl_job(
         )
         winner = best_candidate.factory()
         winner.fit(features, target)
+        winner_auc, winner_f1 = candidate_metrics.get(best_candidate.name, (None, None))
         with tempfile.TemporaryDirectory() as temporary:
             model_path = Path(temporary) / f"{job.id}.joblib"
             joblib.dump({
@@ -751,7 +783,7 @@ def execute_automl_job(
             status="completed",
             framework="scikit-learn",
             backbone=type(winner).__name__,
-            metrics={"best_score": best_score, "evaluation": evaluation},
+            metrics={"best_score": best_score, "auc": winner_auc, "f1": winner_f1, "evaluation": evaluation},
             params={**params, "best_candidate": best_candidate.name},
             model_path=artifact_service.storage_reference(model_artifact),
             file_size=model_artifact.file_size or 0,
@@ -780,6 +812,8 @@ def execute_automl_job(
             "best_model": {
                 "name": best_candidate.name,
                 "score": best_score,
+                "auc": winner_auc,
+                "f1": winner_f1,
             },
             "all_results": final_results,
         }

@@ -15,8 +15,12 @@ dist/
 .superpowers/
 .worktrees/
 *.pid
-temp_test/*
-!temp_test/.gitkeep
+/docs/
+/docs2/
+/tmp/
+/temp_test/
+/spot_weld_quality_experiment_1875.csv
+/spot_weld_quality_experiment_60.csv
 artifact_store/
 uploads/
 exports/

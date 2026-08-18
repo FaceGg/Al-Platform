@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
 import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
@@ -82,6 +83,7 @@ function errorMessage(value: unknown): string | undefined {
 }
 
 export default function AutoMLPage() {
+  const navigate = useNavigate();
   const { t } = useI18n();
   const { message } = AntApp.useApp();
   const [projects, setProjects] = useState<any[]>([]);
@@ -103,6 +105,8 @@ export default function AutoMLPage() {
   const [crossValidationFolds, setCrossValidationFolds] = useState<3 | 4 | 5>(5);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<any>(null);
+  const [analysisReport, setAnalysisReport] = useState<Record<string, unknown> | null>(null);
+  const [reportGenerating, setReportGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState("results");
   const [recipeTab, setRecipeTab] = useState("general");
   const [qualityRunning, setQualityRunning] = useState(false);
@@ -118,6 +122,7 @@ export default function AutoMLPage() {
   const [viewingTaskKey, setViewingTaskKey] = useState<string | null>(null);
   const [qualityChartUrls, setQualityChartUrls] = useState<Record<string, string>>({});
   const [experimentModalOpen, setExperimentModalOpen] = useState(false);
+  const [configurationOpen, setConfigurationOpen] = useState(false);
   const [experimentCreating, setExperimentCreating] = useState(false);
   const [experimentForm] = Form.useForm();
   const barRef = useRef<HTMLDivElement>(null);
@@ -138,28 +143,17 @@ export default function AutoMLPage() {
   };
 
   const refreshModelingTasks = async () => {
-    if (!selectedProject) {
-      setModelingTasks([]);
-      return;
-    }
     setLoadingModelingTasks(true);
     try {
-      const [ordinaryResponse, qualityResponse] = await Promise.all([
-        apiClient.get("/training/automl/jobs", { params: { project_id: selectedProject } }),
-        apiClient.get(`/projects/${selectedProject}/spot-weld/runs`),
-      ]);
+      const ordinaryResponse = await apiClient.get("/training/automl/jobs", selectedProject ? { params: { project_id: selectedProject } } : undefined);
       const ordinaryItems = Array.isArray(ordinaryResponse.data)
         ? ordinaryResponse.data
         : ordinaryResponse.data?.items || [];
-      const qualityItems = Array.isArray(qualityResponse.data)
-        ? qualityResponse.data
-        : qualityResponse.data?.items || [];
       const tasks: ModelingTask[] = [
         ...ordinaryItems
-          .filter((job: Record<string, unknown>) => String(job.project_id || selectedProject) === selectedProject)
           .map((job: Record<string, unknown>) => ({
           id: String(job.id),
-          project_id: String(job.project_id || selectedProject),
+          project_id: String(job.project_id || selectedProject || ""),
           name: String(job.name || "AutoML"),
           status: String(job.status || "queued"),
           kind: "ordinary" as const,
@@ -168,19 +162,6 @@ export default function AutoMLPage() {
           errorCode: typeof job.error_code === "string" ? job.error_code : undefined,
           errorMessage: errorMessage(job.error_details),
           })),
-        ...qualityItems.map((run: Record<string, unknown>) => ({
-          id: String(run.id),
-          project_id: String(run.project_id || selectedProject),
-          name: "点焊质量感知",
-          status: String(run.status || "queued"),
-          kind: "spot-weld" as const,
-          created_at: typeof run.created_at === "string" ? run.created_at : undefined,
-          progress: normalizeProgress(
-            (run.statistics as Record<string, unknown> | undefined)?.modeling_progress || run.modeling_progress,
-          ),
-          errorCode: typeof run.error_code === "string" ? run.error_code : undefined,
-          errorMessage: errorMessage(run.error_details),
-        })),
       ];
       tasks.sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
       setModelingTasks(tasks);
@@ -192,10 +173,14 @@ export default function AutoMLPage() {
   };
 
   const deleteModelingTask = async (task: ModelingTask) => {
-    if (!selectedProject) return;
     try {
       if (task.kind === "spot-weld") {
-        await apiClient.delete(`/projects/${selectedProject}/spot-weld/runs/${task.id}`);
+        const projectId = task.project_id || selectedProject;
+        if (!projectId) {
+          message.error("缺少任务项目，无法删除");
+          return;
+        }
+        await apiClient.delete(`/projects/${projectId}/spot-weld/runs/${task.id}`);
       } else {
         await apiClient.post("/training/batch-delete", { ids: [task.id] });
       }
@@ -208,13 +193,13 @@ export default function AutoMLPage() {
 
   useEffect(() => {
     apiClient.get("/projects").then((res) => setProjects(res.data.items || res.data || [])).catch(() => {});
+    void refreshModelingTasks();
   }, []);
 
   useEffect(() => {
     if (!selectedProject) {
       setDatasets([]); setSelectedDataset(null);
       setExperiments([]); setSelectedExperiment(null);
-      setModelingTasks([]);
       return;
     }
     listDatasets(selectedProject).then(setDatasets).catch(() => setDatasets([]));
@@ -289,25 +274,7 @@ export default function AutoMLPage() {
   };
 
   const viewModelingTask = async (task: ModelingTask) => {
-    if (!selectedProject) return;
-    const key = `${task.kind}-${task.id}`;
-    setViewingTaskKey(key);
-    try {
-      if (task.kind === "spot-weld") {
-        const detail = await getQualityRun(selectedProject, task.id);
-        setQualityRun(detail);
-        setRecipeTab("spot-weld-quality");
-      } else {
-        const response = await apiClient.get(`/training/jobs/${task.id}`);
-        setResults(response.data?.metrics || null);
-        setRecipeTab("general");
-        setActiveTab("results");
-      }
-    } catch (error) {
-      message.error(formatApiError(error, "建模结果加载失败"));
-    } finally {
-      setViewingTaskKey(null);
-    }
+    navigate(`/automl/task/${task.id}`);
   };
 
   useEffect(() => {
@@ -377,6 +344,7 @@ export default function AutoMLPage() {
     }
     setRunning(true);
     setResults(null);
+    setAnalysisReport(null);
     try {
       const res = await apiClient.post("/training/automl/run", {
         project_id: selectedProject, experiment_id: selectedExperiment,
@@ -392,31 +360,47 @@ export default function AutoMLPage() {
       });
       void refreshModelingTasks();
       const rid = res.data.run_id || res.data.id || res.data.job_id;
-      let poll: number | undefined;
-      let isTerminal = false;
-      const pollJob = async () => {
-        try {
-          const r = await apiClient.get("/training/jobs/" + rid);
-          const d = r.data;
-          if (d.status === "completed" || d.status === "done") {
-            isTerminal = true;
-            if (poll !== undefined) window.clearInterval(poll);
-            setResults(d.metrics || d); setRunning(false); void refreshModelingTasks(); message.success(t.common.success);
-          } else if (d.status === "failed") {
-            isTerminal = true;
-            if (poll !== undefined) window.clearInterval(poll);
-            setRunning(false); void refreshModelingTasks(); message.error(t.common.error);
-          }
-        } catch { /* continue */ }
-      };
-      await pollJob();
-      if (!isTerminal) {
-        poll = window.setInterval(() => { void pollJob(); }, 3000);
-      }
+      setRunning(false);
+      setConfigurationOpen(false);
+      navigate(`/automl/task/${rid}`);
     } catch (e: any) {
       message.error(formatApiError(e, t.common.error));
       setRunning(false);
     }
+  };
+
+  const generateAnalysisReport = () => {
+    if (!results) return;
+    setReportGenerating(true);
+    const models = Array.isArray(results.models || results.all_results) ? (results.models || results.all_results) : [];
+    const best = results.best_model || models[0] || null;
+    setAnalysisReport({
+      title: "通用自动建模分析报告",
+      generated_at: new Date().toISOString(),
+      project_id: selectedProject,
+      experiment_id: selectedExperiment,
+      dataset_id: selectedDataset,
+      task: taskType,
+      search_method: searchMethod,
+      best_model: best,
+      models,
+      feature_importance: results.feature_importance || results.features || {},
+      metrics: results.metrics || {},
+    });
+    setReportGenerating(false);
+    message.success("分析报告已生成");
+  };
+
+  const exportAnalysisReport = () => {
+    if (!analysisReport) return;
+    const blob = new Blob([JSON.stringify(analysisReport, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `automl-analysis-report-${selectedProject || "report"}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    message.success("分析报告已导出");
   };
 
   const createExperiment = async (values: { name: string; description?: string }) => {
@@ -598,20 +582,12 @@ export default function AutoMLPage() {
     <AppLayout>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <h3>{t.automl?.title || "AutoML"}</h3>
-        <Button icon={<PlusOutlined />} aria-label="新建" onClick={() => { setRecipeTab("general"); setResults(null); }}>新建</Button>
+        <Button icon={<PlusOutlined />} aria-label="新建" onClick={() => { setRecipeTab("general"); setResults(null); setConfigurationOpen(true); }}>新建</Button>
       </div>
-      <Card title="建模任务" style={{ marginBottom: 16 }} extra={<Button type="link" onClick={() => void refreshModelingTasks()} loading={loadingModelingTasks} disabled={!selectedProject}>刷新</Button>}>
-        <Table<ModelingTask> rowKey={(task) => `${task.kind}-${task.id}`} size="small" columns={modelingTaskColumns} dataSource={modelingTasks} loading={loadingModelingTasks} pagination={false} locale={{ emptyText: selectedProject ? "暂无建模任务" : "请选择项目后查看建模任务" }} />
+      <Card title="建模任务" style={{ marginBottom: 16 }} extra={<Button type="link" onClick={() => void refreshModelingTasks()} loading={loadingModelingTasks}>刷新</Button>}>
+        <Table<ModelingTask> rowKey={(task) => `${task.kind}-${task.id}`} size="small" columns={modelingTaskColumns} dataSource={modelingTasks} loading={loadingModelingTasks} pagination={false} locale={{ emptyText: "暂无建模任务" }} />
       </Card>
-      <Tabs
-        activeKey={recipeTab}
-        onChange={setRecipeTab}
-        items={[
-          { key: "general", label: t.automl?.title || "AutoML" },
-          { key: "spot-weld-quality", label: "点焊质量感知" },
-        ]}
-      />
-      {recipeTab === "general" && <>
+      {configurationOpen && <Modal title="新建通用自动建模" open={configurationOpen} onCancel={() => setConfigurationOpen(false)} footer={null} width={1100} destroyOnClose>
       <Card style={{ marginBottom: 16 }}>
         <Row gutter={[16, 16]} align="middle">
           <Col xs={24} sm={6}><Text strong>{t.automl?.select_project || "Project"}</Text>
@@ -701,6 +677,10 @@ export default function AutoMLPage() {
             children: (<>
               {bestModel && (
                 <Card style={{ marginBottom: 16 }}>
+                  <Space style={{ marginBottom: 12 }}>
+                    <Button type="primary" onClick={generateAnalysisReport} loading={reportGenerating}>生成分析报告</Button>
+                    <Button icon={<DownloadOutlined />} onClick={exportAnalysisReport} disabled={!analysisReport}>导出报告</Button>
+                  </Space>
                   <Row gutter={16}>
                     <Col span={12}>
                       <div style={{ textAlign: "center", padding: 24 }}>
@@ -714,6 +694,7 @@ export default function AutoMLPage() {
                       <Table rowKey="name" dataSource={allResults} columns={resultColumns} size="small" pagination={false} style={{ marginTop: 8 }} />
                     </Col>
                   </Row>
+                  {analysisReport && <Text type="secondary">报告已生成：{new Date(String(analysisReport.generated_at)).toLocaleString()}</Text>}
                 </Card>
               )}
               {featureEntries.length > 0 && (
@@ -758,7 +739,7 @@ export default function AutoMLPage() {
           </Form.Item>
         </Form>
       </Modal>
-      </>}
+      </Modal>}
       {recipeTab === "spot-weld-quality" && <section className="spot-weld-recipe">
         <Card>
           <Row gutter={[16, 16]} align="middle">

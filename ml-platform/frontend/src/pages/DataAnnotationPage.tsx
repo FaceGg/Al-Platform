@@ -90,14 +90,6 @@ const RULE_CONFIG_FIELDS: Array<{ key: keyof QualityRuleConfig; label: string; s
   { key: "spatter_cluster_min_strength", label: "簇内飞溅等级", suffix: "级" },
 ];
 
-const ANNOTATION_TYPES = [
-  { key: "spot-weld", label: "点焊数据标注", description: "四通道波形、工艺参数与质量规则" },
-  { key: "electrode", label: "电极柱极焊数据标注", description: "暂未开放" },
-  { key: "filling", label: "加注数据标注", description: "暂未开放" },
-  { key: "tightening", label: "拧紧数据标注", description: "暂未开放" },
-  { key: "other", label: "其他", description: "暂未开放" },
-] as const;
-
 function qualityLabelText(value: string | null | undefined): string {
   if (!value) return "-";
   return LABEL_TEXT[value] || value;
@@ -192,7 +184,6 @@ export default function DataAnnotationPage() {
   const [preparingRun, setPreparingRun] = useState(false);
   const [deletingRunId, setDeletingRunId] = useState("");
   const [savingRules, setSavingRules] = useState(false);
-  const [selectedFlow, setSelectedFlow] = useState(() => Boolean(searchParams.get("type")));
   const [labelMode, setLabelMode] = useState<QualityLabelMode>(searchParams.get("mode") === "manual" ? "manual" : "automatic");
   const [ruleConfig, setRuleConfig] = useState<QualityRuleConfig>({ ...DEFAULT_RULE_CONFIG });
   const [workspaceMode, setWorkspaceMode] = useState(Boolean(searchParams.get("runId")));
@@ -210,8 +201,7 @@ export default function DataAnnotationPage() {
 
   const selectedProject = useMemo(() => projects.find((item) => item.id === projectId), [projects, projectId]);
   const selectedRun = runs.find((item) => item.id === runId);
-  const isSpotWeldFlow = selectedFlow || searchParams.get("type") === "spot-weld"
-    || Boolean(searchParams.get("runId") || searchParams.get("datasetId"));
+  const isSpotWeldFlow = true;
   const requestedView = searchParams.get("view");
   const isWorkspace = isSpotWeldFlow && (workspaceMode || requestedView === "workspace");
   const isTaskList = isSpotWeldFlow && !isWorkspace && (
@@ -486,23 +476,8 @@ export default function DataAnnotationPage() {
     }
   };
 
-  const openAnnotationType = (type: string) => {
-    if (type !== "spot-weld") {
-      message.info("该标注类型暂未开放");
-      return;
-    }
-    setWorkspaceMode(false);
-    setSelectedFlow(true);
-    setDatasetArtifactId("");
-    setRunId("");
-    const next = new URLSearchParams({ type: "spot-weld", view: "tasks", mode: "automatic" });
-    if (projectId) next.set("projectId", projectId);
-    navigate(`/data-annotation?${next.toString()}`, { replace: true });
-  };
-
   const openSetup = (nextMode: QualityLabelMode = "automatic") => {
     setWorkspaceMode(false);
-    setSelectedFlow(true);
     setRunId("");
     setLabelMode(nextMode);
     setSearchParams((current) => {
@@ -684,33 +659,6 @@ export default function DataAnnotationPage() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [projectId, runId, selectedRun?.status, selected?.id, message]);
-
-  const catalogView = (
-    <>
-      <div className="page-header">
-        <div className="page-header-copy">
-          <p className="page-kicker">QUALITY / LABELING</p>
-          <h2 className="page-title">数据标注</h2>
-          <p className="page-subtitle">选择数据类型进入对应标注流程</p>
-        </div>
-      </div>
-      <section className="data-annotation__catalog" aria-label="标注类型">
-        {ANNOTATION_TYPES.map((type) => (
-          <button
-            type="button"
-            key={type.key}
-            className={`data-annotation__type ${type.key === "spot-weld" ? "is-available" : "is-disabled"}`}
-            aria-label={type.label}
-            onClick={() => openAnnotationType(type.key)}
-          >
-            <strong>{type.label}</strong>
-            <span>{type.description}</span>
-            <Tag color={type.key === "spot-weld" ? "blue" : "default"}>{type.key === "spot-weld" ? "已开放" : "暂未开放"}</Tag>
-          </button>
-        ))}
-      </section>
-    </>
-  );
 
   const tasksView = (
     <>
@@ -942,7 +890,7 @@ export default function DataAnnotationPage() {
   return (
     <AppLayout>
       <div className="page-shell fade-in spot-weld-annotation">
-        {!isSpotWeldFlow ? catalogView : isTaskList ? (loadingProjects ? <div className="data-annotation__loading"><Spin /></div> : tasksView) : isSetup ? (loadingProjects || loadingDatasets ? <div className="data-annotation__loading"><Spin /></div> : setupView) : workspaceView}
+        {isTaskList ? (loadingProjects ? <div className="data-annotation__loading"><Spin /></div> : tasksView) : isSetup ? (loadingProjects || loadingDatasets ? <div className="data-annotation__loading"><Spin /></div> : setupView) : workspaceView}
       </div>
     </AppLayout>
   );
