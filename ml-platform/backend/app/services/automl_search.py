@@ -11,8 +11,9 @@ from optuna.exceptions import TrialPruned
 from optuna.pruners import HyperbandPruner, NopPruner
 from optuna.samplers import GridSampler, NSGAIISampler, RandomSampler, TPESampler
 from optuna.trial import FrozenTrial, TrialState
-from sklearn.metrics import get_scorer
-from sklearn.model_selection import KFold, StratifiedKFold, cross_val_score, train_test_split
+from sklearn.base import clone
+from sklearn.metrics import f1_score, get_scorer, roc_auc_score
+from sklearn.model_selection import KFold, StratifiedKFold, cross_val_predict, cross_val_score, train_test_split
 
 from app.services.automl_catalog import AlgorithmFamily, AlgorithmUnavailable, ParameterSpec, TaskType
 
@@ -67,6 +68,8 @@ class FamilySearchResult:
     best_score: float | None = None
     best_params: dict[str, object] = field(default_factory=dict)
     best_estimator: object | None = None
+    auc: float | None = None
+    f1: float | None = None
     feature_importance: list[float] = field(default_factory=list)
     completed_trials: int = 0
     pruned_trials: int = 0
@@ -200,6 +203,67 @@ def _feature_importance(estimator, expected_width: int) -> list[float]:
     return array.tolist() if array.ndim == 1 and len(array) == expected_width else []
 
 
+def classification_metrics(
+    estimator,
+    *,
+    features: np.ndarray,
+    target: np.ndarray,
+    evaluation: Mapping[str, object],
+) -> tuple[float | None, float | None]:
+    """Evaluate a fitted model on held-out/CV predictions without training leakage."""
+    if len(np.unique(target)) < 2:
+        return None, None
+    cross_validation = bool(evaluation.get("cross_validation_enabled", True))
+    if cross_validation:
+        folds = int(evaluation.get("cross_validation_folds") or 5)
+        _, class_counts = np.unique(np.asarray(target), return_counts=True)
+        if len(class_counts) > 0:
+            folds = min(folds, int(class_counts.min()))
+        if folds < 2:
+            cross_validation = False
+    if cross_validation:
+        splitter = StratifiedKFold(n_splits=folds, shuffle=True, random_state=42)
+        predictions = cross_val_predict(clone(estimator), features, target, cv=splitter, method="predict")
+        scoring = None
+        for method in ("predict_proba", "decision_function"):
+            try:
+                scoring = cross_val_predict(clone(estimator), features, target, cv=splitter, method=method)
+                break
+            except (AttributeError, TypeError, ValueError):
+                continue
+        metric_target = target
+    else:
+        stratify = target if len(np.unique(target)) > 1 else None
+        train_features, test_features, train_target, test_target = train_test_split(
+            features, target, test_size=0.2, random_state=42, stratify=stratify,
+        )
+        holdout = clone(estimator)
+        holdout.fit(train_features, train_target)
+        predictions = holdout.predict(test_features)
+        scoring = None
+        for method in ("predict_proba", "decision_function"):
+            try:
+                scoring = getattr(holdout, method)(test_features)
+                break
+            except (AttributeError, TypeError, ValueError):
+                continue
+        metric_target = test_target
+    f1 = float(f1_score(metric_target, predictions, average="weighted", zero_division=0))
+    auc = None
+    if scoring is not None:
+        try:
+            scores = np.asarray(scoring)
+            if scores.ndim == 1:
+                auc = float(roc_auc_score(metric_target, scores))
+            elif scores.ndim == 2 and scores.shape[1] == 2:
+                auc = float(roc_auc_score(metric_target, scores[:, 1]))
+            elif scores.ndim == 2:
+                auc = float(roc_auc_score(metric_target, scores, multi_class="ovr", average="weighted"))
+        except (TypeError, ValueError):
+            auc = None
+    return auc, f1
+
+
 def _trial_summary(trial: FrozenTrial) -> TrialSummary:
     duration = trial.duration.total_seconds() if trial.duration else 0.0
     score = float(trial.value) if trial.value is not None and math.isfinite(float(trial.value)) else None
@@ -331,6 +395,13 @@ def run_family_search(
     result.best_score = float(best_trial.value)
     result.best_params = best_params
     result.best_estimator = estimator
+    if task == "classification":
+        try:
+            result.auc, result.f1 = classification_metrics(
+                estimator, features=features, target=target, evaluation=evaluation,
+            )
+        except (TypeError, ValueError, RuntimeError):
+            result.auc, result.f1 = None, None
     result.feature_importance = _feature_importance(estimator, features.shape[1])
     return result
 

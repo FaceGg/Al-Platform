@@ -19,6 +19,7 @@ const KnowledgeBasePage = lazy(() => import("./pages/KnowledgeBasePage"));
 const KnowledgeDetailPage = lazy(() => import("./pages/KnowledgeDetailPage"));
 const KnowledgeGraphPage = lazy(() => import("./pages/KnowledgeGraphPage"));
 const AutoMLPage = lazy(() => import("./pages/AutoMLPage"));
+const AutoMLTaskPage = lazy(() => import("./pages/AutoMLTaskPage"));
 const TrainingJobsPage = lazy(() => import("./pages/TrainingJobsPage"));
 const MonitorPage = lazy(() => import("./pages/MonitorPage"));
 const AlgorithmCatalogPage = lazy(() => import("./pages/AlgorithmCatalogPage"));
@@ -92,6 +93,7 @@ function AppContent() {
             <Route path="/knowledge/:kbId" element={<ProtectedRoute><KnowledgeDetailPage /></ProtectedRoute>} />
             <Route path="/knowledge-graph" element={<ProtectedRoute><KnowledgeGraphPage /></ProtectedRoute>} />
             <Route path="/automl" element={<ProtectedRoute><PageErrorBoundary pageName="自动建模"><AutoMLPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/automl/task/:taskId" element={<ProtectedRoute><PageErrorBoundary pageName="自动建模任务"><AutoMLTaskPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/training" element={<ProtectedRoute><TrainingJobsPage /></ProtectedRoute>} />
             <Route path="/monitor" element={<ProtectedRoute><MonitorPage /></ProtectedRoute>} />
             <Route path="/algorithms" element={<ProtectedRoute><AlgorithmCatalogPage /></ProtectedRoute>} />

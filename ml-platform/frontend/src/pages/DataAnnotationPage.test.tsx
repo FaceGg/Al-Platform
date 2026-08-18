@@ -76,20 +76,16 @@ describe("DataAnnotationPage", () => {
     });
   });
 
-  it("shows five annotation types before a user selects a workflow", async () => {
+  it("opens the task list directly without annotation type cards", async () => {
     render(
       <MemoryRouter>
         <AntApp><DataAnnotationPage /></AntApp>
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole("heading", { name: "数据标注" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "点焊数据标注" })).toBeInTheDocument();
-    expect(screen.getByText("电极柱极焊数据标注")).toBeInTheDocument();
-    expect(screen.getByText("加注数据标注")).toBeInTheDocument();
-    expect(screen.getByText("拧紧数据标注")).toBeInTheDocument();
-    expect(screen.getByText("其他")).toBeInTheDocument();
-    expect(screen.queryByText("样本队列")).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "点焊标注任务" })).toBeInTheDocument();
+    expect(await screen.findByText("1/1 100%")).toBeInTheDocument();
+    expect(screen.queryByText("电极柱极焊数据标注")).not.toBeInTheDocument();
   });
 
   it("opens point-weld setup with compatible data-management files", async () => {
@@ -99,12 +95,9 @@ describe("DataAnnotationPage", () => {
       </MemoryRouter>,
     );
 
-    await act(async () => {
-      fireEvent.click(await screen.findByRole("button", { name: "点焊数据标注" }));
-    });
     expect(await screen.findByRole("heading", { name: "点焊标注任务" })).toBeInTheDocument();
-    expect(screen.getByText("自动标注")).toBeInTheDocument();
-    expect(screen.getByText("1/1 100%")).toBeInTheDocument();
+    expect(await screen.findByText("自动标注")).toBeInTheDocument();
+    expect(await screen.findByText("1/1 100%")).toBeInTheDocument();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "新建自动标注任务" }));
       await Promise.resolve();

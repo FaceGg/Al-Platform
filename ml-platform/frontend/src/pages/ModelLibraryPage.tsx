@@ -6,11 +6,11 @@ import {
 import {
   CheckOutlined, CloudServerOutlined, DownloadOutlined, EyeOutlined, KeyOutlined,
   PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined,
-  RollbackOutlined, StopOutlined, SyncOutlined,
+  RollbackOutlined, StopOutlined, SyncOutlined, DeleteOutlined,
 } from "@ant-design/icons";
 import apiClient, { formatApiError } from "../api/client";
 import {
-  approveModelVersion, createDeployment, createRegisteredModel,
+  approveModelVersion, createDeployment, createRegisteredModel, deleteRegisteredModel, deleteDeployment,
   createInferenceApiKey, createRollout, type CreatedInferenceApiKey,
   type DeploymentRollout, type InferenceApiKey, type InferenceDeployment,
   type InferenceMetricPage, type InferenceRecord, type InferenceRequestLogPage,
@@ -435,13 +435,48 @@ export default function ModelLibraryPage() {
     }
   };
 
+  const confirmDeleteModel = (model: RegisteredModel) => {
+    Modal.confirm({
+      title: "删除注册模型",
+      content: `确认删除注册模型“${model.name}”？该操作不可撤销。`,
+      okText: "删除", okButtonProps: { danger: true, "aria-label": `删除注册模型 ${model.name}` },
+      cancelText: t.common.cancel,
+      onOk: async () => {
+        try {
+          await deleteRegisteredModel(model.id);
+          setModels((current) => current.filter((item) => item.id !== model.id));
+          setVersions((current) => { const next = { ...current }; delete next[model.id]; return next; });
+          message.success("注册模型已删除");
+        } catch (cause) { message.error(formatApiError(cause, copy.commandFailed)); }
+      },
+    });
+  };
+
+  const confirmDeleteDeployment = (deployment: InferenceDeployment) => {
+    Modal.confirm({
+      title: "删除推理部署",
+      content: `确认删除推理部署“${deployment.name}”？该操作不可撤销。`,
+      okText: "删除", okButtonProps: { danger: true, "aria-label": `删除推理部署 ${deployment.name}` },
+      cancelText: t.common.cancel,
+      onOk: async () => {
+        try {
+          await deleteDeployment(deployment.id);
+          setDeployments((current) => current.filter((item) => item.id !== deployment.id));
+          if (operationsDeployment?.id === deployment.id) setOperationsDeployment(undefined);
+          message.success("推理部署已删除");
+        } catch (cause) { message.error(formatApiError(cause, copy.commandFailed)); }
+      },
+    });
+  };
+
   const modelColumns = [
     { title: copy.name, dataIndex: "name", key: "name", render: (value: string, row: RegisteredModel) => <Space direction="vertical" size={0}><Text strong>{value}</Text><Text type="secondary">{row.description}</Text></Space> },
     { title: copy.latestVersion, dataIndex: "latest_version", key: "latest_version", width: 140, render: (value: number | null) => value ? `v${value}` : "-" },
     { title: copy.status, dataIndex: "latest_approval_status", key: "status", width: 140, render: (value: string | null) => value ? <Tag color={statusColor(value)}>{statusLabel(value)}</Tag> : "-" },
-    { title: t.model.actions, key: "actions", width: 260, render: (_: unknown, row: RegisteredModel) => <Space wrap>
+    { title: t.model.actions, key: "actions", width: 340, render: (_: unknown, row: RegisteredModel) => <Space wrap>
       <Button icon={<EyeOutlined />} aria-label={`${copy.versions} ${row.name}`} onClick={() => setVersionModel(row)}>{copy.versions}</Button>
       {canRegister && <Button icon={<PlusOutlined />} aria-label={`${copy.registerVersion} ${row.name}`} onClick={() => setRegisterModel(row)}>{copy.registerVersion}</Button>}
+      {canRegister && <Button danger icon={<DeleteOutlined />} aria-label={`删除注册模型 ${row.name}`} onClick={() => confirmDeleteModel(row)}>删除</Button>}
     </Space> },
   ];
 
@@ -460,6 +495,7 @@ export default function ModelLibraryPage() {
         predictionForm.setFieldValue("records", JSON.stringify([record], null, 2));
       }}>{copy.onlineTest}</Button>}
       <Button icon={<EyeOutlined />} aria-label={`${production.releaseOperations} ${row.name}`} onClick={() => void openOperations(row)}>{production.releaseOperations}</Button>
+      {canRegister && <Button danger icon={<DeleteOutlined />} aria-label={`删除推理部署 ${row.name}`} onClick={() => confirmDeleteDeployment(row)}>删除</Button>}
     </Space> },
   ];
 
