@@ -5,6 +5,8 @@ sys.path.insert(0, ".")
 from fastapi.testclient import TestClient
 from app.main import app
 from app.database import Base, engine
+from app.database import SessionLocal
+from app.models.user import User
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
@@ -20,8 +22,12 @@ class TestUsersAPI(unittest.TestCase):
     def setUpClass(cls):
         # Ensure admin user exists
         r = client.post("/api/auth/register", json={
-            "username": "admin", "password": "admin123", "role": "admin"
+            "username": "admin", "password": "admin123"
         })
+        with SessionLocal() as db:
+            administrator = db.query(User).filter(User.username == "admin").one()
+            administrator.role = "admin"
+            db.commit()
         cls.admin_h = admin_login()
 
     def test_01_health_accessible_without_auth(self):
@@ -50,7 +56,6 @@ class TestUsersAPI(unittest.TestCase):
         r = client.post("/api/auth/register", json={
             "username": uname,
             "password": "newpass123",
-            "role": "engineer",
         })
         self.assertIn(r.status_code, [200, 201])
 
@@ -58,7 +63,6 @@ class TestUsersAPI(unittest.TestCase):
         r = client.post("/api/auth/register", json={
             "username": "admin",
             "password": "somepass123",
-            "role": "engineer",
         })
         self.assertIn(r.status_code, [400, 409])
 
@@ -92,7 +96,6 @@ class TestUsersAPI(unittest.TestCase):
             created = client.post("/api/auth/register", json={
                 "username": username,
                 "password": "newpass123",
-                "role": "user",
             })
             self.assertIn(created.status_code, [200, 201])
             usernames.append(username)
@@ -118,7 +121,6 @@ class TestUsersAPI(unittest.TestCase):
         created = client.post("/api/auth/register", json={
             "username": username,
             "password": "newpass123",
-            "role": "user",
         })
         self.assertIn(created.status_code, [200, 201])
 
@@ -147,7 +149,6 @@ class TestUsersAPI(unittest.TestCase):
         created = client.post("/api/auth/register", json={
             "username": username,
             "password": "newpass123",
-            "role": "user",
         })
         self.assertIn(created.status_code, [200, 201])
 

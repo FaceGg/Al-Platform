@@ -78,7 +78,7 @@
 - Create: `ml-platform/backend/tests/test_api_inference_production.py`
 - Modify: `ml-platform/backend/tests/week_manifest.py`
 
-- [ ] **Step 1: Write the first failing model and event tests**
+- [x] **Step 1: Write the first failing model and event tests**
 
 ```python
 def test_target_weights_must_total_10000(self):
@@ -101,7 +101,7 @@ def test_rollout_event_contains_only_safe_payload(self):
 
 Use real SQLAlchemy sessions and a fake recorder. Do not mock constraints.
 
-- [ ] **Step 2: Run the seven modules and verify RED**
+- [x] **Step 2: Run the seven modules and verify RED**
 
 ```powershell
 cd ml-platform/backend
@@ -110,7 +110,7 @@ python -m unittest tests.test_inference_production_models tests.test_inference_r
 
 Expected: import failures name the missing Week 9 model and service modules.
 
-- [ ] **Step 3: Register the exact Week 9 modules**
+- [x] **Step 3: Register the exact Week 9 modules**
 
 Add this list to `WEEK_TEST_MODULES`:
 
@@ -128,7 +128,7 @@ Add this list to `WEEK_TEST_MODULES`:
 
 Run `python -m unittest tests.test_suite_manifest -v`. Expected: every file is assigned once; failures are limited to the missing production implementation.
 
-- [ ] **Step 4: Commit the RED contract tests**
+- [x] **Step 4: Commit the RED contract tests**
 
 ```powershell
 git add ml-platform/backend/tests
@@ -144,15 +144,15 @@ git commit -m "test: freeze week 9 inference contracts"
 - Modify: `ml-platform/backend/tests/test_inference_production_models.py`
 - Modify: `ml-platform/backend/tests/test_database_production.py`
 
-- [ ] **Step 1: Add revision strategy/state constants (2–5 min)**
+- [x] **Step 1: Add revision strategy/state constants (2–5 min)**
 
 Add `REVISION_STRATEGIES`, `REVISION_STATES`, and `ROLLOUT_STATES`; import no model yet.
 
-- [ ] **Step 2: Add `DeploymentRevision` (2–5 min)**
+- [x] **Step 2: Add `DeploymentRevision` (2–5 min)**
 
 Add the revision class from the following block and export it from `app.models`.
 
-- [ ] **Step 3: Add `DeploymentTarget` (2–5 min)**
+- [x] **Step 3: Add `DeploymentTarget` (2–5 min)**
 
 Add the target class from the following block and its `DeploymentRevision.targets` relationship.
 
@@ -193,27 +193,27 @@ class DeploymentTarget(Base):
     role = Column(String(16), nullable=False)
 ```
 
-- [ ] **Step 4: Add `DeploymentRollout` (2–5 min)**
+- [x] **Step 4: Add `DeploymentRollout` (2–5 min)**
 
 Add `DeploymentRollout` with the frozen states, `from_revision_id`, `to_revision_id`, `current_step`, `lock_version`, JSON `step_schedule`, JSON `thresholds`, `last_error_code`, and timestamps. Add a PostgreSQL partial unique index that permits only one `pending`, `preloading`, `progressing`, or `paused` rollout per deployment; service row locking enforces the same rule in SQLite tests.
 
-- [ ] **Step 5: Add `InferenceApiKey` (2–5 min)**
+- [x] **Step 5: Add `InferenceApiKey` (2–5 min)**
 
 Add `InferenceApiKey` with `deployment_id`, 12-character `prefix`, PBKDF2 `secret_hash`, JSON scopes, expiry, revocation, last-used, actor, and timestamps.
 
-- [ ] **Step 6: Add `InferenceRequestLog` (2–5 min)**
+- [x] **Step 6: Add `InferenceRequestLog` (2–5 min)**
 
 Add request/deployment/revision/version/key IDs, batch size, integer duration, constrained status, stable error code, occurrence and expiry.
 
-- [ ] **Step 7: Add `InferenceMetricBucket` (2–5 min)**
+- [x] **Step 7: Add `InferenceMetricBucket` (2–5 min)**
 
 Add unique deployment/minute, request/success/error/limited/load-failure counts, `batch_size_sum`, latency sum/max, fixed-boundary `latency_buckets` JSON, and `traffic_weights` JSON.
 
-- [ ] **Step 8: Add `ModelCard` and exports (2–5 min)**
+- [x] **Step 8: Add `ModelCard` and exports (2–5 min)**
 
 Add one card per model version with generated lineage/schema/metrics/approval fields, risk text, operational guidance, and `guidance_revision`; export all seven classes from `app.models.__init__`.
 
-- [ ] **Step 9: Write migration tests before the revision (2–5 min)**
+- [x] **Step 9: Write migration tests before the revision (2–5 min)**
 
 Set `HEAD_REVISION = "20260720_09_production_inference"`. Assert 45 business tables, all seven table names, named indexes, backfilled one stable revision and 10000-basis-point target for every Week 8 deployment, one model card per version, and complete downgrade to `20260718_08`.
 
@@ -225,7 +225,7 @@ python -m unittest tests.test_inference_production_models tests.test_database_pr
 
 Expected: RED because the revision file and tables are absent.
 
-- [ ] **Step 10: Create the revision header and seven tables (2–5 min)**
+- [x] **Step 10: Create the revision header and seven tables (2–5 min)**
 
 The revision header must be:
 
@@ -238,15 +238,15 @@ depends_on = None
 
 Create tables in dependency order with the exact ORM constraint/index names.
 
-- [ ] **Step 11: Add deterministic backfill (2–5 min)**
+- [x] **Step 11: Add deterministic backfill (2–5 min)**
 
 Backfill with SQLAlchemy `sa.table` plus `op.bulk_insert`/connection queries so UUID handling works on PostgreSQL and SQLite. Use each legacy deployment ID as its initial stable revision ID and each model-version ID as its initial model-card ID.
 
-- [ ] **Step 12: Add complete downgrade (2–5 min)**
+- [x] **Step 12: Add complete downgrade (2–5 min)**
 
 Drop only Week 9 tables and indexes in reverse dependency order and leave all legacy rows untouched.
 
-- [ ] **Step 13: Run migration GREEN**
+- [x] **Step 13: Run migration GREEN**
 
 ```powershell
 python -m unittest tests.test_inference_production_models tests.test_database_production -v
@@ -255,7 +255,7 @@ python -m compileall -q app alembic
 
 Expected: clean database upgrades twice, `alembic check` passes, current head is `20260720_09_production_inference`, backfills match, and downgrade returns to `20260718_08`.
 
-- [ ] **Step 14: Commit models and migration (2–5 min)**
+- [x] **Step 14: Commit models and migration (2–5 min)**
 
 ```powershell
 git add ml-platform/backend/app/models ml-platform/backend/alembic/versions/20260720_09_production_inference.py ml-platform/backend/tests/test_inference_production_models.py ml-platform/backend/tests/test_database_production.py
@@ -269,7 +269,7 @@ git commit -m "feat: add production inference persistence"
 - Modify: `ml-platform/backend/app/main.py`
 - Modify: `ml-platform/backend/tests/test_inference_rollout.py`
 
-- [ ] **Step 1: Write the exact protocol test**
+- [x] **Step 1: Write the exact protocol test**
 
 ```python
 class RecordingEventRecorder:
@@ -287,7 +287,7 @@ def test_null_recorder_does_not_commit(self):
 
 Run `python -m unittest tests.test_inference_rollout -v`. Expected: RED because `app.events.domain` is absent.
 
-- [ ] **Step 2: Implement the frozen public contract**
+- [x] **Step 2: Implement the frozen public contract**
 
 ```python
 from dataclasses import dataclass
@@ -359,7 +359,7 @@ def create_domain_event(
 
 Inject `NullDomainEventRecorder` by default. The recorder never calls commit; the caller owns the transaction. Rollout idempotency keys use `rollout:{rollout_id}:{state}:{lock_version}` so a repeated Celery delivery records the same logical event in Week 10's future outbox.
 
-- [ ] **Step 3: Verify no notification implementation leaked into Week 9**
+- [x] **Step 3: Verify no notification implementation leaked into Week 9**
 
 ```powershell
 python -m unittest tests.test_inference_rollout -v
@@ -368,7 +368,7 @@ rg -n "notification|outbox|smtp|wecom|webhook" app/events/domain.py alembic/vers
 
 Expected: event tests pass and the search returns no notification table, provider, or network sender.
 
-- [ ] **Step 4: Commit the event contract**
+- [x] **Step 4: Commit the event contract**
 
 ```powershell
 git add ml-platform/backend/app/events ml-platform/backend/app/main.py ml-platform/backend/tests/test_inference_rollout.py
@@ -384,7 +384,7 @@ git commit -m "feat: define safe inference domain events"
 - Modify: `ml-platform/backend/tests/test_inference_api_keys.py`
 - Modify: `ml-platform/backend/tests/test_inference_rate_limit.py`
 
-- [ ] **Step 1: Write failing key-lifecycle tests**
+- [x] **Step 1: Write failing key-lifecycle tests**
 
 ```python
 def test_create_returns_plaintext_once_and_persists_only_hash(self):
@@ -409,7 +409,7 @@ def test_rotation_revokes_old_key_in_same_transaction(self):
 
 Cover unknown scope, expiry, revocation, wrong deployment, wrong secret, and list serialization without `secret_hash` or plaintext.
 
-- [ ] **Step 2: Write failing limiter tests and run RED**
+- [x] **Step 2: Write failing limiter tests and run RED**
 
 ```python
 def test_redis_failure_never_becomes_allow(self):
@@ -433,7 +433,7 @@ python -m unittest tests.test_inference_api_keys tests.test_inference_rate_limit
 
 Expected: RED because both service modules are absent.
 
-- [ ] **Step 3: Implement one-time keys with PBKDF2**
+- [x] **Step 3: Implement one-time keys with PBKDF2**
 
 ```python
 class InferenceApiKeyService:
@@ -459,7 +459,7 @@ class InferenceApiKeyService:
 
 `verify` selects by the 12-character prefix, verifies PBKDF2 in constant-time library code, checks expiry/revocation/scope/deployment, updates only `last_used_at`, and raises stable `INFERENCE_API_KEY_INVALID`, `INFERENCE_API_KEY_EXPIRED`, `INFERENCE_API_KEY_REVOKED`, or `INFERENCE_API_KEY_OUT_OF_SCOPE` codes. `rotate` revokes then creates in the caller's transaction.
 
-- [ ] **Step 4: Implement one atomic Redis script**
+- [x] **Step 4: Implement one atomic Redis script**
 
 Use one Lua `EVAL` to refill, consume, store token count/update time, and set TTL. `consume(key, capacity, refill_per_second)` returns `RateLimitDecision(allowed, remaining, retry_after_seconds)`. Redis connection, timeout, or script failures raise `RateLimitBackendUnavailable("RATE_LIMIT_BACKEND_UNAVAILABLE")`; production never falls back to memory.
 
@@ -472,7 +472,7 @@ inference_log_retention_days: int = Field(default=30, ge=1, le=365)
 inference_rollout_observation_seconds: int = Field(default=60, ge=10, le=3600)
 ```
 
-- [ ] **Step 5: Run GREEN and scan for secret exposure**
+- [x] **Step 5: Run GREEN and scan for secret exposure**
 
 ```powershell
 python -m unittest tests.test_inference_api_keys tests.test_inference_rate_limit tests.test_config -v
@@ -481,7 +481,7 @@ rg -n "plaintext|secret_hash|mli_|X-Inference-Api-Key" app/services app/models a
 
 Expected: all lifecycle and limiter tests pass; plaintext appears only in the one-time result and response path, never in logs, audit changes, repr, summaries, or exports.
 
-- [ ] **Step 6: Commit key and limiter services**
+- [x] **Step 6: Commit key and limiter services**
 
 ```powershell
 git add ml-platform/backend/app/services/inference_api_keys.py ml-platform/backend/app/services/inference_rate_limit.py ml-platform/backend/app/config.py ml-platform/backend/tests/test_inference_api_keys.py ml-platform/backend/tests/test_inference_rate_limit.py
@@ -497,7 +497,7 @@ git commit -m "feat: secure production inference access"
 - Modify: `ml-platform/backend/tests/test_inference_observability.py`
 - Modify: `ml-platform/backend/tests/test_model_cards.py`
 
-- [ ] **Step 1: Write the redaction and aggregation tests**
+- [x] **Step 1: Write the redaction and aggregation tests**
 
 ```python
 def test_request_log_has_no_payload_fields(self):
@@ -527,11 +527,11 @@ def test_two_requests_increment_one_minute_bucket(self):
 
 Run `python -m unittest tests.test_inference_observability -v`. Expected: RED because the service is absent.
 
-- [ ] **Step 2: Implement log writing and bounded metric queries**
+- [x] **Step 2: Implement log writing and bounded metric queries**
 
 Round occurrence time to the minute. Insert the allowlisted request log and upsert its bucket in the caller's transaction. Store duration as a non-negative integer, status from `success/error/limited`, stable code only, and retention expiry. Accumulate batch size, the active revision weights, and fixed latency histogram boundaries `[5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000]`; calculate p50/p95/p99 from those bucket counts without scanning raw logs. Expose average/max/histogram percentiles, counts, average batch size, traffic weights, and load failures. Reject query windows over 31 days and page sizes over 200. A retention task deletes expired logs and old buckets, never cards.
 
-- [ ] **Step 3: Write the generated-card tests**
+- [x] **Step 3: Write the generated-card tests**
 
 ```python
 def test_card_system_fields_are_generated_and_guidance_versions(self):
@@ -552,11 +552,11 @@ def test_card_update_rejects_system_fields(self):
 
 Run `python -m unittest tests.test_model_cards -v`. Expected: RED because `ModelCardService` is absent.
 
-- [ ] **Step 4: Implement card generation and export**
+- [x] **Step 4: Implement card generation and export**
 
 `ensure_for_version` copies immutable feature/output schema, frozen metrics, source artifact and training lineage by stable IDs, approval status/actor/time/comment, and current release references. `update_guidance` changes only `operational_guidance` and increments `guidance_revision`. JSON export omits storage URIs, credentials, request records, predictions, and raw exceptions. Call `ensure_for_version` after version registration and after approval-history changes without overwriting human guidance.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
 ```powershell
 python -m unittest tests.test_inference_observability tests.test_model_cards tests.test_model_registry_service -v
@@ -578,7 +578,7 @@ Expected: aggregation, retention, redaction, immutable fields, guidance versioni
 - Modify: `ml-platform/backend/tests/test_inference_runtime.py`
 - Modify: `ml-platform/backend/tests/test_inference_deployment.py`
 
-- [ ] **Step 1: Write failing deterministic-routing and CAS tests**
+- [x] **Step 1: Write failing deterministic-routing and CAS tests**
 
 ```python
 def test_weighted_router_is_stable(self):
@@ -608,7 +608,7 @@ def test_stale_rollout_command_is_rejected(self):
 
 Add cases for unapproved/cross-project/duplicate targets, total weights, concurrent active rollout, preload failure, threshold failure, restored stable weights, repeat rollback, and restart reconciliation.
 
-- [ ] **Step 2: Run the rollout tests and verify RED**
+- [x] **Step 2: Run the rollout tests and verify RED**
 
 ```powershell
 python -m unittest tests.test_inference_rollout tests.test_inference_runtime tests.test_inference_deployment -v
@@ -616,7 +616,7 @@ python -m unittest tests.test_inference_rollout tests.test_inference_runtime tes
 
 Expected: missing service/runtime-key behavior fails while existing Week 8 tests continue to execute.
 
-- [ ] **Step 3: Implement stable weighted selection**
+- [x] **Step 3: Implement stable weighted selection**
 
 ```python
 def select(self, revision, routing_key):
@@ -635,15 +635,15 @@ def select(self, revision, routing_key):
     raise InferenceRolloutError("TARGET_WEIGHTS_INVALID")
 ```
 
-- [ ] **Step 4: Implement the state machine and safe events**
+- [x] **Step 4: Implement the state machine and safe events**
 
 Expose `create_candidate`, `preload`, `advance`, `pause`, `resume`, `rollback`, and `reconcile`. Use default steps `[0, 1000, 5000, 10000]` and frozen thresholds `{"max_error_rate": 0.01, "max_p95_ms": 500}`. Route in two stages while a rollout progresses: use the current step to choose the stable or candidate revision, then use that revision's target weights to choose the actual model version. Lock the rollout row, compare `expected_lock_version`, increment it in the same update, and persist step/state/error/timestamps. Restore last-known stable weights before recording `paused`, `failed`, or `rolled_back`. Emit only the seven frozen safe events through `DomainEventRecorder`; never commit inside the recorder.
 
-- [ ] **Step 5: Extend the private runtime with compatibility**
+- [x] **Step 5: Extend the private runtime with compatibility**
 
 Add `runtime_key` to `LoadedDeployment`; when omitted, default to the Week 8 deployment ID. Index sessions by runtime key so `revision-1:model-a` and `revision-2:model-b` can coexist for one stable deployment. Internal list and prediction responses return `runtime_key`, `deployment_id`, `revision_id`, `model_version_id`, and version number. Keep `/internal/deployments/{runtime_key}` private behind `X-Inference-Internal-Token`; preserve Week 8 fields and `DEPLOYMENT_SPEC_CONFLICT` behavior.
 
-- [ ] **Step 6: Run GREEN and commit**
+- [x] **Step 6: Run GREEN and commit**
 
 ```powershell
 python -m unittest tests.test_inference_rollout tests.test_inference_runtime tests.test_inference_deployment -v
@@ -726,7 +726,7 @@ Expected: strict bodies, roles, hidden outsider behavior, one-time key output, w
 - Modify: `ml-platform/backend/tests/test_celery_workflows.py`
 - Modify: `ml-platform/backend/tests/test_inference_deployment.py`
 
-- [ ] **Step 1: Write failing task registration tests**
+- [x] **Step 1: Write failing task registration tests**
 
 ```python
 def test_week9_task_names_are_stable(self):
@@ -748,7 +748,7 @@ def test_duplicate_step_does_not_duplicate_runtime_load(self):
 
 Run `python -m unittest tests.test_celery_workflows tests.test_inference_deployment -v`. Expected: RED on missing task names or duplicate side effects.
 
-- [ ] **Step 2: Implement tasks with database-owned idempotency**
+- [x] **Step 2: Implement tasks with database-owned idempotency**
 
 Register these exact names:
 
@@ -769,7 +769,7 @@ def reconcile_inference_rollouts():
 
 Add analogous rollback and telemetry-prune tasks. Each opens its own session, catches only known stable domain errors, and relies on persisted rollout state/lock version before a runtime side effect. Repeated delivery with the same expected version returns the persisted state without loading twice. Add 60-second rollout reconciliation and daily telemetry pruning to Beat.
 
-- [ ] **Step 3: Run GREEN and commit**
+- [x] **Step 3: Run GREEN and commit**
 
 ```powershell
 python -m unittest tests.test_celery_workflows tests.test_inference_deployment tests.test_inference_observability -v
@@ -850,7 +850,7 @@ git commit -m "feat: add inference release operations UI"
 - Modify: `ml-platform/.github/workflows/ci.yml`
 - Modify: `ml-platform/frontend/e2e/model-inference.spec.ts`
 
-- [ ] **Step 1: Add the gated real-service acceptance case**
+- [x] **Step 1: Add the gated real-service acceptance case**
 
 ```python
 @unittest.skipUnless(
@@ -874,7 +874,7 @@ def test_rollout_key_restart_and_rollback(self):
 
 Also exhaust a low-capacity Redis bucket and assert 429 plus `Retry-After`, stop Redis and assert stable 503 without runtime invocation, then inspect database logs/events for forbidden values.
 
-- [ ] **Step 2: Run the local gate and verify expected skip/RED**
+- [x] **Step 2: Run the local gate and verify expected skip/RED**
 
 ```powershell
 cd ml-platform/backend
@@ -883,15 +883,15 @@ python -m unittest tests.test_inference_production_stack tests.test_ci_workflow 
 
 Expected: the real-service case is explicitly skipped without `RUN_INFERENCE_INTEGRATION`; configuration assertions fail until Compose/CI settings are wired.
 
-- [ ] **Step 3: Update isolated Compose and CI**
+- [x] **Step 3: Update isolated Compose and CI**
 
-Keep `inference-runtime` on `expose: ["7000"]` with no host port. Pass the existing 32-character runtime secret and URL plus rate/rollout settings consistently to backend, worker, scheduler, runtime, and test process. In CI use a unique Compose project and temporary volumes, upgrade PostgreSQL to `20260720_09_production_inference`, run `RUN_INFERENCE_INTEGRATION=1`, collect logs only after existing redaction, scan for the known internal secret and created test key, and upload results. Never stop or recreate the user's default Compose stack.
+Keep `inference-runtime` on `expose: ["7000"]` with no host port. Pass the existing 32-character runtime secret and URL plus rate/rollout settings consistently to backend, worker, scheduler, runtime, and test process. In CI use a unique Compose project and temporary volumes, upgrade PostgreSQL to `20260720_09_production_inference`, run `RUN_INFERENCE_INTEGRATION=1`, capture failure evidence in a temporary raw directory, reject configured secrets and every `mli_` token before copying, redact only the copied artifact, then delete raw evidence before upload. Never stop or recreate the user's default Compose stack.
 
-- [ ] **Step 4: Extend browser acceptance without fixed sleeps**
+- [x] **Step 4: Extend browser acceptance without fixed sleeps**
 
 Use real login and public APIs to prepare two approved versions. Through `/models`, start a canary, inspect revision/weight metadata, create a key and confirm plaintext is shown once, pause/resume, finish, predict actual v2, rollback to v1, and verify viewer controls are absent. Use accessible roles/names and response or state predicates.
 
-- [ ] **Step 5: Run local GREEN checks**
+- [x] **Step 5: Run local GREEN checks**
 
 ```powershell
 python -m unittest tests.test_suite_manifest tests.test_ci_workflow tests.test_inference_production_stack -v
@@ -905,7 +905,7 @@ Expected: local configuration and Chromium checks pass; real service result must
 - [ ] **Step 6: Commit delivery integration**
 
 ```powershell
-git add ml-platform/backend/tests ml-platform/docker-compose.yml ml-platform/.github/workflows/ci.yml ml-platform/frontend/e2e/model-inference.spec.ts
+git add ml-platform/backend/tests ml-platform/docker-compose.yml ml-platform/.github/workflows/ci.yml ml-platform/frontend/e2e/model-inference.spec.ts ml-platform/frontend/e2e/fixtures/seed_inference_model.py ml-platform/frontend/e2e/fixtures/advance_inference_rollout.py
 git commit -m "test: verify production inference lifecycle"
 ```
 
@@ -920,7 +920,7 @@ git commit -m "test: verify production inference lifecycle"
 - Modify: `PLATFORM_STATUS.md`
 - Modify: `C:/Users/17723/.codex/DEVELOPMENT_EXPERIENCE.md`
 
-- [ ] **Step 1: Run the Week 9 and compatibility backend suites**
+- [x] **Step 1: Run the Week 9 and compatibility backend suites**
 
 ```powershell
 cd ml-platform/backend
@@ -951,7 +951,9 @@ Expected: frontend tests/build/audit pass, migration double-upgrade/current/chec
 
 Build from the same Git commit, use isolated PostgreSQL/Redis/MinIO/runtime resources, and run the gated lifecycle. Record image digest, migration head, readiness, rollout/rollback results, rate-limit 429/503 results, runtime restart reconciliation, redaction scan, Chromium trace, and remote Actions URL. Clean only the isolated project and volumes.
 
-- [ ] **Step 4: Write operations and acceptance evidence**
+2026-07-27 local WSL portion completed with Docker Server `29.6.2` / Compose `v5.3.1`: PostgreSQL migration head/current/check, experiment stack, rollout/restart/rollback/rate-limit lifecycle, Redis fail-closed case, and readiness all passed in an isolated project and its volumes were removed. GitHub Actions remains required.
+
+- [x] **Step 4: Write operations and acceptance evidence**
 
 Document revision states, 0/10/50/100 flow, pause/resume/rollback, runtime-key privacy, API-key creation/rotation/revocation, 429/503 behavior, log/metric retention, card fields/export, stable errors, recovery, and verification commands. The acceptance record includes exact counts and evidence but no credentials, keys, model input, predictions, storage paths, customer data, or raw exceptions.
 

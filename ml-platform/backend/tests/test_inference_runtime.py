@@ -112,6 +112,60 @@ class TestInferenceRuntime(unittest.TestCase):
         self.assertEqual(stopped.status_code, 200)
         self.assertTrue(stopped_again.json()["already_absent"])
 
+    def test_runtime_key_allows_multiple_revisions_for_one_deployment(self):
+        revision_one = f"{self.deployment_id}:revision-1"
+        revision_two = f"{self.deployment_id}:revision-2"
+        first_spec = {
+            **self.spec,
+            "runtime_key": revision_one,
+            "revision_id": str(uuid.uuid4()),
+        }
+        second_spec = {
+            **self.spec,
+            "runtime_key": revision_two,
+            "revision_id": str(uuid.uuid4()),
+            "model_version_id": str(uuid.uuid4()),
+            "version_number": 2,
+        }
+        first = self.client.put(
+            f"/internal/deployments/{revision_one}",
+            json=first_spec,
+            headers=self.headers,
+        )
+        second = self.client.put(
+            f"/internal/deployments/{revision_two}",
+            json=second_spec,
+            headers=self.headers,
+        )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        listing = self.client.get("/internal/deployments", headers=self.headers).json()
+        self.assertEqual(
+            {item["runtime_key"] for item in listing["items"]},
+            {revision_one, revision_two},
+        )
+        prediction = self.client.post(
+            f"/internal/deployments/{revision_two}/predict",
+            json={"records": [{"current": 0.1, "voltage": 0.2}]},
+            headers=self.headers,
+        )
+        self.assertEqual(prediction.status_code, 200)
+        self.assertEqual(prediction.json()["runtime_key"], revision_two)
+        self.assertEqual(prediction.json()["deployment_id"], self.deployment_id)
+        self.assertEqual(prediction.json()["revision_id"], second_spec["revision_id"])
+        self.assertEqual(prediction.json()["model_version_id"], second_spec["model_version_id"])
+        self.assertEqual(prediction.json()["version_number"], 2)
+
+    def test_legacy_deployment_id_defaults_runtime_key(self):
+        loaded = self.client.put(
+            f"/internal/deployments/{self.deployment_id}",
+            json=self.spec,
+            headers=self.headers,
+        )
+        self.assertEqual(loaded.status_code, 200)
+        listing = self.client.get("/internal/deployments", headers=self.headers).json()
+        self.assertEqual(listing["items"][0]["runtime_key"], self.deployment_id)
+
     def test_conflicting_loaded_spec_is_rejected(self):
         self.client.put(
             f"/internal/deployments/{self.deployment_id}",

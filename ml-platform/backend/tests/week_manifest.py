@@ -102,11 +102,42 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_inference_tasks",
     ],
     17: [
+        "test_run_suite",
         "test_spot_weld_quality_models",
         "test_spot_weld_features",
         "test_spot_weld_quality_service",
         "test_api_spot_weld_quality",
         "test_spot_weld_quality_tasks",
+    ],
+    9: [
+        "test_inference_production_models",
+        "test_inference_rollout",
+        "test_inference_api_keys",
+        "test_inference_rate_limit",
+        "test_inference_observability",
+        "test_model_cards",
+        "test_api_inference_production",
+    ],
+    10: [
+        "test_security_hardening",
+        "test_platform_audit",
+        "test_notification_models",
+        "test_notification_outbox",
+        "test_notification_channels",
+        "test_api_notifications",
+        "test_notification_production_stack",
+    ],
+    11: [
+        "test_week11_12_tools",
+        "test_week11_contracts",
+    ],
+    12: [
+        "test_week12_security_gates",
+        "test_auth_jwt_migration",
+        "test_evidence_manifest",
+        "test_acceptance_environment",
+        "test_image_security_contracts",
+        "test_notification_receiver_acceptance",
     ],
 }
 

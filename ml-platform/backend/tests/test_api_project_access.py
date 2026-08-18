@@ -202,6 +202,19 @@ class TestProjectRoleResourceAPI(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/projects/{self.project.id}").status_code, 404)
         self.assertEqual(self.client.get(f"/api/workflows/{self.workflow.id}").status_code, 404)
 
+    def test_project_detail_returns_only_callers_resolved_role(self):
+        for role in ("owner", "editor", "operator", "viewer"):
+            with self.subTest(role=role):
+                self._as(role)
+
+                response = self.client.get(f"/api/projects/{self.project.id}")
+
+                self.assertEqual(response.status_code, 200, response.text)
+                payload = response.json()
+                self.assertEqual(payload["project_role"], role)
+                self.assertNotIn("members", payload)
+                self.assertNotIn("member_roles", payload)
+
     def test_only_owner_can_update_project_metadata(self):
         self._as("editor")
         denied = self.client.put(
@@ -463,6 +476,16 @@ class TestProjectWriteAuditCompleteness(unittest.TestCase):
             "model_version.reject", "model_version.archive",
             "inference_deployment.create", "inference_deployment.start",
             "inference_deployment.stop", "inference_deployment.delete",
+            "inference_rollout.create", "inference_rollout.pause",
+            "inference_rollout.resume", "inference_rollout.rollback",
+            "inference_api_key.create", "inference_api_key.rotate",
+            "inference_api_key.revoke", "model_card.guidance.update",
+        },
+        "notifications": {
+            "notification.endpoint.create", "notification.endpoint.update",
+            "notification.endpoint.delete", "notification.endpoint.test",
+            "notification.subscription.create", "notification.subscription.update",
+            "notification.subscription.delete",
         },
     }
 

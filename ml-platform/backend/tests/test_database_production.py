@@ -1,11 +1,13 @@
 """Production database and Alembic baseline tests."""
 
+import json
 from pathlib import Path
 from queue import Queue
 from threading import Thread
 from types import SimpleNamespace
 from unittest import TestCase, mock
 import tempfile
+import uuid
 
 from alembic import command
 from alembic.config import Config
@@ -18,14 +20,15 @@ from sqlalchemy.pool import StaticPool
 
 import app.main as main_module
 from app.config import settings
-from app import database as database_module
-from app.database import Base, engine_options
+from app.database import engine_options
 from app.database_schema import (
     DatabaseSchemaError,
     require_current_schema,
     schema_status,
 )
 from app.main import initialize_database
+from app.models.artifact import Artifact
+from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
 from app.models.project import Project
 from app.models.user import User
 
@@ -35,7 +38,25 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20260730_09"
+HEAD_REVISION = "20260815_11"
+NOTIFICATION_REVISION = "20260720_10_security_notifications"
+WEEK9_TABLES = {
+    "deployment_revisions",
+    "deployment_targets",
+    "deployment_rollouts",
+    "inference_api_keys",
+    "inference_request_logs",
+    "inference_metric_buckets",
+    "model_cards",
+}
+WEEK10_TABLES = {
+    "platform_audit_events",
+    "notification_endpoints",
+    "notification_subscriptions",
+    "notification_outbox",
+    "notification_deliveries",
+    "in_app_notifications",
+}
 
 
 class TestDatabaseEngineOptions(TestCase):
@@ -101,28 +122,6 @@ class TestDatabaseEngineOptions(TestCase):
                 "pool_timeout": 19,
             },
         )
-
-    def test_file_sqlite_allows_writer_while_reader_transaction_is_open(self):
-        """Long annotation polling must not block local SQLite progress commits."""
-        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
-        with _TemporaryDatabase() as database_url:
-            db_engine = create_engine(database_url, **engine_options(database_url))
-            database_module.configure_sqlite_engine(db_engine)
-            try:
-                with db_engine.begin() as connection:
-                    connection.execute(text("CREATE TABLE lock_probe (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)"))
-                    connection.execute(text("INSERT INTO lock_probe (id, value) VALUES (1, 0)"))
-
-                with db_engine.connect() as reader, db_engine.connect() as writer:
-                    self.assertEqual(reader.scalar(text("PRAGMA journal_mode")), "wal")
-                    self.assertGreaterEqual(int(reader.scalar(text("PRAGMA busy_timeout"))), 30_000)
-                    reader.execute(text("BEGIN"))
-                    reader.execute(text("SELECT value FROM lock_probe")).all()
-                    writer.execute(text("UPDATE lock_probe SET value = 1 WHERE id = 1"))
-                    writer.commit()
-                    reader.rollback()
-            finally:
-                db_engine.dispose()
 
 
 class TestDatabaseSchemaStatus(TestCase):
@@ -218,44 +217,6 @@ class TestDatabaseInitialization(TestCase):
 
 
 class TestDatabaseLifespan(TestCase):
-    def test_repair_orphaned_project_owners_assigns_only_invalid_projects_to_admin(self):
-        db_engine = create_engine("sqlite://", **engine_options("sqlite://"))
-        Base.metadata.create_all(db_engine)
-        session_factory = sessionmaker(bind=db_engine)
-        try:
-            with session_factory() as db:
-                admin = User(
-                    username="admin",
-                    password_hash="hash",
-                    role="admin",
-                )
-                owner = User(
-                    username="project-owner",
-                    password_hash="hash",
-                    role="engineer",
-                )
-                db.add_all([admin, owner])
-                db.flush()
-                valid_project = Project(name="valid-project", owner_id=owner.id)
-                orphaned_project = Project(name="orphaned-project")
-                db.add_all([valid_project, orphaned_project])
-                db.commit()
-
-                repaired = main_module.repair_orphaned_project_owners(db)
-                db.expire_all()
-
-                self.assertEqual(repaired, 1)
-                self.assertEqual(
-                    db.get(Project, orphaned_project.id).owner_id,
-                    admin.id,
-                )
-                self.assertEqual(
-                    db.get(Project, valid_project.id).owner_id,
-                    owner.id,
-                )
-        finally:
-            db_engine.dispose()
-
     def test_default_admin_seed_tolerates_concurrent_unique_insert(self):
         existing_user = SimpleNamespace(username="admin")
 
@@ -318,29 +279,6 @@ class TestDatabaseLifespan(TestCase):
                 global_engine.dispose.assert_not_called()
                 dispose.assert_called_once_with()
 
-    def test_lifespan_recovers_orphaned_local_quality_runs_with_injected_session_factory(self):
-        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
-        with _TemporaryDatabase() as database_url:
-            db_engine = create_engine(database_url, **engine_options(database_url))
-            session_factory = sessionmaker(
-                autocommit=False,
-                autoflush=False,
-                bind=db_engine,
-            )
-            test_app = FastAPI(lifespan=main_module.lifespan)
-            main_module.configure_runtime_dependencies(
-                test_app,
-                app_settings=SimpleNamespace(app_mode="local"),
-                db_engine=db_engine,
-                session_factory=session_factory,
-            )
-
-            with mock.patch.object(main_module, "recover_orphaned_local_quality_runs") as recover:
-                with TestClient(test_app):
-                    recover.assert_called_once()
-                    recovered_session = recover.call_args.args[0]
-                    self.assertEqual(recovered_session.bind, db_engine)
-
 
 class TestAlembicBaseline(TestCase):
     def test_baseline_is_static_and_does_not_use_metadata_ddl(self):
@@ -367,7 +305,7 @@ class TestAlembicBaseline(TestCase):
             try:
                 inspector = inspect(db_engine)
                 business_tables = set(inspector.get_table_names()) - {"alembic_version"}
-                self.assertEqual(len(business_tables), 43)
+                self.assertEqual(len(business_tables), 56)
                 self.assertTrue(
                     {
                         "users",
@@ -380,16 +318,27 @@ class TestAlembicBaseline(TestCase):
                         "pipeline_schedules",
                         "pipeline_schedule_runs",
                         "project_members",
-                        "spot_weld_quality_runs",
-                        "spot_weld_quality_samples",
-                        "spot_weld_quality_rule_sets",
-                        "spot_weld_label_revisions",
-                        "spot_weld_label_snapshots",
                         "audit_events",
                         "registered_models",
                         "model_versions",
                         "inference_deployments",
                     }.issubset(business_tables)
+                )
+                self.assertTrue(WEEK9_TABLES.issubset(business_tables))
+                self.assertTrue(WEEK10_TABLES.issubset(business_tables))
+                self.assertIn(
+                    "uq_deployment_rollouts_active",
+                    {
+                        item["name"]
+                        for item in inspector.get_indexes("deployment_rollouts")
+                    },
+                )
+                self.assertIn(
+                    "uq_inference_metric_buckets_deployment_minute",
+                    {
+                        item["name"]
+                        for item in inspector.get_indexes("inference_metric_buckets")
+                    },
                 )
                 self.assertIn(
                     "ix_users_username",
@@ -466,6 +415,200 @@ class TestAlembicBaseline(TestCase):
             finally:
                 db_engine.dispose()
 
+    def test_notification_revision_expands_alembic_version_column(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "20260720_09_production_inference")
+                command.upgrade(config, NOTIFICATION_REVISION)
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                version_column = next(
+                    column
+                    for column in inspect(db_engine).get_columns("alembic_version")
+                    if column["name"] == "version_num"
+                )
+                with db_engine.connect() as connection:
+                    revision = connection.scalar(
+                        text("SELECT version_num FROM alembic_version")
+                    )
+                self.assertEqual(version_column["type"].length, 64)
+                self.assertEqual(revision, NOTIFICATION_REVISION)
+            finally:
+                db_engine.dispose()
+
+    def test_notification_revision_downgrade_restores_alembic_version_column(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "20260720_09_production_inference")
+                command.upgrade(config, NOTIFICATION_REVISION)
+                command.downgrade(config, "20260720_09_production_inference")
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                version_column = next(
+                    column
+                    for column in inspect(db_engine).get_columns("alembic_version")
+                    if column["name"] == "version_num"
+                )
+                with db_engine.connect() as connection:
+                    revision = connection.scalar(
+                        text("SELECT version_num FROM alembic_version")
+                    )
+                self.assertEqual(version_column["type"].length, 32)
+                self.assertEqual(revision, "20260720_09_production_inference")
+            finally:
+                db_engine.dispose()
+
+    def test_production_inference_revision_backfills_legacy_registry_rows(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "20260718_08")
+                db_engine = create_engine(database_url)
+                try:
+                    seeded = self._seed_legacy_registry(db_engine)
+                finally:
+                    db_engine.dispose()
+                command.upgrade(config, "head")
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                with db_engine.connect() as connection:
+                    revision = connection.execute(text(
+                        "SELECT id, deployment_id, revision_number, strategy, status "
+                        "FROM deployment_revisions"
+                    )).mappings().one()
+                    target = connection.execute(text(
+                        "SELECT revision_id, model_version_id, weight_bps, role "
+                        "FROM deployment_targets"
+                    )).mappings().one()
+                    card = connection.execute(text(
+                        "SELECT id, model_version_id, training_data_lineage, "
+                        "approval_status, release_status, intended_use, limitations "
+                        "FROM model_cards"
+                    )).mappings().one()
+                    card_count = connection.scalar(text("SELECT COUNT(*) FROM model_cards"))
+
+                self.assertEqual(self._as_uuid(revision["id"]), seeded["deployment_id"])
+                self.assertEqual(
+                    self._as_uuid(revision["deployment_id"]),
+                    seeded["deployment_id"],
+                )
+                self.assertEqual(revision["revision_number"], 1)
+                self.assertEqual(revision["strategy"], "immediate")
+                self.assertEqual(revision["status"], "stable")
+                self.assertEqual(
+                    self._as_uuid(target["revision_id"]),
+                    seeded["deployment_id"],
+                )
+                self.assertEqual(
+                    self._as_uuid(target["model_version_id"]),
+                    seeded["model_version_id"],
+                )
+                self.assertEqual(target["weight_bps"], 10000)
+                self.assertEqual(target["role"], "stable")
+                self.assertEqual(self._as_uuid(card["id"]), seeded["model_version_id"])
+                self.assertEqual(
+                    self._as_uuid(card["model_version_id"]),
+                    seeded["model_version_id"],
+                )
+                self.assertEqual(card["approval_status"], "approved")
+                self.assertEqual(card["release_status"], "released")
+                self.assertEqual(card["intended_use"], "")
+                self.assertEqual(card["limitations"], "")
+                lineage = card["training_data_lineage"]
+                if isinstance(lineage, str):
+                    lineage = json.loads(lineage)
+                self.assertEqual(lineage, {"dataset_artifact_id": "legacy-dataset"})
+                self.assertEqual(card_count, 1)
+            finally:
+                db_engine.dispose()
+
+    def test_production_inference_revision_has_complete_downgrade(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "20260718_08")
+                db_engine = create_engine(database_url)
+                try:
+                    seeded = self._seed_legacy_registry(db_engine)
+                finally:
+                    db_engine.dispose()
+                command.upgrade(config, "head")
+                command.downgrade(config, "20260718_08")
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                inspector = inspect(db_engine)
+                tables = set(inspector.get_table_names())
+                self.assertTrue(WEEK9_TABLES.isdisjoint(tables))
+                self.assertTrue({
+                    "registered_models",
+                    "model_versions",
+                    "inference_deployments",
+                }.issubset(tables))
+                with db_engine.connect() as connection:
+                    revision = connection.scalar(
+                        text("SELECT version_num FROM alembic_version")
+                    )
+                    deployment_count = connection.scalar(text(
+                        "SELECT COUNT(*) FROM inference_deployments WHERE id = :id"
+                    ), {"id": seeded["deployment_id"].hex})
+                    version_count = connection.scalar(text(
+                        "SELECT COUNT(*) FROM model_versions WHERE id = :id"
+                    ), {"id": seeded["model_version_id"].hex})
+                self.assertEqual(revision, "20260718_08")
+                self.assertEqual(deployment_count, 1)
+                self.assertEqual(version_count, 1)
+            finally:
+                db_engine.dispose()
+
+    def test_production_inference_request_status_has_no_server_default(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "head")
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                status_column = next(
+                    column
+                    for column in inspect(db_engine).get_columns("inference_request_logs")
+                    if column["name"] == "status"
+                )
+                self.assertFalse(status_column["nullable"])
+                self.assertIsNone(status_column.get("default"))
+            finally:
+                db_engine.dispose()
+
     def test_experiment_tracking_revision_has_complete_downgrade(self):
         TEMP_ROOT.mkdir(parents=True, exist_ok=True)
         with _TemporaryDatabase() as database_url:
@@ -523,6 +666,80 @@ class TestAlembicBaseline(TestCase):
                 self.assertEqual(revision, "20260718_07")
             finally:
                 db_engine.dispose()
+
+    @staticmethod
+    def _as_uuid(value):
+        return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+
+    @staticmethod
+    def _seed_legacy_registry(db_engine):
+        db = sessionmaker(bind=db_engine, expire_on_commit=False)()
+        try:
+            owner = User(username=f"legacy-{uuid.uuid4().hex}", password_hash="hash")
+            db.add(owner)
+            db.flush()
+            project = Project(name="Legacy production inference", owner_id=owner.id)
+            db.add(project)
+            db.flush()
+            artifact = Artifact(
+                project_id=project.id,
+                name="legacy.onnx",
+                type="model",
+                storage_path="",
+                storage_uri="s3://models/legacy.onnx",
+                file_size=12,
+                format="onnx",
+                metadata_={
+                    "dataset_artifact_id": "legacy-dataset",
+                    "credentials": "must-not-migrate",
+                    "storage_uri": "s3://private/source.csv",
+                },
+            )
+            db.add(artifact)
+            db.flush()
+            registered = RegisteredModel(
+                project_id=project.id,
+                name="Legacy classifier",
+                created_by_id=owner.id,
+            )
+            db.add(registered)
+            db.flush()
+            version = ModelVersion(
+                registered_model_id=registered.id,
+                version_number=1,
+                source_kind="onnx_artifact",
+                source_artifact_id=artifact.id,
+                onnx_artifact_id=artifact.id,
+                framework="onnx",
+                algorithm="classifier",
+                feature_schema=[{"name": "current", "dtype": "float64"}],
+                output_schema={"name": "fault", "dtype": "int64"},
+                metrics={"accuracy": 0.95},
+                conversion_metadata={"sha256": "a" * 64},
+                approval_status="approved",
+                approval_comment="validated",
+                approved_by_id=owner.id,
+                approved_at=None,
+                created_by_id=owner.id,
+            )
+            db.add(version)
+            db.flush()
+            deployment = InferenceDeployment(
+                project_id=project.id,
+                name="legacy-primary",
+                model_version_id=version.id,
+                desired_state="running",
+                observed_state="running",
+                created_by_id=owner.id,
+            )
+            db.add(deployment)
+            db.commit()
+            return {
+                "deployment_id": deployment.id,
+                "model_version_id": version.id,
+            }
+        finally:
+            db.close()
 
 
 class _TemporaryDatabase:

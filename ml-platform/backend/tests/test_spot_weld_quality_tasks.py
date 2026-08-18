@@ -4,6 +4,12 @@ from unittest.mock import patch
 
 
 class TestSpotWeldQualityTasks(unittest.TestCase):
+    def test_celery_worker_discovers_spot_weld_quality_task(self):
+        from app.tasks.celery_app import celery_app
+
+        self.assertIn("app.tasks.spot_weld_quality_tasks", celery_app.conf.include)
+        self.assertIn("ml_platform.execute_spot_weld_quality", celery_app.tasks)
+
     def test_dispatcher_returns_celery_task_id(self):
         from app.tasks.spot_weld_quality_tasks import CeleryQualityDispatcher
 

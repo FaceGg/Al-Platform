@@ -52,25 +52,25 @@ class InferenceRuntimeClient:
             )
         return response.json()
 
-    def load(self, deployment_id, specification):
+    def load(self, runtime_key, specification):
         return self._request(
             "PUT",
-            f"/internal/deployments/{deployment_id}",
+            f"/internal/deployments/{runtime_key}",
             json=specification,
             timeout=self.load_timeout_seconds,
         )
 
-    def unload(self, deployment_id):
+    def unload(self, runtime_key):
         return self._request(
             "DELETE",
-            f"/internal/deployments/{deployment_id}",
+            f"/internal/deployments/{runtime_key}",
             timeout=self.load_timeout_seconds,
         )
 
-    def predict(self, deployment_id, records):
+    def predict(self, runtime_key, records):
         return self._request(
             "POST",
-            f"/internal/deployments/{deployment_id}/predict",
+            f"/internal/deployments/{runtime_key}/predict",
             json={"records": records},
             timeout=self.predict_timeout_seconds,
         )

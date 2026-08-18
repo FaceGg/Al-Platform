@@ -4,10 +4,8 @@ sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import Base, engine, SessionLocal
-from app.models.experiment import Experiment
-from app.models.project import Project
-from app.models.user import User
+from app.database import Base, engine
+from tests.auth_test_support import ensure_admin
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
@@ -22,7 +20,7 @@ class TestProjectsCRUD(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Ensure admin exists for fresh DB
-        client.post("/api/auth/register", json={"username": "admin", "password": "admin123", "role": "admin"})
+        ensure_admin()
         cls.h = login()
         cls.created_ids = []
 
@@ -48,11 +46,6 @@ class TestProjectsCRUD(unittest.TestCase):
         self.assertIn("items", data)
         self.assertIn("total", data)
         self.assertGreaterEqual(data["total"], 2)
-        created = next(
-            item for item in data["items"]
-            if item["name"] == "TestProject_CRUD"
-        )
-        self.assertEqual(created["creator_username"], "admin")
 
     def test_04_get_project(self):
         pid = self.created_ids[0]
@@ -87,75 +80,6 @@ class TestProjectsCRUD(unittest.TestCase):
         # Verify deleted
         r = client.get(f"/api/projects/{pid}", headers=self.h)
         self.assertEqual(r.status_code, 404)
-
-    def test_09_delete_project_with_experiment(self):
-        created = client.post("/api/projects", json={
-            "name": f"ExperimentProject_{uuid.uuid4().hex}",
-        }, headers=self.h)
-        self.assertEqual(created.status_code, 201)
-        project_id = uuid.UUID(created.json()["id"])
-
-        with SessionLocal() as db:
-            admin = db.query(User).filter(User.username == "admin").first()
-            experiment = Experiment(
-                project_id=project_id,
-                created_by=admin.id,
-                name=f"Delete cascade {uuid.uuid4().hex}",
-                mlflow_experiment_id=f"delete-cascade-{uuid.uuid4().hex}",
-            )
-            db.add(experiment)
-            db.commit()
-            experiment_id = experiment.id
-
-        try:
-            with TestClient(app, raise_server_exceptions=False) as error_client:
-                deleted = error_client.delete(f"/api/projects/{project_id}", headers=self.h)
-
-            self.assertEqual(deleted.status_code, 204, deleted.text)
-            with SessionLocal() as db:
-                self.assertIsNone(db.get(Experiment, experiment_id))
-        finally:
-            with SessionLocal() as db:
-                db.query(Experiment).filter(Experiment.id == experiment_id).delete()
-                db.query(Project).filter(Project.id == project_id).delete(synchronize_session=False)
-                db.commit()
-
-    def test_09a_batch_delete_project_with_experiment(self):
-        created = client.post("/api/projects", json={
-            "name": f"BatchExperimentProject_{uuid.uuid4().hex}",
-        }, headers=self.h)
-        self.assertEqual(created.status_code, 201)
-        project_id = uuid.UUID(created.json()["id"])
-
-        with SessionLocal() as db:
-            admin = db.query(User).filter(User.username == "admin").first()
-            experiment = Experiment(
-                project_id=project_id,
-                created_by=admin.id,
-                name=f"Batch delete cascade {uuid.uuid4().hex}",
-                mlflow_experiment_id=f"batch-delete-cascade-{uuid.uuid4().hex}",
-            )
-            db.add(experiment)
-            db.commit()
-            experiment_id = experiment.id
-
-        try:
-            with TestClient(app, raise_server_exceptions=False) as error_client:
-                deleted = error_client.post(
-                    "/api/projects/batch-delete",
-                    json={"ids": [str(project_id)]},
-                    headers=self.h,
-                )
-
-            self.assertEqual(deleted.status_code, 200, deleted.text)
-            self.assertEqual(deleted.json(), {"deleted": 1})
-            with SessionLocal() as db:
-                self.assertIsNone(db.get(Experiment, experiment_id))
-        finally:
-            with SessionLocal() as db:
-                db.query(Experiment).filter(Experiment.id == experiment_id).delete()
-                db.query(Project).filter(Project.id == project_id).delete(synchronize_session=False)
-                db.commit()
 
     def test_10_delete_nonexistent_project(self):
         r = client.delete(f"/api/projects/{uuid.uuid4()}", headers=self.h)

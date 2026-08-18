@@ -14,7 +14,7 @@ from sklearn.linear_model import LogisticRegression
 from app.database import Base
 from app.models.artifact import Artifact
 from app.models.model_library import ModelLibrary
-from app.models.model_registry import ModelVersion, RegisteredModel
+from app.models.model_registry import ModelCard, ModelVersion, RegisteredModel
 from app.models.project import Project
 from app.models.training import TrainingJob
 from app.models.user import User
@@ -206,6 +206,20 @@ class TestModelRegistryService(unittest.TestCase):
         self.db.commit()
         self.assertEqual(version.metrics, {"accuracy": 0.95})
 
+    def test_platform_registration_flushes_version_before_model_card(self):
+        library, _artifact = self._platform_source()
+        self.db.autoflush = False
+
+        version = self.service.register_platform_version(
+            self.db,
+            model_id=self.model.id,
+            source_model_library_id=library.id,
+            actor_id=self.owner.id,
+        )
+
+        card = self.db.query(ModelCard).filter_by(model_version_id=version.id).one()
+        self.assertEqual(card.model_version_id, version.id)
+
     def test_registration_compensates_onnx_when_commit_fails(self):
         library, _artifact = self._platform_source()
         original_commit = self.db.commit
@@ -266,6 +280,48 @@ class TestModelRegistryService(unittest.TestCase):
         )
         self.assertEqual(version.source_kind, "onnx_artifact")
         self.assertEqual(version.onnx_artifact_id, artifact.id)
+
+    def test_registration_creates_model_card_with_generated_evidence(self):
+        source = self.root / "card-source.onnx"
+        source.write_bytes(b"uploaded-onnx")
+        artifact = self.artifacts.create_from_file(
+            self.project.id, source, source.name, "model",
+            metadata={"source": "upload", "dataset_artifact_id": "dataset-1"},
+        )
+        self.db.autoflush = False
+        version = self.service.register_onnx_version(
+            self.db, model_id=self.model.id, source_artifact_id=artifact.id,
+            actor_id=self.owner.id,
+            feature_schema=[{"name": "current", "dtype": "float64"}],
+            output_schema={"name": "fault", "dtype": "int64"},
+        )
+        card = self.db.query(ModelCard).filter_by(model_version_id=version.id).one()
+        self.assertEqual(card.input_schema, version.feature_schema)
+        self.assertEqual(card.training_data_lineage["dataset_artifact_id"], "dataset-1")
+
+    def test_approval_refreshes_card_evidence_without_overwriting_guidance(self):
+        from app.services.model_cards import ModelCardService
+
+        source = self.root / "approval-card.onnx"
+        source.write_bytes(b"uploaded-onnx")
+        artifact = self.artifacts.create_from_file(
+            self.project.id, source, source.name, "model", metadata={"source": "upload"},
+        )
+        version = self.service.register_onnx_version(
+            self.db, model_id=self.model.id, source_artifact_id=artifact.id,
+            actor_id=self.owner.id,
+            feature_schema=[{"name": "current", "dtype": "float64"}],
+            output_schema={"name": "fault", "dtype": "int64"},
+        )
+        card = ModelCardService().ensure_for_version(self.db, version)
+        ModelCardService().update_guidance(self.db, card.id, "Use calibrated sensors only.")
+
+        self.service.approve(self.db, version.id, self.owner.id, "validated")
+
+        refreshed = self.db.query(ModelCard).filter_by(model_version_id=version.id).one()
+        self.assertEqual(refreshed.operational_guidance, "Use calibrated sensors only.")
+        self.assertEqual(refreshed.approval_status, "approved")
+        self.assertEqual(refreshed.approval_history[-1]["comment"], "validated")
 
     def test_approval_state_machine_is_idempotent_and_terminal(self):
         library, _artifact = self._platform_source()

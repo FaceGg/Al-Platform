@@ -74,36 +74,45 @@ def create_runtime_app(*, registry: RuntimeRegistry, internal_token: str) -> Fas
         authorize(_auth)
         return {"items": registry.list()}
 
-    @app.put("/internal/deployments/{deployment_id}")
-    def load(deployment_id: str, specification: dict, _auth=Header(default=None, alias="X-Inference-Internal-Token")):
+    @app.put("/internal/deployments/{runtime_key:path}")
+    def load(runtime_key: str, specification: dict, _auth=Header(default=None, alias="X-Inference-Internal-Token")):
         authorize(_auth)
-        if str(specification.get("deployment_id")) != deployment_id:
+        declared_runtime_key = specification.get("runtime_key")
+        if declared_runtime_key is None:
+            declared_runtime_key = specification.get("deployment_id")
+        if str(declared_runtime_key) != runtime_key:
             raise RuntimeErrorCode("DEPLOYMENT_SPEC_INVALID")
         existing = {
-            item["deployment_id"]: item for item in registry.list()
-        }.get(deployment_id)
+            item["runtime_key"]: item for item in registry.list()
+        }.get(runtime_key)
         loaded = registry.load(specification)
         return {
+            "runtime_key": loaded.runtime_key,
             "deployment_id": loaded.deployment_id,
+            "revision_id": loaded.revision_id,
             "model_version_id": loaded.model_version_id,
             "already_loaded": existing is not None,
         }
 
-    @app.delete("/internal/deployments/{deployment_id}")
-    def unload(deployment_id: str, _auth=Header(default=None, alias="X-Inference-Internal-Token")):
+    @app.delete("/internal/deployments/{runtime_key:path}")
+    def unload(runtime_key: str, _auth=Header(default=None, alias="X-Inference-Internal-Token")):
         authorize(_auth)
-        removed = registry.unload(deployment_id)
+        existing = {
+            item["runtime_key"]: item for item in registry.list()
+        }.get(runtime_key)
+        removed = registry.unload(runtime_key)
         return {
-            "deployment_id": deployment_id,
+            "runtime_key": runtime_key,
+            "deployment_id": (existing or {}).get("deployment_id", runtime_key),
             "already_absent": not removed,
         }
 
-    @app.post("/internal/deployments/{deployment_id}/predict")
-    def predict(deployment_id: str, payload: dict, _auth=Header(default=None, alias="X-Inference-Internal-Token")):
+    @app.post("/internal/deployments/{runtime_key:path}/predict")
+    def predict(runtime_key: str, payload: dict, _auth=Header(default=None, alias="X-Inference-Internal-Token")):
         authorize(_auth)
         if set(payload) != {"records"}:
             raise RuntimeErrorCode("INFERENCE_SCHEMA_MISMATCH")
-        return registry.predict(deployment_id, payload["records"])
+        return registry.predict(runtime_key, payload["records"])
 
     return app
 

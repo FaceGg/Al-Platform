@@ -4,7 +4,9 @@ import { PlusOutlined, ExperimentOutlined, BranchesOutlined, EditOutlined, Delet
 import { useParams, useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import apiClient from '../api/client'
+import type { ProjectRole } from '../api/securityNotifications'
 import AppLayout from '../components/AppLayout'
+import ProjectGovernanceTabs from './ProjectGovernanceTabs'
 
 export default function ProjectDetailPage() {
   const { projectId } = useParams()
@@ -61,6 +63,10 @@ export default function ProjectDetailPage() {
       message.error('删除失败')
     }
   }
+
+  const projectRole = ["owner", "editor", "operator", "viewer"].includes(project.project_role)
+    ? project.project_role as ProjectRole
+    : null
 
   return (
     <AppLayout>
@@ -127,6 +133,8 @@ export default function ProjectDetailPage() {
           </List.Item>
         )}
         locale={{ emptyText: '暂无工作流，点击上方按钮创建' }} />
+
+      {projectId ? <ProjectGovernanceTabs projectId={projectId} projectRole={projectRole} /> : null}
 
       <Modal title="新建工作流" open={modalOpen} onCancel={() => setModalOpen(false)}
         onOk={() => form.submit()}>

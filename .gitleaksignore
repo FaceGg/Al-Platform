@@ -1,0 +1,5 @@
+# Deterministic CI/E2E test values retained only in historical commits.
+# Current occurrences carry explicit gitleaks:allow markers and are verified by source scans.
+3104c7ff30e5a159c98385632bbbe9913a7ed473:ml-platform/frontend/playwright.config.ts:generic-api-key:11
+5d6a1ae22783395366aba9eaa3629a315d8da358:.github/workflows/ci.yml:generic-api-key:292
+41296c8eb36acb9f95fb1852ec7cd3d3f695a0ec:.github/workflows/ci.yml:generic-api-key:153

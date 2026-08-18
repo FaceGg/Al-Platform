@@ -5,12 +5,13 @@ sys.path.insert(0, ".")
 from fastapi.testclient import TestClient
 from app.main import app
 from app.database import Base, engine
+from tests.auth_test_support import ensure_admin
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
 
 # Ensure admin exists for fresh DB
-client.post("/api/auth/register", json={"username": "admin", "password": "admin123", "role": "admin"})
+ensure_admin()
 
 
 def login_headers():

@@ -4,10 +4,26 @@ sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import Base, engine
+from app.api.auth import pwd_context
+from app.database import Base, SessionLocal, engine
+from app.models.user import User
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
+
+
+def ensure_admin():
+    db = SessionLocal()
+    try:
+        if db.query(User).filter(User.username == "admin").first() is None:
+            db.add(User(
+                username="admin",
+                password_hash=pwd_context.hash("admin123"),
+                role="admin",
+            ))
+            db.commit()
+    finally:
+        db.close()
 
 
 def login():
@@ -18,8 +34,7 @@ def login():
 class TestComputeAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Ensure admin exists for fresh DB
-        client.post("/api/auth/register", json={"username": "admin", "password": "admin123", "role": "admin"})
+        ensure_admin()
         cls.h = login()
         cls.node_ids = []
         cls.device_ids = []

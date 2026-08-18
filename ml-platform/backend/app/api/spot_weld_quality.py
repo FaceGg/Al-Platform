@@ -34,11 +34,11 @@ from app.services.spot_weld_quality import (
     build_annotation_export,
     create_demo_quality_dataset,
     create_quality_run_record,
+    normalize_quality_search_config,
     normalize_report_rule_config,
     QUALITY_LABEL_MODES,
     resolve_dataset_frame,
     save_labeled_dataset,
-    select_automl_configs,
     train_label_snapshot,
     update_quality_run_rules,
     validate_report_frame,
@@ -68,7 +68,10 @@ class DatasetQualityRequest(BaseModel):
 
     dataset_artifact_id: uuid.UUID
     field_mapping: dict[str, str] = Field(default_factory=dict)
-    candidate_ids: list[str] = Field(default_factory=list)
+    algorithm_ids: list[str] = Field(default_factory=list)
+    search_method: str = "bayesian"
+    max_trials: int = Field(default=20, ge=5, le=200)
+    time_budget: int = Field(default=600, ge=60, le=3600)
     target_column: str | None = None
     input_columns: list[str] | None = None
     cross_validation_enabled: bool = True
@@ -209,7 +212,13 @@ def _serialize_run(run: SpotWeldQualityRun, *, include_results: bool = True) -> 
         "sample_count": total_count or len(run.samples),
         "feature_version": (run.statistics or {}).get("feature_version", "report_v1"),
         "rule_set_version": run.rule_set_version,
-        "selected_candidate_ids": list(input_fingerprint.get("selected_candidate_ids") or []),
+        "selected_algorithm_ids": list(input_fingerprint.get("algorithm_ids") or []),
+        "search": {
+            "contract": input_fingerprint.get("search_contract"),
+            "method": input_fingerprint.get("search_method"),
+            "max_trials": input_fingerprint.get("max_trials"),
+            "time_budget": input_fingerprint.get("time_budget"),
+        },
         "target_column": input_fingerprint.get("target_column"),
         "input_columns": list(input_fingerprint.get("input_columns") or []),
         "evaluation": dict(
@@ -292,7 +301,12 @@ def validate_dataset(
 ):
     require_project_access(db, project_id, current_user.id, "resource.create")
     try:
-        select_automl_configs(data.candidate_ids)
+        normalize_quality_search_config(
+            data.algorithm_ids,
+            data.search_method,
+            data.max_trials,
+            data.time_budget,
+        )
         if data.label_mode not in QUALITY_LABEL_MODES:
             raise QualityPipelineError("QUALITY_LABEL_MODE_INVALID")
         normalize_report_rule_config(data.rule_config)
@@ -325,7 +339,12 @@ def create_run(
 ):
     access = require_project_access(db, project_id, current_user.id, "resource.create")
     try:
-        select_automl_configs(data.candidate_ids)
+        search_config = normalize_quality_search_config(
+            data.algorithm_ids,
+            data.search_method,
+            data.max_trials,
+            data.time_budget,
+        )
         if data.label_mode not in QUALITY_LABEL_MODES:
             raise QualityPipelineError("QUALITY_LABEL_MODE_INVALID")
         normalized_rule_config = normalize_report_rule_config(data.rule_config)
@@ -357,7 +376,10 @@ def create_run(
                 changes={
                     "dataset_artifact_id": str(data.dataset_artifact_id),
                     "feature_version": "report_v1",
-                    "candidate_ids": data.candidate_ids,
+                    "algorithm_ids": search_config["algorithm_ids"],
+                    "search_method": search_config["search_method"],
+                    "max_trials": search_config["max_trials"],
+                    "time_budget": search_config["time_budget"],
                     "target_column": run_configuration["target_column"],
                     "input_columns": run_configuration["input_columns"],
                     "evaluation": run_configuration["evaluation"],
@@ -366,7 +388,8 @@ def create_run(
                 },
             ),
             allowed_changes={
-                "dataset_artifact_id", "feature_version", "candidate_ids", "target_column",
+                "dataset_artifact_id", "feature_version", "algorithm_ids", "search_method",
+                "max_trials", "time_budget", "target_column",
                 "input_columns", "evaluation", "label_mode", "rule_config",
             },
         ):
@@ -376,7 +399,10 @@ def create_run(
                 user_id=current_user.id,
                 dataset_artifact_id=data.dataset_artifact_id,
                 field_mapping=data.field_mapping,
-                candidate_ids=data.candidate_ids,
+                algorithm_ids=search_config["algorithm_ids"],
+                search_method=search_config["search_method"],
+                max_trials=search_config["max_trials"],
+                time_budget=search_config["time_budget"],
                 target_column=data.target_column,
                 input_columns=data.input_columns,
                 cross_validation_enabled=data.cross_validation_enabled,

@@ -192,6 +192,7 @@ export default function DataAnnotationPage() {
   const [preparingRun, setPreparingRun] = useState(false);
   const [deletingRunId, setDeletingRunId] = useState("");
   const [savingRules, setSavingRules] = useState(false);
+  const [selectedFlow, setSelectedFlow] = useState(() => Boolean(searchParams.get("type")));
   const [labelMode, setLabelMode] = useState<QualityLabelMode>(searchParams.get("mode") === "manual" ? "manual" : "automatic");
   const [ruleConfig, setRuleConfig] = useState<QualityRuleConfig>({ ...DEFAULT_RULE_CONFIG });
   const [workspaceMode, setWorkspaceMode] = useState(Boolean(searchParams.get("runId")));
@@ -209,7 +210,7 @@ export default function DataAnnotationPage() {
 
   const selectedProject = useMemo(() => projects.find((item) => item.id === projectId), [projects, projectId]);
   const selectedRun = runs.find((item) => item.id === runId);
-  const isSpotWeldFlow = searchParams.get("type") === "spot-weld"
+  const isSpotWeldFlow = selectedFlow || searchParams.get("type") === "spot-weld"
     || Boolean(searchParams.get("runId") || searchParams.get("datasetId"));
   const requestedView = searchParams.get("view");
   const isWorkspace = isSpotWeldFlow && (workspaceMode || requestedView === "workspace");
@@ -381,7 +382,10 @@ export default function DataAnnotationPage() {
     const validation = await validateQualityDataset(projectId, nextDatasetArtifactId, {}, {
       label_mode: nextLabelMode,
       rule_config: nextLabelMode === "automatic" ? nextRuleConfig : {},
-      candidate_ids: [],
+      algorithm_ids: [],
+      search_method: "bayesian",
+      max_trials: 20,
+      time_budget: 600,
     });
     if (!validation.valid_rows || validation.errors.length) {
       const firstError = validation.errors[0];
@@ -391,7 +395,10 @@ export default function DataAnnotationPage() {
     const payload: Parameters<typeof createQualityRun>[1] = {
       dataset_artifact_id: nextDatasetArtifactId,
       field_mapping: {},
-      candidate_ids: [],
+      algorithm_ids: [],
+      search_method: "bayesian",
+      max_trials: 20,
+      time_budget: 600,
       label_mode: nextLabelMode,
     };
     if (nextLabelMode === "automatic") payload.rule_config = nextRuleConfig;
@@ -485,21 +492,17 @@ export default function DataAnnotationPage() {
       return;
     }
     setWorkspaceMode(false);
+    setSelectedFlow(true);
     setDatasetArtifactId("");
     setRunId("");
-    setSearchParams((current) => {
-      current.set("type", "spot-weld");
-      current.set("view", "tasks");
-      if (projectId) current.set("projectId", projectId);
-      current.delete("runId");
-      current.delete("datasetId");
-      current.set("mode", "automatic");
-      return current;
-    }, { replace: true });
+    const next = new URLSearchParams({ type: "spot-weld", view: "tasks", mode: "automatic" });
+    if (projectId) next.set("projectId", projectId);
+    navigate(`/data-annotation?${next.toString()}`, { replace: true });
   };
 
   const openSetup = (nextMode: QualityLabelMode = "automatic") => {
     setWorkspaceMode(false);
+    setSelectedFlow(true);
     setRunId("");
     setLabelMode(nextMode);
     setSearchParams((current) => {

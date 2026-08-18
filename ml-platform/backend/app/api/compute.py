@@ -6,8 +6,43 @@ from app.database import get_db
 from app.models.compute import ComputeNode, EdgeDevice
 from app.models.user import User
 from app.api.auth import get_current_user
+from app.services.resource_access import ResourceAccessService
 
 router = APIRouter(prefix="/api/compute", tags=["compute"])
+
+
+def _node_response(node: ComputeNode) -> dict:
+    return {
+        "id": str(node.id),
+        "name": node.name,
+        "node_number": node.node_number,
+        "ip_address": node.ip_address,
+        "node_type": node.node_type,
+        "status": node.status,
+        "purpose": node.purpose,
+        "cpu_cores": node.cpu_cores,
+        "gpu_count": node.gpu_count,
+        "memory_gb": node.memory_gb,
+        "disk_gb": node.disk_gb,
+        "current_load": node.current_load,
+        "tags": node.tags or [],
+    }
+
+
+def _device_response(device: EdgeDevice) -> dict:
+    return {
+        "id": str(device.id),
+        "name": device.name,
+        "group_id": device.group_id,
+        "ip_address": device.ip_address,
+        "device_type": device.device_type,
+        "status": device.status,
+        "model_deployed": device.model_deployed,
+        "version": device.version,
+        "last_heartbeat": (
+            device.last_heartbeat.isoformat() if device.last_heartbeat else None
+        ),
+    }
 
 
 # ---- Compute Nodes ----
@@ -26,25 +61,26 @@ def list_nodes(
     nodes = q.all()
     return {
         "items": [
-            {
-                "id": str(n.id),
-                "name": n.name,
-                "node_number": n.node_number,
-                "ip_address": n.ip_address,
-                "node_type": n.node_type,
-                "status": n.status,
-                "purpose": n.purpose,
-                "cpu_cores": n.cpu_cores,
-                "gpu_count": n.gpu_count,
-                "memory_gb": n.memory_gb,
-                "disk_gb": n.disk_gb,
-                "current_load": n.current_load,
-                "tags": n.tags or [],
-            }
+            _node_response(n)
             for n in nodes
         ],
         "total": len(nodes),
     }
+
+
+@router.get("/nodes/{node_id}")
+def get_node(
+    node_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    node = ResourceAccessService().require_owned(
+        db,
+        ComputeNode,
+        node_id,
+        current_user.id,
+    )
+    return _node_response(node)
 
 
 @router.post("/nodes")
@@ -71,9 +107,12 @@ def create_node(data: dict, db: Session = Depends(get_db), current_user: User = 
 
 @router.put("/nodes/{node_id}")
 def update_node(node_id: str, data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    node = db.query(ComputeNode).filter(ComputeNode.id == uuid.UUID(node_id)).first()
-    if not node:
-        raise HTTPException(404)
+    node = ResourceAccessService().require_owned(
+        db,
+        ComputeNode,
+        node_id,
+        current_user.id,
+    )
     for key in ["name", "status", "purpose", "ip_address", "description", "tags"]:
         if key in data:
             setattr(node, key, data[key])
@@ -83,9 +122,12 @@ def update_node(node_id: str, data: dict, db: Session = Depends(get_db), current
 
 @router.delete("/nodes/{node_id}")
 def delete_node(node_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    node = db.query(ComputeNode).filter(ComputeNode.id == uuid.UUID(node_id)).first()
-    if not node:
-        raise HTTPException(404)
+    node = ResourceAccessService().require_owned(
+        db,
+        ComputeNode,
+        node_id,
+        current_user.id,
+    )
     db.delete(node)
     db.commit()
     return {"status": "deleted"}
@@ -104,17 +146,7 @@ def list_devices(
     devices = q.all()
     return {
         "items": [
-            {
-                "id": str(d.id),
-                "name": d.name,
-                "group_id": d.group_id,
-                "ip_address": d.ip_address,
-                "device_type": d.device_type,
-                "status": d.status,
-                "model_deployed": d.model_deployed,
-                "version": d.version,
-                "last_heartbeat": d.last_heartbeat.isoformat() if d.last_heartbeat else None,
-            }
+            _device_response(d)
             for d in devices
         ],
         "total": len(devices),
@@ -136,3 +168,55 @@ def create_device(data: dict, db: Session = Depends(get_db), current_user: User 
     db.commit()
     db.refresh(device)
     return {"id": str(device.id), "name": device.name}
+
+
+@router.get("/devices/{device_id}")
+def get_device(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    device = ResourceAccessService().require_owned(
+        db,
+        EdgeDevice,
+        device_id,
+        current_user.id,
+    )
+    return _device_response(device)
+
+
+@router.put("/devices/{device_id}")
+def update_device(
+    device_id: str,
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    device = ResourceAccessService().require_owned(
+        db,
+        EdgeDevice,
+        device_id,
+        current_user.id,
+    )
+    for key in ["name", "group_id", "ip_address", "device_type", "status", "description", "config"]:
+        if key in data:
+            setattr(device, key, data[key])
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/devices/{device_id}")
+def delete_device(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    device = ResourceAccessService().require_owned(
+        db,
+        EdgeDevice,
+        device_id,
+        current_user.id,
+    )
+    db.delete(device)
+    db.commit()
+    return {"status": "deleted"}

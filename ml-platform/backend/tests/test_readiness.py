@@ -3,6 +3,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from pydantic import SecretStr
+
 from app.api import readiness as readiness_api
 from app.services.readiness_service import ReadinessService
 
@@ -93,6 +95,84 @@ class TestReadiness(unittest.TestCase):
         self.assertFalse(result["ready"])
         self.assertEqual(result["database"]["code"], "DATABASE_UNAVAILABLE")
         self.assertNotIn("password", encoded.lower())
+
+    def test_notification_readiness_exposes_only_redacted_booleans(self):
+        notification_key = "notification-readiness-secret"
+        service = ReadinessService(
+            engine=MagicMock(),
+            settings=SimpleNamespace(
+                task_backend="local",
+                artifact_storage_backend="local",
+                resolved_notification_master_key=SecretStr(notification_key),
+            ),
+            celery_app=SimpleNamespace(
+                tasks={
+                    "ml_platform.deliver_notifications": object(),
+                    "ml_platform.enqueue_due_notifications": object(),
+                },
+            ),
+        )
+        service._database = lambda: {"ready": True, "code": "OK"}
+
+        result = service.check_all()
+
+        self.assertIs(result["notification_crypto_configured"], True)
+        self.assertIs(result["notification_worker_registered"], True)
+        self.assertNotIn(notification_key, json.dumps(result))
+
+    def test_production_notification_readiness_requires_live_worker_registration(self):
+        celery_app = MagicMock()
+        celery_app.tasks = {
+            "ml_platform.deliver_notifications": object(),
+            "ml_platform.enqueue_due_notifications": object(),
+        }
+        celery_app.control.inspect.return_value.ping.return_value = {
+            "worker@old": {"ok": "pong"},
+        }
+        celery_app.control.inspect.return_value.registered.return_value = {
+            "worker@old": ["ml_platform.execute_training"],
+        }
+        service = ReadinessService(
+            engine=MagicMock(),
+            settings=SimpleNamespace(
+                app_mode="production",
+                task_backend="celery",
+                artifact_storage_backend="local",
+                resolved_notification_master_key=SecretStr("notification-readiness-secret"),
+            ),
+            celery_app=celery_app,
+        )
+
+        self.assertFalse(service._notification_worker_registered())
+
+    def test_production_notification_readiness_uses_only_live_worker_registrations(self):
+        celery_app = MagicMock()
+        celery_app.tasks = {
+            "ml_platform.deliver_notifications": object(),
+            "ml_platform.enqueue_due_notifications": object(),
+        }
+        celery_app.control.inspect.return_value.ping.return_value = {
+            "worker@current": {"ok": "pong"},
+        }
+        celery_app.control.inspect.return_value.registered.return_value = {
+            "worker@current": [
+                "ml_platform.deliver_notifications",
+                "ml_platform.enqueue_due_notifications",
+            ],
+            "worker@stale": ["ml_platform.execute_training"],
+        }
+        service = ReadinessService(
+            engine=MagicMock(),
+            settings=SimpleNamespace(
+                app_mode="production",
+                task_backend="celery",
+                artifact_storage_backend="local",
+                resolved_notification_master_key=SecretStr("notification-readiness-secret"),
+            ),
+            celery_app=celery_app,
+        )
+
+        self.assertTrue(service._notification_worker_registered())
 
     def test_production_readiness_builds_real_dependency_clients(self):
         production = SimpleNamespace(

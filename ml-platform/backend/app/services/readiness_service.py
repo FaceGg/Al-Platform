@@ -33,7 +33,56 @@ class ReadinessService:
             "tensorboard": self._tensorboard(),
             "inference_runtime": self._inference_runtime(),
         }
-        return {"ready": all(item["ready"] for item in checks.values()), **checks}
+        notification_crypto_configured = self._notification_crypto_configured()
+        notification_worker_registered = self._notification_worker_registered()
+        notification_ready = (
+            getattr(self.settings, "app_mode", "local") != "production"
+            or (notification_crypto_configured and notification_worker_registered)
+        )
+        return {
+            "ready": all(item["ready"] for item in checks.values())
+            and notification_ready,
+            **checks,
+            "notification_crypto_configured": notification_crypto_configured,
+            "notification_worker_registered": notification_worker_registered,
+        }
+
+    def _notification_crypto_configured(self) -> bool:
+        master_key = getattr(self.settings, "resolved_notification_master_key", None)
+        if master_key is None:
+            return False
+        try:
+            return bool(master_key.get_secret_value().strip())
+        except AttributeError:
+            return False
+
+    def _notification_worker_registered(self) -> bool:
+        required_tasks = {
+            "ml_platform.deliver_notifications",
+            "ml_platform.enqueue_due_notifications",
+        }
+        tasks = getattr(self.celery_app, "tasks", {}) if self.celery_app else {}
+        if not required_tasks.issubset(tasks):
+            return False
+        if getattr(self.settings, "task_backend", "local") != "celery":
+            return True
+        try:
+            inspector = self.celery_app.control.inspect()
+            active_workers = inspector.ping()
+            registered = inspector.registered()
+        except Exception:
+            return False
+        if not isinstance(active_workers, dict) or not active_workers:
+            return False
+        if not isinstance(registered, dict):
+            return False
+        for worker_name in active_workers:
+            worker_tasks = registered.get(worker_name)
+            if not isinstance(worker_tasks, (list, tuple, set)):
+                return False
+            if not required_tasks.issubset(worker_tasks):
+                return False
+        return True
 
     def _database(self):
         try:

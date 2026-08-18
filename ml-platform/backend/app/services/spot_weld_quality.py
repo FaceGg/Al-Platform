@@ -18,10 +18,8 @@ import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-from sklearn.ensemble import ExtraTreesClassifier, GradientBoostingClassifier, HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, f1_score, roc_auc_score, silhouette_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
-from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 
 from app.models.model_library import ModelLibrary
@@ -33,6 +31,8 @@ from app.models.spot_weld_quality import (
     SpotWeldQualitySample,
 )
 from app.services.artifact_service import ArtifactAccessError, ArtifactService, build_artifact_service
+from app.services.automl_catalog import get_algorithm_family, resolve_algorithm_families
+from app.services.automl_search import FamilySearchResult, SEARCH_METHODS, SearchConfig, run_family_search
 from app.services.spot_weld_features import (
     FEATURE_SCHEMA,
     QualityPipelineError,
@@ -44,19 +44,6 @@ from app.services.spot_weld_features import (
     decode_report_waveforms,
 )
 
-
-AUTOML_CONFIGS: tuple[dict[str, Any], ...] = (
-    {"name": "LGB_v1", "type": "lgb", "params": {"n_estimators": 200, "learning_rate": 0.05, "num_leaves": 31}},
-    {"name": "LGB_v2", "type": "lgb", "params": {"n_estimators": 500, "learning_rate": 0.03, "num_leaves": 63, "subsample": 0.7, "colsample_bytree": 0.7, "reg_alpha": 0.1, "reg_lambda": 0.1}},
-    {"name": "XGB_v1", "type": "xgb", "params": {"n_estimators": 200, "learning_rate": 0.05, "max_depth": 5}},
-    {"name": "XGB_v2", "type": "xgb", "params": {"n_estimators": 500, "learning_rate": 0.03, "max_depth": 7}},
-    {"name": "CAT_v1", "type": "catboost", "params": {"iterations": 200, "learning_rate": 0.05, "depth": 6, "verbose": False}},
-    {"name": "CAT_v2", "type": "catboost", "params": {"iterations": 500, "learning_rate": 0.03, "depth": 8, "verbose": False}},
-    {"name": "GBDT_v1", "type": "gbdt", "params": {"n_estimators": 200, "learning_rate": 0.1, "max_depth": 5}},
-    {"name": "RF_v1", "type": "rf", "params": {"n_estimators": 300, "max_depth": None}},
-    {"name": "ET_v1", "type": "extra", "params": {"n_estimators": 300, "max_depth": None}},
-    {"name": "HGB_v1", "type": "histgb", "params": {"max_iter": 300, "learning_rate": 0.05}},
-)
 
 REPORT_RULE_ENERGY_SIGMA = 2.5
 REPORT_RULE_SPATTER_CLUSTER_ID = 1
@@ -145,15 +132,34 @@ def build_runtime_rule_thresholds(
     }
 
 
-def select_automl_configs(candidate_ids: Sequence[str] | None = None) -> tuple[dict[str, Any], ...]:
-    requested = tuple(candidate_ids or ())
-    catalog = {str(config["name"]): config for config in AUTOML_CONFIGS}
-    if len(set(requested)) != len(requested) or any(candidate_id not in catalog for candidate_id in requested):
-        raise QualityPipelineError("QUALITY_AUTOML_CONFIG_INVALID")
-    return tuple(catalog[candidate_id] for candidate_id in requested) if requested else AUTOML_CONFIGS
-
-
 QUALITY_CROSS_VALIDATION_FOLDS = frozenset({3, 4, 5})
+
+
+def normalize_quality_search_config(
+    algorithm_ids: Sequence[str] | None = None,
+    search_method: str = "bayesian",
+    max_trials: int = 20,
+    time_budget: int = 600,
+) -> dict[str, Any]:
+    if (
+        search_method not in SEARCH_METHODS
+        or isinstance(max_trials, bool)
+        or not 5 <= int(max_trials) <= 200
+        or isinstance(time_budget, bool)
+        or not 60 <= int(time_budget) <= 3600
+    ):
+        raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID")
+    try:
+        families = resolve_algorithm_families(list(algorithm_ids or []))
+    except ValueError as error:
+        raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID") from error
+    return {
+        "search_contract": "optuna_v1",
+        "algorithm_ids": [family.id for family in families],
+        "search_method": search_method,
+        "max_trials": int(max_trials),
+        "time_budget": int(time_budget),
+    }
 
 
 def normalize_quality_evaluation_config(
@@ -505,44 +511,48 @@ def save_labeled_dataset(
         )
 
 
-SNAPSHOT_TRAINING_CONFIGS: tuple[dict[str, Any], ...] = (
-    {"name": "AutoML(LGB_v2)", "type": "lgb", "params": dict(AUTOML_CONFIGS[1]["params"]), "feature_scope": "fusion"},
-    {"name": "MLP_128-64-32", "type": "mlp", "params": {"hidden_layer_sizes": (128, 64, 32), "alpha": 0.001, "max_iter": 350, "early_stopping": False}, "feature_scope": "fusion"},
-    {"name": "MLP_256-128-64", "type": "mlp", "params": {"hidden_layer_sizes": (256, 128, 64), "alpha": 0.0005, "max_iter": 350, "early_stopping": False}, "feature_scope": "fusion"},
-    {"name": "MLP_仅表格", "type": "mlp", "params": {"hidden_layer_sizes": (128, 64, 32), "alpha": 0.001, "max_iter": 350, "early_stopping": False}, "feature_scope": "table"},
-)
 SNAPSHOT_TRAINING_CV_FOLDS = 5
 
 
 @dataclass
 class CandidateResult:
+    algorithm_id: str
     name: str
-    model_type: str
+    status: str
+    config_index: int
+    best_score: float | None = None
     auc: float | None = None
     f1: float | None = None
-    config_index: int = 0
     auc_std: float = 0.0
     f1_std: float = 0.0
+    best_params: dict[str, Any] = field(default_factory=dict)
+    completed_trials: int = 0
+    pruned_trials: int = 0
+    failed_trials: int = 0
     training_time_seconds: float = 0.0
     error_code: str | None = None
     error_message: str | None = None
     feature_importance: list[float] = field(default_factory=list)
-    params: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
-            "model_type": self.model_type,
+            "algorithm_id": self.algorithm_id,
+            "status": self.status,
+            "best_score": self.best_score,
             "auc": self.auc,
             "f1": self.f1,
             "config_index": self.config_index,
             "auc_std": self.auc_std,
             "f1_std": self.f1_std,
+            "best_params": self.best_params,
+            "completed_trials": self.completed_trials,
+            "pruned_trials": self.pruned_trials,
+            "failed_trials": self.failed_trials,
             "training_time_seconds": self.training_time_seconds,
             "error_code": self.error_code,
             "error_message": self.error_message,
             "feature_importance": self.feature_importance,
-            "params": self.params,
         }
 
 
@@ -551,42 +561,6 @@ def select_best_candidate(results: list[CandidateResult]) -> CandidateResult:
     if not successful:
         raise QualityPipelineError("QUALITY_AUTOML_ALL_CANDIDATES_FAILED")
     return max(successful, key=lambda item: (float(item.auc), float(item.f1), -item.config_index))
-
-
-def _build_estimator(config: Mapping[str, Any], *, seed: int = 42):
-    model_type = config["type"]
-    params = dict(config.get("params", {}))
-    if model_type == "lgb":
-        try:
-            from lightgbm import LGBMClassifier
-        except ImportError as error:
-            raise QualityPipelineError("QUALITY_AUTOML_DEPENDENCY_UNAVAILABLE", message="lightgbm is not installed") from error
-        return LGBMClassifier(random_state=seed, verbosity=-1, **params)
-    if model_type == "xgb":
-        try:
-            from xgboost import XGBClassifier
-        except ImportError as error:
-            raise QualityPipelineError("QUALITY_AUTOML_DEPENDENCY_UNAVAILABLE", message="xgboost is not installed") from error
-        return XGBClassifier(random_state=seed, eval_metric="logloss", n_jobs=1, **params)
-    if model_type == "catboost":
-        try:
-            from catboost import CatBoostClassifier
-        except ImportError as error:
-            raise QualityPipelineError("QUALITY_AUTOML_DEPENDENCY_UNAVAILABLE", message="catboost is not installed") from error
-        return CatBoostClassifier(random_seed=seed, allow_writing_files=False, **params)
-    if model_type == "gbdt":
-        return GradientBoostingClassifier(random_state=seed, **params)
-    if model_type == "rf":
-        return RandomForestClassifier(random_state=seed, n_jobs=1, **params)
-    if model_type == "extra":
-        return ExtraTreesClassifier(random_state=seed, n_jobs=1, **params)
-    if model_type == "histgb":
-        return HistGradientBoostingClassifier(random_state=seed, **params)
-    if model_type == "mlp":
-        params.setdefault("max_iter", 400)
-        params.setdefault("early_stopping", True)
-        return MLPClassifier(random_state=seed, **params)
-    raise QualityPipelineError("QUALITY_AUTOML_CONFIG_INVALID", message=f"Unknown model type: {model_type}")
 
 
 def _feature_importance(model, feature_count: int) -> np.ndarray:
@@ -620,13 +594,94 @@ def _quality_automl_auc(y_true: np.ndarray, probabilities: np.ndarray, class_cou
     ))
 
 
+def _quality_automl_splits(
+    features: np.ndarray,
+    target: np.ndarray,
+    evaluation: Mapping[str, Any],
+) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    if evaluation["cross_validation_enabled"]:
+        splitter = StratifiedKFold(
+            n_splits=int(evaluation["cross_validation_folds"]),
+            shuffle=True,
+            random_state=42,
+        )
+        return tuple(splitter.split(features, target))
+    try:
+        train_index, test_index = train_test_split(
+            np.arange(len(target)),
+            test_size=0.2,
+            random_state=42,
+            stratify=target,
+        )
+    except ValueError as error:
+        raise QualityPipelineError("QUALITY_AUTOML_INSUFFICIENT_LABELS") from error
+    return ((train_index, test_index),)
+
+
+def _quality_estimator_metrics(
+    estimator_factory: Callable[[], Any],
+    *,
+    features: np.ndarray,
+    target: np.ndarray,
+    evaluation: Mapping[str, Any],
+) -> dict[str, Any]:
+    class_count = len(np.unique(target))
+    aucs: list[float] = []
+    f1s: list[float] = []
+    importances: list[np.ndarray] = []
+    for train_index, test_index in _quality_automl_splits(features, target, evaluation):
+        scaler = StandardScaler()
+        train = scaler.fit_transform(features[train_index])
+        test = scaler.transform(features[test_index])
+        estimator = estimator_factory()
+        estimator.fit(_estimator_matrix(train), target[train_index])
+        probabilities = estimator.predict_proba(_estimator_matrix(test))
+        predictions = estimator.predict(_estimator_matrix(test))
+        aucs.append(_quality_automl_auc(target[test_index], probabilities, class_count))
+        f1s.append(float(f1_score(
+            target[test_index], predictions, average="macro", zero_division=0,
+        )))
+        importances.append(_feature_importance(estimator, features.shape[1]))
+    return {
+        "auc": float(np.mean(aucs)),
+        "f1": float(np.mean(f1s)),
+        "auc_std": float(np.std(aucs)),
+        "f1_std": float(np.std(f1s)),
+        "feature_importance": np.mean(importances, axis=0).tolist(),
+    }
+
+
+def _evaluate_quality_estimator(
+    estimator,
+    *,
+    task: str,
+    features: np.ndarray,
+    target: np.ndarray,
+    evaluation: Mapping[str, Any],
+) -> float:
+    if task != "classification":
+        raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID")
+    metrics = _quality_estimator_metrics(
+        lambda: estimator,
+        features=features,
+        target=target,
+        evaluation=evaluation,
+    )
+    return float(metrics["auc"])
+
+
 def run_automl(
     features: np.ndarray,
     labels: Iterable[Any],
     *,
-    configs: tuple[Mapping[str, Any], ...] = AUTOML_CONFIGS,
+    algorithm_ids: Sequence[str] | None = None,
+    search_method: str = "bayesian",
+    max_trials: int = 20,
+    time_budget: float = 600,
     evaluation: Mapping[str, Any] | None = None,
     progress_callback: Callable[[int, int, CandidateResult], None] | None = None,
+    family_search: Callable[..., FamilySearchResult] = run_family_search,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[list[CandidateResult], CandidateResult]:
     X = np.asarray(features, dtype=np.float64)
     y_raw = np.asarray(list(labels))
@@ -647,66 +702,87 @@ def run_automl(
     )
     if len(counts) < 2 or int(counts.min()) < minimum_count:
         raise QualityPipelineError("QUALITY_AUTOML_INSUFFICIENT_LABELS")
-    if evaluation_config["cross_validation_enabled"]:
-        splitter = StratifiedKFold(
-            n_splits=int(evaluation_config["cross_validation_folds"]),
-            shuffle=True,
-            random_state=42,
-        )
-        splits = tuple(splitter.split(X, y))
-    else:
-        try:
-            train_index, test_index = train_test_split(
-                np.arange(len(y)),
-                test_size=0.2,
-                random_state=42,
-                stratify=y,
-            )
-        except ValueError as error:
-            raise QualityPipelineError("QUALITY_AUTOML_INSUFFICIENT_LABELS") from error
-        splits = ((train_index, test_index),)
+    search_config = normalize_quality_search_config(
+        algorithm_ids,
+        search_method,
+        int(max_trials),
+        int(time_budget),
+    )
+    families = resolve_algorithm_families(search_config["algorithm_ids"])
+    deadline = monotonic() + float(search_config["time_budget"])
+    planned_trials = len(families) * search_config["max_trials"]
+    terminal_trials = 0
     results: list[CandidateResult] = []
-    for config_index, config in enumerate(configs):
-        result = CandidateResult(
-            name=str(config["name"]), model_type=str(config["type"]), config_index=config_index,
-            params=dict(config.get("params", {})),
+    for config_index, family in enumerate(families):
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            results.append(CandidateResult(
+                algorithm_id=family.id,
+                name=family.display_name,
+                status="failed",
+                config_index=config_index,
+                error_code="QUALITY_AUTOML_BUDGET_EXHAUSTED",
+                error_message="Point-weld AutoML time budget exhausted",
+            ))
+            continue
+
+        def on_trial(_summary, *, current_family=family) -> None:
+            nonlocal terminal_trials
+            terminal_trials += 1
+            if progress_callback is not None:
+                progress_callback(
+                    terminal_trials,
+                    planned_trials,
+                    CandidateResult(
+                        algorithm_id=current_family.id,
+                        name=current_family.display_name,
+                        status="running",
+                        config_index=config_index,
+                    ),
+                )
+
+        family_result = family_search(
+            family=family,
+            task="classification",
+            features=X,
+            target=y,
+            evaluation=evaluation_config,
+            config=SearchConfig(
+                method=search_config["search_method"],
+                max_trials=search_config["max_trials"],
+                timeout_seconds=max(0.001, remaining / (len(families) - config_index)),
+            ),
+            catalog_index=config_index,
+            estimator_evaluator=_evaluate_quality_estimator,
+            trial_callback=on_trial,
         )
-        aucs: list[float] = []
-        f1s: list[float] = []
-        importances: list[np.ndarray] = []
-        started = time.perf_counter()
-        try:
-            for train_index, test_index in splits:
-                scaler = StandardScaler()
-                train = scaler.fit_transform(X[train_index])
-                test = scaler.transform(X[test_index])
-                model = _build_estimator(config)
-                model.fit(_estimator_matrix(train), y[train_index])
-                probabilities = model.predict_proba(_estimator_matrix(test))
-                predictions = model.predict(_estimator_matrix(test))
-                aucs.append(_quality_automl_auc(y[test_index], probabilities, len(unique)))
-                f1s.append(float(f1_score(
-                    y[test_index],
-                    predictions,
-                    average="macro",
-                    zero_division=0,
-                )))
-                importances.append(_feature_importance(model, X.shape[1]))
-            result.auc = float(np.mean(aucs))
-            result.f1 = float(np.mean(f1s))
-            result.auc_std = float(np.std(aucs))
-            result.f1_std = float(np.std(f1s))
-            result.feature_importance = np.mean(importances, axis=0).tolist()
-        except QualityPipelineError as error:
-            result.error_code = error.code
-            result.error_message = str(error)
-        except Exception as error:  # candidate failures stay visible in the result table
-            result.error_code = "QUALITY_AUTOML_CANDIDATE_FAILED"
-            result.error_message = str(error)
-        result.training_time_seconds = time.perf_counter() - started
+        result = CandidateResult(
+            algorithm_id=family.id,
+            name=family.display_name,
+            status=family_result.status,
+            config_index=config_index,
+            best_score=family_result.best_score,
+            best_params=dict(family_result.best_params),
+            completed_trials=family_result.completed_trials,
+            pruned_trials=family_result.pruned_trials,
+            failed_trials=family_result.failed_trials,
+            training_time_seconds=family_result.training_time_seconds,
+            error_code=family_result.error_code,
+            error_message=family_result.error_message,
+        )
+        if family_result.status == "completed":
+            metrics = _quality_estimator_metrics(
+                lambda family=family, params=result.best_params: family.build("classification", params),
+                features=X,
+                target=y,
+                evaluation=evaluation_config,
+            )
+            result.auc = metrics["auc"]
+            result.f1 = metrics["f1"]
+            result.auc_std = metrics["auc_std"]
+            result.f1_std = metrics["f1_std"]
+            result.feature_importance = metrics["feature_importance"]
         results.append(result)
-        if progress_callback is not None:
-            progress_callback(config_index + 1, len(configs), result)
     return results, select_best_candidate(results)
 
 
@@ -1051,7 +1127,10 @@ def create_quality_run_record(
     user_id,
     dataset_artifact_id,
     field_mapping: Mapping[str, str] | None = None,
-    candidate_ids: Sequence[str] | None = None,
+    algorithm_ids: Sequence[str] | None = None,
+    search_method: str = "bayesian",
+    max_trials: int = 20,
+    time_budget: int = 600,
     target_column: str | None = None,
     input_columns: Sequence[str] | None = None,
     cross_validation_enabled: bool = True,
@@ -1062,7 +1141,12 @@ def create_quality_run_record(
 ) -> SpotWeldQualityRun:
     if not isinstance(label_mode, str) or label_mode not in QUALITY_LABEL_MODES:
         raise QualityPipelineError("QUALITY_LABEL_MODE_INVALID")
-    selected_configs = select_automl_configs(candidate_ids)
+    search_config = normalize_quality_search_config(
+        algorithm_ids,
+        search_method,
+        max_trials,
+        time_budget,
+    )
     normalized_rule_config = normalize_report_rule_config(rule_config)
     artifact_service = artifact_service or build_artifact_service(db)
     artifact, frame = resolve_dataset_frame(db, artifact_service, project_id, dataset_artifact_id)
@@ -1086,7 +1170,7 @@ def create_quality_run_record(
             "artifact_id": str(artifact.id),
             "sha256": (artifact.metadata_ or {}).get("sha256"),
             "row_count": len(frame),
-            "selected_candidate_ids": [str(config["name"]) for config in selected_configs],
+            **search_config,
             "label_mode": label_mode,
             "rule_config": normalized_rule_config,
             **run_configuration,
@@ -1285,13 +1369,16 @@ def _source_row_values(frame: pd.DataFrame, row_index: int) -> dict[str, Any]:
 
 
 def _fit_candidate_model(features: np.ndarray, labels: Iterable[Any], candidate: CandidateResult):
-    config = next((item for item in AUTOML_CONFIGS if item["name"] == candidate.name), None)
-    if config is None:
-        raise QualityPipelineError("QUALITY_AUTOML_CONFIG_INVALID")
+    try:
+        family = get_algorithm_family(candidate.algorithm_id)
+    except ValueError as error:
+        raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID") from error
+    model = family.build("classification", candidate.best_params)
+    if candidate.error_code is not None:
+        raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID")
     _, encoded = np.unique(np.asarray(list(labels)), return_inverse=True)
     scaler = StandardScaler()
     transformed = scaler.fit_transform(np.asarray(features, dtype=np.float64))
-    model = _build_estimator(config)
     model.fit(_estimator_matrix(transformed), encoded)
     return scaler, model
 
@@ -1463,24 +1550,31 @@ def _write_quality_run_report(
     ])
     automl = pd.DataFrame([
         {
-            "候选模型": item.name,
-            "模型类型": item.model_type,
+            "算法家族": item.algorithm_id,
+            "显示名称": item.name,
+            "状态": item.status,
+            "最佳分数": item.best_score,
             "AUC": item.auc,
             "AUC标准差": item.auc_std,
             "F1": item.f1,
             "F1标准差": item.f1_std,
+            "完成试验": item.completed_trials,
+            "剪枝试验": item.pruned_trials,
+            "失败试验": item.failed_trials,
             "训练耗时(秒)": item.training_time_seconds,
             "错误码": item.error_code,
-            "参数": _export_json(item.params),
+            "最佳参数": _export_json(item.best_params),
         }
         for item in candidates
     ], columns=[
-        "候选模型", "模型类型", "AUC", "AUC标准差", "F1", "F1标准差", "训练耗时(秒)", "错误码", "参数",
+        "算法家族", "显示名称", "状态", "最佳分数", "AUC", "AUC标准差",
+        "F1", "F1标准差", "完成试验", "剪枝试验", "失败试验",
+        "训练耗时(秒)", "错误码", "最佳参数",
     ])
     deep_learning = pd.DataFrame([
         {
             "模型": "未启用独立深度学习比较",
-            "说明": "本次点焊质量运行使用所选 AutoML 候选模型。",
+            "说明": "点焊质量运行统一使用七类算法家族的 Optuna 搜索。",
         },
     ], columns=["模型", "说明"])
     labels_frame = pd.DataFrame([
@@ -1628,6 +1722,7 @@ def _generated_artifacts(
             "target_schema": run_statistics.get("target_schema"),
             "input_schema": run_statistics.get("input_schema") or [],
             "evaluation": run_statistics.get("evaluation") or {},
+            "search": run_statistics.get("search") or {},
             "candidate_results": candidate_results,
             "samples": [
                 {
@@ -1734,8 +1829,11 @@ def execute_quality_run(
             raise QualityPipelineError("QUALITY_LABEL_MODE_INVALID")
         normalized_rule_config = normalize_report_rule_config(run_input.get("rule_config"))
         thresholds = build_runtime_rule_thresholds(features, normalized_rule_config)
-        selected_configs = select_automl_configs(
-            run_input.get("selected_candidate_ids"),
+        search_config = normalize_quality_search_config(
+            run_input.get("algorithm_ids"),
+            run_input.get("search_method", "bayesian"),
+            run_input.get("max_trials", 20),
+            run_input.get("time_budget", 600),
         )
         run_configuration, supervised_labels = resolve_quality_run_configuration(
             frame,
@@ -1771,7 +1869,19 @@ def execute_quality_run(
             "label_mode": label_mode,
             **run_configuration,
             "annotation_progress": _annotation_progress(0, total_count),
-            "modeling_progress": _modeling_progress(0, len(selected_configs) if label_mode == "automatic" or supervised_labels is not None else 0),
+            "search": {
+                "contract": search_config["search_contract"],
+                "method": search_config["search_method"],
+                "max_trials": search_config["max_trials"],
+                "time_budget": search_config["time_budget"],
+                "algorithm_ids": search_config["algorithm_ids"],
+                "budget_exhausted": False,
+            },
+            "modeling_progress": _modeling_progress(
+                0,
+                len(search_config["algorithm_ids"]) * search_config["max_trials"]
+                if label_mode == "automatic" or supervised_labels is not None else 0,
+            ),
         }
         db.commit()
 
@@ -1806,10 +1916,14 @@ def execute_quality_run(
                 }
                 db.commit()
 
-        def update_model_progress(completed_count: int, candidate_total: int, _result: CandidateResult) -> None:
+        def update_model_progress(completed_count: int, candidate_total: int, result: CandidateResult) -> None:
             run.statistics = {
                 **(run.statistics or {}),
                 "modeling_progress": _modeling_progress(completed_count, candidate_total),
+                "search": {
+                    **((run.statistics or {}).get("search") or {}),
+                    "current_algorithm": result.algorithm_id,
+                },
             }
             db.commit()
 
@@ -1820,7 +1934,10 @@ def execute_quality_run(
             candidate_results, best_candidate = run_automl(
                 features.to_numpy(dtype=np.float64),
                 supervised_labels,
-                configs=selected_configs,
+                algorithm_ids=search_config["algorithm_ids"],
+                search_method=search_config["search_method"],
+                max_trials=search_config["max_trials"],
+                time_budget=search_config["time_budget"],
                 evaluation=evaluation,
                 progress_callback=update_model_progress,
             )
@@ -1870,7 +1987,10 @@ def execute_quality_run(
             candidate_results, best_candidate = run_automl(
                 features.to_numpy(dtype=np.float64),
                 automatic_labels,
-                configs=selected_configs,
+                algorithm_ids=search_config["algorithm_ids"],
+                search_method=search_config["search_method"],
+                max_trials=search_config["max_trials"],
+                time_budget=search_config["time_budget"],
                 evaluation=evaluation,
                 progress_callback=update_model_progress,
             )
@@ -1925,10 +2045,22 @@ def execute_quality_run(
             sample.warning_level = warning_level(float(probability)) if probability is not None else "none"
         db.flush()
         annotated_count = total_count if label_mode == "automatic" else 0
+        completed_trials = sum(
+            item.completed_trials + item.pruned_trials + item.failed_trials
+            for item in candidate_results
+        )
+        planned_trials = len(search_config["algorithm_ids"]) * search_config["max_trials"]
         run.statistics = {
             **(run.statistics or {}),
             "annotation_progress": _annotation_progress(annotated_count, total_count),
-            "modeling_progress": _modeling_progress(len(candidate_results), len(candidate_results)),
+            "modeling_progress": _modeling_progress(completed_trials, planned_trials),
+            "search": {
+                **((run.statistics or {}).get("search") or {}),
+                "budget_exhausted": any(
+                    item.error_code == "QUALITY_AUTOML_BUDGET_EXHAUSTED"
+                    for item in candidate_results
+                ),
+            },
         }
         db.commit()
         samples = db.query(SpotWeldQualitySample).filter(
@@ -1954,7 +2086,14 @@ def execute_quality_run(
             "label_mode": label_mode,
             **run_configuration,
             "annotation_progress": _annotation_progress(annotated_count, total_count),
-            "modeling_progress": _modeling_progress(len(candidate_results), len(candidate_results)),
+            "modeling_progress": _modeling_progress(completed_trials, planned_trials),
+            "search": {
+                **((run.statistics or {}).get("search") or {}),
+                "budget_exhausted": any(
+                    item.error_code == "QUALITY_AUTOML_BUDGET_EXHAUSTED"
+                    for item in candidate_results
+                ),
+            },
             "warning_counts": dict(Counter(sample.warning_level for sample in samples)),
         }
         run.automl_results = [item.to_dict() for item in candidate_results]
@@ -2004,15 +2143,6 @@ def _snapshot_label_source(snapshot: SpotWeldLabelSnapshot) -> str:
     return sources.pop()
 
 
-def _training_feature_indexes(config: Mapping[str, Any], feature_names: list[str]) -> list[int]:
-    if config.get("feature_scope") != "table":
-        return list(range(len(feature_names)))
-    missing = [name for name in TABLE_FEATURES if name not in feature_names]
-    if missing:
-        raise QualityPipelineError("QUALITY_TRAINING_FEATURE_SCHEMA_INVALID")
-    return [feature_names.index(name) for name in TABLE_FEATURES]
-
-
 def _snapshot_training_data(
     db,
     snapshot: SpotWeldLabelSnapshot,
@@ -2057,75 +2187,37 @@ def _snapshot_training_data(
     return features, np.asarray(labels, dtype=str), feature_names, ordered_samples
 
 
-def _snapshot_auc(y_true: np.ndarray, probabilities: np.ndarray, class_count: int) -> float:
-    if class_count == 2:
-        return float(roc_auc_score(y_true, probabilities[:, 1]))
-    return float(roc_auc_score(
-        y_true,
-        probabilities,
-        labels=np.arange(class_count),
-        multi_class="ovr",
-        average="macro",
-    ))
-
-
 def run_snapshot_training(
     features: np.ndarray,
     labels: np.ndarray,
     feature_names: list[str],
     *,
-    configs: tuple[Mapping[str, Any], ...] = SNAPSHOT_TRAINING_CONFIGS,
+    algorithm_ids: Sequence[str] | None = None,
+    search_method: str = "bayesian",
+    max_trials: int = 20,
+    time_budget: int = 600,
+    family_search: Callable[..., FamilySearchResult] = run_family_search,
 ) -> tuple[list[CandidateResult], CandidateResult, np.ndarray]:
+    if features.ndim != 2 or features.shape[1] != len(feature_names):
+        raise QualityPipelineError("QUALITY_TRAINING_FEATURE_SCHEMA_INVALID")
     classes, encoded = np.unique(labels, return_inverse=True)
     counts = np.bincount(encoded)
     if len(classes) < 2 or int(counts.min()) < 5:
         raise QualityPipelineError("QUALITY_LABELS_INSUFFICIENT_FOR_5_FOLD")
-    splitter = StratifiedKFold(
-        n_splits=SNAPSHOT_TRAINING_CV_FOLDS,
-        shuffle=True,
-        random_state=42,
+    results, winner = run_automl(
+        features,
+        labels,
+        algorithm_ids=algorithm_ids,
+        search_method=search_method,
+        max_trials=max_trials,
+        time_budget=time_budget,
+        evaluation={
+            "cross_validation_enabled": True,
+            "cross_validation_folds": SNAPSHOT_TRAINING_CV_FOLDS,
+        },
+        family_search=family_search,
     )
-    results: list[CandidateResult] = []
-    for config_index, config in enumerate(configs):
-        result = CandidateResult(
-            name=str(config["name"]),
-            model_type=str(config["type"]),
-            config_index=config_index,
-            params={**dict(config.get("params", {})), "feature_scope": str(config.get("feature_scope", "fusion"))},
-        )
-        started = time.perf_counter()
-        aucs: list[float] = []
-        f1s: list[float] = []
-        importances: list[np.ndarray] = []
-        try:
-            indexes = _training_feature_indexes(config, feature_names)
-            for train_index, test_index in splitter.split(features, encoded):
-                scaler = StandardScaler()
-                train = scaler.fit_transform(features[train_index][:, indexes])
-                test = scaler.transform(features[test_index][:, indexes])
-                model = _build_estimator(config)
-                model.fit(_estimator_matrix(train), encoded[train_index])
-                probabilities = model.predict_proba(_estimator_matrix(test))
-                predictions = model.predict(_estimator_matrix(test))
-                aucs.append(_snapshot_auc(encoded[test_index], probabilities, len(classes)))
-                f1s.append(float(f1_score(encoded[test_index], predictions, average="macro", zero_division=0)))
-                expanded = np.zeros(len(feature_names), dtype=float)
-                expanded[indexes] = _feature_importance(model, len(indexes))
-                importances.append(expanded)
-            result.auc = float(np.mean(aucs))
-            result.f1 = float(np.mean(f1s))
-            result.auc_std = float(np.std(aucs))
-            result.f1_std = float(np.std(f1s))
-            result.feature_importance = np.mean(importances, axis=0).tolist()
-        except QualityPipelineError as error:
-            result.error_code = error.code
-            result.error_message = str(error)
-        except Exception as error:
-            result.error_code = "QUALITY_SNAPSHOT_TRAINING_CANDIDATE_FAILED"
-            result.error_message = str(error)
-        result.training_time_seconds = time.perf_counter() - started
-        results.append(result)
-    return results, select_best_candidate(results), classes
+    return results, winner, classes
 
 
 def _fit_snapshot_model(
@@ -2134,14 +2226,15 @@ def _fit_snapshot_model(
     feature_names: list[str],
     best_candidate: CandidateResult,
 ) -> tuple[Any, StandardScaler, np.ndarray, list[int]]:
-    config = next((item for item in SNAPSHOT_TRAINING_CONFIGS if item["name"] == best_candidate.name), None)
-    if config is None:
-        raise QualityPipelineError("QUALITY_AUTOML_CONFIG_INVALID")
+    try:
+        family = get_algorithm_family(best_candidate.algorithm_id)
+    except ValueError as error:
+        raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID") from error
     _, encoded = np.unique(labels, return_inverse=True)
-    indexes = _training_feature_indexes(config, feature_names)
+    indexes = list(range(len(feature_names)))
     scaler = StandardScaler()
     transformed = scaler.fit_transform(features[:, indexes])
-    model = _build_estimator(config)
+    model = family.build("classification", best_candidate.best_params)
     model.fit(_estimator_matrix(transformed), encoded)
     return model, scaler, encoded, indexes
 
@@ -2194,7 +2287,10 @@ def _write_snapshot_report(
         {"指标": "最优模型", "值": next((item.name for item in candidates if item.error_code is None and item.auc == max((candidate.auc or -1) for candidate in candidates)), "-")},
     ])
     automl = pd.DataFrame([item.to_dict() for item in candidates])
-    deep_learning = automl.loc[:, [column for column in ("name", "model_type", "auc", "auc_std", "f1", "f1_std", "training_time_seconds", "error_code") if column in automl.columns]]
+    deep_learning = pd.DataFrame([{
+        "状态": "已移除固定候选",
+        "说明": "标签快照训练统一复用七类算法家族和 Optuna 搜索。",
+    }])
     labels_frame = pd.DataFrame([
         {
             "sample_id": str(sample.id),
@@ -2279,7 +2375,22 @@ def train_label_snapshot(
     artifact_service = artifact_service or build_artifact_service(db)
     label_source = _snapshot_label_source(snapshot)
     features, labels, feature_names, snapshot_samples = _snapshot_training_data(db, snapshot, run)
-    candidates, best_candidate, classes = run_snapshot_training(features, labels, feature_names)
+    run_input = run.input_fingerprint or {}
+    search_config = normalize_quality_search_config(
+        run_input.get("algorithm_ids"),
+        run_input.get("search_method", "bayesian"),
+        run_input.get("max_trials", 20),
+        run_input.get("time_budget", 600),
+    )
+    candidates, best_candidate, classes = run_snapshot_training(
+        features,
+        labels,
+        feature_names,
+        algorithm_ids=search_config["algorithm_ids"],
+        search_method=search_config["search_method"],
+        max_trials=search_config["max_trials"],
+        time_budget=search_config["time_budget"],
+    )
     model, scaler, encoded_labels, indexes = _fit_snapshot_model(features, labels, feature_names, best_candidate)
     selected_feature_names = [feature_names[index] for index in indexes]
     importance_values = _feature_importance(model, len(indexes))
@@ -2321,6 +2432,12 @@ def train_label_snapshot(
         "label_source": label_source,
         "feature_version": "report_v1",
         "rule_set_version": run.rule_set_version,
+        "algorithm_id": best_candidate.algorithm_id,
+        "algorithm_ids": search_config["algorithm_ids"],
+        "search_method": search_config["search_method"],
+        "max_trials": search_config["max_trials"],
+        "time_budget": search_config["time_budget"],
+        "best_params": best_candidate.best_params,
     }
     with tempfile.TemporaryDirectory(prefix="spot-weld-quality-training-") as directory:
         root = Path(directory)
@@ -2335,6 +2452,12 @@ def train_label_snapshot(
             "feature_version": "report_v1",
             "label_snapshot_id": str(snapshot.id),
             "label_source": label_source,
+            "algorithm_id": best_candidate.algorithm_id,
+            "algorithm_ids": search_config["algorithm_ids"],
+            "search_method": search_config["search_method"],
+            "max_trials": search_config["max_trials"],
+            "time_budget": search_config["time_budget"],
+            "best_params": best_candidate.best_params,
         }, model_path)
         schema_path.write_text(json.dumps({
             "feature_schema": selected_feature_names,
@@ -2342,6 +2465,10 @@ def train_label_snapshot(
             "metrics": best_metrics,
             "feature_importance": feature_importance,
             "label_source": label_source,
+            "algorithm_id": best_candidate.algorithm_id,
+            "algorithm_ids": search_config["algorithm_ids"],
+            "search_method": search_config["search_method"],
+            "best_params": best_candidate.best_params,
         }, ensure_ascii=False), encoding="utf-8")
         _write_snapshot_report(
             report_path,
@@ -2373,7 +2500,7 @@ def train_label_snapshot(
         version="report_v1",
         status="completed",
         framework="scikit-learn",
-        backbone=best_candidate.name,
+        backbone=best_candidate.algorithm_id,
         description=("基于报告复现自动标签快照的质量感知模型" if label_source == "automatic" else "基于已审核点焊标签快照的质量感知模型"),
         metrics=best_metrics,
         params={
@@ -2384,6 +2511,12 @@ def train_label_snapshot(
             "feature_version": "report_v1",
             "rule_set_version": run.rule_set_version,
             "schema_artifact_id": str(schema_artifact.id),
+            "algorithm_id": best_candidate.algorithm_id,
+            "algorithm_ids": search_config["algorithm_ids"],
+            "search_method": search_config["search_method"],
+            "max_trials": search_config["max_trials"],
+            "time_budget": search_config["time_budget"],
+            "best_params": best_candidate.best_params,
         },
         dataset_artifact_id=run.dataset_artifact_id,
         model_artifact_id=model_artifact.id,

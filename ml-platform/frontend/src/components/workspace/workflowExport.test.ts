@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import * as workflowExport from "./workflowExport";
+import {
+  buildExportBlob,
+  buildExportFilename,
+  exportCompletedWorkflowNode,
+  markRunNodeExported,
+} from "./workflowExport";
 
 async function readBlobText(blob: Blob): Promise<string> {
   if (typeof blob.text === "function") return blob.text();
@@ -25,20 +30,19 @@ async function readBlobBytes(blob: Blob): Promise<number[]> {
 
 describe("workflow export serialization", () => {
   it("uses a deterministic CSV filename when no name is supplied", () => {
-    expect(workflowExport.buildExportFilename("csv_export", "node-1", { file_name: "" })).toBe(
+    expect(buildExportFilename("csv_export", "node-1", { file_name: "" })).toBe(
       "csv_export_node-1.csv",
     );
   });
 
   it("serializes tabular data as a CSV Blob", () => {
-    const blob = workflowExport.buildExportBlob([{ id: 1, value: "ok" }], "csv");
+    const blob = buildExportBlob([{ id: 1, value: "ok" }], "csv");
 
     expect(blob.type).toContain("text/csv");
   });
 
   it("honors browser CSV separator, header, and GBK encoding options", async () => {
-    const buildExportBlob = workflowExport.buildExportBlob as (...args: any[]) => Blob;
-    const blob = buildExportBlob([
+    const blob = (buildExportBlob as (...args: any[]) => Blob)([
       { id: 1, status: "\u710a\u63a5" },
       { id: 2, status: "ok" },
     ], "csv", {
@@ -54,8 +58,7 @@ describe("workflow export serialization", () => {
   });
 
   it("uses a backend-style rows summary for text-mode WriteAsText exports", async () => {
-    const buildExportBlob = workflowExport.buildExportBlob as (...args: any[]) => Blob;
-    const blob = buildExportBlob([
+    const blob = (buildExportBlob as (...args: any[]) => Blob)([
       { id: 1, status: "ok" },
       { id: 2, status: "failed" },
     ], "text", { textSummary: true });
@@ -64,7 +67,6 @@ describe("workflow export serialization", () => {
   });
 
   it("does not download a completed export payload automatically", async () => {
-    const exportCompletedWorkflowNode = (workflowExport as any).exportCompletedWorkflowNode;
     expect(typeof exportCompletedWorkflowNode).toBe("function");
 
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
@@ -81,7 +83,6 @@ describe("workflow export serialization", () => {
   });
 
   it("deduplicates completed export attempts by run and node", () => {
-    const markRunNodeExported = (workflowExport as any).markRunNodeExported;
     expect(typeof markRunNodeExported).toBe("function");
 
     const completed = new Set<string>();

@@ -2,9 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App as AntApp, ConfigProvider } from "antd";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { createElement } from "react";
 import WorkspacePage, { hydrateWorkflowEdges, resolvePort } from "./WorkspacePage";
-import { isVisualizationResultNode } from "../components/workspace/WorkflowCanvas";
+import { isVisualizationResultNode } from "../components/workspace/workflowVisualization";
 import { LangProvider } from "../i18n";
 import { useWorkflowStore } from "../stores/workflowStore";
 
@@ -25,10 +24,7 @@ vi.mock("../components/workspace/NodeConfigPanel", () => ({
   default: () => null,
   NodeResultPanel: () => null,
 }));
-vi.mock("../components/workspace/WorkflowCanvas", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../components/workspace/WorkflowCanvas")>()),
-  default: () => null,
-}));
+vi.mock("../components/workspace/WorkflowCanvas", () => ({ default: () => null }));
 
 class TestWebSocket {
   static instances: TestWebSocket[] = [];
@@ -52,27 +48,17 @@ class TestWebSocket {
 
 function renderWorkspacePage(): void {
   render(
-    createElement(
-      ConfigProvider,
-      null,
-      createElement(
-        AntApp,
-        null,
-        createElement(
-          LangProvider,
-          null,
-          createElement(
-            MemoryRouter,
-            { initialEntries: ["/workspace/workflow-1"] },
-            createElement(
-              Routes,
-              null,
-              createElement(Route, { path: "/workspace/:workflowId", element: createElement(WorkspacePage) }),
-            ),
-          ),
-        ),
-      ),
-    ),
+    <ConfigProvider>
+      <AntApp>
+        <LangProvider>
+          <MemoryRouter initialEntries={["/workspace/workflow-1"]}>
+            <Routes>
+              <Route path="/workspace/:workflowId" element={<WorkspacePage />} />
+            </Routes>
+          </MemoryRouter>
+        </LangProvider>
+      </AntApp>
+    </ConfigProvider>,
   );
 }
 
