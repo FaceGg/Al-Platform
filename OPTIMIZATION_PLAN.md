@@ -201,3 +201,13 @@
 | JupyterHub | https://github.com/jupyterhub/jupyterhub | 在线 Notebook |
 | Label Studio | https://github.com/HumanSignalAI/label-studio | 多模态数据标注 |
 | Apache Superset | https://github.com/apache/superset | SQL Lab 数据探索、数据质量报告 |
+
+---
+
+## 七、2026-08-18 范围调整：暂缓 Label Studio 集成
+
+- 当前决策：暂时不需要 Label Studio 集成，该能力从当前首期承诺范围移除并标记为延后；前文保留为 2026-07-23 的历史候选方案，不再代表当前排期。
+- 保留能力：继续保留平台现有数据标注页面和独立导航入口，不删除已有数据管理或标注基础 UI。
+- 不实施范围：Label Studio 服务部署、iframe 嵌入、任务管理 API、数据集同步、标注结果回流和训练触发闭环。
+- 重新立项条件：出现明确的多模态标注业务需求，并完成部署、安全、账号体系、对象存储和训练数据回流边界评审。
+- 估算调整：推荐首期范围由 15 项调整为 14 项，约 50 人日调整为约 47 人日；按 2 名工程师估算约 5 周开发和 1-2 周集成验收，总计约 6-7 周。
