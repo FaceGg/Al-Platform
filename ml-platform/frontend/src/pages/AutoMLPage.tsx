@@ -4,7 +4,13 @@ import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlin
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
-import { createQualityRun, downloadQualityArtifact, getQualityRun, type QualityRun } from "../api/spotWeldQuality";
+import {
+  createQualityRun,
+  downloadQualityArtifact,
+  getQualityRun,
+  type QualityAlgorithmId,
+  type QualityRun,
+} from "../api/spotWeldQuality";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
 
@@ -27,11 +33,6 @@ const AUTOML_SEARCH_OPTIONS = [
   { value: "evolutionary", label: "进化算法" },
   { value: "multi_fidelity", label: "多保真搜索" },
 ];
-
-const REPORT_CANDIDATE_OPTIONS = [
-  "LGB_v1", "LGB_v2", "XGB_v1", "XGB_v2", "CAT_v1",
-  "CAT_v2", "GBDT_v1", "RF_v1", "ET_v1", "HGB_v1",
-].map((value) => ({ value, label: value }));
 
 const QUALITY_REQUIRED_SOURCE_COLUMNS = [
   "wld1c", "wld2c", "tipv1", "tipv2", "wres", "energy",
@@ -105,7 +106,7 @@ export default function AutoMLPage() {
   const [activeTab, setActiveTab] = useState("results");
   const [recipeTab, setRecipeTab] = useState("general");
   const [qualityRunning, setQualityRunning] = useState(false);
-  const [qualityCandidateIds, setQualityCandidateIds] = useState<string[]>([]);
+  const [qualityAlgorithmIds, setQualityAlgorithmIds] = useState<QualityAlgorithmId[]>([]);
   const [qualityTargetColumn, setQualityTargetColumn] = useState("");
   const [qualityInputColumns, setQualityInputColumns] = useState<string[]>([]);
   const [qualityCrossValidationEnabled, setQualityCrossValidationEnabled] = useState(true);
@@ -459,7 +460,7 @@ export default function AutoMLPage() {
       const run = await createQualityRun(selectedProject, {
         dataset_artifact_id: selectedDataset,
         field_mapping: {},
-        candidate_ids: qualityCandidateIds,
+        algorithm_ids: qualityAlgorithmIds,
         target_column: qualityTargetColumn || undefined,
         input_columns: normalizedInputs,
         cross_validation_enabled: qualityCrossValidationEnabled,
@@ -572,7 +573,7 @@ export default function AutoMLPage() {
   const qualityKSearch = Object.entries((qualityCluster.silhouette_scores || {}) as Record<string, number>);
   const qualityPca = Array.isArray(qualityCluster.pca_coordinates) ? qualityCluster.pca_coordinates : [];
   const qualityBestCandidate = qualityCandidates.find((candidate) => candidate.error_code == null) || qualityCandidates[0];
-  const formatQualityMetric = (key: string) => {
+  const formatQualityMetric = (key: "auc" | "f1") => {
     const value = qualityBestCandidate?.[key];
     return typeof value === "number" && Number.isFinite(value) ? value.toFixed(4) : "-";
   };
@@ -829,15 +830,15 @@ export default function AutoMLPage() {
           </Row>
           <Row gutter={[16, 16]} align="middle" style={{ marginTop: 16 }}>
             <Col xs={24} md={8}>
-              <Text strong>报告候选算法</Text>
+              <Text strong>质量感知算法家族</Text>
               <Select
                 mode="multiple"
-                aria-label="报告候选算法"
+                aria-label="质量感知算法家族"
                 style={{ width: "100%", marginTop: 4 }}
-                value={qualityCandidateIds}
-                onChange={setQualityCandidateIds}
-                placeholder="留空使用全部 10 项"
-                options={REPORT_CANDIDATE_OPTIONS}
+                value={qualityAlgorithmIds}
+                onChange={(values: QualityAlgorithmId[]) => setQualityAlgorithmIds(values)}
+                placeholder="留空使用全部算法家族"
+                options={AUTOML_ALGORITHM_OPTIONS}
               />
             </Col>
             <Col xs={12} md={4}>
