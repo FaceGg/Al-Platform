@@ -42,6 +42,31 @@ describe("AppLayout", () => {
       </MemoryRouter>
     );
     await waitFor(() => expect(document.querySelector(".ant-layout-sider")).toBeTruthy());
+    expect(screen.getByText("数据标注")).toBeInTheDocument();
+  });
+
+  it("marks the theme toggle and header with stable theme-aware hooks", async () => {
+    render(
+      <MemoryRouter>
+        <LangProvider><AppLayout><div>test</div></AppLayout></LangProvider>
+      </MemoryRouter>,
+    );
+
+    expect(document.querySelector(".app-header")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /switch to light mode/i })).toBeInTheDocument();
+  });
+
+  it("selects data annotation instead of the shorter data route", async () => {
+    render(
+      <MemoryRouter initialEntries={["/data-annotation"]}>
+        <AppLayout><div>test</div></AppLayout>
+      </MemoryRouter>,
+    );
+
+    const annotationItem = screen.getByText("数据标注").closest("li");
+    const dataItem = screen.getByText("数据管理").closest("li");
+    expect(annotationItem).toHaveClass("ant-menu-item-selected");
+    expect(dataItem).not.toHaveClass("ant-menu-item-selected");
   });
 
   it("renders the stable notification trigger with its unread count", async () => {

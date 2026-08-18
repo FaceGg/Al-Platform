@@ -6,7 +6,7 @@ import {
   DatabaseOutlined, AppstoreOutlined, TeamOutlined, ApartmentOutlined,
   CloudUploadOutlined, ThunderboltOutlined, ExperimentOutlined, ApiOutlined,
   CloudServerOutlined, RobotOutlined, MessageOutlined, MenuFoldOutlined,
-  MenuUnfoldOutlined, MonitorOutlined, SafetyOutlined, ToolOutlined,
+  MenuUnfoldOutlined, MonitorOutlined, SafetyOutlined, ToolOutlined, TagsOutlined,
 } from "@ant-design/icons";
 import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
@@ -23,13 +23,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { theme, toggleTheme } = useTheme();
   const [collapsed, setCollapsed] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const role = localStorage.getItem("role");
+  const storedRole = localStorage.getItem("role");
+  const [userRole, setUserRole] = useState(storedRole || "user");
 
   const menuItems = [
     { key: "/", icon: <DashboardOutlined />, label: t.nav.dashboard },
     { key: "/projects", icon: <ProjectOutlined />, label: t.nav.projects },
     { key: "/models", icon: <AppstoreOutlined />, label: t.nav.models },
     { key: "/data", icon: <CloudUploadOutlined />, label: t.nav.data },
+    { key: "/data-annotation", icon: <TagsOutlined />, label: t.nav.data_annotation },
     { type: "divider" as const },
     { key: "/automl", icon: <ThunderboltOutlined />, label: t.nav.automl },
     { key: "/training", icon: <ExperimentOutlined />, label: t.nav.training },
@@ -41,12 +43,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { type: "divider" as const },
     { key: "/monitor", icon: <MonitorOutlined />, label: t.nav.monitor },
     { key: "/compute", icon: <CloudServerOutlined />, label: "Compute" },
-    ...(role === "admin" ? [{ key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users }] : []),
+    ...(userRole === "admin" ? [{ key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users }] : []),
   ];
 
   const userMenuItems = [
-    { key: "profile", icon: <UserOutlined />, label: role === "admin" ? t.profile.admin : role === "engineer" ? t.profile.engineer : t.profile.user, onClick: () => setProfileOpen(true) },
-    ...(role === "admin" ? [{ key: "admin", icon: <TeamOutlined />, label: t.nav.users, onClick: () => navigate("/admin/users") }] : []),
+    { key: "profile", icon: <UserOutlined />, label: userRole === "admin" ? t.profile.admin : userRole === "engineer" ? t.profile.engineer : t.profile.user, onClick: () => setProfileOpen(true) },
+    ...(userRole === "admin" ? [{ key: "admin", icon: <TeamOutlined />, label: t.nav.users, onClick: () => navigate("/admin/users") }] : []),
     { type: "divider" as const },
     { key: "logout", icon: <LogoutOutlined />, label: t.app.logout, onClick: () => { localStorage.clear(); navigate("/login"); } },
   ];
@@ -55,28 +57,36 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     const p = location.pathname;
     if (p === "/") return "/";
     if (p.startsWith("/workspace") || p.startsWith("/template")) return "/projects";
-    for (const item of menuItems) {
-      if (typeof item.key === "string" && p.startsWith(item.key) && item.key !== "/") return item.key;
-    }
-    return "/";
+    return menuItems
+      .map((item) => item.key)
+      .filter((key): key is string => (
+        typeof key === "string"
+        && key !== "/"
+        && (p === key || p.startsWith(`${key}/`))
+      ))
+      .sort((left, right) => right.length - left.length)[0] || "/";
   })();
 
   const [username, setUsername] = useState(() => localStorage.getItem("username") || "");
   useEffect(() => {
     if (username || !localStorage.getItem("token")) return;
     let active = true;
-    apiClient.get("/me").then((response) => {
+    apiClient.get("/auth/me").then((response) => {
       const value = String(response.data?.username || "").trim();
       if (active && value) {
         localStorage.setItem("username", value);
         setUsername(value);
       }
+      if (active && response.data?.role) {
+        localStorage.setItem("role", String(response.data.role));
+        setUserRole(String(response.data.role));
+      }
     }).catch(() => undefined);
     return () => { active = false; };
   }, [username]);
-  const displayUsername = username || localStorage.getItem("userId") || "-";
-  const roleLabel = role === "admin" ? t.profile.admin : role === "engineer" ? t.profile.engineer : t.profile.user;
-  const roleColor = role === "admin" ? "red" : role === "engineer" ? "blue" : "green";
+  const displayUsername = username || "-";
+  const roleLabel = userRole === "admin" ? t.profile.admin : userRole === "engineer" ? t.profile.engineer : t.profile.user;
+  const roleColor = userRole === "admin" ? "red" : userRole === "engineer" ? "blue" : "green";
 
   return (
     <>
@@ -88,8 +98,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           onCollapse={setCollapsed}
           trigger={null}
           width={220}
+          className="app-sider"
           style={{
-            background: "linear-gradient(180deg, #0D1117 0%, #161B22 100%)",
+            background: "var(--bg-sidebar)",
             borderRight: "1px solid var(--border-default)",
             overflow: "auto",
           }}
@@ -122,8 +133,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </div>
             {!collapsed && (
               <div>
-                <div style={{ color: "#E6EDF3", fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>Precision Forge</div>
-                <div style={{ color: "#8B949E", fontSize: 10 }}>AI Training Platform</div>
+                <div style={{ color: "var(--text-primary)", fontWeight: 700, fontSize: 14, lineHeight: 1.3 }}>Precision Forge</div>
+                <div style={{ color: "var(--text-secondary)", fontSize: 10 }}>AI Training Platform</div>
               </div>
             )}
           </div>
@@ -144,8 +155,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <Layout>
           {/* Header */}
           <Header
+            className="app-header"
             style={{
-              background: "rgba(22, 27, 34, 0.95)",
+              background: "var(--bg-header)",
               backdropFilter: "blur(12px)",
               borderBottom: "1px solid var(--border-default)",
               padding: "0 24px",
@@ -206,6 +218,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 size="small"
                 onClick={toggleTheme}
                 icon={theme === "dark" ? <SunOutlined /> : <MoonOutlined />}
+                aria-label={theme === "dark" ? (lang === "zh" ? "切换到明亮模式" : "Switch to light mode") : (lang === "zh" ? "切换到暗黑模式" : "Switch to dark mode")}
+                title={theme === "dark" ? (lang === "zh" ? "切换到明亮模式" : "Switch to light mode") : (lang === "zh" ? "切换到暗黑模式" : "Switch to dark mode")}
                 style={{borderRadius: 4, minWidth: 32, height: 28, padding: "0 8px"}}
               />
               <Dropdown menu={{ items: userMenuItems }}>
@@ -215,7 +229,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     style={{ backgroundColor: "var(--accent-primary)", flexShrink: 0 }}
                     size={30}
                   />
-                  <div>
+                  <div className="user-identity" style={{ display: "flex", flexDirection: "column", gap: 1, justifyContent: "center" }}>
                     <div style={{ color: "var(--text-primary)", fontSize: 13, fontWeight: 500, lineHeight: 1.2 }}>
                       {displayUsername.slice(0, 12)}
                     </div>

@@ -68,14 +68,18 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [dashStats, setDashStats] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     const loadDashboard = () => Promise.all([
-      apiGet("/dashboard/stats").catch(() => null),
-      apiGet("/projects").catch(() => null),
+      apiGet("/dashboard/stats"),
+      apiGet("/projects"),
     ]).then(([stats, proj]) => {
       setDashStats(stats);
       setProjects((proj?.items || []).slice(0, 6));
+      setLoadError(false);
+    }).catch(() => {
+      setLoadError(true);
     }).finally(() => setLoading(false));
     loadDashboard();
     const timer = window.setInterval(loadDashboard, 15000);
@@ -84,6 +88,10 @@ export default function DashboardPage() {
 
   if (loading) {
     return <AppLayout><Spin size="large" style={{ display: "block", margin: "120px auto" }} /></AppLayout>;
+  }
+
+  if (loadError || !dashStats) {
+    return <AppLayout><div className="empty-state" role="alert" style={{ textAlign: "center" }}>工作台数据加载失败</div></AppLayout>;
   }
 
   const assets = dashStats?.core_assets || {};

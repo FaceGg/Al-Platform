@@ -43,4 +43,20 @@ describe("AppLayout username display", () => {
     expect(await screen.findByText("admin")).toBeInTheDocument();
     expect(localStorage.getItem("username")).toBe("admin");
   });
+
+  it("uses the authenticated user endpoint and never renders the UUID as identity", async () => {
+    localStorage.setItem("userId", "f1bb5967-6295-44b7-8c0c-4905725cbfa4");
+    localStorage.setItem("token", "token");
+
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AppLayout><div>test</div></AppLayout>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("admin")).toBeInTheDocument();
+    expect(apiGet).toHaveBeenCalledWith("/auth/me");
+    expect(screen.queryByText("f1bb5967-6295-44b7-8c0c-4905725cbfa4")).not.toBeInTheDocument();
+    expect(document.querySelector(".user-identity")).toHaveStyle({ display: "flex", flexDirection: "column", gap: "1px" });
+  });
 });
