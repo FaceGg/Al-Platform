@@ -18,7 +18,6 @@ from app.services.automl_catalog import AlgorithmFamily, AlgorithmUnavailable, P
 
 
 SEARCH_METHODS = frozenset({"grid", "random", "bayesian", "evolutionary", "multi_fidelity"})
-EstimatorEvaluator = Callable[..., float]
 
 
 class AllFamilySearchesFailed(RuntimeError):
@@ -230,7 +229,6 @@ def run_family_search(
     catalog_index: int,
     progress_callback: Callable[[TrialProgress], None] | None = None,
     trial_callback: Callable[[TrialSummary], None] | None = None,
-    estimator_evaluator: EstimatorEvaluator = _evaluate_estimator,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> FamilySearchResult:
     """Optimize one selected algorithm family within a bounded wall-time slice."""
@@ -265,7 +263,7 @@ def run_family_search(
                 params = _suggest_params(trial, family, exclude=family.resource_parameter)
                 for resource in _resource_rungs(family):
                     rung_params = {**params, family.resource_parameter: resource}
-                    score = _finite_score(estimator_evaluator(
+                    score = _finite_score(_evaluate_estimator(
                         family.build(task, rung_params), task=task, features=features,
                         target=target, evaluation=evaluation,
                     ))
@@ -275,7 +273,7 @@ def run_family_search(
                 return score
 
             params = _suggest_params(trial, family)
-            return _finite_score(estimator_evaluator(
+            return _finite_score(_evaluate_estimator(
                 family.build(task, params), task=task, features=features,
                 target=target, evaluation=evaluation,
             ))

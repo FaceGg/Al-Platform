@@ -227,23 +227,7 @@ describe("AutoMLPage", () => {
       if (url === "/experiments") return Promise.resolve({ data: { items: [] } });
       return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
     });
-    quality.getQualityRun.mockResolvedValue({
-      id: "quality-1",
-      status: "completed",
-      search: { contract: "optuna_v1", method: "multi_fidelity", max_trials: 20, time_budget: 600 },
-      automl_results: [{
-        algorithm_id: "random_forest",
-        name: "Random Forest",
-        status: "completed",
-        auc: 0.91,
-        f1: 0.88,
-        best_params: { n_estimators: 420 },
-        completed_trials: 18,
-        pruned_trials: 1,
-        failed_trials: 1,
-        training_time_seconds: 12.3,
-      }],
-    });
+    quality.getQualityRun.mockResolvedValue({ id: "quality-1", status: "completed", automl_results: [{ name: "RF_v1", auc: 0.91, f1: 0.88 }] });
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.mouseDown((await screen.findAllByRole("combobox"))[0]);
@@ -252,10 +236,7 @@ describe("AutoMLPage", () => {
 
     await waitFor(() => expect(quality.getQualityRun).toHaveBeenCalledWith("project-1", "quality-1"));
     expect(screen.getByRole("tab", { name: "点焊质量感知" })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByText("Random Forest")).toBeInTheDocument();
-    expect(screen.getByText("多保真搜索")).toBeInTheDocument();
-    expect(screen.getByText("n_estimators=420")).toBeInTheDocument();
-    expect(screen.getByText("18/1/1")).toBeInTheDocument();
+    expect(await screen.findByText("RF_v1")).toBeInTheDocument();
   });
 
   it("submits the selected generic cross-validation configuration without a budget", async () => {
@@ -335,17 +316,12 @@ describe("AutoMLPage", () => {
     fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
     fireEvent.click(await screen.findByText("weld.csv"));
     await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
-    const runButton = screen.getByRole("button", { name: "运行质量感知" });
-    await waitFor(() => expect(runButton).not.toBeDisabled());
-    fireEvent.click(runButton);
+    fireEvent.click(screen.getByRole("button", { name: "运行质量感知" }));
 
     await waitFor(() => expect(quality.createQualityRun).toHaveBeenCalledWith("project-1", {
       dataset_artifact_id: "dataset-1",
       field_mapping: {},
-      algorithm_ids: [],
-      search_method: "bayesian",
-      max_trials: 20,
-      time_budget: 600,
+      candidate_ids: [],
       target_column: undefined,
       input_columns: QUALITY_REPORT_COLUMNS,
       cross_validation_enabled: true,
@@ -438,10 +414,7 @@ describe("AutoMLPage", () => {
     await waitFor(() => expect(quality.createQualityRun).toHaveBeenCalledWith("project-1", {
       dataset_artifact_id: "dataset-1",
       field_mapping: {},
-      algorithm_ids: [],
-      search_method: "bayesian",
-      max_trials: 20,
-      time_budget: 600,
+      candidate_ids: [],
       target_column: "quality",
       input_columns: QUALITY_REPORT_COLUMNS,
       cross_validation_enabled: true,
@@ -451,42 +424,9 @@ describe("AutoMLPage", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     fireEvent.click(download);
     await waitFor(() => expect(quality.downloadQualityArtifact).toHaveBeenCalledWith("project-1", "run-1", "report"));
-  }, 15_000);
-
-  it("exposes seven families and five search methods for point-weld quality", async () => {
-    datasets.getDatasetPreview.mockResolvedValue({
-      columns: QUALITY_REPORT_COLUMNS,
-      dtypes: Object.fromEntries(QUALITY_REPORT_COLUMNS.map((column) => [column, "float64"])),
-      preview: [],
-    });
-    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
-
-    fireEvent.click(await screen.findByRole("tab", { name: "点焊质量感知" }));
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知项目" }));
-    fireEvent.click(await screen.findByText("Weld line"));
-    fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
-    fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
-    expect(screen.queryByText("报告候选算法")).not.toBeInTheDocument();
-    expect(screen.queryByText("LGB_v1")).not.toBeInTheDocument();
-
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知算法家族" }));
-    for (const label of [
-      "LightGBM", "XGBoost", "CatBoost", "GBDT",
-      "Random Forest", "Extra Trees", "HistGradientBoosting",
-    ]) {
-      expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
-    }
-
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知搜索方法" }));
-    for (const label of ["网格搜索", "随机搜索", "贝叶斯优化", "进化算法", "多保真搜索"]) {
-      expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
-    }
-    expect(screen.getByRole("spinbutton", { name: "质量感知最大试验次数" })).toHaveValue("20");
-    expect(screen.getByRole("spinbutton", { name: "质量感知总时间上限" })).toHaveValue("600");
   });
 
-  it("submits the selected point-weld family and search configuration", async () => {
+  it("submits the selected report candidate IDs in order", async () => {
     datasets.getDatasetPreview.mockResolvedValue({
       columns: QUALITY_REPORT_COLUMNS,
       dtypes: Object.fromEntries(QUALITY_REPORT_COLUMNS.map((column) => [column, "float64"])),
@@ -500,25 +440,20 @@ describe("AutoMLPage", () => {
     fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
     fireEvent.click(await screen.findByText("weld.csv"));
     await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知算法家族" }));
-    fireEvent.click(await screen.findByText("Random Forest"));
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知搜索方法" }));
-    fireEvent.click(await screen.findByText("多保真搜索"));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "报告候选算法" }));
+    fireEvent.click(await screen.findByText("RF_v1"));
+    fireEvent.click(await screen.findByText("GBDT_v1"));
     fireEvent.click(screen.getByRole("button", { name: "运行质量感知" }));
 
     await waitFor(() => expect(quality.createQualityRun).toHaveBeenCalledWith("project-1", {
       dataset_artifact_id: "dataset-1",
       field_mapping: {},
-      algorithm_ids: ["random_forest"],
-      search_method: "multi_fidelity",
-      max_trials: 20,
-      time_budget: 600,
+      candidate_ids: ["RF_v1", "GBDT_v1"],
       target_column: undefined,
       input_columns: QUALITY_REPORT_COLUMNS,
       cross_validation_enabled: true,
       cross_validation_folds: 3,
     }));
-    expect(quality.createQualityRun.mock.calls[0][1]).not.toHaveProperty("candidate_ids");
   });
 
   it("keeps AutoML visible when a structured dispatch error is returned", async () => {
@@ -572,7 +507,7 @@ describe("AutoMLPage", () => {
       time_budget: 600,
     })));
     expect(api.post.mock.calls[0][1]).not.toHaveProperty("candidate_ids");
-  }, 15_000);
+  });
 
   it("submits the selected input columns with the target column", async () => {
     api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });

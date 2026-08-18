@@ -2016,3 +2016,61 @@
 - 处理决定：保留脱敏 Compose 日志、资源 envelope 和原始失败结果；下一次运行前必须先取得 WSL/Docker 生命周期证据或隔离宿主重启来源，再重新执行全量负载。固定资源门禁继续保持阻塞。
 - 远端门禁：GitHub Actions 本月配额仍耗尽，远端 CI 记录为未执行/计费阻塞；本分支只能提交和推送已审查文档，不能合并到 `main`。
 - 遗留事项：真实性能汇总、备份恢复、N-1 升级、浏览器/通知矩阵、最终 manifest、远端 required checks 和合并仍未完成。
+### 2026-08-18：合并远端主线后的历史记录
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：根因已由 Ubuntu 目标服务日志确认；本地源文件、静态回归和部署文档已修复，目标服务器需按无损命令移除已部署文件的 BOM、重建 Nginx，并重建前端以加载 IPv4 健康检查。
+- 问题现象：后端和 MLflow 已健康，`127.0.0.1:80` 却没有监听；`nginx` 反复重启，`frontend` 显示 `unhealthy`。Nginx 日志稳定报 `unknown directive "﻿#" in /etc/nginx/nginx.conf:2`，前端健康检查稳定报 `wget: can't connect to remote host: Connection refused`。
+- 已确认根因：挂载到 Nginx 的根 `nginx.conf` 以 UTF-8 BOM 开头，Nginx 不把 BOM 视为注释的一部分，解析阶段直接退出；前端 Dockerfile 健康检查使用 `localhost`，容器中的 wget 优先连接未监听的 IPv6 回环 `::1`，而站点仅监听 IPv4。
+- 解决方法：移除 `nginx.conf` 和前端 Dockerfile 的 UTF-8 BOM；前端健康检查改为 `http://127.0.0.1/`。新增三项部署静态契约，分别锁定网关配置无 BOM、前端 Dockerfile 无 BOM 和 IPv4 健康检查。
+- 测试先行：三项新契约先分别因网关 BOM、前端 `localhost` 探针和前端 Dockerfile BOM 失败；最小修改后均恢复 GREEN。
+- 验证方式：针对性 `tests.test_ci_workflow` 3/3 通过；字节检查确认两个运行时文件均不以 `EF BB BF` 开头。目标服务器已确认后端/MLflow 健康，但尚未执行修复后的 Nginx/前端容器运行态验收。
+- 影响范围：Nginx 网关配置、前端镜像健康检查、部署故障说明和 CI 静态契约；不修改业务 API、前端页面、数据库、MinIO、MLflow 或持久化数据。
+- 预防措施：所有被运行时解释器直接读取的配置、Dockerfile 和 shell 文件必须使用 UTF-8 无 BOM；容器健康检查使用明确的 `127.0.0.1` 或 `::1`，不能依赖 `localhost` 的 IPv4/IPv6 解析顺序。
+- 遗留事项：服务器先移除 `nginx.conf` BOM 并重建 `nginx` 恢复 80 端口，再重建 `frontend` 消除健康检查误报；不执行 `docker compose down -v`。
+
+### 2026-08-17：AutoML 七类算法与五类超参数搜索实施计划
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：需求、架构、搜索执行、结果结构、前端交互和历史结果查看设计均已确认；详细 TDD 实施计划已完成，生产代码尚未修改。
+- 设计范围：通用 AutoML 算法选择从 10 套人工参数版本调整为 LightGBM、XGBoost、CatBoost、GBDT、Random Forest、Extra Trees、HistGradientBoosting 七个算法家族；新增基于 Optuna 的网格、随机、贝叶斯、进化和多保真五类搜索；任务列表新增普通 AutoML 与点焊质量任务的持久结果查看入口。
+- 兼容决策：新任务使用 `algorithm_ids`、`search_method`、`max_trials`、`time_budget` 和持久化 `search_contract=optuna_v1`；历史 `candidate_ids` 任务保留原执行路径；点焊报告复现继续使用既有 10 套固定候选配置；不修改数据库 Schema。
+- 设计文档：`docs/superpowers/specs/2026-08-16-automl-hyperparameter-search-design.md`，提交 `cb8e48d`。
+- 实施计划：`docs/superpowers/plans/2026-08-17-automl-hyperparameter-search.md`，按算法目录、Optuna 搜索服务、执行与 MLflow、API 兼容、前端搜索控件、历史结果查看、全量验收七个任务推进。
+- 计划验证：每项功能先运行失败测试，再做最小实现并恢复 GREEN；最终分别执行 AutoML 聚焦后端、聚焦前端、完整后端 `run_suite.py`、完整前端 Vitest、生产构建、浏览器结果回看和 `git diff --check`。
+- 已知风险：五类搜索会显著增加训练成本；多保真对传统估计器需按资源阶段重新训练；线程/Celery 当前不能安全强杀已开始的第三方估计器；本地通过不代表真实 Celery、Redis、MLflow、Ubuntu Compose 或远程 CI 已验收。
+- 遗留事项：等待用户选择实施方式后开始 TDD；实现完成前不得将此功能标记为完成，不得把计划或设计审阅当作运行态验收。
+
+### 2026-08-17：AutoML 七类算法、五类搜索与历史结果查看完成
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：本地功能实现、聚焦回归、完整后端隔离套件、完整前端测试和生产构建已完成；真实 Celery/Redis/MLflow、Ubuntu Compose、远程 CI 与长时多算法性能验收仍待独立执行。
+- 完成内容：新增七类不可变算法家族目录；通用 AutoML 支持网格、随机、贝叶斯、进化和多保真五类 Optuna 搜索；每个家族独立调参并比较家族最优模型；新增试验进度、预算状态、家族结果、最佳参数和 MLflow 试验子运行；前端算法框仅展示七类家族，并提供搜索方法、最大试验次数和总时间上限；建模任务列表支持恢复普通 AutoML 和点焊质量历史结果。
+- 兼容与安全：新请求通过显式 Pydantic 字段集识别并持久化 `search_contract=optuna_v1`；历史 `candidate_ids` 任务继续进入原有限候选路径；新旧字段混用在入队前返回 `AUTOML_SEARCH_CONFIG_INVALID`；LightGBM、XGBoost、CatBoost 缺失时明确标记不可用，不再静默替换算法；未修改数据库 Schema 或点焊报告固定候选契约。
+- 测试先行：算法目录测试先因模块缺失 RED；搜索服务测试先因模块缺失 RED；执行器测试先因缺少 `search` 指标 RED；API 测试先因严格模型拒绝新字段 RED；前端测试先因缺少七家族、五方法和结果按钮 RED；每项最小实现后恢复 GREEN。
+- 验证方式：AutoML 相关后端聚焦回归 48/48 通过，Python `compileall` 通过；后端 `run_suite.py` 为 91/91 模块通过；前端完整 Vitest 为 39 个文件、170/170 用例通过；`npm run build` 通过；`git diff --check` 在最终文档提交前再次执行。
+- 影响范围：`automl_catalog.py`、`automl_search.py`、`automl_execution.py`、训练 API、后端 AutoML 测试与清单、Optuna 依赖、AutoML 页面与页面测试；不修改点焊质量服务算法配置、数据库迁移、权限模型或推理 API。
+- 已知风险：传统估计器的多保真阶段会重新拟合而非强制依赖 warm start；已经开始的第三方估计器不能被当前线程安全强杀；选择全部七家族且试验预算较大时训练成本显著上升；Vite 仍报告既有 ECharts 大 chunk 警告。
+- 遗留事项：在真实 Celery/Redis/MLflow 环境验证长任务恢复、试验子运行和总时间预算；在 Ubuntu Compose 与远程 CI 验证依赖安装和跨平台行为；根据真实数据规模评估默认 `20` 次试验与 `600` 秒预算是否需要按项目配额调整。
+
+### 2026-08-17：点焊质量感知统一 Optuna 搜索设计
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：需求边界和架构设计已确认，生产代码尚未修改；GitHub 发布在点焊改造和 WSL/Compose 验收完成前暂停。
+- 设计范围：点焊质量感知和标签快照训练全部改用七类算法家族及网格、随机、贝叶斯、进化、多保真五种搜索；删除十套固定候选、`candidate_ids`、固定 `AutoML(LGB_v2)` 和三套固定 MLP 快照候选。
+- 架构决策：复用 `automl_catalog.py` 与 `automl_search.py`，点焊提供宏平均 AUC 搜索目标并记录宏平均 F1；家族最优按 AUC、F1、目录顺序决胜，快照训练沿用原质量任务的搜索配置重新搜索审核标签。
+- 数据边界：搜索合同、进度和家族结果继续写入现有 JSON 字段，不新增数据库迁移；旧固定候选记录不属于新执行和展示合同，不实现兼容分支。
+- 设计文档：`docs/superpowers/specs/2026-08-17-spot-weld-optuna-unification-design.md`。
+- 后续步骤：完成详细 TDD 实施计划，逐项观察 RED/GREEN，执行本地全量、WSL Linux、WSL Compose、远程 CI 和合并后远端 `main` 核验。
+
+### 2026-08-17：GitHub main 按本地 main 回退同步
+
+- 当前状态：按用户明确要求以本地 `main` 为准，将 GitHub `main` 从 `130d1d3` 更新为本地历史；更新前已创建远端备份分支 `codex/backup-origin-main-20260817-before-local-sync` 保存原远端提交。
+- 安全边界：先 fetch 并比较 fetched/live remote SHA，再使用 `--force-with-lease=main:130d1d3...` 更新，只有远端未变化时才允许写入；未删除发布分支、备份分支或用户未跟踪文件。
+- 影响说明：原远端 127 个领先提交不再位于 `main`，但仍可从备份分支恢复；本地 11 个独有提交成为 GitHub `main` 历史。
+
+### 2026-08-17：放弃点焊质量感知 Optuna 新方案及后续残留
+
+- 当前状态：按用户要求放弃点焊质量感知 Optuna 新方案及其后续菜单/发布残留；当前本地与远端 `main=cbef56f` 保持旧版通用 AutoML 状态。
+- 清理结果：删除本地 `spot-weld-optuna-release`、`spot-weld-optuna-dev` 工作树及对应分支，删除本地合并备份分支；删除远端 `codex/spot-weld-optuna-unification` 和 `codex/backup-origin-main-20260817-before-local-sync`。
+- 保留边界：未修改当前 `main` 的用户未跟踪文件；旧版点焊质量分支和历史 PR 不属于本次被放弃的新 Optuna 方案，继续保留。
+- 验证方式：fetch 后确认本地/远端 `main` SHA 相同，点焊 Optuna 分支、远端备份分支和对应工作树均无残留。
