@@ -2110,3 +2110,11 @@
 - 影响范围：仅涉及 AutoML 页面点焊质量感知的算法选择、创建请求、报告指标类型及对应页面测试；不修改后端搜索实现、数据库、普通 AutoML 执行合同或历史任务数据。
 - 预防措施：破坏性 API 字段迁移必须全仓搜索所有生产调用方和测试断言，并以完整 TypeScript 构建作为关闭条件；有限字段展示应使用字面量联合或 `keyof`，禁止用任意字符串索引结构化结果。
 - 剩余事项：GitHub Actions 本月配额耗尽，远端检查可能在 runner 启动前因计费阻塞失败；发布时必须把该状态记录为未执行，不能冒充代码失败或 CI 通过。
+
+### 2026-08-18：工作台回归与 AutoML 类型修复发布完成
+
+- 发布状态：分支 `codex/fix-dashboard-navigation-ui` 已推送并通过 PR #22 合并到 `main`；PR head 为 `3cd9dec9e0ee890263cb7f53038c606b8b6e7102`，merge commit 为 `d20a0b205e43aea728e07ee34122f6b7d03ad0cf`。
+- 合并范围：工作台真实数据与失败态、明暗主题 Header、用户名/身份展示、数据标注导航、点焊质量感知 `algorithm_ids` 合同、质量指标类型收窄，以及 GitHub Actions 配额优化设计和实施计划。
+- 合并后验证：在 `main` 的 merge tree 上重新执行完整 `npm test`，结果为 `43/43` 文件、`211/211` 用例；`npm run build` 成功并包含 `tsc --noEmit`，仅保留既有 ECharts 大 chunk 提示。
+- 远端 CI 状态：Actions run `32093869178` 的四个前置 job 均为 `steps=[]`，annotation 明确说明账户付款失败或消费限额需提高，runner 未启动；Chromium 与 Week 11-12 job 因依赖被跳过。PR 已由普通合并流程接受，该 run 不构成远程测试通过证据。
+- 同步要求：本记录提交后再次 fetch/prune，并确认本地 `main`、`origin/main` 与 GitHub `refs/heads/main` 指向同一最终提交；其他工作树中的临时缓存和独立验收修改不属于本次发布范围，保持原状。
