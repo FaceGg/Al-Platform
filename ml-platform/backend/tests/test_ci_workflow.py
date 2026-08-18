@@ -7,6 +7,7 @@ import yaml
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
+CLEANUP_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "actions-cleanup.yml"
 COMPOSE_FILE = REPOSITORY_ROOT / "docker-compose.yml"
 ACCEPTANCE_COMPOSE_FILE = REPOSITORY_ROOT / "docker-compose.acceptance.yml"
 WEEK12_SECURITY_IMAGES_COMPOSE_FILE = (
@@ -28,6 +29,10 @@ NOTIFICATION_STACK_TEST = (
     REPOSITORY_ROOT / "ml-platform" / "backend" / "tests" / "test_notification_production_stack.py"
 )
 BACKEND_REQUIREMENTS = REPOSITORY_ROOT / "ml-platform" / "backend" / "requirements.txt"
+
+
+def load_workflow_contract(path: Path) -> dict:
+    return yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
 class TestProductionIntegrationWorkflow(unittest.TestCase):
@@ -909,6 +914,94 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertLess(steps.index(evidence), steps.index(upload))
         self.assertIn("ci-inference-internal-secret", evidence_script)
         self.assertIn("INFERENCE_INTEGRATION_CONTEXT_PATH", evidence_script)
+
+
+class TestActionsQuotaWorkflows(unittest.TestCase):
+    def test_ci_declares_light_and_full_triggers(self):
+        contract = load_workflow_contract(CI_WORKFLOW)
+        triggers = contract["on"]
+
+        self.assertIn("schedule", triggers)
+        self.assertIn("workflow_dispatch", triggers)
+        self.assertEqual(triggers["schedule"][0]["cron"], "0 2 * * 0")
+
+        mode = triggers["workflow_dispatch"]["inputs"]["mode"]
+        self.assertEqual(mode["type"], "choice")
+        self.assertEqual(mode["default"], "light")
+        self.assertEqual(mode["options"], ["light", "full"])
+
+    def test_ci_cancels_obsolete_runs_only_within_the_same_ref(self):
+        contract = load_workflow_contract(CI_WORKFLOW)
+
+        self.assertIn("concurrency", contract)
+        concurrency = contract["concurrency"]
+        self.assertEqual(concurrency["cancel-in-progress"], "true")
+        self.assertIn("github.event.pull_request.number", concurrency["group"])
+        self.assertIn("github.ref", concurrency["group"])
+
+    def test_heavy_ci_jobs_are_limited_to_full_validation_events(self):
+        jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+        expected_markers = (
+            "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            "github.event_name == 'schedule'",
+            "github.event_name == 'workflow_dispatch'",
+            "inputs.mode == 'full'",
+        )
+
+        for job_name in (
+            "production-integration",
+            "experiment-integration",
+            "week11-12-verification",
+        ):
+            with self.subTest(job=job_name):
+                condition = jobs[job_name].get("if", "")
+                for marker in expected_markers:
+                    self.assertIn(marker, condition)
+
+    def test_ci_artifact_retention_matches_evidence_policy(self):
+        jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+        expected_retention = {
+            ("browser-acceptance", "Upload Playwright failure evidence"): 7,
+            ("production-integration", "Upload production failure evidence"): 7,
+            ("experiment-integration", "Upload experiment failure evidence"): 7,
+            ("week11-12-verification", "Upload verification evidence"): 14,
+        }
+
+        for (job_name, step_name), days in expected_retention.items():
+            with self.subTest(job=job_name, step=step_name):
+                upload = next(
+                    step for step in jobs[job_name]["steps"] if step.get("name") == step_name
+                )
+                self.assertEqual(upload["with"].get("retention-days"), days)
+
+    def test_cleanup_workflow_has_least_privilege_and_delete_guards(self):
+        self.assertTrue(CLEANUP_WORKFLOW.is_file())
+
+        contract = load_workflow_contract(CLEANUP_WORKFLOW)
+        job = yaml.safe_load(CLEANUP_WORKFLOW.read_text(encoding="utf-8"))["jobs"]["cleanup"]
+        self.assertEqual(contract["on"]["schedule"][0]["cron"], "30 2 * * 0")
+        self.assertIn("workflow_dispatch", contract["on"])
+        self.assertEqual(job["permissions"], {"actions": "write"})
+
+        cleanup_step = job["steps"][0]
+        self.assertEqual(cleanup_step.get("env", {}).get("GH_TOKEN"), "${{ github.token }}")
+        script = cleanup_step["run"]
+        for marker in (
+            "FAILURE_EVIDENCE_RETENTION_DAYS=7",
+            "VERIFICATION_EVIDENCE_RETENTION_DAYS=14",
+            "CACHE_RETENTION_DAYS=7",
+            "RUN_RETENTION_DAYS=30",
+            'status == "completed"',
+            "actions/artifacts",
+            "actions/caches",
+            "actions/runs",
+            "--paginate",
+            "--method DELETE",
+            "playwright-failure-evidence",
+            "week11-12-verification-evidence",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, script)
 
 
 if __name__ == "__main__":

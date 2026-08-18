@@ -5,6 +5,22 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: CI coverage level
+        required: true
+        default: light
+        type: choice
+        options:
+          - light
+          - full
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   quality:
@@ -119,9 +135,14 @@ jobs:
             temp_test/playwright-report
             temp_test/playwright-test-results
           if-no-files-found: ignore
+          retention-days: 7
 
   production-integration:
     name: Production integration (Ubuntu)
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     services:
@@ -327,6 +348,7 @@ jobs:
           name: production-integration-failure-evidence
           path: ${{ runner.temp }}/production-evidence
           if-no-files-found: ignore
+          retention-days: 7
       - name: Stop Celery worker
         if: always()
         shell: bash
@@ -339,6 +361,10 @@ jobs:
 
   experiment-integration:
     name: Production experiment integration (Ubuntu)
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
     runs-on: ubuntu-22.04
     timeout-minutes: 35
     env:
@@ -507,6 +533,7 @@ jobs:
           name: experiment-integration-failure-evidence
           path: ${{ runner.temp }}/experiment-evidence
           if-no-files-found: ignore
+          retention-days: 7
       - name: Stop production experiment stack
         if: always()
         shell: bash
@@ -518,6 +545,10 @@ jobs:
 
   week11-12-verification:
     name: Week 11-12 verification (Ubuntu)
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
     runs-on: ubuntu-22.04
     needs: [quality, browser-acceptance, production-integration, experiment-integration]
     timeout-minutes: 30
@@ -760,3 +791,4 @@ jobs:
           name: week11-12-verification-evidence
           path: temp_test/week11-12
           if-no-files-found: warn
+          retention-days: 14

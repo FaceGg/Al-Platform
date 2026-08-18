@@ -1,0 +1,85 @@
+name: Actions data cleanup
+
+on:
+  schedule:
+    - cron: "30 2 * * 0"
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    name: Remove expired Actions data
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: write
+    steps:
+      - name: Delete expired Actions data
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          FAILURE_EVIDENCE_RETENTION_DAYS=7
+          VERIFICATION_EVIDENCE_RETENTION_DAYS=14
+          CACHE_RETENTION_DAYS=7
+          RUN_RETENTION_DAYS=30
+          REPOSITORY="${GITHUB_REPOSITORY}"
+
+          failure_cutoff="$(date -u -d "${FAILURE_EVIDENCE_RETENTION_DAYS} days ago" +%s)"
+          verification_cutoff="$(date -u -d "${VERIFICATION_EVIDENCE_RETENTION_DAYS} days ago" +%s)"
+          cache_cutoff="$(date -u -d "${CACHE_RETENTION_DAYS} days ago" +%s)"
+          run_cutoff="$(date -u -d "${RUN_RETENTION_DAYS} days ago" +%s)"
+
+          delete_resource() {
+            local endpoint="$1"
+            gh api --method DELETE "repos/${REPOSITORY}/${endpoint}"
+          }
+
+          while IFS= read -r artifact; do
+            artifact_id="$(jq -r '.id' <<<"${artifact}")"
+            artifact_name="$(jq -r '.name' <<<"${artifact}")"
+            artifact_created_at="$(jq -r '.created_at' <<<"${artifact}")"
+            artifact_created_epoch="$(date -u -d "${artifact_created_at}" +%s)"
+            artifact_cutoff="${failure_cutoff}"
+            if [ "${artifact_name}" = "week11-12-verification-evidence" ]; then
+              artifact_cutoff="${verification_cutoff}"
+            fi
+
+            if [ "${artifact_created_epoch}" -lt "${artifact_cutoff}" ]; then
+              delete_resource "actions/artifacts/${artifact_id}"
+            fi
+          done < <(
+            gh api --paginate "repos/${REPOSITORY}/actions/artifacts?per_page=100" |
+              jq -c '
+                .artifacts[] |
+                select(
+                  .name == "playwright-failure-evidence" or
+                  .name == "production-integration-failure-evidence" or
+                  .name == "experiment-integration-failure-evidence" or
+                  .name == "week11-12-verification-evidence"
+                )
+              '
+          )
+
+          while IFS= read -r cache; do
+            cache_id="$(jq -r '.id' <<<"${cache}")"
+            delete_resource "actions/caches/${cache_id}"
+          done < <(
+            gh api --paginate "repos/${REPOSITORY}/actions/caches?per_page=100" |
+              jq -c --argjson cutoff "${cache_cutoff}" '
+                .actions_caches[] |
+                select((.last_accessed_at | fromdateiso8601) < $cutoff)
+              '
+          )
+
+          while IFS= read -r workflow_run; do
+            workflow_run_id="$(jq -r '.id' <<<"${workflow_run}")"
+            delete_resource "actions/runs/${workflow_run_id}"
+          done < <(
+            gh api --paginate "repos/${REPOSITORY}/actions/runs?status=completed&per_page=100" |
+              jq -c --argjson cutoff "${run_cutoff}" '
+                .workflow_runs[] |
+                select(.status == "completed") |
+                select((.created_at | fromdateiso8601) < $cutoff)
+              '
+          )
