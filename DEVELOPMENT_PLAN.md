@@ -2118,3 +2118,12 @@
 - 合并后验证：在 `main` 的 merge tree 上重新执行完整 `npm test`，结果为 `43/43` 文件、`211/211` 用例；`npm run build` 成功并包含 `tsc --noEmit`，仅保留既有 ECharts 大 chunk 提示。
 - 远端 CI 状态：Actions run `32093869178` 的四个前置 job 均为 `steps=[]`，annotation 明确说明账户付款失败或消费限额需提高，runner 未启动；Chromium 与 Week 11-12 job 因依赖被跳过。PR 已由普通合并流程接受，该 run 不构成远程测试通过证据。
 - 同步要求：本记录提交后再次 fetch/prune，并确认本地 `main`、`origin/main` 与 GitHub `refs/heads/main` 指向同一最终提交；其他工作树中的临时缓存和独立验收修改不属于本次发布范围，保持原状。
+
+### 2026-08-18：GitHub Actions 配额优化与定时清理
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 任务状态：已在独立分支完成本地工作流实现与 YAML 契约验证；尚未推送或触发远端工作流，未执行任何远端 Artifact、cache 或 run 删除。
+- 优化策略：所有 PR、`develop` 推送、定时和手动任务继续执行跨平台质量与 Chromium；生产集成、实验集成和 Week 11-12 安全冻结验证仅在 `main` 推送、每周日 02:00 UTC 定时任务或手动 `full` 模式执行。手动触发默认 `light`，同一 PR 或引用的新运行会取消旧运行。
+- 清理策略：新增每周日 02:30 UTC 的 Actions cleanup workflow，失败证据 Artifact 保留 7 天、Week 11-12 验收/安全证据保留 14 天、最后访问超过 7 天的 cache 可删除、创建超过 30 天且状态为 `completed` 的 workflow run 可删除。清理仅授予 job 级 `actions: write`，并以 Artifact 名称白名单、时间阈值和 completed 状态三重限制；不 checkout 源码、不操作 Release、业务文件或未完成运行。
+- 验证方式：新增额度/清理契约先 RED，随后 `ml-platform.backend.tests.test_ci_workflow.TestActionsQuotaWorkflows` 5/5 通过，完整 `ml-platform.backend.tests.test_ci_workflow` 41/41 通过；两份工作流通过 PyYAML 解析，`git diff --check` 通过。
+- 远端边界：最近远端 run 的 runner 曾因账户付款或 Actions 消费限额在启动前失败；本地测试和 YAML 解析不构成远端运行通过，计费恢复后应以同一提交分别验证 PR light、main full、manual full 与 cleanup workflow，且不要在计费阻塞时反复 rerun。
