@@ -321,7 +321,7 @@ describe("AutoMLPage", () => {
     await waitFor(() => expect(quality.createQualityRun).toHaveBeenCalledWith("project-1", {
       dataset_artifact_id: "dataset-1",
       field_mapping: {},
-      candidate_ids: [],
+      algorithm_ids: [],
       target_column: undefined,
       input_columns: QUALITY_REPORT_COLUMNS,
       cross_validation_enabled: true,
@@ -414,7 +414,7 @@ describe("AutoMLPage", () => {
     await waitFor(() => expect(quality.createQualityRun).toHaveBeenCalledWith("project-1", {
       dataset_artifact_id: "dataset-1",
       field_mapping: {},
-      candidate_ids: [],
+      algorithm_ids: [],
       target_column: "quality",
       input_columns: QUALITY_REPORT_COLUMNS,
       cross_validation_enabled: true,
@@ -440,15 +440,15 @@ describe("AutoMLPage", () => {
     fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
     fireEvent.click(await screen.findByText("weld.csv"));
     await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "报告候选算法" }));
-    fireEvent.click(await screen.findByText("RF_v1"));
-    fireEvent.click(await screen.findByText("GBDT_v1"));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知算法家族" }));
+    fireEvent.click(await screen.findByText("Random Forest"));
+    fireEvent.click(await screen.findByText("GBDT"));
     fireEvent.click(screen.getByRole("button", { name: "运行质量感知" }));
 
     await waitFor(() => expect(quality.createQualityRun).toHaveBeenCalledWith("project-1", {
       dataset_artifact_id: "dataset-1",
       field_mapping: {},
-      candidate_ids: ["RF_v1", "GBDT_v1"],
+      algorithm_ids: ["random_forest", "gbdt"],
       target_column: undefined,
       input_columns: QUALITY_REPORT_COLUMNS,
       cross_validation_enabled: true,

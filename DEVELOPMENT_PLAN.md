@@ -2098,3 +2098,15 @@
 - 解决方法：Dashboard 对统计和项目接口统一建立显式失败态，成功时继续使用真实 `core_assets`、`model_status`、`algorithm_coverage` 和项目数据；AppLayout 恢复 `/auth/me`、禁止 UUID 身份回退、压紧用户名/角色布局，Header/Sider 使用主题变量；在数据管理下方恢复 `/data-annotation` 并按最长路由匹配选中项。
 - 验证方式：Dashboard、AppLayout、用户名和主题聚焦回归 `12/12`；完整前端 Vitest `43/43` 文件、`211/211` 用例通过。真实本地后端和浏览器确认工作台显示 `81/1/15/9`，明亮模式 Header 为浅色，右上角显示 `admin/管理员`，数据标注入口进入 `/data-annotation`。
 - 剩余事项：`npx tsc --noEmit` 仍在 `AutoMLPage.tsx:462` 的旧 `candidate_ids` 请求与 `AutoMLPage.tsx:576` 的 `QualityFamilyResult` 动态索引处失败；这是当前合并基线的独立合同冲突，需单独确认点焊 AutoML 兼容方向后修复。
+
+### 2026-08-18：点焊质量感知 AutoML TypeScript 合同阻塞修复
+
+- 当前状态：两个既有 TypeScript 构建阻塞已修复并完成本地前端验证；本记录更正上一条记录中的剩余事项，不改写其历史快照。
+- 问题现象：`AutoMLPage.tsx` 创建点焊质量感知运行时提交已从 API 类型删除的 `candidate_ids`，同时报告指标辅助函数用任意 `string` 索引 `QualityFamilyResult`，分别触发 `TS2353` 和 `TS7053`。
+- 已确认根因：点焊质量感知后端和前端 API 已统一为七类稳定算法家族的 `algorithm_ids` 合同，但页面仍保留十套固定候选的旧 UI 与请求字段；指标展示实际只读取 `auc` 和 `f1`，函数参数却扩大为任意字符串。
+- 解决方法：点焊质量感知算法选择复用现有七类算法家族选项，状态使用 `QualityAlgorithmId[]` 并提交 `algorithm_ids`；指标键收窄为 `"auc" | "f1"`，不为结果类型增加宽松索引签名；同步三类质量运行请求断言。
+- 测试先行：选中 Random Forest 和 GBDT 的质量运行测试先因页面仍显示旧候选并发送旧字段而 RED；实现后首次聚焦复跑又发现两个默认场景仍断言 `candidate_ids`，同步为当前 API 合同后恢复 GREEN。
+- 验证方式：`npm test -- --run src/pages/AutoMLPage.test.tsx` 为 `20/20`；`npx tsc --noEmit` 退出码为 0；完整 `npm test` 为 `43/43` 文件、`211/211` 用例；`npm run build` 成功，仅保留既有 ECharts 大 chunk 提示。
+- 影响范围：仅涉及 AutoML 页面点焊质量感知的算法选择、创建请求、报告指标类型及对应页面测试；不修改后端搜索实现、数据库、普通 AutoML 执行合同或历史任务数据。
+- 预防措施：破坏性 API 字段迁移必须全仓搜索所有生产调用方和测试断言，并以完整 TypeScript 构建作为关闭条件；有限字段展示应使用字面量联合或 `keyof`，禁止用任意字符串索引结构化结果。
+- 剩余事项：GitHub Actions 本月配额耗尽，远端检查可能在 runner 启动前因计费阻塞失败；发布时必须把该状态记录为未执行，不能冒充代码失败或 CI 通过。
