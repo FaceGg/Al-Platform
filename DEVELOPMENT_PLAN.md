@@ -1978,3 +1978,41 @@
 - 合并边界：失败的远程 checks 仍保留为计费/消费限额导致的 runner 未启动证据，不改写为测试通过；本次发布依据为当前提交上的 Windows 完整自动化验证和 WSL/Compose 真实认证业务验收。
 - 合并核验：远端 `main` 已指向 `4bf62c2`，其两个父提交分别为原基线 `79fb2f4` 和发布分支 `2aa6904`；发布分支是远端 `main` 的祖先，PR 状态为 `MERGED`。
 - 保留状态：原始主工作树的 `OPTIMIZATION_PLAN.md`、`ml-platform/frontend/pnpm-lock.yaml` 和 `tmp/report-media-20260730/` 仍为未跟踪用户文件，未修改、未暂存、未删除。
+
+### 2026-08-17：Week 11 固定资源性能验收受宿主权限阻塞
+
+- 当前周次：第 11 至第 12 周系统联调与最终验收；本分支 `codex/week11-stateful-acceptance`，HEAD 为 `d68a91073222272e8b1da6e0d620b4e26f99c070`。
+- 已完成：性能脚本已修正 `source_commit` provenance，工作流性能证据要求逐个轮询 `/api/runs/{run_id}` 并以 `completed` 终态收口；失败路径会保存 Compose 状态和脱敏日志。静态 PowerShell AST、Python `py_compile` 均通过。
+- 问题现象：资源封装首次执行确认目标为 4 CPU / 8 GiB，但工作负载在 Compose 启动阶段退出；第二次执行时当前受控会话拒绝写入 `C:\Users\17723\.wslconfig`（`UnauthorizedAccessException`），未受限直跑也在首个 `wsl.exe` 调用收到 `Wsl/Service/E_ACCESSDENIED`。
+- 已确认边界：原 `.wslconfig` SHA-256 为 `2f4e0c4ad4e592a8c5736363098d936e5cd85a0a3262ea15b5a9d4e99a639e14`，第一次资源封装后逐字节恢复；第二次未获得写权限，未修改宿主配置。Docker、PostgreSQL、Redis、MinIO、Celery 和真实性能请求均未启动，不能把本次结果写成性能通过。
+- 处理决定：不绕过宿主权限、不删除 WSL/Docker 数据、不用未受限运行替代固定资源门禁。恢复 WSL 服务访问和临时配置写权限后，从本提交重新运行 `run-resource-envelope.ps1`，并检查 `resource-envelope.json`、`workload.txt`、`performance/summary.json` 与恢复哈希。
+- 远端门禁：用户已耗尽本月 GitHub Actions 配额；远端 CI 继续记录为未执行/计费阻塞，不创建虚假通过证据，不在 Week 11-12 最终门禁未闭合前合并本分支。
+- 遗留事项：固定资源性能、真实备份恢复、N-1 数据升级、四角色/四通道浏览器矩阵、安全证据 manifest、范围审查、推送和合并仍未完成；共享经验文档因当前沙箱禁止写入 `C:\Users\17723\.codex`，待恢复写权限后追加对应可复用记录。
+
+### 2026-08-18：固定资源性能夹具配置上限回归
+
+- 当前周次：第 11 至第 12 周系统联调与最终验收。
+- 问题现象：WSL/Docker 已恢复并成功暴露 4 CPU / 8 GiB，但隔离 Compose 在 `migrate` 阶段退出；Pydantic 报 `inference_rate_limit_refill_per_second` 超过最大值 `10000`。
+- 根因：临时性能工作负载把限流补充速率误设为 `100000`，超出生产 `Settings` 的显式字段约束；该错误阻止迁移和后续负载启动。
+- 解决方法：将性能夹具的补充速率改为合法上限 `10000`，保持容量 `100000` 以避免测试请求被限流；不修改生产配置约束或限流实现。
+- 验证方式：已从 Compose 脱敏日志确认失败容器和精确校验错误；修复后需重新执行资源封装、迁移、真实性能与终态汇总。
+- 遗留事项：本次性能验收尚未重新完成，备份恢复、N-1、浏览器/通知矩阵、最终 manifest、提交、推送和合并仍待执行。
+
+### 2026-08-18：固定资源性能种子脚本路径修复
+
+- 当前周次：第 11 至第 12 周系统联调与最终验收。
+- 问题现象：Compose 迁移、backend、worker、inference、MLflow、MinIO 和 TensorBoard 均健康，但种子脚本执行失败并报 `ModuleNotFoundError: No module named 'app'`。
+- 根因：脚本被复制到容器 `/tmp` 后直接以文件路径运行，容器默认 Python 搜索路径未包含 `/app`。
+- 解决方法：执行种子脚本时显式设置 `PYTHONPATH=/app`；不修改生产镜像或应用模块导入逻辑。
+- 验证方式：失败日志已保存于隔离诊断 artifact；修复后需重新完成种子、负载、工作流终态和汇总门禁。
+- 遗留事项：固定资源真实性能尚未完成，其他 Week 11-12 运行态门禁和远端发布仍待执行。
+
+### 2026-08-18：固定资源性能负载中途 Docker 生命周期阻断
+
+- 当前周次：第 11 至第 12 周系统联调与最终验收。
+- 已完成：资源封装观察到 WSL `nproc=4`、`MemTotal=8133228 kB`、Docker `NCPU=4`、`MemTotal=8328425472`；迁移、backend、worker、scheduler、inference、MLflow、MinIO 和 TensorBoard 健康；冷启动、三轮 core-read、三轮 warm-inference 和三轮 worker 停止 enqueue 均生成当前 HEAD 原始 JSON。
+- 问题现象：负载中途 Redis、PostgreSQL、backend、worker 等容器在同一时刻收到 `SIGTERM`；Redis 日志为正常 shutdown，随后队列清理命令报 `service \"redis\" is not running`。后续 warm-inference 原始结果为 `status_counts={\"599\":2000}`、`error_rate=1.0`；`welding-e2e` 与 `summary.json` 未生成。
+- 已确认边界：现有 Docker/WSL journal 未保留对应时间窗口，无法证明是 OOM、Docker daemon 重启还是宿主外部生命周期操作；不能将部分原始 JSON 视为性能通过，也不能重试后忽略统一 SIGTERM。
+- 处理决定：保留脱敏 Compose 日志、资源 envelope 和原始失败结果；下一次运行前必须先取得 WSL/Docker 生命周期证据或隔离宿主重启来源，再重新执行全量负载。固定资源门禁继续保持阻塞。
+- 远端门禁：GitHub Actions 本月配额仍耗尽，远端 CI 记录为未执行/计费阻塞；本分支只能提交和推送已审查文档，不能合并到 `main`。
+- 遗留事项：真实性能汇总、备份恢复、N-1 升级、浏览器/通知矩阵、最终 manifest、远端 required checks 和合并仍未完成。
