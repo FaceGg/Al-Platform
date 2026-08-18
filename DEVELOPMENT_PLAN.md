@@ -2127,3 +2127,9 @@
 - 清理策略：新增每周日 02:30 UTC 的 Actions cleanup workflow，失败证据 Artifact 保留 7 天、Week 11-12 验收/安全证据保留 14 天、最后访问超过 7 天的 cache 可删除、创建超过 30 天且状态为 `completed` 的 workflow run 可删除。清理仅授予 job 级 `actions: write`，并以 Artifact 名称白名单、时间阈值和 completed 状态三重限制；不 checkout 源码、不操作 Release、业务文件或未完成运行。
 - 验证方式：新增额度/清理契约先 RED，随后 `ml-platform.backend.tests.test_ci_workflow.TestActionsQuotaWorkflows` 5/5 通过，完整 `ml-platform.backend.tests.test_ci_workflow` 41/41 通过；两份工作流通过 PyYAML 解析，`git diff --check` 通过。
 - 远端边界：最近远端 run 的 runner 曾因账户付款或 Actions 消费限额在启动前失败；本地测试和 YAML 解析不构成远端运行通过，计费恢复后应以同一提交分别验证 PR light、main full、manual full 与 cleanup workflow，且不要在计费阻塞时反复 rerun。
+
+### 2026-08-18：GitHub Actions 配额控制推送到 main
+
+- 发布状态：用户已明确授权将本地 `main` 的 Actions 配额控制提交推送到 `origin/main`；推送前重新 fetch 并确认远端仍为 `0b841e3`，本地仅领先 `27f5782` 与 `e8497ba` 两个已审阅提交。
+- 推送范围：CI 轻量/全量分流、并发取消、7/14 天 Artifact 保留、最小权限 cleanup workflow、41 项 YAML 契约测试，以及本计划记录；不执行 cleanup workflow，不删除现有远端 Actions 数据。
+- 远端验证边界：push 后读取 `refs/heads/main` 确认 SHA 一致；若 GitHub runner 因计费或额度阻塞未启动，必须单独记录为远端未执行，不得改写为通过或代码失败。
