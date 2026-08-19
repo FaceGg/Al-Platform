@@ -2539,6 +2539,11 @@ def _frontend_uses_react_router_server_api(frontend_directory: Path) -> bool:
                 return True
             if any(part in _FRONTEND_IGNORED_DIRECTORIES for part in candidate_parts):
                 continue
+            # Test fixtures may intentionally contain route-action examples to
+            # validate UI behavior. They are not runtime entry points and must
+            # not invalidate the production client-only exception review.
+            if ".test." in path.name or ".spec." in path.name:
+                continue
             resolved_path = _safe_frontend_source_path(
                 path,
                 frontend_directory,
@@ -2935,8 +2940,8 @@ def _raw_scan_report_error(name: str, value: object) -> str | None:
             value,
             exception_path=(
                 repository_root
-                / "docs"
-                / "security"
+                / ".github"
+                / "contracts"
                 / "react-router-rsc-mode-exception.json"
             ),
             frontend_directory=repository_root / "ml-platform" / "frontend",

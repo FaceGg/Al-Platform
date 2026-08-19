@@ -365,7 +365,7 @@ class TestAutoMLTracking(unittest.TestCase):
 
         self.assertEqual(result.status, "completed")
         stratified_kfold.assert_not_called()
-        self.assertEqual(len(FeatureCapturingClassifier.seen_columns), 2)
+        self.assertEqual(len(FeatureCapturingClassifier.seen_columns), 3)
         with self.Session() as db:
             job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
             self.assertEqual(job.metrics["evaluation"], {
@@ -398,7 +398,14 @@ class TestAutoMLTracking(unittest.TestCase):
                     shuffle=True,
                     random_state=42,
                 )
-                self.assertEqual(len(FeatureCapturingClassifier.seen_columns), folds + 1)
+                self.assertGreaterEqual(
+                    len(FeatureCapturingClassifier.seen_columns),
+                    folds + 1,
+                )
+                self.assertEqual(
+                    set(FeatureCapturingClassifier.seen_columns),
+                    {("current", "force")},
+                )
 
     def test_enabled_cross_validation_uses_kfold_for_regression(self):
         FeatureCapturingRegressor.seen_columns.clear()

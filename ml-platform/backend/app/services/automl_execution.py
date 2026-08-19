@@ -685,7 +685,10 @@ def execute_automl_job(
                     try:
                         auc, f1 = classification_metrics(
                             estimator,
-                            features=features.to_numpy() if hasattr(features, "to_numpy") else features,
+                            # Keep the DataFrame schema: custom estimators and
+                            # feature-name-aware sklearn pipelines may require
+                            # column labels during metric evaluation.
+                            features=features,
                             target=np.asarray(target),
                             evaluation=evaluation,
                         )

@@ -676,7 +676,7 @@ jobs:
           ACCEPTANCE_SOURCE_COMMIT: ${{ github.sha }}
         run: |
           python -m tools.security_scans all \
-            --npm-audit-exception "$GITHUB_WORKSPACE/docs/security/react-router-rsc-mode-exception.json" \
+            --npm-audit-exception "$GITHUB_WORKSPACE/.github/contracts/react-router-rsc-mode-exception.json" \
             --output "$ML_PLATFORM_EVIDENCE_DIR/security/security.json"
       - name: Run frozen-stack web security gate
         shell: bash

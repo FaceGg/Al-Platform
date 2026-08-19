@@ -2,6 +2,7 @@
   "schema_version": 1,
   "id": "react-router-rsc-mode-csrf",
   "owner": "ml-platform-maintainers",
+  "reviewed_at": "2026-08-01",
   "expires_on": "2026-09-10",
   "package_versions": {
     "react-router": "7.18.2",

@@ -18,7 +18,7 @@ NPM_AUDIT_EXCEPTION = (
     REPOSITORY_ROOT / ".github" / "contracts" / "react-router-rsc-mode-exception.json"
 )
 PIP_AUDIT_EXCEPTION = (
-    REPOSITORY_ROOT / "docs" / "security" / "cryptography-pkcs7-mlflow-exception.json"
+    REPOSITORY_ROOT / ".github" / "contracts" / "cryptography-pkcs7-mlflow-exception.json"
 )
 PRODUCTION_INFRASTRUCTURE = (
     REPOSITORY_ROOT / ".github" / "contracts" / "PRODUCTION_INFRASTRUCTURE.md"

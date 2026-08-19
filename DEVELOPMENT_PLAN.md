@@ -2285,3 +2285,11 @@
 - 解决方法：将 CI 必需的最小契约迁移到受版本控制的 `.github/contracts/`，并把测试引用改为该目录；未恢复或上传本地 `docs/`、`docs2/`、`tmp/`、`temp_test/` 内容。
 - 验证方式：`tests.test_ci_workflow` `41/41` 通过；Week 9 `7/7` 模块通过；Week 10 `7/7` 模块通过；`git diff --check` 通过；运行器临时目录自动清理。
 - 遗留事项：本地修改尚未提交/推送，当前主线仍需以新提交触发 GitHub Actions 质量和 full 验收。
+
+### 2026-08-19：Actions Run 32208645363 干净 checkout 质量门禁修复
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 问题现象：`FaceGg/Al-Platform` 的 Actions Run `32208645363` 在 Ubuntu 和 Windows 的 quality job 失败；干净 checkout 缺少被 `.gitignore` 排除的 `docs/` 契约文件，AutoML 指标评估丢失 DataFrame 列名，前端 React Router 审计还把测试夹具误判为运行时代码。
+- 解决方法：将最小 CI 契约放入受版本控制的 `.github/contracts/`，统一 workflow、测试和扫描器引用；指标计算保留 DataFrame；扫描器跳过 `.test.`、`.spec.` 前端夹具；已移除的 cryptography 例外文件保持不存在并由契约测试断言。
+- 验证方式：`test_automl_tracking` 与 `test_image_security_contracts` 为 `37/37`；`test_week12_security_gates` 为 `160 passed, 1 skipped`；`test_ci_workflow`、`test_suite_manifest`、`test_run_suite` 为 `47/47`；`git diff --check` 待提交前复核。
+- 遗留事项：需将本次范围化修复推送到 `main`，并以新提交对应的 GitHub Actions quality 结果作为最终远程验收依据；不可将本地结果或旧 run 视为远程通过。

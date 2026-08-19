@@ -18,9 +18,9 @@ DOCKERFILES = tuple(
         "Dockerfile.tensorboard",
     )
 )
-BASE_RECORD = ROOT / "docs" / "security" / "python-base-image.json"
+BASE_RECORD = ROOT / ".github" / "contracts" / "python-base-image.json"
 REQUIREMENTS = BACKEND / "requirements.txt"
-EXCEPTION = ROOT / "docs" / "security" / "cryptography-pkcs7-mlflow-exception.json"
+EXCEPTION = ROOT / ".github" / "contracts" / "cryptography-pkcs7-mlflow-exception.json"
 COMPOSE = ROOT / "docker-compose.yml"
 
 

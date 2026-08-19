@@ -247,8 +247,8 @@ class SecurityGateTests(unittest.TestCase):
             self._react_router_audit_report(),
             exception_path=(
                 repository_root
-                / "docs"
-                / "security"
+                / ".github"
+                / "contracts"
                 / "react-router-rsc-mode-exception.json"
             ),
             frontend_directory=repository_root / "ml-platform" / "frontend",
@@ -2765,8 +2765,8 @@ class SecurityGateTests(unittest.TestCase):
         repository_root = Path(__file__).resolve().parents[3]
         example_path = (
             repository_root
-            / "docs"
-            / "delivery"
+            / ".github"
+            / "contracts"
             / "ubuntu24.production.env.example"
         )
         values = {
