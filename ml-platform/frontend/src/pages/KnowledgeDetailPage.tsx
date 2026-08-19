@@ -132,7 +132,10 @@ export default function KnowledgeDetailPage() {
     const userMsg = { role: "user", content: messageInput };
     setChatMessages((prev) => [...prev, userMsg]); setMessageInput("");
     try {
-      const res = await apiClient.post("/knowledge/bases/" + kbId + "/chat", { chat_id: activeChatId, message: userMsg.content });
+      const res = await apiClient.post("/knowledge/bases/" + kbId + "/chat", {
+        session_id: activeChatId,
+        messages: [...chatMessages, userMsg].map(({ role, content }) => ({ role, content })),
+      });
       setChatMessages((prev) => [...prev, { role: "assistant", content: res.data.answer || res.data.response || res.data.content, sources: res.data.sources }]);
       if (!activeChatId && res.data.chat_id) { setActiveChatId(res.data.chat_id); loadChats(); }
     } catch (e: any) { message.error(e.response?.data?.detail || t.common.error); }

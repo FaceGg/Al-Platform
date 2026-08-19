@@ -2245,3 +2245,43 @@
 - 发布状态：自动建模任务列表、任务详情、真实分类 AUC/F1、超参数详情、报告按钮状态、品牌和入口调整等当前工作区改动已提交并合并到 `main`，本地 `main` 与 `origin/main` 已同步。
 - 提交记录：合并提交 `cb565011d7b755b8939989254fa7183024ed06b6`；功能分支提交 `7aa71e4` 已推送至 `origin/codex/automl-task-results-20260818`。
 - 验证方式：发布前前端构建通过、聚焦 Vitest 通过、后端模块编译通过、`git diff --check` 通过；发布后校验本地与远端 `main` SHA 相同，工作区干净。
+
+### 2026-08-19：知识库聊天输入 ID 契约修复
+
+- 问题现象：知识库聊天请求可能把历史消息的 `fc_...` 数据库/来源 ID 一起转发给模型接口，触发“Expected an ID that begins with `ctc`”校验错误；前端发送的 `{chat_id, message}` 也与后端 `{session_id, messages}` 契约不一致。
+- 解决方法：后端新增统一消息归一化，仅保留 `role` 和字符串 `content`，丢弃本地 `id`、`sources` 等元数据，并兼容旧请求字段；前端改为发送 `session_id` 与去元数据后的完整消息列表。
+- 验证方式：新增回归测试覆盖 `fc_...` ID 清理和旧格式兼容；后端聚焦测试通过，前端 TypeScript/Vite 生产构建通过，`git diff --check` 通过。
+- 遗留风险：当前无法直接调用外部 LLM 服务验证供应商响应；需在配置真实 API 后执行一次知识库聊天端到端验证。
+
+### 2026-08-19：GitHub Actions 日常反馈与冻结验收分层优化
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 问题现象：`main` push 会并行启动 Chromium、生产集成、实验 Compose 构建和 Week 11-12 四镜像安全验收；同一轮运行重复安装依赖，完整门禁的反馈时间明显高于日常提交所需。
+- 解决方法：跨平台 `quality` 继续覆盖 PR、`develop`、`main`、定时和手动运行；`browser-acceptance`、`production-integration`、`experiment-integration` 和 `week11-12-verification` 仅允许周日定时或手动 `workflow_dispatch mode=full` 执行。Week 11-12 四镜像构建改用 Buildx 的 `type=gha` 层缓存，同时保留 `--load`、当前 `GITHUB_SHA` 的 OCI revision 标签、镜像 ID 校验和冻结栈无重建约束。
+- 测试先行与验证：新增的触发范围与 Buildx 缓存契约先在旧 workflow 上失败，修改后两项聚焦测试通过；`tests.test_ci_workflow` 结果为 39 通过、2 个既有错误，错误来自本地不再跟踪的 `docs/security/react-router-rsc-mode-exception.json` 和 `docs/delivery/PRODUCTION_INFRASTRUCTURE.md` 缺失，不由本次 workflow 改动引入；两份 workflow 均可被 PyYAML 解析，`git diff --check` 通过。
+- 遗留工作：尚未推送本次本地改动，也没有新的远端运行证据。发布后需要分别触发手动 `light` 和手动 `full`，并在下一次周日定时运行中确认完整门禁、Buildx 缓存命中和冻结证据均正常；本次历史 run `32203024661` 的后端套件失败须独立分析，不能归因于本次未发布的优化。
+
+### 2026-08-19：Week 9-10 验收复核
+
+- 本地 Week 9 推理生产化：模型卡、rollout、限流、API key、观测、部署、生产模型和推理 API 聚焦测试通过；本地后端合计 `202 passed, 1 skipped`，skip 为显式要求真实生产栈的集成用例。
+- 本地 Week 10 权限/审计/通知：项目权限、平台审计、通知模型、四通道路由、Outbox、API 通知和安全加固聚焦测试均通过；上述总数已包含 Week 10 用例，未发现本地功能回归。
+- 本地前端：治理页、模型库、通知中心及相关 API 共 `5` 个测试文件、`38/38` 用例通过；`npm run build` 通过，只有既有 ECharts 大 chunk 警告。
+- 真实运行态边界：本机未安装 Docker，PostgreSQL/Redis/Celery/Mailpit/受控通知接收器生产栈未在本机执行；对应测试结果为 `10 passed, 8 skipped`，不能将 skip 计为运行态通过。
+- 远端历史证据：Actions Run `31942746922`（分支 `codex/week9-12-mlops-core`，提交 `ee848f3daa58d598eda76eceeeb3fef3c13018be`，2026-08-16）中 Windows/Ubuntu quality、生产集成、实验集成、Chromium 和 Week 11-12 verification 全部成功，可证明该分支快照的运行态门禁。
+- 当前主线边界：Actions Run `32203024661`（`main`，提交 `2aa4841f1a7010548d8e4faa3bd11d8fb749ab55`）的生产/实验集成成功，但 Windows/Ubuntu quality 失败，Chromium 与 Week 11-12 因依赖被跳过；因此 Week 9/10 功能实现和本地回归可判定完成，当前 `main` 的最终远程验收不能判定通过。
+
+### 2026-08-19：屏蔽已弃用的点焊质量 AutoML 默认验收
+
+- 用户决策：点焊质量 AutoML 已弃用，前端入口已屏蔽；不再为恢复该历史执行链修改通用 AutoML 搜索器。
+- 实施方式：保留 `test_spot_weld_quality_service` 和 `test_api_spot_weld_quality` 及第 17 周归属，新增 `DEPRECATED_TEST_MODULES`；默认 `run_suite.py` 和 Week 17 验收排除这两个历史模块，使用 `--include-deprecated` 才显式运行。
+- 保留边界：点焊质量模型表、特征解析、任务调度和其他非 AutoML 兼容代码继续进入默认验收；弃用代码和测试仅用于历史数据/协议回归，不作为当前 CI 通过条件。
+- 验证方式：`tests.test_suite_manifest` 与 `tests.test_run_suite` 共 6 项通过；`run_suite.py --week 17` 默认 4 个活动模块全部通过；临时测试目录由既有 `finally` 清理逻辑删除。
+- 遗留事项：当前工作区 CI 优化和本次验收编排改动尚未推送；需要在发布后触发当前提交的质量和完整冻结门禁，不能用历史运行替代。
+
+### 2026-08-19：修复 CI 契约对已停止跟踪文档的依赖
+
+- 问题现象：`tests.test_ci_workflow` 的 41 项中有 2 项因 `docs/security/react-router-rsc-mode-exception.json` 和 `docs/delivery/PRODUCTION_INFRASTRUCTURE.md` 已按本地目录治理规则停止跟踪而报 `FileNotFoundError`。
+- 根因：CI 门禁测试把仅用于契约校验的安全/交付元数据放在已被 `.gitignore` 排除的本地文档目录，测试引用路径与版本控制边界不一致。
+- 解决方法：将 CI 必需的最小契约迁移到受版本控制的 `.github/contracts/`，并把测试引用改为该目录；未恢复或上传本地 `docs/`、`docs2/`、`tmp/`、`temp_test/` 内容。
+- 验证方式：`tests.test_ci_workflow` `41/41` 通过；Week 9 `7/7` 模块通过；Week 10 `7/7` 模块通过；`git diff --check` 通过；运行器临时目录自动清理。
+- 遗留事项：本地修改尚未提交/推送，当前主线仍需以新提交触发 GitHub Actions 质量和 full 验收。

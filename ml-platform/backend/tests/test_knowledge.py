@@ -4,6 +4,7 @@ sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
 from app.main import app
+from app.api.knowledge import normalize_chat_messages
 from app.database import Base, engine
 from tests.auth_test_support import ensure_admin
 
@@ -20,6 +21,27 @@ def login_headers():
 
 
 class TestKnowledgeAPI(unittest.TestCase):
+    def test_chat_messages_strip_internal_ids_and_accept_legacy_shape(self):
+        normalized = normalize_chat_messages({
+            "chat_id": "session-1",
+            "message": "How much current?",
+            "history": [{
+                "id": "fc_087e6e046878738d016a84fcf0022087d095864ef8775a5ed8",
+                "role": "assistant",
+                "content": "Use the process specification.",
+                "sources": [{"id": "fc_source"}],
+            }],
+        })
+
+        self.assertEqual(normalized["session_id"], "session-1")
+        self.assertEqual(
+            normalized["messages"],
+            [
+                {"role": "assistant", "content": "Use the process specification."},
+                {"role": "user", "content": "How much current?"},
+            ],
+        )
+
     def test_01_create_kb(self):
         h = login_headers()
         r = client.post("/api/knowledge/bases", json={

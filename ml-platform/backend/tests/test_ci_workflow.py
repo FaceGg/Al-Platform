@@ -15,15 +15,15 @@ WEEK12_SECURITY_IMAGES_COMPOSE_FILE = (
 )
 FRONTEND_DOCKERFILE = REPOSITORY_ROOT / "ml-platform" / "frontend" / "Dockerfile"
 NPM_AUDIT_EXCEPTION = (
-    REPOSITORY_ROOT / "docs" / "security" / "react-router-rsc-mode-exception.json"
+    REPOSITORY_ROOT / ".github" / "contracts" / "react-router-rsc-mode-exception.json"
 )
 PIP_AUDIT_EXCEPTION = (
     REPOSITORY_ROOT / "docs" / "security" / "cryptography-pkcs7-mlflow-exception.json"
 )
 PRODUCTION_INFRASTRUCTURE = (
-    REPOSITORY_ROOT / "docs" / "delivery" / "PRODUCTION_INFRASTRUCTURE.md"
+    REPOSITORY_ROOT / ".github" / "contracts" / "PRODUCTION_INFRASTRUCTURE.md"
 )
-USER_GUIDE = REPOSITORY_ROOT / "docs" / "delivery" / "USER_GUIDE.md"
+USER_GUIDE = REPOSITORY_ROOT / ".github" / "contracts" / "USER_GUIDE.md"
 PLATFORM_STATUS = REPOSITORY_ROOT / "PLATFORM_STATUS.md"
 NOTIFICATION_STACK_TEST = (
     REPOSITORY_ROOT / "ml-platform" / "backend" / "tests" / "test_notification_production_stack.py"
@@ -294,7 +294,8 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
 
     def test_week11_12_ci_builds_and_scans_every_production_python_image_from_the_commit(self):
         parsed = yaml.safe_load(self.workflow)
-        steps = parsed["jobs"]["week11-12-verification"]["steps"]
+        job = parsed["jobs"]["week11-12-verification"]
+        steps = job["steps"]
         build = next(
             step
             for step in steps
@@ -302,6 +303,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         )
         scan = next(step for step in steps if step.get("name") == "Run security scans")
 
+        self.assertIn("docker/setup-buildx-action@v3", [step.get("uses") for step in steps])
         self.assertIn("for image in backend worker inference tensorboard", build["run"])
         self.assertIn("ml-platform-${image}:week11-12-${GITHUB_SHA}", build["run"])
         self.assertIn("ACCEPTANCE_ADDITIONAL_IMAGES", scan["env"])
@@ -310,6 +312,10 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn("ml-platform-tensorboard:week11-12-${{ github.sha }}", scan["env"]["ACCEPTANCE_ADDITIONAL_IMAGES"])
         self.assertIn('dockerfile="Dockerfile"', build["run"])
         self.assertIn('dockerfile="Dockerfile.$image"', build["run"])
+        self.assertIn("docker buildx build", build["run"])
+        self.assertIn("--load", build["run"])
+        self.assertIn("--cache-from type=gha,scope=week11-12-${image}", build["run"])
+        self.assertIn("--cache-to type=gha,mode=max,scope=week11-12-${image}", build["run"])
         self.assertIn('-f "$dockerfile"', build["run"])
         self.assertIn("docker image inspect", build["run"])
         self.assertIn("ACCEPTANCE_IMAGE_DIGEST", build["run"])
@@ -942,13 +948,13 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
     def test_heavy_ci_jobs_are_limited_to_full_validation_events(self):
         jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
         expected_markers = (
-            "github.event_name == 'push' && github.ref == 'refs/heads/main'",
             "github.event_name == 'schedule'",
             "github.event_name == 'workflow_dispatch'",
             "inputs.mode == 'full'",
         )
 
         for job_name in (
+            "browser-acceptance",
             "production-integration",
             "experiment-integration",
             "week11-12-verification",
@@ -957,6 +963,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
                 condition = jobs[job_name].get("if", "")
                 for marker in expected_markers:
                     self.assertIn(marker, condition)
+                self.assertNotIn("github.event_name == 'push'", condition)
 
     def test_ci_artifact_retention_matches_evidence_policy(self):
         jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]

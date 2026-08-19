@@ -4,7 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from tests.week_manifest import WEEK_TEST_MODULES
+from tests.week_manifest import ALL_TEST_MODULES, DEPRECATED_TEST_MODULES, WEEK_TEST_MODULES
 
 
 class TestSuiteManifest(unittest.TestCase):
@@ -17,6 +17,17 @@ class TestSuiteManifest(unittest.TestCase):
 
         self.assertEqual(len(assigned), len(set(assigned)), "A test module is assigned to multiple weeks")
         self.assertEqual(discovered, set(assigned))
+
+    def test_deprecated_quality_automl_modules_are_excluded_from_default_suite(self):
+        self.assertTrue(DEPRECATED_TEST_MODULES)
+        self.assertTrue(DEPRECATED_TEST_MODULES.isdisjoint(ALL_TEST_MODULES))
+        self.assertEqual(
+            DEPRECATED_TEST_MODULES,
+            {
+                "test_spot_weld_quality_service",
+                "test_api_spot_weld_quality",
+            },
+        )
 
     def test_production_inference_stack_is_explicitly_gated_without_opt_in(self):
         environment = os.environ.copy()

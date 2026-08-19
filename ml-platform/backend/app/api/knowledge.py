@@ -23,6 +23,35 @@ from app.engine.vector_store import get_vector_store
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
 
+def normalize_chat_messages(request: dict) -> dict:
+    """Keep local message IDs and source metadata out of provider requests."""
+    messages = request.get("messages")
+    if messages is None:
+        history = request.get("history") or []
+        messages = [
+            {"role": item.get("role"), "content": item.get("content")}
+            for item in history
+            if isinstance(item, dict)
+        ]
+        legacy_message = request.get("message")
+        if legacy_message:
+            messages.append({"role": "user", "content": legacy_message})
+
+    normalized = []
+    for item in messages or []:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role in {"system", "user", "assistant"} and isinstance(content, str) and content:
+            normalized.append({"role": role, "content": content})
+
+    return {
+        "messages": normalized,
+        "session_id": request.get("session_id") or request.get("chat_id"),
+    }
+
+
 # -------------------------------------------------------------------------------
 #  Utility: TF-IDF embedding helpers
 # -------------------------------------------------------------------------------
@@ -546,8 +575,9 @@ def chat(
     if not kb:
         raise HTTPException(404, "Knowledge base not found")
 
-    messages = request.get("messages", [])
-    session_id_str = request.get("session_id")
+    normalized_request = normalize_chat_messages(request)
+    messages = normalized_request["messages"]
+    session_id_str = normalized_request["session_id"]
     llm_api_url_override = request.get("llm_api_url")
     top_k = request.get("top_k", 5)
 

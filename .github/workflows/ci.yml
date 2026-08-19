@@ -89,6 +89,9 @@ jobs:
 
   browser-acceptance:
     name: Chromium acceptance (Ubuntu)
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
     runs-on: ubuntu-22.04
     needs: quality
     steps:
@@ -140,7 +143,6 @@ jobs:
   production-integration:
     name: Production integration (Ubuntu)
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
     runs-on: ubuntu-22.04
@@ -362,7 +364,6 @@ jobs:
   experiment-integration:
     name: Production experiment integration (Ubuntu)
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
     runs-on: ubuntu-22.04
@@ -546,7 +547,6 @@ jobs:
   week11-12-verification:
     name: Week 11-12 verification (Ubuntu)
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
     runs-on: ubuntu-22.04
@@ -581,6 +581,7 @@ jobs:
       COMPOSE_PROJECT_NAME: ci-week12-security-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
@@ -635,7 +636,10 @@ jobs:
             if [ "$image" != "backend" ]; then
               dockerfile="Dockerfile.$image"
             fi
-            docker build \
+            docker buildx build \
+              --load \
+              --cache-from type=gha,scope=week11-12-${image} \
+              --cache-to type=gha,mode=max,scope=week11-12-${image} \
               --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
               --tag "ml-platform-${image}:week11-12-${GITHUB_SHA}" \
               -f "$dockerfile" .

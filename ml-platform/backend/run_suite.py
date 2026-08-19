@@ -7,7 +7,11 @@ import subprocess
 import sys
 import time
 
-from tests.week_manifest import ALL_TEST_MODULES, WEEK_TEST_MODULES
+from tests.week_manifest import (
+    ALL_TEST_MODULES,
+    DEPRECATED_TEST_MODULES,
+    WEEK_TEST_MODULES,
+)
 
 
 BACKEND_DIR = os.path.dirname(__file__)
@@ -22,6 +26,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         choices=sorted(WEEK_TEST_MODULES),
         help="Run only the test modules owned by one development week.",
+    )
+    parser.add_argument(
+        "--include-deprecated",
+        action="store_true",
+        help="Include historical point-weld-quality AutoML tests excluded from default acceptance.",
     )
     return parser.parse_args()
 
@@ -105,11 +114,18 @@ def run_modules(test_modules: list[str]) -> int:
 
 def main() -> int:
     args = parse_args()
-    modules = WEEK_TEST_MODULES[args.week] if args.week else ALL_TEST_MODULES
+    if args.week:
+        modules = list(WEEK_TEST_MODULES[args.week])
+    else:
+        modules = list(ALL_TEST_MODULES)
+    if not args.include_deprecated:
+        modules = [module for module in modules if module not in DEPRECATED_TEST_MODULES]
     if args.week:
         print(f"Running Week {args.week} acceptance suite ({len(modules)} modules).")
     else:
-        print(f"Running complete Week 1-4 acceptance suite ({len(modules)} modules).")
+        print(f"Running complete active acceptance suite ({len(modules)} modules).")
+    if args.include_deprecated:
+        print("Including deprecated point-weld-quality AutoML tests.")
     return run_modules(modules)
 
 
