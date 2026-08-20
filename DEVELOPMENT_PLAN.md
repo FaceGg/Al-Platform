@@ -2393,3 +2393,11 @@
 - 解决方法：新增 trial 级排序键，按四位小数精度的 AUC、F1、Accuracy 降序，试验耗时升序，试验编号兜底；Optuna `best_trial` 改用该排序键。缺失历史指标时继续使用已有 score 兼容回退。
 - 验证方式：新增同一算法多个 trial 的回归，三项指标均为 `1.0000` 时断言选择耗时更少者；后端 AutoML 搜索、跟踪、报告测试 `43/43`，前端 `AutoMLTaskPage` `6/6`，并执行构建、Python 编译和 `git diff --check`。
 - 遗留事项：真实服务重启后的浏览器端到端 AutoML 重跑仍未执行；当前工作区并行改动保持原状。
+
+### 2026-08-20：修复 Run 32326272019 测试清单遗漏
+
+- 问题现象：GitHub Actions Run `32326272019` 的 Ubuntu 和 Windows quality job 均在 `test_suite_manifest` 失败，完整套件实际为 `111 passed, 1 failed`；失败项提示新增 `test_automl_report` 未分配周次归属。
+- 根因：新增 AutoML 报告测试文件后只加入了本地聚焦测试和 Week 6 功能实现，没有同步更新 `tests.week_manifest.WEEK_TEST_MODULES`，导致清单完整性契约在干净 checkout 中发现未登记模块。
+- 解决方法：将 `test_automl_report` 纳入 Week 6 测试模块清单，保持默认完整套件和周次套件的单一归属约束。
+- 验证方式：本地 manifest 与 AutoML 聚焦测试 `48/48` 通过；Week 6 acceptance suite `14/14` 通过；推送后需以新 SHA 对应的 Actions Run 作为远端最终证据。
+- 遗留事项：Run `32326272019` 的两个 quality job 已失败，Production integration、Chromium 和 Week 11-12 verification 按 push 条件跳过；新 Run 的远端结果待完成。
