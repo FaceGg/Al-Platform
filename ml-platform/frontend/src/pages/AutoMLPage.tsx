@@ -54,6 +54,7 @@ interface ModelingTask {
   id: string;
   project_id?: string;
   name?: string;
+  experimentName?: string;
   status?: string;
   kind: "ordinary" | "spot-weld";
   created_at?: string;
@@ -155,6 +156,7 @@ export default function AutoMLPage() {
           id: String(job.id),
           project_id: String(job.project_id || selectedProject || ""),
           name: String(job.name || "AutoML"),
+          experimentName: typeof job.experiment_name === "string" ? job.experiment_name : undefined,
           status: String(job.status || "queued"),
           kind: "ordinary" as const,
           created_at: typeof job.created_at === "string" ? job.created_at : undefined,
@@ -205,7 +207,7 @@ export default function AutoMLPage() {
     listDatasets(selectedProject).then(setDatasets).catch(() => setDatasets([]));
     apiClient.get("/experiments", { params: { project_id: selectedProject } })
       .then((res) => {
-        const items = res.data.items || [];
+        const items = (res.data.items || []).filter((item: any) => !item.automl_used);
         setExperiments(items);
         setSelectedExperiment(items[0]?.id || null);
       })
@@ -359,6 +361,8 @@ export default function AutoMLPage() {
         cross_validation_folds: crossValidationEnabled ? crossValidationFolds : null,
       });
       void refreshModelingTasks();
+      setExperiments((items) => items.filter((item: any) => item.id !== selectedExperiment));
+      setSelectedExperiment(null);
       const rid = res.data.run_id || res.data.id || res.data.job_id;
       setRunning(false);
       setConfigurationOpen(false);
@@ -568,7 +572,7 @@ export default function AutoMLPage() {
     { title: "训练耗时", dataIndex: "training_time_seconds", key: "time", render: (value: number | null) => value == null ? "-" : `${Number(value).toFixed(1)}s` },
   ];
   const modelingTaskColumns = [
-    { title: "任务", dataIndex: "name", key: "name", render: (value: string, row: ModelingTask) => <Space size={6}><strong>{value}</strong><Tag color={row.kind === "spot-weld" ? "blue" : "default"}>{row.kind === "spot-weld" ? "点焊建模" : "普通建模"}</Tag></Space> },
+    { title: "实验", dataIndex: "experimentName", key: "experiment", render: (value: string | undefined, row: ModelingTask) => <Space size={6}><strong>{value || "-"}</strong><Tag color={row.kind === "spot-weld" ? "blue" : "default"}>{row.kind === "spot-weld" ? "点焊建模" : "普通建模"}</Tag></Space> },
     { title: "状态", dataIndex: "status", key: "status", render: (value: string) => <Tag color={value === "completed" ? "green" : value === "failed" ? "red" : "blue"}>{value}</Tag> },
     { title: "建模进度", key: "progress", render: (_value: unknown, row: ModelingTask) => `${row.progress.completed}/${row.progress.total} ${row.progress.percent}%` },
     { title: "错误详情", key: "error", render: (_value: unknown, row: ModelingTask) => (row.errorCode || row.errorMessage) ? <Space direction="vertical" size={0}><Text type="danger">{row.errorCode}</Text>{row.errorMessage && <Text type="danger">{row.errorMessage}</Text>}</Space> : "-" },
@@ -597,7 +601,7 @@ export default function AutoMLPage() {
             <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.select_dataset} value={selectedDataset} onChange={setSelectedDataset}
               options={datasets.map((d: any) => ({ value: d.id, label: d.name || d.filename }))} /></Col>
           <Col xs={24} sm={4}><Text strong>{t.training?.experiments || "Experiment"}</Text>
-            <Select style={{ width: "100%", marginTop: 4 }} value={selectedExperiment || undefined} onChange={setSelectedExperiment}
+            <Select aria-label="实验" style={{ width: "100%", marginTop: 4 }} value={selectedExperiment || undefined} onChange={setSelectedExperiment}
               disabled={!selectedProject} placeholder={t.training?.experiments || "Experiment"}
               options={experiments.map((item: any) => ({ value: item.id, label: item.name }))} />
             <Button type="link" size="small" style={{ padding: 0, marginTop: 3 }} disabled={!selectedProject}

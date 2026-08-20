@@ -178,7 +178,10 @@ class TestExperimentAPI(unittest.TestCase):
             headers=self.owner_headers,
         )
         self.assertEqual(listed.status_code, 200)
-        self.assertIn(created["id"], {item["id"] for item in listed.json()["items"]})
+        listed_by_id = {item["id"]: item for item in listed.json()["items"]}
+        self.assertIn(created["id"], listed_by_id)
+        self.assertIs(listed_by_id[created["id"]]["automl_used"], False)
+        self.assertIsNone(listed_by_id[created["id"]]["automl_job_id"])
 
         detail = self.client.get(
             f"/api/experiments/{created['id']}",

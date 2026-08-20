@@ -37,6 +37,8 @@ from app.services.automl_search import (
     AllFamilySearchesFailed,
     SearchConfig,
     TrialSummary,
+    automl_metric_order_key,
+    automl_metric_sort_key,
     classification_metrics,
     choose_family_winner,
     run_family_search,
@@ -328,6 +330,9 @@ def _family_summary(result) -> dict:
                 "number": trial.number,
                 "state": trial.state,
                 "score": trial.score,
+                "auc": trial.auc,
+                "f1": trial.f1,
+                "accuracy": trial.accuracy,
                 "params": trial.params,
                 "duration_seconds": trial.duration_seconds,
                 "error_code": trial.error_code,
@@ -335,6 +340,89 @@ def _family_summary(result) -> dict:
             for trial in result.trials
         ],
     }
+
+
+def _persist_family_models(
+    *,
+    job,
+    db,
+    artifact_service,
+    dataset,
+    features,
+    target,
+    target_column,
+    target_classes,
+    evaluation,
+    search_method,
+    family_results,
+) -> dict[str, ModelLibrary]:
+    """Persist one trusted joblib source for every completed AutoML family."""
+    persisted: dict[str, ModelLibrary] = {}
+    feature_schema = [
+        {"name": str(name), "dtype": str(features[name].dtype)}
+        for name in features.columns
+    ]
+    target_schema = {
+        "name": target_column,
+        "dtype": str(target.dtype),
+        "task": "classification" if target_classes else "regression",
+        "classes": target_classes,
+    }
+    for result in family_results:
+        if result.status != "completed" or result.best_estimator is None:
+            continue
+        with tempfile.TemporaryDirectory() as temporary:
+            model_path = Path(temporary) / f"{job.id}-{result.algorithm_id}.joblib"
+            joblib.dump({
+                "model": result.best_estimator,
+                "feature_schema": feature_schema,
+                "target_schema": target_schema,
+            }, model_path)
+            model_artifact = artifact_service.create_from_file(
+                job.project_id,
+                model_path,
+                f"{job.name}-{result.algorithm_id}.joblib",
+                "model",
+                metadata={
+                    "source": "automl",
+                    "training_job_id": str(job.id),
+                    "dataset_artifact_id": str(dataset.id),
+                    "best_algorithm": result.algorithm_id,
+                    "best_score": result.best_score,
+                    "best_params": result.best_params,
+                    "evaluation": evaluation,
+                },
+            )
+        model_entry = ModelLibrary(
+            name=f"{job.name} - {result.display_name}",
+            project_id=job.project_id,
+            owner_id=job.user_id,
+            status="completed",
+            framework=type(result.best_estimator).__module__.split(".")[0],
+            backbone=type(result.best_estimator).__name__,
+            metrics={
+                "best_score": result.best_score,
+                "auc": result.auc,
+                "f1": result.f1,
+                "evaluation": evaluation,
+                "search": search_method,
+            },
+            params={
+                "search_contract": "optuna_v1",
+                "best_algorithm": result.algorithm_id,
+                "best_params": result.best_params,
+            },
+            model_path=artifact_service.storage_reference(model_artifact),
+            file_size=model_artifact.file_size or 0,
+            format="joblib",
+            training_job_id=job.id,
+            dataset_artifact_id=dataset.id,
+            model_artifact_id=model_artifact.id,
+        )
+        db.add(model_entry)
+        db.flush()
+        persisted[result.algorithm_id] = model_entry
+    return persisted
 
 
 def _execute_optuna_job(
@@ -463,35 +551,42 @@ def _execute_optuna_job(
 
     winner = choose_family_winner(family_results)
     budget_exhausted = dependencies.monotonic() >= deadline
-    all_results.sort(key=lambda item: (-float(item["score"]), next(index for index, family in enumerate(families) if family.id == item["algorithm_id"])))
-    with tempfile.TemporaryDirectory() as temporary:
-        model_path = Path(temporary) / f"{job.id}.joblib"
-        joblib.dump({
-            "model": winner.best_estimator,
-            "feature_schema": [{"name": str(name), "dtype": str(features[name].dtype)} for name in features.columns],
-            "target_schema": {"name": target_column, "dtype": str(target.dtype), "task": task, "classes": target_classes},
-        }, model_path)
-        model_artifact = artifact_service.create_from_file(
-            job.project_id, model_path, f"{job.name}.joblib", "model",
-            metadata={
-                "source": "automl", "training_job_id": str(job.id),
-                "dataset_artifact_id": str(dataset.id), "mlflow_run_id": parent.run_id,
-                "best_algorithm": winner.algorithm_id, "best_score": winner.best_score,
-                "best_params": winner.best_params, "evaluation": evaluation,
-            },
-        )
-    model_entry = ModelLibrary(
-        name=job.name, project_id=job.project_id, owner_id=job.user_id,
-        status="completed", framework=type(winner.best_estimator).__module__.split(".")[0],
-        backbone=type(winner.best_estimator).__name__,
-        metrics={"best_score": winner.best_score, "auc": winner.auc, "f1": winner.f1, "evaluation": evaluation, "search": method},
-        params={**params, "best_algorithm": winner.algorithm_id, "best_params": winner.best_params},
-        model_path=artifact_service.storage_reference(model_artifact), file_size=model_artifact.file_size or 0,
-        format="joblib", training_job_id=job.id, dataset_artifact_id=dataset.id,
-        model_artifact_id=model_artifact.id,
+    all_results.sort(
+        key=lambda item: automl_metric_order_key(
+            auc=item.get("auc"),
+            f1=item.get("f1"),
+            accuracy=item.get("score"),
+            duration=item.get("training_time_seconds"),
+            catalog_index=next(index for index, family in enumerate(families) if family.id == item["algorithm_id"]),
+        ),
     )
-    db.add(model_entry)
-    db.flush()
+    persisted = _persist_family_models(
+        job=job,
+        db=db,
+        artifact_service=artifact_service,
+        dataset=dataset,
+        features=features,
+        target=target,
+        target_column=target_column,
+        target_classes=target_classes,
+        evaluation=evaluation,
+        search_method=method,
+        family_results=family_results,
+    )
+    model_entry = persisted.get(winner.algorithm_id)
+    if model_entry is None:
+        raise AllCandidatesFailed("AUTOML_MODEL_PERSIST_FAILED")
+    result_rows = []
+    for item in all_results:
+        source = persisted.get(str(item["algorithm_id"]))
+        result_rows.append({**item, "model_library_id": str(source.id) if source else None})
+    all_results = result_rows
+    family_summaries = []
+    for item in family_results:
+        source = persisted.get(item.algorithm_id)
+        summary = _family_summary(item)
+        summary["model_library_id"] = str(source.id) if source else None
+        family_summaries.append(summary)
     job.status = "completed"
     job.metrics = {
         "best_score": winner.best_score,
@@ -499,13 +594,13 @@ def _execute_optuna_job(
         "evaluation": evaluation,
         "search": {"method": method, "max_trials": max_trials, "time_budget": time_budget, "budget_exhausted": budget_exhausted},
         "progress": {"completed": completed_trials, "total": planned_trials, "percent": round((completed_trials / planned_trials) * 100, 2) if planned_trials else 100, "current_algorithm": winner.algorithm_id, "current_trial": None, "search_method": method, "budget_exhausted": budget_exhausted},
-        "algorithm_results": [_family_summary(item) for item in family_results],
-        "best_model": {"algorithm_id": winner.algorithm_id, "name": winner.display_name, "score": winner.best_score, "auc": winner.auc, "f1": winner.f1, "params": winner.best_params},
+        "algorithm_results": family_summaries,
+        "best_model": {"algorithm_id": winner.algorithm_id, "name": winner.display_name, "score": winner.best_score, "auc": winner.auc, "f1": winner.f1, "params": winner.best_params, "model_library_id": str(model_entry.id)},
         "all_results": all_results,
         "feature_importance": dict(zip(features.columns, winner.feature_importance)),
     }
-    job.model_path = artifact_service.storage_reference(model_artifact)
-    job.model_artifact_id = model_artifact.id
+    job.model_path = model_entry.model_path
+    job.model_artifact_id = model_entry.model_artifact_id
     job.model_library_id = model_entry.id
     job.finished_at = utcnow()
     job.heartbeat_at = utcnow()
@@ -513,7 +608,7 @@ def _execute_optuna_job(
     tracking.set_tags(parent.run_id, {
         "platform.best_candidate": winner.algorithm_id,
         "platform.search_method": method,
-        "platform.model_artifact_id": str(model_artifact.id),
+        "platform.model_artifact_id": str(model_entry.model_artifact_id),
     })
     tracking.end_run(parent.run_id, "FINISHED")
     db.commit()
@@ -743,7 +838,17 @@ def execute_automl_job(
             raise AllCandidatesFailed("All AutoML candidates failed")
         best_score, _index, best_candidate, best_child_run_id = max(
             successes,
-            key=lambda item: (item[0], -item[1]),
+            key=lambda item: automl_metric_sort_key(
+                auc=candidate_metrics.get(item[2].name, (None, None))[0],
+                f1=candidate_metrics.get(item[2].name, (None, None))[1],
+                accuracy=item[0],
+                duration=next(
+                    result["training_time_seconds"]
+                    for result in candidate_results
+                    if result.get("name") == item[2].name
+                ),
+                catalog_index=item[1],
+            ),
         )
         winner = best_candidate.factory()
         winner.fit(features, target)
@@ -802,9 +907,12 @@ def execute_automl_job(
             result for result in candidate_results if result.get("status") == "completed"
         ]
         final_results.sort(
-            key=lambda item: (
-                -float(item["score"]),
-                next(index for index, candidate in enumerate(configured_candidates) if candidate.name == item["name"]),
+            key=lambda item: automl_metric_order_key(
+                auc=item.get("auc"),
+                f1=item.get("f1"),
+                accuracy=item.get("score"),
+                duration=item.get("training_time_seconds"),
+                catalog_index=next(index for index, candidate in enumerate(configured_candidates) if candidate.name == item["name"]),
             ),
         )
         job.metrics = {

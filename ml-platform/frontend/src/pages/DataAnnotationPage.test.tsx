@@ -83,7 +83,12 @@ describe("DataAnnotationPage", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole("heading", { name: "点焊标注任务" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "新建手动标注任务" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建自动标注任务" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "点焊标注任务列表" })).toBeInTheDocument();
+    expect(screen.queryByText("SPOT WELD / TASKS")).not.toBeInTheDocument();
+    expect(screen.queryByText("点焊标注任务")).not.toBeInTheDocument();
+    expect(screen.queryByText("查看任务状态、标注方式和当前进度")).not.toBeInTheDocument();
     expect(await screen.findByText("1/1 100%")).toBeInTheDocument();
     expect(screen.queryByText("电极柱极焊数据标注")).not.toBeInTheDocument();
   });
@@ -95,9 +100,7 @@ describe("DataAnnotationPage", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole("heading", { name: "点焊标注任务" })).toBeInTheDocument();
-    expect(await screen.findByText("自动标注")).toBeInTheDocument();
-    expect(await screen.findByText("1/1 100%")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "新建自动标注任务" })).toBeInTheDocument();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "新建自动标注任务" }));
       await Promise.resolve();
@@ -238,7 +241,7 @@ describe("DataAnnotationPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "返回任务列表" }));
 
-    expect(await screen.findByRole("heading", { name: "点焊标注任务" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "新建手动标注任务" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("annotation-location")).toHaveTextContent("view=tasks"));
     expect(screen.getByTestId("annotation-location")).not.toHaveTextContent("runId=");
     expect(screen.getByTestId("annotation-location")).not.toHaveTextContent("datasetId=");

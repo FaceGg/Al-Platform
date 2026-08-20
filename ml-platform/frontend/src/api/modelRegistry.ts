@@ -304,6 +304,23 @@ export async function registerPlatformVersion(
   return response.data;
 }
 
+export interface AutoMLRegistrationResponse {
+  created: boolean;
+  registered_model: RegisteredModel;
+  version: ModelVersion;
+}
+
+export async function registerAutoMLResult(
+  projectId: string,
+  jobId: string,
+  algorithmId: string,
+): Promise<AutoMLRegistrationResponse> {
+  const response = await apiClient.post(
+    `/projects/${encodeURIComponent(projectId)}/automl-jobs/${encodeURIComponent(jobId)}/results/${encodeURIComponent(algorithmId)}/register`,
+  );
+  return response.data;
+}
+
 export async function uploadOnnxArtifact(projectId: string, file: File) {
   const body = new FormData();
   body.append("file", file);

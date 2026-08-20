@@ -57,6 +57,9 @@ class TrialSummary:
     duration_seconds: float
     intermediate_scores: dict[int, float]
     error_code: str | None = None
+    auc: float | None = None
+    f1: float | None = None
+    accuracy: float | None = None
 
 
 @dataclass
@@ -275,6 +278,9 @@ def _trial_summary(trial: FrozenTrial) -> TrialSummary:
         duration_seconds=duration,
         intermediate_scores={int(key): float(value) for key, value in trial.intermediate_values.items()},
         error_code=trial.user_attrs.get("error_code"),
+        auc=trial.user_attrs.get("auc"),
+        f1=trial.user_attrs.get("f1"),
+        accuracy=trial.user_attrs.get("accuracy", score),
     )
 
 
@@ -334,13 +340,44 @@ def run_family_search(
                     trial.report(score, step=resource)
                     if trial.should_prune():
                         raise TrialPruned()
+                if task == "classification":
+                    try:
+                        auc, f1 = classification_metrics(
+                            family.build(task, {**params, family.resource_parameter: family.max_resource}),
+                            features=features,
+                            target=target,
+                            evaluation=evaluation,
+                        )
+                        if auc is not None:
+                            trial.set_user_attr("auc", auc)
+                        if f1 is not None:
+                            trial.set_user_attr("f1", f1)
+                        trial.set_user_attr("accuracy", score)
+                    except (TypeError, ValueError, RuntimeError):
+                        pass
                 return score
 
             params = _suggest_params(trial, family)
-            return _finite_score(_evaluate_estimator(
+            score = _finite_score(_evaluate_estimator(
                 family.build(task, params), task=task, features=features,
                 target=target, evaluation=evaluation,
             ))
+            if task == "classification":
+                try:
+                    auc, f1 = classification_metrics(
+                        family.build(task, params),
+                        features=features,
+                        target=target,
+                        evaluation=evaluation,
+                    )
+                    if auc is not None:
+                        trial.set_user_attr("auc", auc)
+                    if f1 is not None:
+                        trial.set_user_attr("f1", f1)
+                    trial.set_user_attr("accuracy", score)
+                except (TypeError, ValueError, RuntimeError):
+                    pass
+            return score
         except TrialPruned:
             raise
         except AlgorithmUnavailable as error:
@@ -385,7 +422,7 @@ def run_family_search(
         result.error_message = "No successful hyperparameter trial"
         return result
 
-    best_trial = max(completed, key=lambda trial: (float(trial.value), -trial.number))
+    best_trial = max(completed, key=trial_metric_sort_key)
     best_params = dict(best_trial.params)
     if config.method == "multi_fidelity":
         best_params[family.resource_parameter] = family.max_resource
@@ -407,11 +444,70 @@ def run_family_search(
 
 
 def choose_family_winner(results: Sequence[FamilySearchResult]) -> FamilySearchResult:
-    """Choose the best finite family result, resolving ties by catalog order."""
+    """Choose by AUC, F1, accuracy, duration, then catalog order."""
     successful = [
         result for result in results
         if result.status == "completed" and result.best_score is not None and math.isfinite(result.best_score)
     ]
     if not successful:
         raise AllFamilySearchesFailed()
-    return max(successful, key=lambda item: (float(item.best_score), -item.catalog_index))
+    return max(successful, key=family_result_sort_key)
+
+
+def family_result_sort_key(item: FamilySearchResult) -> tuple[float, float, float, float, int]:
+    return automl_metric_sort_key(
+        auc=item.auc,
+        f1=item.f1,
+        accuracy=item.best_score,
+        duration=item.training_time_seconds,
+        catalog_index=item.catalog_index,
+    )
+
+
+def automl_metric_sort_key(
+    *,
+    auc: float | None,
+    f1: float | None,
+    accuracy: float | None,
+    duration: float | None,
+    catalog_index: int,
+) -> tuple[float, float, float, float, int]:
+    # The UI exposes these metrics to four decimal places. Use that same
+    # precision for tie-breaking so hidden floating-point noise cannot defeat
+    # the requested duration tie-breaker.
+    finite = lambda value: round(float(value), 4) if value is not None and math.isfinite(float(value)) else float("-inf")
+    finite_duration = float(duration) if duration is not None and math.isfinite(float(duration)) else float("inf")
+    return (finite(auc), finite(f1), finite(accuracy), -finite_duration, -catalog_index)
+
+
+def trial_metric_sort_key(trial: FrozenTrial) -> tuple[float, float, float, float, int]:
+    """Choose a parameter trial by displayed metrics, duration, then number."""
+    attrs = trial.user_attrs or {}
+    accuracy = attrs.get("accuracy", trial.value)
+    duration = trial.duration.total_seconds() if trial.duration else None
+    return automl_metric_sort_key(
+        auc=attrs.get("auc"),
+        f1=attrs.get("f1"),
+        accuracy=accuracy,
+        duration=duration,
+        catalog_index=trial.number,
+    )
+
+
+def automl_metric_order_key(
+    *,
+    auc: float | None,
+    f1: float | None,
+    accuracy: float | None,
+    duration: float | None,
+    catalog_index: int,
+) -> tuple[float, float, float, float, int]:
+    """Sort best-first: metrics descending, duration ascending."""
+    winner_key = automl_metric_sort_key(
+        auc=auc,
+        f1=f1,
+        accuracy=accuracy,
+        duration=duration,
+        catalog_index=catalog_index,
+    )
+    return tuple(-value for value in winner_key)

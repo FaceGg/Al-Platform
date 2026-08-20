@@ -40,6 +40,11 @@ def _safe_worker_environment() -> dict[str, str]:
         "WINDIR",
         "TEMP",
         "TMP",
+        "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "XDG_CONFIG_HOME",
         "LD_LIBRARY_PATH",
         "DYLD_LIBRARY_PATH",
     }
@@ -130,6 +135,9 @@ def convert_platform_joblib(
                 raise ValueError
             feature_schema = _normalize_feature_schema(payload["feature_schema"])
             output_schema = _normalize_output_schema(payload["output_schema"])
+            converter_name = str(payload.get("converter") or "skl2onnx")
+            if converter_name not in {"skl2onnx", "catboost", "xgboost", "lightgbm"}:
+                raise ValueError
         except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
             _delete_partial(destination)
             raise ConversionError("MODEL_CONVERSION_FAILED") from None
@@ -145,7 +153,7 @@ def convert_platform_joblib(
             raise
         return replace(
             validated,
-            converter="skl2onnx",
+            converter=converter_name,
             feature_schema=feature_schema,
             output_schema=output_schema,
         )

@@ -7,6 +7,7 @@ import tempfile
 import uuid
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from app.models.artifact import Artifact
 from app.models.model_library import ModelLibrary
@@ -14,7 +15,7 @@ from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.training import TrainingJob
 from app.services.artifact_service import ArtifactService
 from app.services.model_cards import ModelCardService
-from app.services.onnx_conversion import convert_platform_joblib, validate_onnx
+from app.services.onnx_conversion import ConversionError, convert_platform_joblib, validate_onnx
 
 
 def utcnow() -> datetime:
@@ -67,6 +68,122 @@ class ModelRegistryService:
         db.add(model)
         db.flush()
         return model
+
+    @staticmethod
+    def _automl_result(job, algorithm_id: str) -> dict:
+        metrics = dict(job.metrics or {})
+        results = metrics.get("algorithm_results")
+        if not isinstance(results, list):
+            raise ModelRegistryError("AUTOML_RESULT_NOT_FOUND")
+        for item in results:
+            if isinstance(item, dict) and str(item.get("algorithm_id")) == str(algorithm_id):
+                if item.get("status") != "completed" or not item.get("model_library_id"):
+                    raise ModelRegistryError("AUTOML_RESULT_NOT_REGISTERABLE")
+                return item
+        raise ModelRegistryError("AUTOML_RESULT_NOT_FOUND")
+
+    @staticmethod
+    def _write_automl_registration(job, algorithm_id: str, registered_model_id, version_id) -> None:
+        metrics = dict(job.metrics or {})
+        for key in ("algorithm_results", "all_results"):
+            values = metrics.get(key)
+            if isinstance(values, list):
+                for item in values:
+                    if isinstance(item, dict) and str(item.get("algorithm_id")) == str(algorithm_id):
+                        item["registered_model_id"] = str(registered_model_id)
+                        item["model_version_id"] = str(version_id)
+        best = metrics.get("best_model")
+        if isinstance(best, dict) and str(best.get("algorithm_id")) == str(algorithm_id):
+            best["registered_model_id"] = str(registered_model_id)
+            best["model_version_id"] = str(version_id)
+        job.metrics = metrics
+
+    @staticmethod
+    def _name_with_suffix(base: str, suffix: str) -> str:
+        marker = f" [{suffix}]"
+        return f"{base[:128 - len(marker)]}{marker}"
+
+    def _create_automl_registered_model(
+        self,
+        db,
+        *,
+        job,
+        library,
+        actor_id,
+        display_name: str,
+    ) -> RegisteredModel:
+        base_name = f"{job.name} - {display_name}"[:128]
+        candidates = (
+            base_name,
+            self._name_with_suffix(base_name, str(job.id)[:8]),
+            self._name_with_suffix(base_name, str(library.id)),
+        )
+        for candidate in dict.fromkeys(candidates):
+            try:
+                with db.begin_nested():
+                    model = self.create_registered_model(
+                        db,
+                        project_id=job.project_id,
+                        actor_id=actor_id,
+                        name=candidate,
+                        description=f"AutoML 模型结果：{display_name}",
+                    )
+                return model
+            except IntegrityError:
+                continue
+        raise ModelRegistryError("MODEL_NAME_CONFLICT")
+
+    def register_automl_result(
+        self,
+        db,
+        *,
+        job,
+        algorithm_id: str,
+        actor_id,
+        commit: bool = True,
+    ) -> tuple[RegisteredModel, ModelVersion, bool]:
+        if job.status != "completed":
+            raise ModelRegistryError("AUTOML_JOB_NOT_COMPLETED")
+        result = self._automl_result(job, algorithm_id)
+        source_id = result["model_library_id"]
+        library = db.query(ModelLibrary).filter(
+            ModelLibrary.id == uuid.UUID(str(source_id)),
+            ModelLibrary.project_id == job.project_id,
+            ModelLibrary.training_job_id == job.id,
+            ModelLibrary.status == "completed",
+            ModelLibrary.format == "joblib",
+        ).with_for_update().first()
+        if library is None or library.model_artifact_id is None:
+            raise ModelRegistryError("MODEL_SOURCE_NOT_FOUND")
+        existing = db.query(ModelVersion).filter(
+            ModelVersion.source_model_library_id == library.id,
+        ).order_by(ModelVersion.version_number.desc()).first()
+        if existing is not None:
+            self._write_automl_registration(job, algorithm_id, existing.registered_model_id, existing.id)
+            if commit:
+                db.commit()
+            return existing.registered_model, existing, False
+        display_name = str(result.get("name") or algorithm_id)
+        model = self._create_automl_registered_model(
+            db,
+            job=job,
+            library=library,
+            actor_id=actor_id,
+            display_name=display_name,
+        )
+        version = self.register_platform_version(
+            db,
+            model_id=model.id,
+            source_model_library_id=library.id,
+            actor_id=actor_id,
+            commit=False,
+        )
+        self._write_automl_registration(job, algorithm_id, model.id, version.id)
+        if commit:
+            db.commit()
+            db.refresh(model)
+            db.refresh(version)
+        return model, version, True
 
     def _model(self, db, model_id) -> RegisteredModel:
         try:
@@ -136,11 +253,23 @@ class ModelRegistryService:
         job = db.query(TrainingJob).filter(
             TrainingJob.id == job_uuid,
             TrainingJob.project_id == model.project_id,
-            TrainingJob.model_artifact_id == artifact.id,
-            TrainingJob.model_library_id == library.id,
             TrainingJob.status == "completed",
         ).first()
         if job is None or library.status != "completed" or library.format != "joblib":
+            raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED")
+        if metadata.get("source") == "automl":
+            algorithm_id = str(metadata.get("best_algorithm") or "")
+            results = (job.metrics or {}).get("algorithm_results")
+            trusted = isinstance(results, list) and any(
+                isinstance(item, dict)
+                and str(item.get("algorithm_id")) == algorithm_id
+                and str(item.get("model_library_id")) == str(library.id)
+                and item.get("status") == "completed"
+                for item in results
+            )
+        else:
+            trusted = job.model_artifact_id == artifact.id and job.model_library_id == library.id
+        if not trusted:
             raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED")
 
         onnx_artifact = None
@@ -151,11 +280,14 @@ class ModelRegistryService:
                 model.project_id,
                 expected_type="model",
             ) as source:
-                result = self.converter(
-                    source,
-                    destination,
-                    timeout_seconds=self.conversion_timeout_seconds,
-                )
+                try:
+                    result = self.converter(
+                        source,
+                        destination,
+                        timeout_seconds=self.conversion_timeout_seconds,
+                    )
+                except ConversionError as error:
+                    raise ModelRegistryError(error.code) from None
             onnx_artifact = self.artifact_service.create_from_file(
                 model.project_id,
                 destination,

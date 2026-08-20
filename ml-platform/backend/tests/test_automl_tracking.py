@@ -275,15 +275,18 @@ class TestAutoMLTracking(unittest.TestCase):
             self.assertEqual(job.error_code, "AUTOML_ALL_CANDIDATES_FAILED")
         self.assertIn(("run-1", "FAILED"), self.tracking.terminated)
 
-    def test_tied_scores_select_first_candidate_deterministically(self):
+    def test_tied_metrics_select_the_faster_candidate(self):
         job_id = self.create_job()
         result = self.execute(job_id, [
             AutoMLCandidate("first", lambda: DummyClassifier(strategy="most_frequent"), {}),
             AutoMLCandidate("second", lambda: DummyClassifier(strategy="most_frequent"), {}),
         ])
         self.assertEqual(result.status, "completed")
-        self.assertEqual(result.best_candidate, "first")
-        self.assertEqual(self.tracking.parent_tags["platform.best_child_run_id"], "run-2")
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
+            completed = job.metrics["all_results"]
+            expected = min(completed, key=lambda item: item["training_time_seconds"])["name"]
+        self.assertEqual(result.best_candidate, expected)
 
     def test_persisted_candidate_subset_is_used_when_no_override_is_supplied(self):
         job_id = self.create_job(params={
@@ -321,14 +324,28 @@ class TestAutoMLTracking(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         with self.Session() as db:
             job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
-            model = db.query(ModelLibrary).filter(ModelLibrary.training_job_id == job_id).one()
+            models = db.query(ModelLibrary).filter(ModelLibrary.training_job_id == job_id).all()
             self.assertEqual(job.metrics["search"]["method"], "random")
             self.assertEqual(
                 [item["algorithm_id"] for item in job.metrics["algorithm_results"]],
                 ["gbdt", "random_forest"],
             )
             self.assertIn(job.metrics["best_model"]["algorithm_id"], {"gbdt", "random_forest"})
-            self.assertEqual(model.params["best_algorithm"], job.metrics["best_model"]["algorithm_id"])
+            self.assertEqual(len(models), 2)
+            self.assertEqual(
+                {item["algorithm_id"] for item in job.metrics["all_results"]},
+                {item["algorithm_id"] for item in job.metrics["algorithm_results"] if item["status"] == "completed"},
+            )
+            winner = next(model for model in models if model.id == job.model_library_id)
+            self.assertEqual(
+                winner.params["best_algorithm"],
+                job.metrics["best_model"]["algorithm_id"],
+            )
+            self.assertTrue(all(item.get("model_library_id") for item in job.metrics["all_results"]))
+            self.assertEqual(
+                str(job.model_library_id),
+                job.metrics["best_model"]["model_library_id"],
+            )
 
     def test_selected_input_columns_are_the_only_columns_used_for_automl(self):
         FeatureCapturingClassifier.seen_columns.clear()
@@ -500,6 +517,25 @@ class TestAutoMLAPI(unittest.TestCase):
     def setUp(self):
         self.dispatcher.enqueued.clear()
         app.state.automl_dispatcher = self.dispatcher
+        with self.Session() as db:
+            experiment = Experiment(
+                project_id=self.project_id,
+                created_by=self.user_id,
+                name=f"AutoML API {uuid.uuid4().hex}",
+                mlflow_experiment_id=f"automl-api-{uuid.uuid4().hex}",
+            )
+            db.add(experiment)
+            db.commit()
+            self.experiment_id = experiment.id
+
+    def _run_automl(self):
+        return self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "task": "classification",
+        }, headers=self.headers)
 
     def test_dataset_path_is_rejected(self):
         response = self.client.post("/api/training/automl/run", json={
@@ -511,16 +547,94 @@ class TestAutoMLAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
 
     def test_artifact_automl_job_is_queued(self):
-        response = self.client.post("/api/training/automl/run", json={
-            "project_id": str(self.project_id),
-            "experiment_id": str(self.experiment_id),
-            "dataset_artifact_id": str(self.dataset_id),
-            "target_column": "quality",
-            "task": "classification",
-        }, headers=self.headers)
+        response = self._run_automl()
         self.assertEqual(response.status_code, 202, response.text)
         self.assertEqual(response.json()["status"], "queued")
         self.assertEqual(self.dispatcher.enqueued, [response.json()["job_id"]])
+
+    def test_experiment_can_only_create_one_automl_job(self):
+        first = self._run_automl()
+        second = self._run_automl()
+
+        self.assertEqual(first.status_code, 202, first.text)
+        self.assertEqual(second.status_code, 409, second.text)
+        self.assertEqual(
+            second.json()["detail"]["code"],
+            "EXPERIMENT_ALREADY_HAS_AUTOML_JOB",
+        )
+
+    def test_deleting_terminal_automl_job_does_not_release_experiment(self):
+        created = self._run_automl()
+        self.assertEqual(created.status_code, 202, created.text)
+        job_id = uuid.UUID(created.json()["job_id"])
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            job.status = "completed"
+            db.commit()
+
+        deleted = self.client.post(
+            "/api/training/batch-delete",
+            json={"ids": [str(job_id)]},
+            headers=self.headers,
+        )
+        retried = self._run_automl()
+
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertEqual(deleted.json()["deleted"], 1)
+        self.assertEqual(retried.status_code, 409, retried.text)
+        self.assertEqual(
+            retried.json()["detail"]["code"],
+            "EXPERIMENT_ALREADY_HAS_AUTOML_JOB",
+        )
+
+    def test_ordinary_training_job_does_not_occupy_experiment(self):
+        with self.Session() as db:
+            db.add(TrainingJob(
+                project_id=self.project_id,
+                user_id=self.user_id,
+                experiment_id=self.experiment_id,
+                name="ordinary-training",
+                operator_id="random_forest",
+                status="completed",
+            ))
+            db.commit()
+
+        response = self._run_automl()
+
+        self.assertEqual(response.status_code, 202, response.text)
+
+    def test_automl_job_list_includes_experiment_name(self):
+        created = self._run_automl()
+        self.assertEqual(created.status_code, 202, created.text)
+
+        response = self.client.get(
+            "/api/training/automl/jobs",
+            params={"project_id": str(self.project_id)},
+            headers=self.headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        item = next(row for row in response.json() if row["id"] == created.json()["job_id"])
+        self.assertTrue(item["experiment_name"].startswith("AutoML API "))
+        self.assertEqual(item["project_name"], "AutoML API")
+
+    def test_experiment_list_reports_automl_binding(self):
+        created = self._run_automl()
+        self.assertEqual(created.status_code, 202, created.text)
+
+        response = self.client.get(
+            "/api/experiments",
+            params={"project_id": str(self.project_id)},
+            headers=self.headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        item = next(
+            row for row in response.json()["items"]
+            if row["id"] == str(self.experiment_id)
+        )
+        self.assertIs(item["automl_used"], True)
+        self.assertEqual(item["automl_job_id"], created.json()["job_id"])
 
     def test_unknown_candidate_id_is_rejected_before_queueing(self):
         response = self.client.post("/api/training/automl/run", json={

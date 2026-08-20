@@ -31,6 +31,8 @@ class ExperimentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     run_count: int = 0
+    automl_used: bool = False
+    automl_job_id: UUID | None = None
 
 
 class ExperimentList(BaseModel):

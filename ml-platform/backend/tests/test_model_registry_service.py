@@ -20,7 +20,7 @@ from app.models.training import TrainingJob
 from app.models.user import User
 from app.services.artifact_service import ArtifactAccessError, ArtifactService
 from app.services.model_registry import ModelRegistryError, ModelRegistryService
-from app.services.onnx_conversion import ConversionResult
+from app.services.onnx_conversion import ConversionError, ConversionResult
 from app.storage.local import LocalStorage
 
 
@@ -178,6 +178,121 @@ class TestModelRegistryService(unittest.TestCase):
                 actor_id=self.owner.id,
             )
         self.assertEqual(raised.exception.code, "MODEL_SOURCE_UNTRUSTED")
+
+    def test_platform_conversion_failure_is_exposed_as_stable_registry_error(self):
+        library, _artifact = self._platform_source()
+        failing_service = ModelRegistryService(
+            artifact_service=self.artifacts,
+            converter=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                ConversionError("MODEL_CONVERSION_UNSUPPORTED")
+            ),
+            validator=self._fake_validator,
+        )
+
+        with self.assertRaises(ModelRegistryError) as raised:
+            failing_service.register_platform_version(
+                self.db,
+                model_id=self.model.id,
+                source_model_library_id=library.id,
+                actor_id=self.owner.id,
+            )
+
+        self.assertEqual(raised.exception.code, "MODEL_CONVERSION_UNSUPPORTED")
+
+    def test_automl_result_registration_is_idempotent_and_updates_job_metrics(self):
+        library, artifact = self._platform_source()
+        job = self.db.query(TrainingJob).filter(TrainingJob.id == library.training_job_id).one()
+        artifact.metadata_ = {
+            "source": "automl",
+            "training_job_id": str(job.id),
+            "best_algorithm": "random_forest",
+        }
+        job.metrics = {
+            "algorithm_results": [{
+                "algorithm_id": "random_forest",
+                "name": "随机森林",
+                "status": "completed",
+                "model_library_id": str(library.id),
+            }],
+            "all_results": [{
+                "algorithm_id": "random_forest",
+                "name": "随机森林",
+                "status": "completed",
+                "model_library_id": str(library.id),
+            }],
+        }
+        self.db.commit()
+
+        first_model, first_version, first_created = self.service.register_automl_result(
+            self.db,
+            job=job,
+            algorithm_id="random_forest",
+            actor_id=self.owner.id,
+        )
+        second_model, second_version, second_created = self.service.register_automl_result(
+            self.db,
+            job=job,
+            algorithm_id="random_forest",
+            actor_id=self.owner.id,
+        )
+
+        self.assertTrue(first_created)
+        self.assertFalse(second_created)
+        self.assertEqual(first_model.id, second_model.id)
+        self.assertEqual(first_version.id, second_version.id)
+        self.assertEqual(first_model.name, f"{job.name} - 随机森林")
+        self.assertEqual(
+            self.db.query(ModelVersion).filter(ModelVersion.source_model_library_id == library.id).count(),
+            1,
+        )
+        refreshed = self.db.query(TrainingJob).filter(TrainingJob.id == job.id).one()
+        result = refreshed.metrics["algorithm_results"][0]
+        self.assertEqual(result["registered_model_id"], str(first_model.id))
+        self.assertEqual(result["model_version_id"], str(first_version.id))
+
+    def test_automl_registration_disambiguates_existing_project_model_name(self):
+        library, artifact = self._platform_source()
+        job = self.db.query(TrainingJob).filter(TrainingJob.id == library.training_job_id).one()
+        job.name = "automl-job"
+        artifact.metadata_ = {
+            "source": "automl",
+            "training_job_id": str(job.id),
+            "best_algorithm": "random_forest",
+        }
+        job.metrics = {
+            "algorithm_results": [{
+                "algorithm_id": "random_forest",
+                "name": "Random Forest",
+                "status": "completed",
+                "model_library_id": str(library.id),
+            }],
+        }
+        self.db.add(RegisteredModel(
+            project_id=self.project.id,
+            name="automl-job - Random Forest",
+            description="Existing model from another task",
+            created_by_id=self.owner.id,
+        ))
+        self.db.commit()
+
+        model, version, created = self.service.register_automl_result(
+            self.db,
+            job=job,
+            algorithm_id="random_forest",
+            actor_id=self.owner.id,
+        )
+
+        self.assertTrue(created)
+        self.assertEqual(model.name, f"automl-job - Random Forest [{str(job.id)[:8]}]")
+        repeated_model, repeated_version, repeated_created = self.service.register_automl_result(
+            self.db,
+            job=job,
+            algorithm_id="random_forest",
+            actor_id=self.owner.id,
+        )
+        self.assertFalse(repeated_created)
+        self.assertEqual(repeated_model.id, model.id)
+        self.assertEqual(repeated_version.id, version.id)
 
     def test_cross_project_source_is_hidden(self):
         library, _artifact = self._platform_source(self.other_project)

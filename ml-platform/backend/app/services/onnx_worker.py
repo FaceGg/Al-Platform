@@ -8,15 +8,24 @@ import sys
 
 import joblib
 import onnx
+from catboost import CatBoostClassifier, CatBoostRegressor
+from lightgbm import LGBMClassifier, LGBMRegressor
 from sklearn.ensemble import (
+    ExtraTreesClassifier,
+    ExtraTreesRegressor,
     GradientBoostingClassifier,
     GradientBoostingRegressor,
+    HistGradientBoostingClassifier,
+    HistGradientBoostingRegressor,
     RandomForestClassifier,
     RandomForestRegressor,
 )
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from xgboost import XGBClassifier, XGBRegressor
+from onnxmltools import convert_lightgbm, convert_xgboost
+from onnxmltools.convert.common.data_types import FloatTensorType as OnnxFloatTensorType
 from skl2onnx import convert_sklearn
 from skl2onnx.common.data_types import FloatTensorType
 
@@ -28,7 +37,15 @@ ALLOWED_MODEL_TYPES = {
     RandomForestRegressor,
     GradientBoostingClassifier,
     GradientBoostingRegressor,
+    ExtraTreesClassifier,
+    ExtraTreesRegressor,
+    HistGradientBoostingClassifier,
+    HistGradientBoostingRegressor,
 }
+
+CATBOOST_MODEL_TYPES = {CatBoostClassifier, CatBoostRegressor}
+XGBOOST_MODEL_TYPES = {XGBClassifier, XGBRegressor}
+LIGHTGBM_MODEL_TYPES = {LGBMClassifier, LGBMRegressor}
 
 
 class WorkerError(RuntimeError):
@@ -100,7 +117,13 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
     model = package.get("model")
     if model is None:
         raise WorkerError("MODEL_CONVERSION_FAILED")
-    if type(model) not in ALLOWED_MODEL_TYPES:
+    model_type = type(model)
+    if (
+        model_type not in ALLOWED_MODEL_TYPES
+        and model_type not in CATBOOST_MODEL_TYPES
+        and model_type not in XGBOOST_MODEL_TYPES
+        and model_type not in LIGHTGBM_MODEL_TYPES
+    ):
         raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
     scaler = package.get("scaler")
     if scaler is not None and type(scaler) is not StandardScaler:
@@ -108,6 +131,50 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
 
     features = _feature_schema(package.get("feature_schema"))
     output = _output_schema(package.get("target_schema"))
+
+    if model_type in CATBOOST_MODEL_TYPES:
+        if scaler is not None:
+            raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
+        try:
+            model.save_model(str(destination), format="onnx")
+        except Exception:
+            raise WorkerError("MODEL_CONVERSION_FAILED") from None
+        return {
+            "ok": True,
+            "converter": "catboost",
+            "feature_schema": features,
+            "output_schema": output,
+            "input_names": [],
+            "output_names": [],
+            "opset": 0,
+        }
+
+    if model_type in XGBOOST_MODEL_TYPES or model_type in LIGHTGBM_MODEL_TYPES:
+        if scaler is not None:
+            raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
+        try:
+            converter = convert_xgboost if model_type in XGBOOST_MODEL_TYPES else convert_lightgbm
+            converted = converter(
+                model,
+                initial_types=[
+                    ("features", OnnxFloatTensorType([None, len(features)])),
+                ],
+                target_opset=15,
+            )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            onnx.save_model(converted, str(destination))
+        except Exception:
+            raise WorkerError("MODEL_CONVERSION_FAILED") from None
+        return {
+            "ok": True,
+            "converter": "xgboost" if model_type in XGBOOST_MODEL_TYPES else "lightgbm",
+            "feature_schema": features,
+            "output_schema": output,
+            "input_names": [item.name for item in converted.graph.input],
+            "output_names": [item.name for item in converted.graph.output],
+            "opset": max((item.version for item in converted.opset_import), default=0),
+        }
+
     estimator = model
     if scaler is not None:
         estimator = Pipeline([("scaler", scaler), ("model", model)])
@@ -131,6 +198,7 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
 
     return {
         "ok": True,
+        "converter": "skl2onnx",
         "feature_schema": features,
         "output_schema": output,
         "input_names": [item.name for item in converted.graph.input],

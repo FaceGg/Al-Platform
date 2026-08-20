@@ -17,6 +17,7 @@ from app.api.model_registry import build_model_registry_router
 from app.database import Base, get_db
 from app.models.access import AuditEvent, ProjectMember
 from app.models.artifact import Artifact
+from app.models.model_library import ModelLibrary
 from app.models.model_registry import (
     DeploymentRevision,
     DeploymentRollout,
@@ -26,6 +27,7 @@ from app.models.model_registry import (
     RegisteredModel,
 )
 from app.models.project import Project
+from app.models.training import TrainingJob
 from app.models.user import User
 from app.services.inference_deployment import InferenceDeploymentService
 from app.services.model_registry import ModelRegistryService
@@ -101,8 +103,19 @@ class TestModelRegistryAPI(unittest.TestCase):
                 output_schema=output_schema,
             )
 
+        def fake_converter(_source, destination, **_kwargs):
+            destination.write_bytes(b"converted-onnx")
+            return ConversionResult(
+                input_names=("features",), output_names=("label", "probabilities"),
+                opset=17, sha256="c" * 64, size=destination.stat().st_size,
+                converter="test-converter",
+                feature_schema=[{"name": "current", "dtype": "float64"}],
+                output_schema={"name": "fault", "dtype": "int64", "task": "classification"},
+            )
+
         cls.registry_service = ModelRegistryService(
             artifact_service=cls.artifact_service,
+            converter=fake_converter,
             validator=fake_validator,
         )
         cls.runtime = FakeRuntime()
@@ -453,6 +466,91 @@ class TestModelRegistryAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 500, response.text)
         self.assertIn(str(deployment.id), self.runtime.loaded)
         self.assertIn(candidate_alias, self.runtime.loaded)
+
+    def test_11_automl_result_registration_is_atomic_idempotent_and_permissioned(self):
+        unique = uuid.uuid4().hex
+        job = TrainingJob(
+            project_id=self.project.id,
+            user_id=self.users["owner"].id,
+            name=f"AutoML {unique}",
+            status="completed",
+        )
+        self.db.add(job)
+        self.db.flush()
+        source_path = Path(self.temporary.name) / f"{job.id}.joblib"
+        source_path.write_bytes(b"trusted-joblib")
+        artifact = self.artifact_service.create_from_file(
+            self.project.id,
+            source_path,
+            source_path.name,
+            "model",
+            metadata={
+                "source": "automl",
+                "training_job_id": str(job.id),
+                "best_algorithm": "random_forest",
+            },
+            commit=False,
+        )
+        library = ModelLibrary(
+            name=f"AutoML source {unique}",
+            project_id=self.project.id,
+            owner_id=self.users["owner"].id,
+            status="completed",
+            framework="sklearn",
+            backbone="RandomForestClassifier",
+            format="joblib",
+            training_job_id=job.id,
+            model_artifact_id=artifact.id,
+        )
+        self.db.add(library)
+        self.db.flush()
+        job.metrics = {
+            "algorithm_results": [{
+                "algorithm_id": "random_forest",
+                "name": "随机森林",
+                "status": "completed",
+                "model_library_id": str(library.id),
+            }],
+            "all_results": [{
+                "algorithm_id": "random_forest",
+                "name": "随机森林",
+                "status": "completed",
+                "model_library_id": str(library.id),
+            }],
+        }
+        self.db.add(RegisteredModel(
+            project_id=self.project.id,
+            name=f"{job.name} - 随机森林",
+            description="Existing model from another AutoML task",
+            created_by_id=self.users["owner"].id,
+        ))
+        self.db.commit()
+        path = f"/api/projects/{self.project.id}/automl-jobs/{job.id}/results/random_forest/register"
+
+        self.as_role("owner")
+        first = self.client.post(path)
+        second = self.client.post(path)
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertTrue(first.json()["created"])
+        self.assertFalse(second.json()["created"])
+        self.assertEqual(
+            first.json()["registered_model"]["name"],
+            f"{job.name} - 随机森林 [{str(job.id)[:8]}]",
+        )
+        self.assertEqual(
+            first.json()["registered_model"]["id"],
+            second.json()["registered_model"]["id"],
+        )
+        self.assertEqual(
+            self.db.query(ModelVersion).filter(ModelVersion.source_model_library_id == library.id).count(),
+            1,
+        )
+
+        self.as_role("operator")
+        self.assertEqual(self.client.post(path).status_code, 403)
+        self.as_role("outsider")
+        self.assertEqual(self.client.post(path).status_code, 404)
 
 
 if __name__ == "__main__":

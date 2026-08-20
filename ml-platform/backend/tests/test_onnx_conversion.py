@@ -8,7 +8,11 @@ from unittest.mock import patch
 
 import joblib
 import numpy as np
+from catboost import CatBoostClassifier
+from lightgbm import LGBMClassifier
+from xgboost import XGBClassifier
 from sklearn.cluster import KMeans
+from sklearn.ensemble import ExtraTreesClassifier, HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
@@ -90,6 +94,70 @@ class TestOnnxConversion(unittest.TestCase):
             result.output_schema,
         )
         self.assertEqual(validated.sha256, result.sha256)
+
+    def test_catboost_joblib_converts_to_valid_onnx(self):
+        features = np.asarray([
+            [1.0, 2.0],
+            [1.2, 2.1],
+            [8.0, 9.0],
+            [8.5, 9.2],
+        ])
+        target = np.asarray([0, 0, 1, 1])
+        model = CatBoostClassifier(
+            iterations=5,
+            depth=2,
+            verbose=False,
+            random_seed=0,
+            allow_writing_files=False,
+        ).fit(features, target)
+        joblib.dump(self._training_package(model), self.source)
+
+        result = convert_platform_joblib(
+            self.source,
+            self.destination,
+            timeout_seconds=120,
+        )
+
+        self.assertEqual(result.converter, "catboost")
+        self.assertEqual(result.output_schema["task"], "classification")
+        validated = validate_onnx(
+            self.destination,
+            result.feature_schema,
+            result.output_schema,
+        )
+        self.assertEqual(validated.sha256, result.sha256)
+
+    def test_supported_automl_tree_models_convert_to_valid_onnx(self):
+        features = np.asarray([
+            [1.0, 2.0],
+            [1.2, 2.1],
+            [8.0, 9.0],
+            [8.5, 9.2],
+        ])
+        target = np.asarray([0, 0, 1, 1])
+        models = [
+            ("extra_trees", "skl2onnx", ExtraTreesClassifier(n_estimators=5, random_state=0, n_jobs=1)),
+            ("hist_gradient_boosting", "skl2onnx", HistGradientBoostingClassifier(max_iter=5, random_state=0)),
+            ("xgboost", "xgboost", XGBClassifier(n_estimators=5, max_depth=2, n_jobs=1, random_state=0, eval_metric="logloss")),
+            ("lightgbm", "lightgbm", LGBMClassifier(n_estimators=5, num_leaves=7, random_state=0, verbosity=-1)),
+        ]
+
+        for name, converter, model in models:
+            with self.subTest(name=name):
+                model.fit(features, target)
+                source = self.root / f"{name}.joblib"
+                destination = self.root / f"{name}.onnx"
+                joblib.dump(self._training_package(model), source)
+
+                result = convert_platform_joblib(source, destination, timeout_seconds=120)
+
+                self.assertEqual(result.converter, converter)
+                validated = validate_onnx(
+                    destination,
+                    result.feature_schema,
+                    result.output_schema,
+                )
+                self.assertEqual(validated.sha256, result.sha256)
 
     def test_unknown_estimator_is_rejected(self):
         model = KMeans(n_clusters=2, random_state=0, n_init=1).fit(

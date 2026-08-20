@@ -3,13 +3,14 @@
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.auth import get_current_user
 from app.api.project_security import audit_service, require_project_access, resolve_project_access
 from app.database import SessionLocal, get_db
 from app.models.artifact import Artifact
+from app.models.training import TrainingJob
 from app.models.model_registry import (
     DeploymentRollout, InferenceDeployment, ModelCard,
     ModelVersion, RegisteredModel,
@@ -43,6 +44,7 @@ from app.services.model_registry import ModelRegistryError, ModelRegistryService
 
 PROJECT_WRITE_ACTIONS = {
     "POST /api/projects/{project_id}/registered-models": "registered_model.create",
+    "POST /api/projects/{project_id}/automl-jobs/{job_id}/results/{algorithm_id}/register": "model_version.register",
     "POST /api/projects/{project_id}/model-artifacts": "model_artifact.upload",
     "POST /api/registered-models/{model_id}/versions": "model_version.register",
     "POST /api/model-versions/{version_id}/approve": "model_version.approve",
@@ -266,6 +268,74 @@ def build_model_registry_router(
         ):
             model = registry.create_registered_model(db, project_id=project_id, actor_id=current_user.id, name=data.name, description=data.description)
         return _model_view(model)
+
+    @router.post("/api/projects/{project_id}/automl-jobs/{job_id}/results/{algorithm_id}/register")
+    def register_automl_result(
+        project_id: UUID,
+        job_id: str,
+        algorithm_id: str,
+        request: Request,
+        response: Response,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+    ):
+        try:
+            job_uuid = UUID(str(job_id))
+        except ValueError:
+            raise HTTPException(404, {"code": "AUTOML_JOB_NOT_FOUND"})
+        job = db.query(TrainingJob).filter(
+            TrainingJob.id == job_uuid,
+            TrainingJob.project_id == project_id,
+        ).first()
+        if job is None:
+            raise HTTPException(404, {"code": "AUTOML_JOB_NOT_FOUND"})
+        access = resolve_project_access(db, project_id, current_user.id)
+        registry, _ = services(db)
+        compensation_uri = None
+        try:
+            with audit_service(db).project_action(
+                db,
+                request=request,
+                actor=current_user,
+                access=access,
+                permission="model.register",
+                intent=AuditIntent(
+                    project_id=project_id,
+                    action="model_version.register",
+                    resource_type="automl_result",
+                    resource_id=str(job.id),
+                    changes={"algorithm_id": algorithm_id},
+                ),
+                allowed_changes={"algorithm_id"},
+            ):
+                model, version, created = registry.register_automl_result(
+                    db,
+                    job=job,
+                    algorithm_id=algorithm_id,
+                    actor_id=current_user.id,
+                    commit=False,
+                )
+                if created:
+                    generated = db.query(Artifact).filter(Artifact.id == version.onnx_artifact_id).one()
+                    compensation_uri = generated.storage_uri
+        except (ModelRegistryError, ArtifactAccessError) as error:
+            db.rollback()
+            if compensation_uri:
+                registry.compensate_version_artifact(compensation_uri)
+            _error(error)
+        except Exception:
+            db.rollback()
+            if compensation_uri:
+                registry.compensate_version_artifact(compensation_uri)
+            raise
+        db.refresh(model)
+        db.refresh(version)
+        response.status_code = 201 if created else 200
+        return {
+            "created": created,
+            "registered_model": _model_view(model),
+            "version": _version_view(version),
+        }
 
     @router.post("/api/projects/{project_id}/model-artifacts", status_code=201)
     def upload_onnx(project_id: UUID, request: Request, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

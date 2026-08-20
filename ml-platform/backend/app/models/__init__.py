@@ -6,7 +6,7 @@ from app.models.workflow_version import WorkflowVersion
 from app.models.artifact import Artifact
 from app.models.knowledge import KnowledgeBase, Document, Chunk, GraphEntity, GraphRelation
 from app.models.training import TrainingJob
-from app.models.experiment import Experiment
+from app.models.experiment import Experiment, ExperimentAutoMLBinding
 from app.models.schedule import PipelineSchedule, PipelineScheduleRun
 from app.models.access import ProjectMember, AuditEvent
 from app.models.platform_audit import PlatformAuditEvent
@@ -60,6 +60,7 @@ __all__ = [
     "GraphRelation",
     "TrainingJob",
     "Experiment",
+    "ExperimentAutoMLBinding",
     "PipelineSchedule",
     "PipelineScheduleRun",
     "ProjectMember",

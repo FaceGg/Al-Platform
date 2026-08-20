@@ -1,20 +1,22 @@
 """Project-authorized asynchronous training management API."""
 
+import io
 import tempfile
 import uuid
 from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.api.experiments import get_experiment_tracking
 from app.config import settings
 from app.database import get_db
-from app.models.experiment import Experiment
+from app.models.experiment import Experiment, ExperimentAutoMLBinding
 from app.models.project import Project
 from app.models.training import TERMINAL_TRAINING_STATUSES, TrainingJob
 from app.models.user import User
@@ -27,6 +29,7 @@ from app.services.automl_execution import (
 from app.services.automl_catalog import resolve_algorithm_families
 from app.services.automl_search import SEARCH_METHODS
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
+from app.services.automl_report import AutoMLReportError, generate_automl_report
 from app.services.experiment_tracking import TrackingError
 from app.services.iterative_training import IncompatibleCheckpoint, TrainingCheckpoint, TrainingConfig
 from app.tensorboard_gateway.tokens import SessionSigner, SessionTokenInvalid
@@ -598,7 +601,24 @@ def start_automl(
             dataset_artifact_id=dataset.id,
             dataset_path=artifact_service.storage_reference(dataset), status="pending",
         )
-        db.add(job)
+        if db.get(ExperimentAutoMLBinding, experiment.id) is not None:
+            raise HTTPException(409, _error(
+                "EXPERIMENT_ALREADY_HAS_AUTOML_JOB",
+                "Experiment already has an AutoML job",
+            ))
+        try:
+            with db.begin_nested():
+                db.add(job)
+                db.add(ExperimentAutoMLBinding(
+                    experiment_id=experiment.id,
+                    job_id=job.id,
+                ))
+                db.flush()
+        except IntegrityError as error:
+            raise HTTPException(409, _error(
+                "EXPERIMENT_ALREADY_HAS_AUTOML_JOB",
+                "Experiment already has an AutoML job",
+            )) from error
     db.refresh(job)
     _dispatch_job(
         db, job, get_automl_dispatcher(request), request, current_user, access,
@@ -624,6 +644,67 @@ def list_automl_jobs(
         query = query.filter(TrainingJob.project_id.in_(project_ids))
     jobs = query.order_by(TrainingJob.created_at.desc()).all()
     return [_job_to_dict(job) for job in jobs]
+
+
+@router.post("/jobs/{job_id}/automl-report")
+def create_automl_report(
+    job_id: uuid.UUID,
+    request: Request,
+    regenerate: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    job, _ = _visible_job(db, job_id, current_user.id)
+    if job is None:
+        raise HTTPException(404, _error("TRAINING_JOB_NOT_FOUND", "Training job not found"))
+    try:
+        return generate_automl_report(
+            db,
+            job,
+            get_artifact_service(request, db),
+            regenerate=regenerate,
+        )
+    except AutoMLReportError as error:
+        status = 409 if error.code == "AUTOML_REPORT_NOT_READY" else 422
+        raise HTTPException(status, _error(error.code, str(error))) from error
+    except (ArtifactAccessError, OSError, ValueError) as error:
+        raise HTTPException(422, _error("AUTOML_REPORT_SOURCE_UNAVAILABLE", str(error))) from error
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(500, _error("AUTOML_REPORT_GENERATION_FAILED", "分析报告生成失败")) from error
+
+
+@router.get("/jobs/{job_id}/automl-report/artifacts/{artifact_key}")
+def download_automl_report_artifact(
+    job_id: uuid.UUID,
+    artifact_key: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    job, _ = _visible_job(db, job_id, current_user.id)
+    if job is None:
+        raise HTTPException(404, _error("TRAINING_JOB_NOT_FOUND", "Training job not found"))
+    filenames = {
+        "package": "automl-report.zip",
+        "comparison": "automl_comparison.png",
+        "importance": "feature_importance_automl.png",
+        "clustering": "clustering_automl.png",
+    }
+    filename = filenames.get(artifact_key)
+    manifest = (job.metrics or {}).get("automl_report") or {}
+    artifact_id = (manifest.get("artifacts") or {}).get(filename) if filename else None
+    if artifact_id is None:
+        raise HTTPException(404, _error("AUTOML_REPORT_ARTIFACT_NOT_FOUND", "报告制品不存在"))
+    service = get_artifact_service(request, db)
+    try:
+        with service.materialize(artifact_id, job.project_id, expected_type="report") as path:
+            content = Path(path).read_bytes()
+    except (ArtifactAccessError, OSError, ValueError) as error:
+        raise HTTPException(404, _error("AUTOML_REPORT_ARTIFACT_NOT_FOUND", "报告制品不存在")) from error
+    media_type = "application/zip" if artifact_key == "package" else "image/png"
+    download_name = "automl-detailed-report.zip" if artifact_key == "package" else filename
+    return StreamingResponse(io.BytesIO(content), media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{download_name}"'})
 
 
 @router.get("/models/versions")
@@ -756,8 +837,10 @@ def _job_to_dict(job: TrainingJob) -> dict:
     return {
         "id": str(job.id),
         "project_id": str(job.project_id),
+        "project_name": job.project.name if job.project else None,
         "user_id": str(job.user_id),
         "experiment_id": str(job.experiment_id) if job.experiment_id else None,
+        "experiment_name": job.experiment.name if job.experiment else None,
         "mlflow_run_id": job.mlflow_run_id,
         "name": job.name,
         "operator_id": job.operator_id,

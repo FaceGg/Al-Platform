@@ -2278,6 +2278,18 @@
 - 验证方式：`tests.test_suite_manifest` 与 `tests.test_run_suite` 共 6 项通过；`run_suite.py --week 17` 默认 4 个活动模块全部通过；临时测试目录由既有 `finally` 清理逻辑删除。
 - 遗留事项：当前工作区 CI 优化和本次验收编排改动尚未推送；需要在发布后触发当前提交的质量和完整冻结门禁，不能用历史运行替代。
 
+### 2026-08-19：数据标注入口直接显示任务列表
+
+- 实现状态：数据标注任务列表页移除 `SPOT WELD / TASKS`、`点焊标注任务` 和任务说明副标题，保留新建手动/自动标注任务按钮、任务字段、状态和操作；左侧“数据标注”默认路由继续直接进入任务列表，配置页和工作区链接行为未改变。
+- 验证方式：前端数据标注聚焦 Vitest `22/22` 通过；`npm run build` 通过（仅保留既有大 chunk 警告）；`git diff --check` 通过。
+- 遗留事项：未改变任务列表无数据状态的辅助文案和可访问性 aria-label；如后续要求彻底移除所有“点焊标注任务”字符串，需要单独调整空状态和无障碍标签并补充可访问性评审。
+
+### 2026-08-19：AutoML 模型结果逐项注册到模型库
+
+- 实现状态：AutoML Optuna 路径现在为每个成功算法族保存独立 joblib 制品和项目内 ModelLibrary 来源，并将 `model_library_id` 写回算法结果；新增项目范围原子注册接口，按“任务名称 - 模型名称”创建注册模型和首个版本，重复注册按源模型库 ID 幂等返回，并将注册模型/版本 ID 持久化回任务结果。任务详情“模型结果”操作列已在“详细”后增加“注册”，支持行级 loading、成功后的“已注册”和缺失来源禁用。
+- 验证方式：AutoML Optuna 聚焦测试通过；模型注册服务/API 共 `25/25` 项通过；前端模型注册 API、AutoMLTaskPage 和验收清单共 `15/15` 通过；TypeScript/Vite 生产构建、Python `compileall` 和 `git diff --check` 通过。前端新页面回归覆盖按钮顺序、单行注册状态和无来源禁用。
+- 遗留事项：当前完整 `test_automl_tracking` 中部分 legacy 路径测试仍受工作区已有的 `classification_metrics` DataFrame 改动影响（训练调用次数由 2/折数+1 变为额外一次），该差异不由本次逐项注册改动引入；真实 ONNX 转换与登录后浏览器端到端注册尚未在本机生产栈执行。
+
 ### 2026-08-19：修复 CI 契约对已停止跟踪文档的依赖
 
 - 问题现象：`tests.test_ci_workflow` 的 41 项中有 2 项因 `docs/security/react-router-rsc-mode-exception.json` 和 `docs/delivery/PRODUCTION_INFRASTRUCTURE.md` 已按本地目录治理规则停止跟踪而报 `FileNotFoundError`。
@@ -2293,3 +2305,91 @@
 - 解决方法：将最小 CI 契约放入受版本控制的 `.github/contracts/`，统一 workflow、测试和扫描器引用；指标计算保留 DataFrame；扫描器跳过 `.test.`、`.spec.` 前端夹具；已移除的 cryptography 例外文件保持不存在并由契约测试断言。
 - 验证方式：`test_automl_tracking` 与 `test_image_security_contracts` 为 `37/37`；`test_week12_security_gates` 为 `160 passed, 1 skipped`；`test_ci_workflow`、`test_suite_manifest`、`test_run_suite` 为 `47/47`；`git diff --check` 待提交前复核。
 - 遗留事项：需将本次范围化修复推送到 `main`，并以新提交对应的 GitHub Actions quality 结果作为最终远程验收依据；不可将本地结果或旧 run 视为远程通过。
+
+### 2026-08-19：修复 AutoML 多算法模型结果注册失败
+
+- 问题现象：自动建模结果页点击 CatBoost、Extra Trees、XGBoost、HistGradientBoosting 或 LightGBM 行的“注册”失败；CatBoost 请求日志明确为 HTTP 500 和 `ConversionError: MODEL_CONVERSION_UNSUPPORTED`。
+- 根因：可信模型注册统一调用 ONNX 转换 worker，但 worker 白名单只覆盖部分 scikit-learn 类型，与 AutoML 算法目录不一致；XGBoost/LightGBM 还缺少 `onnxmltools` 转换依赖，专用转换器最高支持 opset 15；LightGBM 间接导入 Matplotlib 时需要子进程保留非敏感用户目录环境变量。转换异常也未映射为 `ModelRegistryError`，导致错误冒泡为 ASGI 500。
+- 解决方法：Extra Trees 和 HistGradientBoosting 接入现有 `skl2onnx`；CatBoost 使用原生 ONNX 导出；XGBoost/LightGBM 增加 `onnxmltools` 依赖并使用 opset 15 专用转换器；扩展受控 converter 元数据和 worker 安全环境白名单；模型注册服务将 ConversionError 映射为稳定领域错误码，保留可信来源校验、事务回滚和 ONNX Runtime 验证。
+- 验证方式：真实训练上述五类模型并逐一完成 joblib -> ONNX -> ONNX Runtime 推理校验；`tests.test_onnx_conversion`、`tests.test_model_registry_service`、`tests.test_api_model_registry` 聚焦套件通过，POSIX 资源限制测试在 Windows 环境按设计跳过；`compileall` 和 `git diff --check` 通过。
+- 遗留事项：当前本地服务需重启以加载新的后端 worker 代码；本次未执行登录后的浏览器端到端 CatBoost 注册，需在服务重启后实际点击验证。
+
+### 2026-08-19：修复同名 AutoML 任务的模型注册冲突
+
+- 问题现象：新建名称仍为 `automl-job` 的自动建模任务后，点击 Random Forest 的“注册”返回 HTTP 500；SQLite 报 `UNIQUE constraint failed: registered_models.project_id, registered_models.name`，冲突名称为 `automl-job - Random Forest`。
+- 根因：注册模型要求项目内名称唯一，而 AutoML 默认注册名只由任务名称和算法显示名组成；不同任务允许使用相同任务名称，因此同一项目内第二个同名任务注册同一算法时必然冲突。原实现没有在领域服务中处理该数据库约束。
+- 解决方法：注册时仍优先使用“任务名称 - 模型名称”；若唯一约束冲突，在嵌套事务保存点内仅回滚该次模型插入，并依次使用任务短 ID、完整来源模型库 ID 后缀重试。来源模型库幂等检查、模型版本创建和外层审计事务保持不变，无法消歧时返回稳定 `MODEL_NAME_CONFLICT`。
+- 验证方式：新增服务层和真实 HTTP API 同名冲突回归；模型注册服务/API `27/27` 通过，确认首次注册为 201、名称带任务短 ID、重复注册为 200 且复用同一版本；Python `compileall` 通过。
+- 遗留事项：运行中的后端服务仍需重启后再对任务 `fff6fd9b-3cfc-45ea-b4b7-c50876637ed4` 实际点击验证；既有同名模型不会被删除或改名。
+
+### 2026-08-19：实验与 AutoML 建模任务改为永久一对一
+
+- 实现状态：新增 `experiment_automl_bindings` 永久占用表和 Alembic `20260819_12`，AutoML 任务创建与绑定在同一审计事务内写入，并由 `experiment_id` 主键处理并发唯一性；重复使用实验返回 HTTP 409 和 `EXPERIMENT_ALREADY_HAS_AUTOML_JOB`。任务成功、失败、取消或物理删除均不释放绑定，删除实验时级联删除；普通训练任务不占用实验。历史 AutoML 任务按 `created_at`、`id` 确定性选择最早任务回填。
+- 前端状态：实验接口返回 `automl_used`、`automl_job_id`，AutoML 任务返回 `experiment_name`；新建建模时仅展示未使用实验，自动选择第一个可用实验，新建实验后自动选中，任务创建成功后从本地选项移除。建模任务列表第一列已由“任务”改为“实验”并显示实验名称。
+- 验证方式：后端 AutoML、实验、数据库、证据清单和 Week 11-12 工具相关模块 `197/197` 通过；迁移完整升级、重复升级、`alembic check` 和历史最早任务回填通过；前端 `AutoMLPage.test.tsx` 为 `4 passed, 19 skipped`，生产构建通过；Python `compileall` 和 `git diff --check` 通过。
+- 遗留事项：当前改动与工作区既有模型注册、ONNX 和数据标注修改均未提交或推送，尚未以当前提交运行远程 CI；前端保留既有 19 个已跳过历史 AutoML 用例，本次新增契约均为活动测试。
+
+### 2026-08-19：AutoML 建模任务进度页显示实验和项目名称
+
+- 实现状态：训练任务序列化新增 `project_name`，复用既有 `experiment_name`；AutoML 建模任务进度页的“任务”字段改为“实验”，显示关联实验名称，“项目”字段改为显示项目名称，不再向用户展示项目 UUID。模型结果、注册、进度轮询和报告逻辑未改变。
+- 验证方式：AutoML API 类 `20/20` 通过；`AutoMLPage.test.tsx` 与 `AutoMLTaskPage.test.tsx` 合计 `7 passed, 19 skipped`；TypeScript/Vite 生产构建通过，仅保留既有大 chunk 警告。
+- 遗留事项：历史任务若关联实验已被删除，实验名称按接口约定显示 `-`；当前修改仍在包含其他用户改动的未提交工作区中，未执行远程 CI。
+### 2026-08-19：AutoML 详细分析报告与页面预览
+
+- 实现状态：已完成后端按需生成和复用 AutoML 详细报告，ZIP 固定包含全流程 XLSX、算法结果 CSV、模型对比图、特征重要性 Top20 和特征重要性加权 KMeans 聚类图；XLSX 固定为总览、AutoML选型、聚类画像、特征重要性、推理结果五个 Sheet。特征重要性按最佳模型的 `feature_importances_`、绝对 `coef_`、permutation importance 顺序获取，聚类在标准化特征乘以归一化权重平方根后的空间中搜索 K=2..8。
+- 页面状态：点击“生成分析报告”调用后端并在模型结果下方显示五标签预览；“导出分析报告”已改为“导出详细报告”并下载 ZIP，报告未生成时保持禁用。
+- 验证方式：报告服务测试覆盖 ZIP 精确文件清单、XLSX 精确 Sheet、PNG 签名、推理行对齐、原生/系数/permutation 特征重要性和幂等复用；AutoML 后端回归、前端页面测试、生产构建、Python 编译及差异检查通过。
+- 遗留事项：页面预览以结构化摘要和表格为主，三张高分辨率图片保存在详细报告中；大数据集完整推理结果仅写入 XLSX，页面按设计最多预览 100 行。
+
+### 2026-08-19：AutoML 详细报告指标和预览字段修正
+
+- 问题现象：报告预览的最佳参数可能以 JSON 字符串直接显示，AutoML 选型仍使用“得分”，特征重要性没有显式按降序处理，推理结果固定显示 `actual`，CSV 保留旧 `score`，模型对比图只显示单一得分。
+- 解决结果：统一生成 AUC、F1、Accuracy 三列并按该顺序写入 CSV；模型对比图改为 AUC/F1/ACC 分组柱状图；最佳参数兼容对象、JSON 字符串和旧 `params` 字段；特征重要性前后端均按重要性降序；推理实际值使用自动建模选择的目标列名；报告指纹升级，旧格式报告自动重新生成。
+- 验证方式：报告测试验证 CSV 首列顺序和 `score` 移除、目标列名、特征重要性降序；前端 AutoML 任务页测试 `4/4` 通过，TypeScript/Vite 生产构建通过，Python 编译和 `git diff --check` 通过。
+- 遗留事项：对于历史结果缺少 AUC/F1 的算法，CSV 和图表对应指标显示为空或 0，不能用 Accuracy 伪造 AUC/F1。
+
+### 2026-08-19：AutoML 导出列顺序与工作簿图片布局固定
+
+- 实现状态：`automl_results.csv` 和 `AutoML全流程报告.xlsx` 的“AutoML选型”统一使用固定九列，顺序为 `name`、`algorithm_id`、`AUC`、`F1`、`Accuracy`、`best_params`、`training_time_seconds`、`status`、`model_library_id`，不再输出其他历史字段。
+- 布局修正：总览、聚类画像和特征重要性 Sheet 的插图锚点由固定 `A4` 改为当前数据末行之后空一行，避免图片覆盖表头或数据；报告版本升级后旧报告会重新生成。
+- 验证方式：报告测试检查 CSV 全部列和顺序、XLSX“AutoML选型”表头完全一致，并验证三个 Sheet 的图片锚点均位于数据末行之后；报告测试 `2/2`、Python 编译和 `git diff --check` 通过。
+- 遗留事项：图片仍为固定画布尺寸；若未来单个 Sheet 包含多张图，应继续按上一张图的实际高度计算后续锚点。
+
+### 2026-08-20：AutoML 报告恢复、试验 AUC 与最佳模型排序
+
+- 实现状态：任务进度接口返回的 `metrics.automl_report` 会在页面加载时直接恢复报告预览；报告已存在时点击“生成分析报告”会提示“分析报告已经生成过，是否重新生成？”，只有确认后才请求 `?regenerate=true` 创建新报告，未强制重生成时继续复用既有报告。
+- 指标修正：分类搜索试验现在独立计算并持久化真实 AUC，任务结果的试验记录同时保留搜索 `score` 和展示用 `auc`；“超参数搜索记录”表改为读取 `auc`，无法计算概率/决策分数时显示空值，不再把 Accuracy 重命名为 AUC。
+- 选择规则：通用 AutoML 的 Optuna 和 legacy 路径统一按 AUC 降序、F1 降序、Accuracy 降序、训练耗时升序选择最佳模型，全部相同时按算法目录顺序确定性兜底；任务页面模型结果采用同一指标顺序展示排序。
+- 测试与构建：后端 `tests.test_automl_search tests.test_automl_report tests.test_automl_tracking` 为 `41/41` 通过；前端 `AutoMLTaskPage.test.tsx` 为 `6/6`，AutoML 页面与周验收组合为 `17 passed, 19 skipped`；TypeScript/Vite 生产构建、Python `compileall` 和 `git diff --check` 通过。构建仅保留既有大 chunk 警告，后端仅保留故障测试估计器的 sklearn 弃用警告。
+- 问题与预防：轮询页面测试不得用 `mockResolvedValueOnce` 表达持续任务快照，卸载后的异步请求可能抢先消费一次性返回；应对状态查询使用稳定 mock，并把表格操作限定到当前渲染容器和目标行。新增排序字段时应显式维护行 DTO，并以生产构建补足 Vitest 无法发现的 TypeScript 类型检查。
+- 遗留事项：本次未启动真实后端服务执行浏览器端到端报告重生成；强制重生成会保留旧报告制品作为历史记录，不主动删除。当前工作区仍包含其他用户并行修改，尚未提交或运行远程 CI。
+
+### 2026-08-20：AutoML 超参数试验展示 AUC、F1、Accuracy
+
+- 实现状态：建模任务“详细结果”摘要中的 `Best Accuracy` 已改为 `Accuracy`；“超参数搜索记录”现在按每组试验显示 `AUC`、`F1`、`Accuracy`、超参数和耗时。
+- 指标来源：分类试验继续以 Accuracy 作为搜索目标和兼容 `score`；同一组参数通过既有无训练泄漏评估计算 AUC 与 weighted F1，并将三个具名指标写入 `TrialSummary` 和任务 `algorithm_results[].trials[]`。历史试验缺少 `accuracy` 时前端和后端均回退到兼容 `score`，缺少 AUC/F1 时显示 `-`，不伪造指标。
+- 验证方式：先确认后端因 `TrialSummary` 缺少 `f1` 产生 RED，前端因缺少 Accuracy 摘要和 F1/Accuracy 列产生 RED；实现后 AutoML 搜索与任务跟踪 `39/39`、AutoMLTaskPage `6/6`、TypeScript/Vite 生产构建通过。
+- 遗留事项：历史任务不会重新计算缺失的试验级 AUC/F1；只有新执行或重新执行的 AutoML 搜索会保存完整三个指标。当前工作区未提交、未推送，也未执行真实浏览器端到端回归。
+
+### 2026-08-20：AutoML 选优键方向统一
+
+- 选优规则：统一按 `AUC` 降序、`F1` 降序、`Accuracy` 降序、耗时升序；前三项越高越优，耗时越低越优。完全相同时继续按算法目录顺序确定性兜底。
+- 实现修正：winner 的 `max()` 使用高指标/低耗时键；Optuna、legacy 的结果列表使用高指标在前/低耗时在前的独立列表键，避免对包含负耗时的 winner 键再次 `reverse=True` 导致耗时方向反转。
+- 验证方式：新增排序回归覆盖 AUC、F1、Accuracy 和耗时四级优先级；后端 AutoML 搜索与跟踪 `40/40`，前端任务页 `6/6`，TypeScript/Vite 生产构建、Python 编译和 `git diff --check` 通过。
+- 遗留事项：未启动真实服务执行浏览器端到端选优；当前工作区未提交、未推送、未运行远程 CI。
+
+### 2026-08-20：AutoML 指标展示精度与耗时选优一致
+
+- 问题现象：页面显示 AUC、F1、Accuracy 相同，但最终最优模型没有选择训练耗时更少者。
+- 根因：后端按完整浮点值比较指标，页面按四位小数展示；用户看到的指标相同，后端可能因第五位及以后的小数差异提前决胜，耗时比较不会触发。
+- 解决方法：AutoML 后端选优键将 AUC、F1、Accuracy 统一四舍五入到四位小数后再比较，前三项相同时才比较耗时，最后按算法目录顺序兜底；任务进度页使用相同四位小数规则排序展示。
+- 验证方式：新增不可见小数差异回归，确认页面精度下指标相同时选择耗时更少模型；后端 AutoML 搜索、跟踪、报告测试 `42/42`，前端 `AutoMLTaskPage` `6/6`，并执行构建、Python 编译和 `git diff --check`。
+- 遗留事项：当前工作区仍包含模型注册、ONNX、实验绑定和数据标注等并行用户修改；未执行提交、推送或真实浏览器端到端任务重跑。
+
+### 2026-08-20：AutoML 同一算法内参数选优补齐耗时兜底
+
+- 问题现象：同一算法的多个超参数试验中，AUC、F1、Accuracy 页面均显示 `1.0000`，但最终采用的最佳参数不是耗时最少的试验。
+- 根因：此前耗时 tie-breaker 只用于不同算法族的 `FamilySearchResult`；Optuna 同一算法族内部仍使用 `(trial.value, -trial.number)`，只按搜索分数和试验编号选择，完全忽略试验 AUC、F1 和耗时。
+- 解决方法：新增 trial 级排序键，按四位小数精度的 AUC、F1、Accuracy 降序，试验耗时升序，试验编号兜底；Optuna `best_trial` 改用该排序键。缺失历史指标时继续使用已有 score 兼容回退。
+- 验证方式：新增同一算法多个 trial 的回归，三项指标均为 `1.0000` 时断言选择耗时更少者；后端 AutoML 搜索、跟踪、报告测试 `43/43`，前端 `AutoMLTaskPage` `6/6`，并执行构建、Python 编译和 `git diff --check`。
+- 遗留事项：真实服务重启后的浏览器端到端 AutoML 重跑仍未执行；当前工作区并行改动保持原状。

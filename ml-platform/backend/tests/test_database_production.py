@@ -1,6 +1,7 @@
 """Production database and Alembic baseline tests."""
 
 import json
+from datetime import datetime
 from pathlib import Path
 from queue import Queue
 from threading import Thread
@@ -28,8 +29,10 @@ from app.database_schema import (
 )
 from app.main import initialize_database
 from app.models.artifact import Artifact
+from app.models.experiment import Experiment
 from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
 from app.models.project import Project
+from app.models.training import TrainingJob
 from app.models.user import User
 
 
@@ -38,7 +41,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20260815_11"
+HEAD_REVISION = "20260819_12"
 NOTIFICATION_REVISION = "20260720_10_security_notifications"
 WEEK9_TABLES = {
     "deployment_revisions",
@@ -305,7 +308,7 @@ class TestAlembicBaseline(TestCase):
             try:
                 inspector = inspect(db_engine)
                 business_tables = set(inspector.get_table_names()) - {"alembic_version"}
-                self.assertEqual(len(business_tables), 56)
+                self.assertEqual(len(business_tables), 57)
                 self.assertTrue(
                     {
                         "users",
@@ -314,6 +317,7 @@ class TestAlembicBaseline(TestCase):
                         "workflow_versions",
                         "artifacts",
                         "experiments",
+                        "experiment_automl_bindings",
                         "training_jobs",
                         "pipeline_schedules",
                         "pipeline_schedule_runs",
@@ -412,6 +416,71 @@ class TestAlembicBaseline(TestCase):
                         text("SELECT version_num FROM alembic_version")
                     )
                 self.assertEqual(revision, HEAD_REVISION)
+            finally:
+                db_engine.dispose()
+
+    def test_automl_binding_revision_backfills_the_earliest_historical_job(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            config = Config(str(ALEMBIC_INI))
+            original_database_url = settings.database_url
+            settings.database_url = database_url
+            try:
+                command.upgrade(config, "20260815_11")
+                db_engine = create_engine(database_url)
+                try:
+                    Session = sessionmaker(bind=db_engine)
+                    with Session() as db:
+                        user = User(username=f"automl-migration-{uuid.uuid4().hex}", password_hash="hash")
+                        db.add(user)
+                        db.flush()
+                        project = Project(name="AutoML migration", owner_id=user.id)
+                        db.add(project)
+                        db.flush()
+                        experiment = Experiment(
+                            project_id=project.id,
+                            created_by=user.id,
+                            name="Historical AutoML",
+                            mlflow_experiment_id=f"historical-{uuid.uuid4().hex}",
+                        )
+                        db.add(experiment)
+                        db.flush()
+                        later = TrainingJob(
+                            project_id=project.id,
+                            user_id=user.id,
+                            experiment_id=experiment.id,
+                            name="later",
+                            operator_id="automl",
+                            status="completed",
+                            created_at=datetime(2026, 8, 19, 2, 0, 0),
+                        )
+                        earlier = TrainingJob(
+                            project_id=project.id,
+                            user_id=user.id,
+                            experiment_id=experiment.id,
+                            name="earlier",
+                            operator_id="automl",
+                            status="failed",
+                            created_at=datetime(2026, 8, 19, 1, 0, 0),
+                        )
+                        db.add_all([later, earlier])
+                        db.commit()
+                        expected_job_id = earlier.id
+                        experiment_id = experiment.id
+                finally:
+                    db_engine.dispose()
+                command.upgrade(config, "head")
+            finally:
+                settings.database_url = original_database_url
+
+            db_engine = create_engine(database_url)
+            try:
+                with db_engine.connect() as connection:
+                    binding = connection.execute(text(
+                        "SELECT experiment_id, job_id FROM experiment_automl_bindings"
+                    )).mappings().one()
+                self.assertEqual(uuid.UUID(str(binding["experiment_id"])), experiment_id)
+                self.assertEqual(uuid.UUID(str(binding["job_id"])), expected_job_id)
             finally:
                 db_engine.dispose()
 

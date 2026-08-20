@@ -662,18 +662,11 @@ export default function DataAnnotationPage() {
 
   const tasksView = (
     <>
-      <div className="page-header">
-        <div className="page-header-copy">
-          <p className="page-kicker">SPOT WELD / TASKS</p>
-          <h2 className="page-title">点焊标注任务</h2>
-          <p className="page-subtitle">查看任务状态、标注方式和当前进度</p>
-        </div>
+      <section className="data-annotation__tasks" aria-label="点焊标注任务列表">
         <div className="data-annotation__task-actions">
           <button type="button" className="ant-btn" onClick={() => openSetup("manual")}>新建手动标注任务</button>
           <button type="button" className="ant-btn ant-btn-primary" onClick={() => openSetup("automatic")}>新建自动标注任务</button>
         </div>
-      </div>
-      <section className="data-annotation__tasks" aria-label="点焊标注任务列表">
         {loadingRuns ? <Spin /> : runs.length === 0 ? <Empty description="暂无点焊标注任务" /> : runs.map((run) => (
           <article className="data-annotation__task" key={run.id}>
             <div className="data-annotation__task-main">

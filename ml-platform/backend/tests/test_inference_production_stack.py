@@ -369,7 +369,7 @@ class TestInferenceProductionStack(unittest.TestCase):
             self.assertNotIn(value, serialized)
 
     def test_rollout_key_restart_and_rollback(self):
-        self.assertEqual(alembic_head(), "20260815_11")
+        self.assertEqual(alembic_head(), "20260819_12")
         self.assertLessEqual(settings.inference_rate_limit_capacity, 5)
         records = [{"current": 1234.567, "force": 7654.321}]
         deployment = self.create_approved_deployment(version_number=1)

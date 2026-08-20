@@ -58,6 +58,9 @@ describe("AutoMLPage", () => {
     datasets.listDatasets.mockReset();
     datasets.getDatasetPreview.mockReset();
     api.get.mockImplementation((url: string) => {
+      if (url === "/training/automl/jobs") {
+        return Promise.resolve({ data: [] });
+      }
       if (url === "/experiments") {
         return Promise.resolve({ data: { items: [{ id: "experiment-1", name: "Experiment 1" }] } });
       }
@@ -90,7 +93,76 @@ describe("AutoMLPage", () => {
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     expect(await screen.findByText("建模任务")).toBeInTheDocument();
-    expect(await screen.findByText("Weld line")).toBeInTheDocument();
+    expect(await screen.findByRole("columnheader", { name: "实验" })).toBeInTheDocument();
+  });
+
+  it("shows the experiment name as the first modeling task column", async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === "/training/automl/jobs") return Promise.resolve({ data: [{
+        id: "automl-1", project_id: "project-1", name: "task-name",
+        experiment_name: "Experiment Alpha", status: "completed",
+      }] });
+      if (url === "/experiments") return Promise.resolve({ data: { items: [] } });
+      return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
+    });
+
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    expect(await screen.findByRole("columnheader", { name: "实验" })).toBeInTheDocument();
+    expect(await screen.findByText("Experiment Alpha")).toBeInTheDocument();
+    expect(screen.queryByText("task-name")).not.toBeInTheDocument();
+  });
+
+  it("only offers unused experiments and selects the first available one", async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === "/training/automl/jobs") return Promise.resolve({ data: [] });
+      if (url === "/experiments") return Promise.resolve({ data: { items: [
+        { id: "used", name: "Used Experiment", automl_used: true },
+        { id: "unused", name: "Unused Experiment", automl_used: false },
+      ] } });
+      return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
+    });
+
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    const projectSelect = (await screen.findAllByRole("combobox"))[0];
+    fireEvent.mouseDown(projectSelect);
+    fireEvent.click(await screen.findByText("Weld line"));
+
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/experiments", { params: { project_id: "project-1" } }));
+    const experimentSelect = screen.getByRole("combobox", { name: "实验" });
+    await waitFor(() => expect(screen.getByTitle("Unused Experiment")).toBeInTheDocument());
+    fireEvent.mouseDown(experimentSelect);
+    expect((await screen.findAllByText("Unused Experiment")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Used Experiment", { selector: ".ant-select-item-option-content" })).not.toBeInTheDocument();
+  });
+
+  it("selects a newly created experiment", async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === "/training/automl/jobs") return Promise.resolve({ data: [] });
+      if (url === "/experiments") return Promise.resolve({ data: { items: [] } });
+      return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
+    });
+    api.post.mockResolvedValue({ data: {
+      id: "experiment-new",
+      name: "Fresh Experiment",
+      automl_used: false,
+    } });
+
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.mouseDown((await screen.findAllByRole("combobox"))[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.click(await screen.findByRole("button", { name: "New Experiment" }));
+    fireEvent.change(await screen.findByLabelText("Experiment Name"), { target: { value: "Fresh Experiment" } });
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/experiments", {
+      project_id: "project-1",
+      name: "Fresh Experiment",
+      description: "",
+    }));
+    expect(await screen.findByTitle("Fresh Experiment")).toBeInTheDocument();
   });
 
   it.skip("renders the measured training time returned by ordinary AutoML", async () => {
