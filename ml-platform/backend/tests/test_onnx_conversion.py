@@ -1,6 +1,7 @@
 import hashlib
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -94,6 +95,25 @@ class TestOnnxConversion(unittest.TestCase):
             result.output_schema,
         )
         self.assertEqual(validated.sha256, result.sha256)
+
+    def test_worker_import_does_not_load_optional_converter_stacks(self):
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; import app.services.onnx_worker; "
+                    "assert not any(name.split('.')[0] in "
+                    "{'catboost', 'lightgbm', 'xgboost', 'onnxmltools'} "
+                    "for name in sys.modules)"
+                ),
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(probe.returncode, 0, probe.stderr)
 
     def test_catboost_joblib_converts_to_valid_onnx(self):
         features = np.asarray([

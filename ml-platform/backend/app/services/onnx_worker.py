@@ -8,8 +8,6 @@ import sys
 
 import joblib
 import onnx
-from catboost import CatBoostClassifier, CatBoostRegressor
-from lightgbm import LGBMClassifier, LGBMRegressor
 from sklearn.ensemble import (
     ExtraTreesClassifier,
     ExtraTreesRegressor,
@@ -23,9 +21,6 @@ from sklearn.ensemble import (
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from xgboost import XGBClassifier, XGBRegressor
-from onnxmltools import convert_lightgbm, convert_xgboost
-from onnxmltools.convert.common.data_types import FloatTensorType as OnnxFloatTensorType
 from skl2onnx import convert_sklearn
 from skl2onnx.common.data_types import FloatTensorType
 
@@ -42,11 +37,6 @@ ALLOWED_MODEL_TYPES = {
     HistGradientBoostingClassifier,
     HistGradientBoostingRegressor,
 }
-
-CATBOOST_MODEL_TYPES = {CatBoostClassifier, CatBoostRegressor}
-XGBOOST_MODEL_TYPES = {XGBClassifier, XGBRegressor}
-LIGHTGBM_MODEL_TYPES = {LGBMClassifier, LGBMRegressor}
-
 
 class WorkerError(RuntimeError):
     def __init__(self, code: str):
@@ -106,6 +96,31 @@ def _output_schema(value: object) -> dict[str, object]:
     return {**value, "name": name, "dtype": dtype, "task": task}
 
 
+def _model_family(model: object) -> str:
+    """Identify a supported model without importing optional converter stacks."""
+    model_type = type(model)
+    if model_type in ALLOWED_MODEL_TYPES:
+        return "skl2onnx"
+    module = model_type.__module__.split(".", 1)[0]
+    name = model_type.__name__
+    if module == "catboost" and name in {"CatBoostClassifier", "CatBoostRegressor"}:
+        from catboost import CatBoostClassifier, CatBoostRegressor
+
+        if model_type in {CatBoostClassifier, CatBoostRegressor}:
+            return "catboost"
+    if module == "xgboost" and name in {"XGBClassifier", "XGBRegressor"}:
+        from xgboost import XGBClassifier, XGBRegressor
+
+        if model_type in {XGBClassifier, XGBRegressor}:
+            return "xgboost"
+    if module == "lightgbm" and name in {"LGBMClassifier", "LGBMRegressor"}:
+        from lightgbm import LGBMClassifier, LGBMRegressor
+
+        if model_type in {LGBMClassifier, LGBMRegressor}:
+            return "lightgbm"
+    raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
+
+
 def _convert(source: Path, destination: Path) -> dict[str, object]:
     try:
         package = joblib.load(source)
@@ -117,14 +132,7 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
     model = package.get("model")
     if model is None:
         raise WorkerError("MODEL_CONVERSION_FAILED")
-    model_type = type(model)
-    if (
-        model_type not in ALLOWED_MODEL_TYPES
-        and model_type not in CATBOOST_MODEL_TYPES
-        and model_type not in XGBOOST_MODEL_TYPES
-        and model_type not in LIGHTGBM_MODEL_TYPES
-    ):
-        raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
+    family = _model_family(model)
     scaler = package.get("scaler")
     if scaler is not None and type(scaler) is not StandardScaler:
         raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
@@ -132,10 +140,14 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
     features = _feature_schema(package.get("feature_schema"))
     output = _output_schema(package.get("target_schema"))
 
-    if model_type in CATBOOST_MODEL_TYPES:
+    if family == "catboost":
         if scaler is not None:
             raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
         try:
+            from catboost import CatBoostClassifier, CatBoostRegressor
+
+            if type(model) not in {CatBoostClassifier, CatBoostRegressor}:
+                raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
             model.save_model(str(destination), format="onnx")
         except Exception:
             raise WorkerError("MODEL_CONVERSION_FAILED") from None
@@ -149,11 +161,20 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
             "opset": 0,
         }
 
-    if model_type in XGBOOST_MODEL_TYPES or model_type in LIGHTGBM_MODEL_TYPES:
+    if family in {"xgboost", "lightgbm"}:
         if scaler is not None:
             raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
         try:
-            converter = convert_xgboost if model_type in XGBOOST_MODEL_TYPES else convert_lightgbm
+            if family == "xgboost":
+                from onnxmltools import convert_xgboost as converter
+                from onnxmltools.convert.common.data_types import (
+                    FloatTensorType as OnnxFloatTensorType,
+                )
+            else:
+                from onnxmltools import convert_lightgbm as converter
+                from onnxmltools.convert.common.data_types import (
+                    FloatTensorType as OnnxFloatTensorType,
+                )
             converted = converter(
                 model,
                 initial_types=[
@@ -167,7 +188,7 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
             raise WorkerError("MODEL_CONVERSION_FAILED") from None
         return {
             "ok": True,
-            "converter": "xgboost" if model_type in XGBOOST_MODEL_TYPES else "lightgbm",
+            "converter": family,
             "feature_schema": features,
             "output_schema": output,
             "input_names": [item.name for item in converted.graph.input],
