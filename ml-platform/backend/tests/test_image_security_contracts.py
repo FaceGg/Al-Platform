@@ -19,12 +19,20 @@ DOCKERFILES = tuple(
     )
 )
 BASE_RECORD = ROOT / ".github" / "contracts" / "python-base-image.json"
+REMEDIATED_WOLFI_REFERENCE = (
+    "cgr.dev/chainguard/wolfi-base:latest@"
+    "sha256:bfcffaf1336b26a3fd33c8cb31a86a09324d2048420d7f49b983f323b0d33e8d"
+)
 REQUIREMENTS = BACKEND / "requirements.txt"
 EXCEPTION = ROOT / ".github" / "contracts" / "cryptography-pkcs7-mlflow-exception.json"
 COMPOSE = ROOT / "docker-compose.yml"
 
 
 class ImageSecurityContractTests(unittest.TestCase):
+    def test_wolfi_reference_is_the_current_cve_remediated_digest(self):
+        record = json.loads(BASE_RECORD.read_text(encoding="utf-8"))
+        self.assertEqual(record["reference"], REMEDIATED_WOLFI_REFERENCE)
+
     def test_all_production_python_images_use_one_immutable_reference(self):
         record = json.loads(BASE_RECORD.read_text(encoding="utf-8"))
         reference = record["reference"]

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "image": "cgr.dev/chainguard/wolfi-base:latest",
-  "reference": "cgr.dev/chainguard/wolfi-base:latest@sha256:30f03343947c7ae3581fda727a6e2aa7b8ce7009b7bfc2ab8d5c9483ace5812f",
+  "reference": "cgr.dev/chainguard/wolfi-base:latest@sha256:bfcffaf1336b26a3fd33c8cb31a86a09324d2048420d7f49b983f323b0d33e8d",
   "architecture": "amd64",
   "runtime": {
     "python_package": "python-3.11=3.11.16-r1",
