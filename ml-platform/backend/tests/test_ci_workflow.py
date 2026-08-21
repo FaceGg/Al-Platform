@@ -970,7 +970,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
 
         self.assertGreaterEqual(
             jobs["week11-12-verification"].get("timeout-minutes", 0),
-            45,
+            60,
         )
 
     def test_ci_artifact_retention_matches_evidence_policy(self):
