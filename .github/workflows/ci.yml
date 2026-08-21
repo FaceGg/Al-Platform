@@ -551,7 +551,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
     runs-on: ubuntu-22.04
     needs: [quality, browser-acceptance, production-integration, experiment-integration]
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       ML_PLATFORM_EVIDENCE_DIR: ${{ github.workspace }}/temp_test/week11-12
       POSTGRES_DB: ml_platform

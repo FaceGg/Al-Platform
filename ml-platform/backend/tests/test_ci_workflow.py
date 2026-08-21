@@ -965,6 +965,14 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
                     self.assertIn(marker, condition)
                 self.assertNotIn("github.event_name == 'push'", condition)
 
+    def test_week11_12_verification_allows_fresh_image_and_security_evidence_run(self):
+        jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+
+        self.assertGreaterEqual(
+            jobs["week11-12-verification"].get("timeout-minutes", 0),
+            45,
+        )
+
     def test_ci_artifact_retention_matches_evidence_policy(self):
         jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
         expected_retention = {
