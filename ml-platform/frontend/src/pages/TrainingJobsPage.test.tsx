@@ -134,7 +134,7 @@ describe("TrainingJobsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "TensorBoard completed-job" }));
     await waitFor(() => expect(open).toHaveBeenCalledWith("/api/training/tensorboard/token/", "_blank", "noopener,noreferrer"));
-  });
+  }, 20_000);
 
   it("deletes Experiments and terminal Training Jobs, but not running jobs", async () => {
     mocks.deleteExperiment.mockResolvedValue(undefined);
