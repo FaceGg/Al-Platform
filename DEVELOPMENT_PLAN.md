@@ -2530,3 +2530,22 @@
 - 运行态边界：该远程 artifact 只覆盖 CI 验证工具、扫描、冻结栈 Web gate 和证据汇总；未生成真实性能三轮、PostgreSQL/MinIO 备份恢复或真实 N-1 升级结果。因此这些项目继续标记为未完成，不能因 full run 全绿而关闭 Week 11-12。
 - 当前环境：本机 `docker` CLI 不可用；没有新增本地 Compose、性能、备份或升级运行态证据。工作区原有点焊质量、AutoML、数据标注和 `.idea/` 未提交改动继续保留。
 - 下一步：在具备 Docker/WSL 权限的隔离环境中执行固定 4 vCPU/8 GiB 三轮性能、真实 PostgreSQL/MinIO 备份恢复、N-1 数据升级及证据 manifest；每项分别记录本地测试、真实运行态、远程门禁和 skipped 状态，再决定 Week 9-12 最终关闭。
+
+### 2026-08-22：WSL 固定资源性能验收继续执行，受 MLflow 初始化阻断
+
+- 真实运行态环境：使用隔离 Compose 项目 `week9-12-perf-20260822`，WSL/Docker 资源仍为 4 vCPU / 8 GiB；所有临时密码和 Fernet key 仅写入 WSL `/tmp`，未写入仓库。
+- 已验证：前一轮隔离生产栈 readiness、Alembic `current`/`check`、服务健康和 teardown 全部通过；本轮性能运行先修正了两个验收环境配置问题：未预构建 `tensorboard-gateway`/`migrate` 镜像，以及 `postgresql://` 错误选择 psycopg2。改为构建全部本地镜像并使用 `postgresql+psycopg://` 后，`migrate` 退出码 0。
+- 当前阻断：MLflow `v3.15.0` 在共享 `ml_platform` 数据库上初始化 backend store 失败，日志为 `psycopg.errors.UndefinedColumn: column "experiment_id" referenced in foreign key constraint does not exist`；因此 MLflow unhealthy，backend 未启动，性能工具未生成任何原始 JSON 或 summary。该结果判定为真实运行态失败/未完成，不计为性能 skipped 或通过。
+- 本地测试：未修改业务代码；既有 Week 11/12 工具合同测试和远程 full 证据保持原结论。远程发布门禁：Actions Run `32494707643` 仍为 success，但不覆盖本次固定资源性能，因此不能替代该失败证据。
+- 下一步：在不改变业务源码前提下，隔离 MLflow backend 数据库（或使用项目既定的独立 MLflow DB）后重跑同一 Compose 生命周期；若仍失败，再建立最小可复现配置缺陷并单独评估是否需要代码/Compose 修复。性能、备份恢复、N-1 和最终 manifest 继续保持未完成。
+
+### 2026-08-22：WSL 固定资源性能验收解除 MLflow 阻断，待负载
+
+- 根因确认：验收会话曾将 `MLFLOW_BACKEND_STORE_URI` 指向共享 `ml_platform` 数据库；MLflow `v3.15.0` 初始化时因既有业务表结构冲突报 `column "experiment_id" referenced in foreign key constraint does not exist`。Compose 已提供独立 `mlflow` 数据库，修正 URI 为 `postgresql+psycopg://ml_platform:<temporary>@postgres:5432/mlflow`。
+- 真实运行态验证：隔离项目 `week9-12-perf-20260822` 在 4 vCPU / 8 GiB WSL/Docker 环境启动；MLflow `/health` healthy，Alembic 从 baseline 至 `20260819_12` 迁移退出码 0，backend、inference-runtime、tensorboard-gateway healthy，`GET /api/health` 返回 `{"status":"ok"}`。
+- 期间另发现并修正仅验收环境问题：临时 `INFERENCE_INTERNAL_SECRET` 少于 32 字符、`SECRET_KEY` 少于 32 字符、通知主密钥文件不是 Fernet key；均通过临时环境变量/WSL `/tmp` secret 修正，未改业务源码，未写入仓库。
+- 当前状态：真实固定资源性能三轮尚未执行，尚未生成 `performance/*.json`、`performance/summary.json` 或最终 evidence manifest；备份恢复、N-1 和最终交付证据继续未完成。
+- 下一步：保持同一 Compose 生命周期和独立 MLflow DB，按工具合同执行 `core-read`、`warm-inference`、`enqueue` 三轮及 `cold-model-load`/`welding-e2e`，逐项保存原始结果并核对容器 image ID、revision、资源封装。
+- 补充校正：实际验证使用 `MLFLOW_BACKEND_STORE_URI=postgresql+psycopg://ml_platform:<temporary>@postgres:5432/mlflow`；MLflow health、Alembic 迁移和 `GET /api/health` 均成功。性能三轮仍未执行。
+- 2026-08-22 最终尝试：固定资源性能负载期间 backend、Redis、PostgreSQL、worker、scheduler 同时终止；性能汇总 `status=failed`，不能计为通过。Windows 直接运行 Week 11/12 单测还因依赖缺失而无法收集；远程 full CI 既有 success 不覆盖真实性能、备份恢复和 N-1。Week 11/12 继续进行中。
+- 2026-08-22：切换到容器内测试环境后，Week 11 工具合同与 Week 11 合同测试共 `104/104` 通过；此前 Windows 运行失败仅因依赖缺失。Week 12 测试需在仓库根路径挂载的容器中运行，避免测试夹具根目录解析错误；真实性能宿主生命周期阻断仍存在，不能关闭 Week 11/12。

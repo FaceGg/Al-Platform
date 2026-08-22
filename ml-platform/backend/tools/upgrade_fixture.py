@@ -9,6 +9,9 @@ from pathlib import Path
 import subprocess
 from typing import Mapping
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
 from tools.backup_restore import (
     collect_database_snapshot,
     require_confirmed_isolated_postgres_target,
@@ -18,6 +21,12 @@ from tools.backup_restore import (
 # The notification branch head remains the supported N-1 starting point for a
 # live upgrade through the merge revision and subsequent linear migrations.
 EXPECTED_N_MINUS_ONE = "20260720_10_security_notifications"
+EXPECTED_N_MINUS_ONE_HEADS = frozenset(
+    {
+        "20260720_10_security_notifications",
+        "20260730_09",
+    },
+)
 EXPECTED_HEAD = "20260819_12"
 UPGRADE_ACCEPTANCE_DATABASE_URL_ENV = "UPGRADE_ACCEPTANCE_DATABASE_URL"
 UPGRADE_ACCEPTANCE_ISOLATED_ENV = "UPGRADE_ACCEPTANCE_ISOLATED"
@@ -96,6 +105,33 @@ def create_upgrade_record(output: Path, database_url: str) -> Path:
             "to_revision": EXPECTED_HEAD,
         },
     )
+
+
+def seed_representative_data(database_url: str) -> dict[str, object]:
+    """Seed one deterministic business graph in an explicitly isolated N-1 DB."""
+    database_url = _isolated_upgrade_database_url(database_url)
+    from app.models import ModelLibrary, Project, User, Workflow
+
+    engine = create_engine(database_url, pool_pre_ping=True)
+    with Session(engine) as session:
+        user = User(
+            username="n1-fixture-owner",
+            password_hash="fixture-not-loginable",
+            role="engineer",
+        )
+        session.add(user)
+        session.flush()
+        project = Project(
+            name="N-1 fixture project",
+            description="acceptance fixture",
+            owner_id=user.id,
+        )
+        session.add(project)
+        session.flush()
+        session.add(Workflow(project_id=project.id, name="N-1 fixture workflow", created_by=user.id))
+        session.add(ModelLibrary(name="N-1 fixture model", owner_id=user.id, project_id=project.id))
+        session.commit()
+        return {"status": "passed", "seeded": ["users", "projects", "workflows", "model_library"]}
 
 
 def create_upgrade_fixture(database_url: str, revision: str, output: Path) -> dict[str, object]:
@@ -215,6 +251,15 @@ def _has_exact_current_revision(
     if not isinstance(output, str):
         return False
     lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if expected_revision == EXPECTED_N_MINUS_ONE:
+        normalized = {
+            line.removesuffix(" (head)")
+            for line in lines
+        }
+        return (
+            len(lines) == len(normalized)
+            and (normalized == {expected_revision} or normalized == set(EXPECTED_N_MINUS_ONE_HEADS))
+        )
     return len(lines) == 1 and lines[0] in {
         expected_revision,
         f"{expected_revision} (head)",
@@ -305,6 +350,9 @@ def main(argv: list[str] | None = None) -> int:
     snapshot = subparsers.add_parser("snapshot")
     snapshot.add_argument("--database-url")
     snapshot.add_argument("--output", type=Path, required=True)
+    seed = subparsers.add_parser("seed")
+    seed.add_argument("--database-url")
+    seed.add_argument("--output", type=Path, required=True)
     upgrade = subparsers.add_parser("upgrade")
     upgrade.add_argument("--database-url")
     upgrade.add_argument("--target", required=True)
@@ -321,6 +369,9 @@ def main(argv: list[str] | None = None) -> int:
             result = create_upgrade_fixture(database_url, args.revision, args.output)
         elif args.command == "snapshot":
             result = snapshot_database(database_url)
+            _write_result(args.output, result)
+        elif args.command == "seed":
+            result = seed_representative_data(database_url)
             _write_result(args.output, result)
         elif args.command == "upgrade":
             result = execute_upgrade(database_url, args.target, args.output)
