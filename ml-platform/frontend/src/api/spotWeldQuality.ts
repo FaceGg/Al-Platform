@@ -78,6 +78,15 @@ export interface QualityRun {
   selected_algorithm_ids?: QualityAlgorithmId[];
   search?: QualitySearchConfig;
   target_column?: string | null;
+  target_column_created?: boolean;
+  target_column_dtype?: string | null;
+  target_schema?: {
+    name?: string;
+    dtype?: string;
+    classes?: string[];
+    class_count?: number;
+    created?: boolean;
+  } | null;
   input_columns?: string[];
   evaluation?: QualityEvaluationConfig;
   label_mode?: QualityLabelMode;
@@ -111,6 +120,26 @@ export interface QualityModel {
   model_artifact_id?: string | null;
   format?: string;
   tags?: string[];
+}
+
+export interface QualityDatasetColumn {
+  name: string;
+  dtype: string;
+}
+
+export interface QualityDatasetColumns {
+  columns: QualityDatasetColumn[];
+  row_count: number;
+  target_candidates: string[];
+}
+
+export interface QualityClusterPreview {
+  model_id: string;
+  best_k: number;
+  silhouette_scores: Record<string, number>;
+  cluster_counts: Record<string, number>;
+  cluster_ids: number[];
+  pca_coordinates: number[][];
 }
 
 export interface QualityTrainingResult {
@@ -256,6 +285,17 @@ export async function submitQualityLabel(
   return response.data;
 }
 
+export async function deleteQualityLabel(
+  projectId: string,
+  runId: string,
+  sampleId: string,
+): Promise<QualitySample> {
+  const response = await apiClient.delete(
+    `/projects/${projectId}/spot-weld/runs/${runId}/samples/${sampleId}/labels`,
+  );
+  return response.data as QualitySample;
+}
+
 export async function reviewQualityLabel(
   projectId: string,
   runId: string,
@@ -323,6 +363,29 @@ export async function listQualityModels(projectId: string): Promise<QualityModel
   return items<QualityModel>(response.data);
 }
 
+export async function listQualityDatasetColumns(
+  projectId: string,
+  artifactId: string,
+): Promise<QualityDatasetColumns> {
+  const response = await apiClient.get(
+    `/projects/${projectId}/spot-weld/datasets/${artifactId}/columns`,
+  );
+  const data = (response.data || {}) as Partial<QualityDatasetColumns>;
+  return {
+    columns: Array.isArray(data.columns) ? data.columns : [],
+    row_count: Number(data.row_count || 0),
+    target_candidates: Array.isArray(data.target_candidates) ? data.target_candidates : [],
+  };
+}
+
+export async function previewQualityClusters(
+  projectId: string,
+  payload: { dataset_artifact_id: string; selected_model_id: string },
+): Promise<QualityClusterPreview> {
+  const response = await apiClient.post(`/projects/${projectId}/spot-weld/cluster-preview`, payload);
+  return response.data as QualityClusterPreview;
+}
+
 export async function downloadQualityArtifact(
   projectId: string,
   runId: string,
@@ -381,6 +444,12 @@ export async function createQualityRun(
     max_trials?: number;
     time_budget?: number;
     target_column?: string;
+    target_column_created?: boolean;
+    target_column_dtype?: "int" | "float" | "string";
+    selected_model_id?: string;
+    weak_supervision?: boolean;
+    cluster_labels?: Record<string, string>;
+    process_rules?: Array<Record<string, string | number | boolean>>;
     input_columns?: string[];
     cross_validation_enabled?: boolean;
     cross_validation_folds?: 3 | 4 | 5 | null;
@@ -411,6 +480,12 @@ export async function validateQualityDataset(
     max_trials?: number;
     time_budget?: number;
     target_column?: string;
+    target_column_created?: boolean;
+    target_column_dtype?: "int" | "float" | "string";
+    selected_model_id?: string;
+    weak_supervision?: boolean;
+    cluster_labels?: Record<string, string>;
+    process_rules?: Array<Record<string, string | number | boolean>>;
     input_columns?: string[];
     cross_validation_enabled?: boolean;
     cross_validation_folds?: 3 | 4 | 5 | null;

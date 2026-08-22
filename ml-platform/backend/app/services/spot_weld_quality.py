@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from collections import Counter
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 import json
 from io import BytesIO
 from pathlib import Path
@@ -49,6 +50,12 @@ REPORT_RULE_ENERGY_SIGMA = 2.5
 REPORT_RULE_SPATTER_CLUSTER_ID = 1
 REPORT_RULESET_VERSION = "report_v2"
 QUALITY_LABEL_MODES = frozenset({"automatic", "manual"})
+CREATED_TARGET_COLUMN_DTYPES = frozenset({"int", "float", "string"})
+CREATED_TARGET_COLUMN_DEFAULT_CLASSES = {
+    "int": ["0", "1", "2"],
+    "float": ["0.0", "1.0", "2.0"],
+    "string": ["label_0", "label_1", "label_2"],
+}
 LOCAL_QUALITY_TASK_PREFIX = "local:"
 LOCAL_QUALITY_RECOVERABLE_STATUSES = ("queued", "validating", "running")
 LOCAL_QUALITY_WORKER_RESTARTED_CODE = "QUALITY_RUN_LOCAL_WORKER_RESTARTED"
@@ -111,6 +118,42 @@ def normalize_report_rule_config(rule_config: Mapping[str, Any] | None = None) -
     ):
         raise QualityPipelineError("QUALITY_RULE_CONFIG_INVALID")
     return normalized
+
+
+def normalize_created_target_column_dtype(target_column_dtype: str | None) -> str:
+    if target_column_dtype is None:
+        return "string"
+    if not isinstance(target_column_dtype, str):
+        raise QualityPipelineError("QUALITY_TARGET_COLUMN_DTYPE_INVALID")
+    normalized = target_column_dtype.strip().lower()
+    if normalized not in CREATED_TARGET_COLUMN_DTYPES:
+        raise QualityPipelineError("QUALITY_TARGET_COLUMN_DTYPE_INVALID")
+    return normalized
+
+
+def normalize_annotation_label(value: Any, target_schema: Mapping[str, Any] | None) -> str:
+    """Return the canonical string stored by the single-label annotation API."""
+    raw = str(value).strip()
+    if not raw:
+        raise QualityPipelineError("QUALITY_LABEL_TYPE_INVALID")
+    dtype = str((target_schema or {}).get("dtype") or "object").strip().lower()
+    if dtype.startswith("int") or dtype in {"integer", "int"}:
+        try:
+            number = Decimal(raw)
+        except (InvalidOperation, ValueError) as error:
+            raise QualityPipelineError("QUALITY_LABEL_TYPE_INVALID") from error
+        if not number.is_finite() or number != number.to_integral_value():
+            raise QualityPipelineError("QUALITY_LABEL_TYPE_INVALID")
+        return str(int(number))
+    if dtype.startswith("float") or dtype in {"double", "number"}:
+        try:
+            number = float(raw)
+        except (TypeError, ValueError) as error:
+            raise QualityPipelineError("QUALITY_LABEL_TYPE_INVALID") from error
+        if not np.isfinite(number):
+            raise QualityPipelineError("QUALITY_LABEL_TYPE_INVALID")
+        return format(number, ".15g")
+    return raw
 
 
 def build_runtime_rule_thresholds(
@@ -272,10 +315,16 @@ def resolve_quality_run_configuration(
     *,
     field_mapping: Mapping[str, str] | None = None,
     target_column: str | None = None,
+    target_column_created: bool = False,
+    target_column_dtype: str | None = None,
     input_columns: Sequence[str] | None = None,
     cross_validation_enabled: bool = True,
     cross_validation_folds: int | None = 3,
 ) -> tuple[dict[str, Any], np.ndarray | None]:
+    if target_column is not None:
+        if not isinstance(target_column, str) or not target_column.strip():
+            raise QualityPipelineError("QUALITY_TARGET_COLUMN_REQUIRED")
+        target_column = target_column.strip()
     evaluation = normalize_quality_evaluation_config(
         cross_validation_enabled,
         cross_validation_folds,
@@ -286,13 +335,27 @@ def resolve_quality_run_configuration(
         target_column=target_column,
         input_columns=input_columns,
     )
-    labels, target_schema = _resolve_quality_target_schema(
-        frame,
-        target_column,
-        evaluation,
-    )
+    if target_column_created:
+        if target_column in frame.columns:
+            raise QualityPipelineError("QUALITY_TARGET_COLUMN_EXISTS", field_name=target_column)
+        created_target_dtype = normalize_created_target_column_dtype(target_column_dtype)
+        default_classes = CREATED_TARGET_COLUMN_DEFAULT_CLASSES[created_target_dtype]
+        labels = None
+        target_schema = {
+            "name": target_column,
+            "dtype": created_target_dtype,
+            "classes": list(default_classes),
+            "class_count": len(default_classes),
+            "created": True,
+        }
+    elif target_column is not None:
+        labels, target_schema = _resolve_quality_target_schema(frame, target_column, evaluation)
+    else:
+        labels, target_schema = None, None
     return {
         "target_column": target_column,
+        "target_column_created": bool(target_column_created),
+        "target_column_dtype": target_schema.get("dtype") if target_schema else None,
         "input_columns": selected_inputs,
         "input_schema": input_schema,
         "target_schema": target_schema,
@@ -431,6 +494,22 @@ def build_annotation_export(run: SpotWeldQualityRun, db, format: str = "xlsx") -
     return output.getvalue()
 
 
+def _coerce_annotation_labels(labels: Sequence[str], target_schema: Mapping[str, Any] | None) -> list[Any]:
+    schema = dict(target_schema or {})
+    dtype = str(schema.get("dtype") or "object").lower()
+    if dtype.startswith("int") or dtype in {"integer", "int"}:
+        try:
+            return [int(str(value).strip()) for value in labels]
+        except (TypeError, ValueError) as error:
+            raise QualityPipelineError("QUALITY_LABEL_TYPE_INVALID") from error
+    if dtype.startswith("float") or dtype in {"double", "number"}:
+        try:
+            return [float(str(value).strip()) for value in labels]
+        except (TypeError, ValueError) as error:
+            raise QualityPipelineError("QUALITY_LABEL_TYPE_INVALID") from error
+    return [str(value) for value in labels]
+
+
 def save_labeled_dataset(
     db,
     run: SpotWeldQualityRun,
@@ -473,8 +552,15 @@ def save_labeled_dataset(
             row_index=missing_rows[0],
         )
 
-    labeled_frame = frame.drop(columns=["label"], errors="ignore").copy()
-    labeled_frame["label"] = [labels_by_row[index] for index in range(len(frame))]
+    run_input = run.input_fingerprint or {}
+    target_schema = (run.statistics or {}).get("target_schema") or run_input.get("target_schema") or {}
+    target_column = str(run_input.get("target_column") or "label")
+    output_labels = _coerce_annotation_labels(
+        [labels_by_row[index] for index in range(len(frame))],
+        target_schema,
+    )
+    labeled_frame = frame.drop(columns=["label", target_column], errors="ignore").copy()
+    labeled_frame[target_column] = output_labels
     source_suffix = Path(source_artifact.name or "dataset.csv").suffix.lower()
     output_suffix = ".xlsx" if source_suffix in {".xls", ".xlsx"} else ".csv"
     source_stem = Path(source_artifact.name or "dataset").stem or "dataset"
@@ -857,6 +943,98 @@ def run_clustering(
     )
 
 
+def load_registered_quality_model(
+    db,
+    *,
+    project_id,
+    model_id,
+    artifact_service: ArtifactService,
+) -> tuple[ModelLibrary, dict[str, Any]]:
+    try:
+        identifier = uuid.UUID(str(model_id))
+    except (TypeError, ValueError) as error:
+        raise QualityPipelineError("QUALITY_MODEL_INVALID") from error
+    model_library = db.query(ModelLibrary).filter(
+        ModelLibrary.id == identifier,
+        ModelLibrary.project_id == project_id,
+        ModelLibrary.status == "registered",
+        ModelLibrary.model_artifact_id.isnot(None),
+    ).one_or_none()
+    if model_library is None:
+        raise QualityPipelineError("QUALITY_MODEL_INVALID")
+    try:
+        with artifact_service.materialize(
+            model_library.model_artifact_id,
+            project_id,
+            expected_type="model",
+        ) as path:
+            bundle = joblib.load(path)
+    except (ArtifactAccessError, OSError, ValueError, TypeError) as error:
+        raise QualityPipelineError("QUALITY_MODEL_ARTIFACT_INVALID") from error
+    if not isinstance(bundle, dict) or bundle.get("model") is None:
+        raise QualityPipelineError("QUALITY_MODEL_ARTIFACT_INVALID")
+    feature_schema = [str(name) for name in bundle.get("feature_schema") or []]
+    if feature_schema != list(FEATURE_SCHEMA):
+        raise QualityPipelineError("QUALITY_MODEL_FEATURE_SCHEMA_INVALID")
+    return model_library, bundle
+
+
+def run_registered_model_annotation(
+    features: pd.DataFrame,
+    bundle: Mapping[str, Any],
+) -> tuple[list[str], list[float | None], np.ndarray]:
+    feature_schema = [str(name) for name in bundle.get("feature_schema") or []]
+    if feature_schema != list(features.columns):
+        raise QualityPipelineError("QUALITY_MODEL_FEATURE_SCHEMA_INVALID")
+    matrix = features.to_numpy(dtype=np.float64)
+    scaler = bundle.get("scaler")
+    transformed = scaler.transform(matrix) if scaler is not None else matrix
+    model = bundle.get("model")
+    predictions = np.asarray(model.predict(_estimator_matrix(transformed))).reshape(-1)
+    classes = np.asarray(bundle.get("classes") or getattr(model, "classes_", []), dtype=object)
+    labels: list[str] = []
+    for prediction in predictions:
+        if classes.size and isinstance(prediction, (int, np.integer)) and 0 <= int(prediction) < len(classes):
+            labels.append(str(classes[int(prediction)]))
+        else:
+            labels.append(str(prediction))
+    probabilities: list[float | None] = [None] * len(labels)
+    if hasattr(model, "predict_proba"):
+        values = np.asarray(model.predict_proba(_estimator_matrix(transformed)), dtype=float)
+        normal_indexes = np.where(classes.astype(str) == "normal")[0] if classes.size else np.array([])
+        scores = 1.0 - values[:, int(normal_indexes[0])] if len(normal_indexes) else np.max(values, axis=1)
+        probabilities = [float(value) for value in scores]
+    raw_importance = getattr(model, "feature_importances_", None)
+    importance = np.asarray(raw_importance, dtype=float).reshape(-1) if raw_importance is not None else np.array([])
+    if len(importance) != len(feature_schema) or not np.isfinite(importance).all() or float(np.maximum(importance, 0).sum()) <= 0:
+        raise QualityPipelineError("QUALITY_MODEL_FEATURE_IMPORTANCE_INVALID")
+    return labels, probabilities, importance
+
+
+def assign_cluster_labels(
+    cluster_ids: Sequence[int],
+    labels_by_cluster: Mapping[str | int, str],
+) -> list[str]:
+    unique_clusters = sorted({int(cluster_id) for cluster_id in cluster_ids})
+    normalized: dict[int, str] = {}
+    for key, value in (labels_by_cluster or {}).items():
+        try:
+            cluster_id = int(key)
+        except (TypeError, ValueError):
+            continue
+        label = str(value or "").strip()
+        if label:
+            normalized[cluster_id] = label
+    assigned = [normalized.get(cluster_id, "") for cluster_id in unique_clusters]
+    if (
+        len(normalized) < len(unique_clusters)
+        or any(not label for label in assigned)
+        or len(set(assigned)) != len(assigned)
+    ):
+        raise QualityPipelineError("QUALITY_CLUSTER_LABELS_REQUIRED")
+    return [normalized[int(cluster_id)] for cluster_id in cluster_ids]
+
+
 @dataclass(frozen=True)
 class RuleHit:
     code: str
@@ -1132,6 +1310,12 @@ def create_quality_run_record(
     max_trials: int = 20,
     time_budget: int = 600,
     target_column: str | None = None,
+    target_column_created: bool = False,
+    target_column_dtype: str | None = None,
+    selected_model_id: Any | None = None,
+    weak_supervision: bool = False,
+    cluster_labels: Mapping[str, str] | None = None,
+    process_rules: Sequence[Mapping[str, Any]] | None = None,
     input_columns: Sequence[str] | None = None,
     cross_validation_enabled: bool = True,
     cross_validation_folds: int | None = 3,
@@ -1155,6 +1339,8 @@ def create_quality_run_record(
         frame,
         field_mapping=field_mapping,
         target_column=target_column,
+        target_column_created=target_column_created,
+        target_column_dtype=target_column_dtype,
         input_columns=input_columns,
         cross_validation_enabled=cross_validation_enabled,
         cross_validation_folds=cross_validation_folds,
@@ -1172,6 +1358,10 @@ def create_quality_run_record(
             "row_count": len(frame),
             **search_config,
             "label_mode": label_mode,
+            "selected_model_id": str(selected_model_id) if selected_model_id else None,
+            "weak_supervision": bool(weak_supervision),
+            "cluster_labels": dict(cluster_labels or {}),
+            "process_rules": [dict(rule) for rule in (process_rules or [])],
             "rule_config": normalized_rule_config,
             **run_configuration,
         },
@@ -1839,6 +2029,8 @@ def execute_quality_run(
             frame,
             field_mapping=run.field_mapping or None,
             target_column=run_input.get("target_column"),
+            target_column_created=bool(run_input.get("target_column_created", False)),
+            target_column_dtype=run_input.get("target_column_dtype"),
             input_columns=run_input.get("input_columns"),
             cross_validation_enabled=(run_input.get("evaluation") or {}).get(
                 "cross_validation_enabled",
@@ -1856,6 +2048,23 @@ def execute_quality_run(
             if label_mode == "automatic"
             else [None] * total_count
         )
+        selected_model_labels: list[str] | None = None
+        selected_model_probabilities: list[float | None] | None = None
+        selected_model_importance: np.ndarray | None = None
+        selected_model_library: ModelLibrary | None = None
+        selected_model_id = run_input.get("selected_model_id")
+        weak_supervision = bool(run_input.get("weak_supervision", False))
+        if label_mode == "automatic" and selected_model_id:
+            selected_model_library, model_bundle = load_registered_quality_model(
+                db,
+                project_id=run.project_id,
+                model_id=selected_model_id,
+                artifact_service=artifact_service,
+            )
+            selected_model_labels, selected_model_probabilities, selected_model_importance = run_registered_model_annotation(
+                features,
+                model_bundle,
+            )
         run.rule_set_version = REPORT_RULESET_VERSION
         db.query(SpotWeldQualitySample).filter(SpotWeldQualitySample.run_id == run.id).delete(synchronize_session=False)
         db.query(SpotWeldQualityRuleSet).filter(SpotWeldQualityRuleSet.run_id == run.id).delete(synchronize_session=False)
@@ -1928,9 +2137,33 @@ def execute_quality_run(
             db.commit()
 
         best_candidate: CandidateResult | None = None
+        automatic_labels_override: list[str] | None = None
         evaluation_actual_labels: list[str] = []
         evaluation_predicted_labels: list[str] = []
-        if supervised_labels is not None:
+        if selected_model_labels is not None:
+            candidate_results = []
+            automatic_labels_override = selected_model_labels
+            probabilities = selected_model_probabilities or [None] * len(records)
+            if weak_supervision:
+                clustering = run_clustering(
+                    features.to_numpy(dtype=np.float64),
+                    feature_names=schema,
+                    feature_importance=selected_model_importance if selected_model_importance is not None else [],
+                )
+                cluster_ids = list(clustering.cluster_ids)
+                automatic_labels_override = assign_cluster_labels(
+                    cluster_ids,
+                    run_input.get("cluster_labels") or {},
+                )
+                final_rules = [
+                    apply_report_v1_rules(record, thresholds=thresholds, cluster_id=cluster_ids[index])
+                    for index, record in enumerate(records)
+                ]
+            else:
+                clustering = None
+                cluster_ids = [None] * len(records)
+                final_rules = [None] * len(records)
+        elif supervised_labels is not None:
             candidate_results, best_candidate = run_automl(
                 features.to_numpy(dtype=np.float64),
                 supervised_labels,
@@ -2038,7 +2271,11 @@ def execute_quality_run(
         for index, sample in enumerate(samples):
             rule_result = final_rules[index]
             probability = probabilities[index]
-            sample.automatic_label = rule_result.primary_label if rule_result is not None else None
+            sample.automatic_label = (
+                automatic_labels_override[index]
+                if automatic_labels_override is not None
+                else (rule_result.primary_label if rule_result is not None else None)
+            )
             sample.rule_hits = [item.to_dict() for item in rule_result.hits] if rule_result is not None else []
             sample.cluster_id = cluster_ids[index]
             sample.defect_probability = float(probability) if probability is not None else None
@@ -2053,6 +2290,10 @@ def execute_quality_run(
         run.statistics = {
             **(run.statistics or {}),
             "annotation_progress": _annotation_progress(annotated_count, total_count),
+            "selected_model_id": str(selected_model_library.id) if selected_model_library is not None else None,
+            "weak_supervision": weak_supervision,
+            "cluster_labels": dict(run_input.get("cluster_labels") or {}),
+            "process_rules": list(run_input.get("process_rules") or []),
             "modeling_progress": _modeling_progress(completed_trials, planned_trials),
             "search": {
                 **((run.statistics or {}).get("search") or {}),

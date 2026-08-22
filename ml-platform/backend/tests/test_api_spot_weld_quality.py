@@ -270,6 +270,9 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
             "search_method": "bayesian",
             "max_trials": 20,
             "time_budget": 600,
+            "label_mode": "manual",
+            "target_column": "Fault",
+            "target_column_created": True,
         }
         response = self.client.post(f"/api/projects/{self.project.id}/spot-weld/validate", json=payload)
         self.assertEqual(response.status_code, 200)
@@ -302,6 +305,8 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
                 "max_trials": 5,
                 "time_budget": 60,
                 "label_mode": "manual",
+                "target_column": "Fault",
+                "target_column_created": True,
                 "rule_config": {"strong_splatter_min": 4},
             },
         )
@@ -317,12 +322,14 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         artifact = self._create_dataset_artifact("padded-weld.csv", frame)
         url = f"/api/projects/{self.project.id}/spot-weld/runs"
 
-        for mode in ("automatic", "manual"):
+        for mode in ("manual",):
             with self.subTest(mode=mode):
                 response = self.client.post(url, json={
                     "dataset_artifact_id": str(artifact.id),
                     "field_mapping": {},
                     "label_mode": mode,
+                    "target_column": "Fault",
+                    "target_column_created": True,
                 })
                 self.assertEqual(response.status_code, 202, response.text)
 
@@ -342,6 +349,7 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
                 "max_trials": 5,
                 "time_budget": 60,
                 "target_column": "label",
+                "label_mode": "manual",
                 "input_columns": input_columns,
                 "cross_validation_enabled": True,
                 "cross_validation_folds": 4,
@@ -367,9 +375,12 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         response = self.client.post(
             f"/api/projects/{self.project.id}/spot-weld/runs",
             json={
-                "dataset_artifact_id": str(self.artifact.id),
-                "field_mapping": {},
-                "input_columns": selected_columns,
+            "dataset_artifact_id": str(self.artifact.id),
+            "field_mapping": {},
+            "input_columns": selected_columns,
+            "label_mode": "manual",
+            "target_column": "Fault",
+            "target_column_created": True,
             },
         )
 
@@ -388,8 +399,9 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         missing_target = self.client.post(url, json={
             "dataset_artifact_id": str(artifact.id),
             "field_mapping": {},
-            "target_column": "missing_label",
-            "input_columns": input_columns,
+                    "target_column": "missing_label",
+                    "input_columns": input_columns,
+                    "label_mode": "manual",
         })
         self.assertEqual(missing_target.status_code, 400, missing_target.text)
         self.assertEqual(missing_target.json()["detail"]["code"], "QUALITY_TARGET_COLUMN_INVALID")
@@ -403,9 +415,195 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
                     "input_columns": input_columns,
                     "cross_validation_enabled": True,
                     "cross_validation_folds": folds,
+                    "label_mode": "manual",
                 })
                 self.assertEqual(response.status_code, 400, response.text)
                 self.assertEqual(response.json()["detail"]["code"], "QUALITY_EVALUATION_CONFIG_INVALID")
+
+    def test_quality_run_requires_target_column(self):
+        url = f"/api/projects/{self.project.id}/spot-weld/runs"
+        response = self.client.post(url, json={
+            "dataset_artifact_id": str(self.artifact.id),
+            "field_mapping": {},
+            "label_mode": "manual",
+        })
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "QUALITY_TARGET_COLUMN_REQUIRED")
+
+    def test_quality_run_can_create_empty_target_column_without_input_leakage(self):
+        url = f"/api/projects/{self.project.id}/spot-weld/runs"
+        response = self.client.post(url, json={
+            "dataset_artifact_id": str(self.artifact.id),
+            "field_mapping": {},
+            "label_mode": "manual",
+            "target_column": "人工标签",
+            "target_column_created": True,
+            "target_column_dtype": "float",
+        })
+
+        self.assertEqual(response.status_code, 202, response.text)
+        payload = response.json()
+        self.assertEqual(payload["target_column"], "人工标签")
+        self.assertTrue(payload["target_column_created"])
+        self.assertEqual(payload["target_column_dtype"], "float")
+        self.assertEqual(payload["target_schema"], {
+            "name": "人工标签",
+            "dtype": "float",
+            "classes": ["0.0", "1.0", "2.0"],
+            "class_count": 3,
+            "created": True,
+        })
+        self.assertNotIn("人工标签", payload["input_columns"])
+
+    def test_manual_label_is_type_converted_and_new_values_are_allowed(self):
+        run = SpotWeldQualityRun(
+            project_id=self.project.id,
+            dataset_artifact_id=self.artifact.id,
+            created_by_id=self.owner.id,
+            status="completed",
+            input_fingerprint={
+                "label_mode": "manual",
+                "target_schema": {"name": "Fault", "dtype": "int64", "classes": ["0", "1"]},
+            },
+            statistics={},
+        )
+        self.db.add(run)
+        self.db.flush()
+        sample = SpotWeldQualitySample(
+            run_id=run.id,
+            source_row_index=0,
+            display_id="W-0001",
+            review_status="pending_review",
+        )
+        self.db.add(sample)
+        self.db.commit()
+
+        accepted = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/samples/{sample.id}/labels",
+            json={"label": "1", "note": ""},
+        )
+        self.assertEqual(accepted.status_code, 201, accepted.text)
+        converted = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/samples/{sample.id}/labels",
+            json={"label": "2.0", "note": ""},
+        )
+        self.assertEqual(converted.status_code, 201, converted.text)
+        self.assertEqual(converted.json()["current_label"], "2")
+        self.db.refresh(run)
+        self.assertEqual(run.statistics["target_schema"]["classes"], ["0", "1", "2"])
+
+        rejected = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/samples/{sample.id}/labels",
+            json={"label": "not-an-int", "note": ""},
+        )
+        self.assertEqual(rejected.status_code, 422, rejected.text)
+        self.assertEqual(rejected.json()["detail"]["code"], "QUALITY_LABEL_TYPE_INVALID")
+
+    def test_manual_new_label_is_type_converted_and_added_to_target_schema(self):
+        run = SpotWeldQualityRun(
+            project_id=self.project.id,
+            dataset_artifact_id=self.artifact.id,
+            created_by_id=self.owner.id,
+            status="completed",
+            input_fingerprint={
+                "label_mode": "manual",
+                "target_schema": {"name": "Fault", "dtype": "int64", "classes": ["0", "1"]},
+            },
+            statistics={},
+        )
+        self.db.add(run); self.db.flush()
+        sample = SpotWeldQualitySample(run_id=run.id, source_row_index=0, display_id="W-0001", review_status="pending_review")
+        self.db.add(sample); self.db.commit()
+
+        response = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/samples/{sample.id}/labels",
+            json={"label": " 2.0 ", "note": ""},
+        )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["current_label"], "2")
+        self.db.refresh(run)
+        self.assertEqual(run.statistics["target_schema"]["classes"], ["0", "1", "2"])
+
+        invalid = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/samples/{sample.id}/labels",
+            json={"label": "not-an-int", "note": ""},
+        )
+        self.assertEqual(invalid.status_code, 422, invalid.text)
+        self.assertEqual(invalid.json()["detail"]["code"], "QUALITY_LABEL_TYPE_INVALID")
+
+    def test_automatic_quality_run_requires_registered_model_and_cluster_labels(self):
+        url = f"/api/projects/{self.project.id}/spot-weld/runs"
+        base_payload = {
+            "dataset_artifact_id": str(self.artifact.id),
+            "field_mapping": {},
+            "label_mode": "automatic",
+            "target_column": "Fault",
+            "target_column_created": True,
+        }
+
+        missing_model = self.client.post(url, json=base_payload)
+        self.assertEqual(missing_model.status_code, 400, missing_model.text)
+        self.assertEqual(missing_model.json()["detail"]["code"], "QUALITY_MODEL_REQUIRED")
+
+        missing_labels = self.client.post(url, json={
+            **base_payload,
+            "selected_model_id": str(uuid.uuid4()),
+            "weak_supervision": True,
+        })
+        self.assertEqual(missing_labels.status_code, 400, missing_labels.text)
+        self.assertEqual(missing_labels.json()["detail"]["code"], "QUALITY_CLUSTER_LABELS_REQUIRED")
+
+    def test_delete_label_clears_current_state_but_keeps_revision_history(self):
+        run = SpotWeldQualityRun(
+            project_id=self.project.id,
+            dataset_artifact_id=self.artifact.id,
+            created_by_id=self.owner.id,
+            status="running",
+            input_fingerprint={"label_mode": "manual", "target_column": "Fault"},
+            statistics={"row_count": 1},
+        )
+        self.db.add(run)
+        self.db.flush()
+        sample = SpotWeldQualitySample(
+            run_id=run.id,
+            source_row_index=0,
+            display_id="W-0001",
+            current_label="normal",
+            current_note="note",
+            review_status="submitted",
+        )
+        self.db.add(sample)
+        self.db.flush()
+        revision = SpotWeldLabelRevision(
+            project_id=self.project.id,
+            run_id=run.id,
+            sample_id=sample.id,
+            author_id=self.owner.id,
+            label="normal",
+            note="note",
+            action="submitted",
+        )
+        self.db.add(revision)
+        self.db.flush()
+        sample.current_revision_id = revision.id
+        self.db.commit()
+
+        response = self.client.delete(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/samples/{sample.id}/labels",
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsNone(response.json()["current_label"])
+        self.assertIsNone(response.json()["current_note"])
+        self.db.expire_all()
+        persisted_sample = self.db.get(SpotWeldQualitySample, sample.id)
+        self.assertIsNone(persisted_sample.current_label)
+        self.assertIsNone(persisted_sample.current_note)
+        self.assertIsNone(persisted_sample.current_revision_id)
+        self.assertEqual(self.db.query(SpotWeldLabelRevision).filter_by(id=revision.id).count(), 1)
+        self.assertEqual(self.db.get(SpotWeldQualityRun, run.id).statistics["annotation_progress"]["annotated_count"], 0)
 
     def test_quality_run_uses_selected_multiclass_label_for_supervised_metrics(self):
         frame = report_frame(15)
@@ -423,6 +621,7 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
                 "max_trials": 5,
                 "time_budget": 60,
                 "target_column": "label",
+                "label_mode": "manual",
                 "input_columns": input_columns,
                 "cross_validation_enabled": True,
                 "cross_validation_folds": 3,
@@ -456,16 +655,16 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
             SpotWeldQualitySample.run_id == run.id,
         ).order_by(SpotWeldQualitySample.source_row_index).all()
         self.assertEqual(len(samples), len(frame))
-        self.assertTrue(all(sample.automatic_label for sample in samples))
-        self.assertTrue(all(sample.rule_hits for sample in samples))
+        self.assertTrue(all(sample.automatic_label is None for sample in samples))
+        self.assertTrue(all(not sample.rule_hits for sample in samples))
         run_detail = self.client.get(
             f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}",
         )
         self.assertEqual(run_detail.status_code, 200, run_detail.text)
         self.assertEqual(run_detail.json()["annotation_progress"], {
-            "annotated_count": len(frame),
+            "annotated_count": 0,
             "total_count": len(frame),
-            "percent": 100.0,
+            "percent": 0.0,
         })
         self.assertIsNotNone(run.automl_results[0]["auc"])
         self.assertIsNotNone(run.automl_results[0]["f1"])
@@ -757,6 +956,9 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
                     "search_method": "bayesian",
                     "max_trials": 20,
                     "time_budget": 600,
+                    "label_mode": "manual",
+                    "target_column": "Fault",
+                    "target_column_created": True,
                 })
                 self.assertEqual(response.status_code, 400, response.text)
                 self.assertEqual(response.json()["detail"]["code"], "QUALITY_AUTOML_SEARCH_CONFIG_INVALID")
@@ -774,6 +976,9 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
                 "dataset_artifact_id": str(self.artifact.id),
                 "field_mapping": {},
                 "algorithm_ids": ["unknown"],
+                "label_mode": "manual",
+                "target_column": "Fault",
+                "target_column_created": True,
             },
         )
 
@@ -798,7 +1003,10 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         path = Path(self.directory.name) / "bad.csv"; frame.to_csv(path, index=False)
         bad = Artifact(project_id=self.project.id, name="bad.csv", type="dataset", storage_path=str(path), format="csv", file_size=path.stat().st_size, metadata_={})
         self.db.add(bad); self.db.commit(); self.db.refresh(bad)
-        response = self.client.post(f"/api/projects/{self.project.id}/spot-weld/validate", json={"dataset_artifact_id": str(bad.id), "field_mapping": {}})
+        response = self.client.post(f"/api/projects/{self.project.id}/spot-weld/validate", json={
+            "dataset_artifact_id": str(bad.id), "field_mapping": {},
+            "label_mode": "manual", "target_column": "Fault", "target_column_created": True,
+        })
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["errors"][0]["code"], "QUALITY_WAVEFORM_LENGTH_INVALID")
 
@@ -809,7 +1017,10 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         artifact = Artifact(project_id=self.project.id, name="partially-bad.csv", type="dataset", storage_path=str(path), format="csv", file_size=path.stat().st_size, metadata_={})
         self.db.add(artifact); self.db.commit(); self.db.refresh(artifact)
 
-        response = self.client.post(f"/api/projects/{self.project.id}/spot-weld/validate", json={"dataset_artifact_id": str(artifact.id), "field_mapping": {}})
+        response = self.client.post(f"/api/projects/{self.project.id}/spot-weld/validate", json={
+            "dataset_artifact_id": str(artifact.id), "field_mapping": {},
+            "label_mode": "manual", "target_column": "Fault", "target_column_created": True,
+        })
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["valid_rows"], 1)
@@ -1018,8 +1229,7 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
 
         models = self.client.get(f"/api/projects/{self.project.id}/spot-weld/models")
         self.assertEqual(models.status_code, 200, models.text)
-        self.assertEqual(models.json()["total"], 1)
-        self.assertEqual(models.json()["items"][0]["params"]["quality_run_id"], str(run.id))
+        self.assertEqual(models.json()["total"], 0)
         hidden = self.client.get(f"/api/projects/{self.other.id}/spot-weld/models")
         self.assertEqual(hidden.status_code, 404)
 

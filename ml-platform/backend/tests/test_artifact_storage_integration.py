@@ -106,7 +106,7 @@ class TestArtifactStorageIntegration(unittest.TestCase):
                 exported = pd.read_csv(draft.data)
                 self.assertEqual(exported.to_dict(orient="records"), source_rows)
 
-    def test_spot_weld_feature_output_and_csv_artifact_keep_all_raw_waveforms(self):
+    def test_spot_weld_feature_output_and_csv_artifact_drop_raw_waveforms(self):
         with tempfile.TemporaryDirectory() as directory:
             context = OperatorContext(
                 run_id="run",
@@ -118,9 +118,16 @@ class TestArtifactStorageIntegration(unittest.TestCase):
                 workspace_dir=Path(directory),
             )
             source = build_demo_report_frame(12)
+            source["Fault"] = [0 if index < 6 else 1 for index in range(len(source))]
             engineered = SpotWeldFeatureEngineering.execute(
                 context, {"data": source}, {},
             ).outputs["features"]
+
+            self.assertNotIn("cvei", engineered[0])
+            self.assertNotIn("cvev", engineered[0])
+            self.assertNotIn("cver", engineered[0])
+            self.assertNotIn("cvep", engineered[0])
+            self.assertEqual([row["Fault"] for row in engineered], source["Fault"].tolist())
 
             for operator in (CSVExport, WriteCSV):
                 result = operator.execute(
@@ -137,7 +144,8 @@ class TestArtifactStorageIntegration(unittest.TestCase):
                 )
                 exported = pd.read_csv(result.artifacts[0].data)
                 for field in ("cvei", "cvev", "cver", "cvep"):
-                    self.assertEqual(exported[field].tolist(), source[field].tolist())
+                    self.assertNotIn(field, exported.columns)
+                self.assertEqual(exported["Fault"].tolist(), source["Fault"].tolist())
 
 
 if __name__ == "__main__":

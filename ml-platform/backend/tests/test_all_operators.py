@@ -292,19 +292,38 @@ class TestProcessingOperatorsExecution(unittest.TestCase):
 
     def test_spot_weld_feature_engineering_preserves_report_feature_contract(self):
         frame = build_demo_report_frame(12)
+        frame["Fault"] = [0 if index < 6 else 1 for index in range(len(frame))]
 
         outputs = execute_operator(
             OperatorRegistry.get("spot_weld_feature_engineering"),
             {"data": frame.to_dict(orient="records")}, {})
 
         self.assertEqual(len(outputs["features"]), 12)
-        self.assertEqual(outputs["schema"]["columns"], list(FEATURE_SCHEMA))
-        self.assertEqual(len(outputs["schema"]["columns"]), 73)
+        self.assertEqual(outputs["schema"]["columns"], list(FEATURE_SCHEMA) + ["Fault"])
+        self.assertEqual(outputs["schema"]["label_column"], "Fault")
+        self.assertEqual(outputs["schema"]["label_position"], "last")
+        self.assertEqual(len(outputs["schema"]["columns"]), 74)
         self.assertEqual(outputs["statistics"]["feature_count"], 73)
+        self.assertEqual(outputs["statistics"]["label_column"], "Fault")
+        self.assertEqual(outputs["statistics"]["label_present"], True)
+        self.assertEqual(outputs["statistics"]["label_dtype"], "int64")
         self.assertEqual(
-            [outputs["features"][0][name] for name in ("cvei", "cvev", "cver", "cvep")],
-            [frame.iloc[0][name] for name in ("cvei", "cvev", "cver", "cvep")],
+            [name for name in ("cvei", "cvev", "cver", "cvep") if name in outputs["features"][0]],
+            [],
         )
+        self.assertEqual([row["Fault"] for row in outputs["features"]], frame["Fault"].tolist())
+
+    def test_spot_weld_feature_engineering_reports_missing_optional_label(self):
+        frame = build_demo_report_frame(12)
+
+        outputs = execute_operator(
+            OperatorRegistry.get("spot_weld_feature_engineering"),
+            {"data": frame.to_dict(orient="records")}, {})
+
+        self.assertNotIn("Fault", outputs["features"][0])
+        self.assertNotIn("Fault", outputs["schema"]["columns"])
+        self.assertEqual(outputs["schema"]["label_column"], "Fault")
+        self.assertEqual(outputs["statistics"]["label_present"], False)
 
     def test_spot_weld_feature_engineering_declares_all_report_source_columns(self):
         operator = OperatorRegistry.get("spot_weld_feature_engineering")

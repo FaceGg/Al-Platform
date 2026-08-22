@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 from openpyxl import load_workbook
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
@@ -29,6 +30,7 @@ from app.services.artifact_service import ArtifactService
 from app.services.automl_search import FamilySearchResult
 from app.services.spot_weld_quality import (
     CandidateResult,
+    assign_cluster_labels,
     _quality_estimator_metrics,
     apply_report_v1_rules,
     build_demo_report_frame,
@@ -40,6 +42,7 @@ from app.services.spot_weld_quality import (
     recover_orphaned_local_quality_runs,
     run_automl,
     run_clustering,
+    run_registered_model_annotation,
     run_snapshot_training,
     save_labeled_dataset,
     select_best_candidate,
@@ -49,7 +52,7 @@ from app.services.spot_weld_quality import (
     validate_report_frame,
     warning_level,
 )
-from app.services.spot_weld_features import QualityPipelineError, build_feature_frame
+from app.services.spot_weld_features import FEATURE_SCHEMA, QualityPipelineError, build_feature_frame
 from app.storage.local import LocalStorage
 
 
@@ -255,6 +258,53 @@ class TestSpotWeldQualityService(unittest.TestCase):
             finally:
                 db.close()
                 engine.dispose()
+
+    def test_save_labeled_dataset_uses_selected_target_name_and_dtype(self):
+        with tempfile.TemporaryDirectory(prefix="quality-save-typed-labels-") as directory:
+            engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+            Session = sessionmaker(bind=engine)
+            Base.metadata.create_all(engine)
+            db = Session()
+            try:
+                owner = User(username=f"typed-labels-{uuid.uuid4().hex}", password_hash="hash")
+                db.add(owner); db.flush()
+                project = Project(name="Typed labels", owner_id=owner.id)
+                db.add(project); db.flush()
+                artifacts = ArtifactService(db, LocalStorage(Path(directory) / "artifacts"))
+                frame = build_demo_report_frame(12)
+                frame["Fault"] = np.tile([0, 1], 6)
+                source_path = Path(directory) / "fault.csv"
+                frame.to_csv(source_path, index=False)
+                dataset = artifacts.create_from_file(project.id, source_path, "fault.csv", "dataset")
+                db.flush()
+                run = SpotWeldQualityRun(
+                    project_id=project.id,
+                    dataset_artifact_id=dataset.id,
+                    created_by_id=owner.id,
+                    status="completed",
+                    input_fingerprint={
+                        "label_mode": "manual",
+                        "target_column": "Fault",
+                        "target_column_created": False,
+                        "target_schema": {"name": "Fault", "dtype": "int64", "classes": ["0", "1"]},
+                    },
+                    statistics={},
+                )
+                db.add(run); db.flush()
+                db.add_all([
+                    SpotWeldQualitySample(run_id=run.id, source_row_index=index, display_id=f"W-{index + 1:04d}", current_label=str(index % 2))
+                    for index in range(len(frame))
+                ])
+                db.commit()
+                labeled = save_labeled_dataset(db, run, artifact_service=artifacts)
+                db.commit()
+                with artifacts.materialize(labeled.id, project.id, expected_type="dataset") as path:
+                    saved = read_report_dataset(path)
+                self.assertEqual(saved.columns[-1], "Fault")
+                self.assertEqual(str(saved["Fault"].dtype), "int64")
+                self.assertEqual(saved["Fault"].tolist()[:4], [0, 1, 0, 1])
+            finally:
+                db.close(); engine.dispose()
 
     def test_quality_search_config_preserves_order_and_rejects_invalid_sets(self):
         selected = normalize_quality_search_config(
@@ -495,6 +545,41 @@ class TestSpotWeldQualityService(unittest.TestCase):
         self.assertTrue(np.isfinite(result.weights).all())
         self.assertTrue(all(weight >= 0 for weight in result.weights))
         self.assertFalse(any("invalid value encountered in sqrt" in str(item.message) for item in caught))
+
+    def test_registered_model_annotation_requires_valid_feature_importance(self):
+        class ModelWithoutImportance:
+            classes_ = np.array(["normal", "strong_splatter"])
+
+            def predict(self, values):
+                return np.zeros(len(values), dtype=int)
+
+        features = pd.DataFrame(
+            np.ones((3, 73), dtype=float),
+            columns=list(FEATURE_SCHEMA),
+        )
+
+        with self.assertRaises(QualityPipelineError) as caught:
+            run_registered_model_annotation(features, {
+                "model": ModelWithoutImportance(),
+                "feature_schema": list(FEATURE_SCHEMA),
+                "classes": ["normal", "strong_splatter"],
+            })
+
+        self.assertEqual(caught.exception.code, "QUALITY_MODEL_FEATURE_IMPORTANCE_INVALID")
+
+    def test_cluster_label_assignment_requires_complete_unique_single_labels(self):
+        with self.assertRaises(QualityPipelineError) as caught:
+            assign_cluster_labels([0, 1, 0], {"0": "normal"})
+        self.assertEqual(caught.exception.code, "QUALITY_CLUSTER_LABELS_REQUIRED")
+
+        with self.assertRaises(QualityPipelineError) as caught:
+            assign_cluster_labels([0, 1, 0], {"0": "normal", "1": "normal"})
+        self.assertEqual(caught.exception.code, "QUALITY_CLUSTER_LABELS_REQUIRED")
+
+        self.assertEqual(
+            assign_cluster_labels([0, 1, 0], {"0": "normal", "1": "strong_splatter"}),
+            ["normal", "strong_splatter", "normal"],
+        )
 
     def test_demo_dataset_is_report_compatible_and_has_multiple_label_groups(self):
         frame = build_demo_report_frame(24)

@@ -28,13 +28,15 @@ from app.models.spot_weld_quality import (
 from app.models.user import User
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.services.audit import AuditIntent
-from app.services.spot_weld_features import QualityPipelineError
+from app.services.spot_weld_features import QualityPipelineError, build_feature_frame
 from app.services.spot_weld_quality import (
     _annotation_progress,
     build_annotation_export,
     create_demo_quality_dataset,
     create_quality_run_record,
+    load_registered_quality_model,
     normalize_quality_search_config,
+    normalize_annotation_label,
     normalize_report_rule_config,
     QUALITY_LABEL_MODES,
     resolve_dataset_frame,
@@ -43,6 +45,8 @@ from app.services.spot_weld_quality import (
     update_quality_run_rules,
     validate_report_frame,
     resolve_quality_run_configuration,
+    run_clustering,
+    run_registered_model_annotation,
 )
 
 
@@ -73,6 +77,12 @@ class DatasetQualityRequest(BaseModel):
     max_trials: int = Field(default=20, ge=5, le=200)
     time_budget: int = Field(default=600, ge=60, le=3600)
     target_column: str | None = None
+    target_column_created: bool = False
+    target_column_dtype: str | None = None
+    selected_model_id: uuid.UUID | None = None
+    weak_supervision: bool = False
+    cluster_labels: dict[str, str] = Field(default_factory=dict)
+    process_rules: list[dict[str, str | float | int | bool]] = Field(default_factory=list)
     input_columns: list[str] | None = None
     cross_validation_enabled: bool = True
     cross_validation_folds: int | None = 3
@@ -107,6 +117,13 @@ class UpdateRulesRequest(BaseModel):
 
 class DemoDatasetRequest(BaseModel):
     row_count: int = Field(default=60, ge=12, le=5000)
+
+
+class ClusterPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_artifact_id: uuid.UUID
+    selected_model_id: uuid.UUID
 
 
 def _quality_error(error: QualityPipelineError, status: int = 400):
@@ -220,6 +237,13 @@ def _serialize_run(run: SpotWeldQualityRun, *, include_results: bool = True) -> 
             "time_budget": input_fingerprint.get("time_budget"),
         },
         "target_column": input_fingerprint.get("target_column"),
+        "target_column_created": bool(input_fingerprint.get("target_column_created", False)),
+        "target_column_dtype": input_fingerprint.get("target_column_dtype"),
+        "target_schema": statistics.get("target_schema") or input_fingerprint.get("target_schema"),
+        "selected_model_id": input_fingerprint.get("selected_model_id"),
+        "weak_supervision": bool(input_fingerprint.get("weak_supervision", False)),
+        "cluster_labels": dict(input_fingerprint.get("cluster_labels") or {}),
+        "process_rules": list(input_fingerprint.get("process_rules") or []),
         "input_columns": list(input_fingerprint.get("input_columns") or []),
         "evaluation": dict(
             input_fingerprint.get("evaluation")
@@ -245,7 +269,6 @@ def _serialize_run(run: SpotWeldQualityRun, *, include_results: bool = True) -> 
             "field_mapping": run.field_mapping or {},
             "feature_schema": run.feature_schema or [],
             "input_schema": statistics.get("input_schema") or input_fingerprint.get("input_schema") or [],
-            "target_schema": statistics.get("target_schema") or input_fingerprint.get("target_schema"),
             "automl_results": run.automl_results or [],
             "clustering_results": run.clustering_results or {},
             "output_artifacts": run.output_artifacts or {},
@@ -316,14 +339,20 @@ def validate_dataset(
             project_id,
             data.dataset_artifact_id,
         )
+        if not isinstance(data.target_column, str) or not data.target_column.strip():
+            raise QualityPipelineError("QUALITY_TARGET_COLUMN_REQUIRED")
         resolve_quality_run_configuration(
             frame,
             field_mapping=data.field_mapping,
             target_column=data.target_column,
+            target_column_created=data.target_column_created,
+            target_column_dtype=data.target_column_dtype,
             input_columns=data.input_columns,
             cross_validation_enabled=data.cross_validation_enabled,
             cross_validation_folds=data.cross_validation_folds,
         )
+        if data.label_mode == "automatic" and data.selected_model_id is None:
+            raise QualityPipelineError("QUALITY_MODEL_REQUIRED")
     except QualityPipelineError as error:
         _quality_error(error)
     return validate_report_frame(frame, data.field_mapping)
@@ -355,14 +384,22 @@ def create_run(
             project_id,
             data.dataset_artifact_id,
         )
+        if not isinstance(data.target_column, str) or not data.target_column.strip():
+            raise QualityPipelineError("QUALITY_TARGET_COLUMN_REQUIRED")
         run_configuration, _ = resolve_quality_run_configuration(
             frame,
             field_mapping=data.field_mapping,
             target_column=data.target_column,
+            target_column_created=data.target_column_created,
+            target_column_dtype=data.target_column_dtype,
             input_columns=data.input_columns,
             cross_validation_enabled=data.cross_validation_enabled,
             cross_validation_folds=data.cross_validation_folds,
         )
+        if data.label_mode == "automatic" and data.selected_model_id is None:
+            raise QualityPipelineError("QUALITY_MODEL_REQUIRED")
+        if data.weak_supervision and not data.cluster_labels:
+            raise QualityPipelineError("QUALITY_CLUSTER_LABELS_REQUIRED")
         with audit_service(db).project_action(
             db,
             request=request,
@@ -381,6 +418,12 @@ def create_run(
                     "max_trials": search_config["max_trials"],
                     "time_budget": search_config["time_budget"],
                     "target_column": run_configuration["target_column"],
+                    "target_column_created": run_configuration["target_column_created"],
+                    "target_column_dtype": run_configuration["target_column_dtype"],
+                    "selected_model_id": str(data.selected_model_id) if data.selected_model_id else None,
+                    "weak_supervision": data.weak_supervision,
+                    "cluster_labels": data.cluster_labels,
+                    "process_rules": data.process_rules,
                     "input_columns": run_configuration["input_columns"],
                     "evaluation": run_configuration["evaluation"],
                     "label_mode": data.label_mode,
@@ -389,7 +432,9 @@ def create_run(
             ),
             allowed_changes={
                 "dataset_artifact_id", "feature_version", "algorithm_ids", "search_method",
-                "max_trials", "time_budget", "target_column",
+                "max_trials", "time_budget", "target_column", "target_column_created", "target_column_dtype",
+                "selected_model_id", "weak_supervision",
+                "cluster_labels", "process_rules",
                 "input_columns", "evaluation", "label_mode", "rule_config",
             },
         ):
@@ -404,6 +449,12 @@ def create_run(
                 max_trials=search_config["max_trials"],
                 time_budget=search_config["time_budget"],
                 target_column=data.target_column,
+                target_column_created=data.target_column_created,
+                target_column_dtype=data.target_column_dtype,
+                selected_model_id=data.selected_model_id,
+                weak_supervision=data.weak_supervision,
+                cluster_labels=data.cluster_labels,
+                process_rules=data.process_rules,
                 input_columns=data.input_columns,
                 cross_validation_enabled=data.cross_validation_enabled,
                 cross_validation_folds=data.cross_validation_folds,
@@ -539,6 +590,8 @@ def list_quality_models(
     require_project_access(db, project_id, current_user.id, "project.read")
     models = db.query(ModelLibrary).filter(
         ModelLibrary.project_id == project_id,
+        ModelLibrary.status == "registered",
+        ModelLibrary.model_artifact_id.isnot(None),
     ).order_by(ModelLibrary.created_at.desc(), ModelLibrary.id.desc()).all()
     items = [
         _serialize_quality_model(model)
@@ -546,6 +599,75 @@ def list_quality_models(
         if (model.params or {}).get("source") == "spot_weld_quality"
     ]
     return {"items": items, "total": len(items)}
+
+
+@router.get("/datasets/{artifact_id}/columns")
+def list_quality_dataset_columns(
+    project_id: uuid.UUID,
+    artifact_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, current_user.id, "project.read")
+    try:
+        artifact_id_value = uuid.UUID(str(artifact_id))
+        artifact_service = get_quality_artifact_service(request, db)
+        _, frame = resolve_dataset_frame(db, artifact_service, project_id, artifact_id_value)
+    except (ValueError, QualityPipelineError, ArtifactAccessError):
+        raise HTTPException(404, detail={"code": "QUALITY_DATASET_NOT_FOUND"})
+    columns = [
+        {"name": str(column), "dtype": str(frame[column].dtype)}
+        for column in frame.columns
+    ]
+    return {
+        "columns": columns,
+        "row_count": int(len(frame)),
+        "target_candidates": [item["name"] for item in columns],
+    }
+
+
+@router.post("/cluster-preview")
+def preview_quality_clusters(
+    project_id: uuid.UUID,
+    data: ClusterPreviewRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, current_user.id, "resource.create")
+    artifact_service = get_quality_artifact_service(request, db)
+    try:
+        _, frame = resolve_dataset_frame(
+            db,
+            artifact_service,
+            project_id,
+            data.dataset_artifact_id,
+        )
+        features, schema, _ = build_feature_frame(frame)
+        model_library, bundle = load_registered_quality_model(
+            db,
+            project_id=project_id,
+            model_id=data.selected_model_id,
+            artifact_service=artifact_service,
+        )
+        _, _, importance = run_registered_model_annotation(features, bundle)
+        clustering = run_clustering(
+            features.to_numpy(dtype=float),
+            feature_names=schema,
+            feature_importance=importance,
+        )
+    except QualityPipelineError as error:
+        _quality_error(error)
+    counts = Counter(clustering.cluster_ids)
+    return {
+        "model_id": str(model_library.id),
+        "best_k": clustering.best_k,
+        "silhouette_scores": {str(key): value for key, value in clustering.silhouette_scores.items()},
+        "cluster_counts": {str(key): counts[key] for key in sorted(counts)},
+        "cluster_ids": clustering.cluster_ids,
+        "pca_coordinates": clustering.pca_coordinates.tolist(),
+    }
 
 
 @router.get("/runs/{run_id}")
@@ -774,6 +896,27 @@ def get_sample(
     return _serialize_sample(_sample_or_404(db, _run_or_404(db, project_id, run_id), sample_id), include_waveforms=True)
 
 
+def _allowed_labels_for_run(run: SpotWeldQualityRun) -> frozenset[str]:
+    input_fingerprint = run.input_fingerprint or {}
+    if input_fingerprint.get("label_mode", "automatic") != "manual":
+        return VALID_LABELS
+    target_schema = (
+        (run.statistics or {}).get("target_schema")
+        or input_fingerprint.get("target_schema")
+        or {}
+    )
+    classes = target_schema.get("classes") if isinstance(target_schema, dict) else None
+    allowed = frozenset(str(value) for value in (classes or []) if str(value).strip())
+    return allowed or VALID_LABELS
+
+
+def _manual_target_schema(run: SpotWeldQualityRun) -> dict:
+    input_fingerprint = run.input_fingerprint or {}
+    statistics = run.statistics or {}
+    target_schema = statistics.get("target_schema") or input_fingerprint.get("target_schema") or {}
+    return dict(target_schema) if isinstance(target_schema, dict) else {}
+
+
 @router.post("/runs/{run_id}/samples/{sample_id}/labels", status_code=201)
 def submit_label(
     project_id: uuid.UUID,
@@ -784,22 +927,38 @@ def submit_label(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if data.label not in VALID_LABELS:
-        raise HTTPException(422, detail={"code": "QUALITY_LABEL_INVALID"})
     access = require_project_access(db, project_id, current_user.id, "quality.label")
     run = _run_or_404(db, project_id, run_id)
+    target_schema = _manual_target_schema(run)
+    label_mode = (run.input_fingerprint or {}).get("label_mode", "automatic")
+    try:
+        normalized_label = normalize_annotation_label(data.label, target_schema) if label_mode == "manual" else str(data.label).strip()
+    except QualityPipelineError as error:
+        raise HTTPException(422, detail={"code": error.code}) from error
+    allowed_labels = _allowed_labels_for_run(run)
+    if label_mode != "manual" and normalized_label not in allowed_labels:
+        raise HTTPException(422, detail={"code": "QUALITY_LABEL_INVALID"})
+    if label_mode == "manual":
+        classes = [str(value) for value in target_schema.get("classes") or []]
+        if normalized_label not in classes:
+            classes.append(normalized_label)
+            target_schema = {
+                **target_schema,
+                "classes": classes,
+                "class_count": len(classes),
+            }
     sample = _sample_or_404(db, run, sample_id)
     revision = SpotWeldLabelRevision(
         project_id=project_id, run_id=run.id, sample_id=sample.id, author_id=current_user.id,
-        label=data.label, note=data.note, action="submitted", parent_revision_id=sample.current_revision_id,
+        label=normalized_label, note=data.note, action="submitted", parent_revision_id=sample.current_revision_id,
     )
     with audit_service(db).project_action(
         db, request=request, actor=current_user, access=access, permission="quality.label",
-        intent=AuditIntent(project_id=project_id, action="spot_weld_quality.label.submit", resource_type="spot_weld_quality_sample", resource_id=str(sample.id), changes={"label": data.label}),
+        intent=AuditIntent(project_id=project_id, action="spot_weld_quality.label.submit", resource_type="spot_weld_quality_sample", resource_id=str(sample.id), changes={"label": normalized_label}),
         allowed_changes={"label"},
     ):
         db.add(revision); db.flush()
-        sample.current_label = data.label
+        sample.current_label = normalized_label
         sample.current_note = data.note
         sample.review_status = "submitted"
         sample.current_revision_id = revision.id
@@ -817,6 +976,62 @@ def submit_label(
         annotated_count = db.query(SpotWeldQualitySample.id).filter(
             SpotWeldQualitySample.run_id == run.id,
             annotation_column.isnot(None),
+        ).count()
+        run.statistics = {
+            **statistics,
+            **({"target_schema": target_schema} if label_mode == "manual" else {}),
+            "annotation_progress": _annotation_progress(annotated_count, total_count),
+        }
+        if label_mode == "manual":
+            run.input_fingerprint = {
+                **(run.input_fingerprint or {}),
+                "target_schema": target_schema,
+            }
+    return _serialize_sample(sample)
+
+
+@router.delete("/runs/{run_id}/samples/{sample_id}/labels")
+def delete_label(
+    project_id: uuid.UUID,
+    run_id: str,
+    sample_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    access = require_project_access(db, project_id, current_user.id, "quality.label")
+    run = _run_or_404(db, project_id, run_id)
+    sample = _sample_or_404(db, run, sample_id)
+    with audit_service(db).project_action(
+        db,
+        request=request,
+        actor=current_user,
+        access=access,
+        permission="quality.label",
+        intent=AuditIntent(
+            project_id=project_id,
+            action="spot_weld_quality.label.delete",
+            resource_type="spot_weld_quality_sample",
+            resource_id=str(sample.id),
+            changes={"label": None},
+        ),
+        allowed_changes={"label"},
+    ):
+        sample.current_label = None
+        sample.current_note = None
+        sample.current_revision_id = None
+        sample.review_status = "pending_review"
+        statistics = dict(run.statistics or {})
+        total_count = int(
+            (statistics.get("annotation_progress") or {}).get("total_count")
+            or statistics.get("row_count")
+            or db.query(SpotWeldQualitySample.id).filter(
+                SpotWeldQualitySample.run_id == run.id,
+            ).count()
+        )
+        annotated_count = db.query(SpotWeldQualitySample.id).filter(
+            SpotWeldQualitySample.run_id == run.id,
+            SpotWeldQualitySample.current_label.isnot(None),
         ).count()
         run.statistics = {
             **statistics,

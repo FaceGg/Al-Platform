@@ -152,6 +152,24 @@ class TestAutoMLSearch(unittest.TestCase):
         self.assertTrue(all(trial.accuracy is not None for trial in completed))
         self.assertTrue(all(trial.accuracy == trial.score for trial in completed))
 
+    def test_family_search_accepts_custom_estimator_evaluator(self):
+        calls = []
+
+        def evaluator(estimator, *, task, features, target, evaluation):
+            calls.append((task, len(features), len(target)))
+            return 0.123
+
+        result = run_family_search(
+            family=get_algorithm_family("random_forest"), task="classification",
+            features=self.features, target=self.classification_target,
+            evaluation={"cross_validation_enabled": False, "cross_validation_folds": None},
+            config=SearchConfig(method="random", max_trials=2, timeout_seconds=30), catalog_index=0,
+            estimator_evaluator=evaluator,
+        )
+
+        self.assertEqual(result.best_score, 0.123)
+        self.assertEqual(len(calls), 2)
+
     def test_invalid_search_configuration_is_rejected(self):
         with self.assertRaises(ValueError):
             SearchConfig(method="unknown", max_trials=5, timeout_seconds=1)

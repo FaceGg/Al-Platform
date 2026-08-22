@@ -1621,7 +1621,34 @@ html body {
 }
 
 .spot-weld-annotation__workspace--detail {
-  grid-template-columns: minmax(220px, 0.72fr) minmax(520px, 1.8fr);
+  grid-template-columns: minmax(180px, 0.58fr) minmax(620px, 2.2fr);
+}
+
+.spot-weld-annotation__workspace-header {
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+}
+
+.spot-weld-annotation__workspace-header .page-kicker {
+  margin-bottom: 1px;
+  font-size: 10px;
+}
+
+.spot-weld-annotation__workspace-header .page-title {
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.spot-weld-annotation__workspace-header .page-subtitle {
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+.spot-weld-annotation__workspace-header .spot-weld-annotation__project {
+  min-width: 160px;
+  min-height: 30px;
 }
 
 .spot-weld-annotation__detail {
@@ -1702,21 +1729,6 @@ html body {
   background: var(--bg-elevated);
 }
 
-.spot-weld-annotation__raw-data-row.is-matched {
-  border-left-color: #2f9e44;
-  background: color-mix(in srgb, #2f9e44 10%, var(--bg-elevated));
-}
-
-.spot-weld-annotation__raw-data-row.is-unmatched {
-  border-left-color: #d94841;
-  background: color-mix(in srgb, #d94841 8%, var(--bg-elevated));
-}
-
-.spot-weld-annotation__raw-data-row.is-label-selected {
-  border-left-color: var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 10%, var(--bg-elevated));
-}
-
 .spot-weld-annotation__raw-data-row span {
   color: var(--text-secondary);
   font-size: 11px;
@@ -1734,12 +1746,77 @@ html body {
 }
 
 .spot-weld-annotation__label-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.spot-weld-annotation__label-item {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 3px;
+  min-width: 0;
+}
+
+.spot-weld-annotation__label-head,
+.spot-weld-annotation__label-footer,
+.spot-weld-annotation__label-head-actions {
+  display: flex;
+  align-items: center;
+}
+
+.spot-weld-annotation__label-head,
+.spot-weld-annotation__label-footer {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.spot-weld-annotation__label-head-actions {
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.spot-weld-annotation__label-footer {
+  margin-top: 9px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.spot-weld-annotation__label-list-editor {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.spot-weld-annotation__label-list-editor input {
+  min-width: 180px;
+  min-height: 32px;
+  flex: 1 1 220px;
+  padding: 4px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  font: inherit;
+}
+
+.spot-weld-annotation__label-list-editor input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 35%, transparent);
+  outline-offset: 1px;
+}
+
+.spot-weld-annotation__label-remove {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 6px !important;
 }
 
 .spot-weld-annotation__label-option {
+  width: 100%;
   min-height: 28px;
   padding: 4px 8px;
   border: 1px solid var(--border-default);
@@ -1748,6 +1825,7 @@ html body {
   background: var(--bg-elevated);
   cursor: pointer;
   font: inherit;
+  text-align: left;
 }
 
 .spot-weld-annotation__label-option:hover,
@@ -1764,7 +1842,7 @@ html body {
 
 @media (max-width: 1100px) {
   .spot-weld-annotation__workspace--detail {
-    grid-template-columns: minmax(200px, 0.7fr) minmax(0, 1.3fr);
+    grid-template-columns: minmax(180px, 0.55fr) minmax(0, 1.45fr);
   }
 }
 
@@ -1873,7 +1951,11 @@ html body {
 .data-annotation__tasks {
   display: grid;
   gap: 8px;
-  max-width: 1080px;
+  width: 100%;
+}
+
+.data-annotation__tasks-surface {
+  padding: 12px;
 }
 
 .data-annotation__task {
@@ -1971,7 +2053,8 @@ html body {
 
 .data-annotation__source-actions,
 .data-annotation__setup-footer,
-.data-annotation__rules-head {
+.data-annotation__rules-head,
+.data-annotation__rule-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;

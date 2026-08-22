@@ -5,7 +5,6 @@ from app.services.spot_weld_features import (
     REPORT_TABLE_FIELDS,
     WAVEFORM_FIELDS,
     build_feature_frame,
-    canonicalize_report_frame,
 )
 import pandas as pd
 import numpy as np
@@ -214,15 +213,28 @@ class SpotWeldFeatureEngineering(BaseOperator):
         data = inputs.get("data", [])
         frame = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
         features, schema, statistics = build_feature_frame(frame)
-        # Keep the encoded source waveforms alongside derived features so the
-        # operator output remains traceable to the original report row.
-        canonical = canonicalize_report_frame(frame)
         enriched = features.copy()
-        for field in WAVEFORM_FIELDS:
-            enriched[field] = canonical[field].to_numpy()
+        label_present = "Fault" in frame.columns
+        if label_present:
+            label = frame["Fault"].reset_index(drop=True)
+            if len(label) != len(enriched):
+                raise ValueError("Fault label length must match feature rows")
+            enriched["Fault"] = label.to_numpy()
+            schema.append("Fault")
+        statistics.update({
+            "label_column": "Fault",
+            "label_present": label_present,
+            "label_dtype": str(frame["Fault"].dtype) if label_present else None,
+        })
         return OperatorResult(outputs={
             "features": enriched.to_dict(orient="records"),
-            "schema": {"columns": schema},
+            "schema": {
+                "columns": schema,
+                "label_column": "Fault",
+                "label_position": "last",
+                "label_present": label_present,
+                "label_dtype": str(frame["Fault"].dtype) if label_present else None,
+            },
             "statistics": statistics,
         })
 

@@ -239,10 +239,18 @@ function CustomNode({ data, selected }: NodeProps) {
     },
   });
 
-  const portStyle = (index: number, total: number, side: "left" | "right"): React.CSSProperties => ({
-    top: total <= 1 ? "50%" : ((index + 0.5) / total) * 100 + "%",
-    ...(side === "left" ? { left: -16 } : { right: -16 }),
-  });
+  const portStyle = (index: number, total: number, side: "left" | "right"): React.CSSProperties => {
+    const compactSpotWeldOutputs = side === "right"
+      && opId === "spot_weld_feature_engineering"
+      && total === 3;
+    const top = compactSpotWeldOutputs
+      ? `${34 + index * 16}%`
+      : total <= 1 ? "50%" : `${((index + 0.5) / total) * 100}%`;
+    return {
+      top,
+      ...(side === "left" ? { left: -16 } : { right: -16 }),
+    };
+  };
 
   return (
     <div

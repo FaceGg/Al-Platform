@@ -299,6 +299,7 @@ def run_family_search(
     catalog_index: int,
     progress_callback: Callable[[TrialProgress], None] | None = None,
     trial_callback: Callable[[TrialSummary], None] | None = None,
+    estimator_evaluator: Callable[..., float] = _evaluate_estimator,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> FamilySearchResult:
     """Optimize one selected algorithm family within a bounded wall-time slice."""
@@ -333,14 +334,14 @@ def run_family_search(
                 params = _suggest_params(trial, family, exclude=family.resource_parameter)
                 for resource in _resource_rungs(family):
                     rung_params = {**params, family.resource_parameter: resource}
-                    score = _finite_score(_evaluate_estimator(
+                    score = _finite_score(estimator_evaluator(
                         family.build(task, rung_params), task=task, features=features,
                         target=target, evaluation=evaluation,
                     ))
                     trial.report(score, step=resource)
                     if trial.should_prune():
                         raise TrialPruned()
-                if task == "classification":
+                if task == "classification" and estimator_evaluator is _evaluate_estimator:
                     try:
                         auc, f1 = classification_metrics(
                             family.build(task, {**params, family.resource_parameter: family.max_resource}),
@@ -358,11 +359,11 @@ def run_family_search(
                 return score
 
             params = _suggest_params(trial, family)
-            score = _finite_score(_evaluate_estimator(
+            score = _finite_score(estimator_evaluator(
                 family.build(task, params), task=task, features=features,
                 target=target, evaluation=evaluation,
             ))
-            if task == "classification":
+            if task == "classification" and estimator_evaluator is _evaluate_estimator:
                 try:
                     auc, f1 = classification_metrics(
                         family.build(task, params),
@@ -432,7 +433,11 @@ def run_family_search(
     result.best_score = float(best_trial.value)
     result.best_params = best_params
     result.best_estimator = estimator
-    if task == "classification":
+    # Point-weld quality supplies its own evaluator, which fits LightGBM on a
+    # named DataFrame. Running the generic metric pass afterward would clone
+    # that estimator and feed it unnamed arrays, producing avoidable feature
+    # name warnings; the caller computes its domain metrics after the search.
+    if task == "classification" and estimator_evaluator is _evaluate_estimator:
         try:
             result.auc, result.f1 = classification_metrics(
                 estimator, features=features, target=target, evaluation=evaluation,

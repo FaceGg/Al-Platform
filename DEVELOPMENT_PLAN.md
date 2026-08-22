@@ -2394,6 +2394,30 @@
 - 验证方式：新增同一算法多个 trial 的回归，三项指标均为 `1.0000` 时断言选择耗时更少者；后端 AutoML 搜索、跟踪、报告测试 `43/43`，前端 `AutoMLTaskPage` `6/6`，并执行构建、Python 编译和 `git diff --check`。
 - 遗留事项：真实服务重启后的浏览器端到端 AutoML 重跑仍未执行；当前工作区并行改动保持原状。
 
+### 2026-08-20：点焊特征工程算子输出与画布端口调整
+
+- 实现状态：`Spot Weld Feature Engineering` 输出的 `features` 不再包含原始 `cvei`、`cvev`、`cver`、`cvep` 波形字段；固定生成的 73 个数值特征保持不变。输入存在 `Fault` 时，按最后一列原样保留；无 `Fault` 的历史报表仍可运行，不伪造标签。
+- 元数据：`schema` 增加 `label_column`、`label_position`、`label_present`、`label_dtype`；`statistics` 增加标签列是否存在、标签名和 dtype 信息，`feature_count` 仍为 73。
+- 画布：仅对该算子右侧输出端应用 12×16px 紧凑半圆并内收至节点右边框范围，其他算子端口样式不变。
+- 验证方式：后端算子执行、旧标签缺失兼容、CSV 制品导出、前端 `CustomNode` 测试和 TypeScript/Vite 构建均通过；`git diff --check` 通过。
+- 遗留事项：尚未启动真实服务执行浏览器画布视觉截图验收；当前修改未提交、未推送，也未运行远程 Actions。
+
+### 2026-08-20：点焊特征工程输出端尺寸更正
+
+- 需求更正：上一版将“紧凑”理解为缩小半圆尺寸；正确含义是保持原始半圆尺寸，仅缩小多个输出端之间的纵向间距。
+- 实现修正：移除该算子专属的 12×16px 样式，恢复全局 16×22.4px 半圆和 `right: -16px` 定位；三个输出端由约 16.7%/50%/83.3% 调整为 34%/50%/66%，集中在 176px 圆角节点的右侧直边范围，避开上下 30px 圆角区域。
+- 验证方式：`CustomNode.test.tsx` 13/13 通过，TypeScript/Vite 生产构建通过，`git diff --check` 通过；构建仅保留既有 ECharts 大 chunk 警告。
+- 遗留事项：尚未启动真实服务执行浏览器画布截图验收；修改未提交、未推送，也未运行远程 Actions。
+
+### 2026-08-20：Week 11/12 生产实验门禁修复可选转换器内存边界
+
+- 当前周次：第 11 至第 12 周系统联调与验收支持。
+- 问题现象：Actions Run `32337237531` 的 quality、生产集成和 Chromium 已通过，但 `Production experiment integration (Ubuntu)` 在 `TestInferenceProductionStack.setUpClass` 注册 LogisticRegression 版本时返回 `MODEL_CONVERSION_FAILED`；迁移、实验训练恢复和浏览器验收均已先行通过。
+- 根因：ONNX worker 顶层导入 CatBoost、LightGBM、XGBoost 和 `onnxmltools`，即使当前模型是 LogisticRegression 也初始化全部可选科学计算栈；Linux worker 同时启用虚拟地址空间/CPU 限制，导致真实生产容器中的转换启动边界比本地 Windows 聚焦环境更紧。
+- 解决方法：按模型类型懒加载 CatBoost、XGBoost、LightGBM 及其 `onnxmltools` 转换器；保留严格模型白名单和既有资源限制；新增回归断言 worker 导入不加载可选转换栈，并保留四类树模型转换测试。
+- 验证方式：ONNX 转换、模型注册服务/API `38/38` 通过；固定依赖组合 `numpy 2.3.5`、`scikit-learn 1.7.2`、`onnx 1.22.0`、`onnxruntime 1.22.1`、`skl2onnx 1.19.1` 下 LogisticRegression 转换通过；`compileall` 和 `git diff --check` 通过。
+- 遗留事项：修复提交后需重新运行 `mode=full` 的 Week 11-12 verification；本机 Docker CLI 当前不可用，不能把本地结果当作真实 Compose 通过。
+
 ### 2026-08-20：修复 Run 32326272019 测试清单遗漏
 
 - 问题现象：GitHub Actions Run `32326272019` 的 Ubuntu 和 Windows quality job 均在 `test_suite_manifest` 失败，完整套件实际为 `111 passed, 1 failed`；失败项提示新增 `test_automl_report` 未分配周次归属。
@@ -2401,3 +2425,108 @@
 - 解决方法：将 `test_automl_report` 纳入 Week 6 测试模块清单，保持默认完整套件和周次套件的单一归属约束。
 - 验证方式：本地 manifest 与 AutoML 聚焦测试 `48/48` 通过；Week 6 acceptance suite `14/14` 通过；推送后需以新 SHA 对应的 Actions Run 作为远端最终证据。
 - 遗留事项：Run `32326272019` 的两个 quality job 已失败，Production integration、Chromium 和 Week 11-12 verification 按 push 条件跳过；新 Run 的远端结果待完成。
+
+### 2026-08-20：数据标注任务入口、目标列与单标签交互重构（进行中）
+
+- 已实现：左侧数据标注默认进入任务列表，列表右上角保留独立的“新建手动标注任务”和“新建自动标注任务”；创建模式由入口固定，移除模拟数据、点焊配置/SPOT WELD 标题、模式单选和已有质量运行。
+- 已实现：增加数据集实际列元数据接口；目标列为必填，支持选择已有列或新建列，并从输入列排除目标列；任务快照返回 `target_column_created`。
+- 已实现：自动任务创建页加载当前项目已注册且有模型制品的模型，持久化选定模型和弱监督开关；worker 支持从受控制品加载 73 维模型 bundle，直接预测，弱监督时使用模型特征重要性执行加权 KMeans。
+- 已实现：样本详情将人工标签置顶，保持单标签覆盖语义，新增删除人工标签 API；删除仅清空当前状态并保留历史 revision，同时重算手动进度。手动任务不显示规则；自动任务仅显示只读“工艺规则”；移除提交复核按钮，保留保存到数据管理。
+- 验证：前端页面测试 `22/22`，新增后端契约测试 `3/3`，Python 编译、TypeScript/Vite 生产构建和 `git diff --check` 通过；构建仅有既有 ECharts 大 chunk 警告。
+- 已补充：弱监督聚类预览、簇到单标签映射、唯一标签和覆盖簇数校验；自动任务只允许当前项目已注册模型；规则区域增加“点焊工艺规则模版”按钮，规则可编辑并在任务中保存快照。
+- 本轮修复：`run_family_search` 增加可选点焊评估器并在自定义评估路径跳过通用 LightGBM 无列名预测，消除 `estimator_evaluator` 签名错误和特征名告警；API 测试更新为目标列必填、手动任务/自动注册模型新契约，并调整校验顺序以优先返回数据集和算法配置错误。
+- 验证：点焊质量 API/服务测试 `64/64`；数据标注页面测试 `23/23`；待执行生产构建、Python 编译、差异检查。
+- 遗留：尚未启动真实前后端服务执行浏览器 smoke；当前工作区包含并行用户修改，未提交、未推送、未运行远端 Actions。
+
+### 2026-08-20：数据标注重构后端契约与规则模板收口
+
+- 完成：目标列必填、新建目标列不进入模型输入、自动任务必须绑定注册模型、弱监督聚类标签映射和人工标签删除契约均已覆盖；任务列表入口及规则模板按钮已纳入页面实现。
+- 根因修复：点焊 AutoML 调用方传入 `estimator_evaluator` 而搜索服务签名未接收；同时自定义 LightGBM 评估完成后又进入通用无列名评估，导致运行错误/警告。搜索服务现在接收自定义评估器，并在该路径只使用领域评估结果。
+- 验证：后端 `tests.test_api_spot_weld_quality tests.test_spot_weld_quality_service` 为 `64/64`，前端 `DataAnnotationPage.test.tsx` 为 `23/23`。
+- 剩余风险：真实模型制品加载、浏览器端完整创建/聚类预览/保存链路和远端 Actions 仍需在服务重启及发布后验证。
+
+### 2026-08-21：数据标注任务列表与手动详情交互修正
+
+- 完成：数据标注入口右侧直接显示“标注任务”列表，两个新建任务按钮移动到列表页头右侧；任务行统一显示删除按钮，运行中任务按钮禁用，终态任务可确认删除。
+- 完成：手动标注详情在保存标签后同步刷新任务级标注进度；人工标签增加“编辑”状态，支持添加、修改和删除标签，移除旧的“删除人工标签”按钮文案。
+- 完成：当前样本数据移除规则命中的红色/绿色高亮，只保留统一数据行样式。
+- 完成：轮询只刷新任务和样本队列，不再重新请求当前样本详情，因此不会因 `loadingDetail` 反复切换导致页面闪烁。
+- 验证：`DataAnnotationPage.test.tsx` 为 `24/24`，前端 TypeScript/Vite 生产构建通过；点焊质量进度相关后端回归 `2/2` 通过。
+- 遗留：尚未执行真实浏览器 smoke、服务重启后的完整手动标注链路和远端 Actions。
+
+### 2026-08-21：Week 11/12 远程 Windows quality 超时修正（待远程重跑）
+
+- 问题现象：Actions Run `32370836856` 的 Ubuntu quality 为 `success`，Windows quality 在 `TrainingJobsPage.test.tsx` 的“stops, resumes, and opens TensorBoard through platform actions”用例以默认 5 秒超时失败；该 job 后置的 Chromium、两个 production integration 和 Week 11-12 verification 均为 `skipped`，不计为通过。
+- 根因：该用例包含 Ant Design 渲染、异步项目/训练任务加载、停止/恢复后的刷新和 TensorBoard 会话创建；Windows 全量 Vitest 在高导入和测试负载下单个用例超过默认 5 秒，但组件断言本身没有失败。单文件运行两次均约 2 秒完成，说明是测试环境时序预算不足而非业务路径断言回归。
+- 解决方法：将该长链路用例的测试级超时显式提高到 `20_000` 毫秒，保留既有 `waitFor` 条件等待，不放宽断言、不屏蔽错误。
+- 验证方式：当前工作区前端完整套件 `44` 个文件、`203 passed`、`19 skipped`；该用例单独连续运行两次通过。结果仅证明本地测试通过，待以包含修正的当前 SHA 重新运行远程 full workflow。
+- 当前状态：Week 9-12 仍保持进行中；本地真实 WSL 生产态已有历史通过记录，最新远程 full 门禁尚未重新通过。其余并行点焊/标注/AutoML dirty 改动保持未提交、未推送。
+
+### 2026-08-21：Run 32435363697 暴露四镜像共同 BusyBox CVE（待远程重建）
+
+- 问题现象：当前 `main` SHA `cbdb869d3618c1780e8b6d2e71a8d5e16beeaeac` 的 full run `32435363697` 中，生产集成、实验集成、双平台 Quality 和 Chromium acceptance 均为 `success`；`Week 11-12 verification` 的验证工具、文件系统 Trivy、pip-audit、npm audit、Bandit、Gitleaks、冻结栈 Web 安全门禁均执行，其中安全汇总因四个容器镜像 Trivy 报告失败而失败。四个镜像都发现 BusyBox `1.37.0-r61` 的 `CVE-2026-38753` 与 `CVE-2026-38754`，修复版本为 `1.38.0-r0`。
+- 已确认根因：backend、worker、inference、tensorboard 四个 Dockerfile 共享 `cgr.dev/chainguard/wolfi-base` 的旧 immutable digest `sha256:30f033...5812f`，因此同一旧 BusyBox 层被复制到四个生产镜像；汇总器的 `SECURITY_EVIDENCE_INVALID` 是对失败镜像回执的 fail-closed 结果，不是扫描器输出缺失，也不是 Web 安全门禁失败。
+- 解决方法：将 `.github/contracts/python-base-image.json` 与四个生产 Dockerfile 的基础引用统一轮换到当前 registry `latest` 对应的 immutable digest `sha256:bfcffaf1336b26a3fd33c8cb31a86a09324d2048420d7f49b983f323b0d33e8d`；保留 Python/pip 精确 pin、APK 有限重试、非 root UID、OCI revision 和 fail-closed 汇总逻辑；新增镜像合同回归固定该修复 digest。
+- 验证方式：新增回归在旧 digest 上先稳定失败，更新后 `tests.test_image_security_contracts` 为 `10/10`，`compileall -q tools tests` 和 `git diff --check` 通过；本机 Docker CLI 不可用，不能把静态合同结果写成镜像构建或 Trivy 通过。必须在包含该修复的新 SHA 上重新构建四镜像、核对 image ID/OCI revision/non-root smoke，重新执行完整 `tools.security_scans`、冻结 Compose 和 evidence manifest。
+- 当前状态：Week 9/10 实现和本地回归保持完成；Week 11/12 真实固定资源、备份恢复、N-1、外部角色/通知矩阵、镜像安全和最终发布 evidence 仍未闭环。并行点焊质量、AutoML、数据标注改动继续保持 dirty，不得混入本次安全提交。
+
+### 2026-08-21：数据标注列表与详情布局统一、人工标签编辑语义拆分
+
+- 完成：任务列表增加统一的 `table-surface` 容器，保持与项目列表、数据管理等页面相同的页头/内容区结构；任务操作仍位于列表页头右侧。
+- 完成：详情页顶部“数据标注”页头收紧高度和字号，样本队列列宽收窄，样本详情主列扩大；移动端仍保持单列布局。
+- 完成：人工标签选项始终用于当前样本结果选择；“编辑”仅进入标签列表维护模式，支持当前会话内新增/删除标签选项，不再通过编辑状态隐藏或显示样本标注选项，也不再提供旧的样本结果删除按钮。
+- 验证：`DataAnnotationPage.test.tsx` `25/25`；前端 TypeScript/Vite 生产构建通过；`git diff --check` 通过。构建仅保留既有 ECharts 大 chunk 警告。
+- 说明：当前新增/删除标签列表为页面会话状态，尚未持久化为项目级标签配置；若需跨刷新、跨任务复用，需要新增后端标签定义接口和数据库字段。
+
+### 2026-08-21：Week 11/12 verification job 超时修正（待远程重跑）
+
+- 问题现象：Actions Run `32439495969` 绑定当前安全提交 `5004b318e98c41b0305200b776b17586a90c0f4a`；Ubuntu/Windows Quality、生产 integration、实验 integration 和 Chromium 均为 `success`，但 Week 11-12 verification 在 `Run security scans` 以 `cancelled` 结束，冻结栈 Web security gate 和 security summary 为 `skipped`，整条 full run 结论为 `cancelled`，不能计为远程发布门禁通过。
+- 已确认根因：该 job 的 `timeout-minutes` 为 `30`。本次新 Wolfi digest 造成四个生产镜像冷构建，job 从 `2026-08-21T05:32:02Z` 执行至 `2026-08-21T06:02:02Z` 正好达到硬超时；镜像构建和 296 项验证工具在超时前均成功，GitHub 日志明确记录 `The operation was canceled`，不是安全扫描器已返回的失败结论。
+- 解决方法：将 `.github/workflows/ci.yml` 的 Week 11-12 verification job timeout 提高到 `45` 分钟；保留四镜像构建、全部安全扫描、冻结栈 Web gate、fail-closed summary 和证据上传逻辑不变；新增 `test_week11_12_verification_allows_fresh_image_and_security_evidence_run` 回归，要求该 job timeout 至少为 45 分钟。
+- 验证方式：先在旧配置上运行新增回归并得到预期失败（`30 not greater than or equal to 45`），更新配置后需运行 CI workflow contract 聚焦测试、`git diff --check`，并以包含该修复的新 SHA 触发 `mode=full`；最终必须查询 run/job JSON，逐项记录 `success`、`failure`、`cancelled` 和 `skipped`。
+- 当前状态：Week 9/10 实现、本地回归和当前 SHA 的前置远程 job 已有证据；Week 11/12 远程安全汇总、冻结栈 Web gate、最终 evidence manifest 仍未闭环，待本次 timeout 修复发布后的新 full run。
+
+### 2026-08-21：数据标注目标列类型与人工标签类型化默认值完成
+
+- 需求实现：新建手动数据标注任务在“目标列来源=新建目标列”时增加数据类型下拉框，支持 `int`、`float`、`string`；任务创建请求、任务快照和任务列表返回 `target_column_dtype` 与 `target_schema`。
+- 默认标签：新建目标列按类型生成三个默认标签：`int` 为 `0/1/2`，`float` 为 `0.0/1.0/2.0`，`string` 为 `label_0/label_1/label_2`。人工标签区域根据任务目标列名称和 dtype 展示，例如 `Fault · int64`，并只显示目标列实际类别。
+- 已有列：选择已有目标列时沿用数据文件实际 dtype 和去重后的非空值类别；例如 `Fault` 为 `int64` 且值为 `0/1` 时，人工标签选项为 `0`、`1`，服务端拒绝不在目标 schema 中的标签值。
+- 导出：保存到数据管理时使用任务目标列的实际名称，不再固定写入 `label`；根据目标 schema 将人工标签转换为整数、浮点或字符串，避免导出类型漂移。
+- 兼容性：目标列类型仍存放在既有 `input_fingerprint/statistics` JSON 中，无 ORM 字段变化，无需新增 Alembic 迁移。
+- 验证：后端 `tests.test_api_spot_weld_quality tests.test_spot_weld_quality_service` 为 `66/66`；新增目标列类型、目标 schema、人工标签集合和类型化导出回归；前端 `DataAnnotationPage.test.tsx` 为 `26/26`；TypeScript/Vite 生产构建、Python `compileall` 和 `git diff --check` 通过。构建仅保留既有 ECharts 大 chunk 警告。
+- 风险与遗留：人工标签/目标列定义仍随单个任务快照保存，未新增项目级标签字典；尚未启动真实前后端服务执行浏览器 smoke，未提交、未推送、未运行远端 Actions。前端任务列表测试曾出现一次异步时序抖动，连续聚焦重跑及最终整文件运行均通过。
+
+### 2026-08-21：人工标签新增值类型校验与 422 修复
+
+- 问题现象：手动标注页添加新标签后，提交样本标签可能返回 `422 Unprocessable Content`；删除标签接口回归中还出现 `NameError: label_mode is not defined`。
+- 根因：前端会话内新增标签未必存在于服务端任务快照类别集合，服务端提交接口未在成功标注后把扩展后的 `target_schema` 写回 `run.statistics`；删除接口误复用了提交接口的 `label_mode/target_schema` 更新逻辑。
+- 解决方法：服务端以任务 `target_schema.dtype` 为准，在提交边界归一化标签（int 支持 `2.0` 转为 `2`，float 转为有限浮点字符串，string 转为去首尾空白），合法新值追加到 schema 并持久化到 `statistics` 与 `input_fingerprint`；删除接口仅重算标注进度。旧测试更新为允许合法新值、拒绝非法类型。
+- 验证方式：点焊质量 API/服务聚焦测试 `67/67`；数据标注页面测试 `27/27`；前端 TypeScript/Vite 构建、Python `compileall` 和 `git diff --check` 通过。尚未执行真实浏览器 smoke、远端 Actions。
+- 预防措施：新增标签必须在 API 服务边界再次做 dtype 校验和持久化，不能只依赖前端状态；提交与删除接口的统计更新逻辑分别维护，避免复制变量造成未定义引用；422 回归应断言稳定业务错误码而非仅断言 HTTP 状态。
+
+### 2026-08-21：Week 11/12 verification 仍受冷路径总时长限制（待远程重跑）
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”。本条只调整 Week 11-12 verification 的时间预算，不把远程取消、后置 skipped 或本地测试通过升级为最终发布门禁通过。
+- 问题现象：Actions Run `32459707829` 绑定 HEAD `213d2c0c775b18fba041a3e29997cd022afaf906`；Windows/Ubuntu Quality、生产集成、实验集成和 Chromium 均为 `success`。Week 11-12 verification 在 `Build production images for security scan` 完成后，`Run verification tools` 刚开始即被取消，后续 `Run security scans`、冻结栈 Web gate 和安全汇总为 `skipped`，run 结论为 `cancelled`。
+- 根因：job 的 `timeout-minutes: 45` 被依赖安装约 22 分钟和四镜像冷构建约 22 分钟共同耗尽；验证工具本身尚未返回失败，GitHub 日志记录 `The operation was canceled`。这是 CI 总预算不足，不是业务验证失败。
+- 解决方法：将 `.github/workflows/ci.yml` 的 Week 11-12 verification `timeout-minutes` 提高到 `60`，并将 `test_week11_12_verification_allows_fresh_image_and_security_evidence_run` 的最低预算断言同步提高到 `60`；保留所有验证工具、安全扫描、冻结栈 Web gate 和 fail-closed 汇总逻辑。
+- 验证方式：合同回归通过；`tests.test_week11_contracts tests.test_week12_security_gates tests.test_evidence_manifest` 共 `197` 项通过、`1` 项因 POSIX 目录权限条件 skipped；`git diff --check` 通过。该结果属于本地测试，不等价于 Docker 真实运行态或远程发布门禁。
+- 远程状态：Run `32459676808` 因并发 workflow 被取消，不能计入任何通过项；Run `32459707829` 的前置 jobs 成功，但 Week 11-12 verification 为 cancelled，后置安全/Web/汇总为 skipped。必须以包含本修复的新 SHA 重新执行 `mode=full`，逐项记录 success、failure、cancelled 和 skipped 后，才能关闭 Week 11-12 及第 12 周。
+- 遗留事项：远程新 full run、四镜像新鲜 Trivy/security receipts、冻结 Compose Web gate、最终 evidence manifest、固定资源性能、备份恢复、N-1 和最终发布合并仍未完成。
+
+### 2026-08-21：Week 11/12 verification 60 分钟修复已 scoped 发布
+
+- 当前状态：第 9 至第 12 周继续保持“进行中”。仅 CI 时间预算修复已提交并推送，其他点焊质量、AutoML、数据标注和 `.idea/` dirty 改动未纳入提交。
+- 发布范围：提交 `b23df21`（`ci: extend week12 verification budget`）仅修改 `.github/workflows/ci.yml` 和 `ml-platform/backend/tests/test_ci_workflow.py`，将 Week 11-12 verification 预算和合同最低值从 `45` 提高到 `60` 分钟。
+- 本地验证：CI workflow 合同测试 `42/42` 通过；先前 Week 11/12 contracts、security gates、evidence manifest 为 `197 passed`、`1 skipped`；`git diff --check` 通过。
+- 远程状态：已推送 `main` 并触发 Actions Run `32494707643`（HEAD `b23df21`，`workflow_dispatch`, `mode=full`）。截至记录时 run 仍运行中，不能将任何未完成 job 计为 success；需等待并逐项记录 `success`、`failure`、`cancelled`、`skipped`。
+- 遗留事项：若新 run 通过，仍需确认新鲜镜像 receipts、冻结栈 Web gate、最终 evidence manifest、性能、备份恢复、N-1 和合并状态；若再次取消或失败，保留精确 job/step 证据后继续最小修复。
+
+### 2026-08-22：Week 9-12 当前 main full 门禁全部通过
+
+- 当前状态：Week 9/10 的实现、本地回归和当前 main 的远程前置门禁保持通过；Week 11/12 的安全、冻结栈和浏览器远程门禁已通过，但第 9 至第 12 周整体仍保持“进行中”，因为真实性能、备份恢复、N-1 和最终交付证据尚未闭环。
+- 远程证据：Actions Run `32494707643`，HEAD `b23df216e6108910c72b6bc99a3245a82bcc20c0`，总结果 `success`。Quality（Ubuntu/Windows）、Production integration、Production experiment integration、Chromium acceptance、Week 11-12 verification 均为 `success`；仅平台条件步骤（另一平台 service smoke、成功路径 failure-evidence 上传）为 `skipped`，不计入功能失败，也不把 skipped 计为通过。
+- 安全证据：artifact `9453181884`（`week11-12-verification-evidence`）中的四镜像 Trivy、filesystem Trivy、pip-audit、npm audit、Bandit、Gitleaks、冻结栈 Web gate 和 security summary 均为 `passed`，四镜像 revision 和 image ID 均绑定当前提交。
+- 运行态边界：该远程 artifact 只覆盖 CI 验证工具、扫描、冻结栈 Web gate 和证据汇总；未生成真实性能三轮、PostgreSQL/MinIO 备份恢复或真实 N-1 升级结果。因此这些项目继续标记为未完成，不能因 full run 全绿而关闭 Week 11-12。
+- 当前环境：本机 `docker` CLI 不可用；没有新增本地 Compose、性能、备份或升级运行态证据。工作区原有点焊质量、AutoML、数据标注和 `.idea/` 未提交改动继续保留。
+- 下一步：在具备 Docker/WSL 权限的隔离环境中执行固定 4 vCPU/8 GiB 三轮性能、真实 PostgreSQL/MinIO 备份恢复、N-1 数据升级及证据 manifest；每项分别记录本地测试、真实运行态、远程门禁和 skipped 状态，再决定 Week 9-12 最终关闭。

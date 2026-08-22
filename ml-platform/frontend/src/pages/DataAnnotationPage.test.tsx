@@ -70,6 +70,14 @@ describe("DataAnnotationPage", () => {
           annotation_progress: { annotated_count: 2, total_count: 4, percent: 50 },
         },
       ] } });
+      if (url.includes("/spot-weld/datasets/") && url.endsWith("/columns")) return Promise.resolve({ data: {
+        columns: [{ name: "wld1c", dtype: "float64" }, { name: "Fault", dtype: "object" }],
+        row_count: 12,
+        target_candidates: ["wld1c", "Fault"],
+      } });
+      if (url === "/projects/project-1/spot-weld/models") return Promise.resolve({ data: { items: [{
+        id: "model-1", name: "质量模型", version: "v1", status: "registered", framework: "scikit-learn",
+      }] } });
       if (url.endsWith("/samples")) return Promise.resolve({ data: { items: [{ id: "sample-1", display_id: "W-0001", review_status: "pending_review", warning_level: "none" }] } });
       if (url.endsWith("/samples/sample-1")) return Promise.resolve({ data: { id: "sample-1", display_id: "W-0001", review_status: "pending_review", waveforms: { current: [1], voltage: [2], resistance: [3], power: [4] } } });
       return Promise.resolve({ data: { items: [] } });
@@ -85,7 +93,9 @@ describe("DataAnnotationPage", () => {
 
     expect(await screen.findByRole("button", { name: "新建手动标注任务" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "新建自动标注任务" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "点焊标注任务列表" })).toBeInTheDocument();
+    const taskList = screen.getByRole("region", { name: "点焊标注任务列表" });
+    expect(taskList).toBeInTheDocument();
+    expect(taskList.parentElement).toHaveClass("table-surface");
     expect(screen.queryByText("SPOT WELD / TASKS")).not.toBeInTheDocument();
     expect(screen.queryByText("点焊标注任务")).not.toBeInTheDocument();
     expect(screen.queryByText("查看任务状态、标注方式和当前进度")).not.toBeInTheDocument();
@@ -105,9 +115,11 @@ describe("DataAnnotationPage", () => {
       fireEvent.click(screen.getByRole("button", { name: "新建自动标注任务" }));
       await Promise.resolve();
     });
-    expect(await screen.findByRole("heading", { name: "点焊标注配置" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "新建自动标注任务" })).toBeInTheDocument();
     expect(screen.getByLabelText("数据管理文件")).toBeInTheDocument();
-    expect(screen.getByText("自动标注规则")).toBeInTheDocument();
+    expect(screen.getByLabelText("目标列")).toBeDisabled();
+    expect(screen.queryByText("准备模拟数据")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("已有质量运行")).not.toBeInTheDocument();
   });
 
   it("loads compatible data-management files from an automatic-label setup link", async () => {
@@ -162,16 +174,21 @@ describe("DataAnnotationPage", () => {
     await waitFor(() => expect(remove).toHaveBeenCalledWith("/projects/project-1/spot-weld/runs/run-1"));
   });
 
-  it("edits and saves automatic rules in the annotation detail", async () => {
-    put.mockResolvedValue({ data: {
-      id: "run-1", status: "completed", label_mode: "automatic",
-      rule_config: { ...{
-        strong_splatter_min: 4, weak_splatter_value: 2, spotdiameter_small_min: 0,
-        spotdiameter_small_max: 2, spotdiameter_large_min: 80, energy_dev_sigma: 2.5,
-        current_max_diff_percentile: 95, power_std_percentile: 95,
-        spatter_cluster_id: 1, spatter_cluster_min_strength: 2,
-      } },
-    } });
+  it("shows task actions in the task-list header and keeps delete available for every task", async () => {
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=tasks&projectId=project-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    const list = await screen.findByRole("region", { name: "点焊标注任务列表" });
+    expect(screen.getByRole("heading", { name: "标注任务" })).toBeInTheDocument();
+    expect(list.closest(".table-surface")).toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: "删除标注任务 run-1" })).toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: "删除标注任务 run-manual" })).toBeInTheDocument();
+  });
+
+  it("shows automatic process rules as read-only after task creation", async () => {
     render(
       <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=workspace&projectId=project-1&runId=run-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AntApp><DataAnnotationPage /></AntApp>
@@ -179,16 +196,12 @@ describe("DataAnnotationPage", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "W-0001" }));
-    fireEvent.change(await screen.findByLabelText("强飞溅阈值"), { target: { value: "4" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存标注规则" }));
-
-    await waitFor(() => expect(put).toHaveBeenCalledWith(
-      "/projects/project-1/spot-weld/runs/run-1/rules",
-      expect.objectContaining({ rule_config: expect.objectContaining({ strong_splatter_min: 4 }) }),
-    ));
+    expect(await screen.findByRole("heading", { name: "工艺规则" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存标注规则" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("强飞溅阈值")).not.toBeInTheDocument();
   });
 
-  it("shows editable reference rules without automatic wording for manual tasks", async () => {
+  it("does not show process rules for manual tasks", async () => {
     render(
       <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=workspace&projectId=project-1&runId=run-manual&mode=manual"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AntApp><DataAnnotationPage /></AntApp>
@@ -196,9 +209,9 @@ describe("DataAnnotationPage", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "W-0001" }));
-    expect(await screen.findByRole("heading", { name: "标注规则" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "自动标注规则" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "保存标注规则" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "人工标签" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "工艺规则" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "标注规则" })).not.toBeInTheDocument();
   });
 
   it("refreshes an active run and its sample queue every second", async () => {
@@ -228,6 +241,7 @@ describe("DataAnnotationPage", () => {
 
     expect(get).toHaveBeenCalledWith("/projects/project-1/spot-weld/runs/run-live");
     expect(get).toHaveBeenCalledWith("/projects/project-1/spot-weld/runs/run-live/samples", { params: {} });
+    expect(get).not.toHaveBeenCalledWith("/projects/project-1/spot-weld/runs/run-live/samples/sample-1");
     vi.useRealTimers();
   });
 
@@ -253,6 +267,8 @@ describe("DataAnnotationPage", () => {
     expect(styles).toContain(".spot-weld-annotation__rule-list {\n  display: grid;\n  grid-template-columns: repeat(2, minmax(0, 1fr));");
     expect(styles).toContain("max-block-size: min(48vh, 520px);");
     expect(styles).toContain("padding: 4px 6px;");
+    expect(styles).not.toContain(".spot-weld-annotation__raw-data-row.is-matched");
+    expect(styles).not.toContain(".spot-weld-annotation__raw-data-row.is-unmatched");
   });
 
   it("falls back to an accessible project when the URL project is stale", async () => {
@@ -276,11 +292,31 @@ describe("DataAnnotationPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "W-0001" }));
     expect(await screen.findByText("当前样本数据")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "删除人工标签" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "功率波动异常" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/projects/project-1/spot-weld/runs/run-1/samples/sample-1/labels",
       { label: "power_fluctuation", note: "" },
     ));
+  });
+
+  it("uses edit mode for the label list without hiding sample label choices", async () => {
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&projectId=project-1&runId=run-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "W-0001" }));
+    expect(await screen.findByText("当前样本数据")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "正常" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+
+    expect(screen.getByRole("textbox", { name: "新建人工标签" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加标签" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "正常" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "删除人工标签 正常" })).toBeInTheDocument();
   });
 
   it("shows every real sample field, keeps automatic labels unselected, and saves a clicked label", async () => {
@@ -320,6 +356,8 @@ describe("DataAnnotationPage", () => {
     expect(screen.getByText("retained")).toBeInTheDocument();
     expect(screen.getByText("[1, 2, 3]")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "强飞溅缺陷" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "删除人工标签" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "能量异常" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/projects/project-1/spot-weld/runs/run-1/samples/sample-1/labels",
@@ -330,7 +368,7 @@ describe("DataAnnotationPage", () => {
   it("renders all configured quality labels for automatic evidence and manual correction", async () => {
     get.mockImplementation((url: string) => {
       if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "焊装线", project_role: "owner" }] } });
-      if (url === "/projects/project-1/spot-weld/runs") return Promise.resolve({ data: { items: [{ id: "run-1", status: "completed", sample_count: 1 }] } });
+      if (url === "/projects/project-1/spot-weld/runs") return Promise.resolve({ data: { items: [{ id: "run-1", status: "completed", sample_count: 1, label_mode: "automatic" }] } });
       if (url.endsWith("/samples")) return Promise.resolve({ data: { items: [{ id: "sample-1", display_id: "W-0001", review_status: "pending_review", warning_level: "notice" }] } });
       if (url.endsWith("/samples/sample-1")) return Promise.resolve({ data: {
         id: "sample-1",
@@ -350,7 +388,7 @@ describe("DataAnnotationPage", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "W-0001" }));
-    await screen.findByText("自动标注规则");
+    await screen.findByText("工艺规则");
     expect(screen.getByRole("button", { name: "飞溅倾向簇" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText("cluster=1 且 飞溅等级 >= 2")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "电流波形异常" })).toBeInTheDocument();
@@ -409,7 +447,7 @@ describe("DataAnnotationPage", () => {
     expect(screen.getByText("选择样本查看详情")).toBeInTheDocument();
   });
 
-  it("uses edited automatic rules when it creates a quality run", async () => {
+  it("creates an automatic task with a required target column and registered model", async () => {
     post.mockImplementation((url: string) => {
       if (url === "/projects/project-1/datasets/upload") return Promise.resolve({ data: { artifact_id: "artifact-1" } });
       if (url.endsWith("/spot-weld/validate")) return Promise.resolve({ data: { valid_rows: 12, errors: [] } });
@@ -422,28 +460,29 @@ describe("DataAnnotationPage", () => {
       </MemoryRouter>,
     );
 
-    const file = new File(["report"], "spot-weld.csv", { type: "text/csv" });
-    fireEvent.change(await screen.findByLabelText("上传点焊报告"), { target: { files: [file] } });
-
-    await waitFor(() => expect(post).toHaveBeenCalledWith(
-      "/projects/project-1/datasets/upload",
-      expect.any(FormData),
-    ));
-    fireEvent.change(screen.getByLabelText("强飞溅阈值"), { target: { value: "4" } });
+    fireEvent.change(await screen.findByLabelText("数据管理文件"), { target: { value: "dataset-report" } });
+    await waitFor(() => expect(screen.getByLabelText("目标列")).not.toBeDisabled());
+    fireEvent.change(screen.getByLabelText("目标列"), { target: { value: "Fault" } });
+    fireEvent.change(screen.getByLabelText("选择模型"), { target: { value: "model-1" } });
     fireEvent.click(screen.getByRole("button", { name: "开始自动标注" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/projects/project-1/spot-weld/runs",
       {
-        dataset_artifact_id: "artifact-1",
+        dataset_artifact_id: "dataset-report",
         field_mapping: {},
         algorithm_ids: [],
         search_method: "bayesian",
         max_trials: 20,
         time_budget: 600,
         label_mode: "automatic",
+        target_column: "Fault",
+        target_column_created: false,
+        input_columns: ["wld1c"],
+        selected_model_id: "model-1",
+        weak_supervision: false,
         rule_config: {
-          strong_splatter_min: 4,
+          strong_splatter_min: 3,
           weak_splatter_value: 2,
           spotdiameter_small_min: 0,
           spotdiameter_small_max: 2,
@@ -454,23 +493,74 @@ describe("DataAnnotationPage", () => {
           spatter_cluster_id: 1,
           spatter_cluster_min_strength: 2,
         },
+        cluster_labels: {},
+        process_rules: [],
       },
     ));
   });
 
-  it("creates a manual point-weld run without automatic rule labels", async () => {
+  it("requires cluster preview and one unique label per cluster for weak supervision", async () => {
+    post.mockImplementation((url: string) => {
+      if (url.endsWith("/cluster-preview")) return Promise.resolve({ data: {
+        model_id: "model-1",
+        best_k: 2,
+        silhouette_scores: { "2": 0.8 },
+        cluster_counts: { "0": 7, "1": 5 },
+        cluster_ids: [0, 1],
+        pca_coordinates: [[0, 0], [1, 1]],
+      } });
+      if (url.endsWith("/validate")) return Promise.resolve({ data: { valid_rows: 12, errors: [] } });
+      if (url.endsWith("/runs")) return Promise.resolve({ data: { id: "run-weak", status: "queued" } });
+      return Promise.resolve({ data: {} });
+    });
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=setup&mode=automatic&projectId=project-1&datasetId=dataset-report"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("目标列")).not.toBeDisabled());
+    fireEvent.change(screen.getByLabelText("目标列"), { target: { value: "Fault" } });
+    fireEvent.change(screen.getByLabelText("选择模型"), { target: { value: "model-1" } });
+    fireEvent.click(screen.getByLabelText("弱监督标注策略"));
+    expect(screen.getByRole("button", { name: "点焊工艺规则模版" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "点焊工艺规则模版" }));
+    expect(screen.getByLabelText("强飞溅阈值")).toHaveValue(3);
+    expect(screen.getByRole("button", { name: "开始自动标注" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "预览聚类结果" }));
+
+    expect(await screen.findByRole("heading", { name: "聚类结果" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("簇 0 标签"), { target: { value: "normal" } });
+    fireEvent.change(screen.getByLabelText("簇 1 标签"), { target: { value: "strong_splatter" } });
+    expect(screen.getByRole("button", { name: "开始自动标注" })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "开始自动标注" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/projects/project-1/spot-weld/runs",
+      expect.objectContaining({
+        weak_supervision: true,
+        cluster_labels: { "0": "normal", "1": "strong_splatter" },
+        process_rules: expect.any(Array),
+      }),
+    ));
+  });
+
+  it("creates a manual task from its dedicated entry with a new target column", async () => {
     post.mockImplementation((url: string) => {
       if (url.endsWith("/spot-weld/validate")) return Promise.resolve({ data: { valid_rows: 12, errors: [] } });
       if (url.endsWith("/spot-weld/runs")) return Promise.resolve({ data: { id: "run-manual", status: "queued" } });
       return Promise.resolve({ data: {} });
     });
     render(
-      <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&projectId=project-1&datasetId=dataset-report"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=setup&mode=manual&projectId=project-1&datasetId=dataset-report"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AntApp><DataAnnotationPage /></AntApp>
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole("radio", { name: "手动标注" }));
+    expect(await screen.findByRole("heading", { name: "新建手动标注任务" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("目标列来源"), { target: { value: "new" } });
+    fireEvent.change(screen.getByLabelText("数据类型"), { target: { value: "float" } });
+    fireEvent.change(screen.getByLabelText("目标列"), { target: { value: "人工标签" } });
     fireEvent.click(screen.getByRole("button", { name: "开始手动标注" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith(
@@ -483,7 +573,65 @@ describe("DataAnnotationPage", () => {
         max_trials: 20,
         time_budget: 600,
         label_mode: "manual",
+        target_column: "人工标签",
+        target_column_created: true,
+        target_column_dtype: "float",
+        input_columns: ["wld1c", "Fault"],
       },
+    ));
+  });
+
+  it("uses an existing target column's dtype and values as manual label options", async () => {
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "焊装线", project_role: "owner" }] } });
+      if (url === "/projects/project-1/spot-weld/runs") return Promise.resolve({ data: { items: [{
+        id: "run-manual", status: "completed", label_mode: "manual",
+        target_schema: { name: "Fault", dtype: "int64", classes: ["0", "1"] },
+      }] } });
+      if (url.endsWith("/samples")) return Promise.resolve({ data: { items: [{ id: "sample-1", display_id: "W-0001", review_status: "pending_review", warning_level: "none" }] } });
+      if (url.endsWith("/samples/sample-1")) return Promise.resolve({ data: {
+        id: "sample-1", display_id: "W-0001", review_status: "pending_review",
+        waveforms: { current: [1], voltage: [2], resistance: [3], power: [4] },
+      } });
+      return Promise.resolve({ data: { items: [] } });
+    });
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&projectId=project-1&runId=run-manual"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "W-0001" }));
+
+    expect(await screen.findByRole("heading", { name: "人工标签（Fault · int64）" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "0" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "正常" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "1" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/projects/project-1/spot-weld/runs/run-manual/samples/sample-1/labels",
+      { label: "1", note: "" },
+    ));
+  });
+
+  it("normalizes a newly added numeric label before submitting it", async () => {
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "焊装线", project_role: "owner" }] } });
+      if (url === "/projects/project-1/spot-weld/runs") return Promise.resolve({ data: { items: [{ id: "run-manual", status: "completed", label_mode: "manual", target_schema: { name: "Fault", dtype: "int64", classes: ["0", "1"] } }] } });
+      if (url.endsWith("/samples")) return Promise.resolve({ data: { items: [{ id: "sample-1", display_id: "W-0001", review_status: "pending_review" }] } });
+      if (url.endsWith("/samples/sample-1")) return Promise.resolve({ data: { id: "sample-1", display_id: "W-0001", review_status: "pending_review", waveforms: { current: [], voltage: [], resistance: [], power: [] } } });
+      return Promise.resolve({ data: { items: [] } });
+    });
+    render(<MemoryRouter initialEntries={["/data-annotation?type=spot-weld&projectId=project-1&runId=run-manual"]}><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "W-0001" }));
+    fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "新建人工标签" }), { target: { value: "2.0" } });
+    fireEvent.click(screen.getByRole("button", { name: "添加标签" }));
+    expect(screen.getByRole("button", { name: "2" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/projects/project-1/spot-weld/runs/run-manual/samples/sample-1/labels",
+      { label: "2", note: "" },
     ));
   });
 
@@ -511,26 +659,16 @@ describe("DataAnnotationPage", () => {
     expect(screen.queryByLabelText("快照名称")).not.toBeInTheDocument();
   });
 
-  it("offers 60-row and 1875-row simulated report datasets", async () => {
-    post.mockImplementation((url: string, payload: any) => {
-      if (url.endsWith("/demo-dataset")) return Promise.resolve({ data: { artifact_id: `artifact-${payload.row_count}` } });
-      if (url.endsWith("/validate")) return Promise.resolve({ data: { valid_rows: 12, errors: [] } });
-      if (url.endsWith("/runs")) return Promise.resolve({ data: { id: "run-demo", status: "queued" } });
-      return Promise.resolve({ data: {} });
-    });
+  it("removes simulation and mode-switch controls from task creation", async () => {
     render(
       <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=setup&projectId=project-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AntApp><DataAnnotationPage /></AntApp>
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: /模拟数据/ }));
-    expect(await screen.findByText("快速样本（60 条）")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("报告复现（1875 条）"));
-
-    await waitFor(() => expect(post).toHaveBeenCalledWith(
-      "/projects/project-1/spot-weld/demo-dataset",
-      { row_count: 1875 },
-    ));
+    expect(await screen.findByRole("heading", { name: "新建自动标注任务" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /模拟数据/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "自动标注" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "手动标注" })).not.toBeInTheDocument();
   });
 });

@@ -375,6 +375,40 @@ describe("CustomNode visual structure", () => {
     expect(cssRule(".workflow-node-handle--output.react-flow__handle")).toContain("border-left: 0 !important;");
     expect(cssRule(".workflow-node-handle--output.react-flow__handle")).toContain("border-radius: 0 11.2px 11.2px 0 !important;");
   });
+
+  it("keeps spot-weld outputs at the original size while grouping them on the straight edge", () => {
+    render(
+      <ReactFlowProvider>
+        <CustomNode
+          id="spot-weld-feature-node"
+          type="custom"
+          selected={false}
+          dragging={false}
+          zIndex={0}
+          isConnectable
+          xPos={0}
+          yPos={0}
+          data={{
+            nodeId: "spot-weld-feature-node",
+            operatorId: "spot_weld_feature_engineering",
+            inputs: [{ name: "data", type: "DataTable" }],
+            outputs: [
+              { name: "features", type: "DataTable" },
+              { name: "schema", type: "JSON" },
+              { name: "statistics", type: "JSON" },
+            ],
+          }}
+        />
+      </ReactFlowProvider>,
+    );
+
+    expect(screen.getByTestId("port-out-features")).toHaveStyle({ top: "34%", right: "-16px" });
+    expect(screen.getByTestId("port-out-schema")).toHaveStyle({ top: "50%", right: "-16px" });
+    expect(screen.getByTestId("port-out-statistics")).toHaveStyle({ top: "66%", right: "-16px" });
+    expect(cssRule(".workflow-node-handle.react-flow__handle")).toContain("width: 16px !important;");
+    expect(cssRule(".workflow-node-handle.react-flow__handle")).toContain("height: 22.4px !important;");
+    expect(workflowStyles).not.toContain(".workflow-node--spot-weld-feature-engineering .workflow-node-handle--output.react-flow__handle");
+  });
 });
 describe("CustomNode visual density", () => {
   it("uses a rounded square tile with centered operator identity and no count strip", () => {
