@@ -35,7 +35,9 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: useExternalAcceptanceStack
     ? [["list"], ["json", { outputFile: externalAcceptanceReportPath }]]
-    : process.env.CI ? "github" : "list",
+    : process.env.CI
+      ? [["github"], ["json", { outputFile: externalAcceptanceReportPath }]]
+      : "list",
   outputDir: externalAcceptanceEvidenceDir,
   use: {
     baseURL: externalAcceptanceBaseUrl || "http://127.0.0.1:5173",

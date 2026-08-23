@@ -129,16 +129,23 @@ jobs:
           ARTIFACT_STORAGE_DIR: ../../temp_test/playwright-artifacts
           ML_PLATFORM_TEMP_DIR: ../../temp_test/playwright-data
         run: npm run test:e2e -- --project=chromium
-      - name: Upload Playwright failure evidence
-        if: failure()
+      - name: Generate Playwright evidence receipt
+        if: always()
+        working-directory: ml-platform/backend
+        run: |
+          python -m tools.playwright_evidence \
+            --input ../../temp_test/week11-12/playwright/playwright-report.json \
+            --output ../../temp_test/week11-12/playwright/result.json \
+            --project chromium
+      - name: Upload Playwright evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-failure-evidence
+          name: playwright-evidence
           path: |
-            temp_test/playwright-report
-            temp_test/playwright-test-results
-          if-no-files-found: ignore
-          retention-days: 7
+            temp_test/week11-12/playwright
+          if-no-files-found: error
+          retention-days: 14
 
   production-integration:
     name: Production integration (Ubuntu)

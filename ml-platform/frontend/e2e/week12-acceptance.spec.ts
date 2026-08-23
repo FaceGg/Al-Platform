@@ -15,6 +15,7 @@ type RolloutFixtureResult = {
   state: string;
   current_step: number;
   lock_version: number;
+  last_error_code?: string | null;
 };
 
 type Week12AcceptanceConfig = {
@@ -186,16 +187,27 @@ with SessionLocal() as db:
     rollout = db.get(DeploymentRollout, rollout_id)
     if rollout is None:
         raise RuntimeError("rollout not found")
-    advanced = InferenceRolloutService(runtime).advance(
-        db,
-        rollout_id,
-        expected_lock_version=rollout.lock_version,
-        observation=observation,
-    )
+    error_code = None
+    try:
+        advanced = InferenceRolloutService(runtime).advance(
+            db,
+            rollout_id,
+            expected_lock_version=rollout.lock_version,
+            observation=observation,
+        )
+    except Exception as error:
+        if getattr(error, "code", None) != "ROLLOUT_HEALTH_THRESHOLD_EXCEEDED":
+            raise
+        db.expire_all()
+        advanced = db.get(DeploymentRollout, rollout_id)
+        if advanced is None:
+            raise RuntimeError("rollout disappeared after threshold failure")
+        error_code = "ROLLOUT_HEALTH_THRESHOLD_EXCEEDED"
     print(json.dumps({
         "state": advanced.state,
         "current_step": advanced.current_step,
         "lock_version": advanced.lock_version,
+        "last_error_code": error_code,
     }))
 `;
 
@@ -621,11 +633,26 @@ test.describe("Week 12 isolated acceptance", () => {
       "preload",
     );
     expect(thresholdPreload).toMatchObject({ state: "progressing", current_step: 0 });
-    const automaticallyRolledBack = advanceRolloutOnce(acceptance, thresholdRolloutId, {
+    const thresholdPaused = advanceRolloutOnce(acceptance, thresholdRolloutId, {
       error_rate: 1,
       p95_ms: 1,
     });
-    expect(automaticallyRolledBack).toMatchObject({ state: "rolled_back", current_step: 0 });
+    expect(thresholdPaused).toMatchObject({
+      state: "paused",
+      current_step: 0,
+      last_error_code: "ROLLOUT_HEALTH_THRESHOLD_EXCEEDED",
+    });
+    const thresholdRolledBack = await expectStatus(
+      page,
+      `/api/inference-deployments/${deploymentId}/rollouts/${thresholdRolloutId}/rollback`,
+      "POST",
+      200,
+      { expected_lock_version: thresholdPaused.lock_version },
+    );
+    expect(responseRecord(thresholdRolledBack.body, "threshold rollback")).toMatchObject({
+      state: "rolled_back",
+      current_step: 0,
+    });
 
     const rolloutResponse = await expectStatus(
       page,

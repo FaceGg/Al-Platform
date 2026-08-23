@@ -53,7 +53,7 @@ jobs:
               jq -c '
                 .artifacts[] |
                 select(
-                  .name == "playwright-failure-evidence" or
+                  .name == "playwright-evidence" or
                   .name == "production-integration-failure-evidence" or
                   .name == "experiment-integration-failure-evidence" or
                   .name == "week11-12-verification-evidence"

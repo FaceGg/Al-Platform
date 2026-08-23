@@ -22,20 +22,20 @@
 | Week 9 | 进行中 | 生命周期、Redis fail-closed 已通过；当前最终 SHA 的远程安全/Chromium 证据尚未通过。 |
 | Week 10 | 进行中 | 角色矩阵、四通道通知已通过；当前最终 SHA 的远程证据尚未通过。 |
 | Week 11 | 进行中 | 固定资源性能、备份恢复、N-1 已在上一 SHA 通过；本次合同测试修复产生新 SHA，三项证据必须绑定新 SHA 重跑。 |
-| Week 12 | 进行中 | Run `32624712697` 因镜像安全合同测试误报失败，Chromium 与 Week 11-12 verification 被 skipped；修复已完成，待新 SHA full run。 |
+| Week 12 | 进行中 | Chromium receipt、CI 成功制品和 rollout 合同修复已完成；外部隔离栈 `1/1` 通过，但当前证据仍绑定旧 SHA，待最终 SHA full run。 |
 | Week 9-12 总体 | 进行中 | 不得因远程 CI 全绿或合同测试通过提前关闭。 |
 
 ## 3. 当前冻结基线
 
-- 源代码 SHA：`7d2ee0902ad60afe5583d3c90746614797e2882e`（待合同测试修复提交更新）
+- 源代码 SHA：以当前 `HEAD` 为准；最终验收要求 `HEAD == origin/main`。
 - 分支：`main`
-- 远程 full run：`32624712697`（`7d2ee09`，失败；新 SHA 待触发）
+- 远程 full run：`32624712697` 为旧 SHA 失败记录；当前 SHA full run 待触发。
 - WSL Docker Engine：`29.7.2`
 - Docker Compose：`5.4.0`
 - 资源 envelope：4 vCPU、8 GiB；当前 WSL 可见内存约 7.76 GiB
 - 平台数据库：`ml_platform`
 - MLflow 数据库：`mlflow`，与平台数据库隔离
-- 当前 SHA 业务镜像：`7d2ee09` 已完成真实运行；合同测试修复提交后必须重建四个镜像并刷新 receipt
+- 当前业务镜像：旧 SHA 仅作历史参考；当前 SHA 必须重建四个镜像并刷新 receipt。
 - Week 11 工具与合同测试：`104/104 OK`
 
 ## 4. 未完成任务
@@ -63,7 +63,7 @@
 
 ### W12-R1：最终 evidence manifest
 
-状态：`open`
+状态：`blocked_by_sha_refresh`
 
 必须包含并通过：
 
@@ -90,11 +90,12 @@
 
 ## 5. 当前阻断与下一步
 
-1. 提交并推送镜像安全合同测试修复，触发新 SHA 的 `mode=full` workflow。
+1. 提交并推送当前 CI、Playwright、rollout 合同修复，触发新 SHA 的 `mode=full` workflow。
 2. 下载并校验最终 SHA 的 security summary、Chromium result、四镜像扫描和 runtime provenance；不得把 Run `32624712697` 的 skipped 后置任务计为通过。
 3. 按最终完整 SHA 重建隔离镜像；复跑 W11-R1、W11-R2、W11-R3，保留上一 SHA 原始证据为历史参考。
-4. 运行 `evidence_manifest.py`；失败时修复真实证据或阻断原因，不手改结果。
-5. manifest 通过后更新 `PLATFORM_STATUS.md`、本文件和最终验收报告，再确认远程 SHA 与本地一致。
+4. 外部 Week 12 栈必须使用 `INFERENCE_RATE_LIMIT_CAPACITY=5`、`INFERENCE_RATE_LIMIT_REFILL_PER_SECOND=0.01`，并完成四角色、四通道、rollout、部署和真实 `429` 浏览器验收；生产默认限流值不改。
+5. 运行 `evidence_manifest.py`；失败时修复真实证据或阻断原因，不手改结果。
+6. manifest 通过后更新 `PLATFORM_STATUS.md`、本文件和最终验收报告，再确认远程 SHA 与本地一致。
 
 ## 6. 当前证据位置
 
@@ -103,7 +104,7 @@
 - W11-R3 实测结果：`temp_test/week11-12-live/evidence/upgrade/result.json`
 - 验收执行计划：`ml-platform/docs/superpowers/plans/2026-08-22-week9-12-acceptance-closure.md`
 - 历史远程全量门禁：Actions Run `32569941915`（旧 SHA，仅作历史参考）
-- 当前性能结果：`performance/summary.json`（`de976590`，待 `7b1c4c0` 及最终 SHA 复跑）
+- 当前性能结果：上一 SHA 的 `performance/summary.json` 仅作历史参考；最终 SHA 必须复跑并覆盖当前证据。
 
 ## 7. 文档维护
 
@@ -111,6 +112,6 @@
 
 ## 8. 最新执行记录（2026-08-23）
 
-- Run `32624712697` 的 Ubuntu/Windows backend suite 各为 `112 passed, 1 failed`；唯一失败为 `test_wolfi_runtime_install_retries_transient_apk_download_failures`。
-- 根因是合同测试要求 `apk add` 包必须同行，未接受为备份恢复加入的合法固定 `postgresql-16-client` 多行 shell 命令；业务 Dockerfile 与安全门禁本身未失败。
-- 已修复测试为按 shell 行续接规范化后检查重试结构、Python/Pip 固定包和失败退出路径；当前容器回归 `10/10 OK`，待提交后的远程 full run 与最终证据重跑。
+- 外部 Week 12 Chromium 验收已在低容量隔离栈完成 `1 passed`；覆盖四角色、项目权限、站内/企业微信/邮件/Webhook、模型注册、ONNX、rollout pause/explicit rollback、部署和真实 `429`。结果绑定旧镜像 SHA，只作修复验证，不能进入最终 manifest。
+- Playwright CI 已改为成功和失败均生成 JSON report，并通过 `tools.playwright_evidence` 生成标准 `playwright/result.json`；新增 workflow 合同测试，清理 workflow 同步制品名。
+- rollout 健康阈值合同已与后端一致：阈值失败先持久化 `paused + ROLLOUT_HEALTH_THRESHOLD_EXCEEDED`，浏览器验收随后显式 rollback，再继续验证正常 rollout。

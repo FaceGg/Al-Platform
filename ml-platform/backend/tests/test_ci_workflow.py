@@ -976,7 +976,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
     def test_ci_artifact_retention_matches_evidence_policy(self):
         jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
         expected_retention = {
-            ("browser-acceptance", "Upload Playwright failure evidence"): 7,
+            ("browser-acceptance", "Upload Playwright evidence"): 14,
             ("production-integration", "Upload production failure evidence"): 7,
             ("experiment-integration", "Upload experiment failure evidence"): 7,
             ("week11-12-verification", "Upload verification evidence"): 14,
@@ -988,6 +988,29 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
                     step for step in jobs[job_name]["steps"] if step.get("name") == step_name
                 )
                 self.assertEqual(upload["with"].get("retention-days"), days)
+
+    def test_browser_acceptance_emits_a_fail_closed_playwright_receipt(self):
+        parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+        steps = parsed["jobs"]["browser-acceptance"]["steps"]
+        receipt = next(
+            step
+            for step in steps
+            if step.get("name") == "Generate Playwright evidence receipt"
+        )
+        upload = next(
+            step for step in steps if step.get("name") == "Upload Playwright evidence"
+        )
+
+        self.assertEqual(receipt.get("if"), "always()")
+        self.assertEqual(receipt.get("working-directory"), "ml-platform/backend")
+        self.assertIn("python -m tools.playwright_evidence", receipt["run"])
+        self.assertIn("playwright-report.json", receipt["run"])
+        self.assertIn("playwright/result.json", receipt["run"])
+        self.assertIn("--project chromium", receipt["run"])
+        self.assertEqual(upload.get("if"), "always()")
+        self.assertEqual(upload["with"].get("name"), "playwright-evidence")
+        self.assertEqual(upload["with"].get("if-no-files-found"), "error")
+        self.assertIn("temp_test/week11-12/playwright", upload["with"].get("path", ""))
 
     def test_cleanup_workflow_has_least_privilege_and_delete_guards(self):
         self.assertTrue(CLEANUP_WORKFLOW.is_file())
@@ -1012,7 +1035,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             "actions/runs",
             "--paginate",
             "--method DELETE",
-            "playwright-failure-evidence",
+            "playwright-evidence",
             "week11-12-verification-evidence",
         ):
             with self.subTest(marker=marker):
