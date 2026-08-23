@@ -2,6 +2,8 @@ import json
 import hashlib
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -31,6 +33,7 @@ from tools.notification_receiver import NotificationReceiver
 from tools.upgrade_fixture import (
     EXPECTED_HEAD,
     EXPECTED_N_MINUS_ONE,
+    EXPECTED_N_MINUS_ONE_HEADS,
     create_upgrade_fixture,
     create_upgrade_record,
     execute_upgrade,
@@ -2703,21 +2706,26 @@ class BackupUpgradeHardeningRegressionTests(unittest.TestCase):
                 run_alembic(default_database, "current")
         subprocess_run.assert_not_called()
 
-    def test_create_upgrade_fixture_requires_all_representative_records(self):
+    def test_upgrade_fixture_direct_cli_loads_the_tools_package(self):
+        script = Path(__file__).parents[1] / "tools" / "upgrade_fixture.py"
+        completed = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_create_upgrade_fixture_allows_empty_n_minus_one_database_before_seed(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "fixture.json"
             database_url = "postgresql://user:password@db/upgrade_acceptance"
-            completed = type("Completed", (), {"returncode": 0, "stdout": EXPECTED_N_MINUS_ONE})()
-            snapshot = {
-                "status": "passed",
-                "table_counts": {
-                    "users": 1,
-                    "projects": 1,
-                    "workflows": 1,
-                    "model_library": 0,
-                },
-                "foreign_key_violations": [],
-            }
+            completed = type("Completed", (), {"returncode": 0, "stdout": ""})()
+            n_minus_one = type(
+                "Completed",
+                (),
+                {"returncode": 0, "stdout": "\n".join(sorted(EXPECTED_N_MINUS_ONE_HEADS))},
+            )()
             with (
                 patch.dict(
                     os.environ,
@@ -2730,12 +2738,14 @@ class BackupUpgradeHardeningRegressionTests(unittest.TestCase):
                 ),
                 patch(
                     "tools.upgrade_fixture.run_alembic",
-                    side_effect=[completed, completed],
+                    side_effect=[completed, n_minus_one],
                 ),
-                patch("tools.upgrade_fixture.snapshot_database", return_value=snapshot),
+                patch("tools.upgrade_fixture.snapshot_database") as snapshot_database,
             ):
                 result = create_upgrade_fixture(database_url, EXPECTED_N_MINUS_ONE, output)
-        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["status"], "passed")
+        self.assertTrue(result["seed_required"])
+        snapshot_database.assert_not_called()
 
     def test_create_upgrade_fixture_requires_the_exact_frozen_current_revision(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2747,16 +2757,6 @@ class BackupUpgradeHardeningRegressionTests(unittest.TestCase):
                 (),
                 {"returncode": 0, "stdout": "20260720_09_production_inference"},
             )()
-            snapshot = {
-                "status": "passed",
-                "table_counts": {
-                    "users": 1,
-                    "projects": 1,
-                    "workflows": 1,
-                    "model_library": 1,
-                },
-                "foreign_key_violations": [],
-            }
             with (
                 patch.dict(
                     os.environ,
@@ -2771,7 +2771,6 @@ class BackupUpgradeHardeningRegressionTests(unittest.TestCase):
                     "tools.upgrade_fixture.run_alembic",
                     side_effect=[completed, wrong_current],
                 ),
-                patch("tools.upgrade_fixture.snapshot_database", return_value=snapshot),
             ):
                 result = create_upgrade_fixture(database_url, EXPECTED_N_MINUS_ONE, output)
         self.assertEqual(result["status"], "failed")

@@ -2,8 +2,12 @@ FROM cgr.dev/chainguard/wolfi-base:latest@sha256:bfcffaf1336b26a3fd33c8cb31a86a0
 USER 0
 WORKDIR /app
 RUN set -eu; \
+    printf '%s\n' 'https://packages.wolfi.dev/os' > /etc/apk/repositories; \
     for attempt in 1 2 3; do \
-        if apk add --no-cache python-3.11=3.11.16-r1 py3.11-pip=26.2.1-r0; then \
+        if apk add --no-cache \
+            python-3.11=3.11.16-r1 \
+            py3.11-pip=26.2.1-r0 \
+            postgresql-16-client=16.11-r0; then \
             exit 0; \
         fi; \
         if [ "$attempt" -eq 3 ]; then \

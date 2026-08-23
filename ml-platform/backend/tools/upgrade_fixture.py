@@ -7,10 +7,16 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 from typing import Mapping
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+
+# Support the documented ``python tools/upgrade_fixture.py`` CLI as well as
+# module invocation, without changing package imports in normal application use.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.backup_restore import (
     collect_database_snapshot,
@@ -135,25 +141,20 @@ def seed_representative_data(database_url: str) -> dict[str, object]:
 
 
 def create_upgrade_fixture(database_url: str, revision: str, output: Path) -> dict[str, object]:
-    """Move an isolated database to the approved N-1 revision and snapshot it."""
+    """Move an isolated database to the approved N-1 heads, ready for seeding."""
     if revision != EXPECTED_N_MINUS_ONE:
         raise ValueError("unexpected N-1 revision")
     database_url = _isolated_upgrade_database_url(database_url)
     completed = run_alembic(database_url, "upgrade", revision)
     current = run_alembic(database_url, "current") if completed.returncode == 0 else None
-    snapshot = (
-        snapshot_database(database_url)
-        if current is not None and _has_exact_current_revision(current, revision)
-        else {}
-    )
     result = {
         "status": (
             "passed"
-            if completed.returncode == 0 and _valid_snapshot(snapshot)
+            if current is not None and _has_exact_current_revision(current, revision)
             else "failed"
         ),
         "revision": revision,
-        "snapshot": snapshot,
+        "seed_required": True,
     }
     _write_result(output, result)
     return result
