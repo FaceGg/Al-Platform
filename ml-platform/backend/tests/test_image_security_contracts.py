@@ -75,23 +75,23 @@ class ImageSecurityContractTests(unittest.TestCase):
 
     def test_wolfi_runtime_install_retries_transient_apk_download_failures(self):
         runtime = json.loads(BASE_RECORD.read_text(encoding="utf-8"))["runtime"]
-        install_command = (
-            f"apk add --no-cache {runtime['python_package']} {runtime['pip_package']}"
-        )
-        expected_retry = (
-            "for attempt in 1 2 3; do\n"
-            f"        if {install_command}; then\n"
-            "            exit 0;\n"
-            "        fi;\n"
-            "        if [ \"$attempt\" -eq 3 ]; then\n"
-            "            exit 1;\n"
-            "        fi;\n"
-            "        sleep \"$attempt\";\n"
-            "    done"
+        python_package = re.escape(runtime["python_package"])
+        pip_package = re.escape(runtime["pip_package"])
+        expected_retry = re.compile(
+            rf"for\s+attempt\s+in\s+1\s+2\s+3;\s+do\s+"
+            rf"if\s+apk\s+add\s+--no-cache\s+{python_package}\s+"
+            rf"{pip_package}(?:\s+[^;]+)?;\s*then\s+"
+            r"exit\s+0;\s+fi;\s+"
+            r"if\s+\[\s*\"\$attempt\"\s+-eq\s+3\s*\];\s*then\s+"
+            r"exit\s+1;\s+fi;\s+sleep\s+\"\$attempt\";\s+done"
         )
         for path in DOCKERFILES:
-            content = path.read_text(encoding="utf-8").replace(" \\\n", "\n")
-            self.assertIn(expected_retry, content, path.name)
+            content = re.sub(
+                r"\\\s*\n\s*",
+                " ",
+                path.read_text(encoding="utf-8"),
+            )
+            self.assertRegex(content, expected_retry, path.name)
 
     def test_backend_host_mounts_keep_the_established_numeric_identity(self):
         compose = COMPOSE.read_text(encoding="utf-8")
