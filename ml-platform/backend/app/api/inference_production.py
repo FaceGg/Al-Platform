@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from time import perf_counter
 from uuid import UUID, uuid4
 
@@ -87,7 +88,15 @@ def _runtime_status(code: str) -> int:
     return 503
 
 
+@lru_cache(maxsize=1)
 def _default_deployment_service():
+    """Build one thread-safe runtime client per backend process.
+
+    The inference endpoint is synchronous, so constructing a deployment service
+    for every request also rebuilt its HTTP connection pool and Redis-adjacent
+    runtime state.  Caching this immutable service keeps connection reuse real
+    while each request still receives its own SQLAlchemy session.
+    """
     secret = settings.resolved_inference_internal_secret
     if not settings.inference_runtime_url or secret is None:
         return None
@@ -102,7 +111,9 @@ def _default_deployment_service():
     )
 
 
+@lru_cache(maxsize=1)
 def _default_rate_limiter():
+    """Build one thread-safe Redis client/pool per backend process."""
     url = settings.redis_events_url
     if url is None:
         return None
