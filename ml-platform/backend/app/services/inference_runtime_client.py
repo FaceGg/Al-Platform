@@ -23,7 +23,10 @@ class InferenceRuntimeClient:
         self.headers = {"X-Inference-Internal-Token": internal_token}
         self.load_timeout_seconds = load_timeout_seconds
         self.predict_timeout_seconds = predict_timeout_seconds
-        self.client = client or httpx
+        # Reuse one connection pool per runtime client.  Creating an httpx
+        # client for every prediction adds handshake and pool setup latency at
+        # the exact concurrency level used by the acceptance gate.
+        self.client = client or httpx.Client()
 
     @staticmethod
     def _code(response, fallback: str) -> str:
