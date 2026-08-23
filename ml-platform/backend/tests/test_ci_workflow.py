@@ -1037,6 +1037,17 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         self.assertEqual(environment["BACKEND_PORT"], "8000")
         self.assertEqual(environment["INFERENCE_RATE_LIMIT_CAPACITY"], "5")
         self.assertEqual(environment["INFERENCE_RATE_LIMIT_REFILL_PER_SECOND"], "0.01")
+        self.assertEqual(
+            environment["NOTIFICATION_CRYPTO_SECRET_FILE"],
+            "/tmp/browser-notification-master.key",
+        )
+        for name in (
+            "NOTIFICATION_CRYPTO_SECRET_FILE",
+            "NOTIFICATION_ACCEPTANCE_CA_FILE",
+            "NOTIFICATION_RECEIVER_CERTIFICATE_FILE",
+            "NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE",
+        ):
+            self.assertNotIn("${{", environment[name])
 
         start = next(
             step for step in steps if step.get("name") == "Start isolated browser acceptance stack"

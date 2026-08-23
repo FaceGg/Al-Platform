@@ -118,10 +118,10 @@ jobs:
       INFERENCE_RATE_LIMIT_CAPACITY: "5"
       INFERENCE_RATE_LIMIT_REFILL_PER_SECOND: "0.01"
       INFERENCE_ROLLOUT_OBSERVATION_SECONDS: "10"
-      NOTIFICATION_CRYPTO_SECRET_FILE: ${{ runner.temp }}/browser-notification-master.key
-      NOTIFICATION_ACCEPTANCE_CA_FILE: ${{ runner.temp }}/browser-notification-acceptance-ca.pem
-      NOTIFICATION_RECEIVER_CERTIFICATE_FILE: ${{ runner.temp }}/browser-notification-receiver-cert.pem
-      NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE: ${{ runner.temp }}/browser-notification-receiver-key.pem
+      NOTIFICATION_CRYPTO_SECRET_FILE: /tmp/browser-notification-master.key
+      NOTIFICATION_ACCEPTANCE_CA_FILE: /tmp/browser-notification-acceptance-ca.pem
+      NOTIFICATION_RECEIVER_CERTIFICATE_FILE: /tmp/browser-notification-receiver-cert.pem
+      NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE: /tmp/browser-notification-receiver-key.pem
       COMPOSE_FILE: docker-compose.yml:docker-compose.acceptance.yml
       COMPOSE_PROJECT_NAME: ci-browser-${{ github.run_id }}-${{ github.run_attempt }}
       BACKEND_PORT: "8000"
