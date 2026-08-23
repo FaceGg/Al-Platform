@@ -127,6 +127,23 @@ class TestInferenceObservability(unittest.TestCase):
             for name in ("records", "input", "predictions", "secret", "payload")
         ))
 
+    def test_record_request_can_persist_log_without_synchronous_bucket_aggregation(self):
+        log = InferenceObservability().record_request(
+            self.db,
+            "request-log-only",
+            self.deployment.id,
+            self.revision.id,
+            self.version.id,
+            self.api_key.id,
+            1,
+            7,
+            "success",
+            aggregate=False,
+        )
+        self.db.commit()
+        self.assertIsNotNone(self.db.get(InferenceRequestLog, log.id))
+        self.assertEqual(self.db.query(InferenceMetricBucket).count(), 0)
+
     def test_safe_request_log_never_exposes_payload_or_key_secret(self):
         log = InferenceObservability().record_request(
             self.db,

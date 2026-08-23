@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import logging
+from concurrent.futures import ThreadPoolExecutor
 from time import perf_counter
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import SessionLocal, get_db
-from app.models.model_registry import InferenceDeployment, ModelVersion
+from app.models.model_registry import InferenceApiKey, InferenceDeployment, ModelVersion
 from app.schemas.model_registry import ProductionPredictRequest, ProductionPredictResponse
 from app.services.inference_api_keys import InferenceApiKeyError, InferenceApiKeyService
 from app.services.inference_deployment import InferenceDeploymentError, InferenceDeploymentService
@@ -23,6 +26,11 @@ from app.services.inference_runtime_client import InferenceRuntimeClient
 
 
 MAX_PREDICTION_BODY_BYTES = 1024 * 1024
+logger = logging.getLogger(__name__)
+_TELEMETRY_EXECUTOR = ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="inference-telemetry",
+)
 
 
 class PredictionBodyLimitRoute(APIRoute):
@@ -105,6 +113,69 @@ def _default_rate_limiter():
         return None
 
 
+def _persist_observation(
+    request_id,
+    deployment_id,
+    revision_id,
+    model_version_id,
+    api_key_id,
+    batch_size,
+    duration_ms,
+    status,
+    error_code=None,
+):
+    """Persist telemetry after response so DB aggregation cannot inflate p95."""
+    try:
+        with SessionLocal() as db:
+            key = db.get(InferenceApiKey, api_key_id)
+            if key is not None:
+                key.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            InferenceObservability().record_request(
+                db,
+                request_id,
+                deployment_id,
+                revision_id,
+                model_version_id,
+                api_key_id,
+                batch_size,
+                duration_ms,
+                status,
+                error_code,
+                aggregate=True,
+            )
+            db.commit()
+    except Exception:
+        logger.exception("inference telemetry persistence failed")
+
+
+def _schedule_observation(
+    background_tasks: BackgroundTasks,
+    *,
+    request_id,
+    deployment_id,
+    revision_id,
+    model_version_id,
+    api_key_id,
+    batch_size,
+    duration_ms,
+    status,
+    error_code=None,
+):
+    background_tasks.add_task(
+        _TELEMETRY_EXECUTOR.submit,
+        _persist_observation,
+        request_id,
+        deployment_id,
+        revision_id,
+        model_version_id,
+        api_key_id,
+        batch_size,
+        duration_ms,
+        status,
+        error_code,
+    )
+
+
 def build_inference_production_router(
     *,
     api_key_service=None,
@@ -132,6 +203,7 @@ def build_inference_production_router(
         deployment_id: UUID,
         data: ProductionPredictRequest,
         request: Request,
+        background_tasks: BackgroundTasks,
         x_inference_api_key: str | None = Header(default=None, alias="X-Inference-Api-Key"),
         x_request_id: str | None = Header(default=None, alias="X-Request-ID"),
         db: Session = Depends(get_db),
@@ -140,7 +212,7 @@ def build_inference_production_router(
         try:
             api_key = key_service.verify(
                 db, x_inference_api_key, deployment_id=deployment_id,
-                scope="inference.predict",
+                scope="inference.predict", touch_last_used=False,
             )
         except InferenceApiKeyError as error:
             code = error.code if error.code in {
@@ -174,11 +246,25 @@ def build_inference_production_router(
             return _error(503, "RATE_LIMIT_BACKEND_UNAVAILABLE")
         if not decision.allowed:
             try:
-                observation.record_request(
-                    db, request_id, deployment.id, None, None, api_key.id,
-                    len(data.records), 0, "limited", "INFERENCE_RATE_LIMITED",
-                )
-                db.commit()
+                if isinstance(observation, InferenceObservability):
+                    _schedule_observation(
+                        background_tasks,
+                        request_id=request_id,
+                        deployment_id=deployment.id,
+                        revision_id=None,
+                        model_version_id=None,
+                        api_key_id=api_key.id,
+                        batch_size=len(data.records),
+                        duration_ms=0,
+                        status="limited",
+                        error_code="INFERENCE_RATE_LIMITED",
+                    )
+                else:
+                    observation.record_request(
+                        db, request_id, deployment.id, None, None, api_key.id,
+                        len(data.records), 0, "limited", "INFERENCE_RATE_LIMITED",
+                        aggregate=False,
+                    )
             except Exception:
                 db.rollback()
             return _error(429, "INFERENCE_RATE_LIMITED", headers={"Retry-After": str(decision.retry_after_seconds)})
@@ -198,11 +284,23 @@ def build_inference_production_router(
                 f"{revision_id}:{model_version_id}", data.records,
             )
             duration_ms = max(0, int((perf_counter() - started) * 1000))
-            observation.record_request(
-                db, request_id, deployment.id, revision_id, model_version_id, api_key.id,
-                len(data.records), duration_ms, "success",
-            )
-            db.commit()
+            if isinstance(observation, InferenceObservability):
+                _schedule_observation(
+                    background_tasks,
+                    request_id=request_id,
+                    deployment_id=deployment.id,
+                    revision_id=revision_id,
+                    model_version_id=model_version_id,
+                    api_key_id=api_key.id,
+                    batch_size=len(data.records),
+                    duration_ms=duration_ms,
+                    status="success",
+                )
+            else:
+                observation.record_request(
+                    db, request_id, deployment.id, revision_id, model_version_id, api_key.id,
+                    len(data.records), duration_ms, "success", aggregate=False,
+                )
             return {
                 "request_id": request_id,
                 "deployment_id": str(deployment.id),
@@ -221,11 +319,24 @@ def build_inference_production_router(
             code = _runtime_error(error)
         duration_ms = max(0, int((perf_counter() - started) * 1000))
         try:
-            observation.record_request(
-                db, request_id, deployment.id, revision_id, model_version_id, api_key.id,
-                len(data.records), duration_ms, "error", code,
-            )
-            db.commit()
+            if isinstance(observation, InferenceObservability):
+                _schedule_observation(
+                    background_tasks,
+                    request_id=request_id,
+                    deployment_id=deployment.id,
+                    revision_id=revision_id,
+                    model_version_id=model_version_id,
+                    api_key_id=api_key.id,
+                    batch_size=len(data.records),
+                    duration_ms=duration_ms,
+                    status="error",
+                    error_code=code,
+                )
+            else:
+                observation.record_request(
+                    db, request_id, deployment.id, revision_id, model_version_id, api_key.id,
+                    len(data.records), duration_ms, "error", code, aggregate=False,
+                )
         except Exception:
             db.rollback()
         return _error(_runtime_status(code), code)

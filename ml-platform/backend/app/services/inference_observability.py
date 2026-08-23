@@ -167,6 +167,7 @@ class InferenceObservability:
         error_code=None,
         *,
         occurred_at: datetime | None = None,
+        aggregate: bool = True,
     ) -> InferenceRequestLog:
         request_id, batch_size, duration_ms, status, error_code = self._validate_request(
             request_id, batch_size, duration_ms, status, error_code,
@@ -186,6 +187,9 @@ class InferenceObservability:
             expires_at=occurred_at + timedelta(days=self.log_retention_days),
         )
         db.add(log)
+        if not aggregate:
+            db.flush()
+            return log
         bucket = self._bucket(db, deployment_id, self._minute(occurred_at))
         bucket.request_count = int(bucket.request_count or 0) + 1
         bucket.batch_size_sum = int(bucket.batch_size_sum or 0) + batch_size

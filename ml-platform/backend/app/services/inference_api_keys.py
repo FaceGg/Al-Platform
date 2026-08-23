@@ -11,6 +11,7 @@ from app.models.model_registry import InferenceApiKey
 
 
 ALLOWED_SCOPES = frozenset({"inference.predict"})
+USAGE_TOUCH_INTERVAL_SECONDS = 60
 
 
 def utcnow() -> datetime:
@@ -95,7 +96,15 @@ class InferenceApiKeyService:
         db.flush()
         return CreatedApiKey(record=record, plaintext=plaintext)
 
-    def verify(self, db, plaintext, *, deployment_id=None, scope=None) -> InferenceApiKey:
+    def verify(
+        self,
+        db,
+        plaintext,
+        *,
+        deployment_id=None,
+        scope=None,
+        touch_last_used: bool = True,
+    ) -> InferenceApiKey:
         if not isinstance(plaintext, str) or not plaintext.startswith("mli_"):
             raise InferenceApiKeyError("INFERENCE_API_KEY_INVALID")
         candidates = db.query(InferenceApiKey).filter(
@@ -122,8 +131,19 @@ class InferenceApiKeyService:
             raise InferenceApiKeyError("INFERENCE_API_KEY_EXPIRED")
         if scope is not None and scope not in set(record.scopes or ()):
             raise InferenceApiKeyError("INFERENCE_API_KEY_OUT_OF_SCOPE")
-        record.last_used_at = utcnow()
-        db.flush()
+        if not touch_last_used:
+            return record
+        now = utcnow()
+        # Avoid serializing every prediction on one API-key row.  Usage metadata
+        # remains current within a bounded interval while revocation/expiry checks
+        # still query the authoritative row on every request.
+        if (
+            record.last_used_at is None
+            or (now - _as_utc_naive(record.last_used_at)).total_seconds()
+            >= USAGE_TOUCH_INTERVAL_SECONDS
+        ):
+            record.last_used_at = now
+            db.flush()
         return record
 
     def _record(self, db, key_id) -> InferenceApiKey:
