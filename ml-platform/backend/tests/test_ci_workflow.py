@@ -1023,6 +1023,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             "WEEK12_ACCEPTANCE_ISOLATED",
             "WEEK12_FIXTURE_DATABASE_URL",
             "WEEK12_INFERENCE_RUNTIME_URL",
+            "WEEK12_INFERENCE_INTERNAL_SECRET",
             "WEEK12_MAILPIT_API_URL",
             "WEEK12_WEBHOOK_RECEIVER_URL",
             "WEEK12_WEBHOOK_RECEIVER_EVENTS_URL",
@@ -1038,6 +1039,10 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         self.assertEqual(environment["INFERENCE_RATE_LIMIT_CAPACITY"], "5")
         self.assertEqual(environment["INFERENCE_RATE_LIMIT_REFILL_PER_SECOND"], "0.01")
         self.assertEqual(
+            environment["WEEK12_INFERENCE_INTERNAL_SECRET"],
+            environment["INFERENCE_INTERNAL_SECRET"],
+        )
+        self.assertEqual(
             environment["NOTIFICATION_CRYPTO_SECRET_FILE"],
             "/tmp/browser-notification-master.key",
         )
@@ -1052,6 +1057,14 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         start = next(
             step for step in steps if step.get("name") == "Start isolated browser acceptance stack"
         )
+        standard = next(
+            step for step in steps if step.get("name") == "Run standard browser regression"
+        )
+        acceptance = next(
+            step
+            for step in steps
+            if step.get("name") == "Run isolated Week 12 browser acceptance"
+        )
         frontend = next(step for step in steps if step.get("name") == "Start browser frontend")
         cleanup = next(
             step for step in steps if step.get("name") == "Stop isolated browser acceptance stack"
@@ -1062,6 +1075,17 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             "postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler mailpit notification-receiver notification-proxy",
         ):
             self.assertIn(marker, start["run"])
+        self.assertEqual(standard.get("env", {}).get("RUN_WEEK12_BROWSER_ACCEPTANCE"), "0")
+        self.assertEqual(
+            standard.get("env", {}).get("DATABASE_URL"),
+            "sqlite:///../../temp_test/playwright_ci.db",
+        )
+        self.assertEqual(
+            standard.get("env", {}).get("ARTIFACT_STORAGE_DIR"),
+            "../../temp_test/playwright-artifacts",
+        )
+        self.assertIn('--grep-invert "Week 12 isolated acceptance"', standard["run"])
+        self.assertIn("e2e/week12-acceptance.spec.ts", acceptance["run"])
         self.assertIn("npm run dev -- --host 127.0.0.1 --port 5173", frontend["run"])
         self.assertEqual(cleanup.get("if"), "always()")
         self.assertIn("down --volumes --remove-orphans", cleanup["run"])

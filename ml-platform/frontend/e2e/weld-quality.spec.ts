@@ -39,7 +39,7 @@ test("runs the welding quality template from an uploaded artifact", async ({ pag
   const runResponsePromise = page.waitForResponse((response) =>
     /\/api\/workflows\/[^/]+\/run$/.test(response.url()) && response.request().method() === "POST",
   );
-  await page.getByRole("button", { name: /运行/ }).click();
+  await page.locator("button").filter({ hasText: /^运行$/ }).click();
   const runResponse = await runResponsePromise;
   const { run_id: runId } = await runResponse.json();
 

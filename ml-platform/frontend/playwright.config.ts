@@ -13,18 +13,19 @@ const pythonExecutable = resolveE2ePython();
 const pythonCommand = `"${pythonExecutable.replaceAll('"', '""')}"`;
 const externalAcceptanceBaseUrl = process.env.WEEK12_ACCEPTANCE_BASE_URL?.trim();
 const useExternalAcceptanceStack = process.env.RUN_WEEK12_BROWSER_ACCEPTANCE === "1";
+const standardBaseUrl = process.env.PLAYWRIGHT_E2E_BASE_URL?.trim() || "http://127.0.0.1:5173";
+const standardFrontendPort = Number(new URL(standardBaseUrl).port || "5173");
 const externalAcceptanceEvidenceDir = path.join(tempTestDir, "week11-12", "playwright");
 const externalAcceptanceReportPath = path.join(
   externalAcceptanceEvidenceDir,
   "playwright-report.json",
 );
+const standardDatabaseUrl = process.env.DATABASE_URL?.trim() || e2eDatabaseUrl;
+const standardArtifactDir = process.env.ARTIFACT_STORAGE_DIR?.trim() || e2eArtifactDir;
 
 if (useExternalAcceptanceStack && !externalAcceptanceBaseUrl) {
   throw new Error("WEEK12_ACCEPTANCE_BASE_URL is required for external Week 12 acceptance");
 }
-
-process.env.DATABASE_URL = e2eDatabaseUrl;
-process.env.ARTIFACT_STORAGE_DIR = e2eArtifactDir;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -40,7 +41,7 @@ export default defineConfig({
       : "list",
   outputDir: externalAcceptanceEvidenceDir,
   use: {
-    baseURL: externalAcceptanceBaseUrl || "http://127.0.0.1:5173",
+    baseURL: externalAcceptanceBaseUrl || standardBaseUrl,
     trace: useExternalAcceptanceStack ? "on" : "on-first-retry",
     screenshot: "only-on-failure",
   },
@@ -54,8 +55,8 @@ export default defineConfig({
       timeout: 120_000,
       env: {
         ...process.env,
-        DATABASE_URL: e2eDatabaseUrl,
-        ARTIFACT_STORAGE_DIR: e2eArtifactDir,
+        DATABASE_URL: standardDatabaseUrl,
+        ARTIFACT_STORAGE_DIR: standardArtifactDir,
         INFERENCE_RUNTIME_URL: "http://127.0.0.1:7000",
         INFERENCE_INTERNAL_SECRET: e2eInferenceSecret,
         NOTIFICATION_MASTER_KEY: e2eNotificationMasterKey,
@@ -69,15 +70,15 @@ export default defineConfig({
       timeout: 120_000,
       env: {
         ...process.env,
-        DATABASE_URL: e2eDatabaseUrl,
-        ARTIFACT_STORAGE_DIR: e2eArtifactDir,
+        DATABASE_URL: standardDatabaseUrl,
+        ARTIFACT_STORAGE_DIR: standardArtifactDir,
         INFERENCE_INTERNAL_SECRET: e2eInferenceSecret,
       },
     },
     {
-      command: "npm run dev -- --host 127.0.0.1 --port 5173",
+      command: `npm run dev -- --host 127.0.0.1 --port ${standardFrontendPort}`,
       cwd: frontendDir,
-      url: "http://127.0.0.1:5173/login",
+      url: `${standardBaseUrl.replace(/\/$/, "")}/login`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },

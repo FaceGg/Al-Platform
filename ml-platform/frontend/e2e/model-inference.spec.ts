@@ -12,12 +12,17 @@ type RolloutFixtureResult = {
   current_step: number;
 };
 
+const fixtureDatabaseUrl = process.env.DATABASE_URL?.trim() || `sqlite:///${path
+  .resolve(import.meta.dirname, "../../../temp_test/playwright_e2e.db")
+  .replaceAll("\\", "/")}`;
+
 function runInferenceFixture<T>(name: string, ...args: string[]): T {
   const script = path.resolve(import.meta.dirname, "fixtures", name);
   return JSON.parse(execFileSync(resolveE2ePython(), [script, ...args], {
     encoding: "utf-8",
     env: {
       ...process.env,
+      DATABASE_URL: fixtureDatabaseUrl,
       INFERENCE_RUNTIME_URL: "http://127.0.0.1:7000",
       INFERENCE_INTERNAL_SECRET: "playwright-inference-secret-at-least-32-bytes",
     },
@@ -211,15 +216,16 @@ test("model registry production release lifecycle", async ({ page, browser }) =>
   await expect(rollbackPrediction.getByText("v1", { exact: true })).toBeVisible();
   await rollbackPrediction.getByRole("button", { name: "Close" }).click();
 
+  const applicationOrigin = new URL(page.url()).origin;
   const viewerContext = await browser.newContext();
   try {
     const viewerPage = await viewerContext.newPage();
-    await viewerPage.goto("http://127.0.0.1:5173/login");
+    await viewerPage.goto(`${applicationOrigin}/login`);
     await viewerPage.getByPlaceholder("用户名").fill(viewer.username);
     await viewerPage.getByPlaceholder("密码").fill(viewer.password);
     await viewerPage.locator('button[type="submit"]').click();
     await expect(viewerPage).toHaveURL(/\/$/);
-    await viewerPage.goto("http://127.0.0.1:5173/models");
+    await viewerPage.goto(`${applicationOrigin}/models`);
     await viewerPage.getByRole("combobox", { name: "项目" }).click();
     await viewerPage.getByText(new RegExp(projectName)).click();
     await viewerPage.getByRole("tab", { name: "推理部署" }).click();
