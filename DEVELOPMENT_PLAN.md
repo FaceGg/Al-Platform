@@ -19,30 +19,30 @@
 | 范围 | 当前状态 | 说明 |
 |---|---|---|
 | Week 1-8 | 已完成 | 已合并到 `main`，保留原有远程交付证据。 |
-| Week 9 | 进行中 | 生命周期、Redis fail-closed 已通过；需在当前 SHA 重新绑定远程安全/Chromium 证据。 |
-| Week 10 | 进行中 | 角色矩阵、四通道通知已通过；需在当前 SHA 重新绑定远程证据。 |
-| Week 11 | 运行态已通过 | 固定资源性能、真实备份恢复、代表性数据 N-1 均已通过；等待当前 SHA manifest。 |
-| Week 12 | 进行中 | 当前 SHA 镜像已重建；等待新远程 full run 的安全/Chromium artifacts 和最终 manifest。 |
+| Week 9 | 进行中 | 生命周期、Redis fail-closed 已通过；需绑定最终 SHA 的远程安全/Chromium 证据。 |
+| Week 10 | 进行中 | 角色矩阵、四通道通知已通过；需绑定最终 SHA 的远程证据。 |
+| Week 11 | 进行中 | 旧 SHA 固定资源性能已通过；默认依赖复用修复已推送，需在 `7b1c4c0` 及最终文档 SHA 重跑并绑定。 |
+| Week 12 | 进行中 | 等待 `7b1c4c0` full run 的安全/Chromium artifacts、最终镜像 receipt 和 manifest。 |
 | Week 9-12 总体 | 进行中 | 不得因远程 CI 全绿或合同测试通过提前关闭。 |
 
 ## 3. 当前冻结基线
 
-- 源代码 SHA：`2356388f21001e23d8f157d74fcd183946053c74`
+- 源代码 SHA：`7b1c4c02f72220eebaccb28becbb34f89b22de67`
 - 分支：`main`
-- 远程 full run：待当前 SHA 推送后重新运行
+- 远程 full run：`32624356304`（`7b1c4c0`，运行中）
 - WSL Docker Engine：`29.7.2`
 - Docker Compose：`5.4.0`
 - 资源 envelope：4 vCPU、8 GiB；当前 WSL 可见内存约 7.76 GiB
 - 平台数据库：`ml_platform`
 - MLflow 数据库：`mlflow`，与平台数据库隔离
-- 当前 SHA 业务镜像：已冷构建，需提交后按完整 SHA 重建并刷新 receipt
+- 当前 SHA 业务镜像：代码镜像已重建并通过旧 SHA 性能复测；`7b1c4c0` 需重建并刷新 receipt
 - Week 11 工具与合同测试：`104/104 OK`
 
 ## 4. 未完成任务
 
 ### W11-R1：固定资源真实性能
 
-状态：`passed`
+状态：`open`
 
 要求：
 
@@ -53,7 +53,7 @@
 - 生成所有原始 JSON 和 `performance/summary.json`。
 - summary 的 `status=passed` 且 `candidate_status=passed`，提交 SHA 与当前基线一致。
 
-证据：`temp_test/week11-12-live/evidence/performance/summary.json`；上一轮 `2e53c1b` 已通过。当前提交需重建镜像并复跑，确保证据绑定最终 SHA。
+证据：`temp_test/week11-12-live/evidence/performance/summary.json`；`de976590` 旧 SHA 已通过（warm p95 170.83/169.06/173.54 ms），当前 `7b1c4c0` 及最终文档 SHA 必须重建镜像并复跑。
 
 ### W11-R2/W11-R3：真实备份恢复与 N-1 升级
 
@@ -90,9 +90,9 @@
 
 ## 5. 当前阻断与下一步
 
-1. 推送 `2356388` 到 GitHub `main`，等待当前 SHA full run 完成。
-2. 下载并校验新 SHA 的 security summary、Chromium result、四镜像扫描和 runtime provenance。
-3. 按完整 SHA 重建隔离镜像；复跑 W11-R1/W11-R2/W11-R3，保留原始 JSON。
+1. 等待并校验 `7b1c4c0` 的 full run；若文档再产生新 SHA，继续以最终 SHA 绑定所有证据。
+2. 下载并校验最终 SHA 的 security summary、Chromium result、四镜像扫描和 runtime provenance。
+3. 按最终完整 SHA 重建隔离镜像；复跑 W11-R1，复核 W11-R2/W11-R3 结果，保留原始 JSON。
 4. 运行 `evidence_manifest.py`；失败时修复真实证据或阻断原因，不手改结果。
 5. manifest 通过后更新 `PLATFORM_STATUS.md`、本文件和最终验收报告，再确认远程 SHA 与本地一致。
 
@@ -103,7 +103,7 @@
 - W11-R3 实测结果：`temp_test/week11-12-live/evidence/upgrade/result.json`
 - 验收执行计划：`ml-platform/docs/superpowers/plans/2026-08-22-week9-12-acceptance-closure.md`
 - 历史远程全量门禁：Actions Run `32569941915`（旧 SHA，仅作历史参考）
-- 当前性能结果：`performance/summary.json`（待最终 SHA 复跑）
+- 当前性能结果：`performance/summary.json`（`de976590`，待 `7b1c4c0` 及最终 SHA 复跑）
 
 ## 7. 文档维护
 
