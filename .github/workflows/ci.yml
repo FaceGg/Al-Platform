@@ -94,6 +94,55 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
     runs-on: ubuntu-22.04
     needs: quality
+    timeout-minutes: 40
+    env:
+      POSTGRES_DB: ml_platform
+      POSTGRES_USER: ml_platform
+      POSTGRES_PASSWORD: ci-browser-postgres-password
+      DATABASE_URL: postgresql+psycopg://ml_platform:ci-browser-postgres-password@postgres:5432/ml_platform
+      SECRET_KEY: ci-browser-secret-key-with-at-least-32-characters
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      REDIS_EVENTS_URL: redis://redis:6379/1
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: ci-browser-minio-root-password
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: ci-browser-minio-root-password
+      MINIO_BUCKET: ml-platform
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg://ml_platform:ci-browser-postgres-password@postgres:5432/mlflow
+      MLFLOW_ARTIFACT_ROOT: s3://ml-platform/mlflow
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      TENSORBOARD_SESSION_SECRET: ci-browser-tensorboard-secret-at-least-32-bytes
+      INFERENCE_INTERNAL_SECRET: ci-browser-inference-secret-at-least-32-bytes # gitleaks:allow
+      INFERENCE_RUNTIME_URL: http://inference-runtime:7000
+      INFERENCE_RATE_LIMIT_CAPACITY: "5"
+      INFERENCE_RATE_LIMIT_REFILL_PER_SECOND: "0.01"
+      INFERENCE_ROLLOUT_OBSERVATION_SECONDS: "10"
+      NOTIFICATION_CRYPTO_SECRET_FILE: ${{ runner.temp }}/browser-notification-master.key
+      NOTIFICATION_ACCEPTANCE_CA_FILE: ${{ runner.temp }}/browser-notification-acceptance-ca.pem
+      NOTIFICATION_RECEIVER_CERTIFICATE_FILE: ${{ runner.temp }}/browser-notification-receiver-cert.pem
+      NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE: ${{ runner.temp }}/browser-notification-receiver-key.pem
+      COMPOSE_FILE: docker-compose.yml:docker-compose.acceptance.yml
+      COMPOSE_PROJECT_NAME: ci-browser-${{ github.run_id }}-${{ github.run_attempt }}
+      BACKEND_PORT: "8000"
+      WEEK12_POSTGRES_PORT: "15432"
+      WEEK12_INFERENCE_RUNTIME_PORT: "17000"
+      WEEK12_MAILPIT_PORT: "18082"
+      WEEK12_RECEIVER_EVENTS_PORT: "18081"
+      RUN_WEEK12_BROWSER_ACCEPTANCE: "1"
+      WEEK12_ACCEPTANCE_BASE_URL: http://127.0.0.1:5173
+      WEEK12_ACCEPTANCE_ISOLATED: "1"
+      WEEK12_OWNER_USERNAME: admin
+      WEEK12_OWNER_PASSWORD: admin123
+      WEEK12_FIXTURE_DATABASE_URL: postgresql+psycopg://ml_platform:ci-browser-postgres-password@127.0.0.1:15432/ml_platform
+      WEEK12_INFERENCE_RUNTIME_URL: http://127.0.0.1:17000
+      WEEK12_MAILPIT_API_URL: http://127.0.0.1:18082/api/v1/messages
+      WEEK12_WEBHOOK_RECEIVER_URL: https://notification-receiver/events
+      WEEK12_WEBHOOK_RECEIVER_EVENTS_URL: http://127.0.0.1:18081/events
+      WEEK12_WEBHOOK_SIGNING_SECRET: ci-browser-webhook-signing-secret-32-bytes
+      WEEK12_WECOM_RECEIVER_URL: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=acceptance-controlled
+      WEEK12_WECOM_RECEIVER_EVENTS_URL: http://127.0.0.1:18081/events
+      WEEK12_RATE_LIMIT_ATTEMPTS: "10"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -119,15 +168,61 @@ jobs:
       - name: Install Chromium
         working-directory: ml-platform/frontend
         run: npx playwright install --with-deps chromium
-      - name: Prepare browser runtime directories
+      - name: Generate browser acceptance secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from cryptography.fernet import Fernet
+
+          target = Path(os.environ["NOTIFICATION_CRYPTO_SECRET_FILE"])
+          target.write_bytes(Fernet.generate_key() + b"\n")
+          target.chmod(0o600)
+          PY
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+            -subj "/CN=qyapi.weixin.qq.com" \
+            -addext "subjectAltName=DNS:qyapi.weixin.qq.com,DNS:notification-receiver" \
+            -keyout "$NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE" \
+            -out "$NOTIFICATION_RECEIVER_CERTIFICATE_FILE"
+          cp "$NOTIFICATION_RECEIVER_CERTIFICATE_FILE" "$NOTIFICATION_ACCEPTANCE_CA_FILE"
+          sudo chown 1000:1000 "$NOTIFICATION_CRYPTO_SECRET_FILE" "$NOTIFICATION_ACCEPTANCE_CA_FILE" "$NOTIFICATION_RECEIVER_CERTIFICATE_FILE" "$NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE"
+          sudo chmod 0400 "$NOTIFICATION_CRYPTO_SECRET_FILE" "$NOTIFICATION_ACCEPTANCE_CA_FILE" "$NOTIFICATION_RECEIVER_CERTIFICATE_FILE" "$NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE"
+      - name: Start isolated browser acceptance stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" config -q
+          for attempt in {1..3}; do
+            if docker compose --project-name "$COMPOSE_PROJECT_NAME" build backend worker tensorboard-gateway inference-runtime; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 15))
+          done
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" up --detach --wait \
+            postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler mailpit notification-receiver notification-proxy
+      - name: Start browser frontend
         working-directory: ml-platform/frontend
-        run: mkdir -p ../../temp_test
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run dev -- --host 127.0.0.1 --port 5173 > "$RUNNER_TEMP/week12-vite.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/week12-vite.pid"
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:5173/login >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/week12-vite.log"
+          exit 1
       - name: Run browser acceptance
         working-directory: ml-platform/frontend
-        env:
-          DATABASE_URL: sqlite:///../../temp_test/playwright_ci.db
-          ARTIFACT_STORAGE_DIR: ../../temp_test/playwright-artifacts
-          ML_PLATFORM_TEMP_DIR: ../../temp_test/playwright-data
         run: npm run test:e2e -- --project=chromium
       - name: Generate Playwright evidence receipt
         if: always()
@@ -146,6 +241,15 @@ jobs:
             temp_test/week11-12/playwright
           if-no-files-found: error
           retention-days: 14
+      - name: Stop isolated browser acceptance stack
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/week12-vite.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/week12-vite.pid")" 2>/dev/null || true
+          fi
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" down --volumes --remove-orphans || true
+          sudo rm -f "$NOTIFICATION_CRYPTO_SECRET_FILE" "$NOTIFICATION_ACCEPTANCE_CA_FILE" "$NOTIFICATION_RECEIVER_CERTIFICATE_FILE" "$NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE"
 
   production-integration:
     name: Production integration (Ubuntu)

@@ -991,6 +991,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
 
     def test_browser_acceptance_emits_a_fail_closed_playwright_receipt(self):
         parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+        job = parsed["jobs"]["browser-acceptance"]
         steps = parsed["jobs"]["browser-acceptance"]["steps"]
         receipt = next(
             step
@@ -1011,6 +1012,48 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         self.assertEqual(upload["with"].get("name"), "playwright-evidence")
         self.assertEqual(upload["with"].get("if-no-files-found"), "error")
         self.assertIn("temp_test/week11-12/playwright", upload["with"].get("path", ""))
+
+        self.assertGreaterEqual(job.get("timeout-minutes", 0), 40)
+        environment = job.get("env", {})
+        expected_environment = {
+            "COMPOSE_FILE",
+            "COMPOSE_PROJECT_NAME",
+            "RUN_WEEK12_BROWSER_ACCEPTANCE",
+            "WEEK12_ACCEPTANCE_BASE_URL",
+            "WEEK12_ACCEPTANCE_ISOLATED",
+            "WEEK12_FIXTURE_DATABASE_URL",
+            "WEEK12_INFERENCE_RUNTIME_URL",
+            "WEEK12_MAILPIT_API_URL",
+            "WEEK12_WEBHOOK_RECEIVER_URL",
+            "WEEK12_WEBHOOK_RECEIVER_EVENTS_URL",
+            "WEEK12_WECOM_RECEIVER_URL",
+            "WEEK12_WECOM_RECEIVER_EVENTS_URL",
+            "INFERENCE_RATE_LIMIT_CAPACITY",
+            "INFERENCE_RATE_LIMIT_REFILL_PER_SECOND",
+        }
+        self.assertTrue(expected_environment.issubset(environment))
+        self.assertEqual(environment["RUN_WEEK12_BROWSER_ACCEPTANCE"], "1")
+        self.assertEqual(environment["WEEK12_ACCEPTANCE_ISOLATED"], "1")
+        self.assertEqual(environment["BACKEND_PORT"], "8000")
+        self.assertEqual(environment["INFERENCE_RATE_LIMIT_CAPACITY"], "5")
+        self.assertEqual(environment["INFERENCE_RATE_LIMIT_REFILL_PER_SECOND"], "0.01")
+
+        start = next(
+            step for step in steps if step.get("name") == "Start isolated browser acceptance stack"
+        )
+        frontend = next(step for step in steps if step.get("name") == "Start browser frontend")
+        cleanup = next(
+            step for step in steps if step.get("name") == "Stop isolated browser acceptance stack"
+        )
+        for marker in (
+            'docker compose --project-name "$COMPOSE_PROJECT_NAME" config -q',
+            "build backend worker tensorboard-gateway inference-runtime",
+            "postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler mailpit notification-receiver notification-proxy",
+        ):
+            self.assertIn(marker, start["run"])
+        self.assertIn("npm run dev -- --host 127.0.0.1 --port 5173", frontend["run"])
+        self.assertEqual(cleanup.get("if"), "always()")
+        self.assertIn("down --volumes --remove-orphans", cleanup["run"])
 
     def test_cleanup_workflow_has_least_privilege_and_delete_guards(self):
         self.assertTrue(CLEANUP_WORKFLOW.is_file())
