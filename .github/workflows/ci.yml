@@ -109,6 +109,9 @@ jobs:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: ci-browser-minio-root-password
       MINIO_BUCKET: ml-platform
+      ARTIFACT_STORAGE_BACKEND: minio
+      MINIO_ENDPOINT: 127.0.0.1:9000
+      MINIO_SECURE: "0"
       MLFLOW_BACKEND_STORE_URI: postgresql+psycopg://ml_platform:ci-browser-postgres-password@postgres:5432/mlflow
       MLFLOW_ARTIFACT_ROOT: s3://ml-platform/mlflow
       MLFLOW_TRACKING_URI: http://mlflow:5000

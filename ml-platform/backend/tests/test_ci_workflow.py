@@ -1033,6 +1033,9 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             "INFERENCE_RATE_LIMIT_REFILL_PER_SECOND",
         }
         self.assertTrue(expected_environment.issubset(environment))
+        self.assertEqual(environment["ARTIFACT_STORAGE_BACKEND"], "minio")
+        self.assertEqual(environment["MINIO_ENDPOINT"], "127.0.0.1:9000")
+        self.assertEqual(environment["MINIO_SECURE"], "0")
         self.assertEqual(environment["RUN_WEEK12_BROWSER_ACCEPTANCE"], "1")
         self.assertEqual(environment["WEEK12_ACCEPTANCE_ISOLATED"], "1")
         self.assertEqual(environment["BACKEND_PORT"], "8000")

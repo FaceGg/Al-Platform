@@ -125,3 +125,4 @@
 - 已确认 WeCom 请求 payload、官方 host 和 path 均合法；`422` 来自容器运行时 DNS/SSRF 校验未使用 acceptance Compose 已声明的显式 allowlist。修复为让 WeCom 创建与发送路径使用同一 `notification_webhook_allowlist`，仅在 acceptance Compose 中加入 `qyapi.weixin.qq.com`；生产默认空 allowlist 和官方 host/path 限制保持不变。
 - 浏览器断言现在包含响应 body，隔离 Week 12 场景禁用 Playwright retry，避免有持久化副作用的二次运行以 `409` 覆盖真实首错。
 - 本地验证：通知/API/CI `79/79`，Week 12 安全门禁 `160 passed / 1 skipped`，evidence manifest `32/32`，前端 `207 passed / 19 skipped`，前端构建通过，Compose 合并配置通过，`git diff --check` 通过。仍需新 SHA 的远程 `mode=full` 证明真实 runner 修复。
+- 新 SHA `d192a48` 的 WeCom 修复已通过真实 CI 创建/发送阶段；但隔离浏览器随后在模型版本注册阶段返回 `409 MODEL_REGISTRY_FAILED`。根因是浏览器 job 的宿主 fixture 进程未设置 MinIO artifact backend，向本地路径写入 artifact，而容器后端按 MinIO 读取。当前修复补齐 `ARTIFACT_STORAGE_BACKEND=minio`、`MINIO_ENDPOINT=127.0.0.1:9000`、`MINIO_SECURE=0` 并增加 CI 合同断言，需再次提交和全量重跑。
