@@ -19,17 +19,17 @@
 | 范围 | 当前状态 | 说明 |
 |---|---|---|
 | Week 1-8 | 已完成 | 已合并到 `main`，保留原有远程交付证据。 |
-| Week 9 | 进行中 | 生命周期、Redis fail-closed 已通过；当前候选 SHA 的远程安全和 Chromium 证据待全量重跑。 |
-| Week 10 | 进行中 | 角色矩阵、四通道通知已通过；当前候选 SHA 的远程证据待全量重跑。 |
-| Week 11 | 进行中 | 固定资源性能、备份恢复、N-1 已在上一 SHA 通过；当前浏览器/CI 修复会产生新 SHA，三项证据必须重新绑定。 |
-| Week 12 | 进行中 | Run `32676127712` 的普通 Chromium `4/4` 通过；隔离 Week 12 在创建 WeCom 端点时因容器 DNS/SSRF 校验未应用显式 acceptance allowlist 返回 `422`，修复待新 SHA 全量重跑。 |
+| Week 9 | 进行中 | 生命周期、Redis fail-closed 和生产集成已通过；当前 SHA 的最终安全、浏览器和证据绑定仍待远程验证。 |
+| Week 10 | 进行中 | 角色矩阵、四通道通知已通过；当前 SHA 的最终远程证据仍待绑定。 |
+| Week 11 | 进行中 | 固定资源性能、备份恢复、N-1 在上一 SHA 通过；当前 SHA 变更后必须重新绑定三项真实证据。 |
+| Week 12 | 进行中 | WeCom allowlist 修复已通过创建/发送阶段；上一轮 Chromium 在模型注册阶段因 MinIO 配置不一致返回 `409 MODEL_REGISTRY_FAILED`，`430db19` 已修复并由 Run `32681461233` 验证中。 |
 | Week 9-12 总体 | 进行中 | 不得因远程 CI 全绿或合同测试通过提前关闭。 |
 
 ## 3. 当前冻结基线
 
-- 源代码 SHA：远端基线 `a497757e685838c992deb35f0fd55b74d6c5f95f`；当前工作区含针对 Run `32676127712` 的 WeCom acceptance DNS/allowlist 修复，提交后冻结为新的验收 SHA。最终验收要求 `HEAD == origin/main`。
+- 源代码 SHA：`430db194e5ecf0932c5ba2e6357c97ab0f2fe955`，当前 `HEAD == origin/main`。该 SHA 包含 WeCom allowlist 和浏览器 fixture MinIO 配置修复；最终验收仍需远程全量门禁和同 SHA 真实证据。
 - 分支：`main`
-- 远程 full run：`32676127712` 绑定 `a497757e`；Quality Windows/Ubuntu、两个生产集成和标准 Chromium `4/4` 均通过。隔离 Week 12 在 `POST /api/projects/{id}/notification-endpoints` 创建 WeCom 端点时收到 `422`，Playwright receipt 正确失败，Week 11-12 verification 为 `skipped`。该 Run 不能用于验收。
+- 远程 full run：当前 `32681461233` 绑定 `430db19`，状态 `in_progress`；上一 Run `32679688421` 的 Quality/生产集成均通过，但 Chromium 以 `MODEL_REGISTRY_FAILED` 失败，Week 11-12 verification 为 `skipped`，不能用于验收。
 - WSL Docker Engine：`29.7.2`
 - Docker Compose：`5.4.0`
 - 资源 envelope：4 vCPU、8 GiB；当前 WSL 可见内存约 7.76 GiB
@@ -90,8 +90,8 @@
 
 ## 5. 当前阻断与下一步
 
-1. 提交并推送当前 WeCom acceptance allowlist 与 Playwright 诊断/重试修复，触发新 SHA 的 `mode=full` workflow。
-2. 下载并校验最终 SHA 的 security summary、Chromium result、四镜像扫描和 runtime provenance；不得把 Run `32630148806` 的 skipped Chromium 或后置任务计为通过。
+1. 等待并核对 Run `32681461233`：Quality、生产集成、Chromium 隔离 Week 12 和 Week 11-12 verification 必须全部成功；任何 `failed` 或 `skipped` 均保持未完成。
+2. 下载并校验 `430db19` 的 security summary、Chromium result、四镜像扫描和 runtime provenance；不得复用旧 SHA 制品，也不得把任何 skipped 作业计为通过。
 3. 按最终完整 SHA 重建隔离镜像；复跑 W11-R1、W11-R2、W11-R3，保留上一 SHA 原始证据为历史参考。
 4. 外部 Week 12 栈必须使用 `INFERENCE_RATE_LIMIT_CAPACITY=5`、`INFERENCE_RATE_LIMIT_REFILL_PER_SECOND=0.01`，并完成四角色、四通道、rollout、部署和真实 `429` 浏览器验收；生产默认限流值不改。
 5. 运行 `evidence_manifest.py`；失败时修复真实证据或阻断原因，不手改结果。
@@ -126,3 +126,17 @@
 - 浏览器断言现在包含响应 body，隔离 Week 12 场景禁用 Playwright retry，避免有持久化副作用的二次运行以 `409` 覆盖真实首错。
 - 本地验证：通知/API/CI `79/79`，Week 12 安全门禁 `160 passed / 1 skipped`，evidence manifest `32/32`，前端 `207 passed / 19 skipped`，前端构建通过，Compose 合并配置通过，`git diff --check` 通过。仍需新 SHA 的远程 `mode=full` 证明真实 runner 修复。
 - 新 SHA `d192a48` 的 WeCom 修复已通过真实 CI 创建/发送阶段；但隔离浏览器随后在模型版本注册阶段返回 `409 MODEL_REGISTRY_FAILED`。根因是浏览器 job 的宿主 fixture 进程未设置 MinIO artifact backend，向本地路径写入 artifact，而容器后端按 MinIO 读取。当前修复补齐 `ARTIFACT_STORAGE_BACKEND=minio`、`MINIO_ENDPOINT=127.0.0.1:9000`、`MINIO_SECURE=0` 并增加 CI 合同断言，需再次提交和全量重跑。
+
+## 10. 最新执行记录（2026-08-24）
+
+- `d192a48` 的 WeCom allowlist 已生效，但 Run `32679688421` 的隔离 Chromium 在注册模型版本时返回 `409 MODEL_REGISTRY_FAILED`；该 Run 的 Week 11-12 verification 为 `skipped`，不能计入验收。
+- 根因是宿主 fixture 与容器后端的 artifact 存储后端不一致：fixture 使用本地路径写入，容器后端从 MinIO 读取。
+- `430db19` 已补齐 MinIO backend、endpoint、insecure CI 模式和对应合同断言，并已推送到 `main`。
+- Run `32681461233`（SHA `430db19`）当前为 `in_progress`；在该 Run 完成且 W11-R1/R2/R3、最终 manifest 重新绑定通过前，Week 9-12 总体保持 `进行中`。
+
+## 11. 最新执行记录（2026-08-24，Run 32681461233 完成后）
+
+- Run `32681461233` 绑定 `430db194e5ecf0932c5ba2e6357c97ab0f2fe955`，总体 `failure`。Quality（Windows/Ubuntu）、Production integration、Production experiment integration 均 `success`。
+- Chromium acceptance 在“Run standard browser regression”失败；日志显示宿主 E2E 继承了隔离栈的 `ARTIFACT_STORAGE_BACKEND=minio` 与 `MINIO_ENDPOINT=127.0.0.1:9000`，但标准 SQLite 回归未启动 MinIO，fixture 上传 artifact 时连接被拒绝。隔离 Week 12 和 Week 11-12 verification 因前置失败均 `skipped`。
+- 修复已在工作树完成：标准 Playwright webServer 与 model fixture 强制 `ARTIFACT_STORAGE_BACKEND=local`，CI 标准步骤显式声明 `local`，并加入 workflow 合同断言。外部 Week 12 模式仍使用 MinIO。
+- 本地验证：前端 Week Acceptance Vitest `7/7 passed`；TypeScript/Python 语法检查通过；后端 pytest 未能执行，因为当前捆绑 Python 未安装 `pytest`/`PyYAML`，归类为 `skipped`，不计通过。下一步需提交新 SHA 并重新运行 full workflow。

@@ -1083,6 +1083,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             standard.get("env", {}).get("DATABASE_URL"),
             "sqlite:///../../temp_test/playwright_ci.db",
         )
+        self.assertEqual(standard.get("env", {}).get("ARTIFACT_STORAGE_BACKEND"), "local")
         self.assertEqual(
             standard.get("env", {}).get("ARTIFACT_STORAGE_DIR"),
             "../../temp_test/playwright-artifacts",

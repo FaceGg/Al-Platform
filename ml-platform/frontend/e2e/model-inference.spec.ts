@@ -23,6 +23,9 @@ function runInferenceFixture<T>(name: string, ...args: string[]): T {
     env: {
       ...process.env,
       DATABASE_URL: fixtureDatabaseUrl,
+      ARTIFACT_STORAGE_BACKEND: process.env.RUN_WEEK12_BROWSER_ACCEPTANCE === "1"
+        ? process.env.ARTIFACT_STORAGE_BACKEND || "local"
+        : "local",
       INFERENCE_RUNTIME_URL: "http://127.0.0.1:7000",
       INFERENCE_INTERNAL_SECRET: "playwright-inference-secret-at-least-32-bytes",
     },

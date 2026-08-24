@@ -56,6 +56,9 @@ export default defineConfig({
       env: {
         ...process.env,
         DATABASE_URL: standardDatabaseUrl,
+        // Standard E2E owns a local SQLite/artifact fixture; do not inherit
+        // the external acceptance job's MinIO settings from the CI process.
+        ARTIFACT_STORAGE_BACKEND: "local",
         ARTIFACT_STORAGE_DIR: standardArtifactDir,
         INFERENCE_RUNTIME_URL: "http://127.0.0.1:7000",
         INFERENCE_INTERNAL_SECRET: e2eInferenceSecret,
@@ -71,6 +74,7 @@ export default defineConfig({
       env: {
         ...process.env,
         DATABASE_URL: standardDatabaseUrl,
+        ARTIFACT_STORAGE_BACKEND: "local",
         ARTIFACT_STORAGE_DIR: standardArtifactDir,
         INFERENCE_INTERNAL_SECRET: e2eInferenceSecret,
       },

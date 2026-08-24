@@ -4,21 +4,21 @@
 
 Close the remaining Week 9-12 acceptance work without confusing implementation, local tests, remote CI, real runtime evidence, and skipped states.
 
-This plan is based on the current frozen source commit `252abf77c547bdb637755b00d1ff1aec8f13e14d` and remote full run `32569941915`. The remote run passed Quality, production integration, experiment integration, Chromium acceptance, and Week 11-12 verification. It does not by itself prove fixed-resource performance, real backup/restore, real N-1 data migration, or the final evidence manifest.
+Current execution is based on source commit `430db194e5ecf0932c5ba2e6357c97ab0f2fe955` (`HEAD == origin/main`) and remote full run `32681461233` (`in_progress`). Previous Run `32679688421` passed Quality and production integration but failed isolated Chromium with `MODEL_REGISTRY_FAILED`; its Week 11-12 verification was skipped.
 
 ## 2. Current Baseline
 
 | Area | Status | Evidence boundary |
 |---|---|---|
-| Week 9 implementation | Complete | Current `main` and remote full run |
-| Week 10 implementation | Complete | Current `main`, local contracts, remote full run |
+| Week 9 implementation | Complete, acceptance open | Current `main` and local/production checks; final SHA-bound remote evidence pending |
+| Week 10 implementation | Complete, acceptance open | Current `main`, local contracts, and production checks; final SHA-bound remote evidence pending |
 | Week 11 tool contracts | Complete | Container tests `104/104` |
 | Week 11 fixed-resource performance | Open | Previous runtime attempt failed when services exited together |
 | Week 11 PostgreSQL/MinIO restore | Open | No valid real restore result yet |
 | Week 11 N-1 data upgrade | Open | Fixture supports dual heads and seeding, but real seeded run is pending |
-| Week 12 security/CI/browser gates | Complete for current SHA | Remote full run `32569941915` |
+| Week 12 security/CI/browser gates | In progress | Run `32681461233` for SHA `430db19`; previous Run `32679688421` failed Chromium and skipped verification |
 | Week 12 external role/notification matrix | Open | Requires independent evidence review and artifact binding |
-| Final evidence manifest/report | Open | Blocked by the three Week 11 runtime artifacts |
+| Final evidence manifest/report | Blocked | Requires successful current-SHA remote gates plus refreshed Week 11 runtime artifacts |
 
 ## 3. Work Packages
 
@@ -274,3 +274,11 @@ The final command is allowed to succeed only after the performance, backup, upgr
 - A skipped GitHub step remains skipped and is never counted as passed.
 - A new source commit invalidates runtime image provenance and all SHA-bound receipts; repeat WP0 and all affected gates.
 - Only after WP6 passes may the status documents be changed from `进行中` to `已完成` and a release merge be considered.
+
+## 8. Current Progress Record (2026-08-24)
+
+- WeCom acceptance DNS/SSRF allowlist issue: fixed and verified through notification creation/send.
+- Browser fixture artifact storage mismatch: fixed in `430db19` by using MinIO backend and local CI endpoint; contract coverage added.
+- Run `32681461233` is `in_progress`. Until Chromium acceptance and Week 11-12 verification both succeed, Week 9-12 remains `in progress`.
+- After the remote gate, rerun and bind fixed-resource performance, PostgreSQL/MinIO restore, N-1 migration, image provenance, and final manifest to `430db19`. Failed, cancelled, or skipped artifacts remain non-passing.
+- Run `32681461233` completed with `failure`: standard Chromium regression inherited external MinIO settings while using the local SQLite fixture, so MinIO upload failed with connection refused before isolated Week 12. The worktree fix forces `ARTIFACT_STORAGE_BACKEND=local` for standard Playwright services/fixtures and adds a CI contract assertion; external acceptance remains MinIO-backed. A new SHA/full run is required.

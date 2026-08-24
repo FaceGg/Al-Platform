@@ -177,6 +177,7 @@ jobs:
         env:
           RUN_WEEK12_BROWSER_ACCEPTANCE: "0"
           DATABASE_URL: sqlite:///../../temp_test/playwright_ci.db
+          ARTIFACT_STORAGE_BACKEND: local
           ARTIFACT_STORAGE_DIR: ../../temp_test/playwright-artifacts
           ML_PLATFORM_TEMP_DIR: ../../temp_test/playwright-data
         run: |
