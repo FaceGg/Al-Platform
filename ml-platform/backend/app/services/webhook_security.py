@@ -147,9 +147,10 @@ def validate_wecom_url(
     url: str,
     *,
     resolve: Callable[[str, int], Iterable[object]] | None = None,
+    allowlist: Iterable[str] = (),
 ) -> str:
     """Allow only documented WeCom robot or application message destinations."""
-    validated = validate_webhook_url(url, resolve=resolve)
+    validated = validate_webhook_url(url, resolve=resolve, allowlist=allowlist)
     parsed = urlsplit(validated)
     if parsed.hostname != WECOM_HOST or parsed.path not in WECOM_PATHS:
         raise WebhookSecurityError("NOTIFICATION_ENDPOINT_FORBIDDEN")

@@ -1,7 +1,7 @@
 # 汽车焊接工业 AI 平台开发计划
 
 > 文档状态：当前进度与未完成任务
-> 更新日期：2026-08-23
+> 更新日期：2026-08-24
 > 项目目录：`E:\codex_workspace\agent_spot_welding`
 
 ## 1. 使用规则
@@ -22,14 +22,14 @@
 | Week 9 | 进行中 | 生命周期、Redis fail-closed 已通过；当前候选 SHA 的远程安全和 Chromium 证据待全量重跑。 |
 | Week 10 | 进行中 | 角色矩阵、四通道通知已通过；当前候选 SHA 的远程证据待全量重跑。 |
 | Week 11 | 进行中 | 固定资源性能、备份恢复、N-1 已在上一 SHA 通过；当前浏览器/CI 修复会产生新 SHA，三项证据必须重新绑定。 |
-| Week 12 | 进行中 | 外部隔离栈 `1/1` 已验证 scheduler 并发与真实 `429`；Run `32637496040` 的普通回归在干净 runner 因缺少 SQLite 父目录失败，目录初始化修复待新 SHA 全量重跑。 |
+| Week 12 | 进行中 | Run `32676127712` 的普通 Chromium `4/4` 通过；隔离 Week 12 在创建 WeCom 端点时因容器 DNS/SSRF 校验未应用显式 acceptance allowlist 返回 `422`，修复待新 SHA 全量重跑。 |
 | Week 9-12 总体 | 进行中 | 不得因远程 CI 全绿或合同测试通过提前关闭。 |
 
 ## 3. 当前冻结基线
 
-- 源代码 SHA：当前工作区含针对 Run `32637496040` 的干净 runner 目录初始化修复；提交后冻结为新的验收 SHA。最终验收要求 `HEAD == origin/main`。
+- 源代码 SHA：远端基线 `a497757e685838c992deb35f0fd55b74d6c5f95f`；当前工作区含针对 Run `32676127712` 的 WeCom acceptance DNS/allowlist 修复，提交后冻结为新的验收 SHA。最终验收要求 `HEAD == origin/main`。
 - 分支：`main`
-- 远程 full run：`32637496040` 绑定 `56d86fa`，Quality 和两个生产集成通过；Chromium 的标准回归因干净 runner 不存在 `temp_test/` 而在后端启动时报 `sqlite3.OperationalError: unable to open database file`，隔离 Week 12 未执行，Week 11-12 verification 被 skipped。该 Run 不能用于验收。
+- 远程 full run：`32676127712` 绑定 `a497757e`；Quality Windows/Ubuntu、两个生产集成和标准 Chromium `4/4` 均通过。隔离 Week 12 在 `POST /api/projects/{id}/notification-endpoints` 创建 WeCom 端点时收到 `422`，Playwright receipt 正确失败，Week 11-12 verification 为 `skipped`。该 Run 不能用于验收。
 - WSL Docker Engine：`29.7.2`
 - Docker Compose：`5.4.0`
 - 资源 envelope：4 vCPU、8 GiB；当前 WSL 可见内存约 7.76 GiB
@@ -90,7 +90,7 @@
 
 ## 5. 当前阻断与下一步
 
-1. 提交并推送当前 CI/Playwright 环境隔离修复，触发新 SHA 的 `mode=full` workflow。
+1. 提交并推送当前 WeCom acceptance allowlist 与 Playwright 诊断/重试修复，触发新 SHA 的 `mode=full` workflow。
 2. 下载并校验最终 SHA 的 security summary、Chromium result、四镜像扫描和 runtime provenance；不得把 Run `32630148806` 的 skipped Chromium 或后置任务计为通过。
 3. 按最终完整 SHA 重建隔离镜像；复跑 W11-R1、W11-R2、W11-R3，保留上一 SHA 原始证据为历史参考。
 4. 外部 Week 12 栈必须使用 `INFERENCE_RATE_LIMIT_CAPACITY=5`、`INFERENCE_RATE_LIMIT_REFILL_PER_SECOND=0.01`，并完成四角色、四通道、rollout、部署和真实 `429` 浏览器验收；生产默认限流值不改。
@@ -117,3 +117,11 @@
 - Run `32632461877` 的 Quality、生产集成均通过，Chromium 失败且 Week 11-12 verification 被 skipped。已验证根因是浏览器 job 缺少 `WEEK12_INFERENCE_INTERNAL_SECRET`，同时把依赖本地 SQLite fixture 的普通 E2E 与外部 PostgreSQL 验收混跑。修复后普通 Chromium 回归在隔离 `5174` 端口 `4/4 passed`，CI 工作流合同 `43/43 OK`，前端测试 `207 passed / 19 skipped`，构建通过；新 SHA 的远程 full run 仍是必需门禁。
 - Run `32637496040` 的 Quality、Production integration、Production experiment integration 均为 `success`；Chromium 在标准回归启动阶段失败，因为全新 runner 上 SQLite 与 artifact 路径的父目录尚未创建，隔离 Week 12 因前置 step 失败未执行，Week 11-12 verification 为 `skipped`。修复为在标准回归前显式创建两个隔离目录，并增加工作流合同断言；仍需新 SHA 的远程 full run。
 - 当前未完成项仍为：新 SHA 远程 full workflow、四镜像重建、W11-R1/R2/R3、最终 security/Playwright 制品下载和 W12-R1 manifest。任何旧 SHA、failed、cancelled 或 skipped 证据均不计通过。
+
+## 9. 最新执行记录（2026-08-24）
+
+- Run `32676127712` 绑定 `a497757e685838c992deb35f0fd55b74d6c5f95f`。Quality Windows/Ubuntu、Production integration、Production experiment integration 均为 `success`；标准 Chromium 回归日志明确为 `4 passed`。
+- 隔离 Week 12 首次执行在创建 WeCom 通知端点时返回 `422`；重试因首次执行已写入持久化模型夹具而在模型版本创建处返回 `409`，后者是重试污染，不是首要根因。Playwright receipt 为 `failed`，Week 11-12 verification 为 `skipped`，因此该 run 仍不计通过。
+- 已确认 WeCom 请求 payload、官方 host 和 path 均合法；`422` 来自容器运行时 DNS/SSRF 校验未使用 acceptance Compose 已声明的显式 allowlist。修复为让 WeCom 创建与发送路径使用同一 `notification_webhook_allowlist`，仅在 acceptance Compose 中加入 `qyapi.weixin.qq.com`；生产默认空 allowlist 和官方 host/path 限制保持不变。
+- 浏览器断言现在包含响应 body，隔离 Week 12 场景禁用 Playwright retry，避免有持久化副作用的二次运行以 `409` 覆盖真实首错。
+- 本地验证：通知/API/CI `79/79`，Week 12 安全门禁 `160 passed / 1 skipped`，evidence manifest `32/32`，前端 `207 passed / 19 skipped`，前端构建通过，Compose 合并配置通过，`git diff --check` 通过。仍需新 SHA 的远程 `mode=full` 证明真实 runner 修复。

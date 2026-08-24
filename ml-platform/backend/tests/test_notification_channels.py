@@ -186,6 +186,15 @@ class TestWebhookSecurity(unittest.TestCase):
             "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=robot-key",
         )
 
+        self.assertEqual(
+            validate_wecom_url(
+                "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=controlled",
+                resolve=lambda _host, _port: ["10.0.0.2"],
+                allowlist=("qyapi.weixin.qq.com",),
+            ),
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=controlled",
+        )
+
 
 @unittest.skipIf(NotificationChannelRouter is None, "notification channel modules are unavailable")
 class TestNotificationAdapters(unittest.TestCase):
@@ -436,6 +445,28 @@ class TestNotificationAdapters(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.error_code, "NOTIFICATION_ENDPOINT_FORBIDDEN")
         self.assertEqual(client.calls, [])
+
+    def test_wecom_uses_explicit_allowlist_for_controlled_proxy_delivery(self):
+        endpoint = self._endpoint(
+            "wecom",
+            {"url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=controlled"},
+        )
+        client = RecordingHttpClient(FakeResponse(200, {"errcode": 0}))
+        settings = Settings(
+            _env_file=None,
+            notification_master_key=MASTER_KEY,
+            notification_webhook_allowlist=["qyapi.weixin.qq.com"],
+        )
+
+        result = NotificationChannelRouter(
+            self.db,
+            settings,
+            http_client=client,
+            resolve=lambda _host, _port: ["10.0.0.2"],
+        ).send(endpoint=endpoint, event=self.event, delivery_key="delivery-controlled-wecom")
+
+        self.assertEqual(result.status, "sent")
+        self.assertEqual(len(client.calls), 1)
 
     def test_email_uses_tls_and_enforces_recipient_cap(self):
         smtp = RecordingSMTP()

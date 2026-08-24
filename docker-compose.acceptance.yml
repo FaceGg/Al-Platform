@@ -32,7 +32,7 @@ services:
       HTTPS_PROXY: http://notification-proxy:3128
       NO_PROXY: localhost,127.0.0.1,postgres,redis,minio,mlflow,tensorboard-gateway,inference-runtime,backend,frontend,nginx,mailpit,notification-receiver
       SSL_CERT_FILE: /run/secrets/notification_acceptance_ca
-      NOTIFICATION_WEBHOOK_ALLOWLIST: notification-receiver
+      NOTIFICATION_WEBHOOK_ALLOWLIST: notification-receiver,qyapi.weixin.qq.com
       NOTIFICATION_TEST_WEBHOOK_URL: https://notification-receiver/events
       NOTIFICATION_TEST_WECOM_URL: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=acceptance-controlled
       NOTIFICATION_TEST_RECEIVER_EVENTS_URL: http://notification-receiver:8080/events
@@ -56,7 +56,7 @@ services:
       HTTPS_PROXY: http://notification-proxy:3128
       NO_PROXY: localhost,127.0.0.1,postgres,redis,minio,mlflow,tensorboard-gateway,inference-runtime,backend,frontend,nginx,mailpit,notification-receiver
       SSL_CERT_FILE: /run/secrets/notification_acceptance_ca
-      NOTIFICATION_WEBHOOK_ALLOWLIST: notification-receiver
+      NOTIFICATION_WEBHOOK_ALLOWLIST: notification-receiver,qyapi.weixin.qq.com
     depends_on:
       mailpit:
         condition: service_healthy

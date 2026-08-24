@@ -212,6 +212,34 @@ class TestNotificationAPI(unittest.TestCase):
         )
         self.assertNotIn("test-webhook-secret", json.dumps(webhook_audit.changes))
 
+    def test_wecom_endpoint_creation_honors_runtime_allowlist(self):
+        previous_settings = app.state.settings
+        app.state.settings = Settings(
+            _env_file=None,
+            notification_master_key=self.settings.notification_master_key,
+            notification_webhook_allowlist=["qyapi.weixin.qq.com"],
+        )
+        try:
+            with patch(
+                "app.services.webhook_security._resolve_host",
+                return_value=["10.0.0.2"],
+            ):
+                response = self.client.post(
+                    f"/api/projects/{self.project.id}/notification-endpoints",
+                    json={
+                        "kind": "wecom",
+                        "name": f"controlled-wecom-{uuid.uuid4().hex}",
+                        "config": {
+                            "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=controlled",
+                        },
+                    },
+                )
+        finally:
+            app.state.settings = previous_settings
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["kind"], "wecom")
+
     def test_notification_endpoint_rejects_declared_oversized_json_request(self):
         payload = json.dumps(
             {

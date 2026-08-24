@@ -503,7 +503,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
                 )
                 self.assertEqual(
                     environment["NOTIFICATION_WEBHOOK_ALLOWLIST"],
-                    "notification-receiver",
+                    "notification-receiver,qyapi.weixin.qq.com",
                 )
                 self.assertIn("notification-receiver", environment["NO_PROXY"])
                 self.assertIn("notification_acceptance_ca", service["secrets"])

@@ -265,7 +265,10 @@ def _validated_endpoint_config(
                 allowlist=app_settings.notification_webhook_allowlist,
             )._headers(b"{}", "notification-config-validation")
         elif kind == "wecom":
-            validate_wecom_url(str(config["url"]))
+            validate_wecom_url(
+                str(config["url"]),
+                allowlist=app_settings.notification_webhook_allowlist,
+            )
         elif kind == "email":
             recipients = EmailNotificationAdapter._addresses(config["to"])
             recipients.extend(

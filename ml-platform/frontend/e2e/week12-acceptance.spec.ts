@@ -313,7 +313,10 @@ async function expectStatus(
   extraHeaders?: Record<string, string>,
 ): Promise<ApiResult> {
   const result = await api(page, requestPath, method, payload, extraHeaders);
-  expect(result.status, `${method} ${requestPath}`).toBe(expectedStatus);
+  expect(
+    result.status,
+    `${method} ${requestPath}: ${JSON.stringify(result.body)}`,
+  ).toBe(expectedStatus);
   return result;
 }
 
@@ -396,6 +399,8 @@ async function testEndpoint(
 }
 
 test.describe("Week 12 isolated acceptance", () => {
+  test.describe.configure({ retries: 0 });
+
   test.skip(
     !acceptanceEnabled,
     `requires RUN_WEEK12_BROWSER_ACCEPTANCE=1 and ${missingAcceptanceEnvironment.join(", ") || "the isolated acceptance environment"}; skipped is not an acceptance pass`,

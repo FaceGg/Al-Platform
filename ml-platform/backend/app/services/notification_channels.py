@@ -329,12 +329,14 @@ class WeComNotificationAdapter:
         timeout_seconds: int,
         max_payload_bytes: int,
         resolve: Callable[[str, int], Iterable[object]] | None,
+        allowlist: Iterable[str],
     ) -> None:
         self.config = config
         self.http_client = http_client
         self.timeout_seconds = timeout_seconds
         self.max_payload_bytes = max_payload_bytes
         self.resolve = resolve
+        self.allowlist = allowlist
 
     def send(
         self,
@@ -349,7 +351,11 @@ class WeComNotificationAdapter:
         if not isinstance(url, str):
             return DeliveryResult("failed", "NOTIFICATION_ENDPOINT_INVALID")
         try:
-            validated_url = validate_wecom_url(url, resolve=self.resolve)
+            validated_url = validate_wecom_url(
+                url,
+                resolve=self.resolve,
+                allowlist=self.allowlist,
+            )
             body = canonical_json_bytes(
                 {
                     "msgtype": "text",
@@ -528,6 +534,7 @@ class NotificationChannelRouter:
                 timeout_seconds=self.settings.notification_webhook_timeout_seconds,
                 max_payload_bytes=self.settings.notification_max_payload_bytes,
                 resolve=self.resolve,
+                allowlist=self.settings.notification_webhook_allowlist,
             )
         elif endpoint.kind == "email":
             adapter = EmailNotificationAdapter(
