@@ -1084,6 +1084,10 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             standard.get("env", {}).get("ARTIFACT_STORAGE_DIR"),
             "../../temp_test/playwright-artifacts",
         )
+        self.assertIn(
+            "mkdir -p ../../temp_test/playwright-artifacts ../../temp_test/playwright-data",
+            standard["run"],
+        )
         self.assertIn('--grep-invert "Week 12 isolated acceptance"', standard["run"])
         self.assertIn("e2e/week12-acceptance.spec.ts", acceptance["run"])
         self.assertIn("npm run dev -- --host 127.0.0.1 --port 5173", frontend["run"])

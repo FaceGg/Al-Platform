@@ -176,7 +176,9 @@ jobs:
           DATABASE_URL: sqlite:///../../temp_test/playwright_ci.db
           ARTIFACT_STORAGE_DIR: ../../temp_test/playwright-artifacts
           ML_PLATFORM_TEMP_DIR: ../../temp_test/playwright-data
-        run: npm run test:e2e -- --project=chromium --grep-invert "Week 12 isolated acceptance"
+        run: |
+          mkdir -p ../../temp_test/playwright-artifacts ../../temp_test/playwright-data
+          npm run test:e2e -- --project=chromium --grep-invert "Week 12 isolated acceptance"
       - name: Generate browser acceptance secrets
         shell: bash
         run: |
