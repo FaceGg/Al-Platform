@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { App as AntApp, Dropdown, Empty, Spin, Tag, Tooltip } from "antd";
 import { DeleteOutlined, DownloadOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -253,6 +253,17 @@ export default function DataAnnotationPage() {
 
   const selectedProject = useMemo(() => projects.find((item) => item.id === projectId), [projects, projectId]);
   const selectedRun = runs.find((item) => item.id === runId);
+  const selectedRunLabelSchemaKey = [
+    selectedRun?.id || "",
+    selectedRun?.label_mode || "",
+    selectedRun?.target_schema?.name || "",
+    selectedRun?.target_schema?.dtype || "",
+    ...(selectedRun?.target_schema?.classes || []),
+  ].join("\u0000");
+  const labelOptionsStyle = useMemo(() => {
+    const longestLabelLength = labelOptions.reduce((length, [, text]) => Math.max(length, Array.from(text).length), 0);
+    return { "--label-option-width": `calc(${Math.max(longestLabelLength, 4)}ch + 68px)` } as CSSProperties;
+  }, [labelOptions]);
   const isSpotWeldFlow = true;
   const requestedView = searchParams.get("view");
   const requestedRunId = searchParams.get("runId");
@@ -282,7 +293,7 @@ export default function DataAnnotationPage() {
     setLabelOptions(labelOptionsForRun(selectedRun));
     setEditingLabelList(false);
     setNewLabelText("");
-  }, [selectedRun?.id, selectedRun?.label_mode, selectedRun?.target_schema]);
+  }, [selectedRunLabelSchemaKey]);
 
   useEffect(() => {
     setLabelMode(searchParams.get("mode") === "manual" ? "manual" : "automatic");
@@ -411,13 +422,30 @@ export default function DataAnnotationPage() {
       skipUrlStateSyncRef.current = false;
       return;
     }
+    if (requestedView === "tasks") {
+      if (workspaceMode) setWorkspaceMode(false);
+      if (runId) setRunId("");
+      if (datasetArtifactId) setDatasetArtifactId("");
+      setSelected(null);
+      setLabel("");
+      setSearchParams((current) => {
+        current.set("type", "spot-weld");
+        current.set("view", "tasks");
+        current.delete("runId");
+        current.delete("sampleId");
+        current.delete("datasetId");
+        current.delete("mode");
+        return current;
+      }, { replace: true });
+      return;
+    }
     setSearchParams((current) => {
       if (projectId) current.set("projectId", projectId); else current.delete("projectId");
       if (datasetArtifactId) current.set("datasetId", datasetArtifactId); else current.delete("datasetId");
       if (runId) current.set("runId", runId); else current.delete("runId");
       return current;
     }, { replace: true });
-  }, [projectId, datasetArtifactId, runId, setSearchParams]);
+  }, [projectId, datasetArtifactId, runId, requestedView, workspaceMode, setSearchParams]);
 
   useEffect(() => {
     detailRequestId.current += 1;
@@ -616,6 +644,7 @@ export default function DataAnnotationPage() {
   };
 
   const openRunWorkspace = (run: QualityRun, mode: QualityLabelMode = run.label_mode || "automatic") => {
+    skipUrlStateSyncRef.current = true;
     setWorkspaceMode(true);
     setRunId(run.id);
     setLabelMode(mode);
@@ -992,18 +1021,11 @@ export default function DataAnnotationPage() {
 
   const workspaceView = (
     <>
-      <div className="page-header">
+      <div className="page-header spot-weld-annotation__workspace-header">
         <div className="page-header-copy">
           <p className="page-kicker">QUALITY / LABELING</p>
           <h2 className="page-title">{labels.title || "数据标注"}</h2>
           <p className="page-subtitle">{selectedProject?.name || "点焊样本逐条标注"}</p>
-        </div>
-        <div className="spot-weld-annotation__controls">
-          <label htmlFor="spot-weld-annotation-project">Project</label>
-          <select id="spot-weld-annotation-project" className="spot-weld-annotation__project" aria-label="Project" value={projectId} onChange={(event) => { setProjectId(event.target.value); setRunId(""); }} disabled={loadingProjects}>
-            <option value="">选择项目</option>
-            {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
-          </select>
         </div>
         <div className="spot-weld-annotation__actions">
           <button type="button" className="ant-btn" aria-label="返回任务列表" onClick={returnToTaskList}>返回任务列表</button>
@@ -1021,7 +1043,7 @@ export default function DataAnnotationPage() {
             <div className="spot-weld-annotation__sample-list">
               {samples.map((sample) => <button type="button" className={`spot-weld-annotation__sample ${selected?.id === sample.id ? "is-selected" : ""}`} key={sample.id} onClick={() => selectSample(sample)} aria-label={sample.display_id}>
                 <span><strong>{sample.display_id}</strong><small>第 {sample.source_row_index ?? "-"} 行</small></span>
-                <Tag color={warningColor[sample.warning_level || "none"]}>{qualityLabelText(sample.current_label || sample.automatic_label) || "未标注"}</Tag>
+                <Tag color={selectedRun?.label_mode === "manual" ? undefined : warningColor[sample.warning_level || "none"]}>{qualityLabelText(sample.current_label || sample.automatic_label) || "未标注"}</Tag>
               </button>)}
             </div>
           )}
@@ -1037,7 +1059,7 @@ export default function DataAnnotationPage() {
                   <button type="button" className="ant-btn" aria-label="编辑" onClick={() => setEditingLabelList((current) => !current)} disabled={!canLabel || savingLabel}>{editingLabelList ? "完成" : "编辑"}</button>
                 </div>
               </div>
-              <div className="spot-weld-annotation__label-options" role="group" aria-label="人工标签选项">
+              <div className="spot-weld-annotation__label-options" role="group" aria-label="人工标签选项" style={labelOptionsStyle}>
                 {labelOptions.map(([value, text]) => <span className="spot-weld-annotation__label-item" key={value}>
                   <button type="button" className={`spot-weld-annotation__label-option ${label === value ? "is-selected" : ""}`} aria-pressed={label === value} onClick={() => void saveLabel(value)} disabled={!canLabel || savingLabel}>{text}</button>
                   {editingLabelList && <button type="button" className="ant-btn ant-btn-icon-only spot-weld-annotation__label-remove" aria-label={`删除人工标签 ${text}`} onClick={() => removeLabelOption(value, text)} disabled={!canLabel || savingLabel}><DeleteOutlined /></button>}

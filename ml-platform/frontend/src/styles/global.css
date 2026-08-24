@@ -1625,30 +1625,26 @@ html body {
 }
 
 .spot-weld-annotation__workspace-header {
+  min-height: 0;
   align-items: center;
   gap: 10px;
-  margin-bottom: 14px;
-  padding: 10px 12px;
+  margin-bottom: 8px;
+  padding: 5px 10px;
 }
 
 .spot-weld-annotation__workspace-header .page-kicker {
-  margin-bottom: 1px;
-  font-size: 10px;
+  margin-bottom: 0;
+  font-size: 9px;
 }
 
 .spot-weld-annotation__workspace-header .page-title {
-  font-size: 16px;
-  line-height: 1.2;
+  font-size: 15px;
+  line-height: 1.15;
 }
 
 .spot-weld-annotation__workspace-header .page-subtitle {
-  margin-top: 2px;
-  font-size: 11px;
-}
-
-.spot-weld-annotation__workspace-header .spot-weld-annotation__project {
-  min-width: 160px;
-  min-height: 30px;
+  margin-top: 1px;
+  font-size: 10px;
 }
 
 .spot-weld-annotation__detail {
@@ -1747,16 +1743,19 @@ html body {
 
 .spot-weld-annotation__label-options {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--label-option-width, 132px)), var(--label-option-width, 132px)));
   gap: 7px;
   margin-top: 10px;
 }
 
 .spot-weld-annotation__label-item {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: stretch;
   gap: 3px;
   min-width: 0;
+  width: var(--label-option-width, 132px);
+  max-width: 100%;
 }
 
 .spot-weld-annotation__label-head,
@@ -1826,6 +1825,9 @@ html body {
   cursor: pointer;
   font: inherit;
   text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .spot-weld-annotation__label-option:hover,

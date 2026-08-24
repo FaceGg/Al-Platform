@@ -1,6 +1,6 @@
 ﻿import { describe, it, expect } from "vitest";
-import { render, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { fireEvent, render, waitFor } from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import AppLayout from "./AppLayout";
 import { beforeEach, vi } from "vitest";
 import { screen } from "@testing-library/react";
@@ -24,6 +24,22 @@ describe("AppLayout", () => {
     notificationMocks.listInAppNotifications.mockReset().mockResolvedValue({ items: [], total: 0 });
     notificationMocks.markRead.mockReset();
     notificationMocks.archive.mockReset();
+  });
+
+  it("returns to the annotation task list from an active annotation run", async () => {
+    function LocationProbe() {
+      const location = useLocation();
+      return <output data-testid="location">{location.pathname}{location.search}</output>;
+    }
+
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=workspace&projectId=project-1&runId=run-1"]}>
+        <AppLayout><LocationProbe /></AppLayout>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByText("数据标注"));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/data-annotation?type=spot-weld&view=tasks"));
   });
 
   it("renders without crashing", async () => {

@@ -67,6 +67,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       .sort((left, right) => right.length - left.length)[0] || "/";
   })();
 
+  const handleMenuNavigate = (key: string) => {
+    if (key === "/data-annotation") {
+      navigate("/data-annotation?type=spot-weld&view=tasks");
+      return;
+    }
+    navigate(key);
+  };
+
   const [username, setUsername] = useState(() => localStorage.getItem("username") || "");
   useEffect(() => {
     if (username || !localStorage.getItem("token")) return;
@@ -146,8 +154,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             items={menuItems.map((item: any) =>
               item.type === "divider"
                 ? item
-                : { ...item, onClick: () => navigate(item.key) }
+                : item
             )}
+            onClick={({ key }) => handleMenuNavigate(String(key))}
             style={{ background: "transparent", border: "none", padding: "8px 0" }}
           />
         </Sider>

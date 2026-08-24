@@ -271,6 +271,13 @@ describe("DataAnnotationPage", () => {
     expect(styles).not.toContain(".spot-weld-annotation__raw-data-row.is-unmatched");
   });
 
+  it("keeps the annotation detail header compact", () => {
+    const styles = readFileSync(resolve(process.cwd(), "src/styles/global.css"), "utf8").replace(/\r\n/g, "\n");
+    expect(styles).toContain(".spot-weld-annotation__workspace-header {\n  min-height: 0;\n  align-items: center;\n  gap: 10px;\n  margin-bottom: 8px;\n  padding: 5px 10px;");
+    expect(styles).toContain(".spot-weld-annotation__workspace-header .page-title {\n  font-size: 15px;");
+    expect(styles).not.toContain(".spot-weld-annotation__workspace-header .spot-weld-annotation__project");
+  });
+
   it("falls back to an accessible project when the URL project is stale", async () => {
     render(
       <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=setup&projectId=missing-project"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
@@ -317,6 +324,44 @@ describe("DataAnnotationPage", () => {
     expect(screen.getByRole("button", { name: "添加标签" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "正常" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "删除人工标签 正常" })).toBeInTheDocument();
+  });
+
+  it("keeps label editing open during polling and sizes options from the longest label", async () => {
+    vi.useFakeTimers();
+    const run = {
+      id: "run-manual-live",
+      status: "running",
+      label_mode: "manual",
+      target_schema: { name: "Fault", dtype: "string", classes: ["短", "这是最长人工标签"] },
+      annotation_progress: { annotated_count: 0, total_count: 1, percent: 0 },
+    };
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "焊装线", project_role: "owner" }] } });
+      if (url === "/projects/project-1/spot-weld/runs") return Promise.resolve({ data: { items: [{ ...run, target_schema: { ...run.target_schema } }] } });
+      if (url === "/projects/project-1/spot-weld/runs/run-manual-live") return Promise.resolve({ data: { ...run, target_schema: { ...run.target_schema } } });
+      if (url.endsWith("/samples/sample-1")) return Promise.resolve({ data: {
+        id: "sample-1", display_id: "W-0001", review_status: "pending_review",
+        waveforms: { current: [], voltage: [], resistance: [], power: [] },
+      } });
+      if (url.endsWith("/samples")) return Promise.resolve({ data: { items: [{ id: "sample-1", display_id: "W-0001", review_status: "pending_review" }] } });
+      return Promise.resolve({ data: { items: [] } });
+    });
+
+    render(<MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=workspace&projectId=project-1&runId=run-manual-live"]}><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "W-0001" }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+
+    const options = screen.getByRole("group", { name: "人工标签选项" });
+    expect(options.getAttribute("style")).toContain("--label-option-width: calc(8ch + 68px)");
+    await act(async () => { vi.advanceTimersByTime(1000); await Promise.resolve(); await Promise.resolve(); });
+
+    const input = screen.getByRole("textbox", { name: "新建人工标签" });
+    fireEvent.change(input, { target: { value: "新增标签" } });
+    fireEvent.click(screen.getByRole("button", { name: "添加标签" }));
+    expect(screen.getByRole("button", { name: "新增标签" })).toBeInTheDocument();
   });
 
   it("shows every real sample field, keeps automatic labels unselected, and saves a clicked label", async () => {
@@ -407,7 +452,7 @@ describe("DataAnnotationPage", () => {
     await waitFor(() => expect(quality.saveLabeledDataset).toHaveBeenCalledWith("project-1", "run-1", "current"));
   });
 
-  it("ignores a sample detail that returns after switching projects", async () => {
+  it("does not render a project switcher in the active workspace", async () => {
     let resolveOldDetail: (value: unknown) => void = () => undefined;
     const oldDetail = new Promise((resolve) => { resolveOldDetail = resolve; });
     get.mockImplementation((url: string) => {
@@ -431,9 +476,7 @@ describe("DataAnnotationPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "W-0001" }));
     await waitFor(() => expect(get).toHaveBeenCalledWith("/projects/project-1/spot-weld/runs/run-1/samples/sample-1"));
-    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "project-2" } });
-    await waitFor(() => expect(get).toHaveBeenCalledWith("/projects/project-2/spot-weld/runs"));
-    expect(await screen.findByText("暂无样本")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
 
     await act(async () => {
       resolveOldDetail({ data: {
@@ -443,8 +486,7 @@ describe("DataAnnotationPage", () => {
       await Promise.resolve();
     });
 
-    expect(screen.queryByText("四通道波形")).not.toBeInTheDocument();
-    expect(screen.getByText("选择样本查看详情")).toBeInTheDocument();
+    expect(screen.getByText("当前样本数据")).toBeInTheDocument();
   });
 
   it("creates an automatic task with a required target column and registered model", async () => {
@@ -588,7 +630,7 @@ describe("DataAnnotationPage", () => {
         id: "run-manual", status: "completed", label_mode: "manual",
         target_schema: { name: "Fault", dtype: "int64", classes: ["0", "1"] },
       }] } });
-      if (url.endsWith("/samples")) return Promise.resolve({ data: { items: [{ id: "sample-1", display_id: "W-0001", review_status: "pending_review", warning_level: "none" }] } });
+      if (url.endsWith("/samples")) return Promise.resolve({ data: { items: [{ id: "sample-1", display_id: "W-0001", review_status: "pending_review", warning_level: "critical" }] } });
       if (url.endsWith("/samples/sample-1")) return Promise.resolve({ data: {
         id: "sample-1", display_id: "W-0001", review_status: "pending_review",
         waveforms: { current: [1], voltage: [2], resistance: [3], power: [4] },
@@ -607,6 +649,8 @@ describe("DataAnnotationPage", () => {
     expect(screen.getByRole("button", { name: "0" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "正常" })).not.toBeInTheDocument();
+    const manualQueueTag = within(screen.getByRole("button", { name: "W-0001" })).getByText("-");
+    expect(manualQueueTag).not.toHaveClass("ant-tag-red");
     fireEvent.click(screen.getByRole("button", { name: "1" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/projects/project-1/spot-weld/runs/run-manual/samples/sample-1/labels",

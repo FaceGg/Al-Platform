@@ -279,7 +279,7 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         self.assertEqual(response.json()["valid_rows"], 2)
         created = self.client.post(f"/api/projects/{self.project.id}/spot-weld/runs", json=payload)
         self.assertEqual(created.status_code, 202)
-        self.assertEqual(created.json()["status"], "queued")
+        self.assertEqual(created.json()["status"], "running")
         self.assertEqual(created.json()["task_id"], "quality-task-1")
         self.assertEqual(created.json()["selected_algorithm_ids"], ["gbdt", "random_forest"])
         self.assertEqual(created.json()["search"], {
@@ -456,6 +456,43 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         })
         self.assertNotIn("人工标签", payload["input_columns"])
 
+    def test_manual_annotation_accepts_generic_dataset_without_spot_weld_fields(self):
+        artifact = self._create_dataset_artifact("generic-annotation.csv", pd.DataFrame({
+            "record_id": ["A-1", "A-2", "A-3"],
+            "temperature": [20.5, 21.0, 22.25],
+            "Fault": [0, 1, 0],
+        }))
+        payload = {
+            "dataset_artifact_id": str(artifact.id),
+            "field_mapping": {},
+            "label_mode": "manual",
+            "target_column": "Fault",
+            "target_column_created": False,
+            "input_columns": ["record_id", "temperature"],
+        }
+        validation = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/validate",
+            json=payload,
+        )
+        self.assertEqual(validation.status_code, 200, validation.text)
+        self.assertEqual(validation.json()["valid_rows"], 3)
+
+        created = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/runs",
+            json=payload,
+        )
+        self.assertEqual(created.status_code, 202, created.text)
+        run = self.db.get(SpotWeldQualityRun, uuid.UUID(created.json()["id"]))
+        self.assertEqual(run.statistics["target_schema"]["classes"], ["0", "1"])
+        outcome = execute_quality_run(self.db, run.id, artifact_service=self.artifact_service)
+        self.assertEqual(outcome.status, "completed")
+        self.assertEqual(self.client.get(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}",
+        ).json()["status"], "running")
+        samples = self.db.query(SpotWeldQualitySample).filter_by(run_id=run.id).all()
+        self.assertEqual(len(samples), 3)
+        self.assertEqual(samples[0].table_values["record_id"], "A-1")
+
     def test_manual_label_is_type_converted_and_new_values_are_allowed(self):
         run = SpotWeldQualityRun(
             project_id=self.project.id,
@@ -484,6 +521,15 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
             json={"label": "1", "note": ""},
         )
         self.assertEqual(accepted.status_code, 201, accepted.text)
+        progress = self.client.get(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}",
+        )
+        self.assertEqual(progress.status_code, 200, progress.text)
+        self.assertEqual(progress.json()["annotation_progress"], {
+            "annotated_count": 1,
+            "total_count": 1,
+            "percent": 100.0,
+        })
         converted = self.client.post(
             f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/samples/{sample.id}/labels",
             json={"label": "2.0", "note": ""},
@@ -698,7 +744,10 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
                     created_by_id=self.owner.id,
                     status="running",
                     input_fingerprint={"label_mode": label_mode, "row_count": 4},
-                    statistics={"row_count": 4},
+                    statistics={
+                        "row_count": 4,
+                        **({"annotation_progress": {"annotated_count": 0, "total_count": 4}} if label_mode == "manual" else {}),
+                    },
                 )
                 self.db.add(run)
                 self.db.flush()

@@ -234,6 +234,11 @@ def _quality_required_input_columns(field_mapping: Mapping[str, str] | None = No
     return [mapping[name] for name in (*REPORT_TABLE_FIELDS, *WAVEFORM_FIELDS)]
 
 
+def is_quality_report_frame(frame: pd.DataFrame) -> bool:
+    required = set(REPORT_TABLE_FIELDS) | set(WAVEFORM_FIELDS)
+    return required.issubset({str(column) for column in frame.columns})
+
+
 def _resolve_quality_input_schema(
     frame: pd.DataFrame,
     *,
@@ -361,6 +366,77 @@ def resolve_quality_run_configuration(
         "target_schema": target_schema,
         "evaluation": evaluation,
     }, labels
+
+
+def resolve_manual_run_configuration(
+    frame: pd.DataFrame,
+    *,
+    target_column: str,
+    target_column_created: bool = False,
+    target_column_dtype: str | None = None,
+    input_columns: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Resolve a generic annotation task without spot-weld feature requirements."""
+    if not isinstance(target_column, str) or not target_column.strip():
+        raise QualityPipelineError("QUALITY_TARGET_COLUMN_REQUIRED")
+    target_column = target_column.strip()
+    frame_columns = [str(column) for column in frame.columns]
+    if input_columns is None:
+        selected = [column for column in frame_columns if column != target_column]
+    else:
+        if isinstance(input_columns, (str, bytes)):
+            raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
+        selected = [str(column) for column in input_columns]
+    if not selected or len(selected) != len(set(selected)):
+        raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
+    if target_column in selected:
+        raise QualityPipelineError(
+            "QUALITY_INPUT_COLUMNS_INVALID",
+            message=f"目标列不能同时作为输入列：{target_column}",
+        )
+    unknown_columns = [column for column in selected if column not in frame_columns]
+    if unknown_columns:
+        raise QualityPipelineError(
+            "QUALITY_INPUT_COLUMNS_INVALID",
+            message=f"输入列不存在：{', '.join(unknown_columns)}",
+        )
+    if target_column_created:
+        if target_column in frame.columns:
+            raise QualityPipelineError("QUALITY_TARGET_COLUMN_EXISTS", field_name=target_column)
+        created_dtype = normalize_created_target_column_dtype(target_column_dtype)
+        classes = list(CREATED_TARGET_COLUMN_DEFAULT_CLASSES[created_dtype])
+        target_schema = {
+            "name": target_column,
+            "dtype": created_dtype,
+            "classes": classes,
+            "class_count": len(classes),
+            "created": True,
+        }
+    else:
+        if target_column not in frame.columns:
+            raise QualityPipelineError("QUALITY_TARGET_COLUMN_INVALID", field_name=target_column)
+        raw = frame[target_column]
+        values = raw.dropna().astype(str).str.strip()
+        classes = list(dict.fromkeys(value for value in values.tolist() if value))
+        if not classes:
+            raise QualityPipelineError("QUALITY_TARGET_COLUMN_INVALID", field_name=target_column)
+        target_schema = {
+            "name": target_column,
+            "dtype": str(raw.dtype),
+            "classes": classes,
+            "class_count": len(classes),
+            "created": False,
+        }
+    input_schema = [{"name": column, "dtype": str(frame[column].dtype)} for column in selected]
+    return {
+        "target_column": target_column,
+        "target_column_created": bool(target_column_created),
+        "target_column_dtype": target_schema["dtype"],
+        "input_columns": selected,
+        "input_schema": input_schema,
+        "target_schema": target_schema,
+        "evaluation": {"cross_validation_enabled": False, "cross_validation_folds": None},
+    }
 
 
 ANNOTATION_SAMPLE_EXPORT_FIELDS = (
@@ -1334,17 +1410,30 @@ def create_quality_run_record(
     normalized_rule_config = normalize_report_rule_config(rule_config)
     artifact_service = artifact_service or build_artifact_service(db)
     artifact, frame = resolve_dataset_frame(db, artifact_service, project_id, dataset_artifact_id)
-    features, schema, statistics = build_feature_frame(frame, field_mapping=field_mapping)
-    run_configuration, _ = resolve_quality_run_configuration(
-        frame,
-        field_mapping=field_mapping,
-        target_column=target_column,
-        target_column_created=target_column_created,
-        target_column_dtype=target_column_dtype,
-        input_columns=input_columns,
-        cross_validation_enabled=cross_validation_enabled,
-        cross_validation_folds=cross_validation_folds,
-    )
+    if label_mode == "manual" and not is_quality_report_frame(frame):
+        run_configuration = resolve_manual_run_configuration(
+            frame,
+            target_column=target_column or "",
+            target_column_created=target_column_created,
+            target_column_dtype=target_column_dtype,
+            input_columns=input_columns,
+        )
+        schema = run_configuration["input_schema"]
+        statistics = {"row_count": int(len(frame)), "input_schema": schema}
+        valid_rows = len(frame)
+    else:
+        features, schema, statistics = build_feature_frame(frame, field_mapping=field_mapping)
+        run_configuration, _ = resolve_quality_run_configuration(
+            frame,
+            field_mapping=field_mapping,
+            target_column=target_column,
+            target_column_created=target_column_created,
+            target_column_dtype=target_column_dtype,
+            input_columns=input_columns,
+            cross_validation_enabled=cross_validation_enabled,
+            cross_validation_folds=cross_validation_folds,
+        )
+        valid_rows = len(features)
     run = SpotWeldQualityRun(
         project_id=project_id,
         dataset_artifact_id=artifact.id,
@@ -1365,7 +1454,7 @@ def create_quality_run_record(
             "rule_config": normalized_rule_config,
             **run_configuration,
         },
-        statistics={**statistics, "valid_rows": len(features), **run_configuration},
+        statistics={**statistics, "valid_rows": valid_rows, **run_configuration},
         rule_set_version=REPORT_RULESET_VERSION,
         automl_results=[],
         clustering_results={},
@@ -1409,6 +1498,65 @@ def claim_quality_run(
     if claimed != 1:
         return None
     return db.query(SpotWeldQualityRun).filter(SpotWeldQualityRun.id == run_id).first()
+
+
+def _execute_manual_annotation_run(db, run, frame: pd.DataFrame) -> QualityRunOutcome:
+    run_input = run.input_fingerprint or {}
+    configuration = resolve_manual_run_configuration(
+        frame,
+        target_column=run_input.get("target_column") or "",
+        target_column_created=bool(run_input.get("target_column_created", False)),
+        target_column_dtype=run_input.get("target_column_dtype"),
+        input_columns=run_input.get("input_columns"),
+    )
+    input_columns = configuration["input_columns"]
+    samples = []
+    for index, (_, row) in enumerate(frame.iterrows()):
+        table_values = {
+            str(column): _json_value(row[column])
+            for column in frame.columns
+        }
+        feature_values = {}
+        for column in input_columns:
+            value = row[column]
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(numeric):
+                feature_values[column] = numeric
+        samples.append(SpotWeldQualitySample(
+            run_id=run.id,
+            source_row_index=int(index),
+            display_id=f"W-{len(samples) + 1:04d}",
+            table_values=table_values,
+            feature_values=feature_values,
+            waveforms={},
+            automatic_label=None,
+            rule_hits=[],
+            warning_level="none",
+            review_status="pending_review",
+        ))
+    db.query(SpotWeldQualitySample).filter(SpotWeldQualitySample.run_id == run.id).delete(synchronize_session=False)
+    db.add_all(samples)
+    run.status = "completed" if len(frame) == 0 else "running"
+    run.rule_set_version = "generic_annotation_v1"
+    run.feature_schema = configuration["input_schema"]
+    run.statistics = {
+        "row_count": int(len(frame)),
+        "valid_rows": int(len(frame)),
+        "label_mode": "manual",
+        **configuration,
+        "annotation_progress": _annotation_progress(0, len(frame)),
+        "modeling_progress": _modeling_progress(0, 0),
+    }
+    run.automl_results = []
+    run.clustering_results = {}
+    run.output_artifacts = {}
+    run.error_code = None
+    run.error_details = {}
+    db.commit()
+    return QualityRunOutcome(str(run.id), "completed")
 
 
 def recover_orphaned_local_quality_runs(db) -> int:
@@ -2009,12 +2157,14 @@ def execute_quality_run(
     artifact_service = artifact_service or build_artifact_service(db)
     try:
         _, frame = resolve_dataset_frame(db, artifact_service, run.project_id, run.dataset_artifact_id)
+        run_input = run.input_fingerprint or {}
+        label_mode = run_input.get("label_mode", "automatic")
+        if label_mode == "manual" and not is_quality_report_frame(frame):
+            return _execute_manual_annotation_run(db, run, frame)
         features, schema, statistics = build_feature_frame(frame, field_mapping=run.field_mapping or None)
         canonical = canonicalize_report_frame(frame, run.field_mapping or None)
         waveforms = decode_report_waveforms(frame, run.field_mapping or None)
         records = features.to_dict(orient="records")
-        run_input = run.input_fingerprint or {}
-        label_mode = run_input.get("label_mode", "automatic")
         if not isinstance(label_mode, str) or label_mode not in QUALITY_LABEL_MODES:
             raise QualityPipelineError("QUALITY_LABEL_MODE_INVALID")
         normalized_rule_config = normalize_report_rule_config(run_input.get("rule_config"))

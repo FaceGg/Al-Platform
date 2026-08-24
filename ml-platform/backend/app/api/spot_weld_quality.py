@@ -11,6 +11,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session, load_only
 
 from app.api.auth import get_current_user
@@ -45,6 +46,8 @@ from app.services.spot_weld_quality import (
     update_quality_run_rules,
     validate_report_frame,
     resolve_quality_run_configuration,
+    resolve_manual_run_configuration,
+    is_quality_report_frame,
     run_clustering,
     run_registered_model_annotation,
 )
@@ -200,7 +203,12 @@ def _snapshot_or_404(
     return snapshot
 
 
-def _serialize_run(run: SpotWeldQualityRun, *, include_results: bool = True) -> dict:
+def _serialize_run(
+    run: SpotWeldQualityRun,
+    *,
+    include_results: bool = True,
+    annotated_count_override: int | None = None,
+) -> dict:
     input_fingerprint = run.input_fingerprint or {}
     label_mode = input_fingerprint.get("label_mode", "automatic")
     statistics = run.statistics or {}
@@ -212,18 +220,23 @@ def _serialize_run(run: SpotWeldQualityRun, *, include_results: bool = True) -> 
         or len(run.samples)
         or 0
     )
-    if stored_progress and total_count:
+    if annotated_count_override is not None:
+        annotated_count = int(annotated_count_override)
+    elif stored_progress and total_count:
         annotated_count = int(stored_progress.get("annotated_count") or 0)
     elif label_mode == "manual":
         annotated_count = sum(1 for sample in run.samples if sample.current_label)
     else:
         annotated_count = sum(1 for sample in run.samples if sample.automatic_label)
     percent = round((annotated_count / total_count) * 100, 2) if total_count else 0.0
+    display_status = run.status
+    if label_mode == "manual" and display_status not in {"failed", "cancelled"}:
+        display_status = "completed" if total_count and annotated_count >= total_count else "running"
     payload = {
         "id": str(run.id),
         "project_id": str(run.project_id),
         "dataset_artifact_id": str(run.dataset_artifact_id),
-        "status": run.status,
+        "status": display_status,
         "task_id": run.task_id,
         "worker_id": run.worker_id,
         "sample_count": total_count or len(run.samples),
@@ -274,6 +287,28 @@ def _serialize_run(run: SpotWeldQualityRun, *, include_results: bool = True) -> 
             "output_artifacts": run.output_artifacts or {},
         })
     return payload
+
+
+def _manual_annotation_counts(db: Session, runs: list[SpotWeldQualityRun]) -> dict[uuid.UUID, int]:
+    manual_run_ids = [
+        run.id
+        for run in runs
+        if (run.input_fingerprint or {}).get("label_mode", "automatic") == "manual"
+    ]
+    if not manual_run_ids:
+        return {}
+    counts = {run_id: 0 for run_id in manual_run_ids}
+    counts.update({
+        run_id: int(count)
+        for run_id, count in db.query(
+            SpotWeldQualitySample.run_id,
+            func.count(SpotWeldQualitySample.id),
+        ).filter(
+            SpotWeldQualitySample.run_id.in_(manual_run_ids),
+            SpotWeldQualitySample.current_label.isnot(None),
+        ).group_by(SpotWeldQualitySample.run_id).all()
+    })
+    return counts
 
 
 def _serialize_sample(sample: SpotWeldQualitySample, *, include_waveforms: bool = False) -> dict:
@@ -341,20 +376,37 @@ def validate_dataset(
         )
         if not isinstance(data.target_column, str) or not data.target_column.strip():
             raise QualityPipelineError("QUALITY_TARGET_COLUMN_REQUIRED")
-        resolve_quality_run_configuration(
-            frame,
-            field_mapping=data.field_mapping,
-            target_column=data.target_column,
-            target_column_created=data.target_column_created,
-            target_column_dtype=data.target_column_dtype,
-            input_columns=data.input_columns,
-            cross_validation_enabled=data.cross_validation_enabled,
-            cross_validation_folds=data.cross_validation_folds,
-        )
+        if data.label_mode == "manual" and not is_quality_report_frame(frame):
+            resolve_manual_run_configuration(
+                frame,
+                target_column=data.target_column,
+                target_column_created=data.target_column_created,
+                target_column_dtype=data.target_column_dtype,
+                input_columns=data.input_columns,
+            )
+        else:
+            resolve_quality_run_configuration(
+                frame,
+                field_mapping=data.field_mapping,
+                target_column=data.target_column,
+                target_column_created=data.target_column_created,
+                target_column_dtype=data.target_column_dtype,
+                input_columns=data.input_columns,
+                cross_validation_enabled=data.cross_validation_enabled,
+                cross_validation_folds=data.cross_validation_folds,
+            )
         if data.label_mode == "automatic" and data.selected_model_id is None:
             raise QualityPipelineError("QUALITY_MODEL_REQUIRED")
     except QualityPipelineError as error:
         _quality_error(error)
+    if data.label_mode == "manual" and not is_quality_report_frame(frame):
+        return {
+            "row_count": int(len(frame)),
+            "valid_rows": int(len(frame)),
+            "invalid_rows": 0,
+            "feature_schema": [],
+            "errors": [],
+        }
     return validate_report_frame(frame, data.field_mapping)
 
 
@@ -386,16 +438,25 @@ def create_run(
         )
         if not isinstance(data.target_column, str) or not data.target_column.strip():
             raise QualityPipelineError("QUALITY_TARGET_COLUMN_REQUIRED")
-        run_configuration, _ = resolve_quality_run_configuration(
-            frame,
-            field_mapping=data.field_mapping,
-            target_column=data.target_column,
-            target_column_created=data.target_column_created,
-            target_column_dtype=data.target_column_dtype,
-            input_columns=data.input_columns,
-            cross_validation_enabled=data.cross_validation_enabled,
-            cross_validation_folds=data.cross_validation_folds,
-        )
+        if data.label_mode == "manual" and not is_quality_report_frame(frame):
+            run_configuration = resolve_manual_run_configuration(
+                frame,
+                target_column=data.target_column,
+                target_column_created=data.target_column_created,
+                target_column_dtype=data.target_column_dtype,
+                input_columns=data.input_columns,
+            )
+        else:
+            run_configuration, _ = resolve_quality_run_configuration(
+                frame,
+                field_mapping=data.field_mapping,
+                target_column=data.target_column,
+                target_column_created=data.target_column_created,
+                target_column_dtype=data.target_column_dtype,
+                input_columns=data.input_columns,
+                cross_validation_enabled=data.cross_validation_enabled,
+                cross_validation_folds=data.cross_validation_folds,
+            )
         if data.label_mode == "automatic" and data.selected_model_id is None:
             raise QualityPipelineError("QUALITY_MODEL_REQUIRED")
         if data.weak_supervision and not data.cluster_labels:
@@ -577,7 +638,18 @@ def list_runs(
     runs = db.query(SpotWeldQualityRun).filter(
         SpotWeldQualityRun.project_id == project_id,
     ).order_by(SpotWeldQualityRun.created_at.desc(), SpotWeldQualityRun.id.desc()).all()
-    return {"items": [_serialize_run(run, include_results=False) for run in runs], "total": len(runs)}
+    manual_counts = _manual_annotation_counts(db, runs)
+    return {
+        "items": [
+            _serialize_run(
+                run,
+                include_results=False,
+                annotated_count_override=manual_counts.get(run.id),
+            )
+            for run in runs
+        ],
+        "total": len(runs),
+    }
 
 
 @router.get("/models")
@@ -678,7 +750,12 @@ def get_run(
     current_user: User = Depends(get_current_user),
 ):
     require_project_access(db, project_id, current_user.id, "project.read")
-    return _serialize_run(_run_or_404(db, project_id, run_id))
+    run = _run_or_404(db, project_id, run_id)
+    manual_counts = _manual_annotation_counts(db, [run])
+    return _serialize_run(
+        run,
+        annotated_count_override=manual_counts.get(run.id),
+    )
 
 
 @router.put("/runs/{run_id}/rules")
@@ -962,6 +1039,7 @@ def submit_label(
         sample.current_note = data.note
         sample.review_status = "submitted"
         sample.current_revision_id = revision.id
+        db.flush()
         statistics = dict(run.statistics or {})
         stored_progress = dict(statistics.get("annotation_progress") or {})
         label_mode = (run.input_fingerprint or {}).get("label_mode", "automatic")
@@ -982,6 +1060,8 @@ def submit_label(
             **({"target_schema": target_schema} if label_mode == "manual" else {}),
             "annotation_progress": _annotation_progress(annotated_count, total_count),
         }
+        if label_mode == "manual":
+            run.status = "completed" if total_count and annotated_count >= total_count else "running"
         if label_mode == "manual":
             run.input_fingerprint = {
                 **(run.input_fingerprint or {}),
@@ -1021,6 +1101,7 @@ def delete_label(
         sample.current_note = None
         sample.current_revision_id = None
         sample.review_status = "pending_review"
+        db.flush()
         statistics = dict(run.statistics or {})
         total_count = int(
             (statistics.get("annotation_progress") or {}).get("total_count")
@@ -1037,6 +1118,8 @@ def delete_label(
             **statistics,
             "annotation_progress": _annotation_progress(annotated_count, total_count),
         }
+        if (run.input_fingerprint or {}).get("label_mode", "automatic") == "manual":
+            run.status = "completed" if total_count and annotated_count >= total_count else "running"
     return _serialize_sample(sample)
 
 
