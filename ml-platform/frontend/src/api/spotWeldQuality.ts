@@ -63,6 +63,12 @@ export interface QualityRuleConfig {
 
 export interface QualityRun {
   id: string;
+  project_id?: string;
+  project_name?: string | null;
+  created_by_id?: string | null;
+  created_by_name?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
   status: QualityRunStatus | string;
   dataset_artifact_id?: string;
   sample_count?: number;
@@ -120,6 +126,13 @@ export interface QualityModel {
   model_artifact_id?: string | null;
   format?: string;
   tags?: string[];
+  registered_model_id?: string | null;
+  model_version_id?: string | null;
+  approval_status?: string | null;
+  feature_schema?: Array<{ name: string; dtype?: string }>;
+  label_dtype?: string | null;
+  target_column?: string | null;
+  target_column_dtype?: string | null;
 }
 
 export interface QualityDatasetColumn {
@@ -140,6 +153,22 @@ export interface QualityClusterPreview {
   cluster_counts: Record<string, number>;
   cluster_ids: number[];
   pca_coordinates: number[][];
+  feature_count?: number;
+  cluster_summaries?: Array<{ cluster_id: number; role: string; count: number; percentage: number }>;
+  weights?: number[];
+}
+
+export type AnnotationRuleTokenKind = "data" | "number_operator" | "logical_operator" | "number" | "string";
+
+export interface AnnotationProcessRuleToken {
+  kind: AnnotationRuleTokenKind;
+  value: string | number;
+}
+
+export interface AnnotationProcessRule {
+  id: string;
+  label: string;
+  tokens: AnnotationProcessRuleToken[];
 }
 
 export interface QualityTrainingResult {
@@ -217,8 +246,10 @@ function items<T>(data: { items?: T[] } | T[]): T[] {
   return Array.isArray(data) ? data : data.items || [];
 }
 
-export async function listQualityRuns(projectId: string): Promise<QualityRun[]> {
-  const response = await apiClient.get(`/projects/${projectId}/spot-weld/runs`);
+export async function listQualityRuns(projectId?: string): Promise<QualityRun[]> {
+  const response = projectId
+    ? await apiClient.get(`/projects/${projectId}/spot-weld/runs`)
+    : await apiClient.get("/spot-weld/runs");
   return items(response.data);
 }
 
@@ -446,14 +477,16 @@ export async function createQualityRun(
     target_column?: string;
     target_column_created?: boolean;
     target_column_dtype?: "int" | "float" | "string";
+    label_dtype?: "int" | "float" | "string";
     selected_model_id?: string;
     weak_supervision?: boolean;
     cluster_labels?: Record<string, string>;
-    process_rules?: Array<Record<string, string | number | boolean>>;
+    process_rules?: AnnotationProcessRule[];
     input_columns?: string[];
     cross_validation_enabled?: boolean;
     cross_validation_folds?: 3 | 4 | 5 | null;
     label_mode?: QualityLabelMode;
+    workflow_kind?: "quality_modeling" | "data_annotation";
     rule_config?: Partial<QualityRuleConfig>;
   },
 ) {
@@ -474,6 +507,7 @@ export async function validateQualityDataset(
   fieldMapping: Record<string, string> = {},
   options: {
     label_mode?: QualityLabelMode;
+    workflow_kind?: "quality_modeling" | "data_annotation";
     rule_config?: Partial<QualityRuleConfig>;
     algorithm_ids?: QualityAlgorithmId[];
     search_method?: QualitySearchMethod;
@@ -482,10 +516,11 @@ export async function validateQualityDataset(
     target_column?: string;
     target_column_created?: boolean;
     target_column_dtype?: "int" | "float" | "string";
+    label_dtype?: "int" | "float" | "string";
     selected_model_id?: string;
     weak_supervision?: boolean;
     cluster_labels?: Record<string, string>;
-    process_rules?: Array<Record<string, string | number | boolean>>;
+    process_rules?: AnnotationProcessRule[];
     input_columns?: string[];
     cross_validation_enabled?: boolean;
     cross_validation_folds?: 3 | 4 | 5 | null;

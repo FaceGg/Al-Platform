@@ -4,6 +4,7 @@ import { PlayCircleOutlined, DeleteOutlined, EyeOutlined, SendOutlined, CopyOutl
 import AppLayout from "../components/AppLayout";
 import { apiGet, apiDelete } from "../api/client";
 import { useI18n } from "../i18n";
+import { notifyDashboardStatsChanged } from "../events/dashboardStats";
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -37,6 +38,7 @@ export default function APIMarketplacePage() {
 
   const handleDelete = async (id: string) => {
     await apiDelete("/api/platform/apis/" + id);
+    notifyDashboardStatsChanged();
     message.success("Deleted"); fetchData();
   };
 

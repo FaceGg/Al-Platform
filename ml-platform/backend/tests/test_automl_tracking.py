@@ -587,6 +587,30 @@ class TestAutoMLAPI(unittest.TestCase):
             "EXPERIMENT_ALREADY_HAS_AUTOML_JOB",
         )
 
+    def test_automl_delete_removes_training_job_and_experiment(self):
+        created = self._run_automl()
+        self.assertEqual(created.status_code, 202, created.text)
+        job_id = uuid.UUID(created.json()["job_id"])
+        experiment_id = self.experiment_id
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            job.status = "completed"
+            db.commit()
+
+        deleted = self.client.delete(
+            f"/api/training/automl/jobs/{job_id}",
+            headers=self.headers,
+        )
+
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertEqual(deleted.json(), {
+            "deleted": 1,
+            "experiment_deleted": True,
+        })
+        with self.Session() as db:
+            self.assertIsNone(db.get(TrainingJob, job_id))
+            self.assertIsNone(db.get(Experiment, experiment_id))
+
     def test_ordinary_training_job_does_not_occupy_experiment(self):
         with self.Session() as db:
             db.add(TrainingJob(

@@ -1,5 +1,6 @@
 """Agent orchestration & communication tests."""
 import sys, os, unittest
+import uuid
 sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
@@ -17,6 +18,14 @@ ensure_admin()
 def login_headers():
     r = client.post("/api/auth/login", data={"username": "admin", "password": "admin123"})
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+def create_project(headers):
+    response = client.post("/api/projects", json={
+        "name": f"Agent tasks {uuid.uuid4()}",
+        "description": "Agent task ownership tests",
+    }, headers=headers)
+    return response.json()["id"]
 
 
 class TestAgentAPI(unittest.TestCase):
@@ -46,12 +55,18 @@ class TestAgentAPI(unittest.TestCase):
 
     def test_04_create_task(self):
         h = login_headers()
+        self.__class__.project_id = create_project(h)
         r = client.post("/api/orchestration/tasks", json={
             "name": "TestTask", "description": "A test task",
-            "priority": 5, "requires_review": True,
+            "priority": 5, "requires_review": True, "project_id": self.__class__.project_id,
         }, headers=h)
         self.assertIn(r.status_code, [200, 201])
         self.__class__.task_id = r.json().get("id")
+        listed = client.get("/api/orchestration/tasks", headers=h)
+        row = next(item for item in listed.json() if item["id"] == self.__class__.task_id)
+        self.assertEqual(row["project_id"], self.__class__.project_id)
+        self.assertEqual(row["project_name"].startswith("Agent tasks "), True)
+        self.assertEqual(row["created_by_name"], "admin")
 
     def test_05_send_message(self):
         h = login_headers()
@@ -60,7 +75,7 @@ class TestAgentAPI(unittest.TestCase):
         }, headers=h)
         aid = r.json()["id"]
         r = client.post("/api/orchestration/tasks", json={
-            "name": "MsgTask", "description": "Test",
+            "name": "MsgTask", "description": "Test", "project_id": create_project(h),
         }, headers=h)
         tid = r.json().get("id")
         if tid:
@@ -73,7 +88,7 @@ class TestAgentAPI(unittest.TestCase):
     def test_06_list_messages(self):
         h = login_headers()
         r = client.post("/api/orchestration/tasks", json={
-            "name": "MsgTask2", "description": "Test",
+            "name": "MsgTask2", "description": "Test", "project_id": create_project(h),
         }, headers=h)
         tid = r.json().get("id")
         if tid:
@@ -105,7 +120,7 @@ class TestAgentAPI(unittest.TestCase):
         }, headers=h)
         aid = r.json()["id"]
         r = client.post("/api/orchestration/tasks", json={
-            "name": "DelTask", "description": "Test",
+            "name": "DelTask", "description": "Test", "project_id": create_project(h),
         }, headers=h)
         tid = r.json().get("id")
         if tid:

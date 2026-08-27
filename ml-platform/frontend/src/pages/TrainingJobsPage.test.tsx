@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   resumeTrainingJob: vi.fn(),
   createTensorBoardSession: vi.fn(),
 }));
+const dashboardEvents = vi.hoisted(() => ({ notifyDashboardStatsChanged: vi.fn() }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
 vi.mock("../i18n", () => ({
@@ -31,7 +32,7 @@ vi.mock("../i18n", () => ({
         dataset_artifact: "Dataset artifact", model_artifact: "Model artifact", model_library: "Model library",
         status: "Status", metrics: "Metrics", operator: "Operator", started: "Started", stop: "Stop",
         confirm_stop: "Confirm stop", resume: "Resume", tensorboard: "TensorBoard", checkpoints: "Checkpoints",
-        epoch: "Epoch", progress: "Progress", name: "Name", project: "Project", target_column: "Target column",
+        epoch: "Epoch", progress: "Progress", name: "Name", project: "Project", creator: "Creator", all_projects: "All projects", target_column: "Target column",
       },
       model: { actions: "Actions" },
     },
@@ -64,12 +65,13 @@ vi.mock("../api/client", () => ({
   formatApiError: (_error: unknown, fallback: string) => fallback,
 }));
 vi.mock("echarts-for-react", () => ({ default: () => <div data-testid="metric-chart" /> }));
+vi.mock("../events/dashboardStats", () => dashboardEvents);
 
 describe("TrainingJobsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listExperiments.mockResolvedValue([{
-      id: "e1", project_id: "p1", created_by: "u1", name: "Weld baseline", description: "",
+      id: "e1", project_id: "p1", project_name: "Weld line", created_by: "u1", created_by_name: "alice", name: "Weld baseline", description: "",
       mlflow_experiment_id: "m1", created_at: "2026-07-17", updated_at: "2026-07-17", run_count: 2,
     }]);
     mocks.listExperimentRuns.mockResolvedValue({ items: [
@@ -84,7 +86,7 @@ describe("TrainingJobsPage", () => {
       ],
     });
     mocks.listTrainingJobs.mockResolvedValue([
-      { id: "job-1", name: "running-job", status: "running", current_epoch: 2, total_epochs: 10 },
+      { id: "job-1", name: "running-job", project_name: "Weld line", created_by_name: "alice", status: "running", current_epoch: 2, total_epochs: 10 },
       { id: "job-2", name: "completed-job", status: "completed", current_epoch: 10, total_epochs: 10, mlflow_run_id: "run-b" },
     ]);
     mocks.listTrainingCheckpoints.mockResolvedValue([
@@ -94,6 +96,7 @@ describe("TrainingJobsPage", () => {
     mocks.stopTrainingJob.mockResolvedValue({});
     mocks.resumeTrainingJob.mockResolvedValue({});
     mocks.createExperiment.mockResolvedValue({ id: "e2" });
+    dashboardEvents.notifyDashboardStatsChanged.mockReset();
   });
 
   it("creates an Experiment and compares two selected Runs", async () => {
@@ -108,7 +111,7 @@ describe("TrainingJobsPage", () => {
       project_id: "p1", name: "New baseline", description: "",
     }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Runs" }));
+    fireEvent.click(screen.getByRole("button", { name: "Runs Weld baseline" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: "run-a" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "run-b" }));
     fireEvent.click(screen.getByRole("button", { name: "Compare" }));
@@ -117,6 +120,23 @@ describe("TrainingJobsPage", () => {
     expect(screen.getByText("0.94")).toBeInTheDocument();
     expect(screen.getByTestId("metric-chart")).toBeInTheDocument();
   }, 10_000);
+
+  it("shows all experiments by default with project and creator columns", async () => {
+    render(<TrainingJobsPage />);
+
+    await waitFor(() => expect(mocks.listExperiments).toHaveBeenCalledWith(undefined));
+    expect(screen.getByRole("columnheader", { name: "Project" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Creator" })).toBeInTheDocument();
+    expect(screen.getAllByText("Weld line").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("alice").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("All projects")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Actions" })).toHaveStyle({ textAlign: "right" });
+    const actionsHeader = screen.getByRole("columnheader", { name: "Actions" });
+    expect(actionsHeader.closest(".ant-table-thead")?.querySelector("th:last-child")).toHaveStyle({ textAlign: "right" });
+    expect(actionsHeader).not.toHaveClass("ant-table-cell-fix-right");
+    expect(screen.getByRole("button", { name: "Runs Weld baseline" }).closest("td")).toHaveStyle({ textAlign: "right" });
+    expect(actionsHeader).toHaveClass("training-operation-column");
+  });
 
   it("stops, resumes, and opens TensorBoard through platform actions", async () => {
     const open = vi.spyOn(window, "open").mockImplementation(() => null);
@@ -128,13 +148,50 @@ describe("TrainingJobsPage", () => {
     fireEvent.click(await screen.findByText("Confirm stop"));
     await waitFor(() => expect(mocks.stopTrainingJob).toHaveBeenCalledWith("job-1"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Resume completed-job" }));
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     fireEvent.click(await screen.findByRole("button", { name: "Resume checkpoints/best.joblib" }));
     await waitFor(() => expect(mocks.resumeTrainingJob).toHaveBeenCalledWith("job-2", "checkpoints/best.joblib"));
 
-    fireEvent.click(screen.getByRole("button", { name: "TensorBoard completed-job" }));
+    fireEvent.click(screen.getByRole("button", { name: "TensorBoard" }));
     await waitFor(() => expect(open).toHaveBeenCalledWith("/api/training/tensorboard/token/", "_blank", "noopener,noreferrer"));
   }, 20_000);
+
+  it("shows all training jobs by default with project and creator columns", async () => {
+    render(<TrainingJobsPage />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Training jobs" }));
+
+    await waitFor(() => expect(mocks.listTrainingJobs).toHaveBeenCalledWith(undefined));
+    expect(screen.getByRole("columnheader", { name: "Project" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Creator" })).toBeInTheDocument();
+    expect(screen.getAllByText("Weld line").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("alice").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("All projects")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Actions" })).toHaveStyle({ textAlign: "right" });
+    const actionsHeader = screen.getByRole("columnheader", { name: "Actions" });
+    expect(actionsHeader.closest(".ant-table-thead")?.querySelector("th:last-child")).toHaveStyle({ textAlign: "right" });
+    expect(actionsHeader).not.toHaveClass("ant-table-cell-fix-right");
+    const actionsCell = screen.getAllByRole("button", { name: "Details" })[0].closest("td");
+    expect(actionsCell).toHaveStyle({ textAlign: "right" });
+    expect(actionsCell).toHaveClass("training-operation-column");
+  });
+
+  it("keeps AutoML resume and TensorBoard actions visible but disabled", async () => {
+    mocks.listTrainingJobs.mockResolvedValueOnce([
+      { id: "automl-job", name: "automl-job", status: "completed", operator_id: "automl", mlflow_run_id: "automl-run" },
+    ]);
+    render(<TrainingJobsPage />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Training jobs" }));
+
+    const resume = await screen.findByRole("button", { name: "Resume" });
+    const tensorboard = screen.getByRole("button", { name: "TensorBoard" });
+    expect(screen.getByRole("button", { name: "Details" })).toBeInTheDocument();
+    expect(resume).toBeDisabled();
+    expect(tensorboard).toBeDisabled();
+    fireEvent.click(resume);
+    fireEvent.click(tensorboard);
+    expect(mocks.listTrainingCheckpoints).not.toHaveBeenCalled();
+    expect(mocks.createTensorBoardSession).not.toHaveBeenCalled();
+  });
 
   it("deletes Experiments and terminal Training Jobs, but not running jobs", async () => {
     mocks.deleteExperiment.mockResolvedValue(undefined);
@@ -150,6 +207,7 @@ describe("TrainingJobsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Delete completed-job" }));
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     await waitFor(() => expect(mocks.deleteTrainingJob).toHaveBeenCalledWith("job-2"));
+    expect(dashboardEvents.notifyDashboardStatsChanged).toHaveBeenCalled();
   });
 
   it("hides deletion for Experiments and Training Jobs with active training", async () => {

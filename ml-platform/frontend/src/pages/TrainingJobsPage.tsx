@@ -14,14 +14,12 @@ import {
   Table,
   Tabs,
   Tag,
-  Tooltip,
   Typography,
   message,
   type CheckboxProps,
 } from "antd";
 import {
   BarChartOutlined,
-  DeleteOutlined,
   EyeOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
@@ -54,7 +52,11 @@ import {
   type TrainingJob,
 } from "../api/training";
 import AppLayout from "../components/AppLayout";
+import DeleteConfirmation from "../components/DeleteConfirmation";
+import TableRowAction from "../components/TableRowAction";
 import { useI18n } from "../i18n";
+import { notifyDashboardStatsChanged } from "../events/dashboardStats";
+import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 
 const { Title, Text } = Typography;
 
@@ -88,17 +90,20 @@ function JsonValue({ value }: { value: unknown }) {
 }
 
 export default function TrainingJobsPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const labels = t.training;
   const [experimentForm] = Form.useForm();
   const [trainingForm] = Form.useForm();
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [projectId, setProjectId] = useState<string>();
+  const [jobProjectId, setJobProjectId] = useState<string>();
+  const [experimentProjectId, setExperimentProjectId] = useState<string>();
   const [experiments, setExperiments] = useState<Experiment[]>([]);
   const [jobs, setJobs] = useState<TrainingJob[]>([]);
   const [datasets, setDatasets] = useState<DatasetOption[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshingJobs, setRefreshingJobs] = useState(false);
   const [activeTab, setActiveTab] = useState("experiments");
   const [createExperimentOpen, setCreateExperimentOpen] = useState(false);
   const [createTrainingOpen, setCreateTrainingOpen] = useState(false);
@@ -114,10 +119,6 @@ export default function TrainingJobsPage() {
   const [checkpoints, setCheckpoints] = useState<TrainingCheckpoint[]>([]);
 
   const loadExperiments = useCallback(async (selectedProjectId?: string) => {
-    if (!selectedProjectId) {
-      setExperiments([]);
-      return;
-    }
     setLoading(true);
     try {
       setExperiments(await listExperiments(selectedProjectId));
@@ -129,13 +130,13 @@ export default function TrainingJobsPage() {
   }, [t.common.error]);
 
   const loadJobs = useCallback(async (selectedProjectId?: string) => {
-    setLoading(true);
+    setRefreshingJobs(true);
     try {
       setJobs(await listTrainingJobs(selectedProjectId));
     } catch (error) {
       message.error(formatApiError(error, t.common.error));
     } finally {
-      setLoading(false);
+      setRefreshingJobs(false);
     }
   }, [t.common.error]);
 
@@ -148,13 +149,22 @@ export default function TrainingJobsPage() {
   }, [t.common.error]);
 
   useEffect(() => {
-    void loadExperiments(projectId);
-    void loadJobs(projectId);
-  }, [loadExperiments, loadJobs, projectId]);
+    void loadExperiments(experimentProjectId);
+  }, [experimentProjectId, loadExperiments]);
+
+  useEffect(() => {
+    void loadJobs(jobProjectId);
+  }, [jobProjectId, loadJobs]);
+
+  useEffect(() => {
+    if (!jobs.some((job) => !TERMINAL_TRAINING_STATUSES.has(job.status || ""))) return;
+    const timer = window.setInterval(() => void loadJobs(jobProjectId), 1500);
+    return () => window.clearInterval(timer);
+  }, [jobProjectId, jobs, loadJobs]);
 
   const refresh = () => {
-    if (activeTab === "experiments") void loadExperiments(projectId);
-    else void loadJobs(projectId);
+    if (activeTab === "experiments") void loadExperiments(experimentProjectId);
+    else void loadJobs(jobProjectId);
   };
 
   const submitExperiment = async (values: { name: string; description?: string }) => {
@@ -232,10 +242,11 @@ export default function TrainingJobsPage() {
   }) => {
     try {
       await createTrainingJob({ ...values, monitor: "val_loss", mode: "min", patience: 5, restore_best: true, checkpoint_interval: 1 });
+      notifyDashboardStatsChanged();
       message.success(t.common.success);
       setCreateTrainingOpen(false);
       trainingForm.resetFields();
-      await loadJobs(projectId);
+      await loadJobs(jobProjectId);
     } catch (error) {
       message.error(formatApiError(error, t.common.error));
     }
@@ -252,7 +263,8 @@ export default function TrainingJobsPage() {
   const stopJob = async (job: TrainingJob) => {
     try {
       await stopTrainingJob(job.id);
-      await loadJobs(projectId);
+      notifyDashboardStatsChanged();
+      await loadJobs(jobProjectId);
     } catch (error) {
       message.error(formatApiError(error, t.common.error));
     }
@@ -262,8 +274,11 @@ export default function TrainingJobsPage() {
     try {
       const result = await deleteTrainingJob(job.id);
       if (result.deleted !== 1) message.error(t.common.error);
-      else message.success(t.common.success);
-      await loadJobs(projectId);
+      else {
+        notifyDashboardStatsChanged();
+        message.success(t.common.success);
+      }
+      await loadJobs(jobProjectId);
     } catch (error) {
       message.error(formatApiError(error, t.common.error));
     }
@@ -282,8 +297,9 @@ export default function TrainingJobsPage() {
     if (!resumeJob) return;
     try {
       await resumeTrainingJob(resumeJob.id, checkpoint.path);
+      notifyDashboardStatsChanged();
       setResumeJob(null);
-      await loadJobs(projectId);
+      await loadJobs(jobProjectId);
     } catch (error) {
       message.error(formatApiError(error, t.common.error));
     }
@@ -321,6 +337,8 @@ export default function TrainingJobsPage() {
 
   const experimentColumns = [
     { title: labels.experiment_name, dataIndex: "name", key: "name" },
+    { title: labels.project, dataIndex: "project_name", key: "project", render: (value: string, experiment: Experiment) => value || experiment.project_id || "-" },
+    { title: labels.creator || "Creator", dataIndex: "created_by_name", key: "creator", render: (value: string, experiment: Experiment) => value || experiment.created_by || "-" },
     { title: labels.description, dataIndex: "description", key: "description", render: (value: string) => value || "-" },
     { title: labels.runs, dataIndex: "run_count", key: "run_count", width: 100 },
     { title: labels.started, dataIndex: "created_at", key: "created_at", width: 180, render: (value: string) => dayjs(value).format("YYYY-MM-DD HH:mm") },
@@ -328,45 +346,47 @@ export default function TrainingJobsPage() {
       title: t.model.actions,
       key: "actions",
       width: 160,
-      fixed: "right" as const,
-      align: "center" as const,
-      render: (_: unknown, experiment: Experiment) => <Space size={2} wrap={false}>
-        <Button aria-label={labels.runs} icon={<BarChartOutlined />} onClick={() => void openRuns(experiment)}>{labels.runs}</Button>
-        {!activeExperimentIds.has(experiment.id) && <Popconfirm
-          title={`${t.common.delete} ${experiment.name}?`}
-          okText={t.common.delete}
-          cancelText={t.common.cancel}
-          okButtonProps={{ danger: true }}
+      className: "training-operation-column",
+      align: "right" as const,
+      onHeaderCell: () => ({ style: { textAlign: "right" as const } }),
+      onCell: () => ({ style: { textAlign: "right" as const } }),
+      render: (_: unknown, experiment: Experiment) => <div className="table-row-actions">
+        <TableRowAction label={`${labels.runs} ${experiment.name}`} icon={<BarChartOutlined />} onClick={() => void openRuns(experiment)} />
+        {!activeExperimentIds.has(experiment.id) && <DeleteConfirmation
+          label={`${t.common.delete} ${experiment.name}`}
+          targetName={experiment.name}
           onConfirm={() => void removeExperiment(experiment)}
-        >
-          <Tooltip title={`${t.common.delete} ${experiment.name}`}>
-            <Button danger type="text" size="small" icon={<DeleteOutlined />} aria-label={`${t.common.delete} ${experiment.name}`} />
-          </Tooltip>
-        </Popconfirm>
+        />
         }
-      </Space>,
+      </div>,
     },
   ];
 
   const jobColumns = [
     { title: labels.name, dataIndex: "name", key: "name", width: 180 },
+    { title: labels.project, dataIndex: "project_name", key: "project", width: 160, render: (value: string, job: TrainingJob) => value || job.project_id || "-" },
+    { title: labels.creator || "Creator", dataIndex: "created_by_name", key: "creator", width: 140, render: (value: string, job: TrainingJob) => value || job.created_by_id || job.user_id || "-" },
     {
       title: labels.status,
       dataIndex: "status",
       key: "status",
       width: 140,
-      render: (value: string) => <Tag color={statusColors[value]}>{value || "pending"}</Tag>,
+      render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag>,
     },
     {
       title: labels.progress,
       key: "progress",
       width: 240,
       render: (_: unknown, job: TrainingJob) => {
-        const current = job.current_epoch || 0;
-        const total = job.total_epochs || 0;
-        const percent = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
+        const progress = job.metrics?.progress;
+        const progressRecord = progress && typeof progress === "object" ? progress as Record<string, unknown> : undefined;
+        const current = Number(progressRecord?.completed ?? job.current_epoch) || 0;
+        const total = Number(progressRecord?.total ?? job.total_epochs) || 0;
+        const percent = typeof progressRecord?.percent === "number"
+          ? Math.min(100, Math.max(0, Math.round(progressRecord.percent)))
+          : total ? Math.min(100, Math.round((current / total) * 100)) : 0;
         return <Space direction="vertical" size={2} style={{ width: "100%" }}>
-          <Progress percent={percent} size="small" strokeColor={statusColors[job.status || "pending"]} />
+          <Progress percent={percent} size="small" strokeColor={taskStatusColor(job.status)} />
           <Text type="secondary">{labels.epoch} {current}/{total || "-"}</Text>
         </Space>;
       },
@@ -376,27 +396,26 @@ export default function TrainingJobsPage() {
       title: t.model.actions,
       key: "actions",
       width: 260,
-      fixed: "right" as const,
-      align: "center" as const,
-      render: (_: unknown, job: TrainingJob) => <Space size={2} wrap={false}>
-        <Button aria-label={`${labels.details} ${job.name}`} icon={<EyeOutlined />} onClick={() => void showDetail(job.id)} />
+      className: "training-operation-column",
+      align: "right" as const,
+      onHeaderCell: () => ({ style: { textAlign: "right" as const } }),
+      onCell: () => ({ style: { textAlign: "right" as const } }),
+      render: (_: unknown, job: TrainingJob) => {
+        const isAutoMLJob = job.operator_id === "automl";
+        return <div className="table-row-actions">
+        <TableRowAction label={labels.details} icon={<EyeOutlined />} onClick={() => void showDetail(job.id)} />
         {job.status === "running" && <Popconfirm title={`${labels.stop} ${job.name}?`} onConfirm={() => void stopJob(job)} okText={labels.confirm_stop}>
-          <Button danger aria-label={`${labels.stop} ${job.name}`} icon={<PauseCircleOutlined />} />
+          <span><TableRowAction label={`${labels.stop} ${job.name}`} icon={<PauseCircleOutlined />} warning /></span>
         </Popconfirm>}
-        {job.status !== "running" && <Button aria-label={`${labels.resume} ${job.name}`} icon={<PlayCircleOutlined />} onClick={() => void openResume(job)} />}
-        {job.mlflow_run_id && <Button aria-label={`${labels.tensorboard} ${job.name}`} icon={<BarChartOutlined />} onClick={() => void openTensorBoard(job)} />}
-        {TERMINAL_TRAINING_STATUSES.has(job.status || "") && <Popconfirm
-          title={`${t.common.delete} ${job.name}?`}
-          okText={t.common.delete}
-          cancelText={t.common.cancel}
-          okButtonProps={{ danger: true }}
+        {job.status !== "running" && <TableRowAction label={labels.resume} icon={<PlayCircleOutlined />} disabled={isAutoMLJob} onClick={() => void openResume(job)} />}
+        {job.mlflow_run_id && <TableRowAction label={labels.tensorboard} icon={<BarChartOutlined />} disabled={isAutoMLJob} onClick={() => void openTensorBoard(job)} />}
+        {TERMINAL_TRAINING_STATUSES.has(job.status || "") && <DeleteConfirmation
+          label={`${t.common.delete} ${job.name}`}
+          targetName={job.name}
           onConfirm={() => void removeTrainingJob(job)}
-        >
-          <Tooltip title={`${t.common.delete} ${job.name}`}>
-            <Button danger type="text" size="small" icon={<DeleteOutlined />} aria-label={`${t.common.delete} ${job.name}`} />
-          </Tooltip>
-        </Popconfirm>}
-      </Space>,
+        />}
+      </div>;
+      },
     },
   ];
 
@@ -406,12 +425,15 @@ export default function TrainingJobsPage() {
       <Space wrap>
         <Select
           aria-label={labels.project}
-          value={projectId}
+          value={activeTab === "jobs" ? jobProjectId || "" : experimentProjectId || ""}
           style={{ minWidth: 220 }}
-          options={projects.map((project) => ({ value: project.id, label: project.name }))}
-          onChange={setProjectId}
+          options={[
+            { value: "", label: labels.all_projects || "All projects" },
+            ...projects.map((project) => ({ value: project.id, label: project.name })),
+          ]}
+          onChange={(value) => activeTab === "jobs" ? setJobProjectId(value || undefined) : setExperimentProjectId(value || undefined)}
         />
-        <Button icon={<ReloadOutlined />} onClick={refresh}>{t.common.refresh}</Button>
+        <Button icon={<ReloadOutlined />} loading={activeTab === "jobs" && refreshingJobs} onClick={refresh}>{t.common.refresh}</Button>
         {activeTab === "experiments"
           ? <Button aria-label={labels.new_experiment} type="primary" icon={<PlusOutlined />} disabled={!projectId} onClick={() => setCreateExperimentOpen(true)}>{labels.new_experiment}</Button>
           : <Button aria-label={labels.new_job} type="primary" icon={<PlusOutlined />} onClick={() => setCreateTrainingOpen(true)}>{labels.new_job}</Button>}
@@ -422,12 +444,12 @@ export default function TrainingJobsPage() {
       {
         key: "experiments",
         label: labels.experiments,
-        children: <Table rowKey="id" size="small" scroll={{ x: 760 }} dataSource={experiments} columns={experimentColumns} loading={loading} locale={{ emptyText: t.common.no_data }} />,
+        children: <div className="table-surface training-experiments__table"><Table rowKey="id" size="small" scroll={{ x: 760 }} dataSource={experiments} columns={experimentColumns} loading={loading} locale={{ emptyText: t.common.no_data }} /></div>,
       },
       {
         key: "jobs",
         label: labels.jobs,
-        children: <Table rowKey="id" size="small" scroll={{ x: 980 }} dataSource={jobs} columns={jobColumns} loading={loading} locale={{ emptyText: t.common.no_data }} />,
+        children: <div className="table-surface training-jobs__table"><Table rowKey="id" size="small" scroll={{ x: 980 }} dataSource={jobs} columns={jobColumns} loading={loading} locale={{ emptyText: t.common.no_data }} /></div>,
       },
     ]} />
 

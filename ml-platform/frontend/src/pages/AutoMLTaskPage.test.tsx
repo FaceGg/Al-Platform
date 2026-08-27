@@ -62,6 +62,25 @@ describe("AutoMLTaskPage model registration", () => {
     expect(screen.queryByText("焊点缺陷建模")).not.toBeInTheDocument();
   });
 
+  it("shows completed jobs at 100% when a time budget ends before all planned trials", async () => {
+    get.mockResolvedValue({ data: {
+      id: "job-1",
+      project_id: "project-1",
+      project_name: "一号焊装项目",
+      experiment_name: "焊点缺陷实验",
+      status: "completed",
+      metrics: {
+        progress: { completed: 13, total: 35, percent: 37.14, budget_exhausted: true },
+        algorithm_results: [{ algorithm_id: "gbdt", name: "梯度提升树", status: "completed", model_library_id: "library-1", auc: 0.9, f1: 0.8, trials: [] }],
+      },
+    } });
+    renderPage();
+
+    expect(await screen.findByText("已完成试验 13 / 35")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+    expect(screen.getByRole("button", { name: "生成分析报告" })).toBeEnabled();
+  });
+
   it("places register after detail and marks only the clicked result registered", async () => {
     renderPage();
 

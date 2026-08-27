@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import {
-  App as AntApp, Card, Table, Button, Upload, Select, Space, Modal, Tooltip, Typography, Row, Col, Tag
+  App as AntApp, Card, Table, Button, Upload, Select, Space, Modal, Typography, Row, Col, Tag
 } from "antd";
 import {
-  UploadOutlined, DownloadOutlined, DeleteOutlined, EyeOutlined, ImportOutlined, ExportOutlined, TagsOutlined
+  UploadOutlined, DownloadOutlined, EyeOutlined, ImportOutlined, ExportOutlined, TagsOutlined
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import apiClient from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
 import AppLayout from "../components/AppLayout";
+import DeleteConfirmation from "../components/DeleteConfirmation";
+import TableRowAction from "../components/TableRowAction";
 import { useI18n } from "../i18n";
 
 const { Text } = Typography;
@@ -64,21 +66,14 @@ export default function DataManagePage() {
     return false;
   };
 
-  const handleDelete = (dsId: string) => {
-    Modal.confirm({
-      title: t.data.delete_file + "?",
-      okType: "danger",
-      cancelText: t.common.cancel,
-      onOk: async () => {
-        try {
-          await apiClient.delete("/datasets/" + dsId);
-          message.success(t.common.success);
-          setDatasets((prev) => prev.filter((d) => d.id !== dsId));
-        } catch (e: any) {
-          message.error(e.response?.data?.detail || t.common.error);
-        }
-      },
-    });
+  const handleDelete = async (dsId: string) => {
+    try {
+      await apiClient.delete("/datasets/" + dsId);
+      message.success(t.common.success);
+      setDatasets((prev) => prev.filter((d) => d.id !== dsId));
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || t.common.error);
+    }
   };
 
   const handlePreview = async (dsId: string) => {
@@ -129,7 +124,7 @@ export default function DataManagePage() {
       message.warning("请先为数据选择项目");
       return;
     }
-    navigate(`/data-annotation?type=spot-weld&view=setup&mode=automatic&projectId=${encodeURIComponent(record.project_id)}&datasetId=${encodeURIComponent(record.id)}`);
+    navigate(`/data-annotation?view=setup&mode=automatic&projectId=${encodeURIComponent(record.project_id)}&datasetId=${encodeURIComponent(record.id)}`);
   };
 
   const columns = [
@@ -143,16 +138,16 @@ export default function DataManagePage() {
     { title: t.data.rows, dataIndex: "row_count", key: "rows", width: 80 },
     { title: t.model.created, dataIndex: "created_at", key: "created_at", width: 160 },
     {
-      title: t.model.actions, key: "actions", width: 160, fixed: "right" as const, align: "center" as const,
+      title: t.model.actions, key: "actions", width: 160, fixed: "right" as const, align: "right" as const,
       render: (_: any, record: any) => (
-        <Space className="dataset-table-actions" size={2} wrap={false}>
+        <div className="table-row-actions">
           {["csv", "xls", "xlsx"].includes(String(record.format || "").toLowerCase()) && record.project_id && (
-            <Tooltip title={`自动标注 ${record.name}`}><Button type="text" size="small" icon={<TagsOutlined />} aria-label={`自动标注 ${record.name}`} onClick={() => handleAutomaticLabeling(record)} /></Tooltip>
+            <TableRowAction label={`自动标注 ${record.name}`} icon={<TagsOutlined />} onClick={() => handleAutomaticLabeling(record)} />
           )}
-          <Tooltip title={`${t.data.preview} ${record.name}`}><Button type="text" size="small" icon={<EyeOutlined />} aria-label={`${t.data.preview} ${record.name}`} onClick={() => handlePreview(record.id)} /></Tooltip>
-          <Tooltip title={`${t.data.download} ${record.name}`}><Button type="text" size="small" icon={<DownloadOutlined />} aria-label={`${t.data.download} ${record.name}`} onClick={() => handleDownload(record.id)} /></Tooltip>
-          <Tooltip title={`${t.common.delete} ${record.name}`}><Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label={`${t.common.delete} ${record.name}`} onClick={() => handleDelete(record.id)} /></Tooltip>
-        </Space>
+          <TableRowAction label={`${t.data.preview} ${record.name}`} icon={<EyeOutlined />} onClick={() => handlePreview(record.id)} />
+          <TableRowAction label={`${t.data.download} ${record.name}`} icon={<DownloadOutlined />} onClick={() => handleDownload(record.id)} />
+          <DeleteConfirmation label={`${t.common.delete} ${record.name}`} targetName={record.name} onConfirm={() => void handleDelete(record.id)} />
+        </div>
       ),
     },
   ];

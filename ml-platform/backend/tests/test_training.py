@@ -413,6 +413,27 @@ class TestTrainingAPI(unittest.TestCase):
         with self.Session() as db:
             self.assertIsNotNone(db.get(TrainingJob, job_id))
 
+    def test_batch_delete_allows_cancel_requested_training_job(self):
+        job_id = self._create_source_job(status="running", checkpoint=False)
+
+        stopped = self.client.post(
+            f"/api/training/jobs/{job_id}/stop",
+            headers=self.owner_headers,
+        )
+        self.assertEqual(stopped.status_code, 200, stopped.text)
+        self.assertEqual(stopped.json()["status"], "cancel_requested")
+
+        deleted = self.client.post(
+            "/api/training/batch-delete",
+            json={"ids": [str(job_id)]},
+            headers=self.owner_headers,
+        )
+
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertEqual(deleted.json(), {"deleted": 1})
+        with self.Session() as db:
+            self.assertIsNone(db.get(TrainingJob, job_id))
+
     def test_resume_validates_checkpoint_and_creates_lineage(self):
         source_id = self._create_source_job(status="cancelled")
         response = self.client.post(

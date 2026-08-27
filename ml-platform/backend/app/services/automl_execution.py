@@ -551,6 +551,11 @@ def _execute_optuna_job(
 
     winner = choose_family_winner(family_results)
     budget_exhausted = dependencies.monotonic() >= deadline
+    if budget_exhausted and completed_trials < planned_trials:
+        raise TimeoutError(
+            f"AutoML time budget exhausted before all trials completed "
+            f"({completed_trials}/{planned_trials} trials completed)"
+        )
     all_results.sort(
         key=lambda item: automl_metric_order_key(
             auc=item.get("auc"),
@@ -950,6 +955,9 @@ def execute_automl_job(
             except Exception:
                 pass
         error_code = (
+            "AUTOML_TIME_BUDGET_EXCEEDED"
+            if isinstance(error, TimeoutError)
+            else
             "AUTOML_ALL_CANDIDATES_FAILED"
             if isinstance(error, AllCandidatesFailed)
             else "AUTOML_ALL_ALGORITHMS_FAILED"
@@ -962,7 +970,16 @@ def execute_automl_job(
                 failed.status = "failed"
                 failed.error_code = error_code
                 failed.error_message = str(error)
-                failed.error_details = {"exception_type": type(error).__name__}
+                failed.error_details = {
+                    "exception_type": type(error).__name__,
+                    "message": str(error),
+                    "budget_exhausted": isinstance(error, TimeoutError),
+                }
+                metrics = dict(failed.metrics or {})
+                progress = dict(metrics.get("progress") or {})
+                progress["budget_exhausted"] = isinstance(error, TimeoutError)
+                metrics["progress"] = progress
+                failed.metrics = metrics
                 failed.finished_at = utcnow()
                 failed_db.commit()
         return AutoMLExecutionResult(str(job_uuid), "failed", error_code=error_code)

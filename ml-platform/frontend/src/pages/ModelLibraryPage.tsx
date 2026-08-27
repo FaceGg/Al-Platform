@@ -6,7 +6,7 @@ import {
 import {
   CheckOutlined, CloudServerOutlined, DownloadOutlined, EyeOutlined, KeyOutlined,
   PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined,
-  RollbackOutlined, StopOutlined, SyncOutlined, DeleteOutlined,
+  RollbackOutlined, StopOutlined, SyncOutlined,
 } from "@ant-design/icons";
 import apiClient, { formatApiError } from "../api/client";
 import {
@@ -23,7 +23,10 @@ import {
   exportModelCard, uploadOnnxArtifact,
 } from "../api/modelRegistry";
 import AppLayout from "../components/AppLayout";
+import DeleteConfirmation from "../components/DeleteConfirmation";
+import TableRowAction from "../components/TableRowAction";
 import { useI18n } from "../i18n";
+import { notifyDashboardStatsChanged } from "../events/dashboardStats";
 
 const { Text, Title } = Typography;
 
@@ -169,6 +172,7 @@ export default function ModelLibraryPage() {
       });
       setModels((current) => [created, ...current]);
       setVersions((current) => ({ ...current, [created.id]: [] }));
+      notifyDashboardStatsChanged();
       setModelOpen(false);
       modelForm.resetFields();
     } catch (cause) {
@@ -213,6 +217,7 @@ export default function ModelLibraryPage() {
         name: values.name.trim(), model_version_id: values.model_version_id,
       });
       setDeployments((current) => [created, ...current]);
+      notifyDashboardStatsChanged();
       setDeploymentOpen(false);
       deploymentForm.resetFields();
     } catch (cause) {
@@ -227,6 +232,7 @@ export default function ModelLibraryPage() {
         ? await startDeployment(deployment.id)
         : await stopDeployment(deployment.id);
       setDeployments((current) => current.map((item) => item.id === updated.id ? updated : item));
+      notifyDashboardStatsChanged();
     } catch (cause) {
       message.error(formatApiError(cause, copy.runtimeFailed));
     } finally {
@@ -435,68 +441,54 @@ export default function ModelLibraryPage() {
     }
   };
 
-  const confirmDeleteModel = (model: RegisteredModel) => {
-    Modal.confirm({
-      title: "删除注册模型",
-      content: `确认删除注册模型“${model.name}”？该操作不可撤销。`,
-      okText: "删除", okButtonProps: { danger: true, "aria-label": `删除注册模型 ${model.name}` },
-      cancelText: t.common.cancel,
-      onOk: async () => {
-        try {
-          await deleteRegisteredModel(model.id);
-          setModels((current) => current.filter((item) => item.id !== model.id));
-          setVersions((current) => { const next = { ...current }; delete next[model.id]; return next; });
-          message.success("注册模型已删除");
-        } catch (cause) { message.error(formatApiError(cause, copy.commandFailed)); }
-      },
-    });
+  const removeModel = async (model: RegisteredModel) => {
+    try {
+      await deleteRegisteredModel(model.id);
+      setModels((current) => current.filter((item) => item.id !== model.id));
+      setVersions((current) => { const next = { ...current }; delete next[model.id]; return next; });
+      notifyDashboardStatsChanged();
+      message.success("注册模型已删除");
+    } catch (cause) { message.error(formatApiError(cause, copy.commandFailed)); }
   };
 
-  const confirmDeleteDeployment = (deployment: InferenceDeployment) => {
-    Modal.confirm({
-      title: "删除推理部署",
-      content: `确认删除推理部署“${deployment.name}”？该操作不可撤销。`,
-      okText: "删除", okButtonProps: { danger: true, "aria-label": `删除推理部署 ${deployment.name}` },
-      cancelText: t.common.cancel,
-      onOk: async () => {
-        try {
-          await deleteDeployment(deployment.id);
-          setDeployments((current) => current.filter((item) => item.id !== deployment.id));
-          if (operationsDeployment?.id === deployment.id) setOperationsDeployment(undefined);
-          message.success("推理部署已删除");
-        } catch (cause) { message.error(formatApiError(cause, copy.commandFailed)); }
-      },
-    });
+  const removeDeployment = async (deployment: InferenceDeployment) => {
+    try {
+      await deleteDeployment(deployment.id);
+      setDeployments((current) => current.filter((item) => item.id !== deployment.id));
+      if (operationsDeployment?.id === deployment.id) setOperationsDeployment(undefined);
+      notifyDashboardStatsChanged();
+      message.success("推理部署已删除");
+    } catch (cause) { message.error(formatApiError(cause, copy.commandFailed)); }
   };
 
   const modelColumns = [
     { title: copy.name, dataIndex: "name", key: "name", render: (value: string, row: RegisteredModel) => <Space direction="vertical" size={0}><Text strong>{value}</Text><Text type="secondary">{row.description}</Text></Space> },
     { title: copy.latestVersion, dataIndex: "latest_version", key: "latest_version", width: 140, render: (value: number | null) => value ? `v${value}` : "-" },
     { title: copy.status, dataIndex: "latest_approval_status", key: "status", width: 140, render: (value: string | null) => value ? <Tag color={statusColor(value)}>{statusLabel(value)}</Tag> : "-" },
-    { title: t.model.actions, key: "actions", width: 340, render: (_: unknown, row: RegisteredModel) => <Space wrap>
-      <Button icon={<EyeOutlined />} aria-label={`${copy.versions} ${row.name}`} onClick={() => setVersionModel(row)}>{copy.versions}</Button>
-      {canRegister && <Button icon={<PlusOutlined />} aria-label={`${copy.registerVersion} ${row.name}`} onClick={() => setRegisterModel(row)}>{copy.registerVersion}</Button>}
-      {canRegister && <Button danger icon={<DeleteOutlined />} aria-label={`删除注册模型 ${row.name}`} onClick={() => confirmDeleteModel(row)}>删除</Button>}
-    </Space> },
+    { title: t.model.actions, key: "actions", width: 140, align: "right" as const, render: (_: unknown, row: RegisteredModel) => <div className="table-row-actions">
+      <TableRowAction label={`${copy.versions} ${row.name}`} icon={<EyeOutlined />} onClick={() => setVersionModel(row)} />
+      {canRegister && <TableRowAction label={`${copy.registerVersion} ${row.name}`} icon={<PlusOutlined />} onClick={() => setRegisterModel(row)} />}
+      {canRegister && <DeleteConfirmation label={`${copy.deleteRegisteredModel} ${row.name}`} targetName={row.name} onConfirm={() => void removeModel(row)} />}
+    </div> },
   ];
 
   const deploymentColumns = [
     { title: copy.name, dataIndex: "name", key: "name", render: (value: string, row: InferenceDeployment) => <Space direction="vertical" size={0}><Text strong>{value}</Text>{row.last_error_code && <Text type="danger">{row.last_error_code}</Text>}</Space> },
     { title: copy.desiredState, dataIndex: "desired_state", key: "desired", width: 120, render: (value: string) => <Tag>{statusLabel(value)}</Tag> },
     { title: copy.observedState, dataIndex: "observed_state", key: "observed", width: 150, render: (value: string) => <Space direction="vertical" size={2}><Tag color={statusColor(value)}>{statusLabel(value)}</Tag>{["starting", "stopping"].includes(value) && <Progress percent={50} showInfo={false} size="small" />}</Space> },
-    { title: t.model.actions, key: "actions", width: 300, render: (_: unknown, row: InferenceDeployment) => <Space wrap>
-      {canOperate && row.desired_state === "stopped" && <Button icon={<PlayCircleOutlined />} loading={busyId === row.id} aria-label={`${copy.start} ${row.name}`} onClick={() => void operate(row, "start")}>{copy.start}</Button>}
-      {canOperate && row.desired_state === "running" && <Button icon={<StopOutlined />} loading={busyId === row.id} aria-label={`${copy.stop} ${row.name}`} onClick={() => void operate(row, "stop")}>{copy.stop}</Button>}
-      {canOperate && <Button icon={<CloudServerOutlined />} aria-label={`${copy.onlineTest} ${row.name}`} disabled={row.observed_state !== "running"} onClick={() => {
+    { title: t.model.actions, key: "actions", width: 190, align: "right" as const, render: (_: unknown, row: InferenceDeployment) => <div className="table-row-actions">
+      {canOperate && row.desired_state === "stopped" && <TableRowAction label={`${copy.start} ${row.name}`} icon={<PlayCircleOutlined />} loading={busyId === row.id} onClick={() => void operate(row, "start")} />}
+      {canOperate && row.desired_state === "running" && <TableRowAction label={`${copy.stop} ${row.name}`} icon={<StopOutlined />} warning loading={busyId === row.id} onClick={() => void operate(row, "stop")} />}
+      {canOperate && <TableRowAction label={`${copy.onlineTest} ${row.name}`} icon={<CloudServerOutlined />} disabled={row.observed_state !== "running"} onClick={() => {
         const version = Object.values(versions).flat().find((item) => item.id === row.model_version_id);
         const record = Object.fromEntries((version?.feature_schema || []).map((field) => [field.name, 0]));
         setTestDeployment(row);
         setPrediction(undefined);
         predictionForm.setFieldValue("records", JSON.stringify([record], null, 2));
-      }}>{copy.onlineTest}</Button>}
-      <Button icon={<EyeOutlined />} aria-label={`${production.releaseOperations} ${row.name}`} onClick={() => void openOperations(row)}>{production.releaseOperations}</Button>
-      {canRegister && <Button danger icon={<DeleteOutlined />} aria-label={`删除推理部署 ${row.name}`} onClick={() => confirmDeleteDeployment(row)}>删除</Button>}
-    </Space> },
+      }} />}
+      <TableRowAction label={`${production.releaseOperations} ${row.name}`} icon={<EyeOutlined />} onClick={() => void openOperations(row)} />
+      {canRegister && <DeleteConfirmation label={`${copy.deleteDeployment} ${row.name}`} targetName={row.name} onConfirm={() => void removeDeployment(row)} />}
+    </div> },
   ];
 
   const isApiKeyExpired = (key: InferenceApiKey) => {
@@ -508,17 +500,17 @@ export default function ModelLibraryPage() {
   const rolloutColumns = [
     { title: production.releaseState, dataIndex: "state", key: "state", width: 170, render: (value: string, row: DeploymentRollout) => <Space direction="vertical" size={0}><Tag color={statusColor(value)}>{productionStatusLabel(value)}</Tag>{["pending", "preloading", "progressing", "paused"].includes(value) && <Progress percent={Math.min(100, Math.max(0, row.current_step / 100))} size="small" showInfo />}{row.last_error_code && <Text type="danger">{row.last_error_code}</Text>}</Space> },
     { title: production.targetWeights, key: "targets", render: (_: unknown, row: DeploymentRollout) => row.targets?.map((target) => `${target.model_version_id}: ${target.weight_bps / 100}%`).join(", ") || "-" },
-    { title: t.model.actions, key: "actions", width: 300, render: (_: unknown, row: DeploymentRollout) => <Space wrap>
-      {canOperate && ["pending", "preloading", "progressing"].includes(row.state) && <Button icon={<PauseCircleOutlined />} loading={rolloutBusyId === row.id} aria-label={`${production.pause} ${production.release} ${row.id}`} onClick={() => confirmRolloutCommand(row, "pause")}>{production.pause}</Button>}
-      {canOperate && row.state === "paused" && <Button icon={<PlayCircleOutlined />} loading={rolloutBusyId === row.id} aria-label={`${production.resume} ${production.release} ${row.id}`} onClick={() => confirmRolloutCommand(row, "resume")}>{production.resume}</Button>}
-      {canOperate && ["pending", "preloading", "progressing", "paused", "completed", "failed"].includes(row.state) && <Button danger icon={<RollbackOutlined />} loading={rolloutBusyId === row.id} aria-label={`${production.rollback} ${production.release} ${row.id}`} onClick={() => confirmRollback(row)}>{production.rollback}</Button>}
-    </Space> },
+    { title: t.model.actions, key: "actions", width: 120, align: "right" as const, render: (_: unknown, row: DeploymentRollout) => <div className="table-row-actions">
+      {canOperate && ["pending", "preloading", "progressing"].includes(row.state) && <TableRowAction label={`${production.pause} ${production.release} ${row.id}`} icon={<PauseCircleOutlined />} warning loading={rolloutBusyId === row.id} onClick={() => confirmRolloutCommand(row, "pause")} />}
+      {canOperate && row.state === "paused" && <TableRowAction label={`${production.resume} ${production.release} ${row.id}`} icon={<PlayCircleOutlined />} loading={rolloutBusyId === row.id} onClick={() => confirmRolloutCommand(row, "resume")} />}
+      {canOperate && ["pending", "preloading", "progressing", "paused", "completed", "failed"].includes(row.state) && <TableRowAction label={`${production.rollback} ${production.release} ${row.id}`} icon={<RollbackOutlined />} warning loading={rolloutBusyId === row.id} onClick={() => confirmRollback(row)} />}
+    </div> },
   ];
 
   const keyColumns = [
     { title: production.keyPrefix, dataIndex: "prefix", key: "prefix" },
     { title: production.keyStatus, key: "status", render: (_: unknown, row: InferenceApiKey) => row.revoked_at ? <Tag color="error">{production.revoked}</Tag> : isApiKeyExpired(row) ? <Tag color="warning">{production.expired}</Tag> : <Tag color="success">{production.active}</Tag> },
-    { title: t.model.actions, key: "actions", width: 250, render: (_: unknown, row: InferenceApiKey) => canRegister && !row.revoked_at ? <Space wrap><Button icon={<SyncOutlined />} disabled={isApiKeyExpired(row)} aria-label={`${production.rotateApiKey} ${row.prefix}`} onClick={() => void handleRotateApiKey(row)}>{production.rotateApiKey}</Button><Button danger icon={<StopOutlined />} aria-label={`${production.revokeApiKey} ${row.prefix}`} onClick={() => void handleRevokeApiKey(row)}>{production.revokeApiKey}</Button></Space> : null },
+    { title: t.model.actions, key: "actions", width: 90, align: "right" as const, render: (_: unknown, row: InferenceApiKey) => canRegister && !row.revoked_at ? <div className="table-row-actions"><TableRowAction label={`${production.rotateApiKey} ${row.prefix}`} icon={<SyncOutlined />} disabled={isApiKeyExpired(row)} onClick={() => void handleRotateApiKey(row)} /><TableRowAction label={`${production.revokeApiKey} ${row.prefix}`} icon={<StopOutlined />} warning onClick={() => void handleRevokeApiKey(row)} /></div> : null },
   ];
 
   const logColumns = [
@@ -541,11 +533,11 @@ export default function ModelLibraryPage() {
           <Tabs activeKey={tab} onChange={setTab} items={[
             { key: "models", label: copy.models, children: <Space direction="vertical" size={12} style={{ width: "100%" }}>
               {canRegister && <Button type="primary" icon={<PlusOutlined />} aria-label={copy.register} onClick={() => setModelOpen(true)}>{copy.register}</Button>}
-              <Table rowKey="id" loading={loading} dataSource={models} columns={modelColumns} locale={{ emptyText: <Empty description={copy.emptyModels} /> }} scroll={{ x: 760 }} pagination={false} />
+              <div className="table-surface"><Table rowKey="id" loading={loading} dataSource={models} columns={modelColumns} locale={{ emptyText: <Empty description={copy.emptyModels} /> }} scroll={{ x: 760 }} pagination={false} /></div>
             </Space> },
             { key: "deployments", label: copy.deployments, children: <Space direction="vertical" size={12} style={{ width: "100%" }}>
               {canRegister && <Button type="primary" icon={<PlusOutlined />} aria-label={copy.createDeployment} onClick={() => setDeploymentOpen(true)}>{copy.createDeployment}</Button>}
-              <Table rowKey="id" loading={loading} dataSource={deployments} columns={deploymentColumns} locale={{ emptyText: <Empty description={copy.emptyDeployments} /> }} scroll={{ x: 800 }} pagination={false} />
+              <div className="table-surface"><Table rowKey="id" loading={loading} dataSource={deployments} columns={deploymentColumns} locale={{ emptyText: <Empty description={copy.emptyDeployments} /> }} scroll={{ x: 800 }} pagination={false} /></div>
             </Space> },
           ]} />
         </>}

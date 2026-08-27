@@ -2,8 +2,11 @@ import { useState, useEffect } from "react";
 import { Card, Table, Tag, Button, Space, Typography, Modal, Input, Select, Form, message, Descriptions, Tabs, List, Timeline, Badge, Empty } from "antd";
 import { PlusOutlined, EyeOutlined, DeleteOutlined, SendOutlined, CheckOutlined, CloseOutlined, MessageOutlined, RobotOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import DeleteConfirmation from "../components/DeleteConfirmation";
+import TableRowAction from "../components/TableRowAction";
 import apiClient, { apiGet, apiPost, apiDelete } from "../api/client";
 import { useI18n } from "../i18n";
+import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 
 const { Title, Text, Paragraph } = Typography;
 const stColor: Record<string, string> = { pending: "default", running: "blue", completed: "green", failed: "red", in_progress: "processing" };
@@ -22,15 +25,19 @@ export default function OrchestrationPage() {
     deleteFailed: "删除失败", deleteSelectedAgents: "确定要删除选中的",
     agents: "个智能体吗？", no: "否", active: "活跃", disabled: "禁用",
     model: "模型", actions: "操作", type: "类型", status: "状态",
+    project: "项目", creator: "创建人", allProjects: "全部项目",
   } : {
     planCompleted: "Planning completed", planFailed: "Planning failed", deleteAgent: "Delete agent",
     batchDeleteAgent: "Delete selected agents", agentDeleted: "Agents deleted",
     deleteFailed: "Delete failed", deleteSelectedAgents: "Delete selected",
     agents: "agents?", no: "No", active: "Active", disabled: "Disabled",
     model: "Model", actions: "Actions", type: "Type", status: "Status",
+    project: "Project", creator: "Creator", allProjects: "All projects",
   };
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
+  const [taskProjectId, setTaskProjectId] = useState("");
   const [agents, setAgents] = useState<any[]>([]);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [showCreate, setShowCreate] = useState(false);
@@ -47,11 +54,20 @@ export default function OrchestrationPage() {
   const [createForm] = Form.useForm();
   const [agentForm] = Form.useForm();
 
-  useEffect(() => { fetchData(); fetchAgents(); fetchReviews(); }, []);
+  useEffect(() => {
+    apiClient.get("/projects").then((response) => setProjects(response.data.items || response.data || [])).catch(() => setProjects([]));
+    fetchAgents();
+    fetchReviews();
+  }, []);
+
+  useEffect(() => { void fetchData(); }, [taskProjectId]);
 
   const fetchData = async () => {
     setLoading(true);
-    try { const res: any = await apiGet("/orchestration/tasks"); setData(res.items || res || []); }
+    try {
+      const response = await apiClient.get("/orchestration/tasks", { params: taskProjectId ? { project_id: taskProjectId } : undefined });
+      setData(response.data.items || response.data || []);
+    }
     catch { setData([]); }
     finally { setLoading(false); }
   };
@@ -103,76 +119,53 @@ export default function OrchestrationPage() {
   };
 
   const handleDeleteTask = async (taskId: string) => {
-    Modal.confirm({
-      title: t.common.delete + "任务",
-      okType: "danger",
-      onOk: async () => { await apiDelete("/orchestration/tasks/" + taskId); message.success(t.common.success); fetchData(); },
-    });
+    await apiDelete("/orchestration/tasks/" + taskId);
+    message.success(t.common.success);
+    fetchData();
   };
 
 
   const handleBatchDelete = async () => {
-    Modal.confirm({
-      title: "确定要删除选中的 " + selectedRowKeys.length + " 个任务吗？",
-      okType: "danger",
-      okText: "删除",
-      cancelText: "取消",
-      onOk: async () => {
-        try {
-          await apiClient.post("/orchestration/batch-delete", { ids: selectedRowKeys });
-          message.success("批量删除成功");
-          setSelectedRowKeys([]);
-          fetchData();
-        } catch {
-          message.error("批量删除失败");
-        }
-      },
-    });
+    try {
+      await apiClient.post("/orchestration/batch-delete", { ids: selectedRowKeys });
+      message.success("批量删除成功");
+      setSelectedRowKeys([]);
+      fetchData();
+    } catch {
+      message.error("批量删除失败");
+    }
   };
 
 
   const handleBatchDeleteAgent = async () => {
     if (agentSelectedKeys.length === 0) return;
-    Modal.confirm({
-      title: "确定要删除选中的 " + agentSelectedKeys.length + " 个智能体吗？",
-      okType: "danger",
-      okText: "删除",
-      cancelText: "取消",
-      onOk: async () => {
-        try {
-          await apiClient.post("/orchestration/agents/batch-delete", { ids: agentSelectedKeys });
-          message.success(text.agentDeleted);
-          setAgentSelectedKeys([]);
-          fetchAgents();
-        } catch {
-          message.error(text.deleteFailed);
-        }
-      },
-    });
+    try {
+      await apiClient.post("/orchestration/agents/batch-delete", { ids: agentSelectedKeys });
+      message.success(text.agentDeleted);
+      setAgentSelectedKeys([]);
+      fetchAgents();
+    } catch {
+      message.error(text.deleteFailed);
+    }
   };
 
-  const handleDeleteAgent = (agent: any) => {
-    Modal.confirm({
-      title: text.deleteAgent,
-      content: agent.name,
-      okType: "danger",
-      onOk: async () => {
-        try {
-          await apiDelete("/orchestration/agents/" + agent.id);
-          message.success(text.agentDeleted);
-          setAgentSelectedKeys((keys) => keys.filter((key) => key !== agent.id));
-          fetchAgents();
-        } catch (error: any) {
-          message.error(error.response?.data?.detail || text.deleteFailed);
-        }
-      },
-    });
+  const handleDeleteAgent = async (agent: any) => {
+    try {
+      await apiDelete("/orchestration/agents/" + agent.id);
+      message.success(text.agentDeleted);
+      setAgentSelectedKeys((keys) => keys.filter((key) => key !== agent.id));
+      fetchAgents();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || text.deleteFailed);
+    }
   };
   const taskColumns = [
 
     { title: t.knowledge?.name || "名称", dataIndex: "name", key: "name", ellipsis: true },
+    { title: text.project, dataIndex: "project_name", key: "project", render: (value: string, task: any) => value || task.project_id || "-" },
+    { title: text.creator, dataIndex: "created_by_name", key: "creator", render: (value: string, task: any) => value || task.created_by_id || "-" },
     { title: t.training?.status || "状态", dataIndex: "status", key: "status",
-      render: (s: string) => <Tag color={stColor[s] || "default"}>{s}</Tag> },
+      render: (s: string) => <Tag color={taskStatusColor(s)}>{taskStatusLabel(s, lang)}</Tag> },
     { title: "优先级", dataIndex: "priority", key: "priority",
       render: (p: number) => <Tag color={p > 5 ? "red" : p > 2 ? "orange" : "green"}>P{p}</Tag> },
     { title: t.orchestration?.assigned_agent || "智能体", dataIndex: "assigned_agent_id", key: "assigned_agent_id",
@@ -181,14 +174,14 @@ export default function OrchestrationPage() {
       render: (v: boolean) => v ? <Tag color="orange">待审核</Tag> : <Tag>否</Tag> },
     { title: t.training?.started || "创建时间", dataIndex: "created_at", key: "created_at",
       render: (t: string) => t ? new Date(t).toLocaleDateString() : "-" },
-    { title: t.model?.actions || "操作", key: "actions",
+    { title: t.model?.actions || "操作", key: "actions", align: "right" as const,
       render: (_: any, r: any) => (
-        <Space size="small">
-          <Button size="small" icon={<EyeOutlined />} onClick={() => { setSelected(r); setShowDetail(true); }} />
-          <Button size="small" icon={<SendOutlined />} onClick={() => handlePlan(r)}>{t.orchestration.plan}</Button>
-          <Button size="small" icon={<MessageOutlined />} onClick={() => { setSelected(r); fetchMessages(r.id); setShowMessages(true); }} />
-          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDeleteTask(r.id)} />
-        </Space>
+        <div className="table-row-actions">
+          <TableRowAction label={`${lang === "zh" ? "查看任务" : "View task"} ${r.name}`} icon={<EyeOutlined />} onClick={() => { setSelected(r); setShowDetail(true); }} />
+          <TableRowAction label={`${t.orchestration.plan} ${r.name}`} icon={<SendOutlined />} onClick={() => handlePlan(r)} />
+          <TableRowAction label={`${lang === "zh" ? "查看消息" : "View messages"} ${r.name}`} icon={<MessageOutlined />} onClick={() => { setSelected(r); fetchMessages(r.id); setShowMessages(true); }} />
+          <DeleteConfirmation label={`${t.common.delete} ${r.name}`} targetName={r.name} onConfirm={() => void handleDeleteTask(r.id)} />
+        </div>
       )},
   ];
 
@@ -199,8 +192,10 @@ export default function OrchestrationPage() {
     { title: text.model, dataIndex: "model_name", key: "model_name", render: (m: string) => <Tag color="blue">{m || "-"}</Tag> },
     { title: text.status, dataIndex: "is_active", key: "is_active",
       render: (v: boolean) => <Badge status={v ? "success" : "error"} text={v ? text.active : text.disabled} /> },
-    { title: text.actions, key: "actions", render: (_: any, agent: any) => (
-      <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDeleteAgent(agent)}>{t.common.delete}</Button>
+    { title: text.actions, key: "actions", align: "right" as const, render: (_: any, agent: any) => (
+      <div className="table-row-actions">
+        <DeleteConfirmation label={`${t.common.delete} ${agent.name}`} targetName={agent.name} onConfirm={() => void handleDeleteAgent(agent)} />
+      </div>
     ) },
   ];
 
@@ -221,24 +216,31 @@ export default function OrchestrationPage() {
 
         <Card title={<Title level={4}>{t.orchestration?.title || "多智能体编排"}</Title>}
           extra={<Space>
+            {activeTab === "tasks" && <Select
+              aria-label={text.project}
+              value={taskProjectId}
+              style={{ minWidth: 180 }}
+              options={[{ value: "", label: text.allProjects }, ...projects.map((project) => ({ value: project.id, label: project.name }))]}
+              onChange={setTaskProjectId}
+            />}
             {activeTab === "tasks" && selectedRowKeys.length > 0 && (
-              <Button danger icon={<DeleteOutlined />} onClick={handleBatchDelete}>
-                批量删除 ({selectedRowKeys.length})
-              </Button>
+              <DeleteConfirmation label="批量删除任务" selectedCount={selectedRowKeys.length} onConfirm={() => void handleBatchDelete()}>
+                <Button danger icon={<DeleteOutlined />}>批量删除 ({selectedRowKeys.length})</Button>
+              </DeleteConfirmation>
             )}
             {activeTab === "agents" && agentSelectedKeys.length > 0 && (
-              <Button danger icon={<DeleteOutlined />} onClick={handleBatchDeleteAgent}>
-                {text.batchDeleteAgent} ({agentSelectedKeys.length})
-              </Button>
+              <DeleteConfirmation label={text.batchDeleteAgent} selectedCount={agentSelectedKeys.length} onConfirm={() => void handleBatchDeleteAgent()}>
+                <Button danger icon={<DeleteOutlined />}>{text.batchDeleteAgent} ({agentSelectedKeys.length})</Button>
+              </DeleteConfirmation>
             )}
             <Button icon={<PlusOutlined />} onClick={() => setShowAgent(true)}>{t.orchestration?.new_agent || "新建智能体"}</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowCreate(true)}>{t.orchestration?.new_task || "新建任务"}</Button>
           </Space>}>
           <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
             { key: "tasks", label: t.orchestration?.tasks || "任务",
-              children: <Table dataSource={data} columns={taskColumns} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 10 }} rowSelection={{ selectedRowKeys, onChange: (keys: React.Key[]) => setSelectedRowKeys(keys) }} /> },
+              children: <div className="table-surface"><Table dataSource={data} columns={taskColumns} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 10 }} rowSelection={{ selectedRowKeys, onChange: (keys: React.Key[]) => setSelectedRowKeys(keys) }} /></div> },
             { key: "agents", label: t.orchestration?.agents || "智能体",
-              children: <Table dataSource={agents} columns={agentColumns} rowKey="id" size="small" pagination={{ pageSize: 10 }} rowSelection={{ selectedRowKeys: agentSelectedKeys, onChange: (keys: React.Key[]) => setAgentSelectedKeys(keys) }} /> },
+              children: <div className="table-surface"><Table dataSource={agents} columns={agentColumns} rowKey="id" size="small" pagination={{ pageSize: 10 }} rowSelection={{ selectedRowKeys: agentSelectedKeys, onChange: (keys: React.Key[]) => setAgentSelectedKeys(keys) }} /></div> },
           ]} />
         </Card>
 
@@ -254,6 +256,7 @@ export default function OrchestrationPage() {
 
       <Modal title={t.orchestration?.new_task || "待审核"} open={showCreate} onCancel={() => setShowCreate(false)} onOk={() => createForm.submit()} width={500}>
         <Form form={createForm} layout="vertical" onFinish={handleCreateTask}>
+          <Form.Item name="project_id" label={text.project} rules={[{ required: true }]}><Select options={projects.map((project) => ({ value: project.id, label: project.name }))} /></Form.Item>
           <Form.Item name="name" label={t.knowledge?.name || "名称"} rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="description" label={t.knowledge?.desc || "取消"}><Input.TextArea rows={3} /></Form.Item>
           <Form.Item name="priority" label={t.orchestration?.priority || "待审核"} initialValue={5}>

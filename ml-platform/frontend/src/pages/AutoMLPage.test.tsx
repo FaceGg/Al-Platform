@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App as AntApp } from "antd";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
@@ -12,13 +12,14 @@ const QUALITY_REPORT_COLUMNS = [
   "cvei", "cvev", "cver", "cvep",
 ];
 
-const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
+const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), delete: vi.fn() }));
 const datasets = vi.hoisted(() => ({ listDatasets: vi.fn(), getDatasetPreview: vi.fn() }));
 const quality = vi.hoisted(() => ({
   createQualityRun: vi.fn(),
   downloadQualityArtifact: vi.fn(),
   getQualityRun: vi.fn(),
 }));
+const dashboardEvents = vi.hoisted(() => ({ notifyDashboardStatsChanged: vi.fn() }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
 vi.mock("../api/client", () => ({
@@ -33,6 +34,7 @@ vi.mock("../api/client", () => ({
 }));
 vi.mock("../api/datasets", () => datasets);
 vi.mock("../api/spotWeldQuality", () => quality);
+vi.mock("../events/dashboardStats", () => dashboardEvents);
 vi.mock("../i18n", () => ({
   useI18n: () => ({
     t: {
@@ -55,6 +57,7 @@ describe("AutoMLPage", () => {
   beforeEach(() => {
     api.get.mockReset();
     api.post.mockReset();
+    api.delete.mockReset();
     datasets.listDatasets.mockReset();
     datasets.getDatasetPreview.mockReset();
     api.get.mockImplementation((url: string) => {
@@ -78,6 +81,7 @@ describe("AutoMLPage", () => {
     quality.createQualityRun.mockResolvedValue({ id: "run-1", status: "queued" });
     quality.getQualityRun.mockResolvedValue({ id: "run-1", status: "completed" });
     quality.downloadQualityArtifact.mockResolvedValue(new Blob(["report"]));
+    dashboardEvents.notifyDashboardStatsChanged.mockReset();
   });
 
   it.skip("renders generic AutoML controls", async () => {
@@ -113,7 +117,40 @@ describe("AutoMLPage", () => {
     expect(screen.queryByText("task-name")).not.toBeInTheDocument();
   });
 
-  it("only offers unused experiments and selects the first available one", async () => {
+  it("shows the project column and controls an active AutoML task", async () => {
+    let taskFetches = 0;
+    api.get.mockImplementation((url: string) => {
+      if (url === "/training/automl/jobs") {
+        taskFetches += 1;
+        return Promise.resolve({ data: [{
+          id: "automl-running", project_id: "project-1", project_name: "Weld line", created_by_name: "alice", name: "task-name",
+          status: taskFetches > 1 ? "cancel_requested" : "running",
+        }] });
+      }
+      if (url === "/experiments") return Promise.resolve({ data: { items: [] } });
+      return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
+    });
+    api.post.mockResolvedValue({ data: { status: "cancel_requested" } });
+
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    expect(await screen.findByRole("columnheader", { name: "项目" })).toBeInTheDocument();
+    expect(await screen.findByRole("columnheader", { name: "创建人" })).toBeInTheDocument();
+    expect(await screen.findByText("Weld line")).toBeInTheDocument();
+    expect(await screen.findByText("alice")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看建模结果 automl-running" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "停止建模任务 automl-running" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/training/jobs/automl-running/stop"));
+    const deleteButton = await screen.findByRole("button", { name: "删除建模任务 automl-running" });
+    await waitFor(() => expect(deleteButton).toBeEnabled());
+    fireEvent.click(deleteButton);
+    expect(api.delete).not.toHaveBeenCalledWith("/training/automl/jobs/automl-running");
+    fireEvent.click(within(await screen.findByRole("tooltip")).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/training/automl/jobs/automl-running"));
+    expect(dashboardEvents.notifyDashboardStatsChanged).toHaveBeenCalled();
+  });
+
+  it("offers existing experiments and selects the first available one", async () => {
     api.get.mockImplementation((url: string) => {
       if (url === "/training/automl/jobs") return Promise.resolve({ data: [] });
       if (url === "/experiments") return Promise.resolve({ data: { items: [
@@ -134,7 +171,8 @@ describe("AutoMLPage", () => {
     await waitFor(() => expect(screen.getByTitle("Unused Experiment")).toBeInTheDocument());
     fireEvent.mouseDown(experimentSelect);
     expect((await screen.findAllByText("Unused Experiment")).length).toBeGreaterThan(0);
-    expect(screen.queryByText("Used Experiment", { selector: ".ant-select-item-option-content" })).not.toBeInTheDocument();
+    expect(screen.getByText("Used Experiment", { selector: ".ant-select-item-option-content" }).closest(".ant-select-item-option"))
+      .toHaveClass("ant-select-item-option-disabled");
   });
 
   it("selects a newly created experiment", async () => {
@@ -214,7 +252,7 @@ describe("AutoMLPage", () => {
     fireEvent.mouseDown(await screen.findAllByRole("combobox").then((items) => items[0]));
     fireEvent.click(await screen.findByText("Weld line"));
 
-    expect(await screen.findByText("普通建模")).toBeInTheDocument();
+    expect(await screen.findByText("自动建模")).toBeInTheDocument();
     expect(screen.getByText("点焊建模")).toBeInTheDocument();
     expect(screen.getByText("10/10 100%")).toBeInTheDocument();
     expect(screen.getByText("3/10 30%")).toBeInTheDocument();

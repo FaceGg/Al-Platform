@@ -22,6 +22,8 @@ from app.models.access import AuditEvent, ProjectMember
 from app.models.project import Project
 from app.models.user import User
 from app.models.artifact import Artifact
+from app.models.model_library import ModelLibrary
+from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.spot_weld_quality import (
     SpotWeldLabelRevision,
     SpotWeldLabelSnapshot,
@@ -84,7 +86,9 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         app.state.quality_artifact_service_factory = lambda _db: self.artifact_service
         self.dispatcher = type("QualityDispatcher", (), {
             "enqueued": [],
+            "cancelled": [],
             "enqueue": lambda dispatcher, run_id: dispatcher.enqueued.append(str(run_id)) or "quality-task-1",
+            "cancel": lambda dispatcher, task_id: dispatcher.cancelled.append(str(task_id)),
         })()
         app.state.quality_dispatcher = self.dispatcher
         self.client = TestClient(app)
@@ -465,6 +469,7 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         payload = {
             "dataset_artifact_id": str(artifact.id),
             "field_mapping": {},
+            "workflow_kind": "data_annotation",
             "label_mode": "manual",
             "target_column": "Fault",
             "target_column_created": False,
@@ -579,11 +584,12 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         self.assertEqual(invalid.status_code, 422, invalid.text)
         self.assertEqual(invalid.json()["detail"]["code"], "QUALITY_LABEL_TYPE_INVALID")
 
-    def test_automatic_quality_run_requires_registered_model_and_cluster_labels(self):
+    def test_automatic_annotation_requires_registered_model_and_validates_weak_rules(self):
         url = f"/api/projects/{self.project.id}/spot-weld/runs"
         base_payload = {
             "dataset_artifact_id": str(self.artifact.id),
             "field_mapping": {},
+            "workflow_kind": "data_annotation",
             "label_mode": "automatic",
             "target_column": "Fault",
             "target_column_created": True,
@@ -593,13 +599,88 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         self.assertEqual(missing_model.status_code, 400, missing_model.text)
         self.assertEqual(missing_model.json()["detail"]["code"], "QUALITY_MODEL_REQUIRED")
 
-        missing_labels = self.client.post(url, json={
+        without_registered_model = self.client.post(url, json={
             **base_payload,
             "selected_model_id": str(uuid.uuid4()),
             "weak_supervision": True,
         })
-        self.assertEqual(missing_labels.status_code, 400, missing_labels.text)
-        self.assertEqual(missing_labels.json()["detail"]["code"], "QUALITY_CLUSTER_LABELS_REQUIRED")
+        self.assertEqual(without_registered_model.status_code, 400, without_registered_model.text)
+        self.assertEqual(without_registered_model.json()["detail"]["code"], "QUALITY_MODEL_INVALID")
+
+    def test_weak_supervision_rules_can_reference_non_model_dataset_columns(self):
+        artifact = self._create_dataset_artifact("annotation-rule-columns.csv", pd.DataFrame({
+            "wld1c": [1.0, 2.0, 3.0],
+            "Fault": [0, 1, 0],
+        }))
+        payload = {
+            "dataset_artifact_id": str(artifact.id),
+            "field_mapping": {},
+            "workflow_kind": "data_annotation",
+            "label_mode": "automatic",
+            "label_dtype": "int",
+            "selected_model_id": str(uuid.uuid4()),
+            "weak_supervision": True,
+            "process_rules": [{
+                "id": "rule-fault",
+                "label": "1",
+                "tokens": [
+                    {"kind": "data", "value": "Fault"},
+                    {"kind": "logical_operator", "value": "=="},
+                    {"kind": "number", "value": 1},
+                ],
+            }],
+        }
+        bundle = {"feature_schema_names": ["wld1c"]}
+        feature_frame = pd.DataFrame({"wld1c": [1.0, 2.0, 3.0]})
+
+        with patch.object(quality_api, "load_registered_annotation_model", return_value=(SimpleNamespace(), bundle)), \
+                patch.object(quality_api, "annotation_feature_frame", return_value=feature_frame):
+            validation = self.client.post(
+                f"/api/projects/{self.project.id}/spot-weld/validate",
+                json=payload,
+            )
+            created = self.client.post(
+                f"/api/projects/{self.project.id}/spot-weld/runs",
+                json=payload,
+            )
+
+        self.assertEqual(validation.status_code, 200, validation.text)
+        self.assertEqual(created.status_code, 202, created.text)
+        self.assertEqual(created.json()["process_rules"][0]["tokens"][0]["value"], "Fault")
+
+    def test_annotation_uses_generic_path_for_complete_spot_weld_shaped_dataset(self):
+        payload = {
+            "dataset_artifact_id": str(self.artifact.id),
+            "field_mapping": {},
+            "workflow_kind": "data_annotation",
+            "label_mode": "automatic",
+            "label_dtype": "int",
+            "selected_model_id": str(uuid.uuid4()),
+        }
+        validation = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/validate",
+            json=payload,
+        )
+        self.assertEqual(validation.status_code, 200, validation.text)
+        self.assertEqual(validation.json()["valid_rows"], 2)
+
+        created = self.client.post(
+            f"/api/projects/{self.project.id}/spot-weld/runs",
+            json=payload,
+        )
+        self.assertEqual(created.status_code, 202, created.text)
+        run = self.db.get(SpotWeldQualityRun, uuid.UUID(created.json()["id"]))
+        self.assertEqual(run.input_fingerprint["workflow_kind"], "data_annotation")
+        self.assertIsNone(run.input_fingerprint["target_column"])
+
+        expected = quality_service.QualityRunOutcome(str(run.id), "completed")
+        with patch(
+            "app.services.spot_weld_quality._execute_generic_automatic_annotation_run",
+            return_value=expected,
+        ) as execute_generic:
+            outcome = execute_quality_run(self.db, run.id, artifact_service=self.artifact_service)
+        self.assertEqual(outcome.status, "completed")
+        execute_generic.assert_called_once()
 
     def test_delete_label_clears_current_state_but_keeps_revision_history(self):
         run = SpotWeldQualityRun(
@@ -949,15 +1030,17 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), {"deleted": 1, "run_id": str(run_id)})
+        self.assertEqual(self.dispatcher.cancelled, [])
         self.assertIsNone(self.db.get(SpotWeldQualityRun, run_id))
         self.assertIsNone(self.db.get(SpotWeldQualitySample, sample_id))
 
-    def test_active_quality_run_cannot_be_deleted(self):
+    def test_active_quality_run_can_be_deleted_and_cancelled(self):
         run = SpotWeldQualityRun(
             project_id=self.project.id,
             dataset_artifact_id=self.artifact.id,
             created_by_id=self.owner.id,
             status="running",
+            task_id="quality-task-active",
         )
         self.db.add(run)
         self.db.commit()
@@ -966,9 +1049,10 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
             f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}",
         )
 
-        self.assertEqual(response.status_code, 409, response.text)
-        self.assertEqual(response.json()["detail"]["code"], "QUALITY_RUN_ACTIVE")
-        self.assertIsNotNone(self.db.get(SpotWeldQualityRun, run.id))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"deleted": 1, "run_id": str(run.id)})
+        self.assertEqual(self.dispatcher.cancelled, ["quality-task-active"])
+        self.assertIsNone(self.db.get(SpotWeldQualityRun, run.id))
 
     def test_completed_run_rules_can_be_updated(self):
         run = SpotWeldQualityRun(
@@ -1279,6 +1363,42 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         models = self.client.get(f"/api/projects/{self.project.id}/spot-weld/models")
         self.assertEqual(models.status_code, 200, models.text)
         self.assertEqual(models.json()["total"], 0)
+
+        source = self.db.query(ModelLibrary).filter(
+            ModelLibrary.id == uuid.UUID(trained.json()["model"]["id"]),
+        ).one()
+        registered = RegisteredModel(
+            project_id=self.project.id,
+            name="已注册质量模型",
+            description="annotation fixture",
+            created_by_id=self.owner.id,
+        )
+        self.db.add(registered)
+        self.db.flush()
+        self.db.add(ModelVersion(
+            registered_model_id=registered.id,
+            version_number=1,
+            source_kind="platform_joblib",
+            source_model_library_id=source.id,
+            source_artifact_id=source.model_artifact_id,
+            onnx_artifact_id=source.model_artifact_id,
+            framework=source.framework or "scikit-learn",
+            algorithm=source.backbone or "gbdt",
+            feature_schema=[{"name": name, "dtype": "float64"} for name in FEATURE_SCHEMA],
+            output_schema={"name": "Fault", "dtype": "int64", "task": "classification"},
+            metrics=source.metrics or {},
+            approval_status="pending",
+            created_by_id=self.owner.id,
+        ))
+        self.db.commit()
+
+        models = self.client.get(f"/api/projects/{self.project.id}/spot-weld/models")
+        self.assertEqual(models.status_code, 200, models.text)
+        self.assertEqual(models.json()["total"], 1)
+        self.assertEqual(models.json()["items"][0]["status"], "completed")
+        self.assertEqual(models.json()["items"][0]["name"], "已注册质量模型")
+        self.assertEqual(models.json()["items"][0]["label_dtype"], "int64")
+        self.assertEqual(models.json()["items"][0]["target_column"], "Fault")
         hidden = self.client.get(f"/api/projects/{self.other.id}/spot-weld/models")
         self.assertEqual(hidden.status_code, 404)
 

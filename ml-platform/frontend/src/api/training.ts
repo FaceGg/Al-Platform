@@ -19,7 +19,10 @@ export interface TrainingJobCreate {
 export interface TrainingJob {
   id: string;
   project_id?: string;
+  project_name?: string | null;
   user_id?: string;
+  created_by_id?: string | null;
+  created_by_name?: string | null;
   experiment_id?: string | null;
   mlflow_run_id?: string | null;
   name?: string;

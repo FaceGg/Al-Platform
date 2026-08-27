@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { Card, Table, Tag, Button, Space, Typography, Modal, Input, Select, Form, message, Progress, Row, Col } from "antd";
-import { PlusOutlined, ThunderboltOutlined, EyeOutlined, DeleteOutlined } from "@ant-design/icons";
+import { PlusOutlined, ThunderboltOutlined, EyeOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import AnnotationCanvas from "../components/AnnotationCanvas";
+import DeleteConfirmation from "../components/DeleteConfirmation";
 import { apiGet, apiPost, apiPut, apiDelete } from "../api/client";
 
 const { Title } = Typography;
@@ -74,7 +75,7 @@ export default function AnnotationPage() {
         <Space>
           <Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedTask(r); fetchSamples(r.id); setShowSamples(true); }}>样本</Button>
           <Button size="small" icon={<ThunderboltOutlined />} onClick={() => handleAutoLabel(r.id)}>自动标注</Button>
-          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(r.id)}>删除</Button>
+          <DeleteConfirmation label={`删除标注任务 ${r.name}`} targetName={r.name} onConfirm={() => void handleDelete(r.id)} />
         </Space>
       )},
   ];

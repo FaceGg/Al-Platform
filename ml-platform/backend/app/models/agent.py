@@ -27,6 +27,8 @@ class AgentTask(Base):
     __tablename__ = "agent_tasks"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    created_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id"), nullable=True)
     name = Column(String(256), nullable=False)
     description = Column(Text, default="")
@@ -46,6 +48,9 @@ class AgentTask(Base):
 
     children = relationship("AgentTask", backref="parent", remote_side="AgentTask.id")
     assigned_agent = relationship("Agent", foreign_keys=[assigned_agent_id], backref="tasks")
+    project = relationship("Project", foreign_keys=[project_id], backref="agent_tasks")
+    created_by_user = relationship("User", foreign_keys=[created_by_id], backref="agent_tasks")
+    workflow = relationship("Workflow", foreign_keys=[workflow_id], backref="agent_tasks")
 
 
 class AgentMessage(Base):

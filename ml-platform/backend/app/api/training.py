@@ -1,6 +1,9 @@
 """Project-authorized asynchronous training management API."""
 
+import asyncio
 import io
+import os
+import secrets
 import tempfile
 import uuid
 from pathlib import Path
@@ -32,6 +35,7 @@ from app.services.artifact_service import ArtifactAccessError, build_artifact_se
 from app.services.automl_report import AutoMLReportError, generate_automl_report
 from app.services.experiment_tracking import TrackingError
 from app.services.iterative_training import IncompatibleCheckpoint, TrainingCheckpoint, TrainingConfig
+from app.tensorboard_gateway.processes import TensorBoardProcessManager
 from app.tensorboard_gateway.tokens import SessionSigner, SessionTokenInvalid
 from app.api.project_security import audit_service, require_project_access, resolve_project_access
 from app.services.audit import AuditIntent
@@ -44,6 +48,7 @@ PROJECT_WRITE_ACTIONS = {
     "POST /api/training/jobs/{job_id}/stop": "training_job.stop",
     "POST /api/training/jobs/{job_id}/resume": "training_job.resume",
     "POST /api/training/automl/run": "training_job.automl_start",
+    "DELETE /api/training/automl/jobs/{job_id}": "training_job.delete",
     "POST /api/training/batch-delete": "training_job.delete",
 }
 
@@ -85,7 +90,7 @@ class AutoMLRunRequest(BaseModel):
     max_trials: int | None = Field(default=None, ge=5, le=200)
     cross_validation_enabled: bool = True
     cross_validation_folds: int | None = 5
-    time_budget: int = Field(default=60, ge=10, le=3600)
+    time_budget: int = Field(default=60, ge=10, le=9999)
     name: str = Field(default="automl-job", min_length=1, max_length=128)
 
 
@@ -149,17 +154,73 @@ def get_tensorboard_signer(request: Request):
     configured = getattr(request.app.state, "tensorboard_signer", None)
     if configured is not None:
         return configured
-    from app.config import settings
-
-    secret = settings.resolved_tensorboard_session_secret
+    runtime_settings = getattr(request.app.state, "settings", None) or settings
+    secret = runtime_settings.resolved_tensorboard_session_secret
     if secret is None:
-        raise HTTPException(503, _error(
-            "TENSORBOARD_UNAVAILABLE",
-            "TensorBoard sessions are not configured",
-        ))
-    configured = SessionSigner(secret.get_secret_value())
+        if runtime_settings.app_mode != "local":
+            raise HTTPException(503, _error(
+                "TENSORBOARD_UNAVAILABLE",
+                "TensorBoard sessions are not configured",
+            ))
+        configured = SessionSigner(secrets.token_urlsafe(32))
+    else:
+        configured = SessionSigner(secret.get_secret_value())
     request.app.state.tensorboard_signer = configured
     return configured
+
+
+async def proxy_local_tensorboard(claims, path: str, request: Request):
+    injected = getattr(request.app.state, "tensorboard_local_proxy_handler", None)
+    if injected is not None:
+        return await injected(claims, path, request)
+    manager = getattr(request.app.state, "tensorboard_process_manager", None)
+    if manager is None:
+        runtime_settings = getattr(request.app.state, "settings", None) or settings
+        manager = TensorBoardProcessManager(
+            Path(os.environ.get(
+                "TENSORBOARD_LOG_ROOT",
+                str(Path(tempfile.gettempdir()) / "tensorboard-runs"),
+            )),
+            idle_timeout_seconds=runtime_settings.tensorboard_idle_timeout_seconds,
+        )
+        request.app.state.tensorboard_process_manager = manager
+    manager.cleanup()
+    session = manager.get_or_start(
+        session_id=claims.session_id,
+        run_id=claims.run_id,
+        relative_logdir=claims.relative_logdir,
+        expires_at=claims.expires_at,
+    )
+    target = f"http://127.0.0.1:{session.port}/sessions/{session.session_id}/{path.lstrip('/')}"
+    async with httpx.AsyncClient(trust_env=False) as client:
+        for attempt in range(30):
+            try:
+                upstream = await client.request(
+                    request.method,
+                    target,
+                    params=request.query_params,
+                    content=await request.body(),
+                    headers={
+                        key: value for key, value in request.headers.items()
+                        if key.lower() in {"accept", "content-type", "range"}
+                    },
+                )
+                break
+            except httpx.RequestError as error:
+                if attempt == 29:
+                    raise HTTPException(503, _error(
+                        "TENSORBOARD_UNAVAILABLE",
+                        "TensorBoard local process did not become ready",
+                    )) from error
+                await asyncio.sleep(0.1)
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers={
+            key: value for key, value in upstream.headers.items()
+            if key.lower() in {"content-type", "content-range", "accept-ranges", "location"}
+        },
+    )
 
 
 @router.post("/run", status_code=202)
@@ -467,18 +528,16 @@ async def proxy_tensorboard(token: str, path: str, request: Request):
     if injected is not None:
         return await injected(claims, path, request)
 
-    from app.config import settings
-
+    runtime_settings = getattr(request.app.state, "settings", None) or settings
     gateway_url = getattr(
         request.app.state,
         "tensorboard_gateway_url",
-        settings.tensorboard_gateway_url,
+        runtime_settings.tensorboard_gateway_url,
     )
     if not gateway_url:
-        raise HTTPException(503, _error(
-            "TENSORBOARD_UNAVAILABLE",
-            "TensorBoard gateway is unavailable",
-        ))
+        if runtime_settings.app_mode == "local":
+            return await proxy_local_tensorboard(claims, path, request)
+        raise HTTPException(503, _error("TENSORBOARD_UNAVAILABLE", "TensorBoard gateway is unavailable"))
     target = (
         f"{str(gateway_url).rstrip('/')}/sessions/"
         f"{claims.session_id}/{path.lstrip('/')}"
@@ -644,6 +703,46 @@ def list_automl_jobs(
         query = query.filter(TrainingJob.project_id.in_(project_ids))
     jobs = query.order_by(TrainingJob.created_at.desc()).all()
     return [_job_to_dict(job) for job in jobs]
+
+
+@router.delete("/automl/jobs/{job_id}")
+def delete_automl_job(
+    job_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    job, access = _visible_job(db, job_id, current_user.id)
+    if job is None or job.operator_id != "automl":
+        raise HTTPException(404, _error("AUTOML_JOB_NOT_FOUND", "AutoML job not found"))
+    if job.status not in TERMINAL_TRAINING_STATUSES:
+        raise HTTPException(409, _error(
+            "AUTOML_JOB_NOT_TERMINAL",
+            "AutoML job must reach a terminal status before deletion",
+        ))
+    experiment = job.experiment
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="resource.delete",
+        intent=AuditIntent(
+            project_id=job.project_id,
+            action="training_job.automl_delete",
+            resource_type="training_job",
+            resource_id=str(job.id),
+            changes={
+                "experiment_id": str(experiment.id) if experiment is not None else None,
+            },
+        ),
+        allowed_changes={"experiment_id"},
+    ):
+        db.delete(job)
+        db.flush()
+        if experiment is not None:
+            db.delete(experiment)
+    return {
+        "deleted": 1,
+        "experiment_deleted": experiment is not None,
+    }
 
 
 @router.post("/jobs/{job_id}/automl-report")
@@ -839,6 +938,8 @@ def _job_to_dict(job: TrainingJob) -> dict:
         "project_id": str(job.project_id),
         "project_name": job.project.name if job.project else None,
         "user_id": str(job.user_id),
+        "created_by_id": str(job.user_id),
+        "created_by_name": job.user.username if job.user else None,
         "experiment_id": str(job.experiment_id) if job.experiment_id else None,
         "experiment_name": job.experiment.name if job.experiment else None,
         "mlflow_run_id": job.mlflow_run_id,
@@ -860,6 +961,7 @@ def _job_to_dict(job: TrainingJob) -> dict:
         "model_library_id": str(job.model_library_id) if job.model_library_id else None,
         "error_code": job.error_code,
         "error_message": job.error_message,
+        "error_details": job.error_details or {},
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,

@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState } from "react";
-import { Button, Card, Col, Empty, Progress, Row, Select, Space, Spin, Table, Tag, Typography } from "antd";
-import { EyeOutlined, ReloadOutlined } from "@ant-design/icons";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Button, Card, Col, Progress, Row, Spin, Typography } from "antd";
+import { ReloadOutlined } from "@ant-design/icons";
 
 import apiClient from "../api/client";
-import { getQualityWarningSummary, type QualityWarningSummary } from "../api/spotWeldQuality";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
 
@@ -24,28 +22,17 @@ interface MonitorData {
   gpu: ResourceMetric;
 }
 
-interface ProjectOption {
-  id: string;
-  name: string;
-}
-
 function toGigaBytes(bytes: number): number {
   return bytes / (1024 * 1024 * 1024);
 }
 
 export default function MonitorPage() {
   const { t } = useI18n();
-  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<MonitorData | null>(null);
   const [history, setHistory] = useState<{ cpu: number[]; memory: number[]; disk: number[]; gpu: number[] }>({
     cpu: [], memory: [], disk: [], gpu: [],
   });
-  const [projects, setProjects] = useState<ProjectOption[]>([]);
-  const [qualityProjectId, setQualityProjectId] = useState<string>();
-  const [qualityWarnings, setQualityWarnings] = useState<QualityWarningSummary | null>(null);
-  const [loadingQualityWarnings, setLoadingQualityWarnings] = useState(false);
-  const qualityWarningsRequestId = useRef(0);
 
   const mapBackendResponse = (raw: any): MonitorData => ({
     cpu: { usage_percent: raw.cpu?.percent ?? 0 },
@@ -84,51 +71,11 @@ export default function MonitorPage() {
     }
   };
 
-  const fetchQualityWarnings = async (projectId: string) => {
-    const requestId = ++qualityWarningsRequestId.current;
-    setLoadingQualityWarnings(true);
-    try {
-      const warnings = await getQualityWarningSummary(projectId);
-      if (qualityWarningsRequestId.current === requestId) {
-        setQualityWarnings(warnings);
-      }
-    } catch {
-      if (qualityWarningsRequestId.current === requestId) {
-        setQualityWarnings(null);
-      }
-    } finally {
-      if (qualityWarningsRequestId.current === requestId) {
-        setLoadingQualityWarnings(false);
-      }
-    }
-  };
-
-  useEffect(() => {
-    let active = true;
-    apiClient.get("/projects").then((response) => {
-      if (!active) return;
-      const values = Array.isArray(response.data) ? response.data : response.data?.items;
-      setProjects(Array.isArray(values) ? values : []);
-    }).catch(() => { if (active) setProjects([]); });
-    return () => { active = false; };
-  }, []);
-
   useEffect(() => {
     void fetchData();
     const timer = window.setInterval(() => { void fetchData(); }, 3000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (!qualityProjectId) {
-      qualityWarningsRequestId.current += 1;
-      setQualityWarnings(null);
-      setLoadingQualityWarnings(false);
-      return;
-    }
-    void fetchQualityWarnings(qualityProjectId);
-    return () => { qualityWarningsRequestId.current += 1; };
-  }, [qualityProjectId]);
 
   const svgLineChart = (values: number[], color: string, width = 300, height = 80) => {
     if (values.length < 2) return null;
@@ -146,7 +93,6 @@ export default function MonitorPage() {
   };
 
   const gaugeColor = (pct: number) => (pct > 80 ? "#d64747" : pct > 60 ? "#b67a1d" : "#247a54");
-  const warningColor: Record<string, string> = { critical: "error", warning: "warning", notice: "processing", none: "default" };
   const cards = [
     { key: "cpu", title: t.monitor.cpu, data: data?.cpu },
     { key: "memory", title: t.monitor.memory, data: data?.memory },
@@ -158,12 +104,11 @@ export default function MonitorPage() {
     return <AppLayout><div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 300 }}><Spin size="large" /></div></AppLayout>;
   }
 
-  const warningItems = qualityWarnings?.items || [];
   return <AppLayout>
     <section className="monitor-page page-shell fade-in">
       <div className="page-header page-header--stacked">
         <div className="page-header-copy"><h3 className="page-title">{t.monitor.title}</h3></div>
-        <Button icon={<ReloadOutlined />} onClick={() => { void fetchData(); if (qualityProjectId) void fetchQualityWarnings(qualityProjectId); }}>{t.monitor.refresh}</Button>
+        <Button icon={<ReloadOutlined />} onClick={() => void fetchData()}>{t.monitor.refresh}</Button>
       </div>
       <Row gutter={[16, 16]}>
         {cards.map((card) => {
@@ -182,22 +127,6 @@ export default function MonitorPage() {
           </Col>;
         })}
       </Row>
-      <section className="monitor-quality-warnings" aria-labelledby="quality-warning-title">
-        <div className="monitor-quality-warnings__head">
-          <h4 id="quality-warning-title">点焊质量预警</h4>
-          <Select aria-label="质量预警项目" placeholder="选择项目" value={qualityProjectId} onChange={setQualityProjectId} options={projects.map((project) => ({ value: project.id, label: project.name }))} style={{ width: "min(320px, 100%)" }} />
-        </div>
-        {!qualityProjectId ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择项目" /> : loadingQualityWarnings ? <Spin /> : <>
-          <Space className="monitor-quality-warnings__counts" size={[6, 6]} wrap>{["critical", "warning", "notice", "none"].map((level) => <Tag key={level} color={warningColor[level]}>{level}: {qualityWarnings?.counts?.[level as keyof QualityWarningSummary["counts"]] || 0}</Tag>)}</Space>
-          <Table rowKey={(item) => `${item.run_id}:${item.id}`} size="small" pagination={false} dataSource={warningItems} scroll={{ x: 680 }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无点焊预警" /> }} columns={[
-            { title: "样本", dataIndex: "display_id", key: "sample" },
-            { title: "告警", dataIndex: "warning_level", key: "warning", render: (level: string) => <Tag color={warningColor[level] || "default"}>{level}</Tag> },
-            { title: "缺陷概率", dataIndex: "defect_probability", key: "probability", render: (value: number | null | undefined) => value == null ? "-" : `${(value * 100).toFixed(1)}%` },
-            { title: "标签", key: "label", render: (_: unknown, item) => item.current_label || item.automatic_label || "-" },
-            { title: "操作", key: "action", width: 120, render: (_: unknown, item) => <Button type="text" icon={<EyeOutlined />} aria-label={`查看样本 ${item.display_id}`} onClick={() => navigate(`/data-annotation?projectId=${encodeURIComponent(qualityProjectId)}&runId=${encodeURIComponent(item.run_id)}&sampleId=${encodeURIComponent(item.id)}`)}>查看样本</Button> },
-          ]} />
-        </>}
-      </section>
     </section>
   </AppLayout>;
 }

@@ -12,7 +12,7 @@ from app.api.auth import get_current_user
 from app.database import get_db
 from app.models.experiment import Experiment
 from app.models.project import Project
-from app.models.training import TERMINAL_TRAINING_STATUSES, TrainingJob
+from app.models.training import TrainingJob
 from app.models.user import User
 from app.schemas.experiment import (
     ExperimentCreate,
@@ -29,10 +29,14 @@ from app.services.experiment_tracking import (
     resolve_tracking_configuration,
 )
 from app.api.project_security import audit_service, require_project_access, resolve_project_access
+from app.services.project_access import ProjectAccessService
 from app.services.audit import AuditIntent
 
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
+EXPERIMENT_BLOCKING_TRAINING_STATUSES = (
+    "pending", "queued", "running", "cancel_requested",
+)
 PROJECT_WRITE_ACTIONS = {
     "POST /api/experiments": "experiment.create",
     "DELETE /api/experiments/{experiment_id}": "experiment.delete",
@@ -121,17 +125,21 @@ def create_experiment(
 
 @router.get("", response_model=ExperimentList)
 def list_experiments(
-    project_id: uuid.UUID = Query(...),
+    project_id: uuid.UUID | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = require_project_access(
-        db, project_id, current_user.id, "project.read",
-    ).project
+    if project_id is not None:
+        project_ids = [require_project_access(db, project_id, current_user.id, "project.read").project.id]
+    else:
+        project_ids = [project.id for project in ProjectAccessService().accessible_project_query(db, current_user.id).all()]
     items = db.query(Experiment).filter(
-        Experiment.project_id == project.id,
+        Experiment.project_id.in_(project_ids),
     ).order_by(Experiment.created_at.desc(), Experiment.id).all()
-    return {"items": items, "total": len(items)}
+    return {
+        "items": [_experiment_payload(experiment) for experiment in items],
+        "total": len(items),
+    }
 
 
 @router.delete("/{experiment_id}", status_code=204)
@@ -160,7 +168,7 @@ def delete_experiment(
             TrainingJob.experiment_id == experiment.id,
             or_(
                 TrainingJob.status.is_(None),
-                TrainingJob.status.notin_(TERMINAL_TRAINING_STATUSES),
+                TrainingJob.status.in_(EXPERIMENT_BLOCKING_TRAINING_STATUSES),
             ),
         ).first()
         if active_job is not None:
@@ -289,12 +297,16 @@ def _experiment_payload(experiment: Experiment, *, run_count: int = 0) -> dict:
         "id": experiment.id,
         "project_id": experiment.project_id,
         "created_by": experiment.created_by,
+        "project_name": experiment.project.name if experiment.project else None,
+        "created_by_name": experiment.created_by_user.username if experiment.created_by_user else None,
         "name": experiment.name,
         "description": experiment.description or "",
         "mlflow_experiment_id": experiment.mlflow_experiment_id,
         "created_at": experiment.created_at,
         "updated_at": experiment.updated_at,
         "run_count": run_count,
+        "automl_used": experiment.automl_used,
+        "automl_job_id": experiment.automl_job_id,
     }
 
 

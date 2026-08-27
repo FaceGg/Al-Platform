@@ -39,7 +39,7 @@ describe("AppLayout", () => {
     );
 
     fireEvent.click(screen.getByText("数据标注"));
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/data-annotation?type=spot-weld&view=tasks"));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/data-annotation?view=tasks"));
   });
 
   it("renders without crashing", async () => {

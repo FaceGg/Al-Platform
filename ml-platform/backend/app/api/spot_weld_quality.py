@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import io
+import logging
 import uuid
 from collections import Counter
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -19,6 +20,7 @@ from app.api.project_security import audit_service, require_project_access
 from app.config import settings
 from app.database import get_db
 from app.models.model_library import ModelLibrary
+from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.spot_weld_quality import (
     SpotWeldLabelRevision,
     SpotWeldLabelSnapshot,
@@ -29,12 +31,14 @@ from app.models.spot_weld_quality import (
 from app.models.user import User
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.services.audit import AuditIntent
+from app.services.project_access import ProjectAccessService
 from app.services.spot_weld_features import QualityPipelineError, build_feature_frame
 from app.services.spot_weld_quality import (
     _annotation_progress,
     build_annotation_export,
     create_demo_quality_dataset,
     create_quality_run_record,
+    load_registered_annotation_model,
     load_registered_quality_model,
     normalize_quality_search_config,
     normalize_annotation_label,
@@ -47,13 +51,18 @@ from app.services.spot_weld_quality import (
     validate_report_frame,
     resolve_quality_run_configuration,
     resolve_manual_run_configuration,
-    is_quality_report_frame,
     run_clustering,
     run_registered_model_annotation,
+    annotation_feature_frame,
+    normalize_annotation_process_rules,
+    normalize_annotation_label_dtype,
+    registered_annotation_feature_importance,
 )
 
 
 router = APIRouter(prefix="/api/projects/{project_id}/spot-weld", tags=["spot-weld-quality"])
+all_runs_router = APIRouter(prefix="/api/spot-weld", tags=["spot-weld-quality"])
+logger = logging.getLogger(__name__)
 VALID_LABELS = frozenset({
     "normal", "strong_splatter", "weak_splatter", "power_fluctuation", "spot_too_small",
     "spot_too_large", "energy_anomaly", "current_jump", "anomaly_cluster",
@@ -78,18 +87,22 @@ class DatasetQualityRequest(BaseModel):
     algorithm_ids: list[str] = Field(default_factory=list)
     search_method: str = "bayesian"
     max_trials: int = Field(default=20, ge=5, le=200)
-    time_budget: int = Field(default=600, ge=60, le=3600)
+    time_budget: int = Field(default=600, ge=60, le=9999)
     target_column: str | None = None
     target_column_created: bool = False
     target_column_dtype: str | None = None
+    label_dtype: str | None = None
     selected_model_id: uuid.UUID | None = None
     weak_supervision: bool = False
     cluster_labels: dict[str, str] = Field(default_factory=dict)
-    process_rules: list[dict[str, str | float | int | bool]] = Field(default_factory=list)
+    # Rules contain nested token arrays; semantic validation is performed by
+    # normalize_annotation_process_rules after the request contract parses.
+    process_rules: list[dict[str, Any]] = Field(default_factory=list)
     input_columns: list[str] | None = None
     cross_validation_enabled: bool = True
     cross_validation_folds: int | None = 3
     label_mode: Literal["automatic", "manual"] = "automatic"
+    workflow_kind: Literal["quality_modeling", "data_annotation"] = "quality_modeling"
     rule_config: dict[str, float | int] = Field(default_factory=dict)
 
 
@@ -235,6 +248,9 @@ def _serialize_run(
     payload = {
         "id": str(run.id),
         "project_id": str(run.project_id),
+        "project_name": run.project.name if run.project is not None else None,
+        "created_by_id": str(run.created_by_id) if run.created_by_id else None,
+        "created_by_name": run.created_by.username if run.created_by is not None else None,
         "dataset_artifact_id": str(run.dataset_artifact_id),
         "status": display_status,
         "task_id": run.task_id,
@@ -332,19 +348,32 @@ def _serialize_sample(sample: SpotWeldQualitySample, *, include_waveforms: bool 
     return payload
 
 
-def _serialize_quality_model(model: ModelLibrary) -> dict:
+def _serialize_quality_model(
+    model: ModelLibrary,
+    *,
+    registered_model: RegisteredModel | None = None,
+    model_version: ModelVersion | None = None,
+) -> dict:
+    output_schema = model_version.output_schema if model_version else {}
     return {
         "id": str(model.id),
-        "name": model.name,
-        "version": model.version,
+        "name": registered_model.name if registered_model else model.name,
+        "version": f"v{model_version.version_number}" if model_version else model.version,
         "status": model.status,
-        "framework": model.framework,
+        "framework": model_version.framework if model_version else model.framework,
         "backbone": model.backbone,
         "metrics": model.metrics or {},
         "params": model.params or {},
         "model_artifact_id": str(model.model_artifact_id) if model.model_artifact_id else None,
         "format": model.format,
         "tags": model.tags or [],
+        "registered_model_id": str(registered_model.id) if registered_model else None,
+        "model_version_id": str(model_version.id) if model_version else None,
+        "approval_status": model_version.approval_status if model_version else None,
+        "feature_schema": model_version.feature_schema if model_version else [],
+        "label_dtype": output_schema.get("dtype") if isinstance(output_schema, dict) else None,
+        "target_column": output_schema.get("name") if isinstance(output_schema, dict) else None,
+        "target_column_dtype": output_schema.get("dtype") if isinstance(output_schema, dict) else None,
         "created_at": model.created_at.isoformat() if model.created_at else None,
     }
 
@@ -367,23 +396,41 @@ def validate_dataset(
         )
         if data.label_mode not in QUALITY_LABEL_MODES:
             raise QualityPipelineError("QUALITY_LABEL_MODE_INVALID")
-        normalize_report_rule_config(data.rule_config)
+        if data.workflow_kind == "quality_modeling":
+            normalize_report_rule_config(data.rule_config)
         _, frame = resolve_dataset_frame(
             db,
             get_quality_artifact_service(request, db),
             project_id,
             data.dataset_artifact_id,
         )
-        if not isinstance(data.target_column, str) or not data.target_column.strip():
+        if data.workflow_kind == "quality_modeling" and (not isinstance(data.target_column, str) or not data.target_column.strip()):
             raise QualityPipelineError("QUALITY_TARGET_COLUMN_REQUIRED")
-        if data.label_mode == "manual" and not is_quality_report_frame(frame):
-            resolve_manual_run_configuration(
+        if data.workflow_kind == "data_annotation" and data.label_mode == "manual" and (not isinstance(data.target_column, str) or not data.target_column.strip()):
+            raise QualityPipelineError("QUALITY_TARGET_COLUMN_REQUIRED")
+        if data.workflow_kind == "data_annotation":
+            automatic_annotation = data.label_mode == "automatic"
+            configuration = resolve_manual_run_configuration(
                 frame,
-                target_column=data.target_column,
-                target_column_created=data.target_column_created,
-                target_column_dtype=data.target_column_dtype,
-                input_columns=data.input_columns,
+                target_column=None if automatic_annotation else data.target_column,
+                target_column_created=False if automatic_annotation else data.target_column_created,
+                target_column_dtype=(data.label_dtype or data.target_column_dtype) if automatic_annotation else data.target_column_dtype,
+                input_columns=None if automatic_annotation else data.input_columns,
             )
+            if data.label_mode == "automatic" and data.selected_model_id is not None and data.weak_supervision:
+                label_dtype = normalize_annotation_label_dtype(
+                    data.label_dtype or data.target_column_dtype or configuration["target_schema"]["dtype"],
+                )
+                artifact_service = get_quality_artifact_service(request, db)
+                _, bundle = load_registered_annotation_model(
+                    db, project_id=project_id, model_id=data.selected_model_id, artifact_service=artifact_service,
+                )
+                feature_frame = annotation_feature_frame(frame, bundle)
+                normalize_annotation_process_rules(
+                    data.process_rules,
+                    columns=[str(column) for column in frame.columns],
+                    label_dtype=label_dtype,
+                )
         else:
             resolve_quality_run_configuration(
                 frame,
@@ -395,11 +442,11 @@ def validate_dataset(
                 cross_validation_enabled=data.cross_validation_enabled,
                 cross_validation_folds=data.cross_validation_folds,
             )
-        if data.label_mode == "automatic" and data.selected_model_id is None:
+        if data.workflow_kind == "data_annotation" and data.label_mode == "automatic" and data.selected_model_id is None:
             raise QualityPipelineError("QUALITY_MODEL_REQUIRED")
     except QualityPipelineError as error:
         _quality_error(error)
-    if data.label_mode == "manual" and not is_quality_report_frame(frame):
+    if data.workflow_kind == "data_annotation":
         return {
             "row_count": int(len(frame)),
             "valid_rows": int(len(frame)),
@@ -428,7 +475,10 @@ def create_run(
         )
         if data.label_mode not in QUALITY_LABEL_MODES:
             raise QualityPipelineError("QUALITY_LABEL_MODE_INVALID")
-        normalized_rule_config = normalize_report_rule_config(data.rule_config)
+        normalized_rule_config = (
+            {} if data.workflow_kind == "data_annotation"
+            else normalize_report_rule_config(data.rule_config)
+        )
         artifact_service = get_quality_artifact_service(request, db)
         _, frame = resolve_dataset_frame(
             db,
@@ -436,16 +486,42 @@ def create_run(
             project_id,
             data.dataset_artifact_id,
         )
-        if not isinstance(data.target_column, str) or not data.target_column.strip():
+        if data.workflow_kind == "quality_modeling" and (not isinstance(data.target_column, str) or not data.target_column.strip()):
             raise QualityPipelineError("QUALITY_TARGET_COLUMN_REQUIRED")
-        if data.label_mode == "manual" and not is_quality_report_frame(frame):
+        if data.workflow_kind == "data_annotation" and data.label_mode == "manual" and (not isinstance(data.target_column, str) or not data.target_column.strip()):
+            raise QualityPipelineError("QUALITY_TARGET_COLUMN_REQUIRED")
+        if data.workflow_kind == "data_annotation":
+            automatic_annotation = data.label_mode == "automatic"
             run_configuration = resolve_manual_run_configuration(
                 frame,
-                target_column=data.target_column,
-                target_column_created=data.target_column_created,
-                target_column_dtype=data.target_column_dtype,
-                input_columns=data.input_columns,
+                target_column=None if automatic_annotation else data.target_column,
+                target_column_created=False if automatic_annotation else data.target_column_created,
+                target_column_dtype=(data.label_dtype or data.target_column_dtype) if automatic_annotation else data.target_column_dtype,
+                input_columns=None if automatic_annotation else data.input_columns,
             )
+            normalized_process_rules = []
+            if data.label_mode == "automatic" and data.weak_supervision:
+                if data.selected_model_id is None:
+                    raise QualityPipelineError("QUALITY_MODEL_REQUIRED")
+                _, bundle = load_registered_annotation_model(
+                    db, project_id=project_id, model_id=data.selected_model_id, artifact_service=artifact_service,
+                )
+                feature_frame = annotation_feature_frame(frame, bundle)
+                label_dtype = normalize_annotation_label_dtype(
+                    data.label_dtype or data.target_column_dtype or run_configuration["target_schema"]["dtype"],
+                )
+                normalized_process_rules = normalize_annotation_process_rules(
+                    data.process_rules,
+                    columns=[str(column) for column in frame.columns],
+                    label_dtype=label_dtype,
+                )
+                run_configuration["target_column_dtype"] = label_dtype
+                run_configuration["target_schema"] = {
+                    **run_configuration["target_schema"],
+                    "dtype": label_dtype,
+                    "classes": list(dict.fromkeys(rule["label"] for rule in normalized_process_rules)),
+                }
+                run_configuration["target_schema"]["class_count"] = len(run_configuration["target_schema"]["classes"])
         else:
             run_configuration, _ = resolve_quality_run_configuration(
                 frame,
@@ -457,10 +533,8 @@ def create_run(
                 cross_validation_enabled=data.cross_validation_enabled,
                 cross_validation_folds=data.cross_validation_folds,
             )
-        if data.label_mode == "automatic" and data.selected_model_id is None:
+        if data.workflow_kind == "data_annotation" and data.label_mode == "automatic" and data.selected_model_id is None:
             raise QualityPipelineError("QUALITY_MODEL_REQUIRED")
-        if data.weak_supervision and not data.cluster_labels:
-            raise QualityPipelineError("QUALITY_CLUSTER_LABELS_REQUIRED")
         with audit_service(db).project_action(
             db,
             request=request,
@@ -484,10 +558,11 @@ def create_run(
                     "selected_model_id": str(data.selected_model_id) if data.selected_model_id else None,
                     "weak_supervision": data.weak_supervision,
                     "cluster_labels": data.cluster_labels,
-                    "process_rules": data.process_rules,
+                    "process_rules": normalized_process_rules if data.workflow_kind == "data_annotation" else data.process_rules,
                     "input_columns": run_configuration["input_columns"],
                     "evaluation": run_configuration["evaluation"],
                     "label_mode": data.label_mode,
+                    "workflow_kind": data.workflow_kind,
                     "rule_config": normalized_rule_config,
                 },
             ),
@@ -496,7 +571,7 @@ def create_run(
                 "max_trials", "time_budget", "target_column", "target_column_created", "target_column_dtype",
                 "selected_model_id", "weak_supervision",
                 "cluster_labels", "process_rules",
-                "input_columns", "evaluation", "label_mode", "rule_config",
+                "input_columns", "evaluation", "label_mode", "workflow_kind", "rule_config",
             },
         ):
             run = create_quality_run_record(
@@ -515,11 +590,12 @@ def create_run(
                 selected_model_id=data.selected_model_id,
                 weak_supervision=data.weak_supervision,
                 cluster_labels=data.cluster_labels,
-                process_rules=data.process_rules,
+                process_rules=normalized_process_rules if data.workflow_kind == "data_annotation" else data.process_rules,
                 input_columns=data.input_columns,
                 cross_validation_enabled=data.cross_validation_enabled,
                 cross_validation_folds=data.cross_validation_folds,
                 label_mode=data.label_mode,
+                workflow_kind=data.workflow_kind,
                 rule_config=normalized_rule_config,
                 artifact_service=artifact_service,
             )
@@ -652,23 +728,65 @@ def list_runs(
     }
 
 
+@all_runs_router.get("/runs")
+def list_accessible_runs(
+    project_id: uuid.UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if project_id is not None:
+        require_project_access(db, project_id, current_user.id, "project.read")
+        project_ids = [project_id]
+    else:
+        project_ids = [
+            project.id
+            for project in ProjectAccessService().accessible_project_query(db, current_user.id).all()
+        ]
+    runs = db.query(SpotWeldQualityRun).filter(
+        SpotWeldQualityRun.project_id.in_(project_ids),
+    ).order_by(SpotWeldQualityRun.created_at.desc(), SpotWeldQualityRun.id.desc()).all()
+    manual_counts = _manual_annotation_counts(db, runs)
+    return {
+        "items": [
+            _serialize_run(
+                run,
+                include_results=False,
+                annotated_count_override=manual_counts.get(run.id),
+            )
+            for run in runs
+        ],
+        "total": len(runs),
+    }
+
+
 @router.get("/models")
 def list_quality_models(
     project_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List only platform-generated quality models within one readable project."""
+    """List registered platform model versions available for annotation."""
     require_project_access(db, project_id, current_user.id, "project.read")
-    models = db.query(ModelLibrary).filter(
+    rows = db.query(ModelLibrary, ModelVersion, RegisteredModel).join(
+        ModelVersion,
+        ModelVersion.source_model_library_id == ModelLibrary.id,
+    ).join(
+        RegisteredModel,
+        RegisteredModel.id == ModelVersion.registered_model_id,
+    ).filter(
         ModelLibrary.project_id == project_id,
-        ModelLibrary.status == "registered",
+        RegisteredModel.project_id == project_id,
+        ModelLibrary.status.in_(("completed", "registered")),
         ModelLibrary.model_artifact_id.isnot(None),
-    ).order_by(ModelLibrary.created_at.desc(), ModelLibrary.id.desc()).all()
+        ModelVersion.source_kind == "platform_joblib",
+    ).order_by(ModelVersion.created_at.desc(), ModelVersion.id.desc()).all()
     items = [
-        _serialize_quality_model(model)
-        for model in models
-        if (model.params or {}).get("source") == "spot_weld_quality"
+        _serialize_quality_model(
+            model,
+            registered_model=registered_model,
+            model_version=model_version,
+        )
+        for model, model_version, registered_model in rows
     ]
     return {"items": items, "total": len(items)}
 
@@ -716,14 +834,15 @@ def preview_quality_clusters(
             project_id,
             data.dataset_artifact_id,
         )
-        features, schema, _ = build_feature_frame(frame)
-        model_library, bundle = load_registered_quality_model(
+        model_library, bundle = load_registered_annotation_model(
             db,
             project_id=project_id,
             model_id=data.selected_model_id,
             artifact_service=artifact_service,
         )
-        _, _, importance = run_registered_model_annotation(features, bundle)
+        features = annotation_feature_frame(frame, bundle)
+        schema = list(features.columns)
+        importance = registered_annotation_feature_importance(bundle, schema)
         clustering = run_clustering(
             features.to_numpy(dtype=float),
             feature_names=schema,
@@ -732,13 +851,27 @@ def preview_quality_clusters(
     except QualityPipelineError as error:
         _quality_error(error)
     counts = Counter(clustering.cluster_ids)
+    normal_cluster = max(sorted(counts), key=lambda cluster_id: counts[cluster_id])
+    total_count = sum(counts.values())
+    cluster_summaries = [
+        {
+            "cluster_id": cluster_id,
+            "role": "normal" if cluster_id == normal_cluster else "anomaly",
+            "count": counts[cluster_id],
+            "percentage": round((counts[cluster_id] / total_count) * 100, 1) if total_count else 0.0,
+        }
+        for cluster_id in sorted(counts)
+    ]
     return {
         "model_id": str(model_library.id),
+        "feature_count": len(schema),
         "best_k": clustering.best_k,
         "silhouette_scores": {str(key): value for key, value in clustering.silhouette_scores.items()},
         "cluster_counts": {str(key): counts[key] for key in sorted(counts)},
+        "cluster_summaries": cluster_summaries,
         "cluster_ids": clustering.cluster_ids,
         "pca_coordinates": clustering.pca_coordinates.tolist(),
+        "weights": clustering.weights,
     }
 
 
@@ -802,8 +935,13 @@ def delete_run(
 ):
     access = require_project_access(db, project_id, current_user.id, "resource.delete")
     run = _run_or_404(db, project_id, run_id)
-    if run.status not in {"completed", "failed", "cancelled"}:
-        raise HTTPException(409, detail={"code": "QUALITY_RUN_ACTIVE", "message": "Only terminal quality runs can be deleted"})
+    if run.task_id and run.status not in {"completed", "failed", "cancelled"}:
+        cancel = getattr(get_quality_dispatcher(request), "cancel", None)
+        if callable(cancel):
+            try:
+                cancel(run.task_id)
+            except Exception:
+                logger.warning("Failed to cancel annotation task %s before deletion", run.task_id, exc_info=True)
     with audit_service(db).project_action(
         db,
         request=request,

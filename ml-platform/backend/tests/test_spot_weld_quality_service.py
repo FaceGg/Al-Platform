@@ -30,6 +30,7 @@ from app.services.artifact_service import ArtifactService
 from app.services.automl_search import FamilySearchResult
 from app.services.spot_weld_quality import (
     CandidateResult,
+    apply_annotation_process_rules,
     assign_cluster_labels,
     _quality_estimator_metrics,
     apply_report_v1_rules,
@@ -47,6 +48,7 @@ from app.services.spot_weld_quality import (
     save_labeled_dataset,
     select_best_candidate,
     normalize_quality_search_config,
+    normalize_annotation_process_rules,
     train_label_snapshot,
     update_quality_run_rules,
     validate_report_frame,
@@ -545,6 +547,52 @@ class TestSpotWeldQualityService(unittest.TestCase):
         self.assertTrue(np.isfinite(result.weights).all())
         self.assertTrue(all(weight >= 0 for weight in result.weights))
         self.assertFalse(any("invalid value encountered in sqrt" in str(item.message) for item in caught))
+
+    def test_annotation_rules_consume_short_circuited_boolean_operands(self):
+        rules = normalize_annotation_process_rules(
+            [{
+                "id": "rule-1",
+                "label": "1",
+                "tokens": [
+                    {"kind": "data", "value": "temperature"},
+                    {"kind": "logical_operator", "value": ">"},
+                    {"kind": "number", "value": 10},
+                    {"kind": "logical_operator", "value": "or"},
+                    {"kind": "data", "value": "pressure"},
+                    {"kind": "logical_operator", "value": ">"},
+                    {"kind": "number", "value": 5},
+                ],
+            }],
+            columns=["temperature", "pressure"],
+            label_dtype="int",
+        )
+
+        label, hits = apply_annotation_process_rules({"temperature": 12, "pressure": 0}, rules)
+
+        self.assertEqual(label, "1")
+        self.assertEqual(hits[0]["code"], "rule-1")
+
+    def test_annotation_rules_validate_columns_and_shared_label_dtype(self):
+        base_rule = {
+            "id": "rule-1",
+            "tokens": [
+                {"kind": "data", "value": "temperature"},
+                {"kind": "logical_operator", "value": ">"},
+                {"kind": "number", "value": 10},
+            ],
+        }
+        with self.assertRaisesRegex(QualityPipelineError, "QUALITY_LABEL_TYPE_INVALID"):
+            normalize_annotation_process_rules(
+                [{**base_rule, "label": "not-an-int"}],
+                columns=["temperature"],
+                label_dtype="int",
+            )
+        with self.assertRaisesRegex(QualityPipelineError, "QUALITY_ANNOTATION_RULE_COLUMN_INVALID"):
+            normalize_annotation_process_rules(
+                [{**base_rule, "label": "1"}],
+                columns=["pressure"],
+                label_dtype="int",
+            )
 
     def test_registered_model_annotation_requires_valid_feature_importance(self):
         class ModelWithoutImportance:

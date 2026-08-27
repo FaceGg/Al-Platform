@@ -9,7 +9,7 @@ from app.models.user import User
 from app.api.auth import get_current_user
 from app.models.agent import Agent, AgentTask, AgentMessage
 from app.engine.orchestrator import Orchestrator
-from app.api.project_security import audit_service, resolve_workflow_access
+from app.api.project_security import audit_service, require_project_access, resolve_project_access, resolve_workflow_access
 from app.services.audit import AuditIntent
 
 router = APIRouter(prefix="/api/orchestration", tags=["orchestration"])
@@ -42,7 +42,10 @@ def _task_for_user(db, task_id, user):
     task = db.query(AgentTask).filter(AgentTask.id == identifier).first()
     if task is None:
         return None
-    if task.workflow_id is not None:
+    if task.project_id is not None:
+        if resolve_project_access(db, task.project_id, user.id) is None:
+            return None
+    elif task.workflow_id is not None:
         try:
             resolve_workflow_access(db, task.workflow_id, user.id)
         except HTTPException:
@@ -52,6 +55,19 @@ def _task_for_user(db, task_id, user):
 
 @contextmanager
 def _task_action(db, task, request, actor, permission, action, changes=None):
+    if task.project_id is not None:
+        access = require_project_access(db, task.project_id, actor.id, permission)
+        with audit_service(db).project_action(
+            db, request=request, actor=actor, access=access, permission=permission,
+            intent=AuditIntent(
+                project_id=task.project_id, action=action,
+                resource_type="agent_task", resource_id=str(task.id),
+                changes=changes or {},
+            ),
+            allowed_changes=set((changes or {}).keys()),
+        ):
+            yield
+        return
     if task.workflow_id is None:
         yield
         db.commit()
@@ -303,42 +319,56 @@ def create_agent_task(
     current_user=Depends(get_current_user),
 ):
     workflow_id = uuid.UUID(data["workflow_id"]) if data.get("workflow_id") else None
+    project_id = uuid.UUID(data["project_id"]) if data.get("project_id") else None
+    if workflow_id is None and project_id is None:
+        raise HTTPException(422, {"code": "PROJECT_REQUIRED", "message": "Project is required"})
+    access = None
+    if workflow_id is not None:
+        workflow, access = resolve_workflow_access(db, workflow_id, current_user.id)
+        project_id = workflow.project_id
+    else:
+        access = require_project_access(db, project_id, current_user.id, "execution.operate")
     task = AgentTask(
         id=uuid.uuid4(),
+        project_id=project_id,
+        created_by_id=current_user.id,
         name=data["name"],
         description=data.get("description", ""),
         workflow_id=workflow_id,
         input_data=data.get("input_data", {}),
         priority=data.get("priority", 0),
     )
-    if workflow_id is None:
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="execution.operate",
+        intent=AuditIntent(
+            project_id=project_id, action="agent_task.create",
+            resource_type="agent_task", resource_id=str(task.id),
+            changes={"name": task.name},
+        ),
+        allowed_changes={"name"},
+    ):
         db.add(task)
-        db.commit()
-    else:
-        workflow, access = resolve_workflow_access(db, workflow_id, current_user.id)
-        with audit_service(db).project_action(
-            db, request=request, actor=current_user, access=access,
-            permission="execution.operate",
-            intent=AuditIntent(
-                project_id=workflow.project_id, action="agent_task.create",
-                resource_type="agent_task", resource_id=str(task.id),
-                changes={"name": task.name},
-            ),
-            allowed_changes={"name"},
-        ):
-            db.add(task)
     db.refresh(task)
     return {"id": str(task.id), "name": task.name, "status": task.status}
 
 
 @router.get("/tasks")
-def list_agent_tasks(workflow_id: str = None, db=Depends(get_db), current_user=Depends(get_current_user)):
+def list_agent_tasks(
+    workflow_id: str = None,
+    project_id: str = None,
+    db=Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     q = db.query(AgentTask)
     if workflow_id:
         workflow, _ = resolve_workflow_access(db, workflow_id, current_user.id)
         q = q.filter(AgentTask.workflow_id == workflow.id)
+    elif project_id:
+        access = require_project_access(db, project_id, current_user.id, "project.read")
+        q = q.filter(AgentTask.project_id == access.project.id)
     tasks = q.order_by(AgentTask.created_at.desc()).all()
-    if workflow_id is None:
+    if workflow_id is None and project_id is None:
         tasks = [task for task in tasks if _task_for_user(db, task.id, current_user)]
     return [
         {
@@ -350,6 +380,18 @@ def list_agent_tasks(workflow_id: str = None, db=Depends(get_db), current_user=D
             "priority": t.priority,
             "assigned_agent_id": str(t.assigned_agent_id) if t.assigned_agent_id else None,
             "requires_review": bool(t.requires_review),
+            "project_id": str(t.project_id or (t.workflow.project_id if t.workflow else "")) or None,
+            "project_name": (
+                t.project.name if t.project else t.workflow.project.name if t.workflow and t.workflow.project else None
+            ),
+            "created_by_id": str(t.created_by_id or (t.workflow.created_by if t.workflow else "")) or None,
+            "created_by_name": (
+                t.created_by_user.username
+                if t.created_by_user
+                else t.workflow.created_by_user.username
+                if t.workflow and t.workflow.created_by_user
+                else None
+            ),
             "created_at": t.created_at.isoformat() if t.created_at else None,
         }
         for t in tasks

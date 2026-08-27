@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { App as AntApp, Button, Table, Modal, Form, Input, Space } from 'antd'
-import { PlusOutlined } from '@ant-design/icons'
+import { DeleteOutlined, EyeOutlined, PlusOutlined } from '@ant-design/icons'
 import { Link, useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import apiClient from '../api/client'
 import AppLayout from '../components/AppLayout'
+import DeleteConfirmation from '../components/DeleteConfirmation'
+import TableRowAction from '../components/TableRowAction'
 import { useI18n } from '../i18n'
 
 export default function ProjectListPage() {
@@ -25,47 +27,25 @@ export default function ProjectListPage() {
 
   const { t } = useI18n()
 
-  const deleteProject = (id: string, name: string) => {
-    Modal.confirm({
-      title: '确认删除项目 ' + name + '?',
-      content: '此操作不可撤销，项目下的所有工作流将被一并删除。',
-      okText: '删除',
-      okType: 'danger',
-      cancelText: '取消',
-      onOk: async () => {
-        try {
-          await apiClient.delete('/projects/' + id)
-          message.success('删除成功')
-          load()
-        } catch (e: any) {
-          message.error(e.response?.data?.detail || '删除失败')
-        }
-      },
-    })
+  const deleteProject = async (id: string) => {
+    try {
+      await apiClient.delete('/projects/' + id)
+      message.success('删除成功')
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '删除失败')
+    }
   }
 
-  const batchDelete = () => {
-    const names = projects
-      .filter((p) => selectedRowKeys.includes(p.id))
-      .map((p) => p.name)
-      .join(', ')
-    Modal.confirm({
-      title: `确认删除选中的 ${selectedRowKeys.length} 个项目?`,
-      content: `将删除: ${names}。此操作不可撤销。`,
-      okText: '删除',
-      okType: 'danger',
-      cancelText: '取消',
-      onOk: async () => {
-        try {
-          await apiClient.post('/projects/batch-delete', { ids: selectedRowKeys })
-          message.success(`成功删除 ${selectedRowKeys.length} 个项目`)
-          setSelectedRowKeys([])
-          load()
-        } catch (e: any) {
-          message.error(e.response?.data?.detail || '批量删除失败')
-        }
-      },
-    })
+  const batchDelete = async () => {
+    try {
+      await apiClient.post('/projects/batch-delete', { ids: selectedRowKeys })
+      message.success(`成功删除 ${selectedRowKeys.length} 个项目`)
+      setSelectedRowKeys([])
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '批量删除失败')
+    }
   }
 
   const createProject = async (values: any) => {
@@ -97,12 +77,12 @@ export default function ProjectListPage() {
       render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm')
     },
     {
-      title: '操作', key: 'actions',
+      title: '操作', key: 'actions', align: 'right' as const,
       render: (_: any, record: any) => (
-        <Space>
-          <a onClick={() => navigate('/projects/' + record.id)}>进入</a>
-          <a style={{ color: '#ff4d4f' }} onClick={() => deleteProject(record.id, record.name)}>删除</a>
-        </Space>
+        <div className="table-row-actions">
+          <TableRowAction label={`进入项目 ${record.name}`} icon={<EyeOutlined />} onClick={() => navigate('/projects/' + record.id)} />
+          <DeleteConfirmation label={`删除项目 ${record.name}`} targetName={record.name} onConfirm={() => void deleteProject(record.id)} />
+        </div>
       ),
     },
   ]
@@ -116,9 +96,9 @@ export default function ProjectListPage() {
           </div>
           <Space className="page-actions" wrap>
             {selectedRowKeys.length > 0 && (
-              <Button danger onClick={batchDelete}>
-                批量删除 ({`${selectedRowKeys.length}`})
-              </Button>
+              <DeleteConfirmation label="批量删除项目" selectedCount={selectedRowKeys.length} onConfirm={() => void batchDelete()}>
+                <Button danger icon={<DeleteOutlined />}>批量删除 ({`${selectedRowKeys.length}`})</Button>
+              </DeleteConfirmation>
             )}
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>新建项目</Button>
           </Space>

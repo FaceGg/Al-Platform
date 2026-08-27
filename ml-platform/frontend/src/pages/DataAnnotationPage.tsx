@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { App as AntApp, Dropdown, Empty, Spin, Tag, Tooltip } from "antd";
-import { DeleteOutlined, DownloadOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
+import { App as AntApp, Dropdown, Empty, Spin, Steps, Table, Tag, Tooltip } from "antd";
+import { DeleteOutlined, DownloadOutlined, EyeOutlined, LeftOutlined, ReloadOutlined, RightOutlined, UploadOutlined } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import * as echarts from "echarts";
 
 import AppLayout from "../components/AppLayout";
+import DeleteConfirmation from "../components/DeleteConfirmation";
+import TableRowAction from "../components/TableRowAction";
+import { useI18n } from "../i18n";
+import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 import { formatApiError, default as apiClient } from "../api/client";
 import { listDatasets } from "../api/datasets";
 import {
@@ -22,15 +27,14 @@ import {
   type QualityRun,
   type QualityLabelMode,
   type QualityModel,
-  type QualityClusterPreview,
-  type QualityRuleConfig,
   type QualitySample,
   type QualitySampleDetail,
+  type AnnotationProcessRule,
+  type AnnotationRuleTokenKind,
   uploadQualityDataset,
-  updateQualityRunRules,
   validateQualityDataset,
 } from "../api/spotWeldQuality";
-import { useI18n } from "../i18n";
+import type { QualityClusterPreview } from "../api/spotWeldQuality";
 
 interface ProjectOption { id: string; name: string; project_role?: string; }
 
@@ -42,20 +46,16 @@ interface DatasetOption {
   row_count?: number;
 }
 
-const LABEL_OPTIONS = [
-  ["normal", "正常"],
-  ["strong_splatter", "强飞溅缺陷"],
-  ["weak_splatter", "弱飞溅缺陷"],
-  ["spot_too_small", "焊点过小/虚焊"],
-  ["spot_too_large", "焊点过大/烧穿"],
-  ["energy_anomaly", "能量异常"],
-  ["current_jump", "电流波形异常"],
-  ["power_fluctuation", "功率波动异常"],
-  ["anomaly_cluster", "飞溅倾向簇"],
-] as const;
-
 type LabelOption = readonly [string, string];
 type CreatedTargetColumnDtype = "int" | "float" | "string";
+interface AnnotationRuleToken { kind: AnnotationRuleTokenKind; value: string; }
+type AnnotationRule = Omit<AnnotationProcessRule, "tokens"> & { tokens: AnnotationRuleToken[] };
+
+const CLUSTER_COLORS = ["#1677ff", "#d4380d", "#389e0d", "#d48806", "#722ed1", "#08979c", "#c41d7f", "#531dab"];
+
+function clusterColor(clusterId: number): string {
+  return CLUSTER_COLORS[Math.abs(clusterId) % CLUSTER_COLORS.length];
+}
 
 const CREATED_TARGET_COLUMN_DTYPE_OPTIONS: ReadonlyArray<readonly [CreatedTargetColumnDtype, string]> = [
   ["int", "整数（int）"],
@@ -63,60 +63,19 @@ const CREATED_TARGET_COLUMN_DTYPE_OPTIONS: ReadonlyArray<readonly [CreatedTarget
   ["string", "文本（string）"],
 ];
 
-const LABEL_TEXT: Record<string, string> = Object.fromEntries(LABEL_OPTIONS);
-
-const RULE_TEXT: Record<string, string> = {
-  strong_splatter: "wld_spatter_strength >= 3",
-  weak_splatter: "wld_spatter_strength = 2",
-  spot_too_small: "0 < spotdiameter < 2 mm",
-  spot_too_large: "spotdiameter > 80 mm",
-  energy_anomaly: "|energy_dev| > 2.5σ",
-  current_jump: "current_max_diff > P95",
-  power_fluctuation: "power_std > P95",
-  anomaly_cluster: "cluster=1 且 飞溅等级 >= 2",
-  normal: "以上规则均不满足",
-};
-
-const DEFAULT_RULE_CONFIG: QualityRuleConfig = {
-  strong_splatter_min: 3,
-  weak_splatter_value: 2,
-  spotdiameter_small_min: 0,
-  spotdiameter_small_max: 2,
-  spotdiameter_large_min: 80,
-  energy_dev_sigma: 2.5,
-  current_max_diff_percentile: 95,
-  power_std_percentile: 95,
-  spatter_cluster_id: 1,
-  spatter_cluster_min_strength: 2,
-};
-
-const RULE_CONFIG_FIELDS: Array<{ key: keyof QualityRuleConfig; label: string; suffix: string }> = [
-  { key: "strong_splatter_min", label: "强飞溅阈值", suffix: "级" },
-  { key: "weak_splatter_value", label: "弱飞溅等级", suffix: "级" },
-  { key: "spotdiameter_small_min", label: "虚焊直径下限", suffix: "mm" },
-  { key: "spotdiameter_small_max", label: "虚焊直径上限", suffix: "mm" },
-  { key: "spotdiameter_large_min", label: "烧穿直径阈值", suffix: "mm" },
-  { key: "energy_dev_sigma", label: "能量偏差标准差", suffix: "σ" },
-  { key: "current_max_diff_percentile", label: "电流跳变分位数", suffix: "P" },
-  { key: "power_std_percentile", label: "功率波动分位数", suffix: "P" },
-  { key: "spatter_cluster_id", label: "飞溅倾向簇编号", suffix: "" },
-  { key: "spatter_cluster_min_strength", label: "簇内飞溅等级", suffix: "级" },
-];
-
 function qualityLabelText(value: string | null | undefined): string {
   if (!value) return "-";
-  return LABEL_TEXT[value] || value;
+  return value;
 }
 
 function labelOptionsForRun(run: QualityRun | undefined): LabelOption[] {
-  if (run?.label_mode !== "manual") return [...LABEL_OPTIONS];
-  const classes = run.target_schema?.classes || [];
-  return classes.length ? classes.map((value) => [value, value] as const) : [...LABEL_OPTIONS];
+  const classes = run?.target_schema?.classes || [];
+  return classes.map((value) => [value, value] as const);
 }
 
-function labelHeadingForRun(run: QualityRun | undefined): string {
-  if (run?.label_mode !== "manual" || !run.target_schema?.name || !run.target_schema?.dtype) return "人工标签";
-  return `人工标签（${run.target_schema.name} · ${run.target_schema.dtype}）`;
+function labelHeadingForRun(run: QualityRun | undefined, copy: { humanLabel: string }): string {
+  if (run?.label_mode !== "manual" || !run.target_schema?.name || !run.target_schema?.dtype) return copy.humanLabel;
+  return `${copy.humanLabel}（${run.target_schema.name} · ${run.target_schema.dtype}）`;
 }
 
 function normalizeLabelValue(value: string, run: QualityRun | undefined): string | null {
@@ -140,24 +99,27 @@ function annotationProgressText(run: QualityRun): string {
   return `${progress.annotated_count}/${progress.total_count} ${progress.percent}%`;
 }
 
-function runModeText(run: QualityRun): string {
-  return run.label_mode === "manual" ? "手动标注" : "自动标注";
+function runModeText(run: QualityRun, copy: { manual: string; automatic: string }): string {
+  return run.label_mode === "manual" ? copy.manual : copy.automatic;
+}
+
+function normalizeLabelDtype(value: string | null | undefined): CreatedTargetColumnDtype {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized.includes("float") || normalized === "double" || normalized === "number") return "float";
+  if (normalized.includes("int") || normalized === "integer") return "int";
+  return "string";
+}
+
+function runStatusText(run: QualityRun, lang: "zh" | "en"): string {
+  return taskStatusLabel(run.status, lang);
 }
 
 const warningColor: Record<string, string> = {
   critical: "red", warning: "orange", notice: "gold", none: "green",
 };
 
-const WAVEFORM_FIELD_CHANNELS: Record<string, keyof NonNullable<QualitySampleDetail["waveforms"]>> = {
-  cvei: "current",
-  cvev: "voltage",
-  cver: "resistance",
-  cvep: "power",
-};
-
-function fullSampleValue(name: string, value: unknown, waveforms: QualitySampleDetail["waveforms"]): string {
-  const channel = WAVEFORM_FIELD_CHANNELS[name];
-  const displayValue = channel ? waveforms?.[channel] : value;
+function fullSampleValue(value: unknown): string {
+  const displayValue = value;
   if (typeof displayValue === "string") return displayValue;
   if (displayValue == null) return "-";
   if (Array.isArray(displayValue)) return `[${displayValue.map((item) => String(item)).join(", ")}]`;
@@ -165,44 +127,12 @@ function fullSampleValue(name: string, value: unknown, waveforms: QualitySampleD
   return String(displayValue);
 }
 
-function sampleRuleState(
-  name: string,
-  detail: QualitySampleDetail,
-  run: QualityRun | undefined,
-): "matched" | "unmatched" | null {
-  const source = detail.table_values || {};
-  const featureValues = detail.feature_values || {};
-  const rules = run?.rule_config || DEFAULT_RULE_CONFIG;
-  const numeric = Number(source[name]);
-  if (name === "wld_spatter_strength") {
-    return numeric >= Number(rules.strong_splatter_min ?? 3) || numeric === Number(rules.weak_splatter_value ?? 2)
-      ? "matched" : "unmatched";
-  }
-  if (name === "spotdiameter") {
-    return (numeric > Number(rules.spotdiameter_small_min ?? 0) && numeric < Number(rules.spotdiameter_small_max ?? 2))
-      || numeric > Number(rules.spotdiameter_large_min ?? 80) ? "matched" : "unmatched";
-  }
-  if (name === "energy") {
-    return Math.abs(Number(featureValues.energy_dev)) > Number(rules.energy_dev_sigma ?? 2.5) ? "matched" : "unmatched";
-  }
-  if (name === "energy_dev") {
-    return Math.abs(Number(source[name] ?? featureValues.energy_dev)) > Number(rules.energy_dev_sigma ?? 2.5) ? "matched" : "unmatched";
-  }
-  if (name === "cvei" || name === "current_max_diff") {
-    return (detail.rule_hits || []).some((rule) => rule.code === "current_jump") ? "matched" : "unmatched";
-  }
-  if (name === "cvep" || name === "power_std") {
-    return (detail.rule_hits || []).some((rule) => rule.code === "power_fluctuation") ? "matched" : "unmatched";
-  }
-  return null;
-}
-
 export default function DataAnnotationPage() {
-  const { t } = useI18n();
   const { message } = AntApp.useApp();
+  const { lang, t } = useI18n();
+  const copy = t.dataAnnotation;
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const labels = (t.spotWeld || {}) as Record<string, string>;
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [projectId, setProjectId] = useState(searchParams.get("projectId") || "");
   const [datasetArtifactId, setDatasetArtifactId] = useState(searchParams.get("datasetId") || "");
@@ -219,25 +149,34 @@ export default function DataAnnotationPage() {
   const [downloadingAnnotationExport, setDownloadingAnnotationExport] = useState(false);
   const [savingLabeledDataset, setSavingLabeledDataset] = useState(false);
   const [label, setLabel] = useState("");
-  const [labelOptions, setLabelOptions] = useState<LabelOption[]>([...LABEL_OPTIONS]);
+  const [labelOptions, setLabelOptions] = useState<LabelOption[]>([]);
   const [editingLabelList, setEditingLabelList] = useState(false);
   const [newLabelText, setNewLabelText] = useState("");
   const [savingLabel, setSavingLabel] = useState(false);
   const [preparingRun, setPreparingRun] = useState(false);
   const [deletingRunId, setDeletingRunId] = useState("");
-  const [savingRules, setSavingRules] = useState(false);
   const [labelMode, setLabelMode] = useState<QualityLabelMode>(searchParams.get("mode") === "manual" ? "manual" : "automatic");
   const [datasetColumns, setDatasetColumns] = useState<Array<{ name: string; dtype: string }>>([]);
+  const [loadingDatasetColumns, setLoadingDatasetColumns] = useState(false);
   const [targetColumnMode, setTargetColumnMode] = useState<"existing" | "new">("existing");
   const [targetColumn, setTargetColumn] = useState("");
   const [targetColumnDtype, setTargetColumnDtype] = useState<CreatedTargetColumnDtype>("int");
   const [qualityModels, setQualityModels] = useState<QualityModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
+  const [automaticSetupStep, setAutomaticSetupStep] = useState<1 | 2>(1);
   const [weakSupervision, setWeakSupervision] = useState(false);
+  const [labelDtype, setLabelDtype] = useState<CreatedTargetColumnDtype>("string");
+  const [annotationRules, setAnnotationRules] = useState<AnnotationRule[]>([
+    { id: "rule-1", label: "", tokens: [
+      { kind: "data", value: "" },
+      { kind: "logical_operator", value: ">" },
+      { kind: "number", value: "" },
+    ] },
+  ]);
+  const [editingRuleToken, setEditingRuleToken] = useState<{ ruleId: string; tokenIndex: number } | null>({ ruleId: "rule-1", tokenIndex: 0 });
   const [clusterPreview, setClusterPreview] = useState<QualityClusterPreview | null>(null);
-  const [clusterLabels, setClusterLabels] = useState<Record<string, string>>({});
   const [previewingClusters, setPreviewingClusters] = useState(false);
-  const [ruleConfig, setRuleConfig] = useState<QualityRuleConfig>({ ...DEFAULT_RULE_CONFIG });
+  const clusterChartRef = useRef<HTMLDivElement>(null);
   const [workspaceMode, setWorkspaceMode] = useState(Boolean(searchParams.get("runId")));
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const activeContextRef = useRef({ projectId, runId });
@@ -252,6 +191,10 @@ export default function DataAnnotationPage() {
   );
 
   const selectedProject = useMemo(() => projects.find((item) => item.id === projectId), [projects, projectId]);
+  const selectedModel = useMemo(
+    () => qualityModels.find((item) => item.id === selectedModelId),
+    [qualityModels, selectedModelId],
+  );
   const selectedRun = runs.find((item) => item.id === runId);
   const selectedRunLabelSchemaKey = [
     selectedRun?.id || "",
@@ -264,30 +207,17 @@ export default function DataAnnotationPage() {
     const longestLabelLength = labelOptions.reduce((length, [, text]) => Math.max(length, Array.from(text).length), 0);
     return { "--label-option-width": `calc(${Math.max(longestLabelLength, 4)}ch + 68px)` } as CSSProperties;
   }, [labelOptions]);
-  const isSpotWeldFlow = true;
   const requestedView = searchParams.get("view");
   const requestedRunId = searchParams.get("runId");
-  const isWorkspace = isSpotWeldFlow && (workspaceMode || requestedView === "workspace");
-  const isTaskList = isSpotWeldFlow && !isWorkspace && (
+  const isWorkspace = workspaceMode || requestedView === "workspace";
+  const isTaskList = !isWorkspace && (
     requestedView === "tasks"
     || (!searchParams.get("datasetId") && !searchParams.get("runId") && !requestedView)
   );
-  const isSetup = isSpotWeldFlow && !isWorkspace && !isTaskList;
+  const isSetup = !isWorkspace && !isTaskList;
   const projectRole = selectedProject?.project_role || "";
   const canCreate = ["owner", "editor"].includes(projectRole);
   const canLabel = ["owner", "editor", "operator"].includes(projectRole);
-  const canReview = ["owner", "editor"].includes(projectRole);
-  const clusterMappingValues = Object.values(clusterLabels).map((value) => value.trim()).filter(Boolean);
-  const clusterMappingComplete = Boolean(
-    clusterPreview
-    && clusterMappingValues.length >= clusterPreview.best_k
-    && new Set(clusterMappingValues).size === clusterMappingValues.length,
-  );
-
-  useEffect(() => {
-    if (!selectedRun) return;
-    setRuleConfig({ ...DEFAULT_RULE_CONFIG, ...(selectedRun.rule_config || {}) });
-  }, [selectedRun?.id, selectedRun?.rule_config]);
 
   useEffect(() => {
     setLabelOptions(labelOptionsForRun(selectedRun));
@@ -302,10 +232,12 @@ export default function DataAnnotationPage() {
   useEffect(() => {
     if (!isSetup || !projectId || !datasetArtifactId) {
       setDatasetColumns([]);
+      setLoadingDatasetColumns(false);
       setTargetColumn("");
       return;
     }
     let active = true;
+    setLoadingDatasetColumns(true);
     listQualityDatasetColumns(projectId, datasetArtifactId)
       .then((result) => {
         if (!active) return;
@@ -317,9 +249,16 @@ export default function DataAnnotationPage() {
             : ""
         ));
       })
-      .catch((error) => { if (active) message.error(formatApiError(error, "数据列加载失败")); });
+      .catch((error) => { if (active) message.error(formatApiError(error, "数据列加载失败")); })
+      .finally(() => { if (active) setLoadingDatasetColumns(false); });
     return () => { active = false; };
   }, [isSetup, projectId, datasetArtifactId, targetColumnMode, message]);
+
+  useEffect(() => {
+    if (targetColumnMode !== "existing" || !targetColumn) return;
+    const selectedColumn = datasetColumns.find((column) => column.name === targetColumn);
+    if (selectedColumn) setLabelDtype(normalizeLabelDtype(selectedColumn.dtype));
+  }, [datasetColumns, targetColumn, targetColumnMode]);
 
   useEffect(() => {
     if (!isSetup || labelMode !== "automatic" || !projectId) {
@@ -341,8 +280,34 @@ export default function DataAnnotationPage() {
 
   useEffect(() => {
     setClusterPreview(null);
-    setClusterLabels({});
-  }, [datasetArtifactId, selectedModelId, weakSupervision]);
+    setPreviewingClusters(false);
+  }, [datasetArtifactId, selectedModelId]);
+
+  useEffect(() => {
+    if (!clusterPreview || !clusterChartRef.current) return undefined;
+    const chart = echarts.init(clusterChartRef.current);
+    const clusterIds = [...new Set(clusterPreview.cluster_ids)].sort((left, right) => left - right);
+    chart.setOption({
+      tooltip: { trigger: "item" },
+      legend: { data: clusterIds.map((clusterId) => `簇${clusterId}`), bottom: 0 },
+      xAxis: { type: "value", name: "PC1" },
+      yAxis: { type: "value", name: "PC2" },
+      series: clusterIds.map((clusterId) => ({
+        name: `簇${clusterId}`,
+        type: "scatter",
+        symbolSize: 7,
+        itemStyle: { color: clusterColor(clusterId) },
+        data: clusterPreview.pca_coordinates
+          .map((point, index) => ({ point, clusterId: clusterPreview.cluster_ids[index] }))
+          .filter((item) => item.clusterId === clusterId)
+          .map((item) => [item.point[0], item.point[1], item.clusterId]),
+        encode: { x: 0, y: 1, itemName: 2 },
+      })),
+    });
+    const resize = () => chart.resize();
+    window.addEventListener("resize", resize);
+    return () => { window.removeEventListener("resize", resize); chart.dispose(); };
+  }, [clusterPreview]);
 
   useEffect(() => {
     let active = true;
@@ -351,9 +316,7 @@ export default function DataAnnotationPage() {
         if (!active) return;
         const items = (response.data.items || response.data || []) as ProjectOption[];
         setProjects(items);
-        setProjectId((current) => (
-          items.some((item) => item.id === current) ? current : items[0]?.id || ""
-        ));
+        setProjectId((current) => items.some((item) => item.id === current) ? current : isTaskList ? "" : items[0]?.id || "");
       })
       .catch(() => { if (active) setProjects([]); })
       .finally(() => { if (active) setLoadingProjects(false); });
@@ -361,38 +324,48 @@ export default function DataAnnotationPage() {
   }, []);
 
   useEffect(() => {
-    if (!isSpotWeldFlow || loadingProjects || !projects.some((project) => project.id === projectId)) {
+    if (isSetup && !loadingProjects && !projectId && projects[0]) setProjectId(projects[0].id);
+  }, [isSetup, loadingProjects, projectId, projects]);
+
+  useEffect(() => {
+    if (loadingProjects) {
       runsRequestId.current += 1;
       setRuns([]);
-      if (!isSpotWeldFlow) setRunId("");
       return;
     }
-    if (!projectId) { runsRequestId.current += 1; setRuns([]); setRunId(""); return; }
     let active = true;
-    const expectedProjectId = projectId;
     const requestId = ++runsRequestId.current;
     setLoadingRuns(true);
-    listQualityRuns(projectId)
+    const taskListMode = isTaskList;
+    const expectedProjectId = projectId;
+    const loadRuns = taskListMode
+      ? listQualityRuns(projectId || undefined)
+      : projectId && projects.some((project) => project.id === projectId)
+        ? listQualityRuns(projectId)
+        : Promise.resolve([] as QualityRun[]);
+    loadRuns
       .then((items) => {
-        if (!active || runsRequestId.current !== requestId || activeContextRef.current.projectId !== expectedProjectId) return;
-        setRuns(items);
+        if (!active || runsRequestId.current !== requestId || (!taskListMode && activeContextRef.current.projectId !== expectedProjectId)) return;
+        const uniqueItems = Array.from(new Map(items.map((item) => [item.id, item])).values())
+          .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
+        setRuns(uniqueItems);
         setRunId((current) => {
-          if (items.some((run) => run.id === current)) return current;
-          return requestedRunId && items.some((run) => run.id === requestedRunId) ? requestedRunId : "";
+          if (uniqueItems.some((run) => run.id === current)) return current;
+          return requestedRunId && uniqueItems.some((run) => run.id === requestedRunId) ? requestedRunId : "";
         });
       })
       .catch((error) => {
-        if (active && runsRequestId.current === requestId && activeContextRef.current.projectId === expectedProjectId) {
-          message.error(formatApiError(error, "质量运行加载失败"));
+        if (active && runsRequestId.current === requestId && (taskListMode || activeContextRef.current.projectId === expectedProjectId)) {
+          message.error(formatApiError(error, "标注任务加载失败"));
         }
       })
       .finally(() => {
-        if (active && runsRequestId.current === requestId && activeContextRef.current.projectId === expectedProjectId) {
+        if (active && runsRequestId.current === requestId && (taskListMode || activeContextRef.current.projectId === expectedProjectId)) {
           setLoadingRuns(false);
         }
       });
     return () => { active = false; };
-  }, [isSpotWeldFlow, loadingProjects, projects, projectId, message, requestedRunId]);
+  }, [isTaskList, loadingProjects, projects, projectId, message, requestedRunId]);
 
   useEffect(() => {
     if (!isSetup || loadingProjects || !projectId) {
@@ -429,7 +402,7 @@ export default function DataAnnotationPage() {
       setSelected(null);
       setLabel("");
       setSearchParams((current) => {
-        current.set("type", "spot-weld");
+        current.delete("type");
         current.set("view", "tasks");
         current.delete("runId");
         current.delete("sampleId");
@@ -500,32 +473,140 @@ export default function DataAnnotationPage() {
     if (refreshed) await selectSample(refreshed);
   };
 
+  const previewAnnotationClusters = async () => {
+    if (!projectId || !datasetArtifactId || !selectedModelId || previewingClusters) return;
+    setPreviewingClusters(true);
+    try {
+      const preview = await previewQualityClusters(projectId, {
+        dataset_artifact_id: datasetArtifactId,
+        selected_model_id: selectedModelId,
+      });
+      setClusterPreview(preview);
+      message.success(`聚类完成，最优 K=${preview.best_k}`);
+    } catch (error) {
+      setClusterPreview(null);
+      message.error(formatApiError(error, "聚类失败"));
+    } finally {
+      setPreviewingClusters(false);
+    }
+  };
+
+  const updateAnnotationRule = (ruleId: string, patch: Partial<AnnotationRule>) => {
+    setAnnotationRules((current) => current.map((rule) => rule.id === ruleId ? { ...rule, ...patch } : rule));
+  };
+
+  const updateAnnotationRuleToken = (ruleId: string, tokenIndex: number, patch: Partial<AnnotationRuleToken>) => {
+    setAnnotationRules((current) => current.map((rule) => rule.id === ruleId
+      ? { ...rule, tokens: rule.tokens.map((token, index) => index === tokenIndex ? { ...token, ...patch } : token) }
+      : rule));
+  };
+
+  const completeAnnotationRuleToken = (ruleId: string, tokenIndex: number, value: string) => {
+    updateAnnotationRuleToken(ruleId, tokenIndex, { value });
+    if (value !== "") setEditingRuleToken(null);
+  };
+
+  const addAnnotationRuleToken = (ruleId: string) => {
+    const tokenIndex = annotationRules.find((rule) => rule.id === ruleId)?.tokens.length || 0;
+    setAnnotationRules((current) => current.map((rule) => rule.id === ruleId
+      ? { ...rule, tokens: [...rule.tokens, { kind: rule.tokens.length % 2 === 0 ? "number" : "logical_operator", value: "" }] }
+      : rule));
+    setEditingRuleToken({ ruleId, tokenIndex });
+  };
+
+  const removeAnnotationRuleToken = (ruleId: string, tokenIndex: number) => {
+    setAnnotationRules((current) => current.map((rule) => rule.id === ruleId
+      ? { ...rule, tokens: rule.tokens.filter((_, index) => index !== tokenIndex) }
+      : rule));
+    setEditingRuleToken(null);
+  };
+
+  const removeAnnotationRule = (ruleId: string) => setAnnotationRules((current) => current.filter((rule) => rule.id !== ruleId));
+
+  const addAnnotationRule = () => setAnnotationRules((current) => [...current, {
+    id: `rule-${Date.now()}`,
+    label: "",
+    tokens: [{ kind: "data", value: "" }, { kind: "logical_operator", value: ">" }, { kind: "number", value: "" }],
+  }]);
+
+  const serializedAnnotationRules = (): AnnotationProcessRule[] => annotationRules.map((rule) => ({
+    id: rule.id,
+    label: rule.label,
+    tokens: rule.tokens.map((token) => ({ kind: token.kind, value: token.value })),
+  }));
+
+  const weakSupervisionRulesAreValid = (dtype: CreatedTargetColumnDtype = labelDtype) => {
+    if (!weakSupervision) return true;
+    if (!clusterPreview) {
+      message.error("请先完成聚类");
+      return false;
+    }
+    const operandKinds = new Set<AnnotationRuleTokenKind>(["data", "number", "string"]);
+    const operatorKinds = new Set<AnnotationRuleTokenKind>(["number_operator", "logical_operator"]);
+    for (const rule of annotationRules) {
+      const rawLabel = rule.label.trim();
+      const labelNumber = Number(rawLabel);
+      const validLabel = dtype === "int"
+        ? rawLabel !== "" && Number.isFinite(labelNumber) && Number.isInteger(labelNumber)
+        : dtype === "float"
+          ? rawLabel !== "" && Number.isFinite(labelNumber)
+          : rawLabel !== "";
+      const validTokens = rule.tokens.length >= 3
+        && rule.tokens.every((token, index) => token.value !== "" && (index % 2 === 0 ? operandKinds : operatorKinds).has(token.kind))
+        && operandKinds.has(rule.tokens[rule.tokens.length - 1].kind)
+        && rule.tokens.some((token) => token.kind === "logical_operator" && !["and", "or"].includes(token.value));
+      if (!validLabel || !validTokens) {
+        message.error("请检查标注规则和标签数据类型");
+        return false;
+      }
+    }
+    return annotationRules.length > 0;
+  };
+
   const startQualityRun = async (
     nextDatasetArtifactId: string,
     nextLabelMode: QualityLabelMode = labelMode,
-    nextRuleConfig: QualityRuleConfig = ruleConfig,
   ) => {
-    const normalizedTargetColumn = targetColumn.trim();
-    if (!projectId || !normalizedTargetColumn) return;
-    const targetColumnCreated = targetColumnMode === "new";
-    const inputColumns = datasetColumns
-      .map((item) => item.name)
-      .filter((name) => name !== normalizedTargetColumn);
+    const normalizedTargetColumn = nextLabelMode === "automatic" ? undefined : targetColumn.trim();
+    if (!projectId || (nextLabelMode === "manual" && !normalizedTargetColumn)) return;
+    const targetColumnCreated = nextLabelMode === "automatic"
+      ? false
+      : targetColumnMode === "new";
+    const modelLabelDtype = selectedModel?.label_dtype?.toLowerCase().includes("float")
+      ? "float"
+      : selectedModel?.label_dtype?.toLowerCase().includes("int")
+        ? "int"
+        : "string";
+    const effectiveLabelDtype = nextLabelMode === "automatic"
+      ? (weakSupervision ? labelDtype : modelLabelDtype)
+      : targetColumnCreated
+        ? targetColumnDtype
+        : normalizeLabelDtype(datasetColumns.find((column) => column.name === normalizedTargetColumn)?.dtype);
+    if (nextLabelMode === "automatic" && weakSupervision && !weakSupervisionRulesAreValid(effectiveLabelDtype)) return;
+    const inputColumns = datasetColumns.map((item) => item.name).filter((name) => name !== normalizedTargetColumn);
     const validation = await validateQualityDataset(projectId, nextDatasetArtifactId, {}, {
       label_mode: nextLabelMode,
-      rule_config: nextLabelMode === "automatic" ? nextRuleConfig : {},
+      workflow_kind: "data_annotation",
       algorithm_ids: [],
       search_method: "bayesian",
       max_trials: 20,
       time_budget: 600,
-      target_column: normalizedTargetColumn,
-      target_column_created: targetColumnCreated,
-      target_column_dtype: targetColumnCreated ? targetColumnDtype : undefined,
-      input_columns: inputColumns,
+      ...(nextLabelMode === "manual" ? {
+        target_column: normalizedTargetColumn,
+        target_column_created: targetColumnCreated,
+        target_column_dtype: targetColumnCreated ? effectiveLabelDtype : undefined,
+        input_columns: inputColumns,
+      } : { label_dtype: effectiveLabelDtype }),
+      selected_model_id: nextLabelMode === "automatic" ? selectedModelId : undefined,
+      weak_supervision: nextLabelMode === "automatic" ? weakSupervision : undefined,
+      process_rules: nextLabelMode === "automatic" && weakSupervision ? serializedAnnotationRules() : undefined,
+      cluster_labels: nextLabelMode === "automatic" && weakSupervision
+        ? Object.fromEntries((clusterPreview?.cluster_summaries || []).map((item) => [String(item.cluster_id), item.role]))
+        : undefined,
     });
     if (!validation.valid_rows || validation.errors.length) {
       const firstError = validation.errors[0];
-      message.error(firstError?.code || "报告字段或波形校验失败");
+      message.error(firstError?.code || "数据校验失败");
       return;
     }
     const payload: Parameters<typeof createQualityRun>[1] = {
@@ -536,40 +617,40 @@ export default function DataAnnotationPage() {
       max_trials: 20,
       time_budget: 600,
       label_mode: nextLabelMode,
-      target_column: normalizedTargetColumn,
-      target_column_created: targetColumnCreated,
-      ...(targetColumnCreated ? { target_column_dtype: targetColumnDtype } : {}),
-      input_columns: inputColumns,
+      workflow_kind: "data_annotation",
+      ...(nextLabelMode === "manual" ? {
+        target_column: normalizedTargetColumn,
+        target_column_created: targetColumnCreated,
+        ...(targetColumnCreated ? { target_column_dtype: effectiveLabelDtype } : {}),
+        input_columns: inputColumns,
+      } : { label_dtype: effectiveLabelDtype }),
     };
     if (nextLabelMode === "automatic") {
-      payload.rule_config = nextRuleConfig;
       payload.selected_model_id = selectedModelId;
       payload.weak_supervision = weakSupervision;
-      payload.cluster_labels = weakSupervision ? clusterLabels : {};
-      payload.process_rules = weakSupervision ? RULE_CONFIG_FIELDS.map((field) => ({
-        key: field.key,
-        name: field.label,
-        value: nextRuleConfig[field.key],
-        unit: field.suffix,
-      })) : [];
+      payload.process_rules = weakSupervision ? serializedAnnotationRules() : undefined;
+      payload.cluster_labels = weakSupervision
+        ? Object.fromEntries((clusterPreview?.cluster_summaries || []).map((item) => [String(item.cluster_id), item.role]))
+        : undefined;
     }
     const run = await createQualityRun(projectId, payload);
+    const taskListParams = new URLSearchParams();
+    taskListParams.set("view", "tasks");
+    taskListParams.set("projectId", run.project_id || projectId);
+    taskListParams.set("mode", nextLabelMode);
+    const workspaceParams = new URLSearchParams(taskListParams);
+    workspaceParams.set("view", "workspace");
+    workspaceParams.set("datasetId", nextDatasetArtifactId);
+    workspaceParams.set("runId", run.id);
+    navigate(`/data-annotation?${taskListParams.toString()}`, { replace: true });
+    navigate(`/data-annotation?${workspaceParams.toString()}`);
     setWorkspaceMode(true);
-    setSearchParams((current) => {
-      current.set("type", "spot-weld");
-      current.set("view", "workspace");
-      current.set("projectId", projectId);
-      current.set("datasetId", nextDatasetArtifactId);
-      current.set("runId", run.id);
-      current.set("mode", nextLabelMode);
-      return current;
-    }, { replace: true });
     setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)]);
     setRunId(run.id);
     setDatasetArtifactId(nextDatasetArtifactId);
     setSamples([]);
     setSelected(null);
-    message.success(`${nextLabelMode === "automatic" ? "自动标注" : "手动标注"}已创建 ${validation.valid_rows} 条记录的质量运行`);
+    message.success(`${nextLabelMode === "automatic" ? "自动标注" : "手动标注"}任务已创建，共 ${validation.valid_rows} 条记录`);
   };
 
   const handleReportUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -578,7 +659,7 @@ export default function DataAnnotationPage() {
     if (!file || !projectId || !canCreate) return;
     const extension = file.name.split(".").pop()?.toLowerCase();
     if (!extension || !["csv", "xls", "xlsx"].includes(extension)) {
-      message.error("仅支持 CSV、XLS 或 XLSX 报告");
+      message.error("仅支持 CSV、XLS 或 XLSX 数据文件");
       return;
     }
     setPreparingRun(true);
@@ -587,16 +668,16 @@ export default function DataAnnotationPage() {
       setDatasetArtifactId(artifact.artifact_id);
       setWorkspaceMode(false);
       setSearchParams((current) => {
-        current.set("type", "spot-weld");
+        current.delete("type");
         current.set("projectId", projectId);
         current.set("datasetId", artifact.artifact_id);
         current.delete("runId");
         current.set("mode", labelMode);
         return current;
       }, { replace: true });
-      message.success("报告已上传，请选择标注方式后开始");
+      message.success("数据文件已上传，请继续配置标注任务");
     } catch (error) {
-      message.error(formatApiError(error, "报告上传或质量运行创建失败"));
+      message.error(formatApiError(error, "数据文件上传失败"));
     } finally {
       setPreparingRun(false);
     }
@@ -604,11 +685,12 @@ export default function DataAnnotationPage() {
 
   const handleSelectedDataset = async () => {
     if (!datasetArtifactId || !canCreate) return;
+    if (labelMode === "automatic" && !weakSupervisionRulesAreValid()) return;
     setPreparingRun(true);
     try {
-      await startQualityRun(datasetArtifactId, labelMode, ruleConfig);
+      await startQualityRun(datasetArtifactId, labelMode);
     } catch (error) {
-      message.error(formatApiError(error, "质量运行创建失败"));
+      message.error(formatApiError(error, "标注任务创建失败"));
     } finally {
       setPreparingRun(false);
     }
@@ -618,8 +700,9 @@ export default function DataAnnotationPage() {
     setWorkspaceMode(false);
     setRunId("");
     setLabelMode(nextMode);
+    setAutomaticSetupStep(1);
     setSearchParams((current) => {
-      current.set("type", "spot-weld");
+      current.delete("type");
       current.set("view", "setup");
       current.set("mode", nextMode);
       current.delete("runId");
@@ -636,7 +719,6 @@ export default function DataAnnotationPage() {
     setSelected(null);
     setLabel("");
     const next = new URLSearchParams();
-    next.set("type", "spot-weld");
     next.set("view", "tasks");
     if (projectId) next.set("projectId", projectId);
     next.set("mode", labelMode);
@@ -646,10 +728,11 @@ export default function DataAnnotationPage() {
   const openRunWorkspace = (run: QualityRun, mode: QualityLabelMode = run.label_mode || "automatic") => {
     skipUrlStateSyncRef.current = true;
     setWorkspaceMode(true);
+    if (run.project_id) setProjectId(run.project_id);
     setRunId(run.id);
     setLabelMode(mode);
-    setSearchParams((current) => {
-      current.set("type", "spot-weld");
+      setSearchParams((current) => {
+      current.delete("type");
       current.set("view", "workspace");
       current.set("projectId", projectId);
       current.set("runId", run.id);
@@ -658,25 +741,17 @@ export default function DataAnnotationPage() {
     }, { replace: true });
   };
 
-  const updateRuleConfig = (key: keyof QualityRuleConfig, value: string) => {
-    const numeric = Number(value);
-    setRuleConfig((current) => ({ ...current, [key]: Number.isFinite(numeric) ? numeric : 0 }));
-  };
-
-  const resetRuleConfig = () => setRuleConfig({ ...DEFAULT_RULE_CONFIG });
-
   const refreshRuns = async () => {
-    if (!projectId) return;
     const expectedProjectId = projectId;
     const requestId = ++runsRequestId.current;
     setLoadingRuns(true);
     try {
-      const items = await listQualityRuns(expectedProjectId);
+      const items = await listQualityRuns(expectedProjectId || undefined);
       if (runsRequestId.current !== requestId || activeContextRef.current.projectId !== expectedProjectId) return;
       setRuns(items);
     } catch (error) {
       if (runsRequestId.current === requestId && activeContextRef.current.projectId === expectedProjectId) {
-        message.error(formatApiError(error, "质量运行加载失败"));
+        message.error(formatApiError(error, "标注任务加载失败"));
       }
     } finally {
       if (runsRequestId.current === requestId && activeContextRef.current.projectId === expectedProjectId) {
@@ -707,26 +782,6 @@ export default function DataAnnotationPage() {
       message.error(formatApiError(error, "标签保存失败"));
     } finally {
       setSavingLabel(false);
-    }
-  };
-
-  const previewClusters = async () => {
-    if (!projectId || !datasetArtifactId || !selectedModelId || previewingClusters) return;
-    setPreviewingClusters(true);
-    try {
-      const preview = await previewQualityClusters(projectId, {
-        dataset_artifact_id: datasetArtifactId,
-        selected_model_id: selectedModelId,
-      });
-      setClusterPreview(preview);
-      setClusterLabels(Object.fromEntries(
-        Object.keys(preview.cluster_counts).map((clusterId) => [clusterId, ""]),
-      ));
-      message.success(`聚类完成，最优 K=${preview.best_k}`);
-    } catch (error) {
-      message.error(formatApiError(error, "聚类预览失败"));
-    } finally {
-      setPreviewingClusters(false);
     }
   };
 
@@ -777,42 +832,17 @@ export default function DataAnnotationPage() {
   };
 
   const removeRun = async (run: QualityRun) => {
-    if (!projectId || deletingRunId || !window.confirm(`确认删除标注任务 ${run.id}？`)) return;
+    const runProjectId = run.project_id || projectId;
+    if (!runProjectId || deletingRunId) return;
     setDeletingRunId(run.id);
     try {
-      await deleteQualityRun(projectId, run.id);
+      await deleteQualityRun(runProjectId, run.id);
       setRuns((current) => current.filter((item) => item.id !== run.id));
       message.success("标注任务已删除");
     } catch (error) {
       message.error(formatApiError(error, "标注任务删除失败"));
     } finally {
       setDeletingRunId("");
-    }
-  };
-
-  const saveRuleConfiguration = async () => {
-    if (!projectId || !runId || !selectedRun || savingRules) return;
-    setSavingRules(true);
-    try {
-      const updated = await updateQualityRunRules(projectId, runId, ruleConfig);
-      setRuns((current) => current.map((item) => item.id === updated.id ? updated : item));
-      await refreshActiveWorkspace();
-      message.success(selectedRun.label_mode === "manual" ? "标注规则已保存" : "规则已保存，自动标签已重新计算");
-    } catch (error) {
-      message.error(formatApiError(error, "标注规则保存失败"));
-    } finally {
-      setSavingRules(false);
-    }
-  };
-
-  const submitRunForReview = async () => {
-    if (!projectId || !runId || !canLabel) return;
-    try {
-      const response = await apiClient.post(`/projects/${projectId}/spot-weld/runs/${runId}/submit-review`);
-      message.success(`已提交 ${response.data?.submitted_count ?? 0} 条标注复核`);
-      await refreshSamples(selected?.id || "");
-    } catch (error) {
-      message.error(formatApiError(error, "提交复核失败"));
     }
   };
 
@@ -824,7 +854,7 @@ export default function DataAnnotationPage() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `spot-weld-annotations-${runId.slice(0, 8)}.${format}`;
+      anchor.download = `data-annotations-${runId.slice(0, 8)}.${format}`;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (error) {
@@ -856,45 +886,65 @@ export default function DataAnnotationPage() {
     return () => window.clearInterval(timer);
   }, [projectId, runId, selectedRun?.status, selected?.id, message]);
 
+  const taskColumns = [
+    {
+      title: copy.task,
+      key: "task",
+      render: (_: unknown, run: QualityRun) => <div className="table-primary-cell">
+        <strong>{run.id.slice(0, 8)}</strong>
+        <span>{runModeText(run, copy)}</span>
+      </div>,
+    },
+    { title: copy.project, key: "project", render: (_: unknown, run: QualityRun) => run.project_name || run.project_id || "-" },
+    { title: copy.creator, key: "creator", render: (_: unknown, run: QualityRun) => run.created_by_name || run.created_by_id || "-" },
+    { title: copy.modeStatus, key: "status", render: (_: unknown, run: QualityRun) => <Tag color={taskStatusColor(run.status)}>{runStatusText(run, lang)}</Tag> },
+    { title: copy.progress, key: "progress", render: (_: unknown, run: QualityRun) => annotationProgressText(run) },
+    {
+      title: copy.actions,
+      key: "actions",
+      align: "right" as const,
+      render: (_: unknown, run: QualityRun) => <div className="table-row-actions">
+        <TableRowAction
+          label={`${run.label_mode === "manual" ? copy.viewManual : copy.view} ${run.id}`}
+          icon={<EyeOutlined />}
+          onClick={() => openRunWorkspace(run)}
+        />
+        <DeleteConfirmation
+          label={`${copy.deleteTask} ${run.id}`}
+          targetName={run.id}
+          loading={deletingRunId === run.id}
+          onConfirm={() => void removeRun(run)}
+        />
+      </div>,
+    },
+  ];
+
   const tasksView = (
     <>
       <div className="page-header data-annotation__tasks-header">
         <div className="page-header-copy">
-          <h2 className="page-title">标注任务</h2>
+          <h2 className="page-title">{copy.title}</h2>
         </div>
         <div className="data-annotation__task-actions">
-          <button type="button" className="ant-btn" onClick={() => openSetup("manual")}>新建手动标注任务</button>
-          <button type="button" className="ant-btn ant-btn-primary" onClick={() => openSetup("automatic")}>新建自动标注任务</button>
+          <select aria-label={copy.project} value={projectId} onChange={(event) => setProjectId(event.target.value)} disabled={loadingProjects}>
+            <option value="">{lang === "zh" ? "全部项目" : "All projects"}</option>
+            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select>
+          <button type="button" className="ant-btn" onClick={() => openSetup("manual")}>{copy.manualTask}</button>
+          <button type="button" className="ant-btn ant-btn-primary" onClick={() => openSetup("automatic")}>{copy.automaticTask}</button>
         </div>
       </div>
-      <div className="table-surface data-annotation__tasks-surface">
-      <section className="data-annotation__tasks" aria-label="点焊标注任务列表">
-        {loadingRuns ? <Spin /> : runs.length === 0 ? <Empty description="暂无点焊标注任务" /> : runs.map((run) => (
-          <article className="data-annotation__task" key={run.id}>
-            <div className="data-annotation__task-main">
-              <strong>{run.id.slice(0, 8)}</strong>
-              <span>{runModeText(run)}</span>
-              <Tag color={run.status === "completed" ? "green" : run.status === "failed" ? "red" : "blue"}>{run.status}</Tag>
-            </div>
-            <div className="data-annotation__task-progress" aria-label={`标注进度 ${run.id}`}>
-              <span>标注进度</span><strong>{annotationProgressText(run)}</strong>
-            </div>
-              <div className="data-annotation__task-buttons">
-              <button
-                type="button"
-                className="ant-btn"
-                aria-label={`${run.label_mode === "manual" ? "手工标注" : "查看标注"} ${run.id}`}
-                onClick={() => openRunWorkspace(run)}
-              >
-                {run.label_mode === "manual" ? "手工标注" : "查看标注"}
-              </button>
-              <Tooltip title={["completed", "failed", "cancelled"].includes(String(run.status)) ? "删除标注任务" : "运行中的任务不能删除"}>
-                <button type="button" className="ant-btn ant-btn-icon-only" aria-label={`删除标注任务 ${run.id}`} onClick={() => void removeRun(run)} disabled={deletingRunId === run.id || !["completed", "failed", "cancelled"].includes(String(run.status))}><DeleteOutlined /></button>
-              </Tooltip>
-            </div>
-          </article>
-        ))}
-      </section>
+      <div className="table-surface data-annotation__tasks-surface" role="region" aria-label={copy.taskListLabel}>
+        <Table<QualityRun>
+          rowKey="id"
+          size="small"
+          loading={loadingRuns}
+          dataSource={runs}
+          columns={taskColumns}
+          pagination={false}
+          scroll={{ x: 820 }}
+          locale={{ emptyText: <Empty description={copy.noTasks} /> }}
+        />
       </div>
     </>
   );
@@ -903,25 +953,32 @@ export default function DataAnnotationPage() {
     <>
       <div className="page-header spot-weld-annotation__workspace-header">
         <div className="page-header-copy">
-          <h2 className="page-title">{labelMode === "manual" ? "新建手动标注任务" : "新建自动标注任务"}</h2>
-          <p className="page-subtitle">选择数据文件和必填目标列后创建任务</p>
+          <h2 className="page-title">{labelMode === "manual" ? copy.manualTask : copy.automaticTask}</h2>
+          <p className="page-subtitle">{labelMode === "automatic" ? (lang === "zh" ? "选择数据和注册模型，再配置标注策略" : "Select data and a registered model, then configure the strategy") : (lang === "zh" ? "选择数据文件和必填目标列后创建任务" : "Select a data file and required target column to create the task")}</p>
         </div>
-        <button type="button" className="ant-btn" onClick={returnToTaskList}>返回任务列表</button>
+        <button type="button" className="ant-btn" onClick={returnToTaskList}>{copy.backToTasks}</button>
       </div>
-      <section className="data-annotation__setup" aria-label="点焊标注配置">
+      <section className="data-annotation__setup" aria-label={copy.setupLabel}>
+        {labelMode === "automatic" && <Steps
+          className="data-annotation__setup-steps"
+          current={automaticSetupStep - 1}
+          items={[{ title: copy.chooseModel }, { title: copy.weakTitle }]}
+          responsive={false}
+        />}
+        {labelMode === "manual" || automaticSetupStep === 1 ? <>
         <div className="data-annotation__setup-grid">
           <div className="data-annotation__setup-field">
-            <label htmlFor="spot-weld-setup-project">项目</label>
+            <label htmlFor="spot-weld-setup-project">{copy.project}</label>
             <select id="spot-weld-setup-project" aria-label="Project" value={projectId} onChange={(event) => { setProjectId(event.target.value); setDatasetArtifactId(""); setRunId(""); }} disabled={loadingProjects}>
-              <option value="">选择项目</option>
+              <option value="">{copy.chooseProject}</option>
               {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
             </select>
           </div>
           <div className="data-annotation__setup-field">
-            <label htmlFor="spot-weld-dataset">数据管理文件</label>
+            <label htmlFor="spot-weld-dataset">{copy.dataFileLabel}</label>
             <select
               id="spot-weld-dataset"
-              aria-label="数据管理文件"
+              aria-label={copy.dataFileLabel}
               value={datasetArtifactId}
               onChange={(event) => {
                 const next = event.target.value;
@@ -930,7 +987,7 @@ export default function DataAnnotationPage() {
               }}
               disabled={!projectId || loadingDatasets}
             >
-              <option value="">选择兼容文件</option>
+              <option value="">{copy.chooseFile}</option>
               {datasets.map((dataset) => {
                 const artifactId = dataset.artifact_id || dataset.id || "";
                 return <option value={artifactId} key={artifactId}>{dataset.name || artifactId} · {dataset.row_count ?? 0} 行</option>;
@@ -939,10 +996,10 @@ export default function DataAnnotationPage() {
           </div>
         </div>
         <div className="data-annotation__source-actions">
-          <input ref={uploadInputRef} className="spot-weld-annotation__sr-only" type="file" accept=".csv,.xls,.xlsx" aria-label="上传点焊报告" onChange={handleReportUpload} />
-          <button type="button" className="ant-btn" onClick={() => uploadInputRef.current?.click()} disabled={!canCreate || preparingRun}><UploadOutlined />上传 CSV / XLS / XLSX</button>
+          <input ref={uploadInputRef} className="spot-weld-annotation__sr-only" type="file" accept=".csv,.xls,.xlsx" aria-label={copy.uploadFile} onChange={handleReportUpload} />
+          <button type="button" className="ant-btn" onClick={() => uploadInputRef.current?.click()} disabled={!canCreate || preparingRun}><UploadOutlined />{copy.uploadButton}</button>
         </div>
-        <div className="data-annotation__setup-grid">
+        {labelMode === "manual" && <div className="data-annotation__setup-grid">
           <div className="data-annotation__setup-field">
             <label htmlFor="quality-target-column-mode">目标列来源</label>
             <select id="quality-target-column-mode" aria-label="目标列来源" value={targetColumnMode} onChange={(event) => { setTargetColumnMode(event.target.value as "existing" | "new"); setTargetColumn(""); }}>
@@ -963,58 +1020,100 @@ export default function DataAnnotationPage() {
               {CREATED_TARGET_COLUMN_DTYPE_OPTIONS.map(([value, text]) => <option key={value} value={value}>{text}</option>)}
             </select>
           </div>}
-        </div>
+        </div>}
         {labelMode === "automatic" && <div className="data-annotation__setup-grid">
           <div className="data-annotation__setup-field">
-            <label htmlFor="quality-registered-model">选择模型</label>
-            <select id="quality-registered-model" aria-label="选择模型" value={selectedModelId} onChange={(event) => setSelectedModelId(event.target.value)}>
-              <option value="">选择当前项目已注册模型</option>
+            <label htmlFor="quality-registered-model">{copy.chooseModel}</label>
+            <select id="quality-registered-model" aria-label={copy.chooseModel} value={selectedModelId} onChange={(event) => setSelectedModelId(event.target.value)}>
+              <option value="">{copy.chooseModelOption}</option>
               {qualityModels.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.version || "v1"} · {model.framework || "-"}</option>)}
             </select>
           </div>
-          <label className="data-annotation__setup-field" htmlFor="quality-weak-supervision">
-            <span>弱监督标注策略</span>
-            <input id="quality-weak-supervision" aria-label="弱监督标注策略" type="checkbox" checked={weakSupervision} onChange={(event) => setWeakSupervision(event.target.checked)} />
-          </label>
-          {weakSupervision && <button type="button" className="ant-btn" onClick={() => void previewClusters()} disabled={!datasetArtifactId || !selectedModelId || previewingClusters}>
-            {previewingClusters ? "聚类中..." : "预览聚类结果"}
-          </button>}
         </div>}
-        {labelMode === "automatic" && weakSupervision && <section className="data-annotation__rules" aria-labelledby="quality-rule-title">
+        {labelMode === "automatic" && <div className="data-annotation__setup-footer data-annotation__setup-footer--centered">
+          <button type="button" className="ant-btn ant-btn-primary" onClick={() => setAutomaticSetupStep(2)} disabled={!canCreate || !projectId || !datasetArtifactId || !selectedModelId || loadingDatasetColumns}>
+            {copy.next}<RightOutlined />
+          </button>
+        </div>}
+        </> : <>
+        <div className="data-annotation__setup-grid">
+          <div className="data-annotation__setup-field">
+            <label htmlFor="quality-annotation-strategy">标注策略</label>
+            <select id="quality-annotation-strategy" aria-label="标注策略" value="model-inference" disabled>
+              <option value="model-inference">注册模型推理</option>
+            </select>
+          </div>
+          <div className="data-annotation__setup-field">
+            <label htmlFor="quality-selected-model-summary">已选模型</label>
+            <input id="quality-selected-model-summary" aria-label="已选模型" value={selectedModel ? `${selectedModel.name} · ${selectedModel.version || "v1"}` : "-"} readOnly />
+          </div>
+        </div>
+        <section className="data-annotation__weak-supervision" aria-labelledby="annotation-weak-supervision-title">
           <div className="data-annotation__rules-head">
-            <div><h3 id="quality-rule-title">工艺规则</h3><p>工艺规则用于弱监督标注证据，开始任务后仅展示快照。</p></div>
-            <div className="data-annotation__rule-actions">
-              <button type="button" className="ant-btn" onClick={resetRuleConfig} disabled={!canCreate}>点焊工艺规则模版</button>
-              <button type="button" className="ant-btn" onClick={resetRuleConfig} disabled={!canCreate}>恢复默认规则</button>
+            <div>
+              <h3 id="annotation-weak-supervision-title">{copy.weakTitle}</h3>
+              <p>{copy.weakHint}</p>
             </div>
+            <label className="data-annotation__toggle-field" htmlFor="annotation-weak-supervision-toggle">
+              <input id="annotation-weak-supervision-toggle" aria-label={copy.weakTitle} type="checkbox" checked={weakSupervision} onChange={(event) => { setWeakSupervision(event.target.checked); setClusterPreview(null); }} />
+              <span className="data-annotation__toggle-track" aria-hidden="true"><span className="data-annotation__toggle-thumb" /></span>
+              <span>{weakSupervision ? copy.enabled : copy.enable}</span>
+            </label>
           </div>
-          <div className="data-annotation__rule-table">
-            {RULE_CONFIG_FIELDS.map((field) => (
-              <label key={field.key} htmlFor={`quality-rule-${field.key}`}>
-                <span>{field.label}</span>
-                <div><input id={`quality-rule-${field.key}`} aria-label={field.label} type="number" step="any" value={ruleConfig[field.key]} onChange={(event) => updateRuleConfig(field.key, event.target.value)} disabled={!canCreate} /><small>{field.suffix}</small></div>
-              </label>
-            ))}
-          </div>
-          <div className="data-annotation__rule-reference">
-            {LABEL_OPTIONS.filter(([value]) => value !== "normal").map(([value, text]) => <span key={value}><Tag>{text}</Tag><small>{RULE_TEXT[value]}</small></span>)}
-            <span><Tag color="green">正常</Tag><small>{RULE_TEXT.normal}</small></span>
-          </div>
-        </section>}
-        {labelMode === "automatic" && weakSupervision && clusterPreview && <section className="data-annotation__rules" aria-labelledby="quality-cluster-title">
-          <div className="data-annotation__rules-head"><div><h3 id="quality-cluster-title">聚类结果</h3><p>按轮廓系数选择的最优 K：{clusterPreview.best_k}</p></div></div>
-          <div className="data-annotation__rule-table">
-            {Object.entries(clusterPreview.cluster_counts).map(([clusterId, count]) => <label key={clusterId} htmlFor={`quality-cluster-label-${clusterId}`}>
-              <span>簇 {clusterId}（{count} 条）</span>
-              <input id={`quality-cluster-label-${clusterId}`} aria-label={`簇 ${clusterId} 标签`} value={clusterLabels[clusterId] || ""} onChange={(event) => setClusterLabels((current) => ({ ...current, [clusterId]: event.target.value }))} placeholder="输入单标签" />
-            </label>)}
-          </div>
-        </section>}
-        <div className="data-annotation__setup-footer">
-          <button type="button" className="ant-btn ant-btn-primary" onClick={() => void handleSelectedDataset()} disabled={!canCreate || !projectId || !datasetArtifactId || !targetColumn.trim() || (labelMode === "automatic" && !selectedModelId) || (labelMode === "automatic" && weakSupervision && !clusterMappingComplete) || preparingRun}>
-            {preparingRun ? "准备中..." : labelMode === "automatic" ? "开始自动标注" : "开始手动标注"}
+          {weakSupervision && <>
+            <div className="data-annotation__weak-actions">
+              <button type="button" className="ant-btn" onClick={() => void previewAnnotationClusters()} disabled={previewingClusters || !datasetArtifactId || !selectedModelId}>
+                {previewingClusters ? <><span className="data-annotation__spinner" aria-hidden="true" />{copy.clustering}</> : copy.startClustering}
+              </button>
+              {clusterPreview && <Tag color="blue">最优 K：{clusterPreview.best_k} · {clusterPreview.feature_count || 0} 个特征</Tag>}
+            </div>
+            {previewingClusters && <div className="data-annotation__cluster-loading" role="status"><span className="data-annotation__spinner data-annotation__spinner--large" aria-hidden="true" />{copy.clusteringHint}</div>}
+            {clusterPreview && <div className="data-annotation__cluster-result">
+              <div className="data-annotation__cluster-summary" aria-label={copy.clusterResult}>
+                {clusterPreview.cluster_summaries?.map((item) => <div className="data-annotation__cluster-summary-item" key={item.cluster_id}>
+                  <span className="data-annotation__cluster-swatch" style={{ "--cluster-color": clusterColor(item.cluster_id) } as CSSProperties} aria-hidden="true" />
+                  <span>{lang === "zh" ? `簇${item.cluster_id}（${item.role === "normal" ? copy.normal : copy.anomaly}）：${item.count}条（${item.percentage}%）` : `Cluster ${item.cluster_id} (${item.role === "normal" ? copy.normal : copy.anomaly}): ${item.count} ${copy.rows} (${item.percentage}%)`}</span>
+                </div>)}
+              </div>
+              <div ref={clusterChartRef} className="data-annotation__cluster-chart" aria-label={copy.clusterChart} />
+            </div>}
+            {clusterPreview && <div className="data-annotation__annotation-rules" aria-label={lang === "zh" ? "标注规则列表" : copy.rulesTitle}>
+              <div className="data-annotation__rules-head"><div><h3>{copy.rulesTitle}</h3><p>{copy.rulesHint}</p></div><button type="button" className="ant-btn" onClick={addAnnotationRule}>{copy.addRow}</button></div>
+              <div className="data-annotation__label-type-row"><label htmlFor="annotation-label-dtype">{copy.labelType}</label><select id="annotation-label-dtype" aria-label={copy.labelType} value={labelDtype} onChange={(event) => setLabelDtype(event.target.value as CreatedTargetColumnDtype)}><option value="int">{copy.int}</option><option value="float">{copy.float}</option><option value="string">{copy.stringType}</option></select></div>
+              {annotationRules.map((rule) => <div className="data-annotation__annotation-rule" key={rule.id}>
+                <div className="data-annotation__annotation-rule-head"><strong>{copy.rule}</strong><Tooltip title={copy.deleteRule}><button type="button" className="ant-btn ant-btn-icon-only ant-btn-danger-icon" aria-label={lang === "zh" ? "删除" : `${copy.deleteRule} ${rule.id}`} onClick={() => removeAnnotationRule(rule.id)} disabled={annotationRules.length === 1}><DeleteOutlined /></button></Tooltip></div>
+                <div className="data-annotation__rule-tokens">{rule.tokens.map((token, index) => {
+                  const isEditing = token.value === "" || (editingRuleToken?.ruleId === rule.id && editingRuleToken.tokenIndex === index);
+                  return <div className={`data-annotation__rule-token ${isEditing ? "is-editing" : "is-complete"}`} key={`${rule.id}-${index}`}>
+                    {isEditing ? <>
+                      <select aria-label={lang === "zh" ? `规则 ${rule.id} 条件 ${index + 1} 类型` : `${copy.editCondition} ${index + 1}`} value={token.kind} onFocus={() => setEditingRuleToken({ ruleId: rule.id, tokenIndex: index })} onChange={(event) => updateAnnotationRuleToken(rule.id, index, { kind: event.target.value as AnnotationRuleTokenKind, value: "" })}>
+                        <option value="data">{copy.data}</option><option value="number_operator">{copy.numberOperator}</option><option value="logical_operator">{copy.logicalOperator}</option><option value="number">{copy.number}</option><option value="string">{copy.string}</option>
+                      </select>
+                      {token.kind === "data" ? <select aria-label={lang === "zh" ? `规则 ${rule.id} 条件 ${index + 1} 值` : copy.chooseData} value={token.value} onFocus={() => setEditingRuleToken({ ruleId: rule.id, tokenIndex: index })} onChange={(event) => completeAnnotationRuleToken(rule.id, index, event.target.value)}><option value="">{copy.chooseData}</option>{datasetColumns.map((column) => <option value={column.name} key={column.name}>{column.name}</option>)}</select>
+                        : token.kind === "number_operator" ? <select aria-label={lang === "zh" ? `规则 ${rule.id} 条件 ${index + 1} 值` : copy.chooseOperator} value={token.value} onFocus={() => setEditingRuleToken({ ruleId: rule.id, tokenIndex: index })} onChange={(event) => completeAnnotationRuleToken(rule.id, index, event.target.value)}><option value="">{copy.chooseOperator}</option>{["+", "-", "*", "/"].map((value) => <option value={value} key={value}>{value}</option>)}</select>
+                          : token.kind === "logical_operator" ? <select aria-label={lang === "zh" ? `规则 ${rule.id} 条件 ${index + 1} 值` : copy.chooseLogic} value={token.value} onFocus={() => setEditingRuleToken({ ruleId: rule.id, tokenIndex: index })} onChange={(event) => completeAnnotationRuleToken(rule.id, index, event.target.value)}><option value="">{copy.chooseLogic}</option>{[">", ">=", "<", "<=", "==", "!=", "and", "or"].map((value) => <option value={value} key={value}>{value}</option>)}</select>
+                            : <input aria-label={lang === "zh" ? `规则 ${rule.id} 条件 ${index + 1} 值` : copy.editCondition} type={token.kind === "number" ? "number" : "text"} value={token.value} onFocus={() => setEditingRuleToken({ ruleId: rule.id, tokenIndex: index })} onChange={(event) => updateAnnotationRuleToken(rule.id, index, { value: event.target.value })} onBlur={() => token.value !== "" && setEditingRuleToken(null)} onKeyDown={(event) => { if (event.key === "Enter" && token.value !== "") { event.preventDefault(); setEditingRuleToken(null); } }} placeholder={token.kind === "number" ? copy.inputNumber : copy.inputString} />}
+                    </> : <button type="button" className="data-annotation__rule-token-value" aria-label={lang === "zh" ? `编辑条件 ${index + 1}：${token.value}` : `${copy.editCondition} ${index + 1}: ${token.value}`} onClick={() => setEditingRuleToken({ ruleId: rule.id, tokenIndex: index })}>{token.value}</button>}
+                    <Tooltip title={copy.deleteCondition}><button type="button" className="data-annotation__rule-token-delete" aria-label={lang === "zh" ? `删除条件 ${index + 1}` : `${copy.deleteCondition} ${index + 1}`} onClick={() => removeAnnotationRuleToken(rule.id, index)}>×</button></Tooltip>
+                  </div>;
+                })}<button type="button" className="ant-btn ant-btn-sm" onClick={() => addAnnotationRuleToken(rule.id)}>{copy.addCondition}</button></div>
+                <div className="data-annotation__annotation-rule-label"><label htmlFor={`annotation-rule-label-${rule.id}`}>{copy.hitLabel}</label><input id={`annotation-rule-label-${rule.id}`} aria-label={lang === "zh" ? `规则 ${rule.id} 标签` : `${copy.rule} ${rule.id} ${copy.hitLabel}`} value={rule.label} onChange={(event) => updateAnnotationRule(rule.id, { label: event.target.value })} placeholder={copy.inputLabel} /></div>
+              </div>)}
+            </div>}
+          </>}
+        </section>
+        <div className="data-annotation__setup-footer data-annotation__setup-footer--centered">
+          <button type="button" className="ant-btn" onClick={() => setAutomaticSetupStep(1)} disabled={preparingRun}><LeftOutlined />{copy.previous}</button>
+          <button type="button" className="ant-btn ant-btn-primary" onClick={() => void handleSelectedDataset()} disabled={!canCreate || !projectId || !datasetArtifactId || !selectedModelId || preparingRun}>
+            {preparingRun ? copy.preparing : copy.startAutomatic}
           </button>
         </div>
+        </>}
+        {labelMode === "manual" && <div className="data-annotation__setup-footer">
+          <button type="button" className="ant-btn ant-btn-primary" onClick={() => void handleSelectedDataset()} disabled={!canCreate || !projectId || !datasetArtifactId || !targetColumn.trim() || preparingRun}>
+            {preparingRun ? copy.preparing : copy.startManual}
+          </button>
+        </div>}
       </section>
     </>
   );
@@ -1023,67 +1122,61 @@ export default function DataAnnotationPage() {
     <>
       <div className="page-header spot-weld-annotation__workspace-header">
         <div className="page-header-copy">
-          <p className="page-kicker">QUALITY / LABELING</p>
-          <h2 className="page-title">{labels.title || "数据标注"}</h2>
-          <p className="page-subtitle">{selectedProject?.name || "点焊样本逐条标注"}</p>
+          <p className="page-kicker">DATA / LABELING</p>
+          <h2 className="page-title">{t.spotWeld.title}</h2>
+          <p className="page-subtitle">{selectedProject?.name || (lang === "zh" ? "样本逐条标注" : "Review samples one by one")}</p>
         </div>
         <div className="spot-weld-annotation__actions">
-          <button type="button" className="ant-btn" aria-label="返回任务列表" onClick={returnToTaskList}>返回任务列表</button>
+          <button type="button" className="ant-btn" aria-label={copy.backToTasks} onClick={returnToTaskList}>{copy.backToTasks}</button>
           {projectId && selectedRun && <Dropdown trigger={["click"]} disabled={downloadingAnnotationExport} menu={{ items: [{ key: "csv", label: "CSV" }, { key: "xlsx", label: "XLSX" }], onClick: ({ key }) => { void downloadAnnotations(key as "csv" | "xlsx"); } }}>
-            <button type="button" className="ant-btn" aria-label="导出标注" disabled={downloadingAnnotationExport}><DownloadOutlined />导出标注</button>
+            <button type="button" className="ant-btn" aria-label={copy.export} disabled={downloadingAnnotationExport}><DownloadOutlined />{copy.export}</button>
           </Dropdown>}
-          {projectId && selectedRun?.status === "completed" && <button type="button" className="ant-btn" aria-label="保存到数据管理" onClick={() => void saveToDataManagement()} disabled={!canLabel || savingLabeledDataset}>{savingLabeledDataset ? "保存中..." : "保存到数据管理"}</button>}
-          <Tooltip title="刷新标注任务"><button type="button" className="ant-btn ant-btn-icon-only" aria-label="刷新标注任务" onClick={() => { void refreshRuns(); }} disabled={!projectId || loadingRuns}><ReloadOutlined /></button></Tooltip>
+          {projectId && selectedRun?.status === "completed" && <button type="button" className="ant-btn" aria-label={copy.saveToData} onClick={() => void saveToDataManagement()} disabled={!canLabel || savingLabeledDataset}>{savingLabeledDataset ? copy.saving : copy.saveToData}</button>}
+          <Tooltip title={copy.refreshTasks}><button type="button" className="ant-btn ant-btn-icon-only" aria-label={copy.refreshTasks} onClick={() => { void refreshRuns(); }} disabled={loadingRuns}><ReloadOutlined /></button></Tooltip>
         </div>
       </div>
       <div className="spot-weld-annotation__workspace spot-weld-annotation__workspace--detail">
         <section className="spot-weld-annotation__region spot-weld-annotation__queue" aria-labelledby="spot-weld-queue-title">
-          <div className="spot-weld-annotation__region-head"><h3 id="spot-weld-queue-title">{labels.queue || "样本队列"}</h3><div className="spot-weld-annotation__queue-meta"><Tag>{samples.length} 条</Tag>{selectedRun && <Tag color="blue">{annotationProgressText(selectedRun)}</Tag>}</div></div>
-          {loadingRuns || loadingSamples ? <Spin /> : samples.length === 0 ? <Empty description="暂无样本" /> : (
+          <div className="spot-weld-annotation__region-head"><h3 id="spot-weld-queue-title">{copy.sampleQueue}</h3><div className="spot-weld-annotation__queue-meta"><Tag>{samples.length} {copy.rows}</Tag>{selectedRun && <Tag color="blue">{annotationProgressText(selectedRun)}</Tag>}</div></div>
+          {loadingRuns || loadingSamples ? <Spin /> : samples.length === 0 ? <Empty description={copy.noSamples} /> : (
             <div className="spot-weld-annotation__sample-list">
               {samples.map((sample) => <button type="button" className={`spot-weld-annotation__sample ${selected?.id === sample.id ? "is-selected" : ""}`} key={sample.id} onClick={() => selectSample(sample)} aria-label={sample.display_id}>
-                <span><strong>{sample.display_id}</strong><small>第 {sample.source_row_index ?? "-"} 行</small></span>
-                <Tag color={selectedRun?.label_mode === "manual" ? undefined : warningColor[sample.warning_level || "none"]}>{qualityLabelText(sample.current_label || sample.automatic_label) || "未标注"}</Tag>
+                <span><strong>{sample.display_id}</strong><small>{copy.row.replace("{index}", String(sample.source_row_index ?? "-"))}</small></span>
+                <Tag color={selectedRun?.label_mode === "manual" ? undefined : warningColor[sample.warning_level || "none"]}>{qualityLabelText(sample.current_label || sample.automatic_label) || copy.unlabelled}</Tag>
               </button>)}
             </div>
           )}
         </section>
         <section className="spot-weld-annotation__region spot-weld-annotation__detail" aria-labelledby="spot-weld-detail-title">
-          <div className="spot-weld-annotation__region-head"><h3 id="spot-weld-detail-title">样本详情</h3>{selectedRun && <Tag color={selectedRun.status === "completed" ? "green" : "blue"}>{selectedRun.status}</Tag>}</div>
-          {loadingDetail ? <Spin /> : !selected ? <Empty description="选择样本查看详情" /> : <>
-            <section className="spot-weld-annotation__label-editor" aria-label="人工标签">
+          <div className="spot-weld-annotation__region-head"><h3 id="spot-weld-detail-title">{copy.sampleDetail}</h3>{selectedRun && <Tag color={taskStatusColor(selectedRun.status)}>{runStatusText(selectedRun, lang)}</Tag>}</div>
+          {loadingDetail ? <Spin /> : !selected ? <Empty description={copy.selectSample} /> : <>
+            <section className="spot-weld-annotation__label-editor" aria-label={copy.humanLabel}>
               <div className="spot-weld-annotation__label-head">
-                <div className="spot-weld-annotation__subhead"><h4>{labelHeadingForRun(selectedRun)}</h4><small>{savingLabel ? "保存中..." : label ? "已选择并自动保存" : "未标注"}</small></div>
+                <div className="spot-weld-annotation__subhead"><h4>{labelHeadingForRun(selectedRun, copy)}</h4><small>{savingLabel ? copy.saving : label ? copy.selectedSaved : copy.unlabelled}</small></div>
                 <div className="spot-weld-annotation__label-head-actions">
-                  {selectedRun?.target_schema?.dtype && <Tag color="blue">类型：{selectedRun.target_schema.dtype}</Tag>}
-                  <button type="button" className="ant-btn" aria-label="编辑" onClick={() => setEditingLabelList((current) => !current)} disabled={!canLabel || savingLabel}>{editingLabelList ? "完成" : "编辑"}</button>
+                  {selectedRun?.target_schema?.dtype && <Tag color="blue">{copy.type}: {selectedRun.target_schema.dtype}</Tag>}
+                  <button type="button" className="ant-btn" aria-label={copy.edit} onClick={() => setEditingLabelList((current) => !current)} disabled={!canLabel || savingLabel}>{editingLabelList ? copy.done : copy.edit}</button>
                 </div>
               </div>
-              <div className="spot-weld-annotation__label-options" role="group" aria-label="人工标签选项" style={labelOptionsStyle}>
+              <div className="spot-weld-annotation__label-options" role="group" aria-label={copy.labelOptions} style={labelOptionsStyle}>
                 {labelOptions.map(([value, text]) => <span className="spot-weld-annotation__label-item" key={value}>
                   <button type="button" className={`spot-weld-annotation__label-option ${label === value ? "is-selected" : ""}`} aria-pressed={label === value} onClick={() => void saveLabel(value)} disabled={!canLabel || savingLabel}>{text}</button>
-                  {editingLabelList && <button type="button" className="ant-btn ant-btn-icon-only spot-weld-annotation__label-remove" aria-label={`删除人工标签 ${text}`} onClick={() => removeLabelOption(value, text)} disabled={!canLabel || savingLabel}><DeleteOutlined /></button>}
+                  {editingLabelList && <button type="button" className="ant-btn ant-btn-icon-only ant-btn-danger-icon spot-weld-annotation__label-remove" aria-label={lang === "zh" ? `删除人工标签 ${text}` : `${copy.deleteCondition} ${text}`} onClick={() => removeLabelOption(value, text)} disabled={!canLabel || savingLabel}><DeleteOutlined /></button>}
                 </span>)}
               </div>
               {editingLabelList && <div className="spot-weld-annotation__label-list-editor">
-                <input aria-label="新建人工标签" value={newLabelText} onChange={(event) => setNewLabelText(event.target.value)} placeholder="输入新标签名称" onKeyDown={(event) => { if (event.key === "Enter") addLabelOption(); }} />
-                <button type="button" className="ant-btn" onClick={addLabelOption} disabled={!canLabel || savingLabel || !newLabelText.trim()}>添加标签</button>
+                <input aria-label={copy.newLabel} value={newLabelText} onChange={(event) => setNewLabelText(event.target.value)} placeholder={copy.inputNewLabel} onKeyDown={(event) => { if (event.key === "Enter") addLabelOption(); }} />
+                <button type="button" className="ant-btn" onClick={addLabelOption} disabled={!canLabel || savingLabel || !newLabelText.trim()}>{copy.addLabel}</button>
               </div>}
-              <div className="spot-weld-annotation__label-footer"><small className="spot-weld-annotation__status">当前状态：{selected.review_status || "pending_review"}</small><small>点击标签即可覆盖当前样本结果</small></div>
+              <div className="spot-weld-annotation__label-footer"><small className="spot-weld-annotation__status">{copy.status}: {selected.review_status || copy.pendingReview}</small><small>{copy.overrideHint}</small></div>
             </section>
-            {selectedRun?.label_mode === "automatic" && <section className="spot-weld-annotation__annotation-rules" aria-labelledby="spot-weld-rule-list-title">
-              <div className="spot-weld-annotation__subhead"><h4 id="spot-weld-rule-list-title">工艺规则</h4><small>任务创建时的规则快照，仅供查看</small></div>
-              <div className="spot-weld-annotation__rule-list">
-                {LABEL_OPTIONS.map(([value, text]) => <div className="spot-weld-annotation__rule-item" key={value}><Tag color={value === "normal" ? "green" : "blue"}>{text}</Tag><span>{RULE_TEXT[value]}</span></div>)}
-              </div>
-            </section>}
             <section className="spot-weld-annotation__raw-data" aria-labelledby="spot-weld-raw-data-title">
-              <div className="spot-weld-annotation__subhead"><h4 id="spot-weld-raw-data-title">当前样本数据</h4><small>{Object.keys(selected.table_values || {}).length} 个真实字段</small></div>
+              <div className="spot-weld-annotation__subhead"><h4 id="spot-weld-raw-data-title">{copy.sampleData}</h4><small>{copy.fieldsCount.replace("{count}", String(Object.keys(selected.table_values || {}).length))}</small></div>
               <div className="spot-weld-annotation__raw-data-list">
                 {Object.entries(selected.table_values || {}).map(([name, value]) => {
-                  return <div className="spot-weld-annotation__raw-data-row" key={name}><span>{name}</span><strong>{fullSampleValue(name, value, selected.waveforms)}</strong></div>;
+                  return <div className="spot-weld-annotation__raw-data-row" key={name}><span>{name}</span><strong>{fullSampleValue(value)}</strong></div>;
                 })}
-                <div className="spot-weld-annotation__raw-data-row"><span>label</span><strong>{label ? qualityLabelText(label) : "未标注"}</strong></div>
+                <div className="spot-weld-annotation__raw-data-row"><span>{copy.label}</span><strong>{label ? qualityLabelText(label) : copy.unlabelled}</strong></div>
               </div>
             </section>
           </>}

@@ -10,6 +10,7 @@ import AppLayout from "../components/AppLayout";
 import { apiGet } from "../api/client";
 import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
+import { DASHBOARD_STATS_CHANGED } from "../events/dashboardStats";
 
 const { Title, Text } = Typography;
 
@@ -83,7 +84,24 @@ export default function DashboardPage() {
     }).finally(() => setLoading(false));
     loadDashboard();
     const timer = window.setInterval(loadDashboard, 15000);
-    return () => window.clearInterval(timer);
+    const refreshImmediately = () => { void loadDashboard(); };
+    const refreshFromOtherTab = (event: StorageEvent) => {
+      if (event.key === "platform:dashboard-stats-changed") refreshImmediately();
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refreshImmediately();
+    };
+    window.addEventListener(DASHBOARD_STATS_CHANGED, refreshImmediately);
+    window.addEventListener("storage", refreshFromOtherTab);
+    window.addEventListener("focus", refreshImmediately);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener(DASHBOARD_STATS_CHANGED, refreshImmediately);
+      window.removeEventListener("storage", refreshFromOtherTab);
+      window.removeEventListener("focus", refreshImmediately);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, []);
 
   if (loading) {

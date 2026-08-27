@@ -53,6 +53,10 @@ _SQLITE_COLUMNS = {
         "early_stopping_min_delta": "FLOAT",
         "restore_best": "BOOLEAN NOT NULL DEFAULT 1",
     },
+    "agent_tasks": {
+        "project_id": "CHAR(32)",
+        "created_by_id": "CHAR(32)",
+    },
     "model_library": {
         "training_job_id": "CHAR(32)",
         "dataset_artifact_id": "CHAR(32)",
@@ -69,6 +73,10 @@ _SQLITE_INDEXES = {
         "ix_training_jobs_mlflow_run_id": "mlflow_run_id",
         "ix_training_jobs_task_id": "task_id",
         "ix_training_jobs_heartbeat_at": "heartbeat_at",
+    },
+    "agent_tasks": {
+        "ix_agent_tasks_project_id": "project_id",
+        "ix_agent_tasks_created_by_id": "created_by_id",
     },
 }
 

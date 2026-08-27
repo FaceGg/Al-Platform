@@ -32,6 +32,7 @@ from app.models.platform_models import (
     OrchestrationApp,
     OrchestrationVersion,
 )
+from app.models.project import Project
 from app.models.user import User
 
 
@@ -101,6 +102,24 @@ class TestMiscModels(unittest.TestCase):
         self.assertEqual(child_task.children, parent_task)
         self.assertIsNone(parent_task.children)
         self.assertIn(child_task, parent_task.parent)
+
+    def test_agent_task_project_and_creator_relationships(self):
+        user = User(username="agent-task-owner", password_hash="hash")
+        self.session.add(user)
+        self.session.flush()
+        project = Project(name="Agent task project", owner_id=user.id)
+        self.session.add(project)
+        self.session.flush()
+        task = AgentTask(
+            name="Owned task",
+            project_id=project.id,
+            created_by_id=user.id,
+        )
+        self.session.add(task)
+        self.session.commit()
+
+        self.assertEqual(task.project, project)
+        self.assertEqual(task.created_by_user, user)
 
     def test_compute_node_and_edge_device_defaults(self):
         user = User(username="compute-user", password_hash="hash")

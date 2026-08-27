@@ -1,15 +1,15 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App as AntApp } from "antd";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
 import DataManagePage from "./DataManagePage";
 
-const { get } = vi.hoisted(() => ({ get: vi.fn() }));
+const { get, remove } = vi.hoisted(() => ({ get: vi.fn(), remove: vi.fn() }));
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
-vi.mock("../api/client", () => ({ default: { get }, formatApiError: (_error: unknown, fallback: string) => fallback }));
+vi.mock("../api/client", () => ({ default: { get, delete: remove }, formatApiError: (_error: unknown, fallback: string) => fallback }));
 vi.mock("react-router-dom", async () => ({
   ...(await vi.importActual<typeof import("react-router-dom")>("react-router-dom")),
   useNavigate: () => navigate,
@@ -32,6 +32,7 @@ vi.mock("../i18n", () => ({
 describe("DataManagePage", () => {
   beforeEach(() => {
     get.mockReset();
+    remove.mockReset();
     navigate.mockReset();
     get.mockImplementation((url: string) => {
       if (url === "/projects") return Promise.resolve({ data: { items: [] } });
@@ -59,7 +60,8 @@ describe("DataManagePage", () => {
     expect(await screen.findByLabelText("Preview weld.csv")).toBeInTheDocument();
     expect(screen.getByLabelText("Download weld.csv")).toBeInTheDocument();
     expect(screen.getByLabelText("Delete weld.csv")).toBeInTheDocument();
-    expect(document.querySelectorAll(".dataset-table-actions")).toHaveLength(1);
+    expect(document.querySelectorAll(".table-row-actions")).toHaveLength(1);
+    expect(screen.getByRole("columnheader", { name: "Actions" })).toHaveStyle({ textAlign: "right" });
   });
 
   it("opens the selected file in point-weld automatic-label setup", async () => {
@@ -67,7 +69,17 @@ describe("DataManagePage", () => {
 
     fireEvent.click(await screen.findByLabelText("自动标注 weld.csv"));
 
-    expect(navigate).toHaveBeenCalledWith("/data-annotation?type=spot-weld&view=setup&mode=automatic&projectId=project-1&datasetId=dataset-1");
+    expect(navigate).toHaveBeenCalledWith("/data-annotation?view=setup&mode=automatic&projectId=project-1&datasetId=dataset-1");
+  });
+
+  it("deletes a dataset only after confirmation", async () => {
+    remove.mockResolvedValue({});
+    render(<MemoryRouter><AntApp><DataManagePage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete weld.csv" }));
+    expect(remove).not.toHaveBeenCalled();
+    fireEvent.click(within(await screen.findByRole("tooltip")).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("/datasets/dataset-1"));
   });
 
   it("accepts legacy XLS report uploads alongside CSV and XLSX", async () => {

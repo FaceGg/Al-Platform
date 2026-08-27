@@ -12,6 +12,8 @@ export interface Experiment {
   id: string;
   project_id: string;
   created_by: string;
+  project_name?: string | null;
+  created_by_name?: string | null;
   name: string;
   description: string;
   mlflow_experiment_id: string;
@@ -62,8 +64,8 @@ export async function deleteExperiment(experimentId: string): Promise<void> {
   await apiClient.delete(`/experiments/${experimentId}`);
 }
 
-export async function listExperiments(projectId: string): Promise<Experiment[]> {
-  const response = await apiClient.get("/experiments", { params: { project_id: projectId } });
+export async function listExperiments(projectId?: string): Promise<Experiment[]> {
+  const response = await apiClient.get("/experiments", { params: projectId ? { project_id: projectId } : undefined });
   return normalizeItems<Experiment>(response.data);
 }
 

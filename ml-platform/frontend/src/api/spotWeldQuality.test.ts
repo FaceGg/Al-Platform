@@ -43,6 +43,13 @@ describe("spot weld quality API", () => {
     expect(get).toHaveBeenNthCalledWith(3, "/projects/project-1/spot-weld/runs/run-1/samples/sample-1");
   });
 
+  it("lists all accessible quality runs when no project is selected", async () => {
+    get.mockResolvedValueOnce({ data: { items: [{ id: "run-1" }, { id: "run-2" }] } });
+
+    await expect(listQualityRuns()).resolves.toEqual([{ id: "run-1" }, { id: "run-2" }]);
+    expect(get).toHaveBeenCalledWith("/spot-weld/runs");
+  });
+
   it("posts label and review payloads to the selected sample", async () => {
     post.mockResolvedValue({ data: { id: "revision-1" } });
 

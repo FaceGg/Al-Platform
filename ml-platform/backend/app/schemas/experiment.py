@@ -25,6 +25,8 @@ class ExperimentResponse(BaseModel):
     id: UUID
     project_id: UUID
     created_by: UUID
+    project_name: str | None = None
+    created_by_name: str | None = None
     name: str
     description: str
     mlflow_experiment_id: str

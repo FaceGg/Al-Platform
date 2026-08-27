@@ -34,6 +34,13 @@ describe("experiment tracking API", () => {
     });
   });
 
+  it("lists all accessible experiments when no project is selected", async () => {
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({ data: { items: [{ id: "e1" }, { id: "e2" }] } });
+
+    await expect(listExperiments()).resolves.toEqual([{ id: "e1" }, { id: "e2" }]);
+    expect(get).toHaveBeenCalledWith("/experiments", { params: undefined });
+  });
+
   it("posts deterministic Run comparisons", async () => {
     const post = vi.spyOn(apiClient, "post").mockResolvedValue({
       data: { run_ids: ["run-1", "run-2"], param_names: [], metric_names: [], runs: [] },

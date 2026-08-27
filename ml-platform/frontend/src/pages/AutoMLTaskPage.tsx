@@ -94,6 +94,10 @@ export default function AutoMLTaskPage() {
   const completed = Number(progress.completed ?? progress.completed_count ?? 0);
   const total = Number(progress.total ?? progress.total_count ?? 0);
   const percent = Number.isFinite(Number(progress.percent)) ? Number(progress.percent) : total > 0 ? Math.round((completed / total) * 100) : 0;
+  // A time-budgeted search may complete successfully before exhausting its
+  // planned trial budget. The job lifecycle is the source of truth for the
+  // overall progress bar; keep the trial counters for transparency.
+  const displayPercent = String(job?.status) === "completed" ? 100 : percent;
   const rows = useMemo<AutoMLResultRow[]>(() => {
     const source = resultSource(metrics);
     const mapped: AutoMLResultRow[] = source.map((row, index) => {
@@ -105,7 +109,7 @@ export default function AutoMLTaskPage() {
       || Number(left.training_time_seconds ?? Number.POSITIVE_INFINITY) - Number(right.training_time_seconds ?? Number.POSITIVE_INFINITY));
   }, [metrics]);
 
-  const reportReady = String(job?.status) === "completed" && percent >= 100 && rows.length > 0;
+  const reportReady = String(job?.status) === "completed" && displayPercent >= 100 && rows.length > 0;
   const formatMetric = (value: number | null) => value == null ? "-" : value.toFixed(4);
   const selectedTrials = selectedModel && Array.isArray(selectedModel.trials)
     ? selectedModel.trials as Record<string, unknown>[]
@@ -220,8 +224,8 @@ export default function AutoMLTaskPage() {
             <Descriptions.Item label="项目">{String(job.project_name || "-")}</Descriptions.Item>
             <Descriptions.Item label="最佳模型">{String((metrics.best_model as Record<string, unknown> | undefined)?.name || "-")}</Descriptions.Item>
           </Descriptions>
-          <Progress percent={Math.max(0, Math.min(100, percent))} status={job.status === "failed" ? "exception" : job.status === "completed" ? "success" : "active"} />
-          <Text type="secondary">已完成 {Number.isFinite(completed) ? completed : 0} / {Number.isFinite(total) ? total : 0} 个模型</Text>
+          <Progress percent={Math.max(0, Math.min(100, displayPercent))} status={job.status === "failed" ? "exception" : job.status === "completed" ? "success" : "active"} />
+          <Text type="secondary">已完成试验 {Number.isFinite(completed) ? completed : 0} / {Number.isFinite(total) ? total : 0}</Text>
         </Card>
         <Card title="模型结果" extra={<Space>
           <Button type="primary" onClick={generateReport} loading={reportGenerating} disabled={!reportReady}>生成分析报告</Button>

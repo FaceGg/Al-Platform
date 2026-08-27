@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
-import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined } from "@ant-design/icons";
+import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, StopOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
@@ -13,7 +13,11 @@ import {
   type QualityRun,
 } from "../api/spotWeldQuality";
 import AppLayout from "../components/AppLayout";
+import DeleteConfirmation from "../components/DeleteConfirmation";
+import TableRowAction from "../components/TableRowAction";
 import { useI18n } from "../i18n";
+import { notifyDashboardStatsChanged } from "../events/dashboardStats";
+import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 
 const { Text, Title } = Typography;
 
@@ -53,6 +57,8 @@ const QUALITY_CHARTS: Array<{ key: "model_comparison_chart" | "cluster_pca_chart
 interface ModelingTask {
   id: string;
   project_id?: string;
+  project_name?: string;
+  createdBy?: string;
   name?: string;
   experimentName?: string;
   status?: string;
@@ -85,7 +91,7 @@ function errorMessage(value: unknown): string | undefined {
 
 export default function AutoMLPage() {
   const navigate = useNavigate();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { message } = AntApp.useApp();
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
@@ -101,7 +107,7 @@ export default function AutoMLPage() {
   const [algorithmIds, setAlgorithmIds] = useState<string[]>([]);
   const [searchMethod, setSearchMethod] = useState("bayesian");
   const [maxTrials, setMaxTrials] = useState(20);
-  const [timeBudget, setTimeBudget] = useState(600);
+  const [timeBudget, setTimeBudget] = useState(9999);
   const [crossValidationEnabled, setCrossValidationEnabled] = useState(true);
   const [crossValidationFolds, setCrossValidationFolds] = useState<3 | 4 | 5>(5);
   const [running, setRunning] = useState(false);
@@ -121,6 +127,7 @@ export default function AutoMLPage() {
   const [modelingTasks, setModelingTasks] = useState<ModelingTask[]>([]);
   const [loadingModelingTasks, setLoadingModelingTasks] = useState(false);
   const [viewingTaskKey, setViewingTaskKey] = useState<string | null>(null);
+  const [stoppingTaskKey, setStoppingTaskKey] = useState<string | null>(null);
   const [qualityChartUrls, setQualityChartUrls] = useState<Record<string, string>>({});
   const [experimentModalOpen, setExperimentModalOpen] = useState(false);
   const [configurationOpen, setConfigurationOpen] = useState(false);
@@ -155,14 +162,19 @@ export default function AutoMLPage() {
           .map((job: Record<string, unknown>) => ({
           id: String(job.id),
           project_id: String(job.project_id || selectedProject || ""),
+          project_name: typeof job.project_name === "string" ? job.project_name : undefined,
+          createdBy: typeof job.created_by_name === "string" ? job.created_by_name : typeof job.created_by_id === "string" ? job.created_by_id : undefined,
           name: String(job.name || "AutoML"),
           experimentName: typeof job.experiment_name === "string" ? job.experiment_name : undefined,
           status: String(job.status || "queued"),
           kind: "ordinary" as const,
           created_at: typeof job.created_at === "string" ? job.created_at : undefined,
-          progress: normalizeProgress((job.metrics as Record<string, unknown> | undefined)?.progress || job.progress),
+          progress: (() => {
+            const progress = normalizeProgress((job.metrics as Record<string, unknown> | undefined)?.progress || job.progress);
+            return String(job.status) === "completed" ? { ...progress, percent: 100 } : progress;
+          })(),
           errorCode: typeof job.error_code === "string" ? job.error_code : undefined,
-          errorMessage: errorMessage(job.error_details),
+          errorMessage: errorMessage(job.error_details) || (typeof job.error_message === "string" ? job.error_message : undefined),
           })),
       ];
       tasks.sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
@@ -184,8 +196,16 @@ export default function AutoMLPage() {
         }
         await apiClient.delete(`/projects/${projectId}/spot-weld/runs/${task.id}`);
       } else {
-        await apiClient.post("/training/batch-delete", { ids: [task.id] });
+        await apiClient.delete(`/training/automl/jobs/${task.id}`);
+        const projectId = task.project_id || selectedProject;
+        if (projectId && projectId === selectedProject) {
+          const response = await apiClient.get("/experiments", { params: { project_id: projectId } });
+          const items = Array.isArray(response.data) ? response.data : (response.data.items || []);
+          setExperiments(items);
+          setSelectedExperiment(items.find((item: any) => !item.automl_used)?.id || null);
+        }
       }
+      notifyDashboardStatsChanged();
       message.success("建模任务已删除");
       await refreshModelingTasks();
     } catch (error) {
@@ -207,9 +227,9 @@ export default function AutoMLPage() {
     listDatasets(selectedProject).then(setDatasets).catch(() => setDatasets([]));
     apiClient.get("/experiments", { params: { project_id: selectedProject } })
       .then((res) => {
-        const items = (res.data.items || []).filter((item: any) => !item.automl_used);
+        const items = Array.isArray(res.data) ? res.data : (res.data.items || []);
         setExperiments(items);
-        setSelectedExperiment(items[0]?.id || null);
+        setSelectedExperiment(items.find((item: any) => !item.automl_used)?.id || null);
       })
       .catch(() => { setExperiments([]); setSelectedExperiment(null); });
     void refreshModelingTasks();
@@ -277,6 +297,21 @@ export default function AutoMLPage() {
 
   const viewModelingTask = async (task: ModelingTask) => {
     navigate(`/automl/task/${task.id}`);
+  };
+
+  const stopModelingTask = async (task: ModelingTask) => {
+    if (task.kind !== "ordinary" || !["pending", "queued", "running"].includes(String(task.status))) return;
+    setStoppingTaskKey(`${task.kind}-${task.id}`);
+    try {
+      await apiClient.post(`/training/jobs/${task.id}/stop`);
+      notifyDashboardStatsChanged();
+      message.success("已提交停止任务请求");
+      await refreshModelingTasks();
+    } catch (error) {
+      message.error(formatApiError(error, "任务停止失败"));
+    } finally {
+      setStoppingTaskKey(null);
+    }
   };
 
   useEffect(() => {
@@ -360,6 +395,7 @@ export default function AutoMLPage() {
         cross_validation_enabled: crossValidationEnabled,
         cross_validation_folds: crossValidationEnabled ? crossValidationFolds : null,
       });
+      notifyDashboardStatsChanged();
       void refreshModelingTasks();
       setExperiments((items) => items.filter((item: any) => item.id !== selectedExperiment));
       setSelectedExperiment(null);
@@ -572,14 +608,17 @@ export default function AutoMLPage() {
     { title: "训练耗时", dataIndex: "training_time_seconds", key: "time", render: (value: number | null) => value == null ? "-" : `${Number(value).toFixed(1)}s` },
   ];
   const modelingTaskColumns = [
-    { title: "实验", dataIndex: "experimentName", key: "experiment", render: (value: string | undefined, row: ModelingTask) => <Space size={6}><strong>{value || "-"}</strong><Tag color={row.kind === "spot-weld" ? "blue" : "default"}>{row.kind === "spot-weld" ? "点焊建模" : "普通建模"}</Tag></Space> },
-    { title: "状态", dataIndex: "status", key: "status", render: (value: string) => <Tag color={value === "completed" ? "green" : value === "failed" ? "red" : "blue"}>{value}</Tag> },
+    { title: "项目", dataIndex: "project_name", key: "project", render: (value: string | undefined, row: ModelingTask) => value || row.project_id || "-" },
+    { title: "创建人", dataIndex: "createdBy", key: "creator", render: (value: string | undefined) => value || "-" },
+    { title: "实验", dataIndex: "experimentName", key: "experiment", render: (value: string | undefined, row: ModelingTask) => <Space size={6}><strong>{value || "-"}</strong><Tag color={row.kind === "spot-weld" ? "blue" : "default"}>{row.kind === "spot-weld" ? "点焊建模" : "自动建模"}</Tag></Space> },
+    { title: "状态", dataIndex: "status", key: "status", render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag> },
     { title: "建模进度", key: "progress", render: (_value: unknown, row: ModelingTask) => `${row.progress.completed}/${row.progress.total} ${row.progress.percent}%` },
     { title: "错误详情", key: "error", render: (_value: unknown, row: ModelingTask) => (row.errorCode || row.errorMessage) ? <Space direction="vertical" size={0}><Text type="danger">{row.errorCode}</Text>{row.errorMessage && <Text type="danger">{row.errorMessage}</Text>}</Space> : "-" },
-    { title: "操作", key: "actions", render: (_value: unknown, row: ModelingTask) => <Space size={4}>
-      {String(row.status) === "completed" && <Button type="text" icon={<EyeOutlined />} aria-label={`查看建模结果 ${row.id}`} loading={viewingTaskKey === `${row.kind}-${row.id}`} onClick={() => void viewModelingTask(row)}>查看建模结果</Button>}
-      <Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除建模任务 ${row.id}`} onClick={() => void deleteModelingTask(row)} disabled={!['completed', 'failed', 'cancelled'].includes(String(row.status))}>删除</Button>
-    </Space> },
+    { title: "操作", key: "actions", align: "right" as const, render: (_value: unknown, row: ModelingTask) => <div className="table-row-actions">
+      <TableRowAction label={`查看建模结果 ${row.id}`} icon={<EyeOutlined />} loading={viewingTaskKey === `${row.kind}-${row.id}`} onClick={() => void viewModelingTask(row)} />
+      {row.kind === "ordinary" && ["pending", "queued", "running"].includes(String(row.status)) && <TableRowAction label={`停止建模任务 ${row.id}`} icon={<StopOutlined />} warning loading={stoppingTaskKey === `${row.kind}-${row.id}`} onClick={() => void stopModelingTask(row)} />}
+      <DeleteConfirmation label={`删除建模任务 ${row.id}`} targetName={row.experimentName || row.id} onConfirm={() => void deleteModelingTask(row)} disabled={!['completed', 'failed', 'cancelled', 'cancel_requested'].includes(String(row.status))} />
+    </div> },
   ];
 
   return (
@@ -589,7 +628,7 @@ export default function AutoMLPage() {
         <Button icon={<PlusOutlined />} aria-label="新建" onClick={() => { setRecipeTab("general"); setResults(null); setConfigurationOpen(true); }}>新建</Button>
       </div>
       <Card title="建模任务" style={{ marginBottom: 16 }} extra={<Button type="link" onClick={() => void refreshModelingTasks()} loading={loadingModelingTasks}>刷新</Button>}>
-        <Table<ModelingTask> rowKey={(task) => `${task.kind}-${task.id}`} size="small" columns={modelingTaskColumns} dataSource={modelingTasks} loading={loadingModelingTasks} pagination={false} locale={{ emptyText: "暂无建模任务" }} />
+        <div className="table-surface"><Table<ModelingTask> rowKey={(task) => `${task.kind}-${task.id}`} size="small" columns={modelingTaskColumns} dataSource={modelingTasks} loading={loadingModelingTasks} pagination={false} locale={{ emptyText: "暂无建模任务" }} /></div>
       </Card>
       {configurationOpen && <Modal title="新建通用自动建模" open={configurationOpen} onCancel={() => setConfigurationOpen(false)} footer={null} width={1100} destroyOnClose>
       <Card style={{ marginBottom: 16 }}>
@@ -603,7 +642,11 @@ export default function AutoMLPage() {
           <Col xs={24} sm={4}><Text strong>{t.training?.experiments || "Experiment"}</Text>
             <Select aria-label="实验" style={{ width: "100%", marginTop: 4 }} value={selectedExperiment || undefined} onChange={setSelectedExperiment}
               disabled={!selectedProject} placeholder={t.training?.experiments || "Experiment"}
-              options={experiments.map((item: any) => ({ value: item.id, label: item.name }))} />
+              options={experiments.map((item: any) => ({
+                value: item.id,
+                label: item.name,
+                disabled: Boolean(item.automl_used),
+              }))} />
             <Button type="link" size="small" style={{ padding: 0, marginTop: 3 }} disabled={!selectedProject}
               onClick={() => setExperimentModalOpen(true)}>
               {t.training?.new_experiment || "New Experiment"}
@@ -645,8 +688,8 @@ export default function AutoMLPage() {
               options={AUTOML_SEARCH_OPTIONS} /></Col>
           <Col xs={12} sm={3}><Text strong>最大试验次数</Text>
             <InputNumber aria-label="最大试验次数" min={5} max={200} value={maxTrials} onChange={(value) => setMaxTrials(value ?? 20)} style={{ width: "100%", marginTop: 4 }} /></Col>
-          <Col xs={12} sm={3}><Text strong>总时间上限</Text>
-            <InputNumber aria-label="总时间上限" min={60} max={3600} value={timeBudget} onChange={(value) => setTimeBudget(value ?? 600)} style={{ width: "100%", marginTop: 4 }} /></Col>
+          <Col xs={12} sm={3}><Text strong>总时间上限（秒）</Text>
+            <InputNumber aria-label="总时间上限" min={60} max={9999} value={timeBudget} onChange={(value) => setTimeBudget(value ?? 9999)} addonAfter="秒" style={{ width: "100%", marginTop: 4 }} /></Col>
           <Col xs={12} sm={3}><Text strong>交叉验证</Text>
             <div style={{ marginTop: 7 }}><Switch aria-label="启用交叉验证" checked={crossValidationEnabled} onChange={setCrossValidationEnabled} /></div></Col>
           <Col xs={12} sm={3}><Text strong>折数</Text>

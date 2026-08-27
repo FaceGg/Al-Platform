@@ -216,6 +216,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             await stop_event_subscriber(event_subscriber)
         finally:
+            tensorboard_manager = getattr(app.state, "tensorboard_process_manager", None)
+            if tensorboard_manager is not None:
+                tensorboard_manager.close()
             db_engine.dispose()
 
 
@@ -290,6 +293,7 @@ app.include_router(inference_production_api.router)
 app.include_router(platform_security_api.router)
 app.include_router(notifications_api.router)
 app.include_router(spot_weld_quality_api.router)
+app.include_router(spot_weld_quality_api.all_runs_router)
 
 
 @app.get("/api/health")

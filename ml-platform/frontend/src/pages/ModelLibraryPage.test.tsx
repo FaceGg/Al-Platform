@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App as AntApp } from "antd";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ModelLibraryPage from "./ModelLibraryPage";
@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   listInferenceApiKeys: vi.fn(), createInferenceApiKey: vi.fn(), rotateInferenceApiKey: vi.fn(), revokeInferenceApiKey: vi.fn(),
   listInferenceMetrics: vi.fn(), listInferenceMetricWindow: vi.fn(), listInferenceRequestLogs: vi.fn(), getModelCard: vi.fn(),
   updateModelCardGuidance: vi.fn(), exportModelCard: vi.fn(),
+  deleteRegisteredModel: vi.fn(), deleteDeployment: vi.fn(),
 }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
@@ -25,12 +26,12 @@ vi.mock("../api/client", () => ({
   formatApiError: (_error: unknown, fallback: string) => fallback,
 }));
 vi.mock("../i18n", () => ({ useI18n: () => ({ t: {
-  common: { create: "Create", cancel: "Cancel", refresh: "Refresh", close: "Close" },
+  common: { create: "Create", cancel: "Cancel", delete: "Delete", refresh: "Refresh", close: "Close" },
   model: { actions: "Actions" },
   modelRegistry: {
     title: "Model operations", project: "Project", selectProject: "Select project",
     models: "Registered models", deployments: "Deployments", name: "Name", description: "Description",
-    latestVersion: "Latest version", status: "Status", versions: "Versions", register: "Register model",
+    latestVersion: "Latest version", status: "Status", versions: "Versions", register: "Register model", deleteRegisteredModel: "Delete registered model", deleteDeployment: "Delete deployment",
     sourceLibraryId: "Source model ID", registerVersion: "Register version", approve: "Approve",
     reject: "Reject", comment: "Comment", createDeployment: "Create deployment",
     version: "Version", desiredState: "Desired", observedState: "Observed", start: "Start",
@@ -105,6 +106,26 @@ describe("ModelLibraryPage", () => {
     mocks.getModelCard.mockResolvedValue({ id: "card-1", model_version_id: "v1", operational_guidance: "Watch drift.", guidance_revision: 1, approval_status: "approved", release_status: "released" });
     mocks.updateModelCardGuidance.mockResolvedValue({ id: "card-1", operational_guidance: "Use a reviewed threshold.", guidance_revision: 2 });
     mocks.exportModelCard.mockResolvedValue({ id: "card-1", format: "markdown" });
+    mocks.deleteRegisteredModel.mockResolvedValue(undefined);
+    mocks.deleteDeployment.mockResolvedValue(undefined);
+  });
+
+  it("deletes registered models and deployments only after confirmation", async () => {
+    mocks.listDeployments.mockResolvedValue([deployment]);
+    render(<AntApp><ModelLibraryPage /></AntApp>);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Project" }));
+    fireEvent.click(await screen.findByText("Weld line (owner)"));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete registered model Weld fault" }));
+    expect(mocks.deleteRegisteredModel).not.toHaveBeenCalled();
+    fireEvent.click(within(await screen.findByRole("tooltip")).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(mocks.deleteRegisteredModel).toHaveBeenCalledWith("m1"));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Deployments" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete deployment line-a" }));
+    expect(mocks.deleteDeployment).not.toHaveBeenCalled();
+    fireEvent.click(within(await screen.findByRole("tooltip")).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(mocks.deleteDeployment).toHaveBeenCalledWith("d1"));
   });
 
   it("registers, approves, deploys, starts, and predicts named records", async () => {

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.database import get_db
 from app.models.model_library import ModelLibrary
+from app.models.model_registry import InferenceDeployment, ModelVersion
 from app.models.api_model import PlatformAPI
 from app.models.artifact import Artifact
 from app.models.training import TrainingJob
@@ -42,15 +43,9 @@ def get_dashboard_stats(
         )
     datasets = datasets_query.all()
 
-    models_query = db.query(ModelLibrary)
     apis_query = db.query(PlatformAPI)
     training_jobs_query = db.query(TrainingJob)
     if not is_platform_admin:
-        models_query = models_query.filter(or_(
-            ModelLibrary.owner_id == current_user.id,
-            ModelLibrary.project_id.in_(accessible_project_ids),
-            ModelLibrary.is_public.is_(True),
-        ))
         apis_query = apis_query.filter(or_(
             PlatformAPI.owner_id == current_user.id,
             PlatformAPI.is_public.is_(True),
@@ -61,7 +56,6 @@ def get_dashboard_stats(
 
     total_algorithms = len(operators)
     total_datasets = len(datasets)
-    total_models = models_query.count()
     total_apis = apis_query.count()
     total_projects = len(accessible_projects)
     total_users = db.query(User).count() if is_platform_admin else 1
@@ -80,10 +74,38 @@ def get_dashboard_stats(
     total_api_calls = sum(c[0] or 0 for c in api_calls)
     total_success_calls = sum(c[1] or 0 for c in api_calls)
 
-    # Model by status
-    model_training = models_query.filter(ModelLibrary.status == "training").count()
-    model_completed = models_query.filter(ModelLibrary.status == "completed").count()
-    model_published = models_query.filter(ModelLibrary.status == "published").count()
+    # Model lifecycle is derived from real training jobs and running deployments.
+    active_training_statuses = ("pending", "queued", "running", "cancel_requested")
+    model_training = training_jobs_query.filter(
+        TrainingJob.status.in_(active_training_statuses),
+    ).count()
+    published_job_ids = {
+        row[0]
+        for row in training_jobs_query.with_entities(TrainingJob.id)
+        .join(
+            ModelVersion,
+            or_(
+                TrainingJob.model_library_id == ModelVersion.source_model_library_id,
+                TrainingJob.model_artifact_id == ModelVersion.source_artifact_id,
+            ),
+        )
+        .join(
+            InferenceDeployment,
+            InferenceDeployment.model_version_id == ModelVersion.id,
+        )
+        .filter(
+            TrainingJob.status == "completed",
+            InferenceDeployment.observed_state == "running",
+        )
+        .distinct()
+        .all()
+    }
+    model_published = len(published_job_ids)
+    completed_query = training_jobs_query.filter(TrainingJob.status == "completed")
+    if published_job_ids:
+        completed_query = completed_query.filter(TrainingJob.id.notin_(published_job_ids))
+    model_completed = completed_query.count()
+    total_models = model_training + model_completed + model_published
 
     algorithm_categories = Counter(
         getattr(operator, "category", "utility") or "utility"

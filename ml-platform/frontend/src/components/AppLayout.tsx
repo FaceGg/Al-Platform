@@ -69,7 +69,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   const handleMenuNavigate = (key: string) => {
     if (key === "/data-annotation") {
-      navigate("/data-annotation?type=spot-weld&view=tasks");
+      navigate("/data-annotation?view=tasks");
       return;
     }
     navigate(key);

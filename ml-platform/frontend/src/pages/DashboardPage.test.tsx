@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
@@ -60,5 +60,21 @@ describe("DashboardPage", () => {
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
     expect(await screen.findByText("工作台数据加载失败")).toBeInTheDocument();
+  });
+
+  it("refreshes statistics immediately after a model or API mutation event", async () => {
+    render(<MemoryRouter><DashboardPage /></MemoryRouter>);
+    await screen.findByText("内置算子");
+    const initialCalls = apiGet.mock.calls.filter(([path]) => path === "/dashboard/stats").length;
+    window.dispatchEvent(new CustomEvent("platform:dashboard-stats-changed"));
+    await waitFor(() => expect(apiGet.mock.calls.filter(([path]) => path === "/dashboard/stats").length).toBe(initialCalls + 1));
+  });
+
+  it("refreshes statistics when the window regains focus", async () => {
+    render(<MemoryRouter><DashboardPage /></MemoryRouter>);
+    await screen.findByText("内置算子");
+    const initialCalls = apiGet.mock.calls.filter(([path]) => path === "/dashboard/stats").length;
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(apiGet.mock.calls.filter(([path]) => path === "/dashboard/stats").length).toBe(initialCalls + 1));
   });
 });

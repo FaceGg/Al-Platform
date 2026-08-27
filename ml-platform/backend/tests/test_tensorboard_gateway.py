@@ -2,6 +2,10 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import httpx
 
 from fastapi.testclient import TestClient
 from fastapi.responses import JSONResponse
@@ -242,6 +246,94 @@ class TestTensorBoardPlatformAuthorization(unittest.TestCase):
         self.assertEqual(proxied.json()["run_id"], "run-safe-1")
         tampered = self.client.get(payload["url"].replace(payload["token"], payload["token"] + "x"))
         self.assertEqual(tampered.status_code, 403)
+
+    def test_local_mode_uses_ephemeral_signer_and_local_proxy(self):
+        original_signer = platform_app.state.tensorboard_signer
+        original_proxy = platform_app.state.tensorboard_proxy_handler
+        original_settings = getattr(platform_app.state, "settings", None)
+        delattr(platform_app.state, "tensorboard_signer")
+        delattr(platform_app.state, "tensorboard_proxy_handler")
+        platform_app.state.settings = SimpleNamespace(
+            app_mode="local",
+            resolved_tensorboard_session_secret=None,
+            tensorboard_gateway_url=None,
+            tensorboard_session_ttl_seconds=60,
+            tensorboard_idle_timeout_seconds=600,
+        )
+
+        async def local_proxy_handler(claims, path, _request):
+            return JSONResponse({"run_id": claims.run_id, "path": path, "local": True})
+
+        platform_app.state.tensorboard_local_proxy_handler = local_proxy_handler
+        try:
+            response = self.client.post(
+                f"/api/training/jobs/{self.job_id}/tensorboard-session",
+                headers=self.owner_headers,
+            )
+            self.assertEqual(response.status_code, 201, response.text)
+            proxied = self.client.get(response.json()["url"] + "data/plugin/scalars")
+            self.assertEqual(proxied.status_code, 200, proxied.text)
+            self.assertTrue(proxied.json()["local"])
+        finally:
+            platform_app.state.tensorboard_signer = original_signer
+            platform_app.state.tensorboard_proxy_handler = original_proxy
+            platform_app.state.settings = original_settings
+            delattr(platform_app.state, "tensorboard_local_proxy_handler")
+
+    def test_local_proxy_waits_for_tensorboard_process_to_become_ready(self):
+        original_signer = platform_app.state.tensorboard_signer
+        original_proxy = platform_app.state.tensorboard_proxy_handler
+        original_settings = getattr(platform_app.state, "settings", None)
+        delattr(platform_app.state, "tensorboard_signer")
+        delattr(platform_app.state, "tensorboard_proxy_handler")
+        platform_app.state.settings = SimpleNamespace(
+            app_mode="local",
+            resolved_tensorboard_session_secret=None,
+            tensorboard_gateway_url=None,
+            tensorboard_session_ttl_seconds=60,
+            tensorboard_idle_timeout_seconds=600,
+        )
+
+        class FakeManager:
+            def cleanup(self):
+                return 0
+
+            def get_or_start(self, **values):
+                return SimpleNamespace(session_id=values["session_id"], port=61234)
+
+        class FakeClient:
+            calls = 0
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def request(self, method, target, **_kwargs):
+                self.__class__.calls += 1
+                if self.__class__.calls == 1:
+                    raise httpx.ConnectError("starting", request=httpx.Request(method, target))
+                return httpx.Response(200, json={"ready": True})
+
+        platform_app.state.tensorboard_process_manager = FakeManager()
+        try:
+            response = self.client.post(
+                f"/api/training/jobs/{self.job_id}/tensorboard-session",
+                headers=self.owner_headers,
+            )
+            with patch("app.api.training.httpx.AsyncClient", return_value=FakeClient()), patch(
+                "asyncio.sleep", new=AsyncMock()
+            ) as sleep:
+                proxied = self.client.get(response.json()["url"])
+            self.assertEqual(proxied.status_code, 200, proxied.text)
+            self.assertEqual(FakeClient.calls, 2)
+            sleep.assert_awaited_once()
+        finally:
+            platform_app.state.tensorboard_signer = original_signer
+            platform_app.state.tensorboard_proxy_handler = original_proxy
+            platform_app.state.settings = original_settings
+            delattr(platform_app.state, "tensorboard_process_manager")
 
 
 class TestGatewayImport(unittest.TestCase):

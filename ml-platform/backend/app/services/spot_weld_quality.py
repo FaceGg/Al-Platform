@@ -24,6 +24,7 @@ from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.preprocessing import StandardScaler
 
 from app.models.model_library import ModelLibrary
+from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.spot_weld_quality import (
     SpotWeldLabelRevision,
     SpotWeldLabelSnapshot,
@@ -51,6 +52,9 @@ REPORT_RULE_SPATTER_CLUSTER_ID = 1
 REPORT_RULESET_VERSION = "report_v2"
 QUALITY_LABEL_MODES = frozenset({"automatic", "manual"})
 CREATED_TARGET_COLUMN_DTYPES = frozenset({"int", "float", "string"})
+ANNOTATION_RULE_TOKEN_KINDS = frozenset({"data", "number_operator", "logical_operator", "number", "string"})
+ANNOTATION_NUMBER_OPERATORS = frozenset({"+", "-", "*", "/"})
+ANNOTATION_LOGICAL_OPERATORS = frozenset({">", ">=", "<", "<=", "==", "!=", "and", "or"})
 CREATED_TARGET_COLUMN_DEFAULT_CLASSES = {
     "int": ["0", "1", "2"],
     "float": ["0.0", "1.0", "2.0"],
@@ -131,6 +135,17 @@ def normalize_created_target_column_dtype(target_column_dtype: str | None) -> st
     return normalized
 
 
+def normalize_annotation_label_dtype(value: str | None) -> str:
+    normalized = str(value or "string").strip().lower()
+    if normalized.startswith("int") or normalized == "integer":
+        return "int"
+    if normalized.startswith("float") or normalized in {"double", "number"}:
+        return "float"
+    if normalized in {"string", "str", "text", "object"}:
+        return "string"
+    raise QualityPipelineError("QUALITY_TARGET_COLUMN_DTYPE_INVALID")
+
+
 def normalize_annotation_label(value: Any, target_schema: Mapping[str, Any] | None) -> str:
     """Return the canonical string stored by the single-label annotation API."""
     raw = str(value).strip()
@@ -154,6 +169,224 @@ def normalize_annotation_label(value: Any, target_schema: Mapping[str, Any] | No
             raise QualityPipelineError("QUALITY_LABEL_TYPE_INVALID")
         return format(number, ".15g")
     return raw
+
+
+def _annotation_rule_value(token: Mapping[str, Any], columns: set[str]) -> dict[str, Any]:
+    kind = str(token.get("kind") or "").strip()
+    if kind not in ANNOTATION_RULE_TOKEN_KINDS:
+        raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
+    value = token.get("value")
+    if kind == "data":
+        name = str(value or "").strip()
+        if not name or name not in columns:
+            raise QualityPipelineError("QUALITY_ANNOTATION_RULE_COLUMN_INVALID", field_name=name or None)
+        return {"kind": kind, "value": name}
+    if kind == "number_operator":
+        operator = str(value or "").strip()
+        if operator not in ANNOTATION_NUMBER_OPERATORS:
+            raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
+        return {"kind": kind, "value": operator}
+    if kind == "logical_operator":
+        operator = str(value or "").strip().lower()
+        if operator not in ANNOTATION_LOGICAL_OPERATORS:
+            raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
+        return {"kind": kind, "value": operator}
+    if kind == "number":
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as error:
+            raise QualityPipelineError("QUALITY_ANNOTATION_RULE_NUMBER_INVALID") from error
+        if not np.isfinite(number):
+            raise QualityPipelineError("QUALITY_ANNOTATION_RULE_NUMBER_INVALID")
+        return {"kind": kind, "value": number}
+    text = str(value or "")
+    if not text.strip():
+        raise QualityPipelineError("QUALITY_ANNOTATION_RULE_STRING_INVALID")
+    return {"kind": kind, "value": text}
+
+
+def _validate_annotation_rule_tokens(tokens: Sequence[Mapping[str, Any]]) -> None:
+    if len(tokens) < 3:
+        raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
+    operand_kinds = {"data", "number", "string"}
+    operator_kinds = {"number_operator", "logical_operator"}
+    for index, token in enumerate(tokens):
+        expected = operand_kinds if index % 2 == 0 else operator_kinds
+        if token["kind"] not in expected:
+            raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
+    if tokens[-1]["kind"] not in operand_kinds:
+        raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
+    if not any(
+        token["kind"] == "logical_operator" and token["value"] not in {"and", "or"}
+        for token in tokens
+    ):
+        raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
+
+
+def normalize_annotation_process_rules(
+    process_rules: Sequence[Mapping[str, Any]] | None,
+    *,
+    columns: Sequence[str],
+    label_dtype: str,
+) -> list[dict[str, Any]]:
+    if not process_rules:
+        raise QualityPipelineError("QUALITY_ANNOTATION_RULES_REQUIRED")
+    normalized_dtype = normalize_annotation_label_dtype(label_dtype)
+    target_schema = {"dtype": normalized_dtype}
+    allowed_columns = {str(column) for column in columns}
+    normalized: list[dict[str, Any]] = []
+    for index, rule in enumerate(process_rules):
+        if not isinstance(rule, Mapping):
+            raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
+        raw_tokens = rule.get("tokens")
+        if not isinstance(raw_tokens, Sequence) or isinstance(raw_tokens, (str, bytes)):
+            raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
+        tokens = [
+            _annotation_rule_value(token, allowed_columns)
+            for token in raw_tokens
+            if isinstance(token, Mapping)
+        ]
+        if len(tokens) != len(raw_tokens):
+            raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
+        _validate_annotation_rule_tokens(tokens)
+        normalized.append({
+            "id": str(rule.get("id") or f"rule-{index + 1}"),
+            "tokens": tokens,
+            "label": normalize_annotation_label(rule.get("label"), target_schema),
+        })
+    return normalized
+
+
+def registered_annotation_feature_importance(
+    bundle: Mapping[str, Any],
+    feature_names: Sequence[str],
+) -> np.ndarray:
+    model = bundle.get("model")
+    raw_importance = getattr(model, "feature_importances_", None)
+    importance = np.asarray(raw_importance, dtype=float).reshape(-1) if raw_importance is not None else np.array([])
+    if (
+        len(importance) != len(feature_names)
+        or not np.isfinite(importance).all()
+        or float(np.maximum(importance, 0).sum()) <= 0
+    ):
+        raise QualityPipelineError("QUALITY_MODEL_FEATURE_IMPORTANCE_INVALID")
+    return np.maximum(importance, 0)
+
+
+def annotation_feature_frame(frame: pd.DataFrame, bundle: Mapping[str, Any]) -> pd.DataFrame:
+    feature_names = [str(name) for name in bundle.get("feature_schema_names") or []]
+    missing = [name for name in feature_names if name not in frame.columns]
+    if not feature_names or missing:
+        raise QualityPipelineError(
+            "QUALITY_INPUT_COLUMNS_INVALID",
+            message=f"注册模型输入列不存在：{', '.join(missing)}" if missing else None,
+        )
+    try:
+        return frame.loc[:, feature_names].apply(pd.to_numeric, errors="raise")
+    except (KeyError, TypeError, ValueError) as error:
+        raise QualityPipelineError(
+            "QUALITY_INPUT_COLUMNS_INVALID",
+            message="通用自动标注输入列必须为数值类型",
+        ) from error
+
+
+class _AnnotationRuleParser:
+    def __init__(self, tokens: Sequence[Mapping[str, Any]], values: Mapping[str, Any]):
+        self.tokens = list(tokens)
+        self.values = values
+        self.index = 0
+
+    def parse(self) -> bool:
+        result = self._parse_or()
+        if self.index != len(self.tokens) or not isinstance(result, (bool, np.bool_)):
+            raise ValueError("invalid rule expression")
+        return bool(result)
+
+    def _peek(self, value: str) -> bool:
+        return self.index < len(self.tokens) and self.tokens[self.index].get("value") == value
+
+    def _take(self) -> Mapping[str, Any]:
+        token = self.tokens[self.index]
+        self.index += 1
+        return token
+
+    def _parse_or(self):
+        value = self._parse_and()
+        while self._peek("or"):
+            self._take()
+            operand = self._parse_and()
+            value = bool(value) or bool(operand)
+        return value
+
+    def _parse_and(self):
+        value = self._parse_comparison()
+        while self._peek("and"):
+            self._take()
+            operand = self._parse_comparison()
+            value = bool(value) and bool(operand)
+        return value
+
+    def _parse_comparison(self):
+        left = self._parse_additive()
+        if self.index >= len(self.tokens):
+            return left
+        operator = str(self.tokens[self.index].get("value"))
+        if operator not in {">", ">=", "<", "<=", "==", "!="}:
+            return left
+        self._take()
+        right = self._parse_additive()
+        if operator == "==":
+            return left == right
+        if operator == "!=":
+            return left != right
+        left_number, right_number = float(left), float(right)
+        return {
+            ">": left_number > right_number,
+            ">=": left_number >= right_number,
+            "<": left_number < right_number,
+            "<=": left_number <= right_number,
+        }[operator]
+
+    def _parse_additive(self):
+        value = self._parse_multiplicative()
+        while self.index < len(self.tokens) and self.tokens[self.index].get("value") in {"+", "-"}:
+            operator = str(self._take().get("value"))
+            operand = self._parse_multiplicative()
+            value = float(value) + float(operand) if operator == "+" else float(value) - float(operand)
+        return value
+
+    def _parse_multiplicative(self):
+        value = self._parse_operand()
+        while self.index < len(self.tokens) and self.tokens[self.index].get("value") in {"*", "/"}:
+            operator = str(self._take().get("value"))
+            operand = float(self._parse_operand())
+            value = float(value) * operand if operator == "*" else float(value) / operand
+        return value
+
+    def _parse_operand(self):
+        token = self._take()
+        if token.get("kind") == "data":
+            return self.values.get(str(token.get("value")))
+        return token.get("value")
+
+
+def apply_annotation_process_rules(
+    values: Mapping[str, Any],
+    process_rules: Sequence[Mapping[str, Any]],
+) -> tuple[str | None, list[dict[str, str]]]:
+    for rule in process_rules:
+        try:
+            matches = _AnnotationRuleParser(rule.get("tokens") or [], values).parse()
+        except (TypeError, ValueError, ZeroDivisionError, IndexError):
+            matches = False
+        if matches:
+            label = str(rule.get("label") or "")
+            return label, [{
+                "code": str(rule.get("id") or "annotation_rule"),
+                "label": label,
+                "reason": "命中用户配置的弱监督标注规则",
+            }]
+    return None, []
 
 
 def build_runtime_rule_thresholds(
@@ -189,7 +422,7 @@ def normalize_quality_search_config(
         or isinstance(max_trials, bool)
         or not 5 <= int(max_trials) <= 200
         or isinstance(time_budget, bool)
-        or not 60 <= int(time_budget) <= 3600
+        or not 60 <= int(time_budget) <= 9999
     ):
         raise QualityPipelineError("QUALITY_AUTOML_SEARCH_CONFIG_INVALID")
     try:
@@ -371,15 +604,13 @@ def resolve_quality_run_configuration(
 def resolve_manual_run_configuration(
     frame: pd.DataFrame,
     *,
-    target_column: str,
+    target_column: str | None,
     target_column_created: bool = False,
     target_column_dtype: str | None = None,
     input_columns: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Resolve a generic annotation task without spot-weld feature requirements."""
-    if not isinstance(target_column, str) or not target_column.strip():
-        raise QualityPipelineError("QUALITY_TARGET_COLUMN_REQUIRED")
-    target_column = target_column.strip()
+    target_column = target_column.strip() if isinstance(target_column, str) and target_column.strip() else None
     frame_columns = [str(column) for column in frame.columns]
     if input_columns is None:
         selected = [column for column in frame_columns if column != target_column]
@@ -389,7 +620,7 @@ def resolve_manual_run_configuration(
         selected = [str(column) for column in input_columns]
     if not selected or len(selected) != len(set(selected)):
         raise QualityPipelineError("QUALITY_INPUT_COLUMNS_INVALID")
-    if target_column in selected:
+    if target_column and target_column in selected:
         raise QualityPipelineError(
             "QUALITY_INPUT_COLUMNS_INVALID",
             message=f"目标列不能同时作为输入列：{target_column}",
@@ -400,8 +631,16 @@ def resolve_manual_run_configuration(
             "QUALITY_INPUT_COLUMNS_INVALID",
             message=f"输入列不存在：{', '.join(unknown_columns)}",
         )
-    if target_column_created:
-        if target_column in frame.columns:
+    if target_column is None and not target_column_created:
+        target_schema = {
+            "name": None,
+            "dtype": normalize_annotation_label_dtype(target_column_dtype),
+            "classes": [],
+            "class_count": 0,
+            "created": False,
+        }
+    elif target_column_created:
+        if target_column and target_column in frame.columns:
             raise QualityPipelineError("QUALITY_TARGET_COLUMN_EXISTS", field_name=target_column)
         created_dtype = normalize_created_target_column_dtype(target_column_dtype)
         classes = list(CREATED_TARGET_COLUMN_DEFAULT_CLASSES[created_dtype])
@@ -1030,12 +1269,20 @@ def load_registered_quality_model(
         identifier = uuid.UUID(str(model_id))
     except (TypeError, ValueError) as error:
         raise QualityPipelineError("QUALITY_MODEL_INVALID") from error
-    model_library = db.query(ModelLibrary).filter(
+    model_library = db.query(ModelLibrary).join(
+        ModelVersion,
+        ModelVersion.source_model_library_id == ModelLibrary.id,
+    ).join(
+        RegisteredModel,
+        RegisteredModel.id == ModelVersion.registered_model_id,
+    ).filter(
         ModelLibrary.id == identifier,
         ModelLibrary.project_id == project_id,
-        ModelLibrary.status == "registered",
+        RegisteredModel.project_id == project_id,
+        ModelLibrary.status.in_(("registered", "completed")),
         ModelLibrary.model_artifact_id.isnot(None),
-    ).one_or_none()
+        ModelVersion.source_kind == "platform_joblib",
+    ).distinct().one_or_none()
     if model_library is None:
         raise QualityPipelineError("QUALITY_MODEL_INVALID")
     try:
@@ -1049,17 +1296,93 @@ def load_registered_quality_model(
         raise QualityPipelineError("QUALITY_MODEL_ARTIFACT_INVALID") from error
     if not isinstance(bundle, dict) or bundle.get("model") is None:
         raise QualityPipelineError("QUALITY_MODEL_ARTIFACT_INVALID")
-    feature_schema = [str(name) for name in bundle.get("feature_schema") or []]
+    feature_schema = [str(name) for name in bundle.get("feature_schema_names") or bundle.get("feature_schema") or []]
     if feature_schema != list(FEATURE_SCHEMA):
         raise QualityPipelineError("QUALITY_MODEL_FEATURE_SCHEMA_INVALID")
     return model_library, bundle
+
+
+def load_registered_annotation_model(
+    db,
+    *,
+    project_id,
+    model_id,
+    artifact_service: ArtifactService,
+) -> tuple[ModelLibrary, dict[str, Any]]:
+    """Load a project-scoped generic or quality model artifact for annotation."""
+    try:
+        identifier = uuid.UUID(str(model_id))
+    except (TypeError, ValueError) as error:
+        raise QualityPipelineError("QUALITY_MODEL_INVALID") from error
+    model_library = db.query(ModelLibrary).join(
+        ModelVersion,
+        ModelVersion.source_model_library_id == ModelLibrary.id,
+    ).join(
+        RegisteredModel,
+        RegisteredModel.id == ModelVersion.registered_model_id,
+    ).filter(
+        ModelLibrary.id == identifier,
+        ModelLibrary.project_id == project_id,
+        RegisteredModel.project_id == project_id,
+        ModelLibrary.status.in_(("registered", "completed")),
+        ModelLibrary.model_artifact_id.isnot(None),
+        ModelVersion.source_kind == "platform_joblib",
+    ).distinct().one_or_none()
+    if model_library is None:
+        raise QualityPipelineError("QUALITY_MODEL_INVALID")
+    try:
+        with artifact_service.materialize(
+            model_library.model_artifact_id,
+            project_id,
+            expected_type="model",
+        ) as path:
+            bundle = joblib.load(path)
+    except (ArtifactAccessError, OSError, ValueError, TypeError) as error:
+        raise QualityPipelineError("QUALITY_MODEL_ARTIFACT_INVALID") from error
+    if not isinstance(bundle, dict) or bundle.get("model") is None:
+        raise QualityPipelineError("QUALITY_MODEL_ARTIFACT_INVALID")
+    feature_schema = bundle.get("feature_schema") or []
+    feature_names = [
+        str(item.get("name")) if isinstance(item, dict) else str(item)
+        for item in feature_schema
+    ]
+    if not feature_names:
+        raise QualityPipelineError("QUALITY_MODEL_FEATURE_SCHEMA_INVALID")
+    bundle = {**bundle, "feature_schema_names": feature_names}
+    return model_library, bundle
+
+
+def run_registered_annotation_model(
+    features: pd.DataFrame,
+    bundle: Mapping[str, Any],
+) -> tuple[list[str], list[float | None]]:
+    feature_names = [str(name) for name in bundle.get("feature_schema_names") or []]
+    if feature_names != list(features.columns):
+        raise QualityPipelineError("QUALITY_MODEL_FEATURE_SCHEMA_INVALID")
+    matrix = features.to_numpy(dtype=np.float64)
+    scaler = bundle.get("scaler")
+    transformed = scaler.transform(matrix) if scaler is not None else matrix
+    model = bundle.get("model")
+    predictions = np.asarray(model.predict(_estimator_matrix(transformed))).reshape(-1)
+    classes = np.asarray(bundle.get("classes") or getattr(model, "classes_", []), dtype=object)
+    labels = [
+        str(classes[int(prediction)])
+        if classes.size and isinstance(prediction, (int, np.integer)) and 0 <= int(prediction) < len(classes)
+        else str(prediction)
+        for prediction in predictions
+    ]
+    probabilities: list[float | None] = [None] * len(labels)
+    if hasattr(model, "predict_proba"):
+        values = np.asarray(model.predict_proba(_estimator_matrix(transformed)), dtype=float)
+        probabilities = [float(np.max(row)) for row in values]
+    return labels, probabilities
 
 
 def run_registered_model_annotation(
     features: pd.DataFrame,
     bundle: Mapping[str, Any],
 ) -> tuple[list[str], list[float | None], np.ndarray]:
-    feature_schema = [str(name) for name in bundle.get("feature_schema") or []]
+    feature_schema = [str(name) for name in bundle.get("feature_schema_names") or bundle.get("feature_schema") or []]
     if feature_schema != list(features.columns):
         raise QualityPipelineError("QUALITY_MODEL_FEATURE_SCHEMA_INVALID")
     matrix = features.to_numpy(dtype=np.float64)
@@ -1396,6 +1719,7 @@ def create_quality_run_record(
     cross_validation_enabled: bool = True,
     cross_validation_folds: int | None = 3,
     label_mode: str = "automatic",
+    workflow_kind: str = "quality_modeling",
     rule_config: Mapping[str, Any] | None = None,
     artifact_service: ArtifactService | None = None,
 ) -> SpotWeldQualityRun:
@@ -1407,10 +1731,13 @@ def create_quality_run_record(
         max_trials,
         time_budget,
     )
-    normalized_rule_config = normalize_report_rule_config(rule_config)
+    normalized_rule_config = (
+        {} if workflow_kind == "data_annotation"
+        else normalize_report_rule_config(rule_config)
+    )
     artifact_service = artifact_service or build_artifact_service(db)
     artifact, frame = resolve_dataset_frame(db, artifact_service, project_id, dataset_artifact_id)
-    if label_mode == "manual" and not is_quality_report_frame(frame):
+    if workflow_kind == "data_annotation":
         run_configuration = resolve_manual_run_configuration(
             frame,
             target_column=target_column or "",
@@ -1447,6 +1774,7 @@ def create_quality_run_record(
             "row_count": len(frame),
             **search_config,
             "label_mode": label_mode,
+            "workflow_kind": workflow_kind,
             "selected_model_id": str(selected_model_id) if selected_model_id else None,
             "weak_supervision": bool(weak_supervision),
             "cluster_labels": dict(cluster_labels or {}),
@@ -1455,7 +1783,7 @@ def create_quality_run_record(
             **run_configuration,
         },
         statistics={**statistics, "valid_rows": valid_rows, **run_configuration},
-        rule_set_version=REPORT_RULESET_VERSION,
+        rule_set_version=("generic_annotation_v1" if workflow_kind == "data_annotation" else REPORT_RULESET_VERSION),
         automl_results=[],
         clustering_results={},
         output_artifacts={},
@@ -1474,6 +1802,24 @@ class QualityRunOutcome:
 
     def to_dict(self) -> dict[str, str | None]:
         return {"run_id": self.run_id, "status": self.status, "error_code": self.error_code}
+
+
+class QualityRunDeleted(Exception):
+    """Stop worker persistence after the user deletes an annotation run."""
+
+
+def _ensure_quality_run_available(
+    db,
+    run_id,
+    cancellation_requested: Callable[[], bool] | None = None,
+) -> None:
+    if cancellation_requested is not None and cancellation_requested():
+        db.rollback()
+        raise QualityRunDeleted
+    exists = db.query(SpotWeldQualityRun.id).filter(SpotWeldQualityRun.id == run_id).first()
+    if exists is None:
+        db.rollback()
+        raise QualityRunDeleted
 
 
 def claim_quality_run(
@@ -1500,7 +1846,12 @@ def claim_quality_run(
     return db.query(SpotWeldQualityRun).filter(SpotWeldQualityRun.id == run_id).first()
 
 
-def _execute_manual_annotation_run(db, run, frame: pd.DataFrame) -> QualityRunOutcome:
+def _execute_manual_annotation_run(
+    db,
+    run,
+    frame: pd.DataFrame,
+    cancellation_requested: Callable[[], bool] | None = None,
+) -> QualityRunOutcome:
     run_input = run.input_fingerprint or {}
     configuration = resolve_manual_run_configuration(
         frame,
@@ -1528,7 +1879,7 @@ def _execute_manual_annotation_run(db, run, frame: pd.DataFrame) -> QualityRunOu
         samples.append(SpotWeldQualitySample(
             run_id=run.id,
             source_row_index=int(index),
-            display_id=f"W-{len(samples) + 1:04d}",
+            display_id=f"S-{len(samples) + 1:04d}",
             table_values=table_values,
             feature_values=feature_values,
             waveforms={},
@@ -1537,6 +1888,7 @@ def _execute_manual_annotation_run(db, run, frame: pd.DataFrame) -> QualityRunOu
             warning_level="none",
             review_status="pending_review",
         ))
+    _ensure_quality_run_available(db, run.id, cancellation_requested)
     db.query(SpotWeldQualitySample).filter(SpotWeldQualitySample.run_id == run.id).delete(synchronize_session=False)
     db.add_all(samples)
     run.status = "completed" if len(frame) == 0 else "running"
@@ -1555,6 +1907,114 @@ def _execute_manual_annotation_run(db, run, frame: pd.DataFrame) -> QualityRunOu
     run.output_artifacts = {}
     run.error_code = None
     run.error_details = {}
+    _ensure_quality_run_available(db, run.id, cancellation_requested)
+    db.commit()
+    return QualityRunOutcome(str(run.id), "completed")
+
+
+def _execute_generic_automatic_annotation_run(
+    db,
+    run,
+    frame: pd.DataFrame,
+    artifact_service: ArtifactService,
+    cancellation_requested: Callable[[], bool] | None = None,
+) -> QualityRunOutcome:
+    run_input = run.input_fingerprint or {}
+    configuration = resolve_manual_run_configuration(
+        frame,
+        target_column=run_input.get("target_column") or "",
+        target_column_created=bool(run_input.get("target_column_created", False)),
+        target_column_dtype=run_input.get("target_column_dtype"),
+        input_columns=run_input.get("input_columns"),
+    )
+    input_columns = configuration["input_columns"]
+    selected_model_id = run_input.get("selected_model_id")
+    if not selected_model_id:
+        raise QualityPipelineError("QUALITY_MODEL_REQUIRED")
+    _, bundle = load_registered_annotation_model(
+        db,
+        project_id=run.project_id,
+        model_id=selected_model_id,
+        artifact_service=artifact_service,
+    )
+    features = annotation_feature_frame(frame, bundle)
+    input_columns = list(features.columns)
+    labels, probabilities = run_registered_annotation_model(features, bundle)
+    weak_supervision = bool(run_input.get("weak_supervision", False))
+    normalized_rules: list[dict[str, Any]] = []
+    cluster_result: ClusterResult | None = None
+    if weak_supervision:
+        normalized_rules = normalize_annotation_process_rules(
+            run_input.get("process_rules") or [],
+            columns=[str(column) for column in frame.columns],
+            label_dtype=configuration["target_schema"]["dtype"],
+        )
+        importance = registered_annotation_feature_importance(bundle, input_columns)
+        cluster_result = run_clustering(
+            features.to_numpy(dtype=np.float64),
+            feature_names=input_columns,
+            feature_importance=importance,
+        )
+    samples = []
+    for index, (_, row) in enumerate(frame.iterrows()):
+        table_values = {str(column): _json_value(row[column]) for column in frame.columns}
+        feature_values = {column: float(features.iloc[index][column]) for column in input_columns}
+        probability = probabilities[index]
+        automatic_label = labels[index]
+        rule_hits: list[dict[str, str]] = []
+        if cluster_result is not None:
+            rule_label, rule_hits = apply_annotation_process_rules(table_values, normalized_rules)
+            if rule_label is not None:
+                automatic_label = rule_label
+        samples.append(SpotWeldQualitySample(
+            run_id=run.id,
+            source_row_index=int(index),
+            display_id=f"S-{index + 1:04d}",
+            table_values=table_values,
+            feature_values=feature_values,
+            waveforms={},
+            automatic_label=automatic_label,
+            rule_hits=rule_hits,
+            cluster_id=cluster_result.cluster_ids[index] if cluster_result is not None else None,
+            defect_probability=probability,
+            warning_level="high" if probability is not None and probability < 0.5 else "none",
+            review_status="pending_review",
+        ))
+    _ensure_quality_run_available(db, run.id, cancellation_requested)
+    db.query(SpotWeldQualitySample).filter(SpotWeldQualitySample.run_id == run.id).delete(synchronize_session=False)
+    db.add_all(samples)
+    run.status = "completed"
+    run.rule_set_version = "generic_annotation_v1"
+    run.feature_schema = configuration["input_schema"]
+    # Weak-supervision correction options must be limited to labels explicitly
+    # authored in rules; model-only predictions are not valid human labels.
+    inferred_classes = list(dict.fromkeys(
+        [str(rule["label"]) for rule in normalized_rules] if weak_supervision else labels,
+    ))
+    target_schema = {
+        **configuration["target_schema"],
+        "classes": inferred_classes,
+        "class_count": len(inferred_classes),
+    }
+    run.statistics = {
+        "row_count": int(len(frame)),
+        "valid_rows": int(len(frame)),
+        "label_mode": "automatic",
+        **configuration,
+        "target_schema": target_schema,
+        "selected_model_id": str(selected_model_id),
+        "weak_supervision": weak_supervision,
+        "cluster_labels": dict(run_input.get("cluster_labels") or {}),
+        "process_rules": normalized_rules,
+        "annotation_progress": _annotation_progress(len(samples), len(frame)),
+        "modeling_progress": _modeling_progress(0, 0),
+    }
+    run.automl_results = []
+    run.clustering_results = cluster_result.to_dict() if cluster_result is not None else {}
+    run.output_artifacts = {}
+    run.error_code = None
+    run.error_details = {}
+    _ensure_quality_run_available(db, run.id, cancellation_requested)
     db.commit()
     return QualityRunOutcome(str(run.id), "completed")
 
@@ -2143,6 +2603,7 @@ def execute_quality_run(
     worker_id: str | None = None,
     task_id: str | None = None,
     artifact_service: ArtifactService | None = None,
+    cancellation_requested: Callable[[], bool] | None = None,
 ) -> QualityRunOutcome:
     try:
         identifier = uuid.UUID(str(run_id))
@@ -2159,8 +2620,17 @@ def execute_quality_run(
         _, frame = resolve_dataset_frame(db, artifact_service, run.project_id, run.dataset_artifact_id)
         run_input = run.input_fingerprint or {}
         label_mode = run_input.get("label_mode", "automatic")
-        if label_mode == "manual" and not is_quality_report_frame(frame):
-            return _execute_manual_annotation_run(db, run, frame)
+        if run_input.get("workflow_kind") == "data_annotation":
+            if label_mode == "manual":
+                return _execute_manual_annotation_run(db, run, frame, cancellation_requested)
+            if label_mode == "automatic":
+                return _execute_generic_automatic_annotation_run(
+                    db,
+                    run,
+                    frame,
+                    artifact_service,
+                    cancellation_requested,
+                )
         features, schema, statistics = build_feature_frame(frame, field_mapping=run.field_mapping or None)
         canonical = canonicalize_report_frame(frame, run.field_mapping or None)
         waveforms = decode_report_waveforms(frame, run.field_mapping or None)
@@ -2494,6 +2964,9 @@ def execute_quality_run(
         run.error_details = {}
         db.commit()
         return QualityRunOutcome(str(run.id), "completed")
+    except QualityRunDeleted:
+        db.rollback()
+        return QualityRunOutcome(str(identifier), "cancelled")
     except QualityPipelineError as error:
         db.rollback()
         run = db.query(SpotWeldQualityRun).filter(SpotWeldQualityRun.id == identifier).first()
