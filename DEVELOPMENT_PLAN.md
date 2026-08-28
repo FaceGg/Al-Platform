@@ -452,3 +452,10 @@
 - 修复：保留后端真实状态和控制逻辑不变；`DataAnnotationPage` 对手动任务将 `completed` 映射为“已完成”，其余状态映射为“运行中”，并同步状态颜色；自动任务继续使用通用状态映射。
 - 验证：`DataAnnotationPage.test.tsx` `38/38 passed`；前端 `npm run build` 通过，仅有既有 ECharts 大 chunk warning；`git diff --check` 通过。
 - 剩余：未执行真实登录浏览器视觉复核、提交或远程门禁；工作区其他并行修改未纳入本次验证。
+
+## 54. 最新执行记录（2026-08-28，全部本地变更发布到 main）
+
+- 发布范围：将本地 `main` 相对 `origin/main` 的全部提交和工作树变更统一纳入发布，包括弱监督默认“其他”兜底规则、手动标注状态展示收敛、Agent 任务归属迁移与权限处理、Week 12 MinIO fixture 隔离、证据清单迁移头更新以及对应设计、计划和测试。
+- 发布前审计：确认当前仓库是普通主工作区，分支为 `main`，工作树干净；受控重试 `git fetch origin main --prune` 成功，确认 `origin/main` 是本地 `HEAD` 的祖先，不需要冲突合并或强制推送。
+- 验证：完整前端 Vitest `242 passed / 19 skipped`；前端 TypeScript/Vite 生产构建通过，仅有既有 ECharts 大 chunk warning；后端综合回归 `280 passed / 2 skipped / 164 subtests passed`；编排权限专项 `25 passed / 24 subtests passed`；Python `compileall`、`git diff --check origin/main..HEAD` 均通过。后端仅保留既有 `python_multipart` 弃用警告。
+- 发布策略：全部本地提交和本记录通过普通非强制 `git push origin main` 发布；推送后必须重新获取远端引用并确认本地 `HEAD`、`origin/main` 和 GitHub `refs/heads/main` SHA 一致，工作树保持干净。
