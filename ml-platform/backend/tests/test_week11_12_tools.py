@@ -118,6 +118,49 @@ class EnvironmentManifestTests(unittest.TestCase):
         self.assertNotIn("probe-value", rendered)
 
 
+class AcceptanceRunnerContractTests(unittest.TestCase):
+    def test_week11_runner_uses_versioned_executors_not_temp_test(self):
+        root = Path(__file__).resolve().parents[3]
+        runner = root / "ml-platform" / "backend" / "tools" / "acceptance" / "run_week11_acceptance.sh"
+        self.assertTrue(runner.is_file())
+        content = runner.read_text(encoding="utf-8")
+        self.assertIn("tools/acceptance/run_performance.sh", content)
+        self.assertIn("tools/acceptance/run_backup_restore.sh", content)
+        self.assertIn("tools/acceptance/run_upgrade_fixture.sh", content)
+        self.assertNotIn("temp_test", content)
+
+    def test_full_ci_runs_the_versioned_live_week11_executor(self):
+        root = Path(__file__).resolve().parents[3]
+        workflow = (root / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8",
+        )
+        self.assertIn("Run live Week 11 acceptance evidence", workflow)
+        self.assertIn(
+            "bash ml-platform/backend/tools/acceptance/run_week11_acceptance.sh",
+            workflow,
+        )
+
+    def test_upgrade_smoke_failure_stops_the_acceptance_runner(self):
+        root = Path(__file__).resolve().parents[3]
+        runner = (
+            root / "ml-platform" / "backend" / "tools" / "acceptance"
+            / "run_upgrade_fixture.sh"
+        )
+        content = runner.read_text(encoding="utf-8")
+        self.assertIn("raise SystemExit(0 if result[\"status\"] == \"passed\" else 1)", content)
+
+    def test_performance_runner_preserves_compose_managed_runtime_secrets(self):
+        root = Path(__file__).resolve().parents[3]
+        runner = (
+            root / "ml-platform" / "backend" / "tools" / "acceptance"
+            / "run_performance.sh"
+        )
+        content = runner.read_text(encoding="utf-8")
+        self.assertNotIn("/tmp/week9-12-secrets", content)
+        self.assertNotIn("docker run -d", content)
+        self.assertIn('docker cp "$BACKEND:$CONTAINER_PERFORMANCE/." "$PERFORMANCE"', content)
+
+
 class _OkHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)

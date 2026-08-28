@@ -101,6 +101,11 @@ class ImageSecurityContractTests(unittest.TestCase):
         self.assertIn("chown -R app:app /home/app data app/uploads /tmp/ml-platform", backend)
         self.assertIn("USER 1000:1000", backend)
 
+    def test_inference_runtime_uses_one_process_for_its_in_memory_registry(self):
+        content = (BACKEND / "Dockerfile.inference").read_text(encoding="utf-8")
+        self.assertIn('"--workers", "1"', content)
+        self.assertNotIn("INFERENCE_RUNTIME_WORKERS", content)
+
     def test_direct_security_dependencies_are_fixed(self):
         lines = {
             line.split("#", 1)[0].strip().casefold()

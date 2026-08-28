@@ -511,3 +511,30 @@
 - 修复：推理镜像新增 `INFERENCE_RUNTIME_WORKERS` 环境变量，默认 4，Uvicorn 使用该值启动；生产可显式覆盖，未修改限流阈值。
 - 验证：Dockerfile 变更已完成静态检查；需在新镜像上重新执行性能证据，并与新 SHA 的镜像 provenance 一致后才能判断是否达标。
 - 当前状态：该修复会改变镜像与提交 SHA，最终仍需一次新的完整远端门禁和三组 Week 11 证据；未将旧性能失败结果改写为通过。
+
+## 59. 最新执行记录（2026-08-28，验收提交边界更新）
+
+- 推理并发修复已提交并推送，当前 `HEAD=6cceaa00b3b38db88a1a788df807dfeb0a03f775`；Run `33143998452` 仍只绑定上一 SHA `53ae360...`，不能作为当前 HEAD 的最终验收证据。
+- 已完成本地 Dockerfile 构建验证和差异检查；当前性能失败结果、备份恢复阻断记录和历史证据均保留。
+- Week 9-12 仍为 `in_progress`。在不重新执行当前 SHA 的远端门禁、重新生成镜像 provenance 及三组 Week 11 真实证据前，不得运行通过最终 manifest 或标记验收完成。
+
+## 60. 最新执行记录（2026-08-28，推理并发修复后性能复核）
+
+- 新镜像 `INFERENCE_RUNTIME_WORKERS=4` 已成功构建并启动；固定负载性能复核绑定 `6cceaa00b3b38db88a1a788df807dfeb0a03f775`。
+- `core-read`、`enqueue`、`cold-model-load`、`welding-e2e` 场景完成；`warm-inference` 三轮仍失败，P95 `890-943ms`、P99 `1332-1476ms`，远高于 `200/500ms` 阈值。
+- 结论：单纯增加 Uvicorn worker 未解决主要瓶颈，不能继续通过修改阈值或重复同一脚本宣称通过；需进一步 profiling/架构优化后再生成性能证据。
+- 当前状态：Week 9-12 仍为 `in_progress`；备份恢复与 N-1 证据仍未生成，最终 manifest 仍被阻断。
+
+## 61. 最新执行记录（2026-08-28，Week 11 证据再次核验）
+
+- 备份恢复真实重跑已绕过错误的 `mc` 目录挂载并加入 Compose 网络；fixture seed 成功，但 `backup-postgres` 返回 `127`，后端运行镜像未提供 `pg_dump`，因此未生成可通过的 `restore-result.json`，W11-R2 仍为 `blocked`。
+- N-1 runbook 已修正目标 revision 为 `20260826_13`（与 `upgrade_fixture.py` 的 `EXPECTED_HEAD` 一致）；实际容器执行还发现临时 backend 容器未挂载升级脚本，未产生当前 SHA 的升级证据，W11-R3 仍为 `missing/blocked`。
+- 当前性能证据仍绑定 `6cceaa00b3b38db88a1a788df807dfeb0a03f775` 且 `warm-inference` 超阈值失败；未修改阈值或伪造结果。
+- 当前结论：Week 9-12 不能关闭，最终 `evidence_manifest.py` 继续保持阻断。需要将备份/N-1 执行器纳入可复用的受版本控制运行路径，并提供 PostgreSQL 客户端工具后再做一次真实证据生成。
+
+## 62. 最新执行记录（2026-08-28，受版本控制的 Week 11 执行器修复）
+
+- 已将 WP3/WP4/WP5 执行器置于 `ml-platform/backend/tools/acceptance/`，CI 的 Week 11-12 verification 在安全扫描和 frozen-stack web gate 后同一 job 内执行真实性能、备份恢复和 N-1 流程，再下载 Playwright receipt 并生成 final evidence manifest。
+- 性能运行器不再停掉 Compose backend 后用历史 `/tmp/week9-12-secrets` 手工重建容器；它保留 Compose 管理的 secret、证书、网络和运行时环境，在既有 backend 内生成原始结果，再复制到版本化 evidence 目录。新增回归合同拒绝旧临时路径和手工 `docker run`。
+- 对第 58-60 节的并发尝试补充更正：推理运行时拥有进程内 `RuntimeRegistry`，多 Uvicorn worker 不能共享已部署模型状态，会产生非 owner worker 的 `DEPLOYMENT_NOT_READY`。运行时镜像已恢复固定单 worker；性能门槛未修改，必须使用该候选提交重新实测。
+- 验证：Week 11/12 工具、镜像和 CI 合同 `158/158` 通过；所有 acceptance shell 的 `bash -n` 通过；尚未获得该候选提交的 WP3/WP4/WP5 实测结果、远程 full run 或 final manifest，因此 Week 9-12 保持 `in_progress`。

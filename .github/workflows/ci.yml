@@ -908,6 +908,11 @@ jobs:
             backend:/tmp/week12-web-security.json \
             "$ML_PLATFORM_EVIDENCE_DIR/security/web.json" || true
           exit "$web_status"
+      - name: Run live Week 11 acceptance evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ml-platform/backend/tools/acceptance/run_week11_acceptance.sh
       - name: Summarize security evidence
         working-directory: ml-platform/backend
         run: |
@@ -915,6 +920,26 @@ jobs:
             --input-dir "$ML_PLATFORM_EVIDENCE_DIR/security" \
             --output "$ML_PLATFORM_EVIDENCE_DIR/security/summary.json" \
             --source-commit "${GITHUB_SHA}"
+      - name: Download Playwright evidence
+        uses: actions/download-artifact@v5
+        with:
+          name: playwright-evidence
+          path: temp_test/week11-12/playwright
+      - name: Generate final evidence manifest
+        working-directory: ml-platform/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          export REMOTE_CI_RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          python -m tools.evidence_manifest \
+            --evidence-dir "$ML_PLATFORM_EVIDENCE_DIR" \
+            --output "$ML_PLATFORM_EVIDENCE_DIR/final-evidence-manifest.json"
+      - name: Stop live Week 11 acceptance stack
+        if: always()
+        shell: bash
+        run: |
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" down --volumes --remove-orphans || true
+          rm -f "$NOTIFICATION_CRYPTO_SECRET_FILE"
       - name: Upload verification evidence
         if: always()
         uses: actions/upload-artifact@v4
