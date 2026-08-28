@@ -36,6 +36,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { key: "/automl", icon: <ThunderboltOutlined />, label: t.nav.automl },
     { key: "/training", icon: <ExperimentOutlined />, label: t.nav.training },
     { key: "/orchestration", icon: <RobotOutlined />, label: t.nav.orchestration },
+    { key: "/api-marketplace", icon: <ApiOutlined />, label: t.nav.api_market },
     { type: "divider" as const },
     { key: "/knowledge", icon: <DatabaseOutlined />, label: t.nav.knowledge },
     { key: "/knowledge-graph", icon: <ApartmentOutlined />, label: t.knowledge?.graph || "Graph" },

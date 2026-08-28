@@ -32,12 +32,12 @@ export default function APIMarketplacePage() {
 
   const fetchData = async () => {
     setLoading(true);
-    try { const res: any = await apiGet("/api/platform/apis"); setData(res.items || []); }
+    try { const res: any = await apiGet("/platform/apis"); setData(res.items || []); }
     finally { setLoading(false); }
   };
 
   const handleDelete = async (id: string) => {
-    await apiDelete("/api/platform/apis/" + id);
+    await apiDelete("/platform/apis/" + id);
     notifyDashboardStatsChanged();
     message.success("Deleted"); fetchData();
   };

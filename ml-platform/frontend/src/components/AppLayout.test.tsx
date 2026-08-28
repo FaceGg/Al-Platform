@@ -59,6 +59,17 @@ describe("AppLayout", () => {
     );
     await waitFor(() => expect(document.querySelector(".ant-layout-sider")).toBeTruthy());
     expect(screen.getByText("数据标注")).toBeInTheDocument();
+    expect(screen.getByText(/API\s*(市场|Market)/)).toBeInTheDocument();
+  });
+
+  it("navigates to the API marketplace from the sidebar", async () => {
+    function LocationProbe() {
+      const location = useLocation();
+      return <output data-testid="location">{location.pathname}</output>;
+    }
+    render(<MemoryRouter><AppLayout><LocationProbe /></AppLayout></MemoryRouter>);
+    fireEvent.click(await screen.findByText(/API\s*(市场|Market)/));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/api-marketplace"));
   });
 
   it("marks the theme toggle and header with stable theme-aware hooks", async () => {

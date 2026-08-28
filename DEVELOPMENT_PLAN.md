@@ -145,6 +145,13 @@
 
 > 以上第 1–11 节为 Week 9–12 验收记录，最后更新日期固定为 2026-08-24。以下条目仅记录后续产品开发，不作为验收进度更新。
 
+## 11A. 验收续行（2026-08-28）
+
+- 当前发布 SHA `905d82cce113bb9493bc9c99b16d8b43337c0dec` 的普通 push Run `33131895648` 已完成 `success`；Quality Ubuntu/Windows、后端套件、前端测试和构建均通过，但 Production integration、Production experiment integration、Chromium acceptance、Week 11-12 verification 在该 push 模式下均为 `skipped`，不计入 Week 9-12 验收。
+- 已触发当前 SHA 的完整门禁 Run `33135264039`（`workflow_dispatch`, `mode=full`）。截至 2026-08-28 记录，Production integration、Production experiment integration、Quality Ubuntu/Windows 均为 `success`，Chromium acceptance 仍为 `in_progress`；Week 11-12 verification 尚未开始。必须等待并逐项核对所有 required jobs，任何 `failed`、`cancelled` 或 `skipped` 均保持未完成。
+- 本地 `run_suite.py` 已执行到 `test_week12_security_gates`；该模块在本机 300 秒超时，未取得完整 active suite 通过结论，记为 `failed/blocked`，不替代远端 full run。此前已通过的 `test_database_production`、`test_api_project_access`、`test_notification_models` 和 `test_week11_12_tools` 保持独立通过记录。
+- 当前工作树存在用户未提交的前端修改（`AppLayout*`、`APIMarketplacePage*`），未纳入本次验收提交，必须保留。
+
 ## 12. 最新执行记录（2026-08-24，手动标注详情修复）
 
 - 问题现象：手动标注样本后队列进度始终少 1；只标注一个样本时退出再进入显示 `0`。人工标签编辑区在运行中任务轮询时自动退出，新增标签丢失；标签按钮宽度随内容和编辑按钮变化。
@@ -453,9 +460,25 @@
 - 验证：`DataAnnotationPage.test.tsx` `38/38 passed`；前端 `npm run build` 通过，仅有既有 ECharts 大 chunk warning；`git diff --check` 通过。
 - 剩余：未执行真实登录浏览器视觉复核、提交或远程门禁；工作区其他并行修改未纳入本次验证。
 
+## 54. 最新执行记录（2026-08-28，API 市场导航入口与接口路径修复）
+
+- 问题现象：API 市场页面虽有路由，但侧边栏没有入口；页面请求使用了相对 `/api` 客户端下的重复 `/api` 前缀，且直接访问后端地址的 `/api-marketplace` 返回 404。
+- 根因：导航菜单遗漏 `/api-marketplace`；`apiGet`/`apiDelete` 已配置 `baseURL=/api`，页面又传入 `/api/platform/apis`，导致接口路径重复。
+- 修复：侧边栏加入 API 市场菜单项；API 页面改用 `/platform/apis` 和 `/platform/apis/{id}`，最终请求为 `/api/platform/apis`；前端路由保持 `/api-marketplace`，必须通过前端端口访问。
+- 验证：AppLayout 与 API 页面聚焦测试 `8/8 passed`；前端生产构建通过；`git diff --check` 通过。
+- 剩余：当前 `/api/platform/apis` 仍要求有效登录 Token；未执行真实登录浏览器复核、提交或远程门禁。
+
 ## 54. 最新执行记录（2026-08-28，全部本地变更发布到 main）
 
 - 发布范围：将本地 `main` 相对 `origin/main` 的全部提交和工作树变更统一纳入发布，包括弱监督默认“其他”兜底规则、手动标注状态展示收敛、Agent 任务归属迁移与权限处理、Week 12 MinIO fixture 隔离、证据清单迁移头更新以及对应设计、计划和测试。
 - 发布前审计：确认当前仓库是普通主工作区，分支为 `main`，工作树干净；受控重试 `git fetch origin main --prune` 成功，确认 `origin/main` 是本地 `HEAD` 的祖先，不需要冲突合并或强制推送。
 - 验证：完整前端 Vitest `242 passed / 19 skipped`；前端 TypeScript/Vite 生产构建通过，仅有既有 ECharts 大 chunk warning；后端综合回归 `280 passed / 2 skipped / 164 subtests passed`；编排权限专项 `25 passed / 24 subtests passed`；Python `compileall`、`git diff --check origin/main..HEAD` 均通过。后端仅保留既有 `python_multipart` 弃用警告。
 - 发布策略：全部本地提交和本记录通过普通非强制 `git push origin main` 发布；推送后必须重新获取远端引用并确认本地 `HEAD`、`origin/main` 和 GitHub `refs/heads/main` SHA 一致，工作树保持干净。
+
+## 55. 最新执行记录（2026-08-28，API市场与应用编排完成计划）
+
+- 用户确认需要为“API市场”和“应用编排”编写实现计划；本轮只写计划，不宣称功能已完成。
+- 已将范围拆为两个可独立交付的计划：`ml-platform/docs/superpowers/plans/2026-08-28-api-management-completion.md` 与 `ml-platform/docs/superpowers/plans/2026-08-28-agent-orchestration-completion.md`。
+- API市场计划先于应用编排执行，原因是其依赖面较小；计划覆盖 Pydantic 契约、Alembic 迁移、项目权限、发布幂等、同源认证测试、工作台统计、前端 CRUD、TDD、Playwright 和文档。
+- 应用编排计划明确当前原型缺口：规划未调用 LLM、计划未持久化、无 DAG worker 执行、审核仅在进程内存；计划覆盖持久化 plan/node/edge/attempt/review/message、状态机、调度/重试/取消/恢复、前端命令和 API 发布前置条件。
+- 状态：`planned`。尚未执行实现、迁移、测试、真实登录浏览器验收或远端门禁；现有工作树用户修改保持不变。
