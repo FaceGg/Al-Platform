@@ -8,7 +8,7 @@ import AppLayout from "../components/AppLayout";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
 import { useI18n } from "../i18n";
-import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
+import { normalizeTaskStatus, taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 import { formatApiError, default as apiClient } from "../api/client";
 import { listDatasets } from "../api/datasets";
 import {
@@ -111,7 +111,17 @@ function normalizeLabelDtype(value: string | null | undefined): CreatedTargetCol
 }
 
 function runStatusText(run: QualityRun, lang: "zh" | "en"): string {
-  return taskStatusLabel(run.status, lang);
+  const status = run.label_mode === "manual"
+    ? (normalizeTaskStatus(run.status) === "completed" ? "completed" : "running")
+    : run.status;
+  return taskStatusLabel(status, lang);
+}
+
+function runStatusColor(run: QualityRun): string {
+  const status = run.label_mode === "manual"
+    ? (normalizeTaskStatus(run.status) === "completed" ? "completed" : "running")
+    : run.status;
+  return taskStatusColor(status);
 }
 
 const warningColor: Record<string, string> = {
@@ -167,7 +177,7 @@ export default function DataAnnotationPage() {
   const [weakSupervision, setWeakSupervision] = useState(false);
   const [labelDtype, setLabelDtype] = useState<CreatedTargetColumnDtype>("string");
   const [annotationRules, setAnnotationRules] = useState<AnnotationRule[]>([
-    { id: "rule-1", label: "", tokens: [
+    { id: "rule-1", kind: "condition", label: "", tokens: [
       { kind: "data", value: "" },
       { kind: "logical_operator", value: ">" },
       { kind: "number", value: "" },
@@ -525,12 +535,14 @@ export default function DataAnnotationPage() {
 
   const addAnnotationRule = () => setAnnotationRules((current) => [...current, {
     id: `rule-${Date.now()}`,
+    kind: "condition",
     label: "",
     tokens: [{ kind: "data", value: "" }, { kind: "logical_operator", value: ">" }, { kind: "number", value: "" }],
   }]);
 
   const serializedAnnotationRules = (): AnnotationProcessRule[] => annotationRules.map((rule) => ({
     id: rule.id,
+    kind: rule.kind || "condition",
     label: rule.label,
     tokens: rule.tokens.map((token) => ({ kind: token.kind, value: token.value })),
   }));
@@ -551,7 +563,7 @@ export default function DataAnnotationPage() {
         : dtype === "float"
           ? rawLabel !== "" && Number.isFinite(labelNumber)
           : rawLabel !== "";
-      const validTokens = rule.tokens.length >= 3
+      const validTokens = rule.kind === "fallback" ? rule.tokens.length === 0 : rule.tokens.length >= 3
         && rule.tokens.every((token, index) => token.value !== "" && (index % 2 === 0 ? operandKinds : operatorKinds).has(token.kind))
         && operandKinds.has(rule.tokens[rule.tokens.length - 1].kind)
         && rule.tokens.some((token) => token.kind === "logical_operator" && !["and", "or"].includes(token.value));
@@ -897,7 +909,7 @@ export default function DataAnnotationPage() {
     },
     { title: copy.project, key: "project", render: (_: unknown, run: QualityRun) => run.project_name || run.project_id || "-" },
     { title: copy.creator, key: "creator", render: (_: unknown, run: QualityRun) => run.created_by_name || run.created_by_id || "-" },
-    { title: copy.modeStatus, key: "status", render: (_: unknown, run: QualityRun) => <Tag color={taskStatusColor(run.status)}>{runStatusText(run, lang)}</Tag> },
+    { title: copy.modeStatus, key: "status", render: (_: unknown, run: QualityRun) => <Tag color={runStatusColor(run)}>{runStatusText(run, lang)}</Tag> },
     { title: copy.progress, key: "progress", render: (_: unknown, run: QualityRun) => annotationProgressText(run) },
     {
       title: copy.actions,
@@ -1055,7 +1067,19 @@ export default function DataAnnotationPage() {
               <p>{copy.weakHint}</p>
             </div>
             <label className="data-annotation__toggle-field" htmlFor="annotation-weak-supervision-toggle">
-              <input id="annotation-weak-supervision-toggle" aria-label={copy.weakTitle} type="checkbox" checked={weakSupervision} onChange={(event) => { setWeakSupervision(event.target.checked); setClusterPreview(null); }} />
+              <input id="annotation-weak-supervision-toggle" aria-label={copy.weakTitle} type="checkbox" checked={weakSupervision} onChange={(event) => {
+                const enabled = event.target.checked;
+                if (enabled) {
+                  setAnnotationRules((current) => current.some((rule) => rule.kind === "fallback") ? current : [...current, {
+                    id: `fallback-rule-${Date.now()}`,
+                    kind: "fallback",
+                    label: copy.fallbackLabel,
+                    tokens: [],
+                  }]);
+                }
+                setWeakSupervision(enabled);
+                setClusterPreview(null);
+              }} />
               <span className="data-annotation__toggle-track" aria-hidden="true"><span className="data-annotation__toggle-thumb" /></span>
               <span>{weakSupervision ? copy.enabled : copy.enable}</span>
             </label>
@@ -1081,8 +1105,8 @@ export default function DataAnnotationPage() {
               <div className="data-annotation__rules-head"><div><h3>{copy.rulesTitle}</h3><p>{copy.rulesHint}</p></div><button type="button" className="ant-btn" onClick={addAnnotationRule}>{copy.addRow}</button></div>
               <div className="data-annotation__label-type-row"><label htmlFor="annotation-label-dtype">{copy.labelType}</label><select id="annotation-label-dtype" aria-label={copy.labelType} value={labelDtype} onChange={(event) => setLabelDtype(event.target.value as CreatedTargetColumnDtype)}><option value="int">{copy.int}</option><option value="float">{copy.float}</option><option value="string">{copy.stringType}</option></select></div>
               {annotationRules.map((rule) => <div className="data-annotation__annotation-rule" key={rule.id}>
-                <div className="data-annotation__annotation-rule-head"><strong>{copy.rule}</strong><Tooltip title={copy.deleteRule}><button type="button" className="ant-btn ant-btn-icon-only ant-btn-danger-icon" aria-label={lang === "zh" ? "删除" : `${copy.deleteRule} ${rule.id}`} onClick={() => removeAnnotationRule(rule.id)} disabled={annotationRules.length === 1}><DeleteOutlined /></button></Tooltip></div>
-                <div className="data-annotation__rule-tokens">{rule.tokens.map((token, index) => {
+                <div className="data-annotation__annotation-rule-head"><strong>{copy.rule}</strong><Tooltip title={copy.deleteRule}><button type="button" className="ant-btn ant-btn-icon-only ant-btn-danger-icon" aria-label={lang === "zh" ? "删除" : `${copy.deleteRule} ${rule.id}`} onClick={() => removeAnnotationRule(rule.id)} disabled={annotationRules.length === 1 && rule.kind !== "fallback"}><DeleteOutlined /></button></Tooltip></div>
+                {rule.kind === "fallback" ? <div className="data-annotation__rule-tokens"><span className="data-annotation__rule-token-value">{copy.fallbackCondition}</span></div> : <div className="data-annotation__rule-tokens">{rule.tokens.map((token, index) => {
                   const isEditing = token.value === "" || (editingRuleToken?.ruleId === rule.id && editingRuleToken.tokenIndex === index);
                   return <div className={`data-annotation__rule-token ${isEditing ? "is-editing" : "is-complete"}`} key={`${rule.id}-${index}`}>
                     {isEditing ? <>
@@ -1096,7 +1120,7 @@ export default function DataAnnotationPage() {
                     </> : <button type="button" className="data-annotation__rule-token-value" aria-label={lang === "zh" ? `编辑条件 ${index + 1}：${token.value}` : `${copy.editCondition} ${index + 1}: ${token.value}`} onClick={() => setEditingRuleToken({ ruleId: rule.id, tokenIndex: index })}>{token.value}</button>}
                     <Tooltip title={copy.deleteCondition}><button type="button" className="data-annotation__rule-token-delete" aria-label={lang === "zh" ? `删除条件 ${index + 1}` : `${copy.deleteCondition} ${index + 1}`} onClick={() => removeAnnotationRuleToken(rule.id, index)}>×</button></Tooltip>
                   </div>;
-                })}<button type="button" className="ant-btn ant-btn-sm" onClick={() => addAnnotationRuleToken(rule.id)}>{copy.addCondition}</button></div>
+                })}<button type="button" className="ant-btn ant-btn-sm" onClick={() => addAnnotationRuleToken(rule.id)}>{copy.addCondition}</button></div>}
                 <div className="data-annotation__annotation-rule-label"><label htmlFor={`annotation-rule-label-${rule.id}`}>{copy.hitLabel}</label><input id={`annotation-rule-label-${rule.id}`} aria-label={lang === "zh" ? `规则 ${rule.id} 标签` : `${copy.rule} ${rule.id} ${copy.hitLabel}`} value={rule.label} onChange={(event) => updateAnnotationRule(rule.id, { label: event.target.value })} placeholder={copy.inputLabel} /></div>
               </div>)}
             </div>}
@@ -1148,7 +1172,7 @@ export default function DataAnnotationPage() {
           )}
         </section>
         <section className="spot-weld-annotation__region spot-weld-annotation__detail" aria-labelledby="spot-weld-detail-title">
-          <div className="spot-weld-annotation__region-head"><h3 id="spot-weld-detail-title">{copy.sampleDetail}</h3>{selectedRun && <Tag color={taskStatusColor(selectedRun.status)}>{runStatusText(selectedRun, lang)}</Tag>}</div>
+          <div className="spot-weld-annotation__region-head"><h3 id="spot-weld-detail-title">{copy.sampleDetail}</h3>{selectedRun && <Tag color={runStatusColor(selectedRun)}>{runStatusText(selectedRun, lang)}</Tag>}</div>
           {loadingDetail ? <Spin /> : !selected ? <Empty description={copy.selectSample} /> : <>
             <section className="spot-weld-annotation__label-editor" aria-label={copy.humanLabel}>
               <div className="spot-weld-annotation__label-head">

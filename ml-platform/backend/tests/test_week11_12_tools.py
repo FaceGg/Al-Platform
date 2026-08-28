@@ -2904,7 +2904,7 @@ class UpgradeFixtureTests(unittest.TestCase):
 
     def test_release_n_minus_one_contract_targets_current_merge_head(self):
         self.assertEqual(EXPECTED_N_MINUS_ONE, "20260720_10_security_notifications")
-        self.assertEqual(EXPECTED_HEAD, "20260819_12")
+        self.assertEqual(EXPECTED_HEAD, "20260826_13")
 
     def test_wrong_target_revision_fails_closed(self):
         with self.assertRaises(ValueError):

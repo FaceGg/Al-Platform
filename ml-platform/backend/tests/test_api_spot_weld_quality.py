@@ -620,15 +620,19 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
             "label_dtype": "int",
             "selected_model_id": str(uuid.uuid4()),
             "weak_supervision": True,
-            "process_rules": [{
-                "id": "rule-fault",
-                "label": "1",
-                "tokens": [
-                    {"kind": "data", "value": "Fault"},
-                    {"kind": "logical_operator", "value": "=="},
-                    {"kind": "number", "value": 1},
-                ],
-            }],
+            "process_rules": [
+                {
+                    "id": "rule-fault",
+                    "kind": "condition",
+                    "label": "1",
+                    "tokens": [
+                        {"kind": "data", "value": "Fault"},
+                        {"kind": "logical_operator", "value": "=="},
+                        {"kind": "number", "value": 1},
+                    ],
+                },
+                {"id": "fallback", "kind": "fallback", "label": "0", "tokens": []},
+            ],
         }
         bundle = {"feature_schema_names": ["wld1c"]}
         feature_frame = pd.DataFrame({"wld1c": [1.0, 2.0, 3.0]})
@@ -647,6 +651,10 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         self.assertEqual(validation.status_code, 200, validation.text)
         self.assertEqual(created.status_code, 202, created.text)
         self.assertEqual(created.json()["process_rules"][0]["tokens"][0]["value"], "Fault")
+        self.assertEqual(created.json()["process_rules"][0]["kind"], "condition")
+        self.assertEqual(created.json()["process_rules"][1], {
+            "id": "fallback", "kind": "fallback", "label": "0", "tokens": [],
+        })
 
     def test_annotation_uses_generic_path_for_complete_spot_weld_shaped_dataset(self):
         payload = {

@@ -235,22 +235,33 @@ def normalize_annotation_process_rules(
     target_schema = {"dtype": normalized_dtype}
     allowed_columns = {str(column) for column in columns}
     normalized: list[dict[str, Any]] = []
+    fallback_seen = False
     for index, rule in enumerate(process_rules):
         if not isinstance(rule, Mapping):
             raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
         raw_tokens = rule.get("tokens")
         if not isinstance(raw_tokens, Sequence) or isinstance(raw_tokens, (str, bytes)):
             raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
-        tokens = [
-            _annotation_rule_value(token, allowed_columns)
-            for token in raw_tokens
-            if isinstance(token, Mapping)
-        ]
-        if len(tokens) != len(raw_tokens):
+        kind = str(rule.get("kind") or "condition")
+        if kind not in {"condition", "fallback"}:
             raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
-        _validate_annotation_rule_tokens(tokens)
+        if kind == "fallback":
+            if fallback_seen or raw_tokens:
+                raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
+            fallback_seen = True
+            tokens = []
+        else:
+            tokens = [
+                _annotation_rule_value(token, allowed_columns)
+                for token in raw_tokens
+                if isinstance(token, Mapping)
+            ]
+            if len(tokens) != len(raw_tokens):
+                raise QualityPipelineError("QUALITY_ANNOTATION_RULE_INVALID")
+            _validate_annotation_rule_tokens(tokens)
         normalized.append({
             "id": str(rule.get("id") or f"rule-{index + 1}"),
+            "kind": kind,
             "tokens": tokens,
             "label": normalize_annotation_label(rule.get("label"), target_schema),
         })
@@ -374,7 +385,11 @@ def apply_annotation_process_rules(
     values: Mapping[str, Any],
     process_rules: Sequence[Mapping[str, Any]],
 ) -> tuple[str | None, list[dict[str, str]]]:
+    fallback_rule: Mapping[str, Any] | None = None
     for rule in process_rules:
+        if str(rule.get("kind") or "condition") == "fallback":
+            fallback_rule = rule
+            continue
         try:
             matches = _AnnotationRuleParser(rule.get("tokens") or [], values).parse()
         except (TypeError, ValueError, ZeroDivisionError, IndexError):
@@ -386,6 +401,13 @@ def apply_annotation_process_rules(
                 "label": label,
                 "reason": "命中用户配置的弱监督标注规则",
             }]
+    if fallback_rule is not None:
+        label = str(fallback_rule.get("label") or "")
+        return label, [{
+            "code": str(fallback_rule.get("id") or "annotation_fallback"),
+            "label": label,
+            "reason": "未命中其他弱监督规则，使用兜底标签",
+        }]
     return None, []
 
 

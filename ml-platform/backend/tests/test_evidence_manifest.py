@@ -458,7 +458,7 @@ class EvidenceManifestTests(unittest.TestCase):
             payload = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(manifest["status"], "passed")
         self.assertEqual(payload["commit"], self._COMMIT)
-        self.assertEqual(payload["migration_head"], "20260819_12")
+        self.assertEqual(payload["migration_head"], "20260826_13")
         paths = [item["path"] for item in payload["files"]]
         self.assertEqual(paths, sorted(paths))
         self.assertIn("environment.json", paths)
@@ -469,7 +469,7 @@ class EvidenceManifestTests(unittest.TestCase):
         )
 
     def test_manifest_targets_the_current_release_merge_head(self):
-        self.assertEqual(MIGRATION_HEAD, "20260819_12")
+        self.assertEqual(MIGRATION_HEAD, "20260826_13")
 
     def test_generate_fails_closed_for_missing_or_failed_required_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

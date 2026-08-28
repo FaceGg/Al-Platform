@@ -159,6 +159,7 @@ export interface QualityClusterPreview {
 }
 
 export type AnnotationRuleTokenKind = "data" | "number_operator" | "logical_operator" | "number" | "string";
+export type AnnotationProcessRuleKind = "condition" | "fallback";
 
 export interface AnnotationProcessRuleToken {
   kind: AnnotationRuleTokenKind;
@@ -167,6 +168,7 @@ export interface AnnotationProcessRuleToken {
 
 export interface AnnotationProcessRule {
   id: string;
+  kind?: AnnotationProcessRuleKind;
   label: string;
   tokens: AnnotationProcessRuleToken[];
 }

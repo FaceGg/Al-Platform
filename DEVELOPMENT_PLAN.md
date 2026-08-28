@@ -1,7 +1,9 @@
 # 汽车焊接工业 AI 平台开发计划
 
 > 文档状态：当前进度与未完成任务
-> 更新日期：2026-08-26
+> 文档更新日期：2026-08-27
+> 验收工作最后更新：2026-08-24（第 1–11 节）
+> 其后条目：产品开发记录，不改变 Week 9–12 验收冻结状态
 > 项目目录：`E:\codex_workspace\agent_spot_welding`
 
 ## 1. 使用规则
@@ -140,6 +142,8 @@
 - Chromium acceptance 在“Run standard browser regression”失败；日志显示宿主 E2E 继承了隔离栈的 `ARTIFACT_STORAGE_BACKEND=minio` 与 `MINIO_ENDPOINT=127.0.0.1:9000`，但标准 SQLite 回归未启动 MinIO，fixture 上传 artifact 时连接被拒绝。隔离 Week 12 和 Week 11-12 verification 因前置失败均 `skipped`。
 - 修复已在工作树完成：标准 Playwright webServer 与 model fixture 强制 `ARTIFACT_STORAGE_BACKEND=local`，CI 标准步骤显式声明 `local`，并加入 workflow 合同断言。外部 Week 12 模式仍使用 MinIO。
 - 本地验证：前端 Week Acceptance Vitest `7/7 passed`；TypeScript/Python 语法检查通过；后端 pytest 未能执行，因为当前捆绑 Python 未安装 `pytest`/`PyYAML`，归类为 `skipped`，不计通过。下一步需提交新 SHA 并重新运行 full workflow。
+
+> 以上第 1–11 节为 Week 9–12 验收记录，最后更新日期固定为 2026-08-24。以下条目仅记录后续产品开发，不作为验收进度更新。
 
 ## 12. 最新执行记录（2026-08-24，手动标注详情修复）
 
@@ -433,3 +437,18 @@
 - 修复：将新增公共操作组件、旧标注页和编排页测试登记到 Week 12；实验删除改用明确的 `pending/queued/running/cancel_requested` 阻塞集合；质量建模配置恢复直接读取请求中的目标列、数据类型和输入列。
 - 验证：聚焦回归前端 `7/7 passed`、后端 `51 passed / 11 subtests passed`；完整前端 `239 passed / 19 skipped`；后端综合测试 `202 passed / 41 subtests passed`，仅保留既有依赖弃用警告。
 - 剩余：等待生产构建、暂存差异检查、Git 提交和 GitHub `main` 推送验证。
+
+## 52. 最新执行记录（2026-08-28，弱监督默认“其他”兜底规则）
+
+- 需求：数据标注的自动标注流程启用“弱监督标注策略”时，在“标注规则与标签”中默认增加“其他”规则，表达未命中用户普通规则的所有情况；该规则可以删除，仅允许编辑标签名称。
+- 根因：原有 `process_rules` 只有条件 token，没有显式兜底语义；未命中规则时直接保留模型预测，前端也无法用稳定合同区分普通规则和“所有其他情况”。
+- 修复：前后端规则合同增加兼容性的 `kind: condition | fallback`，历史缺省规则按 `condition` 处理。启用弱监督时前端仅在不存在兜底项时追加默认“其他 / Other”；兜底条件只读显示“除以上规则之外 / All other cases”，标签可编辑并可使用右上角删除按钮删除。序列化和标签类型校验识别兜底规则。后端限制最多一条兜底规则且要求空 tokens，先匹配全部普通规则，均未命中时才返回兜底标签；删除兜底规则后继续沿用模型预测。
+- 验证：TDD 首次前端用例因找不到默认“其他”规则失败；实现后前端 `DataAnnotationPage + spotWeldQuality API` 测试 `43/43 passed`。后端服务与 API 聚焦测试 `4 passed / 3 subtests passed` 和 `1 passed`，相关完整测试 `74 passed / 25 subtests passed`；前端 TypeScript/Vite 生产构建通过，仅保留既有 ECharts 大 chunk warning；后端 `py_compile` 和 `git diff --check` 通过。
+- 剩余：尚未在已登录真实浏览器会话中执行中文/英文视觉复核；当前工作区存在其他并行 CI、验收、迁移和编排修改，本功能未覆盖或回退这些变更。
+## 53. 最新执行记录（2026-08-28，手动标注状态展示收敛）
+
+- 需求：数据标注中的手动标注任务只展示“运行中”和“已完成”；自动标注任务状态保持不变。
+- 根因：前端任务列表和工作区直接使用通用状态映射，手动任务的失败、取消状态会透出到用户界面。
+- 修复：保留后端真实状态和控制逻辑不变；`DataAnnotationPage` 对手动任务将 `completed` 映射为“已完成”，其余状态映射为“运行中”，并同步状态颜色；自动任务继续使用通用状态映射。
+- 验证：`DataAnnotationPage.test.tsx` `38/38 passed`；前端 `npm run build` 通过，仅有既有 ECharts 大 chunk warning；`git diff --check` 通过。
+- 剩余：未执行真实登录浏览器视觉复核、提交或远程门禁；工作区其他并行修改未纳入本次验证。

@@ -594,6 +594,46 @@ class TestSpotWeldQualityService(unittest.TestCase):
                 label_dtype="int",
             )
 
+    def test_annotation_rules_use_fallback_only_after_condition_rules_miss(self):
+        rules = normalize_annotation_process_rules(
+            [
+                {
+                    "id": "hot",
+                    "label": "hot",
+                    "tokens": [
+                        {"kind": "data", "value": "temperature"},
+                        {"kind": "logical_operator", "value": ">"},
+                        {"kind": "number", "value": 10},
+                    ],
+                },
+                {"id": "other", "kind": "fallback", "label": "other", "tokens": []},
+            ],
+            columns=["temperature"],
+            label_dtype="string",
+        )
+
+        self.assertEqual(rules[0]["kind"], "condition")
+        self.assertEqual(rules[1]["kind"], "fallback")
+        self.assertEqual(apply_annotation_process_rules({"temperature": 12}, rules)[0], "hot")
+        fallback_label, fallback_hits = apply_annotation_process_rules({"temperature": 2}, rules)
+        self.assertEqual(fallback_label, "other")
+        self.assertEqual(fallback_hits[0]["code"], "other")
+
+    def test_annotation_rules_reject_invalid_fallback_contracts(self):
+        fallback = {"id": "other", "kind": "fallback", "label": "other", "tokens": []}
+        invalid_rules = [
+            [fallback, {**fallback, "id": "other-2"}],
+            [{**fallback, "kind": "unknown"}],
+            [{**fallback, "tokens": [{"kind": "number", "value": 1}]}],
+        ]
+        for rules in invalid_rules:
+            with self.subTest(rules=rules), self.assertRaisesRegex(
+                QualityPipelineError, "QUALITY_ANNOTATION_RULE_INVALID"
+            ):
+                normalize_annotation_process_rules(rules, columns=["temperature"], label_dtype="string")
+
+        self.assertEqual(apply_annotation_process_rules({"temperature": 2}, []), (None, []))
+
     def test_registered_model_annotation_requires_valid_feature_importance(self):
         class ModelWithoutImportance:
             classes_ = np.array(["normal", "strong_splatter"])

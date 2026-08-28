@@ -110,7 +110,7 @@ jobs:
       MINIO_SECRET_KEY: ci-browser-minio-root-password
       MINIO_BUCKET: ml-platform
       ARTIFACT_STORAGE_BACKEND: minio
-      MINIO_ENDPOINT: 127.0.0.1:9000
+      MINIO_ENDPOINT: minio:9000
       MINIO_SECURE: "0"
       MLFLOW_BACKEND_STORE_URI: postgresql+psycopg://ml_platform:ci-browser-postgres-password@postgres:5432/mlflow
       MLFLOW_ARTIFACT_ROOT: s3://ml-platform/mlflow
@@ -138,6 +138,7 @@ jobs:
       WEEK12_OWNER_USERNAME: admin
       WEEK12_OWNER_PASSWORD: admin123
       WEEK12_FIXTURE_DATABASE_URL: postgresql+psycopg://ml_platform:ci-browser-postgres-password@127.0.0.1:15432/ml_platform
+      WEEK12_FIXTURE_MINIO_ENDPOINT: 127.0.0.1:9000
       WEEK12_INFERENCE_RUNTIME_URL: http://127.0.0.1:17000
       WEEK12_INFERENCE_INTERNAL_SECRET: ci-browser-inference-secret-at-least-32-bytes # gitleaks:allow
       WEEK12_MAILPIT_API_URL: http://127.0.0.1:18082/api/v1/messages

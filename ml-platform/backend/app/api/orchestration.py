@@ -56,7 +56,9 @@ def _task_for_user(db, task_id, user):
 @contextmanager
 def _task_action(db, task, request, actor, permission, action, changes=None):
     if task.project_id is not None:
-        access = require_project_access(db, task.project_id, actor.id, permission)
+        access = resolve_project_access(db, task.project_id, actor.id)
+        if access is None:
+            raise HTTPException(404, "Project not found")
         with audit_service(db).project_action(
             db, request=request, actor=actor, access=access, permission=permission,
             intent=AuditIntent(

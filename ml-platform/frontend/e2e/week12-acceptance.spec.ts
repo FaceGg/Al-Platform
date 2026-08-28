@@ -24,6 +24,7 @@ type Week12AcceptanceConfig = {
   ownerUsername?: string;
   ownerPassword?: string;
   fixtureDatabaseUrl?: string;
+  fixtureMinioEndpoint?: string;
   inferenceRuntimeUrl?: string;
   inferenceInternalSecret?: string;
   mailpitApiUrl?: string;
@@ -53,6 +54,7 @@ const acceptance: Week12AcceptanceConfig = {
   ownerUsername: environmentValue("WEEK12_OWNER_USERNAME"),
   ownerPassword: environmentValue("WEEK12_OWNER_PASSWORD"),
   fixtureDatabaseUrl: environmentValue("WEEK12_FIXTURE_DATABASE_URL"),
+  fixtureMinioEndpoint: environmentValue("WEEK12_FIXTURE_MINIO_ENDPOINT"),
   inferenceRuntimeUrl: environmentValue("WEEK12_INFERENCE_RUNTIME_URL"),
   inferenceInternalSecret: environmentValue("WEEK12_INFERENCE_INTERNAL_SECRET"),
   mailpitApiUrl: environmentValue("WEEK12_MAILPIT_API_URL"),
@@ -70,6 +72,7 @@ const requiredAcceptanceEnvironment = [
   ["WEEK12_OWNER_USERNAME", acceptance.ownerUsername],
   ["WEEK12_OWNER_PASSWORD", acceptance.ownerPassword],
   ["WEEK12_FIXTURE_DATABASE_URL", acceptance.fixtureDatabaseUrl],
+  ["WEEK12_FIXTURE_MINIO_ENDPOINT", acceptance.fixtureMinioEndpoint],
   ["WEEK12_INFERENCE_RUNTIME_URL", acceptance.inferenceRuntimeUrl],
   ["WEEK12_INFERENCE_INTERNAL_SECRET", acceptance.inferenceInternalSecret],
   ["WEEK12_MAILPIT_API_URL", acceptance.mailpitApiUrl],
@@ -133,6 +136,10 @@ function fixtureEnvironment(config: Week12AcceptanceConfig): NodeJS.ProcessEnv {
   return {
     ...process.env,
     DATABASE_URL: required(config.fixtureDatabaseUrl, "WEEK12_FIXTURE_DATABASE_URL"),
+    MINIO_ENDPOINT: required(
+      config.fixtureMinioEndpoint,
+      "WEEK12_FIXTURE_MINIO_ENDPOINT",
+    ),
     INFERENCE_RUNTIME_URL: required(config.inferenceRuntimeUrl, "WEEK12_INFERENCE_RUNTIME_URL"),
     INFERENCE_INTERNAL_SECRET: required(
       config.inferenceInternalSecret,

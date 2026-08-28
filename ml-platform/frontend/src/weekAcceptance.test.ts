@@ -131,6 +131,10 @@ describe("frontend acceptance manifest", () => {
 
   it("uses an explicit external Week 12 stack without starting local browser services", () => {
     const config = readFileSync(resolve(process.cwd(), "playwright.config.ts"), "utf-8");
+    const spec = readFileSync(
+      resolve(process.cwd(), "e2e", "week12-acceptance.spec.ts"),
+      "utf-8",
+    );
 
     expect(config).toContain(
       'const externalAcceptanceBaseUrl = process.env.WEEK12_ACCEPTANCE_BASE_URL?.trim();',
@@ -143,6 +147,9 @@ describe("frontend acceptance manifest", () => {
     expect(config).toContain('trace: useExternalAcceptanceStack ? "on" : "on-first-retry"');
     expect(config).toContain('const externalAcceptanceReportPath = path.join(');
     expect(config).toContain('["json", { outputFile: externalAcceptanceReportPath }]');
+    expect(spec).toContain('fixtureMinioEndpoint: environmentValue("WEEK12_FIXTURE_MINIO_ENDPOINT")');
+    expect(spec).toContain('MINIO_ENDPOINT: required(');
+    expect(spec).toContain('"WEEK12_FIXTURE_MINIO_ENDPOINT",');
   });
 
   it("keeps every secondary notification role context on the configured acceptance stack", () => {

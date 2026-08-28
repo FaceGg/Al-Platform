@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import DataAnnotationPage from "./DataAnnotationPage";
+import { translations } from "../i18n";
 
 const { get, post, put, remove, datasets } = vi.hoisted(() => ({
   get: vi.fn(), post: vi.fn(), put: vi.fn(), remove: vi.fn(), datasets: vi.fn(),
@@ -202,6 +203,11 @@ describe("DataAnnotationPage", () => {
     await waitFor(() => expect(remove).toHaveBeenCalledWith("/projects/project-1/spot-weld/runs/run-manual"));
   });
 
+  it("provides English copy for the weak-supervision fallback rule", () => {
+    expect(translations.en.dataAnnotation.fallbackLabel).toBe("Other");
+    expect(translations.en.dataAnnotation.fallbackCondition).toBe("All other cases");
+  });
+
   it("does not delete an annotation task when confirmation is cancelled", async () => {
     render(
       <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=tasks&projectId=project-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
@@ -250,6 +256,24 @@ describe("DataAnnotationPage", () => {
     expect(within(list).getByText("carol")).toBeInTheDocument();
     expect(within(list).getByRole("button", { name: "查看标注 run-1" })).toBeInTheDocument();
     expect(within(list).getByRole("button", { name: "手工标注 run-2" })).toBeInTheDocument();
+  });
+
+  it("limits manual task status display to running or completed while preserving automatic statuses", async () => {
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "焊装线", project_role: "owner" }] } });
+      if (url === "/spot-weld/runs") return Promise.resolve({ data: { items: [
+        { id: "manual-failed", project_id: "project-1", project_name: "焊装线", created_by_name: "alice", status: "failed", label_mode: "manual" },
+        { id: "manual-cancelled", project_id: "project-1", project_name: "焊装线", created_by_name: "bob", status: "cancelled", label_mode: "manual" },
+        { id: "automatic-failed", project_id: "project-1", project_name: "焊装线", created_by_name: "carol", status: "failed", label_mode: "automatic" },
+      ] } });
+      return Promise.resolve({ data: { items: [] } });
+    });
+
+    render(<MemoryRouter initialEntries={["/data-annotation?view=tasks"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
+
+    const list = await screen.findByRole("region", { name: "数据标注任务列表" });
+    expect(within(list).getAllByText("运行中")).toHaveLength(2);
+    expect(within(list).getByText("失败")).toBeInTheDocument();
   });
 
   it("does not show domain-specific rules after automatic task creation", async () => {
@@ -596,7 +620,7 @@ describe("DataAnnotationPage", () => {
     fireEvent.change(screen.getByLabelText("选择模型"), { target: { value: "model-1" } });
     expect(screen.queryByLabelText("弱监督标注策略")).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: /下一页/ })).not.toBeDisabled());
-    fireEvent.click(screen.getByRole("button", { name: /下一页/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /下一页/ }));
     expect(screen.getByLabelText("标注策略")).toHaveValue("model-inference");
     expect(screen.getByLabelText("已选模型")).toHaveValue("分类模型 · v1");
     expect(screen.getByRole("button", { name: /上一页/ })).toBeInTheDocument();
@@ -630,14 +654,15 @@ describe("DataAnnotationPage", () => {
       return Promise.resolve({ data: {} });
     });
     render(
-      <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=setup&mode=automatic&projectId=project-1&datasetId=dataset-report"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=setup&mode=automatic&projectId=project-1"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AntApp><DataAnnotationPage /></AntApp>
       </MemoryRouter>,
     );
 
-    fireEvent.change(await screen.findByLabelText("选择模型"), { target: { value: "model-1" } });
+    fireEvent.change(await screen.findByLabelText("数据管理文件"), { target: { value: "dataset-report" } });
+    fireEvent.change(screen.getByLabelText("选择模型"), { target: { value: "model-1" } });
     await waitFor(() => expect(screen.getByRole("button", { name: /下一页/ })).not.toBeDisabled());
-    fireEvent.click(screen.getByRole("button", { name: /下一页/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /下一页/ }));
     expect(screen.getByLabelText("标注策略")).toHaveValue("model-inference");
     expect(screen.getByRole("checkbox", { name: "弱监督标注策略" })).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/点焊|焊点|飞溅|虚焊|烧穿|波形|工艺规则/);
@@ -723,7 +748,7 @@ describe("DataAnnotationPage", () => {
     );
 
     fireEvent.change(await screen.findByLabelText("选择模型"), { target: { value: "model-1" } });
-    fireEvent.click(screen.getByRole("button", { name: /下一页/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /下一页/ }));
     fireEvent.click(screen.getByRole("button", { name: "开始自动标注" }));
     await waitFor(() => expect(screen.getByTestId("annotation-location")).toHaveTextContent("runId=run-created"));
 
@@ -759,8 +784,10 @@ describe("DataAnnotationPage", () => {
     );
 
     fireEvent.change(await screen.findByLabelText("选择模型"), { target: { value: "model-1" } });
-    fireEvent.click(screen.getByRole("button", { name: /下一页/ }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "弱监督标注策略" }));
+    const nextButton = await screen.findByRole("button", { name: /下一页/ });
+    await waitFor(() => expect(nextButton).not.toBeDisabled());
+    fireEvent.click(nextButton);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "弱监督标注策略" }));
     expect(screen.getByText("已启用")).toBeInTheDocument();
     expect(screen.queryByLabelText("标注规则列表")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "开始自动标注" })).not.toBeDisabled();
@@ -793,7 +820,8 @@ describe("DataAnnotationPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "删除条件 4" }));
     expect(screen.queryByRole("button", { name: "删除条件 4" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "添加一行" }));
-    expect(screen.getAllByRole("button", { name: "删除" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "删除" })).toHaveLength(3);
+    fireEvent.click(screen.getAllByRole("button", { name: "删除" })[2]);
     fireEvent.click(screen.getAllByRole("button", { name: "删除" })[1]);
 
     fireEvent.click(screen.getByRole("button", { name: "开始自动标注" }));
@@ -806,6 +834,7 @@ describe("DataAnnotationPage", () => {
         cluster_labels: { "0": "normal", "1": "anomaly" },
         process_rules: [{
           id: "rule-1",
+          kind: "condition",
           label: "1",
           tokens: [
             { kind: "data", value: "wld1c" },
@@ -814,6 +843,60 @@ describe("DataAnnotationPage", () => {
           ],
         }],
       }),
+    ));
+  });
+
+  it("adds an editable removable fallback rule when weak supervision is enabled", async () => {
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "通用数据项目", project_role: "owner" }] } });
+      if (url.includes("/spot-weld/models")) return Promise.resolve({ data: { items: [{ id: "model-1", name: "通用模型", label_dtype: "string" }] } });
+      if (url.includes("/spot-weld/datasets") && url.endsWith("/columns")) return Promise.resolve({ data: { columns: [{ name: "temperature", dtype: "float64" }], row_count: 2 } });
+      return Promise.resolve({ data: { items: [] } });
+    });
+    post.mockImplementation((url: string) => {
+      if (url.endsWith("/cluster-preview")) return Promise.resolve({ data: { best_k: 2, feature_count: 1, cluster_summaries: [{ cluster_id: 0, role: "normal", count: 1, percentage: 50 }, { cluster_id: 1, role: "anomaly", count: 1, percentage: 50 }] } });
+      if (url.endsWith("/validate")) return Promise.resolve({ data: { valid_rows: 2, errors: [] } });
+      if (url.endsWith("/runs")) return Promise.resolve({ data: { id: "run-fallback", project_id: "project-1", status: "queued" } });
+      return Promise.resolve({ data: {} });
+    });
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?view=setup&projectId=project-1&mode=automatic"]}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+    fireEvent.change(await screen.findByLabelText("数据管理文件"), { target: { value: "dataset-report" } });
+    fireEvent.change(screen.getByLabelText("选择模型"), { target: { value: "model-1" } });
+    const nextButton = await screen.findByRole("button", { name: /下一页/ });
+    await waitFor(() => expect(nextButton).not.toBeDisabled());
+    fireEvent.click(nextButton);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "弱监督标注策略" }));
+    fireEvent.click(await screen.findByRole("button", { name: "开始聚类" }));
+    expect(await screen.findByDisplayValue("其他")).toBeInTheDocument();
+    expect(screen.getByText("除以上规则之外")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/fallback-rule 条件 1 类型/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "弱监督标注策略" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "弱监督标注策略" }));
+    fireEvent.click(await screen.findByRole("button", { name: "开始聚类" }));
+    expect(await screen.findAllByDisplayValue("其他")).toHaveLength(1);
+
+    fireEvent.change(screen.getByDisplayValue("其他"), { target: { value: "未分类" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "删除" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "开始自动标注" }));
+
+    const expectedFallbackRule = {
+      id: expect.stringMatching(/^fallback-rule-/),
+      kind: "fallback",
+      label: "未分类",
+      tokens: [],
+    };
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/projects/project-1/spot-weld/validate",
+      expect.objectContaining({ process_rules: [expectedFallbackRule] }),
+    ));
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/projects/project-1/spot-weld/runs",
+      expect.objectContaining({ process_rules: [expectedFallbackRule] }),
     ));
   });
 
