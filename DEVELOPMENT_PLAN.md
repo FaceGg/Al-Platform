@@ -495,3 +495,19 @@
 - 修复：将 `./pages/APIMarketplacePage.test.tsx` 登记到 Week 12，保留清单的“每个测试文件恰好归属一个开发周”断言。
 - 验证：本地前端全量 `49 passed`、`244 passed | 19 skipped`；清单专项通过；远端旧 Run 的 `failed/skipped` 状态不回写为通过。
 - 当前验收状态：Week 9-12 仍为 `in_progress`。当前 SHA 尚未获得新的 full run；Week 11 的固定资源性能、PostgreSQL/MinIO 备份恢复、N-1 升级三组真实证据及最终 `evidence_manifest.py` 仍未在当前 SHA 闭环。
+
+## 57. 最新执行记录（2026-08-28，Run 33143998452 成功后的证据收口）
+
+- 远端 Run `33143998452` 已完成 `success`，绑定 SHA `53ae360a7d050b48ca6b32d502e90958bcd327b9`；Quality 双平台、Production 双集成、Chromium 和 Week 11-12 job 均为 `success`。
+- 制品核验：Week 11-12 artifact 仅包含 `environment.json`、security、runtime-images 和 web security；Chromium artifact 包含 `playwright/result.json`。未包含 `performance/summary.json`、`backup/restore-result.json` 或 `upgrade/result.json`。
+- 当前 SHA 本地性能复跑已生成全部场景原始结果并绑定 `53ae360...`，但 `warm-inference` 超过阈值，`performance/summary.json` 为 `status=failed`；其余 core-read、enqueue、cold-model-load、welding-e2e 通过。
+- 备份恢复复跑被本地 MinIO 客户端挂载阻断：`/tmp/mc.acceptance` 是目录而非可执行 `mc` 文件，工具返回 `mc: Permission denied`。未将该次尝试记为通过，也未伪造 `restore-result.json`。
+- 当前验收状态仍为 `in_progress`。Week 11 三组真实证据尚未全部 `passed`，最终 `evidence_manifest.py` 不得运行通过或标记总体完成。
+
+## 58. 最新执行记录（2026-08-28，修复推理运行时并发配置）
+
+- 问题现象：当前 SHA 性能复跑中 warm-inference 2000 请求全部返回 200，但 P95 `929-1001ms`、P99 `1377-1469ms`，超过 `200/500ms` 门槛。
+- 根因：`Dockerfile.inference` 将 Uvicorn worker 固定为 1，验收并发请求集中在单 worker 进程。
+- 修复：推理镜像新增 `INFERENCE_RUNTIME_WORKERS` 环境变量，默认 4，Uvicorn 使用该值启动；生产可显式覆盖，未修改限流阈值。
+- 验证：Dockerfile 变更已完成静态检查；需在新镜像上重新执行性能证据，并与新 SHA 的镜像 provenance 一致后才能判断是否达标。
+- 当前状态：该修复会改变镜像与提交 SHA，最终仍需一次新的完整远端门禁和三组 Week 11 证据；未将旧性能失败结果改写为通过。
