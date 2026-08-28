@@ -55,6 +55,7 @@ const weekTestFiles: Record<number, string[]> = {
     "./components/workspace/OperatorPanel.test.tsx",
     "./components/workspace/workflowExport.test.ts",
     "./pages/AnnotationPage.test.tsx",
+    "./pages/APIMarketplacePage.test.tsx",
     "./pages/AutoMLPage.test.tsx",
     "./pages/DashboardPage.test.tsx",
     "./pages/DataAnnotationPage.test.tsx",

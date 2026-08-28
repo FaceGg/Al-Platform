@@ -151,6 +151,11 @@
 - 已触发当前 SHA 的完整门禁 Run `33135264039`（`workflow_dispatch`, `mode=full`）。截至 2026-08-28 记录，Production integration、Production experiment integration、Quality Ubuntu/Windows 均为 `success`，Chromium acceptance 仍为 `in_progress`；Week 11-12 verification 尚未开始。必须等待并逐项核对所有 required jobs，任何 `failed`、`cancelled` 或 `skipped` 均保持未完成。
 - 本地 `run_suite.py` 已执行到 `test_week12_security_gates`；该模块在本机 300 秒超时，未取得完整 active suite 通过结论，记为 `failed/blocked`，不替代远端 full run。此前已通过的 `test_database_production`、`test_api_project_access`、`test_notification_models` 和 `test_week11_12_tools` 保持独立通过记录。
 - 当前工作树存在用户未提交的前端修改（`AppLayout*`、`APIMarketplacePage*`），未纳入本次验收提交，必须保留。
+- Run `33135264039` 已于 2026-08-28 完成，绑定 SHA `905d82cce113bb9493bc9c99b16d8b43337c0dec`，总体 `success`。六个 job 均为 `success`：Quality Ubuntu/Windows、Production integration、Production experiment integration、Chromium acceptance、Week 11-12 verification。
+- 已下载并核对远端制品：Playwright `result.json` 为 `passed=1,total=1,failed=0`；安全 `summary.json` 为 `status=passed`，四个当前 SHA 镜像、pip-audit、Bandit、npm audit、Trivy、Gitleaks 和 frozen-stack web security gates 均为 `passed`，runtime-images 与 source commit 均绑定 `905d82c`。
+- 该 Run 的 Week 11-12 verification 工作流实际执行的是工具/合同测试、安全扫描和 web security gate；上传制品未包含当前 SHA 的 `performance/summary.json`、`backup/restore-result.json` 或 `upgrade/result.json`。因此 W11-R1、W11-R2、W11-R3 仍为 `rerun_required`，不能仅凭 job 绿色关闭 Week 9-12 验收。
+- 继续重跑时发现本地 `temp_test/week11-12-live` runbook 不是可复用的当前发布门禁：性能脚本会被旧证据目录拒绝，带 security image override 时要求 CI 专用 `WEEK12_*_IMAGE` 变量，去掉 override 后 backup 脚本在一次性 WSL 调用中又因 `/tmp/week9-12-secrets/env` 生命周期和 Compose DNS 不稳定而失败。上述结果归类为 `blocked`，不计为业务验收失败，也不计为通过。
+- 当前 `HEAD` 已变为 `420a6c8848fc095dfa1e76e0f1c12cb91ec07592`，与 Run `33135264039` 绑定的 `905d82c` 不同；该 Run 的安全、浏览器和 Week 11-12 结果不能绑定到当前 SHA。必须先将 WP3/WP4/WP5 执行器纳入受版本控制的 CI/工具路径，再以 `420a6c8` 重新生成全部证据。
 
 ## 12. 最新执行记录（2026-08-24，手动标注详情修复）
 
@@ -482,3 +487,11 @@
 - API市场计划先于应用编排执行，原因是其依赖面较小；计划覆盖 Pydantic 契约、Alembic 迁移、项目权限、发布幂等、同源认证测试、工作台统计、前端 CRUD、TDD、Playwright 和文档。
 - 应用编排计划明确当前原型缺口：规划未调用 LLM、计划未持久化、无 DAG worker 执行、审核仅在进程内存；计划覆盖持久化 plan/node/edge/attempt/review/message、状态机、调度/重试/取消/恢复、前端命令和 API 发布前置条件。
 - 状态：`planned`。尚未执行实现、迁移、测试、真实登录浏览器验收或远端门禁；现有工作树用户修改保持不变。
+
+## 56. 最新执行记录（2026-08-28，修复当前 SHA 前端验收清单漏项）
+
+- 问题现象：当前 SHA `420a6c8848fc095dfa1e76e0f1c12cb91ec07592` 的远端 Run `33138556778` 中，Windows/Ubuntu Quality 的后端 `113/113` 通过、前端实际测试 `243 passed / 19 skipped`，但 `weekAcceptance.test.ts` 失败，导致后续 Production、Chromium 和 Week 11-12 作业均为 `skipped`。
+- 根因：新增的 `src/pages/APIMarketplacePage.test.tsx` 已被 Vitest 自动发现，但没有加入 Week 12 的 `weekTestFiles` 台账；这是清单契约错误，不是产品测试失败。
+- 修复：将 `./pages/APIMarketplacePage.test.tsx` 登记到 Week 12，保留清单的“每个测试文件恰好归属一个开发周”断言。
+- 验证：本地前端全量 `49 passed`、`244 passed | 19 skipped`；清单专项通过；远端旧 Run 的 `failed/skipped` 状态不回写为通过。
+- 当前验收状态：Week 9-12 仍为 `in_progress`。当前 SHA 尚未获得新的 full run；Week 11 的固定资源性能、PostgreSQL/MinIO 备份恢复、N-1 升级三组真实证据及最终 `evidence_manifest.py` 仍未在当前 SHA 闭环。
