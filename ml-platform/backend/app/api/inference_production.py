@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
-from time import perf_counter
+from threading import Lock
+from time import monotonic, perf_counter
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
@@ -37,6 +38,25 @@ _TELEMETRY_EXECUTOR = ThreadPoolExecutor(
     max_workers=2,
     thread_name_prefix="inference-telemetry",
 )
+_API_KEY_TOUCH_LOCK = Lock()
+_API_KEY_TOUCH_TIMES: dict[str, float] = {}
+
+
+def _claim_api_key_touch(api_key_id) -> bool:
+    """Throttle best-effort usage metadata writes per backend process."""
+    key = str(api_key_id)
+    now = monotonic()
+    with _API_KEY_TOUCH_LOCK:
+        previous = _API_KEY_TOUCH_TIMES.get(key)
+        if previous is not None and now - previous < USAGE_TOUCH_INTERVAL_SECONDS:
+            return False
+        _API_KEY_TOUCH_TIMES[key] = now
+        if len(_API_KEY_TOUCH_TIMES) > 4096:
+            cutoff = now - USAGE_TOUCH_INTERVAL_SECONDS
+            for item_key, item_time in tuple(_API_KEY_TOUCH_TIMES.items()):
+                if item_time < cutoff:
+                    _API_KEY_TOUCH_TIMES.pop(item_key, None)
+        return True
 
 
 class PredictionBodyLimitRoute(APIRoute):
@@ -160,19 +180,20 @@ def _persist_observation(
 
             # Do not hold the API-key row lock while the minute bucket is locked.
             # High-volume telemetry otherwise deadlocks on the two tables.
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-            cutoff = now - timedelta(seconds=USAGE_TOUCH_INTERVAL_SECONDS)
-            db.query(InferenceApiKey).filter(
-                InferenceApiKey.id == api_key_id,
-                or_(
-                    InferenceApiKey.last_used_at.is_(None),
-                    InferenceApiKey.last_used_at < cutoff,
-                ),
-            ).update(
-                {InferenceApiKey.last_used_at: now},
-                synchronize_session=False,
-            )
-            db.commit()
+            if _claim_api_key_touch(api_key_id):
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                cutoff = now - timedelta(seconds=USAGE_TOUCH_INTERVAL_SECONDS)
+                db.query(InferenceApiKey).filter(
+                    InferenceApiKey.id == api_key_id,
+                    or_(
+                        InferenceApiKey.last_used_at.is_(None),
+                        InferenceApiKey.last_used_at < cutoff,
+                    ),
+                ).update(
+                    {InferenceApiKey.last_used_at: now},
+                    synchronize_session=False,
+                )
+                db.commit()
     except Exception:
         logger.exception("inference telemetry persistence failed")
 

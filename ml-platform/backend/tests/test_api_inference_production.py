@@ -119,6 +119,25 @@ class TestProductionInferenceApi(unittest.TestCase):
             [call[0] for call in metric_db.method_calls].index("query"),
         )
 
+    def test_telemetry_does_not_touch_api_key_again_within_usage_interval(self):
+        metric_db = MagicMock()
+        key_id = uuid.uuid4()
+        with patch("app.api.inference_production.SessionLocal") as session_local, patch(
+            "app.api.inference_production.InferenceObservability.record_request",
+        ):
+            session_local.return_value.__enter__.return_value = metric_db
+            _persist_observation(
+                "request-id-1", uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), key_id,
+                1, 12, "success",
+            )
+            _persist_observation(
+                "request-id-2", uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), key_id,
+                1, 12, "success",
+            )
+
+        update_call = metric_db.query.return_value.filter.return_value.update
+        self.assertEqual(update_call.call_count, 1)
+
     def test_production_route_is_versioned_and_requires_api_key(self):
         paths = self.app.openapi()["paths"]
         self.assertIn("post", paths["/api/v1/inference/{deployment_id}/predict"])

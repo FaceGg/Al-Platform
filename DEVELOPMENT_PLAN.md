@@ -629,3 +629,12 @@
 - 远端在本地提交期间先后推送 `aeda410`（Chromium timeout 40→60 分钟）和 `c7af3b7`（移除自定义 pip index URL）；未覆盖任何用户修改。
 - 本地已将上述远端提交与验收台账合并；`ci.yml` 当前 Chromium timeout 为 `60` 分钟，Quality/Production/Week 11-12 的其他 timeout 保持既定值，默认 pip 源不再被 workflow 覆盖。
 - 本地 CI 合同测试 `tests.test_ci_workflow` 为 `45/45 OK`，`git diff --check` 通过。合并后的候选提交尚未取得新的远程 full Run；Week 9-12 继续保持 `in_progress`。
+
+## 73. 最新执行记录（2026-08-29，修复遥测 API key 高频写入）
+
+- Run `33259324896` 绑定提交 `117e941ab504a8ba4ef64f794523a13250faf644`；Quality 双平台、Production 双集成和 Chromium acceptance 均为 `success`，但 Week 11-12 verification 在 `Run live Week 11 acceptance evidence` 失败，因此总 Run 为 `failure`。
+- 该 Run 的环境、安全、runtime-images 和 Playwright 证据均绑定当前 SHA；真实性能原始结果也完整生成，但 `warm-inference` 三轮 2000 请求全部返回 200、错误率为 0，P95 分别为 `229.06/232.15/224.98 ms`，超过冻结的 `200 ms` 门槛；性能摘要为 `status=failed`，备份恢复、N-1 和最终 manifest 因前一步失败未生成。
+- 根因：`_persist_observation` 在每个请求的后台任务中都执行一次条件 `UPDATE inference_api_keys` 和独立提交，即使 60 秒窗口内没有实际更新也会制造数据库事务；该额外写入与分钟聚合并发运行，增加生产请求的数据库争用。不是修改阈值或制品绑定问题。
+- 修复：在 `app/api/inference_production.py` 增加线程安全的 60 秒进程内触碰节流；同一 API key 在窗口内只执行一次元数据更新，同时保留“先提交指标聚合、后更新 API key”的死锁修复。新增回归测试 `test_telemetry_does_not_touch_api_key_again_within_usage_interval`。
+- 本地验证：推理、API key、观测、生产模型、Week 11/12 工具、Week 11 合同和 CI 合同共 `192` 项测试通过；`git diff --check` 通过。当前工作树修复提交尚未取得新的远程 full Run，Week 9-12 仍为 `in_progress`。
+- 下一步：提交并推送该修复后，仅在最终 SHA 上触发一次 `workflow_dispatch mode=full`；必须取得六个 required jobs 全部 `success`，并下载同一 SHA 的性能、备份恢复、N-1、安全/runtime-images、Playwright 和最终 `evidence_manifest.py` 通过制品后，才能关闭验收。
