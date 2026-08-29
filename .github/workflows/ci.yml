@@ -45,7 +45,6 @@ jobs:
       - name: Install backend dependencies
         working-directory: ml-platform/backend
         run: |
-          python -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
           python -m pip install -r requirements.txt
       - name: Install optional PyTorch CPU backend
         run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
