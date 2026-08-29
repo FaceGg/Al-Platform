@@ -488,6 +488,13 @@
 - 应用编排计划明确当前原型缺口：规划未调用 LLM、计划未持久化、无 DAG worker 执行、审核仅在进程内存；计划覆盖持久化 plan/node/edge/attempt/review/message、状态机、调度/重试/取消/恢复、前端命令和 API 发布前置条件。
 - 状态：`planned`。尚未执行实现、迁移、测试、真实登录浏览器验收或远端门禁；现有工作树用户修改保持不变。
 
+## 56. 最新执行记录（2026-08-29，按顺序开始 API 管理实现）
+
+- 执行顺序确认：先完成 API 管理，再开始应用编排；本轮未修改应用编排代码。
+- 已完成 API 第一阶段：`PlatformAPI` 增加来源/发布元数据字段；新增 `20260829_14_api_management_contract` Alembic 迁移；创建接口改为 Pydantic 契约和 `201` 响应；校验 API 类型、HTTP method、内部 `/api/` endpoint；更新接口增加状态转换校验；统计接口返回 published/offline/failed/total_calls；前端 API 市场增加新建、编辑、状态数据展示、统一删除确认和同源测试地址。
+- 验证：全新 SQLite 数据库 Alembic 链升级至 `20260829_14` 成功；后端 API 平台测试 `8/8 passed`；前端 API 市场聚焦测试 `1/1 passed`；前端生产构建通过（仅既有大 chunk warning）；`git diff --check` 通过。
+- 当前未完成：模型/编排发布幂等服务、完整 owner/member 权限矩阵、API 端到端浏览器验收、完整 i18n/error-state 回归和远端门禁。API 管理仍为 `in_progress`，应用编排保持 `pending`。
+
 ## 56. 最新执行记录（2026-08-28，修复当前 SHA 前端验收清单漏项）
 
 - 问题现象：当前 SHA `420a6c8848fc095dfa1e76e0f1c12cb91ec07592` 的远端 Run `33138556778` 中，Windows/Ubuntu Quality 的后端 `113/113` 通过、前端实际测试 `243 passed / 19 skipped`，但 `weekAcceptance.test.ts` 失败，导致后续 Production、Chromium 和 Week 11-12 作业均为 `skipped`。
@@ -553,3 +560,18 @@
 - 已将 `.github/workflows/ci.yml` 的 Production integration timeout 调整为 `60` 分钟，Production experiment integration timeout 调整为 `90` 分钟；实验作业增加 `COMPOSE_PARALLEL_LIMIT=1` 和 Buildx 初始化，使共享 requirements 层串行构建并复用缓存，避免冷 runner 上的带宽竞争。
 - 已新增 CI 合同测试，锁定生产作业冷缓存预算、实验作业串行构建约束和 Buildx 初始化；本地 `tests.test_ci_workflow` 为 `45/45 OK`，`git diff --check` 通过。
 - 该修复改变了 workflow source SHA；必须提交推送后重新触发唯一一次 full CI，重新取得当前 SHA 的 security、runtime-images、Playwright、Week 11 三组真实证据并运行最终 `evidence_manifest.py`。在此之前 Week 9-12 保持 `in_progress`。
+
+## 65. 最新执行记录（2026-08-29，Week 11 运行器密钥权限阻断）
+
+- Run `33229492059` 绑定当前提交 `3ecf2830f968d2372bb340784c78d61bf083858f`；Quality 双平台、Production 双集成和 Chromium acceptance 均为 `success`，Week 11-12 verification 在 `Run live Week 11 acceptance evidence` 失败。
+- 真实日志显示 frozen-stack web security gate 成功；随后 `run_week11_acceptance.sh` 重新启动 security image Compose 栈时，`migrate` 服务退出 `1`，导致性能、备份恢复、N-1、汇总和最终 manifest 均未执行。根因是前一步 cleanup 删除了由 CI 设置为 UID `1000:1000` 的通知密钥，运行器重新生成密钥后只设置 `0600`，生产镜像以 UID 1000 读取失败。
+- 修复：运行器生成或复用密钥后统一执行 `sudo chown 1000:1000` 和 `sudo chmod 0400`；Compose 启动失败时输出 `migrate` 日志。新增独立 stdlib 回归合同，先验证缺失权限合同时失败，再验证修复后通过；`bash -n` 和该回归测试均通过。
+- 当前状态：Week 9-12 仍为 `in_progress`；Run `33229492059` 不计入验收。修复提交并推送后，只再触发一次 full CI，必须重新生成当前 SHA 的 security、Playwright、performance、backup/restore、upgrade 和最终 `evidence_manifest.py`，全部通过后才可关闭验收。
+
+## 66. 最新执行记录（2026-08-29，修复 Week 11 回归测试台账阻断）
+
+- 问题现象：权限修复提交 `90d14a147e49efd9216e73672f42752c79bdbae0` 的 Quality 作业在 `test_suite_manifest` 失败，业务测试未执行失败；自动发现的 `test_week11_runner_contract.py` 未登记到周测试归属清单。
+- 根因：新增独立测试模块后未同步 `tests/week_manifest.py`，违反“每个测试模块恰好一个周归属”的合同。
+- 修复：将通知密钥 UID/权限回归断言并入已登记的 `test_week11_12_tools.py`，删除独立未登记模块；不修改用户未提交的 API 市场变更。
+- 本地验证：模块归属清单通过；仓库环境缺少 `fastapi`、`httpx` 等 `requirements.txt` 依赖，完整后端导入测试无法启动；待远端 Quality 环境验证。`bash -n`、`git diff --check` 和 Python 编译检查在提交前完成。
+- 验收状态：保持 `in_progress`。提交推送后仅允许触发一次当前 SHA full CI；只有 Quality、Production、Chromium、Week 11-12 verification 以及最终证据清单全部成功，且制品绑定当前 SHA，才能关闭 Week 9-12。
