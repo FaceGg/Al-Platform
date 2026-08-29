@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import math
 import re
 
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.exc import IntegrityError
 
 from app.models.model_registry import (
@@ -133,6 +134,39 @@ class InferenceObservability:
             InferenceMetricBucket.bucket_start == minute,
         ).with_for_update().first()
         if bucket is None:
+            bind = db.get_bind()
+            if bind.dialect.name == "postgresql":
+                # A missing-row SELECT cannot serialize first creation: concurrent
+                # telemetry workers can all observe no bucket before inserting.
+                # Let PostgreSQL arbitrate the unique key, then lock the winner.
+                db.execute(
+                    postgres_insert(InferenceMetricBucket).values(
+                        deployment_id=deployment_id,
+                        bucket_start=minute,
+                        request_count=0,
+                        success_count=0,
+                        error_count=0,
+                        limited_count=0,
+                        load_failure_count=0,
+                        batch_size_sum=0,
+                        latency_sum_ms=0,
+                        latency_max_ms=0,
+                        latency_buckets=self._empty_histogram(),
+                        traffic_weights={},
+                    ).on_conflict_do_nothing(
+                        index_elements=[
+                            InferenceMetricBucket.deployment_id,
+                            InferenceMetricBucket.bucket_start,
+                        ],
+                    ),
+                )
+                bucket = db.query(InferenceMetricBucket).filter(
+                    InferenceMetricBucket.deployment_id == deployment_id,
+                    InferenceMetricBucket.bucket_start == minute,
+                ).with_for_update().first()
+                if bucket is None:
+                    raise RuntimeError("inference metric bucket upsert returned no row")
+                return bucket
             try:
                 # A savepoint preserves the caller transaction when another worker wins.
                 with db.begin_nested():

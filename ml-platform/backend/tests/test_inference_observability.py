@@ -1,8 +1,10 @@
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
@@ -324,6 +326,54 @@ class TestInferenceObservability(unittest.TestCase):
             ).count(),
             1,
         )
+
+    def test_postgres_bucket_creation_uses_atomic_conflict_safe_insert(self):
+        minute = datetime(2026, 7, 20, 12, 34)
+        existing = InferenceMetricBucket(
+            id=uuid.uuid4(),
+            deployment_id=self.deployment.id,
+            bucket_start=minute,
+            latency_buckets={},
+            traffic_weights={},
+        )
+
+        class Query:
+            def __init__(self):
+                self.calls = 0
+
+            def filter(self, *_criteria):
+                return self
+
+            def with_for_update(self):
+                return self
+
+            def first(self):
+                self.calls += 1
+                return None if self.calls == 1 else existing
+
+        class PostgresSession:
+            bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+            def __init__(self):
+                self.query_value = Query()
+                self.executed = []
+
+            def query(self, _model):
+                return self.query_value
+
+            def get_bind(self):
+                return self.bind
+
+            def execute(self, statement):
+                self.executed.append(statement)
+
+        db = PostgresSession()
+        bucket = InferenceObservability()._bucket(db, self.deployment.id, minute)
+
+        self.assertIs(bucket, existing)
+        self.assertEqual(len(db.executed), 1)
+        sql = str(db.executed[0].compile(dialect=postgresql_dialect()))
+        self.assertIn("ON CONFLICT (deployment_id, bucket_start) DO NOTHING", sql)
 
 
 if __name__ == "__main__":

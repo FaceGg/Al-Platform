@@ -604,3 +604,11 @@
 - 已将 `test_database_production.py`、`test_evidence_manifest.py`、`test_inference_production_stack.py`、`test_week11_12_tools.py`、`upgrade_fixture.py`、`evidence_manifest.py` 和 `run_upgrade_fixture.sh` 的发布 head 统一为 `20260829_14`，并保留 `20260826_13` 作为迁移链中的父 revision；未修改性能阈值或伪造历史证据。
 - 本地验证：上述 Python 文件编译通过，四个 acceptance shell `bash -n` 通过，`tests.test_ci_workflow` `45/45` 通过，`git diff --check` 通过。当前工作树仍保留用户未提交的 `ml-platform/frontend/src/pages/APIMarketplacePage.test.tsx`，未纳入本次修复。
 - 当前状态：Week 9–12 仍为 `in_progress`。提交并推送本次修复及已有 API 市场提交后，只允许触发一次最终 full CI；必须取得同一 SHA 的 Quality、Production integration、Production experiment integration、Chromium acceptance、Week 11–12 verification，以及 security/runtime-images、performance、backup/restore、upgrade 和最终 `evidence_manifest.py` 全部通过制品，才可关闭验收。
+
+## 70. 最新执行记录（2026-08-29，修复分钟指标桶首次创建竞态）
+
+- 问题现象：Run `33242546889` 的真实性能请求全部返回 `200`，但 PostgreSQL 日志在并发遥测写入时多次报告 `duplicate key value violates unique constraint uq_inference_metric_buckets_deployment_minute`，遥测执行器因此记录未处理持久化异常，性能证据按 fail-closed 规则为 `failed`。
+- 根因：`InferenceObservability._bucket` 使用“缺失行 `SELECT ... FOR UPDATE` 后再 INSERT”的非原子创建流程；并发事务都能在首个事务提交前观察到缺失行，savepoint 回退不能可靠覆盖 PostgreSQL 的唯一键竞争窗口。
+- 修复：PostgreSQL 方言改用 `INSERT ... ON CONFLICT (deployment_id, bucket_start) DO NOTHING`，随后重新 `SELECT ... FOR UPDATE` 锁定获胜桶；SQLite/其他方言继续保留 savepoint 回退路径。新增回归测试锁定原子冲突安全 SQL。
+- 验证：`test_inference_observability`、`test_api_inference_production`、`test_inference_production_models` 共 `31/31` 通过；Week 11/12 工具与 CI 合同 `150/150` 通过；四个 acceptance shell 经 Bash `-n` 检查通过；相关 Python 编译和 `git diff --check` 通过。后端全量回归在安全扫描 CLI 子进程处出现既有参数兼容错误 `--pip-audit-exception legacy-exception.json`，随后停止，不能记为全量通过。
+- 当前验收：本机无 Docker，未宣称真实 PostgreSQL 竞态已在容器中复跑；未重新触发远端 CI。旧 Run 和旧 SHA 制品继续失效，Week 9–12 保持 `in_progress`。若要关闭，必须在包含本修复的当前 SHA 上重新生成 performance、backup/restore、N-1、security/runtime-images、Playwright 和最终 `evidence_manifest.py` 全部通过制品。
