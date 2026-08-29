@@ -647,3 +647,20 @@
 - 修复：运行器 EXIT trap 和 workflow 清理统一改为 `sudo rm -f -- "$NOTIFICATION_CRYPTO_SECRET_FILE"`；新增 Week 11 runner 与 CI workflow 回归合同，防止权限回退。
 - 本地验证：回归合同先在修复前按预期失败；修复后 `tests.test_week11_12_tools tests.test_ci_workflow` 共 `152/152` 通过，`bash -n tools/acceptance/run_week11_acceptance.sh` 和 `git diff --check` 通过。
 - 当前状态：Week 9-12 仍为 `in_progress`。本次 Run 不计入关闭条件；修复提交推送后只触发一次新的 full CI，并必须重新获得当前 SHA 的六个 required jobs、security/runtime-images、performance、backup/restore、upgrade、Playwright 和最终 `evidence_manifest.py` 全部通过证据。
+
+## 75. 最新执行记录（2026-08-29，修复推理 API-key 校验尾延迟）
+
+- Run `33267537199` 绑定当前提交 `2f5df6b276ab377c6d9f5157f13dfadabd5df9be`；Quality 双平台、Production 双集成、Chromium acceptance 和安全扫描均成功，Week 11-12 verification 仅因真实性能摘要失败而失败。
+- 当前 SHA 的真实性能原始证据完整生成，`cold-model-load`、`core-read`、`enqueue`、`welding-e2e` 均通过；`warm-inference` 三轮请求均为 HTTP `200` 且错误率 `0`，但 P95 为 `224.05/220.66/219.01 ms`，冻结门槛仍为 `200 ms`。
+- 根因定位：生产推理路径每次请求都会从数据库重新读取 API-key 行并重复执行 PBKDF2 secret 校验；该校验结果不影响每次请求的撤销、过期、部署绑定或 scope 检查，却在固定并发下增加尾延迟。不是阈值、错误率、制品绑定或 CI skipped 问题。
+- 修复：`InferenceApiKeyService` 增加进程内、TTL `300` 秒、最多 `1024` 项的 SHA-256 摘要缓存，仅复用已确认的 `(record_id, secret_hash)`；每次请求仍重新读取授权状态，secret hash 变化自动失效，缓存不保存 API-key 明文。新增跨实例回归测试，确认重复校验只执行一次且撤销后立即拒绝。
+- 本地验证：API-key `6/6`、runtime `9/9`、推理/观测/Week 11/12/CI 合同 `184/184` 通过；`bash -n`、Python 编译和 `git diff --check` 必须在推送前再次执行。当前仍未取得修复 SHA 的远程性能、备份恢复、N-1、Playwright、安全汇总和最终 manifest，Week 9-12 保持 `in_progress`。
+- 下一步：推送修复 SHA 后只触发一次 `workflow_dispatch mode=full`；仅当六个 required jobs、同 SHA 全部证据以及最终 `evidence_manifest.py` 均成功时，才允许关闭 W11-R1/R2/R3、W12-R1 和 Week 9-12 总体验收。
+
+## 76. 最新执行记录（2026-08-29，API-key 修复提交前本地门禁）
+
+- 已核对当前分支 `main` 与 `origin/main` 均指向 `2f5df6b276ab377c6d9f5157f13dfadabd5df9be`；用户此前修改的 `.github/workflows/ci.yml` 已包含在该提交中，工作树没有新的 CI 差异。
+- 当前候选变更仅为 `InferenceApiKeyService` 的摘要校验缓存、跨实例/撤销回归测试和本条验收记录。缓存 TTL 为 `300` 秒、上限 `1024` 项，不保存明文；每次请求仍重新读取授权状态。
+- 使用 Codex bundled Python 验证：API-key 测试退出码 `0`（6 项）；CI workflow 合同退出码 `0`（46 项）；Week 11/12 工具、合同和证据清单测试退出码 `0`；后端 `run_suite.py` 退出码 `0`。Python 编译、四个 acceptance shell 的 `bash -n` 和 `git diff --check` 均通过。
+- 当前状态：Week 9-12 仍为 `in_progress`。尚未在修复后的新 SHA 上触发远程 full CI；不得复用 Run `33267537199` 的失败性能证据。
+- 下一步：提交并推送当前候选 SHA；只触发一次 `gh workflow run ci.yml --ref main -f mode=full`，等待 Quality、Production、Chromium 和 Week 11-12 全部完成，下载同一 SHA 的全部制品并运行 `evidence_manifest.py`。只有 manifest 通过才可关闭验收。

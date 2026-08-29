@@ -2,6 +2,7 @@ import unittest
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -161,6 +162,47 @@ class TestInferenceApiKeys(unittest.TestCase):
 
         self.assertIsNotNone(verified.last_used_at)
         self.assertEqual(verified.secret_hash, created.record.secret_hash)
+
+    def test_repeated_verification_reuses_secret_check_but_reloads_authorization_state(self):
+        created = self.service.create(
+            self.db,
+            self.deployment.id,
+            self.actor.id,
+            ["inference.predict"],
+            None,
+        )
+        self.db.commit()
+
+        first_service = InferenceApiKeyService()
+        second_service = InferenceApiKeyService()
+        with patch.object(first_service._context, "verify", wraps=first_service._context.verify) as verify:
+            first_service.verify(
+                self.db,
+                created.plaintext,
+                deployment_id=self.deployment.id,
+                scope="inference.predict",
+                touch_last_used=False,
+            )
+            second_service.verify(
+                self.db,
+                created.plaintext,
+                deployment_id=self.deployment.id,
+                scope="inference.predict",
+                touch_last_used=False,
+            )
+
+        self.assertEqual(verify.call_count, 1)
+        self.service.revoke(self.db, created.record.id, self.actor.id)
+        self.db.commit()
+        with self.assertRaises(InferenceApiKeyError) as raised:
+            self.service.verify(
+                self.db,
+                created.plaintext,
+                deployment_id=self.deployment.id,
+                scope="inference.predict",
+                touch_last_used=False,
+            )
+        self.assertEqual(raised.exception.code, "INFERENCE_API_KEY_REVOKED")
 
     def test_unknown_scope_expiry_and_explicit_revocation_have_distinct_codes(self):
         with self.assertRaises(InferenceApiKeyError) as raised:

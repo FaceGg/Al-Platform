@@ -2,7 +2,10 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import hashlib
 import secrets
+import threading
+import time
 import uuid
 
 from passlib.context import CryptContext
@@ -12,6 +15,8 @@ from app.models.model_registry import InferenceApiKey
 
 ALLOWED_SCOPES = frozenset({"inference.predict"})
 USAGE_TOUCH_INTERVAL_SECONDS = 60
+VERIFICATION_CACHE_TTL_SECONDS = 300
+VERIFICATION_CACHE_MAX_ENTRIES = 1024
 
 
 def utcnow() -> datetime:
@@ -49,6 +54,41 @@ class ApiKeyView:
 
 class InferenceApiKeyService:
     _context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+    _verification_cache_lock = threading.RLock()
+    _verification_cache: dict[bytes, tuple[str, str, float]] = {}
+
+    @classmethod
+    def _cached_record(cls, plaintext, candidates):
+        cache_key = hashlib.sha256(plaintext.encode("utf-8")).digest()
+        now = time.monotonic()
+        with cls._verification_cache_lock:
+            cached = cls._verification_cache.get(cache_key)
+            if cached is None:
+                return None
+            record_id, secret_hash, expires_at = cached
+            if expires_at <= now:
+                cls._verification_cache.pop(cache_key, None)
+                return None
+            for candidate in candidates:
+                if str(candidate.id) == record_id and candidate.secret_hash == secret_hash:
+                    return candidate
+        return None
+
+    @classmethod
+    def _cache_record(cls, plaintext, record):
+        cache_key = hashlib.sha256(plaintext.encode("utf-8")).digest()
+        with cls._verification_cache_lock:
+            if len(cls._verification_cache) >= VERIFICATION_CACHE_MAX_ENTRIES:
+                oldest_key = min(
+                    cls._verification_cache,
+                    key=lambda key: cls._verification_cache[key][2],
+                )
+                cls._verification_cache.pop(oldest_key, None)
+            cls._verification_cache[cache_key] = (
+                str(record.id),
+                record.secret_hash,
+                time.monotonic() + VERIFICATION_CACHE_TTL_SECONDS,
+            )
 
     @staticmethod
     def _normalized_scopes(scopes) -> tuple[str, ...]:
@@ -110,14 +150,18 @@ class InferenceApiKeyService:
         candidates = db.query(InferenceApiKey).filter(
             InferenceApiKey.prefix == plaintext[:12],
         ).all()
-        record = next(
-            (
-                candidate
-                for candidate in candidates
-                if self._context.verify(plaintext, candidate.secret_hash)
-            ),
-            None,
-        )
+        record = self._cached_record(plaintext, candidates)
+        if record is None:
+            record = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if self._context.verify(plaintext, candidate.secret_hash)
+                ),
+                None,
+            )
+            if record is not None:
+                self._cache_record(plaintext, record)
         if record is None:
             raise InferenceApiKeyError("INFERENCE_API_KEY_INVALID")
         if deployment_id is not None and str(record.deployment_id) != str(deployment_id):
