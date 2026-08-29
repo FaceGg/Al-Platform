@@ -42,12 +42,19 @@ target.chmod(0o600)
 PY
 fi
 
+# The production images run as UID 1000 and must be able to read the mounted key.
+sudo chown 1000:1000 "$NOTIFICATION_CRYPTO_SECRET_FILE"
+sudo chmod 0400 "$NOTIFICATION_CRYPTO_SECRET_FILE"
+
 mkdir -p "$EVIDENCE" "$EVIDENCE/security"
 export ACCEPTANCE_SOURCE_COMMIT="$SOURCE_COMMIT"
 
-"${COMPOSE[@]}" up -d --wait --no-build \
+if ! "${COMPOSE[@]}" up -d --wait --no-build \
   postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime \
-  migrate backend worker scheduler
+  migrate backend worker scheduler; then
+  "${COMPOSE[@]}" logs --no-color migrate || true
+  exit 1
+fi
 
 "${COMPOSE[@]}" exec -T backend \
   python -m tools.acceptance_environment environment \
