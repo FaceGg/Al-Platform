@@ -538,3 +538,18 @@
 - 性能运行器不再停掉 Compose backend 后用历史 `/tmp/week9-12-secrets` 手工重建容器；它保留 Compose 管理的 secret、证书、网络和运行时环境，在既有 backend 内生成原始结果，再复制到版本化 evidence 目录。新增回归合同拒绝旧临时路径和手工 `docker run`。
 - 对第 58-60 节的并发尝试补充更正：推理运行时拥有进程内 `RuntimeRegistry`，多 Uvicorn worker 不能共享已部署模型状态，会产生非 owner worker 的 `DEPLOYMENT_NOT_READY`。运行时镜像已恢复固定单 worker；性能门槛未修改，必须使用该候选提交重新实测。
 - 验证：Week 11/12 工具、镜像和 CI 合同 `158/158` 通过；所有 acceptance shell 的 `bash -n` 通过；尚未获得该候选提交的 WP3/WP4/WP5 实测结果、远程 full run 或 final manifest，因此 Week 9-12 保持 `in_progress`。
+
+## 63. 最新执行记录（2026-08-29，唯一 full CI 与最终 manifest 结果）
+
+- 当前提交 `aa70e1fbb60a2e3b859a961bd5826677b014a3e1` 已推送到 `origin/main`，本地 `HEAD`、远端分支和 GitHub `refs/heads/main` 一致。
+- 本地顺序验收已全部通过并绑定当前提交：固定资源性能 `status=passed/candidate_status=passed`，三轮 warm-inference P95 约 `151/157/170ms`；PostgreSQL/MinIO 备份恢复 `status=passed`，行数、外键、3 个对象 SHA-256、RTO/RPO 均通过；N-1 从 `20260720_10_security_notifications` 到 `20260826_13` 两次升级、`alembic check`、API/ready/worker smoke 均通过。
+- 唯一远程 full run `33179479206` 绑定当前提交。Quality Windows/Ubuntu 和 Chromium acceptance 均 `success`，Chromium receipt 为 `passed=1,total=1,failed=0`；Production integration 在 `30` 分钟 job 上限被取消，Production experiment integration 在 `35` 分钟 job 上限被取消，Week 11-12 verification 因依赖取消而为 `skipped`。
+- 已下载该 run 的全部可用制品；只有 Playwright evidence，未生成 `security/summary.json`、`security/runtime-images.json` 或 Week 11-12 verification artifact。最终 `evidence_manifest.py` 已执行并按 fail-closed 规则失败，明确缺少上述两个安全证据文件。
+- **唯一剩余根因：远程 full CI 的两个生产集成 job 在依赖安装/镜像构建仍运行时达到 30/35 分钟 job timeout，导致后续安全汇总与 Week 11-12 verification 被取消/跳过。** 本轮不再触发第二次 CI，不标记 Week 9-12 完成；当前总体保持 `in_progress`。
+
+## 64. 最新执行记录（2026-08-29，修复冷缓存验收超时）
+
+- 已核对 Run `33179479206` 的完整 job 日志：Production integration 在 backend `pip install` 阶段耗满 30 分钟；Production experiment integration 的四个镜像并行重复下载 `xgboost` 131.7 MB 和 `catboost` 97.2 MB，耗满 35 分钟，均未进入业务测试。
+- 已将 `.github/workflows/ci.yml` 的 Production integration timeout 调整为 `60` 分钟，Production experiment integration timeout 调整为 `90` 分钟；实验作业增加 `COMPOSE_PARALLEL_LIMIT=1` 和 Buildx 初始化，使共享 requirements 层串行构建并复用缓存，避免冷 runner 上的带宽竞争。
+- 已新增 CI 合同测试，锁定生产作业冷缓存预算、实验作业串行构建约束和 Buildx 初始化；本地 `tests.test_ci_workflow` 为 `45/45 OK`，`git diff --check` 通过。
+- 该修复改变了 workflow source SHA；必须提交推送后重新触发唯一一次 full CI，重新取得当前 SHA 的 security、runtime-images、Playwright、Week 11 三组真实证据并运行最终 `evidence_manifest.py`。在此之前 Week 9-12 保持 `in_progress`。

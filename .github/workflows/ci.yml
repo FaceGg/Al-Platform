@@ -273,7 +273,9 @@ jobs:
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    # A clean runner can spend more than 25 minutes downloading the pinned
+    # backend wheels before the integration tests start.
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:16
@@ -494,7 +496,9 @@ jobs:
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
     runs-on: ubuntu-22.04
-    timeout-minutes: 35
+    # The four runtime images share a large requirements layer.  Allow a cold
+    # runner enough time to build it before starting the lifecycle checks.
+    timeout-minutes: 90
     env:
       POSTGRES_DB: ml_platform
       POSTGRES_USER: ml_platform
@@ -523,8 +527,12 @@ jobs:
       NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE: /tmp/notification-receiver-key.pem
       COMPOSE_FILE: docker-compose.yml:docker-compose.acceptance.yml
       COMPOSE_PROJECT_NAME: ci-inference-${{ github.run_id }}-${{ github.run_attempt }}
+      # Build the shared requirements layer once, then reuse it for each
+      # service instead of contending for the package mirror four times.
+      COMPOSE_PARALLEL_LIMIT: "1"
     steps:
       - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
       - name: Generate notification test key
         shell: bash
         run: |

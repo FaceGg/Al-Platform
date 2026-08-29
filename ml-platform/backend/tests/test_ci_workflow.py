@@ -973,6 +973,25 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             60,
         )
 
+    def test_production_acceptance_has_cold_runner_timeout_budget(self):
+        jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+
+        self.assertGreaterEqual(
+            jobs["production-integration"].get("timeout-minutes", 0),
+            60,
+        )
+
+    def test_experiment_acceptance_serializes_cold_image_builds(self):
+        jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+        experiment = jobs["experiment-integration"]
+
+        self.assertGreaterEqual(experiment.get("timeout-minutes", 0), 90)
+        self.assertEqual(experiment.get("env", {}).get("COMPOSE_PARALLEL_LIMIT"), "1")
+        self.assertIn(
+            "docker/setup-buildx-action@v3",
+            [step.get("uses") for step in experiment["steps"]],
+        )
+
     def test_ci_artifact_retention_matches_evidence_policy(self):
         jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
         expected_retention = {
