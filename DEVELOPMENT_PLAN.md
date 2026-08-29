@@ -21,24 +21,24 @@
 | 范围 | 当前状态 | 说明 |
 |---|---|---|
 | Week 1-8 | 已完成 | 已合并到 `main`，保留原有远程交付证据。 |
-| Week 9 | 进行中 | 生命周期、Redis fail-closed 和生产集成已通过；当前修复提交仍待最终远程证据绑定。 |
-| Week 10 | 进行中 | 角色矩阵、四通道通知已通过；当前修复提交仍待最终远程证据绑定。 |
-| Week 11 | 进行中 | 备份恢复、N-1 执行器已纳入版本控制；性能 runner 暴露出高并发遥测跨表死锁，已修复并待最终远程复测。 |
-| Week 12 | 进行中 | WeCom allowlist 修复已通过创建/发送阶段；上一轮 Chromium 在模型注册阶段因 MinIO 配置不一致返回 `409 MODEL_REGISTRY_FAILED`，`430db19` 已修复并由 Run `32681461233` 验证中。 |
+| Week 9 | 进行中 | 生命周期、Redis fail-closed 和生产集成在当前 SHA 已通过；最终安全/运行时证据仍缺失。 |
+| Week 10 | 进行中 | 角色矩阵、四通道通知和当前 SHA 的 Quality/生产集成已通过；最终证据仍缺失。 |
+| Week 11 | 进行中 | 备份恢复、N-1 执行器已纳入版本控制；当前 full Run 的 Week 11-12 verification 因 Chromium 取消而 skipped，当前 SHA 证据未生成。 |
+| Week 12 | 进行中 | 当前 full Run 的 Chromium acceptance 在后端依赖安装阶段达到 40 分钟上限并 cancelled，Playwright receipt 为 failed/0 tests。 |
 | Week 9-12 总体 | 进行中 | 不得因远程 CI 全绿或合同测试通过提前关闭；最终状态须由同一 SHA 的完整制品和 evidence manifest 决定。 |
 
 ## 3. 当前冻结基线
 
-- 源代码 SHA：`bfa6145456b0835d5f55c2d57913a3880f06fd29`，当前 `HEAD == origin/main`。该 SHA 包含 Week 11 runner 密钥权限和测试台账修复；本轮新增的遥测事务修复将在下一次唯一最终 CI 中绑定。
+- 源代码 SHA：`4dacd2e685db5b6fbed672def32166783e5d0fbc`，当前 `HEAD == origin/main`。该 SHA 包含分钟指标桶冲突安全修复；本次唯一 full Run 已绑定该 SHA。
 - 分支：`main`
-- 远程 full run：`33234445251` 绑定 `bfa6145`，已完成但失败；Quality、生产集成和 Chromium 成功，Week 11-12 runner 因 `warm-inference` P95 超过 200 ms 退出，后续证据步骤 skipped，不能用于验收。
+- 远程 full run：`33249241089` 绑定 `4dacd2e`，已完成但总体 `cancelled`；Quality Windows/Ubuntu、Production integration 和 Production experiment integration 为 `success`，Chromium acceptance 为 `cancelled`（依赖安装超时），Week 11-12 verification 为 `skipped`，不能用于验收。
 - WSL Docker Engine：`29.7.2`
 - Docker Compose：`5.4.0`
 - 资源 envelope：4 vCPU、8 GiB；当前 WSL 可见内存约 7.76 GiB
 - 平台数据库：`ml_platform`
 - MLflow 数据库：`mlflow`，与平台数据库隔离
 - 当前业务镜像：旧 SHA 仅作历史参考；当前 SHA 必须重建四个镜像并刷新 receipt。
-- Week 11 工具与合同测试：本地 `45/45` CI 合同通过；依赖完整环境中的 Week 11/12 工具回归待远程验证。
+- Week 11 工具与合同测试：本地 `150/150` 通过；当前 SHA 的远程 Week 11-12 verification 未执行。
 
 ## 4. 未完成任务
 
@@ -92,12 +92,12 @@
 
 ## 5. 当前阻断与下一步
 
-1. 等待并核对 Run `32681461233`：Quality、生产集成、Chromium 隔离 Week 12 和 Week 11-12 verification 必须全部成功；任何 `failed` 或 `skipped` 均保持未完成。
-2. 下载并校验 `430db19` 的 security summary、Chromium result、四镜像扫描和 runtime provenance；不得复用旧 SHA 制品，也不得把任何 skipped 作业计为通过。
-3. 按最终完整 SHA 重建隔离镜像；复跑 W11-R1、W11-R2、W11-R3，保留上一 SHA 原始证据为历史参考。
-4. 外部 Week 12 栈必须使用 `INFERENCE_RATE_LIMIT_CAPACITY=5`、`INFERENCE_RATE_LIMIT_REFILL_PER_SECOND=0.01`，并完成四角色、四通道、rollout、部署和真实 `429` 浏览器验收；生产默认限流值不改。
-5. 运行 `evidence_manifest.py`；失败时修复真实证据或阻断原因，不手改结果。
-6. manifest 通过后更新 `PLATFORM_STATUS.md`、本文件和最终验收报告，再确认远程 SHA 与本地一致。
+1. Run `33249241089` 已核对：Quality 双平台、两个 Production job 成功；Chromium 在后端依赖安装阶段达到 40 分钟上限并 cancelled，Week 11-12 verification skipped。该状态保持未完成。
+2. 已下载该 Run 的全部可用制品；仅有 `playwright-evidence/result.json`，内容为 `status=failed`、`passed=0`、`total=0`，没有当前 SHA 的 security、runtime-images、performance、backup/restore、upgrade 或 environment 制品。
+3. 不复用本地旧 SHA 或失败证据；W11-R1、W11-R2、W11-R3 和 W12-R1 继续保持 `rerun_required`/`blocked`，需要修复 Chromium 冷 runner 依赖安装超时后，在新提交上重新取得完整门禁。
+4. 外部 Week 12 栈仍必须使用 `INFERENCE_RATE_LIMIT_CAPACITY=5`、`INFERENCE_RATE_LIMIT_REFILL_PER_SECOND=0.01`，完成四角色、四通道、rollout、部署和真实 `429` 浏览器验收；生产默认限流值不改。
+5. 已运行 `evidence_manifest.py`；它按 fail-closed 规则报告 7 项必需证据全部缺失，未生成通过 manifest。
+6. 只有新 SHA 的完整远程门禁和 manifest 全部通过后，才能更新 `PLATFORM_STATUS.md`、本文件和最终验收报告。
 
 ## 6. 当前证据位置
 
@@ -107,6 +107,9 @@
 - 验收执行计划：`ml-platform/docs/superpowers/plans/2026-08-22-week9-12-acceptance-closure.md`
 - 历史远程全量门禁：Actions Run `32569941915`（旧 SHA，仅作历史参考）
 - 当前性能结果：上一 SHA 的 `performance/summary.json` 仅作历史参考；最终 SHA 必须复跑并覆盖当前证据。
+- 当前 Run 下载目录：`temp_test/remote-run-33249241089/`（仅含失败的 Playwright receipt）。
+- 当前 manifest 尝试输出：`temp_test/manifest-33249241089.json` 未生成（必需证据缺失）。
+- 针对 Chromium 冷 runner 依赖安装超时，工作树已将 `.github/workflows/ci.yml` 的 Chromium job timeout 从 `40` 调整为 `60` 分钟；该修改需在新 SHA 的 full Run 中验证，不能复用 `33249241089`。
 
 ## 7. 文档维护
 
@@ -612,3 +615,11 @@
 - 修复：PostgreSQL 方言改用 `INSERT ... ON CONFLICT (deployment_id, bucket_start) DO NOTHING`，随后重新 `SELECT ... FOR UPDATE` 锁定获胜桶；SQLite/其他方言继续保留 savepoint 回退路径。新增回归测试锁定原子冲突安全 SQL。
 - 验证：`test_inference_observability`、`test_api_inference_production`、`test_inference_production_models` 共 `31/31` 通过；Week 11/12 工具与 CI 合同 `150/150` 通过；四个 acceptance shell 经 Bash `-n` 检查通过；相关 Python 编译和 `git diff --check` 通过。后端全量回归在安全扫描 CLI 子进程处出现既有参数兼容错误 `--pip-audit-exception legacy-exception.json`，随后停止，不能记为全量通过。
 - 当前验收：本机无 Docker，未宣称真实 PostgreSQL 竞态已在容器中复跑；未重新触发远端 CI。旧 Run 和旧 SHA 制品继续失效，Week 9–12 保持 `in_progress`。若要关闭，必须在包含本修复的当前 SHA 上重新生成 performance、backup/restore、N-1、security/runtime-images、Playwright 和最终 `evidence_manifest.py` 全部通过制品。
+
+## 71. 最新执行记录（2026-08-29，Run 33249241089 完成后的当前 SHA 验收）
+
+- Run `33249241089` 绑定 `4dacd2e685db5b6fbed672def32166783e5d0fbc`，总体结论为 `cancelled`。
+- Quality Windows/Ubuntu、Production integration、Production experiment integration 均为 `success`；Chromium acceptance 在 `Install backend dependencies` 阶段达到 40 分钟 job 上限并为 `cancelled`；Week 11-12 verification 因依赖取消为 `skipped`。
+- 该 Run 的全部可用制品已下载到 `temp_test/remote-run-33249241089/`，仅包含 `playwright-evidence/result.json`，其 `status=failed`、`passed=0`、`total=0`。当前 SHA 没有可用的 `environment.json`、`performance/summary.json`、`backup/restore-result.json`、`upgrade/result.json`、`security/summary.json` 或 `security/runtime-images.json`。
+- 已使用远程 Run URL 调用 `evidence_manifest.py`；工具按 fail-closed 规则报告上述 7 项必需证据缺失，未生成 manifest，未修改任何旧证据或状态为通过。
+- 唯一当前阻断根因：Chromium acceptance 冷 runner 在安装后端依赖时超过 40 分钟 job timeout，导致浏览器和 Week 11-12 verification 没有执行，后续当前 SHA 证据无法生成。Week 9-12 总体保持 `in_progress`。
