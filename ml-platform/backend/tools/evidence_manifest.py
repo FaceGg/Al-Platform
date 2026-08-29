@@ -31,7 +31,7 @@ from tools.week11_performance import (
 )
 
 
-MIGRATION_HEAD = "20260826_13"
+MIGRATION_HEAD = "20260829_14"
 RUNTIME_IMAGE_PROVENANCE_EVIDENCE = Path("security/runtime-images.json")
 REQUIRED_STATUS_GATE_EVIDENCE = (
     Path("performance/summary.json"),

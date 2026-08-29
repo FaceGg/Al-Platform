@@ -597,3 +597,10 @@
 - 修复：遥测先提交 `InferenceRequestLog` 和分钟桶聚合，释放聚合锁；随后在同一 Session 的新事务中使用 60 秒条件更新 `last_used_at`，不再让两张表的锁重叠。新增回归测试锁定先提交指标、后触碰 API key 的顺序。
 - 本地验证：相关 Python 文件编译通过；`tests.test_ci_workflow` `45/45` 通过；四个 acceptance shell `bash -n` 通过；`git diff --check` 通过。完整后端回归尚未在本机执行，因缺少 `requirements.txt` 中的 `fastapi`、`pydantic` 等依赖。
 - 剩余：提交并推送该修复后，只触发一次最终 full CI；必须取得同一 SHA 的 security summary、runtime-images、Playwright、performance、backup/restore、upgrade 和 `evidence_manifest.py` 全部通过制品，之后才可关闭 Week 9–12。
+
+## 69. 最新执行记录（2026-08-29，统一迁移 head 台账）
+
+- Run `33241458084` 绑定提交 `d089ee9d0540693d007332d1f13bf223f77c8c7d`，Quality Windows/Ubuntu 均在 `test_upgrade_head_twice_creates_complete_schema` 失败；真实失败不是业务回归，而是 API 管理迁移已将 Alembic head 推进到 `20260829_14`，验收测试和工具仍固定旧值 `20260826_13`。
+- 已将 `test_database_production.py`、`test_evidence_manifest.py`、`test_inference_production_stack.py`、`test_week11_12_tools.py`、`upgrade_fixture.py`、`evidence_manifest.py` 和 `run_upgrade_fixture.sh` 的发布 head 统一为 `20260829_14`，并保留 `20260826_13` 作为迁移链中的父 revision；未修改性能阈值或伪造历史证据。
+- 本地验证：上述 Python 文件编译通过，四个 acceptance shell `bash -n` 通过，`tests.test_ci_workflow` `45/45` 通过，`git diff --check` 通过。当前工作树仍保留用户未提交的 `ml-platform/frontend/src/pages/APIMarketplacePage.test.tsx`，未纳入本次修复。
+- 当前状态：Week 9–12 仍为 `in_progress`。提交并推送本次修复及已有 API 市场提交后，只允许触发一次最终 full CI；必须取得同一 SHA 的 Quality、Production integration、Production experiment integration、Chromium acceptance、Week 11–12 verification，以及 security/runtime-images、performance、backup/restore、upgrade 和最终 `evidence_manifest.py` 全部通过制品，才可关闭验收。
