@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -12,13 +12,18 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import SessionLocal, get_db
 from app.models.model_registry import InferenceApiKey, InferenceDeployment, ModelVersion
 from app.schemas.model_registry import ProductionPredictRequest, ProductionPredictResponse
-from app.services.inference_api_keys import InferenceApiKeyError, InferenceApiKeyService
+from app.services.inference_api_keys import (
+    USAGE_TOUCH_INTERVAL_SECONDS,
+    InferenceApiKeyError,
+    InferenceApiKeyService,
+)
 from app.services.inference_deployment import InferenceDeploymentError, InferenceDeploymentService
 from app.services.inference_observability import InferenceObservability
 from app.services.inference_rate_limit import RateLimitBackendUnavailable, RedisTokenBucket
@@ -138,9 +143,6 @@ def _persist_observation(
     """Persist telemetry after response so DB aggregation cannot inflate p95."""
     try:
         with SessionLocal() as db:
-            key = db.get(InferenceApiKey, api_key_id)
-            if key is not None:
-                key.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
             InferenceObservability().record_request(
                 db,
                 request_id,
@@ -153,6 +155,22 @@ def _persist_observation(
                 status,
                 error_code,
                 aggregate=True,
+            )
+            db.commit()
+
+            # Do not hold the API-key row lock while the minute bucket is locked.
+            # High-volume telemetry otherwise deadlocks on the two tables.
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            cutoff = now - timedelta(seconds=USAGE_TOUCH_INTERVAL_SECONDS)
+            db.query(InferenceApiKey).filter(
+                InferenceApiKey.id == api_key_id,
+                or_(
+                    InferenceApiKey.last_used_at.is_(None),
+                    InferenceApiKey.last_used_at < cutoff,
+                ),
+            ).update(
+                {InferenceApiKey.last_used_at: now},
+                synchronize_session=False,
             )
             db.commit()
     except Exception:

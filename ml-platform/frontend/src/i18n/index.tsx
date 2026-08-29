@@ -321,7 +321,7 @@ const ZH = {
     title: "AI\u5bf9\u8bdd", clear: "\u6e05\u7a7a", send: "\u53d1\u9001", not_configured: "\u672a\u914d\u7f6e", new_chat: "\u65b0\u5efa\u5bf9\u8bdd", search: "\u641c\u7d22", upload: "\u4e0a\u4f20", delete: "\u5220\u9664", vectorize_all: "\u5168\u90e8\u5411\u91cf\u5316", back: "\u8fd4\u56de", knowledge_base: "\u77e5\u8bc6\u5e93",
   },
   api_market: {
-    title: "API\u5e02\u573a", detail: "\u8be6\u60c5", test: "\u6d4b\u8bd5", custom: "\u81ea\u5b9a\u4e49", copy: "\u590d\u5236", history: "\u5386\u53f2", model_api: "\u6a21\u578bAPI",
+    title: "API\u5e02\u573a", detail: "\u8be6\u60c5", test: "\u6d4b\u8bd5", custom: "\u81ea\u5b9a\u4e49", copy: "\u590d\u5236", history: "\u5386\u53f2", model_api: "\u6a21\u578bAPI", create: "\u65b0\u5efa API",
   },
   chat: {
     title: "\u0041\u0049\u667a\u80fd\u5bf9\u8bdd",
@@ -587,7 +587,7 @@ const EN: Record<string, any> = {
   training: { title: "Experiment and Training Operations", experiments: "Experiments", jobs: "Training Jobs", new_experiment: "New Experiment", experiment_name: "Experiment Name", description: "Description", runs: "Runs", compare: "Compare", new_job: "New Training", name: "Job Name", project: "Project", creator: "Creator", all_projects: "All projects", dataset_artifact: "Dataset Artifact", target_column: "Target Column", model_artifact: "Model Artifact", model_library: "Model Library Entry", feature_schema: "Feature Schema", target_schema: "Target Schema", preprocessing: "Preprocessing", logs: "Logs", error_code: "Error", details: "Details", status: "Status", start: "Start", stop: "Stop", confirm_stop: "Confirm Stop", resume: "Resume", tensorboard: "TensorBoard", checkpoints: "Checkpoints", epoch: "Epoch", progress: "Progress", task: "Task Type", total_epochs: "Total Epochs", metrics: "Metrics", operator: "Operator", started: "Started", restore: "Restore" },
   orchestration: { title: "Orchestration", workflow: "Workflow", new_workflow: "New Workflow", publish: "Publish", planner: "Planner", executor: "Executor", reviewer: "Reviewer", plan: "Plan" },
   ai_chat: { title: "AI Chat", clear: "Clear", send: "Send", not_configured: "Not configured", new_chat: "New Chat", search: "Search", upload: "Upload", delete: "Delete", vectorize_all: "Vectorize All", back: "Back", knowledge_base: "Knowledge Base" },
-  api_market: { title: "API Marketplace", detail: "Detail", test: "Test", custom: "Custom", copy: "Copy", history: "History", model_api: "Model API" },
+  api_market: { title: "API Marketplace", detail: "Detail", test: "Test", custom: "Custom", copy: "Copy", history: "History", model_api: "Model API", create: "Create API" },
   chat: { title: "AI Chat", placeholder: "Type your question...", send: "Send" },
   monitor: { title: "Resource Monitor", cpu: "CPU", memory: "Memory", disk: "Disk", gpu: "GPU", refresh: "Refresh", used: "Used", total: "Total", usage: "Usage" },
   profile: { admin: "Admin", engineer: "Engineer", user: "User", username: "Username", role: "Role", language: "Language", change_password: "Change Password", logout: "Logout", profile: "Profile" },

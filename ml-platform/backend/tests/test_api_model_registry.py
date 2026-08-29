@@ -17,6 +17,7 @@ from app.api.model_registry import build_model_registry_router
 from app.database import Base, get_db
 from app.models.access import AuditEvent, ProjectMember
 from app.models.artifact import Artifact
+from app.models.api_model import PlatformAPI
 from app.models.model_library import ModelLibrary
 from app.models.model_registry import (
     DeploymentRevision,
@@ -218,6 +219,26 @@ class TestModelRegistryAPI(unittest.TestCase):
         self.as_role("operator")
         started = self.client.post(f"/api/inference-deployments/{deployment_id}/start")
         self.assertEqual(started.json()["observed_state"], "running")
+        published = self.db.query(PlatformAPI).filter(
+            PlatformAPI.source_kind == "model",
+            PlatformAPI.source_id == uuid.UUID(deployment_id),
+        ).all()
+        self.assertEqual(len(published), 1)
+        self.assertEqual(published[0].status, "published")
+        self.assertEqual(
+            published[0].endpoint,
+            f"/api/inference-deployments/{deployment_id}/predict",
+        )
+
+        repeated = self.client.post(f"/api/inference-deployments/{deployment_id}/start")
+        self.assertEqual(repeated.json()["observed_state"], "running")
+        self.assertEqual(
+            self.db.query(PlatformAPI).filter(
+                PlatformAPI.source_kind == "model",
+                PlatformAPI.source_id == uuid.UUID(deployment_id),
+            ).count(),
+            1,
+        )
         predicted = self.client.post(
             f"/api/inference-deployments/{deployment_id}/predict",
             json={"records": [{"current": 8.0}]},
@@ -225,6 +246,14 @@ class TestModelRegistryAPI(unittest.TestCase):
         self.assertEqual(predicted.json()["predictions"], [1])
         stopped = self.client.post(f"/api/inference-deployments/{deployment_id}/stop")
         self.assertEqual(stopped.json()["observed_state"], "stopped")
+        self.db.expire_all()
+        self.assertEqual(
+            self.db.query(PlatformAPI).filter(
+                PlatformAPI.source_kind == "model",
+                PlatformAPI.source_id == uuid.UUID(deployment_id),
+            ).one().status,
+            "offline",
+        )
 
     def test_04_viewer_reads_but_cannot_operate_and_outsider_is_hidden(self):
         self.as_role("viewer")

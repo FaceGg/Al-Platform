@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from "react";
-import { Card, Table, Tag, Button, Space, Typography, Modal, Descriptions, message, Select, Input, Tabs, Spin, Empty } from "antd";
-import { PlayCircleOutlined, DeleteOutlined, EyeOutlined, SendOutlined, CopyOutlined, CheckOutlined } from "@ant-design/icons";
+import { Alert, Card, Table, Tag, Button, Space, Typography, Modal, Descriptions, message, Select, Input, Form } from "antd";
+import { PlayCircleOutlined, EyeOutlined, SendOutlined, CopyOutlined, PlusOutlined, EditOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
-import { apiGet, apiDelete } from "../api/client";
+import apiClient, { apiGet, apiPost, apiPut, apiDelete, formatApiError } from "../api/client";
 import { useI18n } from "../i18n";
 import { notifyDashboardStatsChanged } from "../events/dashboardStats";
+import DeleteConfirmation from "../components/DeleteConfirmation";
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -14,6 +15,7 @@ const stName: Record<string, string> = { published: "Published", offline: "Offli
 export default function APIMarketplacePage() {
   const { t } = useI18n();
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [data, setData] = useState<any[]>([]);
   const [detail, setDetail] = useState<any>(null);
   const [showDetail, setShowDetail] = useState(false);
@@ -21,31 +23,71 @@ export default function APIMarketplacePage() {
   const [testApi, setTestApi] = useState<any>(null);
   const [filterType, setFilterType] = useState("");
   const [testMethod, setTestMethod] = useState("POST");
-  const [testUrl, setTestUrl] = useState("http://127.0.0.1:8000");
+  const [testUrl, setTestUrl] = useState("/api/");
   const [testBody, setTestBody] = useState('{\n  \n}');
   const [testHeaders, setTestHeaders] = useState('{"Content-Type":"application/json"}');
   const [testResponse, setTestResponse] = useState<any>(null);
   const [testLoading, setTestLoading] = useState(false);
   const [testHistory, setTestHistory] = useState<Array<{time:string; method:string; url:string; status:number; body:any}>>([]);
+  const [showEditor, setShowEditor] = useState(false);
+  const [editing, setEditing] = useState<any>(null);
+  const [form] = Form.useForm();
 
   useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
     setLoading(true);
+    setLoadError("");
     try { const res: any = await apiGet("/platform/apis"); setData(res.items || []); }
+    catch (error) {
+      setData([]);
+      setLoadError(formatApiError(error, "API list loading failed"));
+    }
     finally { setLoading(false); }
   };
 
   const handleDelete = async (id: string) => {
-    await apiDelete("/platform/apis/" + id);
-    notifyDashboardStatsChanged();
-    message.success("Deleted"); fetchData();
+    try {
+      await apiDelete("/platform/apis/" + id);
+      notifyDashboardStatsChanged();
+      message.success(t.common?.success || "Deleted"); fetchData();
+    } catch (error) { message.error(formatApiError(error, "Delete failed")); }
+  };
+
+  const openEditor = (api?: any) => {
+    setEditing(api || null);
+    form.setFieldsValue(api ? { ...api } : { api_type: "custom", method: "POST", version: "v1", endpoint: "/api/" });
+    setShowEditor(true);
+  };
+
+  const handleSave = async (values: any) => {
+    try {
+      if (editing) {
+        await apiPut("/platform/apis/" + editing.id, {
+          name: values.name,
+          endpoint: values.endpoint,
+          description: values.description || "",
+        });
+      } else {
+        await apiPost("/platform/apis", {
+          name: values.name,
+          api_type: "custom",
+          source_kind: "custom",
+          endpoint: values.endpoint,
+          method: values.method || "POST",
+          version: values.version || "v1",
+          description: values.description || "",
+        });
+      }
+      setShowEditor(false); form.resetFields(); await fetchData(); notifyDashboardStatsChanged();
+      message.success(t.common?.success || "Saved");
+    } catch (error) { message.error(formatApiError(error, "Save failed")); }
   };
 
   const openTest = (api: any) => {
     setTestApi(api);
     setTestMethod(api.method || "POST");
-    setTestUrl("http://127.0.0.1:8000" + (api.endpoint || "/api/"));
+    setTestUrl(api.endpoint || "/api/");
     setTestBody(api.request_schema ? JSON.stringify(api.request_schema, null, 2) : '{\n  \n}');
     setTestResponse(null);
     setShowTest(true);
@@ -57,20 +99,22 @@ export default function APIMarketplacePage() {
     try {
       let headers: Record<string,string> = {};
       try { headers = JSON.parse(testHeaders); } catch {}
-      const options: RequestInit = { method: testMethod, headers };
+      if (!testUrl.startsWith("/api/")) throw new Error("Only internal /api/ endpoints can be tested");
+      let body: any = undefined;
       if (testMethod !== "GET" && testMethod !== "HEAD") {
-        try { options.body = testBody; } catch { options.body = testBody; }
+        try { body = JSON.parse(testBody); } catch { body = testBody; }
       }
-      const resp = await fetch(testUrl, options);
+      const resp = await apiClient.request({
+        url: testUrl.replace(/^\/api(?=\/)/, ""),
+        method: testMethod,
+        headers,
+        data: body,
+      });
       const elapsed = Date.now() - start;
-      let respBody: any;
-      const ct = resp.headers.get("content-type") || "";
-      if (ct.includes("json")) respBody = await resp.json();
-      else respBody = await resp.text();
       const result = {
         status: resp.status, statusText: resp.statusText,
-        headers: Object.fromEntries(resp.headers.entries()),
-        body: respBody, elapsed,
+        headers: resp.headers || {},
+        body: resp.data, elapsed,
       };
       setTestResponse(result);
       setTestHistory(prev => [{time:new Date().toLocaleTimeString(),method:testMethod,url:testUrl,status:resp.status,body:result}, ...prev.slice(0, 19)]);
@@ -98,23 +142,41 @@ export default function APIMarketplacePage() {
         <Space size="small">
           <Button size="small" icon={<EyeOutlined />} onClick={() => { setDetail(r); setShowDetail(true); }}>{t.api_market.detail}</Button>
           <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => openTest(r)}>{t.api_market.test}</Button>
-          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(r.id)} />
+          {r.source_kind === "custom" && !r.source_id && (
+            <>
+              <Button size="small" icon={<EditOutlined />} onClick={() => openEditor(r)}>编辑</Button>
+              <DeleteConfirmation label={`删除 ${r.name}`} targetName={r.name} onConfirm={() => void handleDelete(r.id)} />
+            </>
+          )}
         </Space>
       )},
   ];
 
   return (
     <AppLayout>
-      <Card><Title level={4}>{t.api_market.title}</Title>
+      <Card><Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}><Title level={4} style={{ margin: 0 }}>{t.api_market.title}</Title><Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()}>{t.api_market.create || "新建 API"}</Button></Space>
         <Space style={{ marginBottom: 16 }}>
           <Button type={filterType===""?"primary":"default"} onClick={()=>setFilterType("")}>All</Button>
           <Button type={filterType==="model"?"primary":"default"} onClick={()=>setFilterType("model")}>{t.api_market.model_api}</Button>
           <Button type={filterType==="orchestration"?"primary":"default"} onClick={()=>setFilterType("orchestration")}>Orch. API</Button>
           <Button type={filterType==="custom"?"primary":"default"} onClick={()=>setFilterType("custom")}>{t.api_market.custom}</Button>
         </Space>
+        {loadError && <Alert type="error" showIcon message={loadError} style={{ marginBottom: 16 }} />}
         <Table dataSource={filtered} columns={columns} rowKey="id" loading={loading} size="small"
           pagination={{ pageSize: 15 }} locale={{ emptyText: "No APIs yet" }} />
       </Card>
+
+      <Modal open={showEditor} title={editing ? "编辑 API" : "新建 API"} onCancel={() => setShowEditor(false)} onOk={() => form.submit()}>
+        <Form form={form} layout="vertical" onFinish={handleSave}>
+          <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="api_type" hidden><Input /></Form.Item>
+          <Form.Item label="类型"><Input value="自定义" disabled /></Form.Item>
+          <Form.Item name="endpoint" label="内部路径" rules={[{ required: true, pattern: /^\/api\//, message: "必须是 /api/ 开头的内部路径" }]}><Input /></Form.Item>
+          <Form.Item name="method" label="方法"><Select options={["GET", "POST", "PUT", "PATCH", "DELETE"].map(value => ({ value, label: value }))} /></Form.Item>
+          <Form.Item name="version" label="版本"><Input /></Form.Item>
+          <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
+        </Form>
+      </Modal>
 
       <Modal open={showDetail} onCancel={()=>setShowDetail(false)} footer={null} width={700} title="API Detail">
         {detail && (
@@ -141,7 +203,7 @@ export default function APIMarketplacePage() {
             <Space>
               <Select value={testMethod} onChange={setTestMethod} style={{ width: 100 }}
                 options={["GET","POST","PUT","DELETE","PATCH"].map(m=>({value:m,label:m}))} />
-              <Input value={testUrl} onChange={e=>setTestUrl(e.target.value)} style={{ flex: 1 }} />
+              <Input value={testUrl} readOnly style={{ flex: 1 }} />
               <Button type="primary" icon={<SendOutlined />} onClick={handleSendTest} loading={testLoading}>{t.ai_chat.send}</Button>
             </Space>
             <Text type="secondary">Headers:</Text>

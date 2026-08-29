@@ -1,7 +1,7 @@
 # 汽车焊接工业 AI 平台开发计划
 
 > 文档状态：当前进度与未完成任务
-> 文档更新日期：2026-08-27
+> 文档更新日期：2026-08-29
 > 验收工作最后更新：2026-08-24（第 1–11 节）
 > 其后条目：产品开发记录，不改变 Week 9–12 验收冻结状态
 > 项目目录：`E:\codex_workspace\agent_spot_welding`
@@ -21,24 +21,24 @@
 | 范围 | 当前状态 | 说明 |
 |---|---|---|
 | Week 1-8 | 已完成 | 已合并到 `main`，保留原有远程交付证据。 |
-| Week 9 | 进行中 | 生命周期、Redis fail-closed 和生产集成已通过；当前 SHA 的最终安全、浏览器和证据绑定仍待远程验证。 |
-| Week 10 | 进行中 | 角色矩阵、四通道通知已通过；当前 SHA 的最终远程证据仍待绑定。 |
-| Week 11 | 进行中 | 固定资源性能、备份恢复、N-1 在上一 SHA 通过；当前 SHA 变更后必须重新绑定三项真实证据。 |
+| Week 9 | 进行中 | 生命周期、Redis fail-closed 和生产集成已通过；当前修复提交仍待最终远程证据绑定。 |
+| Week 10 | 进行中 | 角色矩阵、四通道通知已通过；当前修复提交仍待最终远程证据绑定。 |
+| Week 11 | 进行中 | 备份恢复、N-1 执行器已纳入版本控制；性能 runner 暴露出高并发遥测跨表死锁，已修复并待最终远程复测。 |
 | Week 12 | 进行中 | WeCom allowlist 修复已通过创建/发送阶段；上一轮 Chromium 在模型注册阶段因 MinIO 配置不一致返回 `409 MODEL_REGISTRY_FAILED`，`430db19` 已修复并由 Run `32681461233` 验证中。 |
-| Week 9-12 总体 | 进行中 | 不得因远程 CI 全绿或合同测试通过提前关闭。 |
+| Week 9-12 总体 | 进行中 | 不得因远程 CI 全绿或合同测试通过提前关闭；最终状态须由同一 SHA 的完整制品和 evidence manifest 决定。 |
 
 ## 3. 当前冻结基线
 
-- 源代码 SHA：`430db194e5ecf0932c5ba2e6357c97ab0f2fe955`，当前 `HEAD == origin/main`。该 SHA 包含 WeCom allowlist 和浏览器 fixture MinIO 配置修复；最终验收仍需远程全量门禁和同 SHA 真实证据。
+- 源代码 SHA：`bfa6145456b0835d5f55c2d57913a3880f06fd29`，当前 `HEAD == origin/main`。该 SHA 包含 Week 11 runner 密钥权限和测试台账修复；本轮新增的遥测事务修复将在下一次唯一最终 CI 中绑定。
 - 分支：`main`
-- 远程 full run：当前 `32681461233` 绑定 `430db19`，状态 `in_progress`；上一 Run `32679688421` 的 Quality/生产集成均通过，但 Chromium 以 `MODEL_REGISTRY_FAILED` 失败，Week 11-12 verification 为 `skipped`，不能用于验收。
+- 远程 full run：`33234445251` 绑定 `bfa6145`，已完成但失败；Quality、生产集成和 Chromium 成功，Week 11-12 runner 因 `warm-inference` P95 超过 200 ms 退出，后续证据步骤 skipped，不能用于验收。
 - WSL Docker Engine：`29.7.2`
 - Docker Compose：`5.4.0`
 - 资源 envelope：4 vCPU、8 GiB；当前 WSL 可见内存约 7.76 GiB
 - 平台数据库：`ml_platform`
 - MLflow 数据库：`mlflow`，与平台数据库隔离
 - 当前业务镜像：旧 SHA 仅作历史参考；当前 SHA 必须重建四个镜像并刷新 receipt。
-- Week 11 工具与合同测试：`104/104 OK`
+- Week 11 工具与合同测试：本地 `45/45` CI 合同通过；依赖完整环境中的 Week 11/12 工具回归待远程验证。
 
 ## 4. 未完成任务
 
@@ -575,3 +575,19 @@
 - 修复：将通知密钥 UID/权限回归断言并入已登记的 `test_week11_12_tools.py`，删除独立未登记模块；不修改用户未提交的 API 市场变更。
 - 本地验证：模块归属清单通过；仓库环境缺少 `fastapi`、`httpx` 等 `requirements.txt` 依赖，完整后端导入测试无法启动；待远端 Quality 环境验证。`bash -n`、`git diff --check` 和 Python 编译检查在提交前完成。
 - 验收状态：保持 `in_progress`。提交推送后仅允许触发一次当前 SHA full CI；只有 Quality、Production、Chromium、Week 11-12 verification 以及最终证据清单全部成功，且制品绑定当前 SHA，才能关闭 Week 9-12。
+
+## 67. 最新执行记录（2026-08-29，API 管理继续实现）
+
+- 完成模型部署与 API 目录生命周期同步：部署 `start` 成功后自动创建或恢复唯一的 `source_kind=model` API；重复启动保持幂等；`stop` 成功后将同一 API 标记为 `offline`，从未发布的部署停止不会报 API 不存在错误。
+- 完成后端边界：手工创建仅允许 `custom` API；来源绑定 API 禁止直接编辑或删除；公开 API 对非所有者只读；部署发布权限区分 viewer `403` 与项目外用户隐藏 `404`；数据库增加 `(source_kind, source_id, version)` 唯一约束并纳入 `20260829_14` 迁移。
+- 完成前端 API 市场测试器修复：使用 Axios `apiClient.request` 自动携带认证，强制同源内部路径；新增/编辑 payload 测试、加载失败可见状态和自定义 API 表单约束。
+- 验证证据：后端 `test_api_platform` 13/13、`test_api_model_registry` 11/11、独立迁移后 `test_api_dashboard` 8/8、前端 `APIMarketplacePage.test.tsx` 5/5、前端生产构建通过、`git diff --check` 通过；全新 SQLite 已升级至 `20260829_14 (head)`。
+- 浏览器验收受环境阻断：本地前后端均已启动，但 Codex In-app Browser 访问 `http://127.0.0.1:5173/api-marketplace` 和 `http://localhost:5173/api-marketplace` 均报告 `ERR_BLOCKED_BY_CLIENT`，未将其误记为通过。API 管理仍保持 `in_progress`，应用编排继续 `pending`，待可用浏览器环境完成真实登录 CRUD/测试验收后再收口。
+
+## 67. 最新执行记录（2026-08-29，修复高并发遥测跨表死锁）
+
+- 问题现象：Run `33234445251` 的 Week 11 runner 在 live acceptance 内退出；性能制品显示 `warm-inference` 三轮 P95 为 `217.4–221.1 ms`，超过未修改的 `200 ms` 门槛。PostgreSQL 日志同时出现 `inference_api_keys.last_used_at` 与 `inference_metric_buckets ... FOR UPDATE` 的死锁。
+- 根因：`_persist_observation` 在同一事务中先更新 API key，再锁定并更新分钟聚合桶。高并发遥测使不同事务以相反的跨表锁顺序等待，既造成死锁，也占用生产请求共享的数据库资源。
+- 修复：遥测先提交 `InferenceRequestLog` 和分钟桶聚合，释放聚合锁；随后在同一 Session 的新事务中使用 60 秒条件更新 `last_used_at`，不再让两张表的锁重叠。新增回归测试锁定先提交指标、后触碰 API key 的顺序。
+- 本地验证：相关 Python 文件编译通过；`tests.test_ci_workflow` `45/45` 通过；四个 acceptance shell `bash -n` 通过；`git diff --check` 通过。完整后端回归尚未在本机执行，因缺少 `requirements.txt` 中的 `fastapi`、`pydantic` 等依赖。
+- 剩余：提交并推送该修复后，只触发一次最终 full CI；必须取得同一 SHA 的 security summary、runtime-images、Playwright、performance、backup/restore、upgrade 和 `evidence_manifest.py` 全部通过制品，之后才可关闭 Week 9–12。

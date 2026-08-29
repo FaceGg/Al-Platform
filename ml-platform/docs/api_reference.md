@@ -274,6 +274,23 @@ Authorization: Bearer <access_token>
 |------|------|------|
 | GET | `/api/health` | 健康检查 |
 
+## 15. API 管理
+
+API 市场前端入口为 `/api-marketplace`，应通过前端开发/部署端口访问；后端页面地址 `/api-marketplace` 不存在。
+所有接口需要登录后的 Bearer Token，前端 Axios 客户端会自动附加认证头。
+
+| 方法 | 端点 | 说明 |
+|------|------|------|
+| GET | `/api/platform/apis` | 获取当前用户拥有或公开可见的 API |
+| GET | `/api/platform/apis/stats` | 获取权限范围内的 API 总数、发布/下线/失败数和调用总数 |
+| POST | `/api/platform/apis` | 创建自定义 API；仅接受内部 `/api/...` 路径 |
+| PUT | `/api/platform/apis/{api_id}` | 编辑自定义 API；来源绑定 API 由部署生命周期管理 |
+| DELETE | `/api/platform/apis/{api_id}` | 删除自定义 API；来源绑定 API 不允许直接删除 |
+| POST | `/api/platform/apis/publish/deployment/{deployment_id}` | 发布运行中的推理部署，幂等返回同一 API |
+| POST | `/api/platform/apis/publish/deployment/{deployment_id}/offline` | 将部署 API 下线 |
+
+模型 API 的真实执行地址为 `/api/inference-deployments/{deployment_id}/predict`。部署成功启动后自动发布，停止后自动下线；未达到 running/running 状态的部署不能发布。
+
 ---
 
 ## 通用响应格式

@@ -32,6 +32,7 @@ from app.schemas.model_registry import (
     VersionCreate,
 )
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
+from app.services.api_publication import APIPublicationError, sync_deployment_publication
 from app.services.audit import AuditIntent
 from app.services.inference_deployment import InferenceDeploymentError, InferenceDeploymentService
 from app.services.inference_api_keys import InferenceApiKeyError, InferenceApiKeyService
@@ -522,6 +523,22 @@ def build_model_registry_router(
             result = getattr(deployment_service_value, action)(db, deployment.id)
         except InferenceDeploymentError as error:
             _error(error)
+        try:
+            sync_deployment_publication(
+                db,
+                result.id,
+                current_user.id,
+                running=action == "start",
+            )
+        except APIPublicationError as error:
+            raise HTTPException(
+                500,
+                {
+                    "code": "API_PUBLICATION_SYNC_FAILED",
+                    "message": str(error),
+                    "deployment_state": result.observed_state,
+                },
+            ) from error
         return _deployment_view(result)
 
     @router.post("/api/inference-deployments/{deployment_id}/start")

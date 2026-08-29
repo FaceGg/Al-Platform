@@ -1,7 +1,7 @@
 import unittest
 import uuid
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api.inference_production import build_inference_production_router
+from app.api.inference_production import _persist_observation, build_inference_production_router
 from app.database import Base, get_db
 from app.models import artifact as artifact_models  # noqa: F401
 from app.models import model_library as model_library_models  # noqa: F401
@@ -91,6 +91,33 @@ class TestProductionInferenceApi(unittest.TestCase):
     def tearDownClass(cls):
         cls.client.close()
         cls.engine.dispose()
+
+    def test_telemetry_releases_metric_lock_before_touching_api_key(self):
+        metric_db = MagicMock()
+        metric_db.query.return_value.filter.return_value.update.return_value = 1
+        with patch("app.api.inference_production.SessionLocal") as session_local, patch(
+            "app.api.inference_production.InferenceObservability.record_request",
+        ) as record_request:
+            session_local.return_value.__enter__.return_value = metric_db
+            _persist_observation(
+                "request-id",
+                uuid.uuid4(),
+                uuid.uuid4(),
+                uuid.uuid4(),
+                uuid.uuid4(),
+                1,
+                12,
+                "success",
+            )
+
+        record_request.assert_called_once()
+        self.assertEqual(metric_db.commit.call_count, 2)
+        update_call = metric_db.query.return_value.filter.return_value.update
+        update_call.assert_called_once()
+        self.assertLess(
+            [call[0] for call in metric_db.method_calls].index("commit"),
+            [call[0] for call in metric_db.method_calls].index("query"),
+        )
 
     def test_production_route_is_versioned_and_requires_api_key(self):
         paths = self.app.openapi()["paths"]
