@@ -1118,6 +1118,17 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         self.assertEqual(cleanup.get("if"), "always()")
         self.assertIn("down --volumes --remove-orphans", cleanup["run"])
 
+    def test_week11_cleanup_removes_protected_notification_key_with_privilege(self):
+        root = Path(__file__).resolve().parents[3]
+        workflow = (root / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8",
+        )
+        cleanup_start = workflow.index("- name: Stop live Week 11 acceptance stack")
+        cleanup_end = workflow.index("- name: Upload verification evidence", cleanup_start)
+        cleanup = workflow[cleanup_start:cleanup_end]
+
+        self.assertIn('sudo rm -f -- "$NOTIFICATION_CRYPTO_SECRET_FILE"', cleanup)
+
     def test_cleanup_workflow_has_least_privilege_and_delete_guards(self):
         self.assertTrue(CLEANUP_WORKFLOW.is_file())
 

@@ -18,7 +18,7 @@ cleanup() {
   fi
   rm -rf "$RUNTIME_DIR"
   if [ "$CREATED_NOTIFICATION_KEY" -eq 1 ]; then
-    rm -f "$NOTIFICATION_CRYPTO_SECRET_FILE"
+    sudo rm -f -- "$NOTIFICATION_CRYPTO_SECRET_FILE"
   fi
   exit "$status"
 }

@@ -638,3 +638,12 @@
 - 修复：在 `app/api/inference_production.py` 增加线程安全的 60 秒进程内触碰节流；同一 API key 在窗口内只执行一次元数据更新，同时保留“先提交指标聚合、后更新 API key”的死锁修复。新增回归测试 `test_telemetry_does_not_touch_api_key_again_within_usage_interval`。
 - 本地验证：推理、API key、观测、生产模型、Week 11/12 工具、Week 11 合同和 CI 合同共 `192` 项测试通过；`git diff --check` 通过。当前工作树修复提交尚未取得新的远程 full Run，Week 9-12 仍为 `in_progress`。
 - 下一步：提交并推送该修复后，仅在最终 SHA 上触发一次 `workflow_dispatch mode=full`；必须取得六个 required jobs 全部 `success`，并下载同一 SHA 的性能、备份恢复、N-1、安全/runtime-images、Playwright 和最终 `evidence_manifest.py` 通过制品后，才能关闭验收。
+
+## 74. 最新执行记录（2026-08-29，修复 Week 11 受保护密钥清理失败）
+
+- Run `33264654621` 绑定提交 `4e6b6207ba7b13bbd6ac1f2e4c7da94906c0abfa`；Quality 双平台、Production 双集成和 Chromium acceptance 均 `success`。
+- Week 11-12 verification 的性能、备份恢复、N-1、安全扫描、冻结栈 Web 安全门和 live acceptance 均已执行；live acceptance 本身完成后，runner 在 `Stop live Week 11 acceptance stack` 清理阶段失败。
+- 唯一失败根因：CI 先以 `sudo chown 1000:1000`、`sudo chmod 0400` 保护 `/tmp/week12-security-notification-master.key`，但 `run_week11_acceptance.sh` 的 EXIT trap 与 workflow 的 `if: always()` 清理仍以普通用户执行 `rm -f`，日志报告 `Operation not permitted`，导致 job 失败并阻止最终 manifest 步骤完成。
+- 修复：运行器 EXIT trap 和 workflow 清理统一改为 `sudo rm -f -- "$NOTIFICATION_CRYPTO_SECRET_FILE"`；新增 Week 11 runner 与 CI workflow 回归合同，防止权限回退。
+- 本地验证：回归合同先在修复前按预期失败；修复后 `tests.test_week11_12_tools tests.test_ci_workflow` 共 `152/152` 通过，`bash -n tools/acceptance/run_week11_acceptance.sh` 和 `git diff --check` 通过。
+- 当前状态：Week 9-12 仍为 `in_progress`。本次 Run 不计入关闭条件；修复提交推送后只触发一次新的 full CI，并必须重新获得当前 SHA 的六个 required jobs、security/runtime-images、performance、backup/restore、upgrade、Playwright 和最终 `evidence_manifest.py` 全部通过证据。
