@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Alert, Card, Table, Tag, Button, Space, Typography, Modal, Descriptions, message, Select, Input, Form } from "antd";
+import { Alert, Card, Table, Tag, Button, Space, Typography, Modal, Descriptions, message, Select, Input, Form, Row, Col, Statistic } from "antd";
 import { PlayCircleOutlined, EyeOutlined, SendOutlined, CopyOutlined, PlusOutlined, EditOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import apiClient, { apiGet, apiPost, apiPut, apiDelete, formatApiError } from "../api/client";
@@ -17,6 +17,7 @@ export default function APIMarketplacePage() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [data, setData] = useState<any[]>([]);
+  const [stats, setStats] = useState({ total_apis: 0, published: 0, offline: 0, failed: 0, total_calls: 0 });
   const [detail, setDetail] = useState<any>(null);
   const [showDetail, setShowDetail] = useState(false);
   const [showTest, setShowTest] = useState(false);
@@ -38,7 +39,20 @@ export default function APIMarketplacePage() {
   const fetchData = async () => {
     setLoading(true);
     setLoadError("");
-    try { const res: any = await apiGet("/platform/apis"); setData(res.items || []); }
+    try {
+      const [res, summary]: any[] = await Promise.all([
+        apiGet("/platform/apis"),
+        apiGet("/platform/apis/stats"),
+      ]);
+      setData(res.items || []);
+      setStats({
+        total_apis: Number(summary.total_apis || 0),
+        published: Number(summary.published || 0),
+        offline: Number(summary.offline || 0),
+        failed: Number(summary.failed || 0),
+        total_calls: Number(summary.total_calls || 0),
+      });
+    }
     catch (error) {
       setData([]);
       setLoadError(formatApiError(error, "API list loading failed"));
@@ -155,6 +169,12 @@ export default function APIMarketplacePage() {
   return (
     <AppLayout>
       <Card><Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}><Title level={4} style={{ margin: 0 }}>{t.api_market.title}</Title><Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()}>{t.api_market.create || "新建 API"}</Button></Space>
+        <Row gutter={16} style={{ marginBottom: 20 }}>
+          <Col xs={12} md={6}><Statistic title="API 总数" value={stats.total_apis} /></Col>
+          <Col xs={12} md={6}><Statistic title="已发布" value={stats.published} valueStyle={{ color: "#389e0d" }} /></Col>
+          <Col xs={12} md={6}><Statistic title="已下线" value={stats.offline} valueStyle={{ color: "#cf1322" }} /></Col>
+          <Col xs={12} md={6}><Statistic title="API 调用总数" value={stats.total_calls} /></Col>
+        </Row>
         <Space style={{ marginBottom: 16 }}>
           <Button type={filterType===""?"primary":"default"} onClick={()=>setFilterType("")}>All</Button>
           <Button type={filterType==="model"?"primary":"default"} onClick={()=>setFilterType("model")}>{t.api_market.model_api}</Button>

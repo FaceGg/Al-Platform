@@ -39,7 +39,17 @@ describe("APIMarketplacePage", () => {
   it("loads APIs through the client-relative platform endpoint", async () => {
     render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
     await waitFor(() => expect(apiGet).toHaveBeenCalledWith("/platform/apis"));
+    await waitFor(() => expect(apiGet).toHaveBeenCalledWith("/platform/apis/stats"));
     expect(screen.getByText("API 市场")).toBeInTheDocument();
+  });
+
+  it("renders live API totals from the stats endpoint", async () => {
+    apiGet.mockImplementation(async (url: string) => url.endsWith("/stats")
+      ? { total_apis: 7, published: 5, offline: 1, failed: 1, total_calls: 42 }
+      : { items: [] });
+    render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
+    expect(await screen.findByText("7")).toBeInTheDocument();
+    expect(screen.getByText("42")).toBeInTheDocument();
   });
 
   it("tests an internal endpoint through the authenticated api client", async () => {

@@ -584,6 +584,12 @@
 - 验证证据：后端 `test_api_platform` 13/13、`test_api_model_registry` 11/11、独立迁移后 `test_api_dashboard` 8/8、前端 `APIMarketplacePage.test.tsx` 5/5、前端生产构建通过、`git diff --check` 通过；全新 SQLite 已升级至 `20260829_14 (head)`。
 - 浏览器验收受环境阻断：本地前后端均已启动，但 Codex In-app Browser 访问 `http://127.0.0.1:5173/api-marketplace` 和 `http://localhost:5173/api-marketplace` 均报告 `ERR_BLOCKED_BY_CLIENT`，未将其误记为通过。API 管理仍保持 `in_progress`，应用编排继续 `pending`，待可用浏览器环境完成真实登录 CRUD/测试验收后再收口。
 
+## 68. 最新执行记录（2026-08-29，API 市场实时统计摘要）
+
+- API 市场页面新增实时统计摘要，初始化和每次 mutation 后并行重新读取 `/platform/apis` 与 `/platform/apis/stats`，展示 API 总数、已发布、已下线和调用总数；统计不由前端列表长度推算。
+- 新增组件回归覆盖统计接口请求及数值展示；前端 API 市场测试 `6/6 passed`，生产构建通过。
+- API 管理仍为 `in_progress`：真实登录浏览器验收仍受 `ERR_BLOCKED_BY_CLIENT` 阻断，未开始应用编排。
+
 ## 67. 最新执行记录（2026-08-29，修复高并发遥测跨表死锁）
 
 - 问题现象：Run `33234445251` 的 Week 11 runner 在 live acceptance 内退出；性能制品显示 `warm-inference` 三轮 P95 为 `217.4–221.1 ms`，超过未修改的 `200 ms` 门槛。PostgreSQL 日志同时出现 `inference_api_keys.last_used_at` 与 `inference_metric_buckets ... FOR UPDATE` 的死锁。
