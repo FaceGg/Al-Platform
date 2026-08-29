@@ -2,7 +2,7 @@
 
 > 文档状态：当前进度与未完成任务
 > 文档更新日期：2026-08-29
-> 验收工作最后更新：2026-08-24（第 1–11 节）
+> 验收工作最后更新：2026-08-29（Run 33271973667 后续修复）
 > 其后条目：产品开发记录，不改变 Week 9–12 验收冻结状态
 > 项目目录：`E:\codex_workspace\agent_spot_welding`
 
@@ -23,22 +23,22 @@
 | Week 1-8 | 已完成 | 已合并到 `main`，保留原有远程交付证据。 |
 | Week 9 | 进行中 | 生命周期、Redis fail-closed 和生产集成在当前 SHA 已通过；最终安全/运行时证据仍缺失。 |
 | Week 10 | 进行中 | 角色矩阵、四通道通知和当前 SHA 的 Quality/生产集成已通过；最终证据仍缺失。 |
-| Week 11 | 进行中 | 备份恢复、N-1 执行器已纳入版本控制；当前 full Run 的 Week 11-12 verification 因 Chromium 取消而 skipped，当前 SHA 证据未生成。 |
-| Week 12 | 进行中 | 当前 full Run 的 Chromium acceptance 在后端依赖安装阶段达到 40 分钟上限并 cancelled，Playwright receipt 为 failed/0 tests。 |
+| Week 11 | 进行中 | Run `33271973667` 已生成 environment/security/performance 证据，但 `warm-inference-1` P95 `203.11 ms` 超过冻结 `200 ms` 门槛；备份恢复、N-1 和最终 manifest 未执行。 |
+| Week 12 | 进行中 | Run `33271973667` 的 Chromium acceptance 成功，Playwright receipt 已通过；Week 11-12 verification 因性能门禁失败而未完成。 |
 | Week 9-12 总体 | 进行中 | 不得因远程 CI 全绿或合同测试通过提前关闭；最终状态须由同一 SHA 的完整制品和 evidence manifest 决定。 |
 
 ## 3. 当前冻结基线
 
-- 源代码 SHA：当前候选提交将包含 Chromium 冷 runner timeout 与 pip 源修复；推送后以该提交的完整 40 位 SHA 作为新的验收绑定点。分钟指标桶冲突安全修复仍保留在其父提交 `4dacd2e685db5b6fbed672def32166783e5d0fbc`。
+- 源代码 SHA：当前远程验收提交 `815d712ad688b9ceb072af7ca1c32083a6f50f07`；本地 single-flight 修复尚未提交，提交后必须以新 SHA 重新绑定全部证据。分钟指标桶冲突安全修复保留在父提交 `4dacd2e685db5b6fbed672def32166783e5d0fbc`。
 - 分支：`main`
-- 远程 full run：`33249241089` 绑定 `4dacd2e`，已完成但总体 `cancelled`；Quality Windows/Ubuntu、Production integration 和 Production experiment integration 为 `success`，Chromium acceptance 为 `cancelled`（依赖安装超时），Week 11-12 verification 为 `skipped`，不能用于验收。Chromium timeout/pip 源修复尚未在远端 Run 验证。
+- 远程 full run：`33271973667` 绑定 `815d712`，总体 `failure`；Quality Windows/Ubuntu、Production integration、Production experiment integration 和 Chromium acceptance 为 `success`，Week 11-12 verification 在 live acceptance runner 因性能摘要失败而 `failure`。其性能摘要 `warm-inference-1.p95_ms=203.112229599924`，不能用于关闭验收。
 - WSL Docker Engine：`29.7.2`
 - Docker Compose：`5.4.0`
 - 资源 envelope：4 vCPU、8 GiB；当前 WSL 可见内存约 7.76 GiB
 - 平台数据库：`ml_platform`
 - MLflow 数据库：`mlflow`，与平台数据库隔离
 - 当前业务镜像：旧 SHA 仅作历史参考；当前 SHA 必须重建四个镜像并刷新 receipt。
-- Week 11 工具与合同测试：本地 `150/150` 通过；当前 SHA 的远程 Week 11-12 verification 未执行。
+- Week 11 工具与合同测试：本地相关回归 `196/196` 通过；当前 SHA 的远程 Week 11-12 verification 因性能门禁失败未完成。
 
 ## 4. 未完成任务
 
@@ -55,13 +55,13 @@
 - 生成所有原始 JSON 和 `performance/summary.json`。
 - summary 的 `status=passed` 且 `candidate_status=passed`，提交 SHA 与当前基线一致。
 
-证据：`temp_test/week11-12-live/evidence/performance/summary.json`；当前候选变更提交后必须重建镜像并复跑，不复用旧 SHA 结果。
+证据：Run `33271973667` 已生成 `performance/summary.json`，但 `status=failed`；single-flight 修复提交后必须重建镜像并复跑，不复用旧 SHA 结果。
 
 ### W11-R2/W11-R3：真实备份恢复与 N-1 升级
 
 状态：`rerun_required`
 
-证据：`backup/restore-result.json`、`upgrade/result.json`、`upgrade/smoke.json`；上一 SHA 均为 `status=passed`，当前候选变更提交后必须重新绑定并验证。
+证据：`backup/restore-result.json`、`upgrade/result.json`、`upgrade/smoke.json`；Run `33271973667` 未生成这些文件，修复提交后必须重新绑定并验证。
 
 ### W12-R1：最终 evidence manifest
 
@@ -92,9 +92,9 @@
 
 ## 5. 当前阻断与下一步
 
-1. Run `33249241089` 已核对：Quality 双平台、两个 Production job 成功；Chromium 在后端依赖安装阶段达到 40 分钟上限并 cancelled，Week 11-12 verification skipped。该状态保持未完成。
-2. 已下载该 Run 的全部可用制品；仅有 `playwright-evidence/result.json`，内容为 `status=failed`、`passed=0`、`total=0`，没有当前 SHA 的 security、runtime-images、performance、backup/restore、upgrade 或 environment 制品。
-3. 不复用本地旧 SHA 或失败证据；W11-R1、W11-R2、W11-R3 和 W12-R1 继续保持 `rerun_required`/`blocked`，需要修复 Chromium 冷 runner 依赖安装超时后，在新提交上重新取得完整门禁。
+1. Run `33271973667` 已核对：Quality 双平台、两个 Production job 和 Chromium acceptance 成功；Week 11-12 verification 在 `warm-inference-1` P95 `203.112229599924 ms` 超过 `200 ms` 门槛后失败。该状态保持未完成。
+2. 已下载该 Run 的全部可用制品；包含 environment/security/performance 和已通过的 Playwright receipt，但未生成 backup/restore、N-1 或最终 manifest。性能失败证据保留为失败，不改写状态。
+3. 不复用本地旧 SHA 或失败证据；W11-R1、W11-R2、W11-R3 和 W12-R1 继续保持 `rerun_required`/`blocked`，需要在 single-flight 修复的新 SHA 上重新取得完整门禁。
 4. 外部 Week 12 栈仍必须使用 `INFERENCE_RATE_LIMIT_CAPACITY=5`、`INFERENCE_RATE_LIMIT_REFILL_PER_SECOND=0.01`，完成四角色、四通道、rollout、部署和真实 `429` 浏览器验收；生产默认限流值不改。
 5. 已运行 `evidence_manifest.py`；它按 fail-closed 规则报告 7 项必需证据全部缺失，未生成通过 manifest。
 6. 只有新 SHA 的完整远程门禁和 manifest 全部通过后，才能更新 `PLATFORM_STATUS.md`、本文件和最终验收报告。
@@ -107,8 +107,8 @@
 - 验收执行计划：`ml-platform/docs/superpowers/plans/2026-08-22-week9-12-acceptance-closure.md`
 - 历史远程全量门禁：Actions Run `32569941915`（旧 SHA，仅作历史参考）
 - 当前性能结果：上一 SHA 的 `performance/summary.json` 仅作历史参考；最终 SHA 必须复跑并覆盖当前证据。
-- 当前 Run 下载目录：`temp_test/remote-run-33249241089/`（仅含失败的 Playwright receipt）。
-- 当前 manifest 尝试输出：`temp_test/manifest-33249241089.json` 未生成（必需证据缺失）。
+- 当前 Run 下载目录：`temp_test/remote-run-33271973667/`（含 environment/security/performance 和 Playwright 证据）。
+- 当前 manifest 尝试输出：Run `33271973667` 未执行最终 manifest（性能 runner 失败），新 SHA 必须重新生成。
 - 针对 Chromium 冷 runner 依赖安装超时，`.github/workflows/ci.yml` 的 Chromium job timeout 已从 `40` 调整为 `60` 分钟；同时移除了自定义 pip index URL，改用 runner 默认源。两项修改需在新 SHA 的 full Run 中验证，不能复用 `33249241089`。
 
 ## 7. 文档维护
@@ -664,3 +664,11 @@
 - 使用 Codex bundled Python 验证：API-key 测试退出码 `0`（6 项）；CI workflow 合同退出码 `0`（46 项）；Week 11/12 工具、合同和证据清单测试退出码 `0`；后端 `run_suite.py` 退出码 `0`。Python 编译、四个 acceptance shell 的 `bash -n` 和 `git diff --check` 均通过。
 - 当前状态：Week 9-12 仍为 `in_progress`。尚未在修复后的新 SHA 上触发远程 full CI；不得复用 Run `33267537199` 的失败性能证据。
 - 下一步：提交并推送当前候选 SHA；只触发一次 `gh workflow run ci.yml --ref main -f mode=full`，等待 Quality、Production、Chromium 和 Week 11-12 全部完成，下载同一 SHA 的全部制品并运行 `evidence_manifest.py`。只有 manifest 通过才可关闭验收。
+
+## 77. 最新执行记录（2026-08-29，Run 33271973667 性能失败与并发 single-flight 修复）
+
+- Run `33271973667` 绑定 SHA `815d712ad688b9ceb072af7ca1c32083a6f50f07`；Quality 双平台、Production 双集成和 Chromium acceptance 均为 `success`，Week 11-12 verification 在 live Week 11 runner 的性能摘要阶段失败。
+- 真实性能证据显示五个场景均执行完成，HTTP 请求全部成功；唯一失败门禁为 `warm-inference-1` 的 P95 `203.112229599924 ms`，冻结门槛为 `200 ms`。`warm-inference-2/3` 分别为 `198.325159349838/182.731779350149 ms`。失败不是弃用警告、缺失制品或 skipped 作业。
+- 根因：API-key 摘要缓存只解决串行重复校验；固定并发首批请求在同一缓存 miss 时仍同时执行 PBKDF2，造成首次 warm-inference 尾延迟抖动。新增 per-key single-flight 锁，并在锁内 double-check 缓存；继续每次从数据库读取撤销、过期、部署绑定和 scope 状态，缓存不保存明文。
+- TDD 验证：先加入 `test_concurrent_verification_coalesces_a_cache_miss`，修复前确认 `8 != 1` 失败；实现后该回归和既有 API-key 回归通过。随后运行 `tests.test_inference_api_keys tests.test_api_inference_production tests.test_inference_observability tests.test_inference_production_models tests.test_week11_contracts tests.test_week11_12_tools tests.test_ci_workflow`，共 `196` 项通过。
+- 当前状态：single-flight 修复尚未提交，Week 9-12 保持 `in_progress`。提交后只允许在新 SHA 触发一次 full CI；必须重新取得六个 required jobs、performance、backup/restore、N-1、security/runtime-images、Playwright 和最终 `evidence_manifest.py` 全部通过证据。

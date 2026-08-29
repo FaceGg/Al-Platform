@@ -2,6 +2,10 @@ import unittest
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
+import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
@@ -203,6 +207,51 @@ class TestInferenceApiKeys(unittest.TestCase):
                 touch_last_used=False,
             )
         self.assertEqual(raised.exception.code, "INFERENCE_API_KEY_REVOKED")
+
+    def test_concurrent_verification_coalesces_a_cache_miss(self):
+        plaintext = "mli_" + uuid.uuid4().hex
+        candidate = SimpleNamespace(
+            id=uuid.uuid4(),
+            prefix=plaintext[:12],
+            secret_hash="candidate-hash",
+            deployment_id=self.deployment.id,
+            revoked_at=None,
+            expires_at=None,
+            scopes=["inference.predict"],
+            last_used_at=None,
+        )
+        verify_calls = 0
+        verify_lock = Lock()
+
+        def verify_secret(_plaintext, _secret_hash):
+            nonlocal verify_calls
+            with verify_lock:
+                verify_calls += 1
+            time.sleep(0.02)
+            return True
+
+        def verify_once(_index):
+            db = SimpleNamespace(
+                query=lambda _model: SimpleNamespace(
+                    filter=lambda *_args, **_kwargs: SimpleNamespace(
+                        all=lambda: [candidate],
+                    ),
+                ),
+            )
+            return self.service.verify(
+                db,
+                plaintext,
+                deployment_id=self.deployment.id,
+                scope="inference.predict",
+                touch_last_used=False,
+            )
+
+        with patch.object(self.service._context, "verify", side_effect=verify_secret):
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                results = list(pool.map(verify_once, range(8)))
+
+        self.assertEqual(len(results), 8)
+        self.assertEqual(verify_calls, 1)
 
     def test_unknown_scope_expiry_and_explicit_revocation_have_distinct_codes(self):
         with self.assertRaises(InferenceApiKeyError) as raised:

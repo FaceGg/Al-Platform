@@ -54,12 +54,32 @@ class ApiKeyView:
 
 class InferenceApiKeyService:
     _context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+    _verification_locks_guard = threading.Lock()
+    _verification_locks: dict[bytes, threading.Lock] = {}
     _verification_cache_lock = threading.RLock()
     _verification_cache: dict[bytes, tuple[str, str, float]] = {}
 
     @classmethod
-    def _cached_record(cls, plaintext, candidates):
-        cache_key = hashlib.sha256(plaintext.encode("utf-8")).digest()
+    def _cache_key(cls, plaintext):
+        return hashlib.sha256(plaintext.encode("utf-8")).digest()
+
+    @classmethod
+    def _verification_lock(cls, cache_key):
+        with cls._verification_locks_guard:
+            lock = cls._verification_locks.get(cache_key)
+            if lock is None:
+                lock = threading.Lock()
+                cls._verification_locks[cache_key] = lock
+                if len(cls._verification_locks) > 4096:
+                    for stale_key in tuple(cls._verification_locks):
+                        if stale_key not in cls._verification_cache:
+                            cls._verification_locks.pop(stale_key, None)
+                            if len(cls._verification_locks) <= 4096:
+                                break
+            return lock
+
+    @classmethod
+    def _cached_record(cls, cache_key, candidates):
         now = time.monotonic()
         with cls._verification_cache_lock:
             cached = cls._verification_cache.get(cache_key)
@@ -75,8 +95,7 @@ class InferenceApiKeyService:
         return None
 
     @classmethod
-    def _cache_record(cls, plaintext, record):
-        cache_key = hashlib.sha256(plaintext.encode("utf-8")).digest()
+    def _cache_record(cls, cache_key, record):
         with cls._verification_cache_lock:
             if len(cls._verification_cache) >= VERIFICATION_CACHE_MAX_ENTRIES:
                 oldest_key = min(
@@ -150,18 +169,22 @@ class InferenceApiKeyService:
         candidates = db.query(InferenceApiKey).filter(
             InferenceApiKey.prefix == plaintext[:12],
         ).all()
-        record = self._cached_record(plaintext, candidates)
+        cache_key = self._cache_key(plaintext)
+        record = self._cached_record(cache_key, candidates)
         if record is None:
-            record = next(
-                (
-                    candidate
-                    for candidate in candidates
-                    if self._context.verify(plaintext, candidate.secret_hash)
-                ),
-                None,
-            )
-            if record is not None:
-                self._cache_record(plaintext, record)
+            with self._verification_lock(cache_key):
+                record = self._cached_record(cache_key, candidates)
+                if record is None:
+                    record = next(
+                        (
+                            candidate
+                            for candidate in candidates
+                            if self._context.verify(plaintext, candidate.secret_hash)
+                        ),
+                        None,
+                    )
+                    if record is not None:
+                        self._cache_record(cache_key, record)
         if record is None:
             raise InferenceApiKeyError("INFERENCE_API_KEY_INVALID")
         if deployment_id is not None and str(record.deployment_id) != str(deployment_id):
