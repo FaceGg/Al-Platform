@@ -29,9 +29,9 @@
 
 ## 3. 当前冻结基线
 
-- 源代码 SHA：`4dacd2e685db5b6fbed672def32166783e5d0fbc`，当前 `HEAD == origin/main`。该 SHA 包含分钟指标桶冲突安全修复；本次唯一 full Run 已绑定该 SHA。
+- 源代码 SHA：当前候选提交将包含 Chromium 冷 runner timeout 与 pip 源修复；推送后以该提交的完整 40 位 SHA 作为新的验收绑定点。分钟指标桶冲突安全修复仍保留在其父提交 `4dacd2e685db5b6fbed672def32166783e5d0fbc`。
 - 分支：`main`
-- 远程 full run：`33249241089` 绑定 `4dacd2e`，已完成但总体 `cancelled`；Quality Windows/Ubuntu、Production integration 和 Production experiment integration 为 `success`，Chromium acceptance 为 `cancelled`（依赖安装超时），Week 11-12 verification 为 `skipped`，不能用于验收。
+- 远程 full run：`33249241089` 绑定 `4dacd2e`，已完成但总体 `cancelled`；Quality Windows/Ubuntu、Production integration 和 Production experiment integration 为 `success`，Chromium acceptance 为 `cancelled`（依赖安装超时），Week 11-12 verification 为 `skipped`，不能用于验收。Chromium timeout/pip 源修复尚未在远端 Run 验证。
 - WSL Docker Engine：`29.7.2`
 - Docker Compose：`5.4.0`
 - 资源 envelope：4 vCPU、8 GiB；当前 WSL 可见内存约 7.76 GiB
@@ -109,7 +109,7 @@
 - 当前性能结果：上一 SHA 的 `performance/summary.json` 仅作历史参考；最终 SHA 必须复跑并覆盖当前证据。
 - 当前 Run 下载目录：`temp_test/remote-run-33249241089/`（仅含失败的 Playwright receipt）。
 - 当前 manifest 尝试输出：`temp_test/manifest-33249241089.json` 未生成（必需证据缺失）。
-- 针对 Chromium 冷 runner 依赖安装超时，工作树已将 `.github/workflows/ci.yml` 的 Chromium job timeout 从 `40` 调整为 `60` 分钟；该修改需在新 SHA 的 full Run 中验证，不能复用 `33249241089`。
+- 针对 Chromium 冷 runner 依赖安装超时，`.github/workflows/ci.yml` 的 Chromium job timeout 已从 `40` 调整为 `60` 分钟；同时移除了自定义 pip index URL，改用 runner 默认源。两项修改需在新 SHA 的 full Run 中验证，不能复用 `33249241089`。
 
 ## 7. 文档维护
 
@@ -623,3 +623,9 @@
 - 该 Run 的全部可用制品已下载到 `temp_test/remote-run-33249241089/`，仅包含 `playwright-evidence/result.json`，其 `status=failed`、`passed=0`、`total=0`。当前 SHA 没有可用的 `environment.json`、`performance/summary.json`、`backup/restore-result.json`、`upgrade/result.json`、`security/summary.json` 或 `security/runtime-images.json`。
 - 已使用远程 Run URL 调用 `evidence_manifest.py`；工具按 fail-closed 规则报告上述 7 项必需证据缺失，未生成 manifest，未修改任何旧证据或状态为通过。
 - 唯一当前阻断根因：Chromium acceptance 冷 runner 在安装后端依赖时超过 40 分钟 job timeout，导致浏览器和 Week 11-12 verification 没有执行，后续当前 SHA 证据无法生成。Week 9-12 总体保持 `in_progress`。
+
+## 72. 最新执行记录（2026-08-29，Chromium CI 超时修复已合并）
+
+- 远端在本地提交期间先后推送 `aeda410`（Chromium timeout 40→60 分钟）和 `c7af3b7`（移除自定义 pip index URL）；未覆盖任何用户修改。
+- 本地已将上述远端提交与验收台账合并；`ci.yml` 当前 Chromium timeout 为 `60` 分钟，Quality/Production/Week 11-12 的其他 timeout 保持既定值，默认 pip 源不再被 workflow 覆盖。
+- 本地 CI 合同测试 `tests.test_ci_workflow` 为 `45/45 OK`，`git diff --check` 通过。合并后的候选提交尚未取得新的远程 full Run；Week 9-12 继续保持 `in_progress`。
