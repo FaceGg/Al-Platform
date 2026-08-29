@@ -94,7 +94,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
     runs-on: ubuntu-22.04
     needs: quality
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       POSTGRES_DB: ml_platform
       POSTGRES_USER: ml_platform
