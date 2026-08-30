@@ -695,3 +695,12 @@
 - 密钥读取修复已生效；新的唯一根因是 runner UID 的一次性容器在 readiness 检查构造 MinIOStorage 时无法创建 `/tmp/ml-platform/artifact-cache`。
 - 修复：运行器创建 runner 拥有的 `0700` 临时目录，并将其挂载到两个一次性容器的 `/tmp/ml-platform`；生产服务仍使用原有容器临时目录。
 - 本地需验证 runner 合同、shell 语法、Python 编译和差异检查；该 Run 未生成可关闭验收的完整 manifest，Week 9-12 保持 `in_progress`。
+
+## 81. 最新执行记录（2026-08-30，Run 33287513144 性能失败与 ONNX 线程限制修复）
+
+- Run `33287513144` 绑定 `d7991ea62657165d47253e1971068bdc6e7de562`；Quality 双平台、Production 双集成和 Chromium acceptance 均 `success`，Week 11-12 verification 在 live 性能阶段失败。
+- 真实性能请求全部返回 HTTP 200 且错误率为 0；唯一失败门禁为 `warm-inference` 三轮 P95 `224.792/211.557/205.079 ms`，冻结门槛为 `200 ms`。容器启动、密钥读取、artifact cache 和清理均已成功，后续备份、N-1、manifest 因该门禁 fail-closed 未执行。
+- 根因：推理运行时为每个 ONNX 会话使用默认线程池；4 vCPU 固定资源下与 20 路并发叠加造成 CPU 过度争抢和尾延迟超标。
+- 修复：`RuntimeRegistry.load` 创建 ONNX `SessionOptions`，将 `intra_op_num_threads` 与 `inter_op_num_threads` 均固定为 `1`，保持模型输出和安全校验不变。
+- 本地验证：`tests.test_inference_runtime tests.test_inference_api_keys tests.test_inference_production_stack` 共 `18` 项（`2` 项按配置 skipped）通过；后续必须补充全套 Week 11/12 工具、合同、编译和差异检查。
+- 当前状态：Week 9-12 仍为 `in_progress`。该修复提交后只允许再触发一次新 SHA 的 `workflow_dispatch mode=full`；必须重新取得性能、backup/restore、N-1、security/runtime-images、Playwright 和最终 evidence manifest 全部通过，才能关闭验收。

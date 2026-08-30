@@ -146,8 +146,14 @@ class RuntimeRegistry:
             raise RuntimeErrorCode("MODEL_ARTIFACT_INTEGRITY_FAILED")
         try:
             with self.storage.materialize(normalized["storage_uri"]) as path:
+                # Keep the small acceptance model from oversubscribing the
+                # shared 4-vCPU envelope under fixed concurrent load.
+                session_options = ort.SessionOptions()
+                session_options.intra_op_num_threads = 1
+                session_options.inter_op_num_threads = 1
                 session = ort.InferenceSession(
                     str(Path(path)),
+                    sess_options=session_options,
                     providers=["CPUExecutionProvider"],
                 )
         except Exception:
