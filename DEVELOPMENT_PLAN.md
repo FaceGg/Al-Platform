@@ -704,3 +704,11 @@
 - 修复：`RuntimeRegistry.load` 创建 ONNX `SessionOptions`，将 `intra_op_num_threads` 与 `inter_op_num_threads` 均固定为 `1`，保持模型输出和安全校验不变。
 - 本地验证：`tests.test_inference_runtime tests.test_inference_api_keys tests.test_inference_production_stack` 共 `18` 项（`2` 项按配置 skipped）通过；后续必须补充全套 Week 11/12 工具、合同、编译和差异检查。
 - 当前状态：Week 9-12 仍为 `in_progress`。该修复提交后只允许再触发一次新 SHA 的 `workflow_dispatch mode=full`；必须重新取得性能、backup/restore、N-1、security/runtime-images、Playwright 和最终 evidence manifest 全部通过，才能关闭验收。
+
+## 82. 最新执行记录（2026-08-30，Run 33291044965 manifest 误报修复）
+
+- Run `33291044965` 已结束：Quality 双平台、Production 双集成和 Chromium acceptance 成功；性能、备份恢复、N-1、安全和 Playwright 证据均已生成并通过业务门禁。
+- 唯一失败点为最终 `evidence_manifest.py`：`backup/restore-result.json` 中 `source_table_counts`/`restored_table_counts` 的真实表名 `inference_api_keys` 被泛化敏感字段规则误判为 API key。回执没有写入数据库 URL、凭据、token 或 secret。
+- 修复：manifest 对四类数据库表计数字典执行严格结构校验（合法 SQL 标识符、非负整数），并将表名作为结构标识跳过敏感字段名匹配；普通 JSON 中真实 `api_key`/`token` 等敏感字段仍 fail-closed 拒绝。
+- 回归：新增 manifest 测试覆盖 `inference_api_keys` 表名可接受和真实敏感字段仍拒绝；两项定向测试通过，`git diff --check` 通过。完整远程验收必须绑定修复后新 SHA，不能改写或复用 Run `33291044965` 的失败 manifest。
+- 当前状态：Week 9-12 仍为 `in_progress`。下一步提交并推送本修复，只触发一次新 SHA `mode=full`，下载同 SHA 全部制品并再次运行最终 manifest；只有六个 required jobs 和 manifest 全部通过后才能关闭验收。

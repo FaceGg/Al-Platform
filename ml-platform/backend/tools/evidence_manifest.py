@@ -107,20 +107,60 @@ def _assert_safe_text(value: str, *, location: str) -> None:
         raise ValueError(f"absolute path found in evidence: {location}")
 
 
-def _assert_safe_json(value: Any, *, location: str) -> None:
+_STRUCTURAL_COUNT_MAP_KEYS = frozenset(
+    {
+        "source_table_counts",
+        "restored_table_counts",
+        "before_table_counts",
+        "after_table_counts",
+    }
+)
+_TABLE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _assert_safe_count_map(value: Any, *, location: str) -> None:
+    """Validate table-count structure without treating table identifiers as secrets."""
+    if not isinstance(value, dict):
+        raise ValueError(f"invalid table count map in evidence: {location}")
+    for table, count in value.items():
+        if (
+            not isinstance(table, str)
+            or not _TABLE_NAME.fullmatch(table)
+            or not isinstance(count, int)
+            or isinstance(count, bool)
+            or count < 0
+        ):
+            raise ValueError(f"invalid table count map in evidence: {location}")
+
+
+def _assert_safe_json(
+    value: Any,
+    *,
+    location: str,
+    structural_keys: bool = False,
+) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             key_text = str(key)
             if (
+                not structural_keys
+                and
                 _SENSITIVE_KEY.search(key_text)
                 and key_text not in _NON_SECRET_STRUCTURE_KEYS
                 and item not in (None, "", "[redacted]", False)
             ):
                 raise ValueError(f"sensitive value found in evidence: {location}")
-            _assert_safe_json(item, location=location)
+            if key_text in _STRUCTURAL_COUNT_MAP_KEYS:
+                _assert_safe_count_map(item, location=location)
+                continue
+            _assert_safe_json(
+                item,
+                location=location,
+                structural_keys=structural_keys,
+            )
     elif isinstance(value, list):
         for item in value:
-            _assert_safe_json(item, location=location)
+            _assert_safe_json(item, location=location, structural_keys=structural_keys)
     elif isinstance(value, str):
         _assert_safe_text(value, location=location)
 
