@@ -10,6 +10,8 @@ RUNTIME_DIR="$(mktemp -d)"
 MC_PATH="$RUNTIME_DIR/mc"
 MC_CONTAINER=""
 CREATED_NOTIFICATION_KEY=0
+RUNNER_NOTIFICATION_KEY="$RUNTIME_DIR/notification-master-runner.key"
+RUNNER_NOTIFICATION_KEY_CONTAINER=/tmp/week11-notification-master.key
 
 cleanup() {
   local status=$?
@@ -45,6 +47,15 @@ fi
 # The production images run as UID 1000 and must be able to read the mounted key.
 sudo chown 1000:1000 "$NOTIFICATION_CRYPTO_SECRET_FILE"
 sudo chmod 0400 "$NOTIFICATION_CRYPTO_SECRET_FILE"
+# The evidence executors run as the host runner UID so bind-mounted receipts are
+# writable by Actions. Give those short-lived containers a separate, read-only
+# copy of the same key without weakening the production secret mount.
+sudo install \
+  -o "$(id -u)" \
+  -g "$(id -g)" \
+  -m 0400 \
+  "$NOTIFICATION_CRYPTO_SECRET_FILE" \
+  "$RUNNER_NOTIFICATION_KEY"
 
 mkdir -p "$EVIDENCE" "$EVIDENCE/security"
 export ACCEPTANCE_SOURCE_COMMIT="$SOURCE_COMMIT"
@@ -71,11 +82,15 @@ MC_CONTAINER=""
 
 "${COMPOSE[@]}" run --rm -T \
   --user "$(id -u):$(id -g)" \
+  --env "NOTIFICATION_MASTER_KEY_FILE=$RUNNER_NOTIFICATION_KEY_CONTAINER" \
   -v "$EVIDENCE:/evidence" \
+  -v "$RUNNER_NOTIFICATION_KEY:$RUNNER_NOTIFICATION_KEY_CONTAINER:ro" \
   -v "$MC_PATH:/usr/local/bin/mc:ro" \
   backend sh tools/acceptance/run_backup_restore.sh
 
 "${COMPOSE[@]}" run --rm -T \
   --user "$(id -u):$(id -g)" \
+  --env "NOTIFICATION_MASTER_KEY_FILE=$RUNNER_NOTIFICATION_KEY_CONTAINER" \
   -v "$EVIDENCE:/evidence" \
+  -v "$RUNNER_NOTIFICATION_KEY:$RUNNER_NOTIFICATION_KEY_CONTAINER:ro" \
   backend sh tools/acceptance/run_upgrade_fixture.sh

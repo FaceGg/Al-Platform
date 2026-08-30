@@ -2,7 +2,7 @@
 
 > 文档状态：当前进度与未完成任务
 > 文档更新日期：2026-08-29
-> 验收工作最后更新：2026-08-29（Run 33271973667 后续修复）
+> 验收工作最后更新：2026-08-30（Run 33282921412 根因修复）
 > 其后条目：产品开发记录，不改变 Week 9–12 验收冻结状态
 > 项目目录：`E:\codex_workspace\agent_spot_welding`
 
@@ -680,3 +680,11 @@
 - 修复：两个一次性证据执行器的 `docker compose run` 均显式使用 `--user "$(id -u):$(id -g)"`，让容器使用宿主 runner UID 写入 bind mount，同时保持非 root；新增合同测试锁定两处参数。
 - TDD/本地验证：修复前 `test_week11_evidence_executors_use_runner_uid_for_bind_mount_writes` 按预期失败；修复后 `AcceptanceRunnerContractTests 7/7`、`bash -n tools/acceptance/run_week11_acceptance.sh` 和 `git diff --check` 通过。
 - 当前状态：Week 9-12 仍为 `in_progress`。本次 Run 的 Playwright、security、performance 等已生成但因 live runner 失败不能关闭；权限修复推送后只允许再触发一次当前 SHA 的 full CI，并重新绑定 backup/restore、N-1、summary、Playwright 和最终 manifest。
+
+## 79. 最新执行记录（2026-08-30，临时容器密钥读取修复）
+
+- Run `33282921412` 绑定提交 `568b20fb281a890a90290db26d10a2470556dad4`；Quality 双平台、Production 双集成和 Chromium acceptance 均 `success`，但 Week 11-12 verification 在 `Run live Week 11 acceptance evidence` 失败。
+- 失败发生在 `run_backup_restore.sh` 调用 `seed_backup_fixture.py` 导入应用配置时：`NOTIFICATION_MASTER_KEY_FILE could not be read`。根因是前一轮权限修复让一次性容器使用宿主 runner UID 写入 evidence，但通知密钥仍为 `1000:1000`、`0400`，runner UID 无法读取该密钥。
+- 修复：保留两个证据执行器的 `--user "$(id -u):$(id -g)"`，在运行器中使用 `sudo install` 创建仅供本次 runner UID 读取的 `0400` 临时密钥副本，并通过只读 bind mount 和 `NOTIFICATION_MASTER_KEY_FILE` 覆盖传入 backup/upgrade 临时容器；生产栈原始密钥权限不变。
+- 本地验证：`AcceptanceRunnerContractTests` 及 Week 11/12 工具共 `108/108` 通过；验收 shell `bash -n`、Python 编译和 `git diff --check` 通过。Run `33282921412` 的失败证据不计入验收。
+- 当前状态：Week 9-12 仍为 `in_progress`。提交本修复及本条记录后，只触发一次新的 `workflow_dispatch mode=full`；必须在同一新 SHA 上取得六个 required jobs、performance、backup/restore、N-1、security/runtime-images、Playwright 和最终 `evidence_manifest.py` 全部通过，之后才能关闭 W11-R1/R2/R3、W12-R1 和总体验收。

@@ -150,6 +150,20 @@ class AcceptanceRunnerContractTests(unittest.TestCase):
         content = runner.read_text(encoding="utf-8")
         self.assertEqual(content.count('--user "$(id -u):$(id -g)"'), 2)
 
+    def test_week11_evidence_executors_mount_runner_readable_notification_key(self):
+        root = Path(__file__).resolve().parents[3]
+        runner = root / "ml-platform" / "backend" / "tools" / "acceptance" / "run_week11_acceptance.sh"
+        content = runner.read_text(encoding="utf-8")
+        self.assertIn('sudo install', content)
+        self.assertEqual(
+            content.count('--env "NOTIFICATION_MASTER_KEY_FILE=$RUNNER_NOTIFICATION_KEY_CONTAINER"'),
+            2,
+        )
+        self.assertEqual(
+            content.count('-v "$RUNNER_NOTIFICATION_KEY:$RUNNER_NOTIFICATION_KEY_CONTAINER:ro"'),
+            2,
+        )
+
     def test_full_ci_runs_the_versioned_live_week11_executor(self):
         root = Path(__file__).resolve().parents[3]
         workflow = (root / ".github" / "workflows" / "ci.yml").read_text(
