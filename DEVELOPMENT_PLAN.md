@@ -672,3 +672,11 @@
 - 根因：API-key 摘要缓存只解决串行重复校验；固定并发首批请求在同一缓存 miss 时仍同时执行 PBKDF2，造成首次 warm-inference 尾延迟抖动。新增 per-key single-flight 锁，并在锁内 double-check 缓存；继续每次从数据库读取撤销、过期、部署绑定和 scope 状态，缓存不保存明文。
 - TDD 验证：先加入 `test_concurrent_verification_coalesces_a_cache_miss`，修复前确认 `8 != 1` 失败；实现后该回归和既有 API-key 回归通过。随后运行 `tests.test_inference_api_keys tests.test_api_inference_production tests.test_inference_observability tests.test_inference_production_models tests.test_week11_contracts tests.test_week11_12_tools tests.test_ci_workflow`，共 `196` 项通过。
 - 当前状态：single-flight 修复尚未提交，Week 9-12 保持 `in_progress`。提交后只允许在新 SHA 触发一次 full CI；必须重新取得六个 required jobs、performance、backup/restore、N-1、security/runtime-images、Playwright 和最终 `evidence_manifest.py` 全部通过证据。
+
+## 78. 最新执行记录（2026-08-29，Run 33276592294 证据目录权限修复）
+
+- Run `33276592294` 绑定 SHA `ad7ad0f8cc630f7daab570c32c7b5ad9f13f9de5`；Quality 双平台、Production 双集成和 Chromium acceptance 均 `success`，Week 11-12 verification 在 live acceptance 阶段失败。
+- 唯一失败根因：宿主 runner 创建的 `$ML_PLATFORM_EVIDENCE_DIR` 由 runner UID 拥有，而 Compose backend 镜像固定以 UID `1000` 运行；`run_week11_acceptance.sh` 通过 bind mount 将该目录挂载到 `/evidence` 后，`run_backup_restore.sh` 的 `mkdir -p /evidence/backup` 报 `Permission denied`，导致备份、N-1 和最终 manifest 未执行。不是业务、性能或安全扫描失败。
+- 修复：两个一次性证据执行器的 `docker compose run` 均显式使用 `--user "$(id -u):$(id -g)"`，让容器使用宿主 runner UID 写入 bind mount，同时保持非 root；新增合同测试锁定两处参数。
+- TDD/本地验证：修复前 `test_week11_evidence_executors_use_runner_uid_for_bind_mount_writes` 按预期失败；修复后 `AcceptanceRunnerContractTests 7/7`、`bash -n tools/acceptance/run_week11_acceptance.sh` 和 `git diff --check` 通过。
+- 当前状态：Week 9-12 仍为 `in_progress`。本次 Run 的 Playwright、security、performance 等已生成但因 live runner 失败不能关闭；权限修复推送后只允许再触发一次当前 SHA 的 full CI，并重新绑定 backup/restore、N-1、summary、Playwright 和最终 manifest。

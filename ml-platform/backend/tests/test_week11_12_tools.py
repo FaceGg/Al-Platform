@@ -144,6 +144,12 @@ class AcceptanceRunnerContractTests(unittest.TestCase):
         self.assertIn("tools/acceptance/run_upgrade_fixture.sh", content)
         self.assertNotIn("temp_test", content)
 
+    def test_week11_evidence_executors_use_runner_uid_for_bind_mount_writes(self):
+        root = Path(__file__).resolve().parents[3]
+        runner = root / "ml-platform" / "backend" / "tools" / "acceptance" / "run_week11_acceptance.sh"
+        content = runner.read_text(encoding="utf-8")
+        self.assertEqual(content.count('--user "$(id -u):$(id -g)"'), 2)
+
     def test_full_ci_runs_the_versioned_live_week11_executor(self):
         root = Path(__file__).resolve().parents[3]
         workflow = (root / ".github" / "workflows" / "ci.yml").read_text(

@@ -70,10 +70,12 @@ docker rm -f "$MC_CONTAINER" >/dev/null
 MC_CONTAINER=""
 
 "${COMPOSE[@]}" run --rm -T \
+  --user "$(id -u):$(id -g)" \
   -v "$EVIDENCE:/evidence" \
   -v "$MC_PATH:/usr/local/bin/mc:ro" \
   backend sh tools/acceptance/run_backup_restore.sh
 
 "${COMPOSE[@]}" run --rm -T \
+  --user "$(id -u):$(id -g)" \
   -v "$EVIDENCE:/evidence" \
   backend sh tools/acceptance/run_upgrade_fixture.sh
