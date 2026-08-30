@@ -12,6 +12,8 @@ MC_CONTAINER=""
 CREATED_NOTIFICATION_KEY=0
 RUNNER_NOTIFICATION_KEY="$RUNTIME_DIR/notification-master-runner.key"
 RUNNER_NOTIFICATION_KEY_CONTAINER=/tmp/week11-notification-master.key
+RUNNER_TEMP_ROOT="$RUNTIME_DIR/ml-platform"
+RUNNER_TEMP_ROOT_CONTAINER=/tmp/ml-platform
 
 cleanup() {
   local status=$?
@@ -56,6 +58,7 @@ sudo install \
   -m 0400 \
   "$NOTIFICATION_CRYPTO_SECRET_FILE" \
   "$RUNNER_NOTIFICATION_KEY"
+install -d -m 0700 "$RUNNER_TEMP_ROOT"
 
 mkdir -p "$EVIDENCE" "$EVIDENCE/security"
 export ACCEPTANCE_SOURCE_COMMIT="$SOURCE_COMMIT"
@@ -85,6 +88,7 @@ MC_CONTAINER=""
   --env "NOTIFICATION_MASTER_KEY_FILE=$RUNNER_NOTIFICATION_KEY_CONTAINER" \
   -v "$EVIDENCE:/evidence" \
   -v "$RUNNER_NOTIFICATION_KEY:$RUNNER_NOTIFICATION_KEY_CONTAINER:ro" \
+  -v "$RUNNER_TEMP_ROOT:$RUNNER_TEMP_ROOT_CONTAINER" \
   -v "$MC_PATH:/usr/local/bin/mc:ro" \
   backend sh tools/acceptance/run_backup_restore.sh
 
@@ -93,4 +97,5 @@ MC_CONTAINER=""
   --env "NOTIFICATION_MASTER_KEY_FILE=$RUNNER_NOTIFICATION_KEY_CONTAINER" \
   -v "$EVIDENCE:/evidence" \
   -v "$RUNNER_NOTIFICATION_KEY:$RUNNER_NOTIFICATION_KEY_CONTAINER:ro" \
+  -v "$RUNNER_TEMP_ROOT:$RUNNER_TEMP_ROOT_CONTAINER" \
   backend sh tools/acceptance/run_upgrade_fixture.sh

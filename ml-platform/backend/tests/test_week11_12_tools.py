@@ -163,6 +163,11 @@ class AcceptanceRunnerContractTests(unittest.TestCase):
             content.count('-v "$RUNNER_NOTIFICATION_KEY:$RUNNER_NOTIFICATION_KEY_CONTAINER:ro"'),
             2,
         )
+        self.assertIn('install -d -m 0700 "$RUNNER_TEMP_ROOT"', content)
+        self.assertEqual(
+            content.count('-v "$RUNNER_TEMP_ROOT:$RUNNER_TEMP_ROOT_CONTAINER"'),
+            2,
+        )
 
     def test_full_ci_runs_the_versioned_live_week11_executor(self):
         root = Path(__file__).resolve().parents[3]

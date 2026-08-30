@@ -688,3 +688,10 @@
 - 修复：保留两个证据执行器的 `--user "$(id -u):$(id -g)"`，在运行器中使用 `sudo install` 创建仅供本次 runner UID 读取的 `0400` 临时密钥副本，并通过只读 bind mount 和 `NOTIFICATION_MASTER_KEY_FILE` 覆盖传入 backup/upgrade 临时容器；生产栈原始密钥权限不变。
 - 本地验证：`AcceptanceRunnerContractTests` 及 Week 11/12 工具共 `108/108` 通过；验收 shell `bash -n`、Python 编译和 `git diff --check` 通过。Run `33282921412` 的失败证据不计入验收。
 - 当前状态：Week 9-12 仍为 `in_progress`。提交本修复及本条记录后，只触发一次新的 `workflow_dispatch mode=full`；必须在同一新 SHA 上取得六个 required jobs、performance、backup/restore、N-1、security/runtime-images、Playwright 和最终 `evidence_manifest.py` 全部通过，之后才能关闭 W11-R1/R2/R3、W12-R1 和总体验收。
+
+## 80. 最新执行记录（2026-08-30，临时 artifact cache 目录权限修复）
+
+- Run `33285363236` 绑定 `ca84239c916813041a0eb5aceae6d95c371c2326`；五个前置 job 均 `success`，Week 11-12 verification 在 live acceptance 失败。
+- 密钥读取修复已生效；新的唯一根因是 runner UID 的一次性容器在 readiness 检查构造 MinIOStorage 时无法创建 `/tmp/ml-platform/artifact-cache`。
+- 修复：运行器创建 runner 拥有的 `0700` 临时目录，并将其挂载到两个一次性容器的 `/tmp/ml-platform`；生产服务仍使用原有容器临时目录。
+- 本地需验证 runner 合同、shell 语法、Python 编译和差异检查；该 Run 未生成可关闭验收的完整 manifest，Week 9-12 保持 `in_progress`。
