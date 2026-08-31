@@ -2,7 +2,7 @@
 
 > 文档状态：当前进度与未完成任务
 > 文档更新日期：2026-08-29
-> 验收工作最后更新：2026-08-30（Run 33282921412 根因修复）
+> 验收工作最后更新：2026-08-24（冻结；后续验收仅作为续行记录追加）
 > 其后条目：产品开发记录，不改变 Week 9–12 验收冻结状态
 > 项目目录：`E:\codex_workspace\agent_spot_welding`
 
@@ -712,3 +712,11 @@
 - 修复：manifest 对四类数据库表计数字典执行严格结构校验（合法 SQL 标识符、非负整数），并将表名作为结构标识跳过敏感字段名匹配；普通 JSON 中真实 `api_key`/`token` 等敏感字段仍 fail-closed 拒绝。
 - 回归：新增 manifest 测试覆盖 `inference_api_keys` 表名可接受和真实敏感字段仍拒绝；两项定向测试通过，`git diff --check` 通过。完整远程验收必须绑定修复后新 SHA，不能改写或复用 Run `33291044965` 的失败 manifest。
 - 当前状态：Week 9-12 仍为 `in_progress`。下一步提交并推送本修复，只触发一次新 SHA `mode=full`，下载同 SHA 全部制品并再次运行最终 manifest；只有六个 required jobs 和 manifest 全部通过后才能关闭验收。
+
+## 83. 验收续行（2026-08-31，Run 33294680627 Playwright 绝对路径修复）
+
+- Run `33294680627` 绑定 `aa879e4ea4bd0f0594c2424e7e89aeeeeb277ea9`，Quality Windows/Ubuntu、Production integration、Production experiment integration、Chromium acceptance 和 live Week 11 业务步骤均为 `success`；最终 `evidence_manifest.py` 为唯一失败步骤，因此该 Run 总体为 `failure`，不得关闭 Week 9-12。
+- 已下载并检查同 SHA 制品。`playwright/playwright-report.json` 的 `config.argv`、`config.rootDir`、`config.projects[].outputDir`、`reporter.outputFile` 和 trace attachment path 包含 GitHub runner 的 `/home/runner/...` 或 `/tmp/...` 绝对路径；manifest 按现有 fail-closed 规则拒绝该原始制品。不是性能、备份恢复、N-1、安全扫描或 Playwright 用例失败。
+- 修复：`tools.playwright_evidence` 增加递归净化器，保留 JSON 的测试状态、项目和附件结构，同时脱敏文本凭据并替换 Windows/POSIX 绝对路径；浏览器 CI 在生成 summary 后以净化版覆盖待上传的 report。manifest 的绝对路径和敏感值门禁不放宽。
+- 本地验证：新增 RED/GREEN 回归覆盖 runner 路径净化后 Chromium 结果仍为 passed；CI 合同先因缺少 `--sanitized-output` 失败，再在接线后通过。完整 `tests.test_evidence_manifest tests.test_ci_workflow` 共 `80` 项通过；使用 Run `33294680627` 的真实 report 重放，净化后通过 `_assert_safe_json` 且摘要为 `1/1` passed；Python 编译和 `git diff --check` 通过。
+- 当前状态：Week 9-12 仍为 `in_progress`。本修复必须提交并在新 SHA 上重新触发一次 `mode=full`；仅当六个 required jobs、同 SHA 全部制品和最终 manifest 均通过后才能更新验收结果。

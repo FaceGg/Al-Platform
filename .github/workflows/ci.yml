@@ -245,6 +245,7 @@ jobs:
           python -m tools.playwright_evidence \
             --input ../../temp_test/week11-12/playwright/playwright-report.json \
             --output ../../temp_test/week11-12/playwright/result.json \
+            --sanitized-output ../../temp_test/week11-12/playwright/playwright-report.json \
             --project chromium
       - name: Upload Playwright evidence
         if: always()

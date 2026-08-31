@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tools.evidence_manifest import MIGRATION_HEAD, generate
-from tools.playwright_evidence import summarize_report
+from tools.playwright_evidence import sanitize_report, summarize_report
 from tools.security_scans import (
     REQUIRED_SCAN_GATES,
     WEB_SECURITY_GATE_NAMES,
@@ -1374,6 +1374,49 @@ class EvidenceManifestTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["tests"], {"total": 1, "passed": 0, "failed": 0})
+
+    def test_playwright_report_sanitizer_redacts_runner_paths_without_changing_results(self):
+        raw_report = {
+            "config": {
+                "rootDir": "/home/runner/work/Al-Platform/Al-Platform/ml-platform/frontend/e2e",
+                "projects": [{"outputDir": "/tmp/week11-12/playwright"}],
+            },
+            "suites": [
+                {
+                    "specs": [
+                        {
+                            "tests": [
+                                {
+                                    "projectName": "chromium",
+                                    "results": [
+                                        {
+                                            "status": "passed",
+                                            "attachments": [
+                                                {"path": "/tmp/week11-12/playwright/trace.zip"}
+                                            ],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "playwright-report.json"
+            output = root / "sanitized-report.json"
+            source.write_text(json.dumps(raw_report), encoding="utf-8")
+
+            sanitize_report(source, output)
+
+            sanitized = output.read_text(encoding="utf-8")
+            result = summarize_report(output, root / "result.json", project="chromium")
+
+        self.assertNotIn("/home/runner/", sanitized)
+        self.assertNotIn("/tmp/week11-12", sanitized)
+        self.assertEqual(result["status"], "passed")
 
 
 if __name__ == "__main__":

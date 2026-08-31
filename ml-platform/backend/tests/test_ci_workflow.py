@@ -1026,6 +1026,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         self.assertIn("python -m tools.playwright_evidence", receipt["run"])
         self.assertIn("playwright-report.json", receipt["run"])
         self.assertIn("playwright/result.json", receipt["run"])
+        self.assertIn("--sanitized-output", receipt["run"])
         self.assertIn("--project chromium", receipt["run"])
         self.assertEqual(upload.get("if"), "always()")
         self.assertEqual(upload["with"].get("name"), "playwright-evidence")
