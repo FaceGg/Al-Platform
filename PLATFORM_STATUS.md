@@ -6,7 +6,9 @@
 
 > 第八周：ONNX 模型注册中心、独立基础推理运行时、运维 UI、生产 Compose、本地与远程验收已完成；已随 PR #3 合并到 `main`。
 
-> 最后更新: 2026-08-02 | 当前版本: 0.3.0
+> 最后更新: 2026-08-31 | 当前版本: 0.3.0
+
+> Week 9-12 远程验收已完成：GitHub Actions [Run 33363122355](https://github.com/FaceGg/Al-Platform/actions/runs/33363122355) 绑定提交 `3752794001c58b91d6a0e5f9c139f5635989a963`，Quality Windows/Ubuntu、Production integration、Production experiment integration、Chromium acceptance、Week 11-12 verification 六个 required job 全部成功；最终 `final-evidence-manifest.json` 状态为 `passed`。
 
 ---
 
@@ -385,9 +387,9 @@
 
 ### 未实现或未验收
 
-- 模型灰度发布、滚动升级、回滚、限流和在线推理治理已完成本地实现；远程 GitHub Actions 与最终生产证据仍未完成。
-- SSO、Kubernetes、Notebook、GPU 和多集群治理；项目角色、关键写操作审计与四通道企业通知已完成本地实现，远程验收仍待执行。
-- 更广泛的浏览器 E2E、性能、安全、备份恢复、升级和 Docker 镜像验收；焊接质量主流程 E2E 已通过。
+- 模型灰度发布、滚动升级、回滚、限流和在线推理治理已完成，并已通过 Week 9-12 远程验收；后续仅保留功能扩展和常规回归。
+- SSO、Kubernetes、Notebook、GPU 和多集群治理仍未实现；项目角色、关键写操作审计与四通道企业通知已完成并通过本次远程验收。
+- Week 9-12 的浏览器 E2E、性能、安全、备份恢复、N-1 升级和 Docker 镜像证据已完成；焊接质量主流程 E2E 继续纳入常规回归。
 
 ## 十二、2026-07-14 第四周交付审计
 
@@ -404,7 +406,14 @@
 - 第 1 至第 8 周能力已通过 PR #1、#2、#3 合并到 `main`；第 8 周最终远程验收为 [Actions Run 29714469437](https://github.com/FaceGg/Al-Platform/actions/runs/29714469437)。
 - 前端测试环境告警已清理；工作流参数标签、分类和端口预览双语已补齐。
 - 路由懒加载后首屏依赖块均低于 500 kB；ECharts 懒加载 chunk 约 1.13 MB，后续继续按图表能力裁剪。
-- WSL2 已完成 Docker Compose 生产栈与真实服务验收；备份恢复和性能压测仍按后续周次执行。
+- WSL2 已完成 Docker Compose 生产栈与真实服务验收；Week 9-12 的备份恢复和性能压测已由 Run `33363122355` 在固定 4 vCPU/8 GiB 资源下完成。
+
+### Week 9-12 验收结果（2026-08-31）
+
+- Week 9、Week 10：生产推理、权限、审计、模型卡、Outbox 与四通道通知均已通过当前 SHA 的远程 required jobs。
+- Week 11：`performance/summary.json`、`backup/restore-result.json`、`upgrade/result.json` 和 `upgrade/smoke.json` 均为 `passed`；备份恢复 RTO `0.5765s`、RPO `2.4009s`。
+- Week 12：Chromium receipt 为 `1/1 passed`；security summary、runtime-images 和 Web 安全门均通过。
+- 最终证据清单：`E:\\codex_workspace\\agent_spot_welding\\.worktrees\\week12-playwright-evidence\\temp_test\\remote-run-33363122355\\final-evidence-manifest.json`，`status=passed`，迁移 head `20260829_14`，镜像 digest `sha256:6269cf4e8f8a43f0a6a607ad94b14017f7dc5f27d728600341deed974e29c931`。
 
 ## 十三、2026-07-15 第一至第四周全模块回归
 
