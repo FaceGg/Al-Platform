@@ -29,7 +29,7 @@
 
 ## 3. 当前冻结基线
 
-- 源代码 SHA：`3752794001c58b91d6a0e5f9c139f5635989a963`。
+- 验收证据代码 SHA：`3752794001c58b91d6a0e5f9c139f5635989a963`；随后仅提交状态文档收口提交 `e7d84d9`，未改变验收代码。
 - 分支：`main`
 - 远程 full run：`33363122355` 绑定 `3752794001c58b91d6a0e5f9c139f5635989a963`，总体 `success`；Quality Windows/Ubuntu、Production integration、Production experiment integration、Chromium acceptance 和 Week 11-12 verification 均为 `success`。
 - WSL Docker Engine：`29.7.2`
@@ -719,3 +719,10 @@ W11-R1、W11-R2/R3、W12-R1 及当前 source SHA 绑定均已通过，已完成�
 - 修复：`tools.playwright_evidence` 增加递归净化器，保留 JSON 的测试状态、项目和附件结构，同时脱敏文本凭据并替换 Windows/POSIX 绝对路径；浏览器 CI 在生成 summary 后以净化版覆盖待上传的 report。manifest 的绝对路径和敏感值门禁不放宽。
 - 本地验证：新增 RED/GREEN 回归覆盖 runner 路径净化后 Chromium 结果仍为 passed；CI 合同先因缺少 `--sanitized-output` 失败，再在接线后通过。完整 `tests.test_evidence_manifest tests.test_ci_workflow` 共 `80` 项通过；使用 Run `33294680627` 的真实 report 重放，净化后通过 `_assert_safe_json` 且摘要为 `1/1` passed；Python 编译和 `git diff --check` 通过。
 - 当前状态：Week 9-12 仍为 `in_progress`。本修复必须提交并在新 SHA 上重新触发一次 `mode=full`；仅当六个 required jobs、同 SHA 全部制品和最终 manifest 均通过后才能更新验收结果。
+
+## 84. 验收续行（2026-08-31，Run 33363122355 最终关闭）
+
+- Run `33363122355` 绑定验收证据代码 SHA `3752794001c58b91d6a0e5f9c139f5635989a963`，总体 `success`；Quality Windows/Ubuntu、Production integration、Production experiment integration、Chromium acceptance 和 Week 11-12 verification 六个 required job 全部成功。
+- 同一 SHA 的 `environment.json`、`performance/summary.json`、`backup/restore-result.json`、`upgrade/result.json`、`security/summary.json`、`security/runtime-images.json` 和 `playwright/result.json` 均已下载；性能、备份恢复、N-1、安全和 Playwright 状态全部 `passed`。
+- 最终 `evidence_manifest.py` 结果为 `temp_test/remote-run-33363122355/final-evidence-manifest.json`，`status=passed`，包含完整哈希、迁移 head `20260829_14` 和镜像 digest `sha256:6269cf4e8f8a43f0a6a607ad94b14017f7dc5f27d728600341deed974e29c931`。
+- Week 9、Week 10、Week 11、Week 12 及 Week 9-12 总体现已关闭。随后提交的 `e7d84d9` 仅更新 `DEVELOPMENT_PLAN.md` 和 `PLATFORM_STATUS.md`，不改变已验证代码或制品绑定；本次不再重复触发 CI。
