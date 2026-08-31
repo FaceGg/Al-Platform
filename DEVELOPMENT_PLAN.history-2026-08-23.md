@@ -2609,3 +2609,17 @@
 - WP0 已生成：`temp_test/week11-12-live/evidence/environment.json`、`resource-envelope.json`、`source-runtime-receipt.json` 和脱敏后的 `compose-config-redacted.yml`。Compose 明确使用 `ml_platform` 与独立 `mlflow` 数据库；源 SHA 为 `252abf77c547bdb637755b00d1ff1aec8f13e14d`。
 - 重新拉取外部依赖仍失败：`postgres:16` 和 `redis:7` 对 `registry-1.docker.io:443` 连接超时，后续镜像未继续等待。该阻断保持为 failed/blocked，不计为 skipped 或 passed。
 - 当前可通过项：当前 SHA 业务镜像已冷构建；容器内 Week 11 工具与合同测试 `104/104 OK`。WP1-WP5 仍不能生成当前 SHA 的完整运行态结果，WP6 manifest 不得执行。
+
+### 2026-08-31：Week 9-12 验收状态同步（最终关闭）
+
+本节为归档文件的最新状态同步记录。此前条目保留当时的失败、阻断和未完成结论，不作历史改写；本节以最终同 SHA 证据覆盖当前任务状态。
+
+- 验收证据代码 SHA：`3752794001c58b91d6a0e5f9c139f5635989a963`；随后仅有状态文档收口提交 `e7d84d9`、`b2775a9`，未改变已验证代码。
+- GitHub Actions Run `33363122355` 总体 `success`；Quality Windows、Quality Ubuntu、Production integration、Production experiment integration、Chromium acceptance、Week 11-12 verification 六个 required job 全部 `success`。
+- W11-R1 固定资源真实性能：`performance/summary.json` 的 `status=passed`、`candidate_status=passed`，绑定上述验收证据代码 SHA。
+- W11-R2 真实 PostgreSQL/MinIO 备份恢复：`backup/restore-result.json` 的 `status=passed`、行数和对象哈希匹配、外键违规为空，RTO/RPO 门禁通过。
+- W11-R3 真实 N-1 升级：`upgrade/result.json` 与 `upgrade/smoke.json` 均通过；双次升级、`alembic check`、快照有效性和代表性数据保持通过。
+- W12-R1 最终 evidence manifest：`temp_test/remote-run-33363122355/final-evidence-manifest.json` 的 `status=passed`，包含必需证据哈希、迁移 head `20260829_14`、镜像 digest 和同 SHA 绑定。
+- W12-R2 发布目标和外部验收矩阵：Chromium receipt `1/1 passed`，覆盖角色权限、四通道通知、模型注册、部署、rollout、回滚和真实 `429` 限流路径；安全、runtime-images 和 Web security gate 均通过。
+- W12-R3 最终状态和发布决策：已完成状态文档更新、证据归档和 `main` 推送；不再重复触发 CI。
+- 当前同步状态：Week 9、Week 10、Week 11、Week 12、W11-R1、W11-R2、W11-R3、W12-R1、W12-R2、W12-R3 及 Week 9-12 总体均为“已完成”。后续未实现范围仍为 SSO、Kubernetes、Notebook、GPU 和多集群治理，不属于本次验收阻断项。
