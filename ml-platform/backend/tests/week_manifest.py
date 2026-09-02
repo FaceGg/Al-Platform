@@ -55,6 +55,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
     ],
     5: [
         "test_config",
+        "test_database_migrations",
         "test_database_production",
         "test_database_transfer",
         "test_storage",

@@ -789,3 +789,12 @@ W11-R1、W11-R2/R3、W12-R1 及当前 source SHA 绑定均已通过，已完成�
 - 排除范围：`output/` QA 生成物、`packaging/` 未完成安装脚本、含行业标题的独立预览、旧版方案、编辑器锁文件和其他未完成内容继续保留在保护位置，不进入 `main`。
 - 本地验证：前端完整 Vitest `254 passed / 19 skipped`，TypeScript 检查通过，生产构建通过（仅既有大 chunk warning）；后端定向回归 `77/77 OK`；Python 编译、DOCX 23 页渲染/逐页检查和 `git diff --check` 通过。
 - 状态：提交、推送和快进合并仍待完成；远端如在写入前发生变化，必须重新同步，禁止强制推送。发布后需核对本地 `main`、`origin/main` 和 GitHub `refs/heads/main` 为同一 SHA，且工作树仅保留明确保护内容。
+
+## 92. CI 失败修复记录（2026-09-02，Run 33584653041）
+
+- Run `33584653041` 绑定提交 `04cbb71a85bb4836963dfbb91cfa47c11326becd`，Quality Ubuntu 和 Windows 均失败；其余 Production、Chromium 和 Week 11-12 job 因 Quality 失败而 `skipped`，不能按绿色子集计为通过。
+- 首个真实失败为 `tests.test_suite_manifest.TestSuiteManifest.test_every_backend_test_module_has_one_week_owner`：自动发现新增模块 `test_database_migrations`，但 `tests/week_manifest.py` 未登记其周次归属；`112` 个其他模块通过。
+- 根因是发布提交新增独立数据库迁移兼容回归时未同步测试周次台账，违反每个 `test_*.py` 恰好归属一个周次的 manifest 合同。
+- 修复：将 `test_database_migrations` 登记到与数据库/存储兼容回归一致的 Week 5；未删除测试、未放宽 manifest 断言，也未修改通用技术方案 Markdown。
+- 本地验证：修复前 `tests.test_suite_manifest` 稳定复现 `1` 项失败；修复后 `tests.test_database_migrations tests.test_suite_manifest` 共 `6/6 OK`；完整 `run_suite.py` 为 `114 passed, 0 failed`。
+- 待远端验证：提交并推送本修复后重新检查 Quality Ubuntu/Windows；仅当后续 required jobs 不再因该门禁失败而跳过，才可记录新的 CI 结论。
