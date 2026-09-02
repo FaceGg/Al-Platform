@@ -798,3 +798,11 @@ W11-R1、W11-R2/R3、W12-R1 及当前 source SHA 绑定均已通过，已完成�
 - 修复：将 `test_database_migrations` 登记到与数据库/存储兼容回归一致的 Week 5；未删除测试、未放宽 manifest 断言，也未修改通用技术方案 Markdown。
 - 本地验证：修复前 `tests.test_suite_manifest` 稳定复现 `1` 项失败；修复后 `tests.test_database_migrations tests.test_suite_manifest` 共 `6/6 OK`；完整 `run_suite.py` 为 `114 passed, 0 failed`。
 - 待远端验证：提交并推送本修复后重新检查 Quality Ubuntu/Windows；仅当后续 required jobs 不再因该门禁失败而跳过，才可记录新的 CI 结论。
+
+## 93. CI 修复远端验证记录（2026-09-02，Run 33588866589）
+
+- 修复提交 `eb9c13bc787f2ac9b3534b2bb522c10b58f888db` 已推送到 `origin/main`，Run `33588866589` 绑定同一 SHA。
+- Quality Ubuntu 和 Windows 均为 `success`；后端套件、前端测试、前端构建及 Windows/Ubuntu 服务 smoke test 均通过。Production integration、Production experiment integration、Chromium acceptance 和 Week 11-12 verification 在本次 `push` 轻量模式下按工作流设计为 `skipped`，不作为本次 CI 修复的失败依据，也不替代 full acceptance。
+- 结果：Run `33588866589` 总体为 `success`，已验证 `test_database_migrations` 周次登记修复消除了 Run `33584653041` 的 manifest 阻断，未修改测试发现合同或删除测试。
+- 同步核对：本地 `main`、`origin/main` 与 GitHub `refs/heads/main` 均指向 `eb9c13bc787f2ac9b3534b2bb522c10b58f888db`；工作树仅保留评审中的通用技术方案 Markdown 和 Word 编辑器锁文件，未纳入本次记录提交。
+- 剩余：本次仅关闭 CI manifest 修复验证；后续若要重新进行 Week 9-12 完整验收，仍须按既有计划单独触发 `workflow_dispatch mode=full` 并核对全部 required jobs 与同 SHA 证据制品。
