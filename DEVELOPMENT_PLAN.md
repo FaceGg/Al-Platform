@@ -806,3 +806,23 @@ W11-R1、W11-R2/R3、W12-R1 及当前 source SHA 绑定均已通过，已完成�
 - 结果：Run `33588866589` 总体为 `success`，已验证 `test_database_migrations` 周次登记修复消除了 Run `33584653041` 的 manifest 阻断，未修改测试发现合同或删除测试。
 - 同步核对：本地 `main`、`origin/main` 与 GitHub `refs/heads/main` 均指向 `eb9c13bc787f2ac9b3534b2bb522c10b58f888db`；工作树仅保留评审中的通用技术方案 Markdown 和 Word 编辑器锁文件，未纳入本次记录提交。
 - 剩余：本次仅关闭 CI manifest 修复验证；后续若要重新进行 Week 9-12 完整验收，仍须按既有计划单独触发 `workflow_dispatch mode=full` 并核对全部 required jobs 与同 SHA 证据制品。
+
+## 94. 技术方案评审修订记录（2026-09-02）
+
+- 本次范围：仅修订通用自动建模与数据标注技术方案及其冲突的 supporting specs；未修改业务代码、数据库、CI 或 Word 文档，保留 Word 编辑器锁文件。
+- 修订内容：统一四种规范 `task_type` 及兼容别名；明确必需列缺失与列值为空的处理；补充样本级指派、任务完成条件、重叠样本乐观并发、回传批次合并和回传锁；补充标注员主体映射、独立会话、服务间认证、CORS/CSRF/Cookie/限流/密码和 JSON/XML 解析安全合同；补充特征重要性来源、one-hot 聚合、多目标加权和零值处理；明确百万样本 Silhouette 确定性抽样与全量最终聚类；明确簇/规则/簇加规则的执行范围、逐列优先级和不可删除兜底；补充 `executing`、`preview_ready`、`awaiting_annotation`、`needs_review`、`completed` 状态及接口守卫；补全 API 字段、游标分页、幂等、revision、预览、指派、批注、回传、导出状态/下载；补充导出 manifest、运行时版本、seed、SHA-256、SBOM、签名和离线推理输入校验；增加异步租约、重试、临时制品清理和可执行验收矩阵。
+- 同步文档：`ml-platform/docs/superpowers/specs/2026-08-31-multilabel-annotation-annotator-portal-design.md`、`2026-08-19-automl-result-registration-design.md`、`2026-08-20-data-annotation-task-redesign.md`、`2026-08-27-weak-supervision-fallback-rule-design.md`、`2026-08-19-data-annotation-task-list-design.md`。
+- 校验：`git diff --check` 通过；主方案和 supporting specs 的 Markdown 代码围栏成对；术语扫描未发现 worker 自动注册、共享登录、可删除兜底或旧行业专用表述残留（历史开发计划/经验记录按历史事实保留）。本次没有运行业务测试，因为未修改运行时代码。
+- 当前状态：技术方案已补全，仍为 `in_progress`/待评审；实现计划和代码迁移不在本次范围，待评审通过后按本计划 Task 1 开始全项目通用化迁移。
+
+## 95. 通用自动建模与数据标注开发计划（2026-09-02）
+
+- 依据：评审修订后的 ml-platform/docs/technical-proposals/2026-09-01-general-automl-annotation-platform.md 及其 supporting specs。
+- 新增计划：ml-platform/docs/superpowers/plans/2026-09-02-general-automl-annotation-platform.md。
+- 计划状态：planned。技术方案仍处于评审修订状态；本条只登记实现顺序，不表示功能已完成。
+- 任务范围：全项目去行业化基线；CSV/Excel/Parquet/JSON/XML 数据版本和输入合同；四种 AutoML 任务、多目标指标、交叉验证、搜索强度、类别权重和特征重要性；多列标签 schema 与 revision；手动/自动任务状态、预览和指派；cluster/rule/cluster_rule 与特征重要性加权 KMeans；独立标注员认证和 8443 可配置门户；样本级重叠指派、乐观并发、主动回传和回传锁；数据管理验收/差异/批注；用户手动注册模型；签名导出包与离线 predict/annotate；异步租约、幂等、恢复、清理、安全、浏览器和发布门禁。
+- 依赖顺序：Task 1 建立通用边界后，Task 2 冻结数据和输入合同；Task 3/4 可并行；随后执行 Task 5/6、Task 7/8、Task 9/10/11、Task 12、Task 13，最后由 Task 14 完成全量验收和发布证据。
+- 与旧计划的关系：保留 ml-platform/docs/superpowers/plans/2026-08-31-multilabel-annotation-annotator-portal.md 作为历史记录；本计划纠正其中共享认证、worker 自动注册、可删除兜底和行业专用依赖等已被评审方案否定的边界。
+- 本轮变更：仅新增独立开发计划并追加本台账记录；未修改业务代码、数据库、CI、Word 文档或评审中的技术方案内容。
+- 本轮验证：计划任务编号 1-14 唯一；Markdown 代码围栏成对；未发现 TODO、TBD 或其他占位词；Task 12 的 Playwright 用例改为从前端目录执行 `npm run test:e2e -- e2e/generic-annotation-portal.spec.ts`；git diff --check 通过。
+- 未完成与门禁：尚未执行任何实现、运行时测试、迁移、构建、浏览器验收、导出验证、恢复演练、提交或推送；评审未通过前不得按本计划标记任何任务完成。

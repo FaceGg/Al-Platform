@@ -2,29 +2,29 @@
 
 ## 目标与范围
 
-本需求包含五个相互依赖的子系统：AutoML 支持多标签分类、多输出回归；手动/自动标注支持标签集合；自动标注支持按簇、按规则、簇+规则；新增独立标注员网页、注册和登录；管理员可指派任务；完成的 AutoML 模型自动进入模型库并可导出可复现推理包。
+本需求包含五个相互依赖的子系统：AutoML 支持单目标分类、多输出分类（产品文案为多标签分类）、单目标回归和多输出回归；手动/自动标注支持多个独立标签列；自动标注支持按簇、按规则、簇+规则；新增独立标注员网页、注册和登录；管理员可指派任务；AutoML 候选由用户手动选择注册到模型库并可导出可复现推理包。
 
 项目整体目标是通用自动建模和通用数据标注。现有单标签任务仅作为迁移输入：旧 `target_column` 读取时转换为单元素 `target_columns`，迁移完成后统一使用通用任务合同。新任务显式保存任务类型和输入契约，不根据行业字段或数据列形状猜测业务类型。
 
 ## 核心合同
 
-- `task_type`: `classification`、`multilabel_classification`、`regression`、`multiregression`。
+- `task_type`: `classification`、`multioutput_classification`、`regression`、`multioutput_regression`；历史 `multilabel_classification`/`multiregression` 仅作为写入前兼容别名。
 - `target_columns`: 有序目标列数组；旧单目标字段兼容为长度 1。
 - `label_schema`: 标签 ID、显示名、值类型、允许值、颜色和版本。
-- 样本标签统一为 `{label_id, value, source, confidence, annotator_id, created_at}` 数组；单标签任务长度最多为 1。
-- 自动策略为 `cluster`、`rule`、`cluster_rule`，三者互斥，只能选择一种。启用聚类后，用户可选择一个或多个指定簇参与标注；按簇策略必须为指定簇配置标签，并自动增加可删除/可编辑的“其他”兜底簇，覆盖未选择或未配置标签的全部簇。按规则策略复用现有规则编辑器，但每条规则可写入多列标签。簇+规则策略整合两套配置并保存命中的规则、簇 ID 和解释信息。
+- 样本标签按独立列保存为 `{label_column_key: {value, source, confidence, annotator_id, created_at}}` 映射；不压缩为数组型多选值，单标签任务只包含一个键。
+- 自动策略为 `cluster`、`rule`、`cluster_rule`，三者互斥，只能选择一种。启用聚类后，用户可选择一个或多个指定簇参与标注；按簇策略必须为指定簇配置标签，并始终保留不可删除、可编辑的“其他”兜底簇，覆盖未选择或未配置标签的全部簇。按规则策略复用现有规则编辑器，但每条规则可写入多列标签。簇+规则策略整合两套配置并保存命中的规则、簇 ID 和解释信息。
 - `input_contract`: 输入列名、顺序、dtype、缺失值策略、预处理/特征工程版本、训练数据 schema hash、模型版本。
-- 导出包包含 `model.*`、`inference.py`、`manifest.json`、`input_schema.json`、`cluster_method.json`、`label_rules.json`、`README.md`。
+- 导出包包含 `model.*`、`inference.py`、`manifest.json`、输入/输出合同、运行时锁定依赖、SBOM、签名和可选的聚类/规则/簇映射工件；只在关联自动标注任务修订时生成 annotation 目录。
 
 ## 架构与权限
 
-后端沿用 FastAPI、SQLAlchemy、Alembic、Artifact Storage、异步 worker 和项目权限，逐步移除行业专用模型、字段、路由和页面。去行业化是全项目迁移目标，不是新功能的可选清理项；迁移期间旧 URL 只能返回弃用/重定向，不能作为新业务写入入口。认证复用现有 JWT/session，新增 `annotator` 角色和任务级 assignment 权限。前端保留主工作台路由，并新增独立 `annotator` 入口/地址；两者共享认证和 API 类型，但 annotator 不加载管理员导航壳。
+后端沿用 FastAPI、SQLAlchemy、Alembic、Artifact Storage、异步 worker 和项目权限，逐步移除行业专用模型、字段、路由和页面。去行业化是全项目迁移目标，不是新功能的可选清理项；迁移期间旧 URL 只能返回弃用/重定向，不能作为新业务写入入口。标注员采用独立账号、独立认证服务、独立会话和可配置的独立门户端口（默认 8443）；两端只共享 API 类型和受控服务合同，不共享浏览器 Cookie 或登录态。前端保留主工作台路由，并新增独立 annotator 入口/地址；annotator 不加载管理员导航壳。
 
 管理员/项目 owner/editor 可创建、配置、分配和导出；annotator 只能访问已分配任务、样本和提交接口；viewer 只读汇总。资源查询必须同时通过项目范围和 assignment 范围校验。
 
 ## 数据流与错误处理
 
-管理员创建任务时保存目标列、标签集合、策略配置和输入契约。AutoML worker 训练并幂等创建模型库条目。管理员创建 assignment 后，标注员独立登录并提交样本标签。自动标注 worker 生成模型预测，再按唯一选定策略生成最终标签；规则、簇方法、簇选择、兜底标签和输入契约写入运行快照。任务完成后前端不自动跳转到标注详情页，任务列表提供“预览”和“指派标注员”操作；手动任务和自动任务使用同一交互约定。模型导出服务生成归档包，推理脚本加载 manifest，在预测前完整校验输入契约。
+管理员创建任务时保存目标列、标签 schema、样本范围、策略配置和输入契约。AutoML worker 只训练并保存候选工件和报告，不创建或启用模型库条目；管理员必须手动选择完整成功的候选注册。管理员创建 assignment 后，标注员独立登录并提交样本标签。自动标注 worker 生成模型预测，再按唯一选定策略生成最终标签；规则、簇方法、簇选择、兜底标签和输入契约写入运行快照。任务完成后前端不自动跳转到标注详情页，任务列表提供“预览”和“指派标注员”操作；手动任务和自动任务使用同一交互约定。模型导出服务生成归档包，推理脚本加载 manifest，在预测前完整校验输入契约。
 
 稳定错误码至少包括 `TASK_TYPE_INVALID`、`TARGET_SCHEMA_INVALID`、`LABEL_VALUE_INVALID`、`ANNOTATOR_ASSIGNMENT_REQUIRED`、`CLUSTER_LABEL_MAPPING_INCOMPLETE`、`RULE_CONFIG_INVALID`、`INPUT_CONTRACT_MISMATCH`、`MODEL_EXPORT_FAILED`。长任务状态必须可恢复，失败保留脱敏详情，不伪装为完成。
 
@@ -32,7 +32,7 @@
 
 后端覆盖四种建模类型、标签 schema、三种互斥自动策略、指定簇/“其他”兜底、多列规则标签、任务指派、annotator 越权、导出 manifest 和输入契约拒绝/兼容；前端覆盖通用 AutoML、通用标注配置、完成后不跳转、预览、单选/多选标注员指派、独立登录/注册和工作区；Playwright 覆盖管理员指派、annotator 登录提交、越权拒绝、模型导出下载；通用化迁移后的全量模型注册/部署、迁移和 artifact 回归必须通过。当前 SHA 的 required 测试、构建、迁移、浏览器和导出/推理证据全部通过后才可标记完成。
 
-## 待确认决策
+## 初始问题（已关闭）
 
 1. 独立网页采用独立域名、独立端口，还是同一前端部署下的 `/annotator` 地址。
 2. 多人同时标注采用最后写入、样本锁定还是多数投票合并。

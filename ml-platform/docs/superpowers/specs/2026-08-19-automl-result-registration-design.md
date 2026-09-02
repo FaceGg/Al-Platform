@@ -6,16 +6,16 @@
 
 ## 当前约束
 
-当前 AutoML 搜索会评估多个算法族，但只为最佳算法保存一个 `joblib` 制品和一个内部 `ModelLibrary` 记录，任务顶层 `model_library_id` 也只指向该最佳模型。模型注册现有流程要求可信的项目内 `ModelLibrary` 来源并将其转换为 ONNX 模型版本，因此其他结果行必须先获得独立且可验证的源制品。
+当前 AutoML 搜索会评估多个算法族。worker 为每个完整成功的候选保存独立且可验证的候选制品和结果行，但不自动创建或启用 `ModelLibrary`/注册模型记录；模型库记录只能由用户在结果行点击“注册”后创建。模型注册现有流程需要可信的项目内来源并将候选制品转换为 ONNX 模型版本，因此注册请求必须绑定独立候选制品和输入输出合同。
 
 ## 后端设计
 
 ### 每个结果保存独立制品
 
 - AutoML 搜索结束后，对每个状态为 `completed` 且具有 `best_estimator` 的算法族保存独立 `joblib` 制品。
-- 为每个制品创建项目内 `ModelLibrary` 记录，绑定同一个训练任务、数据集制品和各自算法/指标/最佳参数。
-- `metrics.algorithm_results` 与 `metrics.all_results` 对应行写入 `model_library_id`，以稳定的 `algorithm_id` 关联结果、制品和注册操作。
-- 获胜算法对应的 `ModelLibrary` ID 继续写入 `TrainingJob.model_library_id`，保持现有任务详情和模型注册来源兼容。
+- 为每个制品创建项目内候选制品记录，绑定同一个训练任务、数据集制品和各自算法/指标/最佳参数；不得在 worker 阶段创建模型库条目。
+- `metrics.algorithm_results` 与 `metrics.all_results` 对应行写入 `candidate_artifact_id`，以稳定的 `algorithm_id` 关联结果、制品和后续注册操作。
+- 任务顶层只保存获胜候选的 `winner_candidate_artifact_id`；只有用户显式注册后才写入 `model_library_id`、`registered_model_id` 和 `model_version_id`。
 - 任一算法制品保存失败时任务失败并回滚该次任务尚未提交的数据库变更；已写入外部存储的文件按现有制品补偿清理规则删除。
 
 ### 原子化注册接口
@@ -25,10 +25,10 @@
 服务端流程：
 
 1. 验证当前用户具有任务所属项目的 `model.register` 权限。
-2. 验证任务属于路径项目、状态为 `completed`，并在任务结果中找到状态成功且带 `model_library_id` 的指定算法。
-3. 验证源 `ModelLibrary`、模型制品、训练任务和项目归属一致，继续复用现有可信来源校验。
-4. 以源 `model_library_id` 查询是否已有 `ModelVersion`；若存在，直接返回对应注册模型并标记 `created=false`。
-5. 若不存在，创建名称为“任务名称 - 模型名称”的 `RegisteredModel`，再调用现有平台版本注册服务生成首个 ONNX 版本和模型卡。
+2. 验证任务属于路径项目、状态为 `completed`，并在任务结果中找到状态成功且带 `candidate_artifact_id` 的指定算法。
+3. 验证候选制品、训练任务、输入输出合同和项目归属一致，继续复用现有可信来源校验；不能由客户端伪造源 ID。
+4. 以候选制品的稳定指纹查询是否已有注册结果；若存在，直接返回对应注册模型并标记 `created=false`。
+5. 若不存在，创建名称为“任务名称 - 模型名称”的 `RegisteredModel`，再调用现有平台版本注册服务生成首个 ONNX 版本和模型卡；源候选转为模型库记录的动作必须属于本次显式注册事务。
 6. 将 `registered_model_id` 和 `model_version_id` 写回任务的 `algorithm_results` 与 `all_results` 对应行，供任务详情刷新后恢复“已注册”状态。
 7. 注册模型、版本、模型卡、任务结果状态与审计记录在同一数据库事务中提交；ONNX 转换或写入失败时回滚数据库，并删除本次转换制品。
 
@@ -55,11 +55,11 @@
 
 后端覆盖：
 
-- 多个成功算法分别保存独立制品、`ModelLibrary` 和结果行 ID。
+- 多个成功算法分别保存独立候选制品和结果行 ID，worker 不创建 `ModelLibrary`。
 - 最佳算法仍写入任务顶层 `model_library_id`。
 - 首次注册创建注册模型、v1 版本和模型卡。
 - 重复注册返回同一注册模型且不增加模型或版本数量。
-- 跨项目任务、无权限用户、失败结果、缺失源 ID 和伪造来源均被拒绝。
+- 跨项目任务、无权限用户、失败结果、缺失候选制品和伪造来源均被拒绝。
 - ONNX 转换失败时不留下空注册模型或孤立版本/制品。
 
 前端覆盖：
