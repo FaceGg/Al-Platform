@@ -34,6 +34,7 @@ from app.services.spot_weld_quality import (
     assign_cluster_labels,
     _quality_estimator_metrics,
     apply_report_v1_rules,
+    annotation_feature_frame,
     build_demo_report_frame,
     claim_quality_run,
     create_demo_quality_dataset,
@@ -59,6 +60,16 @@ from app.storage.local import LocalStorage
 
 
 class TestSpotWeldQualityService(unittest.TestCase):
+    def test_annotation_feature_frame_materializes_legacy_report_model_features(self):
+        frame = build_demo_report_frame(12)
+        bundle = {"feature_schema_names": list(FEATURE_SCHEMA)}
+
+        features = annotation_feature_frame(frame, bundle)
+
+        self.assertEqual(list(features.columns), list(FEATURE_SCHEMA))
+        self.assertEqual(features.shape, (12, len(FEATURE_SCHEMA)))
+        self.assertTrue(np.isfinite(features.to_numpy(dtype=np.float64)).all())
+
     def test_automatic_rule_update_recalculates_labels_and_preserves_manual_labels(self):
         engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
         Session = sessionmaker(bind=engine)

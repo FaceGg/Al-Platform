@@ -287,6 +287,17 @@ def registered_annotation_feature_importance(
 def annotation_feature_frame(frame: pd.DataFrame, bundle: Mapping[str, Any]) -> pd.DataFrame:
     feature_names = [str(name) for name in bundle.get("feature_schema_names") or []]
     missing = [name for name in feature_names if name not in frame.columns]
+    # Legacy report_v1 model bundles store the derived 73-feature schema, while
+    # report datasets store only the source table fields and encoded waveforms.
+    # Materialize that legacy feature frame only for the exact known schema;
+    # generic annotation models continue to consume their raw input columns.
+    if missing and feature_names == list(FEATURE_SCHEMA):
+        try:
+            derived, derived_schema, _ = build_feature_frame(frame)
+            if derived_schema == feature_names:
+                return derived.loc[:, feature_names].apply(pd.to_numeric, errors="raise")
+        except (QualityPipelineError, KeyError, TypeError, ValueError):
+            pass
     if not feature_names or missing:
         raise QualityPipelineError(
             "QUALITY_INPUT_COLUMNS_INVALID",
@@ -748,8 +759,14 @@ def _export_json(value: Any) -> str | None:
     return str(value)
 
 
-def build_annotation_export(run: SpotWeldQualityRun, db, format: str = "xlsx") -> bytes:
-    """Build a transient CSV/XLSX export from persisted annotation lineage."""
+def build_annotation_export(
+    run: SpotWeldQualityRun,
+    db,
+    format: str = "xlsx",
+    *,
+    artifact_service: ArtifactService | None = None,
+) -> bytes:
+    """Build an export containing original dataset rows and their labels."""
     if format not in {"csv", "xlsx"}:
         raise QualityPipelineError("QUALITY_ANNOTATION_EXPORT_FORMAT_INVALID")
 
@@ -763,7 +780,19 @@ def build_annotation_export(run: SpotWeldQualityRun, db, format: str = "xlsx") -
         SpotWeldLabelSnapshot.run_id == run.id,
     ).order_by(SpotWeldLabelSnapshot.created_at, SpotWeldLabelSnapshot.id).all()
 
-    sample_frame = pd.DataFrame([
+    artifact_service = artifact_service or build_artifact_service(db)
+    _source_artifact, source_frame = resolve_dataset_frame(
+        db, artifact_service, run.project_id, run.dataset_artifact_id,
+    )
+    target_column = str((run.input_fingerprint or {}).get("target_column") or "label")
+    labels_by_row = {
+        int(sample.source_row_index): (sample.current_label or sample.automatic_label)
+        for sample in samples
+    }
+    labeled_frame = source_frame.drop(columns=[target_column], errors="ignore").copy()
+    labeled_frame[target_column] = [labels_by_row.get(index) for index in range(len(source_frame))]
+
+    lineage_frame = pd.DataFrame([
         {
             "source_row_index": sample.source_row_index,
             "display_id": sample.display_id,
@@ -822,10 +851,11 @@ def build_annotation_export(run: SpotWeldQualityRun, db, format: str = "xlsx") -
 
     output = BytesIO()
     if format == "csv":
-        sample_frame.to_csv(output, index=False, encoding="utf-8-sig")
+        labeled_frame.to_csv(output, index=False, encoding="utf-8-sig")
         return output.getvalue()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        sample_frame.to_excel(writer, sheet_name="标注样本", index=False)
+        labeled_frame.to_excel(writer, sheet_name="标注数据", index=False)
+        lineage_frame.to_excel(writer, sheet_name="标注样本", index=False)
         revision_frame.to_excel(writer, sheet_name="标签修订", index=False)
         snapshot_frame.to_excel(writer, sheet_name="标签快照", index=False)
     return output.getvalue()

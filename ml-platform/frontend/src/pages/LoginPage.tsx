@@ -32,7 +32,7 @@ export default function LoginPage() {
           <div className="auth-mark">
             <ThunderboltOutlined />
           </div>
-          <Title level={3}>智擎</Title>
+          <Title level={3}>灵工</Title>
           <Text type="secondary">工业智能平台</Text>
         </div>
 

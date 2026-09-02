@@ -23,7 +23,7 @@ export default function RegisterPage() {
       <Card className="auth-card" styles={{ body: { padding: "42px 38px" } }}>
         <div className="auth-heading">
           <Title level={3}>注册新账号</Title>
-          <Text type="secondary">创建您的智擎账户</Text>
+          <Text type="secondary">创建您的灵工账户</Text>
         </div>
         <Form onFinish={onFinish} size="large" initialValues={{ role: "engineer" }}>
           <Form.Item name="username" rules={[{ required: true, message: "请输入用户名" }]}>

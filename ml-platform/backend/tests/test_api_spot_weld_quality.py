@@ -194,7 +194,11 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         )
         self.assertIn("attachment;", response.headers["content-disposition"])
         workbook = pd.ExcelFile(BytesIO(response.content), engine="openpyxl")
-        self.assertEqual(workbook.sheet_names, ["标注样本", "标签修订", "标签快照"])
+        self.assertEqual(workbook.sheet_names, ["标注数据", "标注样本", "标签修订", "标签快照"])
+        labeled_frame = pd.read_excel(BytesIO(response.content), sheet_name="标注数据", engine="openpyxl")
+        self.assertIn("wld1c", labeled_frame.columns)
+        self.assertIn("label", labeled_frame.columns)
+        self.assertEqual(labeled_frame.iloc[0]["label"], "normal")
         sample_frame = pd.read_excel(BytesIO(response.content), sheet_name="标注样本", engine="openpyxl")
         self.assertIn("current_label", sample_frame.columns)
         self.assertEqual(sample_frame.iloc[0]["current_label"], "normal")
@@ -204,6 +208,37 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
         snapshot_frame = pd.read_excel(BytesIO(response.content), sheet_name="标签快照", engine="openpyxl")
         self.assertEqual(snapshot_frame.iloc[0]["snapshot_id"], str(snapshot.id))
         self.assertEqual(snapshot_frame.iloc[0]["label_source"], "approved")
+
+    def test_annotation_export_csv_contains_original_columns_and_labels(self):
+        run = SpotWeldQualityRun(
+            project_id=self.project.id,
+            dataset_artifact_id=self.artifact.id,
+            created_by_id=self.owner.id,
+            status="completed",
+            input_fingerprint={"label_mode": "manual", "target_column": "quality_label"},
+        )
+        self.db.add(run)
+        self.db.flush()
+        source = report_frame()
+        for index in range(len(source)):
+            self.db.add(SpotWeldQualitySample(
+                run_id=run.id,
+                source_row_index=index,
+                display_id=f"S-{index + 1:04d}",
+                table_values={str(column): value for column, value in source.iloc[index].items()},
+                current_label=f"manual-{index}",
+                review_status="submitted",
+            ))
+        self.db.commit()
+
+        response = self.client.get(
+            f"/api/projects/{self.project.id}/spot-weld/runs/{run.id}/annotations/export?format=csv",
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        exported = pd.read_csv(BytesIO(response.content), encoding="utf-8-sig")
+        self.assertEqual(list(exported["wld1c"]), list(source["wld1c"]))
+        self.assertEqual(exported["quality_label"].tolist(), ["manual-0", "manual-1"])
 
     def test_annotation_export_is_project_scoped(self):
         run, _snapshot = self._create_approved_snapshot()

@@ -114,6 +114,14 @@ W11-R1、W11-R2/R3、W12-R1 及当前 source SHA 绑定均已通过，已完成�
 
 每次执行后只更新本文件的当前状态、未完成任务、阻断和下一步；历史问题、已解决问题和旧状态保留在归档文件及共享经验文档中，不在当前计划中重复展开。
 
+## 7A. 最新执行记录（2026-08-31，通用自动标注旧模型输入兼容）
+
+- 问题现象：通用数据标注启动自动标注时，注册模型要求 `current_ratio`、`voltage_ratio`、`power_wld1` 等 73 个点焊派生特征，原始数据没有这些列，任务失败并返回 `QUALITY_INPUT_COLUMNS_INVALID`。
+- 根因：历史 `report_v1` 模型包保存的是派生特征 schema；通用自动标注执行层此前把内部派生特征名直接当作原始数据列名读取，未调用既有 `build_feature_frame()` 适配器。
+- 修复：仅当注册模型 schema 与完整 `FEATURE_SCHEMA` 精确匹配时，自动标注现场从点焊报告原始字段生成派生特征；其他通用模型仍严格按原始输入列读取，不过滤缺失列、不引入目标列或模型特征列概念。新增回归测试覆盖 73 特征生成。
+- 验证：`py -3.14 -m py_compile` 通过；`git diff --check` 通过。当前环境缺少 `joblib`，后端运行时 smoke/test 无法执行，记为 `skipped`，不宣称测试通过。
+- 未完成：需在具备后端依赖的环境运行点焊质量服务和 API 回归测试，并用真实注册模型/数据集执行一次自动标注验收。
+
 ## 8. 最新执行记录（2026-08-23）
 
 - 外部 Week 12 Chromium 验收在低容量隔离栈完成 `1 passed`；覆盖四角色、项目权限、站内/企业微信/邮件/Webhook、模型注册、ONNX、rollout pause/explicit rollback、部署和真实 `429`。scheduler 每 60 秒会推进 rollout，浏览器合同已改为验证合法状态机、单调推进和最终 `completed@10000`，并对 `ROLLOUT_REVISION_CONFLICT` 读取持久化状态。
@@ -726,3 +734,58 @@ W11-R1、W11-R2/R3、W12-R1 及当前 source SHA 绑定均已通过，已完成�
 - 同一 SHA 的 `environment.json`、`performance/summary.json`、`backup/restore-result.json`、`upgrade/result.json`、`security/summary.json`、`security/runtime-images.json` 和 `playwright/result.json` 均已下载；性能、备份恢复、N-1、安全和 Playwright 状态全部 `passed`。
 - 最终 `evidence_manifest.py` 结果为 `temp_test/remote-run-33363122355/final-evidence-manifest.json`，`status=passed`，包含完整哈希、迁移 head `20260829_14` 和镜像 digest `sha256:6269cf4e8f8a43f0a6a607ad94b14017f7dc5f27d728600341deed974e29c931`。
 - Week 9、Week 10、Week 11、Week 12 及 Week 9-12 总体现已关闭。随后提交的 `e7d84d9` 仅更新 `DEVELOPMENT_PLAN.md` 和 `PLATFORM_STATUS.md`，不改变已验证代码或制品绑定；本次不再重复触发 CI。
+## 85. 最新执行记录（2026-08-31，数据标注导出恢复原始数据列）
+
+- 问题现象：自动标注和手动标注的 CSV/XLSX 导出仅包含样本索引、自动/人工标签、审核状态等标注元数据，没有包含用户上传数据的原始列。
+- 根因：`build_annotation_export` 直接从 `spot_weld_quality_samples` 构造主表；该表用于标注状态和追溯，不是原始数据制品的完整导出来源。
+- 修复：导出时通过运行记录的 `dataset_artifact_id` 重新读取原始 DataFrame，按 `source_row_index` 将最终标签对齐到原始行。自动标注默认追加 `label`，手动标注沿用任务的目标列名；CSV 直接输出合并数据，XLSX 首表改为“标注数据”，并继续保留“标注样本 / 标签修订 / 标签快照”追溯工作表。
+- 验证：自动 XLSX 与手动 CSV 导出聚焦测试 `4 passed`，确认原始列存在且标签与原始行对齐；Python 编译和 `git diff --check` 通过。完整 `test_api_spot_weld_quality.py` 回归仍需在最终差异上执行。
+- 剩余工作：尚未通过真实登录浏览器下载文件并使用 Excel/文本编辑器人工检查；未执行提交、推送或远程门禁。
+
+## 86. 最新执行记录（2026-08-31，产品品牌更名为灵工 / Linkraft）
+
+- 需求：项目中文名称由“智擎”改为“灵工”，英文名称改为“Linkraft”。
+- 修复：中文和英文国际化品牌分别改为“灵工”和“Linkraft”；同步更新登录、注册、工作台副标题、浏览器标题、核心导航 E2E 断言及设计系统注释。历史开发记录和独立旧视觉预览保留原文，不改写历史事实。
+- 验证：品牌聚焦 Vitest 与验收清单测试 `25/25 passed`；前端生产构建通过，仅有既有 ECharts 大 chunk warning；核心导航 Playwright `1/1 passed`，验证浏览器标题为“灵工 Linkraft”且核心认证路由显示“灵工”。完整前端 Vitest 为 `248 passed / 19 skipped / 1 failed`，唯一失败是与本次品牌改名无关的既有 `ProjectListPage` 创建者夹具未渲染 `admin`。
+
+## 87. 最新执行记录（2026-08-31，多标签建模、标注员门户与模型导出计划）
+
+- 用户需求：自动建模支持多标签分类和回归；手动/自动标注支持标签；自动标注支持按簇、按规则、簇+规则；新增独立标注员登录注册页面；管理员可指派任务；完成模型注册模型库并导出模型文件、推理代码、聚类方法、标注规则，推理校验输入数据与训练输入一致。
+- 本轮处理：仅整理需求并新增设计与实施计划，未修改业务代码、数据库或运行时行为。
+- 设计文件：`ml-platform/docs/superpowers/specs/2026-08-31-multilabel-annotation-annotator-portal-design.md`。
+- 实施计划：`ml-platform/docs/superpowers/plans/2026-08-31-multilabel-annotation-annotator-portal.md`。
+- 计划拆分：合同/迁移、AutoML 多输出、统一标签、自动标注策略、标注员认证与指派、模型注册导出、推理一致性、文档与验收共 8 个任务；默认复用现有认证并新增 `annotator` 角色，兼容旧单标签任务。
+- 待确认：独立网页部署形态（独立域名/端口或 `/annotator`）、多人并行标注冲突策略、多标签层级/互斥规则。上述决策确认前不进入实现阶段。
+- 状态：`planned`。尚未执行测试、构建、迁移、浏览器验收、提交或远程门禁。
+- 剩余：未执行提交、推送或远程门禁；完整前端测试仍需单独修复 `ProjectListPage.test.tsx` 的既有失败后复跑，不能将本轮聚焦通过折算为全量通过。
+
+## 88. 需求边界再次纠正（2026-08-31）
+
+- 用户明确：整个项目都必须是通用自动建模和通用数据标注，不是仅本次需求去除行业内容。
+- 计划修正：新增“全项目去行业化迁移”作为 Task 0；现有行业专用模型、字段、路由、服务、页面和测试只作为待迁移遗留，不再作为新功能兼容目标。
+- 后续门禁：实现前必须完成行业专用引用盘点、通用 API/模型迁移、旧数据转换和全量引用扫描；任何新代码不得继续依赖固定行业字段或专用工作流。
+- 具体迁移清单：后端行业专用 API/service/model 及测试、前端数据标注页面/API/组件及测试、数据库迁移、worker 分发、artifact/export、路由/菜单/i18n 和用户文档均纳入 Task 0；旧 URL 仅允许迁移期弃用或重定向。
+
+## 89. 需求细化记录（2026-08-31，自动标注策略与完成后交互）
+
+- 自动标注策略互斥：用户只能选择 `cluster`、`rule`、`cluster_rule` 其中一种。
+- 按簇标注：聚类后允许选择一个或多个簇；指定簇必须配置标签；默认增加可编辑/可删除的“其他”兜底簇，覆盖未选择或未配置标签的全部簇。
+- 按规则标注：复用现有规则能力，但扩展为每条规则支持多列标签。
+- 按簇+规则标注：整合簇选择/标签与规则标签，并持久化明确的优先级和标签来源。
+- 完成后交互：手动和自动任务完成后均不自动跳转标注详情页；任务列表/结果区域增加只读“预览”和支持单选/多选标注员的“指派标注员”。
+- 计划文件已同步更新：`ml-platform/docs/superpowers/specs/2026-08-31-multilabel-annotation-annotator-portal-design.md`、`ml-platform/docs/superpowers/plans/2026-08-31-multilabel-annotation-annotator-portal.md`。
+
+## 90. 技术方案记录（2026-08-31，通用自动建模与数据标注平台）
+
+- 新增技术方案：`ml-platform/docs/technical-proposals/2026-08-31-general-modeling-annotation-platform.md`。
+- 方案内容：全项目通用化架构、四种 AutoML 任务类型、统一标签/修订模型、聚类/规则/簇加规则流程、预览与指派交互、标注员门户、模型导出包、输入契约校验、迁移阶段、API 草案、测试和发布门禁。
+- 本轮仅新增技术文档，未修改业务代码、数据库或运行时行为；`git diff --check` 已执行。
+- 待评审决策：标注员部署形态、多人标注冲突策略、多标签层级/互斥规则、簇加规则优先级。
+
+## 91. 发布同步记录（2026-09-02）
+
+- 发布基线：本地发布分支 `codex/publish-local-safe-20260902` 已基于 `origin/main` 的 `e307e1b9968f1e1fe215ccdfbe126d43905da722`；原工作树通过 `codex/local-pre-sync-20260902` 和两份 stash 保留。
+- 纳入范围：标注导出恢复原始数据列、旧 SQLite API 字段兼容、历史模型输入适配、灵工/Linkraft 品牌同步、对应回归测试，以及通用自动建模/数据标注技术方案、设计、实施计划和本记录。
+- 排除范围：`output/` QA 生成物、`packaging/` 未完成安装脚本、含行业标题的独立预览、旧版方案、编辑器锁文件和其他未完成内容继续保留在保护位置，不进入 `main`。
+- 本地验证：前端完整 Vitest `254 passed / 19 skipped`，TypeScript 检查通过，生产构建通过（仅既有大 chunk warning）；后端定向回归 `77/77 OK`；Python 编译、DOCX 23 页渲染/逐页检查和 `git diff --check` 通过。
+- 状态：提交、推送和快进合并仍待完成；远端如在写入前发生变化，必须重新同步，禁止强制推送。发布后需核对本地 `main`、`origin/main` 和 GitHub `refs/heads/main` 为同一 SHA，且工作树仅保留明确保护内容。

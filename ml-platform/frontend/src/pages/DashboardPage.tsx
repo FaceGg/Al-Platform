@@ -19,7 +19,7 @@ export default function DashboardPage() {
   const { lang } = useI18n();
   const { theme } = useTheme();
   const text = lang === "zh" ? {
-    title: "数据驾驶舱", subtitle: "智擎 · 总览面板",
+    title: "数据驾驶舱", subtitle: "灵工 · 总览面板",
     algorithms: "内置算子", datasets: "数据集", models: "模型总数", apis: "API 总数",
     enterProjects: "进入项目", algorithmDistribution: "算子分布", modelStatus: "模型状态",
     quickActions: "快捷操作", newDataset: "新建数据集", automl: "自动化建模",
@@ -27,7 +27,7 @@ export default function DashboardPage() {
     viewAll: "查看全部", noDescription: "无描述", noProjects: "暂无项目", createFirst: "创建第一个项目",
     trainingState: "训练中", completedState: "已完成", publishedState: "已发布",
   } : {
-    title: "Data Cockpit", subtitle: "智擎 · Overview",
+    title: "Data Cockpit", subtitle: "Linkraft · Overview",
     algorithms: "Built-in Operators", datasets: "Datasets", models: "Models", apis: "APIs",
     enterProjects: "Open Projects", algorithmDistribution: "Operator Distribution", modelStatus: "Model Status",
     quickActions: "Quick Actions", newDataset: "New Dataset", automl: "AutoML",

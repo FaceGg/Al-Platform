@@ -970,6 +970,7 @@ def delete_run(
 def export_annotations(
     project_id: uuid.UUID,
     run_id: str,
+    request: Request,
     format: str = Query(default="xlsx"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -977,7 +978,12 @@ def export_annotations(
     require_project_access(db, project_id, current_user.id, "project.read")
     run = _run_or_404(db, project_id, run_id)
     try:
-        content = build_annotation_export(run, db, format)
+        content = build_annotation_export(
+            run,
+            db,
+            format,
+            artifact_service=get_quality_artifact_service(request, db),
+        )
     except QualityPipelineError as error:
         _quality_error(error)
     media_type = {

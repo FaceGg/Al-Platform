@@ -66,6 +66,7 @@ const weekTestFiles: Record<number, string[]> = {
     "./pages/MonitorPage.test.tsx",
     "./pages/OrchestrationPage.test.tsx",
     "./pages/ProjectListPage.test.tsx",
+    "./pages/RegisterPage.test.tsx",
     "./pages/UserManagementPage.test.tsx",
     "./stores/themeContext.test.tsx",
   ],

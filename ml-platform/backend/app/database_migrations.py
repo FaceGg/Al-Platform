@@ -65,6 +65,15 @@ _SQLITE_COLUMNS = {
     "artifacts": {
         "storage_uri": "TEXT",
     },
+    # Existing local SQLite databases may predate the API management
+    # migration. Keep the compatibility path additive and idempotent so the
+    # application can start before the next full Alembic upgrade.
+    "platform_apis": {
+        "source_kind": "VARCHAR(32) NOT NULL DEFAULT 'custom'",
+        "source_id": "CHAR(32)",
+        "published_at": "DATETIME",
+        "last_error": "TEXT",
+    },
 }
 
 _SQLITE_INDEXES = {

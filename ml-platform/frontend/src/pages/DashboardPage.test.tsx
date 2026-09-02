@@ -36,6 +36,12 @@ describe("DashboardPage", () => {
     expect(screen.queryByText("内置算法")).not.toBeInTheDocument();
   });
 
+  it("shows the localized product brand in the dashboard subtitle", async () => {
+    render(<MemoryRouter><DashboardPage /></MemoryRouter>);
+
+    expect(await screen.findByText("灵工 · 总览面板")).toBeInTheDocument();
+  });
+
   it("renders real dashboard values and recent projects from the API", async () => {
     apiGet.mockImplementation((path: string) => Promise.resolve(
       path === "/dashboard/stats"

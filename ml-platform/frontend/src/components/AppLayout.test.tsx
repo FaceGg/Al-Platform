@@ -62,6 +62,21 @@ describe("AppLayout", () => {
     expect(screen.getByText(/API\s*(市场|Market)/)).toBeInTheDocument();
   });
 
+  it.each([
+    ["zh", "灵工"],
+    ["en", "Linkraft"],
+  ])("renders the %s locale brand name", async (lang, brandName) => {
+    localStorage.setItem("lang", lang);
+
+    render(
+      <MemoryRouter>
+        <LangProvider><AppLayout><div>test</div></AppLayout></LangProvider>
+      </MemoryRouter>,
+    );
+
+    expect((await screen.findAllByText(brandName)).length).toBeGreaterThan(0);
+  });
+
   it("navigates to the API marketplace from the sidebar", async () => {
     function LocationProbe() {
       const location = useLocation();

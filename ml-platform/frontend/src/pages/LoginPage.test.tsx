@@ -15,6 +15,18 @@ describe("LoginPage", () => {
     login.mockReset();
   });
 
+  it("shows the current product brand", () => {
+    render(
+      <MemoryRouter>
+        <AntApp>
+          <LoginPage />
+        </AntApp>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("heading", { name: "灵工" })).toBeInTheDocument();
+  });
+
   it("stores the username after a successful login", async () => {
     login.mockResolvedValue({ access_token: "token", user_id: "user-id", role: "admin" });
 
