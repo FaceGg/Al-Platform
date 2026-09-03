@@ -1,5 +1,7 @@
 # 多标签自动建模、数据标注与标注员门户实施计划
 
+> **历史归档：** 本计划已被 `2026-09-02-general-automl-annotation-platform.md` 取代，仅保留用于追溯，禁止作为当前实施依据。其“共享认证”和“可删除其他兜底”等边界已被 2026-09-02 评审通过的通用平台方案否定。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将项目整体收敛为通用自动建模和通用数据标注，并交付多标签/多输出建模、标签化标注策略、独立标注员门户、任务指派和可复现模型导出推理。

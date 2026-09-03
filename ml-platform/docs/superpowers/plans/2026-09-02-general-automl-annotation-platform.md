@@ -12,7 +12,7 @@
 
 **Supporting specs:** ml-platform/docs/superpowers/specs/2026-08-31-multilabel-annotation-annotator-portal-design.md、2026-08-20-data-annotation-task-redesign.md、2026-08-19-automl-result-registration-design.md、2026-08-27-weak-supervision-fallback-rule-design.md。
 
-**Status:** planned。技术方案仍处于评审修订状态；本计划是评审通过后的实现顺序，不代表任何功能已完成。
+**Status:** planned。技术方案已于 2026-09-02 评审通过；本计划是已确认方案的实现顺序，不代表任何功能已完成。
 
 ## Global Constraints
 
@@ -1031,7 +1031,7 @@ Expected: no automatic redirect occurs, preview/assignment/return actions are vi
 **Objective:** 让导入、预览、训练、聚类、回传和导出在重复请求、worker 重启和基础设施短暂故障下保持可恢复且失败封闭。
 
 **Files:**
-- Create: ml-platform/backend/tests/test_async_operation_contract.py、test_security_contract.py
+- Create: ml-platform/backend/tests/test_async_operation_contract.py、test_security_contract.py、tools/cleanup_acceptance.py
 - Modify: ml-platform/backend/app/tasks/celery_app.py、dispatcher.py、recovery.py、training_recovery.py、notification_tasks.py、app/services/artifact_service.py、config.py、main.py
 - Modify: ml-platform/annotator/backend/app/config.py、app/main.py、services/session.py
 - Modify: docker-compose.yml、docker-compose.acceptance.yml、backend/Dockerfile、backend/Dockerfile.worker、annotator/backend/Dockerfile
@@ -1042,6 +1042,7 @@ Expected: no automatic redirect occurs, preview/assignment/return actions are vi
 - heartbeat_operation(db: Session, operation_id: UUID, worker_id: str) -> None
 - complete_operation(db: Session, operation_id: UUID, result_artifact_id: UUID, checksum: str) -> None
 - cleanup_orphan_artifacts(storage: ArtifactStorage, older_than: timedelta) -> CleanupReport
+- write_cleanup_report(storage: ArtifactStorage, output: Path, older_than: timedelta, source_commit: str) -> Path
 - enforce_request_security(request: Request, policy: SecurityPolicy) -> None
 
 - [ ] **Step 1: Write RED tests for lease recovery, duplicate keys, cleanup and web security**
@@ -1086,6 +1087,8 @@ Expected: duplicate requests enqueue multiple workers, stale leases cannot be re
 5. Configure exact CORS allowlists for both origins, CSRF validation for state-changing cookie requests, secure cookies, service JWT/mTLS validation and the stated login/register/reset/bulk-label rate limits.
 6. Enforce upload magic-byte checks, path traversal rejection, decompression limits, XML hardening and redacted error details. Add dependency lock and runtime image smoke checks.
 7. Update the test week manifest in the same change as every new test module, then run the manifest contract before the full suite.
+8. Serialize the cleanup acceptance report with at least `status`, `scanned`, `removed`, `retained_committed`, `errors`, `ttl_seconds` and `source_commit`; write it only after the orphan-artifact scan and audit record are complete. A missing or failed report blocks REL-01.
+9. Expose the cleanup acceptance harness as `python -m tools.cleanup_acceptance --older-than-seconds 3600 --output /evidence/cleanup.json --source-commit "$ACCEPTANCE_SOURCE_COMMIT"` inside the same backend Compose environment. The runner mounts the host `.../recovery` directory at `/evidence`, so this produces the host artifact `recovery/cleanup.json`. It must call `cleanup_orphan_artifacts`, write the report atomically, and never treat `docker compose down` as proof of cleanup.
 
 - [ ] **Step 4: Run GREEN verification**
 
@@ -1111,10 +1114,11 @@ Expected: lease/retry/cleanup/security tests pass, every test module has one wee
 - Modify: ml-platform/docs/api_reference.md、ml-platform/docs/user_guide.md、ml-platform/docs/technical-proposals/2026-09-01-general-automl-annotation-platform.md（仅在评审产生新决策时）、DEVELOPMENT_PLAN.md
 - Create: ml-platform/docs/acceptance/2026-09-02-general-platform-acceptance-matrix.md、ml-platform/docs/acceptance/2026-09-02-export-runtime-checklist.md
 - Modify: .github/workflows/ci.yml、ml-platform/backend/tests/week_manifest.py
-- Create: ml-platform/backend/tests/test_acceptance_manifest.py、ml-platform/frontend/e2e/generic-platform-acceptance.spec.ts
+- Create: ml-platform/backend/tests/test_acceptance_manifest.py、ml-platform/backend/tools/generic_acceptance_evidence.py、ml-platform/frontend/e2e/generic-platform-acceptance.spec.ts
 
 **Interfaces:**
-- Acceptance matrix maps DAT-01..02、LAB-01..02、CLU-01..02、CON-01..02、RET-01、AUTH-01..02、API-01、AUTO-01..02、EXP-01、INF-01 and REL-01 to exact test commands and evidence files.
+- Acceptance matrix maps DAT-01..03、LAB-01..03、CLU-01..02、CON-01..02、RET-01、AUTH-01..02、API-01、AUTO-01..02、EXP-01、INF-01 and REL-01 to exact test commands and evidence files.
+- write_contract_receipt(evidence_dir: Path, evidence_id: str, status: str, command: list[str], evidence_paths: list[str], commit_sha: str) -> Path writes one redacted, SHA-bound JSON receipt for each matrix row.
 - Release gate consumes current Git SHA, required job statuses, artifact hashes, migration head and browser receipts; old SHA or skipped evidence cannot satisfy the gate.
 
 - [ ] **Step 1: Write the acceptance matrix and failing gate checks**
@@ -1150,6 +1154,8 @@ Expected: no matrix or gate exists, or skipped/old-SHA evidence is accepted.
 3. Add the acceptance matrix with exact commands for backend tests, frontend Vitest/build, Playwright, Alembic fresh/legacy upgrade, export validation, offline invalid-input tests, security checks and recovery rehearsal.
 4. Generate a final evidence manifest containing current SHA, environment, migration head, test outputs, browser receipt, export hashes, SBOM/signature validation and recovery results. Store failed/cancelled/skipped evidence as such.
 5. Update DEVELOPMENT_PLAN.md by appending this plan path, dependencies, current status planned and known risks. Do not mark any task complete before its implementation and required evidence exist.
+6. Implement `tools/generic_acceptance_evidence.py` as the single receipt writer. It emits `receipts/<ID>.json` for every matrix ID below `temp_test/generic-platform-acceptance/`, records the exact command, test-source hash, generated-artifact paths/hashes, status and current SHA, and rejects secrets or absolute runner paths before the final manifest is built.
+7. For REL-01, keep recovery sources distinct: the versioned `run_week11_acceptance.sh` produces backup/restore and upgrade receipts, while the Task 13 cleanup harness serializes `CleanupReport` to `temp_test/generic-platform-acceptance/recovery/cleanup.json`. The receipt writer must fail closed when that cleanup report is missing, stale, secret-bearing or not bound to the current SHA; `docker compose down` is teardown, not cleanup evidence.
 
 - [ ] **Step 4: Run GREEN verification and release decision**
 
@@ -1160,10 +1166,23 @@ Set-Location ml-platform/backend
 py -3.14 -m pytest tests/test_acceptance_manifest.py tests/test_suite_manifest.py -q
 py -3.14 run_suite.py
 py -3.14 -m alembic upgrade head
+py -3.14 -m pytest tests/test_database_migrations.py tests/test_model_export_contract.py tests/test_offline_inference_contract.py tests/test_security_contract.py tests/test_async_operation_contract.py -q
 Set-Location ..\frontend
 npm test -- --run
 npm run build
 npm run test:e2e -- e2e/generic-platform-acceptance.spec.ts
+Set-Location ..\..
+# Convert the PowerShell repository path to an absolute WSL path before using
+# Docker bind mounts. The versioned orchestrator invokes backend-container
+# backup/upgrade executors and receives its Compose environment in WSL/CI.
+$env:COMPOSE_FILE = "docker-compose.yml:docker-compose.acceptance.yml"
+$env:COMPOSE_PROJECT_NAME = "generic-platform-acceptance"
+$env:ACCEPTANCE_SOURCE_COMMIT = (git rev-parse HEAD).Trim()
+$repoWsl = (wsl.exe -e wslpath -a (Get-Location).Path).Trim()
+$env:ML_PLATFORM_EVIDENCE_DIR = "$repoWsl/temp_test/generic-platform-acceptance/recovery"
+wsl.exe -e sh -lc "set -eu; cd '$repoWsl'; docker compose --project-name $env:COMPOSE_PROJECT_NAME config -q; bash ml-platform/backend/tools/acceptance/run_week11_acceptance.sh"
+Set-Location ml-platform/backend
+py -3.14 -m pytest tests/test_week11_12_tools.py -q
 Set-Location ..\..
 git diff --check
 ~~~
