@@ -7,6 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -113,7 +114,17 @@ def create_generic_annotation_task(
         idempotency_key=key,
     )
     db.add(task)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.query(GenericAnnotationTask).filter(
+            GenericAnnotationTask.idempotency_key == key,
+            GenericAnnotationTask.owner_id == current_user.id,
+        ).first()
+        if existing is None:
+            raise
+        return _serialize(existing)
     db.refresh(task)
     return _serialize(task)
 
