@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -15,6 +17,16 @@ from app.models.user import User
 from app.services.annotation_tasks import migrate_legacy_quality_run
 
 router = APIRouter(tags=["generic-tasks"])
+
+
+class GenericTaskCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: uuid.UUID
+    dataset_version_id: uuid.UUID
+    label_schema_id: uuid.UUID
+    mode: Literal["manual", "automatic"] = "manual"
+    sample_scope: dict = Field(default_factory=lambda: {"kind": "all"})
+    label_snapshot: dict = Field(default_factory=dict)
 
 
 def _uuid(value, field: str) -> uuid.UUID:
@@ -45,6 +57,14 @@ def _require_project(db: Session, project_id: uuid.UUID, user: User) -> Project:
     return project
 
 
+def _contract_error(request: Request, code: str, message: str, status_code: int = 400, details: dict | None = None):
+    request_id = str(getattr(request.state, "request_id", "")) or None
+    return HTTPException(
+        status_code=status_code,
+        detail={"request_id": request_id, "code": code, "message": message, "details": details or {}},
+    )
+
+
 @router.get("/api/annotation-tasks")
 def list_generic_annotation_tasks(
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
@@ -55,30 +75,42 @@ def list_generic_annotation_tasks(
     return {"items": [_serialize(task) for task in tasks], "total": len(tasks)}
 
 
+def _request_context(request: Request, x_request_id: str | None, idempotency_key: str | None):
+    request_id = getattr(request.state, "request_id", None)
+    if not x_request_id or request_id is None or str(request_id) != x_request_id:
+        raise _contract_error(request, "REQUEST_ID_REQUIRED", "X-Request-ID is required")
+    if not idempotency_key or len(idempotency_key) > 128:
+        raise _contract_error(request, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required")
+    return idempotency_key
+
+
 @router.post("/api/annotation-tasks", status_code=status.HTTP_201_CREATED)
 def create_generic_annotation_task(
-    data: dict,
+    data: GenericTaskCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    x_request_id: str | None = Header(default=None, alias="X-Request-ID"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    project_id = _uuid(data.get("project_id"), "project_id")
-    dataset_version_id = _uuid(data.get("dataset_version_id"), "dataset_version_id")
-    label_schema_id = _uuid(data.get("label_schema_id"), "label_schema_id")
+    key = _request_context(request, x_request_id, idempotency_key)
+    project_id = data.project_id
     _require_project(db, project_id, current_user)
-    mode = data.get("mode", "manual")
-    if mode not in {"manual", "automatic"}:
-        raise HTTPException(status_code=422, detail={"code": "INVALID_TASK_MODE"})
-    scope = data.get("sample_scope", {"kind": "all"})
-    if not isinstance(scope, dict):
-        raise HTTPException(status_code=422, detail={"code": "INVALID_SAMPLE_SCOPE"})
+    existing = db.query(GenericAnnotationTask).filter(
+        GenericAnnotationTask.idempotency_key == key,
+        GenericAnnotationTask.owner_id == current_user.id,
+    ).first()
+    if existing is not None:
+        return _serialize(existing)
     task = GenericAnnotationTask(
         project_id=project_id,
-        dataset_version_id=dataset_version_id,
-        label_schema_id=label_schema_id,
+        dataset_version_id=data.dataset_version_id,
+        label_schema_id=data.label_schema_id,
         owner_id=current_user.id,
-        mode=mode,
-        sample_scope=scope,
-        label_snapshot=data.get("label_snapshot", {}),
+        mode=data.mode,
+        sample_scope=data.sample_scope,
+        label_snapshot=data.label_snapshot,
+        idempotency_key=key,
     )
     db.add(task)
     db.commit()
@@ -88,13 +120,15 @@ def create_generic_annotation_task(
 
 @router.post("/api/automl-tasks", status_code=status.HTTP_201_CREATED)
 def create_automl_task(
-    data: dict,
+    data: GenericTaskCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    x_request_id: str | None = Header(default=None, alias="X-Request-ID"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    payload = dict(data)
-    payload["mode"] = "automatic"
-    return create_generic_annotation_task(payload, db, current_user)
+    payload = data.model_copy(update={"mode": "automatic"})
+    return create_generic_annotation_task(payload, request, db, current_user, x_request_id, idempotency_key)
 
 
 @router.post("/api/projects/{project_id}/spot-weld/runs", status_code=status.HTTP_410_GONE)
@@ -113,10 +147,19 @@ def reject_legacy_spot_weld_write(project_id: uuid.UUID, data: dict | None = Non
 @router.post("/api/annotation-tasks/{legacy_run_id}/migrate", status_code=status.HTTP_201_CREATED)
 def migrate_legacy_task(
     legacy_run_id: uuid.UUID,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    x_request_id: str | None = Header(default=None, alias="X-Request-ID"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
+    _request_context(request, x_request_id, idempotency_key)
+    from app.models.spot_weld_quality import SpotWeldQualityRun
+    run = db.query(SpotWeldQualityRun).filter(SpotWeldQualityRun.id == legacy_run_id).first()
+    if run is None:
+        raise HTTPException(status_code=404, detail={"code": "LEGACY_QUALITY_RUN_NOT_FOUND", "message": "Legacy run not found"})
+    if run.created_by_id != current_user.id or run.project_id is None:
+        raise HTTPException(status_code=404, detail={"code": "LEGACY_QUALITY_RUN_NOT_FOUND", "message": "Legacy run not found"})
+    _require_project(db, run.project_id, current_user)
     task = migrate_legacy_quality_run(db, legacy_run_id)
-    if task.owner_id != current_user.id:
-        raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND"})
     return _serialize(task)

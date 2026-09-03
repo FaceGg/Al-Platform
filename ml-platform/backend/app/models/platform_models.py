@@ -76,6 +76,7 @@ class GenericAnnotationTask(Base):
     sample_scope = Column(JSON, nullable=False, default=dict)
     label_snapshot = Column(JSON, nullable=False, default=dict)
     source_legacy_id = Column(String(64), nullable=True, unique=True, index=True)
+    idempotency_key = Column(String(128), nullable=True, unique=True, index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

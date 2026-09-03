@@ -24,11 +24,13 @@
 | 引用位置 | 行业专用内容 | 通用替代 | 迁移策略 | 验证证据 | 状态 |
 |---|---|---|---|---|---|
 | `backend/app/api/spot_weld_quality.py` `/api/projects/{project_id}/spot-weld/runs` | 点焊质量运行创建写入口 | `/api/annotation-tasks`、`/api/automl-tasks` | 新写请求结构化返回 `410 GENERIC_API_REQUIRED`；旧读取与历史服务保留 | `tests/test_genericization_contract.py::test_legacy_spot_weld_write_is_closed` | in_progress |
-| `backend/app/models/spot_weld_quality.py` 运行、样本、标签修订/快照模型 | 行业化持久化表和字段 | `GenericAnnotationTask` 的 UUID 引用与 `label_snapshot` | 只读适配器复制，不删除原行；后续 Task 2/4 建立正式数据版本和 schema | `migrate_legacy_quality_run` focused contract | in_progress |
+| `backend/app/models/spot_weld_quality.py` 运行、样本、标签修订/快照模型 | 行业化持久化表和字段 | `GenericAnnotationTask` 的 UUID 引用与 `label_snapshot` | 只读适配器复制，不删除原行；后续 Task 2/4 建立正式数据版本和 schema；当前保留 source IDs/count/checksum | `migrate_legacy_quality_run` focused contract | in_progress |
 | `backend/app/services/spot_weld_features.py` `FEATURE_SCHEMA` 等 | 固定行业特征构建 | 通用输入合同（Task 2） | 仅允许旧服务作为迁移/兼容边界，新通用入口不导入该模块 | Task 1 source scan（待完整依赖环境） | planned |
 | `ml-platform/frontend/src` 点焊页面和 API client | 行业化导航与请求命名 | 通用标注任务页面/API（Task 12） | 保留历史页面，后续替换生产导航和 i18n | Task 12 UI contract | planned |
 
 本次盘点只建立迁移边界和可审计适配器；正式 `DatasetVersion`、`LabelSchema`、revision 表和输入合同属于后续 Task 2/4，不在 Task 1 提前创建。
+
+Task 1 remaining（未完成）：`ml-platform/frontend/src/App.tsx`、`pages/AnnotationPage.tsx`、`pages/DataAnnotationPage.tsx`、`api/spotWeldQuality.ts` 和 `i18n/index.tsx` 的生产导航/API 文案仍保留历史兼容入口；`spot_weld_quality` service/features/task/model 仍作为只读迁移适配边界，待后续任务完成全面替换和扫描收口。
 
 ## 迁移门禁
 
