@@ -826,3 +826,11 @@ W11-R1、W11-R2/R3、W12-R1 及当前 source SHA 绑定均已通过，已完成�
 - 本轮变更：仅新增独立开发计划并追加本台账记录；未修改业务代码、数据库、CI、Word 文档或评审中的技术方案内容。
 - 本轮验证：计划任务编号 1-14 唯一；Markdown 代码围栏成对；未发现 TODO、TBD 或其他占位词；Task 12 的 Playwright 用例改为从前端目录执行 `npm run test:e2e -- e2e/generic-annotation-portal.spec.ts`；git diff --check 通过。
 - 未完成与门禁：尚未执行任何实现、运行时测试、迁移、构建、浏览器验收、导出验证、恢复演练、提交或推送；评审未通过前不得按本计划标记任何任务完成。
+
+## 96. 本地分支整理记录（2026-09-03）
+
+- 任务范围：仅整理本地 Git 分支引用，不修改业务代码、远端分支、工作树文件或未提交内容。
+- 已完成：刷新 `origin` 引用后，依据 `git branch --merged main`、祖先关系和工作树占用情况，使用安全删除方式移除 16 个已被当前 `main` 完整包含的历史/临时本地分支，包括 `master`、旧同步快照、已合并周分支和已发布分支的本地副本。
+- 保留边界：保留当前 `main`；保留 `general-automl-annotation-20260902`、`codex/spot-weld-quality`、`codex/week9-12-mlops-core`（均被链接工作树占用，其中两个工作树含未提交或未跟踪内容）；保留 `codex/integrate-spot-weld-quality-20260801`、`codex/publish-current-conversation`、`codex/zhinqing-branding-hold`（仍有未合并独有提交）。
+- 验证：本地分支从 23 个减少到 7 个；`main` 与 `origin/main` 均为 `8f51a0d9971355c6905fdf3ae8cd22ad957bb3a8`；删除候选不再出现在本地 `refs/heads`，10 个原有同名远端引用仍存在，另有 5 个候选原本没有远端同名引用；`git worktree list` 仍显示 3 个链接工作树和 1 个外部脱离工作树。
+- 未完成/边界：未删除任何远端分支、链接工作树或工作树中的缓存/未跟踪文件；后续若要清理这些对象，必须由用户明确指定范围并先保存内容。
