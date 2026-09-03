@@ -1,6 +1,7 @@
 WEEK_TEST_MODULES: dict[int, list[str]] = {
     1: [
         "test_suite_manifest",
+        "test_genericization_contract",
         "test_module_imports",
         "test_app",
         "test_api_users",

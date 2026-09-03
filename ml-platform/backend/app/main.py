@@ -62,6 +62,7 @@ from app.api import auth, projects, workflows, runs, operators, datasets, workfl
 from app.api import users, models as model_api
 from app.api import knowledge, monitor, labeling, training, orchestration
 from app.api import algorithm as algo_api, platform_api, compute, annotations as annot_api, chat as chat_api
+from app.api import generic_tasks as generic_tasks_api
 from app.api import model_library as model_lib_api, dashboard as dash_api, readiness, experiments, schedules
 from app.api import project_access as project_access_api
 from app.api import model_registry as model_registry_api
@@ -292,6 +293,9 @@ app.include_router(model_registry_api.router)
 app.include_router(inference_production_api.router)
 app.include_router(platform_security_api.router)
 app.include_router(notifications_api.router)
+# Generic task routes are registered before the deprecated industry route so
+# the closed legacy write path cannot shadow the new platform boundary.
+app.include_router(generic_tasks_api.router)
 app.include_router(spot_weld_quality_api.router)
 app.include_router(spot_weld_quality_api.all_runs_router)
 

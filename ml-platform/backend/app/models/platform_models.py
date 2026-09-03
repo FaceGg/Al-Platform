@@ -56,6 +56,33 @@ class AnnotationTask(Base):
     dataset = relationship("Dataset", backref="annotation_tasks")
 
 
+class GenericAnnotationTask(Base):
+    """Industry-neutral task boundary used by the new annotation platform.
+
+    Dataset versions and label schemas are introduced by later tasks, so this
+    transition model stores auditable UUID references and immutable snapshots
+    without taking a dependency on those downstream tables yet.
+    """
+
+    __tablename__ = "generic_annotation_tasks"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    dataset_version_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    label_schema_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    mode = Column(String(16), nullable=False, default="manual")
+    status = Column(String(24), nullable=False, default="pending")
+    sample_scope = Column(JSON, nullable=False, default=dict)
+    label_snapshot = Column(JSON, nullable=False, default=dict)
+    source_legacy_id = Column(String(64), nullable=True, unique=True, index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    project = relationship("Project")
+    owner = relationship("User")
+
+
 class AnnotationResult(Base):
     __tablename__ = "annotation_results"
 
