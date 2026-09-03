@@ -1,4 +1,4 @@
-"""Report-compatible quality validation, AutoML, clustering and rules."""
+"""Legacy spot-weld adapter for migration and historical compatibility."""
 
 from __future__ import annotations
 
@@ -45,6 +45,8 @@ from app.services.spot_weld_features import (
     canonicalize_report_frame,
     decode_report_waveforms,
 )
+
+LEGACY_ADAPTER_ONLY = True
 
 
 REPORT_RULE_ENERGY_SIGMA = 2.5

@@ -102,10 +102,13 @@ class GenericizationContractTests(unittest.TestCase):
 
     def test_legacy_spot_weld_write_is_closed(self):
         response = self.client.post(
-            f"/api/projects/{self.project.id}/spot-weld/runs", json={}
+            f"/api/projects/{self.project.id}/spot-weld/runs", json={},
+            headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": "legacy-410"},
         )
         self.assertEqual(response.status_code, 410, response.text)
         self.assertEqual(response.json()["detail"]["code"], "GENERIC_API_REQUIRED")
+        self.assertIn("request_id", response.json()["detail"])
+        self.assertIn("message", response.json()["detail"])
 
     def test_list_is_owner_isolated(self):
         other = User(username="generic-other", password_hash="hash", role="engineer")
@@ -183,7 +186,9 @@ class GenericizationContractTests(unittest.TestCase):
             headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": "migration-denied"},
         )
         self.assertEqual(denied.status_code, 404)
-        self.assertEqual(self.db.query(GenericAnnotationTask).count(), 0)
+        self.assertIsNone(self.db.query(GenericAnnotationTask).filter(
+            GenericAnnotationTask.source_legacy_id == str(run.id)
+        ).first())
         app.dependency_overrides[get_current_user] = lambda: self.owner
         missing = self.client.post(
             f"/api/annotation-tasks/{uuid.uuid4()}/migrate",
@@ -199,6 +204,30 @@ class GenericizationContractTests(unittest.TestCase):
         self.assertIn('revision = "20260903_15"', contents)
         self.assertIn('down_revision = "20260829_14"', contents)
         self.assertIn("uq_generic_annotation_task_source_legacy_id", contents)
+
+    def test_partial_existing_generic_table_is_upgraded_idempotently(self):
+        from importlib.util import module_from_spec, spec_from_file_location
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+        from sqlalchemy import inspect, text
+
+        migration_path = Path(__file__).parents[1] / "alembic" / "versions" / "20260903_15_generic_annotation_tasks.py"
+        spec = spec_from_file_location("generic_migration", migration_path)
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE projects (id CHAR(32) PRIMARY KEY)"))
+            connection.execute(text("CREATE TABLE users (id CHAR(32) PRIMARY KEY)"))
+            connection.execute(text("CREATE TABLE generic_annotation_tasks (id CHAR(32) PRIMARY KEY, project_id CHAR(32) NOT NULL, owner_id CHAR(32) NOT NULL, mode VARCHAR(16) NOT NULL, status VARCHAR(24) NOT NULL, sample_scope JSON NOT NULL, label_snapshot JSON NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)"))
+            ctx = MigrationContext.configure(connection)
+            module.op = Operations(ctx)
+            module.upgrade()
+            module.upgrade()
+            columns = {column["name"] for column in inspect(connection).get_columns("generic_annotation_tasks")}
+            self.assertTrue({"dataset_version_id", "label_schema_id", "source_legacy_id", "idempotency_key"}.issubset(columns))
+            unique_names = {item["name"] for item in inspect(connection).get_unique_constraints("generic_annotation_tasks")}
+            self.assertIn("uq_generic_annotation_task_source_legacy_id", unique_names)
 
 
 if __name__ == "__main__":

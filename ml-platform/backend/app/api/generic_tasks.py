@@ -143,13 +143,24 @@ def create_automl_task(
 
 
 @router.post("/api/projects/{project_id}/spot-weld/runs", status_code=status.HTTP_410_GONE)
-def reject_legacy_spot_weld_write(project_id: uuid.UUID, data: dict | None = None):
+def reject_legacy_spot_weld_write(
+    project_id: uuid.UUID,
+    request: Request,
+    data: dict | None = None,
+    current_user: User = Depends(get_current_user),
+    x_request_id: str | None = Header(default=None, alias="X-Request-ID"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
     """Close the industry-specific write path during generic migration."""
+    _request_context(request, x_request_id, idempotency_key)
+    request_id = str(getattr(request.state, "request_id", "")) or None
     raise HTTPException(
         status_code=status.HTTP_410_GONE,
         detail={
+            "request_id": request_id,
             "code": "GENERIC_API_REQUIRED",
             "message": "Use /api/annotation-tasks or /api/automl-tasks.",
+            "details": {},
             "legacy_route": f"/api/projects/{project_id}/spot-weld/runs",
         },
     )

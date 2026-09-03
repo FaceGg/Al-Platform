@@ -1,4 +1,4 @@
-"""Strict report_v1 point-weld waveform decoding and feature extraction."""
+"""Legacy spot-weld feature adapter; generic routes must not import it."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from typing import Mapping
 
 import numpy as np
 import pandas as pd
+
+LEGACY_ADAPTER_ONLY = True
 
 
 WAVEFORM_BYTES = 1740

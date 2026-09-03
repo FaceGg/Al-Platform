@@ -116,6 +116,30 @@ def migrate_legacy_quality_run(db: Session, run_id: uuid.UUID) -> GenericAnnotat
             for snapshot in snapshots
         ],
     }
+    source_integrity = {
+        "sample_count": len(samples),
+        "sample_ids": sorted(str(sample.id) for sample in samples),
+        "revision_count": len(revisions),
+        "revision_ids": sorted(str(revision.id) for revision in revisions),
+        "snapshot_count": len(snapshots),
+        "snapshot_ids": sorted(str(snapshot.id) for snapshot in snapshots),
+    }
+    target_integrity = {
+        "sample_count": len(label_snapshot["samples"]),
+        "sample_ids": sorted(item["id"] for item in label_snapshot["samples"]),
+        "revision_count": len(label_snapshot["revisions"]),
+        "revision_ids": sorted(item["id"] for item in label_snapshot["revisions"]),
+        "snapshot_count": len(label_snapshot["snapshots"]),
+        "snapshot_ids": sorted(item["id"] for item in label_snapshot["snapshots"]),
+    }
+    if source_integrity != target_integrity:
+        raise ValueError("LEGACY_MIGRATION_INTEGRITY_MISMATCH")
+    label_snapshot["integrity"] = {
+        "source": source_integrity,
+        "target": target_integrity,
+        "verified": True,
+        "boundary": "transition_snapshot_only",
+    }
     canonical_json = json.dumps(label_snapshot, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     label_snapshot["canonical_json"] = canonical_json
     label_snapshot["checksum"] = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()

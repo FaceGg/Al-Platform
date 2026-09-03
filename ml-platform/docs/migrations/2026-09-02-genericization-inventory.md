@@ -32,6 +32,8 @@
 
 Task 1 remaining（未完成）：`ml-platform/frontend/src/App.tsx`、`pages/AnnotationPage.tsx`、`pages/DataAnnotationPage.tsx`、`api/spotWeldQuality.ts` 和 `i18n/index.tsx` 的生产导航/API 文案仍保留历史兼容入口；`spot_weld_quality` service/features/task/model 仍作为只读迁移适配边界，待后续任务完成全面替换和扫描收口。
 
+拆分裁定：前端生产导航和 API client 文案属于 Task 12 的主平台/标注员门户交付；Task 1 仅建立后端通用边界、旧写入口关闭、迁移适配器和禁止新代码依赖行业 feature builder 的门禁。上述前端文件与旧服务的全面替换不在本轮验收范围，必须在 Task 12 通过对应 UI/E2E 和 source-scan 证据后才能关闭。
+
 ## 迁移门禁
 
 1. 新业务代码不得依赖固定行业字段、特征 schema、行业标签或行业专用路由。
