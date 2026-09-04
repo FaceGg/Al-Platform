@@ -100,3 +100,27 @@
 - Alembic: `check` reported no new operations; `upgrade head` completed with local revision `20260904_16`.
 - Changed genericization modules compiled with `py_compile`; `git diff --check` returned exit code 0.
 - Task 1 is `passed` for its scoped backend transition boundary. Formal `DatasetVersion`, parser and input-contract work remains Task 2; the platform overall remains `in_progress`.
+
+## Task 2 review-fix round 3 (2026-09-04)
+
+- Scoped re-review of `1f02a7c..269affe`: bounded staging, JSON scalar compatibility, version uniqueness/retry, structured-entry version freezing, filename preservation, parse options and malformed version UUID handling are addressed.
+- Open blockers: API-level compensation cleanup still swallows storage deletion failures; legacy artifact deletion can invalidate immutable DatasetVersion artifact references; ZIP member extraction lacks per-member and aggregate expanded-byte limits before staging.
+- Decision: keep Task 2 `in_progress`; return these three fail-closed boundaries to the original implementer for a TDD fix round, then run a scoped re-review. Task 3 remains blocked.
+
+## Task 2 review-fix round 3 completion (2026-09-04)
+
+- Fix commit: `b1caac6a5fd6f5e9544b7e98d5080560da091671` (`fix(data): close task2 api cleanup gaps`).
+- Scoped re-review verdict: API rollback cleanup, immutable-artifact deletion protection, and ZIP path/member/aggregate expanded-byte limits are all addressed; no new Critical/Important breakage.
+- Fresh verification on current SHA: `tests/test_dataset_import_contract.py` 32 passed; `tests/test_api_datasets.py` 15 passed; migration/storage/genericization/manifest guard 28 passed with 2 subtests; `alembic check` and `alembic upgrade head` passed; `compileall app tests` and `git diff --check` passed.
+- Task 2 is `passed` for its focused local contract and API scope. Full backend suite, browser E2E, remote CI, and Task 13 parser process isolation remain pending; Task 3 and Task 4 remain planned.
+
+## Task 2 review-fix round 4 (2026-09-04)
+
+- Additional audit found a consistency gap: batch and ZIP handlers appended artifacts from already committed `DatasetVersion` rows to outer rollback cleanup, so a later member failure could delete immutable version content.
+- RED/GREEN regression coverage added for both batch and ZIP paths; fix commit `2ab41655a75e7ba106a78ba07047eaa3287be346` now adds only unversioned legacy artifacts to outer storage compensation.
+- Fresh focused verification: `pytest tests/test_dataset_import_contract.py -k "committed_version_artifacts" -q` -> 2 passed; prior Task 2 focused suites remain the covering evidence. Scoped re-review is pending before final Task 2 ledger completion.
+
+## Task 2 review-fix round 4 completion (2026-09-04)
+
+- Scoped re-review verdict: outer compensation is limited to unversioned legacy artifacts; committed batch and ZIP `DatasetVersion` artifacts remain durable when a later entry fails. No new Critical/Important breakage was found in the fix diff.
+- Task 2: complete (commits `7902a56..2ab4165`, review clean for the focused local contract/API scope). Full backend suite, browser E2E, remote CI and Task 13 parser process isolation remain pending; Task 3 and Task 4 are now unblocked by Task 2's scoped dependency.
