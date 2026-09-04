@@ -77,7 +77,9 @@ class ModelRegistryService:
             raise ModelRegistryError("AUTOML_RESULT_NOT_FOUND")
         for item in results:
             if isinstance(item, dict) and str(item.get("algorithm_id")) == str(algorithm_id):
-                if item.get("status") != "completed" or not item.get("model_library_id"):
+                if item.get("status") != "completed" or not (
+                    item.get("model_library_id") or item.get("model_artifact_id")
+                ):
                     raise ModelRegistryError("AUTOML_RESULT_NOT_REGISTERABLE")
                 return item
         raise ModelRegistryError("AUTOML_RESULT_NOT_FOUND")
@@ -145,16 +147,67 @@ class ModelRegistryService:
         if job.status != "completed":
             raise ModelRegistryError("AUTOML_JOB_NOT_COMPLETED")
         result = self._automl_result(job, algorithm_id)
-        source_id = result["model_library_id"]
-        library = db.query(ModelLibrary).filter(
-            ModelLibrary.id == uuid.UUID(str(source_id)),
-            ModelLibrary.project_id == job.project_id,
-            ModelLibrary.training_job_id == job.id,
-            ModelLibrary.status == "completed",
-            ModelLibrary.format == "joblib",
-        ).with_for_update().first()
-        if library is None or library.model_artifact_id is None:
-            raise ModelRegistryError("MODEL_SOURCE_NOT_FOUND")
+        library = None
+        source_library_id = result.get("model_library_id")
+        if source_library_id:
+            try:
+                source_uuid = uuid.UUID(str(source_library_id))
+            except (TypeError, ValueError, AttributeError):
+                raise ModelRegistryError("MODEL_SOURCE_NOT_FOUND") from None
+            library = db.query(ModelLibrary).filter(
+                ModelLibrary.id == source_uuid,
+                ModelLibrary.project_id == job.project_id,
+                ModelLibrary.training_job_id == job.id,
+                ModelLibrary.status == "completed",
+                ModelLibrary.format == "joblib",
+            ).with_for_update().first()
+            if library is None or library.model_artifact_id is None:
+                raise ModelRegistryError("MODEL_SOURCE_NOT_FOUND")
+        else:
+            artifact_id = result.get("model_artifact_id")
+            try:
+                artifact_uuid = uuid.UUID(str(artifact_id))
+            except (TypeError, ValueError, AttributeError):
+                raise ModelRegistryError("MODEL_SOURCE_NOT_FOUND") from None
+            artifact = db.query(Artifact).filter(
+                Artifact.id == artifact_uuid,
+                Artifact.project_id == job.project_id,
+                Artifact.type == "model",
+                Artifact.format == "joblib",
+            ).first()
+            metadata = dict(artifact.metadata_ or {}) if artifact is not None else {}
+            if artifact is None or metadata.get("source") != "automl":
+                raise ModelRegistryError("MODEL_SOURCE_NOT_FOUND")
+            if str(metadata.get("training_job_id")) != str(job.id):
+                raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED")
+            if metadata.get("best_candidate") not in {None, str(algorithm_id)}:
+                raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED")
+            library = db.query(ModelLibrary).filter(
+                ModelLibrary.project_id == job.project_id,
+                ModelLibrary.training_job_id == job.id,
+                ModelLibrary.model_artifact_id == artifact.id,
+                ModelLibrary.status == "completed",
+                ModelLibrary.format == "joblib",
+            ).with_for_update().first()
+            if library is None:
+                library = ModelLibrary(
+                    name=str(result.get("name") or algorithm_id),
+                    project_id=job.project_id,
+                    owner_id=job.user_id,
+                    status="completed",
+                    framework="sklearn",
+                    backbone=str(algorithm_id),
+                    metrics=dict(result),
+                    params=dict(result.get("params") or {}),
+                    training_job_id=job.id,
+                    dataset_artifact_id=job.dataset_artifact_id,
+                    model_artifact_id=artifact.id,
+                    file_size=artifact.file_size or 0,
+                    format="joblib",
+                    progress=100.0,
+                )
+                db.add(library)
+                db.flush()
         existing = db.query(ModelVersion).filter(
             ModelVersion.source_model_library_id == library.id,
         ).order_by(ModelVersion.version_number.desc()).first()
@@ -223,16 +276,68 @@ class ModelRegistryService:
         source_model_library_id,
         actor_id,
         commit: bool = True,
+        source_model_artifact_id=None,
     ) -> ModelVersion:
         model = self._model(db, model_id)
-        try:
-            source_uuid = uuid.UUID(str(source_model_library_id))
-        except (TypeError, ValueError, AttributeError):
-            raise ModelRegistryError("MODEL_SOURCE_NOT_FOUND") from None
-        library = db.query(ModelLibrary).filter(
-            ModelLibrary.id == source_uuid,
-            ModelLibrary.project_id == model.project_id,
-        ).first()
+        library = None
+        if source_model_library_id is not None:
+            try:
+                source_uuid = uuid.UUID(str(source_model_library_id))
+            except (TypeError, ValueError, AttributeError):
+                raise ModelRegistryError("MODEL_SOURCE_NOT_FOUND") from None
+            library = db.query(ModelLibrary).filter(
+                ModelLibrary.id == source_uuid,
+                ModelLibrary.project_id == model.project_id,
+            ).first()
+        elif source_model_artifact_id is not None:
+            try:
+                artifact_uuid = uuid.UUID(str(source_model_artifact_id))
+            except (TypeError, ValueError, AttributeError):
+                raise ModelRegistryError("MODEL_SOURCE_NOT_FOUND") from None
+            artifact = db.query(Artifact).filter(
+                Artifact.id == artifact_uuid,
+                Artifact.project_id == model.project_id,
+                Artifact.type == "model",
+                Artifact.format == "joblib",
+            ).first()
+            if artifact is not None:
+                metadata = dict(artifact.metadata_ or {})
+                job_id = metadata.get("training_job_id")
+                try:
+                    job_uuid = uuid.UUID(str(job_id))
+                except (TypeError, ValueError, AttributeError):
+                    raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED") from None
+                job = db.query(TrainingJob).filter(
+                    TrainingJob.id == job_uuid,
+                    TrainingJob.project_id == model.project_id,
+                    TrainingJob.status == "completed",
+                ).first()
+                if job is None or metadata.get("source") != "automl":
+                    raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED")
+                library = db.query(ModelLibrary).filter(
+                    ModelLibrary.project_id == model.project_id,
+                    ModelLibrary.training_job_id == job.id,
+                    ModelLibrary.model_artifact_id == artifact.id,
+                ).first()
+                if library is None:
+                    library = ModelLibrary(
+                        name=artifact.name,
+                        project_id=model.project_id,
+                        owner_id=actor_id,
+                        status="completed",
+                        framework="sklearn",
+                        backbone=str(metadata.get("best_candidate") or "automl"),
+                        metrics={},
+                        params={},
+                        training_job_id=job.id,
+                        dataset_artifact_id=job.dataset_artifact_id,
+                        model_artifact_id=artifact.id,
+                        file_size=artifact.file_size or 0,
+                        format="joblib",
+                        progress=100.0,
+                    )
+                    db.add(library)
+                    db.flush()
         if library is None or library.model_artifact_id is None:
             raise ModelRegistryError("MODEL_SOURCE_NOT_FOUND")
         artifact = db.query(Artifact).filter(

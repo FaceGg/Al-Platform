@@ -77,7 +77,7 @@ class AllCandidatesFailed(RuntimeError):
     pass
 
 
-VALID_CROSS_VALIDATION_FOLDS = frozenset({3, 4, 5})
+VALID_CROSS_VALIDATION_FOLDS = frozenset({2, 3, 4, 5})
 
 
 def normalize_evaluation_config(
@@ -646,7 +646,14 @@ def execute_automl_job(
         task = normalize_task_type(params.get("task", "classification"))
         target_columns = list(params.get("target_columns") or [target_column])
         if task.startswith("multioutput_"):
-            raise ValueError("multi-output AutoML jobs use the Task 3 search contract")
+            from app.services.automl_search import AutoMLContract, run_automl_search
+            contract = AutoMLContract(task_type=task, target_columns=target_columns, input_columns=params.get("input_columns"), cross_validation_folds=int(params.get("cross_validation_folds") or 5))
+            result = run_automl_search(frame, contract)
+            job.metrics = {"task_type": task, "per_target": {k: vars(v) for k, v in result.per_target.items()}, "cv_strategy": result.cv_strategy, "input_contract": {"target_columns": target_columns, "input_columns": params.get("input_columns"), "cross_validation_folds": contract.cross_validation_folds}}
+            job.status = "completed"
+            job.finished_at = utcnow()
+            db.commit()
+            return AutoMLExecutionResult(str(job.id), "completed", None)
         requested_input_columns = params.get("input_columns")
         feature_columns = resolve_automl_feature_columns(
             frame,

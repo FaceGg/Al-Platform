@@ -13,6 +13,7 @@ from app.services.automl_search import (
     run_automl_search,
     validate_target_columns,
 )
+from app.services.automl_execution import normalize_evaluation_config
 
 
 def _frame():
@@ -40,6 +41,13 @@ def test_multioutput_classification_uses_independent_targets_and_iterative_strat
     assert result.per_target["label_a"].macro_f1 is not None
     assert result.per_target["label_b"].auc is not None
     assert result.cv_strategy == "iterative_stratified"
+
+def test_two_fold_cv_is_supported_and_multioutput_worker_contract_is_real():
+    frame = _frame()
+    contract = AutoMLContract(task_type="multioutput_classification", target_columns=["label_a", "label_b"], input_columns=["x1", "x2", "x3"], cross_validation_folds=2)
+    result = run_automl_search(frame, contract)
+    assert result.cv_strategy == "iterative_stratified"
+    assert normalize_evaluation_config(True, 2)["cross_validation_folds"] == 2
 
 
 def test_candidate_ranking_is_auc_then_f1_then_accuracy_then_runtime():
@@ -70,3 +78,10 @@ def test_worker_does_not_create_model_library_record():
     import inspect
     source = inspect.getsource(execute_automl_job)
     assert "db.add(model_entry)" not in source
+
+def test_registry_result_accepts_candidate_artifact_identity():
+    from app.services.model_registry import ModelRegistryService, ModelRegistryError
+    from types import SimpleNamespace
+    job = SimpleNamespace(status="completed", metrics={"algorithm_results":[{"algorithm_id":"rf", "status":"completed", "model_artifact_id":"abc"}]})
+    result = ModelRegistryService._automl_result(job, "rf")
+    assert result["model_artifact_id"] == "abc"

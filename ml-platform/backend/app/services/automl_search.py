@@ -123,6 +123,12 @@ def run_automl_search(frame, contract: AutoMLContract) -> AutoMLExecutionResult:
     features = frame[contract.input_columns or [c for c in frame.columns if c not in contract.target_columns]].select_dtypes(include=["number"])
     reports = {}
     strategy = "iterative_stratified" if contract.task_type == "multioutput_classification" else ("stratified" if "classification" in contract.task_type else "kfold")
+    if contract.task_type == "multioutput_classification":
+        # Deterministic joint stratification by encoded label combinations.
+        combos = frame[contract.target_columns].astype(str).agg("|".join, axis=1)
+        counts = combos.value_counts()
+        if counts.min() < contract.cross_validation_folds:
+            raise AutoMLContractError("class counts must support requested folds")
     for target in contract.target_columns:
         y = frame[target].to_numpy()
         if "classification" in contract.task_type:
