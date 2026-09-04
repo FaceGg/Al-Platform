@@ -242,7 +242,7 @@ Expected: all five formats have frozen parse contracts; XXE, duplicate keys, non
 - aggregate_feature_importance(per_target: dict[str, Sequence[float]], feature_map: FeatureMap) -> FeatureImportanceReport
 - rank_candidates(candidates: Sequence[CandidateSummary], task_type: str) -> list[CandidateSummary]
 
-- [ ] **Step 1: Write RED tests for task normalization, CV, search and ranking**
+- [x] **Step 1: Write RED tests for task normalization, CV, search and ranking**
 
 ~~~python
 def test_only_four_task_types_are_persisted():
@@ -270,7 +270,7 @@ def test_worker_does_not_create_model_library_record(db, candidate):
     assert db.query(ModelLibrary).filter(ModelLibrary.training_job_id == candidate.task_id).count() == 0
 ~~~
 
-- [ ] **Step 2: Run the tests and verify the current single-output implementation fails**
+- [x] **Step 2: Run the tests and verify the current single-output implementation fails**
 
 Run:
 
@@ -298,7 +298,7 @@ Run:
 
 ~~~text
 Set-Location ml-platform/backend
-py -3.14 -m pytest tests/test_automl_multioutput.py tests/test_automl_catalog.py tests/test_api_training.py -q
+py -3.14 -m pytest tests/test_automl_multioutput.py tests/test_automl_catalog.py tests/test_training.py tests/test_automl_tracking.py -q
 py -3.14 -m py_compile app/services/automl_catalog.py app/services/automl_search.py app/services/automl_execution.py
 git diff --check
 ~~~
@@ -306,6 +306,8 @@ git diff --check
 Expected: four task types, 2-5 fold CV, all search controls, ranking, feature importance and worker non-registration tests pass; incomplete candidates cannot be registered.
 
 **Dependencies:** Tasks 1 and 2.
+
+**Current checkpoint (2026-09-04):** Task 3 remains `in_progress`. The four task types, 2-fold contract entry, multi-output dispatch entry, joint-label frequency validation and artifact-only candidate registration compatibility are implemented and covered by focused tests. Step 3 and Step 4 remain open because real multi-output artifact/prediction persistence, iterative stratified fold assignment, fold-local preprocessing, search strength/time-budget/class-weight controls, complete per-target/aggregate and AUC-tier reporting, request idempotency/cancellation/recovery, durable worker wiring and frontend controls are not yet complete. Resume with a scoped re-review of these gaps; do not start Task 4 while this checkpoint is open.
 
 ## Task 4: 标签 schema、类型校验和修订历史
 

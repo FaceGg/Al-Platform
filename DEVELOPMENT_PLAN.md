@@ -1,7 +1,7 @@
 # 通用自动建模与数据标注平台当前开发计划
 
 > 文档状态：仅汇总未完成、待验证、风险和已延后工作。
-> 文档更新日期：2026-09-03
+> 文档更新日期：2026-09-04
 > 当前工作树：`E:\codex_workspace\agent_spot_welding\.worktrees\general-automl-annotation-20260902`
 > 当前分支：`general-automl-annotation-20260902`
 
@@ -39,7 +39,7 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 | 阶段 | 工作范围 | 状态 | 当前口径 |
 |---|---|---|---|
 | Week 1–12 | 已交付的平台基础、生产化、权限通知与历史验收 | `passed` / `completed` | 已归档，不作为当前待办。 |
-| 通用自动建模与数据标注平台 | 2026-09-02 实施计划 Task 1–14 | `in_progress` | Task 1 去行业化边界与 Task 2 数据导入、数据版本和输入合同均已通过当前本地聚焦验证；Task 3/4 尚未开始。 |
+| 通用自动建模与数据标注平台 | 2026-09-02 实施计划 Task 1–14 | `in_progress` | Task 1 去行业化边界与 Task 2 数据导入、数据版本和输入合同已通过当前本地聚焦验证；Task 3 正在修复和复核，Task 4 尚未开始。 |
 | Week 13 | Kubernetes 基础接入 | `planned`（未开始） | 后续工作，见 BKL-04。 |
 | Week 14 | Kubernetes Job/Pod 执行器 | `planned`（未开始） | 依赖 Week 13，见 BKL-05。 |
 | Week 15 | Notebook、镜像与 GPU | `planned`（未开始） | 依赖 Kubernetes 基础能力，见 BKL-06。 |
@@ -51,7 +51,7 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 
 ## 5. 当前主交付计划
 
-Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 正在按依赖执行。文档评审、历史局部功能或 Week 1–12 验收均不构成当前任务完成状态。按依赖执行，不得跳过 Task 2 的 RED 测试和安全解析边界。
+Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 已完成当前本地聚焦合同/API 范围；Task 3 正在按复核结论补齐训练合同和生产接线。文档评审、历史局部功能或 Week 1–12 验收均不构成当前任务完成状态。按依赖执行，不得把局部测试或旧 SHA 证据外推为整体平台验收。
 
 | ID | 工作项 | 依赖 | 状态 |
 |---|---|---|---|
@@ -72,8 +72,8 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 
 ### 当前执行入口
 
-1. 从 Task 1 的引用盘点、迁移边界和 RED 测试开始。
-2. Task 2 完成后，Task 3 与 Task 4 可以并行；其余任务按上表依赖推进。
+1. 明日恢复后先从 Task 3 的剩余阻断和 scoped re-review 开始，不启动 Task 4。
+2. Task 3 完成实现、测试、运行时证据和复核后，Task 4 与后续任务再按依赖推进。
 3. 每个 Task 的精确文件、接口、RED/GREEN 步骤和命令以实施计划为准；本文件不创建平行的实现步骤。
 4. Task 14 必须在实现完成后的新 SHA 上重新生成证据，不能复用归档中的 Week 9–12 运行态制品。
 
@@ -112,7 +112,7 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 
 ## 8. 当前风险与门禁
 
-- 通用平台仍处于 `in_progress`：Task 1 的后端边界已通过本地聚焦证据，Task 2 及后续任务尚未完成。迁移、运行时测试、构建、浏览器验收、导出验证、恢复演练、提交、推送和远程门禁均不能整体记为已完成。
+- 通用平台仍处于 `in_progress`：Task 1 已通过其范围内的本地聚焦证据，Task 2 已通过当前本地聚焦合同/API范围，Task 3 仍未完成。迁移、运行时测试、构建、浏览器验收、导出验证、恢复演练和远程门禁均不能整体记为已完成。
 - Task 1 必须先完成全项目行业特定引用盘点和迁移边界，禁止向新代码继续引入固定行业字段、路由、服务或工作流。
 - 自动标注、认证、回传、导出和清理都涉及跨服务状态；每个 Task 需保留幂等、revision、权限和失败回执的测试证据。
 - 对恢复、备份、升级和安全验收，脚本路径存在不等于可执行：必须记录容器/宿主机边界、环境变量、证书、Compose 服务、镜像和证据目录。
@@ -124,6 +124,7 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 
 - 2026-09-04：Task 3 修复轮次 1。补齐 2 折配置、multi-output worker 合同入口和联合标签频次校验；模型注册兼容完成的 AutoML candidate artifact，并在注册时补建满足现有 ModelVersion 外键的 ModelLibrary lineage。验证：`test_automl_multioutput.py` 8 passed；model registry service/API 27 passed（1 warning、2 subtests）；相关模块 py_compile 与 `git diff --check` 通过。Task 3 仍为 `in_progress`，真实多目标制品持久化、迭代分层折分配、折内预处理、搜索控制、幂等取消恢复和完整 AUC 分层尚未完成。
 - 2026-09-04：Task 3 修复轮次 1 追加回归。修正注册平台版本的 AutoML 信任判定，使 artifact-only 候选可用匹配的 `model_artifact_id` 完成血缘校验；新增完整注册事务回归。验证：artifact-only 1 passed；AutoML/registry/API 合并套件 36 passed（1 warning、2 subtests）。Task 3 仍保持 `in_progress`。
+- 2026-09-04：Task 3 修复轮次 1 收口并暂停。当前提交 `7a99fa9`、`16d8a98` 已补齐 2 折配置、multi-output worker 合同入口、联合标签频次校验、artifact-only candidate 注册兼容和血缘回归；`test_automl_multioutput.py` 8 passed，AutoML/registry/API 合并套件 36 passed（1 warning、2 subtests），相关模块 `py_compile` 与 `git diff --check` 通过。Task 3 仍为 `in_progress`，真实多目标制品持久化、迭代分层、折内预处理、搜索控制、幂等/取消/恢复、完整 AUC 分层及前端接线仍待完成；按用户要求暂停开发，明日从这些阻断和 scoped re-review 继续，不启动 Task 4。
 
 - 每次 Task 完成后，在本文件更新当前状态、未完成项、风险和下一步；完成明细、旧失败和历史证据追加到归档，不回写旧事实。
 - 2026-09-03：将整理前的完整 `DEVELOPMENT_PLAN.md` 保存为 `DEVELOPMENT_PLAN.history-2026-09-03.md`。Week 1–12 及历史执行记录已从当前视图分离。

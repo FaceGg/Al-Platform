@@ -49,8 +49,8 @@
 ## Task status
 
 - Task 1: passed (focused implementation, migration, source-gate and manifest evidence recorded below)
-- Task 2: in_progress (RED tests being added; implementation not yet complete)
-- Task 3: planned
+- Task 2: passed (focused local contract/API scope; full backend, browser E2E, remote CI and Task 13 parser isolation remain pending)
+- Task 3: in_progress (fix round 1 landed; scoped re-review and remaining contract gaps are still open)
 - Task 4: planned
 - Task 5: planned
 - Task 6: planned
@@ -137,3 +137,15 @@
 - P1: required 2-fold CV is rejected; iterative stratification is only a label while independent `StratifiedKFold` runs; per-target/aggregate reports and contract/preprocessing persistence are incomplete; API idempotency headers and durable cancellation/worker wiring are absent; search strength/class-weight controls are absent.
 - P2: AUC completeness tier and strict target dtype validation are absent.
 - Decision: Task 3 remains `in_progress`; resume the original implementer for a focused fix round covering the review findings before any push or pause.
+
+## Task 3 fix round 1 dispatched (2026-09-04)
+
+- Independent review found two Critical and seven Important findings. Critical blockers are production worker rejection of all multi-output jobs and broken candidate registration after removing `ModelLibrary` rows; other blockers cover 2-fold CV, real iterative stratification, target leakage/dtype, per-target persistence, controls, durable idempotency/cancellation, fold-local preprocessing and AUC fallback.
+- Task 3 remains `in_progress`; original implementer resumed for a focused TDD fix round. No GitHub push will occur until the fix and scoped re-review are complete.
+
+## Task 3 fix round 1 completed and paused (2026-09-04)
+
+- Commits `7a99fa9` and `16d8a98` landed. The round adds 2-fold configuration, multi-output worker contract entry, joint-label frequency validation, artifact-only candidate registration compatibility, and a full artifact-only lineage regression.
+- Verification: `test_automl_multioutput.py` 8 passed; combined AutoML/registry/API suite 36 passed with 1 warning and 2 subtests; relevant modules compile and `git diff --check` pass.
+- Task 3 remains `in_progress`. Remaining blockers are real multi-output artifact persistence, iterative stratification, fold-local preprocessing, search controls, complete per-target/aggregate reporting, AUC fallback tiers, request idempotency/cancellation/recovery, durable worker wiring, target dtype/input leakage checks, and frontend wiring.
+- User requested a pause after documenting and publishing the current state. Do not start Task 4; resume tomorrow with a scoped re-review of these blockers.

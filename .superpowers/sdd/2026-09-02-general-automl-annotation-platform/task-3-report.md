@@ -41,3 +41,8 @@
 - The worker multi-output branch currently records contract reports but does not yet persist a trained multi-output candidate artifact; this remains a release blocker and Task 3 stays `in_progress`.
 - Follow-up regression: the existing AutoML trust predicate also required `model_library_id` in job metrics after artifact-only persistence. It now accepts the candidate `model_artifact_id` when it matches the validated source artifact.
 - `pytest tests/test_model_registry_service.py -k artifact_only -q` -> **1 passed**; combined AutoML/registry/API suite -> **36 passed, 1 warning, 2 subtests passed**.
+
+## Pause checkpoint (2026-09-04)
+
+- Task 3 remains `in_progress`; the current round is published as a partial implementation checkpoint, not a completion claim.
+- User requested to pause development after documentation and GitHub publication. Do not begin Task 4. On resume, start with a scoped re-review and RED/GREEN coverage for the remaining limitations above, then update the plan only after production-path evidence is available.
