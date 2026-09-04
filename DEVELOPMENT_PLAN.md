@@ -57,7 +57,7 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 |---|---|---|---|
 | Task 1 | 全项目去行业化迁移基线 | 无；阻塞后续实现 | `passed` |
 | Task 2 | 数据导入、数据版本和统一输入合同 | Task 1 | `passed` |
-| Task 3 | AutoML 四种任务类型和训练合同 | Task 1、Task 2 | `in_progress` |
+| Task 3 | AutoML 四种任务类型和训练合同 | Task 1、Task 2 | `passed` |
 | Task 4 | 标签 schema、类型校验和修订历史 | Task 1、Task 2 | `planned` |
 | Task 5 | 标注任务状态机、任务列表和预览 | Task 2、Task 4 | `planned` |
 | Task 6 | 三种自动标注策略和特征重要性加权 KMeans | Task 3、Task 4、Task 5 | `planned` |
