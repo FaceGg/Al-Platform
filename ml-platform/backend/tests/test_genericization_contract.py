@@ -231,7 +231,7 @@ class GenericizationContractTests(unittest.TestCase):
         self.assertTrue(migration.exists())
         contents = migration.read_text(encoding="utf-8")
         self.assertIn('revision = "20260903_15"', contents)
-        self.assertIn('down_revision = "20260829_14"', contents)
+        self.assertIn('down_revision = "20260902_15"', contents)
         self.assertIn("uq_generic_annotation_task_source_legacy_id", contents)
 
     def test_partial_existing_generic_table_is_upgraded_idempotently(self):

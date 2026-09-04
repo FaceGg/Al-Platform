@@ -11,7 +11,7 @@ class DatasetVersion(Base):
     __tablename__ = "dataset_versions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     operator_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     version = Column(Integer, nullable=False, default=1)
     status = Column(String(24), nullable=False, default="ready")

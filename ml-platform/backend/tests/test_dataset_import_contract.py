@@ -3,11 +3,13 @@ import math
 import uuid
 import asyncio
 import io
+from contextlib import contextmanager
 
 import pandas as pd
 import pytest
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
+from fastapi import HTTPException
 
 from app.database import Base
 from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
@@ -22,6 +24,16 @@ from app.services.input_contract import (
 )
 from app.services.artifact_service import ArtifactService
 from app.storage.local import LocalStorage
+
+
+class _RecordingAuditService:
+    def __init__(self):
+        self.calls = []
+
+    @contextmanager
+    def project_action(self, _db, **kwargs):
+        self.calls.append(kwargs)
+        yield
 
 
 def test_json_object_array_is_normalized_and_hash_is_stable(tmp_path):
@@ -312,7 +324,9 @@ def test_api_dataset_import_creates_original_normalized_artifacts_and_version(
     operator = type("Operator", (), {"id": uuid.uuid4()})()
     service = ArtifactService(db, LocalStorage(tmp_path / "storage"))
     monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: service)
-    monkeypatch.setattr(datasets_api, "resolve_project_access", lambda *_args: object())
+    audit = _RecordingAuditService()
+    monkeypatch.setattr(datasets_api, "require_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "audit_service", lambda _db: audit)
     upload = datasets_api.UploadFile(filename=name, file=io.BytesIO(payload))
 
     result = asyncio.run(datasets_api.import_dataset_version(
@@ -325,6 +339,8 @@ def test_api_dataset_import_creates_original_normalized_artifacts_and_version(
         version.original_artifact_id, version.normalized_artifact_id,
     ])).count() == 2
     assert db.query(DatasetImport).filter_by(dataset_version_id=version.id).count() == 1
+    assert audit.calls[0]["permission"] == "resource.create"
+    assert audit.calls[0]["intent"].action == "dataset.import"
 
 
 def test_api_dataset_import_accepts_parquet_and_creates_version(tmp_path, monkeypatch):
@@ -337,7 +353,8 @@ def test_api_dataset_import_accepts_parquet_and_creates_version(tmp_path, monkey
     operator = type("Operator", (), {"id": uuid.uuid4()})()
     service = ArtifactService(db, LocalStorage(tmp_path / "storage"))
     monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: service)
-    monkeypatch.setattr(datasets_api, "resolve_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "require_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "audit_service", lambda _db: _RecordingAuditService())
     upload = datasets_api.UploadFile(filename="rows.parquet", file=io.BytesIO(path.read_bytes()))
     result = asyncio.run(datasets_api.import_dataset_version(
         str(project_id), None, upload, "parquet", None, db, operator,
@@ -416,3 +433,65 @@ def test_parser_enforces_elapsed_time_and_xml_path_and_column_compatibility(tmp_
         read_dataset_upload(xml, "xml", ParseOptions(record_path=".//record"))
     assert unsafe_path.value.code == "DATA_PARSE_UNSAFE_PATH"
     assert incompatible_columns.value.code == "DATA_PARSE_DUPLICATE_COLUMN"
+
+
+def test_api_rejects_client_source_format_that_conflicts_with_content(tmp_path, monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    service = ArtifactService(db, LocalStorage(tmp_path / "storage"))
+    monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: service)
+    monkeypatch.setattr(datasets_api, "require_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "audit_service", lambda _db: _RecordingAuditService())
+    upload = datasets_api.UploadFile(
+        filename="rows.json", file=io.BytesIO(b'[{"id": "a", "value": 1}]'),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(datasets_api.import_dataset_version(
+            str(uuid.uuid4()), None, upload, "csv", None, db,
+            type("Operator", (), {"id": uuid.uuid4(), "username": "operator"})(),
+        ))
+
+    assert error.value.status_code == 400
+    assert error.value.detail["code"] == "DATA_FORMAT_MISMATCH"
+
+
+def test_api_invalid_project_id_is_a_controlled_not_found(tmp_path, monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    monkeypatch.setattr(datasets_api, "require_project_access", lambda *_args: object())
+    upload = datasets_api.UploadFile(filename="rows.csv", file=io.BytesIO(b"id\na\n"))
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(datasets_api.import_dataset_version(
+            "not-a-uuid", None, upload, None, None, db,
+            type("Operator", (), {"id": uuid.uuid4(), "username": "operator"})(),
+        ))
+    assert error.value.status_code == 404
+
+
+def test_freeze_versions_increase_per_project_and_persist_mapping_and_locator(tmp_path):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    project_id = uuid.uuid4()
+    path = tmp_path / "rows.csv"
+    path.write_text("sample,value\na,1\nb,2\n", encoding="utf-8")
+    first = read_dataset_upload(path, "csv", ParseOptions(sample_id_column="sample"))
+    first.project_id = project_id
+    second = read_dataset_upload(path, "csv", ParseOptions(sample_id_column="sample"))
+    second.project_id = project_id
+
+    first_version = freeze_dataset_version(db, first, uuid.uuid4())
+    second_version = freeze_dataset_version(db, second, uuid.uuid4())
+
+    assert (first_version.version, second_version.version) == (1, 2)
+    assert first_version.parse_contract["field_mapping"] == {
+        "sample": "sample", "value": "value",
+    }
+    assert first_version.parse_contract["row_locator"]["a"] == 0
+    sample = db.query(DatasetSample).filter_by(
+        dataset_version_id=first_version.id, sample_id="a",
+    ).one()
+    assert sample.row_index == first_version.parse_contract["row_locator"]["a"]

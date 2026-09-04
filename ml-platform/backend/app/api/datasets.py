@@ -18,7 +18,7 @@ from app.models.artifact import Artifact
 from app.models.user import User
 from app.api.auth import get_current_user
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
-from app.api.project_security import audit_service, require_project_access, resolve_project_access
+from app.api.project_security import audit_service, require_project_access, resolve_project_access, project_uuid
 from app.services.audit import AuditIntent
 from app.schemas.dataset_import import ParseOptions
 from app.services.data_import import DataImportError, freeze_dataset_version, read_dataset_upload
@@ -43,8 +43,8 @@ async def import_dataset_version(
     parse_options: str | None = Query(default=None),
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
 ):
-    project_uuid = UUID(project_id)
-    resolve_project_access(db, project_uuid, current_user.id)
+    project_id_value = project_uuid(project_id)
+    access = require_project_access(db, project_id_value, current_user.id, "resource.create")
     options = ParseOptions()
     if parse_options:
         try:
@@ -57,14 +57,20 @@ async def import_dataset_version(
         detected_format = "excel"
     staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
     try:
-        staging_path.write_bytes(await file.read())
-        try:
-            table = read_dataset_upload(staging_path, detected_format, options)
-        except DataImportError as error:
-            raise HTTPException(400, {"code": error.code, "message": str(error)}) from error
-        table.project_id = project_uuid
-        version = freeze_dataset_version(db, table, current_user.id)
-        return {"id": str(version.id), "dataset_version_id": str(version.id), "row_count": version.row_count, "column_count": version.column_count, "content_hash": version.content_hash, "schema_hash": version.schema_hash}
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="resource.create",
+            intent=AuditIntent(project_id=project_id_value, action="dataset.import", resource_type="dataset_version", changes={"filename": safe_name}),
+            allowed_changes={"filename"},
+        ):
+            staging_path.write_bytes(await file.read())
+            try:
+                table = read_dataset_upload(staging_path, detected_format, options)
+            except DataImportError as error:
+                raise HTTPException(400, {"code": error.code, "message": str(error)}) from error
+            table.project_id = project_id_value
+            version = freeze_dataset_version(db, table, current_user.id)
+            return {"id": str(version.id), "dataset_version_id": str(version.id), "row_count": version.row_count, "column_count": version.column_count, "content_hash": version.content_hash, "schema_hash": version.schema_hash}
     finally:
         staging_path.unlink(missing_ok=True)
 

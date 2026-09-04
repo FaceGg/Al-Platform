@@ -4,6 +4,7 @@ import re
 import tempfile
 import time
 import uuid
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,25 @@ def _pairs(pairs):
 
 def _scalar(value: Any) -> bool:
     return value is None or isinstance(value, (str, int, float, bool))
+
+
+def _sniff_source_format(path: Path) -> str:
+    raw = path.read_bytes()[:4096]
+    stripped = raw.lstrip()
+    if raw.startswith(b"PAR1"):
+        return "parquet"
+    if stripped.startswith((b"[", b"{")):
+        return "json"
+    if stripped.startswith(b"<"):
+        return "xml"
+    if zipfile.is_zipfile(path):
+        try:
+            with zipfile.ZipFile(path) as archive:
+                if "[Content_Types].xml" in set(archive.namelist()):
+                    return "excel"
+        except (OSError, zipfile.BadZipFile):
+            pass
+    return "csv"
 
 
 def _check_frame(frame: pd.DataFrame, options: ParseOptions) -> None:
@@ -130,6 +150,10 @@ def read_dataset_upload(path: Path, source_format: str, options: ParseOptions) -
     if not path.is_file() or path.stat().st_size > options.max_file_bytes:
         raise DataImportError("DATA_LIMIT_FILE_BYTES")
     source_format = source_format.lower().lstrip(".")
+    source_format = "excel" if source_format in {"xlsx", "xls"} else source_format
+    detected_format = _sniff_source_format(path)
+    if source_format != detected_format:
+        raise DataImportError("DATA_FORMAT_MISMATCH", f"declared format {source_format!r} does not match detected format {detected_format!r}")
     try:
         if source_format == "csv":
             header = path.read_text(encoding="utf-8-sig").splitlines()[0]
@@ -170,7 +194,8 @@ def read_dataset_upload(path: Path, source_format: str, options: ParseOptions) -
         sample_ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, f"dataset:{content_hash}:{index}")) for index in range(len(frame))]
     schema = [{"name": name, "dtype": str(frame[name].dtype), "nullable": bool(frame[name].isna().any())} for name in frame.columns]
     schema_hash = hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return NormalizedTable(frame, {"parser_version": "1", "source_format": source_format, "sample_id_column": options.sample_id_column, "options": options.model_dump(mode="json")}, content_hash, schema_hash, sample_ids, path)
+    parse_contract = {"parser_version": "1", "source_format": source_format, "sample_id_column": options.sample_id_column, "options": options.model_dump(mode="json"), "field_mapping": {name: name for name in frame.columns}, "row_locator": {sample_id: index for index, sample_id in enumerate(sample_ids)}}
+    return NormalizedTable(frame, parse_contract, content_hash, schema_hash, sample_ids, path)
 
 
 def freeze_dataset_version(db: Session, normalized: NormalizedTable, operator_id: uuid.UUID) -> DatasetVersion:
@@ -190,7 +215,9 @@ def freeze_dataset_version(db: Session, normalized: NormalizedTable, operator_id
         finally:
             normalized_path.unlink(missing_ok=True)
         artifacts.append(normalized_artifact)
-        version = DatasetVersion(project_id=normalized.project_id, operator_id=operator_id, row_count=len(normalized.frame), column_count=len(normalized.frame.columns), content_hash=normalized.content_hash, schema_hash=normalized.schema_hash, parse_contract=normalized.parse_contract, original_artifact_id=original.id if original else None, normalized_artifact_id=normalized_artifact.id)
+        latest_version = db.query(DatasetVersion.version).filter(DatasetVersion.project_id == normalized.project_id).order_by(DatasetVersion.version.desc()).first()
+        next_version = (latest_version[0] if latest_version else 0) + 1
+        version = DatasetVersion(project_id=normalized.project_id, operator_id=operator_id, version=next_version, row_count=len(normalized.frame), column_count=len(normalized.frame.columns), content_hash=normalized.content_hash, schema_hash=normalized.schema_hash, parse_contract=normalized.parse_contract, original_artifact_id=original.id if original else None, normalized_artifact_id=normalized_artifact.id)
         db.add(version)
         db.flush()
         for position, name in enumerate(normalized.frame.columns):
