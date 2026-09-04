@@ -71,6 +71,7 @@ class TrainingJob(Base):
     early_stopping_patience = Column(Integer, nullable=True)
     early_stopping_min_delta = Column(Float, nullable=True)
     restore_best = Column(Boolean, nullable=False, default=True)
+    automl_contract = Column(JSON, default=dict)
 
     project = relationship("Project", backref="training_jobs")
     user = relationship("User", backref="training_jobs")

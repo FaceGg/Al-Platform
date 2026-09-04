@@ -17,7 +17,7 @@ from sklearn.ensemble import (
 )
 
 
-TaskType = Literal["classification", "regression"]
+TaskType = Literal["classification", "multioutput_classification", "regression", "multioutput_regression"]
 
 
 class AlgorithmUnavailable(RuntimeError):
@@ -53,9 +53,10 @@ class AlgorithmFamily:
     builder: Callable[[TaskType, Mapping[str, object]], object]
 
     def build(self, task: TaskType, params: Mapping[str, object]):
-        if task not in {"classification", "regression"}:
+        if task not in {"classification", "multioutput_classification", "regression", "multioutput_regression"}:
             raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
-        return self.builder(task, MappingProxyType(dict(params)))
+        base_task = "classification" if "classification" in task else "regression"
+        return self.builder(base_task, MappingProxyType(dict(params)))
 
 
 def _mapping(values: Mapping[str, object]) -> Mapping[str, object]:

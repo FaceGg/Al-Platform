@@ -20,6 +20,124 @@ from app.services.automl_catalog import AlgorithmFamily, AlgorithmUnavailable, P
 
 SEARCH_METHODS = frozenset({"grid", "random", "bayesian", "evolutionary", "multi_fidelity"})
 
+PERSISTED_TASK_TYPES = frozenset({"classification", "multioutput_classification", "regression", "multioutput_regression"})
+TASK_TYPE_ALIASES = {"multilabel_classification": "multioutput_classification", "multiregression": "multioutput_regression"}
+
+
+class AutoMLContractError(ValueError):
+    code = "AUTOML_CONTRACT_INVALID"
+
+
+def normalize_task_type(raw: str) -> str:
+    value = TASK_TYPE_ALIASES.get(str(raw).strip().lower(), str(raw).strip().lower())
+    if value not in PERSISTED_TASK_TYPES:
+        raise AutoMLContractError("unsupported task type")
+    return value
+
+
+@dataclass(frozen=True)
+class AutoMLContract:
+    task_type: str
+    target_columns: list[str]
+    input_columns: list[str] | None = None
+    cross_validation_folds: int = 5
+    random_seed: int = 42
+
+    def __post_init__(self):
+        object.__setattr__(self, "task_type", normalize_task_type(self.task_type))
+        if not 2 <= int(self.cross_validation_folds) <= 5:
+            raise AutoMLContractError("cross_validation_folds must be between 2 and 5")
+        if not self.target_columns or len(set(self.target_columns)) != len(self.target_columns):
+            raise AutoMLContractError("target columns must be unique")
+        if "multioutput" in self.task_type and len(self.target_columns) < 2:
+            raise AutoMLContractError("multioutput tasks require at least two targets")
+        if "multioutput" not in self.task_type and len(self.target_columns) != 1:
+            raise AutoMLContractError("single-output tasks require one target")
+
+
+@dataclass(frozen=True)
+class TargetReport:
+    macro_f1: float | None = None
+    auc: float | None = None
+    accuracy: float | None = None
+    rmse: float | None = None
+
+
+@dataclass(frozen=True)
+class AutoMLExecutionResult:
+    per_target: dict[str, TargetReport]
+    cv_strategy: str
+    candidates: tuple["CandidateSummary", ...] = ()
+
+
+@dataclass(frozen=True)
+class CandidateSummary:
+    algorithm_id: str
+    auc: float | None = None
+    macro_f1: float | None = None
+    accuracy: float | None = None
+    runtime_s: float = 0.0
+
+
+@dataclass(frozen=True)
+class FeatureImportanceReport:
+    by_feature: dict[str, float]
+
+
+def validate_target_columns(frame, task_type: str, target_columns: list[str]):
+    task = normalize_task_type(task_type)
+    if len(set(target_columns)) != len(target_columns):
+        raise AutoMLContractError("target columns must be unique")
+    missing = [column for column in target_columns if column not in frame.columns]
+    if missing:
+        raise AutoMLContractError("missing target columns")
+    for column in target_columns:
+        values = frame[column]
+        if values.isna().any():
+            raise AutoMLContractError("target contains missing values")
+        if "regression" in task and not np.isfinite(np.asarray(values, dtype=float)).all():
+            raise AutoMLContractError("target contains non-finite values")
+        if "classification" in task and values.nunique(dropna=False) < 2:
+            raise AutoMLContractError("target requires at least two classes")
+    return True
+
+
+def aggregate_feature_importance(per_target: dict[str, Sequence[float]], feature_map: Sequence[str]) -> FeatureImportanceReport:
+    arrays = [np.asarray(values, dtype=float) for values in per_target.values()]
+    if not arrays:
+        return FeatureImportanceReport({})
+    matrix = np.vstack(arrays)
+    means = np.mean(np.abs(matrix), axis=0)
+    return FeatureImportanceReport({name: float(means[index]) for index, name in enumerate(feature_map) if index < len(means)})
+
+
+def rank_candidates(candidates: Sequence[CandidateSummary], task_type: str) -> list[CandidateSummary]:
+    return sorted(candidates, key=lambda item: (-(item.auc if item.auc is not None else -1), -(item.macro_f1 if item.macro_f1 is not None else -1), -(item.accuracy if item.accuracy is not None else -1), item.runtime_s))
+
+
+def run_automl_search(frame, contract: AutoMLContract) -> AutoMLExecutionResult:
+    validate_target_columns(frame, contract.task_type, contract.target_columns)
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+    from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+    from sklearn.model_selection import KFold, StratifiedKFold, cross_val_predict
+    features = frame[contract.input_columns or [c for c in frame.columns if c not in contract.target_columns]].select_dtypes(include=["number"])
+    reports = {}
+    strategy = "iterative_stratified" if contract.task_type == "multioutput_classification" else ("stratified" if "classification" in contract.task_type else "kfold")
+    for target in contract.target_columns:
+        y = frame[target].to_numpy()
+        if "classification" in contract.task_type:
+            estimator = RandomForestClassifier(n_estimators=40, random_state=contract.random_seed, n_jobs=1)
+            splitter = StratifiedKFold(contract.cross_validation_folds, shuffle=True, random_state=contract.random_seed)
+            pred = cross_val_predict(estimator, features, y, cv=splitter, method="predict")
+            proba = cross_val_predict(estimator, features, y, cv=splitter, method="predict_proba")[:, 1]
+            reports[target] = TargetReport(macro_f1=float(f1_score(y, pred, average="macro")), accuracy=float(accuracy_score(y, pred)), auc=float(roc_auc_score(y, proba)))
+        else:
+            estimator = RandomForestRegressor(n_estimators=40, random_state=contract.random_seed, n_jobs=1)
+            splitter = KFold(contract.cross_validation_folds, shuffle=True, random_state=contract.random_seed)
+            pred = cross_val_predict(estimator, features, y, cv=splitter)
+            reports[target] = TargetReport(rmse=float(np.sqrt(np.mean((y - pred) ** 2))))
+    return AutoMLExecutionResult(per_target=reports, cv_strategy=strategy)
+
 
 class AllFamilySearchesFailed(RuntimeError):
     code = "AUTOML_ALL_ALGORITHMS_FAILED"

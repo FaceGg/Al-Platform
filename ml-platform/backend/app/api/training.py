@@ -29,6 +29,7 @@ from app.services.automl_execution import (
     resolve_automl_feature_columns,
     resolve_candidates,
 )
+from app.services.automl_search import normalize_task_type, validate_target_columns
 from app.services.automl_catalog import resolve_algorithm_families
 from app.services.automl_search import SEARCH_METHODS
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
@@ -81,7 +82,8 @@ class AutoMLRunRequest(BaseModel):
     project_id: uuid.UUID
     experiment_id: uuid.UUID
     dataset_artifact_id: uuid.UUID
-    target_column: str = Field(min_length=1)
+    target_column: str | None = Field(default=None, min_length=1)
+    target_columns: list[str] | None = None
     input_columns: list[str] | None = None
     task: str = "classification"
     candidate_ids: list[str] = Field(default_factory=list)
@@ -89,7 +91,7 @@ class AutoMLRunRequest(BaseModel):
     search_method: str | None = None
     max_trials: int | None = Field(default=None, ge=5, le=200)
     cross_validation_enabled: bool = True
-    cross_validation_folds: int | None = 5
+    cross_validation_folds: int | None = Field(default=5, ge=2, le=5)
     time_budget: int = Field(default=60, ge=10, le=9999)
     name: str = Field(default="automl-job", min_length=1, max_length=128)
 
@@ -589,8 +591,17 @@ def start_automl(
         ),
         allowed_changes={"name", "task"},
     ):
-        if data.task not in {"classification", "regression"}:
-            raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", "Invalid AutoML task"))
+        try:
+            task_type = normalize_task_type(data.task)
+            target_columns = list(data.target_columns or ([data.target_column] if data.target_column else []))
+            if not target_columns:
+                raise ValueError("At least one target column is required")
+            if "multioutput" in task_type and len(target_columns) < 2:
+                raise ValueError("Multi-output AutoML requires at least two target columns")
+            if "multioutput" not in task_type and len(target_columns) != 1:
+                raise ValueError("Single-output AutoML requires exactly one target column")
+        except ValueError as error:
+            raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
         new_fields = {"algorithm_ids", "search_method", "max_trials"}
         uses_new_contract = bool(data.model_fields_set & new_fields)
         try:
@@ -608,7 +619,7 @@ def start_automl(
                     family.id for family in resolve_algorithm_families(data.algorithm_ids)
                 ]
             else:
-                resolve_candidates(data.task, data.candidate_ids)
+                resolve_candidates(task_type, data.candidate_ids)
             evaluation = normalize_evaluation_config(
                 data.cross_validation_enabled,
                 data.cross_validation_folds,
@@ -630,20 +641,25 @@ def start_automl(
                 expected_type="dataset",
             ) as dataset_path:
                 frame = read_automl_dataset(dataset_path)
-            resolve_automl_feature_columns(
+            feature_columns = resolve_automl_feature_columns(
                 frame,
-                data.target_column,
+                target_columns[0],
                 data.input_columns,
             )
+            if len(target_columns) > 1:
+                if any(column in feature_columns for column in target_columns):
+                    raise ValueError("AutoML target columns cannot be input columns")
+            validate_target_columns(frame, task_type, target_columns)
         except (OSError, ValueError) as error:
             raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
         job = TrainingJob(
             id=job_id, project_id=data.project_id, user_id=current_user.id,
             experiment_id=experiment.id, name=data.name, operator_id="automl",
             params={
-                "target_column": data.target_column,
+                "target_column": target_columns[0],
+                "target_columns": target_columns,
                 "input_columns": list(data.input_columns) if data.input_columns is not None else None,
-                "task": data.task,
+                "task": task_type,
                 **(
                     {
                         "search_contract": "optuna_v1",
@@ -659,6 +675,13 @@ def start_automl(
             },
             dataset_artifact_id=dataset.id,
             dataset_path=artifact_service.storage_reference(dataset), status="pending",
+            automl_contract={
+                "task_type": task_type,
+                "target_columns": target_columns,
+                "cross_validation_folds": evaluation["cross_validation_folds"],
+                "cv_strategy": "iterative_stratified" if task_type == "multioutput_classification" else ("stratified" if "classification" in task_type else "kfold"),
+                "random_seed": 42,
+            },
         )
         if db.get(ExperimentAutoMLBinding, experiment.id) is not None:
             raise HTTPException(409, _error(

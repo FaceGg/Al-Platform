@@ -42,6 +42,7 @@ from app.services.automl_search import (
     classification_metrics,
     choose_family_winner,
     run_family_search,
+    normalize_task_type,
 )
 from app.services.training_execution import build_training_tracking, claim_training_job, utcnow
 
@@ -192,7 +193,7 @@ def _legacy_candidates(task: str) -> tuple[AutoMLCandidate, ...]:
 
 
 def default_candidates(task: str) -> tuple[AutoMLCandidate, ...]:
-    if task not in {"classification", "regression"}:
+    if normalize_task_type(task) not in {"classification", "regression"}:
         raise ValueError("AUTOML_CONFIG_INVALID")
     is_classifier = task == "classification"
     return (
@@ -257,7 +258,7 @@ def resolve_candidates(
     task: str,
     candidate_ids: Sequence[str] | None = None,
 ) -> tuple[AutoMLCandidate, ...]:
-    if task not in {"classification", "regression"}:
+    if normalize_task_type(task) not in {"classification", "regression"}:
         raise ValueError("AUTOML_CONFIG_INVALID")
     catalog = {
         candidate.name: candidate
@@ -393,35 +394,7 @@ def _persist_family_models(
                     "evaluation": evaluation,
                 },
             )
-        model_entry = ModelLibrary(
-            name=f"{job.name} - {result.display_name}",
-            project_id=job.project_id,
-            owner_id=job.user_id,
-            status="completed",
-            framework=type(result.best_estimator).__module__.split(".")[0],
-            backbone=type(result.best_estimator).__name__,
-            metrics={
-                "best_score": result.best_score,
-                "auc": result.auc,
-                "f1": result.f1,
-                "evaluation": evaluation,
-                "search": search_method,
-            },
-            params={
-                "search_contract": "optuna_v1",
-                "best_algorithm": result.algorithm_id,
-                "best_params": result.best_params,
-            },
-            model_path=artifact_service.storage_reference(model_artifact),
-            file_size=model_artifact.file_size or 0,
-            format="joblib",
-            training_job_id=job.id,
-            dataset_artifact_id=dataset.id,
-            model_artifact_id=model_artifact.id,
-        )
-        db.add(model_entry)
-        db.flush()
-        persisted[result.algorithm_id] = model_entry
+        persisted[result.algorithm_id] = model_artifact
     return persisted
 
 
@@ -578,19 +551,19 @@ def _execute_optuna_job(
         search_method=method,
         family_results=family_results,
     )
-    model_entry = persisted.get(winner.algorithm_id)
-    if model_entry is None:
+    model_artifact = persisted.get(winner.algorithm_id)
+    if model_artifact is None:
         raise AllCandidatesFailed("AUTOML_MODEL_PERSIST_FAILED")
     result_rows = []
     for item in all_results:
         source = persisted.get(str(item["algorithm_id"]))
-        result_rows.append({**item, "model_library_id": str(source.id) if source else None})
+        result_rows.append({**item, "model_artifact_id": str(source.id) if source else None})
     all_results = result_rows
     family_summaries = []
     for item in family_results:
         source = persisted.get(item.algorithm_id)
         summary = _family_summary(item)
-        summary["model_library_id"] = str(source.id) if source else None
+        summary["model_artifact_id"] = str(source.id) if source else None
         family_summaries.append(summary)
     job.status = "completed"
     job.metrics = {
@@ -600,20 +573,20 @@ def _execute_optuna_job(
         "search": {"method": method, "max_trials": max_trials, "time_budget": time_budget, "budget_exhausted": budget_exhausted},
         "progress": {"completed": completed_trials, "total": planned_trials, "percent": round((completed_trials / planned_trials) * 100, 2) if planned_trials else 100, "current_algorithm": winner.algorithm_id, "current_trial": None, "search_method": method, "budget_exhausted": budget_exhausted},
         "algorithm_results": family_summaries,
-        "best_model": {"algorithm_id": winner.algorithm_id, "name": winner.display_name, "score": winner.best_score, "auc": winner.auc, "f1": winner.f1, "params": winner.best_params, "model_library_id": str(model_entry.id)},
+        "best_model": {"algorithm_id": winner.algorithm_id, "name": winner.display_name, "score": winner.best_score, "auc": winner.auc, "f1": winner.f1, "params": winner.best_params, "model_artifact_id": str(model_artifact.id)},
         "all_results": all_results,
         "feature_importance": dict(zip(features.columns, winner.feature_importance)),
     }
-    job.model_path = model_entry.model_path
-    job.model_artifact_id = model_entry.model_artifact_id
-    job.model_library_id = model_entry.id
+    job.model_path = artifact_service.storage_reference(model_artifact)
+    job.model_artifact_id = model_artifact.id
+    job.model_library_id = None
     job.finished_at = utcnow()
     job.heartbeat_at = utcnow()
     tracking.log_metrics(parent.run_id, {"best_score": winner.best_score}, step=0)
     tracking.set_tags(parent.run_id, {
         "platform.best_candidate": winner.algorithm_id,
         "platform.search_method": method,
-        "platform.model_artifact_id": str(model_entry.model_artifact_id),
+        "platform.model_artifact_id": str(model_artifact.id),
     })
     tracking.end_run(parent.run_id, "FINISHED")
     db.commit()
@@ -670,9 +643,10 @@ def execute_automl_job(
             frame = read_automl_dataset(dataset_path)
         params = dict(job.params or {})
         target_column = params.get("target_column")
-        task = params.get("task", "classification")
-        if task not in {"classification", "regression"}:
-            raise ValueError("AutoML task must be classification or regression")
+        task = normalize_task_type(params.get("task", "classification"))
+        target_columns = list(params.get("target_columns") or [target_column])
+        if task.startswith("multioutput_"):
+            raise ValueError("multi-output AutoML jobs use the Task 3 search contract")
         requested_input_columns = params.get("input_columns")
         feature_columns = resolve_automl_feature_columns(
             frame,
@@ -694,6 +668,7 @@ def execute_automl_job(
             params.get("cross_validation_enabled", True),
             params.get("cross_validation_folds", 5),
         )
+        params.setdefault("task_snapshot", {"task": task, "target_columns": target_columns, "random_seed": 42, "cv_strategy": "stratified" if task == "classification" else "kfold"})
         if params.get("search_contract") == "optuna_v1":
             return _execute_optuna_job(
                 job=job,
@@ -889,24 +864,6 @@ def execute_automl_job(
                 },
             )
 
-        model_entry = ModelLibrary(
-            name=job.name,
-            project_id=job.project_id,
-            owner_id=job.user_id,
-            status="completed",
-            framework="scikit-learn",
-            backbone=type(winner).__name__,
-            metrics={"best_score": best_score, "auc": winner_auc, "f1": winner_f1, "evaluation": evaluation},
-            params={**params, "best_candidate": best_candidate.name},
-            model_path=artifact_service.storage_reference(model_artifact),
-            file_size=model_artifact.file_size or 0,
-            format="joblib",
-            training_job_id=job.id,
-            dataset_artifact_id=dataset.id,
-            model_artifact_id=model_artifact.id,
-        )
-        db.add(model_entry)
-        db.flush()
         job.status = "completed"
         final_results = [
             result for result in candidate_results if result.get("status") == "completed"
@@ -935,7 +892,7 @@ def execute_automl_job(
         }
         job.model_path = artifact_service.storage_reference(model_artifact)
         job.model_artifact_id = model_artifact.id
-        job.model_library_id = model_entry.id
+        job.model_library_id = None
         job.finished_at = utcnow()
         job.heartbeat_at = utcnow()
         tracking.log_metrics(parent.run_id, {"best_score": best_score}, step=0)
