@@ -594,3 +594,100 @@ def test_legacy_upload_handler_freezes_dataset_version_without_losing_response_f
     assert db.query(DatasetVersion).count() == 1
     version = db.query(DatasetVersion).one()
     assert db.get(Artifact, version.original_artifact_id).name == "legacy.csv"
+
+
+def test_batch_upload_rollback_cleanup_failure_is_fail_closed(tmp_path, monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    project_id = uuid.uuid4()
+    user = type("User", (), {"id": uuid.uuid4(), "username": "operator"})()
+    request = type("Request", (), {"state": type("State", (), {})(), "client": None})()
+    monkeypatch.setattr(datasets_api, "project_uuid", lambda value: project_id)
+    monkeypatch.setattr(datasets_api, "resolve_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "audit_service", lambda _db: _RecordingAuditService())
+    files = [
+        datasets_api.UploadFile(filename="first.bin", file=io.BytesIO(b"first")),
+        datasets_api.UploadFile(filename="second.bin", file=io.BytesIO(b"second")),
+    ]
+    created = iter([
+        type("Artifact", (), {"storage_uri": "memory://first", "id": uuid.uuid4(), "name": "first.bin", "file_size": 5})(),
+    ])
+
+    def create(*_args, **_kwargs):
+        try:
+            return next(created)
+        except StopIteration:
+            raise RuntimeError("second artifact failed")
+
+    class Storage:
+        def delete(self, _uri):
+            raise OSError("storage unavailable")
+
+    service = type("Service", (), {"storage": Storage()})()
+    monkeypatch.setattr(datasets_api, "build_artifact_service", lambda _db: service)
+    monkeypatch.setattr(datasets_api, "_create_dataset_artifact", create)
+    async def stage(*_args, **_kwargs):
+        return 5
+    monkeypatch.setattr(datasets_api, "_stage_upload", stage)
+
+    with pytest.raises(DataImportError) as error:
+        asyncio.run(datasets_api.batch_upload_dataset(str(project_id), request, files, db, user))
+    assert error.value.code == "DATA_CLEANUP_FAILED"
+    assert isinstance(error.value.__cause__, RuntimeError)
+
+
+def test_zip_handler_rejects_unsafe_member_before_writing_artifacts(tmp_path, monkeypatch):
+    import zipfile
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    project_id = uuid.uuid4()
+    user = type("User", (), {"id": uuid.uuid4(), "username": "operator"})()
+    request = type("Request", (), {"state": type("State", (), {})(), "client": None})()
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("../escape.csv", "id\n1\n")
+    payload.seek(0)
+    monkeypatch.setattr(datasets_api, "project_uuid", lambda value: project_id)
+    monkeypatch.setattr(datasets_api, "resolve_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "audit_service", lambda _db: _RecordingAuditService())
+    monkeypatch.setattr(datasets_api, "build_artifact_service", lambda _db: ArtifactService(db, LocalStorage(tmp_path / "storage")))
+    upload = datasets_api.UploadFile(filename="unsafe.zip", file=payload)
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(datasets_api.import_zip_dataset(str(project_id), request, upload, db, user))
+    assert error.value.status_code == 400
+    assert error.value.detail["code"] == "DATA_PARSE_UNSAFE_PATH"
+    assert db.query(Artifact).count() == 0
+    assert db.query(DatasetVersion).count() == 0
+
+
+def test_zip_handler_enforces_member_and_cumulative_decompressed_limits(tmp_path, monkeypatch):
+    import zipfile
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    project_id = uuid.uuid4()
+    user = type("User", (), {"id": uuid.uuid4(), "username": "operator"})()
+    request = type("Request", (), {"state": type("State", (), {})(), "client": None})()
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("one.csv", "id\n12345\n")
+        archive.writestr("two.csv", "id\n67890\n")
+    payload.seek(0)
+    monkeypatch.setattr(datasets_api, "project_uuid", lambda value: project_id)
+    monkeypatch.setattr(datasets_api, "resolve_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "audit_service", lambda _db: _RecordingAuditService())
+    monkeypatch.setattr(datasets_api, "build_artifact_service", lambda _db: ArtifactService(db, LocalStorage(tmp_path / "storage")))
+    monkeypatch.setattr(datasets_api, "ParseOptions", lambda: ParseOptions(max_file_bytes=20, max_decompressed_bytes=15))
+    upload = datasets_api.UploadFile(filename="limits.zip", file=payload)
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(datasets_api.import_zip_dataset(str(project_id), request, upload, db, user))
+    assert error.value.status_code == 400
+    assert error.value.detail["code"] in {"DATA_LIMIT_FILE_BYTES", "DATA_LIMIT_DECOMPRESSED_BYTES"}
+    assert db.query(Artifact).count() == 0
+    assert db.query(DatasetVersion).count() == 0

@@ -4,7 +4,10 @@ sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import Base, engine
+from app.database import Base, SessionLocal, engine
+from app.models.artifact import Artifact
+from app.models.data_version import DatasetVersion
+from app.services.artifact_service import build_artifact_service
 from tests.auth_test_support import ensure_admin
 
 Base.metadata.create_all(bind=engine)
@@ -97,18 +100,35 @@ class TestDatasetsAPI(unittest.TestCase):
         item = next(entry for entry in r.json()["items"] if entry["id"] == self.artifact_ids[0])
         self.assertEqual(item["project_name"], "DatasetTestProject")
 
-    def test_03c_delete_dataset_removes_the_owned_artifact(self):
+    def test_03c_delete_rejects_dataset_artifact_referenced_by_immutable_version(self):
         uploaded = client.post(
             f"/api/projects/{self.project_id}/datasets/upload",
-            files={"file": ("delete-me.csv", self._make_csv(), "text/csv")},
+            files={"file": ("immutable.csv", self._make_csv(), "text/csv")},
             headers=self.h,
         )
         self.assertEqual(uploaded.status_code, 200)
         dataset_id = uploaded.json()["id"]
         response = client.delete(f"/api/datasets/{dataset_id}", headers=self.h)
-        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"]["code"], "DATA_IMMUTABLE_ARTIFACT")
         preview = client.get(f"/api/datasets/{dataset_id}/preview", headers=self.h)
-        self.assertEqual(preview.status_code, 404)
+        self.assertEqual(preview.status_code, 200)
+        with SessionLocal() as db:
+            version = db.query(DatasetVersion).filter(
+                DatasetVersion.original_artifact_id == uuid.UUID(dataset_id),
+            ).one()
+            artifact_ids = [version.original_artifact_id, version.normalized_artifact_id]
+            self.assertEqual(
+                db.query(Artifact).filter(Artifact.id.in_(artifact_ids)).count(),
+                2,
+            )
+            service = build_artifact_service(db)
+            for artifact_id in artifact_ids:
+                artifact = db.get(Artifact, artifact_id)
+                with service.materialize(
+                    artifact.id, artifact.project_id, expected_type="dataset",
+                ) as path:
+                    self.assertTrue(path.is_file())
 
     def test_03d_zero_row_dataset_can_be_deleted(self):
         uploaded = client.post(
@@ -118,8 +138,19 @@ class TestDatasetsAPI(unittest.TestCase):
         )
         self.assertEqual(uploaded.status_code, 200)
         self.assertEqual(uploaded.json()["row_count"], 0)
+        dataset_id = uploaded.json()["id"]
+        deleted = client.delete(f"/api/datasets/{dataset_id}", headers=self.h)
+        self.assertEqual(deleted.status_code, 409)
 
-        deleted = client.delete(f"/api/datasets/{uploaded.json()['id']}", headers=self.h)
+    def test_03e_delete_unreferenced_legacy_artifact(self):
+        uploaded = client.post(
+            f"/api/projects/{self.project_id}/datasets/batch-upload",
+            files=[("files", ("legacy.bin", io.BytesIO(b"legacy"), "application/octet-stream"))],
+            headers=self.h,
+        )
+        self.assertEqual(uploaded.status_code, 200)
+        dataset_id = uploaded.json()["files"][0]["artifact_id"]
+        deleted = client.delete(f"/api/datasets/{dataset_id}", headers=self.h)
         self.assertEqual(deleted.status_code, 204)
 
     def test_04_preview_nonexistent_dataset(self):

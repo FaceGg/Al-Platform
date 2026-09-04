@@ -6,6 +6,7 @@ from uuid import UUID
 import uuid
 import json
 from pathlib import Path
+from pathlib import PurePosixPath
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
@@ -162,13 +163,16 @@ def _create_dataset_artifact(
     )
 
 
-def _cleanup_storage(db: Session, storage_uris: list[str]) -> None:
+def _cleanup_storage(db: Session, storage_uris: list[str], original_error: Exception | None = None) -> None:
     storage = build_artifact_service(db).storage
+    failures = []
     for uri in storage_uris:
         try:
             storage.delete(uri)
-        except Exception:
-            pass
+        except Exception as error:
+            failures.append(f"{uri}: {error}")
+    if failures:
+        raise DataImportError("DATA_CLEANUP_FAILED", "; ".join(failures)) from original_error
 
 
 def _read_dataset(path: Path):
@@ -266,8 +270,8 @@ def upload_dataset(
             finally:
                 staging_path.unlink(missing_ok=True)
             artifact = db.get(Artifact, version.original_artifact_id)
-    except Exception:
-        _cleanup_storage(db, storage_uris)
+    except Exception as error:
+        _cleanup_storage(db, storage_uris, error)
         raise
     metadata = artifact.metadata_ or {}
     schema = [{"name": column.name, "dtype": column.dtype, "null_count": 0} for column in version.schema_columns]
@@ -332,8 +336,8 @@ def batch_import(
                 except Exception as error:
                     failed_count += 1
                     results.append({"name": file.filename, "error": str(error)})
-    except Exception:
-        _cleanup_storage(db, storage_uris)
+    except Exception as error:
+        _cleanup_storage(db, storage_uris, error)
         raise
     return {
         "total": len(files),
@@ -502,6 +506,18 @@ def delete_dataset(
     ).first()
     if not artifact:
         raise HTTPException(404, "Dataset not found")
+    referenced = db.query(DatasetVersion.id).filter(
+        (DatasetVersion.original_artifact_id == artifact.id)
+        | (DatasetVersion.normalized_artifact_id == artifact.id)
+    ).first()
+    if referenced is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "DATA_IMMUTABLE_ARTIFACT",
+                "message": "Dataset artifact is referenced by an immutable dataset version",
+            },
+        )
     try:
         build_artifact_service(db).delete_content(artifact)
     except ArtifactAccessError as exc:
@@ -557,8 +573,8 @@ async def batch_upload_dataset(
                     "artifact_id": str(artifact.id), "name": safe_name,
                     "size": artifact.file_size, "format": fmt_map.get(ext, ""),
                 })
-    except Exception:
-        _cleanup_storage(db, storage_uris)
+    except Exception as error:
+        _cleanup_storage(db, storage_uris, error)
         raise
     return {"message": f"Uploaded {len(artifacts)} files", "files": artifacts}
 
@@ -593,16 +609,41 @@ async def import_zip_dataset(
                 zip_path = Path(tmpdir) / safe_zip_name
                 await _stage_upload(file, zip_path)
                 with zipfile.ZipFile(zip_path, "r") as archive:
-                    for member in archive.namelist():
-                        if member.endswith("/"):
-                            continue
-                        fname = os.path.basename(member)
+                    members = [info for info in archive.infolist() if not info.is_dir()]
+                    options = ParseOptions()
+                    expanded_total = 0
+                    for info in members:
+                        member = info.filename
+                        normalized_member = member.replace("\\", "/")
+                        path = PurePosixPath(normalized_member)
+                        if (
+                            not normalized_member
+                            or normalized_member.startswith("/")
+                            or ":" in path.parts[0]
+                            or any(part in {"", ".", ".."} for part in path.parts)
+                        ):
+                            raise HTTPException(400, {"code": "DATA_PARSE_UNSAFE_PATH", "message": "Unsafe ZIP member path"})
+                        if info.file_size > options.max_file_bytes:
+                            raise HTTPException(400, {"code": "DATA_LIMIT_FILE_BYTES", "message": "ZIP member exceeds file size limit"})
+                        expanded_total += info.file_size
+                        if expanded_total > options.max_decompressed_bytes:
+                            raise HTTPException(400, {"code": "DATA_LIMIT_DECOMPRESSED_BYTES", "message": "ZIP expanded size exceeds limit"})
+                    expanded_total = 0
+                    for info in members:
+                        fname = Path(info.filename.replace("\\", "/")).name
                         staging_path = Path(tmpdir) / f"{uuid.uuid4()}_{fname}"
-                        with archive.open(member, "r") as source, staging_path.open("xb") as target:
+                        member_bytes = 0
+                        with archive.open(info, "r") as source, staging_path.open("xb") as target:
                             while True:
                                 chunk = source.read(1024 * 1024)
                                 if not chunk:
                                     break
+                                member_bytes += len(chunk)
+                                expanded_total += len(chunk)
+                                if member_bytes > options.max_file_bytes:
+                                    raise DataImportError("DATA_LIMIT_FILE_BYTES")
+                                if expanded_total > options.max_decompressed_bytes:
+                                    raise DataImportError("DATA_LIMIT_DECOMPRESSED_BYTES")
                                 target.write(chunk)
                         ext = Path(fname).suffix.lower()
                         if ext in {".csv", ".xlsx", ".xls", ".json", ".xml", ".parquet"}:
@@ -617,8 +658,14 @@ async def import_zip_dataset(
                             "artifact_id": str(artifact.id), "name": fname,
                             "size": artifact.file_size,
                         })
-    except Exception:
-        _cleanup_storage(db, storage_uris)
+    except DataImportError as error:
+        _cleanup_storage(db, storage_uris, error)
+        raise HTTPException(400, {"code": error.code, "message": str(error)}) from error
+    except HTTPException as error:
+        _cleanup_storage(db, storage_uris, error)
+        raise
+    except Exception as error:
+        _cleanup_storage(db, storage_uris, error)
         raise
     return {"message": f"Imported {len(artifacts)} files from ZIP", "files": artifacts}
 @router.get("/datasets/{dataset_id}/preview")
