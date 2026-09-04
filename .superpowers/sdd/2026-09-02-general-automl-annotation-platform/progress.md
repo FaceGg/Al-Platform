@@ -124,3 +124,16 @@
 
 - Scoped re-review verdict: outer compensation is limited to unversioned legacy artifacts; committed batch and ZIP `DatasetVersion` artifacts remain durable when a later entry fails. No new Critical/Important breakage was found in the fix diff.
 - Task 2: complete (commits `7902a56..2ab4165`, review clean for the focused local contract/API scope). Full backend suite, browser E2E, remote CI and Task 13 parser process isolation remain pending; Task 3 and Task 4 are now unblocked by Task 2's scoped dependency.
+
+## Task 3 review intake (2026-09-04)
+
+- Implementation commits `3c5dbd8` and `e3aec22` add the four-task AutoML contract, multi-output search helpers, target validation, candidate artifact-only persistence, and migration `20260904_18`.
+- Plan verification command was corrected during investigation: `tests/test_api_training.py` does not exist in this repository; the maintained API/training coverage is in `tests/test_training.py` and `tests/test_automl_tracking.py`.
+- Task 3 remains under task-level review until spec compliance and quality are independently confirmed. Existing optional LightGBM availability failure is environment-specific and cannot be counted as a pass.
+
+## Task 3 review findings (2026-09-04)
+
+- P0: `start_automl` accepts multi-output jobs but `execute_automl_job` rejects every `multioutput_*` job; the new search helper is not connected to production execution.
+- P1: required 2-fold CV is rejected; iterative stratification is only a label while independent `StratifiedKFold` runs; per-target/aggregate reports and contract/preprocessing persistence are incomplete; API idempotency headers and durable cancellation/worker wiring are absent; search strength/class-weight controls are absent.
+- P2: AUC completeness tier and strict target dtype validation are absent.
+- Decision: Task 3 remains `in_progress`; resume the original implementer for a focused fix round covering the review findings before any push or pause.

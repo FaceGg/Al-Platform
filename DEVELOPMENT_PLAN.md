@@ -57,7 +57,7 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 |---|---|---|---|
 | Task 1 | 全项目去行业化迁移基线 | 无；阻塞后续实现 | `passed` |
 | Task 2 | 数据导入、数据版本和统一输入合同 | Task 1 | `passed` |
-| Task 3 | AutoML 四种任务类型和训练合同 | Task 1、Task 2 | `passed` |
+| Task 3 | AutoML 四种任务类型和训练合同 | Task 1、Task 2 | `in_progress` |
 | Task 4 | 标签 schema、类型校验和修订历史 | Task 1、Task 2 | `planned` |
 | Task 5 | 标注任务状态机、任务列表和预览 | Task 2、Task 4 | `planned` |
 | Task 6 | 三种自动标注策略和特征重要性加权 KMeans | Task 3、Task 4、Task 5 | `planned` |
@@ -120,7 +120,7 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 
 ## 9. 文档维护与本次整理记录
 
-- 2026-09-04：Task 3 完成首轮合同实现与聚焦验证：新增四类任务归一化（含请求别名）、目标列校验、multi-output 独立目标搜索结果、特征重要性聚合、候选排序和 TrainingJob AutoML 合同快照迁移；候选模型仅保留 artifact，不自动写入 ModelLibrary。聚焦 `tests/test_automl_multioutput.py` 6 passed，Alembic upgrade head、py_compile、git diff --check 通过；既有 `test_automl_catalog` 在当前环境因缺少 LightGBM 仍有独立失败，Task 3 完整 API/前端接线和 durable-worker 语义仍待后续收敛。实现提交 `3c5dbd83df5938177d5f409fadb7e50a242fb465`。
+- 2026-09-04：Task 3 首轮实现经过独立复核未通过：生产 worker 会直接拒绝 `multioutput_*` 任务，2 折 CV 被错误排除，iterative stratification 仅为标记，API 幂等/取消、四档搜索强度、class-weight、完整 per-target/aggregate 持久化和 durable worker 接线均缺失。Task 3 状态保持 `in_progress`；此前实现提交和聚焦测试记录保留为历史证据，不代表任务完成。
 
 - 每次 Task 完成后，在本文件更新当前状态、未完成项、风险和下一步；完成明细、旧失败和历史证据追加到归档，不回写旧事实。
 - 2026-09-03：将整理前的完整 `DEVELOPMENT_PLAN.md` 保存为 `DEVELOPMENT_PLAN.history-2026-09-03.md`。Week 1–12 及历史执行记录已从当前视图分离。
