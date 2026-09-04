@@ -123,6 +123,7 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 - 2026-09-04：Task 3 首轮实现经过独立复核未通过：生产 worker 会直接拒绝 `multioutput_*` 任务，2 折 CV 被错误排除，iterative stratification 仅为标记，API 幂等/取消、四档搜索强度、class-weight、完整 per-target/aggregate 持久化和 durable worker 接线均缺失。Task 3 状态保持 `in_progress`；此前实现提交和聚焦测试记录保留为历史证据，不代表任务完成。
 
 - 2026-09-04：Task 3 修复轮次 1。补齐 2 折配置、multi-output worker 合同入口和联合标签频次校验；模型注册兼容完成的 AutoML candidate artifact，并在注册时补建满足现有 ModelVersion 外键的 ModelLibrary lineage。验证：`test_automl_multioutput.py` 8 passed；model registry service/API 27 passed（1 warning、2 subtests）；相关模块 py_compile 与 `git diff --check` 通过。Task 3 仍为 `in_progress`，真实多目标制品持久化、迭代分层折分配、折内预处理、搜索控制、幂等取消恢复和完整 AUC 分层尚未完成。
+- 2026-09-04：Task 3 修复轮次 1 追加回归。修正注册平台版本的 AutoML 信任判定，使 artifact-only 候选可用匹配的 `model_artifact_id` 完成血缘校验；新增完整注册事务回归。验证：artifact-only 1 passed；AutoML/registry/API 合并套件 36 passed（1 warning、2 subtests）。Task 3 仍保持 `in_progress`。
 
 - 每次 Task 完成后，在本文件更新当前状态、未完成项、风险和下一步；完成明细、旧失败和历史证据追加到归档，不回写旧事实。
 - 2026-09-03：将整理前的完整 `DEVELOPMENT_PLAN.md` 保存为 `DEVELOPMENT_PLAN.history-2026-09-03.md`。Week 1–12 及历史执行记录已从当前视图分离。

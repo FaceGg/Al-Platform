@@ -179,6 +179,43 @@ class TestModelRegistryService(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, "MODEL_SOURCE_UNTRUSTED")
 
+    def test_automl_artifact_only_result_registers_with_lineage(self):
+        job = TrainingJob(
+            project_id=self.project.id,
+            user_id=self.owner.id,
+            name=f"automl-{uuid.uuid4().hex}",
+            status="completed",
+            dataset_artifact_id=None,
+        )
+        self.db.add(job)
+        self.db.flush()
+        source_path = self.root / f"{job.id}-automl.joblib"
+        fitted = LogisticRegression().fit(
+            np.asarray([[0.0, 0.0], [1.0, 1.0]]), np.asarray([0, 1]),
+        )
+        joblib.dump({
+            "model": fitted,
+            "feature_schema": [{"name": "x", "dtype": "float64"}],
+            "target_schema": {"name": "y", "dtype": "int64", "task": "classification"},
+        }, source_path)
+        artifact = self.artifacts.create_from_file(
+            self.project.id,
+            source_path,
+            source_path.name,
+            "model",
+            metadata={"source": "automl", "training_job_id": str(job.id), "best_algorithm": "rf"},
+            commit=False,
+        )
+        job.metrics = {"algorithm_results": [{"algorithm_id": "rf", "status": "completed", "model_artifact_id": str(artifact.id), "name": "Random Forest"}]}
+        self.db.commit()
+
+        _model, version, created = self.service.register_automl_result(
+            self.db, job=job, algorithm_id="rf", actor_id=self.owner.id, commit=True,
+        )
+        self.assertTrue(created)
+        self.assertEqual(version.source_model_library_id is not None, True)
+        self.assertEqual(job.metrics["algorithm_results"][0]["model_version_id"], str(version.id))
+
     def test_platform_conversion_failure_is_exposed_as_stable_registry_error(self):
         library, _artifact = self._platform_source()
         failing_service = ModelRegistryService(

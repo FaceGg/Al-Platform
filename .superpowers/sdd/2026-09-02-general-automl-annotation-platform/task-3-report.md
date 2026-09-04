@@ -39,3 +39,5 @@
 
 - Full Task 3 compliance is still not established: real iterative-stratified fold assignments, fold-local preprocessing, per-target artifact/prediction persistence, search strength/time-budget/class-weight controls, durable idempotency/cancellation/recovery, and complete AUC ranking tiers remain open for later fix rounds.
 - The worker multi-output branch currently records contract reports but does not yet persist a trained multi-output candidate artifact; this remains a release blocker and Task 3 stays `in_progress`.
+- Follow-up regression: the existing AutoML trust predicate also required `model_library_id` in job metrics after artifact-only persistence. It now accepts the candidate `model_artifact_id` when it matches the validated source artifact.
+- `pytest tests/test_model_registry_service.py -k artifact_only -q` -> **1 passed**; combined AutoML/registry/API suite -> **36 passed, 1 warning, 2 subtests passed**.

@@ -368,7 +368,10 @@ class ModelRegistryService:
             trusted = isinstance(results, list) and any(
                 isinstance(item, dict)
                 and str(item.get("algorithm_id")) == algorithm_id
-                and str(item.get("model_library_id")) == str(library.id)
+                and (
+                    str(item.get("model_library_id")) == str(library.id)
+                    or str(item.get("model_artifact_id")) == str(artifact.id)
+                )
                 and item.get("status") == "completed"
                 for item in results
             )
