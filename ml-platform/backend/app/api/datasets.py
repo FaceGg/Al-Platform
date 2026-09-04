@@ -566,9 +566,9 @@ async def batch_upload_dataset(
                         artifact = _create_dataset_artifact(
                             artifact_service, project_id_value, staging_path, safe_name, commit=False,
                         )
+                        storage_uris.append(artifact.storage_uri)
                 finally:
                     staging_path.unlink(missing_ok=True)
-                storage_uris.append(artifact.storage_uri)
                 artifacts.append({
                     "artifact_id": str(artifact.id), "name": safe_name,
                     "size": artifact.file_size, "format": fmt_map.get(ext, ""),
@@ -653,7 +653,7 @@ async def import_zip_dataset(
                             artifact = _create_dataset_artifact(
                                 artifact_service, project_id_value, staging_path, fname, commit=False,
                             )
-                        storage_uris.append(artifact.storage_uri)
+                            storage_uris.append(artifact.storage_uri)
                         artifacts.append({
                             "artifact_id": str(artifact.id), "name": fname,
                             "size": artifact.file_size,

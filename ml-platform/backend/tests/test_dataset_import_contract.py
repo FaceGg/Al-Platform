@@ -691,3 +691,88 @@ def test_zip_handler_enforces_member_and_cumulative_decompressed_limits(tmp_path
     assert error.value.detail["code"] in {"DATA_LIMIT_FILE_BYTES", "DATA_LIMIT_DECOMPRESSED_BYTES"}
     assert db.query(Artifact).count() == 0
     assert db.query(DatasetVersion).count() == 0
+
+
+def test_batch_upload_failure_does_not_delete_committed_version_artifacts(tmp_path, monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    project_id = uuid.uuid4()
+    user = type("User", (), {"id": uuid.uuid4(), "username": "operator"})()
+    request = type("Request", (), {"state": type("State", (), {})(), "client": None})()
+    service = ArtifactService(db, LocalStorage(tmp_path / "storage"))
+    monkeypatch.setattr(datasets_api, "project_uuid", lambda value: project_id)
+    monkeypatch.setattr(datasets_api, "resolve_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "audit_service", lambda _db: _RecordingAuditService())
+    monkeypatch.setattr(datasets_api, "build_artifact_service", lambda _db: service)
+    monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: service)
+    real_freeze = datasets_api._freeze_staged_upload
+    calls = 0
+
+    def freeze_once_then_fail(db_arg, project_arg, operator_arg, staging_arg, name_arg):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return real_freeze(db_arg, project_arg, operator_arg, staging_arg, name_arg)
+        raise RuntimeError("second batch entry failed")
+
+    monkeypatch.setattr(datasets_api, "_freeze_staged_upload", freeze_once_then_fail)
+    files = [
+        datasets_api.UploadFile(filename="first.csv", file=io.BytesIO(b"id,value\na,1\n")),
+        datasets_api.UploadFile(filename="second.csv", file=io.BytesIO(b"id,value\nb,2\n")),
+    ]
+
+    with pytest.raises(RuntimeError, match="second batch entry failed"):
+        asyncio.run(datasets_api.batch_upload_dataset(str(project_id), request, files, db, user))
+
+    version = db.query(DatasetVersion).one()
+    for artifact_id in (version.original_artifact_id, version.normalized_artifact_id):
+        artifact = db.get(Artifact, artifact_id)
+        assert artifact is not None
+        assert service.storage.exists(artifact.storage_uri)
+
+
+def test_zip_import_failure_does_not_delete_committed_version_artifacts(tmp_path, monkeypatch):
+    import zipfile
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    project_id = uuid.uuid4()
+    user = type("User", (), {"id": uuid.uuid4(), "username": "operator"})()
+    request = type("Request", (), {"state": type("State", (), {})(), "client": None})()
+    service = ArtifactService(db, LocalStorage(tmp_path / "storage"))
+    monkeypatch.setattr(datasets_api, "project_uuid", lambda value: project_id)
+    monkeypatch.setattr(datasets_api, "resolve_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "audit_service", lambda _db: _RecordingAuditService())
+    monkeypatch.setattr(datasets_api, "build_artifact_service", lambda _db: service)
+    monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: service)
+    real_freeze = datasets_api._freeze_staged_upload
+    calls = 0
+
+    def freeze_once_then_fail(db_arg, project_arg, operator_arg, staging_arg, name_arg):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return real_freeze(db_arg, project_arg, operator_arg, staging_arg, name_arg)
+        raise RuntimeError("second ZIP entry failed")
+
+    monkeypatch.setattr(datasets_api, "_freeze_staged_upload", freeze_once_then_fail)
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("first.csv", "id,value\na,1\n")
+        archive.writestr("second.csv", "id,value\nb,2\n")
+    payload.seek(0)
+
+    with pytest.raises(RuntimeError, match="second ZIP entry failed"):
+        asyncio.run(datasets_api.import_zip_dataset(
+            str(project_id), request,
+            datasets_api.UploadFile(filename="batch.zip", file=payload),
+            db, user,
+        ))
+
+    version = db.query(DatasetVersion).one()
+    for artifact_id in (version.original_artifact_id, version.normalized_artifact_id):
+        artifact = db.get(Artifact, artifact_id)
+        assert artifact is not None
+        assert service.storage.exists(artifact.storage_uri)
