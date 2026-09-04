@@ -120,7 +120,7 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 
 ## 9. 文档维护与本次整理记录
 
-- 2026-09-04：Task 3 完成首轮合同实现与聚焦验证：新增四类任务归一化（含请求别名）、目标列校验、multi-output 独立目标搜索结果、特征重要性聚合、候选排序和 TrainingJob AutoML 合同快照迁移；候选模型仅保留 artifact，不自动写入 ModelLibrary。聚焦 `tests/test_automl_multioutput.py` 6 passed，Alembic upgrade head、py_compile、git diff --check 通过；既有 `test_automl_catalog` 在当前环境因缺少 LightGBM 仍有独立失败，Task 3 完整 API/前端接线和 durable-worker 语义仍待后续收敛。
+- 2026-09-04：Task 3 完成首轮合同实现与聚焦验证：新增四类任务归一化（含请求别名）、目标列校验、multi-output 独立目标搜索结果、特征重要性聚合、候选排序和 TrainingJob AutoML 合同快照迁移；候选模型仅保留 artifact，不自动写入 ModelLibrary。聚焦 `tests/test_automl_multioutput.py` 6 passed，Alembic upgrade head、py_compile、git diff --check 通过；既有 `test_automl_catalog` 在当前环境因缺少 LightGBM 仍有独立失败，Task 3 完整 API/前端接线和 durable-worker 语义仍待后续收敛。实现提交 `3c5dbd83df5938177d5f409fadb7e50a242fb465`。
 
 - 每次 Task 完成后，在本文件更新当前状态、未完成项、风险和下一步；完成明细、旧失败和历史证据追加到归档，不回写旧事实。
 - 2026-09-03：将整理前的完整 `DEVELOPMENT_PLAN.md` 保存为 `DEVELOPMENT_PLAN.history-2026-09-03.md`。Week 1–12 及历史执行记录已从当前视图分离。
