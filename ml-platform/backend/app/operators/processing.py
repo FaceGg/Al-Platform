@@ -1,3 +1,5 @@
+GENERICIZATION_BRIDGE_ONLY = True
+
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator

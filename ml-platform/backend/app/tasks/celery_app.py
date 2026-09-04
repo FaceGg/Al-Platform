@@ -1,5 +1,7 @@
 """Celery application configuration."""
 
+GENERICIZATION_BRIDGE_ONLY = True
+
 from celery import Celery
 from celery.schedules import crontab
 

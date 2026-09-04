@@ -39,7 +39,7 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 | 阶段 | 工作范围 | 状态 | 当前口径 |
 |---|---|---|---|
 | Week 1–12 | 已交付的平台基础、生产化、权限通知与历史验收 | `passed` / `completed` | 已归档，不作为当前待办。 |
-| 通用自动建模与数据标注平台 | 2026-09-02 实施计划 Task 1–14 | `planned`（未开始开发） | 方案、实施计划和验收资料已准备；尚未开始代码、迁移、测试或运行时工作。 |
+| 通用自动建模与数据标注平台 | 2026-09-02 实施计划 Task 1–14 | `in_progress` | Task 1 去行业化边界已通过聚焦验证；Task 2 数据导入、数据版本和输入合同正在执行。 |
 | Week 13 | Kubernetes 基础接入 | `planned`（未开始） | 后续工作，见 BKL-04。 |
 | Week 14 | Kubernetes Job/Pod 执行器 | `planned`（未开始） | 依赖 Week 13，见 BKL-05。 |
 | Week 15 | Notebook、镜像与 GPU | `planned`（未开始） | 依赖 Kubernetes 基础能力，见 BKL-06。 |
@@ -51,12 +51,12 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 
 ## 5. 当前主交付计划
 
-所有 Task 仍为 `planned`，且尚未开始开发。文档评审、历史局部功能或 Week 1–12 验收均不构成实现完成状态。按依赖执行，不得跳过 Task 1 的去行业化基线。
+Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 正在按依赖执行。文档评审、历史局部功能或 Week 1–12 验收均不构成当前任务完成状态。按依赖执行，不得跳过 Task 2 的 RED 测试和安全解析边界。
 
 | ID | 工作项 | 依赖 | 状态 |
 |---|---|---|---|
-| Task 1 | 全项目去行业化迁移基线 | 无；阻塞后续实现 | `in_progress` |
-| Task 2 | 数据导入、数据版本和统一输入合同 | Task 1 | `planned` |
+| Task 1 | 全项目去行业化迁移基线 | 无；阻塞后续实现 | `passed` |
+| Task 2 | 数据导入、数据版本和统一输入合同 | Task 1 | `in_progress` |
 | Task 3 | AutoML 四种任务类型和训练合同 | Task 1、Task 2 | `planned` |
 | Task 4 | 标签 schema、类型校验和修订历史 | Task 1、Task 2 | `planned` |
 | Task 5 | 标注任务状态机、任务列表和预览 | Task 2、Task 4 | `planned` |
@@ -112,7 +112,7 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 
 ## 8. 当前风险与门禁
 
-- 通用平台尚未开始业务实现。迁移、运行时测试、构建、浏览器验收、导出验证、恢复演练、提交、推送和远程门禁均不能记为已完成。
+- 通用平台仍处于 `in_progress`：Task 1 的后端边界已通过本地聚焦证据，Task 2 及后续任务尚未完成。迁移、运行时测试、构建、浏览器验收、导出验证、恢复演练、提交、推送和远程门禁均不能整体记为已完成。
 - Task 1 必须先完成全项目行业特定引用盘点和迁移边界，禁止向新代码继续引入固定行业字段、路由、服务或工作流。
 - 自动标注、认证、回传、导出和清理都涉及跨服务状态；每个 Task 需保留幂等、revision、权限和失败回执的测试证据。
 - 对恢复、备份、升级和安全验收，脚本路径存在不等于可执行：必须记录容器/宿主机边界、环境变量、证书、Compose 服务、镜像和证据目录。
@@ -132,3 +132,5 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 - 2026-09-03：本地分支整理的详细记录为：任务范围仅限本地 Git 分支引用；依据 `git branch --merged main`、祖先关系和工作树占用安全删除 16 个已被 `main` 完整包含的历史/临时本地分支；保留当前 `main`、链接工作树占用分支和仍有未合并独有提交的分支；未删除远端分支、链接工作树或缓存/未跟踪文件。验证结果为本地分支从 23 个减少到 7 个，`main`、`origin/main` 与当时基线一致；后续清理需用户明确指定范围。
 - 2026-09-03：按用户要求发布本次变更：功能分支提交 `f29191ba8980f0066a98b8dd8af26e70890d78d2` 已推送到 `origin/general-automl-annotation-20260902`；随后与根 `main` 的分支整理提交合并为 `f6c8bff64458f305f1568f67ab3f8479983431f4` 并推送到 `origin/main`。README 未加入任何提交，仅在本地工作树和根 `main` 工作树同步保留。
 - 2026-09-03：发布前验证记录：README 以外的工作树变更已提交并推送，`git diff --check` 退出码为 0；后端标准套件因 `python` 命令仅指向 WindowsApps 占位符、Python 3.14 环境未安装 `fastapi`，前端因缺少 `node_modules` 未执行测试和构建。上述环境缺口不计为测试通过，也不改变通用平台 Task 1–14 的 `planned` 状态。
+- 2026-09-04：Task 1 收口。使用 backend `.venv` 执行 `python -m unittest tests.test_genericization_contract tests.test_suite_manifest -v`，23/23 通过；从 `ml-platform/backend` 根运行源码去行业化门禁返回空违规；`alembic check` 与 `alembic upgrade head` 均通过；相关模块 `py_compile` 和 `git diff --check` 通过。Task 1 状态提升为 `passed`，README 仍为本地专用未提交文件。
+- 2026-09-04：启动 Task 2。依赖检查确认 pandas/openpyxl 可用，但 `.venv` 尚缺 pytest、pyarrow 和 XML 安全解析依赖；先按 TDD 写入 `test_dataset_import_contract.py` 并执行 RED，缺失的解析/版本/输入合同模块导致测试失败后再实现。Task 2 状态为 `in_progress`，整体通用平台保持 `in_progress`。

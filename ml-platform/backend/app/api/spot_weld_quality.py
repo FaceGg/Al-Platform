@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+LEGACY_ADAPTER_ONLY = True
+
 import io
 import logging
 import uuid

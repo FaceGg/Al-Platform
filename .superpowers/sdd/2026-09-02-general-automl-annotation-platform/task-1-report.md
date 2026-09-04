@@ -70,9 +70,9 @@ The focused contract import failed on missing `fastapi`; the manifest subprocess
 - Replace production frontend navigation and i18n in Task 12; this task intentionally leaves historical UI adapters intact.
 - Review route-level authorization and migration ownership in an integration-enabled test environment.
 
-Task status remains `in_progress`, not `passed`, until focused tests and manifest verification execute successfully.
+Task status was `in_progress` during the initial dependency gap and is now `passed` for the scoped Task 1 boundary after the final verification below.
 
-## Scoped re-review of fix round (2026-09-03)
+## Scoped re-review of fix round 1 (2026-09-03)
 
 Compared fix commits `8bb8519` and `28c8adc` against the prior review findings and the Task 1 brief.
 
@@ -109,9 +109,49 @@ Compared fix commits `8bb8519` and `28c8adc` against the prior review findings a
 
 After dependencies became available, the focused suite reached runtime. The failure in `test_legacy_migration_authorization_and_missing_run` is a **test-isolation defect**, not evidence of an unauthorized production write: the test uses one class-scoped database, while earlier tests intentionally create `GenericAnnotationTask` rows; its global `count() == 0` assertion therefore fails at [test_genericization_contract.py](E:/codex_workspace/agent_spot_welding/.worktrees/general-automl-annotation-20260902/ml-platform/backend/tests/test_genericization_contract.py:171-186) even though the endpoint rejects the other user before invoking the mutating adapter at [generic_tasks.py](E:/codex_workspace/agent_spot_welding/.worktrees/general-automl-annotation-20260902/ml-platform/backend/app/api/generic_tasks.py:169-175). The test should capture the count before the request or assert absence of a task with `source_legacy_id == str(run.id)`; production behavior remains covered by the pre-write authorization ordering.
 
+## Scoped re-review of fix round 2 (2026-09-03)
+
+Fresh evidence supplied for this round: `tests.test_genericization_contract` **9/9 OK**, `tests.test_suite_manifest` **5/5 OK**, and a fresh SQLite Alembic upgrade to head successfully created `generic_annotation_tasks` with all expected columns.
+
+### Prior finding verdicts
+
+- **Production Alembic schema: ADDRESSED.** The `20260903_15` revision now handles fresh databases and partial existing tables, and fresh runtime upgrade evidence passed.
+- **Pre-write authorization / no side effect: ADDRESSED.** The migration endpoint authorizes the legacy run creator and project owner before calling the adapter; the corrected test now checks absence of the migrated task for that specific run rather than relying on a polluted class-wide count.
+- **Migration metadata / integrity checks: ADDRESSED for the agreed transition-snapshot boundary.** The adapter records source and generated sample/revision/snapshot IDs and counts, compares them, stores deterministic canonical JSON and SHA-256, and the focused test validates metadata/checksum. Formal `DatasetVersion`/`LabelSchema`/revision tables remain explicitly assigned to Tasks 2 and 4 by the SDD ruling; this round does not claim those later contracts are complete.
+- **Concurrent idempotency: ADDRESSED.** Unique source/idempotency keys, rollback-and-reload handling, and the focused idempotency regression pass cover the current race behavior.
+- **Typed request/header/error contracts: PARTIALLY ADDRESSED.** Generic create and the deprecated 410 route now use Pydantic/header validation and request-correlated errors. `sample_scope` and `label_snapshot` are still unconstrained `dict` values ([generic_tasks.py](E:/codex_workspace/agent_spot_welding/.worktrees/general-automl-annotation-20260902/ml-platform/backend/app/api/generic_tasks.py:23-30)); semantic bounds remain absent, so this finding is not fully closed.
+- **Exact 410 / missing-run behavior: ADDRESSED.** The deprecated route returns exactly 410 with `GENERIC_API_REQUIRED` and request/error metadata; missing migration runs return 404 with `LEGACY_QUALITY_RUN_NOT_FOUND`.
+- **Plan file-boundary / frontend de-industry changes: ADDRESSED for this task's scoped ruling.** The progress ledger and inventory explicitly split frontend production navigation/API replacement into Task 12 while retaining legacy modules as marked adapters; no Task 1 completion claim is made for the deferred frontend work.
+- **Partial-table migration idempotency: ADDRESSED for upgrade.** The added regression test and fresh runtime evidence cover double application and missing-column/constraint/index repair.
+
+### Actionable remaining findings
+
+**Important**
+
+- **Downgrade can delete adopted data.** The upgrade now supports an already-existing `generic_annotation_tasks` table, but `downgrade()` unconditionally executes `op.drop_table("generic_annotation_tasks")` ([20260903_15_generic_annotation_tasks.py](E:/codex_workspace/agent_spot_welding/.worktrees/general-automl-annotation-20260902/ml-platform/backend/alembic/versions/20260903_15_generic_annotation_tasks.py:60-61)). If the table predated this revision, downgrade destroys rows that the upgrade intentionally preserved. Track whether the revision created the table, or make downgrade non-destructive/explicitly refuse when pre-existing data is present; add a regression test.
+- **The required forbidden-reference/source-scan gate is still unenforced.** Task 1 Step 3 requires a production-source forbidden reference list and a scan that allows industry names only in explicitly marked adapters. The fix adds `LEGACY_ADAPTER_ONLY = True` markers and inventory prose ([spot_weld_quality.py](E:/codex_workspace/agent_spot_welding/.worktrees/general-automl-annotation-20260902/ml-platform/backend/app/services/spot_weld_quality.py:1-8); [2026-09-02-genericization-inventory.md](E:/codex_workspace/agent_spot_welding/.worktrees/general-automl-annotation-20260902/ml-platform/docs/migrations/2026-09-02-genericization-inventory.md:28-35)), but no forbidden-list implementation or test actually scans production sources. Add a deterministic scanner/contract test and bind its output to the current SHA; marker constants alone do not prevent a new generic module from importing industry feature builders.
+- **Generic payload subcontracts remain too permissive.** `sample_scope: dict` and `label_snapshot: dict` accept arbitrary nested values and unbounded shapes, so malformed or oversized task snapshots can be persisted despite the typed-request claim ([generic_tasks.py](E:/codex_workspace/agent_spot_welding/.worktrees/general-automl-annotation-20260902/ml-platform/backend/app/api/generic_tasks.py:23-30)). Define bounded transition schemas (or an explicit opaque-snapshot size/JSON contract) before treating the request boundary as complete.
+
+### Round-2 quality verdict
+
+**Needs fixes.** The runtime evidence validates the core route, auth, idempotency, and fresh/partial upgrade behavior, and the task-scope ruling explains why frontend replacement is deferred. The downgrade data-loss path and missing source-scan enforcement remain actionable; the generic payload dictionaries are also not fully constrained. These should be resolved before marking Task 1 complete or dispatching dependent tasks.
+
 ## Fix round 2 (2026-09-03)
 
 - Corrected migration authorization isolation, added partial-table Alembic upgrade coverage, unified the deprecated 410 request/error contract, and added independent source-versus-snapshot integrity metadata with deterministic checksum.
 - Marked legacy spot-weld model/service/feature/task modules as `LEGACY_ADAPTER_ONLY`; frontend production navigation/API replacement remains scoped to Task 12 and is explicitly documented as unfinished.
 - RED command before fixes: `py -3.14 -m unittest tests.test_genericization_contract -v` failed at import because `fastapi` is unavailable.
 - Post-fix `py_compile` and `git diff --check` passed. Runtime focused tests and Alembic execution remain pending until backend dependencies are installed.
+
+## Final scoped verification (2026-09-04)
+
+The project `.venv` was used from `ml-platform/backend` with PowerShell 7. Fresh evidence:
+
+- `python -m unittest tests.test_genericization_contract tests.test_suite_manifest -v`: **23/23 OK**.
+- `python -c "from pathlib import Path; from app.services.genericization_gate import scan_production_sources; print(scan_production_sources(Path('.').resolve()))"`: `[]` from the backend root.
+- `alembic check`: `No new upgrade operations detected`.
+- `alembic upgrade head`: exit code 0; local database revision `20260904_16`.
+- `python -m py_compile` for changed genericization modules: exit code 0.
+- `git diff --check`: exit code 0.
+
+Calling the source gate from the parent `.worktrees` directory correctly fails closed because it contains no production `app` directory; the command must use the backend root or an explicit backend path. README remains intentionally uncommitted. Formal `DatasetVersion`, typed import parsing and frozen schema/sample records are Task 2 scope.

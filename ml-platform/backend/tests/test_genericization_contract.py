@@ -4,6 +4,7 @@ import sys
 import unittest
 import uuid
 import hashlib
+import tempfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -80,6 +81,34 @@ class GenericizationContractTests(unittest.TestCase):
         self.assertEqual(first.status_code, 201, first.text)
         self.assertEqual(second.status_code, 201, second.text)
         self.assertEqual(first.json()["id"], second.json()["id"])
+
+    def test_generic_annotation_idempotency_key_is_scoped_to_the_owner(self):
+        payload = {
+            "project_id": str(self.project.id),
+            "dataset_version_id": str(uuid.uuid4()),
+            "mode": "manual",
+            "label_schema_id": str(uuid.uuid4()),
+            "sample_scope": {"kind": "all"},
+        }
+        headers = {"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": "shared-owner-key"}
+        first = self.client.post("/api/annotation-tasks", json=payload, headers=headers)
+        self.assertEqual(first.status_code, 201, first.text)
+
+        other = User(username="generic-idempotency-other", password_hash="hash", role="engineer")
+        self.db.add(other)
+        self.db.flush()
+        other_project = Project(name="Other generic project", owner_id=other.id)
+        self.db.add(other_project)
+        self.db.commit()
+        app.dependency_overrides[get_current_user] = lambda: other
+        second = self.client.post(
+            "/api/annotation-tasks",
+            json={**payload, "project_id": str(other_project.id)},
+            headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": "shared-owner-key"},
+        )
+        self.assertEqual(second.status_code, 201, second.text)
+        self.assertNotEqual(first.json()["id"], second.json()["id"])
+        app.dependency_overrides[get_current_user] = lambda: self.owner
 
     def test_generic_annotation_requires_explicit_correlation_headers(self):
         payload = {
@@ -228,6 +257,142 @@ class GenericizationContractTests(unittest.TestCase):
             self.assertTrue({"dataset_version_id", "label_schema_id", "source_legacy_id", "idempotency_key"}.issubset(columns))
             unique_names = {item["name"] for item in inspect(connection).get_unique_constraints("generic_annotation_tasks")}
             self.assertIn("uq_generic_annotation_task_source_legacy_id", unique_names)
+
+    def test_downgrade_does_not_drop_preexisting_generic_table(self):
+        from importlib.util import module_from_spec, spec_from_file_location
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+        from sqlalchemy import text
+
+        migration_path = Path(__file__).parents[1] / "alembic" / "versions" / "20260903_15_generic_annotation_tasks.py"
+        spec = spec_from_file_location("generic_migration_downgrade", migration_path)
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE generic_annotation_tasks (id CHAR(32) PRIMARY KEY, project_id CHAR(32) NOT NULL, owner_id CHAR(32) NOT NULL, mode VARCHAR(16) NOT NULL, status VARCHAR(24) NOT NULL, sample_scope JSON NOT NULL, label_snapshot JSON NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)"))
+            connection.execute(text("INSERT INTO generic_annotation_tasks (id, project_id, owner_id, mode, status, sample_scope, label_snapshot, created_at, updated_at) VALUES ('task-1', 'project-1', 'owner-1', 'manual', 'pending', '{}', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
+            ctx = MigrationContext.configure(connection)
+            module.op = Operations(ctx)
+            module.upgrade()
+            with self.assertRaises(RuntimeError):
+                module.downgrade()
+            row = connection.execute(text("SELECT id FROM generic_annotation_tasks WHERE id='task-1'")).first()
+            self.assertIsNotNone(row)
+
+    def test_downgrade_refuses_table_drop_after_module_reload(self):
+        from importlib.util import module_from_spec, spec_from_file_location
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+        from sqlalchemy import inspect, text
+
+        migration_path = Path(__file__).parents[1] / "alembic" / "versions" / "20260903_15_generic_annotation_tasks.py"
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE projects (id CHAR(32) PRIMARY KEY)"))
+            connection.execute(text("CREATE TABLE users (id CHAR(32) PRIMARY KEY)"))
+            upgrade_spec = spec_from_file_location("generic_migration_fresh_upgrade", migration_path)
+            upgrade_module = module_from_spec(upgrade_spec)
+            upgrade_spec.loader.exec_module(upgrade_module)
+            upgrade_module.op = Operations(MigrationContext.configure(connection))
+            upgrade_module.upgrade()
+
+            downgrade_spec = spec_from_file_location("generic_migration_fresh_downgrade", migration_path)
+            downgrade_module = module_from_spec(downgrade_spec)
+            downgrade_spec.loader.exec_module(downgrade_module)
+            downgrade_module.op = Operations(MigrationContext.configure(connection))
+            with self.assertRaises(RuntimeError):
+                downgrade_module.downgrade()
+
+            self.assertIn("generic_annotation_tasks", inspect(connection).get_table_names())
+
+    def test_generic_payload_subcontracts_reject_unbounded_or_malformed_json(self):
+        headers = {"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": "bounded-payload"}
+        base = {
+            "project_id": str(self.project.id),
+            "dataset_version_id": str(uuid.uuid4()),
+            "label_schema_id": str(uuid.uuid4()),
+            "mode": "manual",
+        }
+        malformed_scope = self.client.post(
+            "/api/annotation-tasks", headers=headers,
+            json={**base, "sample_scope": {"kind": "unknown"}},
+        )
+        self.assertEqual(malformed_scope.status_code, 422, malformed_scope.text)
+        oversized_snapshot = self.client.post(
+            "/api/annotation-tasks",
+            headers={**headers, "Idempotency-Key": "oversized-payload"},
+            json={**base, "sample_scope": {"kind": "all"}, "label_snapshot": {"payload": "x" * 70000}},
+        )
+        self.assertEqual(oversized_snapshot.status_code, 422, oversized_snapshot.text)
+
+    def test_production_source_forbidden_reference_gate_is_enforced(self):
+        from app.services.genericization_gate import scan_production_sources
+
+        violations = scan_production_sources(Path(__file__).parents[1])
+        self.assertEqual(violations, [], violations)
+
+    def test_source_gate_requires_markers_for_legacy_bridge_files(self):
+        from app.services.genericization_gate import scan_production_sources
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            app_root = Path(temporary_directory) / "app"
+            legacy_adapter = app_root / "services" / "spot_weld_features.py"
+            legacy_adapter.parent.mkdir(parents=True)
+            legacy_adapter.write_text("class SpotWeldFeatureEngineering: pass\n", encoding="utf-8")
+
+            violations = scan_production_sources(Path(temporary_directory))
+
+        self.assertEqual(
+            violations,
+            ["services/spot_weld_features.py: missing LEGACY_ADAPTER_ONLY marker"],
+        )
+
+    def test_source_gate_rejects_new_business_dependency_on_legacy_features(self):
+        from app.services.genericization_gate import scan_production_sources
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            app_root = Path(temporary_directory) / "app" / "services"
+            app_root.mkdir(parents=True)
+            (app_root / "new_annotation_flow.py").write_text(
+                "from app.services.spot_weld_features import build_feature_frame\n",
+                encoding="utf-8",
+            )
+
+            violations = scan_production_sources(Path(temporary_directory))
+
+        self.assertEqual(
+            violations,
+            ["services/new_annotation_flow.py: forbidden reference spot_weld"],
+        )
+
+    def test_source_gate_rejects_a_root_without_production_sources(self):
+        from app.services.genericization_gate import scan_production_sources
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            with self.assertRaisesRegex(ValueError, "app directory"):
+                scan_production_sources(Path(temporary_directory))
+
+    def test_model_uniqueness_matches_migration_without_duplicate_unique_indexes(self):
+        model_source = (Path(__file__).parents[1] / "app" / "models" / "platform_models.py").read_text(encoding="utf-8")
+        migration_root = Path(__file__).parents[1] / "alembic" / "versions"
+        migration_source = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in migration_root.glob("202609*_generic*task*.py")
+        )
+        self.assertNotIn("source_legacy_id = Column(String(64), nullable=True, unique=True, index=True)", model_source)
+        self.assertNotIn("idempotency_key = Column(String(128), nullable=True, unique=True, index=True)", model_source)
+        self.assertIn('sa.UniqueConstraint("source_legacy_id", name="uq_generic_annotation_task_source_legacy_id")', migration_source)
+        unique_constraints = {
+            constraint.name: tuple(constraint.columns.keys())
+            for constraint in GenericAnnotationTask.__table__.constraints
+            if isinstance(constraint, __import__("sqlalchemy").UniqueConstraint)
+        }
+        self.assertEqual(
+            unique_constraints["uq_generic_annotation_task_owner_idempotency"],
+            ("owner_id", "idempotency_key"),
+        )
+        self.assertIn("uq_generic_annotation_task_owner_idempotency", migration_source)
 
 
 if __name__ == "__main__":

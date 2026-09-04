@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+GENERICIZATION_BRIDGE_ONLY = True
+
 import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+import json
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -28,6 +31,24 @@ class GenericTaskCreate(BaseModel):
     mode: Literal["manual", "automatic"] = "manual"
     sample_scope: dict = Field(default_factory=lambda: {"kind": "all"})
     label_snapshot: dict = Field(default_factory=dict)
+
+    @field_validator("sample_scope")
+    @classmethod
+    def validate_sample_scope(cls, value: dict) -> dict:
+        if set(value) - {"kind", "sample_ids", "filters"} or value.get("kind") not in {"all", "ids", "filter"}:
+            raise ValueError("sample_scope must declare kind all, ids, or filter")
+        if value.get("kind") == "ids" and not isinstance(value.get("sample_ids"), list):
+            raise ValueError("sample_scope.ids must be a list")
+        if len(json.dumps(value, ensure_ascii=True, separators=(",", ":"))) > 16384:
+            raise ValueError("sample_scope exceeds 16 KiB")
+        return value
+
+    @field_validator("label_snapshot")
+    @classmethod
+    def validate_label_snapshot(cls, value: dict) -> dict:
+        if len(json.dumps(value, ensure_ascii=True, separators=(",", ":"))) > 65536:
+            raise ValueError("label_snapshot exceeds 64 KiB")
+        return value
 
 
 def _uuid(value, field: str) -> uuid.UUID:

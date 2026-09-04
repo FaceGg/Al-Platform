@@ -48,8 +48,8 @@
 
 ## Task status
 
-- Task 1: in_progress (pre-flight complete; RED test implementation pending)
-- Task 2: planned
+- Task 1: passed (focused implementation, migration, source-gate and manifest evidence recorded below)
+- Task 2: in_progress (RED tests being added; implementation not yet complete)
 - Task 3: planned
 - Task 4: planned
 - Task 5: planned
@@ -92,3 +92,11 @@
 - Added independent source-versus-snapshot integrity metadata and deterministic transition boundary markers; legacy modules now expose `LEGACY_ADAPTER_ONLY`.
 - Clarified that frontend production navigation/API replacement is Task 12 scope, with unfinished status retained in inventory and report.
 - Verification: py_compile and git diff --check passed; focused unittest remains blocked by missing `fastapi`.
+
+## Task 1 final verification (2026-09-04)
+
+- Project `.venv` focused suite: `python -m unittest tests.test_genericization_contract tests.test_suite_manifest -v` -> **23/23 OK**.
+- Backend-root source gate: `scan_production_sources(Path('.').resolve())` -> `[]`.
+- Alembic: `check` reported no new operations; `upgrade head` completed with local revision `20260904_16`.
+- Changed genericization modules compiled with `py_compile`; `git diff --check` returned exit code 0.
+- Task 1 is `passed` for its scoped backend transition boundary. Formal `DatasetVersion`, parser and input-contract work remains Task 2; the platform overall remains `in_progress`.

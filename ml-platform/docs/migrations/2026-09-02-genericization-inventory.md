@@ -1,6 +1,6 @@
 # 通用化迁移基线清单
 
-**状态：** planned，Task 1 交付物。本文档用于记录全项目去行业化盘点结果，不表示迁移已经完成。
+**状态：** Task 1 `passed`（仅限本清单所列的后端边界、适配器和源码门禁）；本文档仍不表示后续正式数据版本迁移已经完成。
 
 ## 目的
 
@@ -23,8 +23,8 @@
 
 | 引用位置 | 行业专用内容 | 通用替代 | 迁移策略 | 验证证据 | 状态 |
 |---|---|---|---|---|---|
-| `backend/app/api/spot_weld_quality.py` `/api/projects/{project_id}/spot-weld/runs` | 点焊质量运行创建写入口 | `/api/annotation-tasks`、`/api/automl-tasks` | 新写请求结构化返回 `410 GENERIC_API_REQUIRED`；旧读取与历史服务保留 | `tests/test_genericization_contract.py::test_legacy_spot_weld_write_is_closed` | in_progress |
-| `backend/app/models/spot_weld_quality.py` 运行、样本、标签修订/快照模型 | 行业化持久化表和字段 | `GenericAnnotationTask` 的 UUID 引用与 `label_snapshot` | 只读适配器复制，不删除原行；后续 Task 2/4 建立正式数据版本和 schema；当前保留 source IDs/count/checksum | `migrate_legacy_quality_run` focused contract | in_progress |
+| `backend/app/api/spot_weld_quality.py` `/api/projects/{project_id}/spot-weld/runs` | 点焊质量运行创建写入口 | `/api/annotation-tasks`、`/api/automl-tasks` | 新写请求结构化返回 `410 GENERIC_API_REQUIRED`；旧读取与历史服务保留 | `tests/test_genericization_contract.py::test_legacy_spot_weld_write_is_closed`；23/23 focused suite | passed |
+| `backend/app/models/spot_weld_quality.py` 运行、样本、标签修订/快照模型 | 行业化持久化表和字段 | `GenericAnnotationTask` 的 UUID 引用与 `label_snapshot` | 只读适配器复制，不删除原行；后续 Task 2/4 建立正式数据版本和 schema；当前保留 source IDs/count/checksum | `migrate_legacy_quality_run` focused contract；23/23 focused suite | passed（过渡边界） |
 | `backend/app/services/spot_weld_features.py` `FEATURE_SCHEMA` 等 | 固定行业特征构建 | 通用输入合同（Task 2） | 仅允许旧服务作为迁移/兼容边界，新通用入口不导入该模块 | Task 1 source scan（待完整依赖环境） | planned |
 | `ml-platform/frontend/src` 点焊页面和 API client | 行业化导航与请求命名 | 通用标注任务页面/API（Task 12） | 保留历史页面，后续替换生产导航和 i18n | Task 12 UI contract | planned |
 
@@ -40,3 +40,11 @@ Task 1 remaining（未完成）：`ml-platform/frontend/src/App.tsx`、`pages/An
 2. 旧写入入口必须返回结构化弃用响应或明确重定向。
 3. 旧数据只允许在校验行数、sample_id 和校验和后写入新通用版本，不删除原始记录。
 4. 扫描结果、迁移结果和回归测试必须绑定同一当前 Git SHA。
+
+## Task 1 收口记录（2026-09-04）
+
+- backend `.venv` focused unittest：`tests.test_genericization_contract` + `tests.test_suite_manifest`，23/23 通过。
+- backend-root `scan_production_sources(Path('.').resolve())`：返回空违规列表。
+- Alembic `check` 与 `upgrade head`：通过，当前本地数据库 revision 为 `20260904_16`。
+- `py_compile` 与 `git diff --check`：通过。
+- Task 2 正式 `DatasetVersion`、解析器、输入合同和不可变样本表尚未完成，不能将本清单解释为全平台完成。

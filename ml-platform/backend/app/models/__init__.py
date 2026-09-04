@@ -1,3 +1,5 @@
+GENERICIZATION_BRIDGE_ONLY = True
+
 from app.models.user import User
 from app.models.project import Project
 from app.models.workflow import Workflow, WorkflowNode, WorkflowEdge

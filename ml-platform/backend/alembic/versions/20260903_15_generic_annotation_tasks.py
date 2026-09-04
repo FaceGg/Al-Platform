@@ -79,4 +79,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("generic_annotation_tasks")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "generic_annotation_tasks" not in inspector.get_table_names():
+        return
+    raise RuntimeError(
+        "Refusing destructive downgrade of generic_annotation_tasks; preserve the table and data"
+    )

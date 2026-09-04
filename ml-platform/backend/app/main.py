@@ -1,5 +1,7 @@
 """FastAPI application entry point."""
 
+GENERICIZATION_BRIDGE_ONLY = True
+
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 import asyncio

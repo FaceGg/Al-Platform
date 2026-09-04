@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+GENERICIZATION_BRIDGE_ONLY = True
+
 import uuid
 import hashlib
 import json

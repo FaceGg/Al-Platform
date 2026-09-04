@@ -1,6 +1,6 @@
 """Dataset, annotation, and orchestration app ORM models."""
 import uuid
-from sqlalchemy import Column, String, Text, Float, DateTime, JSON, Boolean, ForeignKey, Integer, func
+from sqlalchemy import Column, String, Text, Float, DateTime, JSON, Boolean, ForeignKey, Integer, func, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -65,18 +65,36 @@ class GenericAnnotationTask(Base):
     """
 
     __tablename__ = "generic_annotation_tasks"
+    __table_args__ = (
+        UniqueConstraint("source_legacy_id", name="uq_generic_annotation_task_source_legacy_id"),
+        UniqueConstraint(
+            "owner_id",
+            "idempotency_key",
+            name="uq_generic_annotation_task_owner_idempotency",
+        ),
+        Index("ix_generic_annotation_tasks_project_id", "project_id"),
+        Index("ix_generic_annotation_tasks_dataset_version_id", "dataset_version_id"),
+        Index("ix_generic_annotation_tasks_label_schema_id", "label_schema_id"),
+        Index("ix_generic_annotation_tasks_owner_id", "owner_id"),
+        Index("ix_generic_annotation_tasks_source_legacy_id", "source_legacy_id"),
+        Index(
+            "ix_generic_annotation_tasks_owner_idempotency",
+            "owner_id",
+            "idempotency_key",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
-    dataset_version_id = Column(UUID(as_uuid=True), nullable=False, index=True)
-    label_schema_id = Column(UUID(as_uuid=True), nullable=False, index=True)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    dataset_version_id = Column(UUID(as_uuid=True), nullable=False)
+    label_schema_id = Column(UUID(as_uuid=True), nullable=False)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     mode = Column(String(16), nullable=False, default="manual")
     status = Column(String(24), nullable=False, default="pending")
     sample_scope = Column(JSON, nullable=False, default=dict)
     label_snapshot = Column(JSON, nullable=False, default=dict)
-    source_legacy_id = Column(String(64), nullable=True, unique=True, index=True)
-    idempotency_key = Column(String(128), nullable=True, unique=True, index=True)
+    source_legacy_id = Column(String(64), nullable=True)
+    idempotency_key = Column(String(128), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
