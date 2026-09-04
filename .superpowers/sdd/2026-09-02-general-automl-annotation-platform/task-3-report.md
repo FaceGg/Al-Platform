@@ -18,5 +18,5 @@
 
 ## Known limitations
 - Existing `tests/test_automl_catalog.py` requires optional LightGBM in this environment and fails when unavailable.
-- Commits: `3c5dbd83df5938177d5f409fadb7e50a242fb465`, `e3aec221a4407407ecddd6e06265c116347c28b1`.
+- Commits: `3c5dbd83df5938177d5f409fadb7e50a242fb465`, `e3aec221a4407407ecddd6e06265c116347c28b1`, `ae801656ce4e7b065c9618bec6336c7e4bc32b21`, `47ed285b25ef51f8ca0f2795270df70f22cb66c2`.
 - Durable worker wiring, complete frontend controls, and full API regression remain for follow-up Task 13/Task 12 integration.
