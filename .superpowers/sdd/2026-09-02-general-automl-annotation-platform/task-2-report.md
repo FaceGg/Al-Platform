@@ -38,3 +38,13 @@ Status: passed locally; Task 3 and Task 4 remain planned.
 - Added regressions for migration ordering, API permission/audit/error behavior, content-format mismatch, per-project version increments, and mapping/locator persistence.
 - Verification: `pytest tests/test_dataset_import_contract.py tests/test_genericization_contract.py tests/test_data_version_migration_graph.py -q` -> 41 passed; `alembic upgrade head` -> passed; `alembic check` -> `No new upgrade operations detected`; `pytest tests/test_database_migrations.py tests/test_artifact_storage_integration.py tests/test_api_datasets.py -q` -> 18 passed; `py_compile` and `git diff --check` -> passed.
 - Remaining concerns unchanged: no full backend suite, browser E2E, or remote CI evidence.
+
+## Review Fix Round 2
+
+- Dataset-import uploads now stream bounded chunks to staging and remove partial staging files on size failure; the request-specific `ParseOptions.max_file_bytes` is applied before parsing. The original upload filename is preserved on the immutable original artifact.
+- The parser now uses content sniffing when `source_format` is omitted, rejects only explicit format/content conflicts, checks compressed container expanded size, supports controlled CSV encoding/delimiter/header and Excel worksheet options, and rejects incompatible JSON scalar types across records with `DATA_PARSE_INCOMPATIBLE_COLUMN_TYPE`.
+- Every structured canonical entry (`dataset-imports`, legacy upload/batch, batch-upload, ZIP members) now freezes a DatasetVersion; non-structured legacy artifacts remain artifact-only by compatibility boundary. The report does not claim an isolated parsing worker: that process/isolation boundary remains Task 13 work.
+- Added a unique `(project_id, version)` index and `DATA_VERSION_CONFLICT` retry/fail-closed allocation behavior. Existing database upgrades use the additive `20260905_17` migration.
+- Cleanup deletion failures now raise `DATA_CLEANUP_FAILED` rather than being silently discarded. Malformed dataset-version IDs return controlled 404.
+- RED/GREEN coverage added for JSON cross-record type conflict, content sniffing without an extension, bounded staging, cleanup failures, version-pair uniqueness, malformed version ID, and legacy upload version freezing.
+- Verification: `pytest tests/test_dataset_import_contract.py tests/test_genericization_contract.py tests/test_data_version_migration_graph.py -q` -> 47 passed; `pytest tests/test_database_migrations.py tests/test_artifact_storage_integration.py tests/test_api_datasets.py -q` -> 18 passed; `alembic upgrade head` and `alembic check` passed; `py_compile` and `git diff --check` passed. Existing Starlette/JWT key-length warnings remain test-environment warnings.

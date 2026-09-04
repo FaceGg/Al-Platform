@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import pandas as pd
 import pytest
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from fastapi import HTTPException
 
@@ -495,3 +496,101 @@ def test_freeze_versions_increase_per_project_and_persist_mapping_and_locator(tm
         dataset_version_id=first_version.id, sample_id="a",
     ).one()
     assert sample.row_index == first_version.parse_contract["row_locator"]["a"]
+
+
+def test_dataset_version_project_version_pair_is_unique(tmp_path):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    project_id = uuid.uuid4()
+    values = {
+        "project_id": project_id,
+        "operator_id": uuid.uuid4(),
+        "version": 1,
+        "row_count": 0,
+        "column_count": 0,
+        "content_hash": "a",
+        "schema_hash": "b",
+        "parse_contract": {},
+    }
+    db.add_all([DatasetVersion(**values), DatasetVersion(**values)])
+    with pytest.raises(IntegrityError):
+        db.commit()
+
+
+def test_json_rejects_incompatible_cross_record_scalar_types(tmp_path):
+    path = tmp_path / "mixed.json"
+    path.write_text('[{"value": 1}, {"value": "one"}]', encoding="utf-8")
+    with pytest.raises(DataImportError) as error:
+        read_dataset_upload(path, "json", ParseOptions())
+    assert error.value.code == "DATA_PARSE_INCOMPATIBLE_COLUMN_TYPE"
+
+
+def test_content_sniff_is_used_when_source_format_is_omitted(tmp_path):
+    path = tmp_path / "rows.data"
+    path.write_text('[{"id": "a", "value": 1}]', encoding="utf-8")
+    table = read_dataset_upload(path, None, ParseOptions())
+    assert table.parse_contract["source_format"] == "json"
+
+
+def test_upload_staging_reads_only_bounded_chunks(tmp_path):
+    destination = tmp_path / "oversize.csv"
+    upload = datasets_api.UploadFile(filename="oversize.csv", file=io.BytesIO(b"abcdef"))
+    with pytest.raises(DataImportError) as error:
+        asyncio.run(datasets_api._stage_upload(upload, destination, max_bytes=3))
+    assert error.value.code == "DATA_LIMIT_FILE_BYTES"
+    assert not destination.exists()
+
+
+def test_malformed_dataset_version_uuid_is_controlled_404(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    with pytest.raises(HTTPException) as error:
+        datasets_api.get_dataset_version("bad-version", db, type("User", (), {"id": uuid.uuid4()})())
+    assert error.value.status_code == 404
+
+
+def test_freeze_cleanup_failure_is_not_silently_swallowed(tmp_path, monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    path = tmp_path / "rows.csv"
+    path.write_text("id,value\na,1\n", encoding="utf-8")
+    table = read_dataset_upload(path, "csv", ParseOptions())
+    table.project_id = uuid.uuid4()
+
+    class Storage:
+        def delete(self, _uri):
+            raise OSError("cleanup unavailable")
+
+    class FailingService:
+        storage = Storage()
+        def create_from_file(self, *_args, **_kwargs):
+            return type("Artifact", (), {"storage_uri": "memory://artifact"})()
+
+    monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: FailingService())
+    with pytest.raises(DataImportError) as error:
+        freeze_dataset_version(db, table, uuid.uuid4())
+    assert error.value.code == "DATA_CLEANUP_FAILED"
+
+
+def test_legacy_upload_handler_freezes_dataset_version_without_losing_response_fields(tmp_path, monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    project_id = uuid.uuid4()
+    user = type("User", (), {"id": uuid.uuid4(), "username": "operator"})()
+    service = ArtifactService(db, LocalStorage(tmp_path / "storage"))
+    monkeypatch.setattr(datasets_api, "project_uuid", lambda value: project_id)
+    monkeypatch.setattr(datasets_api, "require_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "resolve_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "audit_service", lambda _db: _RecordingAuditService())
+    monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: service)
+    request = type("Request", (), {"state": type("State", (), {})(), "client": None})()
+    upload = datasets_api.UploadFile(filename="legacy.csv", file=io.BytesIO(b"id,value\na,1\n"))
+    result = datasets_api.upload_dataset(str(project_id), request, upload, db, user)
+    assert result["artifact_id"] == result["id"]
+    assert db.query(DatasetVersion).count() == 1
+    version = db.query(DatasetVersion).one()
+    assert db.get(Artifact, version.original_artifact_id).name == "legacy.csv"

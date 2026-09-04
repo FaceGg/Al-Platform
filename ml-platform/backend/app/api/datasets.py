@@ -34,6 +34,50 @@ PROJECT_WRITE_ACTIONS = {
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+MAX_IMPORT_UPLOAD_BYTES = 1_000_000_000
+
+
+async def _stage_upload(file: UploadFile, destination: Path, *, max_bytes: int = MAX_IMPORT_UPLOAD_BYTES) -> int:
+    total = 0
+    try:
+        with destination.open("xb") as target:
+            while True:
+                chunk = await file.read(min(1024 * 1024, max_bytes - total + 1))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise DataImportError("DATA_LIMIT_FILE_BYTES")
+                target.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    return total
+
+
+def _stage_upload_sync(file: UploadFile, destination: Path, *, max_bytes: int = MAX_IMPORT_UPLOAD_BYTES) -> int:
+    total = 0
+    try:
+        with destination.open("xb") as target:
+            while True:
+                chunk = file.file.read(min(1024 * 1024, max_bytes - total + 1))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise DataImportError("DATA_LIMIT_FILE_BYTES")
+                target.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    return total
+
+
+def _freeze_staged_upload(db: Session, project_id, operator: User, staging_path: Path, source_name: str):
+    table = read_dataset_upload(staging_path, None, ParseOptions())
+    table.project_id = project_id
+    table.source_name = source_name
+    return freeze_dataset_version(db, table, operator.id)
 
 
 @router.post("/projects/{project_id}/dataset-imports", status_code=201)
@@ -52,9 +96,7 @@ async def import_dataset_version(
         except Exception as error:
             raise HTTPException(400, "Invalid parse_options") from error
     safe_name = Path(file.filename or "uploaded_file").name
-    detected_format = source_format or Path(safe_name).suffix.lower().lstrip(".")
-    if detected_format in {"xlsx", "xls"}:
-        detected_format = "excel"
+    detected_format = source_format
     staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
     try:
         with audit_service(db).project_action(
@@ -63,12 +105,13 @@ async def import_dataset_version(
             intent=AuditIntent(project_id=project_id_value, action="dataset.import", resource_type="dataset_version", changes={"filename": safe_name}),
             allowed_changes={"filename"},
         ):
-            staging_path.write_bytes(await file.read())
+            await _stage_upload(file, staging_path, max_bytes=options.max_file_bytes)
             try:
                 table = read_dataset_upload(staging_path, detected_format, options)
             except DataImportError as error:
                 raise HTTPException(400, {"code": error.code, "message": str(error)}) from error
             table.project_id = project_id_value
+            table.source_name = safe_name
             version = freeze_dataset_version(db, table, current_user.id)
             return {"id": str(version.id), "dataset_version_id": str(version.id), "row_count": version.row_count, "column_count": version.column_count, "content_hash": version.content_hash, "schema_hash": version.schema_hash}
     finally:
@@ -79,7 +122,11 @@ async def import_dataset_version(
 def get_dataset_version(
     version_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
 ):
-    version = db.query(DatasetVersion).filter(DatasetVersion.id == UUID(version_id)).first()
+    try:
+        version_uuid = UUID(version_id)
+    except (TypeError, ValueError, AttributeError) as error:
+        raise HTTPException(404, "Dataset version not found") from error
+    version = db.query(DatasetVersion).filter(DatasetVersion.id == version_uuid).first()
     if version is None:
         raise HTTPException(404, "Dataset version not found")
     require_project_access(db, version.project_id, current_user.id, "project.read")
@@ -196,31 +243,40 @@ def upload_dataset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project_uuid = UUID(project_id)
-    access = resolve_project_access(db, project_uuid, current_user.id)
+    project_id_value = project_uuid(project_id)
+    access = resolve_project_access(db, project_id_value, current_user.id)
     storage_uris = []
     try:
         with audit_service(db).project_action(
             db, request=request, actor=current_user, access=access,
             permission="resource.create",
             intent=AuditIntent(
-                project_id=project_uuid, action="dataset.upload",
+                project_id=project_id_value, action="dataset.upload",
                 resource_type="dataset", changes={"filename": Path(file.filename or "").name},
             ),
             allowed_changes={"filename"},
         ):
-            artifact = _store_uploaded_dataset(db, project_uuid, file, commit=False)
-            storage_uris.append(artifact.storage_uri)
+            safe_name = Path(file.filename or "uploaded_file").name
+            staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
+            try:
+                _stage_upload_sync(file, staging_path)
+                version = _freeze_staged_upload(db, project_id_value, current_user, staging_path, safe_name)
+            except DataImportError as error:
+                raise HTTPException(400, {"code": error.code, "message": str(error)}) from error
+            finally:
+                staging_path.unlink(missing_ok=True)
+            artifact = db.get(Artifact, version.original_artifact_id)
     except Exception:
         _cleanup_storage(db, storage_uris)
         raise
     metadata = artifact.metadata_ or {}
+    schema = [{"name": column.name, "dtype": column.dtype, "null_count": 0} for column in version.schema_columns]
     return {
         "id": str(artifact.id), "artifact_id": str(artifact.id),
         "name": artifact.name,
-        "row_count": metadata.get("row_count", 0),
-        "schema": metadata.get("schema", []),
-        "sha256": metadata.get("sha256", ""),
+        "row_count": version.row_count,
+        "schema": schema,
+        "sha256": version.content_hash,
     }
 
 
@@ -232,8 +288,8 @@ def batch_import(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project_uuid = UUID(project_id)
-    access = resolve_project_access(db, project_uuid, current_user.id)
+    project_id_value = project_uuid(project_id)
+    access = resolve_project_access(db, project_id_value, current_user.id)
 
     results = []
     success_count = 0
@@ -245,25 +301,32 @@ def batch_import(
             db, request=request, actor=current_user, access=access,
             permission="resource.create",
             intent=AuditIntent(
-                project_id=project_uuid, action="dataset.batch_upload",
+                project_id=project_id_value, action="dataset.batch_upload",
                 resource_type="dataset", changes={"file_count": len(files)},
             ),
             allowed_changes={"file_count"},
         ):
             for file in files:
                 try:
-                    with db.begin_nested():
-                        artifact = _store_uploaded_dataset(
-                            db, project_uuid, file, commit=False,
+                    safe_name = Path(file.filename or "uploaded_file").name
+                    staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
+                    try:
+                        _stage_upload_sync(file, staging_path)
+                        version = _freeze_staged_upload(
+                            db, project_id_value, current_user, staging_path, safe_name,
                         )
-                    storage_uris.append(artifact.storage_uri)
-                    metadata = artifact.metadata_ or {}
+                    finally:
+                        staging_path.unlink(missing_ok=True)
+                    artifact = db.get(Artifact, version.original_artifact_id)
 
                     results.append({
                         "id": str(artifact.id), "name": artifact.name,
-                        "format": artifact.format, "rows": metadata.get("row_count", 0),
-                        "schema": metadata.get("schema", []),
-                        "sha256": metadata.get("sha256", ""),
+                        "format": artifact.format, "rows": version.row_count,
+                        "schema": [
+                            {"name": column.name, "dtype": column.dtype}
+                            for column in version.schema_columns
+                        ],
+                        "sha256": version.content_hash,
                     })
                     success_count += 1
                 except Exception as error:
@@ -457,8 +520,8 @@ async def batch_upload_dataset(
     current_user: User = Depends(get_current_user),
 ):
     """Batch upload multiple files or a folder to a project."""
-    project_uuid = UUID(project_id)
-    access = resolve_project_access(db, project_uuid, current_user.id)
+    project_id_value = project_uuid(project_id)
+    access = resolve_project_access(db, project_id_value, current_user.id)
     artifacts = []
     storage_uris = []
     artifact_service = build_artifact_service(db)
@@ -467,29 +530,32 @@ async def batch_upload_dataset(
             db, request=request, actor=current_user, access=access,
             permission="resource.create",
             intent=AuditIntent(
-                project_id=project_uuid, action="dataset.batch_upload",
+                project_id=project_id_value, action="dataset.batch_upload",
                 resource_type="dataset", changes={"file_count": len(files)},
             ),
             allowed_changes={"file_count"},
         ):
             for file in files:
-                content = await file.read()
                 safe_name = Path(file.filename or "uploaded_file").name
                 staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
-                staging_path.write_bytes(content)
                 ext = staging_path.suffix.lower()
                 fmt_map = {".csv": "csv", ".xlsx": "xlsx", ".xls": "xls", ".txt": "txt",
                            ".json": "json", ".png": "png", ".jpg": "jpg"}
                 try:
-                    artifact = _create_dataset_artifact(
-                        artifact_service, project_uuid, staging_path, safe_name, commit=False,
-                    )
+                    await _stage_upload(file, staging_path)
+                    if ext in {".csv", ".xlsx", ".xls", ".json", ".xml", ".parquet"}:
+                        version = _freeze_staged_upload(db, project_id_value, current_user, staging_path, safe_name)
+                        artifact = db.get(Artifact, version.original_artifact_id)
+                    else:
+                        artifact = _create_dataset_artifact(
+                            artifact_service, project_id_value, staging_path, safe_name, commit=False,
+                        )
                 finally:
                     staging_path.unlink(missing_ok=True)
                 storage_uris.append(artifact.storage_uri)
                 artifacts.append({
                     "artifact_id": str(artifact.id), "name": safe_name,
-                    "size": len(content), "format": fmt_map.get(ext, ""),
+                    "size": artifact.file_size, "format": fmt_map.get(ext, ""),
                 })
     except Exception:
         _cleanup_storage(db, storage_uris)
@@ -507,9 +573,8 @@ async def import_zip_dataset(
 ):
     """Import a ZIP-compressed dataset. Extracts and processes all files inside."""
     import zipfile, tempfile
-    project_uuid = UUID(project_id)
-    access = resolve_project_access(db, project_uuid, current_user.id)
-    content = await file.read()
+    project_id_value = project_uuid(project_id)
+    access = resolve_project_access(db, project_id_value, current_user.id)
     artifacts = []
     storage_uris = []
     artifact_service = build_artifact_service(db)
@@ -518,30 +583,39 @@ async def import_zip_dataset(
             db, request=request, actor=current_user, access=access,
             permission="resource.create",
             intent=AuditIntent(
-                project_id=project_uuid, action="dataset.import_zip",
+                project_id=project_id_value, action="dataset.import_zip",
                 resource_type="dataset", changes={"filename": Path(file.filename or "").name},
             ),
             allowed_changes={"filename"},
         ):
             with tempfile.TemporaryDirectory() as tmpdir:
-                zip_path = os.path.join(tmpdir, file.filename)
-                with open(zip_path, "wb") as target:
-                    target.write(content)
+                safe_zip_name = Path(file.filename or "dataset.zip").name
+                zip_path = Path(tmpdir) / safe_zip_name
+                await _stage_upload(file, zip_path)
                 with zipfile.ZipFile(zip_path, "r") as archive:
                     for member in archive.namelist():
                         if member.endswith("/"):
                             continue
-                        extracted = archive.read(member)
                         fname = os.path.basename(member)
                         staging_path = Path(tmpdir) / f"{uuid.uuid4()}_{fname}"
-                        staging_path.write_bytes(extracted)
-                        artifact = _create_dataset_artifact(
-                            artifact_service, project_uuid, staging_path, fname, commit=False,
-                        )
+                        with archive.open(member, "r") as source, staging_path.open("xb") as target:
+                            while True:
+                                chunk = source.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                target.write(chunk)
+                        ext = Path(fname).suffix.lower()
+                        if ext in {".csv", ".xlsx", ".xls", ".json", ".xml", ".parquet"}:
+                            version = _freeze_staged_upload(db, project_id_value, current_user, staging_path, fname)
+                            artifact = db.get(Artifact, version.original_artifact_id)
+                        else:
+                            artifact = _create_dataset_artifact(
+                                artifact_service, project_id_value, staging_path, fname, commit=False,
+                            )
                         storage_uris.append(artifact.storage_uri)
                         artifacts.append({
                             "artifact_id": str(artifact.id), "name": fname,
-                            "size": len(extracted),
+                            "size": artifact.file_size,
                         })
     except Exception:
         _cleanup_storage(db, storage_uris)

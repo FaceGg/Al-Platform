@@ -13,3 +13,7 @@ class ParseOptions(BaseModel):
     max_depth: int = Field(default=32, gt=0)
     max_field_bytes: int = Field(default=64 * 1024, gt=0)
     max_time_seconds: float = Field(default=300.0, gt=0)
+    encoding: str = "utf-8-sig"
+    delimiter: str = ","
+    has_header: bool = True
+    sheet_name: int | str = 0

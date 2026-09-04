@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.data_version import DatasetImport, DatasetSample, DatasetSchemaColumn, DatasetVersion
@@ -32,6 +33,7 @@ class NormalizedTable:
     sample_ids: list[str]
     source_path: Path | None = None
     project_id: uuid.UUID | None = None
+    source_name: str | None = None
 
 
 def _depth(value: Any, level: int = 0) -> int:
@@ -74,6 +76,16 @@ def _sniff_source_format(path: Path) -> str:
     return "csv"
 
 
+def _decompressed_size(path: Path) -> int:
+    if not zipfile.is_zipfile(path):
+        return path.stat().st_size
+    try:
+        with zipfile.ZipFile(path) as archive:
+            return sum(item.file_size for item in archive.infolist())
+    except (OSError, zipfile.BadZipFile):
+        return path.stat().st_size
+
+
 def _check_frame(frame: pd.DataFrame, options: ParseOptions) -> None:
     if len(frame) > options.max_rows:
         raise DataImportError("DATA_LIMIT_ROWS")
@@ -107,6 +119,15 @@ def _json_records(path: Path, options: ParseOptions) -> list[dict]:
         raise DataImportError("DATA_PARSE_INVALID", "expected object array")
     if any(not _scalar(item) for row in value for item in row.values()):
         raise DataImportError("DATA_PARSE_NON_SCALAR")
+    kinds: dict[str, set[str]] = {}
+    for row in value:
+        for key, item in row.items():
+            if item is None:
+                continue
+            kind = "bool" if isinstance(item, bool) else "number" if isinstance(item, (int, float)) else "string"
+            kinds.setdefault(key, set()).add(kind)
+    if any(len(values) > 1 for values in kinds.values()):
+        raise DataImportError("DATA_PARSE_INCOMPATIBLE_COLUMN_TYPE")
     return value
 
 
@@ -144,14 +165,19 @@ def _xml_records(path: Path, options: ParseOptions) -> list[dict]:
     return records
 
 
-def read_dataset_upload(path: Path, source_format: str, options: ParseOptions) -> NormalizedTable:
+def read_dataset_upload(path: Path, source_format: str | None, options: ParseOptions) -> NormalizedTable:
     path = Path(path)
     started = time.monotonic()
     if not path.is_file() or path.stat().st_size > options.max_file_bytes:
         raise DataImportError("DATA_LIMIT_FILE_BYTES")
-    source_format = source_format.lower().lstrip(".")
-    source_format = "excel" if source_format in {"xlsx", "xls"} else source_format
+    if _decompressed_size(path) > options.max_decompressed_bytes:
+        raise DataImportError("DATA_LIMIT_DECOMPRESSED_BYTES")
     detected_format = _sniff_source_format(path)
+    if source_format is None:
+        source_format = detected_format
+    else:
+        source_format = source_format.lower().lstrip(".")
+        source_format = "excel" if source_format in {"xlsx", "xls"} else source_format
     if source_format != detected_format:
         raise DataImportError("DATA_FORMAT_MISMATCH", f"declared format {source_format!r} does not match detected format {detected_format!r}")
     try:
@@ -160,9 +186,11 @@ def read_dataset_upload(path: Path, source_format: str, options: ParseOptions) -
             header_columns = next(__import__("csv").reader([header]))
             if len(set(header_columns)) != len(header_columns):
                 raise DataImportError("DATA_PARSE_DUPLICATE_COLUMN")
-            frame = pd.read_csv(path)
+            frame = pd.read_csv(path, sep=options.delimiter, encoding=options.encoding, header=0 if options.has_header else None)
+            if not options.has_header:
+                frame.columns = [f"column_{index}" for index in range(len(frame.columns))]
         elif source_format in {"excel", "xlsx", "xls"}:
-            frame = pd.read_excel(path)
+            frame = pd.read_excel(path, sheet_name=options.sheet_name)
             source_format = "excel"
         elif source_format == "parquet":
             frame = pd.read_parquet(path)
@@ -195,16 +223,26 @@ def read_dataset_upload(path: Path, source_format: str, options: ParseOptions) -
     schema = [{"name": name, "dtype": str(frame[name].dtype), "nullable": bool(frame[name].isna().any())} for name in frame.columns]
     schema_hash = hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     parse_contract = {"parser_version": "1", "source_format": source_format, "sample_id_column": options.sample_id_column, "options": options.model_dump(mode="json"), "field_mapping": {name: name for name in frame.columns}, "row_locator": {sample_id: index for index, sample_id in enumerate(sample_ids)}}
-    return NormalizedTable(frame, parse_contract, content_hash, schema_hash, sample_ids, path)
+    return NormalizedTable(frame, parse_contract, content_hash, schema_hash, sample_ids, path, None, path.name)
 
 
 def freeze_dataset_version(db: Session, normalized: NormalizedTable, operator_id: uuid.UUID) -> DatasetVersion:
+    for attempt in range(3):
+        try:
+            return _freeze_dataset_version_once(db, normalized, operator_id)
+        except IntegrityError as error:
+            db.rollback()
+            if attempt == 2:
+                raise DataImportError("DATA_VERSION_CONFLICT", "dataset version allocation conflicted") from error
+
+
+def _freeze_dataset_version_once(db: Session, normalized: NormalizedTable, operator_id: uuid.UUID) -> DatasetVersion:
     if normalized.project_id is None:
         raise DataImportError("DATA_PROJECT_REQUIRED")
     service = build_artifact_service(db)
     artifacts = []
     try:
-        original = service.create_from_file(normalized.project_id, normalized.source_path, normalized.source_path.name, "dataset", {"source": "original"}, commit=False) if normalized.source_path else None
+        original = service.create_from_file(normalized.project_id, normalized.source_path, normalized.source_name or normalized.source_path.name, "dataset", {"source": "original"}, commit=False) if normalized.source_path else None
         if original is not None:
             artifacts.append(original)
         with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as handle:
@@ -228,11 +266,22 @@ def freeze_dataset_version(db: Session, normalized: NormalizedTable, operator_id
         db.commit()
         db.refresh(version)
         return version
-    except Exception:
+    except IntegrityError:
         db.rollback()
-        for artifact in artifacts:
-            try:
-                service.storage.delete(artifact.storage_uri)
-            except Exception:
-                pass
+        _cleanup_artifacts_or_raise(service, artifacts, None)
         raise
+    except Exception as error:
+        db.rollback()
+        _cleanup_artifacts_or_raise(service, artifacts, error)
+        raise
+
+
+def _cleanup_artifacts_or_raise(service, artifacts, original_error):
+    cleanup_errors = []
+    for artifact in artifacts:
+        try:
+            service.storage.delete(artifact.storage_uri)
+        except Exception as cleanup_error:
+            cleanup_errors.append(f"{artifact.storage_uri}: {cleanup_error}")
+    if cleanup_errors:
+        raise DataImportError("DATA_CLEANUP_FAILED", "; ".join(cleanup_errors)) from original_error

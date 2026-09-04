@@ -32,6 +32,9 @@ def upgrade():
         index_name = f"ix_{table}_{column}"
         if table in inspector.get_table_names() and index_name not in {item["name"] for item in inspector.get_indexes(table)}:
             op.create_index(index_name, table, [column], unique=False)
+    inspector = sa.inspect(bind)
+    if "dataset_versions" in inspector.get_table_names() and "uq_dataset_versions_project_version" not in {item["name"] for item in inspector.get_indexes("dataset_versions")}:
+        op.create_index("uq_dataset_versions_project_version", "dataset_versions", ["project_id", "version"], unique=True)
 
 def downgrade():
     raise RuntimeError("Refusing destructive downgrade of immutable dataset versions")
