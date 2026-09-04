@@ -39,7 +39,7 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 | 阶段 | 工作范围 | 状态 | 当前口径 |
 |---|---|---|---|
 | Week 1–12 | 已交付的平台基础、生产化、权限通知与历史验收 | `passed` / `completed` | 已归档，不作为当前待办。 |
-| 通用自动建模与数据标注平台 | 2026-09-02 实施计划 Task 1–14 | `in_progress` | Task 1 去行业化边界已通过聚焦验证；Task 2 数据导入、数据版本和输入合同正在执行。 |
+| 通用自动建模与数据标注平台 | 2026-09-02 实施计划 Task 1–14 | `in_progress` | Task 1 去行业化边界与 Task 2 数据导入、数据版本和输入合同均已通过当前本地聚焦验证；Task 3/4 尚未开始。 |
 | Week 13 | Kubernetes 基础接入 | `planned`（未开始） | 后续工作，见 BKL-04。 |
 | Week 14 | Kubernetes Job/Pod 执行器 | `planned`（未开始） | 依赖 Week 13，见 BKL-05。 |
 | Week 15 | Notebook、镜像与 GPU | `planned`（未开始） | 依赖 Kubernetes 基础能力，见 BKL-06。 |
@@ -56,7 +56,7 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 | ID | 工作项 | 依赖 | 状态 |
 |---|---|---|---|
 | Task 1 | 全项目去行业化迁移基线 | 无；阻塞后续实现 | `passed` |
-| Task 2 | 数据导入、数据版本和统一输入合同 | Task 1 | `in_progress` |
+| Task 2 | 数据导入、数据版本和统一输入合同 | Task 1 | `passed` |
 | Task 3 | AutoML 四种任务类型和训练合同 | Task 1、Task 2 | `planned` |
 | Task 4 | 标签 schema、类型校验和修订历史 | Task 1、Task 2 | `planned` |
 | Task 5 | 标注任务状态机、任务列表和预览 | Task 2、Task 4 | `planned` |
@@ -134,3 +134,4 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 - 2026-09-03：发布前验证记录：README 以外的工作树变更已提交并推送，`git diff --check` 退出码为 0；后端标准套件因 `python` 命令仅指向 WindowsApps 占位符、Python 3.14 环境未安装 `fastapi`，前端因缺少 `node_modules` 未执行测试和构建。上述环境缺口不计为测试通过，也不改变通用平台 Task 1–14 的 `planned` 状态。
 - 2026-09-04：Task 1 收口。使用 backend `.venv` 执行 `python -m unittest tests.test_genericization_contract tests.test_suite_manifest -v`，23/23 通过；从 `ml-platform/backend` 根运行源码去行业化门禁返回空违规；`alembic check` 与 `alembic upgrade head` 均通过；相关模块 `py_compile` 和 `git diff --check` 通过。Task 1 状态提升为 `passed`，README 仍为本地专用未提交文件。
 - 2026-09-04：启动 Task 2。依赖检查确认 pandas/openpyxl 可用，但 `.venv` 尚缺 pytest、pyarrow 和 XML 安全解析依赖；先按 TDD 写入 `test_dataset_import_contract.py` 并执行 RED，缺失的解析/版本/输入合同模块导致测试失败后再实现。Task 2 状态为 `in_progress`，整体通用平台保持 `in_progress`。
+- 2026-09-04：Task 2 收口。新增 CSV/Excel/Parquet/JSON/XML 安全解析、重复键/列与非标量拒绝、文件/行/列/深度/字段/耗时限制、稳定 hash/sample_id、原始与归一化制品补偿、不可变数据版本/列/样本/导入记录、统一输入合同、数据版本导入/查询 API、Alembic 迁移和 SQLite 兼容。`pytest tests/test_dataset_import_contract.py tests/test_database_migrations.py tests/test_artifact_storage_integration.py tests/test_genericization_contract.py tests/test_suite_manifest.py -q` 为 46 passed（1 warning、2 subtests）；`alembic upgrade head`、`py_compile`、`git diff --check` 均通过。完整后端套件、浏览器验收和远程 CI 未执行；Task 3/4 仍为 `planned`。

@@ -4,6 +4,7 @@ import mimetypes
 from typing import List, Optional
 from uuid import UUID
 import uuid
+import json
 from pathlib import Path
 from urllib.parse import quote
 
@@ -19,6 +20,9 @@ from app.api.auth import get_current_user
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.api.project_security import audit_service, require_project_access, resolve_project_access
 from app.services.audit import AuditIntent
+from app.schemas.dataset_import import ParseOptions
+from app.services.data_import import DataImportError, freeze_dataset_version, read_dataset_upload
+from app.models.data_version import DatasetVersion
 
 router = APIRouter(prefix="/api", tags=["datasets"])
 PROJECT_WRITE_ACTIONS = {
@@ -30,6 +34,50 @@ PROJECT_WRITE_ACTIONS = {
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+@router.post("/projects/{project_id}/dataset-imports", status_code=201)
+async def import_dataset_version(
+    project_id: str, request: Request, file: UploadFile = File(...),
+    source_format: str | None = Query(default=None),
+    parse_options: str | None = Query(default=None),
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    project_uuid = UUID(project_id)
+    resolve_project_access(db, project_uuid, current_user.id)
+    options = ParseOptions()
+    if parse_options:
+        try:
+            options = ParseOptions.model_validate(json.loads(parse_options))
+        except Exception as error:
+            raise HTTPException(400, "Invalid parse_options") from error
+    safe_name = Path(file.filename or "uploaded_file").name
+    detected_format = source_format or Path(safe_name).suffix.lower().lstrip(".")
+    if detected_format in {"xlsx", "xls"}:
+        detected_format = "excel"
+    staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
+    try:
+        staging_path.write_bytes(await file.read())
+        try:
+            table = read_dataset_upload(staging_path, detected_format, options)
+        except DataImportError as error:
+            raise HTTPException(400, {"code": error.code, "message": str(error)}) from error
+        table.project_id = project_uuid
+        version = freeze_dataset_version(db, table, current_user.id)
+        return {"id": str(version.id), "dataset_version_id": str(version.id), "row_count": version.row_count, "column_count": version.column_count, "content_hash": version.content_hash, "schema_hash": version.schema_hash}
+    finally:
+        staging_path.unlink(missing_ok=True)
+
+
+@router.get("/dataset-versions/{version_id}")
+def get_dataset_version(
+    version_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    version = db.query(DatasetVersion).filter(DatasetVersion.id == UUID(version_id)).first()
+    if version is None:
+        raise HTTPException(404, "Dataset version not found")
+    require_project_access(db, version.project_id, current_user.id, "project.read")
+    return {"id": str(version.id), "project_id": str(version.project_id), "version": version.version, "status": version.status, "row_count": version.row_count, "column_count": version.column_count, "content_hash": version.content_hash, "schema_hash": version.schema_hash, "parse_contract": version.parse_contract, "columns": [{"name": item.name, "dtype": item.dtype, "nullable": item.nullable, "position": item.position} for item in version.schema_columns]}
 
 
 def _store_uploaded_dataset(

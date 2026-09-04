@@ -11,6 +11,7 @@ from app.models import agent, algorithm, api_model, artifact, compute, knowledge
 from app.models import model_library, platform_models, project, run, training, user, workflow
 from app.models import access, schedule, workflow_version
 from app.models import spot_weld_quality
+from app.models import data_version
 
 
 config = context.config

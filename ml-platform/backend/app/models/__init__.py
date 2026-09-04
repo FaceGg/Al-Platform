@@ -44,6 +44,7 @@ from app.models.platform_models import (
     OrchestrationApp,
     OrchestrationVersion,
 )
+from app.models.data_version import DatasetVersion, DatasetSchemaColumn, DatasetSample, DatasetImport
 from app.models.spot_weld_quality import (
     SpotWeldQualityRun,
     SpotWeldQualitySample,
@@ -104,6 +105,10 @@ __all__ = [
     "AnnotationResult",
     "OrchestrationApp",
     "OrchestrationVersion",
+    "DatasetVersion",
+    "DatasetSchemaColumn",
+    "DatasetSample",
+    "DatasetImport",
     "SpotWeldQualityRun",
     "SpotWeldQualitySample",
     "SpotWeldQualityRuleSet",

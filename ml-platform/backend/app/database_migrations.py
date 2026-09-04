@@ -74,6 +74,9 @@ _SQLITE_COLUMNS = {
         "published_at": "DATETIME",
         "last_error": "TEXT",
     },
+    "dataset_versions": {
+        "status": "VARCHAR(24) NOT NULL DEFAULT 'ready'",
+    },
 }
 
 _SQLITE_INDEXES = {
@@ -86,6 +89,18 @@ _SQLITE_INDEXES = {
     "agent_tasks": {
         "ix_agent_tasks_project_id": "project_id",
         "ix_agent_tasks_created_by_id": "created_by_id",
+    },
+    "dataset_versions": {
+        "ix_dataset_versions_project_id": "project_id",
+    },
+    "dataset_schema_columns": {
+        "ix_dataset_schema_columns_dataset_version_id": "dataset_version_id",
+    },
+    "dataset_samples": {
+        "ix_dataset_samples_dataset_version_id": "dataset_version_id",
+    },
+    "dataset_imports": {
+        "ix_dataset_imports_dataset_version_id": "dataset_version_id",
     },
 }
 
