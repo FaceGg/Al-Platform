@@ -153,6 +153,12 @@
 
 - Optional LightGBM runtime evidence, frontend/browser coverage and remote CI remain unverified. Task 3 remains `in_progress` pending scoped re-review; Task 4 remains `planned`.
 
+## Fix round 7 (2026-09-05)
+
+- Single-output Optuna now persists best-so-far artifacts, reports and metrics on timeout when a successful family trial exists, completing with `budget_exhausted`; timeout before any successful family still fails closed.
+- Multi-output low-budget grid allocation gives every requested available family one trial before round-robin distribution of remaining slots.
+- Target regressions passed; AutoML/multi-output focused suite: **64 passed, 47 warnings, 10 subtests**. Task 3 remains `in_progress`; Task 4 remains `planned`.
+
 ## Fix round 6 (2026-09-05)
 
 - Multi-output timeout keeps the best completed trial, persists artifact/reports/metrics, and completes with `search.budget_exhausted=true`.

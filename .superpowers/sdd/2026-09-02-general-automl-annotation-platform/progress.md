@@ -219,6 +219,12 @@
 - TDD evidence: RED **6 failed, 1 passed**; targeted GREEN **7 passed**; expanded focused suite **129 passed, 1 deselected, 59 warnings, 16 subtests**. The deselected/unfiltered failure is the pre-existing optional LightGBM availability test; compile, Alembic check and diff check pass.
 - Task 3 remains `in_progress` pending scoped re-review; Task 4 remains `planned`. Browser, frontend, optional LightGBM and remote CI evidence remain open.
 
+## Task 3 fix round 7 (2026-09-05)
+
+- Optuna timeout persists best-so-far artifacts and completed status when a successful family trial exists; no-success timeout remains failed.
+- Multi-output grid allocation guarantees one trial per requested available family before distributing remaining `max_trials` round-robin.
+- Targeted regressions and AutoML/multi-output focused suite passed (`64 passed`, 10 subtests). Task 3 remains `in_progress`; Task 4 remains `planned`.
+
 ## Task 3 fix round 6 (2026-09-05)
 
 - Timeout preserves best-so-far artifacts and completed status with budget exhaustion metadata.

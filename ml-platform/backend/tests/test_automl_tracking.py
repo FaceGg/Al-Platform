@@ -35,6 +35,7 @@ from app.services.automl_execution import (
     execute_automl_job,
 )
 from app.services.experiment_tracking import TrackedRun
+from app.services.automl_search import FamilySearchResult
 from app.tasks.celery_app import celery_app
 from app.tasks.training_tasks import LocalTrainingDispatcher
 
@@ -514,6 +515,44 @@ class TestAutoMLTracking(unittest.TestCase):
             expected *= len(values)
         self.assertEqual(len(specs), expected)
         self.assertEqual(len({tuple(sorted(params.items())) for _family, params in specs}), expected)
+
+    def test_grid_trial_specs_give_each_requested_family_a_trial(self):
+        from app.services.automl_catalog import resolve_algorithm_families
+        specs = _build_multioutput_trial_specs(
+            resolve_algorithm_families(["random_forest", "extra_trees"]),
+            method="grid", max_trials=2, search_strength="balanced",
+        )
+        self.assertEqual({family.id for family, _params in specs}, {"random_forest", "extra_trees"})
+
+    def test_optuna_timeout_persists_best_so_far(self):
+        job_id = self.create_job(params={
+            "search_contract": "optuna_v1", "target_column": "quality",
+            "input_columns": ["current", "force"], "task": "classification",
+            "algorithm_ids": ["gbdt", "random_forest"], "search_method": "random",
+            "max_trials": 5, "time_budget": 60,
+            "cross_validation_enabled": False, "cross_validation_folds": None,
+        })
+        def family_search(**kwargs):
+            kwargs["progress_callback"](SimpleNamespace(trial_number=0))
+            return FamilySearchResult(
+                algorithm_id=kwargs["family"].id,
+                display_name=kwargs["family"].display_name,
+                catalog_index=kwargs["catalog_index"], status="completed",
+                best_score=0.8, best_params=dict(kwargs["family"].default_params),
+                best_estimator=DummyClassifier(strategy="most_frequent").fit([[0], [1]], [0, 1]),
+                completed_trials=1, training_time_seconds=1.0,
+            )
+        ticks = iter([0.0, 1.0, 61.0, 61.0])
+        result = execute_automl_job(job_id, dependencies=AutoMLDependencies(
+            session_factory=self.Session, artifact_service_factory=lambda _db: self.artifacts,
+            tracking_factory=lambda: self.tracking, worker_id="worker-1", task_id="task-1",
+            family_search=family_search, monotonic=lambda: next(ticks),
+        ))
+        self.assertEqual(result.status, "completed")
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            self.assertIsNotNone(job.model_artifact_id)
+            self.assertTrue(job.metrics["search"]["budget_exhausted"])
 
     def test_all_failed_marks_parent_and_job_failed(self):
         job_id = self.create_job()

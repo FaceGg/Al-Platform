@@ -123,6 +123,16 @@ def _build_multioutput_trial_specs(families, *, method: str, max_trials: int, se
     if method in {"random", "bayesian", "evolutionary"} and extras:
         extras = [extras[index] for index in np.random.default_rng(42).permutation(len(extras))]
     specs = defaults if method == "grid" else defaults + extras
+    if max_trials >= len(families) and len(families) > 1:
+        grouped = {family.id: [] for family in families}
+        for family, params in specs:
+            grouped[family.id].append((family, params))
+        selected = [grouped[family.id].pop(0) for family in families if grouped[family.id]]
+        while len(selected) < max_trials and any(grouped.values()):
+            for family in families:
+                if grouped[family.id] and len(selected) < max_trials:
+                    selected.append(grouped[family.id].pop(0))
+        return selected
     return specs[:max_trials]
 
 
@@ -625,11 +635,6 @@ def _execute_optuna_job(
 
     winner = choose_family_winner(family_results)
     budget_exhausted = dependencies.monotonic() >= deadline
-    if budget_exhausted and completed_trials < planned_trials:
-        raise TimeoutError(
-            f"AutoML time budget exhausted before all trials completed "
-            f"({completed_trials}/{planned_trials} trials completed)"
-        )
     all_results.sort(
         key=lambda item: automl_metric_order_key(
             auc=item.get("auc"),
