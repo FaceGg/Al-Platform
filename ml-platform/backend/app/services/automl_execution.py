@@ -5,6 +5,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass
+from itertools import product
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -83,6 +84,46 @@ class AllCandidatesFailed(RuntimeError):
 
 class AutoMLCancelled(RuntimeError):
     pass
+
+
+def _apply_search_strength(family, params: dict, strength: str, *, preserve_existing: bool = False) -> dict:
+    values = {"light": 0.25, "balanced": 0.5, "thorough": 0.75, "maximum": 1.0}
+    fraction = values[strength]
+    if family.resource_parameter in family.search_space:
+        spec = family.search_space[family.resource_parameter]
+        if spec.kind == "int" and spec.low is not None and spec.high is not None:
+            if preserve_existing and family.resource_parameter in params:
+                params[family.resource_parameter] = int(float(params[family.resource_parameter]) * (0.5 + fraction / 2))
+            else:
+                params[family.resource_parameter] = int(spec.low + (spec.high - spec.low) * fraction)
+            if spec.step:
+                params[family.resource_parameter] = max(spec.low, min(spec.high, round(params[family.resource_parameter] / spec.step) * spec.step))
+    return params
+
+
+def _build_multioutput_trial_specs(families, *, method: str, max_trials: int, search_strength: str):
+    """Build family candidates; grid uses full Cartesian parameter combinations."""
+    defaults = []
+    extras = []
+    for family in families:
+        if method == "grid":
+            names = tuple(family.grid)
+            combinations = product(*(family.grid[name] for name in names))
+            for values in combinations:
+                params = dict(zip(names, values))
+                defaults.append((family, _apply_search_strength(family, params, search_strength, preserve_existing=True)))
+        else:
+            params = _apply_search_strength(family, dict(family.default_params), search_strength)
+            defaults.append((family, params))
+            for parameter, values in family.grid.items():
+                for value in values:
+                    candidate = dict(params)
+                    candidate[parameter] = value
+                    extras.append((family, candidate))
+    if method in {"random", "bayesian", "evolutionary"} and extras:
+        extras = [extras[index] for index in np.random.default_rng(42).permutation(len(extras))]
+    specs = defaults if method == "grid" else defaults + extras
+    return specs[:max_trials]
 
 
 def _aggregate_fold_classification_metrics(target, predictions, fold_scores):
@@ -699,18 +740,12 @@ def _execute_multioutput_job(
     base_estimators = strength_estimators[search_strength]
     requested_family_ids = list(params.get("algorithm_ids") or ["random_forest"])
     families = resolve_algorithm_families(requested_family_ids)
-    default_specs = [(family, dict(family.default_params)) for family in families]
-    extra_specs = []
-    for family in families:
-        defaults = dict(family.default_params)
-        for parameter, values in family.grid.items():
-            for value in values:
-                candidate_params = {**defaults, parameter: value}
-                if candidate_params != defaults:
-                    extra_specs.append((family, candidate_params))
-    if method in {"random", "bayesian", "evolutionary"}:
-        extra_specs = [extra_specs[index] for index in np.random.default_rng(contract.random_seed).permutation(len(extra_specs))]
-    trial_specs = (default_specs + extra_specs)[:min(requested_trials, len(default_specs) + len(extra_specs))]
+    trial_specs = _build_multioutput_trial_specs(
+        families,
+        method=method,
+        max_trials=requested_trials,
+        search_strength=search_strength,
+    )
     splits = (
         iterative_stratified_splits(targets, n_splits=contract.cross_validation_folds, random_seed=contract.random_seed)
         if task == "multioutput_classification"
@@ -748,10 +783,15 @@ def _execute_multioutput_job(
                 "error_code": error.code,
             })
     best = None
+    budget_exhausted = False
     job.metrics = {"search": {"method": method, "max_trials": requested_trials, "completed_trials": 0, "trials": [], "budget_exhausted": False}}
     db.commit()
     for trial_index, (family, family_params) in enumerate(runnable_specs):
-        check_control()
+        try:
+            check_control()
+        except TimeoutError:
+            budget_exhausted = True
+            break
         raw_estimator = family.build(task, family_params)
         if task == "multioutput_classification" and params.get("class_weight") and "class_weight" in raw_estimator.get_params():
             raw_estimator.set_params(class_weight="balanced")
@@ -759,7 +799,11 @@ def _execute_multioutput_job(
         predictions = np.zeros((len(features), len(target_columns)), dtype=object if task == "multioutput_classification" else float)
         target_scores = {column: [] for column in target_columns}
         for train_index, test_index in splits:
-            check_control()
+            try:
+                check_control()
+            except TimeoutError:
+                budget_exhausted = True
+                break
             fold_model = MultiOutputClassifier(clone(base)) if task == "multioutput_classification" else MultiOutputRegressor(clone(base))
             fold_model.fit(features.iloc[train_index], targets.iloc[train_index])
             predictions[test_index] = fold_model.predict(features.iloc[test_index])
@@ -774,6 +818,8 @@ def _execute_multioutput_job(
                         except (AttributeError, TypeError, ValueError):
                             continue
                     target_scores[target_column].append((np.asarray(test_index), score))
+        if budget_exhausted:
+            break
         per_target = {}
         for target_index, target_column in enumerate(target_columns):
             actual = targets[target_column].to_numpy()
@@ -796,6 +842,8 @@ def _execute_multioutput_job(
         job.heartbeat_at = utcnow()
         db.commit()
     if best is None:
+        if budget_exhausted:
+            raise TimeoutError("AutoML time budget exceeded")
         raise AllCandidatesFailed("No multi-output trials completed")
     _best_score, best_family, best_params, predictions, per_target = best
     raw_estimator = best_family.build(task, best_params)
@@ -803,7 +851,8 @@ def _execute_multioutput_job(
         raw_estimator.set_params(class_weight="balanced")
     base = make_pipeline(SimpleImputer(strategy="median"), StandardScaler(), raw_estimator)
     estimator = MultiOutputClassifier(base) if task == "multioutput_classification" else MultiOutputRegressor(base)
-    check_control()
+    if not budget_exhausted:
+        check_control()
     estimator.fit(features, targets)
     prediction_payload = {}
     for index, target_column in enumerate(target_columns):
@@ -882,10 +931,11 @@ def _execute_multioutput_job(
             "n_estimators": base_estimators,
             "selected_algorithm": best_family.id,
             "selected_params": best_params,
+            "selected_n_estimators": best_params.get("n_estimators"),
             "max_trials": requested_trials,
             "completed_trials": sum(item["status"] == "completed" for item in trials),
             "trials": trials,
-            "budget_exhausted": False,
+            "budget_exhausted": budget_exhausted,
         },
         "prediction_source": "cross_validation",
         "auc_tier": auc_tier({name: item.get("auc") for name, item in per_target.items()}),

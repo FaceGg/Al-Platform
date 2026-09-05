@@ -30,6 +30,7 @@ from app.models.user import User
 from app.services.automl_execution import (
     AutoMLCandidate,
     AutoMLDependencies,
+    _build_multioutput_trial_specs,
     _aggregate_fold_classification_metrics,
     execute_automl_job,
 )
@@ -453,11 +454,66 @@ class TestAutoMLTracking(unittest.TestCase):
             tracking_factory=lambda: self.tracking, worker_id="worker-1", task_id="task-1",
             monotonic=lambda: next(ticks),
         ))
-        self.assertEqual(result.error_code, "AUTOML_TIME_BUDGET_EXCEEDED")
+        self.assertEqual(result.status, "completed")
+        self.assertIsNone(result.error_code)
         with self.Session() as db:
             search = db.get(TrainingJob, job_id).metrics["search"]
             self.assertGreaterEqual(search["completed_trials"], 1)
             self.assertTrue(search["budget_exhausted"])
+
+    def test_timeout_persists_best_so_far_artifact_and_completed_status(self):
+        self.dataset_path.write_text(
+            "x1,x2,target_a,target_b\n" + "\n".join(
+                f"{index},{index % 7},{index * 1.5},{index % 7 * 2}" for index in range(60)
+            ), encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_columns": ["target_a", "target_b"], "task": "multioutput_regression",
+            "input_columns": ["x1", "x2"], "cross_validation_folds": 2,
+            "algorithm_ids": ["random_forest"], "search_method": "grid", "max_trials": 5, "time_budget": 60,
+        })
+        ticks = iter([0.0] + [1.0] * 8 + [61.0])
+        result = execute_automl_job(job_id, dependencies=AutoMLDependencies(
+            session_factory=self.Session, artifact_service_factory=lambda _db: self.artifacts,
+            tracking_factory=lambda: self.tracking, worker_id="worker-1", task_id="task-1",
+            monotonic=lambda: next(ticks),
+        ))
+        self.assertEqual(result.status, "completed")
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            self.assertEqual(job.status, "completed")
+            self.assertIsNotNone(job.model_artifact_id)
+            self.assertTrue(job.metrics["search"]["budget_exhausted"])
+            self.assertGreaterEqual(job.metrics["search"]["completed_trials"], 1)
+
+    def test_search_strength_changes_family_resource_parameter(self):
+        self.dataset_path.write_text(
+            "x1,x2,target_a,target_b\n" + "\n".join(
+                f"{index},{index % 7},{index * 1.5},{index % 7 * 2}" for index in range(60)
+            ), encoding="utf-8",
+        )
+        values = {}
+        for strength in ("light", "maximum"):
+            job_id = self.create_job(params={
+                "target_columns": ["target_a", "target_b"], "task": "multioutput_regression",
+                "input_columns": ["x1", "x2"], "cross_validation_folds": 2,
+                "algorithm_ids": ["random_forest"], "search_method": "grid", "max_trials": 5,
+                "search_strength": strength, "time_budget": 60,
+            })
+            self.execute(job_id)
+            with self.Session() as db:
+                values[strength] = db.get(TrainingJob, job_id).metrics["search"]["selected_params"]["n_estimators"]
+        self.assertLess(values["light"], values["maximum"])
+
+    def test_grid_trial_specs_use_cartesian_parameter_combinations(self):
+        from app.services.automl_catalog import resolve_algorithm_families
+        family = resolve_algorithm_families(["random_forest"])[0]
+        specs = _build_multioutput_trial_specs((family,), method="grid", max_trials=200, search_strength="balanced")
+        expected = 1
+        for values in family.grid.values():
+            expected *= len(values)
+        self.assertEqual(len(specs), expected)
+        self.assertEqual(len({tuple(sorted(params.items())) for _family, params in specs}), expected)
 
     def test_all_failed_marks_parent_and_job_failed(self):
         job_id = self.create_job()

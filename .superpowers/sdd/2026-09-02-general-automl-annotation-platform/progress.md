@@ -218,3 +218,9 @@
 - Deadline failures retain committed completed trials and set `search.budget_exhausted=true`.
 - TDD evidence: RED **6 failed, 1 passed**; targeted GREEN **7 passed**; expanded focused suite **129 passed, 1 deselected, 59 warnings, 16 subtests**. The deselected/unfiltered failure is the pre-existing optional LightGBM availability test; compile, Alembic check and diff check pass.
 - Task 3 remains `in_progress` pending scoped re-review; Task 4 remains `planned`. Browser, frontend, optional LightGBM and remote CI evidence remain open.
+
+## Task 3 fix round 6 (2026-09-05)
+
+- Timeout preserves best-so-far artifacts and completed status with budget exhaustion metadata.
+- Search strength is injected into family resources; grid trial construction is Cartesian and respects requested families/trial limits.
+- Targeted regressions passed; Task 3 remains `in_progress`, Task 4 remains `planned`.

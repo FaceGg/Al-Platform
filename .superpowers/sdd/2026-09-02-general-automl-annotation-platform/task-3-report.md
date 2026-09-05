@@ -152,3 +152,9 @@
 ### Remaining limitations
 
 - Optional LightGBM runtime evidence, frontend/browser coverage and remote CI remain unverified. Task 3 remains `in_progress` pending scoped re-review; Task 4 remains `planned`.
+
+## Fix round 6 (2026-09-05)
+
+- Multi-output timeout keeps the best completed trial, persists artifact/reports/metrics, and completes with `search.budget_exhausted=true`.
+- `search_strength` changes family resources; grid search uses Cartesian combinations while honoring `algorithm_ids` and `max_trials`.
+- Targeted round-6 regressions passed. Task 3 remains `in_progress`; Task 4 remains `planned`.
