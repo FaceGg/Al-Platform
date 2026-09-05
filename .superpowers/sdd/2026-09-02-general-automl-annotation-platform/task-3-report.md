@@ -100,3 +100,23 @@
 
 - Request replay/idempotency headers, cancellation polling, durable lease/recovery and full frontend wiring remain open Task 3/Task 13 integration work.
 - Optional LightGBM and browser/remote CI gates were not run in this environment.
+
+## Fix round 4 (2026-09-05)
+
+### Changed behavior
+
+- Multi-output classification now assembles continuous scores for every CV fold before computing AUC. Binary one-dimensional/two-column scores and multiclass score matrices are supported; a missing or invalid fold score makes that target incomplete, with no fallback to an older search report.
+- Multi-output execution now uses one shared split plan for predictions and scoring, runs a bounded observable candidate-size loop, records requested/completed trials and selected configuration, polls persisted cancellation between folds/trials, refreshes its heartbeat, and fails with `AUTOML_TIME_BUDGET_EXCEEDED` when its deadline is exhausted.
+- `POST /api/training/automl/run` accepts an optional owner-scoped `Idempotency-Key`. An exact replay returns the original job without a second dispatch; a key reused with a different request fingerprint returns a conflict. Migration `20260905_19` adds the nullable key, lookup index and owner/key uniqueness constraint.
+- Existing `claim_training_job` and `reconcile_stale_training_jobs` remain the durable lease/recovery boundary; AutoML now supplies the heartbeat and persisted cancellation polling required by that shared path.
+
+### RED/GREEN evidence
+
+- RED: fold aggregation/cancellation tests initially failed during collection because the production helper and callback contract did not exist; idempotency replay returned `409 EXPERIMENT_ALREADY_HAS_AUTOML_JOB` instead of the original job.
+- GREEN: `pytest tests/test_automl_multioutput.py tests/test_automl_tracking.py tests/test_model_registry_service.py tests/test_api_model_registry.py tests/test_training.py tests/test_training_recovery.py -q` -> **99 passed, 57 warnings, 12 subtests passed**.
+- Changed modules passed `py_compile`; migration `20260905_19` upgraded successfully and `alembic check` reported no new operations; `git diff --check` passed.
+
+### Remaining limitations
+
+- The bounded multi-output loop currently tunes random-forest estimator count; it does not execute every catalog family or implement true iterative multilabel stratification.
+- Frontend controls, browser coverage, optional LightGBM evidence and remote CI remain outside this fix round. Task 3 stays `in_progress`; Task 4 stays `planned` pending scoped re-review.

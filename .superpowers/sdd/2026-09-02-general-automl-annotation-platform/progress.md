@@ -193,3 +193,11 @@
 - `start_automl` still creates a fresh UUID without an `Idempotency-Key` replay contract. Cancellation only sets `cancel_requested`; the multi-output worker does not poll cancellation state or receive a callback, and durable lease/recovery is not wired to this execution path.
 - Joint-label `StratifiedKFold` provides deterministic shared folds but is not a true iterative-stratification algorithm; treat this as an implementation gap if the approved contract requires iterative multilabel balancing. Regression predictions now come from CV folds, but search reports and worker metrics do not reuse one shared split object.
 - Ruling: Task 3 remains `in_progress`; Task 4 remains `planned`. Continue with a focused fix round for production AUC aggregation/tiering, actual budget/search execution, and durable request/cancellation/recovery wiring before completion review.
+
+## Task 3 fix round 4 (2026-09-05)
+
+- Production multi-output AUC now aggregates complete out-of-fold score arrays, supports binary and multiclass shapes, and marks the tier incomplete when any target lacks valid continuous scores; the prior search-report fallback was removed.
+- Multi-output execution now has an observable bounded trial loop driven by search method/max trials, enforces the persisted deadline, reuses one split plan, polls persisted cancellation, and updates the existing TrainingJob heartbeat/claim/recovery boundary.
+- AutoML start requests now support owner-scoped `Idempotency-Key` replay with a canonical request fingerprint and database uniqueness via migration `20260905_19`.
+- Fresh focused verification: **99 passed**, 57 warnings, 12 subtests; changed modules compile; migration upgrade/check and `git diff --check` pass.
+- Task 3 remains `in_progress` pending scoped re-review. Full catalog-family multi-output search, true iterative multilabel stratification, frontend/browser and remote CI evidence remain open. Task 4 remains `planned`.

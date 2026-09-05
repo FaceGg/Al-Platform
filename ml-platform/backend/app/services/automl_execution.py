@@ -65,6 +65,7 @@ class AutoMLDependencies:
     task_id: str = "unknown"
     family_search: Callable = run_family_search
     monotonic: Callable[[], float] = time.monotonic
+    cancellation_requested: Callable[[uuid.UUID], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,59 @@ class AutoMLExecutionResult:
 
 class AllCandidatesFailed(RuntimeError):
     pass
+
+
+class AutoMLCancelled(RuntimeError):
+    pass
+
+
+def _aggregate_fold_classification_metrics(target, predictions, fold_scores):
+    """Compute metrics from complete out-of-fold predictions and scores."""
+    target = np.asarray(target)
+    predictions = np.asarray(predictions).astype(target.dtype, copy=False)
+    classes = np.unique(target)
+    score_rows = None
+    complete_scores = bool(fold_scores)
+    for test_index, scores in fold_scores:
+        if scores is None:
+            complete_scores = False
+            continue
+        values = np.asarray(scores)
+        if len(classes) == 2:
+            if values.ndim == 2:
+                if values.shape[1] != 2:
+                    complete_scores = False
+                    continue
+                values = values[:, 1]
+            if values.ndim != 1:
+                complete_scores = False
+                continue
+            if score_rows is None:
+                score_rows = np.full(len(target), np.nan)
+            score_rows[np.asarray(test_index)] = values
+        else:
+            if values.ndim != 2 or values.shape[1] != len(classes):
+                complete_scores = False
+                continue
+            if score_rows is None:
+                score_rows = np.full((len(target), len(classes)), np.nan)
+            score_rows[np.asarray(test_index), :] = values
+    auc = None
+    if complete_scores and score_rows is not None and np.isfinite(score_rows).all():
+        try:
+            auc = float(roc_auc_score(
+                target,
+                score_rows,
+                multi_class="ovr" if len(classes) > 2 else "raise",
+                average="macro",
+            ))
+        except ValueError:
+            auc = None
+    return {
+        "macro_f1": float(f1_score(target, predictions, average="macro")),
+        "accuracy": float(accuracy_score(target, predictions)),
+        "auc": auc,
+    }
 
 
 VALID_CROSS_VALIDATION_FOLDS = frozenset({2, 3, 4, 5})
@@ -609,9 +663,10 @@ def _execute_multioutput_job(
     task: str,
     parent,
     tracking,
+    dependencies: AutoMLDependencies,
 ) -> AutoMLExecutionResult:
     """Train and persist one explicit multi-output candidate bundle."""
-    from app.services.automl_search import AutoMLContract, run_automl_search, validate_target_columns
+    from app.services.automl_search import AutoMLContract, auc_tier, iterative_stratified_splits, validate_target_columns
 
     target_columns = list(params.get("target_columns") or ([params.get("target_column")] if params.get("target_column") else []))
     contract = AutoMLContract(
@@ -633,74 +688,95 @@ def _execute_multioutput_job(
     if features.empty or len(features) < 10:
         raise ValueError("AutoML requires numeric features and at least ten rows")
 
-    # Keep the search contract and the persisted candidate deterministic. The
-    # per-target reports come from the fold-local evaluator; predictions and
-    # estimators below are fit only after selection for durable inference.
-    search_result = run_automl_search(prepared, contract)
     strength_estimators = {"light": 40, "balanced": 80, "thorough": 160, "maximum": 320}
     search_strength = str(params.get("search_strength", "balanced")).lower()
     if search_strength not in strength_estimators:
         raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
-    n_estimators = strength_estimators[search_strength]
-    base = (
-        RandomForestClassifier(
-            n_estimators=n_estimators,
-            random_state=contract.random_seed,
-            n_jobs=1,
-            class_weight="balanced" if params.get("class_weight") else None,
-        )
+    deadline = dependencies.monotonic() + float(params.get("time_budget", 600))
+    requested_trials = int(params.get("max_trials") or {"light": 1, "balanced": 2, "thorough": 3, "maximum": 4}[search_strength])
+    trial_count = min(requested_trials, 4)
+    method = str(params.get("search_method") or "strength")
+    base_estimators = strength_estimators[search_strength]
+    candidate_sizes = [max(20, base_estimators // 2), base_estimators, base_estimators + max(20, base_estimators // 2), base_estimators * 2]
+    if method in {"random", "bayesian", "evolutionary"}:
+        candidate_sizes = [candidate_sizes[index] for index in np.random.default_rng(contract.random_seed).permutation(len(candidate_sizes))]
+    candidate_sizes = candidate_sizes[:trial_count]
+    splits = (
+        iterative_stratified_splits(targets, n_splits=contract.cross_validation_folds, random_seed=contract.random_seed)
         if task == "multioutput_classification"
-        else RandomForestRegressor(n_estimators=n_estimators, random_state=contract.random_seed, n_jobs=1)
+        else list(KFold(contract.cross_validation_folds, shuffle=True, random_state=contract.random_seed).split(features))
     )
-    estimator = MultiOutputClassifier(base) if task == "multioutput_classification" else MultiOutputRegressor(base)
-    estimator.fit(features, targets)
-    predictions = np.zeros((len(features), len(target_columns)), dtype=object if task == "multioutput_classification" else float)
-    if contract.cross_validation_folds:
-        from app.services.automl_search import iterative_stratified_splits
-        splits = iterative_stratified_splits(targets, n_splits=contract.cross_validation_folds, random_seed=contract.random_seed) if task == "multioutput_classification" else list(KFold(contract.cross_validation_folds, shuffle=True, random_state=contract.random_seed).split(features))
+
+    def check_control():
+        if dependencies.cancellation_requested:
+            cancelled = dependencies.cancellation_requested(job.id)
+        else:
+            with dependencies.session_factory() as control_db:
+                cancelled = control_db.query(TrainingJob.status).filter(
+                    TrainingJob.id == job.id,
+                ).scalar() == "cancel_requested"
+        if cancelled:
+            raise AutoMLCancelled("AutoML cancellation requested")
+        if dependencies.monotonic() >= deadline:
+            raise TimeoutError("AutoML time budget exceeded")
+        job.heartbeat_at = utcnow()
+        db.commit()
+
+    trials = []
+    best = None
+    for trial_index, n_estimators in enumerate(candidate_sizes):
+        check_control()
+        base = (
+            RandomForestClassifier(n_estimators=n_estimators, random_state=contract.random_seed, n_jobs=1, class_weight="balanced" if params.get("class_weight") else None)
+            if task == "multioutput_classification"
+            else RandomForestRegressor(n_estimators=n_estimators, random_state=contract.random_seed, n_jobs=1)
+        )
+        predictions = np.zeros((len(features), len(target_columns)), dtype=object if task == "multioutput_classification" else float)
+        target_scores = {column: [] for column in target_columns}
         for train_index, test_index in splits:
+            check_control()
             fold_model = MultiOutputClassifier(clone(base)) if task == "multioutput_classification" else MultiOutputRegressor(clone(base))
             fold_model.fit(features.iloc[train_index], targets.iloc[train_index])
             predictions[test_index] = fold_model.predict(features.iloc[test_index])
-    per_target = {}
+            if task == "multioutput_classification":
+                for target_index, target_column in enumerate(target_columns):
+                    fitted = fold_model.estimators_[target_index]
+                    score = None
+                    for score_method in ("predict_proba", "decision_function"):
+                        try:
+                            score = getattr(fitted, score_method)(features.iloc[test_index])
+                            break
+                        except (AttributeError, TypeError, ValueError):
+                            continue
+                    target_scores[target_column].append((np.asarray(test_index), score))
+        per_target = {}
+        for target_index, target_column in enumerate(target_columns):
+            actual = targets[target_column].to_numpy()
+            predicted = predictions[:, target_index]
+            per_target[target_column] = (
+                _aggregate_fold_classification_metrics(actual, predicted, target_scores[target_column])
+                if task == "multioutput_classification"
+                else {"rmse": float(np.sqrt(mean_squared_error(actual, predicted)))}
+            )
+        score = float(np.mean([
+            item.get("auc") if item.get("auc") is not None else item.get("macro_f1", -1)
+            for item in per_target.values()
+        ])) if task == "multioutput_classification" else -float(np.mean([item["rmse"] for item in per_target.values()]))
+        trial = {"number": trial_index, "n_estimators": n_estimators, "score": score, "status": "completed"}
+        trials.append(trial)
+        if best is None or score > best[0]:
+            best = (score, n_estimators, predictions.copy(), per_target)
+    if best is None:
+        raise AllCandidatesFailed("No multi-output trials completed")
+    _best_score, n_estimators, predictions, per_target = best
+    base = RandomForestClassifier(n_estimators=n_estimators, random_state=contract.random_seed, n_jobs=1, class_weight="balanced" if params.get("class_weight") else None) if task == "multioutput_classification" else RandomForestRegressor(n_estimators=n_estimators, random_state=contract.random_seed, n_jobs=1)
+    estimator = MultiOutputClassifier(base) if task == "multioutput_classification" else MultiOutputRegressor(base)
+    check_control()
+    estimator.fit(features, targets)
     prediction_payload = {}
     for index, target_column in enumerate(target_columns):
-        values = targets[target_column].to_numpy()
         predicted = predictions[:, index]
         prediction_payload[target_column] = predicted.tolist()
-        if task == "multioutput_classification":
-            pred = predictions[:, index]
-            auc = None
-            for train_index, test_index in splits:
-                fold_estimator = clone(base).fit(features.iloc[train_index], targets.iloc[train_index, index])
-                scores = None
-                for method in ("predict_proba", "decision_function"):
-                    try:
-                        scores = getattr(fold_estimator, method)(features.iloc[test_index])
-                        break
-                    except (AttributeError, TypeError, ValueError):
-                        continue
-                if scores is not None:
-                    values_scores = np.asarray(scores)
-                    try:
-                        if values_scores.ndim == 1:
-                            auc = float(roc_auc_score(targets.iloc[test_index, index], values_scores))
-                        elif values_scores.ndim == 2 and values_scores.shape[1] >= 2:
-                            auc = float(roc_auc_score(targets.iloc[test_index, index], values_scores[:, 1]))
-                    except ValueError:
-                        auc = None
-                    if auc is not None:
-                        break
-            report = search_result.per_target[target_column]
-            per_target[target_column] = {
-                "macro_f1": report.macro_f1,
-                "accuracy": report.accuracy,
-                "auc": auc if auc is not None else report.auc,
-            }
-        else:
-            per_target[target_column] = {
-                "rmse": float(np.sqrt(mean_squared_error(values, predicted))),
-            }
     report_values = [value for value in per_target.values()]
     aggregate = {
         "macro_f1": float(np.mean([item["macro_f1"] for item in report_values if item.get("macro_f1") is not None]))
@@ -763,7 +839,7 @@ def _execute_multioutput_job(
         "per_target": per_target,
         "predictions": prediction_payload,
         "aggregate": aggregate,
-        "cv_strategy": search_result.cv_strategy,
+        "cv_strategy": "iterative_stratified" if task == "multioutput_classification" else "kfold",
         "input_contract": input_contract,
         "preprocessing": preprocessing,
         "search": {
@@ -771,10 +847,15 @@ def _execute_multioutput_job(
             "strength": params.get("search_strength", "balanced"),
             "time_budget": params.get("time_budget", 600),
             "class_weight": bool(params.get("class_weight", False)),
-            "n_estimators": n_estimators,
+            "n_estimators": base_estimators,
+            "selected_n_estimators": n_estimators,
+            "max_trials": requested_trials,
+            "completed_trials": len(trials),
+            "trials": trials,
+            "budget_exhausted": False,
         },
         "prediction_source": "cross_validation",
-        "auc_tier": "complete" if all(item.get("auc") is not None for item in per_target.values()) else "incomplete",
+        "auc_tier": auc_tier({name: item.get("auc") for name, item in per_target.items()}),
     }
     job.feature_schema = feature_schema
     job.target_schema = target_schema
@@ -859,6 +940,7 @@ def execute_automl_job(
                 task=task,
                 parent=parent,
                 tracking=tracking,
+                dependencies=dependencies,
             )
         requested_input_columns = params.get("input_columns")
         feature_columns = resolve_automl_feature_columns(
@@ -1125,6 +1207,9 @@ def execute_automl_job(
             except Exception:
                 pass
         error_code = (
+            "AUTOML_CANCELLED"
+            if isinstance(error, AutoMLCancelled)
+            else
             "AUTOML_TIME_BUDGET_EXCEEDED"
             if isinstance(error, TimeoutError)
             else
@@ -1137,7 +1222,7 @@ def execute_automl_job(
         with dependencies.session_factory() as failed_db:
             failed = failed_db.query(TrainingJob).filter(TrainingJob.id == job_uuid).first()
             if failed is not None:
-                failed.status = "failed"
+                failed.status = "cancelled" if isinstance(error, AutoMLCancelled) else "failed"
                 failed.error_code = error_code
                 failed.error_message = str(error)
                 failed.error_details = {
@@ -1152,6 +1237,10 @@ def execute_automl_job(
                 failed.metrics = metrics
                 failed.finished_at = utcnow()
                 failed_db.commit()
-        return AutoMLExecutionResult(str(job_uuid), "failed", error_code=error_code)
+        return AutoMLExecutionResult(
+            str(job_uuid),
+            "cancelled" if isinstance(error, AutoMLCancelled) else "failed",
+            error_code=error_code,
+        )
     finally:
         db.close()

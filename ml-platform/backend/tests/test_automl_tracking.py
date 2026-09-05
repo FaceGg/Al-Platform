@@ -30,6 +30,7 @@ from app.models.user import User
 from app.services.automl_execution import (
     AutoMLCandidate,
     AutoMLDependencies,
+    _aggregate_fold_classification_metrics,
     execute_automl_job,
 )
 from app.services.experiment_tracking import TrackedRun
@@ -330,6 +331,64 @@ class TestAutoMLTracking(unittest.TestCase):
             self.assertEqual(job.metrics["search"]["time_budget"], 1800)
             self.assertTrue(job.metrics["search"]["class_weight"])
             self.assertIn(job.metrics["auc_tier"], {"complete", "incomplete"})
+
+    def test_fold_auc_aggregates_all_binary_and_multiclass_scores(self):
+        binary = _aggregate_fold_classification_metrics(
+            np.array([0, 1, 0, 1]),
+            np.array([0, 1, 0, 1]),
+            [(np.array([0, 1]), np.array([0.1, 0.9])), (np.array([2, 3]), np.array([0.2, 0.8]))],
+        )
+        multiclass = _aggregate_fold_classification_metrics(
+            np.array([0, 1, 2, 0, 1, 2]),
+            np.array([0, 1, 2, 0, 1, 2]),
+            [
+                (np.array([0, 1, 2]), np.eye(3)),
+                (np.array([3, 4, 5]), np.eye(3)),
+            ],
+        )
+        self.assertEqual(binary["auc"], 1.0)
+        self.assertEqual(multiclass["auc"], 1.0)
+        self.assertIsNone(_aggregate_fold_classification_metrics(
+            np.array([0, 1]), np.array([0, 1]), [(np.array([0, 1]), None)],
+        )["auc"])
+
+    def test_multioutput_worker_honors_cancellation_polling(self):
+        self.dataset_path.write_text(
+            "x1,x2,label_a,label_b\n" + "\n".join(
+                f"{index % 7},{index % 5},{index % 2},{index % 3 == 0}" for index in range(60)
+            ), encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_columns": ["label_a", "label_b"], "task": "multioutput_classification",
+            "input_columns": ["x1", "x2"], "cross_validation_folds": 2,
+        })
+        result = execute_automl_job(job_id, dependencies=AutoMLDependencies(
+            session_factory=self.Session, artifact_service_factory=lambda _db: self.artifacts,
+            tracking_factory=lambda: self.tracking, worker_id="worker-1", task_id="task-1",
+            cancellation_requested=lambda _job_id: True,
+        ))
+        self.assertEqual(result.status, "cancelled")
+        with self.Session() as db:
+            self.assertEqual(db.get(TrainingJob, job_id).status, "cancelled")
+
+    def test_multioutput_worker_stops_when_time_budget_is_exhausted(self):
+        self.dataset_path.write_text(
+            "x1,x2,target_a,target_b\n" + "\n".join(
+                f"{index},{index % 7},{index * 1.5},{index % 7 * 2}" for index in range(60)
+            ), encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_columns": ["target_a", "target_b"], "task": "multioutput_regression",
+            "input_columns": ["x1", "x2"], "cross_validation_folds": 2, "time_budget": 60,
+        })
+        ticks = iter((0.0, 61.0))
+        result = execute_automl_job(job_id, dependencies=AutoMLDependencies(
+            session_factory=self.Session, artifact_service_factory=lambda _db: self.artifacts,
+            tracking_factory=lambda: self.tracking, worker_id="worker-1", task_id="task-1",
+            monotonic=lambda: next(ticks),
+        ))
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error_code, "AUTOML_TIME_BUDGET_EXCEEDED")
 
     def test_multioutput_regression_persists_cross_validated_predictions(self):
         self.dataset_path.write_text(
@@ -646,6 +705,36 @@ class TestAutoMLAPI(unittest.TestCase):
             second.json()["detail"]["code"],
             "EXPERIMENT_ALREADY_HAS_AUTOML_JOB",
         )
+
+    def test_idempotency_key_replays_original_automl_job(self):
+        headers = {**self.headers, "Idempotency-Key": f"automl-{uuid.uuid4().hex}"}
+        payload = {
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "task": "classification",
+        }
+        first = self.client.post("/api/training/automl/run", json=payload, headers=headers)
+        second = self.client.post("/api/training/automl/run", json=payload, headers=headers)
+        self.assertEqual(first.status_code, 202, first.text)
+        self.assertEqual(second.status_code, 202, second.text)
+        self.assertEqual(second.json()["job_id"], first.json()["job_id"])
+        self.assertEqual(self.dispatcher.enqueued, [first.json()["job_id"]])
+
+    def test_idempotency_key_rejects_different_request(self):
+        headers = {**self.headers, "Idempotency-Key": f"automl-{uuid.uuid4().hex}"}
+        first = self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id), "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id), "target_column": "quality",
+        }, headers=headers)
+        second = self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id), "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id), "target_column": "quality", "name": "different",
+        }, headers=headers)
+        self.assertEqual(first.status_code, 202, first.text)
+        self.assertEqual(second.status_code, 409, second.text)
+        self.assertEqual(second.json()["detail"]["code"], "AUTOML_IDEMPOTENCY_CONFLICT")
 
     def test_deleting_terminal_automl_job_does_not_release_experiment(self):
         created = self._run_automl()

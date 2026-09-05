@@ -1,7 +1,9 @@
 """Project-authorized asynchronous training management API."""
 
 import asyncio
+import hashlib
 import io
+import json
 import os
 import secrets
 import tempfile
@@ -9,7 +11,7 @@ import uuid
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
@@ -573,6 +575,7 @@ def start_automl(
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     experiment, access = _visible_experiment(
         db,
@@ -582,6 +585,26 @@ def start_automl(
     )
     if experiment is None:
         raise HTTPException(404, _error("EXPERIMENT_NOT_FOUND", "Experiment not found"))
+    normalized_key = str(idempotency_key or "").strip() or None
+    request_fingerprint = hashlib.sha256(json.dumps(
+        data.model_dump(mode="json"), sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    if normalized_key is not None and len(normalized_key) > 128:
+        raise HTTPException(400, _error("AUTOML_IDEMPOTENCY_KEY_INVALID", "Idempotency-Key must be at most 128 characters"))
+    if normalized_key is not None:
+        replay = db.query(TrainingJob).filter(
+            TrainingJob.user_id == current_user.id,
+            TrainingJob.automl_idempotency_key == normalized_key,
+            TrainingJob.operator_id == "automl",
+        ).first()
+        if replay is not None:
+            if (
+                replay.project_id != data.project_id
+                or replay.experiment_id != data.experiment_id
+                or (replay.automl_contract or {}).get("idempotency_fingerprint") != request_fingerprint
+            ):
+                raise HTTPException(409, _error("AUTOML_IDEMPOTENCY_CONFLICT", "Idempotency-Key was used for another AutoML request"))
+            return {"job_id": str(replay.id), "status": replay.status, "task_id": replay.task_id}
     job_id = uuid.uuid4()
     with audit_service(db).project_action(
         db, request=request, actor=current_user, access=access,
@@ -692,7 +715,9 @@ def start_automl(
                 "cross_validation_folds": evaluation["cross_validation_folds"],
                 "cv_strategy": "iterative_stratified" if task_type == "multioutput_classification" else ("stratified" if "classification" in task_type else "kfold"),
                 "random_seed": 42,
+                "idempotency_fingerprint": request_fingerprint,
             },
+            automl_idempotency_key=normalized_key,
         )
         if db.get(ExperimentAutoMLBinding, experiment.id) is not None:
             raise HTTPException(409, _error(
@@ -708,6 +733,14 @@ def start_automl(
                 ))
                 db.flush()
         except IntegrityError as error:
+            if normalized_key is not None:
+                replay = db.query(TrainingJob).filter(
+                    TrainingJob.user_id == current_user.id,
+                    TrainingJob.automl_idempotency_key == normalized_key,
+                    TrainingJob.operator_id == "automl",
+                ).first()
+                if replay is not None and (replay.automl_contract or {}).get("idempotency_fingerprint") == request_fingerprint:
+                    return {"job_id": str(replay.id), "status": replay.status, "task_id": replay.task_id}
             raise HTTPException(409, _error(
                 "EXPERIMENT_ALREADY_HAS_AUTOML_JOB",
                 "Experiment already has an AutoML job",
