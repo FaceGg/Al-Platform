@@ -180,7 +180,8 @@ class ModelRegistryService:
                 raise ModelRegistryError("MODEL_SOURCE_NOT_FOUND")
             if str(metadata.get("training_job_id")) != str(job.id):
                 raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED")
-            if metadata.get("best_candidate") not in {None, str(algorithm_id)}:
+            metadata_candidate = metadata.get("best_candidate") or metadata.get("best_algorithm")
+            if metadata_candidate not in {None, str(algorithm_id)}:
                 raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED")
             library = db.query(ModelLibrary).filter(
                 ModelLibrary.project_id == job.project_id,
@@ -363,7 +364,7 @@ class ModelRegistryService:
         if job is None or library.status != "completed" or library.format != "joblib":
             raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED")
         if metadata.get("source") == "automl":
-            algorithm_id = str(metadata.get("best_algorithm") or "")
+            algorithm_id = str(metadata.get("best_candidate") or metadata.get("best_algorithm") or "")
             results = (job.metrics or {}).get("algorithm_results")
             trusted = isinstance(results, list) and any(
                 isinstance(item, dict)

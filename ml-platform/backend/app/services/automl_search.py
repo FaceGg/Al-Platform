@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Literal, Mapping, Sequence
 
 import numpy as np
+import pandas as pd
 import optuna
 from optuna.exceptions import TrialPruned
 from optuna.pruners import HyperbandPruner, NopPruner
@@ -19,9 +20,31 @@ from app.services.automl_catalog import AlgorithmFamily, AlgorithmUnavailable, P
 
 
 SEARCH_METHODS = frozenset({"grid", "random", "bayesian", "evolutionary", "multi_fidelity"})
+SEARCH_STRENGTHS = frozenset({"light", "balanced", "thorough", "maximum"})
+SEARCH_TIME_BUDGETS = frozenset({60, 300, 600, 1800})
 
 PERSISTED_TASK_TYPES = frozenset({"classification", "multioutput_classification", "regression", "multioutput_regression"})
 TASK_TYPE_ALIASES = {"multilabel_classification": "multioutput_classification", "multiregression": "multioutput_regression"}
+
+
+def normalize_search_controls(
+    *,
+    strength: str = "balanced",
+    time_budget: int = 600,
+    class_weight: bool = False,
+) -> dict[str, object]:
+    normalized_strength = str(strength).strip().lower()
+    if normalized_strength not in SEARCH_STRENGTHS:
+        raise AutoMLContractError("invalid search strength")
+    if isinstance(time_budget, bool) or int(time_budget) not in SEARCH_TIME_BUDGETS:
+        raise AutoMLContractError("invalid time budget")
+    if not isinstance(class_weight, bool):
+        raise AutoMLContractError("class_weight must be boolean")
+    return {
+        "strength": normalized_strength,
+        "time_budget": int(time_budget),
+        "class_weight": class_weight,
+    }
 
 
 class AutoMLContractError(ValueError):
@@ -95,10 +118,16 @@ def validate_target_columns(frame, task_type: str, target_columns: list[str]):
         values = frame[column]
         if values.isna().any():
             raise AutoMLContractError("target contains missing values")
-        if "regression" in task and not np.isfinite(np.asarray(values, dtype=float)).all():
-            raise AutoMLContractError("target contains non-finite values")
-        if "classification" in task and values.nunique(dropna=False) < 2:
-            raise AutoMLContractError("target requires at least two classes")
+        if "regression" in task:
+            if not pd.api.types.is_numeric_dtype(values):
+                raise AutoMLContractError("regression target must be numeric")
+            if not np.isfinite(np.asarray(values, dtype=float)).all():
+                raise AutoMLContractError("target contains non-finite values")
+        if "classification" in task:
+            if pd.api.types.is_float_dtype(values) and not np.all(np.asarray(values) == np.asarray(values).astype(int)):
+                raise AutoMLContractError("classification target must be categorical or integral")
+            if values.nunique(dropna=False) < 2:
+                raise AutoMLContractError("target requires at least two classes")
     return True
 
 

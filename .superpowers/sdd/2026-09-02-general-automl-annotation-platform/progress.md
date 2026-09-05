@@ -149,3 +149,18 @@
 - Verification: `test_automl_multioutput.py` 8 passed; combined AutoML/registry/API suite 36 passed with 1 warning and 2 subtests; relevant modules compile and `git diff --check` pass.
 - Task 3 remains `in_progress`. Remaining blockers are real multi-output artifact persistence, iterative stratification, fold-local preprocessing, search controls, complete per-target/aggregate reporting, AUC fallback tiers, request idempotency/cancellation/recovery, durable worker wiring, target dtype/input leakage checks, and frontend wiring.
 - User requested a pause after documenting and publishing the current state. Do not start Task 4; resume tomorrow with a scoped re-review of these blockers.
+
+## Task 3 scoped re-review after fix round 1 (2026-09-05)
+
+- Verdict: findings remain open; Task 3 stays `in_progress` and Task 4 remains `planned`.
+- Addressed in the reviewed diff: multi-output dispatch no longer rejects the task type; 2-5 fold configuration accepts 2 folds.
+- Open Critical/Important findings: multi-output execution only records reports and marks jobs complete without candidate artifact/prediction/contract persistence; iterative stratification is only a label while folds remain independent `StratifiedKFold`; producer writes `best_algorithm` while registry trust checks `best_candidate`; target dtype and all-target leakage guards are incomplete; search strength/time/class-weight controls are absent; idempotency replay, cancellation polling, durable recovery and lease wiring are absent; AUC fallback/tiering is incomplete; artifact-only registration is unreachable from the UI; frontend multi-output controls are missing; the production worker regression test does not execute `execute_automl_job`.
+- Ruling: resume the Task 3 implementer for one focused fix round covering the load-bearing production persistence/trust mismatch and the directly testable contract gaps. Do not start Task 4 until the implementation report and scoped re-review are clean or findings are explicitly adjudicated at the review cap.
+
+## Task 3 fix round 2 (2026-09-05)
+
+- Added a real multi-output worker path that trains and persists a deterministic candidate artifact, stores predictions, per-target and aggregate metrics, input/preprocessing contracts, schemas, and canonical candidate identity.
+- Tightened target dtype validation and default feature exclusion for all target columns; added direct AUC decision-function fallback and four-level search-control contract coverage.
+- Registry trust validation now accepts the canonical `best_candidate` or legacy `best_algorithm` metadata key while requiring matching algorithm/artifact/job identity.
+- RED/GREEN evidence is recorded in `task-3-report.md`: final focused AutoML suite 46 passed; static compile and diff checks passed.
+- Task 3 remains `in_progress`: durable request replay/idempotency, cancellation/recovery, full family search for multi-output, frontend controls, and remote/browser gates are still open.

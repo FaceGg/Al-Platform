@@ -22,8 +22,9 @@ from sklearn.ensemble import (
     RandomForestRegressor,
 )
 from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.metrics import get_scorer
-from sklearn.model_selection import KFold, StratifiedKFold, cross_val_score, train_test_split
+from sklearn.metrics import accuracy_score, f1_score, get_scorer, mean_squared_error, roc_auc_score
+from sklearn.model_selection import KFold, StratifiedKFold, cross_val_predict, cross_val_score, train_test_split
+from sklearn.multioutput import MultiOutputClassifier, MultiOutputRegressor
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
@@ -282,11 +283,14 @@ def resolve_automl_feature_columns(
     frame: pd.DataFrame,
     target_column: str | None,
     requested_input_columns: Sequence[str] | None,
+    *,
+    target_columns: Sequence[str] | None = None,
 ) -> list[str]:
-    if not target_column or target_column not in frame.columns:
+    all_targets = [str(column) for column in (target_columns or ([target_column] if target_column else []))]
+    if not all_targets or any(column not in frame.columns for column in all_targets):
         raise ValueError("AutoML target column is missing")
     if requested_input_columns is None:
-        return frame.drop(columns=[target_column]).select_dtypes(include=["number"]).columns.tolist()
+        return frame.drop(columns=all_targets).select_dtypes(include=["number"]).columns.tolist()
     if not isinstance(requested_input_columns, (list, tuple)):
         raise ValueError("AutoML input columns must be a list")
     feature_columns = [str(column) for column in requested_input_columns]
@@ -294,7 +298,7 @@ def resolve_automl_feature_columns(
         raise ValueError("AutoML requires at least one input column")
     if len(set(feature_columns)) != len(feature_columns):
         raise ValueError("AutoML input columns must be unique")
-    if target_column in feature_columns:
+    if any(column in feature_columns for column in all_targets):
         raise ValueError("AutoML target column cannot be an input column")
     missing_columns = [column for column in feature_columns if column not in frame.columns]
     if missing_columns:
@@ -593,6 +597,167 @@ def _execute_optuna_job(
     return AutoMLExecutionResult(str(job.id), "completed", winner.algorithm_id)
 
 
+def _execute_multioutput_job(
+    *,
+    job,
+    db,
+    artifact_service,
+    dataset,
+    frame: pd.DataFrame,
+    params: dict,
+    task: str,
+    parent,
+    tracking,
+) -> AutoMLExecutionResult:
+    """Train and persist one explicit multi-output candidate bundle."""
+    from app.services.automl_search import AutoMLContract, run_automl_search, validate_target_columns
+
+    target_columns = list(params.get("target_columns") or ([params.get("target_column")] if params.get("target_column") else []))
+    contract = AutoMLContract(
+        task_type=task,
+        target_columns=target_columns,
+        input_columns=params.get("input_columns"),
+        cross_validation_folds=int(params.get("cross_validation_folds") or 5),
+    )
+    validate_target_columns(frame, task, target_columns)
+    feature_columns = resolve_automl_feature_columns(
+        frame,
+        target_columns[0],
+        params.get("input_columns"),
+        target_columns=target_columns,
+    )
+    prepared = frame.dropna(subset=[*target_columns, *feature_columns])
+    features = prepared.loc[:, feature_columns]
+    targets = prepared.loc[:, target_columns]
+    if features.empty or len(features) < 10:
+        raise ValueError("AutoML requires numeric features and at least ten rows")
+
+    # Keep the search contract and the persisted candidate deterministic. The
+    # per-target reports come from the fold-local evaluator; predictions and
+    # estimators below are fit only after selection for durable inference.
+    search_result = run_automl_search(prepared, contract)
+    base = (
+        RandomForestClassifier(
+            n_estimators=80,
+            random_state=contract.random_seed,
+            n_jobs=1,
+            class_weight="balanced" if params.get("class_weight") else None,
+        )
+        if task == "multioutput_classification"
+        else RandomForestRegressor(n_estimators=80, random_state=contract.random_seed, n_jobs=1)
+    )
+    estimator = MultiOutputClassifier(base) if task == "multioutput_classification" else MultiOutputRegressor(base)
+    estimator.fit(features, targets)
+    predictions = np.asarray(estimator.predict(features))
+    per_target = {}
+    prediction_payload = {}
+    for index, target_column in enumerate(target_columns):
+        values = targets[target_column].to_numpy()
+        predicted = predictions[:, index]
+        prediction_payload[target_column] = predicted.tolist()
+        if task == "multioutput_classification":
+            report = search_result.per_target[target_column]
+            per_target[target_column] = {
+                "macro_f1": report.macro_f1,
+                "accuracy": report.accuracy,
+                "auc": report.auc,
+            }
+        else:
+            per_target[target_column] = {
+                "rmse": float(mean_squared_error(values, predicted, squared=False)),
+            }
+    report_values = [value for value in per_target.values()]
+    aggregate = {
+        "macro_f1": float(np.mean([item["macro_f1"] for item in report_values if item.get("macro_f1") is not None]))
+        if task == "multioutput_classification" else None,
+        "accuracy": float(np.mean([item["accuracy"] for item in report_values if item.get("accuracy") is not None]))
+        if task == "multioutput_classification" else None,
+        "auc": float(np.mean([item["auc"] for item in report_values if item.get("auc") is not None]))
+        if task == "multioutput_classification" and all(item.get("auc") is not None for item in report_values) else None,
+        "rmse": float(np.mean([item["rmse"] for item in report_values])) if task != "multioutput_classification" else None,
+    }
+    algorithm_id = "multioutput_random_forest"
+    input_contract = {
+        "task_type": task,
+        "target_columns": target_columns,
+        "input_columns": feature_columns,
+        "cross_validation_folds": contract.cross_validation_folds,
+        "random_seed": contract.random_seed,
+    }
+    preprocessing = {"feature_columns": feature_columns, "steps": []}
+    feature_schema = [{"name": str(name), "dtype": str(features[name].dtype)} for name in features.columns]
+    target_schema = [{"name": name, "dtype": str(targets[name].dtype)} for name in target_columns]
+    with tempfile.TemporaryDirectory() as temporary:
+        model_path = Path(temporary) / f"{job.id}-multioutput.joblib"
+        joblib.dump({
+            "model": estimator,
+            "feature_schema": feature_schema,
+            "target_schema": target_schema,
+            "input_contract": input_contract,
+            "preprocessing": preprocessing,
+        }, model_path)
+        model_artifact = artifact_service.create_from_file(
+            job.project_id,
+            model_path,
+            f"{job.name}-{algorithm_id}.joblib",
+            "model",
+            metadata={
+                "source": "automl",
+                "training_job_id": str(job.id),
+                "dataset_artifact_id": str(dataset.id),
+                "best_algorithm": algorithm_id,
+                "best_candidate": algorithm_id,
+                "candidate_id": algorithm_id,
+                "input_contract": input_contract,
+            },
+        )
+
+    job.metrics = {
+        "task_type": task,
+        "best_candidate": algorithm_id,
+        "best_algorithm": algorithm_id,
+        "best_model": {"algorithm_id": algorithm_id, "model_artifact_id": str(model_artifact.id), "aggregate": aggregate},
+        "algorithm_results": [{
+            "algorithm_id": algorithm_id,
+            "name": algorithm_id,
+            "status": "completed",
+            "model_artifact_id": str(model_artifact.id),
+            "per_target": per_target,
+            "aggregate": aggregate,
+        }],
+        "per_target": per_target,
+        "predictions": prediction_payload,
+        "aggregate": aggregate,
+        "cv_strategy": search_result.cv_strategy,
+        "input_contract": input_contract,
+        "preprocessing": preprocessing,
+        "search": {
+            "method": params.get("search_method", "default"),
+            "strength": params.get("search_strength", "balanced"),
+            "time_budget": params.get("time_budget", 600),
+            "class_weight": bool(params.get("class_weight", False)),
+        },
+    }
+    job.feature_schema = feature_schema
+    job.target_schema = target_schema
+    job.preprocessing = preprocessing
+    job.automl_contract = input_contract
+    job.model_path = artifact_service.storage_reference(model_artifact)
+    job.model_artifact_id = model_artifact.id
+    job.model_library_id = None
+    job.status = "completed"
+    job.finished_at = utcnow()
+    job.heartbeat_at = utcnow()
+    tracking.set_tags(parent.run_id, {
+        "platform.best_candidate": algorithm_id,
+        "platform.best_algorithm": algorithm_id,
+        "platform.model_artifact_id": str(model_artifact.id),
+    })
+    tracking.end_run(parent.run_id, "FINISHED")
+    db.commit()
+    return AutoMLExecutionResult(str(job.id), "completed", algorithm_id)
+
+
 def execute_automl_job(
     job_id,
     *,
@@ -646,14 +811,17 @@ def execute_automl_job(
         task = normalize_task_type(params.get("task", "classification"))
         target_columns = list(params.get("target_columns") or [target_column])
         if task.startswith("multioutput_"):
-            from app.services.automl_search import AutoMLContract, run_automl_search
-            contract = AutoMLContract(task_type=task, target_columns=target_columns, input_columns=params.get("input_columns"), cross_validation_folds=int(params.get("cross_validation_folds") or 5))
-            result = run_automl_search(frame, contract)
-            job.metrics = {"task_type": task, "per_target": {k: vars(v) for k, v in result.per_target.items()}, "cv_strategy": result.cv_strategy, "input_contract": {"target_columns": target_columns, "input_columns": params.get("input_columns"), "cross_validation_folds": contract.cross_validation_folds}}
-            job.status = "completed"
-            job.finished_at = utcnow()
-            db.commit()
-            return AutoMLExecutionResult(str(job.id), "completed", None)
+            return _execute_multioutput_job(
+                job=job,
+                db=db,
+                artifact_service=artifact_service,
+                dataset=dataset,
+                frame=frame,
+                params=params,
+                task=task,
+                parent=parent,
+                tracking=tracking,
+            )
         requested_input_columns = params.get("input_columns")
         feature_columns = resolve_automl_feature_columns(
             frame,

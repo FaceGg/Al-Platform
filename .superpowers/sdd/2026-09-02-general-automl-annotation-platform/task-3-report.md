@@ -46,3 +46,31 @@
 
 - Task 3 remains `in_progress`; the current round is published as a partial implementation checkpoint, not a completion claim.
 - User requested to pause development after documentation and GitHub publication. Do not begin Task 4. On resume, start with a scoped re-review and RED/GREEN coverage for the remaining limitations above, then update the plan only after production-path evidence is available.
+
+## Fix round 2 (2026-09-05)
+
+### Changed files
+
+- `ml-platform/backend/app/services/automl_execution.py`: added a real multi-output execution path that validates all targets, excludes every target from default features, trains a deterministic `MultiOutputClassifier`/`MultiOutputRegressor`, persists a joblib candidate artifact, and stores per-target predictions/reports, aggregate metrics, input contract, preprocessing, feature/target schemas, and artifact identity. Candidate metadata writes both `best_candidate` and `best_algorithm`.
+- `ml-platform/backend/app/services/automl_search.py`: tightened regression/classification target dtype checks and added four search-strength/four time-budget contract normalization with class-weight validation.
+- `ml-platform/backend/app/services/model_registry.py`: accepts either canonical candidate metadata key while still requiring artifact/job/algorithm identity to match.
+- `ml-platform/backend/app/api/training.py`: accepts multi-output target exclusion and persists search strength/class-weight controls; allows route-level business validation for fold errors.
+- `ml-platform/backend/tests/test_automl_multioutput.py`: added RED/GREEN coverage for target dtype, all-target feature exclusion, decision-function AUC fallback, and search controls.
+- `ml-platform/backend/tests/test_automl_tracking.py`: added a real `execute_automl_job` multi-output regression and aligned artifact-only expectations.
+
+### RED
+
+- `& .venv\\Scripts\\python.exe -m pytest tests/test_automl_tracking.py -k multioutput_execution_persists_candidate_artifact_and_reports -q` -> **1 failed** because the worker marked the multi-output job complete with `model_artifact_id=None`.
+- `& .venv\\Scripts\\python.exe -m pytest tests/test_automl_multioutput.py -q` -> **2 failed** for missing all-target feature exclusion and strict dtype contracts.
+
+### GREEN
+
+- `& .venv\\Scripts\\python.exe -m pytest tests/test_automl_multioutput.py tests/test_automl_tracking.py -q` -> **46 passed, 41 warnings, 10 subtests passed**.
+- `& .venv\\Scripts\\python.exe -m py_compile app/services/automl_search.py app/services/automl_execution.py app/services/model_registry.py app/api/training.py` -> passed.
+- `git diff --check` -> passed.
+
+### Remaining concerns
+
+- Durable request replay/idempotency, cancellation polling, lease/recovery wiring, and complete frontend controls remain outside this round.
+- Multi-output search still uses the deterministic random-forest candidate rather than the full family search catalog; downstream durable worker and richer search orchestration remain open.
+- Existing historical tests that assert pre-fix ModelLibrary rows or reject 2-fold CV were updated to the current artifact-only/2-fold contract; optional LightGBM and browser/remote CI gates remain environment-dependent.

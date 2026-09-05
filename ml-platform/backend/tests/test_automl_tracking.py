@@ -252,15 +252,56 @@ class TestAutoMLTracking(unittest.TestCase):
         self.assertEqual(self.tracking.parent_tags["platform.best_child_run_id"], "run-2")
         with self.Session() as db:
             job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
-            model = db.query(ModelLibrary).filter(ModelLibrary.training_job_id == job_id).one()
             self.assertEqual(job.status, "completed")
-            self.assertEqual(model.model_artifact_id, job.model_artifact_id)
-            self.assertEqual(model.dataset_artifact_id, self.dataset_id)
+            self.assertIsNotNone(job.model_artifact_id)
+            self.assertEqual(
+                db.query(ModelLibrary).filter(ModelLibrary.training_job_id == job_id).count(),
+                0,
+            )
             self.assertEqual(job.metrics["best_model"]["name"], "logistic")
             self.assertEqual(
                 [result["name"] for result in job.metrics["all_results"]],
                 ["logistic"],
             )
+
+    def test_multioutput_execution_persists_candidate_artifact_and_reports(self):
+        self.dataset_path.write_text(
+            "x1,x2,label_a,label_b\n" + "\n".join(
+                f"{index % 7},{index % 5},{int(index % 2 == 0)},{int(index % 3 == 0)}"
+                for index in range(60)
+            ),
+            encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_column": "label_a",
+            "target_columns": ["label_a", "label_b"],
+            "task": "multioutput_classification",
+            "input_columns": ["x1", "x2"],
+            "cross_validation_enabled": True,
+            "cross_validation_folds": 2,
+        })
+
+        result = self.execute(job_id)
+
+        self.assertEqual(result.status, "completed")
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
+            self.assertIsNotNone(job.model_artifact_id)
+            self.assertEqual(job.metrics["best_candidate"], "multioutput_random_forest")
+            self.assertEqual(
+                job.metrics["algorithm_results"][0]["model_artifact_id"],
+                str(job.model_artifact_id),
+            )
+            self.assertEqual(
+                set(job.metrics["per_target"]),
+                {"label_a", "label_b"},
+            )
+            self.assertEqual(
+                set(job.metrics["predictions"]),
+                {"label_a", "label_b"},
+            )
+            self.assertIn("preprocessing", job.metrics)
+            self.assertEqual(job.metrics["input_contract"]["target_columns"], ["label_a", "label_b"])
 
     def test_all_failed_marks_parent_and_job_failed(self):
         job_id = self.create_job()
@@ -331,21 +372,13 @@ class TestAutoMLTracking(unittest.TestCase):
                 ["gbdt", "random_forest"],
             )
             self.assertIn(job.metrics["best_model"]["algorithm_id"], {"gbdt", "random_forest"})
-            self.assertEqual(len(models), 2)
+            self.assertEqual(len(models), 0)
             self.assertEqual(
                 {item["algorithm_id"] for item in job.metrics["all_results"]},
                 {item["algorithm_id"] for item in job.metrics["algorithm_results"] if item["status"] == "completed"},
             )
-            winner = next(model for model in models if model.id == job.model_library_id)
-            self.assertEqual(
-                winner.params["best_algorithm"],
-                job.metrics["best_model"]["algorithm_id"],
-            )
-            self.assertTrue(all(item.get("model_library_id") for item in job.metrics["all_results"]))
-            self.assertEqual(
-                str(job.model_library_id),
-                job.metrics["best_model"]["model_library_id"],
-            )
+            self.assertIsNone(job.model_library_id)
+            self.assertTrue(all(item.get("model_artifact_id") for item in job.metrics["all_results"]))
 
     def test_selected_input_columns_are_the_only_columns_used_for_automl(self):
         FeatureCapturingClassifier.seen_columns.clear()
@@ -899,7 +932,7 @@ class TestAutoMLAPI(unittest.TestCase):
             self.assertEqual(job.params["cross_validation_folds"], 4)
 
     def test_invalid_enabled_cross_validation_folds_return_stable_business_error(self):
-        for folds in (None, 2, 6):
+        for folds in (None, 6):
             with self.subTest(folds=folds):
                 response = self.client.post("/api/training/automl/run", json={
                     "project_id": str(self.project_id),

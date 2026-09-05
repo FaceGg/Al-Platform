@@ -91,8 +91,10 @@ class AutoMLRunRequest(BaseModel):
     search_method: str | None = None
     max_trials: int | None = Field(default=None, ge=5, le=200)
     cross_validation_enabled: bool = True
-    cross_validation_folds: int | None = Field(default=5, ge=2, le=5)
+    cross_validation_folds: int | None = Field(default=5)
     time_budget: int = Field(default=60, ge=10, le=9999)
+    search_strength: str = "balanced"
+    class_weight: bool = False
     name: str = Field(default="automl-job", min_length=1, max_length=128)
 
 
@@ -645,6 +647,7 @@ def start_automl(
                 frame,
                 target_columns[0],
                 data.input_columns,
+                target_columns=target_columns,
             )
             if len(target_columns) > 1:
                 if any(column in feature_columns for column in target_columns):
@@ -672,6 +675,8 @@ def start_automl(
                 ),
                 **evaluation,
                 "time_budget": data.time_budget,
+                "search_strength": data.search_strength,
+                "class_weight": data.class_weight,
             },
             dataset_artifact_id=dataset.id,
             dataset_path=artifact_service.storage_reference(dataset), status="pending",

@@ -12,8 +12,11 @@ from app.services.automl_search import (
     rank_candidates,
     run_automl_search,
     validate_target_columns,
+    classification_metrics,
+    normalize_search_controls,
 )
-from app.services.automl_execution import normalize_evaluation_config
+from app.services.automl_execution import normalize_evaluation_config, resolve_automl_feature_columns
+from sklearn.base import BaseEstimator, ClassifierMixin
 
 
 def _frame():
@@ -66,6 +69,48 @@ def test_target_validation_rejects_missing_nonfinite_and_leakage():
         validate_target_columns(frame.assign(label_a=np.inf), "multioutput_regression", ["label_a", "label_b"])
     with pytest.raises(Exception):
         validate_target_columns(frame, "multioutput_classification", ["label_a", "label_a"])
+    with pytest.raises(Exception):
+        validate_target_columns(frame.assign(label_a=np.linspace(0.0, 1.0, len(frame))), "classification", ["label_a"])
+    with pytest.raises(Exception):
+        validate_target_columns(frame.assign(label_a=["a"] * len(frame)), "regression", ["label_a"])
+
+
+def test_default_features_exclude_every_target_column():
+    frame = _frame().assign(label_c=np.arange(40))
+    assert resolve_automl_feature_columns(frame, None, None, target_columns=["label_a", "label_b", "label_c"]) == ["x1", "x2", "x3"]
+
+
+class DecisionOnlyClassifier(ClassifierMixin, BaseEstimator):
+    def fit(self, X, y):
+        self.classes_ = np.array([0, 1])
+        return self
+
+    def predict(self, X):
+        return np.zeros(len(X), dtype=int)
+
+    def decision_function(self, X):
+        return np.linspace(-1.0, 1.0, len(X))
+
+
+def test_auc_falls_back_to_decision_function_when_predict_proba_missing():
+    frame = _frame()
+    auc, f1 = classification_metrics(
+        DecisionOnlyClassifier(),
+        features=frame[["x1", "x2", "x3"]],
+        target=frame["label_a"].to_numpy(),
+        evaluation={"cross_validation_enabled": False, "cross_validation_folds": None},
+    )
+    assert auc is not None
+    assert f1 is not None
+
+
+def test_search_controls_expose_four_strengths_and_time_budgets():
+    for strength in ("light", "balanced", "thorough", "maximum"):
+        config = normalize_search_controls(strength=strength, time_budget=300, class_weight=True)
+        assert config["strength"] == strength
+        assert config["class_weight"] is True
+    for budget in (60, 300, 600, 1800):
+        assert normalize_search_controls(strength="balanced", time_budget=budget)["time_budget"] == budget
 
 
 def test_feature_importance_aggregates_per_target():
