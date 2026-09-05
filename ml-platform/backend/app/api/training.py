@@ -29,7 +29,7 @@ from app.services.automl_execution import (
     resolve_automl_feature_columns,
     resolve_candidates,
 )
-from app.services.automl_search import normalize_task_type, validate_target_columns
+from app.services.automl_search import normalize_search_controls, normalize_task_type, validate_target_columns
 from app.services.automl_catalog import resolve_algorithm_families
 from app.services.automl_search import SEARCH_METHODS
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
@@ -626,6 +626,11 @@ def start_automl(
                 data.cross_validation_enabled,
                 data.cross_validation_folds,
             )
+            controls = normalize_search_controls(
+                strength=data.search_strength,
+                time_budget=data.time_budget,
+                class_weight=data.class_weight,
+            )
         except ValueError as error:
             code = "AUTOML_SEARCH_CONFIG_INVALID" if uses_new_contract else "AUTOML_CONFIG_INVALID"
             raise HTTPException(400, _error(code, str(error))) from error
@@ -675,8 +680,9 @@ def start_automl(
                 ),
                 **evaluation,
                 "time_budget": data.time_budget,
-                "search_strength": data.search_strength,
-                "class_weight": data.class_weight,
+                "search_strength": controls["strength"],
+                "class_weight": controls["class_weight"],
+                "time_budget": controls["time_budget"],
             },
             dataset_artifact_id=dataset.id,
             dataset_path=artifact_service.storage_reference(dataset), status="pending",

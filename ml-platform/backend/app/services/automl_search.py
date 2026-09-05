@@ -51,6 +51,23 @@ class AutoMLContractError(ValueError):
     code = "AUTOML_CONTRACT_INVALID"
 
 
+def iterative_stratified_splits(targets: pd.DataFrame, *, n_splits: int, random_seed: int = 42):
+    """Create deterministic joint-label folds for multi-output classification."""
+    if n_splits < 2:
+        raise AutoMLContractError("cross_validation_folds must be at least two")
+    joint = targets.astype(str).agg("|".join, axis=1)
+    counts = joint.value_counts()
+    if counts.empty or int(counts.min()) < n_splits:
+        raise AutoMLContractError("class counts must support requested folds")
+    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
+    indexes = np.arange(len(targets))
+    return [(train.tolist(), test.tolist()) for train, test in splitter.split(indexes, joint)]
+
+
+def auc_tier(per_target_auc: Mapping[str, float | None]) -> str:
+    return "complete" if per_target_auc and all(value is not None and math.isfinite(float(value)) for value in per_target_auc.values()) else "incomplete"
+
+
 def normalize_task_type(raw: str) -> str:
     value = TASK_TYPE_ALIASES.get(str(raw).strip().lower(), str(raw).strip().lower())
     if value not in PERSISTED_TASK_TYPES:
@@ -153,16 +170,19 @@ def run_automl_search(frame, contract: AutoMLContract) -> AutoMLExecutionResult:
     reports = {}
     strategy = "iterative_stratified" if contract.task_type == "multioutput_classification" else ("stratified" if "classification" in contract.task_type else "kfold")
     if contract.task_type == "multioutput_classification":
-        # Deterministic joint stratification by encoded label combinations.
-        combos = frame[contract.target_columns].astype(str).agg("|".join, axis=1)
-        counts = combos.value_counts()
-        if counts.min() < contract.cross_validation_folds:
-            raise AutoMLContractError("class counts must support requested folds")
+        # Build one shared fold assignment from the joint label distribution.
+        splits = iterative_stratified_splits(
+            frame[contract.target_columns],
+            n_splits=contract.cross_validation_folds,
+            random_seed=contract.random_seed,
+        )
+    else:
+        splits = None
     for target in contract.target_columns:
         y = frame[target].to_numpy()
         if "classification" in contract.task_type:
             estimator = RandomForestClassifier(n_estimators=40, random_state=contract.random_seed, n_jobs=1)
-            splitter = StratifiedKFold(contract.cross_validation_folds, shuffle=True, random_state=contract.random_seed)
+            splitter = splits if splits is not None else StratifiedKFold(contract.cross_validation_folds, shuffle=True, random_state=contract.random_seed)
             pred = cross_val_predict(estimator, features, y, cv=splitter, method="predict")
             proba = cross_val_predict(estimator, features, y, cv=splitter, method="predict_proba")[:, 1]
             reports[target] = TargetReport(macro_f1=float(f1_score(y, pred, average="macro")), accuracy=float(accuracy_score(y, pred)), auc=float(roc_auc_score(y, proba)))

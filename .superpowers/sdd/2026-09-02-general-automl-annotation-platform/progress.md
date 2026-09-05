@@ -157,6 +157,19 @@
 - Open Critical/Important findings: multi-output execution only records reports and marks jobs complete without candidate artifact/prediction/contract persistence; iterative stratification is only a label while folds remain independent `StratifiedKFold`; producer writes `best_algorithm` while registry trust checks `best_candidate`; target dtype and all-target leakage guards are incomplete; search strength/time/class-weight controls are absent; idempotency replay, cancellation polling, durable recovery and lease wiring are absent; AUC fallback/tiering is incomplete; artifact-only registration is unreachable from the UI; frontend multi-output controls are missing; the production worker regression test does not execute `execute_automl_job`.
 - Ruling: resume the Task 3 implementer for one focused fix round covering the load-bearing production persistence/trust mismatch and the directly testable contract gaps. Do not start Task 4 until the implementation report and scoped re-review are clean or findings are explicitly adjudicated at the review cap.
 
+## Task 3 fix round 2 completed (2026-09-05)
+
+- Commit `45f2db7` adds real multi-output candidate training and artifact persistence, per-target predictions/reports, aggregate metrics, input/preprocessing and feature/target schemas, aligned artifact identity metadata, stricter target contracts, all-target default feature exclusion, AUC decision-function fallback coverage, and search control validation.
+- RED/GREEN evidence from the implementer: real worker persistence test initially failed with `model_artifact_id=None`; contract tests initially failed for target exclusion/dtype; final focused AutoML/tracking/registry/API suite `74 passed`, `41 warnings`, `12 subtests`; `py_compile` and `git diff --check` passed.
+- Remaining open scope: durable request replay/idempotency, cancellation polling, lease/recovery wiring, full multi-output family search, frontend controls, browser/remote CI gates. Task 3 remains `in_progress` pending scoped re-review; Task 4 stays `planned`.
+
+## Task 3 scoped re-review after fix round 2 (2026-09-05)
+
+- Verdict: 5 Important findings remain; Task 3 stays `in_progress` and Task 4 remains `planned`.
+- Addressed: multi-output worker now persists a candidate artifact and result contracts; artifact identity metadata is canonicalized; real `execute_automl_job` regression coverage exists; default feature selection excludes all targets; basic target dtype checks are present.
+- Open findings: iterative stratification is still only a label while execution uses independent `StratifiedKFold`; multi-output AUC does not use `decision_function` fallback or complete/incomplete tiers; search strength/time controls are normalized but do not affect the hard-coded worker candidate; request idempotency/replay and cancellation/lease/recovery wiring are absent; regression metrics and stored predictions use in-sample fits instead of CV predictions.
+- Ruling: continue Task 3 with fix round 3 focused on these five findings. Keep Task 4 `planned`; do not claim Task 3 completion until another scoped re-review is clean or the review cap is reached with explicit adjudication.
+
 ## Task 3 fix round 2 (2026-09-05)
 
 - Added a real multi-output worker path that trains and persists a deterministic candidate artifact, stores predictions, per-target and aggregate metrics, input/preprocessing contracts, schemas, and canonical candidate identity.
@@ -164,3 +177,10 @@
 - Registry trust validation now accepts the canonical `best_candidate` or legacy `best_algorithm` metadata key while requiring matching algorithm/artifact/job identity.
 - RED/GREEN evidence is recorded in `task-3-report.md`: final focused AutoML suite 46 passed; static compile and diff checks passed.
 - Task 3 remains `in_progress`: durable request replay/idempotency, cancellation/recovery, full family search for multi-output, frontend controls, and remote/browser gates are still open.
+
+## Task 3 fix round 3 (2026-09-05)
+
+- Added shared joint-label fold assignments for multi-output classification, complete/incomplete AUC tiering with decision-function fallback, cross-validated prediction persistence, and actual search-strength/class-weight controls.
+- API now normalizes the four supported search strengths and four time budgets before queueing.
+- RED/GREEN evidence is recorded in `task-3-report.md`; focused AutoML/registry/API suite is 78 passed with 12 subtests.
+- Task 3 remains `in_progress`: request replay/idempotency headers, cancellation polling, durable lease/recovery, full multi-output family search, frontend controls, and browser/remote gates remain.

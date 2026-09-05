@@ -74,3 +74,23 @@
 - Durable request replay/idempotency, cancellation polling, lease/recovery wiring, and complete frontend controls remain outside this round.
 - Multi-output search still uses the deterministic random-forest candidate rather than the full family search catalog; downstream durable worker and richer search orchestration remain open.
 - Existing historical tests that assert pre-fix ModelLibrary rows or reject 2-fold CV were updated to the current artifact-only/2-fold contract; optional LightGBM and browser/remote CI gates remain environment-dependent.
+
+## Fix round 3 (2026-09-05)
+
+### Changed behavior
+
+- Added deterministic joint-label fold assignment helper for multi-output classification and wired it into the search evaluator so all targets share one fold plan.
+- Added explicit complete/incomplete AUC tiering and actual `decision_function` fallback in the multi-output worker path.
+- Multi-output evaluation now persists cross-validated predictions and per-target reports; search strength controls estimator size (`light`/`balanced`/`thorough`/`maximum`) and class-weight is passed to the classifier.
+- API validation now normalizes search strength, one of four supported time budgets, and the class-weight boolean before queueing.
+
+### RED/GREEN evidence
+
+- RED: new fold/tier imports failed before implementation; regression worker test exposed missing `prediction_source`.
+- GREEN: `pytest tests/test_automl_multioutput.py tests/test_automl_tracking.py tests/test_model_registry_service.py tests/test_api_model_registry.py -q` -> **78 passed, 41 warnings, 12 subtests passed**.
+- `py_compile` and `git diff --check` passed after the round.
+
+### Remaining concerns
+
+- Request replay/idempotency headers, cancellation polling, durable lease/recovery and full frontend wiring remain open Task 3/Task 13 integration work.
+- Optional LightGBM and browser/remote CI gates were not run in this environment.

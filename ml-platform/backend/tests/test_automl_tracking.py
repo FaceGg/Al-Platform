@@ -303,6 +303,57 @@ class TestAutoMLTracking(unittest.TestCase):
             self.assertIn("preprocessing", job.metrics)
             self.assertEqual(job.metrics["input_contract"]["target_columns"], ["label_a", "label_b"])
 
+    def test_multioutput_controls_change_worker_configuration_and_auc_tier(self):
+        self.dataset_path.write_text(
+            "x1,x2,label_a,label_b\n" + "\n".join(
+                f"{index % 7},{index % 5},{int(index % 2 == 0)},{int(index % 3 == 0)}"
+                for index in range(60)
+            ),
+            encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_column": "label_a",
+            "target_columns": ["label_a", "label_b"],
+            "task": "multioutput_classification",
+            "input_columns": ["x1", "x2"],
+            "cross_validation_folds": 2,
+            "search_strength": "maximum",
+            "time_budget": 1800,
+            "class_weight": True,
+        })
+
+        self.execute(job_id)
+
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            self.assertEqual(job.metrics["search"]["n_estimators"], 320)
+            self.assertEqual(job.metrics["search"]["time_budget"], 1800)
+            self.assertTrue(job.metrics["search"]["class_weight"])
+            self.assertIn(job.metrics["auc_tier"], {"complete", "incomplete"})
+
+    def test_multioutput_regression_persists_cross_validated_predictions(self):
+        self.dataset_path.write_text(
+            "x1,x2,target_a,target_b\n" + "\n".join(
+                f"{index},{index % 7},{index * 1.5 + 3},{(index % 7) * 2.0 - 1}"
+                for index in range(60)
+            ),
+            encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_column": "target_a",
+            "target_columns": ["target_a", "target_b"],
+            "task": "multioutput_regression",
+            "input_columns": ["x1", "x2"],
+            "cross_validation_folds": 3,
+        })
+
+        self.execute(job_id)
+
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            self.assertEqual(job.metrics["prediction_source"], "cross_validation")
+            self.assertEqual(len(job.metrics["predictions"]["target_a"]), 60)
+
     def test_all_failed_marks_parent_and_job_failed(self):
         job_id = self.create_job()
         result = self.execute(job_id, [

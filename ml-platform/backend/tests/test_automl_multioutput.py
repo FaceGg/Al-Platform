@@ -14,6 +14,8 @@ from app.services.automl_search import (
     validate_target_columns,
     classification_metrics,
     normalize_search_controls,
+    iterative_stratified_splits,
+    auc_tier,
 )
 from app.services.automl_execution import normalize_evaluation_config, resolve_automl_feature_columns
 from sklearn.base import BaseEstimator, ClassifierMixin
@@ -111,6 +113,19 @@ def test_search_controls_expose_four_strengths_and_time_budgets():
         assert config["class_weight"] is True
     for budget in (60, 300, 600, 1800):
         assert normalize_search_controls(strength="balanced", time_budget=budget)["time_budget"] == budget
+
+
+def test_multioutput_fold_assignments_use_joint_labels():
+    frame = _frame()
+    splits = iterative_stratified_splits(frame[["label_a", "label_b"]], n_splits=2, random_seed=42)
+    assert len(splits) == 2
+    assert set(np.concatenate([test for _, test in splits])) == set(range(len(frame)))
+    assert all(len(train) + len(test) == len(frame) for train, test in splits)
+
+
+def test_auc_tier_marks_incomplete_when_any_target_has_no_continuous_score():
+    assert auc_tier({"label_a": 0.8, "label_b": 0.7}) == "complete"
+    assert auc_tier({"label_a": 0.8, "label_b": None}) == "incomplete"
 
 
 def test_feature_importance_aggregates_per_target():

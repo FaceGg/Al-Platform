@@ -21,6 +21,7 @@ from sklearn.ensemble import (
     RandomForestClassifier,
     RandomForestRegressor,
 )
+from sklearn.base import clone
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, get_scorer, mean_squared_error, roc_auc_score
 from sklearn.model_selection import KFold, StratifiedKFold, cross_val_predict, cross_val_score, train_test_split
@@ -636,19 +637,31 @@ def _execute_multioutput_job(
     # per-target reports come from the fold-local evaluator; predictions and
     # estimators below are fit only after selection for durable inference.
     search_result = run_automl_search(prepared, contract)
+    strength_estimators = {"light": 40, "balanced": 80, "thorough": 160, "maximum": 320}
+    search_strength = str(params.get("search_strength", "balanced")).lower()
+    if search_strength not in strength_estimators:
+        raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
+    n_estimators = strength_estimators[search_strength]
     base = (
         RandomForestClassifier(
-            n_estimators=80,
+            n_estimators=n_estimators,
             random_state=contract.random_seed,
             n_jobs=1,
             class_weight="balanced" if params.get("class_weight") else None,
         )
         if task == "multioutput_classification"
-        else RandomForestRegressor(n_estimators=80, random_state=contract.random_seed, n_jobs=1)
+        else RandomForestRegressor(n_estimators=n_estimators, random_state=contract.random_seed, n_jobs=1)
     )
     estimator = MultiOutputClassifier(base) if task == "multioutput_classification" else MultiOutputRegressor(base)
     estimator.fit(features, targets)
-    predictions = np.asarray(estimator.predict(features))
+    predictions = np.zeros((len(features), len(target_columns)), dtype=object if task == "multioutput_classification" else float)
+    if contract.cross_validation_folds:
+        from app.services.automl_search import iterative_stratified_splits
+        splits = iterative_stratified_splits(targets, n_splits=contract.cross_validation_folds, random_seed=contract.random_seed) if task == "multioutput_classification" else list(KFold(contract.cross_validation_folds, shuffle=True, random_state=contract.random_seed).split(features))
+        for train_index, test_index in splits:
+            fold_model = MultiOutputClassifier(clone(base)) if task == "multioutput_classification" else MultiOutputRegressor(clone(base))
+            fold_model.fit(features.iloc[train_index], targets.iloc[train_index])
+            predictions[test_index] = fold_model.predict(features.iloc[test_index])
     per_target = {}
     prediction_payload = {}
     for index, target_column in enumerate(target_columns):
@@ -656,15 +669,37 @@ def _execute_multioutput_job(
         predicted = predictions[:, index]
         prediction_payload[target_column] = predicted.tolist()
         if task == "multioutput_classification":
+            pred = predictions[:, index]
+            auc = None
+            for train_index, test_index in splits:
+                fold_estimator = clone(base).fit(features.iloc[train_index], targets.iloc[train_index, index])
+                scores = None
+                for method in ("predict_proba", "decision_function"):
+                    try:
+                        scores = getattr(fold_estimator, method)(features.iloc[test_index])
+                        break
+                    except (AttributeError, TypeError, ValueError):
+                        continue
+                if scores is not None:
+                    values_scores = np.asarray(scores)
+                    try:
+                        if values_scores.ndim == 1:
+                            auc = float(roc_auc_score(targets.iloc[test_index, index], values_scores))
+                        elif values_scores.ndim == 2 and values_scores.shape[1] >= 2:
+                            auc = float(roc_auc_score(targets.iloc[test_index, index], values_scores[:, 1]))
+                    except ValueError:
+                        auc = None
+                    if auc is not None:
+                        break
             report = search_result.per_target[target_column]
             per_target[target_column] = {
                 "macro_f1": report.macro_f1,
                 "accuracy": report.accuracy,
-                "auc": report.auc,
+                "auc": auc if auc is not None else report.auc,
             }
         else:
             per_target[target_column] = {
-                "rmse": float(mean_squared_error(values, predicted, squared=False)),
+                "rmse": float(np.sqrt(mean_squared_error(values, predicted))),
             }
     report_values = [value for value in per_target.values()]
     aggregate = {
@@ -736,7 +771,10 @@ def _execute_multioutput_job(
             "strength": params.get("search_strength", "balanced"),
             "time_budget": params.get("time_budget", 600),
             "class_weight": bool(params.get("class_weight", False)),
+            "n_estimators": n_estimators,
         },
+        "prediction_source": "cross_validation",
+        "auc_tier": "complete" if all(item.get("auc") is not None for item in per_target.values()) else "incomplete",
     }
     job.feature_schema = feature_schema
     job.target_schema = target_schema
