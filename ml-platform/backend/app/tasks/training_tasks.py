@@ -3,10 +3,51 @@
 import threading
 import uuid
 from collections.abc import Callable
+from datetime import timedelta
 
+from app.config import settings
+from app.database import SessionLocal
+from app.models.training import TrainingJob
 from app.services.training_execution import execute_training_job
 from app.services.automl_execution import execute_automl_job
 from app.tasks.celery_app import celery_app
+from app.tasks.training_recovery import reconcile_stale_training_jobs
+
+
+def _active_training_task_ids() -> set[str]:
+    active = celery_app.control.inspect(timeout=1).active() or {}
+    return {
+        str(task["id"])
+        for tasks in active.values()
+        for task in tasks
+        if task.get("name") in {"ml_platform.execute_training", "ml_platform.execute_automl"}
+    }
+
+
+@celery_app.task(name="ml_platform.recover_training_jobs")
+def recover_training_jobs():
+    with SessionLocal() as db:
+        recovered = reconcile_stale_training_jobs(
+            db,
+            active_task_ids=_active_training_task_ids(),
+            stale_after=timedelta(seconds=settings.training_stale_after_seconds),
+        )
+        job_types = {
+            str(job.id): job.operator_id
+            for job in db.query(TrainingJob).filter(
+                TrainingJob.id.in_([uuid.UUID(job_id) for job_id in recovered.requeued_job_ids])
+            ).all()
+        } if recovered.requeued_job_ids else {}
+    dispatched = []
+    for job_id in recovered.requeued_job_ids:
+        task_name = "ml_platform.execute_automl" if job_types.get(job_id) == "automl" else "ml_platform.execute_training"
+        dispatched.append(celery_app.send_task(task_name, args=[job_id]).id)
+    return {
+        "requeued": recovered.requeued,
+        "failed": recovered.failed,
+        "cancelled": recovered.cancelled,
+        "dispatched": dispatched,
+    }
 
 
 @celery_app.task(bind=True, name="ml_platform.execute_training")

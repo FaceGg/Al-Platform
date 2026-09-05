@@ -52,16 +52,48 @@ class AutoMLContractError(ValueError):
 
 
 def iterative_stratified_splits(targets: pd.DataFrame, *, n_splits: int, random_seed: int = 42):
-    """Create deterministic joint-label folds for multi-output classification."""
+    """Greedily balance every target/class indicator across deterministic folds."""
     if n_splits < 2:
         raise AutoMLContractError("cross_validation_folds must be at least two")
-    joint = targets.astype(str).agg("|".join, axis=1)
-    counts = joint.value_counts()
-    if counts.empty or int(counts.min()) < n_splits:
-        raise AutoMLContractError("class counts must support requested folds")
-    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
+    indicators = []
+    for column in targets.columns:
+        for value in sorted(targets[column].unique(), key=str):
+            indicator = (targets[column].to_numpy() == value).astype(int)
+            if int(indicator.sum()) < n_splits:
+                raise AutoMLContractError("class counts must support requested folds")
+            indicators.append(indicator)
+    matrix = np.column_stack(indicators)
+    rng = np.random.default_rng(random_seed)
+    order_noise = rng.random(len(targets))
+    desired_labels = matrix.sum(axis=0, dtype=float) / n_splits
+    desired_sizes = np.full(n_splits, len(targets) / n_splits, dtype=float)
+    fold_labels = np.zeros((n_splits, matrix.shape[1]), dtype=float)
+    fold_sizes = np.zeros(n_splits, dtype=float)
+    unassigned = set(range(len(targets)))
+    assignments = np.full(len(targets), -1, dtype=int)
+    while unassigned:
+        remaining = matrix[list(unassigned)].sum(axis=0)
+        positive_labels = np.flatnonzero(remaining)
+        if not len(positive_labels):
+            selected = min(unassigned, key=lambda index: order_noise[index])
+        else:
+            rarest = positive_labels[np.argmin(remaining[positive_labels])]
+            candidates = [index for index in unassigned if matrix[index, rarest]]
+            selected = max(candidates, key=lambda index: (int(matrix[index].sum()), -order_noise[index]))
+        sample_labels = np.flatnonzero(matrix[selected])
+        deficits = desired_labels[sample_labels] - fold_labels[:, sample_labels]
+        label_need = deficits.sum(axis=1)
+        size_need = desired_sizes - fold_sizes
+        fold = max(range(n_splits), key=lambda index: (label_need[index], size_need[index], -index))
+        assignments[selected] = fold
+        fold_labels[fold] += matrix[selected]
+        fold_sizes[fold] += 1
+        unassigned.remove(selected)
     indexes = np.arange(len(targets))
-    return [(train.tolist(), test.tolist()) for train, test in splitter.split(indexes, joint)]
+    return [
+        (indexes[assignments != fold].tolist(), indexes[assignments == fold].tolist())
+        for fold in range(n_splits)
+    ]
 
 
 def auc_tier(per_target_auc: Mapping[str, float | None]) -> str:

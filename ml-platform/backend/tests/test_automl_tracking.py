@@ -413,6 +413,52 @@ class TestAutoMLTracking(unittest.TestCase):
             self.assertEqual(job.metrics["prediction_source"], "cross_validation")
             self.assertEqual(len(job.metrics["predictions"]["target_a"]), 60)
 
+    def test_multioutput_worker_preserves_idempotency_fingerprint_and_family_selection(self):
+        self.dataset_path.write_text(
+            "x1,x2,target_a,target_b\n" + "\n".join(
+                f"{index},{index % 7},{index * 1.5},{index % 7 * 2}" for index in range(60)
+            ), encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_columns": ["target_a", "target_b"], "task": "multioutput_regression",
+            "input_columns": ["x1", "x2"], "cross_validation_folds": 2,
+            "algorithm_ids": ["extra_trees"], "search_method": "grid", "max_trials": 5,
+        })
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            job.automl_contract = {"idempotency_fingerprint": "keep-me"}
+            db.commit()
+        result = self.execute(job_id)
+        self.assertEqual(result.status, "completed")
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            self.assertEqual(job.automl_contract["idempotency_fingerprint"], "keep-me")
+            self.assertEqual(job.metrics["best_algorithm"], "extra_trees")
+            self.assertTrue(job.preprocessing["fold_local"])
+
+    def test_time_budget_preserves_completed_trials(self):
+        self.dataset_path.write_text(
+            "x1,x2,target_a,target_b\n" + "\n".join(
+                f"{index},{index % 7},{index * 1.5},{index % 7 * 2}" for index in range(60)
+            ), encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_columns": ["target_a", "target_b"], "task": "multioutput_regression",
+            "input_columns": ["x1", "x2"], "cross_validation_folds": 2,
+            "algorithm_ids": ["random_forest"], "search_method": "grid", "max_trials": 5, "time_budget": 60,
+        })
+        ticks = iter([0.0, 1.0, 2.0, 3.0, 4.0, 61.0])
+        result = execute_automl_job(job_id, dependencies=AutoMLDependencies(
+            session_factory=self.Session, artifact_service_factory=lambda _db: self.artifacts,
+            tracking_factory=lambda: self.tracking, worker_id="worker-1", task_id="task-1",
+            monotonic=lambda: next(ticks),
+        ))
+        self.assertEqual(result.error_code, "AUTOML_TIME_BUDGET_EXCEEDED")
+        with self.Session() as db:
+            search = db.get(TrainingJob, job_id).metrics["search"]
+            self.assertGreaterEqual(search["completed_trials"], 1)
+            self.assertTrue(search["budget_exhausted"])
+
     def test_all_failed_marks_parent_and_job_failed(self):
         job_id = self.create_job()
         result = self.execute(job_id, [
@@ -735,6 +781,19 @@ class TestAutoMLAPI(unittest.TestCase):
         self.assertEqual(first.status_code, 202, first.text)
         self.assertEqual(second.status_code, 409, second.text)
         self.assertEqual(second.json()["detail"]["code"], "AUTOML_IDEMPOTENCY_CONFLICT")
+
+    def test_completed_job_replays_after_worker_contract_update(self):
+        headers = {**self.headers, "Idempotency-Key": f"automl-{uuid.uuid4().hex}"}
+        payload = {"project_id": str(self.project_id), "experiment_id": str(self.experiment_id), "dataset_artifact_id": str(self.dataset_id), "target_column": "quality"}
+        first = self.client.post("/api/training/automl/run", json=payload, headers=headers)
+        with self.Session() as db:
+            job = db.get(TrainingJob, uuid.UUID(first.json()["job_id"]))
+            job.status = "completed"
+            job.automl_contract = {**job.automl_contract, "input_columns": ["current", "force"]}
+            db.commit()
+        replay = self.client.post("/api/training/automl/run", json=payload, headers=headers)
+        self.assertEqual(replay.status_code, 202, replay.text)
+        self.assertEqual(replay.json()["job_id"], first.json()["job_id"])
 
     def test_deleting_terminal_automl_job_does_not_release_experiment(self):
         created = self._run_automl()

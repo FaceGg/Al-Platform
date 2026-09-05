@@ -22,6 +22,7 @@ from sklearn.ensemble import (
     RandomForestRegressor,
 )
 from sklearn.base import clone
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, get_scorer, mean_squared_error, roc_auc_score
 from sklearn.model_selection import KFold, StratifiedKFold, cross_val_predict, cross_val_score, train_test_split
@@ -34,7 +35,7 @@ from app.models.experiment import Experiment
 from app.models.model_library import ModelLibrary
 from app.models.training import TrainingJob
 from app.services.artifact_service import build_artifact_service
-from app.services.automl_catalog import resolve_algorithm_families
+from app.services.automl_catalog import AlgorithmUnavailable, resolve_algorithm_families
 from app.services.automl_search import (
     AllFamilySearchesFailed,
     SearchConfig,
@@ -682,7 +683,7 @@ def _execute_multioutput_job(
         params.get("input_columns"),
         target_columns=target_columns,
     )
-    prepared = frame.dropna(subset=[*target_columns, *feature_columns])
+    prepared = frame.dropna(subset=target_columns)
     features = prepared.loc[:, feature_columns]
     targets = prepared.loc[:, target_columns]
     if features.empty or len(features) < 10:
@@ -694,13 +695,22 @@ def _execute_multioutput_job(
         raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
     deadline = dependencies.monotonic() + float(params.get("time_budget", 600))
     requested_trials = int(params.get("max_trials") or {"light": 1, "balanced": 2, "thorough": 3, "maximum": 4}[search_strength])
-    trial_count = min(requested_trials, 4)
     method = str(params.get("search_method") or "strength")
     base_estimators = strength_estimators[search_strength]
-    candidate_sizes = [max(20, base_estimators // 2), base_estimators, base_estimators + max(20, base_estimators // 2), base_estimators * 2]
+    requested_family_ids = list(params.get("algorithm_ids") or ["random_forest"])
+    families = resolve_algorithm_families(requested_family_ids)
+    default_specs = [(family, dict(family.default_params)) for family in families]
+    extra_specs = []
+    for family in families:
+        defaults = dict(family.default_params)
+        for parameter, values in family.grid.items():
+            for value in values:
+                candidate_params = {**defaults, parameter: value}
+                if candidate_params != defaults:
+                    extra_specs.append((family, candidate_params))
     if method in {"random", "bayesian", "evolutionary"}:
-        candidate_sizes = [candidate_sizes[index] for index in np.random.default_rng(contract.random_seed).permutation(len(candidate_sizes))]
-    candidate_sizes = candidate_sizes[:trial_count]
+        extra_specs = [extra_specs[index] for index in np.random.default_rng(contract.random_seed).permutation(len(extra_specs))]
+    trial_specs = (default_specs + extra_specs)[:min(requested_trials, len(default_specs) + len(extra_specs))]
     splits = (
         iterative_stratified_splits(targets, n_splits=contract.cross_validation_folds, random_seed=contract.random_seed)
         if task == "multioutput_classification"
@@ -723,14 +733,29 @@ def _execute_multioutput_job(
         db.commit()
 
     trials = []
+    runnable_specs = []
+    for family, family_params in trial_specs:
+        try:
+            family.build(task, family_params)
+            runnable_specs.append((family, family_params))
+        except AlgorithmUnavailable as error:
+            trials.append({
+                "number": len(trials),
+                "algorithm_id": family.id,
+                "params": family_params,
+                "score": None,
+                "status": "unavailable",
+                "error_code": error.code,
+            })
     best = None
-    for trial_index, n_estimators in enumerate(candidate_sizes):
+    job.metrics = {"search": {"method": method, "max_trials": requested_trials, "completed_trials": 0, "trials": [], "budget_exhausted": False}}
+    db.commit()
+    for trial_index, (family, family_params) in enumerate(runnable_specs):
         check_control()
-        base = (
-            RandomForestClassifier(n_estimators=n_estimators, random_state=contract.random_seed, n_jobs=1, class_weight="balanced" if params.get("class_weight") else None)
-            if task == "multioutput_classification"
-            else RandomForestRegressor(n_estimators=n_estimators, random_state=contract.random_seed, n_jobs=1)
-        )
+        raw_estimator = family.build(task, family_params)
+        if task == "multioutput_classification" and params.get("class_weight") and "class_weight" in raw_estimator.get_params():
+            raw_estimator.set_params(class_weight="balanced")
+        base = make_pipeline(SimpleImputer(strategy="median"), StandardScaler(), raw_estimator)
         predictions = np.zeros((len(features), len(target_columns)), dtype=object if task == "multioutput_classification" else float)
         target_scores = {column: [] for column in target_columns}
         for train_index, test_index in splits:
@@ -762,14 +787,21 @@ def _execute_multioutput_job(
             item.get("auc") if item.get("auc") is not None else item.get("macro_f1", -1)
             for item in per_target.values()
         ])) if task == "multioutput_classification" else -float(np.mean([item["rmse"] for item in per_target.values()]))
-        trial = {"number": trial_index, "n_estimators": n_estimators, "score": score, "status": "completed"}
+        trial = {"number": len(trials), "algorithm_id": family.id, "params": family_params, "score": score, "status": "completed"}
         trials.append(trial)
         if best is None or score > best[0]:
-            best = (score, n_estimators, predictions.copy(), per_target)
+            best = (score, family, family_params, predictions.copy(), per_target)
+        completed_trials = sum(item["status"] == "completed" for item in trials)
+        job.metrics = {"search": {"method": method, "max_trials": requested_trials, "completed_trials": completed_trials, "trials": trials, "budget_exhausted": False}}
+        job.heartbeat_at = utcnow()
+        db.commit()
     if best is None:
         raise AllCandidatesFailed("No multi-output trials completed")
-    _best_score, n_estimators, predictions, per_target = best
-    base = RandomForestClassifier(n_estimators=n_estimators, random_state=contract.random_seed, n_jobs=1, class_weight="balanced" if params.get("class_weight") else None) if task == "multioutput_classification" else RandomForestRegressor(n_estimators=n_estimators, random_state=contract.random_seed, n_jobs=1)
+    _best_score, best_family, best_params, predictions, per_target = best
+    raw_estimator = best_family.build(task, best_params)
+    if task == "multioutput_classification" and params.get("class_weight") and "class_weight" in raw_estimator.get_params():
+        raw_estimator.set_params(class_weight="balanced")
+    base = make_pipeline(SimpleImputer(strategy="median"), StandardScaler(), raw_estimator)
     estimator = MultiOutputClassifier(base) if task == "multioutput_classification" else MultiOutputRegressor(base)
     check_control()
     estimator.fit(features, targets)
@@ -787,7 +819,7 @@ def _execute_multioutput_job(
         if task == "multioutput_classification" and all(item.get("auc") is not None for item in report_values) else None,
         "rmse": float(np.mean([item["rmse"] for item in report_values])) if task != "multioutput_classification" else None,
     }
-    algorithm_id = "multioutput_random_forest"
+    algorithm_id = best_family.id if params.get("algorithm_ids") else "multioutput_random_forest"
     input_contract = {
         "task_type": task,
         "target_columns": target_columns,
@@ -795,7 +827,7 @@ def _execute_multioutput_job(
         "cross_validation_folds": contract.cross_validation_folds,
         "random_seed": contract.random_seed,
     }
-    preprocessing = {"feature_columns": feature_columns, "steps": []}
+    preprocessing = {"feature_columns": feature_columns, "steps": ["median_imputation", "standard_scaling"], "fold_local": True}
     feature_schema = [{"name": str(name), "dtype": str(features[name].dtype)} for name in features.columns]
     target_schema = [{"name": name, "dtype": str(targets[name].dtype)} for name in target_columns]
     with tempfile.TemporaryDirectory() as temporary:
@@ -848,9 +880,10 @@ def _execute_multioutput_job(
             "time_budget": params.get("time_budget", 600),
             "class_weight": bool(params.get("class_weight", False)),
             "n_estimators": base_estimators,
-            "selected_n_estimators": n_estimators,
+            "selected_algorithm": best_family.id,
+            "selected_params": best_params,
             "max_trials": requested_trials,
-            "completed_trials": len(trials),
+            "completed_trials": sum(item["status"] == "completed" for item in trials),
             "trials": trials,
             "budget_exhausted": False,
         },
@@ -860,7 +893,7 @@ def _execute_multioutput_job(
     job.feature_schema = feature_schema
     job.target_schema = target_schema
     job.preprocessing = preprocessing
-    job.automl_contract = input_contract
+    job.automl_contract = {**(job.automl_contract or {}), **input_contract}
     job.model_path = artifact_service.storage_reference(model_artifact)
     job.model_artifact_id = model_artifact.id
     job.model_library_id = None
@@ -1234,6 +1267,9 @@ def execute_automl_job(
                 progress = dict(metrics.get("progress") or {})
                 progress["budget_exhausted"] = isinstance(error, TimeoutError)
                 metrics["progress"] = progress
+                search = dict(metrics.get("search") or {})
+                search["budget_exhausted"] = isinstance(error, TimeoutError)
+                metrics["search"] = search
                 failed.metrics = metrics
                 failed.finished_at = utcnow()
                 failed_db.commit()

@@ -101,6 +101,15 @@
 - Request replay/idempotency headers, cancellation polling, durable lease/recovery and full frontend wiring remain open Task 3/Task 13 integration work.
 - Optional LightGBM and browser/remote CI gates were not run in this environment.
 
+## Fix round 5 (2026-09-05)
+
+- Preserved `idempotency_fingerprint` while the worker merges execution contract fields; completed jobs replay successfully with the original key/body.
+- Added the owner-scoped SQLite unique index for legacy databases and scheduled `ml_platform.recover_training_jobs` through Celery Beat. AutoML stale jobs without checkpoints are requeued; ordinary training keeps checkpoint-gated recovery.
+- Multi-output execution now resolves requested catalog families, evaluates bounded family/grid trials, uses deterministic greedy iterative multilabel fold assignment, and applies imputation/scaling inside each fold pipeline.
+- Completed trial records are committed before later timeout failures; `search.budget_exhausted` is retained.
+- RED: 6 failures and 1 pre-existing pass across the new round-5 tests. GREEN: 7 targeted tests passed. Expanded focused suite: 129 passed, 1 deselected, 59 warnings, 16 subtests. The sole unfiltered failure is the known optional LightGBM availability test.
+- Task 3 remains `in_progress`; Task 4 remains `planned`. Frontend/browser, optional LightGBM runtime and remote CI remain unverified.
+
 ## Fix round 4 (2026-09-05)
 
 ### Changed behavior
@@ -120,3 +129,26 @@
 
 - The bounded multi-output loop currently tunes random-forest estimator count; it does not execute every catalog family or implement true iterative multilabel stratification.
 - Frontend controls, browser coverage, optional LightGBM evidence and remote CI remain outside this fix round. Task 3 stays `in_progress`; Task 4 stays `planned` pending scoped re-review.
+
+## Fix round 5 (2026-09-05)
+
+### Changed behavior
+
+- Multi-output completion merges the execution input contract into the queued `automl_contract`, preserving `idempotency_fingerprint`; completed jobs therefore remain replayable with the original `Idempotency-Key` and request body.
+- SQLite compatibility startup now creates the owner-scoped unique index `uq_training_jobs_user_automl_idempotency` over `(user_id, automl_idempotency_key)`, matching the Alembic/ORM concurrency contract for legacy databases.
+- Celery Beat now invokes `ml_platform.recover_training_jobs`. It excludes active task IDs, reconciles stale training rows, and redispatches recovered jobs; deterministic AutoML jobs can be safely requeued without a checkpoint while ordinary training retains the checkpoint requirement.
+- Multi-output search resolves requested `algorithm_ids` through the shared family catalog, evaluates bounded family/grid configurations, persists algorithm/trial identity, and selects the winning requested family instead of varying only random-forest estimator count.
+- Replaced joint-label `StratifiedKFold` with a deterministic greedy iterative multilabel assignment balancing every target/class indicator. Every CV fold uses a cloned median-imputation and standard-scaling pipeline, preventing preprocessing leakage.
+- Completed trials are committed as they finish. A later deadline failure preserves those trials and marks `search.budget_exhausted=true`.
+
+### RED/GREEN evidence
+
+- RED focused set: **6 failed, 1 passed**. Failures covered missing SQLite unique index, AutoML stale jobs failing without checkpoints, absent recovery task/schedule, non-iterative joint-label splitting, overwritten idempotency fingerprint/family selection, and lost trials on timeout. Completed-job API replay already passed before the worker merge fix.
+- GREEN focused RED set: **7 passed**.
+- Expanded focused suite excluding the known environment-only LightGBM construction test: **129 passed, 1 deselected, 59 warnings, 16 subtests passed**.
+- The unfiltered expanded suite was **129 passed, 1 failed**; the sole failure is `test_every_family_defines_both_tasks_and_resource` because LightGBM is not installed in this Python 3.14 environment.
+- Changed modules passed `py_compile`; `alembic check` reported no new operations; `git diff --check` passed.
+
+### Remaining limitations
+
+- Optional LightGBM runtime evidence, frontend/browser coverage and remote CI remain unverified. Task 3 remains `in_progress` pending scoped re-review; Task 4 remains `planned`.

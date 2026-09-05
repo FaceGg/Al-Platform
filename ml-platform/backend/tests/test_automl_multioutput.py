@@ -123,6 +123,14 @@ def test_multioutput_fold_assignments_use_joint_labels():
     assert all(len(train) + len(test) == len(frame) for train, test in splits)
 
 
+def test_iterative_stratification_balances_each_target_label():
+    targets = pd.DataFrame({"a": [1] * 8 + [0] * 12, "b": [1, 0] * 10, "c": [1, 0, 0, 0, 0] * 4})
+    splits = iterative_stratified_splits(targets, n_splits=2, random_seed=42)
+    for column in targets.columns:
+        positives = [int(targets.iloc[test][column].sum()) for _train, test in splits]
+        assert max(positives) - min(positives) <= 1
+
+
 def test_auc_tier_marks_incomplete_when_any_target_has_no_continuous_score():
     assert auc_tier({"label_a": 0.8, "label_b": 0.7}) == "complete"
     assert auc_tier({"label_a": 0.8, "label_b": None}) == "incomplete"

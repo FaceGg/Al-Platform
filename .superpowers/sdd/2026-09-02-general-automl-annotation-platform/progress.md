@@ -201,3 +201,20 @@
 - AutoML start requests now support owner-scoped `Idempotency-Key` replay with a canonical request fingerprint and database uniqueness via migration `20260905_19`.
 - Fresh focused verification: **99 passed**, 57 warnings, 12 subtests; changed modules compile; migration upgrade/check and `git diff --check` pass.
 - Task 3 remains `in_progress` pending scoped re-review. Full catalog-family multi-output search, true iterative multilabel stratification, frontend/browser and remote CI evidence remain open. Task 4 remains `planned`.
+
+## Task 3 fix round 5 (2026-09-05)
+
+- Worker preserves queued idempotency fingerprint, and completed-job replay remains stable.
+- Legacy SQLite compatibility now provides owner/key uniqueness; Celery Beat invokes durable training recovery, with AutoML stale jobs safely requeued without checkpoints.
+- Multi-output worker honors requested `algorithm_ids`, uses bounded catalog/grid trials, deterministic iterative multilabel fold assignment, and fold-local imputer/scaler pipelines. Completed trials survive later timeout.
+- RED 6 failed/1 passed; targeted GREEN 7 passed; expanded focused suite 129 passed, 1 deselected, 59 warnings, 16 subtests. The deselection is the known missing-LightGBM environment test.
+- Task 3 remains `in_progress`; Task 4 remains `planned` pending scoped re-review.
+
+## Task 3 fix round 5 (2026-09-05)
+
+- Preserved queued idempotency fingerprints across worker completion and added queued-to-completed replay coverage.
+- Added legacy SQLite owner/key unique-index compatibility, scheduled Celery training recovery, and checkpoint-free stale recovery for deterministic AutoML jobs while retaining checkpoint requirements for ordinary training.
+- Multi-output execution now honors requested catalog `algorithm_ids`, evaluates bounded family/grid trials, uses deterministic iterative multilabel fold assignment, and performs imputation/scaling inside every fold pipeline.
+- Deadline failures retain committed completed trials and set `search.budget_exhausted=true`.
+- TDD evidence: RED **6 failed, 1 passed**; targeted GREEN **7 passed**; expanded focused suite **129 passed, 1 deselected, 59 warnings, 16 subtests**. The deselected/unfiltered failure is the pre-existing optional LightGBM availability test; compile, Alembic check and diff check pass.
+- Task 3 remains `in_progress` pending scoped re-review; Task 4 remains `planned`. Browser, frontend, optional LightGBM and remote CI evidence remain open.

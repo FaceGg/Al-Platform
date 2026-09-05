@@ -106,6 +106,12 @@ _SQLITE_INDEXES = {
     },
 }
 
+_SQLITE_UNIQUE_INDEXES = {
+    "training_jobs": {
+        "uq_training_jobs_user_automl_idempotency": ("user_id", "automl_idempotency_key"),
+    },
+}
+
 
 def ensure_schema_compatibility(engine: Engine) -> None:
     if engine.dialect.name != "sqlite":
@@ -131,4 +137,15 @@ def ensure_schema_compatibility(engine: Engine) -> None:
                 if index_name not in existing_indexes:
                     connection.execute(text(
                         f'CREATE INDEX "{index_name}" ON "{table}" ("{column}")'
+                    ))
+        refreshed = inspect(engine)
+        for table, indexes in _SQLITE_UNIQUE_INDEXES.items():
+            if table not in tables:
+                continue
+            existing_indexes = {item["name"] for item in refreshed.get_indexes(table)}
+            for index_name, columns in indexes.items():
+                if index_name not in existing_indexes:
+                    column_sql = ", ".join(f'"{column}"' for column in columns)
+                    connection.execute(text(
+                        f'CREATE UNIQUE INDEX "{index_name}" ON "{table}" ({column_sql})'
                     ))

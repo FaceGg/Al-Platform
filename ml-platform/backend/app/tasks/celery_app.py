@@ -40,6 +40,10 @@ celery_app.conf.update(
             "task": "ml_platform.recover_pipeline_schedules",
             "schedule": 60.0,
         },
+        "training-job-recovery": {
+            "task": "ml_platform.recover_training_jobs",
+            "schedule": 60.0,
+        },
         "inference-deployment-reconciliation": {
             "task": "ml_platform.reconcile_inference_deployments",
             "schedule": 60.0,

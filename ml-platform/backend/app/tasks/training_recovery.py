@@ -11,6 +11,7 @@ class TrainingRecoveryResult:
     requeued: int = 0
     failed: int = 0
     cancelled: int = 0
+    requeued_job_ids: tuple[str, ...] = ()
 
     @property
     def total(self) -> int:
@@ -32,6 +33,7 @@ def reconcile_stale_training_jobs(
         TrainingJob.status.in_(["running", "cancel_requested"]),
     ).all()
     requeued = failed = cancelled = 0
+    requeued_job_ids: list[str] = []
     for job in jobs:
         if job.task_id in active_task_ids:
             continue
@@ -42,7 +44,7 @@ def reconcile_stale_training_jobs(
             job.status = "cancelled"
             job.finished_at = utcnow()
             cancelled += 1
-        elif job.latest_checkpoint_uri:
+        elif job.latest_checkpoint_uri or job.operator_id == "automl":
             job.status = "pending"
             job.attempt = int(job.attempt or 0) + 1
             job.task_id = None
@@ -51,6 +53,7 @@ def reconcile_stale_training_jobs(
             job.error_code = None
             job.error_message = None
             requeued += 1
+            requeued_job_ids.append(str(job.id))
         else:
             job.status = "failed"
             job.error_code = "TRAINING_WORKER_LOST"
@@ -58,4 +61,4 @@ def reconcile_stale_training_jobs(
             job.finished_at = utcnow()
             failed += 1
     db.commit()
-    return TrainingRecoveryResult(requeued, failed, cancelled)
+    return TrainingRecoveryResult(requeued, failed, cancelled, tuple(requeued_job_ids))
