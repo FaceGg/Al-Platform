@@ -619,6 +619,72 @@ describe("AutoMLPage", () => {
     expect(api.post.mock.calls[0][1]).not.toHaveProperty("candidate_ids");
   });
 
+  it("exposes the four canonical task types, all search controls, and four fold choices", async () => {
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务类型" }));
+    for (const label of ["Classification", "Multi-output Classification", "Regression", "Multi-output Regression"]) {
+      expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
+    }
+
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "任务类型" }), { key: "Escape" });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "搜索强度" }));
+    for (const label of ["轻量", "均衡", "彻底", "最大"]) {
+      expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
+    }
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "搜索强度" }), { key: "Escape" });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "总时间上限" }));
+    for (const label of ["60 秒", "300 秒", "600 秒", "1800 秒"]) {
+      expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
+    }
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "总时间上限" }), { key: "Escape" });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "交叉验证折数" }));
+    for (const label of ["2 折", "3 折", "4 折", "5 折"]) {
+      expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
+    }
+    expect(screen.getByRole("switch", { name: "类别权重" })).toBeInTheDocument();
+  });
+
+  it("submits multi-output targets separately and excludes every target from inputs", async () => {
+    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    datasets.getDatasetPreview.mockResolvedValue({
+      columns: ["feature", "force", "label_a", "label_b"],
+      dtypes: { feature: "float64", force: "float64", label_a: "object", label_b: "int64" },
+      preview: [],
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务类型" }));
+    fireEvent.click(await screen.findByText("Multi-output Regression", { selector: ".ant-select-item-option-content" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
+    fireEvent.click(await screen.findByText("label_a", { selector: ".ant-select-item-option-content" }));
+    fireEvent.click(await screen.findByText("label_b", { selector: ".ant-select-item-option-content" }));
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/training/automl/run",
+      expect.objectContaining({
+        task: "multioutput_regression",
+        target_columns: ["label_a", "label_b"],
+        input_columns: ["feature", "force"],
+        search_strength: "balanced",
+        time_budget: 600,
+        class_weight: false,
+      }),
+      expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
+    ));
+    expect(api.post.mock.calls[0][1]).not.toHaveProperty("target_column");
+  });
+
   it.skip("submits the selected input columns with the target column", async () => {
     api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);

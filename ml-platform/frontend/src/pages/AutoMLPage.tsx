@@ -4,6 +4,7 @@ import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Ta
 import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, StopOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
+import type { AutoMLRunPayload, AutoMLSearchMethod, AutoMLSearchStrength, AutoMLTaskType, AutoMLTimeBudget } from "../api/training";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
 import {
   createQualityRun,
@@ -38,6 +39,25 @@ const AUTOML_SEARCH_OPTIONS = [
   { value: "evolutionary", label: "进化算法" },
   { value: "multi_fidelity", label: "多保真搜索" },
 ];
+
+const AUTOML_TASK_OPTIONS = [
+  { value: "classification", label: "Classification" },
+  { value: "multioutput_classification", label: "Multi-output Classification" },
+  { value: "regression", label: "Regression" },
+  { value: "multioutput_regression", label: "Multi-output Regression" },
+];
+
+const AUTOML_STRENGTH_OPTIONS = [
+  { value: "light", label: "轻量" },
+  { value: "balanced", label: "均衡" },
+  { value: "thorough", label: "彻底" },
+  { value: "maximum", label: "最大" },
+];
+
+const AUTOML_TIME_BUDGET_OPTIONS = [60, 300, 600, 1800].map((value) => ({
+  value,
+  label: `${value} 秒`,
+}));
 
 const QUALITY_REQUIRED_SOURCE_COLUMNS = [
   "wld1c", "wld2c", "tipv1", "tipv2", "wres", "energy",
@@ -102,14 +122,16 @@ export default function AutoMLPage() {
   const [datasetColumns, setDatasetColumns] = useState<string[]>([]);
   const [numericInputColumns, setNumericInputColumns] = useState<string[]>([]);
   const [inputColumns, setInputColumns] = useState<string[]>([]);
-  const [targetColumn, setTargetColumn] = useState("");
-  const [taskType, setTaskType] = useState("classification");
+  const [targetColumns, setTargetColumns] = useState<string[]>([]);
+  const [taskType, setTaskType] = useState<AutoMLTaskType>("classification");
   const [algorithmIds, setAlgorithmIds] = useState<string[]>([]);
-  const [searchMethod, setSearchMethod] = useState("bayesian");
+  const [searchMethod, setSearchMethod] = useState<AutoMLSearchMethod>("bayesian");
   const [maxTrials, setMaxTrials] = useState(20);
-  const [timeBudget, setTimeBudget] = useState(9999);
+  const [searchStrength, setSearchStrength] = useState<AutoMLSearchStrength>("balanced");
+  const [timeBudget, setTimeBudget] = useState<AutoMLTimeBudget>(600);
+  const [classWeight, setClassWeight] = useState(false);
   const [crossValidationEnabled, setCrossValidationEnabled] = useState(true);
-  const [crossValidationFolds, setCrossValidationFolds] = useState<3 | 4 | 5>(5);
+  const [crossValidationFolds, setCrossValidationFolds] = useState<2 | 3 | 4 | 5>(5);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<any>(null);
   const [analysisReport, setAnalysisReport] = useState<Record<string, unknown> | null>(null);
@@ -246,7 +268,7 @@ export default function AutoMLPage() {
       setDatasetColumns([]);
       setNumericInputColumns([]);
       setInputColumns([]);
-      setTargetColumn("");
+      setTargetColumns([]);
       setQualityInputColumns([]);
       setQualityTargetColumn("");
       return;
@@ -255,7 +277,7 @@ export default function AutoMLPage() {
     setDatasetColumns([]);
     setNumericInputColumns([]);
     setInputColumns([]);
-    setTargetColumn("");
+    setTargetColumns([]);
     setQualityInputColumns([]);
     setQualityTargetColumn("");
     getDatasetPreview(selectedDataset)
@@ -266,7 +288,11 @@ export default function AutoMLPage() {
         const dtypes = data.dtypes && typeof data.dtypes === "object" ? data.dtypes : {};
         setDatasetColumns(columns);
         setNumericInputColumns(columns.filter((column) => /^(?:u?int|float|complex)/i.test(String(dtypes[column] || ""))));
-        setTargetColumn((current) => columns.includes(current) ? current : (columns.includes("label") ? "label" : ""));
+        setTargetColumns((current) => {
+          const retained = current.filter((column) => columns.includes(column));
+          if (retained.length) return retained;
+          return columns.includes("label") ? ["label"] : [];
+        });
         setQualityTargetColumn((current) => (
           columns.includes(current) && !QUALITY_REQUIRED_SOURCE_COLUMNS.includes(current) ? current : ""
         ));
@@ -275,12 +301,12 @@ export default function AutoMLPage() {
   }, [selectedDataset, t.common.error, message]);
 
   useEffect(() => {
-    const allowed = numericInputColumns.filter((column) => column !== targetColumn);
+    const allowed = numericInputColumns.filter((column) => !targetColumns.includes(column));
     setInputColumns((current) => {
       const retained = current.filter((column) => allowed.includes(column));
       return retained.length ? retained : allowed;
     });
-  }, [numericInputColumns, targetColumn]);
+  }, [numericInputColumns, targetColumns]);
 
   useEffect(() => {
     setQualityInputColumns((current) => {
@@ -291,8 +317,14 @@ export default function AutoMLPage() {
   const allResults = results?.models || results?.all_results || [];
   const bestModel = results?.best_model || allResults[0];
   const features = results?.feature_importance || results?.features || {};
-  const handleTaskTypeChange = (task: string) => {
+  const handleTaskTypeChange = (task: AutoMLTaskType) => {
     setTaskType(task);
+    if (!task.startsWith("multioutput") && targetColumns.length > 1) {
+      setTargetColumns(targetColumns.slice(0, 1));
+    }
+    if (!task.includes("classification")) {
+      setClassWeight(false);
+    }
   };
 
   const viewModelingTask = async (task: ModelingTask) => {
@@ -375,7 +407,8 @@ export default function AutoMLPage() {
   }, [results]);
 
   const handleRun = async () => {
-    if (!selectedProject || !selectedExperiment || !selectedDataset || !targetColumn || inputColumns.length === 0) {
+    const isMultiOutput = taskType.startsWith("multioutput");
+    if (!selectedProject || !selectedExperiment || !selectedDataset || !targetColumns.length || (isMultiOutput && targetColumns.length < 2) || inputColumns.length === 0) {
       message.warning((t.automl?.select_project || "Project") + " / " + (t.automl?.select_dataset || "Dataset") + " / " + (t.automl?.target || "Target"));
       return;
     }
@@ -383,17 +416,26 @@ export default function AutoMLPage() {
     setResults(null);
     setAnalysisReport(null);
     try {
-      const res = await apiClient.post("/training/automl/run", {
+      const payload: AutoMLRunPayload = {
         project_id: selectedProject, experiment_id: selectedExperiment,
-        dataset_artifact_id: selectedDataset, target_column: targetColumn,
+        dataset_artifact_id: selectedDataset,
+        ...(isMultiOutput ? { target_columns: targetColumns } : { target_column: targetColumns[0] }),
         input_columns: inputColumns,
         task: taskType,
         algorithm_ids: algorithmIds,
         search_method: searchMethod,
         max_trials: maxTrials,
         time_budget: timeBudget,
+        search_strength: searchStrength,
+        class_weight: classWeight,
         cross_validation_enabled: crossValidationEnabled,
         cross_validation_folds: crossValidationEnabled ? crossValidationFolds : null,
+      };
+      const idempotencyKey = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const res = await apiClient.post("/training/automl/run", payload, {
+        headers: { "Idempotency-Key": idempotencyKey },
       });
       notifyDashboardStatsChanged();
       void refreshModelingTasks();
@@ -653,8 +695,17 @@ export default function AutoMLPage() {
             </Button>
           </Col>
           <Col xs={24} sm={4}><Text strong>{t.automl?.target || "Target"}</Text>
-            <Select aria-label="目标列" style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.target} value={targetColumn || undefined} onChange={setTargetColumn}
-              disabled={!selectedDataset} options={datasetColumns.map((column) => ({ value: column, label: column }))} /></Col>
+            <Select
+              aria-label="目标列"
+              mode={taskType.startsWith("multioutput") ? "multiple" : undefined}
+              maxTagCount="responsive"
+              style={{ width: "100%", marginTop: 4 }}
+              placeholder={t.automl?.target}
+              value={taskType.startsWith("multioutput") ? targetColumns : targetColumns[0] || undefined}
+              onChange={(columns: string[] | string) => setTargetColumns(Array.isArray(columns) ? columns : columns ? [columns] : [])}
+              disabled={!selectedDataset}
+              options={datasetColumns.map((column) => ({ value: column, label: column }))}
+            /></Col>
           <Col xs={24} sm={6}><Text strong>输入列</Text>
             <Select
               aria-label="输入列"
@@ -664,13 +715,13 @@ export default function AutoMLPage() {
               style={{ width: "100%", marginTop: 4 }}
               placeholder="选择数值输入列"
               value={inputColumns}
-              onChange={(columns: string[]) => setInputColumns(columns.filter((column) => column !== targetColumn))}
+              onChange={(columns: string[]) => setInputColumns(columns.filter((column) => !targetColumns.includes(column)))}
               disabled={!selectedDataset}
-              options={numericInputColumns.filter((column) => column !== targetColumn).map((column) => ({ value: column, label: column }))}
+              options={numericInputColumns.filter((column) => !targetColumns.includes(column)).map((column) => ({ value: column, label: column }))}
             /></Col>
           <Col xs={24} sm={4}><Text strong>{t.automl?.task || "Task"}</Text>
             <Select aria-label="任务类型" style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={handleTaskTypeChange}
-              options={[{ value: "classification", label: "Classification" }, { value: "regression", label: "Regression" }]} /></Col>
+              options={AUTOML_TASK_OPTIONS} /></Col>
           <Col xs={24} sm={6}><Text strong>算法家族</Text>
             <Select
               aria-label="算法家族"
@@ -688,8 +739,14 @@ export default function AutoMLPage() {
               options={AUTOML_SEARCH_OPTIONS} /></Col>
           <Col xs={12} sm={3}><Text strong>最大试验次数</Text>
             <InputNumber aria-label="最大试验次数" min={5} max={200} value={maxTrials} onChange={(value) => setMaxTrials(value ?? 20)} style={{ width: "100%", marginTop: 4 }} /></Col>
+          <Col xs={12} sm={3}><Text strong>搜索强度</Text>
+            <Select aria-label="搜索强度" style={{ width: "100%", marginTop: 4 }} value={searchStrength} onChange={setSearchStrength}
+              options={AUTOML_STRENGTH_OPTIONS} /></Col>
           <Col xs={12} sm={3}><Text strong>总时间上限（秒）</Text>
-            <InputNumber aria-label="总时间上限" min={60} max={9999} value={timeBudget} onChange={(value) => setTimeBudget(value ?? 9999)} addonAfter="秒" style={{ width: "100%", marginTop: 4 }} /></Col>
+            <Select aria-label="总时间上限" style={{ width: "100%", marginTop: 4 }} value={timeBudget} onChange={setTimeBudget}
+              options={AUTOML_TIME_BUDGET_OPTIONS} /></Col>
+          <Col xs={12} sm={3}><Text strong>类别权重</Text>
+            <div style={{ marginTop: 7 }}><Switch aria-label="类别权重" checked={classWeight} disabled={!taskType.includes("classification")} onChange={setClassWeight} /></div></Col>
           <Col xs={12} sm={3}><Text strong>交叉验证</Text>
             <div style={{ marginTop: 7 }}><Switch aria-label="启用交叉验证" checked={crossValidationEnabled} onChange={setCrossValidationEnabled} /></div></Col>
           <Col xs={12} sm={3}><Text strong>折数</Text>
@@ -698,8 +755,8 @@ export default function AutoMLPage() {
               style={{ width: "100%", marginTop: 4 }}
               value={crossValidationFolds}
               disabled={!crossValidationEnabled}
-              onChange={(folds: 3 | 4 | 5) => setCrossValidationFolds(folds)}
-              options={[3, 4, 5].map((folds) => ({ value: folds, label: `${folds} 折` }))}
+              onChange={(folds: 2 | 3 | 4 | 5) => setCrossValidationFolds(folds)}
+              options={[2, 3, 4, 5].map((folds) => ({ value: folds, label: `${folds} 折` }))}
             /></Col>
           <Col xs={24} sm={2}><Button type="primary" icon={<ThunderboltOutlined />} onClick={handleRun} loading={running} block style={{ marginTop: 22 }}>{t.automl?.run || "Run"}</Button></Col>
         </Row>

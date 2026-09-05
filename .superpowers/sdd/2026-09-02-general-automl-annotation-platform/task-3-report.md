@@ -164,3 +164,22 @@
 - Multi-output timeout keeps the best completed trial, persists artifact/reports/metrics, and completes with `search.budget_exhausted=true`.
 - `search_strength` changes family resources; grid search uses Cartesian combinations while honoring `algorithm_ids` and `max_trials`.
 - Targeted round-6 regressions passed. Task 3 remains `in_progress`; Task 4 remains `planned`.
+
+## Frontend contract round (2026-09-05)
+
+### Changed behavior
+
+- AutoML configuration now exposes the four canonical task types: single-output classification/regression and multi-output classification/regression.
+- Target selection switches to multi-select for multi-output tasks; single-output requests send `target_column`, while multi-output requests send `target_columns`. Numeric input options exclude every selected target.
+- The UI exposes all five search methods, four search strengths, four supported time budgets (60/300/600/1800 seconds), 2-5 cross-validation folds, and a class-weight switch that is active only for classification tasks.
+- Every submit attaches a fresh `Idempotency-Key` header. The typed `AutoMLRunPayload` contract records the canonical task/search/fold/time fields.
+
+### RED/GREEN evidence
+
+- RED: newly added frontend contract tests failed because multi-output task options, strength/time presets, 2-fold selection, class-weight control, and target payload/header behavior were absent.
+- GREEN: `npm test -- --run src/pages/AutoMLPage.test.tsx` -> **7 passed, 19 skipped**; `npm run build` -> **passed** (`tsc --noEmit` and Vite production build).
+
+### Remaining concerns
+
+- Browser/Playwright evidence was not added because no authenticated runnable AutoML browser pattern was available in this scoped round.
+- Task 3 remains `in_progress`; optional LightGBM, full backend/remote CI and browser gates remain unverified. Task 4 remains `planned`.

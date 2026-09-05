@@ -230,3 +230,11 @@
 - Timeout preserves best-so-far artifacts and completed status with budget exhaustion metadata.
 - Search strength is injected into family resources; grid trial construction is Cartesian and respects requested families/trial limits.
 - Targeted regressions passed; Task 3 remains `in_progress`, Task 4 remains `planned`.
+
+## Task 3 frontend contract round (2026-09-05)
+
+- Added four canonical task options, single/multi-target selection and payload branching (`target_column` vs `target_columns`). All selected targets are removed from numeric input options.
+- Added four search strengths, four supported time budgets, 2-5 folds, classification-only class-weight switch, and per-submit `Idempotency-Key` header; all five search methods remain exposed.
+- Added `AutoMLRunPayload` TypeScript contract in `src/api/training.ts`.
+- RED: focused frontend contract tests failed on missing options and payload behavior. GREEN: `npm test -- --run src/pages/AutoMLPage.test.tsx` 7 passed/19 skipped; `npm run build` passed.
+- Task 3 remains `in_progress`; browser/remote CI and optional LightGBM evidence remain open. Task 4 remains `planned`.
