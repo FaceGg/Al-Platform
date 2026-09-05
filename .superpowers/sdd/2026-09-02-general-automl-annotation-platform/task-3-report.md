@@ -77,6 +77,12 @@
 
 ## Fix round 3 (2026-09-05)
 
+### Scoped re-review
+
+- Current SHA: `7b4797d`. Focused AutoML/registry/API suites: **78 passed**, 41 warnings, 12 subtests; `py_compile` and `git diff --check` passed.
+- Remaining Important gaps: production AUC aggregation/tiering is not fully robust (first usable fold, binary score indexing and report fallback); multi-output execution does not enforce the time budget or full search method/trial controls; request idempotency replay, cancellation polling and durable lease/recovery are not connected. Joint-label `StratifiedKFold` is deterministic shared splitting but not a true iterative-stratification implementation.
+- Task 3 remains `in_progress`; Task 4 remains `planned`.
+
 ### Changed behavior
 
 - Added deterministic joint-label fold assignment helper for multi-output classification and wired it into the search evaluator so all targets share one fold plan.

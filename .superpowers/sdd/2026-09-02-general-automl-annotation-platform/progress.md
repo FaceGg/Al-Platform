@@ -184,3 +184,12 @@
 - API now normalizes the four supported search strengths and four time budgets before queueing.
 - RED/GREEN evidence is recorded in `task-3-report.md`; focused AutoML/registry/API suite is 78 passed with 12 subtests.
 - Task 3 remains `in_progress`: request replay/idempotency headers, cancellation polling, durable lease/recovery, full multi-output family search, frontend controls, and browser/remote gates remain.
+
+## Task 3 scoped re-review after fix round 3 (2026-09-05)
+
+- Fresh scoped verification on `7b4797d` passed the focused AutoML/registry/API suites: 78 passed, 41 warnings, 12 subtests; compile and diff checks passed.
+- Important findings remain. Production AUC still stops at the first fold with a usable score, falls back to the search report on failure, hard-codes binary `scores[:, 1]` for multi-class cases, and computes `auc_tier` without calling the shared tier helper; an invalid target can therefore be counted as complete.
+- `time_budget` is persisted but does not bound the multi-output execution, and `search_method`/`max_trials` do not drive multi-output family search. Search strength only changes the random-forest estimator count.
+- `start_automl` still creates a fresh UUID without an `Idempotency-Key` replay contract. Cancellation only sets `cancel_requested`; the multi-output worker does not poll cancellation state or receive a callback, and durable lease/recovery is not wired to this execution path.
+- Joint-label `StratifiedKFold` provides deterministic shared folds but is not a true iterative-stratification algorithm; treat this as an implementation gap if the approved contract requires iterative multilabel balancing. Regression predictions now come from CV folds, but search reports and worker metrics do not reuse one shared split object.
+- Ruling: Task 3 remains `in_progress`; Task 4 remains `planned`. Continue with a focused fix round for production AUC aggregation/tiering, actual budget/search execution, and durable request/cancellation/recovery wiring before completion review.
