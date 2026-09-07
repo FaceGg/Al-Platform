@@ -16,9 +16,11 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.database import get_db
 from app.models.platform_models import GenericAnnotationTask
+from app.models.labeling import LabelSchema
 from app.models.project import Project
 from app.models.user import User
 from app.services.annotation_tasks import migrate_legacy_quality_run
+from app.services.label_schema import bind_label_schema_to_task
 
 router = APIRouter(tags=["generic-tasks"])
 
@@ -118,6 +120,14 @@ def create_generic_annotation_task(
     key = _request_context(request, x_request_id, idempotency_key)
     project_id = data.project_id
     _require_project(db, project_id, current_user)
+    schema = db.get(LabelSchema, data.label_schema_id)
+    if schema is None or schema.project_id != project_id:
+        raise _contract_error(
+            request,
+            "LABEL_SCHEMA_NOT_FOUND",
+            "The label schema does not belong to this project.",
+            status_code=404,
+        )
     existing = db.query(GenericAnnotationTask).filter(
         GenericAnnotationTask.idempotency_key == key,
         GenericAnnotationTask.owner_id == current_user.id,
@@ -136,6 +146,8 @@ def create_generic_annotation_task(
     )
     db.add(task)
     try:
+        db.flush()
+        bind_label_schema_to_task(db, task_id=task.id, schema=schema)
         db.commit()
     except IntegrityError:
         db.rollback()

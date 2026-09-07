@@ -20,6 +20,7 @@ from app.main import app
 from app.models.project import Project
 from app.models.user import User
 from app.models.platform_models import GenericAnnotationTask
+from app.models.labeling import LabelColumn, LabelSchema
 from app.services.annotation_tasks import migrate_legacy_quality_run
 from app.models.spot_weld_quality import SpotWeldQualityRun
 from app.models.spot_weld_quality import SpotWeldQualitySample, SpotWeldLabelRevision, SpotWeldLabelSnapshot
@@ -41,6 +42,11 @@ class GenericizationContractTests(unittest.TestCase):
         cls.db.flush()
         cls.project = Project(name="Generic project", owner_id=cls.owner.id)
         cls.db.add(cls.project)
+        cls.db.flush()
+        cls.label_schema = LabelSchema(project_id=cls.project.id, name="generic-labels", version=1, status="active")
+        cls.db.add(cls.label_schema)
+        cls.db.flush()
+        cls.db.add(LabelColumn(schema_id=cls.label_schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"))
         cls.db.commit()
         app.dependency_overrides[get_db] = lambda: cls.db
         app.dependency_overrides[get_current_user] = lambda: cls.owner
@@ -60,7 +66,7 @@ class GenericizationContractTests(unittest.TestCase):
                 "project_id": str(self.project.id),
                 "dataset_version_id": str(uuid.uuid4()),
                 "mode": "manual",
-                "label_schema_id": str(uuid.uuid4()),
+                "label_schema_id": str(self.label_schema.id),
                 "sample_scope": {"kind": "all"},
             },
         )
@@ -72,7 +78,7 @@ class GenericizationContractTests(unittest.TestCase):
             "project_id": str(self.project.id),
             "dataset_version_id": str(uuid.uuid4()),
             "mode": "manual",
-            "label_schema_id": str(uuid.uuid4()),
+            "label_schema_id": str(self.label_schema.id),
             "sample_scope": {"kind": "all"},
         }
         headers = {"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": "same-key"}
@@ -87,7 +93,7 @@ class GenericizationContractTests(unittest.TestCase):
             "project_id": str(self.project.id),
             "dataset_version_id": str(uuid.uuid4()),
             "mode": "manual",
-            "label_schema_id": str(uuid.uuid4()),
+            "label_schema_id": str(self.label_schema.id),
             "sample_scope": {"kind": "all"},
         }
         headers = {"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": "shared-owner-key"}
@@ -99,11 +105,16 @@ class GenericizationContractTests(unittest.TestCase):
         self.db.flush()
         other_project = Project(name="Other generic project", owner_id=other.id)
         self.db.add(other_project)
+        self.db.flush()
+        other_schema = LabelSchema(project_id=other_project.id, name="other-labels", version=1, status="active")
+        self.db.add(other_schema)
+        self.db.flush()
+        self.db.add(LabelColumn(schema_id=other_schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"))
         self.db.commit()
         app.dependency_overrides[get_current_user] = lambda: other
         second = self.client.post(
             "/api/annotation-tasks",
-            json={**payload, "project_id": str(other_project.id)},
+            json={**payload, "project_id": str(other_project.id), "label_schema_id": str(other_schema.id)},
             headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": "shared-owner-key"},
         )
         self.assertEqual(second.status_code, 201, second.text)

@@ -39,7 +39,7 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 | 阶段 | 工作范围 | 状态 | 当前口径 |
 |---|---|---|---|
 | Week 1–12 | 已交付的平台基础、生产化、权限通知与历史验收 | `passed` / `completed` | 已归档，不作为当前待办。 |
-| 通用自动建模与数据标注平台 | 2026-09-02 实施计划 Task 1–14 | `in_progress` | Task 1 去行业化边界与 Task 2 数据导入、数据版本和输入合同已通过当前本地聚焦验证；Task 3 正在修复和复核，Task 4 尚未开始。 |
+| 通用自动建模与数据标注平台 | 2026-09-02 实施计划 Task 1–14 | `in_progress` | Task 1–4 已通过各自当前本地聚焦范围；Task 5–14 尚未完成，远程 CI 和全平台验收仍待后续门禁。 |
 | Week 13 | Kubernetes 基础接入 | `planned`（未开始） | 后续工作，见 BKL-04。 |
 | Week 14 | Kubernetes Job/Pod 执行器 | `planned`（未开始） | 依赖 Week 13，见 BKL-05。 |
 | Week 15 | Notebook、镜像与 GPU | `planned`（未开始） | 依赖 Kubernetes 基础能力，见 BKL-06。 |
@@ -51,14 +51,14 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 
 ## 5. 当前主交付计划
 
-Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 已完成当前本地聚焦合同/API 范围；Task 3 正在按复核结论补齐训练合同和生产接线。文档评审、历史局部功能或 Week 1–12 验收均不构成当前任务完成状态。按依赖执行，不得把局部测试或旧 SHA 证据外推为整体平台验收。
+Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试和源码门禁；Task 5–14 仍按依赖推进。文档评审、历史局部功能或 Week 1–12 验收均不构成当前任务完成状态。按依赖执行，不得把局部测试或旧 SHA 证据外推为整体平台验收。
 
 | ID | 工作项 | 依赖 | 状态 |
 |---|---|---|---|
 | Task 1 | 全项目去行业化迁移基线 | 无；阻塞后续实现 | `passed` |
 | Task 2 | 数据导入、数据版本和统一输入合同 | Task 1 | `passed` |
 | Task 3 | AutoML 四种任务类型和训练合同 | Task 1、Task 2 | `passed` |
-| Task 4 | 标签 schema、类型校验和修订历史 | Task 1、Task 2 | `in_progress` |
+| Task 4 | 标签 schema、类型校验和修订历史 | Task 1、Task 2 | `passed` |
 | Task 5 | 标注任务状态机、任务列表和预览 | Task 2、Task 4 | `planned` |
 | Task 6 | 三种自动标注策略和特征重要性加权 KMeans | Task 3、Task 4、Task 5 | `planned` |
 | Task 7 | 标注员独立认证、主体映射和服务边界 | Task 1、Task 2、Task 4 | `planned` |
@@ -72,8 +72,8 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 
 ### 当前执行入口
 
-1. 明日恢复后先从 Task 3 的剩余阻断和 scoped re-review 开始，不启动 Task 4。
-2. Task 3 完成实现、测试、运行时证据和复核后，Task 4 与后续任务再按依赖推进。
+1. 下一步从 Task 5 的标注任务状态机、列表和预览开始。
+2. Task 4 已提供冻结 schema、任务绑定、列级校验和修订并发边界；Task 5 负责样本初始化与完整生命周期。
 3. 每个 Task 的精确文件、接口、RED/GREEN 步骤和命令以实施计划为准；本文件不创建平行的实现步骤。
 4. Task 14 必须在实现完成后的新 SHA 上重新生成证据，不能复用归档中的 Week 9–12 运行态制品。
 
@@ -112,7 +112,7 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 
 ## 8. 当前风险与门禁
 
-- 通用平台仍处于 `in_progress`：Task 1 已通过其范围内的本地聚焦证据，Task 2 已通过当前本地聚焦合同/API范围，Task 3 仍未完成。迁移、运行时测试、构建、浏览器验收、导出验证、恢复演练和远程门禁均不能整体记为已完成。
+- 通用平台仍处于 `in_progress`：Task 1–4 已通过各自当前本地聚焦证据，Task 5–14 尚未完成。迁移、运行时测试、构建、浏览器验收、导出验证、恢复演练和远程门禁均不能整体记为已完成。
 - Task 1 必须先完成全项目行业特定引用盘点和迁移边界，禁止向新代码继续引入固定行业字段、路由、服务或工作流。
 - 自动标注、认证、回传、导出和清理都涉及跨服务状态；每个 Task 需保留幂等、revision、权限和失败回执的测试证据。
 - 对恢复、备份、升级和安全验收，脚本路径存在不等于可执行：必须记录容器/宿主机边界、环境变量、证书、Compose 服务、镜像和证据目录。
@@ -158,3 +158,6 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 - 2026-09-07：Task 3 继续开发。多输出 trial 规划新增五种搜索方法的可观测参数序列：`random` 对搜索空间采样，`bayesian` 产生确定性可重放探索，`evolutionary` 逐参数变异，`multi_fidelity` 使用 family resource rung；保留旧任务缺省 `strength` 兼容路径，并将缺省 `class_weight` 按合同解释为启用。新增非网格搜索差异性回归。验证：`python -m pytest tests/test_automl_tracking.py -q` 为 **63 passed、11 warnings、10 subtests**；`python -m pytest tests/test_automl_multioutput.py tests/test_automl_report.py -q` 为 **23 passed、2 warnings**。Task 3 仍为 `in_progress`；可选 LightGBM、前端完整浏览器/远程 CI、完整后端门禁仍未完成，Task 4 保持 `planned`。
 
 - 2026-09-07：Task 3 收口并启动 Task 4。多输出 `random`、`bayesian`、`evolutionary`、`multi_fidelity` 已接入与单输出共享的 Optuna family search，使用真实 sampler/pruner 和 trial 分数反馈；`grid` 与 legacy `strength` 路径保持兼容。最终验证：Task 3 后端套件 **146 passed、10 warnings、12 subtests**；前端 Task 3 聚焦测试 **20 passed、19 个历史 skipped**；完整前端套件 **262 passed、19 个历史 skipped**；生产构建、Alembic upgrade/check、模块编译、`git diff --check` 和 Chromium AutoML E2E **1 passed**。可选依赖 `xgboost 3.2.0`、`lightgbm 4.6.0`、`catboost 1.2.10` 均可导入。Task 3 状态提升为 `passed`；Task 4 按依赖进入 `in_progress`。远程 CI 仍属于后续发布/Task 14 门禁，不外推为已通过。
+ - 2026-09-07：Task 3 收口并启动 Task 4。多输出 `random`、`bayesian`、`evolutionary`、`multi_fidelity` 已接入与单输出共享的 Optuna family search，使用真实 sampler/pruner 和 trial 分数反馈；`grid` 与 legacy `strength` 路径保持兼容。最终验证：Task 3 后端套件 **146 passed、10 warnings、12 subtests**；前端 Task 3 聚焦测试 **20 passed、19 个历史 skipped**；完整前端套件 **262 passed、19 个历史 skipped**；生产构建、Alembic upgrade/check、模块编译、`git diff --check` 和 Chromium AutoML E2E **1 passed**。可选依赖 `xgboost 3.2.0`、`lightgbm 4.6.0`、`catboost 1.2.10` 均可导入。Task 3 状态提升为 `passed`；Task 4 按依赖进入 `in_progress`。远程 CI 仍属于后续发布/Task 14 门禁，不外推为已通过。
+
+- 2026-09-07：Task 4 完成当前本地聚焦范围。新增冻结的多列标签 schema、列级约束、任务 schema 绑定快照、当前值与不可变修订历史、评论/确认表、legacy 单列回填迁移和原子 `base_revision` 并发写入；通用任务创建校验 schema 属于项目并自动创建绑定，样本读写/确认拒绝未绑定或错误绑定任务。验证：标签服务、API、通用任务、迁移和 suite manifest 聚焦套件 **36 passed、1 warning、2 subtests**；前端 LabelSchemaEditor、DataAnnotationPage 和 week manifest **48 passed**；`npm run build`、Alembic upgrade/check、模块 `py_compile` 与 `git diff --check` 通过。Task 4 状态提升为 `passed`；Task 5 继续 `planned`。Task 4 未实现样本初始化、任务状态机、完整列表和预览，这些仍属 Task 5。全量后端历史回归仍有 25 个失败，集中在旧点焊 API 测试未提供新请求关联头，以及既有证据/迁移基线假设；不计入 Task 4 聚焦门禁，已保留为后续兼容性工作。

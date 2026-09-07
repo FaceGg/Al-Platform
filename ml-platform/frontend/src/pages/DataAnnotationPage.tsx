@@ -7,10 +7,12 @@ import * as echarts from "echarts";
 import AppLayout from "../components/AppLayout";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
+import LabelSchemaEditor, { type LabelColumnDraft } from "../components/LabelSchemaEditor";
 import { useI18n } from "../i18n";
 import { normalizeTaskStatus, taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 import { formatApiError, default as apiClient } from "../api/client";
 import { listDatasets } from "../api/datasets";
+import { createLabelSchema } from "../api/labelSchemas";
 import {
   createQualityRun,
   deleteQualityRun,
@@ -171,6 +173,7 @@ export default function DataAnnotationPage() {
   const [targetColumnMode, setTargetColumnMode] = useState<"existing" | "new">("existing");
   const [targetColumn, setTargetColumn] = useState("");
   const [targetColumnDtype, setTargetColumnDtype] = useState<CreatedTargetColumnDtype>("int");
+  const [labelSchemaId, setLabelSchemaId] = useState("");
   const [qualityModels, setQualityModels] = useState<QualityModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
   const [automaticSetupStep, setAutomaticSetupStep] = useState<1 | 2>(1);
@@ -665,6 +668,17 @@ export default function DataAnnotationPage() {
     message.success(`${nextLabelMode === "automatic" ? "自动标注" : "手动标注"}任务已创建，共 ${validation.valid_rows} 条记录`);
   };
 
+  const saveLabelSchema = async (columns: LabelColumnDraft[]) => {
+    if (!projectId) { message.error("请先选择项目"); return; }
+    try {
+      const schema = await createLabelSchema(projectId, `${targetColumn.trim() || "labels"}-schema`, columns);
+      setLabelSchemaId(schema.id);
+      message.success(`标签 schema v${schema.version} 已保存`);
+    } catch (error) {
+      message.error(formatApiError(error, "标签 schema 保存失败"));
+    }
+  };
+
   const handleReportUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -1032,6 +1046,10 @@ export default function DataAnnotationPage() {
               {CREATED_TARGET_COLUMN_DTYPE_OPTIONS.map(([value, text]) => <option key={value} value={value}>{text}</option>)}
             </select>
           </div>}
+        </div>}
+        {labelMode === "manual" && <div className="data-annotation__label-schema">
+          <LabelSchemaEditor onSave={(columns) => void saveLabelSchema(columns)} />
+          {labelSchemaId && <span>Schema ID: {labelSchemaId}</span>}
         </div>}
         {labelMode === "automatic" && <div className="data-annotation__setup-grid">
           <div className="data-annotation__setup-field">

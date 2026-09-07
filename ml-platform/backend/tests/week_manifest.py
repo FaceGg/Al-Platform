@@ -107,6 +107,9 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_inference_tasks",
     ],
     17: [
+        "test_automl_multioutput",
+        "test_label_schema",
+        "test_label_schema_api",
         "test_run_suite",
         "test_spot_weld_quality_models",
         "test_spot_weld_features",

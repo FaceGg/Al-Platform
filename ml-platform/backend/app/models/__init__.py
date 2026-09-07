@@ -45,6 +45,7 @@ from app.models.platform_models import (
     OrchestrationVersion,
 )
 from app.models.data_version import DatasetVersion, DatasetSchemaColumn, DatasetSample, DatasetImport
+from app.models.labeling import (LabelSchema, LabelColumn, LabelValueConstraint, AnnotationTaskLabel, AnnotationSampleCurrent, AnnotationRevision, AnnotationComment, AnnotationConfirmation)
 from app.models.spot_weld_quality import (
     SpotWeldQualityRun,
     SpotWeldQualitySample,
@@ -109,6 +110,14 @@ __all__ = [
     "DatasetSchemaColumn",
     "DatasetSample",
     "DatasetImport",
+    "LabelSchema",
+    "LabelColumn",
+    "LabelValueConstraint",
+    "AnnotationTaskLabel",
+    "AnnotationSampleCurrent",
+    "AnnotationRevision",
+    "AnnotationComment",
+    "AnnotationConfirmation",
     "SpotWeldQualityRun",
     "SpotWeldQualitySample",
     "SpotWeldQualityRuleSet",

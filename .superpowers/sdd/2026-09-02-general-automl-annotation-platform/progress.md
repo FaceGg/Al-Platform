@@ -50,8 +50,8 @@
 
 - Task 1: passed (focused implementation, migration, source-gate and manifest evidence recorded below)
 - Task 2: passed (focused local contract/API scope; full backend, browser E2E, remote CI and Task 13 parser isolation remain pending)
-- Task 3: in_progress (fix round 1 landed; scoped re-review and remaining contract gaps are still open)
-- Task 4: planned
+- Task 3: passed (current local focused scope; remote CI remains a later publication/Task 14 gate)
+- Task 4: passed (current local focused scope; Task 5 owns state machine, sample initialization, list and preview)
 - Task 5: planned
 - Task 6: planned
 - Task 7: planned
@@ -252,3 +252,11 @@
 - Multi-output non-grid methods now execute through the shared Optuna family search: RandomSampler, TPESampler, NSGAIISampler and HyperbandPruner receive real completed-trial feedback. Grid and legacy strength execution remain backward compatible.
 - Final local evidence: backend Task 3 suites **146 passed, 10 warnings, 12 subtests**; focused frontend **20 passed, 19 historical skipped**; full frontend **262 passed, 19 historical skipped**; build, Alembic upgrade/check, Python compilation, diff check and Chromium AutoML E2E **1 passed**. Optional XGBoost, LightGBM and CatBoost imports succeeded.
 - Task 3 is `passed`. Task 4 is now `in_progress`. Remote CI remains a later publication/Task 14 gate.
+
+## Task 4 completion (2026-09-07)
+
+- Added typed immutable label schemas, column constraints, task binding snapshots, current values, immutable revisions, comments and confirmations.
+- Generic task creation now validates project ownership and creates the schema binding. Sample read/write/confirm APIs require the binding and use atomic `base_revision` checks.
+- Added legacy single-label backfill and revision uniqueness migrations, schema APIs, and the manual annotation schema editor.
+- RED/GREEN evidence: backend schema/API/generic-task/migration suite **31 passed, 1 warning**; frontend schema editor and annotation page suite **41 passed**; build, Alembic upgrade/check, `py_compile` and diff check passed.
+- Task 4 is `passed` for the focused local scope. Task 5 remains responsible for sample initialization, task state machine, list and preview.

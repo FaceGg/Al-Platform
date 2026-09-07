@@ -5,6 +5,10 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.platform_models import AnnotationTask, AnnotationResult, Dataset
 from app.models.user import User
+from app.models.labeling import LabelSchema, LabelColumn, AnnotationSampleCurrent
+from app.models.project import Project
+from app.schemas.labeling import LabelRevisionWrite, LabelSchemaCreate
+from app.services.label_schema import (LabelValueError, confirm_label_values, create_label_schema, get_current_label_set, require_task_schema_binding, write_label_revision)
 from app.api.auth import get_current_user
 from app.services.resource_access import ResourceAccessService
 
@@ -191,3 +195,91 @@ def auto_label(task_id: str, db: Session = Depends(get_db), current_user: User =
     db.commit()
 
     return {"auto_labeled": count}
+
+
+def _owned_schema(db: Session, schema_id: str, user_id):
+    try:
+        parsed_schema_id = uuid.UUID(schema_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail={"code": "LABEL_SCHEMA_NOT_FOUND"}) from error
+    schema = db.get(LabelSchema, parsed_schema_id)
+    if schema is None:
+        raise HTTPException(status_code=404, detail={"code": "LABEL_SCHEMA_NOT_FOUND"})
+    ResourceAccessService().require_owned(db, Project, schema.project_id, user_id)
+    return schema
+
+
+def _bound_task_schema(db: Session, task_id: str, schema_id: str):
+    try:
+        parsed_task_id = uuid.UUID(task_id)
+        parsed_schema_id = uuid.UUID(schema_id)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_UUID"}) from error
+    try:
+        require_task_schema_binding(db, task_id=parsed_task_id, schema_id=parsed_schema_id)
+    except LabelValueError as error:
+        raise HTTPException(status_code=409, detail={"code": error.code, "message": str(error)}) from error
+    return parsed_task_id
+
+
+@router.post("/label-schemas", status_code=201)
+def create_schema(data: LabelSchemaCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    ResourceAccessService().require_owned(db, Project, data.project_id, current_user.id)
+    schema = create_label_schema(db, project_id=data.project_id, name=data.name, columns=data.columns)
+    return {"id": str(schema.id), "project_id": str(schema.project_id), "name": schema.name, "version": schema.version}
+
+
+@router.get("/label-schemas/{schema_id}")
+def get_label_schema(schema_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    schema = _owned_schema(db, schema_id, current_user.id)
+    return {
+        "id": str(schema.id), "project_id": str(schema.project_id), "name": schema.name,
+        "version": schema.version, "status": schema.status,
+        "columns": [
+            {"machine_key": item.machine_key, "display_name": item.display_name, "ordinal": item.ordinal,
+             "value_type": item.value_type, "required": item.required, "enum_values": item.enum_values or [],
+             "min_value": item.min_value, "max_value": item.max_value, "max_length": item.max_length}
+            for item in sorted(schema.columns, key=lambda value: value.ordinal)
+        ],
+    }
+
+
+@router.get("/label-schemas/{schema_id}/samples/{sample_id}")
+def get_sample_labels(schema_id: str, sample_id: str, task_id: str = Query(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    _owned_schema(db, schema_id, current_user.id)
+    parsed_task_id = _bound_task_schema(db, task_id, schema_id)
+    try:
+        current = get_current_label_set(db, parsed_task_id, sample_id)
+    except LabelValueError as error:
+        raise HTTPException(status_code=404, detail={"code": error.code}) from error
+    if str(db.query(AnnotationSampleCurrent.schema_id).filter_by(task_id=uuid.UUID(task_id), sample_id=sample_id).scalar()) != schema_id:
+        raise HTTPException(status_code=409, detail={"code": "LABEL_SCHEMA_MISMATCH"})
+    return {"sample_id": sample_id, "values": current.values, "revision_no": current.revision_no}
+
+
+@router.put("/label-schemas/{schema_id}/samples/{sample_id}")
+def update_sample_labels(schema_id: str, sample_id: str, data: LabelRevisionWrite, task_id: str = Query(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    _owned_schema(db, schema_id, current_user.id)
+    parsed_task_id = _bound_task_schema(db, task_id, schema_id)
+    try:
+        current = get_current_label_set(db, parsed_task_id, sample_id)
+        if str(db.query(AnnotationSampleCurrent.schema_id).filter_by(task_id=uuid.UUID(task_id), sample_id=sample_id).scalar()) != schema_id:
+            raise LabelValueError("schema mismatch", "LABEL_SCHEMA_MISMATCH")
+        result = write_label_revision(
+            db, parsed_task_id, sample_id, data.values, current_user.id, data.base_revision,
+        )
+    except LabelValueError as error:
+        code = 409 if error.code == "LABEL_REVISION_CONFLICT" else 422
+        raise HTTPException(status_code=code, detail={"code": error.code, "message": str(error)}) from error
+    return {"sample_id": sample_id, "values": result.values, "revision_no": result.revision_no}
+
+
+@router.post("/label-schemas/{schema_id}/samples/{sample_id}/confirm")
+def confirm_sample_labels(schema_id: str, sample_id: str, task_id: str = Query(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    _owned_schema(db, schema_id, current_user.id)
+    parsed_task_id = _bound_task_schema(db, task_id, schema_id)
+    try:
+        confirmation = confirm_label_values(db, parsed_task_id, sample_id, current_user.id)
+    except LabelValueError as error:
+        raise HTTPException(status_code=422, detail={"code": error.code, "message": str(error)}) from error
+    return {"id": str(confirmation.id), "action": confirmation.action}

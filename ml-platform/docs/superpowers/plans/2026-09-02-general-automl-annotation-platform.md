@@ -326,7 +326,7 @@ Expected: four task types, 2-5 fold CV, all search controls, ranking, feature im
 - write_label_revision(db: Session, task_id: UUID, sample_id: str, values: Mapping[str, object], author_id: UUID, base_revision: int) -> LabelWriteResult
 - get_current_label_set(db: Session, task_id: UUID, sample_id: str) -> CurrentLabelSet
 
-- [ ] **Step 1: Write RED tests for int/float/string and independent columns**
+- [x] **Step 1: Write RED tests for int/float/string and independent columns**
 
 ~~~python
 def test_label_types_reject_invalid_values():
@@ -350,7 +350,7 @@ def test_completion_rejects_missing_required_label():
     assert error.value.code == "LABEL_REQUIRED_MISSING"
 ~~~
 
-- [ ] **Step 2: Run the focused tests and verify failure**
+- [x] **Step 2: Run the focused tests and verify failure**
 
 Run:
 
@@ -361,7 +361,7 @@ py -3.14 -m pytest tests/test_label_schema.py -q
 
 Expected: the current single-label string storage accepts invalid numeric values or cannot preserve independent columns and revision numbers.
 
-- [ ] **Step 3: Implement schema and revision persistence**
+- [x] **Step 3: Implement schema and revision persistence**
 
 1. Add label_schemas, label_columns, label_value_constraints, annotation_task_labels, annotation_sample_current, annotation_revisions, annotation_comments and annotation_confirmations with project and task indexes.
 2. Freeze machine key, display name, ordinal, type, required flag, enum/range and string byte limit at schema version creation. Do not coerce arrays or multi-select values.
@@ -370,7 +370,7 @@ Expected: the current single-label string storage accepts invalid numeric values
 5. Add migration backfill from legacy single-label fields into one-column schemas and preserve legacy revision ids.
 6. Update the editor to let administrators create columns, choose type and constraints, and show validation errors before submitting.
 
-- [ ] **Step 4: Run GREEN verification**
+- [x] **Step 4: Run GREEN verification**
 
 Run:
 
