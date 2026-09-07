@@ -32,10 +32,11 @@ from app.services.automl_execution import (
     AutoMLDependencies,
     _build_multioutput_trial_specs,
     _aggregate_fold_classification_metrics,
+    _rank_multioutput_trials,
     execute_automl_job,
 )
 from app.services.experiment_tracking import TrackedRun
-from app.services.automl_search import FamilySearchResult
+from app.services.automl_search import FamilySearchResult, run_family_search
 from app.tasks.celery_app import celery_app
 from app.tasks.training_tasks import LocalTrainingDispatcher
 
@@ -74,6 +75,20 @@ class FeatureCapturingRegressor(RegressorMixin, BaseEstimator):
 
     def predict(self, features):
         return np.full(len(features), self.prediction_, dtype=float)
+
+
+class FailOnThirdFitClassifier(ClassifierMixin, BaseEstimator):
+    fit_calls = 0
+
+    def fit(self, features, target):
+        type(self).fit_calls += 1
+        if type(self).fit_calls >= 3:
+            raise ValueError("final fit failed")
+        self.classes_ = np.unique(target)
+        return self
+
+    def predict(self, features):
+        return np.full(len(features), self.classes_[0])
 
 class FakeArtifactService:
     def __init__(self, dataset_id, dataset_path):
@@ -292,7 +307,7 @@ class TestAutoMLTracking(unittest.TestCase):
             self.assertIsNotNone(job.model_artifact_id)
             self.assertEqual(job.metrics["best_candidate"], "multioutput_random_forest")
             self.assertEqual(
-                job.metrics["algorithm_results"][0]["model_artifact_id"],
+                next(row for row in job.metrics["algorithm_results"] if row["algorithm_id"] == job.metrics["best_candidate"])["model_artifact_id"],
                 str(job.model_artifact_id),
             )
             self.assertEqual(
@@ -305,6 +320,42 @@ class TestAutoMLTracking(unittest.TestCase):
             )
             self.assertIn("preprocessing", job.metrics)
             self.assertEqual(job.metrics["input_contract"]["target_columns"], ["label_a", "label_b"])
+
+    def test_multioutput_persists_one_artifact_for_each_completed_family(self):
+        self.dataset_path.write_text(
+            "x1,x2,label_a,label_b\n" + "\n".join(
+                f"{index % 7},{index % 5},{int(index % 2 == 0)},{int(index % 3 == 0)}"
+                for index in range(60)
+            ),
+            encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_columns": ["label_a", "label_b"],
+            "task": "multioutput_classification",
+            "input_columns": ["x1", "x2"],
+            "cross_validation_folds": 2,
+            "algorithm_ids": ["random_forest", "extra_trees"],
+            "search_method": "grid",
+            "max_trials": 2,
+        })
+
+        result = self.execute(job_id)
+
+        self.assertEqual(result.status, "completed")
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            rows = [row for row in job.metrics["algorithm_results"] if row["status"] == "completed"]
+            self.assertEqual({row["algorithm_id"] for row in rows}, {"random_forest", "extra_trees"})
+            self.assertEqual(len({row["model_artifact_id"] for row in rows}), 2)
+            self.assertEqual(
+                {row["model_artifact_id"] for row in rows},
+                {str(artifact.id) for artifact in self.artifacts.created},
+            )
+            self.assertEqual(
+                {row["algorithm_id"] for row in job.metrics["all_results"]},
+                {row["algorithm_id"] for row in rows},
+            )
+            self.assertIn(str(job.model_artifact_id), {row["model_artifact_id"] for row in rows})
 
     def test_multioutput_controls_change_worker_configuration_and_auc_tier(self):
         self.dataset_path.write_text(
@@ -373,6 +424,52 @@ class TestAutoMLTracking(unittest.TestCase):
         with self.Session() as db:
             self.assertEqual(db.get(TrainingJob, job_id).status, "cancelled")
 
+    def test_single_output_worker_honors_cancellation_polling(self):
+        job_id = self.create_job(params={
+            "target_column": "quality",
+            "task": "classification",
+            "input_columns": ["current", "force"],
+            "cross_validation_enabled": False,
+            "cross_validation_folds": None,
+        })
+        result = execute_automl_job(job_id, dependencies=AutoMLDependencies(
+            session_factory=self.Session,
+            artifact_service_factory=lambda _db: self.artifacts,
+            tracking_factory=lambda: self.tracking,
+            worker_id="worker-1",
+            task_id="task-1",
+            cancellation_requested=lambda _job_id: True,
+        ))
+        self.assertEqual(result.status, "cancelled")
+        with self.Session() as db:
+            self.assertEqual(db.get(TrainingJob, job_id).status, "cancelled")
+
+    def test_single_output_cancellation_after_candidate_search_does_not_complete_final_fit(self):
+        job_id = self.create_job(params={
+            "target_column": "quality",
+            "task": "classification",
+            "input_columns": ["current", "force"],
+            "cross_validation_enabled": False,
+            "cross_validation_folds": None,
+        })
+        cancellation_states = iter((False, False, True))
+        result = execute_automl_job(job_id, candidates=[
+            AutoMLCandidate("capturing", FeatureCapturingClassifier, {}),
+        ], dependencies=AutoMLDependencies(
+            session_factory=self.Session,
+            artifact_service_factory=lambda _db: self.artifacts,
+            tracking_factory=lambda: self.tracking,
+            worker_id="worker-1",
+            task_id="task-1",
+            cancellation_requested=lambda _job_id: next(cancellation_states),
+        ))
+
+        self.assertEqual(result.status, "cancelled")
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            self.assertEqual(job.status, "cancelled")
+            self.assertIsNone(job.model_artifact_id)
+
     def test_multioutput_worker_stops_when_time_budget_is_exhausted(self):
         self.dataset_path.write_text(
             "x1,x2,target_a,target_b\n" + "\n".join(
@@ -415,6 +512,64 @@ class TestAutoMLTracking(unittest.TestCase):
             self.assertEqual(job.metrics["prediction_source"], "cross_validation")
             self.assertEqual(len(job.metrics["predictions"]["target_a"]), 60)
 
+    def test_multioutput_regression_persists_full_metrics_and_feature_importance(self):
+        self.dataset_path.write_text(
+            "x1,x2,target_a,target_b\n" + "\n".join(
+                f"{index},{index % 7},{index * 1.5 + 3},{(index % 7) * 2.0 - 1}"
+                for index in range(60)
+            ),
+            encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_column": "target_a",
+            "target_columns": ["target_a", "target_b"],
+            "task": "multioutput_regression",
+            "input_columns": ["x1", "x2"],
+            "cross_validation_folds": 3,
+        })
+
+        self.execute(job_id)
+
+        with self.Session() as db:
+            metrics = db.get(TrainingJob, job_id).metrics
+            for report in metrics["per_target"].values():
+                self.assertEqual(set(report), {"r2", "rmse", "mae"})
+                self.assertTrue(all(np.isfinite(float(report[key])) for key in ("r2", "rmse", "mae")))
+            self.assertEqual(set(metrics["aggregate"]), {"r2", "rmse", "mae"})
+            self.assertEqual(set(metrics["feature_importance"]), {"x1", "x2"})
+            report = metrics["feature_importance_report"]
+            self.assertEqual(set(report["per_target"]), {"target_a", "target_b"})
+            self.assertEqual(report["source"], "model_native")
+
+    def test_multioutput_worker_ranks_regression_candidates_by_full_metric_contract(self):
+        trials = [
+            {
+                "algorithm_id": "higher_runtime",
+                "status": "completed",
+                "aggregate": {"r2": 0.90, "rmse": 0.80, "mae": 0.50},
+                "training_time_seconds": 20.0,
+            },
+            {
+                "algorithm_id": "lower_rmse",
+                "status": "completed",
+                "aggregate": {"r2": 0.90, "rmse": 0.70, "mae": 0.90},
+                "training_time_seconds": 10.0,
+            },
+            {
+                "algorithm_id": "faster_tie",
+                "status": "completed",
+                "aggregate": {"r2": 0.90, "rmse": 0.80, "mae": 0.50},
+                "training_time_seconds": 5.0,
+            },
+        ]
+
+        ranked = _rank_multioutput_trials(trials, "multioutput_regression")
+
+        self.assertEqual(
+            [trial["algorithm_id"] for trial in ranked],
+            ["lower_rmse", "faster_tie", "higher_runtime"],
+        )
+
     def test_multioutput_worker_preserves_idempotency_fingerprint_and_family_selection(self):
         self.dataset_path.write_text(
             "x1,x2,target_a,target_b\n" + "\n".join(
@@ -437,6 +592,103 @@ class TestAutoMLTracking(unittest.TestCase):
             self.assertEqual(job.automl_contract["idempotency_fingerprint"], "keep-me")
             self.assertEqual(job.metrics["best_algorithm"], "extra_trees")
             self.assertTrue(job.preprocessing["fold_local"])
+
+    def test_multioutput_candidate_runtime_failure_isolated_from_later_candidates(self):
+        self.dataset_path.write_text(
+            "x1,x2,label_a,label_b\n" + "\n".join(
+                f"{index % 7},{index % 5},{int(index % 2 == 0)},{int(index % 3 == 0)}"
+                for index in range(60)
+            ),
+            encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_columns": ["label_a", "label_b"],
+            "task": "multioutput_classification",
+            "input_columns": ["x1", "x2"],
+            "cross_validation_folds": 2,
+            "algorithm_ids": ["runtime_failure", "random_forest"],
+            "search_method": "grid",
+            "max_trials": 2,
+        })
+        from app.services.automl_catalog import resolve_algorithm_families
+
+        failing_family = SimpleNamespace(
+            id="runtime_failure",
+            display_name="Runtime failure",
+            default_params={},
+            grid={},
+            search_space={},
+            resource_parameter="n_estimators",
+            min_resource=1,
+            max_resource=1,
+            build=lambda _task, _params: FailingEstimator(),
+        )
+        valid_family = resolve_algorithm_families(["random_forest"])[0]
+        with patch(
+            "app.services.automl_execution.resolve_algorithm_families",
+            return_value=(failing_family, valid_family),
+        ):
+            result = self.execute(job_id)
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.best_candidate, "random_forest")
+        with self.Session() as db:
+            rows = db.get(TrainingJob, job_id).metrics["algorithm_results"]
+            failed = next(row for row in rows if row["algorithm_id"] == "runtime_failure")
+            completed = next(row for row in rows if row["algorithm_id"] == "random_forest")
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(failed["error_code"], "AUTOML_CANDIDATE_FAILED")
+            self.assertTrue(failed["error_type"])
+            self.assertEqual(completed["status"], "completed")
+            self.assertTrue(completed["model_artifact_id"])
+
+    def test_multioutput_candidate_final_artifact_failure_does_not_discard_other_candidates(self):
+        FailOnThirdFitClassifier.fit_calls = 0
+        self.dataset_path.write_text(
+            "x1,x2,label_a,label_b\n" + "\n".join(
+                f"{index % 7},{index % 5},{int(index % 2 == 0)},{int(index % 3 == 0)}"
+                for index in range(60)
+            ),
+            encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_columns": ["label_a", "label_b"],
+            "task": "multioutput_classification",
+            "input_columns": ["x1", "x2"],
+            "cross_validation_folds": 2,
+            "algorithm_ids": ["final_fit_failure", "random_forest"],
+            "search_method": "grid",
+            "max_trials": 2,
+        })
+        from app.services.automl_catalog import resolve_algorithm_families
+
+        failing_family = SimpleNamespace(
+            id="final_fit_failure",
+            display_name="Final fit failure",
+            default_params={},
+            grid={},
+            search_space={},
+            resource_parameter="n_estimators",
+            min_resource=1,
+            max_resource=1,
+            build=lambda _task, _params: FailOnThirdFitClassifier(),
+        )
+        valid_family = resolve_algorithm_families(["random_forest"])[0]
+        with patch(
+            "app.services.automl_execution.resolve_algorithm_families",
+            return_value=(failing_family, valid_family),
+        ):
+            result = self.execute(job_id)
+
+        self.assertEqual(result.status, "completed")
+        with self.Session() as db:
+            rows = db.get(TrainingJob, job_id).metrics["algorithm_results"]
+            failed = next(row for row in rows if row["algorithm_id"] == "final_fit_failure")
+            completed = next(row for row in rows if row["algorithm_id"] == "random_forest")
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(failed["error_code"], "AUTOML_CANDIDATE_FAILED")
+            self.assertEqual(completed["status"], "completed")
+            self.assertTrue(completed["model_artifact_id"])
 
     def test_time_budget_preserves_completed_trials(self):
         self.dataset_path.write_text(
@@ -523,6 +775,69 @@ class TestAutoMLTracking(unittest.TestCase):
             method="grid", max_trials=2, search_strength="balanced",
         )
         self.assertEqual({family.id for family, _params in specs}, {"random_forest", "extra_trees"})
+
+    def test_non_grid_search_methods_generate_distinct_observable_trials(self):
+        from app.services.automl_catalog import resolve_algorithm_families
+
+        family = resolve_algorithm_families(["random_forest"])[0]
+        for method in ("random", "bayesian", "evolutionary", "multi_fidelity"):
+            specs = _build_multioutput_trial_specs(
+                (family,), method=method, max_trials=4, search_strength="balanced",
+            )
+            params = [tuple(sorted(values.items())) for _family, values in specs]
+            self.assertGreater(len(set(params)), 1, method)
+            if method == "multi_fidelity":
+                self.assertGreater(len({values[family.resource_parameter] for _family, values in specs}), 1)
+
+    def test_multioutput_bayesian_search_uses_optuna_family_search(self):
+        self.dataset_path.write_text(
+            "x1,x2,target_a,target_b\n" + "\n".join(
+                f"{index},{index % 7},{index * 1.5},{index % 7 * 2}" for index in range(60)
+            ),
+            encoding="utf-8",
+        )
+        job_id = self.create_job(params={
+            "target_columns": ["target_a", "target_b"],
+            "task": "multioutput_regression",
+            "input_columns": ["x1", "x2"],
+            "cross_validation_folds": 2,
+            "algorithm_ids": ["random_forest"],
+            "search_method": "bayesian",
+            "search_strength": "light",
+            "max_trials": 2,
+            "time_budget": 60,
+        })
+        observed_methods = []
+
+        def observed_family_search(**kwargs):
+            observed_methods.append(kwargs["config"].method)
+            return run_family_search(**kwargs)
+
+        result = execute_automl_job(job_id, dependencies=AutoMLDependencies(
+            session_factory=self.Session,
+            artifact_service_factory=lambda _db: self.artifacts,
+            tracking_factory=lambda: self.tracking,
+            worker_id="worker-1",
+            task_id="task-1",
+            family_search=observed_family_search,
+        ))
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(observed_methods, ["bayesian"])
+        with self.Session() as db:
+            search = db.get(TrainingJob, job_id).metrics["search"]
+            self.assertEqual(search["method"], "bayesian")
+            self.assertEqual(search["completed_trials"], 2)
+            self.assertTrue(all(row["status"] == "complete" for row in search["trials"]))
+
+    def test_multioutput_trial_budget_rejects_fewer_trials_than_families(self):
+        from app.services.automl_catalog import resolve_algorithm_families
+
+        with self.assertRaises(ValueError):
+            _build_multioutput_trial_specs(
+                resolve_algorithm_families(["random_forest", "extra_trees"]),
+                method="grid", max_trials=1, search_strength="balanced",
+            )
 
     def test_optuna_timeout_persists_best_so_far(self):
         job_id = self.create_job(params={
@@ -630,6 +945,35 @@ class TestAutoMLTracking(unittest.TestCase):
             )
             self.assertIsNone(job.model_library_id)
             self.assertTrue(all(item.get("model_artifact_id") for item in job.metrics["all_results"]))
+
+    def test_optuna_persists_complete_single_output_training_contract(self):
+        job_id = self.create_job(params={
+            "search_contract": "optuna_v1",
+            "target_column": "quality",
+            "input_columns": ["current", "force"],
+            "task": "classification",
+            "algorithm_ids": ["random_forest"],
+            "search_method": "random",
+            "max_trials": 1,
+            "time_budget": 60,
+            "cross_validation_enabled": False,
+            "cross_validation_folds": None,
+        })
+
+        result = self.execute(job_id)
+        self.assertEqual(result.status, "completed")
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            self.assertEqual(job.metrics["input_contract"]["task_type"], "classification")
+            self.assertEqual(job.metrics["input_contract"]["target_columns"], ["quality"])
+            self.assertEqual(job.metrics["input_contract"]["input_columns"], ["current", "force"])
+            self.assertIn("preprocessing", job.metrics)
+            self.assertIn("feature_importance_report", job.metrics)
+            self.assertEqual([item["name"] for item in job.feature_schema], ["current", "force"])
+            self.assertEqual(job.target_schema["name"], "quality")
+            self.assertEqual(job.automl_contract["task_type"], "classification")
+            self.assertEqual(job.automl_contract["target_columns"], ["quality"])
+            self.assertEqual(job.automl_contract["input_columns"], ["current", "force"])
 
     def test_selected_input_columns_are_the_only_columns_used_for_automl(self):
         FeatureCapturingClassifier.seen_columns.clear()
@@ -987,6 +1331,20 @@ class TestAutoMLAPI(unittest.TestCase):
         self.assertIs(item["automl_used"], True)
         self.assertEqual(item["automl_job_id"], created.json()["job_id"])
 
+    def test_target_column_and_target_columns_are_mutually_exclusive(self):
+        response = self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "target_columns": ["quality"],
+            "task": "classification",
+        }, headers=self.headers)
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "AUTOML_CONFIG_INVALID")
+        self.assertEqual(self.dispatcher.enqueued, [])
+
     def test_unknown_candidate_id_is_rejected_before_queueing(self):
         response = self.client.post("/api/training/automl/run", json={
             "project_id": str(self.project_id),
@@ -1051,8 +1409,12 @@ class TestAutoMLAPI(unittest.TestCase):
             "algorithm_ids": ["gbdt", "random_forest"],
             "search_method": "bayesian",
             "max_trials": 20,
-            "time_budget": 600,
-        }, headers=self.headers)
+            "time_budget": 3600,
+        }, headers={
+            **self.headers,
+            "X-Request-ID": str(uuid.uuid4()),
+            "Idempotency-Key": f"automl-new-{uuid.uuid4().hex}",
+        })
 
         self.assertEqual(response.status_code, 202, response.text)
         with self.Session() as db:
@@ -1063,6 +1425,56 @@ class TestAutoMLAPI(unittest.TestCase):
             self.assertEqual(job.params["algorithm_ids"], ["gbdt", "random_forest"])
             self.assertEqual(job.params["search_method"], "bayesian")
             self.assertEqual(job.params["max_trials"], 20)
+            self.assertEqual(job.params["time_budget"], 3600)
+
+    def test_new_search_rejects_trial_budget_smaller_than_selected_family_count(self):
+        response = self.client.post("/api/training/automl/run", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "task": "classification",
+            "algorithm_ids": ["gbdt", "random_forest", "extra_trees", "hist_gradient_boosting", "lightgbm", "xgboost"],
+            "search_method": "bayesian",
+            "max_trials": 5,
+            "time_budget": 3600,
+        }, headers={
+            **self.headers,
+            "X-Request-ID": str(uuid.uuid4()),
+            "Idempotency-Key": f"automl-budget-families-{uuid.uuid4().hex}",
+        })
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "AUTOML_SEARCH_CONFIG_INVALID")
+        self.assertEqual(self.dispatcher.enqueued, [])
+
+    def test_new_search_request_requires_request_id_and_idempotency_key(self):
+        payload = {
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "task": "classification",
+            "algorithm_ids": ["gbdt"],
+            "search_method": "bayesian",
+            "max_trials": 20,
+            "time_budget": 3600,
+        }
+        missing_request_id = self.client.post(
+            "/api/training/automl/run",
+            json=payload,
+            headers={**self.headers, "Idempotency-Key": "automl-request-context"},
+        )
+        self.assertEqual(missing_request_id.status_code, 400, missing_request_id.text)
+        self.assertEqual(missing_request_id.json()["detail"]["code"], "REQUEST_ID_REQUIRED")
+
+        missing_idempotency_key = self.client.post(
+            "/api/training/automl/run",
+            json=payload,
+            headers={**self.headers, "X-Request-ID": str(uuid.uuid4())},
+        )
+        self.assertEqual(missing_idempotency_key.status_code, 400, missing_idempotency_key.text)
+        self.assertEqual(missing_idempotency_key.json()["detail"]["code"], "IDEMPOTENCY_KEY_REQUIRED")
 
     def test_new_and_legacy_algorithm_fields_are_mutually_exclusive(self):
         response = self.client.post("/api/training/automl/run", json={
@@ -1076,7 +1488,11 @@ class TestAutoMLAPI(unittest.TestCase):
             "search_method": "grid",
             "max_trials": 5,
             "time_budget": 60,
-        }, headers=self.headers)
+        }, headers={
+            **self.headers,
+            "X-Request-ID": str(uuid.uuid4()),
+            "Idempotency-Key": f"automl-mutual-{uuid.uuid4().hex}",
+        })
 
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(response.json()["detail"]["code"], "AUTOML_SEARCH_CONFIG_INVALID")

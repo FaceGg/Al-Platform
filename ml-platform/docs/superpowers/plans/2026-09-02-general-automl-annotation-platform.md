@@ -281,7 +281,7 @@ py -3.14 -m pytest tests/test_automl_multioutput.py tests/test_automl_catalog.py
 
 Expected: only classification and regression are accepted, target arrays are ignored, or the worker creates a model-library row.
 
-- [ ] **Step 3: Implement training contracts and search controls**
+- [x] **Step 3: Implement training contracts and search controls**
 
 1. Normalize aliases at request parsing and reject aliases in persisted rows, model contracts and manifests.
 2. Validate target count, dtype, missing values, finite values, class cardinality and target leakage before queueing.
@@ -292,7 +292,7 @@ Expected: only classification and regression are accepted, target arrays are ign
 7. Persist per-target reports, aggregate metrics, search configuration, runtime, input contract, preprocessing and feature-importance report. Candidate completion may store artifacts but cannot mutate model registry tables.
 8. Wire tasks/automl_tasks.py into the durable dispatcher with idempotency key, lease fields, progress and cancellation.
 
-- [ ] **Step 4: Run GREEN verification**
+- [x] **Step 4: Run GREEN verification**
 
 Run:
 

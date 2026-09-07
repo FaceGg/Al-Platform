@@ -31,9 +31,14 @@ from app.services.automl_execution import (
     resolve_automl_feature_columns,
     resolve_candidates,
 )
-from app.services.automl_search import normalize_search_controls, normalize_task_type, validate_target_columns
+from app.services.automl_search import (
+    CANONICAL_SEARCH_TIME_BUDGETS,
+    SEARCH_METHODS,
+    normalize_search_controls,
+    normalize_task_type,
+    validate_target_columns,
+)
 from app.services.automl_catalog import resolve_algorithm_families
-from app.services.automl_search import SEARCH_METHODS
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.services.automl_report import AutoMLReportError, generate_automl_report
 from app.services.experiment_tracking import TrackingError
@@ -94,9 +99,9 @@ class AutoMLRunRequest(BaseModel):
     max_trials: int | None = Field(default=None, ge=5, le=200)
     cross_validation_enabled: bool = True
     cross_validation_folds: int | None = Field(default=5)
-    time_budget: int = Field(default=60, ge=10, le=9999)
+    time_budget: int = Field(default=3600, ge=60, le=86400)
     search_strength: str = "balanced"
-    class_weight: bool = False
+    class_weight: bool = True
     name: str = Field(default="automl-job", min_length=1, max_length=128)
 
 
@@ -575,6 +580,7 @@ def start_automl(
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    x_request_id: str | None = Header(default=None, alias="X-Request-ID"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     experiment, access = _visible_experiment(
@@ -585,12 +591,26 @@ def start_automl(
     )
     if experiment is None:
         raise HTTPException(404, _error("EXPERIMENT_NOT_FOUND", "Experiment not found"))
+    new_fields = {"algorithm_ids", "search_method", "max_trials"}
+    uses_new_contract = bool(data.model_fields_set & new_fields)
+    request_id = getattr(request.state, "request_id", None)
+    normalized_request_id = str(x_request_id or "").strip() or None
     normalized_key = str(idempotency_key or "").strip() or None
     request_fingerprint = hashlib.sha256(json.dumps(
         data.model_dump(mode="json"), sort_keys=True, separators=(",", ":"),
     ).encode("utf-8")).hexdigest()
     if normalized_key is not None and len(normalized_key) > 128:
         raise HTTPException(400, _error("AUTOML_IDEMPOTENCY_KEY_INVALID", "Idempotency-Key must be at most 128 characters"))
+    if uses_new_contract:
+        if not normalized_request_id or request_id is None or normalized_request_id != str(request_id):
+            raise HTTPException(400, _error("REQUEST_ID_REQUIRED", "X-Request-ID is required"))
+        if normalized_key is None:
+            raise HTTPException(400, _error("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required"))
+        if data.time_budget not in CANONICAL_SEARCH_TIME_BUDGETS:
+            raise HTTPException(400, _error(
+                "AUTOML_SEARCH_CONFIG_INVALID",
+                "AutoML search time budget must be 30, 60, 120, or 240 minutes",
+            ))
     if normalized_key is not None:
         replay = db.query(TrainingJob).filter(
             TrainingJob.user_id == current_user.id,
@@ -605,6 +625,11 @@ def start_automl(
             ):
                 raise HTTPException(409, _error("AUTOML_IDEMPOTENCY_CONFLICT", "Idempotency-Key was used for another AutoML request"))
             return {"job_id": str(replay.id), "status": replay.status, "task_id": replay.task_id}
+    if data.target_column is not None and data.target_columns is not None:
+        raise HTTPException(400, _error(
+            "AUTOML_CONFIG_INVALID",
+            "target_column and target_columns cannot be provided together",
+        ))
     job_id = uuid.uuid4()
     with audit_service(db).project_action(
         db, request=request, actor=current_user, access=access,
@@ -627,8 +652,6 @@ def start_automl(
                 raise ValueError("Single-output AutoML requires exactly one target column")
         except ValueError as error:
             raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
-        new_fields = {"algorithm_ids", "search_method", "max_trials"}
-        uses_new_contract = bool(data.model_fields_set & new_fields)
         try:
             resolved_algorithm_ids = None
             if uses_new_contract:
@@ -643,6 +666,10 @@ def start_automl(
                 resolved_algorithm_ids = [
                     family.id for family in resolve_algorithm_families(data.algorithm_ids)
                 ]
+                if data.max_trials < len(resolved_algorithm_ids):
+                    raise ValueError(
+                        "max_trials must be at least the number of selected algorithm families",
+                    )
             else:
                 resolve_candidates(task_type, data.candidate_ids)
             evaluation = normalize_evaluation_config(

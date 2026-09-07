@@ -105,6 +105,31 @@ describe("AutoMLTaskPage model registration", () => {
     expect(register).toBeDisabled();
   });
 
+  it("registers a completed artifact-only AutoML candidate", async () => {
+    get.mockResolvedValue({ data: {
+      id: "job-1", project_id: "project-1", status: "completed",
+      metrics: {
+        progress: { completed: 1, total: 1, percent: 100 },
+        algorithm_results: [{
+          algorithm_id: "multioutput_random_forest",
+          name: "Multi-output random forest",
+          status: "completed",
+          model_artifact_id: "artifact-1",
+        }],
+      },
+    } });
+    renderPage();
+
+    const register = await screen.findByRole("button", { name: "注册" });
+    expect(register).toBeEnabled();
+    fireEvent.click(register);
+    await waitFor(() => expect(registerAutoMLResult).toHaveBeenCalledWith(
+      "project-1",
+      "job-1",
+      "multioutput_random_forest",
+    ));
+  });
+
   it("generates a five-tab preview and exports the detailed zip", async () => {
     const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:report");
     const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
@@ -156,5 +181,49 @@ describe("AutoMLTaskPage model registration", () => {
     expect(within(detailDialog).getByText("0.9300")).toBeInTheDocument();
     expect(within(detailDialog).getByText("0.8200")).toBeInTheDocument();
     expect(within(detailDialog).getByText("0.7100")).toBeInTheDocument();
+  });
+
+  it("ranks regression results by R2, RMSE, MAE, and runtime", async () => {
+    get.mockResolvedValue({ data: {
+      id: "job-1", project_id: "project-1", status: "completed",
+      params: { task: "multioutput_regression" },
+      metrics: {
+        progress: { completed: 3, total: 3, percent: 100 },
+        algorithm_results: [
+          { algorithm_id: "higher_runtime", name: "Higher runtime", status: "completed", aggregate: { r2: 0.90, rmse: 0.80, mae: 0.50 }, training_time_seconds: 20 },
+          { algorithm_id: "lower_rmse", name: "Lower RMSE", status: "completed", aggregate: { r2: 0.90, rmse: 0.70, mae: 0.90 }, training_time_seconds: 10 },
+          { algorithm_id: "faster_tie", name: "Faster tie", status: "completed", aggregate: { r2: 0.90, rmse: 0.80, mae: 0.50 }, training_time_seconds: 5 },
+        ],
+      },
+    } });
+    renderPage();
+
+    await screen.findByText("Higher runtime");
+    const bodyRows = Array.from(document.querySelectorAll(".ant-table-tbody > tr"));
+    const names = bodyRows.map((row) => row.textContent || "");
+
+    expect(names[0]).toContain("Lower RMSE");
+    expect(names[1]).toContain("Faster tie");
+    expect(names[2]).toContain("Higher runtime");
+  });
+
+  it("shows regression metrics instead of classification-only result columns", async () => {
+    get.mockResolvedValue({ data: {
+      id: "job-1", project_id: "project-1", status: "completed",
+      params: { task: "regression" },
+      metrics: {
+        progress: { completed: 1, total: 1, percent: 100 },
+        algorithm_results: [{
+          algorithm_id: "random_forest", name: "Random forest", status: "completed",
+          aggregate: { r2: 0.91, rmse: 0.23, mae: 0.12 }, training_time_seconds: 5,
+        }],
+      },
+    } });
+    renderPage();
+
+    expect(await screen.findByRole("columnheader", { name: "R²" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "RMSE" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "MAE" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "AUC" })).not.toBeInTheDocument();
   });
 });

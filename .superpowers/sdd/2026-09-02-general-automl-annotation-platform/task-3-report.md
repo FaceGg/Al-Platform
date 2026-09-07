@@ -183,3 +183,30 @@
 
 - Browser/Playwright evidence was not added because no authenticated runnable AutoML browser pattern was available in this scoped round.
 - Task 3 remains `in_progress`; optional LightGBM, full backend/remote CI and browser gates remain unverified. Task 4 remains `planned`.
+
+## Task 3 continuation (2026-09-07)
+
+### Changed behavior
+
+- Multi-output trial planning now produces method-specific, observable candidate configurations for all five search methods. Random samples the declared search space; Bayesian and evolutionary produce deterministic reproducible parameter exploration; multi-fidelity emits bounded resource rungs. The historical `strength` default remains supported for queued jobs created before the search-method contract.
+- Omitted multi-output `class_weight` now follows the API contract default of enabled, while an explicit false remains respected.
+
+### Verification
+
+- `python -m pytest tests/test_automl_tracking.py -q` -> **63 passed, 11 warnings, 10 subtests passed**.
+- `python -m pytest tests/test_automl_multioutput.py tests/test_automl_report.py -q` -> **23 passed, 2 warnings**.
+- Added regression coverage for distinct non-grid trial configurations and multi-fidelity resource progression.
+
+### Remaining limitations
+
+- The method-specific planner is deterministic and bounded but is not yet a full adaptive Bayesian/evolutionary optimizer with feedback between completed trials.
+- Optional LightGBM runtime, complete frontend/browser coverage, full backend/remote CI and final scoped re-review remain open. Task 3 remains `in_progress`; Task 4 remains `planned`.
+
+## Completion (2026-09-07)
+
+- Replaced the provisional multi-output parameter sequences for non-grid methods with the shared Optuna family-search execution path. Random, Bayesian, evolutionary and multi-fidelity searches now use their configured sampler/pruner and completed-trial feedback; grid and legacy strength paths retain their established behavior.
+- Added a production-path regression proving multi-output Bayesian jobs call Optuna family search and persist the real completed trial count.
+- Backend verification: **146 passed, 10 warnings, 12 subtests** across AutoML contracts, catalog, search, execution, reports, training, recovery and registry suites.
+- Frontend verification: Task 3 focused tests **20 passed, 19 historical skipped**; complete frontend suite **262 passed, 19 historical skipped**; production build passed.
+- Runtime verification: Alembic upgrade/check, Python module compilation, `git diff --check`, optional XGBoost/LightGBM/CatBoost imports, and Chromium multi-output AutoML E2E **1 passed**.
+- Task 3 is `passed`. Task 4 may start. Remote CI remains a later publication and Task 14 gate.

@@ -8,14 +8,14 @@ export type AutoMLTaskType =
 
 export type AutoMLSearchMethod = "grid" | "random" | "bayesian" | "evolutionary" | "multi_fidelity";
 export type AutoMLSearchStrength = "light" | "balanced" | "thorough" | "maximum";
-export type AutoMLTimeBudget = 60 | 300 | 600 | 1800;
+// Values are execution seconds; the UI presents the approved 30/60/120/240-minute presets.
+export type AutoMLTimeBudget = 1800 | 3600 | 7200 | 14400;
 
-export interface AutoMLRunPayload {
+interface AutoMLRunPayloadBase {
   project_id: string;
   experiment_id: string;
   dataset_artifact_id: string;
   input_columns: string[];
-  task: AutoMLTaskType;
   algorithm_ids: string[];
   search_method: AutoMLSearchMethod;
   max_trials: number;
@@ -24,9 +24,19 @@ export interface AutoMLRunPayload {
   class_weight: boolean;
   cross_validation_enabled: boolean;
   cross_validation_folds: 2 | 3 | 4 | 5 | null;
-  target_column?: string;
-  target_columns?: string[];
 }
+
+export type AutoMLRunPayload =
+  | (AutoMLRunPayloadBase & {
+      task: "classification" | "regression";
+      target_column: string;
+      target_columns?: never;
+    })
+  | (AutoMLRunPayloadBase & {
+      task: "multioutput_classification" | "multioutput_regression";
+      target_columns: [string, string, ...string[]];
+      target_column?: never;
+    });
 
 export interface TrainingJobCreate {
   project_id: string;

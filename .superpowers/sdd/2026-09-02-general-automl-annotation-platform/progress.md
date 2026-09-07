@@ -238,3 +238,17 @@
 - Added `AutoMLRunPayload` TypeScript contract in `src/api/training.ts`.
 - RED: focused frontend contract tests failed on missing options and payload behavior. GREEN: `npm test -- --run src/pages/AutoMLPage.test.tsx` 7 passed/19 skipped; `npm run build` passed.
 - Task 3 remains `in_progress`; browser/remote CI and optional LightGBM evidence remain open. Task 4 remains `planned`.
+
+## 2026-09-07 continuation checkpoint
+
+- Multi-output trial planning now emits observable, deterministic method-specific parameter sequences for `random`, `bayesian`, `evolutionary`, and `multi_fidelity`; legacy jobs without `search_method` retain the `strength` compatibility path.
+- Multi-output worker default `class_weight` now follows the request contract default (`true`) instead of treating an omitted legacy field as false.
+- Added regression coverage proving non-grid methods produce distinct trial configurations and that multi-fidelity changes the resource rung.
+- Verification: `python -m pytest tests/test_automl_tracking.py -q` -> **63 passed, 11 warnings, 10 subtests**; `python -m pytest tests/test_automl_multioutput.py tests/test_automl_report.py -q` -> **23 passed, 2 warnings**.
+- Remaining: optional LightGBM runtime evidence, complete frontend/browser and remote CI evidence, full backend gate, and final scoped review. Task 3 stays `in_progress`; Task 4 stays `planned`.
+
+## Task 3 completion and Task 4 start (2026-09-07)
+
+- Multi-output non-grid methods now execute through the shared Optuna family search: RandomSampler, TPESampler, NSGAIISampler and HyperbandPruner receive real completed-trial feedback. Grid and legacy strength execution remain backward compatible.
+- Final local evidence: backend Task 3 suites **146 passed, 10 warnings, 12 subtests**; focused frontend **20 passed, 19 historical skipped**; full frontend **262 passed, 19 historical skipped**; build, Alembic upgrade/check, Python compilation, diff check and Chromium AutoML E2E **1 passed**. Optional XGBoost, LightGBM and CatBoost imports succeeded.
+- Task 3 is `passed`. Task 4 is now `in_progress`. Remote CI remains a later publication/Task 14 gate.

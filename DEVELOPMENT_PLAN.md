@@ -57,8 +57,8 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 |---|---|---|---|
 | Task 1 | 全项目去行业化迁移基线 | 无；阻塞后续实现 | `passed` |
 | Task 2 | 数据导入、数据版本和统一输入合同 | Task 1 | `passed` |
-| Task 3 | AutoML 四种任务类型和训练合同 | Task 1、Task 2 | `in_progress` |
-| Task 4 | 标签 schema、类型校验和修订历史 | Task 1、Task 2 | `planned` |
+| Task 3 | AutoML 四种任务类型和训练合同 | Task 1、Task 2 | `passed` |
+| Task 4 | 标签 schema、类型校验和修订历史 | Task 1、Task 2 | `in_progress` |
 | Task 5 | 标注任务状态机、任务列表和预览 | Task 2、Task 4 | `planned` |
 | Task 6 | 三种自动标注策略和特征重要性加权 KMeans | Task 3、Task 4、Task 5 | `planned` |
 | Task 7 | 标注员独立认证、主体映射和服务边界 | Task 1、Task 2、Task 4 | `planned` |
@@ -152,4 +152,9 @@ Task 1 已完成其范围内的实现、迁移、测试和源码门禁；Task 2 
 
 - 2026-09-05：Task 3 fix round 6 实现检查点。multi-output timeout 保留 best-so-far artifact/reports/metrics 并以 completed + `budget_exhausted` 收口；`search_strength` 实际注入 family resource 参数；grid 使用 Cartesian combinations，尊重 `algorithm_ids` 与 `max_trials`。目标回归通过，Task 3 仍为 `in_progress`，Task 4 保持 `planned`。
 
+
 - 2026-09-05：Task 3 fix round 7 实现检查点。single-output Optuna 在已有成功 trial 时对 timeout 采用 best-so-far 部分成功语义并持久化 artifact/reports/metrics；multi-output 低 `max_trials` grid 先保证每个请求且可用 family 至少一个 trial，再公平轮询剩余槽位。目标回归和 AutoML/multioutput 聚焦集通过（64 passed、10 subtests）；Task 3 仍为 `in_progress`，Task 4 保持 `planned`。
+
+- 2026-09-07：Task 3 继续开发。多输出 trial 规划新增五种搜索方法的可观测参数序列：`random` 对搜索空间采样，`bayesian` 产生确定性可重放探索，`evolutionary` 逐参数变异，`multi_fidelity` 使用 family resource rung；保留旧任务缺省 `strength` 兼容路径，并将缺省 `class_weight` 按合同解释为启用。新增非网格搜索差异性回归。验证：`python -m pytest tests/test_automl_tracking.py -q` 为 **63 passed、11 warnings、10 subtests**；`python -m pytest tests/test_automl_multioutput.py tests/test_automl_report.py -q` 为 **23 passed、2 warnings**。Task 3 仍为 `in_progress`；可选 LightGBM、前端完整浏览器/远程 CI、完整后端门禁仍未完成，Task 4 保持 `planned`。
+
+- 2026-09-07：Task 3 收口并启动 Task 4。多输出 `random`、`bayesian`、`evolutionary`、`multi_fidelity` 已接入与单输出共享的 Optuna family search，使用真实 sampler/pruner 和 trial 分数反馈；`grid` 与 legacy `strength` 路径保持兼容。最终验证：Task 3 后端套件 **146 passed、10 warnings、12 subtests**；前端 Task 3 聚焦测试 **20 passed、19 个历史 skipped**；完整前端套件 **262 passed、19 个历史 skipped**；生产构建、Alembic upgrade/check、模块编译、`git diff --check` 和 Chromium AutoML E2E **1 passed**。可选依赖 `xgboost 3.2.0`、`lightgbm 4.6.0`、`catboost 1.2.10` 均可导入。Task 3 状态提升为 `passed`；Task 4 按依赖进入 `in_progress`。远程 CI 仍属于后续发布/Task 14 门禁，不外推为已通过。

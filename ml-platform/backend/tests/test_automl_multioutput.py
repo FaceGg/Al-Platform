@@ -7,9 +7,11 @@ from app.services.automl_execution import execute_automl_job
 from app.services.automl_search import (
     AutoMLContract,
     CandidateSummary,
+    SearchConfig,
     aggregate_feature_importance,
     normalize_task_type,
     rank_candidates,
+    run_family_search,
     run_automl_search,
     validate_target_columns,
     classification_metrics,
@@ -19,6 +21,10 @@ from app.services.automl_search import (
 )
 from app.services.automl_execution import normalize_evaluation_config, resolve_automl_feature_columns
 from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.impute import SimpleImputer
+from sklearn.multioutput import MultiOutputClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 
 def _frame():
@@ -55,12 +61,39 @@ def test_two_fold_cv_is_supported_and_multioutput_worker_contract_is_real():
     assert normalize_evaluation_config(True, 2)["cross_validation_folds"] == 2
 
 
+def test_multioutput_regression_search_reports_r2_rmse_and_mae():
+    frame = _frame().assign(
+        target_a=lambda data: data["x1"] * 1.5 + data["x2"],
+        target_b=lambda data: data["x2"] * 2.0 - data["x3"],
+    )
+    contract = AutoMLContract(
+        task_type="multioutput_regression",
+        target_columns=["target_a", "target_b"],
+        input_columns=["x1", "x2", "x3"],
+        cross_validation_folds=3,
+    )
+    result = run_automl_search(frame, contract)
+    for report in result.per_target.values():
+        assert report.r2 is not None
+        assert report.rmse is not None
+        assert report.mae is not None
+
+
 def test_candidate_ranking_is_auc_then_f1_then_accuracy_then_runtime():
     ranked = rank_candidates([
         CandidateSummary("a", auc=0.90, macro_f1=0.60, accuracy=0.80, runtime_s=20),
         CandidateSummary("b", auc=0.90, macro_f1=0.60, accuracy=0.80, runtime_s=10),
     ], "classification")
     assert [item.algorithm_id for item in ranked] == ["b", "a"]
+
+
+def test_regression_candidate_ranking_is_r2_then_rmse_then_mae_then_runtime():
+    ranked = rank_candidates([
+        CandidateSummary("higher_r2", runtime_s=20, r2=0.90, rmse=0.8, mae=0.5),
+        CandidateSummary("lower_rmse", runtime_s=10, r2=0.90, rmse=0.7, mae=0.9),
+        CandidateSummary("faster_tie", runtime_s=5, r2=0.90, rmse=0.8, mae=0.5),
+    ], "regression")
+    assert [item.algorithm_id for item in ranked] == ["lower_rmse", "faster_tie", "higher_r2"]
 
 
 def test_target_validation_rejects_missing_nonfinite_and_leakage():
@@ -108,11 +141,15 @@ def test_auc_falls_back_to_decision_function_when_predict_proba_missing():
 
 def test_search_controls_expose_four_strengths_and_time_budgets():
     for strength in ("light", "balanced", "thorough", "maximum"):
-        config = normalize_search_controls(strength=strength, time_budget=300, class_weight=True)
+        config = normalize_search_controls(strength=strength, time_budget=3600, class_weight=True)
         assert config["strength"] == strength
         assert config["class_weight"] is True
-    for budget in (60, 300, 600, 1800):
+    for budget in (1800, 3600, 7200, 14400):
         assert normalize_search_controls(strength="balanced", time_budget=budget)["time_budget"] == budget
+
+
+def test_search_controls_enable_class_weight_by_default():
+    assert normalize_search_controls(time_budget=3600)["class_weight"] is True
 
 
 def test_multioutput_fold_assignments_use_joint_labels():
@@ -136,10 +173,75 @@ def test_auc_tier_marks_incomplete_when_any_target_has_no_continuous_score():
     assert auc_tier({"label_a": 0.8, "label_b": None}) == "incomplete"
 
 
+def test_fold_auc_aligns_score_columns_to_global_class_order():
+    from app.services.automl_execution import _aggregate_fold_classification_metrics
+
+    target = np.array(["a", "b", "c", "a", "b", "c"])
+    predictions = target.copy()
+    fold_scores = [
+        (np.array([0, 1, 2]), np.eye(3), np.array(["a", "b", "c"])),
+        (
+            np.array([3, 4, 5]),
+            np.array([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]]),
+            np.array(["c", "a", "b"]),
+        ),
+    ]
+
+    report = _aggregate_fold_classification_metrics(target, predictions, fold_scores)
+
+    assert report["auc"] == 1.0
+
+
 def test_feature_importance_aggregates_per_target():
     report = aggregate_feature_importance({"a": [1.0, 3.0], "b": [3.0, 1.0]}, ["x1", "x2"])
     assert report.by_feature["x1"] == 2.0
     assert report.by_feature["x2"] == 2.0
+
+
+def test_grid_family_search_suggests_only_cartesian_grid_parameters():
+    from app.services.automl_catalog import resolve_algorithm_families
+
+    family = resolve_algorithm_families(["random_forest"])[0]
+    result = run_family_search(
+        family=family,
+        task="classification",
+        features=np.array([[0.0, 0.0], [1.0, 1.0]] * 10),
+        target=np.array([0, 1] * 10),
+        evaluation={"cross_validation_enabled": False, "cross_validation_folds": None},
+        config=SearchConfig(method="grid", max_trials=3, timeout_seconds=10),
+        catalog_index=0,
+        estimator_evaluator=lambda estimator, **_kwargs: float(estimator.get_params()["n_estimators"]),
+    )
+
+    assert result.completed_trials == 3
+    assert all(set(trial.params).issubset(family.grid) for trial in result.trials)
+
+
+def test_family_search_supports_an_explicit_multioutput_estimator_builder():
+    from app.services.automl_catalog import resolve_algorithm_families
+
+    frame = _frame()
+    family = resolve_algorithm_families(["random_forest"])[0]
+    result = run_family_search(
+        family=family,
+        task="multioutput_classification",
+        features=frame[["x1", "x2", "x3"]].to_numpy(),
+        target=frame[["label_a", "label_b"]].to_numpy(),
+        evaluation={"cross_validation_enabled": False, "cross_validation_folds": None},
+        config=SearchConfig(method="random", max_trials=1, timeout_seconds=10),
+        catalog_index=0,
+        estimator_builder=lambda current_family, task, params: MultiOutputClassifier(
+            make_pipeline(
+                SimpleImputer(strategy="median"),
+                StandardScaler(),
+                current_family.build(task, params),
+            ),
+        ),
+        estimator_evaluator=lambda _estimator, **_kwargs: 0.8,
+    )
+
+    assert result.status == "completed"
+    assert isinstance(result.best_estimator, MultiOutputClassifier)
 
 
 def test_worker_does_not_create_model_library_record():

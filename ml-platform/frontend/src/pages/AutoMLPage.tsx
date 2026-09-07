@@ -31,6 +31,7 @@ const AUTOML_ALGORITHM_OPTIONS = [
   { value: "extra_trees", label: "Extra Trees" },
   { value: "hist_gradient_boosting", label: "HistGradientBoosting" },
 ];
+const AUTOML_ALGORITHM_IDS = AUTOML_ALGORITHM_OPTIONS.map(({ value }) => value);
 
 const AUTOML_SEARCH_OPTIONS = [
   { value: "grid", label: "网格搜索" },
@@ -47,17 +48,39 @@ const AUTOML_TASK_OPTIONS = [
   { value: "multioutput_regression", label: "Multi-output Regression" },
 ];
 
-const AUTOML_STRENGTH_OPTIONS = [
-  { value: "light", label: "轻量" },
-  { value: "balanced", label: "均衡" },
-  { value: "thorough", label: "彻底" },
-  { value: "maximum", label: "最大" },
+const AUTOML_STRENGTH_OPTIONS: Array<{ value: AutoMLSearchStrength; label: string }> = [
+  { value: "light", label: "轻度（10 次）" },
+  { value: "balanced", label: "标准（30 次）" },
+  { value: "thorough", label: "高度（80 次）" },
+  { value: "maximum", label: "Ultra（200 次）" },
+];
+const AUTOML_STRENGTH_DEFAULT_TRIALS: Record<AutoMLSearchStrength, number> = {
+  light: 10,
+  balanced: 30,
+  thorough: 80,
+  maximum: 200,
+};
+
+const AUTOML_TIME_BUDGET_OPTIONS: Array<{ value: AutoMLTimeBudget; label: string }> = [
+  { value: 1800, label: "30 分钟" },
+  { value: 3600, label: "60 分钟（标准）" },
+  { value: 7200, label: "120 分钟" },
+  { value: 14400, label: "240 分钟" },
 ];
 
-const AUTOML_TIME_BUDGET_OPTIONS = [60, 300, 600, 1800].map((value) => ({
-  value,
-  label: `${value} 秒`,
-}));
+function createRequestIdentifier(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const randomHex = () => Math.floor(Math.random() * 0x100000000).toString(16).padStart(8, "0");
+  return `${randomHex()}-${randomHex().slice(0, 4)}-4${randomHex().slice(0, 3)}-${(8 + Math.floor(Math.random() * 4)).toString(16)}${randomHex().slice(0, 3)}-${randomHex()}${randomHex()}`;
+}
+
+function formatAutoMLTimeBudget(value: unknown): string {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return "-";
+  return seconds % 60 === 0 ? `${seconds / 60} 分钟` : `${seconds} 秒`;
+}
 
 const QUALITY_REQUIRED_SOURCE_COLUMNS = [
   "wld1c", "wld2c", "tipv1", "tipv2", "wres", "energy",
@@ -124,12 +147,12 @@ export default function AutoMLPage() {
   const [inputColumns, setInputColumns] = useState<string[]>([]);
   const [targetColumns, setTargetColumns] = useState<string[]>([]);
   const [taskType, setTaskType] = useState<AutoMLTaskType>("classification");
-  const [algorithmIds, setAlgorithmIds] = useState<string[]>([]);
+  const [algorithmIds, setAlgorithmIds] = useState<string[]>(() => [...AUTOML_ALGORITHM_IDS]);
   const [searchMethod, setSearchMethod] = useState<AutoMLSearchMethod>("bayesian");
-  const [maxTrials, setMaxTrials] = useState(20);
+  const [maxTrials, setMaxTrials] = useState(30);
   const [searchStrength, setSearchStrength] = useState<AutoMLSearchStrength>("balanced");
-  const [timeBudget, setTimeBudget] = useState<AutoMLTimeBudget>(600);
-  const [classWeight, setClassWeight] = useState(false);
+  const [timeBudget, setTimeBudget] = useState<AutoMLTimeBudget>(3600);
+  const [classWeight, setClassWeight] = useState(true);
   const [crossValidationEnabled, setCrossValidationEnabled] = useState(true);
   const [crossValidationFolds, setCrossValidationFolds] = useState<2 | 3 | 4 | 5>(5);
   const [running, setRunning] = useState(false);
@@ -158,6 +181,8 @@ export default function AutoMLPage() {
   const barRef = useRef<HTMLDivElement>(null);
   const radarRef = useRef<HTMLDivElement>(null);
   const resultRegionRef = useRef<HTMLDivElement>(null);
+  const datasetPreviewRequestRef = useRef(0);
+  const automlSubmissionRef = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
   const qualityMissingSourceColumns = QUALITY_REQUIRED_SOURCE_COLUMNS.filter(
     (column) => !datasetColumns.includes(column),
   );
@@ -264,6 +289,7 @@ export default function AutoMLPage() {
   }, [selectedProject, modelingTasks]);
 
   useEffect(() => {
+    const requestGeneration = ++datasetPreviewRequestRef.current;
     if (!selectedDataset) {
       setDatasetColumns([]);
       setNumericInputColumns([]);
@@ -282,6 +308,7 @@ export default function AutoMLPage() {
     setQualityTargetColumn("");
     getDatasetPreview(selectedDataset)
       .then((data) => {
+        if (requestGeneration !== datasetPreviewRequestRef.current) return;
         const columns: string[] = Array.isArray(data.columns)
           ? data.columns.filter((column: unknown): column is string => typeof column === "string")
           : [];
@@ -297,7 +324,10 @@ export default function AutoMLPage() {
           columns.includes(current) && !QUALITY_REQUIRED_SOURCE_COLUMNS.includes(current) ? current : ""
         ));
       })
-      .catch(() => { setDatasetColumns([]); setNumericInputColumns([]); setInputColumns([]); message.error(t.common.error); });
+      .catch(() => {
+        if (requestGeneration !== datasetPreviewRequestRef.current) return;
+        setDatasetColumns([]); setNumericInputColumns([]); setInputColumns([]); message.error(t.common.error);
+      });
   }, [selectedDataset, t.common.error, message]);
 
   useEffect(() => {
@@ -322,9 +352,12 @@ export default function AutoMLPage() {
     if (!task.startsWith("multioutput") && targetColumns.length > 1) {
       setTargetColumns(targetColumns.slice(0, 1));
     }
-    if (!task.includes("classification")) {
-      setClassWeight(false);
-    }
+    setClassWeight(task.includes("classification"));
+  };
+
+  const handleSearchStrengthChange = (strength: AutoMLSearchStrength) => {
+    setSearchStrength(strength);
+    setMaxTrials(AUTOML_STRENGTH_DEFAULT_TRIALS[strength]);
   };
 
   const viewModelingTask = async (task: ModelingTask) => {
@@ -416,12 +449,10 @@ export default function AutoMLPage() {
     setResults(null);
     setAnalysisReport(null);
     try {
-      const payload: AutoMLRunPayload = {
+      const payloadBase = {
         project_id: selectedProject, experiment_id: selectedExperiment,
         dataset_artifact_id: selectedDataset,
-        ...(isMultiOutput ? { target_columns: targetColumns } : { target_column: targetColumns[0] }),
         input_columns: inputColumns,
-        task: taskType,
         algorithm_ids: algorithmIds,
         search_method: searchMethod,
         max_trials: maxTrials,
@@ -431,12 +462,30 @@ export default function AutoMLPage() {
         cross_validation_enabled: crossValidationEnabled,
         cross_validation_folds: crossValidationEnabled ? crossValidationFolds : null,
       };
-      const idempotencyKey = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const payload: AutoMLRunPayload = isMultiOutput
+        ? {
+            ...payloadBase,
+            task: taskType as "multioutput_classification" | "multioutput_regression",
+            target_columns: targetColumns as [string, string, ...string[]],
+          }
+        : {
+            ...payloadBase,
+            task: taskType as "classification" | "regression",
+            target_column: targetColumns[0],
+          };
+      const fingerprint = JSON.stringify(payload);
+      const existingSubmission = automlSubmissionRef.current;
+      const submission = existingSubmission && existingSubmission.fingerprint === fingerprint
+        ? existingSubmission
+        : { fingerprint, idempotencyKey: createRequestIdentifier() };
+      automlSubmissionRef.current = submission;
       const res = await apiClient.post("/training/automl/run", payload, {
-        headers: { "Idempotency-Key": idempotencyKey },
+        headers: {
+          "Idempotency-Key": submission.idempotencyKey,
+          "X-Request-ID": createRequestIdentifier(),
+        },
       });
+      automlSubmissionRef.current = null;
       notifyDashboardStatsChanged();
       void refreshModelingTasks();
       setExperiments((items) => items.filter((item: any) => item.id !== selectedExperiment));
@@ -738,11 +787,11 @@ export default function AutoMLPage() {
             <Select aria-label="搜索方法" style={{ width: "100%", marginTop: 4 }} value={searchMethod} onChange={setSearchMethod}
               options={AUTOML_SEARCH_OPTIONS} /></Col>
           <Col xs={12} sm={3}><Text strong>最大试验次数</Text>
-            <InputNumber aria-label="最大试验次数" min={5} max={200} value={maxTrials} onChange={(value) => setMaxTrials(value ?? 20)} style={{ width: "100%", marginTop: 4 }} /></Col>
+            <InputNumber aria-label="最大试验次数" min={5} max={200} value={maxTrials} onChange={(value) => setMaxTrials(value ?? AUTOML_STRENGTH_DEFAULT_TRIALS.balanced)} style={{ width: "100%", marginTop: 4 }} /></Col>
           <Col xs={12} sm={3}><Text strong>搜索强度</Text>
-            <Select aria-label="搜索强度" style={{ width: "100%", marginTop: 4 }} value={searchStrength} onChange={setSearchStrength}
+            <Select aria-label="搜索强度" style={{ width: "100%", marginTop: 4 }} value={searchStrength} onChange={handleSearchStrengthChange}
               options={AUTOML_STRENGTH_OPTIONS} /></Col>
-          <Col xs={12} sm={3}><Text strong>总时间上限（秒）</Text>
+          <Col xs={12} sm={3}><Text strong>总时间上限</Text>
             <Select aria-label="总时间上限" style={{ width: "100%", marginTop: 4 }} value={timeBudget} onChange={setTimeBudget}
               options={AUTOML_TIME_BUDGET_OPTIONS} /></Col>
           <Col xs={12} sm={3}><Text strong>类别权重</Text>
@@ -770,7 +819,7 @@ export default function AutoMLPage() {
           <Space wrap size="large" style={{ marginBottom: 10 }}>
             <Text strong>{`搜索方法：${results.search.method}`}</Text>
             <Text>{`最大试验：${results.search.max_trials}`}</Text>
-            <Text>{`时间上限：${results.search.time_budget} 秒`}</Text>
+            <Text>{`时间上限：${formatAutoMLTimeBudget(results.search.time_budget)}`}</Text>
             {results.search.budget_exhausted && <Tag color="orange">预算已耗尽</Tag>}
           </Space>
           {bestModel?.params && <div style={{ marginBottom: 10 }}><Text strong>最佳参数：</Text><Text>{formatParams(bestModel.params)}</Text></div>}

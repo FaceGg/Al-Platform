@@ -13,7 +13,7 @@ from optuna.pruners import HyperbandPruner, NopPruner
 from optuna.samplers import GridSampler, NSGAIISampler, RandomSampler, TPESampler
 from optuna.trial import FrozenTrial, TrialState
 from sklearn.base import clone
-from sklearn.metrics import f1_score, get_scorer, roc_auc_score
+from sklearn.metrics import f1_score, get_scorer, mean_absolute_error, mean_squared_error, r2_score, roc_auc_score
 from sklearn.model_selection import KFold, StratifiedKFold, cross_val_predict, cross_val_score, train_test_split
 
 from app.services.automl_catalog import AlgorithmFamily, AlgorithmUnavailable, ParameterSpec, TaskType
@@ -21,7 +21,11 @@ from app.services.automl_catalog import AlgorithmFamily, AlgorithmUnavailable, P
 
 SEARCH_METHODS = frozenset({"grid", "random", "bayesian", "evolutionary", "multi_fidelity"})
 SEARCH_STRENGTHS = frozenset({"light", "balanced", "thorough", "maximum"})
-SEARCH_TIME_BUDGETS = frozenset({60, 300, 600, 1800})
+# The user-facing presets are 30/60/120/240 minutes. Worker deadlines remain
+# seconds so existing execution code and persisted task parameters are unambiguous.
+CANONICAL_SEARCH_TIME_BUDGETS = frozenset({1800, 3600, 7200, 14400})
+SEARCH_TIME_BUDGETS = frozenset({60, 300, 600}) | CANONICAL_SEARCH_TIME_BUDGETS
+SEARCH_STRENGTH_TRIALS = {"light": 10, "balanced": 30, "thorough": 80, "maximum": 200}
 
 PERSISTED_TASK_TYPES = frozenset({"classification", "multioutput_classification", "regression", "multioutput_regression"})
 TASK_TYPE_ALIASES = {"multilabel_classification": "multioutput_classification", "multiregression": "multioutput_regression"}
@@ -30,8 +34,8 @@ TASK_TYPE_ALIASES = {"multilabel_classification": "multioutput_classification", 
 def normalize_search_controls(
     *,
     strength: str = "balanced",
-    time_budget: int = 600,
-    class_weight: bool = False,
+    time_budget: int = 3600,
+    class_weight: bool = True,
 ) -> dict[str, object]:
     normalized_strength = str(strength).strip().lower()
     if normalized_strength not in SEARCH_STRENGTHS:
@@ -132,7 +136,9 @@ class TargetReport:
     macro_f1: float | None = None
     auc: float | None = None
     accuracy: float | None = None
+    r2: float | None = None
     rmse: float | None = None
+    mae: float | None = None
 
 
 @dataclass(frozen=True)
@@ -149,6 +155,9 @@ class CandidateSummary:
     macro_f1: float | None = None
     accuracy: float | None = None
     runtime_s: float = 0.0
+    r2: float | None = None
+    rmse: float | None = None
+    mae: float | None = None
 
 
 @dataclass(frozen=True)
@@ -190,7 +199,20 @@ def aggregate_feature_importance(per_target: dict[str, Sequence[float]], feature
 
 
 def rank_candidates(candidates: Sequence[CandidateSummary], task_type: str) -> list[CandidateSummary]:
-    return sorted(candidates, key=lambda item: (-(item.auc if item.auc is not None else -1), -(item.macro_f1 if item.macro_f1 is not None else -1), -(item.accuracy if item.accuracy is not None else -1), item.runtime_s))
+    normalized_task = normalize_task_type(task_type)
+    if "regression" in normalized_task:
+        return sorted(candidates, key=lambda item: (
+            -(item.r2 if item.r2 is not None else float("-inf")),
+            item.rmse if item.rmse is not None else float("inf"),
+            item.mae if item.mae is not None else float("inf"),
+            item.runtime_s,
+        ))
+    return sorted(candidates, key=lambda item: (
+        -(item.auc if item.auc is not None else -1),
+        -(item.macro_f1 if item.macro_f1 is not None else -1),
+        -(item.accuracy if item.accuracy is not None else -1),
+        item.runtime_s,
+    ))
 
 
 def run_automl_search(frame, contract: AutoMLContract) -> AutoMLExecutionResult:
@@ -216,13 +238,39 @@ def run_automl_search(frame, contract: AutoMLContract) -> AutoMLExecutionResult:
             estimator = RandomForestClassifier(n_estimators=40, random_state=contract.random_seed, n_jobs=1)
             splitter = splits if splits is not None else StratifiedKFold(contract.cross_validation_folds, shuffle=True, random_state=contract.random_seed)
             pred = cross_val_predict(estimator, features, y, cv=splitter, method="predict")
-            proba = cross_val_predict(estimator, features, y, cv=splitter, method="predict_proba")[:, 1]
-            reports[target] = TargetReport(macro_f1=float(f1_score(y, pred, average="macro")), accuracy=float(accuracy_score(y, pred)), auc=float(roc_auc_score(y, proba)))
+            scoring = None
+            for score_method in ("predict_proba", "decision_function"):
+                try:
+                    scoring = cross_val_predict(estimator, features, y, cv=splitter, method=score_method)
+                    break
+                except (AttributeError, TypeError, ValueError):
+                    continue
+            auc = None
+            if scoring is not None:
+                values = np.asarray(scoring)
+                try:
+                    if values.ndim == 1:
+                        auc = float(roc_auc_score(y, values))
+                    elif values.ndim == 2 and values.shape[1] == 2:
+                        auc = float(roc_auc_score(y, values[:, 1]))
+                    elif values.ndim == 2:
+                        auc = float(roc_auc_score(y, values, multi_class="ovr", average="macro"))
+                except (TypeError, ValueError):
+                    auc = None
+            reports[target] = TargetReport(
+                macro_f1=float(f1_score(y, pred, average="macro")),
+                accuracy=float(accuracy_score(y, pred)),
+                auc=auc,
+            )
         else:
             estimator = RandomForestRegressor(n_estimators=40, random_state=contract.random_seed, n_jobs=1)
             splitter = KFold(contract.cross_validation_folds, shuffle=True, random_state=contract.random_seed)
             pred = cross_val_predict(estimator, features, y, cv=splitter)
-            reports[target] = TargetReport(rmse=float(np.sqrt(np.mean((y - pred) ** 2))))
+            reports[target] = TargetReport(
+                r2=float(r2_score(y, pred)),
+                rmse=float(np.sqrt(mean_squared_error(y, pred))),
+                mae=float(mean_absolute_error(y, pred)),
+            )
     return AutoMLExecutionResult(per_target=reports, cv_strategy=strategy)
 
 
@@ -348,6 +396,14 @@ def _suggest_params(
         for name, spec in family.search_space.items()
         if name != exclude
     }
+
+
+def _suggest_grid_params(trial: optuna.Trial, family: AlgorithmFamily) -> dict[str, object]:
+    """Sample only declared grid dimensions and retain family defaults elsewhere."""
+    params = dict(family.default_params)
+    for name, values in family.grid.items():
+        params[name] = trial.suggest_categorical(name, list(values))
+    return params
 
 
 def _resource_rungs(family: AlgorithmFamily) -> tuple[int, ...]:
@@ -505,6 +561,7 @@ def run_family_search(
     progress_callback: Callable[[TrialProgress], None] | None = None,
     trial_callback: Callable[[TrialSummary], None] | None = None,
     estimator_evaluator: Callable[..., float] = _evaluate_estimator,
+    estimator_builder: Callable[[AlgorithmFamily, TaskType, Mapping[str, object]], object] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> FamilySearchResult:
     """Optimize one selected algorithm family within a bounded wall-time slice."""
@@ -523,6 +580,11 @@ def run_family_search(
         result.error_message = str(error)
         return result
 
+    def build_estimator(params: Mapping[str, object]):
+        if estimator_builder is not None:
+            return estimator_builder(family, task, params)
+        return family.build(task, params)
+
     sampler, pruner = build_optuna_components(
         config.method,
         family.grid,
@@ -540,7 +602,7 @@ def run_family_search(
                 for resource in _resource_rungs(family):
                     rung_params = {**params, family.resource_parameter: resource}
                     score = _finite_score(estimator_evaluator(
-                        family.build(task, rung_params), task=task, features=features,
+                        build_estimator(rung_params), task=task, features=features,
                         target=target, evaluation=evaluation,
                     ))
                     trial.report(score, step=resource)
@@ -549,7 +611,7 @@ def run_family_search(
                 if task == "classification" and estimator_evaluator is _evaluate_estimator:
                     try:
                         auc, f1 = classification_metrics(
-                            family.build(task, {**params, family.resource_parameter: family.max_resource}),
+                            build_estimator({**params, family.resource_parameter: family.max_resource}),
                             features=features,
                             target=target,
                             evaluation=evaluation,
@@ -563,15 +625,15 @@ def run_family_search(
                         pass
                 return score
 
-            params = _suggest_params(trial, family)
+            params = _suggest_grid_params(trial, family) if config.method == "grid" else _suggest_params(trial, family)
             score = _finite_score(estimator_evaluator(
-                family.build(task, params), task=task, features=features,
+                build_estimator(params), task=task, features=features,
                 target=target, evaluation=evaluation,
             ))
             if task == "classification" and estimator_evaluator is _evaluate_estimator:
                 try:
                     auc, f1 = classification_metrics(
-                        family.build(task, params),
+                        build_estimator(params),
                         features=features,
                         target=target,
                         evaluation=evaluation,
@@ -632,7 +694,7 @@ def run_family_search(
     best_params = dict(best_trial.params)
     if config.method == "multi_fidelity":
         best_params[family.resource_parameter] = family.max_resource
-    estimator = family.build(task, best_params)
+    estimator = build_estimator(best_params)
     estimator.fit(features, target)
     result.status = "completed"
     result.best_score = float(best_trial.value)
