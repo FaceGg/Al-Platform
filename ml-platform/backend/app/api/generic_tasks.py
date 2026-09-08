@@ -7,7 +7,7 @@ GENERICIZATION_BRIDGE_ONLY = True
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 import json
 from sqlalchemy.exc import IntegrityError
@@ -16,11 +16,13 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.database import get_db
 from app.models.platform_models import GenericAnnotationTask
+from app.models.data_version import DatasetSample, DatasetVersion
 from app.models.labeling import LabelSchema
 from app.models.project import Project
 from app.models.user import User
 from app.services.annotation_tasks import migrate_legacy_quality_run
-from app.services.label_schema import bind_label_schema_to_task
+from app.services.annotation_task_state import list_annotation_tasks
+from app.services.label_schema import bind_label_schema_to_task, label_schema_snapshot
 
 router = APIRouter(tags=["generic-tasks"])
 
@@ -33,6 +35,9 @@ class GenericTaskCreate(BaseModel):
     mode: Literal["manual", "automatic"] = "manual"
     sample_scope: dict = Field(default_factory=lambda: {"kind": "all"})
     label_snapshot: dict = Field(default_factory=dict)
+    visible_columns: list[str] = Field(default_factory=list)
+    instructions: str = ""
+    configuration: dict = Field(default_factory=dict)
 
     @field_validator("sample_scope")
     @classmethod
@@ -68,7 +73,9 @@ def _serialize(task: GenericAnnotationTask) -> dict:
         "label_schema_id": str(task.label_schema_id),
         "mode": task.mode,
         "status": task.status,
+        "task_revision": task.task_revision,
         "sample_scope": task.sample_scope or {},
+        "task_snapshot": task.task_snapshot or {},
         "source_legacy_id": task.source_legacy_id,
         "created_at": task.created_at.isoformat() if task.created_at else None,
     }
@@ -91,12 +98,17 @@ def _contract_error(request: Request, code: str, message: str, status_code: int 
 
 @router.get("/api/annotation-tasks")
 def list_generic_annotation_tasks(
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+    project_id: uuid.UUID | None = Query(default=None), cursor: str | None = Query(default=None), limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
+    if project_id is not None:
+        try:
+            return list_annotation_tasks(db, project_id, current_user.id, cursor, limit)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail={"code": str(error)}) from error
     tasks = db.query(GenericAnnotationTask).filter(
         GenericAnnotationTask.owner_id == current_user.id
-    ).order_by(GenericAnnotationTask.created_at.desc()).all()
-    return {"items": [_serialize(task) for task in tasks], "total": len(tasks)}
+    ).order_by(GenericAnnotationTask.created_at.desc()).limit(limit).all()
+    return {"items": [_serialize(task) for task in tasks], "total": len(tasks), "next_cursor": None}
 
 
 def _request_context(request: Request, x_request_id: str | None, idempotency_key: str | None):
@@ -128,6 +140,29 @@ def create_generic_annotation_task(
             "The label schema does not belong to this project.",
             status_code=404,
         )
+    version = db.query(DatasetVersion).filter(DatasetVersion.id == data.dataset_version_id, DatasetVersion.project_id == project_id).one_or_none()
+    if version is None:
+        raise _contract_error(request, "DATASET_VERSION_NOT_FOUND", "The dataset version does not belong to this project.", status_code=404)
+    requested_ids = list(data.sample_scope.get("sample_ids", [])) if data.sample_scope.get("kind") == "ids" else None
+    samples_query = db.query(DatasetSample).filter(DatasetSample.dataset_version_id == version.id)
+    if requested_ids is not None:
+        samples_query = samples_query.filter(DatasetSample.sample_id.in_(requested_ids))
+    samples = samples_query.order_by(DatasetSample.row_index.asc()).all()
+    if requested_ids is not None and {sample.sample_id for sample in samples} != set(requested_ids):
+        raise _contract_error(request, "SAMPLE_SCOPE_INVALID", "The sample scope contains unknown sample ids.", status_code=422)
+    schema_snapshot = label_schema_snapshot(schema)
+    visible_columns = list(data.visible_columns)
+    task_snapshot = {
+        "dataset_version": {"id": str(version.id), "version": version.version, "content_hash": version.content_hash, "schema_hash": version.schema_hash},
+        "sample_ids": [sample.sample_id for sample in samples],
+        "visible_columns": visible_columns,
+        "label_schema": schema_snapshot,
+        "instructions": data.instructions,
+        "configuration": data.configuration,
+    }
+    import hashlib
+    canonical = json.dumps(task_snapshot, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    task_snapshot["config_hash"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     existing = db.query(GenericAnnotationTask).filter(
         GenericAnnotationTask.idempotency_key == key,
         GenericAnnotationTask.owner_id == current_user.id,
@@ -140,8 +175,10 @@ def create_generic_annotation_task(
         label_schema_id=data.label_schema_id,
         owner_id=current_user.id,
         mode=data.mode,
+        status="draft",
         sample_scope=data.sample_scope,
-        label_snapshot=data.label_snapshot,
+        label_snapshot=schema_snapshot,
+        task_snapshot=task_snapshot,
         idempotency_key=key,
     )
     db.add(task)

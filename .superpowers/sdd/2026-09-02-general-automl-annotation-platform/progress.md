@@ -52,7 +52,7 @@
 - Task 2: passed (focused local contract/API scope; full backend, browser E2E, remote CI and Task 13 parser isolation remain pending)
 - Task 3: passed (current local focused scope; remote CI remains a later publication/Task 14 gate)
 - Task 4: passed (current local focused scope; Task 5 owns state machine, sample initialization, list and preview)
-- Task 5: planned
+- Task 5: in_progress
 - Task 6: planned
 - Task 7: planned
 - Task 8: planned
@@ -260,3 +260,17 @@
 - Added legacy single-label backfill and revision uniqueness migrations, schema APIs, and the manual annotation schema editor.
 - RED/GREEN evidence: backend schema/API/generic-task/migration suite **31 passed, 1 warning**; frontend schema editor and annotation page suite **41 passed**; build, Alembic upgrade/check, `py_compile` and diff check passed.
 - Task 4 is `passed` for the focused local scope. Task 5 remains responsible for sample initialization, task state machine, list and preview.
+
+## Task 5 start (2026-09-07)
+
+- Added generic task revisions, preview operation idempotency, transition guards, owner-scoped listing and preview APIs, migration `20260907_25`, and frontend preview client/component.
+- Current status is `in_progress`; complete snapshots, asynchronous workers, sample statistics and page-level operation-center wiring remain open.
+
+## Task 5 boundary correction (2026-09-07)
+
+- Kept state and preview logic in dedicated generic modules rather than extending the historical compatibility adapter.
+- Added owner-scoped preview listing, cursor validation, and structured transition errors. Focused backend verification is **10 passed, 1 warning, 2 subtests**; frontend preview/manifest verification is **8 passed**.
+2026-09-08 Task 5 continuation: RED covered preview owner isolation, cursor pagination, and transition audit. GREEN implemented `list_annotation_previews`, owner-scoped API access, cursor responses, and append-only transition audit events. Focused backend state/API tests: 10 passed. Remaining: immutable task snapshot completion, async preview worker, preview statistics, and UI operation-center wiring.
+2026-09-08 Task 5 snapshot increment: RED covered server-owned snapshot fields and immutable update behavior. GREEN added `task_snapshot`, dataset-version/sample/schema/config freezing, ownership validation, migration `20260908_26`, and ORM immutability guard. Focused state/API/manifest tests: 16 passed; migration upgrade/check, compile, and diff check passed. Remaining: async preview worker, statistics/result pagination, and UI wiring.
+2026-09-08 Task 5 preview runtime increment: RED covered monotonic progress/completion and owner-scoped preview detail. GREEN added progress/error/completed_at persistence, migration `20260908_27`, monotonic progress updates, and detail API. Focused state/API/manifest tests: 18 passed; migration upgrade/check, compile, and diff check passed. Remaining: durable async worker, statistics/result pagination, and UI wiring.
+2026-09-08 Task 5 worker increment: Added generic Celery `execute_annotation_preview`; it reads immutable task snapshots and materializes progress plus sample/column/label summaries. Direct worker regression passed. API remains queued without forced broker dispatch in local tests; broker trigger/recovery, result pagination, and UI wiring remain.

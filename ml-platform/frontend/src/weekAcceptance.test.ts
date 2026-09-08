@@ -47,6 +47,7 @@ const weekTestFiles: Record<number, string[]> = {
     "./components/DeleteConfirmation.test.tsx",
     "./components/LabelSchemaEditor.test.tsx",
     "./components/PageErrorBoundary.test.tsx",
+    "./components/PreviewDrawer.test.tsx",
     "./components/TableRowAction.test.tsx",
     "./components/spotWeld/WaveformPanel.test.tsx",
     "./components/workspace/CustomNode.test.tsx",

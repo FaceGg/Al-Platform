@@ -13,6 +13,7 @@ celery_app = Celery(
     include=[
         "app.tasks.workflow_tasks",
         "app.tasks.training_tasks",
+        "app.tasks.annotation_preview_tasks",
         "app.tasks.inference_tasks",
         "app.tasks.notification_tasks",
         "app.tasks.spot_weld_quality_tasks",
@@ -65,6 +66,7 @@ celery_app.conf.update(
 
 # Register tasks for CLI/import smoke checks as well as worker include discovery.
 from app.tasks import training_tasks  # noqa: E402,F401
+from app.tasks import annotation_preview_tasks  # noqa: E402,F401
 from app.tasks import scheduler_tasks  # noqa: E402,F401
 from app.tasks import inference_tasks  # noqa: E402,F401
 from app.tasks import notification_tasks  # noqa: E402,F401

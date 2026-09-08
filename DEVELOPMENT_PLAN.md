@@ -59,7 +59,7 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 | Task 2 | 数据导入、数据版本和统一输入合同 | Task 1 | `passed` |
 | Task 3 | AutoML 四种任务类型和训练合同 | Task 1、Task 2 | `passed` |
 | Task 4 | 标签 schema、类型校验和修订历史 | Task 1、Task 2 | `passed` |
-| Task 5 | 标注任务状态机、任务列表和预览 | Task 2、Task 4 | `planned` |
+| Task 5 | 标注任务状态机、任务列表和预览 | Task 2、Task 4 | `in_progress` |
 | Task 6 | 三种自动标注策略和特征重要性加权 KMeans | Task 3、Task 4、Task 5 | `planned` |
 | Task 7 | 标注员独立认证、主体映射和服务边界 | Task 1、Task 2、Task 4 | `planned` |
 | Task 8 | 指派、重叠样本并发、自动保存和回传锁 | Task 4、Task 5、Task 7 | `planned` |
@@ -127,6 +127,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 2026-09-04：Task 3 修复轮次 1 收口并暂停。当前提交 `7a99fa9`、`16d8a98` 已补齐 2 折配置、multi-output worker 合同入口、联合标签频次校验、artifact-only candidate 注册兼容和血缘回归；`test_automl_multioutput.py` 8 passed，AutoML/registry/API 合并套件 36 passed（1 warning、2 subtests），相关模块 `py_compile` 与 `git diff --check` 通过。Task 3 仍为 `in_progress`，真实多目标制品持久化、迭代分层、折内预处理、搜索控制、幂等/取消/恢复、完整 AUC 分层及前端接线仍待完成；按用户要求暂停开发，明日从这些阻断和 scoped re-review 继续，不启动 Task 4。
 
 - 每次 Task 完成后，在本文件更新当前状态、未完成项、风险和下一步；完成明细、旧失败和历史证据追加到归档，不回写旧事实。
+- 2026-09-08：Task 5 增量开发继续。按 TDD 先补预览列表所有者隔离、cursor 分页和状态转移审计回归，初始 3 项失败；随后在独立通用状态服务中实现任务所有者校验、预览 cursor 分页及 `annotation_task.transition` 成功审计事件。验证：状态机/API 聚焦测试 10 passed（含 1 warning），相关模块 `py_compile` 与 `git diff --check` 通过。Task 5 仍为 `in_progress`，任务快照持久化、异步预览 worker、统计结果和页面接线仍未完成。
+- 2026-09-08：Task 5 快照合同增量。按 TDD 新增服务端快照测试，先验证请求字段未注册而失败；随后新增 `task_snapshot` 持久化字段和迁移，创建任务时校验数据版本归属、固定样本 ID、生成可见列/标签 schema/指令/配置 hash，并以 ORM 事件拒绝已冻结快照更新。验证：Task 5 状态/API/manifest 聚焦测试 16 passed（1 warning、2 subtests），Alembic upgrade/check、相关模块编译和 `git diff --check` 通过。Task 5 仍为 `in_progress`，异步 preview worker、样本统计与预览结果分页、页面操作中心接线待完成。
+- 2026-09-08：Task 5 预览运行态增量。按 TDD 新增进度单调递增、完成时间、失败信息和 owner-scoped 详情回归；新增预览 `progress/error/completed_at` 字段及迁移 `20260908_27`，状态服务支持运行态更新并拒绝进度回退，详情接口返回可恢复所需运行态。验证：Task 5 状态/API/manifest 聚焦测试 18 passed（2 warnings、2 subtests），Alembic upgrade/check、相关模块编译和 `git diff --check` 通过。Task 5 仍为 `in_progress`，真实异步 worker、样本统计和预览结果分页、页面操作中心接线待完成。
+- 2026-09-08：Task 5 worker 增量。新增通用 Celery `execute_annotation_preview` 任务并注册 worker 发现列表；worker 仅读取不可变 `task_snapshot`，写入 running/completed 进度和样本/可见列/标签列摘要。直接 worker 回归通过；当前 API 创建仍返回 queued，尚未在无 broker 环境强制派发，恢复调度和真实 broker 验证仍待完成。Task 5 保持 `in_progress`。
 - 2026-09-03：将整理前的完整 `DEVELOPMENT_PLAN.md` 保存为 `DEVELOPMENT_PLAN.history-2026-09-03.md`。Week 1–12 及历史执行记录已从当前视图分离。
 - 2026-09-03：从 `DEVELOPMENT_PLAN.history-2026-08-23.md` 回收尚未实现的工作流、数据治理、SSO、云原生、数据探索、RAG/AIHub 和优化候选，并按 `planned`、`pending_decision` 或 `deferred` 进入第 7 节。
 - 2026-09-03：没有提升任何业务状态；通用平台 Task 1–14、遗留验证项和 backlog 均保持未完成状态。
@@ -161,3 +165,5 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
  - 2026-09-07：Task 3 收口并启动 Task 4。多输出 `random`、`bayesian`、`evolutionary`、`multi_fidelity` 已接入与单输出共享的 Optuna family search，使用真实 sampler/pruner 和 trial 分数反馈；`grid` 与 legacy `strength` 路径保持兼容。最终验证：Task 3 后端套件 **146 passed、10 warnings、12 subtests**；前端 Task 3 聚焦测试 **20 passed、19 个历史 skipped**；完整前端套件 **262 passed、19 个历史 skipped**；生产构建、Alembic upgrade/check、模块编译、`git diff --check` 和 Chromium AutoML E2E **1 passed**。可选依赖 `xgboost 3.2.0`、`lightgbm 4.6.0`、`catboost 1.2.10` 均可导入。Task 3 状态提升为 `passed`；Task 4 按依赖进入 `in_progress`。远程 CI 仍属于后续发布/Task 14 门禁，不外推为已通过。
 
 - 2026-09-07：Task 4 完成当前本地聚焦范围。新增冻结的多列标签 schema、列级约束、任务 schema 绑定快照、当前值与不可变修订历史、评论/确认表、legacy 单列回填迁移和原子 `base_revision` 并发写入；通用任务创建校验 schema 属于项目并自动创建绑定，样本读写/确认拒绝未绑定或错误绑定任务。验证：标签服务、API、通用任务、迁移和 suite manifest 聚焦套件 **36 passed、1 warning、2 subtests**；前端 LabelSchemaEditor、DataAnnotationPage 和 week manifest **48 passed**；`npm run build`、Alembic upgrade/check、模块 `py_compile` 与 `git diff --check` 通过。Task 4 状态提升为 `passed`；Task 5 继续 `planned`。Task 4 未实现样本初始化、任务状态机、完整列表和预览，这些仍属 Task 5。全量后端历史回归仍有 25 个失败，集中在旧点焊 API 测试未提供新请求关联头，以及既有证据/迁移基线假设；不计入 Task 4 聚焦门禁，已保留为后续兼容性工作。
+- 2026-09-07：Task 5 启动。新增通用任务 revision、预览操作幂等、状态转移守卫、项目/所有者隔离列表分页接口和预览列表接口；新增独立状态服务、schema、迁移、前端预览抽屉与 API 客户端。当前状态为 `in_progress`，待完成完整任务快照、异步 worker、样本统计/预览分页及页面操作中心接线。
+- 2026-09-07：Task 5 边界修正。状态与预览逻辑已从历史兼容适配器中隔离到独立通用服务和路由；任务创建保留 `draft` 初始状态，预览按 `(task_id, task_revision, config_hash)` 幂等，非法 cursor 和未授权预览返回结构化错误。验证：Task 5 后端聚焦 **10 passed、1 warning、2 subtests**；前端预览组件与 manifest **8 passed**；构建、迁移检查、编译和 diff check 通过。Task 5 仍为 `in_progress`。

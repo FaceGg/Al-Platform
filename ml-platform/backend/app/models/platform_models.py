@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import Column, String, Text, Float, DateTime, JSON, Boolean, ForeignKey, Integer, func, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+from sqlalchemy import event, inspect
 from app.database import Base
 
 
@@ -91,8 +92,10 @@ class GenericAnnotationTask(Base):
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     mode = Column(String(16), nullable=False, default="manual")
     status = Column(String(24), nullable=False, default="pending")
+    task_revision = Column(Integer, nullable=False, default=0)
     sample_scope = Column(JSON, nullable=False, default=dict)
     label_snapshot = Column(JSON, nullable=False, default=dict)
+    task_snapshot = Column(JSON, nullable=False, default=dict)
     source_legacy_id = Column(String(64), nullable=True)
     idempotency_key = Column(String(128), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
@@ -100,6 +103,37 @@ class GenericAnnotationTask(Base):
 
     project = relationship("Project")
     owner = relationship("User")
+
+
+@event.listens_for(GenericAnnotationTask, "before_update")
+def _prevent_task_snapshot_update(_mapper, _connection, target):
+    history = inspect(target).attrs.task_snapshot.history
+    if history.has_changes():
+        raise ValueError("GenericAnnotationTask snapshot is immutable")
+
+
+class AnnotationTaskPreview(Base):
+    __tablename__ = "annotation_task_previews"
+    __table_args__ = (
+        UniqueConstraint("task_id", "task_revision", "config_hash", name="uq_annotation_preview_task_revision_config"),
+        Index("ix_annotation_task_previews_task", "task_id", "created_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id = Column(UUID(as_uuid=True), ForeignKey("generic_annotation_tasks.id", ondelete="CASCADE"), nullable=False)
+    task_revision = Column(Integer, nullable=False)
+    config_hash = Column(String(128), nullable=False)
+    operation_id = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid.uuid4)
+    status = Column(String(24), nullable=False, default="queued")
+    progress = Column(Integer, nullable=False, default=0)
+    summary = Column(JSON, nullable=False, default=dict)
+    error = Column(JSON, nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    task = relationship("GenericAnnotationTask")
+    creator = relationship("User")
 
 
 class AnnotationResult(Base):
