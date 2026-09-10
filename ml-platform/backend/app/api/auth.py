@@ -24,6 +24,12 @@ from app.services.platform_audit import (
     record_failed_platform_event,
     record_platform_event,
 )
+from app.services.security import (
+    LOGIN_ACCOUNT_LIMIT,
+    LOGIN_IP_LIMIT,
+    REGISTRATION_LIMIT,
+    enforce_rate_limit,
+)
 
 
 
@@ -32,6 +38,11 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+
+def _client_key(request: Request) -> str:
+    client = request.client
+    return (client.host if client is not None and client.host else "unknown").strip() or "unknown"
 
 
 
@@ -99,6 +110,10 @@ def login(
     db: Session = Depends(get_db),
 ):
 
+    client_key = _client_key(request)
+    enforce_rate_limit(f"auth:login:ip:{client_key}", LOGIN_IP_LIMIT)
+    enforce_rate_limit(f"auth:login:account:{form.username.casefold()}", LOGIN_ACCOUNT_LIMIT)
+
     user = db.query(User).filter(User.username == form.username).first()
 
     if not user or not pwd_context.verify(form.password, user.password_hash):
@@ -144,6 +159,7 @@ def register(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    enforce_rate_limit(f"auth:register:ip:{_client_key(request)}", REGISTRATION_LIMIT)
     existing = db.query(User).filter(User.username == data.username).first()
 
     if existing:

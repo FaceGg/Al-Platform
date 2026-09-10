@@ -230,6 +230,21 @@ services:
     secrets:
       - notification_master_key
 
+  annotator:
+    build:
+      context: ./ml-platform/annotator/backend
+      dockerfile: Dockerfile
+    ports:
+      - "${ANNOTATOR_PORT:-8443}:8443"
+    environment:
+      ANNOTATOR_PORT: 8443
+      ANNOTATOR_API_ORIGIN: ${ANNOTATOR_API_ORIGIN:-http://backend:8000}
+      ANNOTATOR_PUBLIC_ORIGIN: ${ANNOTATOR_PUBLIC_ORIGIN:-http://localhost:8443}
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
   worker:
     build:
       context: ./ml-platform/backend

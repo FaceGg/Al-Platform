@@ -2,6 +2,8 @@
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import hashlib
+import json
 from pathlib import Path
 import tempfile
 import uuid
@@ -239,6 +241,146 @@ class ModelRegistryService:
             db.refresh(version)
         return model, version, True
 
+    @staticmethod
+    def _candidate(job, candidate_id):
+        for item in (job.metrics or {}).get("algorithm_results", ()):
+            if isinstance(item, dict) and str(item.get("candidate_id") or item.get("algorithm_id")) == str(candidate_id):
+                if item.get("status") != "completed" or not item.get("model_artifact_id"):
+                    raise ModelRegistryError("CANDIDATE_NOT_REGISTERABLE")
+                return item
+        raise ModelRegistryError("CANDIDATE_NOT_FOUND")
+
+    def register_automl_candidate(self, db, *, task_id, candidate_id, model_name, actor_id, idempotency_key):
+        try:
+            task_uuid = uuid.UUID(str(task_id))
+        except (TypeError, ValueError, AttributeError):
+            raise ModelRegistryError("AUTOML_JOB_NOT_FOUND") from None
+        job = db.query(TrainingJob).filter(TrainingJob.id == task_uuid).with_for_update().first()
+        if job is None:
+            raise ModelRegistryError("AUTOML_JOB_NOT_FOUND")
+        if job.status != "completed":
+            raise ModelRegistryError("CANDIDATE_NOT_REGISTERABLE")
+        if not isinstance(model_name, str) or not model_name.strip() or len(model_name.strip()) > 128:
+            raise ModelRegistryError("MODEL_NAME_INVALID")
+        normalized_name = model_name.strip()
+        key = str(idempotency_key or "").strip()
+        if not key or len(key) > 128:
+            raise ModelRegistryError("IDEMPOTENCY_KEY_REQUIRED")
+        existing = db.query(ModelVersion).filter(
+            ModelVersion.registration_task_id == job.id,
+            ModelVersion.registration_idempotency_key == key,
+        ).first()
+        if existing is not None:
+            if (
+                existing.registration_candidate_id == str(candidate_id)
+                and existing.registered_model.name == normalized_name
+            ):
+                return existing, False
+            raise ModelRegistryError("MODEL_REGISTRATION_IDEMPOTENCY_CONFLICT")
+        candidate = self._candidate(job, candidate_id)
+        try:
+            artifact_uuid = uuid.UUID(str(candidate["model_artifact_id"]))
+        except (TypeError, ValueError, AttributeError):
+            raise ModelRegistryError("CANDIDATE_NOT_REGISTERABLE") from None
+        artifact = db.query(Artifact).filter(
+            Artifact.id == artifact_uuid,
+            Artifact.project_id == job.project_id,
+            Artifact.type == "model",
+            Artifact.format == "joblib",
+        ).first()
+        metadata = dict(artifact.metadata_ or {}) if artifact is not None else {}
+        if artifact is None or metadata.get("source") != "automl" or str(metadata.get("training_job_id")) != str(job.id):
+            raise ModelRegistryError("CANDIDATE_NOT_REGISTERABLE")
+        if not isinstance(metadata.get("sha256"), str) or len(metadata["sha256"]) != 64:
+            raise ModelRegistryError("MODEL_CONTRACT_INVALID")
+        try:
+            with self.artifact_service.materialize(artifact.id, job.project_id, expected_type="model") as source:
+                digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        except Exception:
+            raise ModelRegistryError("CANDIDATE_NOT_REGISTERABLE") from None
+        if digest != metadata["sha256"]:
+            raise ModelRegistryError("MODEL_CONTRACT_INVALID")
+        candidate_metadata = dict((job.metrics or {}).get("input_contract") or metadata.get("input_contract") or {})
+        targets = list(candidate_metadata.get("target_columns") or [])
+        inputs = list(candidate_metadata.get("input_columns") or [])
+        if not targets or not inputs:
+            raise ModelRegistryError("MODEL_CONTRACT_INVALID")
+        contract_hash = hashlib.sha256(json.dumps(candidate_metadata, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        library = ModelLibrary(
+            name=normalized_name,
+            project_id=job.project_id,
+            owner_id=actor_id,
+            status="completed",
+            framework="sklearn",
+            backbone=str(candidate.get("algorithm_id") or candidate_id),
+            metrics=dict((job.metrics or {}).get("per_target") or candidate.get("per_target") or {}),
+            params=dict(candidate.get("params") or {}),
+            training_job_id=job.id,
+            dataset_artifact_id=job.dataset_artifact_id,
+            model_artifact_id=artifact.id,
+            file_size=artifact.file_size or 0,
+            format="joblib",
+            progress=100.0,
+        )
+        db.add(library)
+        db.flush()
+        model = self.create_registered_model(db, project_id=job.project_id, actor_id=actor_id, name=normalized_name, description="")
+        version = self.register_platform_version(db, model_id=model.id, source_model_library_id=library.id, actor_id=actor_id, commit=False)
+        version.registration_task_id = job.id
+        version.registration_candidate_id = str(candidate_id)
+        version.registration_idempotency_key = key
+        version.lifecycle_state = "pending_review"
+        version.output_schema = {"task_type": candidate_metadata.get("task_type"), "target_columns": targets}
+        version.conversion_metadata = {**(version.conversion_metadata or {}), "input_contract_hash": contract_hash, "input_contract": candidate_metadata, "source_artifact_sha256": metadata["sha256"], "preprocessing": (job.metrics or {}).get("preprocessing") or job.preprocessing or {}, "feature_importance": (job.metrics or {}).get("feature_importance_report") or {}}
+        db.flush()
+        return version, True
+
+    def list_registerable_candidates(self, db, task_id):
+        try:
+            task_uuid = uuid.UUID(str(task_id))
+        except (TypeError, ValueError, AttributeError):
+            raise ModelRegistryError("AUTOML_JOB_NOT_FOUND") from None
+        job = db.query(TrainingJob).filter(TrainingJob.id == task_uuid).first()
+        if job is None:
+            raise ModelRegistryError("AUTOML_JOB_NOT_FOUND")
+        if job.status != "completed":
+            return []
+        rows = []
+        for item in (job.metrics or {}).get("algorithm_results", ()):
+            if not isinstance(item, dict) or item.get("status") != "completed" or not item.get("model_artifact_id"):
+                continue
+            rows.append({
+                "candidate_id": str(item.get("candidate_id") or item.get("algorithm_id")),
+                "algorithm_id": item.get("algorithm_id"),
+                "name": item.get("name") or item.get("algorithm_id"),
+                "metrics": dict(item.get("aggregate") or item.get("metrics") or {}),
+                "model_artifact_id": str(item.get("model_artifact_id")),
+            })
+        return rows
+
+    def validate_model_contract(self, db, model_version_id):
+        version = self._version(db, model_version_id)
+        metadata = dict(version.conversion_metadata or {})
+        return {"valid": bool(metadata.get("input_contract_hash")), "input_contract_hash": metadata.get("input_contract_hash"), "target_columns": (version.output_schema or {}).get("target_columns", [])}
+
+    def transition_model_version(self, db, model_version_id, action, actor_id, *, commit=True):
+        version = self._version(db, model_version_id)
+        target = {"approve": "enabled", "disable": "disabled", "revoke": "revoked", "archive": "archived"}.get(action)
+        if target is None:
+            raise ModelRegistryError("MODEL_VERSION_STATE_CONFLICT")
+        if action == "approve" and version.lifecycle_state not in {"pending_review", "disabled"}:
+            raise ModelRegistryError("MODEL_VERSION_STATE_CONFLICT")
+        version.lifecycle_state = target
+        if action == "approve":
+            version.approval_status = "approved"
+        elif action in {"disable", "revoke", "archive"}:
+            version.approval_status = "archived" if action == "archive" else version.approval_status
+        if commit:
+            db.commit(); db.refresh(version)
+        else:
+            db.flush()
+        return version
+
     def _model(self, db, model_id) -> RegisteredModel:
         try:
             model_uuid = uuid.UUID(str(model_id))
@@ -364,7 +506,12 @@ class ModelRegistryService:
         if job is None or library.status != "completed" or library.format != "joblib":
             raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED")
         if metadata.get("source") == "automl":
-            algorithm_id = str(metadata.get("best_candidate") or metadata.get("best_algorithm") or "")
+            algorithm_id = str(
+                metadata.get("best_candidate")
+                or metadata.get("best_algorithm")
+                or metadata.get("candidate_id")
+                or ""
+            )
             results = (job.metrics or {}).get("algorithm_results")
             trusted = isinstance(results, list) and any(
                 isinstance(item, dict)

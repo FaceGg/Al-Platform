@@ -75,8 +75,24 @@ _SQLITE_COLUMNS = {
         "published_at": "DATETIME",
         "last_error": "TEXT",
     },
+    "model_versions": {
+        "lifecycle_state": "VARCHAR(16) NOT NULL DEFAULT 'pending_review'",
+        "registration_task_id": "CHAR(32)",
+        "registration_candidate_id": "VARCHAR(128)",
+        "registration_idempotency_key": "VARCHAR(128)",
+    },
     "dataset_versions": {
         "status": "VARCHAR(24) NOT NULL DEFAULT 'ready'",
+    },
+    "generic_annotation_tasks": {
+        "paused_from_status": "VARCHAR(24)",
+    },
+    "model_exports": {
+        "idempotency_scope": "VARCHAR(256) NOT NULL DEFAULT 'model'",
+        "request_hash": "VARCHAR(64) NOT NULL DEFAULT ''",
+    },
+    "durable_operations": {
+        "result_summary": "JSON",
     },
 }
 
@@ -104,11 +120,24 @@ _SQLITE_INDEXES = {
     "dataset_imports": {
         "ix_dataset_imports_dataset_version_id": "dataset_version_id",
     },
+    "durable_operations": {
+        "ix_durable_operations_lease": ("state", "lease_expires_at"),
+    },
 }
 
 _SQLITE_UNIQUE_INDEXES = {
     "training_jobs": {
         "uq_training_jobs_user_automl_idempotency": ("user_id", "automl_idempotency_key"),
+    },
+    "model_versions": {
+        "uq_model_versions_registration_idempotency": (
+            "registration_task_id",
+            "registration_candidate_id",
+            "registration_idempotency_key",
+        ),
+    },
+    "model_exports": {
+        "uq_model_exports_idempotency": ("idempotency_scope", "idempotency_key"),
     },
 }
 
@@ -133,10 +162,12 @@ def ensure_schema_compatibility(engine: Engine) -> None:
             if table not in tables:
                 continue
             existing_indexes = {item["name"] for item in refreshed.get_indexes(table)}
-            for index_name, column in indexes.items():
+            for index_name, columns in indexes.items():
                 if index_name not in existing_indexes:
+                    column_list = (columns,) if isinstance(columns, str) else tuple(columns)
+                    column_sql = ", ".join(f'"{column}"' for column in column_list)
                     connection.execute(text(
-                        f'CREATE INDEX "{index_name}" ON "{table}" ("{column}")'
+                        f'CREATE INDEX "{index_name}" ON "{table}" ({column_sql})'
                     ))
         refreshed = inspect(engine)
         for table, indexes in _SQLITE_UNIQUE_INDEXES.items():

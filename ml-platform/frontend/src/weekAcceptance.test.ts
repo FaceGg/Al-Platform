@@ -72,6 +72,13 @@ const weekTestFiles: Record<number, string[]> = {
     "./pages/UserManagementPage.test.tsx",
     "./stores/themeContext.test.tsx",
   ],
+  17: [
+    "./api/annotationReturns.test.ts",
+    "./api/annotatorAssignments.test.ts",
+    "./api/modelExports.test.ts",
+    "./components/AssignmentDialog.test.tsx",
+    "./components/ReturnBatchList.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(

@@ -7,8 +7,14 @@ class TaskAction(str, Enum):
     publish = "publish"
     execute = "execute"
     pause = "pause"
+    resume = "resume"
     cancel = "cancel"
+    return_ = "return"
+    accept = "accept"
     complete = "complete"
+    archive = "archive"
+    restore = "restore"
+    reopen = "reopen"
 
 
 class AnnotationPreviewCreate(BaseModel):
@@ -22,3 +28,9 @@ class AnnotationTaskTransition(BaseModel):
     task_revision: int = Field(ge=0)
     action: TaskAction
     preview_id: uuid.UUID | None = None
+
+
+class AnnotationTaskExecute(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_revision: int = Field(ge=0)
+    preview_id: uuid.UUID

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.artifact import Artifact
 from app.storage.base import ArtifactStorage, StorageError
 from app.storage.factory import create_artifact_storage
+from app.services.security import validate_upload_filename, validate_upload_magic
 
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ class ArtifactService:
     @staticmethod
     def _temporary_draft_path(name: str) -> str:
         import tempfile
-        safe_name = Path(name).name or "artifact.bin"
+        safe_name = validate_upload_filename(Path(name).name or "artifact.bin")
         return str(Path(tempfile.gettempdir()) / f"artifact-draft-{uuid.uuid4().hex}-{safe_name}")
 
     def create_dataset(
@@ -156,13 +157,15 @@ class ArtifactService:
             raise ArtifactAccessError("Artifact size limit must be positive")
         import tempfile
 
-        safe_filename = Path(filename).name
-        if not safe_filename or safe_filename != filename:
-            raise ArtifactAccessError("Invalid artifact filename")
+        try:
+            safe_filename = validate_upload_filename(filename)
+        except ValueError as error:
+            raise ArtifactAccessError(str(error)) from error
         temporary = Path(tempfile.gettempdir()) / (
             f"artifact-upload-{uuid.uuid4().hex}-{safe_filename}"
         )
         size = 0
+        prefix = bytearray()
         try:
             with temporary.open("xb") as output:
                 while True:
@@ -174,7 +177,13 @@ class ArtifactService:
                     size += len(chunk)
                     if size > max_bytes:
                         raise ArtifactAccessError("Artifact exceeds size limit")
+                    if len(prefix) < 8192:
+                        prefix.extend(chunk[: 8192 - len(prefix)])
                     output.write(chunk)
+            try:
+                validate_upload_magic(Path(safe_filename).suffix, bytes(prefix))
+            except ValueError as error:
+                raise ArtifactAccessError(str(error)) from error
             return self.create_from_file(
                 project_id,
                 temporary,

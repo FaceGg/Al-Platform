@@ -7,7 +7,6 @@ from pathlib import Path
 import sys
 
 import joblib
-import onnx
 from sklearn.ensemble import (
     ExtraTreesClassifier,
     ExtraTreesRegressor,
@@ -21,8 +20,17 @@ from sklearn.ensemble import (
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from skl2onnx import convert_sklearn
-from skl2onnx.common.data_types import FloatTensorType
+
+
+def _onnx_dependencies():
+    """Load conversion-only dependencies when a conversion is actually requested."""
+    try:
+        import onnx
+        from skl2onnx import convert_sklearn
+        from skl2onnx.common.data_types import FloatTensorType
+    except ModuleNotFoundError as error:
+        raise WorkerError("MODEL_CONVERSION_DEPENDENCY_UNAVAILABLE") from error
+    return onnx, convert_sklearn, FloatTensorType
 
 
 ALLOWED_MODEL_TYPES = {
@@ -165,6 +173,7 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
         if scaler is not None:
             raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
         try:
+            onnx, _convert_sklearn, _float_tensor_type = _onnx_dependencies()
             if family == "xgboost":
                 from onnxmltools import convert_xgboost as converter
                 from onnxmltools.convert.common.data_types import (
@@ -204,6 +213,7 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
     if output["task"] == "classification":
         options = {id(model): {"zipmap": False}}
     try:
+        onnx, convert_sklearn, FloatTensorType = _onnx_dependencies()
         converted = convert_sklearn(
             estimator,
             initial_types=[

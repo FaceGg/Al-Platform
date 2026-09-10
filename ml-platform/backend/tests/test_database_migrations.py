@@ -3,6 +3,8 @@ import unittest
 from sqlalchemy import create_engine, inspect, text
 
 from app.database_migrations import ensure_schema_compatibility
+from app.models.model_export import ModelExport
+from app.models.model_registry import ModelVersion
 
 
 class DatabaseMigrationCompatibilityTests(unittest.TestCase):
@@ -46,6 +48,31 @@ class DatabaseMigrationCompatibilityTests(unittest.TestCase):
                 connection.execute(text("SELECT source_kind FROM platform_apis")).scalar_one(),
                 "custom",
             )
+
+    def test_model_export_orm_declares_migration_indexes_and_idempotency_guard(self):
+        constraint_names = {
+            constraint.name
+            for constraint in ModelExport.__table__.constraints
+            if constraint.name
+        }
+        index_names = {index.name for index in ModelExport.__table__.indexes}
+
+        self.assertIn("uq_model_exports_idempotency", constraint_names)
+        self.assertIn("ix_model_exports_model_version_status", index_names)
+
+    def test_model_registration_idempotency_is_scoped_to_one_task_and_key(self):
+        indexes = {
+            index.name: index
+            for index in ModelVersion.__table__.indexes
+            if index.name == "uq_model_versions_registration_idempotency"
+        }
+
+        index = indexes["uq_model_versions_registration_idempotency"]
+        self.assertTrue(index.unique)
+        self.assertEqual(
+            [column.name for column in index.columns],
+            ["registration_task_id", "registration_idempotency_key"],
+        )
 
 
 if __name__ == "__main__":

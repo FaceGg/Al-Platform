@@ -1,9 +1,10 @@
 # 通用自动建模与数据标注平台当前开发计划
 
 > 文档状态：仅汇总未完成、待验证、风险和已延后工作。
-> 文档更新日期：2026-09-04
+> 文档更新日期：2026-09-09
 > 当前工作树：`E:\codex_workspace\agent_spot_welding\.worktrees\general-automl-annotation-20260902`
 > 当前分支：`general-automl-annotation-20260902`
+> 当前整理基线：`e94862a`（未包含 `README.md` 本地改动）
 
 ## 1. 使用规则
 
@@ -29,10 +30,10 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 | 文档 | 作用 | 当前状态 |
 |---|---|---|
 | [通用自动建模与数据标注平台技术方案](ml-platform/docs/technical-proposals/2026-09-01-general-automl-annotation-platform.md) | 产品、数据、接口、安全和验收合同 | 已评审，作为实现依据 |
-| [通用自动建模与数据标注平台实施计划](ml-platform/docs/superpowers/plans/2026-09-02-general-automl-annotation-platform.md) | Task 1–14 的文件边界、接口、测试和依赖 | `planned` |
-| [通用平台验收矩阵](ml-platform/docs/acceptance/2026-09-02-general-platform-acceptance-matrix.md) | 19 项验收编号、执行上下文和证据责任 | `planned` |
-| [通用化迁移基线清单](ml-platform/docs/migrations/2026-09-02-genericization-inventory.md) | 去行业化迁移盘点与门禁 | `planned` |
-| [导出与离线运行时清单](ml-platform/docs/acceptance/2026-09-02-export-runtime-checklist.md) | 导出包和离线推理输入合同 | `planned` |
+| [通用自动建模与数据标注平台实施计划](ml-platform/docs/superpowers/plans/2026-09-02-general-automl-annotation-platform.md) | Task 1–14 的文件边界、接口、测试和依赖 | `in_progress` |
+| [通用平台验收矩阵](ml-platform/docs/acceptance/2026-09-02-general-platform-acceptance-matrix.md) | 19 项验收编号、执行上下文和证据责任 | `in_progress` |
+| [通用化迁移基线清单](ml-platform/docs/migrations/2026-09-02-genericization-inventory.md) | 去行业化迁移盘点与门禁 | `in_progress` | Task 1 后端边界已通过；下游生产导航和完整迁移仍待完成。 |
+| [导出与离线运行时清单](ml-platform/docs/acceptance/2026-09-02-export-runtime-checklist.md) | 导出包和离线推理输入合同 | `in_progress` | 已有导出/离线实现和聚焦测试；完整当前 SHA 收据仍待 Task 14。 |
 
 ## 4. 项目阶段状态
 
@@ -60,22 +61,25 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 | Task 3 | AutoML 四种任务类型和训练合同 | Task 1、Task 2 | `passed` |
 | Task 4 | 标签 schema、类型校验和修订历史 | Task 1、Task 2 | `passed` |
 | Task 5 | 标注任务状态机、任务列表和预览 | Task 2、Task 4 | `in_progress` |
-| Task 6 | 三种自动标注策略和特征重要性加权 KMeans | Task 3、Task 4、Task 5 | `planned` |
-| Task 7 | 标注员独立认证、主体映射和服务边界 | Task 1、Task 2、Task 4 | `planned` |
-| Task 8 | 指派、重叠样本并发、自动保存和回传锁 | Task 4、Task 5、Task 7 | `planned` |
-| Task 9 | 回传结果列表、数据管理验收和站内通知 | Task 4、Task 5、Task 8 | `planned` |
-| Task 10 | 模型候选手动注册和模型库生命周期 | Task 2、Task 3、Task 4、Task 5 | `planned` |
-| Task 11 | 模型导出包和离线 `predict`/`annotate` | Task 2、Task 3、Task 6、Task 10 | `planned` |
-| Task 12 | 主平台和标注员门户前端 | Task 5、Task 7、Task 8、Task 9、Task 10、Task 11 | `planned` |
-| Task 13 | 异步 worker、幂等、恢复、清理和安全门禁 | Task 2、Task 5、Task 7、Task 8、Task 9、Task 10、Task 11 | `planned` |
-| Task 14 | 全量验收、文档同步和发布门禁 | Task 1–13 | `planned` |
+| Task 6 | 三种自动标注策略和特征重要性加权 KMeans | Task 3、Task 4、Task 5 | `in_progress` |
+| Task 7 | 标注员独立认证、主体映射和服务边界 | Task 1、Task 2、Task 4 | `in_progress` |
+| Task 8 | 指派、重叠样本并发、自动保存和回传锁 | Task 4、Task 5、Task 7 | `in_progress` |
+| Task 9 | 回传结果列表、数据管理验收和站内通知 | Task 4、Task 5、Task 8 | `in_progress` |
+| Task 10 | 模型候选手动注册和模型库生命周期 | Task 2、Task 3、Task 4、Task 5 | `in_progress` |
+| Task 11 | 模型导出包和离线 `predict`/`annotate` | Task 2、Task 3、Task 6、Task 10 | `in_progress` |
+| Task 12 | 主平台和标注员门户前端 | Task 5、Task 7、Task 8、Task 9、Task 10、Task 11 | `in_progress` |
+| Task 13 | 异步 worker、幂等、恢复、清理和安全门禁 | Task 2、Task 5、Task 7、Task 8、Task 9、Task 10、Task 11 | `in_progress` |
+| Task 14 | 全量验收、文档同步和发布门禁 | Task 1–13 | `in_progress` |
 
 ### 当前执行入口
 
-1. 下一步从 Task 5 的标注任务状态机、列表和预览开始。
-2. Task 4 已提供冻结 schema、任务绑定、列级校验和修订并发边界；Task 5 负责样本初始化与完整生命周期。
-3. 每个 Task 的精确文件、接口、RED/GREEN 步骤和命令以实施计划为准；本文件不创建平行的实现步骤。
-4. Task 14 必须在实现完成后的新 SHA 上重新生成证据，不能复用归档中的 Week 9–12 运行态制品。
+1. 当前工作树已复核：Task 5 预览完成状态会同步回任务列表；页面回归为 **39/39**，前端台账为 **7/7**，完整 Vitest 为 **57 个文件通过、276 个测试通过、19 个历史 skipped**，生产构建通过。
+2. 后端测试基础设施复核：`tests.test_run_suite` 为 **7/7 OK**，pytest 版本为 **7 passed**，Week 17 聚合为 **21/21 模块通过、0 失败**；`git diff --check` 通过。
+3. 上述均为带未提交修改的当前工作树验证，不是可绑定到 Git SHA 的发布收据；用户本地 `README.md` 继续排除，不暂存、不覆盖、不提交。
+4. Task 5 仍需以运行态和端到端证据收口真实 broker 派发、恢复调度、任务列表刷新后的预览状态保持、完整操作中心和预览结果分页。
+5. Task 6–13 继续补齐跨服务、浏览器、导出/离线、恢复和安全运行态证据。
+6. Task 14 必须在干净且已提交的当前版本上重新生成全量收据，并执行后端/前端全量测试、Playwright、Alembic、Docker/WSL 恢复演练和远程 CI；任何失败、超时、skipped、缺失或未执行门禁均保持 `in_progress`。
+7. 每个 Task 的精确文件、接口、RED/GREEN 步骤和命令以实施计划为准；本文件不创建平行的实现步骤。
 
 ## 6. 遗留验证任务
 
@@ -127,10 +131,16 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 2026-09-04：Task 3 修复轮次 1 收口并暂停。当前提交 `7a99fa9`、`16d8a98` 已补齐 2 折配置、multi-output worker 合同入口、联合标签频次校验、artifact-only candidate 注册兼容和血缘回归；`test_automl_multioutput.py` 8 passed，AutoML/registry/API 合并套件 36 passed（1 warning、2 subtests），相关模块 `py_compile` 与 `git diff --check` 通过。Task 3 仍为 `in_progress`，真实多目标制品持久化、迭代分层、折内预处理、搜索控制、幂等/取消/恢复、完整 AUC 分层及前端接线仍待完成；按用户要求暂停开发，明日从这些阻断和 scoped re-review 继续，不启动 Task 4。
 
 - 每次 Task 完成后，在本文件更新当前状态、未完成项、风险和下一步；完成明细、旧失败和历史证据追加到归档，不回写旧事实。
+
+- 2026-09-08：Task 7 开发推进。新增独立标注员账号、不可变 subject、门户会话、会话版本撤销、主体映射、项目授权和服务令牌校验；新增独立门户 FastAPI 应用及 Compose `annotator` 服务，默认端口通过 `ANNOTATOR_PORT` 配置为 8443。TDD 聚焦验证 `test_annotator_auth.py` 与 suite manifest 为 10 passed、2 subtests；Alembic upgrade、模块编译和 diff check 通过。Docker Compose 验证因当前环境未安装 Docker 无法执行。Task 7 保持 `in_progress`，门户任务/指派 API、生产密钥配置和浏览器/远程验收待后续 Task 8/Task 14 收口。
 - 2026-09-08：Task 5 增量开发继续。按 TDD 先补预览列表所有者隔离、cursor 分页和状态转移审计回归，初始 3 项失败；随后在独立通用状态服务中实现任务所有者校验、预览 cursor 分页及 `annotation_task.transition` 成功审计事件。验证：状态机/API 聚焦测试 10 passed（含 1 warning），相关模块 `py_compile` 与 `git diff --check` 通过。Task 5 仍为 `in_progress`，任务快照持久化、异步预览 worker、统计结果和页面接线仍未完成。
 - 2026-09-08：Task 5 快照合同增量。按 TDD 新增服务端快照测试，先验证请求字段未注册而失败；随后新增 `task_snapshot` 持久化字段和迁移，创建任务时校验数据版本归属、固定样本 ID、生成可见列/标签 schema/指令/配置 hash，并以 ORM 事件拒绝已冻结快照更新。验证：Task 5 状态/API/manifest 聚焦测试 16 passed（1 warning、2 subtests），Alembic upgrade/check、相关模块编译和 `git diff --check` 通过。Task 5 仍为 `in_progress`，异步 preview worker、样本统计与预览结果分页、页面操作中心接线待完成。
 - 2026-09-08：Task 5 预览运行态增量。按 TDD 新增进度单调递增、完成时间、失败信息和 owner-scoped 详情回归；新增预览 `progress/error/completed_at` 字段及迁移 `20260908_27`，状态服务支持运行态更新并拒绝进度回退，详情接口返回可恢复所需运行态。验证：Task 5 状态/API/manifest 聚焦测试 18 passed（2 warnings、2 subtests），Alembic upgrade/check、相关模块编译和 `git diff --check` 通过。Task 5 仍为 `in_progress`，真实异步 worker、样本统计和预览结果分页、页面操作中心接线待完成。
 - 2026-09-08：Task 5 worker 增量。新增通用 Celery `execute_annotation_preview` 任务并注册 worker 发现列表；worker 仅读取不可变 `task_snapshot`，写入 running/completed 进度和样本/可见列/标签列摘要。直接 worker 回归通过；当前 API 创建仍返回 queued，尚未在无 broker 环境强制派发，恢复调度和真实 broker 验证仍待完成。Task 5 保持 `in_progress`。
+- 2026-09-08：Task 5 生命周期与错误回归收口。修正测试先运行 preview worker 后再验证 publish/execute；worker 异常时持久化 `failed`、单调 progress 和脱敏 error，并将任务从 `previewing` 置为 `failed`；任务列表在 cursor 前计算完整 total；新状态 API 错误统一包含 `request_id`、`code`、`message`、`details` 并保留 `detail.code`。验证：状态/API 聚焦套件 19 passed、1 warning，相关模块编译和 `git diff --check` 通过。Task 5 仍待真实 broker、恢复调度、前端详情接线及完整验收，状态保持 `in_progress`。
+- 2026-09-08：Task 6 核心服务增量。按 TDD 新增通用规则 DSL、三种自动策略互斥/兜底校验、逐列来源优先级与冲突 `needs_review`，以及重要性聚合和确定性加权 KMeans（大样本 silhouette 评估上限 50,000、最终分配覆盖全量）。新增不可变 `AnnotationStrategyArtifact` 模型与迁移 `20260908_29`，测试注册到 week manifest。验证：`tests/test_annotation_strategies.py` **7 passed**；相关模块 `py_compile` 与 `git diff --check` 通过。Task 6 API/worker/前端接线、完整迁移和浏览器验收仍未完成，状态保持 `in_progress`。
+- 2026-09-08：Task 8 并发与回传锁增量。按 TDD 新增重叠指派、样本级 revision 冲突、完整服务端标签集合、回传幂等、回传后只读锁及显式 edit-for-return 流程测试；新增 `AnnotationAssignment`、`AnnotationAssignmentSample`、`AnnotationReturnBatch` 模型、迁移 `20260908_31`、通用并发服务、annotator 请求 schema 和主平台指派/保存/确认/回传 API。验证：`tests/test_annotation_concurrency.py tests/test_annotator_auth.py` **8 passed**；相关模块 `py_compile` 通过。Task 8 仍未完成：项目/标注员授权、任务暂停/撤销守卫、独立门户接线、评论与回传 worker、真实 API 集成和完整迁移升级验证待继续。
+- 2026-09-08：Task 6 运行时增量。按 TDD 先验证自动预览未持久化策略工件而失败；随后新增冻结快照策略编排入口，通用 preview worker 持久化每个任务 revision/config hash 对应的不可变 `AnnotationStrategyArtifact`，并写入逐样本策略决策。聚类配置缺失可信模型重要性时统一失败封闭为 `needs_review`，不伪造等权重；预览详情只提供策略和复核数量摘要，不暴露样本来源链。验证：Task 5/6 状态、API、worker 与策略聚焦套件 **30 passed、7 warnings**；`py_compile`、Alembic `upgrade/check`、`git diff --check` 通过。Task 6 完整模型工件加载/加权聚类执行、前端策略配置和浏览器验收仍未完成，状态保持 `in_progress`。
 - 2026-09-03：将整理前的完整 `DEVELOPMENT_PLAN.md` 保存为 `DEVELOPMENT_PLAN.history-2026-09-03.md`。Week 1–12 及历史执行记录已从当前视图分离。
 - 2026-09-03：从 `DEVELOPMENT_PLAN.history-2026-08-23.md` 回收尚未实现的工作流、数据治理、SSO、云原生、数据探索、RAG/AIHub 和优化候选，并按 `planned`、`pending_decision` 或 `deferred` 进入第 7 节。
 - 2026-09-03：没有提升任何业务状态；通用平台 Task 1–14、遗留验证项和 backlog 均保持未完成状态。
@@ -167,3 +177,104 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 2026-09-07：Task 4 完成当前本地聚焦范围。新增冻结的多列标签 schema、列级约束、任务 schema 绑定快照、当前值与不可变修订历史、评论/确认表、legacy 单列回填迁移和原子 `base_revision` 并发写入；通用任务创建校验 schema 属于项目并自动创建绑定，样本读写/确认拒绝未绑定或错误绑定任务。验证：标签服务、API、通用任务、迁移和 suite manifest 聚焦套件 **36 passed、1 warning、2 subtests**；前端 LabelSchemaEditor、DataAnnotationPage 和 week manifest **48 passed**；`npm run build`、Alembic upgrade/check、模块 `py_compile` 与 `git diff --check` 通过。Task 4 状态提升为 `passed`；Task 5 继续 `planned`。Task 4 未实现样本初始化、任务状态机、完整列表和预览，这些仍属 Task 5。全量后端历史回归仍有 25 个失败，集中在旧点焊 API 测试未提供新请求关联头，以及既有证据/迁移基线假设；不计入 Task 4 聚焦门禁，已保留为后续兼容性工作。
 - 2026-09-07：Task 5 启动。新增通用任务 revision、预览操作幂等、状态转移守卫、项目/所有者隔离列表分页接口和预览列表接口；新增独立状态服务、schema、迁移、前端预览抽屉与 API 客户端。当前状态为 `in_progress`，待完成完整任务快照、异步 worker、样本统计/预览分页及页面操作中心接线。
 - 2026-09-07：Task 5 边界修正。状态与预览逻辑已从历史兼容适配器中隔离到独立通用服务和路由；任务创建保留 `draft` 初始状态，预览按 `(task_id, task_revision, config_hash)` 幂等，非法 cursor 和未授权预览返回结构化错误。验证：Task 5 后端聚焦 **10 passed、1 warning、2 subtests**；前端预览组件与 manifest **8 passed**；构建、迁移检查、编译和 diff check 通过。Task 5 仍为 `in_progress`。
+2026-09-09：Task 8 并发授权与状态守卫增量。修复冻结任务快照之外的样本指派、暂停任务仍可写入、required 标签未在确认时校验、重叠指派未统一修订历史等缺口；新增快照范围与项目/标注员授权校验、任务状态 fail-closed、冻结 schema 校验、AnnotationRevision 持久化及重叠 assignment 同步。API 传递平台 actor 作为 revision author；预览 recovery 改为延迟导入以消除 worker 注册循环依赖。验证：test_annotation_concurrency.py 6 passed；门户/回传/并发组合 17 passed；状态/异步/安全/策略组合 60 passed。Task 8/13/14 的完整迁移、浏览器、恢复和远程 CI 门禁仍未完成。
+
+- 2026-09-09：当前 SHA 验证检查点为 `e94862af844ea95a31203423c24a8ececd7553d6`。已验证：既有 Task 5–9/13 聚焦后端证据、`alembic check` 无新升级操作、fresh SQLite `alembic upgrade head` 到 `20260909_40`、前端生产构建、`git diff --check` 退出码 0（仅有 Windows 换行转换提示）。完整后端 active suite（134 个模块）退出码 1：部分历史数据库/通知检查失败，安全门禁模块超过 300 秒超时；不能记为全量通过。前端全量 Vitest 退出码 1：56 个文件通过、1 个文件失败、274 个测试通过、19 个历史 skipped；失败为 `weekAcceptance.test.ts` 的测试台账遗漏五个新测试文件。当前环境无 Docker，真实 broker、Compose、Playwright、导出/离线、恢复和远程 CI 尚无当前 SHA 通过收据。
+- 2026-09-09：进度决定保持 Task 5–14 为 `in_progress`，不生成发布完成结论。下一执行入口：先补齐前端测试台账并重跑 manifest/全量 Vitest，再隔离修复后端全量失败，之后继续 Task 5 的 broker 派发、恢复调度、结果分页和操作中心接线。
+
+- 2026-09-09：进度整理复核。针对上一条记录的前端台账遗漏，先运行 `npm test -- --run src/weekAcceptance.test.ts`，结果为 **7 passed**；随后运行完整 Vitest，结果为 **57 个测试文件通过、275 个测试通过、19 个历史 skipped，退出码 0**。后端 `tests.test_celery_workflows` 重新执行为 **19/19 OK**，确认时间辅助函数拆分后的 worker 导入回归保持通过。此前后端完整 active suite 的失败/超时、Docker/真实 broker/Playwright/导出离线/恢复/远程 CI 缺口仍然有效，未被本次聚焦证据覆盖。
+- 2026-09-09：整理后的状态不提升任务等级：Task 1–4 仍仅在已记录的本地聚焦范围内为 `passed`，Task 5–14 保持 `in_progress`；当前分支仍未提交或推送，`README.md` 继续作为用户本地修改排除在外。下一入口为隔离后端全量失败并继续 Task 5 的 broker 派发、恢复调度、结果分页和操作中心接线，随后收集 Task 6–13 的完整运行态证据。
+- 2026-09-09：新增测试基础设施风险记录：`run_suite.py` 当前对每个模块固定调用 `unittest`，对 pytest 风格模块会出现 `NO TESTS RAN`，因此 Week 17 的自动化套件结果在修复前不能作为有效门禁。下一轮先在 `tests/test_run_suite.py` 增加框架识别/执行策略回归，再重跑受影响周次。
+
+## 10. 2026-09-09 当前进度快照（整理）
+
+| 范围 | 当前结论 | 已验证或已存在 | 未完成门禁 |
+|---|---|---|---|
+| Task 1–4 | `passed`（仅限已记录的本地聚焦范围） | 实现、迁移、聚焦测试和源码检查已有当前记录 | 完整后端、远程 CI 和平台级发布门禁仍由 Task 14 统一负责 |
+| Task 5 | `in_progress` | 状态转移、任务快照、预览幂等、进度/错误/详情/列表接口和通用预览 worker 已存在 | 真实 broker 派发、恢复调度、结果分页、页面操作中心和当前 SHA 运行态收据 |
+| Task 6 | `in_progress` | 规则 DSL、互斥策略、重要性聚合、确定性加权聚类、策略工件持久化和模型工件加载已存在 | 完整 API/worker/前端接线、浏览器验收和跨服务运行态证据 |
+| Task 7 | `in_progress` | 独立账号、会话撤销、主体映射、项目授权、门户代理 API 和服务身份校验已存在 | 内部平台接线、生产密钥/Compose 配置、浏览器验收和远程证据 |
+| Task 8 | `in_progress` | 重叠指派、样本 revision 冲突、回传幂等、回传锁、显式重新编辑和状态守卫已存在 | 完整项目/标注员授权链、门户客户端/worker/评论接线和真实 API 集成 |
+| Task 9–13 | `in_progress` | 回传、数据管理、模型注册/导出、离线运行、DurableOperation、清理和安全相关代码及聚焦测试已存在 | 跨服务集成、完整迁移/运行态、导出/离线收据、恢复演练和安全发布证据 |
+| Task 14 | `in_progress` | 验收矩阵、收据工具和文档同步入口已建立 | 当前 SHA 的完整后端门禁、Playwright、Docker/WSL、导出/离线、恢复和远程 CI 尚未全部通过 |
+
+### 本次整理核验
+
+- 当前 HEAD 为 `e94862af844ea95a31203423c24a8ececd7553d6`，与 `origin/general-automl-annotation-20260902` ahead/behind 均为 `0`；工作树仍有未提交变更，`README.md` 为用户本地修改，继续排除在外。
+- `tests/test_run_suite.py` 当前为 **7 passed**；运行器已按 AST 选择 pytest/unittest，并以 unittest 最终摘要判断零测试，嵌套历史摘要误判回归已通过。
+- `tests/test_label_schema_api.py` 当前为 **4 passed、1 warning**；测试夹具已创建项目所属数据版本，服务端项目归属校验保持不变。
+- `tests.test_celery_workflows` 当前为 **19/19 OK**；前端台账和完整 Vitest 的既有当前 SHA 复核为 **7/7**、**57 个文件/275 个测试通过、19 个历史 skipped**。
+- `git diff --check` 通过；当前环境无 Docker，真实 broker、Compose、Playwright、导出/离线、恢复和远程 CI 尚无当前 SHA 的完整通过收据。
+
+### 下一执行顺序
+
+1. 继续 Task 5 的真实 broker 派发、恢复调度、结果分页和页面操作中心接线。
+2. 按依赖收口 Task 6–13 的跨服务、浏览器、导出/离线和恢复证据。
+3. 在同一当前 SHA 执行 Task 14 的全量发布门禁；保留后端全量、Docker/WSL、Playwright、导出/离线、恢复和远程 CI 的缺口记录。
+
+本快照只整理进度，不提升任务状态、不生成发布结论，也不执行提交或推送。
+
+### 2026-09-09 当前工作树复核更正
+
+- 当前 HEAD 为 `e94862af844ea95a31203423c24a8ececd7553d6`，分支相对 `origin/general-automl-annotation-20260902` 为 `0/0`；测试执行时工作树包含未提交实现和文档变更，因此下列结果属于当前工作树证据，而非 SHA 绑定的发布收据。
+- Task 5 前端状态回写回归已修复：预览轮询同时更新列表行的 `preview`、`task_revision` 和状态。复核 `npm test -- --run src/pages/DataAnnotationPage.test.tsx` 为 **39/39 passed**，`npm test -- --run src/weekAcceptance.test.ts` 为 **7/7 passed**，`npm test -- --run` 为 **57 个文件通过、276 个测试通过、19 个历史 skipped**，`npm run build` 退出码为 0。
+- 运行器复核：`tests.test_run_suite` 为 **7/7 OK**，`pytest tests/test_run_suite.py -q` 为 **7 passed**，`run_suite.py --week 17` 为 **21/21 模块通过、0 失败、退出码 0**；`git diff --check` 通过。此前的 38/39 和 275 项前端记录保留为历史检查点，不再代表当前工作树结果。
+- 状态不提升：Task 1–4 仅在既有聚焦范围内为 `passed`，Task 5–14 继续为 `in_progress`。后端完整 active suite、Docker/真实 broker、Playwright、导出/离线、恢复演练和远程 CI 仍无可发布的当前版本完整收据。
+- 下一入口：先收口 Task 5 的真实 broker 和恢复调度及端到端操作流程，再按依赖补齐 Task 6–13 的跨服务运行态证据，最后在干净提交上执行 Task 14 发布门禁。
+
+## 11. 2026-09-09 聚合复核（最新）
+
+- 本次复核基于当前工作树 HEAD `e94862af844ea95a31203423c24a8ececd7553d6`；分支与远端仍为 `0/0`，工作树仍有未提交变更，`README.md` 继续作为用户本地文件排除，不暂存、不覆盖。
+- 已完成本轮前置修复：`run_suite.py` 使用 AST 识别 pytest/unittest；`has_zero_tests()` 对 unittest 只依据最后一个 `Ran N test(s)` 摘要，避免嵌套输出造成零测试误判；标签 schema API 测试夹具改为创建项目所属数据版本。
+- 当前验证：`tests.test_run_suite` **7/7 OK**；`pytest tests/test_run_suite.py -q` **7 passed**；`pytest tests/test_label_schema_api.py -q` **4 passed、1 warning**；`tests.test_celery_workflows` **19/19 OK**；`run_suite.py --week 17` **21/21 模块通过、0 失败、退出码 0**；`git diff --check` 通过。
+- 聚合结果只证明 Week 17 模块级运行器和已纳入模块的当前本地测试可执行，不替代完整后端门禁，也不产生浏览器、真实 broker、Docker/WSL、导出/离线、恢复或远程 CI 收据。
+- 任务状态不提升：Task 1–4 仍为已记录本地聚焦范围内的 `passed`；Task 5–14 继续保持 `in_progress`。Task 5 的真实 broker 派发、恢复调度、结果分页和页面操作中心接线仍是下一实现入口。
+- 下一顺序：先继续 Task 5 未完成实现，再按依赖收集 Task 6–13 的跨服务和运行态证据，最后在同一当前 SHA 执行 Task 14 全量发布门禁；任何失败、超时、skipped、缺失或未执行证据都不能标记完成。
+
+## 12. 2026-09-09 进度整理（当前工作树）
+
+- 当前基线：分支 `general-automl-annotation-20260902`，HEAD `e94862af844ea95a31203423c24a8ececd7553d6`，相对 `origin/general-automl-annotation-20260902` 为 `0/0`。工作树存在大量未提交变更；用户本地 `README.md` 明确排除，不暂存、不覆盖、不推送。
+- 状态口径：Task 1–4 继续保持已记录本地聚焦范围内的 `passed`；Task 5–14 继续为 `in_progress`。本次整理不提升任务等级，也不生成发布完成结论。
+- 既有有效证据：运行器框架识别与嵌套摘要修复后的 Week 17 聚合为 **21/21 模块通过**；标签 schema API 为 **4 passed、1 warning**；worker 导入回归为 **19/19 OK**；这些证据仅覆盖对应本地套件。
+- 当前新增 RED：在 `ml-platform/frontend` 执行 `npm test -- --run src/pages/DataAnnotationPage.test.tsx`，结果为 **39 个测试中 38 passed、1 failed**。失败用例是 `executes a generic task from the list once its preview is ready`。
+- 已定位原因：预览轮询只更新 `PreviewDrawer`，未把 `preview_id/status` 回写 `genericTasks`；列表任务的 `task.preview` 仍为空，故“执行”按钮保持 disabled。当前尚未修改生产实现。
+- 影响与门禁：Task 5 的页面操作中心接线仍未闭环；前端完整套件此前的 **57 文件/275 测试通过、19 个历史 skipped** 属于新增 RED 之前的记录，不能作为当前工作树全量通过结论，需修复后重新运行。
+- 下一执行顺序：先完成列表状态回写和服务端 revision 传递回归，再重跑页面聚焦、周台账和前端全量测试；随后继续 broker、恢复、结果分页和操作中心，最后按依赖补齐 Task 6–14 的运行态与发布门禁。
+
+## 13. 2026-09-09 进度整理复核（最新）
+
+- 当前基线仍为分支 `general-automl-annotation-20260902`、HEAD `e94862af844ea95a31203423c24a8ececd7553d6`，相对 `origin/general-automl-annotation-20260902` 为 `0/0`。工作树仍有未提交实现和文档变更；用户本地 `README.md` 保持排除，不暂存、不覆盖、不提交、不推送。
+- Task 5 刷新路径已补齐服务端合同：任务列表仅暴露当前 `task_revision` 的预览，并提供执行所需的预览 ID、操作 ID、修订号、状态、进度和摘要；旧修订预览不会被作为当前可执行预览返回。验证命令 `pytest tests/test_annotation_task_state.py tests/test_annotation_task_state_api.py tests/test_genericization_contract.py -q` 为 **52 passed、3 warnings**，对应模块 `py_compile` 通过。
+- 前端重新验证：`DataAnnotationPage.test.tsx` 为 **39/39 passed**，周台账为 **7/7 passed**，完整 Vitest 为 **57 个文件通过、276 个测试通过、19 个历史 skipped**，生产构建退出码为 0。运行器回归为 unittest **7/7 OK**、pytest **7 passed**；Week 17 聚合为 **21/21 模块通过、0 失败**。
+- 状态不提升：Task 1–4 继续仅在已记录的本地聚焦范围内为 `passed`；Task 5–14 继续为 `in_progress`。上述命令均运行于脏工作树，不能生成 SHA 绑定的发布收据。
+- 当前下一入口：Task 5 仍需验证真实 broker 派发与恢复调度，补齐预览统计/结果分页和完整任务操作中心的端到端流程；随后按依赖收集 Task 6–13 的跨服务、浏览器、导出/离线、恢复和安全运行态证据。Task 14 必须在干净提交上重新执行全量门禁、生成同一 SHA 收据，并完成 Docker/WSL、Playwright 和远程 CI 验证。
+
+## 14. 2026-09-09 Task 5 只读审计与进度整理（最新）
+
+- 本次审计基于工作树 HEAD `e94862af844ea95a31203423c24a8ececd7553d6`；分支相对远端为 `0/0`，工作树仍有未提交变更，用户本地 `README.md` 明确排除，不暂存、不覆盖、不提交、不推送。
+- Task 5 已存在且有局部证据的范围：状态守卫与转移审计、服务端冻结任务快照、预览幂等与 DurableOperation/worker、任务/预览/样本 cursor 列表、刷新后只返回当前 revision 预览、前端轮询回写列表状态。
+- 当前局部验证：Task 5 状态/API/通用化回归 **52 passed、3 warnings**；DataAnnotationPage **39/39**；前端台账 **7/7**；完整 Vitest **57 个文件通过、276 个测试通过、19 个历史 skipped**；生产构建退出码 0；Week 17 聚合 **21/21 模块通过**；worker 导入回归 **19/19 OK**；`git diff --check` 通过。上述均为脏工作树验证，不是发布收据。
+- Task 5 审计缺口：
+  - **P0**：`execute` 目前只改变状态，没有创建执行 DurableOperation、派发执行 worker、持久化执行结果或提供执行恢复；本地非 Celery 模式的预览派发仍可能只返回空任务引用并停留在 queued；恢复任务只覆盖 preview，尚无真实 broker/重启回执。
+  - **P1**：没有样本统计、cluster 统计、rule hits、final labels 的持久化和 cursor API；页面仍是分离的通用任务表与历史表，操作列只有 Preview/Assign/Execute，缺少完整 publish、pause/resume、cancel、return、accept、complete、archive 等状态矩阵和分页操作中心；配置变更尚无新 revision/旧预览失效接口。
+- 全量后端当前不能记为通过：后端 `.venv` 未安装 `catboost`，但 `ml-platform/backend/requirements.txt` 声明 `catboost==1.2.*`；完整收集在 `tests/test_onnx_conversion.py` 处出现 `ModuleNotFoundError`。这是当前环境/依赖门禁，需在同一 `.venv` 补齐并复跑，不能改写为通过或归因于 Task 5 代码。
+- 状态不变：Task 1–4 仅在既有本地聚焦范围内为 `passed`；Task 5–14 继续为 `in_progress`。下一顺序为：先修复后端依赖并重跑完整门禁；随后补 Task 5 执行 DurableOperation、local/Celery dispatch 与 recovery；再补结果/统计分页和统一操作中心；最后收集 Task 6–13 的跨服务、浏览器、导出/离线、恢复和安全证据，并在干净提交上执行 Task 14。
+
+## 15. 2026-09-10 进度整理（Task 5 执行链路进行中）
+
+- 本次整理基于分支 `general-automl-annotation-20260902`、HEAD `e94862af844ea95a31203423c24a8ececd7553d6`；相对 `origin/general-automl-annotation-20260902` 为 `0/0`。工作树仍有大量未提交变更，用户本地 `README.md` 继续排除，不暂存、不覆盖、不提交、不推送。
+- Task 1–4 仍只在各自已记录的本地聚焦范围内为 `passed`；Task 5–14 保持 `in_progress`。本次只同步进度，不提升任务状态，也不生成发布收据。
+- Task 5 当前新增实现处于验证前检查点：工作树出现执行结果模型/迁移、幂等执行请求服务及相关执行 worker/派发测试改动。代理仍在完成实现与回归，当前不能把这些文件视为完成或通过。
+- 既有局部证据保持有效：Task 5 状态/API/通用化回归 **52 passed、3 warnings**；DataAnnotationPage **39/39**；前端台账 **7/7**；完整 Vitest **57 个文件/276 个测试通过/19 个历史 skipped**；生产构建通过；Week 17 聚合 **21/21 模块通过**；worker 导入回归 **19/19 OK**；`git diff --check` 通过。以上均来自脏工作树，不是 SHA 绑定发布证据。
+- 当前环境门禁已重新核对：项目 `.venv` 中 `catboost 1.2.10` 可导入；`onnx`、`onnxmltools`、`skl2onnx` 仍未安装。因此此前“CatBoost 缺失”结论已更正为“CatBoost 已存在，ONNX 转换依赖仍缺失”。后端完整套件必须在依赖补齐后重新收集，不能把环境失败归因于实现。
+- Task 5 未完成缺口仍包括：执行 worker 的完整 GREEN 回归和失败封闭、local/Celery 双模式可执行派发、真实 broker 与重启恢复、结果及 sample/cluster/rule/final-label 统计 cursor API、完整任务操作中心及配置 revision/旧预览失效。Task 6–14 的跨服务、浏览器、导出/离线、Docker/WSL、恢复和远程 CI 证据仍未齐备。
+- 下一入口：先审阅并验证 Task 5 执行链路代理的实现和聚焦测试；随后在同一工作树复跑迁移、执行/异步契约、状态/API 回归与编译检查，再继续结果分页和操作中心。只有在形成干净提交后，才重新生成 Task 14 的当前 SHA 收据。
+
+## 16. 2026-09-10 文档整理与发布前检查点
+
+- 当前分支为 `general-automl-annotation-20260902`，HEAD 仍为 `e94862af844ea95a31203423c24a8ececd7553d6`，相对 `origin/general-automl-annotation-20260902` 为 `0/0`。工作树包含未提交实现、迁移、测试和文档变更；用户本地 `README.md` 明确排除，不暂存、不覆盖、不提交。
+- Task 1–4 继续保持各自已记录本地聚焦范围内的 `passed`；Task 5–14 保持 `in_progress`。Task 5 执行结果模型/迁移、幂等执行请求、执行 worker、失败封闭、结果分页和恢复去重属于当前分支实现，但不生成独立 `passed` 验收收据。
+- Task 5 当前工作树证据：执行链路代理报告 **59 passed、4 warnings**，后续审查复核报告 **61 passed、4 warnings**；前端 `DataAnnotationPage.test.tsx` 当前复核为 **41 passed**，周台账为 **7 passed**。这些结果运行于脏工作树，不能替代干净 SHA 收据。
+- 本轮后端测试重新执行未启动：`ml-platform/backend/.venv/Scripts/python.exe` 的 `pyvenv.cfg` 指向已不存在的 `C:\Users\17723\AppData\Local\Programs\Python\Python314\python.exe`，属于环境阻断，不能写成后端通过或代码失败。前端页面和周台账测试仍可运行并通过。
+- Task 5 尚未闭环的门禁包括真实 broker/Celery 派发、进程退出后的重启恢复、跨进程原子 recovery claim、非 sample 统计数据库分页、完整状态操作矩阵、配置 revision/旧预览失效 API、操作中心结果/统计消费和 cursor 加载，以及 Docker/Playwright/导出离线/远程 CI 证据。
+- 本次只整理状态并发布当前分支，不提升任务等级。推送不代表 Task 5 或 Task 14 完成；修复 Python 环境并形成干净 SHA 后，仍需重跑 required gates。

@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.auth import get_current_user
 from app.database import Base, get_db
 from app.main import app
+from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
 from app.models.labeling import (
     AnnotationRevision,
     AnnotationSampleCurrent,
@@ -68,16 +69,43 @@ def test_schema_create_read_and_non_owner_access_is_denied(api_context):
 
 
 def test_generic_task_creation_freezes_schema_binding(api_context):
-    client, db, _, _, project = api_context
+    client, db, owner, _, project = api_context
     created = client.post("/api/annotations/label-schemas", json=_schema_payload(project.id))
     schema_id = created.json()["id"]
+    version = DatasetVersion(
+        project_id=project.id,
+        operator_id=owner.id,
+        version=1,
+        row_count=1,
+        column_count=1,
+        content_hash="sha256:label-schema-api-data",
+        schema_hash="sha256:label-schema-api-schema",
+    )
+    db.add(version)
+    db.flush()
+    db.add_all([
+        DatasetSchemaColumn(
+            dataset_version_id=version.id,
+            name="feature",
+            position=0,
+            dtype="float",
+            nullable=False,
+        ),
+        DatasetSample(
+            dataset_version_id=version.id,
+            sample_id="label-schema-api-sample-1",
+            row_index=0,
+            values={"feature": 1.0},
+        ),
+    ])
+    db.commit()
     request_id = str(uuid.uuid4())
     response = client.post(
         "/api/annotation-tasks",
         headers={"X-Request-ID": request_id, "Idempotency-Key": f"label-task-{uuid.uuid4()}"},
         json={
             "project_id": str(project.id),
-            "dataset_version_id": str(uuid.uuid4()),
+            "dataset_version_id": str(version.id),
             "label_schema_id": schema_id,
             "mode": "manual",
             "sample_scope": {"kind": "all"},

@@ -47,14 +47,14 @@ class TestCORSMiddleware(unittest.TestCase):
         response = client.options(
             "/api/health",
             headers={
-                "Origin": "http://localhost:3000",
+                "Origin": settings.frontend_origin,
                 "Access-Control-Request-Method": "GET",
             },
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.headers.get("access-control-allow-origin"),
-            "http://localhost:3000",
+            settings.frontend_origin,
         )
         self.assertEqual(
             response.headers.get("access-control-allow-credentials"),

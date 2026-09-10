@@ -58,6 +58,19 @@ class Settings(BaseSettings):
     secret_key_file: str | None = Field(default=None, repr=False, exclude=True)
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
+    frontend_origin: str = "http://localhost:5173"
+    annotator_public_origin: str = "http://localhost:8443"
+    annotator_api_origin: str = "http://localhost:8000"
+    annotator_port: int = Field(default=8443, ge=1, le=65535)
+    annotator_session_ttl_seconds: int = Field(default=1800, ge=60, le=86400)
+    annotator_service_issuer: str = "ml-platform-annotator"
+    annotator_service_audience: str = "ml-platform-internal"
+    annotator_service_algorithm: str = "HS256"
+    annotator_service_secret: SecretStr = Field(default=SecretStr("change-me-annotator-service-secret"), exclude=True)
+
+    @property
+    def resolved_annotator_service_secret(self) -> SecretStr:
+        return self.annotator_service_secret
 
     task_backend: Literal["local", "celery"] = "local"
     celery_broker_url: SecretStr | None = Field(default=None, exclude=True)
@@ -281,6 +294,8 @@ class Settings(BaseSettings):
             )
         if self.task_hard_timeout_seconds <= self.task_soft_timeout_seconds:
             raise ValueError("Production hard timeout must be greater than soft timeout")
+        if len(self.resolved_annotator_service_secret.get_secret_value()) < 32:
+            raise ValueError("Production ANNOTATOR_SERVICE_SECRET must contain at least 32 characters")
 
     def _validate_postgresql_url(self) -> None:
         try:

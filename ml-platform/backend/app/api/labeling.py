@@ -2,8 +2,10 @@
 Auto-labeling API endpoints: rule-based and similarity-based labeling.
 """
 import re
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Request
 import numpy as np
+
+from app.services.security import BULK_LABEL_LIMIT, enforce_rate_limit
 
 router = APIRouter(prefix="/api/labeling", tags=["labeling"])
 
@@ -14,6 +16,7 @@ router = APIRouter(prefix="/api/labeling", tags=["labeling"])
 
 @router.post("/rules")
 def label_by_rules(
+    request: Request,
     data: list = Body(...),
     columns: list = Body(...),
     rules: list = Body(...),
@@ -29,6 +32,8 @@ def label_by_rules(
     Returns:
         {labels: [{row_index, label, matched_rule}], unmatched_count: int}
     """
+    host = request.client.host if request.client is not None else "unknown"
+    enforce_rate_limit(f"labeling:bulk:{host or 'unknown'}", BULK_LABEL_LIMIT)
     # Build column index map
     col_index = {col: i for i, col in enumerate(columns)}
     results = []
@@ -110,6 +115,7 @@ def _evaluate_condition(cell_value: str, condition: str, rule_value):
 
 @router.post("/similarity")
 def label_by_similarity(
+    request: Request,
     unlabeled: list = Body(...),
     labeled: list = Body(...),
     columns: list = Body(...),
@@ -128,6 +134,8 @@ def label_by_similarity(
     Returns:
         {predictions: [{row_index, predicted_label, confidence, neighbors}]}
     """
+    host = request.client.host if request.client is not None else "unknown"
+    enforce_rate_limit(f"labeling:bulk:{host or 'unknown'}", BULK_LABEL_LIMIT)
     if not labeled:
         return {"predictions": [], "error": "No labeled samples provided"}
 

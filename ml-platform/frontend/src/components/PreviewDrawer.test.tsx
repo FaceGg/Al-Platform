@@ -11,4 +11,10 @@ describe("PreviewDrawer", () => {
     fireEvent.click(screen.getByRole("button", { name: "关闭预览" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("shows preview samples", () => {
+    render(<PreviewDrawer open samples={[{ sample_id: "sample-1", row_index: 0, values: { score: 0.9 } }]} onClose={vi.fn()} />);
+    expect(screen.getByLabelText("预览样本")).toHaveTextContent("sample-1");
+    expect(screen.getByText(/score/)).toBeInTheDocument();
+  });
 });

@@ -126,6 +126,114 @@ describe("DataAnnotationPage", () => {
     expect(screen.queryByText("电极柱极焊数据标注")).not.toBeInTheDocument();
   });
 
+  it("executes a generic task from the list once its preview is ready", async () => {
+    const genericTask = {
+      id: "generic-task-1",
+      project_id: "project-1",
+      mode: "automatic",
+      status: "draft",
+      task_revision: 0,
+      sample_scope: { kind: "ids", sample_ids: ["sample-1"] },
+      task_snapshot: { config_hash: "sha256:generic-task" },
+    };
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "通用数据项目", project_role: "owner" }] } });
+      if (url === "/annotation-tasks") return Promise.resolve({ data: { items: [genericTask], total: 1, next_cursor: null } });
+      if (url === "/annotation-tasks/generic-task-1/previews/preview-1") {
+        return Promise.resolve({ data: {
+          id: "preview-1",
+          operation_id: "operation-1",
+          task_revision: 0,
+          status: "completed",
+          progress: 100,
+          summary: { sample_count: 1 },
+        } });
+      }
+      if (url === "/annotation-tasks/generic-task-1/previews/preview-1/samples") {
+        return Promise.resolve({ data: { items: [{ id: "preview-sample-1", sample_id: "sample-1", row_index: 0, values: { feature: 1 } }], total: 1, next_cursor: null } });
+      }
+      return Promise.resolve({ data: { items: [] } });
+    });
+    post.mockImplementation((url: string) => {
+      if (url === "/annotation-tasks/generic-task-1/preview") {
+        return Promise.resolve({ data: { operation_id: "operation-1", preview_id: "preview-1", task_revision: 0, status: "queued" } });
+      }
+      if (url === "/annotation-tasks/generic-task-1/transition") {
+        return Promise.resolve({ data: { ...genericTask, status: "executing", task_revision: 1 } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?view=tasks&projectId=project-1"]}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    const genericList = await screen.findByRole("region", { name: "通用任务列表" });
+    const execute = within(genericList).getByRole("button", { name: "执行" });
+    expect(execute).toBeDisabled();
+
+    fireEvent.click(within(genericList).getByRole("button", { name: "预览" }));
+
+    await waitFor(() => expect(within(genericList).getByRole("button", { name: "执行" })).toBeEnabled());
+    fireEvent.click(within(genericList).getByRole("button", { name: "执行" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/annotation-tasks/generic-task-1/transition",
+      { task_revision: 0, action: "execute", preview_id: "preview-1" },
+    ));
+    await waitFor(() => expect(get.mock.calls.filter(([url]) => url === "/annotation-tasks").length).toBeGreaterThan(1));
+  });
+
+  it("shows the generic operation center for the selected project", async () => {
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "通用数据项目", project_role: "owner" }] } });
+      if (url === "/annotation-tasks") return Promise.resolve({ data: { items: [], total: 0, next_cursor: null } });
+      if (url === "/annotation-operations") return Promise.resolve({ data: {
+        items: [{ id: "operation-1", resource_type: "annotation_preview", task_id: "task-1", state: "running", stage: "materializing", progress: 40, attempt: 1, error_code: null, result_summary: { sample_count: 2 }, created_at: "2026-09-10T00:00:00" }],
+        total: 1,
+        next_cursor: null,
+      } });
+      return Promise.resolve({ data: { items: [] } });
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?view=tasks&projectId=project-1"]}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    const center = await screen.findByRole("region", { name: "通用任务操作" });
+    expect(within(center).getByText("materializing")).toBeInTheDocument();
+    expect(within(center).getByText("40%" )).toBeInTheDocument();
+    expect(within(center).getByText("operation-1")).toBeInTheDocument();
+  });
+
+  it("loads the next cursor page in the generic operation center", async () => {
+    get.mockImplementation((url: string, config?: { params?: { cursor?: string } }) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "通用数据项目", project_role: "owner" }] } });
+      if (url === "/annotation-tasks") return Promise.resolve({ data: { items: [], total: 0, next_cursor: null } });
+      if (url === "/annotation-operations") {
+        return Promise.resolve({ data: config?.params?.cursor
+          ? { items: [{ id: "operation-2", resource_type: "annotation_execution", task_id: "task-1", state: "queued", stage: "queued", progress: 0, attempt: 0 }], total: 2, next_cursor: null }
+          : { items: [{ id: "operation-1", resource_type: "annotation_preview", task_id: "task-1", state: "running", stage: "materializing", progress: 40, attempt: 1 }], total: 2, next_cursor: "operation-1" },
+        });
+      }
+      return Promise.resolve({ data: { items: [] } });
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?view=tasks&projectId=project-1"]}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    const center = await screen.findByRole("region", { name: "通用任务操作" });
+    fireEvent.click(within(center).getByRole("button", { name: "加载更多操作" }));
+    expect(await within(center).findByText("operation-2")).toBeInTheDocument();
+  });
+
   it("opens generic setup with compatible data-management files", async () => {
     render(
       <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>

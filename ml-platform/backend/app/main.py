@@ -20,6 +20,7 @@ from app.database_schema import require_current_schema
 from app.events.subscriber import RedisRunEventSubscriber
 from app.events.domain import DomainEventRecorder, NullDomainEventRecorder
 from app.middleware.request_id import RequestIdMiddleware
+from app.middleware.security import RequestSecurityMiddleware
 from app.websocket.manager import manager
 from app.services.project_access import ProjectAccessError
 from app.services.resource_access import ResourceAccessError
@@ -40,6 +41,7 @@ from app.models import access as access_models  # noqa: F401 (register models)
 from app.models import platform_audit as platform_audit_models  # noqa: F401 (register models)
 from app.models import notifications as notification_models  # noqa: F401 (register models)
 from app.models import spot_weld_quality as spot_weld_quality_models  # noqa: F401 (register models)
+from app.models import annotator as annotator_models  # noqa: F401 (register models)
 
 import app.operators.io_operators  # noqa: F401
 import app.operators.processing  # noqa: F401
@@ -72,6 +74,9 @@ from app.api import inference_production as inference_production_api
 from app.api import platform_security as platform_security_api
 from app.api import notifications as notifications_api
 from app.api import spot_weld_quality as spot_weld_quality_api
+from app.api import annotator_internal as annotator_internal_api
+from app.api import annotation_returns as annotation_returns_api
+from app.api import model_exports as model_exports_api
 
 
 def initialize_database(app_settings=None, db_engine=None) -> None:
@@ -235,10 +240,14 @@ app.state.domain_event_recorder = OutboxDomainEventRecorder()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=[settings.frontend_origin, settings.annotator_public_origin],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+app.add_middleware(
+    RequestSecurityMiddleware,
+    allowed_origins=frozenset({settings.frontend_origin, settings.annotator_public_origin}),
 )
 
 
@@ -299,8 +308,11 @@ app.include_router(notifications_api.router)
 # the closed legacy write path cannot shadow the new platform boundary.
 app.include_router(generic_tasks_api.router)
 app.include_router(annotation_task_state_api.router)
+app.include_router(annotation_returns_api.router)
+app.include_router(model_exports_api.router)
 app.include_router(spot_weld_quality_api.router)
 app.include_router(spot_weld_quality_api.all_runs_router)
+app.include_router(annotator_internal_api.router)
 
 
 @app.get("/api/health")

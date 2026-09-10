@@ -12,7 +12,7 @@
 
 **Supporting specs:** ml-platform/docs/superpowers/specs/2026-08-31-multilabel-annotation-annotator-portal-design.md、2026-08-20-data-annotation-task-redesign.md、2026-08-19-automl-result-registration-design.md、2026-08-27-weak-supervision-fallback-rule-design.md。
 
-**Status:** planned。技术方案已于 2026-09-02 评审通过；本计划是已确认方案的实现顺序，不代表任何功能已完成。
+**Status:** in_progress。技术方案已于 2026-09-02 评审通过；Task 1–4 已完成各自声明的本地聚焦范围，Task 5–14 仍需实现收口和当前 SHA 的完整验收证据。
 
 ## Global Constraints
 
@@ -1155,7 +1155,7 @@ Expected: no matrix or gate exists, or skipped/old-SHA evidence is accepted.
 2. Document all public and internal API contracts, error codes, cursor pagination, idempotency keys, revision headers, role matrix and security requirements. Keep historical records unchanged.
 3. Add the acceptance matrix with exact commands for backend tests, frontend Vitest/build, Playwright, Alembic fresh/legacy upgrade, export validation, offline invalid-input tests, security checks and recovery rehearsal.
 4. Generate a final evidence manifest containing current SHA, environment, migration head, test outputs, browser receipt, export hashes, SBOM/signature validation and recovery results. Store failed/cancelled/skipped evidence as such.
-5. Update DEVELOPMENT_PLAN.md by appending this plan path, dependencies, current status planned and known risks. Do not mark any task complete before its implementation and required evidence exist.
+5. Update DEVELOPMENT_PLAN.md by appending this plan path, dependencies, current status and known risks. Do not mark any task complete before its implementation and required evidence exist.
 6. Implement `tools/generic_acceptance_evidence.py` as the single receipt writer. It emits `receipts/<ID>.json` for every matrix ID below `temp_test/generic-platform-acceptance/`, records the exact command, test-source hash, generated-artifact paths/hashes, status and current SHA, and rejects secrets or absolute runner paths before the final manifest is built.
 7. For REL-01, keep recovery sources distinct: the versioned `run_week11_acceptance.sh` produces backup/restore and upgrade receipts, while the Task 13 cleanup harness serializes `CleanupReport` to `temp_test/generic-platform-acceptance/recovery/cleanup.json`. The receipt writer must fail closed when that cleanup report is missing, stale, secret-bearing or not bound to the current SHA; `docker compose down` is teardown, not cleanup evidence.
 
@@ -1246,3 +1246,69 @@ Expected: the full suite, build, migration, browser, export and recovery evidenc
 - [ ] All task, label, assignment, return, model and export state transitions are audited and revision guarded.
 - [ ] Current SHA has passing required jobs, no required evidence is skipped, and migration/export/recovery evidence is present.
 - [ ] DEVELOPMENT_PLAN.md contains the append-only plan record and unresolved risks without rewriting historical entries.
+
+## 2026-09-09 Progress Checkpoint
+
+- Current SHA: `e94862af844ea95a31203423c24a8ececd7553d6`; Task 1–4 remain passed only within their recorded focused scopes, and Task 5–14 remain `in_progress`.
+- Verified in this checkpoint: focused backend evidence previously recorded, `alembic check`, fresh SQLite `alembic upgrade head` through `20260909_40`, production frontend build, and `git diff --check` (exit 0; Windows line-ending warnings only).
+- Not passed: backend complete active suite exited 1 (legacy database/notification failures plus a 300-second security-gate timeout); frontend full Vitest exited 1 because the week manifest omits five discovered test files; Docker is unavailable, and no current-SHA Playwright, broker, export/offline, recovery or remote-CI receipt exists.
+- Required next order: repair `weekTestFiles`, rerun manifest/full Vitest, classify and fix backend full-suite failures with focused regressions, then resume Task 5 broker/recovery/result-pagination/UI work. No task or release is promoted by this checkpoint.
+
+## 2026-09-09 Task 5 执行链路检查点
+
+- 工作树已出现执行结果模型/迁移、幂等执行请求服务及执行 worker/派发测试的进行中改动；代理尚未完成实现和 GREEN 回归，因此 Task 5、`API-01`、`CLU-02`、`REL-01` 均保持 `in_progress`，不生成验收收据。
+- 既有本地证据仍限定在脏工作树：Task 5 回归 **52 passed、3 warnings**；前端页面 **39/39**；台账 **7/7**；完整 Vitest **57 文件/276 passed/19 skipped**；Week 17 **21/21**；worker 导入 **19/19**；生产构建和 `git diff --check` 通过。
+- 依赖复核：项目 `.venv` 可导入 `catboost 1.2.10`，但 `onnx`、`onnxmltools`、`skl2onnx` 未安装。完整后端套件须补齐声明依赖后重新执行，不能把此前 CatBoost 缺失记录继续当作当前结论。
+- 下一步按依赖执行：完成并审阅 Task 5 执行 worker、local/Celery 派发、结果持久化和恢复回归；再补统计分页和统一操作中心；Task 6–13 运行态证据及 Task 14 的干净 SHA、Docker/WSL、Playwright、导出/离线、恢复、远程 CI 门禁仍待后续。
+
+## 2026-09-09 Progress Revalidation
+
+- The week manifest repair was rechecked with `npm test -- --run src/weekAcceptance.test.ts`: **7 passed**.
+- The current frontend full suite was rerun with `npm test -- --run`: **57 test files passed, 275 tests passed, 19 historical tests skipped, exit code 0**.
+- The worker import boundary was rerun with `python -m unittest tests.test_celery_workflows -v`: **19/19 OK**.
+- These results replace only the prior frontend manifest failure and validate the worker import fix. Backend full-suite failures/timeouts, Docker/broker/Playwright/export/offline/recovery/remote-CI gaps remain open; Task 5–14 and the release gate stay `in_progress`.
+- Test infrastructure risk remains: `run_suite.py` dispatches every module through `unittest`, so pytest-style modules can emit `NO TESTS RAN`. Add framework-aware dispatch and a regression in `tests/test_run_suite.py` before using the Week 17 aggregate as a gate; this progress-only turn does not change the runner.
+
+## 2026-09-09 Progress Organization Correction
+
+- The current worktree already contains AST-based framework-aware dispatch in `run_suite.py`, and `tests/test_run_suite.py` passes **6 tests**. The earlier fixed-`unittest` wording above is a historical checkpoint; the remaining runner issue is false zero-test detection when nested output contains an inner `Ran 0 tests` summary.
+- `tests/test_label_schema_api.py` is **3 passed, 1 failed** because the failing fixture supplies a dataset version outside the project. Repair the fixture with a project-owned version; keep the server-side ownership guard unchanged.
+- Current status remains Task 1–4 scoped `passed`, Task 5–14 `in_progress`. Frontend current-SHA revalidation is **57 files/275 tests passed with 19 historical skipped**; worker import regression is **19/19 OK**. Backend full-suite, broker/Docker, browser, export/offline, recovery and remote-CI gates remain open.
+- This is a documentation-only progress correction; it does not promote a task or release readiness.
+
+## 2026-09-09 Aggregate Revalidation
+
+- Current HEAD remains `e94862af844ea95a31203423c24a8ececd7553d6`; Task 1–4 are passed only within their recorded focused local scopes, and Task 5–14 remain `in_progress`.
+- The test-runner correction is now verified: AST-based framework dispatch is active, unittest zero-test detection uses the final summary, and the project-owned dataset-version fixture is in place.
+- Evidence: `tests.test_run_suite` **7/7 OK**; `pytest tests/test_run_suite.py -q` **7 passed**; `pytest tests/test_label_schema_api.py -q` **4 passed, 1 warning**; `tests.test_celery_workflows` **19/19 OK**; `run_suite.py --week 17` **21/21 modules passed, 0 failed**; `git diff --check` passed.
+- This revalidation closes only the identified runner/fixture defects. It does not close the backend full-suite, broker, Docker/WSL, Playwright, export/offline, recovery or remote-CI requirements, so no task or release gate is promoted.
+
+## 2026-09-09 Progress Organization (Current Worktree)
+
+- Current SHA is `e94862af844ea95a31203423c24a8ececd7553d6` on `general-automl-annotation-20260902`; branch parity with origin is `0/0`. The worktree contains uncommitted changes, and the user-local `README.md` remains outside the publication scope.
+- Task 1–4 remain focused-scope `passed`; Task 5–14 remain `in_progress`.
+- Current frontend regression: `npm test -- --run src/pages/DataAnnotationPage.test.tsx` reports **38 passed, 1 failed of 39**. The preview-ready generic-task row does not enable Execute because the polling result is not copied from drawer state into `genericTasks[].preview`.
+- Required next checkpoint is to fix that state synchronization, rerun the focused page suite, then rerun the week manifest and full frontend suite before continuing Task 5 broker/recovery/result-pagination work. Existing aggregate and worker evidence remain scoped and do not promote Task 5 or the release gate.
+
+## 2026-09-09 Current Worktree Revalidation
+
+- The preview-list state synchronization regression is fixed in the working tree: the polling result updates the matching task row with its preview, revision, and derived task status.
+- Fresh verification: `npm test -- --run src/pages/DataAnnotationPage.test.tsx` reported **39/39 passed**; `npm test -- --run src/weekAcceptance.test.ts` reported **7/7 passed**; `npm test -- --run` reported **57 test files passed, 276 tests passed, 19 historical tests skipped**; and `npm run build` exited 0.
+- Test infrastructure verification: `python -m unittest tests.test_run_suite -v` reported **7/7 OK**; `python -m pytest tests/test_run_suite.py -q` reported **7 passed**; and `run_suite.py --week 17` reported **21/21 modules passed, 0 failed**. `git diff --check` also exited 0.
+- These commands ran against a dirty working tree at HEAD `e94862af844ea95a31203423c24a8ececd7553d6`; they are not SHA-bound release evidence. The earlier 38/39 and 275-test entries remain historical checkpoints only.
+- Task 1–4 remain passed within their documented focused scopes; Task 5–14 remain `in_progress`. Real broker dispatch, recovery, browser, export/offline, Docker/WSL, full backend, and remote-CI gates still require clean-version evidence before Task 14 can pass.
+
+## 2026-09-09 Task 5 Refresh Contract Revalidation
+
+- The task-list serialization now supplies the executable preview for the task's current revision after a fresh list load. It must never surface a stale preview from an older revision as the current action target.
+- A focused regression creates stale revision-0 and completed revision-1 previews, then asserts the list item exposes only the revision-1 id, operation id, revision, status, progress and summary. `pytest tests/test_annotation_task_state.py tests/test_annotation_task_state_api.py tests/test_genericization_contract.py -q` reported **52 passed, 3 warnings**; `py_compile app/services/annotation_task_state.py app/api/annotation_task_state.py app/api/generic_tasks.py` exited 0.
+- The frontend operation boundary was rerun against the same dirty worktree: DataAnnotationPage **39/39 passed**, week manifest **7/7 passed**, full Vitest **57 files / 276 passed / 19 skipped**, and production build exited 0.
+- This closes only the discovered list-refresh serialization gap. Task 5 remains `in_progress` pending real broker dispatch, recovery scheduling, statistics/result pagination, complete operation-center behavior, browser verification and clean-version evidence. Task 6–14 remain `in_progress`; no release gate is promoted.
+
+## 2026-09-09 Task 5 Read-only Audit
+
+- Current baseline is dirty HEAD `e94862af844ea95a31203423c24a8ececd7553d6`, branch parity `0/0`; user-local `README.md` remains excluded from all publication scope.
+- Existing local coverage includes guarded transitions/audit events, frozen task snapshots, preview idempotency and DurableOperation/worker, owner-scoped cursor pages, current-revision preview serialization, and frontend list-state synchronization. Evidence: Task 5 backend regression **52 passed, 3 warnings**; DataAnnotationPage **39/39**; frontend manifest **7/7**; full Vitest **57 files / 276 passed / 19 skipped**; Week 17 **21/21 modules passed**; worker import **19/19 OK**.
+- Task 5 is not complete. P0 gaps are execution DurableOperation/worker/result persistence/recovery, executable local dispatch, and real broker/restart evidence. P1 gaps are cursor-paginated persisted sample/cluster/rule/final-label statistics, a unified paginated operation center with the full state action matrix, and configuration revision/invalidation.
+- Full backend evidence is currently blocked by the project `.venv` missing the declared `catboost==1.2.*`; collection fails at `tests/test_onnx_conversion.py` with `ModuleNotFoundError`. This must be repaired and rerun as an environment gate before code conclusions are drawn.
+- Task 1–4 stay scoped `passed`; Task 5–14 stay `in_progress`. Required implementation order remains execution dispatch/recovery, result/statistics pagination, unified operation center, then Task 6–13 runtime/browser/export/recovery evidence and Task 14 clean-SHA gates.

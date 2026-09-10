@@ -1,0 +1,157 @@
+from dataclasses import dataclass
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from app.services.annotation_strategies import (
+    AnnotationDecision,
+    AutomaticAnnotationConfig,
+    StrategyConfigError,
+    apply_annotation_strategy,
+    validate_strategy_config,
+)
+from app.services.label_schema import LabelColumnContract, LabelSchemaContract
+from app.services.rule_dsl import RuleEvaluationError, evaluate_rule
+from app.services.weighted_clustering import (
+    FeatureMap,
+    InputContract,
+    aggregate_model_importance,
+    build_weighted_clusters,
+)
+
+
+@pytest.fixture
+def schema():
+    return LabelSchemaContract(
+        [
+            LabelColumnContract("label_a", "string", required=True, enum_values=("a", "b", "other")),
+            LabelColumnContract("label_b", "int", required=True, enum_values=(1, 2, 0)),
+        ]
+    )
+
+
+def test_strategy_is_exclusive_and_fallback_is_required(schema):
+    with pytest.raises(StrategyConfigError):
+        validate_strategy_config(
+            AutomaticAnnotationConfig(
+                clustering=True,
+                strategy="cluster_rule",
+                cluster_labels={"1": {"label_a": "x"}},
+                rules=[{"id": "r1", "when": {"score": {"gte": 0.5}}, "values": {"label_a": "y"}}],
+                other_values={"label_a": "other", "label_b": 0},
+            ),
+            schema,
+        )
+
+    with pytest.raises(StrategyConfigError) as error:
+        validate_strategy_config(
+            AutomaticAnnotationConfig(
+                clustering=True,
+                strategy="cluster",
+                cluster_labels={"1": {"label_a": "a", "label_b": 1}},
+            ),
+            schema,
+        )
+    assert error.value.code == "CLUSTER_FALLBACK_REQUIRED"
+
+
+def test_model_output_ignores_cluster_when_clustering_disabled(schema):
+    config = AutomaticAnnotationConfig(clustering=False, strategy=None)
+    decision = apply_annotation_strategy(
+        {"label_a": "a", "label_b": 1}, cluster_id=4, frame_row={"score": 0.9}, config=config, schema=schema
+    )
+    assert isinstance(decision, AnnotationDecision)
+    assert decision.values == {"label_a": "a", "label_b": 1}
+    assert decision.provenance["label_a"]["source"] == "model"
+
+
+def test_cluster_rule_uses_rule_then_cluster_then_other_per_column(schema):
+    config = AutomaticAnnotationConfig(
+        clustering=True,
+        strategy="cluster_rule",
+        cluster_labels={"2": {"label_b": 2}},
+        rules=[{"id": "r1", "when": {"score": {"gte": 0.5}}, "values": {"label_a": "b"}}],
+        other_values={"label_a": "other", "label_b": 0},
+    )
+    decision = apply_annotation_strategy(
+        {"label_a": "a", "label_b": 1}, cluster_id=2, frame_row={"score": 0.9}, config=config, schema=schema
+    )
+    assert decision.values == {"label_a": "b", "label_b": 2}
+    assert decision.provenance["label_a"]["source"] == "rule"
+    assert decision.provenance["label_b"]["source"] == "cluster"
+
+
+def test_same_priority_rule_conflict_needs_review(schema):
+    config = AutomaticAnnotationConfig(
+        clustering=True,
+        strategy="rule",
+        rules=[
+            {"id": "r1", "when": {"score": {"gte": 0.5}}, "values": {"label_a": "a"}},
+            {"id": "r2", "when": {"score": {"gte": 0.5}}, "values": {"label_a": "b"}},
+        ],
+        other_values={"label_a": "other", "label_b": 0},
+    )
+    decision = apply_annotation_strategy(
+        {"label_a": "a", "label_b": 1}, cluster_id=None, frame_row={"score": 0.9}, config=config, schema=schema
+    )
+    assert decision.status == "needs_review"
+    assert decision.values["label_a"] is None
+
+
+def test_rule_dsl_supports_typed_comparisons_and_rejects_unknown_operator():
+    assert evaluate_rule({"score": {"gte": 0.5, "lt": 1}}, {"score": 0.75}) is True
+    with pytest.raises(RuleEvaluationError):
+        evaluate_rule({"score": {"contains": "x"}}, {"score": "x"})
+
+
+def test_aggregate_model_importance_restores_one_hot_and_averages_targets():
+    feature_map = FeatureMap(("age", "color"), {"color": (1, 2)})
+    result = aggregate_model_importance(
+        {"target_a": [1.0, 0.0, 1.0], "target_b": [0.0, 1.0, 1.0]}, feature_map
+    )
+    assert result.values == pytest.approx({"age": 0.25, "color": 0.75})
+    assert result.source == "model"
+
+
+def test_weighted_kmeans_scores_k_2_to_8_and_assigns_all_rows():
+    frame = pd.DataFrame({"x": np.r_[np.zeros(12), np.ones(12)], "y": np.r_[np.zeros(12), np.ones(12)]})
+    contract = InputContract(feature_columns=("x", "y"))
+
+    class Model:
+        feature_importances_ = np.array([3.0, 1.0])
+
+    artifact = build_weighted_clusters(frame, Model(), contract, seed=7)
+    assert set(artifact.k_scores) <= set(range(2, 9))
+    assert len(artifact.labels) == len(frame)
+    assert artifact.sample_count_evaluated <= 50000
+    assert artifact.seed == 7
+
+
+def test_unavailable_model_importance_marks_review_instead_of_fabricating_weights():
+    frame = pd.DataFrame({"x": np.arange(8), "y": np.arange(8)})
+    contract = InputContract(feature_columns=("x", "y"))
+
+    class Model:
+        feature_importances_ = np.array([0.0, 0.0])
+
+    with pytest.raises(ValueError, match="FEATURE_IMPORTANCE_UNAVAILABLE"):
+        build_weighted_clusters(frame, Model(), contract, seed=3)
+
+
+def test_missing_model_importance_is_explicitly_unavailable():
+    result = aggregate_model_importance({}, FeatureMap(("x", "y"), {}))
+    assert result.source == "unavailable"
+    assert result.values == {"x": 0.0, "y": 0.0}
+
+
+def test_weighted_kmeans_reads_feature_importance_from_a_fitted_pipeline():
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    frame = pd.DataFrame({"x": [0.0, 0.1, 0.2, 5.0, 5.1, 5.2], "y": [0.0, 0.2, 0.1, 5.0, 5.2, 5.1]})
+    model = make_pipeline(StandardScaler(), RandomForestClassifier(n_estimators=8, random_state=7)).fit(frame, [0, 0, 0, 1, 1, 1])
+    artifact = build_weighted_clusters(frame, model, InputContract(feature_columns=("x", "y")), seed=7)
+    assert len(artifact.labels) == len(frame)
+    assert sum(artifact.weights.values()) == pytest.approx(1.0)

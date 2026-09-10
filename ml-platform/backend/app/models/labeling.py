@@ -102,11 +102,13 @@ class AnnotationComment(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     task_id = Column(UUID(as_uuid=True), nullable=False)
-    sample_id = Column(String(256), nullable=False)
+    sample_id = Column(String(256), nullable=True)
     revision_id = Column(UUID(as_uuid=True), ForeignKey("annotation_revisions.id"), nullable=True)
     author_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     body = Column(Text, nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    revision = relationship("AnnotationRevision", foreign_keys=[revision_id])
 
 
 class AnnotationConfirmation(Base):
@@ -122,6 +124,84 @@ class AnnotationConfirmation(Base):
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
 
+class AnnotationStrategyArtifact(Base):
+    """Immutable, reproducible strategy and clustering artifact metadata."""
+
+    __tablename__ = "annotation_strategy_artifacts"
+    __table_args__ = (
+        UniqueConstraint("task_id", "task_revision", "config_hash", name="uq_annotation_strategy_artifact_revision_config"),
+        Index("ix_annotation_strategy_artifacts_task", "task_id", "created_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id = Column(UUID(as_uuid=True), nullable=False)
+    task_revision = Column(Integer, nullable=False)
+    config_hash = Column(String(128), nullable=False)
+    strategy = Column(String(32), nullable=False)
+    artifact = Column(JSON, nullable=False, default=dict)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
+class AnnotationAssignment(Base):
+    """A server-owned, fixed sample scope assigned to one portal subject."""
+
+    __tablename__ = "annotation_assignments"
+    __table_args__ = (
+        UniqueConstraint("task_id", "annotator_subject_id", "scope_hash", name="uq_annotation_assignment_scope"),
+        Index("ix_annotation_assignments_task_state", "task_id", "state"),
+        Index("ix_annotation_assignments_subject", "annotator_subject_id", "state"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id = Column(UUID(as_uuid=True), nullable=False)
+    annotator_subject_id = Column(UUID(as_uuid=True), nullable=False)
+    sample_scope = Column(JSON, nullable=False, default=dict)
+    scope_hash = Column(String(128), nullable=False)
+    due_at = Column(DateTime, nullable=True)
+    state = Column(String(32), nullable=False, default="pending")
+    task_revision = Column(Integer, nullable=False, default=0)
+    last_edit_revision = Column(Integer, nullable=False, default=0)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class AnnotationAssignmentSample(Base):
+    __tablename__ = "annotation_assignment_samples"
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "sample_id", name="uq_annotation_assignment_sample"),
+        Index("ix_annotation_assignment_samples_sample", "sample_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assignment_id = Column(UUID(as_uuid=True), ForeignKey("annotation_assignments.id", ondelete="CASCADE"), nullable=False)
+    sample_id = Column(String(256), nullable=False)
+    revision_no = Column(Integer, nullable=False, default=0)
+    values = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
+class AnnotationReturnBatch(Base):
+    __tablename__ = "annotation_return_batches"
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "idempotency_key", name="uq_annotation_return_batch_idempotency"),
+        Index("ix_annotation_return_batches_assignment", "assignment_id", "created_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assignment_id = Column(UUID(as_uuid=True), ForeignKey("annotation_assignments.id", ondelete="CASCADE"), nullable=False)
+    task_revision = Column(Integer, nullable=False)
+    scope_hash = Column(String(128), nullable=False)
+    idempotency_key = Column(String(128), nullable=False)
+    state = Column(String(32), nullable=False, default="pending")
+    rejection_reason = Column(Text, nullable=True)
+    accepted_dataset_version_id = Column(UUID(as_uuid=True), ForeignKey("dataset_versions.id"), nullable=True)
+    reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
 def _reject_immutable_change(mapper, connection, target):
     raise ValueError("IMMUTABLE_LABEL_HISTORY")
 
@@ -130,6 +210,6 @@ def _reject_immutable_delete(mapper, connection, target):
     raise ValueError("IMMUTABLE_LABEL_HISTORY")
 
 
-for _model in (LabelSchema, LabelColumn, LabelValueConstraint, AnnotationTaskLabel, AnnotationRevision, AnnotationComment, AnnotationConfirmation):
+for _model in (LabelSchema, LabelColumn, LabelValueConstraint, AnnotationTaskLabel, AnnotationRevision, AnnotationComment, AnnotationConfirmation, AnnotationStrategyArtifact):
     event.listen(_model, "before_update", _reject_immutable_change)
     event.listen(_model, "before_delete", _reject_immutable_delete)

@@ -1,62 +1,101 @@
 # 通用平台验收矩阵
 
-**状态：** planned，Task 14 交付物。以下编号与主技术方案第 16.4 节一致。
+> 状态：`in_progress`。本矩阵只接受当前 Git SHA 的 `passed` 收据；`failed`、`cancelled`、`skipped`、缺失或旧 SHA 收据均阻止发布。
 
-## 执行上下文
-
-命令基准目录：后端命令从 `ml-platform/backend` 执行；前端命令从 `ml-platform/frontend` 执行。证据根目录固定为 `temp_test/generic-platform-acceptance/`，每个矩阵编号的回执固定写入 `receipts/<ID>.json`，由 `backend/tools/generic_acceptance_evidence.py` 生成。回执必须记录当前 Git SHA、实际命令、测试源文件 hash、生成制品的路径/hash、状态和脱敏检查结果。
-
-恢复演练必须在与 CI 相同的 Compose/容器边界执行，不能把宿主机直接调用 `run_backup_restore.sh` 当作验收：
-
-- WSL 仓库根目录由 PowerShell 7 先通过 `wsl.exe -e wslpath -a (Get-Location).Path` 转换；`ML_PLATFORM_EVIDENCE_DIR` 必须是该路径下的绝对 Linux 路径。
-- 本地受控演练使用 `COMPOSE_FILE=docker-compose.yml:docker-compose.acceptance.yml`；CI 的权威上下文是 `.github/workflows/ci.yml` 的 `week11-12-verification` job，使用 `docker-compose.yml:docker-compose.week12-security-images.yml`，并先构建、校验绑定当前 SHA 的 backend、worker、inference 和 tensorboard 镜像。
-- `run_week11_acceptance.sh` 使用 `docker compose ... up --no-build`，执行前必须通过 `docker compose --project-name "$COMPOSE_PROJECT_NAME" config -q`，并确保 `postgres`、`redis`、`minio`、`minio-init`、`mlflow`、`tensorboard-gateway`、`inference-runtime`、`migrate`、`backend`、`worker` 和 `scheduler` 已按 health/dependency contract 就绪。
-- Compose 必须提供这些变量：`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`、`DATABASE_URL`、`SECRET_KEY`、`CELERY_BROKER_URL`、`CELERY_RESULT_BACKEND`、`REDIS_EVENTS_URL`、`MINIO_ROOT_USER`、`MINIO_ROOT_PASSWORD`、`MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY`、`MLFLOW_BACKEND_STORE_URI`、`MLFLOW_ARTIFACT_ROOT`、`MLFLOW_TRACKING_URI`、`TENSORBOARD_SESSION_SECRET` 和 `INFERENCE_INTERNAL_SECRET`；其中密码、URL 中的凭据、密钥和 token 只来自受控 CI/本地密钥配置，绝不写入回执。
-- `NOTIFICATION_CRYPTO_SECRET_FILE` 必须存在并能被运行时 UID 1000 读取；使用 acceptance Compose overlay 时，还必须提供 `NOTIFICATION_ACCEPTANCE_CA_FILE`、`NOTIFICATION_RECEIVER_CERTIFICATE_FILE` 和 `NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE`。
-- `COMPOSE_PROJECT_NAME`、`ML_PLATFORM_EVIDENCE_DIR` 和 `ACCEPTANCE_SOURCE_COMMIT` 必须显式设置；`ACCEPTANCE_SOURCE_COMMIT` 必须等于当前 Git SHA。
-- WSL 解析 runner 前必须确认 `run_*.sh` 使用 LF 行尾。当前 Windows 工作树受 `core.autocrlf=true` 影响可能物化为 CRLF；这种状态下直接 `bash` 运行或语法检查不属于通过，需使用 Linux/CI checkout 或不覆盖当前工作树的 LF 校验副本。
-- 版本化 runner 只负责写入 `environment.json`、性能结果、`recovery/backup/*` 和 `recovery/upgrade/*`。`recovery/cleanup.json` 不由 Compose teardown 生成，必须由 Task 13 的 `cleanup_orphan_artifacts` 验收 harness 序列化；缺少该文件时 REL-01 保持 `in_progress`。
-
-PowerShell 7 先转换路径，再以 `wsl.exe -e sh -lc` 在 WSL 仓库根目录设置 `COMPOSE_PROJECT_NAME` 和绝对 Linux 路径 `ML_PLATFORM_EVIDENCE_DIR=$repoWsl/temp_test/generic-platform-acceptance/recovery`，运行 `bash ml-platform/backend/tools/acceptance/run_week11_acceptance.sh`，由版本化 runner 调用后端容器内的 backup/upgrade 执行器。
-
-Task 13 清理回执（在同一个 Compose 项目、backend 容器内、恢复 runner 完成后执行）的计划命令为：
-
-```sh
-docker compose --project-name "$COMPOSE_PROJECT_NAME" run --rm -T \
-  --user "$(id -u):$(id -g)" \
-  -v "$ML_PLATFORM_EVIDENCE_DIR:/evidence" \
-  backend python -m tools.cleanup_acceptance \
-  --older-than-seconds 3600 \
-  --output /evidence/cleanup.json \
-  --source-commit "$ACCEPTANCE_SOURCE_COMMIT"
-```
-
-该命令对应计划中的新建工具，当前工作树尚未提供该工具；在 Task 13 完成前不得执行或伪造其输出。
-
-## 验收编号
-
-| 编号 | 覆盖内容 | 精确验证命令 | 必须存在的回执或关联制品 |
+| ID | 合同 | 主要验证命令 | 证据责任 |
 |---|---|---|---|
-| DAT-01 | JSON/XML 正常导入 | `py -3.14 -m pytest tests/test_dataset_import_contract.py -q` | `receipts/DAT-01.json` |
-| DAT-02 | JSON/XML 安全输入 | `py -3.14 -m pytest tests/test_dataset_import_contract.py -q` | `receipts/DAT-02.json` |
-| DAT-03 | 缺列与空值 | `py -3.14 -m pytest tests/test_dataset_import_contract.py -q` | `receipts/DAT-03.json` |
-| LAB-01 | 标签类型与值校验 | `py -3.14 -m pytest tests/test_label_schema.py -q` | `receipts/LAB-01.json` |
-| LAB-02 | 三种自动策略与不可删除兜底 | `py -3.14 -m pytest tests/test_annotation_strategies.py -q` | `receipts/LAB-02.json` |
-| LAB-03 | 策略逐列优先级与冲突 | `py -3.14 -m pytest tests/test_annotation_strategies.py -q` | `receipts/LAB-03.json` |
-| CLU-01 | 特征重要性加权 KMeans | `py -3.14 -m pytest tests/test_annotation_strategies.py -q` | `receipts/CLU-01.json` |
-| CLU-02 | 百万样本最终全量赋簇 | `py -3.14 -m pytest tests/test_annotation_strategies.py -q` | `receipts/CLU-02.json` |
-| CON-01 | 重叠样本乐观并发 | `py -3.14 -m pytest tests/test_annotation_concurrency.py -q` | `receipts/CON-01.json` |
-| CON-02 | 并发回传与幂等 | `py -3.14 -m pytest tests/test_annotation_concurrency.py tests/test_annotation_return_acceptance.py -q` | `receipts/CON-02.json` |
-| RET-01 | 回传后只读锁与新修订解锁 | `py -3.14 -m pytest tests/test_annotation_return_acceptance.py -q` | `receipts/RET-01.json` |
-| AUTH-01 | 独立门户认证与会话撤销 | `py -3.14 -m pytest tests/test_annotator_auth.py -q` | `receipts/AUTH-01.json` |
-| AUTH-02 | CORS、CSRF、限流、密码和服务间认证 | `py -3.14 -m pytest tests/test_security_contract.py -q` | `receipts/AUTH-02.json` |
-| API-01 | 长任务、分页、幂等、revision、审计 | `py -3.14 -m pytest tests/test_annotation_task_state.py tests/test_async_operation_contract.py -q` | `receipts/API-01.json` |
-| AUTO-01 | 四种规范 AutoML 任务类型 | `py -3.14 -m pytest tests/test_automl_multioutput.py -q` | `receipts/AUTO-01.json` |
-| AUTO-02 | 用户手动注册候选模型 | `py -3.14 -m pytest tests/test_model_registration_contract.py -q` | `receipts/AUTO-02.json` |
-| EXP-01 | 导出包、SBOM、签名和策略工件 | `py -3.14 -m pytest tests/test_model_export_contract.py -q` | `receipts/EXP-01.json`；回执记录导出包内 `manifest.json`、`checksums.json`、`security/sbom.spdx.json`、`security/manifest.sig` 的 hash |
-| INF-01 | 离线 predict/annotate 输入拒绝 | `py -3.14 -m pytest tests/test_offline_inference_contract.py -q` | `receipts/INF-01.json`；回执记录脱敏 `validation-report.json` 的 hash |
-| REL-01 | 租约、重试、恢复和清理 | `py -3.14 -m pytest tests/test_async_operation_contract.py tests/test_week11_12_tools.py -q`; isolated Compose: run `bash ml-platform/backend/tools/acceptance/run_week11_acceptance.sh` in the context above, then execute the Task 13 command block above | `receipts/REL-01.json`；runner 生成 `recovery/backup/restore-result.json`、`recovery/upgrade/result.json`；Task 13 cleanup harness 生成 `recovery/cleanup.json`。三者均须存在并绑定当前 SHA，不能用 Compose teardown 或空报告替代 |
+| DAT-01 | CSV、Excel、Parquet 导入与冻结版本 | `pytest tests/test_dataset_import_contract.py -q` | 后端测试收据 |
+| DAT-02 | JSON/XML 安全解析与限制 | `pytest tests/test_dataset_import_contract.py -q` | 后端测试收据 |
+| DAT-03 | 输入合同与不可变数据版本 | `pytest tests/test_dataset_import_contract.py tests/test_database_migrations.py -q` | 后端测试收据 |
+| LAB-01 | 多列标签 schema 与类型校验 | `pytest tests/test_label_schema.py tests/test_label_schema_api.py -q` | 后端测试收据 |
+| LAB-02 | 标签 revision 与并发写入 | `pytest tests/test_annotation_concurrency.py -q` | 后端测试收据 |
+| LAB-03 | 标签前端编辑器 | `npm test -- --run src/components/LabelSchemaEditor.test.tsx` | 前端测试收据 |
+| CLU-01 | 加权 KMeans 与确定性分配 | `pytest tests/test_annotation_strategies.py -q` | 后端测试收据 |
+| CLU-02 | 自动策略预览与复核闭环 | `pytest tests/test_annotation_task_state.py tests/test_annotation_task_state_api.py -q` | 后端测试收据 |
+| CON-01 | 重叠指派与 revision 冲突 | `pytest tests/test_annotation_concurrency.py -q` | 后端测试收据 |
+| CON-02 | 回传锁与显式重新编辑 | `pytest tests/test_annotation_concurrency.py -q` | 后端测试收据 |
+| RET-01 | 回传列表、差异、验收和退回通知 | `pytest tests/test_annotation_return_acceptance.py -q` | 后端测试收据 |
+| AUTH-01 | 独立标注员身份和会话撤销 | `pytest tests/test_annotator_auth.py -q` | 后端测试收据 |
+| AUTH-02 | 门户 API 与服务身份边界 | `pytest -q`（`ml-platform/annotator/backend`） | 门户测试收据 |
+| API-01 | 通用任务 API、分页和状态错误合同 | `pytest tests/test_annotation_task_state_api.py -q` | 后端测试收据 |
+| AUTO-01 | 四种 AutoML 任务与候选工件 | `pytest tests/test_automl_multioutput.py -q` | 后端测试收据 |
+| AUTO-02 | AutoML 浏览器流程 | `npm run test:e2e -- e2e/automl-multioutput.spec.ts` | 浏览器收据 |
+| EXP-01 | 模型导出包、签名、SBOM 与 checksum | `pytest tests/test_model_export_contract.py -q` | 导出收据 |
+| INF-01 | 离线 predict/annotate 输入输出合同 | `pytest tests/test_offline_inference_contract.py -q` | 推理收据 |
+| REL-01 | 迁移、恢复、清理与安全门禁 | `pytest tests/test_async_operation_contract.py tests/test_security_contract.py -q` | 恢复与安全收据 |
 
-## 通过条件
+收据使用 `python -m tools.generic_acceptance_evidence` 写入 `temp_test/generic-platform-acceptance/receipts/`。最终门禁调用 `validate_acceptance_manifest`，并将所有收据绑定到同一个当前 SHA。
 
-前端浏览器补充命令为 `npm run test:e2e -- e2e/generic-platform-acceptance.spec.ts`；新建隔离数据库执行 `py -3.14 -m alembic upgrade head`，旧 SQLite 兼容执行 `py -3.14 -m pytest tests/test_database_migrations.py -q`。最终 `final-evidence-manifest.json` 必须列出所有 19 个回执及其关联制品的 SHA-256。所有 required 测试、构建、迁移、浏览器、导出和恢复证据必须绑定当前 SHA 且为 `passed`。`failed`、`cancelled`、`skipped`、缺失或旧 SHA 证据均保持 `in_progress`。
+## 2026-09-09 当前 SHA 检查记录
+
+- SHA：`e94862af844ea95a31203423c24a8ececd7553d6`。
+- 已验证：聚焦后端证据按各 Task 记录；`alembic check` 无新升级操作；fresh SQLite `upgrade head` 到 `20260909_40`；前端生产构建通过；`git diff --check` 退出码 0。
+- 未通过：后端完整 active suite 退出码 1（旧数据库/通知检查失败，安全门禁模块超过 300 秒超时）；前端完整 Vitest 退出码 1（56 个文件通过、1 个文件失败、274 个测试通过、19 个历史 skipped），失败点为 `weekAcceptance.test.ts` 的测试文件归属台账缺五个新文件。
+- 未执行或无证据：当前 SHA 的 Docker/Compose、真实 broker、Playwright、导出包/离线推理、恢复演练和远程 CI。
+- 矩阵结论：保持 `in_progress`；任何上述失败、超时、缺失或未执行项都不能生成 `passed` 收据。
+
+## 2026-09-09 当前 SHA 复核
+
+- 前端台账回归：`npm test -- --run src/weekAcceptance.test.ts`，**7 passed**。
+- 前端完整套件：`npm test -- --run`，**57 个文件通过、275 个测试通过、19 个历史 skipped，退出码 0**。因此上一条记录中的台账遗漏已修复；旧失败记录保留用于追溯，不再代表当前结果。
+- 后端 worker 回归：`python -m unittest tests.test_celery_workflows -v`，**19/19 OK**。
+- 发布结论不变：后端完整 active suite 仍有历史失败和安全模块超时；Docker/真实 broker/Playwright/导出离线/恢复/远程 CI 仍无当前 SHA 收据，矩阵继续保持 `in_progress`。
+- 测试基础设施风险：`run_suite.py` 固定使用 `unittest` 执行模块，pytest 风格模块可能产生 `NO TESTS RAN`；在框架感知派发和 `tests/test_run_suite.py` 回归完成前，不把 Week 17 聚合结果作为发布门禁。
+
+## 2026-09-09 进度整理更正
+
+- 当前 `run_suite.py` 已具备基于 AST 的 pytest/unittest 框架派发，上一条“固定使用 unittest”是历史检查点，保留用于追溯；新的剩余风险是 `has_zero_tests` 读取嵌套历史摘要时可能误判外层模块为零测试。
+- `tests/test_run_suite.py` 当前 **6 passed**，但 Week 17 聚合仍不能作为通过门禁，直到零测试误判回归修复并重跑聚合。
+- `tests/test_label_schema_api.py` 当前 **3 passed、1 failed**；失败来自测试夹具使用了不属于项目的数据版本，属于夹具待修正，不应削弱服务端项目归属校验。
+- 前端台账与完整 Vitest 的当前 SHA 复核已记录为 **7/7**、**57 个文件/275 个测试通过、19 个历史 skipped**；后端 worker 导入回归为 **19/19 OK**。
+- 矩阵仍为 `in_progress`：后端完整套件、Docker/真实 broker、Playwright、导出/离线、恢复演练和远程 CI 均缺少当前 SHA 的完整通过收据。
+
+## 2026-09-09 聚合复核（最新）
+
+- 当前 SHA 仍为 `e94862af844ea95a31203423c24a8ececd7553d6`。
+- `run_suite.py --week 17` 已按模块原生框架执行，结果为 **21/21 模块通过、0 失败、退出码 0**；其中 `tests.test_run_suite` **7/7 OK**、标签 schema API **4 passed、1 warning**，说明本轮运行器摘要解析和项目归属测试夹具修复已生效。
+- 该聚合结果只覆盖当前本地 Week 17 模块级测试，不等同于 19 项验收收据。后端完整 active suite、真实 broker、Docker/WSL、Playwright、导出/离线、恢复和远程 CI 仍无完整当前 SHA 通过证据。
+- 矩阵结论保持 `in_progress`；不得将本次聚合绿灯外推为任务完成或发布就绪。
+
+## 2026-09-09 当前工作树进度整理
+
+- 当前 SHA 为 `e94862af844ea95a31203423c24a8ececd7553d6`，分支与远端 `0/0`；工作树有未提交变更，用户本地 `README.md` 不属于本次验收范围。
+- 新增前端回归尚未通过：`npm test -- --run src/pages/DataAnnotationPage.test.tsx` 为 **39 项中 38 passed、1 failed**。失败用例为通用任务预览完成后执行按钮应启用的列表流程。
+- 根因已定位为前端状态接线缺口：预览详情已返回 `preview_id/status`，但没有回写列表任务的 `task.preview`，因此执行操作仍被禁用。该问题尚未修复，不能生成 `API-01` 或相关页面通过收据。
+- 此前前端全量 **57 文件/275 测试通过、19 个历史 skipped** 的结果早于本次新增回归，需修复后重新执行；Week 17 聚合、worker 导入和其他局部收据仍只对各自范围有效。
+- 矩阵结论保持 `in_progress`。下一门禁顺序为页面状态回写修复、聚焦测试、台账/全量 Vitest，然后继续 Task 5 的 broker、恢复、分页和操作中心验证。
+
+## 2026-09-09 当前工作树复核更正
+
+- 预览完成状态已回写对应列表任务；`npm test -- --run src/pages/DataAnnotationPage.test.tsx` 为 **39/39 passed**，此前 38/39 的 RED 保留为历史记录。
+- 前端验证已重新执行：台账 **7/7 passed**，完整 Vitest **57 个文件通过、276 个测试通过、19 个历史 skipped**，生产构建退出码 0。275 项测试的旧记录不再代表当前工作树结果。
+- 后端聚合运行器复核：unittest **7/7 OK**、pytest **7 passed**、Week 17 **21/21 模块通过、0 失败**；`git diff --check` 通过。
+- 这些结果来自含未提交变更的工作树，不能写为 Git SHA 绑定的 `passed` 收据。矩阵继续保持 `in_progress`；后端完整套件、Docker/真实 broker、Playwright、导出/离线、恢复和远程 CI 仍缺少可发布版本的完整证据。
+
+## 2026-09-09 Task 5 刷新合同复核
+
+- 任务列表在刷新后已返回当前修订可执行预览，不会将旧修订预览误作为当前动作目标。后端聚焦命令 `pytest tests/test_annotation_task_state.py tests/test_annotation_task_state_api.py tests/test_genericization_contract.py -q` 为 **52 passed、3 warnings**；共享状态服务和任务 API 编译通过。
+- 该结果为 Task 5 的局部工作树证据，可支持后续 `CLU-02`、`API-01` 的实现复核，但不能替代当前 Git SHA 的收据。没有新增 `receipts/`，也没有生成任何 `passed` 验收结论。
+- 矩阵继续为 `in_progress`：真实 broker、恢复、完整后端、Docker/WSL、Playwright、导出/离线和远程 CI 仍需在干净提交上生成同一 SHA 的完整证据。
+
+## 2026-09-09 Task 5 审计补充
+
+- 本次只读审计确认：状态机、冻结快照、预览 DurableOperation/worker、owner-scoped cursor 列表和当前 revision 预览刷新合同已有局部实现；对应 Task 5 回归为 **52 passed、3 warnings**，前端页面 **39/39**，台账 **7/7**，完整 Vitest **57 文件/276 passed/19 skipped**，Week 17 聚合 **21/21**。这些结果均来自脏工作树，不产生 `passed` 收据。
+- `API-01`/`CLU-02` 仍不能关闭：执行链路没有 durable execution operation/worker/result/recovery；本地派发和真实 broker/restart 未验证；统计结果的 sample/cluster/rule/final-label cursor 合同缺失；页面操作中心仍未统一且只有 Preview/Assign/Execute；配置 revision/invalidation 端点缺失。
+- 全量后端门禁另有环境阻塞：项目 `.venv` 缺少 requirements 声明的 `catboost==1.2.*`，完整收集在 `tests/test_onnx_conversion.py` 失败；在依赖补齐并重跑前，不将该失败归因于实现，也不生成全量通过收据。
+- 矩阵继续保持 `in_progress`。下一门禁顺序为补齐依赖并重跑后端全量，随后实现 Task 5 执行/恢复、结果分页和统一操作中心，再收集 Task 6–13 运行态证据，最后在干净 SHA 上重跑 Task 14 全部收据。
+
+## 2026-09-10 Task 5 执行链路检查点
+
+- 当前工作树出现执行结果表/迁移、幂等执行请求服务和执行 worker/派发测试的进行中改动，但代理尚未完成 GREEN 验证；因此 `API-01`、`CLU-02` 和 `REL-01` 不新增 `passed` 收据。
+- 既有局部证据仍只按原范围有效：Task 5 回归 **52 passed、3 warnings**，前端页面 **39/39**，台账 **7/7**，完整 Vitest **57 文件/276 passed/19 skipped**，Week 17 **21/21**，worker 导入 **19/19**，生产构建和 `git diff --check` 通过。所有结果来自脏工作树，不能满足当前 SHA 收据合同。
+- 环境复核更正：项目 `.venv` 可导入 `catboost 1.2.10`；`onnx`、`onnxmltools`、`skl2onnx` 缺失。后端完整套件收集须先补齐声明依赖并重新执行，不能将该环境阻断记为代码失败或通过。
+- 矩阵继续为 `in_progress`。仍缺执行结果完整 GREEN、local/Celery 派发、真实 broker/重启恢复、结果与统计分页、完整任务操作矩阵、Docker/WSL、Playwright、导出/离线及远程 CI 的当前 SHA 证据。
+
+## 2026-09-10 发布前进度整理
+
+- 当前分支 HEAD 为 `e94862af844ea95a31203423c24a8ececd7553d6`，本次发布前仍为脏工作树；下列结果均为工作树证据，不是 SHA 绑定收据。
+- Task 5 执行链路代理报告 **59 passed、4 warnings**，后续审查复核报告 **61 passed、4 warnings**；前端 `DataAnnotationPage.test.tsx` 当前 **41 passed**，`weekAcceptance.test.ts` **7 passed**。
+- 后端重新执行未启动：项目 `.venv` 的 `python.exe` 目标解释器已不存在，`pyvenv.cfg` 指向 `C:\Users\17723\AppData\Local\Programs\Python\Python314\python.exe`。该项标记为环境阻断，不能写成后端通过或失败。
+- `API-01`、`CLU-02`、`REL-01` 及 Task 5 相关矩阵项仍不能关闭。缺口包括真实 broker/Celery、重启恢复、原子 recovery claim、完整操作矩阵、配置 revision/旧预览失效、前端结果/统计消费与 cursor 加载，以及当前 SHA 的 Docker/Playwright/导出/离线/远程 CI 收据。
+- 本次文档整理不生成 `passed` 收据；推送分支只保存当前实现和审计状态，后续必须修复 Python 环境、形成干净 SHA 后重新执行 required gates。

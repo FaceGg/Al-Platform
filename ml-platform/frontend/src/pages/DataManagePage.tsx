@@ -8,9 +8,11 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import apiClient from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
+import { acceptReturnBatch, diffReturnBatch, listReturnBatches, returnReturnBatch, type ReturnBatch, type ReturnDiffRow } from "../api/annotationReturns";
 import AppLayout from "../components/AppLayout";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
+import ReturnBatchList from "../components/ReturnBatchList";
 import { useI18n } from "../i18n";
 
 const { Text } = Typography;
@@ -26,6 +28,11 @@ export default function DataManagePage() {
   const [loading, setLoading] = useState(false);
   const [previewData, setPreviewData] = useState<{ columns: string[]; rows: any[][] } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [returnBatches, setReturnBatches] = useState<ReturnBatch[]>([]);
+  const [returnBatchesLoading, setReturnBatchesLoading] = useState(false);
+  const [returnDiff, setReturnDiff] = useState<ReturnDiffRow[]>([]);
+  const [returnDiffOpen, setReturnDiffOpen] = useState(false);
+  const [returnDiffLoading, setReturnDiffLoading] = useState(false);
 
   useEffect(() => {
     apiClient.get("/projects").then((res) => {
@@ -48,6 +55,62 @@ export default function DataManagePage() {
   useEffect(() => {
     loadDatasets(selectedProject);
   }, [selectedProject]);
+
+  const loadReturnBatches = async (projectId: string | null) => {
+    if (!projectId) {
+      setReturnBatches([]);
+      return;
+    }
+    setReturnBatchesLoading(true);
+    try {
+      const page = await listReturnBatches(projectId);
+      setReturnBatches(page.items || []);
+    } catch (error) {
+      setReturnBatches([]);
+      message.error((error as any)?.response?.data?.detail?.message || "回传结果加载失败");
+    } finally {
+      setReturnBatchesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadReturnBatches(selectedProject);
+  }, [selectedProject]);
+
+  const handleReturnDiff = async (batchId: string) => {
+    setReturnDiffLoading(true);
+    setReturnDiffOpen(true);
+    try {
+      const page = await diffReturnBatch(batchId);
+      setReturnDiff(page.items || []);
+    } catch (error) {
+      setReturnDiff([]);
+      message.error((error as any)?.response?.data?.detail?.message || "回传差异加载失败");
+    } finally {
+      setReturnDiffLoading(false);
+    }
+  };
+
+  const handleAcceptReturn = async (batchId: string, taskRevision: number) => {
+    try {
+      await acceptReturnBatch(batchId, taskRevision);
+      message.success("回传结果已验收");
+      await loadReturnBatches(selectedProject);
+      loadDatasets(selectedProject);
+    } catch (error) {
+      message.error((error as any)?.response?.data?.detail?.message || "回传验收失败");
+    }
+  };
+
+  const handleReturnBatch = async (batchId: string, reason: string, taskRevision: number) => {
+    try {
+      await returnReturnBatch(batchId, { task_revision: taskRevision, reason });
+      message.success("回传结果已退回");
+      await loadReturnBatches(selectedProject);
+    } catch (error) {
+      message.error((error as any)?.response?.data?.detail?.message || "回传退回失败");
+    }
+  };
 
   const handleUpload = async (file: File) => {
     if (!selectedProject) { message.warning(t.automl.select_project); return false; }
@@ -188,6 +251,13 @@ export default function DataManagePage() {
             scroll={{ x: "max-content" }}
           />
         </Card>
+        {selectedProject && <ReturnBatchList
+          items={returnBatches}
+          loading={returnBatchesLoading}
+          onDiff={(batchId) => { void handleReturnDiff(batchId); }}
+          onAccept={(batchId, taskRevision) => { void handleAcceptReturn(batchId, taskRevision); }}
+          onReturn={(batchId, reason, taskRevision) => { void handleReturnBatch(batchId, reason, taskRevision); }}
+        />}
       </div>
       <Modal
         title={t.data.preview}
@@ -222,6 +292,20 @@ export default function DataManagePage() {
             </table>
           </div>
         )}
+      </Modal>
+      <Modal
+        title="回传差异"
+        open={returnDiffOpen}
+        onCancel={() => setReturnDiffOpen(false)}
+        footer={null}
+        width={900}
+      >
+        {returnDiffLoading ? <div role="status">正在加载差异…</div> : returnDiff.length === 0 ? <p>暂无差异</p> : <div style={{ overflowX: "auto" }}>
+          <table className="dataset-preview-table" style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+            <thead><tr><th>样本</th><th>源数据</th><th>标签</th></tr></thead>
+            <tbody>{returnDiff.map((row) => <tr key={row.sample_id}><td>{row.sample_id}</td><td><pre>{JSON.stringify(row.source_values, null, 2)}</pre></td><td><pre>{JSON.stringify(row.label_values, null, 2)}</pre></td></tr>)}</tbody>
+          </table>
+        </div>}
       </Modal>
     </AppLayout>
   );

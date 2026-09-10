@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { App as AntApp, Dropdown, Empty, Spin, Steps, Table, Tag, Tooltip } from "antd";
+import { App as AntApp, Dropdown, Empty, Modal, Spin, Steps, Table, Tag, Tooltip } from "antd";
 import { DeleteOutlined, DownloadOutlined, EyeOutlined, LeftOutlined, ReloadOutlined, RightOutlined, UploadOutlined } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import * as echarts from "echarts";
@@ -13,6 +13,22 @@ import { normalizeTaskStatus, taskStatusColor, taskStatusLabel } from "../utils/
 import { formatApiError, default as apiClient } from "../api/client";
 import { listDatasets } from "../api/datasets";
 import { createLabelSchema } from "../api/labelSchemas";
+import {
+  createAnnotationPreview,
+  getAnnotationPreview,
+  listAnnotationPreviewSamples,
+  listAnnotationExecutionResults,
+  listAnnotationExecutionStats,
+  listAnnotationOperations,
+  listAnnotationTasks,
+  transitionAnnotationTask,
+  type AnnotationPreview,
+  type AnnotationTask,
+  type AnnotationOperation,
+} from "../api/annotationTasks";
+import PreviewDrawer from "../components/PreviewDrawer";
+import AssignmentDialog from "../components/AssignmentDialog";
+import { createAssignments, listAnnotatorSubjects, type AnnotatorSubject, type SampleScope } from "../api/annotatorAssignments";
 import {
   createQualityRun,
   deleteQualityRun,
@@ -46,6 +62,41 @@ interface DatasetOption {
   name?: string;
   format?: string;
   row_count?: number;
+}
+
+interface PreviewDrawerState {
+  taskId: string;
+  previewId?: string;
+  operationId?: string;
+  taskRevision: number;
+  status?: string;
+  summary?: Record<string, unknown>;
+  strategySummary?: Record<string, unknown>;
+  progress?: number;
+  errorMessage?: string | null;
+  samples: Array<{ sample_id: string; row_index: number; values: Record<string, unknown> }>;
+  sampleCursor?: string | null;
+}
+
+interface RevisionConflictState {
+  taskId: string;
+  attemptedRevision: number;
+  currentRevision?: number;
+  labels?: Record<string, unknown>;
+  message: string;
+}
+
+type ExecutionStatsKind = "sample" | "cluster" | "rule" | "final_label";
+
+interface ExecutionViewState {
+  operation: AnnotationOperation;
+  results: Array<{ id: string; sample_id: string; row_index: number; status: string }>;
+  resultsCursor: string | null;
+  statsKind: ExecutionStatsKind;
+  stats: Array<Record<string, unknown>>;
+  statsCursor: string | null;
+  loading: boolean;
+  error: string | null;
 }
 
 type LabelOption = readonly [string, string];
@@ -139,6 +190,24 @@ function fullSampleValue(value: unknown): string {
   return String(displayValue);
 }
 
+function isRevisionConflict(error: unknown): boolean {
+  return Number((error as any)?.response?.status) === 409;
+}
+
+function revisionConflictFromError(error: any, task: AnnotationTask): RevisionConflictState {
+  const detail = error?.response?.data?.detail;
+  const payload = detail && typeof detail === "object" ? detail : {};
+  const currentRevision = Number(payload.current_revision ?? payload.task_revision ?? payload.revision);
+  const labels = payload.labels && typeof payload.labels === "object" ? payload.labels as Record<string, unknown> : undefined;
+  return {
+    taskId: task.id,
+    attemptedRevision: task.task_revision,
+    currentRevision: Number.isFinite(currentRevision) ? currentRevision : undefined,
+    labels,
+    message: String(payload.message || "任务修订已变化，请确认服务端最新状态后重试"),
+  };
+}
+
 export default function DataAnnotationPage() {
   const { message } = AntApp.useApp();
   const { lang, t } = useI18n();
@@ -149,6 +218,18 @@ export default function DataAnnotationPage() {
   const [projectId, setProjectId] = useState(searchParams.get("projectId") || "");
   const [datasetArtifactId, setDatasetArtifactId] = useState(searchParams.get("datasetId") || "");
   const [runs, setRuns] = useState<QualityRun[]>([]);
+  const [genericTasks, setGenericTasks] = useState<AnnotationTask[]>([]);
+  const [annotationOperations, setAnnotationOperations] = useState<AnnotationOperation[]>([]);
+  const [annotationOperationsCursor, setAnnotationOperationsCursor] = useState<string | null>(null);
+  const [executionView, setExecutionView] = useState<ExecutionViewState | null>(null);
+  const [operationsLoading, setOperationsLoading] = useState(false);
+  const [genericTaskLoading, setGenericTaskLoading] = useState(false);
+  const [previewDrawer, setPreviewDrawer] = useState<PreviewDrawerState | null>(null);
+  const [assignmentTask, setAssignmentTask] = useState<AnnotationTask | null>(null);
+  const [annotators, setAnnotators] = useState<AnnotatorSubject[]>([]);
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
+  const [assignmentOverlapWarning, setAssignmentOverlapWarning] = useState<string | null>(null);
+  const [revisionConflict, setRevisionConflict] = useState<RevisionConflictState | null>(null);
   const [datasets, setDatasets] = useState<DatasetOption[]>([]);
   const [runId, setRunId] = useState(searchParams.get("runId") || "");
   const [samples, setSamples] = useState<QualitySample[]>([]);
@@ -379,6 +460,246 @@ export default function DataAnnotationPage() {
       });
     return () => { active = false; };
   }, [isTaskList, loadingProjects, projects, projectId, message, requestedRunId]);
+
+  useEffect(() => {
+    if (!isTaskList || !projectId) {
+      setGenericTasks([]);
+      setAnnotationOperations([]);
+      setAnnotationOperationsCursor(null);
+      return;
+    }
+    let active = true;
+    setGenericTaskLoading(true);
+    listAnnotationTasks(projectId)
+      .then((result) => { if (active) setGenericTasks(result.items || []); })
+      .catch((error) => { if (active) { setGenericTasks([]); message.error(formatApiError(error, "通用任务加载失败")); } })
+      .finally(() => { if (active) setGenericTaskLoading(false); });
+    return () => { active = false; };
+  }, [isTaskList, projectId]);
+
+  useEffect(() => {
+    if (!isTaskList || !projectId) {
+      setAnnotationOperations([]);
+      setAnnotationOperationsCursor(null);
+      return;
+    }
+    let active = true;
+    setOperationsLoading(true);
+    listAnnotationOperations(projectId)
+      .then((result) => { if (active) { setAnnotationOperations(result.items || []); setAnnotationOperationsCursor(result.next_cursor || null); } })
+      .catch((error) => { if (active) { setAnnotationOperations([]); setAnnotationOperationsCursor(null); message.error(formatApiError(error, "通用操作加载失败")); } })
+      .finally(() => { if (active) setOperationsLoading(false); });
+    return () => { active = false; };
+  }, [isTaskList, projectId, message]);
+
+  useEffect(() => {
+    if (!previewDrawer?.previewId) return undefined;
+    const taskId = previewDrawer.taskId;
+    const previewId = previewDrawer.previewId;
+    const operationId = previewDrawer.operationId;
+    let active = true;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const refresh = async () => {
+      try {
+        const preview = await getAnnotationPreview(taskId, previewId);
+        if (!active) return;
+        const previewStatus = String(preview.status);
+        const taskStatus = previewStatus === "completed" || previewStatus === "ready"
+          ? "preview_ready"
+          : previewStatus === "failed" || previewStatus === "cancelled"
+            ? previewStatus
+            : "previewing";
+        setGenericTasks((items) => items.map((item) => item.id === taskId
+          ? {
+              ...item,
+              task_revision: preview.task_revision,
+              status: taskStatus,
+              preview: {
+                ...preview,
+                id: preview.id || previewId,
+                operation_id: preview.operation_id || operationId || null,
+              },
+            }
+          : item));
+        setPreviewDrawer((current) => current ? {
+          ...current,
+          status: previewStatus,
+          progress: preview.progress,
+          summary: preview.summary || current.summary,
+          strategySummary: preview.strategy_summary || current.strategySummary,
+          errorMessage: preview.error_code || preview.error?.message || null,
+        } : current);
+        const terminal = ["completed", "ready", "failed", "cancelled"].includes(previewStatus);
+        if (terminal && timer) clearInterval(timer);
+        if (terminal && previewStatus !== "failed" && previewStatus !== "cancelled") {
+          const page = await listAnnotationPreviewSamples(taskId, previewId, 50);
+          if (!active) return;
+          setPreviewDrawer((current) => current ? {
+            ...current,
+            samples: page.items.map((item) => ({ sample_id: item.sample_id, row_index: item.row_index, values: item.values })),
+            sampleCursor: page.next_cursor,
+          } : current);
+        }
+      } catch (error) {
+        if (active) setPreviewDrawer((current) => current ? { ...current, errorMessage: formatApiError(error, "预览状态加载失败") } : current);
+      }
+    };
+    void refresh();
+    timer = setInterval(() => { void refresh(); }, 1000);
+    return () => { active = false; if (timer) clearInterval(timer); };
+  }, [previewDrawer?.previewId, previewDrawer?.taskId]);
+
+  const openTaskPreview = async (task: AnnotationTask) => {
+    const configHash = String(task.task_snapshot?.config_hash || "sha256:task");
+    try {
+      const preview = await createAnnotationPreview(task.id, task.task_revision, configHash);
+      setPreviewDrawer({
+        taskId: task.id,
+        previewId: preview.preview_id,
+        operationId: preview.operation_id,
+        taskRevision: preview.task_revision,
+        status: preview.status,
+        progress: 0,
+        summary: { status: preview.status, dispatch_id: preview.dispatch_id || null, task_revision: preview.task_revision },
+        samples: [],
+        sampleCursor: null,
+      });
+    } catch (error) {
+      if (isRevisionConflict(error)) setRevisionConflict(revisionConflictFromError(error, task));
+      else message.error(formatApiError(error, "任务预览失败"));
+    }
+  };
+
+  const openAssignmentDialog = async (task: AnnotationTask) => {
+    setAssignmentTask(task);
+    setAssignmentOverlapWarning(null);
+    setAssignmentLoading(true);
+    try {
+      setAnnotators(await listAnnotatorSubjects());
+    } catch (error) {
+      message.error(formatApiError(error, "标注员加载失败"));
+      setAnnotators([]);
+    } finally {
+      setAssignmentLoading(false);
+    }
+  };
+
+  const sampleScopeForTask = (task: AnnotationTask): SampleScope => {
+    const scope = task.sample_scope || {};
+    const sampleIds = Array.isArray(scope.sample_ids) ? scope.sample_ids.map(String) : [];
+    return { kind: "ids", sample_ids: sampleIds };
+  };
+
+  const submitAssignment = async (payload: { annotator_ids: string[]; sample_scope: SampleScope; due_at?: string }) => {
+    if (!assignmentTask) return;
+    setAssignmentLoading(true);
+    try {
+      const result = await createAssignments(assignmentTask.id, payload);
+      setAssignmentOverlapWarning(result.overlap_warning || null);
+      if (!result.overlap_warning) {
+        message.success("指派已提交");
+        setAssignmentTask(null);
+      }
+    } catch (error) {
+      if (isRevisionConflict(error)) setRevisionConflict(revisionConflictFromError(error, assignmentTask));
+      else message.error(formatApiError(error, "指派失败"));
+    } finally {
+      setAssignmentLoading(false);
+    }
+  };
+
+  const executeGenericTask = async (task: AnnotationTask) => {
+    try {
+      const updated = await transitionAnnotationTask(task.id, task.task_revision, "execute", task.preview?.id);
+      setGenericTasks((items) => items.map((item) => item.id === task.id ? { ...item, ...updated } : item));
+      await refreshGenericTaskData();
+    } catch (error) {
+      if (isRevisionConflict(error)) setRevisionConflict(revisionConflictFromError(error, task));
+      else message.error(formatApiError(error, "任务执行失败"));
+    }
+  };
+
+  const refreshGenericTaskData = async () => {
+    if (!isTaskList || !projectId) return;
+    try {
+      const [tasks, operations] = await Promise.all([
+        listAnnotationTasks(projectId),
+        listAnnotationOperations(projectId),
+      ]);
+      setGenericTasks(tasks.items || []);
+      setAnnotationOperations(operations.items || []);
+      setAnnotationOperationsCursor(operations.next_cursor || null);
+    } catch (error) {
+      message.error(formatApiError(error, "通用任务刷新失败"));
+    }
+  };
+
+  const loadMoreAnnotationOperations = async () => {
+    if (!projectId || !annotationOperationsCursor || operationsLoading) return;
+    setOperationsLoading(true);
+    try {
+      const page = await listAnnotationOperations(projectId, 50, annotationOperationsCursor);
+      setAnnotationOperations((items) => [...items, ...(page.items || [])]);
+      setAnnotationOperationsCursor(page.next_cursor || null);
+    } catch (error) {
+      message.error(formatApiError(error, "更多通用操作加载失败"));
+    } finally {
+      setOperationsLoading(false);
+    }
+  };
+
+  const loadExecutionView = async (operation: AnnotationOperation, statsKind: ExecutionStatsKind = "sample", append = false) => {
+    const current = executionView?.operation.id === operation.id ? executionView : null;
+    setExecutionView((value) => value && value.operation.id === operation.id ? { ...value, loading: true, error: null } : {
+      operation, results: [], resultsCursor: null, statsKind, stats: [], statsCursor: null, loading: true, error: null,
+    });
+    try {
+      const resultCursor = append ? current?.resultsCursor || undefined : undefined;
+      const statsCursor = append && current?.statsKind === statsKind ? current.statsCursor || undefined : undefined;
+      const [results, stats] = await Promise.all([
+        listAnnotationExecutionResults(operation.task_id, operation.id, 50, resultCursor),
+        listAnnotationExecutionStats(operation.task_id, operation.id, statsKind, 50, statsCursor),
+      ]);
+      setExecutionView((value) => value && value.operation.id === operation.id ? {
+        ...value,
+        statsKind,
+        results: append ? [...value.results, ...results.items] : results.items,
+        resultsCursor: results.next_cursor,
+        stats: append && value.statsKind === statsKind ? [...value.stats, ...stats.items] : stats.items,
+        statsCursor: stats.next_cursor,
+        loading: false,
+        error: null,
+      } : value);
+    } catch (error) {
+      const rendered = formatApiError(error, "执行结果加载失败");
+      setExecutionView((value) => value && value.operation.id === operation.id ? { ...value, loading: false, error: rendered } : value);
+      message.error(rendered);
+    }
+  };
+
+  const transitionGenericTask = async (task: AnnotationTask, action: "publish" | "pause" | "resume" | "cancel") => {
+    try {
+      await transitionAnnotationTask(task.id, task.task_revision, action);
+      await refreshGenericTaskData();
+    } catch (error) {
+      if (isRevisionConflict(error)) setRevisionConflict(revisionConflictFromError(error, task));
+      else message.error(formatApiError(error, "任务状态更新失败"));
+    }
+  };
+
+  const loadMorePreviewSamples = async () => {
+    if (!previewDrawer?.previewId || !previewDrawer.sampleCursor) return;
+    try {
+      const page = await listAnnotationPreviewSamples(previewDrawer.taskId, previewDrawer.previewId, 50, previewDrawer.sampleCursor);
+      setPreviewDrawer((current) => current ? {
+        ...current,
+        samples: [...current.samples, ...page.items.map((item) => ({ sample_id: item.sample_id, row_index: item.row_index, values: item.values }))],
+        sampleCursor: page.next_cursor,
+      } : current);
+    } catch (error) {
+      message.error(formatApiError(error, "预览样本加载失败"));
+    }
+  };
 
   useEffect(() => {
     if (!isSetup || loadingProjects || !projectId) {
@@ -961,6 +1282,29 @@ export default function DataAnnotationPage() {
         </div>
       </div>
       <div className="table-surface data-annotation__tasks-surface" role="region" aria-label={copy.taskListLabel}>
+        {genericTasks.length > 0 && <div className="data-annotation__generic-tasks" role="region" aria-label="通用任务列表">
+          <Table<AnnotationTask>
+            rowKey="id"
+            size="small"
+            loading={genericTaskLoading}
+            dataSource={genericTasks}
+            pagination={false}
+            columns={[
+              { title: "通用任务", dataIndex: "id", render: (id: string, task: AnnotationTask) => <div className="table-primary-cell"><strong>{id.slice(0, 8)}</strong><span>{task.mode}</span></div> },
+              { title: "状态", dataIndex: "status", render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag> },
+              { title: "修订", dataIndex: "task_revision" },
+              { title: "操作", key: "actions", align: "right" as const, render: (_: unknown, task: AnnotationTask) => <div className="table-row-actions">
+                <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void openTaskPreview(task); }}>预览</button>
+                <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void openAssignmentDialog(task); }}>指派标注员</button>
+                <button type="button" className="ant-btn ant-btn-sm" disabled={!['preview_ready', 'ready', 'paused'].includes(task.status)} onClick={() => { void executeGenericTask(task); }}>执行</button>
+                {task.status === "preview_ready" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "publish"); }}>发布</button>}
+                {["preview_ready", "executing", "awaiting_annotation", "in_progress", "awaiting_return"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "pause"); }}>暂停</button>}
+                {task.status === "paused" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "resume"); }}>恢复</button>}
+                {["draft", "preview_ready", "executing", "awaiting_annotation", "in_progress", "awaiting_return", "paused", "failed", "needs_review"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "cancel"); }}>取消</button>}
+              </div> },
+            ]}
+          />
+        </div>}
         <Table<QualityRun>
           rowKey="id"
           size="small"
@@ -972,6 +1316,79 @@ export default function DataAnnotationPage() {
           locale={{ emptyText: <Empty description={copy.noTasks} /> }}
         />
       </div>
+      <div className="table-surface data-annotation__operations-surface" role="region" aria-label="通用任务操作">
+        <div className="table-row-actions">
+          <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void refreshGenericTaskData(); }} disabled={operationsLoading}>刷新操作</button>
+        </div>
+        <Table<AnnotationOperation>
+          rowKey="id"
+          size="small"
+          loading={operationsLoading}
+          dataSource={annotationOperations}
+          pagination={false}
+          locale={{ emptyText: "暂无运行中的通用操作" }}
+          columns={[
+            { title: "操作", dataIndex: "id", render: (value: string) => <code>{value}</code> },
+            { title: "类型", dataIndex: "resource_type" },
+            { title: "阶段", dataIndex: "stage" },
+            { title: "状态", dataIndex: "state", render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag> },
+            { title: "进度", dataIndex: "progress", render: (value: number) => `${value}%` },
+            { title: "错误", dataIndex: "error_code", render: (value: string | null) => value || "-" },
+            { title: "结果", key: "results", render: (_: unknown, operation: AnnotationOperation) => operation.resource_type === "annotation_execution" && operation.state === "completed"
+              ? <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadExecutionView(operation); }}>查看结果</button>
+              : "-" },
+          ]}
+        />
+        {annotationOperationsCursor && <div className="table-row-actions"><button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadMoreAnnotationOperations(); }} disabled={operationsLoading}>加载更多操作</button></div>}
+        {executionView && <div className="data-annotation__execution-view" role="region" aria-label="执行结果">
+          <div className="table-row-actions">
+            {(["sample", "cluster", "rule", "final_label"] as ExecutionStatsKind[]).map((kind) => <button key={kind} type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadExecutionView(executionView.operation, kind); }} disabled={executionView.loading || executionView.statsKind === kind}>{kind}</button>)}
+          </div>
+          {executionView.error && <div role="alert">{executionView.error}</div>}
+          <Table<{ id: string; sample_id: string; row_index: number; status: string }> rowKey="id" size="small" loading={executionView.loading} dataSource={executionView.results} pagination={false} columns={[
+            { title: "样本", dataIndex: "sample_id" }, { title: "序号", dataIndex: "row_index" }, { title: "状态", dataIndex: "status" },
+          ]} />
+          <Table<Record<string, unknown>> rowKey={(item) => String(item.key)} size="small" loading={executionView.loading} dataSource={executionView.stats} pagination={false} columns={[
+            { title: "统计", dataIndex: "key", render: (value: unknown) => String(value) }, { title: "数量", dataIndex: "count", render: (value: unknown) => value == null ? "-" : String(value) },
+          ]} />
+          {(executionView.resultsCursor || executionView.statsCursor) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadExecutionView(executionView.operation, executionView.statsKind, true); }} disabled={executionView.loading}>加载更多结果</button>}
+        </div>}
+      </div>
+      <PreviewDrawer
+        open={Boolean(previewDrawer)}
+        operationId={previewDrawer?.operationId}
+        summary={previewDrawer?.summary}
+        progress={previewDrawer?.progress}
+        strategySummary={previewDrawer?.strategySummary}
+        errorMessage={previewDrawer?.errorMessage}
+        samples={previewDrawer?.samples}
+        hasMore={Boolean(previewDrawer?.sampleCursor)}
+        onLoadMore={() => { void loadMorePreviewSamples(); }}
+        onClose={() => setPreviewDrawer(null)}
+      />
+      <AssignmentDialog
+        open={Boolean(assignmentTask)}
+        taskRevision={assignmentTask?.task_revision || 0}
+        sampleScope={assignmentTask ? sampleScopeForTask(assignmentTask) : { kind: "ids", sample_ids: [] }}
+        annotators={annotators}
+        overlapWarning={assignmentOverlapWarning}
+        loading={assignmentLoading}
+        onClose={() => setAssignmentTask(null)}
+        onSubmit={(payload) => { void submitAssignment(payload); }}
+      />
+      <Modal
+        open={Boolean(revisionConflict)}
+        title="版本冲突"
+        onCancel={() => setRevisionConflict(null)}
+        footer={null}
+      >
+        {revisionConflict && <div role="alertdialog" aria-label="版本冲突">
+          <p>{revisionConflict.message}</p>
+          {revisionConflict.currentRevision !== undefined && <p>服务端当前修订：{revisionConflict.currentRevision}</p>}
+          {revisionConflict.labels && <pre>{JSON.stringify(revisionConflict.labels, null, 2)}</pre>}
+          <button type="button" className="ant-btn ant-btn-primary" onClick={() => setRevisionConflict(null)}>确认并覆盖完整标签</button>
+        </div>}
+      </Modal>
     </>
   );
 

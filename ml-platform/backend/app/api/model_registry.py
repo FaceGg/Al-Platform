@@ -78,7 +78,13 @@ def _error(error):
     status = 409
     if code.endswith("NOT_FOUND"):
         status = 404
-    elif code in {"MODEL_SCHEMA_INVALID", "MODEL_NAME_INVALID", "DEPLOYMENT_NAME_INVALID"}:
+    elif code == "IDEMPOTENCY_KEY_REQUIRED":
+        status = 400
+    elif code in {
+        "MODEL_SCHEMA_INVALID",
+        "MODEL_NAME_INVALID",
+        "DEPLOYMENT_NAME_INVALID",
+    }:
         status = 422
     elif code == "INFERENCE_LIMIT_EXCEEDED":
         status = 413
@@ -109,6 +115,7 @@ def _version_view(version):
         "metrics": version.metrics,
         "conversion_metadata": version.conversion_metadata,
         "approval_status": version.approval_status,
+        "lifecycle_state": getattr(version, "lifecycle_state", "pending_review"),
         "approval_comment": version.approval_comment,
         "created_at": version.created_at.isoformat() if version.created_at else None,
     }
@@ -338,6 +345,37 @@ def build_model_registry_router(
             "version": _version_view(version),
         }
 
+    @router.post("/api/automl-tasks/{task_id}/register", status_code=201)
+    def register_automl_candidate(task_id: UUID, data: dict, request: Request, response: Response, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        job = db.query(TrainingJob).filter(TrainingJob.id == task_id).first()
+        if job is None:
+            _error(ModelRegistryError("AUTOML_JOB_NOT_FOUND"))
+        access = resolve_project_access(db, job.project_id, current_user.id)
+        key = request.headers.get("Idempotency-Key")
+        if not isinstance(key, str) or not key.strip():
+            _error(ModelRegistryError("IDEMPOTENCY_KEY_REQUIRED"))
+        registry, _ = services(db)
+        try:
+            with audit_service(db).project_action(db, request=request, actor=current_user, access=access, permission="model.register", intent=AuditIntent(project_id=job.project_id, action="model_version.register", resource_type="automl_candidate", resource_id=str(task_id), changes={"candidate_id": data.get("candidate_id")}), allowed_changes={"candidate_id"}):
+                version, created = registry.register_automl_candidate(db, task_id=task_id, candidate_id=data.get("candidate_id"), model_name=data.get("model_name"), actor_id=current_user.id, idempotency_key=key)
+        except ModelRegistryError as error:
+            db.rollback(); _error(error)
+        response.status_code = 201 if created else 200
+        return {"created": created, "model_version_id": str(version.id), "version": _version_view(version)}
+
+    @router.get("/api/automl-tasks/{task_id}/registerable-candidates")
+    def registerable_candidates(task_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        job = db.query(TrainingJob).filter(TrainingJob.id == task_id).first()
+        if job is None:
+            raise HTTPException(404, {"code": "AUTOML_JOB_NOT_FOUND", "message": "AUTOML_JOB_NOT_FOUND"})
+        require_project_access(db, job.project_id, current_user.id, "project.read")
+        registry, _ = services(db)
+        try:
+            items = registry.list_registerable_candidates(db, task_id)
+        except ModelRegistryError as error:
+            _error(error)
+        return {"items": items, "total": len(items)}
+
     @router.post("/api/projects/{project_id}/model-artifacts", status_code=201)
     def upload_onnx(project_id: UUID, request: Request, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         access = resolve_project_access(db, project_id, current_user.id)
@@ -459,6 +497,24 @@ def build_model_registry_router(
     @router.post("/api/model-versions/{version_id}/archive")
     def archive(version_id: str, data: LifecycleComment, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         return lifecycle(version_id, data, request, db, current_user, "archive", "model_version.archive")
+
+    @router.post("/api/model-versions/{version_id}/{action}")
+    def transition(version_id: str, action: str, data: LifecycleComment, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        if action not in {"disable", "revoke"}:
+            raise HTTPException(404, {"code": "MODEL_VERSION_NOT_FOUND", "message": "MODEL_VERSION_NOT_FOUND"})
+        version, access = _version_access(db, version_id, current_user.id)
+        registry, _ = services(db)
+        with audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="model.approve",
+            intent=AuditIntent(project_id=version.registered_model.project_id, action=f"model_version.{action}", resource_type="model_version", resource_id=str(version.id), changes={"comment": data.comment}),
+            allowed_changes={"comment"},
+        ):
+            try:
+                version = registry.transition_model_version(db, version.id, action, current_user.id, commit=False)
+            except ModelRegistryError as error:
+                _error(error)
+        return _version_view(version)
 
     @router.get("/api/projects/{project_id}/inference-deployments")
     def list_deployments(project_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

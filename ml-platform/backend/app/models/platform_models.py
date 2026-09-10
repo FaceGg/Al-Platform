@@ -92,6 +92,7 @@ class GenericAnnotationTask(Base):
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     mode = Column(String(16), nullable=False, default="manual")
     status = Column(String(24), nullable=False, default="pending")
+    paused_from_status = Column(String(24), nullable=True)
     task_revision = Column(Integer, nullable=False, default=0)
     sample_scope = Column(JSON, nullable=False, default=dict)
     label_snapshot = Column(JSON, nullable=False, default=dict)
@@ -134,6 +135,73 @@ class AnnotationTaskPreview(Base):
 
     task = relationship("GenericAnnotationTask")
     creator = relationship("User")
+
+
+class AnnotationTaskRevisionSnapshot(Base):
+    """Immutable configuration snapshot for one generic task revision."""
+
+    __tablename__ = "annotation_task_revision_snapshots"
+    __table_args__ = (
+        UniqueConstraint("task_id", "task_revision", name="uq_annotation_task_revision_snapshot"),
+        Index("ix_annotation_task_revision_snapshots_task", "task_id", "task_revision"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id = Column(UUID(as_uuid=True), ForeignKey("generic_annotation_tasks.id", ondelete="CASCADE"), nullable=False)
+    task_revision = Column(Integer, nullable=False)
+    snapshot = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    task = relationship("GenericAnnotationTask")
+
+
+@event.listens_for(AnnotationTaskRevisionSnapshot, "before_update")
+def _prevent_task_revision_snapshot_update(_mapper, _connection, target):
+    if inspect(target).attrs.snapshot.history.has_changes():
+        raise ValueError("AnnotationTaskRevisionSnapshot is immutable")
+
+
+class AnnotationTaskPreviewSample(Base):
+    __tablename__ = "annotation_task_preview_samples"
+    __table_args__ = (
+        UniqueConstraint("preview_id", "sample_id", name="uq_annotation_preview_sample"),
+        Index("ix_annotation_preview_samples_preview", "preview_id", "row_index"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    preview_id = Column(UUID(as_uuid=True), ForeignKey("annotation_task_previews.id", ondelete="CASCADE"), nullable=False)
+    sample_id = Column(String(256), nullable=False)
+    row_index = Column(Integer, nullable=False)
+    values = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    preview = relationship("AnnotationTaskPreview")
+
+
+class AnnotationTaskExecutionResult(Base):
+    """Immutable per-sample output of a task execution operation."""
+
+    __tablename__ = "annotation_task_execution_results"
+    __table_args__ = (
+        UniqueConstraint("operation_id", "sample_id", name="uq_annotation_execution_result_sample"),
+        Index("ix_annotation_execution_results_task", "task_id", "task_revision", "row_index"),
+        Index("ix_annotation_execution_results_operation", "operation_id", "row_index"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id = Column(UUID(as_uuid=True), ForeignKey("generic_annotation_tasks.id", ondelete="CASCADE"), nullable=False)
+    operation_id = Column(UUID(as_uuid=True), nullable=False)
+    preview_id = Column(UUID(as_uuid=True), ForeignKey("annotation_task_previews.id", ondelete="CASCADE"), nullable=False)
+    task_revision = Column(Integer, nullable=False)
+    sample_id = Column(String(256), nullable=False)
+    row_index = Column(Integer, nullable=False)
+    values = Column(JSON, nullable=False, default=dict)
+    provenance = Column(JSON, nullable=False, default=dict)
+    status = Column(String(24), nullable=False, default="ready")
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    task = relationship("GenericAnnotationTask")
+    preview = relationship("AnnotationTaskPreview")
 
 
 class AnnotationResult(Base):

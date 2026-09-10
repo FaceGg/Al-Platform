@@ -2,23 +2,36 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.database import get_db
 from app.models.user import User
-from app.schemas.annotation_tasks import AnnotationPreviewCreate, AnnotationTaskTransition
-from app.services.annotation_task_state import create_annotation_preview, get_annotation_preview, list_annotation_previews, list_annotation_tasks, transition_annotation_task
+from app.schemas.annotation_tasks import AnnotationPreviewCreate, AnnotationTaskExecute, AnnotationTaskTransition, TaskAction
+from app.services.annotation_task_state import (
+    create_annotation_preview,
+    get_annotation_preview,
+    list_annotation_execution_results,
+    list_annotation_execution_stats,
+    list_annotation_operations,
+    list_annotation_preview_samples,
+    list_annotation_previews,
+    list_annotation_tasks,
+    serialize_annotation_preview,
+    transition_annotation_task,
+)
 from app.tasks.annotation_preview_tasks import enqueue_annotation_preview
+from app.tasks.annotation_execution_tasks import enqueue_annotation_execution
 
 router = APIRouter(tags=["annotation-task-state"])
 
 
-def _error(error: ValueError):
+def _error(error: ValueError, request: Request | None = None):
     code = str(error)
-    status_code = 409 if code in {"TASK_REVISION_CONFLICT", "TASK_STATE_INVALID", "PREVIEW_STALE"} else 404
-    return HTTPException(status_code=status_code, detail={"code": code})
+    status_code = 409 if code in {"TASK_REVISION_CONFLICT", "TASK_STATE_INVALID", "PREVIEW_STALE", "PREVIEW_NOT_COMPLETED", "PREVIEW_PROGRESS_REGRESSION", "PREVIEW_PROGRESS_INVALID", "INVALID_STATS_KIND"} else 404
+    request_id = request.headers.get("X-Request-ID") if request is not None else None
+    return HTTPException(status_code=status_code, detail={"request_id": request_id or str(uuid.uuid4()), "code": code, "message": code.replace("_", " ").lower(), "details": {}})
 
 
 def _serialize(task):
@@ -26,36 +39,82 @@ def _serialize(task):
 
 
 @router.post("/api/annotation-tasks/{task_id}/preview", status_code=status.HTTP_202_ACCEPTED)
-def create_preview(task_id: uuid.UUID, data: AnnotationPreviewCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def create_preview(task_id: uuid.UUID, data: AnnotationPreviewCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     try:
         preview = create_annotation_preview(db, task_id, data.task_revision, data.config_hash, current_user.id)
     except ValueError as error:
-        raise _error(error) from error
-    dispatch = enqueue_annotation_preview(task_id, preview.id, current_user.id)
+        raise _error(error, request) from error
+    dispatch = enqueue_annotation_preview(task_id, preview.id, current_user.id) if getattr(preview, "_created_now", True) else None
     return {"operation_id": str(preview.operation_id), "preview_id": str(preview.id), "task_revision": preview.task_revision, "status": preview.status, "dispatch_id": getattr(dispatch, "id", None)}
 
 
 @router.post("/api/annotation-tasks/{task_id}/transition")
-def transition_task(task_id: uuid.UUID, data: AnnotationTaskTransition, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def transition_task(task_id: uuid.UUID, data: AnnotationTaskTransition, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     try:
         task = transition_annotation_task(db, task_id, data.task_revision, data.action, current_user.id, data.preview_id)
     except ValueError as error:
-        raise _error(error) from error
-    return _serialize(task)
+        raise _error(error, request) from error
+    payload = _serialize(task)
+    operation_id = getattr(task, "_execution_operation_id", None)
+    if data.action.value == "execute" and operation_id is not None:
+        preview_id = getattr(task, "_execution_preview_id", data.preview_id)
+        dispatch = enqueue_annotation_execution(task.id, preview_id, operation_id, current_user.id)
+        payload["operation_id"] = str(operation_id)
+        payload["dispatch_id"] = getattr(dispatch, "id", None)
+    return payload
+
+
+@router.post("/api/annotation-tasks/{task_id}/execute", status_code=status.HTTP_202_ACCEPTED)
+def execute_task(task_id: uuid.UUID, data: AnnotationTaskExecute, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Queue automatic execution while retaining the shared transition guard."""
+    transition = AnnotationTaskTransition(task_revision=data.task_revision, action=TaskAction.execute, preview_id=data.preview_id)
+    return transition_task(task_id, transition, request, db, current_user)
 
 
 @router.get("/api/annotation-tasks/{task_id}/previews")
-def list_previews(task_id: uuid.UUID, cursor: str | None = None, limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def list_previews(task_id: uuid.UUID, request: Request, cursor: str | None = None, limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     try:
         return list_annotation_previews(db, task_id, current_user.id, cursor=cursor, limit=limit)
     except ValueError as error:
-        raise _error(error) from error
+        raise _error(error, request) from error
 
 
 @router.get("/api/annotation-tasks/{task_id}/previews/{preview_id}")
-def preview_detail(task_id: uuid.UUID, preview_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def preview_detail(task_id: uuid.UUID, preview_id: uuid.UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     try:
         preview = get_annotation_preview(db, task_id, preview_id, current_user.id)
     except ValueError as error:
-        raise _error(error) from error
-    return {"id": str(preview.id), "operation_id": str(preview.operation_id), "task_revision": preview.task_revision, "config_hash": preview.config_hash, "status": preview.status, "progress": preview.progress, "summary": preview.summary or {}, "error": preview.error, "completed_at": preview.completed_at.isoformat() if preview.completed_at else None}
+        raise _error(error, request) from error
+    return serialize_annotation_preview(preview)
+
+
+@router.get("/api/annotation-tasks/{task_id}/previews/{preview_id}/samples")
+def preview_samples(task_id: uuid.UUID, preview_id: uuid.UUID, request: Request, cursor: str | None = None, limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    try:
+        return list_annotation_preview_samples(db, task_id, preview_id, current_user.id, cursor=cursor, limit=limit)
+    except ValueError as error:
+        raise _error(error, request) from error
+
+
+@router.get("/api/annotation-tasks/{task_id}/executions/{operation_id}/results")
+def execution_results(task_id: uuid.UUID, operation_id: uuid.UUID, request: Request, cursor: str | None = None, limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    try:
+        return list_annotation_execution_results(db, task_id, operation_id, current_user.id, cursor=cursor, limit=limit)
+    except ValueError as error:
+        raise _error(error, request) from error
+
+
+@router.get("/api/annotation-tasks/{task_id}/executions/{operation_id}/stats")
+def execution_stats(task_id: uuid.UUID, operation_id: uuid.UUID, request: Request, kind: str = Query(default="sample"), cursor: str | None = None, limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    try:
+        return list_annotation_execution_stats(db, task_id, operation_id, current_user.id, kind=kind, cursor=cursor, limit=limit)
+    except ValueError as error:
+        raise _error(error, request) from error
+
+
+@router.get("/api/annotation-operations")
+def annotation_operations(project_id: uuid.UUID, request: Request, cursor: str | None = None, limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    try:
+        return list_annotation_operations(db, project_id, current_user.id, cursor=cursor, limit=limit)
+    except ValueError as error:
+        raise _error(error, request) from error
