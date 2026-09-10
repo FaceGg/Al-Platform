@@ -1,6 +1,8 @@
 ﻿__pycache__/
 *.pyc
 .env
+secrets/
+output/
 *.db
 *.db-shm
 *.db-wal

@@ -124,8 +124,11 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 - 2026-09-03：将整理前的完整 `DEVELOPMENT_PLAN.md` 保存为 `DEVELOPMENT_PLAN.history-2026-09-03.md`。Week 1–12 及历史执行记录已从当前视图分离。
 - 2026-09-03：从 `DEVELOPMENT_PLAN.history-2026-08-23.md` 回收尚未实现的工作流、数据治理、SSO、云原生、数据探索、RAG/AIHub 和优化候选，并按 `planned`、`pending_decision` 或 `deferred` 进入第 7 节。
 - 2026-09-03：没有提升任何业务状态；通用平台 Task 1–14、遗留验证项和 backlog 均保持未完成状态。
+- 2026-09-09：修复生产 Compose 在已有 `.env` 但缺少密钥目录时的启动阻断。`docker-compose.yml` 为 `NOTIFICATION_CRYPTO_SECRET_FILE` 增加默认路径 `./secrets/notification_master_key`；新增 `ml-platform/scripts/prepare-production-secrets.sh`，幂等创建目录、生成合法 Fernet 密钥并保留已有密钥；README 启动步骤先执行该脚本。目标 Ubuntu 主机需重新执行脚本后再运行 Compose。
+- 2026-09-09：重新生成 Ubuntu 源码部署包 `output/linkraft-ubuntu-20260909.tar.gz`。包内包含当前源码、安装/卸载/重打包脚本和一页手册；默认公网入口为 5175，MinIO 固定 CPUv1 版本，五个 Python 服务采用 Debian slim 基线，安装前自动补齐文件型通知密钥。已完成部署合同测试、shell 语法、归档内容和敏感运行时文件排除检查；本机没有 Docker Engine，目标 Ubuntu 的完整镜像构建与运行态健康检查仍待执行。
 - 2026-09-03：用户确认 Week 1–12 已完成，Week 13–16 未开始，Week 17 待定，Week 18–20 暂时搁置；同时确认通用自动建模与数据标注平台实施计划尚未开始开发。当前汇总据此更新，不将任何计划或文档工作记为实现完成。
 - 2026-09-03：整理顶层 `README.md`，补充以 PowerShell 7 为默认宿主环境的本地启动、测试、构建和 WSL Docker Compose 入口；明确历史行业化文档的参考边界，并标明通用平台 Task 1–14 仍为 `planned`。本次仅完成文档整理，未执行通用平台代码、迁移、测试或运行时验收。
 - 2026-09-03：本地分支整理的详细记录为：任务范围仅限本地 Git 分支引用；依据 `git branch --merged main`、祖先关系和工作树占用安全删除 16 个已被 `main` 完整包含的历史/临时本地分支；保留当前 `main`、链接工作树占用分支和仍有未合并独有提交的分支；未删除远端分支、链接工作树或缓存/未跟踪文件。验证结果为本地分支从 23 个减少到 7 个，`main`、`origin/main` 与当时基线一致；后续清理需用户明确指定范围。
 - 2026-09-03：按用户要求发布本次变更：功能分支提交 `f29191ba8980f0066a98b8dd8af26e70890d78d2` 已推送到 `origin/general-automl-annotation-20260902`；随后与根 `main` 的分支整理提交合并为 `f6c8bff64458f305f1568f67ab3f8479983431f4` 并推送到 `origin/main`。README 未加入任何提交，仅在本地工作树和根 `main` 工作树同步保留。
 - 2026-09-03：发布前验证记录：README 以外的工作树变更已提交并推送，`git diff --check` 退出码为 0；后端标准套件因 `python` 命令仅指向 WindowsApps 占位符、Python 3.14 环境未安装 `fastapi`，前端因缺少 `node_modules` 未执行测试和构建。上述环境缺口不计为测试通过，也不改变通用平台 Task 1–14 的 `planned` 状态。
+- 2026-09-09：重新生成 Ubuntu 源码包时，`packaging/build-package.sh` 的校验和重定向缺少末尾引号，导致 Bash 报 `unexpected EOF`。此前将多个文件放在同一次 `bash -n` 调用中只实际解析了第一个脚本，未覆盖该文件；已补齐引号并改为逐文件语法校验。部署合同测试 `tests.test_ci_workflow` 为 49/49，通过后的归档校验和、必要文件和敏感运行时路径排除均已复验；Docker Engine 在本机仍不可用，目标 Ubuntu 的镜像构建和运行态健康检查仍待执行。

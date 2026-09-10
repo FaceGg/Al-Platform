@@ -1,14 +1,23 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
-RUN pip install --no-cache-dir --retries 10 --timeout 120 \
-    "mlflow==3.2.*" \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+RUN groupadd --gid 1000 app \
+    && useradd --uid 1000 --gid 1000 --home-dir /home/app --no-create-home app
+RUN python -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+RUN python -m pip install --no-cache-dir --retries 10 --timeout 120 \
+    "mlflow==3.15.*" \
     "psycopg[binary]==3.2.*" \
     "boto3==1.35.*" \
     "numpy==2.3.5"
+RUN mkdir -p /home/app \
+    && chown -R app:app /home/app
 
 EXPOSE 5000
+ENV HOME=/home/app
+USER 1000:1000
 
 CMD ["mlflow", "server", "--host", "0.0.0.0", "--port", "5000"]

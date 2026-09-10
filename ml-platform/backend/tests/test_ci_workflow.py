@@ -1,4 +1,6 @@
 import json
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -29,6 +31,16 @@ NOTIFICATION_STACK_TEST = (
     REPOSITORY_ROOT / "ml-platform" / "backend" / "tests" / "test_notification_production_stack.py"
 )
 BACKEND_REQUIREMENTS = REPOSITORY_ROOT / "ml-platform" / "backend" / "requirements.txt"
+PRODUCTION_SECRETS_SCRIPT = (
+    REPOSITORY_ROOT / "ml-platform" / "scripts" / "prepare-production-secrets.sh"
+)
+CPU_COMPATIBLE_DOCKERFILES = (
+    REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile",
+    REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.worker",
+    REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.inference",
+    REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.tensorboard",
+    REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.mlflow",
+)
 
 
 def load_workflow_contract(path: Path) -> dict:
@@ -259,6 +271,80 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             acceptance["services"]["backend"]["environment"]["NOTIFICATION_TEST_SMTP_API_URL"],
             "http://mailpit:8025/api/v1/messages",
         )
+
+    def test_production_secret_bootstrap_has_a_safe_default_and_preserves_existing_key(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+        script = PRODUCTION_SECRETS_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertEqual(
+            compose["secrets"]["notification_master_key"]["file"],
+            "${NOTIFICATION_CRYPTO_SECRET_FILE:-./secrets/notification_master_key}",
+        )
+        self.assertIn('DEFAULT_SECRET_PATH="./secrets/notification_master_key"', script)
+        self.assertIn("umask 077", script)
+        self.assertIn('if [[ ! -d "$key_dir" ]]; then', script)
+        self.assertIn('if [[ ! -s "$key_file" ]]; then', script)
+        self.assertIn("openssl rand -base64 32", script)
+        self.assertIn('Existing notification key preserved', script)
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is required for deployment script verification")
+    def test_production_secret_bootstrap_generates_and_preserves_a_fernet_key(self):
+        script = r'''set -Eeuo pipefail
+root="$(pwd)"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf "$temp_dir"' EXIT
+env_file="$temp_dir/.env"
+key_file="$temp_dir/generated/secrets/notification_master_key"
+printf 'NOTIFICATION_CRYPTO_SECRET_FILE=%s\n' "$key_file" > "$env_file"
+ENV_FILE="$env_file" bash "$root/ml-platform/scripts/prepare-production-secrets.sh"
+test -s "$key_file"
+test "$(wc -c < "$key_file")" -eq 44
+first_hash="$(sha256sum "$key_file" | awk '{print $1}')"
+ENV_FILE="$env_file" bash "$root/ml-platform/scripts/prepare-production-secrets.sh"
+second_hash="$(sha256sum "$key_file" | awk '{print $1}')"
+test "$first_hash" = "$second_hash"
+'''
+        result = subprocess.run(
+            ["bash", "-s"],
+            cwd=REPOSITORY_ROOT,
+            capture_output=True,
+            check=False,
+            input=script.encode("utf-8"),
+        )
+
+        self.assertEqual(
+            result.returncode,
+            0,
+            (result.stdout + result.stderr).decode("utf-8", errors="replace"),
+        )
+
+    def test_legacy_cpu_deployment_uses_cpuv1_minio_and_debian_python_images(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            compose["services"]["minio"]["image"],
+            "minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1",
+        )
+        self.assertEqual(
+            compose["services"]["minio-init"]["image"],
+            "minio/mc:RELEASE.2025-07-21T05-28-08Z-cpuv1",
+        )
+        self.assertEqual(
+            compose["services"]["nginx"]["ports"],
+            ["${NGINX_BIND_ADDRESS:-0.0.0.0}:${NGINX_PORT:-5175}:80"],
+        )
+        self.assertEqual(
+            compose["services"]["mlflow"]["build"]["dockerfile"],
+            "Dockerfile.mlflow",
+        )
+        self.assertNotIn("image", compose["services"]["mlflow"])
+
+        for dockerfile in CPU_COMPATIBLE_DOCKERFILES:
+            with self.subTest(dockerfile=dockerfile.name):
+                content = dockerfile.read_text(encoding="utf-8")
+                self.assertIn("FROM python:3.11-slim-bookworm", content)
+                self.assertNotIn("wolfi", content.lower())
+                self.assertNotIn("--resume-retries", content)
 
     def test_primary_compose_passes_smtp_authentication_without_literal_credentials(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))

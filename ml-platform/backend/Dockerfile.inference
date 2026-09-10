@@ -1,21 +1,14 @@
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:bfcffaf1336b26a3fd33c8cb31a86a09324d2048420d7f49b983f323b0d33e8d
-USER 0
+FROM python:3.11-slim-bookworm
 WORKDIR /app
-RUN set -eu; \
-    for attempt in 1 2 3; do \
-        if apk add --no-cache python-3.11=3.11.16-r1 py3.11-pip=26.2.1-r0; then \
-            exit 0; \
-        fi; \
-        if [ "$attempt" -eq 3 ]; then \
-            exit 1; \
-        fi; \
-        sleep "$attempt"; \
-    done
-RUN addgroup -S -g 1000 app && adduser -S -D -H -h /home/app -u 1000 -G app app
-RUN python3.11 -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+RUN groupadd --gid 1000 app \
+    && useradd --uid 1000 --gid 1000 --home-dir /home/app --no-create-home app
+RUN python -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python3.11 -m pip install --retries 10 --resume-retries 20 --timeout 120 -r requirements.txt
+    python -m pip install --retries 10 --timeout 120 -r requirements.txt
 COPY . .
 RUN mkdir -p /home/app /var/lib/ml-platform/inference-cache /tmp/ml-platform \
     && chown -R app:app /home/app /var/lib/ml-platform/inference-cache /tmp/ml-platform
