@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
     frontend_origin: str = "http://localhost:5173"
+    frontend_origin_aliases: str = ""
     annotator_public_origin: str = "http://localhost:8443"
     annotator_api_origin: str = "http://localhost:8000"
     annotator_port: int = Field(default=8443, ge=1, le=65535)

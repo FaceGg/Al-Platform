@@ -61,6 +61,31 @@ class TestCORSMiddleware(unittest.TestCase):
             "true",
         )
 
+    def test_cors_accepts_local_loopback_alias(self):
+        response = client.options(
+            "/api/health",
+            headers={
+                "Origin": "http://127.0.0.1:5173",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers.get("access-control-allow-origin"),
+            "http://127.0.0.1:5173",
+        )
+
+    def test_cors_rejects_unconfigured_origin(self):
+        response = client.options(
+            "/api/health",
+            headers={
+                "Origin": "http://localhost:5199",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"]["code"], "CORS_ORIGIN_FORBIDDEN")
+
 
 class TestModels(unittest.TestCase):
     """Database model relationship tests."""

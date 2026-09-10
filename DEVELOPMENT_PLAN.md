@@ -278,3 +278,20 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 本轮后端测试重新执行未启动：`ml-platform/backend/.venv/Scripts/python.exe` 的 `pyvenv.cfg` 指向已不存在的 `C:\Users\17723\AppData\Local\Programs\Python\Python314\python.exe`，属于环境阻断，不能写成后端通过或代码失败。前端页面和周台账测试仍可运行并通过。
 - Task 5 尚未闭环的门禁包括真实 broker/Celery 派发、进程退出后的重启恢复、跨进程原子 recovery claim、非 sample 统计数据库分页、完整状态操作矩阵、配置 revision/旧预览失效 API、操作中心结果/统计消费和 cursor 加载，以及 Docker/Playwright/导出离线/远程 CI 证据。
 - 本次只整理状态并发布当前分支，不提升任务等级。推送不代表 Task 5 或 Task 14 完成；修复 Python 环境并形成干净 SHA 后，仍需重跑 required gates。
+
+## 17. 2026-09-10 登录失败修复检查点
+
+- 问题现象：管理员使用默认凭据登录时，前端统一显示“用户名或密码错误”；在多次尝试后，服务端实际可能返回 429，损坏或历史格式密码哈希也可能被错误归类为认证失败。
+- 根因：登录查询未处理复制粘贴空格和大小写差异；密码校验对未知哈希格式缺少 fail-closed 处理；前端未区分 401、429 和其他服务错误。测试还共享进程级限流状态，测试顺序可能制造非业务 429。
+- 解决方法：后端登录名按大小写不敏感标识查询并去除首尾空格；未知/损坏哈希统一返回 401，成功登录时按当前策略自动升级哈希；前端对限流返回明确提示，对服务异常保留结构化错误；认证测试在每个用例前清理进程级限流器。
+- 验证方式：`ml-platform/backend` 执行 `python -m pytest tests/test_api_users.py -q`，结果 **15 passed、2 warnings**；`ml-platform/frontend` 执行 `npm test -- --run src/pages/LoginPage.test.tsx src/api/auth.test.ts`，结果 **2 files、4 tests passed**；当前运行服务直接提交 `admin/admin123` 返回 HTTP 200；`git diff --check` 通过。
+- 状态边界：本次只修复认证输入、哈希兼容和错误提示，不改变默认密码、不在启动时覆盖已有用户密码；Task 1–4 及 Task 5–14 状态保持原计划口径，未生成平台级验收结论。
+- 剩余风险：真实部署数据库若已有自定义管理员密码，仍应使用该密码或通过受控管理员重置流程恢复；标注员门户账号与主平台账号保持独立，不能用主平台管理员凭据登录门户。
+
+## 18. 2026-09-10 CORS 登录来源修复检查点
+
+- 问题现象：登录请求返回 `CORS_ORIGIN_FORBIDDEN: request origin is not allowed`。
+- 根因：后端默认只允许 `http://localhost:5173`；浏览器实际使用 `http://127.0.0.1:5173`，或 Vite 在默认端口被占用时切换到 `http://localhost:5174`，均未被安全策略和 CORS 中间件接受。
+- 解决方法：本地模式新增受控 loopback 来源扩展，允许 `localhost`、`127.0.0.1` 和 IPv6 loopback 的 5173/5174 别名；增加 `FRONTEND_ORIGIN_ALIASES` 配置入口供自定义本地来源；生产模式不自动扩展来源，未知来源仍 fail closed。
+- 验证方式：本地运行态对 `localhost/127.0.0.1` 的 5173、5174 登录均返回 HTTP 200；未知来源返回 HTTP 403；`tests/test_security_contract.py` 与 `tests/test_app.py` 共 **15 passed、1 warning**；相关 Python 编译和 `git diff --check` 待最终检查。
+- 状态边界：本次仅修复本地来源匹配和配置边界，不使用通配符，不改变 Task 1–4 或 Task 5–14 状态，也不生成平台级验收结论。

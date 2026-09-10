@@ -11,6 +11,7 @@ from app.services.security import (
     enforce_request_security,
     validate_upload_filename,
     validate_upload_magic,
+    expand_local_dev_origins,
 )
 
 
@@ -36,6 +37,16 @@ def test_unknown_origin_is_rejected_before_cors_response():
         enforce_request_security(_request("OPTIONS", origin="https://unknown.example"), policy)
     assert error.value.status_code == 403
     assert error.value.detail["code"] == "CORS_ORIGIN_FORBIDDEN"
+
+
+def test_local_dev_origin_expansion_is_bounded_to_loopback_aliases():
+    origins = expand_local_dev_origins({"http://localhost:5173", "https://portal.example"})
+    assert "http://localhost:5173" in origins
+    assert "http://127.0.0.1:5173" in origins
+    assert "http://localhost:5174" in origins
+    assert "http://127.0.0.1:5174" in origins
+    assert "https://portal.example" in origins
+    assert "http://evil.example:5173" not in origins
 
 
 def test_cookie_state_change_requires_origin_and_matching_csrf_token():

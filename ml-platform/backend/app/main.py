@@ -25,6 +25,7 @@ from app.websocket.manager import manager
 from app.services.project_access import ProjectAccessError
 from app.services.resource_access import ResourceAccessError
 from app.services.notification_outbox import OutboxDomainEventRecorder
+from app.services.security import expand_local_dev_origins
 from app.services.spot_weld_quality import recover_orphaned_local_quality_runs
 
 # Import all operators so they register themselves
@@ -230,6 +231,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             db_engine.dispose()
 
 
+def _allowed_origins() -> frozenset[str]:
+    configured = {
+        settings.frontend_origin,
+        settings.annotator_public_origin,
+        *(
+            value.strip()
+            for value in settings.frontend_origin_aliases.split(",")
+            if value.strip()
+        ),
+    }
+    if settings.app_mode == "local":
+        return expand_local_dev_origins(configured)
+    return frozenset(configured)
+
+
+_ALLOWED_ORIGINS = _allowed_origins()
+
+
 app = FastAPI(
     title="AI模型训练编排平台",
     description="Web-based visual AI model training orchestration platform",
@@ -240,14 +259,14 @@ app.state.domain_event_recorder = OutboxDomainEventRecorder()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin, settings.annotator_public_origin],
+    allow_origins=sorted(_ALLOWED_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 app.add_middleware(
     RequestSecurityMiddleware,
-    allowed_origins=frozenset({settings.frontend_origin, settings.annotator_public_origin}),
+    allowed_origins=_ALLOWED_ORIGINS,
 )
 
 

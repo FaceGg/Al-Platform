@@ -37,6 +37,31 @@ def _origin(value: str | None) -> str | None:
     return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
 
 
+def expand_local_dev_origins(origins: Iterable[str]) -> frozenset[str]:
+    """Add bounded loopback aliases used by local browser/Vite development.
+
+    Production callers must pass their exact origins. This helper is only used
+    by the local application mode and never creates a wildcard policy.
+    """
+    normalized = {origin for origin in (_origin(item) for item in origins) if origin}
+    for origin in tuple(normalized):
+        parsed = urlsplit(origin)
+        hostname = (parsed.hostname or "").lower()
+        if parsed.scheme != "http" or hostname not in {"localhost", "127.0.0.1", "::1"}:
+            continue
+        port = parsed.port
+        if port is None:
+            continue
+        ports = {port}
+        # Vite moves from its default port to the next port when occupied.
+        if port == 5173:
+            ports.add(5174)
+        for alias_host in ("localhost", "127.0.0.1", "[::1]"):
+            for alias_port in ports:
+                normalized.add(f"http://{alias_host}:{alias_port}")
+    return frozenset(normalized)
+
+
 @dataclass(frozen=True)
 class SecurityPolicy:
     """HTTP security policy for a single application surface."""
@@ -221,6 +246,7 @@ __all__ = [
     "RateLimitDecision",
     "RateLimitPolicy",
     "SecurityPolicy",
+    "expand_local_dev_origins",
     "SlidingWindowRateLimiter",
     "csrf_token",
     "enforce_rate_limit",

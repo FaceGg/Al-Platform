@@ -2,6 +2,7 @@ import { App as AntApp, Form, Input, Button, Card, Typography } from "antd";
 import { UserOutlined, LockOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { useNavigate, Link } from "react-router-dom";
 import { login } from "../api/auth";
+import { formatApiError } from "../api/client";
 import { useTheme } from "../stores/themeContext";
 
 const { Title, Text } = Typography;
@@ -20,8 +21,14 @@ export default function LoginPage() {
       localStorage.setItem("role", result.role);
       message.success("登录成功");
       navigate("/");
-    } catch {
-      message.error("用户名或密码错误");
+    } catch (error: any) {
+      if (error?.response?.status === 429) {
+        message.error("登录尝试过于频繁，请稍后再试");
+      } else if (error?.response?.status === 401) {
+        message.error("用户名或密码错误");
+      } else {
+        message.error(formatApiError(error, "登录失败，请检查服务状态"));
+      }
     }
   };
 
