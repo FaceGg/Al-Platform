@@ -443,3 +443,9 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 当前发布分支 `559fd7e` 上执行 `npm test -- --run src/pages/DataAnnotationPage.test.tsx src/weekAcceptance.test.ts`，结果为 **2 个测试文件、49 passed**。
 - 该结果覆盖通用任务列表、预览状态回写、操作中心 cursor 加载和自动标注页面入口；策略底层已由通用预览 worker 接线并由后端策略回归覆盖。
 - 状态边界：前端聚焦通过不等于 Task 5 或 Task 6 完成；真实 broker/恢复、完整策略 API/浏览器链路、Docker/WSL、完整后端 active suite 和远程 CI 仍未齐备，Task 5–14 保持 `in_progress`。
+
+### 2026-09-11 Task 8/9 当前分支 API 复核
+
+- 在当前分支 `4def21a` 的 Python 3.11.9 环境执行 `tests/test_annotation_concurrency.py tests/test_annotation_return_acceptance.py tests/test_annotator_auth.py tests/test_portal_internal_api.py`，结果为 **22 passed、2 warnings**。
+- 该结果覆盖指派范围、样本级并发冲突、回传幂等与锁、回传验收生成新数据版本、独立标注员认证和门户内部 API。
+- 当前环境未安装 Docker，且没有可用 Redis 服务；真实 Celery broker、Compose/WSL、进程重启恢复和浏览器门户验收仍未执行。Task 8/9 继续 `in_progress`，不将本地聚焦结果升级为完整验收。

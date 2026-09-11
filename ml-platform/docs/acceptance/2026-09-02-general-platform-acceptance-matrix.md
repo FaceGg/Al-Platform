@@ -137,3 +137,8 @@
 - 已为矩阵 19 个 ID 生成本地 receipts，最近一次调用 `validate_acceptance_manifest` 返回 **19 receipts valid**；文档提交完成后必须按最终发布 SHA 重新绑定。
 - 收据验证证明每个合同均有发布 SHA、命令和相对证据路径；收据位于本地 `temp_test/generic-platform-acceptance/receipts/`，未将临时运行目录混入产品代码提交。任何新提交都会使旧 SHA 收据失效。
 - 矩阵仍不等于平台整体发布完成：完整后端 active suite、Docker/WSL、真实 Redis/Celery、进程重启恢复、真实部署导出/离线运行和远程 CI 仍需独立门禁。
+
+## 2026-09-11 Task 8/9 当前分支 API 复核
+
+- 当前分支 `4def21a` 的 Python 3.11.9 聚焦回归：`test_annotation_concurrency.py`、`test_annotation_return_acceptance.py`、`test_annotator_auth.py`、`test_portal_internal_api.py` 共 **22 passed、2 warnings**。
+- 该结果仅证明本地 API/服务合同；Docker、Redis/Celery、进程重启恢复、门户浏览器验收和远程 CI 未执行，因此 Task 8/9 与整体矩阵继续保持 `in_progress`。
