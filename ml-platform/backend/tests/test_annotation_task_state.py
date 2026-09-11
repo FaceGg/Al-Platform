@@ -501,6 +501,41 @@ def test_task_snapshot_is_immutable(db):
     db.rollback()
 
 
+def test_preview_worker_reads_the_persisted_revision_snapshot(db, monkeypatch):
+    task, user, _ = _task(db)
+    from app.models.platform_models import AnnotationTaskRevisionSnapshot
+
+    task.task_revision = 1
+    revision_snapshot = {
+        "config_hash": "sha256:revision-one",
+        "sample_ids": ["s-1"],
+        "visible_columns": ["new_feature"],
+        "label_schema": {"columns": [{"machine_key": "new_label"}]},
+        "configuration": {"strategy": "second"},
+    }
+    db.add(AnnotationTaskRevisionSnapshot(
+        task_id=task.id,
+        task_revision=1,
+        snapshot=revision_snapshot,
+    ))
+    db.commit()
+
+    preview = create_annotation_preview(
+        db,
+        task.id,
+        task_revision=1,
+        config_hash=revision_snapshot["config_hash"],
+        actor_id=user.id,
+    )
+    from app.tasks.annotation_preview_tasks import execute_annotation_preview
+
+    monkeypatch.setattr("app.tasks.annotation_preview_tasks.SessionLocal", lambda: db)
+    result = execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
+
+    assert result["status"] == "completed"
+    assert preview.summary["visible_columns"] == ["new_feature"]
+
+
 def test_preview_progress_is_monotonic_and_records_completion(db):
     task, user, _ = _task(db)
     preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:progress", actor_id=user.id)

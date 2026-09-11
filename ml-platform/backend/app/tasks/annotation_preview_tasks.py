@@ -10,7 +10,11 @@ from app.database import SessionLocal
 from app.models.data_version import DatasetSample
 from app.models.platform_models import AnnotationTaskPreview, AnnotationTaskPreviewSample, GenericAnnotationTask
 from app.services.annotation_strategies import StrategyConfigError, apply_preview_annotation_strategy
-from app.services.annotation_task_state import mark_preview_completed, record_annotation_preview_progress
+from app.services.annotation_task_state import (
+    current_annotation_task_snapshot,
+    mark_preview_completed,
+    record_annotation_preview_progress,
+)
 from app.services.operation_lifecycle import claim_operation, heartbeat_operation, complete_operation, fail_operation
 from app.tasks.celery_app import celery_app
 from app.config import settings
@@ -51,7 +55,7 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
         if operation_id is None or not claim_operation(db, operation_id, worker_id, 300):
             return {"status": "not_claimed", "preview_id": preview_id, "operation_id": str(operation_id) if operation_id else None}
         try:
-            snapshot = task.task_snapshot or {}
+            snapshot = current_annotation_task_snapshot(db, task)
             record_annotation_preview_progress(db, task_uuid, preview_uuid, owner_uuid, status="running", progress=10, summary={"sample_scope": snapshot.get("sample_ids", []), "visible_columns": snapshot.get("visible_columns", [])})
             sample_ids = [str(sample_id) for sample_id in snapshot.get("sample_ids", [])]
             source_rows = db.query(DatasetSample).filter(

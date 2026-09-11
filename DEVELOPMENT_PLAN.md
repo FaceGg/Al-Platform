@@ -376,3 +376,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 在同一 Python 3.11.9 环境执行 `tests/test_security_contract.py`、`tests/test_annotator_auth.py` 和 `tests/test_portal_internal_api.py`，结果为 **72 passed、2 warnings、2 subtests passed**。
 - 实际导入版本再次核对为 `pyarrow 20.0.0`、`onnx 1.22.0`、`onnxruntime 1.24.4`、`skl2onnx 1.19.1`、`onnxmltools 1.16.0`；`pip check` 返回 `No broken requirements found.`。
 - 该组合结果仍属于聚焦测试证据；完整后端 active suite、真实 Redis/Celery、重启恢复、Docker/WSL、Playwright、真实导出/离线运行和远程 CI 尚未全部形成当前 SHA 的通过收据，Task 5–14 继续保持 `in_progress`。
+
+### 2026-09-11 Task 5 revision 快照读取修复
+
+- 复核完整 Task 5 状态链路时发现：配置更新已持久化 `AnnotationTaskRevisionSnapshot`，但预览 worker 仍直接读取不可变任务初始 `task_snapshot`，导致新 revision 的预览可能使用旧的可见列、指令和策略配置。
+- 按 TDD 新增回归：将任务推进到 revision 1 并写入新快照，worker 必须读取 revision 1 的 `visible_columns`；修复 `annotation_preview_tasks` 通过共享 `current_annotation_task_snapshot()` 读取当前 revision 快照。
+- 验证：新增 RED 先观察到 worker 返回旧列 `feature`，GREEN 后 Task 5 状态/API/异步恢复及新增回归 **64 passed、4 warnings**；完整后端此前运行因历史失败和长时间安全扫描被主动中断，不记为通过。
+- 任务状态边界不变：Task 5–14 继续 `in_progress`；真实 Redis/Celery、进程重启恢复、Docker/WSL、完整后端 active suite、Playwright、导出/离线真实运行和远程 CI 仍需独立当前 SHA 证据。
