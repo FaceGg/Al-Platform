@@ -528,3 +528,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 修复：`DataAnnotationPage` 按初始 URL 派生通用 setup 状态；没有 `type=spot-weld` 的 setup URL 默认进入通用任务创建页面，历史测试夹具补充显式兼容类型。
 - 验证：修复前页面测试 **43 passed、1 failed**，失败定位为历史 setup 夹具缺少兼容类型；修复后 `DataAnnotationPage.test.tsx` **44 passed**，`git diff --check` 通过。
 - 状态边界：该修复收口了 Task 12 通用入口刷新/直达行为，并加强 Task 1 的行业边界；Task 1–4 的聚焦状态和 Task 5–14 的未完成状态不变。真实后端运行态、门户浏览器、Docker/WSL recovery、当前 SHA 收据和远程 CI 仍待完成。
+
+## 2026-09-11 Task 12 自动任务模型制品选择
+
+- 复核确认后端已有受项目权限保护的 `GET /api/projects/{project_id}/models`，返回 `type=model` 的项目模型制品；前端新增类型化 `listProjectModelArtifacts` client。
+- 自动任务通用 setup 改为从项目模型制品下拉选择 `model_artifact_id`，不再允许手填任意字符串；切换项目或非自动模式时清理模型制品列表，提交仍只包含 `model_artifact_id` 与 `search_strength`，不恢复 `max_trials`。
+- TDD/验证：新增模型 client 回归，自动任务页面回归覆盖真实列表加载和选择；`DataAnnotationPage.test.tsx` 与 `models.test.ts` 合计 **45 passed**；`npm run build` 通过。
+- 状态边界：该项降低了真实创建请求因 artifact UUID/项目归属错误被拒绝的风险，但 Task 12 仍缺门户完整浏览器链路和当前 SHA 发布收据；Task 5–14 继续 `in_progress`。

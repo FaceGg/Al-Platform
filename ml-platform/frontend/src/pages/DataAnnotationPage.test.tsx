@@ -8,14 +8,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DataAnnotationPage from "./DataAnnotationPage";
 import { translations } from "../i18n";
 
-const { get, post, put, remove, datasets, datasetVersions } = vi.hoisted(() => ({
-  get: vi.fn(), post: vi.fn(), put: vi.fn(), remove: vi.fn(), datasets: vi.fn(), datasetVersions: vi.fn(),
+const { get, post, put, remove, datasets, datasetVersions, modelArtifacts } = vi.hoisted(() => ({
+  get: vi.fn(), post: vi.fn(), put: vi.fn(), remove: vi.fn(), datasets: vi.fn(), datasetVersions: vi.fn(), modelArtifacts: vi.fn(),
 }));
 const quality = vi.hoisted(() => ({ saveLabeledDataset: vi.fn() }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
 vi.mock("../api/client", () => ({ default: { get, post, put, delete: remove } }));
 vi.mock("../api/datasets", () => ({ listDatasets: datasets, listDatasetVersions: datasetVersions }));
+vi.mock("../api/models", () => ({ listProjectModelArtifacts: modelArtifacts }));
 vi.mock("../api/spotWeldQuality", async () => {
   const actual = await vi.importActual<typeof import("../api/spotWeldQuality")>("../api/spotWeldQuality");
   return { ...actual, saveLabeledDataset: quality.saveLabeledDataset };
@@ -54,6 +55,8 @@ describe("DataAnnotationPage", () => {
     ]);
     datasetVersions.mockReset();
     datasetVersions.mockResolvedValue([]);
+    modelArtifacts.mockReset();
+    modelArtifacts.mockResolvedValue([]);
     quality.saveLabeledDataset.mockReset();
     quality.saveLabeledDataset.mockResolvedValue({ artifact_id: "saved-1", name: "labeled-data.csv" });
     get.mockImplementation((url: string) => {
@@ -351,6 +354,7 @@ describe("DataAnnotationPage", () => {
       column_count: 2,
       columns: [{ name: "feature", dtype: "float", nullable: false, position: 0 }],
     }]);
+    modelArtifacts.mockResolvedValue([{ id: "artifact-1", name: "模型一", type: "model", format: "joblib" }]);
     post.mockImplementation((url: string) => {
       if (url === "/annotations/label-schemas") return Promise.resolve({ data: { id: "schema-1", project_id: "project-1", name: "labels", version: 1 } });
       if (url === "/automl-tasks") return Promise.resolve({ data: {
@@ -373,7 +377,7 @@ describe("DataAnnotationPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "新建自动标注任务" }));
     await screen.findByRole("heading", { name: "新建自动标注任务" });
     fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
-    fireEvent.change(screen.getByLabelText("模型制品标识"), { target: { value: "artifact-1" } });
+    fireEvent.change(await screen.findByLabelText("模型制品标识"), { target: { value: "artifact-1" } });
     fireEvent.change(screen.getByLabelText("搜索强度"), { target: { value: "strong" } });
     fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
 

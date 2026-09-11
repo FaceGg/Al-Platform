@@ -12,6 +12,7 @@ import { useI18n } from "../i18n";
 import { normalizeTaskStatus, taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 import { formatApiError, default as apiClient } from "../api/client";
 import { listDatasets, listDatasetVersions, type DatasetVersionOption } from "../api/datasets";
+import { listProjectModelArtifacts, type ModelArtifactOption } from "../api/models";
 import { createLabelSchema } from "../api/labelSchemas";
 import {
   createAnnotationPreview,
@@ -233,6 +234,7 @@ export default function DataAnnotationPage() {
   const [revisionConflict, setRevisionConflict] = useState<RevisionConflictState | null>(null);
   const [datasets, setDatasets] = useState<DatasetOption[]>([]);
   const [genericVersions, setGenericVersions] = useState<DatasetVersionOption[]>([]);
+  const [genericModelArtifacts, setGenericModelArtifacts] = useState<ModelArtifactOption[]>([]);
   const [genericVersionId, setGenericVersionId] = useState("");
   const [genericSchemaName, setGenericSchemaName] = useState("labels");
   const [genericLabelKey, setGenericLabelKey] = useState("label");
@@ -751,6 +753,18 @@ export default function DataAnnotationPage() {
       .catch((error) => { if (active) message.error(formatApiError(error, "数据版本加载失败")); });
     return () => { active = false; };
   }, [isSetup, genericSetupMode, loadingProjects, projectId, message]);
+
+  useEffect(() => {
+    if (!isSetup || !genericSetupMode || labelMode !== "automatic" || loadingProjects || !projectId) {
+      setGenericModelArtifacts([]);
+      return;
+    }
+    let active = true;
+    listProjectModelArtifacts(projectId)
+      .then((items) => { if (active) setGenericModelArtifacts(items); })
+      .catch((error) => { if (active) message.error(formatApiError(error, "模型制品加载失败")); });
+    return () => { active = false; };
+  }, [isSetup, genericSetupMode, labelMode, loadingProjects, projectId, message]);
 
   useEffect(() => {
     if (skipUrlStateSyncRef.current) {
@@ -1701,7 +1715,10 @@ export default function DataAnnotationPage() {
           {labelMode === "automatic" && <>
             <div className="data-annotation__setup-field">
               <label htmlFor="generic-model-artifact">模型制品标识</label>
-              <input id="generic-model-artifact" aria-label="模型制品标识" value={genericModelArtifactId} onChange={(event) => setGenericModelArtifactId(event.target.value)} />
+              <select id="generic-model-artifact" aria-label="模型制品标识" value={genericModelArtifactId} onChange={(event) => setGenericModelArtifactId(event.target.value)} disabled={!genericModelArtifacts.length}>
+                <option value="">选择模型制品</option>
+                {genericModelArtifacts.map((artifact) => <option value={artifact.id} key={artifact.id}>{artifact.name} · {artifact.format || "model"}</option>)}
+              </select>
             </div>
             <div className="data-annotation__setup-field">
               <label htmlFor="generic-search-strength">搜索强度</label>
