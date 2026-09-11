@@ -351,3 +351,9 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 该结果补齐 AUTO-02 的本地当前环境浏览器证据，但不替代真实远程验收栈、完整后端 active suite、Docker/WSL、broker/recovery 和远程 CI。
 
 - 同一当前工作树执行模型导出、导出 API 和离线推理聚焦套件，结果 **9 passed、2 warnings**；该结果验证合同和本地运行路径，但尚未生成统一 receipts 目录中的 SHA 绑定收据。
+
+## 26. 2026-09-11 通用平台 19 项合同收据
+
+- 在当前 SHA `3e4e35b62574163a9942385d4dd164facec0ae9f` 上，为验收矩阵 19 个 ID 写入实际聚焦测试、前端 E2E 和导出/离线命令的 receipts。
+- `validate_acceptance_manifest` 校验结果：**19 receipts valid**，全部绑定当前 SHA 且状态为 `passed`；收据目录为本地 `temp_test/generic-platform-acceptance/receipts/`。
+- 该结果只证明验收矩阵所列 19 个合同的本地收据完整，不替代完整后端 active suite、Docker/WSL、真实 broker/重启恢复、远程 CI 和真实部署导出运行。平台 Task 5–14 仍保持 `in_progress`，未生成整体完成结论。
