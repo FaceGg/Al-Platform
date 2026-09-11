@@ -437,3 +437,9 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 根因：操作中心 cursor 依赖 `created_at` 与 UUID 的数据库比较；SQLite 同一秒创建多个操作时，下一页可能重复上一页操作。
 - 解决：操作中心统一使用 owner/project 过滤后的稳定排序结果和 marker 位置分页，保留非法及越权 cursor 的 fail-closed 行为。
 - 验证：新增两项跨页操作中心回归和任务列表回归，目标测试 **2 passed**；Task 5 状态/API/异步组合 **65 passed、4 warnings**；Task 5 仍为 `in_progress`，真实 broker、重启恢复、Docker/WSL、完整 active suite 和远程 CI 仍待完成。
+
+### 2026-09-11 Task 5/6 前端回归复核
+
+- 当前发布分支 `559fd7e` 上执行 `npm test -- --run src/pages/DataAnnotationPage.test.tsx src/weekAcceptance.test.ts`，结果为 **2 个测试文件、49 passed**。
+- 该结果覆盖通用任务列表、预览状态回写、操作中心 cursor 加载和自动标注页面入口；策略底层已由通用预览 worker 接线并由后端策略回归覆盖。
+- 状态边界：前端聚焦通过不等于 Task 5 或 Task 6 完成；真实 broker/恢复、完整策略 API/浏览器链路、Docker/WSL、完整后端 active suite 和远程 CI 仍未齐备，Task 5–14 保持 `in_progress`。
