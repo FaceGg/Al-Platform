@@ -116,3 +116,8 @@
 
 - 任务列表已补齐回传、验收、完成、归档、恢复和重开动作，均通过统一 transition API 提交 `task_revision`，新增返回任务验收动作的前端回归。
 - `DataAnnotationPage` 聚焦测试 **42 passed**，生产构建和源码门禁通过；该结果不替代真实标注员门户、broker/recovery、浏览器 E2E 和远程 CI 收据。
+
+## 2026-09-11 发布后前端全量复核
+
+- 发布 SHA `3ecea9a61a4ae344322189feee001019c2f072e2` 的前端全量：**57 个文件通过、280 passed、19 skipped**。
+- 前端全量绿灯不关闭 `AUTO-02` 或 `REL-01`；浏览器 E2E、真实 broker/recovery、完整后端和远程 CI 仍需独立收据。

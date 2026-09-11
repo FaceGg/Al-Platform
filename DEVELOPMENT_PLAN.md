@@ -338,3 +338,9 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 在任务列表补齐通用状态动作：`awaiting_return -> return`、`returned_pending_acceptance -> accept`、`accepted -> complete/archive`、`completed -> archive/reopen`、`cancelled -> archive`、`archived -> restore`；所有动作继续复用服务端 revision transition API。
 - 新增 `returned_pending_acceptance` 验收动作回归，先 RED 后 GREEN；标注页面测试 **42 passed**，生产构建、Python 编译和 `git diff --check` 通过。
 - Task 5 仍不提升为平台验收完成：真实 broker、重启恢复、Docker/WSL、Playwright、完整后端 active suite 和远程 CI 仍缺当前 SHA 收据。
+
+## 24. 2026-09-11 当前 SHA 前端全量复核
+
+- 在发布 SHA `3ecea9a61a4ae344322189feee001019c2f072e2` 上重跑前端全量套件：**57 个测试文件通过、280 passed、19 skipped**。
+- 该结果覆盖通用任务动作矩阵和 AutoML 搜索强度表单后的前端回归；生产构建及此前后端聚焦证据仍有效。
+- README 仍为唯一用户本地未暂存修改；后端完整 active suite、Docker/真实 broker、恢复、Playwright、导出/离线和远程 CI 仍未形成完整当前 SHA 收据。
