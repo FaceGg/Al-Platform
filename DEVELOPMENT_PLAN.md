@@ -506,3 +506,11 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 在当前提交 `930e748ecd2b8d4895c94dad732ab18e841219b9` 上重新执行矩阵合同：数据导入/迁移、标签 schema、并发、策略、任务状态、回传、标注员认证/门户、通用任务 API、AutoML、多模型导出、离线推理、安全异步和 AutoML Chromium 均通过；门户测试使用共享 `ml-platform/backend/.venv311` 运行，结果 **3 passed**。
 - `temp_test/generic-platform-acceptance/receipts/` 中 19 项已全部绑定当前 SHA；调用 `validate_acceptance_manifest` 返回 **19 receipts valid**。AUTO-02 已修正为 `e2e/automl-multioutput.spec.ts`，不再错误绑定通用标注浏览器用例。
 - 该收据集仍是本地合同证据，不覆盖真实 Docker/WSL Compose、Redis/Celery broker、进程重启 recovery、后端全量 active suite 或远程 CI。Task 5–14 和发布门禁继续 `in_progress`；Task 12 的通用新建任务 UI 仍需实现。
+
+## 2026-09-11 Task 12 通用新建任务入口接入
+
+- 解决：主平台任务列表的新建手动/自动标注任务入口已切换到通用创建 setup；使用项目授权的数据版本和新建标签 schema，手动任务提交 `/api/annotation-tasks`，自动任务提交 `/api/automl-tasks`。
+- 合同：请求携带 `X-Request-ID` 与 `Idempotency-Key`；自动任务配置只提交 `model_artifact_id` 与 `search_strength`，页面和请求均不再提供 `max_trials`；历史 `type=spot-weld` 兼容路径保留为只读/历史行为，不恢复点焊写入口。
+- TDD：新增手动和自动创建回归，验证 `dataset_version_id`、`label_schema_id`、模式分流、搜索强度及幂等请求头；更新旧入口测试以验证通用 setup。`DataAnnotationPage.test.tsx` **44 passed**。
+- 构建：前端 `npm run build` 通过，`git diff --check` 通过。
+- 状态边界：这是 Task 12 的通用新建 UI 缺口修复，不代表 Task 12 或 Task 5–14 整体验收完成；真实后端创建运行态、门户完整浏览器链路、Docker/WSL broker/recovery、当前 SHA 全量收据和远程 CI 仍待完成，任务继续 `in_progress`。

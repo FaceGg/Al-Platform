@@ -11,6 +11,18 @@ export type AnnotationTask = {
   preview?: AnnotationPreview | null;
 };
 
+export type GenericTaskCreatePayload = {
+  project_id: string;
+  dataset_version_id: string;
+  label_schema_id: string;
+  mode: "manual" | "automatic";
+  sample_scope: { kind: "all" | "ids" | "filter"; sample_ids?: string[]; filters?: Record<string, unknown> };
+  label_snapshot?: Record<string, unknown>;
+  visible_columns: string[];
+  instructions: string;
+  configuration: Record<string, unknown>;
+};
+
 export type AnnotationPreview = {
   id: string;
   operation_id?: string | null;
@@ -41,6 +53,14 @@ export type AnnotationOperation = {
 export async function listAnnotationTasks(projectId: string, limit = 50, cursor?: string) {
   const response = await apiClient.get("/annotation-tasks", { params: { project_id: projectId, limit, cursor } });
   return response.data as { items: AnnotationTask[]; total: number; next_cursor: string | null };
+}
+
+export async function createGenericAnnotationTask(payload: GenericTaskCreatePayload, idempotencyKey: string) {
+  const endpoint = payload.mode === "automatic" ? "/automl-tasks" : "/annotation-tasks";
+  const response = await apiClient.post(endpoint, payload, {
+    headers: { "X-Request-ID": crypto.randomUUID(), "Idempotency-Key": idempotencyKey },
+  });
+  return response.data as AnnotationTask;
 }
 
 export async function createAnnotationPreview(taskId: string, taskRevision: number, configHash: string) {

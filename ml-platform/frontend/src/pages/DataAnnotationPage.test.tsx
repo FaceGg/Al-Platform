@@ -8,14 +8,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DataAnnotationPage from "./DataAnnotationPage";
 import { translations } from "../i18n";
 
-const { get, post, put, remove, datasets } = vi.hoisted(() => ({
-  get: vi.fn(), post: vi.fn(), put: vi.fn(), remove: vi.fn(), datasets: vi.fn(),
+const { get, post, put, remove, datasets, datasetVersions } = vi.hoisted(() => ({
+  get: vi.fn(), post: vi.fn(), put: vi.fn(), remove: vi.fn(), datasets: vi.fn(), datasetVersions: vi.fn(),
 }));
 const quality = vi.hoisted(() => ({ saveLabeledDataset: vi.fn() }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
 vi.mock("../api/client", () => ({ default: { get, post, put, delete: remove } }));
-vi.mock("../api/datasets", () => ({ listDatasets: datasets }));
+vi.mock("../api/datasets", () => ({ listDatasets: datasets, listDatasetVersions: datasetVersions }));
 vi.mock("../api/spotWeldQuality", async () => {
   const actual = await vi.importActual<typeof import("../api/spotWeldQuality")>("../api/spotWeldQuality");
   return { ...actual, saveLabeledDataset: quality.saveLabeledDataset };
@@ -52,6 +52,8 @@ describe("DataAnnotationPage", () => {
       { id: "dataset-report", artifact_id: "dataset-report", name: "customer-data.csv", format: "csv", row_count: 12 },
       { id: "dataset-image", artifact_id: "dataset-image", name: "sample-image.png", format: "png", row_count: 1 },
     ]);
+    datasetVersions.mockReset();
+    datasetVersions.mockResolvedValue([]);
     quality.saveLabeledDataset.mockReset();
     quality.saveLabeledDataset.mockResolvedValue({ artifact_id: "saved-1", name: "labeled-data.csv" });
     get.mockImplementation((url: string) => {
@@ -264,7 +266,7 @@ describe("DataAnnotationPage", () => {
     expect(await within(center).findByText("operation-2")).toBeInTheDocument();
   });
 
-  it("opens generic setup with compatible data-management files", async () => {
+  it("opens the generic setup for a new automatic task", async () => {
     render(
       <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AntApp><DataAnnotationPage /></AntApp>
@@ -277,15 +279,117 @@ describe("DataAnnotationPage", () => {
       await Promise.resolve();
     });
     expect(await screen.findByRole("heading", { name: "新建自动标注任务" })).toBeInTheDocument();
-    expect(screen.getByLabelText("数据管理文件")).toBeInTheDocument();
+    expect(screen.getByLabelText("数据版本")).toBeInTheDocument();
+    expect(screen.getByLabelText("模型制品标识")).toBeInTheDocument();
+    expect(screen.getByLabelText("搜索强度")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建通用任务" })).toBeInTheDocument();
     expect(screen.queryByLabelText("目标列来源")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("目标列")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /下一页/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /下一页/ }).parentElement).toHaveClass("data-annotation__setup-footer--centered");
     expect(screen.queryByLabelText("弱监督标注策略")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "开始自动标注" })).not.toBeInTheDocument();
     expect(screen.queryByText("准备模拟数据")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("已有质量运行")).not.toBeInTheDocument();
+  });
+
+  it("creates a generic manual task from a dataset version and label schema", async () => {
+    datasetVersions.mockResolvedValue([{
+      id: "version-1",
+      project_id: "project-1",
+      version: 1,
+      status: "ready",
+      row_count: 2,
+      column_count: 2,
+      columns: [{ name: "feature", dtype: "float", nullable: false, position: 0 }],
+    }]);
+    post.mockImplementation((url: string) => {
+      if (url === "/annotations/label-schemas") return Promise.resolve({ data: { id: "schema-1", project_id: "project-1", name: "labels", version: 1 } });
+      if (url === "/annotation-tasks") return Promise.resolve({ data: {
+        id: "generic-created-1",
+        project_id: "project-1",
+        mode: "manual",
+        status: "draft",
+        task_revision: 0,
+        sample_scope: { kind: "all" },
+      } });
+      return Promise.resolve({ data: {} });
+    });
+
+    render(
+      <MemoryRouter>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建手动标注任务" }));
+    await screen.findByRole("heading", { name: "新建手动标注任务" });
+    fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/annotations/label-schemas",
+      expect.objectContaining({ project_id: "project-1" }),
+    ));
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/annotation-tasks",
+      expect.objectContaining({
+        project_id: "project-1",
+        dataset_version_id: "version-1",
+        label_schema_id: "schema-1",
+        mode: "manual",
+      }),
+      expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String), "X-Request-ID": expect.any(String) }) }),
+    ));
+  });
+
+  it("creates a generic automatic task through the AutoML contract using search strength", async () => {
+    datasetVersions.mockResolvedValue([{
+      id: "version-1",
+      project_id: "project-1",
+      version: 1,
+      status: "ready",
+      row_count: 2,
+      column_count: 2,
+      columns: [{ name: "feature", dtype: "float", nullable: false, position: 0 }],
+    }]);
+    post.mockImplementation((url: string) => {
+      if (url === "/annotations/label-schemas") return Promise.resolve({ data: { id: "schema-1", project_id: "project-1", name: "labels", version: 1 } });
+      if (url === "/automl-tasks") return Promise.resolve({ data: {
+        id: "generic-automl-1",
+        project_id: "project-1",
+        mode: "automatic",
+        status: "draft",
+        task_revision: 0,
+        sample_scope: { kind: "all" },
+      } });
+      return Promise.resolve({ data: {} });
+    });
+
+    render(
+      <MemoryRouter>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建自动标注任务" }));
+    await screen.findByRole("heading", { name: "新建自动标注任务" });
+    fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
+    fireEvent.change(screen.getByLabelText("模型制品标识"), { target: { value: "artifact-1" } });
+    fireEvent.change(screen.getByLabelText("搜索强度"), { target: { value: "strong" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/automl-tasks",
+      expect.objectContaining({
+        project_id: "project-1",
+        dataset_version_id: "version-1",
+        label_schema_id: "schema-1",
+        mode: "automatic",
+        configuration: { model_artifact_id: "artifact-1", search_strength: "strong" },
+      }),
+      expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String), "X-Request-ID": expect.any(String) }) }),
+    ));
+    const automlPayload = post.mock.calls.find(([url]) => url === "/automl-tasks")?.[1] as Record<string, unknown>;
+    expect(automlPayload).not.toHaveProperty("max_trials");
   });
 
   it("loads compatible data-management files from an automatic-label setup link", async () => {

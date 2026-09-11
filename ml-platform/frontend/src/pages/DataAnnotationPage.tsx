@@ -11,7 +11,7 @@ import LabelSchemaEditor, { type LabelColumnDraft } from "../components/LabelSch
 import { useI18n } from "../i18n";
 import { normalizeTaskStatus, taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 import { formatApiError, default as apiClient } from "../api/client";
-import { listDatasets } from "../api/datasets";
+import { listDatasets, listDatasetVersions, type DatasetVersionOption } from "../api/datasets";
 import { createLabelSchema } from "../api/labelSchemas";
 import {
   createAnnotationPreview,
@@ -21,6 +21,7 @@ import {
   listAnnotationExecutionStats,
   listAnnotationOperations,
   listAnnotationTasks,
+  createGenericAnnotationTask,
   transitionAnnotationTask,
   type AnnotationPreview,
   type AnnotationTask,
@@ -231,6 +232,15 @@ export default function DataAnnotationPage() {
   const [assignmentOverlapWarning, setAssignmentOverlapWarning] = useState<string | null>(null);
   const [revisionConflict, setRevisionConflict] = useState<RevisionConflictState | null>(null);
   const [datasets, setDatasets] = useState<DatasetOption[]>([]);
+  const [genericVersions, setGenericVersions] = useState<DatasetVersionOption[]>([]);
+  const [genericVersionId, setGenericVersionId] = useState("");
+  const [genericSchemaName, setGenericSchemaName] = useState("labels");
+  const [genericLabelKey, setGenericLabelKey] = useState("label");
+  const [genericLabelType, setGenericLabelType] = useState<"string" | "int" | "float">("string");
+  const [genericInstructions, setGenericInstructions] = useState("");
+  const [genericModelArtifactId, setGenericModelArtifactId] = useState("");
+  const [genericSearchStrength, setGenericSearchStrength] = useState("balanced");
+  const [genericCreating, setGenericCreating] = useState(false);
   const [runId, setRunId] = useState(searchParams.get("runId") || "");
   const [samples, setSamples] = useState<QualitySample[]>([]);
   const [selected, setSelected] = useState<QualitySampleDetail | null>(null);
@@ -272,6 +282,7 @@ export default function DataAnnotationPage() {
   const [previewingClusters, setPreviewingClusters] = useState(false);
   const clusterChartRef = useRef<HTMLDivElement>(null);
   const [workspaceMode, setWorkspaceMode] = useState(Boolean(searchParams.get("runId")));
+  const [genericSetupMode, setGenericSetupMode] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const activeContextRef = useRef({ projectId, runId });
   const detailRequestId = useRef(0);
@@ -728,6 +739,18 @@ export default function DataAnnotationPage() {
   }, [isSetup, requestedView, loadingProjects, projectId, message]);
 
   useEffect(() => {
+    if (!isSetup || !genericSetupMode || loadingProjects || !projectId) {
+      setGenericVersions([]);
+      return;
+    }
+    let active = true;
+    listDatasetVersions(projectId)
+      .then((items) => { if (active) setGenericVersions(items); })
+      .catch((error) => { if (active) message.error(formatApiError(error, "数据版本加载失败")); });
+    return () => { active = false; };
+  }, [isSetup, genericSetupMode, loadingProjects, projectId, message]);
+
+  useEffect(() => {
     if (skipUrlStateSyncRef.current) {
       skipUrlStateSyncRef.current = false;
       return;
@@ -1048,8 +1071,16 @@ export default function DataAnnotationPage() {
 
   const openSetup = (nextMode: QualityLabelMode = "automatic") => {
     setWorkspaceMode(false);
+    setGenericSetupMode(true);
     setRunId("");
     setLabelMode(nextMode);
+    setGenericVersionId("");
+    setGenericSchemaName("labels");
+    setGenericLabelKey("label");
+    setGenericLabelType("string");
+    setGenericInstructions("");
+    setGenericModelArtifactId("");
+    setGenericSearchStrength("balanced");
     setAutomaticSetupStep(1);
     setSearchParams((current) => {
       current.delete("type");
@@ -1060,10 +1091,48 @@ export default function DataAnnotationPage() {
     }, { replace: true });
   };
 
+  const createGenericTaskFromSetup = async () => {
+    if (!projectId || !genericVersionId || !genericSchemaName.trim() || !genericLabelKey.trim()) return;
+    if (labelMode === "automatic" && !genericModelArtifactId.trim()) {
+      message.error("自动任务需要模型制品标识");
+      return;
+    }
+    setGenericCreating(true);
+    try {
+      const schema = await createLabelSchema(projectId, genericSchemaName.trim(), [{
+        machine_key: genericLabelKey.trim(),
+        display_name: genericLabelKey.trim(),
+        value_type: genericLabelType,
+        required: false,
+      }]);
+      const version = genericVersions.find((item) => item.id === genericVersionId);
+      const task = await createGenericAnnotationTask({
+        project_id: projectId,
+        dataset_version_id: genericVersionId,
+        label_schema_id: schema.id,
+        mode: labelMode,
+        sample_scope: { kind: "all" },
+        visible_columns: version?.columns.map((column) => column.name) || [],
+        instructions: genericInstructions,
+        configuration: labelMode === "automatic"
+          ? { model_artifact_id: genericModelArtifactId.trim(), search_strength: genericSearchStrength }
+          : {},
+      }, crypto.randomUUID());
+      setGenericTasks((items) => [task, ...items.filter((item) => item.id !== task.id)]);
+      message.success("通用标注任务已创建");
+      returnToTaskList();
+    } catch (error) {
+      message.error(formatApiError(error, "通用标注任务创建失败"));
+    } finally {
+      setGenericCreating(false);
+    }
+  };
+
   const returnToTaskList = () => {
     detailRequestId.current += 1;
     skipUrlStateSyncRef.current = true;
     setWorkspaceMode(false);
+    setGenericSetupMode(false);
     setDatasetArtifactId("");
     setRunId("");
     setSelected(null);
@@ -1586,6 +1655,73 @@ export default function DataAnnotationPage() {
     </>
   );
 
+  const genericSetupView = (
+    <>
+      <div className="page-header data-annotation__tasks-header">
+        <div className="page-header-copy">
+          <h2 className="page-title">{labelMode === "manual" ? "新建手动标注任务" : "新建自动标注任务"}</h2>
+          <p className="page-subtitle">基于数据版本、标签 schema 和通用配置创建任务</p>
+        </div>
+        <button type="button" className="ant-btn" onClick={returnToTaskList}>{copy.backToTasks}</button>
+      </div>
+      <section className="data-annotation__setup" aria-label="通用任务创建">
+        <div className="data-annotation__setup-grid">
+          <div className="data-annotation__setup-field">
+            <label htmlFor="generic-setup-project">{copy.project}</label>
+            <select id="generic-setup-project" aria-label={copy.project} value={projectId} onChange={(event) => setProjectId(event.target.value)} disabled={loadingProjects}>
+              <option value="">{copy.chooseProject}</option>
+              {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
+            </select>
+          </div>
+          <div className="data-annotation__setup-field">
+            <label htmlFor="generic-dataset-version">数据版本</label>
+            <select id="generic-dataset-version" aria-label="数据版本" value={genericVersionId} onChange={(event) => setGenericVersionId(event.target.value)} disabled={!projectId || !genericVersions.length}>
+              <option value="">选择数据版本</option>
+              {genericVersions.map((version) => <option value={version.id} key={version.id}>v{version.version} · {version.row_count} 行 · {version.columns.length} 列</option>)}
+            </select>
+          </div>
+          <div className="data-annotation__setup-field">
+            <label htmlFor="generic-schema-name">标签 schema 名称</label>
+            <input id="generic-schema-name" aria-label="标签 schema 名称" value={genericSchemaName} onChange={(event) => setGenericSchemaName(event.target.value)} />
+          </div>
+          <div className="data-annotation__setup-field">
+            <label htmlFor="generic-label-key">标签字段</label>
+            <input id="generic-label-key" aria-label="标签字段" value={genericLabelKey} onChange={(event) => setGenericLabelKey(event.target.value)} />
+          </div>
+          <div className="data-annotation__setup-field">
+            <label htmlFor="generic-label-type">标签类型</label>
+            <select id="generic-label-type" aria-label="标签类型" value={genericLabelType} onChange={(event) => setGenericLabelType(event.target.value as typeof genericLabelType)}>
+              <option value="string">字符串</option>
+              <option value="int">整数</option>
+              <option value="float">浮点数</option>
+            </select>
+          </div>
+          {labelMode === "automatic" && <>
+            <div className="data-annotation__setup-field">
+              <label htmlFor="generic-model-artifact">模型制品标识</label>
+              <input id="generic-model-artifact" aria-label="模型制品标识" value={genericModelArtifactId} onChange={(event) => setGenericModelArtifactId(event.target.value)} />
+            </div>
+            <div className="data-annotation__setup-field">
+              <label htmlFor="generic-search-strength">搜索强度</label>
+              <select id="generic-search-strength" aria-label="搜索强度" value={genericSearchStrength} onChange={(event) => setGenericSearchStrength(event.target.value)}>
+                <option value="light">轻量</option><option value="balanced">均衡</option><option value="strong">高强度</option><option value="exhaustive">穷举</option>
+              </select>
+            </div>
+          </>}
+        </div>
+        <div className="data-annotation__setup-field">
+          <label htmlFor="generic-instructions">标注说明</label>
+          <textarea id="generic-instructions" aria-label="标注说明" value={genericInstructions} onChange={(event) => setGenericInstructions(event.target.value)} rows={4} />
+        </div>
+        <div className="data-annotation__setup-footer data-annotation__setup-footer--centered">
+          <button type="button" className="ant-btn ant-btn-primary" onClick={() => void createGenericTaskFromSetup()} disabled={!canCreate || !genericVersionId || !genericSchemaName.trim() || !genericLabelKey.trim() || genericCreating}>
+            {genericCreating ? "创建中..." : "创建通用任务"}
+          </button>
+        </div>
+      </section>
+    </>
+  );
+
   const workspaceView = (
     <>
       <div className="page-header spot-weld-annotation__workspace-header">
@@ -1656,7 +1792,7 @@ export default function DataAnnotationPage() {
   return (
     <AppLayout>
       <div className="page-shell fade-in spot-weld-annotation">
-        {isTaskList ? (loadingProjects ? <div className="data-annotation__loading"><Spin /></div> : tasksView) : isSetup ? (loadingProjects || loadingDatasets ? <div className="data-annotation__loading"><Spin /></div> : setupView) : workspaceView}
+        {isTaskList ? (loadingProjects ? <div className="data-annotation__loading"><Spin /></div> : tasksView) : isSetup ? (loadingProjects || loadingDatasets ? <div className="data-annotation__loading"><Spin /></div> : genericSetupMode ? genericSetupView : setupView) : workspaceView}
       </div>
     </AppLayout>
   );
