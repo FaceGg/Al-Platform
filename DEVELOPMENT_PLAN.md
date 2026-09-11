@@ -464,3 +464,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 使用 `--no-deps` 启动 backend、worker 和 inference 后，worker 仍无法解析 `redis`，backend 无法解析 `postgres`；进一步检查确认两个基础容器已退出并从 Compose 网络移除，服务名 DNS 失败是容器生命周期问题。该运行态证据保持失败，不修改应用代码绕过依赖。
 - 当前 Python 3.11.9 环境重新执行 Task 5/6/8/9/13 聚焦组合：`test_annotation_task_state.py test_annotation_task_state_api.py test_async_operation_contract.py test_annotation_strategies.py test_annotation_concurrency.py test_annotation_return_acceptance.py` 为 **85 passed、10 warnings**。
 - 状态边界：聚焦回归通过不等于真实 broker、重启恢复或 Task 5–14 整体验收通过；所有任务继续保持 `in_progress`。下一步仍是获得稳定的 WSL Compose 基础服务持续运行证据，再执行真实预览/执行和 recovery claim。
+
+## 2026-09-11 当前 SHA 非容器门禁复核
+
+- 前端全量 Vitest：**57 个测试文件通过、280 passed、19 skipped**。
+- 模型导出、离线推理和 ONNX 转换聚焦套件：**15 passed、1 skipped、4 subtests passed**。
+- 后端 active suite 使用 Python 3.11 启动并运行到约 44% 后持续进行计算；因预计耗时较长且未产生失败摘要，本轮主动中止，不将其记为通过或失败。可复现命令为 `& (Resolve-Path .venv311\Scripts\python.exe).Path -m pytest -q --maxfail=10`。
+- 状态边界：上述前端和导出证据属于当前工作树对应代码，但后端全量、Docker/WSL 持续运行、真实 broker/recovery、Playwright 和远程 CI 仍未形成完整发布收据；Task 5–14 继续 `in_progress`。
