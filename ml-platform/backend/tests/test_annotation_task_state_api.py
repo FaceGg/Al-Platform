@@ -1,4 +1,7 @@
 import uuid
+import time
+
+import pytest
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -14,6 +17,60 @@ from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetV
 from app.models.project import Project
 from app.models.platform_models import GenericAnnotationTask, AnnotationTaskPreview
 from app.models.user import User
+
+
+@pytest.fixture(autouse=True)
+def isolate_preview_dispatch(monkeypatch):
+    monkeypatch.setattr("app.api.annotation_task_state.enqueue_annotation_preview", lambda *args: None)
+
+
+def test_local_preview_dispatch_completes_with_independent_session(monkeypatch, tmp_path):
+    from app.tasks import annotation_preview_tasks as workers
+    from app.services.annotation_task_state import create_annotation_preview
+    from app.models.operation import DurableOperation
+
+    engine = create_engine(f"sqlite:///{(tmp_path / 'preview.db').as_posix()}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(workers, "SessionLocal", sessions)
+    monkeypatch.setattr(workers.settings, "task_backend", "local")
+    try:
+        with sessions() as db:
+            user = User(username="local-preview-owner", password_hash="hash")
+            db.add(user)
+            db.flush()
+            project = Project(name="Local preview", owner_id=user.id)
+            db.add(project)
+            db.flush()
+            schema = LabelSchema(project_id=project.id, name="labels", version=1, status="active")
+            db.add(schema)
+            db.flush()
+            task = GenericAnnotationTask(
+                project_id=project.id, dataset_version_id=uuid.uuid4(),
+                label_schema_id=schema.id, owner_id=user.id, mode="manual",
+                status="draft", task_revision=0, sample_scope={"kind": "all"},
+                task_snapshot={"sample_ids": [], "visible_columns": [], "label_schema": {"columns": []}},
+            )
+            db.add(task)
+            db.commit()
+            preview = create_annotation_preview(db, task.id, 0, "sha256:local", user.id)
+            preview_id, operation_id = preview.id, preview.operation_id
+            dispatch = workers.enqueue_annotation_preview(task.id, preview_id, user.id)
+            assert dispatch is not None, "local preview must dispatch instead of staying queued"
+            assert dispatch.id == str(preview_id)
+        deadline = time.monotonic() + 10
+        while True:
+            with sessions() as db:
+                operation = db.get(DurableOperation, operation_id)
+                if operation.state in {"completed", "failed"}:
+                    assert operation.state == "completed"
+                    assert db.get(AnnotationTaskPreview, preview_id).progress == 100
+                    assert db.get(GenericAnnotationTask, task.id).status == "preview_ready"
+                    break
+            assert time.monotonic() < deadline, "local worker did not complete"
+            time.sleep(0.02)
+    finally:
+        engine.dispose()
 
 
 class _SessionContext:

@@ -3,6 +3,8 @@
 import uuid
 import hashlib
 import json
+import threading
+from types import SimpleNamespace
 
 from app.database import SessionLocal
 from app.models.data_version import DatasetSample
@@ -15,10 +17,12 @@ from app.config import settings
 
 
 def enqueue_annotation_preview(task_id, preview_id, owner_id):
-    """Dispatch only when Celery is the configured runtime; local mode stays queued."""
-    if settings.task_backend != "celery":
-        return None
-    return execute_annotation_preview.delay(str(task_id), str(preview_id), str(owner_id))
+    """Dispatch through the same durable worker in local and Celery runtimes."""
+    args = (str(task_id), str(preview_id), str(owner_id))
+    if settings.task_backend == "celery":
+        return execute_annotation_preview.delay(*args)
+    threading.Thread(target=execute_annotation_preview.run, args=args, daemon=True).start()
+    return SimpleNamespace(id=str(preview_id))
 
 
 @celery_app.task(bind=True, name="ml_platform.execute_annotation_preview")

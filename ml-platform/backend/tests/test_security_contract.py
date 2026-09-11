@@ -45,6 +45,8 @@ def test_local_dev_origin_expansion_is_bounded_to_loopback_aliases():
     assert "http://127.0.0.1:5173" in origins
     assert "http://localhost:5174" in origins
     assert "http://127.0.0.1:5174" in origins
+    assert "http://localhost:5175" in origins
+    assert "http://127.0.0.1:5175" in origins
     assert "https://portal.example" in origins
     assert "http://evil.example:5173" not in origins
 
@@ -64,6 +66,18 @@ def test_cookie_state_change_requires_origin_and_matching_csrf_token():
             origin="https://portal.example",
             cookies={"portal_session": "s", "csrf_token": "token"},
             headers={"x-csrf-token": "token"},
+        ),
+        policy,
+    )
+
+
+def test_unrelated_cookie_does_not_trigger_portal_csrf_validation():
+    policy = SecurityPolicy(allowed_origins=frozenset({"https://portal.example"}))
+    enforce_request_security(
+        _request(
+            "POST",
+            origin="https://portal.example",
+            cookies={"analytics_id": "visitor"},
         ),
         policy,
     )

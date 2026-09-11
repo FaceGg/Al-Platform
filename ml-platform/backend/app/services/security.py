@@ -53,9 +53,9 @@ def expand_local_dev_origins(origins: Iterable[str]) -> frozenset[str]:
         if port is None:
             continue
         ports = {port}
-        # Vite moves from its default port to the next port when occupied.
+        # Vite moves to the next available port when defaults are occupied.
         if port == 5173:
-            ports.add(5174)
+            ports.update({5174, 5175})
         for alias_host in ("localhost", "127.0.0.1", "[::1]"):
             for alias_port in ports:
                 normalized.add(f"http://{alias_host}:{alias_port}")
@@ -69,6 +69,7 @@ class SecurityPolicy:
     allowed_origins: frozenset[str]
     csrf_cookie_name: str = "csrf_token"
     csrf_header_name: str = "X-CSRF-Token"
+    session_cookie_names: frozenset[str] = frozenset({"portal_session"})
     state_changing_methods: frozenset[str] = _STATE_CHANGING_METHODS
 
     def __post_init__(self) -> None:
@@ -101,7 +102,7 @@ def enforce_request_security(request, policy: SecurityPolicy) -> None:
     if method not in policy.state_changing_methods:
         return
     cookies = request.cookies
-    if not cookies:
+    if not cookies or not (set(cookies) & policy.session_cookie_names):
         return
 
     referer_header = request.headers.get("referer")

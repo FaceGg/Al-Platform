@@ -295,3 +295,18 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 解决方法：本地模式新增受控 loopback 来源扩展，允许 `localhost`、`127.0.0.1` 和 IPv6 loopback 的 5173/5174 别名；增加 `FRONTEND_ORIGIN_ALIASES` 配置入口供自定义本地来源；生产模式不自动扩展来源，未知来源仍 fail closed。
 - 验证方式：本地运行态对 `localhost/127.0.0.1` 的 5173、5174 登录均返回 HTTP 200；未知来源返回 HTTP 403；`tests/test_security_contract.py` 与 `tests/test_app.py` 共 **15 passed、1 warning**；相关 Python 编译和 `git diff --check` 待最终检查。
 - 状态边界：本次仅修复本地来源匹配和配置边界，不使用通配符，不改变 Task 1–4 或 Task 5–14 状态，也不生成平台级验收结论。
+
+## 19. 2026-09-11 CSRF 登录误报修复检查点
+
+- 问题现象：主平台 Bearer Token 登录请求在浏览器携带标注员门户 `portal_session` 以外的无关 Cookie 时，被安全中间件返回 `CSRF_TOKEN_REQUIRED`。
+- 根因：CSRF 策略将任意 Cookie 都当作会话 Cookie；主平台登录不建立 Cookie 会话，且 Bearer Token 请求不需要 CSRF 校验。
+- 解决方法：`SecurityPolicy` 显式维护受保护会话 Cookie 名称，默认仅识别 `portal_session`；无关 Cookie 不触发 CSRF，门户会话仍要求可信来源和匹配的双提交令牌。
+- 验证方式：`ml-platform/backend` 执行 `tests/test_security_contract.py tests/test_api_users.py`，结果 **22 passed、8 warnings**；`git diff --check` 通过。
+- 状态边界：本次只修复 CSRF 会话识别范围，不改变 Bearer Token、门户 Cookie、Task 1–4 或 Task 5–14 状态；后端警告来自现有依赖和测试密钥配置，未作为本次修复范围处理。
+
+## 20. 2026-09-11 Task 5 本地预览派发修复
+
+- 按 TDD 新增 local runtime 回归，先复现默认 `task_backend=local` 下预览派发返回空引用、预览停留 `queued` 的缺口。
+- 修复 `annotation_preview_tasks.enqueue_annotation_preview`：local 模式通过 daemon thread 复用 `execute_annotation_preview.run`，Celery 模式保持 `.delay()`，并返回稳定的本地派发引用。
+- 独立 SQLite 会话回归确认 durable operation 完成、预览进度为 100、任务进入 `preview_ready`；随后 Task 5/6/7/8/13 聚焦套件为 **88 passed、10 warnings**。
+- 用户本地 `README.md` 未纳入本轮改动。Task 5–14 继续为 `in_progress`；真实 broker、进程重启恢复、完整操作中心、Docker/WSL、Playwright、导出/离线及远程 CI 仍需后续收据。
