@@ -132,6 +132,52 @@ if TORCH_AVAILABLE:
             return OperatorResult(outputs={"model": buf.getvalue()})
 
 
+if not TORCH_AVAILABLE:
+    class _TorchUnavailableOperator(BaseOperator):
+        """Keep the operator contract visible when the optional runtime is absent."""
+
+        inputs = [PortSpec("data", "DataTable", "Training Data")]
+        outputs = [PortSpec("model", "Model", "Trained Model")]
+        parameters = [
+            ParamSpec("target_column", "str", "target", "Target Column"),
+            ParamSpec("epochs", "int", 10, "Epochs", range_min=1),
+            ParamSpec("batch_size", "int", 32, "Batch Size", range_min=1),
+            ParamSpec("learning_rate", "float", 0.001, "Learning Rate"),
+            ParamSpec("device", "select", "cpu", "Device", options=["cpu", "cuda"]),
+            ParamSpec("random_seed", "int", 42, "Random Seed"),
+        ]
+
+        def validate(self, inputs):
+            return True
+
+        def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+            raise RuntimeError("TORCH_NOT_INSTALLED")
+
+
+    @register_operator
+    class MLPClassifier(_TorchUnavailableOperator):
+        id = "mlp_classifier"
+        name = "MLP Classifier"
+        category = "dl"
+        description = "Train a simple MLP classifier with PyTorch"
+
+
+    @register_operator
+    class MLPRegressor(_TorchUnavailableOperator):
+        id = "mlp_regressor"
+        name = "MLP Regressor"
+        category = "dl"
+        description = "Train a simple MLP regressor with PyTorch"
+
+
+    @register_operator
+    class CNN1DClassifier(_TorchUnavailableOperator):
+        id = "cnn1d_classifier"
+        name = "CNN1D Classifier"
+        category = "dl"
+        description = "Train a 1D CNN classifier with PyTorch"
+
+
     @register_operator
     class MLPRegressor(BaseOperator):
         id = "mlp_regressor"

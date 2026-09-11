@@ -383,3 +383,9 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 按 TDD 新增回归：将任务推进到 revision 1 并写入新快照，worker 必须读取 revision 1 的 `visible_columns`；修复 `annotation_preview_tasks` 通过共享 `current_annotation_task_snapshot()` 读取当前 revision 快照。
 - 验证：新增 RED 先观察到 worker 返回旧列 `feature`，GREEN 后 Task 5 状态/API/异步恢复及新增回归 **64 passed、4 warnings**；完整后端此前运行因历史失败和长时间安全扫描被主动中断，不记为通过。
 - 任务状态边界不变：Task 5–14 继续 `in_progress`；真实 Redis/Celery、进程重启恢复、Docker/WSL、完整后端 active suite、Playwright、导出/离线真实运行和远程 CI 仍需独立当前 SHA 证据。
+
+### 2026-09-11 深度学习算子可选依赖注册修复
+
+- 当前 Python 3.11 验证环境未安装可选 `torch`；原 `dl_operators` 在导入失败时完全跳过注册，导致完整算子元数据测试看不到 `dl` 类别和三个标准算子。
+- 保持运行时依赖边界：无 `torch` 时仍注册 `mlp_classifier`、`mlp_regressor`、`cnn1d_classifier` 的输入/输出/参数元数据，但执行路径 fail closed 返回 `TORCH_NOT_INSTALLED`，不生成伪造模型。
+- 验证：算子注册、深度学习元数据和扩展算子聚焦回归 **9 passed**。完整后端首批剩余的登录错误属于历史测试共享进程级限流状态，生产限流语义未修改。
