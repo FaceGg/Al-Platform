@@ -111,3 +111,8 @@
 
 - 新建 AutoML 页面已移除“最大试验次数”；前端请求只发送 `search_strength`，后端在新合同中按强度派生执行预算。前端 `AutoMLPage` 聚焦 **10 passed**，后端 AutoML 跟踪/API **64 passed、10 subtests**。
 - 该修复不关闭 `AUTO-01`：完整后端、浏览器 AutoML E2E、真实 worker/broker 和远程 CI 仍需当前 SHA 收据。
+
+## 2026-09-11 通用任务状态动作矩阵
+
+- 任务列表已补齐回传、验收、完成、归档、恢复和重开动作，均通过统一 transition API 提交 `task_revision`，新增返回任务验收动作的前端回归。
+- `DataAnnotationPage` 聚焦测试 **42 passed**，生产构建和源码门禁通过；该结果不替代真实标注员门户、broker/recovery、浏览器 E2E 和远程 CI 收据。

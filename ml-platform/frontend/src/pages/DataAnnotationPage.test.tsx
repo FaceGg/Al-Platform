@@ -210,6 +210,36 @@ describe("DataAnnotationPage", () => {
     expect(within(center).getByText("operation-1")).toBeInTheDocument();
   });
 
+  it("shows the acceptance action for returned generic tasks", async () => {
+    const genericTask = {
+      id: "returned-task-1",
+      project_id: "project-1",
+      mode: "manual",
+      status: "returned_pending_acceptance",
+      task_revision: 3,
+      sample_scope: { kind: "all" },
+    };
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "通用数据项目", project_role: "owner" }] } });
+      if (url === "/annotation-tasks") return Promise.resolve({ data: { items: [genericTask], total: 1, next_cursor: null } });
+      return Promise.resolve({ data: { items: [] } });
+    });
+    post.mockResolvedValue({ data: { ...genericTask, status: "accepted", task_revision: 4 } });
+
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?view=tasks&projectId=project-1"]}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    const genericList = await screen.findByRole("region", { name: "通用任务列表" });
+    fireEvent.click(within(genericList).getByRole("button", { name: "验收" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/annotation-tasks/returned-task-1/transition",
+      { task_revision: 3, action: "accept", preview_id: undefined },
+    ));
+  });
+
   it("loads the next cursor page in the generic operation center", async () => {
     get.mockImplementation((url: string, config?: { params?: { cursor?: string } }) => {
       if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "通用数据项目", project_role: "owner" }] } });

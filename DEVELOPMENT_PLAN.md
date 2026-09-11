@@ -332,3 +332,9 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 新建 AutoML 任务页面移除“最大试验次数”输入和状态，提交请求不再携带 `max_trials`；“搜索强度”仍显示各档默认预算（轻度 10、标准 30、高度 80、Ultra 200）。
 - 后端新搜索合同在省略 `max_trials` 时按标准化 `search_strength` 派生 `max_trials`，并以派生值写入任务合同；旧客户端显式传入该字段仍兼容，但新建页面不再允许用户直接控制。
 - TDD RED/GREEN 验证：前端 `AutoMLPage` **10 passed、19 skipped**；后端 `test_automl_tracking.py` **64 passed、50 warnings、10 subtests**。完整后端此前在环境补齐后暴露历史失败，未将其改写为全量通过。
+
+## 23. 2026-09-11 通用任务操作矩阵补齐
+
+- 在任务列表补齐通用状态动作：`awaiting_return -> return`、`returned_pending_acceptance -> accept`、`accepted -> complete/archive`、`completed -> archive/reopen`、`cancelled -> archive`、`archived -> restore`；所有动作继续复用服务端 revision transition API。
+- 新增 `returned_pending_acceptance` 验收动作回归，先 RED 后 GREEN；标注页面测试 **42 passed**，生产构建、Python 编译和 `git diff --check` 通过。
+- Task 5 仍不提升为平台验收完成：真实 broker、重启恢复、Docker/WSL、Playwright、完整后端 active suite 和远程 CI 仍缺当前 SHA 收据。

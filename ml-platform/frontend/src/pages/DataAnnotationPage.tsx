@@ -677,7 +677,10 @@ export default function DataAnnotationPage() {
     }
   };
 
-  const transitionGenericTask = async (task: AnnotationTask, action: "publish" | "pause" | "resume" | "cancel") => {
+  const transitionGenericTask = async (
+    task: AnnotationTask,
+    action: "publish" | "pause" | "resume" | "cancel" | "return" | "accept" | "complete" | "archive" | "restore" | "reopen",
+  ) => {
     try {
       await transitionAnnotationTask(task.id, task.task_revision, action);
       await refreshGenericTaskData();
@@ -1301,6 +1304,12 @@ export default function DataAnnotationPage() {
                 {["preview_ready", "executing", "awaiting_annotation", "in_progress", "awaiting_return"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "pause"); }}>暂停</button>}
                 {task.status === "paused" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "resume"); }}>恢复</button>}
                 {["draft", "preview_ready", "executing", "awaiting_annotation", "in_progress", "awaiting_return", "paused", "failed", "needs_review"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "cancel"); }}>取消</button>}
+                {task.status === "awaiting_return" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "return"); }}>提交回传</button>}
+                {task.status === "returned_pending_acceptance" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "accept"); }}>验收</button>}
+                {task.status === "accepted" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "complete"); }}>完成</button>}
+                {["accepted", "completed", "cancelled"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "archive"); }}>归档</button>}
+                {task.status === "completed" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "reopen"); }}>重开</button>}
+                {task.status === "archived" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "restore"); }}>恢复归档</button>}
               </div> },
             ]}
           />
