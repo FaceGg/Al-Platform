@@ -485,5 +485,5 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 
 - 前端生产构建通过：`npm run build`，TypeScript 检查和 Vite production bundle 均成功。
 - 当前已有浏览器用例 `e2e/automl-multioutput.spec.ts` 在 Chromium 通过 **1 passed**，验证浏览器提交多输出 AutoML 合同及搜索强度字段。
-- 验收矩阵要求的 `e2e/generic-platform-acceptance.spec.ts` 当前不存在；执行对应命令得到 `No tests found`，因此不记为 E2E 通过，并将其作为 Task 14 当前缺口保留。
-- 状态边界：Task 12/14 仍缺通用平台完整浏览器流程、当前 SHA 收据重生成、真实 Compose/broker/recovery 和远程 CI；Task 5–14 继续 `in_progress`。
+- 已新增验收矩阵要求的 `e2e/generic-platform-acceptance.spec.ts`，以现有真实登录流程和通用 API route mock 验证任务列表、预览完成后的执行解锁、`execute -> return -> accept` 状态动作，以及页面不出现点焊业务入口；Chromium 命令结果为 **1 passed**。
+- 状态边界：该用例补齐通用浏览器局部证据，但 Task 12/14 仍缺当前 SHA 收据重生成、真实 Compose/broker/recovery、完整后端 active suite 和远程 CI；Task 5–14 继续 `in_progress`。
