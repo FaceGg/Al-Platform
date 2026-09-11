@@ -389,3 +389,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 当前 Python 3.11 验证环境未安装可选 `torch`；原 `dl_operators` 在导入失败时完全跳过注册，导致完整算子元数据测试看不到 `dl` 类别和三个标准算子。
 - 保持运行时依赖边界：无 `torch` 时仍注册 `mlp_classifier`、`mlp_regressor`、`cnn1d_classifier` 的输入/输出/参数元数据，但执行路径 fail closed 返回 `TORCH_NOT_INSTALLED`，不生成伪造模型。
 - 验证：算子注册、深度学习元数据和扩展算子聚焦回归 **9 passed**。完整后端首批剩余的登录错误属于历史测试共享进程级限流状态，生产限流语义未修改。
+
+### 2026-09-11 当前 SHA 门禁复核
+
+- 当前发布 SHA `7e6858591d0b3b339a8cf94cef69eebf874f3555` 已推送到 `origin/general-automl-annotation-20260902`，远端 SHA 一致；`README.md` 仍未暂存。
+- 前端全量 Vitest：**57 个文件通过、280 passed、19 skipped**；前端生产构建、后端 `compileall` 和 `git diff --check` 通过。
+- 后端完整 active suite 使用 Python 3.11 执行 `pytest -q --maxfail=20`，在 **187 passed、9 failed、11 errors** 后停止。失败集中于历史 API 测试重复登录触发共享进程级限流，以及首次暴露的可选 Torch 算子注册缺口；Torch 元数据缺口已修复并有 **10 passed** 当前 SHA 回归，认证测试隔离问题尚未修改生产限流语义。
+- 因完整后端 active suite、真实 broker/重启恢复、Docker/WSL、Playwright、真实导出/离线运行和远程 CI 仍未全部通过，Task 5–14 继续保持 `in_progress`。
