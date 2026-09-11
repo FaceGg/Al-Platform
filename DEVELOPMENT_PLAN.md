@@ -542,3 +542,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 当前前端聚焦验证：`src/weekAcceptance.test.ts`、`DataAnnotationPage.test.tsx`、`annotationTasks.test.ts`、`models.test.ts` 共 **4 个测试文件、54 passed**；`npm run build` 通过。
 - 当前 `temp_test/generic-platform-acceptance/receipts/` 仍为旧 SHA `5ec0d947cb372d2c121c61dd5513e5261c9a64db` 的收据，不能绑定当前 HEAD；完整 19 项收据必须在最终不再变更的 SHA 上重新执行生成。
 - 状态边界：本轮只增加当前 SHA 的前端回归证据，不提升 Task 1–14 状态。Task 5–14 以及 Task 14 发布门禁继续 `in_progress`，真实 broker/recovery、Docker/WSL、完整后端 active suite、门户 E2E、导出/离线和远程 CI 仍未闭环。
+
+## 2026-09-11 当前 SHA API-01 收据增量
+
+- 当前 HEAD：`439793b7c75399e848920f5ba61e9181714568d8`。
+- 执行 `tests/test_annotation_task_state_api.py`：**10 passed、2 warnings**（Python 3.11.9 环境）。
+- 已重新写入 `temp_test/generic-platform-acceptance/receipts/API-01.json`，收据绑定当前完整 SHA；其余 18 项仍绑定旧 SHA 或尚未重新执行，验收 manifest 继续 fail-closed。
+- 该收据支持通用任务 API 分页和状态错误合同的当前 SHA 增量证据，但不关闭 Task 5、Task 14 或整体 Task 1–14。
