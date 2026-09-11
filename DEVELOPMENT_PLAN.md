@@ -354,6 +354,6 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 
 ## 26. 2026-09-11 通用平台 19 项合同收据
 
-- 在当前 SHA `3e4e35b62574163a9942385d4dd164facec0ae9f` 上，为验收矩阵 19 个 ID 写入实际聚焦测试、前端 E2E 和导出/离线命令的 receipts。
-- `validate_acceptance_manifest` 校验结果：**19 receipts valid**，全部绑定当前 SHA 且状态为 `passed`；收据目录为本地 `temp_test/generic-platform-acceptance/receipts/`。
+- 为验收矩阵 19 个 ID 写入实际聚焦测试、前端 E2E 和导出/离线命令的 receipts；文档提交完成后按最终发布 SHA 重新绑定。
+- 最近一次 `validate_acceptance_manifest` 校验结果：**19 receipts valid**，全部绑定当时发布 SHA 且状态为 `passed`；收据目录为本地 `temp_test/generic-platform-acceptance/receipts/`。后续提交会使旧绑定失效，必须重新生成。
 - 该结果只证明验收矩阵所列 19 个合同的本地收据完整，不替代完整后端 active suite、Docker/WSL、真实 broker/重启恢复、远程 CI 和真实部署导出运行。平台 Task 5–14 仍保持 `in_progress`，未生成整体完成结论。
