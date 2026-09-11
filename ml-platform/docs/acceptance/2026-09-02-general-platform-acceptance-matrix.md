@@ -142,3 +142,9 @@
 
 - 当前分支 `4def21a` 的 Python 3.11.9 聚焦回归：`test_annotation_concurrency.py`、`test_annotation_return_acceptance.py`、`test_annotator_auth.py`、`test_portal_internal_api.py` 共 **22 passed、2 warnings**。
 - 该结果仅证明本地 API/服务合同；Docker、Redis/Celery、进程重启恢复、门户浏览器验收和远程 CI 未执行，因此 Task 8/9 与整体矩阵继续保持 `in_progress`。
+
+## 2026-09-11 目标分支 Task 5/异步组合复核
+
+- 当前分支 `general-automl-annotation-20260902`、HEAD `ac56fd7` 工作区干净；使用 Python 3.11 环境执行 Task 5/异步组合：**66 passed、4 warnings**。
+- 覆盖 `test_annotation_task_state.py`、`test_annotation_task_state_api.py` 和 `test_async_operation_contract.py`，包括执行 DurableOperation、结果 cursor 分页、local/Celery 派发合同及恢复回归。
+- 该结果是当前分支聚焦证据，不生成或更新 19 项 `passed` 收据；真实 Redis/Celery、进程重启恢复、Docker/WSL、完整后端 active suite、浏览器和远程 CI 仍未形成当前 SHA 的完整证据，矩阵继续 `in_progress`。

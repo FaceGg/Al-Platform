@@ -557,3 +557,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 修复：项目/模式变更时先清理 `genericVersions`、`genericModelArtifacts` 及对应选择值；创建前重新校验数据版本属于当前项目、自动模式模型制品存在于当前项目列表；补齐页面测试的 `formatApiError` mock。
 - 验证：`DataAnnotationPage.test.tsx`、`models.test.ts`、`weekAcceptance.test.ts` 共 **54 passed**；`npm run build` 和 `git diff --check` 通过。
 - 状态边界：该修复强化 Task 12 的跨项目资源授权边界，不提升 Task 1–14 整体验收状态；当前 SHA 收据、真实 broker/recovery、完整后端、门户 E2E、Docker/WSL、导出/离线和远程 CI 仍待闭环。
+
+## 2026-09-11 目标分支 Task 5/异步组合复核
+
+- 当前工作树：`general-automl-annotation-20260902`，HEAD `ac56fd7`，工作区干净。
+- 使用 `ml-platform/backend/.venv311/Scripts/python.exe` 执行 `tests/test_annotation_task_state.py tests/test_annotation_task_state_api.py tests/test_async_operation_contract.py -q`，结果为 **66 passed、4 warnings**。
+- 本次结果覆盖通用任务状态/API、执行 DurableOperation 与结果 cursor 分页、local/Celery 异步合同和恢复回归；属于当前分支聚焦证据。
+- 状态边界：Task 5 仍为 `in_progress`。真实 Redis/Celery broker、进程重启后的 recovery claim、Docker/WSL 持续运行、完整浏览器链路、完整后端 active suite、当前 SHA 全量收据和远程 CI 仍未形成通过证据；Task 6–14 继续按计划推进。
