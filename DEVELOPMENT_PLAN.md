@@ -304,9 +304,25 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 验证方式：`ml-platform/backend` 执行 `tests/test_security_contract.py tests/test_api_users.py`，结果 **22 passed、8 warnings**；`git diff --check` 通过。
 - 状态边界：本次只修复 CSRF 会话识别范围，不改变 Bearer Token、门户 Cookie、Task 1–4 或 Task 5–14 状态；后端警告来自现有依赖和测试密钥配置，未作为本次修复范围处理。
 
+## 20. 2026-09-11 前端 5175 来源修复检查点
+
+- 问题现象：前端实际由 Vite 运行在 `http://127.0.0.1:5175`，登录请求返回 `CORS_ORIGIN_FORBIDDEN: request origin is not allowed`。
+- 根因：本地来源扩展仅覆盖默认端口 `5173` 及一次回退端口 `5174`，未覆盖当前 Vite 进程因端口占用选择的 `5175`。
+- 解决方法：本地模式在保持 loopback 主机白名单的前提下增加 `5175`，生产模式仍使用精确来源集合。
+- 验证方式：`tests/test_security_contract.py tests/test_app.py` 结果 **16 passed、1 warning**；运行态请求使用 `Origin: http://127.0.0.1:5175` 登录返回 HTTP `200`，并返回匹配的 `Access-Control-Allow-Origin`；`git diff --check` 通过。
+- 状态边界：本次只扩展本地受控来源，不使用通配符，不改变认证、CSRF、Task 1–4 或 Task 5–14 状态。
+
 ## 20. 2026-09-11 Task 5 本地预览派发修复
 
 - 按 TDD 新增 local runtime 回归，先复现默认 `task_backend=local` 下预览派发返回空引用、预览停留 `queued` 的缺口。
 - 修复 `annotation_preview_tasks.enqueue_annotation_preview`：local 模式通过 daemon thread 复用 `execute_annotation_preview.run`，Celery 模式保持 `.delay()`，并返回稳定的本地派发引用。
 - 独立 SQLite 会话回归确认 durable operation 完成、预览进度为 100、任务进入 `preview_ready`；随后 Task 5/6/7/8/13 聚焦套件为 **88 passed、10 warnings**。
 - 用户本地 `README.md` 未纳入本轮改动。Task 5–14 继续为 `in_progress`；真实 broker、进程重启恢复、完整操作中心、Docker/WSL、Playwright、导出/离线及远程 CI 仍需后续收据。
+
+## 21. 2026-09-11 当前 SHA 发布复核
+
+- 提交 `cd7cf07146cea6760c6af3b24a6800a917fef0dc` 已 fast-forward 推送到 `origin/general-automl-annotation-20260902`，远端 `ls-remote` 已核对为同一 SHA。
+- 当前 SHA 验证：Task 5/6/7/8/13 后端聚焦 **88 passed、10 warnings**；安全/用户认证 **22 passed、8 warnings**；前端全量 **57 files passed、279 passed、19 skipped**；生产构建、Python `compileall`、`git diff --check` 通过；Alembic upgrade 后 `alembic check` 返回无新升级操作。
+- 工作树只保留用户本地 `README.md` 未暂存修改；代码和开发计划已提交，README 未进入提交。
+- 发布边界仍保持 fail-closed：未具备 Docker/WSL、真实 Redis/Celery broker、进程重启恢复、Playwright、导出/离线真实运行、完整后端 active suite 和远程 CI 的当前 SHA 通过收据，因此 Task 5–14 继续为 `in_progress`，不能宣称平台整体验收完成。
+- 同一工作树执行 `run_suite.py --week 17`，结果 **21 passed、0 failed**；该聚合覆盖已登记模块，不替代完整后端 active suite、真实 broker、Docker/WSL 或远程 CI 门禁。
