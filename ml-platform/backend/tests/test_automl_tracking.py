@@ -1408,7 +1408,7 @@ class TestAutoMLAPI(unittest.TestCase):
             "task": "classification",
             "algorithm_ids": ["gbdt", "random_forest"],
             "search_method": "bayesian",
-            "max_trials": 20,
+            "search_strength": "thorough",
             "time_budget": 3600,
         }, headers={
             **self.headers,
@@ -1424,10 +1424,11 @@ class TestAutoMLAPI(unittest.TestCase):
             self.assertEqual(job.params["search_contract"], "optuna_v1")
             self.assertEqual(job.params["algorithm_ids"], ["gbdt", "random_forest"])
             self.assertEqual(job.params["search_method"], "bayesian")
-            self.assertEqual(job.params["max_trials"], 20)
+            self.assertEqual(job.params["max_trials"], 80)
+            self.assertEqual(job.params["search_strength"], "thorough")
             self.assertEqual(job.params["time_budget"], 3600)
 
-    def test_new_search_rejects_trial_budget_smaller_than_selected_family_count(self):
+    def test_new_search_strength_budget_covers_selected_family_count(self):
         response = self.client.post("/api/training/automl/run", json={
             "project_id": str(self.project_id),
             "experiment_id": str(self.experiment_id),
@@ -1436,7 +1437,7 @@ class TestAutoMLAPI(unittest.TestCase):
             "task": "classification",
             "algorithm_ids": ["gbdt", "random_forest", "extra_trees", "hist_gradient_boosting", "lightgbm", "xgboost"],
             "search_method": "bayesian",
-            "max_trials": 5,
+            "search_strength": "light",
             "time_budget": 3600,
         }, headers={
             **self.headers,
@@ -1444,9 +1445,13 @@ class TestAutoMLAPI(unittest.TestCase):
             "Idempotency-Key": f"automl-budget-families-{uuid.uuid4().hex}",
         })
 
-        self.assertEqual(response.status_code, 400, response.text)
-        self.assertEqual(response.json()["detail"]["code"], "AUTOML_SEARCH_CONFIG_INVALID")
-        self.assertEqual(self.dispatcher.enqueued, [])
+        self.assertEqual(response.status_code, 202, response.text)
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(
+                TrainingJob.id == uuid.UUID(response.json()["job_id"])
+            ).one()
+            self.assertEqual(job.params["max_trials"], 10)
+            self.assertEqual(job.params["search_strength"], "light")
 
     def test_new_search_request_requires_request_id_and_idempotency_key(self):
         payload = {

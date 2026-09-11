@@ -33,6 +33,7 @@ from app.services.automl_execution import (
 )
 from app.services.automl_search import (
     CANONICAL_SEARCH_TIME_BUDGETS,
+    SEARCH_STRENGTH_TRIALS,
     SEARCH_METHODS,
     normalize_search_controls,
     normalize_task_type,
@@ -591,7 +592,7 @@ def start_automl(
     )
     if experiment is None:
         raise HTTPException(404, _error("EXPERIMENT_NOT_FOUND", "Experiment not found"))
-    new_fields = {"algorithm_ids", "search_method", "max_trials"}
+    new_fields = {"algorithm_ids", "search_method"}
     uses_new_contract = bool(data.model_fields_set & new_fields)
     request_id = getattr(request.state, "request_id", None)
     normalized_request_id = str(x_request_id or "").strip() or None
@@ -659,17 +660,13 @@ def start_automl(
                     raise ValueError("All AutoML search fields are required")
                 if "candidate_ids" in data.model_fields_set:
                     raise ValueError("candidate_ids cannot be combined with algorithm_ids")
-                if data.search_method not in SEARCH_METHODS or data.max_trials is None:
+                if data.search_method not in SEARCH_METHODS:
                     raise ValueError("Invalid AutoML search method")
                 if data.time_budget < 60:
                     raise ValueError("AutoML search time budget must be at least 60 seconds")
                 resolved_algorithm_ids = [
                     family.id for family in resolve_algorithm_families(data.algorithm_ids)
                 ]
-                if data.max_trials < len(resolved_algorithm_ids):
-                    raise ValueError(
-                        "max_trials must be at least the number of selected algorithm families",
-                    )
             else:
                 resolve_candidates(task_type, data.candidate_ids)
             evaluation = normalize_evaluation_config(
@@ -681,6 +678,15 @@ def start_automl(
                 time_budget=data.time_budget,
                 class_weight=data.class_weight,
             )
+            requested_max_trials = int(
+                data.max_trials
+                if data.max_trials is not None
+                else SEARCH_STRENGTH_TRIALS[controls["strength"]]
+            )
+            if uses_new_contract and requested_max_trials < len(resolved_algorithm_ids or []):
+                raise ValueError(
+                    "search strength budget must cover the selected algorithm families",
+                )
         except ValueError as error:
             code = "AUTOML_SEARCH_CONFIG_INVALID" if uses_new_contract else "AUTOML_CONFIG_INVALID"
             raise HTTPException(400, _error(code, str(error))) from error
@@ -723,7 +729,7 @@ def start_automl(
                         "search_contract": "optuna_v1",
                         "algorithm_ids": resolved_algorithm_ids,
                         "search_method": data.search_method,
-                        "max_trials": data.max_trials,
+                        "max_trials": requested_max_trials,
                     }
                     if uses_new_contract
                     else {"candidate_ids": data.candidate_ids}

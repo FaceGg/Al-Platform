@@ -682,7 +682,6 @@ describe("AutoMLPage", () => {
         input_columns: ["feature", "force"],
         algorithm_ids: AUTOML_ALGORITHM_IDS,
         search_method: "bayesian",
-        max_trials: 30,
         search_strength: "balanced",
         time_budget: 3600,
         class_weight: true,
@@ -697,20 +696,16 @@ describe("AutoMLPage", () => {
       }),
     ));
     const payload = api.post.mock.calls[0][1];
+    expect(payload).not.toHaveProperty("max_trials");
     expect(payload).not.toHaveProperty("target_columns");
   });
 
-  it("restores the planned max-trials default when the input is cleared", async () => {
+  it("does not expose a user-editable maximum trial count", async () => {
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
-    const maxTrials = screen.getByRole("spinbutton", { name: "最大试验次数" });
-    expect(maxTrials).toHaveValue("30");
-
-    fireEvent.change(maxTrials, { target: { value: "" } });
-    fireEvent.blur(maxTrials);
-
-    await waitFor(() => expect(maxTrials).toHaveValue("30"));
+    expect(screen.queryByText("最大试验次数")).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "最大试验次数" })).not.toBeInTheDocument();
   });
 
   it("reuses the idempotency key when an unchanged AutoML request is retried", async () => {

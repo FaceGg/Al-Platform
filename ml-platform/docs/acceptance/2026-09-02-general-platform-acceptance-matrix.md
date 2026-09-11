@@ -99,3 +99,15 @@
 - 后端重新执行未启动：项目 `.venv` 的 `python.exe` 目标解释器已不存在，`pyvenv.cfg` 指向 `C:\Users\17723\AppData\Local\Programs\Python\Python314\python.exe`。该项标记为环境阻断，不能写成后端通过或失败。
 - `API-01`、`CLU-02`、`REL-01` 及 Task 5 相关矩阵项仍不能关闭。缺口包括真实 broker/Celery、重启恢复、原子 recovery claim、完整操作矩阵、配置 revision/旧预览失效、前端结果/统计消费与 cursor 加载，以及当前 SHA 的 Docker/Playwright/导出/离线/远程 CI 收据。
 - 本次文档整理不生成 `passed` 收据；推送分支只保存当前实现和审计状态，后续必须修复 Python 环境、形成干净 SHA 后重新执行 required gates。
+
+## 2026-09-11 当前 SHA 复核
+
+- 当前发布 SHA：`801f2a44e3802d6ccd3317026e63d730cf0c3869`，已与远端分支一致；工作树仅有用户本地 `README.md` 未暂存修改。
+- 当前 SHA 的可复核结果：Task 5/6/7/8/13 聚焦后端 **88 passed、10 warnings**；安全/用户认证 **22 passed、8 warnings**；Week 17 聚合 **21 passed、0 failed**；前端全量 **57 files passed、279 passed、19 skipped**；生产构建、Python 编译、迁移 upgrade/check 和 `git diff --check` 通过。
+- 本轮补齐了 local preview dispatch：local 模式复用 durable preview worker，独立 SQLite 回归确认 `preview_ready` 和 100% progress；Celery 路径未改变。
+- 未形成以下当前 SHA 收据：真实 Redis/Celery broker、进程重启恢复、Docker/WSL、Playwright、导出包/离线真实运行、完整后端 active suite 和远程 CI。Docker 命令在当前 Windows 宿主不可用，因此这些项目保持 `unexecuted` 或 `in_progress`，矩阵总体保持 `in_progress`。
+
+## 2026-09-11 AutoML 搜索强度控制修复
+
+- 新建 AutoML 页面已移除“最大试验次数”；前端请求只发送 `search_strength`，后端在新合同中按强度派生执行预算。前端 `AutoMLPage` 聚焦 **10 passed**，后端 AutoML 跟踪/API **64 passed、10 subtests**。
+- 该修复不关闭 `AUTO-01`：完整后端、浏览器 AutoML E2E、真实 worker/broker 和远程 CI 仍需当前 SHA 收据。

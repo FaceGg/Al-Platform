@@ -18,7 +18,6 @@ interface AutoMLRunPayloadBase {
   input_columns: string[];
   algorithm_ids: string[];
   search_method: AutoMLSearchMethod;
-  max_trials: number;
   time_budget: AutoMLTimeBudget;
   search_strength: AutoMLSearchStrength;
   class_weight: boolean;

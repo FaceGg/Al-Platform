@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
+import { App as AntApp, Card, Select, Button, Input, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
 import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, StopOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
@@ -54,13 +54,6 @@ const AUTOML_STRENGTH_OPTIONS: Array<{ value: AutoMLSearchStrength; label: strin
   { value: "thorough", label: "高度（80 次）" },
   { value: "maximum", label: "Ultra（200 次）" },
 ];
-const AUTOML_STRENGTH_DEFAULT_TRIALS: Record<AutoMLSearchStrength, number> = {
-  light: 10,
-  balanced: 30,
-  thorough: 80,
-  maximum: 200,
-};
-
 const AUTOML_TIME_BUDGET_OPTIONS: Array<{ value: AutoMLTimeBudget; label: string }> = [
   { value: 1800, label: "30 分钟" },
   { value: 3600, label: "60 分钟（标准）" },
@@ -149,7 +142,6 @@ export default function AutoMLPage() {
   const [taskType, setTaskType] = useState<AutoMLTaskType>("classification");
   const [algorithmIds, setAlgorithmIds] = useState<string[]>(() => [...AUTOML_ALGORITHM_IDS]);
   const [searchMethod, setSearchMethod] = useState<AutoMLSearchMethod>("bayesian");
-  const [maxTrials, setMaxTrials] = useState(30);
   const [searchStrength, setSearchStrength] = useState<AutoMLSearchStrength>("balanced");
   const [timeBudget, setTimeBudget] = useState<AutoMLTimeBudget>(3600);
   const [classWeight, setClassWeight] = useState(true);
@@ -357,7 +349,6 @@ export default function AutoMLPage() {
 
   const handleSearchStrengthChange = (strength: AutoMLSearchStrength) => {
     setSearchStrength(strength);
-    setMaxTrials(AUTOML_STRENGTH_DEFAULT_TRIALS[strength]);
   };
 
   const viewModelingTask = async (task: ModelingTask) => {
@@ -455,7 +446,6 @@ export default function AutoMLPage() {
         input_columns: inputColumns,
         algorithm_ids: algorithmIds,
         search_method: searchMethod,
-        max_trials: maxTrials,
         time_budget: timeBudget,
         search_strength: searchStrength,
         class_weight: classWeight,
@@ -786,8 +776,6 @@ export default function AutoMLPage() {
           <Col xs={24} sm={4}><Text strong>搜索方法</Text>
             <Select aria-label="搜索方法" style={{ width: "100%", marginTop: 4 }} value={searchMethod} onChange={setSearchMethod}
               options={AUTOML_SEARCH_OPTIONS} /></Col>
-          <Col xs={12} sm={3}><Text strong>最大试验次数</Text>
-            <InputNumber aria-label="最大试验次数" min={5} max={200} value={maxTrials} onChange={(value) => setMaxTrials(value ?? AUTOML_STRENGTH_DEFAULT_TRIALS.balanced)} style={{ width: "100%", marginTop: 4 }} /></Col>
           <Col xs={12} sm={3}><Text strong>搜索强度</Text>
             <Select aria-label="搜索强度" style={{ width: "100%", marginTop: 4 }} value={searchStrength} onChange={handleSearchStrengthChange}
               options={AUTOML_STRENGTH_OPTIONS} /></Col>

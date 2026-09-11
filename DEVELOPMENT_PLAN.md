@@ -326,3 +326,9 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 工作树只保留用户本地 `README.md` 未暂存修改；代码和开发计划已提交，README 未进入提交。
 - 发布边界仍保持 fail-closed：未具备 Docker/WSL、真实 Redis/Celery broker、进程重启恢复、Playwright、导出/离线真实运行、完整后端 active suite 和远程 CI 的当前 SHA 通过收据，因此 Task 5–14 继续为 `in_progress`，不能宣称平台整体验收完成。
 - 同一工作树执行 `run_suite.py --week 17`，结果 **21 passed、0 failed**；该聚合覆盖已登记模块，不替代完整后端 active suite、真实 broker、Docker/WSL 或远程 CI 门禁。
+
+## 22. 2026-09-11 AutoML 搜索强度控制实验预算
+
+- 新建 AutoML 任务页面移除“最大试验次数”输入和状态，提交请求不再携带 `max_trials`；“搜索强度”仍显示各档默认预算（轻度 10、标准 30、高度 80、Ultra 200）。
+- 后端新搜索合同在省略 `max_trials` 时按标准化 `search_strength` 派生 `max_trials`，并以派生值写入任务合同；旧客户端显式传入该字段仍兼容，但新建页面不再允许用户直接控制。
+- TDD RED/GREEN 验证：前端 `AutoMLPage` **10 passed、19 skipped**；后端 `test_automl_tracking.py` **64 passed、50 warnings、10 subtests**。完整后端此前在环境补齐后暴露历史失败，未将其改写为全量通过。
