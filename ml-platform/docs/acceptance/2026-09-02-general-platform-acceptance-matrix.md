@@ -121,3 +121,13 @@
 
 - 发布 SHA `3ecea9a61a4ae344322189feee001019c2f072e2` 的前端全量：**57 个文件通过、280 passed、19 skipped**。
 - 前端全量绿灯不关闭 `AUTO-02` 或 `REL-01`；浏览器 E2E、真实 broker/recovery、完整后端和远程 CI 仍需独立收据。
+
+## 2026-09-11 AutoML 浏览器证据
+
+- 执行 `npm run test:e2e -- e2e/automl-multioutput.spec.ts`，Chromium **1 passed**；验证登录、项目/数据集选择、多目标配置、输入列过滤和 AutoML 请求合同。
+- AUTO-02 仍保持 `in_progress`，因为当前结果尚未写入统一 SHA 收据目录，且真实远程验收栈与完整发布门禁仍未执行。
+
+## 2026-09-11 导出与离线推理聚焦复核
+
+- 执行 `pytest tests/test_model_export_contract.py tests/test_model_exports_api.py tests/test_offline_inference_contract.py -q`，结果 **9 passed、2 warnings**。
+- EXP-01/INF-01 仍不生成 `passed` 收据：当前命令结果尚未写入统一 receipts，且未完成真实部署环境的导出包下载、checksum/SBOM 和离线 CLI 运行验收。

@@ -344,3 +344,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 在发布 SHA `3ecea9a61a4ae344322189feee001019c2f072e2` 上重跑前端全量套件：**57 个测试文件通过、280 passed、19 skipped**。
 - 该结果覆盖通用任务动作矩阵和 AutoML 搜索强度表单后的前端回归；生产构建及此前后端聚焦证据仍有效。
 - README 仍为唯一用户本地未暂存修改；后端完整 active suite、Docker/真实 broker、恢复、Playwright、导出/离线和远程 CI 仍未形成完整当前 SHA 收据。
+
+## 25. 2026-09-11 AutoML 浏览器验收
+
+- 在当前发布分支执行 `npm run test:e2e -- e2e/automl-multioutput.spec.ts`，Chromium **1 passed**；浏览器实际提交多输出 AutoML 合同并验证搜索强度请求字段。
+- 该结果补齐 AUTO-02 的本地当前环境浏览器证据，但不替代真实远程验收栈、完整后端 active suite、Docker/WSL、broker/recovery 和远程 CI。
+
+- 同一当前工作树执行模型导出、导出 API 和离线推理聚焦套件，结果 **9 passed、2 warnings**；该结果验证合同和本地运行路径，但尚未生成统一 receipts 目录中的 SHA 绑定收据。
