@@ -535,3 +535,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 自动任务通用 setup 改为从项目模型制品下拉选择 `model_artifact_id`，不再允许手填任意字符串；切换项目或非自动模式时清理模型制品列表，提交仍只包含 `model_artifact_id` 与 `search_strength`，不恢复 `max_trials`。
 - TDD/验证：新增模型 client 回归，自动任务页面回归覆盖真实列表加载和选择；`DataAnnotationPage.test.tsx` 与 `models.test.ts` 合计 **45 passed**；`npm run build` 通过。
 - 状态边界：该项降低了真实创建请求因 artifact UUID/项目归属错误被拒绝的风险，但 Task 12 仍缺门户完整浏览器链路和当前 SHA 发布收据；Task 5–14 继续 `in_progress`。
+
+## 2026-09-11 当前 HEAD 前端回归复核
+
+- 当前 HEAD：`4ff120acd0c319532dc34b5b1f7c5cc994d30dc8`，与远端分支一致；该 HEAD 同时包含用户维护的仓库治理文件变更，本轮未修改或覆盖。
+- 当前前端聚焦验证：`src/weekAcceptance.test.ts`、`DataAnnotationPage.test.tsx`、`annotationTasks.test.ts`、`models.test.ts` 共 **4 个测试文件、54 passed**；`npm run build` 通过。
+- 当前 `temp_test/generic-platform-acceptance/receipts/` 仍为旧 SHA `5ec0d947cb372d2c121c61dd5513e5261c9a64db` 的收据，不能绑定当前 HEAD；完整 19 项收据必须在最终不再变更的 SHA 上重新执行生成。
+- 状态边界：本轮只增加当前 SHA 的前端回归证据，不提升 Task 1–14 状态。Task 5–14 以及 Task 14 发布门禁继续 `in_progress`，真实 broker/recovery、Docker/WSL、完整后端 active suite、门户 E2E、导出/离线和远程 CI 仍未闭环。
