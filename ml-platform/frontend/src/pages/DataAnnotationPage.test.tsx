@@ -980,7 +980,7 @@ describe("DataAnnotationPage", () => {
       <MemoryRouter
         initialEntries={[
           "/automl",
-          "/data-annotation?view=setup&mode=automatic&projectId=project-1&datasetId=dataset-report",
+          "/data-annotation?type=spot-weld&view=setup&mode=automatic&projectId=project-1&datasetId=dataset-report",
         ]}
         initialIndex={1}
         future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
@@ -1102,7 +1102,7 @@ describe("DataAnnotationPage", () => {
       return Promise.resolve({ data: {} });
     });
     render(
-      <MemoryRouter initialEntries={["/data-annotation?view=setup&projectId=project-1&mode=automatic"]}>
+        <MemoryRouter initialEntries={["/data-annotation?type=spot-weld&view=setup&projectId=project-1&mode=automatic"]}>
         <AntApp><DataAnnotationPage /></AntApp>
       </MemoryRouter>,
     );

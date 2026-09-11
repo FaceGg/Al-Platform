@@ -282,7 +282,9 @@ export default function DataAnnotationPage() {
   const [previewingClusters, setPreviewingClusters] = useState(false);
   const clusterChartRef = useRef<HTMLDivElement>(null);
   const [workspaceMode, setWorkspaceMode] = useState(Boolean(searchParams.get("runId")));
-  const [genericSetupMode, setGenericSetupMode] = useState(false);
+  const [genericSetupMode, setGenericSetupMode] = useState(() => (
+    searchParams.get("view") === "setup" && searchParams.get("type") !== "spot-weld"
+  ));
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const activeContextRef = useRef({ projectId, runId });
   const detailRequestId = useRef(0);

@@ -521,3 +521,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 验证：通用创建页面与 API client **46 passed**；周验收台账与 API client **9 passed**；后端状态/API 聚焦 **49 passed、4 warnings**；前端生产构建通过。
 - 全量 Vitest 首次执行为 **53 个文件通过、8 个既有测试超时、276 passed、19 skipped**，新增台账缺口已修复；APIMarketplace 和 AutoML 超时单独复跑分别通过。全量运行仍需在稳定资源条件下重跑，不能记为完整通过。
 - 状态边界：Task 12 及 Task 5–14 继续 `in_progress`。新增提交会使先前绑定旧 SHA 的本地收据失效；当前 SHA 的完整 19 项收据、真实 Compose/broker/recovery、后端全量和远程 CI 仍未闭环。
+
+## 2026-09-11 Task 1/12 通用 setup URL 边界修正
+
+- 发现：通用 setup 通过浏览器刷新或直达 `view=setup` URL 时，组件内部 `genericSetupMode` 默认值为 `false`，会错误渲染历史行业 setup；只有显式 `type=spot-weld` 的历史兼容 URL 才应进入旧 setup。
+- 修复：`DataAnnotationPage` 按初始 URL 派生通用 setup 状态；没有 `type=spot-weld` 的 setup URL 默认进入通用任务创建页面，历史测试夹具补充显式兼容类型。
+- 验证：修复前页面测试 **43 passed、1 failed**，失败定位为历史 setup 夹具缺少兼容类型；修复后 `DataAnnotationPage.test.tsx` **44 passed**，`git diff --check` 通过。
+- 状态边界：该修复收口了 Task 12 通用入口刷新/直达行为，并加强 Task 1 的行业边界；Task 1–4 的聚焦状态和 Task 5–14 的未完成状态不变。真实后端运行态、门户浏览器、Docker/WSL recovery、当前 SHA 收据和远程 CI 仍待完成。
