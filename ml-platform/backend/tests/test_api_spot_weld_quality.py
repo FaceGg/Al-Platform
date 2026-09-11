@@ -38,6 +38,17 @@ from app.services.spot_weld_quality import execute_quality_run
 from app.storage.local import LocalStorage
 
 
+class ContractTestClient(TestClient):
+    """Supply the mandatory request contract without changing production checks."""
+
+    def request(self, method, url, **kwargs):
+        headers = dict(kwargs.pop("headers", {}) or {})
+        headers.setdefault("X-Request-ID", str(uuid.uuid4()))
+        headers.setdefault("Idempotency-Key", str(uuid.uuid4()))
+        kwargs["headers"] = headers
+        return super().request(method, url, **kwargs)
+
+
 def waveform(offset: int = 0) -> str:
     values = (np.arange(870, dtype=np.int32) + offset).astype(">i2")
     return base64.b64encode(values.tobytes()).decode("ascii")
@@ -91,7 +102,7 @@ class TestSpotWeldQualityAPI(unittest.TestCase):
             "cancel": lambda dispatcher, task_id: dispatcher.cancelled.append(str(task_id)),
         })()
         app.state.quality_dispatcher = self.dispatcher
-        self.client = TestClient(app)
+        self.client = ContractTestClient(app)
 
     def tearDown(self):
         app.dependency_overrides.clear()

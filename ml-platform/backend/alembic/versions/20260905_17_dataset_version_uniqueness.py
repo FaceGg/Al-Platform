@@ -29,6 +29,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError(
-        "Refusing destructive downgrade of dataset version uniqueness guard"
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "dataset_versions" not in inspector.get_table_names():
+        return
+    indexes = {item["name"] for item in inspector.get_indexes("dataset_versions")}
+    if INDEX_NAME in indexes:
+        op.drop_index(INDEX_NAME, table_name="dataset_versions")

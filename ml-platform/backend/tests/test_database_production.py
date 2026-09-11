@@ -14,7 +14,9 @@ from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import sqlalchemy as sa
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -445,7 +447,21 @@ class TestAlembicBaseline(TestCase):
                         )
                         db.add(experiment)
                         db.flush()
-                        later = TrainingJob(
+                        historical_jobs = sa.table(
+                            "training_jobs",
+                            sa.column("id", PGUUID(as_uuid=True)),
+                            sa.column("project_id", PGUUID(as_uuid=True)),
+                            sa.column("user_id", PGUUID(as_uuid=True)),
+                            sa.column("name"),
+                            sa.column("operator_id"),
+                            sa.column("status"),
+                            sa.column("experiment_id", PGUUID(as_uuid=True)),
+                            sa.column("created_at"),
+                        )
+                        earlier_id = uuid.uuid4()
+                        later_id = uuid.uuid4()
+                        db.execute(historical_jobs.insert().values(
+                            id=later_id,
                             project_id=project.id,
                             user_id=user.id,
                             experiment_id=experiment.id,
@@ -453,8 +469,9 @@ class TestAlembicBaseline(TestCase):
                             operator_id="automl",
                             status="completed",
                             created_at=datetime(2026, 8, 19, 2, 0, 0),
-                        )
-                        earlier = TrainingJob(
+                        ))
+                        db.execute(historical_jobs.insert().values(
+                            id=earlier_id,
                             project_id=project.id,
                             user_id=user.id,
                             experiment_id=experiment.id,
@@ -462,10 +479,9 @@ class TestAlembicBaseline(TestCase):
                             operator_id="automl",
                             status="failed",
                             created_at=datetime(2026, 8, 19, 1, 0, 0),
-                        )
-                        db.add_all([later, earlier])
+                        ))
                         db.commit()
-                        expected_job_id = earlier.id
+                        expected_job_id = earlier_id
                         experiment_id = experiment.id
                 finally:
                     db_engine.dispose()
@@ -685,7 +701,7 @@ class TestAlembicBaseline(TestCase):
             original_database_url = settings.database_url
             settings.database_url = database_url
             try:
-                command.upgrade(config, "head")
+                command.upgrade(config, "20260717_04")
                 command.downgrade(config, "20260715_03")
             finally:
                 settings.database_url = original_database_url
@@ -715,7 +731,7 @@ class TestAlembicBaseline(TestCase):
             original_database_url = settings.database_url
             settings.database_url = database_url
             try:
-                command.upgrade(config, "head")
+                command.upgrade(config, "20260718_08")
                 command.downgrade(config, "20260718_07")
             finally:
                 settings.database_url = original_database_url

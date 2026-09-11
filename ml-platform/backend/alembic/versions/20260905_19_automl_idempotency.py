@@ -29,4 +29,29 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError("Refusing destructive downgrade of AutoML idempotency")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    uniques = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("training_jobs")
+    }
+    if "uq_training_jobs_user_automl_idempotency" in uniques:
+        with op.batch_alter_table("training_jobs") as batch:
+            batch.drop_constraint(
+                "uq_training_jobs_user_automl_idempotency",
+                type_="unique",
+            )
+
+    indexes = {
+        index["name"]
+        for index in sa.inspect(bind).get_indexes("training_jobs")
+    }
+    if "ix_training_jobs_automl_idempotency_key" in indexes:
+        op.drop_index(
+            "ix_training_jobs_automl_idempotency_key",
+            table_name="training_jobs",
+        )
+
+    columns = {column["name"] for column in sa.inspect(bind).get_columns("training_jobs")}
+    if "automl_idempotency_key" in columns:
+        op.drop_column("training_jobs", "automl_idempotency_key")

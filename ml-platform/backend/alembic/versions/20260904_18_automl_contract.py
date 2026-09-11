@@ -14,4 +14,7 @@ def upgrade() -> None:
         op.add_column("training_jobs", sa.Column("automl_contract", sa.JSON(), nullable=True))
 
 def downgrade() -> None:
-    raise RuntimeError("Refusing destructive downgrade of AutoML contract")
+    bind = op.get_bind()
+    columns = {column["name"] for column in sa.inspect(bind).get_columns("training_jobs")}
+    if "automl_contract" in columns:
+        op.drop_column("training_jobs", "automl_contract")

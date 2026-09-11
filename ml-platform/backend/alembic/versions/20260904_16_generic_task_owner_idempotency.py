@@ -78,6 +78,44 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError(
-        "Refusing to restore global generic task idempotency uniqueness; preserve owner-scoped semantics"
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if TABLE not in inspector.get_table_names():
+        return
+
+    duplicates = bind.execute(
+        sa.text(
+            "SELECT idempotency_key, COUNT(*) AS count "
+            "FROM generic_annotation_tasks "
+            "WHERE idempotency_key IS NOT NULL "
+            "GROUP BY idempotency_key HAVING COUNT(*) > 1"
+        )
+    ).all()
+    if duplicates:
+        raise RuntimeError(
+            "Cannot restore global generic task idempotency uniqueness while duplicate keys exist"
+        )
+
+    unique_constraints = {
+        item.get("name")
+        for item in inspector.get_unique_constraints(TABLE)
+    }
+    indexes = {item["name"] for item in inspector.get_indexes(TABLE)}
+    if bind.dialect.name == "sqlite":
+        with op.batch_alter_table(TABLE, recreate="always") as batch_op:
+            if NEW_CONSTRAINT in unique_constraints:
+                batch_op.drop_constraint(NEW_CONSTRAINT, type_="unique")
+            if OLD_CONSTRAINT not in unique_constraints:
+                batch_op.create_unique_constraint(
+                    OLD_CONSTRAINT, ["idempotency_key"]
+                )
+    else:
+        if NEW_CONSTRAINT in unique_constraints:
+            op.drop_constraint(NEW_CONSTRAINT, TABLE, type="unique")
+        if OLD_CONSTRAINT not in unique_constraints:
+            op.create_unique_constraint(OLD_CONSTRAINT, TABLE, ["idempotency_key"])
+
+    if NEW_INDEX in indexes:
+        op.drop_index(NEW_INDEX, table_name=TABLE)
+    if OLD_INDEX not in indexes:
+        op.create_index(OLD_INDEX, TABLE, ["idempotency_key"], unique=False)

@@ -402,3 +402,11 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 复现确认完整后端首批登录错误并非生产认证失败：历史测试共享进程级 `SlidingWindowRateLimiter`，`test_agents.py` 在同一模块内连续登录超过 5 次；模块级管理员初始化只清理一次状态。
 - 测试隔离修复限定在 `tests/auth_test_support.py`、`test_api_compute.py` 和 `test_agents.py`：管理员初始化或测试 token 获取前清理 limiter；生产登录限额和 fail-closed 行为未修改。
 - 验证：`tests/test_agents.py tests/test_api_chat.py tests/test_api_compute.py tests/test_api_users.py` 为 **46 passed、47 warnings**。该结果仅修复历史测试隔离，不替代完整后端 active suite 或平台级发布门禁。
+
+### 2026-09-11 Alembic 历史边界与旧点焊接口复核
+
+- 迁移聚焦失败的根因分为两类：AutoML 回填测试在旧 revision 上错误使用当前 ORM，导致插入不存在的 `automl_contract` 字段；实验跟踪和模型注册降级测试从最新通用平台 head 回退，错误穿越了后续不可逆通用迁移。
+- 修复方式：回填测试改为使用历史表定义的 Core insert；`20260904_18`、`20260905_19`、`20260905_17` 和 `20260904_16` 增加可验证的结构降级；旧迁移降级测试改为在各自历史 revision 边界执行，不改变新通用任务的生产数据保留原则。
+- 验证：`tests/test_database_production.py -k "automl_binding_revision_backfills_the_earliest_historical_job or experiment_tracking_revision_has_complete_downgrade or model_registry_revision_has_complete_downgrade"` 为 **3 passed、2 warnings**。
+- 点焊历史测试统一注入每请求 `X-Request-ID` 和 `Idempotency-Key` 后，剩余失败均为生产路由明确返回的 **410 `GENERIC_API_REQUIRED`**，表明测试仍调用已退役 `/api/projects/{id}/spot-weld/runs`，不是新通用 API 的安全合同失败；不放宽生产路由，后续应迁移这些历史测试到 `/api/annotation-tasks` 或明确标记退役兼容测试。
+- Task 5–14 仍保持 `in_progress`；完整后端 active suite、真实 broker/恢复、Docker/WSL、浏览器全平台和远程 CI 仍未闭环。
