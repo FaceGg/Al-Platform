@@ -139,6 +139,49 @@ def test_preview_transition_and_stale_preview_errors(monkeypatch):
     finally:
         app.dependency_overrides.clear()
         db.close()
+
+
+def test_project_dataset_versions_lists_generic_creation_inputs():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"dataset-version-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Generic creation project", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    version = DatasetVersion(
+        project_id=project.id,
+        operator_id=user.id,
+        version=2,
+        row_count=3,
+        column_count=2,
+        content_hash="sha256:version",
+        schema_hash="sha256:schema",
+    )
+    db.add(version)
+    db.flush()
+    db.add(DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False))
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        response = TestClient(app).get(f"/api/projects/{project.id}/dataset-versions")
+        assert response.status_code == 200, response.text
+        assert response.json()["items"] == [{
+            "id": str(version.id),
+            "project_id": str(project.id),
+            "version": 2,
+            "status": "ready",
+            "row_count": 3,
+            "column_count": 2,
+            "columns": [{"name": "feature", "dtype": "float", "nullable": False, "position": 0}],
+        }]
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
         engine.dispose()
 
 

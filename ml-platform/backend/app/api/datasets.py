@@ -134,6 +134,44 @@ def get_dataset_version(
     return {"id": str(version.id), "project_id": str(version.project_id), "version": version.version, "status": version.status, "row_count": version.row_count, "column_count": version.column_count, "content_hash": version.content_hash, "schema_hash": version.schema_hash, "parse_contract": version.parse_contract, "columns": [{"name": item.name, "dtype": item.dtype, "nullable": item.nullable, "position": item.position} for item in version.schema_columns]}
 
 
+@router.get("/projects/{project_id}/dataset-versions")
+def list_project_dataset_versions(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = require_project_access(db, project_id, current_user.id, "project.read").project
+    versions = (
+        db.query(DatasetVersion)
+        .filter(DatasetVersion.project_id == project.id)
+        .order_by(DatasetVersion.version.desc(), DatasetVersion.created_at.desc())
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": str(version.id),
+                "project_id": str(version.project_id),
+                "version": version.version,
+                "status": version.status,
+                "row_count": version.row_count,
+                "column_count": version.column_count,
+                "columns": [
+                    {
+                        "name": column.name,
+                        "dtype": column.dtype,
+                        "nullable": column.nullable,
+                        "position": column.position,
+                    }
+                    for column in sorted(version.schema_columns, key=lambda item: item.position)
+                ],
+            }
+            for version in versions
+        ],
+        "total": len(versions),
+    }
+
+
 def _store_uploaded_dataset(
     db: Session, project_id, file: UploadFile, *, commit: bool = True,
 ) -> Artifact:
