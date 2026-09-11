@@ -457,3 +457,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 修复后镜像成功构建并启动迁移、PostgreSQL、Redis、MinIO、MLflow、推理运行时和 Celery worker；迁移成功退出，worker 日志确认连接真实 Redis broker 并报告 `ready`，任务列表包含通用预览和执行任务。
 - 运行态仍未通过：首次临时密钥不是合法 Fernet key，修正为 URL-safe 32 字节 key 后容器重建；随后基础容器约一分钟后整体退出，backend 报 `failed to resolve host 'postgres'`，notification receiver/proxy 以 255 退出，worker 正常退出。该结果保留为运行态失败，不提升 Task 5–14 状态。
 - 当前下一步：在 WSL Docker daemon 稳定后重新启动同一 Compose 项目，确认网络和依赖容器持续运行，再进行真实预览/执行派发、worker 停止重启和 recovery claim 验证。`.dockerignore` 修复需随当前分支发布；README 仍按用户要求在每次推送前检查并同步。
+
+## 2026-09-11 核心 Compose 重试与聚焦回归复核
+
+- 复用已成功构建的当前镜像后，核心 Compose 栈的 PostgreSQL、Redis、MinIO、TensorBoard 和迁移曾成功启动；MLflow 因启动命令运行时下载 `psycopg[binary]` 遇到 PyPI 超时而持续处于 `health: starting`，未形成完整依赖栈。
+- 使用 `--no-deps` 启动 backend、worker 和 inference 后，worker 仍无法解析 `redis`，backend 无法解析 `postgres`；进一步检查确认两个基础容器已退出并从 Compose 网络移除，服务名 DNS 失败是容器生命周期问题。该运行态证据保持失败，不修改应用代码绕过依赖。
+- 当前 Python 3.11.9 环境重新执行 Task 5/6/8/9/13 聚焦组合：`test_annotation_task_state.py test_annotation_task_state_api.py test_async_operation_contract.py test_annotation_strategies.py test_annotation_concurrency.py test_annotation_return_acceptance.py` 为 **85 passed、10 warnings**。
+- 状态边界：聚焦回归通过不等于真实 broker、重启恢复或 Task 5–14 整体验收通过；所有任务继续保持 `in_progress`。下一步仍是获得稳定的 WSL Compose 基础服务持续运行证据，再执行真实预览/执行和 recovery claim。
