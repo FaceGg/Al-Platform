@@ -79,6 +79,40 @@ def test_manual_task_publish_requires_preview_ready(db):
         transition_annotation_task(db, task.id, expected_revision=0, action=TaskAction.publish, actor_id=user.id)
 
 
+def test_all_project_task_api_paginates_without_losing_owner_scope(db):
+    from fastapi.testclient import TestClient
+    from app.api.auth import get_current_user
+    from app.database import get_db
+    from app.main import app
+
+    first, user, project = _task(db)
+    second, _, _ = _task(db)
+    second.owner_id = user.id
+    foreign, _, _ = _task(db)
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        client = TestClient(app)
+        page = client.get("/api/annotation-tasks", params={"limit": 1})
+        assert page.status_code == 200
+        assert page.json()["total"] == 2
+        assert page.json()["next_cursor"]
+        next_page = client.get("/api/annotation-tasks", params={"limit": 1, "cursor": page.json()["next_cursor"]})
+        assert next_page.status_code == 200
+        assert next_page.json()["total"] == 2
+        assert len(next_page.json()["items"]) == 1
+        assert {item["id"] for item in page.json()["items"] + next_page.json()["items"]} == {str(first.id), str(second.id)}
+        for cursor in ("not-a-uuid", str(foreign.id)):
+            response = client.get("/api/annotation-tasks", params={"cursor": cursor})
+            assert response.status_code == 422
+            assert response.json()["detail"]["code"] == "INVALID_CURSOR"
+        wrong_project = client.get("/api/annotation-tasks", params={"project_id": str(project.id), "cursor": str(second.id)})
+        assert wrong_project.status_code == 422
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_preview_reuses_same_operation_for_same_config_hash(db):
     task, user, _ = _task(db)
     first = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:abc", actor_id=user.id)

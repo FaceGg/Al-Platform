@@ -229,26 +229,23 @@ def serialize_annotation_task(task, preview=None, snapshot=None):
 
 def list_annotation_tasks(db, project_id, owner_id, cursor=None, limit=50):
     limit = max(1, min(int(limit), 200))
-    base_query = db.query(GenericAnnotationTask).filter(GenericAnnotationTask.project_id == project_id, GenericAnnotationTask.owner_id == owner_id)
-    total = base_query.count()
+    base_query = db.query(GenericAnnotationTask).filter(GenericAnnotationTask.owner_id == owner_id)
+    if project_id is not None:
+        base_query = base_query.filter(GenericAnnotationTask.project_id == project_id)
     query = base_query.order_by(GenericAnnotationTask.created_at.desc(), GenericAnnotationTask.id.desc())
+    all_items = query.all()
+    total = len(all_items)
+    start = 0
     if cursor:
         try:
             marker_id = uuid.UUID(cursor)
         except (ValueError, AttributeError) as error:
             raise ValueError("INVALID_CURSOR") from error
-        marker = db.query(GenericAnnotationTask).filter(
-            GenericAnnotationTask.id == marker_id,
-            GenericAnnotationTask.project_id == project_id,
-            GenericAnnotationTask.owner_id == owner_id,
-        ).one_or_none()
-        if marker is None:
+        marker_index = next((index for index, item in enumerate(all_items) if item.id == marker_id), None)
+        if marker_index is None:
             raise ValueError("INVALID_CURSOR")
-        query = query.filter(or_(
-            GenericAnnotationTask.created_at < marker.created_at,
-            and_(GenericAnnotationTask.created_at == marker.created_at, GenericAnnotationTask.id < marker.id),
-        ))
-    items = query.limit(limit + 1).all()
+        start = marker_index + 1
+    items = all_items[start:start + limit + 1]
     has_next = len(items) > limit
     items = items[:limit]
     return {

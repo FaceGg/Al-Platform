@@ -100,15 +100,10 @@ def _contract_error(request: Request, code: str, message: str, status_code: int 
 def list_generic_annotation_tasks(
     project_id: uuid.UUID | None = Query(default=None), cursor: str | None = Query(default=None), limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
-    if project_id is not None:
-        try:
-            return list_annotation_tasks(db, project_id, current_user.id, cursor, limit)
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail={"code": str(error)}) from error
-    tasks = db.query(GenericAnnotationTask).filter(
-        GenericAnnotationTask.owner_id == current_user.id
-    ).order_by(GenericAnnotationTask.created_at.desc()).limit(limit).all()
-    return {"items": [_serialize(db, task) for task in tasks], "total": len(tasks), "next_cursor": None}
+    try:
+        return list_annotation_tasks(db, project_id, current_user.id, cursor, limit)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail={"code": str(error)}) from error
 
 
 def _request_context(request: Request, x_request_id: str | None, idempotency_key: str | None):

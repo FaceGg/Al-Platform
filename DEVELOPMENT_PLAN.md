@@ -424,3 +424,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 数据库生产迁移夹具曾在旧 `20260718_08` schema 上使用当前 `ModelVersion` ORM，实际插入不存在的 `lifecycle_state`；已改为旧列集合的 Core insert。生产推理回填和历史边界降级聚焦测试通过。
 - 数据库基线测试的固定 head 常量已更新为当前 Alembic head `20260910_43`；旧的 57 表精确数量改为最低基线断言，允许后续通用平台迁移增加表而不产生伪失败。
 - 当前 active suite 仍有后续模块待执行；本轮不将局部修复扩大为后端全量通过，也不重新纳入点焊历史模块。
+
+### 2026-09-11 Task 5 全项目任务列表分页修复
+
+- 根因：`GET /api/annotation-tasks` 在未提供 `project_id` 时绕过共享状态服务，直接截取前 `limit` 条任务并把本页数量作为 `total`；因此跨项目列表无法 cursor 翻页，且列表合同与按项目查询不一致。
+- 解决：所有任务列表请求统一进入 `list_annotation_tasks`；服务按当前用户过滤，可选项目过滤，使用稳定排序后的任务集合执行 cursor 分页，并拒绝不属于当前用户/项目范围的 cursor。
+- TDD 验证：新增跨项目列表回归先以 `total == 1` 暴露旧实现缺口，修复后 `tests/test_annotation_task_state.py -k all_project_task_api` 为 **1 passed**；Task 5 状态/API/异步组合为 **65 passed、4 warnings**。
+- 状态边界：这是 Task 5 的列表合同修复，不代表 Task 5 验收完成。真实 Redis/Celery、进程重启恢复、完整浏览器链路、Docker/WSL、完整后端 active suite 和远程 CI 仍未齐备；Task 5–14 继续 `in_progress`。
