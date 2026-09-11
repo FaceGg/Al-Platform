@@ -250,14 +250,14 @@ def test_configuration_update_creates_new_revision_and_invalidates_old_preview()
     client = TestClient(app)
     try:
         headers = {"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": str(uuid.uuid4())}
-        created = client.post("/api/annotation-tasks", headers=headers, json={"project_id": str(project.id), "dataset_version_id": str(version.id), "label_schema_id": str(schema.id), "mode": "automatic", "sample_scope": {"kind": "all"}, "configuration": {"strategy": "first"}})
+        created = client.post("/api/annotation-tasks", headers=headers, json={"project_id": str(project.id), "dataset_version_id": str(version.id), "label_schema_id": str(schema.id), "mode": "automatic", "sample_scope": {"kind": "all"}, "configuration": {"strategy": "model", "search_strength": "standard"}})
         assert created.status_code == 201, created.text
         task_id = created.json()["id"]
         old_preview = client.post(f"/api/annotation-tasks/{task_id}/preview", json={"task_revision": 0, "config_hash": created.json()["task_snapshot"]["config_hash"]})
         assert old_preview.status_code == 202
         db.get(GenericAnnotationTask, uuid.UUID(task_id)).status = "failed"
         db.commit()
-        updated = client.put(f"/api/annotation-tasks/{task_id}/configuration", json={"task_revision": 0, "visible_columns": ["feature"], "instructions": "updated", "configuration": {"strategy": "second"}})
+        updated = client.put(f"/api/annotation-tasks/{task_id}/configuration", json={"task_revision": 0, "visible_columns": ["feature"], "instructions": "updated", "configuration": {"strategy": "model", "search_strength": "strong"}})
         assert updated.status_code == 200, updated.text
         assert updated.json()["task_revision"] == 1
         assert updated.json()["task_snapshot"]["config_hash"] != created.json()["task_snapshot"]["config_hash"]
@@ -407,6 +407,62 @@ def test_automatic_task_rejects_model_artifact_from_another_project():
         )
         assert response.status_code == 422
         assert response.json()["detail"]["code"] == "MODEL_ARTIFACT_NOT_FOUND"
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
+def test_automatic_task_rejects_invalid_strategy_before_persisting():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"strategy-contract-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Strategy contract project", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    schema = LabelSchema(project_id=project.id, name="strategy-contract-labels", version=1, status="active")
+    db.add(schema)
+    db.flush()
+    db.add(LabelColumn(schema_id=schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"))
+    version = DatasetVersion(
+        project_id=project.id,
+        operator_id=user.id,
+        version=1,
+        row_count=1,
+        column_count=1,
+        content_hash="sha256:strategy-contract",
+        schema_hash="sha256:strategy-contract-schema",
+    )
+    db.add(version)
+    db.flush()
+    db.add(DatasetSample(dataset_version_id=version.id, sample_id="strategy-contract-sample", row_index=0, values={"feature": 1.0}))
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/automl-tasks",
+            headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": str(uuid.uuid4())},
+            json={
+                "project_id": str(project.id),
+                "dataset_version_id": str(version.id),
+                "label_schema_id": str(schema.id),
+                "sample_scope": {"kind": "all"},
+                "configuration": {
+                    "clustering": True,
+                    "strategy": "cluster_rule",
+                    "other_values": {},
+                    "rules": [{"id": "rule-1", "when": {"column": "feature", "operator": "eq", "value": 1}, "values": {"label": "hit"}}],
+                },
+            },
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "CLUSTER_FALLBACK_REQUIRED"
+        assert db.query(GenericAnnotationTask).count() == 0
     finally:
         app.dependency_overrides.clear()
         db.close()

@@ -24,3 +24,10 @@ export async function getModelExport(exportId: string): Promise<ModelExport> {
   const response = await apiClient.get(`/model-exports/${encodeURIComponent(exportId)}`);
   return response.data as ModelExport;
 }
+
+export async function downloadModelExport(exportId: string): Promise<Blob> {
+  const response = await apiClient.get(`/model-exports/${encodeURIComponent(exportId)}/download`, {
+    responseType: "blob",
+  });
+  return response.data as Blob;
+}

@@ -92,11 +92,15 @@ def execute_annotation_task(self, task_id: str, preview_id: str, owner_id: str, 
         if operation.state in {"completed", "failed", "cancelled"}:
             return {"status": "not_claimed", "operation_id": operation_id}
         if preview.status != "completed":
+            if task.status == "paused":
+                return {"status": "paused", "operation_id": operation_id}
             if task.status == "executing":
                 task.status = "failed"
                 db.commit()
             fail_operation(db, operation_uuid, "ANNOTATION_EXECUTION_INVALID", {"message": "preview is not completed"})
             return {"status": "invalid_request", "operation_id": operation_id}
+        if task.status == "paused":
+            return {"status": "paused", "operation_id": operation_id}
         if (
             operation.resource_key != f"annotation-execution:{task.id}"
             or operation.idempotency_key != f"{preview.task_revision}:{preview.id}"
@@ -112,12 +116,13 @@ def execute_annotation_task(self, task_id: str, preview_id: str, owner_id: str, 
             operation = db.get(DurableOperation, operation_uuid)
             task = db.query(GenericAnnotationTask).filter_by(id=task_uuid, owner_id=owner_uuid).one_or_none()
             preview = db.query(AnnotationTaskPreview).filter_by(id=preview_uuid, task_id=task_uuid).one_or_none()
-            if task is None or preview is None or task.status != "executing" or task.task_revision != preview.task_revision:
+            if task is None or preview is None or task.status not in {"executing", "paused"} or task.task_revision != preview.task_revision:
+                if task is not None and task.status == "paused":
+                    return {"status": "paused", "operation_id": operation_id}
                 fail_operation(db, operation_uuid, "ANNOTATION_EXECUTION_STALE", {"message": "task revision or state changed"}, worker_id=worker_id)
                 return {"status": "invalid_request", "operation_id": operation_id}
             operation.stage = "materializing"
             operation.progress = 10
-            db.commit()
             samples = db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview_uuid).order_by(
                 AnnotationTaskPreviewSample.row_index.asc(), AnnotationTaskPreviewSample.id.asc()
             ).all()
@@ -157,7 +162,6 @@ def execute_annotation_task(self, task_id: str, preview_id: str, owner_id: str, 
             operation = db.get(DurableOperation, operation_uuid)
             operation.stage = "persisting"
             operation.progress = 90
-            db.commit()
             heartbeat_operation(db, operation_uuid, worker_id, 300)
             persisted = db.query(AnnotationTaskExecutionResult).filter_by(operation_id=operation_uuid).order_by(
                 AnnotationTaskExecutionResult.row_index.asc(), AnnotationTaskExecutionResult.sample_id.asc()
@@ -181,12 +185,12 @@ def execute_annotation_task(self, task_id: str, preview_id: str, owner_id: str, 
             return {"status": "completed", "operation_id": operation_id, "result_count": len(persisted)}
         except Exception as error:
             db.rollback()
-            failed_task = db.query(GenericAnnotationTask).filter_by(id=task_uuid, owner_id=owner_uuid).one_or_none()
-            if failed_task is not None and failed_task.status == "executing":
-                failed_task.status = "failed"
-                db.commit()
             try:
                 fail_operation(db, operation_uuid, "ANNOTATION_EXECUTION_FAILED", {"message": str(error)[:300]}, worker_id=worker_id)
+                failed_task = db.query(GenericAnnotationTask).filter_by(id=task_uuid, owner_id=owner_uuid).one_or_none()
+                if failed_task is not None and failed_task.status == "executing":
+                    failed_task.status = "failed"
+                    db.commit()
             except ValueError:
                 pass
             return {"status": "failed", "operation_id": operation_id, "error": {"code": "ANNOTATION_EXECUTION_FAILED", "message": str(error)[:500]}}

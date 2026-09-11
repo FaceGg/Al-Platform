@@ -48,7 +48,7 @@ def claim_operation(db, operation_id, worker_id: str, lease_seconds: int) -> boo
     if operation is None:
         raise ValueError("OPERATION_NOT_FOUND")
     now = _utcnow()
-    if operation.state == "completed":
+    if operation.state in {"completed", "failed", "cancelled"}:
         return False
     if operation.lease_owner and operation.lease_expires_at and operation.lease_expires_at >= now and operation.lease_owner != worker_id:
         return False
@@ -97,11 +97,20 @@ def claim_operation_dispatch(db, operation_id, retry_seconds: int = 30) -> bool:
         update(DurableOperation)
         .where(
             DurableOperation.id == operation_id,
-            DurableOperation.state == "queued",
             or_(
-                DurableOperation.stage != "dispatched",
-                DurableOperation.heartbeat_at.is_(None),
-                DurableOperation.heartbeat_at < retry_before,
+                and_(
+                    DurableOperation.state == "queued",
+                    or_(
+                        DurableOperation.stage != "dispatched",
+                        DurableOperation.heartbeat_at.is_(None),
+                        DurableOperation.heartbeat_at < retry_before,
+                    ),
+                ),
+                and_(
+                    DurableOperation.state == "running",
+                    DurableOperation.heartbeat_at.is_not(None),
+                    DurableOperation.heartbeat_at < retry_before,
+                ),
             ),
         )
         .values(stage="dispatched", heartbeat_at=now)

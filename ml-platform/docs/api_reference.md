@@ -293,6 +293,82 @@ API 市场前端入口为 `/api-marketplace`，应通过前端开发/部署端�
 
 ---
 
+## 16. 通用自动建模与数据标注平台
+
+### 16.1 数据版本与标签 schema
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/projects/{project_id}/dataset-versions` | 查询项目授权的数据版本 |
+| GET | `/api/projects/{project_id}/label-schemas` | 查询项目标签 schema |
+| POST | `/api/projects/{project_id}/label-schemas` | 创建多列标签 schema |
+| GET | `/api/dataset-versions/{version_id}` | 查询不可变数据版本及输入合同 |
+
+支持 CSV、Excel、Parquet、JSON 和 XML。JSON/XML 会先归一化为扁平标量表；解析器拒绝重复键、非标量值、外部实体、路径穿越和超出大小/行数/列数限制的输入。数据版本一旦冻结不可修改。
+
+### 16.2 通用标注任务
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/annotation-tasks` | 按项目和所有者分页查询任务 |
+| POST | `/api/annotation-tasks` | 创建手动通用标注任务 |
+| POST | `/api/automl-tasks` | 创建自动标注/AutoML 任务 |
+| POST | `/api/annotation-tasks/{task_id}/preview` | 创建或复用当前 revision 的预览 |
+| GET | `/api/annotation-tasks/{task_id}/previews` | 查询预览历史 |
+| GET | `/api/annotation-tasks/{task_id}/previews/{preview_id}` | 查询预览状态、快照和摘要 |
+| GET | `/api/annotation-tasks/{task_id}/previews/{preview_id}/samples` | 游标分页查询预览样本 |
+| POST | `/api/annotation-tasks/{task_id}/execute` | 执行当前 revision 的已完成预览 |
+| POST | `/api/annotation-tasks/{task_id}/transition` | 按 revision 执行状态转移 |
+| GET | `/api/annotation-tasks/{task_id}/executions/{operation_id}/results` | 游标分页查询执行结果 |
+| GET | `/api/annotation-tasks/{task_id}/executions/{operation_id}/stats` | 查询样本、策略和最终标签统计 |
+| GET | `/api/annotation-operations` | 查询统一操作中心 |
+
+所有长任务返回 `202` 和 `operation_id`。预览和执行均绑定不可变任务快照、配置 revision 和配置 hash；旧 revision 预览不能解锁当前 revision 的执行。状态修改必须携带 `task_revision`。
+
+### 16.3 AutoML 合同
+
+持久化任务类型为 `classification`、`multioutput_classification`、`regression` 和 `multioutput_regression`。交叉验证支持 2 至 5 折；搜索方法支持 `grid`、`random`、`bayesian`、`evolutionary` 和 `multi_fidelity`；搜索强度使用 `light`、`medium`、`high` 和 `ultra` 档位。AutoML worker 只生成候选制品，不能自动创建或批准模型库版本。
+
+自动标注策略支持 `model`、`cluster`、`rule` 和 `cluster_rule`。同一标签列的来源优先级固定为规则、簇、其他；冲突或无法满足类型约束时返回 `needs_review`，不伪造兜底值或特征重要性。
+
+### 16.4 指派、门户和回传
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/annotation-tasks/{task_id}/assignments` | 指派一个或多个独立标注员 |
+| GET | `/api/projects/{project_id}/annotation-return-batches` | 查询回传批次 |
+| GET | `/api/annotation-return-batches/{return_batch_id}/diff` | 查询回传差异 |
+| POST | `/api/annotation-return-batches/{return_batch_id}/accept` | 验收回传并生成新数据版本 |
+| POST | `/api/annotation-return-batches/{return_batch_id}/return` | 退回回传并记录原因 |
+| POST | `/portal/auth/register` | 标注员注册 |
+| POST | `/portal/auth/login` | 标注员门户登录 |
+| GET | `/portal/tasks` | 查询当前主体的指派任务 |
+| PUT | `/portal/tasks/{task_id}/samples/{sample_id}/labels` | 保存样本标签 |
+| POST | `/portal/tasks/{task_id}/confirm` | 确认标签集合 |
+| POST | `/portal/tasks/{task_id}/edit-for-return` | 显式解除回传只读锁 |
+| POST | `/portal/tasks/{task_id}/return` | 主动回传任务 |
+
+门户使用独立账号、主体 ID、会话和前端入口，不共享主平台 Cookie 或项目选择器。标签写入携带基础 revision；冲突响应包含服务端完整标签集合，必须由标注员明确确认后才能重试。回传成功后范围只读，必须显式编辑并产生新 revision。
+
+### 16.5 幂等、分页和安全
+
+所有写请求要求 `Authorization`、`X-Request-ID` 和 `Idempotency-Key`。列表、样本、预览、结果、统计和差异使用 `cursor` 分页，默认 50、最大 200；游标耗尽后不得重新请求第一页。重复的幂等请求返回原始 operation/resource。
+
+错误响应至少包含 `request_id`、稳定 `code`、`message` 和 `details`。Cookie 状态修改需要 CSRF 校验；CORS 使用明确来源白名单；认证、注册、密码重置和批量标注执行限流。错误详情、导出包和日志不得包含密码、令牌、密钥或真实数据。
+
+### 16.6 模型导出与离线运行
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/model-exports` | 创建预测或标注导出 |
+| GET | `/api/model-exports/{export_id}` | 查询导出状态 |
+| POST | `/api/model-exports/{export_id}/validate` | 校验导出包 |
+| GET | `/api/model-exports/{export_id}/download` | 导出完成后一次性下载 |
+
+导出包必须包含模型、预处理、输入输出合同、映射、推理代码、依赖锁定、SBOM、签名和全量 SHA-256。只有 `ready` 且验证通过的导出可下载；无效输入只产生脱敏报告，不发布部分结果。
+
+---
+
 ## 通用响应格式
 
 成功：

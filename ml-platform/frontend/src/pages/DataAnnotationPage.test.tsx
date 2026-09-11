@@ -43,6 +43,7 @@ describe("DataAnnotationPage", () => {
 
   beforeEach(() => {
     get.mockReset();
+    post.mockReset();
     post.mockResolvedValue({ data: {} });
     put.mockReset();
     put.mockResolvedValue({ data: {} });
@@ -269,6 +270,53 @@ describe("DataAnnotationPage", () => {
     expect(await within(center).findByText("operation-2")).toBeInTheDocument();
   });
 
+  it.each(["results", "stats"])("does not restart the exhausted %s stream when loading execution pages", async (exhausted) => {
+    get.mockImplementation((url: string, config?: { params?: { cursor?: string; kind?: string } }) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "Project" }] } });
+      if (url === "/annotation-operations") return Promise.resolve({ data: { items: [{ id: "op-1", resource_type: "annotation_execution", task_id: "task-1", state: "completed", progress: 100 }], next_cursor: null } });
+      if (url.endsWith("/results") || url.endsWith("/stats")) {
+        const stream = url.endsWith("/results") ? "results" : "stats";
+        const page = config?.params?.cursor ? 2 : 1;
+        return Promise.resolve({ data: {
+          items: stream === "results"
+            ? [{ id: `result-${page}`, sample_id: `sample-${page}`, row_index: page, status: "completed", values: { quality: "pass" }, provenance: { quality: "model" } }]
+            : [{ key: `stat-${page}`, sample_id: `stat-sample-${page}`, row_index: page, status: "completed" }],
+          total: stream === exhausted ? 1 : 2,
+          next_cursor: stream !== exhausted && page === 1 ? "next" : null,
+        } });
+      }
+      return Promise.resolve({ data: { items: [], next_cursor: null } });
+    });
+    render(<MemoryRouter initialEntries={["/data-annotation?view=tasks&projectId=project-1"]}><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "查看结果" }));
+    const view = await screen.findByRole("region", { name: "执行结果" });
+    fireEvent.click(await within(view).findByRole("button", { name: "加载更多结果" }));
+    await waitFor(() => expect(within(view).queryByRole("button", { name: "加载更多结果" })).not.toBeInTheDocument());
+    expect(within(view).getAllByText("sample-1", { exact: true })).toHaveLength(1);
+    expect(get.mock.calls.filter(([url]) => url.endsWith(`/${exhausted}`))).toHaveLength(1);
+    expect(view).toHaveTextContent("stat-sample-1");
+    expect(view).toHaveTextContent('"quality":"pass"');
+    expect(view).toHaveTextContent('"quality":"model"');
+  });
+
+  it("opens an existing preview without recreating it or regressing an executing task", async () => {
+    const task = { id: "task-1", project_id: "project-1", mode: "automatic", status: "executing", task_revision: 2,
+      preview: { id: "preview-1", task_revision: 2, status: "completed" },
+      task_snapshot: { instructions: "Inspect quality", visible_columns: ["feature"], label_schema: { columns: [{ key: "quality" }] } } };
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "Project" }] } });
+      if (url === "/annotation-tasks") return Promise.resolve({ data: { items: [task], next_cursor: null } });
+      if (url.endsWith("/previews/preview-1")) return Promise.resolve({ data: { ...task.preview, progress: 100, summary: { sample_count: 0 } } });
+      return Promise.resolve({ data: { items: [], total: 0, next_cursor: null } });
+    });
+    render(<MemoryRouter initialEntries={["/data-annotation?view=tasks&projectId=project-1"]}><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /^预览$/ }));
+    expect(await screen.findByRole("dialog", { name: "任务预览" })).toHaveTextContent("Inspect quality");
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/annotation-tasks/task-1/previews/preview-1"));
+    expect(post.mock.calls.filter(([url]) => url.endsWith("/preview"))).toHaveLength(0);
+    expect(within(screen.getByRole("region", { name: "通用任务列表" })).getByRole("button", { name: /^执行$/ })).toBeDisabled();
+  });
+
   it("opens the generic setup for a new automatic task", async () => {
     render(
       <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
@@ -394,6 +442,52 @@ describe("DataAnnotationPage", () => {
     ));
     const automlPayload = post.mock.calls.find(([url]) => url === "/automl-tasks")?.[1] as Record<string, unknown>;
     expect(automlPayload).not.toHaveProperty("max_trials");
+  });
+
+  it("submits the selected generic cluster-rule strategy and typed fallback", async () => {
+    datasetVersions.mockResolvedValue([{
+      id: "version-1",
+      project_id: "project-1",
+      version: 1,
+      status: "ready",
+      row_count: 2,
+      column_count: 2,
+      columns: [{ name: "feature", dtype: "float", nullable: false, position: 0 }],
+    }]);
+    modelArtifacts.mockResolvedValue([{ id: "artifact-1", name: "模型一", type: "model", format: "joblib" }]);
+    post.mockImplementation((url: string) => url === "/annotations/label-schemas"
+      ? Promise.resolve({ data: { id: "schema-1", project_id: "project-1", name: "labels", version: 1 } })
+      : Promise.resolve({ data: { id: "task-1", mode: "automatic", status: "draft", task_revision: 0 } }));
+
+    render(<MemoryRouter><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "新建自动标注任务" }));
+    fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
+    fireEvent.change(await screen.findByLabelText("模型制品标识"), { target: { value: "artifact-1" } });
+    fireEvent.change(screen.getByLabelText("自动标注策略"), { target: { value: "cluster_rule" } });
+    fireEvent.change(screen.getByLabelText("fallback 标签"), { target: { value: "other" } });
+    fireEvent.change(screen.getByLabelText("规则字段"), { target: { value: "feature" } });
+    fireEvent.change(screen.getByLabelText("规则值"), { target: { value: "0.5" } });
+    fireEvent.change(screen.getByLabelText("命中标签"), { target: { value: "positive" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/automl-tasks",
+      expect.objectContaining({
+        configuration: {
+          model_artifact_id: "artifact-1",
+          search_strength: "balanced",
+          clustering: true,
+          strategy: "cluster_rule",
+          other_values: { label: "other" },
+          rules: [{
+            id: "generic-rule-1",
+            when: { feature: { gte: "0.5" } },
+            values: { label: "positive" },
+          }],
+        },
+      }),
+      expect.anything(),
+    ));
   });
 
   it.each(["empty", "failed"] as const)("clears project-scoped creation resources while replacement lookups are %s", async (outcome) => {

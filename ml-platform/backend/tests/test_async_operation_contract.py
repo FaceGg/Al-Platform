@@ -362,6 +362,26 @@ def test_operation_dispatch_claim_is_atomic_and_recoverable(db):
     operation = _operation(db, resource_key=f"annotation-execution:{uuid.uuid4()}")
 
     assert claim_operation_dispatch(db, operation.id, 30) is True
+
+
+@pytest.mark.parametrize("state", ["failed", "cancelled"])
+def test_terminal_operation_cannot_be_claimed(db, state):
+    operation = _operation(db)
+    operation.state = state
+    db.commit()
+    assert claim_operation(db, operation.id, "late-worker", 30) is False
+    assert operation.state == state
+
+
+def test_expired_worker_cannot_fail_operation(db):
+    operation = _operation(db)
+    claim_operation(db, operation.id, "old-worker", 30)
+    operation.lease_expires_at = datetime.utcnow() - timedelta(seconds=1)
+    db.commit()
+    with pytest.raises(ValueError, match="OPERATION_LEASE_NOT_OWNED"):
+        fail_operation(db, operation.id, "LATE_FAILURE", worker_id="old-worker")
+    db.refresh(operation)
+    assert operation.state == "running"
     assert claim_operation_dispatch(db, operation.id, 30) is False
 
     persisted = db.get(DurableOperation, operation.id)

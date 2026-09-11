@@ -429,6 +429,7 @@ def _is_gitleaks_source_scope_excluded(relative_path: Path) -> bool:
     parts = relative_path.parts
     return (
         (parts and parts[0] == ".git")
+        or any(part.startswith(".venv") for part in parts)
         or "tmp" in parts
         or "temp_test" in parts
         or "docs2" in parts

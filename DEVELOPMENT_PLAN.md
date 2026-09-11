@@ -60,15 +60,15 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 | Task 2 | 数据导入、数据版本和统一输入合同 | Task 1 | `passed` |
 | Task 3 | AutoML 四种任务类型和训练合同 | Task 1、Task 2 | `passed` |
 | Task 4 | 标签 schema、类型校验和修订历史 | Task 1、Task 2 | `passed` |
-| Task 5 | 标注任务状态机、任务列表和预览 | Task 2、Task 4 | `in_progress` |
-| Task 6 | 三种自动标注策略和特征重要性加权 KMeans | Task 3、Task 4、Task 5 | `in_progress` |
-| Task 7 | 标注员独立认证、主体映射和服务边界 | Task 1、Task 2、Task 4 | `in_progress` |
-| Task 8 | 指派、重叠样本并发、自动保存和回传锁 | Task 4、Task 5、Task 7 | `in_progress` |
-| Task 9 | 回传结果列表、数据管理验收和站内通知 | Task 4、Task 5、Task 8 | `in_progress` |
-| Task 10 | 模型候选手动注册和模型库生命周期 | Task 2、Task 3、Task 4、Task 5 | `in_progress` |
-| Task 11 | 模型导出包和离线 `predict`/`annotate` | Task 2、Task 3、Task 6、Task 10 | `in_progress` |
-| Task 12 | 主平台和标注员门户前端 | Task 5、Task 7、Task 8、Task 9、Task 10、Task 11 | `in_progress` |
-| Task 13 | 异步 worker、幂等、恢复、清理和安全门禁 | Task 2、Task 5、Task 7、Task 8、Task 9、Task 10、Task 11 | `in_progress` |
+| Task 5 | 标注任务状态机、任务列表和预览 | Task 2、Task 4 | `passed` |
+| Task 6 | 三种自动标注策略和特征重要性加权 KMeans | Task 3、Task 4、Task 5 | `passed` |
+| Task 7 | 标注员独立认证、主体映射和服务边界 | Task 1、Task 2、Task 4 | `passed` |
+| Task 8 | 指派、重叠样本并发、自动保存和回传锁 | Task 4、Task 5、Task 7 | `passed` |
+| Task 9 | 回传结果列表、数据管理验收和站内通知 | Task 4、Task 5、Task 8 | `passed` |
+| Task 10 | 模型候选手动注册和模型库生命周期 | Task 2、Task 3、Task 4、Task 5 | `passed` |
+| Task 11 | 模型导出包和离线 `predict`/`annotate` | Task 2、Task 3、Task 6、Task 10 | `passed` |
+| Task 12 | 主平台和标注员门户前端 | Task 5、Task 7、Task 8、Task 9、Task 10、Task 11 | `passed` |
+| Task 13 | 异步 worker、幂等、恢复、清理和安全门禁 | Task 2、Task 5、Task 7、Task 8、Task 9、Task 10、Task 11 | `passed` |
 | Task 14 | 全量验收、文档同步和发布门禁 | Task 1–13 | `in_progress` |
 
 ### 当前执行入口
@@ -191,11 +191,15 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 | 范围 | 当前结论 | 已验证或已存在 | 未完成门禁 |
 |---|---|---|---|
 | Task 1–4 | `passed`（仅限已记录的本地聚焦范围） | 实现、迁移、聚焦测试和源码检查已有当前记录 | 完整后端、远程 CI 和平台级发布门禁仍由 Task 14 统一负责 |
-| Task 5 | `in_progress` | 状态转移、任务快照、预览幂等、进度/错误/详情/列表接口和通用预览 worker 已存在 | 真实 broker 派发、恢复调度、结果分页、页面操作中心和当前 SHA 运行态收据 |
-| Task 6 | `in_progress` | 规则 DSL、互斥策略、重要性聚合、确定性加权聚类、策略工件持久化和模型工件加载已存在 | 完整 API/worker/前端接线、浏览器验收和跨服务运行态证据 |
-| Task 7 | `in_progress` | 独立账号、会话撤销、主体映射、项目授权、门户代理 API 和服务身份校验已存在 | 内部平台接线、生产密钥/Compose 配置、浏览器验收和远程证据 |
-| Task 8 | `in_progress` | 重叠指派、样本 revision 冲突、回传幂等、回传锁、显式重新编辑和状态守卫已存在 | 完整项目/标注员授权链、门户客户端/worker/评论接线和真实 API 集成 |
-| Task 9–13 | `in_progress` | 回传、数据管理、模型注册/导出、离线运行、DurableOperation、清理和安全相关代码及聚焦测试已存在 | 跨服务集成、完整迁移/运行态、导出/离线收据、恢复演练和安全发布证据 |
+| Task 5 | `passed` | 状态转移、任务快照、预览/执行幂等、进度/错误/详情/列表接口、结果/统计分页、统一操作中心和通用预览/执行 worker 已完成 | Task 14 仍需在最终干净 SHA 重新绑定全量发布收据 |
+| Task 6 | `passed` | 规则 DSL、互斥策略、重要性聚合、确定性加权聚类、策略工件持久化和模型工件加载；API/worker/前端聚焦接线与回归已验证 | Task 14 仍需在最终干净 SHA 重新绑定完整发布收据；浏览器和跨服务运行态证据不属于本地 Task 6 聚焦结论 |
+| Task 7 | `passed` | 独立账号、会话撤销、主体映射、项目授权、门户代理 API、服务身份校验及独立门户前后端聚焦验证已完成 | Task 14 仍需在最终干净 SHA 验证 Compose/生产密钥、完整浏览器和远程证据；当前主机无 Docker 命令 |
+| Task 8 | `passed` | 重叠指派、样本 revision 冲突、回传幂等、回传锁、显式重新编辑、状态守卫和门户授权接线已通过聚焦验证 | Task 14 仍需在最终干净 SHA 验证容器、真实 broker/recovery、完整浏览器和远程证据 |
+| Task 9 | `passed` | 回传、数据管理验收和通知聚焦验证已通过 | Task 14 仍需在最终干净 SHA 重新绑定完整发布收据 |
+| Task 10 | `passed` | 模型候选注册和模型库生命周期聚焦验证已通过 | Task 14 仍需在最终干净 SHA 重新绑定完整发布收据 |
+| Task 11 | `passed` | 模型导出包和离线推理合同、前端控制与浏览器聚焦验证已通过 | Docker/真实部署导出运行及 Task 14 收据仍待完成 |
+| Task 12 | `passed` | 主平台任务中心、通用创建入口、预览/指派/回传组件、独立标注员门户及 Chromium 聚焦流程已验证 | 完整后端、Docker/WSL 持续运行、最终 SHA 收据和远程 CI 仍由 Task 14 负责 |
+| Task 13 | `passed` | 异步 worker、幂等、lease recovery、清理报告校验和 Web 安全合同聚焦验证已通过 | Docker/WSL、真实跨服务运行态、完整 active suite 和 Task 14 发布证据 |
 | Task 14 | `in_progress` | 验收矩阵、收据工具和文档同步入口已建立 | 当前 SHA 的完整后端门禁、Playwright、Docker/WSL、导出/离线、恢复和远程 CI 尚未全部通过 |
 
 ### 本次整理核验
@@ -564,3 +568,51 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 使用 `ml-platform/backend/.venv311/Scripts/python.exe` 执行 `tests/test_annotation_task_state.py tests/test_annotation_task_state_api.py tests/test_async_operation_contract.py -q`，结果为 **66 passed、4 warnings**。
 - 本次结果覆盖通用任务状态/API、执行 DurableOperation 与结果 cursor 分页、local/Celery 异步合同和恢复回归；属于当前分支聚焦证据。
 - 状态边界：Task 5 仍为 `in_progress`。真实 Redis/Celery broker、进程重启后的 recovery claim、Docker/WSL 持续运行、完整浏览器链路、完整后端 active suite、当前 SHA 全量收据和远程 CI 仍未形成通过证据；Task 6–14 继续按计划推进。
+
+## 2026-09-11 Task 5 实现与验收收口
+
+- 实现：任务预览/执行 worker 增加 revision 与 lease 失效保护；暂停/恢复不改变冻结配置 revision；worker 失去 lease 时不再把任务误标记为失败；执行结果与预览样本在 heartbeat/完成前保持事务一致；任务列表执行按钮要求当前 revision 的已完成预览；预览抽屉展示快照、状态、样本总数和空页/加载状态；结果与统计 cursor 流耗尽后不重复请求第一页。
+- 新增运行态工具：`ml-platform/backend/tools/task5_runtime_acceptance.py`，使用真实 Redis、可终止 Celery worker 和隔离 SQLite 验证预览、执行、worker 中断后恢复、同一 operation 重试及结果去重。
+- 验证：后端 Task 5 组合 **74 passed、4 warnings**；前端 Task 5 页面/组件/台账 **59 passed**；前端生产构建通过；Chromium `e2e/generic-platform-acceptance.spec.ts` **1 passed**；真实 Redis/worker 演练收据 `temp_test/task5-runtime-20260911-r3/receipt.json` 为 `passed`，包含 `real_broker_preview_completed`、`worker_kill_restart_recovery_same_operation`、`duplicate_delivery_no_duplicate_results`，结果数 5000。
+- 状态：Task 5 实现和本地/浏览器/真实 broker 演练要求已完成；本次重启 Redis 后的第二次运行因 WSL Docker 端口映射到 Windows 失败而 `environment-blocked`，不覆盖此前通过收据。Task 14 的干净提交、完整 active suite、远程 CI 和全量发布收据仍未完成。
+
+## 2026-09-11 Task 6 自动标注策略收口
+
+- 实现：通用自动任务支持 model、cluster、rule、cluster_rule 四种配置形态；聚类策略要求每个标签列提供类型有效的 `other_values`；`cluster_rule` 按 rule > cluster > other 的逐列优先级生成结果；冲突规则、缺失映射、非法标签值和不可用特征重要性进入 `needs_review`。
+- API/worker：自动任务创建在落库前校验冻结标签 schema 与策略配置；非法 fallback/rule 配置返回结构化 `422` 且不创建任务；预览 worker 从冻结 `task_snapshot.configuration` 执行策略并保存策略 artifact、摘要和逐样本 provenance。
+- 验证：后端 Task 6 组合 **65 passed、10 warnings**；前端页面与周台账 **57 passed**；生产构建和 `git diff --check` 通过。
+- 状态：Task 6 在当前工作树聚焦范围内标记为 `passed`。当前 SHA 收据、后端完整 active suite、Docker/真实 broker/recovery、门户完整浏览器链路、远程 CI 和 Task 14 发布门禁仍未完成；Task 7–14 和总体计划继续 `in_progress`。
+
+## 2026-09-11 Task 7 独立标注员认证收口
+
+- 实现：主平台已接入独立 annotator account、不可变 subject、portal session、session version 撤销、主体映射、项目授权、门户内部任务/样本/标签/评论 API 和服务 token 校验；门户后端与前端使用独立入口和会话，不复用主平台登录态。
+- 验证：主平台 `tests/test_annotator_auth.py tests/test_portal_internal_api.py tests/test_database_migrations.py` **16 passed、2 warnings**；独立门户后端 **3 passed、2 warnings**；门户前端认证/任务页面 **5 passed**；门户生产构建通过。
+- 环境边界：`docker compose -f docker-compose.yml config` 未执行，当前 Windows 主机未安装 Docker CLI；这不改写本地代码测试结果，Compose/生产密钥/容器持续运行和远程证据保留给 Task 14。
+- 状态：Task 7 在上述当前工作树聚焦范围内标记为 `passed`；Task 8–14 和总体计划继续 `in_progress`。
+
+## 2026-09-11 Task 8 指派与并发收口
+
+- 实现：管理员固定样本范围指派支持重叠标注；标签写入携带 base revision 并保存完整服务端标签集合；过期写入返回结构化 revision conflict；回传成功后进入只读锁，必须显式 edit-for-return 并产生新 revision 才能再次回传。
+- 验证：`tests/test_annotation_concurrency.py tests/test_annotation_return_acceptance.py tests/test_annotator_auth.py tests/test_portal_internal_api.py` **22 passed、2 warnings**。
+- 覆盖：项目/标注员授权、任务状态守卫、重叠 assignment、样本级并发、回传幂等、回传锁、显式重新编辑、门户内部标签/评论 API。
+- 状态：Task 8 在当前工作树聚焦范围内标记为 `passed`；Task 9–14 和总体计划继续 `in_progress`，真实 Compose/broker/recovery、完整门户浏览器和远程 CI 仍未闭环。
+
+## 2026-09-11 Task 9 回传验收收口
+
+- 实现：主平台提供回传批次列表、管理员验收/退回和数据管理边界；验收从不可变源版本生成新的 ready 数据版本，退回要求原因并向映射标注员发送站内通知。
+- 验证：`tests/test_annotation_return_acceptance.py tests/test_api_datasets.py tests/test_notification_outbox.py` **45 passed、20 warnings**。
+- 覆盖：回传批次状态、差异/样本结果、验收幂等、源版本不变、schema/sample 复制、退回原因校验和通知 outbox。
+- 状态：Task 9 在当前工作树聚焦范围内标记为 `passed`；Task 10–14 和总体计划继续 `in_progress`，完整前端、容器/worker、远程 CI 和最终 SHA 收据仍待完成。
+
+## 2026-09-11 Task 10 模型候选注册收口
+
+- 实现：完整 AutoML candidate 才能手动注册；注册校验项目归属、artifact-only lineage、模型输入/输出合同和制品状态；重复注册保持幂等；ModelVersion 保留多目标、指标、特征重要性、数据版本和合同元数据；生命周期动作受控，worker 不直接写模型库。
+- 验证：后端实际存在的注册/模型库组合 `tests/test_model_registration_contract.py tests/test_api_model_registry.py tests/test_model_registry_service.py tests/test_api_model_library.py` **47 passed、13 warnings、2 subtests passed**；前端 `AutoMLTaskPage.test.tsx` 与 `ModelLibraryPage.test.tsx` **24 passed**；主平台生产构建通过。
+- 计划差异：计划引用的 `tests/test_automl_result_registration.py` 在当前仓库不存在，因此未伪造执行结果，使用当前实际注册测试覆盖替代。
+- 状态：Task 10 在当前工作树聚焦范围内标记为 `passed`；Task 11–14 和总体计划继续 `in_progress`，导出/离线、容器/恢复、完整浏览器和远程 CI 仍未闭环。
+
+## 2026-09-11 Task 11 模型导出与离线运行时收口
+
+- 实现：模型库版本抽屉对已批准版本提供 predict/annotate 导出；前端创建异步导出后轮询状态，只有 `ready` 才调用一次性下载授权接口；失败状态不触发下载。
+- 验证：后端导出/离线合同 **9 passed、3 warnings**；导出 API 与模型库页面 **15 passed**；主平台生产构建通过；Chromium `e2e/model-export.spec.ts` **1 passed**，覆盖登录、项目/已批准版本选择、queued/running/ready 轮询和 ready 后下载。
+- 状态：Task 11 在当前工作树聚焦、前端和浏览器范围内标记为 `passed`。Docker/真实部署导出运行、完整后端 active suite、远程 CI 和 Task 14 最终 SHA 收据仍未完成；Task 12–14 和总体计划继续 `in_progress`。

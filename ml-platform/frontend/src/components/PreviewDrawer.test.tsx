@@ -17,4 +17,13 @@ describe("PreviewDrawer", () => {
     expect(screen.getByLabelText("预览样本")).toHaveTextContent("sample-1");
     expect(screen.getByText(/score/)).toBeInTheDocument();
   });
+
+  it("keeps pagination available for an empty page and prevents loading twice", () => {
+    const onLoadMore = vi.fn();
+    const { rerender } = render(<PreviewDrawer open samples={[]} hasMore onLoadMore={onLoadMore} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
+    expect(onLoadMore).toHaveBeenCalledOnce();
+    rerender(<PreviewDrawer open samples={[]} hasMore loading onLoadMore={onLoadMore} onClose={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "加载更多" })).toBeDisabled();
+  });
 });

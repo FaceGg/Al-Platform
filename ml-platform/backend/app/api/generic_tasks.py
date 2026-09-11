@@ -24,6 +24,12 @@ from app.models.project import Project
 from app.models.user import User
 from app.services.annotation_tasks import migrate_legacy_quality_run
 from app.services.annotation_task_state import current_annotation_task_preview, current_annotation_task_snapshot, list_annotation_tasks, serialize_annotation_task
+from app.services.annotation_strategies import (
+    StrategyConfigError,
+    _config_from_snapshot,
+    label_schema_contract_from_snapshot,
+    validate_strategy_config,
+)
 from app.services.label_schema import bind_label_schema_to_task, label_schema_snapshot
 
 router = APIRouter(tags=["generic-tasks"])
@@ -174,6 +180,19 @@ def create_generic_annotation_task(
     if requested_ids is not None and {sample.sample_id for sample in samples} != set(requested_ids):
         raise _contract_error(request, "SAMPLE_SCOPE_INVALID", "The sample scope contains unknown sample ids.", status_code=422)
     schema_snapshot = label_schema_snapshot(schema)
+    if data.mode == "automatic":
+        try:
+            validate_strategy_config(
+                _config_from_snapshot(data.configuration),
+                label_schema_contract_from_snapshot(schema_snapshot),
+            )
+        except StrategyConfigError as error:
+            raise _contract_error(
+                request,
+                error.code,
+                str(error),
+                status_code=422,
+            ) from error
     visible_columns = list(data.visible_columns)
     task_snapshot = {
         "dataset_version": {"id": str(version.id), "version": version.version, "content_hash": version.content_hash, "schema_hash": version.schema_hash},

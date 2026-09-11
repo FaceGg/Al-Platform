@@ -449,6 +449,89 @@ def test_pause_and_resume_restore_the_previous_active_state(db):
     assert resumed.paused_from_status is None
 
 
+def test_pause_resume_keeps_completed_preview_executable(db, monkeypatch):
+    task, user, _ = _task(db)
+    preview = create_annotation_preview(db, task.id, 0, "sha256:frozen", user.id)
+    from app.tasks.annotation_preview_tasks import execute_annotation_preview
+    monkeypatch.setattr("app.tasks.annotation_preview_tasks.SessionLocal", lambda: db)
+    execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
+    transition_annotation_task(db, task.id, 0, TaskAction.pause, user.id)
+    transition_annotation_task(db, task.id, task.task_revision, TaskAction.resume, user.id)
+    assert task.task_revision == preview.task_revision
+    result = transition_annotation_task(db, task.id, task.task_revision, TaskAction.execute, user.id, preview.id)
+    assert result.status == "executing"
+
+
+def test_paused_execution_delivery_can_resume_same_operation(db, monkeypatch):
+    task, user, _ = _task(db)
+    preview = create_annotation_preview(db, task.id, 0, "sha256:frozen", user.id)
+    preview.status = "completed"
+    task.status = "preview_ready"
+    db.commit()
+    from app.services.annotation_task_execution import request_annotation_execution
+    from app.tasks.annotation_execution_tasks import execute_annotation_task
+    request = request_annotation_execution(db, task.id, preview.id, user.id)
+    monkeypatch.setattr("app.tasks.annotation_execution_tasks.SessionLocal", lambda: db)
+    transition_annotation_task(db, task.id, 0, TaskAction.pause, user.id)
+    args = (str(task.id), str(preview.id), str(user.id), str(request.operation_id))
+    assert execute_annotation_task.run(*args)["status"] == "paused"
+    assert db.get(DurableOperation, request.operation_id).state == "queued"
+    transition_annotation_task(db, task.id, task.task_revision, TaskAction.resume, user.id)
+    assert execute_annotation_task.run(*args)["status"] == "completed"
+    assert execute_annotation_task.run(*args)["status"] == "not_claimed"
+
+
+def test_stale_preview_delivery_does_not_publish_or_fail_new_revision(db, monkeypatch):
+    task, user, _ = _task(db)
+    preview = create_annotation_preview(db, task.id, 0, "sha256:frozen", user.id)
+    task.task_revision = 1
+    db.commit()
+    from app.tasks.annotation_preview_tasks import execute_annotation_preview
+    monkeypatch.setattr("app.tasks.annotation_preview_tasks.SessionLocal", lambda: db)
+    result = execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
+    assert result["status"] == "invalid_request"
+    assert task.status == "previewing"
+    assert db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview.id).count() == 0
+
+
+@pytest.mark.parametrize("worker_kind", ["preview", "execution"])
+def test_worker_lease_loss_rolls_back_all_results(db, monkeypatch, worker_kind):
+    task, user, _ = _task(db)
+    preview = create_annotation_preview(db, task.id, 0, "sha256:frozen", user.id)
+    if worker_kind == "execution":
+        preview.status = "completed"
+        task.status = "preview_ready"
+        db.add(AnnotationTaskPreviewSample(preview_id=preview.id, sample_id="s-1", row_index=0, values={"label": "ok"}))
+        db.commit()
+        from app.services.annotation_task_execution import request_annotation_execution
+        request = request_annotation_execution(db, task.id, preview.id, user.id)
+        from app.tasks import annotation_execution_tasks as module
+        args = (str(task.id), str(preview.id), str(user.id), str(request.operation_id))
+        worker = module.execute_annotation_task
+        model = AnnotationTaskExecutionResult
+        operation_id = request.operation_id
+    else:
+        from app.tasks import annotation_preview_tasks as module
+        args = (str(task.id), str(preview.id), str(user.id))
+        worker = module.execute_annotation_preview
+        model = AnnotationTaskPreviewSample
+        operation_id = preview.operation_id
+    monkeypatch.setattr(module, "SessionLocal", lambda: db)
+
+    def lose_lease(*args, **kwargs):
+        db.rollback()
+        operation = db.get(DurableOperation, operation_id)
+        operation.lease_owner = "replacement-worker"
+        db.commit()
+        raise ValueError("OPERATION_LEASE_NOT_OWNED")
+
+    monkeypatch.setattr(module, "heartbeat_operation", lose_lease)
+    worker.run(*args)
+    assert db.query(model).count() == 0
+    assert db.get(DurableOperation, operation_id).lease_owner == "replacement-worker"
+    assert task.status == ("executing" if worker_kind == "execution" else "previewing")
+
+
 def test_list_annotation_tasks_uses_cursor_and_limit(db):
     task, user, project = _task(db)
     page = list_annotation_tasks(db, project.id, owner_id=user.id, cursor=None, limit=1)

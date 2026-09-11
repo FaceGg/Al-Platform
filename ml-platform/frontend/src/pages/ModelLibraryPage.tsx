@@ -22,6 +22,7 @@ import {
   pauseRollout, resumeRollout, revokeInferenceApiKey, updateModelCardGuidance,
   exportModelCard, uploadOnnxArtifact,
 } from "../api/modelRegistry";
+import { createModelExport, downloadModelExport, getModelExport } from "../api/modelExports";
 import AppLayout from "../components/AppLayout";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
@@ -62,6 +63,7 @@ export default function ModelLibraryPage() {
   const [guidance, setGuidance] = useState("");
   const [rolloutBusyId, setRolloutBusyId] = useState<string>();
   const [rolloutOpen, setRolloutOpen] = useState(false);
+  const [exportBusy, setExportBusy] = useState<string>();
   const [lastLogPage, setLastLogPage] = useState<number>();
   const operationsRequestRef = useRef(0);
   const [registerSource, setRegisterSource] = useState<"platform_joblib" | "onnx_artifact">("platform_joblib");
@@ -160,6 +162,37 @@ export default function ModelLibraryPage() {
       registerForm.resetFields();
     } catch (cause) {
       if (!(cause as { errorFields?: unknown }).errorFields) message.error(formatApiError(cause, copy.commandFailed));
+    }
+  };
+
+  const exportVersion = async (version: ModelVersion, exportKind: "predict" | "annotate") => {
+    if (!projectId || version.approval_status !== "approved") return;
+    const busyKey = `${version.id}:${exportKind}`;
+    setExportBusy(busyKey);
+    try {
+      const created = await createModelExport(projectId, {
+        model_version_id: version.id,
+        export_kind: exportKind,
+        include_annotation: exportKind === "annotate",
+      });
+      let current = created;
+      for (let attempt = 0; attempt < 30 && !["ready", "failed"].includes(current.status); attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        current = await getModelExport(created.id);
+      }
+      if (current.status !== "ready") throw new Error(current.error_code || "MODEL_EXPORT_NOT_READY");
+      const blob = await downloadModelExport(current.id);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `model-export-${version.version_number}-${exportKind}.zip`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      message.success(copy.exportReady);
+    } catch (cause) {
+      message.error(formatApiError(cause, copy.exportFailed));
+    } finally {
+      setExportBusy(undefined);
     }
   };
 
@@ -565,7 +598,10 @@ export default function ModelLibraryPage() {
         { title: copy.version, dataIndex: "version_number", render: (value: number) => `v${value}` },
         { title: copy.status, dataIndex: "approval_status", render: (value: string) => <Tag color={statusColor(value)}>{statusLabel(value)}</Tag> },
         { title: copy.framework, dataIndex: "framework" },
-        { title: t.model.actions, render: (_: unknown, row: ModelVersion) => versionModel && canRegister && row.approval_status === "pending" ? <Space><Button icon={<CheckOutlined />} aria-label={`${copy.approve} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => void approve(versionModel, row)}>{copy.approve}</Button><Button danger aria-label={`${copy.reject} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => reject(versionModel, row)}>{copy.reject}</Button></Space> : null },
+        { title: t.model.actions, render: (_: unknown, row: ModelVersion) => versionModel && canRegister ? <Space>
+          {row.approval_status === "pending" && <><Button icon={<CheckOutlined />} aria-label={`${copy.approve} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => void approve(versionModel, row)}>{copy.approve}</Button><Button danger aria-label={`${copy.reject} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => reject(versionModel, row)}>{copy.reject}</Button></>}
+          {row.approval_status === "approved" && <><Button loading={exportBusy === `${row.id}:predict`} aria-label={`${copy.exportPredict} ${row.version_number}`} onClick={() => void exportVersion(row, "predict")}>{copy.exportPredict}</Button><Button loading={exportBusy === `${row.id}:annotate`} aria-label={`${copy.exportAnnotate} ${row.version_number}`} onClick={() => void exportVersion(row, "annotate")}>{copy.exportAnnotate}</Button></>}
+        </Space> : null },
       ]} />
     </Drawer>
     <Modal title={copy.createDeployment} open={deploymentOpen} onCancel={() => setDeploymentOpen(false)} onOk={() => void submitDeployment()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>

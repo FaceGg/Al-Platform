@@ -277,15 +277,31 @@ class TestNotificationMigration(unittest.TestCase):
         self.assertNotIn("drop_all", source)
 
         with tempfile.TemporaryDirectory() as directory:
-            database_url = f"sqlite:///{Path(directory, 'notifications.db').as_posix()}"
             config = Config(str(ALEMBIC_INI))
             original_database_url = settings.database_url
-            settings.database_url = database_url
             try:
+                notification_database_url = (
+                    f"sqlite:///{Path(directory, 'notifications-only.db').as_posix()}"
+                )
+                settings.database_url = notification_database_url
                 command.upgrade(config, WEEK9_REVISION)
+                command.upgrade(config, WEEK10_REVISION)
+                command.downgrade(config, WEEK9_REVISION)
+                db_engine = create_engine(notification_database_url)
+                try:
+                    self.assertTrue(
+                        WEEK10_TABLES.isdisjoint(inspect(db_engine).get_table_names())
+                    )
+                finally:
+                    db_engine.dispose()
+
+                full_database_url = (
+                    f"sqlite:///{Path(directory, 'full-head.db').as_posix()}"
+                )
+                settings.database_url = full_database_url
                 command.upgrade(config, "head")
                 command.check(config)
-                db_engine = create_engine(database_url)
+                db_engine = create_engine(full_database_url)
                 try:
                     inspector = inspect(db_engine)
                     self.assertTrue(WEEK10_TABLES.issubset(inspector.get_table_names()))
@@ -305,16 +321,21 @@ class TestNotificationMigration(unittest.TestCase):
                     self.assertIn(("deduplication_key",), in_app_constraints)
                 finally:
                     db_engine.dispose()
-                command.downgrade(config, WEEK9_REVISION)
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "Refusing destructive downgrade of generic_annotation_tasks",
+                ):
+                    command.downgrade(config, WEEK9_REVISION)
+                db_engine = create_engine(full_database_url)
+                try:
+                    self.assertIn(
+                        "generic_annotation_tasks",
+                        inspect(db_engine).get_table_names(),
+                    )
+                finally:
+                    db_engine.dispose()
             finally:
                 settings.database_url = original_database_url
-
-            db_engine = create_engine(database_url)
-            try:
-                tables = set(inspect(db_engine).get_table_names())
-                self.assertTrue(WEEK10_TABLES.isdisjoint(tables))
-            finally:
-                db_engine.dispose()
 
 
 if __name__ == "__main__":

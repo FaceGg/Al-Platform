@@ -148,3 +148,62 @@
 - 当前分支 `general-automl-annotation-20260902`、HEAD `ac56fd7` 工作区干净；使用 Python 3.11 环境执行 Task 5/异步组合：**66 passed、4 warnings**。
 - 覆盖 `test_annotation_task_state.py`、`test_annotation_task_state_api.py` 和 `test_async_operation_contract.py`，包括执行 DurableOperation、结果 cursor 分页、local/Celery 派发合同及恢复回归。
 - 该结果是当前分支聚焦证据，不生成或更新 19 项 `passed` 收据；真实 Redis/Celery、进程重启恢复、Docker/WSL、完整后端 active suite、浏览器和远程 CI 仍未形成当前 SHA 的完整证据，矩阵继续 `in_progress`。
+
+## 2026-09-11 Task 5 收口证据
+
+- 后端 Task 5 组合：**74 passed、4 warnings**；前端 `DataAnnotationPage`、`PreviewDrawer` 和周台账：**59 passed**；生产构建通过。
+- 当前分支 Chromium 通用平台验收：`e2e/generic-platform-acceptance.spec.ts` **1 passed**，覆盖任务列表、预览完成后的执行条件和 `execute -> return -> accept` 状态链。
+- 真实 Redis/Celery 演练收据：`temp_test/task5-runtime-20260911-r3/receipt.json`，状态 `passed`；覆盖真实 broker 预览、执行 worker 终止/重启 recovery、同一 operation identity 和 5000 条结果无重复。
+- Task 5 状态：`passed`。矩阵总体仍为 `in_progress`，因为 Task 6–14、当前最终 SHA 的 19 项收据、完整后端 active suite、Docker/WSL 全栈持续运行和远程 CI 仍未闭环。`r5` 重跑因 Docker 到 Windows 的 `127.0.0.1:6395` 端口映射被拒绝，记录为 `environment-blocked`，不改写 `r3` 的通过收据。
+
+## 2026-09-11 Task 6 自动策略证据
+
+- `CLU-01` / `CLU-02` 当前工作树聚焦验证：Task 6 后端组合 **65 passed、10 warnings**。
+- 覆盖：model、cluster、rule、cluster_rule 策略，fallback 和规则冲突，类型化规则 DSL，特征重要性聚合，加权 KMeans 及预览策略 artifact/逐样本 provenance；自动任务 API 非法配置返回结构化 `422` 且不落库。
+- 前端自动策略配置回归与周台账 **57 passed**；生产构建和 `git diff --check` 通过。
+- 状态边界：以上是当前未提交工作树的 Task 6 聚焦证据，不是最终 Git SHA 收据。矩阵总体仍为 `in_progress`，Task 7–14、真实 Docker/Redis/Celery recovery、完整 active suite、门户完整浏览器链路和远程 CI 仍未闭环。
+
+## 2026-09-11 Task 7 独立标注员认证证据
+
+- `AUTH-01` / `AUTH-02` 当前工作树聚焦验证：主平台认证、门户内部 API 和迁移 **16 passed、2 warnings**；独立门户后端 **3 passed、2 warnings**。
+- 门户前端认证、任务队列和工作区测试 **5 passed**，生产构建通过。
+- 覆盖：独立 annotator account、不可变 subject、portal session 与 session version 撤销、主体映射、项目授权、服务 token issuer/audience/scope/project 校验，以及门户不接受客户端自带 project/annotator identity。
+- 环境边界：Docker CLI 不可用，Compose config 和容器运行态未执行；以上是当前工作树聚焦证据，不是最终 Git SHA 收据。矩阵总体继续 `in_progress`，Task 8–14、Compose/真实运行态和远程 CI 仍未闭环。
+
+## 2026-09-11 Task 8 指派与并发证据
+
+- `CON-01` / `CON-02` 当前工作树聚焦验证：`tests/test_annotation_concurrency.py tests/test_annotation_return_acceptance.py tests/test_annotator_auth.py tests/test_portal_internal_api.py` **22 passed、2 warnings**。
+- 覆盖：重叠指派、样本级 revision 冲突、完整服务端标签集合、任务/项目/标注员授权、回传幂等、回传后只读锁、显式 edit-for-return、门户标签和评论 API。
+- 状态边界：Task 8 在当前工作树聚焦范围内通过；矩阵总体继续 `in_progress`，Task 9–14、Docker/真实 broker/recovery、完整门户浏览器和远程 CI 仍未闭环。
+
+## 2026-09-11 Task 9 回传验收证据
+
+- `RET-01` 当前工作树聚焦验证：`tests/test_annotation_return_acceptance.py tests/test_api_datasets.py tests/test_notification_outbox.py` **45 passed、20 warnings**。
+- 覆盖：回传批次列表、管理员验收和退回、验收幂等、从不可变源版本生成新数据版本、源版本不变、schema/sample 复制、退回原因和标注员站内通知。
+- 状态边界：Task 9 在当前工作树聚焦范围内通过；矩阵总体继续 `in_progress`，Task 10–14、完整前端/容器/worker/远程 CI 和最终 SHA 收据仍未闭环。
+
+## 2026-09-11 Task 10 模型注册证据
+
+- 当前仓库实际存在的模型注册/模型库后端组合 **47 passed、13 warnings、2 subtests passed**；前端 AutoML/模型库组合 **24 passed**；主平台生产构建通过。
+- 覆盖：完整 candidate 注册边界、artifact-only lineage、重复注册幂等、多目标合同元数据、模型生命周期和模型库 API。
+- 计划差异：计划引用的 `tests/test_automl_result_registration.py` 当前不存在，未将其记为执行通过；使用实际存在的 `test_model_registration_contract.py`、`test_api_model_registry.py`、`test_model_registry_service.py` 和 `test_api_model_library.py`。
+- 状态边界：Task 10 在当前工作树聚焦范围内通过；矩阵总体继续 `in_progress`，Task 11–14、导出/离线运行态、容器/recovery、完整浏览器和远程 CI 仍未闭环。
+
+## 2026-09-11 Task 11 导出与离线证据
+
+- `EXP-01` / `INF-01` 当前工作树聚焦验证：后端导出/离线合同 **9 passed、3 warnings**；导出 API 与模型库前端 **15 passed**；主平台生产构建通过。
+- 新增 `e2e/model-export.spec.ts`，Chromium **1 passed**；覆盖真实登录、模型库项目选择、已批准版本、异步导出 queued/running/ready 状态轮询以及 ready 后一次性下载。
+- 状态边界：Task 11 在当前工作树聚焦、前端和浏览器范围内通过；矩阵总体继续 `in_progress`，Docker/真实部署导出运行、完整后端 active suite、Task 12–14 和远程 CI 仍未闭环。
+
+## 2026-09-11 Task 12 主平台与标注员门户聚焦证据
+
+- 主平台 Task 12 聚焦套件：`DataAnnotationPage`、`AutoMLTaskPage`、`ModelLibraryPage`、`AssignmentDialog`、`ReturnBatchList` 和周验收台账共 **83 passed**。
+- 独立标注员门户前端全量测试：**5 passed**；门户生产构建和主平台生产构建均通过。
+- Chromium 浏览器流程：**2 passed**，覆盖主平台通用任务列表/预览完成后执行及 `execute -> return -> accept` 状态链，以及门户独立身份、自动保存、冲突/回传锁和显式编辑流程。
+- Task 12 在当前本地聚焦、前端构建和浏览器范围内标记为 `passed`。该证据来自当前工作树，不替代最终干净 SHA 收据；完整后端 active suite、Docker/WSL 持续运行、真实跨服务门户运行和远程 CI 仍由 Task 14 门禁负责。
+
+## 2026-09-11 Task 13 异步恢复、清理与安全聚焦证据
+
+- Task 13 聚焦套件：`tests/test_async_operation_contract.py tests/test_security_contract.py tests/test_suite_manifest.py` **32 passed、2 subtests passed**。
+- 覆盖：过期 lease 单次回收、恢复派发去重、失败操作不发布部分制品、清理报告字段与 SHA 校验、幂等操作及请求安全合同；`celery_app.py`、`recovery.py`、`artifact_service.py`、`config.py`、`main.py` 和清理工具均通过 Python 编译。
+- Task 13 在当前本地异步/安全/清理聚焦范围内标记为 `passed`。Docker/WSL Compose 配置与持续运行、真实跨服务 recovery、完整后端 active suite、最终 SHA 收据和远程 CI 仍未完成，继续由 Task 14 门禁负责。

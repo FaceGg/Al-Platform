@@ -50,6 +50,8 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
         preview = db.query(AnnotationTaskPreview).filter_by(id=preview_uuid, task_id=task_uuid).one_or_none()
         if task is None or preview is None:
             return {"status": "not_found", "preview_id": preview_id}
+        if preview.task_revision != task.task_revision:
+            return {"status": "invalid_request", "preview_id": preview_id, "error": "PREVIEW_STALE"}
         operation_id = preview.operation_id
         worker_id = f"annotation-preview:{getattr(getattr(self, 'request', None), 'id', None) or preview_id}"
         if operation_id is None or not claim_operation(db, operation_id, worker_id, 300):
@@ -110,8 +112,8 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                             "matched_rule_ids": list(decision.matched_rule_ids),
                         }
                     db.add(AnnotationTaskPreviewSample(preview_id=preview_uuid, sample_id=sample_id, row_index=row_index, values=values))
-            db.commit()
             heartbeat_operation(db, operation_id, worker_id, 300)
+            db.commit()
             record_annotation_preview_progress(db, task_uuid, preview_uuid, owner_uuid, status="completed", progress=100, summary=summary)
             mark_preview_completed(db, task_uuid, preview_uuid, owner_uuid)
             checksum_payload = {"preview_id": preview_id, "summary": summary, "samples": sorted((str(item.sample_id), item.values or {}) for item in db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview_uuid).all())}
@@ -121,25 +123,27 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
         except Exception as error:
             db.rollback()
             current = db.query(AnnotationTaskPreview).filter_by(id=preview_uuid, task_id=task_uuid).one_or_none()
-            if current is not None:
-                current.status = "failed"
-                current.progress = max(int(current.progress or 0), 10)
-                current.error = {"code": "PREVIEW_EXECUTION_FAILED", "message": str(error)[:500]}
-                failed_task = db.query(GenericAnnotationTask).filter_by(id=task_uuid, owner_id=owner_uuid).one_or_none()
-                if failed_task is not None and failed_task.status == "previewing":
-                    failed_task.status = "failed"
-                db.commit()
-            if operation_id is not None:
+            failed_task = db.query(GenericAnnotationTask).filter_by(id=task_uuid, owner_id=owner_uuid).one_or_none()
+            lease_owned = True
+            if current is not None and failed_task is not None and current.task_revision == failed_task.task_revision:
                 try:
-                    fail_operation(
-                        db,
-                        operation_id,
-                        "PREVIEW_EXECUTION_FAILED",
-                        {"message": str(error)[:300]},
-                        worker_id=worker_id,
-                    )
+                    if operation_id is not None:
+                        fail_operation(
+                            db,
+                            operation_id,
+                            "PREVIEW_EXECUTION_FAILED",
+                            {"message": str(error)[:300]},
+                            worker_id=worker_id,
+                        )
                 except ValueError:
-                    pass
+                    lease_owned = False
+                if lease_owned:
+                    current.status = "failed"
+                    current.progress = max(int(current.progress or 0), 10)
+                    current.error = {"code": "PREVIEW_EXECUTION_FAILED", "message": str(error)[:500]}
+                    if failed_task.status == "previewing":
+                        failed_task.status = "failed"
+                    db.commit()
             return {"status": "failed", "preview_id": preview_id, "error": current.error if current is not None else None}
     finally:
         if context_exit is not None:

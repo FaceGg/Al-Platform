@@ -149,7 +149,11 @@ def transition_annotation_task(db, task_id, expected_revision: int, action: Task
     elif action == TaskAction.resume:
         task.paused_from_status = None
     task.status = next_status
-    task.task_revision += 1
+    # Pause/resume changes execution availability, not the frozen task
+    # configuration.  Incrementing the revision here would invalidate the
+    # preview that the paused operation is explicitly meant to resume.
+    if action not in {TaskAction.pause, TaskAction.resume}:
+        task.task_revision += 1
     db.add(AuditEvent(
         project_id=task.project_id,
         actor_id=actor_id,

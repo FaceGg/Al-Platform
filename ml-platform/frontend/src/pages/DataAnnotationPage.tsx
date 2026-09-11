@@ -67,6 +67,9 @@ interface DatasetOption {
 }
 
 interface PreviewDrawerState {
+  snapshot?: Record<string, unknown>;
+  loading?: boolean;
+  sampleTotal?: number;
   taskId: string;
   previewId?: string;
   operationId?: string;
@@ -92,7 +95,7 @@ type ExecutionStatsKind = "sample" | "cluster" | "rule" | "final_label";
 
 interface ExecutionViewState {
   operation: AnnotationOperation;
-  results: Array<{ id: string; sample_id: string; row_index: number; status: string }>;
+  results: Array<{ id: string; sample_id: string; row_index: number; status: string; values: Record<string, unknown>; provenance: Record<string, unknown> }>;
   resultsCursor: string | null;
   statsKind: ExecutionStatsKind;
   stats: Array<Record<string, unknown>>;
@@ -242,6 +245,12 @@ export default function DataAnnotationPage() {
   const [genericInstructions, setGenericInstructions] = useState("");
   const [genericModelArtifactId, setGenericModelArtifactId] = useState("");
   const [genericSearchStrength, setGenericSearchStrength] = useState("balanced");
+  const [genericStrategy, setGenericStrategy] = useState<"model" | "cluster" | "rule" | "cluster_rule">("model");
+  const [genericOtherValue, setGenericOtherValue] = useState("");
+  const [genericRuleColumn, setGenericRuleColumn] = useState("");
+  const [genericRuleOperator, setGenericRuleOperator] = useState("gte");
+  const [genericRuleValue, setGenericRuleValue] = useState("");
+  const [genericRuleLabel, setGenericRuleLabel] = useState("");
   const [genericCreating, setGenericCreating] = useState(false);
   const [runId, setRunId] = useState(searchParams.get("runId") || "");
   const [samples, setSamples] = useState<QualitySample[]>([]);
@@ -524,11 +533,10 @@ export default function DataAnnotationPage() {
           : previewStatus === "failed" || previewStatus === "cancelled"
             ? previewStatus
             : "previewing";
-        setGenericTasks((items) => items.map((item) => item.id === taskId
+        setGenericTasks((items) => items.map((item) => item.id === taskId && item.task_revision === preview.task_revision
           ? {
               ...item,
-              task_revision: preview.task_revision,
-              status: taskStatus,
+              status: ["draft", "previewing", "failed"].includes(item.status) ? taskStatus : item.status,
               preview: {
                 ...preview,
                 id: preview.id || previewId,
@@ -553,6 +561,7 @@ export default function DataAnnotationPage() {
             ...current,
             samples: page.items.map((item) => ({ sample_id: item.sample_id, row_index: item.row_index, values: item.values })),
             sampleCursor: page.next_cursor,
+            sampleTotal: page.total,
           } : current);
         }
       } catch (error) {
@@ -567,8 +576,12 @@ export default function DataAnnotationPage() {
   const openTaskPreview = async (task: AnnotationTask) => {
     const configHash = String(task.task_snapshot?.config_hash || "sha256:task");
     try {
-      const preview = await createAnnotationPreview(task.id, task.task_revision, configHash);
+      const existing = task.preview;
+      const preview = existing
+        ? { preview_id: existing.id, operation_id: existing.operation_id || undefined, task_revision: existing.task_revision, status: existing.status, dispatch_id: null }
+        : await createAnnotationPreview(task.id, task.task_revision, configHash);
       setPreviewDrawer({
+        snapshot: task.task_snapshot,
         taskId: task.id,
         previewId: preview.preview_id,
         operationId: preview.operation_id,
@@ -672,16 +685,16 @@ export default function DataAnnotationPage() {
       const resultCursor = append ? current?.resultsCursor || undefined : undefined;
       const statsCursor = append && current?.statsKind === statsKind ? current.statsCursor || undefined : undefined;
       const [results, stats] = await Promise.all([
-        listAnnotationExecutionResults(operation.task_id, operation.id, 50, resultCursor),
-        listAnnotationExecutionStats(operation.task_id, operation.id, statsKind, 50, statsCursor),
+        append && !current?.resultsCursor ? null : listAnnotationExecutionResults(operation.task_id, operation.id, 50, resultCursor),
+        append && current?.statsKind === statsKind && !current.statsCursor ? null : listAnnotationExecutionStats(operation.task_id, operation.id, statsKind, 50, statsCursor),
       ]);
       setExecutionView((value) => value && value.operation.id === operation.id ? {
         ...value,
         statsKind,
-        results: append ? [...value.results, ...results.items] : results.items,
-        resultsCursor: results.next_cursor,
-        stats: append && value.statsKind === statsKind ? [...value.stats, ...stats.items] : stats.items,
-        statsCursor: stats.next_cursor,
+        results: results ? (append ? [...value.results, ...results.items] : results.items) : value.results,
+        resultsCursor: results ? results.next_cursor : value.resultsCursor,
+        stats: stats ? (append && value.statsKind === statsKind ? [...value.stats, ...stats.items] : stats.items) : value.stats,
+        statsCursor: stats ? stats.next_cursor : value.statsCursor,
         loading: false,
         error: null,
       } : value);
@@ -706,16 +719,21 @@ export default function DataAnnotationPage() {
   };
 
   const loadMorePreviewSamples = async () => {
-    if (!previewDrawer?.previewId || !previewDrawer.sampleCursor) return;
+    if (!previewDrawer?.previewId || !previewDrawer.sampleCursor || previewDrawer.loading) return;
+    const previewId = previewDrawer.previewId;
+    setPreviewDrawer((current) => current ? { ...current, loading: true } : current);
     try {
       const page = await listAnnotationPreviewSamples(previewDrawer.taskId, previewDrawer.previewId, 50, previewDrawer.sampleCursor);
-      setPreviewDrawer((current) => current ? {
+      setPreviewDrawer((current) => current?.previewId === previewId ? {
         ...current,
         samples: [...current.samples, ...page.items.map((item) => ({ sample_id: item.sample_id, row_index: item.row_index, values: item.values }))],
         sampleCursor: page.next_cursor,
+        sampleTotal: page.total,
       } : current);
     } catch (error) {
       message.error(formatApiError(error, "预览样本加载失败"));
+    } finally {
+      setPreviewDrawer((current) => current?.previewId === previewId ? { ...current, loading: false } : current);
     }
   };
 
@@ -1099,6 +1117,12 @@ export default function DataAnnotationPage() {
     setGenericInstructions("");
     setGenericModelArtifactId("");
     setGenericSearchStrength("balanced");
+    setGenericStrategy("model");
+    setGenericOtherValue("");
+    setGenericRuleColumn("");
+    setGenericRuleOperator("gte");
+    setGenericRuleValue("");
+    setGenericRuleLabel("");
     setAutomaticSetupStep(1);
     setSearchParams((current) => {
       current.delete("type");
@@ -1115,6 +1139,15 @@ export default function DataAnnotationPage() {
     if (!version || genericCreating) return;
     if (labelMode === "automatic" && !genericModelArtifacts.some((item) => item.id === genericModelArtifactId)) {
       message.error("自动任务需要模型制品标识");
+      return;
+    }
+    if (labelMode === "automatic" && genericStrategy !== "model" && !genericOtherValue.trim()) {
+      message.error("聚类或规则策略需要 fallback 标签");
+      return;
+    }
+    if (labelMode === "automatic" && ["rule", "cluster_rule"].includes(genericStrategy)
+      && (!genericRuleColumn || !genericRuleValue.trim() || !genericRuleLabel.trim())) {
+      message.error("规则策略需要完整条件和标签");
       return;
     }
     setGenericCreating(true);
@@ -1134,7 +1167,22 @@ export default function DataAnnotationPage() {
         visible_columns: version.columns.map((column) => column.name),
         instructions: genericInstructions,
         configuration: labelMode === "automatic"
-          ? { model_artifact_id: genericModelArtifactId.trim(), search_strength: genericSearchStrength }
+          ? {
+              model_artifact_id: genericModelArtifactId.trim(),
+              search_strength: genericSearchStrength,
+              ...(genericStrategy === "model" ? {} : {
+                clustering: true,
+                strategy: genericStrategy,
+                other_values: { [genericLabelKey.trim()]: genericOtherValue.trim() },
+                ...(["rule", "cluster_rule"].includes(genericStrategy) ? {
+                  rules: [{
+                    id: "generic-rule-1",
+                    when: { [genericRuleColumn]: { [genericRuleOperator]: genericRuleValue.trim() } },
+                    values: { [genericLabelKey.trim()]: genericRuleLabel.trim() },
+                  }],
+                } : {}),
+              }),
+            }
           : {},
       }, crypto.randomUUID());
       setGenericTasks((items) => [task, ...items.filter((item) => item.id !== task.id)]);
@@ -1387,7 +1435,7 @@ export default function DataAnnotationPage() {
               { title: "操作", key: "actions", align: "right" as const, render: (_: unknown, task: AnnotationTask) => <div className="table-row-actions">
                 <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void openTaskPreview(task); }}>预览</button>
                 <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void openAssignmentDialog(task); }}>指派标注员</button>
-                <button type="button" className="ant-btn ant-btn-sm" disabled={!['preview_ready', 'ready', 'paused'].includes(task.status)} onClick={() => { void executeGenericTask(task); }}>执行</button>
+                <button type="button" className="ant-btn ant-btn-sm" disabled={task.status !== "preview_ready" || !task.preview || task.preview.task_revision !== task.task_revision || task.preview.status !== "completed"} onClick={() => { void executeGenericTask(task); }}>执行</button>
                 {task.status === "preview_ready" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "publish"); }}>发布</button>}
                 {["preview_ready", "executing", "awaiting_annotation", "in_progress", "awaiting_return"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "pause"); }}>暂停</button>}
                 {task.status === "paused" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "resume"); }}>恢复</button>}
@@ -1442,10 +1490,14 @@ export default function DataAnnotationPage() {
             {(["sample", "cluster", "rule", "final_label"] as ExecutionStatsKind[]).map((kind) => <button key={kind} type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadExecutionView(executionView.operation, kind); }} disabled={executionView.loading || executionView.statsKind === kind}>{kind}</button>)}
           </div>
           {executionView.error && <div role="alert">{executionView.error}</div>}
-          <Table<{ id: string; sample_id: string; row_index: number; status: string }> rowKey="id" size="small" loading={executionView.loading} dataSource={executionView.results} pagination={false} columns={[
+          <Table<ExecutionViewState["results"][number]> rowKey="id" size="small" loading={executionView.loading} dataSource={executionView.results} pagination={false} scroll={{ x: 700 }} columns={[
             { title: "样本", dataIndex: "sample_id" }, { title: "序号", dataIndex: "row_index" }, { title: "状态", dataIndex: "status" },
+            { title: "最终标签", dataIndex: "values", render: (value: unknown) => <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(value)}</pre> },
+            { title: "来源", dataIndex: "provenance", render: (value: unknown) => <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(value)}</pre> },
           ]} />
-          <Table<Record<string, unknown>> rowKey={(item) => String(item.key)} size="small" loading={executionView.loading} dataSource={executionView.stats} pagination={false} columns={[
+          <Table<Record<string, unknown>> rowKey={(item) => String(item.key)} size="small" loading={executionView.loading} dataSource={executionView.stats} pagination={false} columns={executionView.statsKind === "sample" ? [
+            { title: "样本", dataIndex: "sample_id", render: String }, { title: "序号", dataIndex: "row_index", render: String }, { title: "状态", dataIndex: "status", render: String },
+          ] : [
             { title: "统计", dataIndex: "key", render: (value: unknown) => String(value) }, { title: "数量", dataIndex: "count", render: (value: unknown) => value == null ? "-" : String(value) },
           ]} />
           {(executionView.resultsCursor || executionView.statsCursor) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadExecutionView(executionView.operation, executionView.statsKind, true); }} disabled={executionView.loading}>加载更多结果</button>}
@@ -1453,6 +1505,10 @@ export default function DataAnnotationPage() {
       </div>
       <PreviewDrawer
         open={Boolean(previewDrawer)}
+        snapshot={previewDrawer?.snapshot}
+        status={previewDrawer?.status}
+        loading={previewDrawer?.loading}
+        sampleTotal={previewDrawer?.sampleTotal}
         operationId={previewDrawer?.operationId}
         summary={previewDrawer?.summary}
         progress={previewDrawer?.progress}
@@ -1729,6 +1785,40 @@ export default function DataAnnotationPage() {
                 <option value="light">轻量</option><option value="balanced">均衡</option><option value="strong">高强度</option><option value="exhaustive">穷举</option>
               </select>
             </div>
+            <div className="data-annotation__setup-field">
+              <label htmlFor="generic-strategy">自动标注策略</label>
+              <select id="generic-strategy" aria-label="自动标注策略" value={genericStrategy} onChange={(event) => setGenericStrategy(event.target.value as typeof genericStrategy)}>
+                <option value="model">模型输出</option>
+                <option value="cluster">聚类</option>
+                <option value="rule">规则</option>
+                <option value="cluster_rule">规则 + 聚类</option>
+              </select>
+            </div>
+            {genericStrategy !== "model" && <div className="data-annotation__setup-field">
+              <label htmlFor="generic-other-value">fallback 标签</label>
+              <input id="generic-other-value" aria-label="fallback 标签" value={genericOtherValue} onChange={(event) => setGenericOtherValue(event.target.value)} placeholder="未命中时的标签" />
+            </div>}
+            {["rule", "cluster_rule"].includes(genericStrategy) && <div className="data-annotation__setup-field">
+              <label htmlFor="generic-rule-column">规则字段</label>
+              <select id="generic-rule-column" aria-label="规则字段" value={genericRuleColumn} onChange={(event) => setGenericRuleColumn(event.target.value)}>
+                <option value="">选择字段</option>
+                {genericVersions.find((item) => item.id === genericVersionId)?.columns.map((column) => <option key={column.name} value={column.name}>{column.name}</option>)}
+              </select>
+            </div>}
+            {["rule", "cluster_rule"].includes(genericStrategy) && <div className="data-annotation__setup-field">
+              <label htmlFor="generic-rule-operator">规则运算符</label>
+              <select id="generic-rule-operator" aria-label="规则运算符" value={genericRuleOperator} onChange={(event) => setGenericRuleOperator(event.target.value)}>
+                <option value="gte">&gt;=</option><option value="gt">&gt;</option><option value="eq">等于</option><option value="lt">&lt;</option><option value="lte">&lt;=</option>
+              </select>
+            </div>}
+            {["rule", "cluster_rule"].includes(genericStrategy) && <div className="data-annotation__setup-field">
+              <label htmlFor="generic-rule-value">规则值</label>
+              <input id="generic-rule-value" aria-label="规则值" value={genericRuleValue} onChange={(event) => setGenericRuleValue(event.target.value)} />
+            </div>}
+            {["rule", "cluster_rule"].includes(genericStrategy) && <div className="data-annotation__setup-field">
+              <label htmlFor="generic-rule-label">命中标签</label>
+              <input id="generic-rule-label" aria-label="命中标签" value={genericRuleLabel} onChange={(event) => setGenericRuleLabel(event.target.value)} />
+            </div>}
           </>}
         </div>
         <div className="data-annotation__setup-field">
@@ -1736,7 +1826,7 @@ export default function DataAnnotationPage() {
           <textarea id="generic-instructions" aria-label="标注说明" value={genericInstructions} onChange={(event) => setGenericInstructions(event.target.value)} rows={4} />
         </div>
         <div className="data-annotation__setup-footer data-annotation__setup-footer--centered">
-          <button type="button" className="ant-btn ant-btn-primary" onClick={() => void createGenericTaskFromSetup()} disabled={!canCreate || !genericVersions.some((item) => item.id === genericVersionId && item.project_id === projectId) || (labelMode === "automatic" && !genericModelArtifacts.some((item) => item.id === genericModelArtifactId)) || !genericSchemaName.trim() || !genericLabelKey.trim() || genericCreating}>
+          <button type="button" className="ant-btn ant-btn-primary" onClick={() => void createGenericTaskFromSetup()} disabled={!canCreate || !genericVersions.some((item) => item.id === genericVersionId && item.project_id === projectId) || (labelMode === "automatic" && (!genericModelArtifacts.some((item) => item.id === genericModelArtifactId) || (genericStrategy !== "model" && !genericOtherValue.trim()) || (["rule", "cluster_rule"].includes(genericStrategy) && (!genericRuleColumn || !genericRuleValue.trim() || !genericRuleLabel.trim())))) || !genericSchemaName.trim() || !genericLabelKey.trim() || genericCreating}>
             {genericCreating ? "创建中..." : "创建通用任务"}
           </button>
         </div>

@@ -4,6 +4,7 @@ import { resolveE2ePython } from "./e2e/pythonExecutable";
 
 const frontendDir = import.meta.dirname;
 const backendDir = path.resolve(frontendDir, "../backend");
+const portalFrontendDir = path.resolve(frontendDir, "../annotator/frontend");
 const tempTestDir = path.resolve(frontendDir, "../../temp_test");
 const e2eDatabaseUrl = `sqlite:///${path.join(tempTestDir, "playwright_e2e.db").replaceAll("\\", "/")}`;
 const e2eArtifactDir = path.join(tempTestDir, "playwright-artifacts");
@@ -83,6 +84,13 @@ export default defineConfig({
       command: `npm run dev -- --host 127.0.0.1 --port ${standardFrontendPort}`,
       cwd: frontendDir,
       url: `${standardBaseUrl.replace(/\/$/, "")}/login`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      command: "npm run dev -- --host 127.0.0.1 --port 5174",
+      cwd: portalFrontendDir,
+      url: "http://127.0.0.1:5174",
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },
