@@ -471,3 +471,12 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 模型导出、离线推理和 ONNX 转换聚焦套件：**15 passed、1 skipped、4 subtests passed**。
 - 后端 active suite 使用 Python 3.11 启动并运行到约 44% 后持续进行计算；因预计耗时较长且未产生失败摘要，本轮主动中止，不将其记为通过或失败。可复现命令为 `& (Resolve-Path .venv311\Scripts\python.exe).Path -m pytest -q --maxfail=10`。
 - 状态边界：上述前端和导出证据属于当前工作树对应代码，但后端全量、Docker/WSL 持续运行、真实 broker/recovery、Playwright 和远程 CI 仍未形成完整发布收据；Task 5–14 继续 `in_progress`。
+
+## 2026-09-11 当前 SHA 验收矩阵聚焦复核
+
+- 数据导入、数据库迁移和标签 schema 聚焦组合：**49 passed、2 warnings**。
+- AutoML 多输出与跟踪组合：**84 passed、51 warnings、10 subtests passed**。
+- 安全合同与异步操作组合：**24 passed**。
+- 标注员认证和门户内部 API：**12 passed、2 warnings**。
+- 当前 `temp_test/generic-platform-acceptance/receipts/` 中仍有 19 份旧收据，绑定 SHA `1b35a30852f08d3837642f2ad57c84236671850d`，不能作为当前 SHA `64326dc55d61918fa7ef876879d7526f3d324e3f` 的发布证据；本轮只记录聚焦结果，不伪造或复用旧收据。
+- Task 5–14 状态继续为 `in_progress`。完整后端 active suite、真实 Compose/broker/recovery、Playwright、当前 SHA 收据重生成和远程 CI 仍待完成。
