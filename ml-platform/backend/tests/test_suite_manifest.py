@@ -24,8 +24,11 @@ class TestSuiteManifest(unittest.TestCase):
         self.assertEqual(
             DEPRECATED_TEST_MODULES,
             {
+                "test_spot_weld_quality_models",
+                "test_spot_weld_features",
                 "test_spot_weld_quality_service",
                 "test_api_spot_weld_quality",
+                "test_spot_weld_quality_tasks",
             },
         )
 

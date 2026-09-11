@@ -410,3 +410,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 验证：`tests/test_database_production.py -k "automl_binding_revision_backfills_the_earliest_historical_job or experiment_tracking_revision_has_complete_downgrade or model_registry_revision_has_complete_downgrade"` 为 **3 passed、2 warnings**。
 - 点焊历史测试统一注入每请求 `X-Request-ID` 和 `Idempotency-Key` 后，剩余失败均为生产路由明确返回的 **410 `GENERIC_API_REQUIRED`**，表明测试仍调用已退役 `/api/projects/{id}/spot-weld/runs`，不是新通用 API 的安全合同失败；不放宽生产路由，后续应迁移这些历史测试到 `/api/annotation-tasks` 或明确标记退役兼容测试。
 - Task 5–14 仍保持 `in_progress`；完整后端 active suite、真实 broker/恢复、Docker/WSL、浏览器全平台和远程 CI 仍未闭环。
+
+### 2026-09-11 Task 1 行业边界纠正
+
+- 更正前一条记录的处置方向：通用平台不承担点焊业务，Task 1 的目标是去除行业专用实现依赖，不应把旧点焊 API 测试迁移成通用平台功能，也不应恢复 `/spot-weld` 写入口。
+- 将 Week 17 中的 `test_spot_weld_quality_models`、`test_spot_weld_features`、`test_spot_weld_quality_service`、`test_api_spot_weld_quality`、`test_spot_weld_quality_tasks` 统一标记为历史 deprecated 模块；新增 pytest collection 规则，默认 active suite 跳过它们，只有显式 `INCLUDE_DEPRECATED_TESTS=1` 才运行。
+- 验证：`test_suite_manifest.py` 与 `test_genericization_contract.py` **23 passed、2 subtests**；全后端 pytest 收集 **1830 tests collected**；生产旧点焊写入口仍由通用合同返回 `410 GENERIC_API_REQUIRED`。
+- Task 1 的完整生产源码/前端导航去行业化扫描仍需继续；Task 5–14 仍保持 `in_progress`，历史点焊模块不计入通用平台 active acceptance。
