@@ -357,3 +357,22 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 为验收矩阵 19 个 ID 写入实际聚焦测试、前端 E2E 和导出/离线命令的 receipts；文档提交完成后按最终发布 SHA 重新绑定。
 - 最近一次 `validate_acceptance_manifest` 校验结果：**19 receipts valid**，全部绑定当时发布 SHA 且状态为 `passed`；收据目录为本地 `temp_test/generic-platform-acceptance/receipts/`。后续提交会使旧绑定失效，必须重新生成。
 - 该结果只证明验收矩阵所列 19 个合同的本地收据完整，不替代完整后端 active suite、Docker/WSL、真实 broker/重启恢复、远程 CI 和真实部署导出运行。平台 Task 5–14 仍保持 `in_progress`，未生成整体完成结论。
+
+## 27. 2026-09-11 Python/ONNX 验证环境修复
+
+- 原项目 `.venv` 的 `pyvenv.cfg` 指向已不存在的 Python 3.14 安装；重建后按项目依赖恢复验证环境。
+- 当前 Python 3.14 索引没有 `onnxruntime==1.22.*` 可用发行包，已将 `ml-platform/backend/requirements.txt` 的约束更新为 `onnxruntime==1.24.*`，实际安装并验证 `onnxruntime 1.24.1`、`onnx 1.22.0`、`skl2onnx 1.19.1`、`onnxmltools 1.16.0` 可导入。
+- `pyarrow==20.*` 在当前 Python 3.14 环境未提供可用 wheel，源码构建因缺少 CMake 失败；这仍是完整依赖/完整后端门禁风险，不能记为全量通过。若需完整复现，应使用项目支持的 Python 3.11 环境或提供匹配的 PyArrow wheel。
+- 在补齐当前聚焦依赖后，Task 5–8 后端聚焦回归为 **67 passed、46 warnings**；该结果只验证代码聚焦范围，不提升 Task 5–14 状态，也不覆盖完整后端、Docker/真实 broker、恢复或远程 CI。
+
+### 2026-09-11 Python 3.11 复核更正
+
+- 已安装 Python 3.11.9，并在 `ml-platform/backend/.venv311` 中按当前 requirements 完成安装；该环境可用 `pyarrow 20.0.0` 和 `onnxruntime 1.24.4`，`pip check` 无冲突。
+- 3.11 聚焦验证：Task 5–8 **67 passed、10 warnings**；ONNX 转换 **10 passed、1 skipped**（跳过项仅为 Windows 不适用的 POSIX 资源限制测试）；模型导出、推理运行时和离线合同 **18 passed、3 warnings、2 subtests**。
+- 3.14 环境的真实阻断是 `pyarrow==20.*` 没有可用 wheel、源码构建缺 CMake；这不等同于项目 3.14 虚拟环境本身失效。完整后端门禁尚未执行，Task 5–14 继续保持 `in_progress`。
+
+### 2026-09-11 安全/门户组合复核
+
+- 在同一 Python 3.11.9 环境执行 `tests/test_security_contract.py`、`tests/test_annotator_auth.py` 和 `tests/test_portal_internal_api.py`，结果为 **72 passed、2 warnings、2 subtests passed**。
+- 实际导入版本再次核对为 `pyarrow 20.0.0`、`onnx 1.22.0`、`onnxruntime 1.24.4`、`skl2onnx 1.19.1`、`onnxmltools 1.16.0`；`pip check` 返回 `No broken requirements found.`。
+- 该组合结果仍属于聚焦测试证据；完整后端 active suite、真实 Redis/Celery、重启恢复、Docker/WSL、Playwright、真实导出/离线运行和远程 CI 尚未全部形成当前 SHA 的通过收据，Task 5–14 继续保持 `in_progress`。

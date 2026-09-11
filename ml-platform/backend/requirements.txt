@@ -33,7 +33,7 @@ seaborn==0.13.*
 pytest==9.*
 joblib==1.5.*
 onnx==1.22.*
-onnxruntime==1.22.*
+onnxruntime==1.24.*
 skl2onnx==1.19.*
 onnxmltools==1.16.*
 websockets>=12.0
