@@ -487,3 +487,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 当前已有浏览器用例 `e2e/automl-multioutput.spec.ts` 在 Chromium 通过 **1 passed**，验证浏览器提交多输出 AutoML 合同及搜索强度字段。
 - 已新增验收矩阵要求的 `e2e/generic-platform-acceptance.spec.ts`，以现有真实登录流程和通用 API route mock 验证任务列表、预览完成后的执行解锁、`execute -> return -> accept` 状态动作，以及页面不出现点焊业务入口；Chromium 命令结果为 **1 passed**。
 - 状态边界：该用例补齐通用浏览器局部证据，但 Task 12/14 仍缺当前 SHA 收据重生成、真实 Compose/broker/recovery、完整后端 active suite 和远程 CI；Task 5–14 继续 `in_progress`。
+
+## 2026-09-11 当前 SHA 收据增量与 active suite 长运行
+
+- 当前提交 `25e3462182732150981fc218b22eb1454de994f5` 已重新执行并写入 12 项真实收据：DAT-01/02/03、LAB-01/02、CLU-01/02、CON-01/02、RET-01、AUTH-01、AUTO-02。对应聚焦结果为数据导入/迁移 **38 passed**、标签/并发 **17 passed**、策略/任务状态/回传 **62 passed**、标注员认证 **5 passed**，通用平台 Chromium **1 passed**。
+- 后端 Python 3.11 全量 `pytest -q --maxfail=20` 从 0% 运行至约 44% 后进入长时间计算阶段，进程保持高 CPU 且没有新的失败摘要；等待超过 8 分钟后人工中断，退出码 1 仅表示中断，不能作为通过或代码失败证据。
+- 当前收据目录仍有 LAB-03、AUTH-02、API-01、AUTO-01、EXP-01、INF-01、REL-01 绑定旧 SHA；验收 manifest 因此继续 fail closed。WSL 中两套历史验收 Compose 的 PostgreSQL/Redis/MinIO 等基础容器仍已退出，真实 broker/recovery 运行态尚未通过。
+- Task 5–14 继续 `in_progress`；下一步优先补齐未绑定收据的精确命令和真实运行态证据，再重新执行 manifest、远程 CI 和发布门禁。
