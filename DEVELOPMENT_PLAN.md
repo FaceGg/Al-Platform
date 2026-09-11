@@ -417,3 +417,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 将 Week 17 中的 `test_spot_weld_quality_models`、`test_spot_weld_features`、`test_spot_weld_quality_service`、`test_api_spot_weld_quality`、`test_spot_weld_quality_tasks` 统一标记为历史 deprecated 模块；新增 pytest collection 规则，默认 active suite 跳过它们，只有显式 `INCLUDE_DEPRECATED_TESTS=1` 才运行。
 - 验证：`test_suite_manifest.py` 与 `test_genericization_contract.py` **23 passed、2 subtests**；全后端 pytest 收集 **1830 tests collected**；生产旧点焊写入口仍由通用合同返回 `410 GENERIC_API_REQUIRED`。
 - Task 1 的完整生产源码/前端导航去行业化扫描仍需继续；Task 5–14 仍保持 `in_progress`，历史点焊模块不计入通用平台 active acceptance。
+
+### 2026-09-11 通用 active suite 与迁移夹具复核
+
+- 完整 active acceptance suite 使用 `run_suite.py`（默认排除历史点焊模块）运行到数据库生产模块，已确认知识库测试的共享登录限流状态会制造 `access_token` 缺失；清理测试限流器后 `test_knowledge.py` 为 **10 passed**。
+- 数据库生产迁移夹具曾在旧 `20260718_08` schema 上使用当前 `ModelVersion` ORM，实际插入不存在的 `lifecycle_state`；已改为旧列集合的 Core insert。生产推理回填和历史边界降级聚焦测试通过。
+- 数据库基线测试的固定 head 常量已更新为当前 Alembic head `20260910_43`；旧的 57 表精确数量改为最低基线断言，允许后续通用平台迁移增加表而不产生伪失败。
+- 当前 active suite 仍有后续模块待执行；本轮不将局部修复扩大为后端全量通过，也不重新纳入点焊历史模块。
