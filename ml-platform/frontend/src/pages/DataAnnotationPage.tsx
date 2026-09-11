@@ -743,8 +743,9 @@ export default function DataAnnotationPage() {
   }, [isSetup, requestedView, loadingProjects, projectId, message]);
 
   useEffect(() => {
+    setGenericVersions([]);
+    setGenericVersionId("");
     if (!isSetup || !genericSetupMode || loadingProjects || !projectId) {
-      setGenericVersions([]);
       return;
     }
     let active = true;
@@ -755,8 +756,9 @@ export default function DataAnnotationPage() {
   }, [isSetup, genericSetupMode, loadingProjects, projectId, message]);
 
   useEffect(() => {
+    setGenericModelArtifacts([]);
+    setGenericModelArtifactId("");
     if (!isSetup || !genericSetupMode || labelMode !== "automatic" || loadingProjects || !projectId) {
-      setGenericModelArtifacts([]);
       return;
     }
     let active = true;
@@ -1109,7 +1111,9 @@ export default function DataAnnotationPage() {
 
   const createGenericTaskFromSetup = async () => {
     if (!projectId || !genericVersionId || !genericSchemaName.trim() || !genericLabelKey.trim()) return;
-    if (labelMode === "automatic" && !genericModelArtifactId.trim()) {
+    const version = genericVersions.find((item) => item.id === genericVersionId && item.project_id === projectId);
+    if (!version || genericCreating) return;
+    if (labelMode === "automatic" && !genericModelArtifacts.some((item) => item.id === genericModelArtifactId)) {
       message.error("自动任务需要模型制品标识");
       return;
     }
@@ -1121,14 +1125,13 @@ export default function DataAnnotationPage() {
         value_type: genericLabelType,
         required: false,
       }]);
-      const version = genericVersions.find((item) => item.id === genericVersionId);
       const task = await createGenericAnnotationTask({
         project_id: projectId,
         dataset_version_id: genericVersionId,
         label_schema_id: schema.id,
         mode: labelMode,
         sample_scope: { kind: "all" },
-        visible_columns: version?.columns.map((column) => column.name) || [],
+        visible_columns: version.columns.map((column) => column.name),
         instructions: genericInstructions,
         configuration: labelMode === "automatic"
           ? { model_artifact_id: genericModelArtifactId.trim(), search_strength: genericSearchStrength }
@@ -1733,7 +1736,7 @@ export default function DataAnnotationPage() {
           <textarea id="generic-instructions" aria-label="标注说明" value={genericInstructions} onChange={(event) => setGenericInstructions(event.target.value)} rows={4} />
         </div>
         <div className="data-annotation__setup-footer data-annotation__setup-footer--centered">
-          <button type="button" className="ant-btn ant-btn-primary" onClick={() => void createGenericTaskFromSetup()} disabled={!canCreate || !genericVersionId || !genericSchemaName.trim() || !genericLabelKey.trim() || genericCreating}>
+          <button type="button" className="ant-btn ant-btn-primary" onClick={() => void createGenericTaskFromSetup()} disabled={!canCreate || !genericVersions.some((item) => item.id === genericVersionId && item.project_id === projectId) || (labelMode === "automatic" && !genericModelArtifacts.some((item) => item.id === genericModelArtifactId)) || !genericSchemaName.trim() || !genericLabelKey.trim() || genericCreating}>
             {genericCreating ? "创建中..." : "创建通用任务"}
           </button>
         </div>

@@ -14,7 +14,7 @@ const { get, post, put, remove, datasets, datasetVersions, modelArtifacts } = vi
 const quality = vi.hoisted(() => ({ saveLabeledDataset: vi.fn() }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
-vi.mock("../api/client", () => ({ default: { get, post, put, delete: remove } }));
+vi.mock("../api/client", () => ({ default: { get, post, put, delete: remove }, formatApiError: () => "request failed" }));
 vi.mock("../api/datasets", () => ({ listDatasets: datasets, listDatasetVersions: datasetVersions }));
 vi.mock("../api/models", () => ({ listProjectModelArtifacts: modelArtifacts }));
 vi.mock("../api/spotWeldQuality", async () => {
@@ -394,6 +394,58 @@ describe("DataAnnotationPage", () => {
     ));
     const automlPayload = post.mock.calls.find(([url]) => url === "/automl-tasks")?.[1] as Record<string, unknown>;
     expect(automlPayload).not.toHaveProperty("max_trials");
+  });
+
+  it.each(["empty", "failed"] as const)("clears project-scoped creation resources while replacement lookups are %s", async (outcome) => {
+    const defaultGet = get.getMockImplementation()!;
+    get.mockImplementation((url: string) => url === "/projects"
+      ? Promise.resolve({ data: { items: [
+        { id: "project-1", name: "Project A", project_role: "owner" },
+        { id: "project-2", name: "Project B", project_role: "owner" },
+      ] } })
+      : defaultGet(url));
+    const oldVersion = {
+      id: "version-1", project_id: "project-1", version: 1, status: "ready",
+      row_count: 2, column_count: 1,
+      columns: [{ name: "feature", dtype: "float", nullable: false, position: 0 }],
+    };
+    let finishVersions!: (items: unknown[]) => void;
+    let failVersions!: (error: Error) => void;
+    let finishModels!: (items: unknown[]) => void;
+    let failModels!: (error: Error) => void;
+    const pendingVersions = new Promise((resolve, reject) => { finishVersions = resolve; failVersions = reject; });
+    const pendingModels = new Promise((resolve, reject) => { finishModels = resolve; failModels = reject; });
+    datasetVersions.mockImplementation((id: string) => id === "project-1" ? Promise.resolve([oldVersion]) : pendingVersions);
+    modelArtifacts.mockImplementation((id: string) => id === "project-1"
+      ? Promise.resolve([{ id: "artifact-1", name: "Model A", type: "model", format: "joblib" }])
+      : pendingModels);
+    post.mockClear();
+
+    render(<MemoryRouter initialEntries={["/data-annotation?view=setup&mode=automatic&projectId=project-1"]}>
+      <AntApp><DataAnnotationPage /></AntApp>
+    </MemoryRouter>);
+    await screen.findByRole("option", { name: "Model A · joblib" });
+    fireEvent.change(screen.getByLabelText("数据版本"), { target: { value: "version-1" } });
+    fireEvent.change(screen.getByLabelText("模型制品标识"), { target: { value: "artifact-1" } });
+    expect(screen.getByRole("button", { name: "创建通用任务" })).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("项目"), { target: { value: "project-2" } });
+    await waitFor(() => expect(modelArtifacts).toHaveBeenCalledWith("project-2"));
+
+    expect(await screen.findByLabelText("数据版本")).toHaveValue("");
+    expect(screen.getByLabelText("模型制品标识")).toHaveValue("");
+    expect(screen.queryByRole("option", { name: "Model A · joblib" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建通用任务" })).toBeDisabled();
+    await act(async () => {
+      if (outcome === "failed") {
+        failVersions(new Error("Version lookup failed"));
+        failModels(new Error("Model lookup failed"));
+      } else {
+        finishVersions([]);
+        finishModels([]);
+      }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
+    expect(post).not.toHaveBeenCalled();
   });
 
   it("loads compatible data-management files from an automatic-label setup link", async () => {

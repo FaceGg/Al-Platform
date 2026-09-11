@@ -549,3 +549,11 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 执行 `tests/test_annotation_task_state_api.py`：**10 passed、2 warnings**（Python 3.11.9 环境）。
 - 已重新写入 `temp_test/generic-platform-acceptance/receipts/API-01.json`，收据绑定当前完整 SHA；其余 18 项仍绑定旧 SHA 或尚未重新执行，验收 manifest 继续 fail-closed。
 - 该收据支持通用任务 API 分页和状态错误合同的当前 SHA 增量证据，但不关闭 Task 5、Task 14 或整体 Task 1–14。
+
+## 2026-09-11 Task 12 项目切换资源隔离修复
+
+- 发现：通用创建 setup 切换项目时，旧项目的数据版本、模型制品列表和已选 ID 会在新请求完成前继续存在；新请求为空或失败时可能继续提交旧项目资源。
+- TDD：新增 `empty` 与 `failed` 两种替换查询回归，RED 均观察到旧 `version-1` 未清理；修复后验证页面切换项目立即清空列表和选择值，创建按钮保持禁用，失败分支无未处理 rejection。
+- 修复：项目/模式变更时先清理 `genericVersions`、`genericModelArtifacts` 及对应选择值；创建前重新校验数据版本属于当前项目、自动模式模型制品存在于当前项目列表；补齐页面测试的 `formatApiError` mock。
+- 验证：`DataAnnotationPage.test.tsx`、`models.test.ts`、`weekAcceptance.test.ts` 共 **54 passed**；`npm run build` 和 `git diff --check` 通过。
+- 状态边界：该修复强化 Task 12 的跨项目资源授权边界，不提升 Task 1–14 整体验收状态；当前 SHA 收据、真实 broker/recovery、完整后端、门户 E2E、Docker/WSL、导出/离线和远程 CI 仍待闭环。
