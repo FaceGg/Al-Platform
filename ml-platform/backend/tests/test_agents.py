@@ -6,6 +6,7 @@ sys.path.insert(0, ".")
 from fastapi.testclient import TestClient
 from app.main import app
 from app.database import Base, engine
+from app.services.security import rate_limiter
 from tests.auth_test_support import ensure_admin
 
 Base.metadata.create_all(bind=engine)
@@ -16,6 +17,7 @@ ensure_admin()
 
 
 def login_headers():
+    rate_limiter().clear()
     r = client.post("/api/auth/login", data={"username": "admin", "password": "admin123"})
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 

@@ -396,3 +396,9 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 前端全量 Vitest：**57 个文件通过、280 passed、19 skipped**；前端生产构建、后端 `compileall` 和 `git diff --check` 通过。
 - 后端完整 active suite 使用 Python 3.11 执行 `pytest -q --maxfail=20`，在 **187 passed、9 failed、11 errors** 后停止。失败集中于历史 API 测试重复登录触发共享进程级限流，以及首次暴露的可选 Torch 算子注册缺口；Torch 元数据缺口已修复并有 **10 passed** 当前 SHA 回归，认证测试隔离问题尚未修改生产限流语义。
 - 因完整后端 active suite、真实 broker/重启恢复、Docker/WSL、Playwright、真实导出/离线运行和远程 CI 仍未全部通过，Task 5–14 继续保持 `in_progress`。
+
+### 2026-09-11 历史 API 测试限流隔离修复
+
+- 复现确认完整后端首批登录错误并非生产认证失败：历史测试共享进程级 `SlidingWindowRateLimiter`，`test_agents.py` 在同一模块内连续登录超过 5 次；模块级管理员初始化只清理一次状态。
+- 测试隔离修复限定在 `tests/auth_test_support.py`、`test_api_compute.py` 和 `test_agents.py`：管理员初始化或测试 token 获取前清理 limiter；生产登录限额和 fail-closed 行为未修改。
+- 验证：`tests/test_agents.py tests/test_api_chat.py tests/test_api_compute.py tests/test_api_users.py` 为 **46 passed、47 warnings**。该结果仅修复历史测试隔离，不替代完整后端 active suite 或平台级发布门禁。
