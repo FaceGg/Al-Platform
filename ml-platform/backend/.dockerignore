@@ -3,7 +3,7 @@ __pycache__/
 *.db
 *.db-*
 .env
-.venv/
+.venv*/
 artifact_store/
 exports/
 uploads/

@@ -40,6 +40,12 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
     def setUpClass(cls):
         cls.workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 
+    def test_backend_build_excludes_versioned_local_virtualenvs(self):
+        dockerignore = BACKEND_REQUIREMENTS.with_name(".dockerignore")
+        patterns = dockerignore.read_text(encoding="utf-8").splitlines()
+        self.assertIn(".venv*/", patterns)
+        self.assertNotIn("!.venv311/", patterns)
+
     def test_worker_startup_waits_for_ready_log_without_control_probe(self):
         wait_step = self.workflow.split(
             "- name: Wait for Celery worker",

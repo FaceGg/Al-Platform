@@ -449,3 +449,11 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 在当前分支 `4def21a` 的 Python 3.11.9 环境执行 `tests/test_annotation_concurrency.py tests/test_annotation_return_acceptance.py tests/test_annotator_auth.py tests/test_portal_internal_api.py`，结果为 **22 passed、2 warnings**。
 - 该结果覆盖指派范围、样本级并发冲突、回传幂等与锁、回传验收生成新数据版本、独立标注员认证和门户内部 API。
 - 当前环境未安装 Docker，且没有可用 Redis 服务；真实 Celery broker、Compose/WSL、进程重启恢复和浏览器门户验收仍未执行。Task 8/9 继续 `in_progress`，不将本地聚焦结果升级为完整验收。
+
+## 2026-09-11 WSL Docker 运行态复核
+
+- 已确认 WSL Ubuntu 中 Docker Engine `29.7.2` 和 Compose `v5.5.0` 可用；Compose 基础配置在补齐一次性验收变量和证书路径后通过 `docker compose config --quiet`。
+- 首次镜像构建因宿主机新增 `.venv311` 未被后端 `.dockerignore` 排除，构建上下文达到约 1.5 GB；按 TDD 新增构建合同回归并将 `.venv/` 改为 `.venv*/`，`tests/test_ci_workflow.py` 为 **47 passed、79 subtests passed**。
+- 修复后镜像成功构建并启动迁移、PostgreSQL、Redis、MinIO、MLflow、推理运行时和 Celery worker；迁移成功退出，worker 日志确认连接真实 Redis broker 并报告 `ready`，任务列表包含通用预览和执行任务。
+- 运行态仍未通过：首次临时密钥不是合法 Fernet key，修正为 URL-safe 32 字节 key 后容器重建；随后基础容器约一分钟后整体退出，backend 报 `failed to resolve host 'postgres'`，notification receiver/proxy 以 255 退出，worker 正常退出。该结果保留为运行态失败，不提升 Task 5–14 状态。
+- 当前下一步：在 WSL Docker daemon 稳定后重新启动同一 Compose 项目，确认网络和依赖容器持续运行，再进行真实预览/执行派发、worker 停止重启和 recovery claim 验证。`.dockerignore` 修复需随当前分支发布；README 仍按用户要求在每次推送前检查并同步。
