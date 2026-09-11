@@ -514,3 +514,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - TDD：新增手动和自动创建回归，验证 `dataset_version_id`、`label_schema_id`、模式分流、搜索强度及幂等请求头；更新旧入口测试以验证通用 setup。`DataAnnotationPage.test.tsx` **44 passed**。
 - 构建：前端 `npm run build` 通过，`git diff --check` 通过。
 - 状态边界：这是 Task 12 的通用新建 UI 缺口修复，不代表 Task 12 或 Task 5–14 整体验收完成；真实后端创建运行态、门户完整浏览器链路、Docker/WSL broker/recovery、当前 SHA 全量收据和远程 CI 仍待完成，任务继续 `in_progress`。
+
+## 2026-09-11 Task 12 创建 API 回归与前端台账同步
+
+- 新增 `src/api/annotationTasks.test.ts`，直接验证手动/自动创建端点分流、`X-Request-ID`、`Idempotency-Key`、搜索强度和 `max_trials` 缺失；同步登记到 `weekAcceptance.test.ts`。
+- 验证：通用创建页面与 API client **46 passed**；周验收台账与 API client **9 passed**；后端状态/API 聚焦 **49 passed、4 warnings**；前端生产构建通过。
+- 全量 Vitest 首次执行为 **53 个文件通过、8 个既有测试超时、276 passed、19 skipped**，新增台账缺口已修复；APIMarketplace 和 AutoML 超时单独复跑分别通过。全量运行仍需在稳定资源条件下重跑，不能记为完整通过。
+- 状态边界：Task 12 及 Task 5–14 继续 `in_progress`。新增提交会使先前绑定旧 SHA 的本地收据失效；当前 SHA 的完整 19 项收据、真实 Compose/broker/recovery、后端全量和远程 CI 仍未闭环。
