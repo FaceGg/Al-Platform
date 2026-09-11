@@ -464,21 +464,20 @@ def list_annotation_operations(db, project_id, owner_id, cursor=None, limit=50):
         DurableOperation.id.in_(preview_operation_ids) if preview_operation_ids else False,
         DurableOperation.resource_key.in_(execution_keys),
     ))
-    total = query.count()
     query = query.order_by(DurableOperation.created_at.desc(), DurableOperation.id.desc())
+    all_operations = query.all()
+    total = len(all_operations)
+    start = 0
     if cursor:
         try:
             marker_id = uuid.UUID(cursor)
         except (ValueError, TypeError) as error:
             raise ValueError("INVALID_CURSOR") from error
-        marker = db.query(DurableOperation).filter(DurableOperation.id == marker_id).one_or_none()
-        if marker is None:
+        marker_index = next((index for index, operation in enumerate(all_operations) if operation.id == marker_id), None)
+        if marker_index is None:
             raise ValueError("INVALID_CURSOR")
-        query = query.filter(or_(
-            DurableOperation.created_at < marker.created_at,
-            and_(DurableOperation.created_at == marker.created_at, DurableOperation.id < marker.id),
-        ))
-    operations = query.limit(limit + 1).all()
+        start = marker_index + 1
+    operations = all_operations[start:start + limit + 1]
     page = []
     for operation in operations:
         task = None

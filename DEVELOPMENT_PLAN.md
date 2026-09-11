@@ -431,3 +431,9 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 解决：所有任务列表请求统一进入 `list_annotation_tasks`；服务按当前用户过滤，可选项目过滤，使用稳定排序后的任务集合执行 cursor 分页，并拒绝不属于当前用户/项目范围的 cursor。
 - TDD 验证：新增跨项目列表回归先以 `total == 1` 暴露旧实现缺口，修复后 `tests/test_annotation_task_state.py -k all_project_task_api` 为 **1 passed**；Task 5 状态/API/异步组合为 **65 passed、4 warnings**。
 - 状态边界：这是 Task 5 的列表合同修复，不代表 Task 5 验收完成。真实 Redis/Celery、进程重启恢复、完整浏览器链路、Docker/WSL、完整后端 active suite 和远程 CI 仍未齐备；Task 5–14 继续 `in_progress`。
+
+### 2026-09-11 Task 5 操作中心 cursor 稳定性修复
+
+- 根因：操作中心 cursor 依赖 `created_at` 与 UUID 的数据库比较；SQLite 同一秒创建多个操作时，下一页可能重复上一页操作。
+- 解决：操作中心统一使用 owner/project 过滤后的稳定排序结果和 marker 位置分页，保留非法及越权 cursor 的 fail-closed 行为。
+- 验证：新增两项跨页操作中心回归和任务列表回归，目标测试 **2 passed**；Task 5 状态/API/异步组合 **65 passed、4 warnings**；Task 5 仍为 `in_progress`，真实 broker、重启恢复、Docker/WSL、完整 active suite 和远程 CI 仍待完成。

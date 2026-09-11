@@ -255,12 +255,20 @@ def test_execution_stats_are_persisted_and_cursor_paginated(db, monkeypatch):
 def test_annotation_operation_center_lists_project_owned_operations(db):
     task, user, project = _task(db)
     preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:operation-center", actor_id=user.id)
+    second_preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:operation-center-2", actor_id=user.id)
 
     from app.services.annotation_task_state import list_annotation_operations
-    page = list_annotation_operations(db, project.id, user.id, limit=10)
-    assert page["total"] == 1
-    assert page["items"][0]["id"] == str(preview.operation_id)
-    assert page["items"][0]["resource_type"] == "annotation_preview"
+    page = list_annotation_operations(db, project.id, user.id, limit=1)
+    assert page["total"] == 2
+    assert page["next_cursor"]
+    next_page = list_annotation_operations(db, project.id, user.id, cursor=page["next_cursor"], limit=1)
+    assert next_page["total"] == 2
+    assert len(next_page["items"]) == 1
+    assert {item["id"] for item in page["items"] + next_page["items"]} == {
+        str(preview.operation_id),
+        str(second_preview.operation_id),
+    }
+    assert all(item["resource_type"] == "annotation_preview" for item in page["items"] + next_page["items"])
 
 
 def test_execute_worker_rejects_operation_not_bound_to_task(db, monkeypatch):
