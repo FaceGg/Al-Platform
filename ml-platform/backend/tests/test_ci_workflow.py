@@ -1061,6 +1061,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             "WEEK12_WEBHOOK_RECEIVER_EVENTS_URL",
             "WEEK12_WECOM_RECEIVER_URL",
             "WEEK12_WECOM_RECEIVER_EVENTS_URL",
+            "LOGIN_IP_RATE_LIMIT_CAPACITY",
             "INFERENCE_RATE_LIMIT_CAPACITY",
             "INFERENCE_RATE_LIMIT_REFILL_PER_SECOND",
         }
@@ -1072,6 +1073,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         self.assertEqual(environment["RUN_WEEK12_BROWSER_ACCEPTANCE"], "1")
         self.assertEqual(environment["WEEK12_ACCEPTANCE_ISOLATED"], "1")
         self.assertEqual(environment["BACKEND_PORT"], "8000")
+        self.assertEqual(environment["LOGIN_IP_RATE_LIMIT_CAPACITY"], "20")
         self.assertEqual(environment["INFERENCE_RATE_LIMIT_CAPACITY"], "5")
         self.assertEqual(environment["INFERENCE_RATE_LIMIT_REFILL_PER_SECOND"], "0.01")
         self.assertEqual(

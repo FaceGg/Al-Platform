@@ -699,3 +699,10 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 修复：通过容器 registry manifest 解析当前 amd64 immutable manifest，将四个 Dockerfile 和 `.github/contracts/python-base-image.json` 统一更新到 `sha256:6a8dca4c2153cfc11d559cfa6172c187b896423d833f3d48a4c1c44ab55596d7`；保留构建期 `python3.11 -c "import sqlite3"` 检查及安全合同测试。
 - 当前验证：远程 Run 的 Ubuntu/Windows Quality 和生产集成通过；实验集成与 Chromium 均因旧 digest 的同一 ABI 错误失败。新 digest 的完整镜像构建和浏览器验收待提交后重新执行。
 - 状态边界：Task 14 仍为 `in_progress`，不以 manifest 解析成功替代真实构建证据，未通过全量远程门禁前禁止合并 `main`。
+
+## 2026-09-12 远程运行态验收失败修复
+
+- Run `34677426320` 在新基础镜像构建成功后进入真实运行态；Quality 两端和生产集成通过，实验集成失败为 `test_rollout_key_restart_and_rollback` 仍断言旧 head `20260829_14`，实际迁移已到 `20260910_43`。
+- 同一 Run 的 Chromium 失败发生在隔离 Week 12 登录后仍停留 `/login`；标准浏览器回归已有 `LOGIN_IP_RATE_LIMIT_CAPACITY=20`，但隔离浏览器 Compose/backend 环境未继承该配置，登录限流合同不一致。
+- 修复：生产推理集成测试绑定当前迁移 head `20260910_43`；隔离浏览器 job 显式设置登录 IP 限流容量 `20`，并在 CI 合同测试中断言环境变量。
+- 当前验证：修复后的本地聚焦测试待执行；Run `34677426320` 的失败证据仍保持失败，不能作为新修复的通过证据。Task 14 继续 `in_progress`，修复提交后必须重新生成当前 SHA 收据并重跑完整远程验收。
