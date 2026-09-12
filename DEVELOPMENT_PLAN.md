@@ -665,3 +665,9 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 完整后端 active suite 使用独立 `--basetemp` 执行：**1733 passed、109 skipped、23 warnings、686 subtests passed**；此前唯一失败的 React Router 例外日期断言已同步到当前合同 `2026-12-12`。
 - 前端全量 Vitest：**59 个测试文件通过、292 passed、19 skipped**；前端生产构建通过；`alembic check` 报告 `No new upgrade operations detected`。
 - 本轮结果已证明当前工作树的代码/测试回归通过，但尚未形成最终提交 SHA 绑定的 19 项收据。Docker CLI 在当前 Windows 主机不可用，Docker/WSL 全栈和真实 Compose 持续运行保持 `environment-blocked`；远程 CI、最终收据重生成和发布仍待最终提交后执行。
+
+## 2026-09-12 Task 14 当前 SHA 收据复核
+
+- 提交 `860c8d349845b36c20483b7d4d0320911cb1e18f` 上的 19 项本地合同收据已全部重生成并通过 `validate_acceptance_manifest` 校验；每项状态均为 `passed`，所有证据路径均存在且为仓库相对路径。
+- 收据覆盖数据导入/版本、标签 schema/并发、策略、通用任务 API、AutoML、导出、离线推理、恢复/安全和 AutoML Chromium 流程；收据目录为 `temp_test/generic-platform-acceptance/receipts/`。
+- 该收据集仍不代表最终发布就绪：Docker/WSL 全栈持续运行因当前 Windows 无 Docker CLI 保持 `environment-blocked`，真实 Task 5 Redis/Celery 收据仍是历史运行态证据，远程 CI 尚未执行。新增本记录后 SHA 会变化，发布前必须再次重绑定收据。
