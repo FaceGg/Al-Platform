@@ -706,3 +706,10 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 同一 Run 的 Chromium 失败发生在隔离 Week 12 登录后仍停留 `/login`；标准浏览器回归已有 `LOGIN_IP_RATE_LIMIT_CAPACITY=20`，但隔离浏览器 Compose/backend 环境未继承该配置，登录限流合同不一致。
 - 修复：生产推理集成测试绑定当前迁移 head `20260910_43`；隔离浏览器 job 显式设置登录 IP 限流容量 `20`，并在 CI 合同测试中断言环境变量。
 - 当前验证：修复后的本地聚焦测试待执行；Run `34677426320` 的失败证据仍保持失败，不能作为新修复的通过证据。Task 14 继续 `in_progress`，修复提交后必须重新生成当前 SHA 收据并重跑完整远程验收。
+
+## 2026-09-12 远程 CI Compose 环境变量传递修复
+
+- Run `34686414433` 的四个 Quality/生产集成作业通过，但 Chromium acceptance 在 `loginAs()` 仍停留 `/login`；日志确认 workflow 进程有 `LOGIN_IP_RATE_LIMIT_CAPACITY=20`，而 Compose backend 未收到该变量，继续使用应用默认值 5。
+- 根因：`docker-compose.yml` 的共享 `production-environment` 锚点未显式映射 `LOGIN_IP_RATE_LIMIT_CAPACITY`，因此 job 环境变量没有进入复用该锚点的 `migrate`、`backend`、`worker` 和 `scheduler` 服务。
+- 修复：在共享 Compose environment 中加入 `${LOGIN_IP_RATE_LIMIT_CAPACITY:-5}`；新增 CI/Compose 合同回归，锁定生产默认值 5，并确认浏览器 job 显式值 20。
+- 当前验证：`tests/test_ci_workflow.py tests/test_config.py` **70 passed、96 subtests passed**；红测先以四个服务缺少该键失败，再以修复后通过。远程新 SHA 全量 CI、最终 19 项收据和发布合并仍未执行，Task 14 保持 `in_progress`。

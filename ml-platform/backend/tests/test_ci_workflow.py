@@ -827,6 +827,24 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
                     expected_settings.issubset(compose["services"][service_name]["environment"]),
                 )
 
+    def test_login_rate_limit_setting_is_explicitly_passed_through_production_compose(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+        expected_value = "${LOGIN_IP_RATE_LIMIT_CAPACITY:-5}"
+
+        for service_name in ("migrate", "backend", "worker", "scheduler"):
+            with self.subTest(service=service_name):
+                self.assertEqual(
+                    compose["services"][service_name]["environment"][
+                        "LOGIN_IP_RATE_LIMIT_CAPACITY"
+                    ],
+                    expected_value,
+                )
+
+        browser_job = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"][
+            "browser-acceptance"
+        ]
+        self.assertEqual(browser_job["env"]["LOGIN_IP_RATE_LIMIT_CAPACITY"], "20")
+
     def test_minio_init_uses_the_backend_bucket_expression(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
         minio_init = compose["services"]["minio-init"]["environment"]
