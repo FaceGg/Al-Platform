@@ -679,3 +679,9 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 修复：AutoML 重试回归在第二次点击前等待按钮 enabled；生产 Compose 的 `minio`/`minio-init` 和 CI standalone MinIO 统一使用 `quay.io/minio`；新增 CI/Compose 镜像来源契约测试。
 - 当前验证：AutoML 页面 **10 passed、19 skipped**；CI workflow **47 passed、79 subtests passed**；Windows 宿主无 Docker CLI，WSL Compose 仅完成失败的变量前置检查，完整生产栈尚未本地运行。
 - 状态：本修复待当前 SHA 提交后重新执行完整远程 CI；在新 Run 通过前，Task 14 保持 `in_progress`，不将远程失败改写为环境通过。
+
+## 2026-09-12 远程 CI 容器 ABI 失败修复候选
+
+- Run `34670389015` 的实验集成日志确认：backend、worker 和 scheduler 在导入 Python `sqlite3` 时失败，原因是锁定的 Wolfi 基础镜像只提供最高 `GLIBC_2.43`，而 rolling APK 仓库解析出的 `sqlite-libs 3.53.4-r2` 要求 `GLIBC_2.44`。该问题属于基础层与未锁定运行库的 ABI 不一致，不是 scheduler 业务配置错误。
+- 当前修复候选：四个生产 Python Dockerfile 的依赖安装同时显式安装 `glibc`，并在安装后执行 `RUN python3.11 -c "import sqlite3"`；镜像安全合同测试同步要求该运行时检查。该候选尚未在本机 Docker/WSL 中完成构建验证，不能记为通过。
+- Chromium job 已补充 `ml-platform/annotator/frontend` 的 `npm ci`，并新增 workflow 回归；当前 `test_ci_workflow.py` 为 **49 passed、79 subtests passed**。下一步必须提交当前改动后重新运行完整远程 CI，以验证 ABI 候选和浏览器修复在真实 runner 上有效。

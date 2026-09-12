@@ -92,6 +92,12 @@ class ImageSecurityContractTests(unittest.TestCase):
                 path.read_text(encoding="utf-8"),
             )
             self.assertRegex(content, expected_retry, path.name)
+            self.assertRegex(
+                content,
+                r"apk\s+add\s+--no-cache[^\n;]*\bglibc\b",
+                path.name,
+            )
+            self.assertIn('RUN python3.11 -c "import sqlite3"', content, path.name)
 
     def test_backend_host_mounts_keep_the_established_numeric_identity(self):
         compose = COMPOSE.read_text(encoding="utf-8")

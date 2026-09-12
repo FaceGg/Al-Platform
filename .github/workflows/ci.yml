@@ -171,6 +171,9 @@ jobs:
       - name: Install frontend dependencies
         working-directory: ml-platform/frontend
         run: npm ci
+      - name: Install annotator frontend dependencies
+        working-directory: ml-platform/annotator/frontend
+        run: npm ci
       - name: Install Chromium
         working-directory: ml-platform/frontend
         run: npx playwright install --with-deps chromium

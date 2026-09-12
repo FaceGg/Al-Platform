@@ -1131,6 +1131,22 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         self.assertEqual(cleanup.get("if"), "always()")
         self.assertIn("down --volumes --remove-orphans", cleanup["run"])
 
+    def test_browser_acceptance_installs_annotator_frontend_dependencies(self):
+        parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+        steps = parsed["jobs"]["browser-acceptance"]["steps"]
+
+        install = next(
+            step
+            for step in steps
+            if step.get("name") == "Install annotator frontend dependencies"
+        )
+
+        self.assertEqual(
+            install.get("working-directory"),
+            "ml-platform/annotator/frontend",
+        )
+        self.assertEqual(install.get("run"), "npm ci")
+
     def test_week11_cleanup_removes_protected_notification_key_with_privilege(self):
         root = Path(__file__).resolve().parents[3]
         workflow = (root / ".github" / "workflows" / "ci.yml").read_text(

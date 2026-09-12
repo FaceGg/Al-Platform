@@ -7,7 +7,8 @@ RUN set -eu; \
         if apk add --no-cache \
             python-3.11=3.11.16-r1 \
             py3.11-pip=26.2.1-r0 \
-            postgresql-16-client=16.11-r0; then \
+            postgresql-16-client=16.11-r0 \
+            glibc; then \
             exit 0; \
         fi; \
         if [ "$attempt" -eq 3 ]; then \
@@ -15,6 +16,7 @@ RUN set -eu; \
         fi; \
         sleep "$attempt"; \
     done
+RUN python3.11 -c "import sqlite3"
 RUN addgroup -S -g 1000 app && adduser -S -D -H -h /home/app -u 1000 -G app app
 RUN python3.11 -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 COPY requirements.txt .
