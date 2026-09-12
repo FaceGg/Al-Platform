@@ -713,3 +713,10 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 根因：`docker-compose.yml` 的共享 `production-environment` 锚点未显式映射 `LOGIN_IP_RATE_LIMIT_CAPACITY`，因此 job 环境变量没有进入复用该锚点的 `migrate`、`backend`、`worker` 和 `scheduler` 服务。
 - 修复：在共享 Compose environment 中加入 `${LOGIN_IP_RATE_LIMIT_CAPACITY:-5}`；新增 CI/Compose 合同回归，锁定生产默认值 5，并确认浏览器 job 显式值 20。
 - 当前验证：`tests/test_ci_workflow.py tests/test_config.py` **70 passed、96 subtests passed**；红测先以四个服务缺少该键失败，再以修复后通过。远程新 SHA 全量 CI、最终 19 项收据和发布合并仍未执行，Task 14 保持 `in_progress`。
+
+## 2026-09-12 Task 14 Windows 前端全量超时修复候选
+
+- Run `34688938343` 的 `Quality (windows-latest)` 在 `Run frontend tests` 失败：`AutoMLPage.test.tsx` 的多输出目标提交用例超过默认 `5000ms`，`ModelLibraryPage.test.tsx` 的回滚、一次性 API key 和 model-card 用例超过显式 `30000ms`；该失败使 Chromium acceptance 和 Week 11-12 verification 被跳过，不能作为全量通过。
+- 根因：Windows 全量 runner 上 Ant Design/jsdom 重型组件的导入、渲染和异步调度耗时高于单个测试原有预算；断言失败前没有新的产品错误证据，Ubuntu 同一套件已通过。
+- 修复候选：将 Vitest 默认测试预算设为 `15000ms`，并将上述重型 ModelLibrary 回归设为 `60000ms`；不改变产品代码、请求合同或业务超时语义。
+- 当前工作树验证：`npm test` 为 **59 个测试文件、292 passed、19 skipped**；`npm run build` 退出码为 0；`git diff --check` 通过。该结果仍需绑定提交 SHA，并在新 SHA 上重跑完整远程 CI；任何失败、超时或 skipped 门禁继续使 Task 14 保持 `in_progress`。

@@ -243,7 +243,7 @@ describe("ModelLibraryPage", () => {
     else delete (URL as unknown as Record<string, unknown>).createObjectURL;
     if (originalRevokeObjectURL) Object.defineProperty(URL, "revokeObjectURL", originalRevokeObjectURL);
     else delete (URL as unknown as Record<string, unknown>).revokeObjectURL;
-  }, 30_000);
+  }, 60_000);
 
   it("keeps viewer rollout operations read-only while showing failures and empty metrics", async () => {
     mocks.listDeployments.mockResolvedValue([deployment]);
