@@ -685,3 +685,10 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - Run `34670389015` 的实验集成日志确认：backend、worker 和 scheduler 在导入 Python `sqlite3` 时失败，原因是锁定的 Wolfi 基础镜像只提供最高 `GLIBC_2.43`，而 rolling APK 仓库解析出的 `sqlite-libs 3.53.4-r2` 要求 `GLIBC_2.44`。该问题属于基础层与未锁定运行库的 ABI 不一致，不是 scheduler 业务配置错误。
 - 当前修复候选：四个生产 Python Dockerfile 的依赖安装同时显式安装 `glibc`，并在安装后执行 `RUN python3.11 -c "import sqlite3"`；镜像安全合同测试同步要求该运行时检查。该候选尚未在本机 Docker/WSL 中完成构建验证，不能记为通过。
 - Chromium job 已补充 `ml-platform/annotator/frontend` 的 `npm ci`，并新增 workflow 回归；当前 `test_ci_workflow.py` 为 **49 passed、79 subtests passed**。下一步必须提交当前改动后重新运行完整远程 CI，以验证 ABI 候选和浏览器修复在真实 runner 上有效。
+
+## 2026-09-12 远程 CI ABI 与浏览器限流修复
+
+- ABI 根因复核：旧 digest 的 Wolfi 基础层默认从 `apk.cgr.dev` 解析 rolling `sqlite-libs`，即使安装 `glibc` 也无法提供所需的 `GLIBC_2.44`；四个 Python 生产镜像现统一切换到 `https://packages.wolfi.dev/os`，并保留构建期 `import sqlite3` 回归检查。
+- 浏览器根因复核：标准 Chromium 套件在同一 `127.0.0.1` 来源连续登录超过默认 IP 限流容量 5，后续用例收到 429 并回到 `/login`；默认生产容量保持 5，仅为标准 CI 浏览器 job 显式设置 `LOGIN_IP_RATE_LIMIT_CAPACITY=20`，并将容量纳入配置边界验证。
+- 当前验证：镜像/CI/配置合同 **80 passed、92 subtests passed**，`git diff --check` 通过；Docker/WSL 本地构建不可用，以上 ABI 修复仍需远程 runner 验证。
+- 状态边界：本次修复尚未绑定提交 SHA 或远程成功 Run；Task 14 继续 `in_progress`，失败、跳过和环境阻断不改写为通过。
