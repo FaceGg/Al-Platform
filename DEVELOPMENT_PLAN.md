@@ -720,3 +720,9 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 根因：Windows 全量 runner 上 Ant Design/jsdom 重型组件的导入、渲染和异步调度耗时高于单个测试原有预算；断言失败前没有新的产品错误证据，Ubuntu 同一套件已通过。
 - 修复候选：将 Vitest 默认测试预算设为 `15000ms`，并将上述重型 ModelLibrary 回归设为 `60000ms`；不改变产品代码、请求合同或业务超时语义。
 - 当前工作树验证：`npm test` 为 **59 个测试文件、292 passed、19 skipped**；`npm run build` 退出码为 0；`git diff --check` 通过。该结果仍需绑定提交 SHA，并在新 SHA 上重跑完整远程 CI；任何失败、超时或 skipped 门禁继续使 Task 14 保持 `in_progress`。
+## 2026-09-12 CI 阿里云引用清理
+
+- 修改：移除 `.github/workflows/ci.yml` 中残留的阿里云相关历史语义，并将共享依赖层注释改为中性表述；未改变 CI 步骤、镜像、依赖源或运行时行为。
+- 合同：在 `ml-platform/backend/tests/test_ci_workflow.py` 新增工作流静态回归，禁止 `aliyun`、`alibaba`、`阿里云`、`aliyuncs`、`mirrors.aliyun`、`registry.aliyun`、`oss.aliyun`、`cr.aliyun` 和 `alibabacloud` 引用。
+- 验证：`test_ci_workflow.py` **51 passed、92 subtests passed**；工作流关键词扫描未发现阿里云引用；`git diff --check` 通过。
+- 状态：本轮改动尚未提交；Task 14 仍需在最终稳定 SHA 上重生成收据并完成远程 required jobs 全量验收后，才可合并 `main`。

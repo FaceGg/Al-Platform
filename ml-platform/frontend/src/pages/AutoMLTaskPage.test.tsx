@@ -1,5 +1,5 @@
-import { App as AntApp, Modal } from "antd";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { App as AntApp, Modal, message as staticMessage } from "antd";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -145,6 +145,16 @@ describe("AutoMLTaskPage model registration", () => {
     createObjectURL.mockRestore(); revokeObjectURL.mockRestore(); click.mockRestore();
   });
 
+  it("uses the scoped AntApp message API for report notifications", async () => {
+    const staticSuccess = vi.spyOn(staticMessage, "success");
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "生成分析报告" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/training/jobs/job-1/automl-report"));
+
+    expect(staticSuccess).not.toHaveBeenCalled();
+  });
+
   it("restores an existing report and requires confirmation before regeneration", async () => {
     const confirm = vi.spyOn(Modal, "confirm").mockReturnValue({ destroy: vi.fn(), update: vi.fn() });
     const existingReport = { preview: { overview: { project: "一号焊装项目" }, selection: [], clustering: {}, importance: [], inference: [] } };
@@ -157,7 +167,9 @@ describe("AutoMLTaskPage model registration", () => {
     fireEvent.click(screen.getByRole("button", { name: "生成分析报告" }));
     expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: "分析报告已经生成过，是否重新生成？" }));
     expect(post).not.toHaveBeenCalled();
-    await confirm.mock.calls[0][0].onOk?.(vi.fn());
+    await act(async () => {
+      await confirm.mock.calls[0][0].onOk?.(vi.fn());
+    });
     await waitFor(() => expect(post).toHaveBeenCalledWith("/training/jobs/job-1/automl-report?regenerate=true"));
   });
 

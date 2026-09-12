@@ -46,6 +46,23 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn(".venv*/", patterns)
         self.assertNotIn("!.venv311/", patterns)
 
+    def test_ci_workflow_contains_no_aliyun_references(self):
+        forbidden = (
+            "aliyun",
+            "alibaba",
+            "阿里云",
+            "aliyuncs",
+            "mirrors.aliyun",
+            "registry.aliyun",
+            "oss.aliyun",
+            "cr.aliyun",
+            "alibabacloud",
+        )
+        workflow = self.workflow.casefold()
+        for marker in forbidden:
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker.casefold(), workflow)
+
     def test_worker_startup_waits_for_ready_log_without_control_probe(self):
         wait_step = self.workflow.split(
             "- name: Wait for Celery worker",

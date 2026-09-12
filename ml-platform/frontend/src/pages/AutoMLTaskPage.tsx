@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Col, Descriptions, Divider, Empty, Modal, Progress, Row, Spin, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
+import { App as AntApp, Alert, Button, Card, Col, Descriptions, Divider, Empty, Modal, Progress, Row, Spin, Space, Statistic, Table, Tabs, Tag, Typography } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import { useNavigate, useParams } from "react-router-dom";
 import apiClient, { formatApiError } from "../api/client";
@@ -57,6 +57,7 @@ type AutoMLResultRow = Record<string, unknown> & {
 export default function AutoMLTaskPage() {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
+  const { message } = AntApp.useApp();
   const [job, setJob] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();

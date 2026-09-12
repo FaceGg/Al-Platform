@@ -533,8 +533,7 @@ jobs:
       NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE: /tmp/notification-receiver-key.pem
       COMPOSE_FILE: docker-compose.yml:docker-compose.acceptance.yml
       COMPOSE_PROJECT_NAME: ci-inference-${{ github.run_id }}-${{ github.run_attempt }}
-      # Build the shared requirements layer once, then reuse it for each
-      # service instead of contending for the package mirror four times.
+      # Build the shared requirements layer once and reuse it for each service.
       COMPOSE_PARALLEL_LIMIT: "1"
     steps:
       - uses: actions/checkout@v5
