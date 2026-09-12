@@ -692,3 +692,10 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 浏览器根因复核：标准 Chromium 套件在同一 `127.0.0.1` 来源连续登录超过默认 IP 限流容量 5，后续用例收到 429 并回到 `/login`；默认生产容量保持 5，仅为标准 CI 浏览器 job 显式设置 `LOGIN_IP_RATE_LIMIT_CAPACITY=20`，并将容量纳入配置边界验证。
 - 当前验证：镜像/CI/配置合同 **80 passed、92 subtests passed**，`git diff --check` 通过；Docker/WSL 本地构建不可用，以上 ABI 修复仍需远程 runner 验证。
 - 状态边界：本次修复尚未绑定提交 SHA 或远程成功 Run；Task 14 继续 `in_progress`，失败、跳过和环境阻断不改写为通过。
+
+## 2026-09-12 远程 CI 固定基础镜像 ABI 修复
+
+- Run `34675962496` 的完整日志确认，四个 Python 镜像即使切换到 `packages.wolfi.dev/os` 并安装 `glibc`，仍在 `import sqlite3` 时报告 `GLIBC_2.44 not found`；旧固定 Wolfi digest 与当前 sqlite 包 ABI 不兼容。
+- 修复：通过容器 registry manifest 解析当前 amd64 immutable manifest，将四个 Dockerfile 和 `.github/contracts/python-base-image.json` 统一更新到 `sha256:6a8dca4c2153cfc11d559cfa6172c187b896423d833f3d48a4c1c44ab55596d7`；保留构建期 `python3.11 -c "import sqlite3"` 检查及安全合同测试。
+- 当前验证：远程 Run 的 Ubuntu/Windows Quality 和生产集成通过；实验集成与 Chromium 均因旧 digest 的同一 ABI 错误失败。新 digest 的完整镜像构建和浏览器验收待提交后重新执行。
+- 状态边界：Task 14 仍为 `in_progress`，不以 manifest 解析成功替代真实构建证据，未通过全量远程门禁前禁止合并 `main`。

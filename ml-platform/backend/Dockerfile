@@ -1,4 +1,4 @@
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:bfcffaf1336b26a3fd33c8cb31a86a09324d2048420d7f49b983f323b0d33e8d
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:6a8dca4c2153cfc11d559cfa6172c187b896423d833f3d48a4c1c44ab55596d7
 USER 0
 WORKDIR /app
 RUN set -eu; \

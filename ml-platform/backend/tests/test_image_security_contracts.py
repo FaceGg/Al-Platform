@@ -21,7 +21,7 @@ DOCKERFILES = tuple(
 BASE_RECORD = ROOT / ".github" / "contracts" / "python-base-image.json"
 REMEDIATED_WOLFI_REFERENCE = (
     "cgr.dev/chainguard/wolfi-base:latest@"
-    "sha256:bfcffaf1336b26a3fd33c8cb31a86a09324d2048420d7f49b983f323b0d33e8d"
+    "sha256:6a8dca4c2153cfc11d559cfa6172c187b896423d833f3d48a4c1c44ab55596d7"
 )
 REQUIREMENTS = BACKEND / "requirements.txt"
 EXCEPTION = ROOT / ".github" / "contracts" / "cryptography-pkcs7-mlflow-exception.json"
