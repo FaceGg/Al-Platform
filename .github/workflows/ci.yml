@@ -181,6 +181,7 @@ jobs:
         working-directory: ml-platform/frontend
         env:
           RUN_WEEK12_BROWSER_ACCEPTANCE: "0"
+          LOGIN_IP_RATE_LIMIT_CAPACITY: "20"
           DATABASE_URL: sqlite:///../../temp_test/playwright_ci.db
           ARTIFACT_STORAGE_BACKEND: local
           ARTIFACT_STORAGE_DIR: ../../temp_test/playwright-artifacts

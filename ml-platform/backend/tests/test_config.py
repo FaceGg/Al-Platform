@@ -58,6 +58,7 @@ class TestSettings(unittest.TestCase):
         self.assertEqual(local_settings.inference_rate_limit_refill_per_second, 10.0)
         self.assertEqual(local_settings.inference_log_retention_days, 30)
         self.assertEqual(local_settings.inference_rollout_observation_seconds, 60)
+        self.assertEqual(local_settings.login_ip_rate_limit_capacity, 5)
 
     def test_inference_limits_are_bounded(self):
         for field_name, invalid_value in (
@@ -69,6 +70,12 @@ class TestSettings(unittest.TestCase):
             with self.subTest(field_name=field_name):
                 with self.assertRaises(ValidationError):
                     Settings(**{field_name: invalid_value})
+
+    def test_login_ip_limit_capacity_is_bounded(self):
+        for invalid_value in (0, 101):
+            with self.subTest(invalid_value=invalid_value):
+                with self.assertRaises(ValidationError):
+                    Settings(login_ip_rate_limit_capacity=invalid_value)
 
     def test_production_rejects_sqlite(self):
         with self.assertRaisesRegex(ValidationError, "PostgreSQL"):

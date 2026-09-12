@@ -97,6 +97,11 @@ class ImageSecurityContractTests(unittest.TestCase):
                 r"apk\s+add\s+--no-cache[^\n;]*\bglibc\b",
                 path.name,
             )
+            self.assertIn(
+                "printf '%s\\n' 'https://packages.wolfi.dev/os' > /etc/apk/repositories",
+                content,
+                path.name,
+            )
             self.assertIn('RUN python3.11 -c "import sqlite3"', content, path.name)
 
     def test_backend_host_mounts_keep_the_established_numeric_identity(self):

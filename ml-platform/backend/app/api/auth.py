@@ -29,6 +29,7 @@ from app.services.platform_audit import (
 from app.services.security import (
     LOGIN_ACCOUNT_LIMIT,
     LOGIN_IP_LIMIT,
+    RateLimitPolicy,
     REGISTRATION_LIMIT,
     enforce_rate_limit,
 )
@@ -126,7 +127,10 @@ def login(
 ):
 
     client_key = _client_key(request)
-    enforce_rate_limit(f"auth:login:ip:{client_key}", LOGIN_IP_LIMIT)
+    enforce_rate_limit(
+        f"auth:login:ip:{client_key}",
+        RateLimitPolicy(settings.login_ip_rate_limit_capacity, LOGIN_IP_LIMIT.window_seconds),
+    )
     username = _normalize_username(form.username)
     enforce_rate_limit(f"auth:login:account:{username.casefold()}", LOGIN_ACCOUNT_LIMIT)
 

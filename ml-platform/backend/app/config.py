@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     annotator_service_audience: str = "ml-platform-internal"
     annotator_service_algorithm: str = "HS256"
     annotator_service_secret: SecretStr = Field(default=SecretStr("change-me-annotator-service-secret"), exclude=True)
+    login_ip_rate_limit_capacity: int = Field(default=5, ge=1, le=100)
 
     @property
     def resolved_annotator_service_secret(self) -> SecretStr:
