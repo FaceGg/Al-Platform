@@ -150,6 +150,12 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             minio_script,
         )
 
+    def test_minio_services_use_the_public_quay_registry(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+        self.assertEqual(compose["services"]["minio"]["image"], "quay.io/minio/minio:latest")
+        self.assertEqual(compose["services"]["minio-init"]["image"], "quay.io/minio/mc:latest")
+        self.assertIn("quay.io/minio/minio:latest server /data", self.workflow)
+
     def test_failure_evidence_scan_uses_runner_available_grep(self):
         evidence_step = self.workflow.split(
             "- name: Scan and upload production failure evidence",

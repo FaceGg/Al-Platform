@@ -671,3 +671,11 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 提交 `860c8d349845b36c20483b7d4d0320911cb1e18f` 上的 19 项本地合同收据已全部重生成并通过 `validate_acceptance_manifest` 校验；每项状态均为 `passed`，所有证据路径均存在且为仓库相对路径。
 - 收据覆盖数据导入/版本、标签 schema/并发、策略、通用任务 API、AutoML、导出、离线推理、恢复/安全和 AutoML Chromium 流程；收据目录为 `temp_test/generic-platform-acceptance/receipts/`。
 - 该收据集仍不代表最终发布就绪：Docker/WSL 全栈持续运行因当前 Windows 无 Docker CLI 保持 `environment-blocked`，真实 Task 5 Redis/Celery 收据仍是历史运行态证据，远程 CI 尚未执行。新增本记录后 SHA 会变化，发布前必须再次重绑定收据。
+
+## 2026-09-12 远程 CI 失败根因与修复
+
+- Run `34668805956` 已完成但未通过。Ubuntu 质量 job 通过；Windows 质量 job 的唯一失败是 `AutoMLPage.test.tsx` 重试测试在第二次点击前未等待按钮恢复可用，最终为 `1 failed / 291 passed / 19 skipped`。
+- 两个 Ubuntu 生产集成 job 的根因均为 Docker registry 拒绝拉取 `minio/minio:latest`（`pull access denied`），不是应用测试失败。
+- 修复：AutoML 重试回归在第二次点击前等待按钮 enabled；生产 Compose 的 `minio`/`minio-init` 和 CI standalone MinIO 统一使用 `quay.io/minio`；新增 CI/Compose 镜像来源契约测试。
+- 当前验证：AutoML 页面 **10 passed、19 skipped**；CI workflow **47 passed、79 subtests passed**；Windows 宿主无 Docker CLI，WSL Compose 仅完成失败的变量前置检查，完整生产栈尚未本地运行。
+- 状态：本修复待当前 SHA 提交后重新执行完整远程 CI；在新 Run 通过前，Task 14 保持 `in_progress`，不将远程失败改写为环境通过。

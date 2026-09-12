@@ -726,6 +726,7 @@ describe("AutoMLPage", () => {
     const run = screen.getByRole("button", { name: "thunderbolt Run" });
     fireEvent.click(run);
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(run).toBeEnabled());
     fireEvent.click(run);
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
 
