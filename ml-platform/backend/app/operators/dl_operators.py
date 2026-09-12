@@ -260,6 +260,93 @@ if not TORCH_AVAILABLE:
         name = "CNN1D Classifier"
         category = "dl"
         description = "Train a 1D CNN classifier with PyTorch"
+
+
+if TORCH_AVAILABLE:
+    @register_operator
+    class MLPRegressor(BaseOperator):
+        id = "mlp_regressor"
+        name = "MLP Regressor"
+        category = "dl"
+        description = "Train a simple MLP regressor with PyTorch"
+        inputs = [PortSpec("data", "DataTable", "Training Data")]
+        outputs = [PortSpec("model", "Model", "Trained Model")]
+        parameters = [
+            ParamSpec("target_column", "str", "target", "Target Column"),
+            ParamSpec("hidden_layers", "str", "64,32", "Hidden Layer Sizes"),
+            ParamSpec("activation", "select", "relu", "Activation Function", options=["relu", "tanh"]),
+            ParamSpec("epochs", "int", 10, "Epochs", range_min=1),
+            ParamSpec("batch_size", "int", 32, "Batch Size", range_min=1),
+            ParamSpec("learning_rate", "float", 0.001, "Learning Rate"),
+            ParamSpec("device", "select", "cpu", "Device", options=["cpu", "cuda"]),
+            ParamSpec("random_seed", "int", 42, "Random Seed"),
+        ]
+
+        def validate(self, inputs):
+            return True
+
+        def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+            torch.manual_seed(int(params.get("random_seed", 42)))
+            data = inputs.get("data", [])
+            df = pd.DataFrame(data)
+            target = params.get("target_column", "target")
+            features = df.drop(columns=[target])
+            cat_cols = features.select_dtypes(include=["object", "category"]).columns.tolist()
+            if cat_cols:
+                features = pd.get_dummies(features, columns=cat_cols)
+            X = features.values.astype(np.float32)
+            y = df[target].values.astype(np.float32).reshape(-1, 1)
+            X = torch.tensor(X, dtype=torch.float32)
+            y = torch.tensor(y, dtype=torch.float32)
+
+            hidden = [
+                int(h.strip())
+                for h in params.get("hidden_layers", "64,32").split(",")
+                if h.strip()
+            ]
+            activation = params.get("activation", "relu")
+            epochs = int(params.get("epochs", 10))
+            batch_size = int(params.get("batch_size", 32))
+            lr = float(params.get("learning_rate", 0.001))
+
+            loader = DataLoader(
+                TensorDataset(X, y),
+                batch_size=batch_size,
+                shuffle=True,
+            )
+            model = _MLP(X.shape[1], hidden, 1, activation)
+            optimizer = optim.Adam(model.parameters(), lr=lr)
+            criterion = nn.MSELoss()
+            model.train()
+            for _ in range(epochs):
+                for batch_x, batch_y in loader:
+                    optimizer.zero_grad()
+                    loss = criterion(model(batch_x), batch_y)
+                    loss.backward()
+                    optimizer.step()
+
+            import pickle as _pickle
+
+            payload = {
+                "__framework__": "pytorch",
+                "__model_type__": "mlp_regressor",
+                "state_dict": model.state_dict(),
+                "input_dim": X.shape[1],
+                "hidden_layers": hidden,
+                "activation": activation,
+                "net_class": _MLP,
+            }
+            buffer = io.BytesIO()
+            _pickle.dump(payload, buffer)
+            return OperatorResult(outputs={"model": buffer.getvalue()})
+
+
+    @register_operator
+    class CNN1DClassifier(BaseOperator):
+        id = "cnn1d_classifier"
+        name = "CNN1D Classifier"
+        category = "dl"
+        description = "Train a 1D CNN classifier with PyTorch"
         inputs = [PortSpec("data", "DataTable", "Training Data")]
         outputs = [PortSpec("model", "Model", "Trained Model")]
         parameters = [

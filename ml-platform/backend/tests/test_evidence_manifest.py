@@ -52,6 +52,7 @@ class EvidenceManifestTests(unittest.TestCase):
         def excluded(parts: tuple[str, ...]) -> bool:
             return (
                 (parts and parts[0] == ".git")
+                or ".pytest_cache" in parts
                 or any(part.startswith(".venv") for part in parts)
                 or "tmp" in parts
                 or "temp_test" in parts

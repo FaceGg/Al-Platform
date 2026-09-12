@@ -405,7 +405,7 @@ Expected: type and required-value tests pass, schema migration is idempotent, an
 - list_annotation_tasks(project_id: UUID, cursor: str | None, limit: int) -> CursorPage[AnnotationTaskResponse]
 - get_annotation_preview(task_id: UUID, preview_id: UUID, cursor: str | None, limit: int) -> AnnotationPreviewPage
 
-- [ ] **Step 1: Write RED tests for state guards and preview idempotency**
+- [x] **Step 1: Write RED tests for state guards and preview idempotency**
 
 ~~~python
 def test_manual_task_publish_requires_preview_ready(client):
@@ -431,7 +431,7 @@ def test_automatic_task_execution_requires_valid_preview(client):
     assert response.json()["detail"]["code"] == "PREVIEW_STALE"
 ~~~
 
-- [ ] **Step 2: Run the tests and verify the current endpoints fail**
+- [x] **Step 2: Run the tests and verify the current endpoints fail**
 
 Run:
 
@@ -442,7 +442,7 @@ py -3.14 -m pytest tests/test_annotation_task_state.py -q
 
 Expected: the existing annotation API accepts direct status edits, has no preview operation key, or cannot distinguish stale previews.
 
-- [ ] **Step 3: Implement the task contract**
+- [x] **Step 3: Implement the task contract**
 
 1. Add task snapshots containing dataset version, fixed sample-id set, visible columns, label schema, instructions and configuration hash.
 2. Implement the states draft, previewing, preview_ready, executing, awaiting_annotation, in_progress, awaiting_return, returned_pending_acceptance, accepted, completed, paused, cancelled, failed and needs_review.
@@ -451,7 +451,7 @@ Expected: the existing annotation API accepts direct status edits, has no previe
 5. Use one task list for manual and automatic tasks. The API never redirects to a detail page and the response contains preview and assignment affordances.
 6. Record audit events for every state transition and reject client-supplied project or sample scope that differs from the stored snapshot.
 
-- [ ] **Step 4: Run GREEN verification**
+- [x] **Step 4: Run GREEN verification**
 
 Run:
 
@@ -466,6 +466,8 @@ npm run build
 Expected: state and idempotency tests pass; manual and automatic list actions show preview and assignment controls without automatic navigation.
 
 **Dependencies:** Tasks 2 and 4.
+
+**Current checkpoint (2026-09-12):** Task 5 is complete within its declared implementation and local runtime acceptance scope. Current-worktree verification passed with backend `tests/test_annotation_task_state.py tests/test_annotation_task_state_api.py tests/test_async_operation_contract.py` at **75 passed, 5 warnings**, frontend `DataAnnotationPage.test.tsx PreviewDrawer.test.tsx weekAcceptance.test.ts` at **60 passed**, and `npm run build` successful. The existing Task 5 runtime receipt covers real Redis/Celery preview dispatch, worker termination and restart recovery using the same operation identity, and duplicate-delivery protection for **5,000** results. Task 14 remains `in_progress`; these results do not claim current-SHA release receipts, full backend acceptance, Docker/WSL full-stack continuity, or remote CI.
 
 ## Task 6: 三种自动标注策略和特征重要性加权 KMeans
 

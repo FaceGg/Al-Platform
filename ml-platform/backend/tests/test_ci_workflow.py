@@ -437,7 +437,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertEqual(exception["schema_version"], 1)
         self.assertEqual(exception["id"], "react-router-rsc-mode-csrf")
         self.assertEqual(exception["owner"], "ml-platform-maintainers")
-        self.assertEqual(exception["expires_on"], "2026-09-10")
+        self.assertEqual(exception["expires_on"], "2026-12-12")
         self.assertEqual(
             exception["package_versions"],
             {"react-router": "7.18.2", "react-router-dom": "7.18.2"},

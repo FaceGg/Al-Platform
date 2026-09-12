@@ -16,6 +16,7 @@ from app.models.compute import ComputeNode, EdgeDevice
 from app.models.platform_models import AnnotationResult, AnnotationTask, Dataset
 from app.models.project import Project
 from app.models.user import User
+from app.services.security import rate_limiter
 
 try:
     from app.services.resource_access import ResourceAccessError, ResourceAccessService
@@ -63,6 +64,7 @@ RESOURCE_CASES = (
 class TestSecurityHardening(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        rate_limiter().clear()
         cls.engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},

@@ -52,7 +52,7 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 
 ## 5. 当前主交付计划
 
-Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试和源码门禁；Task 5–14 仍按依赖推进。文档评审、历史局部功能或 Week 1–12 验收均不构成当前任务完成状态。按依赖执行，不得把局部测试或旧 SHA 证据外推为整体平台验收。
+Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运行态验收；Task 6–14 仍按依赖推进。文档评审、历史局部功能或 Week 1–12 验收均不构成当前任务完成状态。按依赖执行，不得把局部测试或旧 SHA 证据外推为整体平台验收。
 
 | ID | 工作项 | 依赖 | 状态 |
 |---|---|---|---|
@@ -73,10 +73,10 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 
 ### 当前执行入口
 
-1. 当前工作树已复核：Task 5 预览完成状态会同步回任务列表；页面回归为 **39/39**，前端台账为 **7/7**，完整 Vitest 为 **57 个文件通过、276 个测试通过、19 个历史 skipped**，生产构建通过。
+1. 当前工作树已复核：Task 5 预览完成状态会同步回任务列表；页面/组件/台账回归为 **60/60**，生产构建通过，后端 Task 5/异步组合为 **75 passed、5 warnings**。
 2. 后端测试基础设施复核：`tests.test_run_suite` 为 **7/7 OK**，pytest 版本为 **7 passed**，Week 17 聚合为 **21/21 模块通过、0 失败**；`git diff --check` 通过。
 3. 上述均为带未提交修改的当前工作树验证，不是可绑定到 Git SHA 的发布收据；用户本地 `README.md` 继续排除，不暂存、不覆盖、不提交。
-4. Task 5 仍需以运行态和端到端证据收口真实 broker 派发、恢复调度、任务列表刷新后的预览状态保持、完整操作中心和预览结果分页。
+4. Task 5 的真实 broker 派发、worker 重启恢复、结果去重、任务列表刷新后的预览状态保持、操作中心和结果/统计分页已在实现及聚焦验收中收口；后续仅需在最终稳定 SHA 上重生成发布收据。
 5. Task 6–13 继续补齐跨服务、浏览器、导出/离线、恢复和安全运行态证据。
 6. Task 14 必须在干净且已提交的当前版本上重新生成全量收据，并执行后端/前端全量测试、Playwright、Alembic、Docker/WSL 恢复演练和远程 CI；任何失败、超时、skipped、缺失或未执行门禁均保持 `in_progress`。
 7. 每个 Task 的精确文件、接口、RED/GREEN 步骤和命令以实施计划为准；本文件不创建平行的实现步骤。
@@ -576,6 +576,13 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 验证：后端 Task 5 组合 **74 passed、4 warnings**；前端 Task 5 页面/组件/台账 **59 passed**；前端生产构建通过；Chromium `e2e/generic-platform-acceptance.spec.ts` **1 passed**；真实 Redis/worker 演练收据 `temp_test/task5-runtime-20260911-r3/receipt.json` 为 `passed`，包含 `real_broker_preview_completed`、`worker_kill_restart_recovery_same_operation`、`duplicate_delivery_no_duplicate_results`，结果数 5000。
 - 状态：Task 5 实现和本地/浏览器/真实 broker 演练要求已完成；本次重启 Redis 后的第二次运行因 WSL Docker 端口映射到 Windows 失败而 `environment-blocked`，不覆盖此前通过收据。Task 14 的干净提交、完整 active suite、远程 CI 和全量发布收据仍未完成。
 
+## 2026-09-12 Task 5 当前分支复核
+
+- 当前分支：`general-automl-annotation-20260902`，HEAD `2c065080439d0053bb4a870224f70359be844401`；工作树保留其他任务的未提交修改，未覆盖或回退。
+- 后端 Task 5 聚焦组合 `tests/test_annotation_task_state.py tests/test_annotation_task_state_api.py tests/test_async_operation_contract.py`：**75 passed、5 warnings**。
+- 前端 Task 5 页面/组件/周台账组合 `DataAnnotationPage.test.tsx PreviewDrawer.test.tsx weekAcceptance.test.ts`：**60 passed**；`npm run build` 通过。
+- 计划中的 Task 5 Step 1–4 已全部标记完成。Task 5 状态为 `passed`；现有真实 Redis/Celery 收据仍绑定其生成时的提交，不作为当前 HEAD 的发布收据。Task 6–14、完整后端 active suite、最终 SHA 收据和远程 CI 继续按计划执行。
+
 ## 2026-09-11 Task 6 自动标注策略收口
 
 - 实现：通用自动任务支持 model、cluster、rule、cluster_rule 四种配置形态；聚类策略要求每个标签列提供类型有效的 `other_values`；`cluster_rule` 按 rule > cluster > other 的逐列优先级生成结果；冲突规则、缺失映射、非法标签值和不可用特征重要性进入 `needs_review`。
@@ -616,3 +623,45 @@ Task 1–4 已完成各自当前本地聚焦范围内的实现、迁移、测试
 - 实现：模型库版本抽屉对已批准版本提供 predict/annotate 导出；前端创建异步导出后轮询状态，只有 `ready` 才调用一次性下载授权接口；失败状态不触发下载。
 - 验证：后端导出/离线合同 **9 passed、3 warnings**；导出 API 与模型库页面 **15 passed**；主平台生产构建通过；Chromium `e2e/model-export.spec.ts` **1 passed**，覆盖登录、项目/已批准版本选择、queued/running/ready 轮询和 ready 后下载。
 - 状态：Task 11 在当前工作树聚焦、前端和浏览器范围内标记为 `passed`。Docker/真实部署导出运行、完整后端 active suite、远程 CI 和 Task 14 最终 SHA 收据仍未完成；Task 12–14 和总体计划继续 `in_progress`。
+
+## 2026-09-12 Task 14 证据 manifest 性能与缓存边界修复
+
+- 现象：`test_evidence_manifest.py` 中语义收据用例递归扫描整个工作树，遇到多层 `.pytest_cache` 时耗时约 84 秒，并可能因 Windows 缓存目录权限拒绝而失败。
+- 根因：测试源树摘要与生产 Gitleaks 源范围均未排除任意层级的 `.pytest_cache`，导致生成的缓存文件参与哈希和递归访问。
+- 修复：在 `tools/security_scans.py` 和 `tests/test_evidence_manifest.py` 的源范围排除规则中加入 `.pytest_cache` 路径段；不改变生产扫描命令或 fail-closed 校验合同。
+- 验证：单个语义用例由约 84 秒降至 4.47 秒；完整 `test_evidence_manifest.py` 为 **34 passed、52 subtests passed**；安全合同组合在独立临时目录下为 **26 passed、12 subtests passed**；`git diff --check` 通过。
+- 环境边界：默认 Windows 临时目录存在权限拒绝，未将该环境错误计入代码失败；Task 14 的完整后端、Docker/WSL、最终 SHA 收据和远程 CI 仍未完成。
+
+## 2026-09-12 Task 14 后端全量门禁复核
+
+- 后端收集：当前工作树可收集 **1842 tests**。
+- 全量执行：`pytest -q --maxfail=20` 在约 88 分钟后结束，结果为 **1639 passed、109 skipped、12 failed、8 errors、652 subtests passed**。
+- 已确认的失败类别：深度学习算子在当前运行环境中未注册；`security_hardening` 登录夹具受进程级限流状态污染；Week 12 安全测试中仍有测试侧 Gitleaks 源树摘要未排除 `.pytest_cache`；其余安全门禁失败需按完整堆栈继续拆分。
+- 处理进展：已同步 `test_week12_security_gates.py` 的 `.pytest_cache` 排除规则；证据 manifest 与核心安全合同已在独立临时目录下通过。全量后端仍为 `in_progress`，上述结果不构成发布通过。
+
+## 2026-09-12 Task 14 全量门禁回归修复
+
+- 深度学习算子根因：Torch 可用时，`MLPRegressor` 与 `CNN1DClassifier` 的定义误置于 `if not TORCH_AVAILABLE` 分支，导致应用只注册 `mlp_classifier`。
+- 修复：补齐 Torch 可用分支下的 `mlp_regressor` 与 `cnn1d_classifier` 注册、元数据和训练入口；保留 Torch 不可用时的 fail-fast 合同。
+- 验证：`TestDLOperatorsMetadata` 与 `TestDLAndMechanismOperators` 共 **8 passed**；`git diff --check` 通过。
+- 当前边界：这是全量套件中深度学习注册失败的修复回归；后端全量套件尚未重新执行，Task 14 仍为 `in_progress`。
+
+## 2026-09-12 Task 14 安全例外有效期复核
+
+- 当前日期为 **2026-09-12**，`.github/contracts/react-router-rsc-mode-exception.json` 的 `expires_on` 为 **2026-09-10**。
+- 结果：客户端范围静态检查已通过；依赖扫描和安全汇总中依赖该例外的用例按合同返回失败，错误原因是例外已过期。
+- 处理决定：不修改生产校验以绕过过期日期，也不未经安全复审延长例外有效期；该项保持 `in_progress`，待重新评审合同、升级依赖或移除例外后再验收。
+- 其他回归：`security_hardening.py` **8 passed**；Gitleaks 源树/Trivy 关键安全用例 **3 passed**；深度学习算子元数据与注册 **8 passed**。
+
+## 2026-09-12 Task 14 Week 12 安全门禁收口
+
+- 修复：安全扫描根目录改为优先解析当前 Git worktree；无效/模拟 Git 上下文回退到模块路径根；React Router 客户端-only 例外扫描器忽略明确的 TypeScript 原始类型参数误报。
+- 合同：基于当前 `BrowserRouter` 客户端-only 源码、精确依赖版本 `7.18.2` 和 advisory `1138769` 完成例外续审；合同有效期为 **2026-09-12 至 2026-12-12**，仍要求版本、范围和 advisory 精确匹配。
+- 验证：完整 `tests/test_week12_security_gates.py` 为 **159 passed、1 skipped、117 subtests passed**；安全 hardening 为 **8 passed**；深度学习算子注册/元数据为 **8 passed**。
+- 状态边界：Week 12 安全门禁已在当前工作树通过；完整后端 active suite、当前 SHA 19 项收据、Docker/WSL 全栈和远程 CI 仍未闭环，Task 14 保持 `in_progress`。
+
+## 2026-09-12 Task 14 当前工作树全量回归
+
+- 完整后端 active suite 使用独立 `--basetemp` 执行：**1733 passed、109 skipped、23 warnings、686 subtests passed**；此前唯一失败的 React Router 例外日期断言已同步到当前合同 `2026-12-12`。
+- 前端全量 Vitest：**59 个测试文件通过、292 passed、19 skipped**；前端生产构建通过；`alembic check` 报告 `No new upgrade operations detected`。
+- 本轮结果已证明当前工作树的代码/测试回归通过，但尚未形成最终提交 SHA 绑定的 19 项收据。Docker CLI 在当前 Windows 主机不可用，Docker/WSL 全栈和真实 Compose 持续运行保持 `environment-blocked`；远程 CI、最终收据重生成和发布仍待最终提交后执行。
