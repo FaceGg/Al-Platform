@@ -63,6 +63,28 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertNotIn(marker.casefold(), workflow)
 
+    def test_compose_runtime_contains_no_aliyun_references(self):
+        forbidden = (
+            "aliyun",
+            "alibaba",
+            "阿里云",
+            "aliyuncs",
+            "mirrors.aliyun",
+            "registry.aliyun",
+            "oss.aliyun",
+            "cr.aliyun",
+            "alibabacloud",
+        )
+        for compose_file in (
+            COMPOSE_FILE,
+            ACCEPTANCE_COMPOSE_FILE,
+            WEEK12_SECURITY_IMAGES_COMPOSE_FILE,
+        ):
+            content = compose_file.read_text(encoding="utf-8").casefold()
+            for marker in forbidden:
+                with self.subTest(file=compose_file.name, marker=marker):
+                    self.assertNotIn(marker.casefold(), content)
+
     def test_worker_startup_waits_for_ready_log_without_control_probe(self):
         wait_step = self.workflow.split(
             "- name: Wait for Celery worker",

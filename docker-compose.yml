@@ -98,8 +98,7 @@ services:
       - /bin/sh
       - -c
       - >-
-        pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
-        && pip install --retries 10 --timeout 120 "psycopg[binary]"
+        pip install --retries 10 --timeout 120 "psycopg[binary]"
         &&
         mlflow server
         --host 0.0.0.0

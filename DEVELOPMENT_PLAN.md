@@ -745,3 +745,9 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 现象：Run `34733167969` 在 readiness backend 重启后仍于 Week 12 首次 `loginAs` 停留在 `/login`，说明仅清理 readiness 进程状态不足以解释失败。
 - 修复：Week 12 登录 helper 现在等待真实 `/api/auth/login` 响应；非 2xx 时输出 HTTP 状态、`Retry-After` 和截断后的响应体，保留真实认证流程，不绕过登录。
 - 验证：待当前提交后的远程 Chromium Run 提供响应级证据；Task 14 保持 `in_progress`。
+
+## 2026-09-13 CI/Compose 阿里云依赖源清理
+
+- 现象：`ci.yml` 已无阿里云引用，但共享 `docker-compose.yml` 的 MLflow 服务仍通过 `mirrors.aliyun.com` 配置 pip 源；远程 full CI 的实验镜像构建长期停留，存在外部镜像源不可用导致验收不稳定的风险。
+- 修复：移除 MLflow 服务启动命令中的阿里云 pip 镜像配置，恢复使用 pip 默认源；新增 CI/Compose 静态合同，禁止 CI 与三个验收 Compose 文件出现阿里云相关引用。
+- 验证：`tests/test_ci_workflow.py` **53 passed、119 subtests passed**；`ci.yml` 与三个 Compose 文件关键词扫描无命中；`git diff --check` 通过。待新 SHA 远程 full CI 验证，Task 14 保持 `in_progress`。
