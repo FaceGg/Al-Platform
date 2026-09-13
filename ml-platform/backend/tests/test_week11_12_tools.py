@@ -143,6 +143,8 @@ class AcceptanceRunnerContractTests(unittest.TestCase):
         self.assertIn("tools/acceptance/run_backup_restore.sh", content)
         self.assertIn("tools/acceptance/run_upgrade_fixture.sh", content)
         self.assertNotIn("temp_test", content)
+        self.assertIn('docker create quay.io/minio/mc:latest', content)
+        self.assertNotIn('docker create minio/mc:latest', content)
 
     def test_week11_evidence_executors_use_runner_uid_for_bind_mount_writes(self):
         root = Path(__file__).resolve().parents[3]

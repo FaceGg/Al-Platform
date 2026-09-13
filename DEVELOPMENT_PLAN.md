@@ -759,3 +759,10 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 修复：仅在 `docker-compose.acceptance.yml` 的 backend 映射 `${WEEK12_ACCEPTANCE_BASE_URL:-http://localhost:5173}` 到 `FRONTEND_ORIGIN`；readiness 使用相同 Origin；移除无效的 backend 重启与重复登录逻辑。不使用通配符，不改变生产安全策略。
 - 验证：新增回归先以缺少 `FRONTEND_ORIGIN` 映射失败；修复后 CI/安全组合 **61 passed、2 warnings、119 subtests passed**，包含实际安全中间件对可信来源放行和未知来源 403 拒绝测试。该测试不替代完整真实登录验收，远程当前 SHA 仍待执行。
 - 历史判断更正：此前仅凭 job 状态未变化便将 Run `34734826220` 判断为长期停滞并取消，证据不足；MLflow 镜像配置发生在服务启动时，不能解释 Quality 依赖安装。保留阿里云清理改动及历史记录，但不将其当作已经验证的 CI 故障根因。Task 14 继续 `in_progress`。
+
+## 2026-09-13 Week 11 验收客户端镜像修复
+
+- 现象：当前 SHA `f12db1b4d99e4b1f6dc08eefdddfa21cde10c98f` 的 Run `34738460775` 中，四个基础门禁和 Chromium 均成功，但 `Week 11-12 verification (Ubuntu)` 在 `run_week11_acceptance.sh` 执行 `docker create minio/mc:latest` 时失败；Docker Hub 返回该镜像仓库不存在或拒绝拉取。
+- 根因：Week 11 脚本使用了错误的 Docker Hub 镜像地址；同一验收 Compose 已使用 `quay.io/minio/mc:latest`，但脚本未遵循该约定。
+- 修复：将脚本中的 MinIO 客户端来源改为 `quay.io/minio/mc:latest`，并新增合同测试禁止回退到 `minio/mc:latest`。
+- 验证：`tests/test_week11_12_tools.py tests/test_ci_workflow.py` **162 passed、124 subtests passed、2 warnings**；`git diff --check` 通过。修复提交后必须重新执行当前 SHA 的完整远程验收，Task 14 继续 `in_progress`。
