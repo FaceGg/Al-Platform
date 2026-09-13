@@ -21,7 +21,7 @@ Status: passed locally; Task 3 and Task 4 remain planned.
 ## Review And Commit
 
 - Self-review checked parser fail-closed paths, artifact compensation ordering, immutable child rows, migration chain and manifest registration.
-- Changed: Task 2 models, schemas, parser/input services, datasets API, Alembic/environment compatibility, requirements, focused tests, test manifest, plan/experience/SDD records.
+- Changed: Task 2 models, schemas, parser/input services, datasets API, Alembic/environment compatibility, requirements, focused tests, test manifest, plan/experience/SDD records. <!-- gitleaks:allow -->
 - Commit history: `feat(data): add immutable dataset import versions`, followed by the final review-fix commit (`fix(data): close task2 import review gaps`). Verify the final SHA with `git rev-parse HEAD`.
 
 ## Concerns

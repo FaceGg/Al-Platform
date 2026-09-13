@@ -766,3 +766,15 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 根因：Week 11 脚本使用了错误的 Docker Hub 镜像地址；同一验收 Compose 已使用 `quay.io/minio/mc:latest`，但脚本未遵循该约定。
 - 修复：将脚本中的 MinIO 客户端来源改为 `quay.io/minio/mc:latest`，并新增合同测试禁止回退到 `minio/mc:latest`。
 - 验证：`tests/test_week11_12_tools.py tests/test_ci_workflow.py` **162 passed、124 subtests passed、2 warnings**；`git diff --check` 通过。修复提交后必须重新执行当前 SHA 的完整远程验收，Task 14 继续 `in_progress`。
+
+## 2026-09-13 Week 12 安全扫描依赖与占位值修复
+
+- 现象：Run `34741431033` 的基础门禁和 Week 11 备份/恢复均通过，但 Week 12 `security_scans all` 失败。证据 manifest 显示 `pyarrow==20.0.0` 触发 CVE-2026-25087，四个生产镜像均因此被 Trivy 判定失败；Gitleaks 另报告两个已审阅测试文件中的三个占位值。
+- 修复：将 `pyarrow` 升级到 `23.*`；在 `.gitleaks.toml` 中仅豁免对应的历史 Task 2 报告和注入幂等键的前端测试文件精确路径，不放宽运行时源码或全局规则。
+- 验证边界：本地依赖锁定和安全扫描需在新提交的 Linux 全量环境中重新验证；Task 14 继续 `in_progress`，此前 Run 不作为新 SHA 的通过证据。
+
+## 2026-09-13 Week 11 升级演练目标与 Arrow 修复
+
+- 现象：同一 Run 的升级收据在数据备份/恢复成功后报告 `alembic_check=failed`，收据目标版本为旧 head `20260829_14`，而当前迁移 head 已是 `20260910_43`。
+- 修复：将升级演练、升级结果校验器和发布证据 manifest 统一绑定当前 Alembic head `20260910_43`；将 Arrow 约束收紧为 `>=23.0.1,<24`，排除 `23.0.0`。
+- 验证：新增迁移 head 与运行脚本一致性合同；本地 Week 11/12、CI 和安全合同回归待本轮修改后执行。远程 Run `34741431033` 仍不能作为通过证据。

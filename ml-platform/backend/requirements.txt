@@ -23,7 +23,7 @@ xgboost==3.2.*
 lightgbm==4.6.*
 catboost==1.2.*
 pandas==2.3.*
-pyarrow==20.*
+pyarrow>=23.0.1,<24
 defusedxml==0.7.*
 openpyxl==3.1.*
 xlrd==2.0.*

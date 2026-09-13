@@ -2988,8 +2988,13 @@ class UpgradeFixtureTests(unittest.TestCase):
         self.assertEqual(validate_upgrade_result(result)["status"], "passed")
 
     def test_release_n_minus_one_contract_targets_current_merge_head(self):
+        from alembic.script import ScriptDirectory
+
         self.assertEqual(EXPECTED_N_MINUS_ONE, "20260720_10_security_notifications")
-        self.assertEqual(EXPECTED_HEAD, "20260829_14")
+        backend = Path(__file__).resolve().parents[1]
+        self.assertEqual([EXPECTED_HEAD], ScriptDirectory(str(backend / "alembic")).get_heads())
+        runner = backend / "tools" / "acceptance" / "run_upgrade_fixture.sh"
+        self.assertIn(f"--target {EXPECTED_HEAD}", runner.read_text(encoding="utf-8"))
 
     def test_wrong_target_revision_fails_closed(self):
         with self.assertRaises(ValueError):

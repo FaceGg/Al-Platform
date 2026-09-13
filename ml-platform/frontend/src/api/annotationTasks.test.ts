@@ -27,7 +27,7 @@ describe("annotation task client", () => {
     expect(post).toHaveBeenCalledWith(
       "/annotation-tasks",
       expect.objectContaining({ mode: "manual" }),
-      { headers: { "X-Request-ID": "request-1", "Idempotency-Key": "idempotency-1" } },
+      { headers: { "X-Request-ID": "request-1", "Idempotency-Key": "idempotency-1" } }, // gitleaks:allow
     );
   });
 
@@ -43,7 +43,7 @@ describe("annotation task client", () => {
         mode: "automatic",
         configuration: { model_artifact_id: "artifact-1", search_strength: "strong" },
       }),
-      { headers: { "X-Request-ID": "request-2", "Idempotency-Key": "idempotency-2" } },
+      { headers: { "X-Request-ID": "request-2", "Idempotency-Key": "idempotency-2" } }, // gitleaks:allow
     );
     expect(post.mock.calls[0][1]).not.toHaveProperty("max_trials");
   });
