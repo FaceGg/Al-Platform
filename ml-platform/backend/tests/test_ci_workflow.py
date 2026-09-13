@@ -85,6 +85,48 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
                 with self.subTest(file=compose_file.name, marker=marker):
                     self.assertNotIn(marker.casefold(), content)
 
+    def test_isolated_browser_origin_matches_backend_and_readiness(self):
+        job = yaml.safe_load(self.workflow)["jobs"]["browser-acceptance"]
+        compose = yaml.safe_load(ACCEPTANCE_COMPOSE_FILE.read_text(encoding="utf-8"))
+        self.assertEqual(
+            compose["services"]["backend"]["environment"].get("FRONTEND_ORIGIN"),
+            "${WEEK12_ACCEPTANCE_BASE_URL:-http://localhost:5173}",
+        )
+        start = next(
+            step for step in job["steps"]
+            if step.get("name") == "Start isolated browser acceptance stack"
+        )
+        self.assertIn('--header "Origin: ${WEEK12_ACCEPTANCE_BASE_URL}"', start["run"])
+        self.assertNotIn("restart backend", start["run"])
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.middleware.security import RequestSecurityMiddleware
+
+        app = FastAPI()
+        app.add_middleware(
+            RequestSecurityMiddleware,
+            allowed_origins=frozenset({job["env"]["WEEK12_ACCEPTANCE_BASE_URL"]}),
+        )
+
+        @app.post("/api/auth/login", status_code=204)
+        def login_boundary():
+            return None
+
+        with TestClient(app) as client:
+            self.assertEqual(
+                client.post(
+                    "/api/auth/login",
+                    headers={"Origin": job["env"]["WEEK12_ACCEPTANCE_BASE_URL"]},
+                ).status_code,
+                204,
+            )
+            rejected = client.post(
+                "/api/auth/login", headers={"Origin": "https://untrusted.invalid"}
+            )
+            self.assertEqual(rejected.status_code, 403)
+            self.assertEqual(rejected.json()["detail"]["code"], "CORS_ORIGIN_FORBIDDEN")
+
     def test_worker_startup_waits_for_ready_log_without_control_probe(self):
         wait_step = self.workflow.split(
             "- name: Wait for Celery worker",
@@ -1168,7 +1210,6 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             'docker compose --project-name "$COMPOSE_PROJECT_NAME" config -q',
             "build backend worker tensorboard-gateway inference-runtime",
             "postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler mailpit notification-receiver notification-proxy",
-            'docker compose --project-name "$COMPOSE_PROJECT_NAME" restart backend',
         ):
             self.assertIn(marker, start["run"])
         self.assertEqual(standard.get("env", {}).get("RUN_WEEK12_BROWSER_ACCEPTANCE"), "0")

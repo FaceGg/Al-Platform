@@ -751,3 +751,11 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 现象：`ci.yml` 已无阿里云引用，但共享 `docker-compose.yml` 的 MLflow 服务仍通过 `mirrors.aliyun.com` 配置 pip 源；远程 full CI 的实验镜像构建长期停留，存在外部镜像源不可用导致验收不稳定的风险。
 - 修复：移除 MLflow 服务启动命令中的阿里云 pip 镜像配置，恢复使用 pip 默认源；新增 CI/Compose 静态合同，禁止 CI 与三个验收 Compose 文件出现阿里云相关引用。
 - 验证：`tests/test_ci_workflow.py` **53 passed、119 subtests passed**；`ci.yml` 与三个 Compose 文件关键词扫描无命中；`git diff --check` 通过。待新 SHA 远程 full CI 验证，Task 14 保持 `in_progress`。
+
+## 2026-09-13 Chromium Origin 根因确认与修复
+
+- 直接证据：解析 Run `34731274585` 下载的 Playwright `trace.zip` 网络记录，首次 `POST http://127.0.0.1:5173/api/auth/login` 返回 **403**，对应响应资源为 `{"detail":{"code":"CORS_ORIGIN_FORBIDDEN","message":"request origin is not allowed"}}`。不是此前推测的 429；Run `34733167969` 在重启 backend 后仍失败，四个 Quality/生产集成 job 成功，Week 11-12 verification 为 skipped。
+- 根因：backend 的生产模式只接受精确配置的来源，默认 `FRONTEND_ORIGIN=http://localhost:5173`；隔离浏览器实际使用 `http://127.0.0.1:5173`，验收 Compose 未传递实际来源。原 curl readiness 不带 Origin，不能证明浏览器认证可用。
+- 修复：仅在 `docker-compose.acceptance.yml` 的 backend 映射 `${WEEK12_ACCEPTANCE_BASE_URL:-http://localhost:5173}` 到 `FRONTEND_ORIGIN`；readiness 使用相同 Origin；移除无效的 backend 重启与重复登录逻辑。不使用通配符，不改变生产安全策略。
+- 验证：新增回归先以缺少 `FRONTEND_ORIGIN` 映射失败；修复后 CI/安全组合 **61 passed、2 warnings、119 subtests passed**，包含实际安全中间件对可信来源放行和未知来源 403 拒绝测试。该测试不替代完整真实登录验收，远程当前 SHA 仍待执行。
+- 历史判断更正：此前仅凭 job 状态未变化便将 Run `34734826220` 判断为长期停滞并取消，证据不足；MLflow 镜像配置发生在服务启动时，不能解释 Quality 依赖安装。保留阿里云清理改动及历史记录，但不将其当作已经验证的 CI 故障根因。Task 14 继续 `in_progress`。
