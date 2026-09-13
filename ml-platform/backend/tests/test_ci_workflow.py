@@ -1188,6 +1188,32 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         )
         self.assertEqual(install.get("run"), "npm ci")
 
+    def test_browser_acceptance_waits_for_admin_login_before_playwright(self):
+        parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+        steps = parsed["jobs"]["browser-acceptance"]["steps"]
+        start_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("name") == "Start isolated browser acceptance stack"
+        )
+        playwright_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("name") == "Run isolated Week 12 browser acceptance"
+        )
+        start_run = steps[start_index]["run"]
+        self.assertLess(start_index, playwright_index)
+        self.assertIn(
+            "POST http://127.0.0.1:${BACKEND_PORT}/api/auth/login",
+            start_run,
+        )
+        self.assertIn("username=admin&password=admin123", start_run)
+        self.assertIn("grep -q '\"access_token\"'", start_run)
+        self.assertIn(
+            'docker compose --project-name "$COMPOSE_PROJECT_NAME" logs backend migrate',
+            start_run,
+        )
+
     def test_week11_cleanup_removes_protected_notification_key_with_privilege(self):
         root = Path(__file__).resolve().parents[3]
         workflow = (root / ".github" / "workflows" / "ci.yml").read_text(

@@ -726,3 +726,10 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 合同：在 `ml-platform/backend/tests/test_ci_workflow.py` 新增工作流静态回归，禁止 `aliyun`、`alibaba`、`阿里云`、`aliyuncs`、`mirrors.aliyun`、`registry.aliyun`、`oss.aliyun`、`cr.aliyun` 和 `alibabacloud` 引用。
 - 验证：`test_ci_workflow.py` **51 passed、92 subtests passed**；工作流关键词扫描未发现阿里云引用；`git diff --check` 通过。
 - 状态：本轮改动尚未提交；Task 14 仍需在最终稳定 SHA 上重生成收据并完成远程 required jobs 全量验收后，才可合并 `main`。
+
+## 2026-09-13 Chromium 隔离验收登录就绪门禁
+
+- 现象：Run `34700918237` 的 Quality 两端及两个生产集成均成功，但 `Chromium acceptance (Ubuntu)` 在 Week 12 隔离用例首次管理员登录后仍停留在 `/login`，导致 Week 11-12 verification 为 `skipped`；该 Run 总体为 `failure`。
+- 根因判断：隔离 Compose 栈虽已通过 `up --wait`，但管理员认证接口在浏览器启动时尚未被明确验证为可用；workflow 环境变量显示登录限流容量为 20，但原流程缺少真实登录 readiness 检查。
+- 修复：在隔离栈启动后、Playwright 前增加最多 60 秒的 `/api/auth/login` 重试；失败时输出 backend/migrate 日志；新增 CI workflow 合同测试锁定该顺序和检查内容。
+- 验证：`test_ci_workflow.py` **52 passed、92 subtests passed**；`git diff --check` 通过。新修复尚未提交或远程验证，Task 14 继续 `in_progress`。

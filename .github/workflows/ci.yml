@@ -228,6 +228,18 @@ jobs:
           done
           docker compose --project-name "$COMPOSE_PROJECT_NAME" up --detach --wait \
             postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler mailpit notification-receiver notification-proxy
+          for attempt in {1..60}; do
+            if curl --fail --silent --show-error \
+              --request POST http://127.0.0.1:${BACKEND_PORT}/api/auth/login \
+              --header 'Content-Type: application/x-www-form-urlencoded' \
+              --data 'username=admin&password=admin123' \
+              | grep -q '"access_token"'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" logs backend migrate
+          exit 1
       - name: Start browser frontend
         working-directory: ml-platform/frontend
         shell: bash
