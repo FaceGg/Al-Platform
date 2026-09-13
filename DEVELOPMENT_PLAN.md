@@ -1,9 +1,8 @@
 # 通用自动建模与数据标注平台当前开发计划
 
 > 文档状态：仅汇总未完成、待验证、风险和已延后工作。
-> 文档更新日期：2026-09-03
-> 当前工作树：`E:\codex_workspace\agent_spot_welding\.worktrees\general-automl-annotation-20260902`
-> 当前分支：`general-automl-annotation-20260902`
+> 状态最后核验：2026-09-11
+> 当前工作树、分支和提交以任务开始时的 Git 输出为准，不在此文件固定。
 
 ## 1. 使用规则
 
@@ -132,3 +131,4 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 - 2026-09-03：按用户要求发布本次变更：功能分支提交 `f29191ba8980f0066a98b8dd8af26e70890d78d2` 已推送到 `origin/general-automl-annotation-20260902`；随后与根 `main` 的分支整理提交合并为 `f6c8bff64458f305f1568f67ab3f8479983431f4` 并推送到 `origin/main`。README 未加入任何提交，仅在本地工作树和根 `main` 工作树同步保留。
 - 2026-09-03：发布前验证记录：README 以外的工作树变更已提交并推送，`git diff --check` 退出码为 0；后端标准套件因 `python` 命令仅指向 WindowsApps 占位符、Python 3.14 环境未安装 `fastapi`，前端因缺少 `node_modules` 未执行测试和构建。上述环境缺口不计为测试通过，也不改变通用平台 Task 1–14 的 `planned` 状态。
 - 2026-09-09：重新生成 Ubuntu 源码包时，`packaging/build-package.sh` 的校验和重定向缺少末尾引号，导致 Bash 报 `unexpected EOF`。此前将多个文件放在同一次 `bash -n` 调用中只实际解析了第一个脚本，未覆盖该文件；已补齐引号并改为逐文件语法校验。部署合同测试 `tests.test_ci_workflow` 为 49/49，通过后的归档校验和、必要文件和敏感运行时路径排除均已复验；Docker Engine 在本机仍不可用，目标 Ubuntu 的镜像构建和运行态健康检查仍待执行。
+- 2026-09-11：将 Agent 行为边界、自主执行、澄清、批准、工具调用和分层验证规则移至根目录 `AGENTS.md`；本文件继续作为项目状态、依赖、风险和验收事实台账。新增 `.agents/skills/project-audit` 与 `.agents/skills/release-gates`，分别封装规则审计和发布证据流程。未改变业务代码、历史计划或 CI 业务执行逻辑。
