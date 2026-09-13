@@ -739,3 +739,9 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 现象：隔离 Compose 栈的 readiness 登录探针成功后，Week 12 浏览器首次管理员登录仍停留在 `/login`；当前登录限流器为 backend 进程内状态，探针可能污染后续浏览器验收的同一进程状态。
 - 修复：readiness 探针成功后重启隔离 backend，重新等待 backend 运行并再次执行真实管理员登录探针；探针重试耗尽或 backend 非运行态时输出 backend/migrate 日志并失败。未改变生产默认登录限流容量或认证业务语义。
 - 验证：`tests/test_ci_workflow.py` **52 passed、92 subtests passed**；`ci.yml` 阿里云关键词扫描无命中；`git diff --check` 通过。修复待提交后的远程 full CI 验证，Task 14 继续 `in_progress`。
+
+## 2026-09-13 Chromium 登录失败响应诊断增强
+
+- 现象：Run `34733167969` 在 readiness backend 重启后仍于 Week 12 首次 `loginAs` 停留在 `/login`，说明仅清理 readiness 进程状态不足以解释失败。
+- 修复：Week 12 登录 helper 现在等待真实 `/api/auth/login` 响应；非 2xx 时输出 HTTP 状态、`Retry-After` 和截断后的响应体，保留真实认证流程，不绕过登录。
+- 验证：待当前提交后的远程 Chromium Run 提供响应级证据；Task 14 保持 `in_progress`。
