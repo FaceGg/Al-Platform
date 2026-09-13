@@ -733,3 +733,9 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 根因判断：隔离 Compose 栈虽已通过 `up --wait`，但管理员认证接口在浏览器启动时尚未被明确验证为可用；workflow 环境变量显示登录限流容量为 20，但原流程缺少真实登录 readiness 检查。
 - 修复：在隔离栈启动后、Playwright 前增加最多 60 秒的 `/api/auth/login` 重试；失败时输出 backend/migrate 日志；新增 CI workflow 合同测试锁定该顺序和检查内容。
 - 验证：`test_ci_workflow.py` **52 passed、92 subtests passed**；`git diff --check` 通过。新修复尚未提交或远程验证，Task 14 继续 `in_progress`。
+
+## 2026-09-13 Chromium readiness 探针副作用隔离
+
+- 现象：隔离 Compose 栈的 readiness 登录探针成功后，Week 12 浏览器首次管理员登录仍停留在 `/login`；当前登录限流器为 backend 进程内状态，探针可能污染后续浏览器验收的同一进程状态。
+- 修复：readiness 探针成功后重启隔离 backend，重新等待 backend 运行并再次执行真实管理员登录探针；探针重试耗尽或 backend 非运行态时输出 backend/migrate 日志并失败。未改变生产默认登录限流容量或认证业务语义。
+- 验证：`tests/test_ci_workflow.py` **52 passed、92 subtests passed**；`ci.yml` 阿里云关键词扫描无命中；`git diff --check` 通过。修复待提交后的远程 full CI 验证，Task 14 继续 `in_progress`。

@@ -1146,6 +1146,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             'docker compose --project-name "$COMPOSE_PROJECT_NAME" config -q',
             "build backend worker tensorboard-gateway inference-runtime",
             "postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler mailpit notification-receiver notification-proxy",
+            'docker compose --project-name "$COMPOSE_PROJECT_NAME" restart backend',
         ):
             self.assertIn(marker, start["run"])
         self.assertEqual(standard.get("env", {}).get("RUN_WEEK12_BROWSER_ACCEPTANCE"), "0")
