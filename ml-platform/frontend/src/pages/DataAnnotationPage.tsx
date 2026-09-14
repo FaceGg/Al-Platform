@@ -54,6 +54,7 @@ import {
   uploadQualityDataset,
   validateQualityDataset,
 } from "../api/spotWeldQuality";
+import { deleteAnnotationTask } from "../api/annotationTasks";
 import type { QualityClusterPreview } from "../api/spotWeldQuality";
 
 interface ProjectOption { id: string; name: string; project_role?: string; }
@@ -1446,6 +1447,16 @@ export default function DataAnnotationPage() {
                 {["accepted", "completed", "cancelled"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "archive"); }}>归档</button>}
                 {task.status === "completed" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "reopen"); }}>重开</button>}
                 {task.status === "archived" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "restore"); }}>恢复归档</button>}
+                <DeleteConfirmation
+                  label={`删除通用任务 ${task.id}`}
+                  targetName={task.id.slice(0, 8)}
+                  onConfirm={() => {
+                    void deleteAnnotationTask(task.id).then(() => {
+                      setGenericTasks((items) => items.filter((item) => item.id !== task.id));
+                      message.success("通用任务已删除");
+                    }).catch((error) => message.error(formatApiError(error, "通用任务删除失败")));
+                  }}
+                />
               </div> },
             ]}
           />

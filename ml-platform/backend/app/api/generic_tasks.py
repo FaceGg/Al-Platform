@@ -112,6 +112,30 @@ def list_generic_annotation_tasks(
         raise HTTPException(status_code=422, detail={"code": str(error)}) from error
 
 
+@router.delete("/api/annotation-tasks/{task_id}", status_code=204)
+def delete_generic_annotation_task(
+    task_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    task = db.query(GenericAnnotationTask).filter(
+        GenericAnnotationTask.id == task_id,
+        GenericAnnotationTask.owner_id == current_user.id,
+    ).one_or_none()
+    if task is None:
+        raise _contract_error(request, "TASK_NOT_FOUND", "The task was not found.", status_code=404)
+    if task.status in {"executing", "awaiting_annotation", "in_progress", "awaiting_return"}:
+        raise _contract_error(
+            request,
+            "TASK_ACTIVE",
+            "Cancel the active task before deleting it.",
+            status_code=409,
+        )
+    db.delete(task)
+    db.commit()
+
+
 def _request_context(request: Request, x_request_id: str | None, idempotency_key: str | None):
     request_id = getattr(request.state, "request_id", None)
     if not x_request_id or request_id is None or str(request_id) != x_request_id:
