@@ -4,7 +4,7 @@
 > 文档更新日期：2026-09-14
 > 当前工作树：`E:\codex_workspace\agent_spot_welding\.worktrees\general-automl-annotation-20260902`
 > 当前分支：`general-automl-annotation-20260902`
-> 当前整理基线：`64110d5`（当前工作树干净）
+> 当前整理基线：`5dbc4c0`（当前工作树干净）
 
 ## 1. 使用规则
 
@@ -52,7 +52,7 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 
 ## 5. 当前主交付计划
 
-Task 1–14 已完成各自声明范围内的实现、迁移、测试和验收；发布门禁已在当前 SHA `64110d5846022666d840cd06f9b70fee117f293f` 上通过。文档评审、历史局部功能或旧 SHA 验收不替代本次发布证据。
+Task 1–14 已完成各自声明范围内的实现、迁移、测试和验收；发布门禁已在当前 SHA `5dbc4c0d132c6c5262e9be956311f15d8a72722a` 上通过。文档评审、历史局部功能或旧 SHA 验收不替代本次发布证据。
 
 | ID | 工作项 | 依赖 | 状态 |
 |---|---|---|---|
@@ -781,7 +781,7 @@ Task 1–14 已完成各自声明范围内的实现、迁移、测试和验收�
 
 ## 2026-09-14 Task 14 全量发布门禁通过
 
-- 当前提交：`64110d5846022666d840cd06f9b70fee117f293f`，分支 `general-automl-annotation-20260902`，工作树干净，远程分支与本地 HEAD 一致。
-- 远程 CI：GitHub Actions Run `34752895655` 已完成并成功；`Production integration (Ubuntu)`、`Production experiment integration (Ubuntu)`、`Quality (ubuntu-22.04)`、`Quality (windows-latest)`、`Chromium acceptance (Ubuntu)` 和 `Week 11-12 verification (Ubuntu)` 六个 required jobs 全部为 `success`。
+- 当前提交：`5dbc4c0d132c6c5262e9be956311f15d8a72722a`，分支 `general-automl-annotation-20260902`，工作树干净，远程分支与本地 HEAD 一致。
+- 远程 CI：GitHub Actions Run `34793570151` 已完成并成功；`Production integration (Ubuntu)`、`Production experiment integration (Ubuntu)`、`Quality (ubuntu-22.04)`、`Quality (windows-latest)`、`Chromium acceptance (Ubuntu)` 和 `Week 11-12 verification (Ubuntu)` 六个 required jobs 全部为 `success`。
 - Week 11–12 运行态：生产镜像构建、验证工具、安全扫描、冻结栈 Web 安全门禁、实时备份/恢复和升级演练均完成；备份/恢复 receipt 为 `passed`，RPO/RTO 检查通过，最终 evidence manifest 在当前 SHA 上生成并成功上传。
-- 证据 artifact：`week11-12-verification-evidence`（artifact ID `10327774136`，8,374,668 bytes）和 `playwright-evidence` 均由该 Run 成功上传；所有远程证据均绑定当前 SHA。Task 14 状态提升为 `passed`，允许进入 `main` 合并。
+- 证据 artifact：`week11-12-verification-evidence`（artifact ID `10329274237`）和 `playwright-evidence` 均由该 Run 成功上传；所有远程证据均绑定当前 SHA。Task 14 状态提升为 `passed`，允许进入 `main` 合并。
