@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import re
 import tempfile
 import time
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import numpy as np
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -55,6 +57,29 @@ def _pairs(pairs):
 
 def _scalar(value: Any) -> bool:
     return value is None or isinstance(value, (str, int, float, bool))
+
+
+def _json_value(value: Any) -> Any:
+    """Convert dataframe values to values accepted by SQLAlchemy JSON."""
+    if value is None or value is pd.NaT:
+        return None
+    if isinstance(value, (pd.Timestamp, pd.Timedelta)):
+        return value.isoformat()
+    if isinstance(value, (np.datetime64, np.timedelta64)):
+        return str(value)
+    if isinstance(value, np.generic):
+        return _json_value(value.item())
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    return value
+
+
+def _frame_json_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    return [_json_value(record) for record in frame.to_dict(orient="records")]
 
 
 def _sniff_source_format(path: Path) -> str:
@@ -260,7 +285,7 @@ def _freeze_dataset_version_once(db: Session, normalized: NormalizedTable, opera
         db.flush()
         for position, name in enumerate(normalized.frame.columns):
             db.add(DatasetSchemaColumn(dataset_version_id=version.id, name=name, position=position, dtype=str(normalized.frame[name].dtype), nullable=bool(normalized.frame[name].isna().any())))
-        for index, (sample_id, values) in enumerate(zip(normalized.sample_ids, normalized.frame.to_dict(orient="records"))):
+        for index, (sample_id, values) in enumerate(zip(normalized.sample_ids, _frame_json_records(normalized.frame))):
             db.add(DatasetSample(dataset_version_id=version.id, sample_id=sample_id, row_index=index, values=values))
         db.add(DatasetImport(dataset_version_id=version.id, source_format=normalized.parse_contract["source_format"], parse_contract=normalized.parse_contract, content_hash=normalized.content_hash, schema_hash=normalized.schema_hash))
         db.commit()

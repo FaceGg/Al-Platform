@@ -6,6 +6,7 @@ import {
   UploadOutlined, DownloadOutlined, EyeOutlined, ImportOutlined, ExportOutlined, TagsOutlined
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import dayjs from "dayjs";
 import apiClient from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
 import { acceptReturnBatch, diffReturnBatch, listReturnBatches, returnReturnBatch, type ReturnBatch, type ReturnDiffRow } from "../api/annotationReturns";
@@ -198,8 +199,12 @@ export default function DataManagePage() {
       render: (v: string) => <Tag>{v || "csv"}</Tag> },
     { title: t.data.size, dataIndex: "file_size", key: "size",
       render: (v: number) => v ? (v / 1024).toFixed(1) + " KB" : "-" },
-    { title: t.data.rows, dataIndex: "row_count", key: "rows", width: 80 },
-    { title: t.model.created, dataIndex: "created_at", key: "created_at", width: 160 },
+    { title: t.data.rows, dataIndex: "row_count", key: "rows", width: 80,
+      render: (v: number | null) => v == null ? "-" : v.toLocaleString() },
+    { title: "列数", dataIndex: "column_count", key: "column_count", width: 80,
+      render: (v: number | null) => v == null ? "-" : v.toLocaleString() },
+    { title: t.model.created, dataIndex: "created_at", key: "created_at", width: 160,
+      render: (v: string | null) => v ? dayjs(v).format("YYYY-MM-DD HH:mm:ss") : "-" },
     {
       title: t.model.actions, key: "actions", width: 160, fixed: "right" as const, align: "right" as const,
       render: (_: any, record: any) => (

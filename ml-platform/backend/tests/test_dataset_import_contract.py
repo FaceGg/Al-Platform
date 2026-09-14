@@ -18,7 +18,12 @@ from app.models.data_version import DatasetImport
 from app.models.artifact import Artifact
 from app.api import datasets as datasets_api
 from app.schemas.dataset_import import ParseOptions
-from app.services.data_import import DataImportError, freeze_dataset_version, read_dataset_upload
+from app.services.data_import import (
+    DataImportError,
+    _frame_json_records,
+    freeze_dataset_version,
+    read_dataset_upload,
+)
 from app.services.input_contract import (
     build_input_contract,
     validate_input_contract,
@@ -531,6 +536,22 @@ def test_content_sniff_is_used_when_source_format_is_omitted(tmp_path):
     path.write_text('[{"id": "a", "value": 1}]', encoding="utf-8")
     table = read_dataset_upload(path, None, ParseOptions())
     assert table.parse_contract["source_format"] == "json"
+
+
+def test_excel_dates_and_chinese_values_are_json_serializable(tmp_path):
+    source = tmp_path / "中文数据.xlsx"
+    frame = pd.DataFrame({
+        "名称": ["焊点一", "焊点二"],
+        "日期": pd.to_datetime(["2026-06-09", "2026-06-10"]),
+    })
+    frame.to_excel(source, index=False, engine="openpyxl")
+
+    normalized = read_dataset_upload(source, "excel", ParseOptions())
+    records = _frame_json_records(normalized.frame)
+
+    assert records[0]["名称"] == "焊点一"
+    assert records[0]["日期"] == "2026-06-09T00:00:00"
+    json.dumps(records, ensure_ascii=False)
 
 
 def test_upload_staging_reads_only_bounded_chunks(tmp_path):

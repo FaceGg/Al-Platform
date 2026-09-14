@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from pathlib import PurePosixPath
 from urllib.parse import quote
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import StreamingResponse
@@ -218,11 +219,57 @@ def _read_dataset(path: Path):
 
     if path.suffix.lower() in {".xls", ".xlsx"}:
         return pd.read_excel(path)
-    return pd.read_csv(path)
+    last_error = None
+    for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
+        try:
+            return pd.read_csv(path, encoding=encoding)
+        except UnicodeDecodeError as error:
+            last_error = error
+    raise last_error
 
 
-def _serialize_dataset(artifact: Artifact, *, project_name: str | None = None) -> dict:
+def _json_value(value):
+    import math
+    import numpy as np
+    import pandas as pd
+    from datetime import date, datetime
+
+    if value is None or value is pd.NaT:
+        return None
+    if isinstance(value, (pd.Timestamp, datetime, date)):
+        return value.isoformat()
+    if isinstance(value, np.generic):
+        return _json_value(value.item())
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    return value
+
+
+def _json_records(frame):
+    return [_json_value(record) for record in frame.to_dict(orient="records")]
+
+
+def _serialize_dataset(
+    artifact: Artifact,
+    *,
+    project_name: str | None = None,
+    dataset_version: DatasetVersion | None = None,
+) -> dict:
     metadata = artifact.metadata_ or {}
+    parse_contract = (dataset_version.parse_contract or {}) if dataset_version else {}
+    row_count = dataset_version.row_count if dataset_version else metadata.get("row_count", 0)
+    column_count = dataset_version.column_count if dataset_version else metadata.get("column_count")
+    if column_count is None:
+        column_count = len(metadata.get("schema") or [])
+    created_at = dataset_version.created_at if dataset_version else artifact.created_at
+    if created_at is not None:
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        created_at = created_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     return {
         "id": str(artifact.id),
         "artifact_id": str(artifact.id),
@@ -236,9 +283,10 @@ def _serialize_dataset(artifact: Artifact, *, project_name: str | None = None) -
         "format": artifact.format,
         "file_size": artifact.file_size,
         "size_bytes": artifact.file_size,
-        "row_count": metadata.get("row_count", 0),
+        "row_count": row_count,
+        "column_count": column_count,
         "schema": metadata.get("schema", []),
-        "created_at": artifact.created_at,
+        "created_at": created_at,
     }
 
 
@@ -257,7 +305,14 @@ def list_owned_datasets(
     if project_id:
         query = query.filter(Artifact.project_id == UUID(project_id))
     artifacts = query.order_by(Artifact.created_at.desc()).all()
-    return {"items": [_serialize_dataset(artifact) for artifact in artifacts], "total": len(artifacts)}
+    versions = {
+        version.original_artifact_id: version
+        for version in db.query(DatasetVersion)
+        .filter(DatasetVersion.original_artifact_id.in_([artifact.id for artifact in artifacts]))
+        .order_by(DatasetVersion.created_at.desc())
+        .all()
+    }
+    return {"items": [_serialize_dataset(artifact, dataset_version=versions.get(artifact.id)) for artifact in artifacts], "total": len(artifacts)}
 
 
 @router.get("/projects/{project_id}/datasets")
@@ -273,7 +328,14 @@ def list_project_datasets(
     artifacts = db.query(Artifact).filter(
         Artifact.project_id == project.id, Artifact.type == "dataset",
     ).order_by(Artifact.created_at.desc()).all()
-    items = [_serialize_dataset(artifact, project_name=project.name) for artifact in artifacts]
+    versions = {
+        version.original_artifact_id: version
+        for version in db.query(DatasetVersion)
+        .filter(DatasetVersion.original_artifact_id.in_([artifact.id for artifact in artifacts]))
+        .order_by(DatasetVersion.created_at.desc())
+        .all()
+    }
+    items = [_serialize_dataset(artifact, project_name=project.name, dataset_version=versions.get(artifact.id)) for artifact in artifacts]
     return {"items": items, "total": len(items)}
 
 
@@ -727,7 +789,7 @@ def preview_dataset(
             df = _read_dataset(path)
         return {
             "columns": list(df.columns),
-            "preview": df.head(10).to_dict(orient="records"),
+            "preview": _json_records(df.head(10)),
             "total_rows": len(df),
             "dtypes": {str(k): str(v) for k, v in df.dtypes.items()},
         }
