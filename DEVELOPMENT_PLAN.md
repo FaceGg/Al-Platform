@@ -796,3 +796,9 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 现象：远程 Run `34818802712` 的五项门禁成功，live Week 11 acceptance 失败；在线日志和 artifact 因当前 GitHub 凭据权限不足无法读取完整末尾错误。
 - 修复：性能验收脚本不再拼接固定的 `${PROJECT}-service-1` 容器名，改为通过 `docker compose ps -q <service>` 按服务解析实际容器 ID，覆盖 backend、worker、redis 和 postgres。
 - 验证：`test_week11_12_tools.py` 为 **109 passed、2 warnings、5 subtests passed**；`bash -n run_performance.sh` 和 `git diff --check` 通过。修复后的新提交需重新执行 `mode=full` 远程验收，Task 14 继续 `in_progress`。
+
+## 2026-09-14 Chromium 隔离栈启动超时诊断
+
+- 现象：Run `34836636235` 的四项基础门禁成功，但 Chromium acceptance 在 `Start isolated browser acceptance stack` 长时间无步骤更新，后续验收未启动。
+- 修复：为隔离 Compose `up --wait` 增加 15 分钟外层超时和 30 秒强制终止；失败时输出完整 Compose 状态及最近 200 行日志，保留原服务列表和验收流程不变。
+- 验证：`test_ci_workflow.py` **55 passed、2 warnings、138 subtests passed**；`git diff --check` 通过。修复后的提交需重新执行 `mode=full` 远程验收，Task 14 继续 `in_progress`。
