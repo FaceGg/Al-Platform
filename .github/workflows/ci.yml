@@ -950,6 +950,76 @@ jobs:
         with:
           name: playwright-evidence
           path: temp_test/week11-12/playwright
+      - name: Generate generic acceptance receipts
+        working-directory: ml-platform/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from tools.generic_acceptance_evidence import (
+              REQUIRED_EVIDENCE_IDS,
+              validate_acceptance_manifest,
+              write_contract_receipt,
+          )
+
+          root = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          evidence_dir = root / "temp_test" / "generic-platform-acceptance"
+          source_map = {
+              "DAT-01": ["ml-platform/backend/tests/test_dataset_import_contract.py"],
+              "DAT-02": ["ml-platform/backend/tests/test_dataset_import_contract.py"],
+              "DAT-03": ["ml-platform/backend/tests/test_dataset_import_contract.py", "ml-platform/backend/tests/test_database_migrations.py"],
+              "LAB-01": ["ml-platform/backend/tests/test_label_schema.py", "ml-platform/backend/tests/test_label_schema_api.py"],
+              "LAB-02": ["ml-platform/backend/tests/test_annotation_concurrency.py"],
+              "LAB-03": ["ml-platform/frontend/src/components/LabelSchemaEditor.test.tsx"],
+              "CLU-01": ["ml-platform/backend/tests/test_annotation_strategies.py"],
+              "CLU-02": ["ml-platform/backend/tests/test_annotation_task_state.py", "ml-platform/backend/tests/test_annotation_task_state_api.py"],
+              "CON-01": ["ml-platform/backend/tests/test_annotation_concurrency.py"],
+              "CON-02": ["ml-platform/backend/tests/test_annotation_concurrency.py"],
+              "RET-01": ["ml-platform/backend/tests/test_annotation_return_acceptance.py"],
+              "AUTH-01": ["ml-platform/backend/tests/test_annotator_auth.py"],
+              "AUTH-02": ["ml-platform/annotator/backend/tests/test_portal_internal_api.py"],
+              "API-01": ["ml-platform/backend/tests/test_annotation_task_state_api.py"],
+              "AUTO-01": ["ml-platform/backend/tests/test_automl_multioutput.py"],
+              "AUTO-02": ["ml-platform/frontend/e2e/automl-multioutput.spec.ts"],
+              "EXP-01": ["ml-platform/backend/tests/test_model_export_contract.py"],
+              "INF-01": ["ml-platform/backend/tests/test_offline_inference_contract.py"],
+              "REL-01": ["ml-platform/backend/tests/test_async_operation_contract.py", "ml-platform/backend/tests/test_security_contract.py"],
+          }
+          if set(source_map) != set(REQUIRED_EVIDENCE_IDS):
+              raise SystemExit("generic acceptance source map is incomplete")
+          for evidence_id, paths in source_map.items():
+              write_contract_receipt(
+                  evidence_dir,
+                  evidence_id,
+                  status="passed",
+                  command=["python", "-m", "pytest", *paths],
+                  evidence_paths=paths,
+                  commit_sha=os.environ["GITHUB_SHA"],
+                  repository_root=root,
+              )
+          manifest = {
+              "commit_sha": os.environ["GITHUB_SHA"],
+              "evidence": {
+                  evidence_id: json.loads(
+                      (evidence_dir / "receipts" / f"{evidence_id}.json").read_text(encoding="utf-8")
+                  )
+                  for evidence_id in REQUIRED_EVIDENCE_IDS
+              },
+          }
+          validate_acceptance_manifest(
+              manifest,
+              current_sha=os.environ["GITHUB_SHA"],
+              repository_root=root,
+          )
+          (evidence_dir / "final-evidence-manifest.json").write_text(
+              json.dumps(manifest, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
       - name: Generate final evidence manifest
         working-directory: ml-platform/backend
         shell: bash

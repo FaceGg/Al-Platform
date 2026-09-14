@@ -1289,6 +1289,25 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
 
         self.assertIn('sudo rm -f -- "$NOTIFICATION_CRYPTO_SECRET_FILE"', cleanup)
 
+    def test_week11_generates_and_validates_generic_acceptance_receipts(self):
+        parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+        steps = parsed["jobs"]["week11-12-verification"]["steps"]
+        receipt = next(
+            step for step in steps if step.get("name") == "Generate generic acceptance receipts"
+        )
+        self.assertEqual(receipt.get("working-directory"), "ml-platform/backend")
+        script = receipt["run"]
+        self.assertIn("tools.generic_acceptance_evidence", script)
+        self.assertIn("validate_acceptance_manifest", script)
+        for evidence_id in (
+            "DAT-01", "DAT-02", "DAT-03", "LAB-01", "LAB-02", "LAB-03",
+            "CLU-01", "CLU-02", "CON-01", "CON-02", "RET-01", "AUTH-01",
+            "AUTH-02", "API-01", "AUTO-01", "AUTO-02", "EXP-01", "INF-01",
+            "REL-01",
+        ):
+            with self.subTest(evidence_id=evidence_id):
+                self.assertIn(evidence_id, script)
+
     def test_cleanup_workflow_has_least_privilege_and_delete_guards(self):
         self.assertTrue(CLEANUP_WORKFLOW.is_file())
 
