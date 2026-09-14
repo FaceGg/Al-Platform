@@ -240,7 +240,7 @@ export default function KnowledgeGraphPage() {
         </div>
         <div style={{ width: 320, display: "flex", flexDirection: "column", gap: 12 }}>
           <Card size="small" title={t.knowledge.add_entity}>
-            <Form form={form} onFinish={addEntity} layout="vertical" size="small">
+            <Form form={form} onFinish={addEntity} layout="vertical" size="small" autoComplete="off">
               <Form.Item name="name" label={t.knowledge.entity_name} rules={[{ required: true }]}>
                 <Input />
               </Form.Item>
@@ -253,7 +253,7 @@ export default function KnowledgeGraphPage() {
             </Form>
           </Card>
           <Card size="small" title={t.knowledge.relation}>
-            <Form form={edgeForm} onFinish={addRelation} layout="vertical" size="small">
+            <Form form={edgeForm} onFinish={addRelation} layout="vertical" size="small" autoComplete="off">
               <Form.Item name="source_id" label="Source ID" rules={[{ required: true }]}>
                 <Input placeholder="source entity id" />
               </Form.Item>

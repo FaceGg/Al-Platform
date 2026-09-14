@@ -39,7 +39,7 @@ describe("DataManagePage", () => {
       if (url === "/datasets") {
         return Promise.resolve({ data: { items: [{
           id: "dataset-1", project_id: "project-1", name: "weld.csv", format: "csv",
-          project_name: "Weld line", file_size: 1024, row_count: 2, created_at: "2026-07-20T00:00:00Z",
+          project_name: "Weld line", file_size: 1024, row_count: 2, column_count: 2, created_at: "2026-07-20T00:00:00",
         }], total: 1 } });
       }
       return Promise.reject(new Error(`Unexpected URL: ${url}`));
@@ -51,6 +51,7 @@ describe("DataManagePage", () => {
 
     expect(await screen.findByText("weld.csv")).toBeInTheDocument();
     expect(screen.getByText("Weld line")).toBeInTheDocument();
+    expect(screen.getByText("2026-07-20 08:00:00")).toBeInTheDocument();
     expect(get).toHaveBeenCalledWith("/datasets");
   });
 

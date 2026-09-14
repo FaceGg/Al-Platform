@@ -6,7 +6,6 @@ import {
   UploadOutlined, DownloadOutlined, EyeOutlined, ImportOutlined, ExportOutlined, TagsOutlined
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import dayjs from "dayjs";
 import apiClient from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
 import { acceptReturnBatch, diffReturnBatch, listReturnBatches, returnReturnBatch, type ReturnBatch, type ReturnDiffRow } from "../api/annotationReturns";
@@ -15,8 +14,14 @@ import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
 import ReturnBatchList from "../components/ReturnBatchList";
 import { useI18n } from "../i18n";
+import { formatLocalTime } from "../utils/time";
 
 const { Text } = Typography;
+
+function formatDatasetCreatedAt(value: string | null): string {
+  if (!value) return "-";
+  return formatLocalTime(value, true);
+}
 
 export default function DataManagePage() {
   const navigate = useNavigate();
@@ -204,7 +209,7 @@ export default function DataManagePage() {
     { title: "列数", dataIndex: "column_count", key: "column_count", width: 80,
       render: (v: number | null) => v == null ? "-" : v.toLocaleString() },
     { title: t.model.created, dataIndex: "created_at", key: "created_at", width: 160,
-      render: (v: string | null) => v ? dayjs(v).format("YYYY-MM-DD HH:mm:ss") : "-" },
+      render: (v: string | null) => formatLocalTime(v, true) },
     {
       title: t.model.actions, key: "actions", width: 160, fixed: "right" as const, align: "right" as const,
       render: (_: any, record: any) => (

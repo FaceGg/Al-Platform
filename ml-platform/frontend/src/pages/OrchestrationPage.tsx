@@ -7,6 +7,7 @@ import TableRowAction from "../components/TableRowAction";
 import apiClient, { apiGet, apiPost, apiDelete } from "../api/client";
 import { useI18n } from "../i18n";
 import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
+import { formatLocalTime } from "../utils/time";
 
 const { Title, Text, Paragraph } = Typography;
 const stColor: Record<string, string> = { pending: "default", running: "blue", completed: "green", failed: "red", in_progress: "processing" };
@@ -173,7 +174,7 @@ export default function OrchestrationPage() {
     { title: t.orchestration?.requires_review || "审核", dataIndex: "requires_review", key: "requires_review",
       render: (v: boolean) => v ? <Tag color="orange">待审核</Tag> : <Tag>否</Tag> },
     { title: t.training?.started || "创建时间", dataIndex: "created_at", key: "created_at",
-      render: (t: string) => t ? new Date(t).toLocaleDateString() : "-" },
+      render: (t: string) => formatLocalTime(t) },
     { title: t.model?.actions || "操作", key: "actions", align: "right" as const,
       render: (_: any, r: any) => (
         <div className="table-row-actions">
@@ -255,7 +256,7 @@ export default function OrchestrationPage() {
       </Space>
 
       <Modal title={t.orchestration?.new_task || "待审核"} open={showCreate} onCancel={() => setShowCreate(false)} onOk={() => createForm.submit()} width={500}>
-        <Form form={createForm} layout="vertical" onFinish={handleCreateTask}>
+        <Form form={createForm} layout="vertical" onFinish={handleCreateTask} autoComplete="off">
           <Form.Item name="project_id" label={text.project} rules={[{ required: true }]}><Select options={projects.map((project) => ({ value: project.id, label: project.name }))} /></Form.Item>
           <Form.Item name="name" label={t.knowledge?.name || "名称"} rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="description" label={t.knowledge?.desc || "取消"}><Input.TextArea rows={3} /></Form.Item>
@@ -269,7 +270,7 @@ export default function OrchestrationPage() {
       </Modal>
 
       <Modal title={t.orchestration?.new_agent || "待审核?"} open={showAgent} onCancel={() => setShowAgent(false)} onOk={() => agentForm.submit()} width={500}>
-        <Form form={agentForm} layout="vertical" onFinish={handleCreateAgent}>
+        <Form form={agentForm} layout="vertical" onFinish={handleCreateAgent} autoComplete="off">
           <Form.Item name="name" label={t.knowledge?.name || "名称"} rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="agent_type" label={t.knowledge?.entity_type || "类型"} initialValue="executor">
             <Select options={[
@@ -288,7 +289,7 @@ export default function OrchestrationPage() {
           children: (
             <div>
               <Space><Tag>{msg.from_agent_id ? agents.find((a: any) => a.id === msg.from_agent_id)?.name || msg.from_agent_id.slice(0, 8) : "取消"}</Tag>
-                <Text type="secondary">{new Date(msg.created_at).toLocaleTimeString()}</Text>
+                <Text type="secondary">{formatLocalTime(msg.created_at, true)}</Text>
               </Space>
               <Paragraph style={{ marginTop: 4 }}>{msg.content}</Paragraph>
             </div>

@@ -8,6 +8,7 @@ import AppLayout from '../components/AppLayout'
 import DeleteConfirmation from '../components/DeleteConfirmation'
 import TableRowAction from '../components/TableRowAction'
 import { useI18n } from '../i18n'
+import { formatLocalTime } from '../utils/time'
 
 export default function ProjectListPage() {
   const { message } = AntApp.useApp()
@@ -74,7 +75,7 @@ export default function ProjectListPage() {
       render: (username: string | null | undefined) => username || '-'
     },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at',
-      render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm')
+      render: (v: string) => formatLocalTime(v)
     },
     {
       title: '操作', key: 'actions', align: 'right' as const,
@@ -108,7 +109,7 @@ export default function ProjectListPage() {
         </div>
       </div>
       <Modal title="新建项目" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()}>
-        <Form form={form} onFinish={createProject} layout="vertical">
+        <Form form={form} onFinish={createProject} layout="vertical" autoComplete="off">
           <Form.Item name="name" label="项目名称" rules={[{ required: true }]}>
             <Input placeholder="输入项目名称" />
           </Form.Item>

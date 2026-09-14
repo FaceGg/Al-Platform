@@ -5,6 +5,7 @@ import AppLayout from "../components/AppLayout";
 import AnnotationCanvas from "../components/AnnotationCanvas";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import { apiGet, apiPost, apiPut, apiDelete } from "../api/client";
+import { formatLocalTime } from "../utils/time";
 
 const { Title } = Typography;
 const stColor: Record<string, string> = { pending: "default", labeling: "blue", review: "orange", completed: "green" };
@@ -69,7 +70,7 @@ export default function AnnotationPage() {
         : <span style={{color:"#999"}}>-</span> },
     { title: "已审核", dataIndex: "reviewed_samples", key: "reviewed_samples" },
     { title: "创建时间", dataIndex: "created_at", key: "created_at",
-      render: (t:string) => t ? new Date(t).toLocaleDateString() : "-" },
+      render: (t:string) => formatLocalTime(t) },
     { title: "操作", key: "actions",
       render: (_:any, r:any) => (
         <Space>
@@ -107,7 +108,7 @@ export default function AnnotationPage() {
       </Card>
 
       <Modal title="新建标注任务" open={showCreate} onCancel={() => setShowCreate(false)} onOk={() => form.submit()} width={500}>
-        <Form form={form} layout="vertical" onFinish={handleCreate}>
+        <Form form={form} layout="vertical" onFinish={handleCreate} autoComplete="off">
           <Form.Item name="name" label="任务名称" rules={[{required:true}]}><Input /></Form.Item>
           <Form.Item name="dataset_id" label="数据集ID" rules={[{required:true}]}><Input /></Form.Item>
           <Form.Item name="annotation_type" label="标注类型" initialValue="rectangle">

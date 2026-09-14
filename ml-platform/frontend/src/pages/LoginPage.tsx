@@ -43,12 +43,12 @@ export default function LoginPage() {
           <Text type="secondary">工业智能平台</Text>
         </div>
 
-        <Form onFinish={onFinish} size="large">
+        <Form onFinish={onFinish} size="large" autoComplete="off">
           <Form.Item name="username" rules={[{ required: true, message: "请输入用户名" }]}>
-            <Input prefix={<UserOutlined />} placeholder="用户名" className="auth-input" />
+            <Input prefix={<UserOutlined />} placeholder="用户名" className="auth-input" autoComplete="username" />
           </Form.Item>
           <Form.Item name="password" rules={[{ required: true, message: "请输入密码" }]}>
-            <Input.Password prefix={<LockOutlined />} placeholder="密码" className="auth-input" />
+            <Input.Password prefix={<LockOutlined />} placeholder="密码" className="auth-input" autoComplete="current-password" />
           </Form.Item>
           <Form.Item style={{ marginBottom: 12 }}>
             <Button type="primary" htmlType="submit" block className="auth-submit">登录</Button>

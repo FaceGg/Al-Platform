@@ -226,8 +226,13 @@ jobs:
             fi
             sleep $((attempt * 15))
           done
-          docker compose --project-name "$COMPOSE_PROJECT_NAME" up --detach --wait \
-            postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler mailpit notification-receiver notification-proxy
+          if ! timeout --signal=TERM --kill-after=30s 15m \
+            docker compose --project-name "$COMPOSE_PROJECT_NAME" up --detach --wait \
+              postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler mailpit notification-receiver notification-proxy; then
+            docker compose --project-name "$COMPOSE_PROJECT_NAME" ps --all || true
+            docker compose --project-name "$COMPOSE_PROJECT_NAME" logs --no-color --tail 200 || true
+            exit 1
+          fi
           for attempt in {1..60}; do
             if curl --fail --silent --show-error \
               --request POST http://127.0.0.1:${BACKEND_PORT}/api/auth/login \

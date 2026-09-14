@@ -19,6 +19,7 @@ import TableRowAction from "../components/TableRowAction";
 import { useI18n } from "../i18n";
 import { notifyDashboardStatsChanged } from "../events/dashboardStats";
 import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
+import { formatLocalTime } from "../utils/time";
 
 const { Text, Title } = Typography;
 
@@ -835,7 +836,7 @@ export default function AutoMLPage() {
                       <Table rowKey="name" dataSource={allResults} columns={resultColumns} size="small" pagination={false} style={{ marginTop: 8 }} />
                     </Col>
                   </Row>
-                  {analysisReport && <Text type="secondary">报告已生成：{new Date(String(analysisReport.generated_at)).toLocaleString()}</Text>}
+                  {analysisReport && <Text type="secondary">报告已生成：{formatLocalTime(String(analysisReport.generated_at), true)}</Text>}
                 </Card>
               )}
               {featureEntries.length > 0 && (
@@ -871,7 +872,7 @@ export default function AutoMLPage() {
         onOk={() => experimentForm.submit()}
         confirmLoading={experimentCreating}
       >
-        <Form form={experimentForm} layout="vertical" onFinish={createExperiment}>
+        <Form form={experimentForm} layout="vertical" onFinish={createExperiment} autoComplete="off">
           <Form.Item name="name" label={t.training?.experiment_name || "Experiment Name"} rules={[{ required: true }]}>
             <Input autoFocus />
           </Form.Item>

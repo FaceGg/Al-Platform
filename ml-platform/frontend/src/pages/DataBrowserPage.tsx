@@ -5,6 +5,7 @@ import type { UploadFile } from 'antd/es/upload/interface'
 import apiClient from '../api/client'
 import AppLayout from '../components/AppLayout'
 import { useI18n } from '../i18n'
+import { formatLocalTime } from '../utils/time'
 
 interface Project {
   id: number
@@ -86,7 +87,7 @@ export default function DataBrowserPage() {
   const columns = [
     { title: '名称', dataIndex: 'name', key: 'name' },
     { title: '类型', dataIndex: 'file_type', key: 'file_type' },
-    { title: t.model.created, dataIndex: 'created_at', key: 'created_at' },
+    { title: t.model.created, dataIndex: 'created_at', key: 'created_at', render: (value: string) => formatLocalTime(value, true) },
     {
       title: t.model.actions,
       key: 'actions',

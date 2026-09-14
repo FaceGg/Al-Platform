@@ -25,12 +25,12 @@ export default function RegisterPage() {
           <Title level={3}>注册新账号</Title>
           <Text type="secondary">创建您的灵工账户</Text>
         </div>
-        <Form onFinish={onFinish} size="large" initialValues={{ role: "engineer" }}>
+        <Form onFinish={onFinish} size="large" initialValues={{ role: "engineer" }} autoComplete="off">
           <Form.Item name="username" rules={[{ required: true, message: "请输入用户名" }]}>
-            <Input prefix={<UserOutlined />} placeholder="用户名" className="auth-input" />
+            <Input prefix={<UserOutlined />} placeholder="用户名" className="auth-input" autoComplete="new-username" />
           </Form.Item>
           <Form.Item name="password" rules={[{ required: true, min: 6, message: "密码至少6位" }]}>
-            <Input.Password prefix={<LockOutlined />} placeholder="密码" className="auth-input" />
+            <Input.Password prefix={<LockOutlined />} placeholder="密码" className="auth-input" autoComplete="new-password" />
           </Form.Item>
           <Form.Item name="role" label={<Text type="secondary">角色</Text>}>
             <Select

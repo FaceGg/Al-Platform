@@ -579,7 +579,7 @@ export default function ModelLibraryPage() {
 
     <Modal title={copy.registerVersion} open={Boolean(registerModel)} onCancel={() => setRegisterModel(undefined)} onOk={() => void submitVersion()} okText={copy.registerVersion} okButtonProps={{ "aria-label": copy.registerVersion }}>
       <Select aria-label={copy.sourceKind} value={registerSource} onChange={setRegisterSource} style={{ width: "100%", marginBottom: 16 }} options={[{ value: "platform_joblib", label: copy.platformSource }, { value: "onnx_artifact", label: copy.onnxSource }]} />
-      <Form form={registerForm} layout="vertical">
+      <Form form={registerForm} layout="vertical" autoComplete="off">
         {registerSource === "platform_joblib" ? <Form.Item name="source_model_library_id" label={copy.sourceLibraryId} rules={[{ required: true }]}><Input /></Form.Item> : <>
           <Form.Item name="onnx_file" label={copy.onnxFile} valuePropName="fileList" getValueFromEvent={(event) => event?.fileList} rules={[{ required: true }]}><Upload beforeUpload={() => false} maxCount={1} accept=".onnx"><Button>{copy.selectOnnxFile}</Button></Upload></Form.Item>
           <Form.Item name="feature_schema" label={copy.featureSchema} rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
@@ -588,7 +588,7 @@ export default function ModelLibraryPage() {
       </Form>
     </Modal>
     <Modal title={copy.register} open={modelOpen} onCancel={() => setModelOpen(false)} onOk={() => void submitModel()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
-      <Form form={modelForm} layout="vertical">
+      <Form form={modelForm} layout="vertical" autoComplete="off">
         <Form.Item name="name" label={copy.name} rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item name="description" label={copy.description}><Input.TextArea rows={3} /></Form.Item>
       </Form>
@@ -605,10 +605,10 @@ export default function ModelLibraryPage() {
       ]} />
     </Drawer>
     <Modal title={copy.createDeployment} open={deploymentOpen} onCancel={() => setDeploymentOpen(false)} onOk={() => void submitDeployment()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
-      <Form form={deploymentForm} layout="vertical"><Form.Item name="name" label={copy.name} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="model_version_id" label={copy.version} rules={[{ required: true }]}><Select options={approvedVersions.map(({ model, version }) => ({ value: version.id, label: `${model.name} v${version.version_number}` }))} /></Form.Item></Form>
+      <Form form={deploymentForm} layout="vertical" autoComplete="off"><Form.Item name="name" label={copy.name} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="model_version_id" label={copy.version} rules={[{ required: true }]}><Select options={approvedVersions.map(({ model, version }) => ({ value: version.id, label: `${model.name} v${version.version_number}` }))} /></Form.Item></Form>
     </Modal>
     <Drawer title={testDeployment ? `${copy.onlineTest}: ${testDeployment.name}` : copy.onlineTest} open={Boolean(testDeployment)} onClose={() => setTestDeployment(undefined)} width={620} extra={<Button type="primary" aria-label={copy.predict} onClick={() => void submitPrediction()}>{copy.predict}</Button>}>
-      <Form form={predictionForm} layout="vertical"><Form.Item name="records" label={copy.recordsJson} rules={[{ required: true }]}><Input.TextArea rows={8} /></Form.Item></Form>
+      <Form form={predictionForm} layout="vertical" autoComplete="off"><Form.Item name="records" label={copy.recordsJson} rules={[{ required: true }]}><Input.TextArea rows={8} /></Form.Item></Form>
       {prediction && <Descriptions bordered size="small" column={1}>
         <Descriptions.Item label={copy.version}>v{prediction.version_number}</Descriptions.Item>
         <Descriptions.Item label={copy.predictions}><pre>{JSON.stringify(prediction.predictions, null, 2)}</pre></Descriptions.Item>
@@ -731,7 +731,7 @@ export default function ModelLibraryPage() {
       <Input.Password aria-label={production.keyPlaintext} readOnly value={createdKey.plaintext} />
     </Modal>}
     <Modal title={production.createRollout} open={rolloutOpen} onCancel={() => setRolloutOpen(false)} onOk={() => void submitRollout()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
-      <Form form={rolloutForm} layout="vertical">
+      <Form form={rolloutForm} layout="vertical" autoComplete="off">
         <Form.Item name="strategy" label={production.strategy} initialValue="canary" rules={[{ required: true }]}><Select options={[{ value: "immediate", label: production.immediate }, { value: "canary", label: production.canary }, { value: "rolling", label: production.rolling }]} /></Form.Item>
         <Form.Item name="target_version_id" label={production.targetVersion} rules={[{ required: true }]}><Select options={approvedVersions.map(({ model, version }) => ({ value: version.id, label: `${model.name} v${version.version_number}` }))} /></Form.Item>
         <Form.Item name="target_weight" label={production.targetWeight} initialValue={10000} rules={[{ required: true }]}><Input type="number" min={0} max={10000} /></Form.Item>

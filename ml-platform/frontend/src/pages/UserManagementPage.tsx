@@ -4,6 +4,7 @@ import { EyeOutlined, LockOutlined, DeleteOutlined } from '@ant-design/icons'
 import apiClient from '../api/client'
 import AppLayout from '../components/AppLayout'
 import { useI18n } from '../i18n'
+import { formatLocalTime } from '../utils/time'
 
 interface User {
   id: string
@@ -100,7 +101,7 @@ export default function UserManagementPage() {
         return <Tag color={color}>{role === 'admin' ? t.profile.admin : role === 'engineer' ? t.profile.engineer : t.profile.user}</Tag>
       },
     },
-    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => v ? new Date(v).toLocaleDateString() : '-' },
+    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => formatLocalTime(v) },
     {
       title: '操作', key: 'actions',
       render: (_: any, record: User) => (
@@ -151,14 +152,14 @@ export default function UserManagementPage() {
             <Descriptions.Item label="角色">
               <Tag color={selectedUser.role === 'admin' ? 'red' : 'blue'}>{selectedUser.role}</Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="创建时间">{selectedUser.created_at ? new Date(selectedUser.created_at).toLocaleString() : '-'}</Descriptions.Item>
+            <Descriptions.Item label="创建时间">{formatLocalTime(selectedUser.created_at, true)}</Descriptions.Item>
           </Descriptions>
         )}
       </Modal>
 
       {/* 修改密码弹窗 */}
       <Modal title="修改密码" open={pwdOpen} onCancel={() => setPwdOpen(false)} onOk={() => pwdForm.submit()} confirmLoading={pwdLoading}>
-        <Form form={pwdForm} onFinish={changePassword} layout="vertical">
+        <Form form={pwdForm} onFinish={changePassword} layout="vertical" autoComplete="off">
           <Form.Item name="old_password" label="旧密码" rules={[{ required: true, message: '请输入旧密码' }]}>
             <Input.Password placeholder="请输入旧密码" />
           </Form.Item>

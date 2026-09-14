@@ -187,7 +187,7 @@ export default function APIMarketplacePage() {
       </Card>
 
       <Modal open={showEditor} title={editing ? "编辑 API" : "新建 API"} onCancel={() => setShowEditor(false)} onOk={() => form.submit()}>
-        <Form form={form} layout="vertical" onFinish={handleSave}>
+        <Form form={form} layout="vertical" onFinish={handleSave} autoComplete="off">
           <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="api_type" hidden><Input /></Form.Item>
           <Form.Item label="类型"><Input value="自定义" disabled /></Form.Item>
