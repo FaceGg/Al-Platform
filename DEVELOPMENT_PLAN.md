@@ -784,3 +784,9 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 远程 Run `34797542217` 在提交 `80410f61e2801545f6e23a2f8ddb6e4fb3d3ee67` 上已成功，六个 required jobs 全部为 `success`；该结果证明远程运行态门禁通过，但不自动证明通用 19 项 receipt 已生成。
 - 当前发现：`generic_acceptance_evidence.py` 原先只记录路径，不检查文件存在性或内容哈希；本轮已增加 regular-file、链接、SHA-256 和篡改检测回归，但 CI 尚未调用该 writer 生成并验证 19 项 receipt。
 - 处理决定：19 项 receipt 生成/验证已接入 Week 11–12 的最终 CI 证据链；Task 14 在本轮提交后保持 `in_progress`，待新的最终 SHA full CI 通过后再关闭。保留此前远程成功记录，不将其改写为失败。
+
+## 2026-09-14 Week 11-12 宿主机验证数据库隔离
+
+- 现象：Run `34809619528` 的五项基础门禁及 Chromium acceptance 通过，但 Week 11-12 的宿主机 `Run verification tools` 因继承 Compose 专用的 `postgres` 主机名，出现 `failed to resolve host 'postgres'`，导致后续验收失败。
+- 修复：仅为宿主机单元测试步骤覆盖临时 SQLite `DATABASE_URL`；Compose live acceptance、扫描和备份/升级步骤继续使用 Docker 网络内的 PostgreSQL 配置。
+- 验证：`test_ci_workflow.py` 通过，`git diff --check` 通过；修复后的提交需重新执行 `mode=full` 远程验收，Task 14 继续 `in_progress`。

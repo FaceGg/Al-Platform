@@ -818,7 +818,8 @@ jobs:
       - name: Run verification tools
         working-directory: ml-platform/backend
         run: |
-          python -m unittest tests.test_week11_12_tools tests.test_week11_contracts tests.test_week12_security_gates tests.test_evidence_manifest -v
+          DATABASE_URL=sqlite:///../../temp_test/week11-12-verification.db \
+            python -m unittest tests.test_week11_12_tools tests.test_week11_contracts tests.test_week12_security_gates tests.test_evidence_manifest -v
       - name: Run security scans
         working-directory: ml-platform/backend
         continue-on-error: true
