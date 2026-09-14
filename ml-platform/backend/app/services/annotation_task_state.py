@@ -80,6 +80,8 @@ def create_annotation_preview(db, task_id, task_revision: int, config_hash: str,
             stage="queued",
             progress=0,
             attempt=0,
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
     )
     if previous_status != task.status:

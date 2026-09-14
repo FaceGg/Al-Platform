@@ -23,6 +23,19 @@ function formatDatasetCreatedAt(value: string | null): string {
   return formatLocalTime(value, true);
 }
 
+function datasetErrorMessage(error: any, fallback: string): string {
+  const detail = error?.response?.data?.detail;
+  if (typeof detail === "string") return detail;
+  if (detail?.code === "DATASET_IN_USE") {
+    return `该文件正在被标注任务使用，无法删除（任务状态：${detail.task_status || "未知"}）。请先结束或删除任务后再试。`;
+  }
+  if (detail?.message) return detail.message;
+  if (detail?.code === "DATA_IMMUTABLE_ARTIFACT") {
+    return "该文件已被数据版本引用，不能删除。请先删除或归档相关数据版本。";
+  }
+  return fallback;
+}
+
 export default function DataManagePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -141,7 +154,7 @@ export default function DataManagePage() {
       message.success(t.common.success);
       setDatasets((prev) => prev.filter((d) => d.id !== dsId));
     } catch (e: any) {
-      message.error(e.response?.data?.detail || t.common.error);
+      message.error(datasetErrorMessage(e, t.common.error));
     }
   };
 

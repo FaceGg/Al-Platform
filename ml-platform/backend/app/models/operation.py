@@ -1,6 +1,7 @@
 """Durable, generic worker-operation state for long-running platform work."""
 
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, Index, Integer, JSON, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -30,5 +31,5 @@ class DurableOperation(Base):
     result_summary = Column(JSON, nullable=True)
     error_code = Column(String(64), nullable=True)
     error_details = Column(JSON, nullable=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None), server_default=func.now(), nullable=False)

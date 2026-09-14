@@ -25,6 +25,7 @@ from app.services.audit import AuditIntent
 from app.schemas.dataset_import import ParseOptions
 from app.services.data_import import DataImportError, freeze_dataset_version, read_dataset_upload
 from app.models.data_version import DatasetVersion
+from app.models.platform_models import AnnotationTask, GenericAnnotationTask
 
 router = APIRouter(prefix="/api", tags=["datasets"])
 PROJECT_WRITE_ACTIONS = {
@@ -606,16 +607,27 @@ def delete_dataset(
     ).first()
     if not artifact:
         raise HTTPException(404, "Dataset not found")
-    referenced = db.query(DatasetVersion.id).filter(
+    referenced_versions = db.query(DatasetVersion).filter(
         (DatasetVersion.original_artifact_id == artifact.id)
         | (DatasetVersion.normalized_artifact_id == artifact.id)
-    ).first()
-    if referenced is not None:
+    ).all()
+    version_ids = [version.id for version in referenced_versions]
+    legacy_task = db.query(AnnotationTask).filter(AnnotationTask.dataset_id == artifact.id).first()
+    generic_task = (
+        db.query(GenericAnnotationTask)
+        .filter(GenericAnnotationTask.dataset_version_id.in_(version_ids))
+        .first()
+        if version_ids else None
+    )
+    if legacy_task is not None or generic_task is not None:
+        task = generic_task or legacy_task
         raise HTTPException(
             status_code=409,
             detail={
-                "code": "DATA_IMMUTABLE_ARTIFACT",
-                "message": "Dataset artifact is referenced by an immutable dataset version",
+                "code": "DATASET_IN_USE",
+                "message": "Dataset is in use by an annotation task and cannot be deleted",
+                "task_id": str(task.id),
+                "task_status": task.status,
             },
         )
     try:

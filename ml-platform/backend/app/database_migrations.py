@@ -93,6 +93,7 @@ _SQLITE_COLUMNS = {
     },
     "durable_operations": {
         "result_summary": "JSON",
+        "updated_at": "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
     },
 }
 

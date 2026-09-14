@@ -28,7 +28,7 @@ def upgrade():
         sa.Column("error_code", sa.String(length=64), nullable=True),
         sa.Column("error_details", sa.JSON(), nullable=True),
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("resource_key", "idempotency_key", name="uq_durable_operations_resource_idempotency"),
     )

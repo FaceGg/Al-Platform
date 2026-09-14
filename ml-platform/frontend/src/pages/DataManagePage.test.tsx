@@ -83,6 +83,23 @@ describe("DataManagePage", () => {
     await waitFor(() => expect(remove).toHaveBeenCalledWith("/datasets/dataset-1"));
   });
 
+  it("keeps the page usable when deletion is blocked by an immutable dataset version", async () => {
+    remove.mockRejectedValue({
+      response: {
+        status: 409,
+        data: { detail: { code: "DATA_IMMUTABLE_ARTIFACT", message: "Dataset artifact is referenced by an immutable dataset version" } },
+      },
+    });
+    render(<MemoryRouter><AntApp><DataManagePage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete weld.csv" }));
+    fireEvent.click(within(await screen.findByRole("tooltip")).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("/datasets/dataset-1"));
+    expect(await screen.findByText("weld.csv")).toBeInTheDocument();
+    expect(await screen.findByText("该文件已被数据版本引用，不能删除。请先删除或归档相关数据版本。")).toBeInTheDocument();
+  });
+
   it("accepts legacy XLS report uploads alongside CSV and XLSX", async () => {
     render(<MemoryRouter><AntApp><DataManagePage /></AntApp></MemoryRouter>);
 

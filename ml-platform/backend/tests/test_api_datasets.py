@@ -7,6 +7,8 @@ from app.main import app
 from app.database import Base, SessionLocal, engine
 from app.models.artifact import Artifact
 from app.models.data_version import DatasetVersion
+from app.models.platform_models import GenericAnnotationTask
+from app.models.user import User
 from app.services.artifact_service import build_artifact_service
 from tests.auth_test_support import ensure_admin
 
@@ -100,7 +102,7 @@ class TestDatasetsAPI(unittest.TestCase):
         item = next(entry for entry in r.json()["items"] if entry["id"] == self.artifact_ids[0])
         self.assertEqual(item["project_name"], "DatasetTestProject")
 
-    def test_03c_delete_rejects_dataset_artifact_referenced_by_immutable_version(self):
+    def test_03c_delete_allows_dataset_artifact_without_task_reference(self):
         uploaded = client.post(
             f"/api/projects/{self.project_id}/datasets/upload",
             files={"file": ("immutable.csv", self._make_csv(), "text/csv")},
@@ -109,26 +111,38 @@ class TestDatasetsAPI(unittest.TestCase):
         self.assertEqual(uploaded.status_code, 200)
         dataset_id = uploaded.json()["id"]
         response = client.delete(f"/api/datasets/{dataset_id}", headers=self.h)
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["detail"]["code"], "DATA_IMMUTABLE_ARTIFACT")
-        preview = client.get(f"/api/datasets/{dataset_id}/preview", headers=self.h)
-        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(response.status_code, 204)
+
+    def test_03c1_delete_rejects_dataset_artifact_used_by_annotation_task(self):
+        uploaded = client.post(
+            f"/api/projects/{self.project_id}/datasets/upload",
+            files={"file": ("task-used.csv", self._make_csv(), "text/csv")},
+            headers=self.h,
+        )
+        self.assertEqual(uploaded.status_code, 200)
+        dataset_id = uploaded.json()["id"]
         with SessionLocal() as db:
             version = db.query(DatasetVersion).filter(
                 DatasetVersion.original_artifact_id == uuid.UUID(dataset_id),
             ).one()
-            artifact_ids = [version.original_artifact_id, version.normalized_artifact_id]
-            self.assertEqual(
-                db.query(Artifact).filter(Artifact.id.in_(artifact_ids)).count(),
-                2,
+            owner_id = db.query(User.id).filter(User.username == "admin").scalar()
+            task = GenericAnnotationTask(
+                project_id=uuid.UUID(self.project_id),
+                dataset_version_id=version.id,
+                label_schema_id=uuid.uuid4(),
+                owner_id=owner_id,
+                idempotency_key=f"task-used-{dataset_id}",
+                task_snapshot={},
+                label_snapshot={},
+                status="running",
             )
-            service = build_artifact_service(db)
-            for artifact_id in artifact_ids:
-                artifact = db.get(Artifact, artifact_id)
-                with service.materialize(
-                    artifact.id, artifact.project_id, expected_type="dataset",
-                ) as path:
-                    self.assertTrue(path.is_file())
+            db.add(task)
+            db.commit()
+        response = client.delete(f"/api/datasets/{dataset_id}", headers=self.h)
+        self.assertEqual(response.status_code, 409)
+        detail = response.json()["detail"]
+        self.assertEqual(detail["code"], "DATASET_IN_USE")
+        self.assertEqual(detail["task_status"], "running")
 
     def test_03d_zero_row_dataset_can_be_deleted(self):
         uploaded = client.post(
@@ -140,7 +154,7 @@ class TestDatasetsAPI(unittest.TestCase):
         self.assertEqual(uploaded.json()["row_count"], 0)
         dataset_id = uploaded.json()["id"]
         deleted = client.delete(f"/api/datasets/{dataset_id}", headers=self.h)
-        self.assertEqual(deleted.status_code, 409)
+        self.assertEqual(deleted.status_code, 204)
 
     def test_03e_delete_unreferenced_legacy_artifact(self):
         uploaded = client.post(
