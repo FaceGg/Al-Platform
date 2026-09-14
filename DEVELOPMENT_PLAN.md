@@ -1,10 +1,10 @@
 # 通用自动建模与数据标注平台当前开发计划
 
 > 文档状态：仅汇总未完成、待验证、风险和已延后工作。
-> 文档更新日期：2026-09-09
+> 文档更新日期：2026-09-14
 > 当前工作树：`E:\codex_workspace\agent_spot_welding\.worktrees\general-automl-annotation-20260902`
 > 当前分支：`general-automl-annotation-20260902`
-> 当前整理基线：`e94862a`（未包含 `README.md` 本地改动）
+> 当前整理基线：`64110d5`（当前工作树干净）
 
 ## 1. 使用规则
 
@@ -40,7 +40,7 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 | 阶段 | 工作范围 | 状态 | 当前口径 |
 |---|---|---|---|
 | Week 1–12 | 已交付的平台基础、生产化、权限通知与历史验收 | `passed` / `completed` | 已归档，不作为当前待办。 |
-| 通用自动建模与数据标注平台 | 2026-09-02 实施计划 Task 1–14 | `in_progress` | Task 1–4 已通过各自当前本地聚焦范围；Task 5–14 尚未完成，远程 CI 和全平台验收仍待后续门禁。 |
+| 通用自动建模与数据标注平台 | 2026-09-02 实施计划 Task 1–14 | `passed` | Task 1–14 已完成实现、迁移、测试、运行态验证、文档同步和当前 SHA 发布门禁；后续增强范围仍按独立计划管理。 |
 | Week 13 | Kubernetes 基础接入 | `planned`（未开始） | 后续工作，见 BKL-04。 |
 | Week 14 | Kubernetes Job/Pod 执行器 | `planned`（未开始） | 依赖 Week 13，见 BKL-05。 |
 | Week 15 | Notebook、镜像与 GPU | `planned`（未开始） | 依赖 Kubernetes 基础能力，见 BKL-06。 |
@@ -52,7 +52,7 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 
 ## 5. 当前主交付计划
 
-Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运行态验收；Task 6–14 仍按依赖推进。文档评审、历史局部功能或 Week 1–12 验收均不构成当前任务完成状态。按依赖执行，不得把局部测试或旧 SHA 证据外推为整体平台验收。
+Task 1–14 已完成各自声明范围内的实现、迁移、测试和验收；发布门禁已在当前 SHA `64110d5846022666d840cd06f9b70fee117f293f` 上通过。文档评审、历史局部功能或旧 SHA 验收不替代本次发布证据。
 
 | ID | 工作项 | 依赖 | 状态 |
 |---|---|---|---|
@@ -69,7 +69,7 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 | Task 11 | 模型导出包和离线 `predict`/`annotate` | Task 2、Task 3、Task 6、Task 10 | `passed` |
 | Task 12 | 主平台和标注员门户前端 | Task 5、Task 7、Task 8、Task 9、Task 10、Task 11 | `passed` |
 | Task 13 | 异步 worker、幂等、恢复、清理和安全门禁 | Task 2、Task 5、Task 7、Task 8、Task 9、Task 10、Task 11 | `passed` |
-| Task 14 | 全量验收、文档同步和发布门禁 | Task 1–13 | `in_progress` |
+| Task 14 | 全量验收、文档同步和发布门禁 | Task 1–13 | `passed` |
 
 ### 当前执行入口
 
@@ -78,7 +78,7 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 3. 上述均为带未提交修改的当前工作树验证，不是可绑定到 Git SHA 的发布收据；用户本地 `README.md` 继续排除，不暂存、不覆盖、不提交。
 4. Task 5 的真实 broker 派发、worker 重启恢复、结果去重、任务列表刷新后的预览状态保持、操作中心和结果/统计分页已在实现及聚焦验收中收口；后续仅需在最终稳定 SHA 上重生成发布收据。
 5. Task 6–13 继续补齐跨服务、浏览器、导出/离线、恢复和安全运行态证据。
-6. Task 14 必须在干净且已提交的当前版本上重新生成全量收据，并执行后端/前端全量测试、Playwright、Alembic、Docker/WSL 恢复演练和远程 CI；任何失败、超时、skipped、缺失或未执行门禁均保持 `in_progress`。
+6. Task 14 已在干净且已提交的当前版本上完成全量收据、后端/前端全量测试、Playwright、Alembic、Docker/WSL 恢复演练和远程 CI；任何后续提交都必须重新绑定发布收据。
 7. 每个 Task 的精确文件、接口、RED/GREEN 步骤和命令以实施计划为准；本文件不创建平行的实现步骤。
 
 ## 6. 遗留验证任务
@@ -200,9 +200,9 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 | Task 11 | `passed` | 模型导出包和离线推理合同、前端控制与浏览器聚焦验证已通过 | Docker/真实部署导出运行及 Task 14 收据仍待完成 |
 | Task 12 | `passed` | 主平台任务中心、通用创建入口、预览/指派/回传组件、独立标注员门户及 Chromium 聚焦流程已验证 | 完整后端、Docker/WSL 持续运行、最终 SHA 收据和远程 CI 仍由 Task 14 负责 |
 | Task 13 | `passed` | 异步 worker、幂等、lease recovery、清理报告校验和 Web 安全合同聚焦验证已通过 | Docker/WSL、真实跨服务运行态、完整 active suite 和 Task 14 发布证据 |
-| Task 14 | `in_progress` | 验收矩阵、收据工具和文档同步入口已建立 | 当前 SHA 的完整后端门禁、Playwright、Docker/WSL、导出/离线、恢复和远程 CI 尚未全部通过 |
+| Task 14 | `passed` | 当前 SHA 的完整后端门禁、Playwright、Docker/WSL、导出/离线、恢复、安全和远程 CI 均已通过 | 后续提交需重新生成并绑定全量发布收据 |
 
-### 本次整理核验
+### 历史整理核验（2026-09-09）
 
 - 当前 HEAD 为 `e94862af844ea95a31203423c24a8ececd7553d6`，与 `origin/general-automl-annotation-20260902` ahead/behind 均为 `0`；工作树仍有未提交变更，`README.md` 为用户本地修改，继续排除在外。
 - `tests/test_run_suite.py` 当前为 **7 passed**；运行器已按 AST 选择 pytest/unittest，并以 unittest 最终摘要判断零测试，嵌套历史摘要误判回归已通过。
@@ -210,7 +210,7 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - `tests.test_celery_workflows` 当前为 **19/19 OK**；前端台账和完整 Vitest 的既有当前 SHA 复核为 **7/7**、**57 个文件/275 个测试通过、19 个历史 skipped**。
 - `git diff --check` 通过；当前环境无 Docker，真实 broker、Compose、Playwright、导出/离线、恢复和远程 CI 尚无当前 SHA 的完整通过收据。
 
-### 下一执行顺序
+### 历史下一执行顺序（已完成）
 
 1. 继续 Task 5 的真实 broker 派发、恢复调度、结果分页和页面操作中心接线。
 2. 按依赖收口 Task 6–13 的跨服务、浏览器、导出/离线和恢复证据。
@@ -778,3 +778,10 @@ Task 1–5 已完成各自声明范围内的实现、迁移、测试和本地运
 - 现象：同一 Run 的升级收据在数据备份/恢复成功后报告 `alembic_check=failed`，收据目标版本为旧 head `20260829_14`，而当前迁移 head 已是 `20260910_43`。
 - 修复：将升级演练、升级结果校验器和发布证据 manifest 统一绑定当前 Alembic head `20260910_43`；将 Arrow 约束收紧为 `>=23.0.1,<24`，排除 `23.0.0`。
 - 验证：新增迁移 head 与运行脚本一致性合同；本地 Week 11/12、CI 和安全合同回归待本轮修改后执行。远程 Run `34741431033` 仍不能作为通过证据。
+
+## 2026-09-14 Task 14 全量发布门禁通过
+
+- 当前提交：`64110d5846022666d840cd06f9b70fee117f293f`，分支 `general-automl-annotation-20260902`，工作树干净，远程分支与本地 HEAD 一致。
+- 远程 CI：GitHub Actions Run `34752895655` 已完成并成功；`Production integration (Ubuntu)`、`Production experiment integration (Ubuntu)`、`Quality (ubuntu-22.04)`、`Quality (windows-latest)`、`Chromium acceptance (Ubuntu)` 和 `Week 11-12 verification (Ubuntu)` 六个 required jobs 全部为 `success`。
+- Week 11–12 运行态：生产镜像构建、验证工具、安全扫描、冻结栈 Web 安全门禁、实时备份/恢复和升级演练均完成；备份/恢复 receipt 为 `passed`，RPO/RTO 检查通过，最终 evidence manifest 在当前 SHA 上生成并成功上传。
+- 证据 artifact：`week11-12-verification-evidence`（artifact ID `10327774136`，8,374,668 bytes）和 `playwright-evidence` 均由该 Run 成功上传；所有远程证据均绑定当前 SHA。Task 14 状态提升为 `passed`，允许进入 `main` 合并。
