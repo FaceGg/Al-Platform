@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,7 @@ REQUIRED_EVIDENCE_IDS = (
 )
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _SECRET = re.compile(r"(?:password|secret|token|api[_-]?key)\s*(?:=|:)", re.IGNORECASE)
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class AcceptanceGateError(ValueError):
@@ -74,7 +76,33 @@ def _safe_command_part(value: object) -> str:
     return text
 
 
-def _validate_receipt(evidence_id: str, receipt: object, current_sha: str) -> None:
+def _evidence_file(root: Path, relative_path: str) -> Path:
+    path = (root / relative_path).resolve()
+    try:
+        path.relative_to(root.resolve())
+    except ValueError as exc:
+        raise AcceptanceGateError("EVIDENCE_PATH_UNSAFE", "Evidence path escapes the repository root.") from exc
+    if not path.is_file() or path.is_symlink():
+        raise AcceptanceGateError("EVIDENCE_FILE_MISSING", f"Evidence file is not a regular file: {relative_path}")
+    if path.stat().st_nlink != 1:
+        raise AcceptanceGateError("EVIDENCE_FILE_LINKED", f"Evidence file must not be linked: {relative_path}")
+    return path
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _validate_receipt(
+    evidence_id: str,
+    receipt: object,
+    current_sha: str,
+    repository_root: Path | None = None,
+) -> None:
     if not isinstance(receipt, Mapping):
         raise AcceptanceGateError("REQUIRED_EVIDENCE_INVALID", f"{evidence_id} receipt is invalid.")
     if receipt.get("status") != "passed":
@@ -91,9 +119,27 @@ def _validate_receipt(evidence_id: str, receipt: object, current_sha: str) -> No
         raise AcceptanceGateError("REQUIRED_EVIDENCE_INVALID", f"{evidence_id} evidence paths are missing.")
     for path in paths:
         _safe_relative_path(path)
+    hashes = receipt.get("evidence_hashes")
+    if hashes is None:
+        return
+    if not isinstance(hashes, Mapping) or set(hashes) != set(paths):
+        raise AcceptanceGateError("EVIDENCE_HASH_INVALID", f"{evidence_id} evidence hashes are invalid.")
+    root = (repository_root or Path.cwd()).resolve()
+    for relative_path in paths:
+        expected = hashes[relative_path]
+        if not isinstance(expected, str) or _SHA256.fullmatch(expected) is None:
+            raise AcceptanceGateError("EVIDENCE_HASH_INVALID", f"{evidence_id} evidence hash is invalid.")
+        actual = _sha256(_evidence_file(root, relative_path))
+        if actual != expected:
+            raise AcceptanceGateError("EVIDENCE_HASH_MISMATCH", f"{evidence_id} evidence hash changed.")
 
 
-def validate_acceptance_manifest(manifest: Mapping[str, object], *, current_sha: str) -> None:
+def validate_acceptance_manifest(
+    manifest: Mapping[str, object],
+    *,
+    current_sha: str,
+    repository_root: Path | None = None,
+) -> None:
     current_sha = _require_sha(current_sha)
     if manifest.get("commit_sha") != current_sha:
         raise AcceptanceGateError("EVIDENCE_SHA_MISMATCH", "Manifest is not bound to the current SHA.")
@@ -104,7 +150,7 @@ def validate_acceptance_manifest(manifest: Mapping[str, object], *, current_sha:
     if missing:
         raise AcceptanceGateError("REQUIRED_EVIDENCE_MISSING", f"Missing required evidence: {', '.join(missing)}.")
     for evidence_id in REQUIRED_EVIDENCE_IDS:
-        _validate_receipt(evidence_id, evidence[evidence_id], current_sha)
+        _validate_receipt(evidence_id, evidence[evidence_id], current_sha, repository_root)
 
 
 def write_contract_receipt(
@@ -115,6 +161,7 @@ def write_contract_receipt(
     command: Sequence[str],
     evidence_paths: Sequence[str],
     commit_sha: str,
+    repository_root: Path | None = None,
 ) -> Path:
     if evidence_id not in REQUIRED_EVIDENCE_IDS:
         raise AcceptanceGateError("EVIDENCE_ID_INVALID", "Unknown acceptance evidence id.")
@@ -127,11 +174,17 @@ def write_contract_receipt(
     normalized_paths = [_safe_relative_path(path) for path in evidence_paths]
     if not normalized_paths:
         raise AcceptanceGateError("REQUIRED_EVIDENCE_INVALID", "Receipt evidence paths are required.")
+    root = (repository_root or Path.cwd()).resolve()
+    evidence_hashes = {
+        path: _sha256(_evidence_file(root, path))
+        for path in normalized_paths
+    }
     receipt = {
         "commit_sha": commit_sha,
         "command": normalized_command,
         "evidence_id": evidence_id,
         "evidence_paths": normalized_paths,
+        "evidence_hashes": evidence_hashes,
         "status": status,
     }
     output = Path(evidence_dir) / "receipts" / f"{evidence_id}.json"
@@ -147,6 +200,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--status", choices=("passed", "failed", "cancelled", "skipped"), required=True)
     parser.add_argument("--command", nargs="+", required=True)
     parser.add_argument("--evidence-path", action="append", required=True)
+    parser.add_argument("--repository-root", type=Path, default=Path.cwd())
     parser.add_argument("--commit-sha", default=os.getenv("ACCEPTANCE_SOURCE_COMMIT"))
     args = parser.parse_args(argv)
     write_contract_receipt(
@@ -156,6 +210,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
         command=args.command,
         evidence_paths=args.evidence_path,
         commit_sha=args.commit_sha,
+        repository_root=args.repository_root,
     )
     return 0
 

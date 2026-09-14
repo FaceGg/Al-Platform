@@ -49,6 +49,9 @@ def test_acceptance_manifest_binds_all_evidence_to_current_sha():
 
 
 def test_contract_receipt_is_redacted_and_sha_bound(tmp_path: Path):
+    report = tmp_path / "reports" / "api.json"
+    report.parent.mkdir()
+    report.write_text('{"status": "passed"}', encoding="utf-8")
     receipt = write_contract_receipt(
         tmp_path,
         "API-01",
@@ -56,6 +59,7 @@ def test_contract_receipt_is_redacted_and_sha_bound(tmp_path: Path):
         command=["python", "-m", "pytest", "tests/test_api.py"],
         evidence_paths=["reports/api.json"],
         commit_sha=CURRENT_SHA,
+        repository_root=tmp_path,
     )
 
     payload = json.loads(receipt.read_text(encoding="utf-8"))
@@ -87,3 +91,38 @@ def test_contract_receipt_rejects_absolute_or_secret_bearing_values(tmp_path: Pa
             commit_sha=CURRENT_SHA,
         )
     assert secret_error.value.code == "EVIDENCE_SECRET_DETECTED"
+
+
+def test_contract_receipt_rejects_nonexistent_evidence(tmp_path: Path):
+    with pytest.raises(AcceptanceGateError) as error:
+        write_contract_receipt(
+            tmp_path,
+            "API-01",
+            status="passed",
+            command=["python", "-m", "pytest"],
+            evidence_paths=["reports/nonexistent-acceptance-result.json"],
+            commit_sha=CURRENT_SHA,
+        )
+    assert error.value.code == "EVIDENCE_FILE_MISSING"
+
+
+def test_acceptance_manifest_rejects_tampered_hashed_evidence(tmp_path: Path):
+    report = tmp_path / "evidence" / "api.json"
+    report.parent.mkdir()
+    report.write_text("original", encoding="utf-8")
+    receipt = write_contract_receipt(
+        tmp_path,
+        "API-01",
+        status="passed",
+        command=["pytest", "tests/test_api.py"],
+        evidence_paths=["evidence/api.json"],
+        commit_sha=CURRENT_SHA,
+        repository_root=tmp_path,
+    )
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    manifest = _manifest()
+    manifest["evidence"]["API-01"] = payload
+    report.write_text("tampered", encoding="utf-8")
+    with pytest.raises(AcceptanceGateError) as error:
+        validate_acceptance_manifest(manifest, current_sha=CURRENT_SHA, repository_root=tmp_path)
+    assert error.value.code == "EVIDENCE_HASH_MISMATCH"
