@@ -202,6 +202,17 @@ class AcceptanceRunnerContractTests(unittest.TestCase):
         self.assertNotIn("docker run -d", content)
         self.assertIn('docker cp "$BACKEND:$CONTAINER_PERFORMANCE/." "$PERFORMANCE"', content)
 
+    def test_performance_runner_resolves_compose_containers_by_service(self):
+        root = Path(__file__).resolve().parents[3]
+        runner = (
+            root / "ml-platform" / "backend" / "tools" / "acceptance"
+            / "run_performance.sh"
+        )
+        content = runner.read_text(encoding="utf-8")
+        self.assertIn('"${COMPOSE[@]}" ps -q "$service"', content)
+        self.assertNotIn('BACKEND="${PROJECT}-backend-1"', content)
+        self.assertNotIn('WORKER="${PROJECT}-worker-1"', content)
+
 
 class _OkHandler(BaseHTTPRequestHandler):
     def do_GET(self):

@@ -5,10 +5,16 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)"
 PROJECT="${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required}"
 EVIDENCE="${ML_PLATFORM_EVIDENCE_DIR:?ML_PLATFORM_EVIDENCE_DIR is required}"
 PERFORMANCE="$EVIDENCE/performance"
-BACKEND="${PROJECT}-backend-1"
-WORKER="${PROJECT}-worker-1"
-REDIS="${PROJECT}-redis-1"
-POSTGRES="${PROJECT}-postgres-1"
+service_container() {
+  local service="$1"
+  local container
+  container="$("${COMPOSE[@]}" ps -q "$service")"
+  if [ -z "$container" ]; then
+    echo "missing compose container for service: $service" >&2
+    return 1
+  fi
+  printf '%s\n' "$container"
+}
 CONTEXT=/tmp/week11-perf-context.json
 CONTAINER_PERFORMANCE=/tmp/week11-performance
 COMPOSE=(docker compose --project-name "$PROJECT")
@@ -16,7 +22,9 @@ COMMIT="${ACCEPTANCE_SOURCE_COMMIT:-$(git -C "$ROOT" rev-parse HEAD)}"
 
 cleanup() {
   set +e
-  docker start "$WORKER" >/dev/null 2>&1 || true
+  if [ -n "${WORKER:-}" ]; then
+    docker start "$WORKER" >/dev/null 2>&1 || true
+  fi
   rm -f "$CONTEXT"
 }
 
@@ -38,6 +46,11 @@ if [ -e "$PERFORMANCE" ]; then
   exit 1
 fi
 mkdir -p "$PERFORMANCE"
+
+BACKEND="$(service_container backend)"
+WORKER="$(service_container worker)"
+REDIS="$(service_container redis)"
+POSTGRES="$(service_container postgres)"
 
 export INFERENCE_RATE_LIMIT_CAPACITY=20000
 export INFERENCE_RATE_LIMIT_REFILL_PER_SECOND=10000

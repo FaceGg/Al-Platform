@@ -790,3 +790,9 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 现象：Run `34809619528` 的五项基础门禁及 Chromium acceptance 通过，但 Week 11-12 的宿主机 `Run verification tools` 因继承 Compose 专用的 `postgres` 主机名，出现 `failed to resolve host 'postgres'`，导致后续验收失败。
 - 修复：仅为宿主机单元测试步骤覆盖临时 SQLite `DATABASE_URL`；Compose live acceptance、扫描和备份/升级步骤继续使用 Docker 网络内的 PostgreSQL 配置。
 - 验证：`test_ci_workflow.py` 通过，`git diff --check` 通过；修复后的提交需重新执行 `mode=full` 远程验收，Task 14 继续 `in_progress`。
+
+## 2026-09-14 Week 11 性能验收容器解析修复
+
+- 现象：远程 Run `34818802712` 的五项门禁成功，live Week 11 acceptance 失败；在线日志和 artifact 因当前 GitHub 凭据权限不足无法读取完整末尾错误。
+- 修复：性能验收脚本不再拼接固定的 `${PROJECT}-service-1` 容器名，改为通过 `docker compose ps -q <service>` 按服务解析实际容器 ID，覆盖 backend、worker、redis 和 postgres。
+- 验证：`test_week11_12_tools.py` 为 **109 passed、2 warnings、5 subtests passed**；`bash -n run_performance.sh` 和 `git diff --check` 通过。修复后的新提交需重新执行 `mode=full` 远程验收，Task 14 继续 `in_progress`。
