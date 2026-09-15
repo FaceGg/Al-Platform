@@ -1763,7 +1763,7 @@ export default function DataAnnotationPage() {
             <label htmlFor="generic-dataset-version">数据版本</label>
             <select id="generic-dataset-version" aria-label="数据版本" value={genericVersionId} onChange={(event) => setGenericVersionId(event.target.value)} disabled={!projectId || !genericVersions.length}>
               <option value="">选择数据版本</option>
-              {genericVersions.map((version) => <option value={version.id} key={version.id}>v{version.version} · {version.row_count} 行 · {version.columns.length} 列</option>)}
+              {genericVersions.map((version) => <option value={version.id} key={version.id}>{version.source_name || `数据版本 v${version.version}`} · v{version.version} · {version.row_count} 行 · {version.columns.length} 列</option>)}
             </select>
           </div>
           <div className="data-annotation__setup-field">

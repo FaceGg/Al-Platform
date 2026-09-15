@@ -154,6 +154,12 @@ def list_project_dataset_versions(
             {
                 "id": str(version.id),
                 "project_id": str(version.project_id),
+                "source_name": (
+                    db.query(Artifact.name)
+                    .filter(Artifact.id == version.original_artifact_id)
+                    .scalar()
+                    if version.original_artifact_id else None
+                ),
                 "version": version.version,
                 "status": version.status,
                 "row_count": version.row_count,

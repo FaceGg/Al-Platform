@@ -809,3 +809,5 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 根因：创建时间测试硬编码了中国时区的完整小时值，无法适配 runner 本地时区；删除阻断测试断言了页面未直接展示的中文映射文案，而当前实现按后端 `detail.message` 优先展示 API 错误消息。
 - 修复：时间断言改为只验证稳定的日期部分；删除阻断断言恢复为后端错误消息。未改变产品代码、删除保护或 API 合同。
 - 验证：本地 `DataManagePage.test.tsx` **6 passed**；Run `34913126000` 的失败证据已通过 `gh run view --log-failed` 核实。修复后的提交需重新执行 `mode=full`，Task 14 继续 `in_progress`。
+- 2026-09-15：工作流算子补充了 `select_attributes` 多列选择和未知列显式校验；新增固定输入变量 `df`、固定输出变量 `result` 的 `python_script` 算子，支持前端在线编辑及 `.py` 文本上传，并加入脚本 AST 禁止项、长度和输出规模限制。旧 `execute_python` 保留兼容；后端与前端聚焦回归、前端生产构建已验证，完整工作流运行态和浏览器验收未在本轮执行。
+- 2026-09-15：修复前端 Dockerfile 的依赖安装命令：`npm ci --production=false` 改为 `npm ci --include=dev --audit=false`。原因是锁文件使用的 npm 镜像未实现 audit API，容器内 npm 安装阶段因此以 404 退出；宿主机依赖安装和 `git diff --check` 已验证，当前 Windows 环境没有 Docker CLI/daemon，镜像构建和 Compose 运行态仍待在 WSL/Docker 环境复验。

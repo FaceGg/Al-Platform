@@ -3,6 +3,7 @@ import apiClient from "./client";
 export type DatasetVersionOption = {
   id: string;
   project_id: string;
+  source_name?: string | null;
   version: number;
   status: string;
   row_count: number;

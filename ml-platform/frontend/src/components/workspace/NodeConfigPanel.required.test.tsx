@@ -164,4 +164,44 @@ describe("NodeConfigPanel required parameters", () => {
     expect(await screen.findByText("weld.csv")).toBeInTheDocument();
     expect(screen.queryByText("weld.png")).not.toBeInTheDocument();
   });
+
+  it("allows selecting multiple columns and stores the legacy comma-separated value", async () => {
+    const sourceNode = {
+      id: "source-1",
+      type: "custom",
+      position: { x: 0, y: 0 },
+      data: { operatorId: "csv_import", label: "CSV Import", params: {} },
+    } as any;
+    const selectedNode = {
+      id: "select-1",
+      type: "custom",
+      position: { x: 0, y: 0 },
+      data: { operatorId: "select_attributes", label: "Select Attributes", params: {} },
+    } as any;
+    useWorkflowStore.setState({
+      nodes: [sourceNode, selectedNode],
+      selectedNode,
+      edges: [{ id: "edge-1", source: "source-1", target: "select-1" }] as any,
+      nodeResults: { "source-1": { data: [{ a: 1, b: 2, c: 3 }] } },
+      operators: [{
+        id: "select_attributes",
+        parameters: [
+          { name: "columns", type: "str", default: "", label: "Columns" },
+          { name: "invert", type: "boolean", default: false, label: "Invert" },
+        ],
+      }],
+    });
+
+    render(<NodeConfigPanel />);
+    const selector = screen.getAllByRole("combobox")[0];
+    fireEvent.mouseDown(selector);
+    fireEvent.click(await screen.findByText("a", { selector: ".ant-select-item-option-content" }));
+    fireEvent.mouseDown(selector);
+    fireEvent.click(await screen.findByText("c", { selector: ".ant-select-item-option-content" }));
+
+    expect(useWorkflowStore.getState().nodes.find((node) => node.id === "select-1")?.data.params.columns)
+      .toBe("a,c");
+    expect(screen.getAllByTitle("a").some((element) => element.classList.contains("ant-select-selection-item"))).toBe(true);
+    expect(screen.getAllByTitle("c").some((element) => element.classList.contains("ant-select-selection-item"))).toBe(true);
+  });
 });

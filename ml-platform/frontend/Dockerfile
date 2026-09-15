@@ -1,7 +1,7 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --production=false
+RUN npm ci --include=dev --audit=false
 COPY . .
 RUN npx vite build
 

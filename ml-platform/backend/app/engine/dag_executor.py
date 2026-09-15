@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from datetime import date, datetime
 from typing import Any, Callable
 
 import networkx as nx
+import numpy as np
 
 from app.engine.data_bus import DataBus
 from app.engine.registry import OperatorRegistry
@@ -32,8 +34,25 @@ def _preview_value(port_name: str, raw_data: Any) -> Any:
             return raw_data[:_PREVIEW_STRING_PREFIX_LENGTH] + f"...({len(raw_data)} chars)"
         return raw_data
     if isinstance(raw_data, (list, dict)):
-        return raw_data
+        return _json_safe(raw_data)
     return str(raw_data)[:_PREVIEW_MAX_STRING_LENGTH]
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert operator preview values into database/API JSON primitives."""
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    return value
 
 
 class _OperatorLogger:
@@ -266,8 +285,8 @@ class DAGExecutor:
                 completion = {
                     **preview,
                     "artifacts": artifact_refs,
-                    "metrics": operator_result.metrics,
-                    "logs": operator_result.logs,
+                    "metrics": _json_safe(operator_result.metrics),
+                    "logs": _json_safe(operator_result.logs),
                 }
             self._emit_status(
                 status_callback, run_id, node_id, "completed", completion,

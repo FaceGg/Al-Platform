@@ -347,6 +347,34 @@ class TestProcessingOperatorsExecution(unittest.TestCase):
 
         self.assertEqual(len(outputs["features"]), 12)
 
+    def test_spot_weld_feature_engineering_filters_columns_and_preserves_lowercase_fault(self):
+        frame = build_demo_report_frame(12)
+        frame["fault"] = [0 if index < 6 else 1 for index in range(len(frame))]
+
+        outputs = execute_operator(
+            OperatorRegistry.get("spot_weld_feature_engineering"),
+            {"data": frame.to_dict(orient="records")},
+            {"exclude_columns": "current_mean", "label_column": "fault"},
+        )
+
+        columns = outputs["schema"]["columns"]
+        self.assertNotIn("current_mean", columns)
+        self.assertEqual(columns[-1], "fault")
+        self.assertEqual(outputs["schema"]["label_column"], "fault")
+        self.assertEqual([row["fault"] for row in outputs["features"]], frame["fault"].tolist())
+
+    def test_spot_weld_feature_engineering_rejects_filtering_required_source_column(self):
+        frame = build_demo_report_frame(12)
+
+        with self.assertRaises(ValueError) as raised:
+            execute_operator(
+                OperatorRegistry.get("spot_weld_feature_engineering"),
+                {"data": frame.to_dict(orient="records")},
+                {"exclude_columns": "cvei"},
+            )
+
+        self.assertIn("required source column", str(raised.exception))
+
     def test_spot_weld_feature_engineering_propagates_waveform_error(self):
         frame = build_demo_report_frame(12)
         frame.loc[0, "cvei"] = "not-base64"
@@ -719,12 +747,32 @@ class TestOptimizationOperatorsMetadata(unittest.TestCase):
 class TestUtilityOperatorsMetadata(unittest.TestCase):
     """Test utility operators registration and metadata."""
 
-    UTILITY_IDS = ["execute_python", "collect", "macro", "write_as_text"]
+    UTILITY_IDS = ["execute_python", "python_script", "collect", "macro", "write_as_text"]
 
     def test_all_utility_operators_registered(self):
         for op_id in self.UTILITY_IDS:
             op = OperatorRegistry.get(op_id)
             self.assertIsNotNone(op, f"{op_id} not registered")
+
+
+class TestSelectAttributesOperator(unittest.TestCase):
+    def test_selects_multiple_columns(self):
+        op = OperatorRegistry.get("select_attributes")
+        outputs = execute_operator(
+            op,
+            {"data": [{"a": 1, "b": 2, "c": 3}]},
+            {"columns": "a,c", "invert": False},
+        )
+        self.assertEqual(outputs["data"], [{"a": 1, "c": 3}])
+
+    def test_rejects_unknown_column_instead_of_silently_dropping_it(self):
+        op = OperatorRegistry.get("select_attributes")
+        with self.assertRaises(ValueError):
+            execute_operator(
+                op,
+                {"data": [{"a": 1, "b": 2}]},
+                {"columns": "a,missing", "invert": False},
+            )
 
 
 class TestVisualizationOperatorsMetadata(unittest.TestCase):

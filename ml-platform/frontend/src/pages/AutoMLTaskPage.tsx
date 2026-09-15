@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, Alert, Button, Card, Col, Descriptions, Divider, Empty, Modal, Progress, Row, Spin, Space, Statistic, Table, Tabs, Tag, Typography } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import { useNavigate, useParams } from "react-router-dom";
@@ -65,6 +65,7 @@ export default function AutoMLTaskPage() {
   const [reportGenerating, setReportGenerating] = useState(false);
   const [selectedModel, setSelectedModel] = useState<Record<string, unknown> | null>(null);
   const [registeringAlgorithmId, setRegisteringAlgorithmId] = useState<string | null>(null);
+  const jobStatusRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (!taskId) return;
@@ -76,6 +77,7 @@ export default function AutoMLTaskPage() {
           const nextJob = response.data || {};
           const nextMetrics = nextJob.metrics && typeof nextJob.metrics === "object" ? nextJob.metrics as Record<string, unknown> : {};
           setJob(nextJob);
+          jobStatusRef.current = String(nextJob.status || "");
           if (nextMetrics.automl_report && typeof nextMetrics.automl_report === "object") {
             setAnalysisReport(nextMetrics.automl_report as Record<string, unknown>);
           }
@@ -87,10 +89,10 @@ export default function AutoMLTaskPage() {
     };
     void load();
     const timer = window.setInterval(() => {
-      if (!job || !["completed", "failed", "cancelled"].includes(String(job.status))) void load();
+      if (!["completed", "failed", "cancelled"].includes(jobStatusRef.current || "")) void load();
     }, 2000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [taskId, job?.status]);
+  }, [taskId]);
 
   const metrics = (job?.metrics && typeof job.metrics === "object" ? job.metrics : {}) as Record<string, unknown>;
   const progress = (metrics.progress && typeof metrics.progress === "object" ? metrics.progress : {}) as Record<string, unknown>;
