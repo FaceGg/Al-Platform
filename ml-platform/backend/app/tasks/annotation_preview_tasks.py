@@ -54,9 +54,11 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
             return {"status": "invalid_request", "preview_id": preview_id, "error": "PREVIEW_STALE"}
         operation_id = preview.operation_id
         worker_id = f"annotation-preview:{getattr(getattr(self, 'request', None), 'id', None) or preview_id}"
-        if operation_id is None or not claim_operation(db, operation_id, worker_id, 300):
-            return {"status": "not_claimed", "preview_id": preview_id, "operation_id": str(operation_id) if operation_id else None}
         try:
+            if operation_id is None:
+                raise ValueError("OPERATION_NOT_FOUND")
+            if not claim_operation(db, operation_id, worker_id, 300):
+                return {"status": "not_claimed", "preview_id": preview_id, "operation_id": str(operation_id) if operation_id else None}
             snapshot = current_annotation_task_snapshot(db, task)
             record_annotation_preview_progress(db, task_uuid, preview_uuid, owner_uuid, status="running", progress=10, summary={"sample_scope": snapshot.get("sample_ids", []), "visible_columns": snapshot.get("visible_columns", [])})
             sample_ids = [str(sample_id) for sample_id in snapshot.get("sample_ids", [])]
@@ -94,7 +96,11 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                 strategy_artifact = strategy_result.artifact
                 summary["strategy"] = strategy_artifact.strategy
                 summary["strategy_artifact_id"] = str(strategy_artifact.id)
-                summary["needs_review_count"] = strategy_artifact.artifact.get("review_count", 0)
+                strategy_payload = dict(strategy_artifact.artifact or {})
+                summary["needs_review_count"] = strategy_payload.get("review_count", 0)
+                summary["configuration_complete"] = strategy_payload.get("configuration_complete", True)
+                summary["clusters"] = strategy_payload.get("clusters", [])
+                summary["model_version_id"] = strategy_payload.get("model_version_id")
             existing_ids = {item.sample_id for item in db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview_uuid).all()}
             for row_index, sample_id in enumerate(sample_ids):
                 if sample_id not in existing_ids:
@@ -127,20 +133,25 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
             lease_owned = True
             if current is not None and failed_task is not None and current.task_revision == failed_task.task_revision:
                 try:
+                    error_code = error.code if isinstance(error, StrategyConfigError) else "PREVIEW_EXECUTION_FAILED"
                     if operation_id is not None:
                         fail_operation(
                             db,
                             operation_id,
-                            "PREVIEW_EXECUTION_FAILED",
+                            error_code,
                             {"message": str(error)[:300]},
                             worker_id=worker_id,
                         )
                 except ValueError:
                     lease_owned = False
-                if lease_owned:
+                if lease_owned or str(error) == "OPERATION_NOT_FOUND":
                     current.status = "failed"
-                    current.progress = max(int(current.progress or 0), 10)
-                    current.error = {"code": "PREVIEW_EXECUTION_FAILED", "message": str(error)[:500]}
+                    current.progress = (
+                        int(current.progress or 0)
+                        if str(error) == "OPERATION_NOT_FOUND"
+                        else max(int(current.progress or 0), 10)
+                    )
+                    current.error = {"code": error_code, "message": str(error)[:500]}
                     if failed_task.status == "previewing":
                         failed_task.status = "failed"
                     db.commit()

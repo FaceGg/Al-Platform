@@ -729,8 +729,24 @@ def test_preview_worker_marks_failed_and_persists_error(db, monkeypatch):
     assert persisted.progress >= 10
     assert persisted.error["code"] == "PREVIEW_EXECUTION_FAILED"
 
+def test_preview_worker_persists_claim_failure_at_zero_progress(db, monkeypatch):
+    task, user, _ = _task(db)
+    preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:claim-failure", actor_id=user.id)
+    from app.tasks.annotation_preview_tasks import execute_annotation_preview
+    monkeypatch.setattr("app.tasks.annotation_preview_tasks.SessionLocal", lambda: db)
+    monkeypatch.setattr(
+        "app.tasks.annotation_preview_tasks.claim_operation",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("OPERATION_NOT_FOUND")),
+    )
+    result = execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
+    persisted = db.query(AnnotationTaskPreview).filter_by(id=preview.id).one()
+    assert result["status"] == "failed"
+    assert persisted.status == "failed"
+    assert persisted.progress == 0
+    assert persisted.error == {"code": "PREVIEW_EXECUTION_FAILED", "message": "OPERATION_NOT_FOUND"}
 
-def test_automatic_preview_without_usable_importance_marks_rows_for_review_and_persists_artifact(db, monkeypatch):
+
+def test_cluster_discovery_without_usable_importance_fails_closed(db, monkeypatch):
     task, user, _ = _task(db)
     task.mode = "automatic"
     snapshot = {
@@ -738,13 +754,11 @@ def test_automatic_preview_without_usable_importance_marks_rows_for_review_and_p
         "sample_ids": ["s-1", "s-2"],
         "visible_columns": ["feature"],
         "label_schema": {"columns": [{"machine_key": "label", "value_type": "string", "required": False}]},
-        "configuration": {
-            "clustering": True,
-            "strategy": "cluster",
-            "cluster_labels": {},
-            "other_values": {"label": "other"},
-            "model_outputs": {"s-1": {"label": "a"}, "s-2": {"label": "b"}},
-        },
+            "configuration": {
+                "clustering": True,
+                "cluster_discovery": True,
+                "model_outputs": {"s-1": {"label": "a"}, "s-2": {"label": "b"}},
+            },
     }
     db.query(GenericAnnotationTask).filter_by(id=task.id).update({GenericAnnotationTask.task_snapshot: snapshot})
     db.commit()
@@ -753,14 +767,14 @@ def test_automatic_preview_without_usable_importance_marks_rows_for_review_and_p
     from app.tasks.annotation_preview_tasks import execute_annotation_preview
     monkeypatch.setattr("app.tasks.annotation_preview_tasks.SessionLocal", lambda: db)
     result = execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
-    samples = db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview.id).order_by(AnnotationTaskPreviewSample.row_index).all()
-    artifact = db.query(AnnotationStrategyArtifact).filter_by(task_id=task.id, task_revision=0).one()
-    assert result["status"] == "completed"
-    assert artifact.artifact["importance_source"] == "unavailable"
-    assert all(sample.values["annotation_decision"]["status"] == "needs_review" for sample in samples)
+    persisted = db.query(AnnotationTaskPreview).filter_by(id=preview.id).one()
+    assert result["status"] == "failed"
+    assert persisted.status == "failed"
+    assert persisted.error["code"] == "FEATURE_IMPORTANCE_UNAVAILABLE"
+    assert db.query(AnnotationStrategyArtifact).filter_by(task_id=task.id, task_revision=0).count() == 0
 
 
-def test_preview_strategy_loads_model_artifact_and_persists_weighted_cluster_artifact(db, tmp_path):
+def test_cluster_discovery_loads_model_artifact_and_persists_weighted_cluster_artifact(db, tmp_path):
     task, user, project = _task(db)
     from sklearn.ensemble import RandomForestClassifier
     from app.services.annotation_strategies import apply_preview_annotation_strategy
@@ -785,20 +799,84 @@ def test_preview_strategy_loads_model_artifact_and_persists_weighted_cluster_art
         configuration={
             "model_artifact_id": str(model_artifact.id),
             "clustering": True,
-            "strategy": "cluster",
-            "cluster_labels": {str(index): {"label": "a" if index == 0 else "b"} for index in range(8)},
-            "other_values": {"label": "other"},
+            "cluster_discovery": True,
             "random_seed": 7,
         },
         rows=rows,
     )
     assert len(result.decisions) == len(rows)
     assert result.artifact.artifact["importance_source"] == "model_artifact"
+    assert result.artifact.artifact["configuration_complete"] is False
     assert result.artifact.artifact["cluster_artifact"]["seed"] == 7
     assert len(result.artifact.artifact["cluster_artifact"]["assignments"]) == len(rows)
+    assert {decision.status for decision in result.decisions.values()} == {"pending_configuration"}
 
 
-def test_preview_strategy_with_model_artifact_missing_importance_closes_as_needs_review(db, tmp_path):
+def test_final_cluster_preview_reuses_the_discovery_artifact(db, tmp_path, monkeypatch):
+    task, user, project = _task(db)
+    from sklearn.ensemble import RandomForestClassifier
+    from app.services import annotation_strategies
+
+    features = np.array([[0.0, 0.0], [0.1, 0.2], [0.2, 0.1], [5.0, 5.0], [5.1, 5.2], [5.2, 5.1]])
+    labels = np.array(["a", "a", "a", "b", "b", "b"])
+    model = RandomForestClassifier(n_estimators=8, random_state=7).fit(features, labels)
+    artifact_path = tmp_path / "discovery-model.joblib"
+    joblib.dump({"model": model, "input_contract": {"feature_columns": ["x", "y"]}}, artifact_path)
+    model_artifact = Artifact(project_id=project.id, name="discovery-model", type="model", storage_path=str(artifact_path), format="joblib")
+    db.add(model_artifact)
+    db.commit()
+    rows = {f"s-{index}": {"x": float(row[0]), "y": float(row[1])} for index, row in enumerate(features)}
+    schema_snapshot = {"columns": [{"machine_key": "label", "value_type": "string", "required": True}]}
+
+    discovery = annotation_strategies.apply_preview_annotation_strategy(
+        db,
+        task_id=task.id,
+        task_revision=0,
+        config_hash="sha256:cluster-discovery",
+        actor_id=user.id,
+        project_id=project.id,
+        schema_snapshot=schema_snapshot,
+        configuration={
+            "model_artifact_id": str(model_artifact.id),
+            "clustering": True,
+            "cluster_discovery": True,
+            "random_seed": 7,
+        },
+        rows=rows,
+    )
+    assignments = discovery.artifact.artifact["cluster_artifact"]["assignments"]
+    selected_cluster = str(next(iter(assignments.values())))
+
+    monkeypatch.setattr(
+        annotation_strategies,
+        "_cluster_artifact_from_package",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("final preview must reuse discovery artifact")),
+    )
+    final = annotation_strategies.apply_preview_annotation_strategy(
+        db,
+        task_id=task.id,
+        task_revision=1,
+        config_hash="sha256:cluster-final",
+        actor_id=user.id,
+        project_id=project.id,
+        schema_snapshot=schema_snapshot,
+        configuration={
+            "model_artifact_id": str(model_artifact.id),
+            "clustering": True,
+            "strategy": "cluster",
+            "selected_clusters": [selected_cluster],
+            "cluster_labels": {selected_cluster: {"label": "a"}},
+            "other_values": {"label": "other"},
+            "random_seed": 7,
+        },
+        rows=rows,
+    )
+
+    assert final.artifact.artifact["configuration_complete"] is True
+    assert final.artifact.artifact["cluster_artifact"]["assignments"] == assignments
+
+
+def test_cluster_discovery_with_model_artifact_missing_importance_fails_closed(db, tmp_path):
     task, user, project = _task(db)
     from sklearn.neighbors import KNeighborsClassifier
     from app.services.annotation_strategies import apply_preview_annotation_strategy
@@ -809,22 +887,22 @@ def test_preview_strategy_with_model_artifact_missing_importance_closes_as_needs
     model_artifact = Artifact(project_id=project.id, name="unranked-model", type="model", storage_path=str(artifact_path), format="joblib")
     db.add(model_artifact)
     db.commit()
-    result = apply_preview_annotation_strategy(
-        db,
-        task_id=task.id,
-        task_revision=0,
-        config_hash="sha256:missing-importance",
-        actor_id=user.id,
-        project_id=project.id,
-        schema_snapshot={"columns": [{"machine_key": "label", "value_type": "string", "required": False}]},
-        configuration={
-            "model_artifact_id": str(model_artifact.id),
-            "clustering": True,
-            "strategy": "cluster",
-            "cluster_labels": {},
-            "other_values": {"label": "other"},
-        },
-        rows={"s-1": {"x": 0.0}, "s-2": {"x": 1.0}},
-    )
-    assert result.artifact.artifact["importance_source"] == "unavailable"
-    assert {decision.status for decision in result.decisions.values()} == {"needs_review"}
+    from app.services.annotation_strategies import StrategyConfigError
+
+    with pytest.raises(StrategyConfigError) as error:
+        apply_preview_annotation_strategy(
+            db,
+            task_id=task.id,
+            task_revision=0,
+            config_hash="sha256:missing-importance",
+            actor_id=user.id,
+            project_id=project.id,
+            schema_snapshot={"columns": [{"machine_key": "label", "value_type": "string", "required": False}]},
+            configuration={
+                "model_artifact_id": str(model_artifact.id),
+                "clustering": True,
+                "cluster_discovery": True,
+            },
+            rows={"s-1": {"x": 0.0}, "s-2": {"x": 1.0}},
+        )
+    assert error.value.code == "FEATURE_IMPORTANCE_UNAVAILABLE"

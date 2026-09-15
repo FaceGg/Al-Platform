@@ -8,13 +8,13 @@ describe("annotation task client", () => {
   const payload = (mode: GenericTaskCreatePayload["mode"]): GenericTaskCreatePayload => ({
     project_id: "project-1",
     dataset_version_id: "version-1",
-    label_schema_id: "schema-1",
+    ...(mode === "manual" ? { label_schema_id: "schema-1" } : { model_version_id: "model-version-1" }),
     mode,
     sample_scope: { kind: "all" },
     visible_columns: ["feature"],
     instructions: "",
     configuration: mode === "automatic"
-      ? { model_artifact_id: "artifact-1", search_strength: "strong" }
+      ? { clustering: false, strategy: "model" }
       : {},
   });
 
@@ -31,7 +31,7 @@ describe("annotation task client", () => {
     );
   });
 
-  it("uses the AutoML endpoint and never adds max_trials", async () => {
+  it("uses the automatic task endpoint without model artifacts or search settings", async () => {
     const post = vi.spyOn(apiClient, "post").mockResolvedValue({ data: { id: "task-2" } });
     vi.stubGlobal("crypto", { randomUUID: () => "request-2" });
 
@@ -41,10 +41,13 @@ describe("annotation task client", () => {
       "/automl-tasks",
       expect.objectContaining({
         mode: "automatic",
-        configuration: { model_artifact_id: "artifact-1", search_strength: "strong" },
+        model_version_id: "model-version-1",
+        configuration: { clustering: false, strategy: "model" },
       }),
       { headers: { "X-Request-ID": "request-2", "Idempotency-Key": "idempotency-2" } }, // gitleaks:allow
     );
     expect(post.mock.calls[0][1]).not.toHaveProperty("max_trials");
+    expect(post.mock.calls[0][1]).not.toHaveProperty("search_strength");
+    expect(post.mock.calls[0][1]).not.toHaveProperty("model_artifact_id");
   });
 });

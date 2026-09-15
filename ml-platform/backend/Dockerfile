@@ -8,7 +8,8 @@ RUN set -eu; \
             python-3.11=3.11.16-r1 \
             py3.11-pip=26.2.1-r0 \
             postgresql-16-client=16.11-r0 \
-            glibc; then \
+            glibc \
+            libgomp; then \
             exit 0; \
         fi; \
         if [ "$attempt" -eq 3 ]; then \
@@ -20,11 +21,20 @@ RUN python3.11 -c "import sqlite3"
 RUN addgroup -S -g 1000 app && adduser -S -D -H -h /home/app -u 1000 -G app app
 RUN python3.11 -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 COPY requirements.txt .
+# Keep the CPU image free of XGBoost's Linux NCCL dependency.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python3.11 -m pip install --retries 10 --resume-retries 20 --timeout 120 -r requirements.txt
+    set -eu; \
+    python3.11 -m pip install --no-deps --retries 10 --resume-retries 20 --timeout 120 \
+        "xgboost==3.2.*" "catboost==1.2.*"; \
+    sed '/^xgboost==/d; /^catboost==/d' requirements.txt > /tmp/requirements-without-boost.txt; \
+    python3.11 -m pip install --retries 10 --resume-retries 20 --timeout 120 \
+        graphviz plotly six \
+        -r /tmp/requirements-without-boost.txt
 COPY . .
-RUN mkdir -p /home/app data app/uploads /tmp/ml-platform \
-    && chown -R app:app /home/app data app/uploads /tmp/ml-platform
+RUN mkdir -p /home/app data app/uploads /var/lib/tensorboard/runs \
+    /var/lib/ml-platform/inference-cache /tmp/ml-platform \
+    && chown -R app:app /home/app data app/uploads /var/lib/tensorboard \
+    /var/lib/ml-platform /tmp/ml-platform
 
 EXPOSE 8000
 ENV MPLCONFIGDIR=/tmp/matplotlib

@@ -250,6 +250,41 @@ class ModelRegistryService:
                 return item
         raise ModelRegistryError("CANDIDATE_NOT_FOUND")
 
+    @staticmethod
+    def _automl_output_contract(job, candidate_metadata: dict, targets: list[str]) -> dict:
+        """Persist typed target fields so annotation never has to infer them."""
+        source = candidate_metadata.get("target_schema") or job.target_schema or (job.metrics or {}).get("target_schema")
+        if isinstance(source, dict) and source.get("name"):
+            entries = [source]
+        elif isinstance(source, list):
+            entries = source
+        elif isinstance(source, dict) and isinstance(source.get("columns"), list):
+            entries = source["columns"]
+        else:
+            entries = []
+        by_name = {
+            str(item.get("name")): item
+            for item in entries
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        }
+        columns = []
+        for target in targets:
+            entry = by_name.get(str(target))
+            if entry is None or not str(entry.get("dtype") or "").strip():
+                raise ModelRegistryError("MODEL_CONTRACT_INVALID")
+            columns.append({
+                "machine_key": str(target),
+                "display_name": str(entry.get("display_name") or target),
+                "dtype": str(entry["dtype"]),
+                "task": str(entry.get("task") or candidate_metadata.get("task_type") or ""),
+                "classes": list(entry.get("classes") or []),
+            })
+        return {
+            "task_type": candidate_metadata.get("task_type"),
+            "target_columns": list(targets),
+            "columns": columns,
+        }
+
     def register_automl_candidate(self, db, *, task_id, candidate_id, model_name, actor_id, idempotency_key):
         try:
             task_uuid = uuid.UUID(str(task_id))
@@ -305,6 +340,7 @@ class ModelRegistryService:
         inputs = list(candidate_metadata.get("input_columns") or [])
         if not targets or not inputs:
             raise ModelRegistryError("MODEL_CONTRACT_INVALID")
+        output_contract = self._automl_output_contract(job, candidate_metadata, targets)
         contract_hash = hashlib.sha256(json.dumps(candidate_metadata, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         library = ModelLibrary(
             name=normalized_name,
@@ -330,7 +366,7 @@ class ModelRegistryService:
         version.registration_candidate_id = str(candidate_id)
         version.registration_idempotency_key = key
         version.lifecycle_state = "pending_review"
-        version.output_schema = {"task_type": candidate_metadata.get("task_type"), "target_columns": targets}
+        version.output_schema = output_contract
         version.conversion_metadata = {**(version.conversion_metadata or {}), "input_contract_hash": contract_hash, "input_contract": candidate_metadata, "source_artifact_sha256": metadata["sha256"], "preprocessing": (job.metrics or {}).get("preprocessing") or job.preprocessing or {}, "feature_importance": (job.metrics or {}).get("feature_importance_report") or {}}
         db.flush()
         return version, True

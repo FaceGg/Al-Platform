@@ -29,7 +29,7 @@ router = APIRouter(tags=["annotation-task-state"])
 
 def _error(error: ValueError, request: Request | None = None):
     code = str(error)
-    status_code = 409 if code in {"TASK_REVISION_CONFLICT", "TASK_STATE_INVALID", "PREVIEW_STALE", "PREVIEW_NOT_COMPLETED", "PREVIEW_PROGRESS_REGRESSION", "PREVIEW_PROGRESS_INVALID", "INVALID_STATS_KIND"} else 404
+    status_code = 409 if code in {"TASK_REVISION_CONFLICT", "TASK_STATE_INVALID", "PREVIEW_STALE", "PREVIEW_NOT_COMPLETED", "PREVIEW_CONFIGURATION_INCOMPLETE", "PREVIEW_NEEDS_REVIEW", "PREVIEW_PROGRESS_REGRESSION", "PREVIEW_PROGRESS_INVALID", "INVALID_STATS_KIND"} else 404
     request_id = request.headers.get("X-Request-ID") if request is not None else None
     return HTTPException(status_code=status_code, detail={"request_id": request_id or str(uuid.uuid4()), "code": code, "message": code.replace("_", " ").lower(), "details": {}})
 

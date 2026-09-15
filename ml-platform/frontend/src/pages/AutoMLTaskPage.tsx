@@ -5,6 +5,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import apiClient, { formatApiError } from "../api/client";
 import { registerAutoMLResult } from "../api/modelRegistry";
 import AppLayout from "../components/AppLayout";
+import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 
 const { Title, Text } = Typography;
 
@@ -159,7 +160,7 @@ export default function AutoMLTaskPage() {
         { title: "R²", key: "r2", render: (row: AutoMLResultRow) => formatMetric(metric(row, ["r2", "R2", "r2_score"])) },
         { title: "RMSE", key: "rmse", render: (row: AutoMLResultRow) => formatMetric(metric(row, ["rmse", "RMSE", "root_mean_squared_error"])) },
         { title: "MAE", key: "mae", render: (row: AutoMLResultRow) => formatMetric(metric(row, ["mae", "MAE", "mean_absolute_error"])) },
-        { title: "状态", dataIndex: "status", key: "status", render: (value: unknown) => value ? <Tag>{String(value)}</Tag> : "-" },
+        { title: "状态", dataIndex: "status", key: "status", render: (value: unknown) => value ? <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, "zh")}</Tag> : "-" },
         resultActionColumn,
       ]
     : [
@@ -168,7 +169,7 @@ export default function AutoMLTaskPage() {
         { title: "AUC", dataIndex: "auc", key: "auc", sorter: (a: AutoMLResultRow, b: AutoMLResultRow) => (b.auc ?? -1) - (a.auc ?? -1), render: (value: number | null) => value == null ? "-" : <Text strong>{value.toFixed(4)}</Text> },
         { title: "F1", dataIndex: "f1", key: "f1", render: (value: number | null) => value == null ? "-" : value.toFixed(4) },
         { title: "Accuracy", key: "accuracy", render: (row: AutoMLResultRow) => formatMetric(metric(row, ["accuracy", "Accuracy"])) },
-        { title: "状态", dataIndex: "status", key: "status", render: (value: unknown) => value ? <Tag>{String(value)}</Tag> : "-" },
+        { title: "状态", dataIndex: "status", key: "status", render: (value: unknown) => value ? <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, "zh")}</Tag> : "-" },
         resultActionColumn,
       ];
 
@@ -277,7 +278,7 @@ export default function AutoMLTaskPage() {
         <Card style={{ marginBottom: 16 }}>
           <Descriptions column={{ xs: 1, sm: 2, md: 4 }} size="small">
             <Descriptions.Item label="实验">{String(job.experiment_name || "-")}</Descriptions.Item>
-            <Descriptions.Item label="状态"><Tag color={job.status === "completed" ? "green" : job.status === "failed" ? "red" : "blue"}>{String(job.status || "queued")}</Tag></Descriptions.Item>
+            <Descriptions.Item label="状态"><Tag color={taskStatusColor(job.status)}>{taskStatusLabel(job.status || "queued", "zh")}</Tag></Descriptions.Item>
             <Descriptions.Item label="项目">{String(job.project_name || "-")}</Descriptions.Item>
             <Descriptions.Item label="最佳模型">{String((metrics.best_model as Record<string, unknown> | undefined)?.name || "-")}</Descriptions.Item>
           </Descriptions>

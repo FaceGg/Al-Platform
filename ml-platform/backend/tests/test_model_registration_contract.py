@@ -118,7 +118,10 @@ class TestModelRegistrationContract(unittest.TestCase):
                 {"name": "current", "dtype": "float64"},
                 {"name": "force", "dtype": "float64"},
             ],
-            target_schema={"columns": ["label_a", "label_b"], "task_type": "multioutput_classification"},
+            target_schema=[
+                {"name": "label_a", "dtype": "int64", "task": "multioutput_classification", "classes": [0, 1]},
+                {"name": "label_b", "dtype": "object", "task": "multioutput_classification", "classes": ["a", "b"]},
+            ],
             preprocessing={"imputer": "median", "scaler": "standard"},
         )
         self.db.add(job)
@@ -129,6 +132,7 @@ class TestModelRegistrationContract(unittest.TestCase):
             "task_type": "multioutput_classification",
             "target_columns": ["label_a", "label_b"],
             "input_columns": ["current", "force"],
+            "target_schema": job.target_schema,
             "data_version_id": "dataset-v1",
         }
         artifact = self.artifacts.create_from_file(
@@ -214,6 +218,10 @@ class TestModelRegistrationContract(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.text)
         version = self.db.get(ModelVersion, uuid.UUID(response.json()["model_version_id"]))
         self.assertEqual(version.output_schema["target_columns"], ["label_a", "label_b"])
+        self.assertEqual(
+            [(column["machine_key"], column["dtype"]) for column in version.output_schema["columns"]],
+            [("label_a", "int64"), ("label_b", "object")],
+        )
         self.assertTrue(version.conversion_metadata["input_contract_hash"])
         self.assertEqual(version.lifecycle_state, "pending_review")
 

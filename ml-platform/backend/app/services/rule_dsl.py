@@ -10,30 +10,33 @@ class RuleEvaluationError(ValueError):
 
 
 def _compare(operator: str, actual: object, expected: object) -> bool:
-    if operator in {"eq", "=="}:
-        return actual == expected
-    if operator in {"neq", "!=", "ne"}:
-        return actual != expected
-    if operator in {"gt", ">"}:
-        return actual is not None and actual > expected
-    if operator in {"gte", ">="}:
-        return actual is not None and actual >= expected
-    if operator in {"lt", "<"}:
-        return actual is not None and actual < expected
-    if operator in {"lte", "<="}:
-        return actual is not None and actual <= expected
-    if operator == "in":
-        if not isinstance(expected, (list, tuple, set, frozenset)):
-            raise RuleEvaluationError("in expects a sequence")
-        return actual in expected
-    if operator == "not_in":
-        if not isinstance(expected, (list, tuple, set, frozenset)):
-            raise RuleEvaluationError("not_in expects a sequence")
-        return actual not in expected
-    if operator == "is_null":
-        return actual is None
-    if operator == "not_null":
-        return actual is not None
+    try:
+        if operator in {"eq", "=="}:
+            return actual == expected
+        if operator in {"neq", "!=", "ne"}:
+            return actual != expected
+        if operator in {"gt", ">"}:
+            return actual is not None and actual > expected
+        if operator in {"gte", ">="}:
+            return actual is not None and actual >= expected
+        if operator in {"lt", "<"}:
+            return actual is not None and actual < expected
+        if operator in {"lte", "<="}:
+            return actual is not None and actual <= expected
+        if operator == "in":
+            if not isinstance(expected, (list, tuple, set, frozenset)):
+                raise RuleEvaluationError("in expects a sequence")
+            return actual in expected
+        if operator == "not_in":
+            if not isinstance(expected, (list, tuple, set, frozenset)):
+                raise RuleEvaluationError("not_in expects a sequence")
+            return actual not in expected
+        if operator == "is_null":
+            return actual is None
+        if operator == "not_null":
+            return actual is not None
+    except TypeError as error:
+        raise RuleEvaluationError("rule comparison uses incompatible value types") from error
     raise RuleEvaluationError(f"unsupported operator: {operator}")
 
 

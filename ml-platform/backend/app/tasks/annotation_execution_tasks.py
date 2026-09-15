@@ -144,9 +144,11 @@ def execute_annotation_task(self, task_id: str, preview_id: str, owner_id: str, 
                         "cluster_id": decision.get("cluster_id"),
                         "matched_rule_ids": list(decision.get("matched_rule_ids") or []),
                     }
+                    result_status = str(decision.get("status") or "ready")
                 else:
                     values = raw_values
                     provenance = {}
+                    result_status = "ready"
                 db.add(AnnotationTaskExecutionResult(
                     task_id=task_uuid,
                     operation_id=operation_uuid,
@@ -156,7 +158,7 @@ def execute_annotation_task(self, task_id: str, preview_id: str, owner_id: str, 
                     row_index=item.row_index,
                     values=values,
                     provenance=provenance,
-                    status="ready",
+                    status=result_status,
                 ))
             db.flush()
             operation = db.get(DurableOperation, operation_uuid)
@@ -178,9 +180,11 @@ def execute_annotation_task(self, task_id: str, preview_id: str, owner_id: str, 
             checksum = "sha256:" + hashlib.sha256(
                 json.dumps(checksum_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
             ).hexdigest()
-            if task.status == "executing" and task.task_revision == preview.task_revision:
-                task.status = "awaiting_annotation"
             summary = _execution_summary(persisted)
+            needs_review_count = sum(item.status == "needs_review" for item in persisted)
+            summary["needs_review_count"] = needs_review_count
+            if task.status == "executing" and task.task_revision == preview.task_revision:
+                task.status = "needs_review" if needs_review_count else "awaiting_annotation"
             complete_operation(db, operation_uuid, worker_id, None, checksum, result_summary=summary)
             return {"status": "completed", "operation_id": operation_id, "result_count": len(persisted)}
         except Exception as error:

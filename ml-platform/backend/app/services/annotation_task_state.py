@@ -110,6 +110,11 @@ def transition_annotation_task(db, task_id, expected_revision: int, action: Task
         preview = db.query(AnnotationTaskPreview).filter_by(id=preview_id, task_id=task.id).one_or_none()
         if preview is None or preview.task_revision != expected_revision or preview.status != "completed":
             raise ValueError("PREVIEW_STALE")
+        preview_summary = dict(preview.summary or {})
+        if preview_summary.get("configuration_complete") is False:
+            raise ValueError("PREVIEW_CONFIGURATION_INCOMPLETE")
+        if int(preview_summary.get("needs_review_count", 0) or 0) > 0:
+            raise ValueError("PREVIEW_NEEDS_REVIEW")
         # Execution has its own durable operation. Keep the preview revision
         # stable while the operation runs so retries resolve to the same
         # operation and workers can validate the immutable binding.
@@ -272,7 +277,11 @@ def mark_preview_completed(db, task_id, preview_id, owner_id):
     if preview.task_revision != task.task_revision:
         raise ValueError("TASK_REVISION_CONFLICT")
     if task.status == "previewing":
-        task.status = "preview_ready"
+        summary = dict(preview.summary or {})
+        if summary.get("configuration_complete") is False or int(summary.get("needs_review_count", 0) or 0) > 0:
+            task.status = "needs_review"
+        else:
+            task.status = "preview_ready"
         db.add(AuditEvent(
             project_id=task.project_id,
             actor_id=owner_id,
@@ -282,7 +291,7 @@ def mark_preview_completed(db, task_id, preview_id, owner_id):
             resource_id=str(task.id),
             result="success",
             request_id=uuid.uuid4(),
-            changes={"from_status": "previewing", "to_status": "preview_ready", "task_revision": task.task_revision},
+            changes={"from_status": "previewing", "to_status": task.status, "task_revision": task.task_revision},
         ))
         db.commit()
         db.refresh(task)

@@ -481,7 +481,7 @@ export default function TrainingJobsPage() {
         columns={[
           { title: "Run ID", dataIndex: "run_id", key: "run_id" },
           { title: labels.name, dataIndex: "run_name", key: "run_name", render: (value: string) => value || "-" },
-          { title: labels.status, dataIndex: "status", key: "status", render: (value: string) => <Tag color={statusColors[value]}>{value}</Tag> },
+          { title: labels.status, dataIndex: "status", key: "status", render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag> },
           { title: labels.metrics, dataIndex: "metrics", key: "metrics", render: (value: unknown) => <JsonValue value={value} /> },
         ]}
       />

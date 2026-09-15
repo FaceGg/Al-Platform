@@ -14,10 +14,18 @@ export type AnnotationTask = {
 export type GenericTaskCreatePayload = {
   project_id: string;
   dataset_version_id: string;
-  label_schema_id: string;
+  label_schema_id?: string;
+  model_version_id?: string;
   mode: "manual" | "automatic";
   sample_scope: { kind: "all" | "ids" | "filter"; sample_ids?: string[]; filters?: Record<string, unknown> };
   label_snapshot?: Record<string, unknown>;
+  visible_columns: string[];
+  instructions: string;
+  configuration: Record<string, unknown>;
+};
+
+export type GenericTaskConfigurationPayload = {
+  task_revision: number;
   visible_columns: string[];
   instructions: string;
   configuration: Record<string, unknown>;
@@ -60,6 +68,11 @@ export async function createGenericAnnotationTask(payload: GenericTaskCreatePayl
   const response = await apiClient.post(endpoint, payload, {
     headers: { "X-Request-ID": crypto.randomUUID(), "Idempotency-Key": idempotencyKey },
   });
+  return response.data as AnnotationTask;
+}
+
+export async function updateGenericAnnotationTaskConfiguration(taskId: string, payload: GenericTaskConfigurationPayload) {
+  const response = await apiClient.put(`/annotation-tasks/${encodeURIComponent(taskId)}/configuration`, payload);
   return response.data as AnnotationTask;
 }
 

@@ -8,11 +8,19 @@ import AppLayout from "../components/AppLayout";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
 import LabelSchemaEditor, { type LabelColumnDraft } from "../components/LabelSchemaEditor";
+import AutomaticAnnotationStrategyEditor, {
+  createAutomaticStrategyDraft,
+  createAutomaticRule,
+  type AutomaticRuleDraft,
+  type AutomaticAnnotationSourceColumn,
+  type AutomaticStrategyDraft,
+  type ClusterOption,
+} from "../components/AutomaticAnnotationStrategyEditor";
 import { useI18n } from "../i18n";
 import { normalizeTaskStatus, taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 import { formatApiError, default as apiClient } from "../api/client";
 import { listDatasets, listDatasetVersions, type DatasetVersionOption } from "../api/datasets";
-import { listProjectModelArtifacts, type ModelArtifactOption } from "../api/models";
+import { listAnnotationModelVersions, type AnnotationModelVersion, type AnnotationOutputColumn } from "../api/models";
 import { createLabelSchema } from "../api/labelSchemas";
 import {
   createAnnotationPreview,
@@ -23,6 +31,7 @@ import {
   listAnnotationOperations,
   listAnnotationTasks,
   createGenericAnnotationTask,
+  updateGenericAnnotationTaskConfiguration,
   transitionAnnotationTask,
   type AnnotationPreview,
   type AnnotationTask,
@@ -91,6 +100,8 @@ interface RevisionConflictState {
   labels?: Record<string, unknown>;
   message: string;
 }
+
+type GenericAutomaticConfiguration = Record<string, unknown>;
 
 type ExecutionStatsKind = "sample" | "cluster" | "rule" | "final_label";
 
@@ -214,6 +225,206 @@ function revisionConflictFromError(error: any, task: AnnotationTask): RevisionCo
   };
 }
 
+function outputColumnsFromSnapshot(task: AnnotationTask): AnnotationOutputColumn[] {
+  const configuration = task.task_snapshot?.configuration as Record<string, unknown> | undefined;
+  const outputContract = configuration?.model_output_contract as { columns?: unknown } | undefined;
+  if (Array.isArray(outputContract?.columns)) {
+    return outputContract.columns.filter((column): column is AnnotationOutputColumn => Boolean(
+      column && typeof column === "object"
+      && typeof (column as AnnotationOutputColumn).machine_key === "string"
+      && typeof (column as AnnotationOutputColumn).display_name === "string"
+      && ["string", "int", "float"].includes((column as AnnotationOutputColumn).value_type),
+    ));
+  }
+  const schema = task.task_snapshot?.label_schema as { columns?: unknown } | undefined;
+  return Array.isArray(schema?.columns) ? schema.columns.flatMap((column) => {
+    if (!column || typeof column !== "object") return [];
+    const item = column as Record<string, unknown>;
+    const machineKey = typeof item.machine_key === "string" ? item.machine_key : "";
+    const displayName = typeof item.display_name === "string" ? item.display_name : machineKey;
+    const valueType = item.value_type;
+    return machineKey && ["string", "int", "float"].includes(String(valueType))
+      ? [{ machine_key: machineKey, display_name: displayName, value_type: valueType as AnnotationOutputColumn["value_type"], required: Boolean(item.required) }]
+      : [];
+  }) : [];
+}
+
+function sourceColumnsFromSnapshot(task: AnnotationTask): AutomaticAnnotationSourceColumn[] {
+  const datasetVersion = task.task_snapshot?.dataset_version as { columns?: unknown } | undefined;
+  if (Array.isArray(datasetVersion?.columns)) {
+    const columns = datasetVersion.columns.flatMap((column) => {
+      if (!column || typeof column !== "object") return [];
+      const item = column as Record<string, unknown>;
+      const name = typeof item.name === "string" ? item.name : "";
+      return name ? [{ name, dtype: typeof item.dtype === "string" ? item.dtype : "string" }] : [];
+    });
+    if (columns.length) return columns;
+  }
+  return Array.isArray(task.task_snapshot?.visible_columns)
+    ? task.task_snapshot.visible_columns.map((name) => ({ name: String(name), dtype: "string" }))
+    : [];
+}
+
+function valueText(value: unknown): string {
+  return value == null ? "" : String(value);
+}
+
+function strategyDraftFromTask(task: AnnotationTask, columns: AnnotationOutputColumn[]): AutomaticStrategyDraft {
+  const configuration = (task.task_snapshot?.configuration || {}) as Record<string, unknown>;
+  const rules = Array.isArray(configuration.rules) ? configuration.rules.flatMap((raw, index) => {
+    if (!raw || typeof raw !== "object") return [];
+    const rule = raw as Record<string, unknown>;
+    const rawWhen = rule.when as Record<string, unknown> | undefined;
+    const group = rawWhen && (rawWhen.all || rawWhen.any);
+    const rawConditions = Array.isArray(group) ? group : rawWhen ? [rawWhen] : [];
+    const conditions = rawConditions.flatMap((condition, conditionIndex) => {
+      if (!condition || typeof condition !== "object") return [];
+      const [field, operations] = Object.entries(condition as Record<string, unknown>)[0] || [];
+      if (!field || !operations || typeof operations !== "object") return [];
+      const [operator, rawValue] = Object.entries(operations as Record<string, unknown>)[0] || [];
+      if (!operator) return [];
+      return [{ id: `${String(rule.id || `rule-${index}`)}-condition-${conditionIndex}`, field, operator: operator as any, value: valueText(rawValue) }];
+    });
+    if (!conditions.length) return [];
+    return [{
+      id: String(rule.id || `rule-${index}`),
+      priority: Number.isInteger(rule.priority) ? Number(rule.priority) : 0,
+      join: rawWhen && Array.isArray(rawWhen.any) ? "any" : "all",
+      conditions,
+      values: Object.fromEntries(columns.map((column) => [column.machine_key, valueText((rule.values as Record<string, unknown> | undefined)?.[column.machine_key])])),
+      clusterIds: Array.isArray(rule.cluster_ids) ? rule.cluster_ids.map(String).join(",") : "",
+    } satisfies AutomaticRuleDraft];
+  }) : [];
+  const selectedClusters = Array.isArray(configuration.selected_clusters) ? configuration.selected_clusters.map(String) : [];
+  const rawClusterLabels = configuration.cluster_labels && typeof configuration.cluster_labels === "object" ? configuration.cluster_labels as Record<string, Record<string, unknown>> : {};
+  return {
+    strategy: ["cluster", "rule", "cluster_rule"].includes(String(configuration.strategy)) ? configuration.strategy as AutomaticStrategyDraft["strategy"] : "cluster",
+    selectedClusters,
+    otherValues: Object.fromEntries(columns.map((column) => [column.machine_key, valueText((configuration.other_values as Record<string, unknown> | undefined)?.[column.machine_key])])),
+    clusterLabels: Object.fromEntries(Object.entries(rawClusterLabels).map(([clusterId, values]) => [clusterId, Object.fromEntries(columns.map((column) => [column.machine_key, valueText(values?.[column.machine_key])]))])),
+    rules: rules.length ? rules : [createAutomaticRule(columns)],
+  };
+}
+
+function typedAutomaticValue(column: AnnotationOutputColumn, raw: string): { value?: string | number; error?: string } {
+  if (column.value_type === "string") return raw.trim() ? { value: raw } : { error: `${column.display_name} 不能为空` };
+  if (column.value_type === "int") {
+    return /^[-+]?\d+$/.test(raw.trim()) ? { value: Number(raw) } : { error: `${column.display_name} 必须是整数` };
+  }
+  const numeric = Number(raw);
+  return raw.trim() && Number.isFinite(numeric) ? { value: numeric } : { error: `${column.display_name} 必须是有限浮点数` };
+}
+
+function sourceColumnValueType(dtype: string): "int" | "float" | "boolean" | "string" {
+  const normalized = dtype.trim().toLowerCase();
+  if (normalized.includes("int") || normalized.includes("uint")) return "int";
+  if (normalized.includes("float") || normalized.includes("double") || normalized.includes("decimal") || normalized === "number") return "float";
+  if (normalized === "bool" || normalized === "boolean") return "boolean";
+  return "string";
+}
+
+function typedRuleConditionValue(
+  field: string,
+  operator: string,
+  raw: string,
+  sourceColumns: AutomaticAnnotationSourceColumn[],
+): { value?: string | number | boolean | Array<string | number | boolean>; error?: string } {
+  const sourceColumn = sourceColumns.find((column) => column.name === field);
+  if (!sourceColumn) return { error: `规则字段 ${field} 不在冻结数据版本中` };
+  if (["is_null", "not_null"].includes(operator)) return { value: true };
+  const valueType = sourceColumnValueType(sourceColumn.dtype);
+  if (["gt", "gte", "lt", "lte"].includes(operator) && !["int", "float"].includes(valueType)) {
+    return { error: `规则字段 ${field} 不是数值列，不能使用数值比较` };
+  }
+  const rawValues = ["in", "not_in"].includes(operator) ? raw.split(",").map((item) => item.trim()).filter(Boolean) : [raw.trim()];
+  if (!rawValues.length || rawValues.some((value) => !value)) return { error: `规则字段 ${field} 的比较值不能为空` };
+  const values = rawValues.map((value) => {
+    if (valueType === "string") return { value };
+    if (valueType === "boolean") {
+      if (["true", "1"].includes(value.toLowerCase())) return { value: true };
+      if (["false", "0"].includes(value.toLowerCase())) return { value: false };
+      return { error: `规则字段 ${field} 必须是 true 或 false` };
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || (valueType === "int" && !Number.isInteger(numeric))) {
+      return { error: `规则字段 ${field} 必须是${valueType === "int" ? "整数" : "有限浮点数"}` };
+    }
+    return { value: numeric };
+  });
+  const invalid = values.find((item) => item.error);
+  if (invalid?.error) return { error: invalid.error };
+  const normalized = values.map((item) => item.value!);
+  return { value: ["in", "not_in"].includes(operator) ? normalized : normalized[0] };
+}
+
+function automaticConfigurationFromDraft(
+  draft: AutomaticStrategyDraft,
+  columns: AnnotationOutputColumn[],
+  sourceColumns: AutomaticAnnotationSourceColumn[],
+  clustering: boolean,
+  discovery: boolean,
+): { configuration?: GenericAutomaticConfiguration; error?: string } {
+  if (!clustering) return { configuration: { clustering: false, strategy: "model" } };
+  if (discovery) return { configuration: { clustering: true, cluster_discovery: true } };
+  const otherValues: Record<string, string | number> = {};
+  for (const column of columns) {
+    const result = typedAutomaticValue(column, draft.otherValues[column.machine_key] || "");
+    if (result.error) return { error: result.error };
+    otherValues[column.machine_key] = result.value!;
+  }
+  const rules = [] as Array<Record<string, unknown>>;
+  if (draft.strategy === "rule" || draft.strategy === "cluster_rule") {
+    for (const rule of draft.rules) {
+      const conditions = rule.conditions.map((condition) => {
+        if (!condition.field || (!condition.value.trim() && !["is_null", "not_null"].includes(condition.operator))) return null;
+        const result = typedRuleConditionValue(condition.field, condition.operator, condition.value, sourceColumns);
+        return result.error ? result : { [condition.field]: { [condition.operator]: result.value } };
+      });
+      if (!conditions.length || conditions.some((condition) => condition === null)) return { error: "规则条件不完整" };
+      const invalidCondition = conditions.find((condition) => condition && "error" in condition) as { error?: string } | undefined;
+      if (invalidCondition?.error) return { error: invalidCondition.error };
+      const values: Record<string, string | number> = {};
+      for (const column of columns) {
+        const raw = rule.values[column.machine_key] || "";
+        if (!raw.trim()) continue;
+        const result = typedAutomaticValue(column, raw);
+        if (result.error) return { error: `规则 ${rule.id}：${result.error}` };
+        values[column.machine_key] = result.value!;
+      }
+      if (!Object.keys(values).length) return { error: "每条规则至少需要一个命中标签值" };
+      rules.push({
+        id: rule.id,
+        priority: Number.isInteger(rule.priority) ? rule.priority : 0,
+        when: conditions.length === 1 ? conditions[0] : { [rule.join]: conditions },
+        values,
+        ...(rule.clusterIds.trim() ? { cluster_ids: rule.clusterIds.split(",").map((item) => item.trim()).filter(Boolean) } : {}),
+      });
+    }
+  }
+  const configuration: GenericAutomaticConfiguration = {
+    clustering: true,
+    strategy: draft.strategy,
+    other_values: otherValues,
+    ...(rules.length ? { rules } : {}),
+  };
+  if (!discovery && (draft.strategy === "cluster" || draft.strategy === "cluster_rule")) {
+    if (!draft.selectedClusters.length) return { error: "至少选择一个簇" };
+    const clusterLabels: Record<string, Record<string, string | number>> = {};
+    for (const clusterId of draft.selectedClusters) {
+      const labels: Record<string, string | number> = {};
+      for (const column of columns) {
+        const result = typedAutomaticValue(column, draft.clusterLabels[clusterId]?.[column.machine_key] || "");
+        if (result.error) return { error: `簇 ${clusterId}：${result.error}` };
+        labels[column.machine_key] = result.value!;
+      }
+      clusterLabels[clusterId] = labels;
+    }
+    configuration.selected_clusters = draft.selectedClusters;
+    configuration.cluster_labels = clusterLabels;
+  }
+  return { configuration };
+}
+
 export default function DataAnnotationPage() {
   const { message } = AntApp.useApp();
   const { lang, t } = useI18n();
@@ -238,20 +449,18 @@ export default function DataAnnotationPage() {
   const [revisionConflict, setRevisionConflict] = useState<RevisionConflictState | null>(null);
   const [datasets, setDatasets] = useState<DatasetOption[]>([]);
   const [genericVersions, setGenericVersions] = useState<DatasetVersionOption[]>([]);
-  const [genericModelArtifacts, setGenericModelArtifacts] = useState<ModelArtifactOption[]>([]);
+  const [genericModelVersions, setGenericModelVersions] = useState<AnnotationModelVersion[]>([]);
   const [genericVersionId, setGenericVersionId] = useState("");
   const [genericSchemaName, setGenericSchemaName] = useState("labels");
   const [genericLabelKey, setGenericLabelKey] = useState("label");
   const [genericLabelType, setGenericLabelType] = useState<"string" | "int" | "float">("string");
   const [genericInstructions, setGenericInstructions] = useState("");
-  const [genericModelArtifactId, setGenericModelArtifactId] = useState("");
-  const [genericSearchStrength, setGenericSearchStrength] = useState("balanced");
-  const [genericStrategy, setGenericStrategy] = useState<"model" | "cluster" | "rule" | "cluster_rule">("model");
-  const [genericOtherValue, setGenericOtherValue] = useState("");
-  const [genericRuleColumn, setGenericRuleColumn] = useState("");
-  const [genericRuleOperator, setGenericRuleOperator] = useState("gte");
-  const [genericRuleValue, setGenericRuleValue] = useState("");
-  const [genericRuleLabel, setGenericRuleLabel] = useState("");
+  const [genericModelVersionId, setGenericModelVersionId] = useState("");
+  const [genericClustering, setGenericClustering] = useState(false);
+  const [genericAutomaticDraft, setGenericAutomaticDraft] = useState<AutomaticStrategyDraft>(() => createAutomaticStrategyDraft([]));
+  const [automaticConfigTask, setAutomaticConfigTask] = useState<AnnotationTask | null>(null);
+  const [automaticConfigDraft, setAutomaticConfigDraft] = useState<AutomaticStrategyDraft>(() => createAutomaticStrategyDraft([]));
+  const [automaticConfigSaving, setAutomaticConfigSaving] = useState(false);
   const [genericCreating, setGenericCreating] = useState(false);
   const [runId, setRunId] = useState(searchParams.get("runId") || "");
   const [samples, setSamples] = useState<QualitySample[]>([]);
@@ -310,6 +519,11 @@ export default function DataAnnotationPage() {
   );
 
   const selectedProject = useMemo(() => projects.find((item) => item.id === projectId), [projects, projectId]);
+  const selectedGenericModelVersion = useMemo(
+    () => genericModelVersions.find((item) => item.id === genericModelVersionId),
+    [genericModelVersions, genericModelVersionId],
+  );
+  const selectedGenericOutputColumns = selectedGenericModelVersion?.output_contract.columns || [];
   const selectedModel = useMemo(
     () => qualityModels.find((item) => item.id === selectedModelId),
     [qualityModels, selectedModelId],
@@ -529,15 +743,16 @@ export default function DataAnnotationPage() {
         const preview = await getAnnotationPreview(taskId, previewId);
         if (!active) return;
         const previewStatus = String(preview.status);
+        const previewSummary = preview.summary || {};
         const taskStatus = previewStatus === "completed" || previewStatus === "ready"
-          ? "preview_ready"
+          ? (previewSummary.configuration_complete === false || Number(previewSummary.needs_review_count || 0) > 0 ? "needs_review" : "preview_ready")
           : previewStatus === "failed" || previewStatus === "cancelled"
             ? previewStatus
             : "previewing";
         setGenericTasks((items) => items.map((item) => item.id === taskId && item.task_revision === preview.task_revision
           ? {
               ...item,
-              status: ["draft", "previewing", "failed"].includes(item.status) ? taskStatus : item.status,
+              status: ["draft", "previewing", "failed", "needs_review"].includes(item.status) ? taskStatus : item.status,
               preview: {
                 ...preview,
                 id: preview.id || previewId,
@@ -577,7 +792,10 @@ export default function DataAnnotationPage() {
   const openTaskPreview = async (task: AnnotationTask) => {
     const configHash = String(task.task_snapshot?.config_hash || "sha256:task");
     try {
-      const existing = task.preview;
+      const existing = task.preview && task.preview.task_revision === task.task_revision
+        && !["failed", "cancelled"].includes(task.preview.status)
+        ? task.preview
+        : null;
       const preview = existing
         ? { preview_id: existing.id, operation_id: existing.operation_id || undefined, task_revision: existing.task_revision, status: existing.status, dispatch_id: null }
         : await createAnnotationPreview(task.id, task.task_revision, configHash);
@@ -645,6 +863,64 @@ export default function DataAnnotationPage() {
     } catch (error) {
       if (isRevisionConflict(error)) setRevisionConflict(revisionConflictFromError(error, task));
       else message.error(formatApiError(error, "任务执行失败"));
+    }
+  };
+
+  const clusterOptionsForTask = (task: AnnotationTask): ClusterOption[] => {
+    const rawClusters = task.preview?.summary?.clusters;
+    return Array.isArray(rawClusters) ? rawClusters.flatMap((cluster) => {
+      if (!cluster || typeof cluster !== "object") return [];
+      const item = cluster as Record<string, unknown>;
+      const clusterId = item.cluster_id;
+      const sampleCount = Number(item.sample_count);
+      return clusterId !== undefined && Number.isFinite(sampleCount)
+        ? [{ clusterId: String(clusterId), sampleCount }]
+        : [];
+    }) : [];
+  };
+
+  const openAutomaticConfiguration = (task: AnnotationTask) => {
+    const columns = outputColumnsFromSnapshot(task);
+    if (!columns.length) {
+      message.error("任务没有可配置的冻结标签合同");
+      return;
+    }
+    setAutomaticConfigTask(task);
+    setAutomaticConfigDraft(strategyDraftFromTask(task, columns));
+  };
+
+  const saveAutomaticConfiguration = async () => {
+    if (!automaticConfigTask || automaticConfigSaving) return;
+    const columns = outputColumnsFromSnapshot(automaticConfigTask);
+    const configuration = automaticConfigurationFromDraft(
+      automaticConfigDraft,
+      columns,
+      sourceColumnsFromSnapshot(automaticConfigTask),
+      true,
+      false,
+    );
+    if (configuration.error || !configuration.configuration) {
+      message.error(configuration.error || "自动标注策略配置无效");
+      return;
+    }
+    const snapshot = automaticConfigTask.task_snapshot || {};
+    const visibleColumns = Array.isArray(snapshot.visible_columns) ? snapshot.visible_columns.map(String) : [];
+    setAutomaticConfigSaving(true);
+    try {
+      const updated = await updateGenericAnnotationTaskConfiguration(automaticConfigTask.id, {
+        task_revision: automaticConfigTask.task_revision,
+        visible_columns: visibleColumns,
+        instructions: String(snapshot.instructions || ""),
+        configuration: configuration.configuration,
+      });
+      setGenericTasks((items) => items.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+      setAutomaticConfigTask(null);
+      message.success("自动标注策略已保存，请重新生成预览");
+    } catch (error) {
+      if (isRevisionConflict(error)) setRevisionConflict(revisionConflictFromError(error, automaticConfigTask));
+      else message.error(formatApiError(error, "自动标注策略保存失败"));
+    } finally {
+      setAutomaticConfigSaving(false);
     }
   };
 
@@ -775,17 +1051,21 @@ export default function DataAnnotationPage() {
   }, [isSetup, genericSetupMode, loadingProjects, projectId, message]);
 
   useEffect(() => {
-    setGenericModelArtifacts([]);
-    setGenericModelArtifactId("");
+    setGenericModelVersions([]);
+    setGenericModelVersionId("");
     if (!isSetup || !genericSetupMode || labelMode !== "automatic" || loadingProjects || !projectId) {
       return;
     }
     let active = true;
-    listProjectModelArtifacts(projectId)
-      .then((items) => { if (active) setGenericModelArtifacts(items); })
-      .catch((error) => { if (active) message.error(formatApiError(error, "模型制品加载失败")); });
+    listAnnotationModelVersions(projectId)
+      .then((items) => { if (active) setGenericModelVersions(items); })
+      .catch((error) => { if (active) message.error(formatApiError(error, "可用模型版本加载失败")); });
     return () => { active = false; };
   }, [isSetup, genericSetupMode, labelMode, loadingProjects, projectId, message]);
+
+  useEffect(() => {
+    setGenericAutomaticDraft(createAutomaticStrategyDraft(selectedGenericOutputColumns));
+  }, [selectedGenericModelVersion?.id]);
 
   useEffect(() => {
     if (skipUrlStateSyncRef.current) {
@@ -1116,14 +1396,9 @@ export default function DataAnnotationPage() {
     setGenericLabelKey("label");
     setGenericLabelType("string");
     setGenericInstructions("");
-    setGenericModelArtifactId("");
-    setGenericSearchStrength("balanced");
-    setGenericStrategy("model");
-    setGenericOtherValue("");
-    setGenericRuleColumn("");
-    setGenericRuleOperator("gte");
-    setGenericRuleValue("");
-    setGenericRuleLabel("");
+    setGenericModelVersionId("");
+    setGenericClustering(false);
+    setGenericAutomaticDraft(createAutomaticStrategyDraft([]));
     setAutomaticSetupStep(1);
     setSearchParams((current) => {
       current.delete("type");
@@ -1135,59 +1410,48 @@ export default function DataAnnotationPage() {
   };
 
   const createGenericTaskFromSetup = async () => {
-    if (!projectId || !genericVersionId || !genericSchemaName.trim() || !genericLabelKey.trim()) return;
+    if (!projectId || !genericVersionId) return;
     const version = genericVersions.find((item) => item.id === genericVersionId && item.project_id === projectId);
     if (!version || genericCreating) return;
-    if (labelMode === "automatic" && !genericModelArtifacts.some((item) => item.id === genericModelArtifactId)) {
-      message.error("自动任务需要模型制品标识");
+    if (labelMode === "manual" && (!genericSchemaName.trim() || !genericLabelKey.trim())) return;
+    if (labelMode === "automatic" && (!selectedGenericModelVersion || !selectedGenericOutputColumns.length)) {
+      message.error("自动任务需要选择已启用模型版本");
       return;
     }
-    if (labelMode === "automatic" && genericStrategy !== "model" && !genericOtherValue.trim()) {
-      message.error("聚类或规则策略需要 fallback 标签");
-      return;
-    }
-    if (labelMode === "automatic" && ["rule", "cluster_rule"].includes(genericStrategy)
-      && (!genericRuleColumn || !genericRuleValue.trim() || !genericRuleLabel.trim())) {
-      message.error("规则策略需要完整条件和标签");
+    const automaticConfiguration = labelMode === "automatic"
+      ? automaticConfigurationFromDraft(
+        genericAutomaticDraft,
+        selectedGenericOutputColumns,
+        version.columns.map((column) => ({ name: column.name, dtype: column.dtype })),
+        genericClustering,
+        genericClustering,
+      )
+      : null;
+    if (automaticConfiguration?.error) {
+      message.error(automaticConfiguration.error);
       return;
     }
     setGenericCreating(true);
     try {
-      const schema = await createLabelSchema(projectId, genericSchemaName.trim(), [{
+      const schema = labelMode === "manual" ? await createLabelSchema(projectId, genericSchemaName.trim(), [{
         machine_key: genericLabelKey.trim(),
         display_name: genericLabelKey.trim(),
         value_type: genericLabelType,
         required: false,
-      }]);
+      }]) : null;
       const task = await createGenericAnnotationTask({
         project_id: projectId,
         dataset_version_id: genericVersionId,
-        label_schema_id: schema.id,
+        ...(schema ? { label_schema_id: schema.id } : {}),
+        ...(selectedGenericModelVersion && labelMode === "automatic" ? { model_version_id: selectedGenericModelVersion.id } : {}),
         mode: labelMode,
         sample_scope: { kind: "all" },
         visible_columns: version.columns.map((column) => column.name),
         instructions: genericInstructions,
-        configuration: labelMode === "automatic"
-          ? {
-              model_artifact_id: genericModelArtifactId.trim(),
-              search_strength: genericSearchStrength,
-              ...(genericStrategy === "model" ? {} : {
-                clustering: true,
-                strategy: genericStrategy,
-                other_values: { [genericLabelKey.trim()]: genericOtherValue.trim() },
-                ...(["rule", "cluster_rule"].includes(genericStrategy) ? {
-                  rules: [{
-                    id: "generic-rule-1",
-                    when: { [genericRuleColumn]: { [genericRuleOperator]: genericRuleValue.trim() } },
-                    values: { [genericLabelKey.trim()]: genericRuleLabel.trim() },
-                  }],
-                } : {}),
-              }),
-            }
-          : {},
+        configuration: automaticConfiguration?.configuration || {},
       }, crypto.randomUUID());
       setGenericTasks((items) => [task, ...items.filter((item) => item.id !== task.id)]);
-      message.success("通用标注任务已创建");
+      message.success(genericClustering && labelMode === "automatic" ? "自动任务已创建，请先生成预览" : "通用标注任务已创建");
       returnToTaskList();
     } catch (error) {
       message.error(formatApiError(error, "通用标注任务创建失败"));
@@ -1435,8 +1699,9 @@ export default function DataAnnotationPage() {
               { title: "修订", dataIndex: "task_revision" },
               { title: "操作", key: "actions", align: "right" as const, render: (_: unknown, task: AnnotationTask) => <div className="table-row-actions">
                 <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void openTaskPreview(task); }}>预览</button>
+                {task.mode === "automatic" && task.status === "needs_review" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => openAutomaticConfiguration(task)}>配置策略</button>}
                 <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void openAssignmentDialog(task); }}>指派标注员</button>
-                <button type="button" className="ant-btn ant-btn-sm" disabled={task.status !== "preview_ready" || !task.preview || task.preview.task_revision !== task.task_revision || task.preview.status !== "completed"} onClick={() => { void executeGenericTask(task); }}>执行</button>
+                <button type="button" className="ant-btn ant-btn-sm" disabled={task.status !== "preview_ready" || !task.preview || task.preview.task_revision !== task.task_revision || task.preview.status !== "completed" || task.preview.summary?.configuration_complete === false || Number(task.preview.summary?.needs_review_count || 0) > 0} onClick={() => { void executeGenericTask(task); }}>执行</button>
                 {task.status === "preview_ready" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "publish"); }}>发布</button>}
                 {["preview_ready", "executing", "awaiting_annotation", "in_progress", "awaiting_return"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "pause"); }}>暂停</button>}
                 {task.status === "paused" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "resume"); }}>恢复</button>}
@@ -1502,12 +1767,12 @@ export default function DataAnnotationPage() {
           </div>
           {executionView.error && <div role="alert">{executionView.error}</div>}
           <Table<ExecutionViewState["results"][number]> rowKey="id" size="small" loading={executionView.loading} dataSource={executionView.results} pagination={false} scroll={{ x: 700 }} columns={[
-            { title: "样本", dataIndex: "sample_id" }, { title: "序号", dataIndex: "row_index" }, { title: "状态", dataIndex: "status" },
+            { title: "样本", dataIndex: "sample_id" }, { title: "序号", dataIndex: "row_index" }, { title: "状态", dataIndex: "status", render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag> },
             { title: "最终标签", dataIndex: "values", render: (value: unknown) => <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(value)}</pre> },
             { title: "来源", dataIndex: "provenance", render: (value: unknown) => <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(value)}</pre> },
           ]} />
           <Table<Record<string, unknown>> rowKey={(item) => String(item.key)} size="small" loading={executionView.loading} dataSource={executionView.stats} pagination={false} columns={executionView.statsKind === "sample" ? [
-            { title: "样本", dataIndex: "sample_id", render: String }, { title: "序号", dataIndex: "row_index", render: String }, { title: "状态", dataIndex: "status", render: String },
+            { title: "样本", dataIndex: "sample_id", render: String }, { title: "序号", dataIndex: "row_index", render: String }, { title: "状态", dataIndex: "status", render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag> },
           ] : [
             { title: "统计", dataIndex: "key", render: (value: unknown) => String(value) }, { title: "数量", dataIndex: "count", render: (value: unknown) => value == null ? "-" : String(value) },
           ]} />
@@ -1530,6 +1795,25 @@ export default function DataAnnotationPage() {
         onLoadMore={() => { void loadMorePreviewSamples(); }}
         onClose={() => setPreviewDrawer(null)}
       />
+      <Modal
+        open={Boolean(automaticConfigTask)}
+        title="配置自动标注策略"
+        onCancel={() => setAutomaticConfigTask(null)}
+        footer={[
+          <button type="button" className="ant-btn" key="cancel" onClick={() => setAutomaticConfigTask(null)} disabled={automaticConfigSaving}>取消</button>,
+          <button type="button" className="ant-btn ant-btn-primary" key="save" onClick={() => { void saveAutomaticConfiguration(); }} disabled={automaticConfigSaving}>{automaticConfigSaving ? "保存中..." : "保存策略"}</button>,
+        ]}
+        width={960}
+      >
+        {automaticConfigTask && <AutomaticAnnotationStrategyEditor
+          idPrefix={`automatic-task-${automaticConfigTask.id}`}
+          columns={outputColumnsFromSnapshot(automaticConfigTask)}
+          sourceColumns={sourceColumnsFromSnapshot(automaticConfigTask)}
+          clusters={clusterOptionsForTask(automaticConfigTask)}
+          value={automaticConfigDraft}
+          onChange={setAutomaticConfigDraft}
+        />}
+      </Modal>
       <AssignmentDialog
         open={Boolean(assignmentTask)}
         taskRevision={assignmentTask?.task_revision || 0}
@@ -1766,70 +2050,41 @@ export default function DataAnnotationPage() {
               {genericVersions.map((version) => <option value={version.id} key={version.id}>{version.source_name || `数据版本 v${version.version}`} · v{version.version} · {version.row_count} 行 · {version.columns.length} 列</option>)}
             </select>
           </div>
-          <div className="data-annotation__setup-field">
-            <label htmlFor="generic-schema-name">标签 schema 名称</label>
-            <input id="generic-schema-name" aria-label="标签 schema 名称" value={genericSchemaName} onChange={(event) => setGenericSchemaName(event.target.value)} />
-          </div>
-          <div className="data-annotation__setup-field">
-            <label htmlFor="generic-label-key">标签字段</label>
-            <input id="generic-label-key" aria-label="标签字段" value={genericLabelKey} onChange={(event) => setGenericLabelKey(event.target.value)} />
-          </div>
-          <div className="data-annotation__setup-field">
-            <label htmlFor="generic-label-type">标签类型</label>
-            <select id="generic-label-type" aria-label="标签类型" value={genericLabelType} onChange={(event) => setGenericLabelType(event.target.value as typeof genericLabelType)}>
-              <option value="string">字符串</option>
-              <option value="int">整数</option>
-              <option value="float">浮点数</option>
-            </select>
-          </div>
+          {labelMode === "manual" && <>
+            <div className="data-annotation__setup-field">
+              <label htmlFor="generic-schema-name">标签 schema 名称</label>
+              <input id="generic-schema-name" aria-label="标签 schema 名称" value={genericSchemaName} onChange={(event) => setGenericSchemaName(event.target.value)} />
+            </div>
+            <div className="data-annotation__setup-field">
+              <label htmlFor="generic-label-key">标签字段</label>
+              <input id="generic-label-key" aria-label="标签字段" value={genericLabelKey} onChange={(event) => setGenericLabelKey(event.target.value)} />
+            </div>
+            <div className="data-annotation__setup-field">
+              <label htmlFor="generic-label-type">标签类型</label>
+              <select id="generic-label-type" aria-label="标签类型" value={genericLabelType} onChange={(event) => setGenericLabelType(event.target.value as typeof genericLabelType)}>
+                <option value="string">字符串</option>
+                <option value="int">整数</option>
+                <option value="float">浮点数</option>
+              </select>
+            </div>
+          </>}
           {labelMode === "automatic" && <>
             <div className="data-annotation__setup-field">
-              <label htmlFor="generic-model-artifact">模型制品标识</label>
-              <select id="generic-model-artifact" aria-label="模型制品标识" value={genericModelArtifactId} onChange={(event) => setGenericModelArtifactId(event.target.value)} disabled={!genericModelArtifacts.length}>
-                <option value="">选择模型制品</option>
-                {genericModelArtifacts.map((artifact) => <option value={artifact.id} key={artifact.id}>{artifact.name} · {artifact.format || "model"}</option>)}
+              <label htmlFor="generic-model-version">已启用模型版本</label>
+              <select id="generic-model-version" aria-label="已启用模型版本" value={genericModelVersionId} onChange={(event) => setGenericModelVersionId(event.target.value)} disabled={!genericModelVersions.length}>
+                <option value="">选择模型版本</option>
+                {genericModelVersions.map((modelVersion) => <option value={modelVersion.id} key={modelVersion.id}>{modelVersion.model_name} · v{modelVersion.version_number}</option>)}
               </select>
             </div>
+            {selectedGenericModelVersion && <div className="data-annotation__setup-field">
+              <label>冻结标签合同</label>
+              <div className="data-annotation__output-contract" aria-label="冻结标签合同">
+                {selectedGenericOutputColumns.map((column) => <span key={column.machine_key}>{column.display_name} · {column.machine_key} · {column.value_type}</span>)}
+              </div>
+            </div>}
             <div className="data-annotation__setup-field">
-              <label htmlFor="generic-search-strength">搜索强度</label>
-              <select id="generic-search-strength" aria-label="搜索强度" value={genericSearchStrength} onChange={(event) => setGenericSearchStrength(event.target.value)}>
-                <option value="light">轻量</option><option value="balanced">均衡</option><option value="strong">高强度</option><option value="exhaustive">穷举</option>
-              </select>
+              <label htmlFor="generic-enable-clustering"><input id="generic-enable-clustering" aria-label="启用聚类" type="checkbox" checked={genericClustering} onChange={(event) => setGenericClustering(event.target.checked)} />启用聚类</label>
             </div>
-            <div className="data-annotation__setup-field">
-              <label htmlFor="generic-strategy">自动标注策略</label>
-              <select id="generic-strategy" aria-label="自动标注策略" value={genericStrategy} onChange={(event) => setGenericStrategy(event.target.value as typeof genericStrategy)}>
-                <option value="model">模型输出</option>
-                <option value="cluster">聚类</option>
-                <option value="rule">规则</option>
-                <option value="cluster_rule">规则 + 聚类</option>
-              </select>
-            </div>
-            {genericStrategy !== "model" && <div className="data-annotation__setup-field">
-              <label htmlFor="generic-other-value">fallback 标签</label>
-              <input id="generic-other-value" aria-label="fallback 标签" value={genericOtherValue} onChange={(event) => setGenericOtherValue(event.target.value)} placeholder="未命中时的标签" />
-            </div>}
-            {["rule", "cluster_rule"].includes(genericStrategy) && <div className="data-annotation__setup-field">
-              <label htmlFor="generic-rule-column">规则字段</label>
-              <select id="generic-rule-column" aria-label="规则字段" value={genericRuleColumn} onChange={(event) => setGenericRuleColumn(event.target.value)}>
-                <option value="">选择字段</option>
-                {genericVersions.find((item) => item.id === genericVersionId)?.columns.map((column) => <option key={column.name} value={column.name}>{column.name}</option>)}
-              </select>
-            </div>}
-            {["rule", "cluster_rule"].includes(genericStrategy) && <div className="data-annotation__setup-field">
-              <label htmlFor="generic-rule-operator">规则运算符</label>
-              <select id="generic-rule-operator" aria-label="规则运算符" value={genericRuleOperator} onChange={(event) => setGenericRuleOperator(event.target.value)}>
-                <option value="gte">&gt;=</option><option value="gt">&gt;</option><option value="eq">等于</option><option value="lt">&lt;</option><option value="lte">&lt;=</option>
-              </select>
-            </div>}
-            {["rule", "cluster_rule"].includes(genericStrategy) && <div className="data-annotation__setup-field">
-              <label htmlFor="generic-rule-value">规则值</label>
-              <input id="generic-rule-value" aria-label="规则值" value={genericRuleValue} onChange={(event) => setGenericRuleValue(event.target.value)} />
-            </div>}
-            {["rule", "cluster_rule"].includes(genericStrategy) && <div className="data-annotation__setup-field">
-              <label htmlFor="generic-rule-label">命中标签</label>
-              <input id="generic-rule-label" aria-label="命中标签" value={genericRuleLabel} onChange={(event) => setGenericRuleLabel(event.target.value)} />
-            </div>}
           </>}
         </div>
         <div className="data-annotation__setup-field">
@@ -1837,7 +2092,7 @@ export default function DataAnnotationPage() {
           <textarea id="generic-instructions" aria-label="标注说明" value={genericInstructions} onChange={(event) => setGenericInstructions(event.target.value)} rows={4} />
         </div>
         <div className="data-annotation__setup-footer data-annotation__setup-footer--centered">
-          <button type="button" className="ant-btn ant-btn-primary" onClick={() => void createGenericTaskFromSetup()} disabled={!canCreate || !genericVersions.some((item) => item.id === genericVersionId && item.project_id === projectId) || (labelMode === "automatic" && (!genericModelArtifacts.some((item) => item.id === genericModelArtifactId) || (genericStrategy !== "model" && !genericOtherValue.trim()) || (["rule", "cluster_rule"].includes(genericStrategy) && (!genericRuleColumn || !genericRuleValue.trim() || !genericRuleLabel.trim())))) || !genericSchemaName.trim() || !genericLabelKey.trim() || genericCreating}>
+          <button type="button" className="ant-btn ant-btn-primary" onClick={() => void createGenericTaskFromSetup()} disabled={!canCreate || !genericVersions.some((item) => item.id === genericVersionId && item.project_id === projectId) || (labelMode === "automatic" && !selectedGenericModelVersion) || (labelMode === "manual" && (!genericSchemaName.trim() || !genericLabelKey.trim())) || genericCreating}>
             {genericCreating ? "创建中..." : "创建通用任务"}
           </button>
         </div>

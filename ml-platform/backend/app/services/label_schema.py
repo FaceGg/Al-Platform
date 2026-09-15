@@ -191,7 +191,7 @@ def get_current_label_set(db: Session, task_id, sample_id: str) -> CurrentLabelS
     return CurrentLabelSet(dict(current.values or {}), current.revision_no)
 
 
-def create_label_schema(db: Session, *, project_id, name: str, columns) -> LabelSchema:
+def create_label_schema(db: Session, *, project_id, name: str, columns, commit: bool = True) -> LabelSchema:
     latest = db.query(LabelSchema.version).filter(
         LabelSchema.project_id == project_id, LabelSchema.name == name,
     ).order_by(LabelSchema.version.desc()).first()
@@ -210,8 +210,11 @@ def create_label_schema(db: Session, *, project_id, name: str, columns) -> Label
         ):
             if any(value is not None and value != [] for value in config.values()):
                 db.add(LabelValueConstraint(column_id=column.id, kind=kind, config=config))
-    db.commit()
-    db.refresh(schema)
+    if commit:
+        db.commit()
+        db.refresh(schema)
+    else:
+        db.flush()
     return schema
 
 

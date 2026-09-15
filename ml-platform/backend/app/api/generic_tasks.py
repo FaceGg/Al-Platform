@@ -4,12 +4,14 @@ from __future__ import annotations
 
 GENERICIZATION_BRIDGE_ONLY = True
 
+import hashlib
+import json
 import uuid
+from copy import deepcopy
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-import json
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,7 +21,8 @@ from app.models.platform_models import AnnotationTaskRevisionSnapshot, GenericAn
 from app.models.access import AuditEvent
 from app.models.data_version import DatasetSample, DatasetVersion
 from app.models.artifact import Artifact
-from app.models.labeling import LabelSchema
+from app.models.labeling import AnnotationStrategyArtifact, LabelSchema
+from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.project import Project
 from app.models.user import User
 from app.services.annotation_tasks import migrate_legacy_quality_run
@@ -30,7 +33,7 @@ from app.services.annotation_strategies import (
     label_schema_contract_from_snapshot,
     validate_strategy_config,
 )
-from app.services.label_schema import bind_label_schema_to_task, label_schema_snapshot
+from app.services.label_schema import bind_label_schema_to_task, create_label_schema, label_schema_snapshot
 
 router = APIRouter(tags=["generic-tasks"])
 
@@ -39,7 +42,8 @@ class GenericTaskCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     project_id: uuid.UUID
     dataset_version_id: uuid.UUID
-    label_schema_id: uuid.UUID
+    label_schema_id: uuid.UUID | None = None
+    model_version_id: uuid.UUID | None = None
     mode: Literal["manual", "automatic"] = "manual"
     sample_scope: dict = Field(default_factory=lambda: {"kind": "all"})
     label_snapshot: dict = Field(default_factory=dict)
@@ -102,6 +106,226 @@ def _contract_error(request: Request, code: str, message: str, status_code: int 
     )
 
 
+def _model_output_value_type(dtype: object) -> str:
+    normalized = str(dtype or "").strip().lower()
+    if not normalized:
+        raise StrategyConfigError("model output type is missing", "MODEL_OUTPUT_CONTRACT_INVALID")
+    if "int" in normalized or "uint" in normalized:
+        return "int"
+    if any(token in normalized for token in ("float", "double", "decimal", "number")):
+        return "float"
+    if normalized in {"str", "string", "object", "category", "bool", "boolean"}:
+        return "string"
+    raise StrategyConfigError("model output type is unsupported", "MODEL_OUTPUT_CONTRACT_INVALID")
+
+
+def _output_contract_columns(model_version: ModelVersion) -> list[dict[str, object]]:
+    """Normalize old and new registry records into an immutable label contract."""
+    output_schema = dict(model_version.output_schema or {})
+    metadata = dict(model_version.conversion_metadata or {})
+    input_contract = metadata.get("input_contract")
+    input_contract = dict(input_contract) if isinstance(input_contract, dict) else {}
+    target_schema = input_contract.get("target_schema")
+    target_entries = target_schema if isinstance(target_schema, list) else [target_schema]
+    target_by_name = {
+        str(item.get("name")): item
+        for item in target_entries
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    }
+
+    raw_columns = output_schema.get("columns")
+    if not isinstance(raw_columns, list):
+        if output_schema.get("name") and output_schema.get("dtype"):
+            raw_columns = [output_schema]
+        else:
+            target_columns = output_schema.get("target_columns") or input_contract.get("target_columns")
+            if not isinstance(target_columns, list) or not target_columns:
+                raise StrategyConfigError("model output contract has no label columns", "MODEL_OUTPUT_CONTRACT_INVALID")
+            raw_columns = []
+            for name in target_columns:
+                key = str(name or "").strip()
+                source = target_by_name.get(key)
+                if not key or source is None:
+                    raise StrategyConfigError("model output column type is unavailable", "MODEL_OUTPUT_CONTRACT_INVALID")
+                raw_columns.append({
+                    "machine_key": key,
+                    "display_name": source.get("display_name") or key,
+                    "dtype": source.get("dtype"),
+                    "classes": source.get("classes"),
+                })
+
+    columns: list[dict[str, object]] = []
+    keys: set[str] = set()
+    for raw in raw_columns:
+        if not isinstance(raw, dict):
+            raise StrategyConfigError("model output contract column is invalid", "MODEL_OUTPUT_CONTRACT_INVALID")
+        key = str(raw.get("machine_key") or raw.get("name") or "").strip()
+        display_name = str(raw.get("display_name") or raw.get("name") or key).strip()
+        value_type = _model_output_value_type(raw.get("value_type") or raw.get("dtype"))
+        if not key or not display_name or key in keys:
+            raise StrategyConfigError("model output contract has duplicate or empty labels", "MODEL_OUTPUT_CONTRACT_INVALID")
+        keys.add(key)
+        columns.append({
+            "machine_key": key,
+            "display_name": display_name,
+            "value_type": value_type,
+            "required": True,
+        })
+    if not columns:
+        raise StrategyConfigError("model output contract has no label columns", "MODEL_OUTPUT_CONTRACT_INVALID")
+    return columns
+
+
+def _model_output_contract(model_version: ModelVersion, columns: list[dict[str, object]]) -> dict[str, object]:
+    payload = {
+        "model_version_id": str(model_version.id),
+        "registered_model_id": str(model_version.registered_model_id),
+        "model_name": model_version.registered_model.name,
+        "version_number": model_version.version_number,
+        "columns": deepcopy(columns),
+    }
+    canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return {**payload, "contract_hash": "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
+
+
+def _annotation_model_version(db: Session, project_id: uuid.UUID, model_version_id: uuid.UUID) -> ModelVersion:
+    version = db.query(ModelVersion).join(
+        RegisteredModel, ModelVersion.registered_model_id == RegisteredModel.id,
+    ).filter(
+        ModelVersion.id == model_version_id,
+        RegisteredModel.project_id == project_id,
+    ).one_or_none()
+    if version is None:
+        raise StrategyConfigError("model version does not belong to this project", "MODEL_VERSION_NOT_FOUND")
+    if version.approval_status != "approved" or version.lifecycle_state != "enabled":
+        raise StrategyConfigError("model version is not enabled", "MODEL_VERSION_NOT_ENABLED")
+    if version.source_kind != "platform_joblib":
+        raise StrategyConfigError("automatic annotation requires a platform joblib model", "MODEL_SOURCE_UNSUPPORTED")
+    artifact = db.query(Artifact).filter(
+        Artifact.id == version.source_artifact_id,
+        Artifact.project_id == project_id,
+        Artifact.type == "model",
+    ).one_or_none()
+    if artifact is None:
+        raise StrategyConfigError("model version source artifact is unavailable", "MODEL_ARTIFACT_NOT_FOUND")
+    return version
+
+
+def _annotation_model_view(version: ModelVersion) -> dict[str, object]:
+    columns = _output_contract_columns(version)
+    return {
+        "id": str(version.id),
+        "registered_model_id": str(version.registered_model_id),
+        "model_name": version.registered_model.name,
+        "version_number": version.version_number,
+        "algorithm": version.algorithm,
+        "feature_schema": version.feature_schema or [],
+        "output_contract": _model_output_contract(version, columns),
+    }
+
+
+def _automatic_configuration(
+    configuration: dict,
+    model_version: ModelVersion,
+    output_contract: dict[str, object],
+) -> dict:
+    forbidden = {"model_artifact_id", "model_outputs", "feature_importance", "cluster_ids", "model_output_contract", "model_version_id"}
+    supplied = set(configuration)
+    internal = sorted(supplied & forbidden)
+    if internal:
+        raise StrategyConfigError(
+            "automatic model binding is controlled by the server",
+            "AUTOMATIC_CONFIG_INTERNAL_FIELD",
+        )
+    return {
+        **deepcopy(configuration),
+        "model_version_id": str(model_version.id),
+        "model_artifact_id": str(model_version.source_artifact_id),
+        "model_output_contract": output_contract,
+    }
+
+
+def _automatic_schema_name(model_version: ModelVersion) -> str:
+    return f"automatic-output-{model_version.registered_model_id}-{model_version.version_number}"[:128]
+
+
+def _cluster_discovery_ids(db: Session, task: GenericAnnotationTask) -> set[str]:
+    artifacts = db.query(AnnotationStrategyArtifact).filter(
+        AnnotationStrategyArtifact.task_id == task.id,
+    ).order_by(
+        AnnotationStrategyArtifact.task_revision.desc(),
+        AnnotationStrategyArtifact.created_at.desc(),
+    ).all()
+    for artifact in artifacts:
+        payload = dict(artifact.artifact or {})
+        cluster_artifact = payload.get("cluster_artifact")
+        assignments = cluster_artifact.get("assignments") if isinstance(cluster_artifact, dict) else None
+        if payload.get("configuration_complete") is False and isinstance(assignments, dict):
+            return {str(value) for value in assignments.values()}
+    return set()
+
+
+def _validate_automatic_configuration(
+    db: Session,
+    task: GenericAnnotationTask | None,
+    configuration: dict,
+    schema_snapshot: dict,
+    dataset_version: DatasetVersion | None = None,
+) -> None:
+    config = _config_from_snapshot(configuration)
+    schema = label_schema_contract_from_snapshot(schema_snapshot)
+    version = dataset_version or (db.get(DatasetVersion, task.dataset_version_id) if task is not None else None)
+    source_column_types = {
+        str(column.name): str(column.dtype)
+        for column in (version.schema_columns if version is not None else [])
+    }
+    validate_strategy_config(config, schema, source_column_types=source_column_types)
+    if task is not None and config.cluster_discovery:
+        raise StrategyConfigError("create a new automatic task to re-run cluster discovery", "CLUSTER_DISCOVERY_IMMUTABLE")
+    if (
+        task is not None
+        and config.clustering
+        and not config.cluster_discovery
+        and config.strategy in {"cluster", "cluster_rule"}
+    ):
+        known = _cluster_discovery_ids(db, task)
+        selected = {str(value) for value in config.selected_clusters or ()}
+        if not known:
+            raise StrategyConfigError("run a cluster discovery preview before saving mappings", "CLUSTER_DISCOVERY_REQUIRED")
+        if not selected <= known:
+            raise StrategyConfigError("selected cluster is not present in the discovery preview", "CLUSTER_SELECTION_INVALID")
+        for rule in config.rules:
+            rule_clusters = {str(value) for value in rule.get("cluster_ids") or ()}
+            if not rule_clusters <= known:
+                raise StrategyConfigError("rule cluster filter is not present in the discovery preview", "CLUSTER_SELECTION_INVALID")
+
+
+@router.get("/api/projects/{project_id}/annotation-model-versions")
+def list_annotation_model_versions(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _require_project(db, project_id, current_user)
+    versions = db.query(ModelVersion).join(
+        RegisteredModel, ModelVersion.registered_model_id == RegisteredModel.id,
+    ).filter(
+        RegisteredModel.project_id == project_id,
+        ModelVersion.approval_status == "approved",
+        ModelVersion.lifecycle_state == "enabled",
+        ModelVersion.source_kind == "platform_joblib",
+    ).order_by(RegisteredModel.name.asc(), ModelVersion.version_number.desc()).all()
+    items = []
+    for version in versions:
+        try:
+            items.append(_annotation_model_view(version))
+        except StrategyConfigError:
+            # A model lacking a usable persisted output contract must not be
+            # selectable for a task that has to freeze that contract.
+            continue
+    return {"items": items, "total": len(items)}
+
+
 @router.get("/api/annotation-tasks")
 def list_generic_annotation_tasks(
     project_id: uuid.UUID | None = Query(default=None), cursor: str | None = Query(default=None), limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
@@ -145,17 +369,15 @@ def _request_context(request: Request, x_request_id: str | None, idempotency_key
     return idempotency_key
 
 
-def _snapshot_with_configuration(task: GenericAnnotationTask, data: GenericTaskConfigurationUpdate) -> dict:
-    previous = task.task_snapshot or {}
+def _snapshot_with_configuration(task: GenericAnnotationTask, data: GenericTaskConfigurationUpdate, previous: dict, configuration: dict) -> dict:
     snapshot = {
         "dataset_version": dict(previous.get("dataset_version") or {}),
         "sample_ids": list(previous.get("sample_ids") or []),
         "visible_columns": list(data.visible_columns),
         "label_schema": dict(previous.get("label_schema") or task.label_snapshot or {}),
         "instructions": data.instructions,
-        "configuration": dict(data.configuration),
+        "configuration": deepcopy(configuration),
     }
-    import hashlib
     canonical = json.dumps(snapshot, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     snapshot["config_hash"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return snapshot
@@ -173,29 +395,54 @@ def create_generic_annotation_task(
     key = _request_context(request, x_request_id, idempotency_key)
     project_id = data.project_id
     _require_project(db, project_id, current_user)
-    schema = db.get(LabelSchema, data.label_schema_id)
-    if schema is None or schema.project_id != project_id:
-        raise _contract_error(
-            request,
-            "LABEL_SCHEMA_NOT_FOUND",
-            "The label schema does not belong to this project.",
-            status_code=404,
-        )
+    existing = db.query(GenericAnnotationTask).filter(
+        GenericAnnotationTask.idempotency_key == key,
+        GenericAnnotationTask.owner_id == current_user.id,
+    ).first()
+    if existing is not None:
+        return _serialize(db, existing)
     version = db.query(DatasetVersion).filter(DatasetVersion.id == data.dataset_version_id, DatasetVersion.project_id == project_id).one_or_none()
     if version is None:
         raise _contract_error(request, "DATASET_VERSION_NOT_FOUND", "The dataset version does not belong to this project.", status_code=404)
-    if data.mode == "automatic" and data.configuration.get("model_artifact_id") is not None:
+    schema: LabelSchema
+    configuration = deepcopy(data.configuration)
+    if data.mode == "automatic":
         try:
-            model_artifact_id = uuid.UUID(str(data.configuration["model_artifact_id"]))
-        except (TypeError, ValueError, AttributeError) as error:
-            raise _contract_error(request, "MODEL_ARTIFACT_INVALID", "The model artifact id is invalid.", status_code=422) from error
-        model_artifact = db.query(Artifact).filter(
-            Artifact.id == model_artifact_id,
-            Artifact.project_id == project_id,
-            Artifact.type == "model",
-        ).one_or_none()
-        if model_artifact is None:
-            raise _contract_error(request, "MODEL_ARTIFACT_NOT_FOUND", "The model artifact does not belong to this project.", status_code=422)
+            if data.model_version_id is None:
+                raise StrategyConfigError("automatic tasks require an enabled model version", "MODEL_VERSION_REQUIRED")
+            model_version = _annotation_model_version(db, project_id, data.model_version_id)
+            contract_columns = _output_contract_columns(model_version)
+            output_contract = _model_output_contract(model_version, contract_columns)
+            if data.label_schema_id is not None:
+                raise StrategyConfigError("automatic task labels are derived from the model output contract", "AUTOMATIC_SCHEMA_MANAGED")
+            configuration = _automatic_configuration(configuration, model_version, output_contract)
+            _validate_automatic_configuration(
+                db,
+                None,
+                configuration,
+                {"columns": contract_columns},
+                version,
+            )
+            schema = create_label_schema(
+                db,
+                project_id=project_id,
+                name=_automatic_schema_name(model_version),
+                columns=contract_columns,
+                commit=False,
+            )
+        except StrategyConfigError as error:
+            raise _contract_error(request, error.code, str(error), status_code=422) from error
+    else:
+        if data.label_schema_id is None:
+            raise _contract_error(request, "LABEL_SCHEMA_REQUIRED", "A manual task requires a label schema.", status_code=422)
+        schema = db.get(LabelSchema, data.label_schema_id)
+        if schema is None or schema.project_id != project_id:
+            raise _contract_error(
+                request,
+                "LABEL_SCHEMA_NOT_FOUND",
+                "The label schema does not belong to this project.",
+                status_code=404,
+            )
     requested_ids = list(data.sample_scope.get("sample_ids", [])) if data.sample_scope.get("kind") == "ids" else None
     samples_query = db.query(DatasetSample).filter(DatasetSample.dataset_version_id == version.id)
     if requested_ids is not None:
@@ -206,10 +453,7 @@ def create_generic_annotation_task(
     schema_snapshot = label_schema_snapshot(schema)
     if data.mode == "automatic":
         try:
-            validate_strategy_config(
-                _config_from_snapshot(data.configuration),
-                label_schema_contract_from_snapshot(schema_snapshot),
-            )
+            _validate_automatic_configuration(db, None, configuration, schema_snapshot, version)
         except StrategyConfigError as error:
             raise _contract_error(
                 request,
@@ -219,26 +463,28 @@ def create_generic_annotation_task(
             ) from error
     visible_columns = list(data.visible_columns)
     task_snapshot = {
-        "dataset_version": {"id": str(version.id), "version": version.version, "content_hash": version.content_hash, "schema_hash": version.schema_hash},
+        "dataset_version": {
+            "id": str(version.id),
+            "version": version.version,
+            "content_hash": version.content_hash,
+            "schema_hash": version.schema_hash,
+            "columns": [
+                {"name": column.name, "dtype": column.dtype, "nullable": column.nullable, "position": column.position}
+                for column in sorted(version.schema_columns, key=lambda item: item.position)
+            ],
+        },
         "sample_ids": [sample.sample_id for sample in samples],
         "visible_columns": visible_columns,
         "label_schema": schema_snapshot,
         "instructions": data.instructions,
-        "configuration": data.configuration,
+        "configuration": configuration,
     }
-    import hashlib
     canonical = json.dumps(task_snapshot, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     task_snapshot["config_hash"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    existing = db.query(GenericAnnotationTask).filter(
-        GenericAnnotationTask.idempotency_key == key,
-        GenericAnnotationTask.owner_id == current_user.id,
-    ).first()
-    if existing is not None:
-        return _serialize(db, existing)
     task = GenericAnnotationTask(
         project_id=project_id,
         dataset_version_id=data.dataset_version_id,
-        label_schema_id=data.label_schema_id,
+        label_schema_id=schema.id,
         owner_id=current_user.id,
         mode=data.mode,
         status="draft",
@@ -283,8 +529,28 @@ def update_generic_annotation_task_configuration(
         raise _contract_error(request, "TASK_REVISION_CONFLICT", "The task revision has changed.", status_code=409)
     if task.status not in {"draft", "failed", "needs_review"}:
         raise _contract_error(request, "TASK_STATE_INVALID", "The task configuration cannot be changed in its current state.", status_code=409)
-    snapshot = _snapshot_with_configuration(task, data)
+    previous = current_annotation_task_snapshot(db, task)
+    configuration = deepcopy(data.configuration)
+    if task.mode == "automatic":
+        frozen = dict(previous.get("configuration") or {})
+        protected = {key: frozen.get(key) for key in ("model_version_id", "model_artifact_id", "model_output_contract")}
+        for key, value in protected.items():
+            if key in configuration and configuration[key] != value:
+                raise _contract_error(request, "MODEL_VERSION_IMMUTABLE", "The automatic task model version is frozen.", status_code=422)
+        configuration = {**configuration, **protected}
+        try:
+            _validate_automatic_configuration(
+                db,
+                task,
+                configuration,
+                dict(previous.get("label_schema") or task.label_snapshot or {}),
+            )
+        except StrategyConfigError as error:
+            raise _contract_error(request, error.code, str(error), status_code=422) from error
+    snapshot = _snapshot_with_configuration(task, data, previous, configuration)
     task.task_revision += 1
+    if task.status != "draft":
+        task.status = "draft"
     db.add(AnnotationTaskRevisionSnapshot(task_id=task.id, task_revision=task.task_revision, snapshot=snapshot))
     db.add(AuditEvent(
         project_id=task.project_id,

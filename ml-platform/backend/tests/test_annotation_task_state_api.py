@@ -14,6 +14,8 @@ from app.main import app
 from app.models.labeling import LabelColumn, LabelSchema
 from app.models.artifact import Artifact
 from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
+from app.models.model_library import ModelLibrary
+from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.project import Project
 from app.models.platform_models import GenericAnnotationTask, AnnotationTaskPreview
 from app.models.user import User
@@ -82,6 +84,66 @@ class _SessionContext:
 
     def __exit__(self, *_):
         return False
+
+
+def _enabled_annotation_model(db, project, user, *, columns=None):
+    columns = columns or [
+        {"name": "result", "dtype": "object", "task": "classification"},
+        {"name": "score", "dtype": "int64", "task": "classification"},
+    ]
+    source = Artifact(
+        project_id=project.id,
+        name=f"annotation-source-{uuid.uuid4().hex}.joblib",
+        type="model",
+        storage_path="annotation-source.joblib",
+        format="joblib",
+    )
+    converted = Artifact(
+        project_id=project.id,
+        name=f"annotation-source-{uuid.uuid4().hex}.onnx",
+        type="model",
+        storage_path="annotation-source.onnx",
+        format="onnx",
+    )
+    library = ModelLibrary(
+        name=f"annotation-library-{uuid.uuid4().hex[:8]}",
+        project_id=project.id,
+        owner_id=user.id,
+        status="completed",
+        format="joblib",
+        model_artifact_id=source.id,
+    )
+    model = RegisteredModel(
+        project_id=project.id,
+        name=f"annotation-model-{uuid.uuid4().hex[:8]}",
+        created_by_id=user.id,
+    )
+    db.add_all([source, converted, library, model])
+    db.flush()
+    target_columns = [column["name"] for column in columns]
+    version = ModelVersion(
+        registered_model_id=model.id,
+        version_number=1,
+        source_kind="platform_joblib",
+        source_model_library_id=library.id,
+        source_artifact_id=source.id,
+        onnx_artifact_id=converted.id,
+        framework="sklearn",
+        algorithm="contract-test",
+        feature_schema=[{"name": "feature", "dtype": "float64"}],
+        output_schema={"task_type": "multioutput_classification", "target_columns": target_columns},
+        conversion_metadata={"input_contract": {
+            "input_columns": ["feature"],
+            "target_columns": target_columns,
+            "target_schema": columns,
+        }},
+        approval_status="approved",
+        lifecycle_state="enabled",
+        created_by_id=user.id,
+    )
+    db.add(version)
+    db.flush()
+    return version, source
 
 
 def test_preview_transition_and_stale_preview_errors(monkeypatch):
@@ -172,6 +234,7 @@ def test_project_dataset_versions_lists_generic_creation_inputs():
         assert response.json()["items"] == [{
             "id": str(version.id),
             "project_id": str(project.id),
+            "source_name": None,
             "version": 2,
             "status": "ready",
             "row_count": 3,
@@ -195,10 +258,6 @@ def test_task_creation_freezes_server_owned_snapshot():
     project = Project(name="Snapshot project", owner_id=user.id)
     db.add(project)
     db.flush()
-    schema = LabelSchema(project_id=project.id, name="snapshot-labels", version=1, status="active")
-    db.add(schema)
-    db.flush()
-    db.add(LabelColumn(schema_id=schema.id, machine_key="result", display_name="Result", ordinal=0, value_type="string"))
     version = DatasetVersion(project_id=project.id, operator_id=user.id, version=1, row_count=2, column_count=2, content_hash="sha256:data", schema_hash="sha256:schema")
     db.add(version)
     db.flush()
@@ -208,21 +267,27 @@ def test_task_creation_freezes_server_owned_snapshot():
         DatasetSample(dataset_version_id=version.id, sample_id="s-1", row_index=0, values={"feature": 1}),
         DatasetSample(dataset_version_id=version.id, sample_id="s-2", row_index=1, values={"feature": 2}),
     ])
+    model_version, source_artifact = _enabled_annotation_model(db, project, user)
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: user
     client = TestClient(app)
     try:
         request_id = str(uuid.uuid4())
-        response = client.post("/api/annotation-tasks", headers={"X-Request-ID": request_id, "Idempotency-Key": str(uuid.uuid4())}, json={"project_id": str(project.id), "dataset_version_id": str(version.id), "label_schema_id": str(schema.id), "mode": "automatic", "sample_scope": {"kind": "ids", "sample_ids": ["s-2"]}, "visible_columns": ["feature"], "instructions": "Review selected rows", "configuration": {"strategy": "model"}, "label_snapshot": {"client": "ignored"}})
+        response = client.post("/api/annotation-tasks", headers={"X-Request-ID": request_id, "Idempotency-Key": str(uuid.uuid4())}, json={"project_id": str(project.id), "dataset_version_id": str(version.id), "model_version_id": str(model_version.id), "mode": "automatic", "sample_scope": {"kind": "ids", "sample_ids": ["s-2"]}, "visible_columns": ["feature"], "instructions": "Review selected rows", "configuration": {"strategy": "model"}, "label_snapshot": {"client": "ignored"}})
         assert response.status_code == 201, response.text
         snapshot = response.json()["task_snapshot"]
         assert snapshot["dataset_version"]["id"] == str(version.id)
         assert snapshot["sample_ids"] == ["s-2"]
         assert snapshot["visible_columns"] == ["feature"]
-        assert snapshot["label_schema"]["schema_id"] == str(schema.id)
+        assert [column["machine_key"] for column in snapshot["label_schema"]["columns"]] == ["result", "score"]
+        assert [column["value_type"] for column in snapshot["label_schema"]["columns"]] == ["string", "int"]
+        assert all(column["required"] is True for column in snapshot["label_schema"]["columns"])
         assert snapshot["instructions"] == "Review selected rows"
-        assert snapshot["configuration"] == {"strategy": "model"}
+        assert snapshot["configuration"]["strategy"] == "model"
+        assert snapshot["configuration"]["model_version_id"] == str(model_version.id)
+        assert snapshot["configuration"]["model_artifact_id"] == str(source_artifact.id)
+        assert [column["machine_key"] for column in snapshot["configuration"]["model_output_contract"]["columns"]] == ["result", "score"]
         assert snapshot["config_hash"].startswith("sha256:")
         assert "client" not in snapshot["label_schema"]
     finally:
@@ -239,25 +304,24 @@ def test_configuration_update_creates_new_revision_and_invalidates_old_preview()
     db.add(user); db.flush()
     project = Project(name="Config update project", owner_id=user.id)
     db.add(project); db.flush()
-    schema = LabelSchema(project_id=project.id, name="config-labels", version=1, status="active")
-    db.add(schema); db.flush()
-    db.add(LabelColumn(schema_id=schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"))
     version = DatasetVersion(project_id=project.id, operator_id=user.id, version=1, row_count=1, column_count=1, content_hash="sha256:config-data", schema_hash="sha256:config-schema")
     db.add(version); db.flush()
-    db.add(DatasetSample(dataset_version_id=version.id, sample_id="sample-1", row_index=0, values={"feature": 1.0})); db.commit()
+    db.add(DatasetSample(dataset_version_id=version.id, sample_id="sample-1", row_index=0, values={"feature": 1.0}))
+    model_version, _source_artifact = _enabled_annotation_model(db, project, user, columns=[{"name": "label", "dtype": "object", "task": "classification"}])
+    db.commit()
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: user
     client = TestClient(app)
     try:
         headers = {"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": str(uuid.uuid4())}
-        created = client.post("/api/annotation-tasks", headers=headers, json={"project_id": str(project.id), "dataset_version_id": str(version.id), "label_schema_id": str(schema.id), "mode": "automatic", "sample_scope": {"kind": "all"}, "configuration": {"strategy": "model", "search_strength": "standard"}})
+        created = client.post("/api/annotation-tasks", headers=headers, json={"project_id": str(project.id), "dataset_version_id": str(version.id), "model_version_id": str(model_version.id), "mode": "automatic", "sample_scope": {"kind": "all"}, "configuration": {"strategy": "model"}})
         assert created.status_code == 201, created.text
         task_id = created.json()["id"]
         old_preview = client.post(f"/api/annotation-tasks/{task_id}/preview", json={"task_revision": 0, "config_hash": created.json()["task_snapshot"]["config_hash"]})
         assert old_preview.status_code == 202
         db.get(GenericAnnotationTask, uuid.UUID(task_id)).status = "failed"
         db.commit()
-        updated = client.put(f"/api/annotation-tasks/{task_id}/configuration", json={"task_revision": 0, "visible_columns": ["feature"], "instructions": "updated", "configuration": {"strategy": "model", "search_strength": "strong"}})
+        updated = client.put(f"/api/annotation-tasks/{task_id}/configuration", json={"task_revision": 0, "visible_columns": ["feature"], "instructions": "updated", "configuration": {"strategy": "model"}})
         assert updated.status_code == 200, updated.text
         assert updated.json()["task_revision"] == 1
         assert updated.json()["task_snapshot"]["config_hash"] != created.json()["task_snapshot"]["config_hash"]
@@ -342,7 +406,13 @@ def test_automatic_preview_detail_exposes_strategy_summary_without_sample_proven
             "sample_ids": ["strategy-sample"],
             "visible_columns": ["feature"],
             "label_schema": {"columns": [{"machine_key": "label", "value_type": "string", "required": False}]},
-            "configuration": {"clustering": True, "strategy": "cluster", "cluster_labels": {}, "other_values": {"label": "other"}, "model_outputs": {"strategy-sample": {"label": "a"}}},
+                "configuration": {
+                    "clustering": True,
+                    "cluster_discovery": True,
+                    "feature_importance": [1.0],
+                    "cluster_ids": {"strategy-sample": 0},
+                    "model_outputs": {"strategy-sample": {"label": "a"}},
+                },
         },
     )
     db.add(task)
@@ -358,8 +428,10 @@ def test_automatic_preview_detail_exposes_strategy_summary_without_sample_proven
         execute_annotation_preview.run(str(task.id), preview.json()["preview_id"], str(user.id))
         detail = client.get(f"/api/annotation-tasks/{task.id}/previews/{preview.json()['preview_id']}")
         assert detail.status_code == 200, detail.text
-        assert detail.json()["summary"]["strategy"] == "cluster"
-        assert detail.json()["summary"]["needs_review_count"] == 1
+        assert detail.json()["summary"]["strategy"] == "cluster_discovery"
+        assert detail.json()["summary"]["needs_review_count"] == 0
+        assert detail.json()["summary"]["configuration_complete"] is False
+        assert detail.json()["summary"]["clusters"] == [{"cluster_id": 0, "sample_count": 1}]
         assert "provenance" not in detail.json()["summary"]
     finally:
         app.dependency_overrides.clear()
@@ -367,7 +439,7 @@ def test_automatic_preview_detail_exposes_strategy_summary_without_sample_proven
         engine.dispose()
 
 
-def test_automatic_task_rejects_model_artifact_from_another_project():
+def test_automatic_task_rejects_client_supplied_model_artifact():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine, expire_on_commit=False)()
@@ -378,16 +450,13 @@ def test_automatic_task_rejects_model_artifact_from_another_project():
     other_project = Project(name="Other artifact project", owner_id=user.id)
     db.add_all([project, other_project])
     db.flush()
-    schema = LabelSchema(project_id=project.id, name="artifact-contract-labels", version=1, status="active")
-    db.add(schema)
-    db.flush()
-    db.add(LabelColumn(schema_id=schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"))
     version = DatasetVersion(project_id=project.id, operator_id=user.id, version=1, row_count=1, column_count=1, content_hash="sha256:artifact-contract", schema_hash="sha256:artifact-contract-schema")
     foreign_artifact = Artifact(project_id=other_project.id, name="foreign-model", type="model", storage_path="missing.joblib", format="joblib")
     db.add_all([version, foreign_artifact])
     db.flush()
     db.add(DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False))
     db.add(DatasetSample(dataset_version_id=version.id, sample_id="artifact-contract-sample", row_index=0, values={"feature": 1.0}))
+    model_version, _source_artifact = _enabled_annotation_model(db, project, user, columns=[{"name": "label", "dtype": "object", "task": "classification"}])
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: user
@@ -399,14 +468,14 @@ def test_automatic_task_rejects_model_artifact_from_another_project():
             json={
                 "project_id": str(project.id),
                 "dataset_version_id": str(version.id),
-                "label_schema_id": str(schema.id),
+                "model_version_id": str(model_version.id),
                 "mode": "automatic",
                 "sample_scope": {"kind": "all"},
                 "configuration": {"model_artifact_id": str(foreign_artifact.id), "clustering": False, "strategy": "model"},
             },
         )
         assert response.status_code == 422
-        assert response.json()["detail"]["code"] == "MODEL_ARTIFACT_NOT_FOUND"
+        assert response.json()["detail"]["code"] == "AUTOMATIC_CONFIG_INTERNAL_FIELD"
     finally:
         app.dependency_overrides.clear()
         db.close()
@@ -423,10 +492,6 @@ def test_automatic_task_rejects_invalid_strategy_before_persisting():
     project = Project(name="Strategy contract project", owner_id=user.id)
     db.add(project)
     db.flush()
-    schema = LabelSchema(project_id=project.id, name="strategy-contract-labels", version=1, status="active")
-    db.add(schema)
-    db.flush()
-    db.add(LabelColumn(schema_id=schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"))
     version = DatasetVersion(
         project_id=project.id,
         operator_id=user.id,
@@ -439,6 +504,7 @@ def test_automatic_task_rejects_invalid_strategy_before_persisting():
     db.add(version)
     db.flush()
     db.add(DatasetSample(dataset_version_id=version.id, sample_id="strategy-contract-sample", row_index=0, values={"feature": 1.0}))
+    model_version, _source_artifact = _enabled_annotation_model(db, project, user, columns=[{"name": "label", "dtype": "object", "task": "classification"}])
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: user
@@ -450,7 +516,7 @@ def test_automatic_task_rejects_invalid_strategy_before_persisting():
             json={
                 "project_id": str(project.id),
                 "dataset_version_id": str(version.id),
-                "label_schema_id": str(schema.id),
+                "model_version_id": str(model_version.id),
                 "sample_scope": {"kind": "all"},
                 "configuration": {
                     "clustering": True,
