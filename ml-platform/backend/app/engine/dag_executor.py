@@ -77,6 +77,7 @@ class DAGExecutor:
         self, nodes: list[dict], edges: list[dict], artifact_service=None,
         project_id: str | None = None,
         workflow_id: str | None = None,
+        operator_id: str | None = None,
     ):
         self._nodes = nodes
         self._edges = edges
@@ -86,6 +87,7 @@ class DAGExecutor:
         self._artifact_service = artifact_service
         self._project_id = project_id
         self._workflow_id = workflow_id
+        self._operator_id = operator_id
 
         for node in nodes:
             self._graph.add_node(
@@ -316,6 +318,11 @@ class DAGExecutor:
                 run_id=run_id,
                 node_id=node_id,
             )
+            if draft.type == "dataset" and (draft.metadata or {}).get("source") == "workflow_export":
+                self._artifact_service.create_dataset_version_from_artifact(
+                    artifact,
+                    operator_id=self._operator_id,
+                )
             references.append({
                 "artifact_id": str(artifact.id),
                 "name": artifact.name,

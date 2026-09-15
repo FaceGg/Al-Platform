@@ -810,4 +810,5 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 修复：时间断言改为只验证稳定的日期部分；删除阻断断言恢复为后端错误消息。未改变产品代码、删除保护或 API 合同。
 - 验证：本地 `DataManagePage.test.tsx` **6 passed**；Run `34913126000` 的失败证据已通过 `gh run view --log-failed` 核实。修复后的提交需重新执行 `mode=full`，Task 14 继续 `in_progress`。
 - 2026-09-15：工作流算子补充了 `select_attributes` 多列选择和未知列显式校验；新增固定输入变量 `df`、固定输出变量 `result` 的 `python_script` 算子，支持前端在线编辑及 `.py` 文本上传，并加入脚本 AST 禁止项、长度和输出规模限制。旧 `execute_python` 保留兼容；后端与前端聚焦回归、前端生产构建已验证，完整工作流运行态和浏览器验收未在本轮执行。
+- 2026-09-15：修复工作流导出数据无法用于通用标注任务的问题。工作流 `dataset` artifact 现在同步创建 `DatasetVersion`、schema、samples 和 import 记录；数据版本列表接口还会幂等补建历史 `workflow_export` artifact，因此已有的 `featured.csv` 无需重新上传即可进入选择器。WSL Python 编译通过；后端 pytest 因环境缺少 pytest 未执行。
 - 2026-09-15：修复前端 Dockerfile 的依赖安装命令：`npm ci --production=false` 改为 `npm ci --include=dev --audit=false`。原因是锁文件使用的 npm 镜像未实现 audit API，容器内 npm 安装阶段因此以 404 退出；宿主机依赖安装和 `git diff --check` 已验证，当前 Windows 环境没有 Docker CLI/daemon，镜像构建和 Compose 运行态仍待在 WSL/Docker 环境复验。

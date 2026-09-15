@@ -143,6 +143,30 @@ def list_project_dataset_versions(
     current_user: User = Depends(get_current_user),
 ):
     project = require_project_access(db, project_id, current_user.id, "project.read").project
+    # Backfill workflow-export artifacts created before workflow outputs were
+    # registered as immutable dataset versions.
+    workflow_artifacts = (
+        db.query(Artifact)
+        .filter(Artifact.project_id == project.id, Artifact.type == "dataset")
+        .all()
+    )
+    existing_artifact_ids = {
+        item[0] for item in db.query(DatasetVersion.original_artifact_id)
+        .filter(DatasetVersion.project_id == project.id)
+        .all()
+        if item[0] is not None
+    }
+    backfill_service = build_artifact_service(db)
+    for artifact in workflow_artifacts:
+        if (
+            artifact.id not in existing_artifact_ids
+            and (artifact.metadata_ or {}).get("source") == "workflow_export"
+        ):
+            backfill_service.create_dataset_version_from_artifact(
+                artifact,
+                operator_id=project.owner_id,
+            )
+    db.commit()
     versions = (
         db.query(DatasetVersion)
         .filter(DatasetVersion.project_id == project.id)
