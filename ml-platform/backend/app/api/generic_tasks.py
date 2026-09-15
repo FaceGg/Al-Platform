@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
+from app.api.project_security import require_project_access
 from app.database import get_db
 from app.models.platform_models import AnnotationTaskRevisionSnapshot, GenericAnnotationTask
 from app.models.access import AuditEvent
@@ -394,14 +395,18 @@ def create_generic_annotation_task(
 ):
     key = _request_context(request, x_request_id, idempotency_key)
     project_id = data.project_id
-    _require_project(db, project_id, current_user)
+    require_project_access(db, project_id, current_user.id, "resource.create")
     existing = db.query(GenericAnnotationTask).filter(
         GenericAnnotationTask.idempotency_key == key,
         GenericAnnotationTask.owner_id == current_user.id,
     ).first()
     if existing is not None:
         return _serialize(db, existing)
-    version = db.query(DatasetVersion).filter(DatasetVersion.id == data.dataset_version_id, DatasetVersion.project_id == project_id).one_or_none()
+    version = db.query(DatasetVersion).filter(
+        DatasetVersion.id == data.dataset_version_id,
+        DatasetVersion.project_id == project_id,
+        DatasetVersion.status == "ready",
+    ).one_or_none()
     if version is None:
         raise _contract_error(request, "DATASET_VERSION_NOT_FOUND", "The dataset version does not belong to this project.", status_code=404)
     schema: LabelSchema

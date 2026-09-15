@@ -41,6 +41,7 @@ from app.services.automl_search import (
 )
 from app.services.automl_catalog import resolve_algorithm_families
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
+from app.services.data_import import DataImportError, require_ready_dataset_artifact
 from app.services.automl_report import AutoMLReportError, generate_automl_report
 from app.services.experiment_tracking import TrackingError
 from app.services.iterative_training import IncompatibleCheckpoint, TrainingCheckpoint, TrainingConfig
@@ -266,8 +267,11 @@ def start_training(
             dataset = artifact_service.resolve(
                 data.dataset_artifact_id, data.project_id, expected_type="dataset",
             )
+            require_ready_dataset_artifact(db, dataset.id, project_id=data.project_id)
         except (ValueError, ArtifactAccessError) as error:
             raise HTTPException(400, _error("DATASET_ARTIFACT_INVALID", str(error))) from error
+        except DataImportError as error:
+            raise HTTPException(409, _error(error.code, str(error))) from error
 
         monitor = data.monitor or (
             "val_r2" if data.task == "regression" else "val_accuracy"
@@ -695,8 +699,11 @@ def start_automl(
             dataset = artifact_service.resolve(
                 data.dataset_artifact_id, data.project_id, expected_type="dataset",
             )
+            require_ready_dataset_artifact(db, dataset.id, project_id=data.project_id)
         except (ValueError, ArtifactAccessError) as error:
             raise HTTPException(400, _error("DATASET_ARTIFACT_INVALID", str(error))) from error
+        except DataImportError as error:
+            raise HTTPException(409, _error(error.code, str(error))) from error
         try:
             with artifact_service.materialize(
                 dataset.id,

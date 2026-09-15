@@ -48,6 +48,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile
+      network: host
     command: ["alembic", "upgrade", "head"]
     environment: &production-environment
       APP_MODE: production
@@ -98,7 +99,9 @@ services:
       - /bin/sh
       - -c
       - >-
-        pip install --retries 10 --timeout 120 "psycopg[binary]"
+        pip install --no-index --no-deps --force-reinstall
+        /opt/mlflow-wheel/psycopg-3.3.5-py3-none-any.whl
+        /opt/mlflow-wheel/psycopg_binary-3.3.5-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
         &&
         mlflow server
         --host 0.0.0.0
@@ -113,13 +116,15 @@ services:
       MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL:-http://minio:9000}
       AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?set MINIO_ACCESS_KEY}
       AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY}
+    volumes:
+      - /home/jingms/mlflow-wheel:/opt/mlflow-wheel:ro
     expose:
       - "5000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+      interval: 10s
+      timeout: 10s
+      retries: 60
     depends_on:
       postgres:
         condition: service_healthy
@@ -131,6 +136,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.tensorboard
+      network: host
     environment:
       TENSORBOARD_SESSION_SECRET: ${TENSORBOARD_SESSION_SECRET:?set TENSORBOARD_SESSION_SECRET}
       TENSORBOARD_SESSION_TTL_SECONDS: ${TENSORBOARD_SESSION_TTL_SECONDS:-300}
@@ -151,6 +157,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.inference
+      network: host
     environment:
       APP_MODE: production
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
@@ -203,6 +210,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile
+      network: host
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     environment:
@@ -249,6 +257,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.worker
+      network: host
     environment: *production-environment
     volumes:
       - tensorboard-events:/var/lib/tensorboard/runs
@@ -270,6 +279,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.worker
+      network: host
     command:
       - celery
       - -A

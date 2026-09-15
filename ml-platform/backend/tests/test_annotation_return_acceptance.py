@@ -1,4 +1,5 @@
 import uuid
+import pytest
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -21,10 +22,26 @@ from app.models.notifications import InAppNotification
 from app.models.platform_models import GenericAnnotationTask
 from app.models.project import Project
 from app.models.user import User
-from app.services.annotation_returns import accept_return_batch, reject_return_batch
+from app.services.annotation_returns import AnnotationReturnError, accept_return_batch, reject_return_batch
 
 
-def _fixture():
+def test_return_batch_cursor_must_belong_to_requested_project():
+    from app.services.annotation_returns import list_return_batches
+
+    engine, db, admin, _, project, _, _, batch = _fixture()
+    try:
+        other = Project(name="Other return project", owner_id=admin.id)
+        db.add(other)
+        db.commit()
+        with pytest.raises(AnnotationReturnError, match="INVALID_CURSOR"):
+            list_return_batches(db, other.id, cursor=str(batch.id))
+        assert list_return_batches(db, project.id)["items"][0]["id"] == str(batch.id)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def _fixture(source_result_type=None):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -45,7 +62,7 @@ def _fixture():
         operator_id=admin.id,
         version=1,
         row_count=2,
-        column_count=1,
+        column_count=2 if source_result_type else 1,
         content_hash="sha256:source",
         schema_hash="sha256:source-schema",
         parse_contract={"source_format": "csv"},
@@ -59,9 +76,15 @@ def _fixture():
         dtype="int64",
         nullable=False,
     ))
+    previous_labels = {"result": "old" if source_result_type in {"string", "object"} else 1} if source_result_type else {}
+    if source_result_type:
+        db.add(DatasetSchemaColumn(
+            dataset_version_id=source.id, name="result", position=1,
+            dtype=source_result_type, nullable=False,
+        ))
     db.add_all([
-        DatasetSample(dataset_version_id=source.id, sample_id="sample-1", row_index=0, values={"feature": 1}),
-        DatasetSample(dataset_version_id=source.id, sample_id="sample-2", row_index=1, values={"feature": 2}),
+        DatasetSample(dataset_version_id=source.id, sample_id="sample-1", row_index=0, values={"feature": 1, **previous_labels}),
+        DatasetSample(dataset_version_id=source.id, sample_id="sample-2", row_index=1, values={"feature": 2, **previous_labels}),
     ])
     schema = LabelSchema(project_id=project.id, name="return-labels", version=1, status="active")
     db.add(schema)
@@ -115,6 +138,38 @@ def _fixture():
     db.add(batch)
     db.commit()
     return engine, db, admin, annotator_user, project, source, assignment, batch
+
+
+@pytest.mark.parametrize("source_dtype", ["string", "object"])
+def test_return_overwrites_same_type_label_in_new_version_only(source_dtype):
+    engine, db, admin, _, _, source, _, batch = _fixture(source_dtype)
+    try:
+        accepted = accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
+        columns = db.query(DatasetSchemaColumn).filter_by(dataset_version_id=accepted.id).order_by(DatasetSchemaColumn.position).all()
+        assert [(column.name, column.dtype) for column in columns] == [("feature", "int64"), ("result", source_dtype)]
+        assert accepted.column_count == 2
+        assert db.query(DatasetSample).filter_by(dataset_version_id=accepted.id, sample_id="sample-1").one().values == {"feature": 1, "result": "pass"}
+        assert db.query(DatasetSample).filter_by(dataset_version_id=source.id, sample_id="sample-1").one().values == {"feature": 1, "result": "old"}
+        repeated = accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
+        assert repeated.id == accepted.id
+        assert db.query(DatasetVersion).count() == 2
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_return_rejects_same_name_different_type_without_partial_version():
+    engine, db, admin, _, _, source, _, batch = _fixture("int64")
+    try:
+        with pytest.raises(AnnotationReturnError) as error:
+            accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
+        assert error.value.code == "RETURN_LABEL_COLUMN_TYPE_MISMATCH"
+        assert db.query(DatasetVersion).count() == 1
+        assert db.get(AnnotationReturnBatch, batch.id).state == "pending"
+        assert db.query(DatasetSample).filter_by(dataset_version_id=source.id, sample_id="sample-1").one().values == {"feature": 1, "result": 1}
+    finally:
+        db.close()
+        engine.dispose()
 
 
 def test_return_batch_list_is_project_scoped_cursor_paged_and_stable():

@@ -34,6 +34,7 @@ from app.services.annotation_concurrency import (
     return_assignment,
     save_labels,
 )
+from app.services.annotation_task_state import current_annotation_task_snapshot
 from app.services.security import PASSWORD_RESET_LIMIT, enforce_rate_limit
 
 router = APIRouter(tags=["annotator-auth"])
@@ -202,6 +203,7 @@ def _assignment_for_subject(db: Session, task_id: uuid.UUID, subject_id: uuid.UU
 
 def _task_view(task: GenericAnnotationTask, assignment: AnnotationAssignment, db: Session) -> dict[str, Any]:
     rows = db.query(AnnotationAssignmentSample).filter_by(assignment_id=assignment.id).all()
+    snapshot = current_annotation_task_snapshot(db, task)
     return {
         "id": str(task.id),
         "title": f"Annotation task {str(task.id)[:8]}",
@@ -215,6 +217,9 @@ def _task_view(task: GenericAnnotationTask, assignment: AnnotationAssignment, db
         "total_samples": len(rows),
         "completed_samples": sum(1 for row in rows if row.values),
         "state": assignment.state,
+        "label_schema": snapshot.get("label_schema") or {"columns": []},
+        "instructions": snapshot.get("instructions") or "",
+        "visible_columns": list(snapshot.get("visible_columns") or []),
     }
 
 
@@ -286,6 +291,7 @@ def internal_portal_samples(
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
     _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id)
+    snapshot = current_annotation_task_snapshot(db, task)
     query = db.query(AnnotationAssignmentSample).filter(
         AnnotationAssignmentSample.assignment_id == assignment.id,
     ).order_by(AnnotationAssignmentSample.sample_id.asc())
@@ -298,8 +304,12 @@ def internal_portal_samples(
     has_next = len(rows) > limit
     rows = rows[:limit]
     source_ids = [row.sample_id for row in rows]
+    visible_columns = set(snapshot.get("visible_columns") or [])
     source_by_id = {
-        row.sample_id: row.values or {}
+        row.sample_id: {
+            key: value for key, value in (row.values or {}).items()
+            if key in visible_columns
+        }
         for row in db.query(DatasetSample).filter(
             DatasetSample.dataset_version_id == task.dataset_version_id,
             DatasetSample.sample_id.in_(source_ids),
@@ -349,7 +359,11 @@ def internal_portal_save_labels(
                 "diff_summary": result.diff_summary,
             },
         )
-    return {"values": result.values, "revision": result.revision_no}
+    return {
+        "values": result.values,
+        "revision": result.revision_no,
+        "task_revision": assignment.task_revision,
+    }
 
 
 @router.post("/api/internal/portal/tasks/{task_id}/bulk-labels")

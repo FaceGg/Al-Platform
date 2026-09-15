@@ -50,7 +50,7 @@ from app.models.platform_models import (
     OrchestrationApp,
     OrchestrationVersion,
 )
-from app.models.data_version import DatasetVersion, DatasetSchemaColumn, DatasetSample, DatasetImport
+from app.models.data_version import DatasetVersion, DatasetSchemaColumn, DatasetSample, DatasetImport, DatasetImportProcess
 from app.models.annotator import AnnotatorAccount, AnnotatorSession, AnnotatorSubjectMapping, ProjectAnnotatorGrant
 from app.models.labeling import (LabelSchema, LabelColumn, LabelValueConstraint, AnnotationTaskLabel, AnnotationSampleCurrent, AnnotationRevision, AnnotationComment, AnnotationConfirmation, AnnotationStrategyArtifact, AnnotationAssignment, AnnotationAssignmentSample, AnnotationReturnBatch)
 from app.models.spot_weld_quality import (
@@ -123,6 +123,7 @@ __all__ = [
     "DatasetSchemaColumn",
     "DatasetSample",
     "DatasetImport",
+    "DatasetImportProcess",
     "AnnotatorAccount",
     "AnnotatorSession",
     "AnnotatorSubjectMapping",

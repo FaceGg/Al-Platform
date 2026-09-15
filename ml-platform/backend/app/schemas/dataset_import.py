@@ -17,3 +17,10 @@ class ParseOptions(BaseModel):
     delimiter: str = ","
     has_header: bool = True
     sheet_name: int | str = 0
+
+
+class ConfirmSchemaRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_definition: list[dict] = Field(alias="schema")
+    sample_id_column: str | None = None

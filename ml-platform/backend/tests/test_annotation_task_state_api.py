@@ -19,6 +19,58 @@ from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.project import Project
 from app.models.platform_models import GenericAnnotationTask, AnnotationTaskPreview
 from app.models.user import User
+from app.models.access import ProjectMember
+
+
+@pytest.mark.parametrize("role,expected_status", [("editor", 201), ("viewer", 403), ("outsider", 404)])
+def test_annotation_draft_creation_uses_project_permission(role, expected_status):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    owner = User(username=f"draft-owner-{uuid.uuid4().hex}", password_hash="hash")
+    member = User(username=f"draft-member-{uuid.uuid4().hex}", password_hash="hash")
+    db.add_all([owner, member])
+    db.flush()
+    project = Project(name="Draft permissions", owner_id=owner.id)
+    db.add(project)
+    db.flush()
+    if role != "outsider":
+        db.add(ProjectMember(project_id=project.id, user_id=member.id, role=role, created_by=owner.id))
+    version = DatasetVersion(
+        project_id=project.id, operator_id=owner.id, version=1,
+        row_count=1, column_count=1, content_hash="sha256:data", schema_hash="sha256:schema",
+    )
+    schema = LabelSchema(project_id=project.id, name="draft-labels", version=1, status="active")
+    db.add_all([version, schema])
+    db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="s-1", row_index=0, values={"feature": 1.0}),
+        LabelColumn(schema_id=schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"),
+    ])
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: member
+    try:
+        request_id = str(uuid.uuid4())
+        response = TestClient(app).post(
+            "/api/annotation-tasks",
+            headers={"X-Request-ID": request_id, "Idempotency-Key": f"draft-{request_id}"},
+            json={"project_id": str(project.id), "dataset_version_id": str(version.id),
+                  "label_schema_id": str(schema.id), "mode": "manual"},
+        )
+        assert response.status_code == expected_status, response.text
+        if expected_status == 201:
+            created = db.get(GenericAnnotationTask, uuid.UUID(response.json()["id"]))
+            assert created.status == "draft"
+            assert created.owner_id == member.id
+            assert created.project_id == project.id
+        else:
+            assert db.query(GenericAnnotationTask).count() == 0
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
 
 
 @pytest.fixture(autouse=True)

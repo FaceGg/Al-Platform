@@ -69,7 +69,7 @@ def portal_fixture():
     )
     db.add_all(
         [
-            DatasetSample(dataset_version_id=dataset.id, sample_id="sample-1", row_index=0, values={"feature": 1}),
+            DatasetSample(dataset_version_id=dataset.id, sample_id="sample-1", row_index=0, values={"feature": 1, "private_note": "not authorized"}),
             DatasetSample(dataset_version_id=dataset.id, sample_id="sample-2", row_index=1, values={"feature": 2}),
         ]
     )
@@ -123,7 +123,17 @@ def portal_fixture():
         task_revision=3,
         sample_scope={"kind": "ids", "sample_ids": ["sample-1", "sample-2"]},
         label_snapshot={"columns": [{"machine_key": "label", "value_type": "string", "required": True}]},
-        task_snapshot={"sample_ids": ["sample-1", "sample-2"], "visible_columns": ["feature"]},
+        task_snapshot={
+            "sample_ids": ["sample-1", "sample-2"],
+            "visible_columns": ["feature"],
+            "instructions": "Use the frozen rubric.",
+            "label_schema": {
+                "columns": [{
+                    "machine_key": "label", "display_name": "Frozen label",
+                    "value_type": "string", "required": True, "max_length": 128,
+                }],
+            },
+        },
     )
     db.add(task)
     db.flush()
@@ -239,7 +249,7 @@ def test_internal_portal_label_write_returns_complete_revision_conflict(portal_f
         json={"values": {"label": "new"}, "base_revision": 3},
     )
     assert saved.status_code == 200, saved.text
-    assert saved.json() == {"values": {"label": "new"}, "revision": 4}
+    assert saved.json() == {"values": {"label": "new"}, "revision": 4, "task_revision": 4}
 
     conflict = client.put(
         path,
@@ -249,6 +259,47 @@ def test_internal_portal_label_write_returns_complete_revision_conflict(portal_f
     assert conflict.status_code == 409, conflict.text
     assert conflict.json()["detail"]["code"] == "REVISION_CONFLICT"
     assert conflict.json()["detail"]["current_values"] == {"label": "new"}
+
+
+def test_internal_portal_detail_returns_frozen_editing_contract(portal_fixture):
+    token = _token(
+        project_id=portal_fixture["project_id"],
+        subject_id=portal_fixture["subject_id"],
+        scopes=["assignment:read"],
+    )
+    response = portal_fixture["client"].get(
+        f"/api/internal/portal/tasks/{portal_fixture['task_id']}",
+        headers=_headers(token),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["label_schema"] == {"columns": [{
+        "machine_key": "label", "display_name": "Frozen label",
+        "value_type": "string", "required": True, "max_length": 128,
+    }]}
+    assert body["instructions"] == "Use the frozen rubric."
+    assert body["visible_columns"] == ["feature"]
+    assert "sample_ids" not in body
+
+
+def test_internal_portal_samples_follow_cursor_without_leaking_columns(portal_fixture):
+    token = _token(
+        project_id=portal_fixture["project_id"],
+        subject_id=portal_fixture["subject_id"],
+        scopes=["assignment:read"],
+    )
+    client = portal_fixture["client"]
+    path = f"/api/internal/portal/tasks/{portal_fixture['task_id']}/samples"
+    first = client.get(path, params={"limit": 1}, headers=_headers(token)).json()
+    assert first["items"][0]["values"] == {"feature": 1}
+    second = client.get(
+        path, params={"limit": 1, "cursor": first["next_cursor"]}, headers=_headers(token),
+    ).json()
+    assert [item["sample_id"] for item in second["items"]] == ["sample-2"]
+    assert second["next_cursor"] is None
+    assert second["total"] == 2
+    assert client.get(path, params={"limit": 201}, headers=_headers(token)).status_code == 422
+    assert client.get(path, params={"cursor": "not-assigned"}, headers=_headers(token)).status_code == 422
 
 
 def test_internal_portal_bulk_confirm_and_return_are_idempotent(portal_fixture):

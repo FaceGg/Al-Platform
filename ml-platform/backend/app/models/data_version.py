@@ -66,6 +66,32 @@ class DatasetImport(Base):
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
 
+class DatasetImportProcess(Base):
+    """Mutable import workflow state; immutable data versions are created only on confirmation."""
+
+    __tablename__ = "dataset_import_processes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    operator_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    operation_id = Column(UUID(as_uuid=True), ForeignKey("durable_operations.id"), nullable=False, unique=True)
+    confirmation_operation_id = Column(UUID(as_uuid=True), ForeignKey("durable_operations.id"), nullable=True, unique=True)
+    dataset_version_id = Column(UUID(as_uuid=True), ForeignKey("dataset_versions.id"), nullable=True, unique=True)
+    status = Column(String(24), nullable=False, default="queued", index=True)
+    source_name = Column(String(512), nullable=False)
+    source_format = Column(String(32), nullable=False)
+    parse_options = Column(JSON, nullable=False, default=dict)
+    parse_contract = Column(JSON, nullable=True)
+    inferred_schema = Column(JSON, nullable=True)
+    content_hash = Column(String(128), nullable=True)
+    schema_hash = Column(String(128), nullable=True)
+    original_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id"), nullable=False)
+    normalized_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id"), nullable=True)
+    error = Column(JSON, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 @event.listens_for(DatasetVersion, "before_update")
 def _prevent_dataset_version_update(_mapper, _connection, target):
     raise ValueError("DatasetVersion is immutable")

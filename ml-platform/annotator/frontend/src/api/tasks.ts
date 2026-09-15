@@ -9,7 +9,21 @@ export type Task = {
   read_only?: boolean
   scope_hash: string
   samples?: Sample[]
+  instructions?: string
+  visible_columns?: string[]
+  label_schema?: LabelSchema
 }
+export type LabelColumn = {
+  machine_key: string
+  display_name?: string
+  value_type: 'int' | 'float' | 'string'
+  required?: boolean
+  enum_values?: Array<string | number>
+  min_value?: number
+  max_value?: number
+  max_length?: number
+}
+export type LabelSchema = { columns: LabelColumn[] }
 export type Sample = {
   sample_id: string
   values: Record<string, unknown>
@@ -29,7 +43,7 @@ export const saveLabels = (
   values: Record<string, unknown>,
   baseRevision: number,
 ) =>
-  request<{ revision: number }>(`/portal/tasks/${taskId}/samples/${sampleId}/labels`, {
+  request<{ values: Record<string, unknown>; revision: number; task_revision?: number }>(`/portal/tasks/${taskId}/samples/${sampleId}/labels`, {
     method: 'PUT',
     body: JSON.stringify({ values, base_revision: baseRevision }),
   })

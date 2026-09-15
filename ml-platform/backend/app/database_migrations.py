@@ -95,6 +95,18 @@ _SQLITE_COLUMNS = {
         "result_summary": "JSON",
         "updated_at": "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
     },
+    "dataset_import_processes": {
+        "confirmation_operation_id": "CHAR(32)",
+        "dataset_version_id": "CHAR(32)",
+        "status": "VARCHAR(24) NOT NULL DEFAULT 'queued'",
+        "parse_contract": "JSON",
+        "inferred_schema": "JSON",
+        "content_hash": "VARCHAR(128)",
+        "schema_hash": "VARCHAR(128)",
+        "normalized_artifact_id": "CHAR(32)",
+        "error": "JSON",
+        "updated_at": "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
+    },
 }
 
 _SQLITE_INDEXES = {
@@ -123,6 +135,10 @@ _SQLITE_INDEXES = {
     },
     "durable_operations": {
         "ix_durable_operations_lease": ("state", "lease_expires_at"),
+    },
+    "dataset_import_processes": {
+        "ix_dataset_import_processes_project_id": "project_id",
+        "ix_dataset_import_processes_status": "status",
     },
 }
 

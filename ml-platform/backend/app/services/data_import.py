@@ -15,9 +15,18 @@ import numpy as np
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.data_version import DatasetImport, DatasetSample, DatasetSchemaColumn, DatasetVersion
+from app.models.artifact import Artifact
+from app.models.data_version import (
+    DatasetImport,
+    DatasetImportProcess,
+    DatasetSample,
+    DatasetSchemaColumn,
+    DatasetVersion,
+)
+from app.models.operation import DurableOperation
 from app.schemas.dataset_import import ParseOptions
 from app.services.artifact_service import build_artifact_service
+from app.services.operation_lifecycle import claim_operation, complete_operation, fail_operation
 
 
 class DataImportError(ValueError):
@@ -36,6 +45,66 @@ class NormalizedTable:
     source_path: Path | None = None
     project_id: uuid.UUID | None = None
     source_name: str | None = None
+
+
+def infer_schema(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """Produce the administrator-confirmable, portable import type proposal."""
+    columns = []
+    for name in frame.columns:
+        series = frame[name]
+        if pd.api.types.is_integer_dtype(series.dtype):
+            dtype = "int"
+        elif pd.api.types.is_float_dtype(series.dtype):
+            dtype = "float"
+        else:
+            dtype = "string"
+        columns.append({
+            "name": str(name),
+            "dtype": dtype,
+            "nullable": bool(series.isna().any()),
+        })
+    return columns
+
+
+def _confirmed_frame(frame: pd.DataFrame, schema: list[dict[str, Any]], sample_id_column: str | None):
+    expected = [str(item.get("name", "")) for item in schema]
+    if expected != [str(column) for column in frame.columns] or len(set(expected)) != len(expected):
+        raise DataImportError("DATA_SCHEMA_INVALID")
+    confirmed = frame.copy()
+    for item in schema:
+        name = str(item["name"])
+        dtype = item.get("dtype")
+        if dtype not in {"int", "float", "string"}:
+            raise DataImportError("DATA_SCHEMA_TYPE_INVALID")
+        series = confirmed[name]
+        non_null = series.dropna()
+        if dtype == "int":
+            numeric = pd.to_numeric(non_null, errors="coerce")
+            if numeric.isna().any() or (numeric % 1 != 0).any():
+                raise DataImportError("DATA_SCHEMA_VALUE_INVALID", f"invalid int values in column {name}")
+            confirmed[name] = pd.to_numeric(series, errors="coerce").astype("Int64")
+        elif dtype == "float":
+            numeric = pd.to_numeric(non_null, errors="coerce")
+            if numeric.isna().any() or not np.isfinite(numeric.astype(float)).all():
+                raise DataImportError("DATA_SCHEMA_VALUE_INVALID", f"invalid float values in column {name}")
+            confirmed[name] = pd.to_numeric(series, errors="coerce").astype(float)
+        else:
+            confirmed[name] = series.where(series.isna(), series.astype(str))
+    if sample_id_column is not None:
+        if sample_id_column not in confirmed.columns:
+            raise DataImportError("DATA_SAMPLE_ID_INVALID")
+        values = confirmed[sample_id_column].tolist()
+        if any(value is None or pd.isna(value) or not str(value).strip() for value in values):
+            raise DataImportError("DATA_SAMPLE_ID_INVALID")
+        sample_ids = [str(value) for value in values]
+        if len(set(sample_ids)) != len(sample_ids):
+            raise DataImportError("DATA_SAMPLE_ID_NOT_UNIQUE")
+    else:
+        content_hash = hashlib.sha256(
+            confirmed.to_json(orient="records", date_format="iso", double_precision=15).encode()
+        ).hexdigest()
+        sample_ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, f"dataset:{content_hash}:{index}")) for index in range(len(confirmed))]
+    return confirmed, sample_ids
 
 
 def _depth(value: Any, level: int = 0) -> int:
@@ -83,7 +152,8 @@ def _frame_json_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
 
 
 def _sniff_source_format(path: Path) -> str:
-    raw = path.read_bytes()[:4096]
+    with path.open("rb") as source:
+        raw = source.read(4096)
     stripped = raw.lstrip()
     if raw.startswith(b"PAR1"):
         return "parquet"
@@ -180,7 +250,7 @@ def _xml_records(path: Path, options: ParseOptions) -> list[dict]:
                 raise DataImportError("DATA_PARSE_NON_SCALAR")
             if child.tag in row:
                 raise DataImportError("DATA_PARSE_DUPLICATE_COLUMN")
-            row[child.tag] = child.text
+            row[child.tag] = _coerce_xml_scalar(child.text)
         columns = set(row)
         if expected_columns is None:
             expected_columns = columns
@@ -188,6 +258,32 @@ def _xml_records(path: Path, options: ParseOptions) -> list[dict]:
             raise DataImportError("DATA_PARSE_DUPLICATE_COLUMN")
         records.append(row)
     return records
+
+
+def _coerce_xml_scalar(value: Any) -> Any:
+    """Recover unambiguous scalar types from XML text nodes."""
+    if value is None or not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return value
+    if re.fullmatch(r"[+-]?\d+", text):
+        try:
+            return int(text)
+        except ValueError:
+            return value
+    if re.fullmatch(
+        r"[+-]?(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?|[+-]?\d+[eE][+-]?\d+",
+        text,
+    ):
+        try:
+            number = float(text)
+            return number if math.isfinite(number) else value
+        except ValueError:
+            return value
+    if text.lower() in {"true", "false"}:
+        return text.lower() == "true"
+    return value
 
 
 def read_dataset_upload(path: Path, source_format: str | None, options: ParseOptions) -> NormalizedTable:
@@ -245,10 +341,284 @@ def read_dataset_upload(path: Path, source_format: str | None, options: ParseOpt
             raise DataImportError("DATA_SAMPLE_ID_NOT_UNIQUE")
     else:
         sample_ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, f"dataset:{content_hash}:{index}")) for index in range(len(frame))]
-    schema = [{"name": name, "dtype": str(frame[name].dtype), "nullable": bool(frame[name].isna().any())} for name in frame.columns]
+    schema = infer_schema(frame)
     schema_hash = hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     parse_contract = {"parser_version": "1", "source_format": source_format, "sample_id_column": options.sample_id_column, "options": options.model_dump(mode="json"), "field_mapping": {name: name for name in frame.columns}, "row_locator": {sample_id: index for index, sample_id in enumerate(sample_ids)}}
     return NormalizedTable(frame, parse_contract, content_hash, schema_hash, sample_ids, path, None, path.name)
+
+
+def create_dataset_import_process(
+    db: Session,
+    *,
+    project_id: uuid.UUID,
+    operator_id: uuid.UUID,
+    source_path: Path,
+    source_name: str,
+    source_format: str | None,
+    options: ParseOptions,
+    idempotency_key: str,
+) -> DatasetImportProcess:
+    """Persist the source artifact and a durable parse operation before parsing it."""
+    service = build_artifact_service(db)
+    original = None
+    try:
+        original = service.create_from_file(
+            project_id,
+            source_path,
+            source_name,
+            "dataset",
+            {"source": "dataset_import_original"},
+            commit=False,
+        )
+        operation = DurableOperation(
+            resource_key=f"dataset-import:{project_id}",
+            idempotency_key=idempotency_key,
+            state="queued",
+            stage="queued",
+        )
+        db.add(operation)
+        db.flush()
+        process = DatasetImportProcess(
+            project_id=project_id,
+            operator_id=operator_id,
+            operation_id=operation.id,
+            status="queued",
+            source_name=source_name,
+            source_format=(source_format or source_path.suffix.lstrip(".")).lower(),
+            parse_options=options.model_dump(mode="json"),
+            original_artifact_id=original.id,
+        )
+        db.add(process)
+        db.commit()
+        db.refresh(process)
+        return process
+    except Exception:
+        db.rollback()
+        if original is not None:
+            try:
+                service.storage.delete(original.storage_uri)
+            except Exception:
+                pass
+        raise
+
+
+def process_dataset_import(
+    db: Session,
+    process_id: uuid.UUID,
+    *,
+    worker_id: str = "dataset-import",
+) -> DatasetImportProcess:
+    """Parse a durable import into a pending-schema process, never a data version."""
+    process = db.get(DatasetImportProcess, process_id)
+    if process is None:
+        raise DataImportError("DATA_IMPORT_NOT_FOUND")
+    if process.status == "pending_schema":
+        return process
+    if process.status == "ready":
+        return process
+    if process.operation_id is None or not claim_operation(db, process.operation_id, worker_id, 300):
+        db.refresh(process)
+        return process
+
+    service = build_artifact_service(db)
+    normalized_artifact = None
+    try:
+        original = db.get(Artifact, process.original_artifact_id)
+        if original is None:
+            raise DataImportError("DATA_IMPORT_ORIGINAL_MISSING")
+        with service.storage.materialize(original.storage_uri) as source_path:
+            table = read_dataset_upload(
+                source_path,
+                process.source_format,
+                ParseOptions.model_validate(process.parse_options),
+            )
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as handle:
+            normalized_path = Path(handle.name)
+        try:
+            table.frame.to_csv(normalized_path, index=False)
+            normalized_artifact = service.create_from_file(
+                process.project_id,
+                normalized_path,
+                "normalized.csv",
+                "dataset",
+                {"source": "dataset_import_normalized", "dataset_import_id": str(process.id)},
+                commit=False,
+            )
+        finally:
+            normalized_path.unlink(missing_ok=True)
+        process.status = "pending_schema"
+        process.normalized_artifact_id = normalized_artifact.id
+        process.parse_contract = table.parse_contract
+        process.inferred_schema = infer_schema(table.frame)
+        process.content_hash = table.content_hash
+        process.schema_hash = table.schema_hash
+        process.error = None
+        db.flush()
+        complete_operation(
+            db,
+            process.operation_id,
+            worker_id,
+            normalized_artifact.id,
+            "sha256:" + normalized_artifact.metadata_["sha256"],
+        )
+        db.refresh(process)
+        return process
+    except Exception as error:
+        db.rollback()
+        if normalized_artifact is not None:
+            try:
+                service.storage.delete(normalized_artifact.storage_uri)
+            except Exception:
+                pass
+        process = db.get(DatasetImportProcess, process_id)
+        if process is not None:
+            process.status = "failed"
+            process.error = {"code": getattr(error, "code", "DATA_IMPORT_FAILED"), "message": str(error)[:300]}
+            db.commit()
+            fail_operation(db, process.operation_id, process.error["code"], process.error)
+        raise
+
+
+def confirm_dataset_import_schema(
+    db: Session,
+    process_id: uuid.UUID,
+    *,
+    schema: list[dict[str, Any]],
+    sample_id_column: str | None,
+    operator_id: uuid.UUID,
+) -> DatasetVersion:
+    process = db.get(DatasetImportProcess, process_id)
+    if process is None:
+        raise DataImportError("DATA_IMPORT_NOT_FOUND")
+    if process.status not in {"pending_schema", "confirming"}:
+        raise DataImportError("DATA_IMPORT_NOT_PENDING")
+    service = build_artifact_service(db)
+    original = db.get(Artifact, process.original_artifact_id)
+    normalized = db.get(Artifact, process.normalized_artifact_id)
+    if original is None or normalized is None:
+        raise DataImportError("DATA_IMPORT_ARTIFACT_MISSING")
+    with service.storage.materialize(normalized.storage_uri) as normalized_path:
+        frame = pd.read_csv(normalized_path)
+    confirmed, sample_ids = _confirmed_frame(frame, schema, sample_id_column)
+    confirmed_schema = [
+        {"name": str(item["name"]), "dtype": str(item["dtype"]), "nullable": bool(confirmed[str(item["name"])].isna().any())}
+        for item in schema
+    ]
+    schema_hash = hashlib.sha256(json.dumps(confirmed_schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    parse_contract = {
+        **(process.parse_contract or {}),
+        "sample_id_column": sample_id_column,
+        "confirmed_schema": confirmed_schema,
+        "row_locator": {sample_id: index for index, sample_id in enumerate(sample_ids)},
+        "options": {
+            **((process.parse_contract or {}).get("options") or {}),
+            "sample_id_column": sample_id_column,
+        },
+    }
+    latest = db.query(DatasetVersion.version).filter(
+        DatasetVersion.project_id == process.project_id
+    ).order_by(DatasetVersion.version.desc()).first()
+    version = DatasetVersion(
+        project_id=process.project_id,
+        operator_id=operator_id,
+        version=(latest[0] if latest else 0) + 1,
+        status="ready",
+        row_count=len(confirmed),
+        column_count=len(confirmed.columns),
+        content_hash=process.content_hash,
+        schema_hash=schema_hash,
+        parse_contract=parse_contract,
+        original_artifact_id=original.id,
+        normalized_artifact_id=normalized.id,
+    )
+    db.add(version)
+    db.flush()
+    for position, item in enumerate(confirmed_schema):
+        db.add(DatasetSchemaColumn(
+            dataset_version_id=version.id,
+            name=item["name"],
+            position=position,
+            dtype=item["dtype"],
+            nullable=item["nullable"],
+        ))
+    for index, (sample_id, values) in enumerate(zip(sample_ids, _frame_json_records(confirmed))):
+        db.add(DatasetSample(
+            dataset_version_id=version.id,
+            sample_id=sample_id,
+            row_index=index,
+            values=values,
+        ))
+    db.add(DatasetImport(
+        dataset_version_id=version.id,
+        source_format=process.source_format,
+        parse_contract=parse_contract,
+        content_hash=process.content_hash,
+        schema_hash=schema_hash,
+    ))
+    process.dataset_version_id = version.id
+    process.status = "ready"
+    process.inferred_schema = confirmed_schema
+    process.schema_hash = schema_hash
+    process.parse_contract = parse_contract
+    db.commit()
+    db.refresh(version)
+    return version
+
+
+def execute_dataset_import_confirmation(
+    db: Session,
+    process_id: uuid.UUID,
+    *,
+    worker_id: str = "dataset-import-confirmation",
+) -> DatasetImportProcess:
+    process = db.get(DatasetImportProcess, process_id)
+    if process is None:
+        raise DataImportError("DATA_IMPORT_NOT_FOUND")
+    if process.status == "ready":
+        return process
+    if process.status != "confirming" or process.confirmation_operation_id is None:
+        raise DataImportError("DATA_IMPORT_CONFIRMATION_INVALID")
+    if not claim_operation(db, process.confirmation_operation_id, worker_id, 300):
+        db.refresh(process)
+        return process
+    confirmation = (process.parse_contract or {}).get("confirmation") or {}
+    try:
+        confirm_dataset_import_schema(
+            db,
+            process.id,
+            schema=list(confirmation.get("schema") or []),
+            sample_id_column=confirmation.get("sample_id_column"),
+            operator_id=process.operator_id,
+        )
+        complete_operation(
+            db,
+            process.confirmation_operation_id,
+            worker_id,
+            process.dataset_version_id,
+            "sha256:" + process.schema_hash,
+        )
+        db.refresh(process)
+        return process
+    except Exception as error:
+        db.rollback()
+        process = db.get(DatasetImportProcess, process_id)
+        process.status = "failed"
+        process.error = {"code": getattr(error, "code", "DATA_IMPORT_CONFIRMATION_FAILED"), "message": str(error)[:300]}
+        db.commit()
+        fail_operation(db, process.confirmation_operation_id, process.error["code"], process.error)
+        raise
+
+
+def require_ready_dataset_artifact(db: Session, artifact_id, *, project_id=None) -> None:
+    query = db.query(DatasetImportProcess).filter(
+        (DatasetImportProcess.original_artifact_id == artifact_id)
+        | (DatasetImportProcess.normalized_artifact_id == artifact_id),
+    )
+    if project_id is not None:
+        query = query.filter(DatasetImportProcess.project_id == project_id)
+    process = query.first()
+    if process is not None and process.status != "ready":
+        raise DataImportError("DATASET_NOT_READY", "Dataset import must be schema-confirmed before use")
 
 
 def freeze_dataset_version(db: Session, normalized: NormalizedTable, operator_id: uuid.UUID) -> DatasetVersion:

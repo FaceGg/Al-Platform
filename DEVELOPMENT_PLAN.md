@@ -8,6 +8,20 @@
 
 ## 1. 使用规则
 
+### 2026-09-15 全方案一致性实施（当前口径）
+
+- 导入身份合同续修：确认 sample_id 列时重建 row_locator 并同步嵌套解析选项，避免冻结样本使用用户 ID 而合同仍引用临时生成 ID。两处断言分别观察到失败后修复；完整运行态与整体方案仍未验收。
+
+- 导入资源边界续修：格式探测改为文件流读取 4096 字节，消除 `read_bytes()[:4096]` 先分配完整上传文件的问题。新增回归先失败，修复后导入合同 38 passed；该验证不代表完整解析器资源隔离或百万样本容量验收通过。
+
+- 本轮续执行：回传列表游标改为在当前项目查询内解析，拒绝其他项目批次 ID；新增回归先失败，修复后回传/并发组合 14 passed、2 个依赖弃用警告。该证据仅覆盖查询隔离，不关闭待验收版本、全局完成、恢复或整体复现验收。
+
+- 用户已确认按原技术方案第 1–17 章完整实施。当前入口为 [全方案一致性实施台账](ml-platform/docs/superpowers/plans/2026-09-15-general-platform-conformance.md)，详细原始任务步骤继续参考 2026-09-02 实施计划；发生冲突以技术方案为准。
+- 下方历史 Task 1–13 `passed` 和“业务实现完成”不能作为本轮完整复现结论。数据导入、门户、回传、AutoML、离线导出和验收定义均有已确认缺口，整体保持 `in_progress`。
+- 已开始：导入确认合同、独立导出运行时、门户 schema 编辑/自动保存/分页；草稿创建权限已按集中 `resource.create` 修复并通过相关 API 组合 30 tests、24 subtests（2 warnings）。
+- 未完成：各条款生产链路、完整测试与迁移、真实浏览器、WSL Docker/broker/recovery、容量和备份恢复证据。局部绿灯不能关闭对应章节。
+- 保留本轮开始前的 Compose 构建网络修复及其记录，不覆盖或提交该独立改动。
+
 ### 自动标注方案一致性补齐（进行中）
 
 - 本次按技术方案第 7 章重新核验，历史 Task 6/12 passed 不作为当前端到端一致性证据。
@@ -828,3 +842,21 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 测试台账：将已跟踪的 `AutoMLTaskPage.progress.test.tsx` 登记到 Week 12，恢复自动发现测试文件与台账的一一对应；未改变产品代码或 API 合同。
 - 本地验证：后端 `test_annotation_strategies.py`、`test_annotation_task_state.py`、`test_annotation_task_state_api.py`、`test_model_registration_contract.py` 为 **85 passed、14 warnings**；前端定向组合为 **61 passed**；Chromium `generic-platform-acceptance.spec.ts` 两条合同为 **2 passed**；`npm run build` 通过。上述均在含未提交修改的工作树执行，不能作为当前 Git SHA 发布收据。
 - 未验证：本轮未执行真实 Docker/WSL Compose、真实 Redis/Celery 派发和重启恢复、完整前端/后端套件或新的远程 CI；Task 14 保持 `in_progress`。
+
+## 2026-09-15 WSL Compose 构建网络修复
+
+- 现象：目标工作树在 WSL 执行 `docker compose up -d --build` 时，多个 Wolfi Python 镜像长期停留在 `apk add` 下载 `https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz`，没有创建 Compose 容器。
+- 根因：Docker BuildKit 默认构建网络在该环境无法继续读取 Wolfi 包索引；同一 WSL Docker daemon 通过 `docker run --network host` 已验证 19 个系统包可以完整安装。
+- 修复：仅为 `migrate`、`tensorboard-gateway`、`inference-runtime`、`backend`、`worker` 和 `scheduler` 的 `build` 配置增加 `network: host`。该设置只作用于镜像构建阶段，不改变服务运行网络。
+- 当前验证：主机网络下 Wolfi 包安装通过；Compose 配置与实际全栈构建、启动、端口和门户访问仍待本轮继续验证。
+- 运行态补充：首次启动时 `migrate` 因本地 `.env` 使用不受应用支持的 `postgresql+psycopg2` 且指向未初始化的 `platform` 数据库/用户而退出；已改为项目依赖支持的 `postgresql+psycopg`，并对齐当前 PostgreSQL 容器的 `ml_platform` 数据库/用户及初始化的 `mlflow` 数据库。未删除数据库容器层或数据。
+- 配置补充：修复后迁移继续暴露本地 `SECRET_KEY` 与 `INFERENCE_INTERNAL_SECRET` 未达到生产模式要求的 32 字符下限；仅延长本地开发值，未改变应用校验或生产密钥策略。
+- MLflow 运行态补充：MLflow 容器启动命令使用默认 PyPI 下载 `psycopg-binary` 时因 `files.pythonhosted.org` 读取超时而未健康；已让该一次性启动安装显式使用项目已有的 PyPI 镜像源，避免依赖默认下载链路。
+- MLflow 启动等待补充：镜像源已生效，但 5.3 MB 的 `psycopg-binary` 下载时间超过原健康检查窗口；已将该服务的 pip 读取超时设为 600 秒，并将健康检查窗口扩大到 10 分钟，等待安装完成后再判定服务健康。
+
+## 2026-09-15 Task 11 离线导出包独立性修复
+
+- 实现：导出包现在固定包含 `runtime/inference.py`、`runtime/cli.py`、`runtime/requirements.lock` 和 `runtime/README-runtime.md`。运行时只依赖包内合同、模型和锁定的第三方依赖，不再导入平台 `app` 模块；CLI 可在提取后的独立运行时目录中执行 `predict`。绑定 annotation revision 时，同时导出 strategy、cluster method、cluster artifacts、cluster label mappings 和 rules。
+- 完整性：校验器现在拒绝 ZIP 中未列入 `checksums.json` 的载荷文件；`checksums.json` 与 detached `security/manifest.sig` 为完整性元数据，分别由签名验证和自身内容承载，不能参与自指 SHA-256 清单。
+- 验证：先新增四项 RED 回归并观察到 **4 failed, 1 passed**；实现后使用 `ml-platform/backend/.venv/Scripts/python.exe` 运行 `tests/test_model_export_contract.py tests/test_offline_inference_contract.py -q`，结果 **7 passed, 5 warnings**；`py_compile app/services/model_export.py` 通过。
+- 未验证：未在 Docker/WSL 或干净独立 Python 环境中安装 `runtime/requirements.lock` 后执行真实离线推理；本地聚焦证据不替代 Task 14 的最终 SHA、容器和远程 CI 收据。

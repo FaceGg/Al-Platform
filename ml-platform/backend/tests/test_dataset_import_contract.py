@@ -13,15 +13,18 @@ from sqlalchemy.orm import sessionmaker
 from fastapi import HTTPException
 
 from app.database import Base
-from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
+from app.models.data_version import DatasetImportProcess, DatasetSample, DatasetSchemaColumn, DatasetVersion
 from app.models.data_version import DatasetImport
 from app.models.artifact import Artifact
 from app.api import datasets as datasets_api
 from app.schemas.dataset_import import ParseOptions
 from app.services.data_import import (
     DataImportError,
+    create_dataset_import_process,
+    confirm_dataset_import_schema as confirm_import_schema,
     _frame_json_records,
     freeze_dataset_version,
+    process_dataset_import,
     read_dataset_upload,
 )
 from app.services.input_contract import (
@@ -110,8 +113,8 @@ def test_json_record_path_and_xml_records_are_flattened(tmp_path):
     ]
     assert xml_table.frame.columns.tolist() == ["id", "value"]
     assert xml_table.frame.to_dict(orient="records") == [
-        {"id": "a", "value": "1"},
-        {"id": "b", "value": "2"},
+        {"id": "a", "value": 1},
+        {"id": "b", "value": 2},
     ]
 
 
@@ -320,7 +323,7 @@ def test_freeze_dataset_version_persists_immutable_schema_and_samples(tmp_path):
         ("rows.xml", "xml", b"<root><record id='a'><value>1</value></record></root>"),
     ],
 )
-def test_api_dataset_import_creates_original_normalized_artifacts_and_version(
+def test_api_dataset_import_creates_pending_schema_contract_before_freezing_version(
     tmp_path, monkeypatch, name, source_format, payload,
 ):
     engine = create_engine("sqlite:///:memory:")
@@ -333,23 +336,31 @@ def test_api_dataset_import_creates_original_normalized_artifacts_and_version(
     audit = _RecordingAuditService()
     monkeypatch.setattr(datasets_api, "require_project_access", lambda *_args: object())
     monkeypatch.setattr(datasets_api, "audit_service", lambda _db: audit)
+    monkeypatch.setattr("app.tasks.dataset_import_tasks.enqueue_dataset_import", lambda _id: None)
     upload = datasets_api.UploadFile(filename=name, file=io.BytesIO(payload))
 
     result = asyncio.run(datasets_api.import_dataset_version(
         str(project_id), None, upload, source_format, None, db, operator,
     ))
 
-    version = db.get(DatasetVersion, uuid.UUID(result["dataset_version_id"]))
-    assert version is not None
-    assert db.query(Artifact).filter(Artifact.id.in_([
-        version.original_artifact_id, version.normalized_artifact_id,
-    ])).count() == 2
-    assert db.query(DatasetImport).filter_by(dataset_version_id=version.id).count() == 1
+    assert result["status"] == "queued"
+    process = db.get(DatasetImportProcess, uuid.UUID(result["dataset_import_id"]))
+    process_dataset_import(db, process.id, worker_id="test-import-worker")
+    db.refresh(process)
+    assert process.status == "pending_schema"
+    assert process.inferred_schema == [
+        {"name": "id", "dtype": "string", "nullable": False},
+        {"name": "value", "dtype": "int", "nullable": False},
+    ]
+    assert process.dataset_version_id is None
+    assert db.query(DatasetVersion).count() == 0
+    assert db.query(Artifact).count() == 2
+    assert db.query(DatasetImport).count() == 0
     assert audit.calls[0]["permission"] == "resource.create"
     assert audit.calls[0]["intent"].action == "dataset.import"
 
 
-def test_api_dataset_import_accepts_parquet_and_creates_version(tmp_path, monkeypatch):
+def test_api_dataset_import_accepts_parquet_and_waits_for_schema_confirmation(tmp_path, monkeypatch):
     path = tmp_path / "rows.parquet"
     pd.DataFrame({"id": ["a"], "value": [1]}).to_parquet(path)
     engine = create_engine("sqlite:///:memory:")
@@ -361,11 +372,92 @@ def test_api_dataset_import_accepts_parquet_and_creates_version(tmp_path, monkey
     monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: service)
     monkeypatch.setattr(datasets_api, "require_project_access", lambda *_args: object())
     monkeypatch.setattr(datasets_api, "audit_service", lambda _db: _RecordingAuditService())
+    monkeypatch.setattr("app.tasks.dataset_import_tasks.enqueue_dataset_import", lambda _id: None)
     upload = datasets_api.UploadFile(filename="rows.parquet", file=io.BytesIO(path.read_bytes()))
     result = asyncio.run(datasets_api.import_dataset_version(
         str(project_id), None, upload, "parquet", None, db, operator,
     ))
-    assert db.get(DatasetVersion, uuid.UUID(result["dataset_version_id"])) is not None
+    assert result["status"] == "queued"
+    assert result["dataset_version_id"] is None
+    process = db.get(DatasetImportProcess, uuid.UUID(result["dataset_import_id"]))
+    process_dataset_import(db, process.id, worker_id="test-import-worker")
+    db.refresh(process)
+    assert process.status == "pending_schema"
+    assert process.dataset_version_id is None
+    assert process.inferred_schema == [
+        {"name": "id", "dtype": "string", "nullable": False},
+        {"name": "value", "dtype": "int", "nullable": False},
+    ]
+
+
+def test_confirm_schema_materializes_ready_immutable_version_and_preserves_artifacts(
+    tmp_path, monkeypatch,
+):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    project_id = uuid.uuid4()
+    operator_id = uuid.uuid4()
+    source = tmp_path / "rows.csv"
+    source.write_text("id,value\na,1\nb,2\n", encoding="utf-8")
+    service = ArtifactService(db, LocalStorage(tmp_path / "storage"))
+    monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: service)
+    process = create_dataset_import_process(
+        db,
+        project_id=project_id,
+        operator_id=operator_id,
+        source_path=source,
+        source_name=source.name,
+        source_format="csv",
+        options=ParseOptions(),
+        idempotency_key="import-confirm-1",
+    )
+    process_dataset_import(db, process.id, worker_id="test-import-worker")
+    process = db.get(DatasetImportProcess, process.id)
+
+    version = confirm_import_schema(
+        db,
+        process.id,
+        schema=process.inferred_schema,
+        sample_id_column="id",
+        operator_id=operator_id,
+    )
+    assert version.status == "ready"
+    assert version.parse_contract["sample_id_column"] == "id"
+    assert version.parse_contract["row_locator"] == {"a": 0, "b": 1}
+    assert version.parse_contract["options"]["sample_id_column"] == "id"
+    assert [sample.sample_id for sample in version.samples] == ["a", "b"]
+    assert version.original_artifact_id == process.original_artifact_id
+    assert version.normalized_artifact_id == process.normalized_artifact_id
+    assert db.query(DatasetVersion).count() == 1
+
+
+def test_pending_import_artifact_is_rejected_before_training_or_automl_use(tmp_path):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    project_id = uuid.uuid4()
+    source = tmp_path / "rows.csv"
+    source.write_text("id,value\na,1\n", encoding="utf-8")
+    service = ArtifactService(db, LocalStorage(tmp_path / "storage"))
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: service)
+    try:
+        process = create_dataset_import_process(
+            db,
+            project_id=project_id,
+            operator_id=uuid.uuid4(),
+            source_path=source,
+            source_name=source.name,
+            source_format="csv",
+            options=ParseOptions(),
+            idempotency_key="pending-use-1",
+        )
+        with pytest.raises(DataImportError, match="schema-confirmed"):
+            from app.services.data_import import require_ready_dataset_artifact
+            require_ready_dataset_artifact(db, process.original_artifact_id, project_id=project_id)
+    finally:
+        monkeypatch.undo()
 
 
 def test_freeze_failure_compensates_original_artifact_and_removes_normalized_temp(tmp_path, monkeypatch):
@@ -449,6 +541,7 @@ def test_api_rejects_client_source_format_that_conflicts_with_content(tmp_path, 
     monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: service)
     monkeypatch.setattr(datasets_api, "require_project_access", lambda *_args: object())
     monkeypatch.setattr(datasets_api, "audit_service", lambda _db: _RecordingAuditService())
+    monkeypatch.setattr("app.tasks.dataset_import_tasks.enqueue_dataset_import", lambda _id: None)
     upload = datasets_api.UploadFile(
         filename="rows.json", file=io.BytesIO(b'[{"id": "a", "value": 1}]'),
     )
@@ -529,6 +622,20 @@ def test_json_rejects_incompatible_cross_record_scalar_types(tmp_path):
     with pytest.raises(DataImportError) as error:
         read_dataset_upload(path, "json", ParseOptions())
     assert error.value.code == "DATA_PARSE_INCOMPATIBLE_COLUMN_TYPE"
+
+
+def test_content_sniff_never_reads_the_whole_upload(tmp_path, monkeypatch):
+    from pathlib import Path
+    from app.services.data_import import _sniff_source_format
+
+    path = tmp_path / "large.json"
+    path.write_bytes(b'[{"value":1}]' + b" " * 8192)
+
+    def reject_unbounded_read(_path):
+        raise AssertionError("format detection must read a bounded header")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_unbounded_read)
+    assert _sniff_source_format(path) == "json"
 
 
 def test_content_sniff_is_used_when_source_format_is_omitted(tmp_path):

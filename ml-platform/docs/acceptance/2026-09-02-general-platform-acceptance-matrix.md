@@ -4,25 +4,32 @@
 
 | ID | 合同 | 主要验证命令 | 证据责任 |
 |---|---|---|---|
-| DAT-01 | CSV、Excel、Parquet 导入与冻结版本 | `pytest tests/test_dataset_import_contract.py -q` | 后端测试收据 |
+| DAT-01 | JSON/XML 正常导入：记录路径、映射、解析器/schema hash 冻结，重解析产生新版本 | `pytest tests/test_dataset_import_contract.py -q` | 后端与真实导入链路证据 |
 | DAT-02 | JSON/XML 安全解析与限制 | `pytest tests/test_dataset_import_contract.py -q` | 后端测试收据 |
-| DAT-03 | 输入合同与不可变数据版本 | `pytest tests/test_dataset_import_contract.py tests/test_database_migrations.py -q` | 后端测试收据 |
+| DAT-03 | 缺列与空值：缺少必需列拒绝；已有列空值按 missing_policy 处理并计数 | `pytest tests/test_dataset_import_contract.py -q` | 输入合同证据 |
 | LAB-01 | 多列标签 schema 与类型校验 | `pytest tests/test_label_schema.py tests/test_label_schema_api.py -q` | 后端测试收据 |
-| LAB-02 | 标签 revision 与并发写入 | `pytest tests/test_annotation_concurrency.py -q` | 后端测试收据 |
-| LAB-03 | 标签前端编辑器 | `npm test -- --run src/components/LabelSchemaEditor.test.tsx` | 前端测试收据 |
+| LAB-02 | 三种自动策略互斥、其他兜底不可删除且必须配置、规则未命中回退 | `pytest tests/test_annotation_strategies.py -q` | 策略与真实页面证据 |
+| LAB-03 | 逐列规则 > 簇 > 其他，同优先级冲突进入 needs_review | `pytest tests/test_annotation_strategies.py -q` | 策略优先级与冲突证据 |
 | CLU-01 | 加权 KMeans 与确定性分配 | `pytest tests/test_annotation_strategies.py -q` | 后端测试收据 |
-| CLU-02 | 自动策略预览与复核闭环 | `pytest tests/test_annotation_task_state.py tests/test_annotation_task_state_api.py -q` | 后端测试收据 |
+| CLU-02 | 百万样本聚类：全量赋簇、评估模式/样本数/hash、前端不加载全量 | 容量运行命令尚未建立，不得用小样本测试关闭 | 百万样本实测与浏览器分页证据 |
 | CON-01 | 重叠指派与 revision 冲突 | `pytest tests/test_annotation_concurrency.py -q` | 后端测试收据 |
-| CON-02 | 回传锁与显式重新编辑 | `pytest tests/test_annotation_concurrency.py -q` | 后端测试收据 |
-| RET-01 | 回传列表、差异、验收和退回通知 | `pytest tests/test_annotation_return_acceptance.py -q` | 后端测试收据 |
+| CON-02 | 并发回传：幂等不重复建批次，过期批次不能静默覆盖 | `pytest tests/test_annotation_concurrency.py tests/test_annotation_return_acceptance.py -q` | 并发数据库与 API 证据 |
+| RET-01 | 回传锁：只读、显式编辑并产生新修订后解除，旧批次 supersede | `pytest tests/test_annotation_concurrency.py -q` | 后端与真实门户证据 |
 | AUTH-01 | 独立标注员身份和会话撤销 | `pytest tests/test_annotator_auth.py -q` | 后端测试收据 |
-| AUTH-02 | 门户 API 与服务身份边界 | `pytest -q`（`ml-platform/annotator/backend`） | 门户测试收据 |
+| AUTH-02 | Web 安全：CORS、CSRF、限流、密码哈希、服务 JWT/mTLS | `pytest tests/test_security_contract.py tests/test_annotator_auth.py -q`；门户后端套件 | 双服务真实安全证据 |
 | API-01 | 通用任务 API、分页和状态错误合同 | `pytest tests/test_annotation_task_state_api.py -q` | 后端测试收据 |
 | AUTO-01 | 四种 AutoML 任务与候选工件 | `pytest tests/test_automl_multioutput.py -q` | 后端测试收据 |
-| AUTO-02 | AutoML 浏览器流程 | `npm run test:e2e -- e2e/automl-multioutput.spec.ts` | 浏览器收据 |
+| AUTO-02 | 模型注册：worker 不自动注册、完整候选手动注册、重复注册幂等 | `pytest tests/test_automl_multioutput.py tests/test_model_registration_contract.py -q` | worker、注册 API 与真实浏览器证据 |
 | EXP-01 | 模型导出包、签名、SBOM 与 checksum | `pytest tests/test_model_export_contract.py -q` | 导出收据 |
 | INF-01 | 离线 predict/annotate 输入输出合同 | `pytest tests/test_offline_inference_contract.py -q` | 推理收据 |
-| REL-01 | 迁移、恢复、清理与安全门禁 | `pytest tests/test_async_operation_contract.py tests/test_security_contract.py -q` | 恢复与安全收据 |
+| REL-01 | 重试与恢复：租约过期重领、幂等副作用、临时制品 TTL 清理保护已提交制品 | `pytest tests/test_async_operation_contract.py -q`；真实 worker 恢复演练 | broker/worker/存储恢复证据 |
+
+## 2026-09-15 验收编号语义更正
+
+- 上表恢复技术方案 §16.4 的原始编号含义；旧表曾将 LAB-02/03、CLU-02、CON-02、RET-01、AUTH-02、AUTO-02 等替换为不同场景，不能由旧同名收据推导本表已通过。
+- 命令仅列出现有相关测试入口，不表示这些测试已经穷尽该编号要求。缺少原条款断言、真实容量或跨服务证据时，该编号继续保持未完成。
+- 本轮 19 项最终验收均未关闭。当前 working-tree 聚焦测试单独记录到全方案一致性实施台账，不能生成最终 SHA 的 passed 收据。
+- 以下历史记录保留，不重写既有结果；其范围和 SHA 不自动转移到更正后的编号。
 
 收据使用 `python -m tools.generic_acceptance_evidence` 写入 `temp_test/generic-platform-acceptance/receipts/`。最终门禁调用 `validate_acceptance_manifest`，并将所有收据绑定到同一个当前 SHA。
 

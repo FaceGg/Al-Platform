@@ -10,7 +10,7 @@ from pathlib import PurePosixPath
 from urllib.parse import quote
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 
@@ -22,9 +22,17 @@ from app.api.auth import get_current_user
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.api.project_security import audit_service, require_project_access, resolve_project_access, project_uuid
 from app.services.audit import AuditIntent
-from app.schemas.dataset_import import ParseOptions
-from app.services.data_import import DataImportError, freeze_dataset_version, read_dataset_upload
-from app.models.data_version import DatasetVersion
+from app.schemas.dataset_import import ConfirmSchemaRequest, ParseOptions
+from app.services.data_import import (
+    DataImportError,
+    create_dataset_import_process,
+    freeze_dataset_version,
+    process_dataset_import,
+    read_dataset_upload,
+    _sniff_source_format,
+)
+from app.models.data_version import DatasetImportProcess, DatasetVersion
+from app.models.operation import DurableOperation
 from app.models.platform_models import AnnotationTask, GenericAnnotationTask
 
 router = APIRouter(prefix="/api", tags=["datasets"])
@@ -83,12 +91,27 @@ def _freeze_staged_upload(db: Session, project_id, operator: User, staging_path:
     return freeze_dataset_version(db, table, operator.id)
 
 
-@router.post("/projects/{project_id}/dataset-imports", status_code=201)
+def _dataset_import_payload(process: DatasetImportProcess) -> dict:
+    return {
+        "id": str(process.id),
+        "dataset_import_id": str(process.id),
+        "operation_id": str(process.operation_id),
+        "dataset_version_id": str(process.dataset_version_id) if process.dataset_version_id else None,
+        "status": process.status,
+        "inferred_schema": process.inferred_schema or [],
+        "content_hash": process.content_hash,
+        "schema_hash": process.schema_hash,
+        "error": process.error,
+    }
+
+
+@router.post("/projects/{project_id}/dataset-imports", status_code=202)
 async def import_dataset_version(
     project_id: str, request: Request, file: UploadFile = File(...),
     source_format: str | None = Query(default=None),
     parse_options: str | None = Query(default=None),
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     project_id_value = project_uuid(project_id)
     access = require_project_access(db, project_id_value, current_user.id, "resource.create")
@@ -109,16 +132,96 @@ async def import_dataset_version(
             allowed_changes={"filename"},
         ):
             await _stage_upload(file, staging_path, max_bytes=options.max_file_bytes)
-            try:
-                table = read_dataset_upload(staging_path, detected_format, options)
-            except DataImportError as error:
-                raise HTTPException(400, {"code": error.code, "message": str(error)}) from error
-            table.project_id = project_id_value
-            table.source_name = safe_name
-            version = freeze_dataset_version(db, table, current_user.id)
-            return {"id": str(version.id), "dataset_version_id": str(version.id), "row_count": version.row_count, "column_count": version.column_count, "content_hash": version.content_hash, "schema_hash": version.schema_hash}
+            if source_format is not None:
+                declared_format = source_format.lower().lstrip(".")
+                declared_format = "excel" if declared_format in {"xlsx", "xls"} else declared_format
+                detected_format = _sniff_source_format(staging_path)
+                if declared_format != detected_format:
+                    raise HTTPException(
+                        400,
+                        {
+                            "code": "DATA_FORMAT_MISMATCH",
+                            "message": (
+                                f"declared format {declared_format!r} does not match "
+                                f"detected format {detected_format!r}"
+                            ),
+                        },
+                    )
+            process = create_dataset_import_process(
+                db,
+                project_id=project_id_value,
+                operator_id=current_user.id,
+                source_path=staging_path,
+                source_name=safe_name,
+                source_format=detected_format,
+                options=options,
+                idempotency_key=(str(idempotency_key) if idempotency_key else f"legacy-{uuid.uuid4()}"),
+            )
+            from app.tasks.dataset_import_tasks import enqueue_dataset_import
+
+            enqueue_dataset_import(process.id)
+            return _dataset_import_payload(process)
     finally:
         staging_path.unlink(missing_ok=True)
+
+
+@router.get("/dataset-imports/{import_id}")
+def get_dataset_import(
+    import_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    process = db.get(DatasetImportProcess, import_id)
+    if process is None:
+        raise HTTPException(404, {"code": "DATA_IMPORT_NOT_FOUND", "message": "Dataset import not found"})
+    require_project_access(db, process.project_id, current_user.id, "project.read")
+    return _dataset_import_payload(process)
+
+
+@router.post("/dataset-imports/{import_id}/confirm-schema", status_code=202)
+def confirm_dataset_import_schema(
+    import_id: UUID,
+    data: ConfirmSchemaRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    if not idempotency_key:
+        raise HTTPException(400, {"code": "IDEMPOTENCY_KEY_REQUIRED", "message": "Idempotency-Key is required"})
+    process = db.get(DatasetImportProcess, import_id)
+    if process is None:
+        raise HTTPException(404, {"code": "DATA_IMPORT_NOT_FOUND", "message": "Dataset import not found"})
+    access = require_project_access(db, process.project_id, current_user.id, "resource.create")
+    if process.status != "pending_schema":
+        raise HTTPException(409, {"code": "DATA_IMPORT_NOT_PENDING", "message": "Dataset import is not awaiting schema confirmation"})
+    operation = DurableOperation(
+        resource_key=f"dataset-import-confirm:{process.id}",
+        idempotency_key=str(idempotency_key),
+        state="queued",
+        stage="queued",
+    )
+    db.add(operation)
+    db.flush()
+    process.confirmation_operation_id = operation.id
+    process.status = "confirming"
+    process.parse_contract = {
+        **(process.parse_contract or {}),
+        "confirmation": {
+            "schema": data.schema_definition,
+            "sample_id_column": data.sample_id_column,
+        },
+    }
+    db.commit()
+    from app.tasks.dataset_import_tasks import enqueue_dataset_import_confirmation
+
+    enqueue_dataset_import_confirmation(process.id)
+    return {
+        "id": str(process.id),
+        "dataset_import_id": str(process.id),
+        "operation_id": str(operation.id),
+        "status": process.status,
+    }
 
 
 @router.get("/dataset-versions/{version_id}")

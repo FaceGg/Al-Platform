@@ -69,7 +69,7 @@ def _project_rows(db: Session, project_id, cursor: str | None, limit: int) -> tu
     total = query.count()
     if cursor:
         try:
-            marker = db.get(AnnotationReturnBatch, uuid.UUID(str(cursor)))
+            marker = query.filter(AnnotationReturnBatch.id == uuid.UUID(str(cursor))).one_or_none()
         except (TypeError, ValueError, AttributeError):
             marker = None
         if marker is None:
@@ -208,9 +208,17 @@ def accept_return_batch(db: Session, return_batch_id, expected_revision: int, ac
     source_columns = db.query(DatasetSchemaColumn).filter_by(dataset_version_id=source.id).order_by(DatasetSchemaColumn.position).all()
     source_rows = db.query(DatasetSample).filter_by(dataset_version_id=source.id).order_by(DatasetSample.row_index).all()
     label_columns = sorted(schema.columns, key=lambda item: item.ordinal)
-    source_names = {column.name for column in source_columns}
-    if source_names.intersection({column.machine_key for column in label_columns}):
-        raise AnnotationReturnError("RETURN_LABEL_COLUMN_CONFLICT")
+    source_by_name = {column.name: column for column in source_columns}
+    type_aliases = {
+        "str": "string", "object": "string", "string": "string",
+        "int": "int", "int64": "int",
+        "float": "float", "float64": "float",
+    }
+    for column in label_columns:
+        existing = source_by_name.get(column.machine_key)
+        if existing is not None and type_aliases.get(existing.dtype.lower()) != column.value_type:
+            raise AnnotationReturnError("RETURN_LABEL_COLUMN_TYPE_MISMATCH")
+    appended_columns = [column for column in label_columns if column.machine_key not in source_by_name]
     combined_rows = []
     for row in source_rows:
         values = dict(row.values or {})
@@ -222,7 +230,7 @@ def accept_return_batch(db: Session, return_batch_id, expected_revision: int, ac
         for column in source_columns
     ] + [
         DatasetSchemaColumn(name=column.machine_key, position=len(source_columns) + index, dtype=column.value_type, nullable=not column.required)
-        for index, column in enumerate(label_columns)
+        for index, column in enumerate(appended_columns)
     ]
     content_hash, schema_hash = _dataset_hashes(columns, combined_rows)
     latest = db.query(DatasetVersion.version).filter(DatasetVersion.project_id == task.project_id).order_by(DatasetVersion.version.desc()).first()
