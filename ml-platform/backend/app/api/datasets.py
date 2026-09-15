@@ -306,6 +306,7 @@ def list_owned_datasets(
     if project_id:
         query = query.filter(Artifact.project_id == UUID(project_id))
     artifacts = query.order_by(Artifact.created_at.desc()).all()
+    artifacts = [artifact for artifact in artifacts if (artifact.metadata_ or {}).get("source") != "normalized"]
     versions = {
         version.original_artifact_id: version
         for version in db.query(DatasetVersion)
@@ -329,6 +330,7 @@ def list_project_datasets(
     artifacts = db.query(Artifact).filter(
         Artifact.project_id == project.id, Artifact.type == "dataset",
     ).order_by(Artifact.created_at.desc()).all()
+    artifacts = [artifact for artifact in artifacts if (artifact.metadata_ or {}).get("source") != "normalized"]
     versions = {
         version.original_artifact_id: version
         for version in db.query(DatasetVersion)

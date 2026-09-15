@@ -102,6 +102,11 @@ class TestDatasetsAPI(unittest.TestCase):
         item = next(entry for entry in r.json()["items"] if entry["id"] == self.artifact_ids[0])
         self.assertEqual(item["project_name"], "DatasetTestProject")
 
+    def test_03b2_dataset_lists_hide_internal_normalized_artifact(self):
+        r = client.get("/api/datasets", headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(any(item["name"] == "normalized.csv" for item in r.json()["items"]))
+
     def test_03c_delete_allows_dataset_artifact_without_task_reference(self):
         uploaded = client.post(
             f"/api/projects/{self.project_id}/datasets/upload",

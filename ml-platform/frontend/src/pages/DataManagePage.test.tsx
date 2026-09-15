@@ -97,7 +97,7 @@ describe("DataManagePage", () => {
 
     await waitFor(() => expect(remove).toHaveBeenCalledWith("/datasets/dataset-1"));
     expect(await screen.findByText("weld.csv")).toBeInTheDocument();
-    expect(await screen.findByText("该文件已被数据版本引用，不能删除。请先删除或归档相关数据版本。")).toBeInTheDocument();
+    expect(await screen.findByText("Dataset artifact is referenced by an immutable dataset version")).toBeInTheDocument();
   });
 
   it("accepts legacy XLS report uploads alongside CSV and XLSX", async () => {
