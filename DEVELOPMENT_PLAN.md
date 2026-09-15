@@ -50,6 +50,10 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 
 ## 5. 当前主交付计划
 
+API 管理与应用编排的统一实施顺序、任务边界、验收门槛和文件范围以
+[统一实施计划](ml-platform/docs/superpowers/plans/2026-09-15-api-management-and-orchestration-combined.md)
+为准：先完成 API 管理，再启动应用编排。原 API 管理和应用编排文档保留为历史拆分参考，不再作为独立执行入口。
+
 所有 Task 仍为 `planned`，且尚未开始开发。文档评审、历史局部功能或 Week 1–12 验收均不构成实现完成状态。按依赖执行，不得跳过 Task 1 的去行业化基线。
 
 | ID | 工作项 | 依赖 | 状态 |
@@ -132,3 +136,4 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 - 2026-09-03：发布前验证记录：README 以外的工作树变更已提交并推送，`git diff --check` 退出码为 0；后端标准套件因 `python` 命令仅指向 WindowsApps 占位符、Python 3.14 环境未安装 `fastapi`，前端因缺少 `node_modules` 未执行测试和构建。上述环境缺口不计为测试通过，也不改变通用平台 Task 1–14 的 `planned` 状态。
 - 2026-09-09：重新生成 Ubuntu 源码包时，`packaging/build-package.sh` 的校验和重定向缺少末尾引号，导致 Bash 报 `unexpected EOF`。此前将多个文件放在同一次 `bash -n` 调用中只实际解析了第一个脚本，未覆盖该文件；已补齐引号并改为逐文件语法校验。部署合同测试 `tests.test_ci_workflow` 为 49/49，通过后的归档校验和、必要文件和敏感运行时路径排除均已复验；Docker Engine 在本机仍不可用，目标 Ubuntu 的镜像构建和运行态健康检查仍待执行。
 - 2026-09-11：将 Agent 行为边界、自主执行、澄清、批准、工具调用和分层验证规则移至根目录 `AGENTS.md`；本文件继续作为项目状态、依赖、风险和验收事实台账。新增 `.agents/skills/project-audit` 与 `.agents/skills/release-gates`，分别封装规则审计和发布证据流程。未改变业务代码、历史计划或 CI 业务执行逻辑。
+- 2026-09-15：将 API 管理和应用编排两个拆分计划整理为统一实施计划，明确串行依赖：API 管理完成验收门槛后才启动应用编排；编排完成后再接入编排结果发布 API。原拆分文档保留为历史参考。
