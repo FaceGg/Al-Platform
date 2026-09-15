@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from app.services import weighted_clustering
 from app.services.annotation_strategies import (
     AnnotationDecision,
     AutomaticAnnotationConfig,
@@ -17,6 +18,7 @@ from app.services.weighted_clustering import (
     FeatureMap,
     InputContract,
     aggregate_model_importance,
+    assign_clusters_from_artifact,
     build_weighted_clusters,
     deterministic_sample_indices,
 )
@@ -232,6 +234,51 @@ def test_large_cluster_evaluation_sampling_is_stable_by_sample_id_revision_and_s
     assert deterministic_sample_indices(sample_ids, task_revision=4, seed=7, limit=2)[1] != first_hash
 
 
+def test_large_cluster_evaluation_uses_supplied_sample_ids_and_records_metadata(monkeypatch):
+    row_count = 100_001
+    frame = pd.DataFrame(
+        {
+            "x": np.arange(row_count, dtype=float),
+            "y": np.arange(row_count, dtype=float) % 7,
+        },
+        index=tuple(f"row-{index}" for index in range(row_count)),
+    )
+    sample_ids = tuple(f"sample-{index}" for index in range(row_count))
+
+    class Model:
+        feature_importances_ = np.array([3.0, 1.0])
+
+    class FastKMeans:
+        def __init__(self, n_clusters, random_state, n_init):
+            self.n_clusters = n_clusters
+
+        def fit_predict(self, values):
+            return np.arange(len(values)) % self.n_clusters
+
+        def fit(self, values):
+            self.labels_ = np.arange(len(values)) % self.n_clusters
+            self.cluster_centers_ = np.zeros((self.n_clusters, values.shape[1]))
+            return self
+
+    monkeypatch.setattr(weighted_clustering, "KMeans", FastKMeans)
+    monkeypatch.setattr(weighted_clustering, "silhouette_score", lambda _values, _labels: 0.5)
+
+    _, expected_hash = deterministic_sample_indices(sample_ids, task_revision=5, seed=13)
+    artifact = build_weighted_clusters(
+        frame,
+        Model(),
+        InputContract(feature_columns=("x", "y")),
+        seed=13,
+        task_revision=5,
+        sample_ids=sample_ids,
+    )
+
+    assert artifact.sampling_mode == "deterministic_hash_sample"
+    assert artifact.sample_count_evaluated == 50_000
+    assert artifact.total_sample_count == row_count
+    assert artifact.sampling_hash == expected_hash
+
+
 def test_unavailable_model_importance_marks_review_instead_of_fabricating_weights():
     frame = pd.DataFrame({"x": np.arange(8), "y": np.arange(8)})
     contract = InputContract(feature_columns=("x", "y"))
@@ -259,3 +306,36 @@ def test_weighted_kmeans_reads_feature_importance_from_a_fitted_pipeline():
     artifact = build_weighted_clusters(frame, model, InputContract(feature_columns=("x", "y")), seed=7)
     assert len(artifact.labels) == len(frame)
     assert sum(artifact.weights.values()) == pytest.approx(1.0)
+
+
+def test_frozen_cluster_artifact_reuses_preprocessing_and_centers_for_assignment():
+    frame = pd.DataFrame({
+        "x": [0.0, 0.1, 0.2, 5.0, 5.1, 5.2],
+        "y": [0.0, 0.2, 0.1, 5.0, 5.2, 5.1],
+    })
+
+    class Model:
+        feature_importances_ = np.array([3.0, 1.0])
+
+    artifact = build_weighted_clusters(frame, Model(), InputContract(feature_columns=("x", "y")), seed=7)
+
+    assert artifact.preprocessing["fit_scope"] == "frozen_task_sample_scope"
+    assert artifact.preprocessing["feature_columns"] == ("x", "y")
+    assert tuple(assign_clusters_from_artifact(frame, artifact)) == artifact.labels
+
+
+def test_weighted_kmeans_uses_frozen_importance_when_model_has_no_native_vector():
+    frame = pd.DataFrame({
+        "x": [0.0, 0.1, 0.2, 5.0, 5.1, 5.2],
+        "y": [0.0, 0.2, 0.1, 5.0, 5.2, 5.1],
+    })
+
+    artifact = build_weighted_clusters(
+        frame,
+        object(),
+        InputContract(feature_columns=("x", "y")),
+        seed=7,
+        feature_importance={"x": 3.0, "y": 1.0},
+    )
+
+    assert artifact.weights == pytest.approx({"x": 0.75, "y": 0.25})

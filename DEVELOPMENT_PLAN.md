@@ -1,19 +1,19 @@
 # 通用自动建模与数据标注平台当前开发计划
 
 > 文档状态：仅汇总未完成、待验证、风险和已延后工作。
-> 文档更新日期：2026-09-14
+> 文档更新日期：2026-09-15
 > 当前工作树：`E:\codex_workspace\agent_spot_welding\.worktrees\general-automl-annotation-20260902`
 > 当前分支：`general-automl-annotation-20260902`
-> 当前整理基线：`80410f6`（当前工作树干净）
+> 当前整理基线：`190b55c`（当前工作树含未提交的自动标注与验收修正）
 
 ## 1. 使用规则
 
 ### 自动标注方案一致性补齐（进行中）
 
 - 本次按技术方案第 7 章重新核验，历史 Task 6/12 passed 不作为当前端到端一致性证据。
-- 已补：规则按标签列选择数值最小的优先级；同优先级冲突保持 needs_review；显式目标簇范围和规则簇过滤；配置类型校验。旧快照未声明目标簇时保持历史范围。
-- 待补：启用模型版本选择、模型 output_contract 锁定、多列标签编辑、可视化规则分组、簇预览及映射、冻结工件复用、完整预览执行指派浏览器验证。当前不宣称完整自动标注流程完成。
-- 验证：策略模块新增优先级和未选簇回归；完整最终验证结果需在补齐后更新。
+- 已补：规则按标签列选择数值最小的优先级；同优先级冲突保持 needs_review；显式目标簇范围和规则簇过滤；配置类型校验；已启用模型版本选择和 output_contract 冻结；多列其他兜底、规则命中与簇映射编辑；确定性 K 评估抽样、冻结预处理/中心和发现工件复用。旧快照未声明目标簇时保持历史范围。
+- 待补：聚类发现 -> 策略配置 -> 最终预览 -> 执行/指派的完整浏览器链路，以及真实 Docker/WSL、broker/recovery 运行态复核。当前不因组件或 route-mock 通过而宣称完整自动标注流程完成。
+- 验证：策略和任务状态组合已覆盖发现工件、最终配置复用与多输出工件重要性；浏览器已覆盖通用预览/执行/回传/验收状态链路。完整最终验证结果需在补齐剩余运行态门禁后更新。
 
 - 开发前读取本文件、`AGENTS.md`、共享经验文档、技术方案和对应实施计划。
 - Windows 宿主命令默认使用 PowerShell 7（`pwsh`）；Docker 命令在 WSL 中执行。
@@ -819,3 +819,12 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 2026-09-15：工作流算子补充了 `select_attributes` 多列选择和未知列显式校验；新增固定输入变量 `df`、固定输出变量 `result` 的 `python_script` 算子，支持前端在线编辑及 `.py` 文本上传，并加入脚本 AST 禁止项、长度和输出规模限制。旧 `execute_python` 保留兼容；后端与前端聚焦回归、前端生产构建已验证，完整工作流运行态和浏览器验收未在本轮执行。
 - 2026-09-15：修复工作流导出数据无法用于通用标注任务的问题。工作流 `dataset` artifact 现在同步创建 `DatasetVersion`、schema、samples 和 import 记录；数据版本列表接口还会幂等补建历史 `workflow_export` artifact，因此已有的 `featured.csv` 无需重新上传即可进入选择器。WSL Python 编译通过；后端 pytest 因环境缺少 pytest 未执行。
 - 2026-09-15：修复前端 Dockerfile 的依赖安装命令：`npm ci --production=false` 改为 `npm ci --include=dev --audit=false`。原因是锁文件使用的 npm 镜像未实现 audit API，容器内 npm 安装阶段因此以 404 退出；宿主机依赖安装和 `git diff --check` 已验证，当前 Windows 环境没有 Docker CLI/daemon，镜像构建和 Compose 运行态仍待在 WSL/Docker 环境复验。
+
+## 2026-09-15 自动标注第 7 章冻结工件与浏览器状态链路复核
+
+- 实现：加权 KMeans 在超过 100,000 条样本时只对确定性最多 50,000 条样本选择 K，最终簇分配仍覆盖全部样本；发现预览持久化总量、评估元数据、标准化器和中心。后续最终策略预览只使用该冻结工件分配簇，不重新拟合预处理、KMeans 或搜索 K。多输出包装模型优先使用冻结模型工件中的特征重要性；缺失、非法或零和重要性继续失败封闭。
+- 浏览器修复：`generic-platform-acceptance.spec.ts` 在预览后先确认任务预览抽屉、关闭它并确认隐藏，再点击底层“执行”。此前失败是抽屉覆盖层拦截真实指针事件，不是执行 transition 或 worker 链路失败。
+- 浏览器补充：新增自动任务合同覆盖新建自动任务、聚类发现、簇映射/其他兜底、最终预览、执行和指派。修复其数据集 mock 误以宽泛 glob 拦截 Vite `/src/api/datasets.ts` 并返回 JSON，以及缺失 `project_role`、响应 revision 变量错误导致的测试夹具失真；未改动产品代码或 API 合同。
+- 测试台账：将已跟踪的 `AutoMLTaskPage.progress.test.tsx` 登记到 Week 12，恢复自动发现测试文件与台账的一一对应；未改变产品代码或 API 合同。
+- 本地验证：后端 `test_annotation_strategies.py`、`test_annotation_task_state.py`、`test_annotation_task_state_api.py`、`test_model_registration_contract.py` 为 **85 passed、14 warnings**；前端定向组合为 **61 passed**；Chromium `generic-platform-acceptance.spec.ts` 两条合同为 **2 passed**；`npm run build` 通过。上述均在含未提交修改的工作树执行，不能作为当前 Git SHA 发布收据。
+- 未验证：本轮未执行真实 Docker/WSL Compose、真实 Redis/Celery 派发和重启恢复、完整前端/后端套件或新的远程 CI；Task 14 保持 `in_progress`。

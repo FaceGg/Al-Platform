@@ -807,8 +807,15 @@ def test_cluster_discovery_loads_model_artifact_and_persists_weighted_cluster_ar
     assert len(result.decisions) == len(rows)
     assert result.artifact.artifact["importance_source"] == "model_artifact"
     assert result.artifact.artifact["configuration_complete"] is False
-    assert result.artifact.artifact["cluster_artifact"]["seed"] == 7
-    assert len(result.artifact.artifact["cluster_artifact"]["assignments"]) == len(rows)
+    cluster_artifact = result.artifact.artifact["cluster_artifact"]
+    assert cluster_artifact["seed"] == 7
+    assert cluster_artifact["evaluation_mode"] == "all_rows"
+    assert cluster_artifact["evaluation_sample_count"] == len(rows)
+    assert cluster_artifact["total_sample_count"] == len(rows)
+    assert cluster_artifact["evaluation_sample_hash"]
+    assert cluster_artifact["preprocessing"]["fit_scope"] == "frozen_task_sample_scope"
+    assert cluster_artifact["preprocessing"]["standardizer"]["mean"]
+    assert len(cluster_artifact["assignments"]) == len(rows)
     assert {decision.status for decision in result.decisions.values()} == {"pending_configuration"}
 
 
@@ -906,3 +913,57 @@ def test_cluster_discovery_with_model_artifact_missing_importance_fails_closed(d
             rows={"s-1": {"x": 0.0}, "s-2": {"x": 1.0}},
         )
     assert error.value.code == "FEATURE_IMPORTANCE_UNAVAILABLE"
+
+
+def test_cluster_discovery_uses_frozen_multioutput_feature_importance(db, tmp_path):
+    task, user, project = _task(db)
+    from sklearn.multioutput import MultiOutputClassifier
+    from sklearn.neighbors import KNeighborsClassifier
+    from app.services.annotation_strategies import apply_preview_annotation_strategy
+
+    features = np.array([[0.0, 0.0], [0.1, 0.2], [0.2, 0.1], [5.0, 5.0], [5.1, 5.2], [5.2, 5.1]])
+    targets = np.array([["a", "low"], ["a", "low"], ["a", "high"], ["b", "high"], ["b", "high"], ["b", "high"]])
+    model = MultiOutputClassifier(KNeighborsClassifier(n_neighbors=1)).fit(features, targets)
+    artifact_path = tmp_path / "multioutput-importance.joblib"
+    joblib.dump({
+        "model": model,
+        "input_contract": {"feature_columns": ["x", "y"]},
+        "feature_importance": {"x": 3.0, "y": 1.0},
+        "feature_importance_report": {
+            "source": "model_native",
+            "by_feature": {"x": 0.75, "y": 0.25},
+            "per_target": {
+                "label_a": {"x": 0.75, "y": 0.25},
+                "label_b": {"x": 0.75, "y": 0.25},
+            },
+        },
+    }, artifact_path)
+    model_artifact = Artifact(project_id=project.id, name="multioutput-importance", type="model", storage_path=str(artifact_path), format="joblib")
+    db.add(model_artifact)
+    db.commit()
+    rows = {f"s-{index}": {"x": float(row[0]), "y": float(row[1])} for index, row in enumerate(features)}
+
+    result = apply_preview_annotation_strategy(
+        db,
+        task_id=task.id,
+        task_revision=0,
+        config_hash="sha256:multioutput-importance",
+        actor_id=user.id,
+        project_id=project.id,
+        schema_snapshot={"columns": [
+            {"machine_key": "label_a", "value_type": "string", "required": False},
+            {"machine_key": "label_b", "value_type": "string", "required": False},
+        ]},
+        configuration={
+            "model_artifact_id": str(model_artifact.id),
+            "clustering": True,
+            "cluster_discovery": True,
+            "random_seed": 7,
+        },
+        rows=rows,
+    )
+
+    cluster_artifact = result.artifact.artifact["cluster_artifact"]
+    assert cluster_artifact["weights"] == pytest.approx({"x": 0.75, "y": 0.25})
+    assert cluster_artifact["importance_method"] == "model_native"
+    assert result.artifact.artifact["importance_source"] == "model_artifact"

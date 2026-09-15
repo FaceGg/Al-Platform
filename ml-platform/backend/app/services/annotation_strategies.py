@@ -379,7 +379,12 @@ def _model_outputs_from_package(package: Mapping[str, object], rows: Mapping[str
     return values
 
 
-def _cluster_artifact_from_package(package: Mapping[str, object], rows: Mapping[str, Mapping[str, object]], seed: int):
+def _cluster_artifact_from_package(
+    package: Mapping[str, object],
+    rows: Mapping[str, Mapping[str, object]],
+    seed: int,
+    task_revision: int,
+):
     contract = package.get("input_contract") or {}
     feature_columns = (
         contract.get("feature_columns") or contract.get("input_columns")
@@ -387,14 +392,45 @@ def _cluster_artifact_from_package(package: Mapping[str, object], rows: Mapping[
     )
     if not isinstance(feature_columns, (list, tuple)) or not feature_columns:
         raise StrategyConfigError("model artifact input contract is invalid", "MODEL_CONTRACT_INVALID")
+    frozen_importance = None
+    importance_method = "estimator_native"
+    importance_report = package.get("feature_importance_report")
+    if "feature_importance" in package:
+        frozen_importance = package.get("feature_importance")
+        if isinstance(importance_report, Mapping):
+            importance_method = str(importance_report.get("source") or "frozen_artifact")
+        else:
+            importance_method = "frozen_artifact"
+    elif isinstance(importance_report, Mapping) and "by_feature" in importance_report:
+        frozen_importance = importance_report.get("by_feature")
+        importance_method = str(importance_report.get("source") or "frozen_artifact")
     frame = pd.DataFrame.from_dict(rows, orient="index")
     artifact = build_weighted_clusters(
         frame,
         package["model"],
         InputContract(feature_columns=tuple(str(column) for column in feature_columns)),
         seed=seed,
+        task_revision=task_revision,
+        feature_importance=frozen_importance,
     )
     payload = asdict(artifact)
+    payload.update(
+        {
+            "feature_map": {
+                "source_columns": list(artifact.feature_map.source_columns),
+                "one_hot_dimensions": {
+                    str(column): list(dimensions)
+                    for column, dimensions in artifact.feature_map.one_hot_dimensions.items()
+                },
+            },
+            "evaluation_mode": artifact.sampling_mode,
+            "evaluation_sample_count": artifact.sample_count_evaluated,
+            "evaluation_sample_hash": artifact.sampling_hash,
+            "total_sample_count": artifact.total_sample_count,
+            "importance_method": importance_method,
+            "feature_importance_report": deepcopy(dict(importance_report)) if isinstance(importance_report, Mapping) else None,
+        }
+    )
     payload["assignments"] = {str(sample_id): int(label) for sample_id, label in zip(frame.index, artifact.labels)}
     return artifact, payload
 
@@ -487,6 +523,7 @@ def apply_preview_annotation_strategy(
                         package,
                         rows,
                         int(configuration.get("random_seed", 42)),
+                        task_revision,
                     )
                     importance = list(cluster_artifact.weights.values())
                     cluster_ids = cluster_artifact_payload["assignments"]

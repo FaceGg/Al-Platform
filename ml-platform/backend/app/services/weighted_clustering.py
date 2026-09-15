@@ -60,8 +60,10 @@ class ClusterArtifact:
     weights: dict[str, float]
     feature_map: FeatureMap
     sample_count_evaluated: int
+    total_sample_count: int
     sampling_mode: str
     sampling_hash: str
+    preprocessing: Mapping[str, object]
     centers: tuple[tuple[float, ...], ...]
 
 
@@ -93,10 +95,123 @@ def _extract_importance(model: object, feature_count: int) -> np.ndarray:
             raw = np.abs(raw)
     if raw is None:
         raise ValueError("FEATURE_IMPORTANCE_UNAVAILABLE")
+    return _normalize_importance_values(raw, feature_count)
+
+
+def _normalize_importance_values(raw: object, feature_count: int) -> np.ndarray:
     values = np.asarray(raw, dtype=float).reshape(-1)
     if len(values) != feature_count or not np.all(np.isfinite(values)) or np.any(values < 0) or values.sum() <= 0:
         raise ValueError("FEATURE_IMPORTANCE_UNAVAILABLE")
     return values / values.sum()
+
+
+def _frozen_importance_values(
+    feature_importance: Mapping[str, float] | Sequence[float],
+    feature_columns: Sequence[str],
+) -> np.ndarray:
+    if isinstance(feature_importance, Mapping):
+        expected = set(feature_columns)
+        if set(feature_importance) != expected:
+            raise ValueError("FEATURE_IMPORTANCE_UNAVAILABLE")
+        try:
+            values = [feature_importance[column] for column in feature_columns]
+        except KeyError as error:
+            raise ValueError("FEATURE_IMPORTANCE_UNAVAILABLE") from error
+        return _normalize_importance_values(values, len(feature_columns))
+    return _normalize_importance_values(feature_importance, len(feature_columns))
+
+
+def _numeric_feature_matrix(frame: pd.DataFrame, columns: Sequence[str]) -> np.ndarray:
+    missing = [column for column in columns if column not in frame.columns]
+    if missing:
+        raise ValueError(f"CLUSTER_FEATURE_MISSING:{','.join(missing)}")
+    matrix = frame.loc[:, list(columns)].apply(pd.to_numeric, errors="raise").to_numpy(dtype=float)
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError("CLUSTER_INPUT_INVALID")
+    return matrix
+
+
+def deterministic_sample_indices(
+    sample_ids: Sequence[object],
+    *,
+    task_revision: int,
+    seed: int,
+    limit: int = 50_000,
+) -> tuple[np.ndarray, str]:
+    """Select a stable evaluation subset using frozen sample identities.
+
+    The returned indices preserve hash rank rather than the input row order, so
+    the same frozen samples produce the same evaluation matrix after a harmless
+    source-row reordering.
+    """
+    if limit < 0:
+        raise ValueError("CLUSTER_EVALUATION_LIMIT_INVALID")
+    ranked: list[tuple[bytes, bytes, int]] = []
+    revision_bytes = str(int(task_revision)).encode("utf-8")
+    seed_bytes = str(int(seed)).encode("utf-8")
+    for index, sample_id in enumerate(sample_ids):
+        sample_id_bytes = str(sample_id).encode("utf-8")
+        digest = hashlib.sha256(
+            b"annotation-cluster-evaluation-v1\x00"
+            + revision_bytes
+            + b"\x00"
+            + seed_bytes
+            + b"\x00"
+            + sample_id_bytes
+        ).digest()
+        ranked.append((digest, sample_id_bytes, index))
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    selected = ranked[:limit]
+
+    hash_builder = hashlib.sha256()
+    hash_builder.update(b"annotation-cluster-evaluation-sample-v1\x00")
+    hash_builder.update(revision_bytes)
+    hash_builder.update(b"\x00")
+    hash_builder.update(seed_bytes)
+    hash_builder.update(b"\x00")
+    for digest, sample_id_bytes, _ in selected:
+        hash_builder.update(digest)
+        hash_builder.update(b"\x00")
+        hash_builder.update(sample_id_bytes)
+        hash_builder.update(b"\x00")
+    return np.asarray([item[2] for item in selected], dtype=np.int64), hash_builder.hexdigest()
+
+
+def assign_clusters_from_artifact(frame: pd.DataFrame, artifact: ClusterArtifact) -> tuple[int, ...]:
+    """Assign rows with only frozen weighted-cluster preprocessing and centers."""
+    preprocessing = artifact.preprocessing
+    if not isinstance(preprocessing, Mapping):
+        raise ValueError("CLUSTER_PREPROCESSING_INVALID")
+    feature_columns = preprocessing.get("feature_columns")
+    standardizer = preprocessing.get("standardizer")
+    if not isinstance(feature_columns, (list, tuple)) or not feature_columns or not isinstance(standardizer, Mapping):
+        raise ValueError("CLUSTER_PREPROCESSING_INVALID")
+    columns = tuple(str(column) for column in feature_columns)
+    mean = np.asarray(standardizer.get("mean"), dtype=float)
+    scale = np.asarray(standardizer.get("scale"), dtype=float)
+    matrix = _numeric_feature_matrix(frame, columns)
+    if (
+        mean.ndim != 1
+        or scale.ndim != 1
+        or len(mean) != matrix.shape[1]
+        or len(scale) != matrix.shape[1]
+        or not np.all(np.isfinite(mean))
+        or not np.all(np.isfinite(scale))
+        or np.any(scale <= 0)
+    ):
+        raise ValueError("CLUSTER_PREPROCESSING_INVALID")
+    try:
+        weights = np.asarray([artifact.weights[column] for column in columns], dtype=float)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("CLUSTER_PREPROCESSING_INVALID") from error
+    if not np.all(np.isfinite(weights)) or np.any(weights < 0) or weights.sum() <= 0:
+        raise ValueError("CLUSTER_PREPROCESSING_INVALID")
+    centers = np.asarray(artifact.centers, dtype=float)
+    if centers.ndim != 2 or centers.shape[0] < 1 or centers.shape[1] != matrix.shape[1] or not np.all(np.isfinite(centers)):
+        raise ValueError("CLUSTER_ARTIFACT_INVALID")
+    weighted = ((matrix - mean) / scale) * np.sqrt(weights)
+    distances = np.sum((weighted[:, np.newaxis, :] - centers[np.newaxis, :, :]) ** 2, axis=2)
+    return tuple(int(value) for value in np.argmin(distances, axis=1))
 
 
 def build_weighted_clusters(
@@ -105,29 +220,41 @@ def build_weighted_clusters(
     feature_contract: InputContract,
     seed: int,
     max_k: int = 8,
+    task_revision: int = 0,
+    sample_ids: Sequence[object] | None = None,
+    feature_importance: Mapping[str, float] | Sequence[float] | None = None,
 ) -> ClusterArtifact:
     if frame.empty:
         raise ValueError("CLUSTER_INPUT_EMPTY")
     columns = list(feature_contract.feature_columns)
-    missing = [column for column in columns if column not in frame.columns]
-    if missing:
-        raise ValueError(f"CLUSTER_FEATURE_MISSING:{','.join(missing)}")
-    matrix = frame.loc[:, columns].apply(pd.to_numeric, errors="raise").to_numpy(dtype=float)
-    if not np.all(np.isfinite(matrix)):
-        raise ValueError("CLUSTER_INPUT_INVALID")
-    scaled = StandardScaler().fit_transform(matrix)
-    raw_importance = _extract_importance(model, len(columns))
+    matrix = _numeric_feature_matrix(frame, columns)
+    scaler = StandardScaler().fit(matrix)
+    scaled = scaler.transform(matrix)
+    raw_importance = (
+        _extract_importance(model, len(columns))
+        if feature_importance is None
+        else _frozen_importance_values(feature_importance, columns)
+    )
     weighted = scaled * np.sqrt(raw_importance)
     row_count = len(weighted)
+    evaluation_ids = tuple(frame.index) if sample_ids is None else tuple(sample_ids)
+    if len(evaluation_ids) != row_count:
+        raise ValueError("CLUSTER_SAMPLE_ID_COUNT_MISMATCH")
     if row_count > 100_000:
-        digest = np.array([int.from_bytes(hashlib.sha256(f"{seed}:{index}".encode()).digest()[:8], "big") for index in range(row_count)], dtype=np.uint64)
-        eval_indices = np.argsort(digest)[:50_000]
+        eval_indices, sampling_hash = deterministic_sample_indices(
+            evaluation_ids,
+            task_revision=task_revision,
+            seed=seed,
+        )
         sampling_mode = "deterministic_hash_sample"
-        sampling_hash = hashlib.sha256(digest[eval_indices].tobytes()).hexdigest()
     else:
-        eval_indices = np.arange(row_count)
+        eval_indices, sampling_hash = deterministic_sample_indices(
+            evaluation_ids,
+            task_revision=task_revision,
+            seed=seed,
+            limit=row_count,
+        )
         sampling_mode = "all_rows"
-        sampling_hash = hashlib.sha256(np.asarray(eval_indices, dtype=np.int64).tobytes()).hexdigest()
     eval_matrix = weighted[eval_indices]
     upper_k = min(max(2, int(max_k)), len(eval_matrix) - 1)
     if upper_k < 2:
@@ -144,6 +271,15 @@ def build_weighted_clusters(
     final = KMeans(n_clusters=selected_k, random_state=seed, n_init=10).fit(weighted)
     weights = {column: float(value) for column, value in zip(columns, raw_importance)}
     feature_map = FeatureMap(tuple(columns), {})
+    preprocessing = {
+        "version": "weighted-clustering-v1",
+        "fit_scope": "frozen_task_sample_scope",
+        "feature_columns": tuple(columns),
+        "standardizer": {
+            "mean": tuple(float(value) for value in scaler.mean_),
+            "scale": tuple(float(value) for value in scaler.scale_),
+        },
+    }
     return ClusterArtifact(
         labels=tuple(int(value) for value in final.labels_),
         k_scores=scores,
@@ -152,7 +288,9 @@ def build_weighted_clusters(
         weights=weights,
         feature_map=feature_map,
         sample_count_evaluated=len(eval_indices),
+        total_sample_count=row_count,
         sampling_mode=sampling_mode,
         sampling_hash=sampling_hash,
+        preprocessing=preprocessing,
         centers=tuple(tuple(float(item) for item in row) for row in final.cluster_centers_),
     )
