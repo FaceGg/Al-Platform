@@ -51,7 +51,7 @@ describe("DataManagePage", () => {
 
     expect(await screen.findByText("weld.csv")).toBeInTheDocument();
     expect(screen.getByText("Weld line")).toBeInTheDocument();
-    expect(screen.getByText("2026-07-20 08:00:00")).toBeInTheDocument();
+    expect(screen.getByText(/2026-07-20/)).toBeInTheDocument();
     expect(get).toHaveBeenCalledWith("/datasets");
   });
 

@@ -802,3 +802,10 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 现象：Run `34836636235` 的四项基础门禁成功，但 Chromium acceptance 在 `Start isolated browser acceptance stack` 长时间无步骤更新，后续验收未启动。
 - 修复：为隔离 Compose `up --wait` 增加 15 分钟外层超时和 30 秒强制终止；失败时输出完整 Compose 状态及最近 200 行日志，保留原服务列表和验收流程不变。
 - 验证：`test_ci_workflow.py` **55 passed、2 warnings、138 subtests passed**；`git diff --check` 通过。修复后的提交需重新执行 `mode=full` 远程验收，Task 14 继续 `in_progress`。
+
+## 2026-09-15 Quality 跨平台时间与错误提示回归修复
+
+- 现象：Run `34913126000` 在 Ubuntu 和 Windows Quality 的前端测试均因 `DataManagePage.test.tsx` 两项断言失败，导致 Chromium acceptance 与 Week 11-12 verification 被跳过。
+- 根因：创建时间测试硬编码了中国时区的完整小时值，无法适配 runner 本地时区；删除阻断测试断言了页面未直接展示的中文映射文案，而当前实现按后端 `detail.message` 优先展示 API 错误消息。
+- 修复：时间断言改为只验证稳定的日期部分；删除阻断断言恢复为后端错误消息。未改变产品代码、删除保护或 API 合同。
+- 验证：本地 `DataManagePage.test.tsx` **6 passed**；Run `34913126000` 的失败证据已通过 `gh run view --log-failed` 核实。修复后的提交需重新执行 `mode=full`，Task 14 继续 `in_progress`。
