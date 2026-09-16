@@ -31,7 +31,10 @@ export type Sample = {
   revision: number
 }
 
-export const listTasks = () => request<{ items: Task[] }>('/portal/tasks')
+export const listTasks = (cursor?: string, limit = 50) =>
+  request<{ items: Task[]; total: number; next_cursor?: string | null }>('/portal/tasks', {
+    query: { cursor, limit },
+  })
 export const getTask = (id: string) => request<Task>(`/portal/tasks/${id}`)
 export const listSamples = (id: string, cursor?: string) =>
   request<{ items: Sample[]; next_cursor?: string }>(`/portal/tasks/${id}/samples`, {

@@ -7,7 +7,7 @@ export type AutoMLTaskType =
   | "multioutput_regression";
 
 export type AutoMLSearchMethod = "grid" | "random" | "bayesian" | "evolutionary" | "multi_fidelity";
-export type AutoMLSearchStrength = "light" | "balanced" | "thorough" | "maximum";
+export type AutoMLSearchStrength = "light" | "medium" | "high" | "ultra";
 // Values are execution seconds; the UI presents the approved 30/60/120/240-minute presets.
 export type AutoMLTimeBudget = 1800 | 3600 | 7200 | 14400;
 

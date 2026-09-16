@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -249,19 +250,53 @@ def _assignment_error(error: AssignmentError) -> HTTPException:
 
 
 @router.get("/api/internal/portal/tasks")
-def internal_portal_tasks(request: Request, db: Session = Depends(get_db)):
+def internal_portal_tasks(
+    request: Request,
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
     principal = _service_principal(request, scope="assignment:read", allow_wildcard=True)
-    assignments = db.query(AnnotationAssignment).filter(
+    query = db.query(AnnotationAssignment).join(
+        GenericAnnotationTask,
+        GenericAnnotationTask.id == AnnotationAssignment.task_id,
+    ).join(
+        ProjectAnnotatorGrant,
+        and_(
+            ProjectAnnotatorGrant.project_id == GenericAnnotationTask.project_id,
+            ProjectAnnotatorGrant.subject_id == principal.annotator_subject_id,
+            ProjectAnnotatorGrant.status == "active",
+        ),
+    ).filter(
         AnnotationAssignment.annotator_subject_id == principal.annotator_subject_id,
         AnnotationAssignment.state != "revoked",
-    ).order_by(AnnotationAssignment.created_at.desc(), AnnotationAssignment.id.desc()).all()
+    )
+    total = query.count()
+    if cursor:
+        try:
+            marker_id = uuid.UUID(str(cursor))
+        except (TypeError, ValueError, AttributeError) as error:
+            raise _portal_error("INVALID_CURSOR", status_code=422) from error
+        marker = query.filter(AnnotationAssignment.id == marker_id).one_or_none()
+        if marker is None:
+            raise _portal_error("INVALID_CURSOR", status_code=422)
+        query = query.filter(AnnotationAssignment.id < marker.id)
+    assignments = query.order_by(
+        AnnotationAssignment.id.desc(),
+    ).limit(limit + 1).all()
+    has_next = len(assignments) > limit
+    assignments = assignments[:limit]
     items = []
     for assignment in assignments:
         task = db.get(GenericAnnotationTask, assignment.task_id)
-        if task is None or not _assignment_granted(db, task, principal.annotator_subject_id):
+        if task is None:
             continue
         items.append(_task_view(task, assignment, db))
-    return {"items": items, "total": len(items), "next_cursor": None}
+    return {
+        "items": items,
+        "total": total,
+        "next_cursor": str(assignments[-1].id) if has_next and assignments else None,
+    }
 
 
 @router.get("/api/internal/portal/tasks/{task_id}")
@@ -458,7 +493,7 @@ def internal_portal_edit_for_return(
     return {"assignment_id": str(result.id), "state": result.state, "task_revision": result.task_revision}
 
 
-@router.post("/api/internal/portal/tasks/{task_id}/return")
+@router.post("/api/internal/portal/tasks/{task_id}/return", status_code=202)
 def internal_portal_return(
     task_id: uuid.UUID,
     data: PortalTaskConfirmation,
@@ -479,7 +514,11 @@ def internal_portal_return(
         result = return_assignment(db, assignment.id, data.task_revision, data.scope_hash, idempotency_key)
     except AssignmentError as error:
         raise _assignment_error(error) from error
-    return {"return_batch_id": str(result.return_batch_id), "state": result.state}
+    return {
+        "return_batch_id": str(result.return_batch_id),
+        "operation_id": str(result.operation_id) if result.operation_id else None,
+        "state": result.state,
+    }
 
 
 @router.get("/api/internal/portal/comments")

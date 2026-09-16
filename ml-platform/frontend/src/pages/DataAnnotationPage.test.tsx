@@ -446,7 +446,7 @@ describe("DataAnnotationPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith(
-      "/automl-tasks",
+      "/annotation-tasks",
       expect.objectContaining({
         project_id: "project-1",
         dataset_version_id: "version-1",
@@ -456,7 +456,7 @@ describe("DataAnnotationPage", () => {
       }),
       expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String), "X-Request-ID": expect.any(String) }) }),
     ));
-    const automlPayload = post.mock.calls.find(([url]) => url === "/automl-tasks")?.[1] as Record<string, unknown>;
+    const automlPayload = post.mock.calls.find(([url]) => url === "/annotation-tasks")?.[1] as Record<string, unknown>;
     expect(automlPayload).not.toHaveProperty("search_strength");
     expect(automlPayload).not.toHaveProperty("model_artifact_id");
   });
@@ -498,7 +498,7 @@ describe("DataAnnotationPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith(
-      "/automl-tasks",
+      "/annotation-tasks",
       expect.objectContaining({
         model_version_id: "model-version-1",
         configuration: {

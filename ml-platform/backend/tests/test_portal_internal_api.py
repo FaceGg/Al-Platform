@@ -341,7 +341,7 @@ def test_internal_portal_bulk_confirm_and_return_are_idempotent(portal_fixture):
         headers=_headers(read_write, **{"Idempotency-Key": "portal-return-1"}),
         json={"task_revision": 4, "scope_hash": portal_fixture["scope_hash"]},
     )
-    assert first.status_code == second.status_code == 200
+    assert first.status_code == second.status_code == 202
     assert first.json()["return_batch_id"] == second.json()["return_batch_id"]
 
 

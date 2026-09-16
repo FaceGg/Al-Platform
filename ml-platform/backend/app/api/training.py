@@ -53,6 +53,7 @@ from app.services.project_access import ProjectAccessService
 
 
 router = APIRouter(prefix="/api/training", tags=["training"])
+spec_router = APIRouter(tags=["training"])
 PROJECT_WRITE_ACTIONS = {
     "POST /api/training/run": "training_job.start",
     "POST /api/training/jobs/{job_id}/stop": "training_job.stop",
@@ -102,7 +103,7 @@ class AutoMLRunRequest(BaseModel):
     cross_validation_enabled: bool = True
     cross_validation_folds: int | None = Field(default=5)
     time_budget: int = Field(default=3600, ge=60, le=86400)
-    search_strength: str = "balanced"
+    search_strength: str = "medium"
     class_weight: bool = True
     name: str = Field(default="automl-job", min_length=1, max_length=128)
 
@@ -580,6 +581,7 @@ async def proxy_tensorboard(token: str, path: str, request: Request):
 
 
 @router.post("/automl/run", status_code=202)
+@spec_router.post("/api/automl-tasks", status_code=202)
 def start_automl(
     data: AutoMLRunRequest,
     request: Request,

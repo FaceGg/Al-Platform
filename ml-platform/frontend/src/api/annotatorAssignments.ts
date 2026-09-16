@@ -11,8 +11,13 @@ export async function listAnnotatorSubjects(query = ""): Promise<AnnotatorSubjec
   return Array.isArray(data) ? data : data.items || [];
 }
 
-export async function createAssignments(taskId: string, payload: AssignmentRequest): Promise<{ items: Assignment[]; overlap_warning?: string | null }> {
-  const response = await apiClient.post(`/annotation-tasks/${encodeURIComponent(taskId)}/assignments`, payload);
+export async function createAssignments(taskId: string, payload: AssignmentRequest, idempotencyKey = crypto.randomUUID()): Promise<{ items: Assignment[]; overlap_warning?: string | null }> {
+  const response = await apiClient.post(`/annotation-tasks/${encodeURIComponent(taskId)}/assignments`, payload, {
+    headers: {
+      "X-Request-ID": crypto.randomUUID(),
+      "Idempotency-Key": idempotencyKey,
+    },
+  });
   return response.data as { items: Assignment[]; overlap_warning?: string | null };
 }
 

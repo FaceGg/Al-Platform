@@ -65,6 +65,7 @@ _SQLITE_COLUMNS = {
     },
     "artifacts": {
         "storage_uri": "TEXT",
+        "archived_at": "DATETIME",
     },
     # Existing local SQLite databases may predate the API management
     # migration. Keep the compatibility path additive and idempotent so the
@@ -83,9 +84,11 @@ _SQLITE_COLUMNS = {
     },
     "dataset_versions": {
         "status": "VARCHAR(24) NOT NULL DEFAULT 'ready'",
+        "archived_at": "DATETIME",
     },
     "generic_annotation_tasks": {
         "paused_from_status": "VARCHAR(24)",
+        "archived_at": "DATETIME",
     },
     "model_exports": {
         "idempotency_scope": "VARCHAR(256) NOT NULL DEFAULT 'model'",
@@ -106,6 +109,12 @@ _SQLITE_COLUMNS = {
         "normalized_artifact_id": "CHAR(32)",
         "error": "JSON",
         "updated_at": "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
+    },
+    "annotation_return_batches": {
+        "operation_id": "CHAR(32)",
+    },
+    "annotation_assignments": {
+        "idempotency_key": "VARCHAR(128)",
     },
 }
 
@@ -139,6 +148,12 @@ _SQLITE_INDEXES = {
     "dataset_import_processes": {
         "ix_dataset_import_processes_project_id": "project_id",
         "ix_dataset_import_processes_status": "status",
+    },
+    "artifacts": {
+        "ix_artifacts_archived_at": "archived_at",
+    },
+    "generic_annotation_tasks": {
+        "ix_generic_annotation_tasks_archived_at": "archived_at",
     },
 }
 

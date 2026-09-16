@@ -18,6 +18,10 @@ describe("annotatorAssignments API", () => {
   it("sends the selected subjects and fixed sample scope", async () => {
     client.post.mockResolvedValue({ data: { items: [{ id: "assignment-1" }] } });
     await createAssignments("task-1", { annotator_ids: ["subject-1"], sample_scope: { kind: "ids", sample_ids: ["s-1"] }, due_at: undefined });
-    expect(client.post).toHaveBeenCalledWith("/annotation-tasks/task-1/assignments", { annotator_ids: ["subject-1"], sample_scope: { kind: "ids", sample_ids: ["s-1"] }, due_at: undefined });
+    expect(client.post).toHaveBeenCalledWith(
+      "/annotation-tasks/task-1/assignments",
+      { annotator_ids: ["subject-1"], sample_scope: { kind: "ids", sample_ids: ["s-1"] }, due_at: undefined },
+      { headers: { "X-Request-ID": expect.any(String), "Idempotency-Key": expect.any(String) } },
+    );
   });
 });

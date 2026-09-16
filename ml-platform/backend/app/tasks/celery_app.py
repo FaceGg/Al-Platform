@@ -20,6 +20,7 @@ celery_app = Celery(
         "app.tasks.spot_weld_quality_tasks",
         "app.tasks.model_export_tasks",
         "app.tasks.dataset_import_tasks",
+        "app.tasks.annotation_return_tasks",
         "app.tasks.recovery",
     ],
     broker=(settings.celery_broker_url.get_secret_value() if settings.celery_broker_url else None),
@@ -82,4 +83,5 @@ from app.tasks import notification_tasks  # noqa: E402,F401
 from app.tasks import spot_weld_quality_tasks  # noqa: E402,F401
 from app.tasks import model_export_tasks  # noqa: E402,F401
 from app.tasks import dataset_import_tasks  # noqa: E402,F401
+from app.tasks import annotation_return_tasks  # noqa: E402,F401
 from app.tasks import recovery  # noqa: E402,F401

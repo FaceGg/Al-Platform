@@ -16,6 +16,7 @@ from app.models.labeling import (
     LabelSchema,
 )
 from app.models.platform_models import GenericAnnotationTask
+from app.models.operation import DurableOperation
 from app.services.label_schema import LabelColumnContract, LabelSchemaContract, validate_label_values
 
 
@@ -47,6 +48,7 @@ class LabelWriteResult:
 class ReturnBatchRef:
     return_batch_id: uuid.UUID
     state: str
+    operation_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -117,12 +119,41 @@ def _ensure_task_writable(task: GenericAnnotationTask) -> None:
         raise AssignmentLockedError("task does not accept annotation writes")
 
 
-def create_assignments(db: Session, *, task_id, annotator_ids: list, sample_scope: Mapping[str, object], actor, due_at: datetime | None = None, initial_values: Mapping[str, Mapping[str, object]] | None = None, initial_revision: int = 0):
+def create_assignments(
+    db: Session,
+    *,
+    task_id,
+    annotator_ids: list,
+    sample_scope: Mapping[str, object],
+    actor,
+    due_at: datetime | None = None,
+    initial_values: Mapping[str, Mapping[str, object]] | None = None,
+    initial_revision: int = 0,
+    idempotency_key: str | None = None,
+):
     if not annotator_ids:
         raise AssignmentError("at least one annotator is required", "ANNOTATOR_REQUIRED")
     ids = _scope_ids(sample_scope)
     digest = _scope_hash(ids)
     task = _task_context(db, task_id)
+    actor_id = getattr(actor, "id", actor)
+    if idempotency_key is not None:
+        if not isinstance(idempotency_key, str) or not idempotency_key or len(idempotency_key) > 128:
+            raise AssignmentError("idempotency key is invalid", "IDEMPOTENCY_KEY_INVALID")
+        existing = db.query(AnnotationAssignment).filter(
+            AnnotationAssignment.task_id == task_id,
+            AnnotationAssignment.created_by == actor_id,
+            AnnotationAssignment.idempotency_key == idempotency_key,
+        ).order_by(AnnotationAssignment.id.asc()).all()
+        if existing:
+            requested_subjects = {str(subject_id) for subject_id in dict.fromkeys(annotator_ids)}
+            existing_subjects = {str(item.annotator_subject_id) for item in existing}
+            if existing_subjects != requested_subjects or any(item.scope_hash != digest for item in existing):
+                raise AssignmentError(
+                    "idempotency key was already used for a different assignment request",
+                    "IDEMPOTENCY_CONFLICT",
+                )
+            return existing
     if task is not None:
         _ensure_task_access(db, task, actor)
         _ensure_task_writable(task)
@@ -152,7 +183,7 @@ def create_assignments(db: Session, *, task_id, annotator_ids: list, sample_scop
             raise AssignmentError("annotator account is not active", "ANNOTATOR_FORBIDDEN")
     result = []
     for subject_id in dict.fromkeys(annotator_ids):
-        assignment = AnnotationAssignment(task_id=task_id, annotator_subject_id=subject_id, sample_scope={"kind": "ids", "sample_ids": ids}, scope_hash=digest, due_at=due_at, created_by=actor, task_revision=initial_revision, last_edit_revision=initial_revision)
+        assignment = AnnotationAssignment(task_id=task_id, annotator_subject_id=subject_id, sample_scope={"kind": "ids", "sample_ids": ids}, scope_hash=digest, due_at=due_at, created_by=actor_id, idempotency_key=idempotency_key, task_revision=initial_revision, last_edit_revision=initial_revision)
         db.add(assignment)
         db.flush()
         for sample_id in ids:
@@ -235,6 +266,8 @@ def save_labels(
             source="manual",
             action="edit",
         ))
+        if task.status == "awaiting_return":
+            task.status = "in_progress"
     if commit:
         db.commit()
     return LabelWriteResult(merged, row.revision_no)
@@ -278,7 +311,41 @@ def confirm_assignment(db: Session, assignment_id, task_revision: int, scope_has
                 validate_label_values(contract, row.values or {}, allow_partial=False)
             except ValueError as error:
                 raise AssignmentError(str(error), getattr(error, "code", "LABEL_VALUE_INVALID")) from error
+    if task is not None:
+        _refresh_global_annotation_state(db, task, contract)
+        db.commit()
     return ConfirmationResult(assignment.id, task_revision, scope_hash)
+
+
+def _refresh_global_annotation_state(db: Session, task: GenericAnnotationTask, contract) -> None:
+    """Derive the task-level completion state from the frozen sample scope."""
+    if task.status in {"paused", "cancelled", "archived", "completed", "accepted"}:
+        return
+    snapshot_ids = [str(item) for item in ((task.task_snapshot or {}).get("sample_ids") or []) if str(item)]
+    if not snapshot_ids:
+        task.status = "in_progress"
+        return
+    rows = db.query(AnnotationAssignmentSample).join(
+        AnnotationAssignment,
+        AnnotationAssignment.id == AnnotationAssignmentSample.assignment_id,
+    ).filter(
+        AnnotationAssignment.task_id == task.id,
+        AnnotationAssignmentSample.sample_id.in_(snapshot_ids),
+    ).all()
+    latest: dict[str, AnnotationAssignmentSample] = {}
+    for row in rows:
+        current = latest.get(row.sample_id)
+        if current is None or row.revision_no > current.revision_no:
+            latest[row.sample_id] = row
+    complete = len(latest) == len(set(snapshot_ids))
+    if complete and contract is not None:
+        for sample_id in set(snapshot_ids):
+            try:
+                validate_label_values(contract, latest[sample_id].values or {}, allow_partial=False)
+            except ValueError:
+                complete = False
+                break
+    task.status = "awaiting_return" if complete else "in_progress"
 
 
 def return_assignment(db: Session, assignment_id, task_revision: int, scope_hash: str, idempotency_key: str):
@@ -287,7 +354,7 @@ def return_assignment(db: Session, assignment_id, task_revision: int, scope_hash
         raise AssignmentError("assignment not found", "ASSIGNMENT_NOT_FOUND")
     existing = db.query(AnnotationReturnBatch).filter_by(assignment_id=assignment.id, idempotency_key=idempotency_key).one_or_none()
     if existing is not None:
-        return ReturnBatchRef(existing.id, existing.state)
+        return ReturnBatchRef(existing.id, existing.state, existing.operation_id)
     task = _task_context(db, assignment.task_id)
     if task is not None:
         _ensure_task_writable(task)
@@ -295,11 +362,32 @@ def return_assignment(db: Session, assignment_id, task_revision: int, scope_hash
         raise AssignmentError("assignment revision or scope is stale", "ASSIGNMENT_REVISION_CONFLICT")
     if assignment.state in {"returned_pending_acceptance", "edit_for_return"}:
         raise AssignmentLockedError()
+    db.query(AnnotationReturnBatch).filter(
+        AnnotationReturnBatch.assignment_id == assignment.id,
+        AnnotationReturnBatch.scope_hash == scope_hash,
+        AnnotationReturnBatch.state == "pending",
+    ).update(
+        {AnnotationReturnBatch.state: "superseded"},
+        synchronize_session=False,
+    )
     batch = AnnotationReturnBatch(assignment_id=assignment.id, task_revision=task_revision, scope_hash=scope_hash, idempotency_key=idempotency_key, state="pending")
     db.add(batch)
+    db.flush()
+    operation = DurableOperation(
+        resource_key=f"annotation-return:{batch.id}",
+        idempotency_key=idempotency_key,
+        state="queued",
+        stage="queued",
+    )
+    db.add(operation)
+    db.flush()
+    batch.operation_id = operation.id
     assignment.state = "returned_pending_acceptance"
     db.commit()
-    return ReturnBatchRef(batch.id, batch.state)
+    from app.tasks.annotation_return_tasks import enqueue_annotation_return
+
+    enqueue_annotation_return(batch.id, operation.id)
+    return ReturnBatchRef(batch.id, batch.state, operation.id)
 
 
 def write_with_revision_guard(db: Session, task_id, sample_id: str, values, author_id, base_revision: int):

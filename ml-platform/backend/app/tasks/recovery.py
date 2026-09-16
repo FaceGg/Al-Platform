@@ -9,12 +9,14 @@ from app.tasks.celery_app import celery_app
 from app.models.run import WorkflowRun
 from app.models.operation import DurableOperation
 from app.models.platform_models import AnnotationTaskPreview, GenericAnnotationTask
+from app.models.labeling import AnnotationReturnBatch
 from app.services.operation_lifecycle import claim_operation_dispatch, recover_expired_operations
 
 # Test seams may replace this symbol; the real implementation is imported lazily
 # inside the task to avoid the Celery include cycle.
 enqueue_annotation_preview = None
 enqueue_annotation_execution = None
+enqueue_annotation_return = None
 
 
 def recover_pending_runs(db, enqueue, limit: int = 100) -> int:
@@ -69,6 +71,9 @@ def recover_operations():
     execution_dispatcher = enqueue_annotation_execution
     if execution_dispatcher is None:
         from app.tasks.annotation_execution_tasks import enqueue_annotation_execution as execution_dispatcher
+    return_dispatcher = enqueue_annotation_return
+    if return_dispatcher is None:
+        from app.tasks.annotation_return_tasks import enqueue_annotation_return as return_dispatcher
 
     with SessionLocal() as db:
         stale_ids = recover_expired_operations(
@@ -116,6 +121,21 @@ def recover_operations():
                 continue
             execution_dispatcher(task.id, preview.id, operation.id, task.owner_id)
             recovered.append(str(operation.id))
+        return_candidates = db.query(DurableOperation).filter(
+            DurableOperation.resource_key.like("annotation-return:%"),
+            DurableOperation.state == "queued",
+        ).all()
+        for operation in return_candidates:
+            if not claim_operation_dispatch(db, operation.id):
+                continue
+            batch_id = uuid.UUID(operation.resource_key.split(":", 1)[1])
+            batch = db.query(AnnotationReturnBatch).filter(
+                AnnotationReturnBatch.id == batch_id,
+            ).one_or_none()
+            if batch is None or batch.operation_id != operation.id:
+                continue
+            return_dispatcher(batch.id, operation.id)
+            recovered.append(str(operation.id))
         # Expired claims are released before re-dispatch; the actual worker must
         # acquire the lease and retain the same operation identity.
         for operation_id in stale_ids:
@@ -145,5 +165,13 @@ def recover_operations():
                     preview = None
                 if task is not None and preview is not None and claim_operation_dispatch(db, operation.id):
                     execution_dispatcher(task.id, preview.id, operation.id, task.owner_id)
+                    recovered.append(operation_id)
+            elif operation.resource_key.startswith("annotation-return:"):
+                batch_id = uuid.UUID(operation.resource_key.split(":", 1)[1])
+                batch = db.query(AnnotationReturnBatch).filter(
+                    AnnotationReturnBatch.id == batch_id,
+                ).one_or_none()
+                if batch is not None and batch.operation_id == operation.id and claim_operation_dispatch(db, operation.id):
+                    return_dispatcher(batch.id, operation.id)
                     recovered.append(operation_id)
     return {"recovered_operation_ids": recovered, "count": len(recovered)}

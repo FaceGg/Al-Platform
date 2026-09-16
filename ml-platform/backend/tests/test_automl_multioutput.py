@@ -140,12 +140,12 @@ def test_auc_falls_back_to_decision_function_when_predict_proba_missing():
 
 
 def test_search_controls_expose_four_strengths_and_time_budgets():
-    for strength in ("light", "balanced", "thorough", "maximum"):
+    for strength in ("light", "medium", "high", "ultra"):
         config = normalize_search_controls(strength=strength, time_budget=3600, class_weight=True)
         assert config["strength"] == strength
         assert config["class_weight"] is True
     for budget in (1800, 3600, 7200, 14400):
-        assert normalize_search_controls(strength="balanced", time_budget=budget)["time_budget"] == budget
+        assert normalize_search_controls(strength="medium", time_budget=budget)["time_budget"] == budget
 
 
 def test_search_controls_enable_class_weight_by_default():

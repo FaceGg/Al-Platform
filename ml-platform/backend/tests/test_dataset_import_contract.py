@@ -432,6 +432,63 @@ def test_confirm_schema_materializes_ready_immutable_version_and_preserves_artif
     assert db.query(DatasetVersion).count() == 1
 
 
+@pytest.mark.parametrize("convert_value", [False, True])
+def test_confirmation_preserves_identity_nulls_and_publishes_matching_artifact(
+    tmp_path, monkeypatch, convert_value,
+):
+    import hashlib
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    service = ArtifactService(db, LocalStorage(tmp_path / "storage"))
+    monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: service)
+    records = [
+        {"id": "001", "text": "NA", "value": "1", "optional": None},
+        {"id": "002", "text": "", "value": "2", "optional": "null"},
+    ]
+    source = tmp_path / "identity.json"
+    source.write_text(json.dumps(records), encoding="utf-8")
+    try:
+        process = create_dataset_import_process(
+            db, project_id=uuid.uuid4(), operator_id=uuid.uuid4(),
+            source_path=source, source_name=source.name, source_format="json",
+            options=ParseOptions(), idempotency_key="identity-import",
+        )
+        process_dataset_import(db, process.id)
+        schema = [dict(column) for column in process.inferred_schema]
+        if convert_value:
+            next(column for column in schema if column["name"] == "value")["dtype"] = "int"
+        version = confirm_import_schema(
+            db, process.id, schema=schema, sample_id_column="id", operator_id=process.operator_id,
+        )
+        expected = [
+            {**row, "value": int(row["value"]) if convert_value else row["value"]}
+            for row in records
+        ]
+        samples = db.query(DatasetSample).filter_by(dataset_version_id=version.id).order_by(
+            DatasetSample.row_index,
+        ).all()
+        assert [sample.sample_id for sample in samples] == ["001", "002"]
+        assert [sample.values for sample in samples] == expected
+        normalized = db.get(Artifact, version.normalized_artifact_id)
+        assert normalized.format == "parquet"
+        with service.storage.materialize(normalized.storage_uri) as path:
+            frame = pd.read_parquet(path)
+        assert _frame_json_records(frame) == expected
+        content_hash = hashlib.sha256(
+            frame.to_json(orient="records", date_format="iso", double_precision=15).encode()
+        ).hexdigest()
+        assert version.content_hash == content_hash
+        assert db.query(DatasetImport).filter_by(dataset_version_id=version.id).one().content_hash == content_hash
+        original = db.get(Artifact, process.original_artifact_id)
+        with service.storage.materialize(original.storage_uri) as path:
+            assert json.loads(path.read_text(encoding="utf-8")) == records
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_pending_import_artifact_is_rejected_before_training_or_automl_use(tmp_path):
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

@@ -20,6 +20,7 @@ class Artifact(Base):
     file_size = Column(BigInteger)
     format = Column(String(32))
     metadata_ = Column("metadata", JSON, default=dict)
+    archived_at = Column(DateTime, nullable=True, index=True)
     created_at = Column(DateTime, server_default=func.now())
 
     project = relationship("Project", back_populates="artifacts")

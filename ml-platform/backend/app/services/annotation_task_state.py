@@ -240,7 +240,10 @@ def serialize_annotation_task(task, preview=None, snapshot=None):
 
 def list_annotation_tasks(db, project_id, owner_id, cursor=None, limit=50):
     limit = max(1, min(int(limit), 200))
-    base_query = db.query(GenericAnnotationTask).filter(GenericAnnotationTask.owner_id == owner_id)
+    base_query = db.query(GenericAnnotationTask).filter(
+        GenericAnnotationTask.owner_id == owner_id,
+        GenericAnnotationTask.archived_at.is_(None),
+    )
     if project_id is not None:
         base_query = base_query.filter(GenericAnnotationTask.project_id == project_id)
     query = base_query.order_by(GenericAnnotationTask.created_at.desc(), GenericAnnotationTask.id.desc())

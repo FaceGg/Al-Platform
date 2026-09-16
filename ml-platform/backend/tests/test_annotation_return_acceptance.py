@@ -230,7 +230,7 @@ def test_return_diff_is_sample_id_aligned_and_cursor_paged():
 
 
 def test_acceptance_creates_new_dataset_version_without_mutating_source():
-    engine, db, admin, _annotator, _project, source, _assignment, batch = _fixture()
+    engine, db, admin, _annotator, _project, source, assignment, batch = _fixture()
     try:
         accepted = accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
         assert accepted.status == "ready"
@@ -240,6 +240,8 @@ def test_acceptance_creates_new_dataset_version_without_mutating_source():
         assert db.query(DatasetSample).filter_by(dataset_version_id=source.id, sample_id="sample-1").one().values == {"feature": 1}
         assert db.query(DatasetSample).filter_by(dataset_version_id=accepted.id, sample_id="sample-1").one().values == {"feature": 1, "result": "pass"}
         assert db.get(AnnotationReturnBatch, batch.id).state == "accepted"
+        task = db.get(GenericAnnotationTask, db.get(AnnotationAssignment, assignment.id).task_id)
+        assert task.status == "completed"
     finally:
         db.close()
         engine.dispose()

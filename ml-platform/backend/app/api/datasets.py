@@ -233,7 +233,7 @@ def get_dataset_version(
     except (TypeError, ValueError, AttributeError) as error:
         raise HTTPException(404, "Dataset version not found") from error
     version = db.query(DatasetVersion).filter(DatasetVersion.id == version_uuid).first()
-    if version is None:
+    if version is None or version.archived_at is not None:
         raise HTTPException(404, "Dataset version not found")
     require_project_access(db, version.project_id, current_user.id, "project.read")
     return {"id": str(version.id), "project_id": str(version.project_id), "version": version.version, "status": version.status, "row_count": version.row_count, "column_count": version.column_count, "content_hash": version.content_hash, "schema_hash": version.schema_hash, "parse_contract": version.parse_contract, "columns": [{"name": item.name, "dtype": item.dtype, "nullable": item.nullable, "position": item.position} for item in version.schema_columns]}
@@ -250,7 +250,11 @@ def list_project_dataset_versions(
     # registered as immutable dataset versions.
     workflow_artifacts = (
         db.query(Artifact)
-        .filter(Artifact.project_id == project.id, Artifact.type == "dataset")
+        .filter(
+            Artifact.project_id == project.id,
+            Artifact.type == "dataset",
+            Artifact.archived_at.is_(None),
+        )
         .all()
     )
     existing_artifact_ids = {
@@ -272,7 +276,7 @@ def list_project_dataset_versions(
     db.commit()
     versions = (
         db.query(DatasetVersion)
-        .filter(DatasetVersion.project_id == project.id)
+        .filter(DatasetVersion.project_id == project.id, DatasetVersion.archived_at.is_(None))
         .order_by(DatasetVersion.version.desc(), DatasetVersion.created_at.desc())
         .all()
     )
@@ -434,7 +438,11 @@ def list_owned_datasets(
         db.query(Artifact)
         .options(joinedload(Artifact.project))
         .join(Project, Artifact.project_id == Project.id)
-        .filter(Artifact.type == "dataset", Project.owner_id == current_user.id)
+        .filter(
+            Artifact.type == "dataset",
+            Artifact.archived_at.is_(None),
+            Project.owner_id == current_user.id,
+        )
     )
     if project_id:
         query = query.filter(Artifact.project_id == UUID(project_id))
@@ -461,7 +469,9 @@ def list_project_datasets(
     ).project
 
     artifacts = db.query(Artifact).filter(
-        Artifact.project_id == project.id, Artifact.type == "dataset",
+        Artifact.project_id == project.id,
+        Artifact.type == "dataset",
+        Artifact.archived_at.is_(None),
     ).order_by(Artifact.created_at.desc()).all()
     artifacts = [artifact for artifact in artifacts if (artifact.metadata_ or {}).get("source") != "normalized"]
     versions = {
@@ -594,7 +604,10 @@ def export_dataset(
         db, project_id, current_user.id, "project.read",
     ).project
 
-    artifacts = db.query(Artifact).filter(Artifact.project_id == UUID(project_id)).all()
+    artifacts = db.query(Artifact).filter(
+        Artifact.project_id == UUID(project_id),
+        Artifact.archived_at.is_(None),
+    ).all()
     if not artifacts:
         raise HTTPException(404, "No datasets found in project")
 
@@ -765,12 +778,27 @@ def delete_dataset(
                 "task_status": task.status,
             },
         )
-    try:
-        build_artifact_service(db).delete_content(artifact)
-    except ArtifactAccessError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    db.delete(artifact)
+    artifact.archived_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
+
+
+@router.post("/datasets/{dataset_id}/restore", status_code=200)
+def restore_dataset(
+    dataset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    artifact = db.query(Artifact).join(Project).filter(
+        Artifact.id == UUID(dataset_id),
+        Artifact.type == "dataset",
+        Artifact.archived_at.is_(None),
+        Project.owner_id == current_user.id,
+    ).first()
+    if not artifact:
+        raise HTTPException(404, "Dataset not found")
+    artifact.archived_at = None
+    db.commit()
+    return {"id": str(artifact.id), "archived_at": None}
 
 
 

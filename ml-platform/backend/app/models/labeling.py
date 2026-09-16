@@ -149,6 +149,7 @@ class AnnotationAssignment(Base):
     __tablename__ = "annotation_assignments"
     __table_args__ = (
         UniqueConstraint("task_id", "annotator_subject_id", "scope_hash", name="uq_annotation_assignment_scope"),
+        UniqueConstraint("task_id", "created_by", "idempotency_key", name="uq_annotation_assignment_idempotency"),
         Index("ix_annotation_assignments_task_state", "task_id", "state"),
         Index("ix_annotation_assignments_subject", "annotator_subject_id", "state"),
     )
@@ -163,6 +164,7 @@ class AnnotationAssignment(Base):
     task_revision = Column(Integer, nullable=False, default=0)
     last_edit_revision = Column(Integer, nullable=False, default=0)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    idempotency_key = Column(String(128), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -197,6 +199,7 @@ class AnnotationReturnBatch(Base):
     state = Column(String(32), nullable=False, default="pending")
     rejection_reason = Column(Text, nullable=True)
     accepted_dataset_version_id = Column(UUID(as_uuid=True), ForeignKey("dataset_versions.id"), nullable=True)
+    operation_id = Column(UUID(as_uuid=True), ForeignKey("durable_operations.id"), nullable=True, unique=True)
     reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     reviewed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)

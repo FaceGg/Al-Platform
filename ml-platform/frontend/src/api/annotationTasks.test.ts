@@ -38,7 +38,7 @@ describe("annotation task client", () => {
     await createGenericAnnotationTask(payload("automatic"), "idempotency-2");
 
     expect(post).toHaveBeenCalledWith(
-      "/automl-tasks",
+      "/annotation-tasks",
       expect.objectContaining({
         mode: "automatic",
         model_version_id: "model-version-1",

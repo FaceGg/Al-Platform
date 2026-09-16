@@ -57,7 +57,7 @@ def edit_annotation_assignment(assignment_id: str, data: AssignmentEditRequest, 
     return {"assignment_id": str(result.id), "state": result.state, "task_revision": result.task_revision}
 
 
-@router.post("/assignments/{assignment_id}/return")
+@router.post("/assignments/{assignment_id}/return", status_code=202)
 def return_annotation_assignment(assignment_id: str, data: AssignmentReturnRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
     if not idempotency_key:
         raise HTTPException(status_code=400, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
@@ -67,7 +67,11 @@ def return_annotation_assignment(assignment_id: str, data: AssignmentReturnReque
         raise HTTPException(status_code=409, detail={"code": error.code, "message": str(error)}) from error
     except AssignmentError as error:
         raise HTTPException(status_code=409, detail={"code": error.code, "message": str(error)}) from error
-    return {"return_batch_id": str(result.return_batch_id), "state": result.state}
+    return {
+        "return_batch_id": str(result.return_batch_id),
+        "operation_id": str(result.operation_id) if result.operation_id else None,
+        "state": result.state,
+    }
 
 
 def _owned_task(db, task_id: str, user_id):

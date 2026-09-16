@@ -51,9 +51,9 @@ const AUTOML_TASK_OPTIONS = [
 
 const AUTOML_STRENGTH_OPTIONS: Array<{ value: AutoMLSearchStrength; label: string }> = [
   { value: "light", label: "轻度（10 次）" },
-  { value: "balanced", label: "标准（30 次）" },
-  { value: "thorough", label: "高度（80 次）" },
-  { value: "maximum", label: "Ultra（200 次）" },
+  { value: "medium", label: "中（30 次）" },
+  { value: "high", label: "高（80 次）" },
+  { value: "ultra", label: "Ultra（200 次）" },
 ];
 const AUTOML_TIME_BUDGET_OPTIONS: Array<{ value: AutoMLTimeBudget; label: string }> = [
   { value: 1800, label: "30 分钟" },
@@ -143,7 +143,7 @@ export default function AutoMLPage() {
   const [taskType, setTaskType] = useState<AutoMLTaskType>("classification");
   const [algorithmIds, setAlgorithmIds] = useState<string[]>(() => [...AUTOML_ALGORITHM_IDS]);
   const [searchMethod, setSearchMethod] = useState<AutoMLSearchMethod>("bayesian");
-  const [searchStrength, setSearchStrength] = useState<AutoMLSearchStrength>("balanced");
+  const [searchStrength, setSearchStrength] = useState<AutoMLSearchStrength>("medium");
   const [timeBudget, setTimeBudget] = useState<AutoMLTimeBudget>(3600);
   const [classWeight, setClassWeight] = useState(true);
   const [crossValidationEnabled, setCrossValidationEnabled] = useState(true);

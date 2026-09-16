@@ -1694,7 +1694,7 @@ export default function DataAnnotationPage() {
             dataSource={genericTasks}
             pagination={false}
             columns={[
-              { title: "通用任务", dataIndex: "id", render: (id: string, task: AnnotationTask) => <div className="table-primary-cell"><strong>{id.slice(0, 8)}</strong><span>{task.mode}</span></div> },
+              { title: "通用任务", dataIndex: "id", render: (id: string, task: AnnotationTask) => { const shortId = String(id || "").slice(0, 8); return <div className="table-primary-cell"><strong>{shortId}</strong><span>{task.mode}</span></div>; } },
               { title: "状态", dataIndex: "status", render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag> },
               { title: "修订", dataIndex: "task_revision" },
               { title: "操作", key: "actions", align: "right" as const, render: (_: unknown, task: AnnotationTask) => <div className="table-row-actions">
@@ -1714,7 +1714,7 @@ export default function DataAnnotationPage() {
                 {task.status === "archived" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "restore"); }}>恢复归档</button>}
                 <DeleteConfirmation
                   label={`删除通用任务 ${task.id}`}
-                  targetName={task.id.slice(0, 8)}
+                  targetName={String(task.id || "").slice(0, 8)}
                   onConfirm={() => {
                     void deleteAnnotationTask(task.id).then(() => {
                       setGenericTasks((items) => items.filter((item) => item.id !== task.id));

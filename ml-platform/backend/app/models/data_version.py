@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text, event, func, Index
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text, event, func, Index, inspect
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -23,6 +23,7 @@ class DatasetVersion(Base):
     parse_contract = Column(JSON, nullable=False, default=dict)
     original_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id"), nullable=True)
     normalized_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id"), nullable=True)
+    archived_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     schema_columns = relationship("DatasetSchemaColumn", back_populates="dataset_version", cascade="all, delete-orphan")
@@ -94,10 +95,17 @@ class DatasetImportProcess(Base):
 
 @event.listens_for(DatasetVersion, "before_update")
 def _prevent_dataset_version_update(_mapper, _connection, target):
+    history = inspect(target).attrs.status.history
+    if history.has_changes() and history.deleted == ["pending"] and history.added == ["ready"]:
+        return
     raise ValueError("DatasetVersion is immutable")
 
 
 def _immutable_event(_mapper, _connection, target):
+    if isinstance(target, DatasetVersion):
+        history = inspect(target).attrs.status.history
+        if history.has_changes() and history.deleted == ["pending"] and history.added == ["ready"]:
+            return
     raise ValueError(f"{target.__class__.__name__} is immutable")
 
 for _model in (DatasetVersion, DatasetSchemaColumn, DatasetSample, DatasetImport):

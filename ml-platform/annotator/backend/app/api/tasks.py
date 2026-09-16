@@ -29,9 +29,19 @@ def _failure(error: PlatformClientError) -> HTTPException:
     return HTTPException(status_code=502, detail={"code": "PORTAL_PLATFORM_UNAVAILABLE", "message": str(error)})
 
 @router.get("/tasks")
-async def list_tasks(principal: PortalPrincipal = Depends(require_portal_session)):
+async def list_tasks(
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: PortalPrincipal = Depends(require_portal_session),
+):
     try:
-        return await PlatformClient().internal_request("GET", "/api/internal/portal/tasks", subject_id=str(principal.subject_id), scope="assignment:read")
+        return await PlatformClient().internal_request(
+            "GET",
+            "/api/internal/portal/tasks",
+            subject_id=str(principal.subject_id),
+            scope="assignment:read",
+            params={"cursor": cursor, "limit": limit},
+        )
     except PlatformClientError as error:
         raise _failure(error) from error
 

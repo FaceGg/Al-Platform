@@ -64,8 +64,9 @@ export async function listAnnotationTasks(projectId: string, limit = 50, cursor?
 }
 
 export async function createGenericAnnotationTask(payload: GenericTaskCreatePayload, idempotencyKey: string) {
-  const endpoint = payload.mode === "automatic" ? "/automl-tasks" : "/annotation-tasks";
-  const response = await apiClient.post(endpoint, payload, {
+  // Automatic annotation is still an annotation task. AutoML training has a
+  // separate training contract and must not be selected by this helper.
+  const response = await apiClient.post("/annotation-tasks", payload, {
     headers: { "X-Request-ID": crypto.randomUUID(), "Idempotency-Key": idempotencyKey },
   });
   return response.data as AnnotationTask;

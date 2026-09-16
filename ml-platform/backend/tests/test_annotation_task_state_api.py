@@ -563,12 +563,13 @@ def test_automatic_task_rejects_invalid_strategy_before_persisting():
     client = TestClient(app)
     try:
         response = client.post(
-            "/api/automl-tasks",
+            "/api/annotation-tasks",
             headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": str(uuid.uuid4())},
             json={
                 "project_id": str(project.id),
                 "dataset_version_id": str(version.id),
                 "model_version_id": str(model_version.id),
+                "mode": "automatic",
                 "sample_scope": {"kind": "all"},
                 "configuration": {
                     "clustering": True,

@@ -65,6 +65,39 @@ def test_return_is_idempotent_and_locks_assignment(db):
         save_labels(db, assignment.id, "s-1", {"label_a": "z"}, base_revision=1)
 
 
+def test_assignment_creation_reuses_idempotency_key_and_rejects_payload_change(db):
+    task_id = uuid.uuid4()
+    annotator_id = uuid.uuid4()
+    actor_id = uuid.uuid4()
+    first = create_assignments(
+        db,
+        task_id=task_id,
+        annotator_ids=[annotator_id],
+        sample_scope={"kind": "ids", "sample_ids": ["s-1"]},
+        actor=actor_id,
+        idempotency_key="assignment-key",
+    )
+    repeated = create_assignments(
+        db,
+        task_id=task_id,
+        annotator_ids=[annotator_id],
+        sample_scope={"kind": "ids", "sample_ids": ["s-1"]},
+        actor=actor_id,
+        idempotency_key="assignment-key",
+    )
+    assert [item.id for item in repeated] == [item.id for item in first]
+    assert db.query(AnnotationAssignment).count() == 1
+    with pytest.raises(AssignmentError, match="idempotency key"):
+        create_assignments(
+            db,
+            task_id=task_id,
+            annotator_ids=[annotator_id],
+            sample_scope={"kind": "ids", "sample_ids": ["s-2"]},
+            actor=actor_id,
+            idempotency_key="assignment-key",
+        )
+
+
 def test_edit_for_return_requires_new_revision_before_unlock(db):
     assignment = _assignment(db)
     return_assignment(db, assignment.id, 3, assignment.scope_hash, "first-key")
@@ -76,7 +109,10 @@ def test_edit_for_return_requires_new_revision_before_unlock(db):
     save_labels(db, assignment.id, "s-1", {"label_a": "z", "label_b": 1}, base_revision=3)
     result = return_assignment(db, assignment.id, 4, assignment.scope_hash, "second-key")
     assert result.state == "pending"
-    assert db.query(AnnotationReturnBatch).count() == 2
+    batches = db.query(AnnotationReturnBatch).order_by(AnnotationReturnBatch.created_at.asc()).all()
+    assert len(batches) == 2
+    assert batches[0].state == "superseded"
+    assert batches[1].state == "pending"
 
 
 def _assignment(db):

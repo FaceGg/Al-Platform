@@ -7,6 +7,7 @@ GENERICIZATION_BRIDGE_ONLY = True
 import hashlib
 import json
 import uuid
+from datetime import datetime, timezone
 from copy import deepcopy
 from typing import Literal
 
@@ -23,6 +24,7 @@ from app.models.access import AuditEvent
 from app.models.data_version import DatasetSample, DatasetVersion
 from app.models.artifact import Artifact
 from app.models.labeling import AnnotationStrategyArtifact, LabelSchema
+from app.models.labeling import AnnotationAssignment
 from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.project import Project
 from app.models.user import User
@@ -35,6 +37,8 @@ from app.services.annotation_strategies import (
     validate_strategy_config,
 )
 from app.services.label_schema import bind_label_schema_to_task, create_label_schema, label_schema_snapshot
+from app.services.annotation_concurrency import AssignmentError, create_assignments
+from app.schemas.annotator import AssignmentCreate
 
 router = APIRouter(tags=["generic-tasks"])
 
@@ -337,6 +341,105 @@ def list_generic_annotation_tasks(
         raise HTTPException(status_code=422, detail={"code": str(error)}) from error
 
 
+def _assignment_view(assignment: AnnotationAssignment) -> dict[str, object]:
+    return {
+        "id": str(assignment.id),
+        "task_id": str(assignment.task_id),
+        "annotator_subject_id": str(assignment.annotator_subject_id),
+        "sample_scope": assignment.sample_scope or {},
+        "scope_hash": assignment.scope_hash,
+        "state": assignment.state,
+        "task_revision": assignment.task_revision,
+        "due_at": assignment.due_at.isoformat() if assignment.due_at else None,
+    }
+
+
+@router.get("/api/annotation-tasks/{task_id}/assignments")
+def list_generic_annotation_assignments(
+    task_id: uuid.UUID,
+    request: Request,
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    task = db.query(GenericAnnotationTask).filter(
+        GenericAnnotationTask.id == task_id,
+        GenericAnnotationTask.owner_id == current_user.id,
+        GenericAnnotationTask.archived_at.is_(None),
+    ).one_or_none()
+    if task is None:
+        raise _contract_error(request, "TASK_NOT_FOUND", "The task was not found.", status_code=404)
+    query = db.query(AnnotationAssignment).filter(
+        AnnotationAssignment.task_id == task_id,
+    )
+    total = query.count()
+    if cursor:
+        try:
+            marker_id = uuid.UUID(str(cursor))
+        except (TypeError, ValueError, AttributeError) as error:
+            raise _contract_error(request, "INVALID_CURSOR", "The cursor is invalid.", status_code=422) from error
+        marker = query.filter(AnnotationAssignment.id == marker_id).one_or_none()
+        if marker is None:
+            raise _contract_error(request, "INVALID_CURSOR", "The cursor is invalid.", status_code=422)
+        query = query.filter(AnnotationAssignment.id < marker.id)
+    rows = query.order_by(AnnotationAssignment.id.desc()).limit(limit + 1).all()
+    has_next = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "items": [_assignment_view(row) for row in rows],
+        "total": total,
+        "next_cursor": str(rows[-1].id) if has_next and rows else None,
+    }
+
+
+@router.post("/api/annotation-tasks/{task_id}/assignments", status_code=status.HTTP_202_ACCEPTED)
+def create_generic_annotation_assignments(
+    task_id: uuid.UUID,
+    data: AssignmentCreate,
+    request: Request,
+    x_request_id: str | None = Header(default=None, alias="X-Request-ID"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    task = db.query(GenericAnnotationTask).filter(
+        GenericAnnotationTask.id == task_id,
+        GenericAnnotationTask.owner_id == current_user.id,
+        GenericAnnotationTask.archived_at.is_(None),
+    ).one_or_none()
+    if task is None:
+        raise _contract_error(request, "TASK_NOT_FOUND", "The task was not found.", status_code=404)
+    if not idempotency_key:
+        raise _contract_error(request, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required.", status_code=400)
+    if not x_request_id or str(getattr(request.state, "request_id", "")) != x_request_id:
+        raise _contract_error(request, "REQUEST_ID_REQUIRED", "X-Request-ID is required.", status_code=400)
+    try:
+        assignments = create_assignments(
+            db,
+            task_id=task_id,
+            annotator_ids=data.annotator_ids,
+            sample_scope=data.sample_scope,
+            due_at=data.due_at,
+            actor=current_user.id,
+            initial_revision=task.task_revision,
+            idempotency_key=idempotency_key,
+        )
+    except (ValueError, AssignmentError) as error:
+        raise _contract_error(
+            request,
+            getattr(error, "code", "ASSIGNMENT_INVALID"),
+            str(error),
+            status_code=422,
+        ) from error
+    return {
+        "assignment_ids": [str(item.id) for item in assignments],
+        "items": [_assignment_view(item) for item in assignments],
+        "sample_scope_hash": assignments[0].scope_hash if assignments else None,
+        "task_revision": task.task_revision,
+    }
+
+
 @router.delete("/api/annotation-tasks/{task_id}", status_code=204)
 def delete_generic_annotation_task(
     task_id: uuid.UUID,
@@ -347,6 +450,7 @@ def delete_generic_annotation_task(
     task = db.query(GenericAnnotationTask).filter(
         GenericAnnotationTask.id == task_id,
         GenericAnnotationTask.owner_id == current_user.id,
+        GenericAnnotationTask.archived_at.is_(None),
     ).one_or_none()
     if task is None:
         raise _contract_error(request, "TASK_NOT_FOUND", "The task was not found.", status_code=404)
@@ -357,8 +461,27 @@ def delete_generic_annotation_task(
             "Cancel the active task before deleting it.",
             status_code=409,
         )
-    db.delete(task)
+    task.archived_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
+
+
+@router.post("/api/annotation-tasks/{task_id}/restore")
+def restore_generic_annotation_task(
+    task_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    task = db.query(GenericAnnotationTask).filter(
+        GenericAnnotationTask.id == task_id,
+        GenericAnnotationTask.owner_id == current_user.id,
+        GenericAnnotationTask.archived_at.is_not(None),
+    ).one_or_none()
+    if task is None:
+        raise _contract_error(request, "TASK_NOT_FOUND", "The task was not found.", status_code=404)
+    task.archived_at = None
+    db.commit()
+    return serialize_annotation_task(task)
 
 
 def _request_context(request: Request, x_request_id: str | None, idempotency_key: str | None):
@@ -573,19 +696,6 @@ def update_generic_annotation_task_configuration(
     payload = _serialize(db, task)
     payload["task_snapshot"] = snapshot
     return payload
-
-
-@router.post("/api/automl-tasks", status_code=status.HTTP_201_CREATED)
-def create_automl_task(
-    data: GenericTaskCreate,
-    request: Request,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    x_request_id: str | None = Header(default=None, alias="X-Request-ID"),
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-):
-    payload = data.model_copy(update={"mode": "automatic"})
-    return create_generic_annotation_task(payload, request, db, current_user, x_request_id, idempotency_key)
 
 
 @router.post("/api/projects/{project_id}/spot-weld/runs", status_code=status.HTTP_410_GONE)

@@ -20,12 +20,12 @@ from app.services.automl_catalog import AlgorithmFamily, AlgorithmUnavailable, P
 
 
 SEARCH_METHODS = frozenset({"grid", "random", "bayesian", "evolutionary", "multi_fidelity"})
-SEARCH_STRENGTHS = frozenset({"light", "balanced", "thorough", "maximum"})
+SEARCH_STRENGTHS = frozenset({"light", "medium", "high", "ultra"})
 # The user-facing presets are 30/60/120/240 minutes. Worker deadlines remain
 # seconds so existing execution code and persisted task parameters are unambiguous.
 CANONICAL_SEARCH_TIME_BUDGETS = frozenset({1800, 3600, 7200, 14400})
 SEARCH_TIME_BUDGETS = frozenset({60, 300, 600}) | CANONICAL_SEARCH_TIME_BUDGETS
-SEARCH_STRENGTH_TRIALS = {"light": 10, "balanced": 30, "thorough": 80, "maximum": 200}
+SEARCH_STRENGTH_TRIALS = {"light": 10, "medium": 30, "high": 80, "ultra": 200}
 
 PERSISTED_TASK_TYPES = frozenset({"classification", "multioutput_classification", "regression", "multioutput_regression"})
 TASK_TYPE_ALIASES = {"multilabel_classification": "multioutput_classification", "multiregression": "multioutput_regression"}
@@ -33,7 +33,7 @@ TASK_TYPE_ALIASES = {"multilabel_classification": "multioutput_classification", 
 
 def normalize_search_controls(
     *,
-    strength: str = "balanced",
+    strength: str = "medium",
     time_budget: int = 3600,
     class_weight: bool = True,
 ) -> dict[str, object]:

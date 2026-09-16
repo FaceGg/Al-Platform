@@ -238,7 +238,7 @@ def accept_return_batch(db: Session, return_batch_id, expected_revision: int, ac
         project_id=task.project_id,
         operator_id=actor.id,
         version=(latest[0] if latest else 0) + 1,
-        status="ready",
+        status="pending",
         row_count=len(combined_rows),
         column_count=len(columns),
         content_hash=content_hash,
@@ -257,7 +257,10 @@ def accept_return_batch(db: Session, return_batch_id, expected_revision: int, ac
         ))
     for sample_id, row_index, values in combined_rows:
         db.add(DatasetSample(dataset_version_id=accepted.id, sample_id=sample_id, row_index=row_index, values=values))
+    db.flush()
+    accepted.status = "ready"
     batch.state = "accepted"
+    task.status = "completed"
     batch.accepted_dataset_version_id = accepted.id
     batch.reviewed_by = actor.id
     batch.reviewed_at = datetime.now(timezone.utc).replace(tzinfo=None)

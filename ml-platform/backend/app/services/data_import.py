@@ -432,14 +432,14 @@ def process_dataset_import(
                 process.source_format,
                 ParseOptions.model_validate(process.parse_options),
             )
-        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as handle:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as handle:
             normalized_path = Path(handle.name)
         try:
-            table.frame.to_csv(normalized_path, index=False)
+            table.frame.to_parquet(normalized_path, index=False)
             normalized_artifact = service.create_from_file(
                 process.project_id,
                 normalized_path,
-                "normalized.csv",
+                "normalized.parquet",
                 "dataset",
                 {"source": "dataset_import_normalized", "dataset_import_id": str(process.id)},
                 commit=False,
@@ -497,8 +497,11 @@ def confirm_dataset_import_schema(
     normalized = db.get(Artifact, process.normalized_artifact_id)
     if original is None or normalized is None:
         raise DataImportError("DATA_IMPORT_ARTIFACT_MISSING")
+    if normalized.format != "parquet":
+        # Legacy CSV intermediates cannot recover lost string/null distinctions.
+        raise DataImportError("DATA_IMPORT_REIMPORT_REQUIRED")
     with service.storage.materialize(normalized.storage_uri) as normalized_path:
-        frame = pd.read_csv(normalized_path)
+        frame = pd.read_parquet(normalized_path)
     confirmed, sample_ids = _confirmed_frame(frame, schema, sample_id_column)
     confirmed_schema = [
         {"name": str(item["name"]), "dtype": str(item["dtype"]), "nullable": bool(confirmed[str(item["name"])].isna().any())}
@@ -518,14 +521,43 @@ def confirm_dataset_import_schema(
     latest = db.query(DatasetVersion.version).filter(
         DatasetVersion.project_id == process.project_id
     ).order_by(DatasetVersion.version.desc()).first()
+    content_hash = hashlib.sha256(
+        confirmed.to_json(orient="records", date_format="iso", double_precision=15).encode()
+    ).hexdigest()
+    confirmed_artifact = None
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            confirmed_path = Path(directory) / "confirmed.parquet"
+            confirmed.to_parquet(confirmed_path, index=False)
+            confirmed_artifact = service.create_from_file(
+                process.project_id, confirmed_path, "normalized.parquet", "dataset",
+                {"source": "dataset_import_confirmed", "dataset_import_id": str(process.id)},
+                commit=False,
+            )
+        return _freeze_confirmed_import(
+            db, process, original, confirmed_artifact, operator_id, confirmed,
+            sample_ids, confirmed_schema, parse_contract, content_hash, schema_hash,
+            (latest[0] if latest else 0) + 1,
+        )
+    except Exception:
+        db.rollback()
+        if confirmed_artifact is not None:
+            service.storage.delete(confirmed_artifact.storage_uri)
+        raise
+
+
+def _freeze_confirmed_import(
+    db, process, original, normalized, operator_id, confirmed, sample_ids,
+    confirmed_schema, parse_contract, content_hash, schema_hash, version_number,
+):
     version = DatasetVersion(
         project_id=process.project_id,
         operator_id=operator_id,
-        version=(latest[0] if latest else 0) + 1,
+        version=version_number,
         status="ready",
         row_count=len(confirmed),
         column_count=len(confirmed.columns),
-        content_hash=process.content_hash,
+        content_hash=content_hash,
         schema_hash=schema_hash,
         parse_contract=parse_contract,
         original_artifact_id=original.id,
@@ -552,10 +584,12 @@ def confirm_dataset_import_schema(
         dataset_version_id=version.id,
         source_format=process.source_format,
         parse_contract=parse_contract,
-        content_hash=process.content_hash,
+        content_hash=content_hash,
         schema_hash=schema_hash,
     ))
     process.dataset_version_id = version.id
+    process.normalized_artifact_id = normalized.id
+    process.content_hash = content_hash
     process.status = "ready"
     process.inferred_schema = confirmed_schema
     process.schema_hash = schema_hash

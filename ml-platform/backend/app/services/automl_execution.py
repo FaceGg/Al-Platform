@@ -147,7 +147,7 @@ def _build_multioutput_estimator(task: str, family, family_params: dict, *, clas
 
 
 def _apply_search_strength(family, params: dict, strength: str, *, preserve_existing: bool = False) -> dict:
-    values = {"light": 0.25, "balanced": 0.5, "thorough": 0.75, "maximum": 1.0}
+    values = {"light": 0.25, "medium": 0.5, "high": 0.75, "ultra": 1.0}
     fraction = values[strength]
     if family.resource_parameter in family.search_space:
         spec = family.search_space[family.resource_parameter]
@@ -966,8 +966,8 @@ def _execute_multioutput_job(
     if features.empty or len(features) < 10:
         raise ValueError("AutoML requires numeric features and at least ten rows")
 
-    strength_estimators = {"light": 40, "balanced": 80, "thorough": 160, "maximum": 320}
-    search_strength = str(params.get("search_strength", "balanced")).lower()
+    strength_estimators = {"light": 40, "medium": 80, "high": 160, "ultra": 320}
+    search_strength = str(params.get("search_strength", "medium")).lower()
     if search_strength not in strength_estimators:
         raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
     deadline = dependencies.monotonic() + float(params.get("time_budget", 3600))
@@ -1513,7 +1513,7 @@ def _execute_multioutput_job(
         "preprocessing": preprocessing,
         "search": {
             "method": params.get("search_method", "default"),
-            "strength": params.get("search_strength", "balanced"),
+            "strength": params.get("search_strength", "medium"),
             "time_budget": params.get("time_budget", 3600),
             "class_weight": bool(params.get("class_weight", True)),
             "n_estimators": base_estimators,

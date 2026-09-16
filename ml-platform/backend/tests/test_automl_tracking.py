@@ -371,7 +371,7 @@ class TestAutoMLTracking(unittest.TestCase):
             "task": "multioutput_classification",
             "input_columns": ["x1", "x2"],
             "cross_validation_folds": 2,
-            "search_strength": "maximum",
+            "search_strength": "ultra",
             "time_budget": 1800,
             "class_weight": True,
         })
@@ -746,7 +746,7 @@ class TestAutoMLTracking(unittest.TestCase):
             ), encoding="utf-8",
         )
         values = {}
-        for strength in ("light", "maximum"):
+        for strength in ("light", "ultra"):
             job_id = self.create_job(params={
                 "target_columns": ["target_a", "target_b"], "task": "multioutput_regression",
                 "input_columns": ["x1", "x2"], "cross_validation_folds": 2,
@@ -761,7 +761,7 @@ class TestAutoMLTracking(unittest.TestCase):
     def test_grid_trial_specs_use_cartesian_parameter_combinations(self):
         from app.services.automl_catalog import resolve_algorithm_families
         family = resolve_algorithm_families(["random_forest"])[0]
-        specs = _build_multioutput_trial_specs((family,), method="grid", max_trials=200, search_strength="balanced")
+        specs = _build_multioutput_trial_specs((family,), method="grid", max_trials=200, search_strength="medium")
         expected = 1
         for values in family.grid.values():
             expected *= len(values)
@@ -772,7 +772,7 @@ class TestAutoMLTracking(unittest.TestCase):
         from app.services.automl_catalog import resolve_algorithm_families
         specs = _build_multioutput_trial_specs(
             resolve_algorithm_families(["random_forest", "extra_trees"]),
-            method="grid", max_trials=2, search_strength="balanced",
+            method="grid", max_trials=2, search_strength="medium",
         )
         self.assertEqual({family.id for family, _params in specs}, {"random_forest", "extra_trees"})
 
@@ -782,7 +782,7 @@ class TestAutoMLTracking(unittest.TestCase):
         family = resolve_algorithm_families(["random_forest"])[0]
         for method in ("random", "bayesian", "evolutionary", "multi_fidelity"):
             specs = _build_multioutput_trial_specs(
-                (family,), method=method, max_trials=4, search_strength="balanced",
+                (family,), method=method, max_trials=4, search_strength="medium",
             )
             params = [tuple(sorted(values.items())) for _family, values in specs]
             self.assertGreater(len(set(params)), 1, method)
@@ -836,7 +836,7 @@ class TestAutoMLTracking(unittest.TestCase):
         with self.assertRaises(ValueError):
             _build_multioutput_trial_specs(
                 resolve_algorithm_families(["random_forest", "extra_trees"]),
-                method="grid", max_trials=1, search_strength="balanced",
+                method="grid", max_trials=1, search_strength="medium",
             )
 
     def test_optuna_timeout_persists_best_so_far(self):
@@ -1180,6 +1180,18 @@ class TestAutoMLAPI(unittest.TestCase):
         self.assertEqual(response.json()["status"], "queued")
         self.assertEqual(self.dispatcher.enqueued, [response.json()["job_id"]])
 
+    def test_spec_automl_task_route_uses_training_contract(self):
+        response = self.client.post("/api/automl-tasks", json={
+            "project_id": str(self.project_id),
+            "experiment_id": str(self.experiment_id),
+            "dataset_artifact_id": str(self.dataset_id),
+            "target_column": "quality",
+            "task": "classification",
+        }, headers=self.headers)
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json()["status"], "queued")
+        self.assertEqual(self.dispatcher.enqueued, [response.json()["job_id"]])
+
     def test_experiment_can_only_create_one_automl_job(self):
         first = self._run_automl()
         second = self._run_automl()
@@ -1408,7 +1420,7 @@ class TestAutoMLAPI(unittest.TestCase):
             "task": "classification",
             "algorithm_ids": ["gbdt", "random_forest"],
             "search_method": "bayesian",
-            "search_strength": "thorough",
+            "search_strength": "high",
             "time_budget": 3600,
         }, headers={
             **self.headers,
@@ -1425,7 +1437,7 @@ class TestAutoMLAPI(unittest.TestCase):
             self.assertEqual(job.params["algorithm_ids"], ["gbdt", "random_forest"])
             self.assertEqual(job.params["search_method"], "bayesian")
             self.assertEqual(job.params["max_trials"], 80)
-            self.assertEqual(job.params["search_strength"], "thorough")
+            self.assertEqual(job.params["search_strength"], "high")
             self.assertEqual(job.params["time_budget"], 3600)
 
     def test_new_search_strength_budget_covers_selected_family_count(self):

@@ -12,9 +12,39 @@
 
 - 导入身份合同续修：确认 sample_id 列时重建 row_locator 并同步嵌套解析选项，避免冻结样本使用用户 ID 而合同仍引用临时生成 ID。两处断言分别观察到失败后修复；完整运行态与整体方案仍未验收。
 
+- 导入制品类型续修：确认阶段不再从 CSV 中转文件读取，归一化制品和确认后的版本制品均使用 Parquet；新增 `"001"`、空字符串、`None` 和显式类型转换回归，先观察到前导零丢失，修复后导入合同 40 passed。原始制品、异步 worker、迁移和容量验收仍未整体关闭。
+
 - 导入资源边界续修：格式探测改为文件流读取 4096 字节，消除 `read_bytes()[:4096]` 先分配完整上传文件的问题。新增回归先失败，修复后导入合同 38 passed；该验证不代表完整解析器资源隔离或百万样本容量验收通过。
 
 - 本轮续执行：回传列表游标改为在当前项目查询内解析，拒绝其他项目批次 ID；新增回归先失败，修复后回传/并发组合 14 passed、2 个依赖弃用警告。该证据仅覆盖查询隔离，不关闭待验收版本、全局完成、恢复或整体复现验收。
+
+- 归档边界续修：数据集制品、DatasetVersion 和通用标注任务新增可逆 `archived_at`；DELETE 改为归档，不再删除对象存储或数据库记录；默认列表/详情隐藏归档对象，并提供恢复接口。新增迁移 `20260916_45`，SQLite 兼容层同步补列。数据集导入合同当前 40 passed；API 数据集历史测试因复用未升级的旧 SQLite 文件而出现 `archived_at` 缺列，需在 fresh/迁移后的数据库上重跑，不能记为通过。
+
+- 全局回传完成条件续修：标注员范围确认后由服务端按冻结任务快照合并全部指派的最新样本修订，逐样本执行冻结 schema 完整性校验；仅全部样本合法时进入 `awaiting_return`，后续编辑自动恢复 `in_progress`。并发、状态机和回传组合当前 61 passed；真实门户、broker、数据库迁移和跨服务运行态仍未验收。
+
+- 回传验收状态续修：验收事务在结果版本发布后同步将任务从 `returned_pending_acceptance` 推进到 `completed`；fresh SQLite 上数据集 API 套件 17 passed，回传/并发组合 14 passed。历史数据库兼容、真实门户和跨服务运行态仍保持待验证。
+
+- 回传异步可靠性续修：回传批次新增 durable `operation_id`；门户回传接口返回 `202`、批次幂等复用原 operation；新增回传 worker、Celery 注册和 recovery dispatcher 分支，沿用租约、校验和和失败状态语义。回传/并发/Celery 聚焦套件 33 passed、4 subtests；真实 Redis/Celery broker 和重启恢复仍未验证。
+
+- 迁移漂移修复：fresh SQLite Alembic upgrade 后 `alembic check` 首次发现 operation 外键及两个 `archived_at` 索引未入迁移；已补入 `20260916_45/46` 和 SQLite 兼容索引。当前 fresh upgrade/check 为通过，回传/Celery 聚焦仍为 33 passed、4 subtests。
+
+- 2026-09-16 当前工作树运行态续验：从工作树根目录重新构建并强制重建 worker/scheduler，确认容器实际使用 `celery -A app.tasks.celery_app:celery_app`，连接 Compose Redis，注册 `ml_platform.execute_annotation_return`，并在固定 WSL 会话中观察 worker/scheduler 持续运行；Postgres、Redis、MinIO、MLflow 和 TensorBoard gateway 均达到健康状态。后端导入、并发和回传验收聚焦套件为 54 passed、2 个依赖弃用警告。此前一次无固定 WSL 会话的容器整体退出记录保留为环境生命周期问题，不能作为通过证据；真实回传 operation 停机、lease 过期、recovery 重派发和重复投递演练仍未完成，因此第 3、9、16、17 章及全方案仍为 `in_progress`。
+- 2026-09-16 真实 broker 派发续验：在固定 WSL Compose 会话中执行 `celery inspect ping` 返回 worker `pong`，并通过 Redis 投递 `ml_platform.recover_operations`；worker 日志确认实际收到并完成该任务，返回 `{"recovered_operation_ids": [], "count": 0}`。该证据证明当前 worker/broker 的基础派发链路可用，但没有待恢复操作，尚未证明真实回传 operation 的停机、租约过期、重派发、重启完成和副作用幂等；相关章节继续保持 `in_progress`。
+- 2026-09-16 自动标注/AutoML 路由边界修正：技术方案规定自动标注草稿使用 `/api/annotation-tasks`，AutoML 训练使用独立 `/api/automl-tasks`/训练合同；前端通用标注创建 helper 原先按 `mode=automatic` 错发 `/automl-tasks`，造成两类任务语义混用。已改为手动和自动标注均提交 `/annotation-tasks`，同步更新 API/page 回归；同时让任务列表对测试或旧数据中缺失的 `id` 做安全渲染。前端定向测试 **53 passed**、生产构建和 `git diff --check` 通过。真实 AutoML 训练 API、真实自动标注跨服务链路和最终 SHA 收据仍未完成，整体保持 `in_progress`。
+- 2026-09-16 后端路由边界收口：`POST /api/automl-tasks` 原先错误复用通用标注任务创建器，现改为真正 AutoML `start_automl` 的规范别名；错误的通用路由已移除，自动标注继续使用 `/api/annotation-tasks` 并显式携带 `mode=automatic`。相关通用任务状态 API、AutoML tracking 和模型注册回归 **72 passed、10 subtests passed**。该修复只纠正路由领域归属，不代表真实数据制品到 AutoML worker 的端到端运行态或最终方案验收完成。
+- 2026-09-16 AutoML 规范路由回归：发现训练 router 的前缀会把初始别名错误生成到 `/api/training/automl-tasks`；新增无前缀 `spec_router` 并在主应用注册，使技术方案要求的 `/api/automl-tasks` 精确进入同一 AutoML 训练处理器。新增规范路径回归与自动标注策略回归 **3 passed**；旧 `/api/training/automl/run` 兼容入口保持通过。真实数据制品、真实 worker 完整训练和候选注册仍待端到端验收。
+
+- 2026-09-16 标注员门户任务队列续修：内部 `/api/internal/portal/tasks` 原先一次性读取全部 assignment 并固定返回空游标，已改为按当前标注员和有效项目授权过滤、按 assignment UUID 稳定倒序排序、支持 `cursor`/`limit`（最大 200）和非法/跨主体游标拒绝；annotator backend proxy 与前端 `listTasks` 同步转发分页参数。主平台门户组合回归为 14 passed。现有回传幂等测试合同同步为方案要求的 HTTP 202；annotator 子项目当前没有独立可用 Python 虚拟环境，门户 API/前端对应分页测试尚未执行，保持未验证。
+
+- 2026-09-16 通用任务指派路由续补：前端使用的 `/api/annotation-tasks/{task_id}/assignments` 之前没有主平台实现，浏览器 route mock 掩盖了真实 404；新增任务归属校验、冻结 sample scope/标注员授权复用、HTTP 202 创建响应和 `GET` 游标列表（最大 200）。相关通用任务状态/API 组合为 23 passed，模块编译和 diff 检查通过。该路由仍需补齐全局写接口的请求 ID/幂等持久化及真实浏览器、跨服务运行态验证，不能关闭第 8、12、13、16 章。
+
+- 2026-09-16 指派幂等续修：`annotation_assignments` 新增可空 `idempotency_key` 及 `(task_id, created_by, idempotency_key)` 唯一约束，服务层同键同请求复用原 assignment、同键不同范围/主体返回 `IDEMPOTENCY_CONFLICT`；通用创建路由要求 `Idempotency-Key`，前端生成并发送请求头。新增迁移 `20260916_47`，fresh SQLite `upgrade head` 与 `alembic check` 通过；幂等回归和相关后端组合共 30 passed，前端 assignment API 2 passed。真实并发 PostgreSQL 约束、浏览器和跨服务验证仍未完成。
+
+- 2026-09-16 回归汇总：自动标注策略、任务状态、回传验收、门户和数据导入组合为 125 passed、8 个依赖/模型警告；主平台前端 `tsc --noEmit` 与生产构建通过。构建产物写入既有 `temp_test/frontend-dist` 验证目录，仍未作为发布制品；全量浏览器、annotator 子项目独立环境、真实跨服务指派幂等和最终 SHA 收据继续保持未验证。
+
+- 2026-09-16 导出/离线运行时合同复核：模型导出、签名/SBOM/checksum、绑定自动标注策略、离线 `predict/annotate`、输入拒绝和输出格式组合为 20 passed、3 个依赖/模型警告。该结果证明当前实现具备聚焦合同覆盖，不证明干净 Docker/WSL 运行时、真实模型注册链路、当前 SHA 发布收据或容量验收已完成。
+
+- 2026-09-16 指派请求审计字段续修：通用任务指派创建同时要求 `X-Request-ID` 与 `Idempotency-Key`，前端请求生成并发送二者，符合写接口审计/幂等入口约束；相关任务状态/API 回归 21 passed，前端 assignment API 2 passed，前端生产构建通过。跨服务重复请求、审计记录和真实浏览器仍待验证。
 
 - 用户已确认按原技术方案第 1–17 章完整实施。当前入口为 [全方案一致性实施台账](ml-platform/docs/superpowers/plans/2026-09-15-general-platform-conformance.md)，详细原始任务步骤继续参考 2026-09-02 实施计划；发生冲突以技术方案为准。
 - 下方历史 Task 1–13 `passed` 和“业务实现完成”不能作为本轮完整复现结论。数据导入、门户、回传、AutoML、离线导出和验收定义均有已确认缺口，整体保持 `in_progress`。
@@ -844,6 +874,13 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 未验证：本轮未执行真实 Docker/WSL Compose、真实 Redis/Celery 派发和重启恢复、完整前端/后端套件或新的远程 CI；Task 14 保持 `in_progress`。
 
 ## 2026-09-15 WSL Compose 构建网络修复
+
+## 2026-09-16 Docker Compose 操作手册
+
+- 新增 `docs/DOCKER_COMPOSE_OPERATIONS.md`，整理 Windows + WSL 环境下的 Compose
+  构建、启动、升级、状态/日志检查、停止、删除、镜像清理、数据卷保护和 MLflow
+  本地 Psycopg wheel 配置。
+- 该文档只记录操作流程，不改变服务行为；已执行文档路径和 Compose 命令语法检查。
 
 - 现象：目标工作树在 WSL 执行 `docker compose up -d --build` 时，多个 Wolfi Python 镜像长期停留在 `apk add` 下载 `https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz`，没有创建 Compose 容器。
 - 根因：Docker BuildKit 默认构建网络在该环境无法继续读取 Wolfi 包索引；同一 WSL Docker daemon 通过 `docker run --network host` 已验证 19 个系统包可以完整安装。
