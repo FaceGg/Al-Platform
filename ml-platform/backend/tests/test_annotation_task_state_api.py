@@ -308,6 +308,112 @@ def test_project_dataset_versions_lists_generic_creation_inputs():
         engine.dispose()
 
 
+@pytest.mark.parametrize("visible_columns", [["missing"], ["feature", "feature"]])
+def test_task_creation_rejects_non_source_or_duplicate_visible_columns(visible_columns):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"visible-columns-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Visible column contract", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    version = DatasetVersion(
+        project_id=project.id,
+        operator_id=user.id,
+        version=1,
+        row_count=1,
+        column_count=1,
+        content_hash="sha256:visible-data",
+        schema_hash="sha256:visible-schema",
+    )
+    schema = LabelSchema(project_id=project.id, name="visible-labels", version=1, status="active")
+    db.add_all([version, schema])
+    db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="visible-1", row_index=0, values={"feature": 1.0}),
+        LabelColumn(schema_id=schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"),
+    ])
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        request_id = str(uuid.uuid4())
+        response = TestClient(app).post(
+            "/api/annotation-tasks",
+            headers={"X-Request-ID": request_id, "Idempotency-Key": f"visible-{request_id}"},
+            json={
+                "project_id": str(project.id),
+                "dataset_version_id": str(version.id),
+                "label_schema_id": str(schema.id),
+                "mode": "manual",
+                "visible_columns": visible_columns,
+            },
+        )
+
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"]["code"] == "VISIBLE_COLUMN_INVALID"
+        assert db.query(GenericAnnotationTask).count() == 0
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
+def test_manual_task_rejects_a_source_label_column_with_a_different_type():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"source-label-type-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Source label type contract", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    version = DatasetVersion(
+        project_id=project.id,
+        operator_id=user.id,
+        version=1,
+        row_count=1,
+        column_count=1,
+        content_hash="sha256:source-label-data",
+        schema_hash="sha256:source-label-schema",
+    )
+    schema = LabelSchema(project_id=project.id, name="source-labels", version=1, status="active")
+    db.add_all([version, schema])
+    db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="score", position=0, dtype="float64", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="source-label-1", row_index=0, values={"score": 1.0}),
+        LabelColumn(schema_id=schema.id, machine_key="score", display_name="Score", ordinal=0, value_type="string"),
+    ])
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        request_id = str(uuid.uuid4())
+        response = TestClient(app).post(
+            "/api/annotation-tasks",
+            headers={"X-Request-ID": request_id, "Idempotency-Key": f"source-label-{request_id}"},
+            json={
+                "project_id": str(project.id),
+                "dataset_version_id": str(version.id),
+                "label_schema_id": str(schema.id),
+                "mode": "manual",
+            },
+        )
+
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"]["code"] == "LABEL_SOURCE_COLUMN_TYPE_MISMATCH"
+        assert db.query(GenericAnnotationTask).count() == 0
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
 def test_task_creation_freezes_server_owned_snapshot():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
@@ -373,7 +479,10 @@ def test_configuration_update_creates_new_revision_and_invalidates_old_preview()
     db.add(project); db.flush()
     version = DatasetVersion(project_id=project.id, operator_id=user.id, version=1, row_count=1, column_count=1, content_hash="sha256:config-data", schema_hash="sha256:config-schema")
     db.add(version); db.flush()
-    db.add(DatasetSample(dataset_version_id=version.id, sample_id="sample-1", row_index=0, values={"feature": 1.0}))
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="sample-1", row_index=0, values={"feature": 1.0}),
+    ])
     model_version, _source_artifact = _enabled_annotation_model(db, project, user, columns=[{"name": "label", "dtype": "object", "task": "classification"}])
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
@@ -401,6 +510,18 @@ def test_configuration_update_creates_new_revision_and_invalidates_old_preview()
         assert refreshed.status_code == 200
         assert refreshed.json()["items"][0]["task_revision"] == 1
         assert refreshed.json()["items"][0]["task_snapshot"]["config_hash"] == updated.json()["task_snapshot"]["config_hash"]
+        invalid_visible_columns = client.put(
+            f"/api/annotation-tasks/{task_id}/configuration",
+            json={
+                "task_revision": 1,
+                "visible_columns": ["not-a-source-column"],
+                "instructions": "updated",
+                "configuration": {"strategy": "model"},
+            },
+        )
+        assert invalid_visible_columns.status_code == 422
+        assert invalid_visible_columns.json()["detail"]["code"] == "VISIBLE_COLUMN_INVALID"
+        assert db.get(GenericAnnotationTask, uuid.UUID(task_id)).task_revision == 1
         stale = client.post(f"/api/annotation-tasks/{task_id}/execute", json={"task_revision": 0, "preview_id": old_preview.json()["preview_id"]})
         assert stale.status_code == 409
         assert stale.json()["detail"]["code"] == "TASK_REVISION_CONFLICT"

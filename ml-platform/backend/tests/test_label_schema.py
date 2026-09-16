@@ -43,6 +43,47 @@ def test_label_types_reject_invalid_values():
         validate_label_value(LabelColumnContract("name", "string", max_length=4), "abcdef")
 
 
+def test_string_labels_are_trimmed_nonempty_and_limited_to_default_utf8_bytes():
+    column = LabelColumnContract("name", "string")
+
+    assert validate_label_value(column, "  accepted  ") == "accepted"
+    with pytest.raises(LabelValueError):
+        validate_label_value(column, " \t ")
+    with pytest.raises(LabelValueError):
+        validate_label_value(column, "x" * 4097)
+
+
+def test_integer_labels_are_limited_to_signed_64_bit_range():
+    column = LabelColumnContract("count", "int")
+
+    assert validate_label_value(column, "-9223372036854775808") == -(2 ** 63)
+    assert validate_label_value(column, "9223372036854775807") == 2 ** 63 - 1
+    with pytest.raises(LabelValueError):
+        validate_label_value(column, "9223372036854775808")
+    with pytest.raises(LabelValueError):
+        validate_label_value(column, "-9223372036854775809")
+
+
+def test_new_label_columns_default_to_required(db):
+    schema = create_label_schema(
+        db,
+        project_id=uuid.uuid4(),
+        name="default-required",
+        columns=[{
+            "machine_key": "decision",
+            "display_name": "Decision",
+            "value_type": "string",
+        }],
+    )
+
+    assert schema.columns[0].required is True
+    assert LabelColumnCreate(
+        machine_key="api_decision",
+        display_name="API decision",
+        value_type="string",
+    ).required is True
+
+
 def test_column_constraints_match_the_declared_value_type():
     with pytest.raises(ValueError):
         LabelColumnCreate(machine_key="count", display_name="Count", value_type="int", enum_values=[1.5])

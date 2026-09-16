@@ -19,6 +19,7 @@ from app.models.labeling import (
     AnnotationAssignment,
     AnnotationAssignmentSample,
     AnnotationComment,
+    AnnotationConfirmation,
     AnnotationRevision,
     LabelColumn,
     LabelSchema,
@@ -40,7 +41,12 @@ def portal_fixture():
     db = sessionmaker(bind=engine, expire_on_commit=False)()
 
     admin = User(username=f"portal-admin-{uuid.uuid4().hex}", password_hash="hash", role="admin")
-    db.add(admin)
+    annotator_principal = User(
+        username=f"portal-annotator-principal-{uuid.uuid4().hex}",
+        password_hash="hash",
+        role="annotator",
+    )
+    db.add_all([admin, annotator_principal])
     db.flush()
     project = Project(name="Portal project", owner_id=admin.id)
     db.add(project)
@@ -108,7 +114,7 @@ def portal_fixture():
     db.add(
         AnnotatorSubjectMapping(
             subject_id=subject_id,
-            platform_principal_id=admin.id,
+            platform_principal_id=annotator_principal.id,
             created_by=admin.id,
         )
     )
@@ -176,6 +182,7 @@ def portal_fixture():
             "project_id": project.id,
             "task_id": task.id,
             "subject_id": subject_id,
+            "annotator_principal_id": annotator_principal.id,
             "scope_hash": assignment.scope_hash,
         }
     finally:
@@ -273,7 +280,13 @@ def test_internal_portal_label_write_returns_complete_revision_conflict(portal_f
         json={"values": {"label": "new"}, "base_revision": 3},
     )
     assert saved.status_code == 200, saved.text
-    assert saved.json() == {"values": {"label": "new"}, "revision": 4, "task_revision": 4}
+    assert saved.json() == {"values": {"label": "new"}, "revision": 4, "task_revision": 3}
+    revision = portal_fixture["db"].query(AnnotationRevision).filter_by(
+        task_id=portal_fixture["task_id"],
+        sample_id="sample-1",
+        revision_no=4,
+    ).one()
+    assert revision.author_id == portal_fixture["annotator_principal_id"]
 
     conflict = client.put(
         path,
@@ -351,19 +364,24 @@ def test_internal_portal_bulk_confirm_and_return_are_idempotent(portal_fixture):
     confirmed = client.post(
         f"{task_path}/confirm",
         headers=_headers(read_write),
-        json={"task_revision": 4, "scope_hash": portal_fixture["scope_hash"]},
+        json={"task_revision": 3, "scope_hash": portal_fixture["scope_hash"]},
     )
     assert confirmed.status_code == 200, confirmed.text
+    confirmations = portal_fixture["db"].query(AnnotationConfirmation).filter_by(
+        task_id=portal_fixture["task_id"],
+    ).all()
+    assert confirmations
+    assert {row.confirmer_id for row in confirmations} == {portal_fixture["annotator_principal_id"]}
 
     first = client.post(
         f"{task_path}/return",
         headers=_headers(read_write, **{"Idempotency-Key": "portal-return-1"}),
-        json={"task_revision": 4, "scope_hash": portal_fixture["scope_hash"]},
+        json={"task_revision": 3, "scope_hash": portal_fixture["scope_hash"]},
     )
     second = client.post(
         f"{task_path}/return",
         headers=_headers(read_write, **{"Idempotency-Key": "portal-return-1"}),
-        json={"task_revision": 4, "scope_hash": portal_fixture["scope_hash"]},
+        json={"task_revision": 3, "scope_hash": portal_fixture["scope_hash"]},
     )
     assert first.status_code == second.status_code == 202
     assert first.json()["return_batch_id"] == second.json()["return_batch_id"]

@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base
 from app.models.annotator import AnnotatorAccount, ProjectAnnotatorGrant
-from app.models.data_version import DatasetSample, DatasetVersion
+from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
 from app.models.labeling import (
     AnnotationAssignment,
     AnnotationAssignmentSample,
@@ -32,6 +32,7 @@ from app.services.annotation_concurrency import (
     save_labels,
     transition_assignment,
 )
+from app.tasks.annotation_return_tasks import _execute_with_session
 
 
 @pytest.fixture()
@@ -286,6 +287,55 @@ def test_assignment_can_reference_server_owned_frozen_task_scope(db):
     assert db.query(AnnotationAssignmentSample).filter_by(assignment_id=assignment.id).count() == 1
 
 
+@pytest.mark.parametrize(
+    "task_status",
+    ("draft", "failed", "needs_review", "executing", "awaiting_return", "returned_pending_acceptance"),
+)
+def test_assignments_are_rejected_outside_publishable_or_active_task_states(db, task_status):
+    admin, _other, subject, task = _secure_fixture(db, task_status=task_status)
+
+    with pytest.raises(AssignmentError) as error:
+        create_assignments(
+            db,
+            task_id=task.id,
+            annotator_ids=[subject],
+            sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
+            actor=admin.id,
+        )
+
+    assert error.value.code == "TASK_STATE_INVALID"
+
+
+def test_return_edit_requires_returned_pending_acceptance_and_then_allows_one_new_revision(db):
+    admin, _other, subject, task = _secure_fixture(db)
+    assignment = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[subject],
+        sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
+        actor=admin.id,
+        initial_values={"frozen-1": {"label": "initial"}},
+    )[0]
+    task.status = "awaiting_return"
+    assignment.state = "returned_pending_acceptance"
+    db.commit()
+
+    with pytest.raises(AssignmentError) as error:
+        edit_for_return(db, assignment.id, task.task_revision)
+    assert error.value.code == "TASK_STATE_INVALID"
+
+    task.status = "returned_pending_acceptance"
+    db.commit()
+    with pytest.raises(AssignmentLockedError):
+        save_labels(db, assignment.id, "frozen-1", {"label": "replacement"}, 0, actor=admin.id)
+    edit_for_return(db, assignment.id, task.task_revision)
+    saved = save_labels(db, assignment.id, "frozen-1", {"label": "replacement"}, 0, actor=admin.id)
+
+    assert saved.revision_no == 1
+    assert db.get(AnnotationAssignment, assignment.id).state == "pending"
+    assert db.get(GenericAnnotationTask, task.id).status == "in_progress"
+
+
 def test_paused_task_and_incomplete_required_labels_are_rejected(db):
     admin, _other, subject, task = _secure_fixture(db)
     assignment = create_assignments(
@@ -314,7 +364,9 @@ def test_return_operation_records_project_and_task_context(db):
         annotator_ids=[subject],
         sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
         actor=admin.id,
+        initial_values={"frozen-1": {"label": "ready"}},
     )[0]
+    confirm_assignment(db, assignment.id, assignment.task_revision, assignment.scope_hash, actor=admin.id)
 
     returned = return_assignment(
         db,
@@ -384,8 +436,20 @@ def test_partial_return_acceptance_does_not_complete_task_until_all_scope_is_acc
         actor=admin.id,
         initial_values={"frozen-2": {"label": "second"}},
     )[0]
+    confirm_assignment(db, first.id, first.task_revision, first.scope_hash, actor=admin.id)
+    confirm_assignment(db, second.id, second.task_revision, second.scope_hash, actor=admin.id)
     first_return = return_assignment(db, first.id, first.task_revision, first.scope_hash, "partial-first")
     second_return = return_assignment(db, second.id, second.task_revision, second.scope_hash, "partial-second")
+
+    for returned in (first_return, second_return):
+        assert returned.operation_id is not None
+        result = _execute_with_session(
+            db,
+            str(returned.return_batch_id),
+            str(returned.operation_id),
+            f"partial-return:{returned.return_batch_id}",
+        )
+        assert result["status"] == "completed"
 
     from app.services.annotation_returns import accept_return_batch
 
@@ -416,13 +480,185 @@ def test_label_write_appends_revision_and_synchronizes_overlapping_assignments(d
     rows = db.query(AnnotationAssignment).filter(AnnotationAssignment.task_id == task.id).all()
     assert all(db.query(AnnotationRevision).filter_by(task_id=task.id, sample_id="frozen-1", revision_no=1).count() == 1 for _ in [0])
     assert all(
-        db.query(AnnotationAssignment).filter_by(id=row.id).one().task_revision == 1
+        db.query(AnnotationAssignment).filter_by(id=row.id).one().task_revision == task.task_revision
+        for row in rows
+    )
+    assert all(
+        db.query(AnnotationAssignment).filter_by(id=row.id).one().last_edit_revision == 1
         for row in rows
     )
     assert all(
         db.query(AnnotationAssignment).filter_by(id=row.id).one().state == "pending"
         for row in rows
     )
+
+
+def test_return_uses_frozen_task_revision_after_a_new_label_revision(db):
+    admin, _other, subject, task = _secure_fixture(db)
+    assignment = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[subject],
+        sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
+        actor=admin.id,
+        initial_values={"frozen-1": {"label": "initial"}},
+    )[0]
+    confirm_assignment(db, assignment.id, task.task_revision, assignment.scope_hash, actor=admin.id)
+    saved = save_labels(
+        db,
+        assignment.id,
+        "frozen-1",
+        {"label": "edited"},
+        base_revision=0,
+        actor=admin.id,
+    )
+    assert saved.revision_no == 1
+    assert db.get(AnnotationAssignment, assignment.id).task_revision == task.task_revision
+    assert db.get(AnnotationAssignment, assignment.id).last_edit_revision == 1
+
+    confirm_assignment(db, assignment.id, task.task_revision, assignment.scope_hash, actor=admin.id)
+    returned = return_assignment(
+        db,
+        assignment.id,
+        task.task_revision,
+        assignment.scope_hash,
+        "return-after-edit",
+    )
+    batch = db.get(AnnotationReturnBatch, returned.return_batch_id)
+    assert batch.task_revision == task.task_revision
+
+
+def test_source_backed_manual_labels_initialize_assignment_current_values(db):
+    owner = User(username=f"source-label-owner-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(owner)
+    db.flush()
+    project = Project(name="Source-backed labels", owner_id=owner.id)
+    db.add(project)
+    db.flush()
+    version = DatasetVersion(
+        project_id=project.id,
+        operator_id=owner.id,
+        version=1,
+        row_count=1,
+        column_count=2,
+        content_hash="sha256:source-backed-labels",
+        schema_hash="sha256:source-backed-labels-schema",
+    )
+    schema = LabelSchema(project_id=project.id, name="source-backed", version=1, status="active")
+    db.add_all([version, schema])
+    db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float64", nullable=False),
+        DatasetSchemaColumn(dataset_version_id=version.id, name="decision", position=1, dtype="string", nullable=False),
+        DatasetSample(
+            dataset_version_id=version.id,
+            sample_id="source-backed-1",
+            row_index=0,
+            values={"feature": 1.0, "decision": "initial"},
+        ),
+        LabelColumn(
+            schema_id=schema.id,
+            machine_key="decision",
+            display_name="Decision",
+            ordinal=0,
+            value_type="string",
+            required=True,
+        ),
+    ])
+    subject = uuid.uuid4()
+    db.add_all([
+        AnnotatorAccount(subject_id=subject, username=f"source-backed-{uuid.uuid4().hex}", password_hash="hash", status="active"),
+        ProjectAnnotatorGrant(project_id=project.id, subject_id=subject, status="active", granted_by=owner.id),
+    ])
+    task = GenericAnnotationTask(
+        project_id=project.id,
+        dataset_version_id=version.id,
+        label_schema_id=schema.id,
+        owner_id=owner.id,
+        mode="manual",
+        status="awaiting_annotation",
+        task_revision=0,
+        sample_scope={"kind": "ids", "sample_ids": ["source-backed-1"]},
+        task_snapshot={
+            "sample_ids": ["source-backed-1"],
+            "label_schema": {
+                "columns": [{
+                    "machine_key": "decision",
+                    "value_type": "string",
+                    "required": True,
+                }],
+            },
+        },
+    )
+    db.add(task)
+    db.commit()
+
+    assignment = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[subject],
+        sample_scope={"kind": "ids", "sample_ids": ["source-backed-1"]},
+        actor=owner.id,
+    )[0]
+
+    assignment_sample = db.query(AnnotationAssignmentSample).filter_by(
+        assignment_id=assignment.id,
+        sample_id="source-backed-1",
+    ).one()
+    current = db.query(AnnotationSampleCurrent).filter_by(
+        task_id=task.id,
+        sample_id="source-backed-1",
+    ).one()
+    revision = db.query(AnnotationRevision).filter_by(
+        task_id=task.id,
+        sample_id="source-backed-1",
+        revision_no=0,
+    ).one()
+    assert assignment_sample.values == {"decision": "initial"}
+    assert current.values == {"decision": "initial"}
+    assert revision.values == {"decision": "initial"}
+    assert (revision.source, revision.action) == ("manual", "initialize")
+
+
+def test_editing_after_return_immediately_supersedes_the_pending_batch(db):
+    admin, _other, subject, task = _secure_fixture(db)
+    assignment = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[subject],
+        sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
+        actor=admin.id,
+        initial_values={"frozen-1": {"label": "initial"}},
+    )[0]
+    confirm_assignment(db, assignment.id, task.task_revision, assignment.scope_hash, actor=admin.id)
+    returned = return_assignment(
+        db,
+        assignment.id,
+        task.task_revision,
+        assignment.scope_hash,
+        "return-before-edit",
+    )
+    worker_result = _execute_with_session(
+        db,
+        str(returned.return_batch_id),
+        str(returned.operation_id),
+        f"edit-after-return:{returned.return_batch_id}",
+    )
+    assert worker_result["status"] == "completed"
+
+    edit_for_return(db, assignment.id, task.task_revision)
+    save_labels(
+        db,
+        assignment.id,
+        "frozen-1",
+        {"label": "corrected"},
+        base_revision=0,
+        actor=admin.id,
+    )
+
+    assert db.get(AnnotationReturnBatch, returned.return_batch_id).state == "superseded"
+    assert db.get(AnnotationAssignment, assignment.id).state == "pending"
+    assert db.get(GenericAnnotationTask, task.id).status == "in_progress"
 
 
 def test_assignment_edits_update_current_labels_for_later_assignments(db):

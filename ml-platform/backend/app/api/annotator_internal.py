@@ -244,6 +244,15 @@ def _assignment_contains_sample(db: Session, assignment: AnnotationAssignment, s
     ).first() is not None
 
 
+def _portal_platform_principal(db: Session, subject_id: uuid.UUID) -> uuid.UUID:
+    mapping = db.query(AnnotatorSubjectMapping).filter(
+        AnnotatorSubjectMapping.subject_id == subject_id,
+    ).one_or_none()
+    if mapping is None or mapping.platform_principal_id is None:
+        raise _portal_error("ANNOTATOR_SUBJECT_UNMAPPED")
+    return mapping.platform_principal_id
+
+
 def _assignment_error(error: AssignmentError) -> HTTPException:
     status_code = 409 if isinstance(error, AssignmentLockedError) or error.code in {
         "REVISION_CONFLICT",
@@ -391,8 +400,17 @@ def internal_portal_save_labels(
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
     _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id)
+    platform_principal_id = _portal_platform_principal(db, principal.annotator_subject_id)
     try:
-        result = save_labels(db, assignment.id, sample_id, data.values, data.base_revision, actor=assignment.created_by)
+        result = save_labels(
+            db,
+            assignment.id,
+            sample_id,
+            data.values,
+            data.base_revision,
+            actor=platform_principal_id,
+            access_actor=assignment.created_by,
+        )
     except AssignmentError as error:
         raise _assignment_error(error) from error
     if hasattr(result, "current_values"):
@@ -426,6 +444,7 @@ def internal_portal_bulk_labels(
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
     _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id)
+    platform_principal_id = _portal_platform_principal(db, principal.annotator_subject_id)
     results = []
     try:
         for item in data.items:
@@ -435,7 +454,8 @@ def internal_portal_bulk_labels(
                 item.sample_id,
                 item.values,
                 item.base_revision,
-                actor=assignment.created_by,
+                actor=platform_principal_id,
+                access_actor=assignment.created_by,
                 commit=False,
             )
             if hasattr(result, "current_values"):
@@ -474,8 +494,16 @@ def internal_portal_confirm(
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
     _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id)
+    platform_principal_id = _portal_platform_principal(db, principal.annotator_subject_id)
     try:
-        result = confirm_assignment(db, assignment.id, data.task_revision, data.scope_hash)
+        result = confirm_assignment(
+            db,
+            assignment.id,
+            data.task_revision,
+            data.scope_hash,
+            actor=platform_principal_id,
+            access_actor=assignment.created_by,
+        )
     except AssignmentError as error:
         raise _assignment_error(error) from error
     return {"assignment_id": str(result.assignment_id), "task_revision": result.task_revision, "scope_hash": result.scope_hash}

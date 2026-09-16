@@ -9,10 +9,27 @@ from sqlalchemy.orm import Session
 from app.models.labeling import (AnnotationConfirmation, AnnotationRevision, AnnotationSampleCurrent, AnnotationTaskLabel, LabelColumn, LabelSchema, LabelValueConstraint)
 
 
+DEFAULT_STRING_LABEL_MAX_BYTES = 4096
+INT64_MIN = -(2 ** 63)
+INT64_MAX = 2 ** 63 - 1
+
+
 class LabelValueError(ValueError):
     def __init__(self, message: str, code: str = "LABEL_VALUE_INVALID"):
         super().__init__(message)
         self.code = code
+
+
+def source_column_label_type(dtype: object) -> str | None:
+    """Return the compatible label type for a frozen source-schema column."""
+    normalized = str(dtype or "").strip().lower()
+    if "int" in normalized or "uint" in normalized:
+        return "int"
+    if any(token in normalized for token in ("float", "double", "decimal", "number")):
+        return "float"
+    if normalized in {"str", "string", "object", "category"}:
+        return "string"
+    return None
 
 
 @dataclass(frozen=True)
@@ -54,6 +71,8 @@ def validate_label_value(column: LabelColumnContract, value: object) -> object:
         if isinstance(value, bool) or not re.fullmatch(r"[+-]?\d+", str(value).strip()):
             raise LabelValueError("invalid integer label")
         result = int(str(value).strip())
+        if result < INT64_MIN or result > INT64_MAX:
+            raise LabelValueError("integer label is outside signed 64-bit range", "LABEL_RANGE_INVALID")
     elif kind == "float":
         if isinstance(value, bool):
             raise LabelValueError("invalid float label")
@@ -66,8 +85,11 @@ def validate_label_value(column: LabelColumnContract, value: object) -> object:
     elif kind == "string":
         if not isinstance(value, str):
             raise LabelValueError("string label required")
-        result = value
-        if column.max_length is not None and len(result.encode("utf-8")) > column.max_length:
+        result = value.strip()
+        if not result:
+            raise LabelValueError("string label must not be blank")
+        max_length = column.max_length if column.max_length is not None else DEFAULT_STRING_LABEL_MAX_BYTES
+        if len(result.encode("utf-8")) > max_length:
             raise LabelValueError("string label exceeds byte limit")
     else:
         raise LabelValueError("unsupported label type")
@@ -114,6 +136,7 @@ def label_schema_snapshot(schema: LabelSchema) -> dict[str, object]:
         "schema_id": str(schema.id),
         "name": schema.name,
         "version": schema.version,
+        "purpose": schema.purpose,
         "columns": [
             {
                 "machine_key": column.machine_key,
@@ -125,6 +148,7 @@ def label_schema_snapshot(schema: LabelSchema) -> dict[str, object]:
                 "min_value": column.min_value,
                 "max_value": column.max_value,
                 "max_length": column.max_length,
+                "instruction": column.instruction,
             }
             for column in sorted(schema.columns, key=lambda item: item.ordinal)
         ],
@@ -191,11 +215,25 @@ def get_current_label_set(db: Session, task_id, sample_id: str) -> CurrentLabelS
     return CurrentLabelSet(dict(current.values or {}), current.revision_no)
 
 
-def create_label_schema(db: Session, *, project_id, name: str, columns, commit: bool = True) -> LabelSchema:
+def create_label_schema(
+    db: Session,
+    *,
+    project_id,
+    name: str,
+    columns,
+    purpose: str = "annotation",
+    commit: bool = True,
+) -> LabelSchema:
     latest = db.query(LabelSchema.version).filter(
         LabelSchema.project_id == project_id, LabelSchema.name == name,
     ).order_by(LabelSchema.version.desc()).first()
-    schema = LabelSchema(project_id=project_id, name=name, version=(int(latest[0]) if latest else 0) + 1, status="active")
+    schema = LabelSchema(
+        project_id=project_id,
+        name=name,
+        version=(int(latest[0]) if latest else 0) + 1,
+        status="active",
+        purpose=purpose,
+    )
     db.add(schema)
     db.flush()
     for ordinal, item in enumerate(columns):

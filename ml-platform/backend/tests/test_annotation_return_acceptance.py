@@ -14,7 +14,11 @@ from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetV
 from app.models.labeling import (
     AnnotationAssignment,
     AnnotationAssignmentSample,
+    AnnotationConfirmation,
+    AnnotationReturnBatchSample,
     AnnotationReturnBatch,
+    AnnotationRevision,
+    AnnotationSampleCurrent,
     LabelColumn,
     LabelSchema,
 )
@@ -23,7 +27,12 @@ from app.models.notifications import InAppNotification
 from app.models.platform_models import GenericAnnotationTask
 from app.models.project import Project
 from app.models.user import User
-from app.services.annotation_returns import AnnotationReturnError, accept_return_batch, reject_return_batch
+from app.services.annotation_returns import (
+    AnnotationReturnError,
+    accept_return_batch,
+    diff_return_batch,
+    reject_return_batch,
+)
 from app.tasks.annotation_return_tasks import _execute_with_session
 
 
@@ -107,6 +116,19 @@ def _fixture(source_result_type=None, *, server_owned_scope=False):
     task_snapshot = {"sample_ids": []} if server_owned_scope else {"sample_ids": ["sample-1", "sample-2"]}
     if server_owned_scope:
         task_snapshot["scope"] = {"sample_count": 2, "scope_hash": "sha256:return-scope"}
+    task_snapshot["label_schema"] = {
+        "schema_id": str(schema.id),
+        "columns": [{
+            "machine_key": "result",
+            "display_name": "Result",
+            "value_type": "string",
+            "required": True,
+            "enum_values": [],
+            "min_value": None,
+            "max_value": None,
+            "max_length": None,
+        }],
+    }
     assignment_sample_scope = (
         {
             "kind": "frozen_task_scope",
@@ -123,7 +145,7 @@ def _fixture(source_result_type=None, *, server_owned_scope=False):
         label_schema_id=schema.id,
         owner_id=admin.id,
         mode="manual",
-        status="awaiting_annotation",
+        status="returned_pending_acceptance",
         task_revision=4,
         sample_scope=task_sample_scope,
         task_snapshot=task_snapshot,
@@ -144,9 +166,49 @@ def _fixture(source_result_type=None, *, server_owned_scope=False):
     )
     db.add(assignment)
     db.flush()
+    values_by_sample = {
+        "sample-1": {"result": "pass"},
+        "sample-2": {"result": "fail"},
+    }
     db.add_all([
-        AnnotationAssignmentSample(assignment_id=assignment.id, sample_id="sample-1", revision_no=4, values={"result": "pass"}),
-        AnnotationAssignmentSample(assignment_id=assignment.id, sample_id="sample-2", revision_no=4, values={"result": "fail"}),
+        AnnotationAssignmentSample(assignment_id=assignment.id, sample_id=sample_id, revision_no=4, values=values)
+        for sample_id, values in values_by_sample.items()
+    ])
+    db.add_all([
+        AnnotationSampleCurrent(
+            task_id=task.id,
+            sample_id=sample_id,
+            schema_id=schema.id,
+            revision_no=4,
+            values=values,
+        )
+        for sample_id, values in values_by_sample.items()
+    ])
+    revisions = [
+        AnnotationRevision(
+            task_id=task.id,
+            sample_id=sample_id,
+            schema_id=schema.id,
+            revision_no=4,
+            base_revision=3,
+            values=values,
+            author_id=annotator_user.id,
+            source="manual",
+            action="edit",
+        )
+        for sample_id, values in values_by_sample.items()
+    ]
+    db.add_all(revisions)
+    db.flush()
+    db.add_all([
+        AnnotationConfirmation(
+            task_id=task.id,
+            sample_id=revision.sample_id,
+            revision_id=revision.id,
+            confirmer_id=annotator_user.id,
+            action="confirm",
+        )
+        for revision in revisions
     ])
     if server_owned_scope:
         from app.models.platform_models import AnnotationTaskScopeSample
@@ -167,10 +229,36 @@ def _fixture(source_result_type=None, *, server_owned_scope=False):
     return engine, db, admin, annotator_user, project, source, assignment, batch
 
 
+def _freeze_return_batch(db, assignment, batch):
+    operation = db.get(DurableOperation, batch.operation_id) if batch.operation_id else None
+    if operation is None:
+        task = db.get(GenericAnnotationTask, assignment.task_id)
+        operation = DurableOperation(
+            project_id=task.project_id,
+            task_id=task.id,
+            resource_type="annotation_return",
+            resource_key=f"annotation-return:{batch.id}",
+            idempotency_key=batch.id.hex,
+            state="queued",
+            stage="queued",
+        )
+        db.add(operation)
+        db.flush()
+        batch.operation_id = operation.id
+        db.commit()
+    result = _execute_with_session(db, str(batch.id), str(operation.id), "return-test-worker")
+    db.refresh(operation)
+    assert result["status"] == "completed"
+    assert operation.state == "completed"
+    return operation
+
+
 @pytest.mark.parametrize("source_dtype", ["string", "object"])
 def test_return_overwrites_same_type_label_in_new_version_only(source_dtype):
     engine, db, admin, _, _, source, _, batch = _fixture(source_dtype)
     try:
+        assignment = db.get(AnnotationAssignment, batch.assignment_id)
+        _freeze_return_batch(db, assignment, batch)
         accepted = accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
         columns = db.query(DatasetSchemaColumn).filter_by(dataset_version_id=accepted.id).order_by(DatasetSchemaColumn.position).all()
         assert [(column.name, column.dtype) for column in columns] == [("feature", "int64"), ("result", source_dtype)]
@@ -188,6 +276,8 @@ def test_return_overwrites_same_type_label_in_new_version_only(source_dtype):
 def test_return_rejects_same_name_different_type_without_partial_version():
     engine, db, admin, _, _, source, _, batch = _fixture("int64")
     try:
+        assignment = db.get(AnnotationAssignment, batch.assignment_id)
+        _freeze_return_batch(db, assignment, batch)
         with pytest.raises(AnnotationReturnError) as error:
             accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
         assert error.value.code == "RETURN_LABEL_COLUMN_TYPE_MISMATCH"
@@ -237,6 +327,7 @@ def test_return_diff_is_sample_id_aligned_and_cursor_paged():
     app.dependency_overrides[get_current_user] = lambda: admin
     client = TestClient(app)
     try:
+        _freeze_return_batch(db, _assignment, batch)
         response = client.get(f"/api/annotation-return-batches/{batch.id}/diff?limit=1")
         assert response.status_code == 200, response.text
         body = response.json()
@@ -259,6 +350,7 @@ def test_return_diff_is_sample_id_aligned_and_cursor_paged():
 def test_acceptance_creates_new_dataset_version_without_mutating_source():
     engine, db, admin, _annotator, _project, source, assignment, batch = _fixture()
     try:
+        _freeze_return_batch(db, assignment, batch)
         accepted = accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
         assert accepted.status == "ready"
         assert accepted.id != source.id
@@ -280,6 +372,7 @@ def test_rejected_return_requires_reason_and_notifies_mapped_annotator():
     app.dependency_overrides[get_current_user] = lambda: admin
     client = TestClient(app)
     try:
+        _freeze_return_batch(db, _assignment, batch)
         invalid = client.post(f"/api/annotation-return-batches/{batch.id}/return", json={"task_revision": 4, "reason": "   "})
         assert invalid.status_code == 422, invalid.text
         rejected = reject_return_batch(db, batch.id, expected_revision=4, reason="result needs correction", actor=admin)
@@ -299,6 +392,7 @@ def test_rejected_return_requires_reason_and_notifies_mapped_annotator():
 def test_acceptance_uses_server_owned_frozen_scope_records():
     engine, db, admin, _annotator, _project, _source, assignment, batch = _fixture(server_owned_scope=True)
     try:
+        _freeze_return_batch(db, assignment, batch)
         accepted = accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
 
         assert accepted.status == "ready"
@@ -310,27 +404,68 @@ def test_acceptance_uses_server_owned_frozen_scope_records():
 def test_return_worker_validates_batch_and_persists_summary():
     engine, db, admin, _annotator, _project, _source, assignment, batch = _fixture()
     try:
-        operation = DurableOperation(
-            project_id=db.get(GenericAnnotationTask, assignment.task_id).project_id,
-            task_id=assignment.task_id,
-            resource_type="annotation_return",
-            resource_key=f"annotation-return:{batch.id}",
-            idempotency_key=batch.id.hex,
-            state="queued",
-            stage="queued",
-        )
-        db.add(operation)
-        db.flush()
-        batch.operation_id = operation.id
-        db.commit()
-
-        result = _execute_with_session(db, str(batch.id), str(operation.id), "return-test-worker")
-        db.refresh(operation)
-
-        assert result["status"] == "completed"
-        assert operation.state == "completed"
+        operation = _freeze_return_batch(db, assignment, batch)
         assert operation.result_summary["validated_row_count"] == 2
         assert operation.result_summary["label_columns"] == ["result"]
+        frozen = db.query(AnnotationReturnBatchSample).filter_by(return_batch_id=batch.id).all()
+        assert {row.sample_id: (row.revision_no, row.values) for row in frozen} == {
+            "sample-1": (4, {"result": "pass"}),
+            "sample-2": (4, {"result": "fail"}),
+        }
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_acceptance_requires_a_completed_frozen_return_batch():
+    engine, db, admin, _annotator, _project, _source, _assignment, batch = _fixture()
+    try:
+        with pytest.raises(AnnotationReturnError) as error:
+            accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
+        assert error.value.code == "RETURN_BATCH_NOT_READY"
+        assert db.query(DatasetVersion).count() == 1
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_acceptance_rejects_a_completed_batch_with_a_tampered_snapshot_checksum():
+    engine, db, admin, _annotator, _project, _source, assignment, batch = _fixture()
+    try:
+        operation = _freeze_return_batch(db, assignment, batch)
+        operation.checksum = "sha256:" + "0" * 64
+        db.commit()
+
+        with pytest.raises(AnnotationReturnError) as error:
+            accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
+
+        assert error.value.code == "RETURN_BATCH_CHECKSUM_INVALID"
+        assert db.get(AnnotationReturnBatch, batch.id).state == "pending"
+        assert db.query(DatasetVersion).count() == 1
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_diff_and_acceptance_use_the_frozen_return_snapshot_not_assignment_rows():
+    engine, db, admin, _annotator, _project, _source, assignment, batch = _fixture()
+    try:
+        _freeze_return_batch(db, assignment, batch)
+        db.query(AnnotationAssignmentSample).filter_by(
+            assignment_id=assignment.id,
+            sample_id="sample-1",
+        ).update({AnnotationAssignmentSample.values: {"result": "mutated"}}, synchronize_session=False)
+        db.commit()
+
+        diff = diff_return_batch(db, batch.id)
+        assert {item["sample_id"]: item["label_values"] for item in diff["items"]}["sample-1"] == {"result": "pass"}
+
+        accepted = accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
+        value = db.query(DatasetSample).filter_by(
+            dataset_version_id=accepted.id,
+            sample_id="sample-1",
+        ).one().values
+        assert value["result"] == "pass"
     finally:
         db.close()
         engine.dispose()

@@ -9,6 +9,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.annotator import AnnotatorAccount, ProjectAnnotatorGrant
+from app.models.data_version import DatasetSample, DatasetSchemaColumn
 from app.models.labeling import (
     AnnotationAssignment,
     AnnotationAssignmentSample,
@@ -21,7 +22,12 @@ from app.models.labeling import (
 from app.models.platform_models import GenericAnnotationTask
 from app.models.operation import DurableOperation
 from app.models.access import AuditEvent
-from app.services.label_schema import LabelColumnContract, LabelSchemaContract, validate_label_values
+from app.services.label_schema import (
+    LabelColumnContract,
+    LabelSchemaContract,
+    source_column_label_type,
+    validate_label_values,
+)
 from app.services.annotation_scope import iter_scope_batches, missing_scope_sample_ids, scope_digest
 from app.services.annotation_task_state import current_annotation_task_snapshot
 
@@ -180,6 +186,68 @@ def _task_schema_contract(db: Session, task: GenericAnnotationTask) -> LabelSche
     )
 
 
+def _manual_source_label_keys(
+    db: Session,
+    task: GenericAnnotationTask,
+    contract: LabelSchemaContract | None,
+) -> tuple[str, ...]:
+    """Identify frozen source columns that initialize same-named manual labels."""
+    if task.mode != "manual" or contract is None:
+        return ()
+    source_by_name = {
+        str(column.name): column
+        for column in db.query(DatasetSchemaColumn).filter(
+            DatasetSchemaColumn.dataset_version_id == task.dataset_version_id,
+        ).all()
+    }
+    source_label_keys = []
+    for label_column in contract.columns:
+        source_column = source_by_name.get(label_column.machine_key)
+        if source_column is None:
+            continue
+        source_type = source_column_label_type(source_column.dtype)
+        if source_type is None:
+            raise AssignmentError(
+                "source-backed label column has an unsupported source type",
+                "LABEL_SOURCE_COLUMN_TYPE_UNSUPPORTED",
+            )
+        if source_type != label_column.value_type.lower():
+            raise AssignmentError(
+                "source-backed label column does not match its source type",
+                "LABEL_SOURCE_COLUMN_TYPE_MISMATCH",
+            )
+        source_label_keys.append(label_column.machine_key)
+    return tuple(source_label_keys)
+
+
+def _source_label_values_for_batch(
+    db: Session,
+    task: GenericAnnotationTask,
+    sample_ids: list[str],
+    source_label_keys: tuple[str, ...],
+) -> dict[str, dict[str, object]]:
+    if not source_label_keys:
+        return {}
+    source_rows = db.query(DatasetSample).filter(
+        DatasetSample.dataset_version_id == task.dataset_version_id,
+        DatasetSample.sample_id.in_(sample_ids),
+    ).all()
+    rows_by_sample_id = {str(row.sample_id): row for row in source_rows}
+    missing = sorted(set(sample_ids) - set(rows_by_sample_id))
+    if missing:
+        raise AssignmentError(
+            "frozen task scope contains samples missing from its source dataset version",
+            "SOURCE_SAMPLE_NOT_FOUND",
+        )
+    return {
+        sample_id: {
+            key: dict(rows_by_sample_id[sample_id].values or {}).get(key)
+            for key in source_label_keys
+        }
+        for sample_id in sample_ids
+    }
+
+
 def _ensure_task_access(db: Session, task: GenericAnnotationTask, actor) -> None:
     actor_id = getattr(actor, "id", actor)
     if actor_id is not None and actor_id not in {task.owner_id, getattr(task.project, "owner_id", None)}:
@@ -189,6 +257,40 @@ def _ensure_task_access(db: Session, task: GenericAnnotationTask, actor) -> None
 def _ensure_task_writable(task: GenericAnnotationTask) -> None:
     if task.status in {"paused", "cancelled", "archived", "completed"}:
         raise AssignmentLockedError("task does not accept annotation writes")
+
+
+def _task_state_invalid(task: GenericAnnotationTask, operation: str) -> None:
+    _ensure_task_writable(task)
+    raise AssignmentError(
+        f"task does not allow {operation} in its current state",
+        "TASK_STATE_INVALID",
+    )
+
+
+def _ensure_task_allows_assignment(task: GenericAnnotationTask) -> None:
+    if task.status not in {"preview_ready", "awaiting_annotation", "in_progress"}:
+        _task_state_invalid(task, "assignment changes")
+
+
+def _ensure_task_allows_label_write(
+    task: GenericAnnotationTask,
+    assignment: AnnotationAssignment,
+) -> None:
+    if task.status in {"awaiting_annotation", "in_progress", "awaiting_return"}:
+        return
+    if task.status == "returned_pending_acceptance" and assignment.state == "edit_for_return":
+        return
+    _task_state_invalid(task, "label writes")
+
+
+def _ensure_task_allows_confirmation(task: GenericAnnotationTask) -> None:
+    if task.status not in {"awaiting_annotation", "in_progress"}:
+        _task_state_invalid(task, "completion confirmation")
+
+
+def _ensure_task_allows_return_edit(task: GenericAnnotationTask) -> None:
+    if task.status != "returned_pending_acceptance":
+        _task_state_invalid(task, "return editing")
 
 
 def create_assignments(
@@ -228,7 +330,7 @@ def create_assignments(
             return existing
     if task is not None:
         _ensure_task_access(db, task, actor)
-        _ensure_task_writable(task)
+        _ensure_task_allows_assignment(task)
         if sample_scope.get("kind") == "ids":
             snapshot = current_annotation_task_snapshot(db, task)
             missing_scope_ids = missing_scope_sample_ids(
@@ -255,6 +357,9 @@ def create_assignments(
         }
         if any(subject_id not in active_accounts for subject_id in annotator_ids):
             raise AssignmentError("annotator account is not active", "ANNOTATOR_FORBIDDEN")
+    task_contract = _task_schema_contract(db, task) if task is not None else None
+    source_label_keys = _manual_source_label_keys(db, task, task_contract) if task is not None else ()
+    configuration_revision = task.task_revision if task is not None else initial_revision
     assignments = [
         AnnotationAssignment(
             task_id=task_id,
@@ -264,7 +369,7 @@ def create_assignments(
             due_at=due_at,
             created_by=actor_id,
             idempotency_key=idempotency_key,
-            task_revision=initial_revision,
+            task_revision=configuration_revision,
             last_edit_revision=initial_revision,
         )
         for subject_id in dict.fromkeys(annotator_ids)
@@ -290,20 +395,27 @@ def create_assignments(
                         "automatic labels have not been published for the assignment scope",
                         "AUTOMATIC_LABELS_NOT_PUBLISHED",
                     )
+        source_values = _source_label_values_for_batch(
+            db,
+            task,
+            [sample_id for sample_id in sample_batch if sample_id not in current_values],
+            source_label_keys,
+        ) if task is not None and source_label_keys else {}
         for sample_id in sample_batch:
             current = current_values.get(sample_id)
             values = dict(current.values or {}) if current is not None else dict((initial_values or {}).get(sample_id, {}))
             revision_no = current.revision_no if current is not None else initial_revision
-            if task is not None and current is None and values and task.label_schema_id:
-                contract = _task_schema_contract(db, task)
-                if contract is not None:
+            if task is not None and current is None:
+                if task_contract is not None and values:
                     try:
-                        values = validate_label_values(contract, values, allow_partial=True)
+                        values = validate_label_values(task_contract, values, allow_partial=True)
                     except ValueError as error:
                         raise AssignmentError(
                             str(error),
                             getattr(error, "code", "LABEL_VALUE_INVALID"),
                         ) from error
+                values.update(source_values.get(sample_id, {}))
+            if task is not None and current is None and values and task.label_schema_id:
                 current = AnnotationSampleCurrent(
                     task_id=task.id,
                     sample_id=sample_id,
@@ -401,7 +513,13 @@ def _transition_assignment(
             return assignment
     if task is not None and task.status in {"paused", "cancelled", "archived", "completed"}:
         raise AssignmentLockedError("task does not accept assignment changes")
-    if assignment.task_revision != task_revision:
+    if task is not None:
+        if task.task_revision != task_revision:
+            raise AssignmentError("assignment revision is stale", "ASSIGNMENT_REVISION_CONFLICT")
+        # Older rows may have carried a label revision here. The task revision
+        # is exclusively the frozen configuration revision.
+        assignment.task_revision = task.task_revision
+    elif assignment.task_revision != task_revision:
         raise AssignmentError("assignment revision is stale", "ASSIGNMENT_REVISION_CONFLICT")
     transitions = {
         "pause": {"pending": "paused", "edit_for_return": "paused"},
@@ -489,6 +607,7 @@ def save_labels(
     base_revision: int,
     *,
     actor=None,
+    access_actor=None,
     commit: bool = True,
 ):
     assignment = db.get(AnnotationAssignment, assignment_id)
@@ -498,9 +617,9 @@ def save_labels(
         raise AssignmentLockedError()
     task = _task_context(db, assignment.task_id)
     if task is not None:
-        _ensure_task_writable(task)
-        if actor is not None:
-            _ensure_task_access(db, task, actor)
+        _ensure_task_allows_label_write(task, assignment)
+        if access_actor is not None:
+            _ensure_task_access(db, task, access_actor)
     row = _get_sample(db, assignment_id, sample_id)
     if row.revision_no != base_revision:
         return RevisionConflict(row.revision_no, dict(row.values or {}), {"sample_id": sample_id})
@@ -560,13 +679,15 @@ def save_labels(
         sibling.revision_no = next_revision
         sibling_assignment = db.get(AnnotationAssignment, sibling.assignment_id)
         if sibling_assignment is not None:
-            sibling_assignment.task_revision = next_revision
             sibling_assignment.last_edit_revision = next_revision
-            if sibling_assignment.state == "edit_for_return":
+            if task is None:
+                sibling_assignment.task_revision = next_revision
+            if sibling_assignment.state in {"edit_for_return", "returned_pending_acceptance"}:
                 sibling_assignment.state = "pending"
     row = next(item for item in siblings if item.assignment_id == assignment.id)
     assignment.last_edit_revision = next_revision
-    assignment.task_revision = next_revision
+    if task is None:
+        assignment.task_revision = next_revision
     if task is not None and task.label_schema_id:
         db.add(AnnotationRevision(
             task_id=task.id,
@@ -581,6 +702,19 @@ def save_labels(
         ))
         if task.status in {"awaiting_return", "returned_pending_acceptance"}:
             task.status = "in_progress"
+        stale_batches = db.query(AnnotationReturnBatch).join(
+            AnnotationAssignment,
+            AnnotationAssignment.id == AnnotationReturnBatch.assignment_id,
+        ).join(
+            AnnotationAssignmentSample,
+            AnnotationAssignmentSample.assignment_id == AnnotationAssignment.id,
+        ).filter(
+            AnnotationAssignment.task_id == task.id,
+            AnnotationAssignmentSample.sample_id == sample_id,
+            AnnotationReturnBatch.state.in_(("pending", "returned_for_changes")),
+        ).all()
+        for stale_batch in stale_batches:
+            stale_batch.state = "superseded"
     if commit:
         db.commit()
     return LabelWriteResult(merged, row.revision_no)
@@ -592,12 +726,15 @@ def edit_for_return(db: Session, assignment_id, task_revision: int):
         raise AssignmentError("assignment not found", "ASSIGNMENT_NOT_FOUND")
     task = _task_context(db, assignment.task_id)
     if task is not None:
-        _ensure_task_writable(task)
-    if assignment.state != "returned_pending_acceptance" or task_revision != assignment.task_revision:
-        raise AssignmentLockedError()
-    task = _task_context(db, assignment.task_id)
+        _ensure_task_allows_return_edit(task)
     if task is not None:
-        _ensure_task_writable(task)
+        if task.task_revision != task_revision:
+            raise AssignmentError("assignment revision is stale", "ASSIGNMENT_REVISION_CONFLICT")
+        assignment.task_revision = task.task_revision
+    elif task_revision != assignment.task_revision:
+        raise AssignmentError("assignment revision is stale", "ASSIGNMENT_REVISION_CONFLICT")
+    if assignment.state != "returned_pending_acceptance":
+        raise AssignmentLockedError()
     assignment.state = "edit_for_return"
     db.commit()
     return assignment
@@ -683,19 +820,33 @@ def _validate_assignment_for_return(db: Session, assignment: AnnotationAssignmen
     return {"validated_row_count": row_count}
 
 
-def confirm_assignment(db: Session, assignment_id, task_revision: int, scope_hash: str, actor=None):
+def confirm_assignment(
+    db: Session,
+    assignment_id,
+    task_revision: int,
+    scope_hash: str,
+    actor=None,
+    access_actor=None,
+):
     assignment = db.get(AnnotationAssignment, assignment_id)
     if assignment is None:
         raise AssignmentError("assignment not found", "ASSIGNMENT_NOT_FOUND")
     if assignment.state in {"paused", "revoked", "returned_pending_acceptance"}:
         raise AssignmentLockedError()
-    if assignment.task_revision != task_revision or assignment.scope_hash != scope_hash:
+    if assignment.scope_hash != scope_hash:
         raise AssignmentError("assignment revision or scope is stale", "ASSIGNMENT_REVISION_CONFLICT")
     task = _task_context(db, assignment.task_id)
     if task is not None:
-        _ensure_task_writable(task)
+        _ensure_task_allows_confirmation(task)
+        if access_actor is not None:
+            _ensure_task_access(db, task, access_actor)
+        if task.task_revision != task_revision:
+            raise AssignmentError("assignment revision or scope is stale", "ASSIGNMENT_REVISION_CONFLICT")
+        assignment.task_revision = task.task_revision
         contract = _task_schema_contract(db, task)
     else:
+        if assignment.task_revision != task_revision:
+            raise AssignmentError("assignment revision or scope is stale", "ASSIGNMENT_REVISION_CONFLICT")
         contract = None
     rows = db.query(AnnotationAssignmentSample).filter_by(assignment_id=assignment.id).all()
     if not rows or any(row.values is None for row in rows):
@@ -780,18 +931,24 @@ def return_assignment(db: Session, assignment_id, task_revision: int, scope_hash
     existing = db.query(AnnotationReturnBatch).filter_by(assignment_id=assignment.id, idempotency_key=idempotency_key).one_or_none()
     if existing is not None:
         return ReturnBatchRef(existing.id, existing.state, existing.operation_id)
+    if assignment.state in {"paused", "revoked", "returned_pending_acceptance", "edit_for_return"}:
+        raise AssignmentLockedError()
     task = _task_context(db, assignment.task_id)
     if task is not None:
         _ensure_task_writable(task)
+        if task.task_revision != task_revision:
+            raise AssignmentError("assignment revision or scope is stale", "ASSIGNMENT_REVISION_CONFLICT")
+        assignment.task_revision = task.task_revision
         if task.status != "awaiting_return":
             raise AssignmentError(
                 "the whole task scope must be confirmed before return",
                 "ANNOTATION_NOT_READY",
             )
-    if assignment.scope_hash != scope_hash or assignment.task_revision != task_revision:
+    elif assignment.task_revision != task_revision:
         raise AssignmentError("assignment revision or scope is stale", "ASSIGNMENT_REVISION_CONFLICT")
-    if assignment.state in {"paused", "revoked", "returned_pending_acceptance", "edit_for_return"}:
-        raise AssignmentLockedError()
+    if assignment.scope_hash != scope_hash:
+        raise AssignmentError("assignment revision or scope is stale", "ASSIGNMENT_REVISION_CONFLICT")
+    _validate_assignment_for_return(db, assignment, task)
     if task is not None:
         pending_batches = db.query(AnnotationReturnBatch).join(
             AnnotationAssignment,
@@ -809,7 +966,13 @@ def return_assignment(db: Session, assignment_id, task_revision: int, scope_hash
         ).all()
     for pending in pending_batches:
         pending.state = "superseded"
-    batch = AnnotationReturnBatch(assignment_id=assignment.id, task_revision=task_revision, scope_hash=scope_hash, idempotency_key=idempotency_key, state="pending")
+    batch = AnnotationReturnBatch(
+        assignment_id=assignment.id,
+        task_revision=task.task_revision if task is not None else task_revision,
+        scope_hash=scope_hash,
+        idempotency_key=idempotency_key,
+        state="pending",
+    )
     db.add(batch)
     db.flush()
     operation = DurableOperation(

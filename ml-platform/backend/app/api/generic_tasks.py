@@ -21,7 +21,7 @@ from app.api.project_security import require_project_access
 from app.database import get_db
 from app.models.platform_models import AnnotationTaskRevisionSnapshot, GenericAnnotationTask
 from app.models.access import AuditEvent
-from app.models.data_version import DatasetSample, DatasetVersion
+from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
 from app.models.artifact import Artifact
 from app.models.labeling import AnnotationStrategyArtifact, AnnotationStrategyDecision, LabelSchema
 from app.models.labeling import AnnotationAssignment
@@ -36,7 +36,12 @@ from app.services.annotation_strategies import (
     label_schema_contract_from_snapshot,
     validate_strategy_config,
 )
-from app.services.label_schema import bind_label_schema_to_task, create_label_schema, label_schema_snapshot
+from app.services.label_schema import (
+    bind_label_schema_to_task,
+    create_label_schema,
+    label_schema_snapshot,
+    source_column_label_type,
+)
 from app.services.annotation_concurrency import AssignmentError, create_assignments
 from app.services.annotation_scope import copy_scope_revision, persist_scope_entries, scope_descriptor, scope_digest
 from app.services.rule_dsl import RuleEvaluationError, evaluate_rule
@@ -462,7 +467,6 @@ def create_generic_annotation_assignments(
             sample_scope=data.sample_scope,
             due_at=data.due_at,
             actor=current_user.id,
-            initial_revision=task.task_revision,
             idempotency_key=idempotency_key,
         )
     except (ValueError, AssignmentError) as error:
@@ -578,7 +582,42 @@ def _request_context(request: Request, x_request_id: str | None, idempotency_key
     return idempotency_key
 
 
-def _snapshot_with_configuration(task: GenericAnnotationTask, data: GenericTaskConfigurationUpdate, previous: dict, configuration: dict) -> dict:
+def _validated_visible_columns(
+    source_columns: list[DatasetSchemaColumn],
+    requested_columns: list[str],
+) -> list[str]:
+    visible_columns = list(requested_columns)
+    source_names = {str(column.name) for column in source_columns}
+    if len(visible_columns) != len(set(visible_columns)) or any(
+        column not in source_names for column in visible_columns
+    ):
+        raise ValueError("VISIBLE_COLUMN_INVALID")
+    return visible_columns
+
+
+def _validate_manual_source_label_columns(
+    schema: LabelSchema,
+    source_columns: list[DatasetSchemaColumn],
+) -> None:
+    source_by_name = {str(column.name): column for column in source_columns}
+    for label_column in schema.columns:
+        source_column = source_by_name.get(str(label_column.machine_key))
+        if source_column is None:
+            continue
+        source_type = source_column_label_type(source_column.dtype)
+        if source_type is None:
+            raise ValueError("LABEL_SOURCE_COLUMN_TYPE_UNSUPPORTED")
+        if source_type != str(label_column.value_type).lower():
+            raise ValueError("LABEL_SOURCE_COLUMN_TYPE_MISMATCH")
+
+
+def _snapshot_with_configuration(
+    task: GenericAnnotationTask,
+    data: GenericTaskConfigurationUpdate,
+    previous: dict,
+    configuration: dict,
+    visible_columns: list[str],
+) -> dict:
     scope = dict(previous.get("scope") or {})
     if not scope:
         scope = scope_descriptor(*scope_digest(
@@ -588,7 +627,7 @@ def _snapshot_with_configuration(task: GenericAnnotationTask, data: GenericTaskC
     snapshot = {
         "dataset_version": dict(previous.get("dataset_version") or {}),
         "scope": scope,
-        "visible_columns": list(data.visible_columns),
+        "visible_columns": list(visible_columns),
         "label_schema": dict(previous.get("label_schema") or task.label_snapshot or {}),
         "instructions": data.instructions,
         "configuration": deepcopy(configuration),
@@ -623,6 +662,18 @@ def create_generic_annotation_task(
     ).one_or_none()
     if version is None:
         raise _contract_error(request, "DATASET_VERSION_NOT_FOUND", "The dataset version does not belong to this project.", status_code=404)
+    source_columns = db.query(DatasetSchemaColumn).filter(
+        DatasetSchemaColumn.dataset_version_id == version.id,
+    ).order_by(DatasetSchemaColumn.position.asc()).all()
+    try:
+        visible_columns = _validated_visible_columns(source_columns, data.visible_columns)
+    except ValueError as error:
+        raise _contract_error(
+            request,
+            str(error),
+            "Visible columns must be unique source dataset columns.",
+            status_code=422,
+        ) from error
     schema: LabelSchema
     configuration = deepcopy(data.configuration)
     if data.mode == "automatic":
@@ -662,6 +713,15 @@ def create_generic_annotation_task(
                 "The label schema does not belong to this project.",
                 status_code=404,
             )
+        try:
+            _validate_manual_source_label_columns(schema, source_columns)
+        except ValueError as error:
+            raise _contract_error(
+                request,
+                str(error),
+                "A source-backed label column must preserve its source data type.",
+                status_code=422,
+            ) from error
     requested_ids = (
         {str(sample_id) for sample_id in data.sample_scope.get("sample_ids", []) if str(sample_id)}
         if data.sample_scope.get("kind") == "ids" else None
@@ -691,7 +751,6 @@ def create_generic_annotation_task(
                 str(error),
                 status_code=422,
             ) from error
-    visible_columns = list(data.visible_columns)
     task_snapshot = {
         "dataset_version": {
             "id": str(version.id),
@@ -700,7 +759,7 @@ def create_generic_annotation_task(
             "schema_hash": version.schema_hash,
             "columns": [
                 {"name": column.name, "dtype": column.dtype, "nullable": column.nullable, "position": column.position}
-                for column in sorted(version.schema_columns, key=lambda item: item.position)
+                for column in source_columns
             ],
         },
         "scope": scope_descriptor(scope_count, scope_hash),
@@ -767,6 +826,18 @@ def update_generic_annotation_task_configuration(
         raise _contract_error(request, "TASK_REVISION_CONFLICT", "The task revision has changed.", status_code=409)
     if task.status not in {"draft", "failed", "needs_review"}:
         raise _contract_error(request, "TASK_STATE_INVALID", "The task configuration cannot be changed in its current state.", status_code=409)
+    source_columns = db.query(DatasetSchemaColumn).filter(
+        DatasetSchemaColumn.dataset_version_id == task.dataset_version_id,
+    ).order_by(DatasetSchemaColumn.position.asc()).all()
+    try:
+        visible_columns = _validated_visible_columns(source_columns, data.visible_columns)
+    except ValueError as error:
+        raise _contract_error(
+            request,
+            str(error),
+            "Visible columns must be unique source dataset columns.",
+            status_code=422,
+        ) from error
     previous = current_annotation_task_snapshot(db, task)
     configuration = deepcopy(data.configuration)
     if task.mode == "automatic":
@@ -785,7 +856,13 @@ def update_generic_annotation_task_configuration(
             )
         except StrategyConfigError as error:
             raise _contract_error(request, error.code, str(error), status_code=422) from error
-    snapshot = _snapshot_with_configuration(task, data, previous, configuration)
+    snapshot = _snapshot_with_configuration(
+        task,
+        data,
+        previous,
+        configuration,
+        visible_columns,
+    )
     task.task_revision += 1
     if task.status != "draft":
         task.status = "draft"

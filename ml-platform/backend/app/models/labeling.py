@@ -17,6 +17,7 @@ class LabelSchema(Base):
     name = Column(String(128), nullable=False)
     version = Column(Integer, nullable=False, default=1)
     status = Column(String(16), nullable=False, default="draft")
+    purpose = Column(String(32), nullable=False, default="annotation")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     columns = relationship("LabelColumn", back_populates="schema", cascade="all, delete-orphan")
@@ -32,11 +33,12 @@ class LabelColumn(Base):
     display_name = Column(String(256), nullable=False)
     ordinal = Column(Integer, nullable=False, default=0)
     value_type = Column(String(16), nullable=False)
-    required = Column(Boolean, nullable=False, default=False)
+    required = Column(Boolean, nullable=False, default=True)
     enum_values = Column(JSON, nullable=False, default=list)
     min_value = Column(JSON, nullable=True)
     max_value = Column(JSON, nullable=True)
     max_length = Column(Integer, nullable=True)
+    instruction = Column(Text, nullable=True)
 
     schema = relationship("LabelSchema", back_populates="columns")
 

@@ -11,11 +11,12 @@ class LabelColumnCreate(BaseModel):
     machine_key: str = Field(min_length=1, max_length=128)
     display_name: str = Field(min_length=1, max_length=256)
     value_type: Literal["int", "float", "string"]
-    required: bool = False
+    required: bool = True
     enum_values: list[int | float | str] = Field(default_factory=list)
     min_value: int | float | None = None
     max_value: int | float | None = None
     max_length: int | None = Field(default=None, ge=1, le=65536)
+    instruction: str | None = Field(default=None, max_length=4000)
 
     @field_validator("machine_key")
     @classmethod
@@ -56,6 +57,7 @@ class LabelSchemaCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     project_id: uuid.UUID
     name: str = Field(min_length=1, max_length=128)
+    purpose: Literal["annotation", "training", "inference"] = "annotation"
     columns: list[LabelColumnCreate] = Field(min_length=1, max_length=64)
 
     @field_validator("columns")

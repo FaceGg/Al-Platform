@@ -45,6 +45,14 @@ class DatasetSchemaColumn(Base):
 
 class DatasetSample(Base):
     __tablename__ = "dataset_samples"
+    __table_args__ = (
+        Index(
+            "ix_dataset_samples_version_row_page",
+            "dataset_version_id",
+            "row_index",
+            "id",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     dataset_version_id = Column(UUID(as_uuid=True), ForeignKey("dataset_versions.id", ondelete="CASCADE"), nullable=False, index=True)

@@ -284,8 +284,20 @@ def _bound_task_schema(db: Session, task_id: str, schema_id: str):
 @router.post("/label-schemas", status_code=201)
 def create_schema(data: LabelSchemaCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     ResourceAccessService().require_owned(db, Project, data.project_id, current_user.id)
-    schema = create_label_schema(db, project_id=data.project_id, name=data.name, columns=data.columns)
-    return {"id": str(schema.id), "project_id": str(schema.project_id), "name": schema.name, "version": schema.version}
+    schema = create_label_schema(
+        db,
+        project_id=data.project_id,
+        name=data.name,
+        purpose=data.purpose,
+        columns=data.columns,
+    )
+    return {
+        "id": str(schema.id),
+        "project_id": str(schema.project_id),
+        "name": schema.name,
+        "version": schema.version,
+        "purpose": schema.purpose,
+    }
 
 
 @router.get("/label-schemas/{schema_id}")
@@ -293,11 +305,12 @@ def get_label_schema(schema_id: str, db: Session = Depends(get_db), current_user
     schema = _owned_schema(db, schema_id, current_user.id)
     return {
         "id": str(schema.id), "project_id": str(schema.project_id), "name": schema.name,
-        "version": schema.version, "status": schema.status,
+        "version": schema.version, "status": schema.status, "purpose": schema.purpose,
         "columns": [
             {"machine_key": item.machine_key, "display_name": item.display_name, "ordinal": item.ordinal,
              "value_type": item.value_type, "required": item.required, "enum_values": item.enum_values or [],
-             "min_value": item.min_value, "max_value": item.max_value, "max_length": item.max_length}
+             "min_value": item.min_value, "max_value": item.max_value, "max_length": item.max_length,
+             "instruction": item.instruction}
             for item in sorted(schema.columns, key=lambda value: value.ordinal)
         ],
     }

@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base
 from app.models.annotator import AnnotatorAccount
+from app.models.user import User
 from app.services.annotator_identity import (
     PortalAuthError,
     authenticate_annotator,
@@ -62,7 +63,11 @@ def test_subject_mapping_uses_server_owned_subject_and_project_grant(db):
     actor = type("Actor", (), {"id": uuid.uuid4(), "role": "admin"})()
     mapping = map_annotator_subject(db, account.subject_id, None, actor)
     assert mapping.subject_id == account.subject_id
-    assert mapping.platform_principal_id is None
+    assert mapping.platform_principal_id is not None
+    shadow = db.get(User, mapping.platform_principal_id)
+    assert shadow is not None
+    assert shadow.role == "annotator"
+    assert shadow.username.startswith("annotator-shadow-")
     with pytest.raises(PortalAuthError, match="PROJECT_ID"):
         map_annotator_subject(db, account.subject_id, None, actor, project_id=uuid.uuid4())
 

@@ -15,6 +15,7 @@ from app.config import settings
 from app.models.annotator import AnnotatorAccount, AnnotatorSession, AnnotatorSubjectMapping, ProjectAnnotatorGrant
 from app.models.labeling import AnnotationAssignment
 from app.models.platform_models import GenericAnnotationTask
+from app.models.user import User
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 PORTAL_COOKIE_NAME = "portal_session"
@@ -156,6 +157,17 @@ def map_annotator_subject(db: Session, subject_id: uuid.UUID, platform_principal
         raise PortalAuthError("MAPPING_ADMIN_REQUIRED")
     if db.query(AnnotatorAccount).filter(AnnotatorAccount.subject_id == subject_id).first() is None:
         raise PortalAuthError("ACCOUNT_NOT_FOUND")
+    if platform_principal_id is None:
+        shadow = User(
+            username=f"annotator-shadow-{uuid.uuid4().hex}",
+            password_hash=secrets.token_urlsafe(32),
+            role="annotator",
+        )
+        db.add(shadow)
+        db.flush()
+        platform_principal_id = shadow.id
+    elif db.get(User, platform_principal_id) is None:
+        raise PortalAuthError("PLATFORM_PRINCIPAL_NOT_FOUND")
     mapping = db.query(AnnotatorSubjectMapping).filter(AnnotatorSubjectMapping.subject_id == subject_id).first()
     if mapping is None:
         mapping = AnnotatorSubjectMapping(subject_id=subject_id, platform_principal_id=platform_principal_id, created_by=getattr(actor, "id", None))
