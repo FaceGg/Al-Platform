@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from types import SimpleNamespace
 
 import joblib
 import numpy as np
@@ -8,6 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Query, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app.models.labeling as labeling_models
 from app.database import Base
 from app.models.annotator import AnnotatorAccount, ProjectAnnotatorGrant
 from app.models.labeling import (
@@ -41,6 +43,7 @@ from app.services.annotation_task_state import (
     transition_annotation_task,
 )
 from app.services.annotation_concurrency import create_assignments
+from app.services.annotation_scope import iter_scope_batches, persist_scope_entries, scope_count, scope_descriptor
 
 
 class _SessionContext:
@@ -534,6 +537,233 @@ def test_preview_worker_materializes_source_rows_in_bounded_batches(db, monkeypa
     assert result["status"] == "completed", db.get(AnnotationTaskPreview, preview.id).error
     persisted = db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview.id).limit(10).all()
     assert [item.sample_id for item in persisted] == sample_ids
+
+
+def test_persisted_task_scope_uses_bounded_keyset_pages(db, monkeypatch):
+    task, _, _ = _task(db)
+    scope_entries = [(f"scope-{index}", index * 10) for index in range(5)]
+    assert persist_scope_entries(db, task.id, 0, scope_entries, batch_size=2) == len(scope_entries)
+    db.commit()
+    snapshot = {
+        "scope": scope_descriptor(len(scope_entries), "sha256:scope"),
+        "sample_ids": ["legacy-id-must-not-be-read"],
+    }
+    original_all = Query.all
+
+    def bounded_all(query):
+        assert query._limit_clause is not None, f"unbounded scope query: {query}"
+        return original_all(query)
+
+    monkeypatch.setattr(Query, "all", bounded_all)
+    assert scope_count(db, task, task_revision=0, snapshot=snapshot) == len(scope_entries)
+    assert list(iter_scope_batches(db, task, task_revision=0, snapshot=snapshot, batch_size=2)) == [
+        scope_entries[:2],
+        scope_entries[2:4],
+        scope_entries[4:],
+    ]
+
+
+def test_preview_worker_uses_persisted_scope_instead_of_snapshot_sample_ids(db, monkeypatch):
+    task, user, _ = _task(db)
+    sample_ids = [f"persisted-preview-{index}" for index in range(3)]
+    snapshot = {
+        "config_hash": "sha256:persisted-preview-scope",
+        "scope": scope_descriptor(len(sample_ids), "sha256:persisted-preview-scope"),
+        "sample_ids": ["legacy-id-must-not-be-read"],
+        "visible_columns": ["feature"],
+        "label_schema": {"columns": [{"machine_key": "label"}]},
+    }
+    db.query(GenericAnnotationTask).filter_by(id=task.id).update(
+        {GenericAnnotationTask.task_snapshot: snapshot},
+        synchronize_session=False,
+    )
+    persist_scope_entries(db, task.id, 0, [(sample_id, index) for index, sample_id in enumerate(sample_ids)])
+    db.add_all([
+        DatasetSample(
+            dataset_version_id=task.dataset_version_id,
+            sample_id=sample_id,
+            row_index=index,
+            values={"feature": index},
+        )
+        for index, sample_id in enumerate(sample_ids)
+    ])
+    db.commit()
+    db.refresh(task)
+    preview = create_annotation_preview(
+        db,
+        task.id,
+        task_revision=0,
+        config_hash=snapshot["config_hash"],
+        actor_id=user.id,
+    )
+    from app.tasks import annotation_preview_tasks as module
+
+    monkeypatch.setattr(module, "SessionLocal", lambda: db)
+    monkeypatch.setattr(module, "_PREVIEW_BATCH_SIZE", 2)
+    result = module.execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
+
+    assert result["status"] == "completed", db.get(AnnotationTaskPreview, preview.id).error
+    assert [item.sample_id for item in db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview.id).order_by(
+        AnnotationTaskPreviewSample.row_index.asc()
+    ).all()] == sample_ids
+
+
+def test_automatic_preview_runs_strategy_in_bounded_source_batches(db, monkeypatch):
+    task, user, _ = _task(db)
+    task.mode = "automatic"
+    sample_ids = [f"automatic-bounded-{index}" for index in range(501)]
+    frozen_snapshot = {
+        "config_hash": "sha256:automatic-bounded",
+        "sample_ids": sample_ids,
+        "visible_columns": ["feature"],
+        "label_schema": {"columns": [{"machine_key": "label", "value_type": "string"}]},
+        "configuration": {"clustering": False},
+    }
+    db.query(GenericAnnotationTask).filter_by(id=task.id).update(
+        {GenericAnnotationTask.task_snapshot: frozen_snapshot},
+        synchronize_session=False,
+    )
+    db.refresh(task)
+    db.add_all([
+        DatasetSample(
+            dataset_version_id=task.dataset_version_id,
+            sample_id=sample_id,
+            row_index=index,
+            values={"feature": index},
+        )
+        for index, sample_id in enumerate(sample_ids)
+    ])
+    db.commit()
+
+    preview = create_annotation_preview(
+        db,
+        task.id,
+        task_revision=0,
+        config_hash="sha256:automatic-bounded",
+        actor_id=user.id,
+    )
+    from app.services.annotation_strategies import AnnotationDecision
+    from app.tasks import annotation_preview_tasks as module
+
+    strategy_batches = []
+    artifact = SimpleNamespace(
+        id=uuid.uuid4(),
+        strategy="model",
+        artifact={
+            "configuration_complete": True,
+            "model_version_id": None,
+        },
+    )
+
+    def evaluate_batch(*_args, rows, **_kwargs):
+        strategy_batches.append(tuple(rows))
+        return SimpleNamespace(
+            decisions={
+                sample_id: AnnotationDecision(
+                    values={"label": f"value-{row['feature']}"},
+                    provenance={"label": {"source": "model"}},
+                    model_output={"label": f"value-{row['feature']}"},
+                )
+                for sample_id, row in rows.items()
+            },
+            artifact=artifact,
+        )
+
+    monkeypatch.setattr(module, "SessionLocal", lambda: db)
+    monkeypatch.setattr(module, "apply_preview_annotation_strategy", evaluate_batch)
+    result = module.execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
+
+    assert result["status"] == "completed", db.get(AnnotationTaskPreview, preview.id).error
+    assert [len(batch) for batch in strategy_batches] == [500, 1]
+    assert db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview.id).count() == len(sample_ids)
+
+
+def test_cluster_discovery_preview_uses_bounded_streams_and_persists_decisions(db, monkeypatch, tmp_path):
+    task, user, project = _task(db)
+    from sklearn.ensemble import RandomForestClassifier
+    from app.tasks import annotation_preview_tasks as module
+
+    task.mode = "automatic"
+    sample_ids = [f"cluster-stream-{index}" for index in range(12)]
+    features = np.array([
+        [0.0, 0.0], [0.1, 0.2], [0.2, 0.1], [0.3, 0.1], [0.4, 0.2], [0.5, 0.1],
+        [5.0, 5.0], [5.1, 5.2], [5.2, 5.1], [5.3, 5.1], [5.4, 5.2], [5.5, 5.1],
+    ])
+    labels = np.array(["a"] * 6 + ["b"] * 6)
+    model = RandomForestClassifier(n_estimators=8, random_state=7).fit(features, labels)
+    artifact_path = tmp_path / "streaming-cluster-model.joblib"
+    joblib.dump({"model": model, "input_contract": {"feature_columns": ["x", "y"]}}, artifact_path)
+    model_artifact = Artifact(
+        project_id=project.id,
+        name="streaming-cluster-model",
+        type="model",
+        storage_path=str(artifact_path),
+        format="joblib",
+    )
+    db.add(model_artifact)
+    db.flush()
+    snapshot = {
+        "config_hash": "sha256:cluster-streaming",
+        "sample_ids": sample_ids,
+        "visible_columns": ["x"],
+        "label_schema": {"columns": [{"machine_key": "label", "value_type": "string"}]},
+        "configuration": {
+            "model_artifact_id": str(model_artifact.id),
+            "clustering": True,
+            "cluster_discovery": True,
+            "random_seed": 7,
+            "model_outputs": {
+                sample_id: {"label": str(labels[index])}
+                for index, sample_id in enumerate(sample_ids)
+            },
+        },
+    }
+    db.query(GenericAnnotationTask).filter_by(id=task.id).update(
+        {GenericAnnotationTask.task_snapshot: snapshot},
+        synchronize_session=False,
+    )
+    db.add_all([
+        DatasetSample(
+            dataset_version_id=task.dataset_version_id,
+            sample_id=sample_id,
+            row_index=index,
+            values={"x": float(features[index, 0]), "y": float(features[index, 1])},
+        )
+        for index, sample_id in enumerate(sample_ids)
+    ])
+    db.commit()
+    db.refresh(task)
+
+    preview = create_annotation_preview(
+        db,
+        task.id,
+        task_revision=0,
+        config_hash=snapshot["config_hash"],
+        actor_id=user.id,
+    )
+    original_batches = module._dataset_sample_batches
+    requested_batch_sizes = []
+
+    def observed_batches(session, dataset_version_id, batch_sample_ids):
+        requested_batch_sizes.append(len(batch_sample_ids))
+        yield from original_batches(session, dataset_version_id, batch_sample_ids)
+
+    monkeypatch.setattr(module, "SessionLocal", lambda: db)
+    monkeypatch.setattr(module, "_PREVIEW_BATCH_SIZE", 3)
+    monkeypatch.setattr(module, "_dataset_sample_batches", observed_batches)
+    result = module.execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
+
+    assert result["status"] == "completed", db.get(AnnotationTaskPreview, preview.id).error
+    assert requested_batch_sizes and max(requested_batch_sizes) <= 3
+    strategy = db.query(AnnotationStrategyArtifact).filter_by(task_id=task.id).one()
+    assert "assignments" not in strategy.artifact["cluster_artifact"]
+    assert "labels" not in strategy.artifact["cluster_artifact"]
+    assert strategy.artifact["clusters"] == []
+    assert strategy.artifact["cluster_counts_storage"] == "annotation_strategy_decisions"
+    decision_model = labeling_models.AnnotationStrategyDecision
+    assert db.query(decision_model).filter_by(strategy_artifact_id=strategy.id).count() == len(sample_ids)
+    assert db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview.id).count() == len(sample_ids)
+    assert sum(item["sample_count"] for item in db.get(AnnotationTaskPreview, preview.id).summary["clusters"]) == len(sample_ids)
 
 
 def test_execution_stats_are_persisted_and_cursor_paginated(db, monkeypatch):
@@ -1227,7 +1457,7 @@ def test_cluster_discovery_without_usable_importance_fails_closed(db, monkeypatc
     assert db.query(AnnotationStrategyArtifact).filter_by(task_id=task.id, task_revision=0).count() == 0
 
 
-def test_cluster_discovery_loads_model_artifact_and_persists_weighted_cluster_artifact(db, tmp_path):
+def test_cluster_discovery_persists_sample_decisions_outside_weighted_cluster_artifact(db, tmp_path):
     task, user, project = _task(db)
     from sklearn.ensemble import RandomForestClassifier
     from app.services.annotation_strategies import apply_preview_annotation_strategy
@@ -1268,8 +1498,24 @@ def test_cluster_discovery_loads_model_artifact_and_persists_weighted_cluster_ar
     assert cluster_artifact["evaluation_sample_hash"]
     assert cluster_artifact["preprocessing"]["fit_scope"] == "frozen_task_sample_scope"
     assert cluster_artifact["preprocessing"]["standardizer"]["mean"]
-    assert len(cluster_artifact["assignments"]) == len(rows)
+    assert "assignments" not in cluster_artifact
+    assert "labels" not in cluster_artifact
+    decision_model = getattr(labeling_models, "AnnotationStrategyDecision", None)
+    assert decision_model is not None
+    persisted = db.query(decision_model).filter_by(strategy_artifact_id=result.artifact.id).order_by(
+        decision_model.row_index.asc()
+    ).all()
+    assert [(item.sample_id, item.cluster_id, item.status) for item in persisted] == [
+        (sample_id, result.decisions[sample_id].cluster_id, "pending_configuration")
+        for sample_id in rows
+    ]
+    assert all(item.decision_hash.startswith("sha256:") for item in persisted)
     assert {decision.status for decision in result.decisions.values()} == {"pending_configuration"}
+    from app.api.generic_tasks import _cluster_discovery_ids
+    assert _cluster_discovery_ids(db, task) == {
+        str(decision.cluster_id)
+        for decision in result.decisions.values()
+    }
 
 
 def test_final_cluster_preview_reuses_the_discovery_artifact(db, tmp_path, monkeypatch):
@@ -1304,8 +1550,7 @@ def test_final_cluster_preview_reuses_the_discovery_artifact(db, tmp_path, monke
         },
         rows=rows,
     )
-    assignments = discovery.artifact.artifact["cluster_artifact"]["assignments"]
-    selected_cluster = str(next(iter(assignments.values())))
+    selected_cluster = str(next(iter(discovery.decisions.values())).cluster_id)
 
     monkeypatch.setattr(
         annotation_strategies,
@@ -1333,7 +1578,14 @@ def test_final_cluster_preview_reuses_the_discovery_artifact(db, tmp_path, monke
     )
 
     assert final.artifact.artifact["configuration_complete"] is True
-    assert final.artifact.artifact["cluster_artifact"]["assignments"] == assignments
+    assert "assignments" not in final.artifact.artifact["cluster_artifact"]
+    assert {
+        decision.cluster_id
+        for decision in final.decisions.values()
+    } == {
+        decision.cluster_id
+        for decision in discovery.decisions.values()
+    }
 
 
 def test_cluster_discovery_with_model_artifact_missing_importance_fails_closed(db, tmp_path):

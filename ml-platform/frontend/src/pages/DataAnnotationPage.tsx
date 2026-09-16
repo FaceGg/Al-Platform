@@ -833,6 +833,9 @@ export default function DataAnnotationPage() {
 
   const sampleScopeForTask = (task: AnnotationTask): SampleScope => {
     const scope = task.sample_scope || {};
+    if (scope.kind === "all" || scope.kind === "filter") {
+      return { kind: "frozen_task_scope" };
+    }
     const sampleIds = Array.isArray(scope.sample_ids) ? scope.sample_ids.map(String) : [];
     return { kind: "ids", sample_ids: sampleIds };
   };
@@ -1817,7 +1820,7 @@ export default function DataAnnotationPage() {
       <AssignmentDialog
         open={Boolean(assignmentTask)}
         taskRevision={assignmentTask?.task_revision || 0}
-        sampleScope={assignmentTask ? sampleScopeForTask(assignmentTask) : { kind: "ids", sample_ids: [] }}
+        sampleScope={assignmentTask ? sampleScopeForTask(assignmentTask) : { kind: "frozen_task_scope" }}
         annotators={annotators}
         overlapWarning={assignmentOverlapWarning}
         loading={assignmentLoading}

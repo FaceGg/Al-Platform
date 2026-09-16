@@ -237,6 +237,13 @@ def _assignment_granted(db: Session, task: GenericAnnotationTask, subject_id: uu
     return grant is not None
 
 
+def _assignment_contains_sample(db: Session, assignment: AnnotationAssignment, sample_id: str) -> bool:
+    return db.query(AnnotationAssignmentSample.id).filter(
+        AnnotationAssignmentSample.assignment_id == assignment.id,
+        AnnotationAssignmentSample.sample_id == str(sample_id),
+    ).first() is not None
+
+
 def _assignment_error(error: AssignmentError) -> HTTPException:
     status_code = 409 if isinstance(error, AssignmentLockedError) or error.code in {
         "REVISION_CONFLICT",
@@ -596,11 +603,7 @@ def internal_portal_create_comment(
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
     _task, assignment = _assignment_for_subject(db, data.task_id, principal.annotator_subject_id)
-    scoped_sample_ids = {
-        str(sample_id)
-        for sample_id in (assignment.sample_scope or {}).get("sample_ids", [])
-    }
-    if data.sample_id is not None and data.sample_id not in scoped_sample_ids:
+    if data.sample_id is not None and not _assignment_contains_sample(db, assignment, data.sample_id):
         raise _portal_error("SAMPLE_SCOPE_FORBIDDEN", status_code=403)
     mapping = db.query(AnnotatorSubjectMapping).filter(
         AnnotatorSubjectMapping.subject_id == principal.annotator_subject_id,
@@ -618,7 +621,7 @@ def internal_portal_create_comment(
         ).one_or_none()
         if revision is None:
             raise _portal_error("ANNOTATION_REVISION_NOT_FOUND", status_code=404)
-        if data.sample_id not in scoped_sample_ids:
+        if not _assignment_contains_sample(db, assignment, data.sample_id):
             raise _portal_error("SAMPLE_SCOPE_FORBIDDEN", status_code=403)
         revision_id = revision.id
     comment = AnnotationComment(

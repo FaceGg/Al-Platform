@@ -3,14 +3,16 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Mapping
+from typing import Callable, Iterable, Mapping
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.annotator import AnnotatorAccount, ProjectAnnotatorGrant
 from app.models.labeling import (
     AnnotationAssignment,
     AnnotationAssignmentSample,
+    AnnotationConfirmation,
     AnnotationReturnBatch,
     AnnotationRevision,
     AnnotationSampleCurrent,
@@ -20,6 +22,8 @@ from app.models.platform_models import GenericAnnotationTask
 from app.models.operation import DurableOperation
 from app.models.access import AuditEvent
 from app.services.label_schema import LabelColumnContract, LabelSchemaContract, validate_label_values
+from app.services.annotation_scope import iter_scope_batches, missing_scope_sample_ids, scope_digest
+from app.services.annotation_task_state import current_annotation_task_snapshot
 
 
 class AssignmentError(ValueError):
@@ -60,6 +64,14 @@ class ConfirmationResult:
     scope_hash: str
 
 
+@dataclass(frozen=True)
+class _ResolvedAssignmentScope:
+    payload: dict[str, object]
+    scope_hash: str
+    sample_count: int
+    batches: Callable[[], Iterable[list[str]]]
+
+
 def _scope_ids(scope: Mapping[str, object]) -> list[str]:
     if scope.get("kind") != "ids":
         raise AssignmentError("sample scope must contain explicit ids", "SAMPLE_SCOPE_INVALID")
@@ -71,6 +83,64 @@ def _scope_ids(scope: Mapping[str, object]) -> list[str]:
 
 def _scope_hash(ids: list[str]) -> str:
     return "sha256:" + hashlib.sha256(json.dumps(ids, separators=(",", ":")).encode()).hexdigest()
+
+
+def _resolve_assignment_scope(db: Session, task: GenericAnnotationTask | None, scope: Mapping[str, object]) -> _ResolvedAssignmentScope:
+    kind = scope.get("kind")
+    if kind == "ids":
+        ids = _scope_ids(scope)
+
+        def batches():
+            for start in range(0, len(ids), 500):
+                yield ids[start:start + 500]
+
+        return _ResolvedAssignmentScope(
+            payload={"kind": "ids", "sample_ids": ids, "sample_count": len(ids)},
+            scope_hash=_scope_hash(ids),
+            sample_count=len(ids),
+            batches=batches,
+        )
+    if kind not in {"task_scope", "frozen_task_scope", "all"} or task is None:
+        raise AssignmentError("sample scope must contain explicit ids or the frozen task scope", "SAMPLE_SCOPE_INVALID")
+    snapshot = current_annotation_task_snapshot(db, task)
+
+    def scope_batches():
+        for batch in iter_scope_batches(
+            db,
+            task,
+            task_revision=task.task_revision,
+            snapshot=snapshot,
+        ):
+            yield [sample_id for sample_id, _ in batch]
+
+    scope_metadata = snapshot.get("scope") if isinstance(snapshot, Mapping) else None
+    if isinstance(scope_metadata, Mapping) and scope_metadata.get("scope_hash"):
+        sample_count = int(scope_metadata.get("sample_count", 0))
+        digest = str(scope_metadata["scope_hash"])
+    else:
+        sample_count, digest = scope_digest(
+            (sample_id, row_index)
+            for batch in iter_scope_batches(
+                db,
+                task,
+                task_revision=task.task_revision,
+                snapshot=snapshot,
+            )
+            for sample_id, row_index in batch
+        )
+    if sample_count <= 0:
+        raise AssignmentError("task scope is empty", "SAMPLE_SCOPE_INVALID")
+    return _ResolvedAssignmentScope(
+        payload={
+            "kind": "frozen_task_scope",
+            "sample_count": sample_count,
+            "scope_hash": digest,
+            "task_revision": task.task_revision,
+        },
+        scope_hash=digest,
+        sample_count=sample_count,
+        batches=scope_batches,
+    )
 
 
 def _task_context(db: Session, task_id):
@@ -135,9 +205,9 @@ def create_assignments(
 ):
     if not annotator_ids:
         raise AssignmentError("at least one annotator is required", "ANNOTATOR_REQUIRED")
-    ids = _scope_ids(sample_scope)
-    digest = _scope_hash(ids)
     task = _task_context(db, task_id)
+    resolved_scope = _resolve_assignment_scope(db, task, sample_scope)
+    digest = resolved_scope.scope_hash
     actor_id = getattr(actor, "id", actor)
     if idempotency_key is not None:
         if not isinstance(idempotency_key, str) or not idempotency_key or len(idempotency_key) > 128:
@@ -159,15 +229,17 @@ def create_assignments(
     if task is not None:
         _ensure_task_access(db, task, actor)
         _ensure_task_writable(task)
-        snapshot_ids = (task.task_snapshot or {}).get("sample_ids")
-        if snapshot_ids is None:
-            task_scope = task.sample_scope or {}
-            snapshot_ids = task_scope.get("sample_ids") if task_scope.get("kind") == "ids" else None
-        if snapshot_ids is None:
-            raise AssignmentError("task snapshot does not contain explicit sample ids", "SAMPLE_SCOPE_INVALID")
-        frozen_ids = {str(item) for item in snapshot_ids if str(item)}
-        if not set(ids).issubset(frozen_ids):
-            raise AssignmentError("sample scope is outside the frozen task snapshot", "SAMPLE_SCOPE_INVALID")
+        if sample_scope.get("kind") == "ids":
+            snapshot = current_annotation_task_snapshot(db, task)
+            missing_scope_ids = missing_scope_sample_ids(
+                db,
+                task,
+                task_revision=task.task_revision,
+                snapshot=snapshot,
+                sample_ids=[sample_id for batch in resolved_scope.batches() for sample_id in batch],
+            )
+            if missing_scope_ids:
+                raise AssignmentError("sample scope is outside the frozen task snapshot", "SAMPLE_SCOPE_INVALID")
         active_subjects = {
             row.subject_id
             for row in db.query(ProjectAnnotatorGrant).filter_by(project_id=task.project_id, status="active").all()
@@ -183,40 +255,83 @@ def create_assignments(
         }
         if any(subject_id not in active_accounts for subject_id in annotator_ids):
             raise AssignmentError("annotator account is not active", "ANNOTATOR_FORBIDDEN")
-        current_values = {
-            row.sample_id: row
-            for row in db.query(AnnotationSampleCurrent).filter(
-                AnnotationSampleCurrent.task_id == task.id,
-                AnnotationSampleCurrent.sample_id.in_(ids),
-            ).all()
-        }
-        if task.mode == "automatic":
-            missing = sorted(set(ids) - set(current_values))
-            if missing:
-                raise AssignmentError(
-                    "automatic labels have not been published for the assignment scope",
-                    "AUTOMATIC_LABELS_NOT_PUBLISHED",
-                )
-    else:
-        current_values = {}
-    result = []
-    for subject_id in dict.fromkeys(annotator_ids):
-        assignment = AnnotationAssignment(task_id=task_id, annotator_subject_id=subject_id, sample_scope={"kind": "ids", "sample_ids": ids}, scope_hash=digest, due_at=due_at, created_by=actor_id, idempotency_key=idempotency_key, task_revision=initial_revision, last_edit_revision=initial_revision)
+    assignments = [
+        AnnotationAssignment(
+            task_id=task_id,
+            annotator_subject_id=subject_id,
+            sample_scope=resolved_scope.payload,
+            scope_hash=digest,
+            due_at=due_at,
+            created_by=actor_id,
+            idempotency_key=idempotency_key,
+            task_revision=initial_revision,
+            last_edit_revision=initial_revision,
+        )
+        for subject_id in dict.fromkeys(annotator_ids)
+    ]
+    for assignment in assignments:
         db.add(assignment)
-        db.flush()
-        for sample_id in ids:
+    db.flush()
+
+    for sample_batch in resolved_scope.batches():
+        current_values = {}
+        if task is not None:
+            current_values = {
+                row.sample_id: row
+                for row in db.query(AnnotationSampleCurrent).filter(
+                    AnnotationSampleCurrent.task_id == task.id,
+                    AnnotationSampleCurrent.sample_id.in_(sample_batch),
+                ).limit(len(sample_batch)).all()
+            }
+            if task.mode == "automatic":
+                missing = sorted(set(sample_batch) - set(current_values))
+                if missing:
+                    raise AssignmentError(
+                        "automatic labels have not been published for the assignment scope",
+                        "AUTOMATIC_LABELS_NOT_PUBLISHED",
+                    )
+        for sample_id in sample_batch:
             current = current_values.get(sample_id)
             values = dict(current.values or {}) if current is not None else dict((initial_values or {}).get(sample_id, {}))
             revision_no = current.revision_no if current is not None else initial_revision
-            db.add(AnnotationAssignmentSample(
-                assignment_id=assignment.id,
-                sample_id=sample_id,
-                revision_no=revision_no,
-                values=values,
-            ))
-        result.append(assignment)
+            if task is not None and current is None and values and task.label_schema_id:
+                contract = _task_schema_contract(db, task)
+                if contract is not None:
+                    try:
+                        values = validate_label_values(contract, values, allow_partial=True)
+                    except ValueError as error:
+                        raise AssignmentError(
+                            str(error),
+                            getattr(error, "code", "LABEL_VALUE_INVALID"),
+                        ) from error
+                current = AnnotationSampleCurrent(
+                    task_id=task.id,
+                    sample_id=sample_id,
+                    schema_id=task.label_schema_id,
+                    revision_no=revision_no,
+                    values=dict(values),
+                )
+                db.add(current)
+                db.add(AnnotationRevision(
+                    task_id=task.id,
+                    sample_id=sample_id,
+                    schema_id=task.label_schema_id,
+                    revision_no=revision_no,
+                    base_revision=max(0, revision_no - 1),
+                    values=dict(values),
+                    author_id=actor_id,
+                    source="automatic" if task.mode == "automatic" else "manual",
+                    action="initialize",
+                ))
+            for assignment in assignments:
+                db.add(AnnotationAssignmentSample(
+                    assignment_id=assignment.id,
+                    sample_id=sample_id,
+                    revision_no=revision_no,
+                    values=values,
+                ))
     db.commit()
-    return result
+    return assignments
 
 
 def transition_assignment(
@@ -464,7 +579,7 @@ def save_labels(
             source="manual",
             action="edit",
         ))
-        if task.status == "awaiting_return":
+        if task.status in {"awaiting_return", "returned_pending_acceptance"}:
             task.status = "in_progress"
     if commit:
         db.commit()
@@ -488,7 +603,87 @@ def edit_for_return(db: Session, assignment_id, task_revision: int):
     return assignment
 
 
-def confirm_assignment(db: Session, assignment_id, task_revision: int, scope_hash: str):
+def _assignment_sample_batches(db: Session, assignment_id, batch_size: int = 500):
+    marker = None
+    while True:
+        query = db.query(AnnotationAssignmentSample).filter(
+            AnnotationAssignmentSample.assignment_id == assignment_id,
+        )
+        if marker is not None:
+            query = query.filter(or_(
+                AnnotationAssignmentSample.sample_id > marker.sample_id,
+                and_(
+                    AnnotationAssignmentSample.sample_id == marker.sample_id,
+                    AnnotationAssignmentSample.id > marker.id,
+                ),
+            ))
+        rows = query.order_by(
+            AnnotationAssignmentSample.sample_id.asc(),
+            AnnotationAssignmentSample.id.asc(),
+        ).limit(batch_size).all()
+        if not rows:
+            return
+        yield rows
+        marker = rows[-1]
+
+
+def _revision_confirmation(db: Session, task_id, sample_id: str, revision_no: int):
+    revision = db.query(AnnotationRevision).filter_by(
+        task_id=task_id,
+        sample_id=sample_id,
+        revision_no=revision_no,
+    ).one_or_none()
+    if revision is None:
+        return None, None
+    confirmation = db.query(AnnotationConfirmation).filter(
+        AnnotationConfirmation.task_id == task_id,
+        AnnotationConfirmation.sample_id == sample_id,
+        AnnotationConfirmation.revision_id == revision.id,
+        AnnotationConfirmation.action == "confirm",
+    ).order_by(AnnotationConfirmation.created_at.desc()).first()
+    return revision, confirmation
+
+
+def _validate_assignment_for_return(db: Session, assignment: AnnotationAssignment, task: GenericAnnotationTask | None):
+    if task is None:
+        return {"validated_row_count": sum(1 for _ in _assignment_sample_batches(db, assignment.id))}
+    contract = _task_schema_contract(db, task)
+    row_count = 0
+    for rows in _assignment_sample_batches(db, assignment.id):
+        for row in rows:
+            row_count += 1
+            if contract is not None:
+                try:
+                    validate_label_values(contract, row.values or {}, allow_partial=False)
+                except ValueError as error:
+                    code = getattr(error, "code", "LABEL_VALUE_INVALID")
+                    if code == "LABEL_REQUIRED_MISSING":
+                        code = "ANNOTATION_NOT_READY"
+                    raise AssignmentError(str(error), code) from error
+            current = db.query(AnnotationSampleCurrent).filter_by(
+                task_id=task.id,
+                sample_id=row.sample_id,
+            ).one_or_none()
+            revision_no = current.revision_no if current is not None else row.revision_no
+            if current is None or current.revision_no != row.revision_no:
+                raise AssignmentError(
+                    "assignment labels are stale",
+                    "ASSIGNMENT_REVISION_CONFLICT",
+                )
+            _revision, confirmation = _revision_confirmation(
+                db, task.id, row.sample_id, revision_no,
+            )
+            if confirmation is None:
+                raise AssignmentError(
+                    "all samples must be confirmed before return",
+                    "ANNOTATION_NOT_READY",
+                )
+    if row_count == 0:
+        raise AssignmentError("assignment has no samples", "ASSIGNMENT_SCOPE_INVALID")
+    return {"validated_row_count": row_count}
+
+
+def confirm_assignment(db: Session, assignment_id, task_revision: int, scope_hash: str, actor=None):
     assignment = db.get(AnnotationAssignment, assignment_id)
     if assignment is None:
         raise AssignmentError("assignment not found", "ASSIGNMENT_NOT_FOUND")
@@ -512,6 +707,24 @@ def confirm_assignment(db: Session, assignment_id, task_revision: int, scope_has
             except ValueError as error:
                 raise AssignmentError(str(error), getattr(error, "code", "LABEL_VALUE_INVALID")) from error
     if task is not None:
+        confirmer_id = getattr(actor, "id", actor) or assignment.created_by
+        for row in rows:
+            current = db.query(AnnotationSampleCurrent).filter_by(
+                task_id=task.id,
+                sample_id=row.sample_id,
+            ).one_or_none()
+            revision_no = current.revision_no if current is not None else row.revision_no
+            revision, _existing = _revision_confirmation(db, task.id, row.sample_id, revision_no)
+            if revision is None:
+                raise AssignmentError("label revision not found", "LABEL_REVISION_NOT_FOUND")
+            if _existing is None:
+                db.add(AnnotationConfirmation(
+                    task_id=task.id,
+                    sample_id=row.sample_id,
+                    revision_id=revision.id,
+                    confirmer_id=confirmer_id,
+                    action="confirm",
+                ))
         _refresh_global_annotation_state(db, task, contract)
         db.commit()
     return ConfirmationResult(assignment.id, task_revision, scope_hash)
@@ -521,30 +734,42 @@ def _refresh_global_annotation_state(db: Session, task: GenericAnnotationTask, c
     """Derive the task-level completion state from the frozen sample scope."""
     if task.status in {"paused", "cancelled", "archived", "completed", "accepted"}:
         return
-    snapshot_ids = [str(item) for item in ((task.task_snapshot or {}).get("sample_ids") or []) if str(item)]
-    if not snapshot_ids:
-        task.status = "in_progress"
-        return
-    rows = db.query(AnnotationAssignmentSample).join(
-        AnnotationAssignment,
-        AnnotationAssignment.id == AnnotationAssignmentSample.assignment_id,
-    ).filter(
-        AnnotationAssignment.task_id == task.id,
-        AnnotationAssignmentSample.sample_id.in_(snapshot_ids),
-    ).all()
-    latest: dict[str, AnnotationAssignmentSample] = {}
-    for row in rows:
-        current = latest.get(row.sample_id)
-        if current is None or row.revision_no > current.revision_no:
-            latest[row.sample_id] = row
-    complete = len(latest) == len(set(snapshot_ids))
-    if complete and contract is not None:
-        for sample_id in set(snapshot_ids):
-            try:
-                validate_label_values(contract, latest[sample_id].values or {}, allow_partial=False)
-            except ValueError:
-                complete = False
-                break
+    snapshot = current_annotation_task_snapshot(db, task)
+    complete = True
+    seen_scope_rows = False
+    for scope_batch in iter_scope_batches(
+        db,
+        task,
+        task_revision=task.task_revision,
+        snapshot=snapshot,
+    ):
+        seen_scope_rows = True
+        sample_ids = [sample_id for sample_id, _ in scope_batch]
+        current_rows = db.query(AnnotationSampleCurrent).filter(
+            AnnotationSampleCurrent.task_id == task.id,
+            AnnotationSampleCurrent.sample_id.in_(sample_ids),
+        ).limit(len(sample_ids)).all()
+        current = {str(row.sample_id): row for row in current_rows}
+        if len(current) != len(sample_ids):
+            complete = False
+            break
+        if contract is not None:
+            for sample_id in sample_ids:
+                try:
+                    validate_label_values(contract, current[sample_id].values or {}, allow_partial=False)
+                except ValueError:
+                    complete = False
+                    break
+                _revision, confirmation = _revision_confirmation(
+                    db, task.id, sample_id, current[sample_id].revision_no,
+                )
+                if confirmation is None:
+                    complete = False
+                    break
+        if not complete:
+            break
+    if not seen_scope_rows:
+        complete = False
     task.status = "awaiting_return" if complete else "in_progress"
 
 
@@ -558,18 +783,32 @@ def return_assignment(db: Session, assignment_id, task_revision: int, scope_hash
     task = _task_context(db, assignment.task_id)
     if task is not None:
         _ensure_task_writable(task)
+        if task.status != "awaiting_return":
+            raise AssignmentError(
+                "the whole task scope must be confirmed before return",
+                "ANNOTATION_NOT_READY",
+            )
     if assignment.scope_hash != scope_hash or assignment.task_revision != task_revision:
         raise AssignmentError("assignment revision or scope is stale", "ASSIGNMENT_REVISION_CONFLICT")
     if assignment.state in {"paused", "revoked", "returned_pending_acceptance", "edit_for_return"}:
         raise AssignmentLockedError()
-    db.query(AnnotationReturnBatch).filter(
-        AnnotationReturnBatch.assignment_id == assignment.id,
-        AnnotationReturnBatch.scope_hash == scope_hash,
-        AnnotationReturnBatch.state == "pending",
-    ).update(
-        {AnnotationReturnBatch.state: "superseded"},
-        synchronize_session=False,
-    )
+    if task is not None:
+        pending_batches = db.query(AnnotationReturnBatch).join(
+            AnnotationAssignment,
+            AnnotationAssignment.id == AnnotationReturnBatch.assignment_id,
+        ).filter(
+            AnnotationAssignment.task_id == task.id,
+            AnnotationReturnBatch.scope_hash == scope_hash,
+            AnnotationReturnBatch.state.in_(("pending", "returned_for_changes")),
+        ).all()
+    else:
+        pending_batches = db.query(AnnotationReturnBatch).filter(
+            AnnotationReturnBatch.assignment_id == assignment.id,
+            AnnotationReturnBatch.scope_hash == scope_hash,
+            AnnotationReturnBatch.state.in_(("pending", "returned_for_changes")),
+        ).all()
+    for pending in pending_batches:
+        pending.state = "superseded"
     batch = AnnotationReturnBatch(assignment_id=assignment.id, task_revision=task_revision, scope_hash=scope_hash, idempotency_key=idempotency_key, state="pending")
     db.add(batch)
     db.flush()

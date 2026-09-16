@@ -203,7 +203,7 @@ def _assignment(db):
     )[0]
 
 
-def _secure_fixture(db, *, task_status="awaiting_annotation"):
+def _secure_fixture(db, *, task_status="awaiting_annotation", sample_ids=("frozen-1",)):
     admin = User(username=f"assignment-admin-{uuid.uuid4().hex}", password_hash="hash", role="admin")
     other = User(username=f"assignment-other-{uuid.uuid4().hex}", password_hash="hash", role="engineer")
     db.add_all([admin, other])
@@ -215,14 +215,20 @@ def _secure_fixture(db, *, task_status="awaiting_annotation"):
         project_id=project.id,
         operator_id=admin.id,
         version=1,
-        row_count=1,
+        row_count=len(sample_ids),
         column_count=1,
         content_hash="sha256:assignment-data",
         schema_hash="sha256:assignment-schema",
     )
     db.add(version)
     db.flush()
-    db.add(DatasetSample(dataset_version_id=version.id, sample_id="frozen-1", row_index=0, values={"feature": 1}))
+    for row_index, sample_id in enumerate(sample_ids):
+        db.add(DatasetSample(
+            dataset_version_id=version.id,
+            sample_id=sample_id,
+            row_index=row_index,
+            values={"feature": row_index + 1},
+        ))
     schema = LabelSchema(project_id=project.id, name="assignment-labels", version=1, status="active")
     db.add(schema)
     db.flush()
@@ -238,9 +244,9 @@ def _secure_fixture(db, *, task_status="awaiting_annotation"):
         mode="manual",
         status=task_status,
         task_revision=0,
-        sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
+        sample_scope={"kind": "ids", "sample_ids": list(sample_ids)},
         task_snapshot={
-            "sample_ids": ["frozen-1"],
+            "sample_ids": list(sample_ids),
             "label_schema": {"schema_id": str(schema.id), "columns": [{"machine_key": "label", "value_type": "string", "required": True}]},
         },
     )
@@ -260,6 +266,24 @@ def test_assignment_scope_must_be_within_frozen_task_snapshot(db):
             actor=admin.id,
         )
     assert error.value.code == "SAMPLE_SCOPE_INVALID"
+
+
+def test_assignment_can_reference_server_owned_frozen_task_scope(db):
+    admin, _other, subject, task = _secure_fixture(db)
+    assignment = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[subject],
+        sample_scope={"kind": "frozen_task_scope"},
+        actor=admin.id,
+    )[0]
+    assert assignment.sample_scope == {
+        "kind": "frozen_task_scope",
+        "sample_count": 1,
+        "scope_hash": assignment.scope_hash,
+        "task_revision": task.task_revision,
+    }
+    assert db.query(AnnotationAssignmentSample).filter_by(assignment_id=assignment.id).count() == 1
 
 
 def test_paused_task_and_incomplete_required_labels_are_rejected(db):
@@ -304,6 +328,74 @@ def test_return_operation_records_project_and_task_context(db):
     assert operation.project_id == task.project_id
     assert operation.task_id == task.id
     assert operation.resource_type == "annotation_return"
+
+
+def test_return_requires_complete_confirmed_labels(db):
+    admin, _other, subject, task = _secure_fixture(db)
+    assignment = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[subject],
+        sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
+        actor=admin.id,
+    )[0]
+
+    with pytest.raises(AssignmentError) as error:
+        return_assignment(
+            db,
+            assignment.id,
+            assignment.task_revision,
+            assignment.scope_hash,
+            "incomplete-return",
+        )
+
+    assert error.value.code == "ANNOTATION_NOT_READY"
+
+
+def test_partial_return_acceptance_does_not_complete_task_until_all_scope_is_accepted(db):
+    admin, _other, first_subject, task = _secure_fixture(db, sample_ids=("frozen-1", "frozen-2"))
+    second_subject = uuid.uuid4()
+    db.add(AnnotatorAccount(
+        subject_id=second_subject,
+        username=f"annotator-{uuid.uuid4().hex}",
+        password_hash="hash",
+        status="active",
+    ))
+    db.add(ProjectAnnotatorGrant(
+        project_id=task.project_id,
+        subject_id=second_subject,
+        status="active",
+        granted_by=admin.id,
+    ))
+    db.commit()
+    first = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[first_subject],
+        sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
+        actor=admin.id,
+        initial_values={"frozen-1": {"label": "first"}},
+    )[0]
+    second = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[second_subject],
+        sample_scope={"kind": "ids", "sample_ids": ["frozen-2"]},
+        actor=admin.id,
+        initial_values={"frozen-2": {"label": "second"}},
+    )[0]
+    first_return = return_assignment(db, first.id, first.task_revision, first.scope_hash, "partial-first")
+    second_return = return_assignment(db, second.id, second.task_revision, second.scope_hash, "partial-second")
+
+    from app.services.annotation_returns import accept_return_batch
+
+    accept_return_batch(db, first_return.return_batch_id, task.task_revision, admin)
+    db.refresh(task)
+    assert task.status != "completed"
+
+    accept_return_batch(db, second_return.return_batch_id, task.task_revision, admin)
+    db.refresh(task)
+    assert task.status == "completed"
 
 
 def test_label_write_appends_revision_and_synchronizes_overlapping_assignments(db):

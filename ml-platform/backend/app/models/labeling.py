@@ -143,6 +143,49 @@ class AnnotationStrategyArtifact(Base):
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
 
+class AnnotationStrategyDecision(Base):
+    """Immutable, indexed per-sample output for a frozen annotation strategy."""
+
+    __tablename__ = "annotation_strategy_decisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "strategy_artifact_id",
+            "sample_id",
+            name="uq_annotation_strategy_decision_sample",
+        ),
+        Index(
+            "ix_annotation_strategy_decisions_artifact_row",
+            "strategy_artifact_id",
+            "row_index",
+            "id",
+        ),
+        Index(
+            "ix_annotation_strategy_decisions_artifact_cluster",
+            "strategy_artifact_id",
+            "cluster_id",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    strategy_artifact_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("annotation_strategy_artifacts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sample_id = Column(String(256), nullable=False)
+    row_index = Column(Integer, nullable=False)
+    status = Column(String(24), nullable=False, default="ready")
+    values = Column(JSON, nullable=False, default=dict)
+    provenance = Column(JSON, nullable=False, default=dict)
+    model_output = Column(JSON, nullable=False, default=dict)
+    cluster_id = Column(Integer, nullable=True)
+    matched_rule_ids = Column(JSON, nullable=False, default=list)
+    decision_hash = Column(String(71), nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    strategy_artifact = relationship("AnnotationStrategyArtifact")
+
+
 class AnnotationAssignment(Base):
     """A server-owned, fixed sample scope assigned to one portal subject."""
 
@@ -206,6 +249,38 @@ class AnnotationReturnBatch(Base):
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
 
+class AnnotationReturnBatchSample(Base):
+    """Immutable label values frozen when a return batch is created."""
+
+    __tablename__ = "annotation_return_batch_samples"
+    __table_args__ = (
+        UniqueConstraint(
+            "return_batch_id",
+            "sample_id",
+            name="uq_annotation_return_batch_sample",
+        ),
+        Index(
+            "ix_annotation_return_batch_samples_page",
+            "return_batch_id",
+            "sample_id",
+            "id",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    return_batch_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("annotation_return_batches.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sample_id = Column(String(256), nullable=False)
+    row_index = Column(Integer, nullable=False)
+    revision_no = Column(Integer, nullable=False)
+    values = Column(JSON, nullable=False, default=dict)
+    provenance = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
 def _reject_immutable_change(mapper, connection, target):
     raise ValueError("IMMUTABLE_LABEL_HISTORY")
 
@@ -214,6 +289,6 @@ def _reject_immutable_delete(mapper, connection, target):
     raise ValueError("IMMUTABLE_LABEL_HISTORY")
 
 
-for _model in (LabelSchema, LabelColumn, LabelValueConstraint, AnnotationTaskLabel, AnnotationRevision, AnnotationComment, AnnotationConfirmation, AnnotationStrategyArtifact):
+for _model in (LabelSchema, LabelColumn, LabelValueConstraint, AnnotationTaskLabel, AnnotationRevision, AnnotationComment, AnnotationConfirmation, AnnotationStrategyArtifact, AnnotationStrategyDecision, AnnotationReturnBatchSample):
     event.listen(_model, "before_update", _reject_immutable_change)
     event.listen(_model, "before_delete", _reject_immutable_delete)

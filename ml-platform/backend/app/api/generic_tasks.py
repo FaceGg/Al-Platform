@@ -23,7 +23,7 @@ from app.models.platform_models import AnnotationTaskRevisionSnapshot, GenericAn
 from app.models.access import AuditEvent
 from app.models.data_version import DatasetSample, DatasetVersion
 from app.models.artifact import Artifact
-from app.models.labeling import AnnotationStrategyArtifact, LabelSchema
+from app.models.labeling import AnnotationStrategyArtifact, AnnotationStrategyDecision, LabelSchema
 from app.models.labeling import AnnotationAssignment
 from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.project import Project
@@ -38,6 +38,8 @@ from app.services.annotation_strategies import (
 )
 from app.services.label_schema import bind_label_schema_to_task, create_label_schema, label_schema_snapshot
 from app.services.annotation_concurrency import AssignmentError, create_assignments
+from app.services.annotation_scope import copy_scope_revision, persist_scope_entries, scope_descriptor, scope_digest
+from app.services.rule_dsl import RuleEvaluationError, evaluate_rule
 from app.schemas.annotator import AssignmentCreate, AssignmentPatchRequest
 
 router = APIRouter(tags=["generic-tasks"])
@@ -254,6 +256,35 @@ def _automatic_schema_name(model_version: ModelVersion) -> str:
     return f"automatic-output-{model_version.registered_model_id}-{model_version.version_number}"[:128]
 
 
+def _scope_filter_expression(scope: dict) -> dict | None:
+    if scope.get("kind") != "filter":
+        return None
+    filters = scope.get("filters")
+    if not isinstance(filters, dict) or not filters:
+        raise ValueError("SAMPLE_SCOPE_FILTER_INVALID")
+    expression = filters.get("when") if set(filters) == {"when"} else filters
+    if not isinstance(expression, dict) or not expression:
+        raise ValueError("SAMPLE_SCOPE_FILTER_INVALID")
+    return expression
+
+
+def _selected_scope_entries(samples_query, scope: dict, matched_ids: set[str] | None = None):
+    """Yield one controlled, source-ordered scope without accumulating rows."""
+    expression = _scope_filter_expression(scope)
+    query = samples_query.order_by(DatasetSample.row_index.asc(), DatasetSample.id.asc()).yield_per(500)
+    for sample in query:
+        if expression is not None:
+            try:
+                if not evaluate_rule(expression, dict(sample.values or {})):
+                    continue
+            except RuleEvaluationError as error:
+                raise ValueError("SAMPLE_SCOPE_FILTER_INVALID") from error
+        sample_id = str(sample.sample_id)
+        if matched_ids is not None:
+            matched_ids.add(sample_id)
+        yield sample_id, int(sample.row_index)
+
+
 def _cluster_discovery_ids(db: Session, task: GenericAnnotationTask) -> set[str]:
     artifacts = db.query(AnnotationStrategyArtifact).filter(
         AnnotationStrategyArtifact.task_id == task.id,
@@ -265,7 +296,16 @@ def _cluster_discovery_ids(db: Session, task: GenericAnnotationTask) -> set[str]
         payload = dict(artifact.artifact or {})
         cluster_artifact = payload.get("cluster_artifact")
         assignments = cluster_artifact.get("assignments") if isinstance(cluster_artifact, dict) else None
-        if payload.get("configuration_complete") is False and isinstance(assignments, dict):
+        if payload.get("configuration_complete") is not False:
+            continue
+        persisted = db.query(AnnotationStrategyDecision.cluster_id).filter(
+            AnnotationStrategyDecision.strategy_artifact_id == artifact.id,
+            AnnotationStrategyDecision.cluster_id.isnot(None),
+        ).distinct().order_by(AnnotationStrategyDecision.cluster_id.asc()).limit(16).all()
+        if persisted:
+            return {str(cluster_id) for (cluster_id,) in persisted}
+        # Artifacts created before normalized decision storage remain readable.
+        if isinstance(assignments, dict):
             return {str(value) for value in assignments.values()}
     return set()
 
@@ -539,9 +579,15 @@ def _request_context(request: Request, x_request_id: str | None, idempotency_key
 
 
 def _snapshot_with_configuration(task: GenericAnnotationTask, data: GenericTaskConfigurationUpdate, previous: dict, configuration: dict) -> dict:
+    scope = dict(previous.get("scope") or {})
+    if not scope:
+        scope = scope_descriptor(*scope_digest(
+            (str(sample_id), index)
+            for index, sample_id in enumerate(previous.get("sample_ids") or [])
+        ))
     snapshot = {
         "dataset_version": dict(previous.get("dataset_version") or {}),
-        "sample_ids": list(previous.get("sample_ids") or []),
+        "scope": scope,
         "visible_columns": list(data.visible_columns),
         "label_schema": dict(previous.get("label_schema") or task.label_snapshot or {}),
         "instructions": data.instructions,
@@ -616,12 +662,23 @@ def create_generic_annotation_task(
                 "The label schema does not belong to this project.",
                 status_code=404,
             )
-    requested_ids = list(data.sample_scope.get("sample_ids", [])) if data.sample_scope.get("kind") == "ids" else None
+    requested_ids = (
+        {str(sample_id) for sample_id in data.sample_scope.get("sample_ids", []) if str(sample_id)}
+        if data.sample_scope.get("kind") == "ids" else None
+    )
     samples_query = db.query(DatasetSample).filter(DatasetSample.dataset_version_id == version.id)
     if requested_ids is not None:
         samples_query = samples_query.filter(DatasetSample.sample_id.in_(requested_ids))
-    samples = samples_query.order_by(DatasetSample.row_index.asc()).all()
-    if requested_ids is not None and {sample.sample_id for sample in samples} != set(requested_ids):
+    matched_ids: set[str] = set()
+    try:
+        scope_count, scope_hash = scope_digest(_selected_scope_entries(
+            samples_query,
+            data.sample_scope,
+            matched_ids,
+        ))
+    except ValueError as error:
+        raise _contract_error(request, str(error), "The sample scope filter is invalid.", status_code=422) from error
+    if requested_ids is not None and matched_ids != requested_ids:
         raise _contract_error(request, "SAMPLE_SCOPE_INVALID", "The sample scope contains unknown sample ids.", status_code=422)
     schema_snapshot = label_schema_snapshot(schema)
     if data.mode == "automatic":
@@ -646,7 +703,7 @@ def create_generic_annotation_task(
                 for column in sorted(version.schema_columns, key=lambda item: item.position)
             ],
         },
-        "sample_ids": [sample.sample_id for sample in samples],
+        "scope": scope_descriptor(scope_count, scope_hash),
         "visible_columns": visible_columns,
         "label_schema": schema_snapshot,
         "instructions": data.instructions,
@@ -669,6 +726,14 @@ def create_generic_annotation_task(
     db.add(task)
     try:
         db.flush()
+        persisted_count = persist_scope_entries(
+            db,
+            task.id,
+            task.task_revision,
+            _selected_scope_entries(samples_query, data.sample_scope),
+        )
+        if persisted_count != scope_count:
+            raise RuntimeError("SAMPLE_SCOPE_PERSISTENCE_MISMATCH")
         bind_label_schema_to_task(db, task_id=task.id, schema=schema)
         db.commit()
     except IntegrityError:
@@ -724,6 +789,14 @@ def update_generic_annotation_task_configuration(
     task.task_revision += 1
     if task.status != "draft":
         task.status = "draft"
+    copy_scope_revision(
+        db,
+        task,
+        from_revision=data.task_revision,
+        to_revision=task.task_revision,
+        source_snapshot=previous,
+        target_snapshot=snapshot,
+    )
     db.add(AnnotationTaskRevisionSnapshot(task_id=task.id, task_revision=task.task_revision, snapshot=snapshot))
     db.add(AuditEvent(
         project_id=task.project_id,

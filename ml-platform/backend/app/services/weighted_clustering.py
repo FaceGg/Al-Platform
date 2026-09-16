@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import heapq
 import hashlib
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -65,6 +66,17 @@ class ClusterArtifact:
     sampling_hash: str
     preprocessing: Mapping[str, object]
     centers: tuple[tuple[float, ...], ...]
+
+
+@dataclass(frozen=True)
+class _ReverseSampleRank:
+    """Heap entry whose least item is the lexicographically largest rank."""
+
+    rank: tuple[bytes, bytes]
+    vector: np.ndarray
+
+    def __lt__(self, other: "_ReverseSampleRank") -> bool:
+        return self.rank > other.rank
 
 
 def aggregate_model_importance(per_target: Mapping[str, Sequence[float]], feature_map: FeatureMap) -> ImportanceVector:
@@ -147,21 +159,46 @@ def deterministic_sample_indices(
     if limit < 0:
         raise ValueError("CLUSTER_EVALUATION_LIMIT_INVALID")
     ranked: list[tuple[bytes, bytes, int]] = []
-    revision_bytes = str(int(task_revision)).encode("utf-8")
-    seed_bytes = str(int(seed)).encode("utf-8")
     for index, sample_id in enumerate(sample_ids):
-        sample_id_bytes = str(sample_id).encode("utf-8")
-        digest = hashlib.sha256(
-            b"annotation-cluster-evaluation-v1\x00"
-            + revision_bytes
-            + b"\x00"
-            + seed_bytes
-            + b"\x00"
-            + sample_id_bytes
-        ).digest()
+        digest, sample_id_bytes = _sample_evaluation_rank(
+            sample_id,
+            task_revision=task_revision,
+            seed=seed,
+        )
         ranked.append((digest, sample_id_bytes, index))
     ranked.sort(key=lambda item: (item[0], item[1]))
     selected = ranked[:limit]
+
+    return np.asarray([item[2] for item in selected], dtype=np.int64), _evaluation_sample_hash(
+        selected,
+        task_revision=task_revision,
+        seed=seed,
+    )
+
+
+def _sample_evaluation_rank(sample_id: object, *, task_revision: int, seed: int) -> tuple[bytes, bytes]:
+    revision_bytes = str(int(task_revision)).encode("utf-8")
+    seed_bytes = str(int(seed)).encode("utf-8")
+    sample_id_bytes = str(sample_id).encode("utf-8")
+    digest = hashlib.sha256(
+        b"annotation-cluster-evaluation-v1\x00"
+        + revision_bytes
+        + b"\x00"
+        + seed_bytes
+        + b"\x00"
+        + sample_id_bytes
+    ).digest()
+    return digest, sample_id_bytes
+
+
+def _evaluation_sample_hash(
+    ranked_entries: Sequence[tuple[bytes, bytes, object]],
+    *,
+    task_revision: int,
+    seed: int,
+) -> str:
+    revision_bytes = str(int(task_revision)).encode("utf-8")
+    seed_bytes = str(int(seed)).encode("utf-8")
 
     hash_builder = hashlib.sha256()
     hash_builder.update(b"annotation-cluster-evaluation-sample-v1\x00")
@@ -169,12 +206,12 @@ def deterministic_sample_indices(
     hash_builder.update(b"\x00")
     hash_builder.update(seed_bytes)
     hash_builder.update(b"\x00")
-    for digest, sample_id_bytes, _ in selected:
+    for digest, sample_id_bytes, _ in ranked_entries:
         hash_builder.update(digest)
         hash_builder.update(b"\x00")
         hash_builder.update(sample_id_bytes)
         hash_builder.update(b"\x00")
-    return np.asarray([item[2] for item in selected], dtype=np.int64), hash_builder.hexdigest()
+    return hash_builder.hexdigest()
 
 
 def assign_clusters_from_artifact(frame: pd.DataFrame, artifact: ClusterArtifact) -> tuple[int, ...]:
@@ -212,6 +249,261 @@ def assign_clusters_from_artifact(frame: pd.DataFrame, artifact: ClusterArtifact
     weighted = ((matrix - mean) / scale) * np.sqrt(weights)
     distances = np.sum((weighted[:, np.newaxis, :] - centers[np.newaxis, :, :]) ** 2, axis=2)
     return tuple(int(value) for value in np.argmin(distances, axis=1))
+
+
+def cluster_artifact_from_payload(payload: Mapping[str, object]) -> ClusterArtifact:
+    """Restore a frozen cluster artifact persisted in JSON metadata.
+
+    Per-sample labels deliberately do not belong to this payload.  They are
+    stored in the indexed annotation-strategy decision table, while this
+    helper restores only the preprocessing and centers needed to assign a
+    caller-provided source batch without refitting.
+    """
+    try:
+        feature_map_payload = payload.get("feature_map")
+        if not isinstance(feature_map_payload, Mapping):
+            raise ValueError("CLUSTER_ARTIFACT_INVALID")
+        dimensions_payload = feature_map_payload.get("one_hot_dimensions") or {}
+        if not isinstance(dimensions_payload, Mapping):
+            raise ValueError("CLUSTER_ARTIFACT_INVALID")
+        feature_map = FeatureMap(
+            tuple(str(column) for column in feature_map_payload.get("source_columns") or ()),
+            {
+                str(column): tuple(int(index) for index in dimensions)
+                for column, dimensions in dimensions_payload.items()
+            },
+        )
+        weights_payload = payload.get("weights")
+        centers_payload = payload.get("centers")
+        preprocessing = payload.get("preprocessing")
+        if (
+            not isinstance(weights_payload, Mapping)
+            or not isinstance(centers_payload, (list, tuple))
+            or not isinstance(preprocessing, Mapping)
+        ):
+            raise ValueError("CLUSTER_ARTIFACT_INVALID")
+        return ClusterArtifact(
+            labels=(),
+            k_scores={int(key): float(value) for key, value in (payload.get("k_scores") or {}).items()},
+            selected_k=int(payload["selected_k"]),
+            seed=int(payload["seed"]),
+            weights={str(key): float(value) for key, value in weights_payload.items()},
+            feature_map=feature_map,
+            sample_count_evaluated=int(payload["sample_count_evaluated"]),
+            total_sample_count=int(payload["total_sample_count"]),
+            sampling_mode=str(payload["sampling_mode"]),
+            sampling_hash=str(payload["sampling_hash"]),
+            preprocessing=dict(preprocessing),
+            centers=tuple(
+                tuple(float(value) for value in center)
+                for center in centers_payload
+            ),
+        )
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
+        raise ValueError("CLUSTER_ARTIFACT_INVALID") from error
+
+
+def _nearest_cluster_labels(matrix: np.ndarray, centers: np.ndarray) -> np.ndarray:
+    distances = np.sum((matrix[:, np.newaxis, :] - centers[np.newaxis, :, :]) ** 2, axis=2)
+    return np.argmin(distances, axis=1)
+
+
+def _fit_streaming_lloyd_kmeans(
+    batches: Callable[[], Iterable[tuple[Sequence[object], pd.DataFrame]]],
+    *,
+    columns: Sequence[str],
+    scaler: StandardScaler,
+    weights_root: np.ndarray,
+    initial_centers: np.ndarray,
+    expected_count: int,
+    on_batch: Callable[[], None] | None,
+    max_iterations: int = 300,
+    tolerance: float = 1e-4,
+) -> tuple[np.ndarray, int]:
+    """Run deterministic, full-scope Lloyd KMeans without a global matrix.
+
+    Each iteration aggregates assignment sums and counts over every frozen
+    source batch.  This is batch KMeans rather than MiniBatchKMeans: the
+    bounded batches are an I/O and memory boundary only, never a sampling
+    substitute for the final centers.
+    """
+    centers = np.asarray(initial_centers, dtype=float).copy()
+    if centers.ndim != 2 or centers.shape[0] < 2 or centers.shape[1] != len(columns):
+        raise ValueError("CLUSTER_ARTIFACT_INVALID")
+    for iteration in range(1, max_iterations + 1):
+        sums = np.zeros_like(centers)
+        counts = np.zeros(centers.shape[0], dtype=np.int64)
+        observed_count = 0
+        for sample_ids, frame in batches():
+            if len(sample_ids) != len(frame):
+                raise ValueError("CLUSTER_SAMPLE_ID_COUNT_MISMATCH")
+            matrix = _numeric_feature_matrix(frame, columns)
+            weighted = scaler.transform(matrix) * weights_root
+            labels = _nearest_cluster_labels(weighted, centers)
+            np.add.at(sums, labels, weighted)
+            counts += np.bincount(labels, minlength=centers.shape[0])
+            observed_count += len(weighted)
+            if on_batch is not None:
+                on_batch()
+        if observed_count != expected_count:
+            raise ValueError("CLUSTER_SAMPLE_ID_COUNT_MISMATCH")
+        if np.any(counts == 0):
+            raise ValueError("CLUSTER_EMPTY_CLUSTER")
+        updated_centers = sums / counts[:, np.newaxis]
+        if not np.all(np.isfinite(updated_centers)):
+            raise ValueError("CLUSTER_INPUT_INVALID")
+        shift = float(np.max(np.linalg.norm(updated_centers - centers, axis=1)))
+        scale = max(1.0, float(np.max(np.abs(centers))))
+        centers = updated_centers
+        if shift <= tolerance * scale:
+            return centers, iteration
+    return centers, max_iterations
+
+
+def build_weighted_clusters_streaming(
+    batches: Callable[[], Iterable[tuple[Sequence[object], pd.DataFrame]]],
+    model: object,
+    feature_contract: InputContract,
+    seed: int,
+    *,
+    max_k: int = 8,
+    task_revision: int = 0,
+    total_sample_count: int,
+    feature_importance: Mapping[str, float] | Sequence[float] | None = None,
+    on_batch: Callable[[], None] | None = None,
+) -> ClusterArtifact:
+    """Fit weighted clusters from repeatable bounded source batches.
+
+    The all-row standardizer and final cluster fit consume every eligible row,
+    while only the proposal's allowed silhouette-evaluation subset remains in
+    memory. Callers use :func:`assign_clusters_from_artifact` for the final
+    full-scope assignment pass after this immutable artifact is frozen.
+    """
+    expected_count = int(total_sample_count)
+    if expected_count < 3:
+        raise ValueError("CLUSTER_TOO_FEW_ROWS")
+    columns = tuple(str(column) for column in feature_contract.feature_columns)
+    if not columns:
+        raise ValueError("CLUSTER_FEATURE_MISSING")
+    raw_importance = (
+        _extract_importance(model, len(columns))
+        if feature_importance is None
+        else _frozen_importance_values(feature_importance, columns)
+    )
+    scaler = StandardScaler()
+    observed_count = 0
+    for sample_ids, frame in batches():
+        if len(sample_ids) != len(frame):
+            raise ValueError("CLUSTER_SAMPLE_ID_COUNT_MISMATCH")
+        matrix = _numeric_feature_matrix(frame, columns)
+        scaler.partial_fit(matrix)
+        observed_count += len(matrix)
+        if on_batch is not None:
+            on_batch()
+    if observed_count != expected_count:
+        raise ValueError("CLUSTER_SAMPLE_ID_COUNT_MISMATCH")
+
+    evaluation_limit = expected_count if expected_count <= 100_000 else 50_000
+    all_evaluation_rows: list[tuple[bytes, bytes, np.ndarray]] = []
+    sampled_evaluation_rows: list[_ReverseSampleRank] = []
+    weights_root = np.sqrt(raw_importance)
+    for sample_ids, frame in batches():
+        if len(sample_ids) != len(frame):
+            raise ValueError("CLUSTER_SAMPLE_ID_COUNT_MISMATCH")
+        matrix = _numeric_feature_matrix(frame, columns)
+        weighted = scaler.transform(matrix) * weights_root
+        for sample_id, vector in zip(sample_ids, weighted):
+            digest, sample_id_bytes = _sample_evaluation_rank(
+                sample_id,
+                task_revision=task_revision,
+                seed=seed,
+            )
+            if expected_count <= 100_000:
+                all_evaluation_rows.append((digest, sample_id_bytes, np.asarray(vector, dtype=float).copy()))
+                continue
+            candidate = _ReverseSampleRank((digest, sample_id_bytes), np.asarray(vector, dtype=float).copy())
+            if len(sampled_evaluation_rows) < evaluation_limit:
+                heapq.heappush(sampled_evaluation_rows, candidate)
+            elif candidate.rank < sampled_evaluation_rows[0].rank:
+                heapq.heapreplace(sampled_evaluation_rows, candidate)
+        if on_batch is not None:
+            on_batch()
+
+    if expected_count <= 100_000:
+        evaluation_rows = all_evaluation_rows
+        sampling_mode = "all_rows"
+    else:
+        evaluation_rows = [
+            (entry.rank[0], entry.rank[1], entry.vector)
+            for entry in sampled_evaluation_rows
+        ]
+        sampling_mode = "deterministic_hash_sample"
+    evaluation_rows.sort(key=lambda item: (item[0], item[1]))
+    if len(evaluation_rows) < 3:
+        raise ValueError("CLUSTER_TOO_FEW_ROWS")
+    evaluation_matrix = np.stack([item[2] for item in evaluation_rows])
+    if len(np.unique(evaluation_matrix, axis=0)) < 2:
+        raise ValueError("CLUSTER_SILHOUETTE_UNAVAILABLE")
+    upper_k = min(max(2, int(max_k)), len(evaluation_matrix) - 1)
+    if upper_k < 2:
+        raise ValueError("CLUSTER_TOO_FEW_ROWS")
+    scores: dict[int, float] = {}
+    for k in range(2, upper_k + 1):
+        labels = KMeans(n_clusters=k, random_state=seed, n_init=10).fit_predict(evaluation_matrix)
+        if len(set(labels)) < 2:
+            continue
+        scores[k] = float(silhouette_score(evaluation_matrix, labels))
+    if not scores:
+        raise ValueError("CLUSTER_SILHOUETTE_UNAVAILABLE")
+    selected_k = max(scores, key=lambda key: (scores[key], -key))
+
+    final = KMeans(n_clusters=selected_k, random_state=seed, n_init=10).fit(evaluation_matrix)
+    if expected_count <= 100_000:
+        centers = final.cluster_centers_
+        fit_algorithm = "sklearn_kmeans"
+        fit_iterations = int(getattr(final, "n_iter_", 0))
+    else:
+        centers, fit_iterations = _fit_streaming_lloyd_kmeans(
+            batches,
+            columns=columns,
+            scaler=scaler,
+            weights_root=weights_root,
+            initial_centers=final.cluster_centers_,
+            expected_count=expected_count,
+            on_batch=on_batch,
+        )
+        fit_algorithm = "streaming_full_batch_lloyd_kmeans"
+
+    weights = {column: float(value) for column, value in zip(columns, raw_importance)}
+    preprocessing = {
+        "version": "weighted-clustering-v1",
+        "fit_scope": "frozen_task_sample_scope",
+        "fit_algorithm": fit_algorithm,
+        "fit_iterations": fit_iterations,
+        "feature_columns": tuple(columns),
+        "standardizer": {
+            "mean": tuple(float(value) for value in scaler.mean_),
+            "scale": tuple(float(value) for value in scaler.scale_),
+        },
+    }
+    return ClusterArtifact(
+        labels=(),
+        k_scores=scores,
+        selected_k=selected_k,
+        seed=int(seed),
+        weights=weights,
+        feature_map=FeatureMap(tuple(columns), {}),
+        sample_count_evaluated=len(evaluation_rows),
+        total_sample_count=expected_count,
+        sampling_mode=sampling_mode,
+        sampling_hash=_evaluation_sample_hash(
+            evaluation_rows,
+            task_revision=task_revision,
+            seed=seed,
+        ),
+        preprocessing=preprocessing,
+        centers=tuple(tuple(float(item) for item in row) for row in centers),
+    )
 
 
 def build_weighted_clusters(

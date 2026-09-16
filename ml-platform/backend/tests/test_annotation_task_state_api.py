@@ -17,7 +17,7 @@ from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetV
 from app.models.model_library import ModelLibrary
 from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.project import Project
-from app.models.platform_models import GenericAnnotationTask, AnnotationTaskPreview
+from app.models.platform_models import AnnotationTaskScopeSample, GenericAnnotationTask, AnnotationTaskPreview
 from app.models.user import User
 from app.models.access import ProjectMember
 
@@ -338,7 +338,14 @@ def test_task_creation_freezes_server_owned_snapshot():
         assert response.status_code == 201, response.text
         snapshot = response.json()["task_snapshot"]
         assert snapshot["dataset_version"]["id"] == str(version.id)
-        assert snapshot["sample_ids"] == ["s-2"]
+        assert snapshot["scope"]["storage"] == "annotation_task_scope_samples"
+        assert snapshot["scope"]["sample_count"] == 1
+        created_task_id = uuid.UUID(response.json()["id"])
+        persisted_scope = db.query(AnnotationTaskScopeSample).filter_by(
+            task_id=created_task_id,
+            task_revision=0,
+        ).one()
+        assert (persisted_scope.sample_id, persisted_scope.row_index) == ("s-2", 1)
         assert snapshot["visible_columns"] == ["feature"]
         assert [column["machine_key"] for column in snapshot["label_schema"]["columns"]] == ["result", "score"]
         assert [column["value_type"] for column in snapshot["label_schema"]["columns"]] == ["string", "int"]
@@ -385,6 +392,11 @@ def test_configuration_update_creates_new_revision_and_invalidates_old_preview()
         assert updated.status_code == 200, updated.text
         assert updated.json()["task_revision"] == 1
         assert updated.json()["task_snapshot"]["config_hash"] != created.json()["task_snapshot"]["config_hash"]
+        revision_scope = db.query(AnnotationTaskScopeSample).filter_by(
+            task_id=uuid.UUID(task_id),
+            task_revision=1,
+        ).order_by(AnnotationTaskScopeSample.row_index.asc()).all()
+        assert [(item.sample_id, item.row_index) for item in revision_scope] == [("sample-1", 0)]
         refreshed = client.get(f"/api/annotation-tasks?project_id={project.id}")
         assert refreshed.status_code == 200
         assert refreshed.json()["items"][0]["task_revision"] == 1

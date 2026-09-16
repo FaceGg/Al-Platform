@@ -24,4 +24,17 @@ describe("annotatorAssignments API", () => {
       { headers: { "X-Request-ID": expect.any(String), "Idempotency-Key": expect.any(String) } },
     );
   });
+
+  it("supports server-owned frozen task scopes without sending sample ids", async () => {
+    client.post.mockResolvedValue({ data: { items: [{ id: "assignment-1" }] } });
+    await createAssignments("task-1", {
+      annotator_ids: ["subject-1"],
+      sample_scope: { kind: "frozen_task_scope" },
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "/annotation-tasks/task-1/assignments",
+      { annotator_ids: ["subject-1"], sample_scope: { kind: "frozen_task_scope" }, due_at: undefined },
+      { headers: { "X-Request-ID": expect.any(String), "Idempotency-Key": expect.any(String) } },
+    );
+  });
 });

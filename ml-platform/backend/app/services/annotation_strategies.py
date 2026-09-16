@@ -6,18 +6,26 @@ from copy import deepcopy
 from contextlib import nullcontext
 from dataclasses import asdict
 from dataclasses import dataclass, field
+import hashlib
+from itertools import islice
+import json
 import math
-from typing import Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 import uuid
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from app.models.artifact import Artifact
-from app.models.labeling import AnnotationStrategyArtifact
+from app.models.labeling import AnnotationStrategyArtifact, AnnotationStrategyDecision
 from app.services.label_schema import LabelColumnContract, LabelSchemaContract, validate_label_value
 from app.services.rule_dsl import RuleEvaluationError, evaluate_rule
-from app.services.weighted_clustering import InputContract, build_weighted_clusters
+from app.services.weighted_clustering import (
+    InputContract,
+    build_weighted_clusters,
+    build_weighted_clusters_streaming,
+)
 
 
 class StrategyConfigError(ValueError):
@@ -363,14 +371,17 @@ def _model_outputs_from_package(package: Mapping[str, object], rows: Mapping[str
         raise StrategyConfigError("preview rows do not satisfy model input contract", "MODEL_INPUT_MISSING")
     predictions = package["model"].predict(frame.loc[:, list(feature_columns)])
     target_keys = tuple(schema.by_key)
+    try:
+        predictions = np.asarray(predictions, dtype=object)
+    except (TypeError, ValueError) as error:
+        raise StrategyConfigError("model output shape is invalid", "MODEL_OUTPUT_INVALID") from error
+    expected_shape = (len(frame), len(target_keys))
+    if len(target_keys) == 1 and predictions.shape == (len(frame),):
+        predictions = predictions.reshape(expected_shape)
+    if predictions.shape != expected_shape:
+        raise StrategyConfigError("model output row or target count is invalid", "MODEL_OUTPUT_INVALID")
     values: dict[str, dict[str, object]] = {}
     for sample_id, prediction in zip(frame.index, predictions):
-        if len(target_keys) == 1:
-            candidate = {target_keys[0]: prediction.item() if hasattr(prediction, "item") else prediction}
-            values[str(sample_id)] = _validated_model_output(candidate, schema)
-            continue
-        if not hasattr(prediction, "__len__") or len(prediction) != len(target_keys):
-            raise StrategyConfigError("model output does not match frozen label schema", "MODEL_OUTPUT_INVALID")
         candidate = {
             key: value.item() if hasattr(value, "item") else value
             for key, value in zip(target_keys, prediction)
@@ -379,12 +390,7 @@ def _model_outputs_from_package(package: Mapping[str, object], rows: Mapping[str
     return values
 
 
-def _cluster_artifact_from_package(
-    package: Mapping[str, object],
-    rows: Mapping[str, Mapping[str, object]],
-    seed: int,
-    task_revision: int,
-):
+def _cluster_package_contract(package: Mapping[str, object]):
     contract = package.get("input_contract") or {}
     feature_columns = (
         contract.get("feature_columns") or contract.get("input_columns")
@@ -404,16 +410,20 @@ def _cluster_artifact_from_package(
     elif isinstance(importance_report, Mapping) and "by_feature" in importance_report:
         frozen_importance = importance_report.get("by_feature")
         importance_method = str(importance_report.get("source") or "frozen_artifact")
-    frame = pd.DataFrame.from_dict(rows, orient="index")
-    artifact = build_weighted_clusters(
-        frame,
-        package["model"],
-        InputContract(feature_columns=tuple(str(column) for column in feature_columns)),
-        seed=seed,
-        task_revision=task_revision,
-        feature_importance=frozen_importance,
-    )
+    return tuple(str(column) for column in feature_columns), frozen_importance, importance_method, importance_report
+
+
+def _cluster_artifact_payload(
+    artifact,
+    *,
+    importance_method: str,
+    importance_report: Mapping[str, object] | None,
+    assignment_count: int,
+) -> dict[str, object]:
     payload = asdict(artifact)
+    # Labels are one value per frozen sample. They belong in the indexed
+    # decision table, never in the immutable metadata JSON artifact.
+    payload.pop("labels", None)
     payload.update(
         {
             "feature_map": {
@@ -429,26 +439,198 @@ def _cluster_artifact_from_package(
             "total_sample_count": artifact.total_sample_count,
             "importance_method": importance_method,
             "feature_importance_report": deepcopy(dict(importance_report)) if isinstance(importance_report, Mapping) else None,
+            "assignment_storage": "annotation_strategy_decisions",
+            "assignment_count": int(assignment_count),
         }
     )
-    payload["assignments"] = {str(sample_id): int(label) for sample_id, label in zip(frame.index, artifact.labels)}
-    return artifact, payload
+    return payload
 
 
-def _frozen_discovery_artifact(db, task_id) -> tuple[dict[str, object], dict[str, object]] | None:
+def _cluster_artifact_from_package(
+    package: Mapping[str, object],
+    rows: Mapping[str, Mapping[str, object]],
+    seed: int,
+    task_revision: int,
+):
+    feature_columns, frozen_importance, importance_method, importance_report = _cluster_package_contract(package)
+    frame = pd.DataFrame.from_dict(rows, orient="index")
+    artifact = build_weighted_clusters(
+        frame,
+        package["model"],
+        InputContract(feature_columns=feature_columns),
+        seed=seed,
+        task_revision=task_revision,
+        feature_importance=frozen_importance,
+    )
+    return artifact, _cluster_artifact_payload(
+        artifact,
+        importance_method=importance_method,
+        importance_report=importance_report,
+        assignment_count=len(artifact.labels),
+    )
+
+
+def build_streaming_cluster_artifact_from_package(
+    package: Mapping[str, object],
+    batches: Callable[[], Iterable[tuple[Sequence[object], pd.DataFrame]]],
+    *,
+    seed: int,
+    task_revision: int,
+    total_sample_count: int,
+    on_batch: Callable[[], None] | None = None,
+):
+    """Freeze weighted-cluster metadata without materializing all source rows."""
+    feature_columns, frozen_importance, importance_method, importance_report = _cluster_package_contract(package)
+    artifact = build_weighted_clusters_streaming(
+        batches,
+        package["model"],
+        InputContract(feature_columns=feature_columns),
+        seed=seed,
+        task_revision=task_revision,
+        total_sample_count=total_sample_count,
+        feature_importance=frozen_importance,
+        on_batch=on_batch,
+    )
+    return artifact, _cluster_artifact_payload(
+        artifact,
+        importance_method=importance_method,
+        importance_report=importance_report,
+        assignment_count=total_sample_count,
+    )
+
+
+def _frozen_discovery_artifact(db, task_id) -> tuple[dict[str, object], AnnotationStrategyArtifact] | None:
     artifacts = db.query(AnnotationStrategyArtifact).filter(
         AnnotationStrategyArtifact.task_id == task_id,
     ).order_by(
         AnnotationStrategyArtifact.task_revision.desc(),
         AnnotationStrategyArtifact.created_at.desc(),
-    ).all()
+    ).yield_per(100)
     for artifact in artifacts:
         payload = dict(artifact.artifact or {})
         cluster_artifact = payload.get("cluster_artifact")
         assignments = cluster_artifact.get("assignments") if isinstance(cluster_artifact, Mapping) else None
-        if payload.get("configuration_complete") is False and isinstance(assignments, Mapping) and assignments:
-            return payload, deepcopy(dict(cluster_artifact))
+        has_persisted_decisions = db.query(AnnotationStrategyDecision.id).filter(
+            AnnotationStrategyDecision.strategy_artifact_id == artifact.id,
+        ).first() is not None
+        if payload.get("configuration_complete") is False and (
+            has_persisted_decisions or (isinstance(assignments, Mapping) and assignments)
+        ):
+            return payload, artifact
     return None
+
+
+def _decision_payload(sample_id: object, decision: AnnotationDecision) -> dict[str, object]:
+    return {
+        "sample_id": str(sample_id),
+        "status": str(decision.status),
+        "values": deepcopy(dict(decision.values)),
+        "provenance": deepcopy(dict(decision.provenance)),
+        "model_output": deepcopy(dict(decision.model_output)),
+        "cluster_id": int(decision.cluster_id) if decision.cluster_id is not None else None,
+        "matched_rule_ids": [str(rule_id) for rule_id in decision.matched_rule_ids],
+    }
+
+
+def _decision_hash(payload: Mapping[str, object]) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _mapping_batches(values: Mapping[str, AnnotationDecision], size: int = 500):
+    iterator = iter(values.items())
+    while batch := list(islice(iterator, size)):
+        yield batch
+
+
+def _value_batches(values: Iterable[str], size: int = 500):
+    iterator = iter(values)
+    while batch := list(islice(iterator, size)):
+        yield batch
+
+
+def _persist_strategy_decisions(
+    db,
+    artifact: AnnotationStrategyArtifact,
+    decisions: Mapping[str, AnnotationDecision],
+    *,
+    row_indexes: Mapping[str, int] | None = None,
+) -> None:
+    """Write immutable decisions in bounded batches and verify retries match."""
+    row_indexes = row_indexes or {}
+    default_row_index = 0
+    for batch in _mapping_batches(decisions):
+        sample_ids = [str(sample_id) for sample_id, _ in batch]
+        existing = {
+            item.sample_id: item
+            for item in db.query(AnnotationStrategyDecision).filter(
+                AnnotationStrategyDecision.strategy_artifact_id == artifact.id,
+                AnnotationStrategyDecision.sample_id.in_(sample_ids),
+            ).all()
+        }
+        for offset, (sample_id, decision) in enumerate(batch):
+            payload = _decision_payload(sample_id, decision)
+            digest = _decision_hash(payload)
+            persisted = existing.get(str(sample_id))
+            if persisted is not None:
+                if persisted.decision_hash != digest:
+                    raise StrategyConfigError(
+                        "frozen strategy decision does not match the persisted retry result",
+                        "STRATEGY_DECISION_CONFLICT",
+                    )
+                continue
+            db.add(AnnotationStrategyDecision(
+                strategy_artifact_id=artifact.id,
+                sample_id=str(sample_id),
+                row_index=int(row_indexes.get(str(sample_id), default_row_index + offset)),
+                status=payload["status"],
+                values=payload["values"],
+                provenance=payload["provenance"],
+                model_output=payload["model_output"],
+                cluster_id=payload["cluster_id"],
+                matched_rule_ids=payload["matched_rule_ids"],
+                decision_hash=digest,
+            ))
+        db.flush()
+        default_row_index += len(batch)
+
+
+def _frozen_cluster_ids(
+    db,
+    artifact: AnnotationStrategyArtifact,
+    payload: Mapping[str, object],
+    sample_ids: Sequence[str],
+) -> dict[str, int]:
+    """Resolve frozen cluster ids only for the caller's current batch."""
+    resolved: dict[str, int] = {}
+    for ids in _value_batches((str(sample_id) for sample_id in sample_ids)):
+        for item in db.query(AnnotationStrategyDecision).filter(
+            AnnotationStrategyDecision.strategy_artifact_id == artifact.id,
+            AnnotationStrategyDecision.sample_id.in_(ids),
+        ).all():
+            if item.cluster_id is not None:
+                resolved[item.sample_id] = int(item.cluster_id)
+
+    # Existing strategy artifacts predate the normalized decision table. They
+    # remain readable, but all newly created artifacts use the bounded table.
+    cluster_artifact = payload.get("cluster_artifact")
+    legacy_assignments = cluster_artifact.get("assignments") if isinstance(cluster_artifact, Mapping) else None
+    if isinstance(legacy_assignments, Mapping):
+        for sample_id in sample_ids:
+            if sample_id not in resolved and sample_id in legacy_assignments:
+                resolved[sample_id] = int(legacy_assignments[sample_id])
+    missing = [sample_id for sample_id in sample_ids if sample_id not in resolved]
+    if missing:
+        raise StrategyConfigError(
+            "cluster discovery artifact does not match the frozen sample scope",
+            "CLUSTER_DISCOVERY_REQUIRED",
+        )
+    return resolved
 
 
 def _validated_model_output(values: Mapping[str, object], schema: LabelSchemaContract) -> dict[str, object]:
@@ -488,6 +670,11 @@ def apply_preview_annotation_strategy(
     schema_snapshot: Mapping[str, object],
     configuration: Mapping[str, object],
     rows: Mapping[str, Mapping[str, object]],
+    row_indexes: Mapping[str, int] | None = None,
+    scope_sample_count: int | None = None,
+    model_package: Mapping[str, object] | None = None,
+    precomputed_cluster_artifact: Mapping[str, object] | None = None,
+    precomputed_cluster_ids: Mapping[str, int] | None = None,
 ) -> PreviewStrategyResult:
     """Evaluate a frozen automatic strategy and persist its immutable metadata.
 
@@ -504,20 +691,29 @@ def apply_preview_annotation_strategy(
 
     importance = configuration.get("feature_importance")
     importance_source = "not_required"
-    cluster_ids: Mapping[str, int] = configuration.get("cluster_ids") or {}
+    cluster_ids: Mapping[str, int] = precomputed_cluster_ids or configuration.get("cluster_ids") or {}
     cluster_artifact_payload = None
-    package = None
+    package = model_package
     model_artifact_id = configuration.get("model_artifact_id")
-    if model_artifact_id is not None:
+    if model_artifact_id is not None and package is None:
         if project_id is None:
             raise StrategyConfigError("project context is required for a model artifact", "MODEL_ARTIFACT_CONTEXT_REQUIRED")
         package = _artifact_model_package(db, project_id, model_artifact_id)
-        if not model_outputs:
-            model_outputs = _model_outputs_from_package(package, rows, schema)
+    if package is not None and not model_outputs:
+        model_outputs = _model_outputs_from_package(package, rows, schema)
     model_outputs = _validated_model_outputs(model_outputs, rows, schema)
     if config.clustering:
         if config.cluster_discovery:
-            if package is not None:
+            if precomputed_cluster_artifact is not None:
+                cluster_artifact_payload = deepcopy(dict(precomputed_cluster_artifact))
+                cluster_artifact_payload.pop("assignments", None)
+                cluster_artifact_payload.pop("labels", None)
+                cluster_artifact_payload["assignment_storage"] = "annotation_strategy_decisions"
+                raw_weights = cluster_artifact_payload.get("weights")
+                if isinstance(raw_weights, Mapping):
+                    importance = list(raw_weights.values())
+                importance_source = "model_artifact"
+            elif package is not None:
                 try:
                     cluster_artifact, cluster_artifact_payload = _cluster_artifact_from_package(
                         package,
@@ -526,7 +722,10 @@ def apply_preview_annotation_strategy(
                         task_revision,
                     )
                     importance = list(cluster_artifact.weights.values())
-                    cluster_ids = cluster_artifact_payload["assignments"]
+                    cluster_ids = {
+                        str(sample_id): int(cluster_id)
+                        for sample_id, cluster_id in zip(rows, cluster_artifact.labels)
+                    }
                     importance_source = "model_artifact"
                 except StrategyConfigError:
                     raise
@@ -537,7 +736,11 @@ def apply_preview_annotation_strategy(
                         code if code.startswith(("CLUSTER_", "FEATURE_IMPORTANCE_")) else "CLUSTERING_FAILED",
                     ) from error
             elif isinstance(cluster_ids, Mapping) and cluster_ids:
-                cluster_artifact_payload = {"assignments": {str(key): int(value) for key, value in cluster_ids.items()}}
+                cluster_ids = {str(key): int(value) for key, value in cluster_ids.items()}
+                cluster_artifact_payload = {
+                    "assignment_storage": "annotation_strategy_decisions",
+                    "assignment_count": len(cluster_ids),
+                }
             if importance_source == "unavailable" or not isinstance(importance, (list, tuple)) or not importance:
                 raise StrategyConfigError(
                     "weighted clustering requires a valid model feature-importance vector",
@@ -562,14 +765,20 @@ def apply_preview_annotation_strategy(
             frozen = _frozen_discovery_artifact(db, task_id)
             if frozen is None:
                 raise StrategyConfigError("run a cluster discovery preview before generating final labels", "CLUSTER_DISCOVERY_REQUIRED")
-            discovery_payload, cluster_artifact_payload = frozen
-            assignments = cluster_artifact_payload.get("assignments")
-            if not isinstance(assignments, Mapping):
+            discovery_payload, discovery_artifact = frozen
+            original_cluster_artifact = discovery_payload.get("cluster_artifact")
+            if not isinstance(original_cluster_artifact, Mapping):
                 raise StrategyConfigError("cluster discovery artifact is invalid", "CLUSTER_DISCOVERY_REQUIRED")
-            cluster_ids = {str(sample_id): int(cluster_id) for sample_id, cluster_id in assignments.items()}
-            missing_assignments = [sample_id for sample_id in rows if sample_id not in cluster_ids]
-            if missing_assignments:
-                raise StrategyConfigError("cluster discovery artifact does not match the frozen sample scope", "CLUSTER_DISCOVERY_REQUIRED")
+            cluster_artifact_payload = deepcopy(dict(original_cluster_artifact))
+            cluster_artifact_payload.pop("assignments", None)
+            cluster_artifact_payload.pop("labels", None)
+            cluster_artifact_payload["assignment_storage"] = "annotation_strategy_decisions"
+            cluster_ids = _frozen_cluster_ids(
+                db,
+                discovery_artifact,
+                discovery_payload,
+                tuple(str(sample_id) for sample_id in rows),
+            )
             importance = discovery_payload.get("feature_importance")
             importance_source = str(discovery_payload.get("importance_source") or "frozen_discovery")
             if not isinstance(importance, (list, tuple)) or not importance:
@@ -610,13 +819,24 @@ def apply_preview_annotation_strategy(
         "model_version_id": configuration.get("model_version_id"),
         "model_output_contract_hash": (configuration.get("model_output_contract") or {}).get("contract_hash") if isinstance(configuration.get("model_output_contract"), Mapping) else None,
         "cluster_artifact": cluster_artifact_payload,
-        "clusters": [
-            {"cluster_id": int(cluster_id) if cluster_id.lstrip("-").isdigit() else cluster_id, "sample_count": cluster_counts[cluster_id]}
-            for cluster_id in sorted(cluster_counts, key=lambda value: (not value.lstrip("-").isdigit(), value))
-        ],
+        "clusters": (
+            [
+                {
+                    "cluster_id": int(cluster_id) if cluster_id.lstrip("-").isdigit() else cluster_id,
+                    "sample_count": cluster_counts[cluster_id],
+                }
+                for cluster_id in sorted(cluster_counts, key=lambda value: (not value.lstrip("-").isdigit(), value))
+            ]
+            if scope_sample_count is None else []
+        ),
+        "cluster_counts_storage": "annotation_strategy_decisions" if scope_sample_count is not None else None,
         "configuration_complete": not config.cluster_discovery,
-        "review_count": sum(decision.status == "needs_review" for decision in decisions.values()),
-        "sample_count": len(decisions),
+        "review_count": (
+            sum(decision.status == "needs_review" for decision in decisions.values())
+            if scope_sample_count is None else None
+        ),
+        "review_count_storage": "annotation_strategy_decisions" if scope_sample_count is not None else None,
+        "sample_count": int(scope_sample_count) if scope_sample_count is not None else len(decisions),
     }
     artifact = db.query(AnnotationStrategyArtifact).filter_by(
         task_id=task_id,
@@ -634,4 +854,5 @@ def apply_preview_annotation_strategy(
         )
         db.add(artifact)
         db.flush()
+    _persist_strategy_decisions(db, artifact, decisions, row_indexes=row_indexes)
     return PreviewStrategyResult(decisions=decisions, artifact=artifact)

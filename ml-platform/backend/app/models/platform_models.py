@@ -162,6 +162,42 @@ def _prevent_task_revision_snapshot_update(_mapper, _connection, target):
         raise ValueError("AnnotationTaskRevisionSnapshot is immutable")
 
 
+class AnnotationTaskScopeSample(Base):
+    """One frozen source-sample membership record for a task revision."""
+
+    __tablename__ = "annotation_task_scope_samples"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id",
+            "task_revision",
+            "sample_id",
+            name="uq_annotation_task_scope_sample",
+        ),
+        Index(
+            "ix_annotation_task_scope_samples_page",
+            "task_id",
+            "task_revision",
+            "row_index",
+            "id",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id = Column(UUID(as_uuid=True), ForeignKey("generic_annotation_tasks.id", ondelete="CASCADE"), nullable=False)
+    task_revision = Column(Integer, nullable=False)
+    sample_id = Column(String(256), nullable=False)
+    row_index = Column(Integer, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    task = relationship("GenericAnnotationTask")
+
+
+@event.listens_for(AnnotationTaskScopeSample, "before_update")
+@event.listens_for(AnnotationTaskScopeSample, "before_delete")
+def _prevent_task_scope_sample_mutation(_mapper, _connection, _target):
+    raise ValueError("AnnotationTaskScopeSample is immutable")
+
+
 class AnnotationTaskPreviewSample(Base):
     __tablename__ = "annotation_task_preview_samples"
     __table_args__ = (

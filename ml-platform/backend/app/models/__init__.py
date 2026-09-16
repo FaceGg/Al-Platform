@@ -44,6 +44,7 @@ from app.models.platform_models import (
     GenericAnnotationTask,
     AnnotationTaskPreview,
     AnnotationTaskRevisionSnapshot,
+    AnnotationTaskScopeSample,
     AnnotationTaskPreviewSample,
     AnnotationTaskExecutionResult,
     AnnotationTaskExecutionStatistic,
@@ -53,7 +54,7 @@ from app.models.platform_models import (
 )
 from app.models.data_version import DatasetVersion, DatasetSchemaColumn, DatasetSample, DatasetImport, DatasetImportProcess
 from app.models.annotator import AnnotatorAccount, AnnotatorSession, AnnotatorSubjectMapping, ProjectAnnotatorGrant
-from app.models.labeling import (LabelSchema, LabelColumn, LabelValueConstraint, AnnotationTaskLabel, AnnotationSampleCurrent, AnnotationRevision, AnnotationComment, AnnotationConfirmation, AnnotationStrategyArtifact, AnnotationAssignment, AnnotationAssignmentSample, AnnotationReturnBatch)
+from app.models.labeling import (LabelSchema, LabelColumn, LabelValueConstraint, AnnotationTaskLabel, AnnotationSampleCurrent, AnnotationRevision, AnnotationComment, AnnotationConfirmation, AnnotationStrategyArtifact, AnnotationStrategyDecision, AnnotationAssignment, AnnotationAssignmentSample, AnnotationReturnBatch, AnnotationReturnBatchSample)
 from app.models.spot_weld_quality import (
     SpotWeldQualityRun,
     SpotWeldQualitySample,
@@ -115,6 +116,7 @@ __all__ = [
     "GenericAnnotationTask",
     "AnnotationTaskPreview",
     "AnnotationTaskRevisionSnapshot",
+    "AnnotationTaskScopeSample",
     "AnnotationTaskPreviewSample",
     "AnnotationTaskExecutionResult",
     "AnnotationTaskExecutionStatistic",
@@ -139,9 +141,11 @@ __all__ = [
     "AnnotationComment",
     "AnnotationConfirmation",
     "AnnotationStrategyArtifact",
+    "AnnotationStrategyDecision",
     "AnnotationAssignment",
     "AnnotationAssignmentSample",
     "AnnotationReturnBatch",
+    "AnnotationReturnBatchSample",
     "SpotWeldQualityRun",
     "SpotWeldQualitySample",
     "SpotWeldQualityRuleSet",

@@ -1,7 +1,13 @@
 import apiClient from "./client";
 
 export interface AnnotatorSubject { id: string; username: string; display_name?: string | null; status?: string; }
-export interface SampleScope { kind: "ids"; sample_ids: string[]; }
+export interface SampleScope {
+  kind: "ids" | "frozen_task_scope";
+  sample_ids?: string[];
+  sample_count?: number;
+  scope_hash?: string;
+  task_revision?: number;
+}
 export interface AssignmentRequest { annotator_ids: string[]; sample_scope: SampleScope; due_at?: string; }
 export interface Assignment { id: string; task_id: string; annotator_subject_id: string; sample_scope: SampleScope; scope_hash: string; state: string; task_revision: number; }
 

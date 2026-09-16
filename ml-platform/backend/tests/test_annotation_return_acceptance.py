@@ -18,11 +18,13 @@ from app.models.labeling import (
     LabelColumn,
     LabelSchema,
 )
+from app.models.operation import DurableOperation
 from app.models.notifications import InAppNotification
 from app.models.platform_models import GenericAnnotationTask
 from app.models.project import Project
 from app.models.user import User
 from app.services.annotation_returns import AnnotationReturnError, accept_return_batch, reject_return_batch
+from app.tasks.annotation_return_tasks import _execute_with_session
 
 
 def test_return_batch_cursor_must_belong_to_requested_project():
@@ -41,7 +43,7 @@ def test_return_batch_cursor_must_belong_to_requested_project():
         engine.dispose()
 
 
-def _fixture(source_result_type=None):
+def _fixture(source_result_type=None, *, server_owned_scope=False):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -97,6 +99,24 @@ def _fixture(source_result_type=None):
         value_type="string",
         required=True,
     ))
+    task_sample_scope = (
+        {"kind": "frozen_task_scope", "sample_count": 2, "scope_hash": "sha256:return-scope"}
+        if server_owned_scope
+        else {"kind": "ids", "sample_ids": ["sample-1", "sample-2"]}
+    )
+    task_snapshot = {"sample_ids": []} if server_owned_scope else {"sample_ids": ["sample-1", "sample-2"]}
+    if server_owned_scope:
+        task_snapshot["scope"] = {"sample_count": 2, "scope_hash": "sha256:return-scope"}
+    assignment_sample_scope = (
+        {
+            "kind": "frozen_task_scope",
+            "sample_count": 2,
+            "scope_hash": "sha256:return-scope",
+            "task_revision": 4,
+        }
+        if server_owned_scope
+        else {"kind": "ids", "sample_ids": ["sample-1", "sample-2"]}
+    )
     task = GenericAnnotationTask(
         project_id=project.id,
         dataset_version_id=source.id,
@@ -105,8 +125,8 @@ def _fixture(source_result_type=None):
         mode="manual",
         status="awaiting_annotation",
         task_revision=4,
-        sample_scope={"kind": "ids", "sample_ids": ["sample-1", "sample-2"]},
-        task_snapshot={"sample_ids": ["sample-1", "sample-2"]},
+        sample_scope=task_sample_scope,
+        task_snapshot=task_snapshot,
     )
     db.add(task)
     db.flush()
@@ -115,7 +135,7 @@ def _fixture(source_result_type=None):
     assignment = AnnotationAssignment(
         task_id=task.id,
         annotator_subject_id=subject_id,
-        sample_scope={"kind": "ids", "sample_ids": ["sample-1", "sample-2"]},
+        sample_scope=assignment_sample_scope,
         scope_hash="sha256:return-scope",
         state="returned_pending_acceptance",
         task_revision=4,
@@ -128,6 +148,13 @@ def _fixture(source_result_type=None):
         AnnotationAssignmentSample(assignment_id=assignment.id, sample_id="sample-1", revision_no=4, values={"result": "pass"}),
         AnnotationAssignmentSample(assignment_id=assignment.id, sample_id="sample-2", revision_no=4, values={"result": "fail"}),
     ])
+    if server_owned_scope:
+        from app.models.platform_models import AnnotationTaskScopeSample
+
+        db.add_all([
+            AnnotationTaskScopeSample(task_id=task.id, task_revision=4, sample_id="sample-1", row_index=0),
+            AnnotationTaskScopeSample(task_id=task.id, task_revision=4, sample_id="sample-2", row_index=1),
+        ])
     batch = AnnotationReturnBatch(
         assignment_id=assignment.id,
         task_revision=4,
@@ -265,5 +292,45 @@ def test_rejected_return_requires_reason_and_notifies_mapped_annotator():
         assert "result" not in notification.body.lower()
     finally:
         app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
+def test_acceptance_uses_server_owned_frozen_scope_records():
+    engine, db, admin, _annotator, _project, _source, assignment, batch = _fixture(server_owned_scope=True)
+    try:
+        accepted = accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
+
+        assert accepted.status == "ready"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_return_worker_validates_batch_and_persists_summary():
+    engine, db, admin, _annotator, _project, _source, assignment, batch = _fixture()
+    try:
+        operation = DurableOperation(
+            project_id=db.get(GenericAnnotationTask, assignment.task_id).project_id,
+            task_id=assignment.task_id,
+            resource_type="annotation_return",
+            resource_key=f"annotation-return:{batch.id}",
+            idempotency_key=batch.id.hex,
+            state="queued",
+            stage="queued",
+        )
+        db.add(operation)
+        db.flush()
+        batch.operation_id = operation.id
+        db.commit()
+
+        result = _execute_with_session(db, str(batch.id), str(operation.id), "return-test-worker")
+        db.refresh(operation)
+
+        assert result["status"] == "completed"
+        assert operation.state == "completed"
+        assert operation.result_summary["validated_row_count"] == 2
+        assert operation.result_summary["label_columns"] == ["result"]
+    finally:
         db.close()
         engine.dispose()

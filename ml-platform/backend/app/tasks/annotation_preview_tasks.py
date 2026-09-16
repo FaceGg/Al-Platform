@@ -6,17 +6,26 @@ import json
 import threading
 from types import SimpleNamespace
 
+import pandas as pd
 from sqlalchemy import and_, or_
 
 from app.database import SessionLocal
 from app.models.data_version import DatasetSample
+from app.models.labeling import AnnotationStrategyArtifact
 from app.models.platform_models import AnnotationTaskPreview, AnnotationTaskPreviewSample, GenericAnnotationTask
-from app.services.annotation_strategies import StrategyConfigError, apply_preview_annotation_strategy
+from app.services.annotation_strategies import (
+    StrategyConfigError,
+    _artifact_model_package,
+    apply_preview_annotation_strategy,
+    build_streaming_cluster_artifact_from_package,
+)
 from app.services.annotation_task_state import (
     current_annotation_task_snapshot,
     mark_preview_completed,
     record_annotation_preview_progress,
 )
+from app.services.annotation_scope import iter_scope_batches, scope_count
+from app.services.weighted_clustering import assign_clusters_from_artifact, cluster_artifact_from_payload
 from app.services.operation_lifecycle import claim_operation, heartbeat_operation, complete_operation, fail_operation
 from app.tasks.celery_app import celery_app
 from app.config import settings
@@ -41,6 +50,45 @@ def _dataset_sample_batches(db, dataset_version_id, sample_ids):
             DatasetSample.row_index.asc(),
             DatasetSample.id.asc(),
         ).limit(len(sample_id_batch)).all()
+
+
+def _source_rows_for_sample_ids(db, dataset_version_id, sample_ids):
+    """Materialize one bounded source slice in frozen scope order."""
+    source_rows = [
+        row
+        for batch in _dataset_sample_batches(db, dataset_version_id, sample_ids)
+        for row in batch
+    ]
+    rows_by_id = {str(row.sample_id): row for row in source_rows}
+    rows = {
+        str(sample_id): (
+            dict(rows_by_id[str(sample_id)].values or {})
+            if str(sample_id) in rows_by_id else {}
+        )
+        for sample_id in sample_ids
+    }
+    return source_rows, rows_by_id, rows
+
+
+def _existing_cluster_discovery_artifact(db, task_id, task_revision, config_hash):
+    """Reuse frozen centers on a retry instead of fitting or searching again."""
+    strategy_artifact = db.query(AnnotationStrategyArtifact).filter_by(
+        task_id=task_id,
+        task_revision=task_revision,
+        config_hash=config_hash,
+    ).one_or_none()
+    if strategy_artifact is None:
+        return None
+    payload = dict(strategy_artifact.artifact or {})
+    if payload.get("configuration_complete") is not False:
+        return None
+    cluster_payload = payload.get("cluster_artifact")
+    if not isinstance(cluster_payload, dict):
+        raise StrategyConfigError("cluster discovery artifact is invalid", "CLUSTER_ARTIFACT_INVALID")
+    try:
+        return cluster_artifact_from_payload(cluster_payload), cluster_payload
+    except ValueError as error:
+        raise StrategyConfigError("cluster discovery artifact is invalid", "CLUSTER_ARTIFACT_INVALID") from error
 
 
 def _preview_sample_batches(db, preview_id):
@@ -113,71 +161,172 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                 status="running",
                 progress=10,
                 summary={
-                    "sample_scope_count": len(snapshot.get("sample_ids", [])),
+                    "sample_scope_count": scope_count(
+                        db,
+                        task,
+                        task_revision=preview.task_revision,
+                        snapshot=snapshot,
+                    ),
                     "visible_columns": snapshot.get("visible_columns", []),
                 },
             )
-            sample_ids = [str(sample_id) for sample_id in snapshot.get("sample_ids", [])]
+            sample_scope_count = scope_count(
+                db,
+                task,
+                task_revision=preview.task_revision,
+                snapshot=snapshot,
+            )
+
+            def frozen_scope_batches():
+                yield from iter_scope_batches(
+                    db,
+                    task,
+                    task_revision=preview.task_revision,
+                    snapshot=snapshot,
+                    batch_size=_PREVIEW_BATCH_SIZE,
+                )
+
             visible_columns = list(snapshot.get("visible_columns", []))
             summary = {
-                "sample_count": len(sample_ids),
+                "sample_count": sample_scope_count,
                 "visible_columns": snapshot.get("visible_columns", []),
                 "label_columns": [column.get("machine_key") for column in snapshot.get("label_schema", {}).get("columns", [])],
                 "source_rows_found": 0,
             }
-            automatic_decisions = {}
             strategy_artifact = None
+            configuration = snapshot.get("configuration", {})
             if task.mode == "automatic":
-                source_rows = [
-                    row
-                    for batch in _dataset_sample_batches(db, task.dataset_version_id, sample_ids)
-                    for row in batch
-                ]
-                rows_by_id = {row.sample_id: row for row in source_rows}
-                summary["source_rows_found"] = len(source_rows)
-                rows = {
-                    sample_id: dict(rows_by_id.get(sample_id).values or {}) if rows_by_id.get(sample_id) is not None else {}
-                    for sample_id in sample_ids
-                }
-                strategy_result = apply_preview_annotation_strategy(
-                    db,
-                    task_id=task.id,
-                    task_revision=preview.task_revision,
-                    config_hash=preview.config_hash,
-                    actor_id=owner_uuid,
-                    project_id=task.project_id,
-                    schema_snapshot=snapshot.get("label_schema", {}),
-                    configuration=snapshot.get("configuration", {}),
-                    rows=rows,
-                )
-                automatic_decisions = strategy_result.decisions
-                strategy_artifact = strategy_result.artifact
-                summary["strategy"] = strategy_artifact.strategy
-                summary["strategy_artifact_id"] = str(strategy_artifact.id)
-                strategy_payload = dict(strategy_artifact.artifact or {})
-                summary["needs_review_count"] = strategy_payload.get("review_count", 0)
-                summary["configuration_complete"] = strategy_payload.get("configuration_complete", True)
-                summary["clusters"] = strategy_payload.get("clusters", [])
-                summary["model_version_id"] = strategy_payload.get("model_version_id")
+                # Every automatic strategy advances source retrieval, model
+                # inference, frozen decisions, and preview rows in the same
+                # bounded source slices. Cluster discovery adds repeatable
+                # read-only passes before this final assignment pass.
                 heartbeat_operation(db, operation_id, worker_id, 300)
-                existing_ids = set()
-                for sample_id_batch in _chunks(sample_ids):
-                    existing_ids.update(
+                model_package = None
+                if configuration.get("model_artifact_id") is not None:
+                    model_package = _artifact_model_package(
+                        db,
+                        task.project_id,
+                        configuration.get("model_artifact_id"),
+                    )
+
+                cluster_discovery = bool(configuration.get("clustering")) and bool(
+                    configuration.get("cluster_discovery")
+                )
+                frozen_cluster_artifact = None
+                frozen_cluster_payload = None
+                if cluster_discovery and model_package is not None:
+                    existing = _existing_cluster_discovery_artifact(
+                        db,
+                        task.id,
+                        preview.task_revision,
+                        preview.config_hash,
+                    )
+                    if existing is not None:
+                        frozen_cluster_artifact, frozen_cluster_payload = existing
+                    else:
+                        def cluster_source_batches():
+                            for scope_batch in frozen_scope_batches():
+                                sample_id_batch = [sample_id for sample_id, _ in scope_batch]
+                                _, _, source_values = _source_rows_for_sample_ids(
+                                    db,
+                                    task.dataset_version_id,
+                                    sample_id_batch,
+                                )
+                                yield tuple(sample_id_batch), pd.DataFrame.from_dict(source_values, orient="index")
+
+                        try:
+                            frozen_cluster_artifact, frozen_cluster_payload = (
+                                build_streaming_cluster_artifact_from_package(
+                                    model_package,
+                                    cluster_source_batches,
+                                    seed=int(configuration.get("random_seed", 42)),
+                                    task_revision=preview.task_revision,
+                                    total_sample_count=sample_scope_count,
+                                    on_batch=lambda: heartbeat_operation(db, operation_id, worker_id, 300),
+                                )
+                            )
+                        except StrategyConfigError:
+                            raise
+                        except (ValueError, TypeError, KeyError) as error:
+                            code = str(error).split(":", 1)[0]
+                            raise StrategyConfigError(
+                                "weighted clustering cannot complete for this task range",
+                                code if code.startswith(("CLUSTER_", "FEATURE_IMPORTANCE_")) else "CLUSTERING_FAILED",
+                            ) from error
+
+                needs_review_count = 0
+                cluster_counts: dict[str, int] = {}
+                for scope_batch in frozen_scope_batches():
+                    sample_id_batch = [sample_id for sample_id, _ in scope_batch]
+                    row_indexes = {sample_id: row_index for sample_id, row_index in scope_batch}
+                    source_rows, rows_by_id, rows = _source_rows_for_sample_ids(
+                        db,
+                        task.dataset_version_id,
+                        sample_id_batch,
+                    )
+                    summary["source_rows_found"] += len(source_rows)
+                    strategy_kwargs = {"model_package": model_package}
+                    if frozen_cluster_artifact is not None:
+                        try:
+                            cluster_ids = assign_clusters_from_artifact(
+                                pd.DataFrame.from_dict(rows, orient="index"),
+                                frozen_cluster_artifact,
+                            )
+                        except (ValueError, TypeError, KeyError) as error:
+                            code = str(error).split(":", 1)[0]
+                            raise StrategyConfigError(
+                                "frozen cluster artifact cannot assign this preview batch",
+                                code if code.startswith("CLUSTER_") else "CLUSTERING_FAILED",
+                            ) from error
+                        strategy_kwargs.update({
+                            "precomputed_cluster_artifact": frozen_cluster_payload,
+                            "precomputed_cluster_ids": {
+                                sample_id: int(cluster_id)
+                                for sample_id, cluster_id in zip(sample_id_batch, cluster_ids)
+                            },
+                        })
+                    strategy_result = apply_preview_annotation_strategy(
+                        db,
+                        task_id=task.id,
+                        task_revision=preview.task_revision,
+                        config_hash=preview.config_hash,
+                        actor_id=owner_uuid,
+                        project_id=task.project_id,
+                        schema_snapshot=snapshot.get("label_schema", {}),
+                        configuration=configuration,
+                        rows=rows,
+                        row_indexes=row_indexes,
+                        scope_sample_count=sample_scope_count,
+                        **strategy_kwargs,
+                    )
+                    strategy_artifact = strategy_result.artifact
+                    summary["strategy"] = strategy_artifact.strategy
+                    summary["strategy_artifact_id"] = str(strategy_artifact.id)
+                    strategy_payload = dict(strategy_artifact.artifact or {})
+                    summary["configuration_complete"] = strategy_payload.get("configuration_complete", True)
+                    summary["model_version_id"] = strategy_payload.get("model_version_id")
+                    needs_review_count += sum(
+                        decision.status == "needs_review"
+                        for decision in strategy_result.decisions.values()
+                    )
+                    for decision in strategy_result.decisions.values():
+                        if decision.cluster_id is not None:
+                            key = str(decision.cluster_id)
+                            cluster_counts[key] = cluster_counts.get(key, 0) + 1
+                    existing_ids = {
                         item.sample_id
                         for item in db.query(AnnotationTaskPreviewSample).filter(
                             AnnotationTaskPreviewSample.preview_id == preview_uuid,
                             AnnotationTaskPreviewSample.sample_id.in_(sample_id_batch),
                         ).limit(len(sample_id_batch)).all()
-                    )
-                for batch_start in range(0, len(sample_ids), _PREVIEW_BATCH_SIZE):
-                    sample_id_batch = sample_ids[batch_start:batch_start + _PREVIEW_BATCH_SIZE]
-                    for offset, sample_id in enumerate(sample_id_batch):
+                    }
+                    for sample_id in sample_id_batch:
                         if sample_id in existing_ids:
                             continue
                         source_row = rows_by_id.get(sample_id)
                         source_values = dict(source_row.values or {}) if source_row is not None else {}
                         values = {column: source_values.get(column) for column in visible_columns} if visible_columns else source_values
-                        decision = automatic_decisions.get(sample_id)
+                        decision = strategy_result.decisions.get(sample_id)
                         if decision is not None:
                             values["annotation_decision"] = {
                                 "status": decision.status,
@@ -190,24 +339,33 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                         db.add(AnnotationTaskPreviewSample(
                             preview_id=preview_uuid,
                             sample_id=sample_id,
-                            row_index=batch_start + offset,
+                            row_index=row_indexes[sample_id],
                             values=values,
                         ))
                     db.flush()
+                    heartbeat_operation(db, operation_id, worker_id, 300)
+                summary["needs_review_count"] = needs_review_count
+                summary["clusters"] = [
+                    {
+                        "cluster_id": int(cluster_id) if cluster_id.lstrip("-").isdigit() else cluster_id,
+                        "sample_count": cluster_counts[cluster_id],
+                    }
+                    for cluster_id in sorted(cluster_counts, key=lambda value: (not value.lstrip("-").isdigit(), value))
+                ]
             else:
                 # Manual previews do not need a task-wide in-memory row map.
                 # Read one source batch, materialize it, and release it before
                 # loading the next batch.
                 heartbeat_operation(db, operation_id, worker_id, 300)
-                for batch_start in range(0, len(sample_ids), _PREVIEW_BATCH_SIZE):
-                    sample_id_batch = sample_ids[batch_start:batch_start + _PREVIEW_BATCH_SIZE]
-                    source_rows = [
-                        row
-                        for batch in _dataset_sample_batches(db, task.dataset_version_id, sample_id_batch)
-                        for row in batch
-                    ]
+                for scope_batch in frozen_scope_batches():
+                    sample_id_batch = [sample_id for sample_id, _ in scope_batch]
+                    row_indexes = {sample_id: row_index for sample_id, row_index in scope_batch}
+                    source_rows, rows_by_id, _ = _source_rows_for_sample_ids(
+                        db,
+                        task.dataset_version_id,
+                        sample_id_batch,
+                    )
                     summary["source_rows_found"] += len(source_rows)
-                    rows_by_id = {row.sample_id: row for row in source_rows}
                     existing_ids = {
                         item.sample_id
                         for item in db.query(AnnotationTaskPreviewSample).filter(
@@ -215,7 +373,7 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                             AnnotationTaskPreviewSample.sample_id.in_(sample_id_batch),
                         ).limit(len(sample_id_batch)).all()
                     }
-                    for offset, sample_id in enumerate(sample_id_batch):
+                    for sample_id in sample_id_batch:
                         if sample_id in existing_ids:
                             continue
                         source_row = rows_by_id.get(sample_id)
@@ -224,7 +382,7 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                         db.add(AnnotationTaskPreviewSample(
                             preview_id=preview_uuid,
                             sample_id=sample_id,
-                            row_index=batch_start + offset,
+                            row_index=row_indexes[sample_id],
                             values=values,
                         ))
                     db.flush()
