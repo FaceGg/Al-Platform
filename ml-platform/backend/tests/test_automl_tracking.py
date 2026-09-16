@@ -756,7 +756,7 @@ class TestAutoMLTracking(unittest.TestCase):
             self.execute(job_id)
             with self.Session() as db:
                 values[strength] = db.get(TrainingJob, job_id).metrics["search"]["selected_params"]["n_estimators"]
-        self.assertLess(values["light"], values["maximum"])
+        self.assertLess(values["light"], values["ultra"])
 
     def test_grid_trial_specs_use_cartesian_parameter_combinations(self):
         from app.services.automl_catalog import resolve_algorithm_families

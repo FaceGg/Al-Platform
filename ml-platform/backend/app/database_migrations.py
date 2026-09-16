@@ -95,6 +95,7 @@ _SQLITE_COLUMNS = {
         "request_hash": "VARCHAR(64) NOT NULL DEFAULT ''",
     },
     "durable_operations": {
+        "request_fingerprint": "VARCHAR(64)",
         "result_summary": "JSON",
         "updated_at": "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
     },
@@ -115,6 +116,7 @@ _SQLITE_COLUMNS = {
     },
     "annotation_assignments": {
         "idempotency_key": "VARCHAR(128)",
+        "paused_from_state": "VARCHAR(32)",
     },
 }
 

@@ -13,10 +13,12 @@ from app.models.labeling import (
     AnnotationAssignmentSample,
     AnnotationReturnBatch,
     AnnotationRevision,
+    AnnotationSampleCurrent,
     LabelSchema,
 )
 from app.models.platform_models import GenericAnnotationTask
 from app.models.operation import DurableOperation
+from app.models.access import AuditEvent
 from app.services.label_schema import LabelColumnContract, LabelSchemaContract, validate_label_values
 
 
@@ -181,16 +183,180 @@ def create_assignments(
         }
         if any(subject_id not in active_accounts for subject_id in annotator_ids):
             raise AssignmentError("annotator account is not active", "ANNOTATOR_FORBIDDEN")
+        current_values = {
+            row.sample_id: row
+            for row in db.query(AnnotationSampleCurrent).filter(
+                AnnotationSampleCurrent.task_id == task.id,
+                AnnotationSampleCurrent.sample_id.in_(ids),
+            ).all()
+        }
+        if task.mode == "automatic":
+            missing = sorted(set(ids) - set(current_values))
+            if missing:
+                raise AssignmentError(
+                    "automatic labels have not been published for the assignment scope",
+                    "AUTOMATIC_LABELS_NOT_PUBLISHED",
+                )
+    else:
+        current_values = {}
     result = []
     for subject_id in dict.fromkeys(annotator_ids):
         assignment = AnnotationAssignment(task_id=task_id, annotator_subject_id=subject_id, sample_scope={"kind": "ids", "sample_ids": ids}, scope_hash=digest, due_at=due_at, created_by=actor_id, idempotency_key=idempotency_key, task_revision=initial_revision, last_edit_revision=initial_revision)
         db.add(assignment)
         db.flush()
         for sample_id in ids:
-            db.add(AnnotationAssignmentSample(assignment_id=assignment.id, sample_id=sample_id, revision_no=initial_revision, values=dict((initial_values or {}).get(sample_id, {}))))
+            current = current_values.get(sample_id)
+            values = dict(current.values or {}) if current is not None else dict((initial_values or {}).get(sample_id, {}))
+            revision_no = current.revision_no if current is not None else initial_revision
+            db.add(AnnotationAssignmentSample(
+                assignment_id=assignment.id,
+                sample_id=sample_id,
+                revision_no=revision_no,
+                values=values,
+            ))
         result.append(assignment)
     db.commit()
     return result
+
+
+def transition_assignment(
+    db: Session,
+    assignment_id,
+    *,
+    action: str,
+    task_revision: int,
+    actor,
+    idempotency_key: str | None = None,
+    request_id=None,
+):
+    return _transition_assignment(
+        db,
+        assignment_id,
+        action=action,
+        task_revision=task_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        request_id=request_id,
+    )
+
+
+def _assignment_command_fingerprint(action: str, task_revision: int) -> str:
+    payload = json.dumps(
+        {"action": action, "task_revision": int(task_revision)},
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _transition_assignment(
+    db: Session,
+    assignment_id,
+    *,
+    action: str,
+    task_revision: int,
+    actor,
+    idempotency_key: str | None = None,
+    request_id=None,
+):
+    assignment = db.get(AnnotationAssignment, assignment_id)
+    if assignment is None:
+        raise AssignmentError("assignment not found", "ASSIGNMENT_NOT_FOUND")
+    task = _task_context(db, assignment.task_id)
+    if task is not None:
+        _ensure_task_access(db, task, actor)
+    command_operation = None
+    command_fingerprint = None
+    actor_id = getattr(actor, "id", actor)
+    if idempotency_key:
+        if len(idempotency_key) > 128:
+            raise AssignmentError("idempotency key is invalid", "IDEMPOTENCY_KEY_INVALID")
+        command_fingerprint = _assignment_command_fingerprint(action, task_revision)
+        command_operation = db.query(DurableOperation).filter(
+            DurableOperation.resource_key == f"annotation-assignment-command:{assignment.id}:{actor_id}:{action}",
+            DurableOperation.idempotency_key == idempotency_key,
+        ).one_or_none()
+        if command_operation is not None:
+            if command_operation.request_fingerprint != command_fingerprint:
+                raise AssignmentError("idempotency key was already used for a different request", "IDEMPOTENCY_CONFLICT")
+            stored = dict(command_operation.result_summary or {}).get("response")
+            assignment._command_operation_id = command_operation.id
+            assignment._command_response_payload = stored if isinstance(stored, dict) else None
+            return assignment
+    if task is not None and task.status in {"paused", "cancelled", "archived", "completed"}:
+        raise AssignmentLockedError("task does not accept assignment changes")
+    if assignment.task_revision != task_revision:
+        raise AssignmentError("assignment revision is stale", "ASSIGNMENT_REVISION_CONFLICT")
+    transitions = {
+        "pause": {"pending": "paused", "edit_for_return": "paused"},
+        "resume": {"paused": "__restore__"},
+        "revoke": {"pending": "revoked", "paused": "revoked", "edit_for_return": "revoked"},
+    }
+    next_state = transitions.get(action, {}).get(assignment.state)
+    if next_state is None:
+        raise AssignmentError("assignment state transition is invalid", "ASSIGNMENT_STATE_INVALID")
+    previous_state = assignment.state
+    if action == "pause":
+        assignment.paused_from_state = previous_state
+    elif action == "resume":
+        next_state = assignment.paused_from_state or "pending"
+        if next_state not in {"pending", "edit_for_return"}:
+            raise AssignmentError("assignment state transition is invalid", "ASSIGNMENT_STATE_INVALID")
+        assignment.paused_from_state = None
+    elif action == "revoke":
+        assignment.paused_from_state = None
+    assignment.state = next_state
+    if idempotency_key:
+        command_operation = DurableOperation(
+            project_id=task.project_id if task is not None else None,
+            task_id=task.id if task is not None else None,
+            resource_type="annotation_assignment_command",
+            resource_key=f"annotation-assignment-command:{assignment.id}:{actor_id}:{action}",
+            idempotency_key=idempotency_key,
+            request_fingerprint=command_fingerprint,
+            state="completed",
+            stage="completed",
+            progress=100,
+        )
+        db.add(command_operation)
+        db.flush()
+    if task is not None:
+        db.add(AuditEvent(
+            project_id=task.project_id,
+            actor_id=actor_id,
+            actor_username=getattr(actor, "username", str(actor_id)),
+            action=f"annotation_assignment.{action}",
+            resource_type="annotation_assignment",
+            resource_id=str(assignment.id),
+            result="success",
+            request_id=request_id or uuid.uuid4(),
+            changes={
+                "from_state": previous_state,
+                "to_state": next_state,
+                "task_revision": task_revision,
+                **({"idempotency_key": idempotency_key} if idempotency_key else {}),
+            },
+        ))
+    response = {
+        "id": str(assignment.id),
+        "task_id": str(assignment.task_id),
+        "annotator_subject_id": str(assignment.annotator_subject_id),
+        "sample_scope": assignment.sample_scope or {},
+        "scope_hash": assignment.scope_hash,
+        "state": assignment.state,
+        "task_revision": assignment.task_revision,
+        "due_at": assignment.due_at.isoformat() if assignment.due_at else None,
+    }
+    if command_operation is not None:
+        response["operation_id"] = str(command_operation.id)
+        command_operation.result_summary = {"response": response}
+    db.commit()
+    db.refresh(assignment)
+    if command_operation is not None:
+        assignment._command_operation_id = command_operation.id
+        assignment._command_response_payload = response
+    return assignment
 
 
 def _get_sample(db, assignment_id, sample_id):
@@ -213,7 +379,7 @@ def save_labels(
     assignment = db.get(AnnotationAssignment, assignment_id)
     if assignment is None:
         raise AssignmentError("assignment not found", "ASSIGNMENT_NOT_FOUND")
-    if assignment.state in {"returned_pending_acceptance", "revoked"}:
+    if assignment.state in {"paused", "returned_pending_acceptance", "revoked"}:
         raise AssignmentLockedError()
     task = _task_context(db, assignment.task_id)
     if task is not None:
@@ -233,6 +399,38 @@ def save_labels(
             except ValueError as error:
                 raise AssignmentError(str(error), getattr(error, "code", "LABEL_VALUE_INVALID")) from error
     next_revision = base_revision + 1
+    current = None
+    if task is not None and task.label_schema_id:
+        current = db.query(AnnotationSampleCurrent).filter_by(
+            task_id=task.id,
+            sample_id=sample_id,
+        ).one_or_none()
+        if current is not None:
+            if current.schema_id != task.label_schema_id:
+                raise AssignmentError("current label state uses another schema", "LABEL_SCHEMA_MISMATCH")
+            if current.revision_no != base_revision:
+                return RevisionConflict(current.revision_no, dict(current.values or {}), {"sample_id": sample_id})
+            updated = db.query(AnnotationSampleCurrent).filter(
+                AnnotationSampleCurrent.id == current.id,
+                AnnotationSampleCurrent.revision_no == base_revision,
+            ).update({
+                AnnotationSampleCurrent.values: dict(merged),
+                AnnotationSampleCurrent.revision_no: next_revision,
+            }, synchronize_session=False)
+            if updated != 1:
+                db.rollback()
+                latest = db.query(AnnotationSampleCurrent).filter_by(task_id=task.id, sample_id=sample_id).one_or_none()
+                if latest is not None:
+                    return RevisionConflict(latest.revision_no, dict(latest.values or {}), {"sample_id": sample_id})
+                raise AssignmentError("current label state was not found", "LABEL_SAMPLE_NOT_FOUND")
+        else:
+            db.add(AnnotationSampleCurrent(
+                task_id=task.id,
+                sample_id=sample_id,
+                schema_id=task.label_schema_id,
+                revision_no=next_revision,
+                values=dict(merged),
+            ))
     # Overlapping assignments share one task/sample label state. Mirror the
     # successful write into every assignment's view so a stale editor cannot
     # silently overwrite the latest complete label set.
@@ -294,6 +492,8 @@ def confirm_assignment(db: Session, assignment_id, task_revision: int, scope_has
     assignment = db.get(AnnotationAssignment, assignment_id)
     if assignment is None:
         raise AssignmentError("assignment not found", "ASSIGNMENT_NOT_FOUND")
+    if assignment.state in {"paused", "revoked", "returned_pending_acceptance"}:
+        raise AssignmentLockedError()
     if assignment.task_revision != task_revision or assignment.scope_hash != scope_hash:
         raise AssignmentError("assignment revision or scope is stale", "ASSIGNMENT_REVISION_CONFLICT")
     task = _task_context(db, assignment.task_id)
@@ -360,7 +560,7 @@ def return_assignment(db: Session, assignment_id, task_revision: int, scope_hash
         _ensure_task_writable(task)
     if assignment.scope_hash != scope_hash or assignment.task_revision != task_revision:
         raise AssignmentError("assignment revision or scope is stale", "ASSIGNMENT_REVISION_CONFLICT")
-    if assignment.state in {"returned_pending_acceptance", "edit_for_return"}:
+    if assignment.state in {"paused", "revoked", "returned_pending_acceptance", "edit_for_return"}:
         raise AssignmentLockedError()
     db.query(AnnotationReturnBatch).filter(
         AnnotationReturnBatch.assignment_id == assignment.id,
@@ -374,6 +574,9 @@ def return_assignment(db: Session, assignment_id, task_revision: int, scope_hash
     db.add(batch)
     db.flush()
     operation = DurableOperation(
+        project_id=task.project_id if task is not None else None,
+        task_id=task.id if task is not None else None,
+        resource_type="annotation_return",
         resource_key=f"annotation-return:{batch.id}",
         idempotency_key=idempotency_key,
         state="queued",

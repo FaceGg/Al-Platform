@@ -22,6 +22,14 @@ from app.models.user import User
 from app.models.access import ProjectMember
 
 
+def test_technical_annotation_task_routes_are_exposed():
+    paths = app.openapi()["paths"]
+    assert "post" in paths["/api/annotation-tasks/{task_id}/publish"]
+    assert "post" in paths["/api/annotation-tasks/{task_id}/pause"]
+    assert "post" in paths["/api/annotation-tasks/{task_id}/reopen"]
+    assert "patch" in paths["/api/annotation-tasks/{task_id}/assignments/{assignment_id}"]
+
+
 @pytest.mark.parametrize("role,expected_status", [("editor", 201), ("viewer", 403), ("outsider", 404)])
 def test_annotation_draft_creation_uses_project_permission(role, expected_status):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -663,6 +671,80 @@ def test_preview_list_hides_task_from_non_owner_and_supports_cursor():
         app.dependency_overrides[get_current_user] = lambda: other
         hidden = client.get(f"/api/annotation-tasks/{task['id']}/previews")
         assert hidden.status_code == 404
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
+def test_publish_route_returns_and_replays_durable_command_receipt():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"publish-route-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Publish route", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    schema = LabelSchema(project_id=project.id, name="publish-labels", version=1, status="active")
+    db.add(schema)
+    db.flush()
+    db.add(LabelColumn(schema_id=schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"))
+    task = GenericAnnotationTask(
+        project_id=project.id,
+        dataset_version_id=uuid.uuid4(),
+        label_schema_id=schema.id,
+        owner_id=user.id,
+        mode="manual",
+        status="preview_ready",
+        task_revision=0,
+        sample_scope={"kind": "ids", "sample_ids": ["s-1"]},
+        task_snapshot={"sample_ids": ["s-1"], "config_hash": "sha256:publish-route"},
+    )
+    db.add(task)
+    db.flush()
+    preview = AnnotationTaskPreview(
+        task_id=task.id,
+        task_revision=0,
+        config_hash="sha256:publish-route",
+        status="completed",
+        progress=100,
+        created_by=user.id,
+        summary={"configuration_complete": True, "needs_review_count": 0},
+    )
+    db.add(preview)
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    client = TestClient(app)
+    request_id = str(uuid.uuid4())
+    headers = {"X-Request-ID": request_id, "Idempotency-Key": "publish-route-key"}
+    try:
+        first = client.post(
+            f"/api/annotation-tasks/{task.id}/publish",
+            headers=headers,
+            json={"task_revision": 0, "preview_id": str(preview.id)},
+        )
+        assert first.status_code == 202, first.text
+        assert first.json()["status"] == "awaiting_annotation"
+        assert first.json()["operation_id"]
+
+        repeated = client.post(
+            f"/api/annotation-tasks/{task.id}/publish",
+            headers=headers,
+            json={"task_revision": 0, "preview_id": str(preview.id)},
+        )
+        assert repeated.status_code == 202, repeated.text
+        assert repeated.json() == first.json()
+
+        conflict = client.post(
+            f"/api/annotation-tasks/{task.id}/publish",
+            headers=headers,
+            json={"task_revision": 1, "preview_id": str(preview.id)},
+        )
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
     finally:
         app.dependency_overrides.clear()
         db.close()

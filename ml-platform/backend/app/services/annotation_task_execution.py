@@ -52,6 +52,10 @@ def request_annotation_execution(db, task_id, preview_id, actor_id) -> Annotatio
         raise ValueError("TASK_STATE_INVALID")
     if operation is None:
         operation = DurableOperation(
+            project_id=task.project_id,
+            task_id=task.id,
+            preview_id=preview.id,
+            resource_type="annotation_execution",
             resource_key=resource_key,
             idempotency_key=idempotency_key,
             state="queued",
@@ -70,6 +74,11 @@ def request_annotation_execution(db, task_id, preview_id, actor_id) -> Annotatio
             ).one_or_none()
             if operation is None:
                 raise
+    else:
+        operation.project_id = task.project_id
+        operation.task_id = task.id
+        operation.preview_id = preview.id
+        operation.resource_type = "annotation_execution"
     if task.status in {"preview_ready", "ready", "paused"}:
         task.status = "executing"
     db.commit()

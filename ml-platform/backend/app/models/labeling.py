@@ -161,6 +161,7 @@ class AnnotationAssignment(Base):
     scope_hash = Column(String(128), nullable=False)
     due_at = Column(DateTime, nullable=True)
     state = Column(String(32), nullable=False, default="pending")
+    paused_from_state = Column(String(32), nullable=True)
     task_revision = Column(Integer, nullable=False, default=0)
     last_edit_revision = Column(Integer, nullable=False, default=0)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)

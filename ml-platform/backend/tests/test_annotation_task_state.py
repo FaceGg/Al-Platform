@@ -5,23 +5,42 @@ import joblib
 import numpy as np
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Query, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.models.labeling import AnnotationStrategyArtifact, LabelColumn, LabelSchema
+from app.models.annotator import AnnotatorAccount, ProjectAnnotatorGrant
+from app.models.labeling import (
+    AnnotationAssignmentSample,
+    AnnotationRevision,
+    AnnotationSampleCurrent,
+    AnnotationStrategyArtifact,
+    LabelColumn,
+    LabelSchema,
+)
 from app.models.artifact import Artifact
 from app.models.access import AuditEvent
+from app.models.data_version import DatasetSample
 from app.models.operation import DurableOperation
-from app.models.platform_models import AnnotationTaskExecutionResult, AnnotationTaskPreview, AnnotationTaskPreviewSample, GenericAnnotationTask
+from app.models.platform_models import (
+    AnnotationTaskExecutionResult,
+    AnnotationTaskPreview,
+    AnnotationTaskPreviewSample,
+    AnnotationTaskRevisionSnapshot,
+    GenericAnnotationTask,
+)
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.annotation_tasks import TaskAction
 from app.services.annotation_task_state import (
     create_annotation_preview,
+    current_annotation_task_preview,
+    list_annotation_preview_samples,
+    list_annotation_previews,
     list_annotation_tasks,
     transition_annotation_task,
 )
+from app.services.annotation_concurrency import create_assignments
 
 
 class _SessionContext:
@@ -77,6 +96,95 @@ def test_manual_task_publish_requires_preview_ready(db):
     task, user, _ = _task(db)
     with pytest.raises(ValueError, match="TASK_STATE_INVALID"):
         transition_annotation_task(db, task.id, expected_revision=0, action=TaskAction.publish, actor_id=user.id)
+
+
+def test_publish_keeps_the_configuration_revision_and_current_preview(db):
+    task, user, _ = _task(db)
+    preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:publish-configuration", actor_id=user.id)
+    preview.status = "completed"
+    preview.progress = 100
+    task.status = "preview_ready"
+    db.commit()
+
+    published = transition_annotation_task(
+        db,
+        task.id,
+        expected_revision=0,
+        action=TaskAction.publish,
+        actor_id=user.id,
+    )
+
+    assert published.status == "awaiting_annotation"
+    assert published.task_revision == 0
+    assert current_annotation_task_preview(db, published).id == preview.id
+
+
+def test_task_lifecycle_command_receipt_replays_before_revision_validation(db):
+    task, user, _ = _task(db)
+    task.status = "preview_ready"
+    db.commit()
+
+    first = transition_annotation_task(
+        db,
+        task.id,
+        expected_revision=0,
+        action=TaskAction.pause,
+        actor_id=user.id,
+        idempotency_key="pause-command",
+        request_id=uuid.uuid4(),
+    )
+    operation = db.query(DurableOperation).filter_by(
+        task_id=task.id,
+        resource_type="annotation_task_command",
+        idempotency_key="pause-command",
+    ).one()
+    assert first.status == "paused"
+    assert operation.result_summary["response"]["status"] == "paused"
+
+    task.status = "completed"
+    db.commit()
+    replay = transition_annotation_task(
+        db,
+        task.id,
+        expected_revision=0,
+        action=TaskAction.pause,
+        actor_id=user.id,
+        idempotency_key="pause-command",
+        request_id=uuid.uuid4(),
+    )
+    assert replay._command_replayed is True
+    assert replay._command_operation_id == operation.id
+    assert replay._command_response_payload == operation.result_summary["response"]
+
+    with pytest.raises(ValueError, match="IDEMPOTENCY_CONFLICT"):
+        transition_annotation_task(
+            db,
+            task.id,
+            expected_revision=0,
+            action=TaskAction.pause,
+            actor_id=user.id,
+            idempotency_key="pause-command",
+            reason="changed payload",
+        )
+
+
+def test_reopen_creates_a_new_configuration_revision_snapshot(db):
+    task, user, _ = _task(db)
+    task.status = "completed"
+    db.commit()
+
+    reopened = transition_annotation_task(
+        db,
+        task.id,
+        expected_revision=0,
+        action=TaskAction.reopen,
+        actor_id=user.id,
+    )
+
+    assert reopened.status == "in_progress"
+    assert reopened.task_revision == 1
+    snapshot = db.query(AnnotationTaskRevisionSnapshot).filter_by(task_id=task.id, task_revision=1).one()
+    assert snapshot.snapshot == task.task_snapshot
 
 
 def test_all_project_task_api_paginates_without_losing_owner_scope(db):
@@ -191,6 +299,116 @@ def test_execute_worker_persists_results_and_is_repeatable(db, monkeypatch):
     assert db.query(AnnotationTaskExecutionResult).filter_by(operation_id=requested.operation_id).count() == 2
 
 
+def test_execute_worker_publishes_current_labels_and_assignments_copy_them(db, monkeypatch):
+    task, user, project = _task(db)
+    task.mode = "automatic"
+    preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:execution-label-publication", actor_id=user.id)
+    preview.status = "completed"
+    preview.progress = 100
+    db.add_all([
+        AnnotationTaskPreviewSample(
+            preview_id=preview.id,
+            sample_id="s-1",
+            row_index=0,
+            values={
+                "annotation_decision": {
+                    "values": {"label": "auto-a"},
+                    "provenance": {"label": {"source": "model"}},
+                    "model_output": {"label": "auto-a"},
+                    "cluster_id": 1,
+                    "matched_rule_ids": ["rule-a"],
+                }
+            },
+        ),
+        AnnotationTaskPreviewSample(
+            preview_id=preview.id,
+            sample_id="s-2",
+            row_index=1,
+            values={"annotation_decision": {"values": {"label": "auto-b"}}},
+        ),
+    ])
+    task.status = "preview_ready"
+    db.commit()
+
+    from app.services.annotation_task_execution import request_annotation_execution
+    from app.tasks.annotation_execution_tasks import execute_annotation_task
+
+    requested = request_annotation_execution(db, task.id, preview.id, user.id)
+    monkeypatch.setattr("app.tasks.annotation_execution_tasks.SessionLocal", lambda: db)
+    result = execute_annotation_task.run(str(task.id), str(preview.id), str(user.id), str(requested.operation_id))
+
+    assert result["status"] == "completed"
+    current = db.query(AnnotationSampleCurrent).filter_by(task_id=task.id).order_by(AnnotationSampleCurrent.sample_id).all()
+    assert [(row.sample_id, row.values, row.revision_no) for row in current] == [
+        ("s-1", {"label": "auto-a"}, 0),
+        ("s-2", {"label": "auto-b"}, 0),
+    ]
+    revisions = db.query(AnnotationRevision).filter_by(task_id=task.id).order_by(AnnotationRevision.sample_id).all()
+    assert [(row.sample_id, row.values, row.revision_no, row.source, row.action) for row in revisions] == [
+        ("s-1", {"label": "auto-a"}, 0, "automatic", "initialize"),
+        ("s-2", {"label": "auto-b"}, 0, "automatic", "initialize"),
+    ]
+    assert all(row.provenance_ref == f"annotation-execution:{requested.operation_id}" for row in revisions)
+
+    subject_id = uuid.uuid4()
+    db.add_all([
+        AnnotatorAccount(subject_id=subject_id, username=f"automatic-{uuid.uuid4().hex}", password_hash="hash", status="active"),
+        ProjectAnnotatorGrant(project_id=project.id, subject_id=subject_id, status="active", granted_by=user.id),
+    ])
+    db.commit()
+    assignment = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[subject_id],
+        sample_scope={"kind": "ids", "sample_ids": ["s-1", "s-2"]},
+        actor=user.id,
+        initial_revision=task.task_revision,
+        idempotency_key="automatic-label-assignment",
+    )[0]
+    assigned = db.query(AnnotationAssignmentSample).filter_by(assignment_id=assignment.id).order_by(AnnotationAssignmentSample.sample_id).all()
+    assert [(row.sample_id, row.values, row.revision_no) for row in assigned] == [
+        ("s-1", {"label": "auto-a"}, 0),
+        ("s-2", {"label": "auto-b"}, 0),
+    ]
+
+
+def test_execute_worker_rejects_nonready_results_without_publishing_labels(db, monkeypatch):
+    task, user, _ = _task(db)
+    task.mode = "automatic"
+    preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:execution-nonready-output", actor_id=user.id)
+    preview.status = "completed"
+    preview.progress = 100
+    db.add_all([
+        AnnotationTaskPreviewSample(
+            preview_id=preview.id,
+            sample_id="s-1",
+            row_index=0,
+            values={"annotation_decision": {"values": {"label": "auto-a"}, "status": "ready"}},
+        ),
+        AnnotationTaskPreviewSample(
+            preview_id=preview.id,
+            sample_id="s-2",
+            row_index=1,
+            values={"annotation_decision": {"values": {"label": "auto-b"}, "status": "failed"}},
+        ),
+    ])
+    task.status = "preview_ready"
+    db.commit()
+
+    from app.services.annotation_task_execution import request_annotation_execution
+    from app.tasks.annotation_execution_tasks import execute_annotation_task
+
+    requested = request_annotation_execution(db, task.id, preview.id, user.id)
+    monkeypatch.setattr("app.tasks.annotation_execution_tasks.SessionLocal", lambda: db)
+    result = execute_annotation_task.run(str(task.id), str(preview.id), str(user.id), str(requested.operation_id))
+
+    assert result["status"] == "failed"
+    assert db.get(DurableOperation, requested.operation_id).state == "failed"
+    assert db.query(AnnotationTaskExecutionResult).filter_by(operation_id=requested.operation_id).count() == 0
+    assert db.query(AnnotationSampleCurrent).filter_by(task_id=task.id).count() == 0
+    assert db.query(AnnotationRevision).filter_by(task_id=task.id).count() == 0
+
+
 def test_execution_results_are_cursor_paginated_and_owner_scoped(db, monkeypatch):
     task, user, _ = _task(db)
     preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:execute-page", actor_id=user.id)
@@ -223,6 +441,101 @@ def test_execution_results_are_cursor_paginated_and_owner_scoped(db, monkeypatch
         list_annotation_execution_results(db, task.id, requested.operation_id, other.id, limit=1)
 
 
+def test_execute_worker_materializes_results_in_bounded_batches(db, monkeypatch):
+    task, user, _ = _task(db)
+    preview = create_annotation_preview(
+        db,
+        task.id,
+        task_revision=0,
+        config_hash="sha256:bounded-execution",
+        actor_id=user.id,
+    )
+    preview.status = "completed"
+    preview.progress = 100
+    task.status = "preview_ready"
+    db.add_all([
+        AnnotationTaskPreviewSample(
+            preview_id=preview.id,
+            sample_id=f"bounded-{index}",
+            row_index=index,
+            values={"label": f"value-{index}"},
+        )
+        for index in range(3)
+    ])
+    db.commit()
+
+    from app.services.annotation_task_execution import request_annotation_execution
+    from app.tasks.annotation_execution_tasks import execute_annotation_task
+
+    requested = request_annotation_execution(db, task.id, preview.id, user.id)
+    monkeypatch.setattr("app.tasks.annotation_execution_tasks.SessionLocal", lambda: db)
+    original_all = Query.all
+
+    def bounded_all(query):
+        assert query._limit_clause is not None, f"unbounded row query: {query}"
+        return original_all(query)
+
+    monkeypatch.setattr(Query, "all", bounded_all)
+    result = execute_annotation_task.run(
+        str(task.id),
+        str(preview.id),
+        str(user.id),
+        str(requested.operation_id),
+    )
+
+    assert result["status"] == "completed"
+    assert db.query(AnnotationTaskExecutionResult).filter_by(operation_id=requested.operation_id).count() == 3
+
+
+def test_preview_worker_materializes_source_rows_in_bounded_batches(db, monkeypatch):
+    task, user, _ = _task(db)
+    sample_ids = [f"preview-bounded-{index}" for index in range(3)]
+    frozen_snapshot = {
+        "config_hash": "sha256:preview-bounded",
+        "sample_ids": sample_ids,
+        "visible_columns": ["feature"],
+        "label_schema": {"columns": [{"machine_key": "label"}]},
+    }
+    db.query(GenericAnnotationTask).filter_by(id=task.id).update(
+        {GenericAnnotationTask.task_snapshot: frozen_snapshot},
+        synchronize_session=False,
+    )
+    db.refresh(task)
+    db.add_all([
+        DatasetSample(
+            dataset_version_id=task.dataset_version_id,
+            sample_id=sample_id,
+            row_index=index,
+            values={"feature": index},
+        )
+        for index, sample_id in enumerate(sample_ids)
+    ])
+    db.commit()
+
+    preview = create_annotation_preview(
+        db,
+        task.id,
+        task_revision=0,
+        config_hash="sha256:preview-bounded",
+        actor_id=user.id,
+    )
+    from app.tasks.annotation_preview_tasks import execute_annotation_preview
+
+    monkeypatch.setattr("app.tasks.annotation_preview_tasks.SessionLocal", lambda: db)
+    original_all = Query.all
+
+    def bounded_all(query):
+        assert query._limit_clause is not None, f"unbounded preview row query: {query}"
+        return original_all(query)
+
+    monkeypatch.setattr(Query, "all", bounded_all)
+    result = execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
+
+    assert result["status"] == "completed", db.get(AnnotationTaskPreview, preview.id).error
+    persisted = db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview.id).limit(10).all()
+    assert [item.sample_id for item in persisted] == sample_ids
+
+
 def test_execution_stats_are_persisted_and_cursor_paginated(db, monkeypatch):
     task, user, _ = _task(db)
     preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:execute-stats", actor_id=user.id)
@@ -241,7 +554,22 @@ def test_execution_stats_are_persisted_and_cursor_paginated(db, monkeypatch):
     monkeypatch.setattr("app.tasks.annotation_execution_tasks.SessionLocal", lambda: db)
     execute_annotation_task.run(str(task.id), str(preview.id), str(user.id), str(requested.operation_id))
 
+    from app.models.platform_models import AnnotationTaskExecutionStatistic
     from app.services.annotation_task_state import list_annotation_execution_stats
+
+    persisted = db.query(AnnotationTaskExecutionStatistic).filter_by(operation_id=requested.operation_id).all()
+    assert {
+        (item.kind, item.payload["key"], item.count)
+        for item in persisted
+    } == {
+        ("cluster", "1", 2),
+        ("rule", "r-1", 2),
+        ("rule", "r-2", 1),
+        ("final_label", "label=a", 2),
+    }
+    operation = db.get(DurableOperation, requested.operation_id)
+    assert operation.result_summary == {"sample_count": 2, "needs_review_count": 0}
+
     clusters = list_annotation_execution_stats(db, task.id, requested.operation_id, user.id, kind="cluster", limit=10)
     assert clusters["items"] == [{"key": "1", "cluster_id": 1, "count": 2}]
     rules = list_annotation_execution_stats(db, task.id, requested.operation_id, user.id, kind="rule", limit=1)
@@ -269,6 +597,42 @@ def test_annotation_operation_center_lists_project_owned_operations(db):
         str(second_preview.operation_id),
     }
     assert all(item["resource_type"] == "annotation_preview" for item in page["items"] + next_page["items"])
+
+
+def test_annotation_operation_center_lists_return_operations_by_task_context(db):
+    task, user, project = _task(db)
+    preview = create_annotation_preview(
+        db,
+        task.id,
+        task_revision=0,
+        config_hash="sha256:return-operation-context",
+        actor_id=user.id,
+    )
+    return_operation = DurableOperation(
+        project_id=project.id,
+        task_id=task.id,
+        resource_type="annotation_return",
+        resource_key=f"annotation-return:{uuid.uuid4()}",
+        idempotency_key="return-operation-context",
+        state="queued",
+        stage="queued",
+    )
+    db.add(return_operation)
+    db.commit()
+
+    from app.services.annotation_task_state import list_annotation_operations
+
+    page = list_annotation_operations(db, project.id, user.id, limit=10)
+
+    assert page["total"] == 2
+    assert {item["id"] for item in page["items"]} == {
+        str(preview.operation_id),
+        str(return_operation.id),
+    }
+    assert {item["resource_type"] for item in page["items"]} == {
+        "annotation_preview",
+        "annotation_return",
+    }
 
 
 def test_execute_worker_rejects_operation_not_bound_to_task(db, monkeypatch):
@@ -355,6 +719,35 @@ def test_execute_retry_same_revision_reuses_operation(db):
 
     assert first.operation_id == second.operation_id
     assert db.get(GenericAnnotationTask, task.id).task_revision == preview.task_revision
+
+
+def test_annotation_preview_and_execution_operations_store_task_context(db):
+    task, user, project = _task(db)
+    preview = create_annotation_preview(
+        db,
+        task.id,
+        task_revision=0,
+        config_hash="sha256:operation-context",
+        actor_id=user.id,
+    )
+    preview.status = "completed"
+    preview.progress = 100
+    task.status = "preview_ready"
+    db.commit()
+
+    from app.services.annotation_task_execution import request_annotation_execution
+
+    execution = request_annotation_execution(db, task.id, preview.id, user.id)
+    preview_operation = db.get(DurableOperation, preview.operation_id)
+    execution_operation = db.get(DurableOperation, execution.operation_id)
+
+    for operation, resource_type in (
+        (preview_operation, "annotation_preview"),
+        (execution_operation, "annotation_execution"),
+    ):
+        assert operation.project_id == project.id
+        assert operation.task_id == task.id
+        assert operation.resource_type == resource_type
 
 
 def test_execution_result_queries_reject_operation_with_wrong_preview_binding(db):
@@ -716,6 +1109,44 @@ def test_task_list_total_is_stable_across_cursor_pages(db):
     assert next_page["total"] == 2
 
 
+def test_task_preview_and_sample_pages_use_bounded_row_queries(db, monkeypatch):
+    task, user, project = _task(db)
+    first_preview = AnnotationTaskPreview(
+        task_id=task.id,
+        task_revision=0,
+        config_hash="sha256:bounded-page-1",
+        created_by=user.id,
+        status="completed",
+        progress=100,
+    )
+    second_preview = AnnotationTaskPreview(
+        task_id=task.id,
+        task_revision=0,
+        config_hash="sha256:bounded-page-2",
+        created_by=user.id,
+        status="completed",
+        progress=100,
+    )
+    db.add_all([first_preview, second_preview])
+    db.flush()
+    db.add_all([
+        AnnotationTaskPreviewSample(preview_id=first_preview.id, sample_id="bounded-1", row_index=0, values={}),
+        AnnotationTaskPreviewSample(preview_id=first_preview.id, sample_id="bounded-2", row_index=1, values={}),
+    ])
+    db.commit()
+
+    original_all = Query.all
+
+    def bounded_all(query):
+        assert query._limit_clause is not None, f"unbounded row query: {query}"
+        return original_all(query)
+
+    monkeypatch.setattr(Query, "all", bounded_all)
+    assert len(list_annotation_tasks(db, project.id, user.id, limit=1)["items"]) == 1
+    assert len(list_annotation_previews(db, task.id, user.id, limit=1)["items"]) == 1
+    assert len(list_annotation_preview_samples(db, task.id, first_preview.id, user.id, limit=1)["items"]) == 1
+
+
 def test_preview_worker_marks_failed_and_persists_error(db, monkeypatch):
     task, user, _ = _task(db)
     preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:failure", actor_id=user.id)
@@ -728,6 +1159,28 @@ def test_preview_worker_marks_failed_and_persists_error(db, monkeypatch):
     assert persisted.status == "failed"
     assert persisted.progress >= 10
     assert persisted.error["code"] == "PREVIEW_EXECUTION_FAILED"
+
+
+def test_preview_checksum_failure_rolls_back_samples_and_completion_state(db, monkeypatch):
+    task, user, _ = _task(db)
+    preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:checksum-failure", actor_id=user.id)
+    from app.tasks.annotation_preview_tasks import execute_annotation_preview
+
+    monkeypatch.setattr("app.tasks.annotation_preview_tasks.SessionLocal", lambda: db)
+
+    def fail_checksum_iteration(*args, **kwargs):
+        raise ValueError("CHECKSUM_BUILD_FAILED")
+
+    monkeypatch.setattr("app.tasks.annotation_preview_tasks._preview_sample_batches", fail_checksum_iteration)
+    result = execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
+
+    persisted_preview = db.query(AnnotationTaskPreview).filter_by(id=preview.id).one()
+    operation = db.get(DurableOperation, preview.operation_id)
+    assert result["status"] == "failed"
+    assert db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview.id).count() == 0
+    assert persisted_preview.status == "failed"
+    assert operation.state == "failed"
+
 
 def test_preview_worker_persists_claim_failure_at_zero_progress(db, monkeypatch):
     task, user, _ = _task(db)

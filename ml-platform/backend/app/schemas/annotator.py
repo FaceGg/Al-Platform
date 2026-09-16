@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AssignmentCreate(BaseModel):
@@ -22,4 +22,10 @@ class AssignmentReturnRequest(BaseModel):
 
 
 class AssignmentEditRequest(BaseModel):
+    task_revision: int = Field(ge=0)
+
+
+class AssignmentPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["pause", "resume", "revoke"]
     task_revision: int = Field(ge=0)

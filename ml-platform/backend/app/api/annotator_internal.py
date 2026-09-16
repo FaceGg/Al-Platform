@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import and_
+from sqlalchemy import String, and_, cast, func
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -203,7 +203,11 @@ def _assignment_for_subject(db: Session, task_id: uuid.UUID, subject_id: uuid.UU
 
 
 def _task_view(task: GenericAnnotationTask, assignment: AnnotationAssignment, db: Session) -> dict[str, Any]:
-    rows = db.query(AnnotationAssignmentSample).filter_by(assignment_id=assignment.id).all()
+    sample_query = db.query(AnnotationAssignmentSample).filter_by(assignment_id=assignment.id)
+    total_samples = sample_query.count()
+    completed_samples = sample_query.filter(
+        func.length(cast(AnnotationAssignmentSample.values, String)) > 2,
+    ).count()
     snapshot = current_annotation_task_snapshot(db, task)
     return {
         "id": str(task.id),
@@ -215,8 +219,8 @@ def _task_view(task: GenericAnnotationTask, assignment: AnnotationAssignment, db
         "due_at": assignment.due_at.isoformat() if assignment.due_at else None,
         "read_only": assignment.state == "returned_pending_acceptance",
         "assignment_id": str(assignment.id),
-        "total_samples": len(rows),
-        "completed_samples": sum(1 for row in rows if row.values),
+        "total_samples": total_samples,
+        "completed_samples": completed_samples,
         "state": assignment.state,
         "label_schema": snapshot.get("label_schema") or {"columns": []},
         "instructions": snapshot.get("instructions") or "",

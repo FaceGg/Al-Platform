@@ -1,12 +1,22 @@
 """State transitions and preview operations for generic annotation tasks."""
 
+import hashlib
+import json
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, true
 
 from app.models.access import AuditEvent
 from app.models.operation import DurableOperation
-from app.models.platform_models import AnnotationTaskExecutionResult, AnnotationTaskPreview, AnnotationTaskPreviewSample, AnnotationTaskRevisionSnapshot, GenericAnnotationTask
+from app.models.platform_models import (
+    AnnotationTaskExecutionResult,
+    AnnotationTaskExecutionStatistic,
+    AnnotationTaskPreview,
+    AnnotationTaskPreviewSample,
+    AnnotationTaskRevisionSnapshot,
+    GenericAnnotationTask,
+)
 from app.schemas.annotation_tasks import TaskAction
 
 _TRANSITIONS = {
@@ -55,6 +65,54 @@ def _task_or_error(db, task_id, owner_id=None):
     return task
 
 
+def _created_id_page(query, model, cursor, limit):
+    """Read one stable keyset page ordered by creation time then UUID."""
+    total = query.count()
+    if cursor:
+        try:
+            marker_id = uuid.UUID(str(cursor))
+        except (ValueError, AttributeError) as error:
+            raise ValueError("INVALID_CURSOR") from error
+        marker = query.filter(model.id == marker_id).one_or_none()
+        if marker is None:
+            raise ValueError("INVALID_CURSOR")
+        # Compare database values rather than a Python datetime parameter.
+        # SQLite stores CURRENT_TIMESTAMP at second precision while its
+        # SQLAlchemy bind processor renders a zero microsecond suffix.
+        marker_values = query.with_entities(
+            model.created_at.label("cursor_created_at"),
+            model.id.label("cursor_id"),
+        ).filter(model.id == marker_id).subquery()
+        query = query.join(marker_values, true())
+        query = query.filter(or_(
+            model.created_at < marker_values.c.cursor_created_at,
+            and_(model.created_at == marker_values.c.cursor_created_at, model.id < marker_values.c.cursor_id),
+        ))
+    rows = query.order_by(model.created_at.desc(), model.id.desc()).limit(limit + 1).all()
+    has_next = len(rows) > limit
+    return rows[:limit], total, has_next
+
+
+def _row_id_page(query, model, cursor, limit):
+    """Read one stable keyset page ordered by source row then UUID."""
+    total = query.count()
+    if cursor:
+        try:
+            marker_id = uuid.UUID(str(cursor))
+        except (ValueError, AttributeError) as error:
+            raise ValueError("INVALID_CURSOR") from error
+        marker = query.filter(model.id == marker_id).one_or_none()
+        if marker is None:
+            raise ValueError("INVALID_CURSOR")
+        query = query.filter(or_(
+            model.row_index > marker.row_index,
+            and_(model.row_index == marker.row_index, model.id > marker.id),
+        ))
+    rows = query.order_by(model.row_index.asc(), model.id.asc()).limit(limit + 1).all()
+    has_next = len(rows) > limit
+    return rows[:limit], total, has_next
+
+
 def create_annotation_preview(db, task_id, task_revision: int, config_hash: str, actor_id):
     task = _task_or_error(db, task_id, actor_id)
     if task.task_revision != task_revision:
@@ -74,6 +132,10 @@ def create_annotation_preview(db, task_id, task_revision: int, config_hash: str,
     db.add(
         DurableOperation(
             id=preview.operation_id,
+            project_id=task.project_id,
+            task_id=task.id,
+            preview_id=preview.id,
+            resource_type="annotation_preview",
             resource_key=f"annotation-preview:{preview.id}",
             idempotency_key=config_hash,
             state="queued",
@@ -102,10 +164,84 @@ def create_annotation_preview(db, task_id, task_revision: int, config_hash: str,
     return preview
 
 
-def transition_annotation_task(db, task_id, expected_revision: int, action: TaskAction, actor_id, preview_id=None):
+def _task_command_fingerprint(action: TaskAction, task_revision: int, preview_id=None, reason: str | None = None) -> str:
+    payload = {
+        "action": action.value,
+        "task_revision": int(task_revision),
+        "preview_id": str(preview_id) if preview_id is not None else None,
+        "reason": reason,
+    }
+    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _task_command_resource_key(task_id, actor_id, action: TaskAction) -> str:
+    return f"annotation-task-command:{task_id}:{actor_id}:{action.value}"
+
+
+def _task_command_response(task):
+    return {
+        "id": str(task.id),
+        "project_id": str(task.project_id),
+        "dataset_version_id": str(task.dataset_version_id),
+        "label_schema_id": str(task.label_schema_id),
+        "mode": task.mode,
+        "status": task.status,
+        "task_revision": task.task_revision,
+        "sample_scope": task.sample_scope or {},
+        "source_legacy_id": task.source_legacy_id,
+    }
+
+
+def transition_annotation_task(
+    db,
+    task_id,
+    expected_revision: int,
+    action: TaskAction,
+    actor_id,
+    preview_id=None,
+    idempotency_key: str | None = None,
+    request_id=None,
+    reason: str | None = None,
+):
     task = _task_or_error(db, task_id, actor_id)
+    command_operation = None
+    command_fingerprint = None
+    if idempotency_key:
+        if len(idempotency_key) > 128:
+            raise ValueError("IDEMPOTENCY_KEY_INVALID")
+        command_fingerprint = _task_command_fingerprint(action, expected_revision, preview_id, reason)
+        command_operation = db.query(DurableOperation).filter(
+            DurableOperation.resource_key == _task_command_resource_key(task.id, actor_id, action),
+            DurableOperation.idempotency_key == idempotency_key,
+        ).one_or_none()
+        if command_operation is not None:
+            if command_operation.request_fingerprint != command_fingerprint:
+                raise ValueError("IDEMPOTENCY_CONFLICT")
+            stored = dict(command_operation.result_summary or {}).get("response")
+            task._command_operation_id = command_operation.id
+            task._command_replayed = True
+            task._command_response_payload = stored if isinstance(stored, dict) else _task_command_response(task)
+            return task
     if task.task_revision != expected_revision:
         raise ValueError("TASK_REVISION_CONFLICT")
+    if action == TaskAction.reopen and idempotency_key and (reason is None or not reason.strip()):
+        raise ValueError("REOPEN_REASON_REQUIRED")
+    if action == TaskAction.publish and task.status != "preview_ready":
+        raise ValueError("TASK_STATE_INVALID")
+    if action == TaskAction.publish:
+        if task.mode != "manual":
+            raise ValueError("TASK_STATE_INVALID")
+        current_preview = current_annotation_task_preview(db, task)
+        if preview_id is not None and (current_preview is None or current_preview.id != preview_id):
+            raise ValueError("PREVIEW_STALE")
+        if current_preview is None or current_preview.task_revision != expected_revision or current_preview.status != "completed":
+            raise ValueError("PREVIEW_STALE")
+        preview_summary = dict(current_preview.summary or {})
+        if preview_summary.get("configuration_complete") is False:
+            raise ValueError("PREVIEW_CONFIGURATION_INCOMPLETE")
+        if int(preview_summary.get("needs_review_count", 0) or 0) > 0:
+            raise ValueError("PREVIEW_NEEDS_REVIEW")
     if action == TaskAction.execute:
         preview = db.query(AnnotationTaskPreview).filter_by(id=preview_id, task_id=task.id).one_or_none()
         if preview is None or preview.task_revision != expected_revision or preview.status != "completed":
@@ -129,13 +265,14 @@ def transition_annotation_task(db, task_id, expected_revision: int, action: Task
             resource_type="annotation_task",
             resource_id=str(task.id),
             result="success",
-            request_id=uuid.uuid4(),
+            request_id=request_id or uuid.uuid4(),
             changes={
                 "from_status": previous_status,
                 "to_status": task.status,
                 "task_revision": task.task_revision,
                 "preview_id": str(preview.id),
                 "operation_id": str(execution.operation_id),
+                **({"idempotency_key": idempotency_key} if idempotency_key else {}),
             },
         ))
         db.commit()
@@ -156,11 +293,31 @@ def transition_annotation_task(db, task_id, expected_revision: int, action: Task
     elif action == TaskAction.resume:
         task.paused_from_status = None
     task.status = next_status
-    # Pause/resume changes execution availability, not the frozen task
-    # configuration.  Incrementing the revision here would invalidate the
-    # preview that the paused operation is explicitly meant to resume.
-    if action not in {TaskAction.pause, TaskAction.resume}:
+    # Lifecycle changes do not alter the frozen configuration. Reopening a
+    # completed task is the explicit exception: it starts a new revision whose
+    # snapshot remains independent from the accepted historical revision.
+    if action == TaskAction.reopen:
+        snapshot = deepcopy(current_annotation_task_snapshot(db, task))
         task.task_revision += 1
+        db.add(AnnotationTaskRevisionSnapshot(
+            task_id=task.id,
+            task_revision=task.task_revision,
+            snapshot=snapshot,
+        ))
+    if idempotency_key:
+        command_operation = DurableOperation(
+            project_id=task.project_id,
+            task_id=task.id,
+            resource_type="annotation_task_command",
+            resource_key=_task_command_resource_key(task.id, actor_id, action),
+            idempotency_key=idempotency_key,
+            request_fingerprint=command_fingerprint,
+            state="completed",
+            stage="completed",
+            progress=100,
+        )
+        db.add(command_operation)
+        db.flush()
     db.add(AuditEvent(
         project_id=task.project_id,
         actor_id=actor_id,
@@ -169,11 +326,26 @@ def transition_annotation_task(db, task_id, expected_revision: int, action: Task
         resource_type="annotation_task",
         resource_id=str(task.id),
         result="success",
-        request_id=uuid.uuid4(),
-        changes={"action": action.value, "from_status": previous_status, "to_status": next_status, "task_revision": task.task_revision},
+        request_id=request_id or uuid.uuid4(),
+        changes={
+            "action": action.value,
+            "from_status": previous_status,
+            "to_status": next_status,
+            "task_revision": task.task_revision,
+            **({"reason": reason} if reason else {}),
+            **({"idempotency_key": idempotency_key} if idempotency_key else {}),
+        },
     ))
+    response = _task_command_response(task)
+    if command_operation is not None:
+        response["operation_id"] = str(command_operation.id)
+        command_operation.result_summary = {"response": response}
     db.commit()
     db.refresh(task)
+    if command_operation is not None:
+        task._command_operation_id = command_operation.id
+        task._command_replayed = False
+        task._command_response_payload = response
     return task
 
 
@@ -203,19 +375,18 @@ def current_annotation_task_snapshot(db, task):
 
 def current_annotation_task_preview(db, task):
     """Return the preview that remains actionable after a task-list refresh."""
-    candidates = db.query(AnnotationTaskPreview).filter(
+    query = db.query(AnnotationTaskPreview).filter(
         AnnotationTaskPreview.task_id == task.id,
         AnnotationTaskPreview.task_revision == task.task_revision,
-    ).order_by(AnnotationTaskPreview.created_at.desc(), AnnotationTaskPreview.id.desc()).all()
-    if not candidates:
-        return None
+    )
+    ordered = query.order_by(AnnotationTaskPreview.created_at.desc(), AnnotationTaskPreview.id.desc())
     expected_hash = str(current_annotation_task_snapshot(db, task).get("config_hash") or "")
     if expected_hash:
-        configured = next((item for item in candidates if item.config_hash == expected_hash), None)
+        configured = ordered.filter(AnnotationTaskPreview.config_hash == expected_hash).first()
         if configured is not None:
             return configured
-    completed = next((item for item in candidates if item.status == "completed"), None)
-    return completed or candidates[0]
+    completed = ordered.filter(AnnotationTaskPreview.status == "completed").first()
+    return completed or ordered.first()
 
 
 def serialize_annotation_task(task, preview=None, snapshot=None):
@@ -246,22 +417,7 @@ def list_annotation_tasks(db, project_id, owner_id, cursor=None, limit=50):
     )
     if project_id is not None:
         base_query = base_query.filter(GenericAnnotationTask.project_id == project_id)
-    query = base_query.order_by(GenericAnnotationTask.created_at.desc(), GenericAnnotationTask.id.desc())
-    all_items = query.all()
-    total = len(all_items)
-    start = 0
-    if cursor:
-        try:
-            marker_id = uuid.UUID(cursor)
-        except (ValueError, AttributeError) as error:
-            raise ValueError("INVALID_CURSOR") from error
-        marker_index = next((index for index, item in enumerate(all_items) if item.id == marker_id), None)
-        if marker_index is None:
-            raise ValueError("INVALID_CURSOR")
-        start = marker_index + 1
-    items = all_items[start:start + limit + 1]
-    has_next = len(items) > limit
-    items = items[:limit]
+    items, total, has_next = _created_id_page(base_query, GenericAnnotationTask, cursor, limit)
     return {
         "items": [
             serialize_annotation_task(item, current_annotation_task_preview(db, item), current_annotation_task_snapshot(db, item))
@@ -272,7 +428,7 @@ def list_annotation_tasks(db, project_id, owner_id, cursor=None, limit=50):
     }
 
 
-def mark_preview_completed(db, task_id, preview_id, owner_id):
+def mark_preview_completed(db, task_id, preview_id, owner_id, *, commit: bool = True):
     preview = get_annotation_preview(db, task_id, preview_id, owner_id)
     task = _task_or_error(db, task_id, owner_id)
     if preview.status != "completed":
@@ -296,32 +452,20 @@ def mark_preview_completed(db, task_id, preview_id, owner_id):
             request_id=uuid.uuid4(),
             changes={"from_status": "previewing", "to_status": task.status, "task_revision": task.task_revision},
         ))
-        db.commit()
-        db.refresh(task)
+        if commit:
+            db.commit()
+            db.refresh(task)
     return task
 
 
 def list_annotation_previews(db, task_id, owner_id, cursor=None, limit=50):
     _task_or_error(db, task_id, owner_id)
     limit = max(1, min(int(limit), 200))
-    query = db.query(AnnotationTaskPreview).filter(AnnotationTaskPreview.task_id == task_id).order_by(AnnotationTaskPreview.created_at.desc(), AnnotationTaskPreview.id.desc())
-    all_items = query.all()
-    start = 0
-    if cursor:
-        try:
-            marker_id = uuid.UUID(cursor)
-        except (ValueError, AttributeError) as error:
-            raise ValueError("INVALID_CURSOR") from error
-        marker_index = next((index for index, item in enumerate(all_items) if item.id == marker_id), None)
-        if marker_index is None:
-            raise ValueError("INVALID_CURSOR")
-        start = marker_index + 1
-    items = all_items[start:start + limit + 1]
-    has_next = len(items) > limit
-    items = items[:limit]
+    query = db.query(AnnotationTaskPreview).filter(AnnotationTaskPreview.task_id == task_id)
+    items, total, has_next = _created_id_page(query, AnnotationTaskPreview, cursor, limit)
     return {
         "items": [serialize_annotation_preview(item) for item in items],
-        "total": len(all_items),
+        "total": total,
         "next_cursor": str(items[-1].id) if has_next and items else None,
     }
 
@@ -334,7 +478,18 @@ def get_annotation_preview(db, task_id, preview_id, owner_id):
     return preview
 
 
-def record_annotation_preview_progress(db, task_id, preview_id, owner_id, *, status, progress, summary=None, error=None):
+def record_annotation_preview_progress(
+    db,
+    task_id,
+    preview_id,
+    owner_id,
+    *,
+    status,
+    progress,
+    summary=None,
+    error=None,
+    commit: bool = True,
+):
     preview = get_annotation_preview(db, task_id, preview_id, owner_id)
     progress = int(progress)
     if progress < preview.progress:
@@ -349,30 +504,18 @@ def record_annotation_preview_progress(db, task_id, preview_id, owner_id, *, sta
     if status == "completed":
         preview.progress = 100
         preview.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    db.commit()
-    db.refresh(preview)
+    if commit:
+        db.commit()
+        db.refresh(preview)
     return preview
 
 
 def list_annotation_preview_samples(db, task_id, preview_id, owner_id, cursor=None, limit=50):
     get_annotation_preview(db, task_id, preview_id, owner_id)
     limit = max(1, min(int(limit), 200))
-    query = db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview_id).order_by(AnnotationTaskPreviewSample.row_index.asc(), AnnotationTaskPreviewSample.id.asc())
-    all_items = query.all()
-    start = 0
-    if cursor:
-        try:
-            marker_id = uuid.UUID(cursor)
-        except (ValueError, AttributeError) as error:
-            raise ValueError("INVALID_CURSOR") from error
-        marker_index = next((index for index, item in enumerate(all_items) if item.id == marker_id), None)
-        if marker_index is None:
-            raise ValueError("INVALID_CURSOR")
-        start = marker_index + 1
-    items = all_items[start:start + limit + 1]
-    has_next = len(items) > limit
-    items = items[:limit]
-    return {"items": [{"id": str(item.id), "sample_id": item.sample_id, "row_index": item.row_index, "values": item.values or {}} for item in items], "total": len(all_items), "next_cursor": str(items[-1].id) if has_next and items else None}
+    query = db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview_id)
+    items, total, has_next = _row_id_page(query, AnnotationTaskPreviewSample, cursor, limit)
+    return {"items": [{"id": str(item.id), "sample_id": item.sample_id, "row_index": item.row_index, "values": item.values or {}} for item in items], "total": total, "next_cursor": str(items[-1].id) if has_next and items else None}
 
 
 def _execution_operation_or_error(db, task_id, operation_id, owner_id):
@@ -452,79 +595,76 @@ def list_annotation_execution_stats(db, task_id, operation_id, owner_id, *, kind
         items = [{"key": str(item.id), "sample_id": item.sample_id, "row_index": item.row_index, "status": item.status} for item in page]
         next_cursor = str(page[-1].id) if has_next and page else None
     else:
-        items = list((operation.result_summary or {}).get("stats", {}).get(kind, []))
-        start = 0
+        query = db.query(AnnotationTaskExecutionStatistic).filter_by(
+            task_id=task_id,
+            operation_id=operation.id,
+            kind=kind,
+        )
+        total = query.count()
         if cursor:
-            marker_index = next((index for index, item in enumerate(items) if str(item.get("key")) == str(cursor)), None)
-            if marker_index is None:
+            try:
+                marker_id = uuid.UUID(cursor)
+            except (ValueError, AttributeError) as error:
+                raise ValueError("INVALID_CURSOR") from error
+            marker = query.filter(AnnotationTaskExecutionStatistic.id == marker_id).one_or_none()
+            if marker is None:
                 raise ValueError("INVALID_CURSOR")
-            start = marker_index + 1
-        page = items[start:start + limit + 1]
+            query = query.filter(or_(
+                AnnotationTaskExecutionStatistic.sort_key > marker.sort_key,
+                and_(
+                    AnnotationTaskExecutionStatistic.sort_key == marker.sort_key,
+                    AnnotationTaskExecutionStatistic.id > marker.id,
+                ),
+            ))
+        page = query.order_by(
+            AnnotationTaskExecutionStatistic.sort_key.asc(),
+            AnnotationTaskExecutionStatistic.id.asc(),
+        ).limit(limit + 1).all()
         has_next = len(page) > limit
         page = page[:limit]
-        items = page
-        next_cursor = str(page[-1].get("key")) if has_next and page else None
-    return {"items": items, "total": total if kind == "sample" else len((operation.result_summary or {}).get("stats", {}).get(kind, [])), "next_cursor": next_cursor}
+        items = [
+            {**(item.payload or {}), "count": item.count}
+            for item in page
+        ]
+        next_cursor = str(page[-1].id) if has_next and page else None
+    return {"items": items, "total": total, "next_cursor": next_cursor}
 
 
 def list_annotation_operations(db, project_id, owner_id, cursor=None, limit=50):
     limit = max(1, min(int(limit), 200))
-    task_ids = [task_id for (task_id,) in db.query(GenericAnnotationTask.id).filter(
+    query = db.query(DurableOperation).join(
+        GenericAnnotationTask,
+        GenericAnnotationTask.id == DurableOperation.task_id,
+    ).filter(
+        DurableOperation.project_id == project_id,
         GenericAnnotationTask.project_id == project_id,
         GenericAnnotationTask.owner_id == owner_id,
-    ).all()]
-    if not task_ids:
-        return {"items": [], "total": 0, "next_cursor": None}
-    preview_rows = db.query(AnnotationTaskPreview.operation_id).filter(AnnotationTaskPreview.task_id.in_(task_ids)).all()
-    preview_operation_ids = [operation_id for (operation_id,) in preview_rows]
-    execution_keys = [f"annotation-execution:{task_id}" for task_id in task_ids]
-    query = db.query(DurableOperation).filter(or_(
-        DurableOperation.id.in_(preview_operation_ids) if preview_operation_ids else False,
-        DurableOperation.resource_key.in_(execution_keys),
-    ))
-    query = query.order_by(DurableOperation.created_at.desc(), DurableOperation.id.desc())
-    all_operations = query.all()
-    total = len(all_operations)
-    start = 0
-    if cursor:
-        try:
-            marker_id = uuid.UUID(cursor)
-        except (ValueError, TypeError) as error:
-            raise ValueError("INVALID_CURSOR") from error
-        marker_index = next((index for index, operation in enumerate(all_operations) if operation.id == marker_id), None)
-        if marker_index is None:
-            raise ValueError("INVALID_CURSOR")
-        start = marker_index + 1
-    operations = all_operations[start:start + limit + 1]
-    page = []
-    for operation in operations:
-        task = None
-        preview_id = None
-        resource_type = None
-        if operation.resource_key.startswith("annotation-preview:"):
-            resource_type = "annotation_preview"
-            try:
-                preview_id = uuid.UUID(operation.resource_key.split(":", 1)[1])
-            except ValueError:
-                continue
-            preview = db.query(AnnotationTaskPreview).filter_by(id=preview_id).one_or_none()
-            task = db.query(GenericAnnotationTask).filter_by(id=preview.task_id).one_or_none() if preview else None
-        elif operation.resource_key.startswith("annotation-execution:"):
-            resource_type = "annotation_execution"
-            try:
-                task = db.query(GenericAnnotationTask).filter_by(id=uuid.UUID(operation.resource_key.split(":", 1)[1])).one_or_none()
-                _revision, preview_token = operation.idempotency_key.split(":", 1)
-                preview_id = uuid.UUID(preview_token)
-            except (ValueError, TypeError):
-                continue
-        if task is None or task.project_id != project_id or task.owner_id != owner_id:
-            continue
-        page.append({
-            "id": str(operation.id), "resource_type": resource_type, "task_id": str(task.id), "preview_id": str(preview_id) if preview_id else None,
-            "state": operation.state, "stage": operation.stage, "progress": operation.progress, "attempt": operation.attempt,
-            "error_code": operation.error_code, "checksum": operation.checksum, "result_summary": operation.result_summary or {},
+    )
+    operations, total, has_next = _created_id_page(
+        query,
+        DurableOperation,
+        cursor,
+        limit,
+    )
+    items = [
+        {
+            "id": str(operation.id),
+            "resource_type": operation.resource_type,
+            "task_id": str(operation.task_id),
+            "preview_id": str(operation.preview_id) if operation.preview_id else None,
+            "state": operation.state,
+            "stage": operation.stage,
+            "progress": operation.progress,
+            "attempt": operation.attempt,
+            "error_code": operation.error_code,
+            "checksum": operation.checksum,
+            "result_summary": operation.result_summary or {},
             "created_at": operation.created_at.isoformat() if operation.created_at else None,
-        })
-    has_next = len(page) > limit
-    page = page[:limit]
-    return {"items": page, "total": total, "next_cursor": page[-1]["id"] if has_next and page else None}
+        }
+        for operation in operations
+    ]
+    return {
+        "items": items,
+        "total": total,
+        "next_cursor": str(operations[-1].id) if has_next and operations else None,
+    }

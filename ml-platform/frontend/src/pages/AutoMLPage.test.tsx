@@ -640,7 +640,7 @@ describe("AutoMLPage", () => {
 
     fireEvent.keyDown(screen.getByRole("combobox", { name: "任务类型" }), { key: "Escape" });
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "搜索强度" }));
-    for (const label of ["轻度（10 次）", "标准（30 次）", "高度（80 次）", "Ultra（200 次）"]) {
+    for (const label of ["轻度（10 次）", "中（30 次）", "高（80 次）", "Ultra（200 次）"]) {
       expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
     }
     fireEvent.keyDown(screen.getByRole("combobox", { name: "搜索强度" }), { key: "Escape" });

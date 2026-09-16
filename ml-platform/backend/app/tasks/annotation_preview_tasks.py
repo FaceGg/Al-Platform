@@ -6,6 +6,8 @@ import json
 import threading
 from types import SimpleNamespace
 
+from sqlalchemy import and_, or_
+
 from app.database import SessionLocal
 from app.models.data_version import DatasetSample
 from app.models.platform_models import AnnotationTaskPreview, AnnotationTaskPreviewSample, GenericAnnotationTask
@@ -18,6 +20,49 @@ from app.services.annotation_task_state import (
 from app.services.operation_lifecycle import claim_operation, heartbeat_operation, complete_operation, fail_operation
 from app.tasks.celery_app import celery_app
 from app.config import settings
+
+
+_PREVIEW_BATCH_SIZE = 500
+
+
+def _chunks(values, size=_PREVIEW_BATCH_SIZE):
+    for start in range(0, len(values), size):
+        yield values[start:start + size]
+
+
+def _dataset_sample_batches(db, dataset_version_id, sample_ids):
+    for sample_id_batch in _chunks(sample_ids):
+        if not sample_id_batch:
+            continue
+        yield db.query(DatasetSample).filter(
+            DatasetSample.dataset_version_id == dataset_version_id,
+            DatasetSample.sample_id.in_(sample_id_batch),
+        ).order_by(
+            DatasetSample.row_index.asc(),
+            DatasetSample.id.asc(),
+        ).limit(len(sample_id_batch)).all()
+
+
+def _preview_sample_batches(db, preview_id):
+    marker = None
+    while True:
+        query = db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview_id)
+        if marker is not None:
+            query = query.filter(or_(
+                AnnotationTaskPreviewSample.sample_id > marker.sample_id,
+                and_(
+                    AnnotationTaskPreviewSample.sample_id == marker.sample_id,
+                    AnnotationTaskPreviewSample.id > marker.id,
+                ),
+            ))
+        rows = query.order_by(
+            AnnotationTaskPreviewSample.sample_id.asc(),
+            AnnotationTaskPreviewSample.id.asc(),
+        ).limit(_PREVIEW_BATCH_SIZE).all()
+        if not rows:
+            return
+        yield rows
+        marker = rows[-1]
 
 
 def enqueue_annotation_preview(task_id, preview_id, owner_id):
@@ -60,23 +105,36 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
             if not claim_operation(db, operation_id, worker_id, 300):
                 return {"status": "not_claimed", "preview_id": preview_id, "operation_id": str(operation_id) if operation_id else None}
             snapshot = current_annotation_task_snapshot(db, task)
-            record_annotation_preview_progress(db, task_uuid, preview_uuid, owner_uuid, status="running", progress=10, summary={"sample_scope": snapshot.get("sample_ids", []), "visible_columns": snapshot.get("visible_columns", [])})
+            record_annotation_preview_progress(
+                db,
+                task_uuid,
+                preview_uuid,
+                owner_uuid,
+                status="running",
+                progress=10,
+                summary={
+                    "sample_scope_count": len(snapshot.get("sample_ids", [])),
+                    "visible_columns": snapshot.get("visible_columns", []),
+                },
+            )
             sample_ids = [str(sample_id) for sample_id in snapshot.get("sample_ids", [])]
-            source_rows = db.query(DatasetSample).filter(
-                DatasetSample.dataset_version_id == task.dataset_version_id,
-                DatasetSample.sample_id.in_(sample_ids),
-            ).all() if sample_ids else []
-            rows_by_id = {row.sample_id: row for row in source_rows}
             visible_columns = list(snapshot.get("visible_columns", []))
             summary = {
                 "sample_count": len(sample_ids),
                 "visible_columns": snapshot.get("visible_columns", []),
                 "label_columns": [column.get("machine_key") for column in snapshot.get("label_schema", {}).get("columns", [])],
-                "source_rows_found": len(source_rows),
+                "source_rows_found": 0,
             }
             automatic_decisions = {}
             strategy_artifact = None
             if task.mode == "automatic":
+                source_rows = [
+                    row
+                    for batch in _dataset_sample_batches(db, task.dataset_version_id, sample_ids)
+                    for row in batch
+                ]
+                rows_by_id = {row.sample_id: row for row in source_rows}
+                summary["source_rows_found"] = len(source_rows)
                 rows = {
                     sample_id: dict(rows_by_id.get(sample_id).values or {}) if rows_by_id.get(sample_id) is not None else {}
                     for sample_id in sample_ids
@@ -101,29 +159,102 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                 summary["configuration_complete"] = strategy_payload.get("configuration_complete", True)
                 summary["clusters"] = strategy_payload.get("clusters", [])
                 summary["model_version_id"] = strategy_payload.get("model_version_id")
-            existing_ids = {item.sample_id for item in db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview_uuid).all()}
-            for row_index, sample_id in enumerate(sample_ids):
-                if sample_id not in existing_ids:
-                    source_row = rows_by_id.get(sample_id)
-                    source_values = dict(source_row.values or {}) if source_row is not None else {}
-                    values = {column: source_values.get(column) for column in visible_columns} if visible_columns else source_values
-                    decision = automatic_decisions.get(sample_id)
-                    if decision is not None:
-                        values["annotation_decision"] = {
-                            "status": decision.status,
-                            "values": decision.values,
-                            "provenance": decision.provenance,
-                            "model_output": decision.model_output,
-                            "cluster_id": decision.cluster_id,
-                            "matched_rule_ids": list(decision.matched_rule_ids),
-                        }
-                    db.add(AnnotationTaskPreviewSample(preview_id=preview_uuid, sample_id=sample_id, row_index=row_index, values=values))
-            heartbeat_operation(db, operation_id, worker_id, 300)
-            db.commit()
-            record_annotation_preview_progress(db, task_uuid, preview_uuid, owner_uuid, status="completed", progress=100, summary=summary)
-            mark_preview_completed(db, task_uuid, preview_uuid, owner_uuid)
-            checksum_payload = {"preview_id": preview_id, "summary": summary, "samples": sorted((str(item.sample_id), item.values or {}) for item in db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview_uuid).all())}
-            checksum = "sha256:" + hashlib.sha256(json.dumps(checksum_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+                heartbeat_operation(db, operation_id, worker_id, 300)
+                existing_ids = set()
+                for sample_id_batch in _chunks(sample_ids):
+                    existing_ids.update(
+                        item.sample_id
+                        for item in db.query(AnnotationTaskPreviewSample).filter(
+                            AnnotationTaskPreviewSample.preview_id == preview_uuid,
+                            AnnotationTaskPreviewSample.sample_id.in_(sample_id_batch),
+                        ).limit(len(sample_id_batch)).all()
+                    )
+                for batch_start in range(0, len(sample_ids), _PREVIEW_BATCH_SIZE):
+                    sample_id_batch = sample_ids[batch_start:batch_start + _PREVIEW_BATCH_SIZE]
+                    for offset, sample_id in enumerate(sample_id_batch):
+                        if sample_id in existing_ids:
+                            continue
+                        source_row = rows_by_id.get(sample_id)
+                        source_values = dict(source_row.values or {}) if source_row is not None else {}
+                        values = {column: source_values.get(column) for column in visible_columns} if visible_columns else source_values
+                        decision = automatic_decisions.get(sample_id)
+                        if decision is not None:
+                            values["annotation_decision"] = {
+                                "status": decision.status,
+                                "values": decision.values,
+                                "provenance": decision.provenance,
+                                "model_output": decision.model_output,
+                                "cluster_id": decision.cluster_id,
+                                "matched_rule_ids": list(decision.matched_rule_ids),
+                            }
+                        db.add(AnnotationTaskPreviewSample(
+                            preview_id=preview_uuid,
+                            sample_id=sample_id,
+                            row_index=batch_start + offset,
+                            values=values,
+                        ))
+                    db.flush()
+            else:
+                # Manual previews do not need a task-wide in-memory row map.
+                # Read one source batch, materialize it, and release it before
+                # loading the next batch.
+                heartbeat_operation(db, operation_id, worker_id, 300)
+                for batch_start in range(0, len(sample_ids), _PREVIEW_BATCH_SIZE):
+                    sample_id_batch = sample_ids[batch_start:batch_start + _PREVIEW_BATCH_SIZE]
+                    source_rows = [
+                        row
+                        for batch in _dataset_sample_batches(db, task.dataset_version_id, sample_id_batch)
+                        for row in batch
+                    ]
+                    summary["source_rows_found"] += len(source_rows)
+                    rows_by_id = {row.sample_id: row for row in source_rows}
+                    existing_ids = {
+                        item.sample_id
+                        for item in db.query(AnnotationTaskPreviewSample).filter(
+                            AnnotationTaskPreviewSample.preview_id == preview_uuid,
+                            AnnotationTaskPreviewSample.sample_id.in_(sample_id_batch),
+                        ).limit(len(sample_id_batch)).all()
+                    }
+                    for offset, sample_id in enumerate(sample_id_batch):
+                        if sample_id in existing_ids:
+                            continue
+                        source_row = rows_by_id.get(sample_id)
+                        source_values = dict(source_row.values or {}) if source_row is not None else {}
+                        values = {column: source_values.get(column) for column in visible_columns} if visible_columns else source_values
+                        db.add(AnnotationTaskPreviewSample(
+                            preview_id=preview_uuid,
+                            sample_id=sample_id,
+                            row_index=batch_start + offset,
+                            values=values,
+                        ))
+                    db.flush()
+            digest = hashlib.sha256(json.dumps(
+                {"preview_id": preview_id, "summary": summary},
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode())
+            for batch in _preview_sample_batches(db, preview_uuid):
+                for item in batch:
+                    digest.update(b"\n")
+                    digest.update(json.dumps(
+                        (str(item.sample_id), item.values or {}),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                    ).encode())
+            checksum = "sha256:" + digest.hexdigest()
+            record_annotation_preview_progress(
+                db,
+                task_uuid,
+                preview_uuid,
+                owner_uuid,
+                status="completed",
+                progress=100,
+                summary=summary,
+                commit=False,
+            )
+            mark_preview_completed(db, task_uuid, preview_uuid, owner_uuid, commit=False)
             complete_operation(db, operation_id, worker_id, preview_uuid, checksum)
             return {"status": "completed", "preview_id": preview_id, "operation_id": str(preview.operation_id)}
         except Exception as error:

@@ -8,7 +8,16 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base
 from app.models.annotator import AnnotatorAccount, ProjectAnnotatorGrant
 from app.models.data_version import DatasetSample, DatasetVersion
-from app.models.labeling import AnnotationAssignment, AnnotationReturnBatch, AnnotationRevision, LabelColumn, LabelSchema
+from app.models.labeling import (
+    AnnotationAssignment,
+    AnnotationAssignmentSample,
+    AnnotationReturnBatch,
+    AnnotationRevision,
+    AnnotationSampleCurrent,
+    LabelColumn,
+    LabelSchema,
+)
+from app.models.operation import DurableOperation
 from app.models.platform_models import GenericAnnotationTask
 from app.models.project import Project
 from app.models.user import User
@@ -21,6 +30,7 @@ from app.services.annotation_concurrency import (
     edit_for_return,
     return_assignment,
     save_labels,
+    transition_assignment,
 )
 
 
@@ -115,6 +125,72 @@ def test_edit_for_return_requires_new_revision_before_unlock(db):
     assert batches[1].state == "pending"
 
 
+def test_assignment_pause_resume_restores_edit_for_return_state_and_is_replayable(db):
+    assignment = _assignment(db)
+    assignment.state = "edit_for_return"
+    db.commit()
+
+    paused = transition_assignment(
+        db,
+        assignment.id,
+        action="pause",
+        task_revision=assignment.task_revision,
+        actor=assignment.created_by,
+        idempotency_key="pause-assignment",
+        request_id=uuid.uuid4(),
+    )
+    assert paused.state == "paused"
+    assert paused.paused_from_state == "edit_for_return"
+
+    resumed = transition_assignment(
+        db,
+        assignment.id,
+        action="resume",
+        task_revision=assignment.task_revision,
+        actor=assignment.created_by,
+        idempotency_key="resume-assignment",
+        request_id=uuid.uuid4(),
+    )
+    assert resumed.state == "edit_for_return"
+    assert resumed.paused_from_state is None
+
+    replay = transition_assignment(
+        db,
+        assignment.id,
+        action="pause",
+        task_revision=assignment.task_revision,
+        actor=assignment.created_by,
+        idempotency_key="pause-assignment",
+        request_id=uuid.uuid4(),
+    )
+    assert replay._command_response_payload["state"] == "paused"
+
+
+def test_paused_assignment_rejects_label_confirm_and_return_writes(db):
+    admin, _other, subject, task = _secure_fixture(db)
+    assignment = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[subject],
+        sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
+        actor=admin.id,
+    )[0]
+    transition_assignment(
+        db,
+        assignment.id,
+        action="pause",
+        task_revision=assignment.task_revision,
+        actor=admin.id,
+    )
+
+    with pytest.raises(AssignmentLockedError):
+        save_labels(db, assignment.id, "frozen-1", {"label": "x"}, 0, actor=admin.id)
+    with pytest.raises(AssignmentLockedError):
+        confirm_assignment(db, assignment.id, assignment.task_revision, assignment.scope_hash)
+    with pytest.raises(AssignmentLockedError):
+        return_assignment(db, assignment.id, assignment.task_revision, assignment.scope_hash, "paused-return")
+
+
 def _assignment(db):
     return create_assignments(
         db,
@@ -206,6 +282,30 @@ def test_paused_task_and_incomplete_required_labels_are_rejected(db):
     assert error.value.code == "LABEL_REQUIRED_MISSING"
 
 
+def test_return_operation_records_project_and_task_context(db):
+    admin, _other, subject, task = _secure_fixture(db)
+    assignment = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[subject],
+        sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
+        actor=admin.id,
+    )[0]
+
+    returned = return_assignment(
+        db,
+        assignment.id,
+        task.task_revision,
+        assignment.scope_hash,
+        "return-operation-context",
+    )
+    operation = db.get(DurableOperation, returned.operation_id)
+
+    assert operation.project_id == task.project_id
+    assert operation.task_id == task.id
+    assert operation.resource_type == "annotation_return"
+
+
 def test_label_write_appends_revision_and_synchronizes_overlapping_assignments(db):
     admin, _other, subject, task = _secure_fixture(db)
     second_subject = uuid.uuid4()
@@ -231,3 +331,60 @@ def test_label_write_appends_revision_and_synchronizes_overlapping_assignments(d
         db.query(AnnotationAssignment).filter_by(id=row.id).one().state == "pending"
         for row in rows
     )
+
+
+def test_assignment_edits_update_current_labels_for_later_assignments(db):
+    db.expire_on_commit = False
+    admin, _other, first_subject, task = _secure_fixture(db)
+    task.mode = "automatic"
+    db.add(AnnotationSampleCurrent(
+        task_id=task.id,
+        sample_id="frozen-1",
+        schema_id=task.label_schema_id,
+        revision_no=0,
+        values={"label": "automatic"},
+    ))
+    db.add(AnnotationRevision(
+        task_id=task.id,
+        sample_id="frozen-1",
+        schema_id=task.label_schema_id,
+        revision_no=0,
+        base_revision=0,
+        values={"label": "automatic"},
+        author_id=admin.id,
+        source="automatic",
+        action="initialize",
+        provenance_ref="annotation-execution:test",
+    ))
+    db.commit()
+    first = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[first_subject],
+        sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
+        actor=admin.id,
+        idempotency_key="automatic-current-first",
+    )[0]
+    assert db.query(AnnotationAssignmentSample).filter_by(assignment_id=first.id, sample_id="frozen-1").one().values == {"label": "automatic"}
+
+    edited = save_labels(db, first.id, "frozen-1", {"label": "reviewed"}, base_revision=0, actor=admin.id)
+    assert edited.revision_no == 1
+    current = db.query(AnnotationSampleCurrent).filter_by(task_id=task.id, sample_id="frozen-1").one()
+    assert (current.values, current.revision_no) == ({"label": "reviewed"}, 1)
+
+    second_subject = uuid.uuid4()
+    db.add_all([
+        AnnotatorAccount(subject_id=second_subject, username=f"annotator-{uuid.uuid4().hex}", password_hash="hash", status="active"),
+        ProjectAnnotatorGrant(project_id=task.project_id, subject_id=second_subject, status="active", granted_by=admin.id),
+    ])
+    db.commit()
+    second = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[second_subject],
+        sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
+        actor=admin.id,
+        idempotency_key="automatic-current-second",
+    )[0]
+    copied = db.query(AnnotationAssignmentSample).filter_by(assignment_id=second.id, sample_id="frozen-1").one()
+    assert (copied.values, copied.revision_no) == ({"label": "reviewed"}, 1)

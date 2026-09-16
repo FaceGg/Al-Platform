@@ -34,3 +34,10 @@ class AnnotationTaskExecute(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task_revision: int = Field(ge=0)
     preview_id: uuid.UUID
+
+
+class AnnotationTaskRevisionCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_revision: int = Field(ge=0)
+    preview_id: uuid.UUID | None = None
+    reason: str | None = Field(default=None, min_length=1, max_length=2000)

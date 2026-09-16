@@ -7,7 +7,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Query, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.config import settings
@@ -232,6 +232,30 @@ def test_internal_portal_task_and_sample_reads_are_subject_scoped(portal_fixture
         "revision": 3,
     }
     assert samples.json()["next_cursor"]
+
+
+def test_portal_task_summary_does_not_load_every_assignment_sample(portal_fixture, monkeypatch):
+    original_all = Query.all
+
+    def bounded_all(query):
+        assert query._limit_clause is not None, f"unbounded row query: {query}"
+        return original_all(query)
+
+    monkeypatch.setattr(Query, "all", bounded_all)
+    token = _token(
+        project_id=portal_fixture["project_id"],
+        subject_id=portal_fixture["subject_id"],
+        scopes=["assignment:read"],
+    )
+
+    response = portal_fixture["client"].get(
+        f"/api/internal/portal/tasks/{portal_fixture['task_id']}",
+        headers=_headers(token),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["total_samples"] == 2
+    assert response.json()["completed_samples"] == 2
 
 
 def test_internal_portal_label_write_returns_complete_revision_conflict(portal_fixture):

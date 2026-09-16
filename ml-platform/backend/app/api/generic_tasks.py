@@ -38,7 +38,7 @@ from app.services.annotation_strategies import (
 )
 from app.services.label_schema import bind_label_schema_to_task, create_label_schema, label_schema_snapshot
 from app.services.annotation_concurrency import AssignmentError, create_assignments
-from app.schemas.annotator import AssignmentCreate
+from app.schemas.annotator import AssignmentCreate, AssignmentPatchRequest
 
 router = APIRouter(tags=["generic-tasks"])
 
@@ -438,6 +438,51 @@ def create_generic_annotation_assignments(
         "sample_scope_hash": assignments[0].scope_hash if assignments else None,
         "task_revision": task.task_revision,
     }
+
+
+@router.patch("/api/annotation-tasks/{task_id}/assignments/{assignment_id}")
+def patch_generic_annotation_assignment(
+    task_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    data: AssignmentPatchRequest,
+    request: Request,
+    x_request_id: str | None = Header(default=None, alias="X-Request-ID"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _request_context(request, x_request_id, idempotency_key)
+    assignment = db.query(AnnotationAssignment).join(
+        GenericAnnotationTask,
+        GenericAnnotationTask.id == AnnotationAssignment.task_id,
+    ).filter(
+        AnnotationAssignment.id == assignment_id,
+        AnnotationAssignment.task_id == task_id,
+        GenericAnnotationTask.owner_id == current_user.id,
+        GenericAnnotationTask.archived_at.is_(None),
+    ).one_or_none()
+    if assignment is None:
+        raise _contract_error(request, "ASSIGNMENT_NOT_FOUND", "The assignment was not found.", status_code=404)
+    try:
+        from app.services.annotation_concurrency import transition_assignment
+        updated = transition_assignment(
+            db,
+            assignment.id,
+            action=data.action,
+            task_revision=data.task_revision,
+            actor=current_user,
+            idempotency_key=idempotency_key,
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except (ValueError, AssignmentError) as error:
+        raise _contract_error(
+            request,
+            getattr(error, "code", "ASSIGNMENT_STATE_INVALID"),
+            str(error),
+            status_code=409,
+        ) from error
+    stored = getattr(updated, "_command_response_payload", None)
+    return stored if isinstance(stored, dict) else _assignment_view(updated)
 
 
 @router.delete("/api/annotation-tasks/{task_id}", status_code=204)
