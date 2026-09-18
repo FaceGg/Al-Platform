@@ -118,15 +118,15 @@ describe("DataAnnotationPage", () => {
     const taskList = screen.getByRole("region", { name: "数据标注任务列表" });
     expect(taskList).toBeInTheDocument();
     expect(taskList).toHaveClass("table-surface");
-    expect(within(taskList).getByRole("columnheader", { name: "任务" })).toBeInTheDocument();
-    expect(within(taskList).getByRole("columnheader", { name: "项目" })).toBeInTheDocument();
-    expect(within(taskList).getByRole("columnheader", { name: "创建者" })).toBeInTheDocument();
-    expect(within(taskList).getByRole("columnheader", { name: "操作" })).toBeInTheDocument();
     expect(taskList.querySelector("article")).not.toBeInTheDocument();
     expect(screen.queryByText("SPOT WELD / TASKS")).not.toBeInTheDocument();
     expect(screen.queryByText("点焊标注任务")).not.toBeInTheDocument();
     expect(screen.queryByText("查看任务状态、标注方式和当前进度")).not.toBeInTheDocument();
     expect(await screen.findByText("1/1 100%")).toBeInTheDocument();
+    expect(within(taskList).getByRole("columnheader", { name: "任务" })).toBeInTheDocument();
+    expect(within(taskList).getByRole("columnheader", { name: "项目" })).toBeInTheDocument();
+    expect(within(taskList).getByRole("columnheader", { name: "创建者" })).toBeInTheDocument();
+    expect(within(taskList).getByRole("columnheader", { name: "操作" })).toBeInTheDocument();
     expect(within(taskList).getAllByText("焊装线")).toHaveLength(2);
     expect(screen.getByText("alice")).toBeInTheDocument();
     expect(screen.queryByText("电极柱极焊数据标注")).not.toBeInTheDocument();
@@ -334,7 +334,8 @@ describe("DataAnnotationPage", () => {
     expect(screen.getByLabelText("已启用模型版本")).toBeInTheDocument();
     expect(screen.queryByLabelText("模型制品标识")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("搜索强度")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "创建通用任务" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下一页" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("是否启用弱监督标注")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("目标列来源")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("目标列")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("弱监督标注策略")).not.toBeInTheDocument();
@@ -375,11 +376,15 @@ describe("DataAnnotationPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "新建手动标注任务" }));
     await screen.findByRole("heading", { name: "新建手动标注任务" });
     fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
+    fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "Q3 复检任务" } });
+    fireEvent.change(screen.getByLabelText("填写指引"), { target: { value: "按质检标准填写" } });
+    fireEvent.change(screen.getByLabelText("完成标准"), { target: { value: "全部样本标签填写完整" } });
+    fireEvent.change(screen.getByLabelText("截止时间"), { target: { value: "2026-09-30" } });
     fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/annotations/label-schemas",
-      expect.objectContaining({ project_id: "project-1" }),
+      expect.objectContaining({ project_id: "project-1", columns: [expect.objectContaining({ instruction: "按质检标准填写" })] }),
     ));
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/annotation-tasks",
@@ -388,9 +393,138 @@ describe("DataAnnotationPage", () => {
         dataset_version_id: "version-1",
         label_schema_id: "schema-1",
         mode: "manual",
+        name: "Q3 复检任务",
+        sample_scope: { kind: "all" },
+        visible_columns: ["feature"],
+        completion_criteria: "全部样本标签填写完整",
+        due_at: new Date("2026-09-30T23:59:59").toISOString(),
       }),
       expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String), "X-Request-ID": expect.any(String) }) }),
     ));
+  });
+
+  it("serializes the sample scope filter and visible columns when creating a generic task", async () => {
+    datasetVersions.mockResolvedValue([{
+      id: "version-1",
+      project_id: "project-1",
+      version: 1,
+      status: "ready",
+      row_count: 2,
+      column_count: 2,
+      columns: [
+        { name: "score", dtype: "float", nullable: false, position: 0 },
+        { name: "grade", dtype: "object", nullable: false, position: 1 },
+      ],
+    }]);
+    post.mockResolvedValue({ data: { id: "generic-scope-1", project_id: "project-1", mode: "manual", status: "draft", task_revision: 0 } });
+
+    render(<MemoryRouter><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "新建手动标注任务" }));
+    await screen.findByRole("heading", { name: "新建手动标注任务" });
+    fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
+    expect(screen.getByRole("button", { name: "创建通用任务" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "筛选任务" } });
+    fireEvent.change(screen.getByLabelText("标签 schema 名称"), { target: { value: "labels" } });
+    fireEvent.change(screen.getByLabelText("标签字段"), { target: { value: "label" } });
+    fireEvent.click(screen.getByLabelText("按条件筛选"));
+    fireEvent.click(screen.getByRole("button", { name: "添加条件" }));
+    fireEvent.change(screen.getAllByLabelText("字段")[0], { target: { value: "score" } });
+    fireEvent.change(screen.getAllByLabelText("运算符")[0], { target: { value: "gt" } });
+    fireEvent.change(screen.getAllByLabelText("值")[0], { target: { value: "0.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "添加条件" }));
+    fireEvent.change(screen.getAllByLabelText("字段")[1], { target: { value: "grade" } });
+    fireEvent.change(screen.getAllByLabelText("运算符")[1], { target: { value: "eq" } });
+    fireEvent.change(screen.getAllByLabelText("值")[1], { target: { value: "A" } });
+    fireEvent.click(screen.getByLabelText("grade"));
+    fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/annotation-tasks",
+      expect.objectContaining({
+        name: "筛选任务",
+        sample_scope: { kind: "filter", filters: { score: { gt: 0.5 }, grade: { eq: "A" } } },
+        visible_columns: ["score"],
+      }),
+      expect.anything(),
+    ));
+  });
+
+  it("edits a draft task configuration and retries a failed preview from the task list", async () => {
+    const draftTask = {
+      id: "draft-task-1",
+      project_id: "project-1",
+      mode: "manual",
+      status: "draft",
+      task_revision: 0,
+      name: "原始任务",
+      completion_criteria: "初稿完成标准",
+      due_at: "2026-09-30T23:59:59+00:00",
+      created_at: "2026-09-16T08:30:00",
+      sample_scope: { kind: "all" },
+      task_snapshot: {
+        visible_columns: ["score"],
+        instructions: "初稿说明",
+        completion_criteria: "初稿完成标准",
+        dataset_version: { columns: [{ name: "score", dtype: "float64", nullable: false, position: 0 }, { name: "grade", dtype: "object", nullable: false, position: 1 }] },
+        configuration: {},
+        scope: { sample_count: 12 },
+      },
+    };
+    const failedTask = {
+      id: "failed-task-1",
+      project_id: "project-1",
+      mode: "manual",
+      status: "failed",
+      task_revision: 2,
+      name: "失败任务",
+      created_at: "2026-09-15T09:00:00",
+      sample_scope: { kind: "all" },
+    };
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "通用数据项目", project_role: "owner" }] } });
+      if (url === "/annotation-tasks") return Promise.resolve({ data: { items: [draftTask, failedTask], total: 2, next_cursor: null } });
+      return Promise.resolve({ data: { items: [] } });
+    });
+    put.mockResolvedValue({ data: { ...draftTask, name: "改名任务", task_revision: 1, status: "draft" } });
+    post.mockImplementation((url: string) => {
+      if (url === "/annotation-tasks/failed-task-1/preview") return Promise.resolve({ data: { operation_id: "operation-9", preview_id: "preview-9", task_revision: 2, status: "queued" } });
+      return Promise.resolve({ data: {} });
+    });
+
+    render(<MemoryRouter initialEntries={["/data-annotation?view=tasks&projectId=project-1"]}>
+      <AntApp><DataAnnotationPage /></AntApp>
+    </MemoryRouter>);
+
+    const genericList = await screen.findByRole("region", { name: "通用任务列表" });
+    const draftRow = within(genericList).getByText("原始任务").closest("tr")!;
+    expect(draftRow).not.toBeNull();
+    expect(within(draftRow).getByText("12 条")).toBeInTheDocument();
+    expect(within(draftRow).getByText(/2026\/9\/16/)).toBeInTheDocument();
+    expect(within(draftRow).getByText(/2026\/10\/1/)).toBeInTheDocument();
+
+    fireEvent.click(within(draftRow).getByRole("button", { name: "编辑任务" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("任务名称"), { target: { value: "改名任务" } });
+    fireEvent.change(within(dialog).getByLabelText("完成标准"), { target: { value: "全部样本标签经复核" } });
+    fireEvent.click(within(dialog).getByLabelText(/grade/));
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
+
+    await waitFor(() => expect(put).toHaveBeenCalledWith(
+      "/annotation-tasks/draft-task-1/configuration",
+      {
+        task_revision: 0,
+        name: "改名任务",
+        visible_columns: ["score", "grade"],
+        instructions: "初稿说明",
+        completion_criteria: "全部样本标签经复核",
+        due_at: new Date("2026-09-30T23:59:59").toISOString(),
+        configuration: {},
+      },
+    ));
+
+    const failedRow = within(genericList).getByText("失败任务").closest("tr")!;
+    fireEvent.click(within(failedRow).getByRole("button", { name: "重新生成预览" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/annotation-tasks/failed-task-1/preview", { task_revision: 2, config_hash: "sha256:task" }));
   });
 
   it("creates a generic automatic task from an enabled model version contract", async () => {
@@ -442,7 +576,10 @@ describe("DataAnnotationPage", () => {
     await screen.findByRole("heading", { name: "新建自动标注任务" });
     fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
     fireEvent.change(await screen.findByLabelText("已启用模型版本"), { target: { value: "model-version-1" } });
+    fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "自动预标任务" } });
     expect(screen.queryByLabelText("搜索强度")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    expect(await screen.findByLabelText("是否启用弱监督标注")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith(
@@ -461,7 +598,7 @@ describe("DataAnnotationPage", () => {
     expect(automlPayload).not.toHaveProperty("model_artifact_id");
   });
 
-  it("creates a cluster discovery task before exposing strategy configuration", async () => {
+  it("generates a cluster preview in the wizard and saves the cluster strategy", async () => {
     datasetVersions.mockResolvedValue([{
       id: "version-1",
       project_id: "project-1",
@@ -487,15 +624,70 @@ describe("DataAnnotationPage", () => {
         contract_hash: "contract-hash-1",
       },
     }]);
-    post.mockResolvedValue({ data: { id: "task-1", mode: "automatic", status: "draft", task_revision: 0 } });
+    const discoveryTask = {
+      id: "discovery-task-1",
+      mode: "automatic",
+      status: "draft",
+      task_revision: 0,
+      name: "聚类发现任务",
+      task_snapshot: {
+        config_hash: "sha256:discovery",
+        sample_ids: [],
+        visible_columns: ["feature"],
+        label_schema: { columns: [{ machine_key: "label", display_name: "label", value_type: "string", required: true }] },
+      },
+      sample_scope: { kind: "all" },
+      preview: null,
+    };
+    post.mockImplementation((url: string) => {
+      if (url === "/annotation-tasks") return Promise.resolve({ data: discoveryTask });
+      if (url === "/annotation-tasks/discovery-task-1/preview") return Promise.resolve({ data: { preview_id: "preview-1", task_revision: 0, status: "queued", dispatch_id: null, operation_id: null } });
+      return Promise.resolve({ data: {} });
+    });
+    const defaultGet = get.getMockImplementation();
+    get.mockImplementation((url: string, ...rest: unknown[]) => {
+      if (url === "/annotation-tasks/discovery-task-1/previews/preview-1") {
+        return Promise.resolve({ data: {
+          id: "preview-1",
+          status: "completed",
+          task_revision: 0,
+          progress: 100,
+          summary: {
+            clusters: [{ cluster_id: 0, sample_count: 2 }],
+            cluster_evaluation: {
+              selected_k: 2,
+              k_scores: { "2": 0.5 },
+              evaluation_mode: "all_rows",
+              evaluation_sample_count: 2,
+              total_sample_count: 2,
+              importance_method: "model_native",
+            },
+          },
+        } });
+      }
+      return defaultGet ? defaultGet(url, ...rest) : Promise.resolve({ data: { items: [] } });
+    });
+    put.mockResolvedValue({ data: { ...discoveryTask, task_revision: 1, status: "needs_review" } });
 
     render(<MemoryRouter><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: "新建自动标注任务" }));
     fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
     fireEvent.change(await screen.findByLabelText("已启用模型版本"), { target: { value: "model-version-1" } });
-    fireEvent.click(screen.getByLabelText("启用聚类"));
-    expect(screen.queryByLabelText("自动标注策略")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
+    fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "聚类发现任务" } });
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    fireEvent.change(await screen.findByLabelText("是否启用弱监督标注"), { target: { value: "yes" } });
+    fireEvent.click((await screen.findAllByRole("button", { name: "生成聚类预览" }))[0]);
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/annotation-tasks/discovery-task-1/preview", expect.anything()), { timeout: 3000 });
+    expect(await screen.findByLabelText("自动标注策略")).toBeInTheDocument();
+    expect(screen.getByLabelText("自动标注策略")).toHaveValue("cluster");
+    expect(await screen.findByLabelText("聚类预览效果")).toBeInTheDocument();
+    expect(screen.getByText("簇 0")).toBeInTheDocument();
+    expect(screen.getByText("簇数 K：2")).toBeInTheDocument();
+    expect(screen.getByText(/全量评分/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "簇 0 · 2 个样本" }));
+    fireEvent.change(screen.getByLabelText("簇 0 label"), { target: { value: "cluster-a" } });
+    fireEvent.change(screen.getByLabelText("其他兜底值 label"), { target: { value: "fallback" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存策略并完成" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/annotation-tasks",
@@ -508,6 +700,213 @@ describe("DataAnnotationPage", () => {
       }),
       expect.anything(),
     ));
+    await waitFor(() => expect(put).toHaveBeenCalledWith(
+      "/annotation-tasks/discovery-task-1/configuration",
+      expect.objectContaining({
+        task_revision: 0,
+        configuration: {
+          clustering: true,
+          strategy: "cluster",
+          selected_clusters: ["0"],
+          cluster_labels: { "0": { label: "cluster-a" } },
+          other_values: { label: "fallback" },
+        },
+      }),
+    ));
+  });
+
+  it("generates a cluster preview in the wizard and saves the rule strategy", async () => {
+    datasetVersions.mockResolvedValue([{
+      id: "version-1",
+      project_id: "project-1",
+      version: 1,
+      status: "ready",
+      row_count: 2,
+      column_count: 2,
+      columns: [{ name: "feature", dtype: "float", nullable: false, position: 0 }],
+    }]);
+    modelVersions.mockResolvedValue([{
+      id: "model-version-1",
+      registered_model_id: "registered-1",
+      model_name: "模型一",
+      version_number: 1,
+      algorithm: "RandomForestClassifier",
+      feature_schema: [{ name: "feature", dtype: "float64" }],
+      output_contract: {
+        model_version_id: "model-version-1",
+        registered_model_id: "registered-1",
+        model_name: "模型一",
+        version_number: 1,
+        columns: [{ machine_key: "label", display_name: "label", value_type: "string", required: true }],
+        contract_hash: "contract-hash-1",
+      },
+    }]);
+    const discoveryTask = {
+      id: "discovery-task-1",
+      mode: "automatic",
+      status: "draft",
+      task_revision: 0,
+      name: "规则标注任务",
+      task_snapshot: {
+        config_hash: "sha256:discovery",
+        sample_ids: [],
+        visible_columns: ["feature"],
+        label_schema: { columns: [{ machine_key: "label", display_name: "label", value_type: "string", required: true }] },
+      },
+      sample_scope: { kind: "all" },
+      preview: null,
+    };
+    post.mockImplementation((url: string) => {
+      if (url === "/annotation-tasks") return Promise.resolve({ data: discoveryTask });
+      if (url === "/annotation-tasks/discovery-task-1/preview") return Promise.resolve({ data: { preview_id: "preview-1", task_revision: 0, status: "queued", dispatch_id: null, operation_id: null } });
+      return Promise.resolve({ data: {} });
+    });
+    const defaultGet = get.getMockImplementation();
+    get.mockImplementation((url: string, ...rest: unknown[]) => {
+      if (url === "/annotation-tasks/discovery-task-1/previews/preview-1") {
+        return Promise.resolve({ data: {
+          id: "preview-1",
+          status: "completed",
+          task_revision: 0,
+          progress: 100,
+          summary: {
+            clusters: [{ cluster_id: 0, sample_count: 2 }],
+            cluster_evaluation: {
+              selected_k: 2,
+              k_scores: { "2": 0.5 },
+              evaluation_mode: "all_rows",
+              evaluation_sample_count: 2,
+              total_sample_count: 2,
+              importance_method: "model_native",
+            },
+          },
+        } });
+      }
+      return defaultGet ? defaultGet(url, ...rest) : Promise.resolve({ data: { items: [] } });
+    });
+    put.mockResolvedValue({ data: { ...discoveryTask, task_revision: 1, status: "needs_review" } });
+
+    render(<MemoryRouter><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "新建自动标注任务" }));
+    fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
+    fireEvent.change(await screen.findByLabelText("已启用模型版本"), { target: { value: "model-version-1" } });
+    fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "规则标注任务" } });
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    fireEvent.change(await screen.findByLabelText("是否启用弱监督标注"), { target: { value: "yes" } });
+    fireEvent.click((await screen.findAllByRole("button", { name: "生成聚类预览" }))[0]);
+    fireEvent.change(await screen.findByLabelText("自动标注策略"), { target: { value: "rule" } });
+    fireEvent.change(screen.getByLabelText("其他兜底值 label"), { target: { value: "fallback" } });
+    fireEvent.change(screen.getByLabelText("规则 1 条件 1 字段"), { target: { value: "feature" } });
+    fireEvent.change(screen.getByLabelText("规则 1 条件 1 比较"), { target: { value: "gte" } });
+    fireEvent.change(screen.getByLabelText("规则 1 条件 1 比较值"), { target: { value: "0.5" } });
+    fireEvent.change(screen.getByLabelText("规则 1 命中 label"), { target: { value: "positive" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存策略并完成" }));
+
+    await waitFor(() => expect(put).toHaveBeenCalledWith(
+      "/annotation-tasks/discovery-task-1/configuration",
+      expect.objectContaining({
+        task_revision: 0,
+        configuration: {
+          clustering: true,
+          strategy: "rule",
+          other_values: { label: "fallback" },
+          rules: [expect.objectContaining({ when: { feature: { gte: 0.5 } }, values: { label: "positive" } })],
+        },
+      }),
+    ));
+  });
+
+  it("marks ineligible model versions as disabled with an explanation", async () => {
+    datasetVersions.mockResolvedValue([{
+      id: "version-1",
+      project_id: "project-1",
+      version: 1,
+      status: "ready",
+      row_count: 2,
+      column_count: 2,
+      columns: [{ name: "feature", dtype: "float", nullable: false, position: 0 }],
+    }]);
+    modelVersions.mockResolvedValue([
+      {
+        id: "model-version-1",
+        registered_model_id: "registered-1",
+        model_name: "模型一",
+        version_number: 1,
+        algorithm: "RandomForestClassifier",
+        feature_schema: [{ name: "feature", dtype: "float64" }],
+        output_contract: {
+          model_version_id: "model-version-1",
+          registered_model_id: "registered-1",
+          model_name: "模型一",
+          version_number: 1,
+          columns: [{ machine_key: "label", display_name: "label", value_type: "string", required: true }],
+          contract_hash: "contract-hash-1",
+        },
+      },
+      {
+        id: "model-version-2",
+        registered_model_id: "registered-2",
+        model_name: "模型二",
+        version_number: 2,
+        algorithm: "GradientBoostingClassifier",
+        feature_schema: [{ name: "feature", dtype: "float64" }],
+        output_contract: null,
+        selectable: false,
+        ineligible_reason: "MODEL_SOURCE_UNSUPPORTED",
+      },
+    ]);
+
+    render(<MemoryRouter><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "新建自动标注任务" }));
+    const ineligibleOption = await screen.findByRole("option", { name: /模型二 · v2/ });
+    expect(ineligibleOption).toBeDisabled();
+    expect(ineligibleOption).toHaveTextContent("仅支持平台训练产物（joblib）");
+    const eligibleOption = screen.getByRole("option", { name: /模型一 · v1/ });
+    expect(eligibleOption).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("已启用模型版本"), { target: { value: "model-version-1" } });
+    expect(screen.getByLabelText("已启用模型版本")).toHaveValue("model-version-1");
+  });
+
+  it("returns to the basics step from the rules step via the back button", async () => {
+    datasetVersions.mockResolvedValue([{
+      id: "version-1",
+      project_id: "project-1",
+      version: 1,
+      status: "ready",
+      row_count: 2,
+      column_count: 2,
+      columns: [{ name: "feature", dtype: "float", nullable: false, position: 0 }],
+    }]);
+    modelVersions.mockResolvedValue([{
+      id: "model-version-1",
+      registered_model_id: "registered-1",
+      model_name: "模型一",
+      version_number: 1,
+      algorithm: "RandomForestClassifier",
+      feature_schema: [{ name: "feature", dtype: "float64" }],
+      output_contract: {
+        model_version_id: "model-version-1",
+        registered_model_id: "registered-1",
+        model_name: "模型一",
+        version_number: 1,
+        columns: [{ machine_key: "label", display_name: "label", value_type: "string", required: true }],
+        contract_hash: "contract-hash-1",
+      },
+    }]);
+
+    render(<MemoryRouter><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "新建自动标注任务" }));
+    fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
+    fireEvent.change(await screen.findByLabelText("已启用模型版本"), { target: { value: "model-version-1" } });
+    fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "向导回退任务" } });
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    fireEvent.change(await screen.findByLabelText("是否启用弱监督标注"), { target: { value: "yes" } });
+    expect((await screen.findAllByRole("button", { name: "生成聚类预览" })).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "生成聚类预览" })[0]).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "上一页" }));
+    expect(await screen.findByLabelText("数据版本")).toBeInTheDocument();
+    expect(screen.queryByLabelText("是否启用弱监督标注")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下一页" })).toBeEnabled();
   });
 
   it("serializes configuration rules using the data-version column types", async () => {
@@ -608,14 +1007,15 @@ describe("DataAnnotationPage", () => {
     await screen.findByRole("option", { name: "Model A · v1" });
     fireEvent.change(screen.getByLabelText("数据版本"), { target: { value: "version-1" } });
     fireEvent.change(screen.getByLabelText("已启用模型版本"), { target: { value: "model-version-1" } });
-    expect(screen.getByRole("button", { name: "创建通用任务" })).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "项目内任务" } });
+    expect(screen.getByRole("button", { name: "下一页" })).toBeEnabled();
     fireEvent.change(screen.getByLabelText("项目"), { target: { value: "project-2" } });
     await waitFor(() => expect(modelVersions).toHaveBeenCalledWith("project-2"));
 
     expect(await screen.findByLabelText("数据版本")).toHaveValue("");
     expect(screen.getByLabelText("已启用模型版本")).toHaveValue("");
     expect(screen.queryByRole("option", { name: "Model A · v1" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "创建通用任务" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
     await act(async () => {
       if (outcome === "failed") {
         failVersions(new Error("Version lookup failed"));
@@ -625,7 +1025,7 @@ describe("DataAnnotationPage", () => {
         finishModels([]);
       }
     });
-    fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     expect(post).not.toHaveBeenCalled();
   });
 

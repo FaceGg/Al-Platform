@@ -9,15 +9,18 @@ export type LabelColumnDraft = {
   enum_values?: Array<number | string>;
   min_value?: number;
   max_value?: number;
+  instruction?: string;
 };
 
 type Props = {
   initialColumns?: LabelColumnDraft[];
-  onSave: (columns: LabelColumnDraft[]) => void;
+  initialPurpose?: "annotation" | "training" | "inference";
+  onSave: (columns: LabelColumnDraft[], purpose: "annotation" | "training" | "inference") => void;
 };
 
-export default function LabelSchemaEditor({ initialColumns = [], onSave }: Props) {
+export default function LabelSchemaEditor({ initialColumns = [], initialPurpose = "annotation", onSave }: Props) {
   const [columns, setColumns] = useState<LabelColumnDraft[]>(initialColumns);
+  const [purpose, setPurpose] = useState<"annotation" | "training" | "inference">(initialPurpose);
   const [error, setError] = useState("");
   const add = () => setColumns((items) => [...items, {
     machine_key: `label_${items.length + 1}`,
@@ -49,11 +52,12 @@ export default function LabelSchemaEditor({ initialColumns = [], onSave }: Props
       if (column.value_type === "string" && column.max_length !== undefined) normalized.max_length = column.max_length;
       if (column.value_type !== "string" && column.min_value !== undefined) normalized.min_value = column.min_value;
       if (column.value_type !== "string" && column.max_value !== undefined) normalized.max_value = column.max_value;
+      if (column.instruction?.trim()) normalized.instruction = column.instruction.trim();
       return normalized;
-    }));
+    }), purpose);
   };
   return <section aria-label="标签 schema 编辑器">
-    <div className="label-schema-editor__toolbar"><button type="button" onClick={add}>添加列</button><button type="button" onClick={save} disabled={!columns.length}>保存 schema</button></div>
+    <div className="label-schema-editor__toolbar"><label>用途<select aria-label="schema 用途" value={purpose} onChange={(event) => setPurpose(event.target.value as typeof purpose)}><option value="annotation">标注</option><option value="training">训练</option><option value="inference">推理</option></select></label><button type="button" onClick={add}>添加列</button><button type="button" onClick={save} disabled={!columns.length}>保存 schema</button></div>
     {error && <p role="alert">{error}</p>}
     {columns.map((column, index) => <div className="label-schema-editor__row" key={`${column.machine_key}-${index}`}>
       <input aria-label={`机器键 ${index + 1}`} value={column.machine_key} onChange={(event) => update(index, { machine_key: event.target.value })} />
@@ -76,6 +80,7 @@ export default function LabelSchemaEditor({ initialColumns = [], onSave }: Props
         <input aria-label={`最小值 ${index + 1}`} type="number" value={column.min_value ?? ""} onChange={(event) => update(index, { min_value: event.target.value ? Number(event.target.value) : undefined })} placeholder="最小值" />
         <input aria-label={`最大值 ${index + 1}`} type="number" value={column.max_value ?? ""} onChange={(event) => update(index, { max_value: event.target.value ? Number(event.target.value) : undefined })} placeholder="最大值" />
       </>}
+      <input aria-label={`列说明 ${index + 1}`} value={column.instruction ?? ""} onChange={(event) => update(index, { instruction: event.target.value })} placeholder="列级标注说明" />
     </div>)}
   </section>;
 }

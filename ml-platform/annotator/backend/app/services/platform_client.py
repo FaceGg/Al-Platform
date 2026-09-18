@@ -5,7 +5,10 @@ from datetime import datetime, timedelta, timezone
 from app.config import settings
 
 class PlatformClientError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int = 502, detail: dict | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.detail = detail or {"code": "PORTAL_PLATFORM_UNAVAILABLE", "message": message}
 
 class PlatformClient:
     def __init__(self, base_url: str | None = None):
@@ -42,5 +45,19 @@ class PlatformClient:
                 response = await client.request(method, path, headers=headers, **kwargs)
             response.raise_for_status()
             return response.json() if response.content else {}
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code in {400, 403, 404, 409, 422}:
+                try:
+                    payload = error.response.json()
+                except ValueError:
+                    payload = None
+                detail = payload.get("detail") if isinstance(payload, dict) else None
+                if isinstance(detail, dict) and isinstance(detail.get("code"), str):
+                    raise PlatformClientError(
+                        "internal portal request rejected",
+                        status_code=error.response.status_code,
+                        detail=detail,
+                    ) from error
+            raise PlatformClientError("internal portal request failed") from error
         except (httpx.HTTPError, ValueError) as error:
             raise PlatformClientError("internal portal request failed") from error

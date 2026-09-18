@@ -80,6 +80,8 @@ const weekTestFiles: Record<number, string[]> = {
     "./api/models.test.ts",
     "./api/modelExports.test.ts",
     "./components/AssignmentDialog.test.tsx",
+    "./components/ReturnAcceptancePanel.test.tsx",
+    "./components/AnnotationCommentModerationPanel.test.tsx",
     "./components/ReturnBatchList.test.tsx",
   ],
 };

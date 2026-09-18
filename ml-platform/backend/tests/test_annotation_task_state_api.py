@@ -110,7 +110,7 @@ def test_local_preview_dispatch_completes_with_independent_session(monkeypatch, 
             task = GenericAnnotationTask(
                 project_id=project.id, dataset_version_id=uuid.uuid4(),
                 label_schema_id=schema.id, owner_id=user.id, mode="manual",
-                status="draft", task_revision=0, sample_scope={"kind": "all"},
+                status="draft", task_revision=0, sample_scope={"kind": "all", "sample_count": 0},
                 task_snapshot={"sample_ids": [], "visible_columns": [], "label_schema": {"columns": []}},
             )
             db.add(task)
@@ -204,6 +204,117 @@ def _enabled_annotation_model(db, project, user, *, columns=None):
     db.add(version)
     db.flush()
     return version, source
+
+
+def test_annotation_model_version_listing_flags_eligibility():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"model-list-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Model listing", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    approved, _ = _enabled_annotation_model(db, project, user)
+
+    pending_model = RegisteredModel(
+        project_id=project.id,
+        name=f"pending-model-{uuid.uuid4().hex[:8]}",
+        created_by_id=user.id,
+    )
+    onnx_model = RegisteredModel(
+        project_id=project.id,
+        name=f"onnx-model-{uuid.uuid4().hex[:8]}",
+        created_by_id=user.id,
+    )
+    pending_source = Artifact(
+        project_id=project.id,
+        name=f"pending-source-{uuid.uuid4().hex}.joblib",
+        type="model",
+        storage_path="pending-source.joblib",
+        format="joblib",
+    )
+    pending_onnx = Artifact(
+        project_id=project.id,
+        name=f"pending-source-{uuid.uuid4().hex}.onnx",
+        type="model",
+        storage_path="pending-source.onnx",
+        format="onnx",
+    )
+    onnx_source = Artifact(
+        project_id=project.id,
+        name=f"onnx-source-{uuid.uuid4().hex}.onnx",
+        type="model",
+        storage_path="onnx-source.onnx",
+        format="onnx",
+    )
+    onnx_converted = Artifact(
+        project_id=project.id,
+        name=f"onnx-converted-{uuid.uuid4().hex}.onnx",
+        type="model",
+        storage_path="onnx-converted.onnx",
+        format="onnx",
+    )
+    pending_library = ModelLibrary(
+        name=f"pending-library-{uuid.uuid4().hex[:8]}",
+        project_id=project.id,
+        owner_id=user.id,
+        status="completed",
+        format="joblib",
+        model_artifact_id=pending_source.id,
+    )
+    db.add_all([pending_model, onnx_model, pending_source, pending_onnx, onnx_source, onnx_converted, pending_library])
+    db.flush()
+    pending = ModelVersion(
+        registered_model_id=pending_model.id,
+        version_number=1,
+        source_kind="platform_joblib",
+        source_model_library_id=pending_library.id,
+        source_artifact_id=pending_source.id,
+        onnx_artifact_id=pending_onnx.id,
+        framework="sklearn",
+        algorithm="pending-test",
+        feature_schema=[{"name": "feature", "dtype": "float64"}],
+        output_schema={"task_type": "multioutput_classification", "target_columns": ["label"]},
+        approval_status="pending",
+        lifecycle_state="pending_review",
+        created_by_id=user.id,
+    )
+    onnx_version = ModelVersion(
+        registered_model_id=onnx_model.id,
+        version_number=1,
+        source_kind="onnx_artifact",
+        source_artifact_id=onnx_source.id,
+        onnx_artifact_id=onnx_converted.id,
+        framework="sklearn",
+        algorithm="onnx-test",
+        feature_schema=[{"name": "feature", "dtype": "float64"}],
+        output_schema={"task_type": "multioutput_classification", "target_columns": ["label"]},
+        approval_status="approved",
+        lifecycle_state="enabled",
+        created_by_id=user.id,
+    )
+    db.add_all([pending, onnx_version])
+    db.commit()
+
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        response = TestClient(app).get(f"/api/projects/{project.id}/annotation-model-versions")
+        assert response.status_code == 200, response.text
+        items = {item["id"]: item for item in response.json()["items"]}
+        assert set(items) == {str(approved.id), str(pending.id), str(onnx_version.id)}
+        assert items[str(approved.id)]["selectable"] is True
+        assert items[str(approved.id)]["ineligible_reason"] is None
+        assert items[str(pending.id)]["selectable"] is False
+        assert items[str(pending.id)]["ineligible_reason"] == "MODEL_VERSION_NOT_ENABLED"
+        assert items[str(onnx_version.id)]["selectable"] is False
+        assert items[str(onnx_version.id)]["ineligible_reason"] == "MODEL_SOURCE_UNSUPPORTED"
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
 
 
 def test_preview_transition_and_stale_preview_errors(monkeypatch):
@@ -546,7 +657,7 @@ def test_preview_detail_is_owner_scoped():
     db.add(schema)
     db.flush()
     db.add(LabelColumn(schema_id=schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"))
-    task = GenericAnnotationTask(project_id=project.id, dataset_version_id=uuid.uuid4(), label_schema_id=schema.id, owner_id=user.id, mode="manual", status="draft", task_revision=0, sample_scope={"kind": "all"})
+    task = GenericAnnotationTask(project_id=project.id, dataset_version_id=uuid.uuid4(), label_schema_id=schema.id, owner_id=user.id, mode="manual", status="draft", task_revision=0, sample_scope={"kind": "all", "sample_count": 0})
     db.add(task)
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
@@ -743,7 +854,7 @@ def test_preview_creation_dispatches_in_celery_mode(monkeypatch):
     db.add(schema)
     db.flush()
     db.add(LabelColumn(schema_id=schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"))
-    task = GenericAnnotationTask(project_id=project.id, dataset_version_id=uuid.uuid4(), label_schema_id=schema.id, owner_id=user.id, mode="manual", status="draft", task_revision=0, sample_scope={"kind": "all"})
+    task = GenericAnnotationTask(project_id=project.id, dataset_version_id=uuid.uuid4(), label_schema_id=schema.id, owner_id=user.id, mode="manual", status="draft", task_revision=0, sample_scope={"kind": "all", "sample_count": 0})
     db.add(task)
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
@@ -787,7 +898,7 @@ def test_preview_list_hides_task_from_non_owner_and_supports_cursor():
     app.dependency_overrides[get_current_user] = lambda: owner
     client = TestClient(app)
     try:
-        task_model = GenericAnnotationTask(project_id=project.id, dataset_version_id=uuid.uuid4(), label_schema_id=schema.id, owner_id=owner.id, mode="manual", status="draft", task_revision=0, sample_scope={"kind": "all"})
+        task_model = GenericAnnotationTask(project_id=project.id, dataset_version_id=uuid.uuid4(), label_schema_id=schema.id, owner_id=owner.id, mode="manual", status="draft", task_revision=0, sample_scope={"kind": "all", "sample_count": 0})
         db.add(task_model)
         db.commit()
         task = {"id": str(task_model.id)}
@@ -878,6 +989,89 @@ def test_publish_route_returns_and_replays_durable_command_receipt():
         )
         assert conflict.status_code == 409
         assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
+def test_generic_task_name_round_trip_and_configuration_update():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"name-roundtrip-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Name round trip", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    schema = LabelSchema(project_id=project.id, name="name-labels", version=1, status="active")
+    db.add(schema)
+    db.flush()
+    db.add(LabelColumn(schema_id=schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"))
+    version = DatasetVersion(project_id=project.id, operator_id=user.id, version=1, row_count=2, column_count=2, content_hash="sha256:data", schema_hash="sha256:schema")
+    db.add(version)
+    db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False),
+        DatasetSchemaColumn(dataset_version_id=version.id, name="label", position=1, dtype="string", nullable=True),
+        DatasetSample(dataset_version_id=version.id, sample_id="sample-1", row_index=0, values={"feature": 1.0}),
+        DatasetSample(dataset_version_id=version.id, sample_id="sample-2", row_index=1, values={"feature": 2.0}),
+    ])
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    client = TestClient(app)
+    try:
+        created = client.post(
+            "/api/annotation-tasks",
+            headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": f"name-{uuid.uuid4()}"},
+            json={
+                "project_id": str(project.id),
+                "dataset_version_id": str(version.id),
+                "label_schema_id": str(schema.id),
+                "name": "  Q3 复检任务  ",
+                "completion_criteria": "全部样本必填标签填写完整",
+                "due_at": "2026-09-30T23:59:59+00:00",
+                "mode": "manual",
+                "sample_scope": {"kind": "all"},
+            },
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["name"] == "Q3 复检任务"
+        assert created.json()["completion_criteria"] == "全部样本必填标签填写完整"
+        assert created.json()["due_at"] is not None
+        assert created.json()["due_at"].startswith("2026-09-30")
+        assert created.json()["task_snapshot"]["completion_criteria"] == "全部样本必填标签填写完整"
+        task_id = created.json()["id"]
+
+        listed = client.get("/api/annotation-tasks", params={"project_id": str(project.id)})
+        assert listed.status_code == 200, listed.text
+        items = listed.json()["items"]
+        assert [item["name"] for item in items] == ["Q3 复检任务"]
+        assert items[0]["created_at"]
+        assert items[0]["completion_criteria"] == "全部样本必填标签填写完整"
+        assert items[0]["due_at"] is not None
+
+        updated = client.put(
+            f"/api/annotation-tasks/{task_id}/configuration",
+            json={
+                "task_revision": 0,
+                "name": "Q3 复检任务 v2",
+                "visible_columns": ["feature"],
+                "instructions": "updated",
+                "completion_criteria": "全部样本标签经复核",
+                "due_at": "2026-10-15T23:59:59+00:00",
+                "configuration": {},
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["name"] == "Q3 复检任务 v2"
+        assert updated.json()["completion_criteria"] == "全部样本标签经复核"
+        assert updated.json()["due_at"] is not None
+        assert updated.json()["due_at"].startswith("2026-10-15")
+        assert updated.json()["task_revision"] == 1
+        assert updated.json()["status"] == "draft"
     finally:
         app.dependency_overrides.clear()
         db.close()

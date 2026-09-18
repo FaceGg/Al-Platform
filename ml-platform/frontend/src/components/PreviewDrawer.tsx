@@ -1,3 +1,6 @@
+import ClusterPreviewPanel, { type ClusterEvaluation } from "./ClusterPreviewPanel";
+import type { ClusterOption } from "./AutomaticAnnotationStrategyEditor";
+
 type Props = {
   snapshot?: Record<string, unknown>;
   status?: string;
@@ -16,6 +19,25 @@ type Props = {
   onClose: () => void;
 };
 
+function clusterOptionsFromSummary(summary: Record<string, unknown> | undefined): ClusterOption[] {
+  const rawClusters = summary?.clusters;
+  if (!Array.isArray(rawClusters)) return [];
+  return rawClusters.flatMap((cluster) => {
+    if (!cluster || typeof cluster !== "object") return [];
+    const item = cluster as Record<string, unknown>;
+    const clusterId = item.cluster_id;
+    const sampleCount = Number(item.sample_count);
+    return clusterId !== undefined && Number.isFinite(sampleCount)
+      ? [{ clusterId: String(clusterId), sampleCount }]
+      : [];
+  });
+}
+
+function clusterEvaluationFromSummary(summary: Record<string, unknown> | undefined): ClusterEvaluation | null {
+  const raw = summary?.cluster_evaluation;
+  return raw && typeof raw === "object" ? raw as ClusterEvaluation : null;
+}
+
 function displayValue(value: unknown) {
   if (typeof value === "string") return value;
   return JSON.stringify(value, null, 2);
@@ -27,6 +49,8 @@ function statusLabel(status?: string) {
 
 export default function PreviewDrawer({ open, title = "任务预览", operationId, summary, samples = [], progress, strategySummary, errorMessage, onClose, onLoadMore, hasMore = false, snapshot, status, loading = false, sampleTotal }: Props) {
   if (!open) return null;
+  const drawerClusters = clusterOptionsFromSummary(summary);
+  const drawerClusterEvaluation = clusterEvaluationFromSummary(summary);
   return <aside role="dialog" aria-label={title} className="annotation-preview-drawer">
     <header className="annotation-preview-drawer__header">
       <div><span className="annotation-preview-drawer__eyebrow">ANNOTATION PREVIEW</span><h2>{title}</h2>{operationId && <code>{operationId}</code>}</div>
@@ -44,6 +68,7 @@ export default function PreviewDrawer({ open, title = "任务预览", operationI
         <div><strong>{snapshot && Array.isArray(snapshot.visible_columns) ? snapshot.visible_columns.length : "—"}</strong><span>可见字段</span></div>
       </div>
       {errorMessage && <div className="annotation-preview-drawer__error" role="alert"><strong>预览处理失败</strong><span>{errorMessage}</span></div>}
+      {drawerClusters.length > 0 && <section aria-label="聚类预览" className="annotation-preview-drawer__section"><h3>聚类预览</h3><ClusterPreviewPanel clusters={drawerClusters} evaluation={drawerClusterEvaluation} lang="zh" /></section>}
       {snapshot && <section aria-label="任务快照" className="annotation-preview-drawer__section"><h3>任务快照</h3><dl>
         {([["instructions", "说明"], ["dataset_version", "数据版本"], ["sample_ids", "数据范围"], ["visible_columns", "可见字段"], ["label_schema", "标签 schema"], ["configuration", "模型与配置"], ["config_hash", "配置 hash"]] as const).map(([key, label]) => snapshot[key] !== undefined && <div key={key}><dt>{label}</dt><dd>{key === "sample_ids" && Array.isArray(snapshot[key]) ? `${snapshot[key].length} 个样本` : displayValue(snapshot[key])}</dd></div>)}
     </dl></section>}

@@ -3,12 +3,16 @@ import apiClient from "./client";
 export type AnnotationTask = {
   id: string;
   project_id: string;
+  name?: string;
+  completion_criteria?: string;
+  due_at?: string | null;
   mode: "manual" | "automatic";
   status: string;
   task_revision: number;
   sample_scope: Record<string, unknown>;
   task_snapshot?: Record<string, any>;
   preview?: AnnotationPreview | null;
+  created_at?: string | null;
 };
 
 export type GenericTaskCreatePayload = {
@@ -16,18 +20,24 @@ export type GenericTaskCreatePayload = {
   dataset_version_id: string;
   label_schema_id?: string;
   model_version_id?: string;
+  name?: string;
   mode: "manual" | "automatic";
   sample_scope: { kind: "all" | "ids" | "filter"; sample_ids?: string[]; filters?: Record<string, unknown> };
   label_snapshot?: Record<string, unknown>;
   visible_columns: string[];
   instructions: string;
+  completion_criteria?: string;
+  due_at?: string | null;
   configuration: Record<string, unknown>;
 };
 
 export type GenericTaskConfigurationPayload = {
   task_revision: number;
+  name?: string;
   visible_columns: string[];
   instructions: string;
+  completion_criteria?: string;
+  due_at?: string | null;
   configuration: Record<string, unknown>;
 };
 

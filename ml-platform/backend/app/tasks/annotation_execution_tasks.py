@@ -447,7 +447,7 @@ def execute_annotation_task(self, task_id: str, preview_id: str, owner_id: str, 
                     db.commit()
             except ValueError:
                 pass
-            return {"status": "failed", "operation_id": operation_id, "error": {"code": getattr(error, "code", "ANNOTATION_EXECUTION_FAILED"), "message": str(error)[:500]}}
+            return {"status": "failed", "operation_id": operation_id, "error": {"code": getattr(error, "code", "ANNOTATION_EXECUTION_FAILED"), "message": str(error)[:500], "details": dict(getattr(error, "details", {}) or {})}}
     finally:
         if context_exit is not None:
             context_exit(None, None, None)

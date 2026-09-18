@@ -464,3 +464,115 @@ def test_weighted_kmeans_uses_frozen_importance_when_model_has_no_native_vector(
     )
 
     assert artifact.weights == pytest.approx({"x": 0.75, "y": 0.25})
+
+
+def test_degenerate_weighted_space_blocks_in_memory_clustering():
+    frame = pd.DataFrame({"x": [1.0, 1.0, 1.0], "y": [2.0, 2.0, 2.0]})
+
+    class Model:
+        feature_importances_ = np.array([0.5, 0.5])
+
+    with pytest.raises(ValueError) as error:
+        build_weighted_clusters(frame, Model(), InputContract(feature_columns=("x", "y")), seed=7)
+    assert str(error.value) == "CLUSTER_DEGENERATE_FEATURE_SPACE"
+
+
+def test_degenerate_weighted_space_blocks_streaming_clustering():
+    frame = pd.DataFrame({"x": [1.0, 1.0, 1.0, 1.0], "y": [2.0, 2.0, 2.0, 2.0]})
+    sample_ids = tuple(f"s-{index}" for index in range(len(frame)))
+
+    def batches():
+        yield sample_ids[:2], frame.iloc[:2].copy()
+        yield sample_ids[2:], frame.iloc[2:].copy()
+
+    class Model:
+        feature_importances_ = np.array([0.5, 0.5])
+
+    with pytest.raises(ValueError) as error:
+        weighted_clustering.build_weighted_clusters_streaming(
+            batches,
+            Model(),
+            InputContract(feature_columns=("x", "y")),
+            seed=7,
+            task_revision=1,
+            total_sample_count=len(frame),
+        )
+    assert str(error.value) == "CLUSTER_DEGENERATE_FEATURE_SPACE"
+
+
+def test_aggregate_model_importance_blocks_unmapped_dimensions():
+    feature_map = FeatureMap(("age", "color"), {"color": (1, 2)})
+    with pytest.raises(ValueError) as error:
+        aggregate_model_importance({"target_a": [0.25, 0.25, 0.25, 0.25]}, feature_map)
+    assert str(error.value).startswith("FEATURE_IMPORTANCE_UNMAPPED_DIMENSIONS:3")
+
+
+def test_package_feature_map_aggregates_one_hot_importance():
+    from app.services.annotation_strategies import _cluster_package_contract
+
+    package = {
+        "input_contract": {"feature_columns": ["age", "color"]},
+        "feature_importance_report": {
+            "source": "model_native",
+            "per_target": {"t": [0.4, 0.3, 0.3]},
+        },
+        "feature_map": {"source_columns": ["age", "color"], "one_hot_dimensions": {"color": [1, 2]}},
+    }
+    columns, frozen, method, report, feature_map, encoding = _cluster_package_contract(package)
+    assert columns == ("age", "color")
+    assert frozen == pytest.approx({"age": 0.4, "color": 0.6})
+    assert method == "model_native"
+    assert encoding == "one_hot_aggregated"
+    assert feature_map is not None
+
+
+def test_package_feature_map_blocks_unmapped_interaction_dimensions():
+    from app.services.annotation_strategies import _cluster_package_contract
+
+    package = {
+        "input_contract": {"feature_columns": ["age", "color"]},
+        "feature_importance_report": {
+            "source": "model_native",
+            "per_target": {"t": [0.25, 0.25, 0.25, 0.25]},
+        },
+        "feature_map": {"source_columns": ["age", "color"], "one_hot_dimensions": {"color": [1, 2]}},
+    }
+    with pytest.raises(StrategyConfigError) as error:
+        _cluster_package_contract(package)
+    assert error.value.code == "FEATURE_IMPORTANCE_UNMAPPED_DIMENSIONS"
+
+
+def test_permutation_importance_fallback_ranks_features_without_native_vector():
+    from sklearn.linear_model import LinearRegression
+
+    rng = np.random.default_rng(11)
+    frame = pd.DataFrame({
+        "signal": rng.normal(size=40),
+        "noise": rng.normal(size=40),
+    })
+    target = frame["signal"] * 2.0 + rng.normal(scale=0.01, size=40)
+    model = LinearRegression().fit(frame, target)
+
+    class ImportanceFree:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def fit(self, values, target_values):
+            self._inner.fit(values, target_values)
+            return self
+
+        def predict(self, values):
+            return self._inner.predict(values)
+
+        def score(self, values, target_values):
+            return self._inner.score(values, target_values)
+
+    artifact = build_weighted_clusters(
+        frame,
+        ImportanceFree(model),
+        InputContract(feature_columns=("signal", "noise")),
+        seed=7,
+    )
+    assert artifact.importance_method == "permutation"
+    assert artifact.weights["signal"] > artifact.weights["noise"]
+    assert artifact.weights["signal"] == pytest.approx(sum(artifact.weights.values()))

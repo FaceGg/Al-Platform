@@ -1,5 +1,77 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-18 自动标注 §7.3/§7.4 四项偏差修复与聚类预览效果
+
+- 背景：§7 实现审计发现 4 处与技术方案字面要求的偏差——置换重要性未接入聚类回退链、one-hot 聚合与未映射交互维度阻断未接入生产路径、加权特征空间“至少 2 个不同向量”只在评估抽样上检查、预览/执行错误载荷未携带 `details`（受影响样本数/样本标识）。
+- 修复（后端）：`weighted_clustering.py` 新增置换重要性回退（原生/|coef_| 不可用时在冻结评估子集上按 `sklearn.inspection.permutation_importance` 计算，逐目标等权、clip 非负、方法与种子入工件 `importance_method`，全不可用仍返回 `FEATURE_IMPORTANCE_UNAVAILABLE`）；流式与内存两条路径在加权全空间断言“至少 2 个不同向量”，违反返回新错误码 `CLUSTER_DEGENERATE_FEATURE_SPACE`；`FeatureMap.restore_with_unmapped` 区分数值一维映射与无法归属的交互维度，`aggregate_model_importance` 遇未映射维度抛 `FEATURE_IMPORTANCE_UNMAPPED_DIMENSIONS:{索引}`。`annotation_strategies.py` 的 `_cluster_package_contract` 接入冻结 `feature_map`（`source_columns`+`one_hot_dimensions`）：编码宽度向量按逐目标 L1 归一化+one-hot 求和聚合回原始列并记录 `importance_encoding=one_hot_aggregated`，宽度超出的交互维度阻断；模型推理失败返回稳定错误码 `MODEL_INFERENCE_FAILED`。
+- 修复（7.6）：预览失败 `error` 携带 `details`（`_ExecutionOutputError` 的受影响样本数/样本标识等），执行 worker 返回载荷与预览序列化新增 `error_code`/`error_details`，前端聚类预览失败直接展示服务端错误码。
+- 新增（聚类预览效果）：预览 worker 汇总新增 `cluster_evaluation`（selected_k、逐 K 轮廓系数、evaluation_mode、评估样本数/总数、importance_method）；前端新组件 `ClusterPreviewPanel` 渲染逐簇样本数与占比条形、K 选择、评估方式（全量/确定性抽样）与权重来源，接入向导簇发现完成态、任务列表“配置策略”弹窗与 `PreviewDrawer`（summary.clusters 非空时显示“聚类预览”区）。
+- 测试：新增/更新用例覆盖置换回退成功与全来源不可用失败、`MODEL_INFERENCE_FAILED`、内存/流式退化空间阻断、one-hot 聚合与未映射维度阻断、`ClusterPreviewPanel` 4 项与向导发现流程断言；后端 `test_annotation_strategies.py`+`test_annotation_task_state.py` 102 passed、`test_annotation_task_state_api.py`+`test_portal_internal_api.py` 100 passed；前端 `DataAnnotationPage.test.tsx` 56 passed、组件 4 passed，`tsc --noEmit` 与生产构建通过。
+- 边界：SHAP 重要性仍按方案“经批准”条件未实现（无审批机制，缺失即失败封闭）；`>10 万`行置换回退仅使用 5 万确定性评估子集（已在工件记录方法与种子）；真实浏览器验收与 PostgreSQL 迁移执行仍未完成。
+
+### 2026-09-17 自动标注创建流程严格对齐 §7.1 步骤 6-7
+
+- 修复：自动标注向导创建草稿后立即生成最终配置预览；聚类模式先完成簇发现和策略保存，再以新任务修订生成最终预览。最终预览轮询完成后在向导内展示全量统计与分页样本，仅当预览完成、配置完整、无 `needs_review` 且样本已加载时启用“确认执行”，调用执行接口并返回任务列表。
+- 验证：`DataAnnotationPage.test.tsx` 56 passed；前端 TypeScript 检查与生产构建通过。
+- 边界：真实登录浏览器验收、真实 PostgreSQL 迁移执行仍需单独完成。
+
+### 2026-09-17 自动标注向导内簇发现闭环（§7.1 步骤 3-7 严格实现）
+
+- 问题：技术方案 §7.1 要求启用聚类时"先生成最终簇分配（步骤 3）→三选一策略（步骤 4）→配置簇映射/规则/兜底值（步骤 5）→预览冻结（步骤 6）→确认执行（步骤 7）"在向导内一气呵成；旧实现把簇打标签推迟到创建后任务列表『配置策略』弹窗，向导第 2 页无从看到簇、无法完成簇映射，违反步骤顺序且流程割裂。
+- 修复（仅前端，后端合同已支持）：第 2 页弱监督=是时新增向导内闭环——未生成任务显示"生成聚类预览"按钮（`startGenericDiscovery`：复用向导校验→`POST /annotation-tasks` 以 `{clustering:true, cluster_discovery:true}` 落库→`createAnnotationPreview`→记录 previewId）；预览期间显示 Spin；失败显示错误+重试（重新 `createAnnotationPreview`）；完成后渲染 `AutomaticAnnotationStrategyEditor` 并注入预览 `summary.clusters`（`clusterOptionsForTask`），三选一策略/簇映射/规则/兜底值全部在向导内完成，footer"保存策略并完成"经 `saveGenericStrategy` 以 `PUT /annotation-tasks/{id}/configuration` 提交全量配置（task_revision/name/visible_columns/instructions/completion_criteria/due_at/configuration）。轮询 effect 每秒 `getAnnotationPreview` 直至 completed/ready 或 failed/cancelled；任务创建后第 1 页数据版本/模型版本/样本范围冻结（disabled）防止配置漂移；footer 主按钮四分支（下一页/创建通用任务/生成聚类预览/保存策略并完成，预览未完成禁用保存）。i18n zh/en 对称新增 9 条文案（聚类预览标题/进行中/失败/重试/生成/步骤提示/就绪提示/保存策略/已保存）。
+- 竞态修复：原"预览进行中"判定 `genericDiscoveryPreviewId && 未完成` 在 previewId 尚未设置的窗口（任务已创建、`createAnnotationPreview` 在飞）会误渲染 clusters=[] 的空策略编辑器，随后被 Spin/最终编辑器替换——脱离 DOM 的 select 上派发的 change 事件不会冒泡到 React 根，导致策略切换静默丢失（rule 策略端到端测试失败根因）；判定改为 `(!genericDiscoveryPreviewId || 未完成) && !error`，该窗口全程显示 Spin，策略编辑器仅在簇数据就绪后渲染。
+- 验证：前端 `DataAnnotationPage.test.tsx` 56 passed（2 个用例重写为向导内簇发现闭环端到端：cluster 策略断言 post 落库 discovery 配置+put 提交 `selected_clusters/cluster_labels/other_values`；rule 策略断言 put 提交 `rules/other_values` 完整配置；"上一页"用例改断言可返回并重新生成预览）；前端全量 `313 passed | 19 skipped`（62 文件）；`tsc --noEmit` 与生产构建通过。
+- 边界：浏览器真实登录验收、真实 PostgreSQL 迁移执行仍未完成。
+
+### 2026-09-17 新建自动标注向导化与模型版本可见性修复（§7.1 严格复现）
+
+- 问题（用户报告 4 项）：1) "已启用模型版本"下拉看不到模型库注册的多数版本——列表端点静默过滤未审批/非 platform_joblib/合同无效版本，用户无从得知原因；2) 缺"下一页"分步流程，"是否启用聚类"混在基本信息页；3) 第 2 页缺"上一页"返回；4) 缺"是否启用弱监督标注"选择（否=模型原始输出，是=先聚类再按策略生成标签，对应技术方案 §7.1 步骤 2-3）。
+- 修复（后端）：`GET /api/projects/{id}/annotation-model-versions` 改为返回全部非 archived/revoked 版本并附加 `selectable`/`ineligible_reason`（MODEL_VERSION_NOT_ENABLED / MODEL_SOURCE_UNSUPPORTED / MODEL_OUTPUT_CONTRACT_INVALID；合同无效时输出兜底 view `output_contract: null`），选项禁用+原因后缀替代静默消失；执行端约束不变（仍要求 approved/enabled/platform_joblib/有效合同）。
+- 修复（前端）：genericSetupView 改造为两步向导（antd Steps 指示条）：第 1 页基本信息（数据版本+模型版本+冻结合同+样本范围+可见字段+说明+完成标准+截止时间，footer"下一页"），第 2 页标注规则（"是否启用弱监督标注" select：否→`{clustering:false, strategy:"model"}` 模型原始输出直出；是→渲染策略编辑器，规则策略创建即提交完整 rules/other_values，按簇/簇加规则以簇发现模式落库并提示后续"配置策略"补全；footer"上一页"+"创建通用任务"）。校验抽取 `genericSetupBasicsIncomplete` 供两按钮共用；`AnnotationModelVersion` 类型补 `selectable`/`ineligible_reason`（output_contract 可空）；i18n zh/en 对称补 13 条文案（步骤标题/弱监督/下一页/上一页/模型不可选原因等）。
+- 验证：前端 `DataAnnotationPage.test.tsx` 56 passed（54 既有更新：4 个自动任务创建用例补"下一页"导航与弱监督 select、automatic setup 断言改"下一页"；2 个新增：不可选模型选项禁用+原因显示、上一页返回第 1 步）；前端全量 `313 passed | 19 skipped`；`tsc --noEmit` 与生产构建通过。后端新增 `test_annotation_model_version_listing_flags_eligibility`（pending→NOT_ENABLED、onnx→SOURCE_UNSUPPORTED、approved platform→selectable），`test_annotation_task_state_api.py` 21 passed，相关模块组合 90 passed。
+- 边界：ONNX 来源版本仍不可用于自动标注预览（预览 worker 仅 joblib.load 平台产物，硬约束，以禁用+原因呈现）；簇发现模式下策略补全仍需"生成预览→任务列表『配置策略』"链路（§7.1 步骤 4-5，表单提示已说明）；浏览器真实登录验收、真实 PostgreSQL 迁移执行仍未完成。
+
+### 2026-09-17 新建自动标注任务接入策略编辑器（§7.1 流程补全）
+
+- 问题：新建自动标注任务表单（genericSetupView automatic 分支）仅有模型版本选择、冻结标签合同展示与"启用聚类"复选框；`genericAutomaticDraft` 状态存在但无任何编辑入口（死状态），且创建时 `automaticConfigurationFromDraft` 的 discovery 参数恒等于 `genericClustering`——聚类任务一律以簇发现模式落库，用户无从表达策略意图，规则/兜底值无处配置，也无流程指引。
+- 修复（仅前端，后端合同已支持）：启用聚类且已选模型时渲染 `AutomaticAnnotationStrategyEditor`（clusters=[]，创建阶段无簇，编辑器自动隐藏簇映射区）；聚类开/关分别补 §7.2/§7.3 说明文案；按所选策略显示提示——"按规则"可在本页直接完成规则与全部兜底值配置，"按簇/簇加规则"提示簇映射需在簇分配生成后于任务列表『配置策略』中完成。创建序列化修正：rule 策略提交 `{clustering:true, strategy:"rule", rules, other_values}`（规则条件按数据版本 dtype 类型化校验）；cluster/cluster_rule 仍以 `{clustering:true, cluster_discovery:true}` 落库（后端约束：cluster 策略要求已选簇且簇须来自发现预览，cluster_discovery 要求空配置），创建成功提示分别引导后续步骤。i18n 补 zh/en 六条文案。
+- 验证：前端 `DataAnnotationPage.test.tsx` 54 passed（更新原"按簇策略创建落库簇发现模式"用例：断言策略编辑器可见且默认按簇；新增"按规则策略创建提交 rules/other_values 完整配置"用例）；前端生产构建（tsc --noEmit + vite build）通过。
+- 边界：cluster/cluster_rule 策略在创建页填写的规则/兜底值不落库（受后端簇发现约束），须生成预览后经任务列表『配置策略』弹窗补全，表单提示已说明该流程；浏览器真实登录验收、真实 PostgreSQL 迁移执行仍未完成。
+
+### 2026-09-17 数据标注页任务列表区排布与显示整理
+
+- 问题：任务列表区多个表格堆叠无标题区分——同一 `table-surface` 内通用任务表与历史（QualityRun）任务表贴连（`.data-annotation__generic-tasks` 此前无任何样式），历史表在无数据时常驻渲染空表；通用任务表 7 列 + 十余个行操作按钮且 `.table-row-actions` 为 `nowrap`，操作列溢出挤压；第一列列头误用"通用任务列表"；"刷新操作"按钮游离无归属；运行中的操作/执行结果两个区块也无标题。
+- 修复（仅布局显示，不改功能逻辑）：新增 `.data-annotation__section-head` 区块标题样式，任务列表区加"任务列表"标题、历史任务子区加"历史任务"标题且仅 `runs.length > 0` 时渲染（通用任务为空时改显 Empty 空态，消除双重空表）；通用任务表第一列列头改为"任务"、增加 `scroll={{ x: 1180 }}`，行操作按钮允许换行（`flex-wrap`）；"运行中的操作"与"执行结果"区块加标题，刷新按钮并入标题行；各区块间 `margin-top: 20px` 分隔；新文案接入 zh/en i18n（tasksSection/legacySection/operationsSection/executionResults）。
+- 验证：`DataAnnotationPage.test.tsx` 53 passed（调整 2 个用例：历史表改为数据驱动渲染后列头断言移至数据出现之后；区块标题与页面 h2 重名冲突改文案解决）；前端生产构建通过。
+
+### 2026-09-17 修复本地库缺列导致"任务列表操作页" 500（durable_operations）
+
+- 现象：创建任务成功后跳回任务列表，`GET /api/annotation-operations` 报 `sqlite3.OperationalError: no such column: durable_operations.project_id`。根因同上一条：迁移 `20260916_48_durable_operation_context` 新增的 `project_id`/`task_id`/`preview_id`/`resource_type` 4 列及 `ix_durable_operations_project_created`/`ix_durable_operations_task_created` 2 索引未同步 `ensure_schema_compatibility`，本地库 `create_all` 无法给已有表补列。
+- 修复：`app/database_migrations.py` 的 `_SQLITE_COLUMNS`/`_SQLITE_INDEXES` 补齐上述 4 列 2 索引；本地库经该逻辑升级完毕（列与索引全部就位，幂等验证通过）。
+- 验证：`tests/test_database_migrations.py + test_app.py + test_annotation_task_state_api.py` 33 passed。
+- 备注：本地库（alembic_version 停在 `20260910_43`）对迁移 44-58 的列级需求现已全部由 `ensure_schema_compatibility` 覆盖；如再遇同类 500，优先比对该机制与新迁移的差集。
+
+### 2026-09-17 修复本地库缺列导致"创建手动标注任务" 500
+
+- 现象：`POST /api/annotations/label-schemas` 报 `sqlite3.OperationalError: table label_schemas has no column named purpose`。根因：本地开发库 `ml_platform.db`（alembic_version 停留在 `20260910_43`）由 `create_all` 演进，而本地模式的列级兼容机制 `ensure_schema_compatibility` 未同步迁移 55/56/57/58 的新增列——`label_schemas.purpose`、`label_columns.instruction`、`annotation_comments.parent_id/status/resolved_by/resolved_at`、`generic_annotation_tasks.name/completion_criteria/due_at`（后三个为本工作区新迁移引入，属遗漏）。
+- 修复：`app/database_migrations.py` 的 `_SQLITE_COLUMNS` 补齐上述 9 列（加性、幂等，风格与既有条目一致）；本地库经该逻辑完成升级（列已全部就位，验证幂等）。本地库 `alembic_version` 版本戳仍为 `20260910_43`，本地模式不校验版本戳，无需处理；生产模式走完整 Alembic 链不受影响。
+- 教训（共享经验候选）：在本地 SQLite 模式下新增 ORM 列时，除 Alembic 迁移外必须同步 `database_migrations._SQLITE_COLUMNS`，否则已有本地库在 `create_all`（只建新表不加列）后启动即 500。
+- 验证：`tests/test_database_migrations.py + test_app.py + test_artifact_migration.py + test_artifact_service.py` 21 passed；`tests/test_database_production.py + test_annotation_task_state_api.py` 40 passed、2 failed 为预存失败（`test_production_inference_revision_*`，与本次无关）。
+
+### 2026-09-17 数据标注功能对照第 6/7/8/9/13 章差距复核与创建合同补齐
+
+- 以技术方案第 6、7、8、9、13 章为基准复核数据标注全链路。已确认覆盖：§6.1 名称/说明/范围/可见字段/多选指派、§7 自动策略全流程与失败重试、§8.2 指派（固定范围+截止时间+覆盖提醒）、§8.4 批注管理、§9.1 全状态机操作入口、§9.2/§9.3 回传验收面板（差异明细/空标签风险/验收/退回）、§13.1 列表操作中心/预览/回传列表、§13.2 门户队列与工作区基础。
+- 补齐 §6.1 创建合同剩余字段：`GenericAnnotationTask` 新增 `completion_criteria`（Text，进 task_snapshot 参与 config_hash 冻结）与任务级 `due_at`（可空时间戳，不进快照），迁移 `20260917_58`；创建与配置更新接口、服务层序列化同步两字段；前端创建表单新增完成标准（textarea）、截止时间（date，提交为当日 23:59:59 本地时间 ISO）、标签列填写指引（透传 schema 列 instruction）；编辑弹窗同步两字段；任务列表新增截止时间列；i18n 补 zh/en 文案。
+- 验证：后端 `tests/test_annotation_task_state_api.py` 20 passed（name 往返测试扩展覆盖 completion_criteria/due_at 创建-列表-配置更新全链路）；前端 `DataAnnotationPage.test.tsx` 53 passed（创建断言扩展完成标准/截止时间/列指引 payload，编辑断言扩展两字段，列表断言截止时间列）；前端生产构建通过；`tests/test_database_production.py` 20 passed、2 failed 为预存失败（`test_production_inference_revision_*`：测试仅升级到 `20260718_08` 而 ORM 已含迁移 45 的 `artifacts.archived_at`，与本次无关）。
+- 已知剩余差距（未纳入本次）：§6.2 门户队列缺四类筛选（授权字段/标签完成状态/本人最近修改时间/批注状态），需门户前端→annotator 代理→主平台内部 API 三层联动；§9.3 不阻断风险提示仅空标签计数，标签分布/策略覆盖率/人工修改统计需后端汇总接口；schema 复用入口未实现。
+
+### 2026-09-17 主平台通用任务创建/编辑/列表功能对照技术方案补齐
+
+- 对照技术方案 §6.1/§9.1/§13.1/§16.2 修复主平台数据标注页通用任务缺口：后端 `GenericAnnotationTask` 新增 `name` 列（迁移 `20260917_57`，`server_default=""`），创建与配置更新接口支持名称（strip + 200 上限），服务层序列化补 `name`/`created_at`；`HEAD_REVISION` 测试常量同步 `20260917_57`。
+- 前端创建表单新增任务名称（必填）、样本范围（全量/按条件筛选，条件按列 dtype 序列化为规则 DSL 的数值/字符串比较，条件间 AND，is_null/not_null 传 true）、可见字段勾选（默认全选，非空校验）；任务列表新增名称（缺失回退短 ID）、状态、样本数（快照 scope.sample_count）、创建时间、修订列与“加载更多任务”游标分页；draft/failed/needs_review 行新增“编辑任务”配置弹窗（名称/说明/可见字段，乐观并发 task_revision），draft/failed 行新增“重新生成预览”重试入口（复用 preview 幂等）；新增文案接入 zh/en i18n。
+- 验证：主平台后端 `tests/test_annotation_task_state_api.py` 20 passed（含新增 name 往返/配置更新回归）；`tests/test_database_production.py` 40 passed、2 failed 为预存失败（`test_production_inference_revision_*`：测试仅升级到 `20260718_08` 而 ORM 已含迁移 45 的 `artifacts.archived_at`，与本次无关）；前端 `DataAnnotationPage.test.tsx` 53 passed（含新增 scope 筛选序列化、草稿编辑+失败重试用例）；前端生产构建通过。
+- 边界：schema 复用（列表/选择既有 schema）未纳入本次；浏览器真实登录验收、真实 PostgreSQL 迁移执行仍未完成。
+
 ### 2026-09-16 第七章预测输出形状校验
 
 - 自动标注模型推理在构造逐样本标签前，强制校验预测行数和冻结 schema 的目标列数；拒绝多行、少行、标量和错误维度，统一返回 `MODEL_OUTPUT_INVALID`，避免 `zip` 静默截断。
@@ -9,6 +81,27 @@
 
 > 文档状态：仅汇总未完成、待验证、风险和已延后工作。
 > 文档更新日期：2026-09-15
+
+### 2026-09-16 第七、八章容量门禁与门户队列补齐
+
+- 第七章：预览创建前新增样本数、源字段数和标签字段数容量预检；超过首期基线时返回 `ANNOTATION_CAPACITY_EXCEEDED`、结构化 counts/limits/exceeded 明细，未知冻结样本范围返回 `ANNOTATION_CAPACITY_UNKNOWN`，且不创建 preview 或 durable operation。相同执行键的已存在 preview 先复用，避免配额变化破坏幂等重放。
+- 第八章：主平台内部门户任务队列和 annotator proxy 新增服务端搜索、任务状态筛选、指派状态筛选、创建时间/截止时间/状态排序和游标翻页；门户前端新增对应控件、上一页/下一页、加载/失败重试和过期响应保护，继续保持服务端分页。
+- 验证：后端自动标注任务/API 与门户组合 `108 passed、9 warnings`；主平台门户单测 `24 passed、2 warnings`；annotator backend `4 passed、2 warnings`；annotator frontend 队列 `4 passed`，生产构建通过，`git diff --check` 通过。
+- 边界：当前容量检查仅覆盖样本数和列数，尚未完成内存、CPU、对象存储、队列配额的预估及执行前资源检查，不能关闭第 15.1 节。门户查询的组件/API 回归不能替代真实登录浏览器验收；同人同任务多次指派仍存在工作区仅解析最新指派的问题。标签 schema 编辑器、批量标注/批注完整前端、回传差异/质量风险 UI、真实 PostgreSQL 并发、真实 broker 租约恢复、完整 Chromium/WSL Docker 验收仍未完成。
+
+### 2026-09-16 标注员门户批注交互补齐
+
+- 工作区现在加载任务相关批注，按当前样本显示样本级批注和任务级批注，并支持提交新的样本级批注；提交失败保留输入内容并显示错误。
+- 验证：annotator 工作区/队列定向前端 `21 passed`，annotator 前端生产构建通过；主平台自动标注、门户和任务状态组合 `110 passed`。
+- 边界：主平台回传验收差异/质量风险界面和真实认证浏览器验收仍未完成。
+
+### 2026-09-16 第九章回传验收与第六章 schema 编辑器补齐
+
+- 主平台数据标注任务页新增回传验收面板：服务端分页读取回传批次，读取冻结差异明细，展示源数据/标签值、空标签质量风险，支持验收生成新数据版本和填写原因退回修改。
+- 标签 schema 编辑器新增 schema 用途和列级说明字段，并在创建 schema 请求中传递 `purpose`、`instruction`。
+- 修复 `AssignmentDialog` 对冻结任务范围 `frozen_task_scope` 的类型处理，避免前端构建因读取不存在的 `sample_ids` 失败。
+- 验证：主平台回传/API/任务页定向前端 `56 passed`，主平台生产构建通过；annotator 工作区/队列 `21 passed`，annotator 构建通过；后端第六至第九章组合 `166 passed`。
+- 边界：回传面板仍需真实登录浏览器验收；质量风险当前展示空标签风险，尚未接入更丰富的 schema 级质量规则摘要；真实 PostgreSQL、Celery 租约恢复、WSL Docker 和最终发布证据仍未完成。
 > 当前工作树：`E:\codex_workspace\agent_spot_welding\.worktrees\general-automl-annotation-20260902`
 > 当前分支：`general-automl-annotation-20260902`
 > 当前整理基线：`190b55c`（当前工作树含未提交的自动标注与验收修正）
@@ -912,3 +1005,145 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 完整性：校验器现在拒绝 ZIP 中未列入 `checksums.json` 的载荷文件；`checksums.json` 与 detached `security/manifest.sig` 为完整性元数据，分别由签名验证和自身内容承载，不能参与自指 SHA-256 清单。
 - 验证：先新增四项 RED 回归并观察到 **4 failed, 1 passed**；实现后使用 `ml-platform/backend/.venv/Scripts/python.exe` 运行 `tests/test_model_export_contract.py tests/test_offline_inference_contract.py -q`，结果 **7 passed, 5 warnings**；`py_compile app/services/model_export.py` 通过。
 - 未验证：未在 Docker/WSL 或干净独立 Python 环境中安装 `runtime/requirements.lock` 后执行真实离线推理；本地聚焦证据不替代 Task 14 的最终 SHA、容器和远程 CI 收据。
+
+## 2026-09-17 标注补齐后的主平台前端验证
+
+- 将新增 `ReturnAcceptancePanel.test.tsx` 登记到 Week 17 测试台账，保持测试自动发现与台账一一对应。
+- 本轮实际执行 `npm test`：61 个测试文件通过，301 passed、19 skipped；跳过项不计为通过。
+- 本轮实际执行 `npm run build`：TypeScript 检查及 Vite 生产构建通过，仍存在大体积 chunk 提示。
+- 以上为未提交工作树的本地验证，不证明完整方案、真实 PostgreSQL/Celery、WSL Docker 或浏览器端到端验收完成；最终验收矩阵及当前 SHA 证据仍待收口。
+
+## 2026-09-17 第六、八章批注读取与完整标签覆盖
+
+- 批注读取改为同时约束有效项目授权、服务令牌项目范围、有效指派及指派样本范围；任务级批注可读，样本级批注限于有效指派范围的并集。不可见批注不能用作分页游标，total 也只统计可见项。
+- 游标条件与关联修订分组、创建时间、ID 的实际排序一致；SQLite 默认时间戳和微秒时间戳统一比较，避免漏页、重页。覆盖同时间戳、跨分组、多指派范围和授权撤销回归。
+- 门户新增批注加载更多、加载失败重试及任务/样本范围选择，失败不清空输入；冲突确认后的保存使用完整本地标签集合，不再合并回用户已清空的服务器可选标签。
+- 验证：新增后端四项及前端三项回归先失败；修复及补充边界用例后，`test_portal_internal_api.py test_annotation_concurrency.py` 为 **53 passed**，门户前端全量 **26 passed**，门户 TypeScript/Vite 构建通过。
+- 未完成：批注回复/处理状态、多个 assignment 的编辑工作区选择、完整筛选与批量编辑、真实浏览器/PostgreSQL/WSL Docker 验收仍需继续；本轮不提升整章或整体方案完成状态。
+
+## 2026-09-17 第六至九章多指派工作区请求链
+
+- 任务队列以 assignment ID 区分同一任务的多个指派，打开工作区时传递所选 ID；详情、样本分页、单条/批量保存、确认、重新编辑、回传及新增批注均携带该选择。
+- 主平台按 task、当前服务身份中的 subject、非撤销状态校验所选 assignment；未知、其他主体、其他任务及已撤销指派均拒绝，不回退到最新指派。没有选择且存在多个有效指派时返回 `ASSIGNMENT_SELECTION_REQUIRED`；单指派旧调用保持兼容。
+- 修复门户代理重新编辑请求漏传 `scope_hash`；修复代理将结构化 `REVISION_CONFLICT` 等业务拒绝一律变成 502 的问题，保留冲突修订、当前值和差异。非业务上游错误和服务认证故障仍使用受控 502，不透出原始错误正文。
+- 验证：主平台门户/并发组合 **83 passed**；门户后端全量 **20 passed**；门户前端全量 **29 passed**；TypeScript/Vite 构建通过。新增回归先复现指派选择被忽略、队列 key 重复和业务 409 被吞，再验证修复。
+- 边界：上述是本地 API、代理和组件/请求合同验证，未执行真实浏览器与 WSL Docker 全栈；完整样本筛选、批量编辑 UI、批注回复/处理状态及其他章节缺口继续推进，整体目标保持未完成。
+
+## 2026-09-17 第六章批量编辑界面
+
+- 标注员工作区新增当前页样本多选、全选、标签列/标签值批量设置和覆盖已有合法标签开关。
+- 默认只填充缺失或非法标签，不覆盖已有合法值；覆盖已有合法值必须二次确认。批量请求使用当前每个样本的完整标签集合与 revision，并复用服务端原子批量保存。
+- 批量保存期间锁定标签编辑、样本分页、任务确认和返回；服务端任一样本冲突时整批回滚，前端保留选择和值并显示冲突/失败信息。
+- 验证：门户前端全量 **32 passed**，后端门户/并发组合 **83 passed**，TypeScript/Vite 构建和 Python 编译通过，`git diff --check` 无内容错误。
+- 未完成：批注回复/解决状态、管理员退回修改的门户呈现、真实浏览器/WSL Docker/PostgreSQL 验收，以及第六至第九章其余逐条技术方案核验。
+
+## 2026-09-17 批注读取与指派范围绑定
+
+- 批注列表请求现在携带选中的 `assignment_id`，主平台按有效指派范围过滤样本级批注；任务级批注仍可见。多指派任务不会把不同指派的样本批注混在同一工作区。
+- 验证：主平台批注/指派/并发组合 **59 passed**；门户代理 **20 passed**；门户前端 **32 passed**；门户 TypeScript/Vite 构建及 Python 编译已通过。
+- 仍未完成：批注回复线程、`resolved` 处理状态及管理员处理入口；真实浏览器、PostgreSQL/WSL Docker 联调；第六至第九章逐条技术方案验收。
+
+## 2026-09-17 第九章批注线程数据合同
+
+- `annotation_comments` 新增 `parent_id`、`status`、`resolved_by`、`resolved_at`，新增迁移 `20260917_56_annotation_comment_threads.py`；历史批注回填为 `open`，拒绝破坏性 downgrade。
+- 门户批注创建支持 `parent_id`；回复必须属于同一任务、同一样本范围，跨样本回复返回 `COMMENT_SCOPE_MISMATCH`，返回数据携带父批注和处理状态。
+- 验证：主平台门户批注测试 **60 passed**；门户代理 **20 passed**；门户前端 **32 passed**，构建通过。
+- 当前边界：管理员“标记已解决/重新打开”接口和界面尚未接入；门户工作区暂时仍只展示线程字段的 API 数据，未完成完整线程化 UI。真实迁移升级、浏览器和 Docker 运行态仍待验证。
+
+## 2026-09-17 第九章管理员批注处理状态
+
+- 主平台新增 `PATCH /api/annotation-comments/{comment_id}/status`，仅管理员可执行，支持 `open` 与 `resolved`；解决时记录 `resolved_by`、`resolved_at`，重新打开时清空处理信息。
+- 状态变更写入统一 `AuditEvent`，记录任务项目、批注资源、前后状态和操作人；标注员服务令牌不能调用该管理接口。
+- 批注线程数据迁移和回复合同保持有效，主平台门户批注测试 **60 passed**，Python 编译通过。
+- 未完成：主平台管理员页面、门户线程树状 UI、管理员退回修改通知，以及真实 Alembic upgrade/PostgreSQL/浏览器/Docker 验收。
+
+## 2026-09-16 第九章门户批注线程 UI
+
+- 标注员门户现在按 `parent_id` 将批注展示为线程，显示待处理/已解决状态，并支持从根批注发起回复。
+- 回复请求携带当前指派、任务、样本和父批注 ID；无指派或无回复时保留旧请求参数兼容性。
+- 验证：门户前端 **32 passed**，TypeScript/Vite 构建通过；主平台批注测试 **60 passed**。
+- 未完成：主平台管理员批注处理页面、处理状态实时刷新、站内通知、真实 Alembic upgrade/PostgreSQL/浏览器/Docker 验收。
+
+## 2026-09-16 主平台管理员批注管理入口
+
+- 通用任务列表新增“批注管理”入口；管理员可查看任务批注、父子回复关系、样本范围和处理状态，并切换 `open`/`resolved`。
+- 新增主平台批注列表 API 与前端 `AnnotationCommentModerationPanel`，状态操作调用管理员接口并在成功后更新当前列表。
+- 已使用主平台登录令牌和管理员权限；标注员门户仍不能调用管理员状态接口。
+- 验证：主平台生产构建通过；主平台批注测试 **60 passed**；此前门户前端 **32 passed**、门户后端 **20 passed** 保持通过。
+- 未完成：管理员处理实时刷新和通知、真实 Alembic upgrade/PostgreSQL/浏览器/Docker 验收，以及第六至第九章最终逐条验收矩阵。
+
+## 2026-09-16 批注线程迁移 fresh upgrade
+
+- 在独立临时 SQLite 数据库执行 `alembic upgrade head`，从 baseline 连续升级到 `20260917_56` 成功，包含批注线程和解决状态迁移。
+- 该结果只证明 fresh SQLite upgrade；历史已有批注数据回填、PostgreSQL upgrade、浏览器端到端和 Docker/WSL 运行态仍未验证。
+
+## 2026-09-16 当前工作树全量回归
+
+- 主平台前端 `npm test`：**61 个测试文件通过，301 passed、19 skipped**；跳过项不计为通过。
+- 第六至第九章后端组合（任务状态、自动标注、门户）：**146 passed、164 warnings**。
+- 标注员前端 `npm test`：**32 passed**；TypeScript/Vite 构建通过。
+- 本轮证据仍来自未提交工作树；不替代真实 PostgreSQL、Celery/broker、浏览器、Docker/WSL 和最终 SHA 绑定的验收收据。
+
+## 2026-09-16 管理员批注分页与筛选补齐
+
+- 主平台批注列表移除固定 200 条截断，支持受限 page size、稳定时间/ID 游标、状态和样本 ID 筛选；总数使用同一过滤条件，未知或不属于当前筛选范围的游标拒绝访问。
+- 管理界面接入加载更多、状态/样本筛选、刷新和失败重试；加载失败保留现有条目，切换任务或筛选后忽略旧响应，状态变更移出筛选结果时重置分页。
+- 回归先验证旧接口忽略筛选和分页参数；新增 205 条数据库默认时间戳批注翻页测试，验证超过原上限后无遗漏、无重复，并覆盖非法参数、权限和不存在任务。
+- 本轮执行后端门户/并发组合 **91 passed、2 warnings**；前端批注管理/任务页面/测试台账组合 **61 passed**；TypeScript/Vite 生产构建通过，保留既有大 chunk 警告。
+- 未完成：回复线程筛选、批注状态自动刷新、站内通知 UI 闭环、跨页批量编辑、退回修改门户闭环；本轮未运行真实浏览器、PostgreSQL 或 WSL Docker 验收，不提升整章或整体方案为完成。
+
+## 2026-09-16 标注员批注状态自动刷新
+
+- 门户工作区在页面可见时每 30 秒刷新批注，并在窗口聚焦或页面恢复可见时立即刷新；按已经加载的页数重新获取批注，全部成功后原子替换，失败保留当前内容和草稿。
+- 批注刷新与标签、样本、确认和回传状态分离，不重新读取工作区或重置标签/回复输入。读请求防重叠，切换任务/指派和卸载时废弃旧响应；批注提交会使正在进行的刷新失效，防止旧结果覆盖新批注。
+- 回归先观察新增三项测试失败；补齐后门户前端全量 **38 passed**，TypeScript/Vite 构建通过。测试覆盖多页状态更新、定时轮询及卸载清理、失败恢复、隐藏页面、旧指派响应和提交/刷新竞争。
+- Chromium 新增批注刷新交互 **1 passed**：从登录进入所选指派，填写未保存标签和回复，推进 30 秒后状态变为已解决，标签值、回复文本和回复对象保持不变。该测试使用模拟 API，不是完整服务集成验收。
+- 未完成：主平台批注自动刷新、线程筛选、站内通知 UI 闭环、跨页批量编辑、退回修改门户闭环及真实 PostgreSQL/Celery/WSL Docker 验收；整体目标仍未完成。
+
+## 2026-09-16 标注员通知闭环与批注状态可变性修复
+
+- 独立门户新增通知代理和 UI：未读数、通知列表分页、仅未读筛选、刷新、失败重试、标记已读；主平台内部接口按当前标注员账号、主体映射、有效项目授权和服务令牌 scope 过滤，通知游标不能跨越不可见记录。
+- 通知读取/已读不会接受客户端主体、项目或接收人作为权限依据；已读操作幂等，通知去重键使用固定长度 SHA-256，兼容历史通知的 event_id 去重，避免 PostgreSQL 64 字段限制和重复状态变更撞 outbox 唯一键。
+- 发现并修复 `AnnotationComment` 的历史不可变监听器误把 `status`、`resolved_by`、`resolved_at` 也当作历史内容禁止更新；现在只允许这三个处理元数据字段变化，正文、作者和删除仍不可变。相同状态的重复请求不重复写审计或通知；每次真实状态转换使用独立 transition id。
+- 验证：后端门户通知、权限、批注不可变和重复事件聚焦 **8 passed、2 warnings**；此前第六至九章后端组合 **140 passed**；标注员门户前端 **42 passed**，TypeScript/Vite 构建通过；通知/状态浏览器合同仍需在完整门户 API fixture 中继续扩展。
+- 未完成：退回修改通知的任务深链和门户队列状态联动、主平台通知实时刷新、线程筛选、跨页批量编辑，以及真实 PostgreSQL/Celery/WSL Docker 验收；整体目标仍未完成。
+
+## 2026-09-16 手动标注跨页批量编辑
+
+- 工作区不再因分页替换显示样本而清空批量选择；新增样本缓存和选择快照，保存时从所有已选页取完整标签集合与 revision，当前页“全选/取消全选”只作用于当前页。
+- 保留技术方案的默认策略：已有合法标签不覆盖；启用覆盖时仍必须二次确认；批量请求继续使用后端原子写入，任一样本冲突整批回滚。
+- 新增跨页回归，覆盖第一页选择、第二页选择、正确 revision、覆盖确认和同一批量请求；该测试首次失败原因是测试未启用必需的覆盖确认，修正测试条件后通过。
+- 标注员工作区定向测试通过，TypeScript/Vite 构建通过。未完成：全量第六章筛选条件选择器、远端/超大样本全链路压力验收及真实 PostgreSQL/WSL Docker 验收。
+
+## 2026-09-16 标注员样本筛选条件
+
+- 按技术方案 6.2 补齐服务端样本筛选：样本 ID、必填标签完整/未完整、批注状态（待处理/已解决/无批注）和最近修改时间；筛选发生在授权指派样本查询内，游标和 total 均基于筛选后的固定集合。
+- 标注员代理和工作区已贯穿这些参数；分页切换保留跨页选择和 revision 缓存，筛选条件变化会重新从第一页取数，服务端仍不接受客户端扩大指派范围。
+- 回归修复了第二页 total 被错误统计为剩余条数的问题；主平台门户样本测试 **77 passed、2 warnings**，标注员工作区 **31 passed**，代理 **21 passed**，TypeScript/Vite 构建通过。
+- 未完成：筛选条件的完整浏览器合同、按“本人最近修改”在 PostgreSQL 实际时间精度下的验收，以及第六至九章全量运行态验收。
+
+## 2026-09-16 样本筛选 Chromium 合同
+
+- 新增浏览器合同验证标注员从任务队列进入工作区后，标签完成状态、批注状态、样本 ID 和最近修改时间四个筛选条件均进入 `/portal/tasks/{task_id}/samples` 请求。
+- 验证筛选变化后请求从第一页开始，不携带旧 cursor；该合同使用模拟门户 API，仅证明浏览器交互和请求合同，不替代真实服务联调。
+- Chromium 合同 **1 passed**；前端工作区单元测试 **31 passed**，主平台门户样本测试 **77 passed**，代理测试 **21 passed**，构建和 diff 检查保持通过。
+
+## 2026-09-16 回传/批注通知任务目标
+
+- 通知响应现在只在当前标注员仍有有效账号、主体映射、项目授权和 assignment 时，返回可打开的 `task_id` 与 `assignment_id`；无权通知仍可作为已授权的文本通知读取，但不会泄露或提供任务目标。
+- 回传通知通过 `return_batch_id` 解析所属任务和指派，批注通知通过批注任务及当前有效指派解析目标；门户通知面板新增“打开任务”，直接进入对应工作区并保持 assignment 选择。
+- 新增服务端目标权限回归，覆盖分页、通知接收人隔离和任务目标；标注员通知前端 **4 passed**、后端门户通知/批注测试保持通过、构建通过。
+- 未完成：回传退回后的完整浏览器真实服务合同、主平台通知实时刷新和真实 PostgreSQL/Celery/WSL Docker 验收。
+
+## 2026-09-17 通知刷新收尾与筛选完成状态更正
+
+- 主平台通知中心新增可见页面 30 秒刷新、聚焦/恢复可见刷新、卸载清理；列表与未读数各自防止重叠请求，生命周期编号不在独立读取之间递增，避免互相丢弃结果。失败保留已知未读数和已显示列表，列表写操作期间阻止轮询覆盖。
+- 本轮实际执行通知中心及布局组合 **14 passed**；主平台 TypeScript/Vite 构建通过，仍有既有大 chunk 警告。没有执行完整前端或真实服务验收。
+- 更正此前“样本筛选完成”结论：当前 modified_after 对比的是 AnnotationAssignmentSample.created_at，不是本人修改记录；样本 ID 搜索也不等于方案要求的按授权字段筛选。已有模拟 API 浏览器合同仅证明参数传递，不能证明这些业务语义正确，相关功能继续标记未完成。
+- 后续仍须验证标签完整性筛选的 JSON 空值与类型约束、实际翻页后的筛选游标重置、跨页批量冲突恢复、通知任务目标授权，以及 PostgreSQL/Celery/WSL Docker 全栈。
+
+## 2026-09-17 数据标注筛选语义和批注线程筛选
+
+- 按技术方案第 6.2 节补齐样本筛选合同：`authorized_field`/`authorized_value` 只能针对冻结快照中的授权源字段查询；`modified_after` 改为按门户主体映射到的 `AnnotationRevision.author_id` 和 `created_at` 判断本人最近修改，并将带时区输入转换为 UTC。
+- 标注员代理和工作区已转发并展示授权字段和值筛选；筛选条件变化继续从第一页读取。主平台管理员批注列表新增 `thread=all|roots|replies`，状态、样本和线程过滤共享同一分页与总数查询。
+- 验证：主平台门户筛选/批注线程定向回归 **3 passed**；主平台批注组件与任务页面 **3 passed**；标注员工作区 **31 passed**。标注员代理测试待使用共享后端虚拟环境执行；真实 PostgreSQL、浏览器服务集成和 WSL Docker 仍未验证。

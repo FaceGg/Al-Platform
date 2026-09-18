@@ -1,0 +1,23 @@
+.queue-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0;
+}
+.queue-controls input {
+  flex: 1 1 180px;
+}
+.queue-controls select {
+  font: inherit;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid #aebbc5;
+  border-radius: 4px;
+  padding: 9px;
+  background: #fff;
+}
+.task-row > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

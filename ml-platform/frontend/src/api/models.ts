@@ -30,7 +30,9 @@ export type AnnotationModelVersion = {
     version_number: number;
     columns: AnnotationOutputColumn[];
     contract_hash: string;
-  };
+  } | null;
+  selectable?: boolean;
+  ineligible_reason?: string | null;
 };
 
 export async function listProjectModelArtifacts(projectId: string): Promise<ModelArtifactOption[]> {

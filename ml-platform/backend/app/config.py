@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     inference_log_retention_days: int = Field(default=30, ge=1, le=365)
     inference_rollout_observation_seconds: int = Field(default=60, ge=10, le=3600)
 
+    annotation_max_samples: int = Field(default=1_000_000, ge=1, le=10_000_000)
+    annotation_max_input_columns: int = Field(default=200, ge=1, le=2_000)
+    annotation_max_label_columns: int = Field(default=20, ge=1, le=200)
+
     notification_master_key: SecretStr | None = Field(default=None, exclude=True)
     notification_master_key_file: str | None = Field(
         default=None, repr=False, exclude=True

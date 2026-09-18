@@ -13,6 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -56,11 +57,14 @@ class GenericTaskCreate(BaseModel):
     dataset_version_id: uuid.UUID
     label_schema_id: uuid.UUID | None = None
     model_version_id: uuid.UUID | None = None
+    name: str = Field(default="", max_length=200)
     mode: Literal["manual", "automatic"] = "manual"
     sample_scope: dict = Field(default_factory=lambda: {"kind": "all"})
     label_snapshot: dict = Field(default_factory=dict)
     visible_columns: list[str] = Field(default_factory=list)
     instructions: str = ""
+    completion_criteria: str = ""
+    due_at: datetime | None = None
     configuration: dict = Field(default_factory=dict)
 
     @field_validator("sample_scope")
@@ -85,8 +89,11 @@ class GenericTaskCreate(BaseModel):
 class GenericTaskConfigurationUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task_revision: int = Field(ge=0)
+    name: str | None = Field(default=None, max_length=200)
     visible_columns: list[str] = Field(default_factory=list)
     instructions: str = ""
+    completion_criteria: str = ""
+    due_at: datetime | None = None
     configuration: dict = Field(default_factory=dict)
 
 
@@ -100,6 +107,9 @@ def _uuid(value, field: str) -> uuid.UUID:
 def _serialize(db: Session, task: GenericAnnotationTask) -> dict:
     payload = serialize_annotation_task(task, current_annotation_task_preview(db, task), current_annotation_task_snapshot(db, task))
     payload["created_at"] = task.created_at.isoformat() if task.created_at else None
+    payload["name"] = task.name or ""
+    payload["completion_criteria"] = task.completion_criteria or ""
+    payload["due_at"] = task.due_at.isoformat() if task.due_at else None
     return payload
 
 
@@ -361,18 +371,37 @@ def list_annotation_model_versions(
         RegisteredModel, ModelVersion.registered_model_id == RegisteredModel.id,
     ).filter(
         RegisteredModel.project_id == project_id,
-        ModelVersion.approval_status == "approved",
-        ModelVersion.lifecycle_state == "enabled",
-        ModelVersion.source_kind == "platform_joblib",
+        or_(
+            ModelVersion.lifecycle_state.is_(None),
+            ModelVersion.lifecycle_state.notin_(("archived", "revoked")),
+        ),
     ).order_by(RegisteredModel.name.asc(), ModelVersion.version_number.desc()).all()
     items = []
     for version in versions:
+        # Registered models must stay visible in the picker so users can see
+        # why a version cannot back an automatic task; execution itself still
+        # requires an approved, enabled platform-joblib version with a usable
+        # frozen output contract.
+        reason = None
+        if version.approval_status != "approved" or (version.lifecycle_state or "pending_review") != "enabled":
+            reason = "MODEL_VERSION_NOT_ENABLED"
+        elif version.source_kind != "platform_joblib":
+            reason = "MODEL_SOURCE_UNSUPPORTED"
         try:
-            items.append(_annotation_model_view(version))
+            view = _annotation_model_view(version)
         except StrategyConfigError:
-            # A model lacking a usable persisted output contract must not be
-            # selectable for a task that has to freeze that contract.
-            continue
+            view = {
+                "id": str(version.id),
+                "registered_model_id": str(version.registered_model_id),
+                "model_name": version.registered_model.name,
+                "version_number": version.version_number,
+                "algorithm": version.algorithm,
+                "feature_schema": version.feature_schema or [],
+                "output_contract": None,
+            }
+            if reason is None:
+                reason = "MODEL_OUTPUT_CONTRACT_INVALID"
+        items.append({**view, "selectable": reason is None, "ineligible_reason": reason})
     return {"items": items, "total": len(items)}
 
 
@@ -630,6 +659,7 @@ def _snapshot_with_configuration(
         "visible_columns": list(visible_columns),
         "label_schema": dict(previous.get("label_schema") or task.label_snapshot or {}),
         "instructions": data.instructions,
+        "completion_criteria": data.completion_criteria,
         "configuration": deepcopy(configuration),
     }
     canonical = json.dumps(snapshot, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
@@ -766,6 +796,7 @@ def create_generic_annotation_task(
         "visible_columns": visible_columns,
         "label_schema": schema_snapshot,
         "instructions": data.instructions,
+        "completion_criteria": data.completion_criteria,
         "configuration": configuration,
     }
     canonical = json.dumps(task_snapshot, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
@@ -775,6 +806,9 @@ def create_generic_annotation_task(
         dataset_version_id=data.dataset_version_id,
         label_schema_id=schema.id,
         owner_id=current_user.id,
+        name=data.name.strip(),
+        completion_criteria=data.completion_criteria,
+        due_at=data.due_at,
         mode=data.mode,
         status="draft",
         sample_scope=data.sample_scope,
@@ -863,6 +897,10 @@ def update_generic_annotation_task_configuration(
         configuration,
         visible_columns,
     )
+    if data.name is not None:
+        task.name = data.name.strip()
+    task.completion_criteria = data.completion_criteria
+    task.due_at = data.due_at
     task.task_revision += 1
     if task.status != "draft":
         task.status = "draft"

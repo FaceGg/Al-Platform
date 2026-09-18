@@ -22,7 +22,9 @@ from app.models.labeling import AnnotationStrategyArtifact, AnnotationStrategyDe
 from app.services.label_schema import LabelColumnContract, LabelSchemaContract, validate_label_value
 from app.services.rule_dsl import RuleEvaluationError, evaluate_rule
 from app.services.weighted_clustering import (
+    FeatureMap,
     InputContract,
+    aggregate_model_importance,
     build_weighted_clusters,
     build_weighted_clusters_streaming,
 )
@@ -369,7 +371,15 @@ def _model_outputs_from_package(package: Mapping[str, object], rows: Mapping[str
     missing = [column for column in feature_columns if column not in frame.columns]
     if missing:
         raise StrategyConfigError("preview rows do not satisfy model input contract", "MODEL_INPUT_MISSING")
-    predictions = package["model"].predict(frame.loc[:, list(feature_columns)])
+    try:
+        predictions = package["model"].predict(frame.loc[:, list(feature_columns)])
+    except StrategyConfigError:
+        raise
+    except Exception as error:
+        raise StrategyConfigError(
+            "model inference failed for the frozen preview rows",
+            "MODEL_INFERENCE_FAILED",
+        ) from error
     target_keys = tuple(schema.by_key)
     try:
         predictions = np.asarray(predictions, dtype=object)
@@ -390,7 +400,42 @@ def _model_outputs_from_package(package: Mapping[str, object], rows: Mapping[str
     return values
 
 
-def _cluster_package_contract(package: Mapping[str, object]):
+def _encoded_feature_map(package: Mapping[str, object]) -> FeatureMap | None:
+    """Restore the frozen one-hot mapping a training package may carry."""
+    payload = package.get("feature_map")
+    if not isinstance(payload, Mapping):
+        return None
+    source_columns = payload.get("source_columns")
+    dimensions = payload.get("one_hot_dimensions")
+    if not isinstance(source_columns, (list, tuple)) or not source_columns or not isinstance(dimensions, Mapping):
+        return None
+    return FeatureMap(
+        tuple(str(column) for column in source_columns),
+        {
+            str(column): tuple(int(index) for index in dims)
+            for column, dims in dimensions.items()
+        },
+    )
+
+
+def _encoded_width(feature_map: FeatureMap) -> int:
+    listed = {index for dims in feature_map.one_hot_dimensions.values() for index in dims}
+    return len(listed) + (len(feature_map.source_columns) - len(feature_map.one_hot_dimensions))
+
+
+def _aggregate_encoded_importance(
+    per_target: Mapping[str, Sequence[float]],
+    feature_map: FeatureMap,
+) -> ImportanceVector:
+    try:
+        return aggregate_model_importance(per_target, feature_map)
+    except ValueError as error:
+        message = str(error)
+        code = message.split(":", 1)[0] if message.startswith("FEATURE_IMPORTANCE_") else "FEATURE_IMPORTANCE_UNAVAILABLE"
+        raise StrategyConfigError(message, code) from error
+
+
+def _cluster_package_contract(package: Mapping[str, object]) -> tuple[tuple[str, ...], object, str, Mapping[str, object] | None, FeatureMap | None, str]:
     contract = package.get("input_contract") or {}
     feature_columns = (
         contract.get("feature_columns") or contract.get("input_columns")
@@ -398,8 +443,10 @@ def _cluster_package_contract(package: Mapping[str, object]):
     )
     if not isinstance(feature_columns, (list, tuple)) or not feature_columns:
         raise StrategyConfigError("model artifact input contract is invalid", "MODEL_CONTRACT_INVALID")
-    frozen_importance = None
+    frozen_importance: object = None
     importance_method = "estimator_native"
+    importance_encoding = "per_column"
+    feature_map = _encoded_feature_map(package)
     importance_report = package.get("feature_importance_report")
     if "feature_importance" in package:
         frozen_importance = package.get("feature_importance")
@@ -410,7 +457,33 @@ def _cluster_package_contract(package: Mapping[str, object]):
     elif isinstance(importance_report, Mapping) and "by_feature" in importance_report:
         frozen_importance = importance_report.get("by_feature")
         importance_method = str(importance_report.get("source") or "frozen_artifact")
-    return tuple(str(column) for column in feature_columns), frozen_importance, importance_method, importance_report
+    if feature_map is not None:
+        per_target: Mapping[str, Sequence[float]] | None = None
+        if isinstance(importance_report, Mapping) and isinstance(importance_report.get("per_target"), Mapping):
+            per_target = importance_report.get("per_target")
+        encoded_width = _encoded_width(feature_map)
+        encoded_vectors: dict[str, Sequence[float]] | None = None
+        if per_target and all(
+            isinstance(vector, (list, tuple)) and len(vector) >= encoded_width
+            for vector in per_target.values()
+        ):
+            encoded_vectors = dict(per_target)
+        elif isinstance(frozen_importance, (list, tuple)) and len(frozen_importance) >= encoded_width:
+            encoded_vectors = {"target": frozen_importance}
+        if encoded_vectors is not None:
+            aggregated = _aggregate_encoded_importance(encoded_vectors, feature_map)
+            frozen_importance = aggregated.values
+            importance_encoding = "one_hot_aggregated"
+            if isinstance(importance_report, Mapping):
+                importance_method = str(importance_report.get("source") or "frozen_artifact")
+    return (
+        tuple(str(column) for column in feature_columns),
+        frozen_importance,
+        importance_method,
+        importance_report,
+        feature_map,
+        importance_encoding,
+    )
 
 
 def _cluster_artifact_payload(
@@ -419,25 +492,29 @@ def _cluster_artifact_payload(
     importance_method: str,
     importance_report: Mapping[str, object] | None,
     assignment_count: int,
+    feature_map: FeatureMap | None = None,
+    importance_encoding: str = "per_column",
 ) -> dict[str, object]:
     payload = asdict(artifact)
     # Labels are one value per frozen sample. They belong in the indexed
     # decision table, never in the immutable metadata JSON artifact.
     payload.pop("labels", None)
+    resolved_map = feature_map or artifact.feature_map
     payload.update(
         {
             "feature_map": {
-                "source_columns": list(artifact.feature_map.source_columns),
+                "source_columns": list(resolved_map.source_columns),
                 "one_hot_dimensions": {
                     str(column): list(dimensions)
-                    for column, dimensions in artifact.feature_map.one_hot_dimensions.items()
+                    for column, dimensions in resolved_map.one_hot_dimensions.items()
                 },
             },
             "evaluation_mode": artifact.sampling_mode,
             "evaluation_sample_count": artifact.sample_count_evaluated,
             "evaluation_sample_hash": artifact.sampling_hash,
             "total_sample_count": artifact.total_sample_count,
-            "importance_method": importance_method,
+            "importance_method": importance_method or artifact.importance_method,
+            "importance_encoding": importance_encoding,
             "feature_importance_report": deepcopy(dict(importance_report)) if isinstance(importance_report, Mapping) else None,
             "assignment_storage": "annotation_strategy_decisions",
             "assignment_count": int(assignment_count),
@@ -452,7 +529,7 @@ def _cluster_artifact_from_package(
     seed: int,
     task_revision: int,
 ):
-    feature_columns, frozen_importance, importance_method, importance_report = _cluster_package_contract(package)
+    feature_columns, frozen_importance, importance_method, importance_report, feature_map, importance_encoding = _cluster_package_contract(package)
     frame = pd.DataFrame.from_dict(rows, orient="index")
     artifact = build_weighted_clusters(
         frame,
@@ -461,12 +538,15 @@ def _cluster_artifact_from_package(
         seed=seed,
         task_revision=task_revision,
         feature_importance=frozen_importance,
+        importance_method_hint=importance_method if frozen_importance is not None else None,
     )
     return artifact, _cluster_artifact_payload(
         artifact,
-        importance_method=importance_method,
+        importance_method=artifact.importance_method,
         importance_report=importance_report,
         assignment_count=len(artifact.labels),
+        feature_map=feature_map if feature_map is not None else None,
+        importance_encoding=importance_encoding,
     )
 
 
@@ -480,7 +560,7 @@ def build_streaming_cluster_artifact_from_package(
     on_batch: Callable[[], None] | None = None,
 ):
     """Freeze weighted-cluster metadata without materializing all source rows."""
-    feature_columns, frozen_importance, importance_method, importance_report = _cluster_package_contract(package)
+    feature_columns, frozen_importance, importance_method, importance_report, feature_map, importance_encoding = _cluster_package_contract(package)
     artifact = build_weighted_clusters_streaming(
         batches,
         package["model"],
@@ -489,13 +569,16 @@ def build_streaming_cluster_artifact_from_package(
         task_revision=task_revision,
         total_sample_count=total_sample_count,
         feature_importance=frozen_importance,
+        importance_method_hint=importance_method if frozen_importance is not None else None,
         on_batch=on_batch,
     )
     return artifact, _cluster_artifact_payload(
         artifact,
-        importance_method=importance_method,
+        importance_method=artifact.importance_method,
         importance_report=importance_report,
         assignment_count=total_sample_count,
+        feature_map=feature_map if feature_map is not None else None,
+        importance_encoding=importance_encoding,
     )
 
 

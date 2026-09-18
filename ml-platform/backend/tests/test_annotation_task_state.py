@@ -22,7 +22,7 @@ from app.models.labeling import (
 )
 from app.models.artifact import Artifact
 from app.models.access import AuditEvent
-from app.models.data_version import DatasetSample
+from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
 from app.models.operation import DurableOperation
 from app.models.platform_models import (
     AnnotationTaskExecutionResult,
@@ -30,6 +30,7 @@ from app.models.platform_models import (
     AnnotationTaskPreviewSample,
     AnnotationTaskRevisionSnapshot,
     GenericAnnotationTask,
+    AnnotationTaskScopeSample,
 )
 from app.models.project import Project
 from app.models.user import User
@@ -99,6 +100,87 @@ def test_manual_task_publish_requires_preview_ready(db):
     task, user, _ = _task(db)
     with pytest.raises(ValueError, match="TASK_STATE_INVALID"):
         transition_annotation_task(db, task.id, expected_revision=0, action=TaskAction.publish, actor_id=user.id)
+
+
+@pytest.mark.parametrize(
+    ("field", "setting"),
+    [
+        ("sample_count", "annotation_max_samples"),
+        ("input_column_count", "annotation_max_input_columns"),
+        ("label_column_count", "annotation_max_label_columns"),
+    ],
+)
+def test_annotation_capacity_preflight_blocks_before_preview(db, monkeypatch, field, setting):
+    from app.config import settings
+    from app.api.annotation_task_state import _error
+
+    task, user, project = _task(db)
+    db.add(DatasetVersion(
+        id=task.dataset_version_id, project_id=project.id, operator_id=user.id,
+        version=1, row_count=2, column_count=2, content_hash="sha256:data", schema_hash="sha256:schema",
+    ))
+    db.add(AnnotationTaskRevisionSnapshot(task_id=task.id, task_revision=0, snapshot={
+        "scope": {"sample_count": 2},
+        "label_schema": {"columns": [{"machine_key": "a"}, {"machine_key": "b"}]},
+    }))
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=task.dataset_version_id, name="a", position=0, dtype="float", nullable=False),
+        DatasetSchemaColumn(dataset_version_id=task.dataset_version_id, name="b", position=1, dtype="float", nullable=False),
+    ])
+    db.commit()
+    for name in ("annotation_max_samples", "annotation_max_input_columns", "annotation_max_label_columns"):
+        monkeypatch.setattr(settings, name, 2)
+    monkeypatch.setattr(settings, setting, 1)
+    with pytest.raises(ValueError, match="ANNOTATION_CAPACITY_EXCEEDED") as exc_info:
+        create_annotation_preview(db, task.id, 0, "sha256:frozen", user.id)
+    assert exc_info.value.details["exceeded"] == {field: {"count": 2, "limit": 1}}
+    http_error = _error(exc_info.value)
+    assert http_error.status_code == 409
+    assert http_error.detail["details"] == exc_info.value.details
+    assert task.status == "draft"
+    assert db.query(AnnotationTaskPreview).filter_by(task_id=task.id).count() == 0
+    assert db.query(DurableOperation).count() == 0
+    monkeypatch.setattr(settings, setting, 2)
+    preview = create_annotation_preview(db, task.id, 0, "sha256:frozen", user.id)
+    assert preview.summary["capacity"] == {"sample_count": 2, "input_column_count": 2, "label_column_count": 2}
+
+
+def test_existing_preview_replay_survives_lowered_capacity_quota(db, monkeypatch):
+    from app.config import settings
+
+    task, user, _ = _task(db)
+    preview = create_annotation_preview(db, task.id, 0, "sha256:frozen", user.id)
+    monkeypatch.setattr(settings, "annotation_max_samples", 1)
+    repeated = create_annotation_preview(db, task.id, 0, "sha256:frozen", user.id)
+    assert repeated.id == preview.id
+    assert db.query(DurableOperation).count() == 1
+
+
+def test_annotation_capacity_preflight_fails_closed_without_frozen_scope(db):
+    user = User(username=f"unknown-scope-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Unknown scope", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    schema = LabelSchema(project_id=project.id, name="unknown-labels", version=1, status="active")
+    db.add(schema)
+    db.flush()
+    task = GenericAnnotationTask(
+        project_id=project.id,
+        dataset_version_id=uuid.uuid4(),
+        label_schema_id=schema.id,
+        owner_id=user.id,
+        mode="manual",
+        status="draft",
+        task_revision=0,
+        sample_scope={"kind": "all"},
+        task_snapshot={"visible_columns": [], "label_schema": {"columns": []}},
+    )
+    db.add(task)
+    db.commit()
+    with pytest.raises(ValueError, match="ANNOTATION_CAPACITY_UNKNOWN"):
+        create_annotation_preview(db, task.id, 0, "sha256:unknown-scope", user.id)
 
 
 def test_publish_keeps_the_configuration_revision_and_current_preview(db):
@@ -1426,7 +1508,7 @@ def test_preview_worker_persists_claim_failure_at_zero_progress(db, monkeypatch)
     assert result["status"] == "failed"
     assert persisted.status == "failed"
     assert persisted.progress == 0
-    assert persisted.error == {"code": "PREVIEW_EXECUTION_FAILED", "message": "OPERATION_NOT_FOUND"}
+    assert persisted.error == {"code": "PREVIEW_EXECUTION_FAILED", "message": "OPERATION_NOT_FOUND", "details": {}}
 
 
 def test_cluster_discovery_without_usable_importance_fails_closed(db, monkeypatch):
@@ -1588,18 +1670,68 @@ def test_final_cluster_preview_reuses_the_discovery_artifact(db, tmp_path, monke
     }
 
 
-def test_cluster_discovery_with_model_artifact_missing_importance_fails_closed(db, tmp_path):
+def test_cluster_discovery_falls_back_to_permutation_importance(db, tmp_path):
     task, user, project = _task(db)
     from sklearn.neighbors import KNeighborsClassifier
     from app.services.annotation_strategies import apply_preview_annotation_strategy
 
-    model = KNeighborsClassifier(n_neighbors=1).fit([[0.0], [1.0]], ["a", "b"])
+    features = np.array([[0.0], [0.1], [0.2], [5.0], [5.1], [5.2]])
+    labels = np.array(["a", "a", "a", "b", "b", "b"])
+    model = KNeighborsClassifier(n_neighbors=1).fit(features, labels)
     artifact_path = tmp_path / "unranked-model.joblib"
     joblib.dump({"model": model, "input_contract": {"feature_columns": ["x"]}}, artifact_path)
     model_artifact = Artifact(project_id=project.id, name="unranked-model", type="model", storage_path=str(artifact_path), format="joblib")
     db.add(model_artifact)
     db.commit()
-    from app.services.annotation_strategies import StrategyConfigError
+    rows = {f"s-{index}": {"x": float(row[0])} for index, row in enumerate(features)}
+
+    result = apply_preview_annotation_strategy(
+        db,
+        task_id=task.id,
+        task_revision=0,
+        config_hash="sha256:permutation-importance",
+        actor_id=user.id,
+        project_id=project.id,
+        schema_snapshot={"columns": [{"machine_key": "label", "value_type": "string", "required": False}]},
+        configuration={
+            "model_artifact_id": str(model_artifact.id),
+            "clustering": True,
+            "cluster_discovery": True,
+            "random_seed": 7,
+        },
+        rows=rows,
+    )
+    cluster_artifact = result.artifact.artifact["cluster_artifact"]
+    assert cluster_artifact["importance_method"] == "permutation"
+    assert sum(cluster_artifact["weights"].values()) == pytest.approx(1.0)
+    assert all(weight >= 0 for weight in cluster_artifact["weights"].values())
+
+
+class _UnscorableModel:
+    """predict works, but has neither native importance nor a score method."""
+
+    def predict(self, values):
+        import numpy as _np
+
+        return _np.asarray(["a"] * len(values))
+
+
+class _UnpredictableModel:
+    """Model inference itself fails, exercising the MODEL_INFERENCE_FAILED code."""
+
+    def predict(self, values):
+        raise RuntimeError("predictor unavailable")
+
+
+def test_cluster_discovery_without_any_importance_source_fails_closed(db, tmp_path):
+    task, user, project = _task(db)
+    from app.services.annotation_strategies import StrategyConfigError, apply_preview_annotation_strategy
+
+    artifact_path = tmp_path / "unscorable-model.joblib"
+    joblib.dump({"model": _UnscorableModel(), "input_contract": {"feature_columns": ["x"]}}, artifact_path)
+    model_artifact = Artifact(project_id=project.id, name="unscorable-model", type="model", storage_path=str(artifact_path), format="joblib")
+    db.add(model_artifact)
+    db.commit()
 
     with pytest.raises(StrategyConfigError) as error:
         apply_preview_annotation_strategy(
@@ -1615,9 +1747,38 @@ def test_cluster_discovery_with_model_artifact_missing_importance_fails_closed(d
                 "clustering": True,
                 "cluster_discovery": True,
             },
-            rows={"s-1": {"x": 0.0}, "s-2": {"x": 1.0}},
+            rows={"s-1": {"x": 0.0}, "s-2": {"x": 1.0}, "s-3": {"x": 2.0}},
         )
     assert error.value.code == "FEATURE_IMPORTANCE_UNAVAILABLE"
+
+
+def test_model_inference_failure_fails_preview_with_stable_code(db, tmp_path):
+    task, user, project = _task(db)
+    from app.services.annotation_strategies import StrategyConfigError, apply_preview_annotation_strategy
+
+    artifact_path = tmp_path / "broken-model.joblib"
+    joblib.dump({"model": _UnpredictableModel(), "input_contract": {"feature_columns": ["x"]}}, artifact_path)
+    model_artifact = Artifact(project_id=project.id, name="broken-model", type="model", storage_path=str(artifact_path), format="joblib")
+    db.add(model_artifact)
+    db.commit()
+
+    with pytest.raises(StrategyConfigError) as error:
+        apply_preview_annotation_strategy(
+            db,
+            task_id=task.id,
+            task_revision=0,
+            config_hash="sha256:broken-inference",
+            actor_id=user.id,
+            project_id=project.id,
+            schema_snapshot={"columns": [{"machine_key": "label", "value_type": "string", "required": False}]},
+            configuration={
+                "model_artifact_id": str(model_artifact.id),
+                "clustering": True,
+                "cluster_discovery": True,
+            },
+            rows={"s-1": {"x": 0.0}, "s-2": {"x": 1.0}, "s-3": {"x": 2.0}},
+        )
+    assert error.value.code == "MODEL_INFERENCE_FAILED"
 
 
 def test_cluster_discovery_uses_frozen_multioutput_feature_importance(db, tmp_path):

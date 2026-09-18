@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 
 from app.database import Base
 
@@ -105,12 +105,17 @@ class AnnotationComment(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     task_id = Column(UUID(as_uuid=True), nullable=False)
     sample_id = Column(String(256), nullable=True)
+    parent_id = Column(UUID(as_uuid=True), ForeignKey("annotation_comments.id"), nullable=True)
     revision_id = Column(UUID(as_uuid=True), ForeignKey("annotation_revisions.id"), nullable=True)
     author_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     body = Column(Text, nullable=False)
+    status = Column(String(24), nullable=False, default="open")
+    resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     revision = relationship("AnnotationRevision", foreign_keys=[revision_id])
+    parent = relationship("AnnotationComment", remote_side=[id], foreign_keys=[parent_id])
 
 
 class AnnotationConfirmation(Base):
@@ -284,6 +289,12 @@ class AnnotationReturnBatchSample(Base):
 
 
 def _reject_immutable_change(mapper, connection, target):
+    if isinstance(target, AnnotationComment):
+        # Moderation metadata is mutable; the original conversation is not.
+        state = inspect(target)
+        changed = {attribute.key for attribute in mapper.column_attrs if state.attrs[attribute.key].history.has_changes()}
+        if changed <= {"status", "resolved_by", "resolved_at"}:
+            return
     raise ValueError("IMMUTABLE_LABEL_HISTORY")
 
 

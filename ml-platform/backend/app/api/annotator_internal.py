@@ -1,12 +1,13 @@
 """Portal authentication and controlled internal identity endpoints."""
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import String, and_, cast, func
+from sqlalchemy import String, and_, case, cast, func, or_
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -17,10 +18,13 @@ from app.models.labeling import (
     AnnotationAssignmentSample,
     AnnotationComment,
     AnnotationRevision,
+    AnnotationReturnBatch,
 )
 from app.models.platform_models import GenericAnnotationTask
 from app.models.user import User
-from app.models.annotator import AnnotatorSubjectMapping, ProjectAnnotatorGrant
+from app.models.access import AuditEvent
+from app.models.annotator import AnnotatorAccount, AnnotatorSubjectMapping, ProjectAnnotatorGrant
+from app.models.notifications import InAppNotification
 from app.services.annotator_identity import (
     PortalAuthError, authenticate_annotator, map_annotator_subject, register_annotator,
     require_portal_session, disable_annotator, reset_annotator_password,
@@ -36,6 +40,7 @@ from app.services.annotation_concurrency import (
     save_labels,
 )
 from app.services.annotation_task_state import current_annotation_task_snapshot
+from app.services.notification_outbox import emit_annotation_comment_notification
 from app.services.security import PASSWORD_RESET_LIMIT, enforce_rate_limit
 
 router = APIRouter(tags=["annotator-auth"])
@@ -160,6 +165,201 @@ class PortalCommentCreate(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
     sample_id: str | None = Field(default=None, min_length=1, max_length=256)
     related_revision: int | None = Field(default=None, ge=0)
+    parent_id: uuid.UUID | None = None
+
+
+class CommentResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: str = Field(pattern="^(open|resolved)$")
+
+
+def _portal_notification_query(db: Session, principal):
+    account = db.query(AnnotatorAccount).filter(
+        AnnotatorAccount.subject_id == principal.annotator_subject_id,
+        AnnotatorAccount.status == "active",
+    ).first()
+    if account is None:
+        raise _portal_error("ANNOTATOR_ACCOUNT_INACTIVE")
+    recipients = db.query(AnnotatorSubjectMapping.platform_principal_id).filter(
+        AnnotatorSubjectMapping.subject_id == principal.annotator_subject_id,
+    )
+    projects = db.query(ProjectAnnotatorGrant.project_id).filter(
+        ProjectAnnotatorGrant.subject_id == principal.annotator_subject_id,
+        ProjectAnnotatorGrant.status == "active",
+    )
+    query = db.query(InAppNotification).filter(
+        InAppNotification.recipient_user_id.in_(recipients),
+        InAppNotification.archived_at.is_(None),
+        or_(InAppNotification.project_id.is_(None), InAppNotification.project_id.in_(projects)),
+    )
+    if principal.project_id is not None:
+        query = query.filter(InAppNotification.project_id == principal.project_id)
+    return query
+
+
+def _portal_notification_target(db: Session, row: InAppNotification, principal) -> dict[str, str] | None:
+    resource_id = row.payload.get("return_batch_id") if isinstance(row.payload, dict) else None
+    assignment = None
+    task = None
+    if row.event_type.startswith("annotation_return") and resource_id:
+        try:
+            batch = db.get(AnnotationReturnBatch, uuid.UUID(str(resource_id)))
+        except (TypeError, ValueError, AttributeError):
+            batch = None
+        if batch:
+            assignment = db.get(AnnotationAssignment, batch.assignment_id)
+            task = db.get(GenericAnnotationTask, assignment.task_id) if assignment else None
+    elif row.event_type.startswith("annotation_comment"):
+        comment_id = row.payload.get("comment_id") if isinstance(row.payload, dict) else None
+        try:
+            comment = db.get(AnnotationComment, uuid.UUID(str(comment_id))) if comment_id else None
+        except (TypeError, ValueError, AttributeError):
+            comment = None
+        if comment:
+            task = db.get(GenericAnnotationTask, comment.task_id)
+            assignment = db.query(AnnotationAssignment).filter(
+                AnnotationAssignment.task_id == comment.task_id,
+                AnnotationAssignment.annotator_subject_id == principal.annotator_subject_id,
+                AnnotationAssignment.state != "revoked",
+            ).order_by(AnnotationAssignment.created_at.desc()).first()
+    if not assignment or not task or assignment.annotator_subject_id != principal.annotator_subject_id:
+        return None
+    if not _assignment_granted(db, task, principal.annotator_subject_id):
+        return None
+    return {"task_id": str(task.id), "assignment_id": str(assignment.id)}
+
+
+@router.get("/api/internal/portal/notifications")
+def internal_portal_notifications(
+    request: Request,
+    cursor: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    unread_only: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    principal = _service_principal(request, scope="notification:read", allow_wildcard=True)
+    query = _portal_notification_query(db, principal)
+    unread_count = query.filter(InAppNotification.read_at.is_(None)).count()
+    if unread_only:
+        query = query.filter(InAppNotification.read_at.is_(None))
+    total = query.count()
+    timestamp = InAppNotification.created_at
+    sqlite = db.get_bind().dialect.name == "sqlite"
+    if sqlite:
+        text_timestamp = cast(timestamp, String)
+        timestamp = case(
+            (func.length(text_timestamp) == 19, text_timestamp + ".000000"),
+            else_=text_timestamp,
+        )
+    if cursor is not None:
+        marker = query.filter(InAppNotification.id == cursor).first()
+        if marker is None:
+            raise _portal_error("INVALID_CURSOR", status_code=422)
+        marker_timestamp = marker.created_at.strftime("%Y-%m-%d %H:%M:%S.%f") if sqlite else marker.created_at
+        query = query.filter(or_(
+            timestamp < marker_timestamp,
+            and_(timestamp == marker_timestamp, InAppNotification.id < marker.id),
+        ))
+    rows = query.order_by(timestamp.desc(), InAppNotification.id.desc()).limit(limit + 1).all()
+    has_next = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "items": [{
+            "id": str(row.id), "title": row.title, "body": row.body,
+            "event_type": row.event_type, "severity": row.severity,
+            "created_at": row.created_at.isoformat(),
+            "read_at": row.read_at.isoformat() if row.read_at else None,
+            "target": _portal_notification_target(db, row, principal),
+        } for row in rows],
+        "total": total,
+        "unread_count": unread_count,
+        "next_cursor": str(rows[-1].id) if has_next else None,
+    }
+
+
+@router.post("/api/internal/portal/notifications/{notification_id}/read")
+def internal_portal_read_notification(
+    notification_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    principal = _service_principal(request, scope="notification:write", allow_wildcard=True)
+    query = _portal_notification_query(db, principal).filter(InAppNotification.id == notification_id)
+    row = query.first()
+    if row is None:
+        raise _portal_error("NOTIFICATION_NOT_FOUND", status_code=404)
+    query.filter(InAppNotification.read_at.is_(None)).update(
+        {InAppNotification.read_at: datetime.now(timezone.utc).replace(tzinfo=None)},
+        synchronize_session=False,
+    )
+    db.commit()
+    db.refresh(row)
+    return {"id": str(row.id), "read_at": row.read_at.isoformat()}
+
+
+@router.get("/api/annotation-comments")
+def list_admin_comments(
+    task_id: uuid.UUID,
+    status: str | None = Query(default=None, pattern="^(open|resolved)$"),
+    sample_id: str | None = Query(default=None, min_length=1, max_length=256),
+    thread: str = Query(default="all", pattern="^(all|roots|replies)$"),
+    cursor: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail={"code": "ADMIN_REQUIRED"})
+    task = db.get(GenericAnnotationTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail={"code": "ANNOTATION_TASK_NOT_FOUND"})
+    query = db.query(AnnotationComment).filter(
+        AnnotationComment.task_id == task_id,
+    )
+    if status is not None:
+        query = query.filter(AnnotationComment.status == status)
+    if sample_id is not None:
+        query = query.filter(AnnotationComment.sample_id == sample_id)
+    if thread == "roots":
+        query = query.filter(AnnotationComment.parent_id.is_(None))
+    elif thread == "replies":
+        query = query.filter(AnnotationComment.parent_id.is_not(None))
+    total = query.count()
+    timestamp = AnnotationComment.created_at
+    sqlite = db.get_bind().dialect.name == "sqlite"
+    if sqlite:
+        text_timestamp = cast(timestamp, String)
+        timestamp = case(
+            (func.length(text_timestamp) == 19, text_timestamp + ".000000"),
+            else_=text_timestamp,
+        )
+    if cursor is not None:
+        marker = query.filter(AnnotationComment.id == cursor).first()
+        if marker is None:
+            raise HTTPException(status_code=422, detail={"code": "INVALID_CURSOR"})
+        marker_timestamp = marker.created_at.strftime("%Y-%m-%d %H:%M:%S.%f") if sqlite else marker.created_at
+        query = query.filter(or_(
+            timestamp > marker_timestamp,
+            and_(timestamp == marker_timestamp, AnnotationComment.id > marker.id),
+        ))
+    rows = query.order_by(timestamp.asc(), AnnotationComment.id.asc()).limit(limit + 1).all()
+    has_next = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "total": total,
+        "next_cursor": str(rows[-1].id) if has_next else None,
+        "items": [{
+            "id": str(row.id),
+            "task_id": str(row.task_id),
+            "sample_id": row.sample_id,
+            "parent_id": str(row.parent_id) if row.parent_id else None,
+            "content": row.body,
+            "status": row.status,
+            "related_revision": row.revision.revision_no if row.revision else None,
+            "resolved_by": str(row.resolved_by) if row.resolved_by else None,
+            "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+        } for row in rows],
+    }
 
 
 def _portal_error(code: str, *, status_code: int = 403, message: str | None = None) -> HTTPException:
@@ -188,18 +388,23 @@ def _service_principal(
     return principal
 
 
-def _assignment_for_subject(db: Session, task_id: uuid.UUID, subject_id: uuid.UUID) -> tuple[GenericAnnotationTask, AnnotationAssignment]:
+def _assignment_for_subject(db: Session, task_id: uuid.UUID, subject_id: uuid.UUID, assignment_id: uuid.UUID | None = None) -> tuple[GenericAnnotationTask, AnnotationAssignment]:
     task = db.get(GenericAnnotationTask, task_id)
     if task is None:
         raise _portal_error("ANNOTATION_TASK_NOT_FOUND", status_code=404)
-    assignment = db.query(AnnotationAssignment).filter(
+    query = db.query(AnnotationAssignment).filter(
         AnnotationAssignment.task_id == task.id,
         AnnotationAssignment.annotator_subject_id == subject_id,
         AnnotationAssignment.state != "revoked",
-    ).order_by(AnnotationAssignment.created_at.desc()).first()
-    if assignment is None:
+    )
+    if assignment_id is not None:
+        query = query.filter(AnnotationAssignment.id == assignment_id)
+    assignments = query.limit(2).all()
+    if not assignments:
         raise _portal_error("ASSIGNMENT_NOT_FOUND", status_code=404)
-    return task, assignment
+    if len(assignments) > 1:
+        raise _portal_error("ASSIGNMENT_SELECTION_REQUIRED", status_code=409)
+    return task, assignments[0]
 
 
 def _task_view(task: GenericAnnotationTask, assignment: AnnotationAssignment, db: Session) -> dict[str, Any]:
@@ -274,6 +479,11 @@ def internal_portal_tasks(
     request: Request,
     cursor: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
+    search: str | None = Query(default=None, max_length=128),
+    status: str | None = Query(default=None, max_length=32),
+    assignment_state: str | None = Query(default=None, max_length=32),
+    sort: str = Query(default="created_at", pattern="^(created_at|due_at|status|assignment_state)$"),
+    direction: str = Query(default="desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db),
 ):
     principal = _service_principal(request, scope="assignment:read", allow_wildcard=True)
@@ -291,7 +501,18 @@ def internal_portal_tasks(
         AnnotationAssignment.annotator_subject_id == principal.annotator_subject_id,
         AnnotationAssignment.state != "revoked",
     )
+    normalized_search = search.strip().lower() if search else ""
+    if normalized_search:
+        task_id_text = func.lower(func.replace(cast(GenericAnnotationTask.id, String), "-", ""))
+        search_text = normalized_search.removeprefix("annotation task").strip().replace("-", "")
+        if search_text:
+            query = query.filter(task_id_text.contains(search_text, autoescape=True))
+    if status:
+        query = query.filter(GenericAnnotationTask.status == status)
+    if assignment_state:
+        query = query.filter(AnnotationAssignment.state == assignment_state)
     total = query.count()
+    marker = None
     if cursor:
         try:
             marker_id = uuid.UUID(str(cursor))
@@ -300,10 +521,32 @@ def internal_portal_tasks(
         marker = query.filter(AnnotationAssignment.id == marker_id).one_or_none()
         if marker is None:
             raise _portal_error("INVALID_CURSOR", status_code=422)
-        query = query.filter(AnnotationAssignment.id < marker.id)
-    assignments = query.order_by(
-        AnnotationAssignment.id.desc(),
-    ).limit(limit + 1).all()
+    sort_column = {
+        "created_at": AnnotationAssignment.created_at,
+        "due_at": AnnotationAssignment.due_at,
+        "status": GenericAnnotationTask.status,
+        "assignment_state": AnnotationAssignment.state,
+    }[sort]
+    if marker is not None:
+        marker_task = db.get(GenericAnnotationTask, marker.task_id)
+        marker_value = (
+            getattr(marker_task, sort_column.key)
+            if sort == "status"
+            else getattr(marker, sort_column.key)
+        )
+        tie = AnnotationAssignment.id > marker.id if direction == "asc" else AnnotationAssignment.id < marker.id
+        if marker_value is None:
+            query = query.filter(and_(sort_column.is_(None), tie))
+        else:
+            after = sort_column > marker_value if direction == "asc" else sort_column < marker_value
+            same = sort_column == marker_value
+            query = query.filter(or_(after, and_(same, tie), sort_column.is_(None)))
+    primary = sort_column.asc() if direction == "asc" else sort_column.desc()
+    order_columns = (
+        primary.nulls_last(),
+        AnnotationAssignment.id.asc() if direction == "asc" else AnnotationAssignment.id.desc(),
+    )
+    assignments = query.order_by(*order_columns).limit(limit + 1).all()
     has_next = len(assignments) > limit
     assignments = assignments[:limit]
     items = []
@@ -320,14 +563,14 @@ def internal_portal_tasks(
 
 
 @router.get("/api/internal/portal/tasks/{task_id}")
-def internal_portal_task(task_id: uuid.UUID, request: Request, db: Session = Depends(get_db)):
+def internal_portal_task(task_id: uuid.UUID, request: Request, assignment_id: uuid.UUID | None = Query(default=None), db: Session = Depends(get_db)):
     task = db.get(GenericAnnotationTask, task_id)
     if task is None:
         raise _portal_error("ANNOTATION_TASK_NOT_FOUND", status_code=404)
     principal = _service_principal(request, scope="assignment:read", project_id=task.project_id, allow_wildcard=True)
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
-    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id)
+    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id, assignment_id)
     return _task_view(task, assignment, db)
 
 
@@ -335,8 +578,15 @@ def internal_portal_task(task_id: uuid.UUID, request: Request, db: Session = Dep
 def internal_portal_samples(
     task_id: uuid.UUID,
     request: Request,
+    assignment_id: uuid.UUID | None = Query(default=None),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
+    sample_search: str | None = Query(default=None, min_length=1, max_length=256),
+    label_status: str | None = Query(default=None, pattern="^(complete|incomplete)$"),
+    comment_status: str | None = Query(default=None, pattern="^(open|resolved|none)$"),
+    modified_after: datetime | None = Query(default=None),
+    authorized_field: str | None = Query(default=None, min_length=1, max_length=128),
+    authorized_value: str | None = Query(default=None, max_length=256),
     db: Session = Depends(get_db),
 ):
     task = db.get(GenericAnnotationTask, task_id)
@@ -345,11 +595,64 @@ def internal_portal_samples(
     principal = _service_principal(request, scope="assignment:read", project_id=task.project_id, allow_wildcard=True)
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
-    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id)
+    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id, assignment_id)
     snapshot = current_annotation_task_snapshot(db, task)
+    visible_columns = set(snapshot.get("visible_columns") or [])
+    if authorized_value is not None and authorized_field is None:
+        raise _portal_error("AUTHORIZED_FIELD_REQUIRED", status_code=422)
+    if authorized_field is not None and authorized_field not in visible_columns:
+        raise _portal_error("AUTHORIZED_FIELD_INVALID", status_code=422)
+    required_keys = [
+        str(column.get("machine_key"))
+        for column in (snapshot.get("label_schema", {}).get("columns") or [])
+        if column.get("required") and column.get("machine_key")
+    ]
     query = db.query(AnnotationAssignmentSample).filter(
         AnnotationAssignmentSample.assignment_id == assignment.id,
     ).order_by(AnnotationAssignmentSample.sample_id.asc())
+    if sample_search:
+        query = query.filter(AnnotationAssignmentSample.sample_id.contains(sample_search))
+    if modified_after:
+        platform_principal_id = _portal_platform_principal(db, principal.annotator_subject_id)
+        modified_after_utc = (
+            modified_after.astimezone(timezone.utc).replace(tzinfo=None)
+            if modified_after.tzinfo is not None
+            else modified_after
+        )
+        own_revision = db.query(AnnotationRevision.id).filter(
+            AnnotationRevision.task_id == task.id,
+            AnnotationRevision.sample_id == AnnotationAssignmentSample.sample_id,
+            AnnotationRevision.author_id == platform_principal_id,
+            AnnotationRevision.created_at >= modified_after_utc,
+        ).exists()
+        query = query.filter(own_revision)
+    if authorized_field is not None:
+        source_field = DatasetSample.values[authorized_field]
+        source_match = db.query(DatasetSample.sample_id).filter(
+            DatasetSample.dataset_version_id == task.dataset_version_id,
+            DatasetSample.sample_id == AnnotationAssignmentSample.sample_id,
+            source_field.is_not(None),
+        )
+        if authorized_value is not None:
+            source_match = source_match.filter(
+                source_field.as_string().contains(authorized_value),
+            )
+        query = query.filter(source_match.exists())
+    if label_status:
+        required = and_(*[AnnotationAssignmentSample.values[key].is_not(None) for key in required_keys]) if required_keys else True
+        query = query.filter(required if label_status == "complete" else ~required)
+    if comment_status:
+        any_comment = db.query(AnnotationComment.id).filter(
+            AnnotationComment.task_id == task.id,
+            AnnotationComment.sample_id == AnnotationAssignmentSample.sample_id,
+        ).exists()
+        matching_comment = db.query(AnnotationComment.id).filter(
+            AnnotationComment.task_id == task.id,
+            AnnotationComment.sample_id == AnnotationAssignmentSample.sample_id,
+            AnnotationComment.status == comment_status,
+        ).exists()
+        query = query.filter(matching_comment if comment_status != "none" else ~any_comment)
+    filtered_total = query.order_by(None).count()
     if cursor:
         marker = query.filter(AnnotationAssignmentSample.sample_id == cursor).one_or_none()
         if marker is None:
@@ -359,7 +662,6 @@ def internal_portal_samples(
     has_next = len(rows) > limit
     rows = rows[:limit]
     source_ids = [row.sample_id for row in rows]
-    visible_columns = set(snapshot.get("visible_columns") or [])
     source_by_id = {
         row.sample_id: {
             key: value for key, value in (row.values or {}).items()
@@ -380,7 +682,7 @@ def internal_portal_samples(
             }
             for row in rows
         ],
-        "total": db.query(AnnotationAssignmentSample).filter_by(assignment_id=assignment.id).count(),
+        "total": filtered_total,
         "next_cursor": rows[-1].sample_id if has_next and rows else None,
     }
 
@@ -391,6 +693,7 @@ def internal_portal_save_labels(
     sample_id: str,
     data: PortalLabelWrite,
     request: Request,
+    assignment_id: uuid.UUID | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     task = db.get(GenericAnnotationTask, task_id)
@@ -399,7 +702,7 @@ def internal_portal_save_labels(
     principal = _service_principal(request, scope="assignment:write", project_id=task.project_id, allow_wildcard=True)
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
-    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id)
+    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id, assignment_id)
     platform_principal_id = _portal_platform_principal(db, principal.annotator_subject_id)
     try:
         result = save_labels(
@@ -435,6 +738,7 @@ def internal_portal_bulk_labels(
     task_id: uuid.UUID,
     data: PortalBulkLabelWrite,
     request: Request,
+    assignment_id: uuid.UUID | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     task = db.get(GenericAnnotationTask, task_id)
@@ -443,7 +747,7 @@ def internal_portal_bulk_labels(
     principal = _service_principal(request, scope="assignment:write", project_id=task.project_id, allow_wildcard=True)
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
-    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id)
+    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id, assignment_id)
     platform_principal_id = _portal_platform_principal(db, principal.annotator_subject_id)
     results = []
     try:
@@ -485,6 +789,7 @@ def internal_portal_confirm(
     task_id: uuid.UUID,
     data: PortalTaskConfirmation,
     request: Request,
+    assignment_id: uuid.UUID | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     task = db.get(GenericAnnotationTask, task_id)
@@ -493,7 +798,7 @@ def internal_portal_confirm(
     principal = _service_principal(request, scope="assignment:write", project_id=task.project_id, allow_wildcard=True)
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
-    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id)
+    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id, assignment_id)
     platform_principal_id = _portal_platform_principal(db, principal.annotator_subject_id)
     try:
         result = confirm_assignment(
@@ -514,6 +819,7 @@ def internal_portal_edit_for_return(
     task_id: uuid.UUID,
     data: PortalTaskConfirmation,
     request: Request,
+    assignment_id: uuid.UUID | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     task = db.get(GenericAnnotationTask, task_id)
@@ -522,7 +828,7 @@ def internal_portal_edit_for_return(
     principal = _service_principal(request, scope="assignment:write", project_id=task.project_id, allow_wildcard=True)
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
-    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id)
+    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id, assignment_id)
     if assignment.scope_hash != data.scope_hash:
         raise _portal_error("ASSIGNMENT_REVISION_CONFLICT", status_code=409)
     try:
@@ -537,6 +843,7 @@ def internal_portal_return(
     task_id: uuid.UUID,
     data: PortalTaskConfirmation,
     request: Request,
+    assignment_id: uuid.UUID | None = Query(default=None),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
 ):
@@ -548,7 +855,7 @@ def internal_portal_return(
     principal = _service_principal(request, scope="assignment:return", project_id=task.project_id, allow_wildcard=True)
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
-    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id)
+    _task, assignment = _assignment_for_subject(db, task_id, principal.annotator_subject_id, assignment_id)
     try:
         result = return_assignment(db, assignment.id, data.task_revision, data.scope_hash, idempotency_key)
     except AssignmentError as error:
@@ -564,38 +871,84 @@ def internal_portal_return(
 def internal_portal_comments(
     request: Request,
     task_id: uuid.UUID | None = Query(default=None),
+    assignment_id: uuid.UUID | None = Query(default=None),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
     principal = _service_principal(request, scope="comment:read", allow_wildcard=True)
-    assignments_query = db.query(AnnotationAssignment).filter(
+    assignments_query = db.query(AnnotationAssignment).join(
+        GenericAnnotationTask, GenericAnnotationTask.id == AnnotationAssignment.task_id,
+    ).join(
+        ProjectAnnotatorGrant,
+        and_(
+            ProjectAnnotatorGrant.project_id == GenericAnnotationTask.project_id,
+            ProjectAnnotatorGrant.subject_id == AnnotationAssignment.annotator_subject_id,
+        ),
+    ).filter(
         AnnotationAssignment.annotator_subject_id == principal.annotator_subject_id,
         AnnotationAssignment.state != "revoked",
+        ProjectAnnotatorGrant.status == "active",
     )
-    assignment_task_ids = [row.task_id for row in assignments_query.all()]
+    if principal.project_id is not None:
+        assignments_query = assignments_query.filter(GenericAnnotationTask.project_id == principal.project_id)
+    if assignment_id is not None:
+        assignments_query = assignments_query.filter(AnnotationAssignment.id == assignment_id)
     if task_id is not None:
-        if task_id not in assignment_task_ids:
+        assignments_query = assignments_query.filter(AnnotationAssignment.task_id == task_id)
+        if assignments_query.first() is None:
             raise _portal_error("ASSIGNMENT_NOT_FOUND", status_code=404)
-        assignment_task_ids = [task_id]
-    query = db.query(AnnotationComment).filter(AnnotationComment.task_id.in_(assignment_task_ids))
+    allowed_tasks = assignments_query.with_entities(AnnotationAssignment.task_id)
+    allowed_samples = assignments_query.join(
+        AnnotationAssignmentSample,
+        AnnotationAssignmentSample.assignment_id == AnnotationAssignment.id,
+    ).filter(
+        AnnotationAssignment.task_id == AnnotationComment.task_id,
+        AnnotationAssignmentSample.sample_id == AnnotationComment.sample_id,
+    ).exists()
+    query = db.query(AnnotationComment).filter(
+        AnnotationComment.task_id.in_(allowed_tasks),
+        or_(AnnotationComment.sample_id.is_(None), allowed_samples),
+    )
+    timestamp = AnnotationComment.created_at
+    if db.get_bind().dialect.name == "sqlite":
+        # SQLite CURRENT_TIMESTAMP omits fractional seconds; DateTime binds do not.
+        # Normalize both representations so the cursor cannot include itself.
+        text_timestamp = cast(timestamp, String)
+        timestamp = case(
+            (func.length(text_timestamp) == 19, text_timestamp + ".000000"),
+            else_=text_timestamp,
+        )
     total = query.count()
     if cursor:
         try:
             marker_id = uuid.UUID(cursor)
         except (TypeError, ValueError, AttributeError) as error:
             raise _portal_error("INVALID_CURSOR", status_code=422) from error
-        marker = db.get(AnnotationComment, marker_id)
+        marker = query.filter(AnnotationComment.id == marker_id).first()
         if marker is None:
             raise _portal_error("INVALID_CURSOR", status_code=422)
-        if marker.task_id not in assignment_task_ids:
-            raise _portal_error("INVALID_CURSOR", status_code=422)
-        query = query.filter(AnnotationComment.id < marker.id)
+        same_group = AnnotationComment.revision_id.is_(None) if marker.revision_id is None else AnnotationComment.revision_id.is_not(None)
+        marker_timestamp = (
+            marker.created_at.strftime("%Y-%m-%d %H:%M:%S.%f")
+            if db.get_bind().dialect.name == "sqlite" else marker.created_at
+        )
+        within_group = and_(
+            same_group,
+            or_(
+                timestamp < marker_timestamp,
+                and_(timestamp == marker_timestamp, AnnotationComment.id < marker.id),
+            ),
+        )
+        query = query.filter(
+            within_group if marker.revision_id is None
+            else or_(within_group, AnnotationComment.revision_id.is_(None))
+        )
     # Keep revision-linked comments ahead of task-level notes so a paged
     # response preserves the label context needed by the annotator workspace.
     rows = query.order_by(
         AnnotationComment.revision_id.is_(None).asc(),
-        AnnotationComment.created_at.desc(),
+        timestamp.desc(),
         AnnotationComment.id.desc(),
     ).limit(limit + 1).all()
     has_next = len(rows) > limit
@@ -610,6 +963,8 @@ def internal_portal_comments(
                 "related_revision": (
                     row.revision.revision_no if row.revision is not None else None
                 ),
+                "parent_id": str(row.parent_id) if row.parent_id else None,
+                "status": row.status,
             }
             for row in rows
         ],
@@ -622,6 +977,7 @@ def internal_portal_comments(
 def internal_portal_create_comment(
     data: PortalCommentCreate,
     request: Request,
+    assignment_id: uuid.UUID | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     task = db.get(GenericAnnotationTask, data.task_id)
@@ -630,7 +986,7 @@ def internal_portal_create_comment(
     principal = _service_principal(request, scope="comment:write", project_id=task.project_id, allow_wildcard=True)
     if not _assignment_granted(db, task, principal.annotator_subject_id):
         raise _portal_error("PROJECT_ACCESS_FORBIDDEN")
-    _task, assignment = _assignment_for_subject(db, data.task_id, principal.annotator_subject_id)
+    _task, assignment = _assignment_for_subject(db, data.task_id, principal.annotator_subject_id, assignment_id)
     if data.sample_id is not None and not _assignment_contains_sample(db, assignment, data.sample_id):
         raise _portal_error("SAMPLE_SCOPE_FORBIDDEN", status_code=403)
     mapping = db.query(AnnotatorSubjectMapping).filter(
@@ -658,8 +1014,25 @@ def internal_portal_create_comment(
         revision_id=revision_id,
         author_id=mapping.platform_principal_id,
         body=data.content.strip(),
+        parent_id=data.parent_id,
     )
     db.add(comment)
+    if data.parent_id is not None:
+        parent = db.get(AnnotationComment, data.parent_id)
+        if parent is None or parent.task_id != data.task_id:
+            raise _portal_error("COMMENT_PARENT_NOT_FOUND", status_code=404)
+        if parent.sample_id != data.sample_id:
+            raise _portal_error("COMMENT_SCOPE_MISMATCH", status_code=422)
+        db.flush()
+        emit_annotation_comment_notification(
+            db,
+            project_id=task.project_id,
+            actor_id=mapping.platform_principal_id,
+            recipient_user_id=parent.author_id,
+            comment_id=comment.id,
+            parent_comment_id=parent.id,
+            event_type="annotation_comment.replied",
+        )
     db.commit()
     db.refresh(comment)
     return {
@@ -668,4 +1041,69 @@ def internal_portal_create_comment(
         "sample_id": comment.sample_id,
         "content": comment.body,
         "related_revision": data.related_revision,
+        "parent_id": str(comment.parent_id) if comment.parent_id else None,
+        "status": comment.status,
+    }
+
+
+@router.patch("/api/annotation-comments/{comment_id}/status")
+def update_comment_status(
+    comment_id: uuid.UUID,
+    data: CommentResolution,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail={"code": "ADMIN_REQUIRED"})
+    comment = db.query(AnnotationComment).filter(AnnotationComment.id == comment_id).with_for_update().first()
+    if comment is None:
+        raise HTTPException(status_code=404, detail={"code": "COMMENT_NOT_FOUND"})
+    task = db.get(GenericAnnotationTask, comment.task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail={"code": "ANNOTATION_TASK_NOT_FOUND"})
+    previous = comment.status
+    if previous == data.status:
+        return {
+            "id": str(comment.id),
+            "status": comment.status,
+            "resolved_by": str(comment.resolved_by) if comment.resolved_by else None,
+            "resolved_at": comment.resolved_at.isoformat() if comment.resolved_at else None,
+        }
+    comment.status = data.status
+    comment.resolved_by = current_user.id if data.status == "resolved" else None
+    comment.resolved_at = datetime.now(timezone.utc) if data.status == "resolved" else None
+    request_id = uuid.UUID(request.headers.get("X-Request-ID")) if request.headers.get("X-Request-ID") else uuid.uuid4()
+    transition_id = uuid.uuid4()
+    db.add(AuditEvent(
+        id=transition_id,
+        project_id=task.project_id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        action="annotation.comment.status",
+        result="success",
+        resource_type="annotation_comment",
+        resource_id=str(comment.id),
+        request_id=request_id,
+        source_ip=request.client.host if request.client else None,
+        changes={"from": previous, "to": data.status, "task_id": str(task.id)},
+    ))
+    if comment.author_id != current_user.id:
+        from app.services.notification_outbox import emit_annotation_comment_notification
+        emit_annotation_comment_notification(
+            db,
+            project_id=task.project_id,
+            actor_id=current_user.id,
+            recipient_user_id=comment.author_id,
+            comment_id=comment.id,
+            status=data.status,
+            transition_id=transition_id,
+            event_type="annotation_comment.status_changed",
+        )
+    db.commit()
+    return {
+        "id": str(comment.id),
+        "status": comment.status,
+        "resolved_by": str(comment.resolved_by) if comment.resolved_by else None,
+        "resolved_at": comment.resolved_at.isoformat() if comment.resolved_at else None,
     }

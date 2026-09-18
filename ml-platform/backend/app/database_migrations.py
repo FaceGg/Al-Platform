@@ -89,12 +89,31 @@ _SQLITE_COLUMNS = {
     "generic_annotation_tasks": {
         "paused_from_status": "VARCHAR(24)",
         "archived_at": "DATETIME",
+        "name": "VARCHAR(200) NOT NULL DEFAULT ''",
+        "completion_criteria": "TEXT NOT NULL DEFAULT ''",
+        "due_at": "DATETIME",
+    },
+    "label_schemas": {
+        "purpose": "VARCHAR(32) NOT NULL DEFAULT 'annotation'",
+    },
+    "label_columns": {
+        "instruction": "TEXT",
+    },
+    "annotation_comments": {
+        "parent_id": "CHAR(32)",
+        "status": "VARCHAR(24) NOT NULL DEFAULT 'open'",
+        "resolved_by": "CHAR(32)",
+        "resolved_at": "DATETIME",
     },
     "model_exports": {
         "idempotency_scope": "VARCHAR(256) NOT NULL DEFAULT 'model'",
         "request_hash": "VARCHAR(64) NOT NULL DEFAULT ''",
     },
     "durable_operations": {
+        "project_id": "CHAR(32)",
+        "task_id": "CHAR(32)",
+        "preview_id": "CHAR(32)",
+        "resource_type": "VARCHAR(64)",
         "request_fingerprint": "VARCHAR(64)",
         "result_summary": "JSON",
         "updated_at": "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
@@ -146,6 +165,8 @@ _SQLITE_INDEXES = {
     },
     "durable_operations": {
         "ix_durable_operations_lease": ("state", "lease_expires_at"),
+        "ix_durable_operations_project_created": ("project_id", "created_at", "id"),
+        "ix_durable_operations_task_created": ("task_id", "created_at", "id"),
     },
     "dataset_import_processes": {
         "ix_dataset_import_processes_project_id": "project_id",

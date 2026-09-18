@@ -20,6 +20,18 @@ class FeatureMap:
     one_hot_dimensions: Mapping[str, tuple[int, ...]]
 
     def restore(self, vector: Sequence[float]) -> dict[str, float]:
+        result, _ = self.restore_with_unmapped(vector)
+        return result
+
+    def restore_with_unmapped(self, vector: Sequence[float]) -> tuple[dict[str, float], tuple[int, ...]]:
+        """Map an encoded-space vector back to source columns.
+
+        One-hot dimensions listed per column are summed; every other source
+        column (numeric, one-dimensional) consumes one remaining dimension in
+        source order.  Encoded dimensions that no source column can claim are
+        returned separately so callers can record and block on them instead of
+        silently absorbing interaction terms.
+        """
         values = np.asarray(vector, dtype=float)
         result: dict[str, float] = {}
         mapped = set()
@@ -29,16 +41,17 @@ class FeatureMap:
                 result[column] = float(values[list(dimensions)].sum())
                 mapped.update(dimensions)
         free_dimensions = [index for index in range(len(values)) if index not in mapped]
+        numeric_columns = [column for column in self.source_columns if column not in result]
+        unmapped = tuple(free_dimensions[len(numeric_columns):])
         free_index = 0
-        for column in self.source_columns:
-            if column in result:
-                continue
+        for column in numeric_columns:
             if free_index < len(free_dimensions):
                 result[column] = float(values[free_dimensions[free_index]])
                 free_index += 1
         if not result and len(values):
             result = {str(index): float(value) for index, value in enumerate(values)}
-        return result
+            unmapped = ()
+        return result, unmapped
 
 
 @dataclass(frozen=True)
@@ -66,6 +79,7 @@ class ClusterArtifact:
     sampling_hash: str
     preprocessing: Mapping[str, object]
     centers: tuple[tuple[float, ...], ...]
+    importance_method: str = "estimator_native"
 
 
 @dataclass(frozen=True)
@@ -88,7 +102,11 @@ def aggregate_model_importance(per_target: Mapping[str, Sequence[float]], featur
         if values.ndim != 1 or not np.all(np.isfinite(values)) or np.any(values < 0) or values.sum() <= 0:
             return ImportanceVector({column: 0.0 for column in feature_map.source_columns}, source="needs_review")
         values = values / values.sum()
-        restored.append(feature_map.restore(values))
+        mapped, unmapped = feature_map.restore_with_unmapped(values)
+        if unmapped:
+            indices = ",".join(str(index) for index in unmapped)
+            raise ValueError(f"FEATURE_IMPORTANCE_UNMAPPED_DIMENSIONS:{indices}")
+        restored.append(mapped)
     columns = feature_map.source_columns or tuple(sorted({key for item in restored for key in item}))
     averaged = {column: float(np.mean([item.get(column, 0.0) for item in restored])) for column in columns}
     return ImportanceVector(averaged, source="model")
@@ -108,6 +126,49 @@ def _extract_importance(model: object, feature_count: int) -> np.ndarray:
     if raw is None:
         raise ValueError("FEATURE_IMPORTANCE_UNAVAILABLE")
     return _normalize_importance_values(raw, feature_count)
+
+
+def _permutation_importance_vector(
+    model: object,
+    matrix: np.ndarray,
+    columns: Sequence[str],
+    seed: int,
+    n_repeats: int = 5,
+) -> np.ndarray:
+    """Rank features by permuting raw inputs against the model's own predictions.
+
+    Spec 7.4.1 places permutation importance after native/linear sources. The
+    frozen evaluation rows are the only data kept in memory, so the fallback is
+    computed on that deterministic subset; method and seed are recorded on the
+    artifact.
+    """
+    from sklearn.inspection import permutation_importance
+
+    frame = pd.DataFrame(np.asarray(matrix, dtype=float), columns=list(columns))
+    try:
+        predictions = np.asarray(model.predict(frame))
+        if predictions.ndim == 1:
+            predictions = predictions.reshape(-1, 1)
+        if predictions.shape[0] != len(frame) or predictions.shape[1] < 1:
+            raise ValueError("FEATURE_IMPORTANCE_UNAVAILABLE")
+        vectors: list[np.ndarray] = []
+        for target_index in range(predictions.shape[1]):
+            result = permutation_importance(
+                model,
+                frame,
+                predictions[:, target_index],
+                n_repeats=n_repeats,
+                random_state=seed,
+            )
+            vectors.append(np.maximum(np.asarray(result.importances_mean, dtype=float), 0.0))
+    except ValueError as error:
+        if str(error).startswith("FEATURE_IMPORTANCE_"):
+            raise
+        raise ValueError("FEATURE_IMPORTANCE_UNAVAILABLE") from error
+    except Exception as error:
+        raise ValueError("FEATURE_IMPORTANCE_UNAVAILABLE") from error
+    averaged = np.mean(np.vstack(vectors), axis=0) if len(vectors) > 1 else vectors[0]
+    return _normalize_importance_values(averaged, len(columns))
 
 
 def _normalize_importance_values(raw: object, feature_count: int) -> np.ndarray:
@@ -298,6 +359,7 @@ def cluster_artifact_from_payload(payload: Mapping[str, object]) -> ClusterArtif
                 tuple(float(value) for value in center)
                 for center in centers_payload
             ),
+            importance_method=str(payload.get("importance_method") or "estimator_native"),
         )
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         raise ValueError("CLUSTER_ARTIFACT_INVALID") from error
@@ -360,6 +422,44 @@ def _fit_streaming_lloyd_kmeans(
     return centers, max_iterations
 
 
+class _EvalRowCollector:
+    """Collect the deterministic silhouette-evaluation subset in one pass."""
+
+    def __init__(self, expected_count: int, *, task_revision: int, seed: int):
+        self._task_revision = int(task_revision)
+        self._seed = int(seed)
+        self._keep_all = expected_count <= 100_000
+        self._limit = expected_count if self._keep_all else 50_000
+        self._all: list[tuple[bytes, bytes, np.ndarray]] = []
+        self._heap: list[_ReverseSampleRank] = []
+
+    @property
+    def sampling_mode(self) -> str:
+        return "all_rows" if self._keep_all else "deterministic_hash_sample"
+
+    def add(self, sample_id: object, vector: np.ndarray) -> None:
+        digest, sample_id_bytes = _sample_evaluation_rank(
+            sample_id,
+            task_revision=self._task_revision,
+            seed=self._seed,
+        )
+        if self._keep_all:
+            self._all.append((digest, sample_id_bytes, np.asarray(vector, dtype=float).copy()))
+            return
+        candidate = _ReverseSampleRank((digest, sample_id_bytes), np.asarray(vector, dtype=float).copy())
+        if len(self._heap) < self._limit:
+            heapq.heappush(self._heap, candidate)
+        elif candidate.rank < self._heap[0].rank:
+            heapq.heapreplace(self._heap, candidate)
+
+    def rows(self) -> list[tuple[bytes, bytes, np.ndarray]]:
+        entries = self._all if self._keep_all else [
+            (entry.rank[0], entry.rank[1], entry.vector) for entry in self._heap
+        ]
+        entries.sort(key=lambda item: (item[0], item[1]))
+        return entries
+
+
 def build_weighted_clusters_streaming(
     batches: Callable[[], Iterable[tuple[Sequence[object], pd.DataFrame]]],
     model: object,
@@ -370,6 +470,7 @@ def build_weighted_clusters_streaming(
     task_revision: int = 0,
     total_sample_count: int,
     feature_importance: Mapping[str, float] | Sequence[float] | None = None,
+    importance_method_hint: str | None = None,
     on_batch: Callable[[], None] | None = None,
 ) -> ClusterArtifact:
     """Fit weighted clusters from repeatable bounded source batches.
@@ -385,62 +486,70 @@ def build_weighted_clusters_streaming(
     columns = tuple(str(column) for column in feature_contract.feature_columns)
     if not columns:
         raise ValueError("CLUSTER_FEATURE_MISSING")
-    raw_importance = (
-        _extract_importance(model, len(columns))
-        if feature_importance is None
-        else _frozen_importance_values(feature_importance, columns)
-    )
+    raw_importance: np.ndarray | None
+    if feature_importance is None:
+        try:
+            raw_importance = _extract_importance(model, len(columns))
+            importance_method = "estimator_native"
+        except ValueError:
+            raw_importance = None
+            importance_method = "permutation"
+    else:
+        raw_importance = _frozen_importance_values(feature_importance, columns)
+        importance_method = importance_method_hint or "frozen_artifact"
+
     scaler = StandardScaler()
     observed_count = 0
+    raw_eval_collector = _EvalRowCollector(expected_count, task_revision=task_revision, seed=seed) if raw_importance is None else None
     for sample_ids, frame in batches():
         if len(sample_ids) != len(frame):
             raise ValueError("CLUSTER_SAMPLE_ID_COUNT_MISMATCH")
         matrix = _numeric_feature_matrix(frame, columns)
         scaler.partial_fit(matrix)
+        if raw_eval_collector is not None:
+            for sample_id, vector in zip(sample_ids, matrix):
+                raw_eval_collector.add(sample_id, vector)
         observed_count += len(matrix)
         if on_batch is not None:
             on_batch()
     if observed_count != expected_count:
         raise ValueError("CLUSTER_SAMPLE_ID_COUNT_MISMATCH")
 
+    if raw_importance is None:
+        raw_rows = raw_eval_collector.rows() if raw_eval_collector is not None else []
+        if len(raw_rows) < 3:
+            raise ValueError("FEATURE_IMPORTANCE_UNAVAILABLE")
+        raw_matrix = np.stack([item[2] for item in raw_rows])
+        if len(np.unique(raw_matrix, axis=0)) < 2:
+            raise ValueError("FEATURE_IMPORTANCE_UNAVAILABLE")
+        raw_importance = _permutation_importance_vector(model, raw_matrix, columns, seed)
+
     evaluation_limit = expected_count if expected_count <= 100_000 else 50_000
-    all_evaluation_rows: list[tuple[bytes, bytes, np.ndarray]] = []
-    sampled_evaluation_rows: list[_ReverseSampleRank] = []
     weights_root = np.sqrt(raw_importance)
+    collector = _EvalRowCollector(expected_count, task_revision=task_revision, seed=seed)
+    weighted_space_has_distinct = False
+    first_weighted_row: np.ndarray | None = None
     for sample_ids, frame in batches():
         if len(sample_ids) != len(frame):
             raise ValueError("CLUSTER_SAMPLE_ID_COUNT_MISMATCH")
         matrix = _numeric_feature_matrix(frame, columns)
         weighted = scaler.transform(matrix) * weights_root
+        if first_weighted_row is None and len(weighted):
+            first_weighted_row = weighted[0]
+        if first_weighted_row is not None and not weighted_space_has_distinct:
+            if np.any(np.any(weighted != first_weighted_row, axis=1)):
+                weighted_space_has_distinct = True
         for sample_id, vector in zip(sample_ids, weighted):
-            digest, sample_id_bytes = _sample_evaluation_rank(
-                sample_id,
-                task_revision=task_revision,
-                seed=seed,
-            )
-            if expected_count <= 100_000:
-                all_evaluation_rows.append((digest, sample_id_bytes, np.asarray(vector, dtype=float).copy()))
-                continue
-            candidate = _ReverseSampleRank((digest, sample_id_bytes), np.asarray(vector, dtype=float).copy())
-            if len(sampled_evaluation_rows) < evaluation_limit:
-                heapq.heappush(sampled_evaluation_rows, candidate)
-            elif candidate.rank < sampled_evaluation_rows[0].rank:
-                heapq.heapreplace(sampled_evaluation_rows, candidate)
+            collector.add(sample_id, vector)
         if on_batch is not None:
             on_batch()
 
-    if expected_count <= 100_000:
-        evaluation_rows = all_evaluation_rows
-        sampling_mode = "all_rows"
-    else:
-        evaluation_rows = [
-            (entry.rank[0], entry.rank[1], entry.vector)
-            for entry in sampled_evaluation_rows
-        ]
-        sampling_mode = "deterministic_hash_sample"
-    evaluation_rows.sort(key=lambda item: (item[0], item[1]))
+    evaluation_rows = collector.rows()
+    sampling_mode = collector.sampling_mode
     if len(evaluation_rows) < 3:
         raise ValueError("CLUSTER_TOO_FEW_ROWS")
+    if not weighted_space_has_distinct:
+        raise ValueError("CLUSTER_DEGENERATE_FEATURE_SPACE")
     evaluation_matrix = np.stack([item[2] for item in evaluation_rows])
     if len(np.unique(evaluation_matrix, axis=0)) < 2:
         raise ValueError("CLUSTER_SILHOUETTE_UNAVAILABLE")
@@ -503,6 +612,7 @@ def build_weighted_clusters_streaming(
         ),
         preprocessing=preprocessing,
         centers=tuple(tuple(float(item) for item in row) for row in centers),
+        importance_method=importance_method,
     )
 
 
@@ -515,6 +625,7 @@ def build_weighted_clusters(
     task_revision: int = 0,
     sample_ids: Sequence[object] | None = None,
     feature_importance: Mapping[str, float] | Sequence[float] | None = None,
+    importance_method_hint: str | None = None,
 ) -> ClusterArtifact:
     if frame.empty:
         raise ValueError("CLUSTER_INPUT_EMPTY")
@@ -522,12 +633,19 @@ def build_weighted_clusters(
     matrix = _numeric_feature_matrix(frame, columns)
     scaler = StandardScaler().fit(matrix)
     scaled = scaler.transform(matrix)
-    raw_importance = (
-        _extract_importance(model, len(columns))
-        if feature_importance is None
-        else _frozen_importance_values(feature_importance, columns)
-    )
+    if feature_importance is None:
+        try:
+            raw_importance = _extract_importance(model, len(columns))
+            importance_method = "estimator_native"
+        except ValueError:
+            raw_importance = _permutation_importance_vector(model, matrix, columns, seed)
+            importance_method = "permutation"
+    else:
+        raw_importance = _frozen_importance_values(feature_importance, columns)
+        importance_method = importance_method_hint or "frozen_artifact"
     weighted = scaled * np.sqrt(raw_importance)
+    if not np.any(np.any(weighted != weighted[0], axis=1)):
+        raise ValueError("CLUSTER_DEGENERATE_FEATURE_SPACE")
     row_count = len(weighted)
     evaluation_ids = tuple(frame.index) if sample_ids is None else tuple(sample_ids)
     if len(evaluation_ids) != row_count:
@@ -585,4 +703,5 @@ def build_weighted_clusters(
         sampling_hash=sampling_hash,
         preprocessing=preprocessing,
         centers=tuple(tuple(float(item) for item in row) for row in final.cluster_centers_),
+        importance_method=importance_method,
     )

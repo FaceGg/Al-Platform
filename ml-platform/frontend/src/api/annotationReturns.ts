@@ -9,6 +9,8 @@ export interface ReturnBatch {
   state: ReturnBatchState | string;
   created_at: string | null;
   accepted_dataset_version_id?: string | null;
+  operation_state?: string | null;
+  validated_row_count?: number | null;
 }
 
 export interface ReturnBatchPage { items: ReturnBatch[]; total: number; next_cursor: string | null; }

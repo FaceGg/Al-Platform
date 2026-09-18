@@ -1,0 +1,24 @@
+.notification-inbox {
+  padding: 12px 28px;
+  border-bottom: 1px solid #c9d3dc;
+  background: #fff;
+}
+.notification-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.notification-controls h2 { margin-right: auto; font-size: 18px; }
+.notification-list { list-style: none; padding: 0; margin: 12px 0; max-height: 50vh; overflow: auto; }
+.notification-list li { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid #d6dfe6; }
+.notification-list li > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.notification-list h3 { margin: 0 0 6px; font-size: 15px; }
+.notification-list p { margin: 6px 0; }
+.notification-list time { color: #596773; font-size: 13px; }
+.notification-list button { flex-shrink: 0; }
+.notification-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+@media (max-width: 600px) {
+  .notification-inbox { padding: 12px 16px; }
+  .notification-list li { flex-wrap: wrap; }
+}

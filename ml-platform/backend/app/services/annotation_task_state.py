@@ -15,9 +15,12 @@ from app.models.platform_models import (
     AnnotationTaskPreview,
     AnnotationTaskPreviewSample,
     AnnotationTaskRevisionSnapshot,
+    AnnotationTaskScopeSample,
     GenericAnnotationTask,
 )
 from app.schemas.annotation_tasks import TaskAction
+from app.config import settings
+from app.models.data_version import DatasetSchemaColumn
 
 _TRANSITIONS = {
     "draft": {TaskAction.cancel: "cancelled"},
@@ -63,6 +66,66 @@ def _task_or_error(db, task_id, owner_id=None):
     if task is None:
         raise ValueError("TASK_NOT_FOUND")
     return task
+
+
+def _annotation_capacity_preflight(db, task: GenericAnnotationTask) -> dict[str, int]:
+    """Fail closed before creating a durable preview operation."""
+    snapshot = current_annotation_task_snapshot(db, task)
+    scope = snapshot.get("scope") if isinstance(snapshot, dict) else None
+    sample_count = None
+    for candidate in (scope, task.sample_scope, snapshot, task.task_snapshot):
+        if not isinstance(candidate, dict):
+            continue
+        if "sample_count" in candidate:
+            sample_count = int(candidate["sample_count"])
+            break
+        if isinstance(candidate.get("sample_ids"), list):
+            sample_count = len(candidate["sample_ids"])
+            break
+    frozen_scope_count = int(
+        db.query(AnnotationTaskScopeSample).filter(
+            AnnotationTaskScopeSample.task_id == task.id,
+            AnnotationTaskScopeSample.task_revision == task.task_revision,
+        ).count()
+    )
+    if sample_count is None and frozen_scope_count > 0:
+        sample_count = frozen_scope_count
+    if sample_count is None or sample_count < 0:
+        error = ValueError("ANNOTATION_CAPACITY_UNKNOWN")
+        error.details = {
+            "reason": "frozen_sample_scope_count_missing",
+            "task_id": str(task.id),
+            "task_revision": task.task_revision,
+        }
+        raise error
+    source_columns = db.query(DatasetSchemaColumn).filter(
+        DatasetSchemaColumn.dataset_version_id == task.dataset_version_id,
+    ).count()
+    label_columns = len(((snapshot.get("label_schema") or {}).get("columns") or []))
+    counts = {
+        "sample_count": sample_count,
+        "input_column_count": int(source_columns),
+        "label_column_count": int(label_columns),
+    }
+    limits = {
+        "max_samples": settings.annotation_max_samples,
+        "max_input_columns": settings.annotation_max_input_columns,
+        "max_label_columns": settings.annotation_max_label_columns,
+    }
+    exceeded = {
+        key: {"count": counts[key], "limit": limit}
+        for key, limit in (
+            ("sample_count", limits["max_samples"]),
+            ("input_column_count", limits["max_input_columns"]),
+            ("label_column_count", limits["max_label_columns"]),
+        )
+        if counts[key] > limit
+    }
+    if exceeded:
+        error = ValueError("ANNOTATION_CAPACITY_EXCEEDED")
+        error.details = {"counts": counts, "limits": limits, "exceeded": exceeded}
+        raise error
+    return counts
 
 
 def _created_id_page(query, model, cursor, limit):
@@ -121,12 +184,20 @@ def create_annotation_preview(db, task_id, task_revision: int, config_hash: str,
     if existing is not None:
         existing._created_now = False
         return existing
+    capacity = _annotation_capacity_preflight(db, task)
     previous_status = task.status
     if task.status in {"pending", "draft", "failed", "preview_ready"}:
         task.status = "previewing"
     elif task.status != "previewing":
         raise ValueError("TASK_STATE_INVALID")
-    preview = AnnotationTaskPreview(task_id=task.id, task_revision=task_revision, config_hash=config_hash, created_by=actor_id, status="queued", summary={"sample_scope": task.sample_scope or {}})
+    preview = AnnotationTaskPreview(
+        task_id=task.id,
+        task_revision=task_revision,
+        config_hash=config_hash,
+        created_by=actor_id,
+        status="queued",
+        summary={"sample_scope": task.sample_scope or {}, "capacity": capacity},
+    )
     db.add(preview)
     db.flush()
     db.add(
@@ -352,6 +423,7 @@ def transition_annotation_task(
 def serialize_annotation_preview(preview):
     if preview is None:
         return None
+    error = preview.error if isinstance(preview.error, dict) else {}
     return {
         "id": str(preview.id),
         "operation_id": str(preview.operation_id),
@@ -361,6 +433,8 @@ def serialize_annotation_preview(preview):
         "progress": preview.progress,
         "summary": preview.summary or {},
         "error": preview.error,
+        "error_code": error.get("code"),
+        "error_details": error.get("details") or {},
         "completed_at": preview.completed_at.isoformat() if preview.completed_at else None,
     }
 
@@ -395,12 +469,16 @@ def serialize_annotation_task(task, preview=None, snapshot=None):
         "project_id": str(task.project_id),
         "dataset_version_id": str(task.dataset_version_id),
         "label_schema_id": str(task.label_schema_id),
+        "name": getattr(task, "name", "") or "",
+        "completion_criteria": getattr(task, "completion_criteria", "") or "",
+        "due_at": task.due_at.isoformat() if getattr(task, "due_at", None) else None,
         "mode": task.mode,
         "status": task.status,
         "task_revision": task.task_revision,
         "sample_scope": task.sample_scope or {},
         "task_snapshot": snapshot if snapshot is not None else task.task_snapshot or {},
         "source_legacy_id": task.source_legacy_id,
+        "created_at": task.created_at.isoformat() if getattr(task, "created_at", None) else None,
         "preview": serialize_annotation_preview(preview),
     }
     operation_id = getattr(task, "_execution_operation_id", None)

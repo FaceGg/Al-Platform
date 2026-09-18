@@ -256,6 +256,7 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
 
                 needs_review_count = 0
                 cluster_counts: dict[str, int] = {}
+                strategy_payload: dict = {}
                 for scope_batch in frozen_scope_batches():
                     sample_id_batch = [sample_id for sample_id, _ in scope_batch]
                     row_indexes = {sample_id: row_index for sample_id, row_index in scope_batch}
@@ -352,6 +353,18 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                     }
                     for cluster_id in sorted(cluster_counts, key=lambda value: (not value.lstrip("-").isdigit(), value))
                 ]
+                cluster_artifact = strategy_payload.get("cluster_artifact") if isinstance(strategy_payload.get("cluster_artifact"), dict) else None
+                if cluster_artifact is None and isinstance(frozen_cluster_payload, dict):
+                    cluster_artifact = frozen_cluster_payload
+                if cluster_artifact is not None:
+                    summary["cluster_evaluation"] = {
+                        "selected_k": cluster_artifact.get("selected_k"),
+                        "k_scores": cluster_artifact.get("k_scores") or {},
+                        "evaluation_mode": cluster_artifact.get("evaluation_mode"),
+                        "evaluation_sample_count": cluster_artifact.get("evaluation_sample_count"),
+                        "total_sample_count": cluster_artifact.get("total_sample_count"),
+                        "importance_method": cluster_artifact.get("importance_method"),
+                    }
             else:
                 # Manual previews do not need a task-wide in-memory row map.
                 # Read one source batch, materialize it, and release it before
@@ -440,7 +453,11 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                         if str(error) == "OPERATION_NOT_FOUND"
                         else max(int(current.progress or 0), 10)
                     )
-                    current.error = {"code": error_code, "message": str(error)[:500]}
+                    current.error = {
+                        "code": error_code,
+                        "message": str(error)[:500],
+                        "details": getattr(error, "details", {}) or {},
+                    }
                     if failed_task.status == "previewing":
                         failed_task.status = "failed"
                     db.commit()

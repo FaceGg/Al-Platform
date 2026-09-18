@@ -11,7 +11,7 @@ describe("LabelSchemaEditor", () => {
     fireEvent.change(screen.getByLabelText("类型 1"), { target: { value: "int" } });
     fireEvent.click(screen.getByLabelText("必填"));
     fireEvent.click(screen.getByRole("button", { name: "保存 schema" }));
-    expect(onSave).toHaveBeenCalledWith([{ machine_key: "count", display_name: "标签 1", value_type: "int", required: true }]);
+    expect(onSave).toHaveBeenCalledWith([{ machine_key: "count", display_name: "标签 1", value_type: "int", required: true }], "annotation");
   });
 
   it("blocks duplicate machine keys before submission", () => {
@@ -38,6 +38,19 @@ describe("LabelSchemaEditor", () => {
     expect(onSave).toHaveBeenCalledWith([{
       machine_key: "score", display_name: "标签 1", value_type: "float", required: false,
       enum_values: [0, 0.5, 1], min_value: 0, max_value: 1,
-    }]);
+    }], "annotation");
+  });
+
+  it("saves schema purpose and column instructions", () => {
+    const onSave = vi.fn();
+    render(<LabelSchemaEditor onSave={onSave} />);
+    fireEvent.click(screen.getByRole("button", { name: "添加列" }));
+    fireEvent.change(screen.getByLabelText("schema 用途"), { target: { value: "training" } });
+    fireEvent.change(screen.getByLabelText("列说明 1"), { target: { value: "填写焊点质量等级" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 schema" }));
+    expect(onSave).toHaveBeenCalledWith(
+      [expect.objectContaining({ instruction: "填写焊点质量等级" })],
+      "training",
+    );
   });
 });
