@@ -49,6 +49,36 @@ describe("ClusterPreviewPanel", () => {
     expect(screen.getByText(/Full-scope scoring/)).toBeTruthy();
   });
 
+  it("renders the deterministic scatter projection with per-cluster colors", () => {
+    render(
+      <ClusterPreviewPanel
+        clusters={clusters}
+        evaluation={{ scatter_points: [[0.0, 0.0, 0], [1.0, 1.0, 1], [2.0, 0.5, 0]] }}
+        lang="zh"
+      />,
+    );
+    expect(screen.getByLabelText("聚类散点图")).toBeTruthy();
+    const circles = document.querySelectorAll(".data-annotation__cluster-preview-scatter circle");
+    expect(circles.length).toBe(3);
+    const fills = new Set(Array.from(circles).map((circle) => circle.getAttribute("fill")));
+    expect(fills.size).toBe(2);
+    // Min-max normalization maps the corner points to the padded viewBox.
+    const first = circles[0];
+    expect(Number(first.getAttribute("cx"))).toBeCloseTo(6, 5);
+    expect(Number(first.getAttribute("cy"))).toBeCloseTo(94, 5);
+  });
+
+  it("ignores malformed scatter points", () => {
+    render(
+      <ClusterPreviewPanel
+        clusters={clusters}
+        evaluation={{ scatter_points: [[Number.NaN, 0, 0] as [number, number, number], [1, "x", 0] as unknown as [number, number, number]] }}
+        lang="zh"
+      />,
+    );
+    expect(document.querySelector(".data-annotation__cluster-preview-scatter")).toBeNull();
+  });
+
   it("renders empty state metadata when no clusters exist", () => {
     render(<ClusterPreviewPanel clusters={[]} evaluation={null} lang="zh" />);
     expect(screen.getByText("簇数 K：—")).toBeTruthy();

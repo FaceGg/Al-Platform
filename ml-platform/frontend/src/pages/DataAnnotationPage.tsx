@@ -457,7 +457,7 @@ export default function DataAnnotationPage() {
   const [genericVersionId, setGenericVersionId] = useState("");
   const [genericTaskName, setGenericTaskName] = useState("");
   const [genericCompletionCriteria, setGenericCompletionCriteria] = useState("");
-  const [genericDueAt, setGenericDueAt] = useState("");
+  const [genericDueAt, setGenericDueAt] = useState(() => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
   const [genericScopeMode, setGenericScopeMode] = useState<"all" | "filter">("all");
   const [genericScopeConditions, setGenericScopeConditions] = useState<Array<{ id: string; column: string; operator: string; value: string }>>([]);
   const [genericVisibleColumns, setGenericVisibleColumns] = useState<string[]>([]);
@@ -472,6 +472,8 @@ export default function DataAnnotationPage() {
   const [genericInstructions, setGenericInstructions] = useState("");
   const [genericModelVersionId, setGenericModelVersionId] = useState("");
   const [genericClustering, setGenericClustering] = useState(false);
+  const [genericAutoLabelSource, setGenericAutoLabelSource] = useState<"model" | "custom">("model");
+  const [genericAutoSchema, setGenericAutoSchema] = useState<{ id: string; columns: AnnotationOutputColumn[] } | null>(null);
   const [genericSetupStep, setGenericSetupStep] = useState<1 | 2>(1);
   const [genericDiscoveryTask, setGenericDiscoveryTask] = useState<AnnotationTask | null>(null);
   const [genericDiscoveryPreviewId, setGenericDiscoveryPreviewId] = useState<string | null>(null);
@@ -548,6 +550,10 @@ export default function DataAnnotationPage() {
     [genericModelVersions, genericModelVersionId],
   );
   const selectedGenericOutputColumns = selectedGenericModelVersion?.output_contract?.columns || [];
+  // 弱监督任务（§7.1 步骤 5）的标签列可由用户指定；未指定时沿用模型输出合同。
+  const effectiveAutoColumns = genericAutoLabelSource === "custom" && genericAutoSchema
+    ? genericAutoSchema.columns
+    : selectedGenericOutputColumns;
   const selectedModel = useMemo(
     () => qualityModels.find((item) => item.id === selectedModelId),
     [qualityModels, selectedModelId],
@@ -1234,8 +1240,9 @@ export default function DataAnnotationPage() {
   }, [isSetup, genericSetupMode, labelMode, loadingProjects, projectId, message]);
 
   useEffect(() => {
-    setGenericAutomaticDraft(createAutomaticStrategyDraft(selectedGenericOutputColumns));
-  }, [selectedGenericModelVersion?.id]);
+    setGenericAutomaticDraft(createAutomaticStrategyDraft(effectiveAutoColumns));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGenericModelVersion?.id, genericAutoSchema?.id]);
 
   useEffect(() => {
     if (skipUrlStateSyncRef.current) {
@@ -1587,24 +1594,52 @@ export default function DataAnnotationPage() {
     }, { replace: true });
   };
 
-  const buildGenericSampleScope = (): { kind: "all" | "filter"; filters?: Record<string, Record<string, unknown>> } => {
+  const buildGenericSampleScope = (): { kind: "all" | "filter"; filters?: Record<string, unknown> } => {
     if (genericScopeMode !== "filter") return { kind: "all" };
     const version = genericVersions.find((item) => item.id === genericVersionId);
     const numericColumns = new Set((version?.columns || []).filter((column) => ["int", "float", "int64", "float64", "number"].includes(String(column.dtype).toLowerCase())).map((column) => column.name));
-    const filters: Record<string, Record<string, unknown>> = {};
+    // Every condition row must survive into the frozen scope; a column-keyed
+    // map silently dropped same-column conditions (e.g. ranges) and leaked the
+    // samples the user meant to exclude into the task.
+    const conditions: Array<Record<string, Record<string, unknown>>> = [];
     for (const condition of genericScopeConditions) {
       const column = condition.column.trim();
       if (!column) continue;
       if (condition.operator === "is_null" || condition.operator === "not_null") {
-        filters[column] = { [condition.operator]: true };
+        conditions.push({ [column]: { [condition.operator]: true } });
         continue;
       }
       if (!condition.value.trim()) continue;
       const raw = condition.value.trim();
       const numeric = Number(raw);
-      filters[column] = { [condition.operator]: numericColumns.has(column) && Number.isFinite(numeric) ? numeric : raw };
+      conditions.push({ [column]: { [condition.operator]: numericColumns.has(column) && Number.isFinite(numeric) ? numeric : raw } });
     }
-    return Object.keys(filters).length ? { kind: "filter", filters } : { kind: "all" };
+    return conditions.length ? { kind: "filter", filters: { all: conditions } } : { kind: "all" };
+  };
+
+  const resetGenericScopeDraft = () => {
+    setGenericScopeMode("all");
+    setGenericScopeConditions([]);
+  };
+
+  const saveGenericAutoSchema = async (columns: LabelColumnDraft[]) => {
+    if (!projectId) { message.error(lang === "zh" ? "请先选择项目" : "Select a project first"); return; }
+    if (!genericTaskName.trim()) { message.error(copy.nameRequired); return; }
+    try {
+      const schema = await createLabelSchema(projectId, `${genericTaskName.trim()}-labels`, columns, "annotation");
+      setGenericAutoSchema({
+        id: schema.id,
+        columns: columns.map((column) => ({
+          machine_key: column.machine_key,
+          display_name: column.display_name,
+          value_type: column.value_type,
+          required: column.required,
+        })),
+      });
+      message.success(lang === "zh" ? "自定义标签 schema 已保存" : "Custom label schema saved");
+    } catch (error) {
+      message.error(formatApiError(error, lang === "zh" ? "标签 schema 保存失败" : "Failed to save the label schema"));
+    }
   };
 
   const createGenericTaskFromSetup = async () => {
@@ -1616,8 +1651,16 @@ export default function DataAnnotationPage() {
       return;
     }
     if (labelMode === "manual" && (!genericSchemaName.trim() || !genericLabelKey.trim())) return;
-    if (labelMode === "automatic" && (!selectedGenericModelVersion || !selectedGenericOutputColumns.length)) {
+    if (labelMode === "automatic" && !selectedGenericModelVersion) {
       message.error("自动任务需要选择已启用模型版本");
+      return;
+    }
+    if (labelMode === "automatic" && genericClustering && genericAutoLabelSource === "custom" && !genericAutoSchema) {
+      message.error(lang === "zh" ? "自定义标签模式需要先保存标签 schema" : "Save the custom label schema first");
+      return;
+    }
+    if (labelMode === "automatic" && (!effectiveAutoColumns.length)) {
+      message.error("自动任务需要可用的标签列");
       return;
     }
     const sampleScope = buildGenericSampleScope();
@@ -1632,7 +1675,7 @@ export default function DataAnnotationPage() {
     const automaticConfiguration = labelMode === "automatic"
       ? automaticConfigurationFromDraft(
         genericAutomaticDraft,
-        selectedGenericOutputColumns,
+        effectiveAutoColumns,
         version.columns.map((column) => ({ name: column.name, dtype: column.dtype })),
         genericClustering,
         genericClustering && genericAutomaticDraft.strategy !== "rule",
@@ -1654,7 +1697,7 @@ export default function DataAnnotationPage() {
       const task = await createGenericAnnotationTask({
         project_id: projectId,
         dataset_version_id: genericVersionId,
-        ...(schema ? { label_schema_id: schema.id } : {}),
+        ...(schema || (labelMode === "automatic" && genericClustering && genericAutoLabelSource === "custom" && genericAutoSchema) ? { label_schema_id: (schema || genericAutoSchema!).id } : {}),
         ...(selectedGenericModelVersion && labelMode === "automatic" ? { model_version_id: selectedGenericModelVersion.id } : {}),
         name: genericTaskName.trim(),
         mode: labelMode,
@@ -1666,6 +1709,7 @@ export default function DataAnnotationPage() {
         configuration: automaticConfiguration?.configuration || {},
       }, crypto.randomUUID());
       setGenericTasks((items) => [task, ...items.filter((item) => item.id !== task.id)]);
+      resetGenericScopeDraft();
       if (labelMode === "automatic") {
         await startFinalPreview(task);
       } else {
@@ -1687,8 +1731,12 @@ export default function DataAnnotationPage() {
       message.error(copy.nameRequired);
       return;
     }
-    if (!selectedGenericModelVersion || !selectedGenericOutputColumns.length) {
+    if (!selectedGenericModelVersion) {
       message.error("自动任务需要选择已启用模型版本");
+      return;
+    }
+    if (genericAutoLabelSource === "custom" && !genericAutoSchema) {
+      message.error(lang === "zh" ? "自定义标签模式需要先保存标签 schema" : "Save the custom label schema first");
       return;
     }
     if (!genericVisibleColumns.length) {
@@ -1707,6 +1755,7 @@ export default function DataAnnotationPage() {
         project_id: projectId,
         dataset_version_id: genericVersionId,
         model_version_id: selectedGenericModelVersion.id,
+        ...(genericAutoLabelSource === "custom" && genericAutoSchema ? { label_schema_id: genericAutoSchema.id } : {}),
         name: genericTaskName.trim(),
         mode: "automatic",
         sample_scope: sampleScope,
@@ -1734,7 +1783,7 @@ export default function DataAnnotationPage() {
     if (!genericDiscoveryTask || genericCreating) return;
     const version = genericVersions.find((item) => item.id === genericVersionId);
     const sourceColumns = (version?.columns || []).map((column) => ({ name: column.name, dtype: column.dtype }));
-    const result = automaticConfigurationFromDraft(genericAutomaticDraft, selectedGenericOutputColumns, sourceColumns, true, false);
+    const result = automaticConfigurationFromDraft(genericAutomaticDraft, effectiveAutoColumns, sourceColumns, true, false);
     if (result.error || !result.configuration) {
       message.error(result.error || "自动标注策略配置无效");
       return;
@@ -1798,6 +1847,7 @@ export default function DataAnnotationPage() {
       );
       setGenericTasks((items) => [updated, ...items.filter((item) => item.id !== updated.id)]);
       message.success("自动标注执行已确认");
+      resetGenericScopeDraft();
       returnToTaskList();
     } catch (error) {
       message.error(formatApiError(error, "自动标注执行确认失败"));
@@ -2585,12 +2635,39 @@ export default function DataAnnotationPage() {
         {labelMode === "automatic" && genericSetupStep === 2 && <>
           <div className="data-annotation__setup-field">
             <label htmlFor="generic-weak-supervision">{copy.weakSupervision}</label>
-            <select id="generic-weak-supervision" aria-label={copy.weakSupervision} value={genericClustering ? "yes" : "no"} disabled={!!genericDiscoveryTask} onChange={(event) => setGenericClustering(event.target.value === "yes")}>
+            <select id="generic-weak-supervision" aria-label={copy.weakSupervision} value={genericClustering ? "yes" : "no"} disabled={!!genericDiscoveryTask} onChange={(event) => {
+              const next = event.target.value === "yes";
+              setGenericClustering(next);
+              if (!next) setGenericAutoLabelSource("model");
+            }}>
               <option value="no">{copy.weakSupervisionNo}</option>
               <option value="yes">{copy.weakSupervisionYes}</option>
             </select>
             <small>{genericClustering ? copy.clusteringOnHint : copy.clusteringOffHint}</small>
           </div>
+          {genericClustering && !genericDiscoveryTask && <div className="data-annotation__setup-field" aria-label={lang === "zh" ? "标签来源" : "Label source"}>
+            <label htmlFor="generic-auto-label-source">{lang === "zh" ? "标签来源" : "Label source"}</label>
+            <select
+              id="generic-auto-label-source"
+              aria-label={lang === "zh" ? "标签来源" : "Label source"}
+              value={genericAutoLabelSource}
+              onChange={(event) => setGenericAutoLabelSource(event.target.value === "custom" ? "custom" : "model")}
+              disabled={!!genericDiscoveryTask}
+            >
+              <option value="model">{lang === "zh" ? "模型输出合同（默认）" : "Model output contract (default)"}</option>
+              <option value="custom">{lang === "zh" ? "用户指定标签列" : "User-specified label columns"}</option>
+            </select>
+            <small>{lang === "zh" ? "弱监督标注的最终标签由所选策略生成；可在此指定自己的标签列（簇/规则/兜底值都按这些列配置），模型输出仅作为内部来源保留。" : "Final labels come from the selected strategy; you may define your own label columns (cluster/rule/fallback values are configured against them) while model outputs stay an internal source."}</small>
+          </div>}
+          {genericClustering && !genericDiscoveryTask && genericAutoLabelSource === "custom" && <div className="data-annotation__setup-field" aria-label={lang === "zh" ? "自定义标签 schema" : "Custom label schema"}>
+            <LabelSchemaEditor initialColumns={genericAutoSchema?.columns.map((column) => ({
+              machine_key: column.machine_key,
+              display_name: column.display_name,
+              value_type: column.value_type,
+              required: column.required,
+            })) || []} onSave={(columns) => { void saveGenericAutoSchema(columns); }} />
+            {genericAutoSchema && <small>{lang === "zh" ? `已保存 schema（${genericAutoSchema.columns.length} 列），创建任务时将使用这些标签列。` : `Saved schema (${genericAutoSchema.columns.length} columns); the task will use these label columns.`}</small>}
+          </div>}
           {genericFinalPreviewId && genericDiscoveryTask ? (
             <div className="data-annotation__setup-field" aria-label="最终预览">
               <label>最终预览</label>
@@ -2647,7 +2724,7 @@ export default function DataAnnotationPage() {
                     />
                     <AutomaticAnnotationStrategyEditor
                       idPrefix="generic-setup-automatic"
-                      columns={selectedGenericOutputColumns}
+                      columns={effectiveAutoColumns}
                       sourceColumns={(genericVersions.find((item) => item.id === genericVersionId)?.columns || []).map((column) => ({ name: column.name, dtype: column.dtype }))}
                       clusters={clusterOptionsForTask(genericDiscoveryTask)}
                       value={genericAutomaticDraft}

@@ -442,7 +442,9 @@ describe("DataAnnotationPage", () => {
       "/annotation-tasks",
       expect.objectContaining({
         name: "筛选任务",
-        sample_scope: { kind: "filter", filters: { score: { gt: 0.5 }, grade: { eq: "A" } } },
+        // Every condition row survives inside an AND group; the previous
+        // column-keyed map dropped same-column conditions.
+        sample_scope: { kind: "filter", filters: { all: [{ score: { gt: 0.5 } }, { grade: { eq: "A" } }] } },
         visible_columns: ["score"],
       }),
       expect.anything(),

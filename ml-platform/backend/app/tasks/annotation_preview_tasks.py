@@ -364,6 +364,7 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                         "evaluation_sample_count": cluster_artifact.get("evaluation_sample_count"),
                         "total_sample_count": cluster_artifact.get("total_sample_count"),
                         "importance_method": cluster_artifact.get("importance_method"),
+                        "scatter_points": cluster_artifact.get("scatter_points") or [],
                     }
             else:
                 # Manual previews do not need a task-wide in-memory row map.

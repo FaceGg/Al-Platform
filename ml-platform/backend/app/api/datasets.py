@@ -274,12 +274,26 @@ def list_project_dataset_versions(
                 operator_id=project.owner_id,
             )
     db.commit()
-    versions = (
+    # Versions whose source dataset was deleted (archived artifact) stay
+    # hidden so the annotation wizards see the same data as 数据管理.
+    archived_source_ids = {
+        item[0]
+        for item in db.query(Artifact.id).filter(
+            Artifact.type == "dataset",
+            Artifact.archived_at.isnot(None),
+        ).all()
+        if item[0] is not None
+    }
+    versions_query = (
         db.query(DatasetVersion)
         .filter(DatasetVersion.project_id == project.id, DatasetVersion.archived_at.is_(None))
-        .order_by(DatasetVersion.version.desc(), DatasetVersion.created_at.desc())
-        .all()
     )
+    if archived_source_ids:
+        versions_query = versions_query.filter(
+            (DatasetVersion.original_artifact_id.is_(None)) | (~DatasetVersion.original_artifact_id.in_(archived_source_ids)),
+            (DatasetVersion.normalized_artifact_id.is_(None)) | (~DatasetVersion.normalized_artifact_id.in_(archived_source_ids)),
+        )
+    versions = versions_query.order_by(DatasetVersion.version.desc(), DatasetVersion.created_at.desc()).all()
     return {
         "items": [
             {

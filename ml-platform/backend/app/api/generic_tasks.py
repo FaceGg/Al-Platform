@@ -409,6 +409,10 @@ def list_annotation_model_versions(
 def list_generic_annotation_tasks(
     project_id: uuid.UUID | None = Query(default=None), cursor: str | None = Query(default=None), limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
+    if project_id is not None:
+        # Project task lists surface every task in the project, so membership
+        # must be verified before the wider query runs.
+        require_project_access(db, project_id, current_user.id, "project.read")
     try:
         return list_annotation_tasks(db, project_id, current_user.id, cursor, limit)
     except ValueError as error:
@@ -714,7 +718,28 @@ def create_generic_annotation_task(
             contract_columns = _output_contract_columns(model_version)
             output_contract = _model_output_contract(model_version, contract_columns)
             if data.label_schema_id is not None:
-                raise StrategyConfigError("automatic task labels are derived from the model output contract", "AUTOMATIC_SCHEMA_MANAGED")
+                # Spec 7.1 step 5: weak-supervision (clustering) tasks may pin
+                # user-specified label columns; the model output contract stays
+                # authoritative only for non-clustering tasks (spec 7.2).
+                if not configuration.get("clustering"):
+                    raise StrategyConfigError(
+                        "automatic task labels are derived from the model output contract",
+                        "AUTOMATIC_SCHEMA_MANAGED",
+                    )
+                schema = db.get(LabelSchema, data.label_schema_id)
+                if schema is None or schema.project_id != project_id:
+                    raise StrategyConfigError(
+                        "the label schema does not belong to this project",
+                        "LABEL_SCHEMA_NOT_FOUND",
+                    )
+            else:
+                schema = create_label_schema(
+                    db,
+                    project_id=project_id,
+                    name=_automatic_schema_name(model_version),
+                    columns=contract_columns,
+                    commit=False,
+                )
             configuration = _automatic_configuration(configuration, model_version, output_contract)
             _validate_automatic_configuration(
                 db,
@@ -722,13 +747,6 @@ def create_generic_annotation_task(
                 configuration,
                 {"columns": contract_columns},
                 version,
-            )
-            schema = create_label_schema(
-                db,
-                project_id=project_id,
-                name=_automatic_schema_name(model_version),
-                columns=contract_columns,
-                commit=False,
             )
         except StrategyConfigError as error:
             raise _contract_error(request, error.code, str(error), status_code=422) from error

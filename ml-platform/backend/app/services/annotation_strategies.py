@@ -228,6 +228,32 @@ def _matching_rules(config: AutomaticAnnotationConfig, row: Mapping[str, object]
     return matches, ids
 
 
+def _internal_model_output_value(value: object) -> object:
+    """Lighten model outputs to finite scalars for internal provenance storage."""
+    if hasattr(value, "item") and not isinstance(value, (str, bytes)):
+        value = value.item()
+    if isinstance(value, bool) or isinstance(value, str) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        if not math.isfinite(float(value)):
+            raise StrategyConfigError("model output contains a non-finite value", "MODEL_OUTPUT_INVALID")
+        return value
+    raise StrategyConfigError("model output values must be scalars", "MODEL_OUTPUT_INVALID")
+
+
+def _internal_model_outputs(model_outputs: Mapping[str, object], rows: Mapping[str, Mapping[str, object]]) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    for sample_id in rows:
+        values = model_outputs.get(sample_id)
+        if not isinstance(values, Mapping):
+            raise StrategyConfigError("model output is missing for a preview sample", "MODEL_OUTPUT_INVALID")
+        result[sample_id] = {
+            str(key): _internal_model_output_value(value)
+            for key, value in values.items()
+        }
+    return result
+
+
 def apply_annotation_strategy(
     model_output: Mapping[str, object],
     cluster_id: int | None,
@@ -242,20 +268,28 @@ def apply_annotation_strategy(
         raise StrategyConfigError("cluster discovery does not produce final labels", "CLUSTER_DISCOVERY_INCOMPLETE")
     if not isinstance(model_output, Mapping):
         raise StrategyConfigError("model output must be an object", "MODEL_OUTPUT_INVALID")
-    model_values = dict(model_output)
-    expected_keys = set(schema.by_key)
-    if set(model_values) != expected_keys:
-        raise StrategyConfigError("model output does not match frozen label schema", "MODEL_OUTPUT_INVALID")
-    try:
-        model_values = {
-            key: validate_label_value(schema.by_key[key], model_values[key])
-            for key in schema.by_key
-        }
-    except ValueError as error:
-        raise StrategyConfigError("model output violates frozen label schema", "MODEL_OUTPUT_INVALID") from error
     if not config.clustering:
+        model_values = dict(model_output)
+        expected_keys = set(schema.by_key)
+        if set(model_values) != expected_keys:
+            raise StrategyConfigError("model output does not match frozen label schema", "MODEL_OUTPUT_INVALID")
+        try:
+            model_values = {
+                key: validate_label_value(schema.by_key[key], model_values[key])
+                for key in schema.by_key
+            }
+        except ValueError as error:
+            raise StrategyConfigError("model output violates frozen label schema", "MODEL_OUTPUT_INVALID") from error
         values = {key: model_values.get(key) for key in schema.by_key}
         return AnnotationDecision(values, {key: {"source": "model"} for key in values}, model_output=model_values, cluster_id=cluster_id)
+
+    # Clustering keeps the model output as internal provenance only; its keys
+    # follow the model output contract and may differ from user-specified
+    # label columns (spec 7.1 step 5).
+    model_values = {
+        str(key): _internal_model_output_value(value)
+        for key, value in model_output.items()
+    }
 
     selected = config.selected_clusters is None or str(cluster_id) in {str(value) for value in config.selected_clusters}
     matched_rules, rule_ids = _matching_rules(config, frame_row) if config.strategy in {"rule", "cluster_rule"} and (config.strategy == "rule" or selected) else ([], [])
@@ -359,6 +393,26 @@ def _artifact_model_package(db, project_id, artifact_id):
     return package
 
 
+def _package_target_keys(package: Mapping[str, object], schema: LabelSchemaContract) -> tuple[str, ...]:
+    """Prediction target keys come from the model contract, falling back to the
+    frozen label schema for packages that never recorded explicit targets."""
+    contract = package.get("input_contract") or {}
+    if isinstance(contract, Mapping):
+        target_columns = contract.get("target_columns")
+        if isinstance(target_columns, (list, tuple)) and target_columns:
+            return tuple(str(column) for column in target_columns)
+        target_schema = contract.get("target_schema")
+        entries = target_schema if isinstance(target_schema, list) else ([target_schema] if isinstance(target_schema, Mapping) else [])
+        names = [
+            str(item.get("name")).strip()
+            for item in entries
+            if isinstance(item, Mapping) and str(item.get("name") or "").strip()
+        ]
+        if names:
+            return tuple(names)
+    return tuple(schema.by_key)
+
+
 def _model_outputs_from_package(package: Mapping[str, object], rows: Mapping[str, Mapping[str, object]], schema: LabelSchemaContract) -> dict[str, dict[str, object]]:
     contract = package.get("input_contract") or {}
     feature_columns = (
@@ -380,7 +434,7 @@ def _model_outputs_from_package(package: Mapping[str, object], rows: Mapping[str
             "model inference failed for the frozen preview rows",
             "MODEL_INFERENCE_FAILED",
         ) from error
-    target_keys = tuple(schema.by_key)
+    target_keys = _package_target_keys(package, schema)
     try:
         predictions = np.asarray(predictions, dtype=object)
     except (TypeError, ValueError) as error:
@@ -393,10 +447,10 @@ def _model_outputs_from_package(package: Mapping[str, object], rows: Mapping[str
     values: dict[str, dict[str, object]] = {}
     for sample_id, prediction in zip(frame.index, predictions):
         candidate = {
-            key: value.item() if hasattr(value, "item") else value
+            key: value.item() if hasattr(value, "item") and not isinstance(value, (str, bytes)) else value
             for key, value in zip(target_keys, prediction)
         }
-        values[str(sample_id)] = _validated_model_output(candidate, schema)
+        values[str(sample_id)] = candidate
     return values
 
 
@@ -784,7 +838,12 @@ def apply_preview_annotation_strategy(
         package = _artifact_model_package(db, project_id, model_artifact_id)
     if package is not None and not model_outputs:
         model_outputs = _model_outputs_from_package(package, rows, schema)
-    model_outputs = _validated_model_outputs(model_outputs, rows, schema)
+    if config.clustering:
+        # Weak supervision keeps model outputs as internal provenance; the
+        # frozen label schema may be user-specified and diverge from them.
+        model_outputs = _internal_model_outputs(model_outputs, rows)
+    else:
+        model_outputs = _validated_model_outputs(model_outputs, rows, schema)
     if config.clustering:
         if config.cluster_discovery:
             if precomputed_cluster_artifact is not None:

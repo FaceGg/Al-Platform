@@ -2396,6 +2396,24 @@ td.training-operation-column .table-row-actions {
   white-space: nowrap;
 }
 
+.data-annotation__cluster-preview-scatter {
+  display: grid;
+  gap: 4px;
+}
+
+.data-annotation__cluster-preview-scatter svg {
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.data-annotation__cluster-preview-scatter small {
+  font-size: 11px;
+  color: var(--text-secondary, #666);
+}
+
 .data-annotation__cluster-swatch {
   width: 10px;
   height: 10px;

@@ -10,6 +10,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 
@@ -80,6 +81,7 @@ class ClusterArtifact:
     preprocessing: Mapping[str, object]
     centers: tuple[tuple[float, ...], ...]
     importance_method: str = "estimator_native"
+    scatter_points: tuple[tuple[float, float, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -360,6 +362,11 @@ def cluster_artifact_from_payload(payload: Mapping[str, object]) -> ClusterArtif
                 for center in centers_payload
             ),
             importance_method=str(payload.get("importance_method") or "estimator_native"),
+            scatter_points=tuple(
+                (float(point[0]), float(point[1]), int(point[2]))
+                for point in (payload.get("scatter_points") or ())
+                if isinstance(point, (list, tuple)) and len(point) >= 3
+            ),
         )
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         raise ValueError("CLUSTER_ARTIFACT_INVALID") from error
@@ -368,6 +375,32 @@ def cluster_artifact_from_payload(payload: Mapping[str, object]) -> ClusterArtif
 def _nearest_cluster_labels(matrix: np.ndarray, centers: np.ndarray) -> np.ndarray:
     distances = np.sum((matrix[:, np.newaxis, :] - centers[np.newaxis, :, :]) ** 2, axis=2)
     return np.argmin(distances, axis=1)
+
+
+def _scatter_projection(
+    matrix: np.ndarray,
+    labels: Sequence[int],
+    limit: int = 1000,
+) -> tuple[tuple[float, float, int], ...]:
+    """Project the deterministic evaluation rows to 2D for the preview scatter.
+
+    PCA on the already hash-ordered evaluation matrix is deterministic, so the
+    same frozen scope always renders the same preview points.
+    """
+    count = min(int(limit), len(matrix))
+    if count <= 0 or len(labels) == 0:
+        return ()
+    points_matrix = np.asarray(matrix[:count], dtype=float)
+    components = min(2, points_matrix.shape[1])
+    if components <= 0:
+        return ()
+    projection = PCA(n_components=components).fit_transform(points_matrix)
+    if components == 1:
+        projection = np.column_stack([projection[:, 0], np.zeros(len(projection))])
+    return tuple(
+        (float(x), float(y), int(label))
+        for (x, y), label in zip(projection, list(labels)[:count])
+    )
 
 
 def _fit_streaming_lloyd_kmeans(
@@ -583,6 +616,8 @@ def build_weighted_clusters_streaming(
         )
         fit_algorithm = "streaming_full_batch_lloyd_kmeans"
 
+    evaluation_labels = getattr(final, "labels_", None)
+
     weights = {column: float(value) for column, value in zip(columns, raw_importance)}
     preprocessing = {
         "version": "weighted-clustering-v1",
@@ -613,6 +648,7 @@ def build_weighted_clusters_streaming(
         preprocessing=preprocessing,
         centers=tuple(tuple(float(item) for item in row) for row in centers),
         importance_method=importance_method,
+        scatter_points=_scatter_projection(evaluation_matrix, evaluation_labels) if evaluation_labels is not None else (),
     )
 
 
@@ -704,4 +740,5 @@ def build_weighted_clusters(
         preprocessing=preprocessing,
         centers=tuple(tuple(float(item) for item in row) for row in final.cluster_centers_),
         importance_method=importance_method,
+        scatter_points=_scatter_projection(eval_matrix, final.labels_[eval_indices]),
     )
