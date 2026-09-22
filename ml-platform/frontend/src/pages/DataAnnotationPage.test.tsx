@@ -559,8 +559,12 @@ describe("DataAnnotationPage", () => {
     const draftRow = within(genericList).getByText("原始任务").closest("tr")!;
     expect(draftRow).not.toBeNull();
     expect(within(draftRow).getByText("12 条")).toBeInTheDocument();
-    expect(within(draftRow).getByText(/2026\/9\/16/)).toBeInTheDocument();
-    expect(within(draftRow).getByText(/2026\/10\/1/)).toBeInTheDocument();
+    // 断言跟随运行环境 locale/时区动态计算（组件用 toLocaleString/toLocaleDateString），
+    // 避免 CI（en-US + UTC）与本地（zh-CN + UTC+8）渲染差异导致误报。
+    const expectedCreated = new Date("2026-09-16T08:30:00Z").toLocaleString();
+    const expectedDue = new Date("2026-09-30T23:59:59+00:00").toLocaleDateString();
+    expect(within(draftRow).getByText(expectedCreated)).toBeInTheDocument();
+    expect(within(draftRow).getByText(expectedDue)).toBeInTheDocument();
 
     fireEvent.click(within(draftRow).getByRole("button", { name: "编辑任务" }));
     const dialog = await screen.findByRole("dialog");

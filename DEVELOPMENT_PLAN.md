@@ -1,5 +1,13 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-22 远程 CI 首轮 full 模式暴露两处失败的修复
+
+- 需求：`workflow_dispatch mode=full` 在 `general-automl-annotation-20260902` 分支远程执行，`Quality`（ubuntu + windows 同报）与 `Production experiment integration` 两个 job 失败；`browser-acceptance`、`week11-12-verification` 因依赖 quality 被跳过，19 项收据未生成。
+- 根因 1（Quality，`DataAnnotationPage.test.tsx:562`）：任务列表日期断言写死本地渲染格式 `/2026\/9\/16/`、`/2026\/10\/1/`；组件 `formatBackendTimestamp`/due 列使用 `toLocaleString()`/`toLocaleDateString()`（locale/时区感知），CI runner 为 en-US + UTC，渲染为 `9/16/2026, 8:30:00 AM` 与 `9/30/2026`（本地 zh-CN + UTC+8 才是断言值）。修复：断言改为按同一 `Date` + `toLocale*` 动态计算期望文本，跨 locale/时区恒等；确认 `due_at: new Date(...).toISOString()` 的 PUT 断言两侧对称不受影响。
+- 根因 2（experiment-integration）：`docker-compose.yml` mlflow 服务挂载开发者个人宿主机路径 `/home/jingms/mlflow-wheel`，CI runner 上不存在 → Docker 自动创建空目录 → `pip install --no-index` 找不到 wheel → 容器启动即退出（日志中 Started 后 0.5s Error）→ unhealthy → `compose up --wait` 失败。修复：命令改为条件安装——wheel 存在则按原离线路径安装，否则 `pip install --no-deps psycopg==3.3.5 psycopg-binary==3.3.5`（CI 有网络出口）；开发机行为不变。
+- 测试：`TZ=UTC` 与本地时区分别运行 `DataAnnotationPage.test.tsx` 均 **60/60 passed**；`pytest tests/test_ci_workflow.py tests/test_image_security_contracts.py -q` 为 **67 passed、138 subtests passed**（compose 合同含镜像安全断言不受影响）；compose YAML 解析与折叠命令断言通过；`git diff --check` 对两处改动文件无问题。
+- 遗留：本轮远程 run 的完整绿灯证据（含 19 项收据）待用户提交这两处修复后重新 dispatch 生成；日志中镜像构建阶段的 pip dependency resolver 冲突为警告性质，不阻断。
+
 ### 2026-09-22 Task 14 收据接入修复：19 项 receipt 纳入 CI 最终证据链
 
 - 需求（Task 14 唯一剩余缺口）：CI 中已生成的 19 项通用验收收据落在 `temp_test/generic-platform-acceptance/`，与 `ML_PLATFORM_EVIDENCE_DIR`（`temp_test/week11-12`）分离——`evidence_manifest` 最终 manifest 的哈希文件清单和 `Upload verification evidence` 产物均不包含收据，证据链断裂；且 AUTH-02 的 source_map 指向不存在的 `ml-platform/annotator/backend/tests/test_portal_internal_api.py`，CI 步骤会在该项以 `EVIDENCE_FILE_MISSING` 失败。

@@ -1,4 +1,4 @@
-﻿# AI Model Training Platform - Docker Compose
+# AI Model Training Platform - Docker Compose
 services:
   postgres:
     image: postgres:16
@@ -99,9 +99,13 @@ services:
       - /bin/sh
       - -c
       - >-
+        if ls /opt/mlflow-wheel/psycopg-3.3.5-py3-none-any.whl >/dev/null 2>&1; then
         pip install --no-index --no-deps --force-reinstall
         /opt/mlflow-wheel/psycopg-3.3.5-py3-none-any.whl
-        /opt/mlflow-wheel/psycopg_binary-3.3.5-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+        /opt/mlflow-wheel/psycopg_binary-3.3.5-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl;
+        else
+        pip install --no-deps psycopg==3.3.5 psycopg-binary==3.3.5;
+        fi
         &&
         mlflow server
         --host 0.0.0.0
