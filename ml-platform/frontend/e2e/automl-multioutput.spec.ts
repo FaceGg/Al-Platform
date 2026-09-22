@@ -107,7 +107,9 @@ test("submits a multi-output AutoML contract from the browser", async ({ page })
     task: "multioutput_regression",
     target_columns: ["label_a", "label_b"],
     input_columns: ["feature_a", "feature_b"],
-    search_strength: "balanced",
+    // 2026-09-11 合同更正后强度枚举为 light/medium/high/ultra，默认 medium（与
+    // AutoMLPage.test.tsx 的单测断言一致），旧值 "balanced" 不再存在。
+    search_strength: "medium",
     time_budget: 3600,
     class_weight: false,
     cross_validation_folds: 5,

@@ -1,5 +1,14 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-22 远程 CI 第二轮 full 模式失败修复：BACKEND_PORT 对齐与 E2E 规格同步
+
+- 需求：首轮修复（65e338a）推送后重新 dispatch 的 full 模式 run 中，`Production experiment integration` 与 `browser-acceptance`（含 `generic-annotation-portal.spec.ts` 3 例、`automl-multioutput.spec.ts` 1 例）仍失败。
+- 根因 1（experiment-integration）：base compose 发布 `"${BACKEND_PORT:-8001}:8000"`，该 job 的 `/api/ready` 探测打 `127.0.0.1:8000`，端口不对齐导致 curl exit 7。修复：job env 显式设 `BACKEND_PORT: "8000"`（与 browser-acceptance 一致）。
+- 根因 2（automl spec）：强度枚举在 2026-09-11 合同更正后为 light/medium/high/ultra（默认 medium），规格仍写旧值 `balanced` 导致选项不存在。修复：改为 `medium`。
+- 根因 3（portal spec，多处规格漂移）：① App 挂载与登录后都探测 `/portal/auth/me`，未 mock 的请求抛 Unexpected request 或经 vite 代理 502——全部测试补登录前 401/登录后身份分支；② 队列按钮已改名「继续标注」（旧「打开工作区」不存在）；③ 工作区左侧改为 tab 面板且默认仅展开「指南」——样本筛选/批注/回传操作前需先点击对应 tab；④ 队列页请求带查询串（`?limit=50&sort=due_at`），glob `**/portal/tasks` 匹配不到，改为 `**/portal/tasks**` 并补 `/portal/notifications`、`/portal/comments` 轮询 mock；⑤ 第 4 例 task mock 缺 `label_schema` 导致标签区无输入框；⑥「标签已保存」strict mode 命中两元素，改 `{ exact: true }`。
+- 测试：本地 `npx playwright test e2e/generic-annotation-portal.spec.ts e2e/automl-multioutput.spec.ts --project=chromium` **5/5 passed**（注意 Shell 带 `CI` 环境变量会使 `reuseExistingServer` 失效，需先 `Remove-Item Env:CI` 复用本地 dev server）。
+- 遗留：远程 CI 需在本轮提交推送后重新 dispatch 验证；19 项收据的远程绿灯证据以最终 run 为准。
+
 ### 2026-09-22 远程 CI 首轮 full 模式暴露两处失败的修复
 
 - 需求：`workflow_dispatch mode=full` 在 `general-automl-annotation-20260902` 分支远程执行，`Quality`（ubuntu + windows 同报）与 `Production experiment integration` 两个 job 失败；`browser-acceptance`、`week11-12-verification` 因依赖 quality 被跳过，19 项收据未生成。

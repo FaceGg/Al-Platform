@@ -553,6 +553,9 @@ jobs:
       COMPOSE_PROJECT_NAME: ci-inference-${{ github.run_id }}-${{ github.run_attempt }}
       # Build the shared requirements layer once and reuse it for each service.
       COMPOSE_PARALLEL_LIMIT: "1"
+      # base compose 发布 "${BACKEND_PORT:-8001}:8000"；本 job 的 /api/ready 探测
+      # 打 127.0.0.1:8000，必须显式把宿主端口对齐（browser-acceptance 同样设 8000）。
+      BACKEND_PORT: "8000"
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
