@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import String, and_, case, cast, func, or_
+from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -19,17 +19,25 @@ from app.models.labeling import (
     AnnotationComment,
     AnnotationRevision,
     AnnotationReturnBatch,
+    AnnotationSampleCurrent,
 )
-from app.models.platform_models import GenericAnnotationTask
+from app.models.platform_models import AnnotationTaskScopeSample, GenericAnnotationTask
+from app.models.project import Project
 from app.models.user import User
 from app.models.access import AuditEvent
 from app.models.annotator import AnnotatorAccount, AnnotatorSubjectMapping, ProjectAnnotatorGrant
 from app.models.notifications import InAppNotification
 from app.services.annotator_identity import (
     PortalAuthError, authenticate_annotator, map_annotator_subject, register_annotator,
-    require_portal_session, disable_annotator, reset_annotator_password,
-    grant_annotator_project, revoke_annotator_project, PORTAL_COOKIE_NAME,
-    verify_internal_service_token,
+    require_portal_session, disable_annotator, delete_annotator, reset_annotator_password,
+    grant_annotator_project, revoke_annotator_project, set_annotator_status, PORTAL_COOKIE_NAME,
+    ADMIN_PORTAL_COOKIE_NAME, verify_internal_service_token, ensure_annotator_mapping,
+    issue_admin_portal_token, resolve_portal_identity,
+)
+from app.services.annotation_returns import (
+    AnnotationReturnError,
+    accept_return_batch,
+    reject_return_batch,
 )
 from app.services.annotation_concurrency import (
     AssignmentError,
@@ -52,7 +60,7 @@ class AnnotatorRegisterRequest(BaseModel):
     email: str | None = Field(default=None, max_length=320)
 
 def _error(error: PortalAuthError):
-    status = 422 if error.code in {"PASSWORD_POLICY", "USERNAME_POLICY"} else 401 if error.code in {"INVALID_CREDENTIALS", "ACCOUNT_NOT_ACTIVE", "PORTAL_SESSION_REQUIRED", "ANNOTATOR_SESSION_REVOKED", "ANNOTATOR_SESSION_EXPIRED"} else 409
+    status = 422 if error.code in {"PASSWORD_POLICY", "USERNAME_POLICY"} else 401 if error.code in {"INVALID_CREDENTIALS", "ACCOUNT_NOT_ACTIVE", "PORTAL_SESSION_REQUIRED", "PORTAL_SESSION_INVALID", "ANNOTATOR_SESSION_REVOKED", "ANNOTATOR_SESSION_EXPIRED"} else 409
     return HTTPException(status_code=status, detail={"code": error.code, "message": str(error)})
 
 @router.post("/portal/auth/register", status_code=201)
@@ -65,24 +73,52 @@ def portal_register(data: AnnotatorRegisterRequest, db: Session = Depends(get_db
 
 @router.post("/portal/auth/login")
 def portal_login(response: Response, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    try:
-        session = authenticate_annotator(db, form.username, form.password)
-    except PortalAuthError as error:
-        raise _error(error) from error
+    account = db.query(AnnotatorAccount).filter(AnnotatorAccount.username == form.username).first()
+    if account is not None:
+        # An existing annotator account owns this username: a wrong password
+        # must NOT fall through to the platform-admin path.
+        try:
+            session = authenticate_annotator(db, form.username, form.password)
+        except PortalAuthError as error:
+            raise _error(error) from error
+    else:
+        try:
+            session = issue_admin_portal_token(db, form.username, form.password)
+        except PortalAuthError as error:
+            raise _error(error) from error
     response.set_cookie(session.cookie_name, session.token, httponly=True, secure=True, samesite="lax", max_age=1800, path="/")
-    return {"subject_id": str(session.subject_id), "expires_at": session.expires_at.isoformat()}
+    return {
+        "subject_id": str(session.subject_id) if session.subject_id is not None else None,
+        "expires_at": session.expires_at.isoformat(),
+        "kind": session.kind,
+        "user_id": str(session.user_id) if session.user_id is not None else None,
+    }
 
 @router.post("/portal/auth/logout", status_code=204)
 def portal_logout(response: Response):
-    response.delete_cookie(PORTAL_COOKIE_NAME, path="/")
+    # Deletion must mirror the login cookie's Secure/HttpOnly/SameSite flags:
+    # browsers ignore non-Secure deletions of Secure cookies (RFC 6265bis).
+    # Both identity cookies are cleared so a viewer switch never keeps a
+    # stale session of the other kind.
+    for cookie_name in (PORTAL_COOKIE_NAME, ADMIN_PORTAL_COOKIE_NAME):
+        response.delete_cookie(cookie_name, path="/", secure=True, httponly=True, samesite="lax")
 
 @router.get("/portal/auth/me")
-def portal_me(request: Request, db: Session = Depends(get_db)):
+def portal_me(
+    request: Request,
+    viewer: str = Header(default="annotator", alias="X-Portal-Viewer"),
+    db: Session = Depends(get_db),
+):
     try:
-        principal = require_portal_session(request, db)
+        identity = resolve_portal_identity(request, db, viewer=viewer)
     except PortalAuthError as error:
         raise _error(error) from error
-    return {"subject_id": str(principal.subject_id), "username": principal.username}
+    return {
+        "subject_id": str(identity.subject_id) if identity.subject_id is not None else None,
+        "username": identity.username,
+        "kind": identity.kind,
+        "user_id": str(identity.user_id) if identity.user_id is not None else None,
+    }
 
 @router.post("/api/internal/annotators/{subject_id}/disable", status_code=204)
 def internal_disable(subject_id: uuid.UUID, db: Session = Depends(get_db), admin: User = Depends(get_current_user)):
@@ -90,6 +126,114 @@ def internal_disable(subject_id: uuid.UUID, db: Session = Depends(get_db), admin
         raise HTTPException(403, {"code": "ADMIN_REQUIRED"})
     try:
         disable_annotator(db, subject_id)
+    except PortalAuthError as error:
+        raise _error(error) from error
+
+@router.get("/api/admin/annotators")
+def list_admin_annotators(
+    status: str | None = Query(default=None, pattern="^(pending|active|rejected|disabled)$"),
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_user),
+):
+    if admin.role != "admin":
+        raise HTTPException(403, {"code": "ADMIN_REQUIRED"})
+    query = db.query(AnnotatorAccount).order_by(AnnotatorAccount.created_at.desc(), AnnotatorAccount.id.desc())
+    if status:
+        query = query.filter(AnnotatorAccount.status == status)
+    return {
+        "items": [
+            {
+                "id": str(account.id),
+                "subject_id": str(account.subject_id),
+                "username": account.username,
+                "email": account.email,
+                "status": account.status,
+                "created_at": account.created_at.isoformat() if account.created_at else None,
+            }
+            for account in query.all()
+        ]
+    }
+
+@router.get("/api/annotators")
+def list_annotator_subjects(
+    q: str | None = Query(default=None, max_length=64),
+    project_id: uuid.UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Assignable annotator subjects: approved (active) accounts only.
+
+    `id` is the annotator subject id expected by assignment creation.
+    With `project_id`, only annotators holding an active project grant are returned.
+    """
+    query = db.query(AnnotatorAccount).filter(AnnotatorAccount.status == "active")
+    if q and q.strip():
+        needle = f"%{q.strip().lower()}%"
+        query = query.filter(func.lower(AnnotatorAccount.username).like(needle))
+    if project_id is not None:
+        query = query.join(
+            ProjectAnnotatorGrant,
+            and_(
+                ProjectAnnotatorGrant.subject_id == AnnotatorAccount.subject_id,
+                ProjectAnnotatorGrant.project_id == project_id,
+                ProjectAnnotatorGrant.status == "active",
+            ),
+        )
+    accounts = query.order_by(AnnotatorAccount.username, AnnotatorAccount.id).all()
+    return {
+        "items": [
+            {
+                "id": str(account.subject_id),
+                "username": account.username,
+                "email": account.email,
+                "display_name": None,
+                "status": account.status,
+            }
+            for account in accounts
+        ]
+    }
+
+class AnnotatorStatusRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: str = Field(pattern="^(active|rejected|disabled)$")
+
+@router.patch("/api/admin/annotators/{subject_id}/status")
+def update_admin_annotator_status(
+    subject_id: uuid.UUID,
+    data: AnnotatorStatusRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_user),
+):
+    if admin.role != "admin":
+        raise HTTPException(403, {"code": "ADMIN_REQUIRED"})
+    try:
+        account = set_annotator_status(db, subject_id, data.status)
+    except PortalAuthError as error:
+        raise _error(error) from error
+    if data.status == "active":
+        # Approval must make the annotator fully operational in the portal;
+        # without a subject mapping every label write fails with
+        # ANNOTATOR_SUBJECT_UNMAPPED.
+        ensure_annotator_mapping(db, subject_id, admin)
+    return {
+        "id": str(account.id),
+        "subject_id": str(account.subject_id),
+        "username": account.username,
+        "email": account.email,
+        "status": account.status,
+        "created_at": account.created_at.isoformat() if account.created_at else None,
+    }
+
+@router.delete("/api/admin/annotators/{subject_id}", status_code=204)
+def delete_admin_annotator(
+    subject_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_user),
+):
+    if admin.role != "admin":
+        raise HTTPException(403, {"code": "ADMIN_REQUIRED"})
+    try:
+        delete_annotator(db, subject_id)
     except PortalAuthError as error:
         raise _error(error) from error
 
@@ -113,6 +257,8 @@ def internal_reset_password(subject_id: uuid.UUID, data: PasswordResetRequest, r
 
 @router.post("/api/internal/projects/{project_id}/annotators/{subject_id}/grant", status_code=201)
 def internal_grant(project_id: uuid.UUID, subject_id: uuid.UUID, db: Session = Depends(get_db), admin: User = Depends(get_current_user)):
+    if admin.role != "admin":
+        raise HTTPException(403, {"code": "ADMIN_REQUIRED"})
     try:
         grant = grant_annotator_project(db, project_id, subject_id, admin)
     except PortalAuthError as error:
@@ -121,10 +267,25 @@ def internal_grant(project_id: uuid.UUID, subject_id: uuid.UUID, db: Session = D
 
 @router.delete("/api/internal/projects/{project_id}/annotators/{subject_id}/grant", status_code=204)
 def internal_revoke(project_id: uuid.UUID, subject_id: uuid.UUID, db: Session = Depends(get_db), admin: User = Depends(get_current_user)):
+    if admin.role != "admin":
+        raise HTTPException(403, {"code": "ADMIN_REQUIRED"})
     try:
         revoke_annotator_project(db, project_id, subject_id, admin)
     except PortalAuthError as error:
         raise _error(error) from error
+
+@router.get("/api/admin/annotators/{subject_id}/grants")
+def list_admin_annotator_grants(
+    subject_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_user),
+):
+    if admin.role != "admin":
+        raise HTTPException(403, {"code": "ADMIN_REQUIRED"})
+    grants = db.query(ProjectAnnotatorGrant).filter(
+        ProjectAnnotatorGrant.subject_id == subject_id,
+    ).order_by(ProjectAnnotatorGrant.created_at.desc(), ProjectAnnotatorGrant.id.desc()).all()
+    return {"items": [{"project_id": str(grant.project_id), "status": grant.status} for grant in grants]}
 
 @router.post("/api/internal/annotators/{subject_id}/map")
 def internal_map(subject_id: uuid.UUID, platform_principal_id: uuid.UUID | None = None, db: Session = Depends(get_db), admin: User = Depends(get_current_user)):
@@ -390,7 +551,7 @@ def _service_principal(
 
 def _assignment_for_subject(db: Session, task_id: uuid.UUID, subject_id: uuid.UUID, assignment_id: uuid.UUID | None = None) -> tuple[GenericAnnotationTask, AnnotationAssignment]:
     task = db.get(GenericAnnotationTask, task_id)
-    if task is None:
+    if task is None or task.archived_at is not None:
         raise _portal_error("ANNOTATION_TASK_NOT_FOUND", status_code=404)
     query = db.query(AnnotationAssignment).filter(
         AnnotationAssignment.task_id == task.id,
@@ -416,7 +577,7 @@ def _task_view(task: GenericAnnotationTask, assignment: AnnotationAssignment, db
     snapshot = current_annotation_task_snapshot(db, task)
     return {
         "id": str(task.id),
-        "title": f"Annotation task {str(task.id)[:8]}",
+        "title": task.name or f"Annotation task {str(task.id)[:8]}",
         "project_id": str(task.project_id),
         "status": task.status,
         "task_revision": assignment.task_revision,
@@ -450,11 +611,10 @@ def _assignment_contains_sample(db: Session, assignment: AnnotationAssignment, s
 
 
 def _portal_platform_principal(db: Session, subject_id: uuid.UUID) -> uuid.UUID:
-    mapping = db.query(AnnotatorSubjectMapping).filter(
-        AnnotatorSubjectMapping.subject_id == subject_id,
-    ).one_or_none()
-    if mapping is None or mapping.platform_principal_id is None:
-        raise _portal_error("ANNOTATOR_SUBJECT_UNMAPPED")
+    # Approval normally creates the mapping, but subjects activated before that
+    # guarantee (or via direct database edits) self-heal here with a shadow
+    # principal instead of failing every label write with ANNOTATOR_SUBJECT_UNMAPPED.
+    mapping = ensure_annotator_mapping(db, subject_id)
     return mapping.platform_principal_id
 
 
@@ -500,13 +660,17 @@ def internal_portal_tasks(
     ).filter(
         AnnotationAssignment.annotator_subject_id == principal.annotator_subject_id,
         AnnotationAssignment.state != "revoked",
+        GenericAnnotationTask.archived_at.is_(None),
     )
     normalized_search = search.strip().lower() if search else ""
     if normalized_search:
         task_id_text = func.lower(func.replace(cast(GenericAnnotationTask.id, String), "-", ""))
         search_text = normalized_search.removeprefix("annotation task").strip().replace("-", "")
+        name_match = func.lower(GenericAnnotationTask.name).contains(normalized_search, autoescape=True)
         if search_text:
-            query = query.filter(task_id_text.contains(search_text, autoescape=True))
+            query = query.filter(or_(task_id_text.contains(search_text, autoescape=True), name_match))
+        else:
+            query = query.filter(name_match)
     if status:
         query = query.filter(GenericAnnotationTask.status == status)
     if assignment_state:
@@ -607,9 +771,15 @@ def internal_portal_samples(
         for column in (snapshot.get("label_schema", {}).get("columns") or [])
         if column.get("required") and column.get("machine_key")
     ]
-    query = db.query(AnnotationAssignmentSample).filter(
+    query = db.query(AnnotationAssignmentSample).join(
+        DatasetSample,
+        and_(
+            DatasetSample.dataset_version_id == task.dataset_version_id,
+            DatasetSample.sample_id == AnnotationAssignmentSample.sample_id,
+        ),
+    ).filter(
         AnnotationAssignmentSample.assignment_id == assignment.id,
-    ).order_by(AnnotationAssignmentSample.sample_id.asc())
+    ).order_by(DatasetSample.row_index.asc(), AnnotationAssignmentSample.sample_id.asc())
     if sample_search:
         query = query.filter(AnnotationAssignmentSample.sample_id.contains(sample_search))
     if modified_after:
@@ -632,7 +802,7 @@ def internal_portal_samples(
             DatasetSample.dataset_version_id == task.dataset_version_id,
             DatasetSample.sample_id == AnnotationAssignmentSample.sample_id,
             source_field.is_not(None),
-        )
+        ).correlate(AnnotationAssignmentSample)
         if authorized_value is not None:
             source_match = source_match.filter(
                 source_field.as_string().contains(authorized_value),
@@ -654,10 +824,13 @@ def internal_portal_samples(
         query = query.filter(matching_comment if comment_status != "none" else ~any_comment)
     filtered_total = query.order_by(None).count()
     if cursor:
-        marker = query.filter(AnnotationAssignmentSample.sample_id == cursor).one_or_none()
-        if marker is None:
+        marker_index = db.query(DatasetSample.row_index).filter(
+            DatasetSample.dataset_version_id == task.dataset_version_id,
+            DatasetSample.sample_id == cursor,
+        ).scalar()
+        if marker_index is None:
             raise _portal_error("INVALID_CURSOR", status_code=422)
-        query = query.filter(AnnotationAssignmentSample.sample_id > marker.sample_id)
+        query = query.filter(DatasetSample.row_index > marker_index)
     rows = query.limit(limit + 1).all()
     has_next = len(rows) > limit
     rows = rows[:limit]
@@ -989,11 +1162,7 @@ def internal_portal_create_comment(
     _task, assignment = _assignment_for_subject(db, data.task_id, principal.annotator_subject_id, assignment_id)
     if data.sample_id is not None and not _assignment_contains_sample(db, assignment, data.sample_id):
         raise _portal_error("SAMPLE_SCOPE_FORBIDDEN", status_code=403)
-    mapping = db.query(AnnotatorSubjectMapping).filter(
-        AnnotatorSubjectMapping.subject_id == principal.annotator_subject_id,
-    ).one_or_none()
-    if mapping is None or mapping.platform_principal_id is None:
-        raise _portal_error("ANNOTATOR_SUBJECT_UNMAPPED")
+    author_principal_id = _portal_platform_principal(db, principal.annotator_subject_id)
     revision_id = None
     if data.related_revision is not None:
         if data.sample_id is None:
@@ -1012,7 +1181,7 @@ def internal_portal_create_comment(
         task_id=data.task_id,
         sample_id=data.sample_id,
         revision_id=revision_id,
-        author_id=mapping.platform_principal_id,
+        author_id=author_principal_id,
         body=data.content.strip(),
         parent_id=data.parent_id,
     )
@@ -1027,7 +1196,7 @@ def internal_portal_create_comment(
         emit_annotation_comment_notification(
             db,
             project_id=task.project_id,
-            actor_id=mapping.platform_principal_id,
+            actor_id=author_principal_id,
             recipient_user_id=parent.author_id,
             comment_id=comment.id,
             parent_comment_id=parent.id,
@@ -1107,3 +1276,401 @@ def update_comment_status(
         "resolved_by": str(comment.resolved_by) if comment.resolved_by else None,
         "resolved_at": comment.resolved_at.isoformat() if comment.resolved_at else None,
     }
+
+
+# --- Admin portal review ---------------------------------------------------
+#
+# Admins review their own (owner_id) tasks in the annotator portal after a
+# return batch has been submitted (state="pending"). Identity flows from the
+# portal gateway, which mints service tokens carrying an admin_user_id claim.
+
+
+class AdminCommentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sample_id: str = Field(min_length=1, max_length=256)
+    content: str = Field(min_length=1, max_length=4000)
+    parent_id: uuid.UUID | None = None
+
+
+class AdminReturnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+def _admin_service_principal(request: Request, db: Session, *, scope: str) -> tuple[Any, User]:
+    try:
+        principal = verify_internal_service_token(
+            request,
+            required_scope=scope,
+            project_id=None,
+            allow_wildcard=True,
+        )
+    except PortalAuthError as error:
+        status_code = 401 if error.code in {"SERVICE_TOKEN_REQUIRED", "SERVICE_TOKEN_INVALID"} else 403
+        raise _portal_error(error.code, status_code=status_code) from error
+    if principal.admin_user_id is None:
+        raise _portal_error("SERVICE_ADMIN_REQUIRED")
+    admin = db.get(User, principal.admin_user_id)
+    if admin is None or admin.role != "admin":
+        raise _portal_error("SERVICE_ADMIN_REQUIRED")
+    return principal, admin
+
+
+def _admin_task(db: Session, task_id: uuid.UUID, admin_id: uuid.UUID) -> GenericAnnotationTask:
+    task = db.get(GenericAnnotationTask, task_id)
+    if task is None or task.archived_at is not None or task.owner_id != admin_id:
+        raise _portal_error("ANNOTATION_TASK_NOT_FOUND", status_code=404)
+    return task
+
+
+def _task_return_state(db: Session, task_id: uuid.UUID) -> tuple[AnnotationReturnBatch | None, AnnotationReturnBatch | None]:
+    """Return (latest batch, latest pending batch) for a task, or (None, None)."""
+    batches = db.query(AnnotationReturnBatch).join(
+        AnnotationAssignment, AnnotationAssignment.id == AnnotationReturnBatch.assignment_id,
+    ).filter(
+        AnnotationAssignment.task_id == task_id,
+    ).order_by(
+        AnnotationReturnBatch.created_at.asc(),
+        AnnotationReturnBatch.id.asc(),
+    ).all()
+    latest = batches[-1] if batches else None
+    pending = next((batch for batch in reversed(batches) if batch.state == "pending"), None)
+    return latest, pending
+
+
+def _task_sample_count(db: Session, task: GenericAnnotationTask) -> int:
+    scope = task.sample_scope or {}
+    count = scope.get("sample_count")
+    if isinstance(count, int) and count >= 0:
+        return count
+    ids = scope.get("sample_ids")
+    if isinstance(ids, list) and ids:
+        return len(ids)
+    snapshot_ids = current_annotation_task_snapshot(db, task).get("sample_ids")
+    if isinstance(snapshot_ids, list) and snapshot_ids:
+        return len(snapshot_ids)
+    return db.query(AnnotationTaskScopeSample.id).filter(
+        AnnotationTaskScopeSample.task_id == task.id,
+        AnnotationTaskScopeSample.task_revision == task.task_revision,
+    ).count()
+
+
+def _task_scope_sample_ids(db: Session, task: GenericAnnotationTask) -> set[str]:
+    ids = {
+        row.sample_id
+        for row in db.query(AnnotationTaskScopeSample).filter(
+            AnnotationTaskScopeSample.task_id == task.id,
+            AnnotationTaskScopeSample.task_revision == task.task_revision,
+        ).all()
+    }
+    if not ids:
+        ids = {str(sample_id) for sample_id in (current_annotation_task_snapshot(db, task).get("sample_ids") or [])}
+    if not ids:
+        ids = {
+            row.sample_id
+            for row in db.query(DatasetSample.sample_id).filter(
+                DatasetSample.dataset_version_id == task.dataset_version_id,
+            ).all()
+        }
+    return ids
+
+
+@router.get("/api/internal/portal/admin/tasks")
+def internal_admin_tasks(
+    request: Request,
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    search: str | None = Query(default=None, max_length=128),
+    db: Session = Depends(get_db),
+):
+    _principal, admin = _admin_service_principal(request, db, scope="admin_review:read")
+    # Project deletion does not cascade to annotation tasks, so tasks of deleted
+    # projects stay orphaned (their project_id points nowhere). The main
+    # platform's task list joins accessible projects and never shows them; the
+    # admin portal must use the same rule or reviewers see tasks that no
+    # longer belong to any project.
+    existing_project_ids = select(Project.id)
+    query = db.query(GenericAnnotationTask).filter(
+        GenericAnnotationTask.owner_id == admin.id,
+        GenericAnnotationTask.archived_at.is_(None),
+        GenericAnnotationTask.project_id.in_(existing_project_ids),
+    )
+    normalized_search = search.strip().lower() if search else ""
+    if normalized_search:
+        task_id_text = func.lower(func.replace(cast(GenericAnnotationTask.id, String), "-", ""))
+        search_text = normalized_search.removeprefix("annotation task").strip().replace("-", "")
+        name_match = func.lower(GenericAnnotationTask.name).contains(normalized_search, autoescape=True)
+        if search_text:
+            query = query.filter(or_(task_id_text.contains(search_text, autoescape=True), name_match))
+        else:
+            query = query.filter(name_match)
+    total = query.count()
+    if cursor:
+        try:
+            marker_id = uuid.UUID(str(cursor))
+        except (TypeError, ValueError, AttributeError) as error:
+            raise _portal_error("INVALID_CURSOR", status_code=422) from error
+        marker = query.filter(GenericAnnotationTask.id == marker_id).one_or_none()
+        if marker is None:
+            raise _portal_error("INVALID_CURSOR", status_code=422)
+        query = query.filter(GenericAnnotationTask.id < marker_id)
+    rows = query.order_by(GenericAnnotationTask.id.desc()).limit(limit + 1).all()
+    has_next = len(rows) > limit
+    rows = rows[:limit]
+    task_ids = [row.id for row in rows]
+    assignments_by_task: dict[uuid.UUID, AnnotationAssignment] = {}
+    task_of_assignment: dict[uuid.UUID, uuid.UUID] = {}
+    if task_ids:
+        for assignment in db.query(AnnotationAssignment).filter(
+            AnnotationAssignment.task_id.in_(task_ids),
+        ).order_by(AnnotationAssignment.created_at.asc(), AnnotationAssignment.id.asc()).all():
+            assignments_by_task[assignment.task_id] = assignment
+            task_of_assignment[assignment.id] = assignment.task_id
+    subject_ids = list({assignment.annotator_subject_id for assignment in assignments_by_task.values()})
+    annotator_names = {
+        account.subject_id: account.username
+        for account in db.query(AnnotatorAccount).filter(AnnotatorAccount.subject_id.in_(subject_ids)).all()
+    } if subject_ids else {}
+    latest_batch_by_task: dict[uuid.UUID, AnnotationReturnBatch] = {}
+    pending_batch_by_task: dict[uuid.UUID, AnnotationReturnBatch] = {}
+    assignment_ids = list(task_of_assignment)
+    if assignment_ids:
+        for batch in db.query(AnnotationReturnBatch).filter(
+            AnnotationReturnBatch.assignment_id.in_(assignment_ids),
+        ).order_by(AnnotationReturnBatch.created_at.asc(), AnnotationReturnBatch.id.asc()).all():
+            batch_task = task_of_assignment.get(batch.assignment_id)
+            if batch_task is None:
+                continue
+            latest_batch_by_task[batch_task] = batch
+            if batch.state == "pending":
+                pending_batch_by_task[batch_task] = batch
+    # Completed-sample progress uses the exact same rule as the annotator
+    # portal task list (values longer than "{}"), so progress stays in sync.
+    completed_by_assignment: dict[uuid.UUID, int] = {}
+    if assignments_by_task:
+        for row_assignment_id, count in db.query(
+            AnnotationAssignmentSample.assignment_id, func.count(AnnotationAssignmentSample.id),
+        ).filter(
+            AnnotationAssignmentSample.assignment_id.in_([a.id for a in assignments_by_task.values()]),
+            func.length(cast(AnnotationAssignmentSample.values, String)) > 2,
+        ).group_by(AnnotationAssignmentSample.assignment_id).all():
+            completed_by_assignment[row_assignment_id] = count
+    project_names = {
+        project.id: project.name
+        for project in db.query(Project).filter(Project.id.in_({t.project_id for t in rows})).all()
+    } if rows else {}
+    items = []
+    for task in rows:
+        assignment = assignments_by_task.get(task.id)
+        items.append({
+            "id": str(task.id),
+            "title": task.name or f"Annotation task {str(task.id)[:8]}",
+            "status": task.status,
+            "mode": task.mode,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "task_revision": task.task_revision,
+            "pending_return_batch_id": str(pending_batch_by_task[task.id].id) if task.id in pending_batch_by_task else None,
+            "return_state": latest_batch_by_task[task.id].state if task.id in latest_batch_by_task else None,
+            "sample_count": _task_sample_count(db, task),
+            "completed_samples": completed_by_assignment.get(assignment.id, 0) if assignment is not None else None,
+            "annotator_name": annotator_names.get(assignment.annotator_subject_id) if assignment is not None else None,
+            "project_name": project_names.get(task.project_id),
+        })
+    return {
+        "items": items,
+        "total": total,
+        "next_cursor": str(rows[-1].id) if has_next and rows else None,
+    }
+
+
+@router.get("/api/internal/portal/admin/tasks/{task_id}")
+def internal_admin_task(task_id: uuid.UUID, request: Request, db: Session = Depends(get_db)):
+    _principal, admin = _admin_service_principal(request, db, scope="admin_review:read")
+    task = _admin_task(db, task_id, admin.id)
+    snapshot = current_annotation_task_snapshot(db, task)
+    latest, pending = _task_return_state(db, task.id)
+    scope = task.sample_scope or {}
+    return {
+        "id": str(task.id),
+        "title": task.name or f"Annotation task {str(task.id)[:8]}",
+        "status": task.status,
+        "mode": task.mode,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "instructions": snapshot.get("instructions") or "",
+        "visible_columns": list(snapshot.get("visible_columns") or []),
+        "label_schema": snapshot.get("label_schema") or {"columns": []},
+        "sample_scope": {
+            "kind": scope.get("kind"),
+            "sample_count": _task_sample_count(db, task),
+            "scope_hash": scope.get("scope_hash"),
+        },
+        "pending_return_batch_id": str(pending.id) if pending is not None else None,
+        "return_state": latest.state if latest is not None else None,
+        "read_only": True,
+        "task_revision": task.task_revision,
+    }
+
+
+@router.get("/api/internal/portal/admin/tasks/{task_id}/samples")
+def internal_admin_samples(
+    task_id: uuid.UUID,
+    request: Request,
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    sample_search: str | None = Query(default=None, min_length=1, max_length=256),
+    db: Session = Depends(get_db),
+):
+    _principal, admin = _admin_service_principal(request, db, scope="admin_review:read")
+    task = _admin_task(db, task_id, admin.id)
+    snapshot = current_annotation_task_snapshot(db, task)
+    visible_columns = set(snapshot.get("visible_columns") or [])
+    scope_ids = _task_scope_sample_ids(db, task)
+    if not scope_ids:
+        return {"items": [], "total": 0, "next_cursor": None}
+    query = db.query(DatasetSample).filter(
+        DatasetSample.dataset_version_id == task.dataset_version_id,
+        DatasetSample.sample_id.in_(scope_ids),
+    )
+    if sample_search:
+        query = query.filter(DatasetSample.sample_id.contains(sample_search))
+    total = query.order_by(None).count()
+    if cursor:
+        marker_index = db.query(DatasetSample.row_index).filter(
+            DatasetSample.dataset_version_id == task.dataset_version_id,
+            DatasetSample.sample_id == cursor,
+        ).scalar()
+        if marker_index is None:
+            raise _portal_error("INVALID_CURSOR", status_code=422)
+        query = query.filter(DatasetSample.row_index > marker_index)
+    rows = query.order_by(DatasetSample.row_index.asc(), DatasetSample.id.asc()).limit(limit + 1).all()
+    has_next = len(rows) > limit
+    rows = rows[:limit]
+    current_by_sample = {
+        row.sample_id: row
+        for row in db.query(AnnotationSampleCurrent).filter(
+            AnnotationSampleCurrent.task_id == task.id,
+            AnnotationSampleCurrent.sample_id.in_([row.sample_id for row in rows]),
+        ).all()
+    } if rows else {}
+    items = []
+    for row in rows:
+        current = current_by_sample.get(row.sample_id)
+        values = row.values or {}
+        if visible_columns:
+            values = {key: value for key, value in values.items() if key in visible_columns}
+        items.append({
+            "sample_id": row.sample_id,
+            "values": values,
+            "labels": dict(current.values or {}) if current is not None else {},
+            "revision": current.revision_no if current is not None else None,
+        })
+    return {
+        "items": items,
+        "total": total,
+        "next_cursor": rows[-1].sample_id if has_next and rows else None,
+    }
+
+
+@router.get("/api/internal/portal/admin/tasks/{task_id}/comments")
+def internal_admin_comments(
+    task_id: uuid.UUID,
+    request: Request,
+    sample_id: str | None = Query(default=None, min_length=1, max_length=256),
+    limit: int = Query(default=200, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    _principal, admin = _admin_service_principal(request, db, scope="admin_review:read")
+    task = _admin_task(db, task_id, admin.id)
+    query = db.query(AnnotationComment).filter(AnnotationComment.task_id == task.id)
+    if sample_id is not None:
+        query = query.filter(AnnotationComment.sample_id == sample_id)
+    total = query.count()
+    rows = query.order_by(AnnotationComment.created_at.asc(), AnnotationComment.id.asc()).limit(limit).all()
+    author_ids = {row.author_id for row in rows}
+    authors = {
+        user.id: user.username
+        for user in db.query(User).filter(User.id.in_(author_ids)).all()
+    } if author_ids else {}
+    return {
+        "items": [{
+            "id": str(row.id),
+            "sample_id": row.sample_id,
+            "parent_id": str(row.parent_id) if row.parent_id else None,
+            "author_name": authors.get(row.author_id),
+            "content": row.body,
+            "status": row.status,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        } for row in rows],
+        "total": total,
+    }
+
+
+@router.post("/api/internal/portal/admin/tasks/{task_id}/comments", status_code=201)
+def internal_admin_create_comment(task_id: uuid.UUID, data: AdminCommentCreate, request: Request, db: Session = Depends(get_db)):
+    _principal, admin = _admin_service_principal(request, db, scope="admin_review:write")
+    task = _admin_task(db, task_id, admin.id)
+    _latest, pending = _task_return_state(db, task.id)
+    if pending is None:
+        raise _portal_error("RETURN_BATCH_REQUIRED", status_code=409)
+    if data.sample_id not in _task_scope_sample_ids(db, task):
+        raise _portal_error("SAMPLE_SCOPE_FORBIDDEN", status_code=403)
+    if data.parent_id is not None:
+        parent = db.get(AnnotationComment, data.parent_id)
+        if parent is None or parent.task_id != task.id:
+            raise _portal_error("COMMENT_PARENT_NOT_FOUND", status_code=404)
+        if parent.sample_id != data.sample_id:
+            raise _portal_error("COMMENT_SCOPE_MISMATCH", status_code=422)
+    comment = AnnotationComment(
+        task_id=task.id,
+        sample_id=data.sample_id,
+        revision_id=None,
+        author_id=admin.id,
+        body=data.content.strip(),
+        parent_id=data.parent_id,
+    )
+    db.add(comment)
+    db.commit()
+    db.refresh(comment)
+    return {
+        "id": str(comment.id),
+        "task_id": str(comment.task_id),
+        "sample_id": comment.sample_id,
+        "parent_id": str(comment.parent_id) if comment.parent_id else None,
+        "author_name": admin.username,
+        "content": comment.body,
+        "status": comment.status,
+        "created_at": comment.created_at.isoformat() if comment.created_at else None,
+    }
+
+
+@router.post("/api/internal/portal/admin/tasks/{task_id}/accept")
+def internal_admin_accept(task_id: uuid.UUID, request: Request, db: Session = Depends(get_db)):
+    _principal, admin = _admin_service_principal(request, db, scope="admin_review:write")
+    task = _admin_task(db, task_id, admin.id)
+    _latest, pending = _task_return_state(db, task.id)
+    if pending is None:
+        raise _portal_error("RETURN_BATCH_REQUIRED", status_code=409)
+    try:
+        accepted = accept_return_batch(db, pending.id, task.task_revision, actor=admin)
+    except AnnotationReturnError as error:
+        raise _portal_error(error.code, status_code=409) from error
+    db.refresh(task)
+    return {
+        "dataset_version_id": str(accepted.id),
+        "status": task.status,
+        "version": accepted.version,
+    }
+
+
+@router.post("/api/internal/portal/admin/tasks/{task_id}/return")
+def internal_admin_return(task_id: uuid.UUID, data: AdminReturnRequest, request: Request, db: Session = Depends(get_db)):
+    _principal, admin = _admin_service_principal(request, db, scope="admin_review:write")
+    task = _admin_task(db, task_id, admin.id)
+    _latest, pending = _task_return_state(db, task.id)
+    if pending is None:
+        raise _portal_error("RETURN_BATCH_REQUIRED", status_code=409)
+    try:
+        batch = reject_return_batch(db, pending.id, task.task_revision, data.reason, actor=admin)
+    except AnnotationReturnError as error:
+        raise _portal_error(error.code, status_code=409) from error
+    return {"return_batch_id": str(batch.id), "state": batch.state}

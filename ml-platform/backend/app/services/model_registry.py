@@ -691,10 +691,17 @@ class ModelRegistryService:
     def approve(self, db, version_id, actor_id, comment="", *, commit=True):
         version = self._version(db, version_id)
         if version.approval_status == "approved":
+            # Legacy approvals predate lifecycle_state; heal rows still sitting
+            # in pending_review so the enabled gate (automatic annotation,
+            # deployments) recognizes them. Never touch disabled/revoked rows.
+            if version.lifecycle_state in (None, "pending_review"):
+                version.lifecycle_state = "enabled"
+                self._finish(db, version, commit)
             return version
         if version.approval_status != "pending":
             raise ModelRegistryError("MODEL_VERSION_STATE_CONFLICT")
         version.approval_status = "approved"
+        version.lifecycle_state = "enabled"
         version.approval_comment = str(comment or "").strip()
         version.approved_by_id = actor_id
         version.approved_at = utcnow()
@@ -722,8 +729,12 @@ class ModelRegistryService:
     def archive(self, db, version_id, actor_id, comment="", *, commit=True):
         version = self._version(db, version_id)
         if version.approval_status == "archived":
+            if version.lifecycle_state in (None, "pending_review"):
+                version.lifecycle_state = "archived"
+                self._finish(db, version, commit)
             return version
         version.approval_status = "archived"
+        version.lifecycle_state = "archived"
         version.approval_comment = str(comment or "").strip()
         version.approved_by_id = actor_id
         version.approved_at = utcnow()

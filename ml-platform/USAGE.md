@@ -88,7 +88,7 @@ chmod +x scripts/*.sh
 cd ml-platform/backend
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
-# 终端2 - 前端 (http://localhost:5173)
+# 终端2 - 主平台前端 (http://localhost:5173)
 cd ml-platform/frontend
 npm run dev
 ```
@@ -96,6 +96,16 @@ npm run dev
 ### 2.4 默认登录
 
 启动后访问 **http://localhost:5173**
+
+独立标注员门户使用单独入口 **http://localhost:8443**。Docker 启动时由
+`annotator-frontend` 提供页面，`annotator` 提供 `/portal/*` API；本机开发调试
+门户前端可进入 `ml-platform/annotator/frontend` 执行 `npm run dev`，访问
+**http://localhost:5174**。
+
+门户静态镜像当前使用预构建产物。首次构建或修改门户源码后，先在
+`ml-platform/annotator/frontend` 执行 `npm ci` 和 `npm run build`，再在仓库根目录
+执行 `docker compose up -d --no-deps --build annotator annotator-frontend`。
+生产环境必须在公共入口配置受信任的 HTTPS；上述 HTTP 地址仅用于本地开发。
 
 | 用户名 | 密码 | 角色 |
 |--------|------|------|

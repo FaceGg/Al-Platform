@@ -210,9 +210,8 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile
-      network: host
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "${BACKEND_PORT:-8001}:8000"
     environment:
       <<: *production-environment
       LLM_API_KEY: ${LLM_API_KEY:-}
@@ -243,7 +242,7 @@ services:
       context: ./ml-platform/annotator/backend
       dockerfile: Dockerfile
     ports:
-      - "${ANNOTATOR_PORT:-8443}:8443"
+      - "${ANNOTATOR_API_PORT:-8444}:8443"
     environment:
       ANNOTATOR_PORT: 8443
       ANNOTATOR_API_ORIGIN: ${ANNOTATOR_API_ORIGIN:-http://backend:8000}
@@ -251,6 +250,16 @@ services:
     depends_on:
       backend:
         condition: service_started
+    restart: unless-stopped
+
+  annotator-frontend:
+    build:
+      context: ./ml-platform/annotator/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${ANNOTATOR_PORT:-8443}:80"
+    depends_on:
+      - annotator
     restart: unless-stopped
 
   worker:

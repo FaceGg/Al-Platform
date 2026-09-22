@@ -51,7 +51,9 @@ export default function PreviewDrawer({ open, title = "任务预览", operationI
   if (!open) return null;
   const drawerClusters = clusterOptionsFromSummary(summary);
   const drawerClusterEvaluation = clusterEvaluationFromSummary(summary);
-  return <aside role="dialog" aria-label={title} className="annotation-preview-drawer">
+  return <>
+    <div className="annotation-preview-drawer__mask" role="presentation" onClick={onClose} />
+    <aside role="dialog" aria-label={title} className="annotation-preview-drawer">
     <header className="annotation-preview-drawer__header">
       <div><span className="annotation-preview-drawer__eyebrow">ANNOTATION PREVIEW</span><h2>{title}</h2>{operationId && <code>{operationId}</code>}</div>
       <button type="button" aria-label="关闭预览" className="annotation-preview-drawer__close" onClick={onClose}>×</button>
@@ -80,5 +82,6 @@ export default function PreviewDrawer({ open, title = "任务预览", operationI
       {hasMore && <button type="button" disabled={loading} onClick={onLoadMore}>加载更多</button>}
       </section>
     </div>
-  </aside>;
+    </aside>
+  </>;
 }

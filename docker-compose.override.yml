@@ -1,0 +1,15 @@
+# Local development override: the annotator portal forwards auth to the
+# Windows-host backend (SQLite dev database) so registrations are visible in
+# the local main platform at http://localhost:5173.
+#
+# Networking path: container -> host-gateway (WSL docker bridge) -> WSL TCP
+# relay on :8100 (temp_test/wsl_relay.py) -> WSL localhost -> Windows mirrored
+# localhost -> uvicorn 0.0.0.0:8000. Windows firewall blocks direct container
+# access to the host WLAN IP, hence the relay. Restart the relay after a WSL
+# reboot (see the docstring in temp_test/wsl_relay.py).
+services:
+  annotator:
+    environment:
+      ANNOTATOR_API_ORIGIN: http://host.docker.internal:8100
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

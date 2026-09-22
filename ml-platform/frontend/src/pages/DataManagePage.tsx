@@ -160,7 +160,7 @@ export default function DataManagePage() {
 
   const handlePreview = async (dsId: string) => {
     try {
-      const data = await getDatasetPreview(dsId);
+      const data = await getDatasetPreview(dsId, { limit: 0 });
       const columns = data.columns || [];
       const rows = Array.isArray(data.preview)
         ? data.preview.map((row: Record<string, unknown>) => columns.map((column: string) => row[column]))
@@ -290,29 +290,34 @@ export default function DataManagePage() {
         width={800}
       >
         {previewData && (
-          <div style={{ overflowX: "auto" }}>
-            <table className="dataset-preview-table" style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
-              <thead>
-                <tr>
-                  {previewData.columns.map((col: string, i: number) => (
-                    <th key={i} style={{ padding: "6px 8px", textAlign: "left" }}>
-                      {col}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {previewData.rows.slice(0, 10).map((row: any[], ri: number) => (
-                  <tr key={ri}>
-                    {row.map((cell: any, ci: number) => (
-                      <td key={ci} style={{ padding: "4px 8px", maxWidth: 200, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-                        {String(cell ?? "")}
-                      </td>
+          <div>
+            <p style={{ margin: "0 0 8px", color: "rgba(0,0,0,0.45)", fontSize: 12 }}>
+              共 {previewData.rows.length} 行{previewData.rows.length >= 500 ? "（数据量较大，请滚动查看）" : ""}
+            </p>
+            <div style={{ overflowX: "auto", maxHeight: "60vh", overflowY: "auto" }}>
+              <table className="dataset-preview-table" style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    {previewData.columns.map((col: string, i: number) => (
+                      <th key={i} style={{ padding: "6px 8px", textAlign: "left" }}>
+                        {col}
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {previewData.rows.map((row: any[], ri: number) => (
+                    <tr key={ri}>
+                      {row.map((cell: any, ci: number) => (
+                        <td key={ci} style={{ padding: "4px 8px", maxWidth: 200, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                          {String(cell ?? "")}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </Modal>

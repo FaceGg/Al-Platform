@@ -11,6 +11,210 @@ def test_portal_exposes_task_and_comment_routes():
     assert "/portal/tasks" in paths
     assert "/portal/tasks/{task_id}/samples" in paths
     assert "/portal/comments" in paths
+    assert "/portal/auth/me" in paths
+    assert "/portal/admin/tasks" in paths
+    assert "/portal/admin/tasks/{task_id}" in paths
+    assert "/portal/admin/tasks/{task_id}/samples" in paths
+    assert "/portal/admin/tasks/{task_id}/comments" in paths
+    assert "/portal/admin/tasks/{task_id}/accept" in paths
+    assert "/portal/admin/tasks/{task_id}/return" in paths
+
+
+def test_portal_me_requires_session_and_returns_owned_identity(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.services.platform_client import PlatformClient
+
+    client = TestClient(app)
+    assert client.get("/portal/auth/me").status_code == 401
+    subject = uuid.uuid4()
+    # /portal/auth/me resolves the cookie server-side; no upstream call needed.
+    resolve = AsyncMock(return_value={"subject_id": str(subject), "username": "annotator-a"})
+    monkeypatch.setattr(PlatformClient, "resolve_portal_session", resolve)
+    client.cookies.set("portal_session", "session-token")
+    response = client.get("/portal/auth/me")
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "subject_id": str(subject),
+        "username": "annotator-a",
+        "kind": "annotator",
+        "user_id": None,
+    }
+    client.cookies.delete("portal_session")
+
+
+def test_portal_me_returns_admin_identity_without_subject(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.services.platform_client import PlatformClient
+
+    user_id = uuid.uuid4()
+    resolve = AsyncMock(return_value={
+        "kind": "admin", "user_id": str(user_id), "username": "admin-a",
+    })
+    monkeypatch.setattr(PlatformClient, "resolve_portal_session", resolve)
+    client = TestClient(app)
+    client.cookies.set("portal_session", "admin-token")
+    try:
+        response = client.get("/portal/auth/me")
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "subject_id": None,
+            "username": "admin-a",
+            "kind": "admin",
+            "user_id": str(user_id),
+        }
+    finally:
+        client.cookies.delete("portal_session")
+
+
+def test_portal_logout_deletes_cookie_with_matching_secure_flags():
+    client = TestClient(app)
+    response = client.post("/portal/auth/logout")
+    assert response.status_code == 204
+    set_cookie = response.headers.get("set-cookie", "")
+    assert 'portal_session=""' in set_cookie
+    assert "Max-Age=0" in set_cookie
+    # Secure cookies can only be deleted by Set-Cookie headers that also carry
+    # Secure (RFC 6265bis); a bare deletion is silently ignored by browsers.
+    assert "Secure" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=lax" in set_cookie
+    # Only the active viewer's cookie is cleared so the coexisting annotator
+    # and admin sessions do not log each other out.
+    assert "admin_portal_session" not in set_cookie
+
+
+def test_portal_logout_admin_viewer_only_clears_admin_cookie():
+    client = TestClient(app)
+    response = client.post("/portal/auth/logout", headers={"X-Portal-Viewer": "admin"})
+    assert response.status_code == 204
+    set_cookie = response.headers.get("set-cookie", "")
+    assert 'admin_portal_session=""' in set_cookie
+    assert "Max-Age=0" in set_cookie
+    assert "Secure" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=lax" in set_cookie
+    assert "portal_session" not in set_cookie.replace("admin_portal_session", "")
+
+
+def test_portal_annotator_routes_reject_admin_sessions_with_clear_code():
+    from app.services.session import require_portal_session
+    app.dependency_overrides[require_portal_session] = lambda: PortalPrincipal(
+        subject_id=None, username="admin-a", kind="admin", user_id=uuid.uuid4(),
+    )
+    client = TestClient(app)
+    try:
+        for method, path in [
+            ("GET", "/portal/tasks"),
+            ("GET", "/portal/notifications"),
+            ("GET", "/portal/comments"),
+        ]:
+            response = client.request(method, path)
+            assert response.status_code == 403, response.text
+            assert response.json()["detail"] == {"code": "PORTAL_ANNOTATOR_REQUIRED"}
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_portal_admin_routes_require_admin_kind():
+    app.dependency_overrides[require_portal_session] = lambda: PortalPrincipal(
+        subject_id=uuid.uuid4(), username="annotator-a",
+    )
+    client = TestClient(app)
+    try:
+        response = client.get("/portal/admin/tasks")
+        assert response.status_code == 403, response.text
+        assert response.json()["detail"] == {"code": "PORTAL_ADMIN_REQUIRED"}
+        assert client.get(f"/portal/admin/tasks/{uuid.uuid4()}").status_code == 403
+        assert client.get(f"/portal/admin/tasks/{uuid.uuid4()}/samples").status_code == 403
+        assert client.get(f"/portal/admin/tasks/{uuid.uuid4()}/comments").status_code == 403
+        assert client.post(f"/portal/admin/tasks/{uuid.uuid4()}/comments", json={"sample_id": "s1", "content": "note"}).status_code == 403
+        assert client.post(f"/portal/admin/tasks/{uuid.uuid4()}/accept").status_code == 403
+        assert client.post(f"/portal/admin/tasks/{uuid.uuid4()}/return", json={"reason": "fix"}).status_code == 403
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_portal_admin_routes_forward_admin_identity_and_scopes(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.services.platform_client import PlatformClient
+
+    upstream = AsyncMock(return_value={})
+    monkeypatch.setattr(PlatformClient, "internal_request", upstream)
+    admin_id, task_id = uuid.uuid4(), uuid.uuid4()
+    app.dependency_overrides[require_portal_session] = lambda: PortalPrincipal(
+        subject_id=None, username="admin-a", kind="admin", user_id=admin_id,
+    )
+    client = TestClient(app)
+    try:
+        response = client.get("/portal/admin/tasks", params={"search": "weld", "limit": 20})
+        assert response.status_code == 200, response.text
+        assert upstream.call_args.args == ("GET", "/api/internal/portal/admin/tasks")
+        assert upstream.call_args.kwargs == {
+            "admin_user_id": str(admin_id),
+            "scope": "admin_review:read",
+            "params": {"limit": 20, "search": "weld"},
+        }
+
+        assert client.get(f"/portal/admin/tasks/{task_id}").status_code == 200
+        assert upstream.call_args.args == ("GET", f"/api/internal/portal/admin/tasks/{task_id}")
+        assert upstream.call_args.kwargs["scope"] == "admin_review:read"
+
+        response = client.get(
+            f"/portal/admin/tasks/{task_id}/samples",
+            params={"cursor": "abc", "sample_search": "weld"},
+        )
+        assert response.status_code == 200, response.text
+        assert upstream.call_args.kwargs["params"] == {"cursor": "abc", "limit": 50, "sample_search": "weld"}
+
+        response = client.get(f"/portal/admin/tasks/{task_id}/comments", params={"sample_id": "sample-1"})
+        assert response.status_code == 200, response.text
+        assert upstream.call_args.kwargs["params"] == {"limit": 200, "sample_id": "sample-1"}
+
+        comment = {"sample_id": "sample-1", "content": "check this", "parent_id": None}
+        response = client.post(f"/portal/admin/tasks/{task_id}/comments", json=comment)
+        assert response.status_code == 201, response.text
+        assert upstream.call_args.args == ("POST", f"/api/internal/portal/admin/tasks/{task_id}/comments")
+        assert upstream.call_args.kwargs == {
+            "admin_user_id": str(admin_id),
+            "scope": "admin_review:write",
+            "json": comment,
+        }
+
+        assert client.post(f"/portal/admin/tasks/{task_id}/accept").status_code == 200
+        assert upstream.call_args.args == ("POST", f"/api/internal/portal/admin/tasks/{task_id}/accept")
+        assert upstream.call_args.kwargs["scope"] == "admin_review:write"
+
+        response = client.post(f"/portal/admin/tasks/{task_id}/return", json={"reason": "请补充说明"})
+        assert response.status_code == 200, response.text
+        assert upstream.call_args.args == ("POST", f"/api/internal/portal/admin/tasks/{task_id}/return")
+        assert upstream.call_args.kwargs["json"] == {"reason": "请补充说明"}
+        assert upstream.call_args.kwargs["scope"] == "admin_review:write"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_portal_admin_routes_preserve_structured_rejections(monkeypatch):
+    from app.services.platform_client import PlatformClient, PlatformClientError
+
+    def reject(*args, **kwargs):
+        raise PlatformClientError(
+            "internal portal request rejected",
+            status_code=409,
+            detail={"code": "RETURN_BATCH_REQUIRED"},
+        )
+
+    monkeypatch.setattr(PlatformClient, "internal_request", reject)
+    admin_id = uuid.uuid4()
+    app.dependency_overrides[require_portal_session] = lambda: PortalPrincipal(
+        subject_id=None, username="admin-a", kind="admin", user_id=admin_id,
+    )
+    client = TestClient(app)
+    try:
+        response = client.post(f"/portal/admin/tasks/{uuid.uuid4()}/comments", json={"sample_id": "s1", "content": "note"})
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == {"code": "RETURN_BATCH_REQUIRED"}
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_portal_notification_routes_require_session_and_forward_owned_identity(monkeypatch):

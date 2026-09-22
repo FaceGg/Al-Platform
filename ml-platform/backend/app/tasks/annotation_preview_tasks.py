@@ -27,6 +27,7 @@ from app.services.annotation_task_state import (
 from app.services.annotation_scope import iter_scope_batches, scope_count
 from app.services.weighted_clustering import assign_clusters_from_artifact, cluster_artifact_from_payload
 from app.services.operation_lifecycle import claim_operation, heartbeat_operation, complete_operation, fail_operation
+from app.tasks.annotation_execution_tasks import enqueue_annotation_execution
 from app.tasks.celery_app import celery_app
 from app.config import settings
 
@@ -190,7 +191,7 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
             summary = {
                 "sample_count": sample_scope_count,
                 "visible_columns": snapshot.get("visible_columns", []),
-                "label_columns": [column.get("machine_key") for column in snapshot.get("label_schema", {}).get("columns", [])],
+                "label_columns": [column.get("machine_key") for column in (snapshot.get("label_schema") or {}).get("columns", [])],
                 "source_rows_found": 0,
             }
             strategy_artifact = None
@@ -293,7 +294,7 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                         config_hash=preview.config_hash,
                         actor_id=owner_uuid,
                         project_id=task.project_id,
-                        schema_snapshot=snapshot.get("label_schema", {}),
+                        schema_snapshot=snapshot.get("label_schema") or {},
                         configuration=configuration,
                         rows=rows,
                         row_indexes=row_indexes,
@@ -427,7 +428,13 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                 commit=False,
             )
             mark_preview_completed(db, task_uuid, preview_uuid, owner_uuid, commit=False)
+            # Automatic tasks that just became preview_ready have a queued
+            # execution operation waiting for dispatch; send it once the
+            # preview operation itself is completed.
+            auto_execution_operation_id = getattr(task, "_auto_execution_operation_id", None)
             complete_operation(db, operation_id, worker_id, preview_uuid, checksum)
+            if auto_execution_operation_id is not None:
+                enqueue_annotation_execution(task_uuid, preview_uuid, auto_execution_operation_id, owner_uuid)
             return {"status": "completed", "preview_id": preview_id, "operation_id": str(preview.operation_id)}
         except Exception as error:
             db.rollback()

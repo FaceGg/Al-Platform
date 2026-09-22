@@ -44,6 +44,7 @@ const weekTestFiles: Record<number, string[]> = {
   12: [
     "./api/spotWeldQuality.test.ts",
     "./components/AppLayoutUsername.test.tsx",
+    "./components/ClusterPreviewPanel.test.tsx",
     "./components/DeleteConfirmation.test.tsx",
     "./components/LabelSchemaEditor.test.tsx",
     "./components/PageErrorBoundary.test.tsx",

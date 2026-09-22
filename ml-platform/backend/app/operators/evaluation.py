@@ -18,7 +18,7 @@ class AnomalyEval(BaseOperator):
     category = "evaluation"
     description = "Compare unsupervised anomaly flags with known fault labels"
     inputs = [PortSpec("data", "DataTable", "Flagged Data")]
-    outputs = [PortSpec("metrics", "Params", "Anomaly Metrics")]
+    outputs = [PortSpec("metrics", "JSON", "Anomaly Metrics")]
     parameters = [
         ParamSpec("target_column", "str", "Fault", "Fault Target Column"),
         ParamSpec("flag_column", "str", "outlier", "Anomaly Flag Column"),
@@ -60,10 +60,10 @@ class ClassificationEvalDetailed(BaseOperator):
         PortSpec("test", "DataTable", "Test Data"),
     ]
     outputs = [
-        PortSpec("metrics", "Params", "Overall Metrics"),
-        PortSpec("per_label", "Params", "Per-Label Metrics"),
+        PortSpec("metrics", "JSON", "Overall Metrics"),
+        PortSpec("per_label", "JSON", "Per-Label Metrics"),
         PortSpec("chart", "Chart", "Confusion Matrix + F1 Curve"),
-        PortSpec("errors", "Params", "Error Analysis"),
+        PortSpec("errors", "JSON", "Error Analysis"),
     ]
     parameters = [
         ParamSpec("target_column", "str", "target", "Target Column"),
@@ -193,7 +193,7 @@ class ModelComparison(BaseOperator):
         PortSpec("model_b", "Model", "Model B"),
         PortSpec("test", "DataTable", "Test Data"),
     ]
-    outputs = [PortSpec("comparison", "Params", "Comparison Results")]
+    outputs = [PortSpec("comparison", "JSON", "Comparison Results")]
     parameters = [
         ParamSpec("target_column", "str", "target", "Target Column"),
         ParamSpec("metric", "select", "accuracy", "Primary Metric",
@@ -243,7 +243,7 @@ class ClassificationEval(BaseOperator):
         PortSpec("test", "DataTable", "Test Data"),
     ]
     outputs = [
-        PortSpec("metrics", "Params", "Metrics"),
+        PortSpec("metrics", "JSON", "Metrics"),
         PortSpec("chart", "Chart", "Confusion Matrix"),
     ]
     parameters = [
@@ -309,7 +309,7 @@ class RegressionEval(BaseOperator):
         PortSpec("model", "Model", "Trained Model"),
         PortSpec("test", "DataTable", "Test Data"),
     ]
-    outputs = [PortSpec("metrics", "Params", "Metrics")]
+    outputs = [PortSpec("metrics", "JSON", "Metrics")]
     parameters = [
         ParamSpec("target_column", "str", "target", "Target Column"),
     ]
@@ -355,8 +355,8 @@ class CrossValidation(BaseOperator):
     description = "k-折交叉验证，评估模型泛化能力"
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [
-        PortSpec("fold_metrics", "Params", "Per-fold Metrics"),
-        PortSpec("avg_metrics", "Params", "Average Metrics"),
+        PortSpec("fold_metrics", "JSON", "Per-fold Metrics"),
+        PortSpec("avg_metrics", "JSON", "Average Metrics"),
     ]
     parameters = [
         ParamSpec("target_column", "str", "target", "Target Column"),

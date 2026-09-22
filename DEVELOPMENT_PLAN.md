@@ -1,5 +1,594 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-22 Task 14 收据接入修复：19 项 receipt 纳入 CI 最终证据链
+
+- 需求（Task 14 唯一剩余缺口）：CI 中已生成的 19 项通用验收收据落在 `temp_test/generic-platform-acceptance/`，与 `ML_PLATFORM_EVIDENCE_DIR`（`temp_test/week11-12`）分离——`evidence_manifest` 最终 manifest 的哈希文件清单和 `Upload verification evidence` 产物均不包含收据，证据链断裂；且 AUTH-02 的 source_map 指向不存在的 `ml-platform/annotator/backend/tests/test_portal_internal_api.py`，CI 步骤会在该项以 `EVIDENCE_FILE_MISSING` 失败。
+- 实现（`.github/workflows/ci.yml` week11-12-verification job）：① 收据目录改为 `ML_PLATFORM_EVIDENCE_DIR/generic-platform-acceptance`，使 `evidence_manifest.generate` 的 rglob 文件清单收录全部 19 份收据（`files[].sha256`）并随 `week11-12-verification-evidence` 产物上传；② 嵌套 manifest 更名为 `acceptance-manifest.json`，避免与顶层 `final-evidence-manifest.json` 混淆；③ AUTH-02 证据路径修正为实际存在的 `ml-platform/annotator/backend/tests/test_portal_api.py`（门户后端套件，覆盖会话/Cookie/身份边界）；④ 保留 `validate_acceptance_manifest(current_sha=GITHUB_SHA, repository_root=workspace)` 的 fail-closed 文件哈希校验和 source_map 与 19 项 ID 的一致性断言。
+- 测试：新增 `test_ci_workflow.py::test_week11_generic_receipts_feed_the_final_evidence_manifest`（锁定收据目录在 `ML_PLATFORM_EVIDENCE_DIR` 下、`acceptance-manifest.json` 命名、收据→最终 manifest→上传的步骤顺序、最终 manifest 步骤无 `always()` 保持 fail-closed、上传路径覆盖 `temp_test/week11-12`）；`pytest tests/test_ci_workflow.py tests/test_acceptance_manifest.py -q` 为 **62 passed、138 subtests passed**。
+- 本地链路验证：以当前 HEAD `2740ea1` 模拟 CI 步骤在本地生成 19 份收据 + acceptance-manifest.json，`validate_acceptance_manifest` 通过（含逐文件 SHA-256 哈希比对），并用 `evidence_manifest._evidence_entry` 确认 20 个收据文件全部通过敏感信息/绝对路径安全检查、可被最终 manifest 哈希收录；模拟产物已清理。
+- 边界与未验证项：本修复在工作树中完成，未提交、未推送，远程 CI 尚未在新 SHA 上执行——19 项收据的 `passed` 状态仍需远程 `week11-12-verification` job 在最终干净 SHA 上实际生成后才能作为发布证据。收据哈希绑定的是测试源文件（矩阵 2026-09-15 语义更正的边界仍适用：CLU-02 百万样本实测、AUTH-02/AUTO-02 双服务真实证据、REL-01 真实 worker 恢复演练不因测试文件存在而自动关闭）。
+
+### 2026-09-22 修复交接遗留问题：写接口幂等头、批注草稿保留、ONNX 转换兼容与全量回归
+
+- 需求（HANDOVER.md 第 6 节遗留问题）：① `spotWeldQuality.ts` createQualityRun 缺幂等头（违反技术方案 §12.0 写接口合同）；② AdminReviewPage 批注草稿在自动保存失败后切换样本丢失；③ pyarrow 缺失导致 parquet 测试 skip；④ 主后端全量套件在 20260921_60 链头完整重跑并修复新暴露失败；⑤ 前端三套件回归。
+- 实现（frontend `api/spotWeldQuality.ts`）：createQualityRun 增加 `X-Request-ID` + `Idempotency-Key` 头（Idempotency-Key 作为默认参数 `crypto.randomUUID()`，与 annotationTasks/annotatorAssignments 既有模式一致）；后端 `spot_weld_quality.py` create_run 不强制该头，纯增强无破坏。
+- 实现（annotator frontend `pages/AdminReviewPage.tsx`）：新增 `unsavedRef`（Map<sampleId, draft>）保留保存失败/防抖未触发的草稿——保存成功即清除；切换样本时恢复草稿并提示「上次批注未保存成功，已恢复草稿」；后台顺序重试其他样本的失败草稿（绕开单飞锁 savingRef）。
+- 根因与修复（backend ONNX 转换）：全量套件暴露 `test_onnx_conversion.py` 两个子测试失败（extra_trees/hist_gradient_boosting，RF 同样受影响）——onnx 1.22（protobuf 7）对 `AttributeProto.ints` 字段严格化，拒绝 bool 值；skl2onnx 1.19.1 在树集成节点属性 `nodes_missing_value_tracks_true` 传入原始 bool。修复：venv 升级 skl2onnx 1.19.1 → 1.20.0（修复 RF/ET 路径）+ `onnx_worker.py` 新增 `_apply_skl2onnx_bool_compat()`（HGB 路径 1.20.0 仍传 bool，monkeypatch `tree_ensemble.add_node` 强转 int）+ `requirements.txt` 钉住 `skl2onnx==1.20.*`。注意：该问题影响生产环境的树模型 ONNX 导出功能，非仅测试问题。
+- 测试时序修复（frontend `pages/DataAnnotationPage.test.tsx`）：全量跑挂 4-5 例——React 在 datasets 异步加载期间重挂载 select 导致测试捕获的旧节点脱离文档、fireEvent.change 在 option 渲染前执行导致 value 重置为空。修复：waitFor 内每次重新 getByLabelText 并等待目标 option 出现再 change；5 处 spot-weld POST 断言补幂等头第三参数。
+- 测试：**后端全量 `pytest tests -q`：1991 passed / 2 failed / 109 skipped（修复后 test_onnx_conversion 10 passed + 4 subtests、test_offline_inference_contract + test_inference_production_stack 4 passed/2 skipped）；主平台前端全量：vitest 356 passed / 19 skipped、tsc 通过、build 通过；标注员门户：105 passed、tsc/build 通过（草稿保留新增 2 用例）**。
+- 说明与未验证项：① admin 会话无吊销（无状态 JWT TTL 30min）为设计取舍，仅记录不改动；② 浏览器端到端实测因 Windows→WSL mirrored 网络端口转发失效（容器内 8443 正常、Windows localhost 超时）降级为 curl 链路验证（网关→后端 200）；中文列名导出端到端因需先造数据未实测；③ pyarrow 25.0.1 已装入 venv，parquet 相关 3 例由 skip 转通过。
+
+### 2026-09-21 回传结果卡片显示原始待标注文件与已保存数据制品
+
+- 需求：回传结果卡片补充显示①原始待标注文件名；②已验收并保存到数据管理后的数据制品名。
+- 实现（backend `services/annotation_returns.py` `list_return_batches`）：items 新增 `source_dataset_name`（task.dataset_version_id → DatasetVersion.original_artifact_id → Artifact.name，批量 IN 查询）与 `saved_dataset_name`。关键点：accept 创建的数据版本不带 artifact，数据制品仅在 export-dataset 时创建且不回写批次——通过导出版本 parse_contract.return_batch_id 反查（`DatasetVersion.parse_contract["return_batch_id"].as_string().in_(batch_ids)`，与 ModelLibrary.params["source"] 同款 JSON 索引查询，SQLite/Postgres 通用），每批次取 version 最新的导出（支持多次导出）。
+- 实现（frontend）：`annotationReturns.ts` ReturnBatch 补两个可选字段；`ReturnBatchList` 卡片在任务 ID 上方显示"原始文件 xxx.csv"、下方（有时）显示"已保存制品 xxx.csv"（均 code 样式 + title 悬浮全名，与既有行样式一致）。
+- 测试（backend `test_annotation_return_acceptance.py`）：list 关联测试新增 source 原始文件断言——注意 DatasetVersion 有 immutable ORM 事件（任何 UPDATE 均抛错），测试中用 Core `sa.update` 绕过并 `db.expire_all()` 刷新缓存；export 测试追加三次导出后 `saved_dataset_name == "带后缀.csv"`（最新导出）断言。（frontend）`ReturnBatchList.test.tsx` 新增已保存制品渲染用例 + 未导出不显示断言。**test_annotation_return_acceptance 18 passed；ReturnBatchList + DataManagePage 11 passed；tsc 通过**。
+
+### 2026-09-21 数据管理"回传结果"面板信息增强与统一样式
+
+- 需求：数据管理页"回传结果"面板显示粗糙（仅批次 ID + 修订 + 状态 + 操作按钮，卡片为简易 card-surface），要求信息更全、样式与其他模块一致。
+- 实现（frontend `components/ReturnBatchList.tsx`）：重写为与"回传验收"（ReturnAcceptancePanel）/"任务操作记录"面板一致的样式——`table-surface data-annotation__operations-surface` 容器 + `data-annotation__section-head`（标题 + 批次汇总"共 N 个批次 · M 个待验收"）+ `data-annotation__operations` 自适应卡片网格（minmax(280px, 1fr)）。
+- 卡片信息增强：任务名（code 样式，title 悬浮全名，缺省批次 ID 前 8 位）、状态 Tag（待验收 orange/已验收 green/已退回 red）、标注员（姓名优先，回退 subject_id 前 8 位，title 显示完整 subject_id）、样本数（validated_row_count）、任务修订号、任务 ID（前 8 位，title 全量）、回传时间（formatLocalTime 本地时区）。
+- 交互保留两步退回（退回 → 填原因 → 确认退回 disabled 直至有原因），新增"取消"退出退回编辑；验收/退回按钮仅 pending 批次显示（antd 原生 ant-btn 类按钮，避免 antd Button 对两字中文自动插空格导致 aria-label 断言失效）；加载/空态用 Spin/Empty 对齐参照面板。
+- CSS（`styles/global.css`）：新增 `.return-batch-list`（margin-top 20px 与区块间距约定一致）、`__summary`、退回 textarea、`table-row-actions` 换行起点对齐。
+- 测试：`ReturnBatchList.test.tsx` 由 1 个扩展为 3 个（两步退回流程保留、元数据渲染断言、accepted 批次无验收/退回按钮）。**ReturnBatchList + DataManagePage 10 passed；tsc 通过**。
+
+### 2026-09-21 数据管理预览显示全部数据
+
+- 需求：数据管理页（/data，DataManagePage）点击"预览"只显示 10 行，应显示数据集全部行。
+- 根因：双重 10 行限制——后端 `api/datasets.py` `preview_dataset` 固定 `df.head(10)`；前端 `DataManagePage.tsx` 再 `rows.slice(0, 10)`。
+- 实现（backend）：`GET /datasets/{id}/preview` 新增可选 `limit` 查询参数（默认 10，`ge=0`；`limit=0` 返回全部行），既有调用方（AutoMLPage、TrainingJobsPage、DataBrowserPage、test_api_project_access）不传参数行为不变；`total_rows` 始终为全量行数。
+- 实现（frontend）：`api/datasets.ts` `getDatasetPreview` 增加 `options.limit` 参数；`DataManagePage` 预览请求 `limit=0` 并移除 slice 截断，模态框内表格改为 `maxHeight: 60vh` 双向滚动，顶部显示"共 N 行"（≥500 行时提示滚动查看）。
+- 测试：`test_api_datasets.py` 新增 `test_03_preview_limit_returns_all_rows_when_zero`（15 行 CSV：默认 10 行、limit=2 → 2 行、limit=0 → 15 行）；`DataManagePage.test.tsx` 新增 `previews every dataset row instead of a fixed cap`（断言请求 `?limit=0`、渲染全部 15 行与行数说明）。**test_api_datasets 18 passed；test_api_project_access 16 passed + 24 subtests；DataManagePage 7 passed；tsc 通过**。
+
+### 2026-09-21 指派标注员信息增强 + 已指派排除 + 验收导出数据集补文件后缀
+
+- 需求（三项合并）：① 指派标注员时应能看到可指派标注员的信息；② 指派时应看到本任务已指派的标注员，且下拉中去掉已指派过的；③ 已验收批次保存到数据管理时名称没有文件后缀（如 .csv）。
+- 实现（backend `api/annotator_internal.py`）：`GET /api/annotators` 响应 items 增加 `email` 字段（与 `/api/admin/annotators` 对齐），供指派下拉展示标注员详情。
+- 实现（frontend `components/AssignmentDialog.tsx` + `pages/DataAnnotationPage.tsx`）：
+  - 下拉选项改为富信息渲染（antd optionRender）：用户名（加粗）+ 邮箱 · 已审核通过 · 已授权本项目（无邮箱时仅状态行）；搜索同时匹配用户名与邮箱。
+  - 新增 `assignedIds` prop：`openAssignmentDialog` 并行拉取 `listAnnotatorSubjects` 与 `listTaskAssignments(task.id)`，下拉 options 排除已指派的 subject_id；抽屉内新增「已指派标注员（N）」信息块（用户名列表，不在可指派列表中的显示 subject_id 前 8 位）；全部已指派时下拉空态提示「该项目标注员均已指派」。
+- 实现（backend `services/annotation_returns.py`）：`export_return_batch_dataset` 的 artifact 名补源文件后缀——`{name}.{file_format}`（用户名已以该后缀结尾时不重复添加）；`_unique_export_dataset_name` 去重序号改为插在扩展名之前（`验收结果集-2.csv` 而非 `验收结果集.csv-2`；无扩展名/异常后缀回退原逻辑）。
+- 测试：backend `test_annotator_auth.py` 补 email 断言（含 None）、`test_annotation_return_acceptance.py` 断言名带 `.csv`、重名 `-2.csv`、已带后缀不重复（**18 passed**）；frontend `AssignmentDialog.test.tsx` 新增标注员详情/已指派排除/全部已指派空态 3 用例、`DataAnnotationPage.test.tsx` 指派用例补 assignments 调用与排除断言（**67 passed**）、tsc 通过。
+- 说明：后端 `--reload` 运行则自动生效；已保存的历史导出数据集名不带后缀，不回填。
+
+### 2026-09-21 自动建模任务详情页模型结果 Accuracy 显示为 "-"
+
+- 现象：自动建模（AutoML）任务详情页"模型结果"表格中 Accuracy 列显示 "-"，AUC/F1 正常；详情弹窗与试验表格正常。
+- 根因：后端 `automl_execution.py` 写入 `all_results`/`algorithm_results` 的结果行只有 `score`（家族搜索为 `best_score`）键——分类任务的搜索得分即 accuracy（`scoring="accuracy"`，排序键也把 `item["score"]` 当 accuracy 用），但从不写 `accuracy` 键。前端 `AutoMLTaskPage.tsx` 主表 Accuracy 列与排序只查 `accuracy`/`Accuracy` 键（含嵌套 metrics/evaluation/scores），找不到即回落 "-"。
+- 修复（frontend，最小改动且可兼容已落库的历史任务指标）：`AutoMLTaskPage.tsx` 主表 Accuracy 列渲染与排序的键列表扩为 `["accuracy", "Accuracy", "best_score", "score"]`，与详情弹窗既有的 `best_score ?? accuracy ?? score` 兜底语义对齐。回归任务不受影响（回归路径渲染 R2/RMSE/MAE 列）。
+- 测试：`AutoMLTaskPage.test.tsx` 新增 `shows accuracy from score and best_score when results lack an explicit accuracy key`（all_results 分别携带 score/best_score，断言主表渲染 0.9500/0.9000 而非 "-"）。**AutoMLTaskPage 12 passed；frontend tsc --noEmit 通过**。
+
+### 2026-09-21 自动标注任务 MODEL_INPUT_MISSING：创建时前置校验与错误信息增强
+
+- 现象：新建自动标注任务（不启用弱监督，`clustering=false, strategy="model"`）时创建成功，但生成预览报 MODEL_INPUT_MISSING 且 details 为空，无从定位。
+- 根因：所选数据集为原始 90 列版本，而模型（automl-job - XGBoost，d3bee360）训练于特征工程后的数据集版本（6fc046ee…，74 列 46 行）；模型输入契约要求 73 列（14 原始 + 59 工程特征如 current_mean/voltage_pp/power_wld1 等），模型包 preprocessing 仅含 `drop_rows_before_training`，不含特征工程变换，无法从原始列推导。检查逻辑本身正确，但只在预览执行时暴露且不透明。
+- 修复（backend）：
+  - `api/generic_tasks.py`：新增 `_model_input_columns()`（从冻结的 conversion_metadata.input_contract.feature_columns/input_columns 取输入列，fallback feature_schema）；`create_generic_task` 自动模式在模型版本解析后立即校验数据集 schema 列覆盖输入契约，缺列即 422 MODEL_INPUT_MISSING，message 列出缺失列名（前 10 个）。该校验同时覆盖弱监督与不启用弱监督两种模式（聚类也要跑模型推理）。
+  - `services/annotation_strategies.py`：`_model_outputs_from_package` 的 MODEL_INPUT_MISSING 错误信息携带缺失列（`preview rows are missing N model input columns: ...`），不再为空。
+- 修复（frontend）：
+  - `api/client.ts`：`localizeApiError(code, message?)` 支持 `{message}` 占位符模板，保留后端缺失列详情；无 code/无模板时行为不变。
+  - `i18n/index.tsx`：zh/en apiErrors 新增 MODEL_INPUT_MISSING 词条（带 `{message}` 占位符，提示选择模型训练时使用的数据集版本）。
+- 测试：`test_annotation_task_state_api.py` 新增 `test_automatic_task_creation_rejects_dataset_missing_model_inputs`（数据集缺 `feature` 列 → 422 MODEL_INPUT_MISSING，任务不落库）；既有 `test_automatic_task_rejects_invalid_strategy_before_persisting` 补齐 DatasetSchemaColumn（原只建样本未建 schema 列，被前置校验拦截）。**test_annotation_task_state_api 26 passed；annotation 相关全量 202 passed / 18 skipped；前端 vitest 347 passed / 19 skipped、tsc 通过**。
+- 说明：正确解法是用户选择模型训练时的数据集版本（6fc046ee…，74 列 46 行）；平台现已在创建任务时提前拦截并明确列出缺失列，无需等到预览才发现。
+
+### 2026-09-21 修复自动标注任务模型版本全部显示「未审批启用」
+
+- 现象：新建自动标注任务时模型版本下拉全部禁用并显示「未审批启用」（MODEL_VERSION_NOT_ENABLED）。
+- 根因：模型版本存在两条审批路径——新路径 `transition_model_version`（approve 同时设 `lifecycle_state='enabled'` + `approval_status='approved'`），但审批 API `POST /api/model-versions/{id}/approve` 实际走旧路径 `ModelRegistryService.approve()`，后者只设 `approval_status` 不改 `lifecycle_state`（注册默认 `pending_review`）。`/api/projects/{id}/annotation-model-versions` 的可选性判定要求 approved + enabled 双条件，导致历史审批过的版本全部被禁用（本地库 86 个版本中 84 个为 approved+pending_review 不一致状态）。
+- 修复（backend）：
+  - `services/model_registry.py`：`approve()` 主路径同步设置 `lifecycle_state='enabled'`；对已 approved 但 lifecycle 仍为 pending_review 的遗留行，重复调用 approve() 时自动治愈为 enabled（不触碰显式 disabled/revoked 行）；`archive()` 同步设置 `lifecycle_state='archived'` 并治愈遗留行。
+  - `database_migrations.py`：`ensure_schema_compatibility`（本地 SQLite 兼容路径）新增幂等数据回填——approved+pending_review → enabled、archived+pending_review → archived，仅治愈不一致行。
+  - 新增 Alembic 迁移 `20260921_60_model_version_lifecycle_backfill`（生产 Postgres 同源回填，downgrade 为 no-op）；`tools/upgrade_fixture.py`、`tools/evidence_manifest.py`、`tools/acceptance/run_upgrade_fixture.sh`、`tests/test_database_production.py`、`tests/test_inference_production_stack.py` 的 head 修订号同步更新为 20260921_60。
+- 测试：`test_model_registry_service.py` 新增 approve 启用+遗留治愈用例；`test_database_migrations.py` 新增回填幂等用例；`test_api_model_registry.py` approve 断言补 lifecycle_state。**test_model_registry_service + test_database_migrations + test_api_model_registry 34 passed；test_database_production + test_annotation_task_state_api + test_model_registration_contract 54 passed；alembic heads = 20260921_60（单头）**。本地 ml_platform.db 重启后已治愈（86 个 approved 全部 enabled，1 个 pending）。
+- 说明：治愈后 onnx_artifact 来源的 84 个版本仍会被 MODEL_SOURCE_UNSUPPORTED（「仅支持平台训练产物」）禁用——自动标注仅支持平台训练 joblib 产物为既有设计；当前可选项为 2 个 `automl-job - XGBoost` 平台产物版本。`test_inference_production_stack` 的 head 断言已同步但该重型套件未在本机完整运行。
+
+### 2026-09-21 全量算子契约审计与修复（82 个算子）
+
+- 审计（backend 临时脚本，已清理）：对全部 82 个注册算子的 id/name/description/version、端口（重名/类型/标签/必填输入）、参数（类型/默认值/options/range/required）做结构化检查，共发现 118 条告警。
+- 修复（不合理项，3 类）：
+  - 参数类型 `bool` → `boolean` ×3（`io_operators.py` overwrite、`processing.py` invert / with_replacement）——前端 NodeConfigPanel 只识别 `boolean`（Switch 控件），`bool` 会退化为文本输入框，存在把字符串 "true" 传给后端的风险。
+  - 补齐 7 个 ml 算子缺失的 description（logistic_regression / kmeans_clustering / dbscan / apriori / fp_growth / random_forest_regression / svm_regression），中英双语，消除算子面板空白提示。
+  - 端口类型词汇统一：结构化输出端口 `Params`(14) / `table`(7) → `JSON`(21)，涉及 evaluation / visualization / control / processing / mechanism 五个文件（含 confusion_matrix_plot 的 metrics 输入端口，输出输入两侧同步改）；端口类型仅用于前端 tooltip 展示与 DAG 校验不检查类型，重命名零功能风险。
+- 保留不改（合理设计）：io 导入类与 mechanism 仿真类算子无输入端口（数据源/纯参数驱动）；mechanism 输出的标量类型（str/float/int/boolean/list[str]）如实描述标量值，不强行归一。
+- 测试：算子/工作流/引擎相关测试 **471 passed / 1 failed**（唯一失败为 `test_database_production` alembic 基线漂移，属环境预存问题）；全量后端套件 1978 passed / 8 failed，失败均为迁移基线/发布修订号/Docker 契约类预存问题，与本次改动无关。
+
+### 2026-09-21 修复多端口算子的半圆端口超出节点圆角边框
+
+- 现象：Spot Weld Feature Engineering 等多输出端口算子，右侧半圆端口标签落在节点 30px 圆角弧区（顶部 <17% / 底部 >83%），视觉上凸出圆弧轮廓外。
+- 根因：`CustomNode.tsx` 的 `portStyle` 通用分布公式 `(index+0.5)/total*100%` 未避开圆角弧区；spot-weld 3 输出有专用紧凑布局（34/50/66%）不受影响，但端口数 ≠3 的节点（如快照中保存了 4+ 输出）底部端口会落在 87.5%/91.7% 处。
+- 修复（frontend `CustomNode.tsx`）：spot-weld 3 输出紧凑布局放宽为 20/50/80%（30% 间距）；所有 4 输出端口的算子采用同风格均匀分布 20/40/60/80%（20% 间距，同处 20%–80% 直边带）；其余端口数走通用公式 `16 + ((index+0.5)/total)*68`（16%–84% 带，带边缘对 30px 圆弧凸出为亚像素级）；单端口 50% 不变；应用户要求多轮放宽间距并对 4 输出算子统一风格。
+- 测试：`CustomNode.test.tsx` 回归用例同步更新（3 输出 20/50/80%，4 输出 20/40/60/80%）；该文件 + `WorkspacePage.test.tsx` **23/23 passed**，tsc 通过。
+
+### 2026-09-21 测试工作流算子链合理性验证
+
+- 算子链验证（backend 冒烟脚本，已清理）：用清洗后数据（剔除 101 个纯逗号空行，保留 46 条真实记录）直接跑 `build_feature_frame`，产出标准 73 特征 schema（46×73），特征工程算子链本身可用。结论：`csv_import → spot_weld_feature_engineering → write_csv` 合理；当前工作流中的 `missing_value_handler(mean)` 不合理——源数据缺失值全部来自垃圾空行（均值填充无法修复 base64 波形列，还会静默改写真实数据），建议删除该节点并清洗源文件，或在 csv_import 后用 `filter_examples` 过滤空行（registry 共 82 个算子，端口契约一致）。
+- 说明：同日曾做过工作流画布算子样式重设计（紧凑卡片 + 状态色条 + 圆形端口），应用户要求已全部撤销，`global.css` 与 `CustomNode.test.tsx` 恢复原样（176×176 方形卡片 + 外凸条形端口）。
+
+### 2026-09-21 工作流导出数据集版本失败：operator_id 以字符串写入 UUID 列触发 'str' object has no attribute 'hex'
+
+- 现象：工作流运行在持久化数据集版本时报 `(builtins.AttributeError) 'str' object has no attribute 'hex'`，INSERT INTO dataset_versions 失败，运行整体 failed。
+- 根因：`services/workflow_execution.py` 以 `operator_id=str(workflow.created_by)` 构造 DAGExecutor；`services/artifact_service.py` 的 `create_dataset_version_from_artifact` 将该字符串直接写入 `DatasetVersion.operator_id`（`models/data_version.py` 中为 `UUID(as_uuid=True)`，外键 users.id），SQLAlchemy Uuid 绑定处理器调用 `value.hex` 时对字符串抛 AttributeError。其余字段（project_id/original_artifact_id）为 UUID 对象故未触发。
+- 修复（backend `services/artifact_service.py`）：`create_dataset_version_from_artifact` 入口统一 `operator_id = uuid.UUID(str(operator_id))`，与 `create_from_file` 对 project_id 的边界转换约定一致，同时保护所有调用方（含 `api/datasets.py` 回填路径）。
+- 测试：`test_artifact_service.py` + `test_operator_artifacts.py` + `test_workflow_execution_service.py` **17/17 passed**（miniconda Python）。
+- 说明/限制：本地 SQLite 已存在的历史 failed 运行不会自动恢复，需重跑工作流；后端以 --reload 运行则修复自动生效。
+
+### 2026-09-20 「保存到数据管理」标签列名检测：中文名称必须重命名为英文标识符
+
+- 需求（接上轮）：标签名称也需要检测——如果标签名称为中文，则需要用户修改为英文才能保存到数据管理。
+- 实现（backend `services/annotation_returns.py` + `api/annotation_returns.py`）：
+  - `_validate_export_renames`：导出请求新增 `renames`（machine_key → 新列名），新列名必须匹配 `^[A-Za-z_][A-Za-z0-9_]*$`、不得与源数据其他列/其他标签列/已用目标名冲突、key 必须是已知标签列，否则 EXPORT_LABEL_NAME_INVALID(422)。
+  - `export_return_batch_dataset` 应用重命名：列定义名、样本值键、parse_contract.label_renames 均改用新名；string 标签值映射在新列名下写入。
+- 实现（frontend `api/annotationReturns.ts` + `components/ReturnAcceptancePanel.tsx` + i18n + global.css）：
+  - `exportReturnBatchDataset` 增加 renames 参数（POST body {name, renames}）。
+  - 中文名检测 `needsEnglishName = /[^\x00-\x7F]/.test(key)`：含中文名列时即使值类型为数值也不直接保存，而是展示确认区（红色「中文名称 · 需改为英文」标签 + 英文名输入框，校验英文标识符格式）；所有中文名列未填合法英文名前「确认映射并保存到数据管理」禁用；提交时只携带已填写的 renames。关闭 Drawer 一并重置。
+  - apiErrors 补充 EXPORT_NAME_REQUIRED / EXPORT_LABEL_VALUE_UNMAPPED / EXPORT_LABEL_NAME_INVALID 中英文翻译。
+- 测试：backend 新增 `test_export_renames_label_columns_to_english_identifiers`（合法重命名落列名/样本/契约、中文目标、冲突目标、未知列四种拒绝）——**18/18**；frontend ReturnAcceptancePanel.test.tsx 新增中文名重命名用例（含确认按钮禁用/启用与 renames 透传断言），既有断言更新为三参调用——面板 **8/8**、全量 vitest **346 passed / 19 skipped（63 文件）**、tsc 通过。
+- 说明/限制：线上端到端验证未执行——当前 admin 仅剩「点焊」项目且无回传批次（原含已验收批次的 test 项目已删除），中文列名场景由后端/前端单测覆盖；后端 --reload 已自动生效。
+
+### 2026-09-20 向导蓝框四调：机器键/标签名称同行 + 契约预填默认列 + 删除列保护 + 策略编辑器保存 schema 前锁定
+
+- 需求（接上轮）：①机器键和标签名称放到一行；②默认标签列预填模型输出契约信息（名称、类型）；③添加删除操作——新增列可删、契约默认列可改不可删、至少保留一个标签列；④必须先填写标签列定义并保存 schema，之后才能编辑自动标注策略。
+- 实现（frontend `components/LabelSchemaEditor.tsx` + `pages/DataAnnotationPage.tsx` + `styles/global.css`）：
+  - 组件：卡片头部改为「机器键只读徽标 + 标签名称输入」同行（`__card-head/__identity`），值类型/约束方式第二行并排栅格（`__grid--pair`）；新增 `isDefault` UI 态标记与「删除列 N」按钮（仅非默认列且列数 > 1 时显示），契约默认列可修改但不可删除。
+  - 向导：蓝框 initialColumns 在未保存 schema 时按 `selectedGenericOutputColumns` 预填（machine_key=label-N 只读、display_name/value_type 取契约、isDefault=true）；左侧策略编辑器在 `genericAutoSchema` 为空时替换为虚线锁定提示卡（「请先在右侧填写标签列定义并保存 schema」），保存后渲染编辑器并按新列重建草稿；`saveGenericStrategy` 强制要求已保存 schema（去掉自动创建 fallback），「保存策略并完成」按钮同步加 `!genericAutoSchema` 禁用。
+  - 行为变化：策略配置 JSON 的标签 key 由契约 machine_key（如 fault/label）变为保存 schema 的列键 label-N（display_name 仍取契约名，策略编辑器可见文案不变）；后端 PUT 校验 0 列 schema 的 LABEL_SCHEMA_REQUIRED 防线依旧兜底。
+- 测试：LabelSchemaEditor.test.tsx 新增默认列不可删/新增列可删例（9 例）；DataAnnotationPage 4 个向导用例（cluster 保存、重命名同步、导入策略、rule 保存）增加「填枚举值 → 保存 schema → 解锁」步骤并锁定态断言，PUT 断言键改为 label-1，导入策略 mock payload 键同步 label-1，保存 schema 名称断言用重命名后任务名（创建时已同步）。
+- 验证：组件+页面 69/69；前端全量 vitest **345 passed/19 skipped（63 文件）**、`tsc --noEmit`、`npm run build` 通过。
+- 说明/限制：保存 schema 后再次修改蓝框列不会自动重新保存（需再点保存 schema，且策略已按旧列保存的场景建议重新核对）；「配置策略」Modal 与标签 schema 管理页不受锁定影响（Modal 走独立保存流）。
+
+### 2026-09-20 「保存到数据管理」导出改为真实文件制品：保持源数据集文件类型，修复预览报错
+
+- 需求：数据管理中点击导出数据集的「预览」报错 `Artifact file is missing`；要求导出制品与原始文件保持相同类型（源为 csv 则导出 csv），文件类型自动跟随不允许修改，重名自动改名。
+- 根因：上轮导出直接在 DB 创建 Artifact（storage_path=""、无 storage_uri、format="annotation"），而预览/下载走 `ArtifactService.materialize` → 无文件可读。
+- 实现（backend `services/annotation_returns.py`）：
+  - `_export_file_format`：从验收版本的 parse_contract.source_dataset_version_id 找到源 DatasetVersion → 其 original_artifact 的 format（csv/xlsx/xls/parquet），类型自动跟随源文件、用户不可选；无源制品时回退 csv；不支持的类型报 EXPORT_FILE_TYPE_UNSUPPORTED。
+  - `_write_export_table_file`：csv 用标准库逐行写（表头=列名，string 标签已映射为整数）；xlsx/parquet 走 pandas。
+  - 导出改用 `build_artifact_service(db).create_from_file(...)` 落真实文件（storage_uri、file_size、sha256、format 由文件后缀决定），数据管理预览/下载/物化与上传数据集完全一致；parse_contract 增加 source_file_format。重名 -2 后缀逻辑保持。
+- 测试：test_annotation_return_acceptance.py 导出用例改注入 `ArtifactService(db, LocalStorage(tmp_path))`（monkeypatch app.services.annotation_returns.build_artifact_service），新增断言 artifact.format=="csv"、storage_uri 非空、materialize 读出文件内容 ["feature,result","1,0","2,1"]——**17/17**。
+- 线上验证：删除上轮生成的无文件坏制品（ass 验收导出）；重新导出后 GET /api/datasets/{id}/preview 正常返回（147 行、75 列、label int64、前 10 行数据完整）。后端 --reload 自动生效。
+
+### 2026-09-20 回传验收新增「保存到数据管理」：已验收批次导出为命名数据集，string 标签自动映射为整数
+
+- 需求：主平台回传验收 Drawer（红框位置）为已验收任务添加「保存到数据管理」按钮；需要输入名称并检测标签类型——int/float 标签直接保存，string 标签需建立映射（标签值 → 0,1,2,3,…）。
+- 实现（backend `services/annotation_returns.py` + `api/annotation_returns.py`）：
+  - `GET /api/annotation-return-batches/{id}/export-preview`：校验批次 state=accepted 且 accepted_dataset_version_id 存在（否则 EXPORT_BATCH_NOT_ACCEPTED），基于任务快照 label_schema 逐列返回 {machine_key, value_type, mapping}；string 列扫描验收版本样本收集去重值，按枚举顺序优先、其余按首次出现顺序编号 0,1,2…。
+  - `POST /api/annotation-return-batches/{id}/export-dataset`（body {name}）：创建 Artifact(type=dataset, metadata.source="annotation_return_export"，项目内重名自动 -2 后缀) + DatasetVersion（original_artifact_id 关联，version=项目最大+1，status=ready，parse_contract 记录 source_dataset_version_id/label_mappings）；样本复制验收版本并应用映射，string 标签列 dtype 写为 int；验收版本本身不被修改；写入 AuditEvent(annotation_return.exported_dataset)。权限与 accept/return 一致（require_return_batch_project_owner）。
+  - 错误码：EXPORT_BATCH_NOT_ACCEPTED(409)、ACCEPTED_DATASET_VERSION_NOT_FOUND(404)、EXPORT_NAME_REQUIRED(422)、EXPORT_LABEL_VALUE_UNMAPPED(409)。
+- 实现（frontend `api/annotationReturns.ts` + `components/ReturnAcceptancePanel.tsx` + global.css）：Drawer 中 state=accepted 的批次在底部新增「保存到数据管理」区块——名称输入（必填）+「检测标签并保存」按钮；preview 全为数值列时直接保存；含 string 列时展示每列映射表（标签值→整数）并由「确认映射并保存到数据管理」提交；成功提示数据集名与行数。关闭 Drawer 重置导出状态。
+- 测试：backend test_annotation_return_acceptance.py 新增 3 例（未验收批次拒绝导出/预览、预览返回 string 映射 {pass:0,fail:1}、导出创建命名数据集+int 化标签+验收版本不变+重名 -2 后缀）——**17/17**；回归 `-k "portal or return or annotator or dataset or assignment"` 301 passed（8 个失败均为预先存在：7 个缺 pyarrow/fastparquet 环境、1 个陈旧测试 test_api_annotations 调用已删除的旧端点）。frontend ReturnAcceptancePanel.test.tsx 新增 2 例（string 映射确认流程、数值列直接保存无映射步骤）——面板 **7/7**、全量 **344 passed / 19 skipped**、tsc、build 通过。
+- 线上验证：后端 --reload 自动生效；任务「ass」已验收批次（147 条，label 为 int）实测 export-preview 返回类型检测、export-dataset 创建「ass 验收导出」（v10，147 行 75 列，label 列 dtype=int），数据管理列表 GET /projects/{id}/datasets 第一位可见且 schema 完整。
+
+### 2026-09-20 向导蓝框 schema 编辑器三调：去「最大字节数」+ 卡片式分区重排 + 样式对齐页面板块
+
+- 需求（接上轮）：①去掉 string 类型的「最大字节数」输入，默认后端兜底不溢出即可；②重新设计文字/选择框位置排布，更清晰美观；③样式与页面其他板块一致。
+- 实现（ml-platform/frontend `components/LabelSchemaEditor.tsx` + `styles/global.css`）：
+  - 移除「最大字节数」输入与保存时的 `max_length` 透传（后端 `max_length ≤ 65536` 上限校验兜底，无输入即不限制）；类型切换时也不再清理该字段。
+  - 布局重排为「每列一张卡片」：卡片内第一行为四字段自适应栅格（机器键只读徽标 | 标签名称 | 值类型 | 约束方式），枚举值区（值标签横排 + 「+」追加 + 行删除）与范围区（最小值/最大值并排栅格）仅在对应约束方式下出现，列说明全宽垫底；工具栏左侧新增「标签列定义」标题，右侧集中用途（可选展示）/添加列/保存 schema（主按钮样式）；枚举值与列说明 label 内嵌灰色 hint 小字（「点击 + 逐个添加；值须与所选类型匹配，不能为空」/「选填，展示给标注员的填写指引」）。
+  - CSS 重写为页面同款视觉语言：`--border-default` 边框 + `--bg-surface` 卡片、8px 圆角、12px 次级色加粗 label、34px 高输入/选择框（与 `.data-annotation__setup` 表单完全一致）、antd 按钮类（ant-btn-sm / 主按钮）、机器键虚线边框等宽字体徽标。
+- 验证：`LabelSchemaEditor.test.tsx` 8 例（aria-label 全部保持不变，无需改动）+ DataAnnotationPage 60/60 通过；前端全量 vitest **342 passed/19 skipped（63 文件）**、`tsc --noEmit`、`npm run build` 通过。
+- 说明/限制：aria-label 与交互契约与上轮一致（机器键只读、约束必选默认枚举值、+ 添加枚举值），仅视觉与信息架构调整；标签 schema 管理页与「配置策略」弹窗同步获得新样式。
+
+### 2026-09-20 向导蓝框 schema 编辑器再调整：机器键只读、约束必选默认枚举值、枚举值 + 逐个添加与类型校验
+
+- 需求（接上轮蓝框调整）：①机器键默认 `label-1`（自动递增），去掉输入框不可修改；②约束方式去掉「无约束」，默认枚举值；③枚举值改为「+」按钮逐个添加值（每值一行、可删除），并加校验——值与所选类型必须匹配且不能为空。
+- 实现（ml-platform/frontend `components/LabelSchemaEditor.tsx`）：
+  - 机器键由 `<input>` 改为只读 `<span>` 徽标展示（等宽字体灰底），新建列 `label-N` 自动递增，保存时直接采用；仍保留键唯一性校验（回显数据兜底）。
+  - `constraint_mode` 类型收窄为 `enum | range | enum_range`（去掉 none），新列默认 `enum`；旧数据回显无约束时兜底为枚举值；string 列仅可选枚举值。
+  - 枚举值区块重写为值列表：每行一个输入框（string 为 text、int/float 为 number）+ 行删除按钮，底部「+」按钮追加一行；类型切换时清空约束值。
+  - 保存校验：枚举值不能为空且必须匹配所选类型（int 须整数、float 须有限数字、string 非空）；范围方式下最小值/最大值必填且匹配类型、min ≤ max；错误提示带列名与期望类型。
+- 样式：global.css 新增 `.label-schema-editor__machine-key`（只读徽标）与 `.label-schema-editor__enum(-row)`（枚举行纵排）。
+- 验证：`LabelSchemaEditor.test.tsx` 重写 8 例（只读机器键、默认枚举方式、enum_range 保存、空值/类型不匹配/缺范围拒绝、string 仅枚举、+ 添加与行删除、showPurpose=false、用途与列说明）；DataAnnotationPage 60/60；前端全量 vitest **342 passed/19 skipped（63 文件）**、`tsc --noEmit`、`npm run build` 通过。
+- 说明/限制：任务列表「配置策略」弹窗与标签 schema 管理页共用该编辑器，回显旧无约束 schema 时约束方式兜底显示为枚举值（需补填枚举值后才能保存）；向导默认列 `label-1` 未保存 schema 时策略编辑器仍按契约列（fault）展示。
+
+### 2026-09-20 管理员门户孤儿任务过滤：项目已删除的任务不再出现在评审列表
+
+- 需求：管理员审核门户出现多个主平台（数据标注/数据管理）中看不到的任务。
+- 根因（DB 复盘）：项目删除是硬删除（projects.py 只级联清理 TrainingJob/Experiment/Dataset/OrchestrationApp，**不处理 GenericAnnotationTask**），这些任务的 project_id 指向已不存在的项目成为孤儿任务；主平台任务列表要求 `project_id ∈ 可访问项目`（annotation_task_state.list_annotation_tasks L494-503），孤儿任务永远不显示；而管理员门户列表（annotator_internal.internal_admin_tasks）只过滤 `owner_id == admin AND archived_at IS NULL`，不校验项目存在，孤儿任务全部列出且项目列显示"—"（如 d4731b02/b0c52048/a8d4772a/9ab26fdc，均为 9/14-9/15 创建、项目已删）。
+- 实现（backend annotator_internal.py）：internal_admin_tasks 查询增加 `GenericAnnotationTask.project_id.in_(select(Project.id))`，与主平台口径一致——项目已删除的孤儿任务不再返回（total 同步减少）。sqlalchemy 导入增加 select。
+- 测试：test_portal_admin_review.py 新增 `test_admin_task_list_excludes_tasks_of_deleted_projects`（构造 project_id 指向不存在项目的任务 → 列表不含该任务且其余任务不受影响）。
+- 验证：test_portal_admin_review.py **24/24**；回归 `-k "portal or return or annotator or concurrency or assignment"` **240 passed / 6 skipped**；本地后端 --reload 自动生效，网关 8444 实测 admin/admin123 登录后 GET /portal/admin/tasks 已不含 4 个孤儿任务（列表 6 条均带真实项目名）。
+- 说明/限制：仅过滤列表展示，孤儿任务数据未删除（若未来做项目删除级联需另行评估）；任务详情/样本/批注等单任务端点未加项目存在性校验（深链不可达，风险低）。
+
+### 2026-09-20 向导蓝框标签 schema 编辑器简化：去「用途」、默认列 label-1/标签-1、必填固定、约束方式按类型限定
+
+- 需求（新建自动标注任务向导第 2 步蓝框）：①去掉「用途」选择；②默认列不再预填契约列名 fault，左侧机器键默认 `label-1`（自动递增），右侧为「标签名称」；③去掉「必填」勾选，默认必填；④约束方式按类型限定——int/float 可选 枚举值/范围/枚举值且范围（外加默认无约束），string 只能选枚举值。
+- 实现（ml-platform/frontend `components/LabelSchemaEditor.tsx`）：
+  - 新增 `showPurpose` 属性（默认 true 展示用途；向导蓝框传 false 固定 annotation，标签 schema 管理页等其他使用处不受影响）。
+  - 默认列工厂 `label-N`/`标签-N`（按现有键去重递增），右侧输入 aria-label/占位改为「标签名称」；移除「必填」勾选，保存时 `required` 恒为 true。
+  - 每列新增「约束方式」下拉（无约束/枚举值/范围/枚举值且范围；string 隐藏后两项），枚举值与最小值/最大值输入仅在对应方式下出现；约束方式存 UI 态 `constraint_mode`（不随空枚举值回退为无约束），已保存 schema 回显时按已有约束值推导；切换列类型时清空约束并重置方式选择。
+  - 机器键校验正则放宽允许连字符（`[A-Za-z_][A-Za-z0-9_-]*`）。
+- 实现（其他）：
+  - 后端 `schemas/labeling.py` machine_key 校验同步允许连字符（向后兼容放宽）；`tests/test_label_schema_api.py` 新增 `test_schema_machine_key_allows_hyphen`（创建 label-1 后 GET 回读校验）。
+  - `DataAnnotationPage.tsx` 向导蓝框：`showPurpose={false}`；未保存 schema 时默认一列 `label-1`/`标签-1`（不再预填契约列 fault）。
+- 验证：`LabelSchemaEditor.test.tsx` 重写/扩充 6 例（默认列命名、约束方式先选后填、string 仅枚举、showPurpose=false 隐藏用途且 required 恒 true 等）；DataAnnotationPage 60/60；前端全量 vitest 63 文件 340 passed/19 skipped（此前一次全量出现 TrainingJobsPage 偶发超时，复跑全绿）、`tsc --noEmit`、`npm run build` 通过；后端 labeling 套件 23 passed。
+
+### 2026-09-20 标注员/管理员门户会话兼容：viewer 改 sessionStorage 按标签页隔离 + 「[object Object]」错误修复 + 登出只清当前身份
+
+- 需求：标注员门户与管理员审核门户仍互不兼容——登录管理员账号后，已登录的标注员标签页报错「[object Object]」；刷新标注员门户会被自动跳转到管理员门户。
+- 根因（两个独立缺陷）：
+  - viewer 身份提示（`portalViewer`）原存 localStorage，同源所有标签页共享：管理员标签页登录后写入 `admin`，其他已打开的标注员标签页随后的所有请求都带 `X-Portal-Viewer: admin`，网关据此把请求路由到 admin 会话 → 标注员请求 403/结构化错误；刷新时 App.tsx 的 me() 也按 admin 会话解析 → 显示管理员界面（表现为「自动跳转」）。
+  - 前端错误提取 `payload?.detail?.message ?? payload?.detail`：当 detail 是 `{code: ...}` 而无 message 时，整个对象成为 Error message，React 渲染为 `[object Object]`。
+- 实现：
+  - annotator/frontend `api/client.ts`：`getPortalViewer/setPortalViewer` 从 localStorage 改为 **sessionStorage**（每标签页独立、刷新保持、新标签默认 annotator），管理员登录不再影响其他标签页；错误提取改为类型判断——detail 为字符串用之，否则依次取 `detail.message`/`detail.code`，最后回退 `Request failed (status)`，并把 `error.response = {status, data}` 附在 Error 上供组件读 code。
+  - annotator/backend `api/auth.py` logout：新增 `X-Portal-Viewer` Header 参数，只删除当前 viewer 对应的 cookie（annotator 删 `portal_session`、admin 删 `admin_portal_session`），管理员登出不再杀掉共存标注员会话。
+- 测试：annotator/frontend 新建 `api/client.test.ts` 6 例（sessionStorage 而非 localStorage、默认 annotator、每请求带头、结构化 detail 不出现 "[object Object]"、message 优先于 code、字符串/缺 detail 回退）；后端 test_portal_api.py 更新登出测试并新增 `test_portal_logout_admin_viewer_only_clears_admin_cookie`。
+- 验证：门户全量 vitest **103 passed（14 文件）**、`tsc --noEmit`、`npm run build`（bundle index-UEkagjaR.js）；网关 `pytest tests/` **30 passed**；`docker compose build annotator annotator-frontend && up -d && restart annotator-frontend` 部署完成，8443 返回页已引用新 bundle、网关 logout 健康检查 204。
+- 说明/限制：旧 localStorage 中的 portalViewer 残留不再读取，无需清理；两个门户标签页需 Ctrl+F5 强刷各一次，之后管理员与标注员可在同一浏览器并存互不干扰。
+
+### 2026-09-20 回传 ANNOTATION_NOT_READY：确认后保存使确认失效，前端自动重新确认并重试
+
+- 需求：标注员门户完成标注后，在「回传」页点击「确认任务」再点「发起回传」报错 `the whole task scope must be confirmed before return`（ANNOTATION_NOT_READY，422）。
+- 根因（线上 DB 复盘任务 473ca645「ass」，147 样本）：确认后任何一次标签保存（如 600ms 防抖自动保存/排队保存与确认并发落库）都会把任务状态从 awaiting_return 重置为 in_progress（save_labels 的契约行为），该样本在当前修订上的确认随之失效；`return_assignment` 校验 `task.status != "awaiting_return"` 即拒绝。前端 `confirmed` 标记与后端状态可短暂不一致（保存与确认的响应顺序），用户看到的是一条无解释的英文错误。用户重试（再次确认→回传）实际能成功（06:52 批次已建，06:57 被管理员退回为 returned_for_changes，属正常流程）。
+- 实现：
+  - annotator/frontend TaskWorkspacePage.tsx：①`confirm()` 先冲刷所有 dirty 草稿（清防抖定时器并 await save，任一保存失败则中止确认），杜绝「确认后保存」窗口；②`sendReturn()` 捕获 `ANNOTATION_NOT_READY`（读 `err.response.data.detail.code`，新增 `apiErrorCode` 助手）时自动重新 `confirmTask` 并重试一次回传，成功则提示「检测到确认后有新的修改，已自动重新确认并发起回传」；重试仍失败则显示中文指引（任务范围尚未全部确认…重新点击「确认任务」），不再暴露裸英文错误码。
+  - backend annotation_concurrency.py：`return_assignment` 的 ANNOTATION_NOT_READY 报错文案改为 `labels changed after confirmation; confirm the task again before return`（更准确指向根因；无测试匹配旧文案）。
+- 测试：TaskWorkspacePage.test.tsx 新增 2 例（回传遇 ANNOTATION_NOT_READY 自动重确认+重试成功；重确认仍失败时显示友好中文提示）。
+- 验证：组件 49/49、门户全量 vitest **97 passed（13 文件）**、`tsc --noEmit`、`npm run build`（bundle index-Cjnbn_ru.js）；后端 `pytest -k "portal or return or annotator or concurrency or assignment"` **239 passed / 6 skipped**；annotator-frontend 容器已重建部署，8443 已引用新 bundle。
+- 说明/限制：「确认后修改会使确认失效、需重新确认」是既定安全契约（防止未审内容被回传），本次不改后端状态机，只修复前端竞态窗口与自动恢复；本地后端若以 --reload 运行则新文案自动生效。
+
+### 2026-09-20 聚类向导蓝框：恢复标签 schema 编辑器 + 策略库（保存/导入策略）+ 执行发布 LABEL_SCHEMA_REQUIRED 根因修复
+
+- 需求：新建自动标注任务报 `LABEL_SCHEMA_REQUIRED`；同时按截图要求——若 schema 必填，则在蓝框位置（聚类效果预览生成后、策略编辑器右侧）添加标签 schema 编辑器，并在同位置提供「保存策略」（保存当前页面管理员配置的标注规则）与「导入策略」（从已保存策略导入到左侧自动标注策略编辑器）按钮。
+- 根因（LABEL_SCHEMA_REQUIRED）：发现任务创建时 `task.task_snapshot` 写入空占位 label schema 且之后永不更新；PUT /configuration 换绑新 schema 后权威快照在 `annotation_task_revision_snapshots`，但执行 worker `_publish_execution_label_state` 仍读取过期的 `task.task_snapshot` → 解析出 0 列 → LABEL_SCHEMA_REQUIRED。
+- 实现（后端）：
+  - `tasks/annotation_execution_tasks.py`：`_publish_execution_label_state` 改用 `current_annotation_task_snapshot(db, task)`（按 task_revision 解析 revision 快照，无则回退 task_snapshot），再回退 `task.label_snapshot`。
+  - 新增可复用策略存储：`models/labeling.py` 新表 `saved_annotation_strategies`（project_id+name 唯一，新表由启动 create_all 创建，无需迁移）；`schemas/labeling.py` 新增 `SavedAnnotationStrategyCreate`（校验 payload.strategy ∈ {cluster, rule, cluster_rule}）；`api/annotations.py` 新增 `GET/POST /api/annotations/saved-strategies`（列表用 `project.read`、保存用 `resource.create` 权限；同项目同名 upsert 覆盖更新）。
+- 实现（前端，ml-platform/frontend）：
+  - 新增 `api/savedStrategies.ts`（listSavedStrategies / saveAnnotationStrategy）。
+  - `DataAnnotationPage.tsx` 向导第 2 步：聚类预览（全宽）下方恢复 `cluster-split` 双栏——左侧自动标注策略编辑器，右侧（蓝框）为 LabelSchemaEditor + 策略库块（策略名称输入 + 保存策略按钮；已保存策略下拉 + 导入策略按钮）；恢复 `genericAutoSchema` 状态，`effectiveAutoColumns` 优先用已保存 schema 列；`saveGenericStrategy` 优先绑定已保存 schema，未保存时仍按模型输出契约列自动创建（流程不中断）；进入第 2 步聚类流程时自动加载项目已保存策略；导入时以当前列集合补齐 otherValues/rules 兜底。
+  - `i18n/index.tsx` 更新 clusterPreviewReadyHint 中英文；`global.css` 新增 `.data-annotation__strategy-library(-row)` 样式。
+- 测试：后端新增 `test_saved_annotation_strategies_api.py`（upsert/列表/权限/非法 payload，已登记 week_manifest）与 `test_annotation_task_state.py` 回归 `test_execute_worker_publishes_with_rebound_schema_after_discovery_strategy_save`（task_snapshot 留空占位 + revision 快照换绑 → 执行成功发布标签；task_snapshot 有不可变保护，测试经 Core update 改写）。
+- 验证：后端 3+71+22（labeling 套件）全部通过；前端 DataAnnotationPage 60/60（新增导入策略测试、保存策略断言改正向）、`tsc --noEmit`、`npm run build` 通过；全量 vitest 337 passed/19 skipped，1 例 TrainingJobsPage 偶发超时单独复跑通过（与本次改动无关）。
+- 说明/限制：策略 payload 直接存前端 camelCase 草稿，跨模型复用时导入端按当前输出列合并兜底；标签列名对不上时需管理员重新核对映射。
+
+### 2026-09-20 门户刷新已删除任务：工作区降级为友好提示页而非裸错误码
+
+- 需求：标注员门户在浏览器点刷新时报 `ANNOTATION_TASK_NOT_FOUND`，页面只显示一行裸错误码、无返回入口。
+- 根因：深链 `?task=` 会在刷新后重新打开对应工作区；若任务此后被删除（如管理员删除回传任务），`getTask` 返回 404，TaskWorkspacePage 的 `error && !task` 分支只渲染 `<p className="error">{error}</p>`（原始错误码、无按钮）。
+- 实现（ml-platform/annotator/frontend）：
+  - TaskWorkspacePage.tsx：新增 `taskMissing` 状态，初始加载 catch 中读取 `err.response.status`（client.ts 已附带），404 时置位；`error && !task` 分支改为友好页——「标注工作区」标题 + `任务不存在或已被删除，无法打开标注工作区`（非 404 仍显示原始错误）+ 「返回任务列表」按钮（onBack）。
+  - AdminReviewPage.tsx：同样在任务加载 catch 中对 404 显示 `任务不存在或已被删除，无法打开评审工作区`（该页本就有返回按钮，仅替换裸错误码文案）。
+- 测试：TaskWorkspacePage.test.tsx 新增 1 例（getTask 拒绝 404 → alert 显示友好文案且不含裸错误码、返回按钮触发 onBack）。
+- 验证：组件 47/47、门户全量 vitest **95 passed（13 文件）**、`tsc --noEmit`、`npm run build` 通过（bundle index-DuFeNypf.js）；`docker compose build annotator-frontend && up -d` 已部署，8443 返回页引用新 bundle。
+- 说明/限制：任务被删除后门户端 404 行为本身正确（契约：已删除任务的门户端点一律 404），本次仅修复前端兜底展示；用户需 Ctrl+F5 强刷门户页拿到新 bundle。
+
+### 2026-09-20 回传验收面板重设计：与「任务操作记录」卡片网格同款样式
+
+- 需求：主平台数据标注页中的「回传验收」区块重新设计，样式与上方「任务操作记录」保持一致。
+- 实现（ml-platform/frontend）：
+  - ReturnAcceptancePanel.tsx 重构：外层改为 `table-surface data-annotation__operations-surface` + `data-annotation__section-head`（h3「回传验收」+ ant-btn-sm 刷新按钮）；批次从「左侧按钮列表 + 右侧固定详情栏」两栏布局改为与操作记录相同的 `data-annotation__operations` 自适应卡片网格（minmax(280px,1fr)），每张卡片复用 `data-annotation__operation` 结构——head（任务名 code + 状态 Tag：待验收/已验收/已退回）、meta（标注员 · 样本数）、任务短 id 行、创建时间、操作按钮（pending 且 operation_state=completed 时「打开验收」，否则「查看摘要」）；空态 Empty「暂无回传批次」、加载 Spin、加载更多按钮均与操作记录一致。
+  - 验收操作从右侧常驻详情栏移入 antd Drawer（480px，rootClassName=annotation-return-panel-drawer）：任务/标注员/批次状态/样本数/修订/质量风险摘要、跳转标注员门户按钮（`?task=&viewer=admin`）、退回原因 textarea 与验收/退回按钮（仅 pending 且操作完成时渲染）；不再自动选中首个批次，打开抽屉才加载 diff 计算质量风险。
+  - global.css：删除旧 `annotation-return-panel__batch*` 卡片样式，新增 `__notices`（错误/成功提示条）、`__action`、抽屉正文 p/textarea 与 `annotation-return-panel-drawer` portal 选择器、保留 `__hint`。
+- 测试：ReturnAcceptancePanel.test.tsx 重写为 5 例（卡片上下文与无样本明细、抽屉内验收含门户跳转、退回必填原因、非 pending 批次仅摘要、空态）。
+- 验证：组件 vitest 5/5、主前端全量 **337 passed / 19 skipped（63 文件）**、`tsc --noEmit`、`npm run build` 通过；5173 为 Vite dev server，HMR 自动生效无需部署。
+- 说明/限制：面板文案保持中文（与既有实现一致）；行为契约（验收/退回/门户深链/质量风险口径）未变，仅 UI 结构与样式重排。
+
+### 2026-09-20 聚类向导第 2 步布局：删除 schema 编辑器、聚类预览全宽展示、重命名同步
+
+- 需求（用户截图三处标注）：①删除聚类完成后向导第 2 步中的「自定义标签 schema」编辑器（红框）；②聚类预览面板（绿框）向右拉伸占满主列，K 指标等文字不得遮挡散点图的簇点；③任务因重名被后端自动改名时，右侧冻结契约摘要中的任务名称（蓝框）需同步为新名称。
+- 实现（ml-platform/frontend）：
+  - DataAnnotationPage.tsx：
+    - 删除向导第 2 步 cluster-split 内的 LabelSchemaEditor 块与 `genericAutoSchema` 状态、`saveGenericAutoSchema` 函数；向导不再单独编辑标签列。
+    - `saveGenericStrategy` 改为保存策略时自动以模型输出契约列创建 schema（`{任务名}-labels`，purpose=annotation）并随 PUT /configuration 换绑（`label_schema_id`），流程保持一步完成；`createGenericTaskFromSetup` 的 label_schema_id 展开同步简化（仅 manual schema 路径）。
+    - `notifyAutoRenamedTask` 在提示 toast 的同时 `setGenericTaskName(task.name)` 同步向导与冻结契约摘要展示名；`saveGenericStrategy` 在 PUT 返回后同样调用（PUT 改名亦走 `_unique_task_name` 后缀），保证后续提交的是重命名后的名称。
+    - 向导第 2 步聚类完成后移除 `data-annotation__cluster-split` 双栏，ClusterPreviewPanel 与策略编辑器在 setup-field 内纵向排列，聚类预览占满主列宽度（绿框拉伸）。
+  - global.css：`.data-annotation__cluster-preview-body` 改单列（图表在上、簇数/评分等指标文字在下，不再与散点同排遮挡簇点；配置策略弹窗同组件同步受益）；散点图 svg max-width 420→560px。
+  - i18n：clusterPreviewReadyHint 更新为「标签列将直接采用模型输出契约列」（中英）。
+- 测试：DataAnnotationPage.test.tsx 移除 chooseUserLabelSchema 辅助与两处调用；第一个聚类测试补「保存 schema 按钮不存在」断言；新增「重命名同步」回归测试（创建返回 `聚类发现任务-2` → 契约摘要显示新名称，保存策略 PUT 携带新名称 + label_schema_id）。
+- 验证：DataAnnotationPage + ClusterPreviewPanel 套件 65/65；全量 `npm test` 334 passed / 19 skipped（63 文件，基线 333+1 新增）；`tsc --noEmit`、`npm run build` 通过。
+- 说明/限制：向导内不再支持自定义标签列（枚举值/边界等），如需自定义可在任务列表「配置策略」弹窗（占位任务 frozenLabelColumnCount==0 仍有 LabelSchemaEditor）完成；保存策略每次点击会新建一个 `{任务名}-labels` schema（与旧编辑器逐次保存行为一致）；浏览器实测待部署后补验（散点全宽、K 指标在图表下方、重名任务摘要同步）。
+
+### 2026-09-20 双 cookie 会话隔离 + 已删除任务过滤 + 门户间进度同步
+
+- 需求（四项）：1) 标注员账号与管理员账号在门户内必须严格区分（用户建议必要时新开 8444 管理员门户）；2) 管理员审核门户不得出现已删除任务；3) 主平台回传验收不得出现已删除任务；4) 各门户间任务进度完全同步。
+- 方案选型：浏览器 cookie jar 不区分端口，同 hostname 的 8444 门户无法隔离会话；改为**双 cookie 名**——标注员 `portal_session`（DB 会话）、管理员 `admin_portal_session`（无状态 JWT）——配合 `X-Portal-Viewer` 请求头声明当前身份，同一浏览器可同时保持两个独立会话。
+- 实现（主后端 ml-platform/backend）：
+  - app/services/annotator_identity.py：新增 `ADMIN_PORTAL_COOKIE_NAME`；`resolve_portal_identity(request, db, *, viewer)` 按 viewer 分流——annotator 只读 `portal_session`（DB 会话查不到直接 PORTAL_SESSION_INVALID，旧 admin JWT 残留不再被误解析）；admin 只读 `admin_portal_session`（JWT kind=portal_admin）。
+  - app/api/annotator_internal.py：portal_me 读 `X-Portal-Viewer` 头（默认 annotator）传给 resolve；portal_logout 同时删除两个 cookie（均带 secure/httponly/samesite）；`internal_admin_tasks` 每项新增 `completed_samples`（`AnnotationAssignmentSample` 中 `length(values) > 2` 的计数，与标注员门户同口径）与 `project_name`；任务列表本就过滤 `archived_at.is_(None)`（问题 2 经核为跨项目未删除的空名测试任务，加 project_name 辅助辨识）。
+  - app/services/annotation_returns.py（问题 3）：`_project_rows` 查询补 `GenericAnnotationTask.archived_at.is_(None)` 过滤；`_batch_or_error` 对 archived 任务抛 ANNOTATION_TASK_NOT_FOUND（批次操作 404）。
+- 实现（网关 ml-platform/annotator/backend）：
+  - services/session.py：`require_portal_session` 读 `X-Portal-Viewer` 头选择 cookie 名，转发 `resolve_portal_session(token, viewer, cookie_name)`；services/platform_client.py me 请求携带对应 cookie 名与 viewer 头。
+  - api/auth.py：login 依次匹配两种 Set-Cookie（**admin 名须先测**，因 `admin_portal_session=` 含子串 `portal_session=`）并把网关签发的 token 以正确 cookie 名落盘；logout 删除两个 cookie。
+- 实现（门户前端 ml-platform/annotator/frontend）：
+  - api/client.ts：`getPortalViewer/setPortalViewer`（localStorage），所有请求带 `X-Portal-Viewer` 头；api/auth.ts 登录成功后按返回 kind 写入 viewer。
+  - App.tsx：挂载解析 `?viewer=admin` 深链参数（主平台回传面板「在标注员门户查看明细」按钮改为 `?task=&viewer=admin`）；顶栏 user-chip 增加身份徽标（管理员/标注员）。
+  - api/admin.ts `AdminTaskListItem` 补 completed_samples/project_name；AdminQueuePage 显示 `进度 x/y` 与项目名。
+- 测试：主后端 test_portal_admin_review.py 更新双 cookie 断言并新增共存/互斥 2 例（admin JWT 放入 annotator cookie 被拒）；test_annotation_return_acceptance.py 新增 `test_return_batches_of_deleted_tasks_are_hidden_and_actions_404`；AdminQueuePage.test.tsx 断言进度与项目名。主后端过滤套件 **229 passed / 5 skipped**、网关 **29 passed**、门户前端 **94 passed** + tsc + build（bundle index-Dk9b285a.js）、主前端 **333 passed / 19 skipped** + tsc + build；容器已重建部署（annotator + annotator-frontend + restart annotator-frontend 刷新 nginx IP 缓存）。
+- 端到端实测（8443 线上）：jingms 真实登录 + 同 jar 铸 admin JWT——me 按 viewer 分别解析出 annotator/admin；admin 打 /portal/tasks → 403 PORTAL_ANNOTATOR_REQUIRED；admin tasks 返回 147/147 进度与项目名（任务 as，returned_pending_acceptance）；logout 一次性清双 cookie（删除头均带 Secure/HttpOnly/SameSite=lax）；清空 cookie 后 me → 401。
+- 说明/限制：浏览器需重新登录两个账号（旧 `portal_session` 中的 admin JWT 会按 PORTAL_SESSION_INVALID 拒绝，属预期）；管理员会话仍为无状态 JWT（TTL 30 分钟，无吊销）；验证用临时脚本与含 token 的 jingms.txt 已清理。
+
+### 2026-09-20 管理员登录后 SERVICE_SUBJECT_INVALID：门户前端旧 bundle + 网关 admin 会话误入标注员路由
+
+- 需求：管理员在门户用 admin 账号登录成功后页面报 SERVICE_SUBJECT_INVALID，无法进入评审页。
+- 根因（两层）：
+  1. **门户前端容器跑的是旧 bundle（index-Dlpxkt6r.js，凌晨「侧栏 200px」会话的产物，早于管理员评审功能）**：旧前端不认识 `me()` 返回的 `kind=admin`，把管理员当普通标注员路由到 TaskWorkspacePage，深链 `?task=` 走标注员任务接口。
+  2. **网关标注员路由对 admin 会话铸造坏 subject claim**：api/tasks.py、api/comments.py、api/notifications.py 全部 `subject_id=str(principal.subject_id)`，而 admin principal 的 subject_id 为 None → `"None"` 被写进 service token 的 `annotator_subject_id` claim → 主后端 `uuid.UUID("None")` 解析失败 → SERVICE_SUBJECT_INVALID。
+- 实现（网关 ml-platform/annotator/backend）：
+  - services/session.py 新增 `require_annotator_session`（以 `Depends(require_portal_session)` 作为子依赖，保持 FastAPI dependency_overrides 测试模式有效）：principal.subject_id 为 None（admin 会话）时 403 `PORTAL_ANNOTATOR_REQUIRED`。
+  - api/tasks.py、api/comments.py、api/notifications.py 全部路由的会话依赖从 `require_portal_session` 换为 `require_annotator_session`；admin 路由（api/admin.py）与 me 不变。
+  - tests/test_portal_api.py 新增 `test_portal_annotator_routes_reject_admin_sessions_with_clear_code`（admin principal 打 /portal/tasks、/portal/notifications、/portal/comments → 403 PORTAL_ANNOTATOR_REQUIRED）。
+- 部署：`docker compose build annotator annotator-frontend && up -d && restart annotator-frontend`（重建 annotator 后必须重启 annotator-frontend 刷新 nginx 缓存的网关容器 IP）。**门户前端新 bundle index-uJowFCJs.js（含管理员评审页面）**，与「管理员登录评审」条目记录的 hash 一致。
+- 验证：网关 `pytest tests -q` **29 passed**（28 基线 + 1 新增）；curl 实测——admin 门户 JWT 经 8443：me→200 kind=admin、/portal/admin/tasks→200 返回任务列表、admin 打 /portal/tasks→403 PORTAL_ANNOTATOR_REQUIRED（不再透出 SERVICE_SUBJECT_INVALID）。
+- 说明/限制：本地主后端进程（uvicorn --reload）代码为最新无需重启；此前复现一度误报 SERVICE_ADMIN_REQUIRED，系复现脚本 UUID 抄写错误（`994221` 写成 `994421`），非系统问题；管理员此刻应 Ctrl+F5 强刷门户后重试登录评审。
+
+### 2026-09-20 门户登出修复：Secure cookie 删除头缺 Secure 属性致浏览器忽略删除
+
+- 需求：标注员门户点「退出」后界面回到登录页，但浏览器里 `portal_session` cookie 实际未被删除（登录页只是前端清了本地状态）；再从主平台回传面板点「在标注员门户查看明细」时 `me()` 仍解析出原标注员（jingms）身份，深链进的是标注员工作区而非管理员评审页，管理员无法用自己的账号登录评审。
+- 根因：登录时网关 `response.set_cookie(COOKIE_NAME, token, httponly=True, secure=True, samesite="lax", path="/")` 带 `Secure`；登出时 `response.delete_cookie(COOKIE_NAME, path="/")` 生成的删除 Set-Cookie 不带 `Secure`/`HttpOnly`。按 RFC 6265bis「strict secure cookies」规则（Chrome/Edge/Firefox 已实现），删除带 `Secure` 标志的 cookie 时删除头也必须带 `Secure`，否则浏览器静默忽略该删除。curl 不校验 Secure 属性故服务端自测无法暴露此问题。
+- 实现：
+  - ml-platform/annotator/backend/app/api/auth.py logout：`delete_cookie` 补齐 `secure=True, httponly=True, samesite="lax"`（与 cookie_options() 一致）。
+  - ml-platform/backend/app/api/annotator_internal.py portal_logout：同样补齐（登录 cookie 同为 secure=True 写入）。
+  - 网关 tests/test_portal_api.py 新增 `test_portal_logout_deletes_cookie_with_matching_secure_flags`：断言登出 Set-Cookie 含 `portal_session=""`、`Max-Age=0`、`Secure`、`HttpOnly`、`SameSite=lax`。
+- 验证：网关 `pytest tests -q` **28 passed**（27 基线 + 1 新增）；主后端 `-k "portal or return or comment or annotator"` **226 passed / 5 skipped**（与基线一致）。docker compose 重建 annotator 网关容器（注意：重建后需 `docker compose restart annotator-frontend` 刷新 nginx 缓存的网关容器 IP，否则 502）；curl 全链路实测：login（Set-Cookie 带 Secure）→ logout（删除头带 Secure/HttpOnly/SameSite=lax）→ me 返回 401 PORTAL_SESSION_REQUIRED。
+- 说明/限制：主后端 portal_logout 不经浏览器直接调用（门户前端全部走网关），改动仅为一致性防御；登出仍只删浏览器 cookie，DB 中 AnnotatorSession 记录保留至 TTL 过期（30 分钟内被窃取的 cookie 值理论上仍可用，属既有设计）；管理员此刻重新操作：门户退出 → 主平台点「在标注员门户查看明细」→ 登录页用 admin 账号登录 → 直达 AdminReviewPage。
+
+### 2026-09-20 管理员登录标注员门户评审（验收/退回/批注）
+
+- 需求：管理员在主平台点「在标注员门户查看明细」后，用自己的管理员账号登录标注员门户：只看到自己创建的未归档任务；对已回传（存在 state=pending 回传批次）的任务可合格验收、退回修改、批注（逐条浏览样本+标注结果、批注自动保存）；未回传任务三项操作禁用并提示原因；管理员不能编辑标签值（只读）；普通标注员行为完全不变。
+- 主后端（ml-platform/backend）：
+  - app/services/annotator_identity.py：新增无状态管理员门户 JWT（`issue_admin_portal_token`，payload kind=portal_admin，复用 annotator_service 密钥/算法，TTL annotator_session_ttl_seconds，避免改 AnnotatorSession.account_id 非空 schema）；`resolve_portal_identity` 统一解析门户 cookie（先 DB 会话→annotator，失败再 JWT→admin）；`PortalSession`/`ServicePrincipal` 扩展 kind/user_id/admin_user_id 字段；`service_token_for_project` 支持 admin_user_id claim。
+  - app/api/annotator_internal.py：login 端点先查 AnnotatorAccount 决定分支（annotator 账号存在时密码错不 fallback admin 路径），admin 登录签发 JWT cookie；me 返回 kind/user_id；新增 6 个内部端点 `/api/internal/portal/admin/tasks[/{task_id}[/samples|/comments|/accept|/return]]`——owner+未归档范围过滤、search（名称/短 id）、cursor 分页、样本按 row_index 排序（labels 取 AnnotationSampleCurrent 任务级当前值、values 按 visible_columns 过滤）、批注列表/创建（author_id=管理员 users.id，无 pending 批次 409 RETURN_BATCH_REQUIRED、越界样本 403）、accept 调 `accept_return_batch`、return 调 `reject_return_batch`（AnnotationReturnError→409）。
+- 网关（ml-platform/annotator/backend）：
+  - services/session.py：PortalPrincipal 支持 admin（subject_id=None、user_id）；services/platform_client.py service token 携带 admin_user_id claim（无 subject 时不加 annotator_subject_id）。
+  - api/auth.py me 透传 kind/user_id；新增 api/admin.py 7 个 `/portal/admin/*` 路由（kind 校验 403 PORTAL_ADMIN_REQUIRED，读 admin_review:read/写 admin_review:write，结构化错误透传）；main.py 注册。
+- 门户前端（ml-platform/annotator/frontend）：
+  - api/auth.ts me 类型加 kind/user_id（kind 缺省视为 annotator）；新建 api/admin.ts（7 个端点封装）。
+  - App.tsx：admin 分支路由（评审任务/评审工作区导航、`?task=` 深链直达评审页、admin 不渲染通知收件箱）。
+  - 新建 AdminQueuePage：任务卡片（状态/模式/样本数/创建时间/标注员/回传状态：待验收/已验收/已退回/未回传）；合格验收/退回修改/批注三按钮仅 pending_return_batch_id 存在时可用，否则禁用+tooltip「任务未回传，不能验收/退回/批注」；验收确认弹窗（成功提示生成数据版本）、退回弹窗必填原因；操作后刷新列表。
+  - 新建 AdminReviewPage：顶部任务名+返回+样本位置 x/N；上一条/下一条（按钮+←/→）；样本数据卡片网格（字段名小灰字+值加粗）+标注结果只读（label_schema 列名+当前值）；批注列表（作者/时间/内容）+输入框 800ms debounce 自动保存（内容非空且与上次已保存不同才 POST，保存后清空输入，Ctrl+Enter 或按钮手动提交）；无 pending 批次显示「任务未回传，无法批注」并禁用输入。
+  - styles.css 追加 admin 样式（复用现有 token）。
+- 测试：主后端新增 tests/test_portal_admin_review.py 21 例（admin 登录/me、annotator 不受影响、admin JWT 过期、service token admin claim、任务列表 owner 范围/搜索、详情只读、样本浏览/过滤、批注创建/越界/无批次、accept/return 全流程含冻结批次与数据版本生成）并登记到 tests/week_manifest.py week 8；网关 test_portal_api.py 更新 me 断言并新增 4 例（admin 身份、非 admin 403、admin 转发与 scope、结构化错误透传）；门户前端新增 AdminQueuePage.test.tsx 7 例、AdminReviewPage.test.tsx 7 例、App.test.tsx 补 2 例 admin 分支。
+- 验证：主后端 `-k "portal or return or comment or annotator"` **226 passed / 5 skipped（8 subtests）**、test_suite_manifest **5 passed**；网关 **27 passed**；门户前端 vitest **94 passed（13 文件）**、`tsc --noEmit`、`npm run build` 通过（bundle index-uJowFCJs.js）。主后端全量套件 1957 passed / 109 skipped / **19 failed**，其中 18 个为与本功能无关的既有失败（pyarrow 缺失致 test_dataset_import_contract 7 例、Alembic 迁移头/发布证据常量与工作树未提交迁移不一致 5 例、Dockerfile 断言 2 例、离线推理子进程 1 例、onnx 转换子测试 2 例、升级夹具 1 例），1 个（test_suite_manifest 缺新模块登记）已由本次 week_manifest 登记修复并复验通过。
+- 说明/限制：管理员门户会话为无状态 JWT（无 DB 会话记录、无吊销能力，TTL 30 分钟内有效）；admin 在门户不展示通知收件箱（通知端点为 subject 范围）；批注保存失败的草稿在切换样本时丢弃（错误状态已即时提示）。
+
+### 2026-09-20 回传验收：批次关联任务/标注员、明细改门户查看
+
+- 需求：回传验收面板此前只显示批次 ID，无法与上方任务关联；面板内逐样本「源数据/回传标签」明细太长导致无法验收。要求批次显示所属任务、标注员信息；验收页不再展开样本明细，明细在跳转标注员门户后查看。
+- 后端（app/services/annotation_returns.py）：
+  - `list_return_batches` 每项新增 `task_id`/`task_name`/`annotator_subject_id`/`annotator_name`（批量 in_ 查询 AnnotationAssignment → GenericAnnotationTask.name、AnnotatorAccount.username(subject_id)，无 assignment 时字段缺省）。
+  - diff 端点不变（仍可用于质量风险统计）。
+- 前端（ml-platform/frontend）：
+  - api/annotationReturns.ts：ReturnBatch 类型扩展上述字段。
+  - ReturnAcceptancePanel.tsx 重构：批次卡片显示「任务名 (短 task id) + 标注员 + 样本数 + 状态徽标」（无任务信息时回退批次短 id）；明细区只保留摘要（任务/标注员/状态/样本数/修订/质量风险）与提示文案；删除逐样本表格（源数据/回传标签不再渲染，diff 仅用于计算空标签风险数，超出扫描范围时注明）；新增「在标注员门户查看明细」按钮，window.open 打开门户新标签页，URL 为 `VITE_ANNOTATOR_PORTAL_URL` 或 `{protocol}//{hostname}:8443` + `?task={task_id}`。
+  - global.css 新增批次卡片样式（annotation-return-panel__batch 等）。
+- 标注员门户（annotator/frontend/src/App.tsx）：支持 `?task=&assignment=` 深链——登录态下 me() 解析后自动打开对应任务工作区，未登录时先展示登录页，登录后同样跳转。
+- 测试：后端 test_annotation_return_acceptance.py 列表测试补 AnnotatorAccount/任务名并断言 4 个新字段（13/13 通过）；前端 ReturnAcceptancePanel.test.tsx 重写（断言任务/标注员展示、无表格、门户跳转 URL、验收流程，2/2 通过）。
+- 验证：主前端 vitest 333 passed / 19 skipped、tsc、build 通过；门户 78/78、tsc、build 通过；后端 `-k return` 115 passed / 5 skipped。
+- 说明/限制：管理员平台账号与标注员门户账号体系独立，跳转门户后需以（被授权的）标注员账号登录查看；如需管理员免登录只读评审门户任务，需新增管理员只读会话能力（涉及权限契约，未在本次实现）。
+
+### 2026-09-20 自动标注向导：最终预览限高内部滚动
+
+- 需求：新建自动标注任务第 2 步的「最终预览」区块（全量统计 summary JSON 含超长 visible_columns 数组 + 分页样本逐条 JSON）不受高度约束，页面被撑得很长，需滚动很久才能到底部按钮。
+- 实现：global.css 新增 `.data-annotation__final-preview` 规则——max-height 340px、overflow-y auto、卡片化（边框/圆角/浅底）；内部 `pre` 去外边距、12px 字号、pre-wrap 换行；样本列表 grid 收紧间距。「加载更多预览样本」按钮随区块内部滚动。
+- 验证：DataAnnotationPage.test.tsx 58/58 通过、`npm run build` 通过。
+- 说明：仅 CSS 改动，无逻辑变化；聚类预览分支（ClusterPreviewPanel）不受影响。
+
+### 2026-09-20 聚类发现任务：标签改为聚类之后定义（去掉向导第 2 步前置 schema 编辑器）
+
+- 需求：新建自动标注任务向导第 2 步中，聚类预览之前的「自定义标签 schema」编辑器（红框内容）删除；标签列应在聚类完成后、保存标注策略之前再定义并保存。
+- 后端实现：
+  - app/services/annotation_strategies.py：`label_schema_contract_from_snapshot` 新增 `allow_empty` 参数（cluster discovery 任务在用户定义标签前列之前冻结快照可携带空占位 schema）；`apply_preview_annotation_strategy` 调整解析顺序——先取 config，再以 `allow_empty=config.cluster_discovery` 解析 schema。
+  - app/api/generic_tasks.py：
+    - 创建端点：discovery 配置（`{clustering: true, cluster_discovery: true}`）且未提供 label_schema_id 时不再报 WEAK_SUPERVISION_SCHEMA_REQUIRED，改为 `create_label_schema(..., columns=[], commit=False)` 创建占位空 schema（满足 label_schema_id NOT NULL 约束，避免 SQLite 存量表列变更）；非 discovery 的聚类配置仍要求用户 schema。
+    - `_validate_automatic_configuration`：同样以 `allow_empty=config.cluster_discovery` 放宽；占位任务保存带 strategy 的配置（cluster_discovery=False）时仍 422 LABEL_SCHEMA_REQUIRED。
+    - 更新端点（PUT /configuration）：`GenericTaskConfigurationUpdate` 新增 `label_schema_id`（用 `model_fields_set` 区分「未提供」与「显式提供」）；提供时校验项目归属（404 LABEL_SCHEMA_NOT_FOUND）与列非空（422 LABEL_SCHEMA_REQUIRED）、仅限 automatic 任务（422 LABEL_SCHEMA_IMMUTABLE）；换绑更新 task.label_schema_id/label_snapshot 并以 **Core 层 `update()`** 更新 AnnotationTaskLabel binding（ORM before_update 事件对标注历史一律抛 IMMUTABLE_LABEL_HISTORY，而换绑仅发生在 draft/failed/needs_review 无标注任务上，故绕过 ORM 事件）；`_snapshot_with_configuration` 新增 label_schema 参数，快照 label_schema 与 config_hash 随新 schema 重建。
+  - app/tasks/annotation_preview_tasks.py：`snapshot.get("label_schema")` 两处 None 安全访问（占位 schema 存在但列空，防御性处理）。
+- 前端实现（ml-platform/frontend）：
+  - api/annotationTasks.ts：`GenericTaskConfigurationPayload` 新增 `label_schema_id?`。
+  - DataAnnotationPage.tsx：删除第 2 步聚类前的「自定义标签 schema」编辑器整块与 `genericAutoLabelSource` 死状态；`startGenericDiscovery` 不再要求/提交 label_schema_id；聚类完成后（ClusterPreviewPanel 与策略编辑器之间）插入 LabelSchemaEditor（初始列来自模型输出契约列）；`saveGenericStrategy` 增加未保存 schema 守卫并提交 label_schema_id；任务列表「配置策略」弹窗对占位任务（frozenLabelColumnCount==0）同样先渲染 LabelSchemaEditor 再保存策略（saveAutomaticConfigSchema 创建 `${task.name}-labels` schema 并随 payload 提交）。
+  - i18n：clusterPreviewReadyHint 更新为「请先在上方定义并保存标签列，再选择策略…」。
+- 测试：后端 test_annotation_task_state_api.py 新增 3 例——discovery 无 label_schema_id 创建（201 + 占位空 schema + binding 指向占位 schema）、PUT 带 label_schema_id + rule 策略换绑（task_revision+1、快照 label_schema/config_hash 重建、binding 更新）、占位任务无 schema 保存策略（422 LABEL_SCHEMA_REQUIRED、revision 不变）；前端 DataAnnotationPage.test.tsx 两个 discovery 向导测试的 `chooseUserLabelSchema()` 移至聚类完成后，PUT 断言新增 label_schema_id。
+- 验证：后端受影响套件（test_annotation_task_state.py + test_annotation_task_state_api.py + test_async_operation_contract.py）**115 passed**；前端 `npm test` **333 passed / 19 skipped（63 文件）**（首轮 1-2 例 TrainingJobsPage 时序 flaky，复跑全绿）、`tsc --noEmit` 通过、`npm run build` 通过。
+- 说明：占位 schema 名为 `{任务名}-pending-labels`（零列）；聚类发现 worker 不依赖标签 schema（聚类用模型包特征重要性，发现决策为 pending_configuration 空值）；换绑后 AnnotationTaskLabel 以 Core SQL 更新，绕过标注历史不可变 ORM 事件（此时任务尚无任何标注）。
+
+### 2026-09-20 标注门户：光标默认落在标签框
+
+- 需求：标注详细页光标默认放在 label 中；每次标注上一条/下一条切换样本后，光标位置默认回到标签框。
+- 实现（annotator/frontend）：
+  - SampleStream.tsx：新增 `firstLabelRef` + `useEffect`（依赖 sample_id/disabled），样本变化（含初始加载、上一条/下一条/跳过/保存并下一样本）后自动 focus 第一个标签输入框（enum 为 select、text/number 为 input，均加 `data-label-input="true"` 标记）；锁定/批量保存中不聚焦。
+  - TaskWorkspacePage.tsx `handleShortcut`：标签框内按 Enter 同样触发「保存并进入下一样本」（Ctrl/Meta/Alt 修饰键除外）；按 Esc 将光标移出标签框以恢复全局快捷键（数字 1-9 快捷选项、空格跳过等在标签框内输入时不触发，属预期行为——用户在输入标签值）。
+  - ShortcutHelp.tsx 更新帮助文案（Enter 标签框内同样有效、Esc 可移出标签框、1-9 标签框内输入数字时除外）。
+- 测试：TaskWorkspacePage.test.tsx 新增 3 例——焦点初始落在 category-s-1 且随上一条/下一条切换重新聚焦；标签框内 Enter 保存并在 600ms 后前进且焦点回到新样本标签框；Esc 移出标签框后数字快捷选项恢复。
+- 验证：annotator 前端 `npm test` **78 passed（11 文件）**、`tsc --noEmit` 通过、`npm run build` 通过（新 bundle index-D3fV_Uf_.js）。
+
+### 2026-09-20 标注任务与数据文件重名自动加后缀
+
+- 需求：标注任务不能重名，数据管理中的文件也不能重名；重名时自动添加后缀区分。
+- 实现（后端，项目内去重，软删除/归档不占用名称）：
+  - app/api/generic_tasks.py 新增 `_unique_task_name`：查询项目内未归档任务名集合，重名时追加 `-2`、`-3`…；应用于 POST /api/annotation-tasks 创建（`name=_unique_task_name(...)`）与 PUT /configuration 改名（`exclude_task_id` 排除自身，改回自身当前名保持稳定）。任务快照不含任务名，config_hash 不受影响。
+  - app/api/datasets.py 新增 `_unique_dataset_name`：查询项目内 type=dataset、未归档 Artifact 名集合，重名时在扩展名前追加 `-2`、`-3`…（`rows.csv` → `rows-2.csv`）；应用于全部上传入口——datasets/upload、datasets/batch、datasets/batch-upload、datasets/import-zip（逐成员）、dataset-imports（异步导入 source_name）及 `_store_uploaded_dataset`；batch-upload 与 import-zip 响应改返回 `artifact.name`（去重后真实名称）。
+- 前端（DataAnnotationPage.tsx）：新增 `notifyAutoRenamedTask`，两个任务创建入口（常规创建、聚类发现 startGenericDiscovery）在返回名称与提交名称不一致时提示「任务名称与现有任务重复，已自动改为「xxx」」（中英文）；数据集上传无需改动，列表按后端返回名称展示。
+- 测试：test_annotation_task_state_api.py 新增 `test_generic_task_name_collisions_get_suffixed_suffix`（同名三次创建 → 原名/-2/-3；改名撞名继续顺延；改回自身名保持）；test_dataset_import_contract.py 新增 `test_upload_handler_suffixes_duplicate_dataset_names`（同名二次上传 → rows-2.csv，上传已带后缀名 → rows-2-2.csv）。
+- 验证：后端 `pytest tests/test_annotation_task_state.py tests/test_annotation_task_state_api.py tests/test_async_operation_contract.py` **112 passed**；`pytest tests/test_annotation_task_state_api.py tests/test_dataset_import_contract.py` 56 passed（7 个失败为本机 venv 缺少 pyarrow 的既有环境问题，与本次改动无关，均为 parquet 相关测试）；前端 `npm test` **333 passed / 19 skipped（63 文件）**、`tsc --noEmit` 通过。
+- 说明：去重范围按项目（project_id）划分，不同项目允许同名；内部中间产物 Artifact（normalized.parquet 等）参与名称占用判断但本就不对用户展示；异步 dataset-import 的去重在提交时点判定，导入过程中撞名（并发）仍可能产生极小概率重复，无唯一约束兜底。
+
+### 2026-09-20 去掉「发布」「执行」按钮：预览完成后自动发布/自动执行
+
+- 需求：任务列表操作列去掉「发布」「执行」按钮；新建标注任务后，手动任务在预览完成后自动「发布」（preview_ready → awaiting_annotation），自动任务自动「执行」（创建 execution durable operation → executing）。
+- 后端实现：
+  - app/services/annotation_task_state.py `mark_preview_completed`（唯一将任务置 preview_ready 的位置）：previewing → preview_ready 后新增自动推进——manual 任务直接置 awaiting_annotation 并记录 `annotation_task.auto_published` audit 事件；automatic 任务调用 `request_annotation_execution`（幂等创建 durable operation，内部 commit 置 executing）记录 `annotation_task.auto_execute_requested` 事件（含 operation_id），并将 operation_id 暂存到 `task._auto_execution_operation_id`。聚类发现未配置（configuration_complete=False 或 needs_review_count>0）仍置 needs_review，保持「配置策略」流程不变。
+  - app/tasks/annotation_preview_tasks.py worker 成功路径：`complete_operation`（内部 commit 提交上述 pending 变更）之后，若存在 `_auto_execution_operation_id` 则调用 `enqueue_annotation_execution` 派发执行任务（celery delay / local daemon thread），避免在 preview 操作租约内嵌套派发。
+  - 后端 publish/execute API 端点保留（仅前端移除入口）；manual 任务已 awaiting_annotation 后 execute 请求返回 409 TASK_STATE_INVALID。
+  - 前置修复（既有 dirty 遗留）：`list_annotation_tasks` 此前会话已由 owner 过滤改为 accessible_project_query 项目范围过滤，但 `test_all_project_task_api_paginates_without_losing_owner_scope` 未同步更新——测试中为请求用户补加 second 任务项目的 ProjectMember（editor）成员关系使其保持可见，与新的项目范围语义一致。
+- 前端实现（DataAnnotationPage.tsx）：
+  - 删除任务行「执行」按钮与 `executable` 判断、`executeGenericTask` 函数、`genericTaskActionItems` 中「发布」项及 `runGenericTaskAction` 的 publish 分支、`transitionGenericTask` action 联合类型中的 "publish"；删除向导 `confirmGenericExecution` 函数与页脚「确认执行」按钮，改为「返回任务列表」（resetGenericScopeDraft + returnToTaskList）。
+  - manual 任务创建成功后自动调用 `createAnnotationPreview`（configHash 取自 task_snapshot.config_hash，存在时），提示「任务已创建，预览完成后将自动发布」；configHash 缺失时保持旧提示。
+  - 最终预览就绪 hint 改为「最终标签预览已完成，任务将自动开始执行。」
+  - 新增任务列表轮询：isTaskList 且存在 previewing/executing 状态任务时每 2s 调 refreshGenericTaskData（无 loading 闪烁），无过渡任务时不轮询。
+- 测试：后端 test_annotation_task_state.py（manual 自动发布 audit 断言、automatic 自动执行 + enqueue 派发断言、pause/resume 重写为直接置 preview_ready、audit 事件测试重置状态）、test_annotation_task_state_api.py（execute 端点改 409、local dispatch 断言 awaiting_annotation）、pagination 测试补 ProjectMember；前端 DataAnnotationPage.test.tsx——原「执行按钮」测试改写为「preview_ready 任务无发布/执行按钮」、新增「previewing 任务轮询刷新」（真实计时器，2s 间隔）、manual 创建测试补 config_hash 并断言创建后自动 POST /preview。
+- 验证：后端 `pytest tests/test_annotation_task_state.py tests/test_annotation_task_state_api.py tests/test_async_operation_contract.py` **111 passed**；前端 `npm test` **333 passed / 19 skipped（63 文件）**、`tsc --noEmit` 通过、`npm run build` 通过。
+- 说明：自动执行依赖 recovery 任务周期性 re-dispatch queued 执行操作，进程崩溃后可恢复；重新生成预览/配置策略后的新预览完成同样走自动发布/执行路径（按钮移除后唯一前进方式）；前端列表轮询仅在存在过渡态任务时激活，不产生常驻轮询负载。
+
+### 2026-09-20 任务列表操作列「···」下拉改为全部行内显示
+
+- 需求：主平台数据标注任务列表操作列中收纳在「···」下拉里的操作按钮全部直接显示，不再收进菜单。
+- 实现：DataAnnotationPage.tsx——操作列删除 Dropdown「···」触发按钮，`genericTaskActionItems` 生成的操作项（编辑任务/重试预览/配置策略/批注管理/发布/暂停/恢复/取消/提交回传/验收/完成/归档/重开/恢复归档，按任务状态条件渲染）改为行内 `ant-btn-sm` 按钮直接渲染（支持 danger 样式透传）；`.data-annotation__row-actions` 已有 `flex-wrap: wrap`，按钮自动换行防挤压。global.css 删除不再使用的 `.data-annotation__more-trigger` 规则。DataAnnotationPage.test.tsx 4 处「更多操作 → menuitem」两步点击改为直接点击行内按钮（验收/编辑任务/重新生成预览/配置策略）。
+- 验证：DataAnnotationPage.test.tsx 57/57；主平台前端全量 `npm test` 332 passed / 19 skipped（63 文件，与基线一致）；`tsc --noEmit` 通过；`npm run build` 通过。
+- 说明：菜单项本就按状态互斥生成，单行最多 8 个小按钮（预览/指派/执行 + 最多 4 个状态操作 + 删除），配合换行规则不会挤压其他列；工作台导出下拉（CSV/XLSX）不受影响。
+
+### 2026-09-20 数据标注页三处数据展示修复（时区 / 操作任务对应 / 标题语义）
+
+- 需求（用户截图三问）：①任务创建时间比真实时间少 8 小时；②操作卡片 ID 无法与任务列表 ID 对应；③任务列表 4 个任务却有 7 条"运行中的操作"令人困惑。
+- 根因（查 SQLite 与后端代码确认）：①后端以 UTC 存储时间（`datetime.now(timezone.utc).replace(tzinfo=None)`），API 返回无时区标记的 ISO 字符串，前端 `new Date(value)` 解析无偏移字符串时按本地时区原样显示 UTC 值（比北京少 8 小时）；②操作卡只展示 durable_operations 自身 UUID，未展示 task_id；③操作列表是任务操作日志（含已完成历史，每任务可有多条——预览每次重试都新增一条，41bb29b9 有 3 条、337b23d7 有 2 条），并非"仅运行中"，标题有误导。
+- 实现：DataAnnotationPage.tsx 新增 `formatBackendTimestamp`（无时区标记的 ISO 字符串补 "Z" 后按本地时区格式化，已有 tz 标记则原样），应用于任务表创建时间列与操作卡创建时间；操作卡新增「任务 + 8 位短 ID（主色 code，title 悬停全 ID）」行，与任务列表短 ID 一一对应；操作卡 ID 改 8 位短 ID（title 悬停全 ID）；i18n operationsSection「运行中的操作/Running operations」改「任务操作记录/Task operations」，空态文案同步「暂无任务操作记录」。
+- 测试（DataAnnotationPage.test.tsx）：操作 mock id 改真实 UUID 形态，断言 8 位短 ID（d471a117/bbbbbbbb）与 task_id 展示；创建时间断言不受影响（日期部分不变）。
+- 验证：主平台前端 `npm test` **332 passed / 19 skipped（63 文件）**；`tsc --noEmit` 通过；admin 浏览器实测——ass 创建时间 2026/9/19 15:18→23:18（+8 正确）、操作卡显示「任务 226a1258/41bb29b9/337b23d7/584ae2cc」与任务列表一一对应、标题已改「任务操作记录」。
+- 说明：统计条「运行中操作」计数仅统计未完成操作（state 非 completed/failed/cancelled），语义保持准确；due_at 为用户输入的日期（无时间偏移问题），未改动；其他模块页面的时间显示（如 NotificationCenter）未在本次范围。
+
+### 2026-09-19 工作区侧栏再窄 + 面板控件紧凑化
+
+- 需求：①左侧导航栏再窄一些；②侧栏内的上一页/下一页等按钮字体小一点、更美观。
+- 实现：styles.css——workspace 侧栏 240→200px（1100px 断点 220→190px）；新增 .side-panel-body 控件紧凑规则：按钮 font-size 12px、padding 5px 10px、圆角 4px（primary 6px 12px 加粗），输入/下拉/文本域 13px、padding 6px 10px，muted 文字 12px。
+- 验证：75/75 通过、tsc 与构建通过；部署 8443（bundle index-Dlpxkt6r.js）；浏览器实测——侧栏 200px，分页按钮 12px/38px 宽、"应用到所选样本" 12px/26px 高、下拉框文字无截断（5 个下拉 textFits 全 true）、无按钮溢出换行。
+
+### 2026-09-19 工作区真实进度与全局样本计数 + 侧栏变窄
+
+- 需求：①样本区域计数应显示任务全部样本（此前仅当前页 50 条）；②顶部进度须为真实进度（此前为当前页本地统计，50/50=100% 误导）；③左侧导航栏变窄。
+- 实现：TaskWorkspacePage.tsx——新增 totalSamples=task.total_samples、completedCount=task.completed_samples（后端任务详情 /portal/tasks/{id} 已返回指派范围真实值，sample_query.count + values 非空统计）、globalPosition=page*50+selected+1（全局位置）；顶部"样本 x / y"、进度条"已标注 x / y + 百分比"、底部"第 x/y 条"全部改用任务级数值，task 字段缺失时回退本地页统计（测试 fixture 兼容）；新增 refreshTaskStats（静默 getTask 刷新 completed/total，忽略失败），单条保存成功与批量保存成功后调用，保证进度实时且不虚增（已计入的样本重新保存不重复计数）；定义位置在 save useCallback 之前避免 TDZ；styles.css 侧栏 300→240px（1100px 断点 260→220px）。
+- 验证：75/75 通过、tsc 与构建通过；部署 8443（bundle index-j8-TX3Nv.js）；jingms 浏览器实测两轮——页面显示"样本 1/147、已标注 3/147、2%、第 1/147 条"与接口返回 total_samples=147/completed_samples=3 完全一致（此前误显示 50/50 100%）；保存标签后进度不虚增（重新保存已计入样本 completed 保持 3）；翻页验证第 2 页显示 51/147、第 3 页 101/147、"下一条"到 102/147，第 3 页（末页 47 条）"下一页"正确禁用；侧栏实测 240px。
+
+### 2026-09-19 标注工作区左栏手风琴化（右栏合并 + 一屏布局）
+
+- 需求：①右侧面板（指南/样本/批量/回传/批注）内容移到左侧对应标签栏下方展开；②去掉右侧独立区域；③样本数据一行显示更多列；④整页保持一屏、不需要滚动。
+- 实现：TaskWorkspacePage.tsx 删除 aside.right-panel，新增组件内 renderPanel(key) 渲染函数，五个面板内容在 side-tabs 的 map 中以 div.side-panel-group 包裹（tab 按钮 + side-panel-body 手风琴展开，多面板共存不变）；styles.css——workspace 改两栏（300px 1fr）、修复高度约束链（.workspace-main 加 min-height:0、.workspace-center 改 flex column、.sample-stream 由 height:100% 改 flex:1 + min-height:0，使 grid 行高不再被内容撑开）、side-tabs overflow-y:auto 内部滚动、field-grid minmax 200→150px（5 列）、field-item 紧凑化（浅灰底圆角小卡、字段名 11px、值 13px、padding 4px 6px）、stream-sample 去 900px 宽度限制并压缩各级 padding/margin、删除 right-panel/guideline 独立样式改为 .side-panel-body 内嵌（.guideline 嵌入覆盖）、响应式 960px 以下侧栏横排单列；响应式断点 1280→1100px。
+- 验证：标注员前端 75/75 通过；tsc 与生产构建通过（CSS 25.59kB）；部署 8443（bundle index-7x3gc7c4.js）；jingms 浏览器实测（两轮）——第一轮发现整页滚动 1261px（grid 子项被内容撑高），补修 min-height 约束链后复验全部通过：整页 scrollHeight=clientHeight（diff=0）无滚动、footer"保存并下一样本"常驻视口、左栏三面板展开后侧栏内部滚动（576px 限高）、样本 74 字段卡 5 列在 stream-sample 内部滚动、标签保存功能正常（修订号 9→11）。
+- 说明：样本字段数量多（74 个）时字段区仍需容器内部滚动（5 列下约 15 行），属一屏布局下的预期折衷；侧栏展开多面板后底部按钮需侧栏内滚动可见。
+
+### 2026-09-19 算法平台数据标注模块布局重设计（三页面：首页/工作台/向导）
+
+- 需求：重设计主平台（ml-platform/frontend）数据标注模块各页面样式与布局，保持与平台现有设计令牌一致（--accent-primary #187fd4、page-header/table-surface 卡片、Antd 小表格），标注员门户不动。
+- 实现（DataAnnotationPage.tsx）：
+  - 首页（tasksView）——页头下新增 4 卡任务统计条（进行中任务/待配置策略/待验收回传/运行中操作，彩色圆点+等宽数字，提示文案计数为 0 时隐藏）；操作列由最多 14+ 按钮收纳为「预览/指派标注员/执行 + ··· 更多下拉 + 删除图标」，更多菜单按任务状态动态生成（编辑/重试预览/配置策略/批注管理/发布/暂停/恢复/取消/提交回传/验收/完成/归档/重开/恢复归档），保留原禁用逻辑；任务列表卡片内用 antd Segmented 页签（全部任务/进行中 n/历史任务 n，默认全部保持旧行为）合并通用任务表与历史任务表两区块；「运行中的操作」为任务列表卡片下方的全宽独立卡片，操作以多列网格卡片（auto-fill 280px）呈现（id/类型·阶段/状态 Tag/进度条/错误码/查看结果），加载更多按钮独立内边距类 data-annotation__operations-more；执行结果从操作卡片内嵌套改为独立 Drawer（720px，region/aria 不变）；回传验收面板位于运行中操作之后。
+  - 标注工作台（workspaceView）——大 page-header 压缩为两级窄条：面包屑栏（数据标注 / run 短 id + 状态 Tag + 返回/导出/保存/刷新按钮）+ 元信息栏（模式/样本数/进度条百分比）；「当前样本数据」由两列行表改多列紧凑卡片网格（CSS auto-fill 190px，字段名小字在上、值加粗在下，主色左边条）。
+  - 创建向导（genericSetupView）——Steps 恢复标准尺寸；第 2 步改左右分栏（1fr + 300px sticky 侧栏）：右侧新增「冻结契约摘要」常驻侧栏（任务名称/数据版本含行数/模型版本/样本范围/输出列/契约状态已冻结）；聚类预览就绪时 ClusterPreviewPanel 与 AutomaticAnnotationStrategyEditor 改 `.data-annotation__cluster-split` 左右分栏（向导第 2 步与「配置自动标注策略」Modal 两处）。
+  - ClusterPreviewPanel.tsx——内部重组为「左图表（散点+簇分布条）/右信息（K/评估方式/评估样本/权重来源+K 分数）」分栏，类名与文案全部保留。
+- 布局调整（用户反馈）：首页初版为「任务列表 + 320px 右侧操作栏」双栏；按用户要求「运行中的操作」改为任务列表下方全宽显示（单栏纵向流：统计条 → 任务列表 → 运行中操作 → 回传验收），操作卡片改带边框圆角的网格卡片，移除 layout/rail 双栏 CSS。
+- 样式（global.css）：新增 data-annotation__stats/stat/tabs/row-actions/more-trigger/operations/operation/progress-track/operations-more、spot-weld-annotation__topbar/crumb/metabar/meta-item、setup-step2/contract-aside/contract-row、cluster-split/cluster-preview-body 等规则，全部使用现有主题令牌（深浅双主题适配），1100px 断点响应式折叠。
+- 测试（DataAnnotationPage.test.tsx）：4 处按钮（验收/编辑任务/重新生成预览/配置策略）移入更多菜单，测试改为先点「更多操作」再点 menuitem；其余契约（region aria-label、按钮名、页脚类名）不变。
+- 验证：主平台前端 `npm test` **332 passed / 19 skipped（63 文件）**；weekAcceptance 7/7；`tsc --noEmit` 与生产构建通过；admin 浏览器实测（127.0.0.1:5173 规避 portal_session cookie CSRF 误拦）——统计条四色卡片、Segmented 页签过滤与历史切换、··· 菜单弹出、运行中操作全宽网格卡片（任务列表下方、回传验收之前）、工作台两级窄条+卡片网格、向导第 2 步分栏+冻结契约摘要全部生效，控制台无 JS 错误。
+- 遗留（非本次范围）：旧版「开始手动标注」创建 run 失败——spotWeldQuality.ts createQualityRun 未携带后端要求的 X-Request-ID/Idempotency-Key 头（通用任务流程已携带），属既有功能缺陷待后续修复。
+
+### 2026-09-19 标注员门户按 style-1-light-enterprise 设计稿全面对齐
+
+- 需求：按 `design-showcase/annotator-portal/style-1-light-enterprise.html`（829 行设计稿）的风格样式实现标注员门户，补齐此前未接线的设计元素。
+- 实现：index.html 引入 Inter/JetBrains Mono 字体（preconnect + Google Fonts）；App.tsx 顶栏改为设计稿形态——64px 白色半透明毛玻璃（rgba 0.92 + blur 12px）、导航改为胶囊分段容器（灰底描边、激活项白底蓝字带阴影）、退出改为 36px 图标按钮、user-chip 改白底描边胶囊 + 浅蓝头像；LoginPage 标题对齐设计稿（eyebrow "Annotator Portal" + h1 "标注员门户"）、登录页改双角径向渐变背景、卡片 40px 内边距；统计卡去 stat-dot、改为彩色大数值（待标注蓝/进行中青/待回传橙/已逾期红）+ 大写小标签 + auto-fit 网格；TaskCard 重构为设计稿 DOM（task-main/task-title 行内状态标签/1fr-auto 网格/日历图标）；FeedbackBanner 改 info 圆圈图标 + "质检反馈："粗体前缀；工作区侧栏 56px 图标栏改 220px 图标+文字侧栏（side-tab 横排、激活浅蓝底、底部 side-divider+帮助），stream-meta 增加进度条（已标注 x/y + 蓝色 progress-bar + mono 百分比，labeledCount 按 clean/saved 状态统计）；响应式 1280px 侧栏收窄为图标、960px 隐藏右栏；删除全失效的 TaskQueuePage.css（queue-controls/task-row 规则均已死代码）。
+- 验证：标注员前端 75/75 通过；tsc --noEmit 与生产构建通过（CSS 25.45kB）；部署 8443（bundle index-Dbso6Kz5.js / index-D_UqhuP9.css）；jingms 浏览器实测全部通过——登录页卡片/文案、顶栏胶囊分段与图标按钮、四色统计卡、任务卡行内标签、220px 侧栏、进度条 100%、样本/批量右栏面板布局无错位。
+
+### 2026-09-19 Light Enterprise 主题迁移缺口补齐（样式导入修复 + 测试契约对齐）
+
+- 需求：新主题迁移后核对缺口并补齐（审计发现 3 处，其中 NotificationInbox 由组件级 CSS 覆盖为伪缺口，实际缺 `stream-fields`、`portal-page`）。
+- 实现：styles.css 新增 `.stream-fields`（样本流字段容器纵向布局）与 `.portal-page`（通用页面容器，对齐 app-main 规范）；**关键修复**——迁移时丢失的 `import './styles.css'`（App.tsx）与 `import './TaskQueuePage.css'`（TaskQueuePage.tsx）补回，此前新主题整体未进包（产物 CSS 仅 2.2kB）。测试契约对齐用户迁移后的组件变更：LoginPage 按钮/props（onLogin、登录到任务中心）、TaskQueuePage 新 props（user 对象，移除 onLogout/username）、工作台返回按钮更名"← 返回任务列表"、只读状态并入样本计数段落、双面板分页并存（上一页×2）、空列表隐藏分页、删除已迁移至 App 顶栏的用户名显示测试；App.tsx assignmentId null→undefined、login() 去除 remember 字段保持请求契约。
+- 验证：标注员前端 75/75 通过；tsc 与生产构建通过（CSS 2.2kB→23.9kB）；已部署 8443（bundle index-BVZjvbJe.js / index-B1joRJve.css），部署产物含 stream-fields/portal-page/app-topbar 规则；jingms 浏览器实测队列页与工作台浅色企业主题渲染正常，无无样式区域。
+
+### 2026-09-19 标注工作台顶栏三处精简（去用户信息/返回按钮归位/顶栏变窄）
+
+- 需求：①去掉标注详细页顶栏的用户信息栏（通知铃铛/头像/用户名/退出）；②"返回任务"按钮固定在左侧导航栏最下方；③顶栏变窄。
+- 实现：工作台（TaskWorkspacePage）顶栏仅保留"快捷键"按钮与任务状态，用户信息元素只存在于任务队列页；"← 返回任务"按钮渲染于侧栏 tab-rail 之后（左栏最下方）；styles.css 顶栏紧凑化——`.workspace` padding-top 28→14px、eyebrow 与标题同行（baseline 对齐）、h1 20→18px、topbar padding-bottom 10→8px、workspace-grid margin-top 12px。
+- 验证：标注员前端 76/76 通过（修正 2 处按钮可访问名"返回任务"→"← 返回任务"）；`tsc --noEmit` 与生产构建通过；重建 annotator-frontend 镜像部署 8443（bundle index-CI1dHXER.js），部署产物 CSS/JS 校验含全部新规则与 `back-to-queue` 结构；jingms 浏览器登录实测三点全部生效（顶栏无用户信息、返回按钮在左栏最下方、顶栏紧凑单行）。
+
+### 2026-09-19 标注工作台四项交互修改（批量分页/多面板导航/标签必填/标签类型对齐）
+
+- 需求：①样本区"上一页/下一页"分页移入"批量"分区；②左侧导航支持同时展开多个面板；③指南中标签改为必填（不再可选）；④样本标签类型与管理员创建标注任务时选择的类型一致。
+- 实现：分页控件移至"批量"面板顶部，批量面板独立分页游标（翻页仅影响勾选列表，不改变右侧样本流）；左侧导航由单面板改为 `openTabs` 集合，多面板可同时展开、各自独立收起；`LabelSchemaEditor.tsx`/`DataAnnotationPage.tsx` 标签默认必填，标签类型跟随管理员所选模型输出合同；数据修正脚本将活动任务 "as"（ID 584ae2cc）存量标签更新为必填。
+- 验证：标注员前端 76/76、主平台前端 61/61、weekAcceptance 7/7 全部通过；jingms 登录浏览器验证四项生效；部署 http://localhost:8443（bundle index-CNqoUy17.js）。另修复 weekAcceptance.test.ts 中 ClusterPreviewPanel.test.tsx 未注册问题。
+
+### 2026-09-19 重启后门户登录 500 修复（8000 端口孤儿进程 + WSL 中继）
+
+- 问题：电脑重启后标注员门户登录报 500。Docker 容器自动恢复但本地链路两处中断：①uvicorn 以 `--host 127.0.0.1` 启动且旧 `--reload` 孤儿进程占用 8000 端口，WSL 容器无法访问 Windows 127.0.0.1；②WSL TCP 中继（8100）未自启，而它是容器到本地后端的必经通道。
+- 修复：清理占用 8000 端口的孤儿 worker（PID 23708）与绑定 127.0.0.1 的 uvicorn（PID 860/20028），以 `--host 0.0.0.0 --port 8000 --reload` 重启本地后端；重跑 `temp_test/wsl_relay.py` 恢复 8100 监听。
+- 验证：容器内访问 host.docker.internal:8100/api/health 与门户登录 API（jingms）均返回 200，登录恢复。重启电脑后的恢复清单（见"数据打通"节运维要求）：本地后端必须以 `--host 0.0.0.0` 启动、重跑中继命令、清理 8000 端口残留 python 子进程。
+
+### 2026-09-18 标注员门户重设计 P0（样本流 + 快捷键 + 反馈横幅）
+
+- 范围：按 `ml-platform/docs/technical-proposals/2026-09-18-annotator-portal-redesign.md` §4/§5/§8 实施 P0，纯门户前端（annotator/frontend），不改主平台契约、不做 P1/P2（无仪表盘、跳过不回队尾、无撤销历史侧栏、无重做上限）。
+- 工作台（TaskWorkspacePage）：默认"样本流"模式——左栏 `GuidelinePanel`（任务说明+标签说明快照，可折叠）、中央当前样本（visible_columns 字段分组高亮）、右栏标签控件（沿用原生 select/input，枚举列加数字角标快捷选项 chips）、底栏 ← 上一条|第 n/N 条|下一条 →|跳过|保存并下一样本；顶栏"快捷键"按钮与"浏览全部"模式开关（翻页浏览保留全部既有交互：样本侧栏筛选/分页/批量编辑/回传/批注）。保存成功 600ms 自动前进，队尾显示"本次连续完成 N 条"汇总。全局 keydown 快捷键（window 监听、最新闭包 ref 转发、输入框聚焦不触发）：1-9 按显示顺序切换枚举选项（再按取消）、Enter 保存前进、Space 本地跳过（preventDefault 防滚动/按钮触发）、←/→ 翻样本、Ctrl+Z 撤销（前端栈 20 步，仅标签值变更入栈，undo 恢复不二次入栈并走防抖自动保存）、F1/? 帮助浮层（Esc 关闭）。`save` 改返回 boolean 供前进判断；自动保存防抖、修订号乐观锁、冲突确认弹窗、批量、评论、beforeunload 拦截全部原样保留。
+- 队列页（TaskQueuePage）：`FeedbackBanner`——列表项 `state` ∈ {returned_pending_acceptance, edit_for_return}（或任务状态待验收）时显示"有 N 条反馈待处理"警示横幅，点击滚动并高亮首个退回任务卡（`TaskCard` 含"需重做"徽标）；任务卡展示任务名/状态 tag/我的进度 x/y（无进度字段不显示）/截止时间/[继续标注]，搜索/筛选/排序/游标分页原样保留。
+- 新增组件（src/components/，同目录 *.test.tsx）：GuidelinePanel、ShortcutHelp、SampleStream、TaskCard、FeedbackBanner；`api/tasks.ts` Task 类型补 `state?`（后端 `_task_view` 本就返回该字段，纯前端补类型）。
+- 验证：annotator 前端 `npm test` **71 passed**（10 文件：工作区 41（含新增 10 项样本流/快捷键用例）、队列 7（含反馈横幅 2 项）、新组件 16、登录/通知/任务 API 不变全过）；`npx tsc --noEmit` 通过；`npm run build` 生产构建通过；`git diff --check` 通过。既有测试仅队列页 3 处按钮名选择器"打开工作区"→"继续标注"随任务卡重构同步更新。
+- 未尽：P1/P2（仪表盘、跳过回队尾服务端标记、撤销历史侧栏、重做上限/申诉）；队列列表数据无未读批注字段，反馈横幅按指派退回状态判定；帮助浮层为门户自有 dialog 样式（门户未引入 antd，沿用现有弹窗视觉）。
+
+### 2026-09-18 标注员项目授权闭环（修复指派 TASK_STATE_INVALID / ANNOTATOR_FORBIDDEN）
+
+- 问题：指派标注员确认时报两个错——①`TASK_STATE_INVALID`：后端 `_ensure_task_allows_assignment` 仅允许 preview_ready/awaiting_annotation/in_progress，但前端指派按钮无条件可点；②`ANNOTATOR_FORBIDDEN`：`create_assignments` 要求被指派者在 `project_annotator_grants` 有该项目 active 授权，本地库该表为空且全平台无项目授权 UI。
+- 后端（`api/annotator_internal.py`）：`GET /api/annotators` 新增可选 `project_id`（join ProjectAnnotatorGrant status=active，仅返回项目内已授权 active 标注员）；新增 `GET /api/admin/annotators/{subject_id}/grants`（admin-only，返回 `{items:[{project_id,status}]}` 全部状态记录）；既有 `POST/DELETE /api/internal/projects/{project_id}/annotators/{subject_id}/grant` 原先无角色校验（仅登录），按同文件 admin 端点惯例补 `admin.role != "admin"` → 403 ADMIN_REQUIRED。
+- 前端：`api/annotatorAssignments.ts` `listAnnotatorSubjects(query, projectId?)` 传 `project_id`，新增 `listAnnotatorProjectGrants`/`grantAnnotatorProject`/`revokeAnnotatorProject`；`DataAnnotationPage` 指派按钮按任务状态禁用（非三态 disabled + 中英 title 提示），`openAssignmentDialog` 按 `task.project_id` 过滤加载（保留前端 active 双保险）；`AssignmentDialog` 空列表非加载中时提示"该项目暂无已授权标注员，请先在用户管理 → 标注员管理中完成项目授权"；`UserManagementPage` 标注员管理卡 active 行新增"授权项目"Modal（多选项目，确认时 diff 调 grant/revoke，成功提示"项目授权已更新"，失败 formatApiError）；i18n apiErrors 更新 TASK_STATE_INVALID 中文、新增 ANNOTATOR_FORBIDDEN 中英（后端"未授权/非 active"共用该码，文案取授权语义）。
+- 验证：后端 `test_annotator_auth.py` **10 passed**（project_id 过滤有/无授权断言、grants 端点 403+正常返回）+ `test_portal_internal_api.py`+`test_security_contract.py` 共 97 passed；前端 `UserManagementPage.test.tsx`(4) + `DataAnnotationPage.test.tsx`(57，新增指派禁用/项目过滤用例) + `AssignmentDialog.test.tsx`(3) + `annotatorAssignments.test.ts`(6) + `client.test.ts`(8) 共 **78 passed**；`tsc --noEmit` 与生产构建通过。
+- 取舍：撤销授权后端即撤回该项目全部指派（既有服务语义），Modal 提示文案已说明；grants 端点返回全部状态（含 revoked）供前端仅取 active 做初选。
+
+### 2026-09-18 指派标注员接口补全与下拉选择
+
+- 问题：点击"指派标注员"报 Not Found——前端 `listAnnotatorSubjects()` 调用的 `GET /api/annotators` 后端无实现（此前仅 e2e mock）。同时用户要求抽屉内用下拉菜单选择标注员。
+- 后端（`api/annotator_internal.py`）：新增 `GET /api/annotators`（登录用户可访问，`q` 可选按用户名模糊搜索）：仅返回 active（已审核通过）账号，`id` 为指派创建所需的 subject_id，按用户名排序。
+- 前端（`components/AssignmentDialog.tsx`）：搜索框+复选框列表改为 antd `Select` 多选下拉（内置搜索 `optionFilterProp="label"`、加载中/无匹配提示），提交逻辑与重叠警告、截止时间、范围摘要保持不变；移除未使用的 `onSearch` prop。
+- 验证：后端 `test_annotator_auth.py` **9 passed**（新增：仅返回 active、q 过滤、id 为 subject_id）；前端 `AssignmentDialog.test.tsx`（下拉选择→提交携带选中 id）+ `DataAnnotationPage.test.tsx` + `annotatorAssignments.test.ts` 共 61 passed；`tsc --noEmit` 通过。线上实测：`GET /api/annotators` 返回 active 账号（annotator-review-test、jingms），`q=review` 过滤正确。
+- 运维备注：uvicorn `--reload` 热重载崩溃会遗留"父进程死、子进程持有 127.0.0.1:8000 套接字"的孤儿（本次 PID 37616，父 38628 已亡但 netstat 仍显示父 PID 持有）；重启前用 `Get-NetTCPConnection -LocalPort 8000 -State Listen` 定位并杀掉 python 子进程。
+
+### 2026-09-18 数据标注页指派抽屉与操作列表三处改进
+
+- 需求：①"指派标注员"从居中弹窗改为右侧抽屉且只可选已审核通过（active）标注员；②预览/指派两个抽屉打开时点击左侧原页面（遮罩）即关闭；③任务软删（archived_at）后其操作不再出现在"运行中的操作"。
+- 前端：`AssignmentDialog.tsx` 自定义 Modal 改为 antd `Drawer`（placement right、宽 min(560px,100vw) 对齐 PreviewDrawer，title "指派任务" 自动关联 aria-labelledby，保留多选/搜索/重叠警告/截止时间逻辑，props 不变）；`PreviewDrawer.tsx` 在侧栏外新增遮罩层（`.annotation-preview-drawer__mask`，z-index 999 低于抽屉 1000）点击关闭；`DataAnnotationPage.tsx` 加载标注员后过滤 `status === "active"`。
+- 后端：`services/annotation_task_state.py` `list_annotation_operations` 过滤条件新增 `GenericAnnotationTask.archived_at.is_(None)`——与 `list_annotation_tasks` 既有软删过滤一致，操作中心与任务列表口径统一。
+- 验证：前端 `DataAnnotationPage.test.tsx` 56 + `AssignmentDialog.test.tsx` 2 + `PreviewDrawer.test.tsx` 4（各新增遮罩关闭/抽屉渲染回归）+ `client.test.ts` 8 全部通过；`tsc --noEmit` 与生产构建通过；后端 `test_annotation_task_state.py` 69 passed/1 failed（`test_all_project_task_api_paginates_without_losing_owner_scope`，经移除本改动复跑仍失败，系工作树中 `list_annotation_tasks` 改按可访问项目过滤的既有未提交改动所致，与本任务无关）、操作中心相关 3 项含新增软删回归全过、`test_annotation_task_state_api.py` 21 passed。
+- 取舍：`GET /api/annotators` 后端本无实现（e2e 靠 mock 返回 `status`），前端 `AnnotatorSubject` 类型已含 `status?`，故标注员过滤采用前端方案，未新增后端接口。
+
+### 2026-09-18 API 错误信息按界面语言本地化
+
+- 需求：后端错误如 `TASK_ACTIVE: Cancel the active task before deleting it.` 中文界面显示中文、英文界面显示英文。
+- 实现：i18n 字典（`frontend/src/i18n/index.tsx`）新增 `apiErrors` 中英对照表，首批覆盖标注任务域 9 个错误码（TASK_NOT_FOUND/TASK_ACTIVE/TASK_REVISION_CONFLICT/TASK_STATE_INVALID/MODEL_VERSION_IMMUTABLE/DATASET_VERSION_NOT_FOUND/LABEL_SCHEMA_REQUIRED/SAMPLE_SCOPE_INVALID/ASSIGNMENT_NOT_FOUND）；`formatApiError`（`api/client.ts`）按 `localStorage.lang`（与 LangProvider 同一键）查表返回译文，无译文的错误码保持 `CODE: message` 原样兜底。
+- 验证：`client.test.ts` **8 passed**（新增 3 项：默认中文、英文、未知码兜底）；`tsc --noEmit` 与生产构建通过。
+- 后续扩展：新错误码只需在 `apiErrors` 两张表中各加一行，无需改代码逻辑。
+
+### 2026-09-18 删除标注任务 CSRF 误拦修复
+
+- 问题：主平台删除标注任务报 `CSRF_TOKEN_REQUIRED: csrf token is required`。根因：`enforce_request_security` 注释声明"Bearer-token requests do not need a CSRF token"但实现从未检查 Authorization 头——只要请求携带 `portal_session` cookie 就强制 CSRF 双提交校验。本地开发中 8443 门户与 5173 主平台同用 `localhost`（cookie 不区分端口），门户登录后的会话 cookie 会随主平台请求一起发送，导致 Bearer 认证的 DELETE/POST/PATCH 被 403 误拦。
+- 修复（`services/security.py`）：状态变更请求若带显式 `Authorization` 头则跳过 CSRF 校验——跨站页面无法在不窃取 token 的前提下设置该头，CSRF 针对的"环境 cookie 认证"不适用；纯 cookie 认证路径（Origin/Referer + 双提交 token）保持不变。
+- 验证：`test_security_contract.py` **8 passed**（新增回归：Bearer+portal_session cookie 跳过 CSRF）+ `test_ci_workflow.py` 63 passed/138 subtests；端到端实测——Bearer+cookie DELETE 返回 204（用户场景修复），仅 cookie 无 Origin 返回 403 CSRF_ORIGIN_REQUIRED（保护仍在）。
+
+### 2026-09-18 标注员审核删除操作与标注员管理
+
+- 需求：标注员账号审核支持删除操作；新增"标注员管理"卡片管理已审核通过的标注员。
+- 后端：`annotator_identity.py` 新增 `delete_annotator`（撤销该主体所有未撤销指派 → 显式删除 sessions/subject mappings/project grants/account，SQLite 无 FK 级联强制因此显式删除保证双后端一致）；`annotator_internal.py` 新增 `DELETE /api/admin/annotators/{subject_id}`（204，仅管理员，账号不存在返回 409）。
+- 前端：用户管理页拆分为两个卡片——"标注员账号审核"只显示 pending/rejected（pending 行：通过/拒绝/删除；rejected 行：删除），"标注员管理"显示 active/disabled（active 行：停用/重置密码/删除；disabled 行：启用/删除）；重置密码弹窗调用既有 `POST /api/internal/annotators/{subject_id}/reset-password`（8-128 位、二次确认）。
+- 验证：后端 `test_annotator_auth.py` **8 passed**（新增 3 项：删除撤销指派并清理身份、账号不存在报错、DELETE 接口管理员权限/204/409）；前端 `UserManagementPage.test.tsx` **3 passed**（新增审核/管理卡片数据分流与删除确认调用断言）；`tsc --noEmit` 与生产构建通过。
+- 端到端（API 实测）：对 relay-test 依次 PATCH disabled（200）→ PATCH active（200）→ DELETE（204）→ 列表不再包含；浏览器确认两卡片渲染与按钮正确。浏览器内 POST/PATCH 一律 `net::ERR_ABORTED`（登录表单同样症状，PowerShell 同请求正常），判定为嵌入式浏览器环境问题，非本改动缺陷。
+- 运维备注：本地 uvicorn `--reload` 在热重载时可能崩溃（WinError 233）并遗留孤儿子进程占用 127.0.0.1:8000 遮蔽新进程的 0.0.0.0 绑定；重启后端后需 `netstat -ano | findstr :8000` 检查并终止孤儿 PID（本次为 reloader 子进程 32320）。
+
+### 2026-09-18 标注员门户（8443）与主平台（5173）数据打通
+
+- 问题：8443 门户注册"成功"但 5173 用户管理页看不到申请。根因是双后端双数据库——8443 的 annotator 容器把认证转发到 Docker 栈 backend 容器（PostgreSQL），而 5173 本地开发栈查询的是 Windows 本地 uvicorn（SQLite `ml_platform.db`），两库互不相通。
+- 方案（本地开发链路，不改生产配置）：新增 `docker-compose.override.yml` 将 annotator 容器的 `ANNOTATOR_API_ORIGIN` 指向 `http://host.docker.internal:8100`（`extra_hosts: host-gateway`）；新增 `temp_test/wsl_relay.py` 作为 WSL 内 TCP 中继（0.0.0.0:8100 → localhost:8000）。链路：容器 → host-gateway（WSL docker bridge）→ WSL 中继 8100 → WSL localhost（mirrored 网络）→ Windows uvicorn 0.0.0.0:8000。选择中继是因为 Windows 防火墙拦截容器对宿主 WLAN IP 的入站访问且无管理员权限加规则；host-gateway 在纯 WSL dockerd 下指向 WSL 内部网关而非 Windows。
+- 数据迁移：将 Docker PostgreSQL 中已有的 7 条门户注册（portal-debug-20260918e/jingms/荆茂盛/jing/annotator-portal-test/annotator-portal-ui-test/jin）一次性迁移到本地 SQLite `annotator_accounts`（id/subject_id 去连字符、按 username 去重）；迁移脚本用后已删除。
+- 验证（2026-09-18 端到端）：本地 backend 以 `--host 0.0.0.0 --reload` 运行；容器经中继访问本地后端返回 200；8443 注册 relay-test → 本地后端立即出现 pending；5173 用户管理"标注员账号审核"显示全部迁移账号与 relay-test；浏览器审核 relay-test 通过（"标注员账号已通过审核"）；8443 用 relay-test 登录成功进入"我的任务"工作台。注册→审核→登录闭环完成。
+- 运维要求：WSL 重启后需重跑中继：`wsl sh -c "nohup python3 /mnt/e/codex_workspace/agent_spot_welding/.worktrees/general-automl-annotation-20260902/temp_test/wsl_relay.py >/dev/null 2>&1 &"`；本地 backend 必须以 `--host 0.0.0.0` 启动。`docker-compose.override.yml` 仅用于本地开发，生产部署不受影响。
+- 遗留：Docker `frontend`/`nginx` 容器仍处重启循环（5173 端口被本地 vite 占用 + frontend 网络沙箱损坏），修复需停 vite 后 `docker compose up -d --force-recreate frontend nginx`；4 条用户真实注册（荆茂盛/jingms/jing/jin 等）为 pending，待管理员在 5173 自行审核。
+
+### 2026-09-18 标注员注册审核入口与接口修复
+
+- 注册账号默认状态为 `pending`，不能直接登录标注员门户；管理员审核入口位于主平台“用户管理”页面顶部的“标注员账号审核”区域。
+- 管理员可查看用户名、邮箱、申请时间和状态，并将待审核账号设为“通过”或“拒绝”。通过后账号才能登录 `http://localhost:8443/`。
+- 修复审核 API 路径与主平台 `/api` 前缀不一致导致的 404：正式接口为 `GET /api/admin/annotators` 和 `PATCH /api/admin/annotators/{subject_id}/status`。
+- 验证：当前工作树 OpenAPI 已注册上述接口；标注员身份服务 Python 编译通过；既有标注员认证测试待运行时数据库配置可用后执行。当前运行中的旧后端进程仍需重启后才能加载本次路由修复。
+- 复验（2026-09-18）：运行中后端（uvicorn --reload）已加载路由——OpenAPI 含 `/api/admin/annotators` 与 `PATCH /api/admin/annotators/{subject_id}/status`，带 token 直连返回 200；浏览器端到端走通：`POST /portal/auth/register` 注册 pending 账号 → 用户管理页"标注员账号审核"显示待审核行 → 确认"通过" → 状态变"已通过"并提示成功。此前报告的 404 为旧进程时期日志，已消除。
+- 门户注册 500 排查与复验（2026-09-18）：`http://localhost:8443/` 注册报 "Request failed (500)" 的根因是 Docker 栈 `postgres/redis/minio` 容器被停止（Exited (0)）→ 主平台 backend 容器启动失败（psycopg 解析不了 `postgres` 主机，unhealthy）→ annotator 容器把 `/portal/auth/register` 转发到 `http://backend:8000` 抛 `httpx.ConnectError` → 500。修复为 `docker start postgres/redis/minio` + `docker restart backend`，全部恢复 healthy；API 直连注册返回 201，浏览器 UI 注册成功显示"注册已提交，等待审核"。
+- 遗留（2026-09-18）：Docker 主平台 `frontend`/`nginx` 容器处于重启循环——`frontend` 需绑定宿主 5173 端口，与本机 vite dev server（5173）冲突；且 `frontend` 网络沙箱损坏（restart 报 sandbox not found），需停本地 vite 后 `docker compose up -d --force-recreate frontend nginx` 恢复。不影响 8443 标注员门户与 8000 本地开发服务。
+
+### 2026-09-18 数据标注四项行为严格对齐第七章及数据管理
+
+- 修复任务列表无项目时只显示空列表的问题：前端支持可选 `project_id`，后端按当前用户可访问项目过滤未归档通用任务，避免 owner-only 漏项和越权泄露。
+- 修复自动标注数据选择：数据版本只保留与数据管理一致的 active、非 normalized dataset artifact 来源；归档/删除来源不再出现在新建自动标注任务。
+- 新建向导每次打开显式清空样本范围条件、自定义 schema 和相关草稿状态，删除的范围条件不会残留到后续任务。
+- 弱监督聚类任务强制使用用户指定 label schema；模型 output contract 仅作为内部来源，缺少用户 schema 时后端返回 `WEAK_SUPERVISION_SCHEMA_REQUIRED`。
+- 验证：前端数据标注/API 定向测试 **61 passed**；后端任务/自动创建定向测试 **3 passed**；前端 TypeScript/Vite 生产构建通过；`git diff --check` 通过。
+- 边界：真实 PostgreSQL、Celery/Redis、浏览器登录和 Docker/WSL 运行态仍未执行。
+
+### 2026-09-18 修复标签 schema 422 与数据版本列表 500
+
+- 标签 schema 创建接口由“仅项目 owner”改为项目 `resource.create` 权限，与通用任务创建权限保持一致，项目编辑者不再因权限解析返回 422。
+- 数据版本列表的 workflow-export 回填对不可用/越出存储根目录的历史 artifact 做隔离跳过并记录告警，避免单个坏 artifact 使整个 `/dataset-versions` 请求返回 500。
+- 验证：标签 schema、数据版本、自动任务相关后端测试 **8 passed**；Python 编译和 `git diff --check` 通过。
+
 ### 2026-09-18 自动标注 §7.3/§7.4 四项偏差修复与聚类预览效果
 
 - 背景：§7 实现审计发现 4 处与技术方案字面要求的偏差——置换重要性未接入聚类回退链、one-hot 聚合与未映射交互维度阻断未接入生产路径、加权特征空间“至少 2 个不同向量”只在评估抽样上检查、预览/执行错误载荷未携带 `details`（受影响样本数/样本标识）。
@@ -237,7 +826,7 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 3. 上述均为带未提交修改的当前工作树验证，不是可绑定到 Git SHA 的发布收据；用户本地 `README.md` 继续排除，不暂存、不覆盖、不提交。
 4. Task 5 的真实 broker 派发、worker 重启恢复、结果去重、任务列表刷新后的预览状态保持、操作中心和结果/统计分页已在实现及聚焦验收中收口；后续仅需在最终稳定 SHA 上重生成发布收据。
 5. Task 6–13 继续补齐跨服务、浏览器、导出/离线、恢复和安全运行态证据。
-6. Task 14 的后端/前端全量测试、Playwright、Alembic、Docker/WSL 恢复演练和远程 required jobs 已有证据；通用 19 项 receipt 的文件哈希和 CI 接入仍待完成，任何后续提交都必须重新绑定发布收据。
+6. Task 14 的后端/前端全量测试、Playwright、Alembic、Docker/WSL 恢复演练和远程 required jobs 已有证据；通用 19 项 receipt 的文件哈希与 CI 接入（收据纳入 `ML_PLATFORM_EVIDENCE_DIR` 最终 manifest 与上传产物、AUTH-02 证据路径修正）已在当前工作树完成并锁定回归，仍需在最终干净 SHA 提交并远程重跑 CI 后才能作为发布收据。
 7. 每个 Task 的精确文件、接口、RED/GREEN 步骤和命令以实施计划为准；本文件不创建平行的实现步骤。
 
 ## 6. 遗留验证任务
@@ -359,7 +948,7 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 | Task 11 | `passed` | 模型导出包和离线推理合同、前端控制与浏览器聚焦验证已通过 | Docker/真实部署导出运行及 Task 14 收据仍待完成 |
 | Task 12 | `passed` | 主平台任务中心、通用创建入口、预览/指派/回传组件、独立标注员门户及 Chromium 聚焦流程已验证 | 完整后端、Docker/WSL 持续运行、最终 SHA 收据和远程 CI 仍由 Task 14 负责 |
 | Task 13 | `passed` | 异步 worker、幂等、lease recovery、清理报告校验和 Web 安全合同聚焦验证已通过 | Docker/WSL、真实跨服务运行态、完整 active suite 和 Task 14 发布证据 |
-| Task 14 | `in_progress` | 当前 SHA 的完整后端门禁、Playwright、Docker/WSL、导出/离线、恢复、安全和远程 CI 已通过；receipt 哈希回归已补齐 | 通用 19 项 receipt 尚未由 CI 生成并纳入最终 manifest |
+| Task 14 | `in_progress` | 当前 SHA 的完整后端门禁、Playwright、Docker/WSL、导出/离线、恢复、安全和远程 CI 已通过；receipt 哈希回归已补齐；19 项 receipt 的 CI 接入（纳入最终 manifest 与上传产物、AUTH-02 路径修正）已在当前工作树完成 | 收据接入尚未在最终干净 SHA 上经远程 CI 实际生成验证；矩阵语义更正项（CLU-02/AUTH-02/AUTO-02/REL-01 真实运行态证据）仍按原边界执行 |
 
 ### 历史整理核验（2026-09-09）
 
@@ -1147,3 +1736,95 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 按技术方案第 6.2 节补齐样本筛选合同：`authorized_field`/`authorized_value` 只能针对冻结快照中的授权源字段查询；`modified_after` 改为按门户主体映射到的 `AnnotationRevision.author_id` 和 `created_at` 判断本人最近修改，并将带时区输入转换为 UTC。
 - 标注员代理和工作区已转发并展示授权字段和值筛选；筛选条件变化继续从第一页读取。主平台管理员批注列表新增 `thread=all|roots|replies`，状态、样本和线程过滤共享同一分页与总数查询。
 - 验证：主平台门户筛选/批注线程定向回归 **3 passed**；主平台批注组件与任务页面 **3 passed**；标注员工作区 **31 passed**。标注员代理测试待使用共享后端虚拟环境执行；真实 PostgreSQL、浏览器服务集成和 WSL Docker 仍未验证。
+
+## 2026-09-18 独立标注员门户正式入口
+
+- 修复独立门户只有前端源码和 `5174` 开发入口、`8443` 实际仅提供后端 API 的部署缺口。
+- Docker Compose 新增 `annotator-frontend` 服务：`http://localhost:8443/` 提供门户静态页面，`/portal/*` 反向代理到标注员后端；标注员 API 改用本机 `8444` 映射，避免与正式门户入口冲突。
+- 独立前端本地构建通过；WSL Docker 已成功构建并启动 `annotator`、`annotator-frontend`，浏览器访问 `http://localhost:8443/` 已显示登录页，`GET /portal/auth/login` 返回后端预期的 `405 Method Not Allowed`。
+- 生产镜像使用本地已构建的 `dist` 静态产物，避免 Docker 构建阶段依赖 npm 外网；修改门户前端源码后需先在 `ml-platform/annotator/frontend` 执行 `npm run build`，再重建门户镜像。
+
+## 2026-09-18 标注员门户验收缺陷修复（6 项）
+
+- 任务删除同步：门户任务列表过滤 `archived_at IS NOT NULL`，全部门户任务端点（详情/样本/保存/确认/回传/批注/通知目标）经 `_assignment_for_subject` 对已归档任务统一返回 404 `ANNOTATION_TASK_NOT_FOUND`；活体验证确认管理员删除任务后标注员队列即时隐藏且无法继续标注。
+- 样本自然排序：`internal_portal_samples` join `DatasetSample` 按 `row_index` 升序返回，游标改为 row_index 标记；`source_match` 子查询显式 `.correlate(AnnotationAssignmentSample)` 修复 join 后自动关联报错。
+- 数值标签全角输入：工作台 `parseValue` 对数值输入先做 NFKC 归一化，IME 全角数字（如 `１２`）和服务端带回的全角值均可正常保存为整数；ASCII 数字本可通过校验，根因为全角输入。
+- 搜索与控件解禁：任务队列搜索同时匹配任务名称与 ID（此前仅 ID），前端搜索/筛选/分页/返回按钮此前被脏稿 blockers 误禁用，全部改为 `locked || batchSaving`；"全选当前页"增加 tooltip 说明（配合批量编辑一次应用标签）。
+- 当前样本字段横向排布：`styles.css` 新增 `.field-row`/`.values p` flex 布局，列名与值同行左右对齐。
+- 返回任务：`requestBack` 先冲刷全部脏稿再弹离开确认（"继续标注"/"放弃修改并返回"），无未保存修改时直接返回；筛选切换重置页码与游标缓存，保存目标回退到样本缓存防止筛选切换丢待存修改。
+- 验证：后端门户测试 **81 passed**（含任务删除隐藏锁定、row_index 排序、名称搜索 3 个新回归）；标注员前端 **72 passed**（含 NFKC 全角、离开确认新测试）、tsc 与生产构建通过；8443 已部署新版（index-BUnwSboO.js），端到端 API 活体检查全部通过。
+- 遗留：`test_all_project_task_api_paginates_without_losing_owner_scope` 失败为用户 WIP，待用户决定。
+
+## 2026-09-18 数值标签"请输入十进制整数"根因修复
+
+- 用户在新任务（schema：`label`/int/选填、min/max/max_length 均为 `null`）输入 `1` 仍报"label: 请输入十进制整数"，截图复现确认与输入内容无关。
+- 根因：门户任务快照序列化 schema 时携带显式 `min_value: null`/`max_value: null`/`max_length: null`（指南栏显示"最长 null 字节"即证据），而工作台 `parseValue` 用 `!== undefined` 判断边界——`null !== undefined` 为真，`BigInt(String(null))` 抛异常被 catch 吞掉后误报"请输入十进制整数"；float 路径 `number > null` 恒真会误报"数值高于最大值"，string 路径 `utf8Bytes > null`（null 转 0）会误报超出长度。此前 NFKC 结论不成立（全角只是兜底场景，ASCII `1` 在显式 null 边界下同样失败）。
+- 修复：`parseValue` 四处边界判断与 `GuidelinePanel` 范围/长度展示统一改为 `!= null`；null 边界不再参与校验，指南栏不再显示"最长 null 字节"。
+- 回归：新增"schema 边界为显式 null 时接受整数标签"测试（复现真实快照形状，旧代码下失败）；标注员前端 **73 passed**、tsc 与生产构建通过，8443 重新部署（index-BjhpaJnP.js）。
+
+## 2026-09-18 标注员门户验收缺陷修复（3 项：刷新丢失会话 / 保存 ANNOTATOR_SUBJECT_UNMAPPED / 顶栏用户名）
+
+- 刷新退出登录：门户 SPA 仅在 React state 保存视图，浏览器刷新后回到登录页。BFF 新增 `GET /portal/auth/me`（复用 `require_portal_session`，无 Cookie 401）；`App.tsx` 启动时调用 `me()` 恢复队列视图，登录成功后也拉取用户名。
+- 保存报 `ANNOTATOR_SUBJECT_UNMAPPED`：根因为管理员审批（`PATCH /api/admin/annotators/{id}/status`）从不创建 `AnnotatorSubjectMapping`，映射只能靠手动 `/map` 端点；`jingms` 无映射导致每次保存标签在 `_portal_platform_principal` 处 422。修复：`annotator_identity.py` 新增 `ensure_annotator_mapping`（无平台账号时创建影子主体，保留既有显式映射），审批置 active 时调用；`_portal_platform_principal` 对历史遗漏账号自愈创建影子主体，批注创建端点同步复用。
+- 顶栏用户名：`TaskQueuePage` 顶栏右侧以 `.portal-user` 样式显示登录用户名（超长省略，title 提示完整名）。
+- 验证：后端 `test_annotator_auth` + `test_portal_internal_api` **93 passed**（新增审批建映射/映射保留、缺映射保存自愈 2 个回归）；BFF **23 passed**（新增 me 路由测试）；标注员前端 **76 passed**（新增 App 会话恢复 2 例、顶栏用户名 1 例）、tsc 与生产构建通过。
+- 部署与活体验证：重建并重启 `annotator`、`annotator-frontend` 容器（8443 新资源 index-DJTCKfrH.js，`/portal/auth/me` 无 Cookie 返回 401）；用 BFF 同款服务令牌对活体后端走通样本读取+保存（200），确认 `jingms` 映射自动创建。注意：本地 uvicorn `--reload` 已自动加载后端修复。
+
+
+## 2026-09-18 标注工作区左侧标签页布局重构
+
+- 需求：把工作区红框内容（标注指南、筛选器+样本列表、批量编辑、回传、批注）集中到页面左侧，做成标签页形式。
+- `TaskWorkspacePage.tsx`：新增 `activeTab` 状态（`samples|guide|batch|return|comments`，默认 `samples`）与 `workspaceTabs` 常量；布局改为两列——左侧 `aside.side-tabs`（`role=tablist` 五个 tab 按钮 + 条件渲染的 `role=tabpanel` 面板），右侧 `section.editor` 只保留样本流/浏览编辑主区。原 stream 模式独立指南列、编辑器底部批量编辑、右侧 actions 侧栏全部移入对应 tab；指南移入 tab 后两种模式均可用，删除 `with-guideline` 布局变体。
+- `styles.css`：`.workspace-grid` 改为 `300px minmax(0,1fr)` 两列；新增 `.side-tabs`/`.tab-bar`/`.tab(.active)`/`.tab-panel` 样式；`.side-tabs .guideline` 去内边框避免卡片套卡片；清理 `.sample-list`/`.actions` 旧规则与媒体查询残留。
+- 测试：`TaskWorkspacePage.test.tsx` 新增 `openTab` 辅助，约 20 个用例按新交互补充标签切换（批注/批量/回传/指南）；"stream 模式指南栏"改为"指南标签页"，模式切换用例改为验证两种模式下指南 tab 均可用。
+- 验证：标注员前端 **76 passed**、tsc 与生产构建通过；已重建部署 `annotator-frontend` 容器（8443 新资源 index-Dd59Ls8a.js），浏览器活体冒烟确认五个标签渲染与切换正常、控制台无错误。
+
+## 2026-09-18 标注工作区纵向导航与样本流布局重构
+
+- 需求：五块功能改为左侧纵向导航栏（类似算法平台侧边导航）；移除浏览模式，仅保留样本流；右侧主区按"样本数据字段横向排列 → 标签 → 操作条（上一条/下一条等）"从上到下排布。
+- `TaskWorkspacePage.tsx`：删除 `WorkspaceMode` 类型、`mode` 状态与"浏览全部/返回样本流"切换按钮；侧栏改为 `aside.side-tabs` 内 `nav.tab-rail`（`role=tablist aria-orientation=vertical`，五项：样本/指南/批量/回传/批注）+ 右侧条件渲染面板；新增 `openSamplesPanel()` 供汇总页"打开样本列表"跳转；快捷键与 `advanceStream` 去除模式判断。
+- `SampleStream.tsx`：`onBrowseAll` prop 改名 `onOpenSamples`；标注字段改为 `field-cells` flex-wrap 横向小卡片网格；`.stream-sample` 改单列，主区顺序为数据字段 → 标签编辑 → 底部操作条。
+- `styles.css`：`.workspace-grid` 改 `420px minmax(0,1fr)`；新增 `.side-tabs`（`104px` 纵向导航 + 面板区两列）、`.tab-rail .tab(.active)` 纵向导航按钮样式；新增 `.field-cells`/`.field-cell` 字段卡片样式；删除全部 `.field-row` 旧规则。
+- 测试：模式切换用例替换为"stream-only 模式 + 纵向导航面板切换"；`SampleStream.test.tsx` 更新 prop 与按钮名（"浏览全部"→"打开样本列表"）；**76 passed**、tsc 与生产构建通过。
+- 部署与活体验证：重建 `annotator-frontend` 容器（8443 新资源 index-CD4GRxIl.js）。活体验证链路：jingms 密码未知 → 创建测试账号 `layout-smoke`（active + 项目授权 + 任务 'as' 指派，`temp_test/create_smoke_annotator.py`，注意 SQLite 中 UUID 为 32 位无横线存储、SQLAlchemy UUID(as_uuid=True) 列必须传 `uuid.UUID` 对象）；浏览器验证全部通过——左侧纵向导航五项及面板切换、顶栏无"浏览全部"、右侧字段网格→标签→操作条顺序、指南/批量/回传/批注面板正常、控制台无错误。
+- 临时数据：两枚铸造会话（jingms/layout-smoke）已删除；`layout-smoke` 账号及其任务 'as' 指派保留用于后续验收（如需删除：主平台"用户管理→标注员管理"删除账号即可，或运行 `temp_test/cleanup_sessions.py` 同目录脚本扩展）。
+
+## 2026-09-19 标注工作区手风琴导航与批量勾选整合
+
+- 需求（用户四点）：①左侧导航点击后面板在按钮**正下方**展开（手风琴式）；②"全选当前页"及样本勾选移入"批量"面板；③右侧数据改进显示样式便于查看区分；④以 jingms/12345678 活体验证。
+- `TaskWorkspacePage.tsx`：侧栏改手风琴结构——`workspaceTabs.map` 渲染 `div.tab-item`（tab 按钮 + `activeTab === key` 时面板在其下方），移除"104px 导航 + 右侧面板"两列结构；样本面板只保留搜索/筛选/样本导航按钮/分页（复选框与 `.sample-selection` 包装全部移除）；批量面板新增"全选当前页"复选框、`.batch-samples` 当前页样本勾选列表、"已选择 N 条样本"计数，与既有标签列/标签值/覆盖/应用控件整合。
+- `SampleStream.tsx`：字段展示由 `field-cells` 卡片改为 `field-table` 表格（表头"字段/值"两列、`td.field-name`/`td.field-value` 分列）。
+- `styles.css`：`.side-tabs`/`.tab-rail`/`.tab-item` 改单列手风琴；`.side-tabs .tab-panel` 加边框底色；新增 `.batch-samples`（max-height 280px 纵向滚动、`overflow-x: hidden` 防横向滚动）与 `.batch-sample-id`（`overflow-wrap: anywhere; min-width: 0`）；新增 `.field-table` 表格样式（斑马纹、标注字段组青绿高亮表头/字段名列）；删除 `.field-cells`/`.field-cell`/`.values p` 残留规则；`.workspace-grid` 侧栏 420px→360px。
+- 测试：`TaskWorkspacePage.test.tsx` 四处批量用例改为先 `openTab('批量')` 再勾选；"纵向导航"用例新增"样本面板无全选/勾选、批量面板有"断言；**76 passed**、tsc 与生产构建通过。
+- 部署与活体验证：重建部署两次（最终 8443 资源 index-YTmV6zr2.js / index-CynRGhPC.css，含批量面板横向滚动条修复）。jingms 已有任务 'as' 指派（`temp_test/ensure_jingms_assignment.py` 确认，无需新建）；浏览器以 jingms/12345678 验证全部通过——手风琴式五导航面板下方展开、样本面板无勾选、批量面板勾选列表完整、右侧表格（字段/值表头+斑马纹+高亮）→标签→操作条、控制台无新增 JS 错误，截图三张（样本面板/批量面板/表格特写）。
+- 追加（同日）：`.side-tabs` 加 `position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto`，左侧导航栏固定悬浮不随页面滚动，面板过长时侧栏内部滚动。部署 8443（index-jnd5RnGz.css），浏览器验证通过：滚动 800px 后左侧栏仍完整悬浮、批量面板展开时侧栏内部滚动且其余导航按钮可点（截图 scroll-verify-sidebar-sticky.png / batch-panel-expanded.png）。
+- 追加（同日第二轮，三点需求）：①"样本"面板移除编号样本列表（`samples.map` 按钮块删除），只留搜索/筛选/分页，样本切换统一走右侧流式"上一条/下一条"，样本 ID 仍可在"批量"勾选列表查看；汇总页按钮改名"筛选样本"。②`.workspace-grid` 侧栏 360px→280px 统一变窄。③`SampleStream.tsx` 字段表改 `.field-grid` 多列紧凑卡片（`repeat(auto-fill, minmax(190px,1fr))`，字段名小字在上/值加粗在下，标注字段组青绿高亮），替换 `.field-table` 两列表格。测试：6 处样本按钮点选改用"下一条 →/← 上一条"（`moveNext` 与列表点选等价），"纵向导航"用例改为断言样本面板无列表；**76 passed**、tsc/构建通过。部署 8443（index-DZaGvPNw.js），浏览器验证通过（注意：需刷新页面加载新 bundle，否则旧 JS 渲染旧结构）。
+- 追加（同日第三轮，四点需求）：①样本分页（上一页/第 N 页/下一页）移入"批量"面板顶部，样本面板只留搜索+筛选；②左侧导航改**多开手风琴**——`activeTab` 单值改 `openTabs: ReadonlySet`，tab 点击只打开不切换关闭，各面板头部加"收起"按钮独立关闭（指南面板除外）；③④根因是任务创建数据而非门户渲染：聚类弱监督路径 `LabelSchemaEditor` 空白未预填契约列且新增列默认 `required: false`。修复：`LabelSchemaEditor.add()` 默认 `required: true`；`DataAnnotationPage.tsx` 聚类 schema 编辑器预填 `genericAutoSchema`/冻结输出契约列（machine_key/value_type/required），手动任务路径也默认必填。
+  - 测试：`TaskWorkspacePage.test.tsx` 5 处适配（分页断言移至批量面板上下文、`chooseUserLabelSchema` 改为直接保存预填 schema、纵向导航用例新增多开/收起/分页位置断言），annotator **76 passed**；主平台 `LabelSchemaEditor.test.tsx` 两处 required 断言更新、`DataAnnotationPage.test.tsx` `chooseUserLabelSchema` 简化，**61 passed**；修复分支既有 `weekAcceptance.test.ts` 清单失登（补 `ClusterPreviewPanel.test.tsx`，week 4 `CustomNode.test.ts` 与 week 12 `.tsx` 为两个真实文件非重复），**7 passed**；双端 tsc/构建通过。
+  - 数据手术：jingms 活跃分配指向任务 584ae2cc（'as'，schema 103d5ad1，label 列 `int/required=0`）——`temp_test/surgery_task_as_required.py` 将 `label_columns.required=1` 并同步 `task_snapshot.label_schema.columns[0].required=true`，验证通过；最新任务 f606991a 已是 fault/int/必填（无需处理）。
+  - 部署与活体验证：annotator-frontend 重建部署 8443（index-CNqoUy17.js），浏览器以 jingms/12345678 验证四点全部通过——①样本面板无分页、批量面板顶部有分页；②样本/指南/批量三面板同时展开、批量收起后其余保留；③指南显示"label · 整数 · 必填"；④标签输入框 type=number 与 int 契约匹配。
+- 追加（同日第四轮，三点需求）：①导航面板格式统一——移除面板内 panel-head 双重标题（样本/批量编辑/回传/批注 h2）；②tab 改**点击展开/再次点击收起**（toggle）——`openPanel` 点击改 `togglePanel` 切换 Set 成员，删除四个面板的"收起"按钮与 `closePanel`（`openSamplesPanel` 程序化打开保留只开不切语义）；③侧栏再变窄 `.workspace-grid` 280px→**220px**，`.tab-panel` padding 12px→10px，删除 `.panel-head`/`.panel-collapse` 样式。
+  - 运维：一次部署事故——在 ml-platform 目录跑 `npx vite build` 因 cwd 错误失败，但 docker build 复用旧 dist 仍"成功"，8443 hash 未变；须在 annotator/frontend 目录构建后确认 dist 新 hash 再 docker build。
+  - 测试与验证：`TaskWorkspacePage.test.tsx` 垂直导航用例重写为 toggle 断言（无收起按钮、再点同一 tab 收起且其他面板保留、样本默认开再点关闭），**76 passed**、tsc/构建通过。部署 8443（index-CBAzxZv8.js），浏览器验证①②通过（无标题行/收起按钮、toggle 与多开正常）；③线上 CSS 确认 `220px minmax(0,1fr)` 且无 panel-head 规则——子代理测得 652px 系其视口 ≤1080px 触发既有单列响应式（`@media (max-width:1080px)` 侧栏全宽），宽屏下即 220px。
+- 追加（同日第五轮，四点需求）：①导航样式统一——`GuidelinePanel` 删除头部（h2"标注指南"+折叠按钮），指南面板与样本/批量/回传/批注格式完全一致（面板内无标题、内容直出）；styles.css 删 `.guideline-head`/`.side-tabs .guideline` 特例，`.guideline` 改纯内容网格（装饰由外层 `.tab-panel` 提供）。②指南折叠按钮已随①移除（`GuidelinePanel.test.tsx` 折叠用例改为"无按钮+内容直出"断言）。③**批量分页独立化**——新增 `batchSamples/batchPage/batchPageCursors/batchNextCursor` + `loadBatchPage`（独立 generation 防竞态），批量面板分页/全选/勾选列表全部改用批量状态；初始/筛选变化时批量页与右侧流同步重置为第一页，右侧样本流（samples/selected/moveNext 翻页）不再受批量翻页影响。④`.field-grid` `minmax(190px,1fr)`→`minmax(150px,1fr)`，一行容纳更多列。
+  - 测试与验证：`TaskWorkspacePage.test.tsx` 'replaces pages via next_cursor' 重写为 'pages the batch checklist independently without moving the stream sample'（断言批量列表换页且右侧 `category-s-1` 不变、`category-s-2` 不出现）、'keeps selections across pages' 改等 `选择样本 s-2`、指南相关断言 `标注指南`→`任务说明`；**76 passed**、tsc/构建通过。部署 8443（index-B6Py_PRu.js），浏览器活体验证：①②④ PASS（指南无标题/按钮、格式统一；批量翻页右侧保持"第 1/50 条"不变、上一页返回第一页）；④线上 CSS 确认 `minmax(150px,1fr)`（子代理 699px 窄视口 <760px 触发单列响应式致误报 1 列，宽屏生效）。
+- 追加（同日第六轮，三点需求）：①导航顺序「指南」移到第一位（workspaceTabs：指南/样本/批量/回传/批注，默认展开仍为样本）。②批量面板分页按钮缩小匹配小控件格式（`.pagination button` padding 3px 10px、12px 字号、`.pagination` 12px 文字）。③左侧导航栏样式重设计——tab 按钮改圆角胶囊（transparent 背景/边框、hover 浅灰、激活浅青绿背景 #e3f1f0 + 边框 #b7d8d5 + **左侧 3px 青绿指示条** inset box-shadow、0.15s 过渡），`.tab-rail` gap 8→4、`.tab-item` gap 8→6、`.tab-panel` 加左右 4px 内缩进。
+  - 验证：annotator **76 passed**（在 annotator/frontend 目录）、tsc/构建通过、weekAcceptance 7 passed；部署 8443（index-Drb2J2HF.js），浏览器活体验证三点全部 PASS（tab 顺序、分页按钮 3px 10px/12px、导航视觉含指示条）。注意：在 ml-platform 根目录跑 vitest 会因 workspace 配置致 annotator 测试全挂（43 failed）与 weekAcceptance 4 failed——**必须分别在 annotator/frontend 与 frontend 目录运行**。
+- 追加（同日第七轮，两点需求）：①导航默认展开第一项「指南」——`openTabs` 初始值改 `workspaceTabs[0][0]`（guide）。②解答"保存标签"按钮作用（无需改码）：`SampleStream` 标签输入框下方的「保存标签」仅保存当前样本标签并停留在当前样本（onSave），与底部操作条的「保存并下一样本」（onSaveAndNext，保存后自动推进）互补，前者适合改完复查、后者适合连续标注流。
+  - 测试适配：默认开面板由样本改指南后，3 个用例更新——'renders every frozen schema field'/'shows the guideline tab' 去掉 `openTab('指南')`（toggle 语义下再点会关闭默认开的指南），垂直导航用例改为断言默认指南开、样本未开，再 openTab('样本') 验证多开与收起；**76 passed**、tsc/构建通过。部署 8443（index-CGrawXE4.js），浏览器验证 PASS（指南默认展开激活态、其余未展开、toggle 正常）。
+- 追加（同日第八轮，一屏布局需求："整个页面显示在一个屏幕内不需要滚动查看"）：工作区页改为**视口锁定布局**——`.workspace`（portal-page.workspace）`height:100vh; overflow:hidden; display:flex; flex-direction:column`，topbar `flex-shrink:0`，`.workspace-grid` `flex:1; min-height:0; align-items:stretch`，`.editor` `overflow-y:auto; min-height:0`（样本数据在编辑区内部局部滚动），`.stream-footer`（底部操作条）`position:sticky; bottom:0` 白底上边框始终可见；`.side-tabs` 在此布局下改 `position:static; max-height:100%`（不再需要 sticky）。≤760px 窄屏单列时 `grid-template-rows: minmax(0,auto) minmax(0,1fr)` + side-tabs `max-height:45vh` 保持一屏（数据区仍内部滚动）。
+  - 验证：**76 passed**、tsc/构建通过；部署 8443（index-CvhWsaLy.js / CSS index-f4kwVJWj.css）。浏览器活体验证两轮误报后第三轮确认生效：workspaceH=718=viewport、editorScroll 1849>clientHeight（内部滚动）、操作条无需滚动可见——**前两轮失败系浏览器子代理停留在未刷新旧页面（三次数值完全相同），需关闭旧标签新开导航重测**。窄视口（699px）下编辑区高度仅 153px 偏挤，用户宽屏（>760px 双列）正常。
+- 追加（同日第九轮，通知栏迁移+用户区重设计）：①移除 App 层外挂的"站内通知 0"顶栏（`App.tsx` 不再渲染 `NotificationInbox`），改为**铃铛按钮**——SVG 铃铛 + 未读红色徽章（unread>0 才显示），aria-label 保留 `站内通知（N 条未读）` 格式（测试兼容）。②`NotificationInbox.css` 重写：`.notification-inbox` 改 relative，`.notify-bell` 36px 圆形图标按钮（激活态青绿），`.notify-dropdown` absolute 右对齐 380px 白卡阴影 z-40。③用户区重设计（两页统一）：`.user-chip` 胶囊（青绿首字母圆形头像 `.user-avatar` + 用户名 `.portal-user`）+ `.ghost-btn` 小号退出按钮（hover 红）。④`TaskQueuePage` topbar-actions = 铃铛+用户胶囊+退出；`TaskWorkspacePage` 新增 props `username/onLogout/onOpenNotification`，topbar-actions = 快捷键+状态+铃铛+用户胶囊+退出。
+  - 测试：`TaskQueuePage.test.tsx`/`TaskWorkspacePage.test.tsx` 补 `vi.mock('../api/notifications')`（两页现在渲染 NotificationInbox）；`App.test.tsx` mock 已有无需改；NotificationInbox aria-label 未变故组件测试全兼容。**76 passed**、tsc/构建通过。部署 8443（index-pyFWEcvf.js），浏览器验证两页全部 PASS（无独立通知横条、铃铛下拉展开/收起、用户胶囊 J+jingms+退出、工作区右上角完整）。
+
+## 2026-09-21 后端 9 个预存测试失败修复（迁移账目与契约基线）
+
+- 背景：全量后端套件 1978 passed / 8 failed（--lf 定位共 9 个失败），全部为迁移账目过期、测试基线漂移或 Dockerfile 契约过期，与算子元数据改动无关。
+- 新迁移：`alembic/versions/20260921_59_saved_annotation_strategies.py`——为 `app/models/labeling.py` 的 `SavedAnnotationStrategy` 补齐缺失建表迁移（autogenerate check 失败根因），遵循 `sa.Uuid()` 约定；down_revision=20260917_58。
+- head 账目统一：`tools/evidence_manifest.py` MIGRATION_HEAD、`tools/upgrade_fixture.py` EXPECTED_HEAD、`tools/acceptance/run_upgrade_fixture.sh` --target、`tests/test_database_production.py` HEAD_REVISION、`tests/test_inference_production_stack.py` alembic_head 断言。本轮先统一为 59；随后并行会话新增 `20260921_60_model_version_lifecycle_backfill.py`（model_versions lifecycle 回填）并已将上述账目提升为 20260921_60。
+- 测试基线漂移修复（旧修订点用当前 ORM 模型插入 → 新列导致 INSERT 失败）：
+  - `test_database_production.py` `_seed_legacy_registry`：ORM `Artifact` 改为 `sa.table()` Core 插入（仅 rev-08 列集，metadata 用 json.dumps），移除未用 import；`source/onnx_artifact_id` 引用改用捕获的 artifact_id。
+  - `test_annotation_execution_statistics_migration.py`：ORM `GenericAnnotationTask` 改为 `sa.table()` Core 插入（仅 rev-47 列集，JSON 列显式 `sa.JSON()` 类型），task_id 预生成 uuid4；移除未用 import。注意不能用 `__table__.insert()`（Python 端默认值仍会带上 rev-47 缺失的 name/completion_criteria/due_at 列）。
+- Dockerfile 契约更新（`test_image_security_contracts.py`）：四个 Dockerfile 已改为 xgboost/catboost `--no-deps` 单独安装 + sed 剔除后装其余的新 pip 布局，chown 多行块新增 /var/lib/tensorboard 与 /var/lib/ml-platform；断言改为行续行归一化（`re.sub(r"\s*\\\s*\n\s*", " ", content)`，需吃掉反斜杠前尾随空格）后匹配新命令。
+- `test_notification_models.py`：head→WEEK9 降级断言由特指 `generic_annotation_tasks` 拒绝消息改为通用 `Refusing destructive downgrade`——链上 45-58 号迁移各自先抛拒绝，特指消息已过期且每次新增迁移都会再碎。
+- 验证：image_security+statistics 12 passed；evidence_manifest+week11_12+notification 151 passed（含 57 subtests）；database_production+inference 22 passed 2 skipped；全量套件 1986 passed / 1 failed（即 notification，修复后单文件 8 passed 转绿）。遗留未验证：全量套件未在 20260921_60 链头下完整重跑（与并行会话编辑冲突风险），但 60 号迁移相关的全部 head 账目测试已针对性复跑通过。

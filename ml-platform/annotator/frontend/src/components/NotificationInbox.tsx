@@ -103,11 +103,15 @@ export default function NotificationInbox({ onOpenTask }: { onOpenTask?: (taskId
   }
 
   return <section className="notification-inbox" aria-label="站内通知">
-    <button type="button" aria-expanded={expanded} aria-controls="portal-notices"
+    <button type="button" className="notify-bell" aria-expanded={expanded} aria-controls="portal-notices"
       aria-label={`站内通知（${unread} 条未读）`} onClick={() => setExpanded(value => !value)}>
-      站内通知 <span className="count">{unread}</span>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+        <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+      </svg>
+      {unread > 0 && <span className="notify-badge" aria-hidden="true">{unread}</span>}
     </button>
-    {expanded && <div id="portal-notices">
+    {expanded && <div id="portal-notices" className="notify-dropdown">
       <div className="notification-controls">
         <h2>站内通知</h2>
         <label className="check"><input type="checkbox" checked={unreadOnly} onChange={event => setUnreadOnly(event.target.checked)} />仅未读</label>

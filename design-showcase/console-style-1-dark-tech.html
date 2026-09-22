@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Linkraft · 数据驾驶舱 | 深色科技控制台</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg-deep: #070b12;
+    --bg-sidebar: #0a101c;
+    --bg-surface: #0f1726;
+    --bg-elevated: #142035;
+    --bg-hover: #1a2a44;
+    --border: rgba(56, 189, 248, 0.12);
+    --border-strong: rgba(56, 189, 248, 0.2);
+    --accent: #38bdf8;
+    --accent-soft: rgba(56, 189, 248, 0.12);
+    --success: #34d399;
+    --warning: #fbbf24;
+    --error: #f87171;
+    --purple: #a78bfa;
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-tertiary: #64748b;
+    --text-muted: #475569;
+    --glow: 0 0 20px rgba(56, 189, 248, 0.15);
+  }
+  body {
+    font-family: 'Inter', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-size: 13px;
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    overflow: hidden;
+    height: 100vh;
+  }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+
+  /* Layout */
+  .app {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    height: 100vh;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 18px 18px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo-icon {
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(135deg, #0ea5e9, #8b5cf6);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 14px;
+    box-shadow: 0 0 16px rgba(14, 165, 233, 0.4);
+  }
+  .logo-text {
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+  .logo-sub {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    margin-top: 1px;
+  }
+  .sidebar-nav {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 10px;
+  }
+  .nav-group-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    padding: 12px 12px 6px;
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-bottom: 2px;
+    position: relative;
+  }
+  .nav-item:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+  .nav-item.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--border-strong);
+  }
+  .nav-item.active::before {
+    content: '';
+    position: absolute;
+    left: -10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 18px;
+    background: var(--accent);
+    border-radius: 0 3px 3px 0;
+    box-shadow: 0 0 8px var(--accent);
+  }
+  .nav-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    opacity: 0.8;
+  }
+  .nav-item.active .nav-icon { opacity: 1; }
+  .nav-badge {
+    margin-left: auto;
+    background: var(--error);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    min-width: 18px;
+    text-align: center;
+  }
+  .sidebar-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 8px 8px;
+  }
+  .sidebar-footer {
+    padding: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .storage-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+  }
+  .storage-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-bottom: 8px;
+  }
+  .storage-label span:last-child { color: var(--accent); font-weight: 600; }
+  .storage-bar {
+    height: 4px;
+    background: var(--bg-deep);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .storage-fill {
+    height: 100%;
+    width: 68%;
+    background: linear-gradient(90deg, var(--accent), var(--purple));
+    border-radius: 2px;
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+  }
+
+  /* Main */
+  .main {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Topbar */
+  .topbar {
+    height: 52px;
+    background: rgba(10, 16, 28, 0.8);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    flex-shrink: 0;
+  }
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .topbar-title {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+  }
+  .breadcrumb span:last-child { color: var(--text-primary); font-weight: 500; }
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .search-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    width: 280px;
+    transition: all 0.15s;
+  }
+  .search-box:focus-within {
+    border-color: var(--border-strong);
+    box-shadow: var(--glow);
+  }
+  .search-box input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .search-box input::placeholder { color: var(--text-tertiary); }
+  .search-shortcut {
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--bg-deep);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .icon-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+  }
+  .icon-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border);
+  }
+  .icon-btn .dot {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 8px;
+    height: 8px;
+    background: var(--error);
+    border-radius: 50%;
+    border: 2px solid var(--bg-sidebar);
+  }
+  .user-chip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 8px 4px 4px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .user-chip:hover { background: var(--bg-hover); }
+  .avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, #8b5cf6, #06b6d4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .user-info { line-height: 1.2; }
+  .user-name { font-size: 12px; font-weight: 600; }
+  .user-role { font-size: 10px; color: var(--text-tertiary); }
+
+  /* Content */
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    background-image:
+      linear-gradient(rgba(56, 189, 248, 0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(56, 189, 248, 0.02) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  /* Page header */
+  .page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px;
+  }
+  .page-title-group h1 {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 4px;
+  }
+  .page-desc {
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+  .page-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .btn {
+    padding: 7px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: inherit;
+  }
+  .btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent), #0ea5e9);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(56, 189, 248, 0.25);
+  }
+  .btn-primary:hover {
+    box-shadow: 0 6px 18px rgba(56, 189, 248, 0.35);
+    transform: translateY(-1px);
+  }
+
+  /* Stat cards */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .stat-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+  .stat-card:hover { border-color: var(--border-strong); }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--stat-color, var(--accent));
+    opacity: 0.6;
+  }
+  .stat-card.cyan { --stat-color: var(--accent); }
+  .stat-card.green { --stat-color: var(--success); }
+  .stat-card.purple { --stat-color: var(--purple); }
+  .stat-card.amber { --stat-color: var(--warning); }
+  .stat-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .stat-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--stat-color, var(--accent));
+    opacity: 0.15;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--stat-color, var(--accent));
+    opacity: 1;
+    background: color-mix(in srgb, var(--stat-color, var(--accent)) 15%, transparent);
+  }
+  .stat-icon svg { width: 16px; height: 16px; }
+  .stat-value {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 6px;
+    color: var(--stat-color, var(--text-primary));
+  }
+  .stat-change {
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .stat-change.up { color: var(--success); }
+  .stat-change.down { color: var(--error); }
+
+  /* Chart row */
+  .chart-row {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-title .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 6px var(--success);
+    animation: pulse-dot 2s infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .card-actions {
+    display: flex;
+    gap: 4px;
+  }
+  .card-action {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+  }
+  .card-action:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .card-body { padding: 16px; }
+
+  /* Line chart simulation */
+  .line-chart {
+    height: 220px;
+    position: relative;
+  }
+  .chart-grid {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .chart-grid-line {
+    height: 1px;
+    background: var(--border);
+  }
+  .chart-svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .chart-labels {
+    position: absolute;
+    bottom: -20px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-tertiary);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .chart-legend {
+    display: flex;
+    gap: 16px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  /* Donut chart */
+  .donut-chart {
+    height: 180px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .donut-center {
+    position: absolute;
+    text-align: center;
+  }
+  .donut-value {
+    font-size: 28px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .donut-label {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+  }
+  .donut-legend {
+    display: grid;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .donut-legend-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+  }
+  .donut-legend-item span:first-child {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+  }
+  .donut-legend-item span:last-child {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .legend-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+  }
+
+  /* Table */
+  .table-section {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr;
+    gap: 12px;
+  }
+  .table-wrap {
+    overflow-x: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th {
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 12px 14px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  tr:hover td { background: var(--bg-hover); }
+  tr:last-child td { border-bottom: none; }
+  .cell-primary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .cell-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  .cell-name {
+    font-weight: 600;
+    font-size: 12px;
+  }
+  .cell-sub {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .tag::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+  }
+  .tag.running { background: rgba(56, 189, 248, 0.12); color: var(--accent); }
+  .tag.running::before { background: var(--accent); box-shadow: 0 0 4px var(--accent); }
+  .tag.completed { background: rgba(52, 211, 153, 0.12); color: var(--success); }
+  .tag.completed::before { background: var(--success); }
+  .tag.failed { background: rgba(248, 113, 113, 0.12); color: var(--error); }
+  .tag.failed::before { background: var(--error); }
+  .tag.pending { background: rgba(251, 191, 36, 0.12); color: var(--warning); }
+  .tag.pending::before { background: var(--warning); }
+
+  .progress-mini {
+    width: 80px;
+    height: 4px;
+    background: var(--bg-deep);
+    border-radius: 2px;
+    overflow: hidden;
+    display: inline-block;
+    vertical-align: middle;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--success));
+    border-radius: 2px;
+  }
+
+  .row-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+  }
+  .row-action {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+  }
+  .row-action:hover { background: var(--bg-elevated); color: var(--accent); }
+
+  /* Activity feed */
+  .activity-list {
+    display: grid;
+    gap: 0;
+  }
+  .activity-item {
+    display: flex;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .activity-item:last-child { border-bottom: none; padding-bottom: 0; }
+  .activity-item:first-child { padding-top: 0; }
+  .activity-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 6px;
+    flex-shrink: 0;
+  }
+  .activity-dot.success { background: var(--success); box-shadow: 0 0 6px var(--success); }
+  .activity-dot.info { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .activity-dot.warning { background: var(--warning); }
+  .activity-content { flex: 1; min-width: 0; }
+  .activity-text {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+  .activity-text strong { color: var(--text-primary); font-weight: 600; }
+  .activity-time {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    margin-top: 3px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+  /* Responsive */
+  @media (max-width: 1200px) {
+    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+    .chart-row { grid-template-columns: 1fr 1fr; }
+    .chart-row .card:first-child { grid-column: span 2; }
+    .table-section { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 768px) {
+    .app { grid-template-columns: 60px 1fr; }
+    .sidebar-logo .logo-text, .logo-sub, .nav-item span:not(.nav-badge), .nav-group-label, .sidebar-footer, .storage-card { display: none; }
+    .sidebar-logo { justify-content: center; padding: 16px 0; }
+    .nav-item { justify-content: center; padding: 10px; }
+    .search-box { display: none; }
+    .stat-grid { grid-template-columns: 1fr 1fr; }
+    .chart-row { grid-template-columns: 1fr; }
+    .chart-row .card:first-child { grid-column: span 1; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">L</div>
+      <div>
+        <div class="logo-text">Linkraft</div>
+        <div class="logo-sub">AI Platform</div>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-group-label">概览</div>
+      <div class="nav-item active">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+        <span>数据驾驶舱</span>
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span>项目管理</span>
+      </div>
+
+      <div class="sidebar-divider"></div>
+      <div class="nav-group-label">AI 开发</div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <span>AutoML</span>
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        <span>数据标注</span>
+        <span class="nav-badge">12</span>
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98"/><path d="M15.41 6.51l-6.82 3.98"/></svg>
+        <span>工作流编排</span>
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        <span>模型库</span>
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        <span>API 市场</span>
+      </div>
+
+      <div class="sidebar-divider"></div>
+      <div class="nav-group-label">系统</div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <span>监控告警</span>
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+        <span>计算资源</span>
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="storage-card">
+        <div class="storage-label">
+          <span>存储用量</span>
+          <span>68%</span>
+        </div>
+        <div class="storage-bar">
+          <div class="storage-fill"></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="breadcrumb">
+          <span>工作台</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          <span>数据驾驶舱</span>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="search-box">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-tertiary);"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" placeholder="搜索项目、模型、数据集...">
+          <span class="search-shortcut">⌘K</span>
+        </div>
+        <button class="icon-btn" title="通知">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          <span class="dot"></span>
+        </button>
+        <button class="icon-btn" title="设置">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <div class="user-chip">
+          <div class="avatar">ZH</div>
+          <div class="user-info">
+            <div class="user-name">zhanghao</div>
+            <div class="user-role">Admin</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <div class="content">
+      <!-- Page header -->
+      <div class="page-header">
+        <div class="page-title-group">
+          <h1>数据驾驶舱</h1>
+          <div class="page-desc">实时监控平台核心指标与运行状态 · 上次更新: 刚刚</div>
+        </div>
+        <div class="page-actions">
+          <button class="btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"/></svg>
+            导出报告
+          </button>
+          <button class="btn btn-primary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            新建项目
+          </button>
+        </div>
+      </div>
+
+      <!-- Stat cards -->
+      <div class="stat-grid">
+        <div class="stat-card cyan">
+          <div class="stat-top">
+            <div class="stat-label">内置算子</div>
+            <div class="stat-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+            </div>
+          </div>
+          <div class="stat-value">52</div>
+          <div class="stat-change up">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+            +4 本周新增
+          </div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-top">
+            <div class="stat-label">数据集</div>
+            <div class="stat-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            </div>
+          </div>
+          <div class="stat-value">128</div>
+          <div class="stat-change up">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+            +12 本周新增
+          </div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-top">
+            <div class="stat-label">模型总数</div>
+            <div class="stat-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            </div>
+          </div>
+          <div class="stat-value">86</div>
+          <div class="stat-change up">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+            +7 已发布
+          </div>
+        </div>
+        <div class="stat-card amber">
+          <div class="stat-top">
+            <div class="stat-label">API 调用</div>
+            <div class="stat-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            </div>
+          </div>
+          <div class="stat-value mono">24.8K</div>
+          <div class="stat-change up">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+            18.2% 较昨日
+          </div>
+        </div>
+      </div>
+
+      <!-- Chart row -->
+      <div class="chart-row">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <span class="dot"></span>
+              模型训练趋势
+            </div>
+            <div class="card-actions">
+              <button class="card-action">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              </button>
+              <button class="card-action">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="line-chart">
+              <div class="chart-grid">
+                <div class="chart-grid-line"></div>
+                <div class="chart-grid-line"></div>
+                <div class="chart-grid-line"></div>
+                <div class="chart-grid-line"></div>
+                <div class="chart-grid-line"></div>
+              </div>
+              <svg class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="grad1" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#38bdf8;stop-opacity:0.3"/>
+                    <stop offset="100%" style="stop-color:#38bdf8;stop-opacity:0"/>
+                  </linearGradient>
+                  <linearGradient id="grad2" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#34d399;stop-opacity:0.2"/>
+                    <stop offset="100%" style="stop-color:#34d399;stop-opacity:0"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0,160 C60,140 100,100 160,120 C220,140 260,80 320,60 C380,40 420,90 480,70 C540,50 580,30 600,20 L600,220 L0,220 Z" fill="url(#grad1)"/>
+                <path d="M0,180 C60,170 100,150 160,160 C220,170 260,130 320,140 C380,150 420,120 480,130 C540,140 580,110 600,100 L600,220 L0,220 Z" fill="url(#grad2)"/>
+                <path d="M0,160 C60,140 100,100 160,120 C220,140 260,80 320,60 C380,40 420,90 480,70 C540,50 580,30 600,20" fill="none" stroke="#38bdf8" stroke-width="2"/>
+                <path d="M0,180 C60,170 100,150 160,160 C220,170 260,130 320,140 C380,150 420,120 480,130 C540,140 580,110 600,100" fill="none" stroke="#34d399" stroke-width="2" stroke-dasharray="4,4"/>
+              </svg>
+              <div class="chart-labels">
+                <span>周一</span><span>周二</span><span>周三</span><span>周四</span><span>周五</span><span>周六</span><span>周日</span>
+              </div>
+            </div>
+            <div class="chart-legend">
+              <div class="legend-item"><span class="legend-dot" style="background:#38bdf8"></span>训练任务数</div>
+              <div class="legend-item"><span class="legend-dot" style="background:#34d399"></span>完成模型数</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">算子分布</div>
+          </div>
+          <div class="card-body">
+            <div class="donut-chart">
+              <svg width="160" height="160" viewBox="0 0 42 42">
+                <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#1e293b" stroke-width="5"/>
+                <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#38bdf8" stroke-width="5" stroke-dasharray="30 70" stroke-dashoffset="25"/>
+                <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#34d399" stroke-width="5" stroke-dasharray="22 78" stroke-dashoffset="-5"/>
+                <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#a78bfa" stroke-width="5" stroke-dasharray="18 82" stroke-dashoffset="-27"/>
+                <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#fbbf24" stroke-width="5" stroke-dasharray="15 85" stroke-dashoffset="-45"/>
+                <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#f87171" stroke-width="5" stroke-dasharray="15 85" stroke-dashoffset="-60"/>
+              </svg>
+              <div class="donut-center">
+                <div class="donut-value">52</div>
+                <div class="donut-label">算子总数</div>
+              </div>
+            </div>
+            <div class="donut-legend">
+              <div class="donut-legend-item"><span><span class="legend-swatch" style="background:#38bdf8"></span>数据处理</span><span>16</span></div>
+              <div class="donut-legend-item"><span><span class="legend-swatch" style="background:#34d399"></span>机器学习</span><span>12</span></div>
+              <div class="donut-legend-item"><span><span class="legend-swatch" style="background:#a78bfa"></span>深度学习</span><span>9</span></div>
+              <div class="donut-legend-item"><span><span class="legend-swatch" style="background:#fbbf24"></span>模型评估</span><span>8</span></div>
+              <div class="donut-legend-item"><span><span class="legend-swatch" style="background:#f87171"></span>其他</span><span>7</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">模型状态</div>
+          </div>
+          <div class="card-body">
+            <div style="display:grid;gap:14px;">
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px;">
+                  <span style="color:var(--text-secondary);">训练中</span>
+                  <span class="mono" style="color:var(--warning);font-weight:600;">12</span>
+                </div>
+                <div class="progress-mini" style="width:100%;height:6px;">
+                  <div class="progress-fill" style="width:28%;background:var(--warning);"></div>
+                </div>
+              </div>
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px;">
+                  <span style="color:var(--text-secondary);">已完成</span>
+                  <span class="mono" style="color:var(--success);font-weight:600;">48</span>
+                </div>
+                <div class="progress-mini" style="width:100%;height:6px;">
+                  <div class="progress-fill" style="width:72%;background:var(--success);"></div>
+                </div>
+              </div>
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px;">
+                  <span style="color:var(--text-secondary);">已发布</span>
+                  <span class="mono" style="color:var(--accent);font-weight:600;">26</span>
+                </div>
+                <div class="progress-mini" style="width:100%;height:6px;">
+                  <div class="progress-fill" style="width:54%;background:var(--accent);"></div>
+                </div>
+              </div>
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px;">
+                  <span style="color:var(--text-secondary);">失败</span>
+                  <span class="mono" style="color:var(--error);font-weight:600;">4</span>
+                </div>
+                <div class="progress-mini" style="width:100%;height:6px;">
+                  <div class="progress-fill" style="width:8%;background:var(--error);"></div>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);text-align:center;">
+              <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:4px;">总完成率</div>
+              <div style="font-size:28px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--success);">72.3%</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Table + Activity -->
+      <div class="table-section">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">最近实验</div>
+            <div class="card-actions">
+              <button class="card-action" style="width:auto;padding:0 10px;font-size:11px;color:var(--accent);">
+                查看全部 →
+              </button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>实验名称</th>
+                  <th>类型</th>
+                  <th>状态</th>
+                  <th>准确率</th>
+                  <th>进度</th>
+                  <th style="text-align:right;">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <div class="cell-primary">
+                      <div class="cell-icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                      </div>
+                      <div>
+                        <div class="cell-name">spot_weld_quality_v3</div>
+                        <div class="cell-sub">XGBoost · 分类</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>AutoML</td>
+                  <td><span class="tag completed">已完成</span></td>
+                  <td class="mono" style="color:var(--success);font-weight:600;">96.8%</td>
+                  <td>
+                    <span class="progress-mini"><div class="progress-fill" style="width:100%;"></div></span>
+                  </td>
+                  <td>
+                    <div class="row-actions">
+                      <button class="row-action" title="查看">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                      </button>
+                      <button class="row-action" title="更多">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="cell-primary">
+                      <div class="cell-icon" style="color:var(--purple);">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/></svg>
+                      </div>
+                      <div>
+                        <div class="cell-name">customer_churn_2026</div>
+                        <div class="cell-sub">LightGBM · 分类</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>AutoML</td>
+                  <td><span class="tag running">运行中</span></td>
+                  <td class="mono" style="color:var(--text-tertiary);">—</td>
+                  <td>
+                    <span class="progress-mini"><div class="progress-fill" style="width:64%;"></div></span>
+                  </td>
+                  <td>
+                    <div class="row-actions">
+                      <button class="row-action" title="查看">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                      </button>
+                      <button class="row-action" title="更多">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="cell-primary">
+                      <div class="cell-icon" style="color:var(--warning);">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                      </div>
+                      <div>
+                        <div class="cell-name">demand_forecast_q4</div>
+                        <div class="cell-sub">CatBoost · 回归</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>AutoML</td>
+                  <td><span class="tag pending">等待中</span></td>
+                  <td class="mono" style="color:var(--text-tertiary);">—</td>
+                  <td>
+                    <span class="progress-mini"><div class="progress-fill" style="width:0%;"></div></span>
+                  </td>
+                  <td>
+                    <div class="row-actions">
+                      <button class="row-action" title="查看">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                      </button>
+                      <button class="row-action" title="更多">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="cell-primary">
+                      <div class="cell-icon" style="color:var(--error);">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                      </div>
+                      <div>
+                        <div class="cell-name">defect_detection_v2</div>
+                        <div class="cell-sub">CNN · 图像分类</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>深度学习</td>
+                  <td><span class="tag failed">失败</span></td>
+                  <td class="mono" style="color:var(--text-tertiary);">—</td>
+                  <td>
+                    <span class="progress-mini"><div class="progress-fill" style="width:38%;background:var(--error);"></div></span>
+                  </td>
+                  <td>
+                    <div class="row-actions">
+                      <button class="row-action" title="查看">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                      </button>
+                      <button class="row-action" title="更多">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="cell-primary">
+                      <div class="cell-icon" style="color:var(--success);">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                      </div>
+                      <div>
+                        <div class="cell-name">revenue_prediction</div>
+                        <div class="cell-sub">XGBoost · 回归</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>AutoML</td>
+                  <td><span class="tag completed">已完成</span></td>
+                  <td class="mono" style="color:var(--success);font-weight:600;">92.1%</td>
+                  <td>
+                    <span class="progress-mini"><div class="progress-fill" style="width:100%;"></div></span>
+                  </td>
+                  <td>
+                    <div class="row-actions">
+                      <button class="row-action" title="查看">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                      </button>
+                      <button class="row-action" title="更多">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">最近动态</div>
+          </div>
+          <div class="card-body">
+            <div class="activity-list">
+              <div class="activity-item">
+                <div class="activity-dot success"></div>
+                <div class="activity-content">
+                  <div class="activity-text"><strong>spot_weld_quality_v3</strong> 训练完成，准确率 96.8%</div>
+                  <div class="activity-time">2 分钟前</div>
+                </div>
+              </div>
+              <div class="activity-item">
+                <div class="activity-dot info"></div>
+                <div class="activity-content">新数据集 <strong>weld_data_2026_q3</strong> 已导入，共 12,480 条样本</div>
+                <div class="activity-time">15 分钟前</div>
+              </div>
+              <div class="activity-item">
+                <div class="activity-dot warning"></div>
+                <div class="activity-text">标注任务 <strong>defect_label_batch_07</strong> 待审核样本超过阈值</div>
+                <div class="activity-time">32 分钟前</div>
+              </div>
+              <div class="activity-item">
+                <div class="activity-dot success"></div>
+                <div class="activity-content">模型 <strong>revenue_prediction_v2</strong> 已发布到生产环境</div>
+                <div class="activity-time">1 小时前</div>
+              </div>
+              <div class="activity-item">
+                <div class="activity-dot info"></div>
+                <div class="activity-content">工作流 <strong>daily_retrain_pipeline</strong> 执行成功</div>
+                <div class="activity-time">2 小时前</div>
+              </div>
+              <div class="activity-item">
+                <div class="activity-dot warning"></div>
+                <div class="activity-text">计算资源 <strong>GPU-worker-03</strong> 利用率超过 90%</div>
+                <div class="activity-time">3 小时前</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

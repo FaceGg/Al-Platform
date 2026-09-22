@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { App as AntApp, Dropdown, Empty, Modal, Spin, Steps, Table, Tag, Tooltip } from "antd";
+import { App as AntApp, Drawer, Dropdown, Empty, Modal, Segmented, Spin, Steps, Table, Tag, Tooltip } from "antd";
 import { DeleteOutlined, DownloadOutlined, EyeOutlined, LeftOutlined, ReloadOutlined, RightOutlined, UploadOutlined } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import * as echarts from "echarts";
@@ -22,6 +22,7 @@ import { formatApiError, default as apiClient } from "../api/client";
 import { listDatasets, listDatasetVersions, type DatasetVersionOption } from "../api/datasets";
 import { listAnnotationModelVersions, type AnnotationModelVersion, type AnnotationOutputColumn } from "../api/models";
 import { createLabelSchema } from "../api/labelSchemas";
+import { listSavedStrategies, saveAnnotationStrategy, type SavedAnnotationStrategy } from "../api/savedStrategies";
 import {
   createAnnotationPreview,
   getAnnotationPreview,
@@ -42,7 +43,7 @@ import ReturnAcceptancePanel from "../components/ReturnAcceptancePanel";
 import AnnotationCommentModerationPanel from "../components/AnnotationCommentModerationPanel";
 import AssignmentDialog from "../components/AssignmentDialog";
 import ClusterPreviewPanel, { type ClusterEvaluation } from "../components/ClusterPreviewPanel";
-import { createAssignments, listAnnotatorSubjects, type AnnotatorSubject, type SampleScope } from "../api/annotatorAssignments";
+import { createAssignments, listAnnotatorSubjects, listTaskAssignments, type AnnotatorSubject, type Assignment, type SampleScope } from "../api/annotatorAssignments";
 import {
   createQualityRun,
   deleteQualityRun,
@@ -68,6 +69,15 @@ import {
 } from "../api/spotWeldQuality";
 import { deleteAnnotationTask } from "../api/annotationTasks";
 import type { QualityClusterPreview } from "../api/spotWeldQuality";
+
+// 后端以 UTC 存储时间戳（无时区标记的 ISO 字符串）；
+// 补 "Z" 后再解析，使其按浏览器本地时区正确展示（如北京时间 +8）。
+function formatBackendTimestamp(value: string | null | undefined): string {
+  if (!value) return "-";
+  const hasTimezone = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(value);
+  const date = new Date(hasTimezone ? value : `${value}Z`);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
 
 interface ProjectOption { id: string; name: string; project_role?: string; }
 
@@ -250,6 +260,11 @@ function outputColumnsFromSnapshot(task: AnnotationTask): AnnotationOutputColumn
       ? [{ machine_key: machineKey, display_name: displayName, value_type: valueType as AnnotationOutputColumn["value_type"], required: Boolean(item.required) }]
       : [];
   }) : [];
+}
+
+function frozenLabelColumnCount(task: AnnotationTask): number {
+  const schema = task.task_snapshot?.label_schema as { columns?: unknown } | undefined;
+  return Array.isArray(schema?.columns) ? schema.columns.length : 0;
 }
 
 function sourceColumnsFromSnapshot(task: AnnotationTask): AutomaticAnnotationSourceColumn[] {
@@ -439,6 +454,7 @@ export default function DataAnnotationPage() {
   const [datasetArtifactId, setDatasetArtifactId] = useState(searchParams.get("datasetId") || "");
   const [runs, setRuns] = useState<QualityRun[]>([]);
   const [genericTasks, setGenericTasks] = useState<AnnotationTask[]>([]);
+  const [taskListTab, setTaskListTab] = useState<"all" | "active" | "legacy">("all");
   const [annotationOperations, setAnnotationOperations] = useState<AnnotationOperation[]>([]);
   const [annotationOperationsCursor, setAnnotationOperationsCursor] = useState<string | null>(null);
   const [commentTaskId, setCommentTaskId] = useState<string | null>(null);
@@ -448,6 +464,7 @@ export default function DataAnnotationPage() {
   const [previewDrawer, setPreviewDrawer] = useState<PreviewDrawerState | null>(null);
   const [assignmentTask, setAssignmentTask] = useState<AnnotationTask | null>(null);
   const [annotators, setAnnotators] = useState<AnnotatorSubject[]>([]);
+  const [assignmentExisting, setAssignmentExisting] = useState<Assignment[]>([]);
   const [assignmentLoading, setAssignmentLoading] = useState(false);
   const [assignmentOverlapWarning, setAssignmentOverlapWarning] = useState<string | null>(null);
   const [revisionConflict, setRevisionConflict] = useState<RevisionConflictState | null>(null);
@@ -472,8 +489,6 @@ export default function DataAnnotationPage() {
   const [genericInstructions, setGenericInstructions] = useState("");
   const [genericModelVersionId, setGenericModelVersionId] = useState("");
   const [genericClustering, setGenericClustering] = useState(false);
-  const [genericAutoLabelSource, setGenericAutoLabelSource] = useState<"model" | "custom">("model");
-  const [genericAutoSchema, setGenericAutoSchema] = useState<{ id: string; columns: AnnotationOutputColumn[] } | null>(null);
   const [genericSetupStep, setGenericSetupStep] = useState<1 | 2>(1);
   const [genericDiscoveryTask, setGenericDiscoveryTask] = useState<AnnotationTask | null>(null);
   const [genericDiscoveryPreviewId, setGenericDiscoveryPreviewId] = useState<string | null>(null);
@@ -484,7 +499,14 @@ export default function DataAnnotationPage() {
   const [genericFinalAttempt, setGenericFinalAttempt] = useState(0);
   const [genericFinalSamples, setGenericFinalSamples] = useState<Awaited<ReturnType<typeof listAnnotationPreviewSamples>> | null>(null);
   const [genericAutomaticDraft, setGenericAutomaticDraft] = useState<AutomaticStrategyDraft>(() => createAutomaticStrategyDraft([]));
+  // 聚类预览后管理员可在向导第 2 步定义标签列；保存后优先于模型输出契约列参与策略配置
+  const [genericAutoSchema, setGenericAutoSchema] = useState<{ id: string; columns: AnnotationOutputColumn[] } | null>(null);
+  const [genericSavedStrategies, setGenericSavedStrategies] = useState<SavedAnnotationStrategy[]>([]);
+  const [genericStrategyName, setGenericStrategyName] = useState("");
+  const [genericImportStrategyId, setGenericImportStrategyId] = useState("");
+  const [genericStrategySaving, setGenericStrategySaving] = useState(false);
   const [automaticConfigTask, setAutomaticConfigTask] = useState<AnnotationTask | null>(null);
+  const [automaticConfigSchema, setAutomaticConfigSchema] = useState<{ id: string; columns: AnnotationOutputColumn[] } | null>(null);
   const [automaticConfigDraft, setAutomaticConfigDraft] = useState<AutomaticStrategyDraft>(() => createAutomaticStrategyDraft([]));
   const [automaticConfigSaving, setAutomaticConfigSaving] = useState(false);
   const [genericCreating, setGenericCreating] = useState(false);
@@ -551,9 +573,7 @@ export default function DataAnnotationPage() {
   );
   const selectedGenericOutputColumns = selectedGenericModelVersion?.output_contract?.columns || [];
   // 弱监督任务（§7.1 步骤 5）的标签列可由用户指定；未指定时沿用模型输出合同。
-  const effectiveAutoColumns = genericAutoLabelSource === "custom" && genericAutoSchema
-    ? genericAutoSchema.columns
-    : selectedGenericOutputColumns;
+  const effectiveAutoColumns = genericAutoSchema?.columns || selectedGenericOutputColumns;
   const selectedModel = useMemo(
     () => qualityModels.find((item) => item.id === selectedModelId),
     [qualityModels, selectedModelId],
@@ -731,7 +751,7 @@ export default function DataAnnotationPage() {
   }, [isTaskList, loadingProjects, projects, projectId, message, requestedRunId]);
 
   useEffect(() => {
-    if (!isTaskList || !projectId) {
+    if (!isTaskList) {
       setGenericTasks([]);
       setGenericTasksCursor(null);
       setAnnotationOperations([]);
@@ -740,7 +760,7 @@ export default function DataAnnotationPage() {
     }
     let active = true;
     setGenericTaskLoading(true);
-    listAnnotationTasks(projectId)
+    listAnnotationTasks(projectId || undefined)
       .then((result) => {
         if (!active) return;
         setGenericTasks(result.items || []);
@@ -752,10 +772,10 @@ export default function DataAnnotationPage() {
   }, [isTaskList, projectId]);
 
   const loadMoreGenericTasks = async () => {
-    if (!projectId || !genericTasksCursor || genericTaskLoading) return;
+    if (!genericTasksCursor || genericTaskLoading) return;
     setGenericTaskLoading(true);
     try {
-      const result = await listAnnotationTasks(projectId, 50, genericTasksCursor);
+      const result = await listAnnotationTasks(projectId || undefined, 50, genericTasksCursor);
       setGenericTasks((current) => {
         const seen = new Set(current.map((item) => item.id));
         return [...current, ...(result.items || []).filter((item) => !seen.has(item.id))];
@@ -782,6 +802,17 @@ export default function DataAnnotationPage() {
       .finally(() => { if (active) setOperationsLoading(false); });
     return () => { active = false; };
   }, [isTaskList, projectId, message]);
+
+  // Publishing and execution now advance automatically once previews finish,
+  // so keep the task list fresh while any task is still transitioning.
+  const hasTransitioningTasks = isTaskList && genericTasks.some(
+    (task) => ["previewing", "executing"].includes(task.status),
+  );
+  useEffect(() => {
+    if (!hasTransitioningTasks) return undefined;
+    const timer = setInterval(() => { void refreshGenericTaskData(); }, 2000);
+    return () => { clearInterval(timer); };
+  }, [hasTransitioningTasks, projectId]);
 
   useEffect(() => {
     if (!previewDrawer?.previewId) return undefined;
@@ -935,10 +966,16 @@ export default function DataAnnotationPage() {
     setAssignmentOverlapWarning(null);
     setAssignmentLoading(true);
     try {
-      setAnnotators(await listAnnotatorSubjects());
+      const [subjects, existingAssignments] = await Promise.all([
+        listAnnotatorSubjects("", task.project_id || projectId),
+        listTaskAssignments(task.id),
+      ]);
+      setAnnotators(subjects.filter((item) => item.status === "active"));
+      setAssignmentExisting(Array.isArray(existingAssignments) ? existingAssignments : []);
     } catch (error) {
       message.error(formatApiError(error, "标注员加载失败"));
       setAnnotators([]);
+      setAssignmentExisting([]);
     } finally {
       setAssignmentLoading(false);
     }
@@ -971,17 +1008,6 @@ export default function DataAnnotationPage() {
     }
   };
 
-  const executeGenericTask = async (task: AnnotationTask) => {
-    try {
-      const updated = await transitionAnnotationTask(task.id, task.task_revision, "execute", task.preview?.id);
-      setGenericTasks((items) => items.map((item) => item.id === task.id ? { ...item, ...updated } : item));
-      await refreshGenericTaskData();
-    } catch (error) {
-      if (isRevisionConflict(error)) setRevisionConflict(revisionConflictFromError(error, task));
-      else message.error(formatApiError(error, "任务执行失败"));
-    }
-  };
-
   const clusterOptionsForTask = (task: AnnotationTask): ClusterOption[] => {
     const rawClusters = task.preview?.summary?.clusters;
     return Array.isArray(rawClusters) ? rawClusters.flatMap((cluster) => {
@@ -1002,17 +1028,44 @@ export default function DataAnnotationPage() {
 
   const openAutomaticConfiguration = (task: AnnotationTask) => {
     const columns = outputColumnsFromSnapshot(task);
-    if (!columns.length) {
+    // Weak-supervision tasks may still carry the discovery placeholder
+    // schema (labels are defined after clustering); the drawer collects it.
+    if (!columns.length && frozenLabelColumnCount(task) === 0) {
       message.error("任务没有可配置的冻结标签合同");
       return;
     }
+    setAutomaticConfigSchema(null);
     setAutomaticConfigTask(task);
     setAutomaticConfigDraft(strategyDraftFromTask(task, columns));
   };
 
+  const saveAutomaticConfigSchema = async (columns: LabelColumnDraft[]) => {
+    if (!projectId || !automaticConfigTask) { message.error(lang === "zh" ? "请先选择项目" : "Select a project first"); return; }
+    try {
+      const schema = await createLabelSchema(projectId, `${automaticConfigTask.name}-labels`, columns, "annotation");
+      setAutomaticConfigSchema({
+        id: schema.id,
+        columns: columns.map((column) => ({
+          machine_key: column.machine_key,
+          display_name: column.display_name,
+          value_type: column.value_type,
+          required: column.required,
+        })),
+      });
+      message.success(lang === "zh" ? "自定义标签 schema 已保存" : "Custom label schema saved");
+    } catch (error) {
+      message.error(formatApiError(error, lang === "zh" ? "标签 schema 保存失败" : "Failed to save the label schema"));
+    }
+  };
+
   const saveAutomaticConfiguration = async () => {
     if (!automaticConfigTask || automaticConfigSaving) return;
-    const columns = outputColumnsFromSnapshot(automaticConfigTask);
+    const hasFrozenLabels = frozenLabelColumnCount(automaticConfigTask) > 0;
+    if (!hasFrozenLabels && !automaticConfigSchema) {
+      message.error(lang === "zh" ? "请先保存标签 schema（聚类后定义标签列）" : "Save the label schema first (labels are defined after clustering)");
+      return;
+    }
+    const columns = hasFrozenLabels ? outputColumnsFromSnapshot(automaticConfigTask) : automaticConfigSchema!.columns;
     const configuration = automaticConfigurationFromDraft(
       automaticConfigDraft,
       columns,
@@ -1030,6 +1083,7 @@ export default function DataAnnotationPage() {
     try {
       const updated = await updateGenericAnnotationTaskConfiguration(automaticConfigTask.id, {
         task_revision: automaticConfigTask.task_revision,
+        ...(!hasFrozenLabels && automaticConfigSchema ? { label_schema_id: automaticConfigSchema.id } : {}),
         visible_columns: visibleColumns,
         instructions: String(snapshot.instructions || ""),
         configuration: configuration.configuration,
@@ -1046,16 +1100,14 @@ export default function DataAnnotationPage() {
   };
 
   const refreshGenericTaskData = async () => {
-    if (!isTaskList || !projectId) return;
+    if (!isTaskList) return;
     try {
-      const [tasks, operations] = await Promise.all([
-        listAnnotationTasks(projectId),
-        listAnnotationOperations(projectId),
-      ]);
+      const tasks = await listAnnotationTasks(projectId || undefined);
+      const operationsResult = projectId ? await listAnnotationOperations(projectId) : null;
       setGenericTasks(tasks.items || []);
       setGenericTasksCursor(tasks.next_cursor || null);
-      setAnnotationOperations(operations.items || []);
-      setAnnotationOperationsCursor(operations.next_cursor || null);
+      setAnnotationOperations(operationsResult?.items || []);
+      setAnnotationOperationsCursor(operationsResult?.next_cursor || null);
     } catch (error) {
       message.error(formatApiError(error, "通用任务刷新失败"));
     }
@@ -1106,7 +1158,7 @@ export default function DataAnnotationPage() {
 
   const transitionGenericTask = async (
     task: AnnotationTask,
-    action: "publish" | "pause" | "resume" | "cancel" | "return" | "accept" | "complete" | "archive" | "restore" | "reopen",
+    action: "pause" | "resume" | "cancel" | "return" | "accept" | "complete" | "archive" | "restore" | "reopen",
   ) => {
     try {
       await transitionAnnotationTask(task.id, task.task_revision, action);
@@ -1243,6 +1295,17 @@ export default function DataAnnotationPage() {
     setGenericAutomaticDraft(createAutomaticStrategyDraft(effectiveAutoColumns));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedGenericModelVersion?.id, genericAutoSchema?.id]);
+
+  // 进入向导第 2 步（聚类流程）时加载项目已保存的标注策略供导入
+  useEffect(() => {
+    if (!genericSetupMode || labelMode !== "automatic" || !genericClustering || !projectId) return;
+    let active = true;
+    listSavedStrategies(projectId)
+      .then((items) => { if (active) setGenericSavedStrategies(items); })
+      .catch(() => { if (active) setGenericSavedStrategies([]); });
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [genericSetupMode, labelMode, genericClustering, projectId]);
 
   useEffect(() => {
     if (skipUrlStateSyncRef.current) {
@@ -1575,7 +1638,12 @@ export default function DataAnnotationPage() {
     setGenericInstructions("");
     setGenericModelVersionId("");
     setGenericClustering(false);
+    resetGenericScopeDraft();
     setGenericAutomaticDraft(createAutomaticStrategyDraft([]));
+    setGenericAutoSchema(null);
+    setGenericSavedStrategies([]);
+    setGenericStrategyName("");
+    setGenericImportStrategyId("");
     setGenericDiscoveryTask(null);
     setGenericDiscoveryPreviewId(null);
     setGenericDiscoveryError(null);
@@ -1622,23 +1690,11 @@ export default function DataAnnotationPage() {
     setGenericScopeConditions([]);
   };
 
-  const saveGenericAutoSchema = async (columns: LabelColumnDraft[]) => {
-    if (!projectId) { message.error(lang === "zh" ? "请先选择项目" : "Select a project first"); return; }
-    if (!genericTaskName.trim()) { message.error(copy.nameRequired); return; }
-    try {
-      const schema = await createLabelSchema(projectId, `${genericTaskName.trim()}-labels`, columns, "annotation");
-      setGenericAutoSchema({
-        id: schema.id,
-        columns: columns.map((column) => ({
-          machine_key: column.machine_key,
-          display_name: column.display_name,
-          value_type: column.value_type,
-          required: column.required,
-        })),
-      });
-      message.success(lang === "zh" ? "自定义标签 schema 已保存" : "Custom label schema saved");
-    } catch (error) {
-      message.error(formatApiError(error, lang === "zh" ? "标签 schema 保存失败" : "Failed to save the label schema"));
+  const notifyAutoRenamedTask = (task: AnnotationTask, requestedName: string) => {
+    if (task.name && requestedName && task.name !== requestedName) {
+      message.info(lang === "zh" ? `任务名称与现有任务重复，已自动改为「${task.name}」` : `Task name already existed; renamed to "${task.name}"`);
+      // 同步向导与冻结契约摘要中展示的任务名称（蓝框）
+      setGenericTaskName(task.name);
     }
   };
 
@@ -1653,10 +1709,6 @@ export default function DataAnnotationPage() {
     if (labelMode === "manual" && (!genericSchemaName.trim() || !genericLabelKey.trim())) return;
     if (labelMode === "automatic" && !selectedGenericModelVersion) {
       message.error("自动任务需要选择已启用模型版本");
-      return;
-    }
-    if (labelMode === "automatic" && genericClustering && genericAutoLabelSource === "custom" && !genericAutoSchema) {
-      message.error(lang === "zh" ? "自定义标签模式需要先保存标签 schema" : "Save the custom label schema first");
       return;
     }
     if (labelMode === "automatic" && (!effectiveAutoColumns.length)) {
@@ -1691,13 +1743,13 @@ export default function DataAnnotationPage() {
         machine_key: genericLabelKey.trim(),
         display_name: genericLabelKey.trim(),
         value_type: genericLabelType,
-        required: false,
+        required: true,
         ...(genericSchemaInstruction.trim() ? { instruction: genericSchemaInstruction.trim() } : {}),
       }]) : null;
       const task = await createGenericAnnotationTask({
         project_id: projectId,
         dataset_version_id: genericVersionId,
-        ...(schema || (labelMode === "automatic" && genericClustering && genericAutoLabelSource === "custom" && genericAutoSchema) ? { label_schema_id: (schema || genericAutoSchema!).id } : {}),
+        ...(schema ? { label_schema_id: schema.id } : {}),
         ...(selectedGenericModelVersion && labelMode === "automatic" ? { model_version_id: selectedGenericModelVersion.id } : {}),
         name: genericTaskName.trim(),
         mode: labelMode,
@@ -1708,12 +1760,25 @@ export default function DataAnnotationPage() {
         due_at: genericDueAt ? new Date(`${genericDueAt}T23:59:59`).toISOString() : null,
         configuration: automaticConfiguration?.configuration || {},
       }, crypto.randomUUID());
+      notifyAutoRenamedTask(task, genericTaskName.trim());
       setGenericTasks((items) => [task, ...items.filter((item) => item.id !== task.id)]);
       resetGenericScopeDraft();
       if (labelMode === "automatic") {
         await startFinalPreview(task);
       } else {
-        message.success("通用标注任务已创建");
+        // Manual tasks publish automatically once their preview completes, so
+        // kick off the preview right away instead of returning to a draft.
+        const configHash = task.task_snapshot?.config_hash;
+        if (typeof configHash === "string" && configHash) {
+          try {
+            await createAnnotationPreview(task.id, task.task_revision, configHash);
+            message.success(lang === "zh" ? "任务已创建，预览完成后将自动发布" : "Task created; it publishes automatically once the preview completes");
+          } catch (error) {
+            message.error(formatApiError(error, "任务预览失败"));
+          }
+        } else {
+          message.success("通用标注任务已创建");
+        }
         returnToTaskList();
       }
     } catch (error) {
@@ -1735,10 +1800,6 @@ export default function DataAnnotationPage() {
       message.error("自动任务需要选择已启用模型版本");
       return;
     }
-    if (genericAutoLabelSource === "custom" && !genericAutoSchema) {
-      message.error(lang === "zh" ? "自定义标签模式需要先保存标签 schema" : "Save the custom label schema first");
-      return;
-    }
     if (!genericVisibleColumns.length) {
       message.error(lang === "zh" ? "请至少选择一个可见字段" : "Select at least one visible field");
       return;
@@ -1755,7 +1816,6 @@ export default function DataAnnotationPage() {
         project_id: projectId,
         dataset_version_id: genericVersionId,
         model_version_id: selectedGenericModelVersion.id,
-        ...(genericAutoLabelSource === "custom" && genericAutoSchema ? { label_schema_id: genericAutoSchema.id } : {}),
         name: genericTaskName.trim(),
         mode: "automatic",
         sample_scope: sampleScope,
@@ -1765,6 +1825,7 @@ export default function DataAnnotationPage() {
         due_at: genericDueAt ? new Date(`${genericDueAt}T23:59:59`).toISOString() : null,
         configuration: { clustering: true, cluster_discovery: true },
       }, crypto.randomUUID());
+      notifyAutoRenamedTask(task, genericTaskName.trim());
       setGenericDiscoveryTask(task);
       setGenericFinalPreviewId(null);
       setGenericFinalPreviewError(null);
@@ -1779,8 +1840,66 @@ export default function DataAnnotationPage() {
     }
   };
 
+  const saveGenericAutoSchema = async (columns: LabelColumnDraft[]) => {
+    if (!projectId) { message.error(lang === "zh" ? "请先选择项目" : "Select a project first"); return; }
+    if (!genericTaskName.trim()) { message.error(copy.nameRequired); return; }
+    try {
+      const schema = await createLabelSchema(projectId, `${genericTaskName.trim()}-labels`, columns, "annotation");
+      setGenericAutoSchema({
+        id: schema.id,
+        columns: columns.map((column) => ({
+          machine_key: column.machine_key,
+          display_name: column.display_name,
+          value_type: column.value_type,
+          required: column.required,
+        })),
+      });
+      message.success(lang === "zh" ? "标签 schema 已保存，策略配置将使用这些标签列" : "Label schema saved; the strategy will use these label columns");
+    } catch (error) {
+      message.error(formatApiError(error, lang === "zh" ? "标签 schema 保存失败" : "Failed to save the label schema"));
+    }
+  };
+
+  const saveStrategyDraftToLibrary = async () => {
+    if (!projectId || genericStrategySaving) return;
+    const name = genericStrategyName.trim();
+    if (!name) { message.error(lang === "zh" ? "请先填写策略名称" : "Enter a strategy name first"); return; }
+    setGenericStrategySaving(true);
+    try {
+      await saveAnnotationStrategy(projectId, name, genericAutomaticDraft);
+      setGenericSavedStrategies(await listSavedStrategies(projectId));
+      message.success(lang === "zh" ? `标注策略「${name}」已保存` : `Strategy "${name}" saved`);
+    } catch (error) {
+      message.error(formatApiError(error, lang === "zh" ? "保存策略失败" : "Failed to save the strategy"));
+    } finally {
+      setGenericStrategySaving(false);
+    }
+  };
+
+  const importStrategyDraftFromLibrary = () => {
+    const strategyId = genericImportStrategyId;
+    if (!strategyId) { message.error(lang === "zh" ? "请先选择要导入的策略" : "Select a strategy to import first"); return; }
+    const saved = genericSavedStrategies.find((item) => item.id === strategyId);
+    if (!saved) return;
+    const payload = saved.payload;
+    const base = createAutomaticStrategyDraft(effectiveAutoColumns);
+    setGenericAutomaticDraft({
+      strategy: payload.strategy,
+      selectedClusters: payload.selectedClusters || [],
+      otherValues: { ...base.otherValues, ...(payload.otherValues || {}) },
+      clusterLabels: payload.clusterLabels || {},
+      rules: payload.rules?.length ? payload.rules : base.rules,
+    });
+    message.success(lang === "zh" ? `已导入策略「${saved.name}」` : `Imported strategy "${saved.name}"`);
+  };
+
   const saveGenericStrategy = async () => {
-    if (!genericDiscoveryTask || genericCreating) return;
+    if (!genericDiscoveryTask || genericCreating || !projectId) return;
+    // 策略配置必须先在蓝框保存标签列定义（schema）后才能进行
+    if (!genericAutoSchema) {
+      message.error(lang === "zh" ? "请先填写「标签列定义」并保存 schema，再保存自动标注策略。" : "Define and save the label schema before saving the automatic strategy.");
+      return;
+    }
     const version = genericVersions.find((item) => item.id === genericVersionId);
     const sourceColumns = (version?.columns || []).map((column) => ({ name: column.name, dtype: column.dtype }));
     const result = automaticConfigurationFromDraft(genericAutomaticDraft, effectiveAutoColumns, sourceColumns, true, false);
@@ -1790,15 +1909,19 @@ export default function DataAnnotationPage() {
     }
     setGenericCreating(true);
     try {
+      const schema = genericAutoSchema;
+      const requestedName = genericTaskName.trim() || genericDiscoveryTask.name || "";
       const updated = await updateGenericAnnotationTaskConfiguration(genericDiscoveryTask.id, {
         task_revision: genericDiscoveryTask.task_revision,
-        name: genericTaskName.trim() || genericDiscoveryTask.name,
+        name: requestedName,
+        label_schema_id: schema.id,
         visible_columns: genericVisibleColumns,
         instructions: genericInstructions,
         completion_criteria: genericCompletionCriteria,
         due_at: genericDueAt ? new Date(`${genericDueAt}T23:59:59`).toISOString() : null,
         configuration: result.configuration,
       });
+      notifyAutoRenamedTask(updated, requestedName);
       setGenericTasks((items) => [updated, ...items.filter((item) => item.id !== updated.id)]);
       await startFinalPreview(updated);
     } catch (error) {
@@ -1834,27 +1957,6 @@ export default function DataAnnotationPage() {
     && genericDiscoveryTask.preview?.summary?.configuration_complete === true
     && Number(genericDiscoveryTask.preview?.summary?.needs_review_count || 0) === 0
     && genericFinalSamples && !genericFinalPreviewError);
-
-  const confirmGenericExecution = async () => {
-    if (!genericFinalReady || !genericDiscoveryTask || !genericFinalPreviewId || genericCreating) return;
-    setGenericCreating(true);
-    try {
-      const updated = await transitionAnnotationTask(
-        genericDiscoveryTask.id,
-        genericDiscoveryTask.task_revision,
-        "execute",
-        genericFinalPreviewId,
-      );
-      setGenericTasks((items) => [updated, ...items.filter((item) => item.id !== updated.id)]);
-      message.success("自动标注执行已确认");
-      resetGenericScopeDraft();
-      returnToTaskList();
-    } catch (error) {
-      message.error(formatApiError(error, "自动标注执行确认失败"));
-    } finally {
-      setGenericCreating(false);
-    }
-  };
 
   const loadMoreGenericFinalSamples = async () => {
     if (!genericDiscoveryTask || !genericFinalPreviewId || !genericFinalSamples?.next_cursor || genericCreating) return;
@@ -2087,6 +2189,55 @@ export default function DataAnnotationPage() {
     },
   ];
 
+  const activeGenericTasks = genericTasks.filter(
+    (task) => !["completed", "cancelled", "archived"].includes(task.status),
+  );
+  const pendingStrategyTasks = genericTasks.filter(
+    (task) => task.mode === "automatic" && task.status === "needs_review",
+  );
+  const pendingAcceptanceTasks = genericTasks.filter(
+    (task) => ["awaiting_return", "returned_pending_acceptance"].includes(task.status),
+  );
+  const runningOperations = annotationOperations.filter(
+    (operation) => !["completed", "failed", "cancelled"].includes(operation.state),
+  );
+
+  const genericTaskActionItems = (task: AnnotationTask) => {
+    const items: Array<{ key: string; label: string; danger?: boolean }> = [];
+    if (["draft", "failed", "needs_review"].includes(task.status)) items.push({ key: "edit", label: copy.editTask });
+    if (["draft", "failed"].includes(task.status)) items.push({ key: "retry-preview", label: copy.retryPreview });
+    if (task.mode === "automatic" && task.status === "needs_review") items.push({ key: "configure", label: lang === "zh" ? "配置策略" : "Configure strategy" });
+    items.push({ key: "comments", label: lang === "zh" ? "批注管理" : "Comments" });
+    if (["preview_ready", "executing", "awaiting_annotation", "in_progress", "awaiting_return"].includes(task.status)) items.push({ key: "pause", label: lang === "zh" ? "暂停" : "Pause" });
+    if (task.status === "paused") items.push({ key: "resume", label: lang === "zh" ? "恢复" : "Resume" });
+    if (["draft", "preview_ready", "executing", "awaiting_annotation", "in_progress", "awaiting_return", "paused", "failed", "needs_review"].includes(task.status)) items.push({ key: "cancel", label: lang === "zh" ? "取消" : "Cancel" });
+    if (task.status === "awaiting_return") items.push({ key: "return", label: lang === "zh" ? "提交回传" : "Return" });
+    if (task.status === "returned_pending_acceptance") items.push({ key: "accept", label: lang === "zh" ? "验收" : "Accept" });
+    if (task.status === "accepted") items.push({ key: "complete", label: lang === "zh" ? "完成" : "Complete" });
+    if (["accepted", "completed", "cancelled"].includes(task.status)) items.push({ key: "archive", label: lang === "zh" ? "归档" : "Archive" });
+    if (task.status === "completed") items.push({ key: "reopen", label: lang === "zh" ? "重开" : "Reopen" });
+    if (task.status === "archived") items.push({ key: "restore", label: lang === "zh" ? "恢复归档" : "Restore" });
+    return items;
+  };
+
+  const runGenericTaskAction = (task: AnnotationTask, key: string) => {
+    switch (key) {
+      case "edit": openEditConfiguration(task); break;
+      case "retry-preview": void retryTaskPreview(task); break;
+      case "configure": openAutomaticConfiguration(task); break;
+      case "comments": setCommentTaskId(task.id); break;
+      case "pause": void transitionGenericTask(task, "pause"); break;
+      case "resume": void transitionGenericTask(task, "resume"); break;
+      case "cancel": void transitionGenericTask(task, "cancel"); break;
+      case "return": void transitionGenericTask(task, "return"); break;
+      case "accept": void transitionGenericTask(task, "accept"); break;
+      case "complete": void transitionGenericTask(task, "complete"); break;
+      case "archive": void transitionGenericTask(task, "archive"); break;
+      case "reopen": void transitionGenericTask(task, "reopen"); break;
+      case "restore": void transitionGenericTask(task, "restore"); break;
+    }
+  };
+
   const tasksView = (
     <>
       <div className="page-header data-annotation__tasks-header">
@@ -2102,105 +2253,150 @@ export default function DataAnnotationPage() {
           <button type="button" className="ant-btn ant-btn-primary" onClick={() => openSetup("automatic")}>{copy.automaticTask}</button>
         </div>
       </div>
-      <div className="table-surface data-annotation__tasks-surface" role="region" aria-label={copy.taskListLabel}>
-        <div className="data-annotation__section-head">
-          <h3>{copy.tasksSection}</h3>
-        </div>
-        {genericTasks.length > 0 && <div className="data-annotation__generic-tasks" role="region" aria-label={copy.genericTasks}>
-          <Table<AnnotationTask>
-            rowKey="id"
-            size="small"
-            loading={genericTaskLoading}
-            dataSource={genericTasks}
-            pagination={false}
-            scroll={{ x: 1180 }}
-            columns={[
-              { title: lang === "zh" ? "任务" : "Task", dataIndex: "id", render: (id: string, task: AnnotationTask) => { const shortId = String(id || "").slice(0, 8); return <div className="table-primary-cell"><strong>{task.name?.trim() || shortId}</strong><span>{task.mode === "manual" ? copy.manual : copy.automatic} · {shortId}</span></div>; } },
-              { title: lang === "zh" ? "状态" : "Status", dataIndex: "status", render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag> },
-              { title: copy.sampleCount, key: "samples", render: (_: unknown, task: AnnotationTask) => { const count = (task.task_snapshot?.scope as { sample_count?: number } | undefined)?.sample_count; return count === undefined || count === null ? "-" : `${count} ${copy.rows}`; } },
-              { title: copy.createdAt, dataIndex: "created_at", render: (value: string | null) => value ? new Date(value).toLocaleString() : "-" },
-              { title: copy.dueAt, dataIndex: "due_at", render: (value: string | null) => value ? new Date(value).toLocaleDateString() : "-" },
-              { title: lang === "zh" ? "修订" : "Revision", dataIndex: "task_revision" },
-              { title: copy.actions, key: "actions", align: "right" as const, render: (_: unknown, task: AnnotationTask) => <div className="table-row-actions">
-                <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void openTaskPreview(task); }}>{lang === "zh" ? "预览" : "Preview"}</button>
-                {["draft", "failed", "needs_review"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => openEditConfiguration(task)}>{copy.editTask}</button>}
-                {["draft", "failed"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void retryTaskPreview(task); }}>{copy.retryPreview}</button>}
-                {task.mode === "automatic" && task.status === "needs_review" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => openAutomaticConfiguration(task)}>{lang === "zh" ? "配置策略" : "Configure strategy"}</button>}
-                <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void openAssignmentDialog(task); }}>{lang === "zh" ? "指派标注员" : "Assign"}</button>
-                <button type="button" className="ant-btn ant-btn-sm" onClick={() => setCommentTaskId(task.id)}>{lang === "zh" ? "批注管理" : "Comments"}</button>
-                <button type="button" className="ant-btn ant-btn-sm" disabled={task.status !== "preview_ready" || !task.preview || task.preview.task_revision !== task.task_revision || task.preview.status !== "completed" || task.preview.summary?.configuration_complete === false || Number(task.preview.summary?.needs_review_count || 0) > 0} onClick={() => { void executeGenericTask(task); }}>{lang === "zh" ? "执行" : "Execute"}</button>
-                {task.status === "preview_ready" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "publish"); }}>{lang === "zh" ? "发布" : "Publish"}</button>}
-                {["preview_ready", "executing", "awaiting_annotation", "in_progress", "awaiting_return"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "pause"); }}>{lang === "zh" ? "暂停" : "Pause"}</button>}
-                {task.status === "paused" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "resume"); }}>{lang === "zh" ? "恢复" : "Resume"}</button>}
-                {["draft", "preview_ready", "executing", "awaiting_annotation", "in_progress", "awaiting_return", "paused", "failed", "needs_review"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "cancel"); }}>{lang === "zh" ? "取消" : "Cancel"}</button>}
-                {task.status === "awaiting_return" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "return"); }}>{lang === "zh" ? "提交回传" : "Return"}</button>}
-                {task.status === "returned_pending_acceptance" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "accept"); }}>{lang === "zh" ? "验收" : "Accept"}</button>}
-                {task.status === "accepted" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "complete"); }}>{lang === "zh" ? "完成" : "Complete"}</button>}
-                {["accepted", "completed", "cancelled"].includes(task.status) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "archive"); }}>{lang === "zh" ? "归档" : "Archive"}</button>}
-                {task.status === "completed" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "reopen"); }}>{lang === "zh" ? "重开" : "Reopen"}</button>}
-                {task.status === "archived" && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void transitionGenericTask(task, "restore"); }}>{lang === "zh" ? "恢复归档" : "Restore"}</button>}
-                <DeleteConfirmation
-                  label={`删除通用任务 ${task.id}`}
-                  targetName={task.name?.trim() || String(task.id || "").slice(0, 8)}
-                  onConfirm={() => {
-                    void deleteAnnotationTask(task.id).then(() => {
-                      setGenericTasks((items) => items.filter((item) => item.id !== task.id));
-                      message.success("通用任务已删除");
-                    }).catch((error) => message.error(formatApiError(error, "通用任务删除失败")));
-                  }}
-                />
-              </div> },
-            ]}
-          />
-          {genericTasksCursor && <div className="table-row-actions"><button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadMoreGenericTasks(); }} disabled={genericTaskLoading}>{copy.loadMoreTasks}</button></div>}
-        </div>}
-        {genericTasks.length === 0 && !genericTaskLoading && <Empty description={copy.noTasks} />}
-        {runs.length > 0 && <div className="data-annotation__legacy-tasks">
-          <div className="data-annotation__section-head">
-            <h3>{copy.legacySection}</h3>
+      <div className="data-annotation__stats" role="region" aria-label={lang === "zh" ? "任务统计" : "Task statistics"}>
+        <div className="data-annotation__stat data-annotation__stat--blue">
+          <div>
+            <span className="data-annotation__stat-label">{lang === "zh" ? "进行中任务" : "Active tasks"}</span>
+            <span className="data-annotation__stat-value">{activeGenericTasks.length}</span>
           </div>
-          <Table<QualityRun>
-            rowKey="id"
-            size="small"
-            loading={loadingRuns}
-            dataSource={runs}
-            columns={taskColumns}
-            pagination={false}
-            scroll={{ x: 820 }}
-            locale={{ emptyText: <Empty description={copy.noTasks} /> }}
-          />
-        </div>}
+          <span className="data-annotation__stat-dot" aria-hidden="true" />
+        </div>
+        <div className="data-annotation__stat data-annotation__stat--orange">
+          <div>
+            <span className="data-annotation__stat-label">{lang === "zh" ? "待配置策略" : "Pending strategy"}</span>
+            <span className="data-annotation__stat-value">{pendingStrategyTasks.length}</span>
+            {pendingStrategyTasks.length > 0 && <span className="data-annotation__stat-hint">{lang === "zh" ? "聚类预览已完成" : "Cluster preview ready"}</span>}
+          </div>
+          <span className="data-annotation__stat-dot" aria-hidden="true" />
+        </div>
+        <div className="data-annotation__stat data-annotation__stat--purple">
+          <div>
+            <span className="data-annotation__stat-label">{lang === "zh" ? "待验收回传" : "Pending acceptance"}</span>
+            <span className="data-annotation__stat-value">{pendingAcceptanceTasks.length}</span>
+          </div>
+          <span className="data-annotation__stat-dot" aria-hidden="true" />
+        </div>
+        <div className="data-annotation__stat data-annotation__stat--green">
+          <div>
+            <span className="data-annotation__stat-label">{lang === "zh" ? "运行中操作" : "Running operations"}</span>
+            <span className="data-annotation__stat-value">{runningOperations.length}</span>
+            {runningOperations.length > 0 && <span className="data-annotation__stat-hint">{lang === "zh" ? "执行 · 预览生成" : "Execution · preview"}</span>}
+          </div>
+          <span className="data-annotation__stat-dot" aria-hidden="true" />
+        </div>
       </div>
-      {commentTaskId && <AnnotationCommentModerationPanel taskId={commentTaskId} open onClose={() => setCommentTaskId(null)} />}
-      <div className="table-surface data-annotation__operations-surface" role="region" aria-label="通用任务操作">
-        <div className="data-annotation__section-head">
-          <h3>{copy.operationsSection}</h3>
-          <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void refreshGenericTaskData(); }} disabled={operationsLoading}>{lang === "zh" ? "刷新操作" : "Refresh"}</button>
-        </div>
-        <Table<AnnotationOperation>
-          rowKey="id"
-          size="small"
-          loading={operationsLoading}
-          dataSource={annotationOperations}
-          pagination={false}
-          locale={{ emptyText: "暂无运行中的通用操作" }}
-          columns={[
-            { title: "操作", dataIndex: "id", render: (value: string) => <code>{value}</code> },
-            { title: "类型", dataIndex: "resource_type" },
-            { title: "阶段", dataIndex: "stage" },
-            { title: "状态", dataIndex: "state", render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag> },
-            { title: "进度", dataIndex: "progress", render: (value: number) => `${value}%` },
-            { title: "错误", dataIndex: "error_code", render: (value: string | null) => value || "-" },
-            { title: "结果", key: "results", render: (_: unknown, operation: AnnotationOperation) => operation.resource_type === "annotation_execution" && operation.state === "completed"
-              ? <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadExecutionView(operation); }}>查看结果</button>
-              : "-" },
-          ]}
-        />
-        {annotationOperationsCursor && <div className="table-row-actions"><button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadMoreAnnotationOperations(); }} disabled={operationsLoading}>加载更多操作</button></div>}
-        {executionView && <div className="data-annotation__execution-view" role="region" aria-label="执行结果">
+      <div className="table-surface data-annotation__tasks-surface" role="region" aria-label={copy.taskListLabel}>
           <div className="data-annotation__section-head">
-            <h3>{copy.executionResults}</h3>
+            <h3>{copy.tasksSection}</h3>
           </div>
+          <div className="data-annotation__tabs" role="tablist" aria-label={lang === "zh" ? "任务视图" : "Task view"}>
+            <Segmented
+              value={taskListTab}
+              onChange={(value) => setTaskListTab(value as typeof taskListTab)}
+              options={[
+                { label: lang === "zh" ? "全部任务" : "All tasks", value: "all" },
+                { label: `${lang === "zh" ? "进行中" : "Active"} ${activeGenericTasks.length}`, value: "active" },
+                { label: `${lang === "zh" ? "历史任务" : "Legacy"} ${runs.length}`, value: "legacy" },
+              ]}
+            />
+          </div>
+          {taskListTab !== "legacy" && (taskListTab === "all" ? genericTasks.length > 0 : activeGenericTasks.length > 0) && <div className="data-annotation__generic-tasks" role="region" aria-label={copy.genericTasks}>
+            <Table<AnnotationTask>
+              rowKey="id"
+              size="small"
+              loading={genericTaskLoading}
+              dataSource={taskListTab === "active" ? activeGenericTasks : genericTasks}
+              pagination={false}
+              scroll={{ x: 980 }}
+              columns={[
+                { title: lang === "zh" ? "任务" : "Task", dataIndex: "id", render: (id: string, task: AnnotationTask) => { const shortId = String(id || "").slice(0, 8); return <div className="table-primary-cell"><strong>{task.name?.trim() || shortId}</strong><span>{task.mode === "manual" ? copy.manual : copy.automatic} · {shortId}</span></div>; } },
+                { title: lang === "zh" ? "状态" : "Status", dataIndex: "status", render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag> },
+                { title: copy.sampleCount, key: "samples", render: (_: unknown, task: AnnotationTask) => { const count = (task.task_snapshot?.scope as { sample_count?: number } | undefined)?.sample_count; return count === undefined || count === null ? "-" : `${count} ${copy.rows}`; } },
+                { title: copy.createdAt, dataIndex: "created_at", render: (value: string | null) => formatBackendTimestamp(value) },
+                { title: copy.dueAt, dataIndex: "due_at", render: (value: string | null) => value ? new Date(value).toLocaleDateString() : "-" },
+                { title: lang === "zh" ? "修订" : "Revision", dataIndex: "task_revision" },
+                { title: copy.actions, key: "actions", align: "right" as const, render: (_: unknown, task: AnnotationTask) => {
+                  const assignable = ["preview_ready", "awaiting_annotation", "in_progress"].includes(task.status);
+                  const moreItems = genericTaskActionItems(task);
+                  return <div className="table-row-actions data-annotation__row-actions">
+                    <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void openTaskPreview(task); }}>{lang === "zh" ? "预览" : "Preview"}</button>
+                    <button type="button" className="ant-btn ant-btn-sm" disabled={!assignable} title={assignable ? undefined : (lang === "zh" ? "任务当前状态不允许指派（需预览就绪/待标注/进行中）" : "Assignment requires the task to be preview ready, awaiting annotation, or in progress")} onClick={() => { void openAssignmentDialog(task); }}>{lang === "zh" ? "指派标注员" : "Assign"}</button>
+                    {moreItems.map((item) => <button key={item.key} type="button" className={`ant-btn ant-btn-sm${item.danger ? " ant-btn-dangerous" : ""}`} onClick={() => runGenericTaskAction(task, item.key)}>{item.label}</button>)}
+                    <DeleteConfirmation
+                      label={`删除通用任务 ${task.id}`}
+                      targetName={task.name?.trim() || String(task.id || "").slice(0, 8)}
+                      onConfirm={() => {
+                        void deleteAnnotationTask(task.id).then(() => {
+                          setGenericTasks((items) => items.filter((item) => item.id !== task.id));
+                          message.success("通用任务已删除");
+                        }).catch((error) => message.error(formatApiError(error, "通用任务删除失败")));
+                      }}
+                    />
+                  </div>;
+                } },
+              ]}
+            />
+            {genericTasksCursor && <div className="table-row-actions"><button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadMoreGenericTasks(); }} disabled={genericTaskLoading}>{copy.loadMoreTasks}</button></div>}
+          </div>}
+          {taskListTab !== "legacy" && (taskListTab === "all" ? genericTasks.length === 0 : activeGenericTasks.length === 0) && !genericTaskLoading && <Empty description={copy.noTasks} />}
+          {taskListTab !== "active" && runs.length > 0 && <div className="data-annotation__legacy-tasks">
+            <div className="data-annotation__section-head">
+              <h3>{copy.legacySection}</h3>
+            </div>
+            <Table<QualityRun>
+              rowKey="id"
+              size="small"
+              loading={loadingRuns}
+              dataSource={runs}
+              columns={taskColumns}
+              pagination={false}
+              scroll={{ x: 820 }}
+              locale={{ emptyText: <Empty description={copy.noTasks} /> }}
+            />
+          </div>}
+      </div>
+      <div className="table-surface data-annotation__operations-surface" role="region" aria-label="通用任务操作">
+            <div className="data-annotation__section-head">
+              <h3>{copy.operationsSection}</h3>
+              <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void refreshGenericTaskData(); }} disabled={operationsLoading}>{lang === "zh" ? "刷新操作" : "Refresh"}</button>
+            </div>
+            <div className="data-annotation__operations">
+              {operationsLoading && annotationOperations.length === 0 && <div className="data-annotation__operations-loading"><Spin /></div>}
+              {!operationsLoading && annotationOperations.length === 0 && <Empty description={lang === "zh" ? "暂无任务操作记录" : "No task operations"} />}
+              {annotationOperations.map((operation) => <div className="data-annotation__operation" key={operation.id}>
+                <div className="data-annotation__operation-head">
+                  <code title={operation.id}>{operation.id.slice(0, 8)}</code>
+                  <Tag color={taskStatusColor(operation.state)}>{taskStatusLabel(operation.state, lang)}</Tag>
+                </div>
+                <div className="data-annotation__operation-meta">
+                  <span>{operation.resource_type}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{operation.stage}</span>
+                </div>
+                {operation.task_id && <div className="data-annotation__operation-task">
+                  {lang === "zh" ? "任务" : "Task"} <code title={operation.task_id}>{operation.task_id.slice(0, 8)}</code>
+                </div>}
+                <div className="data-annotation__operation-progress">
+                  <span className="data-annotation__progress-track" aria-hidden="true"><i style={{ width: `${Math.min(100, Math.max(0, Number(operation.progress) || 0))}%` }} /></span>
+                  <span className="data-annotation__progress-text">{operation.progress}%</span>
+                </div>
+                {operation.created_at && <div className="data-annotation__operation-time">{formatBackendTimestamp(operation.created_at)}</div>}
+                {operation.error_code && <div className="data-annotation__operation-error" role="alert">{operation.error_code}</div>}
+                {operation.resource_type === "annotation_execution" && operation.state === "completed" && (
+                  <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadExecutionView(operation); }}>{lang === "zh" ? "查看结果" : "View results"}</button>
+                )}
+              </div>)}
+            </div>
+            {annotationOperationsCursor && <div className="table-row-actions data-annotation__operations-more"><button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadMoreAnnotationOperations(); }} disabled={operationsLoading}>{lang === "zh" ? "加载更多操作" : "Load more"}</button></div>}
+          </div>
+      {projectId && <ReturnAcceptancePanel projectId={projectId} />}
+      <Drawer
+        open={Boolean(executionView)}
+        title={copy.executionResults}
+        onClose={() => setExecutionView(null)}
+        width={720}
+      >
+        {executionView && <div className="data-annotation__execution-view" role="region" aria-label="执行结果">
           <div className="table-row-actions">
             {(["sample", "cluster", "rule", "final_label"] as ExecutionStatsKind[]).map((kind) => <button key={kind} type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadExecutionView(executionView.operation, kind); }} disabled={executionView.loading || executionView.statsKind === kind}>{kind}</button>)}
           </div>
@@ -2217,8 +2413,8 @@ export default function DataAnnotationPage() {
           ]} />
           {(executionView.resultsCursor || executionView.statsCursor) && <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadExecutionView(executionView.operation, executionView.statsKind, true); }} disabled={executionView.loading}>加载更多结果</button>}
         </div>}
-      </div>
-      {projectId && <ReturnAcceptancePanel projectId={projectId} />}
+      </Drawer>
+      {commentTaskId && <AnnotationCommentModerationPanel taskId={commentTaskId} open onClose={() => setCommentTaskId(null)} />}
       <PreviewDrawer
         open={Boolean(previewDrawer)}
         snapshot={previewDrawer?.snapshot}
@@ -2246,21 +2442,37 @@ export default function DataAnnotationPage() {
         width={960}
       >
         {automaticConfigTask && <>
-          {clusterOptionsForTask(automaticConfigTask).length > 0 && <div className="data-annotation__setup-field" style={{ marginBottom: 12 }}>
-            <ClusterPreviewPanel
-              clusters={clusterOptionsForTask(automaticConfigTask)}
-              evaluation={clusterEvaluationForTask(automaticConfigTask)}
-              lang={lang}
-            />
+          {frozenLabelColumnCount(automaticConfigTask) === 0 && <div className="data-annotation__setup-field" style={{ marginBottom: 12 }} aria-label="自定义标签 schema">
+            <LabelSchemaEditor initialColumns={automaticConfigSchema?.columns.map((column) => ({
+              machine_key: column.machine_key,
+              display_name: column.display_name,
+              value_type: column.value_type,
+              required: column.required,
+            })) || outputColumnsFromSnapshot(automaticConfigTask).map((column) => ({
+              machine_key: column.machine_key,
+              display_name: column.display_name,
+              value_type: column.value_type,
+              required: true,
+            }))} onSave={(columns) => { void saveAutomaticConfigSchema(columns); }} />
+            <small>{lang === "zh" ? "聚类已完成，请先定义并保存标签列，再配置标注策略。" : "Clustering is done; define and save the label columns before configuring the strategy."}</small>
           </div>}
-          <AutomaticAnnotationStrategyEditor
-            idPrefix={`automatic-task-${automaticConfigTask.id}`}
-            columns={outputColumnsFromSnapshot(automaticConfigTask)}
-            sourceColumns={sourceColumnsFromSnapshot(automaticConfigTask)}
-            clusters={clusterOptionsForTask(automaticConfigTask)}
-            value={automaticConfigDraft}
-            onChange={setAutomaticConfigDraft}
-          />
+          {clusterOptionsForTask(automaticConfigTask).length > 0 && <div className="data-annotation__setup-field" style={{ marginBottom: 12 }}>
+            <div className="data-annotation__cluster-split">
+              <ClusterPreviewPanel
+                clusters={clusterOptionsForTask(automaticConfigTask)}
+                evaluation={clusterEvaluationForTask(automaticConfigTask)}
+                lang={lang}
+              />
+              <AutomaticAnnotationStrategyEditor
+                idPrefix={`automatic-task-${automaticConfigTask.id}`}
+                columns={outputColumnsFromSnapshot(automaticConfigTask)}
+                sourceColumns={sourceColumnsFromSnapshot(automaticConfigTask)}
+                clusters={clusterOptionsForTask(automaticConfigTask)}
+                value={automaticConfigDraft}
+                onChange={setAutomaticConfigDraft}
+              />
+            </div>
+          </div>}
         </>}
       </Modal>
       <AssignmentDialog
@@ -2268,6 +2480,7 @@ export default function DataAnnotationPage() {
         taskRevision={assignmentTask?.task_revision || 0}
         sampleScope={assignmentTask ? sampleScopeForTask(assignmentTask) : { kind: "frozen_task_scope" }}
         annotators={annotators}
+        assignedIds={assignmentExisting.map((item) => item.annotator_subject_id)}
         overlapWarning={assignmentOverlapWarning}
         loading={assignmentLoading}
         onClose={() => setAssignmentTask(null)}
@@ -2528,7 +2741,7 @@ export default function DataAnnotationPage() {
         <button type="button" className="ant-btn" onClick={returnToTaskList}>{copy.backToTasks}</button>
       </div>
       <section className="data-annotation__setup" aria-label="通用任务创建">
-        {labelMode === "automatic" && <Steps size="small" current={genericSetupStep - 1} items={[{ title: copy.setupStepBasics }, { title: copy.setupStepRules }]} />}
+        {labelMode === "automatic" && <Steps current={genericSetupStep - 1} items={[{ title: copy.setupStepBasics }, { title: copy.setupStepRules }]} />}
         {(labelMode === "manual" || genericSetupStep === 1) && <>
         <div className="data-annotation__setup-grid">
           <div className="data-annotation__setup-field">
@@ -2632,42 +2845,18 @@ export default function DataAnnotationPage() {
           <input id="generic-due-at" type="date" aria-label={copy.dueAt} value={genericDueAt} onChange={(event) => setGenericDueAt(event.target.value)} />
         </div>
         </>}
-        {labelMode === "automatic" && genericSetupStep === 2 && <>
+        {labelMode === "automatic" && genericSetupStep === 2 && <div className="data-annotation__setup-step2">
+          <div className="data-annotation__setup-step2-main">
           <div className="data-annotation__setup-field">
             <label htmlFor="generic-weak-supervision">{copy.weakSupervision}</label>
             <select id="generic-weak-supervision" aria-label={copy.weakSupervision} value={genericClustering ? "yes" : "no"} disabled={!!genericDiscoveryTask} onChange={(event) => {
-              const next = event.target.value === "yes";
-              setGenericClustering(next);
-              if (!next) setGenericAutoLabelSource("model");
+              setGenericClustering(event.target.value === "yes");
             }}>
               <option value="no">{copy.weakSupervisionNo}</option>
               <option value="yes">{copy.weakSupervisionYes}</option>
             </select>
             <small>{genericClustering ? copy.clusteringOnHint : copy.clusteringOffHint}</small>
           </div>
-          {genericClustering && !genericDiscoveryTask && <div className="data-annotation__setup-field" aria-label={lang === "zh" ? "标签来源" : "Label source"}>
-            <label htmlFor="generic-auto-label-source">{lang === "zh" ? "标签来源" : "Label source"}</label>
-            <select
-              id="generic-auto-label-source"
-              aria-label={lang === "zh" ? "标签来源" : "Label source"}
-              value={genericAutoLabelSource}
-              onChange={(event) => setGenericAutoLabelSource(event.target.value === "custom" ? "custom" : "model")}
-              disabled={!!genericDiscoveryTask}
-            >
-              <option value="model">{lang === "zh" ? "模型输出合同（默认）" : "Model output contract (default)"}</option>
-              <option value="custom">{lang === "zh" ? "用户指定标签列" : "User-specified label columns"}</option>
-            </select>
-            <small>{lang === "zh" ? "弱监督标注的最终标签由所选策略生成；可在此指定自己的标签列（簇/规则/兜底值都按这些列配置），模型输出仅作为内部来源保留。" : "Final labels come from the selected strategy; you may define your own label columns (cluster/rule/fallback values are configured against them) while model outputs stay an internal source."}</small>
-          </div>}
-          {genericClustering && !genericDiscoveryTask && genericAutoLabelSource === "custom" && <div className="data-annotation__setup-field" aria-label={lang === "zh" ? "自定义标签 schema" : "Custom label schema"}>
-            <LabelSchemaEditor initialColumns={genericAutoSchema?.columns.map((column) => ({
-              machine_key: column.machine_key,
-              display_name: column.display_name,
-              value_type: column.value_type,
-              required: column.required,
-            })) || []} onSave={(columns) => { void saveGenericAutoSchema(columns); }} />
-            {genericAutoSchema && <small>{lang === "zh" ? `已保存 schema（${genericAutoSchema.columns.length} 列），创建任务时将使用这些标签列。` : `Saved schema (${genericAutoSchema.columns.length} columns); the task will use these label columns.`}</small>}
-          </div>}
           {genericFinalPreviewId && genericDiscoveryTask ? (
             <div className="data-annotation__setup-field" aria-label="最终预览">
               <label>最终预览</label>
@@ -2682,7 +2871,7 @@ export default function DataAnnotationPage() {
                   })
                   .catch((error) => setGenericFinalPreviewError(formatApiError(error, "最终预览生成失败")));
               }}>重试最终预览</button></>}
-              {!genericFinalPreviewError && genericFinalReady && <small>最终标签预览已完成，请确认执行。</small>}
+              {!genericFinalPreviewError && genericFinalReady && <small>{lang === "zh" ? "最终标签预览已完成，任务将自动开始执行。" : "The final label preview is complete; the task starts executing automatically."}</small>}
               {!genericFinalPreviewError && genericFinalSamples && (
                 <div className="data-annotation__final-preview" aria-label="最终预览结果">
                   <strong>全量统计</strong>
@@ -2722,14 +2911,62 @@ export default function DataAnnotationPage() {
                       evaluation={clusterEvaluationForTask(genericDiscoveryTask)}
                       lang={lang}
                     />
-                    <AutomaticAnnotationStrategyEditor
-                      idPrefix="generic-setup-automatic"
-                      columns={effectiveAutoColumns}
-                      sourceColumns={(genericVersions.find((item) => item.id === genericVersionId)?.columns || []).map((column) => ({ name: column.name, dtype: column.dtype }))}
-                      clusters={clusterOptionsForTask(genericDiscoveryTask)}
-                      value={genericAutomaticDraft}
-                      onChange={setGenericAutomaticDraft}
-                    />
+                    <div className="data-annotation__cluster-split">
+                      {genericAutoSchema
+                        ? <AutomaticAnnotationStrategyEditor
+                            idPrefix="generic-setup-automatic"
+                            columns={effectiveAutoColumns}
+                            sourceColumns={(genericVersions.find((item) => item.id === genericVersionId)?.columns || []).map((column) => ({ name: column.name, dtype: column.dtype }))}
+                            clusters={clusterOptionsForTask(genericDiscoveryTask)}
+                            value={genericAutomaticDraft}
+                            onChange={setGenericAutomaticDraft}
+                          />
+                        : <div className="data-annotation__strategy-locked" aria-label={lang === "zh" ? "自动标注策略未解锁" : "Strategy locked"}>
+                            <h4>{lang === "zh" ? "自动标注策略" : "Automatic strategy"}</h4>
+                            <p>{lang === "zh" ? "请先在右侧填写「标签列定义」并保存 schema，之后才能配置自动标注策略。" : "Define and save the label schema on the right before configuring the automatic strategy."}</p>
+                          </div>}
+                      <div className="data-annotation__setup-field" aria-label={lang === "zh" ? "标签与策略库" : "Labels and strategy library"}>
+                        <LabelSchemaEditor
+                          showPurpose={false}
+                          initialColumns={genericAutoSchema?.columns.map((column) => ({
+                            machine_key: column.machine_key,
+                            display_name: column.display_name,
+                            value_type: column.value_type,
+                            required: column.required,
+                          })) || selectedGenericOutputColumns.map((column, index) => ({
+                            // 默认标签列按模型输出契约预填名称与类型；机器键只读自动递增，且该列不可删除
+                            machine_key: `label-${index + 1}`,
+                            display_name: column.display_name,
+                            value_type: column.value_type,
+                            required: true,
+                            isDefault: true,
+                          }))}
+                          onSave={(columns) => { void saveGenericAutoSchema(columns); }}
+                        />
+                        {genericAutoSchema && <small>{lang === "zh" ? `已保存 schema（${genericAutoSchema.columns.length} 列），保存策略时将绑定这些标签列。` : `Saved schema (${genericAutoSchema.columns.length} columns); saving the strategy will bind these label columns.`}</small>}
+                        <div className="data-annotation__strategy-library" aria-label={lang === "zh" ? "策略库" : "Strategy library"}>
+                          <div className="data-annotation__setup-field">
+                            <label htmlFor="generic-strategy-name">{lang === "zh" ? "保存策略" : "Save strategy"}</label>
+                            <div className="data-annotation__strategy-library-row">
+                              <input id="generic-strategy-name" aria-label={lang === "zh" ? "策略名称" : "Strategy name"} value={genericStrategyName} onChange={(event) => setGenericStrategyName(event.target.value)} placeholder={lang === "zh" ? "策略名称" : "Strategy name"} />
+                              <button type="button" className="ant-btn ant-btn-sm" onClick={() => void saveStrategyDraftToLibrary()} disabled={genericStrategySaving}>{genericStrategySaving ? (lang === "zh" ? "保存中..." : "Saving...") : (lang === "zh" ? "保存策略" : "Save")}</button>
+                            </div>
+                            <small>{lang === "zh" ? "保存当前页面中配置的自动标注策略，便于复用。" : "Save the strategy configured on this page for reuse."}</small>
+                          </div>
+                          <div className="data-annotation__setup-field">
+                            <label htmlFor="generic-strategy-import">{lang === "zh" ? "导入策略" : "Import strategy"}</label>
+                            <div className="data-annotation__strategy-library-row">
+                              <select id="generic-strategy-import" aria-label={lang === "zh" ? "已保存策略" : "Saved strategies"} value={genericImportStrategyId} onChange={(event) => setGenericImportStrategyId(event.target.value)}>
+                                <option value="">{lang === "zh" ? "选择已保存策略" : "Select a saved strategy"}</option>
+                                {genericSavedStrategies.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+                              </select>
+                              <button type="button" className="ant-btn ant-btn-sm" onClick={importStrategyDraftFromLibrary} disabled={!genericSavedStrategies.length}>{lang === "zh" ? "导入策略" : "Import"}</button>
+                            </div>
+                            <small>{lang === "zh" ? "将已保存的策略导入到左侧自动标注策略配置。" : "Import a saved strategy into the strategy editor on the left."}</small>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                     <small>{copy.clusterPreviewReadyHint}</small>
                   </div>}
                 </>
@@ -2740,18 +2977,34 @@ export default function DataAnnotationPage() {
               </button>
               <small>{copy.discoveryHint}</small>
             </div>)}
-        </>}
+          </div>
+          <aside className="data-annotation__contract-aside" aria-label={lang === "zh" ? "冻结契约摘要" : "Frozen contract summary"}>
+            <h4>{lang === "zh" ? "冻结契约摘要" : "Frozen contract"}</h4>
+            {(() => {
+              const selectedGenericVersion = genericVersions.find((item) => item.id === genericVersionId);
+              return <>
+                <div className="data-annotation__contract-row"><span>{lang === "zh" ? "任务名称" : "Task name"}</span><b>{genericTaskName.trim() || "—"}</b></div>
+                <div className="data-annotation__contract-row"><span>{lang === "zh" ? "数据版本" : "Data version"}</span><b>{selectedGenericVersion ? `${selectedGenericVersion.source_name || `v${selectedGenericVersion.version}`} · ${selectedGenericVersion.row_count} ${copy.rows}` : "—"}</b></div>
+                <div className="data-annotation__contract-row"><span>{lang === "zh" ? "模型版本" : "Model version"}</span><b>{selectedGenericModelVersion ? `${selectedGenericModelVersion.model_name} · v${selectedGenericModelVersion.version_number}` : "—"}</b></div>
+                <div className="data-annotation__contract-row"><span>{lang === "zh" ? "样本范围" : "Sample scope"}</span><b>{genericScopeMode === "all" ? copy.scopeAll : `${copy.scopeFilter} · ${genericScopeConditions.length} ${lang === "zh" ? "个条件" : "conditions"}`}</b></div>
+                <div className="data-annotation__contract-row"><span>{lang === "zh" ? "输出列" : "Output columns"}</span><b>{selectedGenericOutputColumns.length ? selectedGenericOutputColumns.map((column) => column.display_name).join(" / ") : "—"}</b></div>
+                <div className="data-annotation__contract-row"><span>{lang === "zh" ? "契约状态" : "Contract"}</span><b className="data-annotation__contract-status">{selectedGenericModelVersion ? (lang === "zh" ? "已冻结" : "Frozen") : "—"}</b></div>
+                <p className="data-annotation__contract-hint">{lang === "zh" ? "第 1 步已锁定的信息在此常驻展示，避免跨步骤来回切换。" : "Step 1 selections stay visible here."}</p>
+              </>;
+            })()}
+          </aside>
+        </div>}
         <div className="data-annotation__setup-footer data-annotation__setup-footer--centered">
           {labelMode === "automatic" && genericSetupStep === 2 && <button type="button" className="ant-btn" onClick={() => setGenericSetupStep(1)}>{copy.prevStep}</button>}
           {labelMode === "automatic" && genericSetupStep === 1
             ? <button type="button" className="ant-btn ant-btn-primary" onClick={() => setGenericSetupStep(2)} disabled={genericSetupBasicsIncomplete}>{copy.nextStep}</button>
             : labelMode === "automatic" && genericFinalPreviewId && genericDiscoveryTask
-              ? <button type="button" className="ant-btn ant-btn-primary" onClick={() => void confirmGenericExecution()} disabled={!genericFinalReady || genericCreating}>
-                  {genericCreating ? "确认中..." : "确认执行"}
+              ? <button type="button" className="ant-btn ant-btn-primary" onClick={() => { resetGenericScopeDraft(); returnToTaskList(); }} disabled={genericCreating}>
+                  {lang === "zh" ? "返回任务列表" : "Back to task list"}
                 </button>
             : labelMode === "automatic" && genericClustering
               ? (genericDiscoveryTask
-                  ? <button type="button" className="ant-btn ant-btn-primary" onClick={() => void saveGenericStrategy()} disabled={!genericDiscoveryPreviewId || !["completed", "ready"].includes(String(genericDiscoveryTask.preview?.status)) || genericCreating}>
+                  ? <button type="button" className="ant-btn ant-btn-primary" onClick={() => void saveGenericStrategy()} disabled={!genericDiscoveryPreviewId || !["completed", "ready"].includes(String(genericDiscoveryTask.preview?.status)) || genericCreating || !genericAutoSchema}>
                       {genericCreating ? "保存中..." : copy.saveStrategy}
                     </button>
                   : <button type="button" className="ant-btn ant-btn-primary" onClick={() => void startGenericDiscovery()} disabled={genericSetupBasicsIncomplete || genericCreating}>
@@ -2767,11 +3020,12 @@ export default function DataAnnotationPage() {
 
   const workspaceView = (
     <>
-      <div className="page-header spot-weld-annotation__workspace-header">
-        <div className="page-header-copy">
-          <p className="page-kicker">DATA / LABELING</p>
-          <h2 className="page-title">{t.spotWeld.title}</h2>
-          <p className="page-subtitle">{selectedProject?.name || (lang === "zh" ? "样本逐条标注" : "Review samples one by one")}</p>
+      <div className="spot-weld-annotation__topbar">
+        <div className="spot-weld-annotation__crumb" aria-label={lang === "zh" ? "任务位置" : "Task location"}>
+          <span>{t.spotWeld.title}</span>
+          <span className="spot-weld-annotation__crumb-sep" aria-hidden="true">/</span>
+          <strong>{selectedRun ? selectedRun.id.slice(0, 8) : (selectedProject?.name || "—")}</strong>
+          {selectedRun && <Tag color={runStatusColor(selectedRun)}>{runStatusText(selectedRun, lang)}</Tag>}
         </div>
         <div className="spot-weld-annotation__actions">
           <button type="button" className="ant-btn" aria-label={copy.backToTasks} onClick={returnToTaskList}>{copy.backToTasks}</button>
@@ -2781,6 +3035,17 @@ export default function DataAnnotationPage() {
           {projectId && selectedRun?.status === "completed" && <button type="button" className="ant-btn" aria-label={copy.saveToData} onClick={() => void saveToDataManagement()} disabled={!canLabel || savingLabeledDataset}>{savingLabeledDataset ? copy.saving : copy.saveToData}</button>}
           <Tooltip title={copy.refreshTasks}><button type="button" className="ant-btn ant-btn-icon-only" aria-label={copy.refreshTasks} onClick={() => { void refreshRuns(); }} disabled={loadingRuns}><ReloadOutlined /></button></Tooltip>
         </div>
+      </div>
+      <div className="spot-weld-annotation__metabar">
+        <span className="spot-weld-annotation__meta-item">{lang === "zh" ? "模式" : "Mode"} <b>{selectedRun?.label_mode === "manual" ? copy.manual : copy.automatic}</b></span>
+        <span className="spot-weld-annotation__meta-item">{lang === "zh" ? "样本" : "Samples"} <b>{samples.length} {copy.rows}</b></span>
+        {selectedRun && selectedRun.annotation_progress && (
+          <span className="spot-weld-annotation__meta-item spot-weld-annotation__meta-progress">
+            {lang === "zh" ? "进度" : "Progress"}
+            <span className="spot-weld-annotation__progress-track" aria-hidden="true"><i style={{ width: `${Math.min(100, Math.max(0, Number(selectedRun.annotation_progress.percent) || 0))}%` }} /></span>
+            <b>{Number(selectedRun.annotation_progress.percent) || 0}%</b>
+          </span>
+        )}
       </div>
       <div className="spot-weld-annotation__workspace spot-weld-annotation__workspace--detail">
         <section className="spot-weld-annotation__region spot-weld-annotation__queue" aria-labelledby="spot-weld-queue-title">

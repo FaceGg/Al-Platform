@@ -101,6 +101,13 @@ def enforce_request_security(request, policy: SecurityPolicy) -> None:
     method = request.method.upper()
     if method not in policy.state_changing_methods:
         return
+    # An explicit Authorization credential is not ambient cookie
+    # authentication: a cross-site page cannot set this header without
+    # stealing the token first, so the double-submit check below does not
+    # apply.  This also keeps Bearer-authenticated SPA traffic working when
+    # a portal session cookie for the same host rides along unexpectedly.
+    if request.headers.get("authorization"):
+        return
     cookies = request.cookies
     if not cookies or not (set(cookies) & policy.session_cookie_names):
         return

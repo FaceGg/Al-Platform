@@ -179,6 +179,33 @@ class TestModelRegistryService(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, "MODEL_SOURCE_UNTRUSTED")
 
+    def test_approve_enables_lifecycle_and_heals_legacy_approved_rows(self):
+        library, _artifact = self._platform_source()
+        version = self.service.register_platform_version(
+            self.db,
+            model_id=self.model.id,
+            source_model_library_id=library.id,
+            actor_id=self.owner.id,
+        )
+        self.db.commit()
+
+        approved = self.service.approve(self.db, version.id, self.owner.id, "ok")
+        self.assertEqual(approved.approval_status, "approved")
+        self.assertEqual(approved.lifecycle_state, "enabled")
+
+        # Legacy row approved through the pre-lifecycle path: a repeated
+        # approve() call heals it to enabled.
+        approved.lifecycle_state = "pending_review"
+        self.db.commit()
+        healed = self.service.approve(self.db, version.id, self.owner.id)
+        self.assertEqual(healed.lifecycle_state, "enabled")
+
+        # Explicitly disabled versions keep their state.
+        healed.lifecycle_state = "disabled"
+        self.db.commit()
+        unchanged = self.service.approve(self.db, version.id, self.owner.id)
+        self.assertEqual(unchanged.lifecycle_state, "disabled")
+
     def test_automl_artifact_only_result_registers_with_lineage(self):
         job = TrainingJob(
             project_id=self.project.id,

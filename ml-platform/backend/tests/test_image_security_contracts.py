@@ -49,7 +49,11 @@ class ImageSecurityContractTests(unittest.TestCase):
         non_root_uid = runtime["non_root_uid"]
         self.assertEqual(non_root_uid, 1000)
         for path in DOCKERFILES:
-            content = path.read_text(encoding="utf-8")
+            content = re.sub(
+                r"\s*\\\s*\n\s*",
+                " ",
+                path.read_text(encoding="utf-8"),
+            )
             self.assertIn("apk add --no-cache", content, path.name)
             self.assertIn(python_package, content, path.name)
             self.assertIn(pip_package, content, path.name)
@@ -61,8 +65,14 @@ class ImageSecurityContractTests(unittest.TestCase):
             self.assertIn("ENV HOME=/home/app", content, path.name)
             self.assertIn(f"USER {non_root_uid}:{non_root_uid}", content, path.name)
             self.assertIn(
+                'python3.11 -m pip install --no-deps --retries 10 --resume-retries 20 '
+                '--timeout 120 "xgboost==3.2.*" "catboost==1.2.*"',
+                content,
+                path.name,
+            )
+            self.assertIn(
                 "python3.11 -m pip install --retries 10 --resume-retries 20 --timeout 120 "
-                "-r requirements.txt",
+                "graphviz plotly six -r /tmp/requirements-without-boost.txt",
                 content,
                 path.name,
             )
@@ -106,10 +116,18 @@ class ImageSecurityContractTests(unittest.TestCase):
 
     def test_backend_host_mounts_keep_the_established_numeric_identity(self):
         compose = COMPOSE.read_text(encoding="utf-8")
-        backend = DOCKERFILES[0].read_text(encoding="utf-8")
+        backend = re.sub(
+            r"\s*\\\s*\n\s*",
+            " ",
+            DOCKERFILES[0].read_text(encoding="utf-8"),
+        )
         self.assertIn("./ml-platform/backend/data:/app/data", compose)
         self.assertIn("./ml-platform/backend/uploads:/app/app/uploads", compose)
-        self.assertIn("chown -R app:app /home/app data app/uploads /tmp/ml-platform", backend)
+        self.assertIn(
+            "chown -R app:app /home/app data app/uploads /var/lib/tensorboard "
+            "/var/lib/ml-platform /tmp/ml-platform",
+            backend,
+        )
         self.assertIn("USER 1000:1000", backend)
 
     def test_inference_runtime_uses_one_process_for_its_in_memory_registry(self):

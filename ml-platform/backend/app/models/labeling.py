@@ -53,6 +53,20 @@ class LabelValueConstraint(Base):
     config = Column(JSON, nullable=False, default=dict)
 
 
+class SavedAnnotationStrategy(Base):
+    """管理员在向导中保存的可复用自动标注策略（按项目唯一命名，重名覆盖更新）。"""
+
+    __tablename__ = "saved_annotation_strategies"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_saved_strategy_project_name"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(200), nullable=False)
+    payload = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class AnnotationTaskLabel(Base):
     __tablename__ = "annotation_task_labels"
     __table_args__ = (UniqueConstraint("task_id", name="uq_annotation_task_label_task"), Index("ix_annotation_task_labels_schema", "schema_id"))

@@ -5,6 +5,7 @@ export type Task = {
   assignment_id?: string
   title: string
   status: string
+  state?: string
   due_at?: string
   completed_samples?: number
   total_samples?: number

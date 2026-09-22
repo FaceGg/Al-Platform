@@ -781,6 +781,44 @@ def test_legacy_upload_handler_freezes_dataset_version_without_losing_response_f
     assert db.get(Artifact, version.original_artifact_id).name == "legacy.csv"
 
 
+def test_upload_handler_suffixes_duplicate_dataset_names(tmp_path, monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    project_id = uuid.uuid4()
+    user = type("User", (), {"id": uuid.uuid4(), "username": "operator"})()
+    service = ArtifactService(db, LocalStorage(tmp_path / "storage"))
+    monkeypatch.setattr(datasets_api, "project_uuid", lambda value: project_id)
+    monkeypatch.setattr(datasets_api, "require_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "resolve_project_access", lambda *_args: object())
+    monkeypatch.setattr(datasets_api, "audit_service", lambda _db: _RecordingAuditService())
+    monkeypatch.setattr("app.services.data_import.build_artifact_service", lambda _db: service)
+    request = type("Request", (), {"state": type("State", (), {})(), "client": None})()
+    payload = b"id,value\na,1\n"
+
+    first = datasets_api.upload_dataset(
+        str(project_id), request, datasets_api.UploadFile(filename="rows.csv", file=io.BytesIO(payload)), db, user,
+    )
+    assert first["name"] == "rows.csv"
+
+    # Uploading the same filename again must not collide: -2 is appended
+    # before the extension, and further uploads keep counting.
+    second = datasets_api.upload_dataset(
+        str(project_id), request, datasets_api.UploadFile(filename="rows.csv", file=io.BytesIO(payload)), db, user,
+    )
+    assert second["name"] == "rows-2.csv"
+    third = datasets_api.upload_dataset(
+        str(project_id), request, datasets_api.UploadFile(filename="rows-2.csv", file=io.BytesIO(payload)), db, user,
+    )
+    assert third["name"] == "rows-2-2.csv"
+
+    names = {
+        artifact.name
+        for artifact in db.query(Artifact).filter(Artifact.project_id == project_id, Artifact.type == "dataset")
+    }
+    assert {"rows.csv", "rows-2.csv", "rows-2-2.csv"} <= names
+
+
 def test_batch_upload_rollback_cleanup_failure_is_fail_closed(tmp_path, monkeypatch):
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

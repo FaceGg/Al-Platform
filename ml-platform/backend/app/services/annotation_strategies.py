@@ -328,9 +328,13 @@ def apply_annotation_strategy(
     return AnnotationDecision(values, provenance, status="needs_review" if needs_review else "ready", model_output=model_values, cluster_id=cluster_id, matched_rule_ids=tuple(rule_ids))
 
 
-def label_schema_contract_from_snapshot(snapshot: Mapping[str, object]) -> LabelSchemaContract:
+def label_schema_contract_from_snapshot(snapshot: Mapping[str, object], *, allow_empty: bool = False) -> LabelSchemaContract:
     columns = snapshot.get("columns", [])
     if not isinstance(columns, list) or not columns:
+        if allow_empty:
+            # Cluster discovery runs before labels are defined; the strategy
+            # editor supplies the user schema together with the mapping.
+            return LabelSchemaContract([])
         raise StrategyConfigError("frozen label schema is required", "LABEL_SCHEMA_REQUIRED")
     return LabelSchemaContract([
         LabelColumnContract(
@@ -424,7 +428,11 @@ def _model_outputs_from_package(package: Mapping[str, object], rows: Mapping[str
     frame = pd.DataFrame.from_dict(rows, orient="index")
     missing = [column for column in feature_columns if column not in frame.columns]
     if missing:
-        raise StrategyConfigError("preview rows do not satisfy model input contract", "MODEL_INPUT_MISSING")
+        listed = ", ".join(str(column) for column in missing[:10]) + (" ..." if len(missing) > 10 else "")
+        raise StrategyConfigError(
+            f"preview rows are missing {len(missing)} model input columns: {listed}",
+            "MODEL_INPUT_MISSING",
+        )
     try:
         predictions = package["model"].predict(frame.loc[:, list(feature_columns)])
     except StrategyConfigError:
@@ -819,8 +827,8 @@ def apply_preview_annotation_strategy(
     without a verified importance vector is intentionally closed as
     ``needs_review``; it never substitutes equal weights.
     """
-    schema = label_schema_contract_from_snapshot(schema_snapshot)
     config = _config_from_snapshot(configuration)
+    schema = label_schema_contract_from_snapshot(schema_snapshot, allow_empty=config.cluster_discovery)
     validate_strategy_config(config, schema)
     model_outputs = configuration.get("model_outputs") or {}
     if not isinstance(model_outputs, Mapping):

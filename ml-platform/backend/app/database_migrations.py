@@ -235,3 +235,14 @@ def ensure_schema_compatibility(engine: Engine) -> None:
                     connection.execute(text(
                         f'CREATE UNIQUE INDEX "{index_name}" ON "{table}" ({column_sql})'
                     ))
+        # Legacy approvals/archives predate lifecycle_state (default
+        # 'pending_review'), which made approved versions fail the enabled
+        # gate used by automatic annotation. Heal only the inconsistent
+        # rows; versions explicitly disabled or revoked keep their state.
+        if "model_versions" in tables:
+            for approval_status, lifecycle in (("approved", "enabled"), ("archived", "archived")):
+                connection.execute(text(
+                    "UPDATE model_versions SET lifecycle_state = :lifecycle "
+                    "WHERE approval_status = :approval_status "
+                    "AND (lifecycle_state IS NULL OR lifecycle_state = 'pending_review')"
+                ), {"lifecycle": lifecycle, "approval_status": approval_status})

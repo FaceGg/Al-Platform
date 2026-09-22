@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import tempfile
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterator
 
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.access import AuditEvent
-from app.models.annotator import AnnotatorSubjectMapping
+from app.models.annotator import AnnotatorAccount, AnnotatorSubjectMapping
+from app.models.artifact import Artifact
 from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
 from app.models.labeling import (
     AnnotationAssignment,
@@ -32,6 +36,7 @@ from app.services.annotation_return_snapshots import (
     scope_row_indexes,
     task_snapshot_for_revision,
 )
+from app.services.artifact_service import build_artifact_service
 from app.services.label_schema import LabelValueError, validate_label_values
 from app.services.notification_outbox import emit_annotation_return_notification
 
@@ -68,7 +73,9 @@ def _batch_or_error(db: Session, return_batch_id) -> tuple[AnnotationReturnBatch
         db,
         db.query(GenericAnnotationTask).filter(GenericAnnotationTask.id == assignment.task_id),
     ).one_or_none()
-    if task is None:
+    if task is None or task.archived_at is not None:
+        # Deleted/archived tasks must behave as missing for every portal and
+        # acceptance flow, including batches that were returned before deletion.
         raise AnnotationReturnError("ANNOTATION_TASK_NOT_FOUND")
     return batch, assignment, task
 
@@ -134,7 +141,12 @@ def _project_rows(db: Session, project_id, cursor: str | None, limit: int) -> tu
         AnnotationAssignment, AnnotationAssignment.id == AnnotationReturnBatch.assignment_id,
     ).join(
         GenericAnnotationTask, GenericAnnotationTask.id == AnnotationAssignment.task_id,
-    ).filter(GenericAnnotationTask.project_id == project_id)
+    ).filter(
+        GenericAnnotationTask.project_id == project_id,
+        # Batches belonging to deleted/archived tasks must not surface in the
+        # acceptance panel; their tasks are gone from every other view too.
+        GenericAnnotationTask.archived_at.is_(None),
+    )
     total = query.count()
     if cursor:
         try:
@@ -156,6 +168,82 @@ def list_return_batches(db: Session, project_id, cursor: str | None = None, limi
         row.id: db.get(DurableOperation, row.operation_id) if row.operation_id else None
         for row in rows
     }
+    # Correlate each batch with its task and annotator so acceptance reviewers
+    # can tell which task and which annotator a batch belongs to.
+    assignments = {
+        assignment.id: assignment
+        for assignment in db.query(AnnotationAssignment).filter(
+            AnnotationAssignment.id.in_([row.assignment_id for row in rows])
+        ).all()
+    } if rows else {}
+    tasks = {
+        task.id: task
+        for task in db.query(GenericAnnotationTask).filter(
+            GenericAnnotationTask.id.in_([assignment.task_id for assignment in assignments.values()])
+        ).all()
+    } if assignments else {}
+    annotators = {
+        account.subject_id: account.username
+        for account in db.query(AnnotatorAccount).filter(
+            AnnotatorAccount.subject_id.in_([assignment.annotator_subject_id for assignment in assignments.values()])
+        ).all()
+    } if assignments else {}
+    # Correlate tasks and accepted batches with their dataset artifacts so
+    # reviewers can see the original file and the saved data product.
+    dataset_version_ids: set = set()
+    for task in tasks.values():
+        if task is not None and task.dataset_version_id is not None:
+            dataset_version_ids.add(task.dataset_version_id)
+    # Exports create their own dataset versions (with the artifact); find the
+    # latest export per batch through the frozen parse_contract reference.
+    exported_by_batch: dict[str, DatasetVersion] = {}
+    if rows:
+        exported_versions = db.query(DatasetVersion).filter(
+            DatasetVersion.parse_contract["return_batch_id"].as_string().in_(
+                [str(row.id) for row in rows]
+            )
+        ).order_by(DatasetVersion.version.desc()).all()
+        for version in exported_versions:
+            key = str((version.parse_contract or {}).get("return_batch_id"))
+            if key and key not in exported_by_batch:
+                exported_by_batch[key] = version
+                dataset_version_ids.add(version.id)
+    versions = {
+        version.id: version
+        for version in db.query(DatasetVersion).filter(
+            DatasetVersion.id.in_(dataset_version_ids)
+        ).all()
+    } if dataset_version_ids else {}
+    artifact_ids = {
+        version.original_artifact_id
+        for version in versions.values()
+        if version.original_artifact_id is not None
+    }
+    artifacts = {
+        artifact.id: artifact
+        for artifact in db.query(Artifact).filter(Artifact.id.in_(artifact_ids)).all()
+    } if artifact_ids else {}
+
+    def _artifact_name(version_id) -> str | None:
+        version = versions.get(version_id) if version_id is not None else None
+        if version is None or version.original_artifact_id is None:
+            return None
+        artifact = artifacts.get(version.original_artifact_id)
+        return artifact.name if artifact is not None else None
+
+    def _batch_context(row: AnnotationReturnBatch) -> dict[str, Any]:
+        assignment = assignments.get(row.assignment_id)
+        if assignment is None:
+            return {}
+        task = tasks.get(assignment.task_id)
+        return {
+            "task_id": str(assignment.task_id),
+            "task_name": task.name if task is not None else None,
+            "annotator_subject_id": str(assignment.annotator_subject_id),
+            "annotator_name": annotators.get(assignment.annotator_subject_id),
+            "source_dataset_name": _artifact_name(task.dataset_version_id) if task is not None else None,
+        }
+
     return {
         "items": [
             {
@@ -170,6 +258,11 @@ def list_return_batches(db: Session, project_id, cursor: str | None = None, limi
                 ),
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "accepted_dataset_version_id": str(row.accepted_dataset_version_id) if row.accepted_dataset_version_id else None,
+                "saved_dataset_name": (
+                    _artifact_name(exported_by_batch[str(row.id)].id)
+                    if str(row.id) in exported_by_batch else None
+                ),
+                **_batch_context(row),
             }
             for row in rows
         ],
@@ -614,5 +707,331 @@ def reject_return_batch(db: Session, return_batch_id, expected_revision: int, re
         db.refresh(batch)
         return batch
     except AnnotationReturnError:
+        db.rollback()
+        raise
+
+
+def _accepted_version_or_error(db: Session, return_batch_id) -> tuple[AnnotationReturnBatch, GenericAnnotationTask, DatasetVersion]:
+    batch, _assignment, task = _batch_or_error(db, return_batch_id)
+    if batch.state != "accepted" or batch.accepted_dataset_version_id is None:
+        raise AnnotationReturnError("EXPORT_BATCH_NOT_ACCEPTED")
+    accepted = db.get(DatasetVersion, batch.accepted_dataset_version_id)
+    if accepted is None or str(accepted.project_id) != str(task.project_id):
+        raise AnnotationReturnError("ACCEPTED_DATASET_VERSION_NOT_FOUND")
+    return batch, task, accepted
+
+
+def _export_label_columns_or_error(db: Session, batch: AnnotationReturnBatch, task: GenericAnnotationTask) -> list[dict]:
+    try:
+        snapshot = task_snapshot_for_revision(db, task, batch.task_revision)
+    except AnnotationReturnSnapshotError as error:
+        raise AnnotationReturnError(error.code) from error
+    columns = list(((snapshot or {}).get("label_schema") or {}).get("columns") or [])
+    for column in columns:
+        machine_key = str(column.get("machine_key") or "")
+        value_type = str(column.get("value_type") or "")
+        if not machine_key or value_type not in {"int", "float", "string"}:
+            raise AnnotationReturnError("RETURN_LABEL_SCHEMA_INVALID")
+    return columns
+
+
+def _string_label_mapping(db: Session, *, column: dict, accepted_version_id) -> dict[str, int]:
+    """value→int mapping for one string label column. Values keep the schema's
+    enum order first, then any remaining values by first appearance in the
+    accepted samples (0, 1, 2, ...)."""
+    key = str(column["machine_key"])
+    appeared: list[str] = []
+    for rows in _source_sample_batches(db, accepted_version_id):
+        for row in rows:
+            value = (row.values or {}).get(key)
+            if value is None:
+                continue
+            text = str(value)
+            if text not in appeared:
+                appeared.append(text)
+    enum_values = [
+        str(value) for value in (column.get("enum_values") or [])
+        if value is not None and str(value) != ""
+    ]
+    ordered = [value for value in enum_values if value in appeared]
+    ordered += [value for value in appeared if value not in ordered]
+    return {value: index for index, value in enumerate(ordered)}
+
+
+def _export_label_plan(db: Session, *, batch: AnnotationReturnBatch, task: GenericAnnotationTask, accepted: DatasetVersion) -> list[dict]:
+    """Per label column: int/float columns pass through unchanged, string
+    columns get a value→int mapping built from the accepted samples."""
+    plan: list[dict] = []
+    for column in _export_label_columns_or_error(db, batch, task):
+        value_type = str(column["value_type"])
+        entry: dict = {
+            "machine_key": str(column["machine_key"]),
+            "display_name": str(column.get("display_name") or column.get("machine_key")),
+            "value_type": value_type,
+        }
+        if value_type == "string":
+            entry["mapping"] = _string_label_mapping(db, column=column, accepted_version_id=accepted.id)
+        plan.append(entry)
+    return plan
+
+
+def export_return_batch_preview(db: Session, return_batch_id) -> dict:
+    """Preview for the save-to-data-management dialog: label column types and,
+    for string columns, the proposed value→int mapping."""
+    batch, task, accepted = _accepted_version_or_error(db, return_batch_id)
+    return {
+        "return_batch_id": str(batch.id),
+        "task_id": str(task.id),
+        "task_name": task.name,
+        "row_count": int(accepted.row_count),
+        "columns": _export_label_plan(db, batch=batch, task=task, accepted=accepted),
+    }
+
+
+def _unique_export_dataset_name(db: Session, project_id, name: str) -> str:
+    existing = {
+        row[0] for row in db.query(Artifact.name).filter(
+            Artifact.project_id == project_id,
+            Artifact.type == "dataset",
+            Artifact.archived_at.is_(None),
+        ).all()
+    }
+    if name not in existing:
+        return name
+    # Insert the counter before the file extension (name-2.csv, not name.csv-2).
+    stem, dot, suffix = name.rpartition(".")
+    if not dot or not stem or len(suffix) > 8 or "/" in suffix or "\\" in suffix:
+        stem, suffix = name, ""
+    extension = f".{suffix}" if suffix else ""
+    counter = 2
+    while f"{stem}-{counter}{extension}" in existing:
+        counter += 1
+    return f"{stem}-{counter}{extension}"
+
+
+def _export_file_format(db: Session, accepted: DatasetVersion) -> str:
+    """The exported file keeps the source dataset's file type (csv/xlsx/parquet,
+    never user-choosable). Falls back to csv when no source artifact exists."""
+    source_version_id = (accepted.parse_contract or {}).get("source_dataset_version_id")
+    if source_version_id:
+        try:
+            source_version = db.get(DatasetVersion, uuid.UUID(str(source_version_id)))
+        except (ValueError, TypeError, AttributeError):
+            source_version = None
+        if source_version is not None and source_version.original_artifact_id:
+            source_artifact = db.get(Artifact, source_version.original_artifact_id)
+            if source_artifact is not None and source_artifact.format:
+                file_format = str(source_artifact.format).lower()
+                if file_format in {"csv", "xlsx", "xls", "parquet"}:
+                    return file_format
+                raise AnnotationReturnError("EXPORT_FILE_TYPE_UNSUPPORTED")
+    return "csv"
+
+
+def _write_export_table_file(path: Path, file_format: str, columns: list[DatasetSchemaColumn], sample_rows: list[dict]) -> None:
+    names = [column.name for column in columns]
+    if file_format == "csv":
+        import csv as csv_module
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv_module.writer(handle)
+            writer.writerow(names)
+            for row in sample_rows:
+                writer.writerow([row["values"].get(name) for name in names])
+        return
+    import pandas as pd
+    frame = pd.DataFrame([row["values"] for row in sample_rows], columns=names)
+    if file_format in {"xls", "xlsx"}:
+        frame.to_excel(path, index=False)
+    elif file_format == "parquet":
+        frame.to_parquet(path, index=False)
+    else:
+        raise AnnotationReturnError("EXPORT_FILE_TYPE_UNSUPPORTED")
+
+
+_EXPORT_LABEL_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_export_renames(renames: dict | None, label_keys: set[str], source_columns) -> dict[str, str]:
+    """Label column names must be English identifiers in the exported dataset;
+    Chinese names have to be renamed (e.g. 结果 → outcome) before saving."""
+    if not renames:
+        return {}
+    other_names = {column.name for column in source_columns if column.name not in label_keys}
+    seen_targets: set[str] = set()
+    for key, target in renames.items():
+        if key not in label_keys:
+            raise AnnotationReturnError("EXPORT_LABEL_NAME_INVALID")
+        if not isinstance(target, str) or not _EXPORT_LABEL_NAME_PATTERN.match(target.strip()) or target.strip() != target:
+            raise AnnotationReturnError("EXPORT_LABEL_NAME_INVALID")
+        if target in other_names or target in seen_targets or target in label_keys - {key}:
+            raise AnnotationReturnError("EXPORT_LABEL_NAME_INVALID")
+        seen_targets.add(target)
+    return dict(renames)
+
+
+def export_return_batch_dataset(db: Session, return_batch_id, name: str, actor, renames: dict | None = None) -> tuple[Artifact, DatasetVersion, dict]:
+    """Save an accepted batch into data management as a named dataset: numeric
+    label columns are copied as-is, string label columns are mapped to ints.
+    Chinese label column names must be renamed (renames) to English first."""
+    name = (name or "").strip()
+    if not name or len(name) > 256:
+        raise AnnotationReturnError("EXPORT_NAME_REQUIRED")
+    try:
+        batch, task, accepted = _accepted_version_or_error(db, return_batch_id)
+        plan = _export_label_plan(db, batch=batch, task=task, accepted=accepted)
+        label_keys = {entry["machine_key"] for entry in plan}
+        mapping_by_key = {
+            entry["machine_key"]: entry["mapping"]
+            for entry in plan if entry["value_type"] == "string"
+        }
+        source_columns = db.query(DatasetSchemaColumn).filter_by(
+            dataset_version_id=accepted.id,
+        ).order_by(DatasetSchemaColumn.position).all()
+        renames = _validate_export_renames(renames, label_keys, source_columns)
+        final_columns = [
+            DatasetSchemaColumn(
+                name=renames.get(column.name, column.name),
+                position=column.position,
+                # String label columns are stored as their mapped ints.
+                dtype="int" if column.name in mapping_by_key else column.dtype,
+                nullable=column.nullable,
+            )
+            for column in source_columns
+        ]
+        file_format = _export_file_format(db, accepted)
+        # The saved dataset name keeps the source file suffix (e.g. ".csv") so
+        # it looks and behaves like an uploaded dataset in data management.
+        suffix = f".{file_format}"
+        base_name = name if name.lower().endswith(suffix) else f"{name}{suffix}"
+        artifact_name = _unique_export_dataset_name(db, task.project_id, base_name)
+        digest = hashlib.sha256(b"annotation-return-export-v1\x00")
+        count = 0
+        sample_rows: list[dict] = []
+        for rows in _source_sample_batches(db, accepted.id):
+            for row in rows:
+                values = dict(row.values or {})
+                for key in label_keys:
+                    value = values.pop(key, None)
+                    if value is None:
+                        continue
+                    mapped_key = renames.get(key, key)
+                    mapping = mapping_by_key.get(key)
+                    if mapping is not None:
+                        mapped = mapping.get(str(value))
+                        if mapped is None:
+                            raise AnnotationReturnError("EXPORT_LABEL_VALUE_UNMAPPED")
+                        values[mapped_key] = mapped
+                    else:
+                        values[mapped_key] = value
+                digest.update(json.dumps(
+                    {"sample_id": str(row.sample_id), "row_index": int(row.row_index), "values": values},
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8"))
+                digest.update(b"\n")
+                sample_rows.append({
+                    "sample_id": str(row.sample_id),
+                    "row_index": int(row.row_index),
+                    "values": values,
+                })
+                count += 1
+        if count != int(accepted.row_count):
+            raise AnnotationReturnError("RETURN_SOURCE_ROW_COUNT_MISMATCH")
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory) / f"annotation-return-export-{uuid.uuid4().hex}.{file_format}"
+            _write_export_table_file(temporary, file_format, final_columns, sample_rows)
+            # The exported dataset keeps the source dataset's file type and is
+            # stored as a real file (storage_uri) so data management preview,
+            # download and materialize all work exactly like uploaded datasets.
+            artifact = build_artifact_service(db).create_from_file(
+                task.project_id,
+                temporary,
+                artifact_name,
+                "dataset",
+                {
+                    "source": "annotation_return_export",
+                    "schema": [
+                        {"name": column.name, "dtype": column.dtype, "null_count": 0}
+                        for column in final_columns
+                    ],
+                    "row_count": count,
+                    "column_count": len(final_columns),
+                    "task_id": str(task.id),
+                    "return_batch_id": str(batch.id),
+                },
+                commit=False,
+            )
+        latest = db.query(DatasetVersion.version).filter(
+            DatasetVersion.project_id == task.project_id,
+        ).order_by(DatasetVersion.version.desc()).first()
+        exported = DatasetVersion(
+            project_id=task.project_id,
+            operator_id=actor.id,
+            original_artifact_id=artifact.id,
+            version=(int(latest[0]) if latest else 0) + 1,
+            status="ready",
+            row_count=count,
+            column_count=len(final_columns),
+            content_hash="sha256:" + digest.hexdigest(),
+            schema_hash=_schema_hash(final_columns),
+            parse_contract={
+                "source_format": "annotation_return_export",
+                "source_dataset_version_id": str(accepted.id),
+                "source_file_format": file_format,
+                "return_batch_id": str(batch.id),
+                "task_id": str(task.id),
+                "task_revision": int(batch.task_revision),
+                "label_mappings": mapping_by_key,
+                "label_renames": dict(renames),
+            },
+        )
+        db.add(exported)
+        db.flush()
+        db.bulk_insert_mappings(DatasetSchemaColumn, [
+            {
+                "id": uuid.uuid4(),
+                "dataset_version_id": exported.id,
+                "name": column.name,
+                "position": column.position,
+                "dtype": column.dtype,
+                "nullable": column.nullable,
+            }
+            for column in final_columns
+        ])
+        db.bulk_insert_mappings(DatasetSample, [
+            {
+                "id": uuid.uuid4(),
+                "dataset_version_id": exported.id,
+                "sample_id": row["sample_id"],
+                "row_index": row["row_index"],
+                "values": row["values"],
+            }
+            for row in sample_rows
+        ])
+        db.add(AuditEvent(
+            project_id=task.project_id,
+            actor_id=actor.id,
+            actor_username=getattr(actor, "username", str(actor.id)),
+            action="annotation_return.exported_dataset",
+            resource_type="annotation_return_batch",
+            resource_id=str(batch.id),
+            result="success",
+            request_id=uuid.uuid4(),
+            changes={
+                "task_revision": batch.task_revision,
+                "artifact_id": str(artifact.id),
+                "dataset_version_id": str(exported.id),
+                "row_count": count,
+                "label_mappings": mapping_by_key,
+            },
+        ))
+        db.commit()
+        db.refresh(exported)
+        return artifact, exported, mapping_by_key
+    except AnnotationReturnError:
+        db.rollback()
+        raise
+    except Exception:
         db.rollback()
         raise

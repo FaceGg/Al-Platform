@@ -21,6 +21,8 @@ from app.models.platform_models import (
 from app.schemas.annotation_tasks import TaskAction
 from app.config import settings
 from app.models.data_version import DatasetSchemaColumn
+from app.models.project import Project
+from app.services.project_access import ProjectAccessService
 
 _TRANSITIONS = {
     "draft": {TaskAction.cancel: "cancelled"},
@@ -497,7 +499,8 @@ def list_annotation_tasks(db, project_id, owner_id, cursor=None, limit=50):
         # enforces project membership before reaching this query.
         base_query = base_query.filter(GenericAnnotationTask.project_id == project_id)
     else:
-        base_query = base_query.filter(GenericAnnotationTask.owner_id == owner_id)
+        accessible_projects = ProjectAccessService.accessible_project_query(db, owner_id).with_entities(Project.id).subquery()
+        base_query = base_query.filter(GenericAnnotationTask.project_id.in_(accessible_projects))
     items, total, has_next = _created_id_page(base_query, GenericAnnotationTask, cursor, limit)
     return {
         "items": [
@@ -533,6 +536,45 @@ def mark_preview_completed(db, task_id, preview_id, owner_id, *, commit: bool = 
             request_id=uuid.uuid4(),
             changes={"from_status": "previewing", "to_status": task.status, "task_revision": task.task_revision},
         ))
+        # A completed, fully configured preview is the publication gate:
+        # manual tasks publish automatically and automatic tasks start their
+        # durable execution without a separate operator action.
+        if task.status == "preview_ready" and task.mode == "manual":
+            db.add(AuditEvent(
+                project_id=task.project_id,
+                actor_id=owner_id,
+                actor_username=getattr(getattr(task, "owner", None), "username", str(owner_id)),
+                action="annotation_task.auto_published",
+                resource_type="annotation_task",
+                resource_id=str(task.id),
+                result="success",
+                request_id=uuid.uuid4(),
+                changes={"from_status": "preview_ready", "to_status": "awaiting_annotation", "task_revision": task.task_revision},
+            ))
+            task.status = "awaiting_annotation"
+        elif task.status == "preview_ready":
+            from app.services.annotation_task_execution import request_annotation_execution
+            execution = request_annotation_execution(db, task.id, preview.id, owner_id)
+            db.add(AuditEvent(
+                project_id=task.project_id,
+                actor_id=owner_id,
+                actor_username=getattr(getattr(task, "owner", None), "username", str(owner_id)),
+                action="annotation_task.auto_execute_requested",
+                resource_type="annotation_task",
+                resource_id=str(task.id),
+                result="success",
+                request_id=uuid.uuid4(),
+                changes={
+                    "from_status": "preview_ready",
+                    "to_status": "executing",
+                    "task_revision": task.task_revision,
+                    "preview_id": str(preview.id),
+                    "operation_id": str(execution.operation_id),
+                },
+            ))
+            # The preview worker dispatches the execution task after the
+            # preview operation itself is completed.
+            task._auto_execution_operation_id = execution.operation_id
         if commit:
             db.commit()
             db.refresh(task)
@@ -720,6 +762,7 @@ def list_annotation_operations(db, project_id, owner_id, cursor=None, limit=50):
         DurableOperation.project_id == project_id,
         GenericAnnotationTask.project_id == project_id,
         GenericAnnotationTask.owner_id == owner_id,
+        GenericAnnotationTask.archived_at.is_(None),
     )
     operations, total, has_next = _created_id_page(
         query,

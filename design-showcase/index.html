@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Linkraft 算法平台 · 控制台设计风格</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #0b0f1a;
+    color: #e2e8f0;
+    line-height: 1.6;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  .bg-pattern {
+    position: fixed;
+    inset: 0;
+    background-image:
+      radial-gradient(circle at 20% 20%, rgba(139, 92, 246, 0.12) 0%, transparent 50%),
+      radial-gradient(circle at 80% 80%, rgba(6, 182, 212, 0.1) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 64px 32px;
+  }
+  header {
+    text-align: center;
+    margin-bottom: 56px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    border-radius: 100px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #a78bfa;
+    margin-bottom: 20px;
+  }
+  .badge-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #a78bfa;
+    box-shadow: 0 0 8px #a78bfa;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  h1 {
+    font-size: clamp(32px, 5vw, 52px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin-bottom: 16px;
+    background: linear-gradient(135deg, #fff 0%, #a78bfa 50%, #22d3ee 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .subtitle {
+    font-size: 17px;
+    color: #94a3b8;
+    max-width: 580px;
+    margin: 0 auto;
+  }
+  .subtitle strong {
+    color: #e2e8f0;
+    font-weight: 600;
+  }
+
+  .styles-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 28px;
+  }
+  .style-card {
+    background: rgba(30, 41, 59, 0.5);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(148, 163, 184, 0.1);
+    border-radius: 20px;
+    overflow: hidden;
+    transition: all 0.3s;
+    display: flex;
+    flex-direction: column;
+  }
+  .style-card:hover {
+    transform: translateY(-6px);
+    border-color: rgba(139, 92, 246, 0.3);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  }
+  .style-preview {
+    position: relative;
+    height: 260px;
+    overflow: hidden;
+    background: #0f172a;
+  }
+  .style-preview iframe {
+    width: 200%;
+    height: 200%;
+    border: none;
+    transform: scale(0.5);
+    transform-origin: top left;
+    pointer-events: none;
+  }
+  .preview-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, transparent 50%, rgba(11, 15, 26, 0.9) 100%);
+    pointer-events: none;
+  }
+  .style-tag {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    z-index: 2;
+  }
+  .style-1 .style-tag {
+    background: rgba(0, 240, 255, 0.2);
+    color: #00f0ff;
+    border: 1px solid rgba(0, 240, 255, 0.3);
+  }
+  .style-2 .style-tag {
+    background: rgba(37, 99, 235, 0.2);
+    color: #60a5fa;
+    border: 1px solid rgba(37, 99, 235, 0.35);
+  }
+  .style-3 .style-tag {
+    background: rgba(236, 72, 153, 0.2);
+    color: #f472b6;
+    border: 1px solid rgba(236, 72, 153, 0.3);
+  }
+  .style-body {
+    padding: 24px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .style-name {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    letter-spacing: -0.01em;
+  }
+  .style-desc {
+    font-size: 14px;
+    color: #94a3b8;
+    margin-bottom: 20px;
+    line-height: 1.6;
+    flex: 1;
+  }
+  .style-features {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .sf {
+    padding: 4px 10px;
+    background: rgba(148, 163, 184, 0.1);
+    border-radius: 6px;
+    font-size: 12px;
+    color: #cbd5e1;
+  }
+  .style-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 20px;
+    background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+    color: #fff;
+    text-decoration: none;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+  .style-link:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+  }
+  .style-link svg {
+    width: 16px;
+    height: 16px;
+    transition: transform 0.2s;
+  }
+  .style-link:hover svg { transform: translateX(2px); }
+
+  footer {
+    text-align: center;
+    padding: 48px 32px 32px;
+    color: #64748b;
+    font-size: 13px;
+  }
+  footer a {
+    color: #8b5cf6;
+    text-decoration: none;
+  }
+
+  @media (max-width: 768px) {
+    .container { padding: 40px 20px; }
+    header { margin-bottom: 40px; }
+    .styles-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="bg-pattern"></div>
+
+<div class="container">
+  <header>
+    <div class="badge">
+      <span class="badge-dot"></span>
+      <span>Linkraft · 算法平台控制台</span>
+    </div>
+    <h1>三种控制台设计风格</h1>
+    <p class="subtitle">
+      为 <strong>Linkraft 算法平台</strong> 打造的三套控制台视觉方案，
+      覆盖 Dashboard、AutoML、数据标注、资源监控等核心模块。
+    </p>
+  </header>
+
+  <div class="styles-grid">
+    <!-- Style 1 -->
+    <div class="style-card style-1">
+      <div class="style-preview">
+        <div class="style-tag">风格一</div>
+        <iframe src="console-style-1-dark-tech.html" title="深色科技风预览"></iframe>
+        <div class="preview-overlay"></div>
+      </div>
+      <div class="style-body">
+        <h3 class="style-name">深空指挥中心</h3>
+        <p class="style-desc">
+          深色主题 + 霓虹青蓝光效 + 数据大屏感。强科技感、强视觉冲击力，
+          适合作为算法平台的监控驾驶舱与核心控制台。
+        </p>
+        <div class="style-features">
+          <span class="sf">深色模式</span>
+          <span class="sf">霓虹光效</span>
+          <span class="sf">大屏感</span>
+          <span class="sf">强科技感</span>
+        </div>
+        <a href="console-style-1-dark-tech.html" class="style-link" target="_blank">
+          查看完整页面
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
+        </a>
+      </div>
+    </div>
+
+    <!-- Style 2 -->
+    <div class="style-card style-2">
+      <div class="style-preview">
+        <div class="style-tag">风格二</div>
+        <iframe src="console-style-2-light-enterprise.html" title="浅色企业风预览"></iframe>
+        <div class="preview-overlay"></div>
+      </div>
+      <div class="style-body">
+        <h3 class="style-name">浅色企业工作台</h3>
+        <p class="style-desc">
+          清爽白底 + 蓝色主色 + 规范信息层级。企业级 SaaS 标准风格，
+          信息密度适中，可读性强，适合长时间操作的工作台场景。
+        </p>
+        <div class="style-features">
+          <span class="sf">浅色主题</span>
+          <span class="sf">企业级</span>
+          <span class="sf">蓝白配色</span>
+          <span class="sf">高可读性</span>
+        </div>
+        <a href="console-style-2-light-enterprise.html" class="style-link" target="_blank">
+          查看完整页面
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
+        </a>
+      </div>
+    </div>
+
+    <!-- Style 3 -->
+    <div class="style-card style-3">
+      <div class="style-preview">
+        <div class="style-tag">风格三</div>
+        <iframe src="console-style-3-modern-minimal.html" title="现代简约风预览"></iframe>
+        <div class="preview-overlay"></div>
+      </div>
+      <div class="style-body">
+        <h3 class="style-name">现代简约风</h3>
+        <p class="style-desc">
+          三栏布局 + 中性黑白灰 + 极细边框。类 Linear / Vercel 的现代极简美学，
+          强调内容本身，克制的视觉语言传递高级感。
+        </p>
+        <div class="style-features">
+          <span class="sf">三栏布局</span>
+          <span class="sf">极简美学</span>
+          <span class="sf">中性配色</span>
+          <span class="sf">高级感</span>
+        </div>
+        <a href="console-style-3-modern-minimal.html" class="style-link" target="_blank">
+          查看完整页面
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  选择你喜欢的风格，可以在此基础上进一步调整配色、布局或功能模块。
+</footer>
+
+</body>
+</html>

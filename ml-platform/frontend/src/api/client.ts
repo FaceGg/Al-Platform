@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { translations } from '../i18n'
 
 const apiClient = axios.create({
   baseURL: '/api',
@@ -36,9 +37,26 @@ export function formatApiError(error: any, fallback: string): string {
   if (detail && typeof detail === "object") {
     const code = detail.code ? String(detail.code) : "";
     const message = detail.message ? String(detail.message) : JSON.stringify(detail);
-    return code ? `${code}: ${message}` : message;
+    if (code) {
+      const localized = localizeApiError(code, message);
+      if (localized) return localized;
+      return `${code}: ${message}`;
+    }
+    return message;
   }
   return String(detail || error?.message || fallback);
+}
+
+function localizeApiError(code: string, message?: string): string | undefined {
+  // Mirror the language the UI is set to (LangProvider persists the same key).
+  const lang = (localStorage.getItem("lang") as "zh" | "en") || "zh";
+  const table = (translations[lang] as any)?.apiErrors;
+  const template = table ? table[code] : undefined;
+  if (!template) return undefined;
+  // Templates may embed {message} to surface actionable backend details.
+  return typeof template === "string" && template.includes("{message}")
+    ? template.replace("{message}", message || "")
+    : template;
 }
 
 export async function apiGet(url: string) {

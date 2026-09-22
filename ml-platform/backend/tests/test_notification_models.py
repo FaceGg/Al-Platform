@@ -323,7 +323,7 @@ class TestNotificationMigration(unittest.TestCase):
                     db_engine.dispose()
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    "Refusing destructive downgrade of generic_annotation_tasks",
+                    "Refusing destructive downgrade",
                 ):
                     command.downgrade(config, WEEK9_REVISION)
                 db_engine = create_engine(full_database_url)

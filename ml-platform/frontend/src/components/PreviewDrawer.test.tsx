@@ -12,6 +12,13 @@ describe("PreviewDrawer", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("closes when the page mask is clicked", () => {
+    const onClose = vi.fn();
+    render(<PreviewDrawer open onClose={onClose} />);
+    fireEvent.click(screen.getByRole("presentation"));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it("shows preview samples", () => {
     render(<PreviewDrawer open samples={[{ sample_id: "sample-1", row_index: 0, values: { score: 0.9 } }]} onClose={vi.fn()} />);
     expect(screen.getByLabelText("预览样本")).toHaveTextContent("sample-1");

@@ -5,12 +5,13 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.platform_models import AnnotationTask, AnnotationResult, Dataset
 from app.models.user import User
-from app.models.labeling import LabelSchema, LabelColumn, AnnotationSampleCurrent
+from app.models.labeling import LabelSchema, LabelColumn, AnnotationSampleCurrent, SavedAnnotationStrategy
 from app.models.project import Project
-from app.schemas.labeling import LabelRevisionWrite, LabelSchemaCreate
+from app.schemas.labeling import LabelRevisionWrite, LabelSchemaCreate, SavedAnnotationStrategyCreate
 from app.services.label_schema import (LabelValueError, confirm_label_values, create_label_schema, get_current_label_set, require_task_schema_binding, write_label_revision)
 from app.api.auth import get_current_user
 from app.services.resource_access import ResourceAccessService
+from app.api.project_security import require_project_access
 from app.schemas.annotator import AssignmentCreate, AssignmentEditRequest, AssignmentReturnRequest, LabelSaveRequest
 from app.services.annotation_concurrency import AssignmentError, AssignmentLockedError, confirm_assignment, create_assignments, edit_for_return, return_assignment, save_labels
 
@@ -283,7 +284,7 @@ def _bound_task_schema(db: Session, task_id: str, schema_id: str):
 
 @router.post("/label-schemas", status_code=201)
 def create_schema(data: LabelSchemaCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    ResourceAccessService().require_owned(db, Project, data.project_id, current_user.id)
+    require_project_access(db, data.project_id, current_user.id, "resource.create")
     schema = create_label_schema(
         db,
         project_id=data.project_id,
@@ -298,6 +299,61 @@ def create_schema(data: LabelSchemaCreate, db: Session = Depends(get_db), curren
         "version": schema.version,
         "purpose": schema.purpose,
     }
+
+
+def _serialize_saved_strategy(item: SavedAnnotationStrategy) -> dict:
+    return {
+        "id": str(item.id),
+        "project_id": str(item.project_id),
+        "name": item.name,
+        "payload": item.payload or {},
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
+@router.get("/saved-strategies")
+def list_saved_strategies(project_id: str = Query(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    try:
+        parsed_project_id = uuid.UUID(project_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail={"code": "PROJECT_NOT_FOUND"}) from error
+    require_project_access(db, parsed_project_id, current_user.id, "project.read")
+    items = (
+        db.query(SavedAnnotationStrategy)
+        .filter(SavedAnnotationStrategy.project_id == parsed_project_id)
+        .order_by(SavedAnnotationStrategy.updated_at.desc())
+        .all()
+    )
+    return {"items": [_serialize_saved_strategy(item) for item in items]}
+
+
+@router.post("/saved-strategies")
+def save_annotation_strategy(data: SavedAnnotationStrategyCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """保存/覆盖当前向导中的自动标注策略草稿（同项目同名覆盖更新）。"""
+    require_project_access(db, data.project_id, current_user.id, "resource.create")
+    existing = (
+        db.query(SavedAnnotationStrategy)
+        .filter(
+            SavedAnnotationStrategy.project_id == data.project_id,
+            SavedAnnotationStrategy.name == data.name.strip(),
+        )
+        .one_or_none()
+    )
+    if existing is not None:
+        existing.payload = data.payload
+        db.commit()
+        db.refresh(existing)
+        return _serialize_saved_strategy(existing)
+    item = SavedAnnotationStrategy(
+        project_id=data.project_id,
+        name=data.name.strip(),
+        payload=data.payload,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return _serialize_saved_strategy(item)
 
 
 @router.get("/label-schemas/{schema_id}")

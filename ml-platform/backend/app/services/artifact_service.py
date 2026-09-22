@@ -110,6 +110,7 @@ class ArtifactService:
     def create_dataset_version_from_artifact(self, artifact: Artifact, *, operator_id) -> DatasetVersion:
         if artifact.type != "dataset" or not operator_id:
             raise ValueError("Dataset version requires a dataset artifact and operator")
+        operator_id = uuid.UUID(str(operator_id))
         with self.storage.materialize(artifact.storage_uri) as path:
             frame = pd.read_csv(path)
         import hashlib

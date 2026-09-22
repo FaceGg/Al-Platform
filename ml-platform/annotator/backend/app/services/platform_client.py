@@ -14,32 +14,55 @@ class PlatformClient:
     def __init__(self, base_url: str | None = None):
         self.base_url = base_url or settings.api_origin
 
-    async def resolve_portal_session(self, token: str) -> dict:
+    async def resolve_portal_session(self, token: str, *, viewer: str = "annotator", cookie_name: str = "portal_session") -> dict:
         try:
             async with httpx.AsyncClient(base_url=self.base_url) as client:
-                response = await client.get("/portal/auth/me", cookies={"portal_session": token})
+                response = await client.get(
+                    "/portal/auth/me",
+                    cookies={cookie_name: token},
+                    headers={"X-Portal-Viewer": viewer},
+                )
             response.raise_for_status()
             return response.json()
         except (httpx.HTTPError, ValueError) as error:
             raise PlatformClientError("portal session could not be resolved") from error
 
-    def _service_token(self, *, subject_id: str, scopes: list[str]) -> str:
+    def _service_token(
+        self,
+        *,
+        subject_id: str | None,
+        scopes: list[str],
+        admin_user_id: str | None = None,
+    ) -> str:
         now = datetime.now(timezone.utc)
-        return jwt.encode({
+        payload = {
             "iss": settings.service_issuer,
             "aud": settings.service_audience,
             "sub": "annotator-portal",
             "project_id": "*",
-            "annotator_subject_id": subject_id,
             "scope": " ".join(sorted(set(scopes))),
             "nonce": secrets.token_urlsafe(16),
             "iat": now,
             "exp": now + timedelta(seconds=60),
-        }, settings.service_secret, algorithm="HS256")
+        }
+        if subject_id is not None:
+            payload["annotator_subject_id"] = subject_id
+        if admin_user_id is not None:
+            payload["admin_user_id"] = admin_user_id
+        return jwt.encode(payload, settings.service_secret, algorithm="HS256")
 
-    async def internal_request(self, method: str, path: str, *, subject_id: str, scope: str, **kwargs) -> dict:
+    async def internal_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        subject_id: str | None = None,
+        scope: str,
+        admin_user_id: str | None = None,
+        **kwargs,
+    ) -> dict:
         headers = dict(kwargs.pop("headers", {}))
-        headers["Authorization"] = f"Bearer {self._service_token(subject_id=subject_id, scopes=[scope])}"
+        headers["Authorization"] = f"Bearer {self._service_token(subject_id=subject_id, scopes=[scope], admin_user_id=admin_user_id)}"
         try:
             async with httpx.AsyncClient(base_url=self.base_url) as client:
                 response = await client.request(method, path, headers=headers, **kwargs)

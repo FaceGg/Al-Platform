@@ -34,6 +34,7 @@ export type GenericTaskCreatePayload = {
 export type GenericTaskConfigurationPayload = {
   task_revision: number;
   name?: string;
+  label_schema_id?: string;
   visible_columns: string[];
   instructions: string;
   completion_criteria?: string;
@@ -68,8 +69,8 @@ export type AnnotationOperation = {
   created_at?: string | null;
 };
 
-export async function listAnnotationTasks(projectId: string, limit = 50, cursor?: string) {
-  const response = await apiClient.get("/annotation-tasks", { params: { project_id: projectId, limit, cursor } });
+export async function listAnnotationTasks(projectId?: string, limit = 50, cursor?: string) {
+  const response = await apiClient.get("/annotation-tasks", { params: { project_id: projectId || undefined, limit, cursor } });
   return response.data as { items: AnnotationTask[]; total: number; next_cursor: string | null };
 }
 

@@ -13,7 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import or_
+from sqlalchemy import or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -24,8 +24,8 @@ from app.models.platform_models import AnnotationTaskRevisionSnapshot, GenericAn
 from app.models.access import AuditEvent
 from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
 from app.models.artifact import Artifact
-from app.models.labeling import AnnotationStrategyArtifact, AnnotationStrategyDecision, LabelSchema
-from app.models.labeling import AnnotationAssignment
+from app.models.labeling import AnnotationStrategyArtifact, AnnotationStrategyDecision, LabelColumn, LabelSchema
+from app.models.labeling import AnnotationAssignment, AnnotationTaskLabel
 from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.project import Project
 from app.models.user import User
@@ -90,6 +90,7 @@ class GenericTaskConfigurationUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task_revision: int = Field(ge=0)
     name: str | None = Field(default=None, max_length=200)
+    label_schema_id: uuid.UUID | None = None
     visible_columns: list[str] = Field(default_factory=list)
     instructions: str = ""
     completion_criteria: str = ""
@@ -102,6 +103,24 @@ def _uuid(value, field: str) -> uuid.UUID:
         return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
     except (TypeError, ValueError, AttributeError) as error:
         raise HTTPException(status_code=422, detail={"code": "INVALID_UUID", "field": field}) from error
+
+
+def _unique_task_name(db: Session, project_id, name: str, *, exclude_task_id=None) -> str:
+    """Annotation task names must stay unique within a project; append -2, -3, ...
+    when the requested name is already taken by another live task."""
+    query = db.query(GenericAnnotationTask.name).filter(
+        GenericAnnotationTask.project_id == project_id,
+        GenericAnnotationTask.archived_at.is_(None),
+    )
+    if exclude_task_id is not None:
+        query = query.filter(GenericAnnotationTask.id != exclude_task_id)
+    existing = {row[0] for row in query.all()}
+    if name not in existing:
+        return name
+    counter = 2
+    while f"{name}-{counter}" in existing:
+        counter += 1
+    return f"{name}-{counter}"
 
 
 def _serialize(db: Session, task: GenericAnnotationTask) -> dict:
@@ -233,6 +252,26 @@ def _annotation_model_version(db: Session, project_id: uuid.UUID, model_version_
     return version
 
 
+def _model_input_columns(version: ModelVersion) -> list[str]:
+    """Model inference input columns from the frozen registration contract."""
+    metadata = dict(version.conversion_metadata or {})
+    contract = metadata.get("input_contract")
+    contract = dict(contract) if isinstance(contract, dict) else {}
+    raw = contract.get("feature_columns") or contract.get("input_columns")
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raw = [
+            item.get("name")
+            for item in (version.feature_schema or [])
+            if isinstance(item, dict)
+        ]
+    names: list[str] = []
+    for item in raw:
+        name = str(item or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
 def _annotation_model_view(version: ModelVersion) -> dict[str, object]:
     columns = _output_contract_columns(version)
     return {
@@ -333,7 +372,9 @@ def _validate_automatic_configuration(
     dataset_version: DatasetVersion | None = None,
 ) -> None:
     config = _config_from_snapshot(configuration)
-    schema = label_schema_contract_from_snapshot(schema_snapshot)
+    # Cluster discovery runs before the user defines label columns, so the
+    # frozen snapshot may still carry the empty placeholder schema.
+    schema = label_schema_contract_from_snapshot(schema_snapshot, allow_empty=config.cluster_discovery)
     version = dataset_version or (db.get(DatasetVersion, task.dataset_version_id) if task is not None else None)
     source_column_types = {
         str(column.name): str(column.dtype)
@@ -650,6 +691,7 @@ def _snapshot_with_configuration(
     previous: dict,
     configuration: dict,
     visible_columns: list[str],
+    label_schema: dict | None = None,
 ) -> dict:
     scope = dict(previous.get("scope") or {})
     if not scope:
@@ -661,7 +703,7 @@ def _snapshot_with_configuration(
         "dataset_version": dict(previous.get("dataset_version") or {}),
         "scope": scope,
         "visible_columns": list(visible_columns),
-        "label_schema": dict(previous.get("label_schema") or task.label_snapshot or {}),
+        "label_schema": label_schema if label_schema is not None else dict(previous.get("label_schema") or task.label_snapshot or {}),
         "instructions": data.instructions,
         "completion_criteria": data.completion_criteria,
         "configuration": deepcopy(configuration),
@@ -715,6 +757,20 @@ def create_generic_annotation_task(
             if data.model_version_id is None:
                 raise StrategyConfigError("automatic tasks require an enabled model version", "MODEL_VERSION_REQUIRED")
             model_version = _annotation_model_version(db, project_id, data.model_version_id)
+            # Automatic annotation runs the model on the selected dataset, so
+            # the dataset schema must cover the frozen model input contract
+            # (fail fast here instead of an opaque preview failure).
+            source_column_names = {column.name for column in source_columns}
+            missing_inputs = [
+                name for name in _model_input_columns(model_version)
+                if name not in source_column_names
+            ]
+            if missing_inputs:
+                listed = ", ".join(missing_inputs[:10]) + (" ..." if len(missing_inputs) > 10 else "")
+                raise StrategyConfigError(
+                    f"the dataset version is missing {len(missing_inputs)} model input columns: {listed}",
+                    "MODEL_INPUT_MISSING",
+                )
             contract_columns = _output_contract_columns(model_version)
             output_contract = _model_output_contract(model_version, contract_columns)
             if data.label_schema_id is not None:
@@ -732,6 +788,22 @@ def create_generic_annotation_task(
                         "the label schema does not belong to this project",
                         "LABEL_SCHEMA_NOT_FOUND",
                     )
+            elif configuration.get("clustering"):
+                if not configuration.get("cluster_discovery"):
+                    raise StrategyConfigError(
+                        "weak-supervision tasks require a user-specified label schema",
+                        "WEAK_SUPERVISION_SCHEMA_REQUIRED",
+                    )
+                # Labels are defined after clustering: the discovery task is
+                # created with an empty placeholder schema that the strategy
+                # configuration step replaces with the user-specified one.
+                schema = create_label_schema(
+                    db,
+                    project_id=project_id,
+                    name=f"{data.name.strip() or 'cluster-discovery'}-pending-labels",
+                    columns=[],
+                    commit=False,
+                )
             else:
                 schema = create_label_schema(
                     db,
@@ -824,7 +896,7 @@ def create_generic_annotation_task(
         dataset_version_id=data.dataset_version_id,
         label_schema_id=schema.id,
         owner_id=current_user.id,
-        name=data.name.strip(),
+        name=_unique_task_name(db, project_id, data.name.strip()),
         completion_criteria=data.completion_criteria,
         due_at=data.due_at,
         mode=data.mode,
@@ -892,6 +964,35 @@ def update_generic_annotation_task_configuration(
         ) from error
     previous = current_annotation_task_snapshot(db, task)
     configuration = deepcopy(data.configuration)
+    # Labels defined after clustering replace the discovery placeholder
+    # schema; the frozen snapshot and config hash follow the new binding.
+    effective_schema_snapshot = dict(previous.get("label_schema") or task.label_snapshot or {})
+    replacement_schema: LabelSchema | None = None
+    if "label_schema_id" in data.model_fields_set and data.label_schema_id is not None:
+        if task.mode != "automatic":
+            raise _contract_error(
+                request,
+                "LABEL_SCHEMA_IMMUTABLE",
+                "Only automatic clustering tasks may replace their label schema.",
+                status_code=422,
+            )
+        replacement_schema = db.get(LabelSchema, data.label_schema_id)
+        if replacement_schema is None or replacement_schema.project_id != task.project_id:
+            raise _contract_error(
+                request,
+                "LABEL_SCHEMA_NOT_FOUND",
+                "The label schema does not belong to this project.",
+                status_code=404,
+            )
+        column_count = db.query(LabelColumn).filter(LabelColumn.schema_id == replacement_schema.id).count()
+        if not column_count:
+            raise _contract_error(
+                request,
+                "LABEL_SCHEMA_REQUIRED",
+                "The replacement label schema has no label columns.",
+                status_code=422,
+            )
+        effective_schema_snapshot = label_schema_snapshot(replacement_schema)
     if task.mode == "automatic":
         frozen = dict(previous.get("configuration") or {})
         protected = {key: frozen.get(key) for key in ("model_version_id", "model_artifact_id", "model_output_contract")}
@@ -904,7 +1005,7 @@ def update_generic_annotation_task_configuration(
                 db,
                 task,
                 configuration,
-                dict(previous.get("label_schema") or task.label_snapshot or {}),
+                effective_schema_snapshot,
             )
         except StrategyConfigError as error:
             raise _contract_error(request, error.code, str(error), status_code=422) from error
@@ -914,9 +1015,22 @@ def update_generic_annotation_task_configuration(
         previous,
         configuration,
         visible_columns,
+        label_schema=effective_schema_snapshot,
     )
     if data.name is not None:
-        task.name = data.name.strip()
+        task.name = _unique_task_name(db, task.project_id, data.name.strip(), exclude_task_id=task.id)
+    if replacement_schema is not None:
+        task.label_schema_id = replacement_schema.id
+        task.label_snapshot = effective_schema_snapshot
+        # ORM events treat annotation label history as immutable, but the
+        # discovery placeholder swap happens before any annotation exists
+        # (the task is still draft/needs_review); update the binding at the
+        # Core level so the immutability guard is not triggered.
+        db.execute(
+            update(AnnotationTaskLabel)
+            .where(AnnotationTaskLabel.task_id == task.id)
+            .values(schema_id=replacement_schema.id, schema_snapshot=effective_schema_snapshot)
+        )
     task.completion_criteria = data.completion_criteria
     task.due_at = data.due_at
     task.task_revision += 1

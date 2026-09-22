@@ -71,6 +71,28 @@ class TestDatasetsAPI(unittest.TestCase):
         self.assertIn("preview", data)
         self.assertIn("total_rows", data)
 
+    def test_03_preview_limit_returns_all_rows_when_zero(self):
+        rows = "\n".join(f"{index},{index * 10}" for index in range(1, 16))
+        csv = self._make_csv(f"col1,col2\n{rows}\n")
+        r = client.post(
+            f"/api/projects/{self.project_id}/datasets/upload",
+            files={"file": ("preview-limit.csv", csv, "text/csv")},
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 200)
+        aid = r.json()["id"]
+
+        default = client.get(f"/api/datasets/{aid}/preview", headers=self.h).json()
+        self.assertEqual(len(default["preview"]), 10)
+        self.assertEqual(default["total_rows"], 15)
+
+        capped = client.get(f"/api/datasets/{aid}/preview?limit=2", headers=self.h).json()
+        self.assertEqual(len(capped["preview"]), 2)
+
+        everything = client.get(f"/api/datasets/{aid}/preview?limit=0", headers=self.h).json()
+        self.assertEqual(len(everything["preview"]), 15)
+        self.assertEqual(everything["total_rows"], 15)
+
     def test_03_raw_download_matches_stored_dataset_bytes(self):
         aid = self.artifact_ids[0]
         response = client.get(f"/api/datasets/{aid}/download", headers=self.h)

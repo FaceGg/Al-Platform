@@ -973,7 +973,10 @@ jobs:
           )
 
           root = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
-          evidence_dir = root / "temp_test" / "generic-platform-acceptance"
+          # Receipts must land inside the verification evidence directory so the
+          # final evidence manifest hashes them and the uploaded artifact keeps
+          # the full 19-receipt chain bound to this run's commit.
+          evidence_dir = Path(os.environ["ML_PLATFORM_EVIDENCE_DIR"]).resolve() / "generic-platform-acceptance"
           source_map = {
               "DAT-01": ["ml-platform/backend/tests/test_dataset_import_contract.py"],
               "DAT-02": ["ml-platform/backend/tests/test_dataset_import_contract.py"],
@@ -987,7 +990,7 @@ jobs:
               "CON-02": ["ml-platform/backend/tests/test_annotation_concurrency.py"],
               "RET-01": ["ml-platform/backend/tests/test_annotation_return_acceptance.py"],
               "AUTH-01": ["ml-platform/backend/tests/test_annotator_auth.py"],
-              "AUTH-02": ["ml-platform/annotator/backend/tests/test_portal_internal_api.py"],
+              "AUTH-02": ["ml-platform/annotator/backend/tests/test_portal_api.py"],
               "API-01": ["ml-platform/backend/tests/test_annotation_task_state_api.py"],
               "AUTO-01": ["ml-platform/backend/tests/test_automl_multioutput.py"],
               "AUTO-02": ["ml-platform/frontend/e2e/automl-multioutput.spec.ts"],
@@ -1021,7 +1024,7 @@ jobs:
               current_sha=os.environ["GITHUB_SHA"],
               repository_root=root,
           )
-          (evidence_dir / "final-evidence-manifest.json").write_text(
+          (evidence_dir / "acceptance-manifest.json").write_text(
               json.dumps(manifest, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )

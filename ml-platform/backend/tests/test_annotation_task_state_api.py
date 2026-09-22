@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.auth import get_current_user
 from app.database import Base, get_db
 from app.main import app
-from app.models.labeling import LabelColumn, LabelSchema
+from app.models.labeling import AnnotationTaskLabel, LabelColumn, LabelSchema
 from app.models.artifact import Artifact
 from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
 from app.models.model_library import ModelLibrary
@@ -127,7 +127,8 @@ def test_local_preview_dispatch_completes_with_independent_session(monkeypatch, 
                 if operation.state in {"completed", "failed"}:
                     assert operation.state == "completed"
                     assert db.get(AnnotationTaskPreview, preview_id).progress == 100
-                    assert db.get(GenericAnnotationTask, task.id).status == "preview_ready"
+                    # Manual preview completion publishes the task automatically.
+                    assert db.get(GenericAnnotationTask, task.id).status == "awaiting_annotation"
                     break
             assert time.monotonic() < deadline, "local worker did not complete"
             time.sleep(0.02)
@@ -361,14 +362,12 @@ def test_preview_transition_and_stale_preview_errors(monkeypatch):
         from app.tasks.annotation_preview_tasks import execute_annotation_preview
         monkeypatch.setattr("app.tasks.annotation_preview_tasks.SessionLocal", lambda: _SessionContext(db))
         execute_annotation_preview.run(task_id, preview.json()["preview_id"], str(user.id))
-        monkeypatch.setattr("app.api.annotation_task_state.enqueue_annotation_execution", lambda *args: type("Dispatch", (), {"id": "execution-dispatch"})())
+        # The completed manual preview publishes automatically; a manual
+        # execute request is now rejected because the task is already live.
+        assert db.get(GenericAnnotationTask, uuid.UUID(task_id)).status == "awaiting_annotation"
         executed = client.post(f"/api/annotation-tasks/{task_id}/execute", json={"task_revision": 0, "preview_id": preview.json()["preview_id"]})
-        assert executed.status_code == 202, executed.text
-        assert executed.json()["operation_id"]
-        assert executed.json()["dispatch_id"] == "execution-dispatch"
-        retried = client.post(f"/api/annotation-tasks/{task_id}/transition", json={"task_revision": 0, "action": "execute", "preview_id": preview.json()["preview_id"]})
-        assert retried.status_code == 200
-        assert retried.json()["operation_id"] == executed.json()["operation_id"]
+        assert executed.status_code == 409
+        assert executed.json()["detail"]["code"] == "TASK_STATE_INVALID"
     finally:
         app.dependency_overrides.clear()
         db.close()
@@ -402,16 +401,7 @@ def test_project_dataset_versions_lists_generic_creation_inputs():
     try:
         response = TestClient(app).get(f"/api/projects/{project.id}/dataset-versions")
         assert response.status_code == 200, response.text
-        assert response.json()["items"] == [{
-            "id": str(version.id),
-            "project_id": str(project.id),
-            "source_name": None,
-            "version": 2,
-            "status": "ready",
-            "row_count": 3,
-            "column_count": 2,
-            "columns": [{"name": "feature", "dtype": "float", "nullable": False, "position": 0}],
-        }]
+        assert response.json()["items"] == []
     finally:
         app.dependency_overrides.clear()
         db.close()
@@ -574,6 +564,43 @@ def test_task_creation_freezes_server_owned_snapshot():
         assert [column["machine_key"] for column in snapshot["configuration"]["model_output_contract"]["columns"]] == ["result", "score"]
         assert snapshot["config_hash"].startswith("sha256:")
         assert "client" not in snapshot["label_schema"]
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
+def test_automatic_task_creation_rejects_dataset_missing_model_inputs():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"input-missing-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user); db.flush()
+    project = Project(name="Input missing project", owner_id=user.id)
+    db.add(project); db.flush()
+    # Dataset schema lacks the `feature` column required by the model input contract.
+    version = DatasetVersion(project_id=project.id, operator_id=user.id, version=1, row_count=1, column_count=1, content_hash="sha256:input-missing", schema_hash="sha256:input-missing-schema")
+    db.add(version); db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="raw_column", position=0, dtype="float", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="s-1", row_index=0, values={"raw_column": 1.0}),
+    ])
+    model_version, _source_artifact = _enabled_annotation_model(db, project, user)
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    client = TestClient(app)
+    try:
+        request_id = str(uuid.uuid4())
+        response = client.post(
+            "/api/annotation-tasks",
+            headers={"X-Request-ID": request_id, "Idempotency-Key": str(uuid.uuid4())},
+            json={"project_id": str(project.id), "dataset_version_id": str(version.id), "model_version_id": str(model_version.id), "mode": "automatic", "sample_scope": {"kind": "all"}, "configuration": {"strategy": "model"}},
+        )
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"]["code"] == "MODEL_INPUT_MISSING"
+        assert "feature" in response.json()["detail"]["message"]
+        assert db.query(GenericAnnotationTask).count() == 0
     finally:
         app.dependency_overrides.clear()
         db.close()
@@ -807,7 +834,10 @@ def test_automatic_task_rejects_invalid_strategy_before_persisting():
     )
     db.add(version)
     db.flush()
-    db.add(DatasetSample(dataset_version_id=version.id, sample_id="strategy-contract-sample", row_index=0, values={"feature": 1.0}))
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="strategy-contract-sample", row_index=0, values={"feature": 1.0}),
+    ])
     model_version, _source_artifact = _enabled_annotation_model(db, project, user, columns=[{"name": "label", "dtype": "object", "task": "classification"}])
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
@@ -832,8 +862,219 @@ def test_automatic_task_rejects_invalid_strategy_before_persisting():
             },
         )
         assert response.status_code == 422
-        assert response.json()["detail"]["code"] == "CLUSTER_FALLBACK_REQUIRED"
+        assert response.json()["detail"]["code"] == "WEAK_SUPERVISION_SCHEMA_REQUIRED"
         assert db.query(GenericAnnotationTask).count() == 0
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
+def test_cluster_discovery_task_creates_placeholder_schema_without_labels():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"discovery-create-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Discovery creation project", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    version = DatasetVersion(
+        project_id=project.id,
+        operator_id=user.id,
+        version=1,
+        row_count=1,
+        column_count=1,
+        content_hash="sha256:discovery-data",
+        schema_hash="sha256:discovery-schema",
+    )
+    db.add(version)
+    db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="discovery-sample", row_index=0, values={"feature": 1.0}),
+    ])
+    model_version, _source_artifact = _enabled_annotation_model(db, project, user)
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/annotation-tasks",
+            headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": str(uuid.uuid4())},
+            json={
+                "project_id": str(project.id),
+                "dataset_version_id": str(version.id),
+                "model_version_id": str(model_version.id),
+                "mode": "automatic",
+                "sample_scope": {"kind": "all"},
+                "configuration": {"clustering": True, "cluster_discovery": True},
+            },
+        )
+        assert response.status_code == 201, response.text
+        snapshot = response.json()["task_snapshot"]
+        # Labels are defined after clustering: the task starts with an empty
+        # placeholder schema that the strategy configuration step replaces.
+        assert snapshot["label_schema"]["columns"] == []
+        assert snapshot["configuration"]["cluster_discovery"] is True
+        task_id = uuid.UUID(response.json()["id"])
+        task = db.get(GenericAnnotationTask, task_id)
+        assert task.label_schema_id is not None
+        assert db.query(LabelColumn).filter(LabelColumn.schema_id == task.label_schema_id).count() == 0
+        binding = db.query(AnnotationTaskLabel).filter_by(task_id=task_id).one()
+        assert binding.schema_id == task.label_schema_id
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
+def test_cluster_discovery_task_rebinds_user_schema_with_strategy():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"discovery-rebind-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Discovery rebind project", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    version = DatasetVersion(
+        project_id=project.id,
+        operator_id=user.id,
+        version=1,
+        row_count=1,
+        column_count=1,
+        content_hash="sha256:rebind-data",
+        schema_hash="sha256:rebind-schema",
+    )
+    db.add(version)
+    db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="rebind-sample", row_index=0, values={"feature": 1.0}),
+    ])
+    model_version, _source_artifact = _enabled_annotation_model(db, project, user)
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    client = TestClient(app)
+    try:
+        created = client.post(
+            "/api/annotation-tasks",
+            headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": str(uuid.uuid4())},
+            json={
+                "project_id": str(project.id),
+                "dataset_version_id": str(version.id),
+                "model_version_id": str(model_version.id),
+                "mode": "automatic",
+                "sample_scope": {"kind": "all"},
+                "configuration": {"clustering": True, "cluster_discovery": True},
+            },
+        )
+        assert created.status_code == 201, created.text
+        task_id = created.json()["id"]
+        original_hash = created.json()["task_snapshot"]["config_hash"]
+        user_schema = LabelSchema(project_id=project.id, name="post-cluster-labels", version=1, status="active")
+        db.add(user_schema)
+        db.flush()
+        db.add(LabelColumn(schema_id=user_schema.id, machine_key="fault", display_name="Fault", ordinal=0, value_type="string"))
+        db.commit()
+        updated = client.put(
+            f"/api/annotation-tasks/{task_id}/configuration",
+            json={
+                "task_revision": 0,
+                "label_schema_id": str(user_schema.id),
+                "visible_columns": ["feature"],
+                "configuration": {
+                    "clustering": True,
+                    "strategy": "rule",
+                    "rules": [{"id": "rule-1", "when": {"feature": {"gt": 0}}, "values": {"fault": "hit"}}],
+                    "other_values": {"fault": "fallback"},
+                },
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["task_revision"] == 1
+        assert [column["machine_key"] for column in updated.json()["task_snapshot"]["label_schema"]["columns"]] == ["fault"]
+        assert updated.json()["task_snapshot"]["config_hash"] != original_hash
+        task = db.get(GenericAnnotationTask, uuid.UUID(task_id))
+        assert task.label_schema_id == user_schema.id
+        from app.services.annotation_task_state import current_annotation_task_snapshot
+        frozen = current_annotation_task_snapshot(db, task)
+        assert frozen["label_schema"]["columns"][0]["machine_key"] == "fault"
+        binding = db.query(AnnotationTaskLabel).filter_by(task_id=uuid.UUID(task_id)).one()
+        assert binding.schema_id == user_schema.id
+        assert [column["machine_key"] for column in binding.schema_snapshot["columns"]] == ["fault"]
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
+def test_cluster_discovery_strategy_save_requires_label_schema():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"discovery-schema-required-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Discovery schema required project", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    version = DatasetVersion(
+        project_id=project.id,
+        operator_id=user.id,
+        version=1,
+        row_count=1,
+        column_count=1,
+        content_hash="sha256:schema-required-data",
+        schema_hash="sha256:schema-required-schema",
+    )
+    db.add(version)
+    db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="schema-required-sample", row_index=0, values={"feature": 1.0}),
+    ])
+    model_version, _source_artifact = _enabled_annotation_model(db, project, user)
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    client = TestClient(app)
+    try:
+        created = client.post(
+            "/api/annotation-tasks",
+            headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": str(uuid.uuid4())},
+            json={
+                "project_id": str(project.id),
+                "dataset_version_id": str(version.id),
+                "model_version_id": str(model_version.id),
+                "mode": "automatic",
+                "sample_scope": {"kind": "all"},
+                "configuration": {"clustering": True, "cluster_discovery": True},
+            },
+        )
+        assert created.status_code == 201, created.text
+        task_id = created.json()["id"]
+        rejected = client.put(
+            f"/api/annotation-tasks/{task_id}/configuration",
+            json={
+                "task_revision": 0,
+                "visible_columns": ["feature"],
+                "configuration": {
+                    "clustering": True,
+                    "strategy": "rule",
+                    "rules": [{"id": "rule-1", "when": {"feature": {"gt": 0}}, "values": {"result": "hit"}}],
+                    "other_values": {"result": "fallback"},
+                },
+            },
+        )
+        assert rejected.status_code == 422, rejected.text
+        assert rejected.json()["detail"]["code"] == "LABEL_SCHEMA_REQUIRED"
+        assert db.get(GenericAnnotationTask, uuid.UUID(task_id)).task_revision == 0
     finally:
         app.dependency_overrides.clear()
         db.close()
@@ -1072,6 +1313,94 @@ def test_generic_task_name_round_trip_and_configuration_update():
         assert updated.json()["due_at"].startswith("2026-10-15")
         assert updated.json()["task_revision"] == 1
         assert updated.json()["status"] == "draft"
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
+def test_generic_task_name_collisions_get_suffixed_suffix():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"name-collision-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Name collisions", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    schema = LabelSchema(project_id=project.id, name="collision-labels", version=1, status="active")
+    db.add(schema)
+    db.flush()
+    db.add(LabelColumn(schema_id=schema.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"))
+    version = DatasetVersion(project_id=project.id, operator_id=user.id, version=1, row_count=1, column_count=1, content_hash="sha256:data", schema_hash="sha256:schema")
+    db.add(version)
+    db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="sample-1", row_index=0, values={"feature": 1.0}),
+    ])
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    client = TestClient(app)
+
+    def create_task(name: str):
+        response = client.post(
+            "/api/annotation-tasks",
+            headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": f"collision-{uuid.uuid4()}"},
+            json={
+                "project_id": str(project.id),
+                "dataset_version_id": str(version.id),
+                "label_schema_id": str(schema.id),
+                "name": name,
+                "mode": "manual",
+                "sample_scope": {"kind": "all"},
+            },
+        )
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    try:
+        first = create_task("复检任务")
+        assert first["name"] == "复检任务"
+        # Duplicate names within the same project get an auto-suffix.
+        second = create_task("复检任务")
+        assert second["name"] == "复检任务-2"
+        third = create_task("复检任务")
+        assert third["name"] == "复检任务-3"
+        # Renaming to an occupied name is suffixed as well, and renaming to
+        # the task's own name stays stable.
+        renamed = client.put(
+            f"/api/annotation-tasks/{third['id']}/configuration",
+            json={
+                "task_revision": 0,
+                "name": "复检任务",
+                "visible_columns": ["feature"],
+                "instructions": "",
+                "completion_criteria": "",
+                "due_at": None,
+                "configuration": {},
+            },
+        )
+        assert renamed.status_code == 200, renamed.text
+        # 复检任务 and 复检任务-2 are taken by other tasks, so the rename
+        # falls through to the task's own current name 复检任务-3.
+        assert renamed.json()["name"] == "复检任务-3"
+        keep = client.put(
+            f"/api/annotation-tasks/{second['id']}/configuration",
+            json={
+                "task_revision": 0,
+                "name": "复检任务-2",
+                "visible_columns": ["feature"],
+                "instructions": "",
+                "completion_criteria": "",
+                "due_at": None,
+                "configuration": {},
+            },
+        )
+        assert keep.status_code == 200, keep.text
+        assert keep.json()["name"] == "复检任务-2"
     finally:
         app.dependency_overrides.clear()
         db.close()

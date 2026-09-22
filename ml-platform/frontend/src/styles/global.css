@@ -443,6 +443,7 @@ td.training-operation-column .table-row-actions {
   background: var(--bg-surface);
 }
 
+.annotation-preview-drawer__mask { position: fixed; inset: 0; z-index: 999; background: rgba(2, 26, 34, .45); }
 .annotation-preview-drawer { position: fixed; inset: 0 0 0 auto; z-index: 1000; width: min(560px, 100vw); background: var(--bg-surface); border-left: 1px solid var(--border-default); box-shadow: -18px 0 50px rgba(2, 26, 34, .18); }
 .annotation-preview-drawer__header { display: flex; justify-content: space-between; gap: 16px; padding: 24px 26px 18px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-header); }
 .annotation-preview-drawer__eyebrow { display: block; color: var(--text-secondary); font-size: 10px; font-weight: 800; letter-spacing: 1px; }
@@ -2129,6 +2130,594 @@ td.training-operation-column .table-row-actions {
   flex-wrap: wrap;
 }
 
+/* ---------- 数据标注布局重设计：统计条 / 双栏 / 操作收纳 ---------- */
+.data-annotation__stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.data-annotation__stat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.data-annotation__stat-label {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.data-annotation__stat-value {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: 700;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.data-annotation__stat-hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.data-annotation__stat-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.data-annotation__stat--blue .data-annotation__stat-dot { background: var(--accent-primary); }
+.data-annotation__stat--blue .data-annotation__stat-value { color: var(--accent-primary); }
+.data-annotation__stat--orange .data-annotation__stat-dot { background: var(--accent-warning); }
+.data-annotation__stat--orange .data-annotation__stat-value { color: var(--accent-warning); }
+.data-annotation__stat--purple .data-annotation__stat-dot { background: #8b5cd6; }
+.data-annotation__stat--purple .data-annotation__stat-value { color: #8b5cd6; }
+.data-annotation__stat--green .data-annotation__stat-dot { background: var(--accent-success); }
+.data-annotation__stat--green .data-annotation__stat-value { color: var(--accent-success); }
+
+.data-annotation__tabs {
+  padding: 0 16px 10px;
+}
+
+.data-annotation__row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.data-annotation__operations {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  padding: 0 16px 14px;
+}
+
+.data-annotation__operations-loading {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+}
+
+.data-annotation__operation {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  align-content: start;
+}
+
+.data-annotation__operations-more {
+  padding: 0 16px 14px;
+}
+
+.data-annotation__operation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.data-annotation__operation-head code {
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.data-annotation__operation-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.data-annotation__operation-task {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.data-annotation__operation-task code {
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  color: var(--accent-primary);
+  overflow-wrap: anywhere;
+}
+
+.data-annotation__operation-time {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.data-annotation__operation-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.data-annotation__progress-track {
+  position: relative;
+  flex: 1;
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+.data-annotation__progress-track i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent-primary);
+}
+
+.data-annotation__progress-text {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.data-annotation__operation-error {
+  color: var(--accent-error);
+  font-size: 12px;
+}
+
+/* ---------- 标注工作台窄顶栏（面包屑 + 元信息） ---------- */
+.spot-weld-annotation__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.spot-weld-annotation__crumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.spot-weld-annotation__crumb strong {
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spot-weld-annotation__crumb-sep {
+  color: var(--text-tertiary);
+}
+
+.spot-weld-annotation__metabar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-bottom: 10px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.spot-weld-annotation__meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.spot-weld-annotation__meta-item b {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.spot-weld-annotation__meta-progress .spot-weld-annotation__progress-track {
+  position: relative;
+  display: inline-block;
+  width: 120px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+.spot-weld-annotation__meta-progress .spot-weld-annotation__progress-track i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent-primary);
+}
+
+/* 当前样本数据改为多列紧凑卡片网格 */
+.spot-weld-annotation__raw-data-list {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.spot-weld-annotation__raw-data-row {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent-primary);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+}
+
+.spot-weld-annotation__raw-data-row span {
+  font-size: 10.5px;
+}
+
+.spot-weld-annotation__raw-data-row strong {
+  font-size: 12px;
+}
+
+/* ---------- 创建向导第二步分栏 + 冻结契约摘要 ---------- */
+.data-annotation__setup-step2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 18px;
+  align-items: start;
+}
+
+.data-annotation__setup-step2-main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.data-annotation__contract-aside {
+  position: sticky;
+  top: 12px;
+  display: grid;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.data-annotation__contract-aside h4 {
+  margin: 0 0 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.data-annotation__contract-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--border-default);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.data-annotation__contract-row b {
+  color: var(--text-primary);
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.data-annotation__contract-row:last-of-type {
+  border-bottom: none;
+}
+
+.data-annotation__contract-status {
+  color: var(--accent-success);
+}
+
+.data-annotation__contract-hint {
+  margin: 8px 0 0;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+}
+
+/* ---------- 标签 schema 编辑器（与数据标注板块卡片风格一致） ---------- */
+.label-schema-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.label-schema-editor__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.label-schema-editor__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.label-schema-editor__toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.label-schema-editor__purpose {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.label-schema-editor__error {
+  margin: 0;
+  color: #d92d20;
+  font-size: 12px;
+}
+
+.label-schema-editor__card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.label-schema-editor__card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.label-schema-editor__identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.label-schema-editor__identity .label-schema-editor__name-input {
+  flex: 1;
+}
+
+.label-schema-editor__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.label-schema-editor__grid--pair {
+  grid-template-columns: repeat(auto-fit, minmax(180px, max-content));
+  justify-content: start;
+}
+
+.label-schema-editor__grid--half {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.label-schema-editor__field {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.label-schema-editor__field > label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.label-schema-editor__hint {
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+.label-schema-editor input,
+.label-schema-editor select {
+  min-width: 0;
+  min-height: 34px;
+  box-sizing: border-box;
+  padding: 5px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.label-schema-editor__machine-key {
+  align-self: center;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: rgba(15, 23, 42, 0.05);
+  border: 1px dashed var(--border-default);
+  border-radius: 4px;
+  padding: 6px 9px;
+  overflow-wrap: anywhere;
+}
+
+.label-schema-editor__enum {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.label-schema-editor__enum-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.label-schema-editor__enum-row input {
+  width: 96px;
+}
+
+.label-schema-editor__enum-add {
+  min-width: 30px;
+  font-weight: 650;
+}
+
+
+/* ---------- 聚类预览与策略配置左右分栏 ---------- */
+.data-annotation__cluster-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+/* 未保存标签 schema 前策略编辑器占位提示 */
+.data-annotation__strategy-locked {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed var(--border-default);
+  border-radius: 8px;
+  background: var(--surface-muted, #f7f8fa);
+}
+
+.data-annotation__strategy-locked > h4 {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.data-annotation__strategy-locked > p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* 策略库（保存策略 / 导入策略）：右侧标签与策略面板内的紧凑块 */
+.data-annotation__strategy-library {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.data-annotation__strategy-library-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.data-annotation__strategy-library-row > input,
+.data-annotation__strategy-library-row > select {
+  flex: 1;
+  min-width: 0;
+}
+
+
+.data-annotation__cluster-preview-body {
+  display: grid;
+  /* 图表在上、指标文字（簇数/评分等）在下：文字不再与散点同排，避免遮挡簇的点 */
+  grid-template-columns: 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.data-annotation__cluster-preview-charts {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.data-annotation__cluster-preview-info {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+}
+
+.data-annotation__cluster-preview-info .data-annotation__cluster-preview-meta {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+@media (max-width: 1100px) {
+  .data-annotation__stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .data-annotation__setup-step2 {
+    grid-template-columns: 1fr;
+  }
+
+  .data-annotation__contract-aside {
+    position: static;
+  }
+
+  .data-annotation__cluster-split,
+  .data-annotation__cluster-preview-body {
+    grid-template-columns: 1fr;
+  }
+}
+
 .ant-btn-danger-icon {
   color: var(--status-error);
 }
@@ -2202,6 +2791,155 @@ td.training-operation-column .table-row-actions {
 .data-annotation__annotation-rules {
   display: grid;
   gap: 12px;
+}
+
+/* The final preview dumps the frozen summary JSON (visible_columns etc.) and
+   paginated samples; cap its height so the wizard footer stays reachable. */
+.data-annotation__final-preview {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  max-height: 340px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  overflow-y: auto;
+}
+
+.data-annotation__final-preview pre {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.data-annotation__final-preview-samples {
+  display: grid;
+  gap: 6px;
+}
+
+/* Return-acceptance section mirrors the task-operations card grid. */
+.annotation-return-panel__notices {
+  display: grid;
+  gap: 6px;
+  padding: 0 16px 8px;
+}
+
+.annotation-return-panel__notices [role="alert"] {
+  color: var(--accent-error);
+  font-size: 12px;
+}
+
+.annotation-return-panel__notices [role="status"] {
+  color: var(--accent-success);
+  font-size: 12px;
+}
+
+.annotation-return-panel__action {
+  justify-self: start;
+}
+
+.return-batch-list {
+  margin-top: 20px;
+}
+
+.return-batch-list__summary {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.return-batch-list textarea {
+  display: block;
+  width: 100%;
+  min-height: 60px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+}
+
+.return-batch-list .table-row-actions {
+  flex-wrap: wrap;
+  white-space: normal;
+  justify-content: flex-start;
+}
+
+.annotation-return-panel-drawer .ant-drawer-body p {
+  margin: 0 0 8px;
+}
+
+.annotation-return-panel-drawer .ant-drawer-body textarea {
+  display: block;
+  width: 100%;
+  margin: 12px 0 8px;
+  min-height: 72px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+}
+
+.annotation-return-panel__hint {
+  color: var(--text-secondary, #666);
+}
+
+.annotation-return-panel__export {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-default);
+}
+
+.annotation-return-panel__export h4 {
+  margin: 0 0 8px;
+}
+
+.annotation-return-panel__export input {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+}
+
+.annotation-return-panel__export-column {
+  margin: 10px 0;
+  padding: 8px 10px;
+  background: var(--surface-muted, #f7f8fa);
+  border-radius: 6px;
+}
+
+.annotation-return-panel__export-mapping {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.annotation-return-panel__export-mapping th,
+.annotation-return-panel__export-mapping td {
+  padding: 3px 8px;
+  border: 1px solid var(--border-default);
+  text-align: left;
+}
+
+.annotation-return-panel__export-rename {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.annotation-return-panel__export-rename label {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-secondary, #6b7280);
+}
+
+.annotation-return-panel__export-rename input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
 }
 
 .data-annotation__toggle-field,
@@ -2403,7 +3141,7 @@ td.training-operation-column .table-row-actions {
 
 .data-annotation__cluster-preview-scatter svg {
   width: 100%;
-  max-width: 420px;
+  max-width: 560px;
   aspect-ratio: 1 / 1;
   border: 1px solid var(--border-subtle);
   background: var(--bg-surface);

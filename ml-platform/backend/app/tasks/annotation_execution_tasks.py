@@ -219,7 +219,12 @@ def _publish_execution_label_state(db, task, operation_id, results):
     """
     if task.mode != "automatic":
         return
-    schema_snapshot = (task.task_snapshot or {}).get("label_schema") or task.label_snapshot or {}
+    # The creation-time task_snapshot column is never rewritten by later
+    # revisions; a discovery task that rebound its label schema would
+    # otherwise still publish against the empty placeholder snapshot
+    # (LABEL_SCHEMA_REQUIRED). Resolve the current revision snapshot instead.
+    from app.services.annotation_task_state import current_annotation_task_snapshot
+    schema_snapshot = (current_annotation_task_snapshot(db, task) or {}).get("label_schema") or task.label_snapshot or {}
     schema = label_schema_contract_from_snapshot(schema_snapshot)
     sample_ids = [item.sample_id for item in results]
     existing = {

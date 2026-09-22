@@ -1,5 +1,6 @@
 import os
 import io
+import logging
 import mimetypes
 from typing import List, Optional
 from uuid import UUID
@@ -20,6 +21,7 @@ from app.models.artifact import Artifact
 from app.models.user import User
 from app.api.auth import get_current_user
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
+from app.storage.base import StorageError
 from app.api.project_security import audit_service, require_project_access, resolve_project_access, project_uuid
 from app.services.audit import AuditIntent
 from app.schemas.dataset_import import ConfirmSchemaRequest, ParseOptions
@@ -36,6 +38,7 @@ from app.models.operation import DurableOperation
 from app.models.platform_models import AnnotationTask, GenericAnnotationTask
 
 router = APIRouter(prefix="/api", tags=["datasets"])
+logger = logging.getLogger(__name__)
 PROJECT_WRITE_ACTIONS = {
     "POST /api/projects/{project_id}/datasets/upload": "dataset.upload",
     "POST /api/projects/{project_id}/datasets/batch": "dataset.batch_upload",
@@ -91,6 +94,27 @@ def _freeze_staged_upload(db: Session, project_id, operator: User, staging_path:
     return freeze_dataset_version(db, table, operator.id)
 
 
+def _unique_dataset_name(db: Session, project_id, name: str) -> str:
+    """Dataset files must stay uniquely named within a project; append -2, -3, ...
+    before the extension when the requested name is already taken."""
+    existing = {
+        row[0]
+        for row in db.query(Artifact.name).filter(
+            Artifact.project_id == project_id,
+            Artifact.type == "dataset",
+            Artifact.archived_at.is_(None),
+        ).all()
+    }
+    if name not in existing:
+        return name
+    stem = Path(name).stem or name
+    suffix = Path(name).suffix
+    counter = 2
+    while f"{stem}-{counter}{suffix}" in existing:
+        counter += 1
+    return f"{stem}-{counter}{suffix}"
+
+
 def _dataset_import_payload(process: DatasetImportProcess) -> dict:
     return {
         "id": str(process.id),
@@ -121,7 +145,7 @@ async def import_dataset_version(
             options = ParseOptions.model_validate(json.loads(parse_options))
         except Exception as error:
             raise HTTPException(400, "Invalid parse_options") from error
-    safe_name = Path(file.filename or "uploaded_file").name
+    safe_name = _unique_dataset_name(db, project_id_value, Path(file.filename or "uploaded_file").name)
     detected_format = source_format
     staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
     try:
@@ -269,30 +293,43 @@ def list_project_dataset_versions(
             artifact.id not in existing_artifact_ids
             and (artifact.metadata_ or {}).get("source") == "workflow_export"
         ):
-            backfill_service.create_dataset_version_from_artifact(
-                artifact,
-                operator_id=project.owner_id,
-            )
+            try:
+                backfill_service.create_dataset_version_from_artifact(
+                    artifact,
+                    operator_id=project.owner_id,
+                )
+            except StorageError:
+                logger.warning(
+                    "Skipping workflow dataset version backfill for unavailable artifact",
+                    extra={"artifact_id": str(artifact.id), "project_id": str(project.id)},
+                )
     db.commit()
-    # Versions whose source dataset was deleted (archived artifact) stay
-    # hidden so the annotation wizards see the same data as 数据管理.
-    archived_source_ids = {
+    # Keep the wizard's choices identical to 数据管理: only an active,
+    # non-normalized dataset artifact may back an annotation version.
+    active_source_ids = {
         item[0]
-        for item in db.query(Artifact.id).filter(
+        for item in db.query(Artifact.id)
+        .filter(
+            Artifact.project_id == project.id,
             Artifact.type == "dataset",
-            Artifact.archived_at.isnot(None),
-        ).all()
+            Artifact.archived_at.is_(None),
+        )
+        .all()
         if item[0] is not None
+    }
+    active_source_ids = {
+        artifact_id
+        for artifact_id in active_source_ids
+        if (db.get(Artifact, artifact_id).metadata_ or {}).get("source") != "normalized"
     }
     versions_query = (
         db.query(DatasetVersion)
-        .filter(DatasetVersion.project_id == project.id, DatasetVersion.archived_at.is_(None))
-    )
-    if archived_source_ids:
-        versions_query = versions_query.filter(
-            (DatasetVersion.original_artifact_id.is_(None)) | (~DatasetVersion.original_artifact_id.in_(archived_source_ids)),
-            (DatasetVersion.normalized_artifact_id.is_(None)) | (~DatasetVersion.normalized_artifact_id.in_(archived_source_ids)),
+        .filter(
+            DatasetVersion.project_id == project.id,
+            DatasetVersion.archived_at.is_(None),
+            DatasetVersion.original_artifact_id.in_(active_source_ids) if active_source_ids else False,
         )
+    )
     versions = versions_query.order_by(DatasetVersion.version.desc(), DatasetVersion.created_at.desc()).all()
     return {
         "items": [
@@ -328,7 +365,7 @@ def list_project_dataset_versions(
 def _store_uploaded_dataset(
     db: Session, project_id, file: UploadFile, *, commit: bool = True,
 ) -> Artifact:
-    safe_name = Path(file.filename or "uploaded_file").name
+    safe_name = _unique_dataset_name(db, project_id, Path(file.filename or "uploaded_file").name)
     staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
     staging_path.write_bytes(file.file.read())
     try:
@@ -520,7 +557,7 @@ def upload_dataset(
             ),
             allowed_changes={"filename"},
         ):
-            safe_name = Path(file.filename or "uploaded_file").name
+            safe_name = _unique_dataset_name(db, project_id_value, Path(file.filename or "uploaded_file").name)
             staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
             try:
                 _stage_upload_sync(file, staging_path)
@@ -572,7 +609,7 @@ def batch_import(
         ):
             for file in files:
                 try:
-                    safe_name = Path(file.filename or "uploaded_file").name
+                    safe_name = _unique_dataset_name(db, project_id_value, Path(file.filename or "uploaded_file").name)
                     staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
                     try:
                         _stage_upload_sync(file, staging_path)
@@ -841,7 +878,7 @@ async def batch_upload_dataset(
             allowed_changes={"file_count"},
         ):
             for file in files:
-                safe_name = Path(file.filename or "uploaded_file").name
+                safe_name = _unique_dataset_name(db, project_id_value, Path(file.filename or "uploaded_file").name)
                 staging_path = Path(UPLOAD_DIR) / f"{uuid.uuid4()}_{safe_name}"
                 ext = staging_path.suffix.lower()
                 fmt_map = {".csv": "csv", ".xlsx": "xlsx", ".xls": "xls", ".txt": "txt",
@@ -859,7 +896,7 @@ async def batch_upload_dataset(
                 finally:
                     staging_path.unlink(missing_ok=True)
                 artifacts.append({
-                    "artifact_id": str(artifact.id), "name": safe_name,
+                    "artifact_id": str(artifact.id), "name": artifact.name,
                     "size": artifact.file_size, "format": fmt_map.get(ext, ""),
                 })
     except Exception as error:
@@ -919,7 +956,7 @@ async def import_zip_dataset(
                             raise HTTPException(400, {"code": "DATA_LIMIT_DECOMPRESSED_BYTES", "message": "ZIP expanded size exceeds limit"})
                     expanded_total = 0
                     for info in members:
-                        fname = Path(info.filename.replace("\\", "/")).name
+                        fname = _unique_dataset_name(db, project_id_value, Path(info.filename.replace("\\", "/")).name)
                         staging_path = Path(tmpdir) / f"{uuid.uuid4()}_{fname}"
                         member_bytes = 0
                         with archive.open(info, "r") as source, staging_path.open("xb") as target:
@@ -944,7 +981,7 @@ async def import_zip_dataset(
                             )
                             storage_uris.append(artifact.storage_uri)
                         artifacts.append({
-                            "artifact_id": str(artifact.id), "name": fname,
+                            "artifact_id": str(artifact.id), "name": artifact.name,
                             "size": artifact.file_size,
                         })
     except DataImportError as error:
@@ -960,6 +997,7 @@ async def import_zip_dataset(
 @router.get("/datasets/{dataset_id}/preview")
 def preview_dataset(
     dataset_id: str,
+    limit: int = Query(10, ge=0, description="Preview row count; 0 returns all rows"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -976,9 +1014,10 @@ def preview_dataset(
             artifact.id, artifact.project_id, expected_type="dataset",
         ) as path:
             df = _read_dataset(path)
+        frame = df if limit == 0 else df.head(limit)
         return {
             "columns": list(df.columns),
-            "preview": _json_records(df.head(10)),
+            "preview": _json_records(frame),
             "total_rows": len(df),
             "dtypes": {str(k): str(v) for k, v in df.dtypes.items()},
         }

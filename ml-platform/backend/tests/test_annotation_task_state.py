@@ -1,11 +1,11 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import joblib
 import numpy as np
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, update
 from sqlalchemy.orm import Query, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -21,7 +21,7 @@ from app.models.labeling import (
     LabelSchema,
 )
 from app.models.artifact import Artifact
-from app.models.access import AuditEvent
+from app.models.access import AuditEvent, ProjectMember
 from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
 from app.models.operation import DurableOperation
 from app.models.platform_models import (
@@ -279,8 +279,11 @@ def test_all_project_task_api_paginates_without_losing_owner_scope(db):
     from app.main import app
 
     first, user, project = _task(db)
-    second, _, _ = _task(db)
+    second, second_owner, second_project = _task(db)
     second.owner_id = user.id
+    # Task lists are scoped to the requester's accessible projects, so the
+    # reassigned task only stays visible through explicit project membership.
+    db.add(ProjectMember(project_id=second_project.id, user_id=user.id, role="editor", created_by=second_owner.id))
     foreign, _, _ = _task(db)
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
@@ -321,7 +324,14 @@ def test_preview_is_previewing_until_worker_finishes(db, monkeypatch):
     from app.tasks.annotation_preview_tasks import execute_annotation_preview
     monkeypatch.setattr("app.tasks.annotation_preview_tasks.SessionLocal", lambda: _SessionContext(db))
     execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
-    assert task.status == "preview_ready"
+    # A completed manual preview publishes the task automatically.
+    db.refresh(task)
+    assert task.status == "awaiting_annotation"
+    auto_event = db.query(AuditEvent).filter(
+        AuditEvent.resource_id == str(task.id),
+        AuditEvent.action == "annotation_task.auto_published",
+    ).one()
+    assert auto_event.changes == {"from_status": "preview_ready", "to_status": "awaiting_annotation", "task_revision": 0}
 
 
 def test_automatic_task_execution_requires_valid_preview(db):
@@ -455,6 +465,68 @@ def test_execute_worker_publishes_current_labels_and_assignments_copy_them(db, m
         ("s-1", {"label": "auto-a"}, 0),
         ("s-2", {"label": "auto-b"}, 0),
     ]
+
+
+def test_execute_worker_publishes_with_rebound_schema_after_discovery_strategy_save(db, monkeypatch):
+    """聚类发现任务保存策略换绑 schema 后，执行发布必须用 revision 快照的新 schema。
+
+    回归：创建时的 task_snapshot 列仍保留空占位 label_schema，执行发布曾读取
+    该过期快照导致 LABEL_SCHEMA_REQUIRED。
+    """
+    task, user, project = _task(db)
+    task.mode = "automatic"
+    # 模拟发现任务创建时的空占位快照：task_snapshot 列有不可变保护，走 Core 层改写
+    db.execute(
+        update(GenericAnnotationTask)
+        .where(GenericAnnotationTask.id == task.id)
+        .values(task_snapshot={
+            "config_hash": "sha256:discovery",
+            "sample_ids": ["s-1"],
+            "visible_columns": ["feature"],
+            "label_schema": {"columns": []},
+        })
+    )
+    db.commit()
+    db.refresh(task)
+    task.label_snapshot = {"columns": []}
+    replacement = LabelSchema(project_id=project.id, name="task-labels", version=1, status="active")
+    db.add(replacement)
+    db.flush()
+    db.add(LabelColumn(schema_id=replacement.id, machine_key="label", display_name="Label", ordinal=0, value_type="string"))
+    task.label_schema_id = replacement.id
+    task.task_revision = 1
+    rebound_schema = {"columns": [{"machine_key": "label", "value_type": "string", "required": False}]}
+    task.label_snapshot = rebound_schema
+    db.add(AnnotationTaskRevisionSnapshot(
+        task_id=task.id,
+        task_revision=1,
+        snapshot={"config_hash": "sha256:rebound", "label_schema": rebound_schema},
+    ))
+    db.commit()
+    preview = create_annotation_preview(db, task.id, task_revision=1, config_hash="sha256:rebound", actor_id=user.id)
+    preview.status = "completed"
+    preview.progress = 100
+    db.add(AnnotationTaskPreviewSample(
+        preview_id=preview.id,
+        sample_id="s-1",
+        row_index=0,
+        values={"annotation_decision": {"values": {"label": "auto-a"}}},
+    ))
+    task.status = "preview_ready"
+    db.commit()
+
+    from app.services.annotation_task_execution import request_annotation_execution
+    from app.tasks.annotation_execution_tasks import execute_annotation_task
+
+    requested = request_annotation_execution(db, task.id, preview.id, user.id)
+    monkeypatch.setattr("app.tasks.annotation_execution_tasks.SessionLocal", lambda: db)
+    result = execute_annotation_task.run(str(task.id), str(preview.id), str(user.id), str(requested.operation_id))
+
+    assert result["status"] == "completed"
+    operation = db.get(DurableOperation, requested.operation_id)
+    assert operation.state == "completed"
+    current = db.query(AnnotationSampleCurrent).filter_by(task_id=task.id).all()
+    assert [(row.sample_id, row.values) for row in current] == [("s-1", {"label": "auto-a"})]
 
 
 def test_execute_worker_rejects_nonready_results_without_publishing_labels(db, monkeypatch):
@@ -753,11 +825,21 @@ def test_automatic_preview_runs_strategy_in_bounded_source_batches(db, monkeypat
 
     monkeypatch.setattr(module, "SessionLocal", lambda: db)
     monkeypatch.setattr(module, "apply_preview_annotation_strategy", evaluate_batch)
+    dispatched = []
+    monkeypatch.setattr(module, "enqueue_annotation_execution", lambda *args: dispatched.append(args))
     result = module.execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
 
     assert result["status"] == "completed", db.get(AnnotationTaskPreview, preview.id).error
     assert [len(batch) for batch in strategy_batches] == [500, 1]
     assert db.query(AnnotationTaskPreviewSample).filter_by(preview_id=preview.id).count() == len(sample_ids)
+    # A completed automatic preview starts its durable execution automatically.
+    db.refresh(task)
+    assert task.status == "executing"
+    execution = db.query(DurableOperation).filter(
+        DurableOperation.resource_key == f"annotation-execution:{task.id}",
+    ).one()
+    assert execution.state == "queued"
+    assert dispatched == [(task.id, preview.id, execution.id, user.id)]
 
 
 def test_cluster_discovery_preview_uses_bounded_streams_and_persists_decisions(db, monkeypatch, tmp_path):
@@ -909,6 +991,31 @@ def test_annotation_operation_center_lists_project_owned_operations(db):
         str(second_preview.operation_id),
     }
     assert all(item["resource_type"] == "annotation_preview" for item in page["items"] + next_page["items"])
+
+
+def test_annotation_operation_center_hides_soft_deleted_task_operations(db):
+    task, user, project = _task(db)
+    preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:soft-deleted-operation", actor_id=user.id)
+
+    from app.services.annotation_task_state import list_annotation_operations
+
+    page = list_annotation_operations(db, project.id, user.id, limit=10)
+    assert page["total"] == 1
+    assert {item["id"] for item in page["items"]} == {str(preview.operation_id)}
+
+    task.archived_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
+
+    page = list_annotation_operations(db, project.id, user.id, limit=10)
+    assert page["total"] == 0
+    assert page["items"] == []
+
+    task.archived_at = None
+    db.commit()
+
+    page = list_annotation_operations(db, project.id, user.id, limit=10)
+    assert page["total"] == 1
+    assert {item["id"] for item in page["items"]} == {str(preview.operation_id)}
 
 
 def test_annotation_operation_center_lists_return_operations_by_task_context(db):
@@ -1154,12 +1261,13 @@ def test_pause_and_resume_restore_the_previous_active_state(db):
     assert resumed.paused_from_status is None
 
 
-def test_pause_resume_keeps_completed_preview_executable(db, monkeypatch):
+def test_pause_resume_keeps_completed_preview_executable(db):
     task, user, _ = _task(db)
     preview = create_annotation_preview(db, task.id, 0, "sha256:frozen", user.id)
-    from app.tasks.annotation_preview_tasks import execute_annotation_preview
-    monkeypatch.setattr("app.tasks.annotation_preview_tasks.SessionLocal", lambda: db)
-    execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
+    preview.status = "completed"
+    preview.progress = 100
+    task.status = "preview_ready"
+    db.commit()
     transition_annotation_task(db, task.id, 0, TaskAction.pause, user.id)
     transition_annotation_task(db, task.id, task.task_revision, TaskAction.resume, user.id)
     assert task.task_revision == preview.task_revision
@@ -1289,6 +1397,11 @@ def test_transition_records_audit_event(db, monkeypatch):
     preview = db.query(AnnotationTaskPreview).filter_by(task_id=task.id).one()
     execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
     db.refresh(task)
+    # The completed manual preview publishes automatically; replaying the
+    # explicit publish transition requires resetting the state first.
+    assert task.status == "awaiting_annotation"
+    task.status = "preview_ready"
+    db.commit()
     transition_annotation_task(db, task.id, expected_revision=0, action=TaskAction.publish, actor_id=user.id)
     event = db.query(AuditEvent).filter(AuditEvent.resource_id == str(task.id), AuditEvent.action == "annotation_task.transition").one()
     assert event.project_id == project.id

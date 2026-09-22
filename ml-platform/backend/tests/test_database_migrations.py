@@ -74,6 +74,37 @@ class DatabaseMigrationCompatibilityTests(unittest.TestCase):
             ["registration_task_id", "registration_idempotency_key"],
         )
 
+    def test_legacy_approved_model_versions_are_healed_to_enabled(self):
+        engine = create_engine("sqlite:///:memory:")
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE model_versions ("
+                "id CHAR(32) PRIMARY KEY, approval_status VARCHAR(16) NOT NULL, "
+                "lifecycle_state VARCHAR(16) NOT NULL DEFAULT 'pending_review')"
+            ))
+            connection.execute(text(
+                "INSERT INTO model_versions (id, approval_status, lifecycle_state) VALUES "
+                "('1', 'approved', 'pending_review'),"
+                "('2', 'approved', 'enabled'),"
+                "('3', 'approved', 'disabled'),"
+                "('4', 'pending', 'pending_review'),"
+                "('5', 'archived', 'pending_review')"
+            ))
+
+        ensure_schema_compatibility(engine)
+        # Idempotent second run must not change healed rows.
+        ensure_schema_compatibility(engine)
+
+        with engine.connect() as connection:
+            states = dict(connection.execute(text(
+                "SELECT id, lifecycle_state FROM model_versions"
+            )).fetchall())
+        self.assertEqual(states["1"], "enabled")
+        self.assertEqual(states["2"], "enabled")
+        self.assertEqual(states["3"], "disabled")
+        self.assertEqual(states["4"], "pending_review")
+        self.assertEqual(states["5"], "archived")
+
 
 if __name__ == "__main__":
     unittest.main()

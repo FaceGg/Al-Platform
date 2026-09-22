@@ -243,9 +243,13 @@ function CustomNode({ data, selected }: NodeProps) {
     const compactSpotWeldOutputs = side === "right"
       && opId === "spot_weld_feature_engineering"
       && total === 3;
+    // Keep handles on the straight edge: the 176px card has 30px corner arcs
+    // (~17% top / ~83% bottom). Spot-weld 3-output and any 4-output operator
+    // use the wide even spread across the 20%–80% band.
     const top = compactSpotWeldOutputs
-      ? `${34 + index * 16}%`
-      : total <= 1 ? "50%" : `${((index + 0.5) / total) * 100}%`;
+      ? `${20 + index * 30}%`
+      : total === 4 ? `${20 + index * 20}%`
+      : total <= 1 ? "50%" : `${16 + ((index + 0.5) / total) * 68}%`;
     return {
       top,
       ...(side === "left" ? { left: -16 } : { right: -16 }),

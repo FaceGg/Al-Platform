@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.auth import get_current_user
 from app.database import Base, get_db
 from app.main import app
-from app.models.annotator import AnnotatorSubjectMapping
+from app.models.annotator import AnnotatorAccount, AnnotatorSubjectMapping
 from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
 from app.models.labeling import (
     AnnotationAssignment,
@@ -31,6 +31,8 @@ from app.services.annotation_returns import (
     AnnotationReturnError,
     accept_return_batch,
     diff_return_batch,
+    export_return_batch_dataset,
+    export_return_batch_preview,
     reject_return_batch,
 )
 from app.tasks.annotation_return_tasks import _execute_with_session
@@ -295,6 +297,31 @@ def test_return_batch_list_is_project_scoped_cursor_paged_and_stable():
     app.dependency_overrides[get_current_user] = lambda: admin
     client = TestClient(app)
     try:
+        task_row = db.get(GenericAnnotationTask, assignment.task_id)
+        task_row.name = "回传关联任务"
+        # The source dataset links to its uploaded file so the list can show
+        # the original file under annotation. DatasetVersion is immutable via
+        # ORM events, so the link is patched with a Core update.
+        from app.models.artifact import Artifact
+        from sqlalchemy import update as sa_update
+        source_artifact = Artifact(
+            project_id=project.id, name="原始焊点数据.csv",
+            type="dataset", storage_path="datasets/source.csv", format="csv",
+        )
+        db.add(source_artifact)
+        db.flush()
+        db.execute(
+            sa_update(DatasetVersion)
+            .where(DatasetVersion.id == _source.id)
+            .values(original_artifact_id=source_artifact.id)
+        )
+        db.expire_all()
+        db.add(AnnotatorAccount(
+            subject_id=assignment.annotator_subject_id,
+            username="annotator-a",
+            password_hash="hash",
+            status="active",
+        ))
         db.add(AnnotationReturnBatch(
             assignment_id=assignment.id,
             task_revision=4,
@@ -307,6 +334,14 @@ def test_return_batch_list_is_project_scoped_cursor_paged_and_stable():
         assert first.status_code == 200, first.text
         assert len(first.json()["items"]) == 1
         assert first.json()["next_cursor"]
+        # Each item is correlated with its task and annotator for reviewers.
+        first_item = first.json()["items"][0]
+        assert first_item["task_id"] == str(assignment.task_id)
+        assert first_item["task_name"] == "回传关联任务"
+        assert first_item["annotator_subject_id"] == str(assignment.annotator_subject_id)
+        assert first_item["annotator_name"] == "annotator-a"
+        assert first_item["source_dataset_name"] == "原始焊点数据.csv"
+        assert first_item["saved_dataset_name"] is None
         second = client.get(
             f"/api/projects/{project.id}/annotation-return-batches?limit=1&cursor={first.json()['next_cursor']}"
         )
@@ -315,6 +350,32 @@ def test_return_batch_list_is_project_scoped_cursor_paged_and_stable():
         repeated = client.get(f"/api/projects/{project.id}/annotation-return-batches?limit=1")
         assert repeated.json()["items"][0]["id"] == first.json()["items"][0]["id"]
         assert batch.id
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
+def test_return_batches_of_deleted_tasks_are_hidden_and_actions_404():
+    from datetime import datetime, timezone
+
+    engine, db, admin, _annotator, project, _source, assignment, batch = _fixture()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: admin
+    client = TestClient(app)
+    try:
+        _freeze_return_batch(db, assignment, batch)
+        # Soft-delete the task after the batch was returned.
+        task_row = db.get(GenericAnnotationTask, assignment.task_id)
+        task_row.archived_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+        listed = client.get(f"/api/projects/{project.id}/annotation-return-batches")
+        assert listed.status_code == 200, listed.text
+        assert all(item["id"] != str(batch.id) for item in listed.json()["items"])
+        assert listed.json()["total"] == 0
+        diff = client.get(f"/api/annotation-return-batches/{batch.id}/diff?limit=1")
+        assert diff.status_code == 404, diff.text
+        assert diff.json()["detail"]["code"] == "ANNOTATION_TASK_NOT_FOUND"
     finally:
         app.dependency_overrides.clear()
         db.close()
@@ -466,6 +527,164 @@ def test_diff_and_acceptance_use_the_frozen_return_snapshot_not_assignment_rows(
             sample_id="sample-1",
         ).one().values
         assert value["result"] == "pass"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_export_preview_and_dataset_require_an_accepted_batch():
+    engine, db, admin, _annotator, _project, _source, assignment, batch = _fixture()
+    try:
+        _freeze_return_batch(db, assignment, batch)
+        with pytest.raises(AnnotationReturnError, match="EXPORT_BATCH_NOT_ACCEPTED"):
+            export_return_batch_preview(db, batch.id)
+        with pytest.raises(AnnotationReturnError, match="EXPORT_BATCH_NOT_ACCEPTED"):
+            export_return_batch_dataset(db, batch.id, "验收数据集", admin)
+        with pytest.raises(AnnotationReturnError, match="EXPORT_NAME_REQUIRED"):
+            accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
+            export_return_batch_dataset(db, batch.id, "   ", admin)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_export_preview_reports_string_label_mapping():
+    engine, db, admin, _annotator, _project, _source, assignment, batch = _fixture()
+    try:
+        _freeze_return_batch(db, assignment, batch)
+        accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
+        preview = export_return_batch_preview(db, batch.id)
+        assert preview["return_batch_id"] == str(batch.id)
+        assert preview["row_count"] == 2
+        assert len(preview["columns"]) == 1
+        column = preview["columns"][0]
+        assert column["machine_key"] == "result"
+        assert column["value_type"] == "string"
+        assert column["mapping"] == {"pass": 0, "fail": 1}
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_export_creates_named_dataset_with_mapped_int_labels(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from app.services.artifact_service import ArtifactService
+    from app.storage.local import LocalStorage
+
+    engine, db, admin, _annotator, _project, _source, assignment, batch = _fixture()
+    service = ArtifactService(db, LocalStorage(tmp_path / "storage"))
+    monkeypatch.setattr(
+        "app.services.annotation_returns.build_artifact_service",
+        lambda _db: service,
+    )
+    try:
+        _freeze_return_batch(db, assignment, batch)
+        accepted = accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
+
+        artifact, version, mappings = export_return_batch_dataset(db, batch.id, "验收结果集", admin)
+        assert artifact.type == "dataset"
+        # The saved dataset name carries the source file suffix (csv).
+        assert artifact.name == "验收结果集.csv"
+        assert artifact.project_id == version.project_id
+        assert mappings == {"result": {"pass": 0, "fail": 1}}
+        assert version.original_artifact_id == artifact.id
+        assert version.status == "ready"
+        assert version.row_count == 2
+        assert version.parse_contract["source_format"] == "annotation_return_export"
+        assert version.parse_contract["label_mappings"] == {"result": {"pass": 0, "fail": 1}}
+        # The export is a real file-backed dataset in the source's file type
+        # (csv), so data management preview/download work.
+        assert artifact.format == "csv"
+        assert artifact.storage_uri
+        with service.materialize(artifact.id, artifact.project_id, expected_type="dataset") as path:
+            lines = Path(path).read_text(encoding="utf-8").strip().splitlines()
+        assert lines == ["feature,result", "1,0", "2,1"]
+        columns = db.query(DatasetSchemaColumn).filter_by(
+            dataset_version_id=version.id,
+        ).order_by(DatasetSchemaColumn.position).all()
+        assert [(column.name, column.dtype) for column in columns] == [("feature", "int64"), ("result", "int")]
+        samples = db.query(DatasetSample).filter_by(
+            dataset_version_id=version.id,
+        ).order_by(DatasetSample.row_index).all()
+        assert [sample.values for sample in samples] == [
+            {"feature": 1, "result": 0},
+            {"feature": 2, "result": 1},
+        ]
+        # The accepted version keeps its original string labels; export is a copy.
+        accepted_samples = db.query(DatasetSample).filter_by(
+            dataset_version_id=accepted.id,
+        ).order_by(DatasetSample.row_index).all()
+        assert [sample.values for sample in accepted_samples] == [
+            {"feature": 1, "result": "pass"},
+            {"feature": 2, "result": "fail"},
+        ]
+        # Repeating the export with the same name gets a -2 suffix (before the
+        # file extension); a name already ending in the suffix is not doubled.
+        _artifact2, _version2, _mappings2 = export_return_batch_dataset(db, batch.id, "验收结果集", admin)
+        assert _artifact2.name == "验收结果集-2.csv"
+        _artifact3, _version3, _mappings3 = export_return_batch_dataset(db, batch.id, "带后缀.csv", admin)
+        assert _artifact3.name == "带后缀.csv"
+        from app.models.artifact import Artifact
+        assert db.query(Artifact).filter_by(project_id=artifact.project_id, type="dataset").count() == 3
+        # The batch list surfaces the latest saved data product for reviewers.
+        from app.services.annotation_returns import list_return_batches
+        listed_item = next(
+            item for item in list_return_batches(db, _project.id)["items"]
+            if item["id"] == str(batch.id)
+        )
+        assert listed_item["saved_dataset_name"] == "带后缀.csv"
+        assert listed_item["state"] == "accepted"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_export_renames_label_columns_to_english_identifiers(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from app.services.artifact_service import ArtifactService
+    from app.storage.local import LocalStorage
+
+    engine, db, admin, _annotator, _project, _source, assignment, batch = _fixture()
+    service = ArtifactService(db, LocalStorage(tmp_path / "storage"))
+    monkeypatch.setattr(
+        "app.services.annotation_returns.build_artifact_service",
+        lambda _db: service,
+    )
+    try:
+        _freeze_return_batch(db, assignment, batch)
+        accept_return_batch(db, batch.id, expected_revision=4, actor=admin)
+
+        # Rename the label column (Chinese names must become English).
+        artifact, version, mappings = export_return_batch_dataset(
+            db, batch.id, "重命名导出", admin, renames={"result": "outcome"},
+        )
+        columns = db.query(DatasetSchemaColumn).filter_by(
+            dataset_version_id=version.id,
+        ).order_by(DatasetSchemaColumn.position).all()
+        assert [(column.name, column.dtype) for column in columns] == [("feature", "int64"), ("outcome", "int")]
+        samples = db.query(DatasetSample).filter_by(
+            dataset_version_id=version.id,
+        ).order_by(DatasetSample.row_index).all()
+        assert [sample.values for sample in samples] == [
+            {"feature": 1, "outcome": 0},
+            {"feature": 2, "outcome": 1},
+        ]
+        with service.materialize(artifact.id, artifact.project_id, expected_type="dataset") as path:
+            lines = Path(path).read_text(encoding="utf-8").strip().splitlines()
+        assert lines == ["feature,outcome", "1,0", "2,1"]
+        assert version.parse_contract["label_renames"] == {"result": "outcome"}
+        assert mappings == {"result": {"pass": 0, "fail": 1}}
+
+        # Non-English rename targets are rejected (422 EXPORT_LABEL_NAME_INVALID).
+        with pytest.raises(AnnotationReturnError, match="EXPORT_LABEL_NAME_INVALID"):
+            export_return_batch_dataset(db, batch.id, "重命名导出", admin, renames={"result": "结果"})
+        # Collisions with existing column names are rejected too.
+        with pytest.raises(AnnotationReturnError, match="EXPORT_LABEL_NAME_INVALID"):
+            export_return_batch_dataset(db, batch.id, "重命名导出", admin, renames={"result": "feature"})
+        with pytest.raises(AnnotationReturnError, match="EXPORT_LABEL_NAME_INVALID"):
+            export_return_batch_dataset(db, batch.id, "重命名导出", admin, renames={"unknown": "outcome"})
     finally:
         db.close()
         engine.dispose()

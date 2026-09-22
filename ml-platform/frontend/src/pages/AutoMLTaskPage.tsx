@@ -124,7 +124,7 @@ export default function AutoMLTaskPage() {
       }
       return compareMetric(left.auc, right.auc, "desc")
         || compareMetric(left.f1, right.f1, "desc")
-        || compareMetric(metric(left, ["accuracy", "Accuracy"]), metric(right, ["accuracy", "Accuracy"]), "desc")
+        || compareMetric(metric(left, ["accuracy", "Accuracy", "best_score", "score"]), metric(right, ["accuracy", "Accuracy", "best_score", "score"]), "desc")
         || compareMetric(metric(left, ["training_time_seconds", "runtime_s", "runtime"]), metric(right, ["training_time_seconds", "runtime_s", "runtime"]), "asc");
     });
   }, [isRegression, metrics]);
@@ -168,7 +168,7 @@ export default function AutoMLTaskPage() {
         { title: "模型", key: "name", render: (row: AutoMLResultRow) => String(row.name || row.model || row.algorithm || "-") },
         { title: "AUC", dataIndex: "auc", key: "auc", sorter: (a: AutoMLResultRow, b: AutoMLResultRow) => (b.auc ?? -1) - (a.auc ?? -1), render: (value: number | null) => value == null ? "-" : <Text strong>{value.toFixed(4)}</Text> },
         { title: "F1", dataIndex: "f1", key: "f1", render: (value: number | null) => value == null ? "-" : value.toFixed(4) },
-        { title: "Accuracy", key: "accuracy", render: (row: AutoMLResultRow) => formatMetric(metric(row, ["accuracy", "Accuracy"])) },
+        { title: "Accuracy", key: "accuracy", render: (row: AutoMLResultRow) => formatMetric(metric(row, ["accuracy", "Accuracy", "best_score", "score"])) },
         { title: "状态", dataIndex: "status", key: "status", render: (value: unknown) => value ? <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, "zh")}</Tag> : "-" },
         resultActionColumn,
       ];

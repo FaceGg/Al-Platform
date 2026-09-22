@@ -68,6 +68,21 @@ def test_schema_create_read_and_non_owner_access_is_denied(api_context):
     assert denied.status_code == 404
 
 
+def test_schema_machine_key_allows_hyphen(api_context):
+    client, _, _, _, project = api_context
+    created = client.post("/api/annotations/label-schemas", json={
+        "project_id": str(project.id),
+        "name": "hyphen-labels",
+        "columns": [
+            {"machine_key": "label-1", "display_name": "标签-1", "value_type": "string", "required": True},
+        ],
+    })
+    assert created.status_code == 201, created.text
+    fetched = client.get(f"/api/annotations/label-schemas/{created.json()['id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["columns"][0]["machine_key"] == "label-1"
+
+
 def test_generic_task_creation_freezes_schema_binding(api_context):
     client, db, owner, _, project = api_context
     created = client.post("/api/annotations/label-schemas", json=_schema_payload(project.id))

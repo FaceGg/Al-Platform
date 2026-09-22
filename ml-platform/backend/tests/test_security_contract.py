@@ -83,6 +83,22 @@ def test_unrelated_cookie_does_not_trigger_portal_csrf_validation():
     )
 
 
+def test_bearer_authorization_with_stray_portal_cookie_skips_csrf():
+    policy = SecurityPolicy(allowed_origins=frozenset({"https://portal.example"}))
+    # A portal session cookie from the same host must not force the
+    # double-submit check on a request that authenticates via an explicit
+    # Bearer credential.
+    enforce_request_security(
+        _request(
+            "DELETE",
+            origin="https://portal.example",
+            cookies={"portal_session": "s"},
+            headers={"authorization": "Bearer jwt"},
+        ),
+        policy,
+    )
+
+
 def test_cookie_state_change_without_origin_or_referer_is_rejected():
     policy = SecurityPolicy(allowed_origins=frozenset({"https://portal.example"}))
     with pytest.raises(HTTPException) as error:

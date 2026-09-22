@@ -282,7 +282,7 @@ class AutoFeatureEngineering(BaseOperator):
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [
         PortSpec("data", "DataTable", "Engineered Data"),
-        PortSpec("feature_report", "Params", "Feature Report"),
+        PortSpec("feature_report", "JSON", "Feature Report"),
     ]
     parameters = [
         ParamSpec("target_column", "str", "", "Target Column"),
@@ -461,7 +461,7 @@ class SelectAttributes(BaseOperator):
     outputs = [PortSpec("data", "DataTable", "Filtered Data")]
     parameters = [
         ParamSpec("columns", "str", "", "Columns to keep (comma-separated)"),
-        ParamSpec("invert", "bool", False, "Invert selection"),
+        ParamSpec("invert", "boolean", False, "Invert selection"),
     ]
     def validate(self, inputs): return True
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
@@ -516,7 +516,7 @@ class SampleOp(BaseOperator):
     outputs = [PortSpec("data", "DataTable", "Sampled Data")]
     parameters = [
         ParamSpec("sample_size", "int", 100, "Sample Size"),
-        ParamSpec("with_replacement", "bool", False, "With Replacement"),
+        ParamSpec("with_replacement", "boolean", False, "With Replacement"),
         ParamSpec("random_seed", "int", 42, "Random Seed"),
     ]
     def validate(self, inputs): return True

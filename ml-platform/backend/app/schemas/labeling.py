@@ -21,7 +21,7 @@ class LabelColumnCreate(BaseModel):
     @field_validator("machine_key")
     @classmethod
     def validate_key(cls, value: str) -> str:
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", value):
             raise ValueError("machine_key must be an identifier")
         return value
 
@@ -73,3 +73,19 @@ class LabelRevisionWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
     values: dict[str, int | float | str | None]
     base_revision: int = Field(ge=0)
+
+
+class SavedAnnotationStrategyCreate(BaseModel):
+    """向导中「保存策略」提交的自动标注策略草稿（camelCase 字段与前端一致）。"""
+
+    model_config = ConfigDict(extra="forbid")
+    project_id: uuid.UUID
+    name: str = Field(min_length=1, max_length=200)
+    payload: dict[str, object]
+
+    @field_validator("payload")
+    @classmethod
+    def validate_payload(cls, value: dict[str, object]) -> dict[str, object]:
+        if value.get("strategy") not in {"cluster", "rule", "cluster_rule"}:
+            raise ValueError("payload.strategy must be cluster, rule or cluster_rule")
+        return value

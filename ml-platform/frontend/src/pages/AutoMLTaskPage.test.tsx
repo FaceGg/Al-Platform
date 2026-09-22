@@ -195,6 +195,22 @@ describe("AutoMLTaskPage model registration", () => {
     expect(within(detailDialog).getByText("0.7100")).toBeInTheDocument();
   });
 
+  it("shows accuracy from score and best_score when results lack an explicit accuracy key", async () => {
+    get.mockResolvedValue({ data: {
+      id: "job-1", project_id: "project-1", project_name: "一号焊装项目", status: "completed",
+      metrics: { progress: { completed: 2, total: 2, percent: 100 },
+        all_results: [
+          { name: "随机森林", algorithm_id: "rf", score: 0.95, auc: 0.93, f1: 0.88, status: "completed" },
+          { name: "梯度提升树", algorithm_id: "gbdt", best_score: 0.9, auc: 0.91, f1: 0.85, status: "completed" },
+        ] },
+    } });
+    renderPage();
+
+    expect(await screen.findByText("随机森林")).toBeInTheDocument();
+    expect(screen.getByText("0.9500")).toBeInTheDocument();
+    expect(screen.getByText("0.9000")).toBeInTheDocument();
+  });
+
   it("ranks regression results by R2, RMSE, MAE, and runtime", async () => {
     get.mockResolvedValue({ data: {
       id: "job-1", project_id: "project-1", status: "completed",

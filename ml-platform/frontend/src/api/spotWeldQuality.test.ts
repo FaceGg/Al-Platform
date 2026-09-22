@@ -109,13 +109,17 @@ describe("spot weld quality API", () => {
       time_budget: 600,
     });
 
-    expect(post).toHaveBeenCalledWith("/projects/project-1/spot-weld/runs", {
-      dataset_artifact_id: "artifact-1",
-      algorithm_ids: ["random_forest"],
-      search_method: "multi_fidelity",
-      max_trials: 20,
-      time_budget: 600,
-    });
+    expect(post).toHaveBeenCalledWith(
+      "/projects/project-1/spot-weld/runs",
+      {
+        dataset_artifact_id: "artifact-1",
+        algorithm_ids: ["random_forest"],
+        search_method: "multi_fidelity",
+        max_trials: 20,
+        time_budget: 600,
+      },
+      { headers: { "X-Request-ID": expect.any(String), "Idempotency-Key": expect.any(String) } },
+    );
     expect(post.mock.calls[0][1]).not.toHaveProperty("candidate_ids");
   });
 

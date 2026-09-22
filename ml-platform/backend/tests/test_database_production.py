@@ -30,7 +30,6 @@ from app.database_schema import (
     schema_status,
 )
 from app.main import initialize_database
-from app.models.artifact import Artifact
 from app.models.experiment import Experiment
 from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
 from app.models.project import Project
@@ -43,7 +42,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20260917_58"
+HEAD_REVISION = "20260921_60"
 NOTIFICATION_REVISION = "20260720_10_security_notifications"
 WEEK9_TABLES = {
     "deployment_revisions",
@@ -766,7 +765,21 @@ class TestAlembicBaseline(TestCase):
             project = Project(name="Legacy production inference", owner_id=owner.id)
             db.add(project)
             db.flush()
-            artifact = Artifact(
+            artifact_id = uuid.uuid4()
+            legacy_artifacts = sa.table(
+                "artifacts",
+                sa.column("id", PGUUID(as_uuid=True)),
+                sa.column("project_id", PGUUID(as_uuid=True)),
+                sa.column("name"),
+                sa.column("type"),
+                sa.column("storage_path"),
+                sa.column("storage_uri"),
+                sa.column("file_size"),
+                sa.column("format"),
+                sa.column("metadata"),
+            )
+            db.execute(legacy_artifacts.insert().values(
+                id=artifact_id,
                 project_id=project.id,
                 name="legacy.onnx",
                 type="model",
@@ -774,14 +787,12 @@ class TestAlembicBaseline(TestCase):
                 storage_uri="s3://models/legacy.onnx",
                 file_size=12,
                 format="onnx",
-                metadata_={
+                metadata=json.dumps({
                     "dataset_artifact_id": "legacy-dataset",
                     "credentials": "must-not-migrate",
                     "storage_uri": "s3://private/source.csv",
-                },
-            )
-            db.add(artifact)
-            db.flush()
+                }),
+            ))
             registered = RegisteredModel(
                 project_id=project.id,
                 name="Legacy classifier",
@@ -818,8 +829,8 @@ class TestAlembicBaseline(TestCase):
                 version_number=1,
                 source_kind="onnx_artifact",
                 source_model_library_id=None,
-                source_artifact_id=artifact.id,
-                onnx_artifact_id=artifact.id,
+                source_artifact_id=artifact_id,
+                onnx_artifact_id=artifact_id,
                 framework="onnx",
                 algorithm="classifier",
                 feature_schema=json.dumps([{"name": "current", "dtype": "float64"}]),

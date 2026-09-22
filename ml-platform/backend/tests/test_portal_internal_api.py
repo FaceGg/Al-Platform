@@ -574,15 +574,20 @@ def test_portal_sample_filters_use_authorized_fields_and_own_revisions(portal_fi
 
 
 def test_internal_portal_task_queue_supports_server_side_search_filter_and_sort(portal_fixture):
+    db = portal_fixture["db"]
+    task = db.get(GenericAnnotationTask, portal_fixture["task_id"])
+    task.name = "季度焊点复检"
+    db.commit()
     token = _token(
         project_id=portal_fixture["project_id"],
         subject_id=portal_fixture["subject_id"],
         scopes=["assignment:read"],
     )
-    response = portal_fixture["client"].get(
+    client = portal_fixture["client"]
+    by_name = client.get(
         "/api/internal/portal/tasks",
         params={
-            "search": "Annotation task",
+            "search": "焊点复检",
             "status": "awaiting_annotation",
             "assignment_state": "pending",
             "sort": "due_at",
@@ -591,8 +596,82 @@ def test_internal_portal_task_queue_supports_server_side_search_filter_and_sort(
         },
         headers=_headers(token),
     )
+    assert by_name.status_code == 200, by_name.text
+    assert by_name.json()["items"][0]["id"] == str(portal_fixture["task_id"])
+    assert by_name.json()["items"][0]["title"] == "季度焊点复检"
+
+    by_id = client.get(
+        "/api/internal/portal/tasks",
+        params={"search": str(portal_fixture["task_id"]).replace("-", "")[:12]},
+        headers=_headers(token),
+    )
+    assert by_id.status_code == 200, by_id.text
+    assert by_id.json()["items"][0]["id"] == str(portal_fixture["task_id"])
+
+
+def test_portal_task_deleted_on_platform_is_hidden_and_locked(portal_fixture):
+    db = portal_fixture["db"]
+    token = _token(
+        project_id=portal_fixture["project_id"],
+        subject_id=portal_fixture["subject_id"],
+        scopes=["assignment:read", "assignment:write"],
+    )
+    client = portal_fixture["client"]
+    headers = _headers(token)
+    task_id = portal_fixture["task_id"]
+
+    listed = client.get("/api/internal/portal/tasks", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert any(item["id"] == str(task_id) for item in listed.json()["items"])
+
+    task = db.get(GenericAnnotationTask, task_id)
+    task.archived_at = datetime(2026, 9, 18, 12, 0)
+    db.commit()
+
+    hidden = client.get("/api/internal/portal/tasks", headers=headers)
+    assert hidden.status_code == 200, hidden.text
+    assert not any(item["id"] == str(task_id) for item in hidden.json()["items"])
+
+    detail = client.get(f"/api/internal/portal/tasks/{task_id}", headers=headers)
+    assert detail.status_code == 404
+    assert detail.json()["detail"]["code"] == "ANNOTATION_TASK_NOT_FOUND"
+
+    samples = client.get(f"/api/internal/portal/tasks/{task_id}/samples", headers=headers)
+    assert samples.status_code == 404
+
+    saved = client.put(
+        f"/api/internal/portal/tasks/{task_id}/samples/sample-1/labels",
+        json={"values": {"label": "blocked"}, "base_revision": 3},
+        headers=headers,
+    )
+    assert saved.status_code == 404
+    assert saved.json()["detail"]["code"] == "ANNOTATION_TASK_NOT_FOUND"
+
+
+def test_portal_samples_are_ordered_by_dataset_row_index(portal_fixture):
+    db = portal_fixture["db"]
+    dataset = db.query(DatasetVersion).one()
+    assignment = db.query(AnnotationAssignment).filter_by(task_id=portal_fixture["task_id"]).one()
+    db.add_all([
+        DatasetSample(dataset_version_id=dataset.id, sample_id="10", row_index=2, values={"feature": 3}),
+        DatasetSample(dataset_version_id=dataset.id, sample_id="2", row_index=3, values={"feature": 4}),
+    ])
+    db.add_all([
+        AnnotationAssignmentSample(assignment_id=assignment.id, sample_id="10", revision_no=0, values={}),
+        AnnotationAssignmentSample(assignment_id=assignment.id, sample_id="2", revision_no=0, values={}),
+    ])
+    db.commit()
+    token = _token(
+        project_id=portal_fixture["project_id"],
+        subject_id=portal_fixture["subject_id"],
+        scopes=["assignment:read"],
+    )
+    response = portal_fixture["client"].get(
+        f"/api/internal/portal/tasks/{portal_fixture['task_id']}/samples",
+        headers=_headers(token),
+    )
     assert response.status_code == 200, response.text
-    assert response.json()["items"][0]["id"] == str(portal_fixture["task_id"])
+    assert [item["sample_id"] for item in response.json()["items"]] == ["sample-1", "sample-2", "10", "2"]
 
 
 @pytest.mark.parametrize("sort", ["created_at", "due_at", "status", "assignment_state"])
@@ -714,6 +793,42 @@ def test_internal_portal_label_write_returns_complete_revision_conflict(portal_f
     assert conflict.status_code == 409, conflict.text
     assert conflict.json()["detail"]["code"] == "REVISION_CONFLICT"
     assert conflict.json()["detail"]["current_values"] == {"label": "new"}
+
+
+def test_internal_portal_label_write_self_heals_missing_subject_mapping(portal_fixture):
+    # Subjects activated before the approval flow created mappings (or edited
+    # directly in the database) used to fail every label write with
+    # ANNOTATOR_SUBJECT_UNMAPPED; the write must create a shadow principal.
+    db = portal_fixture["db"]
+    db.query(AnnotatorSubjectMapping).filter(
+        AnnotatorSubjectMapping.subject_id == portal_fixture["subject_id"]
+    ).delete()
+    db.commit()
+
+    token = _token(
+        project_id=portal_fixture["project_id"],
+        subject_id=portal_fixture["subject_id"],
+        scopes=["assignment:write"],
+    )
+    saved = portal_fixture["client"].put(
+        f"/api/internal/portal/tasks/{portal_fixture['task_id']}/samples/sample-1/labels",
+        headers=_headers(token),
+        json={"values": {"label": "new"}, "base_revision": 3},
+    )
+    assert saved.status_code == 200, saved.text
+    mapping = db.query(AnnotatorSubjectMapping).filter_by(
+        subject_id=portal_fixture["subject_id"]
+    ).one()
+    assert mapping.platform_principal_id is not None
+    assert mapping.platform_principal_id != portal_fixture["annotator_principal_id"]
+    shadow = db.get(User, mapping.platform_principal_id)
+    assert shadow is not None and shadow.role == "annotator"
+    revision = db.query(AnnotationRevision).filter_by(
+        task_id=portal_fixture["task_id"],
+        sample_id="sample-1",
+        revision_no=4,
+    ).one()
+    assert revision.author_id == mapping.platform_principal_id
 
 
 def test_internal_portal_detail_returns_frozen_editing_contract(portal_fixture):

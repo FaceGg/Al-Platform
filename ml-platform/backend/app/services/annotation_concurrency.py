@@ -941,7 +941,7 @@ def return_assignment(db: Session, assignment_id, task_revision: int, scope_hash
         assignment.task_revision = task.task_revision
         if task.status != "awaiting_return":
             raise AssignmentError(
-                "the whole task scope must be confirmed before return",
+                "labels changed after confirmation; confirm the task again before return",
                 "ANNOTATION_NOT_READY",
             )
     elif assignment.task_revision != task_revision:

@@ -14,6 +14,8 @@ from app.services.annotation_returns import (
     AnnotationReturnError,
     accept_return_batch,
     diff_return_batch,
+    export_return_batch_dataset,
+    export_return_batch_preview,
     list_return_batches,
     require_return_batch_project_owner,
     reject_return_batch,
@@ -28,8 +30,15 @@ class ReturnBatchReviewRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=2000)
 
 
+class ExportDatasetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=256)
+    # Chinese label column names must be renamed to English identifiers here.
+    renames: dict[str, str] = Field(default_factory=dict)
+
+
 def _error(error: AnnotationReturnError, request: Request):
-    status = 422 if error.code == "RETURN_REASON_REQUIRED" else 409
+    status = 422 if error.code in {"RETURN_REASON_REQUIRED", "EXPORT_NAME_REQUIRED", "EXPORT_LABEL_NAME_INVALID"} else 409
     if error.code in {"RETURN_BATCH_NOT_FOUND", "ANNOTATION_TASK_NOT_FOUND", "PROJECT_NOT_FOUND"}:
         status = 404
     return HTTPException(
@@ -107,3 +116,42 @@ def return_batch(
     except AnnotationReturnError as error:
         raise _error(error, request) from error
     return {"id": str(batch.id), "state": batch.state}
+
+
+@router.get("/api/annotation-return-batches/{return_batch_id}/export-preview")
+def export_preview(
+    return_batch_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        require_return_batch_project_owner(db, return_batch_id, current_user.id)
+        return export_return_batch_preview(db, return_batch_id)
+    except AnnotationReturnError as error:
+        raise _error(error, request) from error
+
+
+@router.post("/api/annotation-return-batches/{return_batch_id}/export-dataset")
+def export_dataset(
+    return_batch_id: uuid.UUID,
+    data: ExportDatasetRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        require_return_batch_project_owner(db, return_batch_id, current_user.id)
+        artifact, version, mappings = export_return_batch_dataset(
+            db, return_batch_id, data.name, current_user, renames=data.renames,
+        )
+    except AnnotationReturnError as error:
+        raise _error(error, request) from error
+    return {
+        "dataset_id": str(artifact.id),
+        "name": artifact.name,
+        "dataset_version_id": str(version.id),
+        "version": version.version,
+        "row_count": version.row_count,
+        "label_mappings": mappings,
+    }

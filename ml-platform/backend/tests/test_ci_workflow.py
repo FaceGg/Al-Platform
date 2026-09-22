@@ -1291,7 +1291,8 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
 
     def test_week11_generates_and_validates_generic_acceptance_receipts(self):
         parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
-        steps = parsed["jobs"]["week11-12-verification"]["steps"]
+        job = parsed["jobs"]["week11-12-verification"]
+        steps = job["steps"]
         receipt = next(
             step for step in steps if step.get("name") == "Generate generic acceptance receipts"
         )
@@ -1307,6 +1308,49 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         ):
             with self.subTest(evidence_id=evidence_id):
                 self.assertIn(evidence_id, script)
+
+    def test_week11_generic_receipts_feed_the_final_evidence_manifest(self):
+        parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+        job = parsed["jobs"]["week11-12-verification"]
+        steps = job["steps"]
+        receipt = next(
+            step for step in steps if step.get("name") == "Generate generic acceptance receipts"
+        )
+        final_manifest = next(
+            step for step in steps if step.get("name") == "Generate final evidence manifest"
+        )
+        upload = next(
+            step for step in steps if step.get("name") == "Upload verification evidence"
+        )
+        script = receipt["run"]
+
+        # Receipts are generated inside the verification evidence directory so
+        # evidence_manifest hashes them into the final manifest file list and
+        # the uploaded artifact preserves the 19-receipt chain.
+        self.assertIn(
+            'Path(os.environ["ML_PLATFORM_EVIDENCE_DIR"]).resolve() / "generic-platform-acceptance"',
+            script,
+        )
+        self.assertNotIn('root / "temp_test" / "generic-platform-acceptance"', script)
+        self.assertIn('"acceptance-manifest.json"', script)
+        self.assertNotIn("final-evidence-manifest.json", script)
+        self.assertIn(
+            "validate_acceptance_manifest",
+            script,
+        )
+
+        # The receipts step must complete before the final manifest hashes the
+        # evidence directory, and the upload must cover the receipts location.
+        self.assertLess(steps.index(receipt), steps.index(final_manifest))
+        self.assertLess(steps.index(final_manifest), steps.index(upload))
+        self.assertEqual(job["env"]["ML_PLATFORM_EVIDENCE_DIR"], "${{ github.workspace }}/temp_test/week11-12")
+        self.assertIn(
+            "temp_test/week11-12",
+            upload["with"]["path"],
+        )
+        # The final manifest step must fail closed: it may not run when the
+        # receipt chain is broken.
+        self.assertNotEqual(final_manifest.get("if"), "always()")
 
     def test_cleanup_workflow_has_least_privilege_and_delete_guards(self):
         self.assertTrue(CLEANUP_WORKFLOW.is_file())

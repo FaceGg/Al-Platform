@@ -10,12 +10,12 @@ vi.mock('../api/auth', () => ({
 
 describe('portal authentication pages', () => {
   it('submits independent portal login credentials without a project selector', async () => {
-    const onComplete = vi.fn()
-    render(<LoginPage onComplete={onComplete} onRegister={vi.fn()} />)
+    const onLogin = vi.fn()
+    render(<LoginPage onLogin={onLogin} onRegister={vi.fn()} />)
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'annotator' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password1' } })
-    fireEvent.click(screen.getByRole('button', { name: '登录' }))
-    await vi.waitFor(() => expect(onComplete).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: '登录到任务中心' }))
+    await vi.waitFor(() => expect(onLogin).toHaveBeenCalled())
     expect(screen.queryByLabelText('项目')).not.toBeInTheDocument()
   })
 
@@ -23,7 +23,7 @@ describe('portal authentication pages', () => {
     render(<RegisterPage onLogin={vi.fn()} />)
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'new-user' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password1' } })
-    fireEvent.click(screen.getByRole('button', { name: '注册' }))
+    fireEvent.click(screen.getByRole('button', { name: '提交注册申请' }))
     expect(await screen.findByText('注册已提交，等待审核')).toBeVisible()
   })
 })

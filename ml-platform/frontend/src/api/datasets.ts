@@ -17,12 +17,14 @@ export async function listDatasets(projectId?: string) {
   return response.data.items || [];
 }
 
-export async function getDatasetPreview(datasetId: string) {
-  const response = await apiClient.get(`/datasets/${datasetId}/preview`);
+export async function getDatasetPreview(datasetId: string, options?: { limit?: number }) {
+  const suffix = options && options.limit !== undefined ? `?limit=${options.limit}` : "";
+  const response = await apiClient.get(`/datasets/${datasetId}/preview${suffix}`);
   return response.data;
 }
 
-export async function listDatasetVersions(projectId: string): Promise<DatasetVersionOption[]> {
+export async function listDatasetVersions(projectId?: string): Promise<DatasetVersionOption[]> {
+  if (!projectId) return [];
   const response = await apiClient.get(`/projects/${encodeURIComponent(projectId)}/dataset-versions`);
   return response.data.items || [];
 }

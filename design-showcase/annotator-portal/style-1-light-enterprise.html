@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Linkraft · 标注员门户 - 浅色企业版</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f8fafc;
+    --surface: #ffffff;
+    --surface-hover: #f1f5f9;
+    --border: #e2e8f0;
+    --border-strong: #cbd5e1;
+    --text: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #64748b;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-light: #eff6ff;
+    --success: #16a34a;
+    --warning: #d97706;
+    --danger: #dc2626;
+    --info: #0891b2;
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+    --shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.04);
+    --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.04);
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  /* Top navigation */
+  .top-nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 24px;
+    height: 64px;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  .brand svg { width: 26px; height: 26px; color: var(--accent); }
+  .tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg);
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+  }
+  .tab-btn {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .tab-btn:hover { color: var(--text); background: var(--surface-hover); }
+  .tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tab-btn.active { background: var(--surface); color: var(--accent); box-shadow: var(--shadow-sm); font-weight: 600; }
+  .nav-actions { display: flex; align-items: center; gap: 12px; }
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .icon-btn:hover { background: var(--surface-hover); color: var(--text); }
+  .icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .icon-btn svg { width: 18px; height: 18px; }
+
+  /* Views */
+  .views { min-height: calc(100vh - 64px); }
+  .view { display: none; animation: fadeIn 0.25s ease; }
+  .view.active { display: block; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* Login view */
+  .login-wrap {
+    min-height: calc(100vh - 64px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 24px;
+    background:
+      radial-gradient(circle at 10% 20%, rgba(37, 99, 235, 0.06) 0%, transparent 40%),
+      radial-gradient(circle at 90% 80%, rgba(37, 99, 235, 0.04) 0%, transparent 40%);
+  }
+  .login-card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 40px;
+    box-shadow: var(--shadow-lg);
+  }
+  .eyebrow {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+  }
+  .login-card h1 {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+  }
+  .login-card .lead {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-bottom: 28px;
+  }
+  .form-group { margin-bottom: 18px; }
+  .form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+  .form-group input,
+  .form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    transition: all 0.2s;
+  }
+  .form-group input:focus,
+  .form-group select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  }
+  .form-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    font-size: 13px;
+  }
+  .checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .checkbox input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .link { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .link:hover { text-decoration: underline; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+  .btn-secondary:hover { background: var(--surface-hover); }
+  .btn-ghost { background: transparent; color: var(--text-secondary); border-color: var(--border); }
+  .btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
+  .btn-danger { background: #fef2f2; color: var(--danger); border-color: #fecaca; }
+  .btn-danger:hover { background: #fee2e2; }
+  .login-card .btn-primary { width: 100%; padding: 12px; font-size: 15px; }
+
+  /* Queue view */
+  .page { padding: 24px; max-width: 1280px; margin: 0 auto; }
+  .queue-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+  .page-title h2 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 4px; }
+  .page-title p { color: var(--text-muted); font-size: 14px; }
+  .user-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px 6px 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent-light);
+    color: var(--accent);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 12px;
+  }
+  .logout { color: var(--text-muted); cursor: pointer; }
+  .logout:hover { color: var(--danger); }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s;
+  }
+  .stat-card:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
+  .stat-label { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .stat-value { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+  .stat-card.todo .stat-value { color: var(--accent); }
+  .stat-card.doing .stat-value { color: var(--info); }
+  .stat-card.pending .stat-value { color: var(--warning); }
+  .stat-card.overdue .stat-value { color: var(--danger); }
+  .stat-delta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+  .feedback-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: var(--radius);
+    margin-bottom: 24px;
+    color: #92400e;
+    font-size: 14px;
+  }
+  .feedback-banner svg { flex-shrink: 0; width: 20px; height: 20px; color: #d97706; }
+  .feedback-banner strong { font-weight: 600; }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .search-box {
+    position: relative;
+    flex: 1;
+    min-width: 240px;
+  }
+  .search-box svg {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+  }
+  .search-box input {
+    width: 100%;
+    padding: 9px 12px 9px 36px;
+    font-size: 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+  }
+  .search-box input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12); }
+  .filter-select {
+    padding: 9px 28px 9px 12px;
+    font-size: 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    min-width: 130px;
+  }
+  .filter-select:focus { outline: none; border-color: var(--accent); }
+
+  .task-list { display: flex; flex-direction: column; gap: 12px; }
+  .task-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 16px;
+    align-items: center;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s;
+  }
+  .task-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
+  .task-card:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08); }
+  .task-main { min-width: 0; }
+  .task-title {
+    font-weight: 600;
+    font-size: 15px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .task-meta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    color: var(--text-muted);
+    font-size: 13px;
+    flex-wrap: wrap;
+  }
+  .task-meta span { display: inline-flex; align-items: center; gap: 5px; }
+  .task-meta svg { width: 14px; height: 14px; }
+  .task-actions { display: flex; align-items: center; gap: 10px; }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 100px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .tag-todo { background: var(--accent-light); color: var(--accent); }
+  .tag-doing { background: #ecfeff; color: var(--info); }
+  .tag-pending { background: #fffbeb; color: var(--warning); }
+  .tag-overdue { background: #fef2f2; color: var(--danger); }
+  .tag-done { background: #f0fdf4; color: var(--success); }
+  .priority {
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+  }
+  .priority-high { background: #fecaca; color: #991b1b; }
+  .priority-medium { background: #fde68a; color: #92400e; }
+  .priority-low { background: #e2e8f0; color: var(--text-secondary); }
+
+  /* Workspace view */
+  .workspace {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 0;
+    min-height: calc(100vh - 64px);
+  }
+  .side-tabs {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .side-tab {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    background: transparent;
+    font-family: inherit;
+    text-align: left;
+  }
+  .side-tab:hover { background: var(--surface-hover); color: var(--text); }
+  .side-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .side-tab.active { background: var(--accent-light); color: var(--accent); font-weight: 600; }
+  .side-tab svg { width: 18px; height: 18px; }
+  .side-divider { height: 1px; background: var(--border); margin: 12px 0; }
+  .workspace-main { padding: 24px; overflow: auto; background: var(--bg); }
+  .workspace-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+  .workspace-header h3 { font-size: 18px; font-weight: 700; }
+  .progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .progress-bar {
+    width: 160px;
+    height: 8px;
+    background: var(--border);
+    border-radius: 100px;
+    overflow: hidden;
+  }
+  .progress-fill { height: 100%; background: var(--accent); width: 62%; border-radius: 100px; }
+  .data-grid {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .data-grid table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .data-grid th,
+  .data-grid td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  .data-grid th { background: var(--bg); font-weight: 600; color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .data-grid tr:last-child td { border-bottom: none; }
+  .data-grid tr:hover td { background: var(--surface-hover); }
+  .data-grid td { color: var(--text-secondary); }
+  .data-grid .cell-id { font-family: 'JetBrains Mono', monospace; color: var(--text-muted); font-size: 12px; }
+  .label-form {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .label-form h4 { font-size: 15px; font-weight: 700; margin-bottom: 16px; }
+  .form-row-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 16px; }
+  .chip-group { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    padding: 6px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 100px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: var(--surface);
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .action-bar {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 20px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    margin: 0 -24px -24px;
+  }
+  .action-group { display: flex; align-items: center; gap: 10px; }
+
+  @media (max-width: 768px) {
+    .top-nav { padding: 0 16px; height: auto; min-height: 56px; flex-wrap: wrap; padding-top: 10px; padding-bottom: 10px; }
+    .tabs { order: 3; width: 100%; margin-top: 8px; overflow-x: auto; }
+    .workspace { grid-template-columns: 1fr; }
+    .side-tabs { flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--border); padding: 8px; }
+    .side-tab { white-space: nowrap; }
+    .page { padding: 16px; }
+    .task-card { grid-template-columns: 1fr; }
+    .task-actions { justify-content: flex-start; }
+    .action-bar { flex-direction: column; align-items: stretch; margin: 0 -16px -16px; }
+    .action-group { justify-content: space-between; }
+    .login-card { padding: 28px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="top-nav" aria-label="主导航">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    Linkraft
+  </div>
+  <div class="tabs" role="tablist">
+    <button class="tab-btn active" role="tab" aria-selected="true" data-view="login">登录</button>
+    <button class="tab-btn" role="tab" aria-selected="false" data-view="queue">任务队列</button>
+    <button class="tab-btn" role="tab" aria-selected="false" data-view="workspace">标注工作区</button>
+  </div>
+  <div class="nav-actions">
+    <button class="icon-btn" aria-label="通知">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    </button>
+    <button class="icon-btn" aria-label="帮助">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </button>
+  </div>
+</nav>
+
+<main class="views">
+  <!-- Login -->
+  <section id="view-login" class="view active" role="tabpanel">
+    <div class="login-wrap">
+      <div class="login-card">
+        <div class="eyebrow">Annotator Portal</div>
+        <h1>标注员门户</h1>
+        <p class="lead">请使用分配的企业账号登录，开始今天的标注任务。</p>
+        <form onsubmit="event.preventDefault(); alert('演示环境：登录成功');">
+          <div class="form-group">
+            <label for="username">用户名 / 工号</label>
+            <input type="text" id="username" placeholder="例如 annotator-0421" required>
+          </div>
+          <div class="form-group">
+            <label for="password">密码</label>
+            <input type="password" id="password" placeholder="输入密码" required>
+          </div>
+          <div class="form-row">
+            <label class="checkbox"><input type="checkbox" checked> 记住我</label>
+            <a href="#" class="link">忘记密码？</a>
+          </div>
+          <button type="submit" class="btn btn-primary">登录到任务中心</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- Task Queue -->
+  <section id="view-queue" class="view" role="tabpanel">
+    <div class="page">
+      <div class="queue-header">
+        <div class="page-title">
+          <h2>任务队列</h2>
+          <p>今日待处理标注任务与状态概览</p>
+        </div>
+        <div class="user-chip">
+          <span class="avatar">LY</span>
+          <span>李雨桐</span>
+          <span class="logout" title="退出登录">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </span>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card todo">
+          <div class="stat-label">待标注</div>
+          <div class="stat-value">24</div>
+          <div class="stat-delta">较昨日 +3</div>
+        </div>
+        <div class="stat-card doing">
+          <div class="stat-label">进行中</div>
+          <div class="stat-value">7</div>
+          <div class="stat-delta">当前活跃</div>
+        </div>
+        <div class="stat-card pending">
+          <div class="stat-label">待回传</div>
+          <div class="stat-value">12</div>
+          <div class="stat-delta">需提交审核</div>
+        </div>
+        <div class="stat-card overdue">
+          <div class="stat-label">已逾期</div>
+          <div class="stat-value">2</div>
+          <div class="stat-delta">请优先处理</div>
+        </div>
+      </div>
+
+      <div class="feedback-banner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <div><strong>质检反馈：</strong> 上一个批次「客服对话意图-0920」有 3 条样本被退回，请修正标签后重新提交。</div>
+      </div>
+
+      <div class="toolbar">
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="搜索任务名称、批次号或项目...">
+        </div>
+        <select class="filter-select" aria-label="状态筛选">
+          <option>全部状态</option>
+          <option>待标注</option>
+          <option>进行中</option>
+          <option>待回传</option>
+          <option>已逾期</option>
+        </select>
+        <select class="filter-select" aria-label="优先级筛选">
+          <option>全部优先级</option>
+          <option>高</option>
+          <option>中</option>
+          <option>低</option>
+        </select>
+      </div>
+
+      <div class="task-list">
+        <article class="task-card">
+          <div class="task-main">
+            <div class="task-title">
+              <span>电商评论情感标注 - 第 14 批次</span>
+              <span class="tag tag-todo">待标注</span>
+              <span class="priority priority-high">高</span>
+            </div>
+            <div class="task-meta">
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> 截止 09-21</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> 1,240 条</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> 准确率要求 ≥ 95%</span>
+            </div>
+          </div>
+          <div class="task-actions">
+            <button class="btn btn-primary">开始标注</button>
+          </div>
+        </article>
+
+        <article class="task-card">
+          <div class="task-main">
+            <div class="task-title">
+              <span>客服对话意图分类 - 0920</span>
+              <span class="tag tag-doing">进行中</span>
+              <span class="priority priority-high">高</span>
+            </div>
+            <div class="task-meta">
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> 截止 09-20</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> 856 / 2,000 条</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> 3 条待修正</span>
+            </div>
+          </div>
+          <div class="task-actions">
+            <button class="btn btn-secondary">继续标注</button>
+          </div>
+        </article>
+
+        <article class="task-card">
+          <div class="task-main">
+            <div class="task-title">
+              <span>商品图片多标签标注 - 0908</span>
+              <span class="tag tag-pending">待回传</span>
+              <span class="priority priority-medium">中</span>
+            </div>
+            <div class="task-meta">
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> 截止 09-22</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> 500 条</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> 已通过自检</span>
+            </div>
+          </div>
+          <div class="task-actions">
+            <button class="btn btn-secondary">提交审核</button>
+          </div>
+        </article>
+
+        <article class="task-card">
+          <div class="task-main">
+            <div class="task-title">
+              <span>短视频内容审核 - 第 7 批次</span>
+              <span class="tag tag-overdue">已逾期</span>
+              <span class="priority priority-high">高</span>
+            </div>
+            <div class="task-meta">
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> 已于 09-18 到期</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> 120 / 300 条</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> 请立即处理</span>
+            </div>
+          </div>
+          <div class="task-actions">
+            <button class="btn btn-primary">继续标注</button>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- Workspace -->
+  <section id="view-workspace" class="view" role="tabpanel">
+    <div class="workspace">
+      <aside class="side-tabs" aria-label="工作区面板">
+        <button class="side-tab active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> 指南</button>
+        <button class="side-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg> 样本</button>
+        <button class="side-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> 批量</button>
+        <button class="side-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> 回传</button>
+        <button class="side-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg> 批注</button>
+        <div class="side-divider"></div>
+        <button class="side-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> 帮助</button>
+      </aside>
+      <div class="workspace-main">
+        <div class="workspace-header">
+          <h3>电商评论情感标注 · 样本 #2841</h3>
+          <div class="progress">
+            <span>已标注 62 / 100</span>
+            <div class="progress-bar" aria-hidden="true"><div class="progress-fill"></div></div>
+            <span class="mono">62%</span>
+          </div>
+        </div>
+
+        <div class="data-grid">
+          <table>
+            <thead>
+              <tr>
+                <th>样本 ID</th>
+                <th>原始评论</th>
+                <th>商品类目</th>
+                <th>来源</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="cell-id">REV-20240919-2841</td>
+                <td>物流速度很快，包装也完好，但是客服回复有点慢，整体还算满意。</td>
+                <td>家居用品</td>
+                <td>天猫</td>
+              </tr>
+              <tr>
+                <td class="cell-id">REV-20240919-2842</td>
+                <td>完全不值这个价，用了两天就坏了，退货流程还特别麻烦。</td>
+                <td>数码配件</td>
+                <td>京东</td>
+              </tr>
+              <tr>
+                <td class="cell-id">REV-20240919-2843</td>
+                <td>回购第三次了，性价比很高，推荐给了好几个朋友。</td>
+                <td>美妆护肤</td>
+                <td>小红书</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="label-form">
+          <h4>当前样本标签</h4>
+          <div class="form-row-grid">
+            <div class="form-group">
+              <label>情感倾向</label>
+              <div class="chip-group">
+                <button class="chip">正面</button>
+                <button class="chip active">中性</button>
+                <button class="chip">负面</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>情感强度</label>
+              <div class="chip-group">
+                <button class="chip active">弱</button>
+                <button class="chip">中</button>
+                <button class="chip">强</button>
+              </div>
+            </div>
+          </div>
+          <div class="form-row-grid">
+            <div class="form-group">
+              <label for="label-text">标注备注</label>
+              <input type="text" id="label-text" placeholder="补充说明，如混合情感、歧义等..." value="混合情感：物流正面，客服负面">
+            </div>
+            <div class="form-group">
+              <label for="label-issue">问题类型</label>
+              <select id="label-issue">
+                <option>无</option>
+                <option>质量问题</option>
+                <option>物流问题</option>
+                <option selected>服务问题</option>
+                <option>价格问题</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="action-bar">
+          <div class="action-group">
+            <button class="btn btn-secondary">上一项</button>
+            <button class="btn btn-ghost">跳过</button>
+          </div>
+          <div class="action-group">
+            <button class="btn btn-ghost">保存草稿</button>
+            <button class="btn btn-primary">保存并下一项</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+  const tabBtns = document.querySelectorAll('.tab-btn');
+  const views = document.querySelectorAll('.view');
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.view;
+      tabBtns.forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+      btn.classList.add('active');
+      btn.setAttribute('aria-selected', 'true');
+      views.forEach(v => v.classList.toggle('active', v.id === 'view-' + target));
+    });
+  });
+
+  // Chip toggles
+  document.querySelectorAll('.chip-group').forEach(group => {
+    group.addEventListener('click', e => {
+      const chip = e.target.closest('.chip');
+      if (!chip) return;
+      group.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+    });
+  });
+</script>
+
+</body>
+</html>

@@ -3,12 +3,13 @@ import uuid
 
 from alembic import command
 from alembic.config import Config
+import sqlalchemy as sa
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.models.operation import DurableOperation
-from app.models.platform_models import AnnotationTaskExecutionStatistic, AnnotationTaskPreview, GenericAnnotationTask
+from app.models.platform_models import AnnotationTaskExecutionStatistic, AnnotationTaskPreview
 from app.models.project import Project
 from app.models.user import User
 from app.services.annotation_task_state import list_annotation_execution_stats
@@ -33,7 +34,23 @@ def test_execution_statistics_migration_backfills_inline_operation_summary(tmp_p
             project = Project(name="Statistics migration", owner_id=user.id)
             session.add(project)
             session.flush()
-            task = GenericAnnotationTask(
+            task_id = uuid.uuid4()
+            legacy_annotation_tasks = sa.table(
+                "generic_annotation_tasks",
+                sa.column("id", sa.Uuid()),
+                sa.column("project_id", sa.Uuid()),
+                sa.column("dataset_version_id", sa.Uuid()),
+                sa.column("label_schema_id", sa.Uuid()),
+                sa.column("owner_id", sa.Uuid()),
+                sa.column("mode"),
+                sa.column("status"),
+                sa.column("task_revision"),
+                sa.column("sample_scope", sa.JSON()),
+                sa.column("label_snapshot", sa.JSON()),
+                sa.column("task_snapshot", sa.JSON()),
+            )
+            session.execute(legacy_annotation_tasks.insert().values(
+                id=task_id,
                 project_id=project.id,
                 dataset_version_id=uuid.uuid4(),
                 label_schema_id=uuid.uuid4(),
@@ -44,11 +61,9 @@ def test_execution_statistics_migration_backfills_inline_operation_summary(tmp_p
                 sample_scope={"kind": "all"},
                 label_snapshot={},
                 task_snapshot={},
-            )
-            session.add(task)
-            session.flush()
+            ))
             preview = AnnotationTaskPreview(
-                task_id=task.id, task_revision=0, config_hash="sha256:migration-preview",
+                task_id=task_id, task_revision=0, config_hash="sha256:migration-preview",
                 status="completed", progress=100, created_by=user.id,
             )
             session.add(preview)
@@ -62,7 +77,7 @@ def test_execution_statistics_migration_backfills_inline_operation_summary(tmp_p
             operation_id = uuid.uuid4()
             session.execute(DurableOperation.__table__.insert().values(
                 id=operation_id,
-                resource_key=f"annotation-execution:{task.id}",
+                resource_key=f"annotation-execution:{task_id}",
                 idempotency_key=f"0:{preview.id}",
                 state="completed",
                 stage="completed",
@@ -82,7 +97,6 @@ def test_execution_statistics_migration_backfills_inline_operation_summary(tmp_p
                 },
             ))
             session.commit()
-            task_id = task.id
             user_id, project_id = user.id, project.id
             preview_id, preview_operation_id = preview.id, preview.operation_id
         finally:

@@ -253,6 +253,7 @@ class SVMClassifierOp(BaseOperator):
 @register_operator
 class LogisticRegressionOp(BaseOperator):
     id = "logistic_regression"; name = "Logistic Regression"; category = "ml"
+    description = "逻辑回归分类器，支持二分类/多分类目标列训练。 (Logistic regression classifier for binary/multiclass targets)"
     inputs = [PortSpec("data", "DataTable", "Training Data")]
     outputs = [PortSpec("model", "Model", "Trained Model")]
     parameters = [ParamSpec("target_column", "str", "target", "Target Column"), ParamSpec("C", "float", 1.0, "C"), ParamSpec("max_iter", "int", 100, "Max Iter")]
@@ -273,6 +274,7 @@ class LogisticRegressionOp(BaseOperator):
 @register_operator
 class KMeansOp(BaseOperator):
     id = "kmeans_clustering"; name = "k-Means"; category = "ml"
+    description = "k-Means 聚类，将聚类标签追加到输入数据。 (k-Means clustering that appends cluster labels to the input data)"
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("clusters", "DataTable", "Data with cluster labels")]
     parameters = [ParamSpec("k", "int", 3, "K", range_min=1), ParamSpec("max_runs", "int", 10, "Max Runs"), ParamSpec("random_seed", "int", 42, "Seed")]
@@ -288,6 +290,7 @@ class KMeansOp(BaseOperator):
 @register_operator
 class DBSCANOp(BaseOperator):
     id = "dbscan"; name = "DBSCAN"; category = "ml"
+    description = "DBSCAN 基于密度的聚类，聚类标签追加到输入数据（噪声点为 -1）。 (DBSCAN density-based clustering that appends cluster labels; noise points are -1)"
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("clusters", "DataTable", "Data with cluster labels")]
     parameters = [ParamSpec("eps", "float", 0.5, "Epsilon"), ParamSpec("min_points", "int", 5, "Min Points", range_min=1)]
@@ -303,6 +306,7 @@ class DBSCANOp(BaseOperator):
 @register_operator
 class AprioriOp(BaseOperator):
     id = "apriori"; name = "Apriori"; category = "ml"
+    description = "Apriori 关联规则挖掘，从事务数据中提取满足支持度/置信度阈值的规则。 (Apriori association-rule mining over transaction data)"
     inputs = [PortSpec("data", "DataTable", "Transaction data")]
     outputs = [PortSpec("rules", "DataTable", "Association Rules")]
     parameters = [ParamSpec("min_support", "float", 0.1, "Min Support"), ParamSpec("min_confidence", "float", 0.5, "Min Confidence")]
@@ -321,6 +325,7 @@ class AprioriOp(BaseOperator):
 @register_operator
 class FPGrowthOp(BaseOperator):
     id = "fp_growth"; name = "FP-Growth"; category = "ml"
+    description = "FP-Growth 关联规则挖掘，基于 FP 树提取满足支持度/置信度阈值的规则。 (FP-Growth association-rule mining over transaction data)"
     inputs = [PortSpec("data", "DataTable", "Transaction data")]
     outputs = [PortSpec("rules", "DataTable", "Association Rules")]
     parameters = [ParamSpec("min_support", "float", 0.1, "Min Support"), ParamSpec("min_confidence", "float", 0.5, "Min Confidence")]
@@ -338,6 +343,7 @@ class FPGrowthOp(BaseOperator):
 @register_operator
 class RandomForestRegressorOp(BaseOperator):
     id = "random_forest_regression"; name = "Random Forest Regression"; category = "ml"
+    description = "随机森林回归模型训练。 (Random forest regressor trained on the input data)"
     inputs = [PortSpec("data", "DataTable", "Training Data")]
     outputs = [PortSpec("model", "Model", "Trained Model")]
     parameters = [ParamSpec("target_column", "str", "target", "Target Column"), ParamSpec("n_estimators", "int", 100, "Trees"), ParamSpec("max_depth", "int", 10, "Max Depth"), ParamSpec("random_seed", "int", 42, "Seed")]
@@ -358,6 +364,7 @@ class RandomForestRegressorOp(BaseOperator):
 @register_operator
 class SVMRegressionOp(BaseOperator):
     id = "svm_regression"; name = "SVM Regression"; category = "ml"
+    description = "支持向量回归（SVR）模型训练。 (Support vector regression trained on the input data)"
     inputs = [PortSpec("data", "DataTable", "Training Data")]
     outputs = [PortSpec("model", "Model", "Trained Model")]
     parameters = [ParamSpec("target_column", "str", "target", "Target Column"), ParamSpec("kernel", "select", "rbf", "Kernel", options=["linear","rbf","poly"]), ParamSpec("C", "float", 1.0, "C"), ParamSpec("epsilon", "float", 0.1, "Epsilon")]

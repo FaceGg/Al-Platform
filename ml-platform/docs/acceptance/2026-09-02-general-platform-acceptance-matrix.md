@@ -214,3 +214,10 @@
 - Task 13 聚焦套件：`tests/test_async_operation_contract.py tests/test_security_contract.py tests/test_suite_manifest.py` **32 passed、2 subtests passed**。
 - 覆盖：过期 lease 单次回收、恢复派发去重、失败操作不发布部分制品、清理报告字段与 SHA 校验、幂等操作及请求安全合同；`celery_app.py`、`recovery.py`、`artifact_service.py`、`config.py`、`main.py` 和清理工具均通过 Python 编译。
 - Task 13 在当前本地异步/安全/清理聚焦范围内标记为 `passed`。Docker/WSL Compose 配置与持续运行、真实跨服务 recovery、完整后端 active suite、最终 SHA 收据和远程 CI 仍未完成，继续由 Task 14 门禁负责。
+
+## 2026-09-22 收据 CI 接入位置更正
+
+- CI `week11-12-verification` job 的「Generate generic acceptance receipts」步骤已改为将 19 项收据写入 `ML_PLATFORM_EVIDENCE_DIR/generic-platform-acceptance/`（即 `temp_test/week11-12/generic-platform-acceptance/` 的运行时目录，具体以 job 环境变量为准），使最终 evidence manifest 的文件哈希清单收录收据并随 verification evidence 产物上传；此前收据生成于仓库根 `temp_test/generic-platform-acceptance/`、游离于最终 manifest 与上传产物之外，该历史记录保留不改写。
+- 该步骤的嵌套 manifest 命名由 `final-evidence-manifest.json` 更正为 `acceptance-manifest.json`，避免与 `evidence_manifest` 生成的顶层最终 manifest 混淆。
+- AUTH-02 的收据证据路径由不存在的 `ml-platform/annotator/backend/tests/test_portal_internal_api.py` 更正为实际门户后端套件 `ml-platform/annotator/backend/tests/test_portal_api.py`。
+- 上述更正在当前工作树完成并以 `tests/test_ci_workflow.py`、`tests/test_acceptance_manifest.py`（**62 passed、138 subtests passed**）和本地 19 收据 + manifest 校验模拟锁定；远程 CI 尚未在最终干净 SHA 上执行，19 项 `passed` 收据仍以远程实际生成为准，本矩阵头部 fail-closed 规则不变。

@@ -19,6 +19,10 @@ from app.models.user import User
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 PORTAL_COOKIE_NAME = "portal_session"
+# Admin portal sessions live in their own cookie so an annotator and an admin
+# can be logged into the same browser at the same time (cookies are not
+# port-scoped, so a second portal origin would not separate them).
+ADMIN_PORTAL_COOKIE_NAME = "admin_portal_session"
 
 class PortalAuthError(ValueError):
     def __init__(self, code: str, message: str | None = None):
@@ -29,8 +33,10 @@ class PortalAuthError(ValueError):
 class PortalSession:
     token: str
     cookie_name: str
-    subject_id: uuid.UUID
+    subject_id: uuid.UUID | None
     expires_at: datetime
+    kind: str = "annotator"
+    user_id: uuid.UUID | None = None
 
 @dataclass(frozen=True)
 class AnnotatorPrincipal:
@@ -39,11 +45,21 @@ class AnnotatorPrincipal:
     username: str
 
 @dataclass(frozen=True)
+class PortalIdentity:
+    """Resolved portal caller: annotator account or platform admin user."""
+    kind: str
+    subject_id: uuid.UUID | None
+    account_id: uuid.UUID | None
+    username: str
+    user_id: uuid.UUID | None = None
+
+@dataclass(frozen=True)
 class ServicePrincipal:
     service_id: str
     project_id: uuid.UUID | None
     scopes: frozenset[str]
     annotator_subject_id: uuid.UUID | None = None
+    admin_user_id: uuid.UUID | None = None
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -72,6 +88,64 @@ def authenticate_annotator(db: Session, username: str, password: str) -> PortalS
         raise PortalAuthError("ACCOUNT_NOT_ACTIVE")
     return create_portal_session(db, account)
 
+def issue_admin_portal_token(db: Session, username: str, password: str) -> PortalSession:
+    """Issue a stateless portal session JWT for a platform admin user.
+
+    Admins have no AnnotatorAccount, so they cannot use DB-backed sessions
+    (AnnotatorSession.account_id is NOT NULL). A signed JWT keeps the portal
+    cookie contract without schema changes.
+    """
+    user = db.query(User).filter(User.username == username).first()
+    if user is None or user.role != "admin" or not _verify_password_safely(password, user.password_hash):
+        raise PortalAuthError("INVALID_CREDENTIALS")
+    now = _now()
+    expires = now + timedelta(seconds=settings.annotator_session_ttl_seconds)
+    token = jwt.encode(
+        {
+            "kind": "portal_admin",
+            "sub": str(user.id),
+            "username": user.username,
+            "iat": now,
+            "exp": expires,
+        },
+        settings.resolved_annotator_service_secret.get_secret_value(),
+        algorithm=settings.annotator_service_algorithm,
+    )
+    return PortalSession(
+        token=token,
+        cookie_name=ADMIN_PORTAL_COOKIE_NAME,
+        subject_id=None,
+        expires_at=expires,
+        kind="admin",
+        user_id=user.id,
+    )
+
+def _verify_password_safely(password: str, password_hash: str) -> bool:
+    try:
+        return pwd_context.verify(password, password_hash)
+    except (TypeError, ValueError):
+        return False
+
+def set_annotator_status(db: Session, subject_id: uuid.UUID, status: str) -> AnnotatorAccount:
+    if status not in {"active", "rejected", "disabled"}:
+        raise PortalAuthError("INVALID_ACCOUNT_STATUS")
+    account = db.query(AnnotatorAccount).filter(AnnotatorAccount.subject_id == subject_id).first()
+    if account is None:
+        raise PortalAuthError("ACCOUNT_NOT_FOUND")
+    account.status = status
+    if status != "active":
+        account.session_version += 1
+        db.query(AnnotatorSession).filter(
+            AnnotatorSession.account_id == account.id,
+            AnnotatorSession.revoked_at.is_(None),
+        ).update(
+            {AnnotatorSession.revoked_at: _now().replace(tzinfo=None)},
+            synchronize_session=False,
+        )
+    db.commit()
+    db.refresh(account)
+    return account
+
 def create_portal_session(db: Session, account: AnnotatorAccount, ttl_seconds: int | None = None) -> PortalSession:
     now = _now()
     expires = now + timedelta(seconds=ttl_seconds or settings.annotator_session_ttl_seconds)
@@ -87,6 +161,24 @@ def disable_annotator(db: Session, subject_id: uuid.UUID) -> None:
     account.status = "disabled"
     account.session_version += 1
     db.query(AnnotatorSession).filter(AnnotatorSession.account_id == account.id, AnnotatorSession.revoked_at.is_(None)).update({AnnotatorSession.revoked_at: _now().replace(tzinfo=None)}, synchronize_session=False)
+    db.commit()
+
+def delete_annotator(db: Session, subject_id: uuid.UUID) -> None:
+    account = db.query(AnnotatorAccount).filter(AnnotatorAccount.subject_id == subject_id).first()
+    if account is None:
+        raise PortalAuthError("ACCOUNT_NOT_FOUND")
+    # Live assignments are resource grants issued to this subject; revoke them
+    # before removing the identity so no scope survives the deletion.
+    db.query(AnnotationAssignment).filter(
+        AnnotationAssignment.annotator_subject_id == subject_id,
+        AnnotationAssignment.state != "revoked",
+    ).update({AnnotationAssignment.state: "revoked"}, synchronize_session=False)
+    # SQLite does not enforce FK cascades without PRAGMA foreign_keys; delete
+    # dependent identity rows explicitly so both backends behave identically.
+    db.query(AnnotatorSession).filter(AnnotatorSession.account_id == account.id).delete(synchronize_session=False)
+    db.query(AnnotatorSubjectMapping).filter(AnnotatorSubjectMapping.subject_id == subject_id).delete(synchronize_session=False)
+    db.query(ProjectAnnotatorGrant).filter(ProjectAnnotatorGrant.subject_id == subject_id).delete(synchronize_session=False)
+    db.query(AnnotatorAccount).filter(AnnotatorAccount.id == account.id).delete(synchronize_session=False)
     db.commit()
 
 def reset_annotator_password(db: Session, subject_id: uuid.UUID, password: str) -> None:
@@ -150,6 +242,87 @@ def require_portal_session(request: Request, db: Session) -> AnnotatorPrincipal:
         raise PortalAuthError("ANNOTATOR_SESSION_REVOKED")
     return AnnotatorPrincipal(account.subject_id, account.id, account.username)
 
+def resolve_portal_identity(request: Request, db: Session, *, viewer: str = "annotator") -> PortalIdentity:
+    """Resolve the portal cookie into either an annotator or an admin identity.
+
+    Annotator sessions stay DB-backed; admin sessions are stateless JWTs with
+    kind="portal_admin" (see issue_admin_portal_token). The two account kinds
+    use separate cookies, and the viewer hint (from the X-Portal-Viewer
+    request header) selects which one to read, so one browser can hold an
+    annotator and an admin session side by side.
+    """
+    if viewer == "admin":
+        return _resolve_admin_identity(request)
+    return _resolve_annotator_identity(request, db)
+
+def _resolve_annotator_identity(request: Request, db: Session) -> PortalIdentity:
+    token = request.cookies.get(PORTAL_COOKIE_NAME)
+    if not token:
+        raise PortalAuthError("PORTAL_SESSION_REQUIRED")
+    session = db.query(AnnotatorSession).filter(AnnotatorSession.token_hash == _hash_token(token)).first()
+    if session is None:
+        # Only annotator DB sessions live in this cookie since the split; an
+        # unrecognized value is stale (e.g. a pre-split admin JWT).
+        raise PortalAuthError("PORTAL_SESSION_INVALID")
+    if session.revoked_at is not None:
+        raise PortalAuthError("ANNOTATOR_SESSION_REVOKED")
+    expires = session.expires_at.replace(tzinfo=timezone.utc) if session.expires_at.tzinfo is None else session.expires_at
+    if expires <= _now():
+        raise PortalAuthError("ANNOTATOR_SESSION_EXPIRED")
+    account = db.query(AnnotatorAccount).filter(AnnotatorAccount.id == session.account_id).first()
+    if account is None or account.status != "active" or account.session_version != session.session_version:
+        raise PortalAuthError("ANNOTATOR_SESSION_REVOKED")
+    return PortalIdentity(kind="annotator", subject_id=account.subject_id, account_id=account.id, username=account.username)
+
+def _resolve_admin_identity(request: Request) -> PortalIdentity:
+    token = request.cookies.get(ADMIN_PORTAL_COOKIE_NAME)
+    if not token:
+        raise PortalAuthError("PORTAL_SESSION_REQUIRED")
+    try:
+        payload = jwt.decode(
+            token,
+            settings.resolved_annotator_service_secret.get_secret_value(),
+            algorithms=[settings.annotator_service_algorithm],
+            options={"verify_aud": False, "verify_iss": False},
+        )
+    except jwt.InvalidTokenError as error:
+        raise PortalAuthError("PORTAL_SESSION_INVALID") from error
+    if payload.get("kind") != "portal_admin":
+        raise PortalAuthError("PORTAL_SESSION_INVALID")
+    try:
+        admin_user_id = uuid.UUID(str(payload.get("sub")))
+        username = str(payload.get("username"))
+    except (TypeError, ValueError, AttributeError) as error:
+        raise PortalAuthError("PORTAL_SESSION_INVALID") from error
+    return PortalIdentity(kind="admin", subject_id=None, account_id=None, username=username, user_id=admin_user_id)
+
+def ensure_annotator_mapping(db: Session, subject_id: uuid.UUID, actor=None) -> AnnotatorSubjectMapping:
+    """Guarantee a subject→platform principal mapping exists.
+
+    Per the technical proposal the platform maintains a controlled mapping and
+    creates a shadow principal when the annotator has no linked platform
+    account. Existing explicit mappings are preserved so admin-linked
+    principals are never silently replaced by a shadow account.
+    """
+    mapping = db.query(AnnotatorSubjectMapping).filter(AnnotatorSubjectMapping.subject_id == subject_id).first()
+    if mapping is not None and mapping.platform_principal_id is not None:
+        return mapping
+    shadow = User(
+        username=f"annotator-shadow-{uuid.uuid4().hex}",
+        password_hash=secrets.token_urlsafe(32),
+        role="annotator",
+    )
+    db.add(shadow)
+    db.flush()
+    if mapping is None:
+        mapping = AnnotatorSubjectMapping(subject_id=subject_id, platform_principal_id=shadow.id, created_by=getattr(actor, "id", None))
+        db.add(mapping)
+    else:
+        mapping.platform_principal_id = shadow.id
+    db.commit()
+    db.refresh(mapping)
+    return mapping
+
 def map_annotator_subject(db: Session, subject_id: uuid.UUID, platform_principal_id: uuid.UUID | None, actor, *, project_id: uuid.UUID | None = None) -> AnnotatorSubjectMapping:
     if project_id is not None:
         raise PortalAuthError("PROJECT_ID_NOT_CLIENT_SUPPLIED")
@@ -184,6 +357,7 @@ def service_token_for_project(
     scopes: list[str],
     service_id: str = "annotator-portal",
     annotator_subject_id: uuid.UUID | None = None,
+    admin_user_id: uuid.UUID | None = None,
 ) -> str:
     now = _now()
     payload = {
@@ -198,6 +372,8 @@ def service_token_for_project(
     }
     if annotator_subject_id is not None:
         payload["annotator_subject_id"] = str(annotator_subject_id)
+    if admin_user_id is not None:
+        payload["admin_user_id"] = str(admin_user_id)
     return jwt.encode(payload, settings.resolved_annotator_service_secret.get_secret_value(), algorithm=settings.annotator_service_algorithm)
 
 def verify_internal_service_token(
@@ -240,7 +416,14 @@ def verify_internal_service_token(
             subject_id = uuid.UUID(str(subject_claim))
         except (TypeError, ValueError, AttributeError) as error:
             raise PortalAuthError("SERVICE_SUBJECT_INVALID") from error
+    admin_claim = payload.get("admin_user_id")
+    admin_user_id = None
+    if admin_claim is not None:
+        try:
+            admin_user_id = uuid.UUID(str(admin_claim))
+        except (TypeError, ValueError, AttributeError) as error:
+            raise PortalAuthError("SERVICE_ADMIN_INVALID") from error
     service_id = payload.get("sub")
     if not isinstance(service_id, str) or not service_id:
         raise PortalAuthError("SERVICE_ID_REQUIRED")
-    return ServicePrincipal(service_id, resolved_project, scopes, subject_id)
+    return ServicePrincipal(service_id, resolved_project, scopes, subject_id, admin_user_id)
