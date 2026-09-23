@@ -110,14 +110,14 @@ npm run test:e2e
 docker compose config
 docker compose up -d --build
 docker compose ps
-curl -fsS http://127.0.0.1:8000/api/ready
+curl -fsS http://127.0.0.1:8001/api/ready
 docker compose logs --tail=100 backend worker
 docker compose down
 ```
 
 `migrate` 必须成功退出，后端和 Worker 才会启动。`/api/health` 只说明 API 进程存活；生产依赖状态使用 `/api/ready` 检查。
 
-生产 Compose 默认仅将 Nginx 暴露到公网，入口为 `http://服务器IP:5175/`；后端、前端直连和 MinIO 管理端口默认绑定到 `127.0.0.1`。旧 CPU 服务器使用固定的 MinIO CPUv1 镜像与 Debian Python 基础镜像，避免 Wolfi 的 `x86-64-v2` 要求。
+本地可将 `MLFLOW_WHEEL_DIR` 指向 psycopg wheel 缓存目录；该目录没有 wheel 时，MLflow 服务会使用默认 PyPI 源安装依赖。
 
 ## 文档导航
 

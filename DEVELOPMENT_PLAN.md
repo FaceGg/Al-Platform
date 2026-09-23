@@ -33,7 +33,7 @@
 - 修复：移除四个 Dockerfile 中的全局 pip index 覆盖，让 pip 使用默认 PyPI；保留原有重试、读取超时和 BuildKit 缓存。新增 CI 镜像合同测试，禁止这些 Dockerfile 设置阿里源或其他 `index-url` 覆盖。
 - 验证：新增回归先对四个 Dockerfile 全部失败；修复后 `python -m unittest tests.test_ci_workflow -q` 为 **57 tests OK**，`git diff --check` 通过。
 - 未验证：本轮没有构建 Docker 镜像，也没有在新 SHA 上运行远程 CI；实际 CI 下载耗时改善仍待该次运行数据确认。
-- 合并整合补充（2026-09-23）：按用户指定以 `general-automl-annotation-20260902` 工作树为主合入 `main`，保留标注门户和限流变更；为兼容主分支生产合同，Compose 继续使用 CPUv1 MinIO、内网绑定及构建式 MLflow，并移除工作树里的个人 wheel 目录挂载。阿里源覆盖检查扩展到 `Dockerfile.mlflow`，现覆盖五个 Python Dockerfile。合并后的全量测试和远程 CI 尚未运行，验收仍待最终 SHA 的 CI 证据。
+- 合并整合补充（2026-09-23）：按用户指定以 `general-automl-annotation-20260902` 工作树为主合入 `main`。首次 push 质量 Run `35842676835`（SHA `3fc393f`）暴露两处合并合同问题：四个 Dockerfile 选成 Debian 后与工作树的 Wolfi 固定镜像合同冲突；Windows runner 的 `bash` 实际是 WSL 启动器且没有 Linux 发行版。已恢复工作树的 Wolfi 镜像、Quay MinIO 与 GHCR MLflow Compose 配置；MLflow wheel 挂载改为可由 `MLFLOW_WHEEL_DIR` 覆盖，缺少 wheel 时保留默认 PyPI 安装回退；保留生产密钥引导脚本的安全默认值。CI 合同改为断言当前 Compose/Image 行为，并仅在 Linux Bash 环境运行密钥脚本集成验证。上述修正尚待新 SHA 的远程质量与 full 门禁验证。
 
 ### 2026-09-23 CI Run 35802807330：Week 11 性能验收容器 ID 修复
 

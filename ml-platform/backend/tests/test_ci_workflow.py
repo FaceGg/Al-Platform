@@ -1,4 +1,5 @@
 import json
+import platform
 import shutil
 import subprocess
 import unittest
@@ -34,14 +35,14 @@ BACKEND_REQUIREMENTS = REPOSITORY_ROOT / "ml-platform" / "backend" / "requiremen
 PRODUCTION_SECRETS_SCRIPT = (
     REPOSITORY_ROOT / "ml-platform" / "scripts" / "prepare-production-secrets.sh"
 )
-CPU_COMPATIBLE_DOCKERFILES = (
+PRODUCTION_PYTHON_DOCKERFILES = (
     REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile",
     REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.worker",
     REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.inference",
     REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.tensorboard",
     REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.mlflow",
 )
-CI_BUILT_BACKEND_DOCKERFILES = CPU_COMPATIBLE_DOCKERFILES[:4]
+CI_BUILT_BACKEND_DOCKERFILES = PRODUCTION_PYTHON_DOCKERFILES[:4]
 
 
 def load_workflow_contract(path: Path) -> dict:
@@ -76,8 +77,8 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertNotIn(marker.casefold(), workflow)
 
-    def test_ci_built_backend_images_use_default_pypi_index(self):
-        for dockerfile in CPU_COMPATIBLE_DOCKERFILES:
+    def test_production_python_dockerfiles_use_default_pypi_index(self):
+        for dockerfile in PRODUCTION_PYTHON_DOCKERFILES:
             content = dockerfile.read_text(encoding="utf-8").casefold()
             with self.subTest(dockerfile=dockerfile.name):
                 self.assertNotIn("aliyun", content)
@@ -383,7 +384,10 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn("openssl rand -base64 32", script)
         self.assertIn('Existing notification key preserved', script)
 
-    @unittest.skipUnless(shutil.which("bash"), "bash is required for deployment script verification")
+    @unittest.skipUnless(
+        platform.system() != "Windows" and shutil.which("bash"),
+        "a Linux Bash runtime is required for deployment script verification",
+    )
     def test_production_secret_bootstrap_generates_and_preserves_a_fernet_key(self):
         script = r'''set -Eeuo pipefail
 root="$(pwd)"
@@ -414,33 +418,20 @@ test "$first_hash" = "$second_hash"
             (result.stdout + result.stderr).decode("utf-8", errors="replace"),
         )
 
-    def test_legacy_cpu_deployment_uses_cpuv1_minio_and_debian_python_images(self):
+    def test_compose_uses_public_minio_images_and_mlflow_pypi_fallback(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
 
-        self.assertEqual(
-            compose["services"]["minio"]["image"],
-            "minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1",
+        self.assertEqual(compose["services"]["minio"]["image"], "quay.io/minio/minio:latest")
+        self.assertEqual(compose["services"]["minio-init"]["image"], "quay.io/minio/mc:latest")
+        mlflow = compose["services"]["mlflow"]
+        self.assertEqual(mlflow["image"], "ghcr.io/mlflow/mlflow:v3.15.0")
+        self.assertNotIn("build", mlflow)
+        self.assertIn("MLFLOW_WHEEL_DIR", mlflow["volumes"][0])
+        self.assertIn("/opt/mlflow-wheel", mlflow["volumes"][0])
+        self.assertIn(
+            "pip install --no-deps psycopg==3.3.5 psycopg-binary==3.3.5",
+            mlflow["command"][2],
         )
-        self.assertEqual(
-            compose["services"]["minio-init"]["image"],
-            "minio/mc:RELEASE.2025-07-21T05-28-08Z-cpuv1",
-        )
-        self.assertEqual(
-            compose["services"]["nginx"]["ports"],
-            ["${NGINX_BIND_ADDRESS:-0.0.0.0}:${NGINX_PORT:-5175}:80"],
-        )
-        self.assertEqual(
-            compose["services"]["mlflow"]["build"]["dockerfile"],
-            "Dockerfile.mlflow",
-        )
-        self.assertNotIn("image", compose["services"]["mlflow"])
-
-        for dockerfile in CPU_COMPATIBLE_DOCKERFILES:
-            with self.subTest(dockerfile=dockerfile.name):
-                content = dockerfile.read_text(encoding="utf-8")
-                self.assertIn("FROM python:3.11-slim-bookworm", content)
-                self.assertNotIn("wolfi", content.lower())
-                self.assertNotIn("--resume-retries", content)
 
     def test_primary_compose_passes_smtp_authentication_without_literal_credentials(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
