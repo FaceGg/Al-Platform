@@ -1,5 +1,15 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-23 远程 CI 第三轮修复：generic-platform-acceptance 规格重写对齐两步向导 UI
+
+- 需求：第二轮 full 模式 run 中 `browser-acceptance` 的 `generic-platform-acceptance.spec.ts` 2 例确定性失败（各重试 1 次仍败），规格严重落后于 09-20 的两步向导重构。
+- 根因 1（测试 1）：任务单元格现渲染 `<strong>task-1</strong>` + `<span>自动标注 · task-1</span>`，`getByText("task-1")` strict mode 命中两元素；行内「执行」按钮已移除（预览完成后自动执行）。
+- 根因 2（测试 2）：旧规格按单页表单编写——「启用聚类」复选框已被两步向导替代；创建端点应为 POST `/api/annotation-tasks`（旧 mock 的 `/api/automl-tasks` 已废）；「配置策略」弹窗流程已被向导内 Step 2（弱监督 select → 生成聚类预览 → LabelSchemaEditor 保存 schema 解锁 → 策略编辑器 → 保存策略并完成 → 最终预览 → 返回任务列表）替代。
+- 修复：按当前 UI 重写两例。测试 1 改为 awaiting_return → 提交回传 → 验收 状态机流 + 指派按钮 disabled 断言 + 预览 drawer；测试 2 按两步向导全流程（含 schema 保存解锁策略编辑器、PUT configuration 的 `label_schema_id` 与 `cluster_labels` 机器键 `label-1` 断言、最终预览 `configuration_complete` 收尾、指派对话框 antd Select 交互）。策略编辑器容器为 div 无隐式 region role，用 `[aria-label="自动标注策略配置"]` 定位；「返回任务列表」header/footer 双按钮取 `.last()`。
+- 环境事故（非规格问题）：本地 8000 端口 `--reload` 模式 uvicorn（违反本地后端约定）致 login 偶发失败，清理孤儿 reloader 及其 multiprocessing worker 后按约定以 `--host 0.0.0.0 --port 8000` 重启恢复；主平台 `/api/auth/login` 为 OAuth2 表单格式（非 JSON），curl 探测须用 `x-www-form-urlencoded`。
+- 测试：本地 `npx playwright test e2e/generic-platform-acceptance.spec.ts --project=chromium` **2/2 passed**；回归 `generic-annotation-portal.spec.ts + automl-multioutput.spec.ts` **5/5 passed**。
+- 遗留：待提交推送后重新 dispatch full 模式远程 CI，全绿后核对 `week11-12-verification-evidence` 产物中 19 份收据。
+
 ### 2026-09-22 远程 CI 第二轮 full 模式失败修复：BACKEND_PORT 对齐与 E2E 规格同步
 
 - 需求：首轮修复（65e338a）推送后重新 dispatch 的 full 模式 run 中，`Production experiment integration` 与 `browser-acceptance`（含 `generic-annotation-portal.spec.ts` 3 例、`automl-multioutput.spec.ts` 1 例）仍失败。
