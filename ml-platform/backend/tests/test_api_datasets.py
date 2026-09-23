@@ -4,7 +4,12 @@ sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import Base, engine
+from app.database import Base, SessionLocal, engine
+from app.models.artifact import Artifact
+from app.models.data_version import DatasetVersion
+from app.models.platform_models import GenericAnnotationTask
+from app.models.user import User
+from app.services.artifact_service import build_artifact_service
 from tests.auth_test_support import ensure_admin
 
 Base.metadata.create_all(bind=engine)
@@ -66,6 +71,28 @@ class TestDatasetsAPI(unittest.TestCase):
         self.assertIn("preview", data)
         self.assertIn("total_rows", data)
 
+    def test_03_preview_limit_returns_all_rows_when_zero(self):
+        rows = "\n".join(f"{index},{index * 10}" for index in range(1, 16))
+        csv = self._make_csv(f"col1,col2\n{rows}\n")
+        r = client.post(
+            f"/api/projects/{self.project_id}/datasets/upload",
+            files={"file": ("preview-limit.csv", csv, "text/csv")},
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 200)
+        aid = r.json()["id"]
+
+        default = client.get(f"/api/datasets/{aid}/preview", headers=self.h).json()
+        self.assertEqual(len(default["preview"]), 10)
+        self.assertEqual(default["total_rows"], 15)
+
+        capped = client.get(f"/api/datasets/{aid}/preview?limit=2", headers=self.h).json()
+        self.assertEqual(len(capped["preview"]), 2)
+
+        everything = client.get(f"/api/datasets/{aid}/preview?limit=0", headers=self.h).json()
+        self.assertEqual(len(everything["preview"]), 15)
+        self.assertEqual(everything["total_rows"], 15)
+
     def test_03_raw_download_matches_stored_dataset_bytes(self):
         aid = self.artifact_ids[0]
         response = client.get(f"/api/datasets/{aid}/download", headers=self.h)
@@ -97,18 +124,52 @@ class TestDatasetsAPI(unittest.TestCase):
         item = next(entry for entry in r.json()["items"] if entry["id"] == self.artifact_ids[0])
         self.assertEqual(item["project_name"], "DatasetTestProject")
 
-    def test_03c_delete_dataset_removes_the_owned_artifact(self):
+    def test_03b2_dataset_lists_hide_internal_normalized_artifact(self):
+        r = client.get("/api/datasets", headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(any(item["name"] == "normalized.csv" for item in r.json()["items"]))
+
+    def test_03c_delete_allows_dataset_artifact_without_task_reference(self):
         uploaded = client.post(
             f"/api/projects/{self.project_id}/datasets/upload",
-            files={"file": ("delete-me.csv", self._make_csv(), "text/csv")},
+            files={"file": ("immutable.csv", self._make_csv(), "text/csv")},
             headers=self.h,
         )
         self.assertEqual(uploaded.status_code, 200)
         dataset_id = uploaded.json()["id"]
         response = client.delete(f"/api/datasets/{dataset_id}", headers=self.h)
         self.assertEqual(response.status_code, 204)
-        preview = client.get(f"/api/datasets/{dataset_id}/preview", headers=self.h)
-        self.assertEqual(preview.status_code, 404)
+
+    def test_03c1_delete_rejects_dataset_artifact_used_by_annotation_task(self):
+        uploaded = client.post(
+            f"/api/projects/{self.project_id}/datasets/upload",
+            files={"file": ("task-used.csv", self._make_csv(), "text/csv")},
+            headers=self.h,
+        )
+        self.assertEqual(uploaded.status_code, 200)
+        dataset_id = uploaded.json()["id"]
+        with SessionLocal() as db:
+            version = db.query(DatasetVersion).filter(
+                DatasetVersion.original_artifact_id == uuid.UUID(dataset_id),
+            ).one()
+            owner_id = db.query(User.id).filter(User.username == "admin").scalar()
+            task = GenericAnnotationTask(
+                project_id=uuid.UUID(self.project_id),
+                dataset_version_id=version.id,
+                label_schema_id=uuid.uuid4(),
+                owner_id=owner_id,
+                idempotency_key=f"task-used-{dataset_id}",
+                task_snapshot={},
+                label_snapshot={},
+                status="running",
+            )
+            db.add(task)
+            db.commit()
+        response = client.delete(f"/api/datasets/{dataset_id}", headers=self.h)
+        self.assertEqual(response.status_code, 409)
+        detail = response.json()["detail"]
+        self.assertEqual(detail["code"], "DATASET_IN_USE")
+        self.assertEqual(detail["task_status"], "running")
 
     def test_03d_zero_row_dataset_can_be_deleted(self):
         uploaded = client.post(
@@ -118,8 +179,19 @@ class TestDatasetsAPI(unittest.TestCase):
         )
         self.assertEqual(uploaded.status_code, 200)
         self.assertEqual(uploaded.json()["row_count"], 0)
+        dataset_id = uploaded.json()["id"]
+        deleted = client.delete(f"/api/datasets/{dataset_id}", headers=self.h)
+        self.assertEqual(deleted.status_code, 204)
 
-        deleted = client.delete(f"/api/datasets/{uploaded.json()['id']}", headers=self.h)
+    def test_03e_delete_unreferenced_legacy_artifact(self):
+        uploaded = client.post(
+            f"/api/projects/{self.project_id}/datasets/batch-upload",
+            files=[("files", ("legacy.bin", io.BytesIO(b"legacy"), "application/octet-stream"))],
+            headers=self.h,
+        )
+        self.assertEqual(uploaded.status_code, 200)
+        dataset_id = uploaded.json()["files"][0]["artifact_id"]
+        deleted = client.delete(f"/api/datasets/{dataset_id}", headers=self.h)
         self.assertEqual(deleted.status_code, 204)
 
     def test_04_preview_nonexistent_dataset(self):

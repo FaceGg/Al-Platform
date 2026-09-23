@@ -3,7 +3,7 @@ __pycache__/
 *.db
 *.db-*
 .env
-.venv/
+.venv*/
 artifact_store/
 exports/
 uploads/
@@ -11,3 +11,8 @@ data/
 temp_test/
 .coverage
 .pytest_cache/
+node_modules
+dist
+coverage
+.vite
+*.log

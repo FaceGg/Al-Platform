@@ -6,19 +6,272 @@ from dataclasses import dataclass, field
 from typing import Callable, Literal, Mapping, Sequence
 
 import numpy as np
+import pandas as pd
 import optuna
 from optuna.exceptions import TrialPruned
 from optuna.pruners import HyperbandPruner, NopPruner
 from optuna.samplers import GridSampler, NSGAIISampler, RandomSampler, TPESampler
 from optuna.trial import FrozenTrial, TrialState
 from sklearn.base import clone
-from sklearn.metrics import f1_score, get_scorer, roc_auc_score
+from sklearn.metrics import f1_score, get_scorer, mean_absolute_error, mean_squared_error, r2_score, roc_auc_score
 from sklearn.model_selection import KFold, StratifiedKFold, cross_val_predict, cross_val_score, train_test_split
 
 from app.services.automl_catalog import AlgorithmFamily, AlgorithmUnavailable, ParameterSpec, TaskType
 
 
 SEARCH_METHODS = frozenset({"grid", "random", "bayesian", "evolutionary", "multi_fidelity"})
+SEARCH_STRENGTHS = frozenset({"light", "medium", "high", "ultra"})
+# The user-facing presets are 30/60/120/240 minutes. Worker deadlines remain
+# seconds so existing execution code and persisted task parameters are unambiguous.
+CANONICAL_SEARCH_TIME_BUDGETS = frozenset({1800, 3600, 7200, 14400})
+SEARCH_TIME_BUDGETS = frozenset({60, 300, 600}) | CANONICAL_SEARCH_TIME_BUDGETS
+SEARCH_STRENGTH_TRIALS = {"light": 10, "medium": 30, "high": 80, "ultra": 200}
+
+PERSISTED_TASK_TYPES = frozenset({"classification", "multioutput_classification", "regression", "multioutput_regression"})
+TASK_TYPE_ALIASES = {"multilabel_classification": "multioutput_classification", "multiregression": "multioutput_regression"}
+
+
+def normalize_search_controls(
+    *,
+    strength: str = "medium",
+    time_budget: int = 3600,
+    class_weight: bool = True,
+) -> dict[str, object]:
+    normalized_strength = str(strength).strip().lower()
+    if normalized_strength not in SEARCH_STRENGTHS:
+        raise AutoMLContractError("invalid search strength")
+    if isinstance(time_budget, bool) or int(time_budget) not in SEARCH_TIME_BUDGETS:
+        raise AutoMLContractError("invalid time budget")
+    if not isinstance(class_weight, bool):
+        raise AutoMLContractError("class_weight must be boolean")
+    return {
+        "strength": normalized_strength,
+        "time_budget": int(time_budget),
+        "class_weight": class_weight,
+    }
+
+
+class AutoMLContractError(ValueError):
+    code = "AUTOML_CONTRACT_INVALID"
+
+
+def iterative_stratified_splits(targets: pd.DataFrame, *, n_splits: int, random_seed: int = 42):
+    """Greedily balance every target/class indicator across deterministic folds."""
+    if n_splits < 2:
+        raise AutoMLContractError("cross_validation_folds must be at least two")
+    indicators = []
+    for column in targets.columns:
+        for value in sorted(targets[column].unique(), key=str):
+            indicator = (targets[column].to_numpy() == value).astype(int)
+            if int(indicator.sum()) < n_splits:
+                raise AutoMLContractError("class counts must support requested folds")
+            indicators.append(indicator)
+    matrix = np.column_stack(indicators)
+    rng = np.random.default_rng(random_seed)
+    order_noise = rng.random(len(targets))
+    desired_labels = matrix.sum(axis=0, dtype=float) / n_splits
+    desired_sizes = np.full(n_splits, len(targets) / n_splits, dtype=float)
+    fold_labels = np.zeros((n_splits, matrix.shape[1]), dtype=float)
+    fold_sizes = np.zeros(n_splits, dtype=float)
+    unassigned = set(range(len(targets)))
+    assignments = np.full(len(targets), -1, dtype=int)
+    while unassigned:
+        remaining = matrix[list(unassigned)].sum(axis=0)
+        positive_labels = np.flatnonzero(remaining)
+        if not len(positive_labels):
+            selected = min(unassigned, key=lambda index: order_noise[index])
+        else:
+            rarest = positive_labels[np.argmin(remaining[positive_labels])]
+            candidates = [index for index in unassigned if matrix[index, rarest]]
+            selected = max(candidates, key=lambda index: (int(matrix[index].sum()), -order_noise[index]))
+        sample_labels = np.flatnonzero(matrix[selected])
+        deficits = desired_labels[sample_labels] - fold_labels[:, sample_labels]
+        label_need = deficits.sum(axis=1)
+        size_need = desired_sizes - fold_sizes
+        fold = max(range(n_splits), key=lambda index: (label_need[index], size_need[index], -index))
+        assignments[selected] = fold
+        fold_labels[fold] += matrix[selected]
+        fold_sizes[fold] += 1
+        unassigned.remove(selected)
+    indexes = np.arange(len(targets))
+    return [
+        (indexes[assignments != fold].tolist(), indexes[assignments == fold].tolist())
+        for fold in range(n_splits)
+    ]
+
+
+def auc_tier(per_target_auc: Mapping[str, float | None]) -> str:
+    return "complete" if per_target_auc and all(value is not None and math.isfinite(float(value)) for value in per_target_auc.values()) else "incomplete"
+
+
+def normalize_task_type(raw: str) -> str:
+    value = TASK_TYPE_ALIASES.get(str(raw).strip().lower(), str(raw).strip().lower())
+    if value not in PERSISTED_TASK_TYPES:
+        raise AutoMLContractError("unsupported task type")
+    return value
+
+
+@dataclass(frozen=True)
+class AutoMLContract:
+    task_type: str
+    target_columns: list[str]
+    input_columns: list[str] | None = None
+    cross_validation_folds: int = 5
+    random_seed: int = 42
+
+    def __post_init__(self):
+        object.__setattr__(self, "task_type", normalize_task_type(self.task_type))
+        if not 2 <= int(self.cross_validation_folds) <= 5:
+            raise AutoMLContractError("cross_validation_folds must be between 2 and 5")
+        if not self.target_columns or len(set(self.target_columns)) != len(self.target_columns):
+            raise AutoMLContractError("target columns must be unique")
+        if "multioutput" in self.task_type and len(self.target_columns) < 2:
+            raise AutoMLContractError("multioutput tasks require at least two targets")
+        if "multioutput" not in self.task_type and len(self.target_columns) != 1:
+            raise AutoMLContractError("single-output tasks require one target")
+
+
+@dataclass(frozen=True)
+class TargetReport:
+    macro_f1: float | None = None
+    auc: float | None = None
+    accuracy: float | None = None
+    r2: float | None = None
+    rmse: float | None = None
+    mae: float | None = None
+
+
+@dataclass(frozen=True)
+class AutoMLExecutionResult:
+    per_target: dict[str, TargetReport]
+    cv_strategy: str
+    candidates: tuple["CandidateSummary", ...] = ()
+
+
+@dataclass(frozen=True)
+class CandidateSummary:
+    algorithm_id: str
+    auc: float | None = None
+    macro_f1: float | None = None
+    accuracy: float | None = None
+    runtime_s: float = 0.0
+    r2: float | None = None
+    rmse: float | None = None
+    mae: float | None = None
+
+
+@dataclass(frozen=True)
+class FeatureImportanceReport:
+    by_feature: dict[str, float]
+
+
+def validate_target_columns(frame, task_type: str, target_columns: list[str]):
+    task = normalize_task_type(task_type)
+    if len(set(target_columns)) != len(target_columns):
+        raise AutoMLContractError("target columns must be unique")
+    missing = [column for column in target_columns if column not in frame.columns]
+    if missing:
+        raise AutoMLContractError("missing target columns")
+    for column in target_columns:
+        values = frame[column]
+        if values.isna().any():
+            raise AutoMLContractError("target contains missing values")
+        if "regression" in task:
+            if not pd.api.types.is_numeric_dtype(values):
+                raise AutoMLContractError("regression target must be numeric")
+            if not np.isfinite(np.asarray(values, dtype=float)).all():
+                raise AutoMLContractError("target contains non-finite values")
+        if "classification" in task:
+            if pd.api.types.is_float_dtype(values) and not np.all(np.asarray(values) == np.asarray(values).astype(int)):
+                raise AutoMLContractError("classification target must be categorical or integral")
+            if values.nunique(dropna=False) < 2:
+                raise AutoMLContractError("target requires at least two classes")
+    return True
+
+
+def aggregate_feature_importance(per_target: dict[str, Sequence[float]], feature_map: Sequence[str]) -> FeatureImportanceReport:
+    arrays = [np.asarray(values, dtype=float) for values in per_target.values()]
+    if not arrays:
+        return FeatureImportanceReport({})
+    matrix = np.vstack(arrays)
+    means = np.mean(np.abs(matrix), axis=0)
+    return FeatureImportanceReport({name: float(means[index]) for index, name in enumerate(feature_map) if index < len(means)})
+
+
+def rank_candidates(candidates: Sequence[CandidateSummary], task_type: str) -> list[CandidateSummary]:
+    normalized_task = normalize_task_type(task_type)
+    if "regression" in normalized_task:
+        return sorted(candidates, key=lambda item: (
+            -(item.r2 if item.r2 is not None else float("-inf")),
+            item.rmse if item.rmse is not None else float("inf"),
+            item.mae if item.mae is not None else float("inf"),
+            item.runtime_s,
+        ))
+    return sorted(candidates, key=lambda item: (
+        -(item.auc if item.auc is not None else -1),
+        -(item.macro_f1 if item.macro_f1 is not None else -1),
+        -(item.accuracy if item.accuracy is not None else -1),
+        item.runtime_s,
+    ))
+
+
+def run_automl_search(frame, contract: AutoMLContract) -> AutoMLExecutionResult:
+    validate_target_columns(frame, contract.task_type, contract.target_columns)
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+    from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+    from sklearn.model_selection import KFold, StratifiedKFold, cross_val_predict
+    features = frame[contract.input_columns or [c for c in frame.columns if c not in contract.target_columns]].select_dtypes(include=["number"])
+    reports = {}
+    strategy = "iterative_stratified" if contract.task_type == "multioutput_classification" else ("stratified" if "classification" in contract.task_type else "kfold")
+    if contract.task_type == "multioutput_classification":
+        # Build one shared fold assignment from the joint label distribution.
+        splits = iterative_stratified_splits(
+            frame[contract.target_columns],
+            n_splits=contract.cross_validation_folds,
+            random_seed=contract.random_seed,
+        )
+    else:
+        splits = None
+    for target in contract.target_columns:
+        y = frame[target].to_numpy()
+        if "classification" in contract.task_type:
+            estimator = RandomForestClassifier(n_estimators=40, random_state=contract.random_seed, n_jobs=1)
+            splitter = splits if splits is not None else StratifiedKFold(contract.cross_validation_folds, shuffle=True, random_state=contract.random_seed)
+            pred = cross_val_predict(estimator, features, y, cv=splitter, method="predict")
+            scoring = None
+            for score_method in ("predict_proba", "decision_function"):
+                try:
+                    scoring = cross_val_predict(estimator, features, y, cv=splitter, method=score_method)
+                    break
+                except (AttributeError, TypeError, ValueError):
+                    continue
+            auc = None
+            if scoring is not None:
+                values = np.asarray(scoring)
+                try:
+                    if values.ndim == 1:
+                        auc = float(roc_auc_score(y, values))
+                    elif values.ndim == 2 and values.shape[1] == 2:
+                        auc = float(roc_auc_score(y, values[:, 1]))
+                    elif values.ndim == 2:
+                        auc = float(roc_auc_score(y, values, multi_class="ovr", average="macro"))
+                except (TypeError, ValueError):
+                    auc = None
+            reports[target] = TargetReport(
+                macro_f1=float(f1_score(y, pred, average="macro")),
+                accuracy=float(accuracy_score(y, pred)),
+                auc=auc,
+            )
+        else:
+            estimator = RandomForestRegressor(n_estimators=40, random_state=contract.random_seed, n_jobs=1)
+            splitter = KFold(contract.cross_validation_folds, shuffle=True, random_state=contract.random_seed)
+            pred = cross_val_predict(estimator, features, y, cv=splitter)
+            reports[target] = TargetReport(
+                r2=float(r2_score(y, pred)),
+                rmse=float(np.sqrt(mean_squared_error(y, pred))),
+                mae=float(mean_absolute_error(y, pred)),
+            )
+    return AutoMLExecutionResult(per_target=reports, cv_strategy=strategy)
 
 
 class AllFamilySearchesFailed(RuntimeError):
@@ -143,6 +396,14 @@ def _suggest_params(
         for name, spec in family.search_space.items()
         if name != exclude
     }
+
+
+def _suggest_grid_params(trial: optuna.Trial, family: AlgorithmFamily) -> dict[str, object]:
+    """Sample only declared grid dimensions and retain family defaults elsewhere."""
+    params = dict(family.default_params)
+    for name, values in family.grid.items():
+        params[name] = trial.suggest_categorical(name, list(values))
+    return params
 
 
 def _resource_rungs(family: AlgorithmFamily) -> tuple[int, ...]:
@@ -300,6 +561,7 @@ def run_family_search(
     progress_callback: Callable[[TrialProgress], None] | None = None,
     trial_callback: Callable[[TrialSummary], None] | None = None,
     estimator_evaluator: Callable[..., float] = _evaluate_estimator,
+    estimator_builder: Callable[[AlgorithmFamily, TaskType, Mapping[str, object]], object] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> FamilySearchResult:
     """Optimize one selected algorithm family within a bounded wall-time slice."""
@@ -318,6 +580,11 @@ def run_family_search(
         result.error_message = str(error)
         return result
 
+    def build_estimator(params: Mapping[str, object]):
+        if estimator_builder is not None:
+            return estimator_builder(family, task, params)
+        return family.build(task, params)
+
     sampler, pruner = build_optuna_components(
         config.method,
         family.grid,
@@ -335,7 +602,7 @@ def run_family_search(
                 for resource in _resource_rungs(family):
                     rung_params = {**params, family.resource_parameter: resource}
                     score = _finite_score(estimator_evaluator(
-                        family.build(task, rung_params), task=task, features=features,
+                        build_estimator(rung_params), task=task, features=features,
                         target=target, evaluation=evaluation,
                     ))
                     trial.report(score, step=resource)
@@ -344,7 +611,7 @@ def run_family_search(
                 if task == "classification" and estimator_evaluator is _evaluate_estimator:
                     try:
                         auc, f1 = classification_metrics(
-                            family.build(task, {**params, family.resource_parameter: family.max_resource}),
+                            build_estimator({**params, family.resource_parameter: family.max_resource}),
                             features=features,
                             target=target,
                             evaluation=evaluation,
@@ -358,15 +625,15 @@ def run_family_search(
                         pass
                 return score
 
-            params = _suggest_params(trial, family)
+            params = _suggest_grid_params(trial, family) if config.method == "grid" else _suggest_params(trial, family)
             score = _finite_score(estimator_evaluator(
-                family.build(task, params), task=task, features=features,
+                build_estimator(params), task=task, features=features,
                 target=target, evaluation=evaluation,
             ))
             if task == "classification" and estimator_evaluator is _evaluate_estimator:
                 try:
                     auc, f1 = classification_metrics(
-                        family.build(task, params),
+                        build_estimator(params),
                         features=features,
                         target=target,
                         evaluation=evaluation,
@@ -427,7 +694,7 @@ def run_family_search(
     best_params = dict(best_trial.params)
     if config.method == "multi_fidelity":
         best_params[family.resource_parameter] = family.max_resource
-    estimator = family.build(task, best_params)
+    estimator = build_estimator(best_params)
     estimator.fit(features, target)
     result.status = "completed"
     result.best_score = float(best_trial.value)

@@ -113,7 +113,7 @@ export default function TemplateWizardPage() {
         </Descriptions>
       </div>
 
-      <Form form={form} layout="vertical" onFinish={submit} requiredMark="optional">
+      <Form form={form} layout="vertical" onFinish={submit} requiredMark="optional" autoComplete="off">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 20 }}>
           <section>
             <Title level={5}>{labels.project}</Title>
@@ -125,7 +125,7 @@ export default function TemplateWizardPage() {
                 />
               </Form.Item>
               <Button icon={<PlusOutlined />} onClick={() => setCreatingProject(true)}>{labels.create_project}</Button>
-            </> : <Form form={projectForm} component={false} onFinish={createProject}>
+            </> : <Form form={projectForm} component={false} onFinish={createProject} autoComplete="off">
               <Form.Item name="name" label={labels.project_name} rules={[{ required: true }]}><Input /></Form.Item>
               <Form.Item name="description" label={labels.project_description}><Input.TextArea rows={2} /></Form.Item>
               <Space wrap>

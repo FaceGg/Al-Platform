@@ -118,6 +118,12 @@ class ModelVersion(Base):
             "approval_status",
             "created_at",
         ),
+        Index(
+            "uq_model_versions_registration_idempotency",
+            "registration_task_id",
+            "registration_idempotency_key",
+            unique=True,
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -149,6 +155,10 @@ class ModelVersion(Base):
     output_schema = Column(JSON, nullable=False, default=dict)
     metrics = Column(JSON, nullable=False, default=dict)
     conversion_metadata = Column(JSON, nullable=False, default=dict)
+    lifecycle_state = Column(String(16), nullable=False, default="pending_review")
+    registration_task_id = Column(UUID(as_uuid=True), nullable=True)
+    registration_candidate_id = Column(String(128), nullable=True)
+    registration_idempotency_key = Column(String(128), nullable=True)
     approval_status = Column(String(16), nullable=False, default="pending")
     approval_comment = Column(Text, nullable=False, default="")
     approved_by_id = Column(

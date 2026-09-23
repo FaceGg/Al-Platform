@@ -365,7 +365,7 @@ class Store(BaseOperator):
     outputs = [PortSpec('data', 'DataTable', 'Passthrough')]
     parameters = [
         ParamSpec('repository_entry', 'str', '', 'Repository path', required=True),
-        ParamSpec('overwrite', 'bool', False, 'Overwrite existing'),
+        ParamSpec('overwrite', 'boolean', False, 'Overwrite existing'),
     ]
     def validate(self, inputs): return True
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:

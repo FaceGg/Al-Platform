@@ -2,6 +2,7 @@ import { App as AntApp, Form, Input, Button, Card, Typography } from "antd";
 import { UserOutlined, LockOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { useNavigate, Link } from "react-router-dom";
 import { login } from "../api/auth";
+import { formatApiError } from "../api/client";
 import { useTheme } from "../stores/themeContext";
 
 const { Title, Text } = Typography;
@@ -20,8 +21,14 @@ export default function LoginPage() {
       localStorage.setItem("role", result.role);
       message.success("登录成功");
       navigate("/");
-    } catch {
-      message.error("用户名或密码错误");
+    } catch (error: any) {
+      if (error?.response?.status === 429) {
+        message.error("登录尝试过于频繁，请稍后再试");
+      } else if (error?.response?.status === 401) {
+        message.error("用户名或密码错误");
+      } else {
+        message.error(formatApiError(error, "登录失败，请检查服务状态"));
+      }
     }
   };
 
@@ -36,12 +43,12 @@ export default function LoginPage() {
           <Text type="secondary">工业智能平台</Text>
         </div>
 
-        <Form onFinish={onFinish} size="large">
+        <Form onFinish={onFinish} size="large" autoComplete="off">
           <Form.Item name="username" rules={[{ required: true, message: "请输入用户名" }]}>
-            <Input prefix={<UserOutlined />} placeholder="用户名" className="auth-input" />
+            <Input prefix={<UserOutlined />} placeholder="用户名" className="auth-input" autoComplete="username" />
           </Form.Item>
           <Form.Item name="password" rules={[{ required: true, message: "请输入密码" }]}>
-            <Input.Password prefix={<LockOutlined />} placeholder="密码" className="auth-input" />
+            <Input.Password prefix={<LockOutlined />} placeholder="密码" className="auth-input" autoComplete="current-password" />
           </Form.Item>
           <Form.Item style={{ marginBottom: 12 }}>
             <Button type="primary" htmlType="submit" block className="auth-submit">登录</Button>

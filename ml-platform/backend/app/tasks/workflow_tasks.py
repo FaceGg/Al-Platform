@@ -2,7 +2,7 @@
 
 import uuid
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from app.database import SessionLocal
 from app.events.base import NullRunEventPublisher
@@ -11,10 +11,7 @@ from app.models.run import WorkflowRun
 from app.config import settings
 from app.services.workflow_execution import execute_workflow_run
 from app.tasks.celery_app import celery_app
-
-
-def utcnow():
-    return datetime.now(timezone.utc)
+from app.tasks.time_utils import _aware, utcnow
 
 
 def claim_run(db, run_id, task_id: str, worker_id: str, stale_after: timedelta = timedelta(minutes=2)) -> bool:
@@ -34,10 +31,6 @@ def claim_run(db, run_id, task_id: str, worker_id: str, stale_after: timedelta =
     run.heartbeat_at = utcnow()
     db.commit()
     return True
-
-
-def _aware(value):
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
 def build_event_publisher():

@@ -1,5 +1,7 @@
 """FastAPI application entry point."""
 
+GENERICIZATION_BRIDGE_ONLY = True
+
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 import asyncio
@@ -18,10 +20,12 @@ from app.database_schema import require_current_schema
 from app.events.subscriber import RedisRunEventSubscriber
 from app.events.domain import DomainEventRecorder, NullDomainEventRecorder
 from app.middleware.request_id import RequestIdMiddleware
+from app.middleware.security import RequestSecurityMiddleware
 from app.websocket.manager import manager
 from app.services.project_access import ProjectAccessError
 from app.services.resource_access import ResourceAccessError
 from app.services.notification_outbox import OutboxDomainEventRecorder
+from app.services.security import expand_local_dev_origins
 from app.services.spot_weld_quality import recover_orphaned_local_quality_runs
 
 # Import all operators so they register themselves
@@ -38,6 +42,7 @@ from app.models import access as access_models  # noqa: F401 (register models)
 from app.models import platform_audit as platform_audit_models  # noqa: F401 (register models)
 from app.models import notifications as notification_models  # noqa: F401 (register models)
 from app.models import spot_weld_quality as spot_weld_quality_models  # noqa: F401 (register models)
+from app.models import annotator as annotator_models  # noqa: F401 (register models)
 
 import app.operators.io_operators  # noqa: F401
 import app.operators.processing  # noqa: F401
@@ -62,6 +67,7 @@ from app.api import auth, projects, workflows, runs, operators, datasets, workfl
 from app.api import users, models as model_api
 from app.api import knowledge, monitor, labeling, training, orchestration
 from app.api import algorithm as algo_api, platform_api, compute, annotations as annot_api, chat as chat_api
+from app.api import generic_tasks as generic_tasks_api, annotation_task_state as annotation_task_state_api
 from app.api import model_library as model_lib_api, dashboard as dash_api, readiness, experiments, schedules
 from app.api import project_access as project_access_api
 from app.api import model_registry as model_registry_api
@@ -69,6 +75,9 @@ from app.api import inference_production as inference_production_api
 from app.api import platform_security as platform_security_api
 from app.api import notifications as notifications_api
 from app.api import spot_weld_quality as spot_weld_quality_api
+from app.api import annotator_internal as annotator_internal_api
+from app.api import annotation_returns as annotation_returns_api
+from app.api import model_exports as model_exports_api
 
 
 def initialize_database(app_settings=None, db_engine=None) -> None:
@@ -222,6 +231,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             db_engine.dispose()
 
 
+def _allowed_origins() -> frozenset[str]:
+    configured = {
+        settings.frontend_origin,
+        settings.annotator_public_origin,
+        *(
+            value.strip()
+            for value in settings.frontend_origin_aliases.split(",")
+            if value.strip()
+        ),
+    }
+    if settings.app_mode == "local":
+        return expand_local_dev_origins(configured)
+    return frozenset(configured)
+
+
+_ALLOWED_ORIGINS = _allowed_origins()
+
+
 app = FastAPI(
     title="AI模型训练编排平台",
     description="Web-based visual AI model training orchestration platform",
@@ -232,10 +259,14 @@ app.state.domain_event_recorder = OutboxDomainEventRecorder()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=sorted(_ALLOWED_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+app.add_middleware(
+    RequestSecurityMiddleware,
+    allowed_origins=_ALLOWED_ORIGINS,
 )
 
 
@@ -277,6 +308,7 @@ app.include_router(knowledge.router)
 app.include_router(monitor.router)
 app.include_router(labeling.router)
 app.include_router(training.router)
+app.include_router(training.spec_router)
 app.include_router(orchestration.router)
 app.include_router(algo_api.router)
 app.include_router(platform_api.router)
@@ -292,8 +324,15 @@ app.include_router(model_registry_api.router)
 app.include_router(inference_production_api.router)
 app.include_router(platform_security_api.router)
 app.include_router(notifications_api.router)
+# Generic task routes are registered before the deprecated industry route so
+# the closed legacy write path cannot shadow the new platform boundary.
+app.include_router(generic_tasks_api.router)
+app.include_router(annotation_task_state_api.router)
+app.include_router(annotation_returns_api.router)
+app.include_router(model_exports_api.router)
 app.include_router(spot_weld_quality_api.router)
 app.include_router(spot_weld_quality_api.all_runs_router)
+app.include_router(annotator_internal_api.router)
 
 
 @app.get("/api/health")

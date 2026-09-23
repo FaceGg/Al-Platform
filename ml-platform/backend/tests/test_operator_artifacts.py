@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import uuid
+import numpy as np
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -50,6 +51,31 @@ class RecordingArtifactService:
 
 
 class TestOperatorArtifactPersistence(unittest.TestCase):
+    def test_executor_sanitizes_numpy_values_in_completed_preview(self):
+        class NumpyOperator(BaseOperator):
+            id = "test_numpy_preview_operator"
+            name = "Test Numpy Preview"
+            category = "test"
+            inputs = []
+            outputs = [PortSpec("data", "JSON", "Data")]
+            parameters = []
+
+            def validate(self, inputs):
+                return True
+
+            def execute(self, context, inputs, params):
+                return OperatorResult(outputs={"data": [{"value": np.int64(7), "ratio": np.float64(0.5)}]})
+
+        register_operator(NumpyOperator)
+        events = []
+        DAGExecutor(
+            nodes=[{"id": "node-numpy", "operator_id": NumpyOperator.id, "params": {}}],
+            edges=[],
+        ).execute("run-numpy", lambda *event: events.append(event))
+
+        completed = next(event for event in events if event[2] == "completed")
+        assert completed[3]["data"] == [{"value": 7, "ratio": 0.5}]
+
     def test_executor_persists_drafts_and_returns_references(self):
         service = RecordingArtifactService()
         executor = DAGExecutor(

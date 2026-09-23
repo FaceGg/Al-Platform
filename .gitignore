@@ -30,6 +30,7 @@ test-results/
 playwright-report/
 coverage/
 .venv/
+.venv*/
 venv/
 *.egg-info/
 .DS_Store

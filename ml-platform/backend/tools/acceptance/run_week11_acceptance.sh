@@ -77,7 +77,7 @@ fi
 
 bash "$ROOT/ml-platform/backend/tools/acceptance/run_performance.sh"
 
-MC_CONTAINER="$(docker create minio/mc:latest)"
+MC_CONTAINER="$(docker create quay.io/minio/mc:latest)"
 docker cp "$MC_CONTAINER:/usr/bin/mc" "$MC_PATH"
 chmod 0555 "$MC_PATH"
 docker rm -f "$MC_CONTAINER" >/dev/null

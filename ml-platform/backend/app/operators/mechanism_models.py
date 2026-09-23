@@ -90,7 +90,7 @@ class MechanismThermalConduction(BaseOperator):
         PortSpec("peak_temperature", "float", "熔核中心最高温度 (K)"),
         PortSpec("melt_radius", "float", "超过熔点的区域半径估算 (mm)"),
         PortSpec("is_melted", "boolean", "是否达到熔点"),
-        PortSpec("temperature_profile", "table", "沿径向的温度分布"),
+        PortSpec("temperature_profile", "JSON", "沿径向的温度分布"),
         PortSpec("warnings", "list[str]", "工艺警告信息"),
     ]
     parameters = [
@@ -218,7 +218,7 @@ class MechanismNuggetGrowth(BaseOperator):
         PortSpec("nugget_penetration_mm", "float", "熔深 (mm)"),
         PortSpec("min_required_diameter_mm", "float", "最小要求直径 (mm, 按标准估算)"),
         PortSpec("diameter_ok", "boolean", "直径是否达标"),
-        PortSpec("details", "table", "计算详细参数"),
+        PortSpec("details", "JSON", "计算详细参数"),
     ]
     parameters = [
         ParamSpec("current_ka", "float", 10.0, "焊接电流 (kA)", range_min=2.0, range_max=50.0),
@@ -324,11 +324,11 @@ class MechanismWeldLobe(BaseOperator):
     version = "1.0"
     inputs = []
     outputs = [
-        PortSpec("current_range_ka", "table", "可焊电流范围"),
-        PortSpec("time_range_ms", "table", "可焊时间范围"),
+        PortSpec("current_range_ka", "JSON", "可焊电流范围"),
+        PortSpec("time_range_ms", "JSON", "可焊时间范围"),
         PortSpec("is_in_lobe", "boolean", "给定参数是否在窗口内"),
         PortSpec("margin_pct", "float", "参数距窗口边界的余量 (%)"),
-        PortSpec("recommended_params", "table", "推荐参数区间"),
+        PortSpec("recommended_params", "JSON", "推荐参数区间"),
     ]
     parameters = [
         ParamSpec("current_ka", "float", 10.0, "焊接电流 (kA)", range_min=2.0, range_max=50.0),
@@ -441,7 +441,7 @@ class MechanismSplashPredict(BaseOperator):
     outputs = [
         PortSpec("splash_probability", "float", "飞溅概率 (0-1)"),
         PortSpec("risk_level", "str", "风险等级 (低/中/高/极高)"),
-        PortSpec("factor_contributions", "table", "各因素贡献度"),
+        PortSpec("factor_contributions", "JSON", "各因素贡献度"),
         PortSpec("recommendations", "list[str]", "参数调整建议"),
     ]
     parameters = [
@@ -694,7 +694,7 @@ class MechanismValidationGate(BaseOperator):
         PortSpec("all_pass", "boolean", "全部检查是否通过"),
         PortSpec("passed_count", "int", "通过检查数"),
         PortSpec("total_count", "int", "总检查数"),
-        PortSpec("model_results", "table", "各模型结果汇总"),
+        PortSpec("model_results", "JSON", "各模型结果汇总"),
         PortSpec("overall_risk", "str", "综合风险等级"),
     ]
     parameters = [

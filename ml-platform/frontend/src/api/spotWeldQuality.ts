@@ -491,8 +491,11 @@ export async function createQualityRun(
     workflow_kind?: "quality_modeling" | "data_annotation";
     rule_config?: Partial<QualityRuleConfig>;
   },
+  idempotencyKey = crypto.randomUUID(),
 ) {
-  const response = await apiClient.post(`/projects/${projectId}/spot-weld/runs`, payload);
+  const response = await apiClient.post(`/projects/${projectId}/spot-weld/runs`, payload, {
+    headers: { "X-Request-ID": crypto.randomUUID(), "Idempotency-Key": idempotencyKey },
+  });
   return response.data as QualityRun;
 }
 

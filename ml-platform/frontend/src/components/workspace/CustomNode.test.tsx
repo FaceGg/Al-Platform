@@ -402,12 +402,47 @@ describe("CustomNode visual structure", () => {
       </ReactFlowProvider>,
     );
 
-    expect(screen.getByTestId("port-out-features")).toHaveStyle({ top: "34%", right: "-16px" });
+    expect(screen.getByTestId("port-out-features")).toHaveStyle({ top: "20%", right: "-16px" });
     expect(screen.getByTestId("port-out-schema")).toHaveStyle({ top: "50%", right: "-16px" });
-    expect(screen.getByTestId("port-out-statistics")).toHaveStyle({ top: "66%", right: "-16px" });
+    expect(screen.getByTestId("port-out-statistics")).toHaveStyle({ top: "80%", right: "-16px" });
     expect(cssRule(".workflow-node-handle.react-flow__handle")).toContain("width: 16px !important;");
     expect(cssRule(".workflow-node-handle.react-flow__handle")).toContain("height: 22.4px !important;");
     expect(workflowStyles).not.toContain(".workflow-node--spot-weld-feature-engineering .workflow-node-handle--output.react-flow__handle");
+  });
+
+  it("keeps multi-port handles inside the straight edge, away from the 30px corner arcs", () => {
+    render(
+      <ReactFlowProvider>
+        <CustomNode
+          id="multi-port-node"
+          type="custom"
+          selected={false}
+          dragging={false}
+          zIndex={0}
+          isConnectable
+          xPos={0}
+          yPos={0}
+          data={{
+            nodeId: "multi-port-node",
+            operatorId: "spot_weld_feature_engineering",
+            label: "Spot Weld Feature Engineering",
+            inputs: [{ name: "data", type: "DataTable" }],
+            outputs: [
+              { name: "features", type: "DataTable" },
+              { name: "schema", type: "JSON" },
+              { name: "statistics", type: "JSON" },
+              { name: "model", type: "Model" },
+            ],
+          }}
+        />
+      </ReactFlowProvider>,
+    );
+    // 4-output operators use the wide even spread (20%–80% band, same style
+    // as the spot-weld 3-output layout); tabs stay clear of the 30px arcs.
+    expect(screen.getByTestId("port-out-features")).toHaveStyle({ top: "20%" });
+    expect(screen.getByTestId("port-out-schema")).toHaveStyle({ top: "40%" });
+    expect(screen.getByTestId("port-out-statistics")).toHaveStyle({ top: "60%" });
+    expect(screen.getByTestId("port-out-model")).toHaveStyle({ top: "80%" });
   });
 });
 describe("CustomNode visual density", () => {

@@ -1,6 +1,7 @@
 WEEK_TEST_MODULES: dict[int, list[str]] = {
     1: [
         "test_suite_manifest",
+        "test_genericization_contract",
         "test_module_imports",
         "test_app",
         "test_api_users",
@@ -40,6 +41,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_operators_mechanism",
         "test_artifact_service",
         "test_api_datasets",
+        "test_dataset_import_contract",
+        "test_data_version_migration_graph",
         "test_training",
         "test_training_artifacts",
         "test_operators_optimization",
@@ -104,12 +107,32 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_inference_tasks",
     ],
     17: [
+        "test_annotation_task_state",
+        "test_annotation_task_state_api",
+        "test_annotation_execution_statistics_migration",
+        "test_annotation_strategies",
+        "test_annotation_concurrency",
+        "test_automl_multioutput",
+        "test_label_schema",
+        "test_label_schema_api",
         "test_run_suite",
         "test_spot_weld_quality_models",
         "test_spot_weld_features",
         "test_spot_weld_quality_service",
         "test_api_spot_weld_quality",
         "test_spot_weld_quality_tasks",
+        "test_annotator_auth",
+        "test_annotation_return_acceptance",
+        "test_model_registration_contract",
+        "test_acceptance_manifest",
+        "test_async_operation_contract",
+        "test_model_export_contract",
+        "test_model_exports_api",
+        "test_offline_inference_contract",
+        "test_portal_internal_api",
+        "test_portal_admin_review",
+        "test_saved_annotation_strategies_api",
+        "test_security_contract",
     ],
     9: [
         "test_inference_production_models",
@@ -144,12 +167,15 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
 }
 
 
-# The point-weld-quality AutoML execution chain is retained for historical
-# compatibility, but is no longer part of the default acceptance contract.
-# Run it explicitly with ``run_suite.py --include-deprecated --week 17``.
+# Point-weld-quality modules are retained only as historical compatibility
+# tests. They are not part of the generic platform acceptance contract.
+# Run them explicitly with ``run_suite.py --include-deprecated --week 17``.
 DEPRECATED_TEST_MODULES = {
+    "test_spot_weld_quality_models",
+    "test_spot_weld_features",
     "test_spot_weld_quality_service",
     "test_api_spot_weld_quality",
+    "test_spot_weld_quality_tasks",
 }
 
 

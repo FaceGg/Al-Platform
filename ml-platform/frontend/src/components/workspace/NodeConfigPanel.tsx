@@ -368,6 +368,23 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
   };
 
   const handleFileUpload = async (file: File, paramName: string) => {
+    if (operator?.id === "python_script" && paramName === "script") {
+      if (!file.name.toLowerCase().endsWith(".py")) {
+        message.error(lang === "zh" ? "\u53ea\u80fd\u4e0a\u4f20 .py \u6587\u4ef6" : "Only .py files are supported");
+        return false;
+      }
+      if (file.size > 100_000) {
+        message.error(lang === "zh" ? "\u811a\u672c\u4e0d\u80fd\u8d85\u8fc7 100000 \u5b57\u7b26" : "Script must be at most 100000 characters");
+        return false;
+      }
+      try {
+        handleParamChange(paramName, await file.text());
+        message.success(lang === "zh" ? `\u5df2\u52a0\u8f7d ${file.name}` : `Loaded ${file.name}`);
+      } catch {
+        message.error(lang === "zh" ? "\u8bfb\u53d6\u811a\u672c\u5931\u8d25" : "Unable to read script");
+      }
+      return false;
+    }
     setUploading(true);
     try {
       const formData = new FormData();
@@ -416,15 +433,44 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
     const colName = isColumnParam(p.name);
     if (colName && upstreamColumns.length > 0 && (p.type === "str" || p.type === "select")) {
       const portLabel = getPortLabel(operator?.id, p.name, lang) || p.label || p.name;
+      const multiple = operator?.id === "select_attributes" && p.name === "columns";
+      const selectedValues = multiple
+        ? String(value || "").split(",").map((column) => column.trim()).filter(Boolean)
+        : value || undefined;
       return (
         <Select
           style={{ width: "100%" }}
-          value={value || undefined}
-          onChange={(v) => handleParamChange(p.name, v)}
+          mode={multiple ? "multiple" : undefined}
+          value={selectedValues || undefined}
+          onChange={(v) => handleParamChange(p.name, multiple ? v.join(",") : v)}
           placeholder={"\u9009\u62e9" + portLabel}
           allowClear
           options={upstreamColumns.map((c) => ({ label: c, value: c }))}
         />
+      );
+    }
+
+    if (operator?.id === "python_script" && p.name === "script") {
+      return (
+        <div>
+          <Input.TextArea
+            rows={10}
+            maxLength={100_000}
+            showCount
+            value={value || ""}
+            onChange={(e) => handleParamChange(p.name, e.target.value)}
+            placeholder={"result = df.copy()"}
+          />
+          <Upload
+            accept=".py"
+            beforeUpload={(f) => handleFileUpload(f, p.name)}
+            showUploadList={false}
+          >
+            <Button icon={<UploadOutlined />} loading={uploading} size="small" block>
+              {lang === "zh" ? "\u4e0a\u4f20 .py \u6587\u4ef6" : "Upload .py file"}
+            </Button>
+          </Upload>
+        </div>
       );
     }
 

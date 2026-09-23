@@ -1,6 +1,6 @@
 # 通用化迁移基线清单
 
-**状态：** planned，Task 1 交付物。本文档用于记录全项目去行业化盘点结果，不表示迁移已经完成。
+**状态：** `in_progress`（Task 1 的后端边界、适配器和源码门禁已通过；完整生产导航、下游迁移和最终验收仍待完成）；本文档不表示后续正式数据版本迁移已经完成。
 
 ## 目的
 
@@ -19,7 +19,20 @@
 |---|---|---|---|---|---|
 | 待 Task 1 扫描 | 待确认 | 待确认 | 迁移/弃用/重定向 | 待生成 | planned |
 
-> 当前唯一数据行是记录格式模板，不是已经完成的源码扫描结果，也不能作为迁移或验收证据。Task 1 Step 1-3 必须按上述范围追加真实引用位置、替代方案、迁移策略、证据路径和状态；在该盘点完成前，本文档继续保持 `planned`。
+## Task 1 初始盘点（2026-09-03）
+
+| 引用位置 | 行业专用内容 | 通用替代 | 迁移策略 | 验证证据 | 状态 |
+|---|---|---|---|---|---|
+| `backend/app/api/spot_weld_quality.py` `/api/projects/{project_id}/spot-weld/runs` | 点焊质量运行创建写入口 | `/api/annotation-tasks`、`/api/automl-tasks` | 新写请求结构化返回 `410 GENERIC_API_REQUIRED`；旧读取与历史服务保留 | `tests/test_genericization_contract.py::test_legacy_spot_weld_write_is_closed`；23/23 focused suite | passed |
+| `backend/app/models/spot_weld_quality.py` 运行、样本、标签修订/快照模型 | 行业化持久化表和字段 | `GenericAnnotationTask` 的 UUID 引用与 `label_snapshot` | 只读适配器复制，不删除原行；后续 Task 2/4 建立正式数据版本和 schema；当前保留 source IDs/count/checksum | `migrate_legacy_quality_run` focused contract；23/23 focused suite | passed（过渡边界） |
+| `backend/app/services/spot_weld_features.py` `FEATURE_SCHEMA` 等 | 固定行业特征构建 | 通用输入合同（Task 2） | 仅允许旧服务作为迁移/兼容边界，新通用入口不导入该模块 | Task 1 source scan（待完整依赖环境） | planned |
+| `ml-platform/frontend/src` 点焊页面和 API client | 行业化导航与请求命名 | 通用标注任务页面/API（Task 12） | 保留历史页面，后续替换生产导航和 i18n | Task 12 UI contract | planned |
+
+本次盘点只建立迁移边界和可审计适配器；正式 `DatasetVersion`、`LabelSchema`、revision 表和输入合同属于后续 Task 2/4，不在 Task 1 提前创建。
+
+Task 1 remaining（未完成）：`ml-platform/frontend/src/App.tsx`、`pages/AnnotationPage.tsx`、`pages/DataAnnotationPage.tsx`、`api/spotWeldQuality.ts` 和 `i18n/index.tsx` 的生产导航/API 文案仍保留历史兼容入口；`spot_weld_quality` service/features/task/model 仍作为只读迁移适配边界，待后续任务完成全面替换和扫描收口。
+
+拆分裁定：前端生产导航和 API client 文案属于 Task 12 的主平台/标注员门户交付；Task 1 仅建立后端通用边界、旧写入口关闭、迁移适配器和禁止新代码依赖行业 feature builder 的门禁。上述前端文件与旧服务的全面替换不在本轮验收范围，必须在 Task 12 通过对应 UI/E2E 和 source-scan 证据后才能关闭。
 
 ## 迁移门禁
 
@@ -27,3 +40,11 @@
 2. 旧写入入口必须返回结构化弃用响应或明确重定向。
 3. 旧数据只允许在校验行数、sample_id 和校验和后写入新通用版本，不删除原始记录。
 4. 扫描结果、迁移结果和回归测试必须绑定同一当前 Git SHA。
+
+## Task 1 收口记录（2026-09-04）
+
+- backend `.venv` focused unittest：`tests.test_genericization_contract` + `tests.test_suite_manifest`，23/23 通过。
+- backend-root `scan_production_sources(Path('.').resolve())`：返回空违规列表。
+- Alembic `check` 与 `upgrade head`：通过，当前本地数据库 revision 为 `20260904_16`。
+- `py_compile` 与 `git diff --check`：通过。
+- Task 2 正式 `DatasetVersion`、解析器、输入合同和不可变样本表尚未完成，不能将本清单解释为全平台完成。

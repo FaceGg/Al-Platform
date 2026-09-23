@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Badge, Button, Empty, List, Popover, Spin, Tag, Tooltip, Typography } from "antd";
 import { BellOutlined, CheckOutlined, DeleteOutlined } from "@ant-design/icons";
 import { notificationsApi, type InAppNotification } from "../api/securityNotifications";
@@ -25,31 +25,61 @@ export default function NotificationCenter() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [workingId, setWorkingId] = useState<string | null>(null);
+  const unreadRequest = useRef(false);
+  const listRequest = useRef(false);
+  const mutationRequest = useRef(false);
+  const openRef = useRef(false);
+  const generation = useRef(0);
+  openRef.current = open;
 
   const refreshUnreadCount = useCallback(async () => {
+    if (unreadRequest.current) return;
+    unreadRequest.current = true;
+    const request = generation.current;
     try {
-      setUnreadCount(await notificationsApi.getUnreadCount());
+      const count = await notificationsApi.getUnreadCount();
+      if (request === generation.current) setUnreadCount(count);
     } catch {
-      setUnreadCount(0);
+      // A failed refresh must not report a false zero unread count.
+    } finally {
+      unreadRequest.current = false;
     }
   }, []);
 
   const loadNotifications = useCallback(async () => {
+    if (listRequest.current || mutationRequest.current) return;
+    const request = generation.current;
+    listRequest.current = true;
     setLoading(true);
     setError(null);
     try {
       const result = await notificationsApi.listInAppNotifications();
-      setItems(result.items);
+      if (request === generation.current) setItems(result.items);
     } catch {
-      setError(copy.loadFailed);
+      if (request === generation.current) setError(copy.loadFailed);
     } finally {
-      setLoading(false);
+      listRequest.current = false;
+      if (request === generation.current) setLoading(false);
     }
   }, [copy.loadFailed]);
 
   useEffect(() => {
     void refreshUnreadCount();
-  }, [refreshUnreadCount]);
+    const refresh = () => {
+      if (document.visibilityState === "hidden") return;
+      void refreshUnreadCount();
+      if (openRef.current) void loadNotifications();
+    };
+    const timer = window.setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      generation.current += 1;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [loadNotifications, refreshUnreadCount]);
 
   const onOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
@@ -57,30 +87,40 @@ export default function NotificationCenter() {
   };
 
   const markRead = async (notificationId: string) => {
+    if (listRequest.current || mutationRequest.current) return;
+    mutationRequest.current = true;
+    const request = generation.current;
     setWorkingId(notificationId);
     try {
       const result = await notificationsApi.markRead(notificationId);
+      if (request !== generation.current) return;
       setItems((current) => current.map((item) => (
         item.id === notificationId ? { ...item, read_at: result.read_at } : item
       )));
       await refreshUnreadCount();
     } catch {
-      setError(copy.loadFailed);
+      if (request === generation.current) setError(copy.loadFailed);
     } finally {
-      setWorkingId(null);
+      mutationRequest.current = false;
+      if (request === generation.current) setWorkingId(null);
     }
   };
 
   const archive = async (notificationId: string) => {
+    if (listRequest.current || mutationRequest.current) return;
+    mutationRequest.current = true;
+    const request = generation.current;
     setWorkingId(notificationId);
     try {
       await notificationsApi.archive(notificationId);
+      if (request !== generation.current) return;
       setItems((current) => current.filter((item) => item.id !== notificationId));
       await refreshUnreadCount();
     } catch {
-      setError(copy.loadFailed);
+      if (request === generation.current) setError(copy.loadFailed);
     } finally {
-      setWorkingId(null);
+      mutationRequest.current = false;
+      if (request === generation.current) setWorkingId(null);
     }
   };
 
@@ -96,7 +136,7 @@ export default function NotificationCenter() {
         {loading ? <div style={{ textAlign: "center", padding: 20 }}><Spin aria-label={copy.loading} /></div> : null}
         {error ? <Alert type="error" showIcon message={error} /> : null}
         {!loading && !error && items.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={copy.empty} /> : null}
-        {!loading && !error && items.length > 0 ? (
+        {items.length > 0 ? (
           <List
             size="small"
             dataSource={items}
@@ -107,6 +147,7 @@ export default function NotificationCenter() {
                     <Tooltip key="read" title={copy.markRead}>
                       <Button
                         aria-label={copy.markRead}
+                        disabled={loading || workingId !== null}
                         type="text"
                         icon={<CheckOutlined />}
                         loading={workingId === item.id}
@@ -117,6 +158,7 @@ export default function NotificationCenter() {
                   <Tooltip key="archive" title={copy.archive}>
                     <Button
                       aria-label={copy.archive}
+                      disabled={loading || workingId !== null}
                       type="text"
                       danger
                       icon={<DeleteOutlined />}

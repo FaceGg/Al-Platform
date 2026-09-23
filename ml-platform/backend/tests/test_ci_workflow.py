@@ -41,6 +41,7 @@ CPU_COMPATIBLE_DOCKERFILES = (
     REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.tensorboard",
     REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.mlflow",
 )
+CI_BUILT_BACKEND_DOCKERFILES = CPU_COMPATIBLE_DOCKERFILES[:4]
 
 
 def load_workflow_contract(path: Path) -> dict:
@@ -51,6 +52,101 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    def test_backend_build_excludes_versioned_local_virtualenvs(self):
+        dockerignore = BACKEND_REQUIREMENTS.with_name(".dockerignore")
+        patterns = dockerignore.read_text(encoding="utf-8").splitlines()
+        self.assertIn(".venv*/", patterns)
+        self.assertNotIn("!.venv311/", patterns)
+
+    def test_ci_workflow_contains_no_aliyun_references(self):
+        forbidden = (
+            "aliyun",
+            "alibaba",
+            "阿里云",
+            "aliyuncs",
+            "mirrors.aliyun",
+            "registry.aliyun",
+            "oss.aliyun",
+            "cr.aliyun",
+            "alibabacloud",
+        )
+        workflow = self.workflow.casefold()
+        for marker in forbidden:
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker.casefold(), workflow)
+
+    def test_ci_built_backend_images_use_default_pypi_index(self):
+        for dockerfile in CPU_COMPATIBLE_DOCKERFILES:
+            content = dockerfile.read_text(encoding="utf-8").casefold()
+            with self.subTest(dockerfile=dockerfile.name):
+                self.assertNotIn("aliyun", content)
+                self.assertNotIn("--index-url", content)
+                self.assertNotIn("pip config set global.index-url", content)
+
+    def test_compose_runtime_contains_no_aliyun_references(self):
+        forbidden = (
+            "aliyun",
+            "alibaba",
+            "阿里云",
+            "aliyuncs",
+            "mirrors.aliyun",
+            "registry.aliyun",
+            "oss.aliyun",
+            "cr.aliyun",
+            "alibabacloud",
+        )
+        for compose_file in (
+            COMPOSE_FILE,
+            ACCEPTANCE_COMPOSE_FILE,
+            WEEK12_SECURITY_IMAGES_COMPOSE_FILE,
+        ):
+            content = compose_file.read_text(encoding="utf-8").casefold()
+            for marker in forbidden:
+                with self.subTest(file=compose_file.name, marker=marker):
+                    self.assertNotIn(marker.casefold(), content)
+
+    def test_isolated_browser_origin_matches_backend_and_readiness(self):
+        job = yaml.safe_load(self.workflow)["jobs"]["browser-acceptance"]
+        compose = yaml.safe_load(ACCEPTANCE_COMPOSE_FILE.read_text(encoding="utf-8"))
+        self.assertEqual(
+            compose["services"]["backend"]["environment"].get("FRONTEND_ORIGIN"),
+            "${WEEK12_ACCEPTANCE_BASE_URL:-http://localhost:5173}",
+        )
+        start = next(
+            step for step in job["steps"]
+            if step.get("name") == "Start isolated browser acceptance stack"
+        )
+        self.assertIn('--header "Origin: ${WEEK12_ACCEPTANCE_BASE_URL}"', start["run"])
+        self.assertNotIn("restart backend", start["run"])
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.middleware.security import RequestSecurityMiddleware
+
+        app = FastAPI()
+        app.add_middleware(
+            RequestSecurityMiddleware,
+            allowed_origins=frozenset({job["env"]["WEEK12_ACCEPTANCE_BASE_URL"]}),
+        )
+
+        @app.post("/api/auth/login", status_code=204)
+        def login_boundary():
+            return None
+
+        with TestClient(app) as client:
+            self.assertEqual(
+                client.post(
+                    "/api/auth/login",
+                    headers={"Origin": job["env"]["WEEK12_ACCEPTANCE_BASE_URL"]},
+                ).status_code,
+                204,
+            )
+            rejected = client.post(
+                "/api/auth/login", headers={"Origin": "https://untrusted.invalid"}
+            )
+            self.assertEqual(rejected.status_code, 403)
+            self.assertEqual(rejected.json()["detail"]["code"], "CORS_ORIGIN_FORBIDDEN")
 
     def test_worker_startup_waits_for_ready_log_without_control_probe(self):
         wait_step = self.workflow.split(
@@ -517,7 +613,7 @@ test "$first_hash" = "$second_hash"
         self.assertEqual(exception["schema_version"], 1)
         self.assertEqual(exception["id"], "react-router-rsc-mode-csrf")
         self.assertEqual(exception["owner"], "ml-platform-maintainers")
-        self.assertEqual(exception["expires_on"], "2026-09-10")
+        self.assertEqual(exception["expires_on"], "2026-12-12")
         self.assertEqual(
             exception["package_versions"],
             {"react-router": "7.18.2", "react-router-dom": "7.18.2"},
@@ -901,6 +997,24 @@ test "$first_hash" = "$second_hash"
                     expected_settings.issubset(compose["services"][service_name]["environment"]),
                 )
 
+    def test_login_rate_limit_setting_is_explicitly_passed_through_production_compose(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+        expected_value = "${LOGIN_IP_RATE_LIMIT_CAPACITY:-5}"
+
+        for service_name in ("migrate", "backend", "worker", "scheduler"):
+            with self.subTest(service=service_name):
+                self.assertEqual(
+                    compose["services"][service_name]["environment"][
+                        "LOGIN_IP_RATE_LIMIT_CAPACITY"
+                    ],
+                    expected_value,
+                )
+
+        browser_job = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"][
+            "browser-acceptance"
+        ]
+        self.assertEqual(browser_job["env"]["LOGIN_IP_RATE_LIMIT_CAPACITY"], "20")
+
     def test_minio_init_uses_the_backend_bucket_expression(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
         minio_init = compose["services"]["minio-init"]["environment"]
@@ -1135,6 +1249,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             "WEEK12_WEBHOOK_RECEIVER_EVENTS_URL",
             "WEEK12_WECOM_RECEIVER_URL",
             "WEEK12_WECOM_RECEIVER_EVENTS_URL",
+            "LOGIN_IP_RATE_LIMIT_CAPACITY",
             "INFERENCE_RATE_LIMIT_CAPACITY",
             "INFERENCE_RATE_LIMIT_REFILL_PER_SECOND",
         }
@@ -1146,6 +1261,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         self.assertEqual(environment["RUN_WEEK12_BROWSER_ACCEPTANCE"], "1")
         self.assertEqual(environment["WEEK12_ACCEPTANCE_ISOLATED"], "1")
         self.assertEqual(environment["BACKEND_PORT"], "8000")
+        self.assertEqual(environment["LOGIN_IP_RATE_LIMIT_CAPACITY"], "20")
         self.assertEqual(environment["INFERENCE_RATE_LIMIT_CAPACITY"], "5")
         self.assertEqual(environment["INFERENCE_RATE_LIMIT_REFILL_PER_SECOND"], "0.01")
         self.assertEqual(
@@ -1190,6 +1306,10 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             standard.get("env", {}).get("DATABASE_URL"),
             "sqlite:///../../temp_test/playwright_ci.db",
         )
+        self.assertEqual(
+            standard.get("env", {}).get("LOGIN_IP_RATE_LIMIT_CAPACITY"),
+            "20",
+        )
         self.assertEqual(standard.get("env", {}).get("ARTIFACT_STORAGE_BACKEND"), "local")
         self.assertEqual(
             standard.get("env", {}).get("ARTIFACT_STORAGE_DIR"),
@@ -1205,6 +1325,48 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         self.assertEqual(cleanup.get("if"), "always()")
         self.assertIn("down --volumes --remove-orphans", cleanup["run"])
 
+    def test_browser_acceptance_installs_annotator_frontend_dependencies(self):
+        parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+        steps = parsed["jobs"]["browser-acceptance"]["steps"]
+
+        install = next(
+            step
+            for step in steps
+            if step.get("name") == "Install annotator frontend dependencies"
+        )
+
+        self.assertEqual(
+            install.get("working-directory"),
+            "ml-platform/annotator/frontend",
+        )
+        self.assertEqual(install.get("run"), "npm ci")
+
+    def test_browser_acceptance_waits_for_admin_login_before_playwright(self):
+        parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+        steps = parsed["jobs"]["browser-acceptance"]["steps"]
+        start_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("name") == "Start isolated browser acceptance stack"
+        )
+        playwright_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("name") == "Run isolated Week 12 browser acceptance"
+        )
+        start_run = steps[start_index]["run"]
+        self.assertLess(start_index, playwright_index)
+        self.assertIn(
+            "POST http://127.0.0.1:${BACKEND_PORT}/api/auth/login",
+            start_run,
+        )
+        self.assertIn("username=admin&password=admin123", start_run)
+        self.assertIn("grep -q '\"access_token\"'", start_run)
+        self.assertIn(
+            'docker compose --project-name "$COMPOSE_PROJECT_NAME" logs backend migrate',
+            start_run,
+        )
+
     def test_week11_cleanup_removes_protected_notification_key_with_privilege(self):
         root = Path(__file__).resolve().parents[3]
         workflow = (root / ".github" / "workflows" / "ci.yml").read_text(
@@ -1215,6 +1377,69 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         cleanup = workflow[cleanup_start:cleanup_end]
 
         self.assertIn('sudo rm -f -- "$NOTIFICATION_CRYPTO_SECRET_FILE"', cleanup)
+
+    def test_week11_generates_and_validates_generic_acceptance_receipts(self):
+        parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+        job = parsed["jobs"]["week11-12-verification"]
+        steps = job["steps"]
+        receipt = next(
+            step for step in steps if step.get("name") == "Generate generic acceptance receipts"
+        )
+        self.assertEqual(receipt.get("working-directory"), "ml-platform/backend")
+        script = receipt["run"]
+        self.assertIn("tools.generic_acceptance_evidence", script)
+        self.assertIn("validate_acceptance_manifest", script)
+        for evidence_id in (
+            "DAT-01", "DAT-02", "DAT-03", "LAB-01", "LAB-02", "LAB-03",
+            "CLU-01", "CLU-02", "CON-01", "CON-02", "RET-01", "AUTH-01",
+            "AUTH-02", "API-01", "AUTO-01", "AUTO-02", "EXP-01", "INF-01",
+            "REL-01",
+        ):
+            with self.subTest(evidence_id=evidence_id):
+                self.assertIn(evidence_id, script)
+
+    def test_week11_generic_receipts_feed_the_final_evidence_manifest(self):
+        parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+        job = parsed["jobs"]["week11-12-verification"]
+        steps = job["steps"]
+        receipt = next(
+            step for step in steps if step.get("name") == "Generate generic acceptance receipts"
+        )
+        final_manifest = next(
+            step for step in steps if step.get("name") == "Generate final evidence manifest"
+        )
+        upload = next(
+            step for step in steps if step.get("name") == "Upload verification evidence"
+        )
+        script = receipt["run"]
+
+        # Receipts are generated inside the verification evidence directory so
+        # evidence_manifest hashes them into the final manifest file list and
+        # the uploaded artifact preserves the 19-receipt chain.
+        self.assertIn(
+            'Path(os.environ["ML_PLATFORM_EVIDENCE_DIR"]).resolve() / "generic-platform-acceptance"',
+            script,
+        )
+        self.assertNotIn('root / "temp_test" / "generic-platform-acceptance"', script)
+        self.assertIn('"acceptance-manifest.json"', script)
+        self.assertNotIn("final-evidence-manifest.json", script)
+        self.assertIn(
+            "validate_acceptance_manifest",
+            script,
+        )
+
+        # The receipts step must complete before the final manifest hashes the
+        # evidence directory, and the upload must cover the receipts location.
+        self.assertLess(steps.index(receipt), steps.index(final_manifest))
+        self.assertLess(steps.index(final_manifest), steps.index(upload))
+        self.assertEqual(job["env"]["ML_PLATFORM_EVIDENCE_DIR"], "${{ github.workspace }}/temp_test/week11-12")
+        self.assertIn(
+            "temp_test/week11-12",
+            upload["with"]["path"],
+        )
+        # The final manifest step must fail closed: it may not run when the
+        # receipt chain is broken.
+        self.assertNotEqual(final_manifest.get("if"), "always()")
 
     def test_cleanup_workflow_has_least_privilege_and_delete_guards(self):
         self.assertTrue(CLEANUP_WORKFLOW.is_file())

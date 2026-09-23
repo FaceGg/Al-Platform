@@ -107,7 +107,7 @@ export default function KnowledgeBasePage() {
         )}
       </Row>
       <Modal title={t.knowledge.create} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()}>
-        <Form form={form} onFinish={createBase} layout="vertical">
+        <Form form={form} onFinish={createBase} layout="vertical" autoComplete="off">
           <Form.Item name="name" label={t.knowledge.name} rules={[{ required: true }]}>
             <Input placeholder={t.knowledge.name} />
           </Form.Item>

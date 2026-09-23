@@ -7,12 +7,14 @@ from app.main import app
 from app.api.auth import pwd_context
 from app.database import Base, SessionLocal, engine
 from app.models.user import User
+from app.services.security import rate_limiter
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
 
 
 def ensure_admin():
+    rate_limiter().clear()
     db = SessionLocal()
     try:
         if db.query(User).filter(User.username == "admin").first() is None:

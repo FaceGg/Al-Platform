@@ -1,6 +1,7 @@
 import json
 import hashlib
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -143,6 +144,8 @@ class AcceptanceRunnerContractTests(unittest.TestCase):
         self.assertIn("tools/acceptance/run_backup_restore.sh", content)
         self.assertIn("tools/acceptance/run_upgrade_fixture.sh", content)
         self.assertNotIn("temp_test", content)
+        self.assertIn('docker create quay.io/minio/mc:latest', content)
+        self.assertNotIn('docker create minio/mc:latest', content)
 
     def test_week11_evidence_executors_use_runner_uid_for_bind_mount_writes(self):
         root = Path(__file__).resolve().parents[3]
@@ -199,6 +202,99 @@ class AcceptanceRunnerContractTests(unittest.TestCase):
         self.assertNotIn("/tmp/week9-12-secrets", content)
         self.assertNotIn("docker run -d", content)
         self.assertIn('docker cp "$BACKEND:$CONTAINER_PERFORMANCE/." "$PERFORMANCE"', content)
+
+    def test_performance_runner_resolves_compose_containers_by_service(self):
+        root = Path(__file__).resolve().parents[3]
+        runner = (
+            root / "ml-platform" / "backend" / "tools" / "acceptance"
+            / "run_performance.sh"
+        )
+        content = runner.read_text(encoding="utf-8")
+        self.assertIn('"${COMPOSE[@]}" ps -q "$service"', content)
+        self.assertNotIn('BACKEND="${PROJECT}-backend-1"', content)
+        self.assertNotIn('WORKER="${PROJECT}-worker-1"', content)
+
+    def test_performance_runner_uses_backend_container_after_recreation(self):
+        root = Path(__file__).resolve().parents[3]
+        runner = (
+            root / "ml-platform" / "backend" / "tools" / "acceptance"
+            / "run_performance.sh"
+        )
+        bash = shutil.which("bash")
+        if os.name == "nt":
+            git = shutil.which("git")
+            if git:
+                git_bash = Path(git).resolve().parent.parent / "bin" / "bash.exe"
+                if git_bash.is_file():
+                    bash = str(git_bash)
+        self.assertIsNotNone(bash, "Bash is required to exercise the acceptance runner")
+
+        fake_docker = r"""
+recreated=0
+export recreated
+docker() {
+    if [[ "$1" == "compose" ]]; then
+        shift
+        case " $* " in
+            *" ps -q backend "*)
+                if [[ "$recreated" == 1 ]]; then printf 'backend-new\n'; else printf 'backend-old\n'; fi
+                ;;
+            *" ps -q worker "*)
+                if [[ "$recreated" == 1 ]]; then printf 'worker-new\n'; else printf 'worker-old\n'; fi
+                ;;
+            *" ps -q redis "*) printf 'redis-id\n' ;;
+            *" ps -q postgres "*) printf 'postgres-id\n' ;;
+            *" up -d --force-recreate inference-runtime backend worker scheduler "*) recreated=1 ;;
+            *" exec -T backend "*) return 0 ;;
+            *" ps -a "*) return 0 ;;
+            *" logs --no-color --tail 200 "*) return 0 ;;
+        esac
+        return 0
+    fi
+    case "$1" in
+        cp)
+            if [[ "${3:-}" == "backend-new:/tmp/prepare_performance_fixture.py" ]]; then
+                printf 'refreshed-backend-id-reached\n' >&2
+                return 42
+            fi
+            if [[ "${3:-}" == "backend-old:/tmp/prepare_performance_fixture.py" ]]; then
+                printf 'stale-backend-id-used\n' >&2
+                return 1
+            fi
+            return 0
+            ;;
+        logs|start) return 0 ;;
+    esac
+    return 0
+}
+rm() {
+    if [[ "${2:-}" == "/tmp/week11-perf-context.json" ]]; then return 0; fi
+    command rm "$@"
+}
+export -f docker rm
+bash "$1"
+"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = os.environ.copy()
+            environment["COMPOSE_PROJECT_NAME"] = "ci-container-id-regression"
+            environment["ML_PLATFORM_EVIDENCE_DIR"] = "evidence"
+            environment["ACCEPTANCE_SOURCE_COMMIT"] = "a" * 40
+            result = subprocess.run(
+                [bash, "-c", fake_docker, "bash", str(runner)],
+                cwd=directory,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(
+            result.returncode,
+            42,
+            f"runner did not reach the recreated backend container:\n{result.stdout}\n{result.stderr}",
+        )
+        self.assertIn("refreshed-backend-id-reached", result.stderr)
 
 
 class _OkHandler(BaseHTTPRequestHandler):
@@ -2986,8 +3082,13 @@ class UpgradeFixtureTests(unittest.TestCase):
         self.assertEqual(validate_upgrade_result(result)["status"], "passed")
 
     def test_release_n_minus_one_contract_targets_current_merge_head(self):
+        from alembic.script import ScriptDirectory
+
         self.assertEqual(EXPECTED_N_MINUS_ONE, "20260720_10_security_notifications")
-        self.assertEqual(EXPECTED_HEAD, "20260829_14")
+        backend = Path(__file__).resolve().parents[1]
+        self.assertEqual([EXPECTED_HEAD], ScriptDirectory(str(backend / "alembic")).get_heads())
+        runner = backend / "tools" / "acceptance" / "run_upgrade_fixture.sh"
+        self.assertIn(f"--target {EXPECTED_HEAD}", runner.read_text(encoding="utf-8"))
 
     def test_wrong_target_revision_fails_closed(self):
         with self.assertRaises(ValueError):

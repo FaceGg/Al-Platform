@@ -106,7 +106,7 @@ export default function AIChatPage() {
         <div style={{ padding: "12px 16px" }}>
           <Space.Compact style={{ width: "100%" }}>
             <Input.TextArea
-              value={input}
+              autoComplete="off" value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={text.placeholder}
@@ -129,10 +129,10 @@ export default function AIChatPage() {
           placeholder="sk-..." style={{ marginTop: 8, marginBottom: 4 }} />
         <Text type="secondary" style={{ display: "block", fontSize: 12, marginBottom: 16 }}>{text.apiKeyHint}</Text>
         <Text strong>{text.model}</Text>
-        <Input value={model} onChange={(event) => setModel(event.target.value)} placeholder={status?.model || "gpt-4o-mini"}
+              <Input autoComplete="off" value={model} onChange={(event) => setModel(event.target.value)} placeholder={status?.model || "gpt-4o-mini"}
           style={{ marginTop: 8, marginBottom: 16 }} />
         <Text strong>{text.systemPrompt}</Text>
-        <Input.TextArea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={5} style={{ marginTop: 8, marginBottom: 16 }} />
+              <Input.TextArea autoComplete="off" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={5} style={{ marginTop: 8, marginBottom: 16 }} />
         <Text strong>{text.temperature}: {temperature.toFixed(1)}</Text>
         <Slider min={0} max={1} step={0.1} value={temperature} onChange={setTemperature} />
       </Modal>

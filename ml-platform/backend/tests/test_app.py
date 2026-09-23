@@ -47,19 +47,44 @@ class TestCORSMiddleware(unittest.TestCase):
         response = client.options(
             "/api/health",
             headers={
-                "Origin": "http://localhost:3000",
+                "Origin": settings.frontend_origin,
                 "Access-Control-Request-Method": "GET",
             },
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.headers.get("access-control-allow-origin"),
-            "http://localhost:3000",
+            settings.frontend_origin,
         )
         self.assertEqual(
             response.headers.get("access-control-allow-credentials"),
             "true",
         )
+
+    def test_cors_accepts_local_loopback_alias(self):
+        response = client.options(
+            "/api/health",
+            headers={
+                "Origin": "http://127.0.0.1:5173",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers.get("access-control-allow-origin"),
+            "http://127.0.0.1:5173",
+        )
+
+    def test_cors_rejects_unconfigured_origin(self):
+        response = client.options(
+            "/api/health",
+            headers={
+                "Origin": "http://localhost:5199",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"]["code"], "CORS_ORIGIN_FORBIDDEN")
 
 
 class TestModels(unittest.TestCase):

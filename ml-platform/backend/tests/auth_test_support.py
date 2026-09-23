@@ -3,10 +3,12 @@
 from app.api.auth import pwd_context
 from app.database import SessionLocal
 from app.models.user import User
+from app.services.security import rate_limiter
 
 
 def ensure_admin(username: str = "admin", password: str = "admin123") -> None:
     """Create an isolated administrator without exercising public registration."""
+    rate_limiter().clear()
     db = SessionLocal()
     try:
         if db.query(User).filter(User.username == username).first() is None:

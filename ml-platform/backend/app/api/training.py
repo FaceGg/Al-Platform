@@ -1,7 +1,9 @@
 """Project-authorized asynchronous training management API."""
 
 import asyncio
+import hashlib
 import io
+import json
 import os
 import secrets
 import tempfile
@@ -9,7 +11,7 @@ import uuid
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
@@ -29,9 +31,17 @@ from app.services.automl_execution import (
     resolve_automl_feature_columns,
     resolve_candidates,
 )
+from app.services.automl_search import (
+    CANONICAL_SEARCH_TIME_BUDGETS,
+    SEARCH_STRENGTH_TRIALS,
+    SEARCH_METHODS,
+    normalize_search_controls,
+    normalize_task_type,
+    validate_target_columns,
+)
 from app.services.automl_catalog import resolve_algorithm_families
-from app.services.automl_search import SEARCH_METHODS
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
+from app.services.data_import import DataImportError, require_ready_dataset_artifact
 from app.services.automl_report import AutoMLReportError, generate_automl_report
 from app.services.experiment_tracking import TrackingError
 from app.services.iterative_training import IncompatibleCheckpoint, TrainingCheckpoint, TrainingConfig
@@ -43,6 +53,7 @@ from app.services.project_access import ProjectAccessService
 
 
 router = APIRouter(prefix="/api/training", tags=["training"])
+spec_router = APIRouter(tags=["training"])
 PROJECT_WRITE_ACTIONS = {
     "POST /api/training/run": "training_job.start",
     "POST /api/training/jobs/{job_id}/stop": "training_job.stop",
@@ -81,7 +92,8 @@ class AutoMLRunRequest(BaseModel):
     project_id: uuid.UUID
     experiment_id: uuid.UUID
     dataset_artifact_id: uuid.UUID
-    target_column: str = Field(min_length=1)
+    target_column: str | None = Field(default=None, min_length=1)
+    target_columns: list[str] | None = None
     input_columns: list[str] | None = None
     task: str = "classification"
     candidate_ids: list[str] = Field(default_factory=list)
@@ -89,8 +101,10 @@ class AutoMLRunRequest(BaseModel):
     search_method: str | None = None
     max_trials: int | None = Field(default=None, ge=5, le=200)
     cross_validation_enabled: bool = True
-    cross_validation_folds: int | None = 5
-    time_budget: int = Field(default=60, ge=10, le=9999)
+    cross_validation_folds: int | None = Field(default=5)
+    time_budget: int = Field(default=3600, ge=60, le=86400)
+    search_strength: str = "medium"
+    class_weight: bool = True
     name: str = Field(default="automl-job", min_length=1, max_length=128)
 
 
@@ -254,8 +268,11 @@ def start_training(
             dataset = artifact_service.resolve(
                 data.dataset_artifact_id, data.project_id, expected_type="dataset",
             )
+            require_ready_dataset_artifact(db, dataset.id, project_id=data.project_id)
         except (ValueError, ArtifactAccessError) as error:
             raise HTTPException(400, _error("DATASET_ARTIFACT_INVALID", str(error))) from error
+        except DataImportError as error:
+            raise HTTPException(409, _error(error.code, str(error))) from error
 
         monitor = data.monitor or (
             "val_r2" if data.task == "regression" else "val_accuracy"
@@ -564,11 +581,14 @@ async def proxy_tensorboard(token: str, path: str, request: Request):
 
 
 @router.post("/automl/run", status_code=202)
+@spec_router.post("/api/automl-tasks", status_code=202)
 def start_automl(
     data: AutoMLRunRequest,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    x_request_id: str | None = Header(default=None, alias="X-Request-ID"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     experiment, access = _visible_experiment(
         db,
@@ -578,6 +598,45 @@ def start_automl(
     )
     if experiment is None:
         raise HTTPException(404, _error("EXPERIMENT_NOT_FOUND", "Experiment not found"))
+    new_fields = {"algorithm_ids", "search_method"}
+    uses_new_contract = bool(data.model_fields_set & new_fields)
+    request_id = getattr(request.state, "request_id", None)
+    normalized_request_id = str(x_request_id or "").strip() or None
+    normalized_key = str(idempotency_key or "").strip() or None
+    request_fingerprint = hashlib.sha256(json.dumps(
+        data.model_dump(mode="json"), sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    if normalized_key is not None and len(normalized_key) > 128:
+        raise HTTPException(400, _error("AUTOML_IDEMPOTENCY_KEY_INVALID", "Idempotency-Key must be at most 128 characters"))
+    if uses_new_contract:
+        if not normalized_request_id or request_id is None or normalized_request_id != str(request_id):
+            raise HTTPException(400, _error("REQUEST_ID_REQUIRED", "X-Request-ID is required"))
+        if normalized_key is None:
+            raise HTTPException(400, _error("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required"))
+        if data.time_budget not in CANONICAL_SEARCH_TIME_BUDGETS:
+            raise HTTPException(400, _error(
+                "AUTOML_SEARCH_CONFIG_INVALID",
+                "AutoML search time budget must be 30, 60, 120, or 240 minutes",
+            ))
+    if normalized_key is not None:
+        replay = db.query(TrainingJob).filter(
+            TrainingJob.user_id == current_user.id,
+            TrainingJob.automl_idempotency_key == normalized_key,
+            TrainingJob.operator_id == "automl",
+        ).first()
+        if replay is not None:
+            if (
+                replay.project_id != data.project_id
+                or replay.experiment_id != data.experiment_id
+                or (replay.automl_contract or {}).get("idempotency_fingerprint") != request_fingerprint
+            ):
+                raise HTTPException(409, _error("AUTOML_IDEMPOTENCY_CONFLICT", "Idempotency-Key was used for another AutoML request"))
+            return {"job_id": str(replay.id), "status": replay.status, "task_id": replay.task_id}
+    if data.target_column is not None and data.target_columns is not None:
+        raise HTTPException(400, _error(
+            "AUTOML_CONFIG_INVALID",
+            "target_column and target_columns cannot be provided together",
+        ))
     job_id = uuid.uuid4()
     with audit_service(db).project_action(
         db, request=request, actor=current_user, access=access,
@@ -589,10 +648,17 @@ def start_automl(
         ),
         allowed_changes={"name", "task"},
     ):
-        if data.task not in {"classification", "regression"}:
-            raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", "Invalid AutoML task"))
-        new_fields = {"algorithm_ids", "search_method", "max_trials"}
-        uses_new_contract = bool(data.model_fields_set & new_fields)
+        try:
+            task_type = normalize_task_type(data.task)
+            target_columns = list(data.target_columns or ([data.target_column] if data.target_column else []))
+            if not target_columns:
+                raise ValueError("At least one target column is required")
+            if "multioutput" in task_type and len(target_columns) < 2:
+                raise ValueError("Multi-output AutoML requires at least two target columns")
+            if "multioutput" not in task_type and len(target_columns) != 1:
+                raise ValueError("Single-output AutoML requires exactly one target column")
+        except ValueError as error:
+            raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
         try:
             resolved_algorithm_ids = None
             if uses_new_contract:
@@ -600,7 +666,7 @@ def start_automl(
                     raise ValueError("All AutoML search fields are required")
                 if "candidate_ids" in data.model_fields_set:
                     raise ValueError("candidate_ids cannot be combined with algorithm_ids")
-                if data.search_method not in SEARCH_METHODS or data.max_trials is None:
+                if data.search_method not in SEARCH_METHODS:
                     raise ValueError("Invalid AutoML search method")
                 if data.time_budget < 60:
                     raise ValueError("AutoML search time budget must be at least 60 seconds")
@@ -608,11 +674,25 @@ def start_automl(
                     family.id for family in resolve_algorithm_families(data.algorithm_ids)
                 ]
             else:
-                resolve_candidates(data.task, data.candidate_ids)
+                resolve_candidates(task_type, data.candidate_ids)
             evaluation = normalize_evaluation_config(
                 data.cross_validation_enabled,
                 data.cross_validation_folds,
             )
+            controls = normalize_search_controls(
+                strength=data.search_strength,
+                time_budget=data.time_budget,
+                class_weight=data.class_weight,
+            )
+            requested_max_trials = int(
+                data.max_trials
+                if data.max_trials is not None
+                else SEARCH_STRENGTH_TRIALS[controls["strength"]]
+            )
+            if uses_new_contract and requested_max_trials < len(resolved_algorithm_ids or []):
+                raise ValueError(
+                    "search strength budget must cover the selected algorithm families",
+                )
         except ValueError as error:
             code = "AUTOML_SEARCH_CONFIG_INVALID" if uses_new_contract else "AUTOML_CONFIG_INVALID"
             raise HTTPException(400, _error(code, str(error))) from error
@@ -621,8 +701,11 @@ def start_automl(
             dataset = artifact_service.resolve(
                 data.dataset_artifact_id, data.project_id, expected_type="dataset",
             )
+            require_ready_dataset_artifact(db, dataset.id, project_id=data.project_id)
         except (ValueError, ArtifactAccessError) as error:
             raise HTTPException(400, _error("DATASET_ARTIFACT_INVALID", str(error))) from error
+        except DataImportError as error:
+            raise HTTPException(409, _error(error.code, str(error))) from error
         try:
             with artifact_service.materialize(
                 dataset.id,
@@ -630,35 +713,53 @@ def start_automl(
                 expected_type="dataset",
             ) as dataset_path:
                 frame = read_automl_dataset(dataset_path)
-            resolve_automl_feature_columns(
+            feature_columns = resolve_automl_feature_columns(
                 frame,
-                data.target_column,
+                target_columns[0],
                 data.input_columns,
+                target_columns=target_columns,
             )
+            if len(target_columns) > 1:
+                if any(column in feature_columns for column in target_columns):
+                    raise ValueError("AutoML target columns cannot be input columns")
+            validate_target_columns(frame, task_type, target_columns)
         except (OSError, ValueError) as error:
             raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
         job = TrainingJob(
             id=job_id, project_id=data.project_id, user_id=current_user.id,
             experiment_id=experiment.id, name=data.name, operator_id="automl",
             params={
-                "target_column": data.target_column,
+                "target_column": target_columns[0],
+                "target_columns": target_columns,
                 "input_columns": list(data.input_columns) if data.input_columns is not None else None,
-                "task": data.task,
+                "task": task_type,
                 **(
                     {
                         "search_contract": "optuna_v1",
                         "algorithm_ids": resolved_algorithm_ids,
                         "search_method": data.search_method,
-                        "max_trials": data.max_trials,
+                        "max_trials": requested_max_trials,
                     }
                     if uses_new_contract
                     else {"candidate_ids": data.candidate_ids}
                 ),
                 **evaluation,
                 "time_budget": data.time_budget,
+                "search_strength": controls["strength"],
+                "class_weight": controls["class_weight"],
+                "time_budget": controls["time_budget"],
             },
             dataset_artifact_id=dataset.id,
             dataset_path=artifact_service.storage_reference(dataset), status="pending",
+            automl_contract={
+                "task_type": task_type,
+                "target_columns": target_columns,
+                "cross_validation_folds": evaluation["cross_validation_folds"],
+                "cv_strategy": "iterative_stratified" if task_type == "multioutput_classification" else ("stratified" if "classification" in task_type else "kfold"),
+                "random_seed": 42,
+                "idempotency_fingerprint": request_fingerprint,
+            },
+            automl_idempotency_key=normalized_key,
         )
         if db.get(ExperimentAutoMLBinding, experiment.id) is not None:
             raise HTTPException(409, _error(
@@ -674,6 +775,14 @@ def start_automl(
                 ))
                 db.flush()
         except IntegrityError as error:
+            if normalized_key is not None:
+                replay = db.query(TrainingJob).filter(
+                    TrainingJob.user_id == current_user.id,
+                    TrainingJob.automl_idempotency_key == normalized_key,
+                    TrainingJob.operator_id == "automl",
+                ).first()
+                if replay is not None and (replay.automl_contract or {}).get("idempotency_fingerprint") == request_fingerprint:
+                    return {"job_id": str(replay.id), "status": replay.status, "task_id": replay.task_id}
             raise HTTPException(409, _error(
                 "EXPERIMENT_ALREADY_HAS_AUTOML_JOB",
                 "Experiment already has an AutoML job",

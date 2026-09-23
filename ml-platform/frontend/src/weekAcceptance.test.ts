@@ -44,8 +44,11 @@ const weekTestFiles: Record<number, string[]> = {
   12: [
     "./api/spotWeldQuality.test.ts",
     "./components/AppLayoutUsername.test.tsx",
+    "./components/ClusterPreviewPanel.test.tsx",
     "./components/DeleteConfirmation.test.tsx",
+    "./components/LabelSchemaEditor.test.tsx",
     "./components/PageErrorBoundary.test.tsx",
+    "./components/PreviewDrawer.test.tsx",
     "./components/TableRowAction.test.tsx",
     "./components/spotWeld/WaveformPanel.test.tsx",
     "./components/workspace/CustomNode.test.tsx",
@@ -57,6 +60,7 @@ const weekTestFiles: Record<number, string[]> = {
     "./pages/AnnotationPage.test.tsx",
     "./pages/APIMarketplacePage.test.tsx",
     "./pages/AutoMLPage.test.tsx",
+    "./pages/AutoMLTaskPage.progress.test.tsx",
     "./pages/DashboardPage.test.tsx",
     "./pages/DataAnnotationPage.test.tsx",
     "./pages/KnowledgeBasePage.test.tsx",
@@ -69,6 +73,17 @@ const weekTestFiles: Record<number, string[]> = {
     "./pages/RegisterPage.test.tsx",
     "./pages/UserManagementPage.test.tsx",
     "./stores/themeContext.test.tsx",
+  ],
+  17: [
+    "./api/annotationReturns.test.ts",
+    "./api/annotatorAssignments.test.ts",
+    "./api/annotationTasks.test.ts",
+    "./api/models.test.ts",
+    "./api/modelExports.test.ts",
+    "./components/AssignmentDialog.test.tsx",
+    "./components/ReturnAcceptancePanel.test.tsx",
+    "./components/AnnotationCommentModerationPanel.test.tsx",
+    "./components/ReturnBatchList.test.tsx",
   ],
 };
 

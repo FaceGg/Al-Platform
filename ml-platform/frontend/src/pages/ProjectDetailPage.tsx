@@ -7,6 +7,7 @@ import apiClient from '../api/client'
 import type { ProjectRole } from '../api/securityNotifications'
 import AppLayout from '../components/AppLayout'
 import ProjectGovernanceTabs from './ProjectGovernanceTabs'
+import { formatLocalTime } from '../utils/time'
 
 export default function ProjectDetailPage() {
   const { projectId } = useParams()
@@ -125,7 +126,7 @@ export default function ProjectDetailPage() {
                   <div>
                     <Tag color={item.type === 'template' ? 'blue' : 'green'}>{item.type}</Tag>
                     <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
-                      {item.created_at ? dayjs(item.created_at).format('YYYY-MM-DD') : ''}
+                      {formatLocalTime(item.created_at)}
                     </div>
                   </div>
                 } />
@@ -138,7 +139,7 @@ export default function ProjectDetailPage() {
 
       <Modal title="新建工作流" open={modalOpen} onCancel={() => setModalOpen(false)}
         onOk={() => form.submit()}>
-        <Form form={form} onFinish={createWorkflow} layout="vertical">
+        <Form form={form} onFinish={createWorkflow} layout="vertical" autoComplete="off">
           <Form.Item name="name" label="名称" rules={[{ required: true }]}>
             <Input placeholder="输入工作流名称" />
           </Form.Item>

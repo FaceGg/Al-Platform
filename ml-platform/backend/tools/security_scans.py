@@ -67,6 +67,24 @@ _GITLEAKS_SCAN_CONTEXT = "isolated_read_only_snapshot"
 _NPM_AUDIT_REGISTRY_ARGUMENT = "--registry=https://registry.npmjs.org"
 _GITLEAKS_SOURCE_SCOPE_HEADER = b"gitleaks-source-scope-v1\0"
 _FILESYSTEM_TRIVY_EXECUTION_ROOT = "."
+
+
+def _repository_root() -> Path:
+    module_path = Path(__file__).resolve()
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=module_path.parent,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        candidate = result.stdout.strip()
+        if candidate:
+            return Path(candidate).resolve()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return module_path.parents[3].resolve()
 _GITLEAKS_CONFIG_CONTRACT = {
     "title": "ML Platform reviewed source scan scope",
     "extend": {"useDefault": True},
@@ -132,6 +150,9 @@ _REACT_ROUTER_SERVER_PATTERNS = (
         r"\[[^\]\r\n]+\]))*(?=\s*[,}])))",
         re.IGNORECASE,
     ),
+)
+_TYPED_ACTION_PARAMETER_PATTERN = re.compile(
+    r"\baction\s*:\s*(?:string|number|boolean|unknown|any)\b",
 )
 _ROUTE_ACTION_SHORTHAND_PATTERN = re.compile(
     r"\b(?:routes?|routeConfig)(?:\s*:\s*[^=;\n]+)?\s*=\s*\[[^\]]*\{[^{}]*\baction\s*(?=[,}])",
@@ -429,6 +450,8 @@ def _is_gitleaks_source_scope_excluded(relative_path: Path) -> bool:
     parts = relative_path.parts
     return (
         (parts and parts[0] == ".git")
+        or ".pytest_cache" in parts
+        or any(part.startswith(".venv") for part in parts)
         or "tmp" in parts
         or "temp_test" in parts
         or "docs2" in parts
@@ -2582,8 +2605,19 @@ def _frontend_uses_react_router_server_api(frontend_directory: Path) -> bool:
         )
         if invalid_factory_import:
             return True
+        has_server_pattern = any(
+            pattern.search(runtime_source)
+            for pattern in _REACT_ROUTER_SERVER_PATTERNS[:-1]
+        )
+        action_pattern_match = _REACT_ROUTER_SERVER_PATTERNS[-1].search(runtime_source)
+        has_server_pattern = has_server_pattern or (
+            action_pattern_match is not None
+            and not _TYPED_ACTION_PARAMETER_PATTERN.fullmatch(
+                action_pattern_match.group(0).strip()
+            )
+        )
         if (
-            any(pattern.search(runtime_source) for pattern in _REACT_ROUTER_SERVER_PATTERNS)
+            has_server_pattern
             or _ROUTE_ACTION_SHORTHAND_PATTERN.search(runtime_source)
             or _source_uses_extracted_route_action_shorthand(runtime_source)
             or _source_uses_route_object_action(
@@ -2935,7 +2969,7 @@ def _raw_scan_report_error(name: str, value: object) -> str | None:
             return "SECURITY_EVIDENCE_INVALID"
         if not any(observed_counts.values()):
             return None
-        repository_root = Path(__file__).resolve().parents[3]
+        repository_root = _repository_root()
         exception = evaluate_npm_audit_exception(
             value,
             exception_path=(
@@ -2999,7 +3033,7 @@ def run_all(
         if image.strip()
     )
     source_commit = _source_commit(os.getenv("ACCEPTANCE_SOURCE_COMMIT"))
-    repository_root = Path(__file__).resolve().parents[3]
+    repository_root = _repository_root()
     frontend_directory = Path(__file__).resolve().parents[2] / "frontend"
     output_path = Path(output)
     evidence_directory = output_path.parent
@@ -3313,7 +3347,7 @@ def summarize_scans(
         else None
     )
     aggregate_gate_names = REQUIRED_SCAN_GATES - {"web_security"}
-    repository_root = Path(__file__).resolve().parents[3]
+    repository_root = _repository_root()
 
     def valid_passing_container_gate(gate: Mapping[str, object]) -> bool:
         """Verify all production image receipts before accepting a passed container gate."""

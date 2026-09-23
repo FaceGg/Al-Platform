@@ -1,5 +1,42 @@
 import apiClient from "./client";
 
+export type AutoMLTaskType =
+  | "classification"
+  | "multioutput_classification"
+  | "regression"
+  | "multioutput_regression";
+
+export type AutoMLSearchMethod = "grid" | "random" | "bayesian" | "evolutionary" | "multi_fidelity";
+export type AutoMLSearchStrength = "light" | "medium" | "high" | "ultra";
+// Values are execution seconds; the UI presents the approved 30/60/120/240-minute presets.
+export type AutoMLTimeBudget = 1800 | 3600 | 7200 | 14400;
+
+interface AutoMLRunPayloadBase {
+  project_id: string;
+  experiment_id: string;
+  dataset_artifact_id: string;
+  input_columns: string[];
+  algorithm_ids: string[];
+  search_method: AutoMLSearchMethod;
+  time_budget: AutoMLTimeBudget;
+  search_strength: AutoMLSearchStrength;
+  class_weight: boolean;
+  cross_validation_enabled: boolean;
+  cross_validation_folds: 2 | 3 | 4 | 5 | null;
+}
+
+export type AutoMLRunPayload =
+  | (AutoMLRunPayloadBase & {
+      task: "classification" | "regression";
+      target_column: string;
+      target_columns?: never;
+    })
+  | (AutoMLRunPayloadBase & {
+      task: "multioutput_classification" | "multioutput_regression";
+      target_columns: [string, string, ...string[]];
+      target_column?: never;
+    });
+
 export interface TrainingJobCreate {
   project_id: string;
   experiment_id: string;

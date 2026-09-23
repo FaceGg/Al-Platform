@@ -39,7 +39,7 @@ describe("DataManagePage", () => {
       if (url === "/datasets") {
         return Promise.resolve({ data: { items: [{
           id: "dataset-1", project_id: "project-1", name: "weld.csv", format: "csv",
-          project_name: "Weld line", file_size: 1024, row_count: 2, created_at: "2026-07-20T00:00:00Z",
+          project_name: "Weld line", file_size: 1024, row_count: 2, column_count: 2, created_at: "2026-07-20T00:00:00",
         }], total: 1 } });
       }
       return Promise.reject(new Error(`Unexpected URL: ${url}`));
@@ -51,6 +51,7 @@ describe("DataManagePage", () => {
 
     expect(await screen.findByText("weld.csv")).toBeInTheDocument();
     expect(screen.getByText("Weld line")).toBeInTheDocument();
+    expect(screen.getByText(/2026-07-20/)).toBeInTheDocument();
     expect(get).toHaveBeenCalledWith("/datasets");
   });
 
@@ -82,6 +83,23 @@ describe("DataManagePage", () => {
     await waitFor(() => expect(remove).toHaveBeenCalledWith("/datasets/dataset-1"));
   });
 
+  it("keeps the page usable when deletion is blocked by an immutable dataset version", async () => {
+    remove.mockRejectedValue({
+      response: {
+        status: 409,
+        data: { detail: { code: "DATA_IMMUTABLE_ARTIFACT", message: "Dataset artifact is referenced by an immutable dataset version" } },
+      },
+    });
+    render(<MemoryRouter><AntApp><DataManagePage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete weld.csv" }));
+    fireEvent.click(within(await screen.findByRole("tooltip")).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("/datasets/dataset-1"));
+    expect(await screen.findByText("weld.csv")).toBeInTheDocument();
+    expect(await screen.findByText("Dataset artifact is referenced by an immutable dataset version")).toBeInTheDocument();
+  });
+
   it("accepts legacy XLS report uploads alongside CSV and XLSX", async () => {
     render(<MemoryRouter><AntApp><DataManagePage /></AntApp></MemoryRouter>);
 
@@ -90,5 +108,28 @@ describe("DataManagePage", () => {
       .map((input) => input.accept);
     expect(acceptValues).toContain(".csv,.xls,.xlsx,.json,.parquet");
     expect(acceptValues).toContain(".csv,.xls,.xlsx");
+  });
+
+  it("previews every dataset row instead of a fixed cap", async () => {
+    const previewRows = Array.from({ length: 15 }, (_, index) => ({ col1: index + 1, col2: (index + 1) * 10 }));
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [] } });
+      if (url === "/datasets") {
+        return Promise.resolve({ data: { items: [{
+          id: "dataset-1", project_id: "project-1", name: "weld.csv", format: "csv",
+          project_name: "Weld line", file_size: 1024, row_count: 15, column_count: 2, created_at: "2026-07-20T00:00:00",
+        }], total: 1 } });
+      }
+      if (url === "/datasets/dataset-1/preview?limit=0") {
+        return Promise.resolve({ data: { columns: ["col1", "col2"], preview: previewRows, total_rows: 15, dtypes: {} } });
+      }
+      return Promise.reject(new Error(`Unexpected URL: ${url}`));
+    });
+    render(<MemoryRouter><AntApp><DataManagePage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByLabelText("Preview weld.csv"));
+
+    expect(await screen.findByText("共 15 行")).toBeInTheDocument();
+    expect(screen.getByText("150")).toBeInTheDocument();
   });
 });

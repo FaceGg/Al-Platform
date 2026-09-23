@@ -192,6 +192,9 @@ class TestModelRegistryAPI(unittest.TestCase):
             json={"comment": "ready"},
         )
         self.assertEqual(approved.json()["approval_status"], "approved")
+        # Approval must also enable the lifecycle so the version satisfies the
+        # enabled gate used by automatic annotation and deployments.
+        self.assertEqual(approved.json()["lifecycle_state"], "enabled")
         self.__class__.model_id = model_id
         self.__class__.version_id = version_id
 

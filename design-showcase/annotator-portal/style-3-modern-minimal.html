@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Linkraft · 标注员门户 - 现代极简版</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --surface-hover: #f5f5f5;
+    --border: #e5e5e5;
+    --border-strong: #d4d4d4;
+    --text: #171717;
+    --text-secondary: #525252;
+    --text-muted: #737373;
+    --accent: #171717;
+    --accent-hover: #404040;
+    --accent-light: #f5f5f5;
+    --success: #15803d;
+    --warning: #a16207;
+    --danger: #b91c1c;
+    --info: #0369a1;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    --radius: 8px;
+    --radius-sm: 6px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  /* Top navigation */
+  .top-nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 20px;
+    height: 52px;
+    background: rgba(250, 250, 250, 0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  .brand svg { width: 22px; height: 22px; }
+  .tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .tab-btn {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .tab-btn.active { color: var(--text); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); }
+  .nav-actions { display: flex; align-items: center; gap: 8px; }
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .icon-btn:hover { background: var(--surface-hover); color: var(--text); }
+  .icon-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .icon-btn svg { width: 16px; height: 16px; }
+
+  /* Views */
+  .views { min-height: calc(100vh - 52px); }
+  .view { display: none; animation: fadeIn 0.2s ease; }
+  .view.active { display: block; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  /* Login */
+  .login-wrap {
+    min-height: calc(100vh - 52px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 24px;
+  }
+  .login-card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 36px;
+    box-shadow: var(--shadow);
+  }
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+  }
+  .login-card h1 {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 6px;
+  }
+  .login-card .lead { color: var(--text-muted); font-size: 13px; margin-bottom: 26px; }
+  .form-group { margin-bottom: 16px; }
+  .form-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 5px;
+  }
+  .form-group input,
+  .form-group select {
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    transition: all 0.15s;
+  }
+  .form-group input:focus,
+  .form-group select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .form-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 22px;
+    font-size: 12px;
+  }
+  .checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .checkbox input { width: 14px; height: 14px; accent-color: var(--accent); }
+  .link { color: var(--text-secondary); text-decoration: underline; text-underline-offset: 2px; font-weight: 500; }
+  .link:hover { color: var(--text); }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+  .btn-secondary:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+  .btn-ghost { background: transparent; color: var(--text-secondary); border-color: var(--border); }
+  .btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
+  .btn-danger { background: transparent; color: var(--danger); border-color: #fee2e2; }
+  .btn-danger:hover { background: #fef2f2; }
+  .login-card .btn-primary { width: 100%; padding: 10px; font-size: 14px; }
+
+  /* Queue */
+  .page { padding: 20px; max-width: 1200px; margin: 0 auto; }
+  .queue-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+  .page-title h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 2px; }
+  .page-title p { color: var(--text-muted); font-size: 13px; }
+  .user-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px 4px 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--accent-light);
+    color: var(--text);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 10px;
+  }
+  .logout { color: var(--text-muted); cursor: pointer; }
+  .logout:hover { color: var(--danger); }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    transition: all 0.15s;
+  }
+  .stat-card:hover { border-color: var(--border-strong); }
+  .stat-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .stat-value { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+  .stat-card.todo .stat-value { color: var(--text); }
+  .stat-card.doing .stat-value { color: var(--info); }
+  .stat-card.pending .stat-value { color: var(--warning); }
+  .stat-card.overdue .stat-value { color: var(--danger); }
+  .stat-delta { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+  .feedback-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    background: #fefce8;
+    border: 1px solid #fde047;
+    border-radius: var(--radius);
+    margin-bottom: 20px;
+    color: #713f12;
+    font-size: 13px;
+  }
+  .feedback-banner svg { flex-shrink: 0; width: 16px; height: 16px; color: #a16207; }
+  .feedback-banner strong { font-weight: 600; }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .search-box {
+    position: relative;
+    flex: 1;
+    min-width: 220px;
+  }
+  .search-box svg {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px;
+    height: 14px;
+    color: var(--text-muted);
+  }
+  .search-box input {
+    width: 100%;
+    padding: 7px 10px 7px 30px;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+  }
+  .search-box input:focus { outline: none; border-color: var(--accent); }
+  .filter-select {
+    padding: 7px 24px 7px 10px;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    min-width: 110px;
+  }
+  .filter-select:focus { outline: none; border-color: var(--accent); }
+
+  .task-list { display: flex; flex-direction: column; gap: 10px; }
+  .task-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 14px;
+    align-items: center;
+    transition: all 0.15s;
+  }
+  .task-card:hover { border-color: var(--border-strong); }
+  .task-card:focus-within { border-color: var(--accent); }
+  .task-main { min-width: 0; }
+  .task-title {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .task-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-muted);
+    font-size: 12px;
+    flex-wrap: wrap;
+  }
+  .task-meta span { display: inline-flex; align-items: center; gap: 4px; }
+  .task-meta svg { width: 12px; height: 12px; }
+  .task-actions { display: flex; align-items: center; gap: 8px; }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .tag-todo { background: #f5f5f5; color: var(--text-secondary); }
+  .tag-doing { background: #e0f2fe; color: var(--info); }
+  .tag-pending { background: #fef9c3; color: var(--warning); }
+  .tag-overdue { background: #fee2e2; color: var(--danger); }
+  .tag-done { background: #dcfce7; color: var(--success); }
+  .priority {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+  }
+  .priority-high { background: #fee2e2; color: var(--danger); }
+  .priority-medium { background: #fef9c3; color: var(--warning); }
+  .priority-low { background: #f5f5f5; color: var(--text-muted); }
+
+  /* Workspace - three column */
+  .workspace {
+    display: grid;
+    grid-template-columns: 56px 260px 1fr;
+    gap: 0;
+    min-height: calc(100vh - 52px);
+  }
+  .rail {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 10px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
+  }
+  .rail-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .rail-btn:hover { background: var(--surface-hover); color: var(--text); }
+  .rail-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .rail-btn.active { background: var(--text); color: #fff; }
+  .rail-btn svg { width: 18px; height: 18px; }
+  .rail-divider { width: 20px; height: 1px; background: var(--border); margin: 6px 0; }
+  .secondary-panel {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .panel-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+  .sample-list { flex: 1; overflow: auto; }
+  .sample-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .sample-item:hover { background: var(--surface-hover); }
+  .sample-item.active { background: #f5f5f5; box-shadow: inset 2px 0 0 var(--accent); }
+  .sample-id { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+  .sample-preview { font-size: 12px; color: var(--text-secondary); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .sample-status { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 11px; font-weight: 600; color: var(--text-muted); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--border-strong); }
+  .dot.done { background: var(--success); }
+  .workspace-main { padding: 20px; overflow: auto; background: var(--bg); }
+  .workspace-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .workspace-header h3 { font-size: 16px; font-weight: 700; }
+  .progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .progress-bar {
+    width: 120px;
+    height: 6px;
+    background: var(--border);
+    border-radius: 100px;
+    overflow: hidden;
+  }
+  .progress-fill { height: 100%; background: var(--text); width: 62%; border-radius: 100px; }
+  .data-grid {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .data-grid table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .data-grid th,
+  .data-grid td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  .data-grid th { background: var(--bg); font-weight: 600; color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .data-grid tr:last-child td { border-bottom: none; }
+  .data-grid tr:hover td { background: var(--surface-hover); }
+  .data-grid td { color: var(--text-secondary); }
+  .data-grid .cell-id { font-family: 'JetBrains Mono', monospace; color: var(--text-muted); font-size: 11px; }
+  .label-form {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .label-form h4 { font-size: 14px; font-weight: 700; margin-bottom: 14px; }
+  .form-row-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 14px; }
+  .chip-group { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    padding: 5px 11px;
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--surface);
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .chip:hover { border-color: var(--border-strong); color: var(--text); }
+  .chip.active { background: var(--text); color: #fff; border-color: var(--text); }
+  .chip:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .action-bar {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px 18px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    margin: 0 -20px -20px;
+  }
+  .action-group { display: flex; align-items: center; gap: 8px; }
+
+  @media (max-width: 900px) {
+    .workspace { grid-template-columns: 56px 1fr; }
+    .secondary-panel { display: none; }
+  }
+  @media (max-width: 768px) {
+    .top-nav { padding: 0 14px; height: auto; min-height: 48px; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; }
+    .tabs { order: 3; width: 100%; margin-top: 6px; overflow-x: auto; }
+    .workspace { grid-template-columns: 1fr; }
+    .rail { flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--border); padding: 6px; }
+    .rail-divider { display: none; }
+    .page { padding: 16px; }
+    .task-card { grid-template-columns: 1fr; }
+    .task-actions { justify-content: flex-start; }
+    .action-bar { flex-direction: column; align-items: stretch; margin: 0 -16px -16px; }
+    .action-group { justify-content: space-between; }
+    .login-card { padding: 26px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="top-nav" aria-label="主导航">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    Linkraft
+  </div>
+  <div class="tabs" role="tablist">
+    <button class="tab-btn active" role="tab" aria-selected="true" data-view="login">登录</button>
+    <button class="tab-btn" role="tab" aria-selected="false" data-view="queue">任务队列</button>
+    <button class="tab-btn" role="tab" aria-selected="false" data-view="workspace">标注工作区</button>
+  </div>
+  <div class="nav-actions">
+    <button class="icon-btn" aria-label="通知">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    </button>
+    <button class="icon-btn" aria-label="帮助">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </button>
+  </div>
+</nav>
+
+<main class="views">
+  <!-- Login -->
+  <section id="view-login" class="view active" role="tabpanel">
+    <div class="login-wrap">
+      <div class="login-card">
+        <div class="eyebrow">Annotator Portal</div>
+        <h1>标注员门户</h1>
+        <p class="lead">请使用分配的企业账号登录，开始今天的标注任务。</p>
+        <form onsubmit="event.preventDefault(); alert('演示环境：登录成功');">
+          <div class="form-group">
+            <label for="username">用户名 / 工号</label>
+            <input type="text" id="username" placeholder="例如 annotator-0421" required>
+          </div>
+          <div class="form-group">
+            <label for="password">密码</label>
+            <input type="password" id="password" placeholder="输入密码" required>
+          </div>
+          <div class="form-row">
+            <label class="checkbox"><input type="checkbox" checked> 记住我</label>
+            <a href="#" class="link">忘记密码？</a>
+          </div>
+          <button type="submit" class="btn btn-primary">登录到任务中心</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- Task Queue -->
+  <section id="view-queue" class="view" role="tabpanel">
+    <div class="page">
+      <div class="queue-header">
+        <div class="page-title">
+          <h2>任务队列</h2>
+          <p>今日待处理标注任务与状态概览</p>
+        </div>
+        <div class="user-chip">
+          <span class="avatar">LY</span>
+          <span>李雨桐</span>
+          <span class="logout" title="退出登录">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </span>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card todo">
+          <div class="stat-label">待标注</div>
+          <div class="stat-value">24</div>
+          <div class="stat-delta">较昨日 +3</div>
+        </div>
+        <div class="stat-card doing">
+          <div class="stat-label">进行中</div>
+          <div class="stat-value">7</div>
+          <div class="stat-delta">当前活跃</div>
+        </div>
+        <div class="stat-card pending">
+          <div class="stat-label">待回传</div>
+          <div class="stat-value">12</div>
+          <div class="stat-delta">需提交审核</div>
+        </div>
+        <div class="stat-card overdue">
+          <div class="stat-label">已逾期</div>
+          <div class="stat-value">2</div>
+          <div class="stat-delta">请优先处理</div>
+        </div>
+      </div>
+
+      <div class="feedback-banner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <div><strong>质检反馈：</strong> 上一个批次「客服对话意图-0920」有 3 条样本被退回，请修正标签后重新提交。</div>
+      </div>
+
+      <div class="toolbar">
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="搜索任务名称、批次号或项目...">
+        </div>
+        <select class="filter-select" aria-label="状态筛选">
+          <option>全部状态</option>
+          <option>待标注</option>
+          <option>进行中</option>
+          <option>待回传</option>
+          <option>已逾期</option>
+        </select>
+        <select class="filter-select" aria-label="优先级筛选">
+          <option>全部优先级</option>
+          <option>高</option>
+          <option>中</option>
+          <option>低</option>
+        </select>
+      </div>
+
+      <div class="task-list">
+        <article class="task-card">
+          <div class="task-main">
+            <div class="task-title">
+              <span>电商评论情感标注 - 第 14 批次</span>
+              <span class="tag tag-todo">待标注</span>
+              <span class="priority priority-high">高</span>
+            </div>
+            <div class="task-meta">
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> 截止 09-21</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> 1,240 条</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> 准确率要求 ≥ 95%</span>
+            </div>
+          </div>
+          <div class="task-actions">
+            <button class="btn btn-primary">开始标注</button>
+          </div>
+        </article>
+
+        <article class="task-card">
+          <div class="task-main">
+            <div class="task-title">
+              <span>客服对话意图分类 - 0920</span>
+              <span class="tag tag-doing">进行中</span>
+              <span class="priority priority-high">高</span>
+            </div>
+            <div class="task-meta">
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> 截止 09-20</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> 856 / 2,000 条</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> 3 条待修正</span>
+            </div>
+          </div>
+          <div class="task-actions">
+            <button class="btn btn-secondary">继续标注</button>
+          </div>
+        </article>
+
+        <article class="task-card">
+          <div class="task-main">
+            <div class="task-title">
+              <span>商品图片多标签标注 - 0908</span>
+              <span class="tag tag-pending">待回传</span>
+              <span class="priority priority-medium">中</span>
+            </div>
+            <div class="task-meta">
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> 截止 09-22</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> 500 条</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> 已通过自检</span>
+            </div>
+          </div>
+          <div class="task-actions">
+            <button class="btn btn-secondary">提交审核</button>
+          </div>
+        </article>
+
+        <article class="task-card">
+          <div class="task-main">
+            <div class="task-title">
+              <span>短视频内容审核 - 第 7 批次</span>
+              <span class="tag tag-overdue">已逾期</span>
+              <span class="priority priority-high">高</span>
+            </div>
+            <div class="task-meta">
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> 已于 09-18 到期</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> 120 / 300 条</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> 请立即处理</span>
+            </div>
+          </div>
+          <div class="task-actions">
+            <button class="btn btn-primary">继续标注</button>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- Workspace -->
+  <section id="view-workspace" class="view" role="tabpanel">
+    <div class="workspace">
+      <aside class="rail" aria-label="工具栏">
+        <button class="rail-btn active" title="指南" aria-label="指南">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </button>
+        <button class="rail-btn" title="样本" aria-label="样本">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+        </button>
+        <button class="rail-btn" title="批量" aria-label="批量">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </button>
+        <button class="rail-btn" title="回传" aria-label="回传">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </button>
+        <button class="rail-btn" title="批注" aria-label="批注">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        </button>
+        <div class="rail-divider"></div>
+        <button class="rail-btn" title="帮助" aria-label="帮助">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        </button>
+      </aside>
+
+      <aside class="secondary-panel" aria-label="样本列表">
+        <div class="panel-header">样本列表 · 批次 14</div>
+        <div class="sample-list">
+          <div class="sample-item done">
+            <div class="sample-id">REV-2840</div>
+            <div class="sample-preview">包装很好，物流也很快，会回购。</div>
+            <div class="sample-status"><span class="dot done"></span> 已标注</div>
+          </div>
+          <div class="sample-item active">
+            <div class="sample-id">REV-2841</div>
+            <div class="sample-preview">物流速度很快，包装也完好，但是客服回复有点慢，整体还算满意。</div>
+            <div class="sample-status"><span class="dot"></span> 标注中</div>
+          </div>
+          <div class="sample-item">
+            <div class="sample-id">REV-2842</div>
+            <div class="sample-preview">完全不值这个价，用了两天就坏了，退货流程还特别麻烦。</div>
+            <div class="sample-status"><span class="dot"></span> 待标注</div>
+          </div>
+          <div class="sample-item">
+            <div class="sample-id">REV-2843</div>
+            <div class="sample-preview">回购第三次了，性价比很高，推荐给了好几个朋友。</div>
+            <div class="sample-status"><span class="dot"></span> 待标注</div>
+          </div>
+          <div class="sample-item">
+            <div class="sample-id">REV-2844</div>
+            <div class="sample-preview">颜色和图片有点差距，但质量还可以，能接受。</div>
+            <div class="sample-status"><span class="dot"></span> 待标注</div>
+          </div>
+        </div>
+      </aside>
+
+      <div class="workspace-main">
+        <div class="workspace-header">
+          <h3>电商评论情感标注 · 样本 #2841</h3>
+          <div class="progress">
+            <span>已标注 62 / 100</span>
+            <div class="progress-bar" aria-hidden="true"><div class="progress-fill"></div></div>
+            <span class="mono">62%</span>
+          </div>
+        </div>
+
+        <div class="data-grid">
+          <table>
+            <thead>
+              <tr>
+                <th>样本 ID</th>
+                <th>原始评论</th>
+                <th>商品类目</th>
+                <th>来源</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="cell-id">REV-20240919-2841</td>
+                <td>物流速度很快，包装也完好，但是客服回复有点慢，整体还算满意。</td>
+                <td>家居用品</td>
+                <td>天猫</td>
+              </tr>
+              <tr>
+                <td class="cell-id">REV-20240919-2842</td>
+                <td>完全不值这个价，用了两天就坏了，退货流程还特别麻烦。</td>
+                <td>数码配件</td>
+                <td>京东</td>
+              </tr>
+              <tr>
+                <td class="cell-id">REV-20240919-2843</td>
+                <td>回购第三次了，性价比很高，推荐给了好几个朋友。</td>
+                <td>美妆护肤</td>
+                <td>小红书</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="label-form">
+          <h4>当前样本标签</h4>
+          <div class="form-row-grid">
+            <div class="form-group">
+              <label>情感倾向</label>
+              <div class="chip-group">
+                <button class="chip">正面</button>
+                <button class="chip active">中性</button>
+                <button class="chip">负面</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>情感强度</label>
+              <div class="chip-group">
+                <button class="chip active">弱</button>
+                <button class="chip">中</button>
+                <button class="chip">强</button>
+              </div>
+            </div>
+          </div>
+          <div class="form-row-grid">
+            <div class="form-group">
+              <label for="label-text">标注备注</label>
+              <input type="text" id="label-text" placeholder="补充说明，如混合情感、歧义等..." value="混合情感：物流正面，客服负面">
+            </div>
+            <div class="form-group">
+              <label for="label-issue">问题类型</label>
+              <select id="label-issue">
+                <option>无</option>
+                <option>质量问题</option>
+                <option>物流问题</option>
+                <option selected>服务问题</option>
+                <option>价格问题</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="action-bar">
+          <div class="action-group">
+            <button class="btn btn-secondary">上一项</button>
+            <button class="btn btn-ghost">跳过</button>
+          </div>
+          <div class="action-group">
+            <button class="btn btn-ghost">保存草稿</button>
+            <button class="btn btn-primary">保存并下一项</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+  const tabBtns = document.querySelectorAll('.tab-btn');
+  const views = document.querySelectorAll('.view');
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.view;
+      tabBtns.forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+      btn.classList.add('active');
+      btn.setAttribute('aria-selected', 'true');
+      views.forEach(v => v.classList.toggle('active', v.id === 'view-' + target));
+    });
+  });
+
+  document.querySelectorAll('.chip-group').forEach(group => {
+    group.addEventListener('click', e => {
+      const chip = e.target.closest('.chip');
+      if (!chip) return;
+      group.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+    });
+  });
+
+  document.querySelectorAll('.sample-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.sample-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+    });
+  });
+</script>
+
+</body>
+</html>

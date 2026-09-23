@@ -6,6 +6,7 @@ import * as echarts from "echarts";
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
+import { formatLocalTime } from "../utils/time";
 
 const { Text, Paragraph, Title } = Typography;
 const { Panel } = Collapse;
@@ -158,7 +159,7 @@ export default function KnowledgeDetailPage() {
             renderItem={(doc: any) => (
               <Card key={doc.id} size="small" style={{ marginBottom: 8 }}>
                 <Space style={{ justifyContent: "space-between", width: "100%" }}>
-                  <Space><FileTextOutlined style={{ color: "#1890ff" }} /><Text strong>{doc.filename || doc.name}</Text><Tag color="blue">{doc.chunk_count || 0} chunks</Tag><Text type="secondary">{new Date(doc.created_at).toLocaleDateString()}</Text></Space>
+                  <Space><FileTextOutlined style={{ color: "#1890ff" }} /><Text strong>{doc.filename || doc.name}</Text><Tag color="blue">{doc.chunk_count || 0} chunks</Tag><Text type="secondary">{formatLocalTime(doc.created_at)}</Text></Space>
                   <Button danger size="small" icon={<DeleteOutlined />} onClick={() => deleteDoc(doc.id)}>{t.ai_chat.delete}</Button>
                 </Space>
               </Card>
@@ -217,7 +218,7 @@ export default function KnowledgeDetailPage() {
       children: (
         <div>
           <Space.Compact style={{ width: "100%", marginBottom: 16 }}>
-            <Input placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }} />
+            <Input autoComplete="off" placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }} />
             <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch} loading={loading}>{t.ai_chat.search}</Button>
           </Space.Compact>
           <Spin spinning={loading}>
@@ -257,7 +258,7 @@ export default function KnowledgeDetailPage() {
             </div>
             <div style={{ padding: "12px 0", borderTop: "1px solid #f0f0f0" }}>
               <Space.Compact style={{ width: "100%" }}>
-                <Input.TextArea value={messageInput} onChange={(e) => setMessageInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Send..." autoSize={{ minRows: 1, maxRows: 4 }} />
+              <Input.TextArea autoComplete="off" value={messageInput} onChange={(e) => setMessageInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Send..." autoSize={{ minRows: 1, maxRows: 4 }} />
                 <Button type="primary" icon={<SendOutlined />} onClick={sendMessage} loading={chatLoading} style={{ height: "auto" }}>{t.ai_chat.send}</Button>
               </Space.Compact>
             </div>

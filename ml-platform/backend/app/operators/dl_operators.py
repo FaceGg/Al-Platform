@@ -132,6 +132,53 @@ if TORCH_AVAILABLE:
             return OperatorResult(outputs={"model": buf.getvalue()})
 
 
+if not TORCH_AVAILABLE:
+    class _TorchUnavailableOperator(BaseOperator):
+        """Keep the operator contract visible when the optional runtime is absent."""
+
+        inputs = [PortSpec("data", "DataTable", "Training Data")]
+        outputs = [PortSpec("model", "Model", "Trained Model")]
+        parameters = [
+            ParamSpec("target_column", "str", "target", "Target Column"),
+            ParamSpec("epochs", "int", 10, "Epochs", range_min=1),
+            ParamSpec("batch_size", "int", 32, "Batch Size", range_min=1),
+            ParamSpec("learning_rate", "float", 0.001, "Learning Rate"),
+            ParamSpec("device", "select", "cpu", "Device", options=["cpu", "cuda"]),
+            ParamSpec("random_seed", "int", 42, "Random Seed"),
+        ]
+
+        def validate(self, inputs):
+            return True
+
+        def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+            raise RuntimeError("TORCH_NOT_INSTALLED")
+
+
+    @register_operator
+    class MLPClassifier(_TorchUnavailableOperator):
+        id = "mlp_classifier"
+        name = "MLP Classifier"
+        category = "dl"
+        description = "Train a simple MLP classifier with PyTorch"
+
+
+    @register_operator
+    class MLPRegressor(_TorchUnavailableOperator):
+        id = "mlp_regressor"
+        name = "MLP Regressor"
+        category = "dl"
+        description = "Train a simple MLP regressor with PyTorch"
+
+
+    @register_operator
+    class CNN1DClassifier(_TorchUnavailableOperator):
+        id = "cnn1d_classifier"
+        name = "CNN1D Classifier"
+        category = "dl"
+        description = "Train a 1D CNN classifier with PyTorch"
+
+
+if TORCH_AVAILABLE:
     @register_operator
     class MLPRegressor(BaseOperator):
         id = "mlp_regressor"
@@ -159,41 +206,44 @@ if TORCH_AVAILABLE:
             data = inputs.get("data", [])
             df = pd.DataFrame(data)
             target = params.get("target_column", "target")
-
-
-            cat_cols = df.drop(columns=[target]).select_dtypes(include=["object", "category"]).columns.tolist()
+            features = df.drop(columns=[target])
+            cat_cols = features.select_dtypes(include=["object", "category"]).columns.tolist()
             if cat_cols:
-                X = pd.get_dummies(df.drop(columns=[target]), columns=cat_cols).values.astype(np.float32)
-            else:
-                X = df.drop(columns=[target]).values.astype(np.float32)
+                features = pd.get_dummies(features, columns=cat_cols)
+            X = features.values.astype(np.float32)
             y = df[target].values.astype(np.float32).reshape(-1, 1)
             X = torch.tensor(X, dtype=torch.float32)
             y = torch.tensor(y, dtype=torch.float32)
 
-            hidden = [int(h.strip()) for h in params.get("hidden_layers", "64,32").split(",") if h.strip()]
+            hidden = [
+                int(h.strip())
+                for h in params.get("hidden_layers", "64,32").split(",")
+                if h.strip()
+            ]
             activation = params.get("activation", "relu")
             epochs = int(params.get("epochs", 10))
             batch_size = int(params.get("batch_size", 32))
             lr = float(params.get("learning_rate", 0.001))
 
-            dataset = TensorDataset(X, y)
-            loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
+            loader = DataLoader(
+                TensorDataset(X, y),
+                batch_size=batch_size,
+                shuffle=True,
+            )
             model = _MLP(X.shape[1], hidden, 1, activation)
-            criterion = nn.MSELoss()
             optimizer = optim.Adam(model.parameters(), lr=lr)
-
+            criterion = nn.MSELoss()
             model.train()
             for _ in range(epochs):
                 for batch_x, batch_y in loader:
                     optimizer.zero_grad()
-                    outputs = model(batch_x)
-                    loss = criterion(outputs, batch_y)
+                    loss = criterion(model(batch_x), batch_y)
                     loss.backward()
                     optimizer.step()
 
             import pickle as _pickle
-            model_pkg = {
+
+            payload = {
                 "__framework__": "pytorch",
                 "__model_type__": "mlp_regressor",
                 "state_dict": model.state_dict(),
@@ -202,10 +252,9 @@ if TORCH_AVAILABLE:
                 "activation": activation,
                 "net_class": _MLP,
             }
-            buf = io.BytesIO()
-            _pickle.dump(model_pkg, buf)
-            buf.seek(0)
-            return OperatorResult(outputs={"model": buf.getvalue()})
+            buffer = io.BytesIO()
+            _pickle.dump(payload, buffer)
+            return OperatorResult(outputs={"model": buffer.getvalue()})
 
 
     @register_operator

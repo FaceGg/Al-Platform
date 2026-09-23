@@ -7,6 +7,7 @@ from app.main import app
 from app.database import Base, engine
 from app.database import SessionLocal
 from app.models.user import User
+from app.services.security import rate_limiter
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
@@ -30,6 +31,11 @@ class TestUsersAPI(unittest.TestCase):
             db.commit()
         cls.admin_h = admin_login()
 
+    def setUp(self):
+        # Login limits are process-local; isolate each example so test order
+        # cannot turn a credential assertion into an unrelated 429 response.
+        rate_limiter().clear()
+
     def test_01_health_accessible_without_auth(self):
         r = client.get("/api/health")
         self.assertEqual(r.status_code, 200)
@@ -41,6 +47,26 @@ class TestUsersAPI(unittest.TestCase):
         data = r.json()
         self.assertIn("access_token", data)
         self.assertIn("token_type", data)
+
+    def test_02b_login_normalizes_username_case_and_copy_paste_whitespace(self):
+        r = client.post("/api/auth/login", data={"username": "  ADMIN  ", "password": "admin123"})
+        self.assertEqual(r.status_code, 200)
+
+    def test_02c_malformed_legacy_hash_is_a_normal_authentication_failure(self):
+        import uuid
+
+        username = f"malformed-hash-{uuid.uuid4().hex}"
+        with SessionLocal() as db:
+            db.add(User(username=username, password_hash="not-a-password-hash", role="engineer"))
+            db.commit()
+
+        try:
+            r = client.post("/api/auth/login", data={"username": username, "password": "admin123"})
+            self.assertEqual(r.status_code, 401)
+        finally:
+            with SessionLocal() as db:
+                db.query(User).filter(User.username == username).delete()
+                db.commit()
 
     def test_03_login_wrong_password(self):
         r = client.post("/api/auth/login", data={"username": "admin", "password": "wrongpassword"})

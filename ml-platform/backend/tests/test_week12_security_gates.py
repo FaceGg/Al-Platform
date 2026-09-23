@@ -32,8 +32,19 @@ from tools.security_scans import (
 
 class SecurityGateTests(unittest.TestCase):
     @staticmethod
+    def _repository_root() -> Path:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return Path(result.stdout.strip()).resolve()
+
+    @staticmethod
     def _gitleaks_receipt_binding() -> dict[str, str]:
-        repository_root = Path(__file__).resolve().parents[3]
+        repository_root = SecurityGateTests._repository_root()
         config_path = repository_root / ".gitleaks.toml"
         return {
             "execution_root": ".",
@@ -56,6 +67,8 @@ class SecurityGateTests(unittest.TestCase):
         def excluded(parts: tuple[str, ...]) -> bool:
             return (
                 (parts and parts[0] == ".git")
+                or ".pytest_cache" in parts
+                or any(part.startswith(".venv") for part in parts)
                 or "tmp" in parts
                 or "temp_test" in parts
                 or "docs2" in parts
@@ -95,7 +108,7 @@ class SecurityGateTests(unittest.TestCase):
 
     @classmethod
     def _write_gitleaks_source_root(cls, root: Path) -> Path:
-        config_source = Path(__file__).resolve().parents[3] / ".gitleaks.toml"
+        config_source = cls._repository_root() / ".gitleaks.toml"
         root.mkdir(parents=True)
         (root / ".gitleaks.toml").write_bytes(config_source.read_bytes())
         source_path = root / "ml-platform" / "backend" / "app.py"
@@ -146,7 +159,7 @@ class SecurityGateTests(unittest.TestCase):
         path: Path,
         *,
         reviewed_at: str = "2026-08-01",
-        expires_on: str = "2026-09-10",
+        expires_on: str = "2026-12-12",
     ):
         path.write_text(
             json.dumps(
@@ -242,7 +255,7 @@ class SecurityGateTests(unittest.TestCase):
         self.assertNotIn("vulnerabilities", result)
 
     def test_react_router_audit_exception_accepts_the_real_client_only_frontend(self):
-        repository_root = Path(__file__).resolve().parents[3]
+        repository_root = self._repository_root()
         result = evaluate_npm_audit_exception(
             self._react_router_audit_report(),
             exception_path=(
@@ -252,7 +265,7 @@ class SecurityGateTests(unittest.TestCase):
                 / "react-router-rsc-mode-exception.json"
             ),
             frontend_directory=repository_root / "ml-platform" / "frontend",
-            today=date(2026, 8, 10),
+            today=date(2026, 9, 12),
         )
 
         self.assertEqual(result["status"], "passed")
@@ -2398,7 +2411,7 @@ class SecurityGateTests(unittest.TestCase):
             ) as run_scan:
                 run_all(output)
 
-        repository_root = Path(__file__).resolve().parents[3]
+        repository_root = self._repository_root()
         frontend_directory = repository_root / "ml-platform" / "frontend"
         filesystem_call = next(
             call
@@ -2462,7 +2475,7 @@ class SecurityGateTests(unittest.TestCase):
                 subprocess_run.return_value.stderr = ""
                 result = run_all(output)
 
-        repository_root = Path(__file__).resolve().parents[3]
+        repository_root = self._repository_root()
         gitleaks_call = next(
             call
             for call in subprocess_run.call_args_list
@@ -2762,7 +2775,7 @@ class SecurityGateTests(unittest.TestCase):
             self.assertFalse(snapshot_root.exists())
 
     def test_production_env_application_secret_placeholders_are_empty(self):
-        repository_root = Path(__file__).resolve().parents[3]
+        repository_root = self._repository_root()
         example_path = (
             repository_root
             / ".github"
@@ -2867,7 +2880,7 @@ class SecurityGateTests(unittest.TestCase):
         self.assertFalse(is_required_scan_command("secret_gitleaks", wrong_config))
 
     def test_gitleaks_scope_config_extends_default_rules_and_excludes_only_generated_paths(self):
-        repository_root = Path(__file__).resolve().parents[3]
+        repository_root = self._repository_root()
         config_path = repository_root / ".gitleaks.toml"
         self.assertTrue(config_path.is_file())
         self.assertEqual(

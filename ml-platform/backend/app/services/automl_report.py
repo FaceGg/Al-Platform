@@ -97,6 +97,22 @@ def _tabular(frame: pd.DataFrame) -> pd.DataFrame:
 def _importance(model, features: pd.DataFrame, target: pd.Series, task: str):
     names = [str(column) for column in features.columns]
     values = getattr(model, "feature_importances_", None)
+    if values is None and hasattr(model, "estimators_"):
+        vectors = []
+        for estimator in model.estimators_:
+            steps = getattr(estimator, "steps", None)
+            if steps:
+                estimator = steps[-1][1]
+            estimator_values = getattr(estimator, "feature_importances_", None)
+            if estimator_values is None and hasattr(estimator, "coef_"):
+                estimator_values = np.asarray(estimator.coef_)
+            if estimator_values is not None:
+                estimator_values = np.asarray(estimator_values, dtype=float)
+                if estimator_values.ndim > 1:
+                    estimator_values = np.mean(np.abs(estimator_values), axis=0)
+                vectors.append(np.abs(estimator_values).reshape(-1))
+        if vectors and all(len(vector) == len(names) for vector in vectors):
+            values = np.mean(np.vstack(vectors), axis=0)
     if values is None and hasattr(model, "coef_"):
         coefficients = np.abs(np.asarray(model.coef_))
         values = coefficients.mean(axis=0) if coefficients.ndim > 1 else coefficients
@@ -197,34 +213,65 @@ def generate_automl_report(
     params = dict(job.params or {})
     with artifact_service.materialize(job.dataset_artifact_id, job.project_id, expected_type="dataset") as dataset_path:
         frame = read_automl_dataset(dataset_path)
-    target_column = params.get("target_column")
-    feature_columns = resolve_automl_feature_columns(frame, target_column, params.get("input_columns"))
-    prepared = frame.dropna(subset=[target_column, *feature_columns])
-    features = prepared.loc[:, feature_columns]
-    target = prepared[target_column]
     with artifact_service.materialize(job.model_artifact_id, job.project_id, expected_type="model") as model_path:
         payload = joblib.load(model_path)
     model = payload.get("model", payload) if isinstance(payload, dict) else payload
-    target_schema = payload.get("target_schema", {}) if isinstance(payload, dict) else {}
-    task = str(target_schema.get("task") or params.get("task", "classification"))
-    if task == "classification":
+    stored_target_schema = payload.get("target_schema", {}) if isinstance(payload, dict) else {}
+    target_columns = list(params.get("target_columns") or [])
+    if not target_columns and isinstance(stored_target_schema, list):
+        target_columns = [str(item.get("name")) for item in stored_target_schema if isinstance(item, dict) and item.get("name")]
+    target_column = params.get("target_column") or (target_columns[0] if target_columns else None)
+    feature_columns = resolve_automl_feature_columns(
+        frame,
+        target_column,
+        params.get("input_columns"),
+        target_columns=target_columns or None,
+    )
+    target_fields = target_columns or ([target_column] if target_column else [])
+    prepared = frame.dropna(subset=[*target_fields, *feature_columns])
+    features = prepared.loc[:, feature_columns]
+    target_schema = stored_target_schema
+    if isinstance(target_schema, list):
+        target_columns = [str(item.get("name")) for item in target_schema if isinstance(item, dict) and item.get("name")]
+        target_column = target_columns[0] if target_columns else target_column
+        task = str(params.get("task", "multioutput_classification"))
+    else:
+        task = str(target_schema.get("task") or params.get("task", "classification"))
+    is_multioutput = len(target_columns) > 1 or task.startswith("multioutput_")
+    if is_multioutput:
+        target_frame = prepared.loc[:, target_columns]
+        importance_targets = target_frame.iloc[:, 0]
+    elif task == "classification":
         classes = [str(value) for value in (target_schema.get("classes") or [])]
         class_index = {value: index for index, value in enumerate(classes)}
-        target_for_model = target.astype(str).map(class_index) if classes else target
+        importance_targets = prepared[target_column].astype(str).map(class_index) if classes else prepared[target_column]
     else:
-        target_for_model = target
-    names, importances, weights = _importance(model, features, target_for_model, task)
+        importance_targets = prepared[target_column]
+    names, importances, weights = _importance(model, features, importance_targets, "classification" if "classification" in task else "regression")
     clusters = _cluster(features, weights)
     prediction = model.predict(features)
-    if task == "classification" and classes:
+    if is_multioutput:
+        prediction_matrix = np.asarray(prediction)
+        inference = pd.DataFrame({column: prepared[column].tolist() for column in target_columns})
+        for index, column in enumerate(target_columns):
+            inference[f"predicted_{column}"] = prediction_matrix[:, index].tolist()
+        if "classification" in task and hasattr(model, "predict_proba"):
+            probabilities = model.predict_proba(features)
+            for index, column in enumerate(target_columns):
+                values = np.asarray(probabilities[index])
+                inference[f"confidence_{column}"] = values.max(axis=1)
+        if "regression" in task:
+            for column in target_columns:
+                inference[f"residual_{column}"] = inference[column] - inference[f"predicted_{column}"]
+    elif task == "classification" and classes:
         display_prediction = [classes[int(value)] if 0 <= int(value) < len(classes) else str(value) for value in prediction]
+        inference = pd.DataFrame({target_column: prepared[target_column].astype(str), "predicted": display_prediction})
     else:
-        display_prediction = prediction
-    inference = pd.DataFrame({target_column: target.astype(str) if task == "classification" else target, "predicted": display_prediction})
-    if task == "classification" and hasattr(model, "predict_proba"):
+        inference = pd.DataFrame({target_column: prepared[target_column], "predicted": prediction})
+    if not is_multioutput and task == "classification" and hasattr(model, "predict_proba"):
         probabilities = np.asarray(model.predict_proba(features))
         inference["confidence"] = probabilities.max(axis=1)
-    if task == "regression": inference["residual"] = inference[target_column] - inference["predicted"]
+    if not is_multioutput and task == "regression": inference["residual"] = inference[target_column] - inference["predicted"]
     results = _report_results(metrics.get("all_results") or metrics.get("algorithm_results"))
     importance_rows = [{"feature": name, "importance": float(value), "weight": float(weight)} for name, value, weight in zip(names, importances, weights)]
     importance_rows.sort(key=lambda row: row["importance"], reverse=True)

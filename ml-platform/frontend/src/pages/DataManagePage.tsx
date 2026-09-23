@@ -8,12 +8,33 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import apiClient from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
+import { acceptReturnBatch, diffReturnBatch, listReturnBatches, returnReturnBatch, type ReturnBatch, type ReturnDiffRow } from "../api/annotationReturns";
 import AppLayout from "../components/AppLayout";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
+import ReturnBatchList from "../components/ReturnBatchList";
 import { useI18n } from "../i18n";
+import { formatLocalTime } from "../utils/time";
 
 const { Text } = Typography;
+
+function formatDatasetCreatedAt(value: string | null): string {
+  if (!value) return "-";
+  return formatLocalTime(value, true);
+}
+
+function datasetErrorMessage(error: any, fallback: string): string {
+  const detail = error?.response?.data?.detail;
+  if (typeof detail === "string") return detail;
+  if (detail?.code === "DATASET_IN_USE") {
+    return `该文件正在被标注任务使用，无法删除（任务状态：${detail.task_status || "未知"}）。请先结束或删除任务后再试。`;
+  }
+  if (detail?.message) return detail.message;
+  if (detail?.code === "DATA_IMMUTABLE_ARTIFACT") {
+    return "该文件已被数据版本引用，不能删除。请先删除或归档相关数据版本。";
+  }
+  return fallback;
+}
 
 export default function DataManagePage() {
   const navigate = useNavigate();
@@ -26,6 +47,11 @@ export default function DataManagePage() {
   const [loading, setLoading] = useState(false);
   const [previewData, setPreviewData] = useState<{ columns: string[]; rows: any[][] } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [returnBatches, setReturnBatches] = useState<ReturnBatch[]>([]);
+  const [returnBatchesLoading, setReturnBatchesLoading] = useState(false);
+  const [returnDiff, setReturnDiff] = useState<ReturnDiffRow[]>([]);
+  const [returnDiffOpen, setReturnDiffOpen] = useState(false);
+  const [returnDiffLoading, setReturnDiffLoading] = useState(false);
 
   useEffect(() => {
     apiClient.get("/projects").then((res) => {
@@ -48,6 +74,62 @@ export default function DataManagePage() {
   useEffect(() => {
     loadDatasets(selectedProject);
   }, [selectedProject]);
+
+  const loadReturnBatches = async (projectId: string | null) => {
+    if (!projectId) {
+      setReturnBatches([]);
+      return;
+    }
+    setReturnBatchesLoading(true);
+    try {
+      const page = await listReturnBatches(projectId);
+      setReturnBatches(page.items || []);
+    } catch (error) {
+      setReturnBatches([]);
+      message.error((error as any)?.response?.data?.detail?.message || "回传结果加载失败");
+    } finally {
+      setReturnBatchesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadReturnBatches(selectedProject);
+  }, [selectedProject]);
+
+  const handleReturnDiff = async (batchId: string) => {
+    setReturnDiffLoading(true);
+    setReturnDiffOpen(true);
+    try {
+      const page = await diffReturnBatch(batchId);
+      setReturnDiff(page.items || []);
+    } catch (error) {
+      setReturnDiff([]);
+      message.error((error as any)?.response?.data?.detail?.message || "回传差异加载失败");
+    } finally {
+      setReturnDiffLoading(false);
+    }
+  };
+
+  const handleAcceptReturn = async (batchId: string, taskRevision: number) => {
+    try {
+      await acceptReturnBatch(batchId, taskRevision);
+      message.success("回传结果已验收");
+      await loadReturnBatches(selectedProject);
+      loadDatasets(selectedProject);
+    } catch (error) {
+      message.error((error as any)?.response?.data?.detail?.message || "回传验收失败");
+    }
+  };
+
+  const handleReturnBatch = async (batchId: string, reason: string, taskRevision: number) => {
+    try {
+      await returnReturnBatch(batchId, { task_revision: taskRevision, reason });
+      message.success("回传结果已退回");
+      await loadReturnBatches(selectedProject);
+    } catch (error) {
+      message.error((error as any)?.response?.data?.detail?.message || "回传退回失败");
+    }
+  };
 
   const handleUpload = async (file: File) => {
     if (!selectedProject) { message.warning(t.automl.select_project); return false; }
@@ -72,13 +154,13 @@ export default function DataManagePage() {
       message.success(t.common.success);
       setDatasets((prev) => prev.filter((d) => d.id !== dsId));
     } catch (e: any) {
-      message.error(e.response?.data?.detail || t.common.error);
+      message.error(datasetErrorMessage(e, t.common.error));
     }
   };
 
   const handlePreview = async (dsId: string) => {
     try {
-      const data = await getDatasetPreview(dsId);
+      const data = await getDatasetPreview(dsId, { limit: 0 });
       const columns = data.columns || [];
       const rows = Array.isArray(data.preview)
         ? data.preview.map((row: Record<string, unknown>) => columns.map((column: string) => row[column]))
@@ -135,8 +217,12 @@ export default function DataManagePage() {
       render: (v: string) => <Tag>{v || "csv"}</Tag> },
     { title: t.data.size, dataIndex: "file_size", key: "size",
       render: (v: number) => v ? (v / 1024).toFixed(1) + " KB" : "-" },
-    { title: t.data.rows, dataIndex: "row_count", key: "rows", width: 80 },
-    { title: t.model.created, dataIndex: "created_at", key: "created_at", width: 160 },
+    { title: t.data.rows, dataIndex: "row_count", key: "rows", width: 80,
+      render: (v: number | null) => v == null ? "-" : v.toLocaleString() },
+    { title: "列数", dataIndex: "column_count", key: "column_count", width: 80,
+      render: (v: number | null) => v == null ? "-" : v.toLocaleString() },
+    { title: t.model.created, dataIndex: "created_at", key: "created_at", width: 160,
+      render: (v: string | null) => formatLocalTime(v, true) },
     {
       title: t.model.actions, key: "actions", width: 160, fixed: "right" as const, align: "right" as const,
       render: (_: any, record: any) => (
@@ -188,6 +274,13 @@ export default function DataManagePage() {
             scroll={{ x: "max-content" }}
           />
         </Card>
+        {selectedProject && <ReturnBatchList
+          items={returnBatches}
+          loading={returnBatchesLoading}
+          onDiff={(batchId) => { void handleReturnDiff(batchId); }}
+          onAccept={(batchId, taskRevision) => { void handleAcceptReturn(batchId, taskRevision); }}
+          onReturn={(batchId, reason, taskRevision) => { void handleReturnBatch(batchId, reason, taskRevision); }}
+        />}
       </div>
       <Modal
         title={t.data.preview}
@@ -197,31 +290,50 @@ export default function DataManagePage() {
         width={800}
       >
         {previewData && (
-          <div style={{ overflowX: "auto" }}>
-            <table className="dataset-preview-table" style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
-              <thead>
-                <tr>
-                  {previewData.columns.map((col: string, i: number) => (
-                    <th key={i} style={{ padding: "6px 8px", textAlign: "left" }}>
-                      {col}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {previewData.rows.slice(0, 10).map((row: any[], ri: number) => (
-                  <tr key={ri}>
-                    {row.map((cell: any, ci: number) => (
-                      <td key={ci} style={{ padding: "4px 8px", maxWidth: 200, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-                        {String(cell ?? "")}
-                      </td>
+          <div>
+            <p style={{ margin: "0 0 8px", color: "rgba(0,0,0,0.45)", fontSize: 12 }}>
+              共 {previewData.rows.length} 行{previewData.rows.length >= 500 ? "（数据量较大，请滚动查看）" : ""}
+            </p>
+            <div style={{ overflowX: "auto", maxHeight: "60vh", overflowY: "auto" }}>
+              <table className="dataset-preview-table" style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    {previewData.columns.map((col: string, i: number) => (
+                      <th key={i} style={{ padding: "6px 8px", textAlign: "left" }}>
+                        {col}
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {previewData.rows.map((row: any[], ri: number) => (
+                    <tr key={ri}>
+                      {row.map((cell: any, ci: number) => (
+                        <td key={ci} style={{ padding: "4px 8px", maxWidth: 200, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                          {String(cell ?? "")}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
+      </Modal>
+      <Modal
+        title="回传差异"
+        open={returnDiffOpen}
+        onCancel={() => setReturnDiffOpen(false)}
+        footer={null}
+        width={900}
+      >
+        {returnDiffLoading ? <div role="status">正在加载差异…</div> : returnDiff.length === 0 ? <p>暂无差异</p> : <div style={{ overflowX: "auto" }}>
+          <table className="dataset-preview-table" style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+            <thead><tr><th>样本</th><th>源数据</th><th>标签</th></tr></thead>
+            <tbody>{returnDiff.map((row) => <tr key={row.sample_id}><td>{row.sample_id}</td><td><pre>{JSON.stringify(row.source_values, null, 2)}</pre></td><td><pre>{JSON.stringify(row.label_values, null, 2)}</pre></td></tr>)}</tbody>
+          </table>
+        </div>}
       </Modal>
     </AppLayout>
   );

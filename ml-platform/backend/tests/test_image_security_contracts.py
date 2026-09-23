@@ -21,7 +21,7 @@ DOCKERFILES = tuple(
 BASE_RECORD = ROOT / ".github" / "contracts" / "python-base-image.json"
 REMEDIATED_WOLFI_REFERENCE = (
     "cgr.dev/chainguard/wolfi-base:latest@"
-    "sha256:bfcffaf1336b26a3fd33c8cb31a86a09324d2048420d7f49b983f323b0d33e8d"
+    "sha256:6a8dca4c2153cfc11d559cfa6172c187b896423d833f3d48a4c1c44ab55596d7"
 )
 REQUIREMENTS = BACKEND / "requirements.txt"
 EXCEPTION = ROOT / ".github" / "contracts" / "cryptography-pkcs7-mlflow-exception.json"
@@ -49,7 +49,11 @@ class ImageSecurityContractTests(unittest.TestCase):
         non_root_uid = runtime["non_root_uid"]
         self.assertEqual(non_root_uid, 1000)
         for path in DOCKERFILES:
-            content = path.read_text(encoding="utf-8")
+            content = re.sub(
+                r"\s*\\\s*\n\s*",
+                " ",
+                path.read_text(encoding="utf-8"),
+            )
             self.assertIn("apk add --no-cache", content, path.name)
             self.assertIn(python_package, content, path.name)
             self.assertIn(pip_package, content, path.name)
@@ -61,8 +65,14 @@ class ImageSecurityContractTests(unittest.TestCase):
             self.assertIn("ENV HOME=/home/app", content, path.name)
             self.assertIn(f"USER {non_root_uid}:{non_root_uid}", content, path.name)
             self.assertIn(
+                'python3.11 -m pip install --no-deps --retries 10 --resume-retries 20 '
+                '--timeout 120 "xgboost==3.2.*" "catboost==1.2.*"',
+                content,
+                path.name,
+            )
+            self.assertIn(
                 "python3.11 -m pip install --retries 10 --resume-retries 20 --timeout 120 "
-                "-r requirements.txt",
+                "graphviz plotly six -r /tmp/requirements-without-boost.txt",
                 content,
                 path.name,
             )
@@ -92,13 +102,32 @@ class ImageSecurityContractTests(unittest.TestCase):
                 path.read_text(encoding="utf-8"),
             )
             self.assertRegex(content, expected_retry, path.name)
+            self.assertRegex(
+                content,
+                r"apk\s+add\s+--no-cache[^\n;]*\bglibc\b",
+                path.name,
+            )
+            self.assertIn(
+                "printf '%s\\n' 'https://packages.wolfi.dev/os' > /etc/apk/repositories",
+                content,
+                path.name,
+            )
+            self.assertIn('RUN python3.11 -c "import sqlite3"', content, path.name)
 
     def test_backend_host_mounts_keep_the_established_numeric_identity(self):
         compose = COMPOSE.read_text(encoding="utf-8")
-        backend = DOCKERFILES[0].read_text(encoding="utf-8")
+        backend = re.sub(
+            r"\s*\\\s*\n\s*",
+            " ",
+            DOCKERFILES[0].read_text(encoding="utf-8"),
+        )
         self.assertIn("./ml-platform/backend/data:/app/data", compose)
         self.assertIn("./ml-platform/backend/uploads:/app/app/uploads", compose)
-        self.assertIn("chown -R app:app /home/app data app/uploads /tmp/ml-platform", backend)
+        self.assertIn(
+            "chown -R app:app /home/app data app/uploads /var/lib/tensorboard "
+            "/var/lib/ml-platform /tmp/ml-platform",
+            backend,
+        )
         self.assertIn("USER 1000:1000", backend)
 
     def test_inference_runtime_uses_one_process_for_its_in_memory_registry(self):

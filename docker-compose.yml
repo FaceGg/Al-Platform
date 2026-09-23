@@ -1,4 +1,4 @@
-﻿# AI Model Training Platform - Docker Compose
+# AI Model Training Platform - Docker Compose
 services:
   postgres:
     image: postgres:16
@@ -48,6 +48,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile
+      network: host
     command: ["alembic", "upgrade", "head"]
     environment: &production-environment
       APP_MODE: production
@@ -74,6 +75,7 @@ services:
       TENSORBOARD_LOG_ROOT: /var/lib/tensorboard/runs
       INFERENCE_RUNTIME_URL: ${INFERENCE_RUNTIME_URL:-http://inference-runtime:7000}
       INFERENCE_INTERNAL_SECRET: ${INFERENCE_INTERNAL_SECRET:?set INFERENCE_INTERNAL_SECRET}
+      LOGIN_IP_RATE_LIMIT_CAPACITY: ${LOGIN_IP_RATE_LIMIT_CAPACITY:-5}
       INFERENCE_RATE_LIMIT_CAPACITY: ${INFERENCE_RATE_LIMIT_CAPACITY:-100}
       INFERENCE_RATE_LIMIT_REFILL_PER_SECOND: ${INFERENCE_RATE_LIMIT_REFILL_PER_SECOND:-10}
       INFERENCE_ROLLOUT_OBSERVATION_SECONDS: ${INFERENCE_ROLLOUT_OBSERVATION_SECONDS:-60}
@@ -116,9 +118,9 @@ services:
       - "5000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+      interval: 10s
+      timeout: 10s
+      retries: 60
     depends_on:
       postgres:
         condition: service_healthy
@@ -130,6 +132,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.tensorboard
+      network: host
     environment:
       TENSORBOARD_SESSION_SECRET: ${TENSORBOARD_SESSION_SECRET:?set TENSORBOARD_SESSION_SECRET}
       TENSORBOARD_SESSION_TTL_SECONDS: ${TENSORBOARD_SESSION_TTL_SECONDS:-300}
@@ -150,6 +153,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.inference
+      network: host
     environment:
       APP_MODE: production
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
@@ -229,10 +233,36 @@ services:
     secrets:
       - notification_master_key
 
+  annotator:
+    build:
+      context: ./ml-platform/annotator/backend
+      dockerfile: Dockerfile
+    ports:
+      - "${ANNOTATOR_API_PORT:-8444}:8443"
+    environment:
+      ANNOTATOR_PORT: 8443
+      ANNOTATOR_API_ORIGIN: ${ANNOTATOR_API_ORIGIN:-http://backend:8000}
+      ANNOTATOR_PUBLIC_ORIGIN: ${ANNOTATOR_PUBLIC_ORIGIN:-http://localhost:8443}
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  annotator-frontend:
+    build:
+      context: ./ml-platform/annotator/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${ANNOTATOR_PORT:-8443}:80"
+    depends_on:
+      - annotator
+    restart: unless-stopped
+
   worker:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.worker
+      network: host
     environment: *production-environment
     volumes:
       - tensorboard-events:/var/lib/tensorboard/runs
@@ -254,6 +284,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.worker
+      network: host
     command:
       - celery
       - -A

@@ -11,7 +11,7 @@ class DataTableOp(BaseOperator):
     category = "visualization"
     description = "Display data in table view"
     inputs = [PortSpec("data", "DataTable", "Input Data")]
-    outputs = [PortSpec("view", "Params", "Data Preview")]
+    outputs = [PortSpec("view", "JSON", "Data Preview")]
     parameters = []
 
     def validate(self, inputs):
@@ -33,7 +33,7 @@ class DataStatsOp(BaseOperator):
     category = "visualization"
     description = "Compute statistics of dataset"
     inputs = [PortSpec("data", "DataTable", "Input Data")]
-    outputs = [PortSpec("stats", "Params", "Statistics")]
+    outputs = [PortSpec("stats", "JSON", "Statistics")]
     parameters = []
 
     def validate(self, inputs):
@@ -387,7 +387,7 @@ class ConfusionMatrixPlot(BaseOperator):
     name = "Confusion Matrix Plot"
     category = "visualization"
     description = "Plot confusion matrix from evaluation results"
-    inputs = [PortSpec("metrics", "Params", "Evaluation Metrics")]
+    inputs = [PortSpec("metrics", "JSON", "Evaluation Metrics")]
     outputs = [PortSpec("chart", "Chart", "Confusion Matrix")]
     parameters = [
         ParamSpec("title", "str", "Confusion Matrix", "Chart Title"),

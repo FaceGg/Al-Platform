@@ -58,6 +58,21 @@ class Settings(BaseSettings):
     secret_key_file: str | None = Field(default=None, repr=False, exclude=True)
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
+    frontend_origin: str = "http://localhost:5173"
+    frontend_origin_aliases: str = ""
+    annotator_public_origin: str = "http://localhost:8443"
+    annotator_api_origin: str = "http://localhost:8000"
+    annotator_port: int = Field(default=8443, ge=1, le=65535)
+    annotator_session_ttl_seconds: int = Field(default=1800, ge=60, le=86400)
+    annotator_service_issuer: str = "ml-platform-annotator"
+    annotator_service_audience: str = "ml-platform-internal"
+    annotator_service_algorithm: str = "HS256"
+    annotator_service_secret: SecretStr = Field(default=SecretStr("change-me-annotator-service-secret"), exclude=True)
+    login_ip_rate_limit_capacity: int = Field(default=5, ge=1, le=100)
+
+    @property
+    def resolved_annotator_service_secret(self) -> SecretStr:
+        return self.annotator_service_secret
 
     task_backend: Literal["local", "celery"] = "local"
     celery_broker_url: SecretStr | None = Field(default=None, exclude=True)
@@ -106,6 +121,10 @@ class Settings(BaseSettings):
     )
     inference_log_retention_days: int = Field(default=30, ge=1, le=365)
     inference_rollout_observation_seconds: int = Field(default=60, ge=10, le=3600)
+
+    annotation_max_samples: int = Field(default=1_000_000, ge=1, le=10_000_000)
+    annotation_max_input_columns: int = Field(default=200, ge=1, le=2_000)
+    annotation_max_label_columns: int = Field(default=20, ge=1, le=200)
 
     notification_master_key: SecretStr | None = Field(default=None, exclude=True)
     notification_master_key_file: str | None = Field(
@@ -281,6 +300,8 @@ class Settings(BaseSettings):
             )
         if self.task_hard_timeout_seconds <= self.task_soft_timeout_seconds:
             raise ValueError("Production hard timeout must be greater than soft timeout")
+        if len(self.resolved_annotator_service_secret.get_secret_value()) < 32:
+            raise ValueError("Production ANNOTATOR_SERVICE_SECRET must contain at least 32 characters")
 
     def _validate_postgresql_url(self) -> None:
         try:

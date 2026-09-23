@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, func, BigInteger, Boolean, Float, Integer
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, func, BigInteger, Boolean, Float, Integer, Index, UniqueConstraint
 from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -13,6 +13,10 @@ TERMINAL_TRAINING_STATUSES = frozenset({"completed", "failed", "cancelled", "can
 
 class TrainingJob(Base):
     __tablename__ = "training_jobs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "automl_idempotency_key", name="uq_training_jobs_user_automl_idempotency"),
+        Index("ix_training_jobs_automl_idempotency_key", "automl_idempotency_key"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
@@ -71,6 +75,8 @@ class TrainingJob(Base):
     early_stopping_patience = Column(Integer, nullable=True)
     early_stopping_min_delta = Column(Float, nullable=True)
     restore_best = Column(Boolean, nullable=False, default=True)
+    automl_contract = Column(JSON, default=dict)
+    automl_idempotency_key = Column(String(128), nullable=True)
 
     project = relationship("Project", backref="training_jobs")
     user = relationship("User", backref="training_jobs")

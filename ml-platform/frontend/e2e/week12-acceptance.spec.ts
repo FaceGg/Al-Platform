@@ -247,7 +247,18 @@ async function loginAs(page: Page, credentials: Credentials, baseUrl: string): P
   await page.goto(origin(baseUrl, "/login"));
   await page.getByPlaceholder(/(?:\u7528\u6237\u540d|Username)/).fill(credentials.username);
   await page.getByPlaceholder(/(?:\u5bc6\u7801|Password)/).fill(credentials.password);
-  await page.locator('button[type="submit"]').click();
+  const [loginResponse] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes("/api/auth/login")),
+    page.locator('button[type="submit"]').click(),
+  ]);
+  if (!loginResponse.ok()) {
+    const responseBody = await loginResponse.text();
+    throw new Error(
+      `login failed with HTTP ${loginResponse.status()} ` +
+      `Retry-After=${loginResponse.headers()["retry-after"] || "-"} ` +
+      `body=${responseBody.slice(0, 500)}`,
+    );
+  }
   await expect(page).toHaveURL(/\/$/);
 }
 

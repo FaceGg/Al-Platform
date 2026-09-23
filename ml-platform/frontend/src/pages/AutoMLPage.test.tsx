@@ -12,6 +12,16 @@ const QUALITY_REPORT_COLUMNS = [
   "cvei", "cvev", "cver", "cvep",
 ];
 
+const AUTOML_ALGORITHM_IDS = [
+  "lightgbm",
+  "xgboost",
+  "catboost",
+  "gbdt",
+  "random_forest",
+  "extra_trees",
+  "hist_gradient_boosting",
+];
+
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), delete: vi.fn() }));
 const datasets = vi.hoisted(() => ({ listDatasets: vi.fn(), getDatasetPreview: vi.fn() }));
 const quality = vi.hoisted(() => ({
@@ -617,6 +627,152 @@ describe("AutoMLPage", () => {
       time_budget: 600,
     })));
     expect(api.post.mock.calls[0][1]).not.toHaveProperty("candidate_ids");
+  });
+
+  it("exposes the four canonical task types, all search controls, and four fold choices", async () => {
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务类型" }));
+    for (const label of ["Classification", "Multi-output Classification", "Regression", "Multi-output Regression"]) {
+      expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
+    }
+
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "任务类型" }), { key: "Escape" });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "搜索强度" }));
+    for (const label of ["轻度（10 次）", "中（30 次）", "高（80 次）", "Ultra（200 次）"]) {
+      expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
+    }
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "搜索强度" }), { key: "Escape" });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "总时间上限" }));
+    for (const label of ["30 分钟", "60 分钟（标准）", "120 分钟", "240 分钟"]) {
+      expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
+    }
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "总时间上限" }), { key: "Escape" });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "交叉验证折数" }));
+    for (const label of ["2 折", "3 折", "4 折", "5 折"]) {
+      expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
+    }
+    expect(screen.getByRole("switch", { name: "类别权重" })).toBeInTheDocument();
+  });
+
+  it("submits a single-output classification with the planned defaults", async () => {
+    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
+    fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
+    await waitFor(() => expect(screen.getByTitle("feature")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTitle("force")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/training/automl/run",
+      expect.objectContaining({
+        task: "classification",
+        target_column: "quality",
+        input_columns: ["feature", "force"],
+        algorithm_ids: AUTOML_ALGORITHM_IDS,
+        search_method: "bayesian",
+        search_strength: "medium",
+        time_budget: 3600,
+        class_weight: true,
+        cross_validation_enabled: true,
+        cross_validation_folds: 5,
+      }),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "Idempotency-Key": expect.any(String),
+          "X-Request-ID": expect.any(String),
+        }),
+      }),
+    ));
+    const payload = api.post.mock.calls[0][1];
+    expect(payload).not.toHaveProperty("max_trials");
+    expect(payload).not.toHaveProperty("target_columns");
+  });
+
+  it("does not expose a user-editable maximum trial count", async () => {
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    expect(screen.queryByText("最大试验次数")).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "最大试验次数" })).not.toBeInTheDocument();
+  });
+
+  it("reuses the idempotency key when an unchanged AutoML request is retried", async () => {
+    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
+    fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
+    await waitFor(() => expect(screen.getByTitle("feature")).toBeInTheDocument());
+
+    const run = screen.getByRole("button", { name: "thunderbolt Run" });
+    fireEvent.click(run);
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(run).toBeEnabled());
+    fireEvent.click(run);
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+
+    const firstHeaders = api.post.mock.calls[0][2].headers;
+    const retryHeaders = api.post.mock.calls[1][2].headers;
+    expect(retryHeaders["Idempotency-Key"]).toBe(firstHeaders["Idempotency-Key"]);
+    expect(retryHeaders["X-Request-ID"]).toEqual(expect.any(String));
+  });
+
+  it("submits multi-output targets separately and excludes every target from inputs", async () => {
+    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    datasets.getDatasetPreview.mockResolvedValue({
+      columns: ["feature", "force", "label_a", "label_b"],
+      dtypes: { feature: "float64", force: "float64", label_a: "float64", label_b: "int64" },
+      preview: [],
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务类型" }));
+    fireEvent.click(await screen.findByText("Multi-output Regression", { selector: ".ant-select-item-option-content" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
+    fireEvent.click(await screen.findByText("label_a", { selector: ".ant-select-item-option-content" }));
+    fireEvent.click(await screen.findByText("label_b", { selector: ".ant-select-item-option-content" }));
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/training/automl/run",
+      expect.objectContaining({
+        task: "multioutput_regression",
+        target_columns: ["label_a", "label_b"],
+        input_columns: ["feature", "force"],
+        search_strength: "medium",
+        time_budget: 3600,
+        class_weight: false,
+      }),
+      expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
+    ));
+    expect(api.post.mock.calls[0][1]).not.toHaveProperty("target_column");
   });
 
   it.skip("submits the selected input columns with the target column", async () => {

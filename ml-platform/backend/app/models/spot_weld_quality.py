@@ -1,4 +1,6 @@
-"""Persistent state for the report-compatible spot-weld quality pipeline."""
+"""Legacy spot-weld persistence retained only as a migration/read adapter."""
+
+LEGACY_ADAPTER_ONLY = True
 
 import uuid
 

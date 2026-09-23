@@ -1,5 +1,7 @@
 """Celery application configuration."""
 
+GENERICIZATION_BRIDGE_ONLY = True
+
 from celery import Celery
 from celery.schedules import crontab
 
@@ -11,9 +13,15 @@ celery_app = Celery(
     include=[
         "app.tasks.workflow_tasks",
         "app.tasks.training_tasks",
+        "app.tasks.annotation_preview_tasks",
+        "app.tasks.annotation_execution_tasks",
         "app.tasks.inference_tasks",
         "app.tasks.notification_tasks",
         "app.tasks.spot_weld_quality_tasks",
+        "app.tasks.model_export_tasks",
+        "app.tasks.dataset_import_tasks",
+        "app.tasks.annotation_return_tasks",
+        "app.tasks.recovery",
     ],
     broker=(settings.celery_broker_url.get_secret_value() if settings.celery_broker_url else None),
     backend=(settings.celery_result_backend.get_secret_value() if settings.celery_result_backend else None),
@@ -38,6 +46,14 @@ celery_app.conf.update(
             "task": "ml_platform.recover_pipeline_schedules",
             "schedule": 60.0,
         },
+        "training-job-recovery": {
+            "task": "ml_platform.recover_training_jobs",
+            "schedule": 60.0,
+        },
+        "durable-operation-recovery": {
+            "task": "ml_platform.recover_operations",
+            "schedule": 60.0,
+        },
         "inference-deployment-reconciliation": {
             "task": "ml_platform.reconcile_inference_deployments",
             "schedule": 60.0,
@@ -59,7 +75,13 @@ celery_app.conf.update(
 
 # Register tasks for CLI/import smoke checks as well as worker include discovery.
 from app.tasks import training_tasks  # noqa: E402,F401
+from app.tasks import annotation_preview_tasks  # noqa: E402,F401
+from app.tasks import annotation_execution_tasks  # noqa: E402,F401
 from app.tasks import scheduler_tasks  # noqa: E402,F401
 from app.tasks import inference_tasks  # noqa: E402,F401
 from app.tasks import notification_tasks  # noqa: E402,F401
 from app.tasks import spot_weld_quality_tasks  # noqa: E402,F401
+from app.tasks import model_export_tasks  # noqa: E402,F401
+from app.tasks import dataset_import_tasks  # noqa: E402,F401
+from app.tasks import annotation_return_tasks  # noqa: E402,F401
+from app.tasks import recovery  # noqa: E402,F401

@@ -28,6 +28,7 @@ import {
 } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
+import { formatLocalTime } from "../utils/time";
 import apiClient, { formatApiError } from "../api/client";
 import {
   compareExperimentRuns,
@@ -341,7 +342,7 @@ export default function TrainingJobsPage() {
     { title: labels.creator || "Creator", dataIndex: "created_by_name", key: "creator", render: (value: string, experiment: Experiment) => value || experiment.created_by || "-" },
     { title: labels.description, dataIndex: "description", key: "description", render: (value: string) => value || "-" },
     { title: labels.runs, dataIndex: "run_count", key: "run_count", width: 100 },
-    { title: labels.started, dataIndex: "created_at", key: "created_at", width: 180, render: (value: string) => dayjs(value).format("YYYY-MM-DD HH:mm") },
+    { title: labels.started, dataIndex: "created_at", key: "created_at", width: 180, render: (value: string) => formatLocalTime(value) },
     {
       title: t.model.actions,
       key: "actions",
@@ -391,7 +392,7 @@ export default function TrainingJobsPage() {
         </Space>;
       },
     },
-    { title: labels.started, dataIndex: "created_at", key: "created_at", width: 180, render: (value: string) => value ? dayjs(value).format("YYYY-MM-DD HH:mm") : "-" },
+    { title: labels.started, dataIndex: "created_at", key: "created_at", width: 180, render: (value: string) => formatLocalTime(value) },
     {
       title: t.model.actions,
       key: "actions",
@@ -454,7 +455,7 @@ export default function TrainingJobsPage() {
     ]} />
 
     <Modal title={labels.new_experiment} open={createExperimentOpen} onCancel={() => setCreateExperimentOpen(false)} onOk={() => experimentForm.submit()} okText={t.common.create} destroyOnHidden>
-      <Form form={experimentForm} layout="vertical" onFinish={submitExperiment} initialValues={{ description: "" }}>
+        <Form form={experimentForm} layout="vertical" onFinish={submitExperiment} initialValues={{ description: "" }} autoComplete="off">
         <Form.Item name="name" label={labels.experiment_name} rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item name="description" label={labels.description}><Input.TextArea rows={3} /></Form.Item>
       </Form>
@@ -480,7 +481,7 @@ export default function TrainingJobsPage() {
         columns={[
           { title: "Run ID", dataIndex: "run_id", key: "run_id" },
           { title: labels.name, dataIndex: "run_name", key: "run_name", render: (value: string) => value || "-" },
-          { title: labels.status, dataIndex: "status", key: "status", render: (value: string) => <Tag color={statusColors[value]}>{value}</Tag> },
+          { title: labels.status, dataIndex: "status", key: "status", render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag> },
           { title: labels.metrics, dataIndex: "metrics", key: "metrics", render: (value: unknown) => <JsonValue value={value} /> },
         ]}
       />
@@ -504,7 +505,7 @@ export default function TrainingJobsPage() {
     </Modal>
 
     <Modal title={labels.new_job} open={createTrainingOpen} onCancel={() => setCreateTrainingOpen(false)} onOk={() => trainingForm.submit()} okText={t.common.create} destroyOnHidden>
-      <Form form={trainingForm} layout="vertical" onFinish={submitTraining} initialValues={{ task: "auto", total_epochs: 20 }}>
+        <Form form={trainingForm} layout="vertical" onFinish={submitTraining} initialValues={{ task: "auto", total_epochs: 20 }} autoComplete="off">
         <Form.Item name="name" label={labels.name} rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item name="project_id" label={labels.project} rules={[{ required: true }]}><Select options={projects.map((item) => ({ value: item.id, label: item.name }))} onChange={(value) => void selectProjectForTraining(value)} /></Form.Item>
         <Form.Item name="experiment_id" label={labels.experiment_name} rules={[{ required: true }]}><Select options={experiments.map((item) => ({ value: item.id, label: item.name }))} /></Form.Item>

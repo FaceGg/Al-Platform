@@ -1,4 +1,6 @@
-"""Celery entrypoint for durable spot-weld quality execution."""
+"""Legacy spot-weld worker entrypoint retained for migration compatibility."""
+
+LEGACY_ADAPTER_ONLY = True
 
 import inspect
 import threading

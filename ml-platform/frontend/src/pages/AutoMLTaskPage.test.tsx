@@ -1,5 +1,5 @@
-import { App as AntApp, Modal } from "antd";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { App as AntApp, Modal, message as staticMessage } from "antd";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -105,6 +105,31 @@ describe("AutoMLTaskPage model registration", () => {
     expect(register).toBeDisabled();
   });
 
+  it("registers a completed artifact-only AutoML candidate", async () => {
+    get.mockResolvedValue({ data: {
+      id: "job-1", project_id: "project-1", status: "completed",
+      metrics: {
+        progress: { completed: 1, total: 1, percent: 100 },
+        algorithm_results: [{
+          algorithm_id: "multioutput_random_forest",
+          name: "Multi-output random forest",
+          status: "completed",
+          model_artifact_id: "artifact-1",
+        }],
+      },
+    } });
+    renderPage();
+
+    const register = await screen.findByRole("button", { name: "注册" });
+    expect(register).toBeEnabled();
+    fireEvent.click(register);
+    await waitFor(() => expect(registerAutoMLResult).toHaveBeenCalledWith(
+      "project-1",
+      "job-1",
+      "multioutput_random_forest",
+    ));
+  });
+
   it("generates a five-tab preview and exports the detailed zip", async () => {
     const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:report");
     const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
@@ -120,6 +145,16 @@ describe("AutoMLTaskPage model registration", () => {
     createObjectURL.mockRestore(); revokeObjectURL.mockRestore(); click.mockRestore();
   });
 
+  it("uses the scoped AntApp message API for report notifications", async () => {
+    const staticSuccess = vi.spyOn(staticMessage, "success");
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "生成分析报告" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/training/jobs/job-1/automl-report"));
+
+    expect(staticSuccess).not.toHaveBeenCalled();
+  });
+
   it("restores an existing report and requires confirmation before regeneration", async () => {
     const confirm = vi.spyOn(Modal, "confirm").mockReturnValue({ destroy: vi.fn(), update: vi.fn() });
     const existingReport = { preview: { overview: { project: "一号焊装项目" }, selection: [], clustering: {}, importance: [], inference: [] } };
@@ -132,7 +167,9 @@ describe("AutoMLTaskPage model registration", () => {
     fireEvent.click(screen.getByRole("button", { name: "生成分析报告" }));
     expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: "分析报告已经生成过，是否重新生成？" }));
     expect(post).not.toHaveBeenCalled();
-    await confirm.mock.calls[0][0].onOk?.(vi.fn());
+    await act(async () => {
+      await confirm.mock.calls[0][0].onOk?.(vi.fn());
+    });
     await waitFor(() => expect(post).toHaveBeenCalledWith("/training/jobs/job-1/automl-report?regenerate=true"));
   });
 
@@ -156,5 +193,65 @@ describe("AutoMLTaskPage model registration", () => {
     expect(within(detailDialog).getByText("0.9300")).toBeInTheDocument();
     expect(within(detailDialog).getByText("0.8200")).toBeInTheDocument();
     expect(within(detailDialog).getByText("0.7100")).toBeInTheDocument();
+  });
+
+  it("shows accuracy from score and best_score when results lack an explicit accuracy key", async () => {
+    get.mockResolvedValue({ data: {
+      id: "job-1", project_id: "project-1", project_name: "一号焊装项目", status: "completed",
+      metrics: { progress: { completed: 2, total: 2, percent: 100 },
+        all_results: [
+          { name: "随机森林", algorithm_id: "rf", score: 0.95, auc: 0.93, f1: 0.88, status: "completed" },
+          { name: "梯度提升树", algorithm_id: "gbdt", best_score: 0.9, auc: 0.91, f1: 0.85, status: "completed" },
+        ] },
+    } });
+    renderPage();
+
+    expect(await screen.findByText("随机森林")).toBeInTheDocument();
+    expect(screen.getByText("0.9500")).toBeInTheDocument();
+    expect(screen.getByText("0.9000")).toBeInTheDocument();
+  });
+
+  it("ranks regression results by R2, RMSE, MAE, and runtime", async () => {
+    get.mockResolvedValue({ data: {
+      id: "job-1", project_id: "project-1", status: "completed",
+      params: { task: "multioutput_regression" },
+      metrics: {
+        progress: { completed: 3, total: 3, percent: 100 },
+        algorithm_results: [
+          { algorithm_id: "higher_runtime", name: "Higher runtime", status: "completed", aggregate: { r2: 0.90, rmse: 0.80, mae: 0.50 }, training_time_seconds: 20 },
+          { algorithm_id: "lower_rmse", name: "Lower RMSE", status: "completed", aggregate: { r2: 0.90, rmse: 0.70, mae: 0.90 }, training_time_seconds: 10 },
+          { algorithm_id: "faster_tie", name: "Faster tie", status: "completed", aggregate: { r2: 0.90, rmse: 0.80, mae: 0.50 }, training_time_seconds: 5 },
+        ],
+      },
+    } });
+    renderPage();
+
+    await screen.findByText("Higher runtime");
+    const bodyRows = Array.from(document.querySelectorAll(".ant-table-tbody > tr"));
+    const names = bodyRows.map((row) => row.textContent || "");
+
+    expect(names[0]).toContain("Lower RMSE");
+    expect(names[1]).toContain("Faster tie");
+    expect(names[2]).toContain("Higher runtime");
+  });
+
+  it("shows regression metrics instead of classification-only result columns", async () => {
+    get.mockResolvedValue({ data: {
+      id: "job-1", project_id: "project-1", status: "completed",
+      params: { task: "regression" },
+      metrics: {
+        progress: { completed: 1, total: 1, percent: 100 },
+        algorithm_results: [{
+          algorithm_id: "random_forest", name: "Random forest", status: "completed",
+          aggregate: { r2: 0.91, rmse: 0.23, mae: 0.12 }, training_time_seconds: 5,
+        }],
+      },
+    } });
+    renderPage();
+
+    expect(await screen.findByRole("columnheader", { name: "R²" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "RMSE" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "MAE" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "AUC" })).not.toBeInTheDocument();
   });
 });

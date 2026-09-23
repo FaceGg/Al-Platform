@@ -18,6 +18,7 @@ import {
   Typography,
   App as AntApp,
 } from "antd";
+import { formatLocalTime } from "../utils/time";
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined, SendOutlined } from "@ant-design/icons";
 import {
   notificationsApi,
@@ -69,9 +70,7 @@ function commaSeparated(value: string | undefined): string[] {
 }
 
 function localTime(value: string | null): string {
-  if (!value) return "";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleString();
+  return formatLocalTime(value, true);
 }
 
 function endpointPayload(values: EndpointFormValues): NotificationEndpointInput {

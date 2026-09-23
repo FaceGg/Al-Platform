@@ -41,7 +41,7 @@ class TestTrainingRecovery(unittest.TestCase):
         self.db.close()
         self.engine.dispose()
 
-    def _job(self, status, checkpoint=None, task_id="lost-task"):
+    def _job(self, status, checkpoint=None, task_id="lost-task", operator_id=None):
         project_id, user_id, experiment_id = self.ids
         job = TrainingJob(
             project_id=project_id,
@@ -54,6 +54,7 @@ class TestTrainingRecovery(unittest.TestCase):
             worker_id="lost-worker",
             heartbeat_at=utcnow() - timedelta(minutes=10),
             latest_checkpoint_uri=checkpoint,
+            operator_id=operator_id,
         )
         self.db.add(job)
         self.db.commit()
@@ -84,6 +85,18 @@ class TestTrainingRecovery(unittest.TestCase):
         self.assertEqual(recovered.failed, 1)
         self.assertEqual(stale.status, "failed")
         self.assertEqual(stale.error_code, "TRAINING_WORKER_LOST")
+
+    def test_stale_automl_job_without_checkpoint_is_safely_requeued(self):
+        stale = self._job("running", operator_id="automl")
+        recovered = reconcile_stale_training_jobs(self.db, active_task_ids=set(), stale_after=timedelta(minutes=5))
+        self.assertEqual(recovered.requeued, 1)
+        self.assertEqual(recovered.requeued_job_ids, (str(stale.id),))
+        self.assertEqual(stale.status, "pending")
+
+    def test_training_recovery_task_is_registered_and_scheduled(self):
+        from app.tasks.celery_app import celery_app
+        self.assertIn("ml_platform.recover_training_jobs", celery_app.tasks)
+        self.assertEqual(celery_app.conf.beat_schedule["training-job-recovery"]["task"], "ml_platform.recover_training_jobs")
 
     def test_stale_cancel_request_becomes_cancelled(self):
         stale = self._job("cancel_requested", "mlflow-artifacts:/latest")

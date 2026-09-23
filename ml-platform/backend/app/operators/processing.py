@@ -1,3 +1,5 @@
+GENERICIZATION_BRIDGE_ONLY = True
+
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
@@ -204,7 +206,14 @@ class SpotWeldFeatureEngineering(BaseOperator):
         PortSpec("schema", "JSON", "Feature Schema"),
         PortSpec("statistics", "JSON", "Feature Statistics"),
     ]
-    parameters = []
+    parameters = [
+        ParamSpec(
+            "exclude_columns", "str", "", "Columns to exclude from output",
+        ),
+        ParamSpec(
+            "label_column", "str", "Fault", "Label column",
+        ),
+    ]
 
     def validate(self, inputs):
         return True
@@ -212,28 +221,48 @@ class SpotWeldFeatureEngineering(BaseOperator):
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         data = inputs.get("data", [])
         frame = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
+        exclude_columns = {
+            column.strip()
+            for column in str(params.get("exclude_columns") or "").split(",")
+            if column.strip()
+        }
+        required_source_columns = set(REPORT_TABLE_FIELDS + WAVEFORM_FIELDS)
+        forbidden = sorted(exclude_columns & required_source_columns)
+        if forbidden:
+            raise ValueError(
+                "Cannot exclude required source column(s): "
+                + ", ".join(forbidden)
+            )
         features, schema, statistics = build_feature_frame(frame)
         enriched = features.copy()
-        label_present = "Fault" in frame.columns
+        requested_label = str(params.get("label_column") or "Fault").strip() or "Fault"
+        label_lookup = {str(column).casefold(): str(column) for column in frame.columns}
+        actual_label = label_lookup.get(requested_label.casefold())
+        label_present = actual_label is not None
         if label_present:
-            label = frame["Fault"].reset_index(drop=True)
+            label = frame[actual_label].reset_index(drop=True)
             if len(label) != len(enriched):
-                raise ValueError("Fault label length must match feature rows")
-            enriched["Fault"] = label.to_numpy()
-            schema.append("Fault")
+                raise ValueError(f"{actual_label} label length must match feature rows")
+            enriched[actual_label] = label.to_numpy()
+            schema.append(actual_label)
+        output_exclusions = exclude_columns - {actual_label} if actual_label else exclude_columns
+        enriched = enriched.drop(columns=[column for column in output_exclusions if column in enriched], errors="ignore")
+        schema = [column for column in schema if column in enriched.columns]
         statistics.update({
-            "label_column": "Fault",
+            "label_column": actual_label or requested_label,
             "label_present": label_present,
-            "label_dtype": str(frame["Fault"].dtype) if label_present else None,
+            "label_dtype": str(frame[actual_label].dtype) if label_present else None,
+            "excluded_columns": sorted(output_exclusions),
         })
         return OperatorResult(outputs={
             "features": enriched.to_dict(orient="records"),
             "schema": {
                 "columns": schema,
-                "label_column": "Fault",
+                "label_column": actual_label or requested_label,
                 "label_position": "last",
                 "label_present": label_present,
-                "label_dtype": str(frame["Fault"].dtype) if label_present else None,
+                "label_dtype": str(frame[actual_label].dtype) if label_present else None,
+                "excluded_columns": sorted(output_exclusions),
             },
             "statistics": statistics,
         })
@@ -253,7 +282,7 @@ class AutoFeatureEngineering(BaseOperator):
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [
         PortSpec("data", "DataTable", "Engineered Data"),
-        PortSpec("feature_report", "Params", "Feature Report"),
+        PortSpec("feature_report", "JSON", "Feature Report"),
     ]
     parameters = [
         ParamSpec("target_column", "str", "", "Target Column"),
@@ -432,14 +461,18 @@ class SelectAttributes(BaseOperator):
     outputs = [PortSpec("data", "DataTable", "Filtered Data")]
     parameters = [
         ParamSpec("columns", "str", "", "Columns to keep (comma-separated)"),
-        ParamSpec("invert", "bool", False, "Invert selection"),
+        ParamSpec("invert", "boolean", False, "Invert selection"),
     ]
     def validate(self, inputs): return True
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         data = inputs.get("data", []); df = pd.DataFrame(data)
         col_str = params.get("columns", ""); invert = params.get("invert", False)
         if col_str:
-            cols = [c.strip() for c in col_str.split(",") if c.strip() in df.columns]
+            requested = [c.strip() for c in str(col_str).split(",") if c.strip()]
+            missing = [column for column in requested if column not in df.columns]
+            if missing:
+                raise ValueError(f"SelectAttributes: unknown columns: {', '.join(missing)}")
+            cols = requested
             if invert: cols = [c for c in df.columns if c not in cols]
             df = df[cols]
         return OperatorResult(outputs={"data": df.to_dict(orient="records")})
@@ -483,7 +516,7 @@ class SampleOp(BaseOperator):
     outputs = [PortSpec("data", "DataTable", "Sampled Data")]
     parameters = [
         ParamSpec("sample_size", "int", 100, "Sample Size"),
-        ParamSpec("with_replacement", "bool", False, "With Replacement"),
+        ParamSpec("with_replacement", "boolean", False, "With Replacement"),
         ParamSpec("random_seed", "int", 42, "Random Seed"),
     ]
     def validate(self, inputs): return True

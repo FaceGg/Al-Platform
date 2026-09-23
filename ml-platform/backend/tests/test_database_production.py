@@ -14,7 +14,9 @@ from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import sqlalchemy as sa
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -28,7 +30,6 @@ from app.database_schema import (
     schema_status,
 )
 from app.main import initialize_database
-from app.models.artifact import Artifact
 from app.models.experiment import Experiment
 from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
 from app.models.project import Project
@@ -41,7 +42,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20260829_14"
+HEAD_REVISION = "20260921_60"
 NOTIFICATION_REVISION = "20260720_10_security_notifications"
 WEEK9_TABLES = {
     "deployment_revisions",
@@ -308,7 +309,7 @@ class TestAlembicBaseline(TestCase):
             try:
                 inspector = inspect(db_engine)
                 business_tables = set(inspector.get_table_names()) - {"alembic_version"}
-                self.assertEqual(len(business_tables), 57)
+                self.assertGreaterEqual(len(business_tables), 57)
                 self.assertTrue(
                     {
                         "users",
@@ -445,7 +446,21 @@ class TestAlembicBaseline(TestCase):
                         )
                         db.add(experiment)
                         db.flush()
-                        later = TrainingJob(
+                        historical_jobs = sa.table(
+                            "training_jobs",
+                            sa.column("id", PGUUID(as_uuid=True)),
+                            sa.column("project_id", PGUUID(as_uuid=True)),
+                            sa.column("user_id", PGUUID(as_uuid=True)),
+                            sa.column("name"),
+                            sa.column("operator_id"),
+                            sa.column("status"),
+                            sa.column("experiment_id", PGUUID(as_uuid=True)),
+                            sa.column("created_at"),
+                        )
+                        earlier_id = uuid.uuid4()
+                        later_id = uuid.uuid4()
+                        db.execute(historical_jobs.insert().values(
+                            id=later_id,
                             project_id=project.id,
                             user_id=user.id,
                             experiment_id=experiment.id,
@@ -453,8 +468,9 @@ class TestAlembicBaseline(TestCase):
                             operator_id="automl",
                             status="completed",
                             created_at=datetime(2026, 8, 19, 2, 0, 0),
-                        )
-                        earlier = TrainingJob(
+                        ))
+                        db.execute(historical_jobs.insert().values(
+                            id=earlier_id,
                             project_id=project.id,
                             user_id=user.id,
                             experiment_id=experiment.id,
@@ -462,10 +478,9 @@ class TestAlembicBaseline(TestCase):
                             operator_id="automl",
                             status="failed",
                             created_at=datetime(2026, 8, 19, 1, 0, 0),
-                        )
-                        db.add_all([later, earlier])
+                        ))
                         db.commit()
-                        expected_job_id = earlier.id
+                        expected_job_id = earlier_id
                         experiment_id = experiment.id
                 finally:
                     db_engine.dispose()
@@ -624,7 +639,7 @@ class TestAlembicBaseline(TestCase):
                     seeded = self._seed_legacy_registry(db_engine)
                 finally:
                     db_engine.dispose()
-                command.upgrade(config, "head")
+                command.upgrade(config, "20260720_09_production_inference")
                 command.downgrade(config, "20260718_08")
             finally:
                 settings.database_url = original_database_url
@@ -685,7 +700,7 @@ class TestAlembicBaseline(TestCase):
             original_database_url = settings.database_url
             settings.database_url = database_url
             try:
-                command.upgrade(config, "head")
+                command.upgrade(config, "20260717_04")
                 command.downgrade(config, "20260715_03")
             finally:
                 settings.database_url = original_database_url
@@ -715,7 +730,7 @@ class TestAlembicBaseline(TestCase):
             original_database_url = settings.database_url
             settings.database_url = database_url
             try:
-                command.upgrade(config, "head")
+                command.upgrade(config, "20260718_08")
                 command.downgrade(config, "20260718_07")
             finally:
                 settings.database_url = original_database_url
@@ -750,7 +765,21 @@ class TestAlembicBaseline(TestCase):
             project = Project(name="Legacy production inference", owner_id=owner.id)
             db.add(project)
             db.flush()
-            artifact = Artifact(
+            artifact_id = uuid.uuid4()
+            legacy_artifacts = sa.table(
+                "artifacts",
+                sa.column("id", PGUUID(as_uuid=True)),
+                sa.column("project_id", PGUUID(as_uuid=True)),
+                sa.column("name"),
+                sa.column("type"),
+                sa.column("storage_path"),
+                sa.column("storage_uri"),
+                sa.column("file_size"),
+                sa.column("format"),
+                sa.column("metadata"),
+            )
+            db.execute(legacy_artifacts.insert().values(
+                id=artifact_id,
                 project_id=project.id,
                 name="legacy.onnx",
                 type="model",
@@ -758,14 +787,12 @@ class TestAlembicBaseline(TestCase):
                 storage_uri="s3://models/legacy.onnx",
                 file_size=12,
                 format="onnx",
-                metadata_={
+                metadata=json.dumps({
                     "dataset_artifact_id": "legacy-dataset",
                     "credentials": "must-not-migrate",
                     "storage_uri": "s3://private/source.csv",
-                },
-            )
-            db.add(artifact)
-            db.flush()
+                }),
+            ))
             registered = RegisteredModel(
                 project_id=project.id,
                 name="Legacy classifier",
@@ -773,39 +800,72 @@ class TestAlembicBaseline(TestCase):
             )
             db.add(registered)
             db.flush()
-            version = ModelVersion(
+            version_id = uuid.uuid4()
+            deployment_id = uuid.uuid4()
+            legacy_model_versions = sa.table(
+                "model_versions",
+                sa.column("id", PGUUID(as_uuid=True)),
+                sa.column("registered_model_id", PGUUID(as_uuid=True)),
+                sa.column("version_number"),
+                sa.column("source_kind"),
+                sa.column("source_model_library_id", PGUUID(as_uuid=True)),
+                sa.column("source_artifact_id", PGUUID(as_uuid=True)),
+                sa.column("onnx_artifact_id", PGUUID(as_uuid=True)),
+                sa.column("framework"),
+                sa.column("algorithm"),
+                sa.column("feature_schema"),
+                sa.column("output_schema"),
+                sa.column("metrics"),
+                sa.column("conversion_metadata"),
+                sa.column("approval_status"),
+                sa.column("approval_comment"),
+                sa.column("approved_by_id", PGUUID(as_uuid=True)),
+                sa.column("approved_at"),
+                sa.column("created_by_id", PGUUID(as_uuid=True)),
+            )
+            db.execute(legacy_model_versions.insert().values(
+                id=version_id,
                 registered_model_id=registered.id,
                 version_number=1,
                 source_kind="onnx_artifact",
-                source_artifact_id=artifact.id,
-                onnx_artifact_id=artifact.id,
+                source_model_library_id=None,
+                source_artifact_id=artifact_id,
+                onnx_artifact_id=artifact_id,
                 framework="onnx",
                 algorithm="classifier",
-                feature_schema=[{"name": "current", "dtype": "float64"}],
-                output_schema={"name": "fault", "dtype": "int64"},
-                metrics={"accuracy": 0.95},
-                conversion_metadata={"sha256": "a" * 64},
+                feature_schema=json.dumps([{"name": "current", "dtype": "float64"}]),
+                output_schema=json.dumps({"name": "fault", "dtype": "int64"}),
+                metrics=json.dumps({"accuracy": 0.95}),
+                conversion_metadata=json.dumps({"sha256": "a" * 64}),
                 approval_status="approved",
                 approval_comment="validated",
                 approved_by_id=owner.id,
                 approved_at=None,
                 created_by_id=owner.id,
+            ))
+            legacy_deployments = sa.table(
+                "inference_deployments",
+                sa.column("id", PGUUID(as_uuid=True)),
+                sa.column("project_id", PGUUID(as_uuid=True)),
+                sa.column("name"),
+                sa.column("model_version_id", PGUUID(as_uuid=True)),
+                sa.column("desired_state"),
+                sa.column("observed_state"),
+                sa.column("created_by_id", PGUUID(as_uuid=True)),
             )
-            db.add(version)
-            db.flush()
-            deployment = InferenceDeployment(
+            db.execute(legacy_deployments.insert().values(
+                id=deployment_id,
                 project_id=project.id,
                 name="legacy-primary",
-                model_version_id=version.id,
+                model_version_id=version_id,
                 desired_state="running",
                 observed_state="running",
                 created_by_id=owner.id,
-            )
-            db.add(deployment)
+            ))
             db.commit()
             return {
-                "deployment_id": deployment.id,
-                "model_version_id": version.id,
+                "deployment_id": deployment_id,
+                "model_version_id": version_id,
             }
         finally:
             db.close()

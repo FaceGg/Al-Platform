@@ -24,6 +24,7 @@ services:
 
   backend:
     environment:
+      FRONTEND_ORIGIN: ${WEEK12_ACCEPTANCE_BASE_URL:-http://localhost:5173}
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       SMTP_FROM: ml-platform-acceptance@localhost

@@ -75,7 +75,7 @@ export default function ComputeResourcePage() {
       <Modal title={editing ? "编辑节点" : "新增节点"} open={showModal}
         onCancel={() => { setShowModal(false); setEditing(null); }}
         onOk={() => form.submit()} width={600}>
-        <Form form={form} layout="vertical" onFinish={handleSubmit}>
+        <Form form={form} layout="vertical" onFinish={handleSubmit} autoComplete="off">
           <Form.Item name="name" label="节点名称" rules={[{required:true}]}><Input /></Form.Item>
           <Form.Item name="ip_address" label="IP地址"><Input /></Form.Item>
           <Form.Item name="node_type" label="节点类型">

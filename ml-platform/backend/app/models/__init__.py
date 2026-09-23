@@ -1,9 +1,12 @@
+GENERICIZATION_BRIDGE_ONLY = True
+
 from app.models.user import User
 from app.models.project import Project
 from app.models.workflow import Workflow, WorkflowNode, WorkflowEdge
 from app.models.run import WorkflowRun, NodeRun
 from app.models.workflow_version import WorkflowVersion
 from app.models.artifact import Artifact
+from app.models.operation import DurableOperation
 from app.models.knowledge import KnowledgeBase, Document, Chunk, GraphEntity, GraphRelation
 from app.models.training import TrainingJob
 from app.models.experiment import Experiment, ExperimentAutoMLBinding
@@ -32,9 +35,26 @@ from app.models.model_registry import (
     InferenceMetricBucket,
     ModelCard,
 )
+from app.models.model_export import ModelExport
 from app.models.api_model import PlatformAPI
 from app.models.compute import ComputeNode, EdgeDevice
-from app.models.platform_models import Dataset, AnnotationTask, AnnotationResult, OrchestrationApp, OrchestrationVersion
+from app.models.platform_models import (
+    Dataset,
+    AnnotationTask,
+    GenericAnnotationTask,
+    AnnotationTaskPreview,
+    AnnotationTaskRevisionSnapshot,
+    AnnotationTaskScopeSample,
+    AnnotationTaskPreviewSample,
+    AnnotationTaskExecutionResult,
+    AnnotationTaskExecutionStatistic,
+    AnnotationResult,
+    OrchestrationApp,
+    OrchestrationVersion,
+)
+from app.models.data_version import DatasetVersion, DatasetSchemaColumn, DatasetSample, DatasetImport, DatasetImportProcess
+from app.models.annotator import AnnotatorAccount, AnnotatorSession, AnnotatorSubjectMapping, ProjectAnnotatorGrant
+from app.models.labeling import (LabelSchema, LabelColumn, LabelValueConstraint, AnnotationTaskLabel, AnnotationSampleCurrent, AnnotationRevision, AnnotationComment, AnnotationConfirmation, AnnotationStrategyArtifact, AnnotationStrategyDecision, AnnotationAssignment, AnnotationAssignmentSample, AnnotationReturnBatch, AnnotationReturnBatchSample)
 from app.models.spot_weld_quality import (
     SpotWeldQualityRun,
     SpotWeldQualitySample,
@@ -53,6 +73,7 @@ __all__ = [
     "NodeRun",
     "WorkflowVersion",
     "Artifact",
+    "DurableOperation",
     "KnowledgeBase",
     "Document",
     "Chunk",
@@ -86,14 +107,45 @@ __all__ = [
     "InferenceRequestLog",
     "InferenceMetricBucket",
     "ModelCard",
+    "ModelExport",
     "PlatformAPI",
     "ComputeNode",
     "EdgeDevice",
     "Dataset",
     "AnnotationTask",
+    "GenericAnnotationTask",
+    "AnnotationTaskPreview",
+    "AnnotationTaskRevisionSnapshot",
+    "AnnotationTaskScopeSample",
+    "AnnotationTaskPreviewSample",
+    "AnnotationTaskExecutionResult",
+    "AnnotationTaskExecutionStatistic",
     "AnnotationResult",
     "OrchestrationApp",
     "OrchestrationVersion",
+    "DatasetVersion",
+    "DatasetSchemaColumn",
+    "DatasetSample",
+    "DatasetImport",
+    "DatasetImportProcess",
+    "AnnotatorAccount",
+    "AnnotatorSession",
+    "AnnotatorSubjectMapping",
+    "ProjectAnnotatorGrant",
+    "LabelSchema",
+    "LabelColumn",
+    "LabelValueConstraint",
+    "AnnotationTaskLabel",
+    "AnnotationSampleCurrent",
+    "AnnotationRevision",
+    "AnnotationComment",
+    "AnnotationConfirmation",
+    "AnnotationStrategyArtifact",
+    "AnnotationStrategyDecision",
+    "AnnotationAssignment",
+    "AnnotationAssignmentSample",
+    "AnnotationReturnBatch",
+    "AnnotationReturnBatchSample",
     "SpotWeldQualityRun",
     "SpotWeldQualitySample",
     "SpotWeldQualityRuleSet",

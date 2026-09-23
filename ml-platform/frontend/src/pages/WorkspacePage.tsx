@@ -14,6 +14,7 @@ import { normalizeNodeError, normalizeWorkflowHandle, useWorkflowStore } from ".
 import type { NodeRunStatus, WorkflowRunStatus } from "../stores/workflowStore";
 import { deleteWorkflowVersion, listWorkflowVersions, publishWorkflow, restoreWorkflowVersion, WorkflowVersionSummary } from "../api/workflowVersions";
 import { useI18n } from "../i18n";
+import { formatLocalTime } from "../utils/time";
 
 const { Sider, Content } = Layout;
 
@@ -485,7 +486,7 @@ export default function WorkspacePage() {
               }}>{text.delete}</Button>]}>
                 <List.Item.Meta
                   title={<Space><Tag color="blue">v{item.version}</Tag>{item.name}</Space>}
-                  description={item.published_at ? new Date(item.published_at).toLocaleString() : ""}
+                  description={formatLocalTime(item.published_at, true)}
                 />
               </List.Item>
             )}

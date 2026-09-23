@@ -124,7 +124,7 @@ class LoopOperator(BaseOperator):
     description = "Loop execution: iterate over data with configurable iterations"
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [
-        PortSpec("result", "Params", "Loop Results"),
+        PortSpec("result", "JSON", "Loop Results"),
         PortSpec("continue", "boolean", "Continue Flag"),
     ]
     parameters = [

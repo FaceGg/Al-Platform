@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Col, Descriptions, Divider, Empty, Modal, Progress, Row, Spin, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { App as AntApp, Alert, Button, Card, Col, Descriptions, Divider, Empty, Modal, Progress, Row, Spin, Space, Statistic, Table, Tabs, Tag, Typography } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import { useNavigate, useParams } from "react-router-dom";
 import apiClient, { formatApiError } from "../api/client";
 import { registerAutoMLResult } from "../api/modelRegistry";
 import AppLayout from "../components/AppLayout";
+import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 
 const { Title, Text } = Typography;
 
@@ -13,7 +14,7 @@ function metric(row: Record<string, unknown>, names: string[]): number | null {
     const value = Number(row[name]);
     if (Number.isFinite(value)) return value;
   }
-  for (const nestedName of ["metrics", "evaluation", "scores", "metric"]) {
+  for (const nestedName of ["metrics", "evaluation", "scores", "metric", "aggregate"]) {
     const nested = row[nestedName];
     if (nested && typeof nested === "object") {
       const value = metric(nested as Record<string, unknown>, names);
@@ -38,9 +39,11 @@ function resultSource(metrics: Record<string, unknown>): Array<Record<string, un
   return [];
 }
 
-function rankingMetric(value: unknown, fallback: number): number {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? Number(numeric.toFixed(4)) : fallback;
+function compareMetric(left: number | null, right: number | null, direction: "asc" | "desc"): number {
+  if (left == null && right == null) return 0;
+  if (left == null) return 1;
+  if (right == null) return -1;
+  return direction === "desc" ? right - left : left - right;
 }
 
 type AutoMLResultRow = Record<string, unknown> & {
@@ -55,6 +58,7 @@ type AutoMLResultRow = Record<string, unknown> & {
 export default function AutoMLTaskPage() {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
+  const { message } = AntApp.useApp();
   const [job, setJob] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -62,6 +66,7 @@ export default function AutoMLTaskPage() {
   const [reportGenerating, setReportGenerating] = useState(false);
   const [selectedModel, setSelectedModel] = useState<Record<string, unknown> | null>(null);
   const [registeringAlgorithmId, setRegisteringAlgorithmId] = useState<string | null>(null);
+  const jobStatusRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (!taskId) return;
@@ -73,6 +78,7 @@ export default function AutoMLTaskPage() {
           const nextJob = response.data || {};
           const nextMetrics = nextJob.metrics && typeof nextJob.metrics === "object" ? nextJob.metrics as Record<string, unknown> : {};
           setJob(nextJob);
+          jobStatusRef.current = String(nextJob.status || "");
           if (nextMetrics.automl_report && typeof nextMetrics.automl_report === "object") {
             setAnalysisReport(nextMetrics.automl_report as Record<string, unknown>);
           }
@@ -84,10 +90,10 @@ export default function AutoMLTaskPage() {
     };
     void load();
     const timer = window.setInterval(() => {
-      if (!job || !["completed", "failed", "cancelled"].includes(String(job.status))) void load();
+      if (!["completed", "failed", "cancelled"].includes(jobStatusRef.current || "")) void load();
     }, 2000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [taskId, job?.status]);
+  }, [taskId]);
 
   const metrics = (job?.metrics && typeof job.metrics === "object" ? job.metrics : {}) as Record<string, unknown>;
   const progress = (metrics.progress && typeof metrics.progress === "object" ? metrics.progress : {}) as Record<string, unknown>;
@@ -98,16 +104,30 @@ export default function AutoMLTaskPage() {
   // planned trial budget. The job lifecycle is the source of truth for the
   // overall progress bar; keep the trial counters for transparency.
   const displayPercent = String(job?.status) === "completed" ? 100 : percent;
+  const taskType = String(
+    (job?.params && typeof job.params === "object" ? (job.params as Record<string, unknown>).task : undefined)
+      ?? metrics.task_type
+      ?? "classification",
+  );
+  const isRegression = taskType.includes("regression");
   const rows = useMemo<AutoMLResultRow[]>(() => {
     const source = resultSource(metrics);
     const mapped: AutoMLResultRow[] = source.map((row, index) => {
       return { ...row, key: String(row.id || row.name || row.model || index), auc: metric(row, ["auc", "AUC", "roc_auc", "rocAuc", "roc_auc_score"]), f1: metric(row, ["f1", "F1", "f1_score", "f1_weighted"]) };
     });
-    return mapped.sort((left, right) => rankingMetric(right.auc, -1) - rankingMetric(left.auc, -1)
-      || rankingMetric(right.f1, -1) - rankingMetric(left.f1, -1)
-      || rankingMetric(right.best_score ?? right.score, -1) - rankingMetric(left.best_score ?? left.score, -1)
-      || Number(left.training_time_seconds ?? Number.POSITIVE_INFINITY) - Number(right.training_time_seconds ?? Number.POSITIVE_INFINITY));
-  }, [metrics]);
+    return mapped.sort((left, right) => {
+      if (isRegression) {
+        return compareMetric(metric(left, ["r2", "R2", "r2_score"]), metric(right, ["r2", "R2", "r2_score"]), "desc")
+          || compareMetric(metric(left, ["rmse", "RMSE", "root_mean_squared_error"]), metric(right, ["rmse", "RMSE", "root_mean_squared_error"]), "asc")
+          || compareMetric(metric(left, ["mae", "MAE", "mean_absolute_error"]), metric(right, ["mae", "MAE", "mean_absolute_error"]), "asc")
+          || compareMetric(metric(left, ["training_time_seconds", "runtime_s", "runtime"]), metric(right, ["training_time_seconds", "runtime_s", "runtime"]), "asc");
+      }
+      return compareMetric(left.auc, right.auc, "desc")
+        || compareMetric(left.f1, right.f1, "desc")
+        || compareMetric(metric(left, ["accuracy", "Accuracy", "best_score", "score"]), metric(right, ["accuracy", "Accuracy", "best_score", "score"]), "desc")
+        || compareMetric(metric(left, ["training_time_seconds", "runtime_s", "runtime"]), metric(right, ["training_time_seconds", "runtime_s", "runtime"]), "asc");
+    });
+  }, [isRegression, metrics]);
 
   const reportReady = String(job?.status) === "completed" && displayPercent >= 100 && rows.length > 0;
   const formatMetric = (value: number | null) => value == null ? "-" : value.toFixed(4);
@@ -115,10 +135,48 @@ export default function AutoMLTaskPage() {
     ? selectedModel.trials as Record<string, unknown>[]
     : [];
 
+  const resultActionColumn = {
+    title: "操作",
+    key: "actions",
+    render: (_value: unknown, row: AutoMLResultRow) => {
+      const algorithmId = String(row.algorithm_id || "");
+      const registered = Boolean(row.registered_model_id);
+      const canRegister = String(row.status || "") === "completed" && Boolean(row.model_library_id || row.model_artifact_id);
+      return <Space size={4}>
+        <Button type="link" onClick={() => setSelectedModel(row)}>详细</Button>
+        <Button
+          type="link"
+          disabled={!canRegister || registered}
+          loading={registeringAlgorithmId === algorithmId}
+          onClick={() => void registerResult(row)}
+        >{registered ? "已注册" : "注册"}</Button>
+      </Space>;
+    },
+  };
+  const resultColumns = isRegression
+    ? [
+        { title: "排名", key: "rank", render: (_value: unknown, _row: AutoMLResultRow, index: number) => index + 1 },
+        { title: "模型", key: "name", render: (row: AutoMLResultRow) => String(row.name || row.model || row.algorithm || "-") },
+        { title: "R²", key: "r2", render: (row: AutoMLResultRow) => formatMetric(metric(row, ["r2", "R2", "r2_score"])) },
+        { title: "RMSE", key: "rmse", render: (row: AutoMLResultRow) => formatMetric(metric(row, ["rmse", "RMSE", "root_mean_squared_error"])) },
+        { title: "MAE", key: "mae", render: (row: AutoMLResultRow) => formatMetric(metric(row, ["mae", "MAE", "mean_absolute_error"])) },
+        { title: "状态", dataIndex: "status", key: "status", render: (value: unknown) => value ? <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, "zh")}</Tag> : "-" },
+        resultActionColumn,
+      ]
+    : [
+        { title: "排名", key: "rank", render: (_value: unknown, _row: AutoMLResultRow, index: number) => index + 1 },
+        { title: "模型", key: "name", render: (row: AutoMLResultRow) => String(row.name || row.model || row.algorithm || "-") },
+        { title: "AUC", dataIndex: "auc", key: "auc", sorter: (a: AutoMLResultRow, b: AutoMLResultRow) => (b.auc ?? -1) - (a.auc ?? -1), render: (value: number | null) => value == null ? "-" : <Text strong>{value.toFixed(4)}</Text> },
+        { title: "F1", dataIndex: "f1", key: "f1", render: (value: number | null) => value == null ? "-" : value.toFixed(4) },
+        { title: "Accuracy", key: "accuracy", render: (row: AutoMLResultRow) => formatMetric(metric(row, ["accuracy", "Accuracy", "best_score", "score"])) },
+        { title: "状态", dataIndex: "status", key: "status", render: (value: unknown) => value ? <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, "zh")}</Tag> : "-" },
+        resultActionColumn,
+      ];
+
   const registerResult = async (row: Record<string, unknown>) => {
     const projectId = String(job?.project_id || "");
     const algorithmId = String(row.algorithm_id || "");
-    if (!taskId || !projectId || !algorithmId || !row.model_library_id || row.registered_model_id) return;
+    if (!taskId || !projectId || !algorithmId || !(row.model_library_id || row.model_artifact_id) || row.registered_model_id) return;
     setRegisteringAlgorithmId(algorithmId);
     try {
       const response = await registerAutoMLResult(projectId, taskId, algorithmId);
@@ -220,7 +278,7 @@ export default function AutoMLTaskPage() {
         <Card style={{ marginBottom: 16 }}>
           <Descriptions column={{ xs: 1, sm: 2, md: 4 }} size="small">
             <Descriptions.Item label="实验">{String(job.experiment_name || "-")}</Descriptions.Item>
-            <Descriptions.Item label="状态"><Tag color={job.status === "completed" ? "green" : job.status === "failed" ? "red" : "blue"}>{String(job.status || "queued")}</Tag></Descriptions.Item>
+            <Descriptions.Item label="状态"><Tag color={taskStatusColor(job.status)}>{taskStatusLabel(job.status || "queued", "zh")}</Tag></Descriptions.Item>
             <Descriptions.Item label="项目">{String(job.project_name || "-")}</Descriptions.Item>
             <Descriptions.Item label="最佳模型">{String((metrics.best_model as Record<string, unknown> | undefined)?.name || "-")}</Descriptions.Item>
           </Descriptions>
@@ -231,27 +289,7 @@ export default function AutoMLTaskPage() {
           <Button type="primary" onClick={generateReport} loading={reportGenerating} disabled={!reportReady}>生成分析报告</Button>
           <Button icon={<DownloadOutlined />} onClick={() => void exportReport()} disabled={!analysisReport || !reportReady}>导出详细报告</Button>
         </Space>}>
-          {rows.length === 0 ? <Empty description={job.status === "completed" ? "暂无模型结果" : "模型训练中"} /> : <Table rowKey="key" dataSource={rows} pagination={false} columns={[
-            { title: "排名", key: "rank", render: (_: unknown, __: unknown, index: number) => index + 1 },
-            { title: "模型", key: "name", render: (row: typeof rows[number]) => String(row.name || row.model || row.algorithm || "-") },
-            { title: "AUC", dataIndex: "auc", key: "auc", sorter: (a: typeof rows[number], b: typeof rows[number]) => (b.auc ?? -1) - (a.auc ?? -1), render: (value: number | null) => value == null ? "-" : <Text strong>{value.toFixed(4)}</Text> },
-            { title: "F1", dataIndex: "f1", key: "f1", render: (value: number | null) => value == null ? "-" : value.toFixed(4) },
-            { title: "状态", dataIndex: "status", key: "status", render: (value: unknown) => value ? <Tag>{String(value)}</Tag> : "-" },
-            { title: "操作", key: "actions", render: (_: unknown, row: typeof rows[number]) => {
-              const algorithmId = String(row.algorithm_id || "");
-              const registered = Boolean(row.registered_model_id);
-              const canRegister = String(row.status || "") === "completed" && Boolean(row.model_library_id);
-              return <Space size={4}>
-                <Button type="link" onClick={() => setSelectedModel(row)}>详细</Button>
-                <Button
-                  type="link"
-                  disabled={!canRegister || registered}
-                  loading={registeringAlgorithmId === algorithmId}
-                  onClick={() => void registerResult(row)}
-                >{registered ? "已注册" : "注册"}</Button>
-              </Space>;
-            } },
-          ]} />}
+          {rows.length === 0 ? <Empty description={job.status === "completed" ? "暂无模型结果" : "模型训练中"} /> : <Table rowKey="key" dataSource={rows} pagination={false} columns={resultColumns} />}
         </Card>
         {analysisReport && <Card title="分析报告预览" style={{ marginTop: 16 }}>
           <Tabs items={[

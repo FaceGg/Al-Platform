@@ -48,4 +48,23 @@ describe("LoginPage", () => {
     await waitFor(() => expect(localStorage.getItem("username")).toBe("admin"));
     expect(await screen.findByText("authenticated-home")).toBeInTheDocument();
   });
+
+  it("does not report a rate limit as a bad password", async () => {
+    login.mockRejectedValue({ response: { status: 429 } });
+
+    render(
+      <MemoryRouter initialEntries={["/login"]}>
+        <AntApp>
+          <LoginPage />
+        </AntApp>
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("用户名"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByPlaceholderText("密码"), { target: { value: "admin123" } });
+    fireEvent.click(screen.getByRole("button", { name: /登\s*录/ }));
+
+    expect(await screen.findByText("登录尝试过于频繁，请稍后再试")).toBeInTheDocument();
+    expect(screen.queryByText("用户名或密码错误")).not.toBeInTheDocument();
+  });
 });

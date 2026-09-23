@@ -15,6 +15,7 @@ from openpyxl import load_workbook
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.multioutput import MultiOutputClassifier
 
 from app.services.automl_report import REPORT_FILES, REPORT_RESULT_COLUMNS, _importance, generate_automl_report
 
@@ -52,6 +53,32 @@ class FakeDb:
 
 
 class AutoMLReportTests(unittest.TestCase):
+    def test_generate_report_supports_multioutput_predictions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tmp_path = Path(temporary)
+            rng = np.random.default_rng(42)
+            features = pd.DataFrame(rng.normal(size=(40, 2)), columns=["x1", "x2"])
+            frame = features.assign(label_a=(features["x1"] > 0).astype(int), label_b=(features["x2"] > 0).astype(int))
+            dataset_path = tmp_path / "dataset.csv"
+            frame.to_csv(dataset_path, index=False)
+            model = MultiOutputClassifier(RandomForestClassifier(n_estimators=10, random_state=42)).fit(features, frame[["label_a", "label_b"]])
+            model_path = tmp_path / "model.joblib"
+            joblib.dump({
+                "model": model,
+                "feature_schema": [{"name": name, "dtype": str(features[name].dtype)} for name in features.columns],
+                "target_schema": [{"name": "label_a", "dtype": "int64"}, {"name": "label_b", "dtype": "int64"}],
+            }, model_path)
+            service = FakeArtifactService(dataset_path, model_path, tmp_path)
+            job = SimpleNamespace(
+                id=uuid.uuid4(), project_id=uuid.uuid4(), operator_id="automl", status="completed",
+                dataset_artifact_id="dataset", model_artifact_id="model", name="multi-report",
+                params={"target_columns": ["label_a", "label_b"], "input_columns": ["x1", "x2"], "task": "multioutput_classification"},
+                metrics={"best_model": {"name": "Random Forest"}, "all_results": []},
+                project=SimpleNamespace(name="project"), experiment=SimpleNamespace(name="experiment"),
+            )
+            manifest = generate_automl_report(FakeDb(), job, service)
+            inference = manifest["preview"]["inference"]
+            self.assertTrue({"label_a", "label_b", "predicted_label_a", "predicted_label_b"}.issubset(inference[0]))
     def test_importance_supports_coefficients_and_permutation_fallback(self):
         features = pd.DataFrame({"a": [-2, -1, 1, 2, 3, 4], "b": [0, 1, 0, 1, 0, 1]})
         target = pd.Series([0, 0, 1, 1, 1, 1])

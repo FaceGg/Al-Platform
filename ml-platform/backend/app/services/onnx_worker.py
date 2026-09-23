@@ -7,7 +7,6 @@ from pathlib import Path
 import sys
 
 import joblib
-import onnx
 from sklearn.ensemble import (
     ExtraTreesClassifier,
     ExtraTreesRegressor,
@@ -21,8 +20,45 @@ from sklearn.ensemble import (
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from skl2onnx import convert_sklearn
-from skl2onnx.common.data_types import FloatTensorType
+
+
+def _onnx_dependencies():
+    """Load conversion-only dependencies when a conversion is actually requested."""
+    try:
+        import onnx
+        from skl2onnx import convert_sklearn
+        from skl2onnx.common.data_types import FloatTensorType
+    except ModuleNotFoundError as error:
+        raise WorkerError("MODEL_CONVERSION_DEPENDENCY_UNAVAILABLE") from error
+    _apply_skl2onnx_bool_compat()
+    return onnx, convert_sklearn, FloatTensorType
+
+
+_SKL2ONNX_BOOL_COMPAT_APPLIED = False
+
+
+def _apply_skl2onnx_bool_compat() -> None:
+    """Coerce boolean tree attributes to int for protobuf 7.x strictness.
+
+    onnx 1.22 (protobuf 7) rejects bool values in AttributeProto.ints
+    fields, but skl2onnx 1.20 still passes raw booleans from
+    HistGradientBoosting nodes via nodes_missing_value_tracks_true.
+    """
+    global _SKL2ONNX_BOOL_COMPAT_APPLIED
+    if _SKL2ONNX_BOOL_COMPAT_APPLIED:
+        return
+    from skl2onnx.common import tree_ensemble
+
+    original_add_node = tree_ensemble.add_node
+
+    def add_node_compat(*args, **kwargs):
+        value = kwargs.get("nodes_missing_value_tracks_true")
+        if isinstance(value, bool):
+            kwargs["nodes_missing_value_tracks_true"] = int(value)
+        return original_add_node(*args, **kwargs)
+
+    tree_ensemble.add_node = add_node_compat
+    _SKL2ONNX_BOOL_COMPAT_APPLIED = True
 
 
 ALLOWED_MODEL_TYPES = {
@@ -165,6 +201,7 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
         if scaler is not None:
             raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
         try:
+            onnx, _convert_sklearn, _float_tensor_type = _onnx_dependencies()
             if family == "xgboost":
                 from onnxmltools import convert_xgboost as converter
                 from onnxmltools.convert.common.data_types import (
@@ -204,6 +241,7 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
     if output["task"] == "classification":
         options = {id(model): {"zipmap": False}}
     try:
+        onnx, convert_sklearn, FloatTensorType = _onnx_dependencies()
         converted = convert_sklearn(
             estimator,
             initial_types=[

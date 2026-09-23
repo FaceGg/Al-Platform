@@ -72,6 +72,49 @@ class TestExecutePythonOperator(unittest.TestCase):
             execute_operator(op, inputs, params)
 
 
+class TestPythonScriptOperator(unittest.TestCase):
+    def test_registered_with_fixed_contract(self):
+        op = OperatorRegistry.get("python_script")
+        self.assertIsNotNone(op)
+        self.assertEqual([port.name for port in op.inputs], ["data"])
+        self.assertEqual([port.name for port in op.outputs], ["data"])
+        self.assertEqual([param.name for param in op.parameters], ["script"])
+
+    def test_uses_df_and_result_without_configurable_variable_names(self):
+        op = OperatorRegistry.get("python_script")
+        outputs = execute_operator(
+            op,
+            {"data": [{"a": 1}, {"a": 2}]},
+            {"script": "result = df.copy()\nresult['b'] = result['a'] * 2"},
+        )
+        self.assertEqual(outputs["data"], [{"a": 1, "b": 2}, {"a": 2, "b": 4}])
+
+    def test_accepts_record_list_output(self):
+        op = OperatorRegistry.get("python_script")
+        outputs = execute_operator(
+            op,
+            {"data": [{"a": 1}]},
+            {"script": "result = [{'b': df['a'].iloc[0] + 1}]"},
+        )
+        self.assertEqual(outputs["data"], [{"b": 2}])
+
+    def test_rejects_dangerous_script(self):
+        op = OperatorRegistry.get("python_script")
+        with self.assertRaises(RuntimeError) as ctx:
+            execute_operator(op, {"data": [{"a": 1}]}, {"script": "import os"})
+        self.assertIn("not allowed", str(ctx.exception))
+
+    def test_rejects_non_dataframe_or_record_list_output(self):
+        op = OperatorRegistry.get("python_script")
+        with self.assertRaises(TypeError):
+            execute_operator(op, {"data": [{"a": 1}]}, {"script": "result = 123"})
+
+    def test_rejects_oversized_script_parameter(self):
+        op = OperatorRegistry.get("python_script")
+        with self.assertRaises(ValueError):
+            execute_operator(op, {"data": [{"a": 1}]}, {"script": "x" * 100_001})
+
+
 class TestCollectOperator(unittest.TestCase):
     """Tests for the collect operator."""
 

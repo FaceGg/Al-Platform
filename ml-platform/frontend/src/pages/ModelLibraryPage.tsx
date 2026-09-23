@@ -22,6 +22,7 @@ import {
   pauseRollout, resumeRollout, revokeInferenceApiKey, updateModelCardGuidance,
   exportModelCard, uploadOnnxArtifact,
 } from "../api/modelRegistry";
+import { createModelExport, downloadModelExport, getModelExport } from "../api/modelExports";
 import AppLayout from "../components/AppLayout";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
@@ -62,6 +63,7 @@ export default function ModelLibraryPage() {
   const [guidance, setGuidance] = useState("");
   const [rolloutBusyId, setRolloutBusyId] = useState<string>();
   const [rolloutOpen, setRolloutOpen] = useState(false);
+  const [exportBusy, setExportBusy] = useState<string>();
   const [lastLogPage, setLastLogPage] = useState<number>();
   const operationsRequestRef = useRef(0);
   const [registerSource, setRegisterSource] = useState<"platform_joblib" | "onnx_artifact">("platform_joblib");
@@ -160,6 +162,37 @@ export default function ModelLibraryPage() {
       registerForm.resetFields();
     } catch (cause) {
       if (!(cause as { errorFields?: unknown }).errorFields) message.error(formatApiError(cause, copy.commandFailed));
+    }
+  };
+
+  const exportVersion = async (version: ModelVersion, exportKind: "predict" | "annotate") => {
+    if (!projectId || version.approval_status !== "approved") return;
+    const busyKey = `${version.id}:${exportKind}`;
+    setExportBusy(busyKey);
+    try {
+      const created = await createModelExport(projectId, {
+        model_version_id: version.id,
+        export_kind: exportKind,
+        include_annotation: exportKind === "annotate",
+      });
+      let current = created;
+      for (let attempt = 0; attempt < 30 && !["ready", "failed"].includes(current.status); attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        current = await getModelExport(created.id);
+      }
+      if (current.status !== "ready") throw new Error(current.error_code || "MODEL_EXPORT_NOT_READY");
+      const blob = await downloadModelExport(current.id);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `model-export-${version.version_number}-${exportKind}.zip`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      message.success(copy.exportReady);
+    } catch (cause) {
+      message.error(formatApiError(cause, copy.exportFailed));
+    } finally {
+      setExportBusy(undefined);
     }
   };
 
@@ -546,7 +579,7 @@ export default function ModelLibraryPage() {
 
     <Modal title={copy.registerVersion} open={Boolean(registerModel)} onCancel={() => setRegisterModel(undefined)} onOk={() => void submitVersion()} okText={copy.registerVersion} okButtonProps={{ "aria-label": copy.registerVersion }}>
       <Select aria-label={copy.sourceKind} value={registerSource} onChange={setRegisterSource} style={{ width: "100%", marginBottom: 16 }} options={[{ value: "platform_joblib", label: copy.platformSource }, { value: "onnx_artifact", label: copy.onnxSource }]} />
-      <Form form={registerForm} layout="vertical">
+      <Form form={registerForm} layout="vertical" autoComplete="off">
         {registerSource === "platform_joblib" ? <Form.Item name="source_model_library_id" label={copy.sourceLibraryId} rules={[{ required: true }]}><Input /></Form.Item> : <>
           <Form.Item name="onnx_file" label={copy.onnxFile} valuePropName="fileList" getValueFromEvent={(event) => event?.fileList} rules={[{ required: true }]}><Upload beforeUpload={() => false} maxCount={1} accept=".onnx"><Button>{copy.selectOnnxFile}</Button></Upload></Form.Item>
           <Form.Item name="feature_schema" label={copy.featureSchema} rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
@@ -555,7 +588,7 @@ export default function ModelLibraryPage() {
       </Form>
     </Modal>
     <Modal title={copy.register} open={modelOpen} onCancel={() => setModelOpen(false)} onOk={() => void submitModel()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
-      <Form form={modelForm} layout="vertical">
+      <Form form={modelForm} layout="vertical" autoComplete="off">
         <Form.Item name="name" label={copy.name} rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item name="description" label={copy.description}><Input.TextArea rows={3} /></Form.Item>
       </Form>
@@ -565,14 +598,17 @@ export default function ModelLibraryPage() {
         { title: copy.version, dataIndex: "version_number", render: (value: number) => `v${value}` },
         { title: copy.status, dataIndex: "approval_status", render: (value: string) => <Tag color={statusColor(value)}>{statusLabel(value)}</Tag> },
         { title: copy.framework, dataIndex: "framework" },
-        { title: t.model.actions, render: (_: unknown, row: ModelVersion) => versionModel && canRegister && row.approval_status === "pending" ? <Space><Button icon={<CheckOutlined />} aria-label={`${copy.approve} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => void approve(versionModel, row)}>{copy.approve}</Button><Button danger aria-label={`${copy.reject} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => reject(versionModel, row)}>{copy.reject}</Button></Space> : null },
+        { title: t.model.actions, render: (_: unknown, row: ModelVersion) => versionModel && canRegister ? <Space>
+          {row.approval_status === "pending" && <><Button icon={<CheckOutlined />} aria-label={`${copy.approve} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => void approve(versionModel, row)}>{copy.approve}</Button><Button danger aria-label={`${copy.reject} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => reject(versionModel, row)}>{copy.reject}</Button></>}
+          {row.approval_status === "approved" && <><Button loading={exportBusy === `${row.id}:predict`} aria-label={`${copy.exportPredict} ${row.version_number}`} onClick={() => void exportVersion(row, "predict")}>{copy.exportPredict}</Button><Button loading={exportBusy === `${row.id}:annotate`} aria-label={`${copy.exportAnnotate} ${row.version_number}`} onClick={() => void exportVersion(row, "annotate")}>{copy.exportAnnotate}</Button></>}
+        </Space> : null },
       ]} />
     </Drawer>
     <Modal title={copy.createDeployment} open={deploymentOpen} onCancel={() => setDeploymentOpen(false)} onOk={() => void submitDeployment()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
-      <Form form={deploymentForm} layout="vertical"><Form.Item name="name" label={copy.name} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="model_version_id" label={copy.version} rules={[{ required: true }]}><Select options={approvedVersions.map(({ model, version }) => ({ value: version.id, label: `${model.name} v${version.version_number}` }))} /></Form.Item></Form>
+      <Form form={deploymentForm} layout="vertical" autoComplete="off"><Form.Item name="name" label={copy.name} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="model_version_id" label={copy.version} rules={[{ required: true }]}><Select options={approvedVersions.map(({ model, version }) => ({ value: version.id, label: `${model.name} v${version.version_number}` }))} /></Form.Item></Form>
     </Modal>
     <Drawer title={testDeployment ? `${copy.onlineTest}: ${testDeployment.name}` : copy.onlineTest} open={Boolean(testDeployment)} onClose={() => setTestDeployment(undefined)} width={620} extra={<Button type="primary" aria-label={copy.predict} onClick={() => void submitPrediction()}>{copy.predict}</Button>}>
-      <Form form={predictionForm} layout="vertical"><Form.Item name="records" label={copy.recordsJson} rules={[{ required: true }]}><Input.TextArea rows={8} /></Form.Item></Form>
+      <Form form={predictionForm} layout="vertical" autoComplete="off"><Form.Item name="records" label={copy.recordsJson} rules={[{ required: true }]}><Input.TextArea rows={8} /></Form.Item></Form>
       {prediction && <Descriptions bordered size="small" column={1}>
         <Descriptions.Item label={copy.version}>v{prediction.version_number}</Descriptions.Item>
         <Descriptions.Item label={copy.predictions}><pre>{JSON.stringify(prediction.predictions, null, 2)}</pre></Descriptions.Item>
@@ -695,7 +731,7 @@ export default function ModelLibraryPage() {
       <Input.Password aria-label={production.keyPlaintext} readOnly value={createdKey.plaintext} />
     </Modal>}
     <Modal title={production.createRollout} open={rolloutOpen} onCancel={() => setRolloutOpen(false)} onOk={() => void submitRollout()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
-      <Form form={rolloutForm} layout="vertical">
+      <Form form={rolloutForm} layout="vertical" autoComplete="off">
         <Form.Item name="strategy" label={production.strategy} initialValue="canary" rules={[{ required: true }]}><Select options={[{ value: "immediate", label: production.immediate }, { value: "canary", label: production.canary }, { value: "rolling", label: production.rolling }]} /></Form.Item>
         <Form.Item name="target_version_id" label={production.targetVersion} rules={[{ required: true }]}><Select options={approvedVersions.map(({ model, version }) => ({ value: version.id, label: `${model.name} v${version.version_number}` }))} /></Form.Item>
         <Form.Item name="target_weight" label={production.targetWeight} initialValue={10000} rules={[{ required: true }]}><Input type="number" min={0} max={10000} /></Form.Item>
