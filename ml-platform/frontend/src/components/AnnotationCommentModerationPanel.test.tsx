@@ -20,10 +20,12 @@ beforeEach(() => {
 it("loads subsequent pages and preserves comments after a failed request", async () => {
   render(<AnnotationCommentModerationPanel taskId="t1" open onClose={() => {}} />);
   await waitFor(() => expect(screen.getByText("first comment")).toBeVisible());
+  await screen.findByRole("button", { name: "加载更多" });
   vi.mocked(comments.listAnnotationComments).mockRejectedValueOnce(new Error("offline"));
   fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("offline");
   expect(screen.getByText("first comment")).toBeVisible();
+  expect(await screen.findByRole("button", { name: "加载更多" })).toBeEnabled();
   vi.mocked(comments.listAnnotationComments).mockResolvedValueOnce({
     items: [{ ...first, id: "c2", content: "second comment" }], total: 2, next_cursor: null,
   });

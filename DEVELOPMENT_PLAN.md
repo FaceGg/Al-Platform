@@ -8,6 +8,7 @@
 - 当时状态：本地合同验证和新 SHA 的远程 full CI 待本轮完成；Run `35848118822` 仍绑定旧 SHA，不能作为本次修复通过证据。
 - 后续验收记录：GitHub Run `35855270973` 第 2 次尝试于 2026-09-23 通过，六个作业全部成功；Week 11–12 证据清单 `passed`，绑定提交 `4a3c639d9ef34fe4962e873ec277f516b660d586`。四个生产镜像的 Trivy HIGH/CRITICAL 门禁和安全汇总通过，Python CVE `CVE-2026-7210` 未再出现在镜像报告中。
 - 性能重跑：首次尝试同一 SHA 的 `warm-inference` 第 1、3 轮 P95 为 202.02/205.10 ms，略高于既有 200 ms 门槛；第 2 次尝试三轮为 195.60/175.78/191.80 ms，错误率均为 0。门槛未调整；首轮轻微超限未在同 SHA 重跑中复现，超限原因尚未证实。
+- 后续 push Run `35863495070`（记录提交 `3318c51287be6b7fc56fbf0641254d3fb6fc9758`）：Windows 质量作业和 Ubuntu 后端套件通过；Ubuntu 前端测试在 `AnnotationCommentModerationPanel.test.tsx` 失败。失败快照同时显示 `offline` 告警和 accessible name 为 `loading 加载更多` 的分页按钮；测试在错误告警出现后立即重试，没有等待 `loading` 清除。测试现增加空闲按钮等待，定向用例 **3 passed**、主平台前端全量 **356 passed、19 skipped**；修复提交的远程 push 检查待完成。
 
 ### 2026-09-23 标注工作区底部新增「跳转条目」
 
