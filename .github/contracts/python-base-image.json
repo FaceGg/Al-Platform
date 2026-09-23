@@ -9,8 +9,8 @@
     "non_root_uid": 1000
   },
   "scanner": "trivy 0.73.0",
-  "scanner_database": "online database, pending verification of the current runtime pin",
-  "scanned_at": null,
-  "status": "pending_remote_verification",
-  "findings": null
+  "scanner_database": "online Trivy database; verified by CI run 35855270973 attempt 2",
+  "scanned_at": "2026-09-23T12:38:09Z",
+  "status": "passed",
+  "findings": []
 }

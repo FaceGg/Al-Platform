@@ -5,7 +5,9 @@
 - 现象：提交 `bb03dddfafb026a9937cec1155e361ed815aed53` 的 full CI 中，Quality、Production integration、Production experiment integration 和 Chromium acceptance 均通过；Week 11–12 verification 最终失败。
 - 根因：Trivy 对四个生产镜像安装的 `python-3.11=3.11.16-r1` 报告 HIGH `CVE-2026-7210`，报告给出的修复版本为 `3.11.16-r7`。安全汇总器将非 Web 扫描证据统一判为 `SECURITY_EVIDENCE_INVALID`；扫描与汇总之间的隔离栈 Compose 会按默认配置在仓库内创建 `ml-platform/backend/mlflow-wheel` 绑定目录，改变 Gitleaks 已绑定的源树摘要。
 - 修复：四个 Dockerfile 和 `.github/contracts/python-base-image.json` 将 Python 固定版本升级为 `3.11.16-r7`，镜像合同测试同步；Week 11–12 verification 将 `MLFLOW_WHEEL_DIR` 指向 `${{ runner.temp }}/mlflow-wheel`，让 Compose 的宿主机绑定目录留在工作区之外。
-- 状态：本地合同验证和新 SHA 的远程 full CI 待本轮完成；Run `35848118822` 仍绑定旧 SHA，不能作为本次修复通过证据。
+- 当时状态：本地合同验证和新 SHA 的远程 full CI 待本轮完成；Run `35848118822` 仍绑定旧 SHA，不能作为本次修复通过证据。
+- 后续验收记录：GitHub Run `35855270973` 第 2 次尝试于 2026-09-23 通过，六个作业全部成功；Week 11–12 证据清单 `passed`，绑定提交 `4a3c639d9ef34fe4962e873ec277f516b660d586`。四个生产镜像的 Trivy HIGH/CRITICAL 门禁和安全汇总通过，Python CVE `CVE-2026-7210` 未再出现在镜像报告中。
+- 性能重跑：首次尝试同一 SHA 的 `warm-inference` 第 1、3 轮 P95 为 202.02/205.10 ms，略高于既有 200 ms 门槛；第 2 次尝试三轮为 195.60/175.78/191.80 ms，错误率均为 0。门槛未调整；首轮轻微超限未在同 SHA 重跑中复现，超限原因尚未证实。
 
 ### 2026-09-23 标注工作区底部新增「跳转条目」
 
