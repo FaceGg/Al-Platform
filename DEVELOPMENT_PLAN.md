@@ -1,5 +1,13 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-23 CI Run 35802807330：Week 11 性能验收容器 ID 修复
+
+- 现象：Run `35802807330` 的 Quality、生产集成和 Chromium acceptance 均通过；`Week 11-12 verification (Ubuntu)` 在 `Run live Week 11 acceptance evidence` 失败。作业日志及 `week11-12-verification-evidence` artifact 的 `performance/backend-failure.log` 记录 `No such container`，失败状态清单显示 backend 已由 Compose 重建并运行。
+- 已验证根因：`run_performance.sh` 在 `docker compose up -d --force-recreate inference-runtime backend worker scheduler` 前缓存 backend 和 worker 的容器 ID；Compose 重建后，后续 `docker cp` 仍使用旧 backend ID，导致 Docker daemon 报容器不存在。
+- 修复：先初始化容器 ID 变量以确保失败清理路径可用；强制重建后再按 Compose service 查询 backend、worker、redis 和 postgres 的当前 ID。新增运行真实验收 shell runner、用受控 Docker/Compose 函数模拟容器重建并验证 runner 使用新 backend ID 的回归测试。
+- 验证：回归先因 `stale-backend-id-used` 失败，修复后通过；`pytest tests/test_week11_12_tools.py -q` 为 **110 passed、5 subtests passed**；完整后端 `pytest tests -q` 为 **1993 passed、109 skipped、751 subtests passed、41 warnings**；`bash -n ml-platform/backend/tools/acceptance/run_performance.sh` 和 `git diff --check` 通过。
+- 状态：Run `35802807330` 绑定旧 SHA `55f184f7394a0318507240c5962ba2b6ee0ac330`，仍为失败。当前修复尚未提交或推送，也未在新 SHA 重跑远程 full CI；Task 14 继续 `in_progress`，19 项收据仍需由最终 SHA 的远程验收生成并核对。
+
 ### 2026-09-23 远程 CI 第三轮修复：generic-platform-acceptance 规格重写对齐两步向导 UI
 
 - 需求：第二轮 full 模式 run 中 `browser-acceptance` 的 `generic-platform-acceptance.spec.ts` 2 例确定性失败（各重试 1 次仍败），规格严重落后于 09-20 的两步向导重构。

@@ -19,6 +19,10 @@ CONTEXT=/tmp/week11-perf-context.json
 CONTAINER_PERFORMANCE=/tmp/week11-performance
 COMPOSE=(docker compose --project-name "$PROJECT")
 COMMIT="${ACCEPTANCE_SOURCE_COMMIT:-$(git -C "$ROOT" rev-parse HEAD)}"
+BACKEND=""
+WORKER=""
+REDIS=""
+POSTGRES=""
 
 cleanup() {
   set +e
@@ -47,15 +51,17 @@ if [ -e "$PERFORMANCE" ]; then
 fi
 mkdir -p "$PERFORMANCE"
 
-BACKEND="$(service_container backend)"
-WORKER="$(service_container worker)"
-REDIS="$(service_container redis)"
-POSTGRES="$(service_container postgres)"
-
 export INFERENCE_RATE_LIMIT_CAPACITY=20000
 export INFERENCE_RATE_LIMIT_REFILL_PER_SECOND=10000
 export INFERENCE_ROLLOUT_OBSERVATION_SECONDS=60
 "${COMPOSE[@]}" up -d --force-recreate inference-runtime backend worker scheduler
+
+# The forced recreation replaces backend and worker container IDs. Resolve all
+# service IDs after Compose has finished creating the runtime containers.
+BACKEND="$(service_container backend)"
+WORKER="$(service_container worker)"
+REDIS="$(service_container redis)"
+POSTGRES="$(service_container postgres)"
 
 for _ in $(seq 1 90); do
   if "${COMPOSE[@]}" exec -T backend python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()" >/dev/null 2>&1; then
