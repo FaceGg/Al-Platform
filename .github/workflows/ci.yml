@@ -842,6 +842,8 @@ jobs:
       - name: Run frozen-stack web security gate
         shell: bash
         continue-on-error: true
+        env:
+          MLFLOW_WHEEL_DIR: ${{ runner.temp }}/mlflow-wheel
         run: |
           set -euo pipefail
           mkdir -p "$ML_PLATFORM_EVIDENCE_DIR/security"
@@ -944,6 +946,8 @@ jobs:
           exit "$web_status"
       - name: Run live Week 11 acceptance evidence
         shell: bash
+        env:
+          MLFLOW_WHEEL_DIR: ${{ runner.temp }}/mlflow-wheel
         run: |
           set -euo pipefail
           bash ml-platform/backend/tools/acceptance/run_week11_acceptance.sh
@@ -1044,6 +1048,8 @@ jobs:
       - name: Stop live Week 11 acceptance stack
         if: always()
         shell: bash
+        env:
+          MLFLOW_WHEEL_DIR: ${{ runner.temp }}/mlflow-wheel
         run: |
           docker compose --project-name "$COMPOSE_PROJECT_NAME" down --volumes --remove-orphans || true
           sudo rm -f -- "$NOTIFICATION_CRYPTO_SECRET_FILE"

@@ -1,5 +1,12 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-23 full CI Run 35848118822 安全门禁修复
+
+- 现象：提交 `bb03dddfafb026a9937cec1155e361ed815aed53` 的 full CI 中，Quality、Production integration、Production experiment integration 和 Chromium acceptance 均通过；Week 11–12 verification 最终失败。
+- 根因：Trivy 对四个生产镜像安装的 `python-3.11=3.11.16-r1` 报告 HIGH `CVE-2026-7210`，报告给出的修复版本为 `3.11.16-r7`。安全汇总器将非 Web 扫描证据统一判为 `SECURITY_EVIDENCE_INVALID`；扫描与汇总之间的隔离栈 Compose 会按默认配置在仓库内创建 `ml-platform/backend/mlflow-wheel` 绑定目录，改变 Gitleaks 已绑定的源树摘要。
+- 修复：四个 Dockerfile 和 `.github/contracts/python-base-image.json` 将 Python 固定版本升级为 `3.11.16-r7`，镜像合同测试同步；Week 11–12 verification 将 `MLFLOW_WHEEL_DIR` 指向 `${{ runner.temp }}/mlflow-wheel`，让 Compose 的宿主机绑定目录留在工作区之外。
+- 状态：本地合同验证和新 SHA 的远程 full CI 待本轮完成；Run `35848118822` 仍绑定旧 SHA，不能作为本次修复通过证据。
+
 ### 2026-09-23 标注工作区底部新增「跳转条目」
 
 - 需求（用户提出）：在标注工作区最底部「第 X/Y 条」旁新增跳转输入框，输入数字跳到对应数据，超过最大数跳转到最后一条。

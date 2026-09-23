@@ -5,7 +5,7 @@ RUN set -eu; \
     printf '%s\n' 'https://packages.wolfi.dev/os' > /etc/apk/repositories; \
     for attempt in 1 2 3; do \
         if apk add --no-cache \
-            python-3.11=3.11.16-r1 \
+            python-3.11=3.11.16-r7 \
             py3.11-pip=26.2.1-r0 \
             postgresql-16-client=16.11-r0 \
             glibc \

@@ -4,7 +4,7 @@ WORKDIR /app
 RUN set -eu; \
     printf '%s\n' 'https://packages.wolfi.dev/os' > /etc/apk/repositories; \
     for attempt in 1 2 3; do \
-        if apk add --no-cache python-3.11=3.11.16-r1 py3.11-pip=26.2.1-r0 glibc libgomp; then \
+        if apk add --no-cache python-3.11=3.11.16-r7 py3.11-pip=26.2.1-r0 glibc libgomp; then \
             exit 0; \
         fi; \
         if [ "$attempt" -eq 3 ]; then \

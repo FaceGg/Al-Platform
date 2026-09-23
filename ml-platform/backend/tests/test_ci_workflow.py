@@ -587,6 +587,17 @@ test "$first_hash" = "$second_hash"
         steps = parsed["jobs"]["week11-12-verification"]["steps"]
         rendered_steps = "\n".join(str(step.get("run", "")) for step in steps)
 
+        for step_name in (
+            "Run frozen-stack web security gate",
+            "Run live Week 11 acceptance evidence",
+            "Stop live Week 11 acceptance stack",
+        ):
+            step = next(step for step in steps if step.get("name") == step_name)
+            with self.subTest(step=step_name):
+                self.assertEqual(
+                    step["env"]["MLFLOW_WHEEL_DIR"],
+                    "${{ runner.temp }}/mlflow-wheel",
+                )
         self.assertIn("tools.acceptance_environment web-context", rendered_steps)
         self.assertIn("tools.security_scans web", rendered_steps)
         self.assertIn("--base-url http://backend:8000", rendered_steps)
