@@ -381,6 +381,114 @@ describe('TaskWorkspacePage', () => {
     expect(screen.getByRole('button', { name: '发起回传' })).toBeDisabled()
   })
 
+  it('shows an accepted task as read-only without the edit-for-return escape hatch', async () => {
+    vi.mocked(tasks.getTask).mockResolvedValue({
+      ...task, status: 'accepted', read_only: true, state: 'returned_pending_acceptance',
+    } as tasks.Task)
+    await openWorkspace()
+    expect(screen.getByText(/已验收/)).toBeVisible()
+    expect(screen.getByLabelText('category-s-1')).toBeDisabled()
+    openTab('回传')
+    expect(screen.getByText('任务已验收，标注内容已锁定，不可再编辑或回传。')).toBeVisible()
+    expect(screen.getByRole('button', { name: '确认任务' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '发起回传' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '编辑后回传' })).not.toBeInTheDocument()
+    expect(tasks.saveLabels).not.toHaveBeenCalled()
+  })
+
+  it('uses the refreshed revision from a prior single save in the bulk payload', async () => {
+    // Regression: the batch panel read base_revision from a stale sample cache
+    // after a single-sample auto-save, so the whole bulk write intermittently
+    // failed with REVISION_CONFLICT.
+    vi.mocked(tasks.listSamples).mockResolvedValue({ items: [firstSample, { ...secondSample, labels: {} }] })
+    vi.mocked(tasks.saveLabels).mockResolvedValueOnce({ values: { category: 'B' }, revision: 2 })
+    vi.mocked(tasks.bulkLabels).mockResolvedValue({ items: [{ sample_id: 's-2', values: { category: 'B' }, revision: 2 }] })
+    await openWorkspace()
+    // 右侧样本流一次只显示当前样本，先切到 s-2
+    fireEvent.click(screen.getByRole('button', { name: '下一条 →' }))
+    fireEvent.change(screen.getByLabelText('category-s-2'), { target: { value: 'B' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存标签' }))
+    await waitFor(() => expect(tasks.saveLabels).toHaveBeenCalledWith('task-1', 's-2', { category: 'B' }, 1))
+    await screen.findByText('标签已保存')
+    openTab('批量')
+    fireEvent.click(screen.getByLabelText('选择样本 s-2'))
+    fireEvent.change(screen.getByLabelText('批量标签值'), { target: { value: 'C' } })
+    fireEvent.click(screen.getByLabelText('覆盖已有合法标签'))
+    fireEvent.click(screen.getByRole('button', { name: '应用到所选样本' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认批量覆盖' }))
+    await waitFor(() => expect(tasks.bulkLabels).toHaveBeenCalledWith('task-1', [
+      { sample_id: 's-2', values: { category: 'C' }, base_revision: 2 },
+    ]))
+    expect(screen.queryByText(/版本冲突/)).not.toBeInTheDocument()
+  })
+
+  it('jumps to the entered sample number and clamps beyond the total to the last one', async () => {
+    const lastPage = Array.from({ length: 20 }, (_, i) => ({
+      sample_id: `s-${101 + i}`,
+      values: { feature: `条目 ${101 + i}` },
+      labels: {},
+      revision: 1,
+    }))
+    lastPage[19] = { ...lastPage[19], values: { feature: '最后一条' } }
+    vi.mocked(tasks.getTask).mockResolvedValue({ ...task, total_samples: 120 } as tasks.Task)
+    vi.mocked(tasks.listSamples).mockImplementation(async (_id: string, _cursor?: string, _assignment?: string, _filters?: tasks.SampleFilters, offset = 0) =>
+      offset >= 100 ? { items: lastPage } : { items: [firstSample, secondSample], next_cursor: 's-2' })
+    await openWorkspace()
+    expect(screen.getByText(/第 1\/120 条/)).toBeVisible()
+    // 超过最大数（120）→ 跳转到最后一条
+    fireEvent.change(screen.getByLabelText('跳转样本'), { target: { value: '999' } })
+    fireEvent.click(screen.getByRole('button', { name: '跳转' }))
+    expect(await screen.findByText('最后一条')).toBeVisible()
+    expect(screen.getByText(/第 120\/120 条/)).toBeVisible()
+    expect(tasks.listSamples).toHaveBeenLastCalledWith('task-1', undefined, undefined, undefined, 100)
+    // 同页跳转（101）不再发请求
+    const callsBefore = vi.mocked(tasks.listSamples).mock.calls.length
+    fireEvent.change(screen.getByLabelText('跳转样本'), { target: { value: '101' } })
+    fireEvent.click(screen.getByRole('button', { name: '跳转' }))
+    expect(await screen.findByText('条目 101')).toBeVisible()
+    expect(vi.mocked(tasks.listSamples).mock.calls.length).toBe(callsBefore)
+  })
+
+  it('jumping to the first item of a page lets ArrowLeft cross back to the previous page', async () => {
+    const middlePage = Array.from({ length: 50 }, (_, i) => ({
+      sample_id: `s-${51 + i}`,
+      values: { feature: `条目 ${51 + i}` },
+      labels: {},
+      revision: 1,
+    }))
+    vi.mocked(tasks.getTask).mockResolvedValue({ ...task, total_samples: 120 } as tasks.Task)
+    vi.mocked(tasks.listSamples).mockImplementation(async (_id: string, _cursor?: string, _assignment?: string, _filters?: tasks.SampleFilters, offset = 0) =>
+      offset >= 50 ? { items: middlePage } : { items: [firstSample, secondSample] })
+    await openWorkspace()
+    // 跳到第 101 条（第 3 页页首），← 跨页回退走 offset 路径
+    fireEvent.change(screen.getByLabelText('跳转样本'), { target: { value: '101' } })
+    fireEvent.click(screen.getByRole('button', { name: '跳转' }))
+    expect(await screen.findByText('第 101/120 条')).toBeVisible()
+    fireEvent.keyDown(window, { key: 'ArrowLeft' })
+    expect(await screen.findByText('第 51/120 条')).toBeVisible()
+    expect(screen.getByText('条目 51')).toBeVisible()
+    expect(tasks.listSamples).toHaveBeenLastCalledWith('task-1', undefined, undefined, undefined, 50)
+  })
+
+  it('typing in the jump input does not trigger global shortcuts', async () => {
+    vi.mocked(tasks.getTask).mockResolvedValue({
+      ...task,
+      label_schema: { columns: [{ machine_key: 'category', display_name: 'Category', value_type: 'string', enum_values: ['A', 'B'], required: true }] },
+    } as tasks.Task)
+    render(<TaskWorkspacePage taskId="task-1" />)
+    await screen.findByLabelText('category-s-1')
+    const jump = screen.getByLabelText('跳转样本')
+    fireEvent.change(jump, { target: { value: '2' } })
+    // 输入框内按数字 2 不触发标签快捷选项
+    fireEvent.keyDown(jump, { key: '2' })
+    expect(screen.getByLabelText('category-s-1')).toHaveValue('A')
+    // Enter 在跳转框内是跳转而不是「保存并下一条」
+    fireEvent.keyDown(jump, { key: 'Enter' })
+    expect(tasks.saveLabels).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('category-s-2')).toBeVisible()
+    expect(jump).toHaveValue('')
+  })
+
   it('renders every frozen schema field for empty labels and saves typed values', async () => {
     vi.mocked(tasks.getTask).mockResolvedValue({
       ...task,
@@ -802,14 +910,15 @@ describe('TaskWorkspacePage sample stream and shortcuts', () => {
     expect(screen.getByLabelText('选择当前页全部样本')).toBeVisible()
     expect(screen.getByLabelText('选择样本 s-1')).toBeVisible()
     expect(screen.getByLabelText('选择样本 s-2')).toBeVisible()
-    expect(screen.getAllByRole('button', { name: '上一页' })).toHaveLength(2)
-    expect(screen.getAllByRole('button', { name: '下一页' })).toHaveLength(2)
+    // 样本面板已去掉分页，翻页按钮只存在于批量面板
+    expect(screen.getAllByRole('button', { name: '上一页' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: '下一页' })).toHaveLength(1)
     expect(screen.getByLabelText('搜索样本')).toBeVisible()
     expect(screen.getByText('任务说明')).toBeVisible()
     // 再次点击同一 tab 收起对应面板，其他面板保持打开
     openTab('批量')
     expect(screen.queryByLabelText('选择当前页全部样本')).not.toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: '上一页' })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: '上一页' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('搜索样本')).toBeVisible()
     openTab('样本')
     expect(screen.queryByLabelText('搜索样本')).not.toBeInTheDocument()

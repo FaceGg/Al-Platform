@@ -745,6 +745,7 @@ def internal_portal_samples(
     assignment_id: uuid.UUID | None = Query(default=None),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0, le=1_000_000_000),
     sample_search: str | None = Query(default=None, min_length=1, max_length=256),
     label_status: str | None = Query(default=None, pattern="^(complete|incomplete)$"),
     comment_status: str | None = Query(default=None, pattern="^(open|resolved|none)$"),
@@ -831,7 +832,7 @@ def internal_portal_samples(
         if marker_index is None:
             raise _portal_error("INVALID_CURSOR", status_code=422)
         query = query.filter(DatasetSample.row_index > marker_index)
-    rows = query.limit(limit + 1).all()
+    rows = query.offset(offset).limit(limit + 1).all()
     has_next = len(rows) > limit
     rows = rows[:limit]
     source_ids = [row.sample_id for row in rows]

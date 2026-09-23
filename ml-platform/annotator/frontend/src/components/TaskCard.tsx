@@ -5,7 +5,9 @@ const statusLabels: Record<string, string> = {
   in_progress: '进行中',
   awaiting_return: '待回传',
   returned_pending_acceptance: '待验收',
+  accepted: '已验收',
   completed: '已完成',
+  archived: '已归档',
   failed: '失败',
   cancelled: '已取消',
   assigned: '已分派',
@@ -13,8 +15,13 @@ const statusLabels: Record<string, string> = {
 
 export const FEEDBACK_STATES = ['returned_pending_acceptance', 'edit_for_return']
 
+// 终态任务（已验收/已归档/已完成/已取消/失败）不再属于质检反馈：验收或归档后
+// assignment.state 会停留在 returned_pending_acceptance，但任务已锁定，不应提示重做。
+export const TERMINAL_STATUSES = ['accepted', 'completed', 'archived', 'cancelled', 'failed']
+
 export const isFeedbackTask = (task: Task) =>
-  FEEDBACK_STATES.includes(task.state ?? '') || task.status === 'returned_pending_acceptance'
+  !TERMINAL_STATUSES.includes(task.status) &&
+  (FEEDBACK_STATES.includes(task.state ?? '') || task.status === 'returned_pending_acceptance')
 
 export default function TaskCard({
   task,
@@ -28,7 +35,8 @@ export default function TaskCard({
   onOpenTask: (id: string, assignmentId?: string) => void
 }) {
   const hasProgress = task.completed_samples !== undefined && task.total_samples !== undefined && task.total_samples > 0
-  const rework = FEEDBACK_STATES.includes(task.state ?? '')
+  const viewOnly = ['accepted', 'archived'].includes(task.status)
+  const rework = !TERMINAL_STATUSES.includes(task.status) && FEEDBACK_STATES.includes(task.state ?? '')
 
   return (
     <article className={`task-card${highlighted ? ' highlighted' : ''}`} id={cardId}>
@@ -53,7 +61,7 @@ export default function TaskCard({
         </div>
       </div>
       <div className="task-actions">
-        <button className="primary" onClick={() => onOpenTask(task.id, ...(task.assignment_id ? [task.assignment_id] as const : []))}>继续标注</button>
+        <button className="primary" onClick={() => onOpenTask(task.id, ...(task.assignment_id ? [task.assignment_id] as const : []))}>{viewOnly ? '查看任务' : '继续标注'}</button>
       </div>
     </article>
   )

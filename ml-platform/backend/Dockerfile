@@ -19,7 +19,6 @@ RUN set -eu; \
     done
 RUN python3.11 -c "import sqlite3"
 RUN addgroup -S -g 1000 app && adduser -S -D -H -h /home/app -u 1000 -G app app
-RUN python3.11 -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 COPY requirements.txt .
 # Keep the CPU image free of XGBoost's Linux NCCL dependency.
 RUN --mount=type=cache,target=/root/.cache/pip \

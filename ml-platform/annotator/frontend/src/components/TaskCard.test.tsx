@@ -27,6 +27,26 @@ describe('TaskCard', () => {
     expect(screen.getByText('需重做')).toBeVisible()
   })
 
+  it('renders accepted tasks as accepted without rework or feedback', () => {
+    // 验收后 assignment.state 仍是 returned_pending_acceptance，但任务已终态。
+    const accepted: Task = { ...base, status: 'accepted', state: 'returned_pending_acceptance' }
+    render(<TaskCard task={accepted} onOpenTask={vi.fn()} />)
+    expect(screen.getByText('已验收')).toBeVisible()
+    expect(screen.queryByText('需重做')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '查看任务' })).toBeVisible()
+    expect(isFeedbackTask(accepted)).toBe(false)
+  })
+
+  it('renders archived tasks as archived without rework or feedback', () => {
+    // 验收后管理员归档：status=archived，assignment.state 仍停留在回传态。
+    const archived: Task = { ...base, status: 'archived', state: 'returned_pending_acceptance' }
+    render(<TaskCard task={archived} onOpenTask={vi.fn()} />)
+    expect(screen.getByText('已归档')).toBeVisible()
+    expect(screen.queryByText('需重做')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '查看任务' })).toBeVisible()
+    expect(isFeedbackTask(archived)).toBe(false)
+  })
+
   it('opens the workspace with the assignment id when present', () => {
     const onOpenTask = vi.fn()
     render(<TaskCard task={{ ...base, assignment_id: 'a-1' }} onOpenTask={onOpenTask} />)

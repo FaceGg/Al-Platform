@@ -1,5 +1,39 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-23 标注工作区底部新增「跳转条目」
+
+- 需求（用户提出）：在标注工作区最底部「第 X/Y 条」旁新增跳转输入框，输入数字跳到对应数据，超过最大数跳转到最后一条。
+- 实现：
+  - 后端 `annotator_internal.py` `internal_portal_samples` 新增 `offset` 查询参数（ge=0，作用在既有过滤/游标之后 `query.offset(offset).limit(limit+1)`），支持不逐页走游标链直达任意位置；网关 `tasks.py` `list_samples` 透传 `offset`（为 0 时不转发，保持既有转发参数契约不变）。
+  - 前端 `api/tasks.ts` `listSamples` 增加第 5 参 `offset`；`TaskWorkspacePage.tsx` 新增 `loadPageAt(pageIndex, selectIndex)`（offset 分页加载）与 `jumpToSample`（1 起始、低于 1 回第一条、超过 `total_samples` 钳制到最后一条；同页仅本地切换不发请求）；`movePrev` 改为 offset 回退一页（跳转后游标链可能缺失）；`SampleStream.tsx` footer 在「第 X/Y 条」旁渲染数字输入框（过滤非数字）+「跳转」按钮，Enter 提交，输入框内不触发全局快捷键（既有 editable 守卫天然覆盖）。
+- 测试：前端 vitest **111 passed**、tsc 通过（新增：输入 999 超界钳制到 120/120 最后一条 + 同页跳转零请求）；网关 30 passed（原参数转发契约用例保持不变）；主后端 portal 过滤套件 **235 passed / 5 skipped**。
+- 部署：已重建 `annotator-frontend`（bundle `index-B-plsHaE.js`，含跳转 UI）与 `annotator` 网关容器（offset 透传），8443 登录链路验证 200。
+- **运维教训**：重建/重启 `annotator`（网关）容器后其容器 IP 会变化，而 `annotator-frontend`（nginx）启动时解析一次上游主机名并缓存——不重启 nginx 会导致 8443 经 nginx 的登录/接口全部 502（直连 8444 正常）。**重建 annotator 容器后必须 `docker compose restart annotator-frontend`**（本轮已实操验证恢复）。
+- 微调（用户截图反馈）：跳转输入框 placeholder「条数」→「样本」（aria-label 同步为「跳转样本」），`.stream-jump` 增加左右 8px margin 拉开与「第 X/Y 条」/「下一条」的间距。测试 111 passed，已部署 bundle `index-B6eOmWrO.js`。
+
+### 2026-09-23 标注员门户三项修复：已验收任务终态展示、样本面板去分页、批量保存偶发冲突
+
+- 需求（用户提出）：① 任务已验收后去掉质检反馈提示、任务列表显示「已验收」且不能再编辑；② 去掉标注工作区样本面板中的分页；③ 批量操作时不时会报错。
+- 根因 1：验收通过后 `task.status="accepted"`（`refresh_task_return_state`），但 `assignment.state` 停留在 `returned_pending_acceptance`，前端 `isFeedbackTask`/「需重做」徽标按 assignment.state 误判为质检反馈；`statusLabels` 缺 `accepted` 映射导致任务卡片显示原始英文 "accepted"。
+- 根因 2：样本面板（工作区左侧「样本」tab）含独立「分页」区块（上一页/第 N 页/下一页）。
+- 根因 3：单样本保存成功后只更新了 `samplesRef`/`setSamples`，未同步 `sampleCacheRef`；`applyBatch` 优先从 `sampleCacheRef` 取 `base_revision`，读过时修订号触发后端 `RevisionConflict` 409，整批回滚并提示「批量保存存在版本冲突，整批未写入」。仅当所选样本在本次会话中被自动保存过时才复现，故表现为偶发。
+- 修复（仅前端 `ml-platform/annotator/frontend`，后端契约不变——`read_only` 与 `_ensure_task_allows_label_write`/`_ensure_task_allows_return_edit` 已天然锁定已验收任务）：
+  - `TaskCard.tsx`：`statusLabels` 增加 `accepted: '已验收'`；`isFeedbackTask` 排除 `status==='accepted'`；`rework` 徽标排除已验收；按钮文案已验收时为「查看任务」。
+  - `TaskQueuePage.tsx`：状态筛选下拉新增「已验收」选项；逾期统计排除已验收任务。
+  - `TaskWorkspacePage.tsx`：删除样本面板「分页」区块（样本流翻页仍由 下一题/方向键 自动加载）；页头状态已验收时显示「已验收」（优先于「回传后只读」）；回传面板已验收时显示「任务已验收，标注内容已锁定，不可再编辑或回传」并隐藏「编辑后回传」；`save()` 成功后同步 `sampleCacheRef`（批量修订号修复）；`applyBatch` 增加在途保存 ref 守卫（防 `blockers` 渲染滞后竞态）。
+- 测试：前端 vitest **109 passed（14 文件，基线 94 → 新增/调整后全绿）**，`tsc --noEmit` 通过。新增用例：已验收任务卡片（已验收徽标/无需重做/查看任务/isFeedbackTask=false）、队列页（无质检反馈横幅/不计入逾期）、工作区（已验收只读、无编辑后回传）、批量修订号回归（单样本保存后 bulk 使用刷新后的 base_revision）。
+- 未验证：8443 门户线上（docker 镜像）未重建部署；后端未改动无需重跑 pytest。
+- **补充（用户截图反馈后）**：用户实测已验收任务仍显示英文 "archived"+「需重做」+质检反馈横幅——根因是验收后管理员又执行了归档（状态机 `accepted → archive → archived`，见 `annotation_task_state.py`），上轮只排除了 `accepted` 一种终态。修复：`TaskCard.tsx` 导出 `TERMINAL_STATUSES`（accepted/completed/archived/cancelled/failed），`isFeedbackTask` 与「需重做」徽标排除全部终态；`statusLabels` 补 `archived: '已归档'`；已验收/已归档任务按钮统一为「查看任务」；`TaskWorkspacePage.tsx` 页头与回传面板对终态（已验收/已归档/已完成/已取消）显示对应中文并隐藏「编辑后回传」；`TaskQueuePage.tsx` 逾期统计排除 `archived`。测试 vitest **110 passed**、tsc 通过。
+- **部署注意**：annotator-frontend Dockerfile 仅 `COPY dist`（宿主机构建产物），改代码后必须先 `npm run build` 再 `docker compose build`，否则镜像内容不更新（本轮踩过：首次重部署时忘记重跑 build，curl 到的仍是旧 bundle，以 bundle hash + 内容 grep 验证为准）。已部署新 bundle `index-DI7NJEny.js` 到 8443 并验证含「已验收」「已归档」逻辑。
+
+### 2026-09-23 远程 CI Python 依赖源慢
+
+- 现象：远程 CI 构建生产后端镜像时，Python 依赖安装被固定导向阿里云 PyPI 镜像，下载较慢。
+- 根因：CI 构建的 `backend`、`worker`、`inference`、`tensorboard` 四个 Dockerfile 都执行了 `pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/`；workflow 本身未配置该源。
+- 修复：移除四个 Dockerfile 中的全局 pip index 覆盖，让 pip 使用默认 PyPI；保留原有重试、读取超时和 BuildKit 缓存。新增 CI 镜像合同测试，禁止这些 Dockerfile 设置阿里源或其他 `index-url` 覆盖。
+- 验证：新增回归先对四个 Dockerfile 全部失败；修复后 `python -m unittest tests.test_ci_workflow -q` 为 **57 tests OK**，`git diff --check` 通过。
+- 未验证：本轮没有构建 Docker 镜像，也没有在新 SHA 上运行远程 CI；实际 CI 下载耗时改善仍待该次运行数据确认。
+
 ### 2026-09-23 CI Run 35802807330：Week 11 性能验收容器 ID 修复
 
 - 现象：Run `35802807330` 的 Quality、生产集成和 Chromium acceptance 均通过；`Week 11-12 verification (Ubuntu)` 在 `Run live Week 11 acceptance evidence` 失败。作业日志及 `week11-12-verification-evidence` artifact 的 `performance/backend-failure.log` 记录 `No such container`，失败状态清单显示 backend 已由 Compose 重建并运行。

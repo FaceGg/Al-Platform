@@ -104,7 +104,7 @@ export default function TaskQueuePage({
   const overdueCount = tasks.filter((t) => {
     if (!t.due_at) return false
     const due = new Date(t.due_at)
-    return due < new Date() && t.status !== 'completed' && t.status !== 'cancelled'
+    return due < new Date() && !['completed', 'cancelled', 'accepted', 'archived'].includes(t.status)
   }).length
 
   const displayName = user?.username ?? '用户'
@@ -181,6 +181,7 @@ export default function TaskQueuePage({
           <option value="in_progress">进行中</option>
           <option value="awaiting_return">待回传</option>
           <option value="returned_pending_acceptance">待验收</option>
+          <option value="accepted">已验收</option>
           <option value="completed">已完成</option>
           <option value="failed">失败</option>
           <option value="cancelled">已取消</option>

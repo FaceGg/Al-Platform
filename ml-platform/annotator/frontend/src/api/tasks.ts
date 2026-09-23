@@ -58,9 +58,9 @@ export const listTasks = (query: TaskQueueQuery = {}) =>
     query: { limit: 50, ...query },
   })
 export const getTask = (id: string, assignmentId?: string) => request<Task>(`/portal/tasks/${id}`, { query: { assignment_id: assignmentId } })
-export const listSamples = (id: string, cursor?: string, assignmentId?: string, filters: SampleFilters = {}) =>
+export const listSamples = (id: string, cursor?: string, assignmentId?: string, filters: SampleFilters = {}, offset = 0) =>
   request<{ items: Sample[]; next_cursor?: string }>(`/portal/tasks/${id}/samples`, {
-    query: { cursor, limit: 50, assignment_id: assignmentId, ...filters },
+    query: { cursor, limit: 50, offset, assignment_id: assignmentId, ...filters },
   })
 export const saveLabels = (
   taskId: string,

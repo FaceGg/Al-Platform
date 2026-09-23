@@ -51,6 +51,8 @@ curl.exe -s http://localhost:8443/ | Select-String "index-"   # 确认新 bundle
 
 ### 电脑重启后的恢复清单（重要，2026-09-21 实操验证）
 
+**一键恢复**：右键"使用 PowerShell 运行" `temp_test/start_portal.ps1`（依次完成下列全部步骤并自动验证）。手动分步执行如下：
+
 1. 清理 8000 端口残留的 uvicorn 孤儿进程（`--reload` 遗留 worker：杀主进程后 multiprocessing 子进程仍持有 socket，需按 `netstat -ano | findstr ":8000"` 逐个 taskkill）。
 2. 本地后端必须 `--host 0.0.0.0`（不是 127.0.0.1），否则 WSL 容器无法访问——2026-09-21 实测 `127.0.0.1` 绑定时 WSL mirrored localhost 也连不上。
 3. WSL TCP 中继重启（监听 8100，WSL 重启不自启）。**必须用 `setsid` 脱离会话**，普通 `nohup ... &` 会随 wsl.exe 会话退出被回收：

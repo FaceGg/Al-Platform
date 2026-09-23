@@ -29,6 +29,12 @@ NOTIFICATION_STACK_TEST = (
     REPOSITORY_ROOT / "ml-platform" / "backend" / "tests" / "test_notification_production_stack.py"
 )
 BACKEND_REQUIREMENTS = REPOSITORY_ROOT / "ml-platform" / "backend" / "requirements.txt"
+CI_BUILT_BACKEND_DOCKERFILES = (
+    REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile",
+    REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.worker",
+    REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.inference",
+    REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.tensorboard",
+)
 
 
 def load_workflow_contract(path: Path) -> dict:
@@ -62,6 +68,14 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         for marker in forbidden:
             with self.subTest(marker=marker):
                 self.assertNotIn(marker.casefold(), workflow)
+
+    def test_ci_built_backend_images_use_default_pypi_index(self):
+        for dockerfile in CI_BUILT_BACKEND_DOCKERFILES:
+            content = dockerfile.read_text(encoding="utf-8").casefold()
+            with self.subTest(dockerfile=dockerfile.name):
+                self.assertNotIn("aliyun", content)
+                self.assertNotIn("--index-url", content)
+                self.assertNotIn("pip config set global.index-url", content)
 
     def test_compose_runtime_contains_no_aliyun_references(self):
         forbidden = (

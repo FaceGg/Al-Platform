@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { LabelColumn, Sample } from '../api/tasks'
 
 export type NumberedOption = { column: LabelColumn; value: string; index: number }
@@ -23,6 +23,7 @@ export default function SampleStream({
   onSkip,
   onPrev,
   onNext,
+  onJump,
   onOpenSamples,
   onRestart,
 }: {
@@ -45,12 +46,20 @@ export default function SampleStream({
   onSkip: () => void
   onPrev: () => void
   onNext: () => void
+  onJump?: (value: string) => void
   onOpenSamples: () => void
   onRestart: () => void
 }) {
   const firstLabelRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null)
   const setFirstLabelRef = (element: HTMLElement | null) => {
     firstLabelRef.current = element as HTMLInputElement | HTMLSelectElement | null
+  }
+  const [jumpText, setJumpText] = useState('')
+  const submitJump = () => {
+    const trimmed = jumpText.trim()
+    if (!trimmed) return
+    onJump?.(trimmed)
+    setJumpText('')
   }
   // 光标默认落在第一个标签输入框；切换上一条/下一样本后自动回到标签框
   useEffect(() => {
@@ -163,6 +172,28 @@ export default function SampleStream({
       <footer className="stream-footer">
         <button type="button" onClick={onPrev}>← 上一条</button>
         <span className="stream-progress" aria-label="样本进度">第 {position}/{total} 条</span>
+        <span className="stream-jump" aria-label="跳转到指定样本">
+          <input
+            aria-label="跳转样本"
+            placeholder="样本"
+            inputMode="numeric"
+            autoComplete="off"
+            value={jumpText}
+            disabled={disabled}
+            onChange={(event) => setJumpText(event.target.value.replace(/\D/g, ''))}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                submitJump()
+              }
+            }}
+          />
+          <button
+            type="button"
+            disabled={disabled || !jumpText}
+            onClick={submitJump}
+          >跳转</button>
+        </span>
         <button type="button" onClick={onNext}>下一条 →</button>
         <button type="button" onClick={onSkip}>跳过</button>
         <button className="primary" type="button" disabled={saveDisabled} onClick={onSaveAndNext}>保存并下一样本</button>

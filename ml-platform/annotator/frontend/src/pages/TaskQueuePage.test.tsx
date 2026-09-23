@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TaskQueuePage from './TaskQueuePage'
 import { listTasks } from '../api/tasks'
@@ -98,6 +98,24 @@ describe('TaskQueuePage', () => {
     render(<TaskQueuePage onOpenTask={vi.fn()} />)
     await screen.findByText('Review set')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows accepted tasks as accepted without the quality feedback banner', async () => {
+    vi.mocked(listTasks).mockResolvedValue({
+      items: [{
+        id: 'task-1', title: '已验收任务', status: 'accepted', state: 'returned_pending_acceptance',
+        task_revision: 0, scope_hash: 'h', due_at: '2020-01-01T00:00:00Z',
+      }],
+      total: 1, next_cursor: null,
+    })
+    render(<TaskQueuePage onOpenTask={vi.fn()} />)
+    expect(await screen.findByText('已验收')).toBeVisible()
+    // 已验收任务不提示质检反馈、不显示需重做、不计入逾期
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText('需重做')).not.toBeInTheDocument()
+    // 已验收任务不计入逾期（due_at 已过期）
+    const overdueCard = screen.getByText('已逾期').closest('.stat-card') as HTMLElement
+    expect(within(overdueCard).getByText('0')).toBeVisible()
   })
 
 })

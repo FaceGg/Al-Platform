@@ -279,6 +279,32 @@ export default function TaskWorkspacePage({
     setPageCursors((current) => current.slice(0, pageIndex + 1))
   }, [replacePage, taskId, assignmentArgs, sampleFilterArgs])
 
+  // Offset-based page load: supports jumping to an arbitrary position without
+  // walking the cursor chain page by page.
+  const loadPageAt = useCallback(async (pageIndex: number, selectIndex = 0) => {
+    const generation = ++requestGeneration.current
+    const result = await listSamples(taskId, undefined, assignmentArgs[0], sampleFilterArgs[0], pageIndex * 50)
+    if (generation !== requestGeneration.current) return
+    replacePage(result.items, result.next_cursor)
+    setPage(pageIndex)
+    setPageCursors((current) => current.slice(0, pageIndex + 1))
+    if (result.items.length) setSelected(Math.min(selectIndex, result.items.length - 1))
+  }, [replacePage, taskId, assignmentArgs, sampleFilterArgs])
+
+  async function jumpToSample(input: string) {
+    const n = Number.parseInt(input, 10)
+    if (!Number.isFinite(n) || !totalSamples) return
+    // 超过最大数跳转到最后一条；低于 1 回到第一条
+    const target = Math.min(Math.max(1, n), totalSamples)
+    const targetPage = Math.floor((target - 1) / 50)
+    const indexInPage = (target - 1) % 50
+    if (targetPage === page) {
+      chooseSample(Math.min(indexInPage, samples.length - 1))
+      return
+    }
+    await loadPageAt(targetPage, indexInPage)
+  }
+
   useEffect(() => {
     let active = true
     setTaskMissing(false)
@@ -454,6 +480,11 @@ export default function TaskWorkspacePage({
       const latestDraft = draftsRef.current[sampleId] ?? {}
       const stillSame = JSON.stringify(latestDraft) === JSON.stringify(currentDraft)
       const updated = { ...target, labels: result.values ?? payload, revision: result.revision }
+      // Keep the sample cache in sync: applyBatch reads base_revision from it,
+      // and a stale revision there makes the whole bulk write fail with a
+      // REVISION_CONFLICT after any single-sample auto-save bumped the server
+      // revision (intermittent "批量保存存在版本冲突" reports).
+      sampleCacheRef.current.set(sampleId, updated)
       samplesRef.current = samplesRef.current.map((item) => item.sample_id === sampleId ? updated : item)
       setSamples((current) => current.map((item) => item.sample_id === sampleId ? updated : item))
       if (result.task_revision !== undefined) {
@@ -560,7 +591,8 @@ export default function TaskWorkspacePage({
     if (selected > 0) {
       chooseSample(selected - 1)
     } else if (page > 0) {
-      void loadPage(pageCursors[page - 1], page - 1)
+      // 跳转后游标链可能缺失，统一按 offset 回退一页
+      void loadPageAt(page - 1)
     }
   }
 
@@ -712,6 +744,10 @@ export default function TaskWorkspacePage({
 
   async function applyBatch(overwriteConfirmed = false) {
     if (!task || locked || blockers || batchSavingRef.current || !batchColumn || batchParsed.error || !batchIds.length) return
+    // Safety net for the render-lag race: a debounced auto-save that just fired
+    // (savingRef set) may not have re-rendered `blockers` yet when the user
+    // clicks; applying now would send stale base revisions.
+    if (Object.values(savingRef.current).some(Boolean)) return
     if (batchOverwrite && !overwriteConfirmed) {
       setBatchConfirm(true)
       return
@@ -875,7 +911,9 @@ export default function TaskWorkspacePage({
     )
   }
 
-  const statusLabel = locked ? '回传后只读' : task?.status ?? ''
+  const terminalLabel: Record<string, string> = { accepted: '已验收', archived: '已归档', completed: '已完成', cancelled: '已取消' }
+  const terminal = terminalLabel[task?.status ?? '']
+  const statusLabel = terminal ?? (locked ? '回传后只读' : task?.status ?? '')
   const labeledCount = samples.filter((item) => ['clean', 'saved'].includes(saveStates[item.sample_id] ?? '')).length
   // Task-wide counters: fall back to local page stats until the task detail loads.
   const totalSamples = task?.total_samples ?? samples.length
@@ -948,26 +986,6 @@ export default function TaskWorkspacePage({
                 <option value={new Date(Date.now() - 86400000).toISOString()}>最近 24 小时</option>
                 <option value={new Date(Date.now() - 7 * 86400000).toISOString()}>最近 7 天</option>
               </select>
-            </div>
-          </section>
-          <section>
-            <h3>分页</h3>
-            <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-              <button
-                style={{ flex: 1 }}
-                disabled={locked || batchSaving || page === 0}
-                onClick={() => void loadPage(pageCursors[page - 1], page - 1)}
-              >上一页</button>
-              <span className="muted">第 {page + 1} 页</span>
-              <button
-                style={{ flex: 1 }}
-                disabled={locked || batchSaving || !nextCursor}
-                onClick={() => {
-                  const cursor = nextCursor
-                  setPageCursors((current) => [...current.slice(0, page + 1), cursor])
-                  void loadPage(cursor, page + 1)
-                }}
-              >下一页</button>
             </div>
           </section>
         </>
@@ -1115,9 +1133,15 @@ export default function TaskWorkspacePage({
       return (
         <section>
           <h3>任务回传</h3>
-          <p className="muted" style={{ marginBottom: 'var(--space-4)' }}>
-            保存完整标签后确认当前任务修订，再发起回传。
-          </p>
+          {terminal ? (
+            <p className="muted" style={{ marginBottom: 'var(--space-4)' }}>
+              任务{terminal}，标注内容已锁定，不可再编辑或回传。
+            </p>
+          ) : (
+            <p className="muted" style={{ marginBottom: 'var(--space-4)' }}>
+              保存完整标签后确认当前任务修订，再发起回传。
+            </p>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
             <button
               disabled={locked || blockers || normalized.error !== '' || requiresFreshEdit}
@@ -1132,7 +1156,7 @@ export default function TaskWorkspacePage({
             >
               发起回传
             </button>
-            {locked && (
+            {locked && !terminal && (
               <button disabled={blockers} onClick={unlock}>
                 编辑后回传
               </button>
@@ -1318,6 +1342,7 @@ export default function TaskWorkspacePage({
                 onSkip={moveNext}
                 onPrev={movePrev}
                 onNext={moveNext}
+                onJump={jumpToSample}
                 onOpenSamples={openSamplesPanel}
                 onRestart={restartStream}
               />
