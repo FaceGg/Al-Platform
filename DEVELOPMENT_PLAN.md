@@ -1,5 +1,12 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-24 Ubuntu 安装包 r4：上传临时文件目录权限
+
+- 现象：服务器部署后上传数据集返回 500，backend 日志在 `_stage_upload_sync` 写入 `/app/app/uploads/<uuid>_...` 时抛 `PermissionError: [Errno 13] Permission denied`。
+- 根因：backend 镜像以 UID/GID `1000:1000` 非 root 运行；Compose 的宿主机 bind mount `./ml-platform/backend/uploads:/app/app/uploads` 会覆盖镜像构建阶段已经 `chown` 的目录，目标机解压/首次创建的宿主目录通常属于 root，导致应用不能创建临时文件。
+- 修复：新增 `packaging/prepare-production-storage.sh`，使用已构建 backend 镜像临时以 root 修复 bind-mounted `data/` 与 `uploads/` 的 UID/GID；安装脚本改为先 build、修复存储、再启动，并提供已有部署的单独修复命令。安装包升为 `20260924-r4`。
+- 验证边界：新增权限合同先失败后通过；脚本语法、Compose 配置、数据集上传定向回归和 r4 归档检查需绑定最终包。目标 Ubuntu 重新部署后需实测上传成功、已有文件可读和容器保持 UID/GID 1000。
+
 ### 2026-09-24 Ubuntu 安装包 r3：私网 HTTP 标注页空白与 8443 门户外网入口
 
 - 现象：通过 `http://SERVER_IP:5175/data-annotation?view=tasks` 打开数据标注页时页面空白；`http://SERVER_IP:8443/` 从外部机器无法连接。

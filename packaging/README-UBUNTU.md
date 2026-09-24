@@ -10,13 +10,13 @@
 ## Install
 
 ```bash
-tar -xzf linkraft-ubuntu-20260924-r3.tar.gz
-cd linkraft-ubuntu-20260924-r3
+tar -xzf linkraft-ubuntu-20260924-r4.tar.gz
+cd linkraft-ubuntu-20260924-r4
 chmod +x packaging/*.sh ml-platform/scripts/prepare-production-secrets.sh
 PUBLIC_ORIGIN=http://SERVER_PUBLIC_IP:5175 ./packaging/install-ubuntu.sh
 ```
 
-The installer uses `packaging/docker-compose.legacy-cpu.yml` through `packaging/compose-ubuntu.sh`. `PUBLIC_ORIGIN` must be the exact browser origin used to open the platform, without a trailing path; it is written to `FRONTEND_ORIGIN` and passed into the backend container. For additional exact origins, pass comma-separated `PUBLIC_ORIGIN_ALIASES`, for example `PUBLIC_ORIGIN_ALIASES=http://SERVER_PUBLIC_IP:5173,http://127.0.0.1:5173`. If `.env` already exists, its secrets remain unchanged; an explicit `PUBLIC_ORIGIN` updates only the CORS origin setting. The script sets the main platform binding to `0.0.0.0:5175`, exposes the annotator portal at `0.0.0.0:8443`, creates `secrets/notification_master_key` when absent, and starts the complete Compose stack. The annotator frontend is built from its checked-in Node/Vite source during the image build; a pre-existing `dist/` directory is not required. The generated `.env` and `secrets/` directory contain credentials and must be backed up securely but never committed.
+The installer uses `packaging/docker-compose.legacy-cpu.yml` through `packaging/compose-ubuntu.sh`. `PUBLIC_ORIGIN` must be the exact browser origin used to open the platform, without a trailing path; it is written to `FRONTEND_ORIGIN` and passed into the backend container. For additional exact origins, pass comma-separated `PUBLIC_ORIGIN_ALIASES`, for example `PUBLIC_ORIGIN_ALIASES=http://SERVER_PUBLIC_IP:5173,http://127.0.0.1:5173`. If `.env` already exists, its secrets remain unchanged; an explicit `PUBLIC_ORIGIN` updates only the CORS origin setting. The script sets the main platform binding to `0.0.0.0:5175`, exposes the annotator portal at `0.0.0.0:8443`, creates `secrets/notification_master_key` when absent, repairs bind-mounted `data/` and `uploads/` ownership for UID/GID 1000, and starts the complete Compose stack. The annotator frontend is built from its checked-in Node/Vite source during the image build; a pre-existing `dist/` directory is not required. The generated `.env` and `secrets/` directory contain credentials and must be backed up securely but never committed.
 
 Access the main platform at `http://SERVER_PUBLIC_IP:5175/` and the annotator portal at `http://SERVER_PUBLIC_IP:8443/`. If UFW is enabled, run `sudo ufw allow 5175/tcp` and `sudo ufw allow 8443/tcp`. Backend port 8000, frontend port 5173, annotator API port 8444, and MinIO ports 9000/9001 remain local-only by default. `ANNOTATOR_BIND_ADDRESS` defaults to `0.0.0.0`; set it to `127.0.0.1` in `.env` when the portal should remain local-only.
 
@@ -27,6 +27,8 @@ PUBLIC_ORIGIN=http://SERVER_PUBLIC_IP:5175 ./packaging/install-ubuntu.sh
 ./packaging/compose-ubuntu.sh up -d --force-recreate backend
 ./packaging/compose-ubuntu.sh up -d --force-recreate annotator annotator-frontend
 ./packaging/compose-ubuntu.sh restart annotator-frontend
+./packaging/prepare-production-storage.sh
+./packaging/compose-ubuntu.sh restart backend
 ```
 
 For a direct local frontend at `5173`, the browser origin must be exactly `http://localhost:5173` or an explicitly configured alias such as `http://127.0.0.1:5173`; `http://SERVER_PUBLIC_IP:5173` is a different origin and must be added to `PUBLIC_ORIGIN_ALIASES`.
@@ -72,4 +74,11 @@ After rebuilding the `annotator` gateway, restart `annotator-frontend` because n
 ./packaging/compose-ubuntu.sh restart annotator-frontend
 ```
 
-To rebuild the archive from this source tree, run `./packaging/build-package.sh 20260924-r3`.
+To repair upload errors caused by an existing root-owned bind mount without reinstalling:
+
+```bash
+./packaging/prepare-production-storage.sh
+./packaging/compose-ubuntu.sh restart backend
+```
+
+To rebuild the archive from this source tree, run `./packaging/build-package.sh 20260924-r4`.

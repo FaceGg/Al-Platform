@@ -495,6 +495,18 @@ test "$first_hash" = "$second_hash"
         self.assertIn('ANNOTATOR_BIND_ADDRESS="${ANNOTATOR_BIND_ADDRESS:-}"', installer)
         self.assertIn('set_env_value ANNOTATOR_BIND_ADDRESS "0.0.0.0"', installer)
 
+    def test_legacy_package_repairs_bind_mounted_upload_permissions(self):
+        installer = UBUNTU_INSTALL_SCRIPT.read_text(encoding="utf-8")
+        readme = UBUNTU_INSTALL_README.read_text(encoding="utf-8")
+        storage_script = REPOSITORY_ROOT / "packaging" / "prepare-production-storage.sh"
+
+        self.assertTrue(storage_script.exists())
+        self.assertIn("prepare-production-storage.sh", installer)
+        storage = storage_script.read_text(encoding="utf-8")
+        self.assertIn("--user 0:0", storage)
+        self.assertIn("chown -R 1000:1000 /app/app/uploads", storage)
+        self.assertIn("uploads", readme)
+
     def test_primary_compose_passes_smtp_authentication_without_literal_credentials(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
 

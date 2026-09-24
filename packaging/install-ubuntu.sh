@@ -166,8 +166,12 @@ info "Backend CORS frontend origin: $(awk -F= '/^[[:space:]]*FRONTEND_ORIGIN[[:s
 info "Validating the Compose configuration."
 "$COMPOSE_WRAPPER" config >/dev/null
 
-info "Building and starting services. The first build can take several minutes."
-"$COMPOSE_WRAPPER" up -d --build --remove-orphans
+info "Building services. The first build can take several minutes."
+"$COMPOSE_WRAPPER" build
+info "Preparing writable bind-mounted storage for the non-root backend."
+"$ROOT/packaging/prepare-production-storage.sh"
+info "Starting services."
+"$COMPOSE_WRAPPER" up -d --remove-orphans
 
 info "Waiting for the public health endpoint on port $PUBLIC_PORT."
 for _ in $(seq 1 120); do

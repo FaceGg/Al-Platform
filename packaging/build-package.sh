@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-20260924-r3}"
+VERSION="${1:-20260924-r4}"
 PACKAGE_NAME="linkraft-ubuntu-${VERSION}"
 OUTPUT_DIR="$ROOT/output"
 ARCHIVE="$OUTPUT_DIR/${PACKAGE_NAME}.tar.gz"
@@ -84,6 +84,7 @@ MinIO client: minio/mc:RELEASE.2025-07-21T05-28-08Z-cpuv1
 Python services: python:3.11-slim-bookworm (package-specific legacy CPU Dockerfiles)
 Frontend build: node:20-bookworm-slim with npm retries (package-specific legacy CPU Dockerfile)
 Annotator frontend build: node:20-bookworm-slim source build; no host dist/ required
+Writable storage: installer repairs bind-mounted backend data/uploads ownership to UID/GID 1000 before startup
 Package indexes: PIP_INDEX_URL defaults to mirrors.aliyun.com; NPM_REGISTRY defaults to registry.npmmirror.com
 Excluded: .env, secrets, databases, caches, dependencies, test evidence, Git metadata
 EOF
