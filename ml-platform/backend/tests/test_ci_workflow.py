@@ -35,6 +35,12 @@ BACKEND_REQUIREMENTS = REPOSITORY_ROOT / "ml-platform" / "backend" / "requiremen
 PRODUCTION_SECRETS_SCRIPT = (
     REPOSITORY_ROOT / "ml-platform" / "scripts" / "prepare-production-secrets.sh"
 )
+LEGACY_CPU_COMPOSE_FILE = REPOSITORY_ROOT / "packaging" / "docker-compose.legacy-cpu.yml"
+UBUNTU_INSTALL_SCRIPT = REPOSITORY_ROOT / "packaging" / "install-ubuntu.sh"
+UBUNTU_INSTALL_README = REPOSITORY_ROOT / "packaging" / "README-UBUNTU.md"
+LEGACY_ANNOTATOR_FRONTEND_DOCKERFILE = (
+    REPOSITORY_ROOT / "ml-platform" / "annotator" / "frontend" / "Dockerfile.legacy-cpu"
+)
 PRODUCTION_PYTHON_DOCKERFILES = (
     REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile",
     REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.worker",
@@ -432,6 +438,62 @@ test "$first_hash" = "$second_hash"
             "pip install --no-deps psycopg==3.3.5 psycopg-binary==3.3.5",
             mlflow["command"][2],
         )
+
+    def test_production_package_passes_public_frontend_origin_to_backend(self):
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+        backend_environment = compose["services"]["backend"]["environment"]
+        self.assertEqual(
+            backend_environment["FRONTEND_ORIGIN"],
+            "${FRONTEND_ORIGIN:-http://localhost:5173}",
+        )
+        self.assertEqual(
+            backend_environment["FRONTEND_ORIGIN_ALIASES"],
+            "${FRONTEND_ORIGIN_ALIASES:-}",
+        )
+
+        installer = UBUNTU_INSTALL_SCRIPT.read_text(encoding="utf-8")
+        readme = UBUNTU_INSTALL_README.read_text(encoding="utf-8")
+        self.assertIn('PUBLIC_ORIGIN="${PUBLIC_ORIGIN:-}"', installer)
+        self.assertIn('set_env_value FRONTEND_ORIGIN "$PUBLIC_ORIGIN"', installer)
+        self.assertIn("PUBLIC_ORIGIN=http://SERVER_PUBLIC_IP:5175", readme)
+
+    def test_legacy_package_builds_annotator_frontend_from_source(self):
+        compose = LEGACY_CPU_COMPOSE_FILE.read_text(encoding="utf-8")
+        dockerfile = LEGACY_ANNOTATOR_FRONTEND_DOCKERFILE
+
+        self.assertTrue(
+            dockerfile.exists(),
+            "the legacy package must build the annotator frontend from checked-in source",
+        )
+        service_block = compose.split("  annotator-frontend:", 1)[1].split(
+            "\n  worker:", 1
+        )[0]
+        self.assertIn("dockerfile: Dockerfile.legacy-cpu", service_block)
+        self.assertIn("NPM_REGISTRY", service_block)
+
+        content = dockerfile.read_text(encoding="utf-8")
+        self.assertIn("FROM node:20-bookworm-slim AS build", content)
+        self.assertIn("COPY package*.json ./", content)
+        self.assertIn("npm ci", content)
+        self.assertIn("npm run build", content)
+        self.assertIn("COPY --from=build /app/dist /usr/share/nginx/html", content)
+        self.assertNotIn("COPY dist /usr/share/nginx/html", content)
+
+    def test_legacy_package_exposes_the_annotator_portal(self):
+        compose = LEGACY_CPU_COMPOSE_FILE.read_text(encoding="utf-8")
+        readme = UBUNTU_INSTALL_README.read_text(encoding="utf-8")
+        installer = UBUNTU_INSTALL_SCRIPT.read_text(encoding="utf-8")
+
+        service_block = compose.split("  annotator-frontend:", 1)[1].split(
+            "\n  worker:", 1
+        )[0]
+        self.assertIn(
+            '"${ANNOTATOR_BIND_ADDRESS:-0.0.0.0}:${ANNOTATOR_PORT:-8443}:80"',
+            service_block,
+        )
+        self.assertIn("sudo ufw allow 8443/tcp", readme)
+        self.assertIn('ANNOTATOR_BIND_ADDRESS="${ANNOTATOR_BIND_ADDRESS:-}"', installer)
+        self.assertIn('set_env_value ANNOTATOR_BIND_ADDRESS "0.0.0.0"', installer)
 
     def test_primary_compose_passes_smtp_authentication_without_literal_credentials(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))

@@ -1,5 +1,27 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-24 Ubuntu 安装包 r3：私网 HTTP 标注页空白与 8443 门户外网入口
+
+- 现象：通过 `http://SERVER_IP:5175/data-annotation?view=tasks` 打开数据标注页时页面空白；`http://SERVER_IP:8443/` 从外部机器无法连接。
+- 根因：私网 HTTP（非安全上下文）中 `crypto.randomUUID()` 不可用，`DataAnnotationPage` 初始化自动标注策略时直接抛 `TypeError`，React 根节点保持空；legacy CPU Compose 将 `annotator-frontend` 默认绑定在 `127.0.0.1:8443`，因此 8443 仅本机可见。
+- 修复：主平台和标注员门户前端均新增 `utils/uuid.ts`，优先使用 Web Crypto，缺少 `randomUUID` 时生成 RFC 4122 v4 UUID，并替换请求/标注/回传 ID 生成点；legacy CPU Compose 和安装脚本将 `ANNOTATOR_BIND_ADDRESS` 默认设为 `0.0.0.0`，保留通过 `.env` 改为本机绑定的能力。Ubuntu 手册补充 8443 防火墙、CORS 和 nginx 上游重启说明，安装包升为 `20260924-r3`。
+- 验证边界：前端 UUID/页面回归、Python 合同测试、Compose 合并配置、脚本语法和源码归档检查绑定 r3；目标 Ubuntu 全栈重建、8443 外网登录和 MinIO CPUv1 拉取仍需在目标服务器部署 r3 后验证。
+
+### 2026-09-24 Ubuntu 安装包 r2：公网入口 CORS 源配置
+
+- 现象：通过 `5175` 或直接 `5173` 登录时返回 `CORS_ORIGIN_FORBIDDEN`。
+- 根因：生产 Compose 的 backend 环境未注入 `FRONTEND_ORIGIN`，后端始终使用 `http://localhost:5173` 默认值；生产模式也不会自动把服务器 IP、`localhost` 和 `127.0.0.1` 视为同源。
+- 修复：Compose 将 `FRONTEND_ORIGIN`/`FRONTEND_ORIGIN_ALIASES` 传入 backend；安装脚本支持 `PUBLIC_ORIGIN` 和逗号分隔的 `PUBLIC_ORIGIN_ALIASES`，对已有 `.env` 只更新显式指定的 Origin。安装包版本更新为 `20260924-r2`。
+- 使用：公网安装时执行 `PUBLIC_ORIGIN=http://SERVER_PUBLIC_IP:5175 ./packaging/install-ubuntu.sh`；修改已有部署后必须 `--force-recreate backend`。
+- 验证：新增 CORS 配置合同先失败后通过；Compose 解析、脚本语法和归档敏感路径检查需绑定 r2 最终包；目标 Ubuntu 的真实登录仍需在目标地址验证。
+
+### 2026-09-24 Ubuntu 安装包 r1：标注前端改为源码构建
+
+- 现象：旧 CPU 安装包启动构建时，`annotator-frontend` 的 Dockerfile 执行 `COPY dist /usr/share/nginx/html`，目标机提示 `/dist: not found`。
+- 根因：`dist/` 是被 Git 忽略的前端构建产物，源码包按设计不携带它；legacy CPU Compose 覆盖未替换标注前端的主线 Dockerfile。
+- 修复：新增 `ml-platform/annotator/frontend/Dockerfile.legacy-cpu`，使用 Node 20 Debian 多阶段构建并复制构建阶段产物；legacy CPU Compose 为该服务指定 Dockerfile、host 网络和可配置 npm 镜像。安装包版本更新为 `20260924-r1`。
+- 验证：专用合同回归先失败后通过；合并后的 Compose 配置通过；WSL Docker 实际构建 `annotator-frontend` 镜像通过。目标 Ubuntu 全栈启动、健康检查、外网访问和 CPUv1 MinIO 镜像可获取性仍需在目标服务器验证。
+
 ### 2026-09-23 full CI Run 35848118822 安全门禁修复
 
 - 现象：提交 `bb03dddfafb026a9937cec1155e361ed815aed53` 的 full CI 中，Quality、Production integration、Production experiment integration 和 Chromium acceptance 均通过；Week 11–12 verification 最终失败。
@@ -1909,3 +1931,10 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - Dockerfile 契约更新（`test_image_security_contracts.py`）：四个 Dockerfile 已改为 xgboost/catboost `--no-deps` 单独安装 + sed 剔除后装其余的新 pip 布局，chown 多行块新增 /var/lib/tensorboard 与 /var/lib/ml-platform；断言改为行续行归一化（`re.sub(r"\s*\\\s*\n\s*", " ", content)`，需吃掉反斜杠前尾随空格）后匹配新命令。
 - `test_notification_models.py`：head→WEEK9 降级断言由特指 `generic_annotation_tasks` 拒绝消息改为通用 `Refusing destructive downgrade`——链上 45-58 号迁移各自先抛拒绝，特指消息已过期且每次新增迁移都会再碎。
 - 验证：image_security+statistics 12 passed；evidence_manifest+week11_12+notification 151 passed（含 57 subtests）；database_production+inference 22 passed 2 skipped；全量套件 1986 passed / 1 failed（即 notification，修复后单文件 8 passed 转绿）。遗留未验证：全量套件未在 20260921_60 链头下完整重跑（与并行会话编辑冲突风险），但 60 号迁移相关的全部 head 账目测试已针对性复跑通过。
+
+## 2026-09-24 Ubuntu legacy CPU 安装包重新整理
+
+- 发布包改为独立的 `packaging/docker-compose.legacy-cpu.yml` 配置层：主线 Compose 继续服务 CI 基线，Ubuntu 包通过 `packaging/compose-ubuntu.sh` 强制使用 CPUv1 MinIO/mc、`0.0.0.0:5175` 公网入口和本地管理端口。Compose `!override` 用于替换而非追加主线端口映射。
+- Python 服务使用包内 Debian `python:3.11-slim-bookworm` Dockerfile，移除 Wolfi 和 pip 不支持的 `--resume-retries`；MLflow 改为包内构建。前端使用包内 Debian Node 20 Dockerfile，默认 npmmirror 并带 npm 有限重试；Python 默认镜像源仍可通过 `PIP_INDEX_URL` 覆盖。
+- 安装脚本保留已有 `.env`，只补齐公网端口变量，并调用幂等的 `prepare-production-secrets.sh` 创建缺失的通知密钥目录/文件；打包脚本使用 HEAD 归档加当前工作树覆盖，排除 `.env`、`secrets/`、数据库、缓存和依赖目录。
+- 验证：WSL Docker 已构建迁移、MLflow、TensorBoard、推理、后端、worker、scheduler 和前端镜像；Compose 合并配置、端口/镜像合同与各 shell 文件语法通过。当前 WSL Docker Hub 对两个 CPUv1 MinIO 标签返回 `pull access denied`，因此目标机必须预加载同名镜像或配置可访问的批准仓库；目标 Ubuntu 主机上的完整 `up`、健康检查和外网访问仍需在目标环境执行。

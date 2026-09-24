@@ -20,6 +20,7 @@ import { useI18n } from "../i18n";
 import { notifyDashboardStatsChanged } from "../events/dashboardStats";
 import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 import { formatLocalTime } from "../utils/time";
+import { createUuid } from "../utils/uuid";
 
 const { Text, Title } = Typography;
 
@@ -63,11 +64,7 @@ const AUTOML_TIME_BUDGET_OPTIONS: Array<{ value: AutoMLTimeBudget; label: string
 ];
 
 function createRequestIdentifier(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  const randomHex = () => Math.floor(Math.random() * 0x100000000).toString(16).padStart(8, "0");
-  return `${randomHex()}-${randomHex().slice(0, 4)}-4${randomHex().slice(0, 3)}-${(8 + Math.floor(Math.random() * 4)).toString(16)}${randomHex().slice(0, 3)}-${randomHex()}${randomHex()}`;
+  return createUuid();
 }
 
 function formatAutoMLTimeBudget(value: unknown): string {

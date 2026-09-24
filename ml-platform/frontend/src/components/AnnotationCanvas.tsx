@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { Button, Space, Select, Tag, message } from "antd";
 import { apiPut } from "../api/client";
+import { createUuid } from "../utils/uuid";
 
 interface Annotation {
   id: string; type: string; label: string;
@@ -109,7 +110,7 @@ export default function AnnotationCanvas({ sampleId, imageUrl, existingAnnotatio
   const handleMouseDown = (e: React.MouseEvent) => {
     const pos = getCanvasPos(e);
     if (tool === "point") {
-      setAnnotations(prev => [...prev, { id: crypto.randomUUID(), type: "point", label: currentLabel, x: pos.x, y: pos.y, w: 0, h: 0 }]);
+      setAnnotations(prev => [...prev, { id: createUuid(), type: "point", label: currentLabel, x: pos.x, y: pos.y, w: 0, h: 0 }]);
     } else if (tool === "rect") {
       setDrawing(true);
       setStartPos(pos);
@@ -126,7 +127,7 @@ export default function AnnotationCanvas({ sampleId, imageUrl, existingAnnotatio
     const w = Math.abs(pos.x - startPos.x);
     const h = Math.abs(pos.y - startPos.y);
     if (w > 5 && h > 5) {
-      setAnnotations(prev => [...prev, { id: crypto.randomUUID(), type: "rect", label: currentLabel, x, y, w, h }]);
+      setAnnotations(prev => [...prev, { id: createUuid(), type: "rect", label: currentLabel, x, y, w, h }]);
     }
     setDrawing(false);
     setStartPos(null);
@@ -137,7 +138,7 @@ export default function AnnotationCanvas({ sampleId, imageUrl, existingAnnotatio
       message.warning("Need at least 3 points for polygon");
       return;
     }
-    setAnnotations(prev => [...prev, { id: crypto.randomUUID(), type: "polygon", label: currentLabel, x: 0, y: 0, w: 0, h: 0, points: polyPoints }]);
+    setAnnotations(prev => [...prev, { id: createUuid(), type: "polygon", label: currentLabel, x: 0, y: 0, w: 0, h: 0, points: polyPoints }]);
     setPolyPoints([]);
   };
 

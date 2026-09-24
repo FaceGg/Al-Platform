@@ -84,6 +84,7 @@ const weekTestFiles: Record<number, string[]> = {
     "./components/ReturnAcceptancePanel.test.tsx",
     "./components/AnnotationCommentModerationPanel.test.tsx",
     "./components/ReturnBatchList.test.tsx",
+    "./utils/uuid.test.ts",
   ],
 };
 

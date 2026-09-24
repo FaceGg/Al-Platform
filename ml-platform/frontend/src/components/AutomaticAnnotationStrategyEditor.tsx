@@ -1,4 +1,5 @@
 import type { AnnotationOutputColumn } from "../api/models";
+import { createUuid } from "../utils/uuid";
 
 export type AutomaticRuleCondition = {
   id: string;
@@ -36,7 +37,7 @@ const operators: Array<[AutomaticRuleCondition["operator"], string]> = [
 const nullOperators = new Set<AutomaticRuleCondition["operator"]>(["is_null", "not_null"]);
 
 function ruleId() {
-  return crypto.randomUUID();
+  return createUuid();
 }
 
 export function createAutomaticRule(columns: AnnotationOutputColumn[]): AutomaticRuleDraft {

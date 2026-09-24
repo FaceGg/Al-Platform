@@ -1,0 +1,37 @@
+FROM python:3.11-slim-bookworm
+
+USER root
+WORKDIR /app
+
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+
+RUN apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates libgomp1 \
+        && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 1000 app \
+    && useradd --uid 1000 --gid 1000 --home-dir /home/app --no-create-home app
+
+COPY requirements.txt .
+
+# Install CPU model libraries without pulling optional accelerator dependencies.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    set -eu; \
+    python -m pip install --index-url "$PIP_INDEX_URL" --no-deps --retries 10 --timeout 120 \
+        "xgboost==3.2.*" "catboost==1.2.*"; \
+    sed '/^xgboost==/d; /^catboost==/d' requirements.txt > /tmp/requirements-without-boost.txt; \
+    python -m pip install --index-url "$PIP_INDEX_URL" --retries 10 --timeout 120 \
+        graphviz plotly six \
+        -r /tmp/requirements-without-boost.txt
+
+COPY . .
+
+RUN mkdir -p /home/app /var/lib/tensorboard/runs /var/lib/ml-platform/inference-cache \
+    /tmp/ml-platform \
+    && chown -R app:app /home/app /var/lib/tensorboard \
+    /var/lib/ml-platform /tmp/ml-platform
+
+ENV MPLCONFIGDIR=/tmp/matplotlib
+ENV HOME=/home/app
+USER 1000:1000
+CMD ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]

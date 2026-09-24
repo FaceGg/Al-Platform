@@ -1,4 +1,5 @@
 import { request } from './client'
+import { createUuid } from '../utils/uuid'
 
 export type Task = {
   id: string
@@ -95,7 +96,7 @@ export const editForReturn = (taskId: string, taskRevision: number, scopeHash: s
 export const returnTask = (taskId: string, taskRevision: number, scopeHash: string, assignmentId?: string) =>
   request(`/portal/tasks/${taskId}/return`, {
     method: 'POST',
-    headers: { 'Idempotency-Key': crypto.randomUUID() },
+    headers: { 'Idempotency-Key': createUuid() },
     body: JSON.stringify({ task_revision: taskRevision, scope_hash: scopeHash }),
     query: { assignment_id: assignmentId },
   })

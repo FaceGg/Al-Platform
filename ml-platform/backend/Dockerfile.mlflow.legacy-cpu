@@ -1,0 +1,28 @@
+FROM python:3.11-slim-bookworm
+
+USER root
+WORKDIR /app
+
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+
+RUN apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates libgomp1 \
+        && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 1000 app \
+    && useradd --uid 1000 --gid 1000 --home-dir /home/app --no-create-home app
+
+RUN python -m pip install --index-url "$PIP_INDEX_URL" --no-cache-dir --retries 10 --timeout 120 \
+    "mlflow==3.15.*" \
+    "psycopg[binary]==3.3.5" \
+    "boto3==1.35.*" \
+    "numpy==2.3.*"
+
+RUN mkdir -p /home/app \
+    && chown -R app:app /home/app
+
+EXPOSE 5000
+ENV HOME=/home/app
+USER 1000:1000
+
+CMD ["mlflow", "server", "--host", "0.0.0.0", "--port", "5000"]

@@ -1,0 +1,97 @@
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1
+    ports: !override
+      - "${MINIO_BIND_ADDRESS:-127.0.0.1}:${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_BIND_ADDRESS:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-07-21T05-28-08Z-cpuv1
+
+  migrate:
+    build:
+      dockerfile: Dockerfile.legacy-cpu
+      network: host
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+
+  mlflow:
+    image: linkraft-mlflow-legacy-cpu:local
+    build:
+      context: ./ml-platform/backend
+      dockerfile: Dockerfile.mlflow.legacy-cpu
+      network: host
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        exec mlflow server
+        --host 0.0.0.0
+        --port 5000
+        --allowed-hosts "$$MLFLOW_ALLOWED_HOSTS"
+        --backend-store-uri "$$MLFLOW_BACKEND_STORE_URI"
+        --artifacts-destination "$$MLFLOW_ARTIFACT_ROOT"
+
+  tensorboard-gateway:
+    build:
+      dockerfile: Dockerfile.tensorboard.legacy-cpu
+      network: host
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+
+  inference-runtime:
+    build:
+      dockerfile: Dockerfile.inference.legacy-cpu
+      network: host
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+
+  backend:
+    build:
+      dockerfile: Dockerfile.legacy-cpu
+      network: host
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+    ports: !override
+      - "${BACKEND_BIND_ADDRESS:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
+
+  annotator:
+    ports: !override
+      - "${ANNOTATOR_API_BIND_ADDRESS:-127.0.0.1}:${ANNOTATOR_API_PORT:-8444}:8443"
+
+  annotator-frontend:
+    build:
+      dockerfile: Dockerfile.legacy-cpu
+      network: host
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    ports: !override
+      - "${ANNOTATOR_BIND_ADDRESS:-0.0.0.0}:${ANNOTATOR_PORT:-8443}:80"
+
+  worker:
+    build:
+      dockerfile: Dockerfile.worker.legacy-cpu
+      network: host
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+
+  scheduler:
+    build:
+      dockerfile: Dockerfile.worker.legacy-cpu
+      network: host
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+
+  frontend:
+    build:
+      dockerfile: Dockerfile.legacy-cpu
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    ports: !override
+      - "${FRONTEND_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-5173}:80"
+
+  nginx:
+    ports: !override
+      - "${NGINX_BIND_ADDRESS:-0.0.0.0}:${NGINX_PORT:-5175}:80"
