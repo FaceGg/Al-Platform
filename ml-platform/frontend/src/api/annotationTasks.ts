@@ -1,4 +1,5 @@
 import apiClient from "./client";
+import { createUuid } from "../utils/uuid";
 
 export type AnnotationTask = {
   id: string;
@@ -78,7 +79,7 @@ export async function createGenericAnnotationTask(payload: GenericTaskCreatePayl
   // Automatic annotation is still an annotation task. AutoML training has a
   // separate training contract and must not be selected by this helper.
   const response = await apiClient.post("/annotation-tasks", payload, {
-    headers: { "X-Request-ID": crypto.randomUUID(), "Idempotency-Key": idempotencyKey },
+    headers: { "X-Request-ID": createUuid(), "Idempotency-Key": idempotencyKey },
   });
   return response.data as AnnotationTask;
 }

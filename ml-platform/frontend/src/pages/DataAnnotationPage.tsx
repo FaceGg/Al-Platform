@@ -18,6 +18,7 @@ import AutomaticAnnotationStrategyEditor, {
 } from "../components/AutomaticAnnotationStrategyEditor";
 import { useI18n } from "../i18n";
 import { normalizeTaskStatus, taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
+import { createUuid } from "../utils/uuid";
 import { formatApiError, default as apiClient } from "../api/client";
 import { listDatasets, listDatasetVersions, type DatasetVersionOption } from "../api/datasets";
 import { listAnnotationModelVersions, type AnnotationModelVersion, type AnnotationOutputColumn } from "../api/models";
@@ -1759,7 +1760,7 @@ export default function DataAnnotationPage() {
         completion_criteria: genericCompletionCriteria,
         due_at: genericDueAt ? new Date(`${genericDueAt}T23:59:59`).toISOString() : null,
         configuration: automaticConfiguration?.configuration || {},
-      }, crypto.randomUUID());
+      }, createUuid());
       notifyAutoRenamedTask(task, genericTaskName.trim());
       setGenericTasks((items) => [task, ...items.filter((item) => item.id !== task.id)]);
       resetGenericScopeDraft();
@@ -1824,7 +1825,7 @@ export default function DataAnnotationPage() {
         completion_criteria: genericCompletionCriteria,
         due_at: genericDueAt ? new Date(`${genericDueAt}T23:59:59`).toISOString() : null,
         configuration: { clustering: true, cluster_discovery: true },
-      }, crypto.randomUUID());
+      }, createUuid());
       notifyAutoRenamedTask(task, genericTaskName.trim());
       setGenericDiscoveryTask(task);
       setGenericFinalPreviewId(null);
@@ -2820,7 +2821,7 @@ export default function DataAnnotationPage() {
                 <button type="button" className="ant-btn" aria-label={copy.removeScopeCondition} onClick={() => setGenericScopeConditions((current) => current.filter((item) => item.id !== condition.id))}>×</button>
               </div>
             ))}
-            <button type="button" className="ant-btn" onClick={() => setGenericScopeConditions((current) => [...current, { id: crypto.randomUUID(), column: "", operator: "eq", value: "" }])}>{copy.addScopeCondition}</button>
+            <button type="button" className="ant-btn" onClick={() => setGenericScopeConditions((current) => [...current, { id: createUuid(), column: "", operator: "eq", value: "" }])}>{copy.addScopeCondition}</button>
             <small>{lang === "zh" ? "多个条件之间为 AND 关系" : "Conditions are combined with AND"}</small>
           </div>}
         </div>

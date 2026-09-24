@@ -1,4 +1,5 @@
 import apiClient from "./client";
+import { createUuid } from "../utils/uuid";
 
 export type QualityRunStatus = "queued" | "validating" | "running" | "completed" | "failed";
 export type QualityLabelMode = "automatic" | "manual";
@@ -491,10 +492,10 @@ export async function createQualityRun(
     workflow_kind?: "quality_modeling" | "data_annotation";
     rule_config?: Partial<QualityRuleConfig>;
   },
-  idempotencyKey = crypto.randomUUID(),
+  idempotencyKey = createUuid(),
 ) {
   const response = await apiClient.post(`/projects/${projectId}/spot-weld/runs`, payload, {
-    headers: { "X-Request-ID": crypto.randomUUID(), "Idempotency-Key": idempotencyKey },
+    headers: { "X-Request-ID": createUuid(), "Idempotency-Key": idempotencyKey },
   });
   return response.data as QualityRun;
 }

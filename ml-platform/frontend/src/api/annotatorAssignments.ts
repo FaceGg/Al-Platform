@@ -1,4 +1,5 @@
 import apiClient from "./client";
+import { createUuid } from "../utils/uuid";
 
 export interface AnnotatorSubject { id: string; username: string; display_name?: string | null; email?: string | null; status?: string; }
 export interface SampleScope {
@@ -33,10 +34,10 @@ export async function revokeAnnotatorProject(projectId: string, subjectId: strin
   await apiClient.delete(`/internal/projects/${encodeURIComponent(projectId)}/annotators/${encodeURIComponent(subjectId)}/grant`);
 }
 
-export async function createAssignments(taskId: string, payload: AssignmentRequest, idempotencyKey = crypto.randomUUID()): Promise<{ items: Assignment[]; overlap_warning?: string | null }> {
+export async function createAssignments(taskId: string, payload: AssignmentRequest, idempotencyKey = createUuid()): Promise<{ items: Assignment[]; overlap_warning?: string | null }> {
   const response = await apiClient.post(`/annotation-tasks/${encodeURIComponent(taskId)}/assignments`, payload, {
     headers: {
-      "X-Request-ID": crypto.randomUUID(),
+      "X-Request-ID": createUuid(),
       "Idempotency-Key": idempotencyKey,
     },
   });
