@@ -80,21 +80,22 @@ class WorkerError(RuntimeError):
         self.code = code
 
 
-def _apply_resource_limits() -> None:
+def _apply_resource_limits(*, address_space: bool = True) -> None:
     if sys.platform == "win32":
         return
     try:
         import resource
 
-        page_size = os.sysconf("SC_PAGE_SIZE")
-        current_virtual_memory = int(
-            Path("/proc/self/statm").read_text(encoding="ascii").split()[0]
-        ) * page_size
-        memory_limit = max(
-            4 * 1024 * 1024 * 1024,
-            current_virtual_memory + 2 * 1024 * 1024 * 1024,
-        )
-        resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
+        if address_space:
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            current_virtual_memory = int(
+                Path("/proc/self/statm").read_text(encoding="ascii").split()[0]
+            ) * page_size
+            memory_limit = max(
+                4 * 1024 * 1024 * 1024,
+                current_virtual_memory + 2 * 1024 * 1024 * 1024,
+            )
+            resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
         resource.setrlimit(resource.RLIMIT_CPU, (110, 110))
     except (ImportError, OSError, ValueError):
         return
@@ -184,6 +185,7 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
 
             if type(model) not in {CatBoostClassifier, CatBoostRegressor}:
                 raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
+            _apply_resource_limits()
             model.save_model(str(destination), format="onnx")
         except Exception:
             raise WorkerError("MODEL_CONVERSION_FAILED") from None
@@ -212,6 +214,7 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
                 from onnxmltools.convert.common.data_types import (
                     FloatTensorType as OnnxFloatTensorType,
                 )
+            _apply_resource_limits()
             converted = converter(
                 model,
                 initial_types=[
@@ -242,6 +245,7 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
         options = {id(model): {"zipmap": False}}
     try:
         onnx, convert_sklearn, FloatTensorType = _onnx_dependencies()
+        _apply_resource_limits()
         converted = convert_sklearn(
             estimator,
             initial_types=[
@@ -275,7 +279,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument("--result", type=Path, required=True)
     arguments = parser.parse_args(argv)
-    _apply_resource_limits()
+    # Bound CPU time during dependency loading; defer the address-space cap
+    # until optional binary extensions have been imported.
+    _apply_resource_limits(address_space=False)
 
     try:
         payload = _convert(arguments.source, arguments.destination)
