@@ -76,6 +76,35 @@ def test_return_is_idempotent_and_locks_assignment(db):
         save_labels(db, assignment.id, "s-1", {"label_a": "z"}, base_revision=1)
 
 
+def test_return_self_heals_after_failed_freeze_operation(db):
+    """冻结操作失败（如列宽不足导致 PostgreSQL 拒绝写入）后，批次卡在
+    pending、assignment 锁在 returned_pending_acceptance 且审核端
+    验收/退回均被 RETURN_BATCH_NOT_READY 挡住。重新回传必须可以自愈。"""
+    assignment = _assignment(db)
+    first = return_assignment(db, assignment.id, 3, assignment.scope_hash, "return-key")
+    batch = db.get(AnnotationReturnBatch, first.return_batch_id)
+    operation = db.get(DurableOperation, batch.operation_id)
+    operation.state = "failed"
+    db.commit()
+
+    healed = return_assignment(db, assignment.id, 3, assignment.scope_hash, "retry-key")
+
+    batches = db.query(AnnotationReturnBatch).order_by(AnnotationReturnBatch.created_at.asc()).all()
+    assert len(batches) == 2
+    assert batches[0].state == "superseded"
+    assert batches[1].state == "pending"
+    assert healed.return_batch_id == batches[1].id
+    assert db.get(AnnotationAssignment, assignment.id).state == "returned_pending_acceptance"
+
+
+def test_return_stays_locked_while_freeze_operation_is_still_running(db):
+    assignment = _assignment(db)
+    return_assignment(db, assignment.id, 3, assignment.scope_hash, "return-key")
+
+    with pytest.raises(AssignmentLockedError):
+        return_assignment(db, assignment.id, 3, assignment.scope_hash, "other-key")
+
+
 def test_assignment_creation_reuses_idempotency_key_and_rejects_payload_change(db):
     task_id = uuid.uuid4()
     annotator_id = uuid.uuid4()
