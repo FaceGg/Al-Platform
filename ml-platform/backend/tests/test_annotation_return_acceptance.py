@@ -35,7 +35,44 @@ from app.services.annotation_returns import (
     export_return_batch_preview,
     reject_return_batch,
 )
-from app.tasks.annotation_return_tasks import _execute_with_session
+from app.tasks.annotation_return_tasks import _execute_with_session, domain_error_code
+
+
+def test_domain_error_code_rejects_framework_internal_codes():
+    """SQLAlchemy DBAPIError leaks an internal ``code`` attribute (observed as
+    ``9h9h`` in production) which must not be persisted as a domain code."""
+    from types import SimpleNamespace
+
+    from sqlalchemy.exc import DBAPIError
+
+    from app.tasks.annotation_return_tasks import ReturnBatchValidationError
+
+    domain = ReturnBatchValidationError("RETURN_BATCH_SCOPE_INVALID")
+    assert domain_error_code(domain, "ANNOTATION_RETURN_FAILED") == "RETURN_BATCH_SCOPE_INVALID"
+
+    wrapped = DBAPIError("UPDATE ...", {"status": "returned_pending_acceptance"}, ValueError("value too long"))
+    assert domain_error_code(wrapped, "ANNOTATION_RETURN_FAILED") == "ANNOTATION_RETURN_FAILED"
+
+    assert domain_error_code(SimpleNamespace(code="9h9h"), "ANNOTATION_RETURN_FAILED") == "ANNOTATION_RETURN_FAILED"  # type: ignore[arg-type]
+    assert domain_error_code(ValueError("boom"), "ANNOTATION_RETURN_FAILED") == "ANNOTATION_RETURN_FAILED"
+
+
+def test_task_status_values_fit_model_column():
+    """returned_pending_acceptance is 27 chars; the column must be wide enough
+    for PostgreSQL, which enforces VARCHAR lengths (regression: 409 gate)."""
+    from app.services.annotation_task_state import _TRANSITIONS
+
+    status_column = GenericAnnotationTask.__table__.columns["status"]
+    paused_column = GenericAnnotationTask.__table__.columns["paused_from_status"]
+    statuses = {"previewing", "in_progress"}
+    statuses.update(_TRANSITIONS)
+    for targets in _TRANSITIONS.values():
+        statuses.update({value for value in targets.values() if value != "__restore__"})
+    longest = max(statuses, key=len)
+    assert len(longest) <= status_column.type.length, (
+        f"status value {longest!r} ({len(longest)} chars) exceeds column width {status_column.type.length}"
+    )
+    assert len(longest) <= paused_column.type.length
 
 
 def test_return_batch_cursor_must_belong_to_requested_project():
