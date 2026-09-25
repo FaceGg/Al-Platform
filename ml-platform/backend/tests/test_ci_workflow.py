@@ -49,6 +49,8 @@ PRODUCTION_PYTHON_DOCKERFILES = (
     REPOSITORY_ROOT / "ml-platform" / "backend" / "Dockerfile.mlflow",
 )
 CI_BUILT_BACKEND_DOCKERFILES = PRODUCTION_PYTHON_DOCKERFILES[:4]
+MINIO_IMAGE = "cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1"
+MINIO_CLIENT_IMAGE = "cgr.dev/chainguard/minio-client@sha256:b8b144ab34694ecea25aa352c4be9de4c26ee2a02701521dce02ee5593c57338"
 
 
 def load_workflow_contract(path: Path) -> dict:
@@ -427,8 +429,14 @@ test "$first_hash" = "$second_hash"
     def test_compose_uses_public_minio_images_and_mlflow_pypi_fallback(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
 
-        self.assertEqual(compose["services"]["minio"]["image"], "quay.io/minio/minio:latest")
-        self.assertEqual(compose["services"]["minio-init"]["image"], "quay.io/minio/mc:latest")
+        self.assertEqual(compose["services"]["minio"]["image"], MINIO_IMAGE)
+        self.assertEqual(compose["services"]["minio-init"]["image"], MINIO_CLIENT_IMAGE)
+        self.assertEqual(compose["services"]["minio-init"]["entrypoint"], ["/usr/bin/mc"])
+        self.assertEqual(
+            compose["services"]["minio-init"]["command"],
+            ["mb", "--ignore-existing", "local/${MINIO_BUCKET:-ml-platform}"],
+        )
+        self.assertEqual(compose["services"]["minio-init"]["restart"], "on-failure")
         mlflow = compose["services"]["mlflow"]
         self.assertEqual(mlflow["image"], "ghcr.io/mlflow/mlflow:v3.15.0")
         self.assertNotIn("build", mlflow)
