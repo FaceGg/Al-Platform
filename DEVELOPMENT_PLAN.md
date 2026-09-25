@@ -17,7 +17,7 @@
 |---|---|---|---|
 | Week 1–12 | completed | 平台基础、生产化、权限通知和历史验收已归档 | 不作为当前开发入口 |
 | 通用平台 Task 1–13 | 实现记录已收口，发布随 Task 14 统一门禁 | 保留通用 AutoML、数据版本、标注、回传、模型导出和门户合同；不因历史局部记录宣称整个平台发布完成 | 维护兼容性，继续使用当前有效合同 |
-| 通用平台 Task 14 | in_progress | 功能代码 SHA `b185ead4f93068cf457a10fa5079d8be138ab88f` 已通过本地全量、迁移、真实 Compose、浏览器和远程六作业 full CI；主分支文档 SHA `99f18abb81b10024d8c7960ce4275d19150baac3` 的同一 full CI 重跑也已通过，19 项收据和最终 manifest 均绑定并校验；四项原始矩阵语义仍缺真实运行证据 | 补齐 CLU-02 百万样本、AUTH-02 双服务安全、AUTO-02 手动注册幂等、REL-01 worker 恢复演练，再在补齐后的新当前 SHA 重生成收据 |
+| 通用平台 Task 14 | in_progress | 功能代码 SHA `b185ead4f93068cf457a10fa5079d8be138ab88f` 已通过本地全量、迁移、真实 Compose、浏览器和远程六作业 full CI；主分支文档 SHA `99f18abb81b10024d8c7960ce4275d19150baac3` 的同一 full CI 重跑也已通过，19 项收据和最终 manifest 均绑定并校验；四项原始矩阵语义仍缺真实运行证据 | 补齐 CLU-02 10,000 样本、AUTH-02 双服务安全、AUTO-02 手动注册幂等、REL-01 worker 恢复演练，再在补齐后的新当前 SHA 重生成收据 |
 | Week 13 | planned | Kubernetes 集群、命名空间、资源组、节点发现、凭据引用和连通性检查 | 先完成 Task 0 决策与 Week 13 基础门禁 |
 | Week 14 | planned | Kubernetes Job/Pod 执行器、状态、日志、取消、超时、垃圾回收和恢复 | 依赖 Week 13 |
 | Week 15 | planned | Notebook、镜像目录/构建、GPU 资源类和配额 | 依赖 Week 13–14 |
@@ -92,7 +92,7 @@
 - 远程 full CI：首轮 `36101302944` 因 Quay MinIO 401 失败；修复后的首次 `36107534697` 在 warm-inference 延迟门槛上失败；同一代码 SHA 重跑的最终 [Run 36112327185](https://github.com/FaceGg/Al-Platform/actions/runs/36112327185) 绑定 `b185ead4f93068cf457a10fa5079d8be138ab88f`，Production integration、Production experiment integration、Quality Ubuntu、Quality Windows、Chromium acceptance、Week 11–12 verification 六个作业全部 `success`，无 `skipped`。
 - 远程证据产物：已下载 `week11-12-verification-evidence`。`final-evidence-manifest.json` 为 `status=passed`、`commit=b185ead4f93068cf457a10fa5079d8be138ab88f`、`migration_head=20260921_60`，共 64 个文件，逐文件 SHA-256 和 size 校验无错误；`acceptance-manifest.json` 包含完整 19 个 ID，全部 `status=passed`、全部绑定该 SHA，证据源哈希与最终 manifest 一致。远程产物目录为 `temp_test/remote-full-36112327185/`。
 - 四项语义复核仍未通过：
-  - **CLU-02：未完成。** Receipt 只引用 `test_annotation_task_state.py` 和 `test_annotation_task_state_api.py`；源文件确实断言了 `all_rows`、评估样本数/hash 和边界分页，但实际夹具仍是 1–6 行（另有 501 行有界批处理回归），没有 1,000,000 样本容量运行、该规模下的全量赋簇证明或浏览器分页不加载全量的真实证据。
+  - **CLU-02：未完成。** Receipt 只引用 `test_annotation_task_state.py` 和 `test_annotation_task_state_api.py`；源文件确实断言了 `all_rows`、评估样本数/hash 和边界分页，但实际夹具仍是 1–6 行（另有 501 行有界批处理回归），没有 10,000 样本容量运行、该规模下的全量赋簇证明或浏览器分页不加载全量的真实证据。
   - **AUTH-02：未完成。** Receipt 只引用标注员门户 `test_portal_api.py`，覆盖路由、会话、Cookie 和代理转发；没有主平台与门户双服务的真实 CORS/CSRF/限流/密码哈希/服务 JWT 或 mTLS 运行证据。主平台 `test_security_contract.py` 未进入该 receipt 的 evidence paths。
   - **AUTO-02：未完成。** Receipt 只引用被 mock API 的 `automl-multioutput.spec.ts`，只验证浏览器提交配置；没有真实 worker 产出完整候选、用户手动注册和重复注册返回同一版本的浏览器/服务联调证据。`test_model_registration_contract.py` 的单测不能替代该运行态证据。
   - **REL-01：未完成。** Receipt 只引用异步合同和安全单测；没有真实 broker/worker 进程的租约过期重领、重启恢复、幂等副作用和临时制品 TTL 清理（保留已提交制品）演练。Week 11 的备份/恢复产物不等价于该 worker 恢复证据。
@@ -103,6 +103,12 @@
 - PR [#26](https://github.com/FaceGg/Al-Platform/pull/26) 只合并了计划台账和证据边界文档，没有改变功能代码；主分支 SHA `99f18abb81b10024d8c7960ce4275d19150baac3` 的完整 [Run 36127334563](https://github.com/FaceGg/Al-Platform/actions/runs/36127334563) 首次只在 `warm-inference` p95 轻微越过 200 ms 门槛，保持门槛不变重跑后六个作业全部 `success`。
 - 成功重跑的 `week11-12-verification-evidence` artifact 已下载并核对：`final-evidence-manifest.json` 为 `status=passed`、`commit=99f18abb81b10024d8c7960ce4275d19150baac3`、迁移 head 为 `20260921_60`，64 个文件的存在性、size 和 SHA-256 均匹配；`acceptance-manifest.json` 与 19 份 receipt 的 ID、状态、当前 SHA 和证据哈希完全一致。成功 artifact 为 `10862988788`，本地核对目录为 `temp_test/remote-main-36127334563-rerun/evidence-id10862988788/`。
 - 该重跑只补足当前 SHA 的远程门禁与收据链，不改变 6.2 的四项语义结论；Task 14 仍为 **`in_progress`**，不关闭、不宣称发布就绪。
+
+## 6.4 CLU-02 容量范围调整（2026-09-25）
+
+- 用户将当前 Task 14/CLU-02 的必需容量从 1,000,000 样本调整为 10,000 样本；当前验收矩阵和后续计划以 10,000 样本为准。
+- 历史归档和原始方案修订前范围记录中的“百万样本”文字保留为历史记录，不代表当前必须实现的发布门槛。
+- 本次只调整范围和台账，没有启动真实容量运行或补齐其他真实运行证据；Task 14 继续保持 `in_progress`，待 10,000 样本容量与分页证据实际生成后再单独评估 CLU-02。
 
 ## 7. 计划归档索引
 

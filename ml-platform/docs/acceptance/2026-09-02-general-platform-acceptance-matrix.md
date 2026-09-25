@@ -11,7 +11,7 @@
 | LAB-02 | 三种自动策略互斥、其他兜底不可删除且必须配置、规则未命中回退 | `pytest tests/test_annotation_strategies.py -q` | 策略与真实页面证据 |
 | LAB-03 | 逐列规则 > 簇 > 其他，同优先级冲突进入 needs_review | `pytest tests/test_annotation_strategies.py -q` | 策略优先级与冲突证据 |
 | CLU-01 | 加权 KMeans 与确定性分配 | `pytest tests/test_annotation_strategies.py -q` | 后端测试收据 |
-| CLU-02 | 百万样本聚类：全量赋簇、评估模式/样本数/hash、前端不加载全量 | 容量运行命令尚未建立，不得用小样本测试关闭 | 百万样本实测与浏览器分页证据 |
+| CLU-02 | 10,000 样本聚类：全量赋簇、评估模式/样本数/hash、前端不加载全量 | 容量运行命令尚未建立，不得用小样本测试关闭 | 10,000 样本实测与浏览器分页证据 |
 | CON-01 | 重叠指派与 revision 冲突 | `pytest tests/test_annotation_concurrency.py -q` | 后端测试收据 |
 | CON-02 | 并发回传：幂等不重复建批次，过期批次不能静默覆盖 | `pytest tests/test_annotation_concurrency.py tests/test_annotation_return_acceptance.py -q` | 并发数据库与 API 证据 |
 | RET-01 | 回传锁：只读、显式编辑并产生新修订后解除，旧批次 supersede | `pytest tests/test_annotation_concurrency.py -q` | 后端与真实门户证据 |
@@ -32,6 +32,12 @@
 - 以下历史记录保留，不重写既有结果；其范围和 SHA 不自动转移到更正后的编号。
 
 收据使用 `python -m tools.generic_acceptance_evidence` 写入 `temp_test/generic-platform-acceptance/receipts/`。最终门禁调用 `validate_acceptance_manifest`，并将所有收据绑定到同一个当前 SHA。
+
+## 2026-09-25 CLU-02 容量范围调整
+
+- 当前 Task 14/CLU-02 的必需容量由用户调整为 10,000 样本；当前矩阵行和后续验收按此容量执行。
+- 历史记录中的“百万样本”表述保留，不追溯改写历史语义；它不再是当前必须实现的发布门槛。
+- 本次仅更新验收范围，未生成 10,000 样本真实运行或浏览器分页证据。
 
 ## 2026-09-09 当前 SHA 检查记录
 
@@ -225,4 +231,4 @@
 ## 2026-09-25 最终 SHA 远程门禁复核
 
 - 代码 SHA `b185ead4f93068cf457a10fa5079d8be138ab88f` 的 [GitHub full CI Run 36112327185](https://github.com/FaceGg/Al-Platform/actions/runs/36112327185) 六个 required jobs 全部 `success`，没有 `skipped`；`week11-12-verification-evidence` 中的最终 manifest 为 `passed`，19 项 receipt 全部为 `passed` 并绑定该 SHA，manifest 文件哈希和大小逐项核对通过。
-- 这只证明收据链和通用门禁已在当前 SHA 生成，不能覆盖原始矩阵的语义要求。CLU-02 仍缺百万样本与分页实测；AUTH-02 仍缺主平台/门户双服务安全运行证据；AUTO-02 仍缺真实 worker 候选手动注册与重复注册幂等流程；REL-01 仍缺真实 broker/worker 恢复和 TTL 清理演练。四项保持 `in_progress`，矩阵总体不关闭。
+- 这只证明收据链和通用门禁已在当前 SHA 生成，不能覆盖原始矩阵的语义要求。CLU-02 仍缺 10,000 样本与分页实测；AUTH-02 仍缺主平台/门户双服务安全运行证据；AUTO-02 仍缺真实 worker 候选手动注册与重复注册幂等流程；REL-01 仍缺真实 broker/worker 恢复和 TTL 清理演练。四项保持 `in_progress`，矩阵总体不关闭。

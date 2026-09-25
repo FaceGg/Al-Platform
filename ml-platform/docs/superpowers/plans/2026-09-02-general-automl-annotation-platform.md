@@ -552,7 +552,7 @@ py -3.14 -m py_compile app/services/weighted_clustering.py app/services/rule_dsl
 git diff --check
 ~~~
 
-Expected: all three strategy modes, fallback and weighted KMeans tests pass; a million-row fixture verifies full-row assignment and bounded Silhouette sampling.
+Expected: all three strategy modes, fallback and weighted KMeans tests pass; a 10,000-row fixture verifies full-row assignment and bounded Silhouette sampling.
 
 **Dependencies:** Tasks 3, 4 and 5.
 
