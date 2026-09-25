@@ -1,5 +1,12 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-25 Ubuntu 安装包 r6：采用目标 CPUv1 镜像的 HTTP readiness 健康检查
+
+- 现象：目标服务器确认 MinIO server 使用 `linux/amd64` 正常监听 9000/9001，但 r4 的 `mc ready local` 检查报 `mc: executable file not found`；目标部署提供的正确 Compose 使用 MinIO HTTP readiness endpoint。
+- 修复：legacy Compose 将 MinIO healthcheck 对齐为 `curl -fsS http://127.0.0.1:9000/minio/health/ready`，增加 30 秒启动宽限期，并让 `minio-init` 继续依赖 `service_healthy` 后执行 alias 和建桶。安装包升为 `20260925-r6`。
+- 兼容边界：仅更新 legacy CPU 发布 profile；保留 Debian Python 镜像、CPUv1 tag、5175/8443 端口、源码构建和上传目录权限修复，不把主线 Compose 的 ghcr.io MLflow 或端口默认值带回发布包。
+- 验证边界：健康检查合同先失败后通过；合并 Compose、脚本语法和 r6 归档需绑定最终包。目标服务器需重建 MinIO/init 容器并确认 `minio-init` 成功退出、下游服务健康。
+
 ### 2026-09-25 Ubuntu 安装包 r5：CPUv1 MinIO 镜像不含 mc 导致健康检查失败
 
 - 现象：目标服务器上的 `minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1` 进程正常启动并监听 9000/9001，但容器状态为 `unhealthy`；健康检查日志为 `exec: "mc": executable file not found in $PATH`。
