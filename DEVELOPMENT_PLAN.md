@@ -1,5 +1,15 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-26 回传死锁自愈：冻结失败后允许重新回传（r10）
+
+- 现象：部署 r9（列宽迁移已生效）后审核员验收仍报 `RETURN_BATCH_NOT_READY`。服务器证据：`durable_operations` 无新记录，只有两条 09-25 的 `failed` 旧操作——旧批次是终态，验收/退回均被 `_require_completed_frozen_batch` 挡住。
+- 已验证根因（死锁）：`return_assignment` 在创建批次时同步把 assignment 锁进 `returned_pending_acceptance`；冻结失败后批次停留 `pending`，审核端 accept/reject 都要求冻结完成，标注员重新回传又被 assignment 锁拒绝（`AssignmentLockedError`）——无任何设计内恢复路径。
+- 修复：`return_assignment` 遇到 `returned_pending_acceptance` 锁时，若该 assignment 的 pending 批次冻结操作全部 `failed`（或缺失 operation），放行重新回传，旧批次由既有 supersede 逻辑自动清理（提交 `a6128d1`）。
+- 一次性运维：升级到 r10 前已卡死的 assignment，用 SQL 解锁 `UPDATE annotation_assignments SET state='pending' WHERE state='returned_pending_acceptance' AND id IN (SELECT assignment_id FROM annotation_return_batches WHERE state='pending')`，之后标注员重新回传即可（README 已收录）。
+- 验证：`test_annotation_concurrency.py` 26 passed（含两个新回归：失败冻结后可自愈重新回传、运行中操作仍锁定）；回传/审核员套件 47 passed。
+- 发布记录（2026-09-26）：安装包 `output/linkraft-ubuntu-20260926-r10.tar.gz`，manifest 绑定 HEAD `d282673`，SHA-256 `8c0c33ae7bda8c9708b0ec754291cc672a630a8eb763f2516172b90c1f484962`，归档抽查确认自愈代码已包含。
+- 待完成：目标服务器执行 SQL 解锁 + 标注员重新回传 + 审核员验收的端到端确认；提交尚未推送（本地 main 领先 origin 12 个提交）。
+
 ### 2026-09-26 回传验收 409 真根因：任务状态列宽不足 + 框架错误码泄漏（r9）
 
 - 现象：部署 r8 后回传验收仍报 `409 RETURN_BATCH_NOT_READY`，与本地工作树行为不一致。
