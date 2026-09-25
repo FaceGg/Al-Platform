@@ -144,7 +144,10 @@ class AcceptanceRunnerContractTests(unittest.TestCase):
         self.assertIn("tools/acceptance/run_backup_restore.sh", content)
         self.assertIn("tools/acceptance/run_upgrade_fixture.sh", content)
         self.assertNotIn("temp_test", content)
-        self.assertIn('docker create quay.io/minio/mc:latest', content)
+        self.assertIn(
+            'docker create cgr.dev/chainguard/minio-client@sha256:b8b144ab34694ecea25aa352c4be9de4c26ee2a02701521dce02ee5593c57338',
+            content,
+        )
         self.assertNotIn('docker create minio/mc:latest', content)
 
     def test_week11_evidence_executors_use_runner_uid_for_bind_mount_writes(self):
