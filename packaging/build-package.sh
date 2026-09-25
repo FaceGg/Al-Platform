@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-20260926-r9}"
+VERSION="${1:-20260926-r10}"
 PACKAGE_NAME="linkraft-ubuntu-${VERSION}"
 OUTPUT_DIR="$ROOT/output"
 ARCHIVE="$OUTPUT_DIR/${PACKAGE_NAME}.tar.gz"
