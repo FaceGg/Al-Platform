@@ -48,6 +48,19 @@ class ReturnBatchValidationError(ValueError):
         super().__init__(message or code)
 
 
+def domain_error_code(error: BaseException, fallback: str) -> str:
+    """Extract a domain error code without leaking framework internals.
+
+    SQLAlchemy exceptions expose an internal ``code`` attribute (e.g. a hash
+    such as ``9h9h``), which must never be persisted as a domain code. Only
+    UPPER_SNAKE strings survive; everything else falls back.
+    """
+    code = getattr(error, "code", None)
+    if isinstance(code, str) and code and code.isupper() and code.replace("_", "").isalpha():
+        return code[:64]
+    return fallback
+
+
 def enqueue_annotation_return(batch_id, operation_id):
     args = (str(batch_id), str(operation_id))
     if settings.task_backend == "celery":
@@ -167,7 +180,7 @@ def _validate_and_freeze_page(
             normalized = validate_label_values(label_contract, values, allow_partial=False)
         except LabelValueError as error:
             raise ReturnBatchValidationError(
-                getattr(error, "code", "RETURN_LABEL_VALUE_INVALID"),
+                domain_error_code(error, "RETURN_LABEL_VALUE_INVALID"),
                 str(error),
             ) from error
         if normalized != values:
@@ -311,7 +324,7 @@ def _execute_with_session(db, batch_id: str, operation_id: str, worker_id: str):
             fail_operation(
                 db,
                 operation_uuid,
-                getattr(error, "code", "ANNOTATION_RETURN_FAILED"),
+                domain_error_code(error, "ANNOTATION_RETURN_FAILED"),
                 {"message": str(error)[:300]},
                 worker_id=worker_id,
             )

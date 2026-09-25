@@ -1495,6 +1495,18 @@ textarea {
   border-color: var(--status-awaiting-border);
 }
 
+.admin-return-tag.is-processing {
+  background: var(--status-progress-bg);
+  color: var(--status-progress);
+  border-color: var(--status-progress-border);
+}
+
+.admin-return-tag.is-failed {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  border-color: var(--color-danger-border);
+}
+
 .admin-return-tag.is-accepted {
   background: var(--status-completed-bg);
   color: var(--status-completed);

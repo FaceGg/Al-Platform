@@ -22,6 +22,7 @@ from app.services.onnx_conversion import (
     convert_platform_joblib,
     validate_onnx,
 )
+from app.services import onnx_worker
 from app.services.onnx_worker import _apply_resource_limits
 
 
@@ -263,6 +264,48 @@ class TestOnnxConversion(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "MODEL_CONVERSION_FAILED")
         self.assertFalse(self.destination.exists())
+
+    def test_worker_loads_converter_dependencies_before_address_limit(self):
+        features = np.asarray([
+            [1.0, 2.0],
+            [1.2, 2.1],
+            [8.0, 9.0],
+            [8.5, 9.2],
+        ])
+        target = np.asarray([0, 0, 1, 1])
+        model = XGBClassifier(
+            n_estimators=5,
+            max_depth=2,
+            n_jobs=1,
+            random_state=0,
+            eval_metric="logloss",
+        ).fit(features, target)
+        joblib.dump(self._training_package(model), self.source)
+
+        events = []
+
+        def load_dependencies():
+            events.append("dependencies")
+            return original_load_dependencies()
+
+        def apply_limits(*, address_space=True):
+            events.append(("limits", address_space))
+
+        original_load_dependencies = onnx_worker._onnx_dependencies
+        with patch.object(
+            onnx_worker,
+            "_onnx_dependencies",
+            side_effect=load_dependencies,
+        ), patch.object(
+            onnx_worker,
+            "_apply_resource_limits",
+            side_effect=apply_limits,
+        ):
+            payload = onnx_worker._convert(self.source, self.destination)
+
+        self.assertEqual(payload["converter"], "xgboost")
+        self.assertEqual(events, ["dependencies", ("limits", True)])
+        self.assertTrue(self.destination.is_file())
 
     @unittest.skipIf(os.name == "nt", "POSIX resource limits only")
     def test_worker_memory_limit_preserves_current_virtual_memory(self):

@@ -474,12 +474,32 @@ def test_admin_task_list_is_owner_scoped_and_excludes_archived(admin_review_fixt
     returned = next(item for item in items if item["id"] == str(fixture["returned_task"].id))
     assert returned["pending_return_batch_id"] == str(fixture["batch"].id)
     assert returned["return_state"] == "pending"
+    assert returned["return_operation_state"] is None
     assert returned["sample_count"] == 2
     assert returned["annotator_name"] == fixture["db"].query(AnnotatorAccount).one().username
     fresh = next(item for item in items if item["id"] == str(fixture["fresh_task"].id))
     assert fresh["pending_return_batch_id"] is None
     assert fresh["return_state"] is None
+    assert fresh["return_operation_state"] is None
     assert fresh["annotator_name"] is None
+
+
+def test_admin_task_list_exposes_completed_return_validation(admin_review_fixture):
+    fixture = admin_review_fixture
+    _freeze_return_batch(fixture["db"], fixture["batch"])
+
+    response = fixture["client"].get(
+        "/api/internal/portal/admin/tasks",
+        headers=_admin_headers(fixture["admin"].id),
+    )
+
+    assert response.status_code == 200, response.text
+    returned = next(
+        item for item in response.json()["items"]
+        if item["id"] == str(fixture["returned_task"].id)
+    )
+    assert returned["return_operation_state"] == "completed"
+    assert returned["return_validated_row_count"] == 2
 
 
 def test_admin_task_list_excludes_tasks_of_deleted_projects(admin_review_fixture):
@@ -541,6 +561,7 @@ def test_admin_task_detail_is_read_only_with_schema_and_return_state(admin_revie
     assert payload["task_revision"] == 4
     assert payload["pending_return_batch_id"] == str(fixture["batch"].id)
     assert payload["return_state"] == "pending"
+    assert payload["return_operation_state"] is None
     assert payload["visible_columns"] == ["feature"]
     assert payload["label_schema"]["columns"][0]["machine_key"] == "result"
     assert payload["sample_scope"]["sample_count"] == 2

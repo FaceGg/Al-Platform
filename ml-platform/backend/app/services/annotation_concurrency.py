@@ -924,6 +924,21 @@ def _refresh_global_annotation_state(db: Session, task: GenericAnnotationTask, c
     task.status = "awaiting_return" if complete else "in_progress"
 
 
+def _has_failed_pending_batch(db: Session, assignment: AnnotationAssignment) -> bool:
+    """判断 assignment 是否存在冻结操作已失败的 pending 回传批次。"""
+    rows = db.query(AnnotationReturnBatch).filter(
+        AnnotationReturnBatch.assignment_id == assignment.id,
+        AnnotationReturnBatch.state == "pending",
+    ).all()
+    for row in rows:
+        if row.operation_id is None:
+            return True
+        operation = db.get(DurableOperation, row.operation_id)
+        if operation is not None and operation.state == "failed":
+            return True
+    return False
+
+
 def return_assignment(db: Session, assignment_id, task_revision: int, scope_hash: str, idempotency_key: str):
     assignment = db.get(AnnotationAssignment, assignment_id)
     if assignment is None:
@@ -932,7 +947,11 @@ def return_assignment(db: Session, assignment_id, task_revision: int, scope_hash
     if existing is not None:
         return ReturnBatchRef(existing.id, existing.state, existing.operation_id)
     if assignment.state in {"paused", "revoked", "returned_pending_acceptance", "edit_for_return"}:
-        raise AssignmentLockedError()
+        if assignment.state != "returned_pending_acceptance" or not _has_failed_pending_batch(db, assignment):
+            raise AssignmentLockedError()
+        # 自愈：冻结操作失败后批次停留在 pending 且 assignment 被锁在
+        # returned_pending_acceptance，审核端验收/退回同样被 NOT_READY 挡住，
+        # 形成死锁。这里放行重新回传，旧批次会在下方被标记为 superseded。
     task = _task_context(db, assignment.task_id)
     if task is not None:
         _ensure_task_writable(task)

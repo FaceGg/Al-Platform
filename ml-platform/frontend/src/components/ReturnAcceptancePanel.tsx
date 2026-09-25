@@ -57,6 +57,18 @@ function batchStateColor(state: string): string {
   return "default";
 }
 
+function canReviewBatch(batch: ReturnBatch | null | undefined): boolean {
+  return Boolean(batch && batch.state === "pending" && batch.operation_state === "completed");
+}
+
+function returnValidationLabel(batch: ReturnBatch): string {
+  if (batch.operation_state === "completed") return "已完成";
+  if (batch.operation_state === "failed") return `失败${batch.operation_error_code ? ` · ${batch.operation_error_code}` : ""}`;
+  if (batch.operation_state === "running") return "校验中";
+  if (batch.operation_state === "queued") return "排队中";
+  return "未启动";
+}
+
 // Non-ASCII (e.g. Chinese) label column names are invalid identifiers in the
 // exported dataset; the user has to provide an English name before saving.
 const needsEnglishName = (key: string): boolean => /[^\x00-\x7F]/.test(key);
@@ -86,6 +98,10 @@ export default function ReturnAcceptancePanel({ projectId }: Props) {
     try {
       const page = await listReturnBatches(projectId, cursor, 50);
       setBatches(current => cursor ? [...current, ...page.items] : page.items);
+      setSelected(current => {
+        if (!current) return current;
+        return page.items.find(item => item.id === current.id) || current;
+      });
       setNextCursor(page.next_cursor);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "回传批次加载失败");
@@ -107,6 +123,14 @@ export default function ReturnAcceptancePanel({ projectId }: Props) {
       setDiff([]);
       return;
     }
+    // Frozen sample rows do not exist until the durable validation operation
+    // completes. Avoid calling the diff endpoint while it is queued/running;
+    // that endpoint correctly returns 409 RETURN_BATCH_NOT_READY.
+    if (selected.operation_state !== "completed") {
+      setDiff([]);
+      setDiffLoading(false);
+      return;
+    }
     let active = true;
     setDiffLoading(true);
     setError("");
@@ -126,6 +150,10 @@ export default function ReturnAcceptancePanel({ projectId }: Props) {
 
   const review = async (action: "accept" | "return") => {
     if (!selected) return;
+    if (!canReviewBatch(selected)) {
+      setError("回传校验尚未完成，请刷新状态后再验收或退回");
+      return;
+    }
     setLoading(true);
     setError("");
     setMessage("");
@@ -151,8 +179,6 @@ export default function ReturnAcceptancePanel({ projectId }: Props) {
       setLoading(false);
     }
   };
-
-  const actionable = (batch: ReturnBatch) => batch.state === "pending" && batch.operation_state === "completed";
 
   const resetExportState = () => {
     setExportName("");
@@ -229,8 +255,13 @@ export default function ReturnAcceptancePanel({ projectId }: Props) {
               任务 <code title={batch.task_id}>{batch.task_id.slice(0, 8)}</code>
             </div>}
             {batch.created_at && <div className="data-annotation__operation-time">{formatBackendTimestamp(batch.created_at)}</div>}
+            {batch.state === "pending" && !canReviewBatch(batch) && (
+              <div className="data-annotation__operation-task">
+                回传校验 <strong>{returnValidationLabel(batch)}</strong>
+              </div>
+            )}
             <button type="button" className="ant-btn ant-btn-sm annotation-return-panel__action" onClick={() => setSelected(batch)}>
-              {actionable(batch) ? "打开验收" : "查看摘要"}
+              {canReviewBatch(batch) ? "打开验收" : batch.state === "pending" ? "查看状态" : "查看摘要"}
             </button>
           </div>
         ))}
@@ -248,7 +279,11 @@ export default function ReturnAcceptancePanel({ projectId }: Props) {
           <p>任务：<strong>{batchTitle(selected)}</strong></p>
           <p>标注员：<strong>{selected.annotator_name || (selected.annotator_subject_id || "").slice(0, 8) || "-"}</strong></p>
           <p>批次状态：<Tag color={batchStateColor(selected.state)}>{batchStateLabel(selected.state)}</Tag> · 样本数：{selected.validated_row_count ?? "-"} · 修订：{selected.task_revision}</p>
-          <p>质量风险：<strong>{diffLoading ? "…" : risks}</strong> 条标签为空{diff.length > 0 && diff.length < (selected.validated_row_count ?? diff.length) ? `（已扫描前 ${diff.length} 条）` : ""}</p>
+          {selected.state === "pending" && !canReviewBatch(selected) ? (
+            <p role="status">回传内容正在校验，完成后才能验收或退回。当前状态：{returnValidationLabel(selected)}。请点击上方“刷新”查看最新状态。</p>
+          ) : (
+            <p>质量风险：<strong>{diffLoading ? "…" : risks}</strong> 条标签为空{diff.length > 0 && diff.length < (selected.validated_row_count ?? diff.length) ? `（已扫描前 ${diff.length} 条）` : ""}</p>
+          )}
           <p className="annotation-return-panel__hint">
             样本数据与标注结果不在验收页展开；请点击下方按钮跳转标注员门户查看明细后再验收。
           </p>
@@ -261,7 +296,7 @@ export default function ReturnAcceptancePanel({ projectId }: Props) {
               在标注员门户查看明细
             </button>
           </div>
-          {actionable(selected) && <>
+          {canReviewBatch(selected) && <>
             <textarea aria-label="退回原因" value={reason} maxLength={2000} onChange={event => setReason(event.target.value)} placeholder="退回时填写原因" />
             <div className="table-row-actions">
               <button type="button" className="ant-btn ant-btn-primary" disabled={loading} onClick={() => { void review("accept"); }}>验收并生成数据版本</button>

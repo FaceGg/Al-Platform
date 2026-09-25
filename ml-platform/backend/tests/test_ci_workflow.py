@@ -503,6 +503,41 @@ test "$first_hash" = "$second_hash"
         self.assertIn('ANNOTATOR_BIND_ADDRESS="${ANNOTATOR_BIND_ADDRESS:-}"', installer)
         self.assertIn('set_env_value ANNOTATOR_BIND_ADDRESS "0.0.0.0"', installer)
 
+    def test_legacy_minio_healthcheck_uses_http_readiness_probe(self):
+        compose = LEGACY_CPU_COMPOSE_FILE.read_text(encoding="utf-8")
+        minio_block = compose.split("  minio:", 1)[1].split(
+            "  minio-init:", 1
+        )[0]
+        minio_init_block = compose.split("  minio-init:", 1)[1].split(
+            "  migrate:", 1
+        )[0]
+
+        self.assertIn('healthcheck:', minio_block)
+        self.assertIn(
+            'test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/ready"]',
+            minio_block,
+        )
+        self.assertIn('interval: 30s', minio_block)
+        self.assertIn('timeout: 10s', minio_block)
+        self.assertIn('retries: 3', minio_block)
+        self.assertIn('start_period: 30s', minio_block)
+        self.assertNotIn('mc ready local', minio_block)
+        self.assertIn('condition: service_healthy', minio_init_block)
+        self.assertIn('mc alias set local http://minio:9000', minio_init_block)
+        self.assertIn('mc mb --ignore-existing local/$${MINIO_BUCKET:-ml-platform}', minio_init_block)
+
+    def test_legacy_package_repairs_bind_mounted_upload_permissions(self):
+        installer = UBUNTU_INSTALL_SCRIPT.read_text(encoding="utf-8")
+        readme = UBUNTU_INSTALL_README.read_text(encoding="utf-8")
+        storage_script = REPOSITORY_ROOT / "packaging" / "prepare-production-storage.sh"
+
+        self.assertTrue(storage_script.exists())
+        self.assertIn("prepare-production-storage.sh", installer)
+        storage = storage_script.read_text(encoding="utf-8")
+        self.assertIn("--user 0:0", storage)
+        self.assertIn("chown -R 1000:1000 /app/app/uploads", storage)
+        self.assertIn("uploads", readme)
+
     def test_primary_compose_passes_smtp_authentication_without_literal_credentials(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
 

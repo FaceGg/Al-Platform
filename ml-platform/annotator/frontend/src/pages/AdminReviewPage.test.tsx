@@ -25,6 +25,7 @@ const pendingTask: AdminTask = {
   sample_scope: { kind: 'ids', sample_count: 2, scope_hash: 'h' },
   pending_return_batch_id: 'batch-1',
   return_state: 'pending',
+  return_operation_state: 'completed',
   read_only: true as const,
   task_revision: 3,
 }

@@ -33,7 +33,7 @@ function annotatorLabel(batch: ReturnBatch): string {
 export default function ReturnBatchList({ items, loading, onDiff, onAccept, onReturn }: Props) {
   const [reasonDraft, setReasonDraft] = useState<Record<string, string>>({});
   const [returningId, setReturningId] = useState<string | null>(null);
-  const pendingCount = items.filter(batch => batch.state === "pending").length;
+  const pendingCount = items.filter(batch => batch.state === "pending" && batch.operation_state === "completed").length;
 
   return (
     <section className="table-surface data-annotation__operations-surface return-batch-list" role="region" aria-label="回传结果">
@@ -47,7 +47,8 @@ export default function ReturnBatchList({ items, loading, onDiff, onAccept, onRe
         {loading && items.length === 0 && <div className="data-annotation__operations-loading"><Spin /></div>}
         {!loading && items.length === 0 && <Empty description="暂无回传批次" />}
         {items.map(batch => {
-          const actionable = batch.state === "pending";
+          const actionable = batch.state === "pending" && batch.operation_state === "completed";
+          const inspectable = batch.operation_state === "completed";
           const reason = reasonDraft[batch.id] ?? "";
           const returning = returningId === batch.id;
           return (
@@ -81,6 +82,11 @@ export default function ReturnBatchList({ items, loading, onDiff, onAccept, onRe
               {batch.created_at && (
                 <div className="data-annotation__operation-time">{formatLocalTime(batch.created_at, true)}</div>
               )}
+              {batch.state === "pending" && !inspectable && (
+                <div className="data-annotation__operation-task">
+                  回传校验 <strong>{batch.operation_state === "failed" ? `失败${batch.operation_error_code ? ` · ${batch.operation_error_code}` : ""}` : "校验中"}</strong>
+                </div>
+              )}
               {actionable && returning && (
                 <textarea
                   aria-label="退回原因"
@@ -91,7 +97,9 @@ export default function ReturnBatchList({ items, loading, onDiff, onAccept, onRe
                 />
               )}
               <div className="table-row-actions">
-                <button type="button" className="ant-btn ant-btn-sm" onClick={() => onDiff(batch.id)}>查看差异</button>
+                <button type="button" className="ant-btn ant-btn-sm" disabled={!inspectable} onClick={() => onDiff(batch.id)}>
+                  {inspectable ? "查看差异" : "等待校验"}
+                </button>
                 {actionable && !returning && (
                   <button type="button" className="ant-btn ant-btn-sm ant-btn-primary" onClick={() => onAccept(batch.id, batch.task_revision)}>验收</button>
                 )}

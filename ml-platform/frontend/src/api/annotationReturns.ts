@@ -10,6 +10,7 @@ export interface ReturnBatch {
   created_at: string | null;
   accepted_dataset_version_id?: string | null;
   operation_state?: string | null;
+  operation_error_code?: string | null;
   validated_row_count?: number | null;
   task_id?: string | null;
   task_name?: string | null;

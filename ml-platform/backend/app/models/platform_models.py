@@ -94,8 +94,10 @@ class GenericAnnotationTask(Base):
     completion_criteria = Column(Text, nullable=False, default="")
     due_at = Column(DateTime(timezone=True), nullable=True)
     mode = Column(String(16), nullable=False, default="manual")
-    status = Column(String(24), nullable=False, default="pending")
-    paused_from_status = Column(String(24), nullable=True)
+    # 32 chars: the longest status value is "returned_pending_acceptance" (27);
+    # VARCHAR(24) made PostgreSQL reject the worker's return-state update.
+    status = Column(String(32), nullable=False, default="pending")
+    paused_from_status = Column(String(32), nullable=True)
     task_revision = Column(Integer, nullable=False, default=0)
     sample_scope = Column(JSON, nullable=False, default=dict)
     label_snapshot = Column(JSON, nullable=False, default=dict)

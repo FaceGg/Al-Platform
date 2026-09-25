@@ -137,6 +137,72 @@
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-09-26 标注员门户误报“质检反馈/需重做”（r11）
+
+- 现象：标注员修改标签并重新回传后，任务列表显示质检反馈横幅和“需重做”徽章——但任务是正常等待验收，并非审核退回。
+- 根因：`TaskCard` 的 `FEEDBACK_STATES` 把 `returned_pending_acceptance`（每次回传后的正常等待验收状态）与 `edit_for_return`（审核退回）一起算作质检反馈状态；`isFeedbackTask` 还把 `task.status === 'returned_pending_acceptance'` 也计入。
+- 修复：`FEEDBACK_STATES` 收敛为 `['edit_for_return']`，“需重做”徽章与质检反馈横幅只在审核真正退回后出现（提交 `fad3723`）。
+- 验证：审核员门户全量 `118 passed`（新增回归：待验收任务不显示横幅/徽章、`isFeedbackTask` 仅对 `edit_for_return` 为真）；`tsc --noEmit` 通过。
+- 发布记录（2026-09-26）：安装包 `output/linkraft-ubuntu-20260926-r11.tar.gz`，manifest 绑定 HEAD `e2d2779`，SHA-256 `e72e5bd3ea22898facc540251a5a6e592992a788830f73e7b7736690b680daae`，归档抽查确认修复代码已包含。r11 同时包含 r10 的回传死锁自愈。
+- 待完成：目标服务器端到端验收（SQL 解锁 → 重新回传 → 冻结 completed → 合格验收，且任务列表不再误报需重做）；提交尚未推送（本地 main 领先 origin 15 个提交）。
+
+### 2026-09-26 回传死锁自愈：冻结失败后允许重新回传（r10）
+
+- 现象：部署 r9（列宽迁移已生效）后审核员验收仍报 `RETURN_BATCH_NOT_READY`。服务器证据：`durable_operations` 无新记录，只有两条 09-25 的 `failed` 旧操作——旧批次是终态，验收/退回均被 `_require_completed_frozen_batch` 挡住。
+- 已验证根因（死锁）：`return_assignment` 在创建批次时同步把 assignment 锁进 `returned_pending_acceptance`；冻结失败后批次停留 `pending`，审核端 accept/reject 都要求冻结完成，标注员重新回传又被 assignment 锁拒绝（`AssignmentLockedError`）——无任何设计内恢复路径。
+- 修复：`return_assignment` 遇到 `returned_pending_acceptance` 锁时，若该 assignment 的 pending 批次冻结操作全部 `failed`（或缺失 operation），放行重新回传，旧批次由既有 supersede 逻辑自动清理（提交 `a6128d1`）。
+- 一次性运维：升级到 r10 前已卡死的 assignment，用 SQL 解锁 `UPDATE annotation_assignments SET state='pending' WHERE state='returned_pending_acceptance' AND id IN (SELECT assignment_id FROM annotation_return_batches WHERE state='pending')`，之后标注员重新回传即可（README 已收录）。
+- 验证：`test_annotation_concurrency.py` 26 passed（含两个新回归：失败冻结后可自愈重新回传、运行中操作仍锁定）；回传/审核员套件 47 passed。
+- 发布记录（2026-09-26）：安装包 `output/linkraft-ubuntu-20260926-r10.tar.gz`，manifest 绑定 HEAD `d282673`，SHA-256 `8c0c33ae7bda8c9708b0ec754291cc672a630a8eb763f2516172b90c1f484962`，归档抽查确认自愈代码已包含。
+- 待完成：目标服务器执行 SQL 解锁 + 标注员重新回传 + 审核员验收的端到端确认；提交尚未推送（本地 main 领先 origin 12 个提交）。
+
+### 2026-09-26 回传验收 409 真根因：任务状态列宽不足 + 框架错误码泄漏（r9）
+
+- 现象：部署 r8 后回传验收仍报 `409 RETURN_BATCH_NOT_READY`，与本地工作树行为不一致。
+- 已验证根因：`generic_annotation_tasks.status` 为 `VARCHAR(24)`，回传冻结 worker 写入 `returned_pending_acceptance`（27 字符）触发 PostgreSQL `StringDataRightTruncation`，回传校验操作全部 `failed`（服务器 `durable_operations` 两行证据，`error_details` 含完整 SQL）。SQLite 不强制 VARCHAR 宽度，因此测试与本地开发从未暴露；"工作树正常"的印象来自非 PostgreSQL 路径，工作树库同样存在 `VARCHAR(24)`。次级缺陷：`fail_operation` 的 `getattr(error, "code", ...)` 误取 SQLAlchemy `DBAPIError` 内部 `code` 属性，持久化为乱码 `9h9h`，掩盖真实错误。
+- 修复：模型 `status`/`paused_from_status` 加宽至 `String(32)`；新增 alembic 迁移 `20260926_61`（仅 PostgreSQL 执行 `ALTER COLUMN ... TYPE VARCHAR(32)`，幂等守卫）；`annotation_return_tasks.domain_error_code` 只接受 UPPER_SNAKE 域码，其余回退 `ANNOTATION_RETURN_FAILED`。
+- 验证：定向套件 `93 passed`（回传验收 + 状态机 + 迁移图）+ 回传/操作选择器 `28 passed`；alembic 全链 `upgrade head` 在 SQLite 干净通过至 `20260926_61`。新回归测试：状态值必须适配模型列宽、`domain_error_code` 拒绝框架内部码。
+- 发布记录（2026-09-26）：提交 `ef0cb8d`（列宽 + 错误码修复）与 `6e0c855`（r9 打包配置）。安装包 `output/linkraft-ubuntu-20260926-r9.tar.gz` 已构建，manifest 绑定 HEAD `6e0c855`，SHA-256 `76c79d2b5fc71c90bcadcbc56e9076c61c41ca905c06a2b9b5c2eeeca3875732`。升级时 `migrate` 容器自动执行加宽迁移；升级前已 `failed` 的两条回传操作不会自动恢复，需标注员重新回传。
+- 待完成：目标 Ubuntu 部署 r9 后确认迁移生效（列宽 32）并完成一次完整回传→验收；提交尚未推送（本地 main 领先 origin 8 个提交）。
+
+### 2026-09-25 回传验收 409：异步冻结校验未完成时前端误触发验收链路
+
+- 现象：标注员回传后，主平台打开回传卡片可能出现 `Request failed with status code 409`，审核员门户点击验收返回 `RETURN_BATCH_NOT_READY`。
+- 已验证根因：回传批次先落库为 `pending`，由 worker 异步生成不可变快照；在 durable operation 仍为 `queued/running` 时，差异和验收接口按安全契约拒绝请求。主平台的查看摘要路径仍请求差异接口，审核员门户只判断存在 pending 批次，未判断校验操作状态。
+- 修复：审核员任务列表/详情返回 `return_operation_state`、失败码和已校验样本数；主平台回传验收/数据管理列表在校验完成前不请求差异、不显示验收/退回按钮；审核员门户仅在操作 `completed` 时开放验收、退回和批注，并显示排队/校验中/失败状态。保留后端 `RETURN_BATCH_NOT_READY` 守卫。
+- 验证：回传后端定向套件 `43 passed`；主平台回传组件 `14 passed`；审核员门户全量 `116 passed`；两端 TypeScript/生产构建通过。目标 Ubuntu 的 worker/Celery 实际执行及浏览器验收仍需用新包部署验证。
+- 发布：源码安装包需在本次改动后重新生成并绑定新的 manifest/checksum，部署后先确认 worker 日志和批次 operation 从 `queued/running` 进入 `completed`，再进行验收。
+- 发布记录（2026-09-26）：修复已分两个提交落库——`dc09b5e`（worker 地址空间限制延后，XGBoost ONNX 注册修复）与 `578aa66`（回传验收 UI 门控 + r8 打包配置）。安装包 `output/linkraft-ubuntu-20260925-r8.tar.gz`（2.5M）已构建，manifest 绑定 HEAD `578aa66`，SHA-256 `e8ffb9323ffe70f6a05ccf34ee0b0c911f144324ab90e810cb13c142538d3f04`；归档抽查确认回传门控与 worker 修复代码均已包含。目标 Ubuntu 部署 r8 后的 worker 实际执行与浏览器验收仍待完成；提交尚未推送（本地 main 领先 origin 5 个提交）。
+
+### 2026-09-25 AutoML XGBoost 注册：延后 Linux 地址空间限制并重新打包 r7
+
+- 现象：任务 `087b597f-19a0-4d81-88c0-ca14b2d73b71` 的 XGBoost joblib 制品大小和 SHA-256 均匹配，`XGBClassifier` 在 backend 容器内直接调用 `convert_xgboost` 成功，但注册接口返回 `MODEL_CONVERSION_FAILED`。
+- 已验证根因：ONNX 转换 worker 在导入 `onnx_cpp2py_export` 等可选二进制扩展之前设置 `RLIMIT_AS=5298810880`；受限子进程报 `failed to map segment from shared object`，随后只返回稳定的通用错误码。
+- 修复：worker 启动时只设置 CPU 时间限制；模型族对应的 ONNX/XGBoost/LightGBM/CatBoost 二进制依赖加载完成后，再设置地址空间上限并执行转换。保留原有转换白名单、超时和非 root 运行边界。
+- 验证：回归测试先失败后通过；`tests.test_onnx_conversion` 为 12 tests OK（Windows 跳过 POSIX 资源限制用例）；模型注册服务/API 为 29 tests OK。目标 Ubuntu 容器需用新包重建 backend/worker 后重新执行实际注册。
+- 发布：源码安装包升为 `linkraft-ubuntu-20260925-r7.tar.gz`，继续保留 CPUv1 MinIO、5175/8443、公网 CORS、源码构建和密钥引导约束。
+
+### 2026-09-25 Ubuntu 安装包 r6：采用目标 CPUv1 镜像的 HTTP readiness 健康检查
+
+- 现象：目标服务器确认 MinIO server 使用 `linux/amd64` 正常监听 9000/9001，但 r4 的 `mc ready local` 检查报 `mc: executable file not found`；目标部署提供的正确 Compose 使用 MinIO HTTP readiness endpoint。
+- 修复：legacy Compose 将 MinIO healthcheck 对齐为 `curl -fsS http://127.0.0.1:9000/minio/health/ready`，增加 30 秒启动宽限期，并让 `minio-init` 继续依赖 `service_healthy` 后执行 alias 和建桶。安装包升为 `20260925-r6`。
+- 兼容边界：仅更新 legacy CPU 发布 profile；保留 Debian Python 镜像、CPUv1 tag、5175/8443 端口、源码构建和上传目录权限修复，不把主线 Compose 的 ghcr.io MLflow 或端口默认值带回发布包。
+- 验证边界：健康检查合同先失败后通过；合并 Compose、脚本语法和 r6 归档需绑定最终包。目标服务器需重建 MinIO/init 容器并确认 `minio-init` 成功退出、下游服务健康。
+
+### 2026-09-25 Ubuntu 安装包 r5：CPUv1 MinIO 镜像不含 mc 导致健康检查失败
+
+- 现象：目标服务器上的 `minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1` 进程正常启动并监听 9000/9001，但容器状态为 `unhealthy`；健康检查日志为 `exec: "mc": executable file not found in $PATH`。
+- 根因：legacy CPUv1 MinIO server 镜像不包含 `mc` 可执行文件，而主线 Compose 的 `mc ready local` 健康检查会被合并继承到该容器。
+- 修复：legacy Compose 对 MinIO 禁用继承的内部 `mc` 健康检查；由包含 `mc` 的 `minio-init` CPUv1 容器在 `service_started` 后执行 alias、ready 和建桶重试，完成后再放行所有依赖服务。安装包升为 `20260925-r5`。
+- 验证边界：新增合同先失败后通过；Compose 合并配置和脚本语法通过。目标服务器需用 r5 重建 `minio`/`minio-init` 并确认 `minio-init` 成功退出、后端健康和上传流程。
+
+### 2026-09-24 Ubuntu 安装包 r4：上传临时文件目录权限
+
+- 现象：服务器部署后上传数据集返回 500，backend 日志在 `_stage_upload_sync` 写入 `/app/app/uploads/<uuid>_...` 时抛 `PermissionError: [Errno 13] Permission denied`。
+- 根因：backend 镜像以 UID/GID `1000:1000` 非 root 运行；Compose 的宿主机 bind mount `./ml-platform/backend/uploads:/app/app/uploads` 会覆盖镜像构建阶段已经 `chown` 的目录，目标机解压/首次创建的宿主目录通常属于 root，导致应用不能创建临时文件。
+- 修复：新增 `packaging/prepare-production-storage.sh`，使用已构建 backend 镜像临时以 root 修复 bind-mounted `data/` 与 `uploads/` 的 UID/GID；安装脚本改为先 build、修复存储、再启动，并提供已有部署的单独修复命令。安装包升为 `20260924-r4`。
+- 验证边界：新增权限合同先失败后通过；脚本语法、Compose 配置、数据集上传定向回归和 r4 归档检查需绑定最终包。目标 Ubuntu 重新部署后需实测上传成功、已有文件可读和容器保持 UID/GID 1000。
+
 ### 2026-09-24 Ubuntu 安装包 r3：私网 HTTP 标注页空白与 8443 门户外网入口
 
 - 现象：通过 `http://SERVER_IP:5175/data-annotation?view=tasks` 打开数据标注页时页面空白；`http://SERVER_IP:8443/` 从外部机器无法连接。

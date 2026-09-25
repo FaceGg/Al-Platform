@@ -58,7 +58,7 @@ export default function AdminReviewPage({
 
   const sample = samples[index]
   const sampleId = sample?.sample_id ?? null
-  const reviewable = Boolean(task?.pending_return_batch_id)
+  const reviewable = Boolean(task?.pending_return_batch_id && task?.return_operation_state === 'completed')
   const columns = task?.label_schema?.columns ?? []
 
   const saveComment = useCallback(async (targetSampleId: string, content: string, silent = false) => {
@@ -306,7 +306,11 @@ export default function AdminReviewPage({
   }
 
   const saveHint = !reviewable
-    ? '任务未回传，无法批注'
+    ? task?.pending_return_batch_id
+      ? task.return_operation_state === 'failed'
+        ? `回传校验失败${task.return_operation_error_code ? `（${task.return_operation_error_code}）` : ''}，无法批注`
+        : '回传校验中，完成后才能批注'
+      : '任务未回传，无法批注'
     : saveState === 'saving'
       ? '保存中...'
       : saveState === 'saved'

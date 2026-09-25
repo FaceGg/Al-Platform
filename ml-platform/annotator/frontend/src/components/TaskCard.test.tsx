@@ -27,6 +27,15 @@ describe('TaskCard', () => {
     expect(screen.getByText('需重做')).toBeVisible()
   })
 
+  it('does not mark a task awaiting acceptance review as rework', () => {
+    // 标注员回传后（含审核退回后修改并重新回传）assignment.state 为
+    // returned_pending_acceptance，属于正常等待验收，不应提示需重做。
+    const returned: Task = { ...base, status: 'returned_pending_acceptance', state: 'returned_pending_acceptance' }
+    render(<TaskCard task={returned} onOpenTask={vi.fn()} />)
+    expect(screen.getByText('待验收')).toBeVisible()
+    expect(screen.queryByText('需重做')).not.toBeInTheDocument()
+  })
+
   it('renders accepted tasks as accepted without rework or feedback', () => {
     // 验收后 assignment.state 仍是 returned_pending_acceptance，但任务已终态。
     const accepted: Task = { ...base, status: 'accepted', state: 'returned_pending_acceptance' }
@@ -54,10 +63,10 @@ describe('TaskCard', () => {
     expect(onOpenTask).toHaveBeenCalledWith('task-1', 'a-1')
   })
 
-  it('treats returned or rework assignment states as feedback tasks', () => {
-    expect(isFeedbackTask({ ...base, state: 'returned_pending_acceptance' })).toBe(true)
+  it('treats only rework assignment state as feedback task', () => {
+    expect(isFeedbackTask({ ...base, state: 'returned_pending_acceptance' })).toBe(false)
+    expect(isFeedbackTask({ ...base, status: 'returned_pending_acceptance' })).toBe(false)
     expect(isFeedbackTask({ ...base, state: 'edit_for_return' })).toBe(true)
-    expect(isFeedbackTask({ ...base, status: 'returned_pending_acceptance' })).toBe(true)
     expect(isFeedbackTask({ ...base, state: 'pending' })).toBe(false)
   })
 })

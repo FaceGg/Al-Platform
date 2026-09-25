@@ -18,6 +18,35 @@ const returnStateLabels: Record<string, string> = {
   returned_for_changes: '已退回',
 }
 
+function returnReviewState(task: AdminTaskListItem): { label: string; className: string; reviewable: boolean; disabledReason: string } {
+  if (!task.pending_return_batch_id) {
+    return {
+      label: task.return_state ? (returnStateLabels[task.return_state] ?? task.return_state) : '未回传',
+      className: task.return_state ? `is-${task.return_state}` : 'is-none',
+      reviewable: false,
+      disabledReason: '任务未回传，不能验收/退回/批注',
+    }
+  }
+  if (task.return_operation_state === 'completed') {
+    return { label: '待验收', className: 'is-pending', reviewable: true, disabledReason: '' }
+  }
+  if (task.return_operation_state === 'failed') {
+    const suffix = task.return_operation_error_code ? `（${task.return_operation_error_code}）` : ''
+    return {
+      label: '回传校验失败',
+      className: 'is-failed',
+      reviewable: false,
+      disabledReason: `回传校验失败${suffix}，不能验收/退回/批注`,
+    }
+  }
+  return {
+    label: '回传校验中',
+    className: 'is-processing',
+    reviewable: false,
+    disabledReason: '回传校验尚未完成，不能验收/退回/批注',
+  }
+}
+
 const modeLabels: Record<string, string> = {
   manual: '人工标注',
   auto: '自动标注',
@@ -191,17 +220,15 @@ export default function AdminQueuePage({
 
       <div className="queue-list">
         {tasks.map((task) => {
-          const reviewable = Boolean(task.pending_return_batch_id)
-          const returnLabel = task.return_state ? (returnStateLabels[task.return_state] ?? task.return_state) : '未回传'
-          const disabledReason = '任务未回传，不能验收/退回/批注'
+          const review = returnReviewState(task)
           return (
             <article className="task-card admin-task-card" key={task.id} id={`admin-task-${task.id}`}>
               <div className="task-main">
                 <div className="task-title">
                   <span className="task-name">{task.title}</span>
                   <span className={`tag tag-${task.status}`}>{statusLabels[task.status] ?? task.status}</span>
-                  <span className={`admin-return-tag ${reviewable ? 'is-pending' : task.return_state ? `is-${task.return_state}` : 'is-none'}`}>
-                    {returnLabel}
+                  <span className={`admin-return-tag ${review.className}`}>
+                    {review.label}
                   </span>
                 </div>
                 <div className="task-meta">
@@ -219,16 +246,16 @@ export default function AdminQueuePage({
                 <button
                   type="button"
                   className="primary"
-                  disabled={!reviewable}
-                  title={reviewable ? '验收该回传批次并生成数据版本' : disabledReason}
+                  disabled={!review.reviewable}
+                  title={review.reviewable ? '验收该回传批次并生成数据版本' : review.disabledReason}
                   onClick={() => setAcceptTarget(task)}
                 >
                   合格验收
                 </button>
                 <button
                   type="button"
-                  disabled={!reviewable}
-                  title={reviewable ? '退回该回传批次，要求标注员修改' : disabledReason}
+                  disabled={!review.reviewable}
+                  title={review.reviewable ? '退回该回传批次，要求标注员修改' : review.disabledReason}
                   onClick={() => {
                     setReturnReason('')
                     setReturnTarget(task)
@@ -238,8 +265,8 @@ export default function AdminQueuePage({
                 </button>
                 <button
                   type="button"
-                  disabled={!reviewable}
-                  title={reviewable ? '逐条浏览样本与标注结果并添加批注' : disabledReason}
+                  disabled={!review.reviewable}
+                  title={review.reviewable ? '逐条浏览样本与标注结果并添加批注' : review.disabledReason}
                   onClick={() => onOpenTask(task.id)}
                 >
                   批注

@@ -10,6 +10,9 @@ export type AdminTaskListItem = {
   task_revision: number
   pending_return_batch_id: string | null
   return_state: string | null
+  return_operation_state?: string | null
+  return_operation_error_code?: string | null
+  return_validated_row_count?: number | null
   sample_count: number
   completed_samples: number | null
   annotator_name: string | null
@@ -28,6 +31,9 @@ export type AdminTask = {
   sample_scope: { kind?: string; sample_count: number; scope_hash?: string }
   pending_return_batch_id: string | null
   return_state: string | null
+  return_operation_state?: string | null
+  return_operation_error_code?: string | null
+  return_validated_row_count?: number | null
   read_only: true
   task_revision: number
 }
