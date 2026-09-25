@@ -100,6 +100,23 @@ describe('TaskQueuePage', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('does not show quality feedback for a task awaiting acceptance review', async () => {
+    // 标注员回传后（含审核退回后修改并重新回传）任务处于待验收，
+    // 不属于质检反馈，不应显示横幅或需重做徽章。
+    vi.mocked(listTasks).mockResolvedValue({
+      items: [{
+        id: 'task-1', assignment_id: 'assignment-1', title: '已回传任务',
+        status: 'returned_pending_acceptance', state: 'returned_pending_acceptance',
+        task_revision: 0, scope_hash: 'h',
+      }],
+      total: 1, next_cursor: null,
+    })
+    render(<TaskQueuePage onOpenTask={vi.fn()} />)
+    expect(await screen.findByText('待验收')).toBeVisible()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText('需重做')).not.toBeInTheDocument()
+  })
+
   it('shows accepted tasks as accepted without the quality feedback banner', async () => {
     vi.mocked(listTasks).mockResolvedValue({
       items: [{

@@ -13,15 +13,16 @@ const statusLabels: Record<string, string> = {
   assigned: '已分派',
 }
 
-export const FEEDBACK_STATES = ['returned_pending_acceptance', 'edit_for_return']
+// 质检反馈/需重做只对应审核退回（edit_for_return）。returned_pending_acceptance
+// 是回传后的正常等待验收状态，不应提示重做。
+export const FEEDBACK_STATES = ['edit_for_return']
 
 // 终态任务（已验收/已归档/已完成/已取消/失败）不再属于质检反馈：验收或归档后
 // assignment.state 会停留在 returned_pending_acceptance，但任务已锁定，不应提示重做。
 export const TERMINAL_STATUSES = ['accepted', 'completed', 'archived', 'cancelled', 'failed']
 
 export const isFeedbackTask = (task: Task) =>
-  !TERMINAL_STATUSES.includes(task.status) &&
-  (FEEDBACK_STATES.includes(task.state ?? '') || task.status === 'returned_pending_acceptance')
+  !TERMINAL_STATUSES.includes(task.status) && FEEDBACK_STATES.includes(task.state ?? '')
 
 export default function TaskCard({
   task,
