@@ -1,6 +1,6 @@
 # 当前开发计划
 
-> 更新时间：2026-09-25。本文档是当前状态台账；完整历史执行记录已保存到 [2026-09-24 归档快照](DEVELOPMENT_PLAN.history-2026-09-24.md)。最近开发重点是 Week 13–17，详细实施步骤见 [Week 13–17 云原生与数据探索开发计划](ml-platform/docs/superpowers/plans/2026-09-24-week13-17-development.md)。
+> 更新时间：2026-09-26。本文档是当前状态台账；完整历史执行记录已保存到 [2026-09-24 归档快照](DEVELOPMENT_PLAN.history-2026-09-24.md)。最近开发重点是 Week 13–17，详细实施步骤见 [Week 13–17 云原生与数据探索开发计划](ml-platform/docs/superpowers/plans/2026-09-24-week13-17-development.md)。
 
 ## 1. 状态口径
 
@@ -17,7 +17,7 @@
 |---|---|---|---|
 | Week 1–12 | completed | 平台基础、生产化、权限通知和历史验收已归档 | 不作为当前开发入口 |
 | 通用平台 Task 1–13 | 实现记录已收口，发布随 Task 14 统一门禁 | 保留通用 AutoML、数据版本、标注、回传、模型导出和门户合同；不因历史局部记录宣称整个平台发布完成 | 维护兼容性，继续使用当前有效合同 |
-| 通用平台 Task 14 | in_progress | 当前 SHA `6d47e49e64d3001e2f2cdcd176c2deeae6d86d14` 已补齐四项本地真实运行证据：CLU-02 10,000 样本与浏览器分页、AUTH-02 主平台/独立 annotator 网关安全链路、AUTO-02 worker/手动注册/幂等/浏览器、REL-01 broker/worker 恢复；四份 supplemental receipt 已经当前 SHA 校验 | 将四份证据纳入完整 19 项 receipt/最终 manifest，在同一最终 SHA 触发远程 full CI 并完成发布门禁；Dockerfile 当前 SHA 重建仍受 Wolfi apk 网络阻塞，运行镜像 provenance 已单独披露 |
+| 通用平台 Task 14 | in_progress | 本轮继续补齐并复核 CLU-02（10,000 样本）、AUTH-02（双服务安全链路）、AUTO-02（真实 worker/注册/幂等/浏览器）、REL-01（真实 broker/worker 恢复）四项 supplemental evidence；最终收据以本次干净提交的 `commit_sha` 字段为准 | 将四项证据与完整 19 项 receipt/最终 manifest 绑定到同一最终 SHA，触发远程 full CI 并完成发布门禁；所有 skipped、失败或旧 SHA 证据继续阻止关闭 |
 | Week 13 | planned | Kubernetes 集群、命名空间、资源组、节点发现、凭据引用和连通性检查 | 先完成 Task 0 决策与 Week 13 基础门禁 |
 | Week 14 | planned | Kubernetes Job/Pod 执行器、状态、日志、取消、超时、垃圾回收和恢复 | 依赖 Week 13 |
 | Week 15 | planned | Notebook、镜像目录/构建、GPU 资源类和配额 | 依赖 Week 13–14 |
@@ -120,6 +120,16 @@
 - **REL-01：真实恢复演练通过。** 隔离 harness 使用真实 Redis broker 和 worker，注入 worker 进程终止并推进租约过期，验证同一 operation 恢复、重复投递无重复结果；`result_count=5000`，中断 attempt 1、恢复 attempt 3。当前手工 harness 将执行 gate 显式置为 `preview_ready`，原因是现行 manual task 合同在 preview 完成后会转入 `awaiting_annotation`；该适配已记录在 receipt，不隐藏。
 - **运行 provenance 与发布边界：** backend/worker 等当前 SHA 镜像由现有镜像 `docker commit` 快照加 revision label 运行，backend app/requirements 与基线镜像的差异核对为空；Dockerfile 重新构建在 Wolfi `apk add` 下载步骤受网络阻塞。因此四项 supplemental receipt 证明真实运行行为，但尚未证明 Dockerfile 当前 SHA 重建成功。
 - **当前门禁结论：** 四项 supplemental receipt 均通过 `generic_acceptance_evidence._validate_receipt` 的 SHA、路径和哈希校验；尚未把它们并入完整 19 项最终 manifest，也未在该 SHA 重新触发远程 full CI。Task 14 继续为 `in_progress`，不关闭、不宣称发布就绪。
+
+## 6.6 当前收口复核与最终提交门禁（2026-09-26）
+
+本节记录本轮实际执行顺序。最终 supplemental 目录使用 `temp_test/task14-real-<commit_sha>/` 命名，四份 receipt 的 `commit_sha`、证据路径和 SHA-256 哈希以该目录中的 JSON 为准；旧章节中的 SHA 和目录保留为历史检查点。
+
+- **真实运行证据：** CLU-02 真实 worker 完成 10,000 行聚类，`all_rows` 评估和 50 行 cursor 分页通过；AUTH-02 真实主平台与独立 annotator 网关覆盖 CORS、CSRF、限流、PBKDF2、服务 JWT、注册/激活/会话链路；AUTO-02 真实 worker 完成候选、手动注册第一次 201、同键重放 200 且返回同一版本，并以 Playwright 验证完成页；REL-01 在隔离 Redis DB 上终止首个 worker、推进租约过期、同一 operation 恢复 5,000 条结果，重复投递无重复副作用。探索性派发竞态运行不纳入通过证据。
+- **迁移与后端：** WSL Compose 数据库容器 `alembic check` 返回 `No new upgrade operations detected`。当前迁移目录实际 head 为 `20260926_61`，同步更新 evidence/upgrade fixture、升级脚本和相关测试中的旧 `20260921_60` 账目；旧历史文档不回写。首次后端全量运行在 `2004 passed、110 skipped、3 failed` 结束，3 个失败均为旧 head 常量；同步后针对性 3 项测试通过，完整复跑为 **2007 passed、110 skipped、329 warnings、759 subtests passed**（15:09）。
+- **前端：** 主平台 Vitest 全量 **64 files、361 passed、19 skipped**，TypeScript 与生产构建通过；标注员门户 Vitest **15 files、118 passed**，TypeScript 与生产构建通过。浏览器运行证据与单元套件分开记录。
+- **运行环境：** WSL Ubuntu Docker 是本轮唯一真实 Compose 环境；旧项目镜像和 builder cache 已按用户授权清理，通用旧栈容器已停止以释放资源，Task 14 证据栈保持运行。worker/scheduler 的 Compose HTTP healthcheck 对 Celery-only 子镜像显示 `unhealthy`，但 worker 日志和四项真实运行结果均通过；该状态作为 healthcheck 设计边界披露，不改写为服务 HTTP 健康。
+- **发布边界：** 本地 `git diff --check`、四项 supplemental receipt 校验、19 项 receipt 汇总、最终 evidence manifest 和远程 full CI 必须全部绑定同一个最终干净 SHA。未完成远程 full CI、下载并核对 19 项 receipt/manifest 前，Task 14 保持 `in_progress`，不合并或关闭。
 
 ## 7. 计划归档索引
 
