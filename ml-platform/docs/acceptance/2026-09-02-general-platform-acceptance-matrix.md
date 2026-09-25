@@ -221,3 +221,8 @@
 - 该步骤的嵌套 manifest 命名由 `final-evidence-manifest.json` 更正为 `acceptance-manifest.json`，避免与 `evidence_manifest` 生成的顶层最终 manifest 混淆。
 - AUTH-02 的收据证据路径由不存在的 `ml-platform/annotator/backend/tests/test_portal_internal_api.py` 更正为实际门户后端套件 `ml-platform/annotator/backend/tests/test_portal_api.py`。
 - 上述更正在当前工作树完成并以 `tests/test_ci_workflow.py`、`tests/test_acceptance_manifest.py`（**62 passed、138 subtests passed**）和本地 19 收据 + manifest 校验模拟锁定；远程 CI 尚未在最终干净 SHA 上执行，19 项 `passed` 收据仍以远程实际生成为准，本矩阵头部 fail-closed 规则不变。
+
+## 2026-09-25 最终 SHA 远程门禁复核
+
+- 代码 SHA `b185ead4f93068cf457a10fa5079d8be138ab88f` 的 [GitHub full CI Run 36112327185](https://github.com/FaceGg/Al-Platform/actions/runs/36112327185) 六个 required jobs 全部 `success`，没有 `skipped`；`week11-12-verification-evidence` 中的最终 manifest 为 `passed`，19 项 receipt 全部为 `passed` 并绑定该 SHA，manifest 文件哈希和大小逐项核对通过。
+- 这只证明收据链和通用门禁已在当前 SHA 生成，不能覆盖原始矩阵的语义要求。CLU-02 仍缺百万样本与分页实测；AUTH-02 仍缺主平台/门户双服务安全运行证据；AUTO-02 仍缺真实 worker 候选手动注册与重复注册幂等流程；REL-01 仍缺真实 broker/worker 恢复和 TTL 清理演练。四项保持 `in_progress`，矩阵总体不关闭。

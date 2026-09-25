@@ -5,7 +5,7 @@
 ## 当前状态
 
 - Week 1-12 的平台基础能力和历史验收已归档为 `passed` / `completed`，不属于当前实施范围。
-- 通用自动建模与数据标注平台的 Task 1-14 均为 `planned`，尚未开始代码、迁移、测试或运行时验收。技术方案和实施计划是实现合同，不代表功能已经交付。
+- 通用自动建模与数据标注平台的 Task 1-13 已有实现和局部验收记录；Task 14 的功能代码 SHA `b185ead4f93068cf457a10fa5079d8be138ab88f` 已通过本地全量测试、迁移检查、真实 Compose 运行、浏览器验收和远程六作业 full CI；随后主分支文档 SHA `99f18abb81b10024d8c7960ce4275d19150baac3` 的同一 full CI 重跑也已通过，19 项收据与最终 evidence manifest 均按当前 SHA 校验。但 CLU-02、AUTH-02、AUTO-02、REL-01 仍缺矩阵要求的真实容量、双服务安全、注册流程和 worker 恢复证据，因此整体继续保持 `in_progress`。
 - Week 13-16（Kubernetes、Job/Pod、Notebook/GPU、多集群）为 `planned`；Week 17 为 `pending_decision`；Week 18-20 为 `deferred`。
 - 仓库仍包含部分行业化历史实现。通用平台开发必须先完成 Task 1 的去行业化盘点和迁移边界，不能把现有页面、路由或历史文档当作通用功能已完成的证据。
 
@@ -125,8 +125,8 @@ docker compose down
 | --- | --- | --- |
 | [当前开发计划](DEVELOPMENT_PLAN.md) | 当前未完成任务、依赖、风险和阶段状态 | 当前权威资料 |
 | [通用平台技术方案](ml-platform/docs/technical-proposals/2026-09-01-general-automl-annotation-platform.md) | 通用 AutoML 与数据标注的产品、数据、接口和安全合同 | 已评审；实现尚未开始 |
-| [通用平台实施计划](ml-platform/docs/superpowers/plans/2026-09-02-general-automl-annotation-platform.md) | Task 1-14 的文件边界、测试和依赖 | `planned` |
-| [通用平台验收矩阵](ml-platform/docs/acceptance/2026-09-02-general-platform-acceptance-matrix.md) | 验收编号、执行上下文和证据责任 | `planned` |
+| [通用平台实施计划](ml-platform/docs/superpowers/plans/2026-09-02-general-automl-annotation-platform.md) | Task 1-14 的文件边界、测试和依赖 | `in_progress` |
+| [通用平台验收矩阵](ml-platform/docs/acceptance/2026-09-02-general-platform-acceptance-matrix.md) | 验收编号、执行上下文和证据责任 | `in_progress` |
 | [通用化迁移基线清单](ml-platform/docs/migrations/2026-09-02-genericization-inventory.md) | 去行业化范围和迁移门禁 | `planned` |
 | [导出与离线运行时清单](ml-platform/docs/acceptance/2026-09-02-export-runtime-checklist.md) | 导出包与离线推理输入合同 | `planned` |
 | [架构文档](ml-platform/docs/architecture.md) | 历史架构与技术选型参考 | 包含行业化历史描述 |
