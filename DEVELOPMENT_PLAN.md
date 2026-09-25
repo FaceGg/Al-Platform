@@ -1,5 +1,14 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-26 回传验收 409 真根因：任务状态列宽不足 + 框架错误码泄漏（r9）
+
+- 现象：部署 r8 后回传验收仍报 `409 RETURN_BATCH_NOT_READY`，与本地工作树行为不一致。
+- 已验证根因：`generic_annotation_tasks.status` 为 `VARCHAR(24)`，回传冻结 worker 写入 `returned_pending_acceptance`（27 字符）触发 PostgreSQL `StringDataRightTruncation`，回传校验操作全部 `failed`（服务器 `durable_operations` 两行证据，`error_details` 含完整 SQL）。SQLite 不强制 VARCHAR 宽度，因此测试与本地开发从未暴露；"工作树正常"的印象来自非 PostgreSQL 路径，工作树库同样存在 `VARCHAR(24)`。次级缺陷：`fail_operation` 的 `getattr(error, "code", ...)` 误取 SQLAlchemy `DBAPIError` 内部 `code` 属性，持久化为乱码 `9h9h`，掩盖真实错误。
+- 修复：模型 `status`/`paused_from_status` 加宽至 `String(32)`；新增 alembic 迁移 `20260926_61`（仅 PostgreSQL 执行 `ALTER COLUMN ... TYPE VARCHAR(32)`，幂等守卫）；`annotation_return_tasks.domain_error_code` 只接受 UPPER_SNAKE 域码，其余回退 `ANNOTATION_RETURN_FAILED`。
+- 验证：定向套件 `93 passed`（回传验收 + 状态机 + 迁移图）+ 回传/操作选择器 `28 passed`；alembic 全链 `upgrade head` 在 SQLite 干净通过至 `20260926_61`。新回归测试：状态值必须适配模型列宽、`domain_error_code` 拒绝框架内部码。
+- 发布记录（2026-09-26）：提交 `ef0cb8d`（列宽 + 错误码修复）与 `6e0c855`（r9 打包配置）。安装包 `output/linkraft-ubuntu-20260926-r9.tar.gz` 已构建，manifest 绑定 HEAD `6e0c855`，SHA-256 `76c79d2b5fc71c90bcadcbc56e9076c61c41ca905c06a2b9b5c2eeeca3875732`。升级时 `migrate` 容器自动执行加宽迁移；升级前已 `failed` 的两条回传操作不会自动恢复，需标注员重新回传。
+- 待完成：目标 Ubuntu 部署 r9 后确认迁移生效（列宽 32）并完成一次完整回传→验收；提交尚未推送（本地 main 领先 origin 8 个提交）。
+
 ### 2026-09-25 回传验收 409：异步冻结校验未完成时前端误触发验收链路
 
 - 现象：标注员回传后，主平台打开回传卡片可能出现 `Request failed with status code 409`，审核员门户点击验收返回 `RETURN_BATCH_NOT_READY`。
