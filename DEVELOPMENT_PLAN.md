@@ -1,6 +1,6 @@
 # 当前开发计划
 
-> 更新时间：2026-09-24。本文档是当前状态台账；完整历史执行记录已保存到 [2026-09-24 归档快照](DEVELOPMENT_PLAN.history-2026-09-24.md)。最近开发重点是 Week 13–17，详细实施步骤见 [Week 13–17 云原生与数据探索开发计划](ml-platform/docs/superpowers/plans/2026-09-24-week13-17-development.md)。
+> 更新时间：2026-09-25。本文档是当前状态台账；完整历史执行记录已保存到 [2026-09-24 归档快照](DEVELOPMENT_PLAN.history-2026-09-24.md)。最近开发重点是 Week 13–17，详细实施步骤见 [Week 13–17 云原生与数据探索开发计划](ml-platform/docs/superpowers/plans/2026-09-24-week13-17-development.md)。
 
 ## 1. 状态口径
 
@@ -17,7 +17,7 @@
 |---|---|---|---|
 | Week 1–12 | completed | 平台基础、生产化、权限通知和历史验收已归档 | 不作为当前开发入口 |
 | 通用平台 Task 1–13 | 实现记录已收口，发布随 Task 14 统一门禁 | 保留通用 AutoML、数据版本、标注、回传、模型导出和门户合同；不因历史局部记录宣称整个平台发布完成 | 维护兼容性，继续使用当前有效合同 |
-| 通用平台 Task 14 | in_progress | 当前 SHA 的完整收据链、远程门禁和发布判断仍需独立收口 | 按 2026-09-15 通用平台一致性计划执行 |
+| 通用平台 Task 14 | in_progress | 代码 SHA `b185ead4f93068cf457a10fa5079d8be138ab88f` 的本地全量、迁移、真实 Compose、浏览器、远程六作业 full CI、19 项收据和最终 manifest 已通过；四项原始矩阵语义仍缺真实运行证据 | 补齐 CLU-02 百万样本、AUTH-02 双服务安全、AUTO-02 手动注册幂等、REL-01 worker 恢复演练，再在补齐后的新当前 SHA 重生成收据 |
 | Week 13 | planned | Kubernetes 集群、命名空间、资源组、节点发现、凭据引用和连通性检查 | 先完成 Task 0 决策与 Week 13 基础门禁 |
 | Week 14 | planned | Kubernetes Job/Pod 执行器、状态、日志、取消、超时、垃圾回收和恢复 | 依赖 Week 13 |
 | Week 15 | planned | Notebook、镜像目录/构建、GPU 资源类和配额 | 依赖 Week 13–14 |
@@ -82,6 +82,21 @@
 - 证据清单：`ml-platform/temp_test/week11-12-local/manifest.json` 为 `status=passed`，绑定当前 SHA，共 63 个文件；`generic-platform-acceptance/acceptance-manifest.json` 为 19 项收据且全部绑定当前 SHA。安全汇总包含容器镜像、Trivy、前端依赖、Python 依赖、Gitleaks、Bandit 和 Web 18 项检查，均为 passed。
 - WSL 空间处理：已删除此前项目镜像并清理 Docker builder cache；清理后 WSL 根盘曾回收至约 26 GB 可用空间（45% 使用率），后续构建和运行期间保持约 18 GB 可用（64% 使用率）。已执行 `wsl --manage Ubuntu --set-sparse true --allow-unsafe`，并由 `fsutil sparse queryflag` 确认 `ext4.vhdx` 为 sparse；逻辑文件大小仍为 `49,302,994,944` 字节，离线 `diskpart compact vdisk` 在当前权限环境中被取消，因此物理空间缩减未验证。最终口径为“旧镜像/cache 清理完成、VHDX 稀疏化完成、物理压缩未验证”。
 - 发布状态：远端当前 SHA 的完整 CI/发布收据尚未运行；已有远端记录中，运行 `35870469911` 仅覆盖质量门禁，旧运行 `35855270973` 绑定的是历史 SHA。Task 14 继续保持 `in_progress`，直到当前 SHA 的远端全门禁和发布判断完成；Week 13–17 计划状态不因本地 Task 14 收口改变。
+
+## 6.2 通用平台 Task 14 最终 SHA 门禁复核（2026-09-25）
+
+本节追加记录本轮最终代码变更、远程门禁和语义审计；不改写 6.1 的历史结论。
+
+- 最终代码变更：PR [#25](https://github.com/FaceGg/Al-Platform/pull/25) 将 CI 与 Compose 中不可访问的 `quay.io/minio/minio:latest` 替换为可拉取且固定 digest 的 Chainguard MinIO/MinIO Client 镜像，并同步健康检查、初始化命令、验收脚本和合同测试；合并后的代码 SHA 为 `b185ead4f93068cf457a10fa5079d8be138ab88f`。
+- 本地门禁：当前修复分支 `git diff --check` 通过；`alembic upgrade head` 和 `alembic check` 通过（无新升级操作）；后端全量 **1998 passed、110 skipped、759 subtests passed**；主平台前端 **64 files / 359 passed、19 skipped**，TypeScript 与生产构建通过；标注员前端 **15 files / 115 passed**，TypeScript 与生产构建通过；标注员后端门户 **30 passed**。
+- 远程 full CI：首轮 `36101302944` 因 Quay MinIO 401 失败；修复后的首次 `36107534697` 在 warm-inference 延迟门槛上失败；同一代码 SHA 重跑的最终 [Run 36112327185](https://github.com/FaceGg/Al-Platform/actions/runs/36112327185) 绑定 `b185ead4f93068cf457a10fa5079d8be138ab88f`，Production integration、Production experiment integration、Quality Ubuntu、Quality Windows、Chromium acceptance、Week 11–12 verification 六个作业全部 `success`，无 `skipped`。
+- 远程证据产物：已下载 `week11-12-verification-evidence`。`final-evidence-manifest.json` 为 `status=passed`、`commit=b185ead4f93068cf457a10fa5079d8be138ab88f`、`migration_head=20260921_60`，共 64 个文件，逐文件 SHA-256 和 size 校验无错误；`acceptance-manifest.json` 包含完整 19 个 ID，全部 `status=passed`、全部绑定该 SHA，证据源哈希与最终 manifest 一致。远程产物目录为 `temp_test/remote-full-36112327185/`。
+- 四项语义复核仍未通过：
+  - **CLU-02：未完成。** Receipt 只引用 `test_annotation_task_state.py` 和 `test_annotation_task_state_api.py`；测试使用 2–5 行级小夹具，没有 1,000,000 样本容量运行、全量赋簇、Silhouette 评估模式/样本数/hash 和浏览器分页证据。
+  - **AUTH-02：未完成。** Receipt 只引用标注员门户 `test_portal_api.py`，覆盖路由、会话、Cookie 和代理转发；没有主平台与门户双服务的真实 CORS/CSRF/限流/密码哈希/服务 JWT 或 mTLS 运行证据。主平台 `test_security_contract.py` 未进入该 receipt 的 evidence paths。
+  - **AUTO-02：未完成。** Receipt 只引用被 mock API 的 `automl-multioutput.spec.ts`，只验证浏览器提交配置；没有真实 worker 产出完整候选、用户手动注册和重复注册返回同一版本的浏览器/服务联调证据。`test_model_registration_contract.py` 的单测不能替代该运行态证据。
+  - **REL-01：未完成。** Receipt 只引用异步合同和安全单测；没有真实 broker/worker 进程的租约过期重领、重启恢复、幂等副作用和临时制品 TTL 清理（保留已提交制品）演练。Week 11 的备份/恢复产物不等价于该 worker 恢复证据。
+- Task 14 决定：**保持 `in_progress`，不关闭、不宣称发布就绪**。下一步必须补齐上述四项真实运行证据，在补齐后的新当前 SHA 重新生成 receipt 和 manifest，并再次执行完整远程门禁；Week 13–17 计划状态不因本轮 Task 14 复核改变。
 
 ## 7. 计划归档索引
 
