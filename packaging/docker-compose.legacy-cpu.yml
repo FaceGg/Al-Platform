@@ -4,9 +4,34 @@ services:
     ports: !override
       - "${MINIO_BIND_ADDRESS:-127.0.0.1}:${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_BIND_ADDRESS:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
+    # The legacy CPUv1 server image does not include the mc executable. The
+    # base healthcheck would therefore mark a healthy MinIO process unhealthy.
+    healthcheck:
+      test: ["NONE"]
 
   minio-init:
     image: minio/mc:RELEASE.2025-07-21T05-28-08Z-cpuv1
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        set -eu;
+        for attempt in 1 2 3 4 5; do
+          if mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD
+          && mc ready local
+          && mc mb --ignore-existing local/$${MINIO_BUCKET:-ml-platform}; then
+            exit 0;
+          fi;
+          if [ "$$attempt" -eq 5 ]; then
+            echo 'MinIO did not become ready after 5 attempts' >&2;
+            exit 1;
+          fi;
+          sleep "$$attempt";
+        done
+    command: []
 
   migrate:
     build:

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-20260924-r4}"
+VERSION="${1:-20260925-r5}"
 PACKAGE_NAME="linkraft-ubuntu-${VERSION}"
 OUTPUT_DIR="$ROOT/output"
 ARCHIVE="$OUTPUT_DIR/${PACKAGE_NAME}.tar.gz"
@@ -85,6 +85,7 @@ Python services: python:3.11-slim-bookworm (package-specific legacy CPU Dockerfi
 Frontend build: node:20-bookworm-slim with npm retries (package-specific legacy CPU Dockerfile)
 Annotator frontend build: node:20-bookworm-slim source build; no host dist/ required
 Writable storage: installer repairs bind-mounted backend data/uploads ownership to UID/GID 1000 before startup
+MinIO health: CPUv1 server health is coordinated by the mc init container because the server image does not include mc
 Package indexes: PIP_INDEX_URL defaults to mirrors.aliyun.com; NPM_REGISTRY defaults to registry.npmmirror.com
 Excluded: .env, secrets, databases, caches, dependencies, test evidence, Git metadata
 EOF

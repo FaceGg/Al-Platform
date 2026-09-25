@@ -10,13 +10,13 @@
 ## Install
 
 ```bash
-tar -xzf linkraft-ubuntu-20260924-r4.tar.gz
-cd linkraft-ubuntu-20260924-r4
+tar -xzf linkraft-ubuntu-20260925-r5.tar.gz
+cd linkraft-ubuntu-20260925-r5
 chmod +x packaging/*.sh ml-platform/scripts/prepare-production-secrets.sh
 PUBLIC_ORIGIN=http://SERVER_PUBLIC_IP:5175 ./packaging/install-ubuntu.sh
 ```
 
-The installer uses `packaging/docker-compose.legacy-cpu.yml` through `packaging/compose-ubuntu.sh`. `PUBLIC_ORIGIN` must be the exact browser origin used to open the platform, without a trailing path; it is written to `FRONTEND_ORIGIN` and passed into the backend container. For additional exact origins, pass comma-separated `PUBLIC_ORIGIN_ALIASES`, for example `PUBLIC_ORIGIN_ALIASES=http://SERVER_PUBLIC_IP:5173,http://127.0.0.1:5173`. If `.env` already exists, its secrets remain unchanged; an explicit `PUBLIC_ORIGIN` updates only the CORS origin setting. The script sets the main platform binding to `0.0.0.0:5175`, exposes the annotator portal at `0.0.0.0:8443`, creates `secrets/notification_master_key` when absent, repairs bind-mounted `data/` and `uploads/` ownership for UID/GID 1000, and starts the complete Compose stack. The annotator frontend is built from its checked-in Node/Vite source during the image build; a pre-existing `dist/` directory is not required. The generated `.env` and `secrets/` directory contain credentials and must be backed up securely but never committed.
+The installer uses `packaging/docker-compose.legacy-cpu.yml` through `packaging/compose-ubuntu.sh`. `PUBLIC_ORIGIN` must be the exact browser origin used to open the platform, without a trailing path; it is written to `FRONTEND_ORIGIN` and passed into the backend container. For additional exact origins, pass comma-separated `PUBLIC_ORIGIN_ALIASES`, for example `PUBLIC_ORIGIN_ALIASES=http://SERVER_PUBLIC_IP:5173,http://127.0.0.1:5173`. If `.env` already exists, its secrets remain unchanged; an explicit `PUBLIC_ORIGIN` updates only the CORS origin setting. The script sets the main platform binding to `0.0.0.0:5175`, exposes the annotator portal at `0.0.0.0:8443`, creates `secrets/notification_master_key` when absent, repairs bind-mounted `data/` and `uploads/` ownership for UID/GID 1000, and starts the complete Compose stack. The CPUv1 MinIO server image does not include `mc`, so the legacy Compose profile disables the inherited server-side `mc ready local` check and lets the `minio-init` mc container retry readiness and bucket creation before dependent services start. The annotator frontend is built from its checked-in Node/Vite source during the image build; a pre-existing `dist/` directory is not required. The generated `.env` and `secrets/` directory contain credentials and must be backed up securely but never committed.
 
 Access the main platform at `http://SERVER_PUBLIC_IP:5175/` and the annotator portal at `http://SERVER_PUBLIC_IP:8443/`. If UFW is enabled, run `sudo ufw allow 5175/tcp` and `sudo ufw allow 8443/tcp`. Backend port 8000, frontend port 5173, annotator API port 8444, and MinIO ports 9000/9001 remain local-only by default. `ANNOTATOR_BIND_ADDRESS` defaults to `0.0.0.0`; set it to `127.0.0.1` in `.env` when the portal should remain local-only.
 
@@ -81,4 +81,11 @@ To repair upload errors caused by an existing root-owned bind mount without rein
 ./packaging/compose-ubuntu.sh restart backend
 ```
 
-To rebuild the archive from this source tree, run `./packaging/build-package.sh 20260924-r4`.
+If an r4 deployment reports `minio is unhealthy` and its health log says `mc: executable file not found`, deploy r5 or copy the r5 `packaging/docker-compose.legacy-cpu.yml` first. The CPUv1 server image intentionally does not contain `mc`; r5 runs readiness and bucket creation from the separate `minio-init` mc container:
+
+```bash
+./packaging/compose-ubuntu.sh up -d --force-recreate minio minio-init
+./packaging/compose-ubuntu.sh up -d --remove-orphans
+```
+
+To rebuild the archive from this source tree, run `./packaging/build-package.sh 20260925-r5`.

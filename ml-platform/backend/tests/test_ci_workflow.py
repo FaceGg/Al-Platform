@@ -495,6 +495,23 @@ test "$first_hash" = "$second_hash"
         self.assertIn('ANNOTATOR_BIND_ADDRESS="${ANNOTATOR_BIND_ADDRESS:-}"', installer)
         self.assertIn('set_env_value ANNOTATOR_BIND_ADDRESS "0.0.0.0"', installer)
 
+    def test_legacy_minio_healthcheck_runs_from_mc_init_container(self):
+        compose = LEGACY_CPU_COMPOSE_FILE.read_text(encoding="utf-8")
+        minio_block = compose.split("  minio:", 1)[1].split(
+            "  minio-init:", 1
+        )[0]
+        minio_init_block = compose.split("  minio-init:", 1)[1].split(
+            "  migrate:", 1
+        )[0]
+
+        self.assertIn('healthcheck:', minio_block)
+        self.assertIn('test: ["NONE"]', minio_block)
+        self.assertNotIn('mc ready local', minio_block)
+        self.assertIn('condition: service_started', minio_init_block)
+        self.assertIn('for attempt in 1 2 3 4 5', minio_init_block)
+        self.assertIn('mc alias set local http://minio:9000', minio_init_block)
+        self.assertIn('mc ready local', minio_init_block)
+
     def test_legacy_package_repairs_bind_mounted_upload_permissions(self):
         installer = UBUNTU_INSTALL_SCRIPT.read_text(encoding="utf-8")
         readme = UBUNTU_INSTALL_README.read_text(encoding="utf-8")

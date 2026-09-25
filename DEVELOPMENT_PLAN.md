@@ -1,5 +1,12 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-25 Ubuntu 安装包 r5：CPUv1 MinIO 镜像不含 mc 导致健康检查失败
+
+- 现象：目标服务器上的 `minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1` 进程正常启动并监听 9000/9001，但容器状态为 `unhealthy`；健康检查日志为 `exec: "mc": executable file not found in $PATH`。
+- 根因：legacy CPUv1 MinIO server 镜像不包含 `mc` 可执行文件，而主线 Compose 的 `mc ready local` 健康检查会被合并继承到该容器。
+- 修复：legacy Compose 对 MinIO 禁用继承的内部 `mc` 健康检查；由包含 `mc` 的 `minio-init` CPUv1 容器在 `service_started` 后执行 alias、ready 和建桶重试，完成后再放行所有依赖服务。安装包升为 `20260925-r5`。
+- 验证边界：新增合同先失败后通过；Compose 合并配置和脚本语法通过。目标服务器需用 r5 重建 `minio`/`minio-init` 并确认 `minio-init` 成功退出、后端健康和上传流程。
+
 ### 2026-09-24 Ubuntu 安装包 r4：上传临时文件目录权限
 
 - 现象：服务器部署后上传数据集返回 500，backend 日志在 `_stage_upload_sync` 写入 `/app/app/uploads/<uuid>_...` 时抛 `PermissionError: [Errno 13] Permission denied`。
