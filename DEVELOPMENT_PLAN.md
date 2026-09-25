@@ -1,5 +1,14 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-26 标注员门户误报“质检反馈/需重做”（r11）
+
+- 现象：标注员修改标签并重新回传后，任务列表显示质检反馈横幅和“需重做”徽章——但任务是正常等待验收，并非审核退回。
+- 根因：`TaskCard` 的 `FEEDBACK_STATES` 把 `returned_pending_acceptance`（每次回传后的正常等待验收状态）与 `edit_for_return`（审核退回）一起算作质检反馈状态；`isFeedbackTask` 还把 `task.status === 'returned_pending_acceptance'` 也计入。
+- 修复：`FEEDBACK_STATES` 收敛为 `['edit_for_return']`，“需重做”徽章与质检反馈横幅只在审核真正退回后出现（提交 `fad3723`）。
+- 验证：审核员门户全量 `118 passed`（新增回归：待验收任务不显示横幅/徽章、`isFeedbackTask` 仅对 `edit_for_return` 为真）；`tsc --noEmit` 通过。
+- 发布记录（2026-09-26）：安装包 `output/linkraft-ubuntu-20260926-r11.tar.gz`，manifest 绑定 HEAD `e2d2779`，SHA-256 `e72e5bd3ea22898facc540251a5a6e592992a788830f73e7b7736690b680daae`，归档抽查确认修复代码已包含。r11 同时包含 r10 的回传死锁自愈。
+- 待完成：目标服务器端到端验收（SQL 解锁 → 重新回传 → 冻结 completed → 合格验收，且任务列表不再误报需重做）；提交尚未推送（本地 main 领先 origin 15 个提交）。
+
 ### 2026-09-26 回传死锁自愈：冻结失败后允许重新回传（r10）
 
 - 现象：部署 r9（列宽迁移已生效）后审核员验收仍报 `RETURN_BATCH_NOT_READY`。服务器证据：`durable_operations` 无新记录，只有两条 09-25 的 `failed` 旧操作——旧批次是终态，验收/退回均被 `_require_completed_frozen_batch` 挡住。
