@@ -7,6 +7,7 @@
 - 修复：审核员任务列表/详情返回 `return_operation_state`、失败码和已校验样本数；主平台回传验收/数据管理列表在校验完成前不请求差异、不显示验收/退回按钮；审核员门户仅在操作 `completed` 时开放验收、退回和批注，并显示排队/校验中/失败状态。保留后端 `RETURN_BATCH_NOT_READY` 守卫。
 - 验证：回传后端定向套件 `43 passed`；主平台回传组件 `14 passed`；审核员门户全量 `116 passed`；两端 TypeScript/生产构建通过。目标 Ubuntu 的 worker/Celery 实际执行及浏览器验收仍需用新包部署验证。
 - 发布：源码安装包需在本次改动后重新生成并绑定新的 manifest/checksum，部署后先确认 worker 日志和批次 operation 从 `queued/running` 进入 `completed`，再进行验收。
+- 发布记录（2026-09-26）：修复已分两个提交落库——`dc09b5e`（worker 地址空间限制延后，XGBoost ONNX 注册修复）与 `578aa66`（回传验收 UI 门控 + r8 打包配置）。安装包 `output/linkraft-ubuntu-20260925-r8.tar.gz`（2.5M）已构建，manifest 绑定 HEAD `578aa66`，SHA-256 `e8ffb9323ffe70f6a05ccf34ee0b0c911f144324ab90e810cb13c142538d3f04`；归档抽查确认回传门控与 worker 修复代码均已包含。目标 Ubuntu 部署 r8 后的 worker 实际执行与浏览器验收仍待完成；提交尚未推送（本地 main 领先 origin 5 个提交）。
 
 ### 2026-09-25 AutoML XGBoost 注册：延后 Linux 地址空间限制并重新打包 r7
 
