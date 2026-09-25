@@ -39,6 +39,23 @@
 - 历史记录中的“百万样本”表述保留，不追溯改写历史语义；它不再是当前必须实现的发布门槛。
 - 本次仅更新验收范围，未生成 10,000 样本真实运行或浏览器分页证据。
 
+## 2026-09-25 四项真实运行证据追加
+
+以下 supplemental receipt 均绑定当前完整 SHA `6d47e49e64d3001e2f2cdcd176c2deeae6d86d14`，并通过 `generic_acceptance_evidence._validate_receipt` 的路径、SHA 和 SHA-256 校验；它们是当前矩阵语义的运行证据，不自动替换完整 19 项最终 manifest。
+
+| ID | 当前真实运行结果 | 原始证据 |
+|---|---|---|
+| CLU-02 | `passed`：真实 Celery worker 完成 10,000 行聚类，评估为 `all_rows/10000`；Playwright 分页 limit=50、cursor 连续读取，未返回全量数组 | `temp_test/task14-real-6d47e49/clu02-runtime.json`、`clu02-browser.json` |
+| AUTH-02 | `passed`：主平台 CORS/CSRF/限流/哈希/服务 JWT 与独立 annotator 网关注册、session、内部 JWT 转发均为真实 HTTP 结果 | `auth-runtime-final.json`、`auth-gateway-runtime-final.json` |
+| AUTO-02 | `passed`：真实 API→Redis/Celery worker→候选列表→手动注册；第一次 201、幂等重放 200 返回同一版本；真实浏览器渲染完成任务和候选 | `auto02-runtime-final.json`、`auto02-browser-final.json` |
+| REL-01 | `passed`：真实 broker/worker 租约过期重领、worker 终止恢复、重复投递无重复结果；harness 的 `preview_ready` 状态适配已显式记录 | `rel01-final/receipt.json`、`worker-1.log`、`worker-2.log` |
+
+### 当前发布边界
+
+- 本轮四项结果属于当前 SHA 的本地 supplemental evidence；完整 19 项 receipt、最终 evidence manifest 和远程 full CI 尚未在 `6d47e49e64d3001e2f2cdcd176c2deeae6d86d14` 上重生成/重跑。
+- 运行栈的 backend/worker 等镜像是带当前 revision label 的 `docker commit` 快照；Dockerfile 当前 SHA 重建在 Wolfi `apk add` 下载步骤受网络阻塞，不能把快照 provenance 写成 Dockerfile build passed。
+- 矩阵总体和 Task 14 保持 `in_progress`，不得据此关闭 Task 14 或宣称发布就绪。
+
 ## 2026-09-09 当前 SHA 检查记录
 
 - SHA：`e94862af844ea95a31203423c24a8ececd7553d6`。
