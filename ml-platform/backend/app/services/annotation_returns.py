@@ -252,6 +252,7 @@ def list_return_batches(db: Session, project_id, cursor: str | None = None, limi
                 "task_revision": row.task_revision,
                 "state": row.state,
                 "operation_state": operations[row.id].state if operations[row.id] is not None else None,
+                "operation_error_code": operations[row.id].error_code if operations[row.id] is not None else None,
                 "validated_row_count": (
                     (operations[row.id].result_summary or {}).get("validated_row_count")
                     if operations[row.id] is not None else None

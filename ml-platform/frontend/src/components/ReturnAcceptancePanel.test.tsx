@@ -62,6 +62,33 @@ describe("ReturnAcceptancePanel", () => {
     expect(screen.queryByRole("button", { name: "验收并生成数据版本" })).toBeNull();
   });
 
+  it("does not request frozen details while return validation is still running", async () => {
+    vi.mocked(returns.listReturnBatches).mockResolvedValue({
+      items: [{
+        id: "batch-queued",
+        assignment_id: "assignment-queued",
+        task_revision: 4,
+        state: "pending",
+        operation_state: "running",
+        validated_row_count: null,
+        created_at: null,
+        task_id: "66666666-2222-3333-4444-555555555555",
+        task_name: "校验中的任务",
+        annotator_subject_id: "subject-queued",
+        annotator_name: "alice",
+      }],
+      total: 1,
+      next_cursor: null,
+    });
+
+    render(<ReturnAcceptancePanel projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "查看状态" }));
+
+    expect(await screen.findByText(/回传内容正在校验，完成后才能验收或退回/)).toBeVisible();
+    expect(returns.diffReturnBatch).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "验收并生成数据版本" })).toBeNull();
+  });
+
   it("accepts a completed return batch from the drawer", async () => {
     const openSpy = vi.fn();
     vi.stubGlobal("open", openSpy);

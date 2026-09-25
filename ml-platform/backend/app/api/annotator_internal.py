@@ -22,6 +22,7 @@ from app.models.labeling import (
     AnnotationSampleCurrent,
 )
 from app.models.platform_models import AnnotationTaskScopeSample, GenericAnnotationTask
+from app.models.operation import DurableOperation
 from app.models.project import Project
 from app.models.user import User
 from app.models.access import AuditEvent
@@ -1339,6 +1340,22 @@ def _task_return_state(db: Session, task_id: uuid.UUID) -> tuple[AnnotationRetur
     return latest, pending
 
 
+def _return_operation_metadata(db: Session, batch: AnnotationReturnBatch | None) -> dict[str, object]:
+    """Expose only the durable validation status needed by the review portal.
+
+    A return batch is created before its immutable snapshot is frozen by the
+    worker.  The batch's ``pending`` state therefore does not by itself mean
+    that review actions are safe to run.
+    """
+    operation = db.get(DurableOperation, batch.operation_id) if batch is not None and batch.operation_id else None
+    summary = dict(operation.result_summary or {}) if operation is not None else {}
+    return {
+        "return_operation_state": operation.state if operation is not None else None,
+        "return_operation_error_code": operation.error_code if operation is not None else None,
+        "return_validated_row_count": summary.get("validated_row_count"),
+    }
+
+
 def _task_sample_count(db: Session, task: GenericAnnotationTask) -> int:
     scope = task.sample_scope or {}
     count = scope.get("sample_count")
@@ -1463,6 +1480,7 @@ def internal_admin_tasks(
     items = []
     for task in rows:
         assignment = assignments_by_task.get(task.id)
+        latest_batch = latest_batch_by_task.get(task.id)
         items.append({
             "id": str(task.id),
             "title": task.name or f"Annotation task {str(task.id)[:8]}",
@@ -1472,6 +1490,7 @@ def internal_admin_tasks(
             "task_revision": task.task_revision,
             "pending_return_batch_id": str(pending_batch_by_task[task.id].id) if task.id in pending_batch_by_task else None,
             "return_state": latest_batch_by_task[task.id].state if task.id in latest_batch_by_task else None,
+            **_return_operation_metadata(db, latest_batch),
             "sample_count": _task_sample_count(db, task),
             "completed_samples": completed_by_assignment.get(assignment.id, 0) if assignment is not None else None,
             "annotator_name": annotator_names.get(assignment.annotator_subject_id) if assignment is not None else None,
@@ -1507,6 +1526,7 @@ def internal_admin_task(task_id: uuid.UUID, request: Request, db: Session = Depe
         },
         "pending_return_batch_id": str(pending.id) if pending is not None else None,
         "return_state": latest.state if latest is not None else None,
+        **_return_operation_metadata(db, latest),
         "read_only": True,
         "task_revision": task.task_revision,
     }

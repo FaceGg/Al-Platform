@@ -1,5 +1,21 @@
 # 通用自动建模与数据标注平台当前开发计划
 
+### 2026-09-25 回传验收 409：异步冻结校验未完成时前端误触发验收链路
+
+- 现象：标注员回传后，主平台打开回传卡片可能出现 `Request failed with status code 409`，审核员门户点击验收返回 `RETURN_BATCH_NOT_READY`。
+- 已验证根因：回传批次先落库为 `pending`，由 worker 异步生成不可变快照；在 durable operation 仍为 `queued/running` 时，差异和验收接口按安全契约拒绝请求。主平台的查看摘要路径仍请求差异接口，审核员门户只判断存在 pending 批次，未判断校验操作状态。
+- 修复：审核员任务列表/详情返回 `return_operation_state`、失败码和已校验样本数；主平台回传验收/数据管理列表在校验完成前不请求差异、不显示验收/退回按钮；审核员门户仅在操作 `completed` 时开放验收、退回和批注，并显示排队/校验中/失败状态。保留后端 `RETURN_BATCH_NOT_READY` 守卫。
+- 验证：回传后端定向套件 `43 passed`；主平台回传组件 `14 passed`；审核员门户全量 `116 passed`；两端 TypeScript/生产构建通过。目标 Ubuntu 的 worker/Celery 实际执行及浏览器验收仍需用新包部署验证。
+- 发布：源码安装包需在本次改动后重新生成并绑定新的 manifest/checksum，部署后先确认 worker 日志和批次 operation 从 `queued/running` 进入 `completed`，再进行验收。
+
+### 2026-09-25 AutoML XGBoost 注册：延后 Linux 地址空间限制并重新打包 r7
+
+- 现象：任务 `087b597f-19a0-4d81-88c0-ca14b2d73b71` 的 XGBoost joblib 制品大小和 SHA-256 均匹配，`XGBClassifier` 在 backend 容器内直接调用 `convert_xgboost` 成功，但注册接口返回 `MODEL_CONVERSION_FAILED`。
+- 已验证根因：ONNX 转换 worker 在导入 `onnx_cpp2py_export` 等可选二进制扩展之前设置 `RLIMIT_AS=5298810880`；受限子进程报 `failed to map segment from shared object`，随后只返回稳定的通用错误码。
+- 修复：worker 启动时只设置 CPU 时间限制；模型族对应的 ONNX/XGBoost/LightGBM/CatBoost 二进制依赖加载完成后，再设置地址空间上限并执行转换。保留原有转换白名单、超时和非 root 运行边界。
+- 验证：回归测试先失败后通过；`tests.test_onnx_conversion` 为 12 tests OK（Windows 跳过 POSIX 资源限制用例）；模型注册服务/API 为 29 tests OK。目标 Ubuntu 容器需用新包重建 backend/worker 后重新执行实际注册。
+- 发布：源码安装包升为 `linkraft-ubuntu-20260925-r7.tar.gz`，继续保留 CPUv1 MinIO、5175/8443、公网 CORS、源码构建和密钥引导约束。
+
 ### 2026-09-25 Ubuntu 安装包 r6：采用目标 CPUv1 镜像的 HTTP readiness 健康检查
 
 - 现象：目标服务器确认 MinIO server 使用 `linux/amd64` 正常监听 9000/9001，但 r4 的 `mc ready local` 检查报 `mc: executable file not found`；目标部署提供的正确 Compose 使用 MinIO HTTP readiness endpoint。

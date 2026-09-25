@@ -10,6 +10,7 @@ function batch(overrides: Partial<ReturnBatch> = {}): ReturnBatch {
     task_revision: 2,
     state: "pending",
     created_at: null,
+    operation_state: "completed",
     ...overrides,
   };
 }
@@ -90,5 +91,27 @@ describe("ReturnBatchList", () => {
     expect(screen.getByRole("button", { name: "查看差异" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "验收" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "退回" })).not.toBeInTheDocument();
+  });
+
+  it("does not call review endpoints while the return snapshot is being validated", () => {
+    const onDiff = vi.fn();
+    const onAccept = vi.fn();
+    render(
+      <ReturnBatchList
+        items={[batch({ id: "batch-running", operation_state: "running" })]}
+        loading={false}
+        onAccept={onAccept}
+        onReturn={vi.fn()}
+        onDiff={onDiff}
+      />,
+    );
+    expect(screen.getByText("校验中")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "验收" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "退回" })).not.toBeInTheDocument();
+    const diff = screen.getByRole("button", { name: "等待校验" });
+    expect(diff).toBeDisabled();
+    fireEvent.click(diff);
+    expect(onDiff).not.toHaveBeenCalled();
+    expect(onAccept).not.toHaveBeenCalled();
   });
 });

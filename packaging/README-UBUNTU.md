@@ -10,8 +10,8 @@
 ## Install
 
 ```bash
-tar -xzf linkraft-ubuntu-20260925-r6.tar.gz
-cd linkraft-ubuntu-20260925-r6
+tar -xzf linkraft-ubuntu-20260925-r8.tar.gz
+cd linkraft-ubuntu-20260925-r8
 chmod +x packaging/*.sh ml-platform/scripts/prepare-production-secrets.sh
 PUBLIC_ORIGIN=http://SERVER_PUBLIC_IP:5175 ./packaging/install-ubuntu.sh
 ```
@@ -44,6 +44,27 @@ sudo ufw allow 5173/tcp
 ```
 
 To make `5173` the primary browser origin instead, set `PUBLIC_ORIGIN=http://SERVER_PUBLIC_IP:5173` and keep `FRONTEND_BIND_ADDRESS=0.0.0.0`; the installer automatically adds the matching `5175` host alias when no explicit alias list is supplied.
+
+## Return Acceptance Readiness
+
+回传批次创建后，worker 会先异步冻结并校验不可变快照。批次显示为 `pending` 不代表已经可以验收；在操作状态为 `queued` 或 `running` 时，后端会按安全契约返回 `409 RETURN_BATCH_NOT_READY`。r8 的主平台和审核员门户会显示“回传校验中”，并在校验完成前禁用差异、验收、退回和批注操作。
+
+回传后请在门户中点击“刷新”，确认回传操作状态为 `completed` 再验收。若持续停留在校验中，先检查 worker 和 scheduler：
+
+```bash
+./packaging/compose-ubuntu.sh ps backend worker scheduler
+./packaging/compose-ubuntu.sh logs --tail=200 worker scheduler
+```
+
+从 r4-r7 升级时，保留现有 `.env`、`secrets/` 和数据库，只覆盖源码并重建相关服务：
+
+```bash
+tar -xzf /path/to/linkraft-ubuntu-20260925-r8.tar.gz \
+  --strip-components=1 -C ~/linkraft-ubuntu-20260924-r4
+cd ~/linkraft-ubuntu-20260924-r4
+./packaging/compose-ubuntu.sh up -d --build --force-recreate backend worker scheduler frontend annotator annotator-frontend
+./packaging/compose-ubuntu.sh ps
+```
 
 ## CPU Compatibility
 
@@ -81,11 +102,23 @@ To repair upload errors caused by an existing root-owned bind mount without rein
 ./packaging/compose-ubuntu.sh restart backend
 ```
 
-If an r4 or r5 deployment reports a MinIO health-check problem, deploy r6 or copy the r6 `packaging/docker-compose.legacy-cpu.yml` first. The CPUv1 server image does not provide the `mc` health-check command; r6 uses the server's HTTP readiness endpoint and keeps bucket creation in the separate `minio-init` mc container:
+If an r4, r5, r6, or r7 deployment returns `MODEL_CONVERSION_FAILED` when registering an XGBoost AutoML result, update the existing deployment directory without replacing `.env`, `secrets/`, or database files, then rebuild the Python services:
+
+```bash
+tar -xzf /path/to/linkraft-ubuntu-20260925-r8.tar.gz \
+  --strip-components=1 -C ~/linkraft-ubuntu-20260924-r4
+cd ~/linkraft-ubuntu-20260924-r4
+./packaging/compose-ubuntu.sh up -d --build --force-recreate backend worker scheduler
+./packaging/compose-ubuntu.sh ps backend worker scheduler
+```
+
+The r8 worker imports ONNX/XGBoost binary extensions before applying its Linux address-space limit. Existing model artifacts do not need to be retrained; retry registration after the rebuilt `backend` container is healthy.
+
+If an r4, r5, r6, or r7 deployment reports a MinIO health-check problem, deploy r8 or copy the r8 `packaging/docker-compose.legacy-cpu.yml` first. The CPUv1 server image does not provide the `mc` health-check command; r8 uses the server's HTTP readiness endpoint and keeps bucket creation in the separate `minio-init` mc container:
 
 ```bash
 ./packaging/compose-ubuntu.sh up -d --force-recreate minio minio-init
 ./packaging/compose-ubuntu.sh up -d --remove-orphans
 ```
 
-To rebuild the archive from this source tree, run `./packaging/build-package.sh 20260925-r6`.
+To rebuild the archive from this source tree, run `./packaging/build-package.sh 20260925-r8`.

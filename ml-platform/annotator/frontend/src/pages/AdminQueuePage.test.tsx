@@ -19,6 +19,8 @@ const returnedTask = {
   task_revision: 3,
   pending_return_batch_id: 'batch-1',
   return_state: 'pending',
+  return_operation_state: 'completed',
+  return_validated_row_count: 12,
   sample_count: 12,
   completed_samples: 12,
   annotator_name: 'annotator-a',
@@ -82,6 +84,23 @@ describe('AdminQueuePage', () => {
     expect(disabledButtons.map((button) => button.textContent)).toEqual(['合格验收', '退回修改', '批注'])
     disabledButtons.forEach((button) => expect(button).toBeDisabled())
     expect(within(returnedCard).queryAllByTitle(disabledReason)).toHaveLength(0)
+  })
+
+  it('keeps review actions disabled while return validation is running', async () => {
+    vi.mocked(listAdminTasks).mockResolvedValueOnce({
+      items: [{ ...returnedTask, return_operation_state: 'running' }, freshTask],
+      total: 2,
+      next_cursor: null,
+    })
+    render(<AdminQueuePage onOpenTask={vi.fn()} />)
+    await screen.findByText('已回传任务')
+    const returnedCard = cardOf('已回传任务')
+
+    expect(within(returnedCard).getByText('回传校验中')).toBeVisible()
+    expect(within(returnedCard).getAllByTitle('回传校验尚未完成，不能验收/退回/批注')).toHaveLength(3)
+    within(returnedCard)
+      .getAllByTitle('回传校验尚未完成，不能验收/退回/批注')
+      .forEach((button) => expect(button).toBeDisabled())
   })
 
   it('opens the review workspace via the comment action', async () => {
