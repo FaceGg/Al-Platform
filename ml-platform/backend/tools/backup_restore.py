@@ -230,6 +230,35 @@ def _signed_evidence(payload: Mapping[str, object]) -> str:
     return hmac.new(_evidence_key(), serialized, hashlib.sha256).hexdigest()
 
 
+def _normalize_database_snapshot(value: object) -> dict[str, object] | None:
+    """Validate a row-count/FK snapshot before binding it to backup evidence."""
+    if not isinstance(value, Mapping):
+        return None
+    table_counts = value.get("table_counts")
+    foreign_key_violations = value.get("foreign_key_violations")
+    if not isinstance(table_counts, Mapping) or not isinstance(foreign_key_violations, list):
+        return None
+    normalized_counts: dict[str, int] = {}
+    for table, count in table_counts.items():
+        if (
+            not isinstance(table, str)
+            or not table
+            or not isinstance(count, int)
+            or isinstance(count, bool)
+            or count < 0
+        ):
+            return None
+        normalized_counts[table] = count
+    if not normalized_counts:
+        return None
+    if not all(isinstance(item, Mapping) for item in foreign_key_violations):
+        return None
+    return {
+        "table_counts": dict(sorted(normalized_counts.items())),
+        "foreign_key_violations": [dict(item) for item in foreign_key_violations],
+    }
+
+
 def _is_regular_evidence_file(path: Path) -> bool:
     try:
         metadata = path.lstat()
@@ -271,6 +300,7 @@ def _write_operation_receipt(
     returncode: int,
     duration_seconds: float,
     completed_at: datetime | None = None,
+    source_snapshot: Mapping[str, object] | None = None,
 ) -> Path:
     if duration_seconds < 0:
         raise ValueError("operation duration must not be negative")
@@ -287,6 +317,11 @@ def _write_operation_receipt(
         "duration_seconds": float(duration_seconds),
         "completed_at": completed.astimezone(timezone.utc).isoformat(),
     }
+    if source_snapshot is not None:
+        normalized_snapshot = _normalize_database_snapshot(source_snapshot)
+        if normalized_snapshot is None:
+            raise ValueError("backup source snapshot is invalid")
+        payload["source_snapshot"] = normalized_snapshot
     receipt = {**payload, "signature": _signed_evidence(payload)}
     receipt_path = manifest_path.parent / receipt_name
     return _write_evidence_json(receipt_path, receipt)
@@ -360,6 +395,7 @@ def _write_pending_operation_receipt(
     completed_at: datetime | None = None,
     *,
     backup_run_id: str,
+    source_snapshot: Mapping[str, object] | None = None,
 ) -> Path:
     if duration_seconds < 0:
         raise ValueError("operation duration must not be negative")
@@ -381,6 +417,11 @@ def _write_pending_operation_receipt(
         "files": normalized_files,
         "backup_run_id": normalized_run_id,
     }
+    if source_snapshot is not None:
+        normalized_snapshot = _normalize_database_snapshot(source_snapshot)
+        if normalized_snapshot is None:
+            raise ValueError("backup source snapshot is invalid")
+        payload["source_snapshot"] = normalized_snapshot
     receipt = {**payload, "signature": _signed_evidence(payload)}
     return _write_evidence_json(receipt_path, receipt)
 
@@ -393,7 +434,8 @@ def _read_pending_operation_receipt(
         return None
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-        if not isinstance(receipt, dict) or set(receipt) != {
+        if not isinstance(receipt, dict) or set(receipt) not in (
+            {
             "evidence_version",
             "operation",
             "returncode",
@@ -402,7 +444,19 @@ def _read_pending_operation_receipt(
             "files",
             "backup_run_id",
             "signature",
-        }:
+            },
+            {
+                "evidence_version",
+                "operation",
+                "returncode",
+                "duration_seconds",
+                "completed_at",
+                "files",
+                "backup_run_id",
+                "source_snapshot",
+                "signature",
+            },
+        ):
             return None
         payload = {name: value for name, value in receipt.items() if name != "signature"}
         returncode = payload["returncode"]
@@ -410,6 +464,11 @@ def _read_pending_operation_receipt(
         completed_at = payload["completed_at"]
         files = _normalize_pending_files(payload["files"])
         backup_run_id = _normalize_backup_run_id(payload["backup_run_id"])
+        source_snapshot = (
+            _normalize_database_snapshot(payload["source_snapshot"])
+            if "source_snapshot" in payload
+            else None
+        )
         if (
             payload["evidence_version"] != _EVIDENCE_VERSION
             or payload["operation"] != operation
@@ -422,6 +481,7 @@ def _read_pending_operation_receipt(
             or not isinstance(completed_at, str)
             or files is None
             or backup_run_id is None
+            or ("source_snapshot" in payload and source_snapshot is None)
             or not isinstance(receipt["signature"], str)
             or not hmac.compare_digest(receipt["signature"], _signed_evidence(payload))
         ):
@@ -437,6 +497,7 @@ def _read_pending_operation_receipt(
         "completed_at": completed.astimezone(timezone.utc),
         "files": files,
         "backup_run_id": backup_run_id,
+        **({"source_snapshot": source_snapshot} if source_snapshot is not None else {}),
     }
 
 
@@ -636,6 +697,7 @@ def _pending_matches_finalized_backup(
         and pending_completed == finalized_time.astimezone(timezone.utc)
         and pending.get("files") == expected_files
         and pending.get("backup_run_id") == backup_run_id
+        and pending.get("source_snapshot") == finalized.get("source_snapshot")
     )
 
 
@@ -786,13 +848,18 @@ def create_backup_manifest(
                 returncode,
                 duration_seconds,
                 completed_at,
+                receipt.get("source_snapshot"),
             )
         for path in pending_paths:
             path.unlink()
     return manifest
 
 
-def backup_postgres(database_url: str, output: Path) -> dict[str, object]:
+def backup_postgres(
+    database_url: str,
+    output: Path,
+    source_snapshot: Mapping[str, object] | None = None,
+) -> dict[str, object]:
     output.parent.mkdir(parents=True, exist_ok=True)
     environment, database_name = _postgres_environment(database_url)
     started = time.perf_counter()
@@ -821,6 +888,7 @@ def backup_postgres(database_url: str, output: Path) -> dict[str, object]:
             [_backup_evidence_entry(output.parent, output)],
             completed_at,
             backup_run_id=uuid.uuid4().hex,
+            source_snapshot=source_snapshot,
         )
     return result
 
@@ -1260,20 +1328,37 @@ def _read_operation_receipt(
         return None
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-        if not isinstance(receipt, dict) or set(receipt) != {
-            "evidence_version",
-            "operation",
-            "manifest_sha256",
-            "returncode",
-            "duration_seconds",
-            "completed_at",
-            "signature",
-        }:
+        if not isinstance(receipt, dict) or set(receipt) not in (
+            {
+                "evidence_version",
+                "operation",
+                "manifest_sha256",
+                "returncode",
+                "duration_seconds",
+                "completed_at",
+                "signature",
+            },
+            {
+                "evidence_version",
+                "operation",
+                "manifest_sha256",
+                "returncode",
+                "duration_seconds",
+                "completed_at",
+                "source_snapshot",
+                "signature",
+            },
+        ):
             return None
         payload = {name: value for name, value in receipt.items() if name != "signature"}
         returncode = payload["returncode"]
         duration = payload["duration_seconds"]
         completed_at = payload["completed_at"]
+        source_snapshot = (
+            _normalize_database_snapshot(payload["source_snapshot"])
+            if "source_snapshot" in payload
+            else None
+        )
         if (
             payload["evidence_version"] != _EVIDENCE_VERSION
             or payload["operation"] != operation
@@ -1285,6 +1370,7 @@ def _read_operation_receipt(
             or not math.isfinite(float(duration))
             or float(duration) < 0
             or not isinstance(completed_at, str)
+            or ("source_snapshot" in payload and source_snapshot is None)
             or not isinstance(receipt["signature"], str)
             or not hmac.compare_digest(receipt["signature"], _signed_evidence(payload))
         ):
@@ -1298,6 +1384,7 @@ def _read_operation_receipt(
         "returncode": returncode,
         "duration_seconds": float(duration),
         "completed_at": completed_at,
+        **({"source_snapshot": source_snapshot} if source_snapshot is not None else {}),
     }
 
 
@@ -1332,11 +1419,6 @@ def verify_restore(
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if not isinstance(manifest, dict):
             raise ValueError("backup manifest must be an object")
-        source = collect_database_snapshot(source_database)
-        restored = collect_database_snapshot(restored_database)
-        objects = _verify_object_hashes(manifest, restored_bucket)
-        counts_equal = source["table_counts"] == restored["table_counts"]
-        fk_violations = restored["foreign_key_violations"]
         postgres_backup_operation = _read_operation_receipt(
             manifest_path,
             "postgres-backup-operation.json",
@@ -1357,6 +1439,22 @@ def verify_restore(
             "minio-restore-operation.json",
             "restore-minio",
         )
+        source_snapshot = (
+            postgres_backup_operation.get("source_snapshot")
+            if postgres_backup_operation is not None
+            else None
+        )
+        source = (
+            _normalize_database_snapshot(source_snapshot)
+            if source_snapshot is not None
+            else collect_database_snapshot(source_database)
+        )
+        if source is None:
+            raise ValueError("backup source snapshot is invalid")
+        restored = collect_database_snapshot(restored_database)
+        objects = _verify_object_hashes(manifest, restored_bucket)
+        counts_equal = source["table_counts"] == restored["table_counts"]
+        fk_violations = restored["foreign_key_violations"]
         restore_returncode = restore_operation["returncode"] if restore_operation else None
         minio_restore_returncode = (
             minio_restore_operation["returncode"] if minio_restore_operation else None
@@ -1455,12 +1553,29 @@ def verify_restore(
     return result
 
 
+def _read_database_snapshot(path: Path) -> dict[str, object]:
+    if not _is_regular_evidence_file(path):
+        raise ValueError("backup source snapshot must be a regular file")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("backup source snapshot is invalid") from error
+    normalized = _normalize_database_snapshot(value)
+    if normalized is None:
+        raise ValueError("backup source snapshot is invalid")
+    return normalized
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     backup = subparsers.add_parser("backup-postgres")
     backup.add_argument("--database-url-env", required=True)
     backup.add_argument("--output", type=Path, required=True)
+    backup.add_argument("--source-snapshot", type=Path)
+    snapshot = subparsers.add_parser("snapshot")
+    snapshot.add_argument("--database-url-env", required=True)
+    snapshot.add_argument("--output", type=Path, required=True)
     backup_minio_parser = subparsers.add_parser("backup-minio")
     backup_minio_parser.add_argument("--source", required=True)
     backup_minio_parser.add_argument("--destination", required=True)
@@ -1492,8 +1607,22 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "backup-postgres":
-        result = backup_postgres(os.environ[args.database_url_env], args.output)
+        source_snapshot = (
+            _read_database_snapshot(args.source_snapshot)
+            if args.source_snapshot is not None
+            else None
+        )
+        result = backup_postgres(
+            os.environ[args.database_url_env],
+            args.output,
+            source_snapshot,
+        )
         exit_code = int(result["returncode"])
+    elif args.command == "snapshot":
+        snapshot_result = collect_database_snapshot(os.environ[args.database_url_env])
+        _write_evidence_json(args.output, snapshot_result)
+        result = snapshot_result
+        exit_code = 0
     elif args.command == "backup-minio":
         result = mirror_minio(
             args.source,

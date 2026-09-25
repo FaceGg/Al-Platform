@@ -131,6 +131,14 @@
 - **运行环境：** WSL Ubuntu Docker 是本轮唯一真实 Compose 环境；旧项目镜像和 builder cache 已按用户授权清理，通用旧栈容器已停止以释放资源，Task 14 证据栈保持运行。worker/scheduler 的 Compose HTTP healthcheck 对 Celery-only 子镜像显示 `unhealthy`，但 worker 日志和四项真实运行结果均通过；该状态作为 healthcheck 设计边界披露，不改写为服务 HTTP 健康。
 - **发布边界：** 本地 `git diff --check`、四项 supplemental receipt 校验、19 项 receipt 汇总、最终 evidence manifest 和远程 full CI 必须全部绑定同一个最终干净 SHA。未完成远程 full CI、下载并核对 19 项 receipt/manifest 前，Task 14 保持 `in_progress`，不合并或关闭。
 
+## 6.7 备份恢复源库增长竞态修复（2026-09-26）
+
+第二轮当前 SHA `a1b658308465cf9f6f07718f655133334d8ea172` 的远程 full CI 中，性能摘要本身为 `passed`，但 Week 11–12 收据将备份时刻的源库快照（`inference_request_logs=5799`）与恢复校验时仍在增长的源库（`6000`）比较，报告 `row_counts_equal=false`。该结果是验收证据竞态，不是 PostgreSQL restore 丢数据。
+
+本轮修复在执行 `pg_dump` 前采集并规范化数据库快照，将其签名嵌入 PostgreSQL 备份 operation receipt；恢复校验优先使用签名快照，只实时读取恢复库并继续校验外键、对象哈希和 RPO/RTO；旧收据没有快照时保留实时源库回退。新增源库继续增长的回归测试，`tests/test_week11_12_tools.py` **111 passed、5 subtests passed**，后端全量为 **2008 passed、110 skipped、759 subtests passed、329 warnings**。
+
+该修复提交后的 Docker 运行证据、四项 supplemental receipt、19 项最终 manifest 和远程 full CI 尚未完成；Task 14 继续保持 `in_progress`，所有旧 SHA 收据不作为新提交的通过证据。
+
 ## 7. 计划归档索引
 
 - [实施计划索引](ml-platform/docs/superpowers/plans/README.md)：当前、历史、已替代和合并子计划的统一入口。
