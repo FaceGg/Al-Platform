@@ -109,6 +109,7 @@ def _assert_safe_text(value: str, *, location: str) -> None:
 
 _STRUCTURAL_COUNT_MAP_KEYS = frozenset(
     {
+        "table_counts",
         "source_table_counts",
         "restored_table_counts",
         "before_table_counts",
