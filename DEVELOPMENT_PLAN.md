@@ -180,6 +180,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - **证据边界：** 性能门禁失败使该 SHA 没有生成 `final-evidence-manifest.json` 和 19 项当前 SHA receipt；上一轮 `8ffa162` 的 64 文件 manifest 与 19 项 receipt 仍是最后一轮完整通过证据，不能跨 SHA 直接替代。
 - **处理决定：** 不放宽 `200 ms` p95 门槛，也不把 WSL 本地结果当作 GitHub runner 发布门禁。Task 14 回到 **`in_progress`**，不关闭；待当前主分支性能门禁稳定通过后再生成同 SHA manifest/19 项 receipt，并重新评估关闭。
 
+## 6.12 warm-inference 首轮预热缺口修复（2026-09-26）
+
+对 `74be1ce` 两次失败样本、`8ffa162` 通过样本和压测执行顺序逐项核对后，确认正式 `run_performance.sh` 虽然工具已支持 `--warmup`，却没有在 warm-inference 测量前执行预热。失败均为首轮单独越过 200 ms，后两轮回落，且请求全为 HTTP 200；这与模型已在 fixture 阶段加载、但 backend 两个进程的认证/运行时首次并发路径未被预热相符。
+
+- **最小修复：** 每个 warm-inference 测量轮次增加 `--warmup 20`（20 路并发、每路 20 个请求，即 400 个同路径预热请求）；正式测量仍固定为 20 路 × 100 请求、2,000 请求和原有 `p95 <= 200 ms`、`p99 <= 500 ms` 门槛。
+- **证据约束：** 原始 warm-inference receipt 记录预热请求/错误计数；summary 对预热计数执行 accounting 校验并要求 `errors == 0`，预热失败保持 fail-closed。没有把预热请求计入正式测量样本。
+- **本地验证：** 新增的预热 receipt、预热失败门禁和 acceptance runner 合同先在现状下失败，修复后 `tests.test_week11_12_tools` **114 passed**；`git diff --check` 和经 CRLF 归一化输入的 `run_performance.sh` `bash -n` 通过。远程完整 CI 尚未在该修复 SHA 运行，Task 14 仍为 **`in_progress`**。
+
 ## 7. 计划归档索引
 
 - [实施计划索引](ml-platform/docs/superpowers/plans/README.md)：当前、历史、已替代和合并子计划的统一入口。

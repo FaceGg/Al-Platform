@@ -209,6 +209,25 @@ def _accounting_gate(result: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+def _warmup_gate(result: Mapping[str, object]) -> dict[str, object]:
+    """Require an explicitly recorded warmup phase to complete without errors."""
+    warmup = result.get("warmup")
+    if not isinstance(warmup, Mapping):
+        return {
+            "value": warmup,
+            "expected": {"errors": 0},
+            "passed": False,
+            "error_code": "PERFORMANCE_WARMUP_INVALID",
+        }
+    accounting = _accounting_gate(warmup)
+    errors = warmup.get("errors")
+    return {
+        "value": accounting["value"],
+        "expected": {**accounting["expected"], "errors": 0},
+        "passed": accounting["passed"] and errors == 0,
+    }
+
+
 def _workflow_completion_gate(result: Mapping[str, object]) -> dict[str, object]:
     requests = result.get("requests")
     completed_requests = result.get("completed_requests")
@@ -295,6 +314,8 @@ def validate_iteration_evidence(result: Mapping[str, object]) -> dict[str, objec
     }
     if scenario_name == "welding-e2e":
         gates["workflow_completion"] = _workflow_completion_gate(result)
+    if "warmup" in result:
+        gates["warmup"] = _warmup_gate(result)
     return gates
 
 
@@ -334,6 +355,22 @@ def write_result(path: Path, result: Mapping[str, object]) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _warmup_evidence(result: Mapping[str, object]) -> dict[str, object]:
+    """Keep warmup accounting in the raw receipt without retaining its samples."""
+    return {
+        key: result[key]
+        for key in (
+            "concurrency",
+            "requests_per_worker",
+            "requests",
+            "errors",
+            "error_rate",
+            "status_counts",
+        )
+        if key in result
+    }
 
 
 def _request(
@@ -680,13 +717,14 @@ def main(argv: list[str] | None = None) -> int:
         headers["Authorization"] = f"Bearer {os.environ[args.bearer_env]}"
     if args.api_key_env:
         headers["X-Inference-Api-Key"] = os.environ[args.api_key_env]
+    warmup_result = None
     if args.scenario == "welding-e2e":
         if args.concurrency != 1 or not args.completion_url_template:
             parser.error(
                 "welding-e2e requires concurrency 1 and --completion-url-template",
             )
         if args.warmup:
-            run_workflow_scenario(
+            warmup_result = run_workflow_scenario(
                 args.url,
                 args.completion_url_template,
                 args.warmup,
@@ -706,7 +744,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         if args.warmup:
-            run_http_scenario(
+            warmup_result = run_http_scenario(
                 args.url,
                 args.concurrency,
                 args.warmup,
@@ -729,6 +767,8 @@ def main(argv: list[str] | None = None) -> int:
             "commit": _git_commit(),
         },
     )
+    if warmup_result is not None:
+        result["warmup"] = _warmup_evidence(warmup_result)
     write_result(args.output, result)
     return 0
 

@@ -51,6 +51,7 @@ from tools.week11_performance import (
     main as performance_main,
     percentile,
     run_http_scenario,
+    validate_iteration_evidence,
     write_result,
 )
 
@@ -216,6 +217,17 @@ class AcceptanceRunnerContractTests(unittest.TestCase):
         self.assertIn('"${COMPOSE[@]}" ps -q "$service"', content)
         self.assertNotIn('BACKEND="${PROJECT}-backend-1"', content)
         self.assertNotIn('WORKER="${PROJECT}-worker-1"', content)
+
+    def test_performance_runner_prewarms_each_measured_inference_iteration(self):
+        root = Path(__file__).resolve().parents[3]
+        runner = (
+            root / "ml-platform" / "backend" / "tools" / "acceptance"
+            / "run_performance.sh"
+        )
+        content = runner.read_text(encoding="utf-8")
+
+        self.assertIn("--scenario warm-inference --iteration", content)
+        self.assertIn("--warmup 20", content)
 
     def test_performance_runner_uses_backend_container_after_recreation(self):
         root = Path(__file__).resolve().parents[3]
@@ -458,6 +470,47 @@ class PerformanceScenarioTests(unittest.TestCase):
         )
         self.assertNotIn("X-API-Key", _InferenceApiKeyHandler.observed_headers)
 
+    def test_cli_records_successful_warmup_in_raw_evidence(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _OkHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "result.json"
+                with patch(
+                    "tools.week11_performance._git_commit",
+                    return_value="a" * 40,
+                ):
+                    exit_code = performance_main(
+                        [
+                            "run",
+                            "--url",
+                            f"http://127.0.0.1:{server.server_port}/",
+                            "--concurrency",
+                            "1",
+                            "--requests-per-worker",
+                            "1",
+                            "--warmup",
+                            "1",
+                            "--scenario",
+                            "cold-model-load",
+                            "--iteration",
+                            "1",
+                            "--output",
+                            str(output),
+                        ],
+                    )
+                result = json.loads(output.read_text(encoding="utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=3)
+            server.server_close()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["warmup"]["requests"], 1)
+        self.assertEqual(result["warmup"]["errors"], 0)
+
+
     def test_welding_runner_waits_for_all_terminal_completions(self):
         runner = getattr(week11_performance, "run_workflow_scenario", None)
         self.assertIsNotNone(runner)
@@ -651,6 +704,22 @@ class PerformanceScenarioTests(unittest.TestCase):
             self._summarize(root, output)
             core_summary = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(core_summary["scenarios"]["core-read"]["status"], "passed")
+
+    def test_failed_warmup_is_a_candidate_failure(self):
+        result = self._raw_result("warm-inference", 1)
+        result["warmup"] = {
+            "concurrency": 1,
+            "requests_per_worker": 1,
+            "requests": 1,
+            "errors": 1,
+            "error_rate": 1.0,
+            "status_counts": {"500": 1},
+        }
+
+        gates = validate_iteration_evidence(result)
+
+        self.assertIn("warmup", gates)
+        self.assertFalse(gates["warmup"]["passed"])
 
     def test_summary_accepts_single_cold_and_welding_measurements(self):
         with tempfile.TemporaryDirectory() as directory:
