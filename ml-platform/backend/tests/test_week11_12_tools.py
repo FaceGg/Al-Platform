@@ -1195,6 +1195,62 @@ class BackupRestoreTests(unittest.TestCase):
         self.assertNotIn("user:password", serialized)
         self.assertEqual(result["object_hashes"]["status"], "passed")
 
+    def test_verify_restore_uses_the_signed_backup_snapshot_when_source_keeps_growing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backup_root = root / "backup"
+            (backup_root / "minio").mkdir(parents=True)
+            (backup_root / "minio" / "artifact.bin").write_bytes(b"artifact")
+            restored_root = root / "restored-objects"
+            restored_root.mkdir()
+            (restored_root / "artifact.bin").write_bytes(b"artifact")
+            source = "postgresql://user:password@db/source"
+            restored = "postgresql://user:password@db/restored"
+            backup_snapshot = {
+                "table_counts": {"retained": 1},
+                "foreign_key_violations": [],
+            }
+            restored_snapshot = {
+                "table_counts": {"retained": 1},
+                "foreign_key_violations": [],
+            }
+            with patch.dict(
+                os.environ,
+                self._restore_environment(restored, str(restored_root)),
+                clear=True,
+            ):
+                create_backup_manifest(backup_root)
+                _write_operation_receipt(
+                    backup_root / "manifest.json",
+                    "postgres-backup-operation.json",
+                    "backup-postgres",
+                    0,
+                    1.0,
+                    source_snapshot=backup_snapshot,
+                )
+                _write_operation_receipt(
+                    backup_root / "manifest.json",
+                    "minio-backup-operation.json",
+                    "backup-minio",
+                    0,
+                    1.0,
+                )
+                self._write_signed_restore_receipts(backup_root)
+                with patch(
+                    "tools.backup_restore.collect_database_snapshot",
+                    return_value=restored_snapshot,
+                ) as collect:
+                    result = verify_restore(
+                        source,
+                        restored,
+                        backup_root / "manifest.json",
+                        restored_root,
+                        root / "restore-result.json",
+                    )
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["source_table_counts"], backup_snapshot["table_counts"])
+        collect.assert_called_once_with(restored)
+
     def test_verify_restore_rejects_stale_or_future_backup_rpo(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

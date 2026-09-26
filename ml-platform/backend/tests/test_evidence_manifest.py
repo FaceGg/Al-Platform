@@ -697,6 +697,42 @@ class EvidenceManifestTests(unittest.TestCase):
                 )
             self.assertTrue(output.exists())
 
+    def test_generate_accepts_backup_source_snapshot_table_names_containing_api_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_dir = Path(directory) / "evidence"
+            self._write_required_evidence(evidence_dir, include_environment=True, semantic=True)
+            backup_path = evidence_dir / "backup" / "postgres-backup-operation.json"
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            backup_path.write_text(
+                json.dumps(
+                    {
+                        "evidence_version": 1,
+                        "operation": "backup-postgres",
+                        "manifest_sha256": "a" * 64,
+                        "returncode": 0,
+                        "duration_seconds": 1.0,
+                        "completed_at": "2026-01-01T00:00:00+00:00",
+                    },
+                ),
+                encoding="utf-8",
+            )
+            backup = json.loads(backup_path.read_text(encoding="utf-8"))
+            backup["source_snapshot"] = {
+                "table_counts": {"inference_api_keys": 1},
+                "foreign_key_violations": [],
+            }
+            backup_path.write_text(json.dumps(backup), encoding="utf-8")
+            output = Path(directory) / "manifest.json"
+
+            with patch("tools.evidence_manifest._git_commit", return_value=self._COMMIT):
+                generate(
+                    evidence_dir,
+                    output,
+                    remote_ci_run_url="https://github.example.invalid/actions/runs/1",
+                    image_digest=self._IMAGE_DIGEST,
+                )
+            self.assertTrue(output.exists())
+
     def test_generate_rejects_status_only_required_evidence_shells(self):
         with tempfile.TemporaryDirectory() as directory:
             evidence_dir = Path(directory) / "evidence"

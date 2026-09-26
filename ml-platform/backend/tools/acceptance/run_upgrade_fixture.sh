@@ -46,7 +46,7 @@ python tools/upgrade_fixture.py create \
 python tools/upgrade_fixture.py seed --output "$receipt/seed.json"
 python tools/upgrade_fixture.py snapshot --output "$receipt/before.json"
 python tools/upgrade_fixture.py upgrade \
-  --target 20260921_60 \
+  --target 20260926_61 \
   --output "$receipt/result.json"
 
 export DATABASE_URL="$upgrade_database"

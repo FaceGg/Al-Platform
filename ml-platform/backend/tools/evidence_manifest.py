@@ -31,7 +31,7 @@ from tools.week11_performance import (
 )
 
 
-MIGRATION_HEAD = "20260921_60"
+MIGRATION_HEAD = "20260926_61"
 RUNTIME_IMAGE_PROVENANCE_EVIDENCE = Path("security/runtime-images.json")
 REQUIRED_STATUS_GATE_EVIDENCE = (
     Path("performance/summary.json"),
@@ -109,6 +109,7 @@ def _assert_safe_text(value: str, *, location: str) -> None:
 
 _STRUCTURAL_COUNT_MAP_KEYS = frozenset(
     {
+        "table_counts",
         "source_table_counts",
         "restored_table_counts",
         "before_table_counts",

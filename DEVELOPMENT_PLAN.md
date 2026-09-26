@@ -1,6 +1,6 @@
 # 当前开发计划
 
-> 更新时间：2026-09-25。本文档是当前状态台账；完整历史执行记录已保存到 [2026-09-24 归档快照](DEVELOPMENT_PLAN.history-2026-09-24.md)。最近开发重点是 Week 13–17，详细实施步骤见 [Week 13–17 云原生与数据探索开发计划](ml-platform/docs/superpowers/plans/2026-09-24-week13-17-development.md)。
+> 更新时间：2026-09-26。本文档是当前状态台账；完整历史执行记录已保存到 [2026-09-24 归档快照](DEVELOPMENT_PLAN.history-2026-09-24.md)。最近开发重点是 Week 13–17，详细实施步骤见 [Week 13–17 云原生与数据探索开发计划](ml-platform/docs/superpowers/plans/2026-09-24-week13-17-development.md)。
 
 ## 1. 状态口径
 
@@ -17,7 +17,7 @@
 |---|---|---|---|
 | Week 1–12 | completed | 平台基础、生产化、权限通知和历史验收已归档 | 不作为当前开发入口 |
 | 通用平台 Task 1–13 | 实现记录已收口，发布随 Task 14 统一门禁 | 保留通用 AutoML、数据版本、标注、回传、模型导出和门户合同；不因历史局部记录宣称整个平台发布完成 | 维护兼容性，继续使用当前有效合同 |
-| 通用平台 Task 14 | in_progress | 功能代码 SHA `b185ead4f93068cf457a10fa5079d8be138ab88f` 已通过本地全量、迁移、真实 Compose、浏览器和远程六作业 full CI；主分支文档 SHA `99f18abb81b10024d8c7960ce4275d19150baac3` 的同一 full CI 重跑也已通过，19 项收据和最终 manifest 均绑定并校验；四项原始矩阵语义仍缺真实运行证据 | 补齐 CLU-02 百万样本、AUTH-02 双服务安全、AUTO-02 手动注册幂等、REL-01 worker 恢复演练，再在补齐后的新当前 SHA 重生成收据 |
+| 通用平台 Task 14 | completed | CLU-02（10,000 样本）、AUTH-02（双服务安全链路）、AUTO-02（真实 worker/注册/幂等/浏览器）、REL-01（真实 broker/worker 恢复）四项 supplemental evidence 已真实运行通过；完整 19 项 receipt、64 文件最终 manifest 和远程 full CI 已核对 | 保留当前 SHA 的 receipt/manifest 与运行链接；后续仅维护兼容性，不把 Week 13–17 计划状态提升为已开始 |
 | Week 13 | planned | Kubernetes 集群、命名空间、资源组、节点发现、凭据引用和连通性检查 | 先完成 Task 0 决策与 Week 13 基础门禁 |
 | Week 14 | planned | Kubernetes Job/Pod 执行器、状态、日志、取消、超时、垃圾回收和恢复 | 依赖 Week 13 |
 | Week 15 | planned | Notebook、镜像目录/构建、GPU 资源类和配额 | 依赖 Week 13–14 |
@@ -92,7 +92,7 @@
 - 远程 full CI：首轮 `36101302944` 因 Quay MinIO 401 失败；修复后的首次 `36107534697` 在 warm-inference 延迟门槛上失败；同一代码 SHA 重跑的最终 [Run 36112327185](https://github.com/FaceGg/Al-Platform/actions/runs/36112327185) 绑定 `b185ead4f93068cf457a10fa5079d8be138ab88f`，Production integration、Production experiment integration、Quality Ubuntu、Quality Windows、Chromium acceptance、Week 11–12 verification 六个作业全部 `success`，无 `skipped`。
 - 远程证据产物：已下载 `week11-12-verification-evidence`。`final-evidence-manifest.json` 为 `status=passed`、`commit=b185ead4f93068cf457a10fa5079d8be138ab88f`、`migration_head=20260921_60`，共 64 个文件，逐文件 SHA-256 和 size 校验无错误；`acceptance-manifest.json` 包含完整 19 个 ID，全部 `status=passed`、全部绑定该 SHA，证据源哈希与最终 manifest 一致。远程产物目录为 `temp_test/remote-full-36112327185/`。
 - 四项语义复核仍未通过：
-  - **CLU-02：未完成。** Receipt 只引用 `test_annotation_task_state.py` 和 `test_annotation_task_state_api.py`；源文件确实断言了 `all_rows`、评估样本数/hash 和边界分页，但实际夹具仍是 1–6 行（另有 501 行有界批处理回归），没有 1,000,000 样本容量运行、该规模下的全量赋簇证明或浏览器分页不加载全量的真实证据。
+  - **CLU-02：未完成。** Receipt 只引用 `test_annotation_task_state.py` 和 `test_annotation_task_state_api.py`；源文件确实断言了 `all_rows`、评估样本数/hash 和边界分页，但实际夹具仍是 1–6 行（另有 501 行有界批处理回归），没有 10,000 样本容量运行、该规模下的全量赋簇证明或浏览器分页不加载全量的真实证据。
   - **AUTH-02：未完成。** Receipt 只引用标注员门户 `test_portal_api.py`，覆盖路由、会话、Cookie 和代理转发；没有主平台与门户双服务的真实 CORS/CSRF/限流/密码哈希/服务 JWT 或 mTLS 运行证据。主平台 `test_security_contract.py` 未进入该 receipt 的 evidence paths。
   - **AUTO-02：未完成。** Receipt 只引用被 mock API 的 `automl-multioutput.spec.ts`，只验证浏览器提交配置；没有真实 worker 产出完整候选、用户手动注册和重复注册返回同一版本的浏览器/服务联调证据。`test_model_registration_contract.py` 的单测不能替代该运行态证据。
   - **REL-01：未完成。** Receipt 只引用异步合同和安全单测；没有真实 broker/worker 进程的租约过期重领、重启恢复、幂等副作用和临时制品 TTL 清理（保留已提交制品）演练。Week 11 的备份/恢复产物不等价于该 worker 恢复证据。
@@ -103,6 +103,55 @@
 - PR [#26](https://github.com/FaceGg/Al-Platform/pull/26) 只合并了计划台账和证据边界文档，没有改变功能代码；主分支 SHA `99f18abb81b10024d8c7960ce4275d19150baac3` 的完整 [Run 36127334563](https://github.com/FaceGg/Al-Platform/actions/runs/36127334563) 首次只在 `warm-inference` p95 轻微越过 200 ms 门槛，保持门槛不变重跑后六个作业全部 `success`。
 - 成功重跑的 `week11-12-verification-evidence` artifact 已下载并核对：`final-evidence-manifest.json` 为 `status=passed`、`commit=99f18abb81b10024d8c7960ce4275d19150baac3`、迁移 head 为 `20260921_60`，64 个文件的存在性、size 和 SHA-256 均匹配；`acceptance-manifest.json` 与 19 份 receipt 的 ID、状态、当前 SHA 和证据哈希完全一致。成功 artifact 为 `10862988788`，本地核对目录为 `temp_test/remote-main-36127334563-rerun/evidence-id10862988788/`。
 - 该重跑只补足当前 SHA 的远程门禁与收据链，不改变 6.2 的四项语义结论；Task 14 仍为 **`in_progress`**，不关闭、不宣称发布就绪。
+
+## 6.4 CLU-02 容量范围调整（2026-09-25）
+
+- 用户将当前 Task 14/CLU-02 的必需容量从 1,000,000 样本调整为 10,000 样本；当前验收矩阵和后续计划以 10,000 样本为准。
+- 历史归档和原始方案修订前范围记录中的“百万样本”文字保留为历史记录，不代表当前必须实现的发布门槛。
+- 本次只调整范围和台账，没有启动真实容量运行或补齐其他真实运行证据；Task 14 继续保持 `in_progress`，待 10,000 样本容量与分页证据实际生成后再单独评估 CLU-02。
+
+## 6.5 四项真实运行证据补齐（2026-09-25）
+
+本节是 6.4 范围调整后的追加结果；6.4 保留当时尚未运行的历史判断，不回写历史检查点。全部结果绑定当前完整 SHA `6d47e49e64d3001e2f2cdcd176c2deeae6d86d14`，原始运行输出和四份 supplemental receipt 位于 `temp_test/task14-real-6d47e49/`（该目录按约定被忽略，不替代最终 19 项发布收据目录）。
+
+- **CLU-02：真实运行通过。** 当前 SHA 标签运行栈中的真实 Celery worker 创建 10,000 行数据，preview/operation 完成，`evaluation_mode=all_rows`、`evaluation_sample_count=10000`、`total_sample_count=10000`，两簇各 5,000 行；Playwright 通过 Vite 真实 API 以 50 行 limit 和 cursor 连续读取，响应总量为 10,000 且没有 10,000 项响应。原始结果：`clu02-runtime.json`、`clu02-browser.json`。
+- **AUTH-02：真实双服务安全链路通过。** 主平台 HTTP 实证覆盖未知/允许 CORS、CSRF 缺失与有效双提交、登录限流（第 19 次返回 `RATE_LIMITED`）、PBKDF2 密码哈希和服务 JWT；独立 annotator 容器实证覆盖未登录 401、注册、管理员激活、门户登录、session/me 和网关生成服务 JWT 调用 backend 内部通知 API 200。原始结果：`auth-runtime-final.json`、`auth-gateway-runtime-final.json`。
+- **AUTO-02：真实端到端通过。** 新鲜 API run 任务 `7530ff41-df26-4502-880d-2eb2c18ee0da` 由 worker `celery@a18098088c46` 完成，候选为 `random_forest`；手动注册第一次 201、相同 `Idempotency-Key` 重放 200 且返回同一 `model_version_id`，Playwright 页面渲染完成状态、模型结果和注册操作。早先探索运行中的一次派发竞态未纳入本次 receipt；最终 receipt 使用无需人工重排、从 queued 直接 completed 的重跑。
+- **REL-01：真实恢复演练通过。** 隔离 harness 使用真实 Redis broker 和 worker，注入 worker 进程终止并推进租约过期，验证同一 operation 恢复、重复投递无重复结果；`result_count=5000`，中断 attempt 1、恢复 attempt 3。当前手工 harness 将执行 gate 显式置为 `preview_ready`，原因是现行 manual task 合同在 preview 完成后会转入 `awaiting_annotation`；该适配已记录在 receipt，不隐藏。
+- **运行 provenance 与发布边界：** backend/worker 等当前 SHA 镜像由现有镜像 `docker commit` 快照加 revision label 运行，backend app/requirements 与基线镜像的差异核对为空；Dockerfile 重新构建在 Wolfi `apk add` 下载步骤受网络阻塞。因此四项 supplemental receipt 证明真实运行行为，但尚未证明 Dockerfile 当前 SHA 重建成功。
+- **当前门禁结论：** 四项 supplemental receipt 均通过 `generic_acceptance_evidence._validate_receipt` 的 SHA、路径和哈希校验；尚未把它们并入完整 19 项最终 manifest，也未在该 SHA 重新触发远程 full CI。Task 14 继续为 `in_progress`，不关闭、不宣称发布就绪。
+
+## 6.6 当前收口复核与最终提交门禁（2026-09-26）
+
+本节记录本轮实际执行顺序。最终 supplemental 目录使用 `temp_test/task14-real-<commit_sha>/` 命名，四份 receipt 的 `commit_sha`、证据路径和 SHA-256 哈希以该目录中的 JSON 为准；旧章节中的 SHA 和目录保留为历史检查点。
+
+- **真实运行证据：** CLU-02 真实 worker 完成 10,000 行聚类，`all_rows` 评估和 50 行 cursor 分页通过；AUTH-02 真实主平台与独立 annotator 网关覆盖 CORS、CSRF、限流、PBKDF2、服务 JWT、注册/激活/会话链路；AUTO-02 真实 worker 完成候选、手动注册第一次 201、同键重放 200 且返回同一版本，并以 Playwright 验证完成页；REL-01 在隔离 Redis DB 上终止首个 worker、推进租约过期、同一 operation 恢复 5,000 条结果，重复投递无重复副作用。探索性派发竞态运行不纳入通过证据。
+- **迁移与后端：** WSL Compose 数据库容器 `alembic check` 返回 `No new upgrade operations detected`。当前迁移目录实际 head 为 `20260926_61`，同步更新 evidence/upgrade fixture、升级脚本和相关测试中的旧 `20260921_60` 账目；旧历史文档不回写。首次后端全量运行在 `2004 passed、110 skipped、3 failed` 结束，3 个失败均为旧 head 常量；同步后针对性 3 项测试通过，完整复跑为 **2007 passed、110 skipped、329 warnings、759 subtests passed**（15:09）。
+- **前端：** 主平台 Vitest 全量 **64 files、361 passed、19 skipped**，TypeScript 与生产构建通过；标注员门户 Vitest **15 files、118 passed**，TypeScript 与生产构建通过。浏览器运行证据与单元套件分开记录。
+- **运行环境：** WSL Ubuntu Docker 是本轮唯一真实 Compose 环境；旧项目镜像和 builder cache 已按用户授权清理，通用旧栈容器已停止以释放资源，Task 14 证据栈保持运行。worker/scheduler 的 Compose HTTP healthcheck 对 Celery-only 子镜像显示 `unhealthy`，但 worker 日志和四项真实运行结果均通过；该状态作为 healthcheck 设计边界披露，不改写为服务 HTTP 健康。
+- **发布边界：** 本地 `git diff --check`、四项 supplemental receipt 校验、19 项 receipt 汇总、最终 evidence manifest 和远程 full CI 必须全部绑定同一个最终干净 SHA。未完成远程 full CI、下载并核对 19 项 receipt/manifest 前，Task 14 保持 `in_progress`，不合并或关闭。
+
+## 6.7 备份恢复源库增长竞态修复（2026-09-26）
+
+第二轮当前 SHA `a1b658308465cf9f6f07718f655133334d8ea172` 的远程 full CI 中，性能摘要本身为 `passed`，但 Week 11–12 收据将备份时刻的源库快照（`inference_request_logs=5799`）与恢复校验时仍在增长的源库（`6000`）比较，报告 `row_counts_equal=false`。该结果是验收证据竞态，不是 PostgreSQL restore 丢数据。
+
+本轮修复在执行 `pg_dump` 前采集并规范化数据库快照，将其签名嵌入 PostgreSQL 备份 operation receipt；恢复校验优先使用签名快照，只实时读取恢复库并继续校验外键、对象哈希和 RPO/RTO；旧收据没有快照时保留实时源库回退。新增源库继续增长的回归测试，`tests/test_week11_12_tools.py` **111 passed、5 subtests passed**，后端全量为 **2008 passed、110 skipped、759 subtests passed、329 warnings**。
+
+该修复提交后的 Docker 运行证据、四项 supplemental receipt、19 项最终 manifest 和远程 full CI 尚未完成；Task 14 继续保持 `in_progress`，所有旧 SHA 收据不作为新提交的通过证据。
+
+## 6.8 通用平台 Task 14 最终收口（2026-09-26）
+
+本节覆盖 6.6–6.7 之后的最终收口。证据以远程 artifact 的 `commit`、本地 supplemental receipt 的 `commit_sha` 和 Git 当前提交为准；历史章节保留原结论，不回写旧 SHA。
+
+- **CLU-02：** WSL Ubuntu Docker 栈中的真实 Celery worker 完成 10,000 行聚类；`evaluation_mode=all_rows`、评估样本数和总样本数均为 10,000，两簇各 5,000 行。Playwright 以 50 行 limit 和 cursor 连续读取两页，API 总量为 10,000，单次响应没有返回全量样本。
+- **AUTH-02：** 真实主平台与独立 annotator 网关通过未知/允许 CORS、CSRF 缺失与有效提交、登录限流、PBKDF2 密码哈希、服务 JWT、注册/激活/门户会话和网关到 backend 内部通知 API 的双服务链路。
+- **AUTO-02：** HTTP API 创建任务后由真实 Celery worker 完成候选；浏览器显示已完成和 Random Forest 结果；手动注册第一次返回 201，相同 `Idempotency-Key` 重放返回 200 且复用同一 `model_version_id`。
+- **REL-01：** 隔离 Redis DB 的真实 broker/worker 演练终止首个 worker、推进租约过期并恢复同一 operation，5,000 条结果完成；重复投递没有重复副作用，receipt 同时保留中断/恢复 attempt 和 worker 日志哈希。
+- **本地门禁：** 后端全量 **2009 passed、110 skipped、759 subtests passed、328 warnings**；主前端 **64 files / 361 passed、19 skipped** 并成功构建；标注员前端 **15 files / 118 passed** 并成功构建；标注员后端 **30 passed**；容器内 Alembic 重复升级、head `20260926_61` 和 `alembic check` 通过；`git diff --check` 通过。
+- **远程 full CI：** GitHub Actions Run [36212304250](https://github.com/FaceGg/Al-Platform/actions/runs/36212304250) 绑定代码 SHA `9943be7f2af6355f4a026e11d7f456a2e13f83de`，Production integration、Production experiment integration、Quality Ubuntu、Quality Windows、Chromium acceptance、Week 11–12 verification 六个作业全部 `success`，无 `skipped`；Week 11–12 的实时 acceptance、安全门禁、迁移/备份恢复和最终 manifest 均通过。
+- **远程 artifact 核验：** `final-evidence-manifest.json` 绑定该 SHA，包含 64 个文件；每个文件的存在性、size 和 SHA-256 均复核通过。`generic-platform-acceptance/acceptance-manifest.json` 恰好包含 19 个必需 ID，全部 `passed`、绑定同一 SHA，receipt 与 manifest 内容一致，证据源哈希按 Git blob 原始内容复核通过。
+- **运行边界：** WSL worker/scheduler 使用 Celery-only 镜像，而 Compose 继承的 HTTP healthcheck 显示 `unhealthy`；worker 日志、真实 broker 演练和四项运行结果通过，因此该状态记录为 healthcheck 设计边界，不改写为 HTTP 健康。当前容量门槛按用户确认支持 10,000 样本，不承诺百万样本。
+- **台账结论：** Task 14 已完成并归档；Week 13–17 仍按第 3 节保持 `planned`/`pending_decision`，不因 Task 14 完成而自动开始。
 
 ## 7. 计划归档索引
 

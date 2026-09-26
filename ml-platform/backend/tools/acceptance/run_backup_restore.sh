@@ -70,9 +70,13 @@ python tools/acceptance/seed_backup_fixture.py
 printf '%s\n' '{"fixture":"backup","payload":"retained"}' > /tmp/backup-fixture.json
 mc cp /tmp/backup-fixture.json "$source_minio/acceptance/backup-fixture.json" >/dev/null
 
+python tools/backup_restore.py snapshot \
+  --database-url-env BACKUP_SOURCE_DATABASE_URL \
+  --output /tmp/backup-source-snapshot.json
 python tools/backup_restore.py backup-postgres \
   --database-url-env BACKUP_SOURCE_DATABASE_URL \
-  --output "$receipt/postgres.dump"
+  --output "$receipt/postgres.dump" \
+  --source-snapshot /tmp/backup-source-snapshot.json
 python tools/backup_restore.py backup-minio \
   --source "$source_minio" \
   --destination "$receipt/minio" \

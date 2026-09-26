@@ -16,14 +16,14 @@
 
 ## Global Constraints
 
-- Original specification sections 1-17 remain binding. Do not redefine acceptance IDs.
+- Original specification sections 1-17 remain binding, with the 2026-09-25 scope revision setting the current CLU-02 capacity target to 10,000 samples. Do not redefine acceptance IDs.
 - Preserve the pre-existing DEVELOPMENT_PLAN.md and docker-compose.yml changes.
 - No push, production deployment, destructive data migration, or user-data deletion.
 - A local unit-test result is not browser, worker, recovery, capacity, or release evidence.
 - Keep immutable data contents separate from mutable import and review lifecycle records.
 - New tests must first demonstrate the missing behavior, then pass with implementation.
 - Each task remains open until implementation, integration, tests, and required runtime evidence exist.
-- Capacity and recovery targets remain 1,000,000 samples, 200 input columns, 20 labels, 100 annotators, RPO <= 1 hour, RTO <= 4 hours.
+- Capacity and recovery targets are 10,000 samples, 200 input columns, 20 labels, 100 annotators, RPO <= 1 hour, and RTO <= 4 hours.
 
 ## Coverage and Delivery Order
 
