@@ -17,7 +17,7 @@
 |---|---|---|---|
 | Week 1–12 | completed | 平台基础、生产化、权限通知和历史验收已归档 | 不作为当前开发入口 |
 | 通用平台 Task 1–13 | 实现记录已收口，发布随 Task 14 统一门禁 | 保留通用 AutoML、数据版本、标注、回传、模型导出和门户合同；不因历史局部记录宣称整个平台发布完成 | 维护兼容性，继续使用当前有效合同 |
-| 通用平台 Task 14 | in_progress | 四项 supplemental evidence 和主分支 SHA `8ffa162` 的完整六项 CI、64 文件最终 manifest、19 项 receipt 已通过；随后台账收口提交的主分支 SHA `74be1ce` 在 Week 11 warm-inference p95 门禁连续两次失败 | 保留 `8ffa162` 的最后一轮完整通过证据；当前主分支 warm-inference 性能门禁稳定通过并重新生成同 SHA manifest/19 项 receipt 前，不关闭 Task 14，不把 Week 13–17 计划状态提升为已开始 |
+| 通用平台 Task 14 | completed | 主分支 SHA `3fc246980b32c463a9c120573a0b0058bed8d9e7` 的完整六项 CI、64 文件最终 manifest、19 项 receipt，以及同 SHA 的 CLU-02、AUTH-02、AUTO-02、REL-01 真实运行证据均已通过；容量门槛按用户确认支持 10,000 样本 | 归档 Task 14 收口记录；Week 13 仍须先完成 Task 0 决策和基础门禁 |
 | Week 13 | planned | Kubernetes 集群、命名空间、资源组、节点发现、凭据引用和连通性检查 | 先完成 Task 0 决策与 Week 13 基础门禁 |
 | Week 14 | planned | Kubernetes Job/Pod 执行器、状态、日志、取消、超时、垃圾回收和恢复 | 依赖 Week 13 |
 | Week 15 | planned | Notebook、镜像目录/构建、GPU 资源类和配额 | 依赖 Week 13–14 |
@@ -187,6 +187,20 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - **最小修复：** 每个 warm-inference 测量轮次增加 `--warmup 20`（20 路并发、每路 20 个请求，即 400 个同路径预热请求）；正式测量仍固定为 20 路 × 100 请求、2,000 请求和原有 `p95 <= 200 ms`、`p99 <= 500 ms` 门槛。
 - **证据约束：** 原始 warm-inference receipt 记录预热请求/错误计数；summary 对预热计数执行 accounting 校验并要求 `errors == 0`，预热失败保持 fail-closed。没有把预热请求计入正式测量样本。
 - **本地验证：** 新增的预热 receipt、预热失败门禁和 acceptance runner 合同先在现状下失败，修复后 `tests.test_week11_12_tools` **114 passed**；`git diff --check` 和经 CRLF 归一化输入的 `run_performance.sh` `bash -n` 通过。远程完整 CI 尚未在该修复 SHA 运行，Task 14 仍为 **`in_progress`**。
+
+## 6.13 通用平台 Task 14 最终主分支收口（2026-09-26）
+
+本节追加记录 6.12 之后的真实执行结果；6.1–6.12 的历史结论保留，不回写旧 SHA。最终发布代码为主分支合并提交 `3fc246980b32c463a9c120573a0b0058bed8d9e7`，其 Git tree 与修复分支 `f7e3fdb749c8a99d7ea57edcdd63b181dd62f88b` 一致，后者只包含已验证的 warm-inference 预热门禁修复。
+
+- **远程 full CI：** GitHub Actions [Run 36247830654](https://github.com/FaceGg/Al-Platform/actions/runs/36247830654) 的 Production integration、Production experiment integration、Quality Ubuntu、Quality Windows、Chromium acceptance、Week 11–12 verification 六个作业全部 `success`，无 `skipped`。Quality Ubuntu/Windows 完成后端全量、前端全量、构建和服务 smoke；Chromium acceptance 为 12 项通过；Week 11–12 完成迁移、备份/恢复、升级、安全扫描、冻结 Web 安全门禁和 live acceptance。
+- **最终 evidence manifest：** 下载目录为 `temp_test/remote-main-36247830654/`。`final-evidence-manifest.json` 为 `status=passed`、`commit=3fc246980b32c463a9c120573a0b0058bed8d9e7`、迁移 head `20260926_61`、64 个文件；逐文件存在性、size 和 SHA-256 均匹配，镜像 digest 为 `sha256:d3d3e37ce1122f6e17eb8bdb8d648bf982f1b05828bae9dfcf2277835dadac4f`。
+- **19 项 receipt：** `generic-platform-acceptance/acceptance-manifest.json` 恰好包含 19 个必需 ID，全部 `passed` 并绑定该 SHA；receipt 文件、manifest 内容和每个 evidence path 的 Git blob SHA-256 均复核通过。`performance/summary.json` 的 provenance 与当前 SHA 一致，warm-inference 三轮均为 2,000 个测量请求、400 个预热请求、错误数 0；p95 为 `192.04/196.12/191.17 ms`，p99 为 `263.01/424.39/408.34 ms`，均未改变既有门槛。
+- **CLU-02 真实证据：** `temp_test/task14-real-3fc246980b32c463a9c120573a0b0058bed8d9e7/clu02-runtime.json` 记录真实 Celery worker 完成 10,000 行聚类，`evaluation_mode=all_rows`、评估样本数和总样本数均为 10,000，两簇各 5,000 行；`clu02-browser.json` 记录 Playwright 真实 API 分页，每页最多 50 行、cursor 已使用、总量 10,000，任何响应没有返回 10,000 项。
+- **AUTH-02 真实证据：** `auth-runtime-final.json` 和 `auth-runtime-enrichment.json` 记录未知 Origin 403、允许 Origin preflight 200、CSRF origin/token 门禁、PBKDF2 哈希、登录第 19 次触发 `RATE_LIMITED`、缺少 service token 401；`auth-gateway-runtime-final.json` 记录独立 annotator 网关注册、管理员激活、门户登录/session/me，以及网关生成 service JWT 调用 backend 内部 notifications 200。两服务镜像均以 `3fc246…` 标签构建。
+- **AUTO-02 真实证据：** `auto02-runtime-final.json` 记录 HTTP API → Redis/Celery worker 完成 `random_forest` 候选，任务状态 `completed`；手动注册第一次 201、同一 `Idempotency-Key` 重放 200，两个响应复用同一 `model_version_id`。`auto02-browser-final.json` 记录 Playwright 页面显示完成状态、模型结果、Random Forest 候选和注册操作。
+- **REL-01 真实证据：** `rel01-final-v2/receipt.json` 记录隔离 Redis broker 上真实 worker 的中断/重启恢复：首个 worker 在 `materializing`、attempt 1 被终止并推进租约过期，attempt 3 恢复同一 operation，5,000 条结果完成；重复投递无重复结果，worker 日志 SHA-256 同 receipt 保存。该演练显式使用 `preview_ready` 执行门状态，适配现行 manual task 合同并已记录。
+- **运行边界：** `runtime-images.json` 和 `stack-status-final.txt` 绑定 `3fc246…` 的当前镜像。backend、inference、tensorboard、annotator 健康；worker/scheduler 仍显示 Compose 继承的 HTTP healthcheck `unhealthy`，但 Celery 日志、真实四项演练和 broker 恢复均通过，这是 Celery-only 子镜像没有 HTTP endpoint 的已知设计边界，不改写为服务 HTTP 健康。
+- **台账结论：** 当前主分支完整 CI、最终 manifest、19 项 receipt 和四项同 SHA 真实运行证据均通过，Task 14 标记为 **`completed`** 并归档；Week 13–17 计划仍按 Week 13 → Week 14 → Week 15 → Week 16 → Week 17 顺序执行，未因 Task 14 收口而提前开始。
 
 ## 7. 计划归档索引
 

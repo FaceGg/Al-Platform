@@ -5,7 +5,7 @@
 ## 当前状态
 
 - Week 1-12 的平台基础能力和历史验收已归档为 `passed` / `completed`，不属于当前实施范围。
-- 通用自动建模与数据标注平台的 Task 1-13 已有实现和局部验收记录；Task 14 的功能代码 SHA `b185ead4f93068cf457a10fa5079d8be138ab88f` 已通过本地全量测试、迁移检查、真实 Compose 运行、浏览器验收和远程六作业 full CI；随后主分支文档 SHA `99f18abb81b10024d8c7960ce4275d19150baac3` 的同一 full CI 重跑也已通过，19 项收据与最终 evidence manifest 均按当前 SHA 校验。但 CLU-02、AUTH-02、AUTO-02、REL-01 仍缺矩阵要求的真实容量、双服务安全、注册流程和 worker 恢复证据，因此整体继续保持 `in_progress`。
+- 通用自动建模与数据标注平台的 Task 1-13 已有实现和局部验收记录；Task 14 已在主分支 SHA `3fc246980b32c463a9c120573a0b0058bed8d9e7` 收口：六作业 full CI、64 文件最终 evidence manifest、19 项 receipt，以及 CLU-02、AUTH-02、AUTO-02、REL-01 的真实容量、双服务安全、worker 注册和恢复证据均按当前 SHA 校验通过。当前容量范围按用户确认支持 10,000 样本，不承诺百万样本。
 - Week 13-16（Kubernetes、Job/Pod、Notebook/GPU、多集群）为 `planned`；Week 17 为 `pending_decision`；Week 18-20 为 `deferred`。
 - 仓库仍包含部分行业化历史实现。通用平台开发必须先完成 Task 1 的去行业化盘点和迁移边界，不能把现有页面、路由或历史文档当作通用功能已完成的证据。
 
