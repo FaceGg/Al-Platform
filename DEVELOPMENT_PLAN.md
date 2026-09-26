@@ -17,7 +17,7 @@
 |---|---|---|---|
 | Week 1–12 | completed | 平台基础、生产化、权限通知和历史验收已归档 | 不作为当前开发入口 |
 | 通用平台 Task 1–13 | 实现记录已收口，发布随 Task 14 统一门禁 | 保留通用 AutoML、数据版本、标注、回传、模型导出和门户合同；不因历史局部记录宣称整个平台发布完成 | 维护兼容性，继续使用当前有效合同 |
-| 通用平台 Task 14 | completed | CLU-02（10,000 样本）、AUTH-02（双服务安全链路）、AUTO-02（真实 worker/注册/幂等/浏览器）、REL-01（真实 broker/worker 恢复）四项 supplemental evidence 已真实运行通过；完整 19 项 receipt、64 文件最终 manifest 和远程 full CI 已核对 | 保留当前 SHA 的 receipt/manifest 与运行链接；后续仅维护兼容性，不把 Week 13–17 计划状态提升为已开始 |
+| 通用平台 Task 14 | in_progress | CLU-02（10,000 样本）、AUTH-02（双服务安全链路）、AUTO-02（真实 worker/注册/幂等/浏览器）、REL-01（真实 broker/worker 恢复）四项 supplemental evidence 已真实运行通过；f0e SHA 的 19 项 receipt、64 文件 manifest 已核对，但合并后的主分支完整 CI 仍被 Week 11 warm-inference p95 门禁阻断 | 保留 supplemental 运行证据；在当前主分支完整 CI 和同 SHA 最终 manifest/19 项 receipt 全部通过前，不关闭 Task 14，不把 Week 13–17 计划状态提升为已开始 |
 | Week 13 | planned | Kubernetes 集群、命名空间、资源组、节点发现、凭据引用和连通性检查 | 先完成 Task 0 决策与 Week 13 基础门禁 |
 | Week 14 | planned | Kubernetes Job/Pod 执行器、状态、日志、取消、超时、垃圾回收和恢复 | 依赖 Week 13 |
 | Week 15 | planned | Notebook、镜像目录/构建、GPU 资源类和配额 | 依赖 Week 13–14 |
@@ -151,7 +151,16 @@
 - **远程 full CI：** GitHub Actions Run [36212304250](https://github.com/FaceGg/Al-Platform/actions/runs/36212304250) 绑定代码 SHA `9943be7f2af6355f4a026e11d7f456a2e13f83de`，Production integration、Production experiment integration、Quality Ubuntu、Quality Windows、Chromium acceptance、Week 11–12 verification 六个作业全部 `success`，无 `skipped`；Week 11–12 的实时 acceptance、安全门禁、迁移/备份恢复和最终 manifest 均通过。
 - **远程 artifact 核验：** `final-evidence-manifest.json` 绑定该 SHA，包含 64 个文件；每个文件的存在性、size 和 SHA-256 均复核通过。`generic-platform-acceptance/acceptance-manifest.json` 恰好包含 19 个必需 ID，全部 `passed`、绑定同一 SHA，receipt 与 manifest 内容一致，证据源哈希按 Git blob 原始内容复核通过。
 - **运行边界：** WSL worker/scheduler 使用 Celery-only 镜像，而 Compose 继承的 HTTP healthcheck 显示 `unhealthy`；worker 日志、真实 broker 演练和四项运行结果通过，因此该状态记录为 healthcheck 设计边界，不改写为 HTTP 健康。当前容量门槛按用户确认支持 10,000 样本，不承诺百万样本。
-- **台账结论：** Task 14 已完成并归档；Week 13–17 仍按第 3 节保持 `planned`/`pending_decision`，不因 Task 14 完成而自动开始。
+- **台账结论（该节记录当时的 f0e 工作树）：** 四项 supplemental evidence 和 f0e SHA 的 19 项 receipt 已完成核验；该结论由下方主分支回归记录覆盖，不单独作为当前发布关闭依据。
+
+## 6.9 通用平台 Task 14 当前主分支门禁回归（2026-09-26）
+
+第 6.8 节的 f0e 工作树收口完成后，PR #28 合并产生主分支 SHA `d615cbd04b0477b8a39d2c60d1954f96eceda9be`。同一完整工作流 Run [36220608544](https://github.com/FaceGg/Al-Platform/actions/runs/36220608544) 已对失败作业连续重跑三次，三次均在 Week 11–12 verification 的 `warm-inference` 性能门禁失败；因此旧 SHA 的通过收据不能提升为当前主分支发布通过。
+
+- **作业结果：** Production integration、Production experiment integration、Quality Ubuntu、Quality Windows、Chromium acceptance 五个作业均 `success`；失败仅为 Week 11–12 verification 的实时 warm-inference 门禁。
+- **失败证据：** 第三次尝试的三轮 warm-inference p95 为 `190.24 ms`、`180.38 ms`、`206.73 ms`，阈值为 `200 ms`；p99 最高 `478.42 ms` 未超过 `500 ms`，2,000/2,000 请求返回 HTTP 200，error rate 为 0。前两次尝试同样因该 p95 门禁失败，不能按瞬时抖动改写为通过。
+- **其余 Week 11 证据：** cold-model-load、core-read、enqueue、welding-e2e、安全文件、迁移 head `20260926_61` 和当前提交 provenance 均通过；失败使该运行没有生成当前 SHA 的 `final-evidence-manifest.json` 和 19 项 `generic-platform-acceptance/acceptance-manifest.json`。
+- **处理决定：** 不放宽 200 ms 门槛，不以 WSL 本地低于阈值的结果替代 GitHub runner 的发布门禁。Task 14 保持 `in_progress`，不关闭；四项 supplemental evidence 仍作为已通过的独立运行证据保留，待修复或稳定性能门禁后在新的最终 SHA 重新生成并核对完整 manifest/19 项 receipt。
 
 ## 7. 计划归档索引
 
