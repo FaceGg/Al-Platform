@@ -99,6 +99,7 @@ for iteration in 1 2 3; do
       --url "http://127.0.0.1:8000/api/v1/inference/${DEPLOYMENT}/predict" \
       --scenario warm-inference --iteration "$iteration" \
       --concurrency 20 --requests-per-worker 100 --method POST \
+      --warmup 20 \
       --body-file /tmp/week11-inference-body.json --api-key-env PERF_API_KEY \
       --output "$CONTAINER_PERFORMANCE/warm-inference-${iteration}.json"
 done
