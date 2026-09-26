@@ -17,7 +17,7 @@
 |---|---|---|---|
 | Week 1–12 | completed | 平台基础、生产化、权限通知和历史验收已归档 | 不作为当前开发入口 |
 | 通用平台 Task 1–13 | 实现记录已收口，发布随 Task 14 统一门禁 | 保留通用 AutoML、数据版本、标注、回传、模型导出和门户合同；不因历史局部记录宣称整个平台发布完成 | 维护兼容性，继续使用当前有效合同 |
-| 通用平台 Task 14 | completed | CLU-02（10,000 样本）、AUTH-02（双服务安全链路）、AUTO-02（真实 worker/注册/幂等/浏览器）、REL-01（真实 broker/worker 恢复）四项 supplemental evidence 已真实运行通过；主分支 SHA `8ffa162` 的完整六项 CI、64 文件最终 manifest 和 19 项 receipt 已下载、哈希及当前 SHA 核对通过 | 归档 Task 14 的当前收据与运行链接；Week 13–17 计划仍按第 3 节保持 `planned`/`pending_decision`，不因 Task 14 完成而自动开始 |
+| 通用平台 Task 14 | in_progress | 四项 supplemental evidence 和主分支 SHA `8ffa162` 的完整六项 CI、64 文件最终 manifest、19 项 receipt 已通过；随后台账收口提交的主分支 SHA `74be1ce` 在 Week 11 warm-inference p95 门禁连续两次失败 | 保留 `8ffa162` 的最后一轮完整通过证据；当前主分支 warm-inference 性能门禁稳定通过并重新生成同 SHA manifest/19 项 receipt 前，不关闭 Task 14，不把 Week 13–17 计划状态提升为已开始 |
 | Week 13 | planned | Kubernetes 集群、命名空间、资源组、节点发现、凭据引用和连通性检查 | 先完成 Task 0 决策与 Week 13 基础门禁 |
 | Week 14 | planned | Kubernetes Job/Pod 执行器、状态、日志、取消、超时、垃圾回收和恢复 | 依赖 Week 13 |
 | Week 15 | planned | Notebook、镜像目录/构建、GPU 资源类和配额 | 依赖 Week 13–14 |
@@ -169,7 +169,16 @@
 - **性能与运行门禁：** Week 11–12 verification 的 `performance/summary.json` 为 `passed`，warm-inference 三轮均低于 200 ms p95 门槛，全部 2,000 请求返回 HTTP 200，error rate 为 0；summary provenance 与当前 SHA 一致。
 - **最终证据：** 下载的 `final-evidence-manifest.json` 状态为 `passed`，绑定 `8ffa162`，包含 64 个文件；每个文件的存在性、size 和 SHA-256 均复核通过。`generic-platform-acceptance/acceptance-manifest.json` 恰好包含 19 个必需 ID，全部 `passed` 并绑定同一 SHA；receipt 内容、manifest 内容和 Git blob 哈希均复核通过。
 - **数据库与安全：** environment 记录迁移 head `20260926_61 (head)`，安全扫描、备份/恢复、升级和浏览器 artifact 均随同一次完整运行通过。
-- **关闭结论：** 四项 supplemental evidence（CLU-02、AUTH-02、AUTO-02、REL-01）与当前 SHA 的完整远程证据链均已通过。Task 14 现标记为 **`completed`** 并归档；Week 13–17 仍按第 3 节保持 `planned`/`pending_decision`，不因 Task 14 完成而自动开始。容量范围按用户确认支持 10,000 样本，不承诺百万样本。
+- **关闭结论（当时的 `8ffa162`）：** 四项 supplemental evidence（CLU-02、AUTH-02、AUTO-02、REL-01）与该 SHA 的完整远程证据链均已通过；该结论由下方新的主分支回归记录覆盖。容量范围按用户确认支持 10,000 样本，不承诺百万样本。
+
+## 6.11 通用平台 Task 14 主分支性能门禁再次回归（2026-09-26）
+
+PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed09608215a9b1b118f39`。完整 Run [36233922421](https://github.com/FaceGg/Al-Platform/actions/runs/36233922421) 的五个前置作业均 `success`，Week 11–12 verification 对失败作业重跑一次后仍 `failure`。
+
+- **作业范围：** Production integration、Production experiment integration、Quality Ubuntu、Quality Windows、Chromium acceptance 均通过；失败仅为 Week 11–12 verification 的 warm-inference 性能门禁。
+- **两次失败数据：** 第一次尝试三轮 p95 为 `217.19 ms`、`197.40 ms`、`195.89 ms`；失败作业重跑后三轮 p95 为 `204.56 ms`、`187.52 ms`、`190.00 ms`。两次均只有第 1 轮超过 `200 ms`，p99 均低于 `500 ms`，每轮 2,000/2,000 请求 HTTP 200、error rate 为 0，provenance 均匹配当前 SHA。
+- **证据边界：** 性能门禁失败使该 SHA 没有生成 `final-evidence-manifest.json` 和 19 项当前 SHA receipt；上一轮 `8ffa162` 的 64 文件 manifest 与 19 项 receipt 仍是最后一轮完整通过证据，不能跨 SHA 直接替代。
+- **处理决定：** 不放宽 `200 ms` p95 门槛，也不把 WSL 本地结果当作 GitHub runner 发布门禁。Task 14 回到 **`in_progress`**，不关闭；待当前主分支性能门禁稳定通过后再生成同 SHA manifest/19 项 receipt，并重新评估关闭。
 
 ## 7. 计划归档索引
 
