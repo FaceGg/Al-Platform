@@ -17,7 +17,7 @@
 |---|---|---|---|
 | Week 1–12 | completed | 平台基础、生产化、权限通知和历史验收已归档 | 不作为当前开发入口 |
 | 通用平台 Task 1–13 | 实现记录已收口，发布随 Task 14 统一门禁 | 保留通用 AutoML、数据版本、标注、回传、模型导出和门户合同；不因历史局部记录宣称整个平台发布完成 | 维护兼容性，继续使用当前有效合同 |
-| 通用平台 Task 14 | in_progress | CLU-02（10,000 样本）、AUTH-02（双服务安全链路）、AUTO-02（真实 worker/注册/幂等/浏览器）、REL-01（真实 broker/worker 恢复）四项 supplemental evidence 已真实运行通过；f0e SHA 的 19 项 receipt、64 文件 manifest 已核对，但合并后的主分支完整 CI 仍被 Week 11 warm-inference p95 门禁阻断 | 保留 supplemental 运行证据；在当前主分支完整 CI 和同 SHA 最终 manifest/19 项 receipt 全部通过前，不关闭 Task 14，不把 Week 13–17 计划状态提升为已开始 |
+| 通用平台 Task 14 | completed | CLU-02（10,000 样本）、AUTH-02（双服务安全链路）、AUTO-02（真实 worker/注册/幂等/浏览器）、REL-01（真实 broker/worker 恢复）四项 supplemental evidence 已真实运行通过；主分支 SHA `8ffa162` 的完整六项 CI、64 文件最终 manifest 和 19 项 receipt 已下载、哈希及当前 SHA 核对通过 | 归档 Task 14 的当前收据与运行链接；Week 13–17 计划仍按第 3 节保持 `planned`/`pending_decision`，不因 Task 14 完成而自动开始 |
 | Week 13 | planned | Kubernetes 集群、命名空间、资源组、节点发现、凭据引用和连通性检查 | 先完成 Task 0 决策与 Week 13 基础门禁 |
 | Week 14 | planned | Kubernetes Job/Pod 执行器、状态、日志、取消、超时、垃圾回收和恢复 | 依赖 Week 13 |
 | Week 15 | planned | Notebook、镜像目录/构建、GPU 资源类和配额 | 依赖 Week 13–14 |
@@ -161,6 +161,15 @@
 - **失败证据：** 第三次尝试的三轮 warm-inference p95 为 `190.24 ms`、`180.38 ms`、`206.73 ms`，阈值为 `200 ms`；p99 最高 `478.42 ms` 未超过 `500 ms`，2,000/2,000 请求返回 HTTP 200，error rate 为 0。前两次尝试同样因该 p95 门禁失败，不能按瞬时抖动改写为通过。
 - **其余 Week 11 证据：** cold-model-load、core-read、enqueue、welding-e2e、安全文件、迁移 head `20260926_61` 和当前提交 provenance 均通过；失败使该运行没有生成当前 SHA 的 `final-evidence-manifest.json` 和 19 项 `generic-platform-acceptance/acceptance-manifest.json`。
 - **处理决定：** 不放宽 200 ms 门槛，不以 WSL 本地低于阈值的结果替代 GitHub runner 的发布门禁。Task 14 保持 `in_progress`，不关闭；四项 supplemental evidence 仍作为已通过的独立运行证据保留，待修复或稳定性能门禁后在新的最终 SHA 重新生成并核对完整 manifest/19 项 receipt。
+
+## 6.10 通用平台 Task 14 当前主分支最终关闭（2026-09-26）
+
+在第 6.9 节记录的性能门禁回归后，台账修正合并产生主分支 SHA `8ffa1629c65f483300f636ac4c3575176534683d`。完整工作流 Run [36229313373](https://github.com/FaceGg/Al-Platform/actions/runs/36229313373) 的六个作业全部 `success`：Production integration、Production experiment integration、Quality Ubuntu、Quality Windows、Chromium acceptance 和 Week 11–12 verification。
+
+- **性能与运行门禁：** Week 11–12 verification 的 `performance/summary.json` 为 `passed`，warm-inference 三轮均低于 200 ms p95 门槛，全部 2,000 请求返回 HTTP 200，error rate 为 0；summary provenance 与当前 SHA 一致。
+- **最终证据：** 下载的 `final-evidence-manifest.json` 状态为 `passed`，绑定 `8ffa162`，包含 64 个文件；每个文件的存在性、size 和 SHA-256 均复核通过。`generic-platform-acceptance/acceptance-manifest.json` 恰好包含 19 个必需 ID，全部 `passed` 并绑定同一 SHA；receipt 内容、manifest 内容和 Git blob 哈希均复核通过。
+- **数据库与安全：** environment 记录迁移 head `20260926_61 (head)`，安全扫描、备份/恢复、升级和浏览器 artifact 均随同一次完整运行通过。
+- **关闭结论：** 四项 supplemental evidence（CLU-02、AUTH-02、AUTO-02、REL-01）与当前 SHA 的完整远程证据链均已通过。Task 14 现标记为 **`completed`** 并归档；Week 13–17 仍按第 3 节保持 `planned`/`pending_decision`，不因 Task 14 完成而自动开始。容量范围按用户确认支持 10,000 样本，不承诺百万样本。
 
 ## 7. 计划归档索引
 
