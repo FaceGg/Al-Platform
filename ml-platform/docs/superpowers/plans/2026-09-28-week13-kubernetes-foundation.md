@@ -2,7 +2,7 @@
 
 > For agentic workers: execute the tasks in order, keep each checkbox independently reviewable, and use the repository verification rules before claiming completion. 本计划是 [2026-09-24 Week 13–17 计划](2026-09-24-week13-17-development.md) Task 1 的细化执行入口；设计合同见 [Week 13 Kubernetes 基础接入技术方案](../../technical-proposals/2026-09-28-week13-kubernetes-foundation.md)。
 
-**进度（2026-09-28）：** Task 13.0–13.5 完成——后端聚焦测试 37 passed（3 模块）、run_suite --week 13 3/3、compileall、alembic upgrade head（head=20260928_62）+ alembic check、前端 Vitest 368 passed/19 skipped、tsc、build 全绿；Task 13.6 kind/WSL 真实集群 smoke 12/12 PASS（kind v0.34 / K8s v1.37.0，证据 backend/temp_test/week13-local/EVIDENCE.md）。未完成：已认证 Playwright 流程、run_week13_17_acceptance.sh 收集脚本、远端 CI 收据。Week 13 状态为 in_progress。
+**进度（2026-09-28）：** Task 13.0–13.5 完成——后端聚焦测试 37 passed（3 模块）、run_suite --week 13 3/3、compileall、alembic upgrade head（head=20260928_62）+ alembic check、前端 Vitest 368 passed/19 skipped、tsc、build 全绿；Task 13.6 kind/WSL 真实集群 smoke 12/12 PASS（kind v0.34 / K8s v1.37.0，证据 backend/temp_test/week13-local/EVIDENCE.md）。未完成：远端 CI 收据（推送后由 GitHub Actions 采集）。Week 13 状态为 in_progress。
 
 **Goal:** 在不改变通用平台 Task 1–14 合同的前提下，交付项目级 Kubernetes 集群登记、凭据引用、命名空间、资源组、节点能力发现与连通性检查，并通过 kind/WSL 真实集群 smoke；为 Week 14 执行器提供集群身份与凭据引用底座。
 
@@ -125,8 +125,8 @@ git diff --check
 - [x] WSL 内创建（或复用）kind 集群；创建最小权限 ServiceAccount（nodes get/list、namespaces get/list/create、resourcequotas get/list/create/update、events get/list）并生成凭据；RBAC 清单归档。
 - [x] 本地 Settings：allowlist 增 kind endpoint；仅本地启用 `KUBERNETES_ALLOW_INSECURE_ENDPOINTS`；凭据以 `env:`/`file:` 引用提供。
 - [x] 通过 API 或页面：登记 → connectivity-check（记录版本/时延）→ GET nodes（返回 kind 节点）→ PUT namespaces（集群内确认 namespace + ResourceQuota 对象存在）→ 用无效凭据重复检查（确认 `connectivity_failed` 收敛且登记未变）。
-- [ ] 已认证 Playwright：登记 → 检查 → 节点表流程。
-- [ ] 建 `ml-platform/backend/tools/acceptance/run_week13_17_acceptance.sh` 的 Week 13 profile（Week 14+ 复用并扩展），证据写入 `temp_test/week13-local/` 并绑定当前 SHA（Kubernetes 版本、namespace、ServiceAccount、RBAC 清单、证据路径、每条命令退出码）。
+- [x] 已认证 Playwright：登记 → 检查 → 节点表流程（e2e/week13-kubernetes.spec.ts，1 passed，截图 backend/temp_test/week13-local/playwright/）。
+- [x] 建 `ml-platform/backend/tools/acceptance/run_week13_17_acceptance.sh` 的 Week 13 profile（Week 14+ 复用并扩展），OVERALL passed（manifest backend/temp_test/week13-local/acceptance-*.json 绑定 SHA）；RBAC 清单与冒烟证据在 EVIDENCE.md。
 
 ## Task 13.7 台账与索引收口
 

@@ -16,6 +16,9 @@ const externalAcceptanceBaseUrl = process.env.WEEK12_ACCEPTANCE_BASE_URL?.trim()
 const useExternalAcceptanceStack = process.env.RUN_WEEK12_BROWSER_ACCEPTANCE === "1";
 const standardBaseUrl = process.env.PLAYWRIGHT_E2E_BASE_URL?.trim() || "http://127.0.0.1:5173";
 const standardFrontendPort = Number(new URL(standardBaseUrl).port || "5173");
+// Backend port is overridable so a locally occupied 8000 (docker stack, stray
+// dev server) does not force the whole e2e run to serialize behind it.
+const standardBackendPort = process.env.PLAYWRIGHT_E2E_BACKEND_PORT?.trim() || "8000";
 const externalAcceptanceEvidenceDir = path.join(tempTestDir, "week11-12", "playwright");
 const externalAcceptanceReportPath = path.join(
   externalAcceptanceEvidenceDir,
@@ -49,9 +52,9 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: useExternalAcceptanceStack ? undefined : [
     {
-      command: `${pythonCommand} -m uvicorn app.main:app --host 127.0.0.1 --port 8000`,
+      command: `${pythonCommand} -m uvicorn app.main:app --host 127.0.0.1 --port ${standardBackendPort}`,
       cwd: backendDir,
-      url: "http://127.0.0.1:8000/api/health",
+      url: `http://127.0.0.1:${standardBackendPort}/api/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
       env: {

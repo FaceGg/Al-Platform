@@ -18,7 +18,7 @@
 | Week 1–12 | completed | 平台基础、生产化、权限通知和历史验收已归档 | 不作为当前开发入口 |
 | 通用平台 Task 1–13 | 实现记录已收口，发布随 Task 14 统一门禁 | 保留通用 AutoML、数据版本、标注、回传、模型导出和门户合同；不因历史局部记录宣称整个平台发布完成 | 维护兼容性，继续使用当前有效合同 |
 | 通用平台 Task 14 | completed | 主分支 SHA `3fc246980b32c463a9c120573a0b0058bed8d9e7` 的完整六项 CI、64 文件最终 manifest、19 项 receipt，以及同 SHA 的 CLU-02、AUTH-02、AUTO-02、REL-01 真实运行证据均已通过；容量门槛按用户确认支持 10,000 样本 | 归档 Task 14 收口记录；Week 13 仍须先完成 Task 0 决策和基础门禁 |
-| Week 13 | in_progress | 本地实现与真实集群 smoke 已收口（2026-09-28）：4 张云资源表 + 迁移 `20260928_62`（head）、凭据引用/allowlist/状态机合同、`/api/kubernetes` 端点、KubernetesPage；聚焦测试 37 passed、`run_suite --week 13` 3/3、alembic upgrade/check、前端 Vitest/tsc/build 全绿；kind v0.34 + K8s v1.37.0 真实集群 smoke 12/12 PASS（连通性、节点/命名空间发现、幂等 ensure + 集群侧 quota 对象确认、失效凭据收敛、allowlist/跨项目拒绝；证据 `ml-platform/backend/temp_test/week13-local/EVIDENCE.md`） | 已认证 Playwright 流程、run_week13_17_acceptance.sh 收集脚本、远端 CI 收据 |
+| Week 13 | in_progress | 本地实现与真实集群 smoke 已收口（2026-09-28）：4 张云资源表 + 迁移 `20260928_62`（head）、凭据引用/allowlist/状态机合同、`/api/kubernetes` 端点、KubernetesPage；聚焦测试 37 passed、`run_suite --week 13` 3/3、alembic upgrade/check、前端 Vitest/tsc/build 全绿；kind v0.34 + K8s v1.37.0 真实集群 smoke 12/12 PASS（证据 `ml-platform/backend/temp_test/week13-local/EVIDENCE.md`）；已认证 Playwright 浏览器流程 1 passed（登记→连通性→节点表，含真实集群发现）；`run_week13_17_acceptance.sh` Week 13 profile 建成并 OVERALL passed | 远端 CI 收据（推送后由 GitHub Actions 采集，绑定当前 SHA） |
 | Week 14 | planned | Kubernetes Job/Pod 执行器、状态、日志、取消、超时、垃圾回收和恢复 | 依赖 Week 13 |
 | Week 15 | planned | Notebook、镜像目录/构建、GPU 资源类和配额 | 依赖 Week 13–14 |
 | Week 16 | planned | 多集群路由、存储挂载、配额、并发、成本和资源监控 | 依赖 Week 13–15 |
@@ -248,6 +248,7 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 - 2026-09-24：归档本文件压缩前的完整历史，新增 Week 13–17 详细开发计划和实施计划索引；当前文档只保留最新状态、依赖、门禁、风险和归档入口。Week 13–16 保持 planned，Week 17 保持 pending_decision；没有因整理文档提升任何实现状态。
 - 2026-09-28：起草多模态标注平台集成（Label Studio）技术方案与实施计划（独立立项）；同日决策评审：D1 用户决定暂缓，轨道转 `deferred`（§4.3）；D2–D8 结论归档、条件生效，重新立项需用户明确指示，不自行启动。
+- 2026-09-28：Week 13 浏览器与验收收口：已认证 Playwright 流程 1 passed（真实 kind 集群：登记→连通性→节点表，截图证据）；`run_week13_17_acceptance.sh` Week 13 profile 建成，OVERALL passed（8 步全绿 manifest 绑定 SHA）。Week 13 唯一余项为远端 CI 收据。
 - 2026-09-28：Week 13 本地实现推进：Task 13.0–13.5 完成并全部门禁绿（后端 37 passed、`run_suite --week 13` 3/3、alembic upgrade head `20260928_62` + check、前端 368 passed/tsc/build）；Task 13.6 kind v0.34 + K8s v1.37.0 真实集群 smoke 12/12 PASS（修复 5 个实现缺陷：`kubernetes.config.Configuration` 不存在、`_request_timeout` 元组、配额键翻译、`app/operators/optimization.py` sys.path 污染遮蔽 websocket 包、软删集群占用唯一键改部分唯一索引）。Week 13 状态转 `in_progress`；余项：Playwright 浏览器流程、验收收集脚本、远端 CI 收据。
 - 2026-09-28：新增 Week 13–17 各周技术方案（评审稿）与实施计划；Task 0 的 Week 13 子集五项决策收口（§4.1）；Week 17 七项范围决策获批（§4.2），状态由 `pending_decision` 转为 `planned`；Week 13–17 计划迁移修订号顺延（Week 13 `_62`、Week 14–17 `_63`–`_66`）。Week 13–16 状态保持 planned 不变。
 - 后续每个周次完成后，先绑定当前 SHA 和实际证据更新本台账，再把详细执行记录追加到新的日期归档；不得用计划文本、历史测试或旧收据宣称完成。
