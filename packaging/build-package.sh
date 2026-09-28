@@ -66,6 +66,13 @@ done < <(git -C "$ROOT" diff --diff-filter=D --name-only -z HEAD)
 
 prune_excluded_stage_paths
 
+# Windows 工作区覆盖（autocrlf）可能把 CRLF 行尾带入归档，Linux 侧的
+# shell 脚本会因此无法执行（/usr/bin/env: bash\r）。打包前统一归一为 LF。
+find "$STAGE_DIR/$PACKAGE_NAME" -type f \( \
+  -name '*.sh' -o -name '*.py' -o -name '*.yml' -o -name '*.yaml' \
+  -o -name 'Dockerfile*' -o -name '*.conf' -o -name '*.service' \
+\) -exec sed -i 's/\r$//' {} +
+
 chmod +x "$STAGE_DIR/$PACKAGE_NAME/packaging/"*.sh \
   "$STAGE_DIR/$PACKAGE_NAME/ml-platform/scripts/prepare-production-secrets.sh"
 
