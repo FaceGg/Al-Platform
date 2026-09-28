@@ -7,7 +7,7 @@
 - Week 1-12 的平台基础能力和历史验收已归档为 `passed` / `completed`，不属于当前实施范围。
 - 通用自动建模与数据标注平台的 Task 1-13 已有实现和局部验收记录；Task 14 已在主分支 SHA `3fc246980b32c463a9c120573a0b0058bed8d9e7` 收口：六作业 full CI、64 文件最终 evidence manifest、19 项 receipt，以及 CLU-02、AUTH-02、AUTO-02、REL-01 的真实容量、双服务安全、worker 注册和恢复证据均按当前 SHA 校验通过。当前容量范围按用户确认支持 10,000 样本，不承诺百万样本。
 - Week 13-16（Kubernetes、Job/Pod、Notebook/GPU、多集群）为 `planned`；Week 17（数据探索与质量报告）范围已于 2026-09-28 获批，保持 `planned` 待实现；Week 18-20 为 `deferred`。
-- 多模态标注集成（Label Studio 深度集成）为独立立项 `pending_decision`（2026-09-28 起草）；表格标注保持自研门户不迁移。
+- 多模态标注集成（Label Studio 深度集成）于 2026-09-28 决策评审后**暂缓**（`deferred`，用户决定）；方案与 D2–D8 结论归档备查，表格标注保持自研门户不迁移。
 - 仓库仍包含部分行业化历史实现。通用平台开发必须先完成 Task 1 的去行业化盘点和迁移边界，不能把现有页面、路由或历史文档当作通用功能已完成的证据。
 
 完整的当前待办、依赖、风险和历史归档边界见 [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md)。
@@ -133,7 +133,7 @@ docker compose down
 | [Week 15 技术方案](ml-platform/docs/technical-proposals/2026-09-28-week15-notebooks-images-gpu.md) | Week 15 Notebook、镜像与 GPU 的设计合同 | 评审稿（planned） |
 | [Week 16 技术方案](ml-platform/docs/technical-proposals/2026-09-28-week16-multi-cluster-governance.md) | Week 16 多集群与资源治理的设计合同 | 评审稿（planned） |
 | [Week 17 技术方案](ml-platform/docs/technical-proposals/2026-09-28-week17-data-exploration-quality.md) | Week 17 数据探索与质量报告的设计合同 | 已获批（planned） |
-| [Label Studio 集成技术方案](ml-platform/docs/technical-proposals/2026-09-28-label-studio-integration.md) | 多模态标注引擎深度集成的设计合同与决策清单 | 决策门控（pending_decision） |
+| [Label Studio 集成技术方案](ml-platform/docs/technical-proposals/2026-09-28-label-studio-integration.md) | 多模态标注引擎深度集成的设计合同与 D1–D8 决策记录 | 暂缓（deferred） |
 | [通用平台验收矩阵](ml-platform/docs/acceptance/2026-09-02-general-platform-acceptance-matrix.md) | 验收编号、执行上下文和证据责任 | `in_progress` |
 | [通用化迁移基线清单](ml-platform/docs/migrations/2026-09-02-genericization-inventory.md) | 去行业化范围和迁移门禁 | `planned` |
 | [导出与离线运行时清单](ml-platform/docs/acceptance/2026-09-02-export-runtime-checklist.md) | 导出包与离线推理输入合同 | `planned` |

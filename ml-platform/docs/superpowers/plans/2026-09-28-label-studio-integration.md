@@ -1,6 +1,6 @@
 # 多模态标注平台集成（Label Studio）实施计划（决策门控）
 
-> For agentic workers: **Task 0 决策清单（技术方案 §10）未全部获批前，本计划不得越过 Task 0 执行任何一步**。本计划是独立立项的执行入口，不属于 Week 13–17 计划；设计合同见 [Label Studio 集成技术方案](../../technical-proposals/2026-09-28-label-studio-integration.md)。
+> For agentic workers: **本轨道已暂缓（`deferred`，2026-09-28 决策评审）**——D1 未立项，Task 1+ 不执行；D2–D8 结论已归档（[技术方案 §10](../../technical-proposals/2026-09-28-label-studio-integration.md)），重新立项需用户明确指示。本计划是独立立项的执行入口，不属于 Week 13–17 计划。
 
 **Goal:** 以深度集成模式交付多模态标注：平台侧绑定/导出/回流三套合同 + 网关跳转，标注员单点登录 LS 完成标注，结果经现有回传/验收状态机回流；表格标注门户零改动。
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- 状态 `pending_decision`；Task 0 未全批不创建迁移/API/部署配置/实现测试。
+- 状态 `deferred`（2026-09-28 用户暂缓）：不得自行启动；D2–D8 结论见技术方案 §10，重新立项时直接生效。
 - 平台是唯一业务真相源：LS 完成 ≠ 回传；回流唯一入口 = 现有回传状态机；不做自动验收。
 - 凭据（LS API token）只以 `env:`/`file:` 引用；LS 仅内网可达；不做 iframe。
 - 表格标注门户零行为变更；新增测试模块登记唯一周次（`week_manifest.py` 新增独立键 `20:`，不占用 Week 13–17 键）。
@@ -39,17 +39,19 @@ Modify:
 - `tests/week_manifest.py`（新增 `20:` 键）、`frontend/src/weekAcceptance.test.ts`
 - `docker-compose.yml` / K8s manifests（D3 决策后）：LS + 独立 database
 
-## Task 0 决策清单（唯一当前可执行任务）
+## Task 0 决策清单——已收口（2026-09-28：D1 暂缓）
 
-- [ ] D1 立项与首期模态（推荐：仅图像）。
-- [ ] D2 集成模式（推荐：B 深度集成）。
-- [ ] D3 部署形态（推荐：K8s 未就绪先 compose）。
-- [ ] D4 表格标注不迁移（推荐：确认）。
-- [ ] D5 身份模式（推荐：provisioning + 网关单点登录）。
-- [ ] D6 回流确认策略（推荐：LS 完成不自动回传）。
-- [ ] D7 存储访问（推荐：StorageBinding；就绪前 presigned）。
-- [ ] D8 运维承诺（备份/升级/监控，需运维确认）。
-- [ ] 全部确认 → 台账记录（新 §4.3 或日期条目）+ 状态转 `planned`；任一未确认 → 保持 `pending_decision` 到此为止。
+- [x] D1 立项与首期模态：**暂缓，不立项**（用户决定）→ 轨道转 `deferred`，Task 1+ 不执行。
+- [x] D2 集成模式：B 深度集成（证据收口，条件生效）。
+- [x] D3 部署形态：先 compose 落地，后续随 Week 13–15 迁移（用户确认，条件生效）。
+- [x] D4 表格标注不迁移（证据收口，条件生效）。
+- [x] D5 身份模式：provisioning + 网关单点登录（证据收口，条件生效）。
+- [x] D6 回流策略：LS 完成不自动回传（证据收口，条件生效）。
+- [x] D7 存储访问：StorageBinding 优先、就绪前 presigned（证据收口，条件生效）。
+- [x] D8 运维承诺：完整接受（用户确认，条件生效）。
+- [x] 记录归档：DEVELOPMENT_PLAN.md §4.3 + 技术方案 §10；结论 `deferred`，重新立项需用户明确指示。
+
+Verification: 台账 §4.3 与技术方案 §10 记录一致；重新激活时 D2–D8 结论直接生效，无需重做决策评审（除非届时条件变化）。
 
 ## Task 1 模型与迁移（RED → 实现）
 
