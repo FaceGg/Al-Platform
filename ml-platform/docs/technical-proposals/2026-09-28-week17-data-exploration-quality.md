@@ -1,7 +1,7 @@
 # Week 17 数据探索与质量报告技术方案
 
 **日期：** 2026-09-28
-**状态：** 决策门控设计稿。Week 17 为 `pending_decision`——本方案是**决策输入**，不是实现承诺；§8 决策门未获批前不编写任何实现代码、迁移或前端路由。
+**状态：** 设计已获批（2026-09-28，§8 七项决策门全部通过）。Week 17 状态为 `planned`——实现按[实施计划](../superpowers/plans/2026-09-28-week17-data-exploration-quality.md)执行，完成周度门禁前不得宣称完成。
 **范围（若获批）：** 基于 DuckDB 的项目内只读数据探索、数据质量 profile、可追溯质量报告 Artifact、查询与报告页面
 **不包含（无论是否获批）：** Label Studio / 多模态标注与回流、Superset 部署（为独立选项，见 §9）、任意 SQL 代理、跨项目数据访问
 
@@ -53,7 +53,7 @@ query_service.py                          quality_profile.py
 
 ## 5. 核心领域模型
 
-迁移计划名 `20260924_66_data_exploration_quality.py`（以实现日空闲号为准；**获批后才创建**）。
+迁移计划名 `20260924_66_data_exploration_quality.py`（以实现日空闲号为准）。
 
 - **SavedQuery**（可选，决策项）：project 内命名查询，owner 限定，仅存 SQL 文本与参数（无结果）。
 - **QualityReport**（表 `quality_reports`）：`dataset_version_id`、`schema_hash`、`content_hash`、`params_json`（阈值等）、`generator_version`、`artifact_id`（FK artifacts）、`status`、`created_by`。同一 `(dataset_version_id, schema_hash, params_json hash, generator_version)` 幂等复用已有报告。
@@ -82,19 +82,21 @@ query_service.py                          quality_profile.py
 | GET `/quality-reports`、GET `/{id}` | 列表/详情（含绑定头） | 404 隐藏式 |
 | GET `/{id}/download` | 经 Artifact 授权下载 | 403/404 |
 
-## 8. 决策门（必须逐项获批，全部记录到台账后才进入实现）
+## 8. 决策记录（2026-09-28 全部获批）
 
-| # | 决策项 | 推荐默认 |
-|---|---|---|
-| 1 | 功能范围 | DuckDB 只读查询 + 质量 profile + 报告 Artifact；不做 Superset 部署 |
-| 2 | 数据访问角色 | 查询 = `execution.operate`（owner/editor/operator）；viewer 仅看已有报告 |
-| 3 | 资源上限值 | 行 1,000 / 字节 10MB / 30 秒 / 并发 2（可调，需确认） |
-| 4 | 审计与保留 | 查询审计保留 ≥ 90 天；语句原文不入审计 |
-| 5 | SavedQuery 是否纳入首期 | 推荐：不纳入（降低合同面），二期再议 |
-| 6 | 结构化审核扩展 | 维持现状：既有标注指派/回传/验收为基线，不新增重复 API |
-| 7 | 成本预算 | API 进程内执行，无新增基础设施成本；如需作业化（依赖 Week 14）另批 |
+第 1/3/4/5 项由用户于 2026-09-28 确认，第 2/6/7 项按仓库证据收口；台账记录见 DEVELOPMENT_PLAN.md §4.2。
 
-任一项未确认 → Week 17 保持 `pending_decision`，只允许维护本方案与测试骨架文档。
+| # | 决策项 | 决策 | 依据 |
+|---|---|---|---|
+| 1 | 功能范围 | **批准**：DuckDB 只读查询 + 质量 profile + 报告 Artifact；不部署 Superset | 用户确认；Superset 若未来需要另立集成计划 |
+| 2 | 数据访问角色 | 查询 `execution.operate`（owner/editor/operator）、报告生成 `resource.create`、查看/下载 `project.read`（viewer 只读）；不新增 permission 字符串 | 与 Week 13 决策 4 同构；`PERMISSIONS` 为封闭 frozenset（Week 13 已核实） |
+| 3 | 资源上限值 | 行 1,000 / 结果 10MB / 30 秒 / 并发 2（Settings 可配） | 用户确认默认组 |
+| 4 | 审计与保留 | 查询审计保留 90 天（可配）；语句原文不入审计 | 用户确认；保留期仿既有 `inference_log_retention_days` 惯例（默认 30、可配 1–365） |
+| 5 | SavedQuery | 首期不纳入，二期再议 | 用户确认；降低首期合同面 |
+| 6 | 结构化审核扩展 | 维持现状：既有标注指派/回传/验收为基线，不新增重复 API | Week 13–17 计划 §8.1 强制项 |
+| 7 | 成本预算 | API 进程内执行，零新增基础设施；作业化（依赖 Week 14）另批 | 无计费系统可对接；duckdb 为进程内引擎 |
+
+结论：决策门全部通过，Week 17 状态由 `pending_decision` 转为 `planned`；实现按实施计划自 Task 17.1 起。
 
 ## 9. Superset 替代路径
 
@@ -113,8 +115,8 @@ query_service.py                          quality_profile.py
 
 - 不实现 Label Studio/多模态/iframe/训练数据回流（维持 2026-08-18 延后决策）。
 - 不部署 Superset、不代理任意数据库连接、不开放文件路径读取。
-- 未获批不创建迁移、API、前端路由或测试实现；不以本方案文档宣称任何完成状态。
+- 不以本方案文档宣称任何完成状态；实现完成周度门禁前不写发布结论。
 
 ## 12. 方案结论
 
-本方案把"数据探索"压缩为一个可安全获批的最小合同：DuckDB 临时库 + sqlglot 校验 + 三重上限 + Artifact 追溯，全部叠加在既有项目权限与制品合同上。决策门逐项收口后，实施计划（Task 17.x）即可执行；门未开，本方案就是终点。
+本方案把"数据探索"压缩为一个可安全获批的最小合同：DuckDB 临时库 + sqlglot 校验 + 三重上限 + Artifact 追溯，全部叠加在既有项目权限与制品合同上。决策门已于 2026-09-28 全部收口，实施计划（Task 17.1 起）即可执行。

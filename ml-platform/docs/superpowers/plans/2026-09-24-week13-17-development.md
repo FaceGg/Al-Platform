@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Week 13–16 的当前状态为 planned；Week 17 为 pending_decision。计划建立和文档通过不等于功能完成。
+- Week 13–16 的当前状态为 planned；Week 17 决策门已于 2026-09-28 获批（见 Task 5 注记），状态 planned。计划建立和文档通过不等于功能完成。
 - 通用平台边界优先于历史行业化代码；新模块不得增加点焊字段、路由、服务或专用工作流依赖。
 - 所有 API 读写都通过现有 get_current_user、ProjectAccessService 或等价项目资源权限合同；写操作进入 AuditService，跨项目资源返回既有隐藏式 404/403 语义。
 - 集群凭据使用 credential_ref/Secret 引用和最小权限 ServiceAccount；禁止明文 secret、任意 kubeconfig、任意 hostPath、privileged、Docker socket 和未审计外部 URL。
@@ -217,6 +217,8 @@ Steps:
 Exit gate: routing is deterministic and fail-closed, reservations cannot exceed quotas under concurrency, storage bindings cannot escape the project prefix, and the existing single-cluster path remains backward compatible.
 
 ## 8. Task 5: Week 17 decision gate and approved data exploration
+
+> 2026-09-28：七项决策门已全部获批（[DEVELOPMENT_PLAN.md §4.2](../../../../DEVELOPMENT_PLAN.md)、[Week 17 技术方案 §8](../../technical-proposals/2026-09-28-week17-data-exploration-quality.md)）；实现按 [Week 17 实施计划](2026-09-28-week17-data-exploration-quality.md) 自 Task 17.1 起，完成门禁前不宣称完成。
 
 ### 8.1 Decision gate, always required
 

@@ -22,7 +22,7 @@
 | Week 14 | planned | Kubernetes Job/Pod 执行器、状态、日志、取消、超时、垃圾回收和恢复 | 依赖 Week 13 |
 | Week 15 | planned | Notebook、镜像目录/构建、GPU 资源类和配额 | 依赖 Week 13–14 |
 | Week 16 | planned | 多集群路由、存储挂载、配额、并发、成本和资源监控 | 依赖 Week 13–15 |
-| Week 17 | pending_decision | SQL Lab、数据探索、质量报告及结构化审核扩展范围未确认；多模态 Label Studio 已延后 | 先完成产品决策，不直接编码 |
+| Week 17 | planned | 数据探索与质量报告范围已获批（§4.2，2026-09-28）：DuckDB 只读查询 + 质量 profile + 报告 Artifact，不部署 Superset；上限行 1,000/10MB/30 秒/并发 2；SavedQuery 首期不纳入 | 按 2026-09-28 Week 17 实施计划自 Task 17.1 起实现 |
 | Week 18–20 | deferred | RAG、LLM 网关、AIHub、全产品交付不在本轮范围 | 保持搁置 |
 
 ## 3. 最近开发计划：Week 13–17
@@ -37,7 +37,7 @@
 
 执行顺序固定为 Week 13 → Week 14 → Week 15 → Week 16 → Week 17。Week 17 的 Label Studio、多模态同步、iframe 和训练数据回流不在当前承诺范围。
 
-详细文件边界、接口、测试步骤、环境和证据要求见 [Week 13–17 计划](ml-platform/docs/superpowers/plans/2026-09-24-week13-17-development.md)。各周细化设计与执行入口：Week 13 [技术方案](ml-platform/docs/technical-proposals/2026-09-28-week13-kubernetes-foundation.md) / [实施计划](ml-platform/docs/superpowers/plans/2026-09-28-week13-kubernetes-foundation.md)；Week 14 [技术方案](ml-platform/docs/technical-proposals/2026-09-28-week14-kubernetes-executor.md) / [实施计划](ml-platform/docs/superpowers/plans/2026-09-28-week14-kubernetes-executor.md)；Week 15 [技术方案](ml-platform/docs/technical-proposals/2026-09-28-week15-notebooks-images-gpu.md) / [实施计划](ml-platform/docs/superpowers/plans/2026-09-28-week15-notebooks-images-gpu.md)；Week 16 [技术方案](ml-platform/docs/technical-proposals/2026-09-28-week16-multi-cluster-governance.md) / [实施计划](ml-platform/docs/superpowers/plans/2026-09-28-week16-multi-cluster-governance.md)；Week 17 [技术方案](ml-platform/docs/technical-proposals/2026-09-28-week17-data-exploration-quality.md) / [实施计划](ml-platform/docs/superpowers/plans/2026-09-28-week17-data-exploration-quality.md)。全部为评审稿/决策门控设计，不改变各周 planned 与 pending_decision 状态。
+详细文件边界、接口、测试步骤、环境和证据要求见 [Week 13–17 计划](ml-platform/docs/superpowers/plans/2026-09-24-week13-17-development.md)。各周细化设计与执行入口：Week 13 [技术方案](ml-platform/docs/technical-proposals/2026-09-28-week13-kubernetes-foundation.md) / [实施计划](ml-platform/docs/superpowers/plans/2026-09-28-week13-kubernetes-foundation.md)；Week 14 [技术方案](ml-platform/docs/technical-proposals/2026-09-28-week14-kubernetes-executor.md) / [实施计划](ml-platform/docs/superpowers/plans/2026-09-28-week14-kubernetes-executor.md)；Week 15 [技术方案](ml-platform/docs/technical-proposals/2026-09-28-week15-notebooks-images-gpu.md) / [实施计划](ml-platform/docs/superpowers/plans/2026-09-28-week15-notebooks-images-gpu.md)；Week 16 [技术方案](ml-platform/docs/technical-proposals/2026-09-28-week16-multi-cluster-governance.md) / [实施计划](ml-platform/docs/superpowers/plans/2026-09-28-week16-multi-cluster-governance.md)；Week 17 [技术方案](ml-platform/docs/technical-proposals/2026-09-28-week17-data-exploration-quality.md) / [实施计划](ml-platform/docs/superpowers/plans/2026-09-28-week17-data-exploration-quality.md)。全部为评审稿，不改变各周 planned 状态；Week 17 的决策记录见 §4.2。
 
 ## 4. 进入条件与横向合同
 
@@ -58,7 +58,21 @@ Week 13 技术方案 §12 的五项决策按仓库与环境证据收口（细则
 4. 权限映射：管理写操作复用 `resource.create/update/delete`（owner + editor），只读发现复用 `project.read`（全体成员角色）；不新增 permission 字符串，不给平台 admin 新增项目旁路。
 5. TLS：默认全程验证，kind 以 `file:` 引用 kind CA；`insecure_tls` 仅为 WSL IP 访问导致 SAN 不匹配的兜底，保持集群标记 + 设置双开关并审计。
 
-Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径、Week 17 数据探索范围）仍开放；不阻塞 Week 13 实现，但阻塞 Week 15/17。
+Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径）仍开放；不阻塞 Week 13 实现，但阻塞 Week 15。Week 17 范围决策见 §4.2。
+
+### 4.2 Week 17 范围决策记录（2026-09-28）
+
+按 Week 17 技术方案 §8 的七个决策项逐项收口；第 1/3/4/5 项由用户于 2026-09-28 确认，第 2/6/7 项按仓库证据收口（依据见该节）：
+
+1. 功能范围：批准 DuckDB 只读查询 + 质量 profile + 报告 Artifact；不部署 Superset（若未来需要，另立集成计划）。
+2. 数据访问角色：查询 `execution.operate`（owner/editor/operator）、报告生成 `resource.create`、查看/下载 `project.read`（viewer 只读）；不新增 permission 字符串。
+3. 资源上限：行 1,000 / 结果 10MB / 30 秒 / 并发 2（Settings 可配）。
+4. 审计与保留：查询审计保留 90 天（新增可配设置，仿 `inference_log_retention_days` 惯例）；语句原文不入审计。
+5. SavedQuery：首期不纳入，二期再议。
+6. 结构化审核扩展：维持现状，既有标注指派/回传/验收为基线，不新增重复 API。
+7. 成本预算：API 进程内执行，零新增基础设施；如需作业化（依赖 Week 14）另行批准。
+
+结论：Week 17 决策门全部通过，状态由 `pending_decision` 转为 `planned`，实现按 [Week 17 实施计划](ml-platform/docs/superpowers/plans/2026-09-28-week17-data-exploration-quality.md) 自 Task 17.1 起；完成全部周度门禁前不得宣称 completed。
 
 ## 5. 周度验收门禁
 
@@ -224,7 +238,7 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 ## 8. 维护记录
 
 - 2026-09-24：归档本文件压缩前的完整历史，新增 Week 13–17 详细开发计划和实施计划索引；当前文档只保留最新状态、依赖、门禁、风险和归档入口。Week 13–16 保持 planned，Week 17 保持 pending_decision；没有因整理文档提升任何实现状态。
-- 2026-09-28：新增 Week 13–17 各周技术方案（评审稿）与实施计划（Week 17 为决策门控设计）；Task 0 的 Week 13 子集五项决策收口（§4.1）；Week 13–17 计划迁移修订号顺延（Week 13 `_62`、Week 14–17 `_63`–`_66`）。各周状态保持 planned / pending_decision 不变。
+- 2026-09-28：新增 Week 13–17 各周技术方案（评审稿）与实施计划；Task 0 的 Week 13 子集五项决策收口（§4.1）；Week 17 七项范围决策获批（§4.2），状态由 `pending_decision` 转为 `planned`；Week 13–17 计划迁移修订号顺延（Week 13 `_62`、Week 14–17 `_63`–`_66`）。Week 13–16 状态保持 planned 不变。
 - 后续每个周次完成后，先绑定当前 SHA 和实际证据更新本台账，再把详细执行记录追加到新的日期归档；不得用计划文本、历史测试或旧收据宣称完成。
 
 ## 9. 合并自 origin/main 的历史执行记录（2026-09-24）
