@@ -87,6 +87,7 @@ FRONTEND_BIND_ADDRESS=${frontend_bind_address}
 FRONTEND_PORT=5173
 ANNOTATOR_BIND_ADDRESS=${annotator_bind_address}
 ANNOTATOR_PORT=8443
+ANNOTATOR_COOKIE_SECURE=false
 MINIO_BIND_ADDRESS=127.0.0.1
 MINIO_API_PORT=9000
 MINIO_CONSOLE_PORT=9001
@@ -157,6 +158,14 @@ if [[ -n "$ANNOTATOR_BIND_ADDRESS" ]]; then
   set_env_value ANNOTATOR_BIND_ADDRESS "$ANNOTATOR_BIND_ADDRESS"
 elif ! grep -Eq '^[[:space:]]*ANNOTATOR_BIND_ADDRESS[[:space:]]*=' "$ENV_FILE"; then
   set_env_value ANNOTATOR_BIND_ADDRESS "0.0.0.0"
+fi
+
+# 本安装包按纯 HTTP 部署：Secure cookie 在非 localhost 的 HTTP 下会被浏览器
+# 丢弃，导致门户登录成功但会话立即失效。已有 .env 的升级部署同样补写。
+if [[ -n "$ANNOTATOR_COOKIE_SECURE" ]]; then
+  set_env_value ANNOTATOR_COOKIE_SECURE "$ANNOTATOR_COOKIE_SECURE"
+elif ! grep -Eq '^[[:space:]]*ANNOTATOR_COOKIE_SECURE[[:space:]]*=' "$ENV_FILE"; then
+  set_env_value ANNOTATOR_COOKIE_SECURE "false"
 fi
 set_env_value NGINX_PORT "$PUBLIC_PORT"
 set_env_value NGINX_BIND_ADDRESS "0.0.0.0"

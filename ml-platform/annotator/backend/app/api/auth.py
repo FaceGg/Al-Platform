@@ -47,7 +47,7 @@ def logout(
     # viewer's cookie is cleared: the annotator and admin sessions coexist in
     # separate cookies, so logging out of one must not kill the other.
     active = ADMIN_COOKIE_NAME if viewer == "admin" else COOKIE_NAME
-    response.delete_cookie(active, path="/", secure=True, httponly=True, samesite="lax")
+    response.delete_cookie(active, **cookie_options())
 
 @router.get("/me")
 def me(principal: PortalPrincipal = Depends(require_portal_session)):

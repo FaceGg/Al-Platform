@@ -3,13 +3,14 @@ import uuid
 
 from fastapi import Depends, HTTPException, Request
 
+from app.config import settings
 from app.services.platform_client import PlatformClient, PlatformClientError
 
 COOKIE_NAME = "portal_session"
 ADMIN_COOKIE_NAME = "admin_portal_session"
 
 def cookie_options() -> dict:
-    return {"httponly": True, "secure": True, "samesite": "lax", "path": "/"}
+    return {"httponly": True, "secure": settings.cookie_secure, "samesite": "lax", "path": "/"}
 
 
 @dataclass(frozen=True)

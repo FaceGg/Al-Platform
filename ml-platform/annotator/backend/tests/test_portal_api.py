@@ -96,6 +96,25 @@ def test_portal_logout_admin_viewer_only_clears_admin_cookie():
     assert "portal_session" not in set_cookie.replace("admin_portal_session", "")
 
 
+def test_portal_cookie_flags_follow_http_deployment(monkeypatch):
+    """纯 HTTP 部署（ANNOTATOR_COOKIE_SECURE=false）下 cookie 不得带 Secure
+    标志：浏览器会丢弃非安全传输下发的 Secure cookie，导致外网登录成功
+    但会话立即丢失（/portal/auth/me 401）。"""
+    import dataclasses
+    from app.services import session as session_module
+
+    http_settings = dataclasses.replace(session_module.settings, cookie_secure=False)
+    monkeypatch.setattr(session_module, "settings", http_settings)
+    client = TestClient(app)
+    response = client.post("/portal/auth/logout")
+    assert response.status_code == 204
+    set_cookie = response.headers.get("set-cookie", "")
+    assert 'portal_session=""' in set_cookie
+    assert "Secure" not in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=lax" in set_cookie
+
+
 def test_portal_annotator_routes_reject_admin_sessions_with_clear_code():
     from app.services.session import require_portal_session
     app.dependency_overrides[require_portal_session] = lambda: PortalPrincipal(

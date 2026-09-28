@@ -250,6 +250,7 @@ services:
       ANNOTATOR_PORT: 8443
       ANNOTATOR_API_ORIGIN: ${ANNOTATOR_API_ORIGIN:-http://backend:8000}
       ANNOTATOR_PUBLIC_ORIGIN: ${ANNOTATOR_PUBLIC_ORIGIN:-http://localhost:8443}
+      ANNOTATOR_COOKIE_SECURE: ${ANNOTATOR_COOKIE_SECURE:-true}
     depends_on:
       backend:
         condition: service_started
