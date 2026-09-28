@@ -218,6 +218,15 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-09-28 门户 HTTP 登录会话丢失：Secure cookie 硬编码（r12）
+
+- 现象：外网（非 localhost）通过 `http://10.12.18.6:8443` 登录门户，接口返回 200 但会话立即丢失——服务器日志呈 `POST /portal/auth/login 200 OK` 紧跟 `GET /portal/auth/me 401` 循环；本地 localhost 登录正常。
+- 根因：`ml-platform/annotator/backend` 的 `cookie_options()` 与 logout 硬编码 `secure=True`。浏览器按规范丢弃经非安全传输（非 localhost 的 HTTP）下发的 Secure cookie，导致登录成功但浏览器未保存会话。
+- 修复：新增 `ANNOTATOR_COOKIE_SECURE` 配置（默认 `true`），`cookie_options()` 与 logout 删除 cookie 统一走该开关；`docker-compose.yml` 的 annotator 服务注入该变量；`install-ubuntu.sh` 对新装与升级部署都写入 `ANNOTATOR_COOKIE_SECURE=false`（Ubuntu 安装包按纯 HTTP 部署设计），HTTPS 反代场景可改回 `true`（提交 `248a1b3`）。
+- 验证：annotator backend `31 passed`（新增回归：`ANNOTATOR_COOKIE_SECURE=false` 时 cookie 不带 Secure 仍带 HttpOnly/SameSite）；`bash -n` 语法检查通过（仓库 blob 为 LF）。
+- 发布记录（2026-09-28）：安装包 `output/linkraft-ubuntu-20260926-r12.tar.gz`，manifest 绑定 HEAD `1f4d87f`，SHA-256 `8ac6d97269b18268c35fff1da54a2a29bed2544fa8d75ab31faac3746a8b182b`，归档抽查确认 cookie 开关代码与安装脚本均已包含。
+- 待完成：目标服务器部署 r12 后外网登录 8443 并保持会话的端到端确认；外网 5175 的 `CORS_ORIGIN_FORBIDDEN` 与本地 5175 的对偶问题需用 `PUBLIC_ORIGIN`/`PUBLIC_ORIGIN_ALIASES` 收敛（运行时配置，无需发版）。
+
 ### 2026-09-26 标注员门户误报“质检反馈/需重做”（r11）
 
 - 现象：标注员修改标签并重新回传后，任务列表显示质检反馈横幅和“需重做”徽章——但任务是正常等待验收，并非审核退回。
