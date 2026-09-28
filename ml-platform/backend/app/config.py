@@ -126,6 +126,12 @@ class Settings(BaseSettings):
     annotation_max_input_columns: int = Field(default=200, ge=1, le=2_000)
     annotation_max_label_columns: int = Field(default=20, ge=1, le=200)
 
+    kubernetes_endpoint_allowlist: list[str] = Field(default_factory=list)
+    kubernetes_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    kubernetes_read_timeout_seconds: float = Field(default=10.0, gt=0, le=300)
+    kubernetes_stale_after_seconds: int = Field(default=300, ge=10, le=86400)
+    kubernetes_allow_insecure_endpoints: bool = False
+
     notification_master_key: SecretStr | None = Field(default=None, exclude=True)
     notification_master_key_file: str | None = Field(
         default=None, repr=False, exclude=True

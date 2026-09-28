@@ -1,6 +1,5 @@
 from app.engine.operator_contract import OperatorContext, OperatorResult
-import sys, os, io
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import io
 import pandas as pd, numpy as np, joblib
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator

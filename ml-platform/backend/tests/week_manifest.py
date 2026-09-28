@@ -164,6 +164,11 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_image_security_contracts",
         "test_notification_receiver_acceptance",
     ],
+    13: [
+        "test_kubernetes_client",
+        "test_kubernetes_cluster_api",
+        "test_cloud_resource_migrations",
+    ],
 }
 
 
