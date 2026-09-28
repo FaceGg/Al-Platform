@@ -10,8 +10,8 @@
 ## 安装
 
 ```bash
-tar -xzf linkraft-ubuntu-20260926-r11.tar.gz
-cd linkraft-ubuntu-20260926-r11
+tar -xzf linkraft-ubuntu-20260926-r12.tar.gz
+cd linkraft-ubuntu-20260926-r12
 chmod +x packaging/*.sh ml-platform/scripts/prepare-production-secrets.sh
 PUBLIC_ORIGIN=http://SERVER_PUBLIC_IP:5175 ./packaging/install-ubuntu.sh
 ```
@@ -60,6 +60,8 @@ sudo ufw allow 5173/tcp
 
 r8 及更早版本存在一个 PostgreSQL 专属缺陷：`generic_annotation_tasks.status` 列宽为 `VARCHAR(24)`，而回传冻结会写入 `returned_pending_acceptance`（27 字符），导致每次回传校验都失败并表现为 `409 RETURN_BATCH_NOT_READY`（操作 `error_code` 显示为乱码如 `9h9h`，这是 SQLAlchemy 内部错误码泄漏）。SQLite 不检查 VARCHAR 宽度，所以本地开发与测试环境从未暴露该问题。r9 通过 alembic 迁移 `20260926_61` 将 `status` 与 `paused_from_status` 加宽到 `VARCHAR(32)`；升级时 `migrate` 容器会自动执行。r10 起新增自愈：冻结操作失败的回传批次不再死锁，标注员可直接重新回传，旧批次会被自动标记为 `superseded`。
 
+r11 及更早版本的审核员/标注员门户在**非 localhost 的 HTTP 访问**下无法保持登录：登录接口返回 200 但浏览器会丢弃带 `Secure` 标志的 cookie，表现为登录后立即被弹回登录页（`/portal/auth/me` 401）。r12 起 `.env` 中 `ANNOTATOR_COOKIE_SECURE=false`（安装脚本对新装和升级部署都会写入），门户会话 cookie 不再带 Secure 标志；若将来在门户前部署 HTTPS 反向代理，把该值改回 `true` 即可。
+
 从 r9 及更早版本升级前已 `failed` 的回传批次，若标注员门户提示无法重新回传（assignment 仍锁在 `returned_pending_acceptance`），可执行以下 SQL 解锁后再重新回传：
 
 ```bash
@@ -70,7 +72,7 @@ r8 及更早版本存在一个 PostgreSQL 专属缺陷：`generic_annotation_tas
 从 r4-r8 升级时，保留现有 `.env`、`secrets/` 和数据库，只覆盖源码并重建相关服务：
 
 ```bash
-tar -xzf /path/to/linkraft-ubuntu-20260926-r11.tar.gz \
+tar -xzf /path/to/linkraft-ubuntu-20260926-r12.tar.gz \
   --strip-components=1 -C ~/linkraft-ubuntu-20260924-r4
 cd ~/linkraft-ubuntu-20260924-r4
 ./packaging/compose-ubuntu.sh up -d --build --force-recreate backend worker scheduler frontend annotator annotator-frontend
@@ -116,7 +118,7 @@ docker image inspect minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1 \
 如果 r4、r5、r6 或 r7 部署在注册 XGBoost AutoML 结果时返回 `MODEL_CONVERSION_FAILED`，请在不替换 `.env`、`secrets/` 和数据库文件的前提下更新现有部署目录，然后重建 Python 服务：
 
 ```bash
-tar -xzf /path/to/linkraft-ubuntu-20260926-r11.tar.gz \
+tar -xzf /path/to/linkraft-ubuntu-20260926-r12.tar.gz \
   --strip-components=1 -C ~/linkraft-ubuntu-20260924-r4
 cd ~/linkraft-ubuntu-20260924-r4
 ./packaging/compose-ubuntu.sh up -d --build --force-recreate backend worker scheduler
@@ -125,11 +127,11 @@ cd ~/linkraft-ubuntu-20260924-r4
 
 r8 及之后版本的 worker 会在应用 Linux 地址空间限制之前导入 ONNX/XGBoost 二进制扩展。既有模型制品无需重新训练；重建后的 `backend` 容器健康后重试注册即可。
 
-如果 r4、r5、r6 或 r7 部署出现 MinIO 健康检查问题，请部署 r8 或更新版本，或先复制 r11 的 `packaging/docker-compose.legacy-cpu.yml`。CPUv1 服务器镜像不提供 `mc` 健康检查命令；r8 改用服务器的 HTTP 就绪端点，并把存储桶创建保留在独立的 `minio-init` mc 容器中：
+如果 r4、r5、r6 或 r7 部署出现 MinIO 健康检查问题，请部署 r8 或更新版本，或先复制 r12 的 `packaging/docker-compose.legacy-cpu.yml`。CPUv1 服务器镜像不提供 `mc` 健康检查命令；r8 改用服务器的 HTTP 就绪端点，并把存储桶创建保留在独立的 `minio-init` mc 容器中：
 
 ```bash
 ./packaging/compose-ubuntu.sh up -d --force-recreate minio minio-init
 ./packaging/compose-ubuntu.sh up -d --remove-orphans
 ```
 
-如需从当前源码树重新构建安装包，运行 `./packaging/build-package.sh 20260926-r11`。
+如需从当前源码树重新构建安装包，运行 `./packaging/build-package.sh 20260926-r12`。
