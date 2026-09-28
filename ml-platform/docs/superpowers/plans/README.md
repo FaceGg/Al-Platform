@@ -1,12 +1,17 @@
 # 实施计划索引
 
-> 更新时间：2026-09-24。当前执行入口是 Week 13–17 计划；本索引只负责告诉读者哪一份计划有效，具体状态以顶层 DEVELOPMENT_PLAN.md 为准。
+> 更新时间：2026-09-28。当前执行入口是 Week 13–17 计划；本索引只负责告诉读者哪一份计划有效，具体状态以顶层 DEVELOPMENT_PLAN.md 为准。
 
 ## 当前执行计划
 
 | 文档 | 范围 | 状态 | 使用规则 |
 |---|---|---|---|
 | [2026-09-24 Week 13–17 云原生与数据探索开发计划](2026-09-24-week13-17-development.md) | Kubernetes 基础、Job/Pod、Notebook、镜像、GPU、多集群、资源治理；Week 17 决策门 | active | 当前主要开发入口；按 Week 13 → 17 顺序执行 |
+| [2026-09-28 Week 13 Kubernetes 基础接入实施计划](2026-09-28-week13-kubernetes-foundation.md) | Week 13 集群登记、凭据引用、命名空间、资源组、节点发现、连通性检查 | planned | Week 13–17 计划 Task 1 的细化执行入口；迁移修订号以本计划为准（`_61` 已被占用） |
+| [2026-09-28 Week 14 Kubernetes 执行闭环实施计划](2026-09-28-week14-kubernetes-executor.md) | Week 14 Job/Pod 提交、状态、日志、取消、超时、回收、恢复 | planned | Week 13–17 计划 Task 2 的细化执行入口；前置 Week 13 收口 |
+| [2026-09-28 Week 15 Notebook、镜像与 GPU 实施计划](2026-09-28-week15-notebooks-images-gpu.md) | Week 15 Notebook 会话、镜像目录、构建决策门、GPU 资源类 | planned | Week 13–17 计划 Task 3 的细化执行入口；构建路径受 Task 0 约束 |
+| [2026-09-28 Week 16 多集群与资源治理实施计划](2026-09-28-week16-multi-cluster-governance.md) | Week 16 路由、存储绑定、配额/并发/成本、用量监控 | planned | Week 13–17 计划 Task 4 的细化执行入口；单集群兼容为硬门禁 |
+| [2026-09-28 Week 17 数据探索与质量报告实施计划](2026-09-28-week17-data-exploration-quality.md) | Week 17 只读查询、质量 profile、报告 Artifact | 决策门控 | Week 13–17 计划 Task 5 的细化执行入口；Task 17.0 决策门未全批不得越过 |
 | [2026-09-15 通用平台一致性实施计划](2026-09-15-general-platform-conformance.md) | 通用 AutoML 与数据标注方案的跨模块一致性、运行态和发布证据 | in_progress | Week 13–17 不得破坏其合同；Task 14 收据仍是独立发布门禁 |
 | [2026-09-02 通用自动建模与数据标注平台实施计划](2026-09-02-general-automl-annotation-platform.md) | Task 1–14 的具体文件、接口和测试 | in_progress | 前置合同和剩余 Task 的唯一实现依据 |
 | [2026-09-15 API 管理与应用编排统一实施计划](2026-09-15-api-management-and-orchestration-combined.md) | API 管理先于应用编排 | in_progress | 与 Week 13–17 并行时保持 API-first 顺序，不把编排当作 API 目录 |

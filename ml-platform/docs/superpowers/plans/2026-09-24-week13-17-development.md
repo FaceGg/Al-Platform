@@ -45,6 +45,8 @@
 
 ## 2. File and interface map
 
+> **迁移修订号更正（2026-09-28）：** 本计划编写时假设下一个空闲修订号是 `_61`；2026-09-26 main 已合入 `20260926_61_widen_annotation_task_status`。Week 13 迁移改用 `20260928_62`，Week 14–17 顺延为 `_63`–`_66`，实际修订号以各周实现日的空闲号为准。Week 13–17 的细化设计与执行入口：[Week 13 方案](../../technical-proposals/2026-09-28-week13-kubernetes-foundation.md) / [计划](2026-09-28-week13-kubernetes-foundation.md)、[Week 14 方案](../../technical-proposals/2026-09-28-week14-kubernetes-executor.md) / [计划](2026-09-28-week14-kubernetes-executor.md)、[Week 15 方案](../../technical-proposals/2026-09-28-week15-notebooks-images-gpu.md) / [计划](2026-09-28-week15-notebooks-images-gpu.md)、[Week 16 方案](../../technical-proposals/2026-09-28-week16-multi-cluster-governance.md) / [计划](2026-09-28-week16-multi-cluster-governance.md)、[Week 17 方案](../../technical-proposals/2026-09-28-week17-data-exploration-quality.md) / [计划](2026-09-28-week17-data-exploration-quality.md)。
+
 ### Week 13 files
 
 - Create: ml-platform/backend/app/models/cloud_resources.py
@@ -52,7 +54,7 @@
 - Create: ml-platform/backend/app/services/kubernetes_client.py
 - Create: ml-platform/backend/app/services/kubernetes_cluster.py
 - Create: ml-platform/backend/app/api/kubernetes_clusters.py
-- Create: ml-platform/backend/alembic/versions/20260924_61_cloud_resources.py
+- Create: ml-platform/backend/alembic/versions/20260928_62_cloud_resources.py
 - Modify: ml-platform/backend/app/models/__init__.py, ml-platform/backend/app/config.py, ml-platform/backend/app/main.py
 - Test: ml-platform/backend/tests/test_kubernetes_client.py, test_kubernetes_cluster_api.py, test_cloud_resource_migrations.py
 - Create: ml-platform/frontend/src/api/kubernetes.ts, ml-platform/frontend/src/pages/KubernetesPage.tsx, ml-platform/frontend/src/pages/KubernetesPage.test.tsx
@@ -65,7 +67,7 @@
 - Create: ml-platform/backend/app/services/kubernetes_executor.py
 - Create: ml-platform/backend/app/tasks/kubernetes_tasks.py
 - Create: ml-platform/backend/app/api/kubernetes_jobs.py
-- Create: ml-platform/backend/alembic/versions/20260924_62_kubernetes_executions.py
+- Create: ml-platform/backend/alembic/versions/20260924_63_kubernetes_executions.py
 - Modify: ml-platform/backend/app/tasks/__init__.py, ml-platform/backend/app/main.py, ml-platform/backend/app/services/operation_lifecycle.py
 - Test: ml-platform/backend/tests/test_kubernetes_executor.py, test_kubernetes_job_api.py, test_kubernetes_recovery.py, test_kubernetes_logs.py
 - Create: ml-platform/frontend/src/api/kubernetesJobs.ts, ml-platform/frontend/src/pages/JobRunsPage.tsx, ml-platform/frontend/src/pages/JobRunsPage.test.tsx
@@ -79,7 +81,7 @@
 - Create: ml-platform/backend/app/services/image_build_service.py
 - Create: ml-platform/backend/app/services/gpu_scheduler.py
 - Create: ml-platform/backend/app/api/notebooks.py, ml-platform/backend/app/api/images.py
-- Create: ml-platform/backend/alembic/versions/20260924_63_developer_resources.py
+- Create: ml-platform/backend/alembic/versions/20260924_64_developer_resources.py
 - Test: ml-platform/backend/tests/test_notebook_api.py, test_image_catalog_api.py, test_image_build_security.py, test_gpu_scheduling.py
 - Create: ml-platform/frontend/src/api/notebooks.ts, ml-platform/frontend/src/api/images.ts, ml-platform/frontend/src/pages/NotebookPage.tsx, ml-platform/frontend/src/pages/ImageCatalogPage.tsx
 - Test: ml-platform/frontend/src/pages/NotebookPage.test.tsx, ml-platform/frontend/src/pages/ImageCatalogPage.test.tsx
@@ -93,7 +95,7 @@
 - Create: ml-platform/backend/app/services/resource_governance.py
 - Create: ml-platform/backend/app/services/storage_mounts.py
 - Create: ml-platform/backend/app/api/cluster_governance.py
-- Create: ml-platform/backend/alembic/versions/20260924_64_resource_governance.py
+- Create: ml-platform/backend/alembic/versions/20260924_65_resource_governance.py
 - Test: ml-platform/backend/tests/test_multi_cluster_scheduler.py, test_resource_governance.py, test_storage_mounts.py, test_cluster_observability.py
 - Create: ml-platform/frontend/src/api/clusterGovernance.ts, ml-platform/frontend/src/pages/ClusterGovernancePage.tsx, ml-platform/frontend/src/pages/ClusterGovernancePage.test.tsx
 - Modify: ml-platform/frontend/src/App.tsx, ml-platform/frontend/src/components/AppLayout.tsx, ml-platform/frontend/src/i18n/index.tsx
@@ -105,7 +107,7 @@
 - Create: ml-platform/backend/app/schemas/data_exploration.py, ml-platform/backend/app/schemas/quality_report.py
 - Create: ml-platform/backend/app/services/query_service.py, ml-platform/backend/app/services/quality_profile.py
 - Create: ml-platform/backend/app/api/data_exploration.py, ml-platform/backend/app/api/quality_reports.py
-- Create: ml-platform/backend/alembic/versions/20260924_65_data_exploration_quality.py
+- Create: ml-platform/backend/alembic/versions/20260924_66_data_exploration_quality.py
 - Test: ml-platform/backend/tests/test_data_exploration_api.py, test_query_limits.py, test_quality_reports.py
 - Create: ml-platform/frontend/src/api/dataExploration.ts, ml-platform/frontend/src/api/qualityReports.ts, ml-platform/frontend/src/pages/DataExplorationPage.tsx, ml-platform/frontend/src/pages/QualityReportPage.tsx
 - Test: ml-platform/frontend/src/pages/DataExplorationPage.test.tsx, ml-platform/frontend/src/pages/QualityReportPage.test.tsx
@@ -124,6 +126,8 @@
 **Files:** Documentation only: DEVELOPMENT_PLAN.md, ml-platform/docs/superpowers/plans/README.md, this plan.
 
 **Interfaces:** The existing project access, ArtifactService, DatasetVersion, DurableOperation, task dispatcher, audit and notification contracts are inputs. This task produces the Week 13–16 API boundary and a Week 17 decision record.
+
+> 2026-09-28：Week 13 子集五项决策已收口（[DEVELOPMENT_PLAN.md §4.1](../../../../DEVELOPMENT_PLAN.md)、[Week 13 技术方案 §12](../../technical-proposals/2026-09-28-week13-kubernetes-foundation.md)）；镜像仓库、GPU 节点可用性、Week 15 builder 路径与 Week 17 范围仍开放。
 
 - [ ] Record that the current generic platform Task 14 release receipt is still a separate prerequisite for release claims; Week 13 work may be developed in isolation but cannot silently change the generic Task 1–14 contract.
 - [ ] Confirm a test cluster profile: Kubernetes API endpoint, TLS mode, namespace bootstrap, ServiceAccount permissions, registry endpoint and whether a GPU node is available. Store only environment variable names and credential references in the plan.
@@ -145,7 +149,7 @@ Verification: review the decision table, confirm every external dependency has a
 Steps:
 
 - [ ] Write failing model and migration tests for project ownership, unique cluster name per project, credential reference validation, namespace uniqueness and upgrade from an empty SQLite database.
-- [ ] Implement cloud_resources.py and migration 20260924_61_cloud_resources.py. Add indexes for project_id, cluster_id, status and last_checked_at; add a downgrade test that preserves unrelated tables.
+- [ ] Implement cloud_resources.py and migration 20260928_62_cloud_resources.py. Add indexes for project_id, cluster_id, status and last_checked_at; add a downgrade test that preserves unrelated tables.
 - [ ] Write API RED tests for create/list/get connectivity/nodes/namespace/resource-group endpoints, cross-project hidden access, invalid endpoint schemes, missing credentials, timeout and audit event creation.
 - [ ] Implement kubernetes_client.py with the official client, a fake client adapter for tests, TLS/host allowlist validation, bounded connect/read timeouts and redacted exception messages.
 - [ ] Implement kubernetes_cluster.py and kubernetes_clusters.py through existing project authorization and audit helpers. A failed connectivity check must persist status and error code without changing the registered credential reference.
@@ -165,7 +169,7 @@ Exit gate: a real or kind cluster can be registered, checked, and discovered; in
 Steps:
 
 - [ ] Write RED tests for deterministic Job naming, duplicate idempotency replay, resource and image validation, labels, cancellation races, timeout and a late Pod event after success.
-- [ ] Implement kubernetes_execution.py, migration 20260924_62_kubernetes_executions.py and kubernetes_executor.py. Use server-side generateName only when the database operation is already durable; never create a cluster resource before the idempotency row is committed.
+- [ ] Implement kubernetes_execution.py, migration 20260924_63_kubernetes_executions.py and kubernetes_executor.py. Use server-side generateName only when the database operation is already durable; never create a cluster resource before the idempotency row is committed.
 - [ ] Implement kubernetes_tasks.py for submit/watch/reconcile/reap. Watch must reconnect from resourceVersion, fall back to bounded polling, and persist a sanitized error when the cluster disappears.
 - [ ] Implement logs with cursor/byte limits, UTF-8 replacement, secret redaction and an explicit end-of-stream marker. Cancel uses foreground propagation and records the actor and reason.
 - [ ] Add kubernetes_jobs.py endpoints for submit/status/logs/cancel/reconcile. Reuse DurableOperation and request headers; responses contain current revision and operation ID.
@@ -185,7 +189,7 @@ Exit gate: submit is idempotent, watch reconnects, logs are bounded/redacted, ca
 Steps:
 
 - [ ] Write RED tests for NotebookSession project/user isolation, start/stop/delete idempotency, idle timeout, image digest enforcement, build context path traversal, registry credential redaction and GPU request validation.
-- [ ] Implement developer_resources.py, migration 20260924_63_developer_resources.py, notebook_service.py and notebooks.py using the Week 14 executor. Keep JupyterHub integration behind an adapter; session lifecycle remains owned by the platform.
+- [ ] Implement developer_resources.py, migration 20260924_64_developer_resources.py, notebook_service.py and notebooks.py using the Week 14 executor. Keep JupyterHub integration behind an adapter; session lifecycle remains owned by the platform.
 - [ ] Implement image_build_service.py and images.py with immutable digest storage. The accepted build path is rootless Kaniko or the prebuilt-image fallback chosen in Task 0; no Docker socket or arbitrary registry push.
 - [ ] Implement gpu_scheduler.py. Discover nvidia.com/gpu capacity from Week 13 node snapshots, translate profiles into Pod resources, and fail closed when drivers, labels or quota are missing.
 - [ ] Add NotebookPage and ImageCatalogPage with project-scoped selectors, digest/status display, bounded build logs, session open/stop controls and explicit GPU quota errors.
@@ -204,7 +208,7 @@ Exit gate: notebook sessions and builds use the same executor, image and registr
 Steps:
 
 - [ ] Write RED tests for deterministic routing, unhealthy cluster exclusion, no-capacity refusal, quota reservation/release, PVC path isolation, usage aggregation and concurrent reservation races.
-- [ ] Implement resource_governance.py, migration 20260924_64_resource_governance.py, cluster_scheduler.py and storage_mounts.py. Use a database reservation row plus Kubernetes quota checks; release reservations on every terminal or orphaned path.
+- [ ] Implement resource_governance.py, migration 20260924_65_resource_governance.py, cluster_scheduler.py and storage_mounts.py. Use a database reservation row plus Kubernetes quota checks; release reservations on every terminal or orphaned path.
 - [ ] Implement cluster_governance.py endpoints for policies, storage bindings, quotas, usage snapshots and reconciliation. Every mutation is project-authorized and audited.
 - [ ] Add cluster/node/Pod/GPU metrics collection with bounded cardinality and stale-data markers. Do not claim GPU monitoring from the existing host nvidia-smi page; this gate requires Kubernetes resource identity.
 - [ ] Add ClusterGovernancePage with route decision explanation, quotas, reservations, stale indicators and per-project usage. Keep the existing single-cluster compute page functional.
@@ -226,7 +230,7 @@ If approval is absent, update the status to pending_decision and stop here. Do n
 
 - [ ] Write RED tests for project-scoped DatasetVersion visibility, read-only SQL, blocked DDL/DML/attach/copy/file functions, row/byte/time limits, query cancellation, audit records and report artifact ownership.
 - [ ] Implement query_service.py with DuckDB over immutable DatasetVersion artifacts, an allowlisted SQL grammar, per-request temporary database, bounded result serialization and no arbitrary connection strings. Implement quality_profile.py for null/unique/type/range/duplicate/outlier summaries with deterministic input hash.
-- [ ] Add data_exploration.py, quality_reports.py, migration 20260924_65_data_exploration_quality.py and ArtifactService-backed report persistence. Reports include dataset version, schema hash, query/profile parameters, generator version and content hash.
+- [ ] Add data_exploration.py, quality_reports.py, migration 20260924_66_data_exploration_quality.py and ArtifactService-backed report persistence. Reports include dataset version, schema hash, query/profile parameters, generator version and content hash.
 - [ ] Add DataExplorationPage and QualityReportPage with project/dataset selectors, query timeout/row budget display, preview pagination, audit-friendly errors and report download through existing artifact authorization.
 - [ ] Run query, quality, migration, API, frontend and authenticated browser tests. Add an evidence receipt that proves read-only enforcement and current-SHA binding.
 

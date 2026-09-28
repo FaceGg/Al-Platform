@@ -126,6 +126,12 @@ docker compose down
 | [当前开发计划](DEVELOPMENT_PLAN.md) | 当前未完成任务、依赖、风险和阶段状态 | 当前权威资料 |
 | [通用平台技术方案](ml-platform/docs/technical-proposals/2026-09-01-general-automl-annotation-platform.md) | 通用 AutoML 与数据标注的产品、数据、接口和安全合同 | 已评审；实现尚未开始 |
 | [通用平台实施计划](ml-platform/docs/superpowers/plans/2026-09-02-general-automl-annotation-platform.md) | Task 1-14 的文件边界、测试和依赖 | `in_progress` |
+| [Week 13 技术方案](ml-platform/docs/technical-proposals/2026-09-28-week13-kubernetes-foundation.md) | Week 13 集群登记、凭据引用、命名空间与连通性的设计合同 | 评审稿（planned） |
+| [Week 13 实施计划](ml-platform/docs/superpowers/plans/2026-09-28-week13-kubernetes-foundation.md) | Week 13 的任务拆分、文件边界与验证命令 | planned |
+| [Week 14 技术方案](ml-platform/docs/technical-proposals/2026-09-28-week14-kubernetes-executor.md) | Week 14 Job/Pod 执行闭环的设计合同 | 评审稿（planned） |
+| [Week 15 技术方案](ml-platform/docs/technical-proposals/2026-09-28-week15-notebooks-images-gpu.md) | Week 15 Notebook、镜像与 GPU 的设计合同 | 评审稿（planned） |
+| [Week 16 技术方案](ml-platform/docs/technical-proposals/2026-09-28-week16-multi-cluster-governance.md) | Week 16 多集群与资源治理的设计合同 | 评审稿（planned） |
+| [Week 17 技术方案](ml-platform/docs/technical-proposals/2026-09-28-week17-data-exploration-quality.md) | Week 17 数据探索与质量报告的决策门控设计 | 决策门控（pending_decision） |
 | [通用平台验收矩阵](ml-platform/docs/acceptance/2026-09-02-general-platform-acceptance-matrix.md) | 验收编号、执行上下文和证据责任 | `in_progress` |
 | [通用化迁移基线清单](ml-platform/docs/migrations/2026-09-02-genericization-inventory.md) | 去行业化范围和迁移门禁 | `planned` |
 | [导出与离线运行时清单](ml-platform/docs/acceptance/2026-09-02-export-runtime-checklist.md) | 导出包与离线推理输入合同 | `planned` |
