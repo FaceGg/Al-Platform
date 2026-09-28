@@ -224,7 +224,7 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 根因：`ml-platform/annotator/backend` 的 `cookie_options()` 与 logout 硬编码 `secure=True`。浏览器按规范丢弃经非安全传输（非 localhost 的 HTTP）下发的 Secure cookie，导致登录成功但浏览器未保存会话。
 - 修复：新增 `ANNOTATOR_COOKIE_SECURE` 配置（默认 `true`），`cookie_options()` 与 logout 删除 cookie 统一走该开关；`docker-compose.yml` 的 annotator 服务注入该变量；`install-ubuntu.sh` 对新装与升级部署都写入 `ANNOTATOR_COOKIE_SECURE=false`（Ubuntu 安装包按纯 HTTP 部署设计），HTTPS 反代场景可改回 `true`（提交 `248a1b3`）。
 - 验证：annotator backend `31 passed`（新增回归：`ANNOTATOR_COOKIE_SECURE=false` 时 cookie 不带 Secure 仍带 HttpOnly/SameSite）；`bash -n` 语法检查通过（仓库 blob 为 LF）。
-- 发布记录（2026-09-28）：安装包 `output/linkraft-ubuntu-20260926-r12.tar.gz`，manifest 绑定 HEAD `1f4d87f`，SHA-256 `77061681ca3b33ef911b12937d6aa303e2a28933ca40b0587c978ce44fa56e29`，归档抽查确认 cookie 开关代码与安装脚本均已包含。更正：首个 r12 归档（SHA-256 `8ac6d972...b182b`）的 `install-ubuntu.sh` 因 Windows 工作区覆盖带入了 CRLF 行尾，在服务器报 `/usr/bin/env: bash\r`；`build-package.sh` 已增加打包前 LF 归一化并重建归档，旧哈希作废。
+- 发布记录（2026-09-28）：安装包 `output/linkraft-ubuntu-20260926-r12.tar.gz`，manifest 绑定 HEAD `1f4d87f`，SHA-256 `16cf3654723b9380da264ff77cda4df8c3cd1db789403695ab900015141b8f8b`，归档抽查确认 cookie 开关代码与安装脚本均已包含。更正一：首个 r12 归档（SHA-256 `8ac6d972...b182b`）的 `install-ubuntu.sh` 因 Windows 工作区覆盖带入了 CRLF 行尾，在服务器报 `/usr/bin/env: bash\r`；`build-package.sh` 已增加打包前 LF 归一化。更正二：第二个归档（SHA-256 `77061681...56e29`）的安装脚本在 `set -u` 下引用未声明的 `ANNOTATOR_COOKIE_SECURE` 报"未绑定的变量"；已在脚本头部补默认声明并重建。前两个哈希均作废，服务器现场可用 `ANNOTATOR_COOKIE_SECURE=false ./packaging/install-ubuntu.sh` 绕过。
 - 待完成：目标服务器部署 r12 后外网登录 8443 并保持会话的端到端确认；外网 5175 的 `CORS_ORIGIN_FORBIDDEN` 与本地 5175 的对偶问题需用 `PUBLIC_ORIGIN`/`PUBLIC_ORIGIN_ALIASES` 收敛（运行时配置，无需发版）。
 
 ### 2026-09-26 标注员门户误报“质检反馈/需重做”（r11）
