@@ -12,6 +12,7 @@
 | [2026-09-28 Week 15 Notebook、镜像与 GPU 实施计划](2026-09-28-week15-notebooks-images-gpu.md) | Week 15 Notebook 会话、镜像目录、构建决策门、GPU 资源类 | planned | Week 13–17 计划 Task 3 的细化执行入口；构建路径受 Task 0 约束 |
 | [2026-09-28 Week 16 多集群与资源治理实施计划](2026-09-28-week16-multi-cluster-governance.md) | Week 16 路由、存储绑定、配额/并发/成本、用量监控 | planned | Week 13–17 计划 Task 4 的细化执行入口；单集群兼容为硬门禁 |
 | [2026-09-28 Week 17 数据探索与质量报告实施计划](2026-09-28-week17-data-exploration-quality.md) | Week 17 只读查询、质量 profile、报告 Artifact | 决策门控 | Week 13–17 计划 Task 5 的细化执行入口；Task 17.0 决策门未全批不得越过 |
+| [2026-09-28 多模态标注平台集成（Label Studio）实施计划](2026-09-28-label-studio-integration.md) | Label Studio 深度集成：绑定、任务导出、结果回流、网关与部署 | pending_decision | 独立立项，不属于 Week 13–17；Task 0 决策清单（技术方案 §10）未全批不得越过 |
 | [2026-09-15 通用平台一致性实施计划](2026-09-15-general-platform-conformance.md) | 通用 AutoML 与数据标注方案的跨模块一致性、运行态和发布证据 | in_progress | Week 13–17 不得破坏其合同；Task 14 收据仍是独立发布门禁 |
 | [2026-09-02 通用自动建模与数据标注平台实施计划](2026-09-02-general-automl-annotation-platform.md) | Task 1–14 的具体文件、接口和测试 | in_progress | 前置合同和剩余 Task 的唯一实现依据 |
 | [2026-09-15 API 管理与应用编排统一实施计划](2026-09-15-api-management-and-orchestration-combined.md) | API 管理先于应用编排 | in_progress | 与 Week 13–17 并行时保持 API-first 顺序，不把编排当作 API 目录 |
