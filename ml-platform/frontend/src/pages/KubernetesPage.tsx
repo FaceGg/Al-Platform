@@ -70,7 +70,7 @@ export default function KubernetesPage() {
 
   const loadProjects = useCallback(async () => {
     try {
-      const res = await apiClient.get("/api/projects");
+      const res = await apiClient.get("/projects");
       const items: ProjectOption[] = res.data?.items ?? [];
       setProjects(items);
       setProjectId((current) => current ?? items[0]?.id ?? null);

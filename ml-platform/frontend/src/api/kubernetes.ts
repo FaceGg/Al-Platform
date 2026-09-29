@@ -75,17 +75,17 @@ export interface ConnectivityCheckResult {
 }
 
 export async function listClusters(offset = 0, limit = 100): Promise<{ items: ClusterInfo[]; total: number }> {
-  const res = await apiClient.get("/api/kubernetes/clusters", { params: { offset, limit } });
+  const res = await apiClient.get("/kubernetes/clusters", { params: { offset, limit } });
   return res.data;
 }
 
 export async function getCluster(clusterId: string): Promise<ClusterInfo> {
-  const res = await apiClient.get(`/api/kubernetes/clusters/${clusterId}`);
+  const res = await apiClient.get(`/kubernetes/clusters/${clusterId}`);
   return res.data;
 }
 
 export async function createCluster(payload: ClusterCreateRequest): Promise<ClusterInfo> {
-  const res = await apiClient.post("/api/kubernetes/clusters", payload);
+  const res = await apiClient.post("/kubernetes/clusters", payload);
   return res.data;
 }
 
@@ -93,26 +93,26 @@ export async function updateCluster(
   clusterId: string,
   payload: Partial<Pick<ClusterCreateRequest, "display_name" | "api_server_url" | "secret_ref" | "insecure_tls" | "default_namespace">>,
 ): Promise<ClusterInfo> {
-  const res = await apiClient.patch(`/api/kubernetes/clusters/${clusterId}`, payload);
+  const res = await apiClient.patch(`/kubernetes/clusters/${clusterId}`, payload);
   return res.data;
 }
 
 export async function deleteCluster(clusterId: string): Promise<void> {
-  await apiClient.delete(`/api/kubernetes/clusters/${clusterId}`);
+  await apiClient.delete(`/kubernetes/clusters/${clusterId}`);
 }
 
 export async function runConnectivityCheck(clusterId: string): Promise<ConnectivityCheckResult> {
-  const res = await apiClient.post(`/api/kubernetes/clusters/${clusterId}/connectivity-check`, {});
+  const res = await apiClient.post(`/kubernetes/clusters/${clusterId}/connectivity-check`, {});
   return res.data;
 }
 
 export async function listClusterNodes(clusterId: string): Promise<{ items: NodeCapability[]; total: number }> {
-  const res = await apiClient.get(`/api/kubernetes/clusters/${clusterId}/nodes`);
+  const res = await apiClient.get(`/kubernetes/clusters/${clusterId}/nodes`);
   return res.data;
 }
 
 export async function listClusterNamespaces(clusterId: string): Promise<{ items: string[]; total: number }> {
-  const res = await apiClient.get(`/api/kubernetes/clusters/${clusterId}/namespaces`);
+  const res = await apiClient.get(`/kubernetes/clusters/${clusterId}/namespaces`);
   return res.data;
 }
 
@@ -121,14 +121,14 @@ export async function ensureNamespace(
   name: string,
   quotaJson: Record<string, number> | null,
 ): Promise<NamespaceInfo> {
-  const res = await apiClient.put(`/api/kubernetes/clusters/${clusterId}/namespaces/${name}`, {
+  const res = await apiClient.put(`/kubernetes/clusters/${clusterId}/namespaces/${name}`, {
     quota_json: quotaJson,
   });
   return res.data;
 }
 
 export async function listResourceGroups(clusterId?: string): Promise<{ items: ResourceGroupInfo[]; total: number }> {
-  const res = await apiClient.get("/api/kubernetes/resource-groups", {
+  const res = await apiClient.get("/kubernetes/resource-groups", {
     params: clusterId ? { cluster_id: clusterId } : {},
   });
   return res.data;
@@ -140,6 +140,6 @@ export async function createResourceGroup(payload: {
   description?: string;
   quota_json?: Record<string, number>;
 }): Promise<ResourceGroupInfo> {
-  const res = await apiClient.post("/api/kubernetes/resource-groups", payload);
+  const res = await apiClient.post("/kubernetes/resource-groups", payload);
   return res.data;
 }
