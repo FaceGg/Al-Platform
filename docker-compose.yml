@@ -213,6 +213,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile
+      network: host
     ports:
       - "${BACKEND_PORT:-8001}:8000"
     environment:
@@ -244,6 +245,7 @@ services:
     build:
       context: ./ml-platform/annotator/backend
       dockerfile: Dockerfile
+      network: host
     ports:
       - "${ANNOTATOR_API_PORT:-8444}:8443"
     environment:
@@ -260,6 +262,7 @@ services:
     build:
       context: ./ml-platform/annotator/frontend
       dockerfile: Dockerfile
+      network: host
     ports:
       - "${ANNOTATOR_PORT:-8443}:80"
     depends_on:
@@ -313,6 +316,7 @@ services:
     build:
       context: ./ml-platform/frontend
       dockerfile: Dockerfile
+      network: host
     ports:
       - "${FRONTEND_PORT:-5173}:80"
     depends_on:

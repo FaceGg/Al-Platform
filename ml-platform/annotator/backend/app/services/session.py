@@ -10,7 +10,11 @@ COOKIE_NAME = "portal_session"
 ADMIN_COOKIE_NAME = "admin_portal_session"
 
 def cookie_options() -> dict:
-    return {"httponly": True, "secure": settings.cookie_secure, "samesite": "lax", "path": "/"}
+    # Path is scoped to /portal so portal session cookies never ride along on
+    # same-host deployments where the platform SPA lives on another port
+    # (cookies are host-scoped, not port-scoped); a stray portal_session on
+    # platform /api requests would trip its cookie-CSRF policy.
+    return {"httponly": True, "secure": settings.cookie_secure, "samesite": "lax", "path": "/portal"}
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,14 @@
 FROM node:20-alpine AS build
 WORKDIR /app
+# npm registry mirror for China-network builds; override with
+# --build-arg NPM_REGISTRY=https://registry.npmjs.org if needed.
+ARG NPM_REGISTRY=https://registry.npmmirror.com
 COPY package*.json ./
-RUN npm ci --include=dev --audit=false
+# npm ci downloads tarballs from the URLs recorded in package-lock.json
+# (registry.npmjs.org), which the --registry flag does not override. Rewrite
+# them to the mirror host inside the image only; the repo lockfile is untouched.
+RUN sed -i "s#https://registry.npmjs.org/#${NPM_REGISTRY}/#g" package-lock.json \
+    && npm ci --include=dev --audit=false --registry=${NPM_REGISTRY}
 COPY . .
 RUN npx vite build
 

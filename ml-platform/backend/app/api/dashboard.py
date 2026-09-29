@@ -36,12 +36,21 @@ def get_dashboard_stats(
     )
     accessible_project_ids = [project.id for project in accessible_projects]
 
-    datasets_query = db.query(Artifact).filter(Artifact.type == "dataset")
+    # Same semantics as the dataset management list: archived (deleted) and
+    # internal normalized artifacts are not user-visible datasets.
+    datasets_query = db.query(Artifact).filter(
+        Artifact.type == "dataset",
+        Artifact.archived_at.is_(None),
+    )
     if not is_platform_admin:
         datasets_query = datasets_query.filter(
             Artifact.project_id.in_(accessible_project_ids),
         )
-    datasets = datasets_query.all()
+    datasets = [
+        artifact
+        for artifact in datasets_query.all()
+        if (artifact.metadata_ or {}).get("source") != "normalized"
+    ]
 
     apis_query = db.query(PlatformAPI)
     training_jobs_query = db.query(TrainingJob)

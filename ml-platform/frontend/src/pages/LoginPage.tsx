@@ -57,10 +57,6 @@ export default function LoginPage() {
             <Text type="secondary">还没有账号？ <Link to="/register">立即注册</Link></Text>
           </div>
         </Form>
-
-        <div className="auth-note">
-          <Text type="secondary">默认账号: admin / admin123</Text>
-        </div>
       </Card>
     </main>
   );

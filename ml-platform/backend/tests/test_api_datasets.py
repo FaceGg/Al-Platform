@@ -1,5 +1,6 @@
 """Datasets API integration tests."""
 import sys, os, unittest, uuid, io
+from datetime import datetime, timezone
 sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
@@ -170,6 +171,35 @@ class TestDatasetsAPI(unittest.TestCase):
         detail = response.json()["detail"]
         self.assertEqual(detail["code"], "DATASET_IN_USE")
         self.assertEqual(detail["task_status"], "running")
+
+    def test_03c2_delete_allows_dataset_used_only_by_archived_task(self):
+        uploaded = client.post(
+            f"/api/projects/{self.project_id}/datasets/upload",
+            files={"file": ("archived-task.csv", self._make_csv(), "text/csv")},
+            headers=self.h,
+        )
+        self.assertEqual(uploaded.status_code, 200)
+        dataset_id = uploaded.json()["id"]
+        with SessionLocal() as db:
+            version = db.query(DatasetVersion).filter(
+                DatasetVersion.original_artifact_id == uuid.UUID(dataset_id),
+            ).one()
+            owner_id = db.query(User.id).filter(User.username == "admin").scalar()
+            task = GenericAnnotationTask(
+                project_id=uuid.UUID(self.project_id),
+                dataset_version_id=version.id,
+                label_schema_id=uuid.uuid4(),
+                owner_id=owner_id,
+                idempotency_key=f"archived-task-{dataset_id}",
+                task_snapshot={},
+                label_snapshot={},
+                status="cancelled",
+                archived_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+            db.add(task)
+            db.commit()
+        response = client.delete(f"/api/datasets/{dataset_id}", headers=self.h)
+        self.assertEqual(response.status_code, 204)
 
     def test_03d_zero_row_dataset_can_be_deleted(self):
         uploaded = client.post(

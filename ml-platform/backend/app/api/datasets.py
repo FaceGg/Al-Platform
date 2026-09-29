@@ -812,9 +812,14 @@ def delete_dataset(
     ).all()
     version_ids = [version.id for version in referenced_versions]
     legacy_task = db.query(AnnotationTask).filter(AnnotationTask.dataset_id == artifact.id).first()
+    # Task deletion is a soft archive (archived_at); archived tasks keep their
+    # annotation history but no longer block dataset deletion.
     generic_task = (
         db.query(GenericAnnotationTask)
-        .filter(GenericAnnotationTask.dataset_version_id.in_(version_ids))
+        .filter(
+            GenericAnnotationTask.dataset_version_id.in_(version_ids),
+            GenericAnnotationTask.archived_at.is_(None),
+        )
         .first()
         if version_ids else None
     )

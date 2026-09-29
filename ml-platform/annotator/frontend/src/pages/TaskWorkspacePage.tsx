@@ -1038,7 +1038,7 @@ export default function TaskWorkspacePage({
               全选当前页
             </label>
             <div style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: 'var(--space-3)' }}>
-              {batchSamples.map((item) => (
+              {batchSamples.map((item, index) => (
                 <label className="check" key={item.sample_id} style={{ marginBottom: 'var(--space-2)' }}>
                   <input
                     type="checkbox"
@@ -1053,8 +1053,9 @@ export default function TaskWorkspacePage({
                         : current.filter((id) => id !== item.sample_id))
                     }}
                   />
+                  {/* 编号与底部跳转框同一语义（当前筛选下第 N 条）；短 ID 前 8 位可直接用于样本搜索 */}
                   <span className="muted" style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
-                    {item.sample_id}
+                    第 {batchPage * 50 + index + 1} 条 · {item.sample_id.slice(0, 8)}
                   </span>
                 </label>
               ))}
