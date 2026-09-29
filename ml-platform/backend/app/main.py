@@ -79,6 +79,7 @@ from app.api import annotator_internal as annotator_internal_api
 from app.api import annotation_returns as annotation_returns_api
 from app.api import model_exports as model_exports_api
 from app.api import kubernetes_clusters as kubernetes_clusters_api
+from app.api import kubernetes_jobs as kubernetes_jobs_api
 
 
 def initialize_database(app_settings=None, db_engine=None) -> None:
@@ -332,6 +333,7 @@ app.include_router(annotation_task_state_api.router)
 app.include_router(annotation_returns_api.router)
 app.include_router(model_exports_api.router)
 app.include_router(kubernetes_clusters_api.router)
+app.include_router(kubernetes_jobs_api.router)
 app.include_router(spot_weld_quality_api.router)
 app.include_router(spot_weld_quality_api.all_runs_router)
 app.include_router(annotator_internal_api.router)

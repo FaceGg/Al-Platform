@@ -53,6 +53,7 @@ from app.models.platform_models import (
     OrchestrationVersion,
 )
 from app.models.data_version import DatasetVersion, DatasetSchemaColumn, DatasetSample, DatasetImport, DatasetImportProcess
+from app.models.kubernetes_execution import KubernetesJobRun
 from app.models.cloud_resources import (
     KubernetesCluster,
     KubernetesCredentialRef,
@@ -138,6 +139,7 @@ __all__ = [
     "KubernetesCredentialRef",
     "KubernetesNamespace",
     "KubernetesResourceGroup",
+    "KubernetesJobRun",
     "AnnotatorAccount",
     "AnnotatorSession",
     "AnnotatorSubjectMapping",

@@ -131,6 +131,13 @@ class Settings(BaseSettings):
     kubernetes_read_timeout_seconds: float = Field(default=10.0, gt=0, le=300)
     kubernetes_stale_after_seconds: int = Field(default=300, ge=10, le=86400)
     kubernetes_allow_insecure_endpoints: bool = False
+    kubernetes_job_approved_image_prefixes: list[str] = Field(default_factory=list)
+    kubernetes_job_allowed_env_keys: list[str] = Field(default_factory=list)
+    kubernetes_job_max_cpu_cores: int = Field(default=4, ge=1, le=64)
+    kubernetes_job_max_memory_gb: int = Field(default=8, ge=1, le=128)
+    kubernetes_job_max_timeout_seconds: int = Field(default=3600, ge=30, le=86400)
+    kubernetes_job_log_chunk_bytes: int = Field(default=262144, ge=1024, le=1048576)
+    kubernetes_job_ttl_seconds_finished: int = Field(default=3600, ge=60, le=604800)
 
     notification_master_key: SecretStr | None = Field(default=None, exclude=True)
     notification_master_key_file: str | None = Field(

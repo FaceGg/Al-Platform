@@ -359,3 +359,136 @@ class FakeKubernetesClient:
             self.created_namespaces.append(name)
         self.ensured.append((name, quota_json))
         return {"name": name, "ensured": True, "quota_applied": bool(quota_json)}
+
+    # ---- Week 14 job surface ----
+    def _jobs_init(self) -> None:
+        if not hasattr(self, "jobs"):
+            self.jobs: dict[str, dict] = {}
+            self.pod_logs: dict[str, str] = {}
+            self.job_events: list[str] = []
+
+    def create_job(self, manifest: dict) -> dict:
+        self._jobs_init()
+        self._maybe_fail("create_job")
+        name = manifest["metadata"]["name"]
+        if name in self.jobs:
+            raise KubernetesClientError(CONNECTIVITY_FAILED, f"job {name} already exists")
+        self.jobs[name] = _fake_k8s_job(name, manifest)
+        self.job_events.append(f"create:{name}")
+        return dict(self.jobs[name])
+
+    def get_job(self, name: str) -> dict | None:
+        self._jobs_init()
+        self.call_log.append("get_job")
+        job = self.jobs.get(name)
+        if job is None or job.get("deleted"):
+            return None
+        return dict(job)
+
+    def delete_job(self, name: str) -> None:
+        self._jobs_init()
+        self._maybe_fail("delete_job")
+        if name in self.jobs:
+            self.jobs[name]["deleted"] = True
+            self.jobs[name]["active"] = 0
+            self.job_events.append(f"delete:{name}")
+
+    def list_job_pods(self, job_name: str) -> list[dict]:
+        self._jobs_init()
+        self.call_log.append("list_job_pods")
+        return [{"name": f"{job_name}-pod-1", "phase": "Succeeded" if self.jobs.get(job_name, {}).get("succeeded") else "Running"}]
+
+    def read_pod_log(self, pod_name: str, cursor: int, limit_bytes: int) -> str:
+        self._jobs_init()
+        text = self.pod_logs.get(pod_name, "")
+        return text[cursor : cursor + limit_bytes]
+
+
+class JobClientProtocol(Protocol):
+    """Week 14 surface: batch Job lifecycle against one cluster."""
+
+    def create_job(self, manifest: dict) -> dict: ...
+
+    def get_job(self, name: str) -> dict | None: ...
+
+    def delete_job(self, name: str) -> None: ...
+
+    def list_job_pods(self, job_name: str) -> list[dict]: ...
+
+    def read_pod_log(self, pod_name: str, cursor: int, limit_bytes: int) -> str: ...
+
+
+def _job_labels(project_id: str, operation_id: str, revision: int) -> dict:
+    return {
+        "app.kubernetes.io/managed-by": "linkraft",
+        "linkraft.io/project-id": str(project_id).replace("-", "")[:32],
+        "linkraft.io/operation-id": str(operation_id).replace("-", "")[:32],
+        "linkraft.io/revision": str(revision),
+    }
+
+
+def build_job_manifest(
+    *,
+    job_name: str,
+    namespace: str,
+    image_ref: str,
+    command: list[str],
+    args: list[str],
+    env: dict,
+    resources: dict,
+    timeout_seconds: int,
+    labels: dict,
+    ttl_seconds_finished: int,
+) -> dict:
+    """Deterministic, security-hardened batch Job manifest.
+
+    Rejects privileged / hostPath / hostNetwork / hostPID / hostPort shapes by
+    construction: the generator simply never emits them.
+    """
+    back = {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {"name": job_name, "namespace": namespace, "labels": dict(labels)},
+        "spec": {
+            "backoffLimit": 0,
+            "activeDeadlineSeconds": timeout_seconds,
+            "ttlSecondsAfterFinished": ttl_seconds_finished,
+            "selector": {"matchLabels": {"linkraft.io/operation-id": labels["linkraft.io/operation-id"]}},
+            "template": {
+                "metadata": {"labels": dict(labels)},
+                "spec": {
+                    "restartPolicy": "Never",
+                    "automountServiceAccountToken": False,
+                    "containers": [
+                        {
+                            "name": "linkraft-job",
+                            "image": image_ref,
+                            "command": list(command),
+                            "args": list(args),
+                            "env": [{"name": k, "value": v} for k, v in sorted(env.items())],
+                            "resources": {
+                                "requests": {
+                                    "cpu": str(resources.get("cpu_cores", 1)),
+                                    "memory": f"{resources.get('memory_gb', 1)}Gi",
+                                }
+                            },
+                        }
+                    ],
+                },
+            },
+        },
+    }
+    return back
+
+
+def _fake_k8s_job(job_name: str, manifest: dict) -> dict:
+    return {
+        "name": job_name,
+        "namespace": manifest["metadata"]["namespace"],
+        "labels": manifest["metadata"]["labels"],
+        "succeeded": 0,
+        "failed": 0,
+        "active": 1,
+        "conditions": [],
+        "deleted": False,
+    }
