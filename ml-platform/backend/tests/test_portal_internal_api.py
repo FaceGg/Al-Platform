@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import struct
 from datetime import datetime, timezone
 import uuid
 
@@ -1233,3 +1235,114 @@ def test_portal_never_falls_back_from_unknown_assignment(portal_fixture, method,
     )
     assert response.status_code == 404, response.text
     assert response.json()["detail"]["code"] == "ASSIGNMENT_NOT_FOUND"
+
+
+def _waveform_b64(*points: int) -> str:
+    padded = list(points) + [0] * (870 - len(points))
+    return base64.b64encode(struct.pack(">870h", *padded)).decode("ascii")
+
+
+def _portal_samples(portal_fixture) -> dict:
+    token = _token(
+        project_id=portal_fixture["project_id"],
+        subject_id=portal_fixture["subject_id"],
+        scopes=["assignment:read"],
+    )
+    response = portal_fixture["client"].get(
+        f"/api/internal/portal/tasks/{portal_fixture['task_id']}/samples",
+        headers=_headers(token),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_portal_samples_decode_waveform_columns_and_hide_raw_payloads(portal_fixture):
+    db = portal_fixture["db"]
+    payload = _waveform_b64(7, -9, 8160)
+    dataset = db.query(DatasetVersion).one()
+    schema = db.query(LabelSchema).one()
+    admin_id = db.query(User).filter(User.role == "admin").one().id
+    db.add(DatasetSample(
+        dataset_version_id=dataset.id, sample_id="wave-1", row_index=0,
+        values={"feature": 1, "cvei": payload, "cvev": payload, "cver": payload, "cvep": payload},
+    ))
+    task = GenericAnnotationTask(
+        project_id=portal_fixture["project_id"],
+        dataset_version_id=dataset.id,
+        label_schema_id=schema.id,
+        owner_id=admin_id,
+        mode="manual",
+        status="awaiting_annotation",
+        task_revision=1,
+        sample_scope={"kind": "ids", "sample_ids": ["wave-1"]},
+        label_snapshot={"columns": [{"machine_key": "label", "value_type": "string", "required": True}]},
+        task_snapshot={
+            "sample_ids": ["wave-1"],
+            "visible_columns": ["feature", "cvei"],
+            "label_schema": {"columns": [{"machine_key": "label", "value_type": "string", "required": True}]},
+        },
+    )
+    db.add(task)
+    db.flush()
+    assignment = AnnotationAssignment(
+        task_id=task.id,
+        annotator_subject_id=portal_fixture["subject_id"],
+        sample_scope={"kind": "ids", "sample_ids": ["wave-1"]},
+        scope_hash="sha256:portal-wave-scope",
+        state="pending",
+        task_revision=1,
+        last_edit_revision=1,
+        created_by=admin_id,
+    )
+    db.add(assignment)
+    db.flush()
+    db.add(AnnotationAssignmentSample(assignment_id=assignment.id, sample_id="wave-1", revision_no=1, values={"label": None}))
+    db.commit()
+
+    token = _token(
+        project_id=portal_fixture["project_id"],
+        subject_id=portal_fixture["subject_id"],
+        scopes=["assignment:read"],
+    )
+    response = portal_fixture["client"].get(
+        f"/api/internal/portal/tasks/{task.id}/samples", headers=_headers(token),
+    )
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    # even with cvei selected as a visible column, the base64 payload is replaced by decoded channels
+    assert item["values"] == {"feature": 1}
+    assert set(item["waveforms"]) == {"current", "voltage", "resistance", "power"}
+    assert item["waveforms"]["current"][:3] == [7, -9, 8160]
+    assert len(item["waveforms"]["current"]) == 870
+
+
+def test_portal_samples_with_partial_or_invalid_waveforms_degrade_gracefully(portal_fixture):
+    db = portal_fixture["db"]
+    dataset = db.query(DatasetVersion).one()
+    assignment = db.query(AnnotationAssignment).filter_by(task_id=portal_fixture["task_id"]).one()
+    db.add_all([
+        DatasetSample(
+            dataset_version_id=dataset.id, sample_id="wave-2", row_index=2,
+            values={"feature": 1, "cvei": "not base64!!!", "cvev": _waveform_b64(1), "cver": "short"},
+        ),
+        DatasetSample(
+            dataset_version_id=dataset.id, sample_id="wave-3", row_index=3,
+            values={"feature": 2, "cvep": "!!!"},
+        ),
+    ])
+    db.add_all([
+        AnnotationAssignmentSample(assignment_id=assignment.id, sample_id="wave-2", revision_no=3, values={"label": None}),
+        AnnotationAssignmentSample(assignment_id=assignment.id, sample_id="wave-3", revision_no=3, values={"label": None}),
+    ])
+    db.commit()
+
+    items = _portal_samples(portal_fixture)["items"]
+    partial = items[2]
+    # only the valid channel decodes; broken payloads are left out, values unchanged
+    assert partial["values"] == {"feature": 1}
+    assert set(partial["waveforms"]) == {"voltage"}
+    assert partial["waveforms"]["voltage"][0] == 1
+    invalid = items[3]
+    # every waveform payload broken -> item stays exactly as before the feature
+    assert invalid["values"] == {"feature": 2}
+    assert "waveforms" not in invalid

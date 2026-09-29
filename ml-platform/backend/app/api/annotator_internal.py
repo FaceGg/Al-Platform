@@ -50,6 +50,7 @@ from app.services.annotation_concurrency import (
 )
 from app.services.annotation_task_state import current_annotation_task_snapshot
 from app.services.notification_outbox import emit_annotation_comment_notification
+from app.services.waveform_samples import WAVEFORM_FIELDS, decode_sample_waveforms
 from app.services.security import PASSWORD_RESET_LIMIT, enforce_rate_limit
 
 router = APIRouter(tags=["annotator-auth"])
@@ -838,25 +839,32 @@ def internal_portal_samples(
     rows = rows[:limit]
     source_ids = [row.sample_id for row in rows]
     source_by_id = {
-        row.sample_id: {
-            key: value for key, value in (row.values or {}).items()
-            if key in visible_columns
-        }
+        row.sample_id: (row.values or {})
         for row in db.query(DatasetSample).filter(
             DatasetSample.dataset_version_id == task.dataset_version_id,
             DatasetSample.sample_id.in_(source_ids),
         ).all()
     }
+    items = []
+    for row in rows:
+        raw_values = source_by_id.get(row.sample_id, {})
+        values = {key: value for key, value in raw_values.items() if key in visible_columns}
+        item = {
+            "sample_id": row.sample_id,
+            "values": values,
+            "labels": row.values or {},
+            "revision": row.revision_no,
+        }
+        waveforms = decode_sample_waveforms(raw_values)
+        if waveforms:
+            # Waveform columns hold base64 payloads rather than readable data;
+            # once decoded they are served via `waveforms` and hidden from `values`.
+            for field in WAVEFORM_FIELDS:
+                values.pop(field, None)
+            item["waveforms"] = waveforms
+        items.append(item)
     return {
-        "items": [
-            {
-                "sample_id": row.sample_id,
-                "values": source_by_id.get(row.sample_id, {}),
-                "labels": row.values or {},
-                "revision": row.revision_no,
-            }
-            for row in rows
-        ],
+        "items": items,
         "total": filtered_total,
         "next_cursor": rows[-1].sample_id if has_next and rows else None,
     }

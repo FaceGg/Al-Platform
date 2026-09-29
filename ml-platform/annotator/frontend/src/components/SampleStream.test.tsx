@@ -68,4 +68,23 @@ describe('SampleStream', () => {
     fireEvent.click(screen.getByRole('button', { name: '筛选样本' }))
     expect(props.onOpenSamples).toHaveBeenCalledOnce()
   })
+
+  it('renders decoded waveform charts when the sample carries waveforms', () => {
+    renderStream({
+      sample: {
+        ...sample,
+        waveforms: { current: [10, 40, 20, 60], voltage: [5, 8, 6], resistance: [1, 2], power: [3, 9, 4, 7] },
+      },
+    })
+    expect(screen.getByText('波形数据')).toBeVisible()
+    expect(screen.getByRole('img', { name: '电流波形曲线，共 4 个采样点' })).toBeVisible()
+    expect(screen.getByRole('img', { name: '电压波形曲线，共 3 个采样点' })).toBeVisible()
+    expect(screen.getByRole('img', { name: '电阻波形曲线，共 2 个采样点' })).toBeVisible()
+    expect(screen.getByRole('img', { name: '功率波形曲线，共 4 个采样点' })).toBeVisible()
+  })
+
+  it('keeps the workspace layout unchanged when the sample has no waveforms', () => {
+    renderStream()
+    expect(screen.queryByText('波形数据')).not.toBeInTheDocument()
+  })
 })

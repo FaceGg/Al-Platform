@@ -52,6 +52,7 @@ _SQLITE_COLUMNS = {
         "early_stopping_patience": "INTEGER",
         "early_stopping_min_delta": "FLOAT",
         "restore_best": "BOOLEAN NOT NULL DEFAULT 1",
+        "automl_contract": "JSON",
         "automl_idempotency_key": "VARCHAR(128)",
     },
     "agent_tasks": {

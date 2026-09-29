@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { LabelColumn, Sample } from '../api/tasks'
+import WaveformChart from './WaveformChart'
 
 export type NumberedOption = { column: LabelColumn; value: string; index: number }
 
@@ -92,6 +93,7 @@ export default function SampleStream({
             <h3>当前样本 {sample.sample_id}</h3>
             <span className="muted">修订 {sample.revision}</span>
           </div>
+          {sample.waveforms && <WaveformChart waveforms={sample.waveforms} />}
           {annotationFields.length > 0 && (
             <div className="field-group highlight">
               <h4>标注字段</h4>

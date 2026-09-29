@@ -29,11 +29,18 @@ export type LabelColumn = {
   max_length?: number
 }
 export type LabelSchema = { columns: LabelColumn[] }
+export type SampleWaveforms = {
+  current?: number[]
+  voltage?: number[]
+  resistance?: number[]
+  power?: number[]
+}
 export type Sample = {
   sample_id: string
   values: Record<string, unknown>
   labels: Record<string, unknown>
   revision: number
+  waveforms?: SampleWaveforms
 }
 export type SampleFilters = {
   sample_search?: string
