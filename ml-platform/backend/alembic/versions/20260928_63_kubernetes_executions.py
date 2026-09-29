@@ -45,10 +45,15 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["created_by"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("project_id", "idempotency_key", name="uq_kubernetes_job_run_idempotency"),
-        sa.UniqueConstraint("operation_id", name="uq_kubernetes_job_run_operation"),
     )
     op.create_index("ix_kubernetes_job_runs_project_id", "kubernetes_job_runs", ["project_id"])
     op.create_index("ix_kubernetes_job_runs_cluster_id", "kubernetes_job_runs", ["cluster_id"])
+    op.create_index(
+        "ix_kubernetes_job_runs_operation_id", "kubernetes_job_runs", ["operation_id"], unique=True
+    )
+    op.create_index(
+        "ix_kubernetes_job_runs_cluster_created", "kubernetes_job_runs", ["cluster_id", "created_at"]
+    )
     op.create_index("ix_kubernetes_job_runs_status", "kubernetes_job_runs", ["status"])
 
 
