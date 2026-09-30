@@ -3,8 +3,35 @@
 import os
 
 import pytest
+from sqlalchemy import event
 
 from tests.week_manifest import DEPRECATED_TEST_MODULES
+
+
+def _enforce_sqlite_foreign_keys() -> None:
+    """Match production referential integrity in the SQLite test path.
+
+    SQLite ignores foreign keys unless the pragma is set, so a missing
+    detach/cleanup step before a delete passes locally and only fails on
+    PostgreSQL. Set ``SQLITE_FOREIGN_KEYS=0`` to opt out while triaging.
+    """
+    if os.environ.get("SQLITE_FOREIGN_KEYS") == "0":
+        return
+    from app.database import engine
+
+    if engine.dialect.name != "sqlite":
+        return
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
+
+_enforce_sqlite_foreign_keys()
 
 
 def pytest_collection_modifyitems(config, items):

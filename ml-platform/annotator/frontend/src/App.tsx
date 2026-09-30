@@ -12,12 +12,52 @@ import { setPortalViewer } from './api/client'
 
 type Page = 'queue' | 'workspace' | 'adminQueue' | 'adminReview'
 
+type LocationView = { taskId: string | null; assignmentId: string | null; adminQueue: boolean }
+
+function viewFromLocation(): LocationView {
+  const params = new URLSearchParams(window.location.search)
+  return {
+    taskId: params.get('task'),
+    assignmentId: params.get('assignment'),
+    adminQueue: params.get('page') === 'adminQueue',
+  }
+}
+
+function urlFor(page: Page, taskId: string | null, assignmentId: string | null): string {
+  const params = new URLSearchParams()
+  if (taskId) {
+    params.set('task', taskId)
+    if (assignmentId) params.set('assignment', assignmentId)
+  } else if (page === 'adminQueue') {
+    params.set('page', 'adminQueue')
+  }
+  const query = params.toString()
+  return query ? `/?${query}` : '/'
+}
+
 export default function App() {
   const [user, setUser] = useState<PortalIdentity | null>(null)
   const [authView, setAuthView] = useState<'login' | 'register'>('login')
   const [page, setPage] = useState<Page>('queue')
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
   const [activeAssignmentId, setActiveAssignmentId] = useState<string | null>(null)
+
+  // Mirror page switches onto the History API so the browser back button
+  // returns from a workspace to its task list instead of leaving the portal.
+  function navigate(page: Page, options: { taskId?: string | null; assignmentId?: string | null; replace?: boolean } = {}) {
+    const taskId = options.taskId ?? null
+    const assignmentId = options.assignmentId ?? null
+    setActiveTaskId(taskId)
+    setActiveAssignmentId(assignmentId)
+    setPage(page)
+    const url = urlFor(page, taskId, assignmentId)
+    if (window.location.pathname + window.location.search === url) return
+    if (options.replace) {
+      window.history.replaceState({}, '', url)
+    } else {
+      window.history.pushState({}, '', url)
+    }
+  }
 
   useEffect(() => {
     // Deep links opened by the admin platform carry ?viewer=admin so this tab
@@ -28,24 +68,55 @@ export default function App() {
     }
     me().then((u) => {
       setUser(u)
+      if (!u) return
       const admin = u.kind === 'admin'
-      // Deep link (?task=&assignment=) lets reviewers jump straight to a task
-      // workspace, e.g. from the admin platform's return-acceptance panel.
-      const task = params.get('task')
-      if (u && task) {
-        setActiveTaskId(task)
-        setActiveAssignmentId(params.get('assignment'))
-        setPage(admin ? 'adminReview' : 'workspace')
+      const view = viewFromLocation()
+      if (view.taskId) {
+        // Deep link (?task=&assignment=) straight into a workspace, e.g. from
+        // the admin platform's return-acceptance panel. Leave a list entry in
+        // the history first so the browser back button returns to the list.
+        window.history.replaceState({}, '', urlFor(admin ? 'adminQueue' : 'queue', null, null))
+        navigate(admin ? 'adminReview' : 'workspace', { taskId: view.taskId, assignmentId: view.assignmentId })
       } else if (admin) {
-        setPage('adminQueue')
+        navigate('adminQueue', { replace: true })
+      } else {
+        navigate('queue', { replace: true })
       }
     }).catch(() => setUser(null))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    const onPopState = () => {
+      const view = viewFromLocation()
+      const admin = user?.kind === 'admin'
+      if (view.taskId) {
+        setActiveTaskId(view.taskId)
+        setActiveAssignmentId(view.assignmentId)
+        setPage(admin ? 'adminReview' : 'workspace')
+      } else {
+        setActiveTaskId(null)
+        setActiveAssignmentId(null)
+        setPage(admin ? 'adminQueue' : 'queue')
+      }
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [user])
 
   function handleLogin() {
     me().then((u) => {
       setUser(u)
-      if (u.kind === 'admin') setPage('adminQueue')
+      if (!u) return
+      const admin = u.kind === 'admin'
+      const view = viewFromLocation()
+      if (view.taskId) {
+        navigate(admin ? 'adminReview' : 'workspace', { taskId: view.taskId, assignmentId: view.assignmentId, replace: true })
+      } else if (admin) {
+        navigate('adminQueue', { replace: true })
+      } else {
+        navigate('queue', { replace: true })
+      }
     }).catch(() => setUser(null))
   }
 
@@ -55,13 +126,12 @@ export default function App() {
       setPage('queue')
       setActiveTaskId(null)
       setActiveAssignmentId(null)
+      window.history.replaceState({}, '', '/')
     })
   }
 
   function openTask(taskId: string, assignmentId?: string) {
-    setActiveTaskId(taskId)
-    setActiveAssignmentId(assignmentId ?? null)
-    setPage(user?.kind === 'admin' ? 'adminReview' : 'workspace')
+    navigate(user?.kind === 'admin' ? 'adminReview' : 'workspace', { taskId, assignmentId })
   }
 
   if (!user) {
@@ -97,13 +167,13 @@ export default function App() {
             <>
               <button
                 className={page === 'adminQueue' ? 'active' : ''}
-                onClick={() => setPage('adminQueue')}
+                onClick={() => navigate('adminQueue')}
               >
                 评审任务
               </button>
               <button
                 className={page === 'adminReview' ? 'active' : ''}
-                onClick={() => setPage('adminReview')}
+                onClick={() => navigate('adminReview', { taskId: activeTaskId, assignmentId: activeAssignmentId })}
                 disabled={!activeTaskId}
               >
                 评审工作区
@@ -113,13 +183,13 @@ export default function App() {
             <>
               <button
                 className={page === 'queue' ? 'active' : ''}
-                onClick={() => setPage('queue')}
+                onClick={() => navigate('queue')}
               >
                 任务队列
               </button>
               <button
                 className={page === 'workspace' ? 'active' : ''}
-                onClick={() => setPage('workspace')}
+                onClick={() => navigate('workspace', { taskId: activeTaskId, assignmentId: activeAssignmentId })}
                 disabled={!activeTaskId}
               >
                 标注工作区
@@ -160,7 +230,7 @@ export default function App() {
           {page === 'adminReview' && activeTaskId && (
             <AdminReviewPage
               taskId={activeTaskId}
-              onBack={() => setPage('adminQueue')}
+              onBack={() => navigate('adminQueue')}
             />
           )}
         </>
@@ -173,7 +243,7 @@ export default function App() {
             <TaskWorkspacePage
               taskId={activeTaskId}
               assignmentId={activeAssignmentId ?? undefined}
-              onBack={() => setPage('queue')}
+              onBack={() => navigate('queue')}
             />
           )}
         </>

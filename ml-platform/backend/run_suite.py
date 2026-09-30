@@ -135,6 +135,9 @@ def run_modules(test_modules: list[str]) -> int:
             env["TMP"] = system_temp_dir
             env["TMPDIR"] = system_temp_dir
             env["PYTHONPATH"] = BACKEND_DIR
+            # Match PostgreSQL referential integrity so missing detach/cleanup
+            # steps before deletes fail here instead of only in production.
+            env["ML_PLATFORM_SQLITE_FOREIGN_KEYS"] = "1"
 
             print(f"\n{'=' * 60}")
             print(f"  RUNNING: {module}")

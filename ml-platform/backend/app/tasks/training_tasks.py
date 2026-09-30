@@ -15,13 +15,24 @@ from app.tasks.training_recovery import reconcile_stale_training_jobs
 
 
 def _active_training_task_ids() -> set[str]:
-    active = celery_app.control.inspect(timeout=1).active() or {}
-    return {
-        str(task["id"])
-        for tasks in active.values()
-        for task in tasks
-        if task.get("name") in {"ml_platform.execute_training", "ml_platform.execute_automl"}
-    }
+    """Task ids known to be executing, reserved or scheduled on any worker.
+
+    Reserved covers prefetched-but-not-yet-running deliveries; leaving it out
+    would make the recoverer treat a busy worker's queued work as orphaned and
+    re-send it (harmless but noisy, since claim arbitration skips duplicates).
+    """
+    inspector = celery_app.control.inspect(timeout=1)
+    known: set[str] = set()
+    for snapshot in (
+        inspector.active() or {},
+        inspector.reserved() or {},
+        inspector.scheduled() or {},
+    ):
+        for tasks in snapshot.values():
+            for task in tasks or []:
+                if task.get("name") in {"ml_platform.execute_training", "ml_platform.execute_automl"}:
+                    known.add(str(task["id"]))
+    return known
 
 
 @celery_app.task(name="ml_platform.recover_training_jobs")
@@ -31,21 +42,24 @@ def recover_training_jobs():
             db,
             active_task_ids=_active_training_task_ids(),
             stale_after=timedelta(seconds=settings.training_stale_after_seconds),
+            redispatch_after=timedelta(seconds=settings.training_redispatch_after_seconds),
         )
+        interesting_ids = list(recovered.requeued_job_ids) + list(recovered.redispatched_job_ids)
         job_types = {
             str(job.id): job.operator_id
             for job in db.query(TrainingJob).filter(
-                TrainingJob.id.in_([uuid.UUID(job_id) for job_id in recovered.requeued_job_ids])
+                TrainingJob.id.in_([uuid.UUID(job_id) for job_id in interesting_ids])
             ).all()
-        } if recovered.requeued_job_ids else {}
+        } if interesting_ids else {}
     dispatched = []
-    for job_id in recovered.requeued_job_ids:
+    for job_id in recovered.requeued_job_ids + recovered.redispatched_job_ids:
         task_name = "ml_platform.execute_automl" if job_types.get(job_id) == "automl" else "ml_platform.execute_training"
         dispatched.append(celery_app.send_task(task_name, args=[job_id]).id)
     return {
         "requeued": recovered.requeued,
         "failed": recovered.failed,
         "cancelled": recovered.cancelled,
+        "redispatched": len(recovered.redispatched_job_ids),
         "dispatched": dispatched,
     }
 

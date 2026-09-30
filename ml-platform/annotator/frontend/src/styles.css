@@ -1173,11 +1173,13 @@ textarea {
 
 .waveform-group {
   margin-bottom: 0;
-  max-width: 480px;
 }
 
 .waveform-channels {
   display: grid;
+  /* two channels per row; each trace keeps a readable width on wide screens
+     and the grid collapses to a single column below */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
 }
 
@@ -1454,6 +1456,9 @@ textarea {
   .workspace {
     grid-template-columns: 1fr;
     height: auto;
+  }
+  .waveform-channels {
+    grid-template-columns: 1fr;
   }
   .side-tabs {
     flex-direction: row;

@@ -107,6 +107,7 @@ class Settings(BaseSettings):
     tensorboard_idle_timeout_seconds: int = Field(default=600, ge=60, le=86400)
     training_checkpoint_interval_epochs: int = Field(default=5, ge=1, le=1000)
     training_stale_after_seconds: int = Field(default=300, ge=30, le=86400)
+    training_redispatch_after_seconds: int = Field(default=60, ge=30, le=86400)
     inference_runtime_url: str | None = None
     inference_internal_secret: SecretStr | None = Field(default=None, exclude=True)
     inference_internal_secret_file: str | None = Field(
@@ -382,6 +383,7 @@ class Settings(BaseSettings):
             "tensorboard_idle_timeout_seconds": self.tensorboard_idle_timeout_seconds,
             "training_checkpoint_interval_epochs": self.training_checkpoint_interval_epochs,
             "training_stale_after_seconds": self.training_stale_after_seconds,
+            "training_redispatch_after_seconds": self.training_redispatch_after_seconds,
             "inference_runtime_url": self._sanitize_url(self.inference_runtime_url),
             "inference_internal_secret_configured": self._has_secret(
                 self.resolved_inference_internal_secret

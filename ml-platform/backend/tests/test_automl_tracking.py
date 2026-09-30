@@ -1294,6 +1294,38 @@ class TestAutoMLAPI(unittest.TestCase):
             self.assertIsNone(db.get(TrainingJob, job_id))
             self.assertIsNone(db.get(Experiment, experiment_id))
 
+    def test_automl_delete_detaches_registered_model_reference(self):
+        # model_library.training_job_id is a plain FK: a registered model that
+        # still points at the job makes the delete fail on PostgreSQL unless
+        # the link is cleared first. The registered model itself survives.
+        created = self._run_automl()
+        self.assertEqual(created.status_code, 202, created.text)
+        job_id = uuid.UUID(created.json()["job_id"])
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            job.status = "completed"
+            model = ModelLibrary(
+                project_id=self.project_id,
+                owner_id=self.user_id,
+                name="registered-from-automl",
+                training_job_id=job_id,
+            )
+            db.add(model)
+            db.commit()
+            model_id = model.id
+
+        deleted = self.client.delete(
+            f"/api/training/automl/jobs/{job_id}",
+            headers=self.headers,
+        )
+
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        with self.Session() as db:
+            self.assertIsNone(db.get(TrainingJob, job_id))
+            survivor = db.get(ModelLibrary, model_id)
+            self.assertIsNotNone(survivor)
+            self.assertIsNone(survivor.training_job_id)
+
     def test_ordinary_training_job_does_not_occupy_experiment(self):
         with self.Session() as db:
             db.add(TrainingJob(

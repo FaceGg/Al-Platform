@@ -814,6 +814,21 @@ def list_automl_jobs(
     return [_job_to_dict(job) for job in jobs]
 
 
+def _detach_job_references(db: Session, job_ids) -> None:
+    """Clear references that would block deleting the given training jobs.
+
+    ``model_library.training_job_id`` is a plain (NO ACTION) foreign key, so a
+    registered model still pointing at the job makes the delete fail with a
+    foreign key violation. The registered model outlives its job; only the
+    link is cleared.
+    """
+    from app.models.model_library import ModelLibrary
+
+    db.query(ModelLibrary).filter(ModelLibrary.training_job_id.in_(list(job_ids))).update(
+        {ModelLibrary.training_job_id: None}, synchronize_session=False,
+    )
+
+
 @router.delete("/automl/jobs/{job_id}")
 def delete_automl_job(
     job_id: uuid.UUID,
@@ -844,6 +859,7 @@ def delete_automl_job(
         ),
         allowed_changes={"experiment_id"},
     ):
+        _detach_job_references(db, [job.id])
         db.delete(job)
         db.flush()
         if experiment is not None:
@@ -963,8 +979,6 @@ def batch_delete_training_jobs(
 
 def _dispatch_job(db, job, dispatcher, request, actor, access) -> None:
     try:
-        task_id = dispatcher.enqueue(job.id)
-        start = getattr(dispatcher, "start", None)
         with audit_service(db).project_action(
             db, request=request, actor=actor, access=access,
             permission="execution.operate",
@@ -976,7 +990,13 @@ def _dispatch_job(db, job, dispatcher, request, actor, access) -> None:
             allowed_changes={"status"},
         ):
             job.status = "queued"
-            job.task_id = task_id
+        # Deliver to the queue only after the queued status is committed: an
+        # idle worker claims the job within milliseconds, and a pre-commit
+        # delivery loses the claim race and leaves the job queued forever.
+        task_id = dispatcher.enqueue(job.id)
+        job.task_id = task_id
+        db.commit()
+        start = getattr(dispatcher, "start", None)
         if callable(start):
             start(task_id)
     except Exception as error:

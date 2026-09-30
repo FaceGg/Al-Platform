@@ -8,8 +8,11 @@ from app.database import Base, SessionLocal, engine
 from app.models.access import AuditEvent
 from app.models.artifact import Artifact
 from app.models.data_version import DatasetSample, DatasetVersion
+from app.models.experiment import Experiment
 from app.models.labeling import LabelColumn, LabelSchema
+from app.models.model_library import ModelLibrary
 from app.models.platform_models import GenericAnnotationTask
+from app.models.training import TrainingJob
 from app.models.user import User
 from tests.auth_test_support import ensure_admin
 
@@ -173,6 +176,44 @@ class TestProjectsCRUD(unittest.TestCase):
                 ).count(),
                 1,
             )
+
+    def test_14_delete_project_with_circular_model_library_reference(self):
+        # training_jobs <-> model_library reference each other with plain
+        # (NO ACTION) foreign keys; the purge must clear the circular columns
+        # before deleting the rows or PostgreSQL rejects the delete.
+        r = client.post("/api/projects", json={"name": "CycleProject"}, headers=self.h)
+        self.assertEqual(r.status_code, 201)
+        pid = uuid.UUID(r.json()["id"])
+        with SessionLocal() as db:
+            owner_id = db.query(User.id).filter(User.username == "admin").scalar()
+            experiment = Experiment(
+                project_id=pid, created_by=owner_id, name="cycle-experiment",
+                mlflow_experiment_id=f"exp-{uuid.uuid4().hex}",
+            )
+            db.add(experiment)
+            db.flush()
+            job = TrainingJob(
+                project_id=pid, user_id=owner_id, experiment_id=experiment.id,
+                name="cycle-job", operator_id="automl", status="completed",
+            )
+            db.add(job)
+            db.flush()
+            model = ModelLibrary(
+                project_id=pid, owner_id=owner_id, name="cycle-model",
+                training_job_id=job.id,
+            )
+            db.add(model)
+            db.flush()
+            job.model_library_id = model.id
+            db.commit()
+            job_id, model_id = job.id, model.id
+
+        response = client.delete(f"/api/projects/{pid}", headers=self.h)
+
+        self.assertEqual(response.status_code, 204, response.text)
+        with SessionLocal() as db:
+            self.assertIsNone(db.get(TrainingJob, job_id))
+            self.assertIsNone(db.get(ModelLibrary, model_id))
 
 
 if __name__ == "__main__":

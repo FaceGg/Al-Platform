@@ -175,6 +175,12 @@ def _purge_project(db: Session, project: Project) -> None:
         pending.difference_update(ready)
 
     memo: dict = {}
+    # Detach circular references first: the FKs are NO ACTION, so a surviving
+    # value keeps blocking the delete no matter which side goes first.
+    for table_name, column_name in sorted(broken):
+        table = Base.metadata.tables[table_name]
+        clause = _project_deletion_clause(table, project_table, project_id, dependents, broken, memo)
+        db.execute(table.update().where(clause).values({column_name: None}))
     for table in ordered:
         direct = next((fk for fk in table.foreign_keys if fk.column.table is project_table), None)
         if table.name in _PROJECT_DETACH_TABLES and direct is not None:

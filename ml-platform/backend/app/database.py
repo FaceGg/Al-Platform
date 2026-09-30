@@ -1,5 +1,7 @@
 """Minimal SQLAlchemy engine, session, and declarative base."""
 
+import os
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
@@ -42,6 +44,14 @@ def configure_sqlite_engine(db_engine: Engine) -> None:
     if db_engine.dialect.name != "sqlite":
         return
     use_wal = not _is_memory_sqlite_url(str(db_engine.url))
+    # SQLite ignores foreign keys unless asked, while PostgreSQL (production)
+    # enforces them, so a missing cleanup before a delete passes locally and
+    # only fails in production. Test runners opt in through this switch; the
+    # default stays off so local databases with legacy orphan rows keep
+    # working until they are cleaned up.
+    enforce_foreign_keys = os.environ.get(
+        "ML_PLATFORM_SQLITE_FOREIGN_KEYS", ""
+    ).strip().lower() in {"1", "true", "yes"}
 
     @event.listens_for(db_engine, "connect")
     def _configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
@@ -50,6 +60,8 @@ def configure_sqlite_engine(db_engine: Engine) -> None:
             if use_wal:
                 cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+            if enforce_foreign_keys:
+                cursor.execute("PRAGMA foreign_keys=ON")
         finally:
             cursor.close()
 
