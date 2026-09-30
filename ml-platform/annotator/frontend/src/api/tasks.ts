@@ -41,6 +41,7 @@ export type Sample = {
   labels: Record<string, unknown>
   revision: number
   waveforms?: SampleWaveforms
+  label_source?: 'automatic' | 'manual' | string | null
 }
 export type SampleFilters = {
   sample_search?: string

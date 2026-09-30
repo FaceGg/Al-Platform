@@ -23,6 +23,7 @@ from app.models.labeling import (
     AnnotationComment,
     AnnotationConfirmation,
     AnnotationRevision,
+    AnnotationSampleCurrent,
     LabelColumn,
     LabelSchema,
 )
@@ -511,8 +512,69 @@ def test_internal_portal_task_and_sample_reads_are_subject_scoped(portal_fixture
         "values": {"feature": 1},
         "labels": {"label": "old-1"},
         "revision": 3,
+        "label_source": None,
     }
     assert samples.json()["next_cursor"]
+
+
+def test_portal_samples_expose_automatic_label_source(portal_fixture):
+    db = portal_fixture["db"]
+    client = portal_fixture["client"]
+    task_id = portal_fixture["task_id"]
+    token = _token(
+        project_id=portal_fixture["project_id"],
+        subject_id=portal_fixture["subject_id"],
+        scopes=["assignment:read"],
+    )
+    schema_id = db.query(LabelSchema).one().id
+
+    db.add_all([
+        AnnotationSampleCurrent(
+            task_id=task_id,
+            sample_id="sample-1",
+            schema_id=schema_id,
+            revision_no=3,
+            values={"label": "auto-1"},
+        ),
+        AnnotationRevision(
+            task_id=task_id,
+            sample_id="sample-1",
+            schema_id=schema_id,
+            revision_no=3,
+            base_revision=2,
+            values={"label": "auto-1"},
+            author_id=portal_fixture["annotator_principal_id"],
+            source="automatic",
+            action="initialize",
+        ),
+        AnnotationSampleCurrent(
+            task_id=task_id,
+            sample_id="sample-2",
+            schema_id=schema_id,
+            revision_no=3,
+            values={"label": "reviewed-2"},
+        ),
+        AnnotationRevision(
+            task_id=task_id,
+            sample_id="sample-2",
+            schema_id=schema_id,
+            revision_no=3,
+            base_revision=2,
+            values={"label": "reviewed-2"},
+            author_id=portal_fixture["annotator_principal_id"],
+            source="manual",
+            action="edit",
+        ),
+    ])
+    db.commit()
+
+    response = client.get(
+        f"/api/internal/portal/tasks/{task_id}/samples",
+        headers=_headers(token),
+    )
+    assert response.status_code == 200, response.text
+    sources = {item["sample_id"]: item["label_source"] for item in response.json()["items"]}
+    assert sources == {"sample-1": "automatic", "sample-2": "manual"}
 
 
 def test_portal_sample_filters_use_authorized_fields_and_own_revisions(portal_fixture):

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import SampleStream from './SampleStream'
 import { LabelColumn, Sample } from '../api/tasks'
@@ -86,5 +86,22 @@ describe('SampleStream', () => {
   it('keeps the workspace layout unchanged when the sample has no waveforms', () => {
     renderStream()
     expect(screen.queryByText('波形数据')).not.toBeInTheDocument()
+  })
+
+  it('shows automatic labels as the automatic result with an annotator override box', () => {
+    renderStream({ sample: { ...sample, label_source: 'automatic' } })
+    const panel = screen.getByLabelText('自动标注结果')
+    expect(panel).toBeVisible()
+    expect(screen.getByText('以下标签由自动标注生成，可在右侧修改后覆盖。')).toBeVisible()
+    expect(within(panel).getByText('类别')).toBeVisible()
+    expect(within(panel).getByText('A')).toBeVisible()
+    expect(screen.getByText('标注员修改')).toBeVisible()
+  })
+
+  it('keeps the plain label editor when the labels are not automatic', () => {
+    renderStream({ sample: { ...sample, label_source: 'manual' } })
+    expect(screen.queryByLabelText('自动标注结果')).not.toBeInTheDocument()
+    expect(screen.getByText('标签')).toBeVisible()
+    expect(screen.queryByText('标注员修改')).not.toBeInTheDocument()
   })
 })

@@ -51,12 +51,12 @@ test("exports an approved model package after the async export is ready", async 
   await page.route("**/api/projects/project-1/inference-deployments", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
   });
-  await page.route("**/api/projects/project-1/model-exports", async (route) => {
+  await page.route("**/api/model-versions/version-1/exports", async (route) => {
     expect(route.request().method()).toBe("POST");
     await route.fulfill({
       status: 202,
       contentType: "application/json",
-      body: JSON.stringify({ id: "export-1", status: "queued" }),
+      body: JSON.stringify({ id: "export-1", operation_id: "operation-1", status: "queued" }),
     });
   });
   await page.route("**/api/model-exports/export-1", async (route) => {
@@ -64,7 +64,7 @@ test("exports an approved model package after the async export is ready", async 
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ id: "export-1", status: exportPolls < 2 ? "running" : "ready", checksum: "sha256:export" }),
+      body: JSON.stringify({ id: "export-1", status: exportPolls < 2 ? "running" : "completed", manifest_sha256: "sha256:export" }),
     });
   });
   await page.route("**/api/model-exports/export-1/download", async (route) => {

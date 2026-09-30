@@ -170,17 +170,16 @@ export default function ModelLibraryPage() {
     const busyKey = `${version.id}:${exportKind}`;
     setExportBusy(busyKey);
     try {
-      const created = await createModelExport(projectId, {
+      const created = await createModelExport(version.id, {
         model_version_id: version.id,
         export_kind: exportKind,
-        include_annotation: exportKind === "annotate",
       });
       let current = created;
-      for (let attempt = 0; attempt < 30 && !["ready", "failed"].includes(current.status); attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 250));
+      for (let attempt = 0; attempt < 120 && !["completed", "failed"].includes(current.status); attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
         current = await getModelExport(created.id);
       }
-      if (current.status !== "ready") throw new Error(current.error_code || "MODEL_EXPORT_NOT_READY");
+      if (current.status !== "completed") throw new Error(current.error?.code || "MODEL_EXPORT_NOT_READY");
       const blob = await downloadModelExport(current.id);
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");

@@ -9,7 +9,7 @@ from app.models.artifact import Artifact
 from app.models.model_export import ModelExport
 from app.models.model_registry import ModelVersion
 from app.models.operation import DurableOperation
-from app.services.model_export import ExportError, build_export_package
+from app.services.model_export import ExportError, build_export_package, resolve_annotation_payload
 from app.services.operation_lifecycle import claim_operation, complete_operation, fail_operation, heartbeat_operation
 from app.tasks.celery_app import celery_app
 
@@ -53,6 +53,11 @@ def execute_model_export(_self, export_id: str):
                 output_dir=settings.artifact_storage_dir,
                 include_runtime=item.include_runtime,
                 annotation_task_revision=item.annotation_task_revision,
+                annotation_payload=(
+                    resolve_annotation_payload(db, version)
+                    if item.annotation_task_revision is not None
+                    else None
+                ),
             )
             heartbeat_operation(db, item.operation_id, worker_id, 300)
             export_artifact = Artifact(

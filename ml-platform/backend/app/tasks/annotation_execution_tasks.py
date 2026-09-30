@@ -23,10 +23,24 @@ from app.models.platform_models import (
     AnnotationTaskPreviewSample,
     GenericAnnotationTask,
 )
+from app.services.annotation_concurrency import annotator_visible_sample_ids
 from app.services.annotation_strategies import label_schema_contract_from_snapshot
 from app.services.label_schema import validate_label_values
 from app.services.operation_lifecycle import claim_operation, complete_operation, fail_operation, heartbeat_operation
 from app.tasks.celery_app import celery_app
+
+
+def _execution_cluster_filter(db, task) -> set[int] | None:
+    """Selected cluster ids when the frozen strategy narrows execution scope.
+
+    Preview samples outside the selected clusters stay out of execution: they
+    are never materialized, never published, and never counted as needs_review,
+    so a partial cluster selection cannot block publication.
+    """
+    from app.services.annotation_task_state import current_annotation_task_snapshot
+
+    snapshot = current_annotation_task_snapshot(db, task) or {}
+    return annotator_visible_sample_ids(snapshot.get("configuration"))
 
 
 class _ExecutionOutputError(ValueError):
@@ -342,6 +356,7 @@ def execute_annotation_task(self, task_id: str, preview_id: str, owner_id: str, 
             # validation failure must be able to roll every result back rather
             # than have a heartbeat commit a partially materialized output.
             heartbeat_operation(db, operation_uuid, worker_id, 300)
+            execution_cluster_ids = _execution_cluster_filter(db, task)
             for samples in _preview_sample_batches(db, preview_uuid):
                 sample_ids = [item.sample_id for item in samples]
                 existing = {
@@ -356,6 +371,14 @@ def execute_annotation_task(self, task_id: str, preview_id: str, owner_id: str, 
                     if item.sample_id in existing:
                         continue
                     values, provenance, result_status = _preview_result_fields(item)
+                    if execution_cluster_ids is not None:
+                        decision_cluster = provenance.get("cluster_id") if isinstance(provenance, dict) else None
+                        try:
+                            in_scope = decision_cluster is not None and int(decision_cluster) in execution_cluster_ids
+                        except (TypeError, ValueError):
+                            in_scope = False
+                        if not in_scope:
+                            continue
                     result = AnnotationTaskExecutionResult(
                         task_id=task_uuid,
                         operation_id=operation_uuid,

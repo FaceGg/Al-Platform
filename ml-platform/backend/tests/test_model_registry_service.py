@@ -13,6 +13,7 @@ from sklearn.linear_model import LogisticRegression
 
 from app.database import Base
 from app.models.artifact import Artifact
+from app.models.experiment import Experiment
 from app.models.model_library import ModelLibrary
 from app.models.model_registry import ModelCard, ModelVersion, RegisteredModel
 from app.models.project import Project
@@ -313,6 +314,43 @@ class TestModelRegistryService(unittest.TestCase):
         result = refreshed.metrics["algorithm_results"][0]
         self.assertEqual(result["registered_model_id"], str(first_model.id))
         self.assertEqual(result["model_version_id"], str(first_version.id))
+
+    def test_automl_registration_includes_experiment_name_in_model_library(self):
+        library, artifact = self._platform_source()
+        job = self.db.query(TrainingJob).filter(TrainingJob.id == library.training_job_id).one()
+        experiment = Experiment(
+            project_id=self.project.id,
+            created_by=self.owner.id,
+            name="点焊质量实验",
+            mlflow_experiment_id=f"exp-{uuid.uuid4().hex}",
+        )
+        self.db.add(experiment)
+        self.db.flush()
+        job.experiment_id = experiment.id
+        artifact.metadata_ = {
+            "source": "automl",
+            "training_job_id": str(job.id),
+            "best_algorithm": "random_forest",
+        }
+        job.metrics = {
+            "algorithm_results": [{
+                "algorithm_id": "random_forest",
+                "name": "Random Forest",
+                "status": "completed",
+                "model_library_id": str(library.id),
+            }],
+        }
+        self.db.commit()
+
+        model, _version, created = self.service.register_automl_result(
+            self.db,
+            job=job,
+            algorithm_id="random_forest",
+            actor_id=self.owner.id,
+        )
+
+        self.assertTrue(created)
+        self.assertEqual(model.name, f"{job.name} - 点焊质量实验 - Random Forest")
 
     def test_automl_registration_disambiguates_existing_project_model_name(self):
         library, artifact = self._platform_source()

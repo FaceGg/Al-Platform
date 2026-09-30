@@ -845,6 +845,25 @@ def internal_portal_samples(
             DatasetSample.sample_id.in_(source_ids),
         ).all()
     }
+    # The current-value table stores only final labels; the latest revision
+    # carries whether those labels still are the automatic publication.
+    label_source_by_id: dict[str, str] = {}
+    if source_ids:
+        revision_rows = db.query(
+            AnnotationRevision.sample_id,
+            AnnotationRevision.source,
+        ).join(
+            AnnotationSampleCurrent,
+            and_(
+                AnnotationSampleCurrent.task_id == AnnotationRevision.task_id,
+                AnnotationSampleCurrent.sample_id == AnnotationRevision.sample_id,
+                AnnotationSampleCurrent.revision_no == AnnotationRevision.revision_no,
+            ),
+        ).filter(
+            AnnotationRevision.task_id == task.id,
+            AnnotationRevision.sample_id.in_(source_ids),
+        ).all()
+        label_source_by_id = {row.sample_id: row.source for row in revision_rows}
     items = []
     for row in rows:
         raw_values = source_by_id.get(row.sample_id, {})
@@ -854,6 +873,7 @@ def internal_portal_samples(
             "values": values,
             "labels": row.values or {},
             "revision": row.revision_no,
+            "label_source": label_source_by_id.get(row.sample_id),
         }
         waveforms = decode_sample_waveforms(raw_values)
         if waveforms:

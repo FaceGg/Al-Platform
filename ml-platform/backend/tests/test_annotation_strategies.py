@@ -35,7 +35,7 @@ def schema():
     )
 
 
-def test_strategy_is_exclusive_and_fallback_is_required(schema):
+def test_strategy_is_exclusive_and_selection_is_required(schema):
     with pytest.raises(StrategyConfigError):
         validate_strategy_config(
             AutomaticAnnotationConfig(
@@ -57,7 +57,24 @@ def test_strategy_is_exclusive_and_fallback_is_required(schema):
             ),
             schema,
         )
-    assert error.value.code == "CLUSTER_FALLBACK_REQUIRED"
+    assert error.value.code == "CLUSTER_SELECTION_REQUIRED"
+
+
+def test_fallback_is_optional_and_unmatched_samples_need_review(schema):
+    config = AutomaticAnnotationConfig(
+        clustering=True,
+        strategy="cluster",
+        selected_clusters=["1"],
+        cluster_labels={"1": {"label_a": "a", "label_b": 1}},
+    )
+    validate_strategy_config(config, schema)
+    matched = apply_annotation_strategy({"label_a": "a", "label_b": 1}, 1, {"score": 0.1}, config, schema)
+    assert matched.status == "ready"
+    assert matched.values == {"label_a": "a", "label_b": 1}
+    unmatched = apply_annotation_strategy({"label_a": "a", "label_b": 1}, 3, {"score": 0.1}, config, schema)
+    assert unmatched.status == "needs_review"
+    assert unmatched.values == {"label_a": None, "label_b": None}
+    assert unmatched.provenance["label_a"]["source"] == "none"
 
 
 def test_model_output_ignores_cluster_when_clustering_disabled(schema):

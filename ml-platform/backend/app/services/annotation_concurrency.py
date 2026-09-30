@@ -17,6 +17,8 @@ from app.models.labeling import (
     AnnotationReturnBatch,
     AnnotationRevision,
     AnnotationSampleCurrent,
+    AnnotationStrategyArtifact,
+    AnnotationStrategyDecision,
     LabelSchema,
 )
 from app.models.platform_models import GenericAnnotationTask
@@ -91,10 +93,64 @@ def _scope_hash(ids: list[str]) -> str:
     return "sha256:" + hashlib.sha256(json.dumps(ids, separators=(",", ":")).encode()).hexdigest()
 
 
+def annotator_visible_sample_ids(configuration: Mapping[str, object] | None) -> set[str] | None:
+    """Sample ids annotators may see when the strategy selects a cluster subset.
+
+    Returns None when the assignment scope must not be narrowed: strategies
+    without cluster selection or missing frozen decisions keep the full frozen
+    task scope.
+    """
+    if not isinstance(configuration, Mapping) or not configuration.get("clustering"):
+        return None
+    if configuration.get("cluster_discovery"):
+        return None
+    if configuration.get("strategy") not in {"cluster", "cluster_rule"}:
+        return None
+    selected_ids = set()
+    for value in configuration.get("selected_clusters") or []:
+        try:
+            selected_ids.add(int(str(value)))
+        except (TypeError, ValueError):
+            return None
+    if not selected_ids:
+        return None
+    return selected_ids
+
+
+def frozen_cluster_sample_ids(db: Session, task: GenericAnnotationTask, selected_ids: set[int]) -> set[str]:
+    """Resolve the frozen sample ids of the latest strategy artifact per cluster."""
+    artifact = db.query(AnnotationStrategyArtifact).filter(
+        AnnotationStrategyArtifact.task_id == task.id,
+    ).order_by(
+        AnnotationStrategyArtifact.task_revision.desc(),
+        AnnotationStrategyArtifact.created_at.desc(),
+        AnnotationStrategyArtifact.id.desc(),
+    ).first()
+    if artifact is None:
+        return set()
+    rows = db.query(AnnotationStrategyDecision.sample_id).filter(
+        AnnotationStrategyDecision.strategy_artifact_id == artifact.id,
+        AnnotationStrategyDecision.cluster_id.in_(selected_ids),
+    ).all()
+    return {str(row.sample_id) for row in rows}
+
+
 def _resolve_assignment_scope(db: Session, task: GenericAnnotationTask | None, scope: Mapping[str, object]) -> _ResolvedAssignmentScope:
+    snapshot = current_annotation_task_snapshot(db, task) if task is not None else {}
+    selected_ids = annotator_visible_sample_ids(
+        snapshot.get("configuration") if isinstance(snapshot, Mapping) else None,
+    ) if task is not None else None
+    visible_sample_ids = frozen_cluster_sample_ids(db, task, selected_ids) if selected_ids is not None and task is not None else None
     kind = scope.get("kind")
     if kind == "ids":
         ids = _scope_ids(scope)
+        if visible_sample_ids is not None:
+            ids = [sample_id for sample_id in ids if sample_id in visible_sample_ids]
+            if not ids:
+                raise AssignmentError(
+                    "selected clusters do not cover any requested sample",
+                    "SAMPLE_SCOPE_EMPTY_AFTER_CLUSTER_FILTER",
+                )
 
         def batches():
             for start in range(0, len(ids), 500):
@@ -108,7 +164,17 @@ def _resolve_assignment_scope(db: Session, task: GenericAnnotationTask | None, s
         )
     if kind not in {"task_scope", "frozen_task_scope", "all"} or task is None:
         raise AssignmentError("sample scope must contain explicit ids or the frozen task scope", "SAMPLE_SCOPE_INVALID")
-    snapshot = current_annotation_task_snapshot(db, task)
+
+    def scope_pairs():
+        for batch in iter_scope_batches(
+            db,
+            task,
+            task_revision=task.task_revision,
+            snapshot=snapshot,
+        ):
+            for sample_id, row_index in batch:
+                if visible_sample_ids is None or str(sample_id) in visible_sample_ids:
+                    yield sample_id, row_index
 
     def scope_batches():
         for batch in iter_scope_batches(
@@ -117,24 +183,24 @@ def _resolve_assignment_scope(db: Session, task: GenericAnnotationTask | None, s
             task_revision=task.task_revision,
             snapshot=snapshot,
         ):
-            yield [sample_id for sample_id, _ in batch]
+            ids = [sample_id for sample_id, _ in batch]
+            if visible_sample_ids is not None:
+                ids = [sample_id for sample_id in ids if str(sample_id) in visible_sample_ids]
+            if ids:
+                yield ids
 
     scope_metadata = snapshot.get("scope") if isinstance(snapshot, Mapping) else None
-    if isinstance(scope_metadata, Mapping) and scope_metadata.get("scope_hash"):
+    if visible_sample_ids is None and isinstance(scope_metadata, Mapping) and scope_metadata.get("scope_hash"):
         sample_count = int(scope_metadata.get("sample_count", 0))
         digest = str(scope_metadata["scope_hash"])
     else:
-        sample_count, digest = scope_digest(
-            (sample_id, row_index)
-            for batch in iter_scope_batches(
-                db,
-                task,
-                task_revision=task.task_revision,
-                snapshot=snapshot,
-            )
-            for sample_id, row_index in batch
-        )
+        sample_count, digest = scope_digest(scope_pairs())
     if sample_count <= 0:
+        if visible_sample_ids is not None:
+            raise AssignmentError(
+                "selected clusters do not cover any frozen task sample",
+                "SAMPLE_SCOPE_EMPTY_AFTER_CLUSTER_FILTER",
+            )
         raise AssignmentError("task scope is empty", "SAMPLE_SCOPE_INVALID")
     return _ResolvedAssignmentScope(
         payload={
@@ -882,10 +948,14 @@ def confirm_assignment(
 
 
 def _refresh_global_annotation_state(db: Session, task: GenericAnnotationTask, contract) -> None:
-    """Derive the task-level completion state from the frozen sample scope."""
+    """Derive the task-level completion state from the annotator-visible scope."""
     if task.status in {"paused", "cancelled", "archived", "completed", "accepted"}:
         return
     snapshot = current_annotation_task_snapshot(db, task)
+    selected_ids = annotator_visible_sample_ids(
+        snapshot.get("configuration") if isinstance(snapshot, Mapping) else None,
+    )
+    visible_sample_ids = frozen_cluster_sample_ids(db, task, selected_ids) if selected_ids is not None else None
     complete = True
     seen_scope_rows = False
     for scope_batch in iter_scope_batches(
@@ -894,8 +964,14 @@ def _refresh_global_annotation_state(db: Session, task: GenericAnnotationTask, c
         task_revision=task.task_revision,
         snapshot=snapshot,
     ):
+        sample_ids = [
+            str(sample_id)
+            for sample_id, _ in scope_batch
+            if visible_sample_ids is None or str(sample_id) in visible_sample_ids
+        ]
+        if not sample_ids:
+            continue
         seen_scope_rows = True
-        sample_ids = [sample_id for sample_id, _ in scope_batch]
         current_rows = db.query(AnnotationSampleCurrent).filter(
             AnnotationSampleCurrent.task_id == task.id,
             AnnotationSampleCurrent.sample_id.in_(sample_ids),

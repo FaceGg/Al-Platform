@@ -924,6 +924,7 @@ def build_export_package(
     include_runtime: bool = True,
     signing_key: str | bytes | None = None,
     annotation_task_revision: int | str | None = None,
+    annotation_payload: Mapping[str, Any] | None = None,
 ) -> ExportResult:
     """Build and atomically publish one signed package."""
 
@@ -978,7 +979,13 @@ def build_export_package(
         )
 
         if annotation_task_revision is not None:
-            annotation = metadata.get("annotation") or {}
+            # A caller-resolved payload wins; otherwise fall back to metadata
+            # stamped at registration time.
+            annotation = (
+                annotation_payload
+                if annotation_payload is not None
+                else (metadata.get("annotation") or {})
+            )
             _write_json(temporary_root, "annotation/strategy.json", annotation.get("strategy") or {})
             _write_json(temporary_root, "annotation/cluster_method.json", annotation.get("cluster_method") or {})
             _write_json(temporary_root, "annotation/cluster_artifacts.json", annotation.get("cluster_artifacts") or {})
@@ -1093,6 +1100,107 @@ def validate_export_package(path: str | Path, *, signing_key: str | bytes | None
         raise ExportValidationError("EXPORT_PACKAGE_INVALID") from error
 
 
+def resolve_annotation_payload(db: Any, model_version: Any) -> dict[str, Any] | None:
+    """Resolve the frozen weak-supervision strategy bound to a model version.
+
+    The lineage follows the registered training data: the source model
+    library's dataset artifact backs a dataset version created by the
+    annotation return export flow, whose parse contract records the owning
+    generic annotation task. The task's frozen configuration, cluster label
+    mappings, and per-sample cluster assignments become the package payload.
+    Returns None when any link is missing, so exports stay empty rather than
+    embedding a wrong strategy.
+    """
+    from uuid import UUID as UUIDType
+
+    from sqlalchemy import or_
+
+    from app.models.data_version import DatasetVersion
+    from app.models.labeling import AnnotationStrategyArtifact, AnnotationStrategyDecision
+    from app.models.model_library import ModelLibrary
+    from app.models.platform_models import GenericAnnotationTask
+    from app.services.annotation_task_state import current_annotation_task_snapshot
+
+    library_id = getattr(model_version, "source_model_library_id", None)
+    if library_id is None:
+        return None
+    library = db.get(ModelLibrary, library_id)
+    artifact_id = getattr(library, "dataset_artifact_id", None) if library is not None else None
+    if artifact_id is None:
+        return None
+    project_id = getattr(getattr(model_version, "registered_model", None), "project_id", None)
+    versions = db.query(DatasetVersion).filter(
+        or_(
+            DatasetVersion.original_artifact_id == artifact_id,
+            DatasetVersion.normalized_artifact_id == artifact_id,
+        ),
+    ).order_by(DatasetVersion.created_at.desc()).all()
+    task = None
+    for version_row in versions:
+        raw_task_id = (version_row.parse_contract or {}).get("task_id")
+        if not raw_task_id:
+            continue
+        try:
+            candidate = db.query(GenericAnnotationTask).filter(
+                GenericAnnotationTask.id == UUIDType(str(raw_task_id)),
+            ).first()
+        except (TypeError, ValueError):
+            continue
+        if candidate is None or candidate.mode != "automatic":
+            continue
+        if project_id is not None and str(candidate.project_id) != str(project_id):
+            continue
+        task = candidate
+        break
+    if task is None:
+        return None
+    snapshot = current_annotation_task_snapshot(db, task) or {}
+    configuration = snapshot.get("configuration") or {}
+    strategy = configuration.get("strategy")
+    if not configuration.get("clustering") or configuration.get("cluster_discovery"):
+        return None
+    if strategy not in {"cluster", "rule", "cluster_rule"}:
+        return None
+    artifact = db.query(AnnotationStrategyArtifact).filter(
+        AnnotationStrategyArtifact.task_id == task.id,
+    ).order_by(
+        AnnotationStrategyArtifact.task_revision.desc(),
+        AnnotationStrategyArtifact.created_at.desc(),
+        AnnotationStrategyArtifact.id.desc(),
+    ).first()
+    assignments: dict[str, int] = {}
+    cluster_method: dict[str, Any] = {}
+    if artifact is not None:
+        for sample_id, cluster_id in db.query(
+            AnnotationStrategyDecision.sample_id,
+            AnnotationStrategyDecision.cluster_id,
+        ).filter(
+            AnnotationStrategyDecision.strategy_artifact_id == artifact.id,
+            AnnotationStrategyDecision.cluster_id.isnot(None),
+        ).all():
+            assignments[str(sample_id)] = int(cluster_id)
+        payload = dict(artifact.artifact or {})
+        cluster_artifact = payload.get("cluster_artifact")
+        if isinstance(cluster_artifact, Mapping):
+            for key in ("selected_k", "method", "weights_mode", "evaluation_mode", "evaluation_sample_count"):
+                if key in cluster_artifact:
+                    cluster_method[key] = cluster_artifact[key]
+    return {
+        "strategy": {
+            "strategy": strategy,
+            "other_values": configuration.get("other_values") or {},
+        },
+        "rules": {"rules": list(configuration.get("rules") or [])},
+        "cluster_method": cluster_method,
+        "cluster_artifacts": {"assignments": assignments},
+        "cluster_label_mappings": {
+            str(cluster_id): dict(values)
+            for cluster_id, values in (configuration.get("cluster_labels") or {}).items()
+            if isinstance(values, Mapping)
+        },
+    }
+
+
 def create_model_export(
     model_version_id: Any,
     annotation_task_revision: int | str | None,
@@ -1101,6 +1209,7 @@ def create_model_export(
     *,
     output_dir: str | Path | None = None,
     signing_key: str | bytes | None = None,
+    annotation_payload: Mapping[str, Any] | None = None,
     db: Any = None,
     model_version: Any = None,
 ) -> ExportResult:
@@ -1125,4 +1234,5 @@ def create_model_export(
         include_runtime=include_runtime,
         signing_key=signing_key,
         annotation_task_revision=annotation_task_revision,
+        annotation_payload=annotation_payload,
     )

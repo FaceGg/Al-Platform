@@ -20,6 +20,7 @@ export type AutomaticRuleDraft = {
 export type AutomaticStrategyDraft = {
   strategy: "cluster" | "rule" | "cluster_rule";
   selectedClusters: string[];
+  useOtherValues?: boolean;
   otherValues: Record<string, string>;
   clusterLabels: Record<string, Record<string, string>>;
   rules: AutomaticRuleDraft[];
@@ -55,6 +56,7 @@ export function createAutomaticStrategyDraft(columns: AnnotationOutputColumn[]):
   return {
     strategy: "cluster",
     selectedClusters: [],
+    useOtherValues: true,
     otherValues: Object.fromEntries(columns.map((column) => [column.machine_key, ""])),
     clusterLabels: {},
     rules: [createAutomaticRule(columns)],
@@ -72,6 +74,7 @@ type Props = {
 
 export default function AutomaticAnnotationStrategyEditor({ idPrefix, columns, sourceColumns, value, onChange, clusters = [] }: Props) {
   const hasClusterMappings = clusters.length > 0 && (value.strategy === "cluster" || value.strategy === "cluster_rule");
+  const useOtherValues = value.useOtherValues !== false;
   const updateRule = (ruleIdValue: string, update: Partial<AutomaticRuleDraft>) => {
     onChange({ ...value, rules: value.rules.map((rule) => rule.id === ruleIdValue ? { ...rule, ...update } : rule) });
   };
@@ -100,19 +103,6 @@ export default function AutomaticAnnotationStrategyEditor({ idPrefix, columns, s
         <option value="rule">按规则</option>
         <option value="cluster_rule">簇加规则</option>
       </select>
-    </div>
-    <div className="data-annotation__automatic-values" aria-label="其他兜底值">
-      {columns.map((column) => <div className="data-annotation__setup-field" key={column.machine_key}>
-        <label htmlFor={`${idPrefix}-other-${column.machine_key}`}>其他 · {column.display_name}</label>
-        <input
-          id={`${idPrefix}-other-${column.machine_key}`}
-          aria-label={`其他兜底值 ${column.display_name}`}
-          type={column.value_type === "string" ? "text" : "number"}
-          step={column.value_type === "float" ? "any" : "1"}
-          value={value.otherValues[column.machine_key] || ""}
-          onChange={(event) => onChange({ ...value, otherValues: { ...value.otherValues, [column.machine_key]: event.target.value } })}
-        />
-      </div>)}
     </div>
     {(value.strategy === "rule" || value.strategy === "cluster_rule") && <section className="data-annotation__automatic-rules" aria-label="规则配置">
       <div className="data-annotation__rules-head"><h3>规则</h3><button type="button" className="ant-btn ant-btn-sm" onClick={() => onChange({ ...value, rules: [...value.rules, createAutomaticRule(columns)] })}>添加规则</button></div>
@@ -150,5 +140,32 @@ export default function AutomaticAnnotationStrategyEditor({ idPrefix, columns, s
         </div>}
       </div>)}
     </section>}
+    <section className="data-annotation__automatic-other" aria-label="其他兜底值">
+      <div className="data-annotation__rules-head">
+        <h3>其他兜底值</h3>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="使用其他兜底值"
+            checked={useOtherValues}
+            onChange={(event) => onChange({ ...value, useOtherValues: event.target.checked })}
+          />
+          使用其他兜底值
+        </label>
+      </div>
+      {useOtherValues && <div className="data-annotation__automatic-values">
+        {columns.map((column) => <div className="data-annotation__setup-field" key={column.machine_key}>
+          <label htmlFor={`${idPrefix}-other-${column.machine_key}`}>其他 · {column.display_name}</label>
+          <input
+            id={`${idPrefix}-other-${column.machine_key}`}
+            aria-label={`其他兜底值 ${column.display_name}`}
+            type={column.value_type === "string" ? "text" : "number"}
+            step={column.value_type === "float" ? "any" : "1"}
+            value={value.otherValues[column.machine_key] || ""}
+            onChange={(event) => onChange({ ...value, otherValues: { ...value.otherValues, [column.machine_key]: event.target.value } })}
+          />
+        </div>)}
+      </div>}
+    </section>
   </div>;
 }

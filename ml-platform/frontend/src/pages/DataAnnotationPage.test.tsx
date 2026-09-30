@@ -804,6 +804,115 @@ describe("DataAnnotationPage", () => {
     ));
   });
 
+  it("saves the cluster strategy without other fallback values when the toggle is off", async () => {
+    datasetVersions.mockResolvedValue([{
+      id: "version-1",
+      project_id: "project-1",
+      version: 1,
+      status: "ready",
+      row_count: 2,
+      column_count: 2,
+      columns: [{ name: "feature", dtype: "float", nullable: false, position: 0 }],
+    }]);
+    modelVersions.mockResolvedValue([{
+      id: "model-version-1",
+      registered_model_id: "registered-1",
+      model_name: "模型一",
+      version_number: 1,
+      algorithm: "RandomForestClassifier",
+      feature_schema: [{ name: "feature", dtype: "float64" }],
+      output_contract: {
+        model_version_id: "model-version-1",
+        registered_model_id: "registered-1",
+        model_name: "模型一",
+        version_number: 1,
+        columns: [{ machine_key: "label", display_name: "label", value_type: "string", required: true }],
+        contract_hash: "contract-hash-1",
+      },
+    }]);
+    const discoveryTask = {
+      id: "discovery-task-1",
+      mode: "automatic",
+      status: "draft",
+      task_revision: 0,
+      name: "聚类发现任务",
+      task_snapshot: {
+        config_hash: "sha256:discovery",
+        sample_ids: [],
+        visible_columns: ["feature"],
+        label_schema: { columns: [{ machine_key: "label", display_name: "label", value_type: "string", required: true }] },
+      },
+      sample_scope: { kind: "all" },
+      preview: null,
+    };
+    post.mockImplementation((url: string) => {
+      if (url === "/annotation-tasks") return Promise.resolve({ data: discoveryTask });
+      if (url === "/annotation-tasks/discovery-task-1/preview") return Promise.resolve({ data: { preview_id: "preview-1", task_revision: 0, status: "queued", dispatch_id: null, operation_id: null } });
+      if (url === "/annotations/label-schemas") return Promise.resolve({ data: { id: "schema-1", project_id: "project-1", name: "labels", version: 1 } });
+      return Promise.resolve({ data: {} });
+    });
+    const defaultGet = get.getMockImplementation();
+    get.mockImplementation((url: string, ...rest: unknown[]) => {
+      if (url === "/annotation-tasks/discovery-task-1/previews/preview-1") {
+        return Promise.resolve({ data: {
+          id: "preview-1",
+          status: "completed",
+          task_revision: 0,
+          progress: 100,
+          summary: {
+            clusters: [{ cluster_id: 0, sample_count: 2 }],
+            cluster_evaluation: {
+              selected_k: 2,
+              k_scores: { "2": 0.5 },
+              evaluation_mode: "all_rows",
+              evaluation_sample_count: 2,
+              total_sample_count: 2,
+              importance_method: "model_native",
+            },
+          },
+        } });
+      }
+      return defaultGet ? defaultGet(url, ...rest) : Promise.resolve({ data: { items: [] } });
+    });
+    put.mockResolvedValue({ data: { ...discoveryTask, task_revision: 1, status: "needs_review" } });
+
+    render(<MemoryRouter><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "新建自动标注任务" }));
+    fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
+    fireEvent.change(await screen.findByLabelText("已启用模型版本"), { target: { value: "model-version-1" } });
+    fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "聚类发现任务" } });
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    fireEvent.change(await screen.findByLabelText("是否启用弱监督标注"), { target: { value: "yes" } });
+    fireEvent.click((await screen.findAllByRole("button", { name: "生成聚类预览" }))[0]);
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/annotation-tasks/discovery-task-1/preview", expect.anything()), { timeout: 3000 });
+    expect(await screen.findByLabelText("自动标注策略未解锁")).toBeInTheDocument();
+    expect(await screen.findByLabelText("标签 schema 编辑器")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("枚举值 1 值 1"), { target: { value: "ok" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 schema" }));
+    expect(await screen.findByLabelText("自动标注策略")).toHaveValue("cluster");
+    fireEvent.click(screen.getByRole("checkbox", { name: "簇 0 · 2 个样本" }));
+    fireEvent.change(screen.getByLabelText("簇 0 label"), { target: { value: "cluster-a" } });
+    // 关闭"其他兜底值"后不再强制填写每列兜底值
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用其他兜底值" }));
+    expect(screen.queryByLabelText("其他兜底值 label")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "保存策略并完成" }));
+
+    await waitFor(() => expect(put).toHaveBeenCalledWith(
+      "/annotation-tasks/discovery-task-1/configuration",
+      expect.objectContaining({
+        task_revision: 0,
+        label_schema_id: "schema-1",
+        configuration: expect.objectContaining({
+          clustering: true,
+          strategy: "cluster",
+          selected_clusters: ["0"],
+          cluster_labels: { "0": { "label-1": "cluster-a" } },
+          other_values: {},
+        }),
+      }),
+    ));
+  });
+
   it("syncs the auto-renamed task name into the wizard contract summary", async () => {
     datasetVersions.mockResolvedValue([{
       id: "version-1",

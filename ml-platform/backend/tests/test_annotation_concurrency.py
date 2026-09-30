@@ -14,6 +14,8 @@ from app.models.labeling import (
     AnnotationReturnBatch,
     AnnotationRevision,
     AnnotationSampleCurrent,
+    AnnotationStrategyArtifact,
+    AnnotationStrategyDecision,
     LabelColumn,
     LabelSchema,
 )
@@ -745,3 +747,133 @@ def test_assignment_edits_update_current_labels_for_later_assignments(db):
     )[0]
     copied = db.query(AnnotationAssignmentSample).filter_by(assignment_id=second.id, sample_id="frozen-1").one()
     assert (copied.values, copied.revision_no) == ({"label": "reviewed"}, 1)
+
+def _cluster_task_fixture(db, admin, sample_ids, configuration):
+    """An automatic cluster task with a fresh (immutable-at-insert) snapshot."""
+    version = db.query(DatasetVersion).order_by(DatasetVersion.id.asc()).first()
+    schema_id = db.query(LabelSchema).order_by(LabelSchema.id.asc()).first().id
+    task = GenericAnnotationTask(
+        project_id=version.project_id,
+        dataset_version_id=version.id,
+        label_schema_id=schema_id,
+        owner_id=admin.id,
+        mode="automatic",
+        status="awaiting_annotation",
+        task_revision=0,
+        sample_scope={"kind": "all"},
+        task_snapshot={
+            "sample_ids": list(sample_ids),
+            "label_schema": {"schema_id": str(schema_id), "columns": [{"machine_key": "label", "value_type": "string", "required": True}]},
+            "configuration": configuration,
+        },
+    )
+    db.add(task)
+    db.flush()
+    return task
+
+
+def test_cluster_selection_narrows_assignment_scope_to_selected_clusters(db):
+    db.expire_on_commit = False
+    admin, _other, subject, fixture_task = _secure_fixture(db)
+    task = _cluster_task_fixture(db, admin, ["frozen-1", "frozen-2", "frozen-3"], {
+        "clustering": True,
+        "strategy": "cluster",
+        "selected_clusters": ["0"],
+        "cluster_labels": {"0": {"label": "auto"}},
+        "other_values": {"label": "other"},
+    })
+    artifact = AnnotationStrategyArtifact(
+        task_id=task.id,
+        task_revision=0,
+        config_hash="sha256:cluster-config",
+        strategy="cluster",
+        artifact={"configuration_complete": True},
+        created_by=admin.id,
+    )
+    db.add(artifact)
+    db.flush()
+    for sample_id, cluster_id in [("frozen-1", 0), ("frozen-2", 1), ("frozen-3", 0)]:
+        db.add(AnnotationStrategyDecision(
+            strategy_artifact_id=artifact.id,
+            sample_id=sample_id,
+            row_index=0,
+            status="ready",
+            values={"label": "auto"},
+            provenance={"label": {"source": "cluster"}},
+            model_output={},
+            cluster_id=cluster_id,
+            matched_rule_ids=[],
+            decision_hash="sha256:decision",
+        ))
+        db.add(AnnotationSampleCurrent(
+            task_id=task.id,
+            sample_id=sample_id,
+            schema_id=task.label_schema_id,
+            revision_no=0,
+            values={"label": "auto"},
+        ))
+    db.commit()
+
+    assignment = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[subject],
+        sample_scope={"kind": "frozen_task_scope"},
+        actor=admin.id,
+    )[0]
+
+    assigned = sorted(row.sample_id for row in db.query(AnnotationAssignmentSample).filter_by(assignment_id=assignment.id).all())
+    assert assigned == ["frozen-1", "frozen-3"]
+    assert assignment.sample_scope["sample_count"] == 2
+
+
+def test_cluster_selection_rejects_assignment_without_matching_samples(db):
+    db.expire_on_commit = False
+    admin, _other, subject, _fixture_task = _secure_fixture(db)
+    task = _cluster_task_fixture(db, admin, ["frozen-1"], {
+        "clustering": True,
+        "strategy": "cluster",
+        "selected_clusters": ["7"],
+        "cluster_labels": {"7": {"label": "auto"}},
+        "other_values": {"label": "other"},
+    })
+    artifact = AnnotationStrategyArtifact(
+        task_id=task.id,
+        task_revision=0,
+        config_hash="sha256:cluster-config",
+        strategy="cluster",
+        artifact={"configuration_complete": True},
+        created_by=admin.id,
+    )
+    db.add(artifact)
+    db.flush()
+    db.add(AnnotationStrategyDecision(
+        strategy_artifact_id=artifact.id,
+        sample_id="frozen-1",
+        row_index=0,
+        status="ready",
+        values={"label": "auto"},
+        provenance={"label": {"source": "cluster"}},
+        model_output={},
+        cluster_id=1,
+        matched_rule_ids=[],
+        decision_hash="sha256:decision",
+    ))
+    db.add(AnnotationSampleCurrent(
+        task_id=task.id,
+        sample_id="frozen-1",
+        schema_id=task.label_schema_id,
+        revision_no=0,
+        values={"label": "auto"},
+    ))
+    db.commit()
+
+    with pytest.raises(AssignmentError) as error:
+        create_assignments(
+            db,
+            task_id=task.id,
+            annotator_ids=[subject],
+            sample_scope={"kind": "frozen_task_scope"},
+            actor=admin.id,
+        )
+    assert error.value.code == "SAMPLE_SCOPE_EMPTY_AFTER_CLUSTER_FILTER"

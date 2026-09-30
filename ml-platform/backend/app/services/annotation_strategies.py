@@ -160,16 +160,14 @@ def validate_strategy_config(
         raise StrategyConfigError("exactly one clustering strategy is required", "STRATEGY_EXCLUSIVE")
     if not isinstance(config.cluster_labels, Mapping):
         raise StrategyConfigError("cluster labels must be an object", "STRATEGY_CONFIG_INVALID")
-    if not isinstance(config.other_values, Mapping):
+    other_values = config.other_values or {}
+    if not isinstance(other_values, Mapping):
         raise StrategyConfigError("other fallback must be an object", "CLUSTER_FALLBACK_REQUIRED")
     if not isinstance(config.rules, (list, tuple)):
         raise StrategyConfigError("rules must be a list", "RULE_INVALID")
     if config.selected_clusters is not None and (not isinstance(config.selected_clusters, (list, tuple)) or any(isinstance(value, bool) or not isinstance(value, (str, int)) for value in config.selected_clusters)):
         raise StrategyConfigError("selected clusters must be a list of cluster identifiers")
-    missing = [key for key in schema.by_key if key not in config.other_values]
-    if missing:
-        raise StrategyConfigError("other fallback is required for every label column", "CLUSTER_FALLBACK_REQUIRED")
-    for key, value in config.other_values.items():
+    for key, value in other_values.items():
         if key not in schema.by_key:
             raise StrategyConfigError("unknown fallback label column", "LABEL_COLUMN_UNKNOWN")
         try:
@@ -317,7 +315,15 @@ def apply_annotation_strategy(
         if config.strategy in {"cluster", "cluster_rule"} and key in cluster_values:
             candidates.append(("cluster", cluster_values[key]))
         if not candidates:
-            candidates.append(("other", config.other_values[key]))
+            # The fallback is optional; without it an unmatched sample stays in
+            # needs_review instead of being assigned an automatic value.
+            if key in (config.other_values or {}):
+                candidates.append(("other", config.other_values[key]))
+            else:
+                needs_review = True
+                values[key] = None
+                provenance[key] = {"source": "none"}
+                continue
         source, value = candidates[0]
         try:
             values[key] = validate_label_value(schema.by_key[key], value)

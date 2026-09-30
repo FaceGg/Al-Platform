@@ -444,3 +444,67 @@ def test_export_validation_rejects_tampered_manifest(tmp_path: Path):
         assert error.code in {"EXPORT_SIGNATURE_INVALID", "EXPORT_CHECKSUM_MISMATCH"}
     else:
         raise AssertionError("tampered manifest was accepted")
+
+
+def test_annotation_payload_drives_package_content_and_runtime_annotate(tmp_path: Path):
+    payload = {
+        "strategy": {"strategy": "cluster", "other_values": {}},
+        "rules": {"rules": []},
+        "cluster_method": {"selected_k": 2, "method": "weighted_kmeans"},
+        "cluster_artifacts": {"assignments": {"a": 0, "b": 1}},
+        "cluster_label_mappings": {"0": {"label": "accept"}},
+    }
+    export = build_export_package(
+        _version(tmp_path),
+        output_dir=tmp_path / "exports-payload",
+        signing_key="contract-test-key",
+        annotation_task_revision=1,
+        annotation_payload=payload,
+    )
+
+    with zipfile.ZipFile(export.path) as archive:
+        names = set(archive.namelist())
+        assert json.loads(archive.read("annotation/strategy.json")) == {"strategy": "cluster", "other_values": {}}
+        assert json.loads(archive.read("annotation/rules.json")) == {"rules": []}
+        assert json.loads(archive.read("annotation/cluster_label_mappings.json")) == {"0": {"label": "accept"}}
+        assert json.loads(archive.read("annotation/cluster_artifacts.json")) == {"assignments": {"a": 0, "b": 1}}
+        assert json.loads(archive.read("annotation/cluster_method.json")) == {"selected_k": 2, "method": "weighted_kmeans"}
+    assert {
+        "annotation/strategy.json",
+        "annotation/cluster_method.json",
+        "annotation/cluster_artifacts.json",
+        "annotation/cluster_label_mappings.json",
+        "annotation/rules.json",
+    } <= names
+
+    runtime_root = tmp_path / "runtime-payload"
+    source = tmp_path / "input.csv"
+    source.write_text("sample_id,feature\na,0.2\nb,2.8\n", encoding="utf-8")
+    output = tmp_path / "annotated.csv"
+    with zipfile.ZipFile(export.path) as archive:
+        archive.extractall(runtime_root)
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = ""
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(runtime_root / "runtime/cli.py"),
+            "annotate",
+            "--package",
+            str(export.path),
+            "--input",
+            str(source),
+            "--output",
+            str(output),
+        ],
+        cwd=runtime_root / "runtime",
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    frame = __import__("pandas").read_csv(output)
+    assert list(frame["annotation_status"]) == ["ready", "needs_review"]
+    assert frame.loc[frame["sample_id"] == "a", "label"].tolist() == ["accept"]

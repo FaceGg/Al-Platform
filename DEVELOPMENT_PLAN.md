@@ -1,6 +1,6 @@
 # 当前开发计划
 
-> 更新时间：2026-09-28。本文档是当前状态台账；完整历史执行记录已保存到 [2026-09-24 归档快照](DEVELOPMENT_PLAN.history-2026-09-24.md)。最近开发重点是 Week 13–17，详细实施步骤见 [Week 13–17 云原生与数据探索开发计划](ml-platform/docs/superpowers/plans/2026-09-24-week13-17-development.md)。
+> 更新时间：2026-09-30。本文档是当前状态台账；完整历史执行记录已保存到 [2026-09-24 归档快照](DEVELOPMENT_PLAN.history-2026-09-24.md)。最近开发重点是 Week 13–17，详细实施步骤见 [Week 13–17 云原生与数据探索开发计划](ml-platform/docs/superpowers/plans/2026-09-24-week13-17-development.md)。
 
 ## 1. 状态口径
 
@@ -2290,3 +2290,20 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - Python 服务使用包内 Debian `python:3.11-slim-bookworm` Dockerfile，移除 Wolfi 和 pip 不支持的 `--resume-retries`；MLflow 改为包内构建。前端使用包内 Debian Node 20 Dockerfile，默认 npmmirror 并带 npm 有限重试；Python 默认镜像源仍可通过 `PIP_INDEX_URL` 覆盖。
 - 安装脚本保留已有 `.env`，只补齐公网端口变量，并调用幂等的 `prepare-production-secrets.sh` 创建缺失的通知密钥目录/文件；打包脚本使用 HEAD 归档加当前工作树覆盖，排除 `.env`、`secrets/`、数据库、缓存和依赖目录。
 - 验证：WSL Docker 已构建迁移、MLflow、TensorBoard、推理、后端、worker、scheduler 和前端镜像；Compose 合并配置、端口/镜像合同与各 shell 文件语法通过。当前 WSL Docker Hub 对两个 CPUv1 MinIO 标签返回 `pull access denied`，因此目标机必须预加载同名镜像或配置可访问的批准仓库；目标 Ubuntu 主机上的完整 `up`、健康检查和外网访问仍需在目标环境执行。
+
+## 2026-09-30 主平台模型导出/模型库命名/自动标注策略与标注员门户五项修复
+
+- 模型库导出 not found 修复：前端 `ml-platform/frontend/src/api/modelExports.ts` 与 `ModelLibraryPage.tsx` 原调用后端不存在的 `POST /api/projects/{id}/model-exports`（缺 `Idempotency-Key`、字段 `export_kind/include_annotation` 不符、轮询 `ready` 状态），全部对齐后端真实契约：`POST /api/model-versions/{versionId}/exports`（幂等键 `createUuid()`），轮询 `completed/failed`，`GET /api/model-exports/{id}/download`；标注包以 `annotation_task_revision: 0` 绑定版本当前策略载荷；e2e `model-export.spec.ts`、`modelExports.test.ts` 与 `ml-platform/docs/api_reference.md` §16.6 同步。
+- 模型库注册名加入实验名：`ModelRegistryService._create_automl_registered_model` 命名改为 `{job.name} - {experiment.name} - {算法名}`（无绑定实验时回退旧格式），新增回归 `test_automl_registration_includes_experiment_name_in_model_library`。
+- 弱监督"其他兜底值"可选并移至规则/簇映射下方：编辑器新增 `useOtherValues` 开关（缺省开启，向后兼容旧策略库载荷）；后端 `validate_strategy_config` 不再强制每列 fallback（`CLUSTER_FALLBACK_REQUIRED` 仅用于非对象），`apply_annotation_strategy` 无候选且无兜底时落 `needs_review`（provenance source `none`）；`strategyDraftFromTask` 按快照 other_values 回填开关（显式空对象=关闭）。
+- 弱监督按簇样本范围收窄：`annotation_concurrency.py` 新增 `annotator_visible_sample_ids` + `frozen_cluster_sample_ids`，`_resolve_assignment_scope` 对 ids 与 frozen_task_scope 两种指派都按最新策略 artifact 的 `cluster_id ∈ selected_clusters` 过滤（全空返回 `SAMPLE_SCOPE_EMPTY_AFTER_CLUSTER_FILTER`），`_refresh_global_annotation_state` 同步收窄；执行 worker `_execution_cluster_filter` 跳过范围外预览样本（不物化、不发布、不计 needs_review），避免部分簇+无兜底配置卡死发布。
+- 标注员门户自动标注结果：`GET /api/internal/portal/tasks/{id}/samples` 新增 `label_source`（按当前值对应最新 revision 的 source）；`SampleStream.tsx` 对 automatic 样本显示"自动标注结果"面板并把右侧编辑框标题改为"标注员修改"，标注员保存/批量保存后缓存置 `manual`（服务端 save_labels 本就以 manual revision 覆盖自动值）；枚举严格校验此前已三层齐备（前端 select/chips 仅枚举、服务端 `LABEL_ENUM_INVALID`、发布校验），未改动；顺带修复 `AdminQueuePage` 模式标签键 `auto`→`automatic` 不匹配。
+- 验证（本机 Windows，临时 venv `temp_test/export-test-venv`）：后端聚焦套件 `test_model_exports_api+test_model_export_contract` 18 passed、`test_model_registry_service` 19 passed、`test_api_model_registry+test_model_registration_contract` 18 passed+2 subtests、`test_annotation_strategies` 34 passed、`test_annotation_concurrency` 28 passed、`test_annotation_task_state+test_annotation_task_state_api` 97 passed、`test_portal_internal_api` 85 passed、`test_portal_admin_review+test_annotation_return_acceptance+test_async_operation_contract` 65 passed；主平台前端 Vitest 370 passed/19 skipped、`tsc --noEmit`、生产构建通过；标注员门户前端 Vitest 127 passed、tsc、生产构建通过。`git diff --check` 未发现空白错误。
+- 边界与未验证项：真实 Redis/Celery 下的异步导出与执行、真实浏览器 e2e（`model-export.spec.ts`、`generic-platform-acceptance.spec.ts` 更新后未重跑 Chromium）和远程 CI 未在本机闭环；标注包的 annotation 策略文件内容来自 `ModelVersion.conversion_metadata["annotation"]`，当前没有任何流程写入该元数据，因此"导出标注包"虽可产出含 annotation 目录的合法签名包，但策略文件为空对象——该数据链路缺口仍是遗留问题；已存在的注册模型名称不回填实验名。
+
+## 2026-09-30 标注包内容链路收口（导出标注包接入弱监督策略血缘）
+
+- 链路：回传验收导出产生的数据版本自带 `parse_contract.task_id` 与 `original_artifact_id`，AutoML 注册的 `ModelLibrary.dataset_artifact_id` 即该 artifact。`app/services/model_export.py` 新增 `resolve_annotation_payload(db, model_version)`：`ModelVersion.source_model_library_id → ModelLibrary.dataset_artifact_id → DatasetVersion(original/normalized_artifact_id, parse_contract.task_id) → GenericAnnotationTask（automatic、弱监督配置完整、同项目）→ 当前修订快照 configuration + 最新 AnnotationStrategyArtifact/Decision`，产出 `{strategy, rules, cluster_method, cluster_artifacts(assignments), cluster_label_mappings}`。
+- 打包：`build_export_package`/`create_model_export` 新增可选 `annotation_payload`，非空时替代 `conversion_metadata["annotation"]` 写入 `annotation/*.json`（旧元数据路径保留为回退）；`execute_model_export` 在 `annotation_task_revision` 非空时调用解析器。任一血缘缺失返回 None，导出保持空注解目录而非错误策略。未选中簇样本的 assignments 同样写入，离线 `cli.py annotate` 对无映射样本按 `needs_review` 处理，与平台侧弱监督语义一致。
+- 验证：新增 `tests/test_model_export_annotation_lineage.py`（血缘解析 3 正 2 反 + 真实 `execute_model_export` 端到端断言 zip 内注解内容）5 passed；`test_model_export_contract.py` 新增 payload 驱动打包 + 离线 runtime annotate 子进程用例（簇0 映射 ready、簇1 未映射 needs_review）；导出四件套合计 26 passed；`test_annotation_strategies+concurrency+task_state+model_registry_service` 152 passed 无回归。
+- 边界：血缘依赖"验收后执行回传导出"产生的数据版本（`parse_contract.task_id`）；直接上传的 CSV 或未导出的验收版本仍解析不到任务，导出标注包退化为空注解目录（保持原行为，不猜测绑定）。真实 Celery 异步与浏览器 e2e 仍未在本机闭环。

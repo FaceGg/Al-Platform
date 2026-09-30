@@ -360,12 +360,13 @@ API 市场前端入口为 `/api-marketplace`，应通过前端开发/部署端�
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/model-exports` | 创建预测或标注导出 |
+| POST | `/api/model-versions/{version_id}/exports` | 创建预测或标注导出（需 `Idempotency-Key`；标注导出绑定 `annotation_task_revision`） |
+| GET | `/api/model-versions/{version_id}/exports` | 列出版本的导出记录 |
 | GET | `/api/model-exports/{export_id}` | 查询导出状态 |
 | POST | `/api/model-exports/{export_id}/validate` | 校验导出包 |
 | GET | `/api/model-exports/{export_id}/download` | 导出完成后一次性下载 |
 
-导出包必须包含模型、预处理、输入输出合同、映射、推理代码、依赖锁定、SBOM、签名和全量 SHA-256。只有 `ready` 且验证通过的导出可下载；无效输入只产生脱敏报告，不发布部分结果。
+导出状态流转为 `queued` → `running` → `completed`/`failed`。导出包必须包含模型、预处理、输入输出合同、映射、推理代码、依赖锁定、SBOM、签名和全量 SHA-256。只有 `completed` 且验证通过的导出可下载；无效输入只产生脱敏报告，不发布部分结果。
 
 ---
 

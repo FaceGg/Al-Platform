@@ -107,6 +107,13 @@ class ModelRegistryService:
         marker = f" [{suffix}]"
         return f"{base[:128 - len(marker)]}{marker}"
 
+    @staticmethod
+    def _automl_experiment_name(job) -> str:
+        experiment = getattr(job, "experiment", None)
+        if experiment is None:
+            return ""
+        return str(getattr(experiment, "name", "") or "").strip()
+
     def _create_automl_registered_model(
         self,
         db,
@@ -116,7 +123,12 @@ class ModelRegistryService:
         actor_id,
         display_name: str,
     ) -> RegisteredModel:
-        base_name = f"{job.name} - {display_name}"[:128]
+        experiment_name = self._automl_experiment_name(job)
+        segments = [str(job.name)]
+        if experiment_name:
+            segments.append(experiment_name)
+        segments.append(display_name)
+        base_name = " - ".join(segments)[:128]
         candidates = (
             base_name,
             self._name_with_suffix(base_name, str(job.id)[:8]),

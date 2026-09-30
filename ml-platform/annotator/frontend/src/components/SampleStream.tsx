@@ -85,6 +85,7 @@ export default function SampleStream({
   const entries = Object.entries(sample.values ?? {})
   const annotationFields = entries.filter(([key]) => visible.has(key))
   const otherFields = entries.filter(([key]) => !visible.has(key))
+  const automaticLabels = sample.label_source === 'automatic' && Object.keys(sample.labels ?? {}).length > 0
   return (
     <section className="sample-stream" aria-label="样本流">
       <div className="stream-sample">
@@ -115,9 +116,26 @@ export default function SampleStream({
             </div>
           )}
           {entries.length === 0 && <p className="muted">该样本没有可见数据字段</p>}
+          {automaticLabels && (
+            <div className="field-group automatic-labels" aria-label="自动标注结果">
+              <h4>自动标注结果</h4>
+              <p className="muted">以下标签由自动标注生成，可在右侧修改后覆盖。</p>
+              <div className="field-grid">
+                {columns.map((column) => {
+                  const value = (sample.labels ?? {})[column.machine_key]
+                  return (
+                    <div className="field-item" key={column.machine_key}>
+                      <span className="field-item-name">{column.display_name ?? column.machine_key}</span>
+                      <span className="field-item-value">{value == null ? '—' : String(value)}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
         <div className="stream-labels">
-          <h3>标签</h3>
+          <h3>{automaticLabels ? '标注员修改' : '标签'}</h3>
           {columns.map((column, index) => {
             const value = draft[column.machine_key]
             const chips = numberedOptions.filter(option => option.column.machine_key === column.machine_key)

@@ -315,11 +315,13 @@ function strategyDraftFromTask(task: AnnotationTask, columns: AnnotationOutputCo
     } satisfies AutomaticRuleDraft];
   }) : [];
   const selectedClusters = Array.isArray(configuration.selected_clusters) ? configuration.selected_clusters.map(String) : [];
+  const rawOtherValues = (configuration.other_values && typeof configuration.other_values === "object" ? configuration.other_values : {}) as Record<string, unknown>;
   const rawClusterLabels = configuration.cluster_labels && typeof configuration.cluster_labels === "object" ? configuration.cluster_labels as Record<string, Record<string, unknown>> : {};
   return {
     strategy: ["cluster", "rule", "cluster_rule"].includes(String(configuration.strategy)) ? configuration.strategy as AutomaticStrategyDraft["strategy"] : "cluster",
     selectedClusters,
-    otherValues: Object.fromEntries(columns.map((column) => [column.machine_key, valueText((configuration.other_values as Record<string, unknown> | undefined)?.[column.machine_key])])),
+    useOtherValues: configuration.other_values === undefined ? true : Object.keys(rawOtherValues).length > 0,
+    otherValues: Object.fromEntries(columns.map((column) => [column.machine_key, valueText(rawOtherValues[column.machine_key])])),
     clusterLabels: Object.fromEntries(Object.entries(rawClusterLabels).map(([clusterId, values]) => [clusterId, Object.fromEntries(columns.map((column) => [column.machine_key, valueText(values?.[column.machine_key])]))])),
     rules: rules.length ? rules : [createAutomaticRule(columns)],
   };
@@ -385,11 +387,14 @@ function automaticConfigurationFromDraft(
 ): { configuration?: GenericAutomaticConfiguration; error?: string } {
   if (!clustering) return { configuration: { clustering: false, strategy: "model" } };
   if (discovery) return { configuration: { clustering: true, cluster_discovery: true } };
+  const useOtherValues = draft.useOtherValues !== false;
   const otherValues: Record<string, string | number> = {};
-  for (const column of columns) {
-    const result = typedAutomaticValue(column, draft.otherValues[column.machine_key] || "");
-    if (result.error) return { error: result.error };
-    otherValues[column.machine_key] = result.value!;
+  if (useOtherValues) {
+    for (const column of columns) {
+      const result = typedAutomaticValue(column, draft.otherValues[column.machine_key] || "");
+      if (result.error) return { error: result.error };
+      otherValues[column.machine_key] = result.value!;
+    }
   }
   const rules = [] as Array<Record<string, unknown>>;
   if (draft.strategy === "rule" || draft.strategy === "cluster_rule") {
@@ -1887,6 +1892,7 @@ export default function DataAnnotationPage() {
     setGenericAutomaticDraft({
       strategy: payload.strategy,
       selectedClusters: payload.selectedClusters || [],
+      useOtherValues: payload.useOtherValues !== false,
       otherValues: { ...base.otherValues, ...(payload.otherValues || {}) },
       clusterLabels: payload.clusterLabels || {},
       rules: payload.rules?.length ? payload.rules : base.rules,

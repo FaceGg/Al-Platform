@@ -49,7 +49,7 @@ function returnReviewState(task: AdminTaskListItem): { label: string; className:
 
 const modeLabels: Record<string, string> = {
   manual: '人工标注',
-  auto: '自动标注',
+  automatic: '自动标注',
 }
 
 function formatDateTime(value: string | null): string {
