@@ -2940,9 +2940,10 @@ export default function DataAnnotationPage() {
                             display_name: column.display_name,
                             value_type: column.value_type,
                             required: column.required,
-                          })) || selectedGenericOutputColumns.map((column, index) => ({
-                            // 默认标签列按模型输出契约预填名称与类型；机器键只读自动递增，且该列不可删除
-                            machine_key: `label-${index + 1}`,
+                          })) || selectedGenericOutputColumns.map((column) => ({
+                            // 默认标签列按模型输出契约预填机器键、名称与类型；机器键随后续
+                            // 标签名称编辑自动生成，且该列不可删除
+                            machine_key: column.machine_key,
                             display_name: column.display_name,
                             value_type: column.value_type,
                             required: true,

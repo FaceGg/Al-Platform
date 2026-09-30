@@ -20,6 +20,47 @@ describe("LabelSchemaEditor", () => {
     expect(onSave).toHaveBeenCalledWith([{ machine_key: "label-1", display_name: "标签-1", value_type: "int", required: true, enum_values: [0, 1] }], "annotation");
   });
 
+  it("derives the machine key from the user-entered label name", () => {
+    const onSave = vi.fn();
+    render(<LabelSchemaEditor onSave={onSave} />);
+    fireEvent.click(screen.getByRole("button", { name: "添加列" }));
+    fireEvent.change(screen.getByLabelText("标签名称 1"), { target: { value: "质量等级" } });
+    // 机器键实时跟随标签名称（空白转下划线）
+    expect(screen.getByText("质量等级")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("标签名称 1"), { target: { value: "quality level" } });
+    expect(screen.getByText("quality_level")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("枚举值 1 值 1"), { target: { value: "ok" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 schema" }));
+    expect(onSave).toHaveBeenCalledWith(
+      [expect.objectContaining({ machine_key: "quality_level", display_name: "quality level" })],
+      "annotation",
+    );
+  });
+
+  it("keeps the contract machine key when the prefilled name is untouched", () => {
+    const onSave = vi.fn();
+    render(<LabelSchemaEditor onSave={onSave} initialColumns={[
+      { machine_key: "quality", display_name: "质量", value_type: "string", required: true, isDefault: true },
+    ]} />);
+    fireEvent.change(screen.getByLabelText("枚举值 1 值 1"), { target: { value: "ok" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 schema" }));
+    expect(onSave).toHaveBeenCalledWith(
+      [expect.objectContaining({ machine_key: "quality", display_name: "质量" })],
+      "annotation",
+    );
+  });
+
+  it("rejects label names that cannot become machine keys", () => {
+    const onSave = vi.fn();
+    render(<LabelSchemaEditor onSave={onSave} />);
+    fireEvent.click(screen.getByRole("button", { name: "添加列" }));
+    fireEvent.change(screen.getByLabelText("标签名称 1"), { target: { value: "质量(A)" } });
+    fireEvent.change(screen.getByLabelText("枚举值 1 值 1"), { target: { value: "ok" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 schema" }));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it("blocks duplicate machine keys before submission", () => {
     const onSave = vi.fn();
     render(<LabelSchemaEditor onSave={onSave} initialColumns={[

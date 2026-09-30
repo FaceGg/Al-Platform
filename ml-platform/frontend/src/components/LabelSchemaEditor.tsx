@@ -37,6 +37,15 @@ function createColumn(index: number): LabelColumnDraft {
   };
 }
 
+/** 机器键由标签名称生成：去除首尾空白、空白串转下划线；名称为空时保留占位键 */
+export function machineKeyFromName(raw: string, fallback: string): string {
+  const key = raw.trim().replace(/\s+/g, "_");
+  return key || fallback;
+}
+
+/** 与后端 `LabelColumnCreate.validate_key` 一致：Unicode 文字/数字/下划线/中划线，不以中划线开头 */
+export const MACHINE_KEY_PATTERN = /^[\p{L}\p{N}_][\p{L}\p{N}_-]*$/u;
+
 function nextColumnIndex(columns: LabelColumnDraft[]): number {
   const used = new Set(columns.map((column) => column.machine_key));
   let index = columns.length + 1;
@@ -66,11 +75,25 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
   const [purpose, setPurpose] = useState<"annotation" | "training" | "inference">(initialPurpose);
   const [error, setError] = useState("");
   const add = () => setColumns((items) => [...items, createColumn(nextColumnIndex(items))]);
-  const update = (index: number, patch: Partial<LabelColumnDraft>) => setColumns((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+  const update = (index: number, patch: Partial<LabelColumnDraft>) => setColumns((items) => items.map((item, itemIndex) => {
+    if (itemIndex !== index) return item;
+    const next = { ...item, ...patch };
+    // 机器键随标签名称生成（空白转下划线），保证保存到数据管理的标签列名就是用户输入的名称；
+    // 名称被清空时保留原键占位，保存前仍会要求名称非空。
+    if (patch.display_name !== undefined) {
+      next.machine_key = machineKeyFromName(patch.display_name, item.machine_key);
+    }
+    return next;
+  }));
   const save = () => {
     const keys = columns.map((column) => column.machine_key.trim());
     if (new Set(keys).size !== keys.length || columns.some((column) => !column.display_name.trim())) {
-      setError("机器键必须唯一，标签名称不能为空");
+      setError("机器键（随标签名称生成）必须唯一，标签名称不能为空");
+      return;
+    }
+    const invalidKey = columns.find((column) => !MACHINE_KEY_PATTERN.test(column.machine_key.trim()));
+    if (invalidKey) {
+      setError(`「${invalidKey.display_name.trim() || invalidKey.machine_key.trim()}」的标签名称只能包含文字、数字、下划线和中划线`);
       return;
     }
     for (let index = 0; index < columns.length; index += 1) {
@@ -135,7 +158,7 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
       const removable = !column.isDefault && columns.length > 1;
       return <div className="label-schema-editor__card" key={`${column.machine_key}-${index}`}>
       <div className="label-schema-editor__card-head">
-        {/* 机器键 label-N 自动递增，只读不可修改；与标签名称同行 */}
+        {/* 机器键随标签名称自动生成（空白转下划线），只读不可修改；与标签名称同行 */}
         <div className="label-schema-editor__identity">
           <span className="label-schema-editor__machine-key" aria-label={`机器键 ${index + 1}`}>{column.machine_key}</span>
           <input className="label-schema-editor__name-input" aria-label={`标签名称 ${index + 1}`} value={column.display_name} onChange={(event) => update(index, { display_name: event.target.value })} placeholder="标签名称" />

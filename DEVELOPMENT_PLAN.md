@@ -2307,3 +2307,10 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 打包：`build_export_package`/`create_model_export` 新增可选 `annotation_payload`，非空时替代 `conversion_metadata["annotation"]` 写入 `annotation/*.json`（旧元数据路径保留为回退）；`execute_model_export` 在 `annotation_task_revision` 非空时调用解析器。任一血缘缺失返回 None，导出保持空注解目录而非错误策略。未选中簇样本的 assignments 同样写入，离线 `cli.py annotate` 对无映射样本按 `needs_review` 处理，与平台侧弱监督语义一致。
 - 验证：新增 `tests/test_model_export_annotation_lineage.py`（血缘解析 3 正 2 反 + 真实 `execute_model_export` 端到端断言 zip 内注解内容）5 passed；`test_model_export_contract.py` 新增 payload 驱动打包 + 离线 runtime annotate 子进程用例（簇0 映射 ready、簇1 未映射 needs_review）；导出四件套合计 26 passed；`test_annotation_strategies+concurrency+task_state+model_registry_service` 152 passed 无回归。
 - 边界：血缘依赖"验收后执行回传导出"产生的数据版本（`parse_contract.task_id`）；直接上传的 CSV 或未导出的验收版本仍解析不到任务，导出标注包退化为空注解目录（保持原行为，不猜测绑定）。真实 Celery 异步与浏览器 e2e 仍未在本机闭环。
+
+## 2026-09-30 标签列机器键随用户输入的标签名称生成
+
+- 现象：新建自动标注任务向导中定义标签列后，保存的 schema、策略配置（other_values/rules/cluster_labels）、回传验收数据版本与"保存到数据管理"导出文件的标签列名都是 `label-1/label-2`。根因有两处：`DataAnnotationPage` 向导预填标签列时丢弃模型输出契约的真实 `machine_key` 改写为 `label-${index+1}`；`LabelSchemaEditor` 新增列固定 `label-${index}` 且机器键只读，用户输入的标签名称不参与键生成。回传验收/导出链路以 `machine_key` 作为标签列名（`annotation_returns.py`），因此错误名称直达数据管理文件。
+- 修复：`LabelSchemaEditor` 机器键随标签名称实时生成（去除首尾空白、空白串转下划线；名称清空时保留原键占位），保存时校验键唯一与标识符合法性（`/^[\p{L}\p{N}_][\p{L}\p{N}_-]*$/u`，非法时给出友好报错）；向导预填改用模型输出契约的真实 `machine_key`；后端 `LabelColumnCreate.validate_key` 放宽为 Unicode 标识符 `[\w][\w-]*`（支持中文键，空格/括号等仍拒绝）。既有未改名列保持原键不变，兼容历史 schema 回显与"配置自动标注策略"对话框。
+- 验证：`LabelSchemaEditor.test.tsx` 新增中文名生成键、契约键保留、非法名称拒绝三例（12 passed）；`DataAnnotationPage.test.tsx` 61 passed（策略配置键断言改为契约键 `label`）；主平台前端全量 373 passed、tsc、生产构建通过；e2e `generic-platform-acceptance.spec.ts` 期望键改为 `quality`；后端 `test_label_schema(+api)+test_annotation_task_state_api+test_annotation_return_acceptance+test_portal_internal_api` 147 passed。
+- 边界：修复仅影响新保存的 schema；既有任务中已绑定的 `label-N` 列不回填改名。真实浏览器 e2e 未在本机重跑。

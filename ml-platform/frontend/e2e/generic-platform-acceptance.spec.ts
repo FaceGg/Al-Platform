@@ -423,8 +423,8 @@ test("creates, configures, previews, and assigns a clustered automatic task", as
       clustering: true,
       strategy: "cluster",
       selected_clusters: ["0"],
-      cluster_labels: { "0": { "label-1": "clustered" } },
-      other_values: { "label-1": "other" },
+      cluster_labels: { "0": { "quality": "clustered" } },
+      other_values: { "quality": "other" },
     },
   });
 

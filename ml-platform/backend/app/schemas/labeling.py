@@ -21,7 +21,10 @@ class LabelColumnCreate(BaseModel):
     @field_validator("machine_key")
     @classmethod
     def validate_key(cls, value: str) -> str:
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", value):
+        # Unicode identifier: letters/digits (incl. CJK), underscore, hyphen.
+        # Label columns are named by the user in the wizard and reused as
+        # dataset column names on return acceptance, so CJK keys are valid.
+        if not re.fullmatch(r"[\w][\w-]*", value):
             raise ValueError("machine_key must be an identifier")
         return value
 

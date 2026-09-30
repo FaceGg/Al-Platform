@@ -750,8 +750,8 @@ describe("DataAnnotationPage", () => {
     expect(screen.getByRole("button", { name: "保存 schema" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存策略" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "导入策略" })).toBeInTheDocument();
-    // 默认标签列按模型输出契约预填名称与类型；机器键只读自动生成
-    expect(screen.getByText("label-1")).toBeInTheDocument();
+    // 默认标签列按模型输出契约预填机器键、名称与类型；机器键随后续标签名称编辑生成
+    expect(screen.getByLabelText("机器键 1")).toHaveTextContent("label");
     expect(screen.getByLabelText("标签名称 1")).toHaveValue("label");
     expect(screen.getByLabelText("类型 1")).toHaveValue("string");
     expect(screen.getByLabelText("约束方式 1")).toHaveValue("enum");
@@ -797,8 +797,8 @@ describe("DataAnnotationPage", () => {
           clustering: true,
           strategy: "cluster",
           selected_clusters: ["0"],
-          cluster_labels: { "0": { "label-1": "cluster-a" } },
-          other_values: { "label-1": "fallback" },
+          cluster_labels: { "0": { "label": "cluster-a" } },
+          other_values: { "label": "fallback" },
         },
       }),
     ));
@@ -906,7 +906,7 @@ describe("DataAnnotationPage", () => {
           clustering: true,
           strategy: "cluster",
           selected_clusters: ["0"],
-          cluster_labels: { "0": { "label-1": "cluster-a" } },
+          cluster_labels: { "0": { "label": "cluster-a" } },
           other_values: {},
         }),
       }),
@@ -1090,14 +1090,14 @@ describe("DataAnnotationPage", () => {
           payload: {
             strategy: "rule",
             selectedClusters: [],
-            otherValues: { "label-1": "imported-fallback" },
+            otherValues: { "label": "imported-fallback" },
             clusterLabels: {},
             rules: [{
               id: "rule-1",
               priority: 0,
               join: "all",
               conditions: [{ id: "cond-1", field: "feature", operator: "gt", value: "1" }],
-              values: { "label-1": "rule-label" },
+              values: { "label": "rule-label" },
               clusterIds: "",
             }],
           },
@@ -1233,8 +1233,8 @@ describe("DataAnnotationPage", () => {
         configuration: {
           clustering: true,
           strategy: "rule",
-          other_values: { "label-1": "fallback" },
-          rules: [expect.objectContaining({ when: { feature: { gte: 0.5 } }, values: { "label-1": "positive" } })],
+          other_values: { "label": "fallback" },
+          rules: [expect.objectContaining({ when: { feature: { gte: 0.5 } }, values: { "label": "positive" } })],
         },
       }),
     ));

@@ -162,3 +162,23 @@ def test_revision_conflict_and_confirmation_require_complete_values(db):
     with pytest.raises(LabelValueError) as incomplete:
         confirm_label_values(db, current.task_id, "s", author)
     assert incomplete.value.code == "LABEL_REQUIRED_MISSING"
+
+
+def test_machine_keys_accept_unicode_names_and_reject_non_identifiers():
+    # 标签列机器键由用户输入的标签名称生成，允许中文等 Unicode 文字。
+    column = LabelColumnCreate(
+        machine_key="质量等级",
+        display_name="质量等级",
+        value_type="string",
+        enum_values=["ok"],
+    )
+    assert column.machine_key == "质量等级"
+
+    for invalid in ("质量 等级", "质量(等级)", "-质量"):
+        with pytest.raises(ValueError):
+            LabelColumnCreate(
+                machine_key=invalid,
+                display_name=invalid,
+                value_type="string",
+                enum_values=["ok"],
+            )
