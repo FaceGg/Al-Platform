@@ -513,6 +513,8 @@ def test_internal_portal_task_and_sample_reads_are_subject_scoped(portal_fixture
         "labels": {"label": "old-1"},
         "revision": 3,
         "label_source": None,
+        "automatic_labels": None,
+        "manual_modified": False,
     }
     assert samples.json()["next_cursor"]
 

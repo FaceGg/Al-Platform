@@ -128,6 +128,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_async_operation_contract",
         "test_model_export_contract",
         "test_model_exports_api",
+        "test_model_export_annotation_lineage",
         "test_offline_inference_contract",
         "test_portal_internal_api",
         "test_portal_admin_review",
