@@ -6,6 +6,8 @@ GENERICIZATION_BRIDGE_ONLY = True
 
 import hashlib
 import json
+import math
+import re
 import uuid
 from datetime import datetime, timezone
 from copy import deepcopy
@@ -66,6 +68,20 @@ class GenericTaskCreate(BaseModel):
     completion_criteria: str = ""
     due_at: datetime | None = None
     configuration: dict = Field(default_factory=dict)
+    field_descriptions: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("field_descriptions")
+    @classmethod
+    def validate_field_descriptions(cls, value: dict[str, str]) -> dict[str, str]:
+        encoded = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+        if len(encoded) > 65536:
+            raise ValueError("field_descriptions exceeds 64 KiB")
+        for name, description in value.items():
+            if not str(name).strip() or len(str(name)) > 256:
+                raise ValueError("field description names must be 1-256 characters")
+            if len(str(description)) > 2000:
+                raise ValueError("field description entries must be at most 2000 characters")
+        return value
 
     @field_validator("sample_scope")
     @classmethod
@@ -206,15 +222,62 @@ def _output_contract_columns(model_version: ModelVersion) -> list[dict[str, obje
         if not key or not display_name or key in keys:
             raise StrategyConfigError("model output contract has duplicate or empty labels", "MODEL_OUTPUT_CONTRACT_INVALID")
         keys.add(key)
-        columns.append({
+        column: dict[str, object] = {
             "machine_key": key,
             "display_name": display_name,
             "value_type": value_type,
             "required": True,
-        })
+        }
+        # Classification contracts declare the model's class list. Carrying it
+        # into the frozen label schema lets annotators pick a class instead of
+        # free-typing a value the model never produces.
+        enum_values = _contract_enum_values(value_type, raw.get("classes"))
+        if enum_values:
+            column["enum_values"] = enum_values
+        columns.append(column)
     if not columns:
         raise StrategyConfigError("model output contract has no label columns", "MODEL_OUTPUT_CONTRACT_INVALID")
     return columns
+
+
+def _contract_enum_values(value_type: str, classes: object) -> list[object]:
+    """Coerce declared model classes to the column's value type; drop the rest."""
+    if not isinstance(classes, (list, tuple)):
+        return []
+    values: list[object] = []
+    seen: set[str] = set()
+    for item in classes:
+        if item is None or isinstance(item, bool):
+            continue
+        coerced: object | None = None
+        if value_type == "int":
+            if isinstance(item, int):
+                coerced = item
+            elif isinstance(item, float) and item.is_integer():
+                coerced = int(item)
+            elif isinstance(item, str) and re.fullmatch(r"[-+]?\d+", item.strip()):
+                coerced = int(item.strip())
+        elif value_type == "float":
+            if isinstance(item, (int, float)) and math.isfinite(float(item)):
+                coerced = float(item)
+            elif isinstance(item, str):
+                try:
+                    number = float(item.strip())
+                except ValueError:
+                    number = None
+                coerced = number if number is not None and math.isfinite(number) else None
+        else:
+            coerced = str(item)
+            if coerced == "":
+                coerced = None
+        if coerced is None:
+            continue
+        marker = str(coerced)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        values.append(coerced)
+    return values
 
 
 def _model_output_contract(model_version: ModelVersion, columns: list[dict[str, object]]) -> dict[str, object]:
@@ -707,6 +770,9 @@ def _snapshot_with_configuration(
         "instructions": data.instructions,
         "completion_criteria": data.completion_criteria,
         "configuration": deepcopy(configuration),
+        # Field explanations are captured at creation; a strategy update
+        # rewrites the snapshot and must not drop them.
+        "field_descriptions": dict(previous.get("field_descriptions") or {}),
     }
     canonical = json.dumps(snapshot, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     snapshot["config_hash"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -888,6 +954,7 @@ def create_generic_annotation_task(
         "instructions": data.instructions,
         "completion_criteria": data.completion_criteria,
         "configuration": configuration,
+        "field_descriptions": data.field_descriptions,
     }
     canonical = json.dumps(task_snapshot, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     task_snapshot["config_hash"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()

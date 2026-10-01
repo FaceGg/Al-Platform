@@ -30,4 +30,11 @@ describe('GuidelinePanel', () => {
     expect(screen.getByText('暂无任务说明')).toBeVisible()
     expect(screen.getByText('暂无标签说明')).toBeVisible()
   })
+
+  it('shows the administrator column instruction inside the label guide', () => {
+    render(<GuidelinePanel schema={{ columns: [
+      { machine_key: 'quality', display_name: '质量', value_type: 'string' as const, required: true, instruction: '按质检标准填写' },
+    ] }} />)
+    expect(screen.getByText('按质检标准填写')).toBeVisible()
+  })
 })

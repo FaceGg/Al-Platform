@@ -100,6 +100,22 @@ function utf8Bytes(value: string) {
   return new TextEncoder().encode(value).length
 }
 
+/** 人工保存后的样本：保留 automatic_labels 对照，并刷新"是否改过"标记 */
+function withSavedLabels(sample: Sample, values: Record<string, unknown>, revision: number): Sample {
+  const automatic = sample.automatic_labels ?? null
+  return {
+    ...sample,
+    labels: values,
+    revision,
+    label_source: 'manual',
+    manual_modified: Boolean(automatic && canonicalValues(values) !== canonicalValues(automatic)),
+  }
+}
+
+function canonicalValues(values: Record<string, unknown>): string {
+  return JSON.stringify(Object.entries(values).sort(([left], [right]) => left.localeCompare(right)))
+}
+
 function parseValue(column: LabelColumn, raw: unknown): { value?: unknown; error?: string } {
   if (raw === undefined || raw === null || raw === '') {
     return column.required ? { error: '必填标签不能为空' } : {}
@@ -111,8 +127,12 @@ function parseValue(column: LabelColumn, raw: unknown): { value?: unknown; error
     return { value: raw }
   }
   const text = String(raw).normalize('NFKC').trim()
+  // 管理员定义了可选值时，标注员只能从中选择（数值列同样受限，避免手工输入定义外的值）
+  const enumValues = column.enum_values ?? []
+  const enumContains = (candidate: string) => enumValues.some((item) => String(item).normalize('NFKC').trim() === candidate)
   if (column.value_type === 'int') {
     if (!/^[+-]?\d+$/.test(text)) return { error: '请输入十进制整数' }
+    if (enumValues.length && !enumContains(text)) return { error: '标签不在允许值范围内' }
     try {
       const integer = BigInt(text)
       if (integer < BigInt('-9223372036854775808') || integer > BigInt('9223372036854775807')) return { error: '整数超出范围' }
@@ -126,6 +146,7 @@ function parseValue(column: LabelColumn, raw: unknown): { value?: unknown; error
   }
   const number = Number(text)
   if (!Number.isFinite(number)) return { error: '请输入有限数值' }
+  if (enumValues.length && !enumValues.some((item) => Number(item) === number)) return { error: '标签不在允许值范围内' }
   if (column.min_value != null && number < column.min_value) return { error: '数值低于最小值' }
   if (column.max_value != null && number > column.max_value) return { error: '数值高于最大值' }
   return { value: number }
@@ -1331,6 +1352,7 @@ export default function TaskWorkspacePage({
                 draft={draft}
                 visibleColumns={task?.visible_columns ?? []}
                 numberedOptions={numberedOptions}
+                fieldDescriptions={task?.field_descriptions ?? {}}
                 disabled={locked || batchSaving}
                 saveDisabled={!canSave}
                 saveState={saveStates[sample.sample_id]}

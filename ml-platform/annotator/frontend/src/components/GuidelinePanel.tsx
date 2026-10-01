@@ -26,6 +26,7 @@ export default function GuidelinePanel({ instructions, schema }: { instructions?
             <div className="schema-column" key={column.machine_key}>
               <strong>{column.display_name ?? column.machine_key}</strong>
               <span className="muted">{column.machine_key} · {columnDetail(column)}</span>
+              {column.instruction ? <span>{column.instruction}</span> : null}
               {column.enum_values?.length ? (
                 <span>可选值：{column.enum_values.map(String).join('、')}</span>
               ) : null}

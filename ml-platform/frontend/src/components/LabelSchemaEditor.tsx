@@ -26,7 +26,7 @@ type Props = {
   onSave: (columns: LabelColumnDraft[], purpose: "annotation" | "training" | "inference") => void;
 };
 
-function createColumn(index: number): LabelColumnDraft {
+export function createLabelColumn(index: number): LabelColumnDraft {
   return {
     machine_key: `label-${index}`,
     display_name: `标签-${index}`,
@@ -74,7 +74,9 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
   const [columns, setColumns] = useState<LabelColumnDraft[]>(initialColumns);
   const [purpose, setPurpose] = useState<"annotation" | "training" | "inference">(initialPurpose);
   const [error, setError] = useState("");
-  const add = () => setColumns((items) => [...items, createColumn(nextColumnIndex(items))]);
+  // 标注用途：标注员只能选择管理员定义的值，因此每列必须有可选值（枚举），不提供纯范围
+  const allowRangeOnly = purpose !== "annotation";
+  const add = () => setColumns((items) => [...items, createLabelColumn(nextColumnIndex(items))]);
   const update = (index: number, patch: Partial<LabelColumnDraft>) => setColumns((items) => items.map((item, itemIndex) => {
     if (itemIndex !== index) return item;
     const next = { ...item, ...patch };
@@ -98,7 +100,8 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
     }
     for (let index = 0; index < columns.length; index += 1) {
       const column = columns[index];
-      const mode = constraintMode(column);
+      const resolved = constraintMode(column);
+      const mode: ConstraintMode = !allowRangeOnly && resolved === "range" ? "enum_range" : resolved;
       const label = column.display_name.trim() || `第 ${index + 1} 列`;
       if (mode === "enum" || mode === "enum_range") {
         const values = (column.enum_values || []).map((value) => String(value));
@@ -123,7 +126,8 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
     }
     setError("");
     onSave(columns.map((column) => {
-      const mode = constraintMode(column);
+      const resolved = constraintMode(column);
+      const mode: ConstraintMode = !allowRangeOnly && resolved === "range" ? "enum_range" : resolved;
       const normalized: LabelColumnDraft = {
         machine_key: column.machine_key.trim(),
         display_name: column.display_name.trim(),
@@ -153,7 +157,9 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
     </div>
     {error && <p className="label-schema-editor__error" role="alert">{error}</p>}
     {columns.map((column, index) => {
-      const mode = constraintMode(column);
+      // 标注用途下每列必须给出可选值集合，历史遗留的纯范围列按「枚举值且范围」回显并补齐枚举
+      const resolved = constraintMode(column);
+      const mode: ConstraintMode = !allowRangeOnly && resolved === "range" ? "enum_range" : resolved;
       const enumValues = column.enum_values?.length ? column.enum_values.map(String) : [""];
       const removable = !column.isDefault && columns.length > 1;
       return <div className="label-schema-editor__card" key={`${column.machine_key}-${index}`}>
@@ -188,7 +194,9 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
             });
           }}>
             <option value="enum">枚举值</option>
-            {column.value_type !== "string" && <option value="range">范围</option>}
+            {/* 标注用途下标注员只能从管理员定义的值中选择，因此不提供纯范围：
+                数值列如需要边界，用「枚举值且范围」同时给出可选值与上下限 */}
+            {allowRangeOnly && column.value_type !== "string" && <option value="range">范围</option>}
             {column.value_type !== "string" && <option value="enum_range">枚举值且范围</option>}
           </select>
         </div>

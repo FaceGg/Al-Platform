@@ -2314,3 +2314,26 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 修复：`LabelSchemaEditor` 机器键随标签名称实时生成（去除首尾空白、空白串转下划线；名称清空时保留原键占位），保存时校验键唯一与标识符合法性（`/^[\p{L}\p{N}_][\p{L}\p{N}_-]*$/u`，非法时给出友好报错）；向导预填改用模型输出契约的真实 `machine_key`；后端 `LabelColumnCreate.validate_key` 放宽为 Unicode 标识符 `[\w][\w-]*`（支持中文键，空格/括号等仍拒绝）。既有未改名列保持原键不变，兼容历史 schema 回显与"配置自动标注策略"对话框。
 - 验证：`LabelSchemaEditor.test.tsx` 新增中文名生成键、契约键保留、非法名称拒绝三例（12 passed）；`DataAnnotationPage.test.tsx` 61 passed（策略配置键断言改为契约键 `label`）；主平台前端全量 373 passed、tsc、生产构建通过；e2e `generic-platform-acceptance.spec.ts` 期望键改为 `quality`；后端 `test_label_schema(+api)+test_annotation_task_state_api+test_annotation_return_acceptance+test_portal_internal_api` 147 passed。
 - 边界：修复仅影响新保存的 schema；既有任务中已绑定的 `label-N` 列不回填改名。真实浏览器 e2e 未在本机重跑。
+
+## 2026-09-30 标注任务创建与管理改进（截止时间预填、统一标签列定义、列说明与字段解释）
+
+- 指派截止时间预填：`AssignmentDialog` 新增 `defaultDueAt`，打开时按任务 `due_at` 填入 datetime-local（本地时间格式化），可修改；未设置截止时间的任务保持空的“可选”提示。
+- 手动标注任务标签定义统一：新建手动任务向导移除单字段“标签字段/标签类型/填写指引”表单，改用与自动任务相同的 `LabelSchemaEditor`（标签列定义，每列含名称、类型、约束、列说明，可增删列）；创建任务前必须先“保存 schema”（未保存时创建按钮禁用并提示），任务通过 `label_schema_id` 绑定该 schema，不再内联创建单列 schema。
+- 列说明同步到门户指南：列 `instruction` 本已冻结进 `task_snapshot.label_schema`，门户 `GuidelinePanel` 的“标签说明”现渲染该说明；`LabelColumn` 类型补充 `instruction` 字段。
+- 字段解释文件：向导新增“字段解释文件”上传（csv/txt/tsv，每行“字段名,描述”，逗号或制表符分隔），前端解析为 `field_descriptions` 并随任务创建提交；后端 `GenericTaskCreate` 新增 `field_descriptions`（键≤256、值≤2000字符、总≤64 KiB，超出 422），写入 `task_snapshot.field_descriptions`，且策略配置更新重建快照时保留；门户任务视图返回 `field_descriptions`，工作区当前样本对匹配列显示“字段名 + 描述 + 数据”，未匹配列仅显示“字段名 + 数据”。
+- 验证：主平台前端 375 passed（新增截止时间预填、字段解释解析两例；手动任务两例改为先保存标签列定义）、tsc、生产构建通过；标注员门户 129 passed（新增指南列说明、字段描述匹配/未匹配两例）、tsc、生产构建通过；后端 `test_label_schema(+api)+test_annotation_task_state(+api)+test_annotation_concurrency+test_portal_internal_api+test_annotation_return_acceptance+test_annotation_strategies` 282 passed（新增字段说明快照保留与校验、门户返回字段说明两例）。
+- 边界：字段解释文件解析在浏览器端完成（不落后端文件存储）；自动任务向导同样支持上传，字段说明随创建写入快照；真实浏览器 e2e 未在本机重跑。
+
+## 2026-09-30 本地验收环境（WSL Docker）镜像重建：修复"改了代码页面不变"
+
+- 现象：多次修复提交后页面仍显示旧界面（主平台 5173、标注员门户 8443）。排查确认：本地验收环境整栈运行在 WSL Docker Compose（15 个服务，容器当时已运行约 6 小时），主平台/门户前端与后端全部是**镜像内烘焙的构建产物**（无源码 bind-mount），运行中的 `agent_spot_welding-frontend-1` 镜像构建于 2026-09-29 15:23，早于当日 11:02/14:00/14:25 的修复提交，容器 bundle 内检索不到新代码标记。
+- 重建流程（可复用）：① 门户前端 Dockerfile 为 `COPY dist`，必须先 `ml-platform/annotator/frontend` 执行 `npm run build` 产出宿主 `dist/`；② WSL 内 `docker compose build backend worker scheduler frontend annotator-frontend`；③ `docker compose up -d` 同样的五个服务（`migrate` 为一次性服务，随 up 重跑；Postgres 数据在卷中不受影响）。主前端 Dockerfile 在镜像内执行 vite 构建，无需宿主预构建。
+- 验证：镜像构建与容器重建 exit 0；`backend`/`frontend` 健康检查 healthy、`annotator-frontend` running；主前端容器 `DataAnnotationPage-xuceov2f.js` 含「字段解释文件」「随标签名称生成」标记，入口 bundle 换为 `index-M0jY0FXU.js`；门户容器 bundle 与宿主构建一致（`index-D6o7XDy3.js`）且含「自动标注结果」「field-item-description」；后端容器 `generic_tasks.py` 含 `field_descriptions`（6 处）；`curl :8443` 返回新 bundle，`:8001/api/health` 200。
+- 说明：本次仅重建本机 WSL 验收栈；目标服务器（`packaging/install-ubuntu.sh` 发布链路）未同步，如需远端生效须走发布流程。浏览器若仍显示旧页面，需强刷（Ctrl+Shift+R）绕过缓存。
+
+## 2026-09-30 手动标注任务：schema 名称自动派生 + 创建页布局重构
+
+- schema 名称：删除手动向导的「标签 schema 名称」输入框（原先默认值 `labels`、填什么都无实际用途——该字段只在数据库唯一键与预览抽屉的原始快照 JSON 中出现，标注员门户、数据管理导出、前端列表都不展示）。名称改由 `schemaNameForTask(taskName)` 统一派生为 `${任务名称}-labels`，与弱监督任务的既有约定完全一致（服务端同名自动升 version）；保存标签列定义前给出只读提示「保存标签列定义时会自动使用 schema 名称「X-labels」」。评估结论：不使用列机器键（label-1/label-2）代替——schema 是"一组标签列"的集合，用单列键命名任意且与列键语义混淆。
+- 布局重构：新建任务向导第 1 步由扁平字段流改为按用途分区（`data-annotation__setup-section` 卡片 + 标题）：数据来源（项目/数据版本）→ 任务信息（任务名称/截止时间）→ 标签设置（手动：标签列定义；自动：模型与标签合同）→ 样本范围与可见字段 → 字段解释 → 任务说明（标注说明/完成标准）。`LabelSchemaEditor` 与字段解释上传从两列紧凑网格移出为整块卡片，避免大组件被塞进网格列；新增分区样式并复用既有 CSS 变量。
+- 验证：主平台前端 375 passed（手动任务用例新增分区标题断言与派生名称断言 `name: "Q3 复检任务-labels"`）、`tsc` 无错、生产构建通过；重建 frontend 镜像并重建容器（BUILD/UP exit 0，容器 healthy）；容器内与 HTTP 实测确认新入口 bundle `index-DZTEjlsV.js`、`DataAnnotationPage-CtIk7_bG.js` 含「数据来源/任务信息/标签设置/自动使用 schema 名称」，CSS bundle 含 `setup-section`。
+- 边界：浏览器内视觉确认未完成——本地实例 admin 密码非 e2e mock 值，未做密码尝试；分区布局的观感需用户在强刷后确认。既有 `labels` 等历史 schema 记录保留不变。

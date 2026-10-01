@@ -104,4 +104,15 @@ describe('SampleStream', () => {
     expect(screen.getByText('标签')).toBeVisible()
     expect(screen.queryByText('标注员修改')).not.toBeInTheDocument()
   })
+
+  it('shows field descriptions for matched columns and plain fields otherwise', () => {
+    renderStream({ fieldDescriptions: { feature: '焊点强度分值' } })
+    // 匹配上的字段显示名称、描述和数据
+    const featureField = screen.getByText('feature').closest('.field-item') as HTMLElement
+    expect(within(featureField).getByText('焊点强度分值')).toBeVisible()
+    expect(within(featureField).getByText('1')).toBeVisible()
+    // 未匹配的字段只显示名称和数据，没有描述
+    const noteField = screen.getByText('焊点').closest('.field-item') as HTMLElement
+    expect(noteField.querySelector('.field-item-description')).toBeNull()
+  })
 })

@@ -10,20 +10,32 @@ interface Props {
   assignedIds?: string[];
   overlapWarning?: string | null;
   loading?: boolean;
+  /** 任务的截止时间（ISO）；打开对话框时自动填充 */
+  defaultDueAt?: string | null;
   onClose: () => void;
   onSubmit: (payload: { annotator_ids: string[]; sample_scope: SampleScope; due_at?: string }) => void;
 }
 
-export default function AssignmentDialog({ open, taskRevision, sampleScope, annotators, assignedIds = [], overlapWarning, loading = false, onClose, onSubmit }: Props) {
+/** ISO 时间转 datetime-local 输入框需要的本地格式 */
+function toLocalInputValue(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+export default function AssignmentDialog({ open, taskRevision, sampleScope, annotators, assignedIds = [], overlapWarning, loading = false, defaultDueAt = null, onClose, onSubmit }: Props) {
   const [selected, setSelected] = useState<string[]>([]);
   const [dueAt, setDueAt] = useState("");
 
   useEffect(() => {
-    if (!open) {
+    if (open) {
+      setDueAt(defaultDueAt ? toLocalInputValue(defaultDueAt) : "");
+    } else {
       setSelected([]);
       setDueAt("");
     }
-  }, [open]);
+  }, [open, defaultDueAt]);
 
   const sampleIds = sampleScope.kind === "ids" ? (sampleScope.sample_ids ?? []) : [];
   const nameOf = (subjectId: string) => {
@@ -78,8 +90,8 @@ export default function AssignmentDialog({ open, taskRevision, sampleScope, anno
       )}
       {overlapWarning && <p role="alert" className="annotation-dialog__warning">{overlapWarning}</p>}
       <div className="annotation-dialog__scope" aria-label="指派范围摘要"><strong>指派范围</strong><span>{sampleScope.kind === "ids" ? `${sampleScope.kind} · ${sampleIds.slice(0, 5).join(", ")}${sampleIds.length > 5 ? " …" : ""}` : "frozen_task_scope · 服务端冻结样本"}</span></div>
-      <label htmlFor="assignment-due-at">截止时间（可选）</label>
-      <input id="assignment-due-at" type="datetime-local" value={dueAt} onChange={(event) => setDueAt(event.target.value)} />
+      <label htmlFor="assignment-due-at">{defaultDueAt ? "截止时间（已按任务截止时间填充，可修改）" : "截止时间（可选）"}</label>
+      <input id="assignment-due-at" type="datetime-local" aria-label="截止时间" value={dueAt} onChange={(event) => setDueAt(event.target.value)} />
     </div>
   </Drawer>;
 }

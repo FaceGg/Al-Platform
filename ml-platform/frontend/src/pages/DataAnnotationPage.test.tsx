@@ -239,6 +239,84 @@ describe("DataAnnotationPage", () => {
     expect(screen.queryByTitle("granted-annotator")).not.toBeInTheDocument();
   });
 
+  it("prefills the assignment due date from the task due date", async () => {
+    const readyTask = {
+      id: "generic-due",
+      project_id: "project-1",
+      mode: "manual",
+      status: "preview_ready",
+      task_revision: 0,
+      name: "带截止时间任务",
+      due_at: "2026-10-05T23:59:59",
+      sample_scope: { kind: "ids", sample_ids: ["sample-1"] },
+      task_snapshot: { config_hash: "sha256:generic-task" },
+    };
+    get.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "通用数据项目", project_role: "owner" }] } });
+      if (url === "/annotation-tasks") return Promise.resolve({ data: { items: [readyTask], total: 1, next_cursor: null } });
+      if (url === "/annotators") return Promise.resolve({ data: { items: [] } });
+      if (url === "/annotation-tasks/generic-due/assignments") return Promise.resolve({ data: { items: [] } });
+      return Promise.resolve({ data: { items: [] } });
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/data-annotation?view=tasks&projectId=project-1"]}>
+        <AntApp><DataAnnotationPage /></AntApp>
+      </MemoryRouter>,
+    );
+
+    const genericList = await screen.findByRole("region", { name: "通用任务列表" });
+    fireEvent.click(within(genericList).getByRole("button", { name: "指派标注员" }));
+    const dueInput = await screen.findByLabelText("截止时间");
+    expect(dueInput).toHaveValue("2026-10-05T23:59");
+    expect(screen.getByText("截止时间（已按任务截止时间填充，可修改）")).toBeInTheDocument();
+  });
+
+  it("parses an uploaded field description file into the creation payload", async () => {
+    datasetVersions.mockResolvedValue([{
+      id: "version-1",
+      project_id: "project-1",
+      version: 1,
+      status: "ready",
+      row_count: 2,
+      column_count: 2,
+      columns: [
+        { name: "score", dtype: "float", nullable: false, position: 0 },
+        { name: "grade", dtype: "object", nullable: false, position: 1 },
+      ],
+    }]);
+    post.mockImplementation((url: string) => {
+      if (url === "/annotations/label-schemas") return Promise.resolve({ data: { id: "schema-1", project_id: "project-1", name: "labels", version: 1 } });
+      if (url === "/annotation-tasks") return Promise.resolve({ data: { id: "generic-desc-1", project_id: "project-1", mode: "manual", status: "draft", task_revision: 0 } });
+      return Promise.resolve({ data: {} });
+    });
+
+    render(<MemoryRouter><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "新建手动标注任务" }));
+    await screen.findByRole("heading", { name: "新建手动标注任务" });
+    fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
+    fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "字段解释任务" } });
+
+    const file = new File(["score,焊点强度分值\ngrade,质量等级"], "fields.csv", { type: "text/csv" });
+    Object.defineProperty(file, "text", { value: async () => "score,焊点强度分值\ngrade,质量等级" });
+    fireEvent.change(screen.getByLabelText("字段解释文件"), { target: { files: [file] } });
+    expect(await screen.findByText(/已解析 2 个字段说明/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("标签名称 1"), { target: { value: "质量" } });
+    fireEvent.change(screen.getByLabelText("枚举值 1 值 1"), { target: { value: "ok" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 schema" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/annotations/label-schemas", expect.anything()));
+    fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/annotation-tasks",
+      expect.objectContaining({
+        field_descriptions: { score: "焊点强度分值", grade: "质量等级" },
+      }),
+      expect.anything(),
+    ));
+  });
+
   it("shows the generic operation center for the selected project", async () => {
     get.mockImplementation((url: string) => {
       if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "project-1", name: "通用数据项目", project_role: "owner" }] } });
@@ -429,15 +507,29 @@ describe("DataAnnotationPage", () => {
     await screen.findByRole("heading", { name: "新建手动标注任务" });
     fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
     fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "Q3 复检任务" } });
-    fireEvent.change(screen.getByLabelText("填写指引"), { target: { value: "按质检标准填写" } });
     fireEvent.change(screen.getByLabelText("完成标准"), { target: { value: "全部样本标签填写完整" } });
     fireEvent.change(screen.getByLabelText("截止时间"), { target: { value: "2026-09-30" } });
-    fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
-
+    // 标签列定义与自动任务一致：先保存标签列，再创建任务；schema 名称按任务名自动派生
+    fireEvent.change(screen.getByLabelText("标签名称 1"), { target: { value: "质量" } });
+    fireEvent.change(screen.getByLabelText("列说明 1"), { target: { value: "按质检标准填写" } });
+    fireEvent.change(screen.getByLabelText("枚举值 1 值 1"), { target: { value: "ok" } });
+    // 页面按用途分区，标题可见
+    expect(screen.getByRole("heading", { name: "数据来源" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "任务信息" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "标签设置" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "样本范围与可见字段" })).toBeInTheDocument();
+    expect(screen.getByText(/自动使用 schema 名称「Q3 复检任务-labels」/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "保存 schema" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/annotations/label-schemas",
-      expect.objectContaining({ project_id: "project-1", columns: [expect.objectContaining({ instruction: "按质检标准填写" })] }),
+      expect.objectContaining({
+        project_id: "project-1",
+        name: "Q3 复检任务-labels",
+        columns: [expect.objectContaining({ machine_key: "质量", instruction: "按质检标准填写" })],
+      }),
     ));
+    fireEvent.click(screen.getByRole("button", { name: "创建通用任务" }));
+
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/annotation-tasks",
       expect.objectContaining({
@@ -482,8 +574,11 @@ describe("DataAnnotationPage", () => {
     fireEvent.change(await screen.findByLabelText("数据版本"), { target: { value: "version-1" } });
     expect(screen.getByRole("button", { name: "创建通用任务" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "筛选任务" } });
-    fireEvent.change(screen.getByLabelText("标签 schema 名称"), { target: { value: "labels" } });
-    fireEvent.change(screen.getByLabelText("标签字段"), { target: { value: "label" } });
+    // 标签列定义：保存后创建任务时绑定该 schema（schema 名称按任务名自动派生）
+    fireEvent.change(screen.getByLabelText("标签名称 1"), { target: { value: "grade-label" } });
+    fireEvent.change(screen.getByLabelText("枚举值 1 值 1"), { target: { value: "A" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 schema" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/annotations/label-schemas", expect.anything()));
     fireEvent.click(screen.getByLabelText("按条件筛选"));
     fireEvent.click(screen.getByRole("button", { name: "添加条件" }));
     fireEvent.change(screen.getAllByLabelText("字段")[0], { target: { value: "score" } });

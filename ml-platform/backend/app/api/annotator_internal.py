@@ -593,6 +593,7 @@ def _task_view(task: GenericAnnotationTask, assignment: AnnotationAssignment, db
         "label_schema": snapshot.get("label_schema") or {"columns": []},
         "instructions": snapshot.get("instructions") or "",
         "visible_columns": list(snapshot.get("visible_columns") or []),
+        "field_descriptions": snapshot.get("field_descriptions") or {},
     }
 
 
@@ -740,6 +741,48 @@ def internal_portal_task(task_id: uuid.UUID, request: Request, assignment_id: uu
     return _task_view(task, assignment, db)
 
 
+def _annotation_label_sources(db: Session, task_id, sample_ids: list[str]) -> tuple[dict[str, str], dict[str, dict]]:
+    """Current-value source and the frozen automatic labels per sample.
+
+    The automatic publication writes an immutable revision with
+    ``source='automatic'``/``action='initialize'`` before anyone edits. Keeping
+    that revision alongside the current values lets annotators and reviewers see
+    both the automatic result and the human modification.
+    """
+    if not sample_ids:
+        return {}, {}
+    rows = db.query(
+        AnnotationRevision.sample_id,
+        AnnotationRevision.source,
+        AnnotationRevision.action,
+        AnnotationRevision.values,
+        AnnotationSampleCurrent.revision_no,
+    ).join(
+        AnnotationSampleCurrent,
+        and_(
+            AnnotationSampleCurrent.task_id == AnnotationRevision.task_id,
+            AnnotationSampleCurrent.sample_id == AnnotationRevision.sample_id,
+            AnnotationSampleCurrent.revision_no == AnnotationRevision.revision_no,
+        ),
+    ).filter(
+        AnnotationRevision.task_id == task_id,
+        AnnotationRevision.sample_id.in_(sample_ids),
+    ).all()
+    sources = {row.sample_id: row.source for row in rows}
+    automatic = (
+        db.query(AnnotationRevision.sample_id, AnnotationRevision.values).filter(
+            AnnotationRevision.task_id == task_id,
+            AnnotationRevision.sample_id.in_(sample_ids),
+            AnnotationRevision.source == "automatic",
+            AnnotationRevision.action == "initialize",
+        ).order_by(AnnotationRevision.revision_no.asc()).all()
+    )
+    automatic_labels: dict[str, dict] = {}
+    for row in automatic:
+        automatic_labels.setdefault(row.sample_id, dict(row.values or {}))
+    return sources, automatic_labels
+
+
 @router.get("/api/internal/portal/tasks/{task_id}/samples")
 def internal_portal_samples(
     task_id: uuid.UUID,
@@ -847,33 +890,24 @@ def internal_portal_samples(
     }
     # The current-value table stores only final labels; the latest revision
     # carries whether those labels still are the automatic publication.
-    label_source_by_id: dict[str, str] = {}
-    if source_ids:
-        revision_rows = db.query(
-            AnnotationRevision.sample_id,
-            AnnotationRevision.source,
-        ).join(
-            AnnotationSampleCurrent,
-            and_(
-                AnnotationSampleCurrent.task_id == AnnotationRevision.task_id,
-                AnnotationSampleCurrent.sample_id == AnnotationRevision.sample_id,
-                AnnotationSampleCurrent.revision_no == AnnotationRevision.revision_no,
-            ),
-        ).filter(
-            AnnotationRevision.task_id == task.id,
-            AnnotationRevision.sample_id.in_(source_ids),
-        ).all()
-        label_source_by_id = {row.sample_id: row.source for row in revision_rows}
+    label_source_by_id, automatic_labels_by_id = _annotation_label_sources(db, task.id, source_ids)
     items = []
     for row in rows:
         raw_values = source_by_id.get(row.sample_id, {})
         values = {key: value for key, value in raw_values.items() if key in visible_columns}
+        automatic_labels = automatic_labels_by_id.get(row.sample_id)
         item = {
             "sample_id": row.sample_id,
             "values": values,
             "labels": row.values or {},
             "revision": row.revision_no,
             "label_source": label_source_by_id.get(row.sample_id),
+            "automatic_labels": automatic_labels,
+            "manual_modified": bool(
+                automatic_labels
+                and label_source_by_id.get(row.sample_id) == "manual"
+                and dict(row.values or {}) != automatic_labels
+            ),
         }
         waveforms = decode_sample_waveforms(raw_values)
         if waveforms:
@@ -1602,16 +1636,29 @@ def internal_admin_samples(
         ).all()
     } if rows else {}
     items = []
+    admin_sources, admin_automatic = _annotation_label_sources(
+        db, task.id, [row.sample_id for row in rows],
+    )
     for row in rows:
         current = current_by_sample.get(row.sample_id)
         values = row.values or {}
         if visible_columns:
             values = {key: value for key, value in values.items() if key in visible_columns}
+        automatic_labels = admin_automatic.get(row.sample_id)
+        current_values = dict(current.values or {}) if current is not None else {}
         items.append({
             "sample_id": row.sample_id,
             "values": values,
-            "labels": dict(current.values or {}) if current is not None else {},
+            "labels": current_values,
             "revision": current.revision_no if current is not None else None,
+            "label_source": admin_sources.get(row.sample_id),
+            # 审核员同时看到自动标注结果与人工修改结果
+            "automatic_labels": automatic_labels,
+            "manual_modified": bool(
+                automatic_labels
+                and admin_sources.get(row.sample_id) == "manual"
+                and current_values != automatic_labels
+            ),
         })
     return {
         "items": items,

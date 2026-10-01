@@ -47,6 +47,18 @@ wsl sh -c "cd /mnt/e/codex_workspace/agent_spot_welding/.worktrees/general-autom
 curl.exe -s http://localhost:8443/ | Select-String "index-"   # 确认新 bundle hash
 ```
 
+> **2026-09-30 更正（重要）**：上段命令里的 worktree 路径已过期。当前验收栈的 compose 项目是 `agent_spot_welding`，工作目录为主工作树 `/mnt/e/codex_workspace/agent_spot_welding`（用 `docker inspect <容器> --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}'` 确认）。
+> **改完源码页面不更新是预期现象**：主平台、门户、后端全部是镜像内烘焙的构建产物，没有源码挂载。完整重建流程：
+> ```powershell
+> # 1) 门户前端 Dockerfile 是 COPY dist，必须先在本机构建产物（主前端在镜像内构建，无需此步）
+> cd ml-platform/annotator/frontend; npm run build
+> # 2) 重建受影响镜像并重建容器
+> wsl sh -c "cd /mnt/e/codex_workspace/agent_spot_welding && docker compose build backend worker scheduler frontend annotator-frontend && docker compose up -d backend worker scheduler frontend annotator-frontend"
+> # 3) 验证：bundle hash 变化 + 容器内检索新代码标记
+> curl.exe -s http://localhost:8443/ | Select-String "index-"
+> ```
+> 浏览器仍显示旧页面时强刷（Ctrl+Shift+R）。远端目标服务器需另走 `packaging/install-ubuntu.sh` 发布流程。
+
 主后端全量套件（20260921_60 链头下）：**1986 passed / 1 failed**（notification 降级断言，修复后单文件 8 passed 转绿）。既有环境失败已从 18 个收敛（Alembic 迁移头/发布证据常量已随 20260921_60 同步、Dockerfile 断言已归一化）；仍存 pyarrow 缺失致 parquet 相关 7 例（本机 venv 环境问题）。新测试模块必须登记 `tests/week_manifest.py`（`test_suite_manifest` 强制约束）。全量套件未在 20260921_60 链头下完整重跑（并行会话编辑冲突风险），60 号迁移相关 head 账目测试已针对性复跑通过。
 
 ### 电脑重启后的恢复清单（重要，2026-09-21 实操验证）

@@ -2745,6 +2745,30 @@ td.training-operation-column .table-row-actions {
   gap: 14px;
 }
 
+/* 任务创建向导按用途分区：每区一张浅底卡片，标题说明该组字段。 */
+.data-annotation__setup-section {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.data-annotation__setup-section-title {
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.data-annotation__setup-section > small {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .data-annotation__setup-field,
 .data-annotation__existing-run {
   display: grid;

@@ -913,7 +913,56 @@ def test_internal_portal_detail_returns_frozen_editing_contract(portal_fixture):
     }]}
     assert body["instructions"] == "Use the frozen rubric."
     assert body["visible_columns"] == ["feature"]
+    # 字段解释在任务创建时冻结，门户按快照返回；未上传时为空对象
+    assert body["field_descriptions"] == {}
     assert "sample_ids" not in body
+
+
+def test_portal_task_view_returns_frozen_field_descriptions(portal_fixture):
+    db = portal_fixture["db"]
+    token = _token(
+        project_id=portal_fixture["project_id"],
+        subject_id=portal_fixture["subject_id"],
+        scopes=["assignment:read"],
+    )
+    template = db.query(GenericAnnotationTask).filter_by(id=portal_fixture["task_id"]).one()
+    task = GenericAnnotationTask(
+        project_id=template.project_id,
+        dataset_version_id=template.dataset_version_id,
+        label_schema_id=template.label_schema_id,
+        owner_id=template.owner_id,
+        mode="manual",
+        status="awaiting_annotation",
+        task_revision=0,
+        sample_scope={"kind": "ids", "sample_ids": ["sample-1"]},
+        label_snapshot=dict(template.label_snapshot or {}),
+        task_snapshot={
+            "sample_ids": ["sample-1"],
+            "visible_columns": ["feature"],
+            "label_schema": {"columns": [{"machine_key": "label", "display_name": "Frozen label", "value_type": "string", "required": True}]},
+            "field_descriptions": {"feature": "焊点强度分值"},
+        },
+    )
+    db.add(task)
+    db.flush()
+    db.add(AnnotationAssignment(
+        task_id=task.id,
+        annotator_subject_id=portal_fixture["subject_id"],
+        sample_scope={"kind": "ids", "sample_ids": ["sample-1"]},
+        scope_hash="sha256:field-desc-scope",
+        state="pending",
+        task_revision=0,
+        last_edit_revision=0,
+        created_by=template.owner_id,
+    ))
+    db.commit()
+
+    response = portal_fixture["client"].get(
+        f"/api/internal/portal/tasks/{task.id}",
+        headers=_headers(token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["field_descriptions"] == {"feature": "焊点强度分值"}
 
 
 def test_internal_portal_samples_follow_cursor_without_leaking_columns(portal_fixture):

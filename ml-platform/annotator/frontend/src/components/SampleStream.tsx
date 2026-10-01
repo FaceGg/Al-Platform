@@ -10,6 +10,7 @@ export default function SampleStream({
   draft,
   visibleColumns,
   numberedOptions,
+  fieldDescriptions = {},
   disabled,
   saveDisabled,
   saveState,
@@ -33,6 +34,8 @@ export default function SampleStream({
   draft: Record<string, unknown>
   visibleColumns: string[]
   numberedOptions: NumberedOption[]
+  /** 字段解释：数据列名 → 描述；匹配上的字段在名称下方展示描述 */
+  fieldDescriptions?: Record<string, string>
   disabled: boolean
   saveDisabled: boolean
   saveState?: string
@@ -85,7 +88,10 @@ export default function SampleStream({
   const entries = Object.entries(sample.values ?? {})
   const annotationFields = entries.filter(([key]) => visible.has(key))
   const otherFields = entries.filter(([key]) => !visible.has(key))
-  const automaticLabels = sample.label_source === 'automatic' && Object.keys(sample.labels ?? {}).length > 0
+  // 自动标注结果一旦发布就永久保留（人工修改后仍显示，用于对照），
+  // 因此这里只看样本是否携带自动结果，而不是当前值是否仍来自自动标注。
+  const automaticLabels = sample.automatic_labels ?? {}
+  const hasAutomaticResult = Object.keys(automaticLabels).length > 0
   return (
     <section className="sample-stream" aria-label="样本流">
       <div className="stream-sample">
@@ -100,7 +106,11 @@ export default function SampleStream({
               <h4>标注字段</h4>
               <div className="field-grid">
                 {annotationFields.map(([key, value]) => (
-                  <div className="field-item" key={key}><span className="field-item-name">{key}</span><span className="field-item-value">{String(value)}</span></div>
+                  <div className="field-item" key={key}>
+                    <span className="field-item-name">{key}</span>
+                    {fieldDescriptions[key] ? <span className="field-item-description">{fieldDescriptions[key]}</span> : null}
+                    <span className="field-item-value">{String(value)}</span>
+                  </div>
                 ))}
               </div>
             </div>
@@ -110,22 +120,30 @@ export default function SampleStream({
               <h4>其他字段</h4>
               <div className="field-grid">
                 {otherFields.map(([key, value]) => (
-                  <div className="field-item" key={key}><span className="field-item-name">{key}</span><span className="field-item-value">{String(value)}</span></div>
+                  <div className="field-item" key={key}>
+                    <span className="field-item-name">{key}</span>
+                    {fieldDescriptions[key] ? <span className="field-item-description">{fieldDescriptions[key]}</span> : null}
+                    <span className="field-item-value">{String(value)}</span>
+                  </div>
                 ))}
               </div>
             </div>
           )}
           {entries.length === 0 && <p className="muted">该样本没有可见数据字段</p>}
-          {automaticLabels && (
+          {hasAutomaticResult && (
             <div className="field-group automatic-labels" aria-label="自动标注结果">
               <h4>自动标注结果</h4>
-              <p className="muted">以下标签由自动标注生成，可在右侧修改后覆盖。</p>
+              <p className="muted">以下标签由自动标注生成并保留存档，右侧人工修改后会覆盖使用。</p>
               <div className="field-grid">
                 {columns.map((column) => {
-                  const value = (sample.labels ?? {})[column.machine_key]
+                  const value = automaticLabels[column.machine_key]
+                  const edited = automaticLabels[column.machine_key] !== (sample.labels ?? {})[column.machine_key]
                   return (
                     <div className="field-item" key={column.machine_key}>
-                      <span className="field-item-name">{column.display_name ?? column.machine_key}</span>
+                      <span className="field-item-name">
+                        {column.display_name ?? column.machine_key}
+                        {edited ? <span className="field-item-badge">已修改</span> : null}
+                      </span>
                       <span className="field-item-value">{value == null ? '—' : String(value)}</span>
                     </div>
                   )
@@ -135,7 +153,7 @@ export default function SampleStream({
           )}
         </div>
         <div className="stream-labels">
-          <h3>{automaticLabels ? '标注员修改' : '标签'}</h3>
+          <h3>{hasAutomaticResult ? '标注员修改（人工结果）' : '标签'}</h3>
           {columns.map((column, index) => {
             const value = draft[column.machine_key]
             const chips = numberedOptions.filter(option => option.column.machine_key === column.machine_key)

@@ -30,6 +30,8 @@ export type GenericTaskCreatePayload = {
   completion_criteria?: string;
   due_at?: string | null;
   configuration: Record<string, unknown>;
+  /** 字段解释：数据列名 → 描述；随任务快照同步到标注员工作区当前样本 */
+  field_descriptions?: Record<string, string>;
 };
 
 export type GenericTaskConfigurationPayload = {

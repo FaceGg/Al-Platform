@@ -17,6 +17,8 @@ export type Task = {
   instructions?: string
   visible_columns?: string[]
   label_schema?: LabelSchema
+  /** 数据列名 → 字段描述；来自任务创建时上传的字段解释文件 */
+  field_descriptions?: Record<string, string>
 }
 export type LabelColumn = {
   machine_key: string
@@ -27,6 +29,8 @@ export type LabelColumn = {
   min_value?: number
   max_value?: number
   max_length?: number
+  /** 管理员在标签列定义中填写的列说明，同步到指南的标签说明 */
+  instruction?: string | null
 }
 export type LabelSchema = { columns: LabelColumn[] }
 export type SampleWaveforms = {
@@ -42,6 +46,10 @@ export type Sample = {
   revision: number
   waveforms?: SampleWaveforms
   label_source?: 'automatic' | 'manual' | string | null
+  /** 自动标注任务发布时的冻结结果；人工修改后仍保留用于对照 */
+  automatic_labels?: Record<string, unknown> | null
+  /** 当前值与自动结果不同（即标注员确实改动过） */
+  manual_modified?: boolean
 }
 export type SampleFilters = {
   sample_search?: string

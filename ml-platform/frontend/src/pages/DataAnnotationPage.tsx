@@ -7,7 +7,7 @@ import * as echarts from "echarts";
 import AppLayout from "../components/AppLayout";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
-import LabelSchemaEditor, { type LabelColumnDraft } from "../components/LabelSchemaEditor";
+import LabelSchemaEditor, { createLabelColumn, type LabelColumnDraft } from "../components/LabelSchemaEditor";
 import AutomaticAnnotationStrategyEditor, {
   createAutomaticStrategyDraft,
   createAutomaticRule,
@@ -284,6 +284,11 @@ function sourceColumnsFromSnapshot(task: AnnotationTask): AutomaticAnnotationSou
     : [];
 }
 
+/** 标签 schema 名称按任务名自动派生（与弱监督任务同一约定），任务名为空时回退占位名 */
+function schemaNameForTask(taskName: string): string {
+  return `${taskName.trim() || "annotation-task"}-labels`;
+}
+
 function valueText(value: unknown): string {
   return value == null ? "" : String(value);
 }
@@ -488,10 +493,8 @@ export default function DataAnnotationPage() {
   const [editConfigTask, setEditConfigTask] = useState<AnnotationTask | null>(null);
   const [editConfigDraft, setEditConfigDraft] = useState<{ name: string; instructions: string; completionCriteria: string; dueAt: string; visibleColumns: string[] }>({ name: "", instructions: "", completionCriteria: "", dueAt: "", visibleColumns: [] });
   const [editConfigSaving, setEditConfigSaving] = useState(false);
-  const [genericSchemaName, setGenericSchemaName] = useState("labels");
-  const [genericLabelKey, setGenericLabelKey] = useState("label");
-  const [genericLabelType, setGenericLabelType] = useState<"string" | "int" | "float">("string");
-  const [genericSchemaInstruction, setGenericSchemaInstruction] = useState("");
+  const [genericManualSchema, setGenericManualSchema] = useState<{ id: string; columns: AnnotationOutputColumn[] } | null>(null);
+  const [genericFieldDescriptions, setGenericFieldDescriptions] = useState<Record<string, string>>({});
   const [genericInstructions, setGenericInstructions] = useState("");
   const [genericModelVersionId, setGenericModelVersionId] = useState("");
   const [genericClustering, setGenericClustering] = useState(false);
@@ -1638,9 +1641,8 @@ export default function DataAnnotationPage() {
     setRunId("");
     setLabelMode(nextMode);
     setGenericVersionId("");
-    setGenericSchemaName("labels");
-    setGenericLabelKey("label");
-    setGenericLabelType("string");
+    setGenericManualSchema(null);
+    setGenericFieldDescriptions({});
     setGenericInstructions("");
     setGenericModelVersionId("");
     setGenericClustering(false);
@@ -1712,7 +1714,10 @@ export default function DataAnnotationPage() {
       message.error(copy.nameRequired);
       return;
     }
-    if (labelMode === "manual" && (!genericSchemaName.trim() || !genericLabelKey.trim())) return;
+    if (labelMode === "manual" && !genericManualSchema) {
+      message.error(lang === "zh" ? "请先保存标签列定义" : "Save the label column definition first");
+      return;
+    }
     if (labelMode === "automatic" && !selectedGenericModelVersion) {
       message.error("自动任务需要选择已启用模型版本");
       return;
@@ -1745,13 +1750,7 @@ export default function DataAnnotationPage() {
     }
     setGenericCreating(true);
     try {
-      const schema = labelMode === "manual" ? await createLabelSchema(projectId, genericSchemaName.trim(), [{
-        machine_key: genericLabelKey.trim(),
-        display_name: genericLabelKey.trim(),
-        value_type: genericLabelType,
-        required: true,
-        ...(genericSchemaInstruction.trim() ? { instruction: genericSchemaInstruction.trim() } : {}),
-      }]) : null;
+      const schema = labelMode === "manual" ? { id: genericManualSchema!.id } : null;
       const task = await createGenericAnnotationTask({
         project_id: projectId,
         dataset_version_id: genericVersionId,
@@ -1765,6 +1764,7 @@ export default function DataAnnotationPage() {
         completion_criteria: genericCompletionCriteria,
         due_at: genericDueAt ? new Date(`${genericDueAt}T23:59:59`).toISOString() : null,
         configuration: automaticConfiguration?.configuration || {},
+        field_descriptions: genericFieldDescriptions,
       }, createUuid());
       notifyAutoRenamedTask(task, genericTaskName.trim());
       setGenericTasks((items) => [task, ...items.filter((item) => item.id !== task.id)]);
@@ -1830,6 +1830,7 @@ export default function DataAnnotationPage() {
         completion_criteria: genericCompletionCriteria,
         due_at: genericDueAt ? new Date(`${genericDueAt}T23:59:59`).toISOString() : null,
         configuration: { clustering: true, cluster_discovery: true },
+        field_descriptions: genericFieldDescriptions,
       }, createUuid());
       notifyAutoRenamedTask(task, genericTaskName.trim());
       setGenericDiscoveryTask(task);
@@ -1846,11 +1847,58 @@ export default function DataAnnotationPage() {
     }
   };
 
+  // 字段解释文件（csv/txt）：每行左侧字段名、右侧描述，逗号或制表符分隔。
+  const handleFieldDescriptionFile = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const descriptions: Record<string, string> = {};
+      for (const rawLine of text.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        const separatorIndex = [line.indexOf(","), line.indexOf("\t")].filter((index) => index >= 0).sort((a, b) => a - b)[0];
+        if (separatorIndex === undefined) continue;
+        const name = line.slice(0, separatorIndex).trim();
+        const description = line.slice(separatorIndex + 1).trim();
+        if (name) descriptions[name] = description;
+      }
+      if (!Object.keys(descriptions).length) {
+        message.error(lang === "zh" ? "未从文件中解析到任何“字段名,描述”行" : "No 'field,description' lines were parsed from the file");
+        return;
+      }
+      setGenericFieldDescriptions(descriptions);
+      message.success(lang === "zh" ? `已解析 ${Object.keys(descriptions).length} 个字段说明` : `Parsed ${Object.keys(descriptions).length} field descriptions`);
+    } catch (error) {
+      message.error(formatApiError(error, lang === "zh" ? "字段解释文件读取失败" : "Failed to read the field description file"));
+    }
+  };
+
+  const saveGenericManualSchema = async (columns: LabelColumnDraft[]) => {
+    if (!projectId) { message.error(lang === "zh" ? "请先选择项目" : "Select a project first"); return; }
+    // 标签 schema 名称与弱监督任务一致，按任务名自动派生（服务端同名自动升版本）
+    if (!genericTaskName.trim()) { message.error(copy.nameRequired); return; }
+    try {
+      const schema = await createLabelSchema(projectId, schemaNameForTask(genericTaskName), columns, "annotation");
+      setGenericManualSchema({
+        id: schema.id,
+        columns: columns.map((column) => ({
+          machine_key: column.machine_key,
+          display_name: column.display_name,
+          value_type: column.value_type,
+          required: column.required,
+        })),
+      });
+      message.success(lang === "zh" ? "标签列定义已保存，创建任务时将绑定这些标签列" : "Label columns saved; the task will bind them");
+    } catch (error) {
+      message.error(formatApiError(error, lang === "zh" ? "标签列定义保存失败" : "Failed to save the label columns"));
+    }
+  };
+
   const saveGenericAutoSchema = async (columns: LabelColumnDraft[]) => {
     if (!projectId) { message.error(lang === "zh" ? "请先选择项目" : "Select a project first"); return; }
     if (!genericTaskName.trim()) { message.error(copy.nameRequired); return; }
     try {
-      const schema = await createLabelSchema(projectId, `${genericTaskName.trim()}-labels`, columns, "annotation");
+      const schema = await createLabelSchema(projectId, schemaNameForTask(genericTaskName), columns, "annotation");
       setGenericAutoSchema({
         id: schema.id,
         columns: columns.map((column) => ({
@@ -2490,6 +2538,7 @@ export default function DataAnnotationPage() {
         assignedIds={assignmentExisting.map((item) => item.annotator_subject_id)}
         overlapWarning={assignmentOverlapWarning}
         loading={assignmentLoading}
+        defaultDueAt={assignmentTask?.due_at ?? null}
         onClose={() => setAssignmentTask(null)}
         onSubmit={(payload) => { void submitAssignment(payload); }}
       />
@@ -2736,7 +2785,7 @@ export default function DataAnnotationPage() {
     if (reason === "MODEL_OUTPUT_CONTRACT_INVALID") return copy.modelIneligibleContractInvalid;
     return copy.modelIneligibleNotEnabled;
   };
-  const genericSetupBasicsIncomplete = !canCreate || !genericTaskName.trim() || !genericVisibleColumns.length || !genericVersions.some((item) => item.id === genericVersionId && item.project_id === projectId) || (labelMode === "manual" ? (!genericSchemaName.trim() || !genericLabelKey.trim()) : !selectedGenericModelVersion);
+  const genericSetupBasicsIncomplete = !canCreate || !genericTaskName.trim() || !genericVisibleColumns.length || !genericVersions.some((item) => item.id === genericVersionId && item.project_id === projectId) || (labelMode !== "manual" && !selectedGenericModelVersion);
 
   const genericSetupView = (
     <>
@@ -2750,107 +2799,142 @@ export default function DataAnnotationPage() {
       <section className="data-annotation__setup" aria-label="通用任务创建">
         {labelMode === "automatic" && <Steps current={genericSetupStep - 1} items={[{ title: copy.setupStepBasics }, { title: copy.setupStepRules }]} />}
         {(labelMode === "manual" || genericSetupStep === 1) && <>
-        <div className="data-annotation__setup-grid">
-          <div className="data-annotation__setup-field">
-            <label htmlFor="generic-task-name">{copy.taskName}</label>
-            <input id="generic-task-name" aria-label={copy.taskName} value={genericTaskName} onChange={(event) => setGenericTaskName(event.target.value)} placeholder={copy.taskNamePlaceholder} maxLength={200} />
-          </div>
-          <div className="data-annotation__setup-field">
-            <label htmlFor="generic-setup-project">{copy.project}</label>
-            <select id="generic-setup-project" aria-label={copy.project} value={projectId} onChange={(event) => setProjectId(event.target.value)} disabled={loadingProjects}>
-              <option value="">{copy.chooseProject}</option>
-              {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
-            </select>
-          </div>
-          <div className="data-annotation__setup-field">
-            <label htmlFor="generic-dataset-version">数据版本</label>
-            <select id="generic-dataset-version" aria-label="数据版本" value={genericVersionId} onChange={(event) => setGenericVersionId(event.target.value)} disabled={!projectId || !genericVersions.length || !!genericDiscoveryTask}>
-              <option value="">选择数据版本</option>
-              {genericVersions.map((version) => <option value={version.id} key={version.id}>{version.source_name || `数据版本 v${version.version}`} · v{version.version} · {version.row_count} 行 · {version.columns.length} 列</option>)}
-            </select>
-          </div>
-          {labelMode === "manual" && <>
+        <section className="data-annotation__setup-section" aria-labelledby="generic-setup-source">
+          <h3 id="generic-setup-source" className="data-annotation__setup-section-title">{lang === "zh" ? "数据来源" : "Data source"}</h3>
+          <div className="data-annotation__setup-grid">
             <div className="data-annotation__setup-field">
-              <label htmlFor="generic-schema-name">标签 schema 名称</label>
-              <input id="generic-schema-name" aria-label="标签 schema 名称" value={genericSchemaName} onChange={(event) => setGenericSchemaName(event.target.value)} />
-            </div>
-            <div className="data-annotation__setup-field">
-              <label htmlFor="generic-label-key">标签字段</label>
-              <input id="generic-label-key" aria-label="标签字段" value={genericLabelKey} onChange={(event) => setGenericLabelKey(event.target.value)} />
-            </div>
-            <div className="data-annotation__setup-field">
-              <label htmlFor="generic-label-type">标签类型</label>
-              <select id="generic-label-type" aria-label="标签类型" value={genericLabelType} onChange={(event) => setGenericLabelType(event.target.value as typeof genericLabelType)}>
-                <option value="string">字符串</option>
-                <option value="int">整数</option>
-                <option value="float">浮点数</option>
+              <label htmlFor="generic-setup-project">{copy.project}</label>
+              <select id="generic-setup-project" aria-label={copy.project} value={projectId} onChange={(event) => setProjectId(event.target.value)} disabled={loadingProjects}>
+                <option value="">{copy.chooseProject}</option>
+                {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
               </select>
             </div>
             <div className="data-annotation__setup-field">
-              <label htmlFor="generic-schema-instruction">{copy.schemaInstruction}</label>
-              <input id="generic-schema-instruction" aria-label={copy.schemaInstruction} value={genericSchemaInstruction} onChange={(event) => setGenericSchemaInstruction(event.target.value)} placeholder={copy.schemaInstructionPlaceholder} />
-            </div>
-          </>}
-          {labelMode === "automatic" && <>
-            <div className="data-annotation__setup-field">
-              <label htmlFor="generic-model-version">已启用模型版本</label>
-              <select id="generic-model-version" aria-label="已启用模型版本" value={genericModelVersionId} onChange={(event) => setGenericModelVersionId(event.target.value)} disabled={!genericModelVersions.length || !!genericDiscoveryTask}>
-                <option value="">{genericModelVersions.length === 0 ? copy.noModelVersions : "请选择模型版本"}</option>
-                {genericModelVersions.map((modelVersion) => <option value={modelVersion.id} key={modelVersion.id} disabled={modelVersion.selectable === false}>{modelVersion.model_name} · v{modelVersion.version_number}{modelVersion.selectable === false ? ` · ${modelIneligibleReasonText(modelVersion.ineligible_reason)}` : ""}</option>)}
+              <label htmlFor="generic-dataset-version">数据版本</label>
+              <select id="generic-dataset-version" aria-label="数据版本" value={genericVersionId} onChange={(event) => setGenericVersionId(event.target.value)} disabled={!projectId || !genericVersions.length || !!genericDiscoveryTask}>
+                <option value="">选择数据版本</option>
+                {genericVersions.map((version) => <option value={version.id} key={version.id}>{version.source_name || `数据版本 v${version.version}`} · v{version.version} · {version.row_count} 行 · {version.columns.length} 列</option>)}
               </select>
             </div>
-            {selectedGenericModelVersion && <div className="data-annotation__setup-field">
-              <label>冻结标签合同</label>
-              <div className="data-annotation__output-contract" aria-label="冻结标签合同">
-                {selectedGenericOutputColumns.map((column) => <span key={column.machine_key}>{column.display_name} · {column.machine_key} · {column.value_type}</span>)}
-              </div>
-            </div>}
-          </>}
-        </div>
-        <div className="data-annotation__setup-field">
-          <label>{copy.sampleScope}</label>
-          <div className="data-annotation__scope-mode" role="radiogroup" aria-label={copy.sampleScope}>
-            <label><input type="radio" name="generic-scope-mode" checked={genericScopeMode === "all"} disabled={!!genericDiscoveryTask} onChange={() => setGenericScopeMode("all")} />{copy.scopeAll}</label>
-            <label><input type="radio" name="generic-scope-mode" checked={genericScopeMode === "filter"} disabled={!!genericDiscoveryTask} onChange={() => setGenericScopeMode("filter")} />{copy.scopeFilter}</label>
           </div>
-          {genericScopeMode === "filter" && <div className="data-annotation__scope-conditions">
-            {genericScopeConditions.map((condition) => (
-              <div className="data-annotation__scope-condition" key={condition.id}>
-                <select aria-label={copy.scopeColumn} value={condition.column} onChange={(event) => setGenericScopeConditions((current) => current.map((item) => item.id === condition.id ? { ...item, column: event.target.value } : item))}>
-                  <option value="">{copy.scopeColumn}</option>
-                  {(genericVersions.find((item) => item.id === genericVersionId)?.columns || []).map((column) => <option value={column.name} key={column.name}>{column.name}</option>)}
-                </select>
-                <select aria-label={copy.scopeOperator} value={condition.operator} onChange={(event) => setGenericScopeConditions((current) => current.map((item) => item.id === condition.id ? { ...item, operator: event.target.value } : item))}>
-                  {Object.entries(copy.operators).map(([key, text]) => <option value={key} key={key}>{text}</option>)}
-                </select>
-                <input aria-label={copy.scopeValue} value={condition.value} onChange={(event) => setGenericScopeConditions((current) => current.map((item) => item.id === condition.id ? { ...item, value: event.target.value } : item))} disabled={condition.operator === "is_null" || condition.operator === "not_null"} />
-                <button type="button" className="ant-btn" aria-label={copy.removeScopeCondition} onClick={() => setGenericScopeConditions((current) => current.filter((item) => item.id !== condition.id))}>×</button>
-              </div>
-            ))}
-            <button type="button" className="ant-btn" onClick={() => setGenericScopeConditions((current) => [...current, { id: createUuid(), column: "", operator: "eq", value: "" }])}>{copy.addScopeCondition}</button>
-            <small>{lang === "zh" ? "多个条件之间为 AND 关系" : "Conditions are combined with AND"}</small>
+        </section>
+
+        <section className="data-annotation__setup-section" aria-labelledby="generic-setup-basics">
+          <h3 id="generic-setup-basics" className="data-annotation__setup-section-title">{lang === "zh" ? "任务信息" : "Task details"}</h3>
+          <div className="data-annotation__setup-grid">
+            <div className="data-annotation__setup-field">
+              <label htmlFor="generic-task-name">{copy.taskName}</label>
+              <input id="generic-task-name" aria-label={copy.taskName} value={genericTaskName} onChange={(event) => setGenericTaskName(event.target.value)} placeholder={copy.taskNamePlaceholder} maxLength={200} />
+            </div>
+            <div className="data-annotation__setup-field">
+              <label htmlFor="generic-due-at">{copy.dueAt}</label>
+              <input id="generic-due-at" type="date" aria-label={copy.dueAt} value={genericDueAt} onChange={(event) => setGenericDueAt(event.target.value)} />
+            </div>
+          </div>
+        </section>
+
+        {labelMode === "manual" && <section className="data-annotation__setup-section" aria-labelledby="generic-setup-labels">
+          <h3 id="generic-setup-labels" className="data-annotation__setup-section-title">{lang === "zh" ? "标签设置" : "Label settings"}</h3>
+          <LabelSchemaEditor
+            showPurpose={false}
+            initialColumns={genericManualSchema?.columns.map((column) => ({
+              machine_key: column.machine_key,
+              display_name: column.display_name,
+              value_type: column.value_type,
+              required: column.required,
+            })) ?? [createLabelColumn(1)]}
+            onSave={(columns) => { void saveGenericManualSchema(columns); }}
+          />
+          {genericManualSchema
+            ? <small>{lang === "zh" ? `已保存标签列定义（${genericManualSchema.columns.length} 列），创建任务时将绑定这些标签列。` : `Saved label columns (${genericManualSchema.columns.length}); the task will bind these columns.`}</small>
+            : <small>{lang === "zh" ? `保存标签列定义时会自动使用 schema 名称「${schemaNameForTask(genericTaskName)}」。` : `Saving the label columns uses the schema name "${schemaNameForTask(genericTaskName)}" automatically.`}</small>}
+        </section>}
+
+        {labelMode === "automatic" && <section className="data-annotation__setup-section" aria-labelledby="generic-setup-model">
+          <h3 id="generic-setup-model" className="data-annotation__setup-section-title">{lang === "zh" ? "模型与标签合同" : "Model and label contract"}</h3>
+          <div className="data-annotation__setup-field">
+            <label htmlFor="generic-model-version">已启用模型版本</label>
+            <select id="generic-model-version" aria-label="已启用模型版本" value={genericModelVersionId} onChange={(event) => setGenericModelVersionId(event.target.value)} disabled={!genericModelVersions.length || !!genericDiscoveryTask}>
+              <option value="">{genericModelVersions.length === 0 ? copy.noModelVersions : "请选择模型版本"}</option>
+              {genericModelVersions.map((modelVersion) => <option value={modelVersion.id} key={modelVersion.id} disabled={modelVersion.selectable === false}>{modelVersion.model_name} · v{modelVersion.version_number}{modelVersion.selectable === false ? ` · ${modelIneligibleReasonText(modelVersion.ineligible_reason)}` : ""}</option>)}
+            </select>
+          </div>
+          {selectedGenericModelVersion && <div className="data-annotation__setup-field">
+            <label>冻结标签合同</label>
+            <div className="data-annotation__output-contract" aria-label="冻结标签合同">
+              {selectedGenericOutputColumns.map((column) => <span key={column.machine_key}>{column.display_name} · {column.machine_key} · {column.value_type}</span>)}
+            </div>
           </div>}
-        </div>
-        <div className="data-annotation__setup-field">
-          <label>{copy.visibleColumns}</label>
-          <div className="data-annotation__visible-columns" aria-label={copy.visibleColumns}>
-            {(genericVersions.find((item) => item.id === genericVersionId)?.columns || []).map((column) => (
-              <label key={column.name}><input type="checkbox" checked={genericVisibleColumns.includes(column.name)} onChange={(event) => setGenericVisibleColumns((current) => event.target.checked ? [...current, column.name] : current.filter((name) => name !== column.name))} />{column.name}</label>
-            ))}
+        </section>}
+
+        <section className="data-annotation__setup-section" aria-labelledby="generic-setup-scope">
+          <h3 id="generic-setup-scope" className="data-annotation__setup-section-title">{lang === "zh" ? "样本范围与可见字段" : "Sample scope and visible fields"}</h3>
+          <div className="data-annotation__setup-field">
+            <label>{copy.sampleScope}</label>
+            <div className="data-annotation__scope-mode" role="radiogroup" aria-label={copy.sampleScope}>
+              <label><input type="radio" name="generic-scope-mode" checked={genericScopeMode === "all"} disabled={!!genericDiscoveryTask} onChange={() => setGenericScopeMode("all")} />{copy.scopeAll}</label>
+              <label><input type="radio" name="generic-scope-mode" checked={genericScopeMode === "filter"} disabled={!!genericDiscoveryTask} onChange={() => setGenericScopeMode("filter")} />{copy.scopeFilter}</label>
+            </div>
+            {genericScopeMode === "filter" && <div className="data-annotation__scope-conditions">
+              {genericScopeConditions.map((condition) => (
+                <div className="data-annotation__scope-condition" key={condition.id}>
+                  <select aria-label={copy.scopeColumn} value={condition.column} onChange={(event) => setGenericScopeConditions((current) => current.map((item) => item.id === condition.id ? { ...item, column: event.target.value } : item))}>
+                    <option value="">{copy.scopeColumn}</option>
+                    {(genericVersions.find((item) => item.id === genericVersionId)?.columns || []).map((column) => <option value={column.name} key={column.name}>{column.name}</option>)}
+                  </select>
+                  <select aria-label={copy.scopeOperator} value={condition.operator} onChange={(event) => setGenericScopeConditions((current) => current.map((item) => item.id === condition.id ? { ...item, operator: event.target.value } : item))}>
+                    {Object.entries(copy.operators).map(([key, text]) => <option value={key} key={key}>{text}</option>)}
+                  </select>
+                  <input aria-label={copy.scopeValue} value={condition.value} onChange={(event) => setGenericScopeConditions((current) => current.map((item) => item.id === condition.id ? { ...item, value: event.target.value } : item))} disabled={condition.operator === "is_null" || condition.operator === "not_null"} />
+                  <button type="button" className="ant-btn" aria-label={copy.removeScopeCondition} onClick={() => setGenericScopeConditions((current) => current.filter((item) => item.id !== condition.id))}>×</button>
+                </div>
+              ))}
+              <button type="button" className="ant-btn" onClick={() => setGenericScopeConditions((current) => [...current, { id: createUuid(), column: "", operator: "eq", value: "" }])}>{copy.addScopeCondition}</button>
+              <small>{lang === "zh" ? "多个条件之间为 AND 关系" : "Conditions are combined with AND"}</small>
+            </div>}
           </div>
-        </div>
-        <div className="data-annotation__setup-field">
-          <label htmlFor="generic-instructions">标注说明</label>
-          <textarea id="generic-instructions" aria-label="标注说明" value={genericInstructions} onChange={(event) => setGenericInstructions(event.target.value)} rows={4} />
-        </div>
-        <div className="data-annotation__setup-field">
-          <label htmlFor="generic-completion-criteria">{copy.completionCriteria}</label>
-          <textarea id="generic-completion-criteria" aria-label={copy.completionCriteria} value={genericCompletionCriteria} onChange={(event) => setGenericCompletionCriteria(event.target.value)} rows={3} placeholder={copy.completionCriteriaPlaceholder} />
-        </div>
-        <div className="data-annotation__setup-field">
-          <label htmlFor="generic-due-at">{copy.dueAt}</label>
-          <input id="generic-due-at" type="date" aria-label={copy.dueAt} value={genericDueAt} onChange={(event) => setGenericDueAt(event.target.value)} />
-        </div>
+          <div className="data-annotation__setup-field">
+            <label>{copy.visibleColumns}</label>
+            <div className="data-annotation__visible-columns" aria-label={copy.visibleColumns}>
+              {(genericVersions.find((item) => item.id === genericVersionId)?.columns || []).map((column) => (
+                <label key={column.name}><input type="checkbox" checked={genericVisibleColumns.includes(column.name)} onChange={(event) => setGenericVisibleColumns((current) => event.target.checked ? [...current, column.name] : current.filter((name) => name !== column.name))} />{column.name}</label>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="data-annotation__setup-section" aria-labelledby="generic-setup-field-desc">
+          <h3 id="generic-setup-field-desc" className="data-annotation__setup-section-title">{lang === "zh" ? "字段解释" : "Field descriptions"}</h3>
+          <div className="data-annotation__setup-field">
+            <label htmlFor="generic-field-descriptions">{lang === "zh" ? "字段解释文件（可选，csv/txt，每行：字段名,描述）" : "Field description file (optional, csv/txt, one 'field,description' per line)"}</label>
+            <input
+              id="generic-field-descriptions"
+              aria-label={lang === "zh" ? "字段解释文件" : "Field description file"}
+              type="file"
+              accept=".csv,.txt,.tsv,text/csv,text/plain"
+              onChange={(event) => { void handleFieldDescriptionFile(event.target.files?.[0]); }}
+            />
+            {Object.keys(genericFieldDescriptions).length > 0
+              ? <small>
+                {lang === "zh"
+                  ? `已解析 ${Object.keys(genericFieldDescriptions).length} 个字段说明，创建任务后同步到标注员工作区。`
+                  : `${Object.keys(genericFieldDescriptions).length} field descriptions parsed; they sync to the annotator workspace after creation.`}
+              </small>
+              : <small>{lang === "zh" ? "上传后按列名自动匹配，匹配上的字段会在标注员工作区显示说明。" : "Uploaded rows are matched by column name; matched fields show their description in the annotator workspace."}</small>}
+          </div>
+        </section>
+
+        <section className="data-annotation__setup-section" aria-labelledby="generic-setup-notes">
+          <h3 id="generic-setup-notes" className="data-annotation__setup-section-title">{lang === "zh" ? "任务说明" : "Task instructions"}</h3>
+          <div className="data-annotation__setup-field">
+            <label htmlFor="generic-instructions">标注说明</label>
+            <textarea id="generic-instructions" aria-label="标注说明" value={genericInstructions} onChange={(event) => setGenericInstructions(event.target.value)} rows={4} />
+          </div>
+          <div className="data-annotation__setup-field">
+            <label htmlFor="generic-completion-criteria">{copy.completionCriteria}</label>
+            <textarea id="generic-completion-criteria" aria-label={copy.completionCriteria} value={genericCompletionCriteria} onChange={(event) => setGenericCompletionCriteria(event.target.value)} rows={3} placeholder={copy.completionCriteriaPlaceholder} />
+          </div>
+        </section>
         </>}
         {labelMode === "automatic" && genericSetupStep === 2 && <div className="data-annotation__setup-step2">
           <div className="data-annotation__setup-step2-main">
@@ -3018,7 +3102,7 @@ export default function DataAnnotationPage() {
                   : <button type="button" className="ant-btn ant-btn-primary" onClick={() => void startGenericDiscovery()} disabled={genericSetupBasicsIncomplete || genericCreating}>
                       {genericCreating ? copy.clusterPreviewRunning : copy.generateClusters}
                     </button>)
-              : <button type="button" className="ant-btn ant-btn-primary" onClick={() => void createGenericTaskFromSetup()} disabled={genericSetupBasicsIncomplete || genericCreating}>
+              : <button type="button" className="ant-btn ant-btn-primary" onClick={() => void createGenericTaskFromSetup()} disabled={genericSetupBasicsIncomplete || genericCreating || (labelMode === "manual" && !genericManualSchema)} title={labelMode === "manual" && !genericManualSchema ? "请先保存标签列定义" : undefined}>
                   {genericCreating ? "创建中..." : "创建通用任务"}
                 </button>}
         </div>

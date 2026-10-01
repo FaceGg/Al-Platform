@@ -570,6 +570,102 @@ def test_task_creation_freezes_server_owned_snapshot():
         engine.dispose()
 
 
+def test_task_snapshot_keeps_field_descriptions_across_strategy_updates():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"fields-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Field descriptions", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    version = DatasetVersion(
+        project_id=project.id,
+        operator_id=user.id,
+        version=1,
+        row_count=2,
+        column_count=2,
+        content_hash="sha256:fields-data",
+        schema_hash="sha256:fields-schema",
+        parse_contract={"source_format": "json"},
+    )
+    db.add(version)
+    db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="s-1", row_index=0, values={"feature": 1}),
+    ])
+    schema = LabelSchema(project_id=project.id, name="field-labels", version=1, status="active")
+    db.add(schema)
+    db.flush()
+    db.add(LabelColumn(schema_id=schema.id, machine_key="质量", display_name="质量", ordinal=0, value_type="string", required=True, instruction="按质检标准填写"))
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        response = TestClient(app).post(
+            "/api/annotation-tasks",
+            headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": str(uuid.uuid4())},
+            json={
+                "project_id": str(project.id),
+                "dataset_version_id": str(version.id),
+                "label_schema_id": str(schema.id),
+                "mode": "manual",
+                "sample_scope": {"kind": "all"},
+                "visible_columns": ["feature"],
+                "instructions": "",
+                "field_descriptions": {"feature": "焊点强度分值", "unknown": "未匹配字段也会保存"},
+                "configuration": {},
+            },
+        )
+        assert response.status_code == 201, response.text
+        task_id = response.json()["id"]
+        assert response.json()["task_snapshot"]["field_descriptions"] == {
+            "feature": "焊点强度分值",
+            "unknown": "未匹配字段也会保存",
+        }
+        # 管理员在标签列定义中填写的列说明随任务冻结，同步到标注员指南
+        frozen_columns = response.json()["task_snapshot"]["label_schema"]["columns"]
+        assert [column["instruction"] for column in frozen_columns] == ["按质检标准填写"]
+
+        updated = TestClient(app).put(
+            f"/api/annotation-tasks/{task_id}/configuration",
+            json={
+                "task_revision": 0,
+                "visible_columns": ["feature"],
+                "instructions": "updated",
+                "configuration": {},
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["task_snapshot"]["field_descriptions"] == {
+            "feature": "焊点强度分值",
+            "unknown": "未匹配字段也会保存",
+        }
+
+        rejected = TestClient(app).post(
+            "/api/annotation-tasks",
+            headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": str(uuid.uuid4())},
+            json={
+                "project_id": str(project.id),
+                "dataset_version_id": str(version.id),
+                "label_schema_id": str(schema.id),
+                "mode": "manual",
+                "sample_scope": {"kind": "all"},
+                "visible_columns": ["feature"],
+                "instructions": "",
+                "field_descriptions": {"feature": "x" * 2001},
+                "configuration": {},
+            },
+        )
+        assert rejected.status_code == 422
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
 def test_automatic_task_creation_rejects_dataset_missing_model_inputs():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)

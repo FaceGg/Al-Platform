@@ -1171,6 +1171,24 @@ textarea {
   word-break: break-word;
 }
 
+.field-item-description {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-style: italic;
+  word-break: break-word;
+}
+
+/* 标注员改过的字段在自动结果旁标注，便于对照两种结果 */
+.field-item-badge {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-warning, #d97706) 18%, transparent);
+  color: var(--color-warning, #b45309);
+  font-size: 10px;
+  font-weight: 600;
+}
+
 .waveform-group {
   margin-bottom: 0;
 }
