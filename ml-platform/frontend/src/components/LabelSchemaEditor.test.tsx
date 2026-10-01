@@ -100,9 +100,9 @@ describe("LabelSchemaEditor", () => {
     fireEvent.change(screen.getByLabelText("枚举值 1 值 1"), { target: { value: "abc" } });
     fireEvent.click(screen.getByRole("button", { name: "保存 schema" }));
     expect(screen.getByRole("alert")).toBeInTheDocument();
-    // 范围缺最大值 → 拒绝
+    // 范围缺最大值 → 拒绝（标注用途下不提供纯范围，经「枚举值且范围」验证上下限校验）
     fireEvent.change(screen.getByLabelText("枚举值 1 值 1"), { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText("约束方式 1"), { target: { value: "range" } });
+    fireEvent.change(screen.getByLabelText("约束方式 1"), { target: { value: "enum_range" } });
     fireEvent.change(screen.getByLabelText("最小值 1"), { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "保存 schema" }));
     expect(screen.getByRole("alert")).toBeInTheDocument();
