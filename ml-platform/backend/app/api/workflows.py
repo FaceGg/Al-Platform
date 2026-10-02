@@ -9,6 +9,7 @@ from app.schemas.workflow import WorkflowCreate, WorkflowSave, WorkflowResponse,
 from app.api.auth import get_current_user
 from app.api.project_security import audit_service, require_project_access, resolve_project_access
 from app.services.audit import AuditIntent
+from app.services.api_publication import sync_workflow_publication
 
 router = APIRouter(prefix="/api/projects", tags=["workflows"])
 PROJECT_WRITE_ACTIONS = {
@@ -222,4 +223,5 @@ def delete_workflow(
         ),
         allowed_changes=set(),
     ):
+        sync_workflow_publication(db, workflow.id)
         db.delete(workflow)

@@ -53,6 +53,7 @@ from app.models.platform_models import (
     OrchestrationVersion,
 )
 from app.models.data_version import DatasetVersion, DatasetSchemaColumn, DatasetSample, DatasetImport, DatasetImportProcess
+from app.models.demo_loop import DemoLoopConfig, DemoLoopEvent
 from app.models.kubernetes_execution import KubernetesJobRun
 from app.models.cloud_resources import (
     KubernetesCluster,

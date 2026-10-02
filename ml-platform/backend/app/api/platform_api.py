@@ -3,6 +3,8 @@ import uuid
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
+
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import or_
@@ -12,7 +14,13 @@ from app.models.api_model import PlatformAPI
 from app.models.user import User
 from app.api.auth import get_current_user
 from app.services.resource_access import ResourceAccessService
-from app.services.api_publication import APIPublicationError, publish_deployment, unpublish_deployment
+from app.services.api_publication import (
+    APIPublicationError,
+    publish_deployment,
+    publish_workflow_version,
+    unpublish_deployment,
+    unpublish_workflow_version,
+)
 
 router = APIRouter(prefix="/api/platform/apis", tags=["platform_apis"])
 
@@ -220,8 +228,11 @@ def delete_api(api_id: str, db: Session = Depends(get_db), current_user: User = 
         api_id,
         current_user.id,
     )
-    if api.source_id is not None or api.source_kind != "custom":
-        raise HTTPException(409, detail="source-bound APIs cannot be deleted directly")
+    # Custom rows are user-created; orchestration rows are derived from
+    # workflow versions and can be recreated by re-publishing, so both are
+    # deletable here. Model rows follow the deployment lifecycle instead.
+    if api.source_kind == "model":
+        raise HTTPException(409, detail="deployment-bound APIs are managed from the model library; take the deployment offline instead")
     db.delete(api)
     db.commit()
     return {"status": "deleted"}
@@ -271,3 +282,157 @@ def unpublish_deployment_api(
         return _serialize_api(unpublish_deployment(db, deployment_id, current_user.id))
     except APIPublicationError as error:
         raise HTTPException(404, detail={"code": error.code, "message": str(error)}) from error
+
+
+@router.post("/publish/workflow/{workflow_id}/{version_number}", response_model=PlatformAPIItem, status_code=status.HTTP_201_CREATED)
+def publish_workflow_api(
+    workflow_id: str,
+    version_number: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return _serialize_api(publish_workflow_version(db, workflow_id, version_number, current_user.id))
+    except APIPublicationError as error:
+        status_code = 404 if error.code.endswith("NOT_FOUND") else 403 if error.code.endswith("PERMISSION_DENIED") else 409
+        raise HTTPException(status_code, detail={"code": error.code, "message": str(error)}) from error
+
+
+@router.post("/publish/workflow/{workflow_id}/{version_number}/offline", response_model=PlatformAPIItem)
+def unpublish_workflow_api(
+    workflow_id: str,
+    version_number: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return _serialize_api(unpublish_workflow_version(db, workflow_id, version_number, current_user.id))
+    except APIPublicationError as error:
+        raise HTTPException(404, detail={"code": error.code, "message": str(error)}) from error
+
+
+class OrchestrationInvokeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record: dict
+
+
+@router.post("/orchestration/{version_id}/invoke")
+def invoke_orchestration_api(
+    version_id: str,
+    data: OrchestrationInvokeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from datetime import datetime, timezone
+
+    from app.engine.data_bus import DataBus
+    from app.engine.dag_executor import DAGExecutor
+    from app.models.workflow import Workflow
+    from app.models.workflow_version import WorkflowVersion
+    from app.services.artifact_service import build_artifact_service
+    from app.services.project_access import ProjectAccessError, ProjectAccessService
+
+    def _error(code: str, message: str, http_status: int):
+        return HTTPException(http_status, detail={"code": code, "message": message})
+
+    try:
+        version_uuid = uuid.UUID(version_id)
+    except (TypeError, ValueError, AttributeError) as error:
+        raise _error("ORCHESTRATION_API_NOT_FOUND", "Orchestration API not found", 404) from error
+    api = db.query(PlatformAPI).filter(
+        PlatformAPI.source_kind == "orchestration",
+        PlatformAPI.source_id == version_uuid,
+    ).order_by(PlatformAPI.created_at.desc()).first()
+    if api is None:
+        raise _error("ORCHESTRATION_API_NOT_FOUND", "Orchestration API not found", 404)
+    if api.status != "published":
+        raise _error("ORCHESTRATION_API_OFFLINE", "该编排 API 当前处于下线状态", 409)
+    version = db.query(WorkflowVersion).filter(WorkflowVersion.id == version_uuid).first()
+    if version is None:
+        raise _error("ORCHESTRATION_API_NOT_FOUND", "Bound workflow version no longer exists", 404)
+    workflow = db.query(Workflow).filter(Workflow.id == version.workflow_id).first()
+    if workflow is None:
+        raise _error("ORCHESTRATION_API_NOT_FOUND", "Bound workflow no longer exists", 404)
+    try:
+        ProjectAccessService().require(db, workflow.project_id, current_user.id, "project.read")
+    except ProjectAccessError as error:
+        code = "ORCHESTRATION_API_NOT_FOUND" if error.hidden else "ORCHESTRATION_API_FORBIDDEN"
+        raise _error(code, "Workflow is not accessible", 404 if error.hidden else 403) from error
+
+    record = data.record
+    if not record:
+        raise _error("ORCHESTRATION_INVOKE_INVALID", "record must be a non-empty object", 422)
+
+    run_id = f"invoke-{uuid.uuid4()}"
+    executor = DAGExecutor(
+        nodes=version.nodes_snapshot or [],
+        edges=version.edges_snapshot or [],
+        artifact_service=build_artifact_service(db),
+        project_id=str(workflow.project_id),
+        workflow_id=str(workflow.id),
+        input_payload=record,
+    )
+    started = datetime.now(timezone.utc)
+    try:
+        results = executor.execute(run_id)
+    except Exception as error:
+        api.total_calls = (api.total_calls or 0) + 1
+        api.failed_calls = (api.failed_calls or 0) + 1
+        api.last_error = str(error)[:2000]
+        db.commit()
+        raise _error(
+            "ORCHESTRATION_INVOKE_FAILED",
+            f"工作流执行失败：{error}",
+            422,
+        ) from error
+
+    # 拓扑序最后一个节点即输出节点；读回其数据总线产物。
+    def _as_rows(node_results, port):
+        path = node_results.get(port)
+        if not path:
+            return []
+        payload = DataBus.load_data(path)
+        if isinstance(payload, pd.DataFrame):
+            payload = payload.to_dict(orient="records")
+        return payload if isinstance(payload, list) else [payload]
+
+    final_node_id = next(reversed(results))
+    node_results = results[final_node_id] or {}
+    output_port = next((p for p in node_results if p != "artifacts"), None)
+    rows = _as_rows(node_results, output_port) if output_port else []
+    branch = None
+    if "true_branch" in node_results and "false_branch" in node_results:
+        true_rows = _as_rows(node_results, "true_branch")
+        false_rows = _as_rows(node_results, "false_branch")
+        branch = "true" if true_rows else ("false" if false_rows else None)
+        # Condition outputs split rows across two ports: surface the rows of
+        # the branch the record actually took.
+        rows = true_rows if branch == "true" else (false_rows if branch == "false" else rows)
+
+    api.total_calls = (api.total_calls or 0) + 1
+    api.success_calls = (api.success_calls or 0) + 1
+    api.last_error = None
+    db.commit()
+
+    def _safe(value):
+        import math
+
+        if value is None or isinstance(value, (str, int, bool)):
+            return value
+        if isinstance(value, float):
+            return value if math.isfinite(value) else None
+        if isinstance(value, dict):
+            return {str(k): _safe(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_safe(v) for v in value]
+        return str(value)
+
+    return {
+        "api_id": str(api.id),
+        "workflow_version": api.version,
+        "output_node": final_node_id,
+        "branch": branch,
+        "records": _safe(rows),
+        "invoked_at": started.isoformat(),
+    }

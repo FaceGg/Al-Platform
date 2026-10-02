@@ -27,6 +27,7 @@ const APIMarketplacePage = lazy(() => import("./pages/APIMarketplacePage"));
 const AnnotationPage = lazy(() => import("./pages/AnnotationPage"));
 const DataAnnotationPage = lazy(() => import("./pages/DataAnnotationPage"));
 const OrchestrationPage = lazy(() => import("./pages/OrchestrationPage"));
+const DemoLoopPage = lazy(() => import("./pages/DemoLoopPage"));
 const ComputeResourcePage = lazy(() => import("./pages/ComputeResourcePage"));
 const KubernetesPage = lazy(() => import("./pages/KubernetesPage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
@@ -102,6 +103,7 @@ function AppContent() {
             <Route path="/annotations" element={<ProtectedRoute><AnnotationPage /></ProtectedRoute>} />
             <Route path="/data-annotation" element={<ProtectedRoute><DataAnnotationPage /></ProtectedRoute>} />
             <Route path="/orchestration" element={<ProtectedRoute><OrchestrationPage /></ProtectedRoute>} />
+            <Route path="/demo-loop" element={<ProtectedRoute><PageErrorBoundary pageName="闭环演示"><DemoLoopPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/compute" element={<ProtectedRoute><ComputeResourcePage /></ProtectedRoute>} />
             <Route path="/kubernetes" element={<ProtectedRoute><PageErrorBoundary pageName="Kubernetes"><KubernetesPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/chat" element={<ProtectedRoute><AIChatPage /></ProtectedRoute>} />

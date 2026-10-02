@@ -78,6 +78,7 @@ class DAGExecutor:
         project_id: str | None = None,
         workflow_id: str | None = None,
         operator_id: str | None = None,
+        input_payload: Any = None,
     ):
         self._nodes = nodes
         self._edges = edges
@@ -88,6 +89,7 @@ class DAGExecutor:
         self._project_id = project_id
         self._workflow_id = workflow_id
         self._operator_id = operator_id
+        self._input_payload = input_payload
 
         for node in nodes:
             self._graph.add_node(
@@ -361,6 +363,7 @@ class DAGExecutor:
                 cancel_requested=run_control.is_cancel_requested,
                 logger=logger,
                 workspace_dir=DataBus.workspace_dir(run_id, self._workflow_id),
+                payload=self._input_payload,
             )
             pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"node-{node_id}")
             future = pool.submit(op.execute, context, inputs, validated_params)

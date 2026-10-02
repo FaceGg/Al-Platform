@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { App as AntApp, Layout, Button, Space, Input, Modal, Drawer, List, Tag } from "antd";
-import { PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined, PauseCircleOutlined, DeleteOutlined, CloudUploadOutlined, HistoryOutlined } from "@ant-design/icons";
+import { PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined, PauseCircleOutlined, DeleteOutlined, CloudUploadOutlined, HistoryOutlined, ApiOutlined } from "@ant-design/icons";
 import { ReactFlowProvider } from "reactflow";
 import { useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
@@ -12,7 +12,7 @@ import NodeConfigPanel, { NodeResultPanel } from "../components/workspace/NodeCo
 import ExecutionProgress from "../components/workspace/ExecutionProgress";
 import { normalizeNodeError, normalizeWorkflowHandle, useWorkflowStore } from "../stores/workflowStore";
 import type { NodeRunStatus, WorkflowRunStatus } from "../stores/workflowStore";
-import { deleteWorkflowVersion, listWorkflowVersions, publishWorkflow, restoreWorkflowVersion, WorkflowVersionSummary } from "../api/workflowVersions";
+import { deleteWorkflowVersion, listWorkflowVersions, publishWorkflow, publishWorkflowApi, restoreWorkflowVersion, WorkflowVersionSummary } from "../api/workflowVersions";
 import { useI18n } from "../i18n";
 import { formatLocalTime } from "../utils/time";
 
@@ -69,6 +69,7 @@ export default function WorkspacePage() {
     noVersions: "暂无已发布版本", restore: "恢复", delete: "删除", operatorPanel: "算子面板", nodeConfig: "节点配置",
     back: "返回", save: "保存", publish: "发布", version: "版本", run: "运行", stop: "终止",
     confirmDelete: "确认删除", cancel: "取消", deletePrompt: "确定要删除工作流", irreversible: "此操作不可撤销。",
+    publishApi: "发布为 API", publishApiSuccess: "已发布为编排 API，可在 API 市场查看", publishApiFailed: "发布为 API 失败",
   } : {
     loadFailed: "Failed to load workflow", saved: "Saved", saveFailed: "Save failed. Please retry.", publishFailed: "Publish failed",
     historyFailed: "Failed to load version history", cancelled: "Cancellation requested; the current node will stop safely.", cancelFailed: "Cancellation failed",
@@ -77,6 +78,7 @@ export default function WorkspacePage() {
     noVersions: "No published versions", restore: "Restore", delete: "Delete", operatorPanel: "Operator panel", nodeConfig: "Node configuration",
     back: "Back", save: "Save", publish: "Publish", version: "Versions", run: "Run", stop: "Stop",
     confirmDelete: "Confirm deletion", cancel: "Cancel", deletePrompt: "Delete workflow", irreversible: "This action cannot be undone.",
+    publishApi: "Publish as API", publishApiSuccess: "Published as an orchestration API — see the API Marketplace", publishApiFailed: "Publish as API failed",
   };
   const { workflowId } = useParams<{ workflowId: string }>();
   const navigate = useNavigate();
@@ -216,6 +218,20 @@ export default function WorkspacePage() {
       message.success(`已发布版本 v${version.version}`);
     } catch (error: any) {
       message.error(error.response?.data?.detail || text.publishFailed);
+    }
+  };
+
+  // 方案B：把当前草稿发布为版本并注册为编排 API（推理子图 + 冻结模型制品）。
+  const handlePublishApi = async () => {
+    if (!workflowId) return;
+    try {
+      await apiClient.put("/workflows/" + workflowId, buildPayload());
+      const version = await publishWorkflow(workflowId);
+      const api = await publishWorkflowApi(workflowId, version.version);
+      message.success(`${text.publishApiSuccess}（${api.name}）`);
+    } catch (error: any) {
+      const detail = error.response?.data?.detail;
+      message.error(typeof detail === "object" && detail?.message ? detail.message : (detail || text.publishApiFailed));
     }
   };
 
@@ -526,6 +542,9 @@ export default function WorkspacePage() {
             </Button>
             <Button icon={<CloudUploadOutlined />} onClick={handlePublish}>
               {text.publish}
+            </Button>
+            <Button icon={<ApiOutlined />} onClick={handlePublishApi}>
+              {text.publishApi}
             </Button>
             <Button icon={<HistoryOutlined />} onClick={openVersions}>
               {text.version}

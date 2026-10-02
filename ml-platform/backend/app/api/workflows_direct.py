@@ -9,6 +9,7 @@ from app.schemas.workflow import WorkflowSave
 from app.api.auth import get_current_user
 from app.api.project_security import audit_service, resolve_workflow_access
 from app.services.audit import AuditIntent
+from app.services.api_publication import sync_workflow_publication
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows_direct"])
 PROJECT_WRITE_ACTIONS = {
@@ -139,6 +140,7 @@ def delete_workflow_direct(
         ),
         allowed_changes=set(),
     ):
+        sync_workflow_publication(db, wf.id)
         db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == wf.id).delete()
         db.query(WorkflowNode).filter(WorkflowNode.workflow_id == wf.id).delete()
         db.delete(wf)

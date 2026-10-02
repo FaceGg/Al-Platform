@@ -13,6 +13,20 @@ export async function publishWorkflow(workflowId: string) {
   return response.data;
 }
 
+export async function publishWorkflowApi(workflowId: string, version: number) {
+  const response = await apiClient.post(
+    `/platform/apis/publish/workflow/${workflowId}/${version}`,
+  );
+  return response.data;
+}
+
+export async function unpublishWorkflowApi(workflowId: string, version: number) {
+  const response = await apiClient.post(
+    `/platform/apis/publish/workflow/${workflowId}/${version}/offline`,
+  );
+  return response.data;
+}
+
 export async function listWorkflowVersions(workflowId: string): Promise<WorkflowVersionSummary[]> {
   const response = await apiClient.get(`/workflows/${workflowId}/versions`);
   return response.data.items || [];

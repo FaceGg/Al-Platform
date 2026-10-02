@@ -151,16 +151,16 @@ export default function APIMarketplacePage() {
     { title: "Calls", dataIndex: "total_calls", key: "total_calls", width:80 },
     { title: "Success Rate", key: "rate", width:100,
       render: (_:any, r:any) => <Text style={{color:r.total_calls>0&&(r.success_calls/r.total_calls)<0.9?"#ff4d4f":undefined}}>{r.total_calls>0?((r.success_calls/r.total_calls)*100).toFixed(1)+"%":"-"}</Text> },
-    { title: "Actions", key: "actions", width:200,
+    { title: "Actions", key: "actions", width:220,
       render: (_:any, r:any) => (
         <Space size="small">
           <Button size="small" icon={<EyeOutlined />} onClick={() => { setDetail(r); setShowDetail(true); }}>{t.api_market.detail}</Button>
           <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => openTest(r)}>{t.api_market.test}</Button>
           {r.source_kind === "custom" && !r.source_id && (
-            <>
-              <Button size="small" icon={<EditOutlined />} onClick={() => openEditor(r)}>编辑</Button>
-              <DeleteConfirmation label={`删除 ${r.name}`} targetName={r.name} onConfirm={() => void handleDelete(r.id)} />
-            </>
+            <Button size="small" icon={<EditOutlined />} onClick={() => openEditor(r)}>编辑</Button>
+          )}
+          {(r.source_kind === "custom" || r.source_kind === "orchestration") && (
+            <DeleteConfirmation label={`删除 ${r.name}`} targetName={r.name} onConfirm={() => void handleDelete(r.id)} />
           )}
         </Space>
       )},

@@ -3,6 +3,7 @@ from app.operators import evaluation  # noqa: F401
 from app.operators import io_operators  # noqa: F401
 from app.operators import ml_operators  # noqa: F401
 from app.operators import processing  # noqa: F401
+from app.operators import serving_operators  # noqa: F401
 from app.operators import visualization  # noqa: F401
 
 try:

@@ -7,7 +7,7 @@ import {
   CloudUploadOutlined, ThunderboltOutlined, ExperimentOutlined, ApiOutlined,
   CloudServerOutlined, RobotOutlined, MessageOutlined, MenuFoldOutlined,
   MenuUnfoldOutlined, MonitorOutlined, SafetyOutlined, ToolOutlined, TagsOutlined,
-  ClusterOutlined,
+  ClusterOutlined, DeploymentUnitOutlined,
 } from "@ant-design/icons";
 import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
@@ -37,6 +37,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { key: "/automl", icon: <ThunderboltOutlined />, label: t.nav.automl },
     { key: "/training", icon: <ExperimentOutlined />, label: t.nav.training },
     { key: "/orchestration", icon: <RobotOutlined />, label: t.nav.orchestration },
+    { key: "/demo-loop", icon: <DeploymentUnitOutlined />, label: t.nav.demo_loop },
     { key: "/api-marketplace", icon: <ApiOutlined />, label: t.nav.api_market },
     { type: "divider" as const },
     { key: "/knowledge", icon: <DatabaseOutlined />, label: t.nav.knowledge },

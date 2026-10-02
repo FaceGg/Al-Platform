@@ -45,10 +45,20 @@ class ConditionOperator(BaseOperator):
             mask = pd.to_numeric(col_data, errors="coerce") >= float(value)
         elif op == "<=":
             mask = pd.to_numeric(col_data, errors="coerce") <= float(value)
-        elif op == "==":
-            mask = col_data.astype(str) == str(value)
-        elif op == "!=":
-            mask = col_data.astype(str) != str(value)
+        elif op in ("==", "!="):
+            # Numeric columns round-trip through the data bus as floats
+            # (prediction 1 → 1.0), so compare numerically when both sides
+            # coerce; fall back to string equality for text columns.
+            numeric_col = pd.to_numeric(col_data, errors="coerce")
+            try:
+                numeric_value = float(value)
+                numeric_mask = (numeric_col == numeric_value).fillna(False)
+                string_mask = col_data.astype(str) == str(value)
+                mask = numeric_mask | (numeric_col.isna() & string_mask)
+            except (TypeError, ValueError):
+                mask = col_data.astype(str) == str(value)
+            if op == "!=":
+                mask = ~mask
         elif op == "contains":
             mask = col_data.astype(str).str.contains(str(value), na=False)
         else:

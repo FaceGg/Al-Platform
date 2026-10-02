@@ -83,6 +83,7 @@ const weekTestFiles: Record<number, string[]> = {
     "./api/annotationTasks.test.ts",
     "./api/models.test.ts",
     "./api/modelExports.test.ts",
+    "./pages/DemoLoopPage.test.tsx",
     "./components/AssignmentDialog.test.tsx",
     "./components/ReturnAcceptancePanel.test.tsx",
     "./components/AnnotationCommentModerationPanel.test.tsx",

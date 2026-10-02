@@ -25,6 +25,7 @@ const ZH = {
     chat: "\u0041\u0049\u5bf9\u8bdd",
     automl: "\u81ea\u52a8\u5efa\u6a21",
     orchestration: "\u5e94\u7528\u7f16\u6392",
+    demo_loop: "\u95ed\u73af\u6f14\u793a",
     algorithms: "\u7b97\u6cd5\u76ee\u5f55",
     api_market: "\u0041\u0050\u0049\u5e02\u573a",
     annotation: "\u6570\u636e\u6807\u6ce8",
@@ -533,7 +534,7 @@ const ZH = {
 
 const EN: Record<string, any> = {
   app: { title: "Linkraft", login: "Login", register: "Register", logout: "Logout", success: "Success", error: "Error", confirm: "Confirm" },
-  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources", kubernetes: "Kubernetes Clusters" },
+  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", demo_loop: "Closed-Loop Demo", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources", kubernetes: "Kubernetes Clusters" },
   kubernetes: {
     title: "Kubernetes Clusters",
     cluster: "Cluster", provider: "Provider", status: "Status", version: "Version",

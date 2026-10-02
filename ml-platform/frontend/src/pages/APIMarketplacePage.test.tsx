@@ -102,6 +102,54 @@ describe("APIMarketplacePage", () => {
     }));
   });
 
+  it("deletes custom and orchestration APIs after confirmation", async () => {
+    apiGet.mockResolvedValue({
+      items: [
+        { id: "custom-1", name: "Custom one", api_type: "custom", source_kind: "custom",
+          version: "v1", status: "published", method: "POST", endpoint: "/api/custom-one",
+          total_calls: 0, success_calls: 0 },
+        { id: "orch-1", name: "Serving flow v1", api_type: "orchestration",
+          source_kind: "orchestration", source_id: "wf-version-1",
+          version: "v1", status: "published", method: "POST",
+          endpoint: "/api/platform/apis/orchestration/wf-version-1/invoke",
+          total_calls: 2, success_calls: 2 },
+      ],
+    });
+    render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
+    // 每行都有删除动作（自定义 + 编排）。
+    const deleteButtons = await screen.findAllByRole("button", { name: /删除/ });
+    expect(deleteButtons.length).toBeGreaterThanOrEqual(2);
+    const confirmInPopover = () => {
+      // Popconfirm 渲染在 document.body 的 portal 里；关闭后 DOM 会保留（隐藏）。
+      // jsdom 没有布局信息，取文档序最后一个（新开的气泡追加在最后）。
+      const buttons = document.querySelectorAll<HTMLElement>(
+        ".delete-confirmation__overlay .ant-btn-dangerous, .ant-popover .ant-btn-dangerous",
+      );
+      expect(buttons.length).toBeGreaterThan(0);
+      return buttons[buttons.length - 1] as HTMLElement;
+    };
+    fireEvent.click(deleteButtons[0]);
+    fireEvent.click(confirmInPopover());
+    await waitFor(() => expect(apiDelete).toHaveBeenCalledWith("/platform/apis/custom-1"));
+    fireEvent.click(deleteButtons[1]);
+    fireEvent.click(confirmInPopover());
+    await waitFor(() => expect(apiDelete).toHaveBeenCalledWith("/platform/apis/orch-1"));
+  });
+
+  it("hides edit/delete for deployment-bound model APIs", async () => {
+    apiGet.mockResolvedValue({
+      items: [{
+        id: "model-1", name: "Deployment API", api_type: "model", source_kind: "model",
+        source_id: "dep-1", version: "v1", status: "published", method: "POST",
+        endpoint: "/api/inference-deployments/dep-1/predict", total_calls: 0, success_calls: 0,
+      }],
+    });
+    render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
+    await screen.findByText("Deployment API");
+    expect(screen.queryByRole("button", { name: /编辑/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /删除/ })).not.toBeInTheDocument();
+  });
+
   it("shows a visible list error", async () => {
     apiGet.mockRejectedValue(new Error("offline"));
     render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);

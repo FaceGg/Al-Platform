@@ -2,6 +2,10 @@
 
 import os
 
+# Multi-module test runs share one TestClient IP and easily exceed the
+# production login IP limit (5 / 15 min). Raise it for the whole test process.
+os.environ.setdefault("LOGIN_IP_RATE_LIMIT_CAPACITY", "100")
+
 import pytest
 from sqlalchemy import event
 

@@ -22,6 +22,8 @@ class OperatorContext:
     cancel_requested: Callable[[], bool]
     logger: Any
     workspace_dir: Path | None = None
+    # Orchestration-API serving: the single record injected by the invoke call.
+    payload: Any = None
 
 
 @dataclass(frozen=True)
