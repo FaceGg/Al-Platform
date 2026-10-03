@@ -89,20 +89,40 @@ describe('SampleStream', () => {
   })
 
   it('shows automatic labels as the automatic result with an annotator override box', () => {
-    renderStream({ sample: { ...sample, label_source: 'automatic' } })
+    renderStream({ sample: { ...sample, label_source: 'automatic', automatic_labels: { category: 'A' } } })
     const panel = screen.getByLabelText('自动标注结果')
     expect(panel).toBeVisible()
-    expect(screen.getByText('以下标签由自动标注生成，可在右侧修改后覆盖。')).toBeVisible()
+    expect(screen.getByText('以下标签由自动标注生成并保留存档，右侧人工修改后会覆盖使用。')).toBeVisible()
     expect(within(panel).getByText('类别')).toBeVisible()
     expect(within(panel).getByText('A')).toBeVisible()
-    expect(screen.getByText('标注员修改')).toBeVisible()
+    expect(screen.getByText('标注员修改（人工结果）')).toBeVisible()
+    // 未修改的列不显示"已修改"标记
+    expect(within(panel).queryByText('已修改')).not.toBeInTheDocument()
+  })
+
+  it('keeps the automatic result visible and marks modified columns after a manual edit', () => {
+    renderStream({
+      sample: {
+        ...sample,
+        label_source: 'manual',
+        automatic_labels: { category: 'A' },
+        labels: { category: 'B' },
+        manual_modified: true,
+      },
+    })
+    const panel = screen.getByLabelText('自动标注结果')
+    // 自动结果保留显示
+    expect(within(panel).getByText('A')).toBeVisible()
+    // 修改过的列带"已修改"标记
+    expect(within(panel).getByText('已修改')).toBeVisible()
+    expect(screen.getByText('标注员修改（人工结果）')).toBeVisible()
   })
 
   it('keeps the plain label editor when the labels are not automatic', () => {
     renderStream({ sample: { ...sample, label_source: 'manual' } })
     expect(screen.queryByLabelText('自动标注结果')).not.toBeInTheDocument()
     expect(screen.getByText('标签')).toBeVisible()
-    expect(screen.queryByText('标注员修改')).not.toBeInTheDocument()
+    expect(screen.queryByText('标注员修改（人工结果）')).not.toBeInTheDocument()
   })
 
   it('shows field descriptions for matched columns and plain fields otherwise', () => {

@@ -775,7 +775,7 @@ def _annotation_label_sources(db: Session, task_id, sample_ids: list[str]) -> tu
             AnnotationRevision.sample_id.in_(sample_ids),
             AnnotationRevision.source == "automatic",
             AnnotationRevision.action == "initialize",
-        ).order_by(AnnotationRevision.revision_no.asc()).all()
+        ).order_by(AnnotationRevision.revision_no.desc()).all()
     )
     automatic_labels: dict[str, dict] = {}
     for row in automatic:

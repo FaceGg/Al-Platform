@@ -110,7 +110,27 @@ describe("LabelSchemaEditor", () => {
     // 补全后通过
     fireEvent.change(screen.getByLabelText("最大值 1"), { target: { value: "10" } });
     fireEvent.click(screen.getByRole("button", { name: "保存 schema" }));
-    expect(onSave).toHaveBeenCalledWith([expect.objectContaining({ min_value: 0, max_value: 10 })], "annotation");
+    expect(onSave).toHaveBeenCalledWith([expect.objectContaining({ min_value: 0, max_value: 10, enum_values: [1] })], "annotation");
+  });
+
+  it("restricts annotation columns to enum choices but allows ranges for training", () => {
+    const onSave = vi.fn();
+    const first = render(<LabelSchemaEditor onSave={onSave} />);
+    fireEvent.click(screen.getByRole("button", { name: "添加列" }));
+    fireEvent.change(screen.getByLabelText("类型 1"), { target: { value: "int" } });
+    // 标注用途：标注员只能选择定义值，不提供纯范围
+    expect(screen.queryByRole("option", { name: "范围" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "枚举值" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "枚举值且范围" })).toBeInTheDocument();
+    first.unmount();
+
+    const trainingSave = vi.fn();
+    render(<LabelSchemaEditor initialPurpose="training" onSave={trainingSave} />);
+    fireEvent.click(screen.getByRole("button", { name: "添加列" }));
+    fireEvent.change(screen.getByLabelText("类型 1"), { target: { value: "int" } });
+    // 训练用途保留纯范围
+    expect(screen.getByRole("option", { name: "范围" })).toBeInTheDocument();
+    expect(trainingSave).not.toHaveBeenCalled();
   });
 
   it("only offers enum constraints for string columns", () => {

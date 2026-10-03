@@ -515,6 +515,59 @@ def test_manual_task_rejects_a_source_label_column_with_a_different_type():
         engine.dispose()
 
 
+def test_automatic_contract_classes_freeze_as_label_enum():
+    """分类合同的 classes 冻结为标签列枚举，标注员只能从中选择。"""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"classes-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Contract classes", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    version = DatasetVersion(project_id=project.id, operator_id=user.id, version=1, row_count=1, column_count=1, content_hash="sha256:classes", schema_hash="sha256:classes-schema")
+    db.add(version)
+    db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="s-1", row_index=0, values={"feature": 1}),
+    ])
+    model_version, _artifact = _enabled_annotation_model(db, project, user, columns=[
+        {"name": "result", "dtype": "object", "task": "classification", "classes": ["ok", "ng", "ng", 1]},
+        {"name": "score", "dtype": "int64", "task": "classification", "classes": [0, 1, "2", "bad"]},
+    ])
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        response = TestClient(app).post(
+            "/api/annotation-tasks",
+            headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": str(uuid.uuid4())},
+            json={
+                "project_id": str(project.id),
+                "dataset_version_id": str(version.id),
+                "model_version_id": str(model_version.id),
+                "mode": "automatic",
+                "sample_scope": {"kind": "ids", "sample_ids": ["s-1"]},
+                "visible_columns": ["feature"],
+                "configuration": {"strategy": "model"},
+            },
+        )
+        assert response.status_code == 201, response.text
+        columns = {column["machine_key"]: column for column in response.json()["task_snapshot"]["label_schema"]["columns"]}
+        # 字符串列：classes 全部转字符串并去重；未匹配模型的输出也限制在类别内
+        assert columns["result"]["enum_values"] == ["ok", "ng", "1"]
+        # 整数列：无法转换为整数的类别（"bad"）被丢弃
+        assert columns["score"]["enum_values"] == [0, 1, 2]
+        contract_columns = {column["machine_key"]: column for column in response.json()["task_snapshot"]["configuration"]["model_output_contract"]["columns"]}
+        assert contract_columns["result"]["enum_values"] == ["ok", "ng", "1"]
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        engine.dispose()
+
+
 def test_task_creation_freezes_server_owned_snapshot():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)

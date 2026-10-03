@@ -2342,3 +2342,11 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 布局重构：新建任务向导第 1 步由扁平字段流改为按用途分区（`data-annotation__setup-section` 卡片 + 标题）：数据来源（项目/数据版本）→ 任务信息（任务名称/截止时间）→ 标签设置（手动：标签列定义；自动：模型与标签合同）→ 样本范围与可见字段 → 字段解释 → 任务说明（标注说明/完成标准）。`LabelSchemaEditor` 与字段解释上传从两列紧凑网格移出为整块卡片，避免大组件被塞进网格列；新增分区样式并复用既有 CSS 变量。
 - 验证：主平台前端 375 passed（手动任务用例新增分区标题断言与派生名称断言 `name: "Q3 复检任务-labels"`）、`tsc` 无错、生产构建通过；重建 frontend 镜像并重建容器（BUILD/UP exit 0，容器 healthy）；容器内与 HTTP 实测确认新入口 bundle `index-DZTEjlsV.js`、`DataAnnotationPage-CtIk7_bG.js` 含「数据来源/任务信息/标签设置/自动使用 schema 名称」，CSS bundle 含 `setup-section`。
 - 边界：浏览器内视觉确认未完成——本地实例 admin 密码非 e2e mock 值，未做密码尝试；分区布局的观感需用户在强刷后确认。既有 `labels` 等历史 schema 记录保留不变。
+
+## 2026-10-03 标注值严格约束 + 自动/人工双结果保留与对照
+
+- 标注值只能选定义值：① 自动任务标签列由模型输出合同的 classes 冻结为 `enum_values`（类型转换+去重+非法项丢弃，`_contract_enum_values`），弱监督策略值同样受 schema 枚举校验；② 主平台标签列定义在标注用途（annotation）下不再提供纯范围约束（历史范围列按「枚举值且范围」回显补齐枚举），训练/推理用途保留；③ 门户 `parseValue` 对 int/float 列补枚举校验（此前仅字符串列有），枚举列 UI 只渲染下拉，未匹配枚举的提交一律拒绝。
+- 自动/人工双结果：`GET /portal/tasks/{id}/samples`（标注员）与 `GET /portal/admin/tasks/{id}/samples`（审核员）新增 `automatic_labels`（最近一次 automatic/initialize 修订的冻结值）与 `manual_modified`（当前值≠自动结果）。标注员工作区永久保留「自动标注结果」面板（人工修改后不消失），被修改的列带「已修改」徽标，右侧编辑框标题为「标注员修改（人工结果）」；审核员界面同屏显示人工值+自动值对照与「已人工修改」标记，并提示导出规则。
+- 导出取值规则固化：回传批次冻结当前值——有人工修改的列用人工结果，未修改的列用自动结果（自动结果发布后从未被修改时二者相同）。新增回归 `test_return_batch_uses_manual_edits_and_keeps_automatic_values`（真实任务+发布+确认+回传+worker 冻结全链路：frozen-1=manual、frozen-2=auto）。
+- 验证：主平台前端 381 passed（编辑器纯范围隐藏/训练保留两用例）、门户 130 passed（双结果面板/已修改徽标）、后端 348 passed（合同类别派生枚举、标注员与审核员双结果返回、回传导出取值规则等新回归）；tsc 与生产构建全绿。
+- 部署与排查记录：backend/worker/scheduler/frontend 镜像正常重建生效；`annotator-frontend` 的 `COPY dist` 层遭遇 BuildKit 上下文缓存陈旧 + WSL 代理（127.0.0.1:7897）失效且本地已无 `nginx:1.27-alpine` 基础镜像，无法重新 build。改用 `temp_test/update-portal-image.sh`（容器内替换资源 + `docker commit` + force-recreate）完成更新，容器与 HTTP 实测均为新 bundle（`index-DA8yB9OX.js`，标记 1/1/1）。该方案在代理恢复前可复用；代理恢复后建议走正常 `docker compose build`。

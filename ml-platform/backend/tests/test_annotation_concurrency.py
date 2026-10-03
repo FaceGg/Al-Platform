@@ -12,6 +12,7 @@ from app.models.labeling import (
     AnnotationAssignment,
     AnnotationAssignmentSample,
     AnnotationReturnBatch,
+    AnnotationReturnBatchSample,
     AnnotationRevision,
     AnnotationSampleCurrent,
     AnnotationStrategyArtifact,
@@ -877,3 +878,95 @@ def test_cluster_selection_rejects_assignment_without_matching_samples(db):
             actor=admin.id,
         )
     assert error.value.code == "SAMPLE_SCOPE_EMPTY_AFTER_CLUSTER_FILTER"
+
+
+def test_return_batch_uses_manual_edits_and_keeps_automatic_values(db):
+    """导出取值规则：有人工修改的样本用人工结果，未修改的样本保留自动标注结果。"""
+    db.expire_on_commit = False
+    admin, _other, subject, _fixture_task = _secure_fixture(db)
+    task = _cluster_task_fixture(db, admin, ["frozen-1", "frozen-2"], {
+        "clustering": True,
+        "strategy": "cluster",
+        "selected_clusters": ["0", "1"],
+        "cluster_labels": {"0": {"label": "auto"}, "1": {"label": "auto"}},
+        "other_values": {"label": "other"},
+    })
+    # 自动标注发布：两个样本都有 automatic initialize 修订与当前值；
+    # 按簇策略的指派过滤还需要冻结的逐样本簇决策
+    artifact = AnnotationStrategyArtifact(
+        task_id=task.id,
+        task_revision=0,
+        config_hash="sha256:return-rule-config",
+        strategy="cluster",
+        artifact={"configuration_complete": True},
+        created_by=admin.id,
+    )
+    db.add(artifact)
+    db.flush()
+    for sample_id, cluster_id in (("frozen-1", 0), ("frozen-2", 1)):
+        db.add(AnnotationStrategyDecision(
+            strategy_artifact_id=artifact.id,
+            sample_id=sample_id,
+            row_index=0,
+            status="ready",
+            values={"label": "auto"},
+            provenance={"label": {"source": "cluster"}},
+            model_output={},
+            cluster_id=cluster_id,
+            matched_rule_ids=[],
+            decision_hash="sha256:decision",
+        ))
+        db.add(AnnotationSampleCurrent(
+            task_id=task.id,
+            sample_id=sample_id,
+            schema_id=task.label_schema_id,
+            revision_no=0,
+            values={"label": "auto"},
+        ))
+        db.add(AnnotationRevision(
+            task_id=task.id,
+            sample_id=sample_id,
+            schema_id=task.label_schema_id,
+            revision_no=0,
+            base_revision=0,
+            values={"label": "auto"},
+            author_id=admin.id,
+            source="automatic",
+            action="initialize",
+        ))
+    db.commit()
+
+    assignment = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[subject],
+        sample_scope={"kind": "frozen_task_scope"},
+        actor=admin.id,
+    )[0]
+    # 标注员只人工修改 frozen-1，frozen-2 保持自动结果
+    save_labels(db, assignment.id, "frozen-1", {"label": "manual"}, base_revision=0, actor=admin.id)
+    confirm_assignment(db, assignment.id, task.task_revision, assignment.scope_hash, actor=admin.id)
+
+    result = return_assignment(
+        db,
+        assignment.id,
+        task.task_revision,
+        assignment.scope_hash,
+        "auto-manual-return-key",
+    )
+    # 冻结批次样本由异步 worker 写入，测试中同步驱动
+    worker_result = _execute_with_session(
+        db,
+        str(result.return_batch_id),
+        str(result.operation_id),
+        f"auto-manual:{result.return_batch_id}",
+    )
+    assert worker_result["status"] == "completed", worker_result
+
+    frozen = {
+        row.sample_id: row.values
+        for row in db.query(AnnotationReturnBatchSample).filter_by(return_batch_id=result.return_batch_id).all()
+    }
+    # 有人工修改的样本使用人工结果，未修改的样本保留自动标注结果
+    assert frozen["frozen-1"] == {"label": "manual"}
+    assert frozen["frozen-2"] == {"label": "auto"}

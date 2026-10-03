@@ -755,3 +755,38 @@ def test_admin_endpoints_reject_missing_scope(admin_review_fixture):
     )
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "SERVICE_SCOPE_FORBIDDEN"
+
+
+def test_admin_samples_expose_automatic_and_manual_results(admin_review_fixture):
+    """审核员样本列表同时携带自动标注结果与人工修改标记。"""
+    fixture = admin_review_fixture
+    db = fixture["db"]
+    task = fixture["returned_task"]
+    # sample-1 保留自动发布修订（与当前人工值不同），sample-2 无自动结果
+    db.add(AnnotationRevision(
+        task_id=task.id,
+        sample_id="sample-1",
+        schema_id=task.label_schema_id,
+        revision_no=0,
+        base_revision=0,
+        values={"result": "auto"},
+        author_id=fixture["admin"].id,
+        source="automatic",
+        action="initialize",
+    ))
+    db.commit()
+
+    response = fixture["client"].get(
+        f"/api/internal/portal/admin/tasks/{task.id}/samples",
+        headers=_admin_headers(fixture["admin"].id),
+    )
+    assert response.status_code == 200, response.text
+    items = {item["sample_id"]: item for item in response.json()["items"]}
+    # sample-1：人工改过 → 人工结果为主，自动结果保留对照
+    assert items["sample-1"]["labels"] == {"result": "pass"}
+    assert items["sample-1"]["automatic_labels"] == {"result": "auto"}
+    assert items["sample-1"]["manual_modified"] is True
+    assert items["sample-1"]["label_source"] == "manual"
+    # sample-2：无自动结果（手动任务），manual_modified 为 False
+    assert items["sample-2"]["automatic_labels"] is None
+    assert items["sample-2"]["manual_modified"] is False

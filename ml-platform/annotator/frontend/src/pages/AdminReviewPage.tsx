@@ -363,17 +363,31 @@ export default function AdminReviewPage({
             <h3>标注结果（只读）</h3>
             {columns.length ? (
               <div className="field-grid">
-                {columns.map((column) => (
-                  <div className="field-item" key={column.machine_key}>
-                    <span className="field-item-name">{column.display_name ?? column.machine_key}</span>
-                    <span className="field-item-value admin-field-value">
-                      {formatValue(sample.labels?.[column.machine_key])}
-                    </span>
-                  </div>
-                ))}
+                {columns.map((column) => {
+                  const manualValue = sample.labels?.[column.machine_key]
+                  const automaticValue = sample.automatic_labels?.[column.machine_key]
+                  const edited = sample.automatic_labels != null && manualValue !== automaticValue
+                  return (
+                    <div className="field-item" key={column.machine_key}>
+                      <span className="field-item-name">
+                        {column.display_name ?? column.machine_key}
+                        {edited ? <span className="field-item-badge">已人工修改</span> : null}
+                      </span>
+                      <span className="field-item-value admin-field-value">
+                        {formatValue(manualValue)}
+                      </span>
+                      {edited ? (
+                        <span className="field-item-description">自动标注：{formatValue(automaticValue)}</span>
+                      ) : null}
+                    </div>
+                  )
+                })}
               </div>
             ) : (
               <p className="muted">该任务未配置标签列。</p>
+            )}
+            {sample.automatic_labels != null && (
+              <p className="muted">回传导出时：有人工修改的列使用人工结果，未修改的列使用自动标注结果。</p>
             )}
           </section>
 

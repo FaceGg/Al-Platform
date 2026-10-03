@@ -500,9 +500,9 @@ export default function TaskWorkspacePage({
       const result = await saveLabels(task.id, sampleId, payload, baseRevision, ...assignmentArgs)
       const latestDraft = draftsRef.current[sampleId] ?? {}
       const stillSame = JSON.stringify(latestDraft) === JSON.stringify(currentDraft)
-      // A manual save overrides the automatic publication; the workspace must
-      // drop the "自动标注结果" panel for this sample immediately.
-      const updated = { ...target, labels: result.values ?? payload, revision: result.revision, label_source: 'manual' }
+      // 人工保存覆盖自动标注的使用值，但 automatic_results 存档保留供对照，
+      // "已修改" 标记由 withSavedLabels 按当前值与自动结果的差异刷新。
+      const updated = withSavedLabels(target, (result.values ?? payload) as Record<string, unknown>, result.revision)
       // Keep the sample cache in sync: applyBatch reads base_revision from it,
       // and a stale revision there makes the whole bulk write fail with a
       // REVISION_CONFLICT after any single-sample auto-save bumped the server
@@ -804,7 +804,7 @@ export default function TaskWorkspacePage({
       const updated = new Map(result.items.map(item => [item.sample_id, item]))
       for (const [id, saved] of updated) {
         const cached = sampleCacheRef.current.get(id)
-        if (cached) sampleCacheRef.current.set(id, { ...cached, labels: saved.values, revision: saved.revision, label_source: 'manual' })
+        if (cached) sampleCacheRef.current.set(id, withSavedLabels(cached, saved.values, saved.revision))
       }
       samplesRef.current = samplesRef.current.map(row => sampleCacheRef.current.get(row.sample_id) ?? row)
       setSamples(samplesRef.current)

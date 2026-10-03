@@ -43,6 +43,10 @@ export type AdminSample = {
   values: Record<string, unknown>
   labels: Record<string, unknown>
   revision: number | null
+  label_source?: string | null
+  /** 自动标注任务发布时的冻结结果；人工修改后仍保留用于对照 */
+  automatic_labels?: Record<string, unknown> | null
+  manual_modified?: boolean
 }
 
 export type AdminComment = {

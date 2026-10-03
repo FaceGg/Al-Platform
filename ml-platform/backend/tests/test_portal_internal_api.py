@@ -549,6 +549,18 @@ def test_portal_samples_expose_automatic_label_source(portal_fixture):
             source="automatic",
             action="initialize",
         ),
+        # sample-2 先由自动标注发布，随后被标注员人工修改
+        AnnotationRevision(
+            task_id=task_id,
+            sample_id="sample-2",
+            schema_id=schema_id,
+            revision_no=2,
+            base_revision=1,
+            values={"label": "auto-2"},
+            author_id=portal_fixture["annotator_principal_id"],
+            source="automatic",
+            action="initialize",
+        ),
         AnnotationSampleCurrent(
             task_id=task_id,
             sample_id="sample-2",
@@ -575,8 +587,15 @@ def test_portal_samples_expose_automatic_label_source(portal_fixture):
         headers=_headers(token),
     )
     assert response.status_code == 200, response.text
-    sources = {item["sample_id"]: item["label_source"] for item in response.json()["items"]}
-    assert sources == {"sample-1": "automatic", "sample-2": "manual"}
+    items = {item["sample_id"]: item for item in response.json()["items"]}
+    # 未修改：当前值即自动结果
+    assert items["sample-1"]["label_source"] == "automatic"
+    assert items["sample-1"]["automatic_labels"] == {"label": "auto-1"}
+    assert items["sample-1"]["manual_modified"] is False
+    # 已修改：保留自动结果存档并标记人工修改
+    assert items["sample-2"]["label_source"] == "manual"
+    assert items["sample-2"]["automatic_labels"] == {"label": "auto-2"}
+    assert items["sample-2"]["manual_modified"] is True
 
 
 def test_portal_sample_filters_use_authorized_fields_and_own_revisions(portal_fixture):
