@@ -428,7 +428,7 @@ class DemoLoopFlow(unittest.TestCase):
         self._save_config(alert_threshold_rows=100, preprocess_enabled=True)
         router_patch, service_patch, router = self._runtime_patches(_StubService())
         with router_patch as router_cls, service_patch, \
-                patch.object(demo_loop_module, "build_feature_frame", fake_build_feature_frame):
+                patch.object(demo_loop_module, "build_fixed_feature_frame", fake_build_feature_frame):
             router_cls.return_value.select_active.return_value = router
             data = self._predict({"wld1c": 1.0, "wld2c": 1.0})
 
@@ -470,7 +470,7 @@ class DemoLoopFlow(unittest.TestCase):
         self._save_config(alert_threshold_rows=100, preprocess_enabled=True)
         router_patch, service_patch, router = self._runtime_patches(_StubService())
         with router_patch as router_cls, service_patch, \
-                patch.object(demo_loop_module, "build_feature_frame", side_effect=ValueError("no waveforms")):
+                patch.object(demo_loop_module, "build_fixed_feature_frame", side_effect=ValueError("no waveforms")):
             router_cls.return_value.select_active.return_value = router
             r = client.post(
                 f"/api/projects/{self.project_id}/demo-loop/predict",

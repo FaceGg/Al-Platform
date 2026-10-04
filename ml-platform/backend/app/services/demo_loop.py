@@ -47,10 +47,12 @@ from app.services.inference_rollout import WeightedTargetRouter
 from app.services.inference_runtime_client import InferenceRuntimeClient
 from app.services.label_schema import bind_label_schema_to_task, create_label_schema, label_schema_snapshot
 from app.services.model_registry import ModelRegistryService, ModelRegistryError
-from app.services.spot_weld_features import (
+# Fixed report-feature decoding goes through the bridge file's generic entry
+# (production sources must not reference the legacy industry module directly).
+from app.operators.processing import (
     REPORT_TABLE_FIELDS,
     WAVEFORM_FIELDS,
-    build_feature_frame,
+    build_fixed_feature_frame,
 )
 
 
@@ -381,7 +383,7 @@ class DemoLoopService:
     ) -> dict:
         """Derive the model's engineered features from raw report data.
 
-        Uses the platform's spot-weld feature engineering (report table fields
+        Uses the platform's report feature-engineering bridge (report table fields
         + four waveform channels → fixed 73-feature schema) when the uploaded
         row carries the raw source columns.
         """
@@ -393,7 +395,7 @@ class DemoLoopService:
                 "请打开「自动特征工程」开关后重试；否则请上传已做过特征工程的完整特征数据集。",
             )
         try:
-            features, _schema, _stats = build_feature_frame(pd.DataFrame([record]))
+            features, _schema, _stats = build_fixed_feature_frame(pd.DataFrame([record]))
         except Exception as error:
             raise DemoLoopError(
                 "DEMO_LOOP_RECORD_INVALID",

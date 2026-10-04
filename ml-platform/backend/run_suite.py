@@ -19,7 +19,7 @@ from tests.week_manifest import (
 
 BACKEND_DIR = os.path.dirname(__file__)
 PROJECT_DIR = os.path.dirname(os.path.dirname(BACKEND_DIR))
-MODULE_TIMEOUT_SECONDS = 300
+MODULE_TIMEOUT_SECONDS = int(os.environ.get("SUITE_MODULE_TIMEOUT_SECONDS", "300"))
 TESTS_DIR = Path(BACKEND_DIR) / "tests"
 
 

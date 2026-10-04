@@ -552,3 +552,13 @@ class ImputeMissingAdvanced(BaseOperator):
         else: imp = SimpleImputer(strategy=strategy)
         if len(num_cols) > 0: df[num_cols] = imp.fit_transform(df[num_cols])
         return OperatorResult(outputs={"data": df.to_dict(orient="records")})
+
+
+def build_fixed_feature_frame(frame: pd.DataFrame):
+    """Generic entry for the fixed report feature schema (bridge helper).
+
+    Platform services that need the frozen report→feature decoding call this
+    wrapper instead of reaching into the legacy feature module themselves.
+    """
+    features, schema, statistics = build_feature_frame(frame)
+    return features, schema, statistics
