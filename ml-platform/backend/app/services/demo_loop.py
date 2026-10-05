@@ -12,9 +12,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import math
 import tempfile
-import threading
 import uuid
 from datetime import datetime
 from functools import lru_cache
@@ -29,24 +27,28 @@ from app.database import SessionLocal
 from app.models.artifact import Artifact
 from app.models.data_version import DatasetSample, DatasetSchemaColumn
 from app.models.demo_loop import DemoLoopConfig, DemoLoopEvent
-from app.models.experiment import Experiment, ExperimentAutoMLBinding
 from app.models.model_registry import InferenceDeployment, ModelVersion
-from app.models.notifications import InAppNotification
 from app.models.platform_models import GenericAnnotationTask
-from app.models.project import Project
 from app.models.training import TrainingJob
-from app.models.user import User
 from app.services.annotation_concurrency import AssignmentError, create_assignments
 from app.services.annotation_scope import persist_scope_entries, scope_descriptor, scope_digest
 from app.services.artifact_service import build_artifact_service
-from app.services.automl_catalog import AUTOML_FAMILY_IDS, resolve_algorithm_families
-from app.services.automl_execution import normalize_evaluation_config, resolve_automl_feature_columns
-from app.services.automl_search import normalize_search_controls, validate_target_columns
+from app.services.closed_loop_actions import (
+    ClosedLoopError,
+    _automl_dispatcher,
+    _json_value,
+    append_rows_to_dataset_artifact,
+    complete_retrain_swap,
+    candidate_score,
+    lock_for as _lock_for,
+    notify_project_admins,
+    trigger_retrain_job,
+)
 from app.services.inference_deployment import InferenceDeploymentError, InferenceDeploymentService
 from app.services.inference_rollout import WeightedTargetRouter
 from app.services.inference_runtime_client import InferenceRuntimeClient
 from app.services.label_schema import bind_label_schema_to_task, create_label_schema, label_schema_snapshot
-from app.services.model_registry import ModelRegistryService, ModelRegistryError
+from app.services.model_registry import ModelRegistryError  # noqa: F401 (re-exported for callers)
 # Fixed report-feature decoding goes through the bridge file's generic entry
 # (production sources must not reference the legacy industry module directly).
 from app.operators.processing import (
@@ -60,48 +62,6 @@ class DemoLoopError(ValueError):
     def __init__(self, code: str, message: str):
         self.code = code
         super().__init__(message)
-
-
-_LOCKS_GUARD = threading.Lock()
-_LOCKS: dict[str, threading.Lock] = {}
-
-
-def _lock_for(key: str) -> threading.Lock:
-    with _LOCKS_GUARD:
-        lock = _LOCKS.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _LOCKS[key] = lock
-        return lock
-
-
-def _json_value(value):
-    if value is None or value is pd.NaT:
-        return None
-    if isinstance(value, (pd.Timestamp, datetime)):
-        return value.isoformat()
-    if isinstance(value, np.generic):
-        return _json_value(value.item())
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    if isinstance(value, dict):
-        return {str(key): _json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
-    return value
-
-
-def _automl_dispatcher():
-    if getattr(settings, "task_backend", "local") == "celery":
-        # CeleryTrainingDispatcher lives in the training API module; the celery
-        # task itself lives in app.tasks.training_tasks.
-        from app.api.training import CeleryTrainingDispatcher
-        from app.tasks.training_tasks import execute_automl_task
-
-        return CeleryTrainingDispatcher(execute_automl_task)
-    from app.tasks.training_tasks import LocalTrainingDispatcher, execute_local_automl_task
-
-    return LocalTrainingDispatcher(execute_local_automl_task)
 
 
 @lru_cache(maxsize=1)
@@ -509,46 +469,11 @@ class DemoLoopService:
         columns = sorted({key for row in rows for key in row})
         with _lock_for(str(config.id)):
             artifact = self._error_artifact(config, columns)
-            service = self._artifact_service()
-            old_uri = artifact.storage_uri
-            with service.storage.materialize(artifact.storage_uri) as path:
-                frame = pd.read_csv(path)
-            for row in rows:
-                frame.loc[len(frame)] = [
-                    _json_value(row.get(column)) for column in frame.columns
-                ]
-            with tempfile.TemporaryDirectory() as tmp:
-                out = Path(tmp) / "error_rows.csv"
-                frame.to_csv(out, index=False)
-                stored = service.storage.put(
-                    out,
-                    project_id=str(config.project_id),
-                    artifact_id=str(artifact.id),
-                    filename="error_rows.csv",
-                )
-            schema = [
-                {"name": str(column), "dtype": str(frame[column].dtype),
-                 "null_count": int(frame[column].isna().sum())}
-                for column in frame.columns
-            ]
-            artifact.storage_uri = stored.uri
-            artifact.file_size = stored.size
-            artifact.metadata_ = {
-                **(artifact.metadata_ or {}),
-                "sha256": stored.sha256,
-                "source": "demo_loop",
-                "row_count": int(len(frame)),
-                "column_count": int(len(frame.columns)),
-                "schema": schema,
-            }
-            self.db.commit()
-            if old_uri and old_uri != stored.uri:
-                try:
-                    service.storage.delete(old_uri)
-                except Exception:
-                    pass
-        self._emit(config, "error_appended", f"错误数据已追加（当前 {len(frame)} 行）",
-                   payload={"rows": len(rows), "total": int(len(frame))})
+            total = append_rows_to_dataset_artifact(
+                self.db, self._artifact_service(), artifact, rows,
+            )
+        self._emit(config, "error_appended", f"错误数据已追加（当前 {total} 行）",
+                   payload={"rows": len(rows), "total": total})
 
     # ---------------------------------------------------------------- thresholds
 
@@ -583,27 +508,17 @@ class DemoLoopService:
             self._trigger_retrain(config, actor_id)
 
     def _notify_admins(self, config: DemoLoopConfig, predicted: str) -> None:
-        recipients: set = set()
-        project = self.db.query(Project).filter(Project.id == config.project_id).first()
-        if project is not None and project.owner_id:
-            recipients.add(uuid.UUID(str(project.owner_id)))
-        for row in self.db.query(User.id).filter(User.role == "admin").all():
-            recipients.add(row.id)
-        for recipient in recipients:
-            self.db.add(InAppNotification(
-                recipient_user_id=recipient,
-                project_id=config.project_id,
-                event_id=uuid.uuid4(),
-                event_type="demo_loop.alert",
-                deduplication_key=f"dl-{config.id.hex[:12]}-{uuid.uuid4().hex[:12]}",
-                severity="warning",
-                title=f"【{config.name}】报错数据告警",
-                body=(
-                    f"推理命中的报错类别 {predicted} 已累计 {config.error_count} 行，"
-                    f"达到告警阈值 {config.alert_threshold_rows} 行，请关注数据回流与模型质量。"
-                ),
-                payload={"config_id": str(config.id), "error_count": config.error_count},
-            ))
+        notify_project_admins(
+            self.db,
+            config.project_id,
+            title=f"【{config.name}】报错数据告警",
+            body=(
+                f"推理命中的报错类别 {predicted} 已累计 {config.error_count} 行，"
+                f"达到告警阈值 {config.alert_threshold_rows} 行，请关注数据回流与模型质量。"
+            ),
+            event_type="demo_loop.alert",
+            payload={"config_id": str(config.id), "error_count": config.error_count},
+        )
 
     # ------------------------------------------------------------- review task
 
@@ -719,113 +634,23 @@ class DemoLoopService:
             raise DemoLoopError("DEMO_LOOP_RETRAIN_TARGET_MISSING", "未配置重训目标列")
         if config.retrain_dataset_artifact_id is None:
             raise DemoLoopError("DEMO_LOOP_RETRAIN_DATASET_MISSING", "未配置重训数据集")
-        service = self._artifact_service()
-        dataset = service.resolve(config.retrain_dataset_artifact_id, config.project_id, expected_type="dataset")
-        # One AutoML job per experiment (binding PK), so each retrain cycle
-        # gets its own experiment named by cycle.
-        experiment = self.db.query(Experiment).filter(
-            Experiment.project_id == config.project_id,
-            Experiment.name == f"{config.name}-自动建模-{config.error_count}",
-        ).first()
-        if experiment is None:
-            experiment = Experiment(
-                project_id=config.project_id,
-                created_by=actor_id,
-                name=f"{config.name}-自动建模-{config.error_count}",
-                description="闭环演示自动创建的实验",
-                # Unique placeholder; the real tracking id is registered right
-                # below and the column is globally unique.
-                mlflow_experiment_id=f"pending-{uuid.uuid4().hex[:24]}",
-            )
-            self.db.add(experiment)
-            self.db.flush()
-        if experiment.mlflow_experiment_id.startswith("pending-"):
-            # Register the experiment with the real tracking backend so the
-            # AutoML worker can start a run against it.
-            from mlflow.tracking import MlflowClient
-
-            from app.services.experiment_tracking import (
-                MlflowExperimentTracking,
-                resolve_tracking_configuration,
-            )
-            tracking_uri, artifact_root = resolve_tracking_configuration(settings)
-            tracking = MlflowExperimentTracking(
-                client=MlflowClient(tracking_uri=tracking_uri),
-                artifact_root=artifact_root,
-            )
-            experiment.mlflow_experiment_id = tracking.ensure_experiment(
-                f"project/{experiment.project_id}/{experiment.id}",
-            )
-            self.db.flush()
-
-        with service.materialize(dataset.id, config.project_id, expected_type="dataset") as path:
-            frame = pd.read_csv(path)
-        target = config.retrain_target_column
-        if target not in frame.columns:
-            raise DemoLoopError("DEMO_LOOP_RETRAIN_TARGET_MISSING", f"目标列 {target} 不在重训数据集中")
-        task_type = "classification"
-        validate_target_columns(frame, task_type, [target])
-        feature_columns = resolve_automl_feature_columns(
-            frame, target, None, target_columns=[target],
-        )
-        families = resolve_algorithm_families(list(AUTOML_FAMILY_IDS))
-        evaluation = normalize_evaluation_config(True, 3)
-        controls = normalize_search_controls(strength="light", time_budget=600, class_weight=True)
-        max_trials = max(int(config.retrain_max_trials or 10), len(families))
-        fingerprint = hashlib.sha256(json.dumps({
-            "config_id": str(config.id), "error_count": config.error_count,
-            "dataset": str(dataset.id), "target": target,
-        }, sort_keys=True).encode("utf-8")).hexdigest()
-        job = TrainingJob(
-            id=uuid.uuid4(),
+        job = trigger_retrain_job(
+            self.db,
             project_id=config.project_id,
-            user_id=actor_id,
-            experiment_id=experiment.id,
-            name=f"{config.name}-自动建模-{config.error_count}",
-            operator_id="automl",
-            params={
-                "target_column": target,
-                "target_columns": [target],
-                "input_columns": list(feature_columns),
-                "task": task_type,
-                "search_contract": "optuna_v1",
-                "algorithm_ids": [family.id for family in families],
-                "search_method": "bayesian",
-                "max_trials": max_trials,
-                **evaluation,
-                "time_budget": controls["time_budget"],
-                "search_strength": controls["strength"],
-                "class_weight": controls["class_weight"],
-            },
-            dataset_artifact_id=dataset.id,
-            dataset_path=service.storage_reference(dataset),
-            status="pending",
-            automl_contract={
-                "task_type": task_type,
-                "target_columns": [target],
-                "cross_validation_folds": evaluation["cross_validation_folds"],
-                "cv_strategy": "stratified",
-                "random_seed": 42,
-                "idempotency_fingerprint": fingerprint,
-            },
-            automl_idempotency_key=f"demo-loop-{config.id}-{fingerprint[:24]}",
+            actor_id=actor_id,
+            experiment_name=f"{config.name}-自动建模-{config.error_count}",
+            job_name=f"{config.name}-自动建模-{config.error_count}",
+            dataset_artifact_id=config.retrain_dataset_artifact_id,
+            target_column=config.retrain_target_column,
+            max_trials=config.retrain_max_trials,
         )
-        self.db.add(job)
-        self.db.add(ExperimentAutoMLBinding(experiment_id=experiment.id, job_id=job.id))
-        self.db.flush()
-        # Local dispatcher only registers on enqueue and needs start(task_id)
-        # to spawn the worker thread; Celery's delay runs it inside enqueue.
-        dispatcher = _automl_dispatcher()
-        task_id = dispatcher.enqueue(job.id)
-        if hasattr(dispatcher, "start"):
-            dispatcher.start(task_id)
         config.retrain_job_id = job.id
         config.retrain_status = "queued"
         self.db.commit()
         self._emit(config, "retrain_triggered",
-                   f"报错数据已达 {config.error_count} 行，自动建模任务已触发（{max_trials} 组试验）",
+                   f"报错数据已达 {config.error_count} 行，自动建模任务已触发（{job.params['max_trials']} 组试验）",
                    severity="warning",
-                   payload={"job_id": str(job.id), "task_id": task_id})
+                   payload={"job_id": str(job.id)})
 
     def refresh_retrain_status(self, config: DemoLoopConfig, actor_id) -> None:
         if config.retrain_status not in {"queued", "running"} or config.retrain_job_id is None:
@@ -851,56 +676,33 @@ class DemoLoopService:
         self.db.commit()
 
     def _candidate_score(self, row: dict) -> float:
-        metrics = row.get("metrics") or {}
-        if isinstance(metrics, dict):
-            for key in ("auc", "accuracy", "f1", "precision", "recall", "r2"):
-                value = metrics.get(key)
-                if isinstance(value, (int, float)):
-                    return float(value)
-            for value in metrics.values():
-                if isinstance(value, (int, float)):
-                    return float(value)
-        return 0.0
+        return candidate_score(row)
 
     def _swap_to_best_model(self, config: DemoLoopConfig, job: TrainingJob, actor_id) -> None:
         if config.swapped_model_version_id:
             return
-        registry = ModelRegistryService(artifact_service=build_artifact_service(self.db))
-        candidates = registry.list_registerable_candidates(self.db, job.id)
-        if not candidates:
+        version = complete_retrain_swap(
+            self.db,
+            deployment_id=config.deployment_id,
+            job=job,
+            actor_id=actor_id,
+            model_name=f"{config.name}-自动模型",
+        )
+        if version is None:
             self._emit(config, "retrain_failed", "自动建模完成但没有可注册的候选模型", severity="warning")
             return
-        best = max(candidates, key=self._candidate_score)
-        candidate_id = best.get("candidate_id") or best.get("id")
-        try:
-            version, _created = registry.register_automl_candidate(
-                self.db,
-                task_id=job.id,
-                candidate_id=candidate_id,
-                model_name=f"{config.name}-自动模型",
-                actor_id=actor_id,
-                idempotency_key=f"demo-loop-{config.id}-{job.id}",
-            )
-            registry.transition_model_version(self.db, version.id, "approve", actor_id)
-        except ModelRegistryError as error:
-            self._emit(config, "swap_failed", f"最优模型注册失败：{error.code}", severity="critical")
-            return
-        previous_id = None
         deployment = self.db.query(InferenceDeployment).filter(
             InferenceDeployment.id == config.deployment_id,
         ).first() if config.deployment_id else None
-        if deployment is not None:
-            previous_id = str(deployment.model_version_id) if deployment.model_version_id else None
-            deployment.model_version_id = version.id
+        previous_id = str(deployment.model_version_id) if deployment is not None and deployment.model_version_id else None
         config.swapped_model_version_id = version.id
         self._emit(
             config, "model_swapped",
-            f"自动建模完成，已将部署模型替换为最优候选（{best.get('name') or best.get('algorithm_id')}）",
+            f"自动建模完成，已将部署模型替换为最优候选（v{version.version_number}）",
             severity="critical",
             payload={
                 "new_model_version_id": str(version.id),
                 "previous_model_version_id": previous_id,
-                "candidate": _json_value(best) or {},
             },
         )
 

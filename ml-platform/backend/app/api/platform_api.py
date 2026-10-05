@@ -372,6 +372,7 @@ def invoke_orchestration_api(
         project_id=str(workflow.project_id),
         workflow_id=str(workflow.id),
         input_payload=record,
+        operator_id=str(workflow.created_by) if workflow.created_by else None,
     )
     started = datetime.now(timezone.utc)
     try:

@@ -276,7 +276,7 @@ class DemoLoopFlow(unittest.TestCase):
         with patch("app.services.experiment_tracking.resolve_tracking_configuration",
                    return_value=("sqlite:///./temp_test/ut_mlflow_tracking.db",
                                  "file:./temp_test/ut_mlflow_artifacts")), \
-                patch.object(demo_loop_module, "_automl_dispatcher", return_value=stub):
+                patch("app.services.closed_loop_actions.automl_dispatcher", return_value=stub):
             self._predict({"f1": 5.4, "f2": -1.2})
 
         self.assertEqual(len(stub.enqueued), 1)
@@ -323,6 +323,7 @@ class DemoLoopFlow(unittest.TestCase):
                 # Reuse the existing model version id so the FK on
                 # deployment.model_version_id stays satisfiable.
                 id = existing_version_id
+                version_number = 1
 
             class _FakeRegistry:
                 def __init__(self, *_args, **_kwargs):
@@ -339,7 +340,8 @@ class DemoLoopFlow(unittest.TestCase):
                     self.approved = version_id
                     return _FakeVersion()
 
-            with patch.object(demo_loop_module, "ModelRegistryService", _FakeRegistry):
+            # The swap logic lives in closed_loop_actions now.
+            with patch("app.services.closed_loop_actions.ModelRegistryService", _FakeRegistry):
                 service._swap_to_best_model(config, job, self.user_id)
             db.commit()
 

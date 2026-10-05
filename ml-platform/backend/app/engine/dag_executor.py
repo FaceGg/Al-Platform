@@ -364,6 +364,7 @@ class DAGExecutor:
                 logger=logger,
                 workspace_dir=DataBus.workspace_dir(run_id, self._workflow_id),
                 payload=self._input_payload,
+                operator_id=self._operator_id,
             )
             pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"node-{node_id}")
             future = pool.submit(op.execute, context, inputs, validated_params)

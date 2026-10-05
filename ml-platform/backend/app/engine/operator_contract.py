@@ -24,6 +24,9 @@ class OperatorContext:
     workspace_dir: Path | None = None
     # Orchestration-API serving: the single record injected by the invoke call.
     payload: Any = None
+    # The workflow creator (actor) for side-effect operators that write
+    # platform records (e.g. AutoML jobs) on behalf of a user.
+    operator_id: str | None = None
 
 
 @dataclass(frozen=True)
