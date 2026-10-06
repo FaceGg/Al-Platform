@@ -17,6 +17,7 @@ import {
 import { ClusterOutlined, ReloadOutlined } from "@ant-design/icons";
 import { App as AntApp } from "antd";
 import apiClient, { formatApiError } from "../api/client";
+import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
 import {
   ClusterInfo,
@@ -273,148 +274,150 @@ export default function KubernetesPage() {
   ];
 
   return (
-    <div style={{ padding: 24 }}>
-      <Space direction="vertical" size={16} style={{ width: "100%" }}>
-        <Space wrap style={{ justifyContent: "space-between", width: "100%" }}>
-          <Space wrap>
-            <Typography.Title level={4} style={{ margin: 0 }}>{kt("title", "Kubernetes 集群")}</Typography.Title>
-            <Select
-              style={{ minWidth: 220 }}
-              placeholder={kt("selectProject", "选择项目")}
-              value={projectId ?? undefined}
-              options={projects.map((p) => ({ value: p.id, label: p.name }))}
-              onChange={(value) => setProjectId(value)}
-            />
-          </Space>
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={loadClusters}>{kt("refresh", "刷新")}</Button>
-            <Button type="primary" onClick={() => setRegisterOpen(true)} disabled={!projectId}>
-              {kt("register", "登记集群")}
-            </Button>
-          </Space>
-        </Space>
-
-        <Alert
-          type="info"
-          showIcon
-          message={kt("hint", "凭据只保存 env:/file: 引用,平台不存储任何 token 或 kubeconfig 内容;端点必须在 allowlist 内。")}
-        />
-
-        <Table
-          rowKey="id"
-          size="middle"
-          loading={loading}
-          columns={columns as never}
-          dataSource={visibleClusters}
-          pagination={{ pageSize: 10, showTotal: (total) => `${total}` }}
-          locale={{ emptyText: kt("empty", "尚无登记集群") }}
-        />
-      </Space>
-
-      <Modal
-        title={kt("register", "登记集群")}
-        open={registerOpen}
-        onOk={handleRegister}
-        onCancel={() => setRegisterOpen(false)}
-        okText={kt("save", "保存")}
-        cancelText={kt("cancel", "取消")}
-        destroyOnHidden
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item name="name" label={kt("name", "标识名")} rules={[{ required: true }]}>
-            <Input placeholder="w13-kind" />
-          </Form.Item>
-          <Form.Item name="display_name" label={kt("displayName", "显示名")}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="api_server_url" label="API Server" rules={[{ required: true }]}>
-            <Input placeholder="https://127.0.0.1:6443" />
-          </Form.Item>
-          <Form.Item name="secret_ref" label={kt("secretRef", "凭据引用")} rules={[{ required: true }]}
-            extra={kt("secretRefHint", "格式:env:变量名 或 file:/绝对路径;平台不保存凭据内容。")}>
-            <Input placeholder="env:LINKRAFT_KIND_TOKEN" />
-          </Form.Item>
-          <Form.Item name="provider" label={kt("provider", "类型")} initialValue="generic">
-            <Select options={[{ value: "generic", label: "generic" }, { value: "kind", label: "kind" }]} />
-          </Form.Item>
-          <Form.Item name="default_namespace" label={kt("defaultNamespace", "默认命名空间")}>
-            <Input placeholder="linkraft-dev" />
-          </Form.Item>
-          <Form.Item name="insecure_tls" label={kt("insecureTls", "允许 insecure http/TLS(仅本地测试)")} valuePropName="checked">
-            <Switch />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      <Drawer title={`${kt("nodes", "节点能力")} · ${nodesTarget?.name ?? ""}`} width={640} open={!!nodesTarget} onClose={() => setNodesTarget(null)}>
-        <Table
-          rowKey="hostname"
-          size="small"
-          dataSource={nodes ?? []}
-          loading={nodes === null}
-          pagination={false}
-          columns={[
-            { title: "hostname", dataIndex: "hostname", key: "hostname" },
-            { title: "arch", dataIndex: "arch", key: "arch", width: 90 },
-            { title: "CPU", dataIndex: "cpu_cores", key: "cpu", width: 90 },
-            { title: "memory", dataIndex: "memory", key: "memory", width: 110 },
-            { title: "GPU", dataIndex: "gpu", key: "gpu", width: 80 },
-          ]}
-        />
-      </Drawer>
-
-      <Drawer title={`${kt("namespaces", "命名空间")} · ${nsTarget?.name ?? ""}`} width={520} open={!!nsTarget} onClose={() => setNsTarget(null)}>
+    <AppLayout>
+      <div>
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
-          {liveNamespaces === null ? null : (
+          <Space wrap style={{ justifyContent: "space-between", width: "100%" }}>
             <Space wrap>
-              {liveNamespaces.map((name) => <Tag key={name}>{name}</Tag>)}
-              {liveNamespaces.length === 0 && <Typography.Text type="secondary">{kt("empty", "尚无登记集群")}</Typography.Text>}
+              <Typography.Title level={4} style={{ margin: 0 }}>{kt("title", "Kubernetes 集群")}</Typography.Title>
+              <Select
+                style={{ minWidth: 220 }}
+                placeholder={kt("selectProject", "选择项目")}
+                value={projectId ?? undefined}
+                options={projects.map((p) => ({ value: p.id, label: p.name }))}
+                onChange={(value) => setProjectId(value)}
+              />
             </Space>
-          )}
-          <Form form={nsForm} layout="inline">
-            <Form.Item name="namespaceName" rules={[{ required: true }]}>
-              <Input placeholder={kt("namespaceName", "命名空间名")} />
-            </Form.Item>
-            <Form.Item name="cpuCores">
-              <Input placeholder="cpu_cores" style={{ width: 110 }} />
-            </Form.Item>
-            <Form.Item name="memoryMb">
-              <Input placeholder="memory_mb" style={{ width: 110 }} />
-            </Form.Item>
-            <Button type="primary" onClick={handleEnsureNamespace}>{kt("ensure", "确保存在")}</Button>
-          </Form>
-        </Space>
-      </Drawer>
+            <Space>
+              <Button icon={<ReloadOutlined />} onClick={loadClusters}>{kt("refresh", "刷新")}</Button>
+              <Button type="primary" onClick={() => setRegisterOpen(true)} disabled={!projectId}>
+                {kt("register", "登记集群")}
+              </Button>
+            </Space>
+          </Space>
 
-      <Drawer title={`${kt("resourceGroups", "资源组")} · ${rgTarget?.name ?? ""}`} width={560} open={!!rgTarget} onClose={() => setRgTarget(null)}>
-        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            message={kt("hint", "凭据只保存 env:/file: 引用,平台不存储任何 token 或 kubeconfig 内容;端点必须在 allowlist 内。")}
+          />
+
           <Table
             rowKey="id"
+            size="middle"
+            loading={loading}
+            columns={columns as never}
+            dataSource={visibleClusters}
+            pagination={{ pageSize: 10, showTotal: (total) => `${total}` }}
+            locale={{ emptyText: kt("empty", "尚无登记集群") }}
+          />
+        </Space>
+
+        <Modal
+          title={kt("register", "登记集群")}
+          open={registerOpen}
+          onOk={handleRegister}
+          onCancel={() => setRegisterOpen(false)}
+          okText={kt("save", "保存")}
+          cancelText={kt("cancel", "取消")}
+          destroyOnHidden
+        >
+          <Form form={form} layout="vertical">
+            <Form.Item name="name" label={kt("name", "标识名")} rules={[{ required: true }]}>
+              <Input placeholder="w13-kind" />
+            </Form.Item>
+            <Form.Item name="display_name" label={kt("displayName", "显示名")}>
+              <Input />
+            </Form.Item>
+            <Form.Item name="api_server_url" label="API Server" rules={[{ required: true }]}>
+              <Input placeholder="https://127.0.0.1:6443" />
+            </Form.Item>
+            <Form.Item name="secret_ref" label={kt("secretRef", "凭据引用")} rules={[{ required: true }]}
+              extra={kt("secretRefHint", "格式:env:变量名 或 file:/绝对路径;平台不保存凭据内容。")}>
+              <Input placeholder="env:LINKRAFT_KIND_TOKEN" />
+            </Form.Item>
+            <Form.Item name="provider" label={kt("provider", "类型")} initialValue="generic">
+              <Select options={[{ value: "generic", label: "generic" }, { value: "kind", label: "kind" }]} />
+            </Form.Item>
+            <Form.Item name="default_namespace" label={kt("defaultNamespace", "默认命名空间")}>
+              <Input placeholder="linkraft-dev" />
+            </Form.Item>
+            <Form.Item name="insecure_tls" label={kt("insecureTls", "允许 insecure http/TLS(仅本地测试)")} valuePropName="checked">
+              <Switch />
+            </Form.Item>
+          </Form>
+        </Modal>
+
+        <Drawer title={`${kt("nodes", "节点能力")} · ${nodesTarget?.name ?? ""}`} width={640} open={!!nodesTarget} onClose={() => setNodesTarget(null)}>
+          <Table
+            rowKey="hostname"
             size="small"
-            dataSource={resourceGroups ?? []}
-            loading={resourceGroups === null}
+            dataSource={nodes ?? []}
+            loading={nodes === null}
             pagination={false}
             columns={[
-              { title: kt("name", "标识名"), dataIndex: "name", key: "name" },
-              { title: "policy", dataIndex: "scheduling_policy_json", key: "policy", render: (v: Record<string, unknown>) => String(v?.policy_type ?? "-") },
-              { title: "quota", dataIndex: "quota_json", key: "quota", render: (v: Record<string, number>) => Object.keys(v).length ? JSON.stringify(v) : "-" },
-              { title: kt("status", "状态"), dataIndex: "status", key: "status", width: 90 },
+              { title: "hostname", dataIndex: "hostname", key: "hostname" },
+              { title: "arch", dataIndex: "arch", key: "arch", width: 90 },
+              { title: "CPU", dataIndex: "cpu_cores", key: "cpu", width: 90 },
+              { title: "memory", dataIndex: "memory", key: "memory", width: 110 },
+              { title: "GPU", dataIndex: "gpu", key: "gpu", width: 80 },
             ]}
           />
-          <Form form={rgForm} layout="inline">
-            <Form.Item name="groupName" rules={[{ required: true }]}>
-              <Input placeholder={kt("name", "标识名")} />
-            </Form.Item>
-            <Form.Item name="cpuCores">
-              <Input placeholder="cpu_cores" style={{ width: 110 }} />
-            </Form.Item>
-            <Form.Item name="memoryMb">
-              <Input placeholder="memory_mb" style={{ width: 110 }} />
-            </Form.Item>
-            <Button type="primary" onClick={handleCreateResourceGroup}>{kt("save", "保存")}</Button>
-          </Form>
-        </Space>
-      </Drawer>
-    </div>
+        </Drawer>
+
+        <Drawer title={`${kt("namespaces", "命名空间")} · ${nsTarget?.name ?? ""}`} width={520} open={!!nsTarget} onClose={() => setNsTarget(null)}>
+          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            {liveNamespaces === null ? null : (
+              <Space wrap>
+                {liveNamespaces.map((name) => <Tag key={name}>{name}</Tag>)}
+                {liveNamespaces.length === 0 && <Typography.Text type="secondary">{kt("empty", "尚无登记集群")}</Typography.Text>}
+              </Space>
+            )}
+            <Form form={nsForm} layout="inline">
+              <Form.Item name="namespaceName" rules={[{ required: true }]}>
+                <Input placeholder={kt("namespaceName", "命名空间名")} />
+              </Form.Item>
+              <Form.Item name="cpuCores">
+                <Input placeholder="cpu_cores" style={{ width: 110 }} />
+              </Form.Item>
+              <Form.Item name="memoryMb">
+                <Input placeholder="memory_mb" style={{ width: 110 }} />
+              </Form.Item>
+              <Button type="primary" onClick={handleEnsureNamespace}>{kt("ensure", "确保存在")}</Button>
+            </Form>
+          </Space>
+        </Drawer>
+
+        <Drawer title={`${kt("resourceGroups", "资源组")} · ${rgTarget?.name ?? ""}`} width={560} open={!!rgTarget} onClose={() => setRgTarget(null)}>
+          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Table
+              rowKey="id"
+              size="small"
+              dataSource={resourceGroups ?? []}
+              loading={resourceGroups === null}
+              pagination={false}
+              columns={[
+                { title: kt("name", "标识名"), dataIndex: "name", key: "name" },
+                { title: "policy", dataIndex: "scheduling_policy_json", key: "policy", render: (v: Record<string, unknown>) => String(v?.policy_type ?? "-") },
+                { title: "quota", dataIndex: "quota_json", key: "quota", render: (v: Record<string, number>) => Object.keys(v).length ? JSON.stringify(v) : "-" },
+                { title: kt("status", "状态"), dataIndex: "status", key: "status", width: 90 },
+              ]}
+            />
+            <Form form={rgForm} layout="inline">
+              <Form.Item name="groupName" rules={[{ required: true }]}>
+                <Input placeholder={kt("name", "标识名")} />
+              </Form.Item>
+              <Form.Item name="cpuCores">
+                <Input placeholder="cpu_cores" style={{ width: 110 }} />
+              </Form.Item>
+              <Form.Item name="memoryMb">
+                <Input placeholder="memory_mb" style={{ width: 110 }} />
+              </Form.Item>
+              <Button type="primary" onClick={handleCreateResourceGroup}>{kt("save", "保存")}</Button>
+            </Form>
+          </Space>
+        </Drawer>
+      </div>
+    </AppLayout>
   );
 }
