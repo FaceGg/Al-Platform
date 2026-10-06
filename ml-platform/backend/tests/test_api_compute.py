@@ -1,11 +1,13 @@
 """Compute Resource & Edge Device API integration tests."""
 import sys, os, unittest, uuid
+from datetime import datetime, timedelta, timezone
 sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
 from app.main import app
 from app.api.auth import pwd_context
 from app.database import Base, SessionLocal, engine
+from app.models.compute import ComputeNode
 from app.models.user import User
 from app.services.security import rate_limiter
 
@@ -144,6 +146,61 @@ class TestComputeAPI(unittest.TestCase):
     def test_15_compute_requires_auth(self):
         r = client.get("/api/compute/nodes")
         self.assertEqual(r.status_code, 401)
+
+    # ---- Heartbeat reporting ----
+    def test_16_node_heartbeat_reports_liveness_and_load(self):
+        nid = self.node_ids[0]
+        r = client.post(f"/api/compute/nodes/{nid}/heartbeat", json={
+            "status": "busy",
+            "current_load": 87.5,
+        }, headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIsNotNone(data["last_heartbeat"])
+        self.assertFalse(data["heartbeat_stale"])
+        self.assertEqual(data["status"], "busy")
+        self.assertEqual(data["current_load"], 87.5)
+
+    def test_17_node_heartbeat_rejects_non_numeric_load(self):
+        nid = self.node_ids[0]
+        r = client.post(f"/api/compute/nodes/{nid}/heartbeat", json={"current_load": "abc"}, headers=self.h)
+        self.assertEqual(r.status_code, 422)
+
+    def test_18_stale_heartbeat_is_flagged(self):
+        nid = self.node_ids[0]
+        db = SessionLocal()
+        try:
+            node = db.query(ComputeNode).filter(ComputeNode.id == uuid.UUID(nid)).first()
+            node.last_heartbeat = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+            db.commit()
+        finally:
+            db.close()
+        r = client.get("/api/compute/nodes", headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        target = next(n for n in r.json()["items"] if n["id"] == nid)
+        self.assertTrue(target["heartbeat_stale"])
+        # A fresh heartbeat must clear the stale flag again.
+        r = client.post(f"/api/compute/nodes/{nid}/heartbeat", json={}, headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.json()["heartbeat_stale"])
+
+    def test_19_device_heartbeat_reports_runtime_info(self):
+        did = self.device_ids[0]
+        r = client.post(f"/api/compute/devices/{did}/heartbeat", json={
+            "status": "online",
+            "model_deployed": "weld_quality_v1",
+            "version": "v2",
+        }, headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIsNotNone(data["last_heartbeat"])
+        self.assertFalse(data["heartbeat_stale"])
+        self.assertEqual(data["model_deployed"], "weld_quality_v1")
+        self.assertEqual(data["version"], "v2")
+
+    def test_20_heartbeat_nonexistent_node_404(self):
+        r = client.post(f"/api/compute/nodes/{uuid.uuid4()}/heartbeat", json={}, headers=self.h)
+        self.assertEqual(r.status_code, 404)
 
 
 if __name__ == "__main__":

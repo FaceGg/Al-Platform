@@ -16,6 +16,7 @@ import {
   predictDemoLoopRow, resetDemoLoop, saveDemoLoopConfig,
 } from "../api/demoLoop";
 import { useI18n } from "../i18n";
+import { parseBackendTime } from "../utils/time";
 
 const { Title, Text } = Typography;
 
@@ -260,9 +261,10 @@ export default function DemoLoopPage() {
   const alertThreshold = config?.alert_threshold_rows ?? 1;
   const retrainThreshold = config?.retrain_threshold_rows ?? 0;
   const lastEvent = status?.events?.[status.events.length - 1];
+  const lastEventAgeMs = lastEvent ? (Date.now() - (parseBackendTime(lastEvent.created_at)?.getTime() ?? Number.NaN)) : Number.NaN;
   const alertActive = (status?.alert_count ?? 0) > 0 && config?.alert_threshold_rows === 1
     ? true
-    : (lastEvent?.event_type === "alert_triggered" && (Date.now() - new Date(lastEvent.created_at || 0).getTime() < 30000));
+    : (lastEvent?.event_type === "alert_triggered" && Number.isFinite(lastEventAgeMs) && lastEventAgeMs < 30000);
 
   return (
     <AppLayout>

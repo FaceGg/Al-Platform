@@ -61,6 +61,7 @@ const weekTestFiles: Record<number, string[]> = {
     "./pages/APIMarketplacePage.test.tsx",
     "./pages/AutoMLPage.test.tsx",
     "./pages/AutoMLTaskPage.progress.test.tsx",
+    "./pages/ComputeResourcePage.test.tsx",
     "./pages/DashboardPage.test.tsx",
     "./pages/DataAnnotationPage.test.tsx",
     "./pages/KnowledgeBasePage.test.tsx",
@@ -89,6 +90,7 @@ const weekTestFiles: Record<number, string[]> = {
     "./components/ReturnAcceptancePanel.test.tsx",
     "./components/AnnotationCommentModerationPanel.test.tsx",
     "./components/ReturnBatchList.test.tsx",
+    "./utils/time.test.ts",
     "./utils/uuid.test.ts",
   ],
 };

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { listTasks, Task, TaskQueueQuery } from '../api/tasks'
 import FeedbackBanner from '../components/FeedbackBanner'
 import TaskCard, { isFeedbackTask } from '../components/TaskCard'
+import { parseBackendTime } from '../utils/time'
 
 type User = { subject_id?: string | null; username: string }
 
@@ -103,8 +104,8 @@ export default function TaskQueuePage({
   ).length
   const overdueCount = tasks.filter((t) => {
     if (!t.due_at) return false
-    const due = new Date(t.due_at)
-    return due < new Date() && !['completed', 'cancelled', 'accepted', 'archived'].includes(t.status)
+    const due = parseBackendTime(t.due_at)
+    return due !== null && due < new Date() && !['completed', 'cancelled', 'accepted', 'archived'].includes(t.status)
   }).length
 
   const displayName = user?.username ?? '用户'

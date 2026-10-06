@@ -1,4 +1,5 @@
 import { Task } from '../api/tasks'
+import { parseBackendTime } from '../utils/time'
 
 const statusLabels: Record<string, string> = {
   awaiting_annotation: '待标注',
@@ -56,7 +57,7 @@ export default function TaskCard({
               <line x1="8" y1="2" x2="8" y2="6" />
               <line x1="3" y1="10" x2="21" y2="10" />
             </svg>
-            {task.due_at ? `截止 ${new Date(task.due_at).toLocaleDateString()}` : '未设置截止时间'}
+            {task.due_at ? `截止 ${parseBackendTime(task.due_at)?.toLocaleDateString() ?? task.due_at}` : '未设置截止时间'}
           </span>
           {task.assignment_id && <span className="muted">指派编号 {task.assignment_id}</span>}
         </div>

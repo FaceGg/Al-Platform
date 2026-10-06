@@ -3,6 +3,7 @@ import { Alert, Badge, Button, Empty, List, Popover, Spin, Tag, Tooltip, Typogra
 import { BellOutlined, CheckOutlined, DeleteOutlined } from "@ant-design/icons";
 import { notificationsApi, type InAppNotification } from "../api/securityNotifications";
 import { useI18n } from "../i18n";
+import { parseBackendTime } from "../utils/time";
 
 const severityColor: Record<InAppNotification["severity"], string> = {
   info: "blue",
@@ -11,9 +12,8 @@ const severityColor: Record<InAppNotification["severity"], string> = {
 };
 
 function formattedTime(value: string | null): string {
-  if (!value) return "";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleString();
+  const parsed = parseBackendTime(value);
+  return parsed ? parsed.toLocaleString() : "";
 }
 
 export default function NotificationCenter() {

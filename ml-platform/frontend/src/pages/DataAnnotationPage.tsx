@@ -18,6 +18,7 @@ import AutomaticAnnotationStrategyEditor, {
 } from "../components/AutomaticAnnotationStrategyEditor";
 import { useI18n } from "../i18n";
 import { normalizeTaskStatus, taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
+import { parseBackendTime } from "../utils/time";
 import { createUuid } from "../utils/uuid";
 import { formatApiError, default as apiClient } from "../api/client";
 import { listDatasets, listDatasetVersions, type DatasetVersionOption } from "../api/datasets";
@@ -75,9 +76,8 @@ import type { QualityClusterPreview } from "../api/spotWeldQuality";
 // 补 "Z" 后再解析，使其按浏览器本地时区正确展示（如北京时间 +8）。
 function formatBackendTimestamp(value: string | null | undefined): string {
   if (!value) return "-";
-  const hasTimezone = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(value);
-  const date = new Date(hasTimezone ? value : `${value}Z`);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  const parsed = parseBackendTime(value);
+  return parsed ? parsed.toLocaleString() : value;
 }
 
 interface ProjectOption { id: string; name: string; project_role?: string; }
@@ -2368,7 +2368,7 @@ export default function DataAnnotationPage() {
                 { title: lang === "zh" ? "状态" : "Status", dataIndex: "status", render: (value: string) => <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, lang)}</Tag> },
                 { title: copy.sampleCount, key: "samples", render: (_: unknown, task: AnnotationTask) => { const count = (task.task_snapshot?.scope as { sample_count?: number } | undefined)?.sample_count; return count === undefined || count === null ? "-" : `${count} ${copy.rows}`; } },
                 { title: copy.createdAt, dataIndex: "created_at", render: (value: string | null) => formatBackendTimestamp(value) },
-                { title: copy.dueAt, dataIndex: "due_at", render: (value: string | null) => value ? new Date(value).toLocaleDateString() : "-" },
+                { title: copy.dueAt, dataIndex: "due_at", render: (value: string | null) => value ? (parseBackendTime(value)?.toLocaleDateString() ?? value) : "-" },
                 { title: lang === "zh" ? "修订" : "Revision", dataIndex: "task_revision" },
                 { title: copy.actions, key: "actions", align: "right" as const, render: (_: unknown, task: AnnotationTask) => {
                   const assignable = ["preview_ready", "awaiting_annotation", "in_progress"].includes(task.status);

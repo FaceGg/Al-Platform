@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Drawer, Select } from "antd";
 import type { AnnotatorSubject, SampleScope } from "../api/annotatorAssignments";
+import { parseBackendTime } from "../utils/time";
 
 interface Props {
   open: boolean;
@@ -18,8 +19,8 @@ interface Props {
 
 /** ISO 时间转 datetime-local 输入框需要的本地格式 */
 function toLocalInputValue(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
+  const date = parseBackendTime(iso);
+  if (!date) return "";
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }

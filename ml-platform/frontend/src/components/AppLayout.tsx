@@ -45,7 +45,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { key: "/chat", icon: <MessageOutlined />, label: t.nav.chat },
     { type: "divider" as const },
     { key: "/monitor", icon: <MonitorOutlined />, label: t.nav.monitor },
-    { key: "/compute", icon: <CloudServerOutlined />, label: "Compute" },
+    { key: "/compute", icon: <CloudServerOutlined />, label: t.nav.compute },
     { key: "/kubernetes", icon: <ClusterOutlined />, label: t.nav.kubernetes },
     ...(userRole === "admin" ? [{ key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users }] : []),
   ];

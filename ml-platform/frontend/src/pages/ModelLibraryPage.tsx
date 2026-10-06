@@ -9,6 +9,7 @@ import {
   RollbackOutlined, StopOutlined, SyncOutlined,
 } from "@ant-design/icons";
 import apiClient, { formatApiError } from "../api/client";
+import { parseBackendTime } from "../utils/time";
 import {
   approveModelVersion, createDeployment, createRegisteredModel, deleteRegisteredModel, deleteDeployment,
   createInferenceApiKey, createRollout, type CreatedInferenceApiKey,
@@ -524,9 +525,8 @@ export default function ModelLibraryPage() {
   ];
 
   const isApiKeyExpired = (key: InferenceApiKey) => {
-    if (!key.expires_at) return false;
-    const expiresAt = new Date(key.expires_at).getTime();
-    return Number.isFinite(expiresAt) && expiresAt <= Date.now();
+    const expiresAt = parseBackendTime(key.expires_at);
+    return expiresAt !== null && expiresAt.getTime() <= Date.now();
   };
 
   const rolloutColumns = [

@@ -268,7 +268,11 @@ describe("DataAnnotationPage", () => {
     const genericList = await screen.findByRole("region", { name: "通用任务列表" });
     fireEvent.click(within(genericList).getByRole("button", { name: "指派标注员" }));
     const dueInput = await screen.findByLabelText("截止时间");
-    expect(dueInput).toHaveValue("2026-10-05T23:59");
+    // due_at 是无时区标记的 UTC；输入框应显示该时刻的本地时间（而非 UTC 墙上时间）。
+    const dueMoment = new Date(`${readyTask.due_at}Z`);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const expectedLocal = `${dueMoment.getFullYear()}-${pad(dueMoment.getMonth() + 1)}-${pad(dueMoment.getDate())}T${pad(dueMoment.getHours())}:${pad(dueMoment.getMinutes())}`;
+    expect(dueInput).toHaveValue(expectedLocal);
     expect(screen.getByText("截止时间（已按任务截止时间填充，可修改）")).toBeInTheDocument();
   });
 

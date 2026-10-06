@@ -8,6 +8,7 @@ import {
   listAdminComments,
   listAdminSamples,
 } from '../api/admin'
+import { parseBackendTime } from '../utils/time'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 
@@ -19,8 +20,8 @@ function formatValue(value: unknown): string {
 
 function formatTime(value: string | null | undefined): string {
   if (!value) return ''
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString()
+  const parsed = parseBackendTime(value)
+  return parsed ? parsed.toLocaleString() : value
 }
 
 export default function AdminReviewPage({

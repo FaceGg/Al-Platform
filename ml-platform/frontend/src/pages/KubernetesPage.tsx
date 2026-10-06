@@ -18,6 +18,7 @@ import { ClusterOutlined, ReloadOutlined } from "@ant-design/icons";
 import { App as AntApp } from "antd";
 import apiClient, { formatApiError } from "../api/client";
 import AppLayout from "../components/AppLayout";
+import { parseBackendTime } from "../utils/time";
 import { useI18n } from "../i18n";
 import {
   ClusterInfo,
@@ -245,7 +246,7 @@ export default function KubernetesPage() {
     { title: kt("lastCheck", "最近检查"), key: "lastCheck", width: 180, render: (_: unknown, row: ClusterInfo) => (
       <Space direction="vertical" size={0}>
         <Typography.Text style={{ fontSize: 12 }}>
-          {row.last_checked_at ? new Date(row.last_checked_at).toLocaleString() : kt("neverChecked", "未检查")}
+          {row.last_checked_at ? (parseBackendTime(row.last_checked_at)?.toLocaleString() ?? row.last_checked_at) : kt("neverChecked", "未检查")}
         </Typography.Text>
         {row.last_check_latency_ms != null && (
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>{row.last_check_latency_ms}ms</Typography.Text>

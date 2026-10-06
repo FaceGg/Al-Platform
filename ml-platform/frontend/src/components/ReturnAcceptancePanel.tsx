@@ -11,15 +11,13 @@ import {
   type ReturnBatch,
   type ReturnDiffRow,
 } from "../api/annotationReturns";
+import { parseBackendTime } from "../utils/time";
 
 type Props = { projectId: string };
 
-// 后端以 UTC 存储时间戳；补 "Z" 后按浏览器本地时区展示（与 DataAnnotationPage 一致）。
 function formatBackendTimestamp(value: string | null | undefined): string {
-  if (!value) return "-";
-  const hasTimezone = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(value);
-  const date = new Date(hasTimezone ? value : `${value}Z`);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  const parsed = parseBackendTime(value);
+  return parsed ? parsed.toLocaleString() : (value || "-");
 }
 
 function annotatorPortalUrl(taskId?: string | null): string {

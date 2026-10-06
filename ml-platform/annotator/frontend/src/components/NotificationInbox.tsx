@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listNotifications, markNotificationRead, Notification } from '../api/notifications'
+import { parseBackendTime } from '../utils/time'
 import './NotificationInbox.css'
 
 const titles: Record<string, string> = {
@@ -123,7 +124,7 @@ export default function NotificationInbox({ onOpenTask }: { onOpenTask?: (taskId
       <ul className="notification-list">
         {items.map(item => <li key={item.id}>
           <div><h3>{titles[item.event_type] ?? item.title}</h3><p>{item.body}</p>
-            <time dateTime={item.created_at}>{new Date(item.created_at.endsWith('Z') ? item.created_at : `${item.created_at}Z`).toLocaleString()}</time>
+            <time dateTime={item.created_at}>{parseBackendTime(item.created_at)?.toLocaleString() ?? item.created_at}</time>
           </div>
           <div className="notification-actions">
             {item.target && onOpenTask && <button type="button" onClick={() => onOpenTask(item.target!.task_id, item.target!.assignment_id)}>打开任务</button>}

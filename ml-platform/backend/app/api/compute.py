@@ -1,5 +1,8 @@
 """Compute resource and edge device management API."""
+import os
 import uuid
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -9,6 +12,21 @@ from app.api.auth import get_current_user
 from app.services.resource_access import ResourceAccessService
 
 router = APIRouter(prefix="/api/compute", tags=["compute"])
+
+# A node/device whose last reported heartbeat is older than this is surfaced
+# as heartbeat_stale so the UI can flag manually registered entries.
+HEARTBEAT_STALE_SECONDS = max(30, int(os.getenv("COMPUTE_HEARTBEAT_STALE_SECONDS", "180")))
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _heartbeat_stale(last_heartbeat: datetime | None) -> bool:
+    if last_heartbeat is None:
+        return True
+    seen = last_heartbeat if last_heartbeat.tzinfo is None else last_heartbeat.replace(tzinfo=None)
+    return (_utcnow() - seen).total_seconds() > HEARTBEAT_STALE_SECONDS
 
 
 def _node_response(node: ComputeNode) -> dict:
@@ -26,6 +44,8 @@ def _node_response(node: ComputeNode) -> dict:
         "disk_gb": node.disk_gb,
         "current_load": node.current_load,
         "tags": node.tags or [],
+        "last_heartbeat": node.last_heartbeat.isoformat() if node.last_heartbeat else None,
+        "heartbeat_stale": _heartbeat_stale(node.last_heartbeat),
     }
 
 
@@ -42,6 +62,7 @@ def _device_response(device: EdgeDevice) -> dict:
         "last_heartbeat": (
             device.last_heartbeat.isoformat() if device.last_heartbeat else None
         ),
+        "heartbeat_stale": _heartbeat_stale(device.last_heartbeat),
     }
 
 
@@ -133,6 +154,28 @@ def delete_node(node_id: str, db: Session = Depends(get_db), current_user: User 
     return {"status": "deleted"}
 
 
+@router.post("/nodes/{node_id}/heartbeat")
+def node_heartbeat(node_id: str, data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Report node liveness; node agents call this to keep status/load current."""
+    node = ResourceAccessService().require_owned(
+        db,
+        ComputeNode,
+        node_id,
+        current_user.id,
+    )
+    node.last_heartbeat = _utcnow()
+    if "status" in data and data["status"]:
+        node.status = str(data["status"])
+    if "current_load" in data and data["current_load"] is not None:
+        try:
+            node.current_load = max(0.0, min(100.0, float(data["current_load"])))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="current_load must be a number")
+    db.commit()
+    db.refresh(node)
+    return _node_response(node)
+
+
 # ---- Edge Devices ----
 @router.get("/devices")
 def list_devices(
@@ -220,3 +263,29 @@ def delete_device(
     db.delete(device)
     db.commit()
     return {"status": "deleted"}
+
+
+@router.post("/devices/{device_id}/heartbeat")
+def device_heartbeat(
+    device_id: str,
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Report device liveness; edge agents also report what they currently run."""
+    device = ResourceAccessService().require_owned(
+        db,
+        EdgeDevice,
+        device_id,
+        current_user.id,
+    )
+    device.last_heartbeat = _utcnow()
+    if "status" in data and data["status"]:
+        device.status = str(data["status"])
+    if "model_deployed" in data and data["model_deployed"] is not None:
+        device.model_deployed = str(data["model_deployed"])
+    if "version" in data and data["version"] is not None:
+        device.version = str(data["version"])
+    db.commit()
+    db.refresh(device)
+    return _device_response(device)

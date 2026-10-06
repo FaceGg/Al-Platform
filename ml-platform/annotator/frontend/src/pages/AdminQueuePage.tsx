@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { acceptAdminTask, AdminTaskListItem, listAdminTasks, returnAdminTask } from '../api/admin'
+import { parseBackendTime } from '../utils/time'
 
 const statusLabels: Record<string, string> = {
   awaiting_annotation: '待标注',
@@ -54,8 +55,8 @@ const modeLabels: Record<string, string> = {
 
 function formatDateTime(value: string | null): string {
   if (!value) return '—'
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString()
+  const parsed = parseBackendTime(value)
+  return parsed ? parsed.toLocaleString() : value
 }
 
 type User = { username: string }

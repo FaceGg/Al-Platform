@@ -23,6 +23,7 @@ class ComputeNode(Base):
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     description = Column(Text, default="")
     tags = Column(JSON, default=list)
+    last_heartbeat = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 
