@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import {
   Select, Button, Form, Input, List, Typography, message, Card, Space, Tag, Empty
 } from "antd";
-import { PlusOutlined, DeleteOutlined, ReloadOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
@@ -10,7 +10,7 @@ import { useI18n } from "../i18n";
 const { Text } = Typography;
 
 interface GraphNode {
-  id: string; label: string; type?: string; x?: number; y?: number;
+  id: string; label: string; type?: string; source?: string; docCount?: number; x?: number; y?: number;
 }
 interface GraphEdge {
   source: string; target: string; label?: string; type?: string;
@@ -20,12 +20,27 @@ interface GraphData {
 }
 
 export default function KnowledgeGraphPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const graphText = lang === "zh" ? {
+    extract: "自动抽取", extracting: "抽取中...",
+    extractDone: (e: number, r: number) => `抽取完成：新增实体 ${e} 个、关系 ${r} 条`,
+    extractEmpty: "抽取完成：未发现满足阈值的实体（可检查文档内容或降低词频阈值）",
+    extractFailed: "自动抽取失败",
+    auto: "自动", manual: "手动", docCount: (n: number) => `出处文档 ${n} 篇`,
+  } : {
+    extract: "Auto extract", extracting: "Extracting...",
+    extractDone: (e: number, r: number) => `Extracted: ${e} entities, ${r} relations`,
+    extractEmpty: "Extracted nothing above threshold (check document content or lower the frequency threshold)",
+    extractFailed: "Auto extraction failed",
+    auto: "Auto", manual: "Manual", docCount: (n: number) => `${n} source doc(s)`,
+  };
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [bases, setBases] = useState<any[]>([]);
   const [selectedKb, setSelectedKb] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] });
   const [loading, setLoading] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [hover, setHover] = useState<{ x: number; y: number; node: GraphNode } | null>(null);
   const [form] = Form.useForm();
   const [edgeForm] = Form.useForm();
   const [simNodes, setSimNodes] = useState<Array<GraphNode & { vx: number; vy: number }>>([]);
@@ -47,6 +62,8 @@ export default function KnowledgeGraphPage() {
           id: n.id,
           label: n.label ?? n.name ?? n.id,
           type: n.type ?? n.entity_type ?? "entity",
+          source: n.properties?.source,
+          docCount: Array.isArray(n.properties?.doc_ids) ? n.properties.doc_ids.length : undefined,
           x: Math.random() * 600 + 50,
           y: Math.random() * 400 + 50,
         }));
@@ -176,6 +193,20 @@ export default function KnowledgeGraphPage() {
     }
   }, [simNodes, graphData.edges]);
 
+  const handleCanvasMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const hit = simNodes.find((n) => {
+      const dx = (n.x || 0) - mx;
+      const dy = (n.y || 0) - my;
+      return dx * dx + dy * dy <= 20 * 20;
+    });
+    setHover(hit ? { x: mx, y: my, node: hit } : null);
+  };
+
   const addEntity = async (values: any) => {
     try {
       await apiClient.post("/knowledge/bases/" + selectedKb + "/graph/entities", values);
@@ -184,6 +215,25 @@ export default function KnowledgeGraphPage() {
       loadGraph();
     } catch (e: any) {
       message.error(e.response?.data?.detail || t.common.error);
+    }
+  };
+
+  const extractGraph = async () => {
+    if (!selectedKb || extracting) return;
+    setExtracting(true);
+    try {
+      const res = await apiClient.post("/knowledge/bases/" + selectedKb + "/graph/extract");
+      const report = res.data || {};
+      if ((report.entities_created || 0) === 0 && (report.relations_created || 0) === 0) {
+        message.info(graphText.extractEmpty);
+      } else {
+        message.success(graphText.extractDone(report.entities_created || 0, report.relations_created || 0));
+      }
+      loadGraph();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || graphText.extractFailed);
+    } finally {
+      setExtracting(false);
     }
   };
 
@@ -223,6 +273,9 @@ export default function KnowledgeGraphPage() {
           <Button icon={<ReloadOutlined />} onClick={loadGraph} loading={loading}>
             {t.monitor.refresh}
           </Button>
+          <Button icon={<ThunderboltOutlined />} onClick={extractGraph} disabled={!selectedKb} loading={extracting}>
+            {graphText.extract}
+          </Button>
         </Space>
       </div>
       <div style={{ display: "flex", gap: 16 }}>
@@ -234,7 +287,35 @@ export default function KnowledgeGraphPage() {
             {simNodes.length === 0 && !loading ? (
               <Empty description={t.common.loading} style={{ marginTop: 200 }} />
             ) : (
-              <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
+              <div style={{ position: "relative", width: "100%", height: "100%" }}>
+                <canvas
+                  ref={canvasRef}
+                  style={{ width: "100%", height: "100%", display: "block" }}
+                  onMouseMove={handleCanvasMove}
+                  onMouseLeave={() => setHover(null)}
+                />
+                {hover && (
+                  <div style={{
+                    position: "absolute", left: (hover.x || 0) + 14, top: (hover.y || 0) + 10,
+                    background: "#fff", border: "1px solid #d9d9d9", borderRadius: 6,
+                    padding: "6px 10px", pointerEvents: "none", boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                    zIndex: 10, whiteSpace: "nowrap",
+                  }}>
+                    <Space size={6}>
+                      <Text strong>{hover.node.label}</Text>
+                      <Tag color="blue" style={{ marginInlineEnd: 0 }}>{hover.node.type || "entity"}</Tag>
+                      {hover.node.source === "auto"
+                        ? <Tag color="orange" style={{ marginInlineEnd: 0 }}>{graphText.auto}</Tag>
+                        : <Tag style={{ marginInlineEnd: 0 }}>{graphText.manual}</Tag>}
+                    </Space>
+                    {hover.node.docCount ? (
+                      <Text type="secondary" style={{ display: "block", fontSize: 11, marginTop: 2 }}>
+                        {graphText.docCount(hover.node.docCount)}
+                      </Text>
+                    ) : null}
+                  </div>
+                )}
+              </div>
             )}
           </Card>
         </div>
@@ -284,6 +365,10 @@ export default function KnowledgeGraphPage() {
                   <Space>
                     <Tag color={node.type === "entity" ? "blue" : "green"}>{node.type || "entity"}</Tag>
                     <Text>{node.label}</Text>
+                    {node.source === "auto"
+                      ? <Tag color="orange">{graphText.auto}</Tag>
+                      : <Tag>{graphText.manual}</Tag>}
+                    {node.docCount ? <Text type="secondary" style={{ fontSize: 11 }}>{graphText.docCount(node.docCount)}</Text> : null}
                   </Space>
                 </List.Item>
               )}

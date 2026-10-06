@@ -136,6 +136,28 @@ describe("APIMarketplacePage", () => {
     await waitFor(() => expect(apiDelete).toHaveBeenCalledWith("/platform/apis/orch-1"));
   });
 
+  it("renders chat APIs with a dedicated badge, filter, and delete action", async () => {
+    apiGet.mockResolvedValue({
+      items: [
+        { id: "chat-1", name: "焊接工艺知识库 Chat", api_type: "chat", source_kind: "chat",
+          source_id: "kb-1", version: "v1", status: "published", method: "POST",
+          endpoint: "/api/platform/apis/chat/kb-1/invoke", total_calls: 3, success_calls: 3 },
+      ],
+    });
+    render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
+    await screen.findByText("焊接工艺知识库 Chat");
+    expect(screen.getByText("Chat")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Chat API" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Chat API" }));
+    const deleteButtons = await screen.findAllByRole("button", { name: /删除/ });
+    fireEvent.click(deleteButtons[0]);
+    const buttons = document.querySelectorAll<HTMLElement>(
+      ".delete-confirmation__overlay .ant-btn-dangerous, .ant-popover .ant-btn-dangerous",
+    );
+    fireEvent.click(buttons[buttons.length - 1]);
+    await waitFor(() => expect(apiDelete).toHaveBeenCalledWith("/platform/apis/chat-1"));
+  });
+
   it("hides edit/delete for deployment-bound model APIs", async () => {
     apiGet.mockResolvedValue({
       items: [{

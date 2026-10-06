@@ -10,7 +10,6 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, B
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
 
 from app.database import get_db
 from app.models.knowledge import KnowledgeBase, Document, Chunk, GraphEntity, GraphRelation, ChatSession, ChatMessage
@@ -19,6 +18,11 @@ from app.api.auth import get_current_user
 from app.config import settings
 
 from app.engine.vector_store import get_vector_store
+from app.services.knowledge_retrieval import (
+    _compute_similarity,
+    _compute_tfidf_embedding,
+    retrieve_chunks,
+)
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
@@ -53,79 +57,10 @@ def normalize_chat_messages(request: dict) -> dict:
 
 
 # -------------------------------------------------------------------------------
-#  Utility: TF-IDF embedding helpers
+#  Utility: TF-IDF embedding helpers now live in app.services.knowledge_retrieval
+#  (shared with the standalone chat API, the published chat API, and graph
+#  extraction). The private names are re-exported above for compatibility.
 # -------------------------------------------------------------------------------
-
-def _compute_tfidf_embedding(texts, single_text=None):
-    """Compute TF-IDF vectors for a list of texts, optionally vectorize a single query."""
-    if not texts:
-        if single_text is not None:
-            vec = TfidfVectorizer()
-            vec.fit([single_text])
-            emb = vec.transform([single_text]).toarray()[0]
-            return json.dumps(emb.tolist())
-        return []
-    if single_text is not None and not texts:
-        vec = TfidfVectorizer()
-        vec.fit([single_text])
-        emb = vec.transform([single_text]).toarray()[0]
-        return json.dumps(emb.tolist())
-    vec = TfidfVectorizer()
-    vec.fit(texts)
-    if single_text is not None:
-        emb = vec.transform([single_text]).toarray()[0]
-        return json.dumps(emb.tolist())
-    embeddings = vec.transform(texts).toarray()
-    return [json.dumps(e.tolist()) for e in embeddings]
-
-
-def _l2_normalize(vec):
-    """L2-normalize a numpy vector in-place."""
-    norm = np.linalg.norm(vec)
-    if norm > 0:
-        return vec / norm
-    return vec
-
-
-def _compute_similarity(query_vec, doc_vecs, metric="cosine"):
-    """Compute similarity between query vector and document vectors.
-
-    Args:
-        query_vec: JSON-encoded query vector string.
-        doc_vecs: List of JSON-encoded document vector strings.
-        metric: One of 'cosine', 'euclidean', 'dot'.
-
-    Returns:
-        numpy array of similarity scores (higher = more similar).
-    """
-    q = np.array(json.loads(query_vec), dtype=np.float64)
-    docs = np.array([json.loads(d) for d in doc_vecs], dtype=np.float64)
-
-    if docs.shape[0] == 0:
-        return np.array([])
-
-    if metric == "cosine":
-        # L2 normalize for stable cosine similarity
-        q_norm = _l2_normalize(q.copy())
-        docs_norm = np.array([_l2_normalize(d.copy()) for d in docs])
-        similarities = docs_norm.dot(q_norm)
-        similarities = np.nan_to_num(similarities, nan=0.0)
-        return similarities
-    elif metric == "euclidean":
-        # Euclidean distance -> higher is better => negative distance
-        diffs = docs - q
-        distances = np.sqrt(np.sum(diffs * diffs, axis=1))
-        return -distances
-    elif metric == "dot":
-        # Dot product
-        return docs.dot(q)
-    else:
-        # Default to cosine
-        q_norm = _l2_normalize(q.copy())
-        docs_norm = np.array([_l2_normalize(d.copy()) for d in docs])
-        similarities = docs_norm.dot(q_norm)
-        similarities = np.nan_to_num(similarities, nan=0.0)
-        return similarities
 
 
 # -------------------------------------------------------------------------------
@@ -212,6 +147,8 @@ def delete_base(
     ).first()
     if not kb:
         raise HTTPException(404, "Knowledge base not found")
+    from app.services.api_publication import sync_chat_publication
+    sync_chat_publication(db, kb.id)
     db.delete(kb)
     db.commit()
     return {"message": "Knowledge base deleted"}
@@ -354,8 +291,8 @@ def search_knowledge(
     """Search chunks using vector similarity.
 
     Supported metrics: cosine, euclidean, dot.
-    Uses numpy batch computation with L2 normalization.
-    When use_vector_store=True, delegates to in-memory VectorStore for faster retrieval.
+    Retrieval core lives in app.services.knowledge_retrieval so the chat APIs
+    and graph extraction share the exact same ranking.
     """
     kb = db.query(KnowledgeBase).filter(
         KnowledgeBase.id == uuid.UUID(kb_id),
@@ -364,58 +301,9 @@ def search_knowledge(
     if not kb:
         raise HTTPException(404, "Knowledge base not found")
 
-    # Try VectorStore first if enabled
-    if use_vector_store:
-        vstore = get_vector_store()
-        stats = vstore.get_stats()
-        if stats["total_vectors"] > 0:
-            query_vec = np.array(json.loads(_compute_tfidf_embedding([query], single_text=query)), dtype=np.float32)
-            vs_results = vstore.search(query_vec, top_k=top_k)
-            if vs_results:
-                results = []
-                for r in vs_results:
-                    chunk_id = r["id"]
-                    chunk = db.query(Chunk).filter(Chunk.id == uuid.UUID(chunk_id)).first()
-                    results.append({
-                        "chunk_id": chunk_id,
-                        "doc_id": str(chunk.doc_id) if chunk else "",
-                        "content": r["metadata"].get("content", ""),
-                        "score": round(r["score"], 4),
-                        "source": "vector_store",
-                    })
-                return results
-
-    chunks = db.query(Chunk).join(Document).filter(
-        Document.kb_id == kb.id,
-        Chunk.embedding != "",
-    ).all()
-
-    if not chunks:
-        return []
-
-    chunk_texts = [c.content for c in chunks]
-    chunk_embs = [c.embedding for c in chunks]
-
-    # Vectorize query using same corpus
-    query_emb = _compute_tfidf_embedding(chunk_texts, single_text=query)
-
-    # Compute similarities with chosen metric
-    scores = _compute_similarity(query_emb, chunk_embs, metric=metric)
-
-    # Get top_k indices (higher score = more similar)
-    top_indices = np.argsort(scores)[::-1][:top_k]
-
-    results = []
-    for idx in top_indices:
-        if scores[idx] is not None:
-            results.append({
-                "chunk_id": str(chunks[idx].id),
-                "doc_id": str(chunks[idx].doc_id),
-                "content": chunk_texts[idx],
-                "score": round(float(scores[idx]), 4),
-                "source": "tfidf",
-            })
-    return results
+    return retrieve_chunks(
+        db, kb, query, top_k=top_k, metric=metric, use_vector_store=use_vector_store,
+    )
 
 
 # -------------------------------------------------------------------------------
@@ -1004,6 +892,56 @@ def delete_relation(
     return {"message": "Relation deleted"}
 
 
+@router.post("/bases/{kb_id}/graph/extract")
+def extract_kb_graph_endpoint(
+    kb_id: str,
+    doc_ids: Optional[list[str]] = Body(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Rebuild the auto knowledge-graph layer from document content.
+
+    Deterministic rules + statistics (jieba noun phrases, co-occurrence,
+    is_a/part_of patterns). Entities/relations created by the user manually
+    are never modified or deleted; only rows tagged properties.source="auto"
+    are replaced. Without doc_ids every document of the KB is used.
+    """
+    kb = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == uuid.UUID(kb_id),
+        KnowledgeBase.owner_id == current_user.id,
+    ).first()
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+
+    doc_query = db.query(Document).filter(Document.kb_id == kb.id)
+    if doc_ids:
+        try:
+            wanted = {uuid.UUID(x) for x in doc_ids}
+        except (TypeError, ValueError) as error:
+            raise HTTPException(422, "doc_ids must be valid UUIDs") from error
+        doc_query = doc_query.filter(Document.id.in_(wanted))
+    documents = doc_query.all()
+    if not documents:
+        raise HTTPException(422, "No documents to extract from")
+
+    # Oversized selections must be split by the caller instead of silently
+    # degrading inside the time budget.
+    total_chars = sum(len(d.content or "") for d in documents)
+    max_chars = settings.knowledge_graph_max_extract_chars
+    if total_chars > max_chars:
+        raise HTTPException(
+            422,
+            f"Selected documents total {total_chars} chars, above the {max_chars}-char "
+            f"extraction budget; re-run with a doc_ids subset instead",
+        )
+
+    from app.services.knowledge_graph_extraction import extract_kb_graph
+    report = extract_kb_graph(
+        db, kb,
+        [(str(d.id), d.content or "") for d in documents],
+    )
+    return report
+
 
 # -------------------------------------------------------------------------------
 #  Range Search (threshold-based similarity search)
@@ -1154,6 +1092,52 @@ def reload_vectors(kb_id: str, db: Session = Depends(get_db), current_user: User
     return {"loaded": loaded, "total_vectors": len(vstore.ids)}
 
 
+@router.post("/bases/{kb_id}/reembed")
+def reembed_kb(kb_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Recompute TF-IDF embeddings for every chunk with the current tokenizer.
+
+    Required once after switching to jieba tokenization: previously stored
+    vectors were computed with the legacy word splitting, so Chinese similarity
+    is degraded until chunks are re-embedded. Refreshes the VectorStore copies
+    in place (falls back to adding when a chunk was never vectorized there).
+    """
+    kb = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == uuid.UUID(kb_id),
+        KnowledgeBase.owner_id == current_user.id,
+    ).first()
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+
+    chunks = db.query(Chunk).join(Document).filter(
+        Document.kb_id == kb.id,
+    ).all()
+    if not chunks:
+        return {"reembedded": 0, "message": "Knowledge base has no chunks"}
+
+    texts = [c.content for c in chunks]
+    emb_strs = _compute_tfidf_embedding(texts)
+    vstore = get_vector_store()
+    updated = 0
+    for chunk, emb_str in zip(chunks, emb_strs):
+        chunk.embedding = emb_str
+        try:
+            vec = np.array(json.loads(emb_str), dtype=np.float32)
+        except (ValueError, TypeError):
+            continue
+        metadata = {"content": chunk.content[:200], "doc_id": str(chunk.doc_id), "kb_id": str(kb.id)}
+        try:
+            vstore.update(str(chunk.id), vector=vec, metadata=metadata)
+        except ValueError:
+            vstore.add([str(chunk.id)], vec.reshape(1, -1), [metadata])
+        updated += 1
+    db.commit()
+    return {
+        "reembedded": updated,
+        "total_chunks": len(chunks),
+        "vector_store_stats": vstore.get_stats(),
+    }
+
+
 # -------------------------------------------------------------------------------
 #  Enhanced RAG endpoint with source tracking
 # -------------------------------------------------------------------------------
@@ -1230,7 +1214,10 @@ def rag_enhanced(
         "llm_answer": llm_answer,
         "answer": llm_answer or "LLM not configured. Context retrieved successfully.",
         "context_chunks": len(context_chunks),
-    }@router.get("/bases/{kb_id}/graph")
+    }
+
+
+@router.get("/bases/{kb_id}/graph")
 def get_full_graph(
     kb_id: str,
     db: Session = Depends(get_db),

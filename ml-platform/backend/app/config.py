@@ -166,6 +166,17 @@ class Settings(BaseSettings):
     llm_api_key: str = Field(default="", repr=False, exclude=True)
     llm_model: str = "gpt-3.5-turbo"
 
+    # Knowledge-graph auto extraction limits (rules + statistics pipeline)
+    knowledge_graph_max_entities: int = 500
+    knowledge_graph_max_relations: int = 2000
+    knowledge_graph_min_entity_freq: int = 2
+    knowledge_graph_time_budget_seconds: float = 30
+    knowledge_graph_max_extract_chars: int = 200000
+
+    # Retrieval tokenization: switch off to fall back to the legacy
+    # TfidfVectorizer word splitting (also requires a reembed afterwards).
+    retrieval_use_jieba: bool = True
+
     _resolved_secret_key: SecretStr = PrivateAttr()
     _resolved_minio_access_key: SecretStr | None = PrivateAttr(default=None)
     _resolved_minio_secret_key: SecretStr | None = PrivateAttr(default=None)

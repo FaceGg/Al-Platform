@@ -55,4 +55,28 @@ describe("KnowledgeGraphPage", () => {
       );
     });
   });
+
+  it("auto-extracts the graph layer from knowledge base documents", async () => {
+    post.mockImplementation((url: string) => {
+      if (url === "/knowledge/bases/kb-1/graph/extract") {
+        return Promise.resolve({ data: { entities_created: 3, relations_created: 4 } });
+      }
+      return Promise.resolve({ data: { id: "entity-1" } });
+    });
+    render(<AntApp><KnowledgeGraphPage /></AntApp>);
+
+    fireEvent.mouseDown(await screen.findByRole("combobox"));
+    fireEvent.click(await screen.findByText("Weld KB"));
+    const extract = await screen.findByRole("button", { name: /Auto extract/ });
+    fireEvent.click(extract);
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith("/knowledge/bases/kb-1/graph/extract");
+    });
+    // The graph is reloaded after extraction.
+    await waitFor(() => {
+      expect(get.mock.calls.filter(([url]) => url === "/knowledge/bases/kb-1/graph").length)
+        .toBeGreaterThanOrEqual(2);
+    });
+  });
 });

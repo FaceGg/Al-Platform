@@ -234,3 +234,97 @@ def sync_workflow_publication(db, workflow_id) -> int:
     if affected:
         db.commit()
     return affected
+
+
+def _chat_kb(db, kb_id, actor_id):
+    """Owner-checked knowledge-base lookup for chat publication.
+
+    Knowledge bases are owner-private across the knowledge module, so unlike
+    deployment/workflow sources there is no project-access indirection here.
+    Ownership mismatches return the same hidden 404 as a missing KB, matching
+    the knowledge endpoints' convention.
+    """
+    from app.models.knowledge import KnowledgeBase
+
+    try:
+        kb_uuid = kb_id if isinstance(kb_id, uuid.UUID) else uuid.UUID(str(kb_id))
+    except (TypeError, ValueError) as error:
+        raise APIPublicationError("KNOWLEDGE_BASE_NOT_FOUND", "Knowledge base not found") from error
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_uuid).first()
+    if kb is None or kb.owner_id != actor_id:
+        raise APIPublicationError("KNOWLEDGE_BASE_NOT_FOUND", "Knowledge base not found")
+    return kb
+
+
+def publish_chat_api(db, kb_id, actor_id: uuid.UUID) -> PlatformAPI:
+    kb = _chat_kb(db, kb_id, actor_id)
+    api_version = "v1"
+    existing = db.query(PlatformAPI).filter(
+        PlatformAPI.source_kind == "chat",
+        PlatformAPI.source_id == kb.id,
+        PlatformAPI.version == api_version,
+    ).first()
+    now = datetime.now(timezone.utc)
+    if existing is not None:
+        existing.status = "published"
+        existing.published_at = now
+        existing.last_error = None
+        db.commit()
+        db.refresh(existing)
+        return existing
+    api = PlatformAPI(
+        name=f"{kb.name} 对话", api_type="chat",
+        endpoint=f"/api/platform/apis/chat/{kb.id}/invoke", method="POST",
+        version=api_version, status="published", source_kind="chat",
+        source_id=kb.id,
+        description=f"RAG chat API bound to knowledge base {kb.name}",
+        request_schema={
+            "message": "string (required, non-empty)",
+            "top_k": "integer 1-10 (optional)",
+            "system_prompt": "string (optional)",
+            "temperature": "number 0-1 (optional)",
+        },
+        response_schema={"reply": "string", "sources": "list", "usage": "object"},
+        owner_id=actor_id, is_public=False, published_at=now,
+    )
+    db.add(api)
+    db.commit()
+    db.refresh(api)
+    return api
+
+
+def unpublish_chat_api(db, kb_id, actor_id: uuid.UUID) -> PlatformAPI:
+    _chat_kb(db, kb_id, actor_id)
+    api = db.query(PlatformAPI).filter(
+        PlatformAPI.source_kind == "chat", PlatformAPI.source_id == _chat_source_id(db, kb_id),
+    ).order_by(PlatformAPI.created_at.desc()).first()
+    if api is None:
+        raise APIPublicationError("API_NOT_FOUND", "Published chat API not found")
+    api.status = "offline"
+    db.commit()
+    db.refresh(api)
+    return api
+
+
+def _chat_source_id(db, kb_id) -> uuid.UUID:
+    return kb_id if isinstance(kb_id, uuid.UUID) else uuid.UUID(str(kb_id))
+
+
+def sync_chat_publication(db, kb_id) -> int:
+    """Take chat APIs offline when their knowledge base disappears.
+
+    Best-effort: matches by source_id so it also works from delete paths after
+    the knowledge-base row is gone.
+    """
+    try:
+        kb_uuid = uuid.UUID(str(kb_id))
+    except (TypeError, ValueError):
+        return 0
+    affected = db.query(PlatformAPI).filter(
+        PlatformAPI.source_kind == "chat",
+        PlatformAPI.source_id == kb_uuid,
+        PlatformAPI.status == "published",
+    ).update({"status": "offline"}, synchronize_session=False)
+    if affected:
+        db.commit()
+    return affected

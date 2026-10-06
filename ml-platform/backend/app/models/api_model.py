@@ -18,7 +18,7 @@ class PlatformAPI(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(256), nullable=False)
-    api_type = Column(String(32), default="model")  # model, orchestration, custom
+    api_type = Column(String(32), default="model")  # model, orchestration, chat, custom
     algorithm_type = Column(String(64), default="")
     endpoint = Column(String(512), default="")
     method = Column(String(16), default="POST")

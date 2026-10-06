@@ -1,13 +1,14 @@
 import { useState, useRef, useEffect } from "react";
-import { Card, Input, Button, Typography, Space, Spin, Tag, Empty, Divider, Modal, Slider } from "antd";
-import { SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined } from "@ant-design/icons";
+import { Card, Input, Button, Typography, Space, Spin, Tag, Empty, Divider, Modal, Slider, Select, Collapse, message as antdMessage } from "antd";
+import { SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined, ShareAltOutlined, FileTextOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 
 const { Text, Title } = Typography;
 
-interface ChatMsg { role: "user" | "assistant" | "system"; content: string; time: string; }
+interface ChatSource { index: number; chunk_id: string; doc_id: string; filename: string; score: number; }
+interface ChatMsg { role: "user" | "assistant" | "system"; content: string; time: string; sources?: ChatSource[]; }
 
 export default function AIChatPage() {
   const { t, lang } = useI18n();
@@ -16,11 +17,21 @@ export default function AIChatPage() {
     model: "模型", systemPrompt: "系统提示词", temperature: "生成随机度",
     configured: "已配置", start: "开始对话", thinking: "正在思考...",
     placeholder: "输入有关焊接制造的问题...", save: "保存配置",
+    knowledgeBase: "知识库（RAG）", knowledgeBaseHint: "绑定后回答基于知识库检索内容并标注引用来源",
+    noKnowledgeBase: "不使用知识库", citations: "引用来源", noCitations: "本次回答未引用知识库内容",
+    publishAsApi: "发布为 API", publishSuccessPrefix: "已发布为对话 API，",
+    publishSuccessLink: "去 API 市场查看", publishFailed: "发布为 API 失败", kbBound: "知识库",
+    emptySources: "知识库中没有检索到相关内容，已按通用助手回答",
   } : {
     settings: "Chat Settings", apiKey: "API Key", apiKeyHint: "Used only for this browser session and never saved on the server",
     model: "Model", systemPrompt: "System prompt", temperature: "Temperature",
     configured: "Configured", start: "Start a conversation", thinking: "Thinking...",
     placeholder: "Ask about welding manufacturing...", save: "Save settings",
+    knowledgeBase: "Knowledge base (RAG)", knowledgeBaseHint: "Answers are grounded in retrieved chunks with numbered citations",
+    noKnowledgeBase: "No knowledge base", citations: "Citations", noCitations: "This answer used no knowledge base content",
+    publishAsApi: "Publish as API", publishSuccessPrefix: "Published as a chat API - ",
+    publishSuccessLink: "open the API marketplace", publishFailed: "Publish failed", kbBound: "KB",
+    emptySources: "Nothing relevant was retrieved from the knowledge base; answered as a general assistant",
   };
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
@@ -31,37 +42,78 @@ export default function AIChatPage() {
   const [temperature, setTemperature] = useState(() => Number(localStorage.getItem("chat.temperature") || "0.7"));
   const [apiKey, setApiKey] = useState(() => sessionStorage.getItem("chat.apiKey") || "");
   const [model, setModel] = useState(() => sessionStorage.getItem("chat.model") || "");
+  const [kbId, setKbId] = useState(() => localStorage.getItem("chat.kbId") || "");
+  const [kbs, setKbs] = useState<any[]>([]);
+  const [publishing, setPublishing] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     apiClient.get("/chat/status").then(r => setStatus(r.data)).catch(() => {});
+    apiClient.get("/knowledge/bases").then(r => setKbs(Array.isArray(r.data) ? r.data : [])).catch(() => {});
   }, []);
 
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages]);
 
+  const fetchKbs = () => {
+    apiClient.get("/knowledge/bases").then(r => setKbs(Array.isArray(r.data) ? r.data : [])).catch(() => setKbs([]));
+  };
+
   const send = async () => {
-    const text = input.trim();
-    if (!text) return;
-    const userMsg: ChatMsg = { role: "user", content: text, time: new Date().toLocaleTimeString() };
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    const userMsg: ChatMsg = { role: "user", content: trimmed, time: new Date().toLocaleTimeString() };
     setMessages(prev => [...prev, userMsg]);
     setInput("");
     setLoading(true);
     try {
       const res = await apiClient.post("/chat", {
-        message: text,
+        message: trimmed,
         system_prompt: systemPrompt,
         temperature,
         api_key: apiKey || undefined,
         model: model || undefined,
+        kb_id: kbId || undefined,
       });
       const reply = res.data.reply || "No response.";
-      setMessages(prev => [...prev, { role: "assistant", content: reply, time: new Date().toLocaleTimeString() }]);
+      const assistantMsg: ChatMsg = {
+        role: "assistant", content: reply, time: new Date().toLocaleTimeString(),
+        sources: kbId ? (res.data.sources || []) : undefined,
+      };
+      if (kbId && res.data.kb_warning && (res.data.sources || []).length === 0) {
+        setMessages(prev => [...prev, assistantMsg, { role: "system", content: text.emptySources, time: new Date().toLocaleTimeString() }]);
+      } else {
+        setMessages(prev => [...prev, assistantMsg]);
+      }
     } catch (e: any) {
-      setMessages(prev => [...prev, { role: "system", content: "Error: " + (e.response?.data?.detail || e.message), time: new Date().toLocaleTimeString() }]);
+      const detail = e.response?.data?.detail;
+      const detailText = typeof detail === "object" ? (detail?.message || detail?.code) : detail;
+      setMessages(prev => [...prev, { role: "system", content: "Error: " + (detailText || e.message), time: new Date().toLocaleTimeString() }]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const publishApi = async () => {
+    if (!kbId || publishing) return;
+    setPublishing(true);
+    try {
+      await apiClient.post("/platform/apis/publish/chat/" + kbId);
+      antdMessage.success(
+        <span>
+          {`${text.publishSuccessPrefix} `}
+          {/* antd message renders outside the Router portal, so a plain
+              anchor is used for the marketplace jump. */}
+          <a href="/api-marketplace">{text.publishSuccessLink}</a>
+        </span>,
+      );
+    } catch (e: any) {
+      const detail = e.response?.data?.detail;
+      const detailText = typeof detail === "object" ? (detail?.message || detail?.code) : detail;
+      antdMessage.error(text.publishFailed + ": " + (detailText || e.message));
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -69,13 +121,17 @@ export default function AIChatPage() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   };
 
+  const boundKb = kbs.find(kb => kb.id === kbId);
+
   return (
     <AppLayout>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}><RobotOutlined /> {t.ai_chat.title}</Title>
         <Space>
           {apiKey || status?.configured ? <Tag color="green">{text.configured}: {model || status?.model}</Tag> : <Tag color="red">{t.ai_chat.not_configured}</Tag>}
-          <Button icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)}>{text.settings}</Button>
+          {boundKb && <Tag color="purple">{`${text.kbBound}: ${boundKb.name}`}</Tag>}
+          <Button icon={<ShareAltOutlined />} onClick={publishApi} disabled={!kbId} loading={publishing}>{text.publishAsApi}</Button>
+          <Button icon={<SettingOutlined />} onClick={() => { fetchKbs(); setSettingsOpen(true); }}>{text.settings}</Button>
           <Button icon={<ClearOutlined />} onClick={() => setMessages([])} disabled={messages.length === 0}>{t.ai_chat.clear}</Button>
         </Space>
       </div>
@@ -96,6 +152,27 @@ export default function AIChatPage() {
                 }}>
                   {msg.content}
                 </div>
+                {msg.role === "assistant" && msg.sources && (
+                  msg.sources.length > 0 ? (
+                    <Collapse size="small" style={{ marginTop: 6, background: "#fafafa" }}
+                      items={[{
+                        key: "sources",
+                        label: <Space size={4}><FileTextOutlined /> {`${text.citations} (${msg.sources.length})`}</Space>,
+                        children: (
+                          <ul style={{ margin: 0, paddingLeft: 16 }}>
+                            {msg.sources.map(src => (
+                              <li key={src.index} style={{ marginBottom: 4 }}>
+                                <Text style={{ fontSize: 12 }}>[{src.index}] {src.filename || src.doc_id}</Text>
+                                <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>score {src.score}</Text>
+                              </li>
+                            ))}
+                          </ul>
+                        ),
+                      }]} />
+                  ) : (
+                    <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: "block" }}>{text.noCitations}</Text>
+                  )
+                )}
                 <Text type="secondary" style={{ fontSize: 11, marginTop: 2, display: "block", textAlign: msg.role === "user" ? "right" : "left" }}>{msg.time}</Text>
               </div>
             </div>
@@ -120,10 +197,21 @@ export default function AIChatPage() {
       <Modal title={text.settings} open={settingsOpen} onCancel={() => setSettingsOpen(false)} okText={text.save} onOk={() => {
         localStorage.setItem("chat.systemPrompt", systemPrompt);
         localStorage.setItem("chat.temperature", String(temperature));
+        localStorage.setItem("chat.kbId", kbId);
         sessionStorage.setItem("chat.apiKey", apiKey);
         sessionStorage.setItem("chat.model", model);
         setSettingsOpen(false);
       }}>
+        <Text strong>{text.knowledgeBase}</Text>
+        <Select
+          value={kbId || undefined}
+          allowClear
+          placeholder={text.noKnowledgeBase}
+          onChange={(value) => setKbId(value || "")}
+          style={{ width: "100%", marginTop: 8, marginBottom: 4 }}
+          options={kbs.map(kb => ({ value: kb.id, label: kb.name }))}
+        />
+        <Text type="secondary" style={{ display: "block", fontSize: 12, marginBottom: 16 }}>{text.knowledgeBaseHint}</Text>
         <Text strong>{text.apiKey}</Text>
         <Input.Password value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off"
           placeholder="sk-..." style={{ marginTop: 8, marginBottom: 4 }} />

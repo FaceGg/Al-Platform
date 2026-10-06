@@ -16,8 +16,10 @@ from app.api.auth import get_current_user
 from app.services.resource_access import ResourceAccessService
 from app.services.api_publication import (
     APIPublicationError,
+    publish_chat_api,
     publish_deployment,
     publish_workflow_version,
+    unpublish_chat_api,
     unpublish_deployment,
     unpublish_workflow_version,
 )
@@ -229,8 +231,9 @@ def delete_api(api_id: str, db: Session = Depends(get_db), current_user: User = 
         current_user.id,
     )
     # Custom rows are user-created; orchestration rows are derived from
-    # workflow versions and can be recreated by re-publishing, so both are
-    # deletable here. Model rows follow the deployment lifecycle instead.
+    # workflow versions and chat rows from knowledge bases — both can be
+    # recreated by re-publishing, so all three are deletable here. Model rows
+    # follow the deployment lifecycle instead.
     if api.source_kind == "model":
         raise HTTPException(409, detail="deployment-bound APIs are managed from the model library; take the deployment offline instead")
     db.delete(api)
@@ -435,5 +438,151 @@ def invoke_orchestration_api(
         "output_node": final_node_id,
         "branch": branch,
         "records": _safe(rows),
+        "invoked_at": started.isoformat(),
+    }
+
+
+class ChatInvokeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=8000)
+    top_k: int = Field(default=4, ge=1, le=10)
+    system_prompt: str | None = Field(default=None, max_length=4000)
+    temperature: float | None = Field(default=None, ge=0, le=1)
+
+
+@router.post("/publish/chat/{kb_id}", response_model=PlatformAPIItem, status_code=status.HTTP_201_CREATED)
+def publish_chat_kb_api(
+    kb_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return _serialize_api(publish_chat_api(db, kb_id, current_user.id))
+    except APIPublicationError as error:
+        status_code = 404 if error.code.endswith("NOT_FOUND") else 403 if error.code.endswith("PERMISSION_DENIED") else 409
+        raise HTTPException(status_code, detail={"code": error.code, "message": str(error)}) from error
+
+
+@router.post("/publish/chat/{kb_id}/offline", response_model=PlatformAPIItem)
+def unpublish_chat_kb_api(
+    kb_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return _serialize_api(unpublish_chat_api(db, kb_id, current_user.id))
+    except APIPublicationError as error:
+        raise HTTPException(404, detail={"code": error.code, "message": str(error)}) from error
+
+
+@router.post("/chat/{kb_id}/invoke")
+def invoke_chat_api(
+    kb_id: str,
+    data: ChatInvokeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remote RAG chat invocation over a published chat API.
+
+    Error semantics are HTTP status codes (remote integration surface, unlike
+    the interactive /api/chat): 404 unknown/unauthorized, 409 offline, 422
+    invalid payload, 503 LLM unconfigured, 502 LLM call failed. LLM credentials
+    always come from server settings - callers cannot pass keys or models.
+    """
+    from datetime import datetime, timezone
+
+    from app.config import settings
+    from app.models.knowledge import KnowledgeBase
+    from app.services.knowledge_retrieval import (
+        RAG_SYSTEM_APPENDIX,
+        build_rag_context,
+        retrieve_chunks,
+    )
+
+    def _error(code: str, message: str, http_status: int):
+        return HTTPException(http_status, detail={"code": code, "message": message})
+
+    try:
+        kb_uuid = uuid.UUID(kb_id)
+    except (TypeError, ValueError, AttributeError) as error:
+        raise _error("CHAT_API_NOT_FOUND", "Chat API not found", 404) from error
+
+    api = db.query(PlatformAPI).filter(
+        PlatformAPI.source_kind == "chat",
+        PlatformAPI.source_id == kb_uuid,
+    ).order_by(PlatformAPI.created_at.desc()).first()
+    if api is None:
+        raise _error("CHAT_API_NOT_FOUND", "Chat API not found", 404)
+    if api.status != "published":
+        raise _error("CHAT_API_OFFLINE", "该对话 API 当前处于下线状态", 409)
+
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_uuid).first()
+    if kb is None or kb.owner_id != current_user.id:
+        raise _error("CHAT_API_NOT_FOUND", "Chat API not found", 404)
+
+    message = data.message.strip()
+    if not message:
+        raise _error("CHAT_INVOKE_INVALID", "message must be a non-empty string", 422)
+
+    def _fail(code: str, http_status: int, error_text: str):
+        api.total_calls = (api.total_calls or 0) + 1
+        api.failed_calls = (api.failed_calls or 0) + 1
+        api.last_error = error_text[:2000]
+        db.commit()
+        return _error(code, error_text, http_status)
+
+    if not settings.llm_api_key:
+        raise _fail("CHAT_LLM_NOT_CONFIGURED", 503, "LLM_API_KEY is not configured on the server")
+
+    started = datetime.now(timezone.utc)
+    try:
+        results = retrieve_chunks(db, kb, message, top_k=data.top_k)
+    except Exception:
+        results = []
+    context, sources = build_rag_context(results)
+
+    system_prompt = data.system_prompt or "You are a helpful AI assistant for welding manufacturing."
+    system_content = f"{system_prompt}\n\n{RAG_SYSTEM_APPENDIX}" if context else system_prompt
+    user_content = f"参考资料：\n\n{context}\n\n问题：{message}" if context else message
+
+    import requests
+    try:
+        resp = requests.post(
+            settings.llm_api_url,
+            headers={"Authorization": f"Bearer {settings.llm_api_key}", "Content-Type": "application/json"},
+            json={
+                "model": settings.llm_model,
+                "messages": [
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": user_content},
+                ],
+                "temperature": data.temperature if data.temperature is not None else 0.7,
+                "max_tokens": 2000,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        reply = payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+        usage = payload.get("usage", {})
+    except Exception as error:
+        raise _fail("CHAT_LLM_CALL_FAILED", 502, f"LLM call failed: {error}") from error
+
+    api.total_calls = (api.total_calls or 0) + 1
+    api.success_calls = (api.success_calls or 0) + 1
+    api.last_error = None
+    db.commit()
+
+    return {
+        "api_id": str(api.id),
+        "reply": reply,
+        "sources": sources,
+        "kb": {"id": str(kb.id), "name": kb.name},
+        "kb_warning": None if sources else "知识库中没有检索到相关内容",
+        "usage": {
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+        },
         "invoked_at": started.isoformat(),
     }

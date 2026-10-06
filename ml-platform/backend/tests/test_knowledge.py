@@ -121,6 +121,130 @@ class TestKnowledgeAPI(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         client.delete(f"/api/knowledge/bases/{kbid}", headers=h)
 
+    def test_05_reembed_recomputes_all_chunks(self):
+        h = login_headers()
+        r = client.post("/api/knowledge/bases", json={
+            "name": "ReembedKB", "description": "reembed test",
+        }, headers=h)
+        kbid = r.json()["id"]
+        try:
+            r = client.post(f"/api/knowledge/bases/{kbid}/documents", data={
+                "content": "点焊质量取决于焊接电流。点焊飞溅与电流过大有关。",
+            }, headers=h)
+            self.assertIn(r.status_code, [200, 201])
+            r = client.post(f"/api/knowledge/bases/{kbid}/reembed", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertGreaterEqual(r.json()["reembedded"], 1)
+            # Chinese retrieval works with jieba tokenization
+            r = client.post(f"/api/knowledge/bases/{kbid}/search",
+                            json={"query": "点焊 电流", "top_k": 3}, headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertGreaterEqual(len(r.json()), 1)
+        finally:
+            client.delete(f"/api/knowledge/bases/{kbid}", headers=h)
+
+    def test_06_graph_extract_creates_auto_layer_and_preserves_manual(self):
+        h = login_headers()
+        r = client.post("/api/knowledge/bases", json={
+            "name": "ExtractKB", "description": "extract test",
+        }, headers=h)
+        kbid = r.json()["id"]
+        try:
+            for i in range(2):
+                r = client.post(f"/api/knowledge/bases/{kbid}/documents", data={
+                    "content": "点焊是一种电阻焊。点焊质量取决于焊接电流与电极压力。"
+                               "焊接电流过大时点焊会产生飞溅。电极压力影响点焊强度。",
+                }, headers=h)
+                self.assertIn(r.status_code, [200, 201])
+            # Manual entity created before extraction must survive it.
+            r = client.post(f"/api/knowledge/bases/{kbid}/graph/entities",
+                            json={"name": "手动实体", "type": "manual"}, headers=h)
+            self.assertIn(r.status_code, [200, 201])
+
+            r = client.post(f"/api/knowledge/bases/{kbid}/graph/extract", headers=h)
+            self.assertEqual(r.status_code, 200, r.text)
+            report = r.json()
+            self.assertGreaterEqual(report["entities_created"], 2)
+            self.assertGreaterEqual(report["relations_created"], 1)
+
+            r = client.get(f"/api/knowledge/bases/{kbid}/graph/entities", headers=h)
+            entities = r.json()
+            names = [e["name"] for e in entities]
+            self.assertIn("手动实体", names)
+            auto = [e for e in entities if (e.get("properties") or {}).get("source") == "auto"]
+            self.assertGreaterEqual(len(auto), 2)
+            self.assertTrue(all("freq" in (e.get("properties") or {}) for e in auto))
+
+            # Re-run is idempotent for the auto layer; manual rows survive again.
+            r = client.post(f"/api/knowledge/bases/{kbid}/graph/extract", headers=h)
+            self.assertEqual(r.status_code, 200)
+            r = client.get(f"/api/knowledge/bases/{kbid}/graph/entities", headers=h)
+            names_after = [e["name"] for e in r.json()]
+            self.assertEqual(names_after.count("手动实体"), 1)
+
+            # Graph endpoint returns properties for source badges
+            r = client.get(f"/api/knowledge/bases/{kbid}/graph", headers=h)
+            graph = r.json()
+            self.assertTrue(all("properties" in n for n in graph["nodes"]))
+        finally:
+            client.delete(f"/api/knowledge/bases/{kbid}", headers=h)
+
+    def test_07_graph_extract_requires_documents(self):
+        h = login_headers()
+        r = client.post("/api/knowledge/bases", json={
+            "name": "ExtractEmptyKB", "description": "extract empty",
+        }, headers=h)
+        kbid = r.json()["id"]
+        try:
+            r = client.post(f"/api/knowledge/bases/{kbid}/graph/extract", headers=h)
+            self.assertEqual(r.status_code, 422)
+        finally:
+            client.delete(f"/api/knowledge/bases/{kbid}", headers=h)
+
+    def test_08_graph_extract_caps_entities_and_flags_truncation(self):
+        from unittest import mock
+        from app.config import settings
+        h = login_headers()
+        r = client.post("/api/knowledge/bases", json={
+            "name": "ExtractCapKB", "description": "extract cap",
+        }, headers=h)
+        kbid = r.json()["id"]
+        try:
+            for i in range(2):
+                r = client.post(f"/api/knowledge/bases/{kbid}/documents", data={
+                    "content": "点焊是一种电阻焊。点焊质量取决于焊接电流与电极压力。"
+                               "焊接电流过大时点焊会产生飞溅。电极压力影响点焊强度。",
+                }, headers=h)
+                self.assertIn(r.status_code, [200, 201])
+            with mock.patch.object(settings, "knowledge_graph_max_entities", 2):
+                r = client.post(f"/api/knowledge/bases/{kbid}/graph/extract", headers=h)
+            self.assertEqual(r.status_code, 200)
+            report = r.json()
+            self.assertLessEqual(report["entities_created"], 2)
+            self.assertTrue(report["truncated"])
+        finally:
+            client.delete(f"/api/knowledge/bases/{kbid}", headers=h)
+
+    def test_09_graph_extract_rejects_oversized_selection(self):
+        from unittest import mock
+        from app.config import settings
+        h = login_headers()
+        r = client.post("/api/knowledge/bases", json={
+            "name": "ExtractBigKB", "description": "extract oversize",
+        }, headers=h)
+        kbid = r.json()["id"]
+        try:
+            r = client.post(f"/api/knowledge/bases/{kbid}/documents", data={
+                "content": "点焊质量取决于焊接电流。" * 50,
+            }, headers=h)
+            self.assertIn(r.status_code, [200, 201])
+            with mock.patch.object(settings, "knowledge_graph_max_extract_chars", 100):
+                r = client.post(f"/api/knowledge/bases/{kbid}/graph/extract", headers=h)
+            self.assertEqual(r.status_code, 422)
+            self.assertIn("char", r.json()["detail"])
+        finally:
+            client.delete(f"/api/knowledge/bases/{kbid}", headers=h)
+
 
 class TestTemplatesAPI(unittest.TestCase):
     def test_list_templates(self):

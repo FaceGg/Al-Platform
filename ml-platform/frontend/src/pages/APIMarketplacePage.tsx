@@ -142,7 +142,7 @@ export default function APIMarketplacePage() {
   const columns = [
     { title: "API Name", dataIndex: "name", key: "name", ellipsis: true },
     { title: "Type", dataIndex: "api_type", key: "api_type",
-      render: (t:string) => <Tag color={t==="model"?"blue":t==="orchestration"?"purple":"default"}>{t==="model"?"Model":t==="orchestration"?"Orch.":"Custom"}</Tag> },
+      render: (t:string) => <Tag color={t==="model"?"blue":t==="orchestration"?"purple":t==="chat"?"green":"default"}>{t==="model"?"Model":t==="orchestration"?"Orch.":t==="chat"?"Chat":"Custom"}</Tag> },
     { title: "Version", dataIndex: "version", key: "version", render: (v:string) => <Tag color="blue">{v}</Tag> },
     { title: "Status", dataIndex: "status", key: "status",
       render: (s:string) => <Tag color={stColor[s]||"default"}>{stName[s]||s}</Tag> },
@@ -159,7 +159,7 @@ export default function APIMarketplacePage() {
           {r.source_kind === "custom" && !r.source_id && (
             <Button size="small" icon={<EditOutlined />} onClick={() => openEditor(r)}>编辑</Button>
           )}
-          {(r.source_kind === "custom" || r.source_kind === "orchestration") && (
+          {(r.source_kind === "custom" || r.source_kind === "orchestration" || r.source_kind === "chat") && (
             <DeleteConfirmation label={`删除 ${r.name}`} targetName={r.name} onConfirm={() => void handleDelete(r.id)} />
           )}
         </Space>
@@ -179,6 +179,7 @@ export default function APIMarketplacePage() {
           <Button type={filterType===""?"primary":"default"} onClick={()=>setFilterType("")}>All</Button>
           <Button type={filterType==="model"?"primary":"default"} onClick={()=>setFilterType("model")}>{t.api_market.model_api}</Button>
           <Button type={filterType==="orchestration"?"primary":"default"} onClick={()=>setFilterType("orchestration")}>Orch. API</Button>
+          <Button type={filterType==="chat"?"primary":"default"} onClick={()=>setFilterType("chat")}>Chat API</Button>
           <Button type={filterType==="custom"?"primary":"default"} onClick={()=>setFilterType("custom")}>{t.api_market.custom}</Button>
         </Space>
         {loadError && <Alert type="error" showIcon message={loadError} style={{ marginBottom: 16 }} />}

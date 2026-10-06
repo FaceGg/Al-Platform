@@ -429,9 +429,13 @@ curl -X POST "http://localhost:8000/api/auth/register" \
 | GET | `/api/dashboard/stats` | 平台统计 |
 | GET | `/api/monitor/current` | 当前资源监控 |
 | GET | `/api/monitor/history` | 历史监控数据 |
-| POST | `/api/chat` | AI对话 |
+| POST | `/api/chat` | AI对话（支持 `kb_id`/`top_k` 绑定知识库 RAG） |
 | GET/POST | `/api/model-library` | 模型库列表/创建 |
 | GET/POST | `/api/knowledge/bases` | 知识库列表/创建 |
+| POST | `/api/knowledge/bases/{id}/reembed` | 全量重算chunk向量（分词器升级后执行一次） |
+| POST | `/api/knowledge/bases/{id}/graph/extract` | 自动抽取知识图谱（规则+统计，不覆盖手动数据） |
+| POST | `/api/platform/apis/publish/chat/{kb_id}` | 发布知识库为 Chat API |
+| POST | `/api/platform/apis/chat/{kb_id}/invoke` | 远程调用 Chat API（RAG 问答，服务端 LLM 凭据） |
 | GET/POST | `/api/orchestration/agents` | 智能体管理 |
 | GET/POST | `/api/compute/nodes` | 计算节点管理 |
 | GET/POST | `/api/labeling/rules` | 规则标注 |
@@ -477,15 +481,16 @@ python -m unittest tests.test_operators_mechanism -v
 | `test_api_runs.py` | 4 | 工作流执行 |
 | `test_api_model_library.py` | 12 | 模型CRUD/统计 |
 | `test_api_monitor.py` | 9 | 资源监控 |
-| `test_api_chat.py` | 7 | AI对话 |
+| `test_api_chat.py` | 11 | AI对话/知识库绑定RAG |
 | `test_api_compute.py` | 15 | 计算节点/设备 |
 | `test_api_algorithm.py` | 6 | 算法目录 |
 | `test_api_dashboard.py` | 5 | 仪表盘统计 |
 | `test_api_labeling.py` | 8 | 规则标注 |
 | `test_api_platform.py` | 5 | API市场 |
+| `test_chat_api_publication.py` | 9 | Chat API发布/远程调用/生命周期 |
 | `test_training.py` | 3 | 训练任务/早停 |
 | `test_agents.py` | 8 | 智能体API |
-| `test_knowledge.py` | 7 | 知识库/RAG/图谱 |
+| `test_knowledge.py` | 13 | 知识库/RAG/图谱/自动抽取 |
 
 ### 8.3 前端测试
 
