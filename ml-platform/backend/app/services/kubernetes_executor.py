@@ -253,10 +253,13 @@ def _client_for(cluster: KubernetesCluster, credential_ref, settings):
 
 
 def _map_condition(job: dict) -> tuple[str, str]:
+    # K8s >=1.31 emits SuccessCriteriaMet/FailureTarget before the terminal
+    # Complete/Failed condition; both generations must map to our states.
     for condition in job.get("conditions") or []:
-        if condition.get("type") == "Complete":
+        ctype = condition.get("type")
+        if ctype in ("Complete", "SuccessCriteriaMet"):
             return "succeeded", ""
-        if condition.get("type") == "Failed":
+        if ctype in ("Failed", "FailureTarget"):
             if condition.get("reason") == "DeadlineExceeded":
                 return "timed_out", "activeDeadlineSeconds elapsed"
             return "failed", str(condition.get("message", ""))[:300]
@@ -283,7 +286,7 @@ def fetch_cluster_job(db: Session, job_run: KubernetesJobRun, credential_ref, se
             client = _client_for(cluster, credential_ref, settings)
     if client is None:
         return cluster, None
-    job = client.get_job(job_run.job_name)
+    job = client.get_job(job_run.job_name, job_run.namespace)
     return cluster, job
 
 
@@ -396,7 +399,7 @@ def cancel_job(
             )
         client = _client_for(cluster, credential_ref, settings)
     try:
-        client.delete_job(job_run.job_name)
+        client.delete_job(job_run.job_name, job_run.namespace)
     except KubernetesClientError as error:
         raise KubeJobError(error.code, error.message, status=502)
     if _set_terminal(job_run, "cancelled", error_code=None, detail=reason or ""):
@@ -418,15 +421,17 @@ def read_logs(
     limit = min(limit_bytes or settings.kubernetes_job_log_chunk_bytes, settings.kubernetes_job_log_chunk_bytes)
     if client is None:
         client = _client_for(cluster, credential_ref, settings)
-    pods = client.list_job_pods(job_run.job_name)
+    # K8s >=1.27 dropped the job-name pod label; our template label is stable.
+    pod_selector = f"linkraft.io/operation-id={str(job_run.id).replace('-', '')[:32]}"
+    pods = client.list_job_pods(job_run.job_name, job_run.namespace, pod_selector)
     chunk = ""
     for pod in pods:
-        chunk += client.read_pod_log(pod["name"], cursor, limit)
+        chunk += client.read_pod_log(pod["name"], cursor, limit, job_run.namespace)
         if len(chunk.encode("utf-8")) >= limit:
             break
     data = chunk.encode("utf-8")[:limit]
     text = redact_text(data.decode("utf-8", errors="replace"))
-    job = client.get_job(job_run.job_name)
+    job = client.get_job(job_run.job_name, job_run.namespace)
     terminal = bool(job and (job.get("succeeded") or job.get("failed") or job.get("deleted")))
     return {
         "text": text,

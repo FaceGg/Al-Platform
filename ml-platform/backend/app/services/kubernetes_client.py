@@ -309,7 +309,18 @@ class RealKubernetesClient:
         return {"name": name, "ensured": True, "quota_applied": bool(quota_json)}
 
     # ---- Week 14 job surface ----
-    def _find_job(self, name: str) -> dict | None:
+    def get_job(self, name: str, namespace: str | None = None) -> dict | None:
+        """Read one Job; namespace-scoped read first, cluster fallback for old callers."""
+        if namespace:
+            try:
+                result = self._batch.read_namespaced_job(
+                    name, namespace, _request_timeout=self._request_timeout
+                )
+            except Exception as error:  # noqa: BLE001
+                if getattr(error, "status", None) == 404:
+                    return None
+                raise _map_exception(error) from error
+            return _job_status_to_dict(result)
         try:
             result = self._batch.list_job_for_all_namespaces(
                 field_selector=f"metadata.name={name}", _request_timeout=self._request_timeout
@@ -337,6 +348,7 @@ class RealKubernetesClient:
                 backoff_limit=spec["backoffLimit"],
                 active_deadline_seconds=spec["activeDeadlineSeconds"],
                 ttl_seconds_after_finished=spec["ttlSecondsAfterFinished"],
+                manual_selector=True,
                 selector=k8s_client.V1LabelSelector(
                     match_labels=dict(spec["selector"]["matchLabels"])
                 ),
@@ -378,17 +390,17 @@ class RealKubernetesClient:
             "resource_version": result.metadata.resource_version,
         }
 
-    def get_job(self, name: str) -> dict | None:
-        return self._find_job(name)
-
-    def delete_job(self, name: str) -> None:
-        job = self._find_job(name)
-        if job is None:
-            return
+    def delete_job(self, name: str, namespace: str | None = None) -> None:
+        target_ns = namespace
+        if target_ns is None:
+            job = self.get_job(name)
+            if job is None:
+                return
+            target_ns = job["namespace"]
         try:
             self._batch.delete_namespaced_job(
                 name,
-                job["namespace"],
+                target_ns,
                 propagation_policy="Foreground",
                 _request_timeout=self._request_timeout,
             )
@@ -398,39 +410,65 @@ class RealKubernetesClient:
                 return
             raise _map_exception(error) from error
 
-    def list_job_pods(self, job_name: str) -> list[dict]:
-        try:
-            result = self._core.list_pod_for_all_namespaces(
-                label_selector=f"job-name={job_name}", _request_timeout=self._request_timeout
-            )
-        except Exception as error:  # noqa: BLE001
-            raise _map_exception(error) from error
-        pods = []
-        for item in result.items:
-            pods.append(
+    def list_job_pods(self, job_name: str, namespace: str | None = None, label_selector: str | None = None) -> list[dict]:
+        # Our generated pods reliably carry linkraft.io/operation-id; the legacy
+        # job-name label was removed in K8s 1.27, so it is only a fallback.
+        selectors = (
+            [label_selector]
+            if label_selector
+            else [f"batch.kubernetes.io/job-name={job_name}", f"job-name={job_name}"]
+        )
+        last_error: Exception | None = None
+        for selector in selectors:
+            try:
+                if namespace:
+                    result = self._core.list_namespaced_pod(
+                        namespace, label_selector=selector, _request_timeout=self._request_timeout
+                    )
+                else:
+                    result = self._core.list_pod_for_all_namespaces(
+                        label_selector=selector, _request_timeout=self._request_timeout
+                    )
+            except Exception as error:  # noqa: BLE001
+                last_error = error
+                continue
+            pods = [
                 {
                     "name": item.metadata.name,
                     "namespace": item.metadata.namespace,
                     "phase": item.status.phase if item.status else "",
                 }
-            )
-        return pods
+                for item in result.items
+            ]
+            if pods:
+                return pods
+        if last_error is not None:
+            raise _map_exception(last_error) from last_error
+        return []
 
-    def read_pod_log(self, pod_name: str, cursor: int, limit_bytes: int) -> str:
+    def read_pod_log(self, pod_name: str, cursor: int, limit_bytes: int, namespace: str | None = None) -> str:
+        target_ns = namespace
+        if target_ns is None:
+            try:
+                pods = self._core.list_pod_for_all_namespaces(
+                    field_selector=f"metadata.name={pod_name}", _request_timeout=self._request_timeout
+                )
+                if not pods.items:
+                    return ""
+                target_ns = pods.items[0].metadata.namespace
+            except Exception as error:  # noqa: BLE001
+                raise _map_exception(error) from error
         try:
-            pods = self._core.list_pod_for_all_namespaces(
-                field_selector=f"metadata.name={pod_name}", _request_timeout=self._request_timeout
-            )
-            if not pods.items:
-                return ""
-            pod = pods.items[0]
             text = self._core.read_namespaced_pod_log(
                 pod_name,
-                pod.metadata.namespace,
+                target_ns,
                 _preload_content=True,
                 _request_timeout=self._request_timeout,
             )
         except Exception as error:  # noqa: BLE001
+            status = getattr(error, "status", None)
+            if status == 400 and "container" in str(getattr(error, "reason", "")).lower():
+                return ""
             raise _map_exception(error) from error
         return str(text or "")[cursor : cursor + limit_bytes]
 
@@ -509,7 +547,7 @@ class FakeKubernetesClient:
         self.job_events.append(f"create:{name}")
         return dict(self.jobs[name])
 
-    def get_job(self, name: str) -> dict | None:
+    def get_job(self, name: str, namespace: str | None = None) -> dict | None:
         self._jobs_init()
         self.call_log.append("get_job")
         job = self.jobs.get(name)
@@ -517,7 +555,7 @@ class FakeKubernetesClient:
             return None
         return dict(job)
 
-    def delete_job(self, name: str) -> None:
+    def delete_job(self, name: str, namespace: str | None = None) -> None:
         self._jobs_init()
         self._maybe_fail("delete_job")
         if name in self.jobs:
@@ -526,31 +564,31 @@ class FakeKubernetesClient:
             self.jobs[name]["resource_version"] = str(int(self.jobs[name].get("resource_version", "1")) + 1)
             self.job_events.append(f"delete:{name}")
 
-    def list_job_pods(self, job_name: str) -> list[dict]:
+    def list_job_pods(self, job_name: str, namespace: str | None = None, label_selector: str | None = None) -> list[dict]:
         self._jobs_init()
         self.call_log.append("list_job_pods")
         if self.job_pods is not None:
             return list(self.job_pods)
         return [{"name": f"{job_name}-pod-1", "phase": "Succeeded" if self.jobs.get(job_name, {}).get("succeeded") else "Running"}]
 
-    def read_pod_log(self, pod_name: str, cursor: int, limit_bytes: int) -> str:
+    def read_pod_log(self, pod_name: str, cursor: int, limit_bytes: int, namespace: str | None = None) -> str:
         self._jobs_init()
         text = self.pod_logs.get(pod_name, "")
         return text[cursor : cursor + limit_bytes]
 
 
 class JobClientProtocol(Protocol):
-    """Week 14 surface: batch Job lifecycle against one cluster."""
+    """Week 14 surface: batch Job lifecycle against one cluster namespace."""
 
     def create_job(self, manifest: dict) -> dict: ...
 
-    def get_job(self, name: str) -> dict | None: ...
+    def get_job(self, name: str, namespace: str | None = None) -> dict | None: ...
 
-    def delete_job(self, name: str) -> None: ...
+    def delete_job(self, name: str, namespace: str | None = None) -> None: ...
 
-    def list_job_pods(self, job_name: str) -> list[dict]: ...
+    def list_job_pods(self, job_name: str, namespace: str | None = None, label_selector: str | None = None) -> list[dict]: ...
 
-    def read_pod_log(self, pod_name: str, cursor: int, limit_bytes: int) -> str: ...
+    def read_pod_log(self, pod_name: str, cursor: int, limit_bytes: int, namespace: str | None = None) -> str: ...
 
 
 def _job_status_to_dict(job) -> dict:

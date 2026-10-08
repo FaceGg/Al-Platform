@@ -29,8 +29,14 @@ case "$WEEK" in
     WEEK_NUMBER="13"
     FRONTEND_TESTS="src/pages/KubernetesPage.test.tsx src/weekAcceptance.test.ts"
     ;;
+  week14)
+    EVIDENCE_DIR="$BACKEND_DIR/temp_test/week14-local"
+    BACKEND_MODULES="tests/test_kubernetes_executor.py tests/test_kubernetes_job_api.py tests/test_kubernetes_recovery.py tests/test_kubernetes_logs.py"
+    WEEK_NUMBER="14"
+    FRONTEND_TESTS="src/pages/JobRunsPage.test.tsx src/weekAcceptance.test.ts"
+    ;;
   *)
-    echo "unknown profile: $WEEK (supported: week13; week14+ extend this case)" >&2
+    echo "unknown profile: $WEEK (supported: week13, week14; week15+ extend this case)" >&2
     exit 2
     ;;
 esac

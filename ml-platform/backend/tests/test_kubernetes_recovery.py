@@ -47,11 +47,11 @@ class FlakyClient:
         self._inner = inner
         self._failures = list(failures)
 
-    def get_job(self, name):
+    def get_job(self, name, namespace=None):
         if self._failures:
             code = self._failures.pop(0)
             raise KubernetesClientError(code, code)
-        return self._inner.get_job(name)
+        return self._inner.get_job(name, namespace)
 
     def __getattr__(self, item):
         return getattr(self._inner, item)
