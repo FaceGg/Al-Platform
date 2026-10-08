@@ -20,17 +20,13 @@ RUN set -eu; \
 RUN python3.11 -c "import sqlite3"
 RUN addgroup -S -g 1000 app && adduser -S -D -H -h /home/app -u 1000 -G app app
 COPY requirements.txt .
-# PyPI mirror for China-network builds; override with
-# --build-arg PIP_INDEX_URL=https://pypi.org/simple if needed.
-ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 # Keep the CPU image free of XGBoost's Linux NCCL dependency.
-RUN --mount=type=bind,target=/wheels,source=wheelhouse \
-    --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,target=/root/.cache/pip \
     set -eu; \
-    python3.11 -m pip install --find-links /wheels --index-url "${PIP_INDEX_URL}" --no-deps --retries 10 --resume-retries 20 --timeout 120 \
+    python3.11 -m pip install --no-deps --retries 10 --resume-retries 20 --timeout 120 \
         "xgboost==3.2.*" "catboost==1.2.*"; \
     sed '/^xgboost==/d; /^catboost==/d' requirements.txt > /tmp/requirements-without-boost.txt; \
-    python3.11 -m pip install --find-links /wheels --index-url "${PIP_INDEX_URL}" --retries 10 --resume-retries 20 --timeout 120 \
+    python3.11 -m pip install --retries 10 --resume-retries 20 --timeout 120 \
         graphviz plotly six \
         -r /tmp/requirements-without-boost.txt
 COPY . .
