@@ -45,3 +45,6 @@ tensorboard==2.21.*
 # TensorBoard 2.21 supports the patched setuptools release without pkg_resources.
 setuptools==83.0.0
 kubernetes>=31.0,<34
+
+# Cross-platform CPU/memory/network/disk metric sampling for /api/monitor.
+psutil==7.1.*

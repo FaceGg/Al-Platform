@@ -53,6 +53,49 @@ class TestMonitorAPI(unittest.TestCase):
         self.assertIn("free", disk)
         self.assertIn("percent", disk)
 
+    def test_04b_load_metrics_format(self):
+        r = client.get("/api/monitor/current", headers=self.h)
+        load = r.json()["load"]
+        self.assertIn("load1", load)
+        self.assertIn("load5", load)
+        self.assertIn("load15", load)
+        self.assertGreaterEqual(load["cpu_cores"], 1)
+        for key in ("load1", "load5", "load15"):
+            self.assertIsInstance(load[key], (int, float))
+            self.assertGreaterEqual(load[key], 0)
+
+    def test_04c_network_io_counters_are_cumulative_bytes(self):
+        r = client.get("/api/monitor/current", headers=self.h)
+        net = r.json()["net"]
+        self.assertIn("rx_bytes", net)
+        self.assertIn("tx_bytes", net)
+        self.assertGreaterEqual(net["rx_bytes"], 0)
+        self.assertGreaterEqual(net["tx_bytes"], 0)
+
+    def test_04d_disk_io_counters_are_cumulative_bytes(self):
+        r = client.get("/api/monitor/current", headers=self.h)
+        disk_io = r.json()["disk_io"]
+        self.assertIn("read_bytes", disk_io)
+        self.assertIn("write_bytes", disk_io)
+        self.assertGreaterEqual(disk_io["read_bytes"], 0)
+        self.assertGreaterEqual(disk_io["write_bytes"], 0)
+
+    def test_04e_uptime_is_non_negative_seconds(self):
+        r = client.get("/api/monitor/current", headers=self.h)
+        self.assertIsInstance(r.json()["uptime_seconds"], int)
+        self.assertGreaterEqual(r.json()["uptime_seconds"], 0)
+
+    def test_04f_history_includes_extended_metrics(self):
+        r = client.get("/api/monitor/history", headers=self.h, params={"limit": 5})
+        self.assertEqual(r.status_code, 200)
+        items = r.json()
+        self.assertIsInstance(items, list)
+        for snapshot in items:
+            self.assertIn("net", snapshot)
+            self.assertIn("disk_io", snapshot)
+            self.assertIn("load", snapshot)
+            self.assertIn("uptime_seconds", snapshot)
+
     def test_04a_host_memory_and_disk_are_available_without_wmic(self):
         r = client.get("/api/monitor/current", headers=self.h)
         data = r.json()

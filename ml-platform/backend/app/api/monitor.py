@@ -189,7 +189,101 @@ def collect_metrics():
         "memory": get_memory_usage(),
         "disk": get_disk_usage(),
         "gpu": get_gpu_usage(),
+        "load": get_load_average(),
+        "net": get_network_io(),
+        "disk_io": get_disk_io(),
+        "uptime_seconds": get_uptime_seconds(),
     }
+
+
+def get_load_average() -> dict:
+    """System load averages; psutil emulates them where getloadavg is absent."""
+    try:
+        import psutil
+
+        load1, load5, load15 = psutil.getloadavg()
+    except Exception:
+        try:
+            load1, load5, load15 = os.getloadavg()
+        except (AttributeError, OSError):
+            load1 = load5 = load15 = 0.0
+    return {
+        "load1": round(float(load1), 2),
+        "load5": round(float(load5), 2),
+        "load15": round(float(load15), 2),
+        "cpu_cores": os.cpu_count() or 1,
+    }
+
+
+def get_network_io() -> dict:
+    """Cumulative network bytes across non-loopback interfaces."""
+    try:
+        import psutil
+
+        counters = psutil.net_io_counters()
+        return {"rx_bytes": int(counters.bytes_recv), "tx_bytes": int(counters.bytes_sent)}
+    except Exception:
+        pass
+    try:
+        rx = tx = 0
+        with open("/proc/net/dev", "r", encoding="utf-8") as handle:
+            for line in handle.readlines()[2:]:
+                name, _, columns = line.partition(":")
+                if name.strip() == "lo":
+                    continue
+                fields = columns.split()
+                rx += int(fields[0])
+                tx += int(fields[8])
+        return {"rx_bytes": rx, "tx_bytes": tx}
+    except Exception:
+        return {"rx_bytes": 0, "tx_bytes": 0}
+
+
+def get_disk_io() -> dict:
+    """Cumulative disk read/write bytes across physical devices."""
+    try:
+        import psutil
+
+        counters = psutil.disk_io_counters()
+        if counters is None:
+            raise OSError("disk io counters unavailable")
+        return {"read_bytes": int(counters.read_bytes), "write_bytes": int(counters.write_bytes)}
+    except Exception:
+        pass
+    try:
+        read = written = 0
+        with open("/proc/diskstats", "r", encoding="utf-8") as handle:
+            for line in handle:
+                fields = line.split()
+                if len(fields) < 10 or fields[2].startswith(("loop", "ram", "dm-", "sr")):
+                    continue
+                read += int(fields[5]) * 512
+                written += int(fields[9]) * 512
+        return {"read_bytes": read, "write_bytes": written}
+    except Exception:
+        return {"read_bytes": 0, "write_bytes": 0}
+
+
+def get_uptime_seconds() -> int:
+    """Seconds since the host booted."""
+    try:
+        import psutil
+
+        return max(0, int(time.time() - psutil.boot_time()))
+    except Exception:
+        pass
+    if os.name != "nt":
+        try:
+            with open("/proc/uptime", "r", encoding="utf-8") as handle:
+                return int(float(handle.read().split()[0]))
+        except Exception:
+            return 0
+    try:
+        import ctypes
+
+        return int(ctypes.windll.kernel32.GetTickCount64() / 1000)
+    except Exception:
+        return 0
 
 
 # ──────────────────────────────────────────

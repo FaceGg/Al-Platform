@@ -1,14 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button } from "antd";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Button, Card, Col, Progress, Row, Space, Spin, Typography } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
-import { useTheme } from "../stores/themeContext";
 import "./MonitorPage.css";
 
+const { Text } = Typography;
 const HISTORY_LENGTH = 30;
+
+// Platform palette (matches App.tsx theme tokens).
+const COLOR_OK = "#47C3A0";
+const COLOR_WARN = "#D9AC52";
+const COLOR_DANGER = "#E66F75";
+const COLOR_ACCENT = "#2F9BF5";
 
 interface ResourceMetric {
   usage_percent: number;
@@ -23,11 +29,33 @@ interface GpuMetric {
   temperature_c?: number;
 }
 
+interface LoadMetric {
+  load1: number;
+  load5: number;
+  load15: number;
+  cpu_cores: number;
+}
+
+interface NetIo {
+  rx_bytes: number;
+  tx_bytes: number;
+}
+
+interface DiskIo {
+  read_bytes: number;
+  write_bytes: number;
+}
+
 interface MonitorData {
   cpu: ResourceMetric;
   memory: ResourceMetric;
   disk: ResourceMetric;
   gpus: GpuMetric[];
+  load: LoadMetric | null;
+  net: NetIo | null;
+  disk_io: DiskIo | null;
+  uptime_seconds: number | null;
+  timestamp: string | null;
 }
 
 interface MonitorHistory {
@@ -35,136 +63,126 @@ interface MonitorHistory {
   memory: number[];
   disk: number[];
   gpu: number[][];
+  loadPct: number[];
+  netDown: number[];
+  netUp: number[];
+  diskRead: number[];
+  diskWrite: number[];
 }
 
-const EMPTY_HISTORY: MonitorHistory = { cpu: [], memory: [], disk: [], gpu: [] };
+const EMPTY_HISTORY: MonitorHistory = {
+  cpu: [], memory: [], disk: [], gpu: [], loadPct: [],
+  netDown: [], netUp: [], diskRead: [], diskWrite: [],
+};
 
 function toGigaBytes(bytes: number): number {
   return bytes / (1024 * 1024 * 1024);
 }
 
-const LEVEL_COLORS = {
-  dark: { ok: "#47e0c2", warn: "#f5b942", danger: "#ff5f6e" },
-  light: { ok: "#0da48a", warn: "#c07f14", danger: "#d94350" },
-};
-
-function levelColor(percent: number, theme: "light" | "dark"): { main: string; state: "" | "warn" | "danger" } {
-  const palette = LEVEL_COLORS[theme];
-  if (percent > 80) return { main: palette.danger, state: "danger" };
-  if (percent > 60) return { main: palette.warn, state: "warn" };
-  return { main: palette.ok, state: "" };
+function levelColor(percent: number): string {
+  if (percent > 80) return COLOR_DANGER;
+  if (percent > 60) return COLOR_WARN;
+  return COLOR_OK;
 }
 
-/* 260° arc gauge with tick ring, glowing value arc and centered readout. */
-function HudGauge({ percent, color, idPrefix }: { percent: number; color: string; idPrefix: string }) {
-  const radius = 78;
-  const circumference = 2 * Math.PI * radius;
-  const arcLength = circumference * (260 / 360);
-  const clamped = Math.max(0, Math.min(100, percent));
-  const visible = arcLength * (clamped / 100);
-  const ticks = useMemo(() => Array.from({ length: 27 }, (_, i) => {
-    const angle = 140 + (i * 260) / 26;
-    const major = i % 5 === 0;
-    return { angle, major };
-  }), []);
-  return (
-    <div className="hud-gauge-wrap">
-      <svg width={168} height={128} viewBox="0 0 200 200" aria-hidden="true"
-        style={{ transform: "translateY(-14px)" }}>
-        <defs>
-          <linearGradient id={`${idPrefix}-arc`} x1="0%" y1="100%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor={color} stopOpacity={0.55} />
-            <stop offset="100%" stopColor={color} />
-          </linearGradient>
-        </defs>
-        <g transform="rotate(140 100 100)">
-          <circle cx={100} cy={100} r={radius} fill="none"
-            style={{ stroke: "var(--hud-track)" }} strokeWidth={9}
-            strokeDasharray={`${arcLength} ${circumference - arcLength}`} strokeLinecap="round" />
-          <circle cx={100} cy={100} r={radius} fill="none"
-            stroke={`url(#${idPrefix}-arc)`} strokeWidth={9}
-            strokeDasharray={`${visible} ${circumference}`}
-            strokeLinecap="round"
-            style={{
-              transition: "stroke-dasharray 0.9s ease",
-              filter: `drop-shadow(0 0 6px ${color})`,
-            }} />
-          {ticks.map((tick, index) => (
-            <line key={index} x1={100} y1={16} x2={100} y2={tick.major ? 26 : 22}
-              style={{ stroke: tick.major ? "var(--hud-tick)" : "var(--hud-tick-minor)" }}
-              strokeWidth={tick.major ? 2 : 1}
-              transform={`rotate(${tick.angle} 100 100)`} />
-          ))}
-        </g>
-      </svg>
-      <div className="hud-gauge-value" style={{ color }}>{Math.round(clamped)}<span style={{ fontSize: 15 }}>%</span></div>
-      <div className="hud-gauge-unit">LOAD</div>
-    </div>
-  );
+function formatRate(bytesPerSecond: number): string {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond < 0) return "-";
+  if (bytesPerSecond < 1024) return `${Math.round(bytesPerSecond)} B/s`;
+  if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+  if (bytesPerSecond < 1024 * 1024 * 1024) return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
+  return `${(bytesPerSecond / 1024 / 1024 / 1024).toFixed(2)} GB/s`;
 }
 
-/* Glowing trend line with gradient area fill. */
-function HudSparkline({ values, color, idPrefix }: { values: number[]; color: string; idPrefix: string }) {
+function formatUptime(seconds: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return "-";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days} 天 ${hours} 小时`;
+  if (hours > 0) return `${hours} 小时 ${minutes} 分`;
+  return `${minutes} 分钟`;
+}
+
+function snapshotTimeMs(snapshot: any): number {
+  const parsed = snapshot?.timestamp ? Date.parse(snapshot.timestamp) : Number.NaN;
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+/* Bytes-per-second rate between two cumulative counter snapshots. */
+function counterRate(prev: { value: number; timeMs: number } | null, value: number, timeMs: number) {
+  if (!prev || timeMs <= prev.timeMs) return null;
+  const delta = value - prev.value;
+  if (delta < 0) return null; // counters reset (reboot) — skip the interval
+  return (delta / (timeMs - prev.timeMs)) * 1000;
+}
+
+function Sparkline({ values, color }: { values: number[]; color: string }) {
   const width = 220;
-  const height = 52;
+  const height = 46;
   if (values.length < 2) return null;
-  const maxVal = Math.max(...values, 5);
+  const maxVal = Math.max(...values, 0.0001);
   const points = values.map((value, index) => {
     const x = (index / (values.length - 1)) * width;
-    const y = height - (value / (maxVal || 1)) * (height - 4) - 2;
+    const y = height - (value / maxVal) * (height - 4) - 2;
     return { x, y };
   });
   const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
   const areaPath = `${linePath} L${width},${height} L0,${height} Z`;
   return (
-    <div className="hud-spark">
+    <div className="monitor-spark">
       <svg width={width} height={height} aria-hidden="true">
-        <defs>
-          <linearGradient id={`${idPrefix}-area`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity={0.3} />
-            <stop offset="100%" stopColor={color} stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <path d={areaPath} fill={`url(#${idPrefix}-area)`} />
-        <path d={linePath} fill="none" stroke={color} strokeWidth={1.6}
-          style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
-        {points.map((p, index) => (
-          <circle key={index} cx={p.x} cy={p.y} r={1.8} fill={color} />
-        ))}
+        <path d={areaPath} fill={color} fillOpacity={0.12} />
+        <path d={linePath} fill="none" stroke={color} strokeWidth={1.6} />
       </svg>
     </div>
   );
 }
 
-function HudCard({ idPrefix, title, percent, stats, values, extra, theme }: {
-  idPrefix: string;
+function MetricCard({ title, percent, stats, values, children, zone }: {
   title: string;
   percent: number;
   stats: string[];
   values: number[];
-  extra?: string[];
-  theme: "light" | "dark";
+  children?: React.ReactNode;
+  zone?: React.ReactNode;
 }) {
-  const { main, state } = levelColor(percent, theme);
+  const color = percent >= 0 ? levelColor(percent) : COLOR_ACCENT;
   return (
-    <div className={`hud-card${state ? ` hud-card--${state}` : ""}`}>
-      <HudGauge percent={percent} color={main} idPrefix={idPrefix} />
-      <div className="hud-card-title">{title}</div>
-      {stats.map((line) => <div className="hud-stat" key={line}>{line}</div>)}
-      {extra?.map((line) => <div className="hud-stat" key={line}>{line}</div>)}
-      <HudSparkline values={values} color={main} idPrefix={idPrefix} />
+    <Card className="monitor-metric">
+      <div className="monitor-gauge-zone">
+        {zone ?? (percent >= 0 && (
+          <Progress type="dashboard" percent={Math.round(percent)} strokeColor={color} size={128} />
+        ))}
+      </div>
+      <div className="monitor-metric-title">{title}</div>
+      {children}
+      {stats.map((line) => <div className="monitor-stat" key={line}>{line}</div>)}
+      <Sparkline values={values} color={color} />
+    </Card>
+  );
+}
+
+function RatePair({ items }: { items: Array<{ glyph: string; label: string; value: string; color: string }> }) {
+  return (
+    <div className="monitor-rate">
+      {items.map((item) => (
+        <div key={item.label} className="monitor-rate-item">
+          <div className="monitor-rate-value" style={{ color: item.color }}>{item.glyph} {item.value}</div>
+          <div className="monitor-rate-label">{item.label}</div>
+        </div>
+      ))}
     </div>
   );
 }
 
 export default function MonitorPage() {
   const { t } = useI18n();
-  const { theme } = useTheme();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<MonitorData | null>(null);
   const [history, setHistory] = useState<MonitorHistory>(EMPTY_HISTORY);
-  const [clock, setClock] = useState(() => new Date());
-  const [updatedAt, setUpdatedAt] = useState<string>("--:--:--");
+  const [updatedAt, setUpdatedAt] = useState("");
+  const prevNetRef = useRef<{ rx: number; tx: number; timeMs: number } | null>(null);
+  const prevDiskRef = useRef<{ read: number; write: number; timeMs: number } | null>(null);
 
   const mapBackendResponse = (raw: any): MonitorData => ({
     cpu: { usage_percent: raw.cpu?.percent ?? 0 },
@@ -186,23 +204,64 @@ export default function MonitorPage() {
           temperature_c: g?.temperature_c,
         }))
       : [],
+    load: raw.load ?? null,
+    net: raw.net ?? null,
+    disk_io: raw.disk_io ?? null,
+    uptime_seconds: raw.uptime_seconds ?? null,
+    timestamp: typeof raw.timestamp === "string" ? raw.timestamp : null,
   });
 
-  // Backfill trend lines from the backend in-memory buffer so charts survive
-  // page reloads instead of restarting from an empty client-side array.
+  // Backfill trend lines and I/O rates from the backend in-memory buffer so
+  // charts survive page reloads instead of restarting from an empty array.
   const fetchHistory = useCallback(async () => {
     try {
       const res = await apiClient.get("/monitor/history", { params: { limit: 60 } });
       const items = Array.isArray(res.data) ? res.data : [];
-      const backfilled: MonitorHistory = { cpu: [], memory: [], disk: [], gpu: [] };
+      const backfilled: MonitorHistory = {
+        cpu: [], memory: [], disk: [], gpu: [], loadPct: [],
+        netDown: [], netUp: [], diskRead: [], diskWrite: [],
+      };
+      let prevNet: { rx: number; tx: number; timeMs: number } | null = null;
+      let prevDisk: { read: number; write: number; timeMs: number } | null = null;
       for (const snapshot of items) {
         backfilled.cpu.push(snapshot?.cpu?.percent ?? 0);
         backfilled.memory.push(snapshot?.memory?.percent ?? 0);
         backfilled.disk.push(snapshot?.disk?.percent ?? 0);
+        const load = snapshot?.load;
+        backfilled.loadPct.push(load?.cpu_cores ? Math.min(100, (load.load1 / load.cpu_cores) * 100) : 0);
         const gpus = Array.isArray(snapshot?.gpu) ? snapshot.gpu : [];
         gpus.forEach((g: any, index: number) => {
           backfilled.gpu[index] = [...(backfilled.gpu[index] ?? []), g?.gpu_util ?? 0];
         });
+        const timeMs = snapshotTimeMs(snapshot);
+        const net = snapshot?.net;
+        if (net && timeMs) {
+          const down = prevNet ? counterRate({ value: prevNet.rx, timeMs: prevNet.timeMs }, net.rx_bytes ?? 0, timeMs) : null;
+          const up = prevNet ? counterRate({ value: prevNet.tx, timeMs: prevNet.timeMs }, net.tx_bytes ?? 0, timeMs) : null;
+          if (down != null && up != null) {
+            backfilled.netDown.push(down);
+            backfilled.netUp.push(up);
+          }
+          prevNet = { rx: net.rx_bytes ?? 0, tx: net.tx_bytes ?? 0, timeMs };
+        }
+        const diskIo = snapshot?.disk_io;
+        if (diskIo && timeMs) {
+          const read = prevDisk ? counterRate({ value: prevDisk.read, timeMs: prevDisk.timeMs }, diskIo.read_bytes ?? 0, timeMs) : null;
+          const write = prevDisk ? counterRate({ value: prevDisk.write, timeMs: prevDisk.timeMs }, diskIo.write_bytes ?? 0, timeMs) : null;
+          if (read != null && write != null) {
+            backfilled.diskRead.push(read);
+            backfilled.diskWrite.push(write);
+          }
+          prevDisk = { read: diskIo.read_bytes ?? 0, write: diskIo.write_bytes ?? 0, timeMs };
+        }
+      }
+      const tail = items[items.length - 1];
+      if (tail?.net && tail?.disk_io) {
+        const timeMs = snapshotTimeMs(tail);
+        if (timeMs) {
+          prevNetRef.current = { rx: tail.net.rx_bytes ?? 0, tx: tail.net.tx_bytes ?? 0, timeMs };
+          prevDiskRef.current = { read: tail.disk_io.read_bytes ?? 0, write: tail.disk_io.write_bytes ?? 0, timeMs };
+        }
       }
       setHistory(backfilled);
     } catch {
@@ -216,14 +275,44 @@ export default function MonitorPage() {
       const mapped = mapBackendResponse(res.data);
       setData(mapped);
       setUpdatedAt(new Date().toLocaleTimeString());
-      setHistory((prev) => ({
-        cpu: [...prev.cpu.slice(-HISTORY_LENGTH + 1), mapped.cpu.usage_percent],
-        memory: [...prev.memory.slice(-HISTORY_LENGTH + 1), mapped.memory.usage_percent],
-        disk: [...prev.disk.slice(-HISTORY_LENGTH + 1), mapped.disk.usage_percent],
-        gpu: mapped.gpus.length
-          ? mapped.gpus.map((g, index) => [...(prev.gpu[index] ?? []).slice(-HISTORY_LENGTH + 1), g.util])
-          : prev.gpu,
-      }));
+      setHistory((prev) => {
+        const next = {
+          ...prev,
+          cpu: [...prev.cpu.slice(-HISTORY_LENGTH + 1), mapped.cpu.usage_percent],
+          memory: [...prev.memory.slice(-HISTORY_LENGTH + 1), mapped.memory.usage_percent],
+          disk: [...prev.disk.slice(-HISTORY_LENGTH + 1), mapped.disk.usage_percent],
+          loadPct: [...prev.loadPct.slice(-HISTORY_LENGTH + 1),
+            mapped.load?.cpu_cores ? Math.min(100, (mapped.load.load1 / mapped.load.cpu_cores) * 100) : 0],
+          gpu: mapped.gpus.length
+            ? mapped.gpus.map((g, index) => [...(prev.gpu[index] ?? []).slice(-HISTORY_LENGTH + 1), g.util])
+            : prev.gpu,
+        };
+        // Rates use server sampling timestamps; the client clock may drift
+        // from the backend's buffered history.
+        const parsedMs = mapped.timestamp ? Date.parse(mapped.timestamp) : Number.NaN;
+        const nowMs = Number.isNaN(parsedMs) ? Date.now() : parsedMs;
+        if (mapped.net && prevNetRef.current) {
+          const prevNet = prevNetRef.current;
+          const down = counterRate({ value: prevNet.rx, timeMs: prevNet.timeMs }, mapped.net.rx_bytes, nowMs);
+          const up = counterRate({ value: prevNet.tx, timeMs: prevNet.timeMs }, mapped.net.tx_bytes, nowMs);
+          if (down != null && up != null) {
+            next.netDown = [...prev.netDown.slice(-HISTORY_LENGTH + 1), down];
+            next.netUp = [...prev.netUp.slice(-HISTORY_LENGTH + 1), up];
+          }
+        }
+        if (mapped.disk_io && prevDiskRef.current) {
+          const prevDisk = prevDiskRef.current;
+          const read = counterRate({ value: prevDisk.read, timeMs: prevDisk.timeMs }, mapped.disk_io.read_bytes, nowMs);
+          const write = counterRate({ value: prevDisk.write, timeMs: prevDisk.timeMs }, mapped.disk_io.write_bytes, nowMs);
+          if (read != null && write != null) {
+            next.diskRead = [...prev.diskRead.slice(-HISTORY_LENGTH + 1), read];
+            next.diskWrite = [...prev.diskWrite.slice(-HISTORY_LENGTH + 1), write];
+          }
+        }
+        if (mapped.net) prevNetRef.current = { rx: mapped.net.rx_bytes, tx: mapped.net.tx_bytes, timeMs: nowMs };
+        if (mapped.disk_io) prevDiskRef.current = { read: mapped.disk_io.read_bytes, write: mapped.disk_io.write_bytes, timeMs: nowMs };
+        return next;
+      });
     } catch {
       setData(null);
     } finally {
@@ -235,90 +324,110 @@ export default function MonitorPage() {
     void fetchHistory();
     void fetchData();
     const timer = window.setInterval(() => { void fetchData(); }, 3000);
-    const clockTimer = window.setInterval(() => setClock(new Date()), 1000);
-    return () => {
-      window.clearInterval(timer);
-      window.clearInterval(clockTimer);
-    };
+    return () => window.clearInterval(timer);
   }, [fetchData, fetchHistory]);
+
+  const gpus = data?.gpus ?? [];
+  const load = data?.load ?? null;
 
   const metricCards = [
     { key: "cpu", title: t.monitor.cpu, metric: data?.cpu, values: history.cpu },
     { key: "memory", title: t.monitor.memory, metric: data?.memory, values: history.memory },
     { key: "disk", title: t.monitor.disk, metric: data?.disk, values: history.disk },
   ];
-  const gpus = data?.gpus ?? [];
   const gpuCards = gpus.length
     ? gpus.map((gpu, index) => ({
         key: `gpu-${index}`,
         title: gpus.length > 1 ? `GPU ${index + 1}` : t.monitor.gpu,
-        metric: gpu,
+        util: gpu.util,
         values: history.gpu[index] ?? [],
+        gpu,
       }))
-    : [{ key: "gpu", title: t.monitor.gpu, metric: null, values: [] }];
-  const cards = [...metricCards, ...gpuCards];
+    : [{ key: "gpu", title: t.monitor.gpu, util: 0, values: [] as number[], gpu: null as GpuMetric | null }];
 
   if (loading) {
     return <AppLayout>
       <div className="monitor-page page-shell fade-in" style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 300 }}>
-        <div style={{ fontFamily: "ui-monospace, Consolas, monospace", letterSpacing: "0.3em", color: "#2b9ad8" }}>INITIALIZING…</div>
+        <Spin size="large" />
       </div>
     </AppLayout>;
   }
 
   return <AppLayout>
     <section className="monitor-page page-shell fade-in">
-      <div className={`hud-console${theme === "light" ? " hud-console--light" : ""}`}>
-        <div className="hud-scanline" />
-        <div className="hud-header">
-          <div>
-            <div className="hud-kicker">System Monitor // Realtime</div>
-            <h3 className="hud-title">{t.monitor.title}</h3>
-          </div>
-          <div className="hud-header-right">
-            <span className="hud-live"><span className="hud-live-dot" />LIVE</span>
-            <span className="hud-clock">{clock.toLocaleTimeString("en-GB")}</span>
-            <Button className="hud-refresh" icon={<ReloadOutlined />}
-              onClick={() => { void fetchHistory(); void fetchData(); }}>{t.monitor.refresh}</Button>
-          </div>
-        </div>
-        <div className="hud-grid">
-          {cards.map((card) => {
-            const isGpuCard = card.key === "gpu" || card.key.startsWith("gpu-");
-            const gpuMetric = isGpuCard ? (card.metric as GpuMetric | null) : null;
-            const baseMetric = isGpuCard ? undefined : (card.metric as ResourceMetric | undefined);
-            const percent = gpuMetric ? gpuMetric.util : baseMetric?.usage_percent ?? 0;
-            const stats: string[] = [];
-            if (baseMetric?.total_gb != null) {
-              stats.push(`${t.monitor.used} ${baseMetric.used_gb?.toFixed(1)} / ${t.monitor.total} ${baseMetric.total_gb?.toFixed(1)} GB`);
-            }
-            const extra: string[] = [];
-            if (gpuMetric?.temperature_c != null) {
-              extra.push(`${t.monitor.temperature}: ${Math.round(gpuMetric.temperature_c)}°C`);
-            }
-            if (gpuMetric?.memory_total_gb != null) {
-              extra.push(`VRAM ${gpuMetric.memory_used_gb?.toFixed(1)} / ${gpuMetric.memory_total_gb?.toFixed(1)} GB`);
-            }
-            if (card.key === "gpu" && !gpuMetric) {
-              extra.push(t.monitor.no_gpu);
-            }
-            return <HudCard
-              key={card.key}
-              idPrefix={`hud-${card.key}`}
-              title={card.title}
-              percent={percent}
-              stats={stats}
-              extra={extra}
-              values={card.values}
-              theme={theme}
-            />;
-          })}
-        </div>
-        <div className="hud-footer">
-          <span>SAMPLING 3s · BUFFER 120 · SOURCE HOST-0</span>
-          <span>UPDATED {updatedAt}</span>
-        </div>
+      <div className="page-header page-header--stacked">
+        <div className="page-header-copy"><h3 className="page-title">{t.monitor.title}</h3></div>
+        <Space direction="horizontal" size={16} align="center" wrap>
+          {data?.uptime_seconds != null && (
+            <Text type="secondary">{t.monitor.uptime}: {formatUptime(data.uptime_seconds)}</Text>
+          )}
+          {updatedAt && <Text type="secondary">{t.monitor.updated} {updatedAt}</Text>}
+          <Button icon={<ReloadOutlined />} onClick={() => { void fetchHistory(); void fetchData(); }}>{t.monitor.refresh}</Button>
+        </Space>
       </div>
+      <Row gutter={[16, 16]} className="monitor-grid">
+        {metricCards.map((card) => {
+          const metric = card.metric as ResourceMetric | undefined;
+          const percent = metric?.usage_percent ?? 0;
+          const stats: string[] = [];
+          if (metric?.total_gb != null) {
+            stats.push(`${t.monitor.used} ${metric.used_gb?.toFixed(1)} / ${t.monitor.total} ${metric.total_gb?.toFixed(1)} GB`);
+          }
+          return <Col xs={24} sm={12} lg={6} key={card.key}>
+            <MetricCard title={card.title} percent={percent} stats={stats} values={card.values} />
+          </Col>;
+        })}
+        {gpuCards.map((card) => (
+          <Col xs={24} sm={12} lg={6} key={card.key}>
+            <MetricCard
+              title={card.title}
+              percent={card.util}
+              stats={card.gpu?.temperature_c != null ? [`${t.monitor.temperature}: ${Math.round(card.gpu.temperature_c)}°C`] : card.gpu ? [] : [t.monitor.no_gpu]}
+              values={card.values}
+            >
+              {card.gpu?.memory_total_gb != null && (
+                <div className="monitor-stat">VRAM {card.gpu.memory_used_gb?.toFixed(1)} / {card.gpu.memory_total_gb?.toFixed(1)} GB</div>
+              )}
+            </MetricCard>
+          </Col>
+        ))}
+        <Col xs={24} sm={12} lg={6}>
+          <MetricCard
+            title={t.monitor.load}
+            percent={load?.cpu_cores ? Math.min(100, (load.load1 / load.cpu_cores) * 100) : 0}
+            stats={load ? [`1m ${load.load1} · 5m ${load.load5} · 15m ${load.load15}`] : []}
+            values={history.loadPct}
+          />
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <MetricCard
+            title={t.monitor.net}
+            percent={-1}
+            stats={[]}
+            values={history.netDown.map((down, i) => down + (history.netUp[i] ?? 0))}
+            zone={
+              <RatePair items={[
+                { glyph: "↓", label: t.monitor.down, value: formatRate(history.netDown[history.netDown.length - 1] ?? Number.NaN), color: COLOR_OK },
+                { glyph: "↑", label: t.monitor.up, value: formatRate(history.netUp[history.netUp.length - 1] ?? Number.NaN), color: COLOR_ACCENT },
+              ]}/>
+            }
+          />
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <MetricCard
+            title={t.monitor.diskio}
+            percent={-1}
+            stats={[]}
+            values={history.diskRead.map((read, i) => read + (history.diskWrite[i] ?? 0))}
+            zone={
+              <RatePair items={[
+                { glyph: "↓", label: t.monitor.readOp, value: formatRate(history.diskRead[history.diskRead.length - 1] ?? Number.NaN), color: COLOR_OK },
+                { glyph: "↑", label: t.monitor.writeOp, value: formatRate(history.diskWrite[history.diskWrite.length - 1] ?? Number.NaN), color: COLOR_WARN },
+              ]}/>
+            }
+          />
+        </Col>
+      </Row>
     </section>
   </AppLayout>;
 }

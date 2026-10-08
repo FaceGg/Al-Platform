@@ -1,302 +1,73 @@
-/* Sci-fi HUD console for the resource monitor page.
-   Follows the app theme: dark variant by default, light variant via
-   .hud-console--light. All colors flow through --hud-* custom properties. */
+/* Resource monitor — follows the app theme; minimal helpers over antd Cards. */
 
-.hud-console {
-  --hud-mono: ui-monospace, "JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace;
-  --hud-line: rgba(47, 155, 245, 0.18);
-  --hud-ink: #d7f4ff;
-  --hud-title-ink: #eaf9ff;
-  --hud-title-glow: rgba(47, 155, 245, 0.55);
-  --hud-dim: rgba(158, 226, 255, 0.62);
-  --hud-accent: #5fd6ff;
-  --hud-kicker: rgba(96, 210, 255, 0.72);
-  --hud-live: #58e6c2;
-  --hud-live-glow: rgba(71, 195, 160, 0.9);
-  --hud-console-bg:
-    radial-gradient(1200px 480px at 50% -10%, rgba(47, 155, 245, 0.13), transparent 60%),
-    linear-gradient(180deg, rgba(8, 18, 26, 0.97), rgba(4, 9, 14, 0.98));
-  --hud-console-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), inset 0 0 90px rgba(47, 155, 245, 0.05);
-  --hud-console-border: rgba(47, 155, 245, 0.28);
-  --hud-grid-line: rgba(47, 155, 245, 0.05);
-  --hud-card-bg: linear-gradient(180deg, rgba(13, 28, 40, 0.72), rgba(7, 14, 20, 0.85));
-  --hud-card-border: rgba(47, 155, 245, 0.16);
-  --hud-bracket: #5fd6ff;
-  --hud-track: rgba(158, 226, 255, 0.12);
-  --hud-tick: rgba(158, 226, 255, 0.45);
-  --hud-tick-minor: rgba(158, 226, 255, 0.18);
-  --hud-footer: rgba(158, 226, 255, 0.45);
-  --hud-scan: rgba(47, 155, 245, 0.08);
-  position: relative;
-  overflow: hidden;
-  margin: 0 auto;
-  padding: 18px 20px 12px;
-  color: var(--hud-ink);
-  border: 1px solid var(--hud-console-border);
-  border-radius: 10px;
-  background: var(--hud-console-bg);
-  box-shadow: var(--hud-console-shadow);
+.monitor-grid {
+  margin-top: 4px;
 }
 
-.hud-console--light {
-  --hud-line: rgba(31, 138, 210, 0.22);
-  --hud-ink: #16405a;
-  --hud-title-ink: #0d2c40;
-  --hud-title-glow: rgba(31, 138, 210, 0.28);
-  --hud-dim: rgba(35, 80, 105, 0.68);
-  --hud-accent: #1f8ad2;
-  --hud-kicker: rgba(31, 138, 210, 0.75);
-  --hud-live: #0e9d7d;
-  --hud-live-glow: rgba(14, 157, 125, 0.65);
-  --hud-console-bg:
-    radial-gradient(1200px 480px at 50% -10%, rgba(47, 155, 245, 0.1), transparent 60%),
-    linear-gradient(180deg, #f6fbfe, #e8f2f8);
-  --hud-console-shadow: 0 10px 30px rgba(23, 84, 118, 0.14), inset 0 0 90px rgba(47, 155, 245, 0.04);
-  --hud-console-border: rgba(31, 138, 210, 0.3);
-  --hud-grid-line: rgba(31, 138, 210, 0.07);
-  --hud-card-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(238, 247, 252, 0.92));
-  --hud-card-border: rgba(31, 138, 210, 0.18);
-  --hud-bracket: #2b9ad8;
-  --hud-track: rgba(31, 138, 210, 0.14);
-  --hud-tick: rgba(35, 80, 105, 0.42);
-  --hud-tick-minor: rgba(35, 80, 105, 0.18);
-  --hud-footer: rgba(35, 80, 105, 0.5);
-  --hud-scan: rgba(31, 138, 210, 0.06);
-}
-
-/* faint engineering grid */
-.hud-console::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(var(--hud-grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--hud-grid-line) 1px, transparent 1px);
-  background-size: 36px 36px;
-  pointer-events: none;
-}
-
-.hud-scanline {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -90px;
-  height: 90px;
-  background: linear-gradient(180deg, transparent, var(--hud-scan), transparent);
-  animation: hud-scan 7s linear infinite;
-  pointer-events: none;
-}
-
-@keyframes hud-scan {
-  0% { top: -90px; }
-  100% { top: 100%; }
-}
-
-.hud-header {
-  position: relative;
+/* Equal-height cards: stretch every column and let the card fill it. */
+.monitor-grid > .ant-col {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--hud-line);
 }
 
-.hud-kicker {
-  font-family: var(--hud-mono);
-  font-size: 10px;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-  color: var(--hud-kicker);
+.monitor-grid .monitor-metric {
+  flex: 1 1 auto;
+  width: 100%;
 }
 
-.hud-title {
-  margin: 3px 0 0;
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: var(--hud-title-ink);
-  text-shadow: 0 0 18px var(--hud-title-glow);
+.monitor-metric .ant-card-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
-.hud-header-right {
+/* Fixed-height header zone keeps gauges and rate readouts aligned. */
+.monitor-gauge-zone {
+  height: 132px;
   display: flex;
   align-items: center;
-  gap: 14px;
+  justify-content: center;
 }
 
-.hud-live {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--hud-mono);
-  font-size: 11px;
-  letter-spacing: 0.22em;
-  color: var(--hud-live);
-}
-
-.hud-live-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--hud-live);
-  box-shadow: 0 0 10px var(--hud-live-glow);
-  animation: hud-blink 1.6s ease-in-out infinite;
-}
-
-@keyframes hud-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-
-.hud-clock {
-  font-family: var(--hud-mono);
+.monitor-metric-title {
+  margin-top: 6px;
   font-size: 15px;
-  letter-spacing: 0.14em;
-  color: var(--hud-ink);
-  text-shadow: 0 0 12px var(--hud-title-glow);
-}
-
-.hud-refresh.ant-btn {
-  font-family: var(--hud-mono);
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  color: var(--hud-accent);
-  background: rgba(47, 155, 245, 0.08);
-  border: 1px solid color-mix(in srgb, var(--hud-accent) 45%, transparent);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--hud-accent) 18%, transparent);
-}
-
-.hud-refresh.ant-btn:hover {
-  color: var(--hud-title-ink) !important;
-  border-color: var(--hud-accent);
-}
-
-.hud-grid {
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(222px, 1fr));
-  gap: 14px;
-  padding: 16px 0 12px;
-}
-
-.hud-card {
-  position: relative;
-  padding: 14px 12px 10px;
+  font-weight: 600;
   text-align: center;
-  border: 1px solid var(--hud-card-border);
-  background: var(--hud-card-bg);
-  transition: border-color 0.4s ease, box-shadow 0.4s ease;
+  color: var(--text-primary);
 }
 
-/* four HUD corner brackets */
-.hud-card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(var(--hud-bracket), var(--hud-bracket)) top left / 14px 2px,
-    linear-gradient(var(--hud-bracket), var(--hud-bracket)) top left / 2px 14px,
-    linear-gradient(var(--hud-bracket), var(--hud-bracket)) top right / 14px 2px,
-    linear-gradient(var(--hud-bracket), var(--hud-bracket)) top right / 2px 14px,
-    linear-gradient(var(--hud-bracket), var(--hud-bracket)) bottom left / 14px 2px,
-    linear-gradient(var(--hud-bracket), var(--hud-bracket)) bottom left / 2px 14px,
-    linear-gradient(var(--hud-bracket), var(--hud-bracket)) bottom right / 14px 2px,
-    linear-gradient(var(--hud-bracket), var(--hud-bracket)) bottom right / 2px 14px;
-  background-repeat: no-repeat;
-  opacity: 0.55;
+.monitor-stat {
+  margin-top: 4px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--text-secondary);
 }
 
-.hud-card--warn {
-  border-color: color-mix(in srgb, var(--hud-warn, #f5b942) 55%, transparent);
-}
-
-.hud-card--danger {
-  border-color: color-mix(in srgb, var(--hud-danger, #ff5f6e) 65%, transparent);
-  animation: hud-danger-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes hud-danger-pulse {
-  0%, 100% { box-shadow: 0 0 0 transparent; }
-  50% { box-shadow: 0 0 22px color-mix(in srgb, var(--hud-danger, #ff5f6e) 35%, transparent); }
-}
-
-.hud-console--light .hud-card--danger {
-  --hud-danger: #d94350;
-}
-
-.hud-console--light .hud-card--warn {
-  --hud-warn: #c07f14;
-}
-
-.hud-gauge-wrap {
-  position: relative;
-  width: 168px;
-  height: 128px;
-  margin: 0 auto;
-}
-
-.hud-gauge-value {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 14px;
-  font-family: var(--hud-mono);
-  font-size: 30px;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--hud-title-ink);
-  text-shadow: 0 0 16px currentColor;
-}
-
-.hud-gauge-unit {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  font-family: var(--hud-mono);
-  font-size: 10px;
-  letter-spacing: 0.3em;
-  color: var(--hud-dim);
-}
-
-.hud-card-title {
-  margin-top: 6px;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.32em;
-  color: var(--hud-dim);
-}
-
-.hud-stat {
-  margin-top: 6px;
-  font-family: var(--hud-mono);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  color: var(--hud-dim);
-}
-
-.hud-spark {
-  margin-top: 8px;
+/* Trend chart pinned to the card bottom so all cards align. */
+.monitor-spark {
+  margin-top: auto;
+  padding-top: 10px;
   display: flex;
   justify-content: center;
 }
 
-.hud-footer {
-  position: relative;
+.monitor-rate {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--hud-line);
-  font-family: var(--hud-mono);
-  font-size: 10px;
-  letter-spacing: 0.2em;
-  color: var(--hud-footer);
+  justify-content: center;
+  gap: 40px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .hud-scanline, .hud-live-dot, .hud-card--danger { animation: none; }
+.monitor-rate-item {
+  text-align: center;
+}
+
+.monitor-rate-value {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.monitor-rate-label {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
