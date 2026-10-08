@@ -2,6 +2,7 @@
 services:
   postgres:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-ml_platform}
       POSTGRES_USER: ${POSTGRES_USER:-ml_platform}
@@ -15,9 +16,11 @@ services:
       - ./docker/postgres/init-mlflow.sql:/docker-entrypoint-initdb.d/10-init-mlflow.sql:ro
   redis:
     image: redis:7
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
   minio:
+    restart: unless-stopped
     image: cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
     command: server /data --console-address :9001
     environment:
@@ -270,6 +273,7 @@ services:
     restart: unless-stopped
 
   worker:
+    restart: unless-stopped
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.worker
