@@ -9,7 +9,9 @@ tests inject :class:`FakeKubernetesClient` on the same code path.
 
 from __future__ import annotations
 
+import hashlib
 import re
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -18,11 +20,15 @@ from app.models.cloud_resources import KubernetesCluster, KubernetesCredentialRe
 from app.models.operation import DurableOperation
 from app.models.kubernetes_execution import KubernetesJobRun
 from app.services.kubernetes_client import (
-    CONNECTIVITY_FAILED,
     KubernetesClientError,
     _job_labels,
     build_job_manifest,
     redact_text,
+)
+from app.services.operation_lifecycle import (
+    claim_operation,
+    complete_operation,
+    fail_operation,
 )
 
 TERMINAL_STATUSES = ("succeeded", "failed", "cancelled", "timed_out", "orphaned")
@@ -31,6 +37,7 @@ IMAGE_DIGEST_PATTERN = re.compile(r"^(?P<repo>[a-z0-9._/-]+(?:\:[0-9]+)?[a-z0-9.
 JOB_NAME_PATTERN = re.compile(r"^lr-[a-f0-9]{8}-job-[a-f0-9]{8}-[0-9]+$")
 BINDINGS_UNSUPPORTED = "KUBE_JOB_BINDINGS_UNSUPPORTED"
 JOB_NAME_COLLISION = "KUBE_JOB_NAME_COLLISION"
+SETTLE_WORKER_PREFIX = "kubernetes-executor"
 
 
 class KubeJobError(Exception):
@@ -113,6 +120,34 @@ def _set_terminal(job_run: KubernetesJobRun, status: str, *, error_code: str | N
     return True
 
 
+def _settle_operation(db: Session, job_run: KubernetesJobRun, status: str, error_code: str | None) -> None:
+    """Mirror one guarded terminal job write onto the durable operation, once."""
+    operation = db.get(DurableOperation, job_run.operation_id)
+    if operation is None:
+        return
+    if status == "succeeded":
+        worker = f"{SETTLE_WORKER_PREFIX}:{job_run.id}"
+        try:
+            claimed = claim_operation(db, job_run.operation_id, worker, 30)
+        except ValueError:
+            claimed = False
+        checksum = f"sha256:{hashlib.sha256(f'{job_run.job_name}:{status}'.encode('utf-8')).hexdigest()}"
+        summary = {"status": "succeeded", "job_name": job_run.job_name}
+        try:
+            if claimed:
+                complete_operation(db, job_run.operation_id, worker_id=worker, checksum=checksum, result_summary=summary)
+            else:
+                # Same-worker live lease: complete through the current owner.
+                complete_operation(db, job_run.operation_id, checksum=checksum, result_summary=summary)
+        except ValueError:
+            pass  # another writer settled the terminal state first
+    else:
+        try:
+            fail_operation(db, job_run.operation_id, error_code or "KUBE_JOB_FAILED", {"status": status})
+        except ValueError:
+            pass
+
+
 def submit_job(
     db: Session,
     *,
@@ -129,6 +164,7 @@ def submit_job(
     idempotency_key: str,
     actor_id,
     task_id=None,
+    namespace: str | None = None,
 ) -> tuple[KubernetesJobRun, bool]:
     """Idempotent submission: database rows commit before any cluster call."""
     validate_bindings([], [])
@@ -146,10 +182,26 @@ def submit_job(
     clean_timeout = validate_timeout(timeout_seconds, settings)
     clean_command, clean_args = validate_command(command, args)
 
+    # One atomic commit: the durable operation and the queued run become
+    # visible together, before any cluster resource exists.
+    run_id = uuid.uuid4()
+    operation = DurableOperation(
+        project_id=project_id,
+        task_id=task_id,
+        resource_type="kubernetes_job",
+        resource_key=f"kubernetes-job:{run_id}",
+        idempotency_key=idempotency_key,
+        state="queued",
+        stage="queued",
+    )
+    db.add(operation)
+    db.flush()
     run = KubernetesJobRun(
+        id=run_id,
         project_id=project_id,
         cluster_id=cluster.id,
-        namespace=cluster.default_namespace or "default",
+        namespace=namespace or cluster.default_namespace or "default",
+        operation_id=operation.id,
         task_id=task_id,
         idempotency_key=idempotency_key,
         image_ref=clean_image,
@@ -159,23 +211,11 @@ def submit_job(
         resource_json=clean_resources,
         timeout_seconds=clean_timeout,
         status="queued",
+        revision=1,
         created_by=actor_id,
     )
+    run.job_name = job_name_for(project_id, run_id, 1)
     db.add(run)
-    db.flush()
-    run.job_name = job_name_for(project_id, run.id, run.revision)
-    operation = DurableOperation(
-        project_id=project_id,
-        task_id=task_id,
-        resource_type="kubernetes_job",
-        resource_key=f"kubernetes-job:{run.id}",
-        idempotency_key=idempotency_key,
-        state="queued",
-        stage="queued",
-    )
-    db.add(operation)
-    db.flush()
-    run.operation_id = operation.id
     db.commit()
 
     client_error: str | None = None
@@ -229,23 +269,37 @@ def _map_condition(job: dict) -> tuple[str, str]:
     return "unknown", ""
 
 
-def reconcile_job(db: Session, job_run: KubernetesJobRun, credential_ref, settings, client=None) -> KubernetesJobRun:
-    """Read cluster truth once and converge the local state (idempotent)."""
-    if job_run.status in TERMINAL_STATUSES:
-        return job_run
+def fetch_cluster_job(db: Session, job_run: KubernetesJobRun, credential_ref, settings, client=None):
+    """Return (cluster, job_dict|None); raises KubernetesClientError on client failure."""
     cluster = db.query(KubernetesCluster).filter(KubernetesCluster.id == job_run.cluster_id).first()
-    if cluster is None:
-        _set_terminal(job_run, "orphaned", error_code="KUBE_JOB_ORPHANED", detail="cluster registration missing")
-        db.commit()
-        return job_run
-
-    try:
-        if client is None:
+    if client is None:
+        if credential_ref is None:
+            credential_ref = (
+                db.query(KubernetesCredentialRef)
+                .filter(KubernetesCredentialRef.cluster_id == job_run.cluster_id)
+                .first()
+            )
+        if cluster is not None and credential_ref is not None:
             client = _client_for(cluster, credential_ref, settings)
-        job = client.get_job(job_run.job_name)
-    except KubernetesClientError as error:
-        job_run.error_code = error.code
-        job_run.status_detail = f"reconcile deferred: {error.code}"[:500]
+    if client is None:
+        return cluster, None
+    job = client.get_job(job_run.job_name)
+    return cluster, job
+
+
+def apply_cluster_job(
+    db: Session,
+    job_run: KubernetesJobRun,
+    cluster: KubernetesCluster | None,
+    job: dict | None,
+    credential_ref,
+    settings,
+    client=None,
+) -> KubernetesJobRun:
+    """Converge the local row toward cluster truth (idempotent, guarded)."""
+    if cluster is None:
+        if _set_terminal(job_run, "orphaned", error_code="KUBE_JOB_ORPHANED", detail="cluster registration missing"):
+            _settle_operation(db, job_run, "orphaned", "KUBE_JOB_ORPHANED")
         db.commit()
         return job_run
 
@@ -253,8 +307,8 @@ def reconcile_job(db: Session, job_run: KubernetesJobRun, credential_ref, settin
         if job_run.status == "queued":
             # Submitted call crashed before cluster create: retry submission.
             try:
-                client = client or _client_for(cluster, credential_ref, settings)
-                client.create_job(
+                target = client or _client_for(cluster, credential_ref, settings)
+                target.create_job(
                     build_job_manifest(
                         job_name=job_run.job_name,
                         namespace=job_run.namespace,
@@ -269,12 +323,15 @@ def reconcile_job(db: Session, job_run: KubernetesJobRun, credential_ref, settin
                     )
                 )
                 job_run.status = "submitted"
+                job_run.submitted_at = job_run.submitted_at or datetime.now(timezone.utc)
                 job_run.error_code = None
                 job_run.status_detail = "reconciled: job created"
             except KubernetesClientError as error:
                 job_run.error_code = error.code
+                job_run.status_detail = f"reconcile deferred: {error.code}"[:500]
         elif job_run.submitted_at is not None:
-            _set_terminal(job_run, "orphaned", error_code="KUBE_JOB_ORPHANED", detail="job disappeared from cluster")
+            if _set_terminal(job_run, "orphaned", error_code="KUBE_JOB_ORPHANED", detail="job disappeared from cluster"):
+                _settle_operation(db, job_run, "orphaned", "KUBE_JOB_ORPHANED")
         db.commit()
         return job_run
 
@@ -284,32 +341,83 @@ def reconcile_job(db: Session, job_run: KubernetesJobRun, credential_ref, settin
             job_run.status = "running"
             job_run.started_at = job_run.started_at or datetime.now(timezone.utc)
     elif mapped == "succeeded":
-        _set_terminal(job_run, "succeeded", error_code=None, detail="", exit_code=0)
+        if _set_terminal(job_run, "succeeded", error_code=None, detail="", exit_code=0):
+            _settle_operation(db, job_run, "succeeded", None)
     elif mapped == "timed_out":
-        _set_terminal(job_run, "timed_out", error_code="KUBE_JOB_TIMEOUT", detail=reason)
+        if _set_terminal(job_run, "timed_out", error_code="KUBE_JOB_TIMEOUT", detail=reason):
+            _settle_operation(db, job_run, "timed_out", "KUBE_JOB_TIMEOUT")
     elif mapped == "failed":
-        _set_terminal(job_run, "failed", error_code="KUBE_JOB_FAILED", detail=reason)
+        if _set_terminal(job_run, "failed", error_code="KUBE_JOB_FAILED", detail=reason):
+            _settle_operation(db, job_run, "failed", "KUBE_JOB_FAILED")
     db.commit()
     return job_run
 
 
-def cancel_job(db: Session, job_run: KubernetesJobRun, credential_ref, settings, *, reason: str) -> KubernetesJobRun:
+def reconcile_job(
+    db: Session,
+    job_run: KubernetesJobRun,
+    credential_ref,
+    settings,
+    client=None,
+) -> KubernetesJobRun:
+    """Read cluster truth once and converge the local state (idempotent)."""
+    job_run = db.merge(job_run, load=True)
+    if job_run.status in TERMINAL_STATUSES:
+        return job_run
+    try:
+        cluster, job = fetch_cluster_job(db, job_run, credential_ref, settings, client=client)
+    except KubernetesClientError as error:
+        job_run.error_code = error.code
+        job_run.status_detail = f"reconcile deferred: {error.code}"[:500]
+        db.commit()
+        return job_run
+    return apply_cluster_job(db, job_run, cluster, job, credential_ref, settings, client=client)
+
+
+def cancel_job(
+    db: Session,
+    job_run: KubernetesJobRun,
+    credential_ref,
+    settings,
+    *,
+    reason: str,
+    client=None,
+) -> KubernetesJobRun:
+    job_run = db.merge(job_run, load=True)
     if job_run.status in TERMINAL_STATUSES:
         raise KubeJobError("KUBE_JOB_ALREADY_TERMINAL", f"job already {job_run.status}", status=409)
     cluster = db.query(KubernetesCluster).filter(KubernetesCluster.id == job_run.cluster_id).first()
-    client = _client_for(cluster, credential_ref, settings)
+    if client is None:
+        if credential_ref is None:
+            credential_ref = (
+                db.query(KubernetesCredentialRef)
+                .filter(KubernetesCredentialRef.cluster_id == job_run.cluster_id)
+                .first()
+            )
+        client = _client_for(cluster, credential_ref, settings)
     try:
         client.delete_job(job_run.job_name)
     except KubernetesClientError as error:
         raise KubeJobError(error.code, error.message, status=502)
-    _set_terminal(job_run, "cancelled", error_code=None, detail=reason or "")
+    if _set_terminal(job_run, "cancelled", error_code=None, detail=reason or ""):
+        _settle_operation(db, job_run, "cancelled", "KUBE_JOB_CANCELLED")
     db.commit()
     return job_run
 
 
-def read_logs(cluster: KubernetesCluster, credential_ref, settings, job_run: KubernetesJobRun, *, cursor: int, limit_bytes: int | None = None) -> dict:
+def read_logs(
+    cluster: KubernetesCluster,
+    credential_ref,
+    settings,
+    job_run: KubernetesJobRun,
+    *,
+    cursor: int,
+    limit_bytes: int | None = None,
+    client=None,
+) -> dict:
     limit = min(limit_bytes or settings.kubernetes_job_log_chunk_bytes, settings.kubernetes_job_log_chunk_bytes)
-    client = _client_for(cluster, credential_ref, settings)
+    if client is None:
+        client = _client_for(cluster, credential_ref, settings)
     pods = client.list_job_pods(job_run.job_name)
     chunk = ""
     for pod in pods:

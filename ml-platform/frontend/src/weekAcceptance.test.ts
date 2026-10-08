@@ -78,6 +78,9 @@ const weekTestFiles: Record<number, string[]> = {
   13: [
     "./pages/KubernetesPage.test.tsx",
   ],
+  14: [
+    "./pages/JobRunsPage.test.tsx",
+  ],
   17: [
     "./api/annotationReturns.test.ts",
     "./api/annotatorAssignments.test.ts",

@@ -47,4 +47,6 @@ class JobRunResponse(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     created_at: datetime | None = None
+    operation_state: str | None = None
+    operation_progress: int | None = None
     replayed: bool = False

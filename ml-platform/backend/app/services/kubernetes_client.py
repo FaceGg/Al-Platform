@@ -28,6 +28,7 @@ ENDPOINT_FORBIDDEN = "KUBERNETES_ENDPOINT_FORBIDDEN"
 CREDENTIAL_MISSING = "KUBERNETES_CREDENTIAL_MISSING"
 CREDENTIAL_INVALID = "KUBERNETES_CREDENTIAL_INVALID"
 CONNECTIVITY_FAILED = "KUBERNETES_CONNECTIVITY_FAILED"
+GONE = "KUBERNETES_GONE"
 TIMEOUT = "KUBERNETES_TIMEOUT"
 TLS_ERROR = "KUBERNETES_TLS_ERROR"
 AUTH_FAILED = "KUBERNETES_AUTH_FAILED"
@@ -165,6 +166,8 @@ def _map_exception(error: Exception) -> KubernetesClientError:
     if isinstance(status, int):
         if status in (401, 403):
             return KubernetesClientError(AUTH_FAILED, f"cluster rejected credentials (status {status})")
+        if status == 410:
+            return KubernetesClientError(GONE, "watch resource version expired (410)")
         return KubernetesClientError(CONNECTIVITY_FAILED, f"cluster request failed (status {status})")
     return KubernetesClientError(CONNECTIVITY_FAILED, str(error))
 
@@ -206,6 +209,7 @@ class RealKubernetesClient:
         from kubernetes import client as k8s_client
 
         self._core = k8s_client.CoreV1Api(api_client)
+        self._batch = k8s_client.BatchV1Api(api_client)
         self._request_timeout = (connect_timeout_seconds, read_timeout_seconds)
 
     def check_connectivity(self) -> dict:
@@ -304,6 +308,132 @@ class RealKubernetesClient:
             raise _map_exception(error) from error
         return {"name": name, "ensured": True, "quota_applied": bool(quota_json)}
 
+    # ---- Week 14 job surface ----
+    def _find_job(self, name: str) -> dict | None:
+        try:
+            result = self._batch.list_job_for_all_namespaces(
+                field_selector=f"metadata.name={name}", _request_timeout=self._request_timeout
+            )
+        except Exception as error:  # noqa: BLE001
+            raise _map_exception(error) from error
+        if not result.items:
+            return None
+        return _job_status_to_dict(result.items[0])
+
+    def create_job(self, manifest: dict) -> dict:
+        from kubernetes import client as k8s_client
+
+        spec = manifest["spec"]
+        container = spec["template"]["spec"]["containers"][0]
+        body = k8s_client.V1Job(
+            api_version="batch/v1",
+            kind="Job",
+            metadata=k8s_client.V1ObjectMeta(
+                name=manifest["metadata"]["name"],
+                namespace=manifest["metadata"]["namespace"],
+                labels=dict(manifest["metadata"].get("labels") or {}),
+            ),
+            spec=k8s_client.V1JobSpec(
+                backoff_limit=spec["backoffLimit"],
+                active_deadline_seconds=spec["activeDeadlineSeconds"],
+                ttl_seconds_after_finished=spec["ttlSecondsAfterFinished"],
+                selector=k8s_client.V1LabelSelector(
+                    match_labels=dict(spec["selector"]["matchLabels"])
+                ),
+                template=k8s_client.V1PodTemplateSpec(
+                    metadata=k8s_client.V1ObjectMeta(
+                        labels=dict(spec["template"]["metadata"]["labels"])
+                    ),
+                    spec=k8s_client.V1PodSpec(
+                        restart_policy="Never",
+                        automount_service_account_token=False,
+                        containers=[
+                            k8s_client.V1Container(
+                                name=container["name"],
+                                image=container["image"],
+                                command=container.get("command"),
+                                args=container.get("args"),
+                                env=[
+                                    k8s_client.V1EnvVar(name=entry["name"], value=entry["value"])
+                                    for entry in container.get("env", [])
+                                ],
+                                resources=k8s_client.V1ResourceRequirements(
+                                    requests=dict(container["resources"]["requests"])
+                                ),
+                            )
+                        ],
+                    ),
+                ),
+            ),
+        )
+        try:
+            result = self._batch.create_namespaced_job(
+                manifest["metadata"]["namespace"], body, _request_timeout=self._request_timeout
+            )
+        except Exception as error:  # noqa: BLE001
+            raise _map_exception(error) from error
+        return {
+            "name": result.metadata.name,
+            "namespace": result.metadata.namespace,
+            "resource_version": result.metadata.resource_version,
+        }
+
+    def get_job(self, name: str) -> dict | None:
+        return self._find_job(name)
+
+    def delete_job(self, name: str) -> None:
+        job = self._find_job(name)
+        if job is None:
+            return
+        try:
+            self._batch.delete_namespaced_job(
+                name,
+                job["namespace"],
+                propagation_policy="Foreground",
+                _request_timeout=self._request_timeout,
+            )
+        except Exception as error:  # noqa: BLE001
+            status = getattr(error, "status", None)
+            if status == 404:
+                return
+            raise _map_exception(error) from error
+
+    def list_job_pods(self, job_name: str) -> list[dict]:
+        try:
+            result = self._core.list_pod_for_all_namespaces(
+                label_selector=f"job-name={job_name}", _request_timeout=self._request_timeout
+            )
+        except Exception as error:  # noqa: BLE001
+            raise _map_exception(error) from error
+        pods = []
+        for item in result.items:
+            pods.append(
+                {
+                    "name": item.metadata.name,
+                    "namespace": item.metadata.namespace,
+                    "phase": item.status.phase if item.status else "",
+                }
+            )
+        return pods
+
+    def read_pod_log(self, pod_name: str, cursor: int, limit_bytes: int) -> str:
+        try:
+            pods = self._core.list_pod_for_all_namespaces(
+                field_selector=f"metadata.name={pod_name}", _request_timeout=self._request_timeout
+            )
+            if not pods.items:
+                return ""
+            pod = pods.items[0]
+            text = self._core.read_namespaced_pod_log(
+                pod_name,
+                pod.metadata.namespace,
+                _preload_content=True,
+                _request_timeout=self._request_timeout,
+            )
+        except Exception as error:  # noqa: BLE001
+            raise _map_exception(error) from error
+        return str(text or "")[cursor : cursor + limit_bytes]
+
 
 class FakeKubernetesClient:
     """Programmable test double: inject outcomes, assert call order, no cluster."""
@@ -366,6 +496,8 @@ class FakeKubernetesClient:
             self.jobs: dict[str, dict] = {}
             self.pod_logs: dict[str, str] = {}
             self.job_events: list[str] = []
+        if not hasattr(self, "job_pods"):
+            self.job_pods: list[dict] | None = None
 
     def create_job(self, manifest: dict) -> dict:
         self._jobs_init()
@@ -391,11 +523,14 @@ class FakeKubernetesClient:
         if name in self.jobs:
             self.jobs[name]["deleted"] = True
             self.jobs[name]["active"] = 0
+            self.jobs[name]["resource_version"] = str(int(self.jobs[name].get("resource_version", "1")) + 1)
             self.job_events.append(f"delete:{name}")
 
     def list_job_pods(self, job_name: str) -> list[dict]:
         self._jobs_init()
         self.call_log.append("list_job_pods")
+        if self.job_pods is not None:
+            return list(self.job_pods)
         return [{"name": f"{job_name}-pod-1", "phase": "Succeeded" if self.jobs.get(job_name, {}).get("succeeded") else "Running"}]
 
     def read_pod_log(self, pod_name: str, cursor: int, limit_bytes: int) -> str:
@@ -416,6 +551,30 @@ class JobClientProtocol(Protocol):
     def list_job_pods(self, job_name: str) -> list[dict]: ...
 
     def read_pod_log(self, pod_name: str, cursor: int, limit_bytes: int) -> str: ...
+
+
+def _job_status_to_dict(job) -> dict:
+    """Map a kubernetes batch V1Job to the platform's plain job dict."""
+    conditions = []
+    for condition in (job.status.conditions if job.status else None) or []:
+        conditions.append(
+            {
+                "type": condition.type,
+                "reason": condition.reason,
+                "message": condition.message or "",
+            }
+        )
+    return {
+        "name": job.metadata.name,
+        "namespace": job.metadata.namespace,
+        "labels": dict(job.metadata.labels or {}),
+        "succeeded": job.status.succeeded or 0 if job.status else 0,
+        "failed": job.status.failed or 0 if job.status else 0,
+        "active": job.status.active or 0 if job.status else 0,
+        "conditions": conditions,
+        "resource_version": job.metadata.resource_version,
+        "deleted": False,
+    }
 
 
 def _job_labels(project_id: str, operation_id: str, revision: int) -> dict:
@@ -490,5 +649,6 @@ def _fake_k8s_job(job_name: str, manifest: dict) -> dict:
         "failed": 0,
         "active": 1,
         "conditions": [],
+        "resource_version": "1",
         "deleted": False,
     }

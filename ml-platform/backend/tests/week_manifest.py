@@ -174,6 +174,12 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_kubernetes_cluster_api",
         "test_cloud_resource_migrations",
     ],
+    14: [
+        "test_kubernetes_executor",
+        "test_kubernetes_job_api",
+        "test_kubernetes_recovery",
+        "test_kubernetes_logs",
+    ],
 }
 
 

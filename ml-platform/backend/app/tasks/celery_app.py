@@ -21,6 +21,7 @@ celery_app = Celery(
         "app.tasks.model_export_tasks",
         "app.tasks.dataset_import_tasks",
         "app.tasks.annotation_return_tasks",
+        "app.tasks.kubernetes_tasks",
         "app.tasks.recovery",
     ],
     broker=(settings.celery_broker_url.get_secret_value() if settings.celery_broker_url else None),
@@ -66,6 +67,14 @@ celery_app.conf.update(
             "task": "ml_platform.prune_inference_telemetry",
             "schedule": crontab(hour=0, minute=0),
         },
+        "kubernetes-job-reconcile": {
+            "task": "ml_platform.kubernetes_jobs_reconcile",
+            "schedule": 60.0,
+        },
+        "kubernetes-job-gc": {
+            "task": "ml_platform.kubernetes_jobs_gc",
+            "schedule": 300.0,
+        },
         "notification-outbox-dispatch": {
             "task": "ml_platform.enqueue_due_notifications",
             "schedule": 30.0,
@@ -84,4 +93,5 @@ from app.tasks import spot_weld_quality_tasks  # noqa: E402,F401
 from app.tasks import model_export_tasks  # noqa: E402,F401
 from app.tasks import dataset_import_tasks  # noqa: E402,F401
 from app.tasks import annotation_return_tasks  # noqa: E402,F401
+from app.tasks import kubernetes_tasks  # noqa: E402,F401
 from app.tasks import recovery  # noqa: E402,F401
