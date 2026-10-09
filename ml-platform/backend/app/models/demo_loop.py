@@ -29,7 +29,7 @@ class DemoLoopConfig(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
-    name = Column(String(128), nullable=False, default="闭环演示")
+    name = Column(String(128), nullable=False, default="自动化闭环")
     deployment_id = Column(
         UUID(as_uuid=True),
         ForeignKey("inference_deployments.id", ondelete="SET NULL"),

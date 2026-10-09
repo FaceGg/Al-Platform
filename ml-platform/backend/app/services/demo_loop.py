@@ -584,7 +584,7 @@ class DemoLoopService:
             "scope": scope_descriptor(count, scope_hash),
             "visible_columns": [column["name"] for column in (source_columns or [])],
             "label_schema": label_schema_snapshot(schema),
-            "instructions": "闭环演示自动创建：请复核本行数据是否确实属于报错类别。",
+            "instructions": "自动化闭环自动创建：请复核本行数据是否确实属于报错类别。",
             "completion_criteria": "",
             "configuration": {},
             "field_descriptions": {},
@@ -648,12 +648,15 @@ class DemoLoopService:
             raise DemoLoopError("DEMO_LOOP_RETRAIN_TARGET_MISSING", "未配置重训目标列")
         if config.retrain_dataset_artifact_id is None:
             raise DemoLoopError("DEMO_LOOP_RETRAIN_DATASET_MISSING", "未配置重训数据集")
+        # 绑定表以 experiment_id 为主键（实验↔AutoML 任务 1:1），且重训幂等
+        # 指纹含实验名；实验名必须按周期唯一，否则同轮次触发绑定冲突或重放旧任务。
+        cycle = uuid.uuid4().hex[:8]
         job = trigger_retrain_job(
             self.db,
             project_id=config.project_id,
             actor_id=actor_id,
-            experiment_name=f"{config.name}-自动建模-{config.error_count}",
-            job_name=f"{config.name}-自动建模-{config.error_count}",
+            experiment_name=f"{config.name}-自动建模-{config.error_count}-{cycle}",
+            job_name=f"{config.name}-自动建模-{config.error_count}-{cycle}",
             dataset_artifact_id=config.retrain_dataset_artifact_id,
             target_column=config.retrain_target_column,
             max_trials=config.retrain_max_trials,
@@ -693,8 +696,9 @@ class DemoLoopService:
         return candidate_score(row)
 
     def _swap_to_best_model(self, config: DemoLoopConfig, job: TrainingJob, actor_id) -> None:
-        if config.swapped_model_version_id:
-            return
+        # 每个完成的任务只换一次模：上游 refresh_retrain_status 依据
+        # retrain_status 迁移保证调用次数；swapped_model_version_id 仅作
+        # 前端换模水印，每轮覆盖为新版本，不能当 once-ever 守卫。
         version = complete_retrain_swap(
             self.db,
             deployment_id=config.deployment_id,
@@ -729,7 +733,7 @@ class DemoLoopService:
             config.retrain_status = "idle"
             config.retrain_job_id = None
             self.db.query(DemoLoopEvent).filter(DemoLoopEvent.config_id == config.id).delete()
-            self._emit(config, "loop_reset", "演示闭环状态已重置（配置与数据集保留）")
+            self._emit(config, "loop_reset", "闭环状态已重置（配置与数据集保留）")
             self.db.commit()
 
     # -------------------------------------------------------------------- status

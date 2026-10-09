@@ -324,6 +324,7 @@ class DemoLoopFlow(unittest.TestCase):
                 # deployment.model_version_id stays satisfiable.
                 id = existing_version_id
                 version_number = 1
+                approval_status = "pending"
 
             class _FakeRegistry:
                 def __init__(self, *_args, **_kwargs):
@@ -352,6 +353,125 @@ class DemoLoopFlow(unittest.TestCase):
             ).json()
             types = [event["event_type"] for event in status["events"]]
             self.assertIn("model_swapped", types)
+        finally:
+            db.close()
+
+    def test_07b_second_completed_job_swaps_again(self):
+        # 回归：swapped_model_version_id 是前端换模水印，不能当 once-ever
+        # 守卫；真实多周期闭环要求每个完成任务都能再次触发换模。
+        db = SessionLocal()
+        try:
+            config = db.query(DemoLoopConfig).filter(
+                DemoLoopConfig.project_id == uuid.UUID(self.project_id),
+            ).order_by(DemoLoopConfig.created_at.asc()).first()
+            job = db.query(TrainingJob).filter(TrainingJob.id == config.retrain_job_id).one()
+            service = demo_loop_module.DemoLoopService(db)
+
+            class _FakeVersion:
+                id = uuid.uuid4()
+                version_number = 2
+
+            with patch(
+                "app.services.demo_loop.complete_retrain_swap",
+                return_value=_FakeVersion(),
+            ) as swap:
+                service._swap_to_best_model(config, job, self.user_id)
+            db.commit()
+
+            self.assertEqual(swap.call_count, 1)
+            self.assertEqual(config.swapped_model_version_id, _FakeVersion.id)
+        finally:
+            db.close()
+
+    def test_07c_swap_rotates_stable_revision_target(self):
+        # 回归：运行时规格与路由按最新 stable revision 的 target 取模，且
+        # revision 不可变；换模必须轮换 revision，否则运行时永远加载旧模型。
+        db = SessionLocal()
+        try:
+            from app.models.model_registry import DeploymentRevision, DeploymentTarget
+
+            config = db.query(DemoLoopConfig).filter(
+                DemoLoopConfig.project_id == uuid.UUID(self.project_id),
+            ).order_by(DemoLoopConfig.created_at.asc()).first()
+            job = db.query(TrainingJob).filter(TrainingJob.id == config.retrain_job_id).one()
+            deployment = db.query(InferenceDeployment).filter(
+                InferenceDeployment.id == config.deployment_id,
+            ).one()
+            new_version_id = deployment.model_version_id
+            # stable 先指向一个陈旧版本，换入 new_version_id 时必须轮换。
+            current = db.query(ModelVersion).filter(
+                ModelVersion.id == new_version_id,
+            ).one()
+            stale_version = ModelVersion(
+                registered_model_id=current.registered_model_id,
+                version_number=90,
+                source_kind="onnx_artifact",
+                source_artifact_id=current.source_artifact_id,
+                onnx_artifact_id=current.onnx_artifact_id,
+                framework="onnx",
+                feature_schema=[],
+                approval_status="approved",
+            )
+            db.add(stale_version)
+            db.flush()
+            latest = db.query(DeploymentRevision.revision_number).filter(
+                DeploymentRevision.deployment_id == deployment.id,
+            ).order_by(DeploymentRevision.revision_number.desc()).first()
+            old_revision = DeploymentRevision(
+                deployment_id=deployment.id,
+                revision_number=(int(latest[0]) if latest else 0) + 1,
+                strategy="immediate",
+                status="stable",
+            )
+            db.add(old_revision)
+            db.flush()
+            db.add(DeploymentTarget(
+                revision_id=old_revision.id,
+                model_version_id=stale_version.id,
+                weight_bps=10000,
+                role="stable",
+            ))
+            db.commit()
+
+            class _FakeVersion:
+                # 复用既有版本 id，满足 target.model_version_id 的外键约束。
+                id = new_version_id
+                version_number = 1
+                approval_status = "pending"
+
+            class _FakeRegistry:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def list_registerable_candidates(self, _db, _task_id):
+                    return [{"candidate_id": "c-best", "name": "strong",
+                             "metrics": {"accuracy": 0.9}}]
+
+                def register_automl_candidate(self, _db, **_kwargs):
+                    return _FakeVersion(), True
+
+                def transition_model_version(self, _db, version_id, _action, _actor_id, **_kwargs):
+                    return _FakeVersion()
+
+            service = demo_loop_module.DemoLoopService(db)
+            with patch(
+                "app.services.closed_loop_actions.ModelRegistryService", _FakeRegistry,
+            ):
+                service._swap_to_best_model(config, job, self.user_id)
+            db.commit()
+
+            db.refresh(old_revision)
+            self.assertEqual(old_revision.status, "superseded")
+            stable = db.query(DeploymentRevision).filter(
+                DeploymentRevision.deployment_id == deployment.id,
+                DeploymentRevision.status == "stable",
+            ).order_by(DeploymentRevision.revision_number.desc()).first()
+            self.assertIsNotNone(stable)
+            self.assertGreater(stable.revision_number, old_revision.revision_number)
+            targets = list(stable.targets or ())
+            self.assertEqual(len(targets), 1)
+            self.assertEqual(targets[0].model_version_id, new_version_id)
+            self.assertEqual(targets[0].weight_bps, 10000)
         finally:
             db.close()
 

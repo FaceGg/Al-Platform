@@ -214,7 +214,7 @@ export default function DemoLoopPage() {
       alertSeenRef.current = 0;
     } catch (error) {
       setRunning(false);
-      message.error(formatApiError(error, "配置保存失败，未开始演示"));
+      message.error(formatApiError(error, "配置保存失败，未启动闭环"));
       return;
     }
     try {
@@ -238,7 +238,7 @@ export default function DemoLoopPage() {
         await new Promise((resolve) => setTimeout(resolve, 240));
       }
     } catch (error) {
-      message.error(formatApiError(error, "单行调用失败，演示已停止"));
+      message.error(formatApiError(error, "单行调用失败，闭环已停止"));
     } finally {
       setRunning(false);
       if (projectId) fetchDemoLoopStatus(projectId).then((st: any) => setStatus(st)).catch(() => undefined);
@@ -279,7 +279,7 @@ export default function DemoLoopPage() {
       <Card style={{ marginBottom: 16 }}>
         <Space wrap size="large">
           <Title level={3} style={{ margin: 0 }}>
-            <DeploymentUnitOutlined /> {tr.title || "推理-回流-重训 闭环演示"}
+            <DeploymentUnitOutlined /> {tr.title || "推理-回流-重训 自动化闭环"}
           </Title>
           <span>
             <Text type="secondary">{tr.project || "项目"}</Text>
@@ -295,7 +295,7 @@ export default function DemoLoopPage() {
             {tr.refresh || "刷新"}
           </Button>
           <Button type="primary" ghost onClick={() => window.open("/demo-showcase.html", "_blank")}>
-            {tr.showcase || "大屏动画演示"}
+            {tr.showcase || "运行监控大屏"}
           </Button>
           <Button danger onClick={handleReset} disabled={!config}>
             {tr.reset || "重置闭环"}
@@ -311,7 +311,7 @@ export default function DemoLoopPage() {
                 message={tr.no_config || "当前项目尚未配置闭环，保存后自动创建"} style={{ marginBottom: 12 }} />
             )}
             <Form form={form} layout="vertical" onFinish={handleSave}>
-              <Form.Item name="name" label={tr.name || "演示名称"} initialValue="闭环演示" rules={[{ required: true }]}>
+              <Form.Item name="name" label={tr.name || "闭环名称"} initialValue="自动化闭环" rules={[{ required: true }]}>
                 <Input />
               </Form.Item>
               <Form.Item name="deployment_id" label={tr.deployment || "推理部署"} rules={[{ required: true }]}>
@@ -326,7 +326,7 @@ export default function DemoLoopPage() {
               <Form.Item
                 name="preprocess_enabled"
                 label={tr.preprocess || "自动特征工程（原始点焊报告数据 → 73 特征）"}
-                tooltip={tr.preprocess_hint || "开启后，上传原始点焊报告行（报告字段 + cvei/cvev/cver/cvep 波形列）会先经平台特征工程算子补齐派生列再做预测；改动需保存配置生效，开始演示时也会自动保存"}
+                tooltip={tr.preprocess_hint || "开启后，上传原始点焊报告行（报告字段 + cvei/cvev/cver/cvep 波形列）会先经平台特征工程算子补齐派生列再做预测；改动需保存配置生效，启动闭环时也会自动保存"}
                 valuePropName="checked"
               >
                 <Switch />
@@ -377,7 +377,7 @@ export default function DemoLoopPage() {
         </Col>
 
         <Col span={9}>
-          <Card title={<><UploadOutlined /> {tr.playback || "数据回放（逐行调用推理 API）"}</>} size="small">
+          <Card title={<><UploadOutlined /> {tr.playback || "逐行推理调用"}</>} size="small">
             <Space direction="vertical" style={{ width: "100%" }} size="middle">
               <Upload accept=".csv" maxCount={1} beforeUpload={handleUpload} showUploadList={false}>
                 <Button icon={<UploadOutlined />} disabled={!config}>
@@ -388,7 +388,7 @@ export default function DemoLoopPage() {
               <Space>
                 <Button type="primary" icon={<CaretRightOutlined />} onClick={runDemo}
                   loading={running} disabled={!rows.length || !config}>
-                  {running ? (tr.running || "回放中...") : (tr.start || "开始演示")}
+                  {running ? (tr.running || "运行中...") : (tr.start || "启动闭环")}
                 </Button>
                 <Button icon={<PauseOutlined />} onClick={() => { pauseRef.current = true; }}
                   disabled={!running}>
@@ -406,7 +406,7 @@ export default function DemoLoopPage() {
                 />
               )}
               <div style={{ maxHeight: 360, overflowY: "auto" }}>
-                {results.length === 0 && <Text type="secondary">{tr.empty_results || "回放结果将在这里逐行展示"}</Text>}
+                {results.length === 0 && <Text type="secondary">{tr.empty_results || "推理结果将在这里逐行展示"}</Text>}
                 {[...results].reverse().map((item) => (
                   <div key={`${item.index}-${item.prediction}`} className="demo-row-item"
                     style={{

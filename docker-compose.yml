@@ -13,6 +13,7 @@ services:
       timeout: 5s
       retries: 10
     volumes:
+      - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres/init-mlflow.sql:/docker-entrypoint-initdb.d/10-init-mlflow.sql:ro
   redis:
     image: redis:7
@@ -26,6 +27,8 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
     ports:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
@@ -339,6 +342,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres-data:
+  minio-data:
   tensorboard-events:
   inference-cache:
 

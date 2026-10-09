@@ -442,6 +442,7 @@ class OrchestrationAPIFlow(unittest.TestCase):
             # deployment.model_version_id stays satisfiable.
             id = deployment.model_version_id
             version_number = 99
+            approval_status = "pending"
 
         class _FakeRegistry:
             def __init__(self, *_a, **_k):

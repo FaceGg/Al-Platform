@@ -28,13 +28,13 @@ vi.mock("../components/AppLayout", () => ({
   default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 vi.mock("../i18n", () => ({
-  useI18n: () => ({ t: { nav: { demo_loop: "闭环演示" }, demo_loop: { title: "推理-回流-重训 闭环演示" } } }),
+  useI18n: () => ({ t: { nav: { demo_loop: "自动化闭环" }, demo_loop: { title: "推理-回流-重训 自动化闭环" } } }),
 }));
 
 const CONFIG = {
   id: "cfg-1",
   project_id: "p1",
-  name: "闭环演示",
+  name: "自动化闭环",
   deployment_id: "dep-1",
   error_classes: ["error"],
   preprocess_enabled: false,
@@ -63,7 +63,7 @@ const STATUS = {
   retrain_job_id: "job-9",
   review_task_id: null,
   swapped_model_version_id: null,
-  error_artifact: { id: "art-1", name: "闭环演示-报错数据", row_count: 3 },
+  error_artifact: { id: "art-1", name: "自动化闭环-报错数据", row_count: 3 },
   events: [
     {
       id: "e1", event_type: "error_appended", severity: "warning",
@@ -90,9 +90,9 @@ describe("DemoLoopPage", () => {
     render(<MemoryRouter><DemoLoopPage /></MemoryRouter>);
     await waitFor(() => expect(demoLoopApi.fetchDemoLoopConfig).toHaveBeenCalledWith("p1"));
     await waitFor(() => expect(demoLoopApi.fetchDemoLoopStatus).toHaveBeenCalledWith("p1"));
-    expect(screen.getAllByText(/闭环演示|推理-回流-重训 闭环演示/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/自动化闭环|推理-回流-重训 自动化闭环/).length).toBeGreaterThan(0);
     await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
-    expect(screen.getByText("闭环演示-报错数据")).toBeInTheDocument();
+    expect(screen.getByText("自动化闭环-报错数据")).toBeInTheDocument();
   });
 
   it("shows the retrain task link once a job exists", async () => {

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>闭环演示大屏 · 推理-回流-告警-重训-换模型</title>
+<title>闭环自动化运行大屏 · 推理-回流-告警-重训-换模型</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #05080f; }
@@ -223,7 +223,7 @@
     <button class="spd" data-s="2">×2</button>
     <button class="spd" data-s="4">×4</button>
     <div class="sep"></div>
-    <button id="btnMode">模式：演示</button>
+    <button id="btnMode">模式：模拟</button>
     <div id="livePanel">
       <span id="connDot"></span>
       <select id="liveProject"><option value="">加载项目...</option></select>
@@ -582,7 +582,7 @@ function toast(msg, color = C.blue, ms = 2600) {
   setTimeout(() => { el.classList.add("out"); setTimeout(() => el.remove(), 500); }, ms);
 }
 
-/* ================= 剧情引擎（演示模式） ================= */
+/* ================= 剧情引擎（模拟模式） ================= */
 const sim = {
   playing: true, speed: 1,
   invoked: 0, ok: 0, errors: 0, alerts: 0, dataset: 0, version: 1,
@@ -716,7 +716,7 @@ async function liveConnect() {
       if (cfg.retrain_threshold_rows > 0) sim.retrainAt = cfg.retrain_threshold_rows;
       updateGateVisual();
     }
-  } catch (e) { /* 阈值环保持演示值 */ }
+  } catch (e) { /* 阈值环保持默认值 */ }
   const poll = async () => {
     try {
       const res = await fetch(`/api/projects/${project}/demo-loop/status`, {
@@ -833,7 +833,7 @@ btnPlay.onclick = () => {
   sim.playing = !sim.playing;
   btnPlay.textContent = sim.playing ? "⏸ 暂停" : "▶ 播放";
 };
-document.getElementById("btnReset").onclick = () => { resetSim(); toast("已重置演示", C.blue); };
+document.getElementById("btnReset").onclick = () => { resetSim(); toast("已重置模拟", C.blue); };
 document.querySelectorAll(".spd").forEach(b => b.onclick = () => {
   sim.speed = Number(b.dataset.s);
   document.querySelectorAll(".spd").forEach(x => x.style.borderColor = "rgba(90,140,200,.35)");
@@ -851,11 +851,11 @@ btnMode.onclick = () => {
     if (live.timer) clearInterval(live.timer);
     loadLiveProjects();
   } else {
-    btnMode.textContent = "模式：演示";
+    btnMode.textContent = "模式：模拟";
     panel.classList.remove("open");
     if (live.timer) { clearInterval(live.timer); live.timer = null; }
     document.getElementById("connDot").className = "";
-    toast("已切回演示模式", C.blue);
+    toast("已切回模拟模式", C.blue);
   }
 };
 document.getElementById("btnConnect").onclick = liveConnect;
@@ -868,7 +868,7 @@ function fit() {
 addEventListener("resize", fit); fit();
 
 /* 开场 */
-setTimeout(() => toast("演示模式：数据逐行调用推理，报错自动回流 → 告警 → 重训 → 换模型", C.blue, 4200), 600);
+setTimeout(() => toast("模拟模式：数据逐行调用推理，报错自动回流 → 告警 → 重训 → 换模型", C.blue, 4200), 600);
 </script>
 </body>
 </html>

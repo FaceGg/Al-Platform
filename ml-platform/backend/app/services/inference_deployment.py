@@ -224,6 +224,9 @@ class InferenceDeploymentService:
     def start(self, db, deployment_id):
         deployment = self._deployment(db, deployment_id, lock=True)
         if deployment.desired_state == "running" and deployment.observed_state == "running":
+            # 已运行部署不重复走装载状态机，但 stable 换目标后（如闭环换模）
+            # 新的 revision 别名尚未加载；同身份重复 load 是 no-op，安全。
+            self._load_stable_aliases(db, deployment)
             return deployment
         deployment.desired_state = "running"
         deployment.observed_state = "starting"

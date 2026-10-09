@@ -149,6 +149,42 @@ class TestInferenceDeploymentService(unittest.TestCase):
         self.assertEqual(specification["deployment_id"], str(deployment.id))
         self.assertIsNotNone(specification["revision_id"])
 
+    def test_start_while_running_loads_new_stable_alias(self):
+        # 回归：闭环换模会轮换 stable revision；已运行部署再次 start() 必须
+        # 把新 revision 的别名加载进运行时，否则路由键命中 DEPLOYMENT_NOT_READY。
+        deployment = self.service.create(
+            self.db, project_id=self.project.id, version_id=self.version.id,
+            actor_id=self.user.id, name="alias-refresh",
+        )
+        self.service.start(self.db, deployment.id)
+        stable = self.db.query(DeploymentRevision).filter(
+            DeploymentRevision.deployment_id == deployment.id,
+            DeploymentRevision.status == "stable",
+        ).order_by(DeploymentRevision.revision_number.desc()).first()
+        stable.status = "superseded"
+        revision = DeploymentRevision(
+            deployment_id=deployment.id,
+            revision_number=stable.revision_number + 1,
+            strategy="immediate",
+            status="stable",
+        )
+        self.db.add(revision)
+        self.db.flush()
+        self.db.add(DeploymentTarget(
+            revision_id=revision.id,
+            model_version_id=self.candidate_version.id,
+            weight_bps=10000,
+            role="stable",
+        ))
+        deployment.model_version_id = self.candidate_version.id
+        self.db.commit()
+
+        self.service.start(self.db, deployment.id)
+
+        self.assertIn(
+            f"{revision.id}:{self.candidate_version.id}", self.runtime.loaded,
+        )
+
     def test_stable_weighted_route_uses_legacy_runtime_session(self):
         deployment = self.service.create(
             self.db, project_id=self.project.id, version_id=self.version.id,

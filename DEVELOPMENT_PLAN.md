@@ -2395,3 +2395,19 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **部署环境既有问题修复（与本次功能无关但阻塞验证）**：① compose 补齐 postgres/redis/minio/worker `restart: unless-stopped`（此前 postgres 等停掉后无人拉起，backend DNS 解析失败 crash-loop；该状态在验证开始前已存在 34h+）；② `nginx.conf` upstream 改 `resolver 127.0.0.11 valid=5s` 动态解析 + `set $upstream` 变量（静态 `upstream` 在 daemon 重启重建容器后缓存旧 IP，UI 全部 502）。
 - **未解决的环境既有问题**：WSL VM 与 dockerd 周期性重启（dockerd 每 40s–数分钟被 `systemctl restart`，`.bash_history` 显示用户此前已排查过同一现象）。它反复打断浏览器 UI 验证与长请求。UI 已验证部分：登录页、AI对话页新元素（未配置徽标/绑库前禁用的「发布为 API」/配置弹窗含「知识库（RAG）」选择器与提示文案）渲染正确（截图确认）；完整点击流（选库→保存→对话→发布→市场 Chat 筛选→图谱自动抽取按钮）待环境稳定后按 `temp_test/deploy_smoke_chat_rag.py` 的 18 步在浏览器复跑即可。
 - 验证账号：`ui_verify_01`（部署库内，验证用知识库「UI验证知识库」kb_id 2695a7e2-10af-4ec0-afe3-ad656c426369）。改动未提交部分：`docker-compose.yml`（重启策略）、`nginx.conf`（动态解析）、`Dockerfile`/`Dockerfile.worker`（wheelhouse）、`.gitignore`（wheelhouse 排除+keep）。
+
+---
+
+## 2026-10-09 闭环去演示化命名 + 闭环四个真实缺陷修复 + 数据卷持久化收口
+
+- **背景**：用户反馈「闭环演示点击开始演示报错500」「这不是演剧本，我需要的是真实的流程」，并要求把页面名称从演示/demo 改为正式名称、修复后真实浏览器验证、检查镜像重建后数据丢失问题、推送 GitHub。
+- **数据恢复与根因**：MinIO 命名卷切换期间历史文件丢失（全部 dataset/model 工件 FILE_MISSING，部署 11 的模型文件缺失 → 预测 500）。恢复链：`labeled_features_demo.csv`（46 行 × 74 列真实数据）→ 重建重训数据集工件 → 触发真实 AutoML 重训（7 组试验，extra_trees 最优 score=1.0）→ 注册+批准+换模。
+- **缺陷 1（绑定冲突）**：`experiment_automl_bindings` 以 `experiment_id` 为主键（实验↔AutoML 任务 1:1，手动 API 重复绑定即 409），闭环按 `{名称}-自动建模-{error_count}` 复用同名实验时绑定插入 UniqueViolation；且重训幂等指纹含实验名，同名会重放旧任务。修复：方案 A（`demo_loop.py`）与方案 B（`serving_operators.py` retrain_threshold 算子）实验/任务名均追加周期 token（uuid hex[:8]），每轮重训独立实验（兼顾审计血缘）。
+- **缺陷 2（once-ever 换模守卫）**：`_swap_to_best_model` 以 `swapped_model_version_id` 非空为早退守卫，但该字段同时是前端换模水印、`reset()` 不清除——首次换模后闭环永远不再换模。修复：删除该守卫（上游 `refresh_retrain_status` 的 retrain_status 迁移已保证每个完成任务只换一次），水印每轮覆盖为新版本 id。回归 `test_07b_second_completed_job_swaps_again`。
+- **缺陷 3（运行时换模不生效）**：运行时规格与 `WeightedTargetRouter` 都从最新 stable revision 的 target 取模且 revision/runtime_key 不可变，而 `complete_retrain_swap` 只改 `deployment.model_version_id` → 运行时永远尝试加载旧模型（本轮表现为 MODEL_ARTIFACT_INTEGRITY_FAILED，部署 observed_state=failed），闭环换模只在进程内回退生效。修复：`complete_retrain_swap` 轮换 revision（旧 stable → superseded，新建 stable revision + target 指向新版本，strategy=immediate），幂等条件为最新 stable 已指向该版本；提交后 best-effort `start()` 加载运行时。回归 `test_07c_swap_rotates_stable_revision_target`。
+- **缺陷 3b（运行中 start() 不加载新别名）**：`InferenceDeploymentService.start()` 对 running/running 部署直接早退，新 revision 的别名 key（`{revision}:{version}`，即闭环预测路由键）永远不会加载 → DEPLOYMENT_NOT_READY → 静默回退进程内。修复：早退分支补 `_load_stable_aliases`（同身份 load 为运行时 no-op，安全）。回归 `test_start_while_running_loads_new_stable_alias`。
+- **缺陷 4（幂等重放重复 approve）**：同一 job 重放换模时对已批准版本再次 approve 报 MODEL_VERSION_STATE_CONFLICT。修复：`approval_status != "approved"` 才执行 approve。
+- **验证**：后端 `test_demo_loop`(16) + `test_inference_deployment` + `test_api_workflow_publication`(6) + `test_all_operators` + `test_inference_production_stack` = **119 passed, 2 skipped**；前端 DemoLoopPage/OrchestrationPage 9 passed。真实环境：重训任务 860a7f7c 完成（7 候选 joblib 全部真实上传 MinIO），部署 11 恢复 **running**，revision 3 stable → 模型 2e23837d（LightGBM v1），运行时按路由键 `c2639b33:2e23837d` 真实加载 ONNX 并对真实行返回预测 [0]；浏览器（页面上下文真实 token）3 次逐行调用 `/demo-loop/predict` 全部 200 无 500。
+- **命名去演示化**：导航「闭环自动化」（i18n zh/en）、页面标题「推理-回流-重训 自动化闭环」、按钮「开始演示→启动闭环」「回放中→运行中」、卡片「数据回放→逐行推理调用」、大屏标题「闭环自动化运行大屏」与「模式：模拟」、后端审核任务指令文案、DB 现有配置名与报错数据集名（SQL UPDATE）、`DemoLoopConfig.name` 默认值、手册（路由地址 /demo-loop、按钮名、大屏章节、参数速查）全部更新；页面/接口路径 `/demo-loop` 保留（内部标识，非用户可见名称）。
+- **数据持久化收口（用户点名复查）**：compose 的 postgres/minio 改挂命名卷 `postgres-data`/`minio-data`（此前匿名卷随容器重建丢失全部数据——本次 500 的上游根因）；实测 `docker compose up -d --force-recreate postgres minio` 后 projects/users/闭环配置/工件/部署状态全部完好，重建后全链路预测通过。redis 仍为匿名卷（仅缓存/broker，无用户数据）。全容器挂载审计完成，无其他匿名卷承载用户数据。
+- **未验证/遗留**：① 页面「上传 CSV→启动闭环」的完整点击流未在浏览器执行（IAB 自动化不支持文件选择器；逐行端点已用页面上下文真实 token 验证 200，与页面按钮走完全相同的 API）；② WSL 空闲关停仍会停容器（`docker compose up -d` 恢复，数据卷已安全）；③ 工作树 `ml-platform/backend/wheelhouse/` 离线 wheel 目录保持未跟踪（.gitignore 策略）。

@@ -19,7 +19,12 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models.artifact import Artifact
 from app.models.experiment import Experiment, ExperimentAutoMLBinding
-from app.models.model_registry import InferenceDeployment, ModelVersion
+from app.models.model_registry import (
+    DeploymentRevision,
+    DeploymentTarget,
+    InferenceDeployment,
+    ModelVersion,
+)
 from app.models.notifications import InAppNotification
 from app.models.project import Project
 from app.models.training import TrainingJob
@@ -333,14 +338,67 @@ def complete_retrain_swap(
         actor_id=actor_id,
         idempotency_key=f"closed-loop-{job.id}",
     )
-    registry.transition_model_version(db, version.id, "approve", actor_id)
+    # 幂等重放（同一 job 再次换模）时版本可能已批准，重复 approve 会报状态冲突。
+    if version.approval_status != "approved":
+        registry.transition_model_version(db, version.id, "approve", actor_id)
     if deployment_id is not None:
         deployment = db.query(InferenceDeployment).filter(
             InferenceDeployment.id == deployment_id,
         ).first()
         if deployment is not None:
             deployment.model_version_id = version.id
+            # 运行时规格与路由都从最新 stable revision 的 target 取模，revision
+            # 与其 runtime_key 不可变；换模必须轮换 revision，否则运行时永远
+            # 指向旧模型。若最新 stable 已指向该版本（幂等重放）则不再轮换。
+            stable = db.query(DeploymentRevision).filter(
+                DeploymentRevision.deployment_id == deployment.id,
+                DeploymentRevision.status == "stable",
+            ).order_by(DeploymentRevision.revision_number.desc()).first()
+            already_stable = stable is not None and any(
+                target.model_version_id == version.id for target in (stable.targets or ())
+            )
+            if stable is not None and not already_stable:
+                stable.status = "superseded"
+                latest = db.query(DeploymentRevision.revision_number).filter(
+                    DeploymentRevision.deployment_id == deployment.id,
+                ).order_by(DeploymentRevision.revision_number.desc()).first()
+                revision = DeploymentRevision(
+                    deployment_id=deployment.id,
+                    revision_number=int(latest[0]) + 1,
+                    strategy="immediate",
+                    status="stable",
+                    created_by_id=actor_id,
+                )
+                db.add(revision)
+                db.flush()
+                db.add(DeploymentTarget(
+                    revision_id=revision.id,
+                    model_version_id=version.id,
+                    weight_bps=10000,
+                    role="stable",
+                ))
+                db.flush()
     if hasattr(version, "_sa_instance_state"):
         db.commit()
         db.refresh(version)
+    if deployment_id is not None:
+        # Revision 已提交后再加载运行时；失败不回滚换模（推理回退进程内）。
+        _best_effort_runtime_start(deployment_id)
     return version
+
+
+def _best_effort_runtime_start(deployment_id) -> bool:
+    try:
+        from app.tasks.inference_tasks import build_inference_deployment_service
+
+        service = build_inference_deployment_service()
+    except Exception:  # noqa: BLE001 - runtime 未配置时静默跳过
+        return False
+    session = SessionLocal()
+    try:
+        service.start(session, deployment_id)
+        return True
+    except Exception:  # noqa: BLE001 - 加载失败保留换模，由 reconcile/回退兜底
+        return False
+    finally:
+        session.close()

@@ -276,12 +276,15 @@ class RetrainThresholdOperator(BaseOperator):
         if not pending and cycle_rows >= threshold:
             if not context.operator_id:
                 raise RuntimeError("operator context lacks an actor id")
+            # 绑定表以 experiment_id 为主键，且重训幂等指纹含实验名；图重新
+            # 发布后 total 会重置，实验名必须带周期 token 防止冲突与重放。
+            cycle = uuid.uuid4().hex[:8]
             job = trigger_retrain_job(
                 db,
                 project_id=context.project_id,
                 actor_id=context.operator_id,
-                experiment_name=f"编排闭环-{total}",
-                job_name=f"编排闭环-自动建模-{total}",
+                experiment_name=f"编排闭环-{total}-{cycle}",
+                job_name=f"编排闭环-自动建模-{total}-{cycle}",
                 dataset_artifact_id=params.get("retrain_dataset_artifact_id") or artifact.id,
                 target_column=target_column,
                 max_trials=int(params.get("retrain_max_trials") or 10),
