@@ -322,11 +322,14 @@ def complete_retrain_swap(
         return None
     best = max(candidates, key=candidate_score)
     candidate_id = best.get("candidate_id") or best.get("id")
+    # registered_models has a (project_id, name) unique constraint — one model
+    # entry per retrain cycle, suffixed by job id for determinism/idempotency.
+    unique_model_name = f"{model_name}-{str(job.id)[:8]}"
     version, _created = registry.register_automl_candidate(
         db,
         task_id=job.id,
         candidate_id=candidate_id,
-        model_name=model_name,
+        model_name=unique_model_name,
         actor_id=actor_id,
         idempotency_key=f"closed-loop-{job.id}",
     )

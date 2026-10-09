@@ -150,8 +150,14 @@ class DemoLoopService:
         if artifact is None:
             raise DemoLoopError("DEMO_LOOP_MODEL_ARTIFACT_MISSING", "Model artifact no longer exists")
         service = self._artifact_service()
-        with service.storage.open(artifact.storage_uri) as handle:
-            payload = handle.read()
+        try:
+            with service.storage.open(artifact.storage_uri) as handle:
+                payload = handle.read()
+        except Exception as error:
+            raise DemoLoopError(
+                "DEMO_LOOP_MODEL_ARTIFACT_MISSING",
+                "模型制品文件缺失（可能因存储重建丢失）。请重新训练模型并部署，或将部署指回文件完好的模型版本。",
+            ) from error
         loaded = joblib.load(io.BytesIO(payload))
         # Model-library/AutoML artifacts are often packaged as dicts; unwrap
         # the estimator instead of failing with AttributeError on .predict.
@@ -435,7 +441,15 @@ class DemoLoopService:
                 Artifact.project_id == config.project_id,
             ).first()
             if artifact is not None:
-                return artifact
+                # Self-heal: if the stored file was lost (e.g. storage volume
+                # rebuilt), start a fresh dataset instead of failing the loop.
+                try:
+                    with self._artifact_service().storage.materialize(artifact.storage_uri) as path:
+                        pd.read_csv(path, nrows=1)
+                    return artifact
+                except Exception:
+                    config.error_artifact_id = None
+                    self.db.commit()
         name = f"{config.name}-报错数据"
         exists = self.db.query(Artifact.id).filter(
             Artifact.project_id == config.project_id,
