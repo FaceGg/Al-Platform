@@ -75,6 +75,10 @@ celery_app.conf.update(
             "task": "ml_platform.kubernetes_jobs_gc",
             "schedule": 300.0,
         },
+        "notebook-idle-sweep": {
+            "task": "ml_platform.notebook_idle_sweep",
+            "schedule": 300.0,
+        },
         "notification-outbox-dispatch": {
             "task": "ml_platform.enqueue_due_notifications",
             "schedule": 30.0,

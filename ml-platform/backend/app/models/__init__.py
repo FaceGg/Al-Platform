@@ -54,6 +54,12 @@ from app.models.platform_models import (
 )
 from app.models.data_version import DatasetVersion, DatasetSchemaColumn, DatasetSample, DatasetImport, DatasetImportProcess
 from app.models.demo_loop import DemoLoopConfig, DemoLoopEvent
+from app.models.developer_resources import (
+    ContainerImage,
+    GpuResourceClass,
+    ImageBuild,
+    NotebookSession,
+)
 from app.models.kubernetes_execution import KubernetesJobRun
 from app.models.cloud_resources import (
     KubernetesCluster,
@@ -141,6 +147,10 @@ __all__ = [
     "KubernetesNamespace",
     "KubernetesResourceGroup",
     "KubernetesJobRun",
+    "ContainerImage",
+    "ImageBuild",
+    "NotebookSession",
+    "GpuResourceClass",
     "AnnotatorAccount",
     "AnnotatorSession",
     "AnnotatorSubjectMapping",

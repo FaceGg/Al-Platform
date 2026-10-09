@@ -180,6 +180,12 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_kubernetes_recovery",
         "test_kubernetes_logs",
     ],
+    15: [
+        "test_notebook_api",
+        "test_image_catalog_api",
+        "test_image_build_security",
+        "test_gpu_scheduling",
+    ],
 }
 
 

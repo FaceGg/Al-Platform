@@ -139,6 +139,13 @@ class Settings(BaseSettings):
     kubernetes_job_max_timeout_seconds: int = Field(default=3600, ge=30, le=86400)
     kubernetes_job_log_chunk_bytes: int = Field(default=262144, ge=1024, le=1048576)
     kubernetes_job_ttl_seconds_finished: int = Field(default=3600, ge=60, le=604800)
+    notebook_default_idle_seconds: int = Field(default=3600, ge=60, le=86400)
+    notebook_max_per_user: int = Field(default=4, ge=1, le=64)
+    notebook_access_token_ttl_seconds: int = Field(default=900, ge=30, le=3600)
+    notebook_container_port: int = Field(default=8888, ge=1, le=65535)
+    gpu_snapshot_stale_seconds: int = Field(default=300, ge=30, le=86400)
+    image_build_approved: bool = False
+    image_build_builder_image: str = ""
 
     notification_master_key: SecretStr | None = Field(default=None, exclude=True)
     notification_master_key_file: str | None = Field(

@@ -336,6 +336,7 @@ class RealKubernetesClient:
 
         spec = manifest["spec"]
         container = spec["template"]["spec"]["containers"][0]
+        selector = spec.get("selector")
         body = k8s_client.V1Job(
             api_version="batch/v1",
             kind="Job",
@@ -346,12 +347,12 @@ class RealKubernetesClient:
             ),
             spec=k8s_client.V1JobSpec(
                 backoff_limit=spec["backoffLimit"],
-                active_deadline_seconds=spec["activeDeadlineSeconds"],
-                ttl_seconds_after_finished=spec["ttlSecondsAfterFinished"],
-                manual_selector=True,
-                selector=k8s_client.V1LabelSelector(
-                    match_labels=dict(spec["selector"]["matchLabels"])
-                ),
+                active_deadline_seconds=spec.get("activeDeadlineSeconds"),
+                ttl_seconds_after_finished=spec.get("ttlSecondsAfterFinished"),
+                manual_selector=True if selector else None,
+                selector=k8s_client.V1LabelSelector(match_labels=dict(selector["matchLabels"]))
+                if selector
+                else None,
                 template=k8s_client.V1PodTemplateSpec(
                     metadata=k8s_client.V1ObjectMeta(
                         labels=dict(spec["template"]["metadata"]["labels"])
@@ -472,6 +473,88 @@ class RealKubernetesClient:
             raise _map_exception(error) from error
         return str(text or "")[cursor : cursor + limit_bytes]
 
+    # ---- Week 15 notebook session surface ----
+    def create_service(self, manifest: dict) -> dict:
+        from kubernetes import client as k8s_client
+
+        spec = manifest["spec"]
+        ports = [
+            k8s_client.V1ServicePort(
+                name=entry.get("name"),
+                port=entry["port"],
+                target_port=entry.get("targetPort", entry["port"]),
+                protocol=entry.get("protocol", "TCP"),
+            )
+            for entry in spec.get("ports", [])
+        ]
+        body = k8s_client.V1Service(
+            metadata=k8s_client.V1ObjectMeta(
+                name=manifest["metadata"]["name"],
+                namespace=manifest["metadata"]["namespace"],
+                labels=dict(manifest["metadata"].get("labels") or {}),
+            ),
+            spec=k8s_client.V1ServiceSpec(
+                type=spec.get("type", "ClusterIP"),
+                selector=dict(spec.get("selector") or {}),
+                ports=ports,
+            ),
+        )
+        try:
+            result = self._core.create_namespaced_service(
+                manifest["metadata"]["namespace"], body, _request_timeout=self._request_timeout
+            )
+        except Exception as error:  # noqa: BLE001
+            raise _map_exception(error) from error
+        return {"name": result.metadata.name, "namespace": result.metadata.namespace}
+
+    def delete_service(self, name: str, namespace: str | None = None) -> None:
+        if namespace is None:
+            return
+        try:
+            self._core.delete_namespaced_service(
+                name, namespace, _request_timeout=self._request_timeout
+            )
+        except Exception as error:  # noqa: BLE001
+            if getattr(error, "status", None) == 404:
+                return
+            raise _map_exception(error) from error
+
+    def proxy_service_request(
+        self,
+        *,
+        namespace: str,
+        service: str,
+        port: int,
+        subpath: str,
+        method: str = "GET",
+        headers: dict | None = None,
+        body: bytes | None = None,
+    ) -> dict:
+        """Reverse-proxy one HTTP request through the K8s API service proxy."""
+        clean_subpath = subpath.lstrip("/")
+        path = f"/api/v1/namespaces/{namespace}/services/{service}:{port}/proxy"
+        if clean_subpath:
+            path = f"{path}/{clean_subpath}"
+        try:
+            (data, status, headers) = self._core.api_client.call_api(
+                path,
+                method.upper(),
+                header_params={k: v for k, v in (headers or {}).items() if not k.lower().startswith("x-linkraft")},
+                response_type="object",
+                auth_settings=["BearerToken"],
+                body=body if body is not None and method.upper() in ("POST", "PUT", "PATCH") else None,
+                _preload_content=False,
+                _request_timeout=self._request_timeout,
+            )
+            payload = data.read() if hasattr(data, "read") else (data or b"")
+            data.close() if hasattr(data, "close") else None
+        except Exception as error:  # noqa: BLE001
+            status = getattr(error, "status", None)
+            if status is not None:
+                return {"status": int(status), "body": b"", "headers": {}}
+            raise _map_exception(error) from error
+        return {"status": int(status), "body": payload or b"", "headers": dict(headers or {})}
+
 
 class FakeKubernetesClient:
     """Programmable test double: inject outcomes, assert call order, no cluster."""
@@ -576,6 +659,48 @@ class FakeKubernetesClient:
         text = self.pod_logs.get(pod_name, "")
         return text[cursor : cursor + limit_bytes]
 
+    # ---- Week 15 notebook session surface ----
+    def create_service(self, manifest: dict) -> dict:
+        self._jobs_init()
+        if not hasattr(self, "services"):
+            self.services: dict[str, dict] = {}
+            self.proxy_responses: list[dict] = []
+        self._maybe_fail("create_service")
+        name = manifest["metadata"]["name"]
+        self.services[name] = {"namespace": manifest["metadata"]["namespace"], "manifest": manifest}
+        self.job_events.append(f"create-service:{name}")
+        return {"name": name, "namespace": manifest["metadata"]["namespace"]}
+
+    def delete_service(self, name: str, namespace: str | None = None) -> None:
+        self._jobs_init()
+        if not hasattr(self, "services"):
+            self.services = {}
+        if name in self.services:
+            del self.services[name]
+            self.job_events.append(f"delete-service:{name}")
+
+    def proxy_service_request(
+        self,
+        *,
+        namespace: str,
+        service: str,
+        port: int,
+        subpath: str,
+        method: str = "GET",
+        headers: dict | None = None,
+        body: bytes | None = None,
+    ) -> dict:
+        self._jobs_init()
+        if not hasattr(self, "services"):
+            self.services = {}
+        self.call_log.append(f"proxy:{service}")
+        if service not in self.services:
+            return {"status": 404, "body": b"service not found", "headers": {}}
+        queued = getattr(self, "proxy_responses", [])
+        if queued:
+            return dict(queued.pop(0))
+        return {"status": 200, "body": b"notebook-ready", "headers": {"Content-Type": "text/plain"}}
+
 
 class JobClientProtocol(Protocol):
     """Week 14 surface: batch Job lifecycle against one cluster namespace."""
@@ -615,13 +740,16 @@ def _job_status_to_dict(job) -> dict:
     }
 
 
-def _job_labels(project_id: str, operation_id: str, revision: int) -> dict:
-    return {
+def _job_labels(project_id: str, operation_id: str, revision: int, role: str = "job") -> dict:
+    labels = {
         "app.kubernetes.io/managed-by": "linkraft",
         "linkraft.io/project-id": str(project_id).replace("-", "")[:32],
         "linkraft.io/operation-id": str(operation_id).replace("-", "")[:32],
         "linkraft.io/revision": str(revision),
     }
+    if role != "job":
+        labels["linkraft.io/role"] = role
+    return labels
 
 
 def build_job_manifest(

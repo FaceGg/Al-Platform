@@ -7,7 +7,7 @@ import {
   CloudUploadOutlined, ThunderboltOutlined, ExperimentOutlined, ApiOutlined,
   CloudServerOutlined, RobotOutlined, MessageOutlined, MenuFoldOutlined,
   MenuUnfoldOutlined, MonitorOutlined, SafetyOutlined, ToolOutlined, TagsOutlined,
-  ClusterOutlined, DeploymentUnitOutlined, PlayCircleOutlined,
+  ClusterOutlined, DeploymentUnitOutlined, PlayCircleOutlined, BookOutlined,
 } from "@ant-design/icons";
 import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
@@ -48,6 +48,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { key: "/compute", icon: <CloudServerOutlined />, label: t.nav.compute },
     { key: "/kubernetes", icon: <ClusterOutlined />, label: t.nav.kubernetes },
     { key: "/kubernetes/jobs", icon: <PlayCircleOutlined />, label: t.nav.job_runs },
+    { key: "/notebooks", icon: <BookOutlined />, label: t.nav.notebooks },
+    { key: "/images", icon: <DatabaseOutlined />, label: t.nav.images },
     ...(userRole === "admin" ? [{ key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users }] : []),
   ];
 

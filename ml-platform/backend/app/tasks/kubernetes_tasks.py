@@ -250,3 +250,15 @@ def kubernetes_jobs_gc() -> dict:
         return {"deleted": gc_finished_jobs(db, None, settings)}
     finally:
         db.close()
+
+
+@celery_app.task(name="ml_platform.notebook_idle_sweep")
+def notebook_idle_sweep() -> dict:
+    from app.services import notebook_service
+
+    db = SessionLocal()
+    try:
+        swept = notebook_service.sweep_idle_sessions(db, None, settings)
+        return {"swept": swept}
+    finally:
+        db.close()
