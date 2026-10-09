@@ -1,332 +1,189 @@
-import { useState, useEffect } from "react";
-import { Card, Table, Tag, Button, Space, Typography, Modal, Input, Select, Form, message, Descriptions, Tabs, List, Timeline, Badge, Empty } from "antd";
-import { PlusOutlined, EyeOutlined, DeleteOutlined, SendOutlined, CheckOutlined, CloseOutlined, MessageOutlined, RobotOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useState } from "react";
+import { Alert, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Typography, message } from "antd";
+import { ApiOutlined, CloudUploadOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
+import { useNavigate } from "react-router-dom";
 import AppLayout from "../components/AppLayout";
 import DeleteConfirmation from "../components/DeleteConfirmation";
-import TableRowAction from "../components/TableRowAction";
-import apiClient, { apiGet, apiPost, apiDelete } from "../api/client";
+import apiClient, { apiGet, apiPost, formatApiError } from "../api/client";
 import { useI18n } from "../i18n";
-import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
-import { formatLocalTime } from "../utils/time";
 
-const { Title, Text, Paragraph } = Typography;
-const stColor: Record<string, string> = { pending: "default", running: "blue", completed: "green", failed: "red", in_progress: "processing" };
-const agentTypeNames: Record<string, { zh: string; en: string }> = {
-  planner: { zh: "规划智能体", en: "Planner" },
-  llm: { zh: "大模型智能体", en: "LLM" },
-  executor: { zh: "执行智能体", en: "Executor" },
-  reviewer: { zh: "审核智能体", en: "Reviewer" },
-};
+const { Title, Text } = Typography;
 
 export default function OrchestrationPage() {
-  const { t, lang } = useI18n();
-  const text = lang === "zh" ? {
-    planCompleted: "规划完成", planFailed: "规划失败", deleteAgent: "删除智能体",
-    batchDeleteAgent: "批量删除智能体", agentDeleted: "智能体已删除",
-    deleteFailed: "删除失败", deleteSelectedAgents: "确定要删除选中的",
-    agents: "个智能体吗？", no: "否", active: "活跃", disabled: "禁用",
-    model: "模型", actions: "操作", type: "类型", status: "状态",
-    project: "项目", creator: "创建人", allProjects: "全部项目",
-  } : {
-    planCompleted: "Planning completed", planFailed: "Planning failed", deleteAgent: "Delete agent",
-    batchDeleteAgent: "Delete selected agents", agentDeleted: "Agents deleted",
-    deleteFailed: "Delete failed", deleteSelectedAgents: "Delete selected",
-    agents: "agents?", no: "No", active: "Active", disabled: "Disabled",
-    model: "Model", actions: "Actions", type: "Type", status: "Status",
-    project: "Project", creator: "Creator", allProjects: "All projects",
-  };
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const tr = ((t as unknown as Record<string, Record<string, string | undefined>>).orchestration ?? {}) as Record<string, string | undefined>;
+
+  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [projectId, setProjectId] = useState<string>("");
+  const [workflows, setWorkflows] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [data, setData] = useState<any[]>([]);
-  const [projects, setProjects] = useState<any[]>([]);
-  const [taskProjectId, setTaskProjectId] = useState("");
-  const [agents, setAgents] = useState<any[]>([]);
-  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
-  const [showCreate, setShowCreate] = useState(false);
-  const [agentSelectedKeys, setAgentSelectedKeys] = useState<React.Key[]>([]);
-  const [showDetail, setShowDetail] = useState(false);
-  const [showAgent, setShowAgent] = useState(false);
-  const [showReview, setShowReview] = useState(false);
-  const [showMessages, setShowMessages] = useState(false);
-  const [selected, setSelected] = useState<any>(null);
-  const [messages, setMessages] = useState<any[]>([]);
-  const [reviews, setReviews] = useState<any[]>([]);
-  const [reviewComment, setReviewComment] = useState("");
-  const [activeTab, setActiveTab] = useState("tasks");
-  const [createForm] = Form.useForm();
-  const [agentForm] = Form.useForm();
+  const [loadError, setLoadError] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [form] = Form.useForm();
 
   useEffect(() => {
-    apiClient.get("/projects").then((response) => setProjects(response.data.items || response.data || [])).catch(() => setProjects([]));
-    fetchAgents();
-    fetchReviews();
+    apiGet("/projects").then((res: any) => {
+      const items = res.items || [];
+      setProjects(items);
+      if (items.length) setProjectId(items[0].id);
+    }).catch((error) => message.error(formatApiError(error, "项目加载失败")));
   }, []);
 
-  useEffect(() => { void fetchData(); }, [taskProjectId]);
-
-  const fetchData = async () => {
+  const loadWorkflows = useCallback(async (pid: string) => {
+    if (!pid) { setWorkflows([]); return; }
     setLoading(true);
+    setLoadError("");
     try {
-      const response = await apiClient.get("/orchestration/tasks", { params: taskProjectId ? { project_id: taskProjectId } : undefined });
-      setData(response.data.items || response.data || []);
+      const res: any = await apiGet(`/projects/${pid}/workflows`);
+      setWorkflows(res.items || res || []);
+    } catch (error) {
+      setWorkflows([]);
+      setLoadError(formatApiError(error, "工作流加载失败"));
+    } finally {
+      setLoading(false);
     }
-    catch { setData([]); }
-    finally { setLoading(false); }
-  };
+  }, []);
 
-  const fetchAgents = async () => {
-    try { const res: any = await apiGet("/orchestration/agents"); setAgents(res.items || res || []); }
-    catch { setAgents([]); }
-  };
+  useEffect(() => { loadWorkflows(projectId); }, [projectId, loadWorkflows]);
 
-  const fetchReviews = async () => {
-    try { const res: any = await apiGet("/orchestration/reviews"); setReviews(res.reviews || []); }
-    catch { setReviews([]); }
-  };
-
-  const fetchMessages = async (taskId: string) => {
-    try { const res: any = await apiGet("/orchestration/tasks/" + taskId + "/messages"); setMessages(res.items || res || []); }
-    catch { setMessages([]); }
-  };
-
-  const handleCreateTask = async (values: any) => {
-    await apiPost("/orchestration/tasks", values);
-    message.success(t.common.success);
-    setShowCreate(false); createForm.resetFields(); fetchData();
-  };
-
-  const handleCreateAgent = async (values: any) => {
-    await apiPost("/orchestration/agents", values);
-    message.success(t.common.success);
-    setShowAgent(false); agentForm.resetFields(); fetchAgents();
-  };
-
-  const handlePlan = async (task: any) => {
+  const createWorkflow = async (values: any) => {
+    setCreating(true);
     try {
-      await apiPost("/orchestration/plan", {
-        task_id: task.id,
-        task_description: task.description || task.name,
+      const res: any = await apiPost(`/projects/${projectId}/workflows`, {
+        name: values.name,
+        description: values.description || "",
+        nodes: [],
+        edges: [],
       });
-      message.success(text.planCompleted);
-      fetchData();
+      message.success(tr.created || "服务图已创建");
+      setCreating(false);
+      navigate(`/workspace/${res.data?.id || res.id}`);
+    } catch (error) {
+      setCreating(false);
+      message.error(formatApiError(error, "创建失败"));
+    }
+  };
+
+  // 方案B：发布最新已保存草稿为版本，并注册为编排 API。
+  const publishAsApi = async (record: any) => {
+    setPublishingId(record.id);
+    try {
+      const version: any = await apiClient.post(`/workflows/${record.id}/publish`).then((r: any) => r.data);
+      const api: any = await apiClient.post(
+        `/platform/apis/publish/workflow/${record.id}/${version.version}`,
+      ).then((r: any) => r.data);
+      message.success(`${tr.published || "已发布为编排 API"}：${api.name}`);
     } catch (error: any) {
-      message.error(error.response?.data?.detail || text.planFailed);
+      const detail = error?.response?.data?.detail;
+      message.error(typeof detail === "object" && detail?.message ? detail.message : (detail || formatApiError(error, "发布失败")));
+    } finally {
+      setPublishingId(null);
     }
   };
 
-  const handleReview = async (taskId: string, approved: boolean) => {
-    await apiPost("/orchestration/reviews/" + taskId, { approved, comment: reviewComment });
-    message.success(approved ? "已审核通过" : "已拒绝");
-    setReviewComment(""); setShowReview(false); fetchData(); fetchReviews();
-  };
-
-  const handleDeleteTask = async (taskId: string) => {
-    await apiDelete("/orchestration/tasks/" + taskId);
-    message.success(t.common.success);
-    fetchData();
-  };
-
-
-  const handleBatchDelete = async () => {
+  const deleteWorkflow = async (wfId: string) => {
     try {
-      await apiClient.post("/orchestration/batch-delete", { ids: selectedRowKeys });
-      message.success("批量删除成功");
-      setSelectedRowKeys([]);
-      fetchData();
-    } catch {
-      message.error("批量删除失败");
+      await apiClient.delete(`/projects/${projectId}/workflows/${wfId}`);
+      message.success(tr.deleted || "已删除");
+      loadWorkflows(projectId);
+    } catch (error) {
+      message.error(formatApiError(error, "删除失败"));
     }
   };
 
-
-  const handleBatchDeleteAgent = async () => {
-    if (agentSelectedKeys.length === 0) return;
-    try {
-      await apiClient.post("/orchestration/agents/batch-delete", { ids: agentSelectedKeys });
-      message.success(text.agentDeleted);
-      setAgentSelectedKeys([]);
-      fetchAgents();
-    } catch {
-      message.error(text.deleteFailed);
-    }
-  };
-
-  const handleDeleteAgent = async (agent: any) => {
-    try {
-      await apiDelete("/orchestration/agents/" + agent.id);
-      message.success(text.agentDeleted);
-      setAgentSelectedKeys((keys) => keys.filter((key) => key !== agent.id));
-      fetchAgents();
-    } catch (error: any) {
-      message.error(error.response?.data?.detail || text.deleteFailed);
-    }
-  };
-  const taskColumns = [
-
-    { title: t.knowledge?.name || "名称", dataIndex: "name", key: "name", ellipsis: true },
-    { title: text.project, dataIndex: "project_name", key: "project", render: (value: string, task: any) => value || task.project_id || "-" },
-    { title: text.creator, dataIndex: "created_by_name", key: "creator", render: (value: string, task: any) => value || task.created_by_id || "-" },
-    { title: t.training?.status || "状态", dataIndex: "status", key: "status",
-      render: (s: string) => <Tag color={taskStatusColor(s)}>{taskStatusLabel(s, lang)}</Tag> },
-    { title: "优先级", dataIndex: "priority", key: "priority",
-      render: (p: number) => <Tag color={p > 5 ? "red" : p > 2 ? "orange" : "green"}>P{p}</Tag> },
-    { title: t.orchestration?.assigned_agent || "智能体", dataIndex: "assigned_agent_id", key: "assigned_agent_id",
-      render: (id: string) => id ? <Tag color="purple"><RobotOutlined /> {agents.find((a: any) => a.id === id)?.name || id.slice(0, 8)}</Tag> : "-" },
-    { title: t.orchestration?.requires_review || "审核", dataIndex: "requires_review", key: "requires_review",
-      render: (v: boolean) => v ? <Tag color="orange">待审核</Tag> : <Tag>否</Tag> },
-    { title: t.training?.started || "创建时间", dataIndex: "created_at", key: "created_at",
-      render: (t: string) => formatLocalTime(t) },
-    { title: t.model?.actions || "操作", key: "actions", align: "right" as const,
-      render: (_: any, r: any) => (
-        <div className="table-row-actions">
-          <TableRowAction label={`${lang === "zh" ? "查看任务" : "View task"} ${r.name}`} icon={<EyeOutlined />} onClick={() => { setSelected(r); setShowDetail(true); }} />
-          <TableRowAction label={`${t.orchestration.plan} ${r.name}`} icon={<SendOutlined />} onClick={() => handlePlan(r)} />
-          <TableRowAction label={`${lang === "zh" ? "查看消息" : "View messages"} ${r.name}`} icon={<MessageOutlined />} onClick={() => { setSelected(r); fetchMessages(r.id); setShowMessages(true); }} />
-          <DeleteConfirmation label={`${t.common.delete} ${r.name}`} targetName={r.name} onConfirm={() => void handleDeleteTask(r.id)} />
-        </div>
-      )},
-  ];
-
-  const agentColumns = [
-    { title: t.knowledge?.name || "名称", dataIndex: "name", key: "name" },
-    { title: text.type, dataIndex: "agent_type", key: "agent_type",
-      render: (tp: string) => <Tag color={tp === "planner" ? "gold" : tp === "llm" ? "blue" : tp === "executor" ? "green" : "purple"}>{agentTypeNames[tp]?.[lang] || tp}</Tag> },
-    { title: text.model, dataIndex: "model_name", key: "model_name", render: (m: string) => <Tag color="blue">{m || "-"}</Tag> },
-    { title: text.status, dataIndex: "is_active", key: "is_active",
-      render: (v: boolean) => <Badge status={v ? "success" : "error"} text={v ? text.active : text.disabled} /> },
-    { title: text.actions, key: "actions", align: "right" as const, render: (_: any, agent: any) => (
-      <div className="table-row-actions">
-        <DeleteConfirmation label={`${t.common.delete} ${agent.name}`} targetName={agent.name} onConfirm={() => void handleDeleteAgent(agent)} />
-      </div>
-    ) },
+  const columns = [
+    { title: tr.name || "名称", dataIndex: "name", key: "name", ellipsis: true },
+    { title: tr.description || "描述", dataIndex: "description", key: "description", ellipsis: true,
+      render: (v: string) => v || "-" },
+    { title: tr.updated || "更新时间", dataIndex: "updated_at", key: "updated_at", width: 180,
+      render: (v: string) => v ? v.replace("T", " ").slice(0, 19) : "-" },
+    { title: tr.actions || "操作", key: "actions", width: 320,
+      render: (_: unknown, record: any) => (
+        <Space size="small">
+          <Button size="small" type="primary" icon={<EditOutlined />}
+            onClick={() => navigate(`/workspace/${record.id}`)}>
+            {tr.edit || "编辑图"}
+          </Button>
+          <Button size="small" icon={<ApiOutlined />} loading={publishingId === record.id}
+            onClick={() => void publishAsApi(record)}>
+            {tr.publish_api || "发布为 API"}
+          </Button>
+          <DeleteConfirmation label={`删除 ${record.name}`} targetName={record.name}
+            onConfirm={() => void deleteWorkflow(record.id)} />
+        </Space>
+      ) },
   ];
 
   return (
     <AppLayout>
-      <Space direction="vertical" size="large" style={{ width: "100%" }}>
-        {reviews.length > 0 && (
-          <Card size="small" title={<><Badge count={reviews.length} offset={[10, 0]}><CheckOutlined /></Badge> 待审核</>} style={{ borderColor: "#faad14" }}>
-            <List size="small" dataSource={reviews} renderItem={(rv: any) => (
-              <List.Item actions={[
-                <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => { setSelected(rv); setShowReview(true); }}>审核</Button>
-              ]}>
-                <List.Item.Meta title={rv.name || rv.task_id} description={rv.description || ""} />
-              </List.Item>
-            )} />
-          </Card>
-        )}
+      <Card style={{ marginBottom: 16 }}>
+        <Space wrap size="large" align="center">
+          <Title level={3} style={{ margin: 0 }}>
+            <ApiOutlined /> {tr.title || "应用编排 · 服务图"}
+          </Title>
+          <span>
+            <Text type="secondary">{tr.project || "项目"}</Text>
+            <Select
+              style={{ minWidth: 220, marginLeft: 8 }}
+              value={projectId || undefined}
+              onChange={(value) => setProjectId(value)}
+              options={projects.map((p) => ({ value: p.id, label: p.name }))}
+              placeholder={tr.choose_project || "选择项目"}
+            />
+          </span>
+          <Button icon={<PlusOutlined />} type="primary" disabled={!projectId}
+            onClick={() => setCreating(true)}>
+            {tr.new_workflow || "新建服务图"}
+          </Button>
+          <Button icon={<ReloadOutlined />} disabled={!projectId}
+            onClick={() => loadWorkflows(projectId)}>
+            {tr.refresh || "刷新"}
+          </Button>
+          <Button icon={<CloudUploadOutlined />} onClick={() => navigate("/api-marketplace")}>
+            {tr.go_market || "前往 API 市场"}
+          </Button>
+        </Space>
+        <Alert
+          style={{ marginTop: 14 }}
+          type="info"
+          showIcon
+          message={
+            "服务图搭好后点「发布为 API」即可在 API 市场逐行调用。闭环算子（追加报错数据集 / 告警通知管理员 / 重训阈值判断）"
+            + "与推理算子（冻结模型 / 应用模型 / 条件分支）均可在画布左侧算子面板拖入。"
+          }
+        />
+      </Card>
 
-        <Card title={<Title level={4}>{t.orchestration?.title || "多智能体编排"}</Title>}
-          extra={<Space>
-            {activeTab === "tasks" && <Select
-              aria-label={text.project}
-              value={taskProjectId}
-              style={{ minWidth: 180 }}
-              options={[{ value: "", label: text.allProjects }, ...projects.map((project) => ({ value: project.id, label: project.name }))]}
-              onChange={setTaskProjectId}
-            />}
-            {activeTab === "tasks" && selectedRowKeys.length > 0 && (
-              <DeleteConfirmation label="批量删除任务" selectedCount={selectedRowKeys.length} onConfirm={() => void handleBatchDelete()}>
-                <Button danger icon={<DeleteOutlined />}>批量删除 ({selectedRowKeys.length})</Button>
-              </DeleteConfirmation>
-            )}
-            {activeTab === "agents" && agentSelectedKeys.length > 0 && (
-              <DeleteConfirmation label={text.batchDeleteAgent} selectedCount={agentSelectedKeys.length} onConfirm={() => void handleBatchDeleteAgent()}>
-                <Button danger icon={<DeleteOutlined />}>{text.batchDeleteAgent} ({agentSelectedKeys.length})</Button>
-              </DeleteConfirmation>
-            )}
-            <Button icon={<PlusOutlined />} onClick={() => setShowAgent(true)}>{t.orchestration?.new_agent || "新建智能体"}</Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowCreate(true)}>{t.orchestration?.new_task || "新建任务"}</Button>
-          </Space>}>
-          <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
-            { key: "tasks", label: t.orchestration?.tasks || "任务",
-              children: <div className="table-surface"><Table dataSource={data} columns={taskColumns} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 10 }} rowSelection={{ selectedRowKeys, onChange: (keys: React.Key[]) => setSelectedRowKeys(keys) }} /></div> },
-            { key: "agents", label: t.orchestration?.agents || "智能体",
-              children: <div className="table-surface"><Table dataSource={agents} columns={agentColumns} rowKey="id" size="small" pagination={{ pageSize: 10 }} rowSelection={{ selectedRowKeys: agentSelectedKeys, onChange: (keys: React.Key[]) => setAgentSelectedKeys(keys) }} /></div> },
-          ]} />
-        </Card>
+      <Card>
+        {loadError && <Alert type="error" showIcon message={loadError} style={{ marginBottom: 12 }} />}
+        <Table
+          rowKey="id"
+          loading={loading}
+          columns={columns}
+          dataSource={workflows}
+          pagination={false}
+          locale={{ emptyText: <Empty description={projectId ? (tr.empty || "该项目还没有服务图，点「新建服务图」开始编排") : (tr.choose_project_first || "请先选择项目")} /> }}
+        />
+      </Card>
 
-        <Card title="智能体架构" size="small">
-          <Descriptions column={2} size="small" bordered>
-            <Descriptions.Item label={<Tag color="gold">{t.orchestration.planner}</Tag>}>负责任务解析、规划与分配</Descriptions.Item>
-            <Descriptions.Item label={<Tag color="blue">LLM</Tag>}>NLU、自然语言理解与生成</Descriptions.Item>
-            <Descriptions.Item label={<Tag color="green">{t.orchestration.executor}</Tag>}>专业计算、机理约束与小模型推理</Descriptions.Item>
-            <Descriptions.Item label={<Tag color="purple">{t.orchestration.reviewer}</Tag>}>结果审核、质量控制与人工确认</Descriptions.Item>
-          </Descriptions>
-        </Card>
-      </Space>
-
-      <Modal title={t.orchestration?.new_task || "待审核"} open={showCreate} onCancel={() => setShowCreate(false)} onOk={() => createForm.submit()} width={500}>
-        <Form form={createForm} layout="vertical" onFinish={handleCreateTask} autoComplete="off">
-          <Form.Item name="project_id" label={text.project} rules={[{ required: true }]}><Select options={projects.map((project) => ({ value: project.id, label: project.name }))} /></Form.Item>
-          <Form.Item name="name" label={t.knowledge?.name || "名称"} rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="description" label={t.knowledge?.desc || "取消"}><Input.TextArea rows={3} /></Form.Item>
-          <Form.Item name="priority" label={t.orchestration?.priority || "待审核"} initialValue={5}>
-            <Select options={[1, 2, 3, 5, 8, 10].map(v => ({ value: v, label: "P" + v }))} />
+      <Modal
+        title={tr.new_workflow || "新建服务图"}
+        open={creating}
+        onCancel={() => setCreating(false)}
+        onOk={() => form.submit()}
+        confirmLoading={creating}
+        okText={tr.create || "创建并进入画布"}
+      >
+        <Form form={form} layout="vertical" onFinish={createWorkflow}>
+          <Form.Item name="name" label={tr.name || "名称"} rules={[{ required: true, message: tr.name_required || "请输入名称" }]}>
+            <Input maxLength={128} placeholder={tr.name_placeholder || "如：焊接质量推理服务"} />
           </Form.Item>
-          <Form.Item name="requires_review" label={t.orchestration?.requires_review || "待审核?"} initialValue={false}>
-            <Select options={[{ value: true, label: "否" }, { value: false, label: "否" }]} />
+          <Form.Item name="description" label={tr.description || "描述"}>
+            <Input.TextArea rows={2} maxLength={512} placeholder={tr.desc_placeholder || "服务用途说明（可选）"} />
           </Form.Item>
         </Form>
-      </Modal>
-
-      <Modal title={t.orchestration?.new_agent || "待审核?"} open={showAgent} onCancel={() => setShowAgent(false)} onOk={() => agentForm.submit()} width={500}>
-        <Form form={agentForm} layout="vertical" onFinish={handleCreateAgent} autoComplete="off">
-          <Form.Item name="name" label={t.knowledge?.name || "名称"} rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="agent_type" label={t.knowledge?.entity_type || "类型"} initialValue="executor">
-            <Select options={[
-              { value: "planner", label: "待审核" }, { value: "llm", label: "LLM" },
-              { value: "executor", label: "待审核" }, { value: "reviewer", label: "待审核" }
-            ]} />
-          </Form.Item>
-          <Form.Item name="model_name" label="取消"><Input placeholder="例如 gpt-4o-mini" /></Form.Item>
-          <Form.Item name="description" label={t.knowledge?.desc || "取消"}><Input.TextArea rows={3} /></Form.Item>
-        </Form>
-      </Modal>
-
-      <Modal title="智能体架构" open={showMessages} onCancel={() => setShowMessages(false)} footer={null} width={700}>
-        <Timeline items={messages.map((msg: any) => ({
-          color: msg.message_type === "error" ? "red" : msg.message_type === "审核" ? "orange" : "blue",
-          children: (
-            <div>
-              <Space><Tag>{msg.from_agent_id ? agents.find((a: any) => a.id === msg.from_agent_id)?.name || msg.from_agent_id.slice(0, 8) : "取消"}</Tag>
-                <Text type="secondary">{formatLocalTime(msg.created_at, true)}</Text>
-              </Space>
-              <Paragraph style={{ marginTop: 4 }}>{msg.content}</Paragraph>
-            </div>
-          ),
-        }))} />
-        {messages.length === 0 && <Empty description="待审核?" />}
-      </Modal>
-
-      <Modal title="待审核?" open={showReview} onCancel={() => setShowReview(false)} footer={null} width={500}>
-        {selected && (
-          <Space direction="vertical" style={{ width: "100%" }} size="middle">
-            <Descriptions column={1} size="small" bordered>
-              <Descriptions.Item label="取消">{selected.name || selected.task_id}</Descriptions.Item>
-              <Descriptions.Item label="取消">{selected.description || "-"}</Descriptions.Item>
-              <Descriptions.Item label="取消"><Tag>{selected.status}</Tag></Descriptions.Item>
-            </Descriptions>
-            <Input.TextArea rows={3} placeholder="待审核?..." value={reviewComment} onChange={e => setReviewComment(e.target.value)} />
-            <Space>
-              <Button type="primary" icon={<CheckOutlined />} onClick={() => handleReview(selected.task_id || selected.id, true)}>审核</Button>
-              <Button danger icon={<CloseOutlined />} onClick={() => handleReview(selected.task_id || selected.id, false)}>审核</Button>
-            </Space>
-          </Space>
-        )}
-      </Modal>
-
-      <Modal title="待审核?" open={showDetail} onCancel={() => setShowDetail(false)} footer={null} width={600}>
-        {selected && (
-          <Descriptions column={2} bordered size="small">
-            <Descriptions.Item label="取消">{selected.name}</Descriptions.Item>
-            <Descriptions.Item label="取消"><Tag color={stColor[selected.status]}>{selected.status}</Tag></Descriptions.Item>
-            <Descriptions.Item label="待审核">P{selected.priority}</Descriptions.Item>
-            <Descriptions.Item label="取消">{selected.requires_review ? "取消" : "否"}</Descriptions.Item>
-            <Descriptions.Item label="待审核?">{selected.review_status || "否"}</Descriptions.Item>
-            <Descriptions.Item label="待审核">{agents.find((a: any) => a.id === selected.assigned_agent_id)?.name || "-"}</Descriptions.Item>
-            <Descriptions.Item label="取消" span={2}>{selected.description || "-"}</Descriptions.Item>
-          </Descriptions>
-        )}
       </Modal>
     </AppLayout>
   );
