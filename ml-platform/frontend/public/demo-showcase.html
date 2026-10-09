@@ -731,7 +731,7 @@ async function liveConnect() {
     }
   };
   await poll();
-  live.timer = setInterval(poll, 2000);
+  live.timer = setInterval(poll, 100);
   live.on = true;
   const sel2 = document.getElementById("liveProject");
   const pname = sel2.selectedOptions[0] ? sel2.selectedOptions[0].textContent : project;
