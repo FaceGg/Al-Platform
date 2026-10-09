@@ -19,7 +19,8 @@ export default function OrchestrationPage() {
   const [workflows, setWorkflows] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [form] = Form.useForm();
 
@@ -49,7 +50,7 @@ export default function OrchestrationPage() {
   useEffect(() => { loadWorkflows(projectId); }, [projectId, loadWorkflows]);
 
   const createWorkflow = async (values: any) => {
-    setCreating(true);
+    setSubmitting(true);
     try {
       const res: any = await apiPost(`/projects/${projectId}/workflows`, {
         name: values.name,
@@ -58,11 +59,12 @@ export default function OrchestrationPage() {
         edges: [],
       });
       message.success(tr.created || "服务图已创建");
-      setCreating(false);
+      setModalOpen(false);
       navigate(`/workspace/${res.data?.id || res.id}`);
     } catch (error) {
-      setCreating(false);
       message.error(formatApiError(error, "创建失败"));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -134,7 +136,7 @@ export default function OrchestrationPage() {
             />
           </span>
           <Button icon={<PlusOutlined />} type="primary" disabled={!projectId}
-            onClick={() => setCreating(true)}>
+            onClick={() => setModalOpen(true)}>
             {tr.new_workflow || "新建服务图"}
           </Button>
           <Button icon={<ReloadOutlined />} disabled={!projectId}
@@ -170,10 +172,10 @@ export default function OrchestrationPage() {
 
       <Modal
         title={tr.new_workflow || "新建服务图"}
-        open={creating}
-        onCancel={() => setCreating(false)}
+        open={modalOpen}
+        onCancel={() => setModalOpen(false)}
         onOk={() => form.submit()}
-        confirmLoading={creating}
+        confirmLoading={submitting}
         okText={tr.create || "创建并进入画布"}
       >
         <Form form={form} layout="vertical" onFinish={createWorkflow}>

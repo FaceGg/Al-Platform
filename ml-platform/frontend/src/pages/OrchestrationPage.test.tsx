@@ -112,6 +112,16 @@ describe("OrchestrationPage (serving-graph workbench)", () => {
     expect(/删\s*除/.test(popover.textContent || "")).toBe(true);
   });
 
+  it("closes the create modal on cancel without calling the API", async () => {
+    render(<OrchestrationPage />);
+    await screen.findByText("推理服务");
+    fireEvent.click(screen.getByRole("button", { name: /新建服务图/ }));
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
   it("shows the empty state when the project has no workflows", async () => {
     api.apiGet.mockImplementation((url: string) => {
       if (url === "/projects") return Promise.resolve({ items: [{ id: "p1", name: "点焊" }] });
