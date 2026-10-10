@@ -61,6 +61,13 @@ from app.models.developer_resources import (
     NotebookSession,
 )
 from app.models.kubernetes_execution import KubernetesJobRun
+from app.models.resource_governance import (
+    ClusterRoutingPolicy,
+    ResourceQuotaPolicy,
+    ResourceReservation,
+    ResourceUsageSnapshot,
+    StorageBinding,
+)
 from app.models.cloud_resources import (
     KubernetesCluster,
     KubernetesCredentialRef,
@@ -151,6 +158,11 @@ __all__ = [
     "ImageBuild",
     "NotebookSession",
     "GpuResourceClass",
+    "ClusterRoutingPolicy",
+    "StorageBinding",
+    "ResourceQuotaPolicy",
+    "ResourceReservation",
+    "ResourceUsageSnapshot",
     "AnnotatorAccount",
     "AnnotatorSession",
     "AnnotatorSubjectMapping",

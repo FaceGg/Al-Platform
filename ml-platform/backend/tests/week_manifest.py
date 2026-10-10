@@ -186,6 +186,12 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_image_build_security",
         "test_gpu_scheduling",
     ],
+    16: [
+        "test_multi_cluster_scheduler",
+        "test_resource_governance",
+        "test_storage_mounts",
+        "test_cluster_observability",
+    ],
 }
 
 

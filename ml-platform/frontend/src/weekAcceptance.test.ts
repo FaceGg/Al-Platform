@@ -85,6 +85,9 @@ const weekTestFiles: Record<number, string[]> = {
     "./pages/NotebookPage.test.tsx",
     "./pages/ImageCatalogPage.test.tsx",
   ],
+  16: [
+    "./pages/ClusterGovernancePage.test.tsx",
+  ],
   17: [
     "./api/annotationReturns.test.ts",
     "./api/annotatorAssignments.test.ts",

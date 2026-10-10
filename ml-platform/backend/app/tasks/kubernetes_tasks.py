@@ -262,3 +262,37 @@ def notebook_idle_sweep() -> dict:
         return {"swept": swept}
     finally:
         db.close()
+
+
+@celery_app.task(name="ml_platform.governance_usage_collect")
+def governance_usage_collect() -> dict:
+    """Advisory usage collection for every active cluster; failures collapse
+    into per-cluster stale markers and never raise."""
+    from app.models.cloud_resources import KubernetesCluster, KubernetesCredentialRef
+    from app.services import resource_governance
+
+    db = SessionLocal()
+    try:
+        results = {}
+        clusters = db.query(KubernetesCluster).filter(KubernetesCluster.status == "active").all()
+        for cluster in clusters:
+            ref = db.query(KubernetesCredentialRef).filter(KubernetesCredentialRef.cluster_id == cluster.id).first()
+            try:
+                results[str(cluster.id)] = resource_governance.collect_usage(db, cluster, ref, settings)["status"]
+            except Exception:  # noqa: BLE001 - advisory only
+                results[str(cluster.id)] = "stale"
+        pruned = resource_governance.prune_snapshots(db)
+        return {"clusters": results, "pruned": pruned}
+    finally:
+        db.close()
+
+
+@celery_app.task(name="ml_platform.governance_reservation_sweep")
+def governance_reservation_sweep() -> dict:
+    from app.services import resource_governance
+
+    db = SessionLocal()
+    try:
+        return {"swept": resource_governance.release_expired_reservations(db)}
+    finally:
+        db.close()

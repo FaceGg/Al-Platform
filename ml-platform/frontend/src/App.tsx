@@ -33,6 +33,7 @@ const KubernetesPage = lazy(() => import("./pages/KubernetesPage"));
 const JobRunsPage = lazy(() => import("./pages/JobRunsPage"));
 const NotebookPage = lazy(() => import("./pages/NotebookPage"));
 const ImageCatalogPage = lazy(() => import("./pages/ImageCatalogPage"));
+const ClusterGovernancePage = lazy(() => import("./pages/ClusterGovernancePage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
 
 const LIGHT_TOKENS = {
@@ -112,6 +113,7 @@ function AppContent() {
             <Route path="/kubernetes/jobs" element={<ProtectedRoute><PageErrorBoundary pageName="作业运行"><JobRunsPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/notebooks" element={<ProtectedRoute><PageErrorBoundary pageName="Notebook"><NotebookPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/images" element={<ProtectedRoute><PageErrorBoundary pageName="镜像目录"><ImageCatalogPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/cluster-governance" element={<ProtectedRoute><PageErrorBoundary pageName="集群治理"><ClusterGovernancePage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/chat" element={<ProtectedRoute><AIChatPage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

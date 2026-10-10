@@ -217,6 +217,29 @@ def start_session(
     db.add(session)
     db.commit()
 
+    # Week 16 hook: reserve before any cluster call; QUOTA_EXCEEDED aborts the
+    # submission and rolls the rows back (no policy = no-op, single-cluster
+    # compatible).
+    from app.services.cluster_scheduler import reserve
+
+    try:
+        reserve(
+            db,
+            project_id=project_id,
+            cluster_id=cluster.id,
+            operation_id=operation.id,
+            reserved_json={
+                "cpu_cores": clean_resources.get("cpu_cores", 1),
+                "memory_mb": int(float(clean_resources.get("memory_gb", 1)) * 1024),
+                "gpu_count": gpu_count if gpu_class_name else 0,
+            },
+        )
+    except KubeJobError:
+        db.delete(session)
+        db.delete(operation)
+        db.commit()
+        raise
+
     labels = _job_labels(project_id, session.operation_id, 1)
     labels["linkraft.io/role"] = "notebook"
     try:
@@ -287,6 +310,9 @@ def reconcile_session(
 def _terminate(db: Session, session: NotebookSession, status: str, error_code: str | None) -> None:
     if session.status in SESSION_TERMINAL_STATUSES:
         return
+    from app.services.cluster_scheduler import release_reservation
+
+    release_reservation(db, session.operation_id, "terminal")
     session.status = status
     session.error_code = error_code
     session.terminated_at = datetime.now(timezone.utc).replace(tzinfo=None)

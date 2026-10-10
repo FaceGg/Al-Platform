@@ -122,6 +122,9 @@ def _set_terminal(job_run: KubernetesJobRun, status: str, *, error_code: str | N
 
 def _settle_operation(db: Session, job_run: KubernetesJobRun, status: str, error_code: str | None) -> None:
     """Mirror one guarded terminal job write onto the durable operation, once."""
+    from app.services.cluster_scheduler import release_reservation
+
+    release_reservation(db, job_run.operation_id, "orphaned" if status == "orphaned" else "terminal")
     operation = db.get(DurableOperation, job_run.operation_id)
     if operation is None:
         return
@@ -217,6 +220,29 @@ def submit_job(
     run.job_name = job_name_for(project_id, run_id, 1)
     db.add(run)
     db.commit()
+
+    # Week 16 hook: reserve resources before any cluster call. With no quota
+    # policy this is a no-op (single-cluster compatibility); QUOTA_EXCEEDED
+    # aborts the submission and rolls the just-created rows back.
+    from app.services.cluster_scheduler import reserve
+
+    try:
+        reserve(
+            db,
+            project_id=project_id,
+            cluster_id=cluster.id,
+            operation_id=operation.id,
+            reserved_json={
+                "cpu_cores": clean_resources.get("cpu_cores", 1),
+                "memory_mb": int(float(clean_resources.get("memory_gb", 1)) * 1024),
+                "gpu_count": 0,
+            },
+        )
+    except KubeJobError:
+        db.delete(run)
+        db.delete(operation)
+        db.commit()
+        raise
 
     client_error: str | None = None
     try:

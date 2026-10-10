@@ -555,6 +555,38 @@ class RealKubernetesClient:
             raise _map_exception(error) from error
         return {"status": int(status), "body": payload or b"", "headers": dict(headers or {})}
 
+    def node_summary(self, node_name: str) -> dict:
+        """Read the kubelet Summary API for one node via the API server proxy.
+
+        Returns the raw JSON dict; failures map to typed errors so the
+        governance collector can collapse them into a stale marker.
+        """
+        import json as _json
+
+        path = f"/api/v1/nodes/{node_name}/proxy/stats/summary"
+        try:
+            (data, status, _headers) = self._core.api_client.call_api(
+                path,
+                "GET",
+                response_type="object",
+                auth_settings=["BearerToken"],
+                _preload_content=False,
+                _request_timeout=self._request_timeout,
+            )
+            raw = data.read() if hasattr(data, "read") else (data or b"{}")
+            data.close() if hasattr(data, "close") else None
+        except Exception as error:  # noqa: BLE001
+            status = getattr(error, "status", None)
+            if status is not None:
+                raise KubernetesClientError(
+                    CONNECTIVITY_FAILED, f"summary api status {status} for node {node_name}"
+                ) from error
+            raise _map_exception(error) from error
+        try:
+            return _json.loads(raw or b"{}")
+        except ValueError as error:
+            raise KubernetesClientError(CONNECTIVITY_FAILED, f"summary api returned invalid JSON for {node_name}") from error
+
 
 class FakeKubernetesClient:
     """Programmable test double: inject outcomes, assert call order, no cluster."""

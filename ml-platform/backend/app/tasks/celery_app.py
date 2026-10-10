@@ -79,6 +79,14 @@ celery_app.conf.update(
             "task": "ml_platform.notebook_idle_sweep",
             "schedule": 300.0,
         },
+        "governance-usage-collect": {
+            "task": "ml_platform.governance_usage_collect",
+            "schedule": 60.0,
+        },
+        "governance-reservation-sweep": {
+            "task": "ml_platform.governance_reservation_sweep",
+            "schedule": 300.0,
+        },
         "notification-outbox-dispatch": {
             "task": "ml_platform.enqueue_due_notifications",
             "schedule": 30.0,

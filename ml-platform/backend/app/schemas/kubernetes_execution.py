@@ -32,6 +32,7 @@ class JobRunResponse(BaseModel):
     project_id: UUID
     cluster_id: UUID
     namespace: str
+    operation_id: UUID | None = None
     job_name: str
     image_ref: str
     command_json: list

@@ -7,7 +7,7 @@ import {
   CloudUploadOutlined, ThunderboltOutlined, ExperimentOutlined, ApiOutlined,
   CloudServerOutlined, RobotOutlined, MessageOutlined, MenuFoldOutlined,
   MenuUnfoldOutlined, MonitorOutlined, SafetyOutlined, ToolOutlined, TagsOutlined,
-  ClusterOutlined, DeploymentUnitOutlined, PlayCircleOutlined, BookOutlined,
+  ClusterOutlined, DeploymentUnitOutlined, PlayCircleOutlined, BookOutlined, ControlOutlined,
 } from "@ant-design/icons";
 import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
@@ -50,6 +50,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { key: "/kubernetes/jobs", icon: <PlayCircleOutlined />, label: t.nav.job_runs },
     { key: "/notebooks", icon: <BookOutlined />, label: t.nav.notebooks },
     { key: "/images", icon: <DatabaseOutlined />, label: t.nav.images },
+    { key: "/cluster-governance", icon: <ControlOutlined />, label: t.nav.cluster_governance },
     ...(userRole === "admin" ? [{ key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users }] : []),
   ];
 

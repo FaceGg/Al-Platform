@@ -146,6 +146,10 @@ class Settings(BaseSettings):
     gpu_snapshot_stale_seconds: int = Field(default=300, ge=30, le=86400)
     image_build_approved: bool = False
     image_build_builder_image: str = ""
+    governance_snapshot_interval_seconds: int = Field(default=60, ge=30, le=3600)
+    governance_snapshot_stale_seconds: int = Field(default=300, ge=60, le=86400)
+    governance_snapshot_retention_seconds: int = Field(default=86400, ge=3600, le=604800)
+    governance_usage_max_per_scope: int = Field(default=100, ge=10, le=1000)
 
     notification_master_key: SecretStr | None = Field(default=None, exclude=True)
     notification_master_key_file: str | None = Field(

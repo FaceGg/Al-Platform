@@ -41,8 +41,14 @@ case "$WEEK" in
     WEEK_NUMBER="15"
     FRONTEND_TESTS="src/pages/NotebookPage.test.tsx src/pages/ImageCatalogPage.test.tsx src/weekAcceptance.test.ts"
     ;;
+  week16)
+    EVIDENCE_DIR="$BACKEND_DIR/temp_test/week16-local"
+    BACKEND_MODULES="tests/test_multi_cluster_scheduler.py tests/test_resource_governance.py tests/test_storage_mounts.py tests/test_cluster_observability.py"
+    WEEK_NUMBER="16"
+    FRONTEND_TESTS="src/pages/ClusterGovernancePage.test.tsx src/weekAcceptance.test.ts"
+    ;;
   *)
-    echo "unknown profile: $WEEK (supported: week13, week14, week15; week16+ extend this case)" >&2
+    echo "unknown profile: $WEEK (supported: week13..week16; week17+ extend this case)" >&2
     exit 2
     ;;
 esac
