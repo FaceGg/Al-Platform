@@ -795,26 +795,41 @@ class DemoLoopService:
                    payload={"job_id": str(job.id)})
 
     def refresh_retrain_status(self, config: DemoLoopConfig, actor_id) -> None:
-        if config.retrain_status not in {"queued", "running"} or config.retrain_job_id is None:
+        # 收敛入口：job 挂着就必须检查（cancel_requested/终态卡住也在此自愈），
+        # 否则取消/失败/完成后 retrain_job_id 残留会永久挡住下一轮触发。
+        if config.retrain_job_id is None:
             return
         job = self.db.query(TrainingJob).filter(TrainingJob.id == config.retrain_job_id).first()
         if job is None:
             config.retrain_status = "failed"
+            config.retrain_job_id = None
             self._emit(config, "retrain_failed", "自动建模任务记录丢失", severity="warning")
             self.db.commit()
             return
+        if job.status == "cancelled":
+            # 用户取消：回到可触发状态，下一轮积累重新出发。
+            config.retrain_status = "idle"
+            config.retrain_job_id = None
+            self._emit(config, "retrain_cancelled", "自动建模任务已取消，报错继续积累后将再次触发", severity="info")
+            self.db.commit()
+            return
         # Persisted jobs start as "pending"; surface that to users as queued.
-        mapped_status = {"pending": "queued"}.get(job.status, job.status)
-        if mapped_status != config.retrain_status:
+        mapped_status = {"pending": "queued", "cancel_requested": "running"}.get(job.status, job.status)
+        if mapped_status != config.retrain_status and mapped_status in {"queued", "running"}:
             config.retrain_status = mapped_status
             if mapped_status == "running":
                 self._emit(config, "retrain_running", "自动建模任务执行中")
-            elif mapped_status == "failed":
-                self._emit(config, "retrain_failed",
-                           f"自动建模失败：{job.error_message or job.error_code or '未知错误'}",
-                           severity="critical")
         if job.status == "completed":
             self._swap_to_best_model(config, job, actor_id)
+            # 本轮闭环结束：清 job 引用回 idle，允许下一轮积累再触发。
+            config.retrain_status = "idle"
+            config.retrain_job_id = None
+        elif job.status == "failed":
+            config.retrain_status = "failed"
+            config.retrain_job_id = None
+            self._emit(config, "retrain_failed",
+                       f"自动建模失败：{job.error_message or job.error_code or '未知错误'}",
+                       severity="critical")
         self.db.commit()
 
     def _candidate_score(self, row: dict) -> float:

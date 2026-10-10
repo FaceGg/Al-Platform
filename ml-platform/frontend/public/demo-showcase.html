@@ -698,7 +698,7 @@ function applySwap() {
 }
 
 /* ================= 实时模式 ================= */
-const live = { on: false, timer: null, lastEventId: null, project: null, loopId: null, synced: false };
+const live = { on: false, timer: null, seenIds: null, project: null, loopId: null, synced: false };
 function liveHeaders() {
   const token = document.getElementById("liveToken").value.trim() || localStorage.getItem("token") || "";
   return { Authorization: "Bearer " + token };
@@ -731,7 +731,7 @@ async function liveConnect() {
   live.project = project;
   live.loopId = loopId;
   live.synced = false;            /* 首连只同步计数与水位线，不回放历史动画 */
-  live.lastEventId = null;
+  live.seenIds = null;
   localStorage.setItem("demoLiveProject", project);
   localStorage.setItem("demoLiveLoop", loopId);
   clearInterval(live.timer);
@@ -806,14 +806,16 @@ function applyLiveStatus(st) {
   setAlertCount(st.alert_count || 0);
   const events = st.events || [];
   if (!live.synced) {
-    /* 首次同步：只落水位线，历史事件不回放动画 */
-    live.lastEventId = events.length ? events[0].id : null;
+    /* 首次同步：登记历史事件 id，不回放动画 */
+    live.seenIds = new Set(events.map(ev => ev.id));
     live.synced = true;
     return;
   }
-  /* 事件按时间倒序返回：遇到上次回放的水位线即可停止，UUID 不能作时间比较 */
-  for (const ev of events) {
-    if (live.lastEventId && ev.id === live.lastEventId) break;
+  /* 只动画未见过的 events：一条推理事件驱动一次数据流动（同事务事件
+     时间戳并列导致顺序不稳定，用 id 集合去重而非水位线顺序判断） */
+  live.seenIds = live.seenIds || new Set();
+  const fresh = events.filter(ev => !live.seenIds.has(ev.id));
+  for (const ev of fresh) {
     switch (ev.event_type) {
       case "row_predicted":
         runRow(true); break;
@@ -836,7 +838,7 @@ function applyLiveStatus(st) {
         toast(ev.message, C.gold, 3400); break;
     }
   }
-  if (events.length) live.lastEventId = events[0].id;
+  fresh.forEach(ev => live.seenIds.add(ev.id));
 }
 function startRetrainLive() {
   if (sim.retrain === "running") return;

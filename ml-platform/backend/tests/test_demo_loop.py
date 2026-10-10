@@ -732,7 +732,9 @@ class DemoLoopFlow(unittest.TestCase):
             headers=self.h,
         ).json()
         types_dbg = [e["event_type"] for e in st_dbg["events"]]
-        self.assertIn("review_task_created", types_dbg[:3])
+        # 同事务事件时间戳并列，顺序不保证：按计数断言（两轮各建一个任务）。
+        self.assertGreaterEqual(types_dbg.count("review_task_created"), 2)
+        self.assertGreaterEqual(types_dbg.count("review_task_exists"), 2)
         self.assertEqual(len(loop_tasks()), 2)
 
         st = client.get(
@@ -741,6 +743,89 @@ class DemoLoopFlow(unittest.TestCase):
         ).json()
         types = [event["event_type"] for event in st["events"]]
         self.assertIn("review_task_exists", types)
+
+    def test_20_retrain_state_recovers_after_cancel_and_failure(self):
+        # 回归：取消/失败/完成后 retrain_job_id 必须清引用回可触发状态，
+        # 否则一次取消会永久挡住后续所有自动建模（真实环境复现过）。
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path as P
+            base = P(tmp) / "r20.csv"
+            pd.DataFrame({
+                "f1": [0.0, 0.2, 0.1, 0.3, 0.15, 5.0, 5.4, 4.8, 5.2, 5.1],
+                "f2": [1.0, 1.2, 0.9, 1.1, 1.05, -1.0, -1.2, -0.9, -1.1, -1.0],
+                "label": [0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+            }).to_csv(base, index=False)
+            db = SessionLocal()
+            try:
+                art = build_artifact_service(db).create_dataset(
+                    uuid.UUID(self.project_id), base, f"r20-{uuid.uuid4().hex[:6]}")
+                ds_id = str(art.id)
+            finally:
+                db.close()
+
+        loop = client.post(f"/api/projects/{self.project_id}/demo-loop/loops", json={
+            "name": f"状态恢复闭环-{uuid.uuid4().hex[:6]}", "deployment_id": self.deployment_id,
+            "error_classes": ["1"], "alert_threshold_rows": 50,
+            "retrain_enabled": True, "retrain_threshold_rows": 1,
+            "retrain_target_column": "label", "retrain_dataset_artifact_ids": [ds_id],
+        }, headers=self.h).json()
+        loop_id = loop["id"]
+
+        def make_job(status):
+            db = SessionLocal()
+            try:
+                job = TrainingJob(
+                    id=uuid.uuid4(), project_id=uuid.UUID(self.project_id),
+                    user_id=self.user_id, name=f"stub-{status}-{uuid.uuid4().hex[:4]}",
+                    operator_id="automl", params={}, status=status,
+                )
+                db.add(job)
+                db.commit()
+                cfg = db.query(DemoLoopConfig).filter(DemoLoopConfig.id == uuid.UUID(loop_id)).one()
+                cfg.retrain_job_id = job.id
+                cfg.retrain_status = {"cancelled": "cancel_requested"}.get(status, status)
+                db.commit()
+                return str(job.id)
+            finally:
+                db.close()
+
+        def refresh_and_read():
+            st = client.get(
+                f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}/status",
+                headers=self.h,
+            ).json()
+            return st["retrain_status"]
+
+        # 1) 取消 → 收敛回 idle
+        make_job("cancelled")
+        self.assertEqual(refresh_and_read(), "idle")
+
+        # 2) 失败 → 收敛为 failed（可触发集内）
+        make_job("failed")
+        self.assertEqual(refresh_and_read(), "failed")
+
+        # 3) 收敛后 job 引用已清 → 再预测能触发新一轮（stub dispatcher 捕获）
+        db = SessionLocal()
+        try:
+            cfg = db.query(DemoLoopConfig).filter(DemoLoopConfig.id == uuid.UUID(loop_id)).one()
+            cfg.retrain_status = "idle"
+            cfg.error_count = 0
+            db.commit()
+        finally:
+            db.close()
+        stub = _StubDispatcher()
+        with patch("app.services.experiment_tracking.resolve_tracking_configuration",
+                   return_value=("sqlite:///./temp_test/ut_mlflow_tracking.db",
+                                 "file:./temp_test/ut_mlflow_artifacts")), \
+                patch("app.services.closed_loop_actions.automl_dispatcher", return_value=stub):
+            r = client.post(
+                f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}/predict",
+                json={"record": {"f1": 5.2, "f2": -1.1}}, headers=self.h,
+            )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(len(stub.enqueued), 1, "取消恢复后必须能再次触发自动建模")
+
+        client.delete(f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}", headers=self.h)
 
     def test_15_loop_task_crud(self):
         # 闭环支持多任务：创建/列表/修改/删除。
