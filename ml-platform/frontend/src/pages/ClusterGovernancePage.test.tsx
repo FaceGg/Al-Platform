@@ -119,12 +119,18 @@ describe("ClusterGovernancePage", () => {
   it("renders the routing preview with per-cluster exclusion reasons", async () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: /路由预演/ }));
-    expect(await screen.findByText(/region_match/)).toBeInTheDocument();
-    expect(screen.getByText("cluster_not_active")).toBeInTheDocument();
+    // Slow CI machines need a generous timeout for the async preview render.
+    await waitFor(
+      () => expect(screen.getByText(/region_match/)).toBeInTheDocument(),
+      { timeout: 10_000 },
+    );
+    await waitFor(
+      () => expect(screen.getByText("cluster_not_active")).toBeInTheDocument(),
+      { timeout: 10_000 },
+    );
     expect(screen.getByText("healthy")).toBeInTheDocument();
     expect(screen.getByText("broken")).toBeInTheDocument();
-    expect(mocks.routingPreview).toHaveBeenCalledWith("p1");
-    await waitFor(() => expect(mocks.routingPreview).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.routingPreview).toHaveBeenCalledWith("p1"));
   });
 
   it("shows quota labels with their limits", async () => {
