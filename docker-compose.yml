@@ -51,7 +51,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile
-      network: host
+      network: ${COMPOSE_BUILD_NETWORK:-host}
     command: ["alembic", "upgrade", "head"]
     environment: &production-environment
       APP_MODE: production
@@ -145,7 +145,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.tensorboard
-      network: host
+      network: ${COMPOSE_BUILD_NETWORK:-host}
     environment:
       TENSORBOARD_SESSION_SECRET: ${TENSORBOARD_SESSION_SECRET:?set TENSORBOARD_SESSION_SECRET}
       TENSORBOARD_SESSION_TTL_SECONDS: ${TENSORBOARD_SESSION_TTL_SECONDS:-300}
@@ -166,7 +166,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.inference
-      network: host
+      network: ${COMPOSE_BUILD_NETWORK:-host}
     environment:
       APP_MODE: production
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
@@ -219,7 +219,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile
-      network: host
+      network: ${COMPOSE_BUILD_NETWORK:-host}
     ports:
       - "${BACKEND_PORT:-8001}:8000"
     environment:
@@ -251,7 +251,7 @@ services:
     build:
       context: ./ml-platform/annotator/backend
       dockerfile: Dockerfile
-      network: host
+      network: ${COMPOSE_BUILD_NETWORK:-host}
     ports:
       - "${ANNOTATOR_API_PORT:-8444}:8443"
     environment:
@@ -268,7 +268,7 @@ services:
     build:
       context: ./ml-platform/annotator/frontend
       dockerfile: Dockerfile
-      network: host
+      network: ${COMPOSE_BUILD_NETWORK:-host}
     ports:
       - "${ANNOTATOR_PORT:-8443}:80"
     depends_on:
@@ -280,7 +280,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.worker
-      network: host
+      network: ${COMPOSE_BUILD_NETWORK:-host}
     environment: *production-environment
     volumes:
       - tensorboard-events:/var/lib/tensorboard/runs
@@ -302,7 +302,7 @@ services:
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.worker
-      network: host
+      network: ${COMPOSE_BUILD_NETWORK:-host}
     command:
       - celery
       - -A
@@ -323,7 +323,7 @@ services:
     build:
       context: ./ml-platform/frontend
       dockerfile: Dockerfile
-      network: host
+      network: ${COMPOSE_BUILD_NETWORK:-host}
     ports:
       - "${FRONTEND_PORT:-5173}:80"
     depends_on:

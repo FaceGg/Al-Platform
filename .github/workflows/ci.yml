@@ -128,6 +128,7 @@ jobs:
       NOTIFICATION_RECEIVER_CERTIFICATE_FILE: /tmp/browser-notification-receiver-cert.pem
       NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE: /tmp/browser-notification-receiver-key.pem
       COMPOSE_FILE: docker-compose.yml:docker-compose.acceptance.yml
+      COMPOSE_BUILD_NETWORK: default
       COMPOSE_PROJECT_NAME: ci-browser-${{ github.run_id }}-${{ github.run_attempt }}
       BACKEND_PORT: "8000"
       WEEK12_POSTGRES_PORT: "15432"
@@ -553,6 +554,7 @@ jobs:
       NOTIFICATION_RECEIVER_CERTIFICATE_FILE: /tmp/notification-receiver-cert.pem
       NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE: /tmp/notification-receiver-key.pem
       COMPOSE_FILE: docker-compose.yml:docker-compose.acceptance.yml
+      COMPOSE_BUILD_NETWORK: default
       COMPOSE_PROJECT_NAME: ci-inference-${{ github.run_id }}-${{ github.run_attempt }}
       # Build the shared requirements layer once and reuse it for each service.
       COMPOSE_PARALLEL_LIMIT: "1"
