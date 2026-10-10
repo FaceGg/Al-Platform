@@ -40,6 +40,8 @@ export interface DemoLoopConfig {
   alert_count: number;
   total_count: number;
   retrain_status: string;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 export interface DemoLoopEvent {

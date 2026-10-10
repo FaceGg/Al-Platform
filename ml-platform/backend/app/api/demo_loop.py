@@ -119,6 +119,8 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
         "alert_count": int(config.alert_count or 0),
         "total_count": int(getattr(config, "total_count", 0) or 0),
         "retrain_status": config.retrain_status,
+        "created_at": config.created_at.isoformat() if config.created_at else None,
+        "updated_at": config.updated_at.isoformat() if config.updated_at else None,
     }
 
 

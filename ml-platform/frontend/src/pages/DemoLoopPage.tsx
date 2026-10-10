@@ -413,6 +413,17 @@ export default function DemoLoopPage() {
               render: (value: number) => <Tag color={value > 0 ? "red" : "default"}>告警 {value ?? 0}</Tag>,
             },
             {
+              title: "创建时间",
+              dataIndex: "created_at",
+              width: 130,
+              render: (value: string | null) => {
+                const parsed = value ? parseBackendTime(value) : null;
+                return <Text type="secondary" style={{ fontSize: 12 }}>
+                  {parsed ? parsed.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "-"}
+                </Text>;
+              },
+            },
+            {
               title: tr.col_retrain || "自动建模",
               dataIndex: "retrain_status",
               width: 110,
@@ -481,7 +492,13 @@ export default function DemoLoopPage() {
         </Col>
 
         <Col span={9}>
-          <Card title={<><UploadOutlined /> {tr.playback || "逐行推理调用"}</>} size="small">
+          <Card title={(
+            <>
+              <UploadOutlined /> {tr.playback || "逐行推理调用"}
+              {config ? <Tag color="blue" style={{ marginLeft: 8 }}>{config.name}</Tag>
+                : <Tag style={{ marginLeft: 8 }}>未选择任务</Tag>}
+            </>
+          )} size="small">
             <Space direction="vertical" style={{ width: "100%" }} size="middle">
               <Upload accept=".csv" maxCount={1} beforeUpload={handleUpload} showUploadList={false}>
                 <Button icon={<UploadOutlined />} disabled={!config}>
@@ -533,7 +550,13 @@ export default function DemoLoopPage() {
         </Col>
 
         <Col span={7}>
-          <Card title={<><DeploymentUnitOutlined /> {tr.status || "闭环状态"}</>} size="small">
+          <Card title={(
+            <>
+              <DeploymentUnitOutlined /> {tr.status || "闭环状态"}
+              {config ? <Tag color="blue" style={{ marginLeft: 8 }}>{config.name}</Tag>
+                : <Tag style={{ marginLeft: 8 }}>未选择任务</Tag>}
+            </>
+          )} size="small">
             <Row gutter={8}>
               <Col span={8}><Statistic title={tr.error_rows || "回流行数"} value={errorCount} /></Col>
               <Col span={8}><Statistic title={tr.alerts || "告警次数"} value={status?.alert_count ?? 0} /></Col>
