@@ -119,6 +119,12 @@ def append_rows_to_dataset_artifact(
         old_uri = artifact.storage_uri
         with service.storage.materialize(artifact.storage_uri) as path:
             frame = pd.read_csv(path)
+        # Schema evolution: new row keys (e.g. the auto-label target column)
+        # extend the CSV; old rows stay empty for those columns.
+        new_columns = [column for column in columns if column not in frame.columns]
+        if new_columns:
+            for column in new_columns:
+                frame[column] = pd.NA
         for row in rows:
             frame.loc[len(frame)] = [json_value(row.get(column)) for column in frame.columns]
         with tempfile.TemporaryDirectory() as tmp:
@@ -190,14 +196,27 @@ def notify_project_admins(
 
 def trigger_retrain_job(
     db, *, project_id, actor_id, experiment_name: str, job_name: str,
-    dataset_artifact_id, target_column: str, max_trials: int = 10,
+    dataset_artifact_id=None, dataset_artifact_ids=None, target_column: str,
+    max_trials: int = 10,
 ) -> TrainingJob:
-    """Create and dispatch one AutoML job on the given dataset/target."""
+    """Create and dispatch one AutoML job on the given dataset(s)/target.
+
+    Multiple datasets are concatenated in selection order. Rows that lack the
+    target column but carry a ``prediction`` column (closed-loop reflow rows)
+    are auto-labeled with that inference result.
+    """
     project_id = _as_uuid(project_id)
-    dataset_artifact_id = _as_uuid(dataset_artifact_id)
     actor_id = _as_uuid(actor_id)
     service = build_artifact_service(db)
-    dataset = service.resolve(dataset_artifact_id, project_id, expected_type="dataset")
+    raw_ids = list(dataset_artifact_ids or [])
+    if not raw_ids and dataset_artifact_id is not None:
+        raw_ids = [dataset_artifact_id]
+    if not raw_ids:
+        raise ClosedLoopError("CLOSED_LOOP_DATASET_MISSING", "未提供重训数据集")
+    datasets = [
+        service.resolve(_as_uuid(raw), project_id, expected_type="dataset")
+        for raw in raw_ids
+    ]
 
     experiment = db.query(Experiment).filter(
         Experiment.project_id == project_id,
@@ -234,11 +253,60 @@ def trigger_retrain_job(
         )
         db.flush()
 
-    with service.materialize(dataset.id, project_id, expected_type="dataset") as path:
-        frame = pd.read_csv(path)
+    frames = []
+    for source in datasets:
+        with service.materialize(source.id, project_id, expected_type="dataset") as path:
+            frames.append(pd.read_csv(path))
+    frame = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+    # 自动标注：回流数据集没有人工标签列，但回流行自带 prediction 列
+    # （推理结果）。目标列整列缺失时直接由推理结果生成；部分缺失时补齐。
     if target_column not in frame.columns:
-        raise ClosedLoopError(
-            "CLOSED_LOOP_TARGET_MISSING", f"目标列 {target_column} 不在重训数据集中")
+        if "prediction" not in frame.columns:
+            raise ClosedLoopError(
+                "CLOSED_LOOP_TARGET_MISSING", f"目标列 {target_column} 不在重训数据集中")
+        frame[target_column] = frame["prediction"]
+    unlabeled = frame[target_column].isna() | (frame[target_column].astype(str).str.strip() == "")
+    if unlabeled.any():
+        if "prediction" in frame.columns:
+            filled = frame.loc[unlabeled, "prediction"]
+            if filled.notna().any():
+                frame.loc[unlabeled, target_column] = filled
+        if frame[target_column].isna().any() or (frame[target_column].astype(str).str.strip() == "").any():
+            raise ClosedLoopError(
+                "CLOSED_LOOP_TARGET_MISSING",
+                f"目标列 {target_column} 存在缺失值且无推理结果可自动补齐",
+            )
+    # 混合来源的标签可能是数字与字符串（"1" 与 1），统一为数值避免类别分裂。
+    coerced = pd.to_numeric(frame[target_column], errors="coerce")
+    if coerced.notna().all():
+        frame[target_column] = coerced
+    # 回流元数据列不能进特征（标签泄漏）：标注完成后从训练帧剔除。
+    frame = frame.drop(columns=["prediction", "confidence"], errors="ignore")
+    if len(datasets) > 1:
+        # 多数据集列体系可能不同（特征工程后 vs 原始报告列）；取交集保行数，
+        # 否则并集列在来源缺之行全 NaN，drop_rows 策略会把所有行丢光。
+        common = set(frames[0].columns) - {"prediction", "confidence"}
+        for part in frames[1:]:
+            common &= set(part.columns) - {"prediction", "confidence"}
+        common.add(target_column)
+        keep = [column for column in frame.columns if column in common]
+        if target_column not in keep:
+            keep.append(target_column)
+        frame = frame[keep]
+    if len(datasets) > 1:
+        # Worker 训练读取 job.dataset_artifact_id 指向的单个数据集；多选时
+        # 必须把合并+自动标注后的帧物化为新数据集，否则特征列与训练数据
+        # 不一致（合并帧的列不在第一个数据集里 → AUTOML 输入列缺失）。
+        with tempfile.TemporaryDirectory() as tmp:
+            merged_path = Path(tmp) / "merged.csv"
+            frame.to_csv(merged_path, index=False)
+            dataset = service.create_from_file(
+                project_id, merged_path, f"{job_name}-合并数据集", "dataset",
+                metadata={"source": "closed-loop-merge",
+                          "datasets": [str(item.id) for item in datasets]},
+            )
+    else:
+        dataset = datasets[0]
     task_type = "classification"
     validate_target_columns(frame, task_type, [target_column])
     feature_columns = resolve_automl_feature_columns(
@@ -249,7 +317,9 @@ def trigger_retrain_job(
     controls = normalize_search_controls(strength="light", time_budget=600, class_weight=True)
     trials = max(int(max_trials or 10), len(families))
     fingerprint = hashlib.sha256(json.dumps({
-        "experiment": experiment_name, "dataset": str(dataset.id), "target": target_column,
+        "experiment": experiment_name,
+        "datasets": [str(item.id) for item in datasets],
+        "target": target_column,
     }, sort_keys=True).encode("utf-8")).hexdigest()
     job = TrainingJob(
         id=uuid.uuid4(),

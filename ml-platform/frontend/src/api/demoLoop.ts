@@ -29,6 +29,7 @@ export interface DemoLoopConfig {
   retrain_enabled: boolean;
   retrain_threshold_rows: number;
   retrain_dataset_artifact_id: string | null;
+  retrain_dataset_artifact_ids: string[];
   retrain_target_column: string;
   retrain_max_trials: number;
   retrain_dataset: { id: string; name: string } | null;
@@ -37,6 +38,7 @@ export interface DemoLoopConfig {
   swapped_model_version_id: string | null;
   error_count: number;
   alert_count: number;
+  total_count: number;
   retrain_status: string;
 }
 
@@ -53,6 +55,7 @@ export interface DemoLoopStatus {
   config_id: string;
   error_count: number;
   alert_count: number;
+  total_count: number;
   retrain_status: string;
   retrain_job_id: string | null;
   review_task_id: string | null;

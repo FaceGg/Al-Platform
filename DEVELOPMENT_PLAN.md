@@ -2440,3 +2440,16 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **用户报告**：模型库中删除了所有模型与部署后，API 市场里的"11"仍然存在且无删除按钮。排查确认：市场删除按钮对模型 API 隐藏是设计（模型 API 行是部署的派生数据，生命周期归模型库）；**真实缺陷在部署删除接口**——`DELETE /api/inference-deployments/{id}` 只删部署行，未清理 `platform_apis` 中 `source_kind='model'` 的派生行，残留指向已删部署的 published 孤儿行（生产库已实测复现并手工清理 1 条）。
 - **修复**：删除部署时同一事务内删除其市场派生行（`source_kind='model' AND source_id=部署id`）。回归 `test_12_deployment_delete_cleans_marketplace_row`：创建部署→启动（市场行自动发布）→运行中删除被 409 拒绝→停止→删除成功→市场行清零；test_api_model_registry 12 passed。
 - **附注**：用户删除部署 11 前已通过任务列表删除了闭环任务（部署删除会导致闭环配置失去部署引用，属预期）；孤儿行清理后市场不再显示"11"。代理仍不可达，相关提交待推送。
+
+---
+
+## 2026-10-10（续三） 闭环自动建模多数据集合并+回流自动标签、大屏实时修复
+
+- **用户报告三问题**：① 选「自动化闭环-报错数据」重训报"目标列 fault 不在重训数据集中"，且期望多数据集合并+回流数据自动打标签；② 大屏实时模式只在连接时刷新一次；③ 大屏「已调用/正常通过」应为推理条数而非 API 调用数。
+- **多数据集重训（迁移 20261010_68）**：`demo_loop_configs` 新增 `retrain_dataset_artifact_ids` JSON（单列保留并同步首项，存量回填）与 `total_count`。API/服务层接受多选（校验逐个在项目内、去重保序）；`trigger_retrain_job` 多数据集按选择顺序合并，**物化为「…-合并数据集」新工件**作为 job 输入（worker 只读单数据集，直接取第一个会特征列不一致——本轮真实环境复现 AUTOML 输入列缺失）；多数据集列体系不同时**取列交集保行数**（否则并集列 NaN 全行被 drop_rows 策略丢弃，实测 52 行全丢）；回流元数据列 prediction/confidence 剔除防标签泄漏；标签混合数值与字符串做数值归一。
+- **回流自动标签**：回流行落盘时自带目标列（`retrain_target_column`=预测类别，新建工件列随首行生成；`append_rows_to_dataset_artifact` 支持列演进——新键扩展 CSV 列，老行留空）；历史回流文件无目标列时，trigger 合并阶段用 prediction 列补齐（整列缺失则整列生成）。
+- **计数语义**：`total_count` 每行推理 +1（reset 一并清零），状态/列表返回——「已推理=total，正常通过=total-error」。
+- **连带缺陷修复（真实环境复现）**：① 审核任务幂等键 `demo-loop-review-{config}-{alert_count}` 在 reset 计数归零后重放撞历史任务唯一键 → IntegrityError 未捕获 → predict 500 且 PG 事务中止吞掉后续重训触发——键加周期短码，捕获列表加 IntegrityError（先 rollback 再降级为事件）；② 大屏指标渲染走 rAF 缓动，页面后台/未聚焦时 rAF 暂停数字冻结——applyLiveStatus 改直写 DOM。
+- **大屏实时模式重构**：新增闭环任务下拉（项目切换联动加载）；轮询改 scoped `/loops/{id}/status`（旧单任务端点固定返回首个配置，多任务下看到的可能不是正在跑的任务——"连接后不再更新"的根因之一）；首连只同步计数与事件水位线（不回放全历史动画），此后新事件驱动动画。
+- **验证**：后端 113 passed（新增 test_17：多数据集触发→合并工件 12 行/标签补齐/prediction 不进特征/计数 3）；真实环境（用户项目 test112）：报错行预测→回流(10行)→告警→审核任务创建→多数据集合并重训 **completed**→换模（swapped 9e95f7f8）；大屏两标签页指标实时同步（已推理/正常通过=真实行数）。
+- **环境**：WSL 重启循环一次（栈反复重启），保活进程恢复；前端经 Dockerfile.prebuilt 链路部署。

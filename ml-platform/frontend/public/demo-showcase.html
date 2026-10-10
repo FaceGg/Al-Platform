@@ -203,7 +203,7 @@
   </div>
 
   <div id="hud">
-    <div class="stat blue"><div class="k">已调用</div><div class="v" id="stInvoked">0</div></div>
+    <div class="stat blue"><div class="k">已推理</div><div class="v" id="stInvoked">0</div></div>
     <div class="stat green"><div class="k">正常通过</div><div class="v" id="stOk">0</div></div>
     <div class="stat red"><div class="k">报错回流</div><div class="v" id="stErrors">0</div></div>
     <div class="stat orange"><div class="k">管理员告警</div><div class="v" id="stAlerts">0</div></div>
@@ -227,6 +227,7 @@
     <div id="livePanel">
       <span id="connDot"></span>
       <select id="liveProject"><option value="">加载项目...</option></select>
+      <select id="liveLoop"><option value="">闭环任务...</option></select>
       <input id="liveToken" placeholder="Token（留空自动读取本浏览器登录）">
       <button id="btnConnect">连接</button>
     </div>
@@ -697,20 +698,46 @@ function applySwap() {
 }
 
 /* ================= 实时模式 ================= */
-const live = { on: false, timer: null, lastEventId: null, project: null };
-async function liveConnect() {
-  const sel = document.getElementById("liveProject");
-  const project = sel.value;
+const live = { on: false, timer: null, lastEventId: null, project: null, loopId: null, synced: false };
+function liveHeaders() {
   const token = document.getElementById("liveToken").value.trim() || localStorage.getItem("token") || "";
-  if (!project) { toast("请先选择项目（加载失败时请检查是否已在主界面登录）", C.red, 3200); return; }
-  live.project = project;
-  localStorage.setItem("demoLiveProject", project);
-  clearInterval(live.timer);
-  /* 读取真实配置里的重训阈值，驱动阈值环 */
+  return { Authorization: "Bearer " + token };
+}
+/* 项目变化时加载该项目的闭环任务列表 */
+async function loadLiveLoops(project) {
+  const sel = document.getElementById("liveLoop");
+  sel.innerHTML = `<option value="">（加载闭环任务...）</option>`;
+  if (!project) { sel.innerHTML = `<option value="">（请先选择项目）</option>`; return; }
   try {
-    const cfgRes = await fetch(`/api/projects/${project}/demo-loop/config`, {
-      headers: { Authorization: "Bearer " + token },
-    });
+    const res = await fetch(`/api/projects/${project}/demo-loop/loops`, { headers: liveHeaders() });
+    if (!res.ok) throw new Error(String(res.status));
+    const data = await res.json();
+    const items = data.items || [];
+    if (!items.length) { sel.innerHTML = `<option value="">（该项目暂无闭环任务，请先在闭环页创建）</option>`; live.loopId = null; return; }
+    sel.innerHTML = items.map(l => `<option value="${l.id}">${l.name}</option>`).join("");
+    const saved = localStorage.getItem("demoLiveLoop");
+    if (saved && items.some(l => l.id === saved)) sel.value = saved;
+    live.loopId = sel.value;
+  } catch (e) {
+    sel.innerHTML = `<option value="">（任务加载失败：请先在主界面登录）</option>`;
+    live.loopId = null;
+  }
+}
+async function liveConnect() {
+  const project = document.getElementById("liveProject").value;
+  const loopId = document.getElementById("liveLoop").value || live.loopId;
+  if (!project) { toast("请先选择项目（加载失败时请检查是否已在主界面登录）", C.red, 3200); return; }
+  if (!loopId) { toast("该项目的闭环任务为空，请先在「自动化闭环」页创建任务", C.red, 3200); return; }
+  live.project = project;
+  live.loopId = loopId;
+  live.synced = false;            /* 首连只同步计数与水位线，不回放历史动画 */
+  live.lastEventId = null;
+  localStorage.setItem("demoLiveProject", project);
+  localStorage.setItem("demoLiveLoop", loopId);
+  clearInterval(live.timer);
+  /* 读取该任务的真实配置，驱动阈值环 */
+  try {
+    const cfgRes = await fetch(`/api/projects/${project}/demo-loop/loops/${loopId}`, { headers: liveHeaders() });
     if (cfgRes.ok) {
       const cfg = await cfgRes.json();
       if (cfg.retrain_threshold_rows > 0) sim.retrainAt = cfg.retrain_threshold_rows;
@@ -719,8 +746,8 @@ async function liveConnect() {
   } catch (e) { /* 阈值环保持默认值 */ }
   const poll = async () => {
     try {
-      const res = await fetch(`/api/projects/${project}/demo-loop/status`, {
-        headers: { Authorization: "Bearer " + token },
+      const res = await fetch(`/api/projects/${project}/demo-loop/loops/${loopId}/status`, {
+        headers: liveHeaders(),
       });
       if (!res.ok) throw new Error(String(res.status));
       const st = await res.json();
@@ -734,16 +761,17 @@ async function liveConnect() {
   live.timer = setInterval(poll, 100);
   live.on = true;
   const sel2 = document.getElementById("liveProject");
+  const loopSel = document.getElementById("liveLoop");
   const pname = sel2.selectedOptions[0] ? sel2.selectedOptions[0].textContent : project;
-  toast(`已连接实时闭环状态 · ${pname}`, C.green);
+  const lname = loopSel.selectedOptions[0] ? loopSel.selectedOptions[0].textContent : "";
+  toast(`已连接实时闭环 · ${pname} / ${lname}`, C.green);
 }
 /* 拉取当前登录用户可见的项目列表填充下拉框 */
 async function loadLiveProjects() {
   const sel = document.getElementById("liveProject");
-  const token = document.getElementById("liveToken").value.trim() || localStorage.getItem("token") || "";
   sel.innerHTML = `<option value="">加载项目...</option>`;
   try {
-    const res = await fetch("/api/projects", { headers: { Authorization: "Bearer " + token } });
+    const res = await fetch("/api/projects", { headers: liveHeaders() });
     if (!res.ok) throw new Error(String(res.status));
     const data = await res.json();
     const items = data.items || [];
@@ -752,27 +780,44 @@ async function loadLiveProjects() {
     const saved = localStorage.getItem("demoLiveProject");
     if (saved && items.some(p => p.id === saved)) sel.value = saved;
     else sel.value = items[0].id;
+    loadLiveLoops(sel.value);
   } catch (e) {
     sel.innerHTML = `<option value="">（加载失败：请先在主界面登录或粘贴 Token）</option>`;
   }
 }
 function applyLiveStatus(st) {
-  setHud("errors", st.error_count || 0);
-  setHud("alerts", st.alert_count || 0);
+  const total = st.total_count || 0;
+  const errors = st.error_count || 0;
+  const okCount = Math.max(0, total - errors);
+  // 已推理/正常通过按真实条数直读状态（total=推理行数，ok=未报错行数）。
+  // 直写 DOM：rAF 缓动在页面后台/未聚焦时会被暂停，数字会冻结。
+  const setNow = (k, v) => { hud[k] = v; shown[k] = v;
+    const map = { invoked: "stInvoked", ok: "stOk", errors: "stErrors", alerts: "stAlerts" };
+    const el = document.getElementById(map[k]);
+    if (el) el.textContent = Math.round(v); };
+  setNow("invoked", total); sim.invoked = total;
+  setNow("ok", okCount); sim.ok = okCount;
+  setNow("errors", errors);
+  setNow("alerts", st.alert_count || 0);
   sim.alerts = st.alert_count || 0;
-  updateDatasetVisual(st.error_count || 0, sim.alertEvery);
+  sim.dataset = errors;
+  updateDatasetVisual(errors, sim.alertEvery);
   updateGateVisual();
   setAlertCount(st.alert_count || 0);
   const events = st.events || [];
+  if (!live.synced) {
+    /* 首次同步：只落水位线，历史事件不回放动画 */
+    live.lastEventId = events.length ? events[0].id : null;
+    live.synced = true;
+    return;
+  }
   /* 事件按时间倒序返回：遇到上次回放的水位线即可停止，UUID 不能作时间比较 */
   for (const ev of events) {
     if (live.lastEventId && ev.id === live.lastEventId) break;
     switch (ev.event_type) {
       case "row_predicted":
-        runRow(true); sim.ok++; setHud("ok", sim.ok); break;
+        runRow(true); break;
       case "error_row":
-        sim.invoked++; setHud("invoked", sim.invoked);
-        sim.dataset = st.error_count || 0; setHud("errors", sim.dataset);
         updateGateVisual();
         spawn("e6", C.red, { speed: 1.8, onArrive: () => spawn("e7", C.red, { speed: 2, onArrive: () => spawn("e8", C.red, { speed: 2, onArrive: () => spawn("e14", C.purple, { speed: 1.6, onArrive: () => gateCheck() }) }) }) });
         break;
@@ -859,6 +904,14 @@ btnMode.onclick = () => {
   }
 };
 document.getElementById("btnConnect").onclick = liveConnect;
+document.getElementById("liveProject").addEventListener("change", (e) => {
+  live.loopId = null;
+  loadLiveLoops(e.target.value);
+});
+document.getElementById("liveLoop").addEventListener("change", (e) => {
+  live.loopId = e.target.value || null;
+  localStorage.setItem("demoLiveLoop", live.loopId || "");
+});
 
 /* ================= 自适应缩放 ================= */
 function fit() {

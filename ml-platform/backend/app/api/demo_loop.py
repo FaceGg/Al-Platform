@@ -33,6 +33,7 @@ class DemoLoopConfigUpdate(BaseModel):
     retrain_enabled: bool | None = None
     retrain_threshold_rows: int | None = None
     retrain_dataset_artifact_id: str | None = None
+    retrain_dataset_artifact_ids: list[str] | None = None
     retrain_target_column: str | None = None
     retrain_max_trials: int | None = None
 
@@ -81,8 +82,13 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
                         "feature_schema": version.feature_schema or [],
                     }
     retrain_dataset = None
-    if config.retrain_dataset_artifact_id:
-        artifact = db.query(Artifact).filter(Artifact.id == config.retrain_dataset_artifact_id).first()
+    dataset_ids = list(getattr(config, "retrain_dataset_artifact_ids", None) or [])
+    if not dataset_ids and config.retrain_dataset_artifact_id:
+        dataset_ids = [config.retrain_dataset_artifact_id]
+    if dataset_ids:
+        artifact = db.query(Artifact).filter(
+            Artifact.id == uuid.UUID(str(dataset_ids[0])),
+        ).first()
         if artifact is not None:
             retrain_dataset = {"id": str(artifact.id), "name": artifact.name}
     return {
@@ -100,6 +106,7 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
         "retrain_dataset_artifact_id": (
             str(config.retrain_dataset_artifact_id) if config.retrain_dataset_artifact_id else None
         ),
+        "retrain_dataset_artifact_ids": [str(item) for item in dataset_ids],
         "retrain_target_column": config.retrain_target_column,
         "retrain_max_trials": config.retrain_max_trials,
         "retrain_dataset": retrain_dataset,
@@ -110,6 +117,7 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
         ),
         "error_count": int(config.error_count or 0),
         "alert_count": int(config.alert_count or 0),
+        "total_count": int(getattr(config, "total_count", 0) or 0),
         "retrain_status": config.retrain_status,
     }
 
@@ -224,9 +232,21 @@ def create_demo_loop(
     return _config_view(db, config)
 
 
-@router.put("/api/projects/{project_id}/demo-loop/loops/{loop_id}")
-def update_demo_loop(
+@router.get("/api/projects/{project_id}/demo-loop/loops/{loop_id}")
+def get_demo_loop(
     project_id: uuid.UUID,
+    loop_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, current_user.id, "project.read")
+    service = _service(db)
+    config = _require_loop(db, project_id, loop_id, service)
+    return _config_view(db, config)
+
+
+@router.put("/api/projects/{project_id}/demo-loop/loops/{loop_id}")
+def update_demo_loop(    project_id: uuid.UUID,
     loop_id: uuid.UUID,
     data: DemoLoopConfigUpdate,
     db: Session = Depends(get_db),

@@ -49,12 +49,17 @@ class DemoLoopConfig(Base):
         ForeignKey("artifacts.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Multi-dataset retrain selection (list of artifact ids); the legacy single
+    # column above is kept in sync with the first entry for older readers.
+    retrain_dataset_artifact_ids = Column(JSON, nullable=True, default=list)
     retrain_target_column = Column(String(128), nullable=False, default="")
     retrain_max_trials = Column(Integer, nullable=False, default=10)
     # Artifact that accumulates the error rows (kept without FK: it is created lazily).
     error_artifact_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     error_count = Column(Integer, nullable=False, default=0)
     alert_count = Column(Integer, nullable=False, default=0)
+    # Total rows inferred through this loop (normal + error), for monitoring.
+    total_count = Column(Integer, nullable=False, default=0)
     review_task_id = Column(UUID(as_uuid=True), nullable=True)
     retrain_job_id = Column(UUID(as_uuid=True), nullable=True)
     retrain_status = Column(String(24), nullable=False, default="idle")

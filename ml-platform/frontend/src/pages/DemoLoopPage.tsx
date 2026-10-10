@@ -121,7 +121,8 @@ export default function DemoLoopPage() {
       preprocess_enabled: cfg.preprocess_enabled, alert_threshold_rows: cfg.alert_threshold_rows,
       require_review: cfg.require_review, review_annotator_ids: cfg.review_annotator_ids,
       retrain_enabled: cfg.retrain_enabled, retrain_threshold_rows: cfg.retrain_threshold_rows,
-      retrain_dataset_artifact_id: cfg.retrain_dataset_artifact_id,
+      retrain_dataset_artifact_ids: cfg.retrain_dataset_artifact_ids
+        || (cfg.retrain_dataset_artifact_id ? [cfg.retrain_dataset_artifact_id] : []),
       retrain_target_column: cfg.retrain_target_column, retrain_max_trials: cfg.retrain_max_trials,
     });
     alertSeenRef.current = st?.alert_count ?? 0;
@@ -211,7 +212,8 @@ export default function DemoLoopPage() {
     form.setFieldsValue({
       name: "自动化闭环", error_classes: [], preprocess_enabled: false,
       alert_threshold_rows: 1, require_review: false, review_annotator_ids: [],
-      retrain_enabled: false, retrain_threshold_rows: 20, retrain_max_trials: 10,
+      retrain_enabled: false, retrain_threshold_rows: 20, retrain_dataset_artifact_ids: [],
+      retrain_max_trials: 10,
     });
   };
 
@@ -538,9 +540,13 @@ export default function DemoLoopPage() {
                     <Form.Item name="retrain_threshold_rows" label={tr.retrain_threshold || "重训触发行数"} initialValue={20}>
                       <InputNumber min={1} style={{ width: "100%" }} />
                     </Form.Item>
-                    <Form.Item name="retrain_dataset_artifact_id" label={tr.retrain_dataset || "重训数据集"} rules={[{ required: true }]}>
-                      <Select options={datasets.map((item) => ({ value: item.id, label: item.name }))}
-                        placeholder={tr.choose_dataset || "选择数据集"} />
+                    <Form.Item
+                      name="retrain_dataset_artifact_ids"
+                      label={tr.retrain_dataset || "重训数据集（可多选合并训练；选报错数据时自动用推理结果作标签）"}
+                      rules={[{ required: true, message: "请选择至少一个重训数据集" }]}
+                    >
+                      <Select mode="multiple" options={datasets.map((item) => ({ value: item.id, label: item.name }))}
+                        placeholder={tr.choose_dataset || "选择数据集（可多选）"} />
                     </Form.Item>
                     <Form.Item name="retrain_target_column" label={tr.retrain_target || "目标列"} rules={[{ required: true }]}>
                       <Input />

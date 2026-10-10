@@ -14,6 +14,8 @@ import io
 import json
 import tempfile
 import uuid
+
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -271,23 +273,59 @@ class DemoLoopService:
             config.retrain_max_trials = max(5, int(data["retrain_max_trials"] or 10))
         if "retrain_target_column" in data:
             config.retrain_target_column = str(data["retrain_target_column"] or "").strip()[:128]
-        if "retrain_dataset_artifact_id" in data:
+        if "retrain_dataset_artifact_ids" in data:
+            raw_list = data.get("retrain_dataset_artifact_ids") or []
+            if raw_list:
+                if not isinstance(raw_list, list):
+                    raise DemoLoopError(
+                        "DEMO_LOOP_CONFIG_INVALID", "retrain_dataset_artifact_ids must be a list")
+                resolved = []
+                for raw_id in raw_list:
+                    try:
+                        artifact_uuid = uuid.UUID(str(raw_id))
+                    except (TypeError, ValueError, AttributeError):
+                        raise DemoLoopError(
+                            "DEMO_LOOP_CONFIG_INVALID",
+                            "retrain_dataset_artifact_ids entries must be UUIDs") from None
+                    artifact = self.db.query(Artifact).filter(
+                        Artifact.id == artifact_uuid,
+                        Artifact.project_id == project_id,
+                        Artifact.type == "dataset",
+                    ).first()
+                    if artifact is None:
+                        raise DemoLoopError(
+                            "DEMO_LOOP_CONFIG_INVALID",
+                            "Retrain dataset not found in this project")
+                    resolved.append(artifact.id)
+                # 去重但保持选择顺序，前端展示与合并顺序稳定。
+                seen = set()
+                unique = [aid for aid in resolved if not (aid in seen or seen.add(aid))]
+                config.retrain_dataset_artifact_ids = [str(aid) for aid in unique]
+                config.retrain_dataset_artifact_id = unique[0]
+            else:
+                config.retrain_dataset_artifact_ids = []
+                config.retrain_dataset_artifact_id = None
+        if "retrain_dataset_artifact_id" in data and "retrain_dataset_artifact_ids" not in data:
             raw = data.get("retrain_dataset_artifact_id")
             if raw:
                 try:
                     artifact_uuid = uuid.UUID(str(raw))
                 except (TypeError, ValueError, AttributeError):
-                    raise DemoLoopError("DEMO_LOOP_CONFIG_INVALID", "retrain_dataset_artifact_id must be a UUID")
+                    raise DemoLoopError(
+                        "DEMO_LOOP_CONFIG_INVALID", "retrain_dataset_artifact_id must be a UUID") from None
                 artifact = self.db.query(Artifact).filter(
                     Artifact.id == artifact_uuid,
                     Artifact.project_id == project_id,
                     Artifact.type == "dataset",
                 ).first()
                 if artifact is None:
-                    raise DemoLoopError("DEMO_LOOP_CONFIG_INVALID", "Retrain dataset not found in this project")
+                    raise DemoLoopError(
+                        "DEMO_LOOP_CONFIG_INVALID", "Retrain dataset not found in this project")
                 config.retrain_dataset_artifact_id = artifact.id
+                config.retrain_dataset_artifact_ids = [str(artifact.id)]
             else:
                 config.retrain_dataset_artifact_id = None
+                config.retrain_dataset_artifact_ids = []
 
     # ------------------------------------------------------------------ predict
 
@@ -300,6 +338,7 @@ class DemoLoopService:
         predicted, confidence = self._run_prediction(config, deployment, version, record)
 
         is_error = str(predicted) in (config.error_classes or [])
+        config.total_count = int(getattr(config, "total_count", 0) or 0) + 1
         self._emit(
             config,
             "error_row" if is_error else "row_predicted",
@@ -310,10 +349,15 @@ class DemoLoopService:
 
         appended = False
         if is_error:
-            self._append_error_rows(config, [dict(record, **{
+            labeled = dict(record, **{
                 "prediction": str(predicted),
                 "confidence": confidence,
-            })], actor_id)
+            })
+            # 回流行自带推理结果作为标签列：与重训目标列同名，合并重训时
+            # 无需人工标注（报错数据自动携带 fault=<预测类别>）。
+            if config.retrain_target_column:
+                labeled[config.retrain_target_column] = str(predicted)
+            self._append_error_rows(config, [labeled], actor_id)
             appended = True
             self._after_error_append(config, str(predicted), actor_id)
 
@@ -324,6 +368,7 @@ class DemoLoopService:
             "model_version_id": str(version.id),
             "error_matched": is_error,
             "appended": appended,
+            "total_count": int(config.total_count),
             "error_count": int(config.error_count),
             "alert_count": int(config.alert_count),
             "retrain_status": config.retrain_status,
@@ -547,7 +592,10 @@ class DemoLoopService:
                 if config.review_annotator_ids:
                     try:
                         self._create_review_task(config, actor_id)
-                    except (AssignmentError, DemoLoopError, ValueError) as error:
+                    except (AssignmentError, DemoLoopError, ValueError, IntegrityError) as error:
+                        # 审核任务失败只降级为事件：重训触发不能被审核链路阻断
+                        # （PG 事务可能已中止，先回滚再记事件）。
+                        self.db.rollback()
                         self._emit(config, "review_task_failed", f"创建人工审核任务失败：{error}",
                                    severity="warning")
                 else:
@@ -631,6 +679,9 @@ class DemoLoopService:
         }
         canonical = json.dumps(snapshot, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         snapshot["config_hash"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        # 幂等键带周期短码：reset 清零计数后再次告警不得撞历史任务
+        # （alert_count/error_count 归零重放会与旧任务唯一键冲突）。
+        review_cycle = uuid.uuid4().hex[:6]
         task = GenericAnnotationTask(
             project_id=config.project_id,
             dataset_version_id=version.id,
@@ -644,7 +695,7 @@ class DemoLoopService:
             sample_scope={"kind": "all"},
             label_snapshot=snapshot["label_schema"],
             task_snapshot=snapshot,
-            idempotency_key=f"demo-loop-review-{config.id}-{config.alert_count}",
+            idempotency_key=f"demo-loop-review-{config.id}-{config.alert_count}-{review_cycle}",
         )
         self.db.add(task)
         self.db.flush()
@@ -661,7 +712,7 @@ class DemoLoopService:
             sample_scope={"kind": "all"},
             due_at=None,
             actor=actor_id,
-            idempotency_key=f"demo-loop-assign-{config.id}-{config.alert_count}",
+            idempotency_key=f"demo-loop-assign-{config.id}-{config.alert_count}-{review_cycle}",
         )
         config.review_task_id = task.id
         self.db.commit()
@@ -686,7 +737,10 @@ class DemoLoopService:
     def _trigger_retrain_inner(self, config: DemoLoopConfig, actor_id) -> None:
         if not config.retrain_target_column:
             raise DemoLoopError("DEMO_LOOP_RETRAIN_TARGET_MISSING", "未配置重训目标列")
-        if config.retrain_dataset_artifact_id is None:
+        dataset_ids = list(getattr(config, "retrain_dataset_artifact_ids", None) or [])
+        if not dataset_ids and config.retrain_dataset_artifact_id is not None:
+            dataset_ids = [config.retrain_dataset_artifact_id]
+        if not dataset_ids:
             raise DemoLoopError("DEMO_LOOP_RETRAIN_DATASET_MISSING", "未配置重训数据集")
         # 绑定表以 experiment_id 为主键（实验↔AutoML 任务 1:1），且重训幂等
         # 指纹含实验名；实验名必须按周期唯一，否则同轮次触发绑定冲突或重放旧任务。
@@ -697,7 +751,7 @@ class DemoLoopService:
             actor_id=actor_id,
             experiment_name=f"{config.name}-自动建模-{config.error_count}-{cycle}",
             job_name=f"{config.name}-自动建模-{config.error_count}-{cycle}",
-            dataset_artifact_id=config.retrain_dataset_artifact_id,
+            dataset_artifact_ids=dataset_ids,
             target_column=config.retrain_target_column,
             max_trials=config.retrain_max_trials,
         )
@@ -770,6 +824,7 @@ class DemoLoopService:
         with _lock_for(str(config.id)):
             config.error_count = 0
             config.alert_count = 0
+            config.total_count = 0
             config.retrain_status = "idle"
             config.retrain_job_id = None
             self.db.query(DemoLoopEvent).filter(DemoLoopEvent.config_id == config.id).delete()
@@ -795,6 +850,7 @@ class DemoLoopService:
             "config_id": str(config.id),
             "error_count": int(config.error_count or 0),
             "alert_count": int(config.alert_count or 0),
+            "total_count": int(getattr(config, "total_count", 0) or 0),
             "retrain_status": config.retrain_status,
             "retrain_job_id": str(config.retrain_job_id) if config.retrain_job_id else None,
             "review_task_id": str(config.review_task_id) if config.review_task_id else None,

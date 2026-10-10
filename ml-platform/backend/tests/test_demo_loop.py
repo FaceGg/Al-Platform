@@ -771,6 +771,133 @@ class DemoLoopFlow(unittest.TestCase):
             finally:
                 db.close()
 
+    def test_17_multi_dataset_retrain_with_auto_labeled_reflow(self):
+        # 回归：重训数据集支持多选合并；回流行无人工标签时用推理结果自动
+        # 补齐（回流数据集可以单独/混合选入重训），同时 total_count 计数。
+        client.post(f"/api/projects/{self.project_id}/demo-loop/reset", json={}, headers=self.h)
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp) / "base.csv"
+            pd.DataFrame({
+                "f1": [0.0, 0.2, 0.1, 0.3, 0.15, 5.0, 5.4, 4.8, 5.2, 5.1],
+                "f2": [1.0, 1.2, 0.9, 1.1, 1.05, -1.0, -1.2, -0.9, -1.1, -1.0],
+                "label": [0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+            }).to_csv(base_path, index=False)
+            # 模拟回流数据集：只有特征 + prediction 列，没有人工标签列。
+            reflow_path = Path(tmp) / "reflow.csv"
+            pd.DataFrame({
+                "f1": [5.6, 4.9],
+                "f2": [-1.05, -0.95],
+                "prediction": [1, 1],
+                "confidence": [0.9, 0.85],
+            }).to_csv(reflow_path, index=False)
+            db = SessionLocal()
+            try:
+                service = build_artifact_service(db)
+                base_art = service.create_dataset(
+                    uuid.UUID(self.project_id), base_path, f"multi-base-{uuid.uuid4().hex[:6]}")
+                reflow_art = service.create_dataset(
+                    uuid.UUID(self.project_id), reflow_path, f"multi-reflow-{uuid.uuid4().hex[:6]}")
+                base_id, reflow_id = str(base_art.id), str(reflow_art.id)
+            finally:
+                db.close()
+
+        r = client.put(self._config_url(), json={
+            "deployment_id": self.deployment_id,
+            "error_classes": ["1"],
+            "require_review": False,
+            "review_annotator_ids": [],
+            "alert_threshold_rows": 50,
+            "retrain_enabled": True,
+            "retrain_threshold_rows": 3,
+            "retrain_target_column": "label",
+            "retrain_dataset_artifact_ids": [base_id, reflow_id],
+        }, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["retrain_dataset_artifact_ids"], [base_id, reflow_id])
+
+        class _StubRuntime:
+            def predict(self, runtime_key, records):
+                return {"predictions": [[1]], "probabilities": [[0.2, 0.8]]}
+
+        class _StubService:
+            runtime = _StubRuntime()
+
+        stub = _StubDispatcher()
+        from types import SimpleNamespace
+        router = SimpleNamespace(revision_id="rev-1", model_version_id=uuid.UUID(self.model_version_id))
+        with patch("app.services.experiment_tracking.resolve_tracking_configuration",
+                   return_value=("sqlite:///./temp_test/ut_mlflow_tracking.db",
+                                 "file:./temp_test/ut_mlflow_artifacts")), \
+                patch("app.services.closed_loop_actions.automl_dispatcher", return_value=stub), \
+                patch.object(demo_loop_module, "WeightedTargetRouter") as router_cls, \
+                patch.object(demo_loop_module, "_deployment_service", return_value=_StubService()):
+            router_cls.return_value.select_active.return_value = router
+            first = client.post(
+                f"/api/projects/{self.project_id}/demo-loop/predict",
+                json={"record": {"f1": 5.2, "f2": -1.1}}, headers=self.h,
+            )
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["total_count"], 1)
+
+        # 回流行自动带标签列：回流工件出现 label=1。
+        db = SessionLocal()
+        try:
+            config = db.query(DemoLoopConfig).filter(
+                DemoLoopConfig.project_id == uuid.UUID(self.project_id),
+            ).order_by(DemoLoopConfig.created_at.asc()).first()
+            art = db.query(Artifact).filter(Artifact.id == config.error_artifact_id).one()
+            svc = build_artifact_service(db)
+            with svc.storage.materialize(art.storage_uri) as path:
+                reflow = pd.read_csv(path)
+            self.assertIn("label", reflow.columns)
+            self.assertEqual(reflow.iloc[-1]["label"], 1)
+            self.assertIn("prediction", reflow.columns)
+        finally:
+            db.close()
+
+        # 报错数据积累到阈值触发重训：合并两个数据集，标签自动补齐，
+        # prediction/confidence 不进特征列。
+        stub2 = _StubDispatcher()
+        with patch("app.services.experiment_tracking.resolve_tracking_configuration",
+                   return_value=("sqlite:///./temp_test/ut_mlflow_tracking.db",
+                                 "file:./temp_test/ut_mlflow_artifacts")), \
+                patch("app.services.closed_loop_actions.automl_dispatcher", return_value=stub2), \
+                patch.object(demo_loop_module, "WeightedTargetRouter") as router_cls, \
+                patch.object(demo_loop_module, "_deployment_service", return_value=_StubService()):
+            router_cls.return_value.select_active.return_value = router
+            for _ in range(2):
+                client.post(
+                    f"/api/projects/{self.project_id}/demo-loop/predict",
+                    json={"record": {"f1": 5.0, "f2": -1.0}}, headers=self.h,
+                )
+        self.assertEqual(len(stub2.enqueued), 1)
+        db = SessionLocal()
+        try:
+            job = db.query(TrainingJob).filter(
+                TrainingJob.id == uuid.UUID(stub2.enqueued[0]),
+            ).one()
+            # 多选时训练输入是物化后的合并数据集（含自动补齐标签），
+            # 不是第一个原始数据集。
+            self.assertNotEqual(str(job.dataset_artifact_id), base_id)
+            merged = db.query(Artifact).filter(Artifact.id == job.dataset_artifact_id).one()
+            self.assertIn("合并数据集", merged.name)
+            svc = build_artifact_service(db)
+            with svc.materialize(merged.id, merged.project_id, expected_type="dataset") as p:
+                merged_frame = pd.read_csv(p)
+            self.assertEqual(len(merged_frame), 12)  # 10 基础 + 2 回流
+            self.assertIn("label", merged_frame.columns)
+            self.assertNotIn("prediction", merged_frame.columns)
+            self.assertNotIn("confidence", merged_frame.columns)
+            self.assertEqual(set(job.params["input_columns"]), {"f1", "f2"})
+            self.assertEqual(job.automl_contract["target_columns"], ["label"])
+        finally:
+            db.close()
+        status = client.get(
+            f"/api/projects/{self.project_id}/demo-loop/status", headers=self.h,
+        ).json()
+        self.assertEqual(status["total_count"], 3)
+        self.assertEqual(status["error_count"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()
