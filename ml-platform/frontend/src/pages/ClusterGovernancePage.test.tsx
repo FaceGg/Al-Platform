@@ -118,8 +118,10 @@ describe("ClusterGovernancePage", () => {
 
   it("renders the routing preview with per-cluster exclusion reasons", async () => {
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /路由预演/ }));
-    // Slow CI machines need a generous timeout for the async preview render.
+    // Wait for load() to finish (projectId set) before clicking preview,
+    // otherwise handlePreview returns early on a null project.
+    await waitFor(() => expect(screen.getByText(/"cn-east"/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /路由预演/ }));
     await waitFor(
       () => expect(screen.getByText(/region_match/)).toBeInTheDocument(),
       { timeout: 10_000 },
