@@ -132,7 +132,8 @@ export default function NotificationCenter() {
   const content = (
     <div style={{ width: 360, maxWidth: "calc(100vw - 32px)" }}>
       <Typography.Text strong>{copy.notifications}</Typography.Text>
-      <div style={{ marginTop: 12 }}>
+      {/* 通知多时一屏放不下：列表区限高滚动，不整屏展开 */}
+      <div style={{ marginTop: 12, maxHeight: "55vh", overflowY: "auto" }}>
         {loading ? <div style={{ textAlign: "center", padding: 20 }}><Spin aria-label={copy.loading} /></div> : null}
         {error ? <Alert type="error" showIcon message={error} /> : null}
         {!loading && !error && items.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={copy.empty} /> : null}

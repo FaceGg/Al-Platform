@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert, Button, Card, Col, Divider, Form, Input, InputNumber, message, Popconfirm,
-  Progress, Row, Select, Space, Statistic, Switch, Table, Tag, Timeline, Typography, Upload,
+  Alert, Button, Card, Col, Divider, Form, Input, InputNumber, message, Modal, Popconfirm,
+  Progress, Row, Select, Space, Statistic, Switch, Table, Tag, Timeline, Tooltip, Typography, Upload,
 } from "antd";
 import {
-  CaretRightOutlined, DeleteOutlined, DeploymentUnitOutlined, PauseOutlined,
+  CaretRightOutlined, DeleteOutlined, DeploymentUnitOutlined, EditOutlined, PauseOutlined,
   PlusOutlined, ReloadOutlined, TeamOutlined, ThunderboltOutlined, UploadOutlined,
 } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
@@ -88,7 +88,8 @@ export default function DemoLoopPage() {
   const [projectId, setProjectId] = useState<string>("");
   const [loops, setLoops] = useState<DemoLoopConfig[]>([]);
   const [activeLoopId, setActiveLoopId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  // 配置表单在弹窗中：create 新建 / edit 编辑指定任务，null 关闭。
+  const [editor, setEditor] = useState<{ mode: "create" } | { mode: "edit"; loop: DemoLoopConfig } | null>(null);
   const [config, setConfig] = useState<DemoLoopConfig | null>(null);
   const [status, setStatus] = useState<DemoLoopStatus | null>(null);
   const [deployments, setDeployments] = useState<Array<{ id: string; name: string; observed_state: string }>>([]);
@@ -104,7 +105,6 @@ export default function DemoLoopPage() {
   const pauseRef = useRef(false);
   const alertSeenRef = useRef(0);
   const swapSeenRef = useRef<string | null>(null);
-  const creatingRef = useRef(false);
   const [swapPulse, setSwapPulse] = useState(false);
 
   useEffect(() => {
@@ -115,8 +115,9 @@ export default function DemoLoopPage() {
     }).catch((error) => message.error(formatApiError(error, "项目加载失败")));
   }, []);
 
-  const applyConfigToForm = useCallback((cfg: DemoLoopConfig, st: DemoLoopStatus | null) => {
-    form.setFieldsValue({
+  const fillForm = useCallback((cfg: DemoLoopConfig | null) => {
+    form.resetFields();
+    form.setFieldsValue(cfg ? {
       name: cfg.name, deployment_id: cfg.deployment_id, error_classes: cfg.error_classes,
       preprocess_enabled: cfg.preprocess_enabled, alert_threshold_rows: cfg.alert_threshold_rows,
       require_review: cfg.require_review, review_annotator_ids: cfg.review_annotator_ids,
@@ -124,9 +125,12 @@ export default function DemoLoopPage() {
       retrain_dataset_artifact_ids: cfg.retrain_dataset_artifact_ids
         || (cfg.retrain_dataset_artifact_id ? [cfg.retrain_dataset_artifact_id] : []),
       retrain_target_column: cfg.retrain_target_column, retrain_max_trials: cfg.retrain_max_trials,
+    } : {
+      name: "自动化闭环", error_classes: [], preprocess_enabled: false,
+      alert_threshold_rows: 1, require_review: false, review_annotator_ids: [],
+      retrain_enabled: false, retrain_threshold_rows: 20, retrain_dataset_artifact_ids: [],
+      retrain_max_trials: 10,
     });
-    alertSeenRef.current = st?.alert_count ?? 0;
-    swapSeenRef.current = cfg.swapped_model_version_id ?? null;
   }, [form]);
 
   // 任务列表 + 参照数据（部署/数据集/标注员）
@@ -147,29 +151,24 @@ export default function DemoLoopPage() {
       setDatasets((ds?.items || []).map((item: any) => ({ id: item.id, name: item.name })));
       setAnnotators((ann?.items || []).map((item: any) => ({ id: item.id, username: item.username })));
       setActiveLoopId((prev) => (prev && items.some((item) => item.id === prev) ? prev : items[0]?.id ?? null));
-      if (!creatingRef.current) {
-        // 新建草稿进行中（含初次加载未完成即点击新建）不重置创建状态。
-        setCreating(false);
-      }
     } catch (error) {
       message.error(formatApiError(error, "闭环数据加载失败"));
     }
   }, []);
 
-  // 当前选中闭环的配置与状态（切换/新建后都会触发）
+  // 当前选中闭环的配置与状态（切换后触发）
   useEffect(() => {
     if (!projectId || !activeLoopId) { setConfig(null); setStatus(null); return; }
-    if (creatingRef.current) return; // 新建草稿模式不被异步选中结果覆盖
     let cancelled = false;
     (async () => {
       try {
         const st: DemoLoopStatus = await fetchDemoLoopStatusScoped(projectId, activeLoopId);
-        // 完成点复查：等待期间进入新建草稿，则丢弃本次选中结果。
-        if (cancelled || creatingRef.current) return;
+        if (cancelled) return;
         const cfg = loops.find((item) => item.id === activeLoopId) || null;
         setConfig(cfg);
         setStatus(st);
-        applyConfigToForm(cfg as DemoLoopConfig, st);
+        alertSeenRef.current = st?.alert_count ?? 0;
+        swapSeenRef.current = cfg?.swapped_model_version_id ?? null;
       } catch (error) {
         if (!cancelled) {
           setConfig(null);
@@ -179,7 +178,7 @@ export default function DemoLoopPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [projectId, activeLoopId, loops, applyConfigToForm]);
+  }, [projectId, activeLoopId, loops]);
 
   // Poll active loop status so alerts / retrain progress / model swap stay live.
   useEffect(() => {
@@ -204,17 +203,14 @@ export default function DemoLoopPage() {
 
   const startCreate = () => {
     if (running) { message.warning("闭环运行中，请先暂停或等待结束"); return; }
-    creatingRef.current = true;
-    setCreating(true);
-    setConfig(null);
-    setStatus(null);
-    form.resetFields();
-    form.setFieldsValue({
-      name: "自动化闭环", error_classes: [], preprocess_enabled: false,
-      alert_threshold_rows: 1, require_review: false, review_annotator_ids: [],
-      retrain_enabled: false, retrain_threshold_rows: 20, retrain_dataset_artifact_ids: [],
-      retrain_max_trials: 10,
-    });
+    fillForm(null);
+    setEditor({ mode: "create" });
+  };
+
+  const openEdit = (loop: DemoLoopConfig) => {
+    if (running) { message.warning("闭环运行中，请先暂停或等待结束"); return; }
+    fillForm(loop);
+    setEditor({ mode: "edit", loop });
   };
 
   const handleSave = async (values: any) => {
@@ -225,18 +221,17 @@ export default function DemoLoopPage() {
       review_annotator_ids: values.require_review ? values.review_annotator_ids || [] : [],
     };
     try {
-      const cfg: any = creating
+      const cfg: any = editor?.mode === "create"
         ? await createDemoLoop(projectId, payload)
-        : await updateDemoLoop(projectId, activeLoopId as string, payload);
-      message.success(creating ? (tr.created || "闭环任务已创建") : (tr.saved || "配置已保存"));
+        : await updateDemoLoop(projectId, (editor?.mode === "edit" && editor.loop.id) as string, payload);
+      message.success(editor?.mode === "create" ? (tr.created || "闭环任务已创建") : (tr.saved || "配置已保存"));
       const list: DemoLoopConfig[] = await fetchDemoLoops(projectId).then((res: any) => res?.items || []);
       setLoops(list);
-      creatingRef.current = false;
-      setCreating(false);
+      setEditor(null);
       setActiveLoopId(cfg.id);
       setConfig(cfg);
     } catch (error) {
-      message.error(formatApiError(error, creating ? "闭环创建失败" : "配置保存失败"));
+      message.error(formatApiError(error, editor?.mode === "create" ? "闭环创建失败" : "配置保存失败"));
     } finally { setSaving(false); }
   };
 
@@ -276,34 +271,7 @@ export default function DemoLoopPage() {
     if (!rows.length || running || !activeLoopId) return;
     pauseRef.current = false;
     setRunning(true);
-    try {
-      // Persist the current form (e.g. the feature-engineering toggle) so the
-      // loop always predicts with the switches the user sees on screen.
-      const values = await form.validateFields();
-      const cfg: any = creating
-        ? await createDemoLoop(projectId, {
-          ...values,
-          error_classes: values.error_classes || [],
-          review_annotator_ids: values.require_review ? values.review_annotator_ids || [] : [],
-        })
-        : await updateDemoLoop(projectId, activeLoopId as string, {
-          ...values,
-          error_classes: values.error_classes || [],
-          review_annotator_ids: values.require_review ? values.review_annotator_ids || [] : [],
-        });
-      setConfig(cfg);
-      if (creating) {
-        const list: DemoLoopConfig[] = await fetchDemoLoops(projectId).then((res: any) => res?.items || []);
-        setLoops(list);
-        setCreating(false);
-        setActiveLoopId(cfg.id);
-      }
-      alertSeenRef.current = 0;
-    } catch (error) {
-      setRunning(false);
-      message.error(formatApiError(error, "配置保存失败，未启动闭环"));
-      return;
-    }
+    alertSeenRef.current = 0;
     try {
       for (let i = 0; i < rows.length; i += 1) {
         if (pauseRef.current) break;
@@ -416,9 +384,9 @@ export default function DemoLoopPage() {
           rowKey="id"
           dataSource={loops}
           pagination={false}
-          rowClassName={(record) => (!creating && record.id === activeLoopId ? "loop-row--active" : "")}
+          rowClassName={(record) => (record.id === activeLoopId ? "loop-row--active" : "")}
           onRow={(record) => ({
-            onClick: () => { if (!running) { creatingRef.current = false; setCreating(false); setActiveLoopId(record.id); } },
+            onClick: () => { if (!running) setActiveLoopId(record.id); },
             style: { cursor: running ? "not-allowed" : "pointer" },
           })}
           locale={{ emptyText: tr.empty_loops || "暂无闭环任务，点击右上角「新建闭环」创建" }}
@@ -427,8 +395,8 @@ export default function DemoLoopPage() {
               title: tr.col_name || "任务名称",
               dataIndex: "name",
               render: (value: string, record) => (
-                <span className={"loop-name" + (!creating && record.id === activeLoopId ? " loop-name--active" : "")}>
-                  {!creating && record.id === activeLoopId ? <ThunderboltOutlined /> : null} {value}
+                <span className={"loop-name" + (record.id === activeLoopId ? " loop-name--active" : "")}>
+                  {record.id === activeLoopId ? <ThunderboltOutlined /> : null} {value}
                 </span>
               ),
             },
@@ -456,20 +424,29 @@ export default function DemoLoopPage() {
             },
             {
               title: tr.col_actions || "操作",
-              width: 70,
+              width: 110,
               render: (_: unknown, record) => (
-                <Popconfirm
-                  title="删除该闭环任务？"
-                  description="事件与计数一并删除，报错数据文件保留。"
-                  onConfirm={(event) => { event?.stopPropagation(); handleDeleteLoop(record.id); }}
-                  onCancel={(event) => event?.stopPropagation()}
-                >
-                  <Button
-                    size="small" type="text" danger icon={<DeleteOutlined />}
-                    disabled={running}
-                    onClick={(event) => event.stopPropagation()}
-                  />
-                </Popconfirm>
+                <Space size={0}>
+                  <Tooltip title="编辑配置">
+                    <Button
+                      size="small" type="text" icon={<EditOutlined />}
+                      disabled={running}
+                      onClick={(event) => { event.stopPropagation(); openEdit(record); }}
+                    />
+                  </Tooltip>
+                  <Popconfirm
+                    title="删除该闭环任务？"
+                    description="事件与计数一并删除，报错数据文件保留。"
+                    onConfirm={(event) => { event?.stopPropagation(); handleDeleteLoop(record.id); }}
+                    onCancel={(event) => event?.stopPropagation()}
+                  >
+                    <Button
+                      size="small" type="text" danger icon={<DeleteOutlined />}
+                      disabled={running}
+                      onClick={(event) => event.stopPropagation()}
+                    />
+                  </Popconfirm>
+                </Space>
               ),
             },
           ]}
@@ -478,89 +455,28 @@ export default function DemoLoopPage() {
 
       <Row gutter={16}>
         <Col span={8}>
-          <Card
-            title={(
-              <>
-                <ThunderboltOutlined /> {tr.config || "闭环配置"}
-                {creating ? <Tag color="processing" style={{ marginLeft: 8 }}>新建任务</Tag>
-                  : config ? <Tag color="blue" style={{ marginLeft: 8 }}>{config.name}</Tag> : null}
-              </>
+          <Card title={<><ThunderboltOutlined /> 当前任务</>} size="small">
+            {config ? (
+              <Space direction="vertical" style={{ width: "100%" }} size="small">
+                <Text strong style={{ fontSize: 15 }}><ThunderboltOutlined /> {config.name}</Text>
+                <Text type="secondary">推理部署：{config.deployment?.name ?? config.deployment_id ?? "-"}</Text>
+                <Text type="secondary">报错类别：{(config.error_classes || []).join("、") || "-"} · 告警阈值 {config.alert_threshold_rows} 行</Text>
+                <Text type="secondary">
+                  自动建模：{config.retrain_enabled ? `开（${config.retrain_threshold_rows} 行触发 · ${config.retrain_dataset_artifact_ids?.length || 0} 个数据集 · 目标列 ${config.retrain_target_column || "-"}）` : "关"}
+                </Text>
+                <Text type="secondary">自动特征工程：{config.preprocess_enabled ? "开" : "关"} · 人工审核：{config.require_review ? "开" : "关"}</Text>
+                <Button block icon={<EditOutlined />} onClick={() => openEdit(config)} disabled={running}>
+                  编辑配置
+                </Button>
+              </Space>
+            ) : (
+              <Space direction="vertical" style={{ width: "100%" }} size="small">
+                <Text type="secondary">{loops.length ? "未选中任务，点击上方列表选择" : "暂无闭环任务，点击「新建闭环」创建"}</Text>
+                <Button block type="primary" ghost icon={<PlusOutlined />} onClick={startCreate} disabled={running}>
+                  新建闭环
+                </Button>
+              </Space>
             )}
-            size="small"
-          >
-            {creating && (
-              <Alert type="info" showIcon message="正在新建闭环任务，填写后点「创建闭环」" style={{ margin: "10px 0" }} />
-            )}
-            {!creating && config === null && loops.length > 0 && (
-              <Alert type="warning" showIcon message="闭环配置加载失败，请刷新重试" style={{ margin: "10px 0" }} />
-            )}
-            <Form form={form} layout="vertical" onFinish={handleSave}>
-              <Form.Item name="name" label={tr.name || "闭环名称"} initialValue="自动化闭环" rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="deployment_id" label={tr.deployment || "推理部署"} rules={[{ required: true }]}>
-                <Select options={deployments.map((item) => ({
-                  value: item.id,
-                  label: `${item.name}（${item.observed_state === "running" ? "运行中" : item.observed_state}）`,
-                }))} placeholder={tr.choose_deployment || "选择推理部署"} />
-              </Form.Item>
-              <Form.Item name="error_classes" label={tr.error_classes || "报错类别（命中即回流）"} rules={[{ required: true }]}>
-                <Select mode="tags" open={false} placeholder={tr.error_classes_hint || "输入类别后回车"} />
-              </Form.Item>
-              <Form.Item
-                name="preprocess_enabled"
-                label={tr.preprocess || "自动特征工程（原始点焊报告数据 → 73 特征）"}
-                tooltip={tr.preprocess_hint || "开启后，上传原始点焊报告行（报告字段 + cvei/cvev/cver/cvep 波形列）会先经平台特征工程算子补齐派生列再做预测；改动需保存配置生效，启动闭环时也会自动保存"}
-                valuePropName="checked"
-              >
-                <Switch />
-              </Form.Item>
-              <Form.Item name="alert_threshold_rows" label={tr.alert_threshold || "告警阈值（每 N 行报错触发一次）"} initialValue={1}>
-                <InputNumber min={1} style={{ width: "100%" }} />
-              </Form.Item>
-              <Form.Item name="require_review" label={tr.require_review || "告警后人工审核"} valuePropName="checked">
-                <Switch />
-              </Form.Item>
-              <Form.Item noStyle shouldUpdate={(prev, next) => prev.require_review !== next.require_review}>
-                {({ getFieldValue }) => getFieldValue("require_review") ? (
-                  <Form.Item name="review_annotator_ids" label={tr.annotators || "审核标注员"}>
-                    <Select mode="multiple" options={annotators.map((item) => ({
-                      value: item.id, label: item.username,
-                    }))} placeholder={tr.choose_annotators || "选择标注员"} />
-                  </Form.Item>
-                ) : null}
-              </Form.Item>
-              <Divider plain style={{ margin: "8px 0" }}>{tr.retrain_section || "自动重训"}</Divider>
-              <Form.Item name="retrain_enabled" label={tr.retrain_enabled || "积累后自动建模"} valuePropName="checked">
-                <Switch />
-              </Form.Item>
-              <Form.Item noStyle shouldUpdate={(prev, next) => prev.retrain_enabled !== next.retrain_enabled}>
-                {({ getFieldValue }) => getFieldValue("retrain_enabled") ? (
-                  <>
-                    <Form.Item name="retrain_threshold_rows" label={tr.retrain_threshold || "重训触发行数"} initialValue={20}>
-                      <InputNumber min={1} style={{ width: "100%" }} />
-                    </Form.Item>
-                    <Form.Item
-                      name="retrain_dataset_artifact_ids"
-                      label={tr.retrain_dataset || "重训数据集（可多选合并训练；选报错数据时自动用推理结果作标签）"}
-                      rules={[{ required: true, message: "请选择至少一个重训数据集" }]}
-                    >
-                      <Select mode="multiple" options={datasets.map((item) => ({ value: item.id, label: item.name }))}
-                        placeholder={tr.choose_dataset || "选择数据集（可多选）"} />
-                    </Form.Item>
-                    <Form.Item name="retrain_target_column" label={tr.retrain_target || "目标列"} rules={[{ required: true }]}>
-                      <Input />
-                    </Form.Item>
-                    <Form.Item name="retrain_max_trials" label={tr.retrain_trials || "搜索试验次数"} initialValue={10}>
-                      <InputNumber min={5} max={200} style={{ width: "100%" }} />
-                    </Form.Item>
-                  </>
-                ) : null}
-              </Form.Item>
-              <Button type="primary" htmlType="submit" block loading={saving} disabled={!projectId}>
-                {creating ? (tr.create || "创建闭环") : (tr.save || "保存配置")}
-              </Button>
-            </Form>
           </Card>
         </Col>
 
@@ -689,6 +605,85 @@ export default function DemoLoopPage() {
           </Card>
         </Col>
       </Row>
+      <Modal
+        open={editor !== null}
+        title={editor?.mode === "create" ? "新建闭环任务" : `编辑闭环配置${editor?.mode === "edit" ? `：${editor.loop.name}` : ""}`}
+        onCancel={() => setEditor(null)}
+        footer={null}
+        width={560}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" onFinish={handleSave} style={{ marginTop: 12 }}>
+          <Form.Item name="name" label={tr.name || "闭环名称"} rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="deployment_id" label={tr.deployment || "推理部署"} rules={[{ required: true }]}>
+            <Select options={deployments.map((item) => ({
+              value: item.id,
+              label: `${item.name}（${item.observed_state === "running" ? "运行中" : item.observed_state}）`,
+            }))} placeholder={tr.choose_deployment || "选择推理部署"} />
+          </Form.Item>
+          <Form.Item name="error_classes" label={tr.error_classes || "报错类别（命中即回流）"} rules={[{ required: true }]}>
+            <Select mode="tags" open={false} placeholder={tr.error_classes_hint || "输入类别后回车"} />
+          </Form.Item>
+          <Form.Item
+            name="preprocess_enabled"
+            label={tr.preprocess || "自动特征工程（原始点焊报告数据 → 73 特征）"}
+            tooltip={tr.preprocess_hint || "开启后，上传原始点焊报告行（报告字段 + cvei/cvev/cver/cvep 波形列）会先经平台特征工程算子补齐派生列再做预测"}
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item name="alert_threshold_rows" label={tr.alert_threshold || "告警阈值（每 N 行报错触发一次）"} initialValue={1}>
+            <InputNumber min={1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="require_review" label={tr.require_review || "告警后人工审核"} valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, next) => prev.require_review !== next.require_review}>
+            {({ getFieldValue }) => getFieldValue("require_review") ? (
+              <Form.Item name="review_annotator_ids" label={tr.annotators || "审核标注员"}>
+                <Select mode="multiple" options={annotators.map((item) => ({
+                  value: item.id, label: item.username,
+                }))} placeholder={tr.choose_annotators || "选择标注员"} />
+              </Form.Item>
+            ) : null}
+          </Form.Item>
+          <Divider plain style={{ margin: "8px 0" }}>{tr.retrain_section || "自动重训"}</Divider>
+          <Form.Item name="retrain_enabled" label={tr.retrain_enabled || "积累后自动建模"} valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, next) => prev.retrain_enabled !== next.retrain_enabled}>
+            {({ getFieldValue }) => getFieldValue("retrain_enabled") ? (
+              <>
+                <Form.Item name="retrain_threshold_rows" label={tr.retrain_threshold || "重训触发行数"} initialValue={20}>
+                  <InputNumber min={1} style={{ width: "100%" }} />
+                </Form.Item>
+                <Form.Item
+                  name="retrain_dataset_artifact_ids"
+                  label={tr.retrain_dataset || "重训数据集（可多选合并训练；选报错数据时自动用推理结果作标签）"}
+                  rules={[{ required: true, message: "请选择至少一个重训数据集" }]}
+                >
+                  <Select mode="multiple" options={datasets.map((item) => ({ value: item.id, label: item.name }))}
+                    placeholder={tr.choose_dataset || "选择数据集（可多选）"} />
+                </Form.Item>
+                <Form.Item name="retrain_target_column" label={tr.retrain_target || "目标列"} rules={[{ required: true }]}>
+                  <Input />
+                </Form.Item>
+                <Form.Item name="retrain_max_trials" label={tr.retrain_trials || "搜索试验次数"} initialValue={10}>
+                  <InputNumber min={5} max={200} style={{ width: "100%" }} />
+                </Form.Item>
+              </>
+            ) : null}
+          </Form.Item>
+          <Space style={{ width: "100%", justifyContent: "flex-end" }}>
+            <Button onClick={() => setEditor(null)}>取消</Button>
+            <Button type="primary" htmlType="submit" loading={saving} disabled={!projectId}>
+              {editor?.mode === "create" ? (tr.create || "创建闭环") : (tr.save || "保存配置")}
+            </Button>
+          </Space>
+        </Form>
+      </Modal>
     </AppLayout>
   );
 }

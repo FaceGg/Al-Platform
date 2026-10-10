@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DemoLoopPage from "./DemoLoopPage";
@@ -47,6 +47,7 @@ const CONFIG = {
   retrain_enabled: false,
   retrain_threshold_rows: 0,
   retrain_dataset_artifact_id: null,
+  retrain_dataset_artifact_ids: [],
   retrain_target_column: "",
   retrain_max_trials: 10,
   retrain_dataset: null,
@@ -58,6 +59,7 @@ const CONFIG = {
   swapped_model_version_id: null,
   error_count: 3,
   alert_count: 1,
+  total_count: 4,
   retrain_status: "queued",
 };
 
@@ -65,6 +67,7 @@ const STATUS = {
   config_id: "cfg-1",
   error_count: 3,
   alert_count: 1,
+  total_count: 4,
   retrain_status: "queued",
   retrain_job_id: "job-9",
   review_task_id: null,
@@ -99,9 +102,11 @@ describe("DemoLoopPage", () => {
     render(<MemoryRouter><DemoLoopPage /></MemoryRouter>);
     await waitFor(() => expect(demoLoopApi.fetchDemoLoops).toHaveBeenCalledWith("p1"));
     await waitFor(() => expect(demoLoopApi.fetchDemoLoopStatusScoped).toHaveBeenCalledWith("p1", "cfg-1"));
-    expect(screen.getAllByText(/自动化闭环|推理-回流-重训 自动化闭环/).length).toBeGreaterThan(0);
-    await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
-    expect(screen.getByText("自动化闭环-报错数据")).toBeInTheDocument();
+    expect(screen.getAllByText(/自动化闭环/).length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getByText("自动化闭环-报错数据")).toBeInTheDocument());
+    // 配置表单默认不展开：页面上没有「推理部署」字段，只有摘要卡
+    expect(screen.queryByLabelText(/推理部署/)).not.toBeInTheDocument();
+    expect(screen.getByText("编辑配置")).toBeInTheDocument();
   });
 
   it("shows the retrain task link once a job exists", async () => {
@@ -110,28 +115,46 @@ describe("DemoLoopPage", () => {
     expect(screen.getByText(/查看自动建模任务/).closest("a")).toHaveAttribute("href", "/automl/task/job-9");
   });
 
-  it("creates a new loop from the task list", async () => {
+  it("opens the create modal from the toolbar and submits a new loop", async () => {
     demoLoopApi.fetchDemoLoopDeployments.mockResolvedValue({
       items: [{ id: "dep-1", name: "toy-deploy", observed_state: "running" }],
     });
     render(<MemoryRouter><DemoLoopPage /></MemoryRouter>);
     await waitFor(() => expect(screen.getByTestId("loop-task-list")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId("new-loop-btn"));
-    const submit = await screen.findByRole("button", { name: "创建闭环" });
-    // 选择必填的推理部署
-    const formItem = screen.getByText("推理部署").closest(".ant-form-item") as HTMLElement;
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+    // 选择必填的推理部署（限定在弹窗内查询，避开摘要卡同名文案）
+    const formItem = within(dialog).getAllByText(/推理部署/)[0].closest(".ant-form-item") as HTMLElement;
     fireEvent.mouseDown(formItem.querySelector(".ant-select-selector") as HTMLElement);
     const options = await screen.findAllByText(/toy-deploy/);
     const option = options.find((el) => el.closest(".ant-select-item-option")) || options[0];
     fireEvent.click(option.closest(".ant-select-item-option") ?? option);
     // 输入必填的报错类别（tags）
-    const errorItem = screen.getByText(/报错类别/).closest(".ant-form-item") as HTMLElement;
+    const errorItem = within(dialog).getAllByText(/报错类别/)[0].closest(".ant-form-item") as HTMLElement;
     const tagInput = errorItem.querySelector("input") as HTMLInputElement;
     fireEvent.change(tagInput, { target: { value: "1" } });
     fireEvent.keyDown(tagInput, { key: "Enter", keyCode: 13, which: 13 });
-    fireEvent.submit(submit.closest("form") as HTMLFormElement);
+    fireEvent.click(screen.getByRole("button", { name: "创建闭环" }));
     await waitFor(() => expect(demoLoopApi.createDemoLoop).toHaveBeenCalled());
     expect(demoLoopApi.createDemoLoop.mock.calls[0][1].deployment_id).toBe("dep-1");
+  });
+
+  it("opens the edit modal from a row action and saves changes", async () => {
+    render(<MemoryRouter><DemoLoopPage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("loop-task-list")).toBeInTheDocument());
+    // 行内第一个操作按钮是「编辑配置」（tooltip 按钮）
+    const rowButtons = screen.getAllByRole("button").filter((b) => b.closest("tbody"));
+    const editButton = rowButtons.find((b) => !b.className.includes("ant-btn-dangerous"));
+    expect(editButton).toBeTruthy();
+    fireEvent.click(editButton as HTMLElement);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+    const nameInput = await screen.findByDisplayValue("自动化闭环");
+    fireEvent.change(nameInput, { target: { value: "夜间巡检闭环" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+    await waitFor(() => expect(demoLoopApi.updateDemoLoop).toHaveBeenCalledWith("p1", "cfg-1",
+      expect.objectContaining({ name: "夜间巡检闭环" })));
   });
 
   it("deletes a loop from the task list after confirmation", async () => {
@@ -148,7 +171,7 @@ describe("DemoLoopPage", () => {
   it("survives an empty loop list before first create", async () => {
     demoLoopApi.fetchDemoLoops.mockResolvedValue({ items: [] });
     render(<MemoryRouter><DemoLoopPage /></MemoryRouter>);
-    await waitFor(() => expect(screen.getByText(/暂无闭环任务/)).toBeInTheDocument());
-    expect(screen.getAllByText(/闭环配置|新建闭环/).length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getAllByText(/暂无闭环任务/).length).toBeGreaterThan(0));
+    expect(screen.getByTestId("new-loop-btn")).toBeInTheDocument();
   });
 });
