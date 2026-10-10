@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert, Button, Card, Col, Divider, Form, Input, InputNumber, message, Popconfirm,
-  Progress, Row, Select, Space, Statistic, Switch, Tag, Timeline, Typography, Upload,
+  Progress, Row, Select, Space, Statistic, Switch, Table, Tag, Timeline, Typography, Upload,
 } from "antd";
 import {
   CaretRightOutlined, DeleteOutlined, DeploymentUnitOutlined, PauseOutlined,
-  PlusOutlined, ReloadOutlined, ThunderboltOutlined, UploadOutlined,
+  PlusOutlined, ReloadOutlined, TeamOutlined, ThunderboltOutlined, UploadOutlined,
 } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import { formatApiError } from "../api/client";
@@ -362,13 +362,9 @@ export default function DemoLoopPage() {
         .demo-alert-pulse { animation: demoAlertPulse 1.4s ease infinite; }
         @keyframes demoSwapGlow { 0% { transform: rotateY(90deg); opacity: .2; } 100% { transform: rotateY(0); opacity: 1; } }
         .demo-swap-card { animation: demoSwapGlow 1.1s ease; transform-origin: center; }
-        .loop-task-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-        .loop-task-list { display: flex; flex-direction: column; gap: 4px; max-height: 168px; overflow-y: auto; margin-bottom: 10px; }
-        .loop-task-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; background: rgba(0,0,0,.02); }
-        .loop-task-item:hover { background: rgba(0,0,0,.05); }
-        .loop-task-item--active { border-color: #1677ff; background: rgba(22,119,255,.08); }
-        .loop-task-item__name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .loop-task-item__meta { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+        .loop-task-table .loop-name--active { font-weight: 600; color: #1677ff; }
+        .loop-task-table .loop-row--active > td { background: rgba(22,119,255,.10) !important; }
+        .loop-task-table .ant-table-tbody > tr { cursor: pointer; }
       `}</style>
       <Card style={{ marginBottom: 16 }}>
         <Space wrap size="large">
@@ -397,50 +393,99 @@ export default function DemoLoopPage() {
         </Space>
       </Card>
 
+      <Card
+        title={<><TeamOutlined /> {tr.loops_title || "闭环任务"}</>}
+        size="small"
+        style={{ marginBottom: 16 }}
+        extra={(
+          <Space>
+            <Text type="secondary" style={{ fontSize: 12 }}>{tr.loops_hint || "点击行切换任务，表单修改后「保存配置」生效"}</Text>
+            <Button size="small" type="primary" ghost icon={<PlusOutlined />}
+              disabled={running} onClick={startCreate} data-testid="new-loop-btn">
+              {tr.new_loop || "新建闭环"}
+            </Button>
+          </Space>
+        )}
+      >
+        <Table
+          className="loop-task-table"
+          data-testid="loop-task-list"
+          size="small"
+          rowKey="id"
+          dataSource={loops}
+          pagination={false}
+          rowClassName={(record) => (!creating && record.id === activeLoopId ? "loop-row--active" : "")}
+          onRow={(record) => ({
+            onClick: () => { if (!running) { creatingRef.current = false; setCreating(false); setActiveLoopId(record.id); } },
+            style: { cursor: running ? "not-allowed" : "pointer" },
+          })}
+          locale={{ emptyText: tr.empty_loops || "暂无闭环任务，点击右上角「新建闭环」创建" }}
+          columns={[
+            {
+              title: tr.col_name || "任务名称",
+              dataIndex: "name",
+              render: (value: string, record) => (
+                <span className={"loop-name" + (!creating && record.id === activeLoopId ? " loop-name--active" : "")}>
+                  {!creating && record.id === activeLoopId ? <ThunderboltOutlined /> : null} {value}
+                </span>
+              ),
+            },
+            {
+              title: tr.col_error || "回流行数",
+              dataIndex: "error_count",
+              width: 100,
+              render: (value: number) => <Tag color={value > 0 ? "orange" : "default"}>回流 {value ?? 0}</Tag>,
+            },
+            {
+              title: tr.col_alert || "告警次数",
+              dataIndex: "alert_count",
+              width: 100,
+              render: (value: number) => <Tag color={value > 0 ? "red" : "default"}>告警 {value ?? 0}</Tag>,
+            },
+            {
+              title: tr.col_retrain || "自动建模",
+              dataIndex: "retrain_status",
+              width: 110,
+              render: (value: string) => (
+                <Tag color={value === "completed" ? "green" : value === "failed" ? "red" : value === "running" || value === "queued" ? "blue" : "default"}>
+                  {value === "completed" ? "已换模" : value === "failed" ? "重训失败" : value === "running" || value === "queued" ? "重训中" : "未重训"}
+                </Tag>
+              ),
+            },
+            {
+              title: tr.col_actions || "操作",
+              width: 70,
+              render: (_: unknown, record) => (
+                <Popconfirm
+                  title="删除该闭环任务？"
+                  description="事件与计数一并删除，报错数据文件保留。"
+                  onConfirm={(event) => { event?.stopPropagation(); handleDeleteLoop(record.id); }}
+                  onCancel={(event) => event?.stopPropagation()}
+                >
+                  <Button
+                    size="small" type="text" danger icon={<DeleteOutlined />}
+                    disabled={running}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                </Popconfirm>
+              ),
+            },
+          ]}
+        />
+      </Card>
+
       <Row gutter={16}>
         <Col span={8}>
-          <Card title={<><ThunderboltOutlined /> {tr.config || "闭环配置"}</>} size="small">
-            <div className="loop-task-toolbar">
-              <Button size="small" type="primary" ghost icon={<PlusOutlined />}
-                disabled={running} onClick={startCreate} data-testid="new-loop-btn">
-                {tr.new_loop || "新建闭环"}
-              </Button>
-              <Text type="secondary">{tr.loop_count_hint || "点击列表切换，保存当前表单即修改"}</Text>
-            </div>
-            <div className="loop-task-list" data-testid="loop-task-list">
-              {loops.length === 0 && !creating && (
-                <Text type="secondary">暂无闭环任务，点击「新建闭环」创建</Text>
-              )}
-              {loops.map((loop) => (
-                <div
-                  key={loop.id}
-                  className={"loop-task-item" + (loop.id === activeLoopId && !creating ? " loop-task-item--active" : "")}
-                  onClick={() => { if (!running) { creatingRef.current = false; setCreating(false); setActiveLoopId(loop.id); } }}
-                >
-                  <span className="loop-task-item__name">
-                    {loop.id === activeLoopId && !creating ? <ThunderboltOutlined /> : null} {loop.name}
-                  </span>
-                  <span className="loop-task-item__meta">
-                    <Tag color={loop.error_count > 0 ? "orange" : "default"}>回流 {loop.error_count ?? 0}</Tag>
-                    <Tag color={loop.retrain_status === "completed" ? "green" : loop.retrain_status === "failed" ? "red" : "default"}>
-                      {loop.retrain_status === "completed" ? "已换模" : loop.retrain_status === "failed" ? "重训失败" : loop.retrain_status === "running" || loop.retrain_status === "queued" ? "重训中" : "未重训"}
-                    </Tag>
-                    <Popconfirm
-                      title="删除该闭环任务？"
-                      description="事件与计数一并删除，报错数据文件保留。"
-                      onConfirm={(event) => { event?.stopPropagation(); handleDeleteLoop(loop.id); }}
-                      onCancel={(event) => event?.stopPropagation()}
-                    >
-                      <Button
-                        size="small" type="text" danger icon={<DeleteOutlined />}
-                        disabled={running}
-                        onClick={(event) => event.stopPropagation()}
-                      />
-                    </Popconfirm>
-                  </span>
-                </div>
-              ))}
-            </div>
+          <Card
+            title={(
+              <>
+                <ThunderboltOutlined /> {tr.config || "闭环配置"}
+                {creating ? <Tag color="processing" style={{ marginLeft: 8 }}>新建任务</Tag>
+                  : config ? <Tag color="blue" style={{ marginLeft: 8 }}>{config.name}</Tag> : null}
+              </>
+            )}
+            size="small"
+          >
             {creating && (
               <Alert type="info" showIcon message="正在新建闭环任务，填写后点「创建闭环」" style={{ margin: "10px 0" }} />
             )}

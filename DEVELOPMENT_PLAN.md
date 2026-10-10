@@ -2423,3 +2423,12 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **修复的竞态（真实 UX bug）**：初次项目加载未完成时点击「新建闭环」，`loadProjectData` 完成回调会把创建状态/表单重置——`loadProjectData` 与选中 effect 完成回调均检查 `creatingRef`，草稿模式期间只更新列表与参照数据、丢弃迟到的选中结果（`loop-task-list` 容器始终渲染，等待它不等于数据就绪）。
 - **测试**：后端 `test_15_loop_task_crud`（创建/列表含计数徽标/部分修改不清洗/删除/404）+ `test_16_loop_scoped_predict_status_reset_and_event_cleanup`（scoped 预测命中回流、状态 config_id 一致、重置清零、删除后事件级联清除）——`test_demo_loop` 18 passed；全受影响后端 **121 passed, 2 skipped**；前端 DemoLoopPage 5 用例（列表渲染/任务链接/创建流含必填交互/删除确认/空列表）3 连跑稳定，DemoLoop+Orchestration+OperatorPanel **12 passed**，`tsc --noEmit` 通过。
 - **未验证/遗留**：① 画布拖拽节点后的 label 实际渲染未在浏览器自动化中验证（HTML5 drag 事件模拟不可靠，代码路径 displayName→addNode 已由单测间接覆盖）；② 算子 tooltip 描述仍为后端英文描述（属 87 条描述翻译，未在本次范围）；③ 部署后需浏览器验证闭环任务列表与算子面板。
+
+---
+
+## 2026-10-10（续） 闭环任务列表改版为独立表格卡 + 前端缓存头修复落地
+
+- **界面改版（用户反馈"任务列表和配置混到一起，看不清楚"）**：任务列表从配置卡中拆出，独立为全宽「闭环任务」卡（antd Table：任务名称/回流行数/告警次数/自动建模徽标/删除操作；行点击切换、选中行蓝色高亮加粗；卡右上「新建闭环」）；「闭环配置」卡只留表单，标题以蓝色 Tag 标明正在编辑的任务名（新建模式为「新建任务」Tag）。
+- **部署链修正**：frontend 容器 nginx 补缓存策略（index.html no-cache + assets immutable），浏览器启发式缓存 index.html 是用户始终看到旧版页面的根因——运行容器已 docker cp 热修生效；Dockerfile 同步改为持久形态并新增 `Dockerfile.prebuilt`（宿主 `npx vite build --outDir html-dist` → 本地 nginx 基础镜像打包，`DOCKER_BUILDKIT=0` 不查 registry），代理故障时用该链路部署（本次即用此链路上线，绕开 node:20-alpine 拉取失败）。
+- **测试**：DemoLoopPage 5 用例全过、tsc 通过；真实浏览器回归新建→行切换→删除确认全流程通过（截图确认新布局层次）。
+- **待推送**：42b4d8c（手册）、986de12（缓存头）、本次界面改版——本机代理 127.0.0.1:7897 不可达，恢复后推送。

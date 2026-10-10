@@ -9,6 +9,7 @@ output/
 temp_data/
 node_modules/
 dist/
+html-dist/
 *.tsbuildinfo
 *.log
 *.err
