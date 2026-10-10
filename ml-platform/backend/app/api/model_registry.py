@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.api.auth import get_current_user
 from app.api.project_security import audit_service, require_project_access, resolve_project_access
 from app.database import SessionLocal, get_db
+from app.models.api_model import PlatformAPI
 from app.models.artifact import Artifact
 from app.models.training import TrainingJob
 from app.models.model_registry import (
@@ -558,6 +559,12 @@ def build_model_registry_router(
             ):
                 if deployment.desired_state != "stopped" or deployment.observed_state != "stopped":
                     raise InferenceDeploymentError("DEPLOYMENT_NOT_STOPPED")
+                # 市场里的模型 API 行是部署的派生数据；部署删除后必须一并清除，
+                # 否则残留一条指向不存在部署的 published 孤儿行。
+                db.query(PlatformAPI).filter(
+                    PlatformAPI.source_kind == "model",
+                    PlatformAPI.source_id == deployment.id,
+                ).delete(synchronize_session=False)
                 db.delete(deployment)
         except InferenceDeploymentError as error:
             _error(error)

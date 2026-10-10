@@ -2432,3 +2432,11 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **部署链修正**：frontend 容器 nginx 补缓存策略（index.html no-cache + assets immutable），浏览器启发式缓存 index.html 是用户始终看到旧版页面的根因——运行容器已 docker cp 热修生效；Dockerfile 同步改为持久形态并新增 `Dockerfile.prebuilt`（宿主 `npx vite build --outDir html-dist` → 本地 nginx 基础镜像打包，`DOCKER_BUILDKIT=0` 不查 registry），代理故障时用该链路部署（本次即用此链路上线，绕开 node:20-alpine 拉取失败）。
 - **测试**：DemoLoopPage 5 用例全过、tsc 通过；真实浏览器回归新建→行切换→删除确认全流程通过（截图确认新布局层次）。
 - **待推送**：42b4d8c（手册）、986de12（缓存头）、本次界面改版——本机代理 127.0.0.1:7897 不可达，恢复后推送。
+
+---
+
+## 2026-10-10（续二） 删除推理部署连带清理市场模型 API 行（孤儿行缺陷修复）
+
+- **用户报告**：模型库中删除了所有模型与部署后，API 市场里的"11"仍然存在且无删除按钮。排查确认：市场删除按钮对模型 API 隐藏是设计（模型 API 行是部署的派生数据，生命周期归模型库）；**真实缺陷在部署删除接口**——`DELETE /api/inference-deployments/{id}` 只删部署行，未清理 `platform_apis` 中 `source_kind='model'` 的派生行，残留指向已删部署的 published 孤儿行（生产库已实测复现并手工清理 1 条）。
+- **修复**：删除部署时同一事务内删除其市场派生行（`source_kind='model' AND source_id=部署id`）。回归 `test_12_deployment_delete_cleans_marketplace_row`：创建部署→启动（市场行自动发布）→运行中删除被 409 拒绝→停止→删除成功→市场行清零；test_api_model_registry 12 passed。
+- **附注**：用户删除部署 11 前已通过任务列表删除了闭环任务（部署删除会导致闭环配置失去部署引用，属预期）；孤儿行清理后市场不再显示"11"。代理仍不可达，相关提交待推送。

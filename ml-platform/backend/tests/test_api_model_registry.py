@@ -584,6 +584,41 @@ class TestModelRegistryAPI(unittest.TestCase):
         self.as_role("outsider")
         self.assertEqual(self.client.post(path).status_code, 404)
 
+    def test_12_deployment_delete_cleans_marketplace_row(self):
+        # 回归：市场里的模型 API 行是部署的派生数据；删除部署必须连带清除，
+        # 否则残留指向已删部署的 published 孤儿行（模型 API 在市场无删除入口）。
+        self.as_role("editor")
+        deployment = self.client.post(
+            f"/api/projects/{self.project.id}/inference-deployments",
+            json={"name": f"cleanup-{uuid.uuid4().hex[:6]}", "model_version_id": self.version_id},
+        )
+        self.assertEqual(deployment.status_code, 201, deployment.text)
+        deployment_id = deployment.json()["id"]
+        started = self.client.post(f"/api/inference-deployments/{deployment_id}/start")
+        self.assertEqual(started.json()["observed_state"], "running")
+        self.assertGreaterEqual(
+            self.db.query(PlatformAPI).filter(
+                PlatformAPI.source_kind == "model",
+                PlatformAPI.source_id == uuid.UUID(deployment_id),
+            ).count(),
+            1,
+        )
+        # 运行中禁止删除
+        running_guard = self.client.delete(f"/api/inference-deployments/{deployment_id}")
+        self.assertEqual(running_guard.status_code, 409)
+        stopped = self.client.post(f"/api/inference-deployments/{deployment_id}/stop")
+        self.assertEqual(stopped.json()["observed_state"], "stopped")
+        removed = self.client.delete(f"/api/inference-deployments/{deployment_id}")
+        self.assertEqual(removed.status_code, 200, removed.text)
+        self.db.expire_all()
+        self.assertEqual(
+            self.db.query(PlatformAPI).filter(
+                PlatformAPI.source_kind == "model",
+                PlatformAPI.source_id == uuid.UUID(deployment_id),
+            ).count(),
+            0,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
