@@ -58,7 +58,11 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
       const cfg: any = editor?.mode === "create"
         ? await createDemoLoop(projectId, payload)
         : await updateDemoLoop(projectId, (editor?.mode === "edit" && editor.loop.id) as string, payload);
-      message.success(editor?.mode === "create" ? (tr.created || "闭环任务已创建") : (tr.saved || "配置已保存"));
+      // 后端保证同项目任务名唯一（重名自动 -2/-3）；提示展示实际名称。
+      const submittedName = String(values.name ?? "");
+      const finalName = String(cfg?.name ?? submittedName);
+      const suffix = finalName !== submittedName ? `（重名，已自动命名为 ${finalName}）` : "";
+      message.success((editor?.mode === "create" ? (tr.created || "闭环任务已创建") : (tr.saved || "配置已保存")) + suffix);
       onSaved(cfg as DemoLoopConfig);
     } catch (error) {
       message.error(formatApiError(error, editor?.mode === "create" ? "闭环创建失败" : "配置保存失败"));

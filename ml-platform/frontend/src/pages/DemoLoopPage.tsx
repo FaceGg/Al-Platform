@@ -103,7 +103,7 @@ export default function DemoLoopPage() {
           <Button icon={<ReloadOutlined />} onClick={() => loadProjectData(projectId)}>
             {tr.refresh || "刷新"}
           </Button>
-          <Button type="primary" ghost onClick={() => window.open("/demo-showcase.html", "_blank")}>
+          <Button onClick={() => window.open("/demo-showcase.html", "_blank")}>
             {tr.showcase || "运行监控大屏"}
           </Button>
         </Space>
@@ -114,7 +114,7 @@ export default function DemoLoopPage() {
         extra={(
           <Space>
             <Text type="secondary" style={{ fontSize: 12 }}>点击任务行进入任务详情</Text>
-            <Button size="small" type="primary" ghost icon={<PlusOutlined />}
+            <Button size="small" type="primary" icon={<PlusOutlined />}
               onClick={() => setEditor({ mode: "create" })} data-testid="new-loop-btn">
               {tr.new_loop || "新建闭环"}
             </Button>
@@ -176,21 +176,17 @@ export default function DemoLoopPage() {
               title: tr.col_actions || "操作",
               width: 150,
               render: (_: unknown, record) => (
-                <Space size={0}>
-                  <Tooltip title="任务详情（逐行推理 / 闭环状态）">
-                    <Button
-                      size="small" type="link" icon={<ArrowRightOutlined />}
-                      onClick={(event) => { event.stopPropagation(); openDetail(record); }}
-                    >
-                      详情
-                    </Button>
-                  </Tooltip>
-                  <Tooltip title="编辑配置">
-                    <Button
-                      size="small" type="text" icon={<EditOutlined />}
-                      onClick={(event) => { event.stopPropagation(); setEditor({ mode: "edit", loop: record }); }}
-                    />
-                  </Tooltip>
+                <Space size={4}>
+                  <Button
+                    size="small" icon={<ArrowRightOutlined />}
+                    onClick={(event) => { event.stopPropagation(); openDetail(record); }}
+                  >
+                    详情
+                  </Button>
+                  <Button
+                    size="small" icon={<EditOutlined />}
+                    onClick={(event) => { event.stopPropagation(); setEditor({ mode: "edit", loop: record }); }}
+                  />
                   <Popconfirm
                     title="删除该闭环任务？"
                     description="事件与计数一并删除，报错数据文件保留。"
@@ -198,7 +194,7 @@ export default function DemoLoopPage() {
                     onCancel={(event) => event?.stopPropagation()}
                   >
                     <Button
-                      size="small" type="text" danger icon={<DeleteOutlined />}
+                      size="small" danger icon={<DeleteOutlined />}
                       onClick={(event) => event.stopPropagation()}
                     />
                   </Popconfirm>

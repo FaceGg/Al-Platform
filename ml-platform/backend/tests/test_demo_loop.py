@@ -898,6 +898,50 @@ class DemoLoopFlow(unittest.TestCase):
         self.assertEqual(status["total_count"], 3)
         self.assertEqual(status["error_count"], 3)
 
+    def test_18_duplicate_names_auto_renamed(self):
+        # 同项目任务名唯一：重名自动追加 -2/-3，不报错。
+        first = client.post(
+            f"/api/projects/{self.project_id}/demo-loop/loops",
+            json={"name": "巡检闭环", "deployment_id": self.deployment_id,
+                  "error_classes": ["1"]},
+            headers=self.h,
+        )
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(first.json()["name"], "巡检闭环")
+
+        second = client.post(
+            f"/api/projects/{self.project_id}/demo-loop/loops",
+            json={"name": "巡检闭环", "deployment_id": self.deployment_id,
+                  "error_classes": ["1"]},
+            headers=self.h,
+        )
+        self.assertEqual(second.status_code, 201, second.text)
+        self.assertEqual(second.json()["name"], "巡检闭环-2")
+
+        third = client.post(
+            f"/api/projects/{self.project_id}/demo-loop/loops",
+            json={"name": "巡检闭环", "deployment_id": self.deployment_id,
+                  "error_classes": ["1"]},
+            headers=self.h,
+        )
+        self.assertEqual(third.json()["name"], "巡检闭环-3")
+
+        # 改名撞已有任务同样自动让名；把自己原名让给自己不受影响。
+        renamed = client.put(
+            f"/api/projects/{self.project_id}/demo-loop/loops/{first.json()['id']}",
+            json={"name": "巡检闭环-2"},
+            headers=self.h,
+        )
+        self.assertEqual(renamed.status_code, 200, renamed.text)
+        self.assertEqual(renamed.json()["name"], "巡检闭环-2-2")
+
+        # 清理本用例创建的任务
+        for item in (second, third, renamed):
+            client.delete(
+                f"/api/projects/{self.project_id}/demo-loop/loops/{item.json()['id']}",
+                headers=self.h,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

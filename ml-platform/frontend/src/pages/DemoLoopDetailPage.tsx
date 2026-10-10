@@ -4,7 +4,7 @@ import {
 } from "antd";
 import {
   ArrowLeftOutlined, CaretRightOutlined, DeploymentUnitOutlined, EditOutlined,
-  MonitorOutlined, PauseOutlined, ReloadOutlined, ThunderboltOutlined, UploadOutlined,
+  MonitorOutlined, PauseOutlined, ReloadOutlined, RestOutlined, ThunderboltOutlined, UploadOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AppLayout from "../components/AppLayout";
@@ -238,11 +238,11 @@ export default function DemoLoopDetailPage() {
           <Button icon={<EditOutlined />} disabled={running || !loop}
             onClick={() => loop && setEditor({ mode: "edit", loop })}>编辑配置</Button>
           <Button icon={<ReloadOutlined />} onClick={() => { loadLoop(); }}>刷新</Button>
-          <Button type="primary" ghost icon={<MonitorOutlined />}
+          <Button icon={<MonitorOutlined />}
             onClick={() => window.open(`/demo-showcase.html`, "_blank")}>
             {tr.showcase || "运行监控大屏"}
           </Button>
-          <Button danger onClick={handleReset} disabled={!loop}>{tr.reset || "重置闭环"}</Button>
+          <Button danger icon={<RestOutlined />} onClick={handleReset} disabled={!loop}>{tr.reset || "重置闭环"}</Button>
         </Space>
       </Card>
 

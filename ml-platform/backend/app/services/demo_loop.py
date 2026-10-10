@@ -211,7 +211,7 @@ class DemoLoopService:
         self.db.add(config)
         self._apply_config_fields(config, project_id, data)
         if not str(config.name or "").strip():
-            config.name = "自动化闭环"
+            config.name = self._unique_name(project_id, "自动化闭环", exclude_id=config.id)
         self.db.commit()
         self.db.refresh(config)
         return config
@@ -227,6 +227,21 @@ class DemoLoopService:
         self.db.query(DemoLoopEvent).filter(DemoLoopEvent.config_id == config.id).delete()
         self.db.delete(config)
         self.db.commit()
+
+    def _unique_name(self, project_id, desired: str, exclude_id=None) -> str:
+        """同项目任务名唯一：重名自动追加 -2/-3…（用户不指定则后端命名不报错）。"""
+        taken = {
+            row[0] for row in self.db.query(DemoLoopConfig.name).filter(
+                DemoLoopConfig.project_id == project_id,
+                DemoLoopConfig.id != exclude_id,
+            ).all()
+        }
+        if desired not in taken:
+            return desired
+        counter = 2
+        while f"{desired}-{counter}" in taken:
+            counter += 1
+        return f"{desired}-{counter}"[:128]
 
     def _apply_config_fields(self, config: DemoLoopConfig, project_id, data: dict) -> None:
         deployment_id = data.get("deployment_id")
@@ -250,7 +265,8 @@ class DemoLoopService:
                 raise DemoLoopError("DEMO_LOOP_CONFIG_INVALID", "error_classes must not be empty")
             config.error_classes = error_classes
         if "name" in data and str(data.get("name") or "").strip():
-            config.name = str(data["name"]).strip()[:128]
+            config.name = self._unique_name(
+                project_id, str(data["name"]).strip()[:128], exclude_id=config.id)
         if "preprocess_enabled" in data:
             config.preprocess_enabled = bool(data["preprocess_enabled"])
         if "alert_threshold_rows" in data:
