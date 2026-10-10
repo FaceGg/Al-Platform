@@ -2485,3 +2485,13 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **按钮统一（对齐 ModelLibrary/ComputeResource/JobRuns 惯例）**：刷新/大屏=默认样式（去掉 primary ghost）；新建闭环=small primary；行内操作=small 默认（详情带文字+箭头、编辑图标、删除 danger 图标，去掉 link/text/Tooltip）；详情页重置= danger + RestOutlined。
 - **任务名唯一（用户要求"不能重名，重名自动重命名"）**：`_unique_name` 同项目排除自身查重，冲突追加 `-2/-3…`（截断 128）；create 显式名与默认名、update 改名均过唯一化。弹窗成功提示展示后端实际名称（重名时附"（重名，已自动命名为 X）"）。回归 test_18（建 3 同名→-2/-3；改名撞名→-2-2；清理）。
 - **验证**：后端 20 passed；前端 9 passed + tsc；浏览器实测同名创建自动改名为"-2"（已清理）；截图确认列表页按钮风格与平台一致。**按用户要求：本次起提交后不自动推送 GitHub，等用户指示再推。**
+
+---
+
+## 2026-10-10（续八） 闭环审核任务单一化（报错文件本就每任务专属）
+
+- **用户反馈**：每个闭环任务的报警数据应只追加到同一个文件，标注任务也只建一个。核实：报错数据文件**本就按任务隔离**（`_error_artifact` 只认 `config.error_artifact_id`，持续追加，不按名字共享）；**真实缺陷是标注任务随每次告警重复创建**（alert_threshold=1 时每行报错建一个，任务爆炸）。
+- **修复**：`_create_review_task` 加守卫——`config.review_task_id` 指向的任务仍在进行中（状态不在 completed/accepted/cancelled/archived）则跳过创建，emit `review_task_exists` 事件提示"新报错数据继续追加到同一报错数据集"；任务完成后下一轮告警才再建新的。标注任务从报错数据集创建版本快照，任务完成后新数据经新一轮任务覆盖。
+- **测试**：test_19（独立唯一名闭环 + 真实标注员授权链）：3 次报错 → 任务数 1 且有 review_task_exists 事件；任务置 completed 后再告警 → 任务数 2。测试名带 uuid 抗共享 sqlite 库残留（此前残留致 MultipleResultsFound）。全量 test_demo_loop 21 + workflow 6 = 27 passed。
+- **真实环境验证**：test112 项目新建"单审核验证闭环"（阈值 1/开审核）跑 3 条报错行——报错文件"单审核验证闭环-报错数据"3 行同一文件、标注任务仅"…-人工审核-1"一个、事件流两条 review_task_exists；验证后已清理。期间发现用户已自行删除其先前创建的两个同名任务（configs=0 属用户操作，非数据丢失）。
+- **本地提交不推送**（遵用户 2026-10-10 指示）。

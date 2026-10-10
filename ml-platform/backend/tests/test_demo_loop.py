@@ -658,6 +658,90 @@ class DemoLoopFlow(unittest.TestCase):
         finally:
             db.close()
 
+    def test_19_single_active_review_task_per_loop(self):
+        # 每个闭环任务同一时间只有一个进行中的审核任务：后续告警不重复
+        # 新建（报错数据继续追加同一文件），完成后下一轮告警才再建。
+        from app.models.annotator import AnnotatorAccount, ProjectAnnotatorGrant
+        from app.models.platform_models import GenericAnnotationTask
+
+        db = SessionLocal()
+        try:
+            annotator = AnnotatorAccount(
+                username=f"annotator-{uuid.uuid4().hex[:8]}",
+                password_hash=pwd_context.hash("x"),
+                status="active",
+            )
+            db.add(annotator)
+            db.flush()
+            subject_id = str(annotator.subject_id)
+            db.add(ProjectAnnotatorGrant(
+                project_id=uuid.UUID(self.project_id),
+                subject_id=annotator.subject_id,
+                status="active",
+            ))
+            db.commit()
+        finally:
+            db.close()
+
+        # 独立闭环任务（名称每次唯一，抗共享测试库残留），避免与其他用例互相污染
+        loop = client.post(
+            f"/api/projects/{self.project_id}/demo-loop/loops",
+            json={"name": f"单审核闭环-{uuid.uuid4().hex[:6]}", "deployment_id": self.deployment_id,
+                  "error_classes": ["1"], "alert_threshold_rows": 1,
+                  "require_review": True, "review_annotator_ids": [subject_id]},
+            headers=self.h,
+        ).json()
+        loop_id = loop["id"]
+        task_prefix = loop["name"] + "-人工审核"
+
+        def scoped_predict():
+            r = client.post(
+                f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}/predict",
+                json={"record": {"f1": 5.0, "f2": -1.0}}, headers=self.h,
+            )
+            self.assertEqual(r.status_code, 200, r.text)
+
+        def loop_tasks():
+            db2 = SessionLocal()
+            try:
+                return db2.query(GenericAnnotationTask).filter(
+                    GenericAnnotationTask.project_id == uuid.UUID(self.project_id),
+                    GenericAnnotationTask.name.startswith(task_prefix),
+                ).all()
+            finally:
+                db2.close()
+
+        scoped_predict()
+        scoped_predict()
+        scoped_predict()
+        tasks = loop_tasks()
+        self.assertEqual(len(tasks), 1, [t.name for t in tasks])
+
+        db = SessionLocal()
+        try:
+            task = db.query(GenericAnnotationTask).filter(
+                GenericAnnotationTask.name.startswith(task_prefix),
+            ).one()
+            task.status = "completed"
+            db.commit()
+        finally:
+            db.close()
+        scoped_predict()
+        st_dbg = client.get(
+            f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}/status",
+            headers=self.h,
+        ).json()
+        types_dbg = [e["event_type"] for e in st_dbg["events"]]
+        self.assertIn("review_task_created", types_dbg[:3])
+        self.assertEqual(len(loop_tasks()), 2)
+
+        st = client.get(
+            f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}/status",
+            headers=self.h,
+        ).json()
+        types = [event["event_type"] for event in st["events"]]
+        self.assertIn("review_task_exists", types)
+
     def test_15_loop_task_crud(self):
         # 闭环支持多任务：创建/列表/修改/删除。
         r = client.post(

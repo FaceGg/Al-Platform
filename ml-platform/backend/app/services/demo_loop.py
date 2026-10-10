@@ -641,6 +641,21 @@ class DemoLoopService:
     # ------------------------------------------------------------- review task
 
     def _create_review_task(self, config: DemoLoopConfig, actor_id) -> None:
+        # 每个闭环任务同一时间只保留一个人工审核任务：进行中的任务不重复
+        # 新建，新报错数据继续追加到同一报错数据集，审核完成后下一轮告警再建。
+        if config.review_task_id:
+            existing = self.db.query(GenericAnnotationTask).filter(
+                GenericAnnotationTask.id == config.review_task_id,
+            ).first()
+            if existing is not None and existing.status not in {
+                "completed", "accepted", "cancelled", "archived",
+            }:
+                self._emit(
+                    config, "review_task_exists",
+                    f"人工审核任务仍在进行中（{existing.name}），新报错数据继续追加到同一报错数据集",
+                    severity="info",
+                )
+                return
         artifact = self.db.query(Artifact).filter(
             Artifact.id == config.error_artifact_id,
         ).first()
