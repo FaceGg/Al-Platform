@@ -1053,7 +1053,7 @@ test "$first_hash" = "$second_hash"
 
         self.assertIn("for attempt in {1..3}", build["run"])
         self.assertIn(
-            'if docker compose --project-name "$COMPOSE_PROJECT_NAME" build backend worker tensorboard-gateway inference-runtime; then',
+            'if COMPOSE_BAKE=false docker compose --project-name "$COMPOSE_PROJECT_NAME" build backend worker tensorboard-gateway inference-runtime; then',
             build["run"],
         )
         self.assertIn("exit 1", build["run"])
@@ -1120,7 +1120,7 @@ test "$first_hash" = "$second_hash"
         browser_job = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"][
             "browser-acceptance"
         ]
-        self.assertEqual(browser_job["env"]["LOGIN_IP_RATE_LIMIT_CAPACITY"], "20")
+        self.assertEqual(browser_job["env"]["LOGIN_IP_RATE_LIMIT_CAPACITY"], "100")
 
     def test_minio_init_uses_the_backend_bucket_expression(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
@@ -1368,7 +1368,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         self.assertEqual(environment["RUN_WEEK12_BROWSER_ACCEPTANCE"], "1")
         self.assertEqual(environment["WEEK12_ACCEPTANCE_ISOLATED"], "1")
         self.assertEqual(environment["BACKEND_PORT"], "8000")
-        self.assertEqual(environment["LOGIN_IP_RATE_LIMIT_CAPACITY"], "20")
+        self.assertEqual(environment["LOGIN_IP_RATE_LIMIT_CAPACITY"], "100")
         self.assertEqual(environment["INFERENCE_RATE_LIMIT_CAPACITY"], "5")
         self.assertEqual(environment["INFERENCE_RATE_LIMIT_REFILL_PER_SECOND"], "0.01")
         self.assertEqual(
@@ -1415,7 +1415,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         )
         self.assertEqual(
             standard.get("env", {}).get("LOGIN_IP_RATE_LIMIT_CAPACITY"),
-            "20",
+            "100",
         )
         self.assertEqual(standard.get("env", {}).get("ARTIFACT_STORAGE_BACKEND"), "local")
         self.assertEqual(
