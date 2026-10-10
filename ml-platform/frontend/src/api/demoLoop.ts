@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut } from "./client";
+import { apiDelete, apiGet, apiPost, apiPut } from "./client";
 
 export interface DemoLoopDeployment {
   id: string;
@@ -35,6 +35,9 @@ export interface DemoLoopConfig {
   deployment: DemoLoopDeployment | null;
   current_model: DemoLoopModelInfo | null;
   swapped_model_version_id: string | null;
+  error_count: number;
+  alert_count: number;
+  retrain_status: string;
 }
 
 export interface DemoLoopEvent {
@@ -85,6 +88,37 @@ export const fetchDemoLoopStatus = (projectId: string) =>
 
 export const resetDemoLoop = (projectId: string) =>
   apiPost(`/projects/${projectId}/demo-loop/reset`, {});
+
+// ------------------------------------------------------- loop task list (CRUD)
+
+export const fetchDemoLoops = (projectId: string) =>
+  apiGet(`/projects/${projectId}/demo-loop/loops`);
+
+export const createDemoLoop = (
+  projectId: string,
+  payload: Partial<DemoLoopConfig>,
+) => apiPost(`/projects/${projectId}/demo-loop/loops`, payload);
+
+export const updateDemoLoop = (
+  projectId: string,
+  loopId: string,
+  payload: Partial<DemoLoopConfig>,
+) => apiPut(`/projects/${projectId}/demo-loop/loops/${loopId}`, payload);
+
+export const deleteDemoLoop = (projectId: string, loopId: string) =>
+  apiDelete(`/projects/${projectId}/demo-loop/loops/${loopId}`);
+
+export const predictDemoLoopRowScoped = (
+  projectId: string,
+  loopId: string,
+  record: Record<string, unknown>,
+) => apiPost(`/projects/${projectId}/demo-loop/loops/${loopId}/predict`, { record });
+
+export const fetchDemoLoopStatusScoped = (projectId: string, loopId: string) =>
+  apiGet(`/projects/${projectId}/demo-loop/loops/${loopId}/status`);
+
+export const resetDemoLoopScoped = (projectId: string, loopId: string) =>
+  apiPost(`/projects/${projectId}/demo-loop/loops/${loopId}/reset`, {});
 
 export const fetchDemoLoopProjects = () => apiGet("/projects");
 

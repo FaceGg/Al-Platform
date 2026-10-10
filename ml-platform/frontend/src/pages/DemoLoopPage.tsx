@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert, Button, Card, Col, Divider, Form, Input, InputNumber, message, Progress,
-  Row, Select, Space, Statistic, Switch, Tag, Timeline, Typography, Upload,
+  Alert, Button, Card, Col, Divider, Form, Input, InputNumber, message, Popconfirm,
+  Progress, Row, Select, Space, Statistic, Switch, Tag, Timeline, Typography, Upload,
 } from "antd";
 import {
-  CaretRightOutlined, DeploymentUnitOutlined, PauseOutlined, ReloadOutlined,
-  ThunderboltOutlined, UploadOutlined,
+  CaretRightOutlined, DeleteOutlined, DeploymentUnitOutlined, PauseOutlined,
+  PlusOutlined, ReloadOutlined, ThunderboltOutlined, UploadOutlined,
 } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import { formatApiError } from "../api/client";
 import {
   DemoLoopConfig, DemoLoopPredictResult, DemoLoopStatus,
-  fetchDemoLoopAnnotators, fetchDemoLoopConfig, fetchDemoLoopDatasets,
-  fetchDemoLoopDeployments, fetchDemoLoopProjects, fetchDemoLoopStatus,
-  predictDemoLoopRow, resetDemoLoop, saveDemoLoopConfig,
+  createDemoLoop, deleteDemoLoop, fetchDemoLoopAnnotators, fetchDemoLoopDatasets,
+  fetchDemoLoopDeployments, fetchDemoLoopProjects, fetchDemoLoops,
+  fetchDemoLoopStatusScoped, predictDemoLoopRowScoped, resetDemoLoop,
+  resetDemoLoopScoped, updateDemoLoop,
 } from "../api/demoLoop";
 import { useI18n } from "../i18n";
 import { parseBackendTime } from "../utils/time";
@@ -85,6 +86,9 @@ export default function DemoLoopPage() {
   const tr = ((t as unknown as Record<string, Record<string, string | undefined>>).demo_loop ?? {}) as Record<string, string | undefined>;
   const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
   const [projectId, setProjectId] = useState<string>("");
+  const [loops, setLoops] = useState<DemoLoopConfig[]>([]);
+  const [activeLoopId, setActiveLoopId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [config, setConfig] = useState<DemoLoopConfig | null>(null);
   const [status, setStatus] = useState<DemoLoopStatus | null>(null);
   const [deployments, setDeployments] = useState<Array<{ id: string; name: string; observed_state: string }>>([]);
@@ -100,6 +104,7 @@ export default function DemoLoopPage() {
   const pauseRef = useRef(false);
   const alertSeenRef = useRef(0);
   const swapSeenRef = useRef<string | null>(null);
+  const creatingRef = useRef(false);
   const [swapPulse, setSwapPulse] = useState(false);
 
   useEffect(() => {
@@ -110,48 +115,77 @@ export default function DemoLoopPage() {
     }).catch((error) => message.error(formatApiError(error, "项目加载失败")));
   }, []);
 
+  const applyConfigToForm = useCallback((cfg: DemoLoopConfig, st: DemoLoopStatus | null) => {
+    form.setFieldsValue({
+      name: cfg.name, deployment_id: cfg.deployment_id, error_classes: cfg.error_classes,
+      preprocess_enabled: cfg.preprocess_enabled, alert_threshold_rows: cfg.alert_threshold_rows,
+      require_review: cfg.require_review, review_annotator_ids: cfg.review_annotator_ids,
+      retrain_enabled: cfg.retrain_enabled, retrain_threshold_rows: cfg.retrain_threshold_rows,
+      retrain_dataset_artifact_id: cfg.retrain_dataset_artifact_id,
+      retrain_target_column: cfg.retrain_target_column, retrain_max_trials: cfg.retrain_max_trials,
+    });
+    alertSeenRef.current = st?.alert_count ?? 0;
+    swapSeenRef.current = cfg.swapped_model_version_id ?? null;
+  }, [form]);
+
+  // 任务列表 + 参照数据（部署/数据集/标注员）
   const loadProjectData = useCallback(async (pid: string) => {
     if (!pid) return;
     try {
-      const [cfg, st, dep, ds, ann] = await Promise.all([
-        fetchDemoLoopConfig(pid).catch(() => null),
-        fetchDemoLoopStatus(pid).catch(() => null),
+      const [loopsRes, dep, ds, ann] = await Promise.all([
+        fetchDemoLoops(pid).catch(() => ({ items: [] })),
         fetchDemoLoopDeployments(pid).catch(() => ({ items: [] })),
         fetchDemoLoopDatasets(pid).catch(() => ({ items: [] })),
         fetchDemoLoopAnnotators(pid).catch(() => ({ items: [] })),
       ]);
-      setConfig(cfg);
-      setStatus(st);
+      const items: DemoLoopConfig[] = loopsRes?.items || [];
+      setLoops(items);
       setDeployments((dep?.items || []).map((item: any) => ({
         id: item.id, name: item.name, observed_state: item.observed_state,
       })));
       setDatasets((ds?.items || []).map((item: any) => ({ id: item.id, name: item.name })));
       setAnnotators((ann?.items || []).map((item: any) => ({ id: item.id, username: item.username })));
-      if (cfg) {
-        form.setFieldsValue({
-          name: cfg.name, deployment_id: cfg.deployment_id, error_classes: cfg.error_classes,
-          preprocess_enabled: cfg.preprocess_enabled, alert_threshold_rows: cfg.alert_threshold_rows,
-          require_review: cfg.require_review, review_annotator_ids: cfg.review_annotator_ids,
-          retrain_enabled: cfg.retrain_enabled, retrain_threshold_rows: cfg.retrain_threshold_rows,
-          retrain_dataset_artifact_id: cfg.retrain_dataset_artifact_id,
-          retrain_target_column: cfg.retrain_target_column, retrain_max_trials: cfg.retrain_max_trials,
-        });
-        alertSeenRef.current = st?.alert_count ?? 0;
-        swapSeenRef.current = cfg.swapped_model_version_id ?? null;
+      setActiveLoopId((prev) => (prev && items.some((item) => item.id === prev) ? prev : items[0]?.id ?? null));
+      if (!creatingRef.current) {
+        // 新建草稿进行中（含初次加载未完成即点击新建）不重置创建状态。
+        setCreating(false);
       }
     } catch (error) {
       message.error(formatApiError(error, "闭环数据加载失败"));
     }
-  }, [form]);
+  }, []);
 
-  useEffect(() => { loadProjectData(projectId); }, [projectId, loadProjectData]);
-
-  // Poll loop status so alerts / retrain progress / model swap stay live.
+  // 当前选中闭环的配置与状态（切换/新建后都会触发）
   useEffect(() => {
-    if (!projectId || !config) return;
+    if (!projectId || !activeLoopId) { setConfig(null); setStatus(null); return; }
+    if (creatingRef.current) return; // 新建草稿模式不被异步选中结果覆盖
+    let cancelled = false;
+    (async () => {
+      try {
+        const st: DemoLoopStatus = await fetchDemoLoopStatusScoped(projectId, activeLoopId);
+        // 完成点复查：等待期间进入新建草稿，则丢弃本次选中结果。
+        if (cancelled || creatingRef.current) return;
+        const cfg = loops.find((item) => item.id === activeLoopId) || null;
+        setConfig(cfg);
+        setStatus(st);
+        applyConfigToForm(cfg as DemoLoopConfig, st);
+      } catch (error) {
+        if (!cancelled) {
+          setConfig(null);
+          setStatus(null);
+          message.error(formatApiError(error, "闭环状态加载失败"));
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [projectId, activeLoopId, loops, applyConfigToForm]);
+
+  // Poll active loop status so alerts / retrain progress / model swap stay live.
+  useEffect(() => {
+    if (!projectId || !activeLoopId) return;
     const timer = setInterval(async () => {
       try {
-        const st: DemoLoopStatus = await fetchDemoLoopStatus(projectId);
+        const st: DemoLoopStatus = await fetchDemoLoopStatusScoped(projectId, activeLoopId);
         setStatus(st);
         if ((st.alert_count ?? 0) > alertSeenRef.current) {
           alertSeenRef.current = st.alert_count ?? 0;
@@ -160,28 +194,67 @@ export default function DemoLoopPage() {
           swapSeenRef.current = st.swapped_model_version_id;
           setSwapPulse(true);
           setTimeout(() => setSwapPulse(false), 1600);
-          fetchDemoLoopConfig(projectId).then((cfg: any) => setConfig(cfg)).catch(() => undefined);
+          fetchDemoLoops(projectId).then((res: any) => setLoops(res?.items || [])).catch(() => undefined);
         }
       } catch { /* transient poll errors are non-fatal */ }
     }, 2000);
     return () => clearInterval(timer);
-  }, [projectId, config]);
+  }, [projectId, activeLoopId]);
+
+  const startCreate = () => {
+    if (running) { message.warning("闭环运行中，请先暂停或等待结束"); return; }
+    creatingRef.current = true;
+    setCreating(true);
+    setConfig(null);
+    setStatus(null);
+    form.resetFields();
+    form.setFieldsValue({
+      name: "自动化闭环", error_classes: [], preprocess_enabled: false,
+      alert_threshold_rows: 1, require_review: false, review_annotator_ids: [],
+      retrain_enabled: false, retrain_threshold_rows: 20, retrain_max_trials: 10,
+    });
+  };
 
   const handleSave = async (values: any) => {
     setSaving(true);
+    const payload = {
+      ...values,
+      error_classes: values.error_classes || [],
+      review_annotator_ids: values.require_review ? values.review_annotator_ids || [] : [],
+    };
     try {
-      const cfg: any = await saveDemoLoopConfig(projectId, {
-        ...values,
-        error_classes: values.error_classes || [],
-        review_annotator_ids: values.require_review ? values.review_annotator_ids || [] : [],
-      });
+      const cfg: any = creating
+        ? await createDemoLoop(projectId, payload)
+        : await updateDemoLoop(projectId, activeLoopId as string, payload);
+      message.success(creating ? (tr.created || "闭环任务已创建") : (tr.saved || "配置已保存"));
+      const list: DemoLoopConfig[] = await fetchDemoLoops(projectId).then((res: any) => res?.items || []);
+      setLoops(list);
+      creatingRef.current = false;
+      setCreating(false);
+      setActiveLoopId(cfg.id);
       setConfig(cfg);
-      message.success(tr.saved || "配置已保存");
-      fetchDemoLoopStatus(projectId).then((st: any) => setStatus(st)).catch(() => undefined);
     } catch (error) {
-      message.error(formatApiError(error, "配置保存失败"));
+      message.error(formatApiError(error, creating ? "闭环创建失败" : "配置保存失败"));
     } finally { setSaving(false); }
   };
+
+  const handleDeleteLoop = async (loopId: string) => {
+    if (running) { message.warning("闭环运行中，不能删除"); return; }
+    try {
+      await deleteDemoLoop(projectId, loopId);
+      message.success(tr.deleted || "闭环任务已删除");
+      const list: DemoLoopConfig[] = await fetchDemoLoops(projectId).then((res: any) => res?.items || []);
+      setLoops(list);
+      if (activeLoopId === loopId) {
+        setActiveLoopId(list[0]?.id ?? null);
+        if (!list.length) { setConfig(null); setStatus(null); }
+      }
+    } catch (error) {
+      message.error(formatApiError(error, "删除失败"));
+    }
+  };
+
+  useEffect(() => { loadProjectData(projectId); }, [projectId, loadProjectData]);
 
   const handleUpload = (file: File) => {
     const reader = new FileReader();
@@ -198,19 +271,31 @@ export default function DemoLoopPage() {
   };
 
   const runDemo = async () => {
-    if (!rows.length || running) return;
+    if (!rows.length || running || !activeLoopId) return;
     pauseRef.current = false;
     setRunning(true);
     try {
       // Persist the current form (e.g. the feature-engineering toggle) so the
       // loop always predicts with the switches the user sees on screen.
       const values = await form.validateFields();
-      const cfg: any = await saveDemoLoopConfig(projectId, {
-        ...values,
-        error_classes: values.error_classes || [],
-        review_annotator_ids: values.require_review ? values.review_annotator_ids || [] : [],
-      });
+      const cfg: any = creating
+        ? await createDemoLoop(projectId, {
+          ...values,
+          error_classes: values.error_classes || [],
+          review_annotator_ids: values.require_review ? values.review_annotator_ids || [] : [],
+        })
+        : await updateDemoLoop(projectId, activeLoopId as string, {
+          ...values,
+          error_classes: values.error_classes || [],
+          review_annotator_ids: values.require_review ? values.review_annotator_ids || [] : [],
+        });
       setConfig(cfg);
+      if (creating) {
+        const list: DemoLoopConfig[] = await fetchDemoLoops(projectId).then((res: any) => res?.items || []);
+        setLoops(list);
+        setCreating(false);
+        setActiveLoopId(cfg.id);
+      }
       alertSeenRef.current = 0;
     } catch (error) {
       setRunning(false);
@@ -220,7 +305,7 @@ export default function DemoLoopPage() {
     try {
       for (let i = 0; i < rows.length; i += 1) {
         if (pauseRef.current) break;
-        const result: DemoLoopPredictResult = await predictDemoLoopRow(projectId, rows[i].values);
+        const result: DemoLoopPredictResult = await predictDemoLoopRowScoped(projectId, activeLoopId as string, rows[i].values);
         setResults((prev) => [...prev.slice(-29), {
           index: rows[i].__index,
           prediction: result.prediction,
@@ -241,13 +326,15 @@ export default function DemoLoopPage() {
       message.error(formatApiError(error, "单行调用失败，闭环已停止"));
     } finally {
       setRunning(false);
-      if (projectId) fetchDemoLoopStatus(projectId).then((st: any) => setStatus(st)).catch(() => undefined);
+      if (projectId && activeLoopId) fetchDemoLoopStatusScoped(projectId, activeLoopId).then((st: any) => setStatus(st)).catch(() => undefined);
     }
   };
 
   const handleReset = async () => {
     try {
-      const st: any = await resetDemoLoop(projectId);
+      const st: any = activeLoopId
+        ? await resetDemoLoopScoped(projectId, activeLoopId)
+        : await resetDemoLoop(projectId);
       setStatus(st);
       setResults([]);
       setProgress(0);
@@ -275,6 +362,13 @@ export default function DemoLoopPage() {
         .demo-alert-pulse { animation: demoAlertPulse 1.4s ease infinite; }
         @keyframes demoSwapGlow { 0% { transform: rotateY(90deg); opacity: .2; } 100% { transform: rotateY(0); opacity: 1; } }
         .demo-swap-card { animation: demoSwapGlow 1.1s ease; transform-origin: center; }
+        .loop-task-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+        .loop-task-list { display: flex; flex-direction: column; gap: 4px; max-height: 168px; overflow-y: auto; margin-bottom: 10px; }
+        .loop-task-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; background: rgba(0,0,0,.02); }
+        .loop-task-item:hover { background: rgba(0,0,0,.05); }
+        .loop-task-item--active { border-color: #1677ff; background: rgba(22,119,255,.08); }
+        .loop-task-item__name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .loop-task-item__meta { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
       `}</style>
       <Card style={{ marginBottom: 16 }}>
         <Space wrap size="large">
@@ -306,9 +400,52 @@ export default function DemoLoopPage() {
       <Row gutter={16}>
         <Col span={8}>
           <Card title={<><ThunderboltOutlined /> {tr.config || "闭环配置"}</>} size="small">
-            {config === null && (
-              <Alert type="info" showIcon
-                message={tr.no_config || "当前项目尚未配置闭环，保存后自动创建"} style={{ marginBottom: 12 }} />
+            <div className="loop-task-toolbar">
+              <Button size="small" type="primary" ghost icon={<PlusOutlined />}
+                disabled={running} onClick={startCreate} data-testid="new-loop-btn">
+                {tr.new_loop || "新建闭环"}
+              </Button>
+              <Text type="secondary">{tr.loop_count_hint || "点击列表切换，保存当前表单即修改"}</Text>
+            </div>
+            <div className="loop-task-list" data-testid="loop-task-list">
+              {loops.length === 0 && !creating && (
+                <Text type="secondary">暂无闭环任务，点击「新建闭环」创建</Text>
+              )}
+              {loops.map((loop) => (
+                <div
+                  key={loop.id}
+                  className={"loop-task-item" + (loop.id === activeLoopId && !creating ? " loop-task-item--active" : "")}
+                  onClick={() => { if (!running) { creatingRef.current = false; setCreating(false); setActiveLoopId(loop.id); } }}
+                >
+                  <span className="loop-task-item__name">
+                    {loop.id === activeLoopId && !creating ? <ThunderboltOutlined /> : null} {loop.name}
+                  </span>
+                  <span className="loop-task-item__meta">
+                    <Tag color={loop.error_count > 0 ? "orange" : "default"}>回流 {loop.error_count ?? 0}</Tag>
+                    <Tag color={loop.retrain_status === "completed" ? "green" : loop.retrain_status === "failed" ? "red" : "default"}>
+                      {loop.retrain_status === "completed" ? "已换模" : loop.retrain_status === "failed" ? "重训失败" : loop.retrain_status === "running" || loop.retrain_status === "queued" ? "重训中" : "未重训"}
+                    </Tag>
+                    <Popconfirm
+                      title="删除该闭环任务？"
+                      description="事件与计数一并删除，报错数据文件保留。"
+                      onConfirm={(event) => { event?.stopPropagation(); handleDeleteLoop(loop.id); }}
+                      onCancel={(event) => event?.stopPropagation()}
+                    >
+                      <Button
+                        size="small" type="text" danger icon={<DeleteOutlined />}
+                        disabled={running}
+                        onClick={(event) => event.stopPropagation()}
+                      />
+                    </Popconfirm>
+                  </span>
+                </div>
+              ))}
+            </div>
+            {creating && (
+              <Alert type="info" showIcon message="正在新建闭环任务，填写后点「创建闭环」" style={{ margin: "10px 0" }} />
+            )}
+            {!creating && config === null && loops.length > 0 && (
+              <Alert type="warning" showIcon message="闭环配置加载失败，请刷新重试" style={{ margin: "10px 0" }} />
             )}
             <Form form={form} layout="vertical" onFinish={handleSave}>
               <Form.Item name="name" label={tr.name || "闭环名称"} initialValue="自动化闭环" rules={[{ required: true }]}>
@@ -370,7 +507,7 @@ export default function DemoLoopPage() {
                 ) : null}
               </Form.Item>
               <Button type="primary" htmlType="submit" block loading={saving} disabled={!projectId}>
-                {tr.save || "保存配置"}
+                {creating ? (tr.create || "创建闭环") : (tr.save || "保存配置")}
               </Button>
             </Form>
           </Card>

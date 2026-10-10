@@ -1,17 +1,20 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DemoLoopPage from "./DemoLoopPage";
 
 const demoLoopApi = vi.hoisted(() => ({
   fetchDemoLoopProjects: vi.fn(),
-  fetchDemoLoopConfig: vi.fn(),
-  fetchDemoLoopStatus: vi.fn(),
+  fetchDemoLoops: vi.fn(),
+  createDemoLoop: vi.fn(),
+  updateDemoLoop: vi.fn(),
+  deleteDemoLoop: vi.fn(),
+  fetchDemoLoopStatusScoped: vi.fn(),
+  predictDemoLoopRowScoped: vi.fn(),
+  resetDemoLoopScoped: vi.fn(),
   fetchDemoLoopDeployments: vi.fn(),
   fetchDemoLoopDatasets: vi.fn(),
   fetchDemoLoopAnnotators: vi.fn(),
-  saveDemoLoopConfig: vi.fn(),
-  predictDemoLoopRow: vi.fn(),
   resetDemoLoop: vi.fn(),
 }));
 
@@ -53,6 +56,9 @@ const CONFIG = {
     lifecycle_state: "enabled", approval_status: "approved", feature_schema: ["f1", "f2"],
   },
   swapped_model_version_id: null,
+  error_count: 3,
+  alert_count: 1,
+  retrain_status: "queued",
 };
 
 const STATUS = {
@@ -76,20 +82,23 @@ describe("DemoLoopPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     demoLoopApi.fetchDemoLoopProjects.mockResolvedValue({ items: [{ id: "p1", name: "演示项目" }] });
-    demoLoopApi.fetchDemoLoopConfig.mockResolvedValue(CONFIG);
-    demoLoopApi.fetchDemoLoopStatus.mockResolvedValue(STATUS);
+    demoLoopApi.fetchDemoLoops.mockResolvedValue({ items: [CONFIG] });
+    demoLoopApi.fetchDemoLoopStatusScoped.mockResolvedValue(STATUS);
     demoLoopApi.fetchDemoLoopDeployments.mockResolvedValue({ items: [] });
     demoLoopApi.fetchDemoLoopDatasets.mockResolvedValue({ items: [] });
     demoLoopApi.fetchDemoLoopAnnotators.mockResolvedValue({ items: [] });
-    demoLoopApi.saveDemoLoopConfig.mockResolvedValue(CONFIG);
-    demoLoopApi.predictDemoLoopRow.mockResolvedValue({});
+    demoLoopApi.createDemoLoop.mockResolvedValue(CONFIG);
+    demoLoopApi.updateDemoLoop.mockResolvedValue(CONFIG);
+    demoLoopApi.deleteDemoLoop.mockResolvedValue({ status: "deleted" });
+    demoLoopApi.predictDemoLoopRowScoped.mockResolvedValue({});
+    demoLoopApi.resetDemoLoopScoped.mockResolvedValue(STATUS);
     demoLoopApi.resetDemoLoop.mockResolvedValue(STATUS);
   });
 
-  it("loads project data and renders the closed-loop status", async () => {
+  it("loads the loop list and renders the closed-loop status", async () => {
     render(<MemoryRouter><DemoLoopPage /></MemoryRouter>);
-    await waitFor(() => expect(demoLoopApi.fetchDemoLoopConfig).toHaveBeenCalledWith("p1"));
-    await waitFor(() => expect(demoLoopApi.fetchDemoLoopStatus).toHaveBeenCalledWith("p1"));
+    await waitFor(() => expect(demoLoopApi.fetchDemoLoops).toHaveBeenCalledWith("p1"));
+    await waitFor(() => expect(demoLoopApi.fetchDemoLoopStatusScoped).toHaveBeenCalledWith("p1", "cfg-1"));
     expect(screen.getAllByText(/自动化闭环|推理-回流-重训 自动化闭环/).length).toBeGreaterThan(0);
     await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
     expect(screen.getByText("自动化闭环-报错数据")).toBeInTheDocument();
@@ -101,11 +110,45 @@ describe("DemoLoopPage", () => {
     expect(screen.getByText(/查看自动建模任务/).closest("a")).toHaveAttribute("href", "/automl/task/job-9");
   });
 
-  it("survives a missing config before first save", async () => {
-    demoLoopApi.fetchDemoLoopConfig.mockRejectedValue(new Error("not found"));
-    demoLoopApi.fetchDemoLoopStatus.mockRejectedValue(new Error("not found"));
+  it("creates a new loop from the task list", async () => {
+    demoLoopApi.fetchDemoLoopDeployments.mockResolvedValue({
+      items: [{ id: "dep-1", name: "toy-deploy", observed_state: "running" }],
+    });
     render(<MemoryRouter><DemoLoopPage /></MemoryRouter>);
-    await waitFor(() => expect(demoLoopApi.fetchDemoLoopDeployments).toHaveBeenCalledWith("p1"));
-    expect(screen.getAllByText(/闭环配置|保存配置/).length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getByTestId("loop-task-list")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("new-loop-btn"));
+    const submit = await screen.findByRole("button", { name: "创建闭环" });
+    // 选择必填的推理部署
+    const formItem = screen.getByText("推理部署").closest(".ant-form-item") as HTMLElement;
+    fireEvent.mouseDown(formItem.querySelector(".ant-select-selector") as HTMLElement);
+    const options = await screen.findAllByText(/toy-deploy/);
+    const option = options.find((el) => el.closest(".ant-select-item-option")) || options[0];
+    fireEvent.click(option.closest(".ant-select-item-option") ?? option);
+    // 输入必填的报错类别（tags）
+    const errorItem = screen.getByText(/报错类别/).closest(".ant-form-item") as HTMLElement;
+    const tagInput = errorItem.querySelector("input") as HTMLInputElement;
+    fireEvent.change(tagInput, { target: { value: "1" } });
+    fireEvent.keyDown(tagInput, { key: "Enter", keyCode: 13, which: 13 });
+    fireEvent.submit(submit.closest("form") as HTMLFormElement);
+    await waitFor(() => expect(demoLoopApi.createDemoLoop).toHaveBeenCalled());
+    expect(demoLoopApi.createDemoLoop.mock.calls[0][1].deployment_id).toBe("dep-1");
+  });
+
+  it("deletes a loop from the task list after confirmation", async () => {
+    render(<MemoryRouter><DemoLoopPage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("loop-task-list")).toBeInTheDocument());
+    const deleteButtons = screen.getAllByRole("button", { name: /delete/i });
+    expect(deleteButtons.length).toBeGreaterThan(0);
+    fireEvent.click(deleteButtons[0]);
+    const confirmButton = await screen.findByRole("button", { name: /^(OK|确 定)$/ });
+    fireEvent.click(confirmButton);
+    await waitFor(() => expect(demoLoopApi.deleteDemoLoop).toHaveBeenCalledWith("p1", "cfg-1"));
+  });
+
+  it("survives an empty loop list before first create", async () => {
+    demoLoopApi.fetchDemoLoops.mockResolvedValue({ items: [] });
+    render(<MemoryRouter><DemoLoopPage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText(/暂无闭环任务/)).toBeInTheDocument());
+    expect(screen.getAllByText(/闭环配置|新建闭环/).length).toBeGreaterThan(0);
   });
 });

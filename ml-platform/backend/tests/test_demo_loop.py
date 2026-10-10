@@ -19,7 +19,7 @@ from app.database import Base, SessionLocal, engine
 from app.main import app
 from app.api.auth import pwd_context
 from app.models.artifact import Artifact
-from app.models.demo_loop import DemoLoopConfig
+from app.models.demo_loop import DemoLoopConfig, DemoLoopEvent
 from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
 from app.models.notifications import InAppNotification
 from app.models.training import TrainingJob
@@ -657,6 +657,119 @@ class DemoLoopFlow(unittest.TestCase):
             self.assertEqual(str(assignment.annotator_subject_id), subject_id)
         finally:
             db.close()
+
+    def test_15_loop_task_crud(self):
+        # 闭环支持多任务：创建/列表/修改/删除。
+        r = client.post(
+            f"/api/projects/{self.project_id}/demo-loop/loops",
+            json={
+                "name": "夜间闭环", "deployment_id": self.deployment_id,
+                "error_classes": ["3"], "alert_threshold_rows": 5,
+            },
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 201, r.text)
+        loop = r.json()
+        self.assertEqual(loop["name"], "夜间闭环")
+        self.assertEqual(loop["error_classes"], ["3"])
+
+        r = client.get(f"/api/projects/{self.project_id}/demo-loop/loops", headers=self.h)
+        items = r.json()["items"]
+        self.assertIn(loop["id"], [item["id"] for item in items])
+        self.assertTrue(all("error_count" in item and "retrain_status" in item for item in items))
+
+        r = client.put(
+            f"/api/projects/{self.project_id}/demo-loop/loops/{loop['id']}",
+            json={"name": "白天闭环", "alert_threshold_rows": 7},
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["name"], "白天闭环")
+        self.assertEqual(r.json()["alert_threshold_rows"], 7)
+        # 部分修改不清洗未提及的类别
+        self.assertEqual(r.json()["error_classes"], ["3"])
+
+        r = client.delete(
+            f"/api/projects/{self.project_id}/demo-loop/loops/{loop['id']}",
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["status"], "deleted")
+        r = client.get(f"/api/projects/{self.project_id}/demo-loop/loops", headers=self.h)
+        self.assertNotIn(loop["id"], [item["id"] for item in r.json()["items"]])
+        r = client.delete(
+            f"/api/projects/{self.project_id}/demo-loop/loops/{loop['id']}",
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 404)
+
+    def test_16_loop_scoped_predict_status_reset_and_event_cleanup(self):
+        from types import SimpleNamespace
+
+        loop = client.post(
+            f"/api/projects/{self.project_id}/demo-loop/loops",
+            json={
+                "name": " Scoped 闭环", "deployment_id": self.deployment_id,
+                "error_classes": ["1"], "alert_threshold_rows": 100,
+            },
+            headers=self.h,
+        ).json()
+        loop_id = loop["id"]
+        try:
+            class _StubRuntime:
+                def predict(self, runtime_key, records):
+                    return {"predictions": [[1]], "probabilities": [[0.2, 0.8]]}
+
+            class _StubService:
+                runtime = _StubRuntime()
+
+            router = SimpleNamespace(revision_id="rev-1", model_version_id=uuid.UUID(self.model_version_id))
+            with patch.object(demo_loop_module, "WeightedTargetRouter") as router_cls, \
+                    patch.object(demo_loop_module, "_deployment_service", return_value=_StubService()):
+                router_cls.return_value.select_active.return_value = router
+                r = client.post(
+                    f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}/predict",
+                    json={"record": {"f1": 5.1, "f2": -1.05}},
+                    headers=self.h,
+                )
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertTrue(r.json()["error_matched"])
+
+            r = client.get(
+                f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}/status",
+                headers=self.h,
+            )
+            self.assertEqual(r.status_code, 200, r.text)
+            status = r.json()
+            self.assertEqual(status["config_id"], loop_id)
+            self.assertEqual(status["error_count"], 1)
+
+            db = SessionLocal()
+            try:
+                events = db.query(DemoLoopEvent).filter(DemoLoopEvent.config_id == uuid.UUID(loop_id)).all()
+                self.assertGreaterEqual(len(events), 1)
+            finally:
+                db.close()
+
+            r = client.post(
+                f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}/reset",
+                json={}, headers=self.h,
+            )
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(r.json()["error_count"], 0)
+        finally:
+            # 删除任务并校验事件级联清除
+            r = client.delete(
+                f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}",
+                headers=self.h,
+            )
+            self.assertEqual(r.status_code, 200, r.text)
+            db = SessionLocal()
+            try:
+                remaining = db.query(DemoLoopEvent).filter(DemoLoopEvent.config_id == uuid.UUID(loop_id)).count()
+                self.assertEqual(remaining, 0)
+            finally:
+                db.close()
 
 
 if __name__ == "__main__":

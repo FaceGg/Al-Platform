@@ -2411,3 +2411,14 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **命名去演示化**：导航「闭环自动化」（i18n zh/en）、页面标题「推理-回流-重训 自动化闭环」、按钮「开始演示→启动闭环」「回放中→运行中」、卡片「数据回放→逐行推理调用」、大屏标题「闭环自动化运行大屏」与「模式：模拟」、后端审核任务指令文案、DB 现有配置名与报错数据集名（SQL UPDATE）、`DemoLoopConfig.name` 默认值、手册（路由地址 /demo-loop、按钮名、大屏章节、参数速查）全部更新；页面/接口路径 `/demo-loop` 保留（内部标识，非用户可见名称）。
 - **数据持久化收口（用户点名复查）**：compose 的 postgres/minio 改挂命名卷 `postgres-data`/`minio-data`（此前匿名卷随容器重建丢失全部数据——本次 500 的上游根因）；实测 `docker compose up -d --force-recreate postgres minio` 后 projects/users/闭环配置/工件/部署状态全部完好，重建后全链路预测通过。redis 仍为匿名卷（仅缓存/broker，无用户数据）。全容器挂载审计完成，无其他匿名卷承载用户数据。
 - **未验证/遗留**：① 页面「上传 CSV→启动闭环」的完整点击流未在浏览器执行（IAB 自动化不支持文件选择器；逐行端点已用页面上下文真实 token 验证 200，与页面按钮走完全相同的 API）；② WSL 空闲关停仍会停容器（`docker compose up -d` 恢复，数据卷已安全）；③ 工作树 `ml-platform/backend/wheelhouse/` 离线 wheel 目录保持未跟踪（.gitignore 策略）。
+
+---
+
+## 2026-10-10 工作流算子名称统一（去中英混用）+ 闭环任务列表（多任务 CRUD）
+
+- **算子名称统一**：后端 87 个算子中 7 个（api_input/append_error_dataset/notify_admins/retrain_threshold/load_model_artifact/anomaly_eval/spot_weld_feature_engineering——多为闭环新增）缺 i18n 译名，算子面板回退显示后端英文名，与中文算子混排。修复：zh/en `operator` 映射各补 7 条（重训阈值判断/追加报错数据/通知管理员等）；画布节点 label 原取后端 `op.name`（英文）——OperatorPanel 拖拽载荷携带 `displayName`（当前语言译名），`workflowStore.addNode` 优先采用，画布节点与面板名称一致。
+- **闭环任务列表**：`demo_loop_configs` 本就允许一项目多行（无唯一约束，事件 FK 级联），无需迁移。服务层 `list_configs`/`get_config_by_id`/`create_config`/`update_config`/`delete_config`（显式删事件行，不依赖 SQLite/Postgres 级联差异），`save_config` 字段校验抽取为 `_apply_config_fields` 共用。API 新增 `GET/POST /demo-loop/loops`、`PUT/DELETE /demo-loop/loops/{id}`、`POST .../predict|reset`、`GET .../status`；`_config_view` 增补 error_count/alert_count/retrain_status 供列表徽标。**旧端点 `/config|/predict|/status|/reset` 语义不变（首个配置），运行监控大屏兼容不受影响**。
+- **前端**：`DemoLoopPage` 重构为任务列表模式——配置卡顶部工具栏（新建按钮）+ 任务列表（名称/回流计数/重训状态徽标/Popconfirm 删除/点击切换），新建草稿模式（表单默认值，按钮变「创建闭环」），切换任务加载各自状态与表单，轮询/预测/重置均按 `loops/{id}` 作用域；运行中禁用切换/新建/删除。API 模块新增 scoped 方法并保留旧函数。
+- **修复的竞态（真实 UX bug）**：初次项目加载未完成时点击「新建闭环」，`loadProjectData` 完成回调会把创建状态/表单重置——`loadProjectData` 与选中 effect 完成回调均检查 `creatingRef`，草稿模式期间只更新列表与参照数据、丢弃迟到的选中结果（`loop-task-list` 容器始终渲染，等待它不等于数据就绪）。
+- **测试**：后端 `test_15_loop_task_crud`（创建/列表含计数徽标/部分修改不清洗/删除/404）+ `test_16_loop_scoped_predict_status_reset_and_event_cleanup`（scoped 预测命中回流、状态 config_id 一致、重置清零、删除后事件级联清除）——`test_demo_loop` 18 passed；全受影响后端 **121 passed, 2 skipped**；前端 DemoLoopPage 5 用例（列表渲染/任务链接/创建流含必填交互/删除确认/空列表）3 连跑稳定，DemoLoop+Orchestration+OperatorPanel **12 passed**，`tsc --noEmit` 通过。
+- **未验证/遗留**：① 画布拖拽节点后的 label 实际渲染未在浏览器自动化中验证（HTML5 drag 事件模拟不可靠，代码路径 displayName→addNode 已由单测间接覆盖）；② 算子 tooltip 描述仍为后端英文描述（属 87 条描述翻译，未在本次范围）；③ 部署后需浏览器验证闭环任务列表与算子面板。

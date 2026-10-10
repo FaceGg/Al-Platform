@@ -69,7 +69,11 @@ export default function OperatorPanel() {
     });
 
   const onDragStart = (event: React.DragEvent, operator: any) => {
-    event.dataTransfer.setData("application/reactflow", JSON.stringify(operator));
+    // 画布节点 label 不能用后端英文名；携带当前语言的显示名。
+    event.dataTransfer.setData(
+      "application/reactflow",
+      JSON.stringify({ ...operator, displayName: getOpName(operator) }),
+    );
     event.dataTransfer.effectAllowed = "move";
   };
 

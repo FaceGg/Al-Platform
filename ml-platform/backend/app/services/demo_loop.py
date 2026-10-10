@@ -179,11 +179,54 @@ class DemoLoopService:
             DemoLoopConfig.project_id == project_id,
         ).order_by(DemoLoopConfig.created_at.asc()).first()
 
+    def list_configs(self, project_id):
+        return self.db.query(DemoLoopConfig).filter(
+            DemoLoopConfig.project_id == project_id,
+        ).order_by(DemoLoopConfig.created_at.asc()).all()
+
+    def get_config_by_id(self, project_id, config_id):
+        try:
+            config_uuid = uuid.UUID(str(config_id))
+        except (TypeError, ValueError, AttributeError):
+            return None
+        return self.db.query(DemoLoopConfig).filter(
+            DemoLoopConfig.project_id == project_id,
+            DemoLoopConfig.id == config_uuid,
+        ).first()
+
     def save_config(self, project_id, actor_id, data: dict) -> DemoLoopConfig:
         config = self.get_config(project_id)
         if config is None:
             config = DemoLoopConfig(project_id=project_id, created_by_id=actor_id)
             self.db.add(config)
+        self._apply_config_fields(config, project_id, data)
+        self.db.commit()
+        self.db.refresh(config)
+        return config
+
+    def create_config(self, project_id, actor_id, data: dict) -> DemoLoopConfig:
+        config = DemoLoopConfig(project_id=project_id, created_by_id=actor_id)
+        self.db.add(config)
+        self._apply_config_fields(config, project_id, data)
+        if not str(config.name or "").strip():
+            config.name = "自动化闭环"
+        self.db.commit()
+        self.db.refresh(config)
+        return config
+
+    def update_config(self, config: DemoLoopConfig, project_id, data: dict) -> DemoLoopConfig:
+        self._apply_config_fields(config, project_id, data)
+        self.db.commit()
+        self.db.refresh(config)
+        return config
+
+    def delete_config(self, config: DemoLoopConfig) -> None:
+        # 事件行显式清除：不依赖 SQLite/Postgres 的 FK 级联差异。
+        self.db.query(DemoLoopEvent).filter(DemoLoopEvent.config_id == config.id).delete()
+        self.db.delete(config)
+        self.db.commit()
+
+    def _apply_config_fields(self, config: DemoLoopConfig, project_id, data: dict) -> None:
         deployment_id = data.get("deployment_id")
         if deployment_id:
             try:
@@ -245,9 +288,6 @@ class DemoLoopService:
                 config.retrain_dataset_artifact_id = artifact.id
             else:
                 config.retrain_dataset_artifact_id = None
-        self.db.commit()
-        self.db.refresh(config)
-        return config
 
     # ------------------------------------------------------------------ predict
 

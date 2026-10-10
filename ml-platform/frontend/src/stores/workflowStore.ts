@@ -158,7 +158,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       // Count existing nodes with the same operator type for suffix numbering
       const sameTypeCount = state.nodes.filter((n) => n.data?.operatorId === type).length;
       const suffix = sameTypeCount > 0 ? " (" + (sameTypeCount + 1) + ")" : "";
-      const label = (operatorData.name || type) + suffix;
+      const label = (operatorData.displayName || operatorData.name || type) + suffix;
 
       // Extract port definitions from operator data
       const inputs = operatorData.inputs || [];

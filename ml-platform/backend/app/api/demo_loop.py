@@ -108,7 +108,17 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
         "swapped_model_version_id": (
             str(config.swapped_model_version_id) if config.swapped_model_version_id else None
         ),
+        "error_count": int(config.error_count or 0),
+        "alert_count": int(config.alert_count or 0),
+        "retrain_status": config.retrain_status,
     }
+
+
+def _require_loop(db: Session, project_id, loop_id: uuid.UUID, service: DemoLoopService) -> DemoLoopConfig:
+    config = service.get_config_by_id(project_id, loop_id)
+    if config is None:
+        raise HTTPException(404, {"code": "DEMO_LOOP_CONFIG_NOT_FOUND", "message": "Demo loop not found"})
+    return config
 
 
 @router.get("/api/projects/{project_id}/demo-loop/config")
@@ -180,5 +190,115 @@ def demo_loop_reset(
     require_project_access(db, project_id, current_user.id, "resource.create")
     service = _service(db)
     config = _require_config(db, project_id, service)
+    service.reset(config, current_user.id)
+    return service.build_status(config)
+
+
+# ------------------------------------------------------- loop task list (CRUD)
+
+@router.get("/api/projects/{project_id}/demo-loop/loops")
+def list_demo_loops(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, current_user.id, "project.read")
+    service = _service(db)
+    return {"items": [_config_view(db, config) for config in service.list_configs(project_id)]}
+
+
+@router.post("/api/projects/{project_id}/demo-loop/loops", status_code=201)
+def create_demo_loop(
+    project_id: uuid.UUID,
+    data: DemoLoopConfigUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, current_user.id, "resource.create")
+    service = _service(db)
+    try:
+        config = service.create_config(project_id, current_user.id, data.model_dump(exclude_unset=True))
+    except DemoLoopError as error:
+        status_code = 404 if "NOT_FOUND" in error.code else 422
+        raise HTTPException(status_code, {"code": error.code, "message": str(error)})
+    return _config_view(db, config)
+
+
+@router.put("/api/projects/{project_id}/demo-loop/loops/{loop_id}")
+def update_demo_loop(
+    project_id: uuid.UUID,
+    loop_id: uuid.UUID,
+    data: DemoLoopConfigUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, current_user.id, "resource.create")
+    service = _service(db)
+    config = _require_loop(db, project_id, loop_id, service)
+    try:
+        config = service.update_config(config, project_id, data.model_dump(exclude_unset=True))
+    except DemoLoopError as error:
+        status_code = 404 if "NOT_FOUND" in error.code else 422
+        raise HTTPException(status_code, {"code": error.code, "message": str(error)})
+    return _config_view(db, config)
+
+
+@router.delete("/api/projects/{project_id}/demo-loop/loops/{loop_id}")
+def delete_demo_loop(
+    project_id: uuid.UUID,
+    loop_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, current_user.id, "resource.create")
+    service = _service(db)
+    config = _require_loop(db, project_id, loop_id, service)
+    service.delete_config(config)
+    return {"status": "deleted", "id": str(loop_id)}
+
+
+@router.post("/api/projects/{project_id}/demo-loop/loops/{loop_id}/predict")
+def demo_loop_predict_scoped(
+    project_id: uuid.UUID,
+    loop_id: uuid.UUID,
+    data: DemoLoopPredictRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, current_user.id, "resource.create")
+    service = _service(db)
+    config = _require_loop(db, project_id, loop_id, service)
+    try:
+        result = service.predict(config, data.record, current_user.id)
+    except DemoLoopError as error:
+        status_code = 404 if "NOT_FOUND" in error.code or "MISSING" in error.code else 422
+        raise HTTPException(status_code, {"code": error.code, "message": str(error)})
+    return result
+
+
+@router.get("/api/projects/{project_id}/demo-loop/loops/{loop_id}/status")
+def demo_loop_status_scoped(
+    project_id: uuid.UUID,
+    loop_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, current_user.id, "project.read")
+    service = _service(db)
+    config = _require_loop(db, project_id, loop_id, service)
+    service.refresh_retrain_status(config, current_user.id)
+    return service.build_status(config)
+
+
+@router.post("/api/projects/{project_id}/demo-loop/loops/{loop_id}/reset")
+def demo_loop_reset_scoped(
+    project_id: uuid.UUID,
+    loop_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, current_user.id, "resource.create")
+    service = _service(db)
+    config = _require_loop(db, project_id, loop_id, service)
     service.reset(config, current_user.id)
     return service.build_status(config)
