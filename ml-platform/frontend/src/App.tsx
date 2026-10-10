@@ -28,6 +28,7 @@ const AnnotationPage = lazy(() => import("./pages/AnnotationPage"));
 const DataAnnotationPage = lazy(() => import("./pages/DataAnnotationPage"));
 const OrchestrationPage = lazy(() => import("./pages/OrchestrationPage"));
 const DemoLoopPage = lazy(() => import("./pages/DemoLoopPage"));
+const DemoLoopDetailPage = lazy(() => import("./pages/DemoLoopDetailPage"));
 const ComputeResourcePage = lazy(() => import("./pages/ComputeResourcePage"));
 const KubernetesPage = lazy(() => import("./pages/KubernetesPage"));
 const JobRunsPage = lazy(() => import("./pages/JobRunsPage"));
@@ -108,6 +109,7 @@ function AppContent() {
             <Route path="/data-annotation" element={<ProtectedRoute><DataAnnotationPage /></ProtectedRoute>} />
             <Route path="/orchestration" element={<ProtectedRoute><OrchestrationPage /></ProtectedRoute>} />
             <Route path="/demo-loop" element={<ProtectedRoute><PageErrorBoundary pageName="自动化闭环"><DemoLoopPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/demo-loop/:loopId" element={<ProtectedRoute><PageErrorBoundary pageName="闭环任务详情"><DemoLoopDetailPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/compute" element={<ProtectedRoute><ComputeResourcePage /></ProtectedRoute>} />
             <Route path="/kubernetes" element={<ProtectedRoute><PageErrorBoundary pageName="Kubernetes"><KubernetesPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/kubernetes/jobs" element={<ProtectedRoute><PageErrorBoundary pageName="作业运行"><JobRunsPage /></PageErrorBoundary></ProtectedRoute>} />
