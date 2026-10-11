@@ -24,6 +24,9 @@ async function login(page: import("@playwright/test").Page) {
       console.log("LOGIN-DEBUG:", response.status(), response.request().body()?.slice(0, 120));
     }
   });
+  // Wait out the SPA re-render right after goto: clicking on a remounted
+  // form silently loses the submit on slow machines.
+  await page.waitForTimeout(500);
   await page.locator('button[type="submit"]').click();
   // Cold-start vite dev compiles the Dashboard chunk lazily; allow a minute.
   await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
@@ -59,7 +62,11 @@ async function pollJobStatus(
   return status;
 }
 
+// Requires a local kind cluster (46617/46618); CI runners do not have one.
+// Run locally with RUN_KIND_E2E=1 npx playwright test <file>.
 test("week14 job submit, status flow, cursor logs and cancel", async ({ page }) => {
+  // Requires a local kind cluster; CI runners have none.
+  test.skip(!process.env.RUN_KIND_E2E, "requires local kind cluster");
   fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
   await login(page);
   const headers = await apiHeaders(page);

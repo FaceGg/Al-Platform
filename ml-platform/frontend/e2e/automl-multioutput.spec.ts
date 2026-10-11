@@ -4,6 +4,9 @@ async function login(page: import("@playwright/test").Page) {
   await page.goto("/login");
   await page.getByPlaceholder("用户名").fill("admin");
   await page.getByPlaceholder("密码").fill("admin123");
+  // Wait out the SPA re-render right after goto: clicking on a remounted form
+  // silently loses the submit on slow machines.
+  await page.waitForTimeout(500);
   await page.locator('button[type="submit"]').click();
   await expect(page).toHaveURL(/\/$/);
 }

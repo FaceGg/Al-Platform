@@ -13,6 +13,9 @@ test("runs the welding quality template from an uploaded artifact", async ({ pag
       console.log("LOGIN-DEBUG:", response.status(), response.request().body()?.slice(0, 120));
     }
   });
+  // Wait out the SPA re-render right after goto: clicking on a remounted
+  // form silently loses the submit on slow machines.
+  await page.waitForTimeout(500);
   await page.locator('button[type="submit"]').click();
   // Cold-start vite dev compiles the Dashboard chunk lazily; allow a minute.
   await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
