@@ -12,6 +12,11 @@ async function login(page: import("@playwright/test").Page) {
   await page.goto("/login");
   await page.getByPlaceholder("用户名").fill("admin");
   await page.getByPlaceholder("密码").fill("admin123");
+  page.on("response", (response) => {
+    if (response.url().includes("/api/auth/login")) {
+      console.log("LOGIN-DEBUG:", response.status(), response.request().body()?.slice(0, 120));
+    }
+  });
   await page.locator('button[type="submit"]').click();
   // Cold-start vite dev compiles the Dashboard chunk lazily; allow a minute.
   await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
