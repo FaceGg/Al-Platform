@@ -118,9 +118,11 @@ class TestRedaction(unittest.TestCase):
         self.assertIn("Bearer [redacted]", redact_text(text))
 
     def test_query_string_and_long_runs_redacted(self):
-        text = "GET https://127.0.0.1:6443/api?token=abcdef123456 failed AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTt"
+        # The fake token value deliberately avoids hex runs so gitleaks'
+        # generic API-key detector does not flag this test fixture.
+        text = "GET https://127.0.0.1:6443/api?token=fake-token-value failed AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTt"
         redacted = redact_text(text)
-        self.assertNotIn("abcdef123456", redacted)
+        self.assertNotIn("fake-token-value", redacted)
         self.assertIn("[query-redacted]", redacted)
 
 
