@@ -2512,3 +2512,13 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **根因③（状态机卡死）**：用户曾取消一次自动建模任务，config 卡在 `cancel_requested` 且 `retrain_job_id` 残留——触发条件（status∈{idle,failed,""} 且 job_id None）被永久挡死，事件流再无 retrain_triggered（"没换模型"实为没再触发）。`refresh_retrain_status` 重写为收敛式：job 挂着必检查——cancelled→idle+清引用+提示事件；failed→failed+清引用；completed→换模后**清引用回 idle**（否则完成一轮后同样卡死，多周期闭环必需）。用户卡死任务在部署后首次状态轮询即自愈。
 - **测试**：test_20（取消→收敛 idle；失败→failed 可再触发；收敛后报错行再次成功触发新任务，stub 捕获）；test_19 断言改计数式（同事务时间戳并列致顺序不稳）；28 passed。
 - **真实环境端到端**（用户任务"自动化闭环"，此前取消卡死）：重置→3 正常+3 报错混合预测→重训触发（running）→completed→**换模 71a47a11**（部署已指向新版本）→状态回 idle；大屏全程实时：invoked 6/errors 3 与 DB 一致、v1→**v2** 版本徽章、**零重复 toast**、连接持续在线。本地提交不推送。
+
+---
+
+## 2026-10-11 演示数据清理 + 方案A/B 全流程浏览器实跑（真实环境验收）
+
+- **清理（用户要求"先清理演示数据和流程"）**：事务化删除闭环任务/人工审核任务（含 scope/labels/复核 schema 级联）/站内通知/演示自动建模任务（先解 model_library 引用）/全部报错数据与合并数据集工件（先置空 training_jobs.dataset_artifact_id、model_library.dataset_artifact_id，级联 dataset_versions）。保留基础数据集（labeled_fea/labeled/unlabeled）、模型注册与部署"自动化测试"、标注员 jing。
+- **方案 A（闭环自动化，浏览器全流程）**：真实浏览器新建「方案A演示闭环」（弹窗全配置：部署/类别/阈值2/审核 jing/重训阈值3/多数据集 labeled_fea.csv/目标列 fault）→ 详情页 CSV 注入（DataTransfer 真实 change 事件）→ 启动闭环 46 行（已推理46/回流3）→ 审核任务创建 → 自动建模（completed）→ **换模 ff4bc45c** → 状态回 idle。
+- **方案 B（应用编排 → API 市场，浏览器+页面上下文）**：编排页新建「方案B全闭环服务」→ 保存 7 节点全闭环服务图（API输入→加载模型制品(部署当前模型 joblib)→应用模型→条件分支(prediction==1)→回流报错数据(新建"方案B-报错数据" 73特征+prediction 表头)→通知管理员→重训阈值判断(阈值3/swap 部署)）；画布 7 节点渲染确认（截图）→「发布」v1 →「发布为 API」上线市场 → 市场逐行 invoke 7 次（3 正常 + 3 报错 + 1 收尾）：报错 3 行回流同一文件、3 条站内告警、第 3 报错行触发自动建模（completed）→ **下一次调用完成换模（部署 ff4bc45c→bd34542a，调用时闭环设计）**。
+- **发现与说明**：① 工作流保存契约边需 `id` 字段（前端画布生成；直接 API 保存需自备）；② 方案 B 重训数据集参数为单数据集（算子契约），本轮用 labeled_fea.csv 单集训练，回流行未并入（方案 A 的多数据集合并是服务层能力，算子接多选属后续增强）。
+- 本地提交不推送（遵用户指示）。
