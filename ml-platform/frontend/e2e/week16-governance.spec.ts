@@ -13,7 +13,8 @@ async function login(page: import("@playwright/test").Page) {
   await page.getByPlaceholder("用户名").fill("admin");
   await page.getByPlaceholder("密码").fill("admin123");
   await page.locator('button[type="submit"]').click();
-  await expect(page).toHaveURL(/\/$/);
+  // Cold-start vite dev compiles the Dashboard chunk lazily; allow a minute.
+  await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
 }
 
 async function apiHeaders(page: import("@playwright/test").Page): Promise<Record<string, string>> {

@@ -9,7 +9,8 @@ test("runs the welding quality template from an uploaded artifact", async ({ pag
   await page.getByPlaceholder("用户名").fill("admin");
   await page.getByPlaceholder("密码").fill("admin123");
   await page.locator('button[type="submit"]').click();
-  await expect(page).toHaveURL(/\/$/);
+  // Cold-start vite dev compiles the Dashboard chunk lazily; allow a minute.
+  await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
 
   await page.goto("/projects");
   await page.getByRole("button", { name: /新建项目/ }).click();
