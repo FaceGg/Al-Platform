@@ -21,7 +21,7 @@ DOCKERFILES = tuple(
 BASE_RECORD = ROOT / ".github" / "contracts" / "python-base-image.json"
 REMEDIATED_WOLFI_REFERENCE = (
     "cgr.dev/chainguard/wolfi-base:latest@"
-    "sha256:6a8dca4c2153cfc11d559cfa6172c187b896423d833f3d48a4c1c44ab55596d7"
+    "sha256:1c451d46a0d5c4e9f2b38e0e8d3e299564a1aa95c21973efcc1980a9d1d2e73e"
 )
 REQUIREMENTS = BACKEND / "requirements.txt"
 EXCEPTION = ROOT / ".github" / "contracts" / "cryptography-pkcs7-mlflow-exception.json"
@@ -80,8 +80,8 @@ class ImageSecurityContractTests(unittest.TestCase):
     def test_runtime_record_uses_current_wolfi_python_311_security_pins(self):
         record = json.loads(BASE_RECORD.read_text(encoding="utf-8"))
         runtime = record["runtime"]
-        self.assertEqual(runtime["python_package"], "python-3.11=3.11.16-r7")
-        self.assertEqual(runtime["pip_package"], "py3.11-pip=26.2.1-r0")
+        self.assertEqual(runtime["python_package"], "python-3.11=3.11.17-r3")
+        self.assertEqual(runtime["pip_package"], "py3.11-pip=26.2.1-r4")
 
     def test_wolfi_runtime_install_retries_transient_apk_download_failures(self):
         runtime = json.loads(BASE_RECORD.read_text(encoding="utf-8"))["runtime"]
