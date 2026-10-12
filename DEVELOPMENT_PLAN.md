@@ -2539,3 +2539,12 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
   - NodeConfigPanel：`dataset_artifact_id`/`retrain_dataset_artifact_id`（所有算子，原仅 csv_import）→ 数据集下拉（显示名称+行数，csv 过滤）；`model_artifact_id` → 模型制品下拉（名称+格式）；`swap_deployment_id` → 部署下拉（名称+运行状态）；三组下拉数据按算子参数懒加载；兼容过滤语义修正（未登记格式的算子不再过滤为空列表）。
 - **测试**：后端 test_api_datasets 20 passed（新增 model-artifacts 端点）；前端 NodeConfigPanel 测试重写为组件级（mock store/API/i18n）：retrain_threshold 三下拉渲染+csv 过滤 png、load_model_artifact 模型下拉选项，6 passed；tsc 通过。
 - **浏览器实测**（方案B画布）：重训阈值节点三参数全部下拉并按名称回显（方案B-报错数据·3行 / labeled_fea.csv·46行 / 自动化测试（运行中））；模型制品下拉列出全部训练产物 joblib（截图存档）。本地提交不推送。
+
+---
+
+## 2026-10-12 算子参数标签中文化 + 清理重跑方案 A/B + 手册同步
+
+- **参数标签中英混杂修复（用户反馈）**：画布配置面板参数标签此前直接显示后端英文 label（"Retrain Dataset Artifact ID" 等）。新增两级映射 `getParamLabel`（算子级 operatorParamLabels：condition 的判断列/比较运算符/比较值、notify_admins 的告警标题/内容/级别；全局 commonParamLabels 约 70 条：闭环全参数+数据 IO+处理+ML 常见参数），渲染 label 先映射后回退；替换原 dataset_artifact_id 特判。新增测试用例（全局/算子级/英文回退/未命中），NodeConfigPanel 7 passed。
+- **清理重跑（用户要求"删除现有流程和数据，最新环境重演两方案"）**：清方案 A 任务/方案 B 工作流+编排 API+报错数据集/通知/审核任务/训练任务（保留用户"特征工程"工作流与基础数据集）。重跑：方案 A 浏览器新建→46 行→回流 3→审核→重训 completed→**换模 5727cff1**→idle；方案 B 新建编排→7 节点图→中文参数标签实测全生效（数据集制品/重训数据集/重训目标列/阈值行数/搜索试验次数/换模部署，截图）→两步发布→市场调用 7 次（3+3+1）→回流 3 行/告警通知→重训 completed→**下一次调用换模 11d87d76**。
+- 手册同步：更新日期、算子参数表（中文名+下拉说明）、演示成果速览与参数速查（新一轮 ID 与当前模型）。
+- 本地提交不推送（遵用户指示）。

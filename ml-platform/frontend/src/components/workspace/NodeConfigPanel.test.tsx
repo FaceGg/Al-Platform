@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import NodeConfigPanel, { getPortLabel, NodeResultPanel } from "./NodeConfigPanel";
+import NodeConfigPanel, { getParamLabel, getPortLabel, NodeResultPanel } from "./NodeConfigPanel";
 import { useWorkflowStore } from "../../stores/workflowStore";
 
 const datasetsApi = vi.hoisted(() => ({
@@ -44,6 +44,20 @@ describe("operator parameter labels", () => {
 
   it("returns an empty label when a parameter has no special mapping", () => {
     expect(getPortLabel("join", "unknown", "zh")).toBeNull();
+  });
+
+  it("localizes closed-loop operator param labels via global and operator maps", () => {
+    // 全局参数名映射（闭环算子不再显示英文 ID 标签）
+    expect(getParamLabel("retrain_threshold", "retrain_dataset_artifact_id", "zh")).toBe("重训数据集");
+    expect(getParamLabel("retrain_threshold", "swap_deployment_id", "zh")).toBe("换模部署");
+    expect(getParamLabel("load_model_artifact", "model_artifact_id", "zh")).toBe("模型制品");
+    // 算子级映射优先：condition 的 column/value/operator
+    expect(getParamLabel("condition", "column", "zh")).toBe("判断列");
+    expect(getParamLabel("condition", "operator", "zh")).toBe("比较运算符");
+    expect(getParamLabel("notify_admins", "severity", "zh")).toBe("告警级别");
+    // 英文回退与未命中
+    expect(getParamLabel("retrain_threshold", "threshold_rows", "en")).toBe("Threshold Rows");
+    expect(getParamLabel("whatever", "totally_unknown", "zh")).toBeNull();
   });
 });
 

@@ -242,6 +242,96 @@ export function getPortLabel(opId: string, paramName: string, lang: "zh" | "en")
   return portMappings[opId]?.[paramName]?.[lang] || null;
 }
 
+// 参数标签本地化：算子级映射优先，其次全局参数名映射；未命中回退算子自带
+// label（后端多为英文）——避免画布配置面板中英混杂。
+const operatorParamLabels: Record<string, Record<string, { zh: string; en?: string }>> = {
+  condition: {
+    column: { zh: "判断列", en: "Column" },
+    operator: { zh: "比较运算符", en: "Comparison Operator" },
+    value: { zh: "比较值", en: "Comparison Value" },
+  },
+  notify_admins: {
+    title: { zh: "告警标题", en: "Notification Title" },
+    message: { zh: "告警内容", en: "Notification Body" },
+    severity: { zh: "告警级别", en: "Severity" },
+  },
+};
+
+const commonParamLabels: Record<string, { zh: string; en?: string }> = {
+  // 闭环 / 服务算子
+  model_artifact_id: { zh: "模型制品", en: "Model Artifact" },
+  dataset_artifact_id: { zh: "数据集制品", en: "Dataset Artifact" },
+  retrain_dataset_artifact_id: { zh: "重训数据集", en: "Retrain Dataset" },
+  retrain_target_column: { zh: "重训目标列", en: "Retrain Target Column" },
+  retrain_max_trials: { zh: "搜索试验次数", en: "Max Trials" },
+  retrain_threshold_rows: { zh: "重训触发行数", en: "Retrain Threshold Rows" },
+  threshold_rows: { zh: "阈值行数", en: "Threshold Rows" },
+  swap_deployment_id: { zh: "换模部署", en: "Swap Deployment" },
+  // 数据输入输出
+  file_path: { zh: "文件路径", en: "File Path" },
+  url: { zh: "URL 地址", en: "URL" },
+  source: { zh: "数据来源", en: "Source" },
+  sheet_name: { zh: "工作表名", en: "Sheet Name" },
+  encoding: { zh: "编码", en: "Encoding" },
+  delimiter: { zh: "分隔符", en: "Delimiter" },
+  header: { zh: "表头行", en: "Header Row" },
+  filename: { zh: "文件名", en: "Filename" },
+  output_path: { zh: "输出路径", en: "Output Path" },
+  // 数据处理
+  columns: { zh: "列", en: "Columns" },
+  column: { zh: "列", en: "Column" },
+  target_column: { zh: "目标列", en: "Target Column" },
+  feature_columns: { zh: "特征列", en: "Feature Columns" },
+  drop: { zh: "丢弃列", en: "Drop Columns" },
+  missing_strategy: { zh: "缺失值策略", en: "Missing Strategy" },
+  fill_value: { zh: "填充值", en: "Fill Value" },
+  strategy: { zh: "策略", en: "Strategy" },
+  prefix: { zh: "前缀", en: "Prefix" },
+  suffix: { zh: "后缀", en: "Suffix" },
+  new_column: { zh: "新列名", en: "New Column Name" },
+  expression: { zh: "表达式", en: "Expression" },
+  by: { zh: "排序列", en: "Sort By" },
+  ascending: { zh: "升序", en: "Ascending" },
+  regex: { zh: "正则表达式", en: "Regex" },
+  bins: { zh: "分箱数", en: "Bins" },
+  axis: { zh: "轴", en: "Axis" },
+  subset: { zh: "子集列", en: "Subset Columns" },
+  // 机器学习
+  label_column: { zh: "标签列", en: "Label Column" },
+  test_size: { zh: "测试集比例", en: "Test Size" },
+  random_state: { zh: "随机种子", en: "Random Seed" },
+  n_clusters: { zh: "聚类数", en: "Number of Clusters" },
+  n_estimators: { zh: "树数量", en: "Number of Estimators" },
+  max_depth: { zh: "最大深度", en: "Max Depth" },
+  learning_rate: { zh: "学习率", en: "Learning Rate" },
+  n_neighbors: { zh: "近邻数", en: "Number of Neighbors" },
+  kernel: { zh: "核函数", en: "Kernel" },
+  C: { zh: "正则强度", en: "Regularization Strength" },
+  eps: { zh: "邻域半径", en: "Epsilon" },
+  min_samples: { zh: "最小样本数", en: "Min Samples" },
+  contamination: { zh: "污染率", en: "Contamination" },
+  algorithm: { zh: "算法", en: "Algorithm" },
+  task: { zh: "任务类型", en: "Task Type" },
+  max_trials: { zh: "最大试验数", en: "Max Trials" },
+  time_budget: { zh: "时间预算（秒）", en: "Time Budget (s)" },
+  cv_folds: { zh: "交叉验证折数", en: "CV Folds" },
+  scoring: { zh: "评估指标", en: "Scoring" },
+  metric: { zh: "指标", en: "Metric" },
+  metrics: { zh: "指标", en: "Metrics" },
+  method: { zh: "方法", en: "Method" },
+  // 可视化 / 其他
+  x: { zh: "X 轴列", en: "X Column" },
+  y: { zh: "Y 轴列", en: "Y Column" },
+  hue: { zh: "分组列", en: "Hue Column" },
+  k: { zh: "Top K", en: "Top K" },
+};
+
+export function getParamLabel(opId: string | undefined, paramName: string, lang: "zh" | "en"): string | null {
+  const mapped = operatorParamLabels[opId || ""]?.[paramName] || commonParamLabels[paramName];
+  if (!mapped) return null;
+  return (lang === "en" ? (mapped.en || mapped.zh) : mapped.zh);
+}
+
 function compatibleDatasetFormats(operatorId?: string): string[] {
   if (operatorId === "csv_import") return ["csv", "xls", "xlsx"];
   // 闭环回流/重训算子面向 csv 数据集；其余算子不过滤（返回空表示全兼容）。
@@ -789,9 +879,8 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
             return (
               <Form.Item
                 key={p.name}
-                label={<span style={{ fontSize: 12 }}>{p.name === "dataset_artifact_id"
-                  ? (lang === "zh" ? "数据集制品" : "Dataset artifact")
-                  : (p.label || p.name)}{required && (
+                label={<span style={{ fontSize: 12 }}>{getParamLabel(operator?.id, p.name, lang)
+                  || p.label || p.name}{required && (
                   <span className="node-config-panel__required" data-testid={`required-param-${p.name}`} aria-label="required">*</span>
                 )}</span>}
                 style={{ marginBottom: 12 }}
