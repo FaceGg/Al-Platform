@@ -443,12 +443,12 @@ function pathPoint(e, t) {
   return [u*u*a[0] + 2*u*t*c[0] + t*t*b[0], u*u*a[1] + 2*u*t*c[1] + t*t*b[1]];
 }
 const EDGES = [
-  { id: "e1",  path: [[175, 266], [485, 266]],                       c: C.blue,   w: 2 },
-  { id: "e2",  path: [[485, 266], [795, 266]],                       c: C.blue,   w: 2 },
-  { id: "e3",  path: [[795, 266], [1105, 266]],                      c: C.blue,   w: 2 },
-  { id: "e4",  path: [[1105, 266], [1415, 266]],                     c: C.blue,   w: 2 },
-  { id: "e5",  path: [[1415, 188], [900, 58], [485, 188]],           c: C.green,  w: 1.6, label: "正常 · 继续下一条", dash: [7, 7] },
-  { id: "e6",  path: [[1415, 266], [1415, 396]],                     c: C.red,    w: 2, label: "报错" },
+  { id: "e1",  path: [[175, 227], [485, 227]],                       c: C.blue,   w: 2.5 },
+  { id: "e2",  path: [[485, 227], [795, 227]],                       c: C.blue,   w: 2.5 },
+  { id: "e3",  path: [[795, 227], [1105, 227]],                      c: C.blue,   w: 2.5 },
+  { id: "e4",  path: [[1105, 227], [1415, 227]],                     c: C.blue,   w: 2.5 },
+  { id: "e5",  path: [[1415, 186], [900, 46], [485, 186]],           c: C.green,  w: 1.6, label: "正常 · 继续下一条", dash: [7, 7] },
+  { id: "e6",  path: [[1415, 227], [1415, 396]],                     c: C.red,    w: 2.5, label: "报错" },
   { id: "e7",  path: [[1317, 437], [1203, 437]],                     c: C.red,    w: 2 },
   { id: "e8",  path: [[1007, 437], [893, 437]],                      c: C.red,    w: 2 },
   { id: "e9",  path: [[795, 478], [795, 606]],                       c: C.orange, w: 2, label: "达到阈值" },
@@ -508,7 +508,7 @@ function drawBackground(dt) {
 const particles = [];
 function spawn(edgeId, color, opts = {}) {
   const e = EDGES.find(x => x.id === edgeId); if (!e) return null;
-  const p = { e, t: 0, speed: opts.speed || 1, color: color || e.c, size: opts.size || 4.5,
+  const p = { e, t: 0, speed: opts.speed || 1, color: color || e.c, size: opts.size || 7,
               trail: [], onArrive: opts.onArrive, glow: opts.glow || 0 };
   particles.push(p); return p;
 }
@@ -530,7 +530,7 @@ function drawParticles(dt) {
     ctx.lineCap = "round";
     for (let k = 1; k < p.trail.length; k++) {
       const a = k / p.trail.length;
-      ctx.strokeStyle = p.color; ctx.globalAlpha = a * .5; ctx.lineWidth = p.size * a * 1.1;
+      ctx.strokeStyle = p.color; ctx.globalAlpha = a * .7; ctx.lineWidth = p.size * a * 1.5;
       ctx.beginPath(); ctx.moveTo(p.trail[k - 1][0], p.trail[k - 1][1]); ctx.lineTo(p.trail[k][0], p.trail[k][1]); ctx.stroke();
     }
     ctx.globalAlpha = 1; ctx.fillStyle = "#fff";
@@ -804,6 +804,11 @@ function applyLiveStatus(st) {
   updateDatasetVisual(errors, sim.alertEvery);
   updateGateVisual();
   setAlertCount(st.alert_count || 0);
+  /* 预估准确率同步当前部署模型的真实验证评分（0-1 → 百分比） */
+  if (typeof st.model_score === "number" && st.model_score > 0) {
+    sim.accuracy = Math.round(st.model_score * 1000) / 10;
+    setHud("acc", sim.accuracy);
+  }
   const events = st.events || [];
   if (!live.synced) {
     /* 首次同步：登记历史事件 id，不回放动画 */

@@ -879,6 +879,24 @@ class DemoLoopService:
 
     # -------------------------------------------------------------------- status
 
+    def _current_model_score(self, config: DemoLoopConfig) -> float | None:
+        """当前部署模型的验证评分（0-1）：大屏「预估准确率」真实数据源。
+        取模型版本注册来源任务的最佳得分；历史模型无评分时返回 None。"""
+        try:
+            deployment = self._deployment(config)
+            version = self._current_model_version(deployment)
+            if version.registration_task_id is None:
+                return None
+            job = self.db.query(TrainingJob).filter(
+                TrainingJob.id == version.registration_task_id,
+            ).first()
+            score = ((job.metrics or {}).get("best_score") if job else None)
+            if isinstance(score, (int, float)) and 0 < score <= 1:
+                return round(float(score), 4)
+        except Exception:  # noqa: BLE001 - 评分仅用于大屏展示，失败不影响状态
+            pass
+        return None
+
     def build_status(self, config: DemoLoopConfig) -> dict:
         events = self.db.query(DemoLoopEvent).filter(
             DemoLoopEvent.config_id == config.id,
@@ -892,11 +910,13 @@ class DemoLoopService:
                     "name": artifact.name,
                     "row_count": (artifact.metadata_ or {}).get("row_count", 0),
                 }
+        model_score = self._current_model_score(config)
         return {
             "config_id": str(config.id),
             "error_count": int(config.error_count or 0),
             "alert_count": int(config.alert_count or 0),
             "total_count": int(getattr(config, "total_count", 0) or 0),
+            "model_score": model_score,
             "retrain_status": config.retrain_status,
             "retrain_job_id": str(config.retrain_job_id) if config.retrain_job_id else None,
             "review_task_id": str(config.review_task_id) if config.review_task_id else None,
