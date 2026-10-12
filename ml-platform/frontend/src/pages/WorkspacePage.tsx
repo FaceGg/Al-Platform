@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
-import { App as AntApp, Layout, Button, Space, Divider, Input, Modal, Drawer, List, Tag } from "antd";
-import { PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined, PauseCircleOutlined, DeleteOutlined, CloudUploadOutlined, HistoryOutlined, ApiOutlined, CopyOutlined } from "@ant-design/icons";
+import { App as AntApp, Button, Dropdown, Layout, Space, Divider, Input, Modal, Drawer, List, Tag, Tooltip } from "antd";
+import { DownOutlined, EllipsisOutlined, PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined, PauseCircleOutlined, DeleteOutlined, CloudUploadOutlined, HistoryOutlined, ApiOutlined, CopyOutlined } from "@ant-design/icons";
 import { ReactFlowProvider } from "reactflow";
 import { useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
@@ -67,7 +67,7 @@ export default function WorkspacePage() {
     restored: "无法恢复运行状态", runFailed: "运行失败", runComplete: "工作流运行完成", runCancelled: "工作流已取消",
     liveClosed: "实时连接已关闭，正在恢复运行状态", deleteFailed: "删除失败，请重试", history: "版本历史",
     noVersions: "暂无已发布版本", restore: "恢复", delete: "删除", operatorPanel: "算子面板", nodeConfig: "节点配置",
-    back: "返回", save: "保存", saveAsTemplate: "保存为模板", publish: "发布", version: "版本", run: "运行", stop: "终止",
+    back: "返回", save: "保存", saveAsTemplate: "保存为模板", more: "更多", publish: "发布", version: "版本", run: "运行", stop: "终止",
     confirmDelete: "确认删除", cancel: "取消", deletePrompt: "确定要删除工作流", irreversible: "此操作不可撤销。",
     publishApi: "发布为 API", publishApiSuccess: "已发布为编排 API，可在 API 市场查看", publishApiFailed: "发布为 API 失败",
   } : {
@@ -76,7 +76,7 @@ export default function WorkspacePage() {
     restored: "Unable to recover run status", runFailed: "Workflow run failed", runComplete: "Workflow run completed", runCancelled: "Workflow run cancelled",
     liveClosed: "Live connection closed; recovering run status", deleteFailed: "Delete failed. Please retry.", history: "Version history",
     noVersions: "No published versions", restore: "Restore", delete: "Delete", operatorPanel: "Operator panel", nodeConfig: "Node configuration",
-    back: "Back", save: "Save", saveAsTemplate: "Save as Template", publish: "Publish", version: "Versions", run: "Run", stop: "Stop",
+    back: "Back", save: "Save", saveAsTemplate: "Save as Template", more: "More", publish: "Publish", version: "Versions", run: "Run", stop: "Stop",
     confirmDelete: "Confirm deletion", cancel: "Cancel", deletePrompt: "Delete workflow", irreversible: "This action cannot be undone.",
     publishApi: "Publish as API", publishApiSuccess: "Published as an orchestration API — see the API Marketplace", publishApiFailed: "Publish as API failed",
   };
@@ -556,33 +556,48 @@ export default function WorkspacePage() {
           <ExecutionProgress />
 
           <div className="workspace-actions">
-            {/* 编辑组 */}
-            <Space size={4}>
-              <Button icon={<SaveOutlined />} onClick={handleSave}>
-                {text.save}
+            {/* 保存：高频操作保留文字 */}
+            <Tooltip title={text.save}>
+              <Button icon={<SaveOutlined />} onClick={handleSave} aria-label={text.save} />
+            </Tooltip>
+            {/* 发布下拉：发布版本 / 发布为 API 两个发布动作合一 */}
+            <Dropdown
+              menu={{
+                items: [
+                  { key: "publish", icon: <CloudUploadOutlined />, label: text.publish },
+                  { key: "publish-api", icon: <ApiOutlined />, label: text.publishApi },
+                ],
+                onClick: ({ key }) => {
+                  if (key === "publish") handlePublish();
+                  if (key === "publish-api") handlePublishApi();
+                },
+              }}
+              trigger={["click"]}
+            >
+              <Button>
+                <CloudUploadOutlined /> {text.publish} <DownOutlined />
               </Button>
-              <Button icon={<CopyOutlined />} onClick={handleSaveAsTemplate} loading={savingTemplate}>
-                {text.saveAsTemplate || "保存为模板"}
-              </Button>
-              <Button danger icon={<DeleteOutlined />} onClick={() => setDeleteOpen(true)}>
-                {text.delete}
-              </Button>
-            </Space>
-            <Divider type="vertical" style={{ margin: "0 6px" }} />
-            {/* 发布组 */}
-            <Space size={4}>
-              <Button icon={<CloudUploadOutlined />} onClick={handlePublish}>
-                {text.publish}
-              </Button>
-              <Button icon={<ApiOutlined />} onClick={handlePublishApi}>
-                {text.publishApi}
-              </Button>
-              <Button icon={<HistoryOutlined />} onClick={openVersions}>
-                {text.version}
-              </Button>
-            </Space>
-            <Divider type="vertical" style={{ margin: "0 6px" }} />
-            {/* 运行组：画布主操作 */}
+            </Dropdown>
+            {/* 更多下拉：模板 / 版本 / 删除 等低频操作收纳于此 */}
+            <Dropdown
+              menu={{
+                items: [
+                  { key: "template", icon: <CopyOutlined />, label: text.saveAsTemplate || "保存为模板" },
+                  { key: "versions", icon: <HistoryOutlined />, label: text.version },
+                  { type: "divider" },
+                  { key: "delete", icon: <DeleteOutlined />, label: text.delete, danger: true },
+                ],
+                onClick: ({ key }) => {
+                  if (key === "template") void handleSaveAsTemplate();
+                  if (key === "versions") openVersions();
+                  if (key === "delete") setDeleteOpen(true);
+                },
+              }}
+              trigger={["click"]}
+            >
+              <Button icon={<EllipsisOutlined />} aria-label={text.more || "更多"} />
+            </Dropdown>
+            {/* 运行：画布主操作，常驻最右 */}
             {isRunning ? (
               <Button danger icon={<PauseCircleOutlined />} onClick={handleRun}>
                 {text.stop}
