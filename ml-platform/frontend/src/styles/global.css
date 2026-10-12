@@ -544,6 +544,20 @@ td.training-operation-column .table-row-actions {
   backdrop-filter: blur(14px);
 }
 
+/* 变体 b：右下角悬浮运行坞（工具条切 ?toolbar=b 时启用） */
+.workspace-run-dock {
+  position: absolute;
+  bottom: 18px;
+  right: 18px;
+  z-index: 10;
+  padding: 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-header) 92%, transparent);
+  box-shadow: 0 12px 26px rgba(2, 26, 34, 0.18);
+  backdrop-filter: blur(14px);
+}
+
 @media (max-width: 980px) {
   .workspace-actions {
     flex-wrap: wrap !important;

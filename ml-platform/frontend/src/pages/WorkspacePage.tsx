@@ -496,6 +496,10 @@ export default function WorkspacePage() {
     event.dataTransfer.dropEffect = "move";
   }, []);
 
+  // 工具条三版可切换：URL 加 ?toolbar=a/b/c 预览（a=图标极简[默认] b=运行坞 c=紧凑文字）
+  const toolbarVariant = (new URLSearchParams(window.location.search).get("toolbar") || "a") as
+    "a" | "b" | "c";
+
   return (
     <ReactFlowProvider>
       <Layout className="workspace-layout">
@@ -555,10 +559,12 @@ export default function WorkspacePage() {
           <WorkflowCanvas />
           <ExecutionProgress />
 
-          <div className="workspace-actions">
-            {/* 保存：高频操作保留文字 */}
+          {/* 工具条三版可切换：URL 加 ?toolbar=a/b/c 预览（a=图标极简[默认] b=运行坞 c=紧凑文字） */}
+          <div className="workspace-actions" data-variant={toolbarVariant}>
+            {/* 保存（各版通用）：高频操作 */}
             <Tooltip title={text.save}>
-              <Button icon={<SaveOutlined />} onClick={handleSave} aria-label={text.save} />
+              <Button size={toolbarVariant === "c" ? "small" : "middle"} icon={<SaveOutlined />}
+                onClick={handleSave} aria-label={text.save} />
             </Tooltip>
             {/* 发布下拉：发布版本 / 发布为 API 两个发布动作合一 */}
             <Dropdown
@@ -574,9 +580,13 @@ export default function WorkspacePage() {
               }}
               trigger={["click"]}
             >
-              <Button>
-                <CloudUploadOutlined /> {text.publish} <DownOutlined />
-              </Button>
+              {toolbarVariant === "a" ? (
+                <Button icon={<CloudUploadOutlined />} aria-label={text.publish} />
+              ) : (
+                <Button size={toolbarVariant === "c" ? "small" : "middle"}>
+                  <CloudUploadOutlined /> {text.publish} <DownOutlined />
+                </Button>
+              )}
             </Dropdown>
             {/* 更多下拉：模板 / 版本 / 删除 等低频操作收纳于此 */}
             <Dropdown
@@ -595,10 +605,15 @@ export default function WorkspacePage() {
               }}
               trigger={["click"]}
             >
-              <Button icon={<EllipsisOutlined />} aria-label={text.more || "更多"} />
+              {toolbarVariant === "a" ? (
+                <Button icon={<EllipsisOutlined />} aria-label={text.more || "更多"} />
+              ) : (
+                <Button size={toolbarVariant === "c" ? "small" : "middle"}
+                  icon={<EllipsisOutlined />} aria-label={text.more || "更多"} />
+              )}
             </Dropdown>
-            {/* 运行：画布主操作，常驻最右 */}
-            {isRunning ? (
+            {/* 运行：画布主操作。a/c 版常驻行尾；b 版移入右下运行坞 */}
+            {toolbarVariant !== "b" && (isRunning ? (
               <Button danger icon={<PauseCircleOutlined />} onClick={handleRun}>
                 {text.stop}
               </Button>
@@ -606,8 +621,19 @@ export default function WorkspacePage() {
               <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRun}>
                 {text.run}
               </Button>
-            )}
+            ))}
           </div>
+          {toolbarVariant === "b" && (
+            <div className="workspace-run-dock">
+              {isRunning ? (
+                <Button danger shape="circle" icon={<PauseCircleOutlined />}
+                  onClick={handleRun} aria-label={text.stop} />
+              ) : (
+                <Button type="primary" shape="circle" size="large" icon={<PlayCircleOutlined />}
+                  onClick={handleRun} aria-label={text.run} />
+              )}
+            </div>
+          )}
         </Content>
 
         <Sider className="workspace-sider workspace-sider--config" width={290} style={{ background: "var(--bg-surface)", borderLeft: "1px solid var(--border-default)", overflow: "auto" }}>
