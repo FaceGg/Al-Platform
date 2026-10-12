@@ -53,8 +53,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
     ],
     4: [
         "test_weld_demo_service",
-        "test_industrial_templates",
-        "test_industrial_template_e2e",
+        "test_api_workflow_templates",
     ],
     5: [
         "test_config",

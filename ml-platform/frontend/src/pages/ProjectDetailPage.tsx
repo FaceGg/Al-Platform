@@ -93,7 +93,7 @@ export default function ProjectDetailPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <h4>工作流</h4>
         <Space>
-          <Button onClick={() => navigate('/template/weld_quality?project=' + projectId)}
+          <Button onClick={() => navigate('/orchestration')}
             icon={<ExperimentOutlined />}>使用模板</Button>
           <Button type="primary" icon={<PlusOutlined />}
             onClick={() => setModalOpen(true)}>新建工作流</Button>

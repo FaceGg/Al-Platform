@@ -1,5 +1,6 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.project import Project
@@ -17,6 +18,14 @@ PROJECT_WRITE_ACTIONS = {
     "PUT /api/projects/{project_id}/workflows/{workflow_id}": "workflow.update",
     "DELETE /api/projects/{project_id}/workflows/{workflow_id}": "workflow.delete",
 }
+
+
+class TemplateSaveRequest(BaseModel):
+    name: str | None = None
+
+
+class TemplateInstantiateRequest(BaseModel):
+    name: str | None = None
 
 
 def _build_workflow_response(workflow: Workflow) -> WorkflowResponse:
@@ -40,8 +49,125 @@ def list_workflows(
     current_user: User = Depends(get_current_user),
 ):
     require_project_access(db, project_id, current_user.id, "project.read")
-    workflows = db.query(Workflow).filter(Workflow.project_id == UUID(project_id)).all()
+    workflows = db.query(Workflow).filter(
+        Workflow.project_id == UUID(project_id),
+        Workflow.is_template.is_(False),
+    ).all()
     return [{"id": str(w.id), "name": w.name, "description": w.description, "created_at": w.created_at.isoformat() if w.created_at else None} for w in workflows]
+
+
+# ----------------------------------------------------------------- templates
+# 模板即标记 is_template=True 的工作流：保存为模板=复制当前图；从模板创建=
+# 复制模板图到新工作流；编辑模板=直接打开画布修改（PUT 保存）——增删改天然支持。
+
+
+@router.post("/{project_id}/workflows/{workflow_id}/save-as-template", status_code=201)
+def save_workflow_as_template(
+    project_id: str,
+    workflow_id: str,
+    data: TemplateSaveRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    access = resolve_project_access(db, project_id, current_user.id)
+    project_uuid = access.project.id if access is not None else UUID(project_id)
+    source = db.query(Workflow).filter(
+        Workflow.id == UUID(workflow_id),
+        Workflow.project_id == project_uuid,
+    ).first()
+    if not source:
+        raise HTTPException(404, "Workflow not found")
+    template = Workflow(
+        project_id=project_uuid,
+        name=(data.name or f"{source.name}-模板").strip()[:128],
+        description=source.description,
+        is_template=True,
+        created_by=current_user.id,
+    )
+    db.add(template)
+    db.flush()
+    for node in source.nodes:
+        db.add(WorkflowNode(
+            workflow_id=template.id, operator_id=node.operator_id, label=node.label,
+            position_x=node.position_x, position_y=node.position_y, params=node.params,
+        ))
+    for edge in source.edges:
+        db.add(WorkflowEdge(
+            workflow_id=template.id, source_node_id=edge.source_node_id,
+            source_port=edge.source_port, target_node_id=edge.target_node_id,
+            target_port=edge.target_port,
+        ))
+    db.commit()
+    db.refresh(template)
+    return _build_workflow_response(template)
+
+
+@router.get("/{project_id}/workflow-templates")
+def list_workflow_templates(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, current_user.id, "project.read")
+    templates = db.query(Workflow).filter(
+        Workflow.project_id == UUID(project_id),
+        Workflow.is_template.is_(True),
+    ).order_by(Workflow.created_at.desc()).all()
+    return {
+        "items": [
+            {
+                "id": str(t.id),
+                "name": t.name,
+                "description": t.description,
+                "node_count": len(t.nodes),
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+            }
+            for t in templates
+        ],
+        "total": len(templates),
+    }
+
+
+@router.post("/{project_id}/workflow-templates/{template_id}/instantiate", status_code=201)
+def instantiate_workflow_template(
+    project_id: str,
+    template_id: str,
+    data: TemplateInstantiateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    access = resolve_project_access(db, project_id, current_user.id)
+    project_uuid = access.project.id if access is not None else UUID(project_id)
+    template = db.query(Workflow).filter(
+        Workflow.id == UUID(template_id),
+        Workflow.project_id == project_uuid,
+        Workflow.is_template.is_(True),
+    ).first()
+    if not template:
+        raise HTTPException(404, "Template not found")
+    workflow = Workflow(
+        project_id=project_uuid,
+        name=(data.name or template.name).strip()[:128],
+        description=template.description,
+        created_by=current_user.id,
+    )
+    db.add(workflow)
+    db.flush()
+    for node in template.nodes:
+        db.add(WorkflowNode(
+            workflow_id=workflow.id, operator_id=node.operator_id, label=node.label,
+            position_x=node.position_x, position_y=node.position_y, params=dict(node.params or {}),
+        ))
+    for edge in template.edges:
+        db.add(WorkflowEdge(
+            workflow_id=workflow.id, source_node_id=edge.source_node_id,
+            source_port=edge.source_port, target_node_id=edge.target_node_id,
+            target_port=edge.target_port,
+        ))
+    db.commit()
+    db.refresh(workflow)
+    return _build_workflow_response(workflow)
 
 
 @router.post("/{project_id}/workflows", response_model=WorkflowResponse, status_code=201)
@@ -93,11 +219,15 @@ def create_workflow(
             client_id_map[node_data.id] = node.id
 
         for edge_data in data.edges:
+            # dict.get 的默认值是急切求值：client id 会被 UUID() 先炸，
+            # 必须显式回退（client id 优先，否则按服务端 UUID 解析）。
+            source_id = client_id_map.get(edge_data.source) or UUID(edge_data.source)
+            target_id = client_id_map.get(edge_data.target) or UUID(edge_data.target)
             edge = WorkflowEdge(
                 workflow_id=workflow.id,
-                source_node_id=client_id_map.get(edge_data.source, UUID(edge_data.source)),
+                source_node_id=source_id,
                 source_port=edge_data.source_port,
-                target_node_id=client_id_map.get(edge_data.target, UUID(edge_data.target)),
+                target_node_id=target_id,
                 target_port=edge_data.target_port,
             )
             db.add(edge)

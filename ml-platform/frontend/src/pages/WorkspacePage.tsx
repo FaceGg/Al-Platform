@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { App as AntApp, Layout, Button, Space, Input, Modal, Drawer, List, Tag } from "antd";
-import { PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined, PauseCircleOutlined, DeleteOutlined, CloudUploadOutlined, HistoryOutlined, ApiOutlined } from "@ant-design/icons";
+import { PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined, PauseCircleOutlined, DeleteOutlined, CloudUploadOutlined, HistoryOutlined, ApiOutlined, CopyOutlined } from "@ant-design/icons";
 import { ReactFlowProvider } from "reactflow";
 import { useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
@@ -67,7 +67,7 @@ export default function WorkspacePage() {
     restored: "无法恢复运行状态", runFailed: "运行失败", runComplete: "工作流运行完成", runCancelled: "工作流已取消",
     liveClosed: "实时连接已关闭，正在恢复运行状态", deleteFailed: "删除失败，请重试", history: "版本历史",
     noVersions: "暂无已发布版本", restore: "恢复", delete: "删除", operatorPanel: "算子面板", nodeConfig: "节点配置",
-    back: "返回", save: "保存", publish: "发布", version: "版本", run: "运行", stop: "终止",
+    back: "返回", save: "保存", saveAsTemplate: "保存为模板", publish: "发布", version: "版本", run: "运行", stop: "终止",
     confirmDelete: "确认删除", cancel: "取消", deletePrompt: "确定要删除工作流", irreversible: "此操作不可撤销。",
     publishApi: "发布为 API", publishApiSuccess: "已发布为编排 API，可在 API 市场查看", publishApiFailed: "发布为 API 失败",
   } : {
@@ -76,7 +76,7 @@ export default function WorkspacePage() {
     restored: "Unable to recover run status", runFailed: "Workflow run failed", runComplete: "Workflow run completed", runCancelled: "Workflow run cancelled",
     liveClosed: "Live connection closed; recovering run status", deleteFailed: "Delete failed. Please retry.", history: "Version history",
     noVersions: "No published versions", restore: "Restore", delete: "Delete", operatorPanel: "Operator panel", nodeConfig: "Node configuration",
-    back: "Back", save: "Save", publish: "Publish", version: "Versions", run: "Run", stop: "Stop",
+    back: "Back", save: "Save", saveAsTemplate: "Save as Template", publish: "Publish", version: "Versions", run: "Run", stop: "Stop",
     confirmDelete: "Confirm deletion", cancel: "Cancel", deletePrompt: "Delete workflow", irreversible: "This action cannot be undone.",
     publishApi: "Publish as API", publishApiSuccess: "Published as an orchestration API — see the API Marketplace", publishApiFailed: "Publish as API failed",
   };
@@ -93,6 +93,7 @@ export default function WorkspacePage() {
   const [editingName, setEditingName] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versions, setVersions] = useState<WorkflowVersionSummary[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
@@ -199,6 +200,24 @@ export default function WorkspacePage() {
       message.success(text.saved);
     } catch {
       message.error(text.saveFailed);
+    }
+  };
+
+  // 先保存当前草稿，再把图复制为项目模板（模板可在应用编排页管理/复用）。
+  const handleSaveAsTemplate = async () => {
+    if (!workflowId || !workflowProjectId) return;
+    setSavingTemplate(true);
+    try {
+      await apiClient.put("/workflows/" + workflowId, buildPayload());
+      const res = await apiClient.post(
+        `/projects/${workflowProjectId}/workflows/${workflowId}/save-as-template`,
+        {},
+      );
+      message.success(`已保存为模板：${res.data?.name || wfName + "-模板"}`);
+    } catch {
+      message.error("保存为模板失败，请重试");
+    } finally {
+      setSavingTemplate(false);
     }
   };
 
@@ -539,6 +558,9 @@ export default function WorkspacePage() {
             </Button>
             <Button icon={<SaveOutlined />} onClick={handleSave}>
               {text.save}
+            </Button>
+            <Button icon={<CopyOutlined />} onClick={handleSaveAsTemplate} loading={savingTemplate}>
+              {text.saveAsTemplate || "保存为模板"}
             </Button>
             <Button icon={<CloudUploadOutlined />} onClick={handlePublish}>
               {text.publish}

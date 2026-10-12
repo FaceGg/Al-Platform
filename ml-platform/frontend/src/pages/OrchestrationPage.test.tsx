@@ -72,9 +72,10 @@ describe("OrchestrationPage (serving-graph workbench)", () => {
     render(<OrchestrationPage />);
     fireEvent.click(await screen.findByRole("button", { name: /新建服务图/ }));
     await screen.findByRole("dialog");
-    // antd Modal onOk 的合成点击在 jsdom 下不稳定；直接派发 form submit 触发 onFinish
+    // antd Modal onOk 的合成点击在 jsdom 下不稳定；直接派发 form submit 触发 onFinish。
+    // 名称输入按 placeholder 定位（首个 input 现在是模板下拉的搜索框）。
     const dialog = screen.getByRole("dialog");
-    const input = dialog.querySelector("input") as HTMLInputElement;
+    const input = dialog.querySelector('input[placeholder*="如："]') as HTMLInputElement;
     fireEvent.change(input, { target: { value: "焊接质量推理服务" } });
     const form = dialog.querySelector("form");
     expect(form).not.toBeNull();
@@ -85,6 +86,39 @@ describe("OrchestrationPage (serving-graph workbench)", () => {
       nodes: [],
       edges: [],
     }));
+  });
+
+  it("creates a workflow from a template via instantiate endpoint", async () => {
+    api.apiGet.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ items: [{ id: "p1", name: "点焊" }] });
+      if (url === "/projects/p1/workflows") return Promise.resolve({ items: [] });
+      if (url === "/projects/p1/workflow-templates") {
+        return Promise.resolve({ items: [{ id: "tpl-1", name: "方案B全闭环服务-模板", node_count: 7, updated_at: null }] });
+      }
+      return Promise.resolve({ items: [] });
+    });
+    api.post.mockResolvedValue({ data: { id: "wf-from-tpl" } });
+    render(<OrchestrationPage />);
+    await screen.findByText("方案B全闭环服务-模板");
+    fireEvent.click(screen.getByRole("button", { name: /新建服务图/ }));
+    const dialog = await screen.findByRole("dialog");
+    // 模板下拉选模板 + 填名称 → submit
+    const tplCombo = dialog.querySelector(".ant-select-selector") as HTMLElement;
+    tplCombo.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const option = await waitFor(() => {
+      const opt = Array.from(document.querySelectorAll(".ant-select-item-option"))
+        .find(o => o.textContent.includes("方案B"));
+      expect(opt).toBeTruthy();
+      return opt as HTMLElement;
+    });
+    fireEvent.click(option);
+    const input = dialog.querySelector('input[placeholder*="如："]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "从模板来的服务" } });
+    fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/projects/p1/workflow-templates/tpl-1/instantiate",
+      { name: "从模板来的服务" },
+    ));
   });
 
   it("renders an enabled publish action per workflow row", async () => {

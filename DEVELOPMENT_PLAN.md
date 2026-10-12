@@ -2556,3 +2556,16 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **背景**：工具分类存在两个 Python 算子——python_script（沙箱版：AST 校验禁 import/open/exec + 20 个白名单内建 + 100k 限制）与历史遗留 execute_python（**无沙箱**：exec 传入完整 __builtins__，可 import/读文件/起进程，任何能编辑工作流的用户可执行任意代码，worker 容器挂有 secrets）。
 - **移除（存量零使用：nodes/workflow_versions 快照均 0 条）**：删除 ExecutePython 注册类；前端 i18n zh/en 两处算子名清理；测试更新——test_operators_utility 用例替换为"不再注册"守卫、test_all_operators UTILITY_IDS 移除、test_production_stack 超时用例改用 python_script 纯计算大循环（沙箱禁 import time，原用例依赖无沙箱特性）。
 - **验证**：utility+all_operators 106 passed；production_stack 1 passed 4 skipped（celery 环境外跳）；部署后容器内 utility 分类=[python_script, collect, macro, write_as_text]、execute_python=None；算子 API 总数 87→86；浏览器面板搜索 python 仅剩「Python 脚本」一个（截图）。本地提交不推送。
+
+---
+
+## 2026-10-12（续二） 工作流模板体系重构：去焊接模板，方案B存为项目模板（可选/可编辑）
+
+- **用户需求**：去掉焊接硬编码模板；方案B闭环服务图保存为模板；模板要支持选择与编辑等管理操作。
+- **后端**：
+  - 硬编码模板退役：`TEMPLATES` 删除焊接场景 3 项（weld_quality/param_recommend/anomaly_detect，保留通用 full_ml_pipeline 等 4 项）；`INDUSTRIAL_TEMPLATES` 清空（contract 类型保留兼容）；删除 test_industrial_templates / test_industrial_template_e2e 并从周清单移除。
+  - 项目级模板 API（模板=is_template 工作流，天然可编辑）：`POST /workflows/{id}/save-as-template`（复制当前图）、`GET /workflow-templates`（列表含节点数）、`POST /workflow-templates/{tid}/instantiate`（复制为新工作流）；工作流列表排除模板防混入。
+  - **顺带修复既有缺陷**：create_workflow 边端点 `client_id_map.get(k, UUID(k))` 默认值急切求值——client id 边必炸 500（方案B此前只能靠 PUT 保存）；改为显式回退。
+  - 新增 test_api_workflow_templates（保存→列表→实例化→隔离性→模板可删；焊接模板退役断言）并登记周清单 Week4。
+- **前端**：画布顶栏新增「保存为模板」（先保存草稿再复制为模板）；编排页新增「服务图模板」卡（模板列表：从模板创建/编辑（跳画布）/删除，说明文案）；新建编排弹窗新增「从模板创建」下拉（不使用模板=空白）；项目详情页旧「使用模板」入口（硬编码 weld_quality 向导）改跳应用编排页。
+- **验证**：后端 26 passed（workflows/templates/publication/direct + 新模板套件）；前端 OrchestrationPage 7 passed（新增从模板实例化用例）+ tsc；浏览器实测：方案B画布「保存为模板」→ toast 确认；编排页模板卡显示「方案B全闭环服务-模板（7 节点）」；「从模板创建」生成新服务图进列表；新建弹窗下拉含「不使用模板/方案B模板（7 节点）」。本地提交不推送。
