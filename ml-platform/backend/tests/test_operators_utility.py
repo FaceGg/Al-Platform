@@ -1,4 +1,4 @@
-"""Tests for utility operators (execute_python, collect, macro, write_as_text).
+"""Tests for utility operators (python_script, collect, macro, write_as_text).
 
 These operators had no dedicated tests previously.
 """
@@ -17,59 +17,12 @@ from app.engine.registry import OperatorRegistry
 from tests.operator_test_utils import execute_operator, operator_context
 
 
-class TestExecutePythonOperator(unittest.TestCase):
-    """Tests for the execute_python operator."""
+class TestExecutePythonRemoved(unittest.TestCase):
+    """execute_python 是无沙箱的历史算子，已下线（安全：画布可执行任意代码）。
+    存量工作流未使用（nodes/workflow_versions 均为 0），删除注册。"""
 
-    def test_registered(self):
-        op = OperatorRegistry.get("execute_python")
-        self.assertIsNotNone(op)
-        self.assertEqual(op.category, "utility")
-
-    def test_runs_script_and_returns_dataframe_output(self):
-        op = OperatorRegistry.get("execute_python")
-        inputs = {"data": [{"a": 1}, {"a": 2}]}
-        params = {
-            "script": "result = data.copy()\nresult['b'] = result['a'] * 2",
-            "input_var": "data",
-            "output_var": "result",
-        }
-        outputs = execute_operator(op, inputs, params)
-        self.assertEqual(outputs["data"], [{"a": 1, "b": 2}, {"a": 2, "b": 4}])
-
-    def test_custom_variable_names(self):
-        op = OperatorRegistry.get("execute_python")
-        inputs = {"data": [{"x": 10}]}
-        params = {
-            # input_var is exposed as a DataFrame, so use DataFrame operations.
-            "script": "out = inp.copy(); out['x'] = out['x'] + 5",
-            "input_var": "inp",
-            "output_var": "out",
-        }
-        outputs = execute_operator(op, inputs, params)
-        self.assertEqual(outputs["data"], [{"x": 15}])
-
-    def test_falls_back_to_input_when_output_var_missing(self):
-        op = OperatorRegistry.get("execute_python")
-        # output_var defaults to "result"; if script doesn't define it, falls back to df
-        inputs = {"data": [{"a": 1}]}
-        params = {"script": "pass", "input_var": "data", "output_var": "result"}
-        outputs = execute_operator(op, inputs, params)
-        self.assertEqual(outputs["data"], [{"a": 1}])
-
-    def test_script_error_wrapped_as_runtime_error(self):
-        op = OperatorRegistry.get("execute_python")
-        inputs = {"data": [{"a": 1}]}
-        params = {"script": "raise ValueError('boom')"}
-        with self.assertRaises(RuntimeError) as ctx:
-            execute_operator(op, inputs, params)
-        self.assertIn("ExecutePython script error", str(ctx.exception))
-
-    def test_invalid_output_type_raises_type_error(self):
-        op = OperatorRegistry.get("execute_python")
-        inputs = {"data": [{"a": 1}]}
-        params = {"script": "result = 123"}
-        with self.assertRaises(TypeError):
-            execute_operator(op, inputs, params)
+    def test_not_registered_anymore(self):
+        self.assertIsNone(OperatorRegistry.get("execute_python"))
 
 
 class TestPythonScriptOperator(unittest.TestCase):

@@ -221,10 +221,12 @@ class TestProductionStack(unittest.TestCase):
             pubsub.close()
 
     def test_04_timeout_recovery_and_readiness(self):
+        # execute_python 已下线（无沙箱）；用 python_script 的纯计算大循环
+        # （沙箱禁 import/sleep）制造超时，验证 NODE_TIMED_OUT 收口。
         timeout_run_id = self._create_run(
-            operator_id="execute_python",
+            operator_id="python_script",
             params={
-                "script": "import time\ntime.sleep(1)\nresult = []",
+                "script": "x = 0\nfor i in range(10 ** 9):\n    x = x + i\nresult = df.copy()",
                 "timeout_seconds": 0.1,
             },
         )

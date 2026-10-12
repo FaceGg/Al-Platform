@@ -747,7 +747,7 @@ class TestOptimizationOperatorsMetadata(unittest.TestCase):
 class TestUtilityOperatorsMetadata(unittest.TestCase):
     """Test utility operators registration and metadata."""
 
-    UTILITY_IDS = ["execute_python", "python_script", "collect", "macro", "write_as_text"]
+    UTILITY_IDS = ["python_script", "collect", "macro", "write_as_text"]
 
     def test_all_utility_operators_registered(self):
         for op_id in self.UTILITY_IDS:

@@ -2548,3 +2548,11 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **清理重跑（用户要求"删除现有流程和数据，最新环境重演两方案"）**：清方案 A 任务/方案 B 工作流+编排 API+报错数据集/通知/审核任务/训练任务（保留用户"特征工程"工作流与基础数据集）。重跑：方案 A 浏览器新建→46 行→回流 3→审核→重训 completed→**换模 5727cff1**→idle；方案 B 新建编排→7 节点图→中文参数标签实测全生效（数据集制品/重训数据集/重训目标列/阈值行数/搜索试验次数/换模部署，截图）→两步发布→市场调用 7 次（3+3+1）→回流 3 行/告警通知→重训 completed→**下一次调用换模 11d87d76**。
 - 手册同步：更新日期、算子参数表（中文名+下拉说明）、演示成果速览与参数速查（新一轮 ID 与当前模型）。
 - 本地提交不推送（遵用户指示）。
+
+---
+
+## 2026-10-12（续） 下线无沙箱的 execute_python 算子（用户确认按推荐方式）
+
+- **背景**：工具分类存在两个 Python 算子——python_script（沙箱版：AST 校验禁 import/open/exec + 20 个白名单内建 + 100k 限制）与历史遗留 execute_python（**无沙箱**：exec 传入完整 __builtins__，可 import/读文件/起进程，任何能编辑工作流的用户可执行任意代码，worker 容器挂有 secrets）。
+- **移除（存量零使用：nodes/workflow_versions 快照均 0 条）**：删除 ExecutePython 注册类；前端 i18n zh/en 两处算子名清理；测试更新——test_operators_utility 用例替换为"不再注册"守卫、test_all_operators UTILITY_IDS 移除、test_production_stack 超时用例改用 python_script 纯计算大循环（沙箱禁 import time，原用例依赖无沙箱特性）。
+- **验证**：utility+all_operators 106 passed；production_stack 1 passed 4 skipped（celery 环境外跳）；部署后容器内 utility 分类=[python_script, collect, macro, write_as_text]、execute_python=None；算子 API 总数 87→86；浏览器面板搜索 python 仅剩「Python 脚本」一个（截图）。本地提交不推送。

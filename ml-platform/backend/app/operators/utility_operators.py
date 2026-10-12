@@ -85,46 +85,6 @@ class PythonScript(BaseOperator):
 
 
 @register_operator
-class ExecutePython(BaseOperator):
-    id = "execute_python"
-    name = "ExecutePython"
-    category = "utility"
-    description = "Run custom Python script with input data as DataFrame"
-    inputs = [PortSpec("data", "DataTable", "Input Data")]
-    outputs = [PortSpec("data", "DataTable", "Output Data")]
-    parameters = [
-        ParamSpec("script", "str", "", "Python Script (multi-line)", required=True),
-        ParamSpec("input_var", "str", "data", "Input Variable Name"),
-        ParamSpec("output_var", "str", "result", "Output Variable Name"),
-    ]
-
-    def validate(self, inputs):
-        return True
-
-    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
-        script = params.get("script", "")
-        input_var = params.get("input_var", "data")
-        output_var = params.get("output_var", "result")
-
-        data = inputs.get("data", [])
-        df = pd.DataFrame(data)
-
-        local_vars = {input_var: df}
-        try:
-            exec(script, {"__builtins__": __builtins__}, local_vars)
-        except Exception as e:
-            raise RuntimeError(f"ExecutePython script error: {e}") from e
-
-        result = local_vars.get(output_var, df)
-        if isinstance(result, pd.DataFrame):
-            result = result.to_dict(orient="records")
-        elif not isinstance(result, list):
-            raise TypeError(f"ExecutePython: output_var '{output_var}' must be a DataFrame or list")
-
-        return OperatorResult(outputs={"data": result})
-
-
-@register_operator
 class CollectOp(BaseOperator):
     id = "collect"
     name = "Collect"
