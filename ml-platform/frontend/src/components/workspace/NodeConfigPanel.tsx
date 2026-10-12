@@ -1,7 +1,7 @@
 import { Input, InputNumber, Select, Switch, Form, Divider, Button, Drawer, message, Upload, Typography } from "antd";
 import { DownloadOutlined, MinusCircleOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import { useI18n } from "../../i18n";
-import { downloadDatasetArtifact, listDatasets } from "../../api/datasets";
+import { downloadDatasetArtifact, listDatasets, listInferenceDeployments, listModelArtifacts } from "../../api/datasets";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { extractColumnsFromResult, isColumnParam } from "./CustomNode";
 import { useEffect, useState, useMemo } from "react";
@@ -244,12 +244,14 @@ export function getPortLabel(opId: string, paramName: string, lang: "zh" | "en")
 
 function compatibleDatasetFormats(operatorId?: string): string[] {
   if (operatorId === "csv_import") return ["csv", "xls", "xlsx"];
+  // 闭环回流/重训算子面向 csv 数据集；其余算子不过滤（返回空表示全兼容）。
+  if (operatorId === "append_error_dataset" || operatorId === "retrain_threshold") return ["csv"];
   return [];
 }
 
 function isCompatibleDatasetArtifact(operatorId: string | undefined, dataset: DatasetArtifactOption): boolean {
   const supported = compatibleDatasetFormats(operatorId);
-  if (!supported.length) return false;
+  if (!supported.length) return true;
   const format = String(dataset.format || dataset.name?.split(".").pop() || dataset.filename?.split(".").pop() || "").toLowerCase();
   return supported.includes(format);
 }
@@ -268,6 +270,10 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
   const [uploading, setUploading] = useState(false);
   const [datasetArtifacts, setDatasetArtifacts] = useState<DatasetArtifactOption[]>([]);
   const [loadingDatasetArtifacts, setLoadingDatasetArtifacts] = useState(false);
+  const [modelArtifacts, setModelArtifacts] = useState<Array<{ id: string; name: string; format?: string | null }>>([]);
+  const [loadingModelArtifacts, setLoadingModelArtifacts] = useState(false);
+  const [deployments, setDeployments] = useState<Array<{ id: string; name: string; observed_state?: string }>>([]);
+  const [loadingDeployments, setLoadingDeployments] = useState(false);
   const [downloadingExport, setDownloadingExport] = useState(false);
 
   const nodeId = selectedNode?.id || "";
@@ -302,7 +308,8 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
   useEffect(() => {
     const supportsArtifactDataset = Boolean(
       projectId
-      && operator?.parameters?.some((param: any) => param.name === "dataset_artifact_id"),
+      && operator?.parameters?.some((param: any) =>
+        param.name === "dataset_artifact_id" || param.name === "retrain_dataset_artifact_id"),
     );
     if (!supportsArtifactDataset) {
       setDatasetArtifacts([]);
@@ -320,6 +327,35 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
       })
       .catch(() => { if (active) setDatasetArtifacts([]); })
       .finally(() => { if (active) setLoadingDatasetArtifacts(false); });
+    return () => { active = false; };
+  }, [projectId, operator?.id, operator?.parameters]);
+
+  // 模型制品与推理部署下拉数据：闭环算子的 ID 参数不允许用户手填。
+  useEffect(() => {
+    const needsModels = Boolean(
+      projectId && operator?.parameters?.some((param: any) => param.name === "model_artifact_id"),
+    );
+    if (!needsModels) { setModelArtifacts([]); setLoadingModelArtifacts(false); return; }
+    let active = true;
+    setLoadingModelArtifacts(true);
+    listModelArtifacts(projectId)
+      .then((items) => { if (active) setModelArtifacts(items); })
+      .catch(() => { if (active) setModelArtifacts([]); })
+      .finally(() => { if (active) setLoadingModelArtifacts(false); });
+    return () => { active = false; };
+  }, [projectId, operator?.id, operator?.parameters]);
+
+  useEffect(() => {
+    const needsDeployments = Boolean(
+      projectId && operator?.parameters?.some((param: any) => param.name === "swap_deployment_id"),
+    );
+    if (!needsDeployments) { setDeployments([]); setLoadingDeployments(false); return; }
+    let active = true;
+    setLoadingDeployments(true);
+    listInferenceDeployments(projectId)
+      .then((items) => { if (active) setDeployments(items); })
+      .catch(() => { if (active) setDeployments([]); })
+      .finally(() => { if (active) setLoadingDeployments(false); });
     return () => { active = false; };
   }, [projectId, operator?.id, operator?.parameters]);
 
@@ -502,17 +538,21 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
       );
     }
 
-    if (p.name === "dataset_artifact_id" && isCSVImport) {
+    if ((p.name === "dataset_artifact_id" || p.name === "retrain_dataset_artifact_id")
+      && !isCSVImport) {
+      // 闭环等算子的数据集参数一律下拉选择（普通用户拿不到制品 ID）。
       return (
         <Select
-          aria-label={lang === "zh" ? "数据集制品" : "Dataset artifact"}
+          aria-label={lang === "zh" ? (p.name === "retrain_dataset_artifact_id" ? "重训数据集" : "数据集制品") : "Dataset artifact"}
           style={{ width: "100%" }}
           value={value || undefined}
           onChange={(artifactId) => handleParamChange(p.name, artifactId)}
-          placeholder={lang === "zh" ? "选择兼容的数据集制品" : "Select a compatible dataset artifact"}
+          placeholder={lang === "zh" ? (p.name === "retrain_dataset_artifact_id" ? "选择重训数据集" : "选择数据集制品") : "Select a compatible dataset artifact"}
           loading={loadingDatasetArtifacts}
           disabled={!projectId}
           allowClear
+          showSearch
+          optionFilterProp="label"
           options={datasetArtifacts.map((dataset) => {
             const artifactId = dataset.artifact_id || dataset.id || "";
             return {
@@ -522,6 +562,48 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
                 : `${dataset.name || dataset.filename || artifactId} · ${dataset.row_count} 行`,
             };
           })}
+        />
+      );
+    }
+
+    if (p.name === "model_artifact_id") {
+      return (
+        <Select
+          aria-label={lang === "zh" ? "模型制品" : "Model artifact"}
+          style={{ width: "100%" }}
+          value={value || undefined}
+          onChange={(artifactId) => handleParamChange(p.name, artifactId)}
+          placeholder={lang === "zh" ? "选择模型制品（项目内训练产物 joblib）" : "Select a model artifact"}
+          loading={loadingModelArtifacts}
+          disabled={!projectId}
+          allowClear
+          showSearch
+          optionFilterProp="label"
+          options={modelArtifacts.map((artifact) => ({
+            value: artifact.id,
+            label: artifact.format ? `${artifact.name} · ${artifact.format}` : artifact.name,
+          }))}
+        />
+      );
+    }
+
+    if (p.name === "swap_deployment_id") {
+      return (
+        <Select
+          aria-label={lang === "zh" ? "推理部署" : "Inference deployment"}
+          style={{ width: "100%" }}
+          value={value || undefined}
+          onChange={(deploymentId) => handleParamChange(p.name, deploymentId)}
+          placeholder={lang === "zh" ? "选择换模目标部署" : "Select the deployment to swap"}
+          loading={loadingDeployments}
+          disabled={!projectId}
+          allowClear
+          showSearch
+          optionFilterProp="label"
+          options={deployments.map((deployment) => ({
+            value: deployment.id,
+            label: `${deployment.name}（${deployment.observed_state === "running" ? "运行中" : deployment.observed_state || "-"}）`,
+          }))}
         />
       );
     }

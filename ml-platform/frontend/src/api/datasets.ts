@@ -17,6 +17,37 @@ export async function listDatasets(projectId?: string) {
   return response.data.items || [];
 }
 
+export type ModelArtifactOption = {
+  id: string;
+  name: string;
+  format?: string | null;
+  file_size?: number | null;
+  created_at?: string | null;
+};
+
+export async function listModelArtifacts(projectId?: string): Promise<ModelArtifactOption[]> {
+  if (!projectId) return [];
+  const response = await apiClient.get(
+    `/projects/${encodeURIComponent(projectId)}/model-artifacts`,
+  );
+  return response.data.items || [];
+}
+
+export type DeploymentOption = {
+  id: string;
+  name: string;
+  observed_state?: string;
+  desired_state?: string;
+};
+
+export async function listInferenceDeployments(projectId?: string): Promise<DeploymentOption[]> {
+  if (!projectId) return [];
+  const response = await apiClient.get(
+    `/projects/${encodeURIComponent(projectId)}/inference-deployments`,
+  );
+  return response.data.items || [];
+}
+
 export async function getDatasetPreview(datasetId: string, options?: { limit?: number }) {
   const suffix = options && options.limit !== undefined ? `?limit=${options.limit}` : "";
   const response = await apiClient.get(`/datasets/${datasetId}/preview${suffix}`);

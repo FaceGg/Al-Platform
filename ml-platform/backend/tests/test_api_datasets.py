@@ -268,6 +268,34 @@ class TestDatasetsAPI(unittest.TestCase):
             data = r.json()
             self.assertIn("success", data)
 
+    def test_09_list_project_model_artifacts_for_canvas_picker(self):
+        # 画布闭环算子的模型制品参数走下拉：端点须只列项目内 model 工件。
+        db = SessionLocal()
+        try:
+            art = Artifact(
+                project_id=uuid.UUID(self.project_id),
+                name=f"picker-model-{uuid.uuid4().hex[:6]}.joblib", type="model",
+                storage_path="", storage_uri="s3://test/picker-model.joblib",
+                file_size=8, format="joblib",
+            )
+            db.add(art)
+            db.commit()
+            model_name = art.name
+        finally:
+            db.close()
+
+        r = client.get(f"/api/projects/{self.project_id}/model-artifacts", headers=self.h)
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        self.assertGreaterEqual(data["total"], 1)
+        self.assertTrue(all(item["id"] and item["name"] for item in data["items"]))
+        names = [item["name"] for item in data["items"]]
+        self.assertIn(model_name, names)
+        # 数据集工件不得混入模型列表
+        datasets = client.get(f"/api/projects/{self.project_id}/datasets", headers=self.h).json()
+        dataset_names = {item["name"] for item in datasets["items"]}
+        self.assertFalse(any(name in dataset_names for name in names))
+
 
 if __name__ == "__main__":
     unittest.main()

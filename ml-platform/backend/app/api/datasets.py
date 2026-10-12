@@ -536,6 +536,37 @@ def list_project_datasets(
     return {"items": items, "total": len(items)}
 
 
+@router.get("/projects/{project_id}/model-artifacts")
+def list_project_model_artifacts(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Model artifacts (joblib/onnx…) for canvas pickers — users cannot be
+    expected to paste artifact ids by hand."""
+    project = require_project_access(
+        db, project_id, current_user.id, "project.read",
+    ).project
+    artifacts = db.query(Artifact).filter(
+        Artifact.project_id == project.id,
+        Artifact.type == "model",
+        Artifact.archived_at.is_(None),
+    ).order_by(Artifact.created_at.desc()).limit(200).all()
+    return {
+        "items": [
+            {
+                "id": str(artifact.id),
+                "name": artifact.name,
+                "format": artifact.format,
+                "file_size": artifact.file_size,
+                "created_at": artifact.created_at.isoformat() if artifact.created_at else None,
+            }
+            for artifact in artifacts
+        ],
+        "total": len(artifacts),
+    }
+
+
 @router.post("/projects/{project_id}/datasets/upload")
 def upload_dataset(
     project_id: str,

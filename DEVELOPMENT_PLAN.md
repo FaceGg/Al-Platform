@@ -2529,3 +2529,13 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 ## 2026-10-11（续） 演示操作文档最新版重写
 
 - 手册重写（233 行）对齐最新系统与 2026-10-11 方案 A/B 实跑成果：新增"当前环境已就绪演示成果"（方案A任务/方案B工作流+API 可直接展示）；方案 A 章节补状态自愈、新建时报错数据集尚不存在的工作流提示；大屏章节更新为逐条数据流动/首连只同步/零重复报警的实测行为；方案 B 章节补两步发布细节、调用效果实测（triggered/job_id、下次调用换模）与已知边界（单数据集）；动线增加方案 B 加分项；故障表新增取消自愈、方案 B 换模时机两条设计行为；参数速查更新（部署当前模型 bd34542a、演示成果 ID、迁移 20261010_68）。本地提交不推送。
+
+---
+
+## 2026-10-11（续二） 闭环算子参数改为下拉选择（普通用户不接触 ID）
+
+- **用户反馈**：工作流算子参数要求手填制品/部署 ID，普通用户拿不到。改造：
+  - 后端新增 `GET /projects/{id}/model-artifacts`（type=model 工件：id/name/format/size，限 200，test_09 断言不混入数据集）；
+  - NodeConfigPanel：`dataset_artifact_id`/`retrain_dataset_artifact_id`（所有算子，原仅 csv_import）→ 数据集下拉（显示名称+行数，csv 过滤）；`model_artifact_id` → 模型制品下拉（名称+格式）；`swap_deployment_id` → 部署下拉（名称+运行状态）；三组下拉数据按算子参数懒加载；兼容过滤语义修正（未登记格式的算子不再过滤为空列表）。
+- **测试**：后端 test_api_datasets 20 passed（新增 model-artifacts 端点）；前端 NodeConfigPanel 测试重写为组件级（mock store/API/i18n）：retrain_threshold 三下拉渲染+csv 过滤 png、load_model_artifact 模型下拉选项，6 passed；tsc 通过。
+- **浏览器实测**（方案B画布）：重训阈值节点三参数全部下拉并按名称回显（方案B-报错数据·3行 / labeled_fea.csv·46行 / 自动化测试（运行中））；模型制品下拉列出全部训练产物 joblib（截图存档）。本地提交不推送。
