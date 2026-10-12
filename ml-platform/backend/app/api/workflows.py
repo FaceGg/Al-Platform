@@ -86,15 +86,21 @@ def save_workflow_as_template(
     )
     db.add(template)
     db.flush()
+    # 节点是新建的（新 UUID）：边必须经 源节点id→新节点id 映射转接，
+    # 直接照抄源图的节点 id 会指向不存在的节点（连线丢失）。
+    node_id_map = {}
     for node in source.nodes:
-        db.add(WorkflowNode(
+        copy = WorkflowNode(
             workflow_id=template.id, operator_id=node.operator_id, label=node.label,
             position_x=node.position_x, position_y=node.position_y, params=node.params,
-        ))
+        )
+        db.add(copy)
+        db.flush()
+        node_id_map[node.id] = copy.id
     for edge in source.edges:
         db.add(WorkflowEdge(
-            workflow_id=template.id, source_node_id=edge.source_node_id,
-            source_port=edge.source_port, target_node_id=edge.target_node_id,
+            workflow_id=template.id, source_node_id=node_id_map[edge.source_node_id],
+            source_port=edge.source_port, target_node_id=node_id_map[edge.target_node_id],
             target_port=edge.target_port,
         ))
     db.commit()
@@ -154,15 +160,19 @@ def instantiate_workflow_template(
     )
     db.add(workflow)
     db.flush()
+    node_id_map = {}
     for node in template.nodes:
-        db.add(WorkflowNode(
+        copy = WorkflowNode(
             workflow_id=workflow.id, operator_id=node.operator_id, label=node.label,
             position_x=node.position_x, position_y=node.position_y, params=dict(node.params or {}),
-        ))
+        )
+        db.add(copy)
+        db.flush()
+        node_id_map[node.id] = copy.id
     for edge in template.edges:
         db.add(WorkflowEdge(
-            workflow_id=workflow.id, source_node_id=edge.source_node_id,
-            source_port=edge.source_port, target_node_id=edge.target_node_id,
+            workflow_id=workflow.id, source_node_id=node_id_map[edge.source_node_id],
+            source_port=edge.source_port, target_node_id=node_id_map[edge.target_node_id],
             target_port=edge.target_port,
         ))
     db.commit()

@@ -531,8 +531,12 @@ td.training-operation-column .table-row-actions {
   top: 12px;
   right: 12px;
   z-index: 10;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   max-width: calc(100% - 250px);
-  padding: 4px;
+  padding: 5px 8px;
   border: 1px solid var(--border-default);
   border-radius: 14px;
   background: color-mix(in srgb, var(--bg-header) 92%, transparent);

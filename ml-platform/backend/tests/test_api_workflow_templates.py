@@ -69,6 +69,11 @@ class WorkflowTemplatesAPI(unittest.TestCase):
         self.assertTrue(template["name"].endswith("-模板"))
         self.assertEqual(len(template["nodes"]), 3)
         self.assertEqual(len(template["edges"]), 2)
+        # 连线必须指向模板自己的新节点（复制时按源图节点 id 照抄会丢连线）
+        node_ids = {n["id"] for n in template["nodes"]}
+        for e in template["edges"]:
+            self.assertIn(str(e["source_node_id"]), node_ids)
+            self.assertIn(str(e["target_node_id"]), node_ids)
         template_id = template["id"]
 
         # 模板列表可见，且普通工作流列表不再混入模板
@@ -94,6 +99,10 @@ class WorkflowTemplatesAPI(unittest.TestCase):
         copy = r.json()
         self.assertEqual(copy["name"], "从模板创建的服务")
         self.assertEqual(len(copy["nodes"]), 3)
+        copy_node_ids = {n["id"] for n in copy["nodes"]}
+        for e in copy["edges"]:
+            self.assertIn(str(e["source_node_id"]), copy_node_ids)
+            self.assertIn(str(e["target_node_id"]), copy_node_ids)
         self.assertNotEqual(copy["id"], template_id)
 
         # 修改副本不影响模板

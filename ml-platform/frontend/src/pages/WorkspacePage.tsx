@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
-import { App as AntApp, Layout, Button, Space, Input, Modal, Drawer, List, Tag } from "antd";
+import { App as AntApp, Layout, Button, Space, Divider, Input, Modal, Drawer, List, Tag } from "antd";
 import { PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined, PauseCircleOutlined, DeleteOutlined, CloudUploadOutlined, HistoryOutlined, ApiOutlined, CopyOutlined } from "@ant-design/icons";
 import { ReactFlowProvider } from "reactflow";
 import { useNavigate } from "react-router-dom";
@@ -536,6 +536,9 @@ export default function WorkspacePage() {
 
         <Content className="workspace-canvas" onDrop={onDrop} onDragOver={onDragOver}>
           <div className="workspace-title-chip">
+            <Button type="text" size="small" icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}
+              aria-label={text.back} title={text.back} />
+            <Divider type="vertical" style={{ margin: "0 2px" }} />
             {editingName ? (
               <Input size="small" value={wfName} onChange={(e) => setWfName(e.target.value)}
                 onPressEnter={handleNameSave} onBlur={handleNameSave} autoFocus style={{ width: 180 }} />
@@ -552,25 +555,34 @@ export default function WorkspacePage() {
           <WorkflowCanvas />
           <ExecutionProgress />
 
-          <Space className="workspace-actions" wrap>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
-              {text.back}
-            </Button>
-            <Button icon={<SaveOutlined />} onClick={handleSave}>
-              {text.save}
-            </Button>
-            <Button icon={<CopyOutlined />} onClick={handleSaveAsTemplate} loading={savingTemplate}>
-              {text.saveAsTemplate || "保存为模板"}
-            </Button>
-            <Button icon={<CloudUploadOutlined />} onClick={handlePublish}>
-              {text.publish}
-            </Button>
-            <Button icon={<ApiOutlined />} onClick={handlePublishApi}>
-              {text.publishApi}
-            </Button>
-            <Button icon={<HistoryOutlined />} onClick={openVersions}>
-              {text.version}
-            </Button>
+          <div className="workspace-actions">
+            {/* 编辑组 */}
+            <Space size={4}>
+              <Button icon={<SaveOutlined />} onClick={handleSave}>
+                {text.save}
+              </Button>
+              <Button icon={<CopyOutlined />} onClick={handleSaveAsTemplate} loading={savingTemplate}>
+                {text.saveAsTemplate || "保存为模板"}
+              </Button>
+              <Button danger icon={<DeleteOutlined />} onClick={() => setDeleteOpen(true)}>
+                {text.delete}
+              </Button>
+            </Space>
+            <Divider type="vertical" style={{ margin: "0 6px" }} />
+            {/* 发布组 */}
+            <Space size={4}>
+              <Button icon={<CloudUploadOutlined />} onClick={handlePublish}>
+                {text.publish}
+              </Button>
+              <Button icon={<ApiOutlined />} onClick={handlePublishApi}>
+                {text.publishApi}
+              </Button>
+              <Button icon={<HistoryOutlined />} onClick={openVersions}>
+                {text.version}
+              </Button>
+            </Space>
+            <Divider type="vertical" style={{ margin: "0 6px" }} />
+            {/* 运行组：画布主操作 */}
             {isRunning ? (
               <Button danger icon={<PauseCircleOutlined />} onClick={handleRun}>
                 {text.stop}
@@ -580,10 +592,7 @@ export default function WorkspacePage() {
                 {text.run}
               </Button>
             )}
-            <Button danger icon={<DeleteOutlined />} onClick={() => setDeleteOpen(true)}>
-              {text.delete}
-            </Button>
-          </Space>
+          </div>
         </Content>
 
         <Sider className="workspace-sider workspace-sider--config" width={290} style={{ background: "var(--bg-surface)", borderLeft: "1px solid var(--border-default)", overflow: "auto" }}>
