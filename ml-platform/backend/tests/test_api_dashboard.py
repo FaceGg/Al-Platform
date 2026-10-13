@@ -155,7 +155,8 @@ class TestDashboardAPI(unittest.TestCase):
                         name=f"{marker}-hidden-model",
                         status="completed",
                     ),
-                    # 模型总数口径 = 模型库条目（按可访问项目过滤）：可见/隐藏各一
+                    # 模型总数口径 = 注册模型版本数（按可访问项目过滤）：
+                    # 库条目作为版本来源，可见/隐藏各注册一个版本
                     ModelLibrary(
                         name=f"{marker}-visible-library",
                         project_id=visible_project.id,
@@ -170,6 +171,51 @@ class TestDashboardAPI(unittest.TestCase):
                     ),
                     PlatformAPI(name=f"{marker}-visible-api", owner_id=member.id, is_public=False),
                     PlatformAPI(name=f"{marker}-hidden-api", owner_id=outsider.id, is_public=False),
+                ])
+                db.flush()
+                visible_registry = RegisteredModel(
+                    project_id=visible_project.id,
+                    name=f"{marker}-visible-registered",
+                    created_by_id=member.id,
+                )
+                hidden_registry = RegisteredModel(
+                    project_id=hidden_project.id,
+                    name=f"{marker}-hidden-registered",
+                    created_by_id=outsider.id,
+                )
+                db.add_all([visible_registry, hidden_registry])
+                db.flush()
+                visible_library = db.query(ModelLibrary).filter(
+                    ModelLibrary.name == f"{marker}-visible-library",
+                ).one()
+                hidden_library = db.query(ModelLibrary).filter(
+                    ModelLibrary.name == f"{marker}-hidden-library",
+                ).one()
+                visible_artifact = db.query(Artifact).filter(
+                    Artifact.name == f"{marker}-visible.csv",
+                ).one()
+                hidden_artifact = db.query(Artifact).filter(
+                    Artifact.name == f"{marker}-hidden.csv",
+                ).one()
+                db.add_all([
+                    ModelVersion(
+                        registered_model_id=visible_registry.id,
+                        version_number=1,
+                        source_kind="platform_joblib",
+                        source_model_library_id=visible_library.id,
+                        source_artifact_id=visible_artifact.id,
+                        onnx_artifact_id=visible_artifact.id,
+                        created_by_id=member.id,
+                    ),
+                    ModelVersion(
+                        registered_model_id=hidden_registry.id,
+                        version_number=1,
+                        source_kind="platform_joblib",
+                        source_model_library_id=hidden_library.id,
+                        source_artifact_id=hidden_artifact.id,
+                        onnx_artifact_id=hidden_artifact.id,
+                        created_by_id=outsider.id,
+                    ),
                 ])
                 db.commit()
 
@@ -187,6 +233,15 @@ class TestDashboardAPI(unittest.TestCase):
         finally:
             with SessionLocal() as db:
                 db.query(PlatformAPI).filter(PlatformAPI.name.like(f"{marker}%")).delete(synchronize_session=False)
+                registry_ids = [
+                    row[0] for row in db.query(RegisteredModel.id).filter(
+                        RegisteredModel.name.like(f"{marker}%"),
+                    ).all()
+                ]
+                db.query(ModelVersion).filter(
+                    ModelVersion.registered_model_id.in_(registry_ids),
+                ).delete(synchronize_session=False)
+                db.query(RegisteredModel).filter(RegisteredModel.id.in_(registry_ids)).delete(synchronize_session=False)
                 db.query(ModelLibrary).filter(ModelLibrary.name.like(f"{marker}%")).delete(synchronize_session=False)
                 db.query(TrainingJob).filter(TrainingJob.name.like(f"{marker}%")).delete(synchronize_session=False)
                 db.query(Artifact).filter(Artifact.name.like(f"{marker}%")).delete(synchronize_session=False)
