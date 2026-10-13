@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  Button, Card, message, Popconfirm, Select, Space, Table, Tag, Tooltip, Typography,
+  Button, Card, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip, Typography,
 } from "antd";
 import {
-  ArrowRightOutlined, DeleteOutlined, DeploymentUnitOutlined, EditOutlined,
+  ArrowRightOutlined, BookOutlined, DeleteOutlined, DeploymentUnitOutlined, EditOutlined,
   PlusOutlined, ReloadOutlined, TeamOutlined,
 } from "@ant-design/icons";
+import { marked } from "marked";
 import { useNavigate } from "react-router-dom";
 import AppLayout from "../components/AppLayout";
 import LoopConfigModal, { type LoopEditorState } from "../components/loop/LoopConfigModal";
@@ -16,6 +17,9 @@ import {
 } from "../api/demoLoop";
 import { useI18n } from "../i18n";
 import { parseBackendTime } from "../utils/time";
+// 构建期内联手册全文。单一真源：docs/闭环系统演示操作手册.md，
+// 更新后执行 npm run sync:manual 同步本快照（docs 原件供 GitHub 浏览）。
+import manualRaw from "../content/闭环自动化操作手册.md?raw";
 
 const { Title, Text } = Typography;
 
@@ -27,6 +31,7 @@ export default function DemoLoopPage() {
   const [projectId, setProjectId] = useState<string>("");
   const [loops, setLoops] = useState<DemoLoopConfig[]>([]);
   const [editor, setEditor] = useState<LoopEditorState | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
   const [deployments, setDeployments] = useState<Array<{ id: string; name: string; observed_state: string }>>([]);
   const [datasets, setDatasets] = useState<Array<{ id: string; name: string }>>([]);
   const [annotators, setAnnotators] = useState<Array<{ id: string; username: string }>>([]);
@@ -38,6 +43,10 @@ export default function DemoLoopPage() {
       if (items.length) setProjectId(items[0].id);
     }).catch((error) => message.error(formatApiError(error, "项目加载失败")));
   }, []);
+
+  const openManual = () => {
+    setManualOpen(true);
+  };
 
   const loadProjectData = useCallback(async (pid: string) => {
     if (!pid) return;
@@ -84,6 +93,17 @@ export default function DemoLoopPage() {
     <AppLayout>
       <style>{`
         .loop-task-table .ant-table-tbody > tr { cursor: pointer; }
+        .loop-manual-md h1 { font-size: 20px; margin: 14px 0 10px; }
+        .loop-manual-md h2 { font-size: 17px; margin: 18px 0 10px; border-bottom: 1px solid rgba(128,128,128,.25); padding-bottom: 6px; }
+        .loop-manual-md h3 { font-size: 15px; margin: 14px 0 8px; }
+        .loop-manual-md table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+        .loop-manual-md th, .loop-manual-md td { border: 1px solid rgba(128,128,128,.35); padding: 6px 10px; font-size: 12.5px; text-align: left; }
+        .loop-manual-md th { background: rgba(128,128,128,.12); }
+        .loop-manual-md code { background: rgba(128,128,128,.16); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+        .loop-manual-md pre { background: rgba(128,128,128,.12); padding: 10px; border-radius: 6px; overflow-x: auto; }
+        .loop-manual-md pre code { background: transparent; padding: 0; }
+        .loop-manual-md blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid rgba(128,128,128,.4); color: inherit; opacity: .85; }
+        .loop-manual-md li { margin: 3px 0; }
       `}</style>
       <Card style={{ marginBottom: 16 }}>
         <Space wrap size="large">
@@ -102,6 +122,9 @@ export default function DemoLoopPage() {
           </span>
           <Button icon={<ReloadOutlined />} onClick={() => loadProjectData(projectId)}>
             {tr.refresh || "刷新"}
+          </Button>
+          <Button icon={<BookOutlined />} onClick={() => setManualOpen(true)}>
+            {tr.manual || "操作手册"}
           </Button>
           <Button onClick={() => window.open("/demo-showcase.html", "_blank")}>
             {tr.showcase || "运行监控大屏"}
@@ -214,6 +237,21 @@ export default function DemoLoopPage() {
         onCancel={() => setEditor(null)}
         onSaved={() => { setEditor(null); void refreshLoops(); }}
       />
+
+      <Modal
+        title="闭环自动化操作手册"
+        open={manualOpen}
+        onCancel={() => setManualOpen(false)}
+        footer={null}
+        width={860}
+      >
+        <div className="loop-manual-md"
+          style={{ maxHeight: "68vh", overflowY: "auto", lineHeight: 1.75, fontSize: 13.5 }}
+          dangerouslySetInnerHTML={{
+            __html: marked.parse(manualRaw, { async: false }) as string,
+          }}
+        />
+      </Modal>
     </AppLayout>
   );
 }

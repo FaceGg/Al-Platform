@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url'
+import { searchForWorkspaceRoot } from 'vite'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -9,6 +11,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // 允许画布「操作手册」弹窗 ?raw 导入仓库级 docs 手册（位于 frontend 根之外）
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), fileURLToPath(new URL('../docs', import.meta.url))] },
     proxy: {
       '/api': { target: apiProxyTarget, changeOrigin: true },
       '/ws': { target: wsProxyTarget, ws: true },

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build --outDir ../../temp_test/frontend-dist --emptyOutDir",
+    "sync:manual": "cp ../docs/闭环系统演示操作手册.md src/content/闭环自动化操作手册.md",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
