@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.database import get_db
 from app.models.model_library import ModelLibrary
-from app.models.model_registry import InferenceDeployment, ModelVersion
+from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
 from app.models.api_model import PlatformAPI
 from app.models.artifact import Artifact
 from app.models.training import TrainingJob
@@ -83,29 +83,24 @@ def get_dashboard_stats(
     total_api_calls = sum(c[0] or 0 for c in api_calls)
     total_success_calls = sum(c[1] or 0 for c in api_calls)
 
-    # Model stats align with the model library (what 模型库 actually lists):
-    # total = library entries scoped to accessible projects; published =
-    # entries whose model version sits on a running deployment; training =
-    # jobs in flight (outputs not yet入库).
+    # Model stats align with 模型库 (registered models scoped to accessible
+    # projects): total = model versions; published = versions on running
+    # deployments; completed = the rest; training = jobs in flight.
     active_training_statuses = ("pending", "queued", "running", "cancel_requested")
     model_training = training_jobs_query.filter(
         TrainingJob.status.in_(active_training_statuses),
     ).count()
-    library_query = db.query(ModelLibrary)
+    registry_query = db.query(ModelVersion)
     if not is_platform_admin:
-        library_query = library_query.filter(
-            ModelLibrary.project_id.in_(accessible_project_ids),
-        )
-    total_models = library_query.count()
-    deployed_library_ids = {
-        row[0] for row in db.query(ModelVersion.source_model_library_id)
-        .join(InferenceDeployment, InferenceDeployment.model_version_id == ModelVersion.id)
-        .filter(
-            ModelVersion.source_model_library_id.isnot(None),
-            InferenceDeployment.observed_state == "running",
-        ).all()
+        registry_query = registry_query.join(
+            RegisteredModel, ModelVersion.registered_model_id == RegisteredModel.id,
+        ).filter(RegisteredModel.project_id.in_(accessible_project_ids))
+    total_models = registry_query.count()
+    deployed_version_ids = {
+        row[0] for row in db.query(InferenceDeployment.model_version_id)
+        .filter(InferenceDeployment.observed_state == "running").all()
     }
-    model_published = len(deployed_library_ids)
+    model_published = len(deployed_version_ids)
     model_completed = max(0, total_models - model_published)
 
     algorithm_categories = Counter(
