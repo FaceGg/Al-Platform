@@ -127,7 +127,16 @@ docker compose version >/dev/null 2>&1 || die "Docker Compose v2 (docker compose
 docker info >/dev/null 2>&1 || die "Docker daemon is unavailable to the current user."
 [[ -x "$COMPOSE_WRAPPER" ]] || die "Missing executable Compose wrapper: $COMPOSE_WRAPPER"
 
-if [[ -n "$PUBLIC_ORIGIN" && ! "$PUBLIC_ORIGIN" =~ ^https?://[^/]+$ ]]; then
+# Tolerate copy-paste artifacts: strip surrounding whitespace, CR and any
+# number of trailing slashes before validating the origin.
+PUBLIC_ORIGIN="${PUBLIC_ORIGIN%"${PUBLIC_ORIGIN##*[![:space:]]}"}"
+PUBLIC_ORIGIN="${PUBLIC_ORIGIN#*[![:space:]]}"
+PUBLIC_ORIGIN="${PUBLIC_ORIGIN%$'\r'}"
+while [[ "$PUBLIC_ORIGIN" == */ ]]; do
+  PUBLIC_ORIGIN="${PUBLIC_ORIGIN%/}"
+done
+
+if [[ -n "$PUBLIC_ORIGIN" && ! "$PUBLIC_ORIGIN" =~ ^https?://[^/[:space:]]+$ ]]; then
   die "PUBLIC_ORIGIN must be an origin such as http://SERVER_PUBLIC_IP:5175 (without a path)."
 fi
 
