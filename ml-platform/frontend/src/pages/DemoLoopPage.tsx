@@ -17,9 +17,9 @@ import {
 } from "../api/demoLoop";
 import { useI18n } from "../i18n";
 import { parseBackendTime } from "../utils/time";
-// 构建期内联手册全文。单一真源：docs/闭环系统演示操作手册.md，
+// 构建期内联操作要点手册（仅方案 A / 方案 B 操作）。单一真源：docs/闭环系统演示操作手册.md，
 // 更新后执行 npm run sync:manual 同步本快照（docs 原件供 GitHub 浏览）。
-import manualRaw from "../content/闭环自动化操作手册.md?raw";
+import manualRaw from "../content/闭环操作手册.md?raw";
 
 const { Title, Text } = Typography;
 
@@ -239,7 +239,7 @@ export default function DemoLoopPage() {
       />
 
       <Modal
-        title="闭环自动化操作手册"
+        title="闭环操作手册（方案 A / 方案 B）"
         open={manualOpen}
         onCancel={() => setManualOpen(false)}
         footer={null}
