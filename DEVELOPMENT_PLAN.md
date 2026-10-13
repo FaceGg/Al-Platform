@@ -320,7 +320,8 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 现象：r14 发布前触发全量 CI（run 38374172002，mode=full，绑定 `e9248f8`），Chromium acceptance 失败：`e2e/weld-quality.spec.ts:37` 在 `/template/weld_quality` 页两次尝试均找不到三级标题"焊接质量预测"（一致失败，非抖动）；Week 11-12 verification 因 `needs` browser-acceptance 连带 skipped。其余 12 用例通过、3 个 kind 集群用例预期跳过。
 - 根因：`f662881`（项目级工作流模板体系）已退役全部焊接硬编码模板（`INDUSTRIAL_TEMPLATES` 清空，后端 `test_industrial_template_e2e.py` 等同批删除），`GET /api/templates/weld_quality` 返回 404，向导页模板加载失败渲染空页。且该页对通用模板同样不兼容：`GET /api/templates/full_ml_pipeline` 返回裸 TEMPLATES 字典（无 `parameters`/`target_column`/`required_columns` 字段），前端 `parameters.map` 抛错进错误态；实例化端点对通用模板走 query 参数契约而向导页发 industrial JSON body——即 `/template/:id` 向导链路随焊接模板整体退役。上次全量绿为 `96630f7`（2026-10-12 00:00 UTC，早于 `f662881` 落地 3.5 小时），此后 push 仅触发 light CI（不跑浏览器验收），断裂直至本次 full 分发才暴露。
 - 处理：按退役口径对齐测试套件——删除 `e2e/weld-quality.spec.ts` 及其专用 fixture `e2e/fixtures/weld_fault_features.csv`（fixture 无其他引用）。其余浏览器用例已覆盖模型训练/推理/导出（automl-multioutput、model-inference、model-export）与各周验收，不损失"浏览器级跑通 ML 流程"覆盖。不改写为通用模板用例：向导页对通用模板的前后端契约不兼容属产品功能缺口，是否恢复属产品决策，不入本次发布范围。
-- 验证：删除后重触发全量 CI（结果回填于发布记录）。
+- 验证：删除后重触发全量 CI run 38379591239（mode=full，绑定 `f4d6777`）六 job 全绿（Quality ubuntu/windows、Production integration、Production experiment integration、Chromium acceptance、Week 11-12 verification）。
+- 发布记录（2026-10-13）：GitHub Release [20261013-r14](https://github.com/FaceGg/Al-Platform/releases/tag/20261013-r14)，tag 打在 `f4d6777`（Latest），资产为 r14 安装包（3,134,692 字节）与 `.sha256` 校验件；安装包源码内容绑定 `1e8c44e`，`e9248f8`（安装脚本修复）与 `f4d6777`（本条纯测试对齐）不改变包内业务代码。首次全量分发 run 38374172002 因本条用例失败（已修复），发布门禁以 38379591239 为准。
 
 ### 2026-10-13 r14 热修：r13 安装脚本 PUBLIC_ORIGIN 前导字符误删，所有合法 origin 被校验拒绝
 
