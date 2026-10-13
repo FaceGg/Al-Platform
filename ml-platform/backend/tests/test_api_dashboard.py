@@ -260,13 +260,11 @@ class TestDashboardAPI(unittest.TestCase):
         after_create = client.get(
             "/api/dashboard/stats", headers=self.admin_headers,
         ).json()
+        # 新口径：模型统计按模型库条目 + 部署引用计算
+        # （训练中 = 进行中的训练任务；已发布 = 挂在运行中部署的库条目）。
         self.assertEqual(
             after_create["model_status"]["training"] - before["model_status"]["training"],
             2,
-        )
-        self.assertEqual(
-            after_create["model_status"]["completed"] - before["model_status"]["completed"],
-            1,
         )
         self.assertEqual(
             after_create["model_status"]["published"] - before["model_status"]["published"],
@@ -274,7 +272,7 @@ class TestDashboardAPI(unittest.TestCase):
         )
         self.assertEqual(
             after_create["core_assets"]["total_models"] - before["core_assets"]["total_models"],
-            4,
+            1,
         )
         self.assertEqual(
             after_create["core_assets"]["total_apis"] - before["core_assets"]["total_apis"],
@@ -289,8 +287,9 @@ class TestDashboardAPI(unittest.TestCase):
         after_delete = client.get(
             "/api/dashboard/stats", headers=self.admin_headers,
         ).json()
+        # 库条目未被删除：模型总数不变；训练任务减少 → 训练中 -1
         self.assertEqual(after_delete["model_status"]["completed"], before["model_status"]["completed"])
-        self.assertEqual(after_delete["core_assets"]["total_models"], before["core_assets"]["total_models"] + 3)
+        self.assertEqual(after_delete["core_assets"]["total_models"], before["core_assets"]["total_models"] + 1)
         self.assertEqual(after_delete["core_assets"]["total_apis"], before["core_assets"]["total_apis"])
 
         with SessionLocal() as db:

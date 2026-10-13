@@ -83,38 +83,30 @@ def get_dashboard_stats(
     total_api_calls = sum(c[0] or 0 for c in api_calls)
     total_success_calls = sum(c[1] or 0 for c in api_calls)
 
-    # Model lifecycle is derived from real training jobs and running deployments.
+    # Model stats align with the model library (what 模型库 actually lists):
+    # total = library entries scoped to accessible projects; published =
+    # entries whose model version sits on a running deployment; training =
+    # jobs in flight (outputs not yet入库).
     active_training_statuses = ("pending", "queued", "running", "cancel_requested")
     model_training = training_jobs_query.filter(
         TrainingJob.status.in_(active_training_statuses),
     ).count()
-    published_job_ids = {
-        row[0]
-        for row in training_jobs_query.with_entities(TrainingJob.id)
-        .join(
-            ModelVersion,
-            or_(
-                TrainingJob.model_library_id == ModelVersion.source_model_library_id,
-                TrainingJob.model_artifact_id == ModelVersion.source_artifact_id,
-            ),
+    library_query = db.query(ModelLibrary)
+    if not is_platform_admin:
+        library_query = library_query.filter(
+            ModelLibrary.project_id.in_(accessible_project_ids),
         )
-        .join(
-            InferenceDeployment,
-            InferenceDeployment.model_version_id == ModelVersion.id,
-        )
+    total_models = library_query.count()
+    deployed_library_ids = {
+        row[0] for row in db.query(ModelVersion.source_model_library_id)
+        .join(InferenceDeployment, InferenceDeployment.model_version_id == ModelVersion.id)
         .filter(
-            TrainingJob.status == "completed",
+            ModelVersion.source_model_library_id.isnot(None),
             InferenceDeployment.observed_state == "running",
-        )
-        .distinct()
-        .all()
+        ).all()
     }
-    model_published = len(published_job_ids)
-    completed_query = training_jobs_query.filter(TrainingJob.status == "completed")
-    if published_job_ids:
-        completed_query = completed_query.filter(TrainingJob.id.notin_(published_job_ids))
-    model_completed = completed_query.count()
-    total_models = model_training + model_completed + model_published
+    model_published = len(deployed_library_ids)
+    model_completed = max(0, total_models - model_published)
 
     algorithm_categories = Counter(
         getattr(operator, "category", "utility") or "utility"
