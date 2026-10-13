@@ -628,9 +628,9 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
       );
     }
 
-    if ((p.name === "dataset_artifact_id" || p.name === "retrain_dataset_artifact_id")
-      && !isCSVImport) {
-      // 闭环等算子的数据集参数一律下拉选择（普通用户拿不到制品 ID）。
+    if (p.name === "dataset_artifact_id" || p.name === "retrain_dataset_artifact_id") {
+      // 数据集参数一律下拉选择（普通用户拿不到制品 ID）；
+      // csv_import 已在上方按 source 限定仅 artifact 来源渲染。
       return (
         <Select
           aria-label={lang === "zh" ? (p.name === "retrain_dataset_artifact_id" ? "重训数据集" : "数据集制品") : "Dataset artifact"}

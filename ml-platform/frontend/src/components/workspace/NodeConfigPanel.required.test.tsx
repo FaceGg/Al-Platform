@@ -128,9 +128,9 @@ describe("NodeConfigPanel required parameters", () => {
 
     render(<NodeConfigPanel />);
 
-    expect(screen.getByText("Data File")).toBeInTheDocument();
-    expect(screen.queryByText("Dataset Artifact ID")).not.toBeInTheDocument();
-    expect(screen.queryByText("File URL")).not.toBeInTheDocument();
+    expect(screen.getByText("文件路径")).toBeInTheDocument();
+    expect(screen.queryByText("数据集制品")).not.toBeInTheDocument();
+    expect(screen.queryByText("URL 地址")).not.toBeInTheDocument();
   });
 
   it("offers compatible project dataset artifacts through a selector for CSV imports", async () => {
@@ -157,8 +157,8 @@ describe("NodeConfigPanel required parameters", () => {
     render(<NodeConfigPanel projectId="project-1" />);
 
     expect((await screen.findAllByText("数据集制品")).length).toBeGreaterThan(0);
-    expect(screen.queryByText("Data File")).not.toBeInTheDocument();
-    expect(screen.queryByText("File URL")).not.toBeInTheDocument();
+    expect(screen.queryByText("文件路径")).not.toBeInTheDocument();
+    expect(screen.queryByText("URL 地址")).not.toBeInTheDocument();
     expect(datasets).toHaveBeenCalledWith("project-1");
     fireEvent.mouseDown(screen.getAllByRole("combobox")[1]);
     expect(await screen.findByText("weld.csv")).toBeInTheDocument();
