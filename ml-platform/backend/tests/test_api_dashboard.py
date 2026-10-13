@@ -155,6 +155,19 @@ class TestDashboardAPI(unittest.TestCase):
                         name=f"{marker}-hidden-model",
                         status="completed",
                     ),
+                    # 模型总数口径 = 模型库条目（按可访问项目过滤）：可见/隐藏各一
+                    ModelLibrary(
+                        name=f"{marker}-visible-library",
+                        project_id=visible_project.id,
+                        owner_id=member.id,
+                        status="completed",
+                    ),
+                    ModelLibrary(
+                        name=f"{marker}-hidden-library",
+                        project_id=hidden_project.id,
+                        owner_id=outsider.id,
+                        status="completed",
+                    ),
                     PlatformAPI(name=f"{marker}-visible-api", owner_id=member.id, is_public=False),
                     PlatformAPI(name=f"{marker}-hidden-api", owner_id=outsider.id, is_public=False),
                 ])
@@ -174,6 +187,7 @@ class TestDashboardAPI(unittest.TestCase):
         finally:
             with SessionLocal() as db:
                 db.query(PlatformAPI).filter(PlatformAPI.name.like(f"{marker}%")).delete(synchronize_session=False)
+                db.query(ModelLibrary).filter(ModelLibrary.name.like(f"{marker}%")).delete(synchronize_session=False)
                 db.query(TrainingJob).filter(TrainingJob.name.like(f"{marker}%")).delete(synchronize_session=False)
                 db.query(Artifact).filter(Artifact.name.like(f"{marker}%")).delete(synchronize_session=False)
                 db.query(Project).filter(Project.name.like(f"{marker}%")).delete(synchronize_session=False)

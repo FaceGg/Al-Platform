@@ -248,12 +248,14 @@ class TestKnowledgeAPI(unittest.TestCase):
 
 class TestTemplatesAPI(unittest.TestCase):
     def test_list_templates(self):
+        # 焊接场景模板已退役（weld_quality/param_recommend/anomaly_detect），
+        # 通用流程模板保留 4 项。
         r = client.get("/api/templates", headers=login_headers())
         self.assertEqual(r.status_code, 200)
         items = r.json()["items"]
-        self.assertGreaterEqual(len(items), 7)
+        self.assertGreaterEqual(len(items), 4)
         template_ids = [t["id"] for t in items]
-        self.assertIn("weld_quality", template_ids)
+        self.assertIn("full_ml_pipeline", template_ids)
         self.assertIn("condition_branch", template_ids)
         self.assertIn("loop_optimize", template_ids)
         self.assertIn("multi_agent_quality", template_ids)
