@@ -129,8 +129,11 @@ docker info >/dev/null 2>&1 || die "Docker daemon is unavailable to the current 
 
 # Tolerate copy-paste artifacts: strip surrounding whitespace, CR and any
 # number of trailing slashes before validating the origin.
+# 注意：前导空白修剪必须用 ${v#"${v%%[![:space:]]*}"}（剥掉纯空白前缀）；
+# ${v#*[![:space:]]} 会连第一个非空白字符一起吃掉（http:// 变 ttp://），
+# 导致所有合法 origin 都被校验拒绝（r13 现场踩坑）。
 PUBLIC_ORIGIN="${PUBLIC_ORIGIN%"${PUBLIC_ORIGIN##*[![:space:]]}"}"
-PUBLIC_ORIGIN="${PUBLIC_ORIGIN#*[![:space:]]}"
+PUBLIC_ORIGIN="${PUBLIC_ORIGIN#"${PUBLIC_ORIGIN%%[![:space:]]*}"}"
 PUBLIC_ORIGIN="${PUBLIC_ORIGIN%$'\r'}"
 while [[ "$PUBLIC_ORIGIN" == */ ]]; do
   PUBLIC_ORIGIN="${PUBLIC_ORIGIN%/}"

@@ -10,8 +10,8 @@
 ## 安装
 
 ```bash
-tar -xzf linkraft-ubuntu-20260926-r12.tar.gz
-cd linkraft-ubuntu-20260926-r12
+tar -xzf linkraft-ubuntu-20261013-r14.tar.gz
+cd linkraft-ubuntu-20261013-r14
 chmod +x packaging/*.sh ml-platform/scripts/prepare-production-secrets.sh
 PUBLIC_ORIGIN=http://SERVER_PUBLIC_IP:5175 ./packaging/install-ubuntu.sh
 ```
@@ -62,6 +62,8 @@ r8 及更早版本存在一个 PostgreSQL 专属缺陷：`generic_annotation_tas
 
 r11 及更早版本的审核员/标注员门户在**非 localhost 的 HTTP 访问**下无法保持登录：登录接口返回 200 但浏览器会丢弃带 `Secure` 标志的 cookie，表现为登录后立即被弹回登录页（`/portal/auth/me` 401）。r12 起 `.env` 中 `ANNOTATOR_COOKIE_SECURE=false`（安装脚本对新装和升级部署都会写入），门户会话 cookie 不再带 Secure 标志；若将来在门户前部署 HTTPS 反向代理，把该值改回 `true` 即可。
 
+r13 起门户会话 cookie（`portal_session`/`admin_portal_session`）的 `path` 收紧为 `/portal`：cookie 按域不按端口隔离，旧版 `path=/` 的门户 cookie 会被同机主平台（5175/5173）登录请求一并带上，触发平台 cookie-CSRF 策略返回 `CSRF_TOKEN_REQUIRED`。从 r12 及更早版本升级后，既有浏览器需**一次性手动清除**旧的门户 cookie（删除该域名下 `portal_session` 与 `admin_portal_session`，或清除站点数据）；此后主平台与门户登录互不干扰。
+
 从 r9 及更早版本升级前已 `failed` 的回传批次，若标注员门户提示无法重新回传（assignment 仍锁在 `returned_pending_acceptance`），可执行以下 SQL 解锁后再重新回传：
 
 ```bash
@@ -72,12 +74,19 @@ r11 及更早版本的审核员/标注员门户在**非 localhost 的 HTTP 访�
 从 r4-r8 升级时，保留现有 `.env`、`secrets/` 和数据库，只覆盖源码并重建相关服务：
 
 ```bash
-tar -xzf /path/to/linkraft-ubuntu-20260926-r12.tar.gz \
+tar -xzf /path/to/linkraft-ubuntu-20261013-r14.tar.gz \
   --strip-components=1 -C ~/linkraft-ubuntu-20260924-r4
 cd ~/linkraft-ubuntu-20260924-r4
 ./packaging/compose-ubuntu.sh up -d --build --force-recreate backend worker scheduler frontend annotator annotator-frontend
 ./packaging/compose-ubuntu.sh ps
 ```
+
+从 r9-r13 升级到 r14 使用同样的流程（覆盖源码后执行上面的重建命令）。r14 相比 r12 的主要变更：
+
+- **新增平台功能**：Kubernetes 集群管理/作业运行/Notebook 会话/镜像目录/多集群治理（Week 14-16，集群在平台内登记与连通性检查，无需为本包额外配置环境变量）、闭环演示（推理→错误数据回流→阈值告警→自动重训换模型）、编排服务图工作台、资源监控页；主平台/门户时间显示统一按 UTC 解析修复（此前 UTC+8 环境统一慢 8 小时）。
+- **数据库迁移**：alembic head 由 `20260926_61` 推进到 `20261010_68`（新增 `20260928_62`–`20261010_68`，含 demo_loop、compute 心跳、developer_resources、resource_governance 等表）；升级时 `migrate` 容器自动执行，完成后请在 `./packaging/compose-ubuntu.sh logs migrate` 确认无错再验收业务。
+- **门户 cookie path 收紧**：见上一节，升级后需一次性清除旧门户 cookie。
+- **r14 修复 r13 安装脚本缺陷**：r13 的 `install-ubuntu.sh` 在校验前会把 `PUBLIC_ORIGIN` 的第一个字符误删（`http://` 变 `ttp://`），导致所有合法 origin 都被 `[ERROR] PUBLIC_ORIGIN must be an origin ...` 拒绝。r14 已修复（前导空白修剪改用纯空白前缀剥离写法）。若已解压 r13，可在其目录执行 `sed -i '133s|.*|PUBLIC_ORIGIN="${PUBLIC_ORIGIN#"${PUBLIC_ORIGIN%%[![:space:]]*}"}"|' packaging/install-ubuntu.sh` 就地修复，或直接改用 r14 安装包。
 
 ## CPU 兼容性
 
@@ -118,7 +127,7 @@ docker image inspect minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1 \
 如果 r4、r5、r6 或 r7 部署在注册 XGBoost AutoML 结果时返回 `MODEL_CONVERSION_FAILED`，请在不替换 `.env`、`secrets/` 和数据库文件的前提下更新现有部署目录，然后重建 Python 服务：
 
 ```bash
-tar -xzf /path/to/linkraft-ubuntu-20260926-r12.tar.gz \
+tar -xzf /path/to/linkraft-ubuntu-20261013-r14.tar.gz \
   --strip-components=1 -C ~/linkraft-ubuntu-20260924-r4
 cd ~/linkraft-ubuntu-20260924-r4
 ./packaging/compose-ubuntu.sh up -d --build --force-recreate backend worker scheduler
@@ -127,11 +136,11 @@ cd ~/linkraft-ubuntu-20260924-r4
 
 r8 及之后版本的 worker 会在应用 Linux 地址空间限制之前导入 ONNX/XGBoost 二进制扩展。既有模型制品无需重新训练；重建后的 `backend` 容器健康后重试注册即可。
 
-如果 r4、r5、r6 或 r7 部署出现 MinIO 健康检查问题，请部署 r8 或更新版本，或先复制 r12 的 `packaging/docker-compose.legacy-cpu.yml`。CPUv1 服务器镜像不提供 `mc` 健康检查命令；r8 改用服务器的 HTTP 就绪端点，并把存储桶创建保留在独立的 `minio-init` mc 容器中：
+如果 r4、r5、r6 或 r7 部署出现 MinIO 健康检查问题，请部署 r8 或更新版本，或先复制 r14 的 `packaging/docker-compose.legacy-cpu.yml`。CPUv1 服务器镜像不提供 `mc` 健康检查命令；r8 改用服务器的 HTTP 就绪端点，并把存储桶创建保留在独立的 `minio-init` mc 容器中：
 
 ```bash
 ./packaging/compose-ubuntu.sh up -d --force-recreate minio minio-init
 ./packaging/compose-ubuntu.sh up -d --remove-orphans
 ```
 
-如需从当前源码树重新构建安装包，运行 `./packaging/build-package.sh 20260926-r12`。
+如需从当前源码树重新构建安装包，运行 `./packaging/build-package.sh 20261013-r14`。

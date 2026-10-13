@@ -315,6 +315,21 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 发布记录（2026-09-28）：安装包 `output/linkraft-ubuntu-20260926-r12.tar.gz`，manifest 绑定 HEAD `1f4d87f`，SHA-256 `16cf3654723b9380da264ff77cda4df8c3cd1db789403695ab900015141b8f8b`，归档抽查确认 cookie 开关代码与安装脚本均已包含。更正一：首个 r12 归档（SHA-256 `8ac6d972...b182b`）的 `install-ubuntu.sh` 因 Windows 工作区覆盖带入了 CRLF 行尾，在服务器报 `/usr/bin/env: bash\r`；`build-package.sh` 已增加打包前 LF 归一化。更正二：第二个归档（SHA-256 `77061681...56e29`）的安装脚本在 `set -u` 下引用未声明的 `ANNOTATOR_COOKIE_SECURE` 报"未绑定的变量"；已在脚本头部补默认声明并重建。前两个哈希均作废，服务器现场可用 `ANNOTATOR_COOKIE_SECURE=false ./packaging/install-ubuntu.sh` 绕过。
 - 待完成：目标服务器部署 r12 后外网登录 8443 并保持会话的端到端确认；外网 5175 的 `CORS_ORIGIN_FORBIDDEN` 与本地 5175 的对偶问题需用 `PUBLIC_ORIGIN`/`PUBLIC_ORIGIN_ALIASES` 收敛（运行时配置，无需发版）。
 
+### 2026-10-13 r14 热修：r13 安装脚本 PUBLIC_ORIGIN 前导字符误删，所有合法 origin 被校验拒绝
+
+- 现象：用户在目标服务器（10.12.18.6）以 `PUBLIC_ORIGIN=http://10.12.18.6:5175 ./packaging/install-ubuntu.sh` 安装 r13，命令语法正确仍报 `[ERROR] PUBLIC_ORIGIN must be an origin such as http://SERVER_PUBLIC_IP:5175 (without a path).`（前两轮为用户误用反引号致变量为空，末轮命令正确后仍报错才定位到脚本缺陷）。
+- 根因：`9579f53`（r13 当日加入的复制粘贴容错修剪）中前导空白剥离误用 `${PUBLIC_ORIGIN#*[![:space:]]}`——该写法的最短匹配会连第一个非空白字符一起吃掉（`http://10.12.18.6:5175` → `ttp://...`），随后正则 `^https?://` 必然失配，所有合法 origin 全部被拒。容错代码未做真实值测试即入包。
+- 修复：`packaging/install-ubuntu.sh` 前导修剪改为纯空白前缀剥离 `${PUBLIC_ORIGIN#"${PUBLIC_ORIGIN%%[![:space:]]*}"}`，并留注释说明两种写法差异与本次教训。验证：从修复后脚本提取修剪+校验块跑 7 用例矩阵（正常值/首尾空白/CR/尾部斜杠/空值/含路径拒绝/ftp 拒绝）全部符合预期；`bash -n` 语法通过；README 中的服务器端 sed 一行修复命令在 r13 归档原脚本上实测生效（第 133 行替换后语法与校验双过）。
+- 发布记录（2026-10-13）：安装包 `output/linkraft-ubuntu-20261013-r14.tar.gz`（r13 已在现场暴露缺陷，升版区分；r13 归档及 SHA 作废），manifest 绑定 HEAD `1e8c44e`，SHA-256 `3d92c0053ed9d88891accc11bd5c9ae785a8ad2ffd83136b189d3210f5efa2a5`，`sha256sum -c` 通过；归档内实测校验块 `http://10.12.18.6:5175` PASS。`README-UBUNTU.md` 升为 r14（含 r13 就地 sed 修复指引与 r14 变更条目）。
+- 服务器现场两条路：① 直接改用 r14 包重传；② 已解压的 r13 执行 `sed -i '133s|.*|PUBLIC_ORIGIN="${PUBLIC_ORIGIN#"${PUBLIC_ORIGIN%%[![:space:]]*}"}"|' packaging/install-ubuntu.sh` 后继续安装。
+
+### 2026-10-13 常规重打包：纳入 r12 后全部主线改动（r13）
+
+- 背景：r12（2026-09-28）之后主线新增大量已验证改动——Week 14 Kubernetes 执行器、Week 15 Notebook/镜像目录/GPU、Week 16 多集群治理（迁移 head 推进至 `20261010_68`）、闭环演示/编排服务图工作台/资源监控 HUD、时间显示 8 小时偏差修复、项目删除级联重建、csv_import 数据集制品下拉回归修复（`1e8c44e`）、`PUBLIC_ORIGIN` 复制粘贴容错修剪（`9579f53`）等；用户要求按既有格式重新打包最新 Ubuntu 安装包。
+- 发布记录（2026-10-13）：安装包 `output/linkraft-ubuntu-20261013-r13.tar.gz`，manifest 绑定 HEAD `1e8c44e`，SHA-256 `8cbfc54f989a6ebc56d7ba6ac3ff74d4ed653dae22ae7c767e490d061049fcbd`，`sha256sum -c` 通过。首个 r13 归档（SHA-256 `bd3b6134...41bd`）因安装文档未更新而作废重建；中途一版曾将 README 的 `SERVER_PUBLIC_IP` 占位替换为固定 IP `10.12.18.6`，按用户指示恢复占位符（用户部署时自行传参），均未部署、无现场影响。归档抽查确认：门户 cookie `path=/portal` 收紧、`ANNOTATOR_COOKIE_SECURE` 默认声明（`set -u` 安全）、csv_import 下拉修复与 `PUBLIC_ORIGIN` 修剪均已包含；`packaging/README-UBUNTU.md` 已更新到 r13（安装/升级示例、r12→r13 变更说明、迁移推进到 `20261010_68`、门户旧 cookie 一次性清除指引）；排除项复核干净（无 `.env`/secrets/wheelhouse(901MB)/node_modules/数据库/.git）；`docker-compose.override.yml` 未混入（仅 `.disabled`）；全部打包 shell 脚本为 LF 行尾。
+- 环境注记：Windows 工作区的 `build-package.sh` 本身带 CRLF，WSL 直接 `bash packaging/build-package.sh` 报 `set: pipefail: invalid option name`（与 r12 首归档的 install-ubuntu.sh CRLF 问题同类）；本次以 `sed 's/\r$//'` 生成 `.git/` 内临时 LF 副本执行（不进归档、不动工作树）。历史小勘误：r12 最终归档 manifest 实际绑定 `df46ba4`（CRLF 归一化提交之后），非台账原记的 `1f4d87f`。
+- 待完成：目标服务器部署 r13 的端到端验收（升级路径含 alembic 迁移至 `20261010_68`，需确认 migrate 容器自动执行成功后再验收业务功能；r12 升级后需一次性清除旧门户 cookie）。
+
 ### 2026-09-26 标注员门户误报“质检反馈/需重做”（r11）
 
 - 现象：标注员修改标签并重新回传后，任务列表显示质检反馈横幅和“需重做”徽章——但任务是正常等待验收，并非审核退回。
