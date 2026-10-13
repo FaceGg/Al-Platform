@@ -32,6 +32,7 @@ prune_excluded_stage_paths() {
   find "$stage_root" -type d \( \
     -name .git -o -name .worktrees -o -name node_modules -o -name __pycache__ \
     -o -name secrets -o -name output -o -name temp_test -o -name tmp \
+    -o -name wheelhouse \
   \) -prune -exec rm -rf -- {} +
 
   find "$stage_root" -type f \( \
