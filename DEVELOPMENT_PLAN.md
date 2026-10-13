@@ -315,6 +315,13 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 发布记录（2026-09-28）：安装包 `output/linkraft-ubuntu-20260926-r12.tar.gz`，manifest 绑定 HEAD `1f4d87f`，SHA-256 `16cf3654723b9380da264ff77cda4df8c3cd1db789403695ab900015141b8f8b`，归档抽查确认 cookie 开关代码与安装脚本均已包含。更正一：首个 r12 归档（SHA-256 `8ac6d972...b182b`）的 `install-ubuntu.sh` 因 Windows 工作区覆盖带入了 CRLF 行尾，在服务器报 `/usr/bin/env: bash\r`；`build-package.sh` 已增加打包前 LF 归一化。更正二：第二个归档（SHA-256 `77061681...56e29`）的安装脚本在 `set -u` 下引用未声明的 `ANNOTATOR_COOKIE_SECURE` 报"未绑定的变量"；已在脚本头部补默认声明并重建。前两个哈希均作废，服务器现场可用 `ANNOTATOR_COOKIE_SECURE=false ./packaging/install-ubuntu.sh` 绕过。
 - 待完成：目标服务器部署 r12 后外网登录 8443 并保持会话的端到端确认；外网 5175 的 `CORS_ORIGIN_FORBIDDEN` 与本地 5175 的对偶问题需用 `PUBLIC_ORIGIN`/`PUBLIC_ORIGIN_ALIASES` 收敛（运行时配置，无需发版）。
 
+### 2026-10-13 全量 CI 暴露焊接模板浏览器用例残留：随模板体系一并对齐退役（r14 发布门禁）
+
+- 现象：r14 发布前触发全量 CI（run 38374172002，mode=full，绑定 `e9248f8`），Chromium acceptance 失败：`e2e/weld-quality.spec.ts:37` 在 `/template/weld_quality` 页两次尝试均找不到三级标题"焊接质量预测"（一致失败，非抖动）；Week 11-12 verification 因 `needs` browser-acceptance 连带 skipped。其余 12 用例通过、3 个 kind 集群用例预期跳过。
+- 根因：`f662881`（项目级工作流模板体系）已退役全部焊接硬编码模板（`INDUSTRIAL_TEMPLATES` 清空，后端 `test_industrial_template_e2e.py` 等同批删除），`GET /api/templates/weld_quality` 返回 404，向导页模板加载失败渲染空页。且该页对通用模板同样不兼容：`GET /api/templates/full_ml_pipeline` 返回裸 TEMPLATES 字典（无 `parameters`/`target_column`/`required_columns` 字段），前端 `parameters.map` 抛错进错误态；实例化端点对通用模板走 query 参数契约而向导页发 industrial JSON body——即 `/template/:id` 向导链路随焊接模板整体退役。上次全量绿为 `96630f7`（2026-10-12 00:00 UTC，早于 `f662881` 落地 3.5 小时），此后 push 仅触发 light CI（不跑浏览器验收），断裂直至本次 full 分发才暴露。
+- 处理：按退役口径对齐测试套件——删除 `e2e/weld-quality.spec.ts` 及其专用 fixture `e2e/fixtures/weld_fault_features.csv`（fixture 无其他引用）。其余浏览器用例已覆盖模型训练/推理/导出（automl-multioutput、model-inference、model-export）与各周验收，不损失"浏览器级跑通 ML 流程"覆盖。不改写为通用模板用例：向导页对通用模板的前后端契约不兼容属产品功能缺口，是否恢复属产品决策，不入本次发布范围。
+- 验证：删除后重触发全量 CI（结果回填于发布记录）。
+
 ### 2026-10-13 r14 热修：r13 安装脚本 PUBLIC_ORIGIN 前导字符误删，所有合法 origin 被校验拒绝
 
 - 现象：用户在目标服务器（10.12.18.6）以 `PUBLIC_ORIGIN=http://10.12.18.6:5175 ./packaging/install-ubuntu.sh` 安装 r13，命令语法正确仍报 `[ERROR] PUBLIC_ORIGIN must be an origin such as http://SERVER_PUBLIC_IP:5175 (without a path).`（前两轮为用户误用反引号致变量为空，末轮命令正确后仍报错才定位到脚本缺陷）。
