@@ -44,14 +44,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { key: "/knowledge-graph", icon: <ApartmentOutlined />, label: t.knowledge?.graph || "Graph" },
     { key: "/chat", icon: <MessageOutlined />, label: t.nav.chat },
     { type: "divider" as const },
-    { key: "/monitor", icon: <MonitorOutlined />, label: t.nav.monitor },
-    { key: "/compute", icon: <CloudServerOutlined />, label: t.nav.compute },
-    { type: "divider" as const },
     { key: "/kubernetes", icon: <ClusterOutlined />, label: t.nav.kubernetes },
     { key: "/kubernetes/jobs", icon: <PlayCircleOutlined />, label: t.nav.job_runs },
     { key: "/notebooks", icon: <BookOutlined />, label: t.nav.notebooks },
     { key: "/images", icon: <DatabaseOutlined />, label: t.nav.images },
     { key: "/cluster-governance", icon: <ControlOutlined />, label: t.nav.cluster_governance },
+    { type: "divider" as const },
+    { key: "/monitor", icon: <MonitorOutlined />, label: t.nav.monitor },
+    { key: "/compute", icon: <CloudServerOutlined />, label: t.nav.compute },
     ...(userRole === "admin" ? [{ key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users }] : []),
   ];
 
