@@ -340,7 +340,7 @@ const ZH = {
     d_name: "名称", d_algorithm: "算法", d_endpoint: "端点", d_total_calls: "调用总数",
     d_success: "成功", d_failed: "失败", d_public: "公开", d_description: "描述", yes: "是", no: "否",
     test_title: "API 测试：", headers: "请求头 (Headers)", body: "请求体 (Body)",
-    click_send: "点击「发送」测试该 API", copied: "已复制",
+    click_send: "点击「发送」测试该 API", copied: "已复制", field_docs: "字段解释",
     example_title: "调用示例", example_note: "远程调用示例（Bearer token 替换为你的平台令牌）",
     example_note_filled: "已填入你当前登录的令牌；复制后即可直接执行。令牌 24 小时有效，请勿外传",
     use_token: "一键填入令牌", hide_token: "隐藏令牌", token_missing: "未找到登录令牌，请先登录",
@@ -647,6 +647,7 @@ const ZH = {
     cancel: "取消",
   },
   apiErrors: {
+    MODEL_DEPLOYMENT_EXISTS: "模型正被推理部署使用:{message},请先删除对应推理部署。",
     KUBERNETES_ENDPOINT_INVALID: "API server 地址不合法(http 需集群标记与全局开关同时开启)。",
     KUBERNETES_ENDPOINT_FORBIDDEN: "API server 地址不在 allowlist 内,或命中禁用地址。",
     KUBERNETES_CREDENTIAL_MISSING: "凭据引用无法解析:环境变量或文件不存在。",
@@ -912,7 +913,7 @@ const EN: Record<string, any> = {
     d_name: "Name", d_algorithm: "Algorithm", d_endpoint: "Endpoint", d_total_calls: "Total Calls",
     d_success: "Success", d_failed: "Failed", d_public: "Public", d_description: "Description", yes: "Yes", no: "No",
     test_title: "API Test: ", headers: "Headers", body: "Body",
-    click_send: "Click \"Send\" to test the API", copied: "Copied",
+    click_send: "Click \"Send\" to test the API", copied: "Copied", field_docs: "Field reference",
     example_title: "Call example", example_note: "Remote call example (replace the bearer token with your platform token)",
     example_note_filled: "Your current login token is filled in; copy and run it directly. Tokens expire in 24 hours - keep it private",
     use_token: "Fill in my token", hide_token: "Hide token", token_missing: "No login token found - please sign in first",
@@ -955,6 +956,7 @@ const EN: Record<string, any> = {
     spot_weld_feature_engineering: "Spot Weld Feature Engineering",
   },
   apiErrors: {
+    MODEL_DEPLOYMENT_EXISTS: "The model is still referenced by inference deployment \"{message}\"; delete that deployment first.",
     KUBERNETES_ENDPOINT_INVALID: "API server URL is invalid (http requires both the cluster flag and the global switch).",
     KUBERNETES_ENDPOINT_FORBIDDEN: "API server host is outside the allowlist or explicitly blocked.",
     KUBERNETES_CREDENTIAL_MISSING: "Credential reference cannot be resolved: environment variable or file is missing.",

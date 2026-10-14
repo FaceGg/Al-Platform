@@ -11,6 +11,37 @@ const { Title, Text } = Typography;
 const { TextArea } = Input;
 const stColor: Record<string, string> = { published: "green", offline: "red", failed: "orange" };
 
+// [key, zh, en] response-field reference per API type.
+const RESPONSE_FIELD_DOCS: Record<string, Array<[string, string, string]>> = {
+  model: [
+    ["runtime_key", "推理运行时路由键", "Inference runtime routing key"],
+    ["deployment_id", "部署 ID", "Deployment ID"],
+    ["revision_id", "部署修订 ID（当前服务的模型版本修订）", "Deployment revision ID"],
+    ["model_version_id", "模型版本 ID", "Model version ID"],
+    ["version_number", "模型版本号", "Model version number"],
+    ["predictions", "预测结果数组（与输入 records 一一对应）", "Prediction array (one per input record)"],
+    ["duration_ms", "推理耗时（毫秒）", "Inference duration (ms)"],
+    ["probabilities", "各类别概率（分类模型才返回）", "Class probabilities (classification models)"],
+  ],
+  orchestration: [
+    ["api_id", "API 条目 ID", "API entry ID"],
+    ["workflow_version", "实际执行的工作流版本", "Workflow version served"],
+    ["output_node", "输出节点 ID（拓扑序最后节点）", "Output node ID (last node)"],
+    ["branch", "记录命中的条件分支（true/false，无条件节点为 null）", "Condition branch taken (null if none)"],
+    ["records", "输出节点的输出行（内容取决于服务图最后一个算子）", "Output rows of the final node"],
+    ["invoked_at", "服务端处理时间（UTC）", "Server processing time (UTC)"],
+  ],
+  chat: [
+    ["api_id", "API 条目 ID", "API entry ID"],
+    ["reply", "模型回答（[n] 对应 sources 序号）", "Model answer ([n] cites sources)"],
+    ["sources", "引用来源（命中的知识库片段）", "Citations (matched KB chunks)"],
+    ["kb", "绑定的知识库", "Bound knowledge base"],
+    ["kb_warning", "检索未命中等提示", "Retrieval warning"],
+    ["usage", "token 用量（prompt 输入 / completion 输出）", "Token usage"],
+    ["invoked_at", "服务端处理时间（UTC）", "Server processing time (UTC)"],
+  ],
+};
+
 export default function APIMarketplacePage() {
   const { t, lang } = useI18n();
   const tr = t.api_market || {};
@@ -321,9 +352,45 @@ export default function APIMarketplacePage() {
                   <Button size="small" icon={<CopyOutlined />} onClick={()=>{navigator.clipboard.writeText(JSON.stringify(testResponse.body,null,2));message.success(tr.copied);}}>{tr.copy}</Button>
                 </Space>
                 {testResponse.error && <Text type="danger">{testResponse.error}</Text>}
-                <pre style={{background:"#f5f5f5",padding:12,borderRadius:8,overflow:"auto",maxHeight:400,fontSize:12,margin:0}}>
+                <pre style={{background:"#f5f5f5",padding:12,borderRadius:8,overflow:"auto",maxHeight:260,fontSize:12,margin:0}}>
                   {typeof testResponse.body==="string"?testResponse.body:JSON.stringify(testResponse.body,null,2)}
                 </pre>
+                {(() => {
+                  const docs = testApi ? (RESPONSE_FIELD_DOCS[testApi.api_type] || []) : [];
+                  const bodyObj = (testResponse.body && typeof testResponse.body === "object" && !Array.isArray(testResponse.body)) ? testResponse.body : null;
+                  if (!docs.length || !bodyObj) return null;
+                  const present = docs.filter(([key]) => key in bodyObj);
+                  if (!present.length) return null;
+                  const rows: Array<[string, string]> = present.map(([key, zh, en]) => [key, lang === "zh" ? zh : en]);
+                  const first = Array.isArray(bodyObj.records) ? bodyObj.records[0] : null;
+                  if (testApi.api_type === "orchestration" && first && typeof first === "object") {
+                    if ("triggered" in first) {
+                      rows.push(
+                        ["records[].triggered", lang === "zh" ? "是否达到阈值触发自动重训" : "Whether auto-retrain was triggered"],
+                        ["records[].total_rows", lang === "zh" ? "错误数据集累计行数" : "Error dataset total rows"],
+                        ["records[].cycle_rows", lang === "zh" ? "本轮周期新增行数" : "Rows added this cycle"],
+                        ["records[].threshold_rows", lang === "zh" ? "触发重训的阈值行数" : "Threshold rows to trigger retrain"],
+                      );
+                    } else if ("prediction" in first) {
+                      rows.push(["records[].prediction", lang === "zh" ? "模型预测值" : "Model prediction"]);
+                    }
+                  }
+                  return (
+                    <div style={{ marginTop: 12 }}>
+                      <Text strong style={{ fontSize: 12 }}>{tr.field_docs}</Text>
+                      <table style={{ width: "100%", marginTop: 4, borderCollapse: "collapse", fontSize: 12 }}>
+                        <tbody>
+                          {rows.map(([field, desc]) => (
+                            <tr key={field}>
+                              <td style={{ border: "1px solid #f0f0f0", padding: "3px 8px", fontFamily: "monospace", whiteSpace: "nowrap", verticalAlign: "top" }}>{field}</td>
+                              <td style={{ border: "1px solid #f0f0f0", padding: "3px 8px" }}>{desc}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
               </div>
             ) : (
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",color:"#ccc"}}>

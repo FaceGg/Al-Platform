@@ -38,7 +38,7 @@ vi.mock("../i18n", () => ({
         d_name: "名称", d_algorithm: "算法", d_endpoint: "端点", d_total_calls: "调用总数",
         d_success: "成功", d_failed: "失败", d_public: "公开", d_description: "描述", yes: "是", no: "否",
         test_title: "API 测试：", headers: "请求头 (Headers)", body: "请求体 (Body)",
-        click_send: "点击「发送」测试该 API", copied: "已复制",
+        click_send: "点击「发送」测试该 API", copied: "已复制", field_docs: "字段解释",
         example_title: "调用示例", example_note: "远程调用示例（Bearer token 替换为你的平台令牌）",
         example_note_filled: "已填入你当前登录的令牌；复制后即可直接执行。令牌 24 小时有效，请勿外传",
         use_token: "一键填入令牌", hide_token: "隐藏令牌", token_missing: "未找到登录令牌，请先登录",
@@ -199,6 +199,35 @@ describe("APIMarketplacePage", () => {
     await screen.findByText("Deployment API");
     expect(screen.queryByRole("button", { name: /编辑/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /删除/ })).not.toBeInTheDocument();
+  });
+
+  it("shows response field explanations after sending (orchestration)", async () => {
+    localStorage.setItem("token", "jwt-test-token");
+    apiGet.mockResolvedValue({
+      items: [
+        { id: "orch-1", name: "方案B全闭环服务 v2", api_type: "orchestration",
+          source_kind: "orchestration", source_id: "wf-version-1",
+          version: "v2", status: "published", method: "POST",
+          endpoint: "/api/platform/apis/orchestration/wf-version-1/invoke",
+          request_schema: { record: { wld1c: 0 } },
+          total_calls: 0, success_calls: 0 },
+      ],
+    });
+    apiRequest.mockResolvedValue({
+      status: 200, statusText: "OK", headers: {},
+      data: { api_id: "orch-1", workflow_version: "v2", output_node: "n9",
+              branch: null,
+              records: [{ triggered: false, total_rows: 3, cycle_rows: 0, threshold_rows: 3 }],
+              invoked_at: "2026-10-14T12:09:26Z" },
+    });
+    render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /测试/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /发送/ }));
+    expect(await screen.findByText("字段解释")).toBeInTheDocument();
+    expect(screen.getByText("records[].triggered")).toBeInTheDocument();
+    expect(screen.getByText(/是否达到阈值触发自动重训/)).toBeInTheDocument();
+    expect(screen.getByText(/记录命中的条件分支/)).toBeInTheDocument();
+    localStorage.removeItem("token");
   });
 
   it("shows a visible list error", async () => {

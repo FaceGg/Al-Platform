@@ -2773,3 +2773,5 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 
 - 用户实测模型 API 仍 409 `INFERENCE_SCHEMA_MISMATCH`：错误展示修复后根因清晰——测试弹窗的 Body 预填的是 `request_schema` **原始元数据**（`{"records":[{"name":"wld1c","dtype":"float64"},…]}` 字段描述），而 predict 需要的是特征值行；示例（curl）是对的、Body 是错的。
 - 修复：提取 `buildExampleBody(api)`（按类型生成可发送 body：model 兼容 `{name,dtype}`/字符串特征条目、orchestration 用 request_schema.record、chat 用 message+top_k、custom 用 request_schema），`openTest` 预填 Body 改用其 JSON；buildExample 复用同一构造，示例与 Body 永远一致。新增用例断言 Body 含真实特征名且无 schema 元数据；页面 12 passed + tsc + build；前端镜像重建部署。
+
+- **测试弹窗字段解释（同日续）**：响应面板在返回报文下方按 API 类型渲染「字段解释」表——model（runtime_key/deployment_id/revision_id/model_version_id/version_number/predictions/duration_ms/probabilities）、orchestration（api_id/workflow_version/output_node/branch/records/invoked_at）、chat（reply/sources/kb/kb_warning/usage/invoked_at），仅列返回体中实际存在的键；编排闭环输出（records[].triggered/total_rows/cycle_rows/threshold_rows、prediction）与对话引用结构附加嵌套说明；zh/en 双语；响应报文 maxHeight 400→260 给解释表留空间。新增编排场景用例（断言字段解释表与闭环字段说明渲染），页面 13 passed + tsc + build；前端镜像重建部署。
