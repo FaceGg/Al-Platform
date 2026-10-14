@@ -2730,3 +2730,10 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 测试：组件 3 用例（禁用态/名称匹配触发/重开清空）+ 页面测试改两步流 + weekAcceptance 清单登记新文件；全套件除并行会话正在改的 APIMarketplacePage 2 个用例外全绿。
 - 浏览器实测（预构建镜像链路：npm build → temp_test/frontend-dist 同步 html-dist → DOCKER_BUILDKIT=0 docker build -f Dockerfile.prebuilt，docker 代理 7897 不通时走此链）：弹窗文案/禁用态/错误名/正确名/删除成功五步全验证，表格仅剩 test112。
 - 教训：frontend 容器只 restart 不换镜像——改前端必须 docker compose build frontend（或预构建链）+ up -d。
+
+---
+
+## 2026-10-14（续二）调用示例「一键填入令牌」
+
+- API 市场测试弹窗的调用示例区新增「一键填入令牌」按钮：点击后从 localStorage 读取当前登录令牌（前端 `token` 字段，登录时写入）填入示例的 `Authorization: Bearer` 头，复制所得即为可直接执行的完整 curl；再次点击「隐藏令牌」回到 `<token>` 占位。未登录（无令牌）点击提示「未找到登录令牌，请先登录」。填入态示例区附提示文案（24 小时有效、请勿外传），填入态按钮转红色警示。i18n zh/en 各加 3 键。
+- 测试：新增 2 用例（填入→隐藏往返、无令牌告警），APIMarketplacePage 11 passed；tsc + build 通过；前端镜像重建部署。

@@ -40,6 +40,8 @@ vi.mock("../i18n", () => ({
         test_title: "API 测试：", headers: "请求头 (Headers)", body: "请求体 (Body)",
         click_send: "点击「发送」测试该 API", copied: "已复制",
         example_title: "调用示例", example_note: "远程调用示例（Bearer token 替换为你的平台令牌）",
+        example_note_filled: "已填入你当前登录的令牌；复制后即可直接执行。令牌 24 小时有效，请勿外传",
+        use_token: "一键填入令牌", hide_token: "隐藏令牌", token_missing: "未找到登录令牌，请先登录",
         editor_new: "新建 API", editor_edit: "编辑 API",
         f_name: "名称", f_type: "类型", f_type_value: "自定义", f_endpoint: "内部路径",
         f_endpoint_rule: "必须是 /api/ 开头的内部路径", f_method: "方法", f_version: "版本", f_description: "描述",
@@ -203,5 +205,41 @@ describe("APIMarketplacePage", () => {
     apiGet.mockRejectedValue(new Error("offline"));
     render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
     expect(await screen.findByText("API list loading failed")).toBeInTheDocument();
+  });
+
+  it("fills the login token into the call example on demand and hides it again", async () => {
+    localStorage.setItem("token", "jwt-test-token");
+    apiGet.mockResolvedValue({
+      items: [
+        { id: "chat-1", name: "知识库对话", api_type: "chat", source_kind: "chat",
+          source_id: "kb-1", version: "v1", status: "published", method: "POST",
+          endpoint: "/api/platform/apis/chat/kb-1/invoke", total_calls: 0, success_calls: 0 },
+      ],
+    });
+    render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /测试/ }));
+
+    // 默认占位符；未登录令牌场景由浏览器 localStorage 提供
+    expect(await screen.findByText(/<token>/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /一键填入令牌/ }));
+    expect(screen.getByText(/Authorization: Bearer jwt-test-token/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /隐藏令牌/ }));
+    expect(screen.getByText(/<token>/)).toBeInTheDocument();
+    localStorage.removeItem("token");
+  });
+
+  it("warns when filling the token without a login session", async () => {
+    localStorage.removeItem("token");
+    apiGet.mockResolvedValue({
+      items: [
+        { id: "chat-1", name: "知识库对话", api_type: "chat", source_kind: "chat",
+          source_id: "kb-1", version: "v1", status: "published", method: "POST",
+          endpoint: "/api/platform/apis/chat/kb-1/invoke", total_calls: 0, success_calls: 0 },
+      ],
+    });
+    render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /测试/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /一键填入令牌/ }));
+    expect(await screen.findByText("未找到登录令牌，请先登录")).toBeInTheDocument();
   });
 });

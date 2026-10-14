@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Alert, Card, Table, Tag, Button, Space, Typography, Modal, Descriptions, message, Select, Input, Form, Row, Col, Statistic } from "antd";
-import { PlayCircleOutlined, EyeOutlined, SendOutlined, CopyOutlined, PlusOutlined, EditOutlined } from "@ant-design/icons";
+import { PlayCircleOutlined, EyeOutlined, SendOutlined, CopyOutlined, PlusOutlined, EditOutlined, KeyOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import apiClient, { apiGet, apiPost, apiPut, apiDelete, formatApiError } from "../api/client";
 import { useI18n } from "../i18n";
@@ -29,6 +29,7 @@ export default function APIMarketplacePage() {
   const [testHeaders, setTestHeaders] = useState('{"Content-Type":"application/json"}');
   const [testResponse, setTestResponse] = useState<any>(null);
   const [testLoading, setTestLoading] = useState(false);
+  const [useToken, setUseToken] = useState(false);
   const [testHistory, setTestHistory] = useState<Array<{time:string; method:string; url:string; status:number; body:any}>>([]);
   const [showEditor, setShowEditor] = useState(false);
   const [editing, setEditing] = useState<any>(null);
@@ -104,7 +105,18 @@ export default function APIMarketplacePage() {
     setTestUrl(api.endpoint || "/api/");
     setTestBody(api.request_schema ? JSON.stringify(api.request_schema, null, 2) : '{\n  \n}');
     setTestResponse(null);
+    setUseToken(false);
     setShowTest(true);
+  };
+
+  const myToken = () => localStorage.getItem("token") || "";
+
+  const toggleToken = () => {
+    if (!useToken && !myToken()) {
+      message.warning(tr.token_missing);
+      return;
+    }
+    setUseToken(!useToken);
   };
 
   const stName = (s: string) =>
@@ -116,8 +128,9 @@ export default function APIMarketplacePage() {
   const buildExample = (api: any) => {
     const origin = typeof window === "undefined" ? "http://localhost:5173" : window.location.origin;
     const method = api.method || "POST";
+    const tokenRef = useToken && myToken() ? myToken() : "<token>";
     const lines: string[] = [`curl -X ${method} "${origin}${api.endpoint || ""}" \\`];
-    lines.push(`  -H "Authorization: Bearer <token>" \\`);
+    lines.push(`  -H "Authorization: Bearer ${tokenRef}" \\`);
     let body: any = undefined;
     if (api.api_type === "chat") {
       body = { message: lang === "zh" ? "点焊飞溅的主要原因有哪些？" : "What causes weld spatter?", top_k: 4 };
@@ -261,11 +274,14 @@ export default function APIMarketplacePage() {
                 <Space style={{ marginBottom: 4 }}>
                   <Text type="secondary">{tr.example_title}</Text>
                   <Button size="small" icon={<CopyOutlined />} onClick={()=>{navigator.clipboard.writeText(buildExample(testApi));message.success(tr.copied);}}>{tr.copy}</Button>
+                  <Button size="small" icon={<KeyOutlined />} onClick={toggleToken} danger={useToken}>{useToken ? tr.hide_token : tr.use_token}</Button>
                 </Space>
                 <pre style={{background:"#f5f5f5",padding:12,borderRadius:8,fontSize:12,margin:0,whiteSpace:"pre-wrap",wordBreak:"break-all"}}>
                   {buildExample(testApi)}
                 </pre>
-                <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>{tr.example_note}</Text>
+                <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>
+                  {useToken ? tr.example_note_filled : tr.example_note}
+                </Text>
               </div>
             )}
             <Text type="secondary">{tr.headers}:</Text>
