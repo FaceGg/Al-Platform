@@ -9,20 +9,17 @@ interface ThemeCtx {
 }
 
 const ThemeContext = createContext<ThemeCtx>({
-  theme: "dark",
+  theme: "light",
   toggleTheme: () => {},
   setTheme: () => {},
 });
 
 export function ThemeProvider({ children }: { children: any }) {
-  const [theme, setThemeState] = useState<Theme>("dark");
-
-  useEffect(() => {
+  // 默认明亮主题；仅在用户显式切换过（localStorage 有合法值）时沿用其选择
+  const [theme, setThemeState] = useState<Theme>(() => {
     const saved = localStorage.getItem("theme") as Theme;
-    if (saved === "light" || saved === "dark") {
-      setThemeState(saved);
-    }
-  }, []);
+    return saved === "light" || saved === "dark" ? saved : "light";
+  });
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;

@@ -95,7 +95,7 @@ describe("AppLayout", () => {
     );
 
     expect(document.querySelector(".app-header")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /switch to light mode/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /switch to dark mode/i })).toBeInTheDocument();
   });
 
   it("selects data annotation instead of the shorter data route", async () => {

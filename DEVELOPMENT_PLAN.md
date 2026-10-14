@@ -315,6 +315,12 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 发布记录（2026-09-28）：安装包 `output/linkraft-ubuntu-20260926-r12.tar.gz`，manifest 绑定 HEAD `1f4d87f`，SHA-256 `16cf3654723b9380da264ff77cda4df8c3cd1db789403695ab900015141b8f8b`，归档抽查确认 cookie 开关代码与安装脚本均已包含。更正一：首个 r12 归档（SHA-256 `8ac6d972...b182b`）的 `install-ubuntu.sh` 因 Windows 工作区覆盖带入了 CRLF 行尾，在服务器报 `/usr/bin/env: bash\r`；`build-package.sh` 已增加打包前 LF 归一化。更正二：第二个归档（SHA-256 `77061681...56e29`）的安装脚本在 `set -u` 下引用未声明的 `ANNOTATOR_COOKIE_SECURE` 报"未绑定的变量"；已在脚本头部补默认声明并重建。前两个哈希均作废，服务器现场可用 `ANNOTATOR_COOKIE_SECURE=false ./packaging/install-ubuntu.sh` 绕过。
 - 待完成：目标服务器部署 r12 后外网登录 8443 并保持会话的端到端确认；外网 5175 的 `CORS_ORIGIN_FORBIDDEN` 与本地 5175 的对偶问题需用 `PUBLIC_ORIGIN`/`PUBLIC_ORIGIN_ALIASES` 收敛（运行时配置，无需发版）。
 
+### 2026-10-14 登录默认观感：默认明亮主题（语言本就默认中文）
+
+- 主题默认 `dark` → `light`（`stores/themeContext.tsx`；localStorage 读取并入 useState 初始化器消除断层闪烁；显式切换过的浏览器仍沿用其已存选择）。语言默认本就是 `zh`，未动。
+- 验证：`npm run build` 通过；AppLayout 9 用例绿（断言同步为 switch to dark）；容器热更新后新会话实测登录页与工作台均为明亮中文（截图为证）。
+- 附带发现备忘：`npm run build` 实际输出目录是 `temp_test/frontend-dist`，`ml-platform/frontend/dist/` 为 2026-10-10 陈年遗留，勿再据其热更新（建议择机删除）。
+
 ### 2026-10-14 模型运维三项：发布运维 422 根因 StrictInt 拒收字符串分页；来源训练模型改下拉；部署详情查看
 
 - 现象：①模型库「发布运维」抽屉报 `INFERENCE_QUERY_INVALID`；②注册版本「来源训练模型 ID」要求手填 UUID，不知道去哪取；③推理部署缺详情查看入口。另确认删除「编排闭环-自动模型-bfe2f749」被 `MODEL_DEPLOYMENT_EXISTS` 拦截属预期——该模型正是运行中部署「自动化测试」的主版本，先删部署再删模型即可。
