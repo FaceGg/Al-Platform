@@ -315,6 +315,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 发布记录（2026-09-28）：安装包 `output/linkraft-ubuntu-20260926-r12.tar.gz`，manifest 绑定 HEAD `1f4d87f`，SHA-256 `16cf3654723b9380da264ff77cda4df8c3cd1db789403695ab900015141b8f8b`，归档抽查确认 cookie 开关代码与安装脚本均已包含。更正一：首个 r12 归档（SHA-256 `8ac6d972...b182b`）的 `install-ubuntu.sh` 因 Windows 工作区覆盖带入了 CRLF 行尾，在服务器报 `/usr/bin/env: bash\r`；`build-package.sh` 已增加打包前 LF 归一化。更正二：第二个归档（SHA-256 `77061681...56e29`）的安装脚本在 `set -u` 下引用未声明的 `ANNOTATOR_COOKIE_SECURE` 报"未绑定的变量"；已在脚本头部补默认声明并重建。前两个哈希均作废，服务器现场可用 `ANNOTATOR_COOKIE_SECURE=false ./packaging/install-ubuntu.sh` 绕过。
 - 待完成：目标服务器部署 r12 后外网登录 8443 并保持会话的端到端确认；外网 5175 的 `CORS_ORIGIN_FORBIDDEN` 与本地 5175 的对偶问题需用 `PUBLIC_ORIGIN`/`PUBLIC_ORIGIN_ALIASES` 收敛（运行时配置，无需发版）。
 
+### 2026-10-14 模型运维三项：发布运维 422 根因 StrictInt 拒收字符串分页；来源训练模型改下拉；部署详情查看
+
+- 现象：①模型库「发布运维」抽屉报 `INFERENCE_QUERY_INVALID`；②注册版本「来源训练模型 ID」要求手填 UUID，不知道去哪取；③推理部署缺详情查看入口。另确认删除「编排闭环-自动模型-bfe2f749」被 `MODEL_DEPLOYMENT_EXISTS` 拦截属预期——该模型正是运行中部署「自动化测试」的主版本，先删部署再删模型即可。
+- 根因（①）：`MetricQuery`/`RequestLogQuery` 的 `page`/`page_size` 用 `StrictInt`，而查询参数到达后端恒为字符串（`"1"`），strict 校验拒收 → 带分页的 metrics/request-logs 请求必 422。本地对运行中部署实测复现：带分页 422、不带 200。
+- 修复：①分页字段改普通 `int`（宽泛转换，保留 ge/le 约束）；②`/api/model-library` 列表加 `project_id` 过滤，注册版本对话框「来源训练模型」改为本项目已完成且带模型文件条目的下拉（showSearch 按名称过滤），i18n 标签澄清为「来源训练模型（模型库条目）」；③推理部署行新增「部署信息」查看抽屉（名称/关联模型版本/期望与实际状态/创建与最近检查时间/最近错误）。
+- 验证：后端 `test_api_model_library` 6 用例（新增指标/日志字符串分页 200 回归）+ 注册表两套件 31 passed 无回归；前端 `ModelLibraryPage` 14 用例全绿（注册流程 mock 适配下拉交互、apiClient mock 按路由返回模型库条目）；vite build 通过。
+- 待完成：本地容器更新（backend 重建 + 前端 `npm run build` 产物 docker cp 热更新）因 WSL CLI 故障（`0x8007274c`，容器与端口转发不受影响）暂缓；服务器随下次发包（r15）带上。前端热更新后，删除拦截文案才会显示为「模型正被推理部署使用:〈部署名〉…」。
+
 ### 2026-10-14 模型库/注册表删除已注册模型报 500：部署主版本护栏漏判历史发布目标
 
 - 现象：模型库页（模型注册表 UI，`/models`）删除已注册模型报 500。本地 backend 容器日志实锤：`DELETE /api/registered-models/{id}` 抛 `ForeignKeyViolation ... deployment_targets_model_version_id_fkey`，同一批模型反复失败（用户数据：部署「自动化测试」主版本属"编排闭环-自动模型"，其灰度修订 target 引用了另外三个注册模型的版本）。

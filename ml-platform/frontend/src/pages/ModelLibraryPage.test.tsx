@@ -18,11 +18,18 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
 vi.mock("../api/modelRegistry", () => mocks);
 vi.mock("../api/client", () => ({
-  default: { get: vi.fn().mockResolvedValue({ data: { items: [
-    { id: "p1", name: "Weld line", project_role: "owner" },
-    { id: "p2", name: "Read only", project_role: "viewer" },
-    { id: "p3", name: "Operate only", project_role: "operator" },
-  ] } }) },
+  default: { get: vi.fn().mockImplementation((url: string) => {
+    if (String(url).includes("/model-library")) {
+      return Promise.resolve({ data: { items: [
+        { id: "library-1", name: "Weld fault features", version: "v1", model_path: "models/weld.joblib" },
+      ] } });
+    }
+    return Promise.resolve({ data: { items: [
+      { id: "p1", name: "Weld line", project_role: "owner" },
+      { id: "p2", name: "Read only", project_role: "viewer" },
+      { id: "p3", name: "Operate only", project_role: "operator" },
+    ] } });
+  }) },
   formatApiError: (_error: unknown, fallback: string) => fallback,
 }));
 vi.mock("../i18n", () => ({ useI18n: () => ({ t: {
@@ -135,7 +142,8 @@ describe("ModelLibraryPage", () => {
     expect(await screen.findByText("Weld fault")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Register version Weld fault" }));
-    fireEvent.change(screen.getByLabelText("Source model ID"), { target: { value: "library-1" } });
+    fireEvent.mouseDown(await screen.findByRole("combobox", { name: "Source model ID" }));
+    fireEvent.click(await screen.findByText("Weld fault features（v1）"));
     fireEvent.click(screen.getByRole("button", { name: "Register version" }));
     await waitFor(() => expect(mocks.registerPlatformVersion).toHaveBeenCalledWith("m1", "library-1"));
 

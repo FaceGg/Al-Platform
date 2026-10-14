@@ -86,8 +86,10 @@ class ApiKeyCreate(StrictSchema):
 class MetricQuery(StrictSchema):
     since: datetime
     until: datetime
-    page: StrictInt = Field(default=1, ge=1)
-    page_size: StrictInt = Field(default=100, ge=1, le=200)
+    # 查询参数恒为字符串，StrictInt 会拒收 "1"（发布运维抽屉 422 的根因），
+    # 分页字段用普通 int 走宽泛转换。
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=100, ge=1, le=200)
 
 
 class RequestLogQuery(MetricQuery):

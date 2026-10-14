@@ -44,10 +44,13 @@ def list_models(
     status: str = Query(None),
     framework: str = Query(None),
     category: str = Query(None),
+    project_id: str = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     q = db.query(ModelLibrary)
+    if project_id:
+        q = q.filter(ModelLibrary.project_id == uuid.UUID(project_id))
     if current_user.role != "admin":
         accessible = [
             project.id for project in ProjectAccessService()

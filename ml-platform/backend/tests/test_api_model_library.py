@@ -508,6 +508,52 @@ class TestModelLibraryCascadeDelete(unittest.TestCase):
             db.close()
         self._cleanup(project_id)
 
+    def test_06_metrics_query_with_string_pagination(self):
+        """回归：发布运维抽屉带 page/page_size 查询参数报 INFERENCE_QUERY_INVALID。
+
+        查询参数恒为字符串，MetricQuery 原用 StrictInt 拒收 "1"；改普通 int
+        后同一请求应 200。
+        """
+        import uuid as _uuid
+        from datetime import datetime, timedelta, timezone
+
+        from app.database import SessionLocal
+        from app.models.model_registry import InferenceDeployment
+
+        db = SessionLocal()
+        try:
+            suffix = _uuid.uuid4().hex[:8]
+            project, model, registered, version = self._seed(db, suffix)
+            db.add(InferenceDeployment(
+                project_id=project.id, name=f"casc-dep-{suffix}",
+                model_version_id=version.id,
+            ))
+            db.commit()
+            deployment_id = None
+            row = db.query(InferenceDeployment).filter(
+                InferenceDeployment.name == f"casc-dep-{suffix}"
+            ).first()
+            deployment_id = str(row.id)
+            project_id = project.id
+        finally:
+            db.close()
+
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        until = datetime.now(timezone.utc).isoformat()
+        r = client.get(
+            f"/api/inference-deployments/{deployment_id}/metrics",
+            params={"since": since, "until": until, "page": 1, "page_size": 100},
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        r = client.get(
+            f"/api/inference-deployments/{deployment_id}/request-logs",
+            params={"since": since, "until": until, "page": 1, "page_size": 100},
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self._cleanup(project_id)
+
 
 if __name__ == "__main__":
     unittest.main()

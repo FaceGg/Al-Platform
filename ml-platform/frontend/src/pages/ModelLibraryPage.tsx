@@ -4,7 +4,7 @@ import {
   Select, Space, Table, Tabs, Tag, Typography, Upload, message,
 } from "antd";
 import {
-  CheckOutlined, CloudServerOutlined, DownloadOutlined, EyeOutlined, KeyOutlined,
+  CheckOutlined, CloudServerOutlined, DownloadOutlined, EyeOutlined, InfoCircleOutlined, KeyOutlined,
   PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined,
   RollbackOutlined, StopOutlined, SyncOutlined,
 } from "@ant-design/icons";
@@ -52,6 +52,8 @@ export default function ModelLibraryPage() {
   const [prediction, setPrediction] = useState<PredictionResult>();
   const [busyId, setBusyId] = useState<string>();
   const [operationsDeployment, setOperationsDeployment] = useState<InferenceDeployment>();
+  const [detailDeployment, setDetailDeployment] = useState<InferenceDeployment>();
+  const [libraryOptions, setLibraryOptions] = useState<{ id: string; name: string; version: string }[]>([]);
   const [rollouts, setRollouts] = useState<DeploymentRollout[]>([]);
   const [apiKeys, setApiKeys] = useState<InferenceApiKey[]>([]);
   const [metrics, setMetrics] = useState<InferenceMetricPage>();
@@ -85,6 +87,19 @@ export default function ModelLibraryPage() {
     return { since: since.toISOString(), until: until.toISOString() };
   }, [operationsDeployment?.id]);
   const logQuery = useMemo(() => ({ ...metricWindow, page: 1, page_size: 100 }), [metricWindow]);
+
+  useEffect(() => {
+    // 注册版本对话框打开时拉取本项目模型库条目，供「来源训练模型」下拉选择
+    if (!registerModel || !projectId) return;
+    apiClient.get("/model-library", { params: { project_id: projectId, status: "completed" } })
+      .then((response) => {
+        const items = (response.data?.items || []) as { id: string; name: string; version: string; model_path?: string }[];
+        setLibraryOptions(items
+          .filter((item) => item.model_path)
+          .map((item) => ({ id: item.id, name: item.name, version: item.version })));
+      })
+      .catch(() => setLibraryOptions([]));
+  }, [registerModel, projectId]);
 
   useEffect(() => {
     apiClient.get("/projects").then((response) => {
@@ -510,6 +525,7 @@ export default function ModelLibraryPage() {
     { title: copy.desiredState, dataIndex: "desired_state", key: "desired", width: 120, render: (value: string) => <Tag>{statusLabel(value)}</Tag> },
     { title: copy.observedState, dataIndex: "observed_state", key: "observed", width: 150, render: (value: string) => <Space direction="vertical" size={2}><Tag color={statusColor(value)}>{statusLabel(value)}</Tag>{["starting", "stopping"].includes(value) && <Progress percent={50} showInfo={false} size="small" />}</Space> },
     { title: t.model.actions, key: "actions", width: 190, align: "right" as const, render: (_: unknown, row: InferenceDeployment) => <div className="table-row-actions">
+      <TableRowAction label={`${copy.deploymentInfo} ${row.name}`} icon={<InfoCircleOutlined />} onClick={() => setDetailDeployment(row)} />
       {canOperate && row.desired_state === "stopped" && <TableRowAction label={`${copy.start} ${row.name}`} icon={<PlayCircleOutlined />} loading={busyId === row.id} onClick={() => void operate(row, "start")} />}
       {canOperate && row.desired_state === "running" && <TableRowAction label={`${copy.stop} ${row.name}`} icon={<StopOutlined />} warning loading={busyId === row.id} onClick={() => void operate(row, "stop")} />}
       {canOperate && <TableRowAction label={`${copy.onlineTest} ${row.name}`} icon={<CloudServerOutlined />} disabled={row.observed_state !== "running"} onClick={() => {
@@ -579,7 +595,7 @@ export default function ModelLibraryPage() {
     <Modal title={copy.registerVersion} open={Boolean(registerModel)} onCancel={() => setRegisterModel(undefined)} onOk={() => void submitVersion()} okText={copy.registerVersion} okButtonProps={{ "aria-label": copy.registerVersion }}>
       <Select aria-label={copy.sourceKind} value={registerSource} onChange={setRegisterSource} style={{ width: "100%", marginBottom: 16 }} options={[{ value: "platform_joblib", label: copy.platformSource }, { value: "onnx_artifact", label: copy.onnxSource }]} />
       <Form form={registerForm} layout="vertical" autoComplete="off">
-        {registerSource === "platform_joblib" ? <Form.Item name="source_model_library_id" label={copy.sourceLibraryId} rules={[{ required: true }]}><Input /></Form.Item> : <>
+        {registerSource === "platform_joblib" ? <Form.Item name="source_model_library_id" label={copy.sourceLibraryId} rules={[{ required: true }]}><Select showSearch optionFilterProp="label" placeholder={copy.sourceLibraryId} options={libraryOptions.map((item) => ({ value: item.id, label: `${item.name}（${item.version}）` }))} notFoundContent={<Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />} /></Form.Item> : <>
           <Form.Item name="onnx_file" label={copy.onnxFile} valuePropName="fileList" getValueFromEvent={(event) => event?.fileList} rules={[{ required: true }]}><Upload beforeUpload={() => false} maxCount={1} accept=".onnx"><Button>{copy.selectOnnxFile}</Button></Upload></Form.Item>
           <Form.Item name="feature_schema" label={copy.featureSchema} rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
           <Form.Item name="output_schema" label={copy.outputSchema} rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
@@ -592,6 +608,25 @@ export default function ModelLibraryPage() {
         <Form.Item name="description" label={copy.description}><Input.TextArea rows={3} /></Form.Item>
       </Form>
     </Modal>
+    <Drawer title={detailDeployment ? `${copy.deploymentInfo} · ${detailDeployment.name}` : copy.deploymentInfo} open={Boolean(detailDeployment)} onClose={() => setDetailDeployment(undefined)} width={520}>
+      {detailDeployment && (() => {
+        const version = Object.values(versions).flat().find((item) => item.id === detailDeployment.model_version_id);
+        const model = version ? models.find((item) => item.id === version.registered_model_id) : undefined;
+        const formatTime = (value: string | null) => {
+          const parsed = parseBackendTime(value);
+          return parsed ? parsed.toLocaleString() : "-";
+        };
+        return <Descriptions column={1} size="small" bordered>
+          <Descriptions.Item label={copy.name}>{detailDeployment.name}</Descriptions.Item>
+          <Descriptions.Item label={copy.assocModelVersion}>{model && version ? `${model.name} · v${version.version_number}（${statusLabel(version.approval_status)}）` : "-"}</Descriptions.Item>
+          <Descriptions.Item label={copy.desiredState}><Tag>{statusLabel(detailDeployment.desired_state)}</Tag></Descriptions.Item>
+          <Descriptions.Item label={copy.observedState}><Tag color={statusColor(detailDeployment.observed_state)}>{statusLabel(detailDeployment.observed_state)}</Tag></Descriptions.Item>
+          <Descriptions.Item label={copy.createdAt}>{formatTime(detailDeployment.created_at)}</Descriptions.Item>
+          <Descriptions.Item label={copy.lastCheckedAt}>{formatTime(detailDeployment.last_checked_at)}</Descriptions.Item>
+          <Descriptions.Item label={copy.lastError}>{detailDeployment.last_error_code || "-"}</Descriptions.Item>
+        </Descriptions>;
+      })()}
+    </Drawer>
     <Drawer title={versionModel ? `${versionModel.name} ${copy.versions}` : copy.versions} open={Boolean(versionModel)} onClose={() => setVersionModel(undefined)} width={680}>
       <Table rowKey="id" pagination={false} dataSource={versionModel ? versions[versionModel.id] || [] : []} columns={[
         { title: copy.version, dataIndex: "version_number", render: (value: number) => `v${value}` },
