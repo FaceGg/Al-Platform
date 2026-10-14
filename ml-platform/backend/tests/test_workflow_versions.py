@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -15,6 +16,11 @@ class TestWorkflowVersions(unittest.TestCase):
     def setUpClass(cls):
         cls.client_context = TestClient(app)
         cls.client = cls.client_context.__enter__()
+        # 运行工作流时 csv_import 会从进程 CWD 读取 file_path；测试须自带
+        # 该文件（此前依赖开发者机器上的残留 sample.csv，CI 上不存在）。
+        cls._sample_csv = Path("sample.csv")
+        cls._sample_csv.write_text("f1,f2\n0.1,1.0\n0.2,1.1\n", encoding="utf-8")
+        cls.addClassCleanup(cls._sample_csv.unlink, missing_ok=True)
         ensure_admin(username="version_admin")
         login = cls.client.post("/api/auth/login", data={
             "username": "version_admin", "password": "admin123",

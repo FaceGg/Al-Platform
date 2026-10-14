@@ -231,15 +231,17 @@ class OrchestrationAPIFlow(unittest.TestCase):
     def test_08_model_row_delete_policy(self):
         # A model catalog row without a running deployment behind it can be
         # deleted from the market; a running deployment blocks deletion.
+        import tempfile
+        service = build_artifact_service(db=SessionLocal())
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "m.joblib"
+            joblib.dump(LogisticRegression().fit([[0.0], [1.0]], [0, 1]), path)
+            artifact_id = service.create_from_file(
+                self.project.id, path, f"m-{uuid.uuid4().hex[:6]}", "model").id
+        _, deployment_id = self._seed_deployment(self.project.id, artifact_id)
+        deployment_uuid = uuid.UUID(deployment_id)
         db = SessionLocal()
         try:
-            deployment = InferenceDeployment(
-                project_id=self.project.id, name="running-dep",
-                model_version_id=uuid.uuid4(),
-                desired_state="running", observed_state="running",
-            )
-            db.add(deployment)
-            db.flush()
             stopped = PlatformAPI(
                 name="stopped-model-api", api_type="model", source_kind="model",
                 source_id=uuid.uuid4(), endpoint="/api/inference-deployments/x/predict",
@@ -247,7 +249,7 @@ class OrchestrationAPIFlow(unittest.TestCase):
             )
             running = PlatformAPI(
                 name="running-model-api", api_type="model", source_kind="model",
-                source_id=deployment.id, endpoint="/api/inference-deployments/y/predict",
+                source_id=deployment_uuid, endpoint="/api/inference-deployments/y/predict",
                 owner_id=self.admin_id,
             )
             db.add_all([stopped, running])
@@ -267,7 +269,7 @@ class OrchestrationAPIFlow(unittest.TestCase):
         db = SessionLocal()
         try:
             db.query(InferenceDeployment).filter(
-                InferenceDeployment.name == "running-dep").delete()
+                InferenceDeployment.id == deployment_uuid).delete()
             db.commit()
         finally:
             db.close()
