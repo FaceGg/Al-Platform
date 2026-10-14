@@ -63,20 +63,39 @@ describe("ProjectListPage", () => {
     expect(screen.getByRole("columnheader", { name: "操作" })).toHaveStyle({ textAlign: "right" });
   });
 
-  it("requires the shared confirmation for row and batch deletion", async () => {
+  it("requires the shared confirmation and typed project name for deletion", async () => {
     api.delete.mockResolvedValue({});
     api.post.mockResolvedValue({});
     render(<MemoryRouter><AntApp><ProjectListPage /></AntApp></MemoryRouter>);
 
+    // 第一层：行内 Popconfirm 确认后只是打开二级警告弹窗，不触发 API
     fireEvent.click(await screen.findByRole("button", { name: "删除项目 点焊质量感知" }));
     expect(api.delete).not.toHaveBeenCalled();
     fireEvent.click(within(await screen.findByRole("tooltip")).getByRole("button", { name: /删\s*除/ }));
+
+    // 第二层：必须逐字输入项目名称，确认按钮才可用
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/同时删除/)).toBeInTheDocument();
+    const nameInput = within(dialog).getByPlaceholderText("点焊质量感知");
+    fireEvent.change(nameInput, { target: { value: "错误的名称" } });
+    const modalConfirm = within(dialog).getByRole("button", { name: "我已了解后果，删除项目" });
+    expect(modalConfirm).toBeDisabled();
+    fireEvent.click(modalConfirm);
+    expect(api.delete).not.toHaveBeenCalled();
+
+    fireEvent.change(nameInput, { target: { value: "点焊质量感知" } });
+    fireEvent.click(modalConfirm);
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/projects/project-1"));
 
+    // 批量删除：输入固定短语确认
     fireEvent.click(screen.getAllByRole("checkbox")[1]);
     fireEvent.click(await screen.findByRole("button", { name: /批量删除 \(1\)/ }));
     expect(api.post).not.toHaveBeenCalledWith("/projects/batch-delete", { ids: ["project-1"] });
     fireEvent.click(within(await screen.findByRole("tooltip")).getByRole("button", { name: /删\s*除/ }));
+    const batchDialog = await screen.findByRole("dialog");
+    const batchInput = within(batchDialog).getByPlaceholderText("确认删除");
+    fireEvent.change(batchInput, { target: { value: "确认删除" } });
+    fireEvent.click(within(batchDialog).getByRole("button", { name: "我已了解后果，批量删除" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/projects/batch-delete", { ids: ["project-1"] }));
   });
 });
