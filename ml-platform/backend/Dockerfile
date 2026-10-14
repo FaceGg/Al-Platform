@@ -24,10 +24,10 @@ COPY requirements.txt .
 RUN --mount=type=bind,target=/wheels,source=wheelhouse \
     --mount=type=cache,target=/root/.cache/pip \
     set -eu; \
-    python3.11 -m pip install --find-links /wheels --index-url "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" --no-deps --retries 10 --resume-retries 20 --timeout 120 \
+    python3.11 -m pip install --find-links /wheels --no-deps --retries 10 --resume-retries 20 --timeout 120 \
         "xgboost==3.2.*" "catboost==1.2.*"; \
     sed '/^xgboost==/d; /^catboost==/d' requirements.txt > /tmp/requirements-without-boost.txt; \
-    python3.11 -m pip install --find-links /wheels --index-url "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" --retries 10 --resume-retries 20 --timeout 120 \
+    python3.11 -m pip install --find-links /wheels --retries 10 --resume-retries 20 --timeout 120 \
         graphviz plotly six \
         -r /tmp/requirements-without-boost.txt
 COPY . .
