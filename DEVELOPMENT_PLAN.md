@@ -315,6 +315,12 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 发布记录（2026-09-28）：安装包 `output/linkraft-ubuntu-20260926-r12.tar.gz`，manifest 绑定 HEAD `1f4d87f`，SHA-256 `16cf3654723b9380da264ff77cda4df8c3cd1db789403695ab900015141b8f8b`，归档抽查确认 cookie 开关代码与安装脚本均已包含。更正一：首个 r12 归档（SHA-256 `8ac6d972...b182b`）的 `install-ubuntu.sh` 因 Windows 工作区覆盖带入了 CRLF 行尾，在服务器报 `/usr/bin/env: bash\r`；`build-package.sh` 已增加打包前 LF 归一化。更正二：第二个归档（SHA-256 `77061681...56e29`）的安装脚本在 `set -u` 下引用未声明的 `ANNOTATOR_COOKIE_SECURE` 报"未绑定的变量"；已在脚本头部补默认声明并重建。前两个哈希均作废，服务器现场可用 `ANNOTATOR_COOKIE_SECURE=false ./packaging/install-ubuntu.sh` 绕过。
 - 待完成：目标服务器部署 r12 后外网登录 8443 并保持会话的端到端确认；外网 5175 的 `CORS_ORIGIN_FORBIDDEN` 与本地 5175 的对偶问题需用 `PUBLIC_ORIGIN`/`PUBLIC_ORIGIN_ALIASES` 收敛（运行时配置，无需发版）。
 
+### 2026-10-14 常规重打包：纳入 r14 后全部主线改动（r15）
+
+- 背景：r14（2026-10-13）之后主线新增——模型库/注册表删除修复（护栏补判历史发布目标 + 只拦活引用 + 级联清理换模残留）、发布运维 422 修复（StrictInt 拒收字符串分页）、注册版本「来源训练模型」下拉、推理部署「部署信息」查看抽屉、API 市场全类型上线/下线与 predict 调用统计与响应字段解释、编排发布提取目标列元数据、登录默认明亮主题、weld-quality e2e 随模板体系退役等；用户要求推送全部变更并按 r14 方法重新打包。
+- 发布记录（2026-10-14）：安装包 `output/linkraft-ubuntu-20261014-r15.tar.gz`（3,122,353 字节），manifest 绑定 HEAD `61e272b`（README r15 文档提交），SHA-256 `f0bfb10510774469446f48f4bcab7fff1df9c79750f51271a6b4e32eb862f6e8`，`sha256sum -c` 通过；`.git/` 内 LF 临时副本执行打包（构建输出目录 `temp_test/frontend-dist` 与陈年 `ml-platform/frontend/dist` 的教训已记于前节）。归档抽查：删除护栏/分页修复/明亮主题/迁移 `20261014_69`/r15 文档引用全部在包；排除项干净（无 `.env`/secrets/数据库/wheelhouse/node_modules/.git）；packaging 脚本 0 CR（Git Bash 管道的 MSYS CRLF 翻译会虚报，以 WSL 原生工具复核为准；README-UBUNTU.md 的 CRLF 属文档既有惯例不碍执行）。
+- 质量门禁：全量 CI 绑定台账提交后的 HEAD（结果回填）；绿后发 GitHub Release `20261014-r15`（资产 = tar.gz + sha256）。
+
 ### 2026-10-14 登录默认观感：默认明亮主题（语言本就默认中文）
 
 - 主题默认 `dark` → `light`（`stores/themeContext.tsx`；localStorage 读取并入 useState 初始化器消除断层闪烁；显式切换过的浏览器仍沿用其已存选择）。语言默认本就是 `zh`，未动。
