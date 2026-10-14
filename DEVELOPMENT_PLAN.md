@@ -2723,3 +2723,10 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **测试弹窗调用示例**：点击「测试」后左侧新增「调用示例」区——按 API 类型生成可复制的 curl 示例（origin + endpoint + Bearer token 占位 + Content-Type）：chat 生成 `{"message": ..., "top_k": 4}`（示例问题随语言切换）、orchestration 生成 `{"record": {...}}`、model 从 `request_schema.records` 特征清单生成 `{"records": [{特征: 0, ...}]}`、custom 使用其 request_schema；GET/HEAD 不带 body。示例带独立复制按钮，注明 token 需替换为平台令牌。
 - **测试**：APIMarketplacePage.test.tsx 的 i18n mock 补全全部新键、chat 徽标/筛选断言更新为中文（对话/对话 API）；该页 9 + 相关 4 文件 16 用例 passed，tsc + build 通过。
 - **部署环境**：Docker daemon 的 systemd 代理 drop-in（HTTP(S)_PROXY=127.0.0.1:7897）因 Windows 侧代理关闭而阻断全部镜像拉取（前端基础镜像 node:20-alpine 元数据 HEAD proxyconnect timeout）——注释该 drop-in 的两行代理并重启 docker（restart 策略自动恢复整栈），前端镜像重建部署成功。**若用户重新开启代理，可恢复该配置**。
+
+## 2026-10-14（续四） 项目删除二级确认（35bc0ac）
+
+- 新增 TypeToDeleteModal 通用组件：警告正文 + 必须逐字输入项目名称（批量删除输入固定短语「确认删除」）后确认按钮才启用；接入项目列表单删/批量删除两个入口，确认按钮文案「我已了解后果，删除项目」。
+- 测试：组件 3 用例（禁用态/名称匹配触发/重开清空）+ 页面测试改两步流 + weekAcceptance 清单登记新文件；全套件除并行会话正在改的 APIMarketplacePage 2 个用例外全绿。
+- 浏览器实测（预构建镜像链路：npm build → temp_test/frontend-dist 同步 html-dist → DOCKER_BUILDKIT=0 docker build -f Dockerfile.prebuilt，docker 代理 7897 不通时走此链）：弹窗文案/禁用态/错误名/正确名/删除成功五步全验证，表格仅剩 test112。
+- 教训：frontend 容器只 restart 不换镜像——改前端必须 docker compose build frontend（或预构建链）+ up -d。
