@@ -166,6 +166,40 @@ class OrchestrationAPIFlow(unittest.TestCase):
         self.assertEqual(r.status_code, 409, r.text)
         self.assertEqual(r.json()["detail"]["code"], "SERVING_GRAPH_HAS_TRAINING")
 
+    def test_01b_publish_writes_real_feature_schema_into_request_schema(self):
+        # The bound artifact is a dict package carrying feature_schema: the
+        # published request_schema must expose the real feature names so call
+        # examples render invocable records.
+        db = SessionLocal()
+        try:
+            service = build_artifact_service(db)
+            frame = pd.DataFrame({"current": [8.0, 10.0], "force": [2.0, 3.0]})
+            model = LogisticRegression().fit(frame, [0, 1])
+            with tempfile.TemporaryDirectory() as tmp:
+                model_path = Path(tmp) / "pkg.joblib"
+                joblib.dump({"model": model, "feature_schema": ["current", "force"]}, model_path)
+                artifact = service.create_from_file(
+                    self.project.id, model_path, f"pkg-{uuid.uuid4().hex[:6]}", "model")
+            artifact_id = str(artifact.id)
+        finally:
+            db.close()
+
+        nodes = [
+            {"id": "n-input", "operator_id": "api_input", "label": "输入", "params": {}},
+            {"id": "n-model", "operator_id": "load_model_artifact", "label": "模型",
+             "params": {"model_artifact_id": artifact_id}},
+            {"id": "n-apply", "operator_id": "apply_model", "label": "推理", "params": {}},
+        ]
+        edges = [
+            {"source": "n-input", "target": "n-apply", "source_port": "data", "target_port": "data"},
+            {"source": "n-model", "target": "n-apply", "source_port": "model", "target_port": "model"},
+        ]
+        workflow_id, version = self._seed(with_run=False, snapshot_nodes=nodes, snapshot_edges=edges)
+        r = client.post(f"/api/platform/apis/publish/workflow/{workflow_id}/{version}", headers=self.h)
+        self.assertEqual(r.status_code, 201, r.text)
+        schema = r.json()["request_schema"]
+        self.assertEqual(schema.get("record"), {"current": 0, "force": 0})
+
     def test_03_publish_invoke_branch_and_offline(self):
         workflow_id, version = self._seed(with_run=False)
 

@@ -135,7 +135,8 @@ export default function APIMarketplacePage() {
     if (api.api_type === "chat") {
       body = { message: lang === "zh" ? "点焊飞溅的主要原因有哪些？" : "What causes weld spatter?", top_k: 4 };
     } else if (api.api_type === "orchestration") {
-      body = { record: { feature1: 0, feature2: 0 } };
+      const sample = api.request_schema?.record;
+      body = { record: sample && typeof sample === "object" && !Array.isArray(sample) ? sample : { feature1: 0, feature2: 0 } };
     } else if (api.api_type === "model") {
       const feats = Array.isArray(api.request_schema?.records) ? api.request_schema.records : [];
       body = { records: [Object.fromEntries(feats.map((f: string) => [f, 0]))] };

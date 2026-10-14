@@ -156,6 +156,53 @@ def _validate_serving_graph(version: WorkflowVersion) -> None:
         )
 
 
+def _serving_record_schema(db, version: WorkflowVersion) -> dict:
+    """Best-effort: real feature names for the invoke record, read from the
+    graph's bound model artifact (AutoML/model-library packages carry a
+    feature_schema list). Returned as {feature: 0} sample values."""
+    for node in version.nodes_snapshot or []:
+        if node.get("operator_id") != "load_model_artifact":
+            continue
+        artifact_id = (node.get("params") or {}).get("model_artifact_id")
+        if not artifact_id:
+            continue
+        try:
+            import io
+            import joblib
+
+            from app.models.artifact import Artifact
+            from app.services.artifact_service import build_artifact_service
+
+            art = db.query(Artifact).filter(
+                Artifact.id == uuid.UUID(str(artifact_id)),
+            ).first()
+            if art is None:
+                continue
+            storage = build_artifact_service(db).storage
+            with storage.open(art.storage_uri) as handle:
+                payload = handle.read()
+            loaded = joblib.load(io.BytesIO(payload))
+            feats = loaded.get("feature_schema") if isinstance(loaded, dict) else None
+            if isinstance(feats, list) and feats:
+                names = []
+                for feat in feats:
+                    # AutoML schemas carry dicts ({name, dtype}); plain lists
+                    # of names pass through unchanged.
+                    if isinstance(feat, dict):
+                        name = feat.get("name")
+                        if name:
+                            names.append(str(name))
+                    elif str(feat).strip():
+                        names.append(str(feat))
+                if names:
+                    # Full feature list: the invoke record must carry every
+                    # training column or the model rejects the prediction.
+                    return {name: 0 for name in names}
+        except Exception:
+            continue
+    return {}
+
+
 def publish_workflow_version(
     db, workflow_id, version_number: int, actor_id: uuid.UUID,
 ) -> PlatformAPI:
@@ -165,6 +212,10 @@ def publish_workflow_version(
     # normal canvas run, so a run-record gate would be unreachable here.
     _validate_serving_graph(version)
     api_version = f"v{version_number}"
+    record_sample = _serving_record_schema(db, version)
+    request_schema = (
+        {"record": record_sample} if record_sample else {"record": "single row object"}
+    )
     existing = db.query(PlatformAPI).filter(
         PlatformAPI.source_kind == "orchestration",
         PlatformAPI.source_id == version.id,
@@ -175,6 +226,9 @@ def publish_workflow_version(
         existing.status = "published"
         existing.published_at = now
         existing.last_error = None
+        # Refresh the schema sample: the bound artifact's feature list may have
+        # been unknown at first publish (or the catalog predates enrichment).
+        existing.request_schema = request_schema
         db.commit()
         db.refresh(existing)
         return existing
@@ -184,7 +238,7 @@ def publish_workflow_version(
         version=api_version, status="published", source_kind="orchestration",
         source_id=version.id, workflow_id=workflow.id,
         description=f"Orchestration invoke API for {workflow.name} {api_version}",
-        request_schema={"record": "single row object"},
+        request_schema=request_schema,
         response_schema={"records": "output rows", "branch": "taken condition branch"},
         owner_id=actor_id, is_public=False, published_at=now,
     )
