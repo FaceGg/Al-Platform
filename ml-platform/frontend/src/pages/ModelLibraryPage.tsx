@@ -89,14 +89,13 @@ export default function ModelLibraryPage() {
   const logQuery = useMemo(() => ({ ...metricWindow, page: 1, page_size: 100 }), [metricWindow]);
 
   useEffect(() => {
-    // 注册版本对话框打开时拉取本项目模型库条目，供「来源训练模型」下拉选择
+    // 注册版本对话框打开时拉取本项目模型库条目，供「来源训练模型」下拉选择。
+    // 不按 model_path 过滤：闭环重训登记的条目走 artifact 关联，path 常为空。
     if (!registerModel || !projectId) return;
     apiClient.get("/model-library", { params: { project_id: projectId, status: "completed" } })
       .then((response) => {
-        const items = (response.data?.items || []) as { id: string; name: string; version: string; model_path?: string }[];
-        setLibraryOptions(items
-          .filter((item) => item.model_path)
-          .map((item) => ({ id: item.id, name: item.name, version: item.version })));
+        const items = (response.data?.items || []) as { id: string; name: string; version: string }[];
+        setLibraryOptions(items.map((item) => ({ id: item.id, name: item.name, version: item.version })));
       })
       .catch(() => setLibraryOptions([]));
   }, [registerModel, projectId]);

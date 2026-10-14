@@ -321,7 +321,8 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 根因（①）：`MetricQuery`/`RequestLogQuery` 的 `page`/`page_size` 用 `StrictInt`，而查询参数到达后端恒为字符串（`"1"`），strict 校验拒收 → 带分页的 metrics/request-logs 请求必 422。本地对运行中部署实测复现：带分页 422、不带 200。
 - 修复：①分页字段改普通 `int`（宽泛转换，保留 ge/le 约束）；②`/api/model-library` 列表加 `project_id` 过滤，注册版本对话框「来源训练模型」改为本项目已完成且带模型文件条目的下拉（showSearch 按名称过滤），i18n 标签澄清为「来源训练模型（模型库条目）」；③推理部署行新增「部署信息」查看抽屉（名称/关联模型版本/期望与实际状态/创建与最近检查时间/最近错误）。
 - 验证：后端 `test_api_model_library` 6 用例（新增指标/日志字符串分页 200 回归）+ 注册表两套件 31 passed 无回归；前端 `ModelLibraryPage` 14 用例全绿（注册流程 mock 适配下拉交互、apiClient mock 按路由返回模型库条目）；vite build 通过。
-- 待完成：本地容器更新（backend 重建 + 前端 `npm run build` 产物 docker cp 热更新）因 WSL CLI 故障（`0x8007274c`，容器与端口转发不受影响）暂缓；服务器随下次发包（r15）带上。前端热更新后，删除拦截文案才会显示为「模型正被推理部署使用:〈部署名〉…」。
+- 后续（同日晚）：①本地容器已全部更新（backend 重建、前端从**正确构建目录 `temp_test/frontend-dist`** docker cp 热更新——`ml-platform/frontend/dist/` 是 2026-10-10 的陈年遗留，曾据此误降级容器前端包，建议择机删除防再误用）；②frontend/nginx 代理在 backend 容器重建换内部 IP 后 502，重启两容器重新解析即恢复（nginx 启动时解析 upstream 属正常行为）；③「来源训练模型」下拉初版按 `model_path` 非空过滤，但闭环重训条目走 artifact 关联、path 常为空，导致下拉空——已去掉该过滤（仍限本项目已完成条目），浏览器实测后端返回 12 条、页面 effect 请求 200。
+- 待完成：服务器随下次发包（r15）带上全部修复；本地开发库历史孤儿行未清理。
 
 ### 2026-10-14 模型库/注册表删除已注册模型报 500：部署主版本护栏漏判历史发布目标
 
