@@ -2709,3 +2709,8 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **在线栈冒烟**（docker 栈，postgres 已在迁移 69）：15 容器全部健康；登录正常；**93 个只读 GET 端点批量探测**——3 个 500：`/api/dashboard/recent-activity`（既有 bug，b2cbefc 已修，容器待重建生效）、`/api/dashboard/top-models` 与 `/api/model-library/stats/summary`（**新发现：按 JSON 列 metrics 排序，PostgreSQL 不支持，sqlite 测试环境无法暴露**——两个工作台/模型库统计接口在生产必 500，待修）；其余 401/404/422 均为内部鉴权、缺路径参数或缺查询参数的预期形态。19 个页面浏览器巡检无错误标记。
 - **test_evidence_manifest 排障**：与 week12 安全门禁用例并发执行时稳定失败（gitleaks 回执 digest 校验级联失败）——两类测试都会对仓库源码树做全量摘要，并发时互相踩踏；单独执行 35/35 全绿。教训：这两个模块严禁并发跑。
 - **环境差异**：本地 .venv 未装 torch（CI 装了 CPU 版，无用例因此失败）；未运行项=CI 专属 job（Chromium 验收、production-integration、真实 K8s 集成）与 Mimosa 深度安全扫描。
+
+## 2026-10-14（续三） PG 专属 500 修复落地（036fc42）
+
+- top-models 与 model-library/stats/summary 改为取回后 Python 侧按 `best_score` 降序（`top_models_by_score`，无分值沉底），双方言一致；test_13 排序回归（含 dashboard 侧断言）。test_api_model_library 13 passed、test_api_dashboard 回归 OK。
+- backend 容器已重建（含 b2cbefc/1c8b372/036fc42 全部修复），线上复验：top-models / model-library/stats/summary / recent-activity 三个曾 500 端点全部 200，top-models 返回降序内容。生产环境问题清零。
