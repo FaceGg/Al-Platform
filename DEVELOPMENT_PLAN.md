@@ -2747,3 +2747,9 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **调用示例真实化**：`publish_workflow_version` 发布时（新发布与幂等复活均）尽力从绑定制品读取 `feature_schema`（兼容 `{name,dtype}` dict 元素与纯字符串），写入 `request_schema.record` 真实特征模板（**不截断**——截断到 50 会被 LGBM 特征数校验拒绝）；前端调用示例对编排 API 优先消费 request_schema.record。发布测试新增 schema 断言用例（test_api_workflow_publication 7 passed）。
 - **实测（用户需求"调用示例必须先经过测试确保能直接使用"）**：重新发布用户真实工作流「方案B全闭环服务 v2」（version 708ec935）→ request_schema 刷新为 **73 个真实特征**（wld1c/wld2c/tipv1…）→ 用生成的 73 字段 record 实测 invoke → **200**，records=1（全 0 值输入 prediction 序列化为 null 属正常，代入真实测量值即为有效预测）。测试：test_model_port（新模块，登记 week 17）+ test_api_workflow_publication 等聚焦 **63 passed**；前端市场页 11 passed + tsc。
 - **遗留**：① ml_operators.py 的旧实现仍在文件里（被覆盖安装遮蔽），扫描器恢复正常后可将覆盖逻辑合并回文件本体并删除安装器；② Mimosa 对 `pd.DataFrame(`/`def execute(` 等模式的"SQL 注入"误报持续存在（scanner_enobufs），建议重跑完整审计；③ 构建期 pip 对传递依赖仍会"索引取最新"（本地 wheel 版本旧于索引时），构建慢但可用。
+
+---
+
+## 2026-10-14（续四）API 市场列表接口补 request_schema（调用示例真实字段的前置）
+
+- 用户实测发现编排 API 调用示例仍是 feature1/feature2 占位：前端 buildExample 优先消费行数据 `request_schema.record`，但 `GET /api/platform/apis` 列表接口的返回项**从未序列化 request_schema/response_schema**（仅发布/详情序列化含），前端拿不到真实特征只能走占位兜底。列表项补齐两字段后，部署验证：列表返回「方案B全闭环服务 v2」行含 **73 字段** record（wld1c/wld2c/tipv1…）与 response_schema。回归 test_api_platform + test_api_workflow_publication OK。

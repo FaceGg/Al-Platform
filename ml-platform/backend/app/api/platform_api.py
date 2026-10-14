@@ -159,6 +159,8 @@ def list_apis(
                 "source_kind": a.source_kind or a.api_type,
                 "source_id": str(a.source_id) if a.source_id else None,
                 "description": a.description,
+                "request_schema": a.request_schema,
+                "response_schema": a.response_schema,
                 "total_calls": a.total_calls,
                 "success_calls": a.success_calls,
                 "failed_calls": a.failed_calls,
