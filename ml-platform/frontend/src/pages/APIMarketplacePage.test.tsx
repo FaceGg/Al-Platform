@@ -207,8 +207,30 @@ describe("APIMarketplacePage", () => {
     expect(await screen.findByText("API list loading failed")).toBeInTheDocument();
   });
 
-  it("fills the login token into the call example on demand and hides it again", async () => {
+  it("prefills the model API body with real feature names, not schema metadata", async () => {
     localStorage.setItem("token", "jwt-test-token");
+    apiGet.mockResolvedValue({
+      items: [
+        { id: "model-9", name: "自动化测试", api_type: "model", source_kind: "model",
+          source_id: "dep-9", version: "v1", status: "published", method: "POST",
+          endpoint: "/api/inference-deployments/dep-9/predict",
+          request_schema: { records: [{ name: "wld1c", dtype: "float64" }, { name: "wld2c", dtype: "float64" }] },
+          total_calls: 0, success_calls: 0 },
+      ],
+    });
+    render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /测试/ }));
+    const bodyBox = await screen.findAllByRole("textbox");
+    const bodyText = bodyBox.map((b) => b.textContent || "").find((t) => t.includes("records"));
+    expect(bodyText).toContain("wld1c");
+    expect(bodyText).not.toContain("[object Object]");
+    expect(bodyText).not.toContain("dtype");
+    // 调用示例同样使用真实特征名
+    expect(screen.getAllByText(/"wld1c": 0/).length).toBeGreaterThanOrEqual(1);
+    localStorage.removeItem("token");
+  });
+
+  it("fills the login token into the call example on demand and hides it again", async () => {    localStorage.setItem("token", "jwt-test-token");
     apiGet.mockResolvedValue({
       items: [
         { id: "chat-1", name: "知识库对话", api_type: "chat", source_kind: "chat",

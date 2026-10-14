@@ -2766,3 +2766,10 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 ## 2026-10-14（续六）测试弹窗布局调整
 
 - 调用示例块固定 170px 高度、内部滚动（73 特征的长示例不再撑爆弹窗）；弹窗内容高度 500→640；请求体 Body 输入框 6 行→14 行。纯样式变更：APIMarketplacePage 11 passed + tsc + build；前端镜像重建部署。
+
+---
+
+## 2026-10-14（续七）测试弹窗 Body 预填改为可发送请求体（修复模型 API 409 Schema Mismatch 的界面根因）
+
+- 用户实测模型 API 仍 409 `INFERENCE_SCHEMA_MISMATCH`：错误展示修复后根因清晰——测试弹窗的 Body 预填的是 `request_schema` **原始元数据**（`{"records":[{"name":"wld1c","dtype":"float64"},…]}` 字段描述），而 predict 需要的是特征值行；示例（curl）是对的、Body 是错的。
+- 修复：提取 `buildExampleBody(api)`（按类型生成可发送 body：model 兼容 `{name,dtype}`/字符串特征条目、orchestration 用 request_schema.record、chat 用 message+top_k、custom 用 request_schema），`openTest` 预填 Body 改用其 JSON；buildExample 复用同一构造，示例与 Body 永远一致。新增用例断言 Body 含真实特征名且无 schema 元数据；页面 12 passed + tsc + build；前端镜像重建部署。

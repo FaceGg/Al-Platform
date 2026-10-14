@@ -99,11 +99,34 @@ export default function APIMarketplacePage() {
     } catch (error) { message.error(formatApiError(error, "Save failed")); }
   };
 
+  const buildExampleBody = (api: any) => {
+    let body: any = undefined;
+    if (api.api_type === "chat") {
+      body = { message: lang === "zh" ? "点焊飞溅的主要原因有哪些？" : "What causes weld spatter?", top_k: 4 };
+    } else if (api.api_type === "orchestration") {
+      const sample = api.request_schema?.record;
+      body = { record: sample && typeof sample === "object" && !Array.isArray(sample) ? sample : { feature1: 0, feature2: 0 } };
+    } else if (api.api_type === "model") {
+      const feats = Array.isArray(api.request_schema?.records) ? api.request_schema.records : [];
+      // Feature entries may be plain names or {name, dtype} schema dicts.
+      const names = feats
+        .map((f: any) => (f && typeof f === "object" ? f.name : f))
+        .filter(Boolean);
+      body = { records: [Object.fromEntries(names.map((n: string) => [String(n), 0]))] };
+    } else if (api.request_schema && Object.keys(api.request_schema).length) {
+      body = api.request_schema;
+    }
+    return body;
+  };
+
   const openTest = (api: any) => {
     setTestApi(api);
     setTestMethod(api.method || "POST");
     setTestUrl(api.endpoint || "/api/");
-    setTestBody(api.request_schema ? JSON.stringify(api.request_schema, null, 2) : '{\n  \n}');
+    // Prefill the Body with a sendable request (real feature names for
+    // model/orchestration APIs), not the raw schema metadata.
+    const sample = buildExampleBody(api);
+    setTestBody(sample ? JSON.stringify(sample, null, 2) : '{\n  \n}');
     setTestResponse(null);
     setUseToken(false);
     setShowTest(true);
@@ -131,22 +154,7 @@ export default function APIMarketplacePage() {
     const tokenRef = useToken && myToken() ? myToken() : "<token>";
     const lines: string[] = [`curl -X ${method} "${origin}${api.endpoint || ""}" \\`];
     lines.push(`  -H "Authorization: Bearer ${tokenRef}" \\`);
-    let body: any = undefined;
-    if (api.api_type === "chat") {
-      body = { message: lang === "zh" ? "点焊飞溅的主要原因有哪些？" : "What causes weld spatter?", top_k: 4 };
-    } else if (api.api_type === "orchestration") {
-      const sample = api.request_schema?.record;
-      body = { record: sample && typeof sample === "object" && !Array.isArray(sample) ? sample : { feature1: 0, feature2: 0 } };
-    } else if (api.api_type === "model") {
-      const feats = Array.isArray(api.request_schema?.records) ? api.request_schema.records : [];
-      // Feature entries may be plain names or {name, dtype} schema dicts.
-      const names = feats
-        .map((f: any) => (f && typeof f === "object" ? f.name : f))
-        .filter(Boolean);
-      body = { records: [Object.fromEntries(names.map((n: string) => [String(n), 0]))] };
-    } else if (api.request_schema && Object.keys(api.request_schema).length) {
-      body = api.request_schema;
-    }
+    const body = buildExampleBody(api);
     if (method !== "GET" && method !== "HEAD") {
       lines.push(`  -H "Content-Type: application/json" \\`);
       lines.push(`  -d '${JSON.stringify(body ?? {}, null, 1).replace(/\n/g, "\n  ")}'`);
