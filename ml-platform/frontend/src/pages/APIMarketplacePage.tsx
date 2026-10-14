@@ -276,7 +276,7 @@ export default function APIMarketplacePage() {
       </Modal>
 
       <Modal open={showTest} onCancel={() => setShowTest(false)} footer={null} width={900} title={<Space><PlayCircleOutlined /> {tr.test_title}{testApi?.name}</Space>}>
-        <div style={{ display: "flex", gap: 16, height: 500 }}>
+        <div style={{ display: "flex", gap: 16, height: 640 }}>
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12, overflow: "auto" }}>
             <Space>
               <Select value={testMethod} onChange={setTestMethod} style={{ width: 100 }}
@@ -291,7 +291,7 @@ export default function APIMarketplacePage() {
                   <Button size="small" icon={<CopyOutlined />} onClick={()=>{navigator.clipboard.writeText(buildExample(testApi));message.success(tr.copied);}}>{tr.copy}</Button>
                   <Button size="small" icon={<KeyOutlined />} onClick={toggleToken} danger={useToken}>{useToken ? tr.hide_token : tr.use_token}</Button>
                 </Space>
-                <pre style={{background:"#f5f5f5",padding:12,borderRadius:8,fontSize:12,margin:0,whiteSpace:"pre-wrap",wordBreak:"break-all"}}>
+                <pre style={{background:"#f5f5f5",padding:12,borderRadius:8,fontSize:12,margin:0,whiteSpace:"pre-wrap",wordBreak:"break-all",height:170,overflowY:"auto"}}>
                   {buildExample(testApi)}
                 </pre>
                 <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>
@@ -302,7 +302,7 @@ export default function APIMarketplacePage() {
             <Text type="secondary">{tr.headers}:</Text>
             <TextArea value={testHeaders} onChange={e=>setTestHeaders(e.target.value)} rows={3} style={{ fontFamily:"monospace",fontSize:12 }} />
             <Text type="secondary">{tr.body}:</Text>
-            <TextArea value={testBody} onChange={e=>setTestBody(e.target.value)} rows={6} style={{ fontFamily:"monospace",fontSize:12 }} />
+            <TextArea value={testBody} onChange={e=>setTestBody(e.target.value)} rows={14} style={{ fontFamily:"monospace",fontSize:12 }} />
           </div>
           <div style={{ flex: 1, borderLeft: "1px solid #f0f0f0", paddingLeft: 16, overflow: "auto" }}>
             {testResponse ? (

@@ -2760,3 +2760,9 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 
 - 用户测试模型 API（自动化测试部署）暴露两个问题：① 示例生成器把  形态的特征清单当字符串处理，生成 ——改为兼容对象/字符串两种元素并取 name；② 测试发送遇 HTTP 4xx/5xx 时 axios 抛异常被统一显示为 "0 Network Error"，看不到真实状态码与错误体——catch 分支改为有 e.response 时展示真实 status + 响应体。
 - 实测：该模型 API 对应部署（自动化测试）desired/observed 均 running，用其模型版本真实 73 特征实测 predict **200 OK**（用户所见图中 409 为部署启动期间的瞬时 DEPLOYMENT_NOT_READY）。回归：APIMarketplacePage 11 passed + tsc；前端镜像重建部署。
+
+---
+
+## 2026-10-14（续六）测试弹窗布局调整
+
+- 调用示例块固定 170px 高度、内部滚动（73 特征的长示例不再撑爆弹窗）；弹窗内容高度 500→640；请求体 Body 输入框 6 行→14 行。纯样式变更：APIMarketplacePage 11 passed + tsc + build；前端镜像重建部署。
