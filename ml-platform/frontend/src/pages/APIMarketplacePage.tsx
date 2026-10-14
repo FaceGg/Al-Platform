@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Alert, Card, Table, Tag, Button, Space, Typography, Modal, Descriptions, message, Select, Input, Form, Row, Col, Statistic } from "antd";
-import { PlayCircleOutlined, EyeOutlined, SendOutlined, CopyOutlined, PlusOutlined, EditOutlined, KeyOutlined } from "@ant-design/icons";
+import { PlayCircleOutlined, EyeOutlined, SendOutlined, CopyOutlined, PlusOutlined, EditOutlined, KeyOutlined, PauseCircleOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import apiClient, { apiGet, apiPost, apiPut, apiDelete, formatApiError } from "../api/client";
 import { useI18n } from "../i18n";
@@ -98,6 +98,17 @@ export default function APIMarketplacePage() {
       notifyDashboardStatsChanged();
       message.success(t.common?.success || "Deleted"); fetchData();
     } catch (error) { message.error(formatApiError(error, "Delete failed")); }
+  };
+
+  const toggleOnline = async (api: any, online: boolean) => {
+    try {
+      const res: any = await apiPost(`/platform/apis/${api.id}/${online ? "online" : "offline"}`);
+      notifyDashboardStatsChanged();
+      message.success(t.common?.success || "OK");
+      if (res?.status) {
+        setData(prev => prev.map((a: any) => (a.id === api.id ? { ...a, status: res.status } : a)));
+      }
+    } catch (error) { message.error(formatApiError(error, "Status change failed")); }
   };
 
   const openEditor = (api?: any) => {
@@ -247,15 +258,20 @@ export default function APIMarketplacePage() {
     { title: tr.col_calls, dataIndex: "total_calls", key: "total_calls", width:80 },
     { title: tr.col_rate, key: "rate", width:100,
       render: (_:any, r:any) => <Text style={{color:r.total_calls>0&&(r.success_calls/r.total_calls)<0.9?"#ff4d4f":undefined}}>{r.total_calls>0?((r.success_calls/r.total_calls)*100).toFixed(1)+"%":"-"}</Text> },
-    { title: tr.col_actions, key: "actions", width:220,
+    { title: tr.col_actions, key: "actions", width:280,
       render: (_:any, r:any) => (
         <Space size="small">
           <Button size="small" icon={<EyeOutlined />} onClick={() => { setDetail(r); setShowDetail(true); }}>{tr.detail}</Button>
           <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => openTest(r)}>{tr.test}</Button>
+          {r.status === "published" ? (
+            <Button size="small" icon={<PauseCircleOutlined />} onClick={() => void toggleOnline(r, false)}>{tr.offline_btn}</Button>
+          ) : (
+            <Button size="small" icon={<PlayCircleOutlined />} onClick={() => void toggleOnline(r, true)}>{tr.online}</Button>
+          )}
           {r.source_kind === "custom" && !r.source_id && (
             <Button size="small" icon={<EditOutlined />} onClick={() => openEditor(r)}>{tr.edit}</Button>
           )}
-          {(r.source_kind === "custom" || r.source_kind === "orchestration" || r.source_kind === "chat") && (
+          {(r.source_kind === "custom" || r.source_kind === "orchestration" || r.source_kind === "chat" || r.source_kind === "model") && (
             <DeleteConfirmation label={`${tr.delete_confirm || "删除 "}${r.name}`} targetName={r.name} onConfirm={() => void handleDelete(r.id)} />
           )}
         </Space>

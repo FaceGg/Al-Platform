@@ -208,6 +208,70 @@ class OrchestrationAPIFlow(unittest.TestCase):
         self.assertEqual(target, {"name": "fault", "task": "classification",
                                   "classes": ["0.0", "1.0"]})
 
+    def test_07_market_online_offline_roundtrip(self):
+        workflow_id, version = self._seed(with_run=False)
+        api = client.post(
+            f"/api/platform/apis/publish/workflow/{workflow_id}/{version}",
+            headers=self.h).json()
+        invoke_url = f"/api/platform/apis/orchestration/{api['source_id']}/invoke"
+        record = {"record": {"f1": 5.1, "f2": -1.0}}
+
+        self.assertEqual(client.post(invoke_url, json=record, headers=self.h).status_code, 200)
+
+        r = client.post(f"/api/platform/apis/{api['id']}/offline", headers=self.h)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["status"], "offline")
+        self.assertEqual(client.post(invoke_url, json=record, headers=self.h).status_code, 409)
+
+        r = client.post(f"/api/platform/apis/{api['id']}/online", headers=self.h)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["status"], "published")
+        self.assertEqual(client.post(invoke_url, json=record, headers=self.h).status_code, 200)
+
+    def test_08_model_row_delete_policy(self):
+        # A model catalog row without a running deployment behind it can be
+        # deleted from the market; a running deployment blocks deletion.
+        db = SessionLocal()
+        try:
+            deployment = InferenceDeployment(
+                project_id=self.project.id, name="running-dep",
+                model_version_id=uuid.uuid4(),
+                desired_state="running", observed_state="running",
+            )
+            db.add(deployment)
+            db.flush()
+            stopped = PlatformAPI(
+                name="stopped-model-api", api_type="model", source_kind="model",
+                source_id=uuid.uuid4(), endpoint="/api/inference-deployments/x/predict",
+                owner_id=self.admin_id,
+            )
+            running = PlatformAPI(
+                name="running-model-api", api_type="model", source_kind="model",
+                source_id=deployment.id, endpoint="/api/inference-deployments/y/predict",
+                owner_id=self.admin_id,
+            )
+            db.add_all([stopped, running])
+            db.commit()
+            stopped_id = str(stopped.id)
+            running_id = str(running.id)
+        finally:
+            db.close()
+
+        blocked = client.delete(f"/api/platform/apis/{running_id}", headers=self.h)
+        self.assertEqual(blocked.status_code, 409, blocked.text)
+        self.assertIn("下线", blocked.json()["detail"]["message"])
+
+        allowed = client.delete(f"/api/platform/apis/{stopped_id}", headers=self.h)
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+        # 清理测试部署行，保持用例自洁
+        db = SessionLocal()
+        try:
+            db.query(InferenceDeployment).filter(
+                InferenceDeployment.name == "running-dep").delete()
+            db.commit()
+        finally:
+            db.close()
+
     def test_03_publish_invoke_branch_and_offline(self):
         workflow_id, version = self._seed(with_run=False)
 
@@ -260,13 +324,14 @@ class OrchestrationAPIFlow(unittest.TestCase):
         mine = next(item for item in items if item["id"] == api_id)
         self.assertEqual(mine["status"], "offline")
 
-    def test_05_delete_orchestration_api_allowed_model_forbidden(self):
+    def test_05_delete_orchestration_api_and_unbound_model_row(self):
         workflow_id, version = self._seed(with_run=False)
         r = client.post(f"/api/platform/apis/publish/workflow/{workflow_id}/{version}", headers=self.h)
         self.assertEqual(r.status_code, 201, r.text)
         orchestration_id = r.json()["id"]
 
-        # A model-bound catalog row follows the deployment lifecycle instead.
+        # A model catalog row with NO deployment behind it is deletable
+        # (rows of RUNNING deployments are blocked, see test_08).
         db = SessionLocal()
         try:
             model_api = PlatformAPI(
@@ -280,7 +345,7 @@ class OrchestrationAPIFlow(unittest.TestCase):
             db.close()
 
         r = client.delete(f"/api/platform/apis/{model_api_id}", headers=self.h)
-        self.assertEqual(r.status_code, 409, r.text)
+        self.assertEqual(r.status_code, 200, r.text)
 
         r = client.delete(f"/api/platform/apis/{orchestration_id}", headers=self.h)
         self.assertEqual(r.status_code, 200, r.text)

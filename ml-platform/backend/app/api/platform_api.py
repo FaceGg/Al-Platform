@@ -9,13 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models.api_model import PlatformAPI
 from app.models.user import User
 from app.api.auth import get_current_user
 from app.services.resource_access import ResourceAccessService
 from app.services.api_publication import (
     APIPublicationError,
+    sync_deployment_publication,
     publish_chat_api,
     publish_deployment,
     publish_workflow_version,
@@ -233,14 +234,133 @@ def delete_api(api_id: str, db: Session = Depends(get_db), current_user: User = 
         current_user.id,
     )
     # Custom rows are user-created; orchestration rows are derived from
-    # workflow versions and chat rows from knowledge bases — both can be
-    # recreated by re-publishing, so all three are deletable here. Model rows
-    # follow the deployment lifecycle instead.
+    # workflow versions and chat rows from knowledge bases — all three can be
+    # recreated by re-publishing. Model rows follow the deployment lifecycle:
+    # deleting one is allowed only while its deployment is not running (a
+    # running deployment would just re-publish the row on its next sync).
     if api.source_kind == "model":
-        raise HTTPException(409, detail="deployment-bound APIs are managed from the model library; take the deployment offline instead")
+        deployment = None
+        if api.source_id is not None:
+            from app.models.model_registry import InferenceDeployment
+
+            deployment = db.query(InferenceDeployment).filter(
+                InferenceDeployment.id == api.source_id,
+            ).first()
+        if deployment is not None and deployment.desired_state == "running":
+            raise HTTPException(
+                409,
+                detail={"code": "DEPLOYMENT_STILL_RUNNING",
+                        "message": "该 API 由运行中的推理部署生成；请先在市场对该 API 执行「下线」（停止部署）后再删除"},
+            )
     db.delete(api)
     db.commit()
     return {"status": "deleted"}
+
+
+def _deployment_service(db):
+    from app.config import settings as app_settings
+
+    from app.models.model_registry import InferenceDeployment
+    from app.services.inference_deployment import InferenceDeploymentService
+    from app.services.inference_runtime_client import InferenceRuntimeClient
+
+    secret = app_settings.resolved_inference_internal_secret
+    if not app_settings.inference_runtime_url or secret is None:
+        return None
+    client = InferenceRuntimeClient(
+        app_settings.inference_runtime_url,
+        secret.get_secret_value(),
+        load_timeout_seconds=app_settings.inference_load_timeout_seconds,
+        predict_timeout_seconds=app_settings.inference_predict_timeout_seconds,
+    )
+    return InferenceDeploymentService(client, SessionLocal)
+
+
+def _get_owned_api(api_id: str, current_user: User, db: Session) -> PlatformAPI:
+    return ResourceAccessService().require_owned(
+        db, PlatformAPI, api_id, current_user.id,
+    )
+
+
+@router.post("/{api_id}/online")
+def online_api(
+    api_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Bring a catalog API back online, by source kind:
+    model → start the deployment; chat/orchestration → re-publish; custom →
+    draft/offline → published."""
+    api = _get_owned_api(api_id, current_user, db)
+    kind = api.source_kind or api.api_type
+    try:
+        if kind == "model":
+            _deployment_service(db).start(db, api.source_id)
+            sync_deployment_publication(db, api.source_id, current_user.id, running=True)
+        elif kind == "chat":
+            publish_chat_api(db, api.source_id, current_user.id)
+        elif kind == "orchestration":
+            if api.workflow_id is None or not str(api.version or "").lstrip("v").isdigit():
+                raise HTTPException(409, detail={"code": "ORPHANED_ORCHESTRATION_API",
+                                                 "message": "该编排 API 的工作流版本已不存在，无法上线；请删除后重新发布"})
+            publish_workflow_version(db, api.workflow_id, int(str(api.version).lstrip("v")), current_user.id)
+        else:
+            if api.status == "published":
+                pass
+            elif api.status in ("draft", "offline"):
+                api.status = "published"
+                db.commit()
+            else:
+                raise HTTPException(409, detail={"code": "INVALID_STATUS_TRANSITION",
+                                                 "message": f"当前状态 {api.status} 不允许上线"})
+    except HTTPException:
+        raise
+    except APIPublicationError as error:
+        status_code = 404 if error.code.endswith("NOT_FOUND") else 403 if error.code.endswith("PERMISSION_DENIED") else 409
+        raise HTTPException(status_code, detail={"code": error.code, "message": str(error)}) from error
+    db.refresh(api)
+    return _serialize_api(api)
+
+
+@router.post("/{api_id}/offline")
+def offline_api(
+    api_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Take a catalog API offline, by source kind:
+    model → stop the deployment; chat → unpublish; orchestration → unpublish;
+    custom → published → offline."""
+    api = _get_owned_api(api_id, current_user, db)
+    kind = api.source_kind or api.api_type
+    try:
+        if kind == "model":
+            _deployment_service(db).stop(db, api.source_id)
+            sync_deployment_publication(db, api.source_id, current_user.id, running=False)
+        elif kind == "chat":
+            unpublish_chat_api(db, api.source_id, current_user.id)
+        elif kind == "orchestration":
+            if api.workflow_id is None:
+                api.status = "offline"
+                db.commit()
+            else:
+                unpublish_workflow_version(db, api.workflow_id, int(str(api.version).lstrip("v")), current_user.id)
+        else:
+            if api.status == "published":
+                api.status = "offline"
+                db.commit()
+            elif api.status == "offline":
+                pass
+            else:
+                raise HTTPException(409, detail={"code": "INVALID_STATUS_TRANSITION",
+                                                 "message": f"当前状态 {api.status} 不允许下线"})
+    except HTTPException:
+        raise
+    except APIPublicationError as error:
+        status_code = 404 if error.code.endswith("NOT_FOUND") else 403 if error.code.endswith("PERMISSION_DENIED") else 409
+        raise HTTPException(status_code, detail={"code": error.code, "message": str(error)}) from error
+    db.refresh(api)
+    return _serialize_api(api)
 
 
 @router.get("/stats")

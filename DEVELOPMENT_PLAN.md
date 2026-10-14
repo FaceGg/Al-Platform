@@ -2799,3 +2799,12 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 用户核心诉求：换新数据训练新模型后，输入输出都变了，示例与解释不能写死。现状盘点：输入侧已动态（发布时从制品 feature_schema 提取真实特征）；本轮补齐**输出侧**——① 编排发布 `_serving_io_info`（原 record schema 提取扩展）同时读取制品 `target_schema`（目标列名/任务类型/类别标签）写入 `response_schema.target`；② 模型 API 发布本就写入 `version.output_schema`（含 task_type/target_columns/columns[].classes）；③ 前端字段解释合并动态元数据：predictions/records[].prediction 说明带目标列名，probabilities 说明带类别标签（动态行覆盖同字段静态行），幂等复活补上 response_schema 刷新（此前只刷 request_schema，导致复活的 API target 缺失——实测定位修复）。
 - 实测：用户工作流 v2 重新发布 → request_schema 73 特征 + response_schema.target {"name":"fault","task":"classification","classes":["0.0","1.0"]} → 示例 body invoke **200**。测试：发布 target 断言 + 前端字段解释用例，后端 publication/model_port 与前端 13 passed + tsc + build；双镜像重建部署。
 - 换新模型的完整链路（当前行为）：新版本注册 → 部署 → 模型 API 自动同步（新版本号新条目，schema/output 随版本）；编排图在画布换绑制品后重新「发布为 API」→ request_schema/response_schema 刷新为新模型的输入特征与输出目标 → 测试弹窗的示例/Body/字段解释全部随之更新。
+
+---
+
+## 2026-10-14（续九）API 市场上线/下线/删除与真实调用统计（用户四项反馈闭环）
+
+- **通用上线/下线**：新增 `POST /api/platform/apis/{id}/online|offline`，按来源分派——model→部署 `start/stop`（真实启停推理服务）并同步市场状态；chat→`publish/unpublish_chat_api`；orchestration→`publish/unpublish_workflow_version`（孤儿行直接置 offline）；custom→状态机 published↔offline。前端操作列全类型显示 上线/下线 按钮（按当前状态切换），i18n 双语。
+- **predict 计入市场统计**：模型 API 的测试/远程调用走 `/predict`，此前从不计入调用数——predict 端点现按 source_kind=model+source_id=deployment 找目录行累计 total/success/failed 与 last_error（编排 invoke 既有同机制）。
+- **模型行删除策略放宽**：旧策略一刀切禁止删除模型 API；现改为——部署**运行中**→409 并提示先「下线」；**非运行**（已停止/无部署行）→可删除（下次部署发布按幂等重建）。test_05 同步改为新语义，新增 test_08 删除策略用例（含运行中 409 与已停止可删两条路径）。
+- **实测**：predict 计数生效（calls 1→4、success 0→1 随真实调用递增）；offline→online 往返正常；且实测发现并覆盖了一个真实场景——**多次容器重启后推理运行时丢失已加载模型**，市场「上线」按钮触发 `deployment.start` 重载稳定版本别名后 predict 恢复 200（这恰是该按钮的核心价值）。测试：publication/platform/chat/publication 31+ 前端 13 passed + tsc + build；双镜像重建部署。

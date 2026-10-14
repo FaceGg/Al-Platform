@@ -639,10 +639,29 @@ def build_model_registry_router(
         _, deployment_service_value = services(db)
         if deployment_service_value is None:
             raise HTTPException(503, {"code": "INFERENCE_RUNTIME_UNAVAILABLE"})
+        # Market statistics: every predict through a published model API counts
+        # into its catalog row (the orchestration invoke endpoint does the same).
+        from app.models.api_model import PlatformAPI
+
+        catalog_row = db.query(PlatformAPI).filter(
+            PlatformAPI.source_kind == "model",
+            PlatformAPI.source_id == deployment.id,
+        ).first()
         try:
-            return deployment_service_value.predict(db, deployment.id, data.records)
+            result = deployment_service_value.predict(db, deployment.id, data.records)
         except InferenceDeploymentError as error:
+            if catalog_row is not None:
+                catalog_row.total_calls = (catalog_row.total_calls or 0) + 1
+                catalog_row.failed_calls = (catalog_row.failed_calls or 0) + 1
+                catalog_row.last_error = error.code
+                db.commit()
             _error(error)
+        if catalog_row is not None:
+            catalog_row.total_calls = (catalog_row.total_calls or 0) + 1
+            catalog_row.success_calls = (catalog_row.success_calls or 0) + 1
+            catalog_row.last_error = None
+            db.commit()
+        return result
 
     def rollout_service_for(db, request):
         _, deployment_service_value = services(db)

@@ -35,6 +35,7 @@ vi.mock("../i18n", () => ({
         filter_all: "全部", orch_api: "编排 API", chat_api: "对话 API",
         stat_total: "API 总数", stat_published: "已发布", stat_offline: "已下线", stat_calls: "调用总数",
         empty: "暂无 API", edit: "编辑", delete_confirm: "删除 ", detail_title: "API 详情",
+        online: "上线", offline_btn: "下线",
         d_name: "名称", d_algorithm: "算法", d_endpoint: "端点", d_total_calls: "调用总数",
         d_success: "成功", d_failed: "失败", d_public: "公开", d_description: "描述", yes: "是", no: "否",
         test_title: "API 测试：", headers: "请求头 (Headers)", body: "请求体 (Body)",
@@ -187,18 +188,24 @@ describe("APIMarketplacePage", () => {
     await waitFor(() => expect(apiDelete).toHaveBeenCalledWith("/platform/apis/chat-1"));
   });
 
-  it("hides edit/delete for deployment-bound model APIs", async () => {
+  it("model APIs expose online/offline and delete, but no edit", async () => {
+    localStorage.setItem("token", "jwt-test-token");
     apiGet.mockResolvedValue({
       items: [{
         id: "model-1", name: "Deployment API", api_type: "model", source_kind: "model",
         source_id: "dep-1", version: "v1", status: "published", method: "POST",
-        endpoint: "/api/inference-deployments/dep-1/predict", total_calls: 0, success_calls: 0,
+        endpoint: "/api/inference-deployments/dep-1/predict", total_calls: 2, success_calls: 1,
       }],
     });
     render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
     await screen.findByText("Deployment API");
     expect(screen.queryByRole("button", { name: /编辑/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /删除/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /下线/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /删除/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /下线/ }));
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith("/platform/apis/model-1/offline"),
+    );
   });
 
   it("shows response field explanations after sending (orchestration)", async () => {
@@ -248,7 +255,10 @@ describe("APIMarketplacePage", () => {
       ],
     });
     render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: /测试/ }));
+    const testBtns = await screen.findAllByRole("button", { name: /测试/ });
+    const testBtn = testBtns.find((b) => (b.textContent || "").trim() === "测试");
+    if (!testBtn) throw new Error("row test button not found: " + testBtns.map((b) => b.textContent).join("|"));
+    fireEvent.click(testBtn);
     const bodyBox = await screen.findAllByRole("textbox");
     const bodyText = bodyBox.map((b) => b.textContent || "").find((t) => t.includes("records"));
     expect(bodyText).toContain("wld1c");
