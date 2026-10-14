@@ -139,11 +139,14 @@ def get_dashboard_stats(
 @router.get("/top-models")
 def get_top_models(db: Session = Depends(get_db)):
     """Get top 10 models by performance."""
-    from sqlalchemy import func
-    models = db.query(ModelLibrary).filter(
-        ModelLibrary.metrics.isnot(None),
-        ModelLibrary.status.in_(["completed", "published"])
-    ).order_by(ModelLibrary.metrics.desc()).limit(10).all()
+    # JSON 列排序双方言不兼容（PG 报错），Python 侧按 best_score 排序
+    from app.api.model_library import top_models_by_score
+    models = top_models_by_score(
+        db.query(ModelLibrary).filter(
+            ModelLibrary.metrics.isnot(None),
+            ModelLibrary.status.in_(["completed", "published"]),
+        ).all()
+    )
 
     return {
         "items": [

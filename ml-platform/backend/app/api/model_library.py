@@ -19,6 +19,22 @@ PROJECT_WRITE_ACTIONS = {
 }
 
 
+def top_models_by_score(rows, limit: int = 10):
+    """按 AutoML best_score 降序取前 N。
+
+    metrics 是 JSON 列，PostgreSQL 无法直接排序（sqlite 按文本排语义也不
+    可靠），统一取回后在 Python 侧排序，保证双方言行为一致。
+    """
+    def score(row):
+        metrics = row.metrics if isinstance(row.metrics, dict) else {}
+        try:
+            return float(metrics.get("best_score"))
+        except (TypeError, ValueError):
+            return float("-inf")
+
+    return sorted(rows, key=score, reverse=True)[:limit]
+
+
 @router.get("")
 def list_models(
     status: str = Query(None),
@@ -217,10 +233,10 @@ def model_stats(db: Session = Depends(get_db)):
     training = db.query(ModelLibrary).filter(ModelLibrary.status == "training").count()
     published = db.query(ModelLibrary).filter(ModelLibrary.status == "published").count()
 
-    # Top models by mAP
-    top = db.query(ModelLibrary).filter(
-        ModelLibrary.metrics.isnot(None)
-    ).order_by(ModelLibrary.metrics.desc()).limit(10).all()
+    # Top models by best_score（JSON 列排序双方言不兼容，Python 侧排序）
+    top = top_models_by_score(
+        db.query(ModelLibrary).filter(ModelLibrary.metrics.isnot(None)).all()
+    )
 
     return {
         "total_models": total,

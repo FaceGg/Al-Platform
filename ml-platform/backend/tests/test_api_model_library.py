@@ -118,6 +118,77 @@ class TestModelLibraryAPI(unittest.TestCase):
         r = client.get("/api/model-library")
         self.assertEqual(r.status_code, 401)
 
+    def test_13_stats_summary_top_models_sorted_by_best_score(self):
+        # 回归：metrics 是 JSON 列，SQL 侧 order_by 在 PostgreSQL 直接报
+        # "could not identify an ordering operator for type json"（sqlite
+        # 按文本排掩盖了问题）。修复后 Python 侧按 best_score 降序。
+        import uuid as _uuid
+
+        from app.database import SessionLocal
+        from app.models.model_library import ModelLibrary
+        from app.models.project import Project
+        from app.models.user import User
+
+        marker = f"mlstats-{_uuid.uuid4().hex[:8]}"
+        db = SessionLocal()
+        try:
+            owner_id = db.query(User.id).filter(User.username == "admin").scalar()
+            project = Project(name=f"{marker}-project", owner_id=owner_id)
+            db.add(project)
+            db.flush()
+            scores = {"low": 0.42, "high": 0.97, "mid": 0.71}
+            for name, score in scores.items():
+                db.add(ModelLibrary(
+                    project_id=project.id,
+                    owner_id=owner_id,
+                    name=f"{marker}-{name}",
+                    framework="automl",
+                    metrics={"best_score": score},
+                    status="completed",
+                ))
+            db.add(ModelLibrary(
+                project_id=project.id,
+                owner_id=owner_id,
+                name=f"{marker}-noscore",
+                framework="automl",
+                metrics={"f1": 0.9},
+                status="completed",
+            ))
+            db.commit()
+        finally:
+            db.close()
+
+        r = client.get("/api/model-library/stats/summary")
+        self.assertEqual(r.status_code, 200, r.text)
+        top = r.json()["top_models"]
+        top_names = [item["name"] for item in top]
+        self.assertIn(f"{marker}-high", top_names)
+        self.assertEqual(top_names.index(f"{marker}-high"), 0)
+        # 无 best_score 的条目不得排在高分行前面
+        self.assertLess(
+            top_names.index(f"{marker}-mid"),
+            top_names.index(f"{marker}-low") if f"{marker}-low" in top_names else len(top_names),
+        )
+
+        r = client.get("/api/dashboard/top-models", headers=self.h)
+        self.assertEqual(r.status_code, 200, r.text)
+        dash_top = [item["name"] for item in r.json()["items"]]
+        self.assertIn(f"{marker}-high", dash_top)
+        self.assertEqual(dash_top.index(f"{marker}-high"), 0)
+
+        # 清理
+        db = SessionLocal()
+        try:
+            db.query(ModelLibrary).filter(ModelLibrary.name.like(f"{marker}-%")).delete(
+                synchronize_session=False
+            )
+            db.query(Project).filter(Project.name == f"{marker}-project").delete(
+                synchronize_session=False
+            )
+            db.commit()
+        finally:
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main()
