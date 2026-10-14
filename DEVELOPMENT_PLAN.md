@@ -2699,3 +2699,13 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **知识图谱**：首跑被 200k 字符抽取预算正确拦截（10 份合计 315k）——compose 给 backend 增加可配环境变量 `KNOWLEDGE_GRAPH_MAX_EXTRACT_CHARS`（默认 200000 不变）与 `KNOWLEDGE_GRAPH_TIME_BUDGET_SECONDS`（默认 30），部署实例按 500000/120 重启后抽取完成：**500 实体 / 2000 关系**（2.5s；10627 候选实体命中 500 上限，truncated=true 属设计保护，可调 env 重抽），关系构成 co_occurs_with 1997 + part_of 3。检索抽查：焊接防护命中 GB 9448、职业接触限值命中 GBZ 2.1。
 - **部署连环坑**：① 并行提交（f8a4b37 安全 pin 刷新）覆盖了 Dockerfile/Dockerfile.worker 的 wheelhouse bind-mount 补丁 → worker 构建在 cffi 解析处 ResolutionImpossible（cffi wheel 在 wheelhouse 但 find-links 已丢）；两个 Dockerfile 重新打补丁后恢复。**后续改这两个 Dockerfile 须保留 wheelhouse 补丁，或把该方案合并为正式实现**。② 本地 venv 补装 pymupdf（PDF 提取脚本与测试用例使用）。
 - **已知边界**：3 份扫描件 OCR 质量（tesseract chi_sim）——引用文件列表与正文条款可读、表格与封面失真（如"GB 9448-20295"、护目镜表格错行），后续可用 PaddleOCR 重做并经删除/重传替换；图谱含法律文本高频虚词（如"应当"）可加停用词后重抽；truncated=true 表示实体/关系上限可再调。
+
+---
+
+## 2026-10-14（续二） 平台全面测试（证据绑定 b2cbefc+1c8b372）
+
+- **后端**：run_suite.py 全量 107 模块——105 PASSED（约 1501 用例）；test_week11_12_tools 暴露 tools 侧三处漏改的迁移 head 钉定（upgrade_fixture.EXPECTED_HEAD / run_upgrade_fixture.sh --target / evidence_manifest.MIGRATION_HEAD），已同步 20261014_69（1c8b372）并单独复验 OK；test_week12_security_gates 本机 >40 分钟（121/160 用例 ok 后被硬超时截断），CI 300s 内全绿——纯本机性能差异。
+- **前端**：npm test 74 文件 435 passed（19 skipped）+ build 通过。**标注器子系统**（不在 run_suite 清单）：portal 后端 31 passed、前端 130 passed。
+- **在线栈冒烟**（docker 栈，postgres 已在迁移 69）：15 容器全部健康；登录正常；**93 个只读 GET 端点批量探测**——3 个 500：`/api/dashboard/recent-activity`（既有 bug，b2cbefc 已修，容器待重建生效）、`/api/dashboard/top-models` 与 `/api/model-library/stats/summary`（**新发现：按 JSON 列 metrics 排序，PostgreSQL 不支持，sqlite 测试环境无法暴露**——两个工作台/模型库统计接口在生产必 500，待修）；其余 401/404/422 均为内部鉴权、缺路径参数或缺查询参数的预期形态。19 个页面浏览器巡检无错误标记。
+- **test_evidence_manifest 排障**：与 week12 安全门禁用例并发执行时稳定失败（gitleaks 回执 digest 校验级联失败）——两类测试都会对仓库源码树做全量摘要，并发时互相踩踏；单独执行 35/35 全绿。教训：这两个模块严禁并发跑。
+- **环境差异**：本地 .venv 未装 torch（CI 装了 CPU 版，无用例因此失败）；未运行项=CI 专属 job（Chromium 验收、production-integration、真实 K8s 集成）与 Mimosa 深度安全扫描。
