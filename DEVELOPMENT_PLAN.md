@@ -329,6 +329,7 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 根因：注册表删除端点的 `MODEL_DEPLOYMENT_EXISTS` 护栏只查 `inference_deployments.model_version_id`（部署主版本），而 `deployment_targets.model_version_id`（历史/灰度发布目标）同样无 ondelete 地引用 `model_versions`——目标引用别的模型版本时护栏漏判，放行删除后撞外键。`/api/model-library` 删除路径同源缺陷（引用 `model_library.id` 的外键均无 ondelete），此前在本地 sqlite（默认不强制外键）删除"成功"留下孤儿行、仅生产 PG 暴露，属同类隐患一并修复。
 - 修复：两处护栏统一扩展为"部署主版本 OR 历史发布目标引用"即拒绝（409 `MODEL_DEPLOYMENT_EXISTS`，message 携带部署名，前端 i18n 模板 `{message}` 渲染"模型正被推理部署使用:〈部署名〉,请先删除对应推理部署。"）；`ModelRegistryError` 支持 `detail_message` 并经 `_error` 透出；`/api/model-library` 单删改级联删除（连带清理引用版本与变空注册模型，会话 `autoflush=False` 需显式 `flush()` 后再查剩余版本），批量删除逐条提交、部署冲突条目回滚跳过并返回 `skipped` 列表。
 - 验证：`test_api_model_library.py` 新增 5 用例（级联删除/部署占用拒绝/批量跳过/发布目标占用拒模型库删/发布目标拒注册表删——最后两个复现现场场景）全绿；`test_api_model_registry.py`+`test_model_registry_service.py`+`test_model_registration_contract.py` 38 passed + 2 subtests 无回归。`test_13_stats_summary` 本地失败为共享开发库历史 `automl-job` 条目占满 top-10 的环境性污染（CI 新库绿），未动用户数据。
+- 后续（同日，用户实测每个换模过的模型都删不掉）：护栏初版把 superseded/failed 历史发布目标也当占用——闭环自动重训在被复用的部署上留下大量换模残留（部署「自动化测试」11 个目标 = 9 superseded（9 个模型）+ 1 failed + 1 stable），旧模型全部被误拦。已放宽为**只拦活引用**（部署主版本、stable/candidate/draft 修订目标），superseded/failed 目标随模型删除一并清理（`de9231f`，两处端点同口径；新增 test_07 覆盖，级联 7 用例 + 注册表 31 passed 全绿；本地重建后实测在役模型仍 409 带部署名、数据完好）。在役模型（「编排闭环-自动模型-bfe2f749」）被部署占用仍拒删属正确行为，删部署后可删。
 - 待完成：本地 backend 容器重建后对现场报错模型重放 DELETE 确认 409；服务器随下次发包（r15）带上本修复；本地开发库中历史孤儿行（sqlite 时代"删除成功"留下的无部署引用）未清理，如需可另行清理。
 
 ### 2026-10-13 全量 CI 暴露焊接模板浏览器用例残留：随模板体系一并对齐退役（r14 发布门禁）
