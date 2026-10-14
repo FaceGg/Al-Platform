@@ -8,6 +8,7 @@ from app.models.model_library import ModelLibrary
 from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
 from app.models.api_model import PlatformAPI
 from app.models.artifact import Artifact
+from app.models.platform_models import Dataset
 from app.models.training import TrainingJob
 from app.models.project import Project
 from app.models.user import User
@@ -165,7 +166,10 @@ def get_recent_activity(db: Session = Depends(get_db)):
     recent_models = db.query(ModelLibrary).order_by(
         ModelLibrary.created_at.desc()
     ).limit(5).all()
-    recent_datasets = db.query(Dataset).order_by(
+    recent_datasets = db.query(Dataset).filter(
+        # 项目删除时该表脱钩保留（project_id 置空），不作为平台活动展示
+        Dataset.project_id.isnot(None),
+    ).order_by(
         Dataset.created_at.desc()
     ).limit(5).all()
 

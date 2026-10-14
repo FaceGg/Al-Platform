@@ -2680,3 +2680,12 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **前端**：画布「保存为模板」改为弹窗（名称 + 范围单选，通用选项仅 admin 显示，localStorage role）；编排页模板卡片显示 通用/项目 Tag，通用模板对非管理员禁用编辑并隐藏删除；新建服务图模板下拉标注「通用」。
 - **联动修正**：`WorkflowResponse.project_id` 可空；direct GET 的 project_id 由 "None" 字符串改 null；两个测试的迁移 head 常量同步 20261014_69。
 - **验证**：模板模块 4 用例（含跨项目可见/参数清除/权限矩阵）+ workflows/direct/publication/versions/access/runs 模块 + 迁移链升级 全部通过；前端 435 用例 + 构建通过。未做浏览器实测。本地提交，推送待用户指示。
+
+---
+
+## 2026-10-14（续） 项目删除的任务侧清理补强
+
+- **背景**：审计确认 `_purge_project` 已覆盖全部项目作用域表（元数据驱动传递硬删除），但 DB 之外有缺口：K8s 作业 pod / Notebook 会话不随项目回收、工件存储文件成孤儿、旧版 `datasets` 脱钩行仍出现在 dashboard 最近活动。
+- **修复（app/api/projects.py）**：① `_delete_project_completely` 统一入口（单删/批量删共用）：先收集项目工件存储引用，再 best-effort 释放集群资源（非终态 KubernetesJobRun 走 `kubernetes_executor.cancel_job`、非终态 NotebookSession 走 `notebook_service.stop_session`，失败仅告警回滚不阻塞删除），purge 后按引用删除存储对象（minio `storage.delete` / legacy 路径 unlink）；② dashboard `recent-activity` 过滤 `project_id IS NULL` 的脱钩数据集（顺带补上该端点缺失的 Dataset import——原代码一调用即 500 的既有 bug）。标注建任务不拒绝脱钩数据集：旧版流程本就允许无项目数据集，NULL 无法区分"从未归属"与"已脱钩"，保守不动。
+- **排障记录**：test_15 曾稳定失败 0!=1——先是 dashboard NameError 掩盖，后栽在自写测试漏了 `db.add(job)`（构造对象未入 session，INSERT 根本不发生）；用 engine `before_cursor_execute` 事件抓 SQL 才定位。教训：ORM 静默跳过插入时先查 `db.new`。
+- **验证**：test_api_projects 16 passed（新增 test_15 集群资源释放+存储清理接线、test_16 脱钩行隐藏）；test_api_annotations / test_api_dashboard / test_api_users 回归 OK。

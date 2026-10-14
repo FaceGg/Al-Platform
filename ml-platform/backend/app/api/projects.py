@@ -1,10 +1,14 @@
+import logging
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload
+from app.config import settings
 from app.database import get_db
 from app.models.experiment import Experiment
+from app.models.artifact import Artifact
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectList
@@ -16,6 +20,8 @@ from app.api.project_security import (
     require_project_access,
     resolve_project_access,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -90,6 +96,109 @@ def _strongly_connected_groups(dependents, edges):
         if table not in index:
             visit(table)
     return groups
+
+
+def _release_project_cluster_resources(db: Session, project: Project) -> None:
+    """Best-effort release of real cluster resources before the DB purge.
+
+    K8s job pods and notebook sessions outlive their DB rows (the reconcilers
+    are DB-driven and would never see them again), so cancel/stop them first.
+    Every failure is logged and swallowed: an unreachable cluster must not
+    block project deletion.
+    """
+    from app.models.cloud_resources import KubernetesCredentialRef
+    from app.models.developer_resources import NotebookSession
+    from app.models.kubernetes_execution import KubernetesJobRun
+    from app.services import kubernetes_executor, notebook_service
+
+    def _credential_ref(cluster_id) -> KubernetesCredentialRef | None:
+        return db.query(KubernetesCredentialRef).filter(
+            KubernetesCredentialRef.cluster_id == cluster_id,
+        ).first()
+
+    jobs = db.query(KubernetesJobRun).filter(
+        KubernetesJobRun.project_id == project.id,
+        KubernetesJobRun.status.in_(kubernetes_executor.NON_TERMINAL_STATUSES),
+    ).all()
+    for job in jobs:
+        try:
+            kubernetes_executor.cancel_job(
+                db, job, _credential_ref(job.cluster_id), settings,
+                reason="PROJECT_DELETED",
+            )
+        except Exception:
+            logger.warning(
+                "project %s: cancel kubernetes job %s failed", project.id, job.id, exc_info=True,
+            )
+            db.rollback()
+
+    sessions = db.query(NotebookSession).filter(
+        NotebookSession.project_id == project.id,
+        NotebookSession.status.notin_(notebook_service.SESSION_TERMINAL_STATUSES),
+    ).all()
+    for session in sessions:
+        try:
+            notebook_service.stop_session(
+                db, session, _credential_ref(session.cluster_id), settings,
+                reason="PROJECT_DELETED",
+            )
+        except Exception:
+            logger.warning(
+                "project %s: stop notebook session %s failed", project.id, session.id, exc_info=True,
+            )
+            db.rollback()
+
+
+def _collect_project_storage_refs(db: Session, project_id) -> list[tuple[str | None, str | None]]:
+    """Artifact storage locations owned by the project, collected pre-purge."""
+    rows = db.query(
+        Artifact.storage_uri,
+        Artifact.storage_path,
+    ).filter(
+        Artifact.project_id == project_id,
+    ).all()
+    refs: list[tuple[str | None, str | None]] = []
+    seen: set[str] = set()
+    for storage_uri, storage_path in rows:
+        key = storage_uri or storage_path or ""
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        refs.append((storage_uri, storage_path))
+    return refs
+
+
+def _delete_storage_objects(refs: list[tuple[str | None, str | None]]) -> None:
+    """Best-effort removal of the collected artifact files from storage."""
+    if not refs:
+        return
+    from app.storage.factory import create_artifact_storage
+
+    try:
+        storage = create_artifact_storage(settings)
+    except Exception:
+        logger.warning("project storage cleanup: backend unavailable", exc_info=True)
+        return
+    for storage_uri, storage_path in refs:
+        try:
+            if storage_uri:
+                storage.delete(storage_uri)
+            else:
+                legacy = Path(storage_path or "")
+                if legacy.is_file():
+                    legacy.unlink()
+        except Exception:
+            logger.warning(
+                "project storage cleanup failed for %s", storage_uri or storage_path, exc_info=True,
+            )
+
+
+def _delete_project_completely(db: Session, project: Project) -> None:
+    storage_refs = _collect_project_storage_refs(db, project.id)
+    _release_project_cluster_resources(db, project)
+    _purge_project(db, project)
+    db.delete(project)
+    _delete_storage_objects(storage_refs)
 
 
 def _purge_project(db: Session, project: Project) -> None:
@@ -332,8 +441,7 @@ def delete_project(
         ),
         allowed_changes=set(),
     ):
-        _purge_project(db, project)
-        db.delete(project)
+        _delete_project_completely(db, project)
 
 
 from pydantic import BaseModel
@@ -373,7 +481,6 @@ def batch_delete_projects(
             ),
             allowed_changes=set(),
         ):
-            _purge_project(db, project)
-            db.delete(project)
+            _delete_project_completely(db, project)
         deleted += 1
     return {"deleted": deleted}
