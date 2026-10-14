@@ -41,7 +41,8 @@ def get_workflow_direct(
     edges = db.query(WorkflowEdge).filter(WorkflowEdge.workflow_id == UUID(workflow_id)).all()
     return {
         "id": str(wf.id),
-        "project_id": str(wf.project_id),
+        # 平台通用模板不归属项目，project_id 为 null
+        "project_id": str(wf.project_id) if wf.project_id else None,
         "name": wf.name,
         "description": wf.description,
         "type": wf.type,

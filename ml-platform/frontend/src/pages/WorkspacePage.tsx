@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
-import { App as AntApp, Button, Dropdown, Layout, Space, Divider, Input, Modal, Drawer, List, Tag, Tooltip } from "antd";
+import { App as AntApp, Button, Dropdown, Form, Layout, Radio, Space, Divider, Input, Modal, Drawer, List, Tag, Tooltip, Typography } from "antd";
 import { DownOutlined, EllipsisOutlined, PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined, PauseCircleOutlined, DeleteOutlined, CloudUploadOutlined, HistoryOutlined, ApiOutlined, CopyOutlined } from "@ant-design/icons";
 import { ReactFlowProvider } from "reactflow";
 import { useNavigate } from "react-router-dom";
@@ -17,6 +17,7 @@ import { useI18n } from "../i18n";
 import { formatLocalTime } from "../utils/time";
 
 const { Sider, Content } = Layout;
+const { Text } = Typography;
 
 export function resolvePort(handleId: string, portList: {name:string}[]): string {
   if (!handleId) return "";
@@ -70,6 +71,10 @@ export default function WorkspacePage() {
     back: "返回", save: "保存", saveAsTemplate: "保存为模板", more: "更多", publish: "发布", version: "版本", run: "运行", stop: "终止",
     confirmDelete: "确认删除", cancel: "取消", deletePrompt: "确定要删除工作流", irreversible: "此操作不可撤销。",
     publishApi: "发布为 API", publishApiSuccess: "已发布为编排 API，可在 API 市场查看", publishApiFailed: "发布为 API 失败",
+    tplModalTitle: "保存为模板", tplName: "模板名称", tplScope: "保存范围",
+    scopeProject: "仅当前项目", scopeProjectHint: "项目内可见，可复用",
+    scopeGlobal: "全平台通用", scopeGlobalHint: "所有项目可见可实例化；仅平台管理员可保存/编辑/删除",
+    tplSaved: "已保存为模板", tplSavedGlobal: "已保存为平台通用模板", tplSaveFailed: "保存为模板失败，请重试",
   } : {
     loadFailed: "Failed to load workflow", saved: "Saved", saveFailed: "Save failed. Please retry.", publishFailed: "Publish failed",
     historyFailed: "Failed to load version history", cancelled: "Cancellation requested; the current node will stop safely.", cancelFailed: "Cancellation failed",
@@ -79,6 +84,10 @@ export default function WorkspacePage() {
     back: "Back", save: "Save", saveAsTemplate: "Save as Template", more: "More", publish: "Publish", version: "Versions", run: "Run", stop: "Stop",
     confirmDelete: "Confirm deletion", cancel: "Cancel", deletePrompt: "Delete workflow", irreversible: "This action cannot be undone.",
     publishApi: "Publish as API", publishApiSuccess: "Published as an orchestration API — see the API Marketplace", publishApiFailed: "Publish as API failed",
+    tplModalTitle: "Save as Template", tplName: "Template name", tplScope: "Scope",
+    scopeProject: "This project only", scopeProjectHint: "Reusable inside the current project",
+    scopeGlobal: "Platform-wide", scopeGlobalHint: "Visible and instantiable in every project; admins manage global templates",
+    tplSaved: "Saved as template", tplSavedGlobal: "Saved as a platform-wide template", tplSaveFailed: "Save as template failed. Please retry.",
   };
   const { workflowId } = useParams<{ workflowId: string }>();
   const navigate = useNavigate();
@@ -94,6 +103,9 @@ export default function WorkspacePage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
+  const [tplModalOpen, setTplModalOpen] = useState(false);
+  const [tplForm] = Form.useForm();
+  const isAdmin = localStorage.getItem("role") === "admin";
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versions, setVersions] = useState<WorkflowVersionSummary[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
@@ -203,19 +215,26 @@ export default function WorkspacePage() {
     }
   };
 
-  // 先保存当前草稿，再把图复制为项目模板（模板可在应用编排页管理/复用）。
-  const handleSaveAsTemplate = async () => {
+  // 先保存当前草稿，再把图复制为模板；作用域在弹窗中选择（项目/全平台通用）。
+  const openTemplateModal = () => {
+    tplForm.setFieldsValue({ name: `${wfName || "untitled"}-模板`, scope: "project" });
+    setTplModalOpen(true);
+  };
+
+  const handleSaveAsTemplate = async (values: { name?: string; scope?: string }) => {
     if (!workflowId || !workflowProjectId) return;
     setSavingTemplate(true);
     try {
       await apiClient.put("/workflows/" + workflowId, buildPayload());
       const res = await apiClient.post(
         `/projects/${workflowProjectId}/workflows/${workflowId}/save-as-template`,
-        {},
+        { name: values.name || undefined, scope: values.scope || "project" },
       );
-      message.success(`已保存为模板：${res.data?.name || wfName + "-模板"}`);
-    } catch {
-      message.error("保存为模板失败，请重试");
+      const isGlobal = (values.scope || "project") === "global";
+      message.success(isGlobal ? text.tplSavedGlobal : `${text.tplSaved}：${res.data?.name || wfName + "-模板"}`);
+      setTplModalOpen(false);
+    } catch (error) {
+      message.error(formatApiError(error, text.tplSaveFailed));
     } finally {
       setSavingTemplate(false);
     }
@@ -598,7 +617,7 @@ export default function WorkspacePage() {
                   { key: "delete", icon: <DeleteOutlined />, label: text.delete, danger: true },
                 ],
                 onClick: ({ key }) => {
-                  if (key === "template") void handleSaveAsTemplate();
+                  if (key === "template") openTemplateModal();
                   if (key === "versions") openVersions();
                   if (key === "delete") setDeleteOpen(true);
                 },
@@ -650,6 +669,34 @@ export default function WorkspacePage() {
         onCancel={() => setDeleteOpen(false)} confirmLoading={deleting}
         okText={text.delete} cancelText={text.cancel} okButtonProps={{ danger: true }}>
         <p>{text.deletePrompt} <b>{wfName || "untitled"}</b>? {text.irreversible}</p>
+      </Modal>
+
+      <Modal
+        title={text.tplModalTitle}
+        open={tplModalOpen}
+        onCancel={() => setTplModalOpen(false)}
+        onOk={() => tplForm.submit()}
+        confirmLoading={savingTemplate}
+        okText={text.save} cancelText={text.cancel}
+      >
+        <Form form={tplForm} layout="vertical" onFinish={handleSaveAsTemplate}>
+          <Form.Item name="name" label={text.tplName} rules={[{ required: true, message: text.tplName }]}>
+            <Input maxLength={128} />
+          </Form.Item>
+          <Form.Item name="scope" label={text.tplScope} initialValue="project">
+            <Radio.Group>
+              <Radio value="project">{text.scopeProject}</Radio>
+              {isAdmin && <Radio value="global">{text.scopeGlobal}</Radio>}
+            </Radio.Group>
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.scope !== cur.scope}>
+            {() => (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {tplForm.getFieldValue("scope") === "global" ? text.scopeGlobalHint : text.scopeProjectHint}
+              </Text>
+            )}
+          </Form.Item>
+        </Form>
       </Modal>
     </ReactFlowProvider>
   );

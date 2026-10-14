@@ -55,7 +55,8 @@ class WorkflowResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    project_id: UUID
+    # 平台通用模板不归属项目，project_id 为空
+    project_id: UUID | None = None
     name: str
     description: str
     type: str

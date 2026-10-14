@@ -8,7 +8,12 @@ from sqlalchemy.orm import sessionmaker
 from app.models.run import WorkflowRun
 from app.models.workflow import Workflow
 from app.services.audit import AuditService
-from app.services.project_access import ProjectAccessError, ProjectAccessService
+from app.services.project_access import (
+    ProjectAccess,
+    ProjectAccessError,
+    ProjectAccessService,
+    ProjectRole,
+)
 
 
 def project_uuid(value) -> uuid.UUID:
@@ -44,6 +49,12 @@ def resolve_workflow_access(db, workflow_id, user_id):
     workflow = db.query(Workflow).filter(Workflow.id == workflow_uuid).first()
     if workflow is None:
         raise HTTPException(404, "Workflow not found")
+    if workflow.project_id is None:
+        # 平台通用模板：全部登录用户可读；写/删经调用方 permission 校验——
+        # 管理员映射 owner 放行，普通用户映射 viewer 被拒（403 + denied 审计）。
+        is_admin = ProjectAccessService.is_platform_admin(db, user_id)
+        role = ProjectRole.OWNER if is_admin else ProjectRole.VIEWER
+        return workflow, ProjectAccess(project=None, role=role)
     access = ProjectAccessService().resolve(db, workflow.project_id, user_id)
     if access is None:
         access_error(ProjectAccessError("PROJECT_NOT_FOUND", hidden=True))

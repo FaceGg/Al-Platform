@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { ApiOutlined, CloudUploadOutlined, CopyOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import AppLayout from "../components/AppLayout";
@@ -12,9 +12,13 @@ const { Title, Text } = Typography;
 interface WorkflowTemplateItem {
   id: string;
   name: string;
+  description?: string | null;
+  scope?: "project" | "global";
   node_count: number;
   updated_at: string | null;
 }
+
+const isPlatformAdmin = () => localStorage.getItem("role") === "admin";
 
 export default function OrchestrationPage() {
   const { t } = useI18n();
@@ -208,32 +212,45 @@ export default function OrchestrationPage() {
         {templates.length === 0 ? (
           <Text type="secondary">暂无模板。打开一个服务图，点画布顶部的「保存为模板」即可沉淀为可复用模板。</Text>
         ) : (
-          templates.map((tpl) => (
-            <div key={tpl.id} style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-              padding: "6px 10px", marginBottom: 6, borderRadius: 6, background: "rgba(0,0,0,.03)",
-            }}>
-              <span>
-                <Text strong><CopyOutlined /> {tpl.name}</Text>
-                <Tag style={{ marginLeft: 8 }}>{tpl.node_count} 节点</Tag>
-                {tpl.updated_at
-                  ? <Text type="secondary" style={{ fontSize: 12 }}>{tpl.updated_at.replace("T", " ").slice(0, 16)}</Text>
-                  : null}
-              </span>
-              <Space size={4}>
-                <Button size="small" icon={<PlusOutlined />} loading={instantiatingId === tpl.id}
-                  onClick={() => void instantiateTemplate(tpl)}>
-                  从模板创建
-                </Button>
-                <Button size="small" icon={<EditOutlined />}
-                  onClick={() => navigate(`/workspace/${tpl.id}`)}>
-                  编辑
-                </Button>
-                <DeleteConfirmation label={`删除模板 ${tpl.name}`} targetName={tpl.name}
-                  onConfirm={() => void deleteTemplate(tpl.id)} />
-              </Space>
-            </div>
-          ))
+          templates.map((tpl) => {
+            const isGlobal = tpl.scope === "global";
+            const canManage = !isGlobal || isPlatformAdmin();
+            return (
+              <div key={tpl.id} style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                padding: "6px 10px", marginBottom: 6, borderRadius: 6, background: "rgba(0,0,0,.03)",
+              }}>
+                <span>
+                  <Text strong><CopyOutlined /> {tpl.name}</Text>
+                  <Tag color={isGlobal ? "blue" : "default"} style={{ marginLeft: 8 }}>
+                    {isGlobal ? "通用" : "项目"}
+                  </Tag>
+                  <Tag>{tpl.node_count} 节点</Tag>
+                  {tpl.updated_at
+                    ? <Text type="secondary" style={{ fontSize: 12 }}>{tpl.updated_at.replace("T", " ").slice(0, 16)}</Text>
+                    : null}
+                </span>
+                <Space size={4}>
+                  <Tooltip title={isGlobal ? "用此通用模板在当前项目创建服务图" : "用此模板在当前项目创建服务图"}>
+                    <Button size="small" icon={<PlusOutlined />} loading={instantiatingId === tpl.id}
+                      onClick={() => void instantiateTemplate(tpl)}>
+                      从模板创建
+                    </Button>
+                  </Tooltip>
+                  <Tooltip title={canManage ? undefined : "通用模板仅平台管理员可编辑"}>
+                    <Button size="small" icon={<EditOutlined />} disabled={!canManage}
+                      onClick={() => navigate(`/workspace/${tpl.id}`)}>
+                      编辑
+                    </Button>
+                  </Tooltip>
+                  {canManage && (
+                    <DeleteConfirmation label={`删除模板 ${tpl.name}`} targetName={tpl.name}
+                      onConfirm={() => void deleteTemplate(tpl.id)} />
+                  )}
+                </Space>
+              </div>
+            );
+          })
         )}
       </Card>
 
@@ -264,7 +281,10 @@ export default function OrchestrationPage() {
               placeholder="不使用模板（空白服务图）"
               options={[
                 { value: "", label: "不使用模板（空白服务图）" },
-                ...templates.map((tpl) => ({ value: tpl.id, label: `${tpl.name}（${tpl.node_count} 节点）` })),
+                ...templates.map((tpl) => ({
+                  value: tpl.id,
+                  label: `${tpl.name}（${tpl.node_count} 节点${tpl.scope === "global" ? " · 通用" : ""}）`,
+                })),
               ]}
             />
           </Form.Item>

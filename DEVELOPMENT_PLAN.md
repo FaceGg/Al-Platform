@@ -2670,3 +2670,13 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **用户要求**：弹窗只保留方案 A 和方案 B 的操作，去掉所有其他内容。将弹窗快照从全量手册（233 行）替换为专写精简版 `src/content/闭环操作手册.md`：仅含 方案 A 配置表/启动/六环节/重置 + 方案 B 搭图/两步发布/市场调用 + 提示（指向 docs 完整版）。
 - 弹窗标题改为「闭环操作手册（方案 A / 方案 B）」；完整版手册仍在 docs/（供 GitHub 浏览与详查），两者独立维护。
 - **验证**：tsc + DemoLoopPage 6 用例过 + 部署；浏览器实测弹窗 h1/两个 h2/3 张表格正确渲染。本地提交不推送。
+
+---
+
+## 2026-10-14 平台通用工作流模板（不依赖具体项目）
+
+- **用户需求**：做一个通用模板，不依赖具体项目——项目模板只在保存它的项目内可见，无法跨项目沉淀复用。
+- **方案**：`workflows.project_id` 改为可空（迁移 `20261014_69`，batch 模式双方言；NULL=平台通用模板）。保存为模板新增 `scope`（project/global，global 仅平台管理员）；模板列表 = 本项目 + 全平台通用（返回 `scope` 标记）；实例化允许跨项目取通用模板，并清除项目绑定参数（dataset_artifact_id / retrain_dataset_artifact_id / model_artifact_id / swap_deployment_id，指向源项目工件无意义，画布下拉重选）；通用模板编辑/删除仅管理员（resolve_workflow_access 对 NULL 项目合成 owner(admin)/viewer(member) 访问上下文，复用既有审计门；普通用户 403 + denied 审计）。
+- **前端**：画布「保存为模板」改为弹窗（名称 + 范围单选，通用选项仅 admin 显示，localStorage role）；编排页模板卡片显示 通用/项目 Tag，通用模板对非管理员禁用编辑并隐藏删除；新建服务图模板下拉标注「通用」。
+- **联动修正**：`WorkflowResponse.project_id` 可空；direct GET 的 project_id 由 "None" 字符串改 null；两个测试的迁移 head 常量同步 20261014_69。
+- **验证**：模板模块 4 用例（含跨项目可见/参数清除/权限矩阵）+ workflows/direct/publication/versions/access/runs 模块 + 迁移链升级 全部通过；前端 435 用例 + 构建通过。未做浏览器实测。本地提交，推送待用户指示。

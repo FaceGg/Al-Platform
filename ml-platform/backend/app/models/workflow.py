@@ -12,7 +12,8 @@ class Workflow(Base):
     __tablename__ = "workflows"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    # NULL = 平台通用模板（不归属任何项目，全平台项目可见、可实例化）
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     name = Column(String(128), nullable=False)
     description = Column(Text, default="")
     type = Column(String(16), default="free")

@@ -1,6 +1,7 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.project import Project
@@ -11,6 +12,7 @@ from app.api.auth import get_current_user
 from app.api.project_security import audit_service, require_project_access, resolve_project_access
 from app.services.audit import AuditIntent
 from app.services.api_publication import sync_workflow_publication
+from app.services.project_access import ProjectAccess, ProjectAccessService, ProjectRole
 
 router = APIRouter(prefix="/api/projects", tags=["workflows"])
 PROJECT_WRITE_ACTIONS = {
@@ -22,6 +24,7 @@ PROJECT_WRITE_ACTIONS = {
 
 class TemplateSaveRequest(BaseModel):
     name: str | None = None
+    scope: str = "project"  # project=仅当前项目；global=平台通用（需管理员）
 
 
 class TemplateInstantiateRequest(BaseModel):
@@ -59,6 +62,17 @@ def list_workflows(
 # ----------------------------------------------------------------- templates
 # 模板即标记 is_template=True 的工作流：保存为模板=复制当前图；从模板创建=
 # 复制模板图到新工作流；编辑模板=直接打开画布修改（PUT 保存）——增删改天然支持。
+# project_id 为空的是平台通用模板：不归属项目，全部项目可见可实例化；
+# 保存/编辑/删除需平台管理员，实例化时清除项目绑定的制品/部署 ID 参数。
+
+# 项目绑定参数：通用模板跨项目实例化时无意义（指向源项目工件），一律清除，
+# 用户在画布下拉中重新选择目标项目的数据集/模型/部署。
+PROJECT_BOUND_PARAM_KEYS = (
+    "dataset_artifact_id",
+    "retrain_dataset_artifact_id",
+    "model_artifact_id",
+    "swap_deployment_id",
+)
 
 
 @router.post("/{project_id}/workflows/{workflow_id}/save-as-template", status_code=201)
@@ -77,8 +91,13 @@ def save_workflow_as_template(
     ).first()
     if not source:
         raise HTTPException(404, "Workflow not found")
+    is_global = data.scope == "global"
+    if is_global and not ProjectAccessService.is_platform_admin(db, current_user.id):
+        raise HTTPException(403, "Only platform administrators can publish global templates")
+    if data.scope not in ("project", "global"):
+        raise HTTPException(422, "scope must be 'project' or 'global'")
     template = Workflow(
-        project_id=project_uuid,
+        project_id=None if is_global else project_uuid,
         name=(data.name or f"{source.name}-模板").strip()[:128],
         description=source.description,
         is_template=True,
@@ -116,7 +135,10 @@ def list_workflow_templates(
 ):
     require_project_access(db, project_id, current_user.id, "project.read")
     templates = db.query(Workflow).filter(
-        Workflow.project_id == UUID(project_id),
+        or_(
+            Workflow.project_id == UUID(project_id),
+            Workflow.project_id.is_(None),
+        ),
         Workflow.is_template.is_(True),
     ).order_by(Workflow.created_at.desc()).all()
     return {
@@ -125,6 +147,7 @@ def list_workflow_templates(
                 "id": str(t.id),
                 "name": t.name,
                 "description": t.description,
+                "scope": "global" if t.project_id is None else "project",
                 "node_count": len(t.nodes),
                 "created_at": t.created_at.isoformat() if t.created_at else None,
                 "updated_at": t.updated_at.isoformat() if t.updated_at else None,
@@ -147,11 +170,15 @@ def instantiate_workflow_template(
     project_uuid = access.project.id if access is not None else UUID(project_id)
     template = db.query(Workflow).filter(
         Workflow.id == UUID(template_id),
-        Workflow.project_id == project_uuid,
+        or_(
+            Workflow.project_id == project_uuid,
+            Workflow.project_id.is_(None),
+        ),
         Workflow.is_template.is_(True),
     ).first()
     if not template:
         raise HTTPException(404, "Template not found")
+    is_global_template = template.project_id is None
     workflow = Workflow(
         project_id=project_uuid,
         name=(data.name or template.name).strip()[:128],
@@ -162,9 +189,13 @@ def instantiate_workflow_template(
     db.flush()
     node_id_map = {}
     for node in template.nodes:
+        node_params = dict(node.params or {})
+        if is_global_template:
+            for key in PROJECT_BOUND_PARAM_KEYS:
+                node_params.pop(key, None)
         copy = WorkflowNode(
             workflow_id=workflow.id, operator_id=node.operator_id, label=node.label,
-            position_x=node.position_x, position_y=node.position_y, params=dict(node.params or {}),
+            position_x=node.position_x, position_y=node.position_y, params=node_params,
         )
         db.add(copy)
         db.flush()
@@ -347,6 +378,18 @@ def delete_workflow(
         Workflow.id == UUID(workflow_id),
         Workflow.project_id == project_uuid,
     ).first()
+    if not workflow:
+        # 回退平台通用模板：删除权限经审计门校验（管理员放行，普通用户 403）。
+        workflow = db.query(Workflow).filter(
+            Workflow.id == UUID(workflow_id),
+            Workflow.project_id.is_(None),
+        ).first()
+        if workflow:
+            role = ProjectRole.OWNER if ProjectAccessService.is_platform_admin(
+                db, current_user.id,
+            ) else ProjectRole.VIEWER
+            access = ProjectAccess(project=None, role=role)
+            project_uuid = None
     if not workflow:
         raise HTTPException(404, "Workflow not found")
     with audit_service(db).project_action(
