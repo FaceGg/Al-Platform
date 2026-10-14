@@ -2689,3 +2689,13 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **修复（app/api/projects.py）**：① `_delete_project_completely` 统一入口（单删/批量删共用）：先收集项目工件存储引用，再 best-effort 释放集群资源（非终态 KubernetesJobRun 走 `kubernetes_executor.cancel_job`、非终态 NotebookSession 走 `notebook_service.stop_session`，失败仅告警回滚不阻塞删除），purge 后按引用删除存储对象（minio `storage.delete` / legacy 路径 unlink）；② dashboard `recent-activity` 过滤 `project_id IS NULL` 的脱钩数据集（顺带补上该端点缺失的 Dataset import——原代码一调用即 500 的既有 bug）。标注建任务不拒绝脱钩数据集：旧版流程本就允许无项目数据集，NULL 无法区分"从未归属"与"已脱钩"，保守不动。
 - **排障记录**：test_15 曾稳定失败 0!=1——先是 dashboard NameError 掩盖，后栽在自写测试漏了 `db.add(job)`（构造对象未入 session，INSERT 根本不发生）；用 engine `before_cursor_execute` 事件抓 SQL 才定位。教训：ORM 静默跳过插入时先查 `db.new`。
 - **验证**：test_api_projects 16 passed（新增 test_15 集群资源释放+存储清理接线、test_16 脱钩行隐藏）；test_api_annotations / test_api_dashboard / test_api_users 回归 OK。
+
+---
+
+## 2026-10-14 知识库支持 PDF/Word/Excel 上传 + 点焊标准法规入库建图
+
+- **功能：知识库文档格式扩展**。`upload_document` 此前按 UTF-8 文本读取（PDF/Office 二进制变乱码）；现按扩展名解析：`.pdf` 走 pymupdf 文本层提取（无文本层的扫描件返回 422 明确提示先 OCR）、`.docx` 走 python-docx（段落+表格）、`.xlsx/.xlsm` 走 openpyxl（逐工作表逐行）、旧版 `.doc` 明确 422 引导转存。提取内容经 `_pack_chunks` 贪心打包为 ~600 字检索分块（PDF 整页/Word 单行直塞会导致 TF-IDF 排序噪声）；纯文本上传行为不变。前端上传 accept 扩展 `.docx,.xlsx,.xlsm`；user_guide 同步。requirements 新增 `pymupdf==1.28.*`、`python-docx==1.2.*`（wheelhouse 补 3 个 wheel 共 144）。测试：test_knowledge 新增 PDF/DOCX/XLSX 上传与检索命中、扫描件 422 用例（程序化生成三类文件）；聚焦回归 test_knowledge+test_api_chat+test_chat_api_publication+test_api_platform **51 passed**；前端 weekAcceptance/知识页 11 passed + tsc。
+- **入库交付（用户 10 份点焊标准法规 PDF）**：部署环境 admin 账号新建「点焊标准法规」知识库（kb ef9331da-d3e5-4861-9628-afdaa7feafec）。7 份文字版 PDF 直接经新 PDF 解析上传（GBZ 2.1-2019、安全生产法、职业病防治法、职业卫生管理规定、智能制造标准体系建设指南、十四五智能制造发展规划、智能工厂梯度培育通知）；3 份 openstd 逐页还原版 GB 标准（9448-2025 焊接与切割安全、30871-2022、39800.1-2020）为纯扫描件（无文本层），WSL root 安装 tesseract+chi_sim 按 300dpi 逐页 OCR（21k/26k/70k 字符），清理目录点线噪声后以文本形式上传替换。共 278 个分块，reembed 全量重算。
+- **知识图谱**：首跑被 200k 字符抽取预算正确拦截（10 份合计 315k）——compose 给 backend 增加可配环境变量 `KNOWLEDGE_GRAPH_MAX_EXTRACT_CHARS`（默认 200000 不变）与 `KNOWLEDGE_GRAPH_TIME_BUDGET_SECONDS`（默认 30），部署实例按 500000/120 重启后抽取完成：**500 实体 / 2000 关系**（2.5s；10627 候选实体命中 500 上限，truncated=true 属设计保护，可调 env 重抽），关系构成 co_occurs_with 1997 + part_of 3。检索抽查：焊接防护命中 GB 9448、职业接触限值命中 GBZ 2.1。
+- **部署连环坑**：① 并行提交（f8a4b37 安全 pin 刷新）覆盖了 Dockerfile/Dockerfile.worker 的 wheelhouse bind-mount 补丁 → worker 构建在 cffi 解析处 ResolutionImpossible（cffi wheel 在 wheelhouse 但 find-links 已丢）；两个 Dockerfile 重新打补丁后恢复。**后续改这两个 Dockerfile 须保留 wheelhouse 补丁，或把该方案合并为正式实现**。② 本地 venv 补装 pymupdf（PDF 提取脚本与测试用例使用）。
+- **已知边界**：3 份扫描件 OCR 质量（tesseract chi_sim）——引用文件列表与正文条款可读、表格与封面失真（如"GB 9448-20295"、护目镜表格错行），后续可用 PaddleOCR 重做并经删除/重传替换；图谱含法律文本高频虚词（如"应当"）可加停用词后重抽；truncated=true 表示实体/关系上限可再调。

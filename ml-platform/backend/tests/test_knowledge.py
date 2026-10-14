@@ -1,5 +1,5 @@
 """Knowledge base, vector store, and template tests."""
-import sys, os, unittest
+import sys, os, io, unittest
 sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
@@ -100,12 +100,102 @@ class TestKnowledgeAPI(unittest.TestCase):
             headers=h,
         )
         self.assertEqual(uploaded.status_code, 200)
-
         listed = client.get("/api/knowledge/bases", headers=h)
         self.assertEqual(listed.status_code, 200)
         item = next(entry for entry in listed.json() if entry["id"] == kb["id"])
         self.assertEqual(item["document_count"], 1)
+        client.delete(f"/api/knowledge/bases/{kb['id']}", headers=h)
 
+    def test_03d_upload_pdf_docx_xlsx_documents(self):
+        import io
+
+        import openpyxl
+        import pymupdf
+        import docx as docx_lib
+
+        h = login_headers()
+        kb = client.post(
+            "/api/knowledge/bases",
+            json={"name": "FormatKB", "description": "file format test"},
+            headers=h,
+        ).json()
+
+        pdf_buffer = io.BytesIO()
+        pdf_doc = pymupdf.open()
+        page = pdf_doc.new_page()
+        page.insert_text((72, 72), "Spot welding current must stay between 8 and 12 kA.")
+        page.insert_text((72, 92), "Electrode force influences weld nugget size directly.")
+        pdf_doc.save(pdf_buffer)
+        pdf_doc.close()
+        r = client.post(
+            f"/api/knowledge/bases/{kb['id']}/documents",
+            files={"file": ("spec.pdf", pdf_buffer.getvalue(), "application/pdf")},
+            headers=h,
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertGreaterEqual(r.json()["chunk_count"], 1)
+
+        docx_buffer = io.BytesIO()
+        doc = docx_lib.Document()
+        doc.add_paragraph("Welding operators must wear appropriate PPE.")
+        doc.add_paragraph("The workpiece surface shall be free of oil and rust.")
+        doc.save(docx_buffer)
+        r = client.post(
+            f"/api/knowledge/bases/{kb['id']}/documents",
+            files={"file": ("manual.docx", docx_buffer.getvalue(),
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+            headers=h,
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+
+        xlsx_buffer = io.BytesIO()
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "参数"
+        sheet.append(["参数", "范围"])
+        sheet.append(["焊接电流", "8-12 kA"])
+        sheet.append(["电极压力", "2.5-4.0 kN"])
+        workbook.save(xlsx_buffer)
+        r = client.post(
+            f"/api/knowledge/bases/{kb['id']}/documents",
+            files={"file": ("params.xlsx", xlsx_buffer.getvalue(),
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            headers=h,
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertGreaterEqual(r.json()["chunk_count"], 1)
+
+        #检索能命中 xlsx 内容（工作表与单元格文本都进入分块）
+        client.post(f"/api/knowledge/bases/{kb['id']}/reembed", headers=h)
+        r = client.post(f"/api/knowledge/bases/{kb['id']}/search",
+                        json={"query": "电极压力", "top_k": 3}, headers=h)
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(any("电极压力" in item["content"] for item in r.json()))
+
+        client.delete(f"/api/knowledge/bases/{kb['id']}", headers=h)
+
+    def test_03e_upload_scanned_pdf_rejected_with_clear_error(self):
+        import pymupdf
+
+        h = login_headers()
+        kb = client.post(
+            "/api/knowledge/bases",
+            json={"name": "ScanKB", "description": "scanned pdf test"},
+            headers=h,
+        ).json()
+        pdf_buffer = io.BytesIO()
+        pdf_doc = pymupdf.open()
+        page = pdf_doc.new_page(width=200, height=200)
+        page.draw_rect(pymupdf.Rect(20, 20, 180, 180))
+        pdf_doc.save(pdf_buffer)
+        pdf_doc.close()
+        r = client.post(
+            f"/api/knowledge/bases/{kb['id']}/documents",
+            files={"file": ("scan.pdf", pdf_buffer.getvalue(), "application/pdf")},
+            headers=h,
+        )
+        self.assertEqual(r.status_code, 422)
+        self.assertIn("文本层", r.json()["detail"])
         client.delete(f"/api/knowledge/bases/{kb['id']}", headers=h)
 
     def test_04_add_entity_and_graph(self):

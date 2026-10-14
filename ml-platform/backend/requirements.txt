@@ -27,6 +27,8 @@ pandas==2.3.*
 pyarrow>=23.0.1,<24
 defusedxml==0.7.*
 openpyxl==3.1.*
+pymupdf==1.28.*
+python-docx==1.2.*
 xlrd==2.0.*
 numpy==2.3.*
 matplotlib==3.10.*

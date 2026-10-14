@@ -152,7 +152,7 @@ export default function KnowledgeDetailPage() {
       key: "docs", label: <><FileTextOutlined /> Docs</>,
       children: (
         <div>
-          <Upload beforeUpload={(file) => { uploadDoc(file); return false; }} accept=".txt,.md,.csv,.pdf" maxCount={1}>
+          <Upload beforeUpload={(file) => { uploadDoc(file); return false; }} accept=".txt,.md,.csv,.pdf,.docx,.xlsx,.xlsm" maxCount={1}>
             <Button icon={<UploadOutlined />}>{t.ai_chat.upload}</Button>
           </Upload>
           <List style={{ marginTop: 16 }} dataSource={docs} locale={{ emptyText: <Empty description="No documents" /> }}

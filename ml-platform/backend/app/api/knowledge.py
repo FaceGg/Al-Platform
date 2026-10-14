@@ -2,8 +2,10 @@
 Knowledge Base, Knowledge Graph, and RAG API endpoints.
 """
 import uuid
+import io
 import json
 import os
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body, Query
@@ -158,6 +160,108 @@ def delete_base(
 #  Document Management
 # -------------------------------------------------------------------------------
 
+def _extract_document_text(filename: str, file_bytes: bytes) -> str:
+    """Extract plain text from an uploaded document by extension.
+
+    Supports PDF (text layer), Word .docx, Excel .xlsx/.xlsm, and any
+    UTF-8 text file. Legacy .doc is rejected with a clear message (needs a
+    converter). Scanned PDFs without a text layer are rejected instead of
+    silently ingesting an empty document.
+    """
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext == ".pdf":
+        import pymupdf
+
+        doc = pymupdf.open(stream=file_bytes, filetype="pdf")
+        try:
+            pages = [page.get_text("text") for page in doc]
+        finally:
+            doc.close()
+        text = "\n\n".join(p.strip() for p in pages if p.strip())
+        if not text.strip():
+            raise HTTPException(
+                422,
+                "PDF 没有文本层（扫描件或图片版）。请先 OCR 转出文本，或上传文字版 PDF",
+            )
+        return text
+
+    if ext == ".docx":
+        import docx
+
+        document = docx.Document(io.BytesIO(file_bytes))
+        parts = [p.text for p in document.paragraphs]
+        for table in document.tables:
+            for row in table.rows:
+                parts.append(" | ".join(cell.text for cell in row.cells))
+        text = "\n".join(p.strip() for p in parts if p.strip())
+        if not text.strip():
+            raise HTTPException(422, "Word 文档中没有可提取的文本")
+        return text
+
+    if ext in (".xlsx", ".xlsm"):
+        import openpyxl
+
+        workbook = openpyxl.load_workbook(
+            io.BytesIO(file_bytes), read_only=True, data_only=True,
+        )
+        try:
+            lines = []
+            for sheet in workbook.worksheets:
+                lines.append(f"[工作表 {sheet.title}]")
+                for row in sheet.iter_rows(values_only=True):
+                    cells = ["" if v is None else str(v) for v in row]
+                    if any(c.strip() for c in cells):
+                        lines.append(" | ".join(cells))
+        finally:
+            workbook.close()
+        text = "\n".join(lines).strip()
+        if not text.strip():
+            raise HTTPException(422, "Excel 工作簿中没有可提取的文本")
+        return text
+
+    if ext == ".doc":
+        raise HTTPException(
+            422,
+            "暂不支持旧版 .doc 二进制格式：请另存为 .docx 后上传，或直接粘贴文本",
+        )
+
+    return file_bytes.decode("utf-8", errors="replace")
+
+
+def _pack_chunks(paragraphs: list[str], target: int = 600, max_len: int = 1500) -> list[str]:
+    """Greedy-pack short paragraphs into ~target-char chunks for retrieval.
+
+    Document extractions (PDF pages, Word lines) arrive as many tiny lines;
+    one-chunk-per-line makes TF-IDF ranking noisy, one-chunk-per-document
+    makes it useless. Merge upwards to target, hard-split anything over
+    max_len on sentence ends.
+    """
+    chunks: list[str] = []
+    buf = ""
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        if len(para) > max_len:
+            if buf:
+                chunks.append(buf)
+                buf = ""
+            for piece in re.split(r"(?<=[。！？!?；;])", para):
+                if piece.strip() and len(buf) + len(piece) > target and buf:
+                    chunks.append(buf)
+                    buf = ""
+                buf = (buf + piece).strip()
+            continue
+        if buf and len(buf) + len(para) > target:
+            chunks.append(buf)
+            buf = ""
+        buf = (buf + "\n" + para).strip()
+    if buf:
+        chunks.append(buf)
+    return [c for c in chunks if len(c) >= 20] or [p for p in paragraphs if p.strip()]
+
+
 @router.post("/bases/{kb_id}/documents")
 async def upload_document(
     kb_id: str,
@@ -178,7 +282,7 @@ async def upload_document(
         filename = file.filename
         file_bytes = await file.read()
         ext = os.path.splitext(filename)[1].lower()
-        file_text = file_bytes.decode("utf-8", errors="replace")
+        file_text = _extract_document_text(filename, file_bytes)
         doc_type = ext.lstrip(".") if ext else "text"
     else:
         filename = "text_input.txt"
@@ -188,8 +292,11 @@ async def upload_document(
     if not file_text.strip():
         raise HTTPException(400, "No content provided")
 
-    # Chunk by paragraphs
+    # Chunk by paragraphs; extracted office/pdf content is repacked to a
+    # retrieval-friendly granularity, plain text keeps its own blank lines.
     paragraphs = [p.strip() for p in file_text.split("\n\n") if p.strip()]
+    if doc_type in ("pdf", "docx", "xlsx", "xlsm"):
+        paragraphs = _pack_chunks(paragraphs)
     if not paragraphs:
         paragraphs = [file_text.strip()]
 
@@ -1118,22 +1225,30 @@ def reembed_kb(kb_id: str, db: Session = Depends(get_db), current_user: User = D
     emb_strs = _compute_tfidf_embedding(texts)
     vstore = get_vector_store()
     updated = 0
+    vstore_skipped = 0
     for chunk, emb_str in zip(chunks, emb_strs):
         chunk.embedding = emb_str
+        updated += 1
         try:
             vec = np.array(json.loads(emb_str), dtype=np.float32)
         except (ValueError, TypeError):
+            vstore_skipped += 1
             continue
         metadata = {"content": chunk.content[:200], "doc_id": str(chunk.doc_id), "kb_id": str(kb.id)}
+        if vstore.dim is not None and vstore.dim != len(vec):
+            # The store is process-global and TF-IDF dims are per-corpus:
+            # never mix dimensions (retrieval falls back to the DB path).
+            vstore_skipped += 1
+            continue
         try:
             vstore.update(str(chunk.id), vector=vec, metadata=metadata)
         except ValueError:
             vstore.add([str(chunk.id)], vec.reshape(1, -1), [metadata])
-        updated += 1
     db.commit()
     return {
         "reembedded": updated,
         "total_chunks": len(chunks),
+        "vector_store_skipped": vstore_skipped,
         "vector_store_stats": vstore.get_stats(),
     }
 
