@@ -318,8 +318,8 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 ### 2026-10-14 常规重打包：纳入 r14 后全部主线改动（r15）
 
 - 背景：r14（2026-10-13）之后主线新增——模型库/注册表删除修复（护栏补判历史发布目标 + 只拦活引用 + 级联清理换模残留）、发布运维 422 修复（StrictInt 拒收字符串分页）、注册版本「来源训练模型」下拉、推理部署「部署信息」查看抽屉、API 市场全类型上线/下线与 predict 调用统计与响应字段解释、编排发布提取目标列元数据、登录默认明亮主题、weld-quality e2e 随模板体系退役等；用户要求推送全部变更并按 r14 方法重新打包。
-- 发布记录（2026-10-14）：安装包 `output/linkraft-ubuntu-20261014-r15.tar.gz`（3,122,353 字节），manifest 绑定 HEAD `61e272b`（README r15 文档提交），SHA-256 `f0bfb10510774469446f48f4bcab7fff1df9c79750f51271a6b4e32eb862f6e8`，`sha256sum -c` 通过；`.git/` 内 LF 临时副本执行打包（构建输出目录 `temp_test/frontend-dist` 与陈年 `ml-platform/frontend/dist` 的教训已记于前节）。归档抽查：删除护栏/分页修复/明亮主题/迁移 `20261014_69`/r15 文档引用全部在包；排除项干净（无 `.env`/secrets/数据库/wheelhouse/node_modules/.git）；packaging 脚本 0 CR（Git Bash 管道的 MSYS CRLF 翻译会虚报，以 WSL 原生工具复核为准；README-UBUNTU.md 的 CRLF 属文档既有惯例不碍执行）。
-- 质量门禁：全量 CI 绑定台账提交后的 HEAD（结果回填）；绿后发 GitHub Release `20261014-r15`（资产 = tar.gz + sha256）。
+- 发布记录（2026-10-14）：安装包 `output/linkraft-ubuntu-20261014-r15.tar.gz`（3,122,517 字节左右），manifest 绑定 HEAD `a88f2b2`（含两个 CI 失败测试的修复），SHA-256 `2f9425a9e1f1324ba292168a5e2ae17e0167ade718f626b520cc982e868600d0`，`sha256sum -c` 通过；`.git/` 内 LF 临时副本执行打包（构建输出目录 `temp_test/frontend-dist` 与陈年 `ml-platform/frontend/dist` 的教训已记于前节）。归档抽查：删除护栏/分页修复/明亮主题/迁移 `20261014_69`/r15 文档引用全部在包；排除项干净（无 `.env`/secrets/数据库/wheelhouse/node_modules/.git）；packaging 脚本 0 CR（Git Bash 管道的 MSYS CRLF 翻译会虚报，以 WSL 原生工具复核为准；README-UBUNTU.md 的 CRLF 属文档既有惯例不碍执行）。
+- 质量门禁：首跑全量 CI（run 38580810505）两平台 Quality 挂于 `test_api_workflow_publication::test_08`（种子部署用随机 model_version_id，FK 强制下必炸）与 `test_workflow_versions`（csv_import 读 CWD 的 sample.csv，CI 无该文件）——两处均为测试自身缺陷，修复后本地 13 用例绿，重打 r15 并以最终 HEAD 重跑全量 CI（结果回填）；绿后发 GitHub Release `20261014-r15`（资产 = tar.gz + sha256）。
 
 ### 2026-10-14 登录默认观感：默认明亮主题（语言本就默认中文）
 
