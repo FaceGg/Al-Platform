@@ -2714,3 +2714,12 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 
 - top-models 与 model-library/stats/summary 改为取回后 Python 侧按 `best_score` 降序（`top_models_by_score`，无分值沉底），双方言一致；test_13 排序回归（含 dashboard 侧断言）。test_api_model_library 13 passed、test_api_dashboard 回归 OK。
 - backend 容器已重建（含 b2cbefc/1c8b372/036fc42 全部修复），线上复验：top-models / model-library/stats/summary / recent-activity 三个曾 500 端点全部 200，top-models 返回降序内容。生产环境问题清零。
+
+---
+
+## 2026-10-14（续）API 市场页中英文一致化 + 测试弹窗调用示例
+
+- **中英文一致化**：APIMarketplacePage 此前表头/统计卡/筛选按钮/三个弹窗大面积硬编码（英文表头 + 中文按钮混排，切换语言无效果）。i18n `api_market` 节新增 zh/en 各 ~45 键（表头、状态、类型徽标、统计卡、筛选、详情/新建/编辑弹窗、测试弹窗、空态），页面全部改走 `t.api_market`；Type 列渲染参数改名消除对 i18n `t` 的遮蔽；状态名（已发布/已下线/异常）与类型徽标（模型/编排/对话/自定义）随语言切换。
+- **测试弹窗调用示例**：点击「测试」后左侧新增「调用示例」区——按 API 类型生成可复制的 curl 示例（origin + endpoint + Bearer token 占位 + Content-Type）：chat 生成 `{"message": ..., "top_k": 4}`（示例问题随语言切换）、orchestration 生成 `{"record": {...}}`、model 从 `request_schema.records` 特征清单生成 `{"records": [{特征: 0, ...}]}`、custom 使用其 request_schema；GET/HEAD 不带 body。示例带独立复制按钮，注明 token 需替换为平台令牌。
+- **测试**：APIMarketplacePage.test.tsx 的 i18n mock 补全全部新键、chat 徽标/筛选断言更新为中文（对话/对话 API）；该页 9 + 相关 4 文件 16 用例 passed，tsc + build 通过。
+- **部署环境**：Docker daemon 的 systemd 代理 drop-in（HTTP(S)_PROXY=127.0.0.1:7897）因 Windows 侧代理关闭而阻断全部镜像拉取（前端基础镜像 node:20-alpine 元数据 HEAD proxyconnect timeout）——注释该 drop-in 的两行代理并重启 docker（restart 策略自动恢复整栈），前端镜像重建部署成功。**若用户重新开启代理，可恢复该配置**。

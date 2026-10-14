@@ -7,13 +7,13 @@ import { useI18n } from "../i18n";
 import { notifyDashboardStatsChanged } from "../events/dashboardStats";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 const { TextArea } = Input;
 const stColor: Record<string, string> = { published: "green", offline: "red", failed: "orange" };
-const stName: Record<string, string> = { published: "Published", offline: "Offline", failed: "Failed" };
 
 export default function APIMarketplacePage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const tr = t.api_market || {};
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [data, setData] = useState<any[]>([]);
@@ -107,6 +107,35 @@ export default function APIMarketplacePage() {
     setShowTest(true);
   };
 
+  const stName = (s: string) =>
+    s === "published" ? tr.st_published : s === "offline" ? tr.st_offline : s === "failed" ? tr.st_failed : s;
+
+  const typeLabel = (v: string) =>
+    v === "model" ? tr.type_model : v === "orchestration" ? tr.type_orch : v === "chat" ? tr.type_chat : tr.type_custom;
+
+  const buildExample = (api: any) => {
+    const origin = typeof window === "undefined" ? "http://localhost:5173" : window.location.origin;
+    const method = api.method || "POST";
+    const lines: string[] = [`curl -X ${method} "${origin}${api.endpoint || ""}" \\`];
+    lines.push(`  -H "Authorization: Bearer <token>" \\`);
+    let body: any = undefined;
+    if (api.api_type === "chat") {
+      body = { message: lang === "zh" ? "点焊飞溅的主要原因有哪些？" : "What causes weld spatter?", top_k: 4 };
+    } else if (api.api_type === "orchestration") {
+      body = { record: { feature1: 0, feature2: 0 } };
+    } else if (api.api_type === "model") {
+      const feats = Array.isArray(api.request_schema?.records) ? api.request_schema.records : [];
+      body = { records: [Object.fromEntries(feats.map((f: string) => [f, 0]))] };
+    } else if (api.request_schema && Object.keys(api.request_schema).length) {
+      body = api.request_schema;
+    }
+    if (method !== "GET" && method !== "HEAD") {
+      lines.push(`  -H "Content-Type: application/json" \\`);
+      lines.push(`  -d '${JSON.stringify(body ?? {}, null, 1).replace(/\n/g, "\n  ")}'`);
+    }
+    return lines.join("\n");
+  };
+
   const handleSendTest = async () => {
     setTestLoading(true); setTestResponse(null);
     const start = Date.now();
@@ -140,27 +169,27 @@ export default function APIMarketplacePage() {
   const filtered = filterType ? data.filter((a:any) => a.api_type === filterType) : data;
 
   const columns = [
-    { title: "API Name", dataIndex: "name", key: "name", ellipsis: true },
-    { title: "Type", dataIndex: "api_type", key: "api_type",
-      render: (t:string) => <Tag color={t==="model"?"blue":t==="orchestration"?"purple":t==="chat"?"green":"default"}>{t==="model"?"Model":t==="orchestration"?"Orch.":t==="chat"?"Chat":"Custom"}</Tag> },
-    { title: "Version", dataIndex: "version", key: "version", render: (v:string) => <Tag color="blue">{v}</Tag> },
-    { title: "Status", dataIndex: "status", key: "status",
-      render: (s:string) => <Tag color={stColor[s]||"default"}>{stName[s]||s}</Tag> },
-    { title: "Method", dataIndex: "method", key: "method", width:80,
+    { title: tr.col_name, dataIndex: "name", key: "name", ellipsis: true },
+    { title: tr.col_type, dataIndex: "api_type", key: "api_type",
+      render: (v:string) => <Tag color={v==="model"?"blue":v==="orchestration"?"purple":v==="chat"?"green":"default"}>{typeLabel(v)}</Tag> },
+    { title: tr.col_version, dataIndex: "version", key: "version", render: (v:string) => <Tag color="blue">{v}</Tag> },
+    { title: tr.col_status, dataIndex: "status", key: "status",
+      render: (s:string) => <Tag color={stColor[s]||"default"}>{stName(s)||s}</Tag> },
+    { title: tr.col_method, dataIndex: "method", key: "method", width:80,
       render: (m:string) => <Tag color={m==="GET"?"green":"blue"}>{m}</Tag> },
-    { title: "Calls", dataIndex: "total_calls", key: "total_calls", width:80 },
-    { title: "Success Rate", key: "rate", width:100,
+    { title: tr.col_calls, dataIndex: "total_calls", key: "total_calls", width:80 },
+    { title: tr.col_rate, key: "rate", width:100,
       render: (_:any, r:any) => <Text style={{color:r.total_calls>0&&(r.success_calls/r.total_calls)<0.9?"#ff4d4f":undefined}}>{r.total_calls>0?((r.success_calls/r.total_calls)*100).toFixed(1)+"%":"-"}</Text> },
-    { title: "Actions", key: "actions", width:220,
+    { title: tr.col_actions, key: "actions", width:220,
       render: (_:any, r:any) => (
         <Space size="small">
-          <Button size="small" icon={<EyeOutlined />} onClick={() => { setDetail(r); setShowDetail(true); }}>{t.api_market.detail}</Button>
-          <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => openTest(r)}>{t.api_market.test}</Button>
+          <Button size="small" icon={<EyeOutlined />} onClick={() => { setDetail(r); setShowDetail(true); }}>{tr.detail}</Button>
+          <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => openTest(r)}>{tr.test}</Button>
           {r.source_kind === "custom" && !r.source_id && (
-            <Button size="small" icon={<EditOutlined />} onClick={() => openEditor(r)}>编辑</Button>
+            <Button size="small" icon={<EditOutlined />} onClick={() => openEditor(r)}>{tr.edit}</Button>
           )}
           {(r.source_kind === "custom" || r.source_kind === "orchestration" || r.source_kind === "chat") && (
-            <DeleteConfirmation label={`删除 ${r.name}`} targetName={r.name} onConfirm={() => void handleDelete(r.id)} />
+            <DeleteConfirmation label={`${tr.delete_confirm || "删除 "}${r.name}`} targetName={r.name} onConfirm={() => void handleDelete(r.id)} />
           )}
         </Space>
       )},
@@ -168,68 +197,80 @@ export default function APIMarketplacePage() {
 
   return (
     <AppLayout>
-      <Card><Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}><Title level={4} style={{ margin: 0 }}>{t.api_market.title}</Title><Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()}>{t.api_market.create || "新建 API"}</Button></Space>
+      <Card><Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}><Title level={4} style={{ margin: 0 }}>{tr.title}</Title><Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()}>{tr.create || "新建 API"}</Button></Space>
         <Row gutter={16} style={{ marginBottom: 20 }}>
-          <Col xs={12} md={6}><Statistic title="API 总数" value={stats.total_apis} /></Col>
-          <Col xs={12} md={6}><Statistic title="已发布" value={stats.published} valueStyle={{ color: "#389e0d" }} /></Col>
-          <Col xs={12} md={6}><Statistic title="已下线" value={stats.offline} valueStyle={{ color: "#cf1322" }} /></Col>
-          <Col xs={12} md={6}><Statistic title="API 调用总数" value={stats.total_calls} /></Col>
+          <Col xs={12} md={6}><Statistic title={tr.stat_total} value={stats.total_apis} /></Col>
+          <Col xs={12} md={6}><Statistic title={tr.stat_published} value={stats.published} valueStyle={{ color: "#389e0d" }} /></Col>
+          <Col xs={12} md={6}><Statistic title={tr.stat_offline} value={stats.offline} valueStyle={{ color: "#cf1322" }} /></Col>
+          <Col xs={12} md={6}><Statistic title={tr.stat_calls} value={stats.total_calls} /></Col>
         </Row>
         <Space style={{ marginBottom: 16 }}>
-          <Button type={filterType===""?"primary":"default"} onClick={()=>setFilterType("")}>All</Button>
-          <Button type={filterType==="model"?"primary":"default"} onClick={()=>setFilterType("model")}>{t.api_market.model_api}</Button>
-          <Button type={filterType==="orchestration"?"primary":"default"} onClick={()=>setFilterType("orchestration")}>Orch. API</Button>
-          <Button type={filterType==="chat"?"primary":"default"} onClick={()=>setFilterType("chat")}>Chat API</Button>
-          <Button type={filterType==="custom"?"primary":"default"} onClick={()=>setFilterType("custom")}>{t.api_market.custom}</Button>
+          <Button type={filterType===""?"primary":"default"} onClick={()=>setFilterType("")}>{tr.filter_all}</Button>
+          <Button type={filterType==="model"?"primary":"default"} onClick={()=>setFilterType("model")}>{tr.model_api}</Button>
+          <Button type={filterType==="orchestration"?"primary":"default"} onClick={()=>setFilterType("orchestration")}>{tr.orch_api}</Button>
+          <Button type={filterType==="chat"?"primary":"default"} onClick={()=>setFilterType("chat")}>{tr.chat_api}</Button>
+          <Button type={filterType==="custom"?"primary":"default"} onClick={()=>setFilterType("custom")}>{tr.custom}</Button>
         </Space>
         {loadError && <Alert type="error" showIcon message={loadError} style={{ marginBottom: 16 }} />}
         <Table dataSource={filtered} columns={columns} rowKey="id" loading={loading} size="small"
-          pagination={{ pageSize: 15 }} locale={{ emptyText: "No APIs yet" }} />
+          pagination={{ pageSize: 15 }} locale={{ emptyText: tr.empty }} />
       </Card>
 
-      <Modal open={showEditor} title={editing ? "编辑 API" : "新建 API"} onCancel={() => setShowEditor(false)} onOk={() => form.submit()}>
+      <Modal open={showEditor} title={editing ? tr.editor_edit : tr.editor_new} onCancel={() => setShowEditor(false)} onOk={() => form.submit()}>
         <Form form={form} layout="vertical" onFinish={handleSave} autoComplete="off">
-          <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="name" label={tr.f_name} rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="api_type" hidden><Input /></Form.Item>
-          <Form.Item label="类型"><Input value="自定义" disabled /></Form.Item>
-          <Form.Item name="endpoint" label="内部路径" rules={[{ required: true, pattern: /^\/api\//, message: "必须是 /api/ 开头的内部路径" }]}><Input /></Form.Item>
-          <Form.Item name="method" label="方法"><Select options={["GET", "POST", "PUT", "PATCH", "DELETE"].map(value => ({ value, label: value }))} /></Form.Item>
-          <Form.Item name="version" label="版本"><Input /></Form.Item>
-          <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
+          <Form.Item label={tr.f_type}><Input value={tr.f_type_value} disabled /></Form.Item>
+          <Form.Item name="endpoint" label={tr.f_endpoint} rules={[{ required: true, pattern: /^\/api\//, message: tr.f_endpoint_rule }]}><Input /></Form.Item>
+          <Form.Item name="method" label={tr.f_method}><Select options={["GET", "POST", "PUT", "PATCH", "DELETE"].map(value => ({ value, label: value }))} /></Form.Item>
+          <Form.Item name="version" label={tr.f_version}><Input /></Form.Item>
+          <Form.Item name="description" label={tr.f_description}><Input.TextArea rows={3} /></Form.Item>
         </Form>
       </Modal>
 
-      <Modal open={showDetail} onCancel={()=>setShowDetail(false)} footer={null} width={700} title="API Detail">
+      <Modal open={showDetail} onCancel={()=>setShowDetail(false)} footer={null} width={700} title={tr.detail_title}>
         {detail && (
           <Descriptions column={2} bordered size="small">
-            <Descriptions.Item label="Name">{detail.name}</Descriptions.Item>
-            <Descriptions.Item label="Version">{detail.version}</Descriptions.Item>
-            <Descriptions.Item label="Type">{detail.api_type}</Descriptions.Item>
-            <Descriptions.Item label="Algorithm">{detail.algorithm_type || "-"}</Descriptions.Item>
-            <Descriptions.Item label="Endpoint" span={2}><Text code>{detail.endpoint || "-"}</Text></Descriptions.Item>
-            <Descriptions.Item label="Status"><Tag color={stColor[detail.status]}>{stName[detail.status]}</Tag></Descriptions.Item>
-            <Descriptions.Item label="Method"><Tag>{detail.method}</Tag></Descriptions.Item>
-            <Descriptions.Item label="Total Calls">{detail.total_calls}</Descriptions.Item>
-            <Descriptions.Item label="Success">{detail.success_calls}</Descriptions.Item>
-            <Descriptions.Item label="Failed">{detail.failed_calls}</Descriptions.Item>
-            <Descriptions.Item label="Public">{detail.is_public ? "Yes" : "No"}</Descriptions.Item>
-            <Descriptions.Item label="Description" span={2}>{detail.description || "-"}</Descriptions.Item>
+            <Descriptions.Item label={tr.d_name}>{detail.name}</Descriptions.Item>
+            <Descriptions.Item label={tr.col_version}>{detail.version}</Descriptions.Item>
+            <Descriptions.Item label={tr.col_type}>{typeLabel(detail.api_type)}</Descriptions.Item>
+            <Descriptions.Item label={tr.d_algorithm}>{detail.algorithm_type || "-"}</Descriptions.Item>
+            <Descriptions.Item label={tr.d_endpoint} span={2}><Text code>{detail.endpoint || "-"}</Text></Descriptions.Item>
+            <Descriptions.Item label={tr.col_status}><Tag color={stColor[detail.status]}>{stName(detail.status)}</Tag></Descriptions.Item>
+            <Descriptions.Item label={tr.col_method}><Tag>{detail.method}</Tag></Descriptions.Item>
+            <Descriptions.Item label={tr.d_total_calls}>{detail.total_calls}</Descriptions.Item>
+            <Descriptions.Item label={tr.d_success}>{detail.success_calls}</Descriptions.Item>
+            <Descriptions.Item label={tr.d_failed}>{detail.failed_calls}</Descriptions.Item>
+            <Descriptions.Item label={tr.d_public}>{detail.is_public ? tr.yes : tr.no}</Descriptions.Item>
+            <Descriptions.Item label={tr.d_description} span={2}>{detail.description || "-"}</Descriptions.Item>
           </Descriptions>
         )}
       </Modal>
 
-      <Modal open={showTest} onCancel={() => setShowTest(false)} footer={null} width={900} title={<Space><PlayCircleOutlined /> API Test: {testApi?.name}</Space>}>
+      <Modal open={showTest} onCancel={() => setShowTest(false)} footer={null} width={900} title={<Space><PlayCircleOutlined /> {tr.test_title}{testApi?.name}</Space>}>
         <div style={{ display: "flex", gap: 16, height: 500 }}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12, overflow: "auto" }}>
             <Space>
               <Select value={testMethod} onChange={setTestMethod} style={{ width: 100 }}
                 options={["GET","POST","PUT","DELETE","PATCH"].map(m=>({value:m,label:m}))} />
               <Input value={testUrl} readOnly style={{ flex: 1 }} />
               <Button type="primary" icon={<SendOutlined />} onClick={handleSendTest} loading={testLoading}>{t.ai_chat.send}</Button>
             </Space>
-            <Text type="secondary">Headers:</Text>
+            {testApi && (
+              <div>
+                <Space style={{ marginBottom: 4 }}>
+                  <Text type="secondary">{tr.example_title}</Text>
+                  <Button size="small" icon={<CopyOutlined />} onClick={()=>{navigator.clipboard.writeText(buildExample(testApi));message.success(tr.copied);}}>{tr.copy}</Button>
+                </Space>
+                <pre style={{background:"#f5f5f5",padding:12,borderRadius:8,fontSize:12,margin:0,whiteSpace:"pre-wrap",wordBreak:"break-all"}}>
+                  {buildExample(testApi)}
+                </pre>
+                <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>{tr.example_note}</Text>
+              </div>
+            )}
+            <Text type="secondary">{tr.headers}:</Text>
             <TextArea value={testHeaders} onChange={e=>setTestHeaders(e.target.value)} rows={3} style={{ fontFamily:"monospace",fontSize:12 }} />
-            <Text type="secondary">Body:</Text>
+            <Text type="secondary">{tr.body}:</Text>
             <TextArea value={testBody} onChange={e=>setTestBody(e.target.value)} rows={6} style={{ fontFamily:"monospace",fontSize:12 }} />
           </div>
           <div style={{ flex: 1, borderLeft: "1px solid #f0f0f0", paddingLeft: 16, overflow: "auto" }}>
@@ -238,7 +279,7 @@ export default function APIMarketplacePage() {
                 <Space style={{marginBottom:8}}>
                   <Tag color={testResponse.status>=200&&testResponse.status<300?"green":"red"}>{testResponse.status} {testResponse.statusText}</Tag>
                   <Text type="secondary">{testResponse.elapsed}ms</Text>
-                  <Button size="small" icon={<CopyOutlined />} onClick={()=>{navigator.clipboard.writeText(JSON.stringify(testResponse.body,null,2));message.success("Copied");}}>{t.api_market.copy}</Button>
+                  <Button size="small" icon={<CopyOutlined />} onClick={()=>{navigator.clipboard.writeText(JSON.stringify(testResponse.body,null,2));message.success(tr.copied);}}>{tr.copy}</Button>
                 </Space>
                 {testResponse.error && <Text type="danger">{testResponse.error}</Text>}
                 <pre style={{background:"#f5f5f5",padding:12,borderRadius:8,overflow:"auto",maxHeight:400,fontSize:12,margin:0}}>
@@ -248,14 +289,14 @@ export default function APIMarketplacePage() {
             ) : (
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",color:"#ccc"}}>
                 <SendOutlined style={{fontSize:48,marginBottom:16}} />
-                <Text type="secondary">Click "Send" to test the API</Text>
+                <Text type="secondary">{tr.click_send}</Text>
               </div>
             )}
           </div>
         </div>
         {testHistory.length > 0 && (
           <div style={{ marginTop: 16, borderTop: "1px solid #f0f0f0", paddingTop: 12 }}>
-            <Text strong>{t.api_market.history}</Text>
+            <Text strong>{tr.history}</Text>
             <div style={{ maxHeight: 120, overflow: "auto", marginTop: 8 }}>
               {testHistory.slice(0, 10).map((h, i) => (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0", borderBottom: "1px solid #fafafa", fontSize: 12 }}>

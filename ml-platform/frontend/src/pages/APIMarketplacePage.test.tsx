@@ -19,7 +19,34 @@ vi.mock("../api/client", () => ({
   formatApiError,
 }));
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
-vi.mock("../i18n", () => ({ useI18n: () => ({ t: { common: { success: "成功", edit: "编辑" }, api_market: { title: "API 市场", detail: "详情", test: "测试", model_api: "模型 API", custom: "自定义", copy: "复制", history: "历史", create: "新建 API" }, ai_chat: { send: "发送" } } }) }));
+vi.mock("../i18n", () => ({
+  useI18n: () => ({
+    lang: "zh",
+    t: {
+      common: { success: "成功", edit: "编辑" },
+      ai_chat: { send: "发送" },
+      api_market: {
+        title: "API 市场", detail: "详情", test: "测试", custom: "自定义", copy: "复制", history: "历史",
+        model_api: "模型 API", create: "新建 API",
+        col_name: "API 名称", col_type: "类型", col_version: "版本", col_status: "状态", col_method: "方法",
+        col_calls: "调用数", col_rate: "成功率", col_actions: "操作",
+        st_published: "已发布", st_offline: "已下线", st_failed: "异常",
+        type_model: "模型", type_orch: "编排", type_chat: "对话", type_custom: "自定义",
+        filter_all: "全部", orch_api: "编排 API", chat_api: "对话 API",
+        stat_total: "API 总数", stat_published: "已发布", stat_offline: "已下线", stat_calls: "调用总数",
+        empty: "暂无 API", edit: "编辑", delete_confirm: "删除 ", detail_title: "API 详情",
+        d_name: "名称", d_algorithm: "算法", d_endpoint: "端点", d_total_calls: "调用总数",
+        d_success: "成功", d_failed: "失败", d_public: "公开", d_description: "描述", yes: "是", no: "否",
+        test_title: "API 测试：", headers: "请求头 (Headers)", body: "请求体 (Body)",
+        click_send: "点击「发送」测试该 API", copied: "已复制",
+        example_title: "调用示例", example_note: "远程调用示例（Bearer token 替换为你的平台令牌）",
+        editor_new: "新建 API", editor_edit: "编辑 API",
+        f_name: "名称", f_type: "类型", f_type_value: "自定义", f_endpoint: "内部路径",
+        f_endpoint_rule: "必须是 /api/ 开头的内部路径", f_method: "方法", f_version: "版本", f_description: "描述",
+      },
+    },
+  }),
+}));
 
 describe("APIMarketplacePage", () => {
   beforeEach(() => {
@@ -146,9 +173,9 @@ describe("APIMarketplacePage", () => {
     });
     render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
     await screen.findByText("焊接工艺知识库 Chat");
-    expect(screen.getByText("Chat")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Chat API" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Chat API" }));
+    expect(screen.getByText("对话")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "对话 API" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "对话 API" }));
     const deleteButtons = await screen.findAllByRole("button", { name: /删除/ });
     fireEvent.click(deleteButtons[0]);
     const buttons = document.querySelectorAll<HTMLElement>(
