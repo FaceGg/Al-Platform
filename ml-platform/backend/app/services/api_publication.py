@@ -156,10 +156,10 @@ def _validate_serving_graph(version: WorkflowVersion) -> None:
         )
 
 
-def _serving_record_schema(db, version: WorkflowVersion) -> dict:
-    """Best-effort: real feature names for the invoke record, read from the
-    graph's bound model artifact (AutoML/model-library packages carry a
-    feature_schema list). Returned as {feature: 0} sample values."""
+def _serving_io_info(db, version: WorkflowVersion) -> tuple[dict, dict]:
+    """Best-effort IO metadata for a serving graph, read from the bound model
+    artifact: (record sample from feature_schema, target info from
+    target_schema). Both degrade to empty on any problem."""
     for node in version.nodes_snapshot or []:
         if node.get("operator_id") != "load_model_artifact":
             continue
@@ -182,7 +182,10 @@ def _serving_record_schema(db, version: WorkflowVersion) -> dict:
             with storage.open(art.storage_uri) as handle:
                 payload = handle.read()
             loaded = joblib.load(io.BytesIO(payload))
-            feats = loaded.get("feature_schema") if isinstance(loaded, dict) else None
+            if not isinstance(loaded, dict):
+                continue
+            record: dict = {}
+            feats = loaded.get("feature_schema")
             if isinstance(feats, list) and feats:
                 names = []
                 for feat in feats:
@@ -197,10 +200,19 @@ def _serving_record_schema(db, version: WorkflowVersion) -> dict:
                 if names:
                     # Full feature list: the invoke record must carry every
                     # training column or the model rejects the prediction.
-                    return {name: 0 for name in names}
+                    record = {name: 0 for name in names}
+            target = loaded.get("target_schema")
+            target_info = {}
+            if isinstance(target, dict) and target.get("name"):
+                target_info = {
+                    "name": str(target["name"]),
+                    "task": str(target.get("task") or ""),
+                    "classes": [str(c) for c in (target.get("classes") or [])],
+                }
+            return record, target_info
         except Exception:
             continue
-    return {}
+    return {}, {}
 
 
 def publish_workflow_version(
@@ -212,10 +224,13 @@ def publish_workflow_version(
     # normal canvas run, so a run-record gate would be unreachable here.
     _validate_serving_graph(version)
     api_version = f"v{version_number}"
-    record_sample = _serving_record_schema(db, version)
+    record_sample, target_info = _serving_io_info(db, version)
     request_schema = (
         {"record": record_sample} if record_sample else {"record": "single row object"}
     )
+    response_schema: dict = {"records": "output rows"}
+    if target_info:
+        response_schema["target"] = target_info
     existing = db.query(PlatformAPI).filter(
         PlatformAPI.source_kind == "orchestration",
         PlatformAPI.source_id == version.id,
@@ -226,9 +241,10 @@ def publish_workflow_version(
         existing.status = "published"
         existing.published_at = now
         existing.last_error = None
-        # Refresh the schema sample: the bound artifact's feature list may have
+        # Refresh the schema samples: the bound artifact's IO metadata may have
         # been unknown at first publish (or the catalog predates enrichment).
         existing.request_schema = request_schema
+        existing.response_schema = response_schema
         db.commit()
         db.refresh(existing)
         return existing
@@ -239,7 +255,7 @@ def publish_workflow_version(
         source_id=version.id, workflow_id=workflow.id,
         description=f"Orchestration invoke API for {workflow.name} {api_version}",
         request_schema=request_schema,
-        response_schema={"records": "output rows", "branch": "taken condition branch"},
+        response_schema=response_schema,
         owner_id=actor_id, is_public=False, published_at=now,
     )
     db.add(api)

@@ -177,7 +177,12 @@ class OrchestrationAPIFlow(unittest.TestCase):
             model = LogisticRegression().fit(frame, [0, 1])
             with tempfile.TemporaryDirectory() as tmp:
                 model_path = Path(tmp) / "pkg.joblib"
-                joblib.dump({"model": model, "feature_schema": ["current", "force"]}, model_path)
+                joblib.dump({
+                    "model": model,
+                    "feature_schema": ["current", "force"],
+                    "target_schema": {"name": "fault", "dtype": "int64",
+                                      "task": "classification", "classes": ["0.0", "1.0"]},
+                }, model_path)
                 artifact = service.create_from_file(
                     self.project.id, model_path, f"pkg-{uuid.uuid4().hex[:6]}", "model")
             artifact_id = str(artifact.id)
@@ -199,6 +204,9 @@ class OrchestrationAPIFlow(unittest.TestCase):
         self.assertEqual(r.status_code, 201, r.text)
         schema = r.json()["request_schema"]
         self.assertEqual(schema.get("record"), {"current": 0, "force": 0})
+        target = r.json()["response_schema"].get("target")
+        self.assertEqual(target, {"name": "fault", "task": "classification",
+                                  "classes": ["0.0", "1.0"]})
 
     def test_03_publish_invoke_branch_and_offline(self):
         workflow_id, version = self._seed(with_run=False)

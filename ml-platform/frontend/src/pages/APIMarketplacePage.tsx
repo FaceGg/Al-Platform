@@ -359,9 +359,7 @@ export default function APIMarketplacePage() {
                   const docs = testApi ? (RESPONSE_FIELD_DOCS[testApi.api_type] || []) : [];
                   const bodyObj = (testResponse.body && typeof testResponse.body === "object" && !Array.isArray(testResponse.body)) ? testResponse.body : null;
                   if (!docs.length || !bodyObj) return null;
-                  const present = docs.filter(([key]) => key in bodyObj);
-                  if (!present.length) return null;
-                  const rows: Array<[string, string]> = present.map(([key, zh, en]) => [key, lang === "zh" ? zh : en]);
+                  const rows: Array<[string, string]> = docs.filter(([key]) => key in bodyObj).map(([key, zh, en]) => [key, lang === "zh" ? zh : en]);
                   const first = Array.isArray(bodyObj.records) ? bodyObj.records[0] : null;
                   if (testApi.api_type === "orchestration" && first && typeof first === "object") {
                     if ("triggered" in first) {
@@ -371,16 +369,39 @@ export default function APIMarketplacePage() {
                         ["records[].cycle_rows", lang === "zh" ? "本轮周期新增行数" : "Rows added this cycle"],
                         ["records[].threshold_rows", lang === "zh" ? "触发重训的阈值行数" : "Threshold rows to trigger retrain"],
                       );
-                    } else if ("prediction" in first) {
-                      rows.push(["records[].prediction", lang === "zh" ? "模型预测值" : "Model prediction"]);
+                    }
+                    // 动态输出元数据：目标列与类别随模型版本走
+                    const tgt = testApi?.response_schema?.target;
+                    if (tgt && tgt.name && "prediction" in first) {
+                      rows.push(["records[].prediction", lang === "zh"
+                        ? `目标列「${tgt.name}」的预测${tgt.classes?.length ? `；类别：${tgt.classes.join(" / ")}` : ""}`
+                        : `Prediction of target column "${tgt.name}"${tgt.classes?.length ? `; classes: ${tgt.classes.join(" / ")}` : ""}`]);
                     }
                   }
+                  if (testApi.api_type === "model") {
+                    const cols = testApi?.response_schema?.columns;
+                    const c0 = Array.isArray(cols) ? cols[0] : null;
+                    if (c0 && c0.classes?.length) {
+                      rows.push(
+                        ["predictions", lang === "zh"
+                          ? `目标列「${c0.display_name || c0.machine_key}」的${c0.task === "classification" ? "分类" : ""}预测（与输入一一对应）`
+                          : `Prediction of target column "${c0.display_name || c0.machine_key}" (one per input record)`],
+                        ["probabilities", lang === "zh"
+                          ? `各类别概率；类别标签：${c0.classes.join(" / ")}`
+                          : `Class probabilities; labels: ${c0.classes.join(" / ")}`],
+                      );
+                    }
+                  }
+                  // 动态行覆盖同字段的静态解释（后写优先）
+                  const deduped = new Map<string, string>();
+                  for (const [field, desc] of rows) deduped.set(field, desc);
+                  if (!deduped.size) return null;
                   return (
                     <div style={{ marginTop: 12 }}>
                       <Text strong style={{ fontSize: 12 }}>{tr.field_docs}</Text>
                       <table style={{ width: "100%", marginTop: 4, borderCollapse: "collapse", fontSize: 12 }}>
                         <tbody>
-                          {rows.map(([field, desc]) => (
+                          {Array.from(deduped.entries()).map(([field, desc]) => (
                             <tr key={field}>
                               <td style={{ border: "1px solid #f0f0f0", padding: "3px 8px", fontFamily: "monospace", whiteSpace: "nowrap", verticalAlign: "top" }}>{field}</td>
                               <td style={{ border: "1px solid #f0f0f0", padding: "3px 8px" }}>{desc}</td>

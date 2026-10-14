@@ -315,6 +315,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 发布记录（2026-09-28）：安装包 `output/linkraft-ubuntu-20260926-r12.tar.gz`，manifest 绑定 HEAD `1f4d87f`，SHA-256 `16cf3654723b9380da264ff77cda4df8c3cd1db789403695ab900015141b8f8b`，归档抽查确认 cookie 开关代码与安装脚本均已包含。更正一：首个 r12 归档（SHA-256 `8ac6d972...b182b`）的 `install-ubuntu.sh` 因 Windows 工作区覆盖带入了 CRLF 行尾，在服务器报 `/usr/bin/env: bash\r`；`build-package.sh` 已增加打包前 LF 归一化。更正二：第二个归档（SHA-256 `77061681...56e29`）的安装脚本在 `set -u` 下引用未声明的 `ANNOTATOR_COOKIE_SECURE` 报"未绑定的变量"；已在脚本头部补默认声明并重建。前两个哈希均作废，服务器现场可用 `ANNOTATOR_COOKIE_SECURE=false ./packaging/install-ubuntu.sh` 绕过。
 - 待完成：目标服务器部署 r12 后外网登录 8443 并保持会话的端到端确认；外网 5175 的 `CORS_ORIGIN_FORBIDDEN` 与本地 5175 的对偶问题需用 `PUBLIC_ORIGIN`/`PUBLIC_ORIGIN_ALIASES` 收敛（运行时配置，无需发版）。
 
+### 2026-10-14 模型库/注册表删除已注册模型报 500：部署主版本护栏漏判历史发布目标
+
+- 现象：模型库页（模型注册表 UI，`/models`）删除已注册模型报 500。本地 backend 容器日志实锤：`DELETE /api/registered-models/{id}` 抛 `ForeignKeyViolation ... deployment_targets_model_version_id_fkey`，同一批模型反复失败（用户数据：部署「自动化测试」主版本属"编排闭环-自动模型"，其灰度修订 target 引用了另外三个注册模型的版本）。
+- 根因：注册表删除端点的 `MODEL_DEPLOYMENT_EXISTS` 护栏只查 `inference_deployments.model_version_id`（部署主版本），而 `deployment_targets.model_version_id`（历史/灰度发布目标）同样无 ondelete 地引用 `model_versions`——目标引用别的模型版本时护栏漏判，放行删除后撞外键。`/api/model-library` 删除路径同源缺陷（引用 `model_library.id` 的外键均无 ondelete），此前在本地 sqlite（默认不强制外键）删除"成功"留下孤儿行、仅生产 PG 暴露，属同类隐患一并修复。
+- 修复：两处护栏统一扩展为"部署主版本 OR 历史发布目标引用"即拒绝（409 `MODEL_DEPLOYMENT_EXISTS`，message 携带部署名，前端 i18n 模板 `{message}` 渲染"模型正被推理部署使用:〈部署名〉,请先删除对应推理部署。"）；`ModelRegistryError` 支持 `detail_message` 并经 `_error` 透出；`/api/model-library` 单删改级联删除（连带清理引用版本与变空注册模型，会话 `autoflush=False` 需显式 `flush()` 后再查剩余版本），批量删除逐条提交、部署冲突条目回滚跳过并返回 `skipped` 列表。
+- 验证：`test_api_model_library.py` 新增 5 用例（级联删除/部署占用拒绝/批量跳过/发布目标占用拒模型库删/发布目标拒注册表删——最后两个复现现场场景）全绿；`test_api_model_registry.py`+`test_model_registry_service.py`+`test_model_registration_contract.py` 38 passed + 2 subtests 无回归。`test_13_stats_summary` 本地失败为共享开发库历史 `automl-job` 条目占满 top-10 的环境性污染（CI 新库绿），未动用户数据。
+- 待完成：本地 backend 容器重建后对现场报错模型重放 DELETE 确认 409；服务器随下次发包（r15）带上本修复；本地开发库中历史孤儿行（sqlite 时代"删除成功"留下的无部署引用）未清理，如需可另行清理。
+
 ### 2026-10-13 全量 CI 暴露焊接模板浏览器用例残留：随模板体系一并对齐退役（r14 发布门禁）
 
 - 现象：r14 发布前触发全量 CI（run 38374172002，mode=full，绑定 `e9248f8`），Chromium acceptance 失败：`e2e/weld-quality.spec.ts:37` 在 `/template/weld_quality` 页两次尝试均找不到三级标题"焊接质量预测"（一致失败，非抖动）；Week 11-12 verification 因 `needs` browser-acceptance 连带 skipped。其余 12 用例通过、3 个 kind 集群用例预期跳过。
@@ -2775,3 +2783,11 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 修复：提取 `buildExampleBody(api)`（按类型生成可发送 body：model 兼容 `{name,dtype}`/字符串特征条目、orchestration 用 request_schema.record、chat 用 message+top_k、custom 用 request_schema），`openTest` 预填 Body 改用其 JSON；buildExample 复用同一构造，示例与 Body 永远一致。新增用例断言 Body 含真实特征名且无 schema 元数据；页面 12 passed + tsc + build；前端镜像重建部署。
 
 - **测试弹窗字段解释（同日续）**：响应面板在返回报文下方按 API 类型渲染「字段解释」表——model（runtime_key/deployment_id/revision_id/model_version_id/version_number/predictions/duration_ms/probabilities）、orchestration（api_id/workflow_version/output_node/branch/records/invoked_at）、chat（reply/sources/kb/kb_warning/usage/invoked_at），仅列返回体中实际存在的键；编排闭环输出（records[].triggered/total_rows/cycle_rows/threshold_rows、prediction）与对话引用结构附加嵌套说明；zh/en 双语；响应报文 maxHeight 400→260 给解释表留空间。新增编排场景用例（断言字段解释表与闭环字段说明渲染），页面 13 passed + tsc + build；前端镜像重建部署。
+
+---
+
+## 2026-10-14（续八）调用示例/字段解释全动态化：随模型版本走
+
+- 用户核心诉求：换新数据训练新模型后，输入输出都变了，示例与解释不能写死。现状盘点：输入侧已动态（发布时从制品 feature_schema 提取真实特征）；本轮补齐**输出侧**——① 编排发布 `_serving_io_info`（原 record schema 提取扩展）同时读取制品 `target_schema`（目标列名/任务类型/类别标签）写入 `response_schema.target`；② 模型 API 发布本就写入 `version.output_schema`（含 task_type/target_columns/columns[].classes）；③ 前端字段解释合并动态元数据：predictions/records[].prediction 说明带目标列名，probabilities 说明带类别标签（动态行覆盖同字段静态行），幂等复活补上 response_schema 刷新（此前只刷 request_schema，导致复活的 API target 缺失——实测定位修复）。
+- 实测：用户工作流 v2 重新发布 → request_schema 73 特征 + response_schema.target {"name":"fault","task":"classification","classes":["0.0","1.0"]} → 示例 body invoke **200**。测试：发布 target 断言 + 前端字段解释用例，后端 publication/model_port 与前端 13 passed + tsc + build；双镜像重建部署。
+- 换新模型的完整链路（当前行为）：新版本注册 → 部署 → 模型 API 自动同步（新版本号新条目，schema/output 随版本）；编排图在画布换绑制品后重新「发布为 API」→ request_schema/response_schema 刷新为新模型的输入特征与输出目标 → 测试弹窗的示例/Body/字段解释全部随之更新。
