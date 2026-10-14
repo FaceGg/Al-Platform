@@ -4,6 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.model_library import ModelLibrary
+from app.models.model_registry import (
+    DeploymentRevision, DeploymentTarget, InferenceDeployment,
+    ModelVersion, RegisteredModel,
+)
 from app.models.user import User
 from app.api.auth import get_current_user
 from app.api.project_security import audit_service, resolve_project_access
@@ -196,6 +200,63 @@ def update_model(
     return {"status": "ok"}
 
 
+def _cascade_delete_with_guard(db, model):
+    """删除模型库条目，连带清理注册表对它的引用。
+
+    model_versions.source_model_library_id 外键无 ondelete，PostgreSQL
+    直接删已注册条目会在提交时报 IntegrityError（本地 sqlite 不强制外键，
+    问题只在生产暴露）。版本被推理部署引用时必须先删部署（deployment_targets
+    → model_versions 外键同理）——与注册表删除端点的 MODEL_DEPLOYMENT_EXISTS
+    护栏同语义；删除版本后变空的注册模型一并清理。
+    """
+    versions = (
+        db.query(ModelVersion)
+        .filter(ModelVersion.source_model_library_id == model.id)
+        .all()
+    )
+    if versions:
+        version_ids = [v.id for v in versions]
+        # 与注册表删除端点同口径：部署主版本与历史发布目标都算占用，
+        # 灰度修订的 target 可引用本模型版本而部署主版本是别的模型。
+        deployment_exists = (
+            db.query(InferenceDeployment)
+            .filter(
+                InferenceDeployment.model_version_id.in_(version_ids)
+                | InferenceDeployment.id.in_(
+                    db.query(DeploymentRevision.deployment_id)
+                    .join(
+                        DeploymentTarget,
+                        DeploymentTarget.revision_id == DeploymentRevision.id,
+                    )
+                    .filter(DeploymentTarget.model_version_id.in_(version_ids))
+                )
+            )
+            .first()
+        )
+        if deployment_exists is not None:
+            raise HTTPException(409, {
+                "code": "MODEL_DEPLOYMENT_EXISTS",
+                "message": deployment_exists.name,
+            })
+        registered_ids = {version.registered_model_id for version in versions}
+        for version in versions:
+            db.delete(version)
+        # SessionLocal 关闭了 autoflush：先刷出版本删除，剩余版本检查才准确
+        db.flush()
+        for registered_id in registered_ids:
+            # 仍有其他版本（onnx_artifact 来源）的注册模型保留
+            remaining = (
+                db.query(ModelVersion.id)
+                .filter(ModelVersion.registered_model_id == registered_id)
+                .first()
+            )
+            if remaining is None:
+                registered = db.get(RegisteredModel, registered_id)
+                if registered is not None:
+                    db.delete(registered)
+    db.delete(model)
+
+
 @router.delete("/{model_id}")
 def delete_model(
     model_id: str,
@@ -209,7 +270,7 @@ def delete_model(
     if m.project_id is None:
         if m.owner_id != current_user.id:
             raise HTTPException(404)
-        db.delete(m)
+        _cascade_delete_with_guard(db, m)
         db.commit()
     else:
         access = resolve_project_access(db, m.project_id, current_user.id)
@@ -222,7 +283,7 @@ def delete_model(
             ),
             allowed_changes=set(),
         ):
-            db.delete(m)
+            _cascade_delete_with_guard(db, m)
     return {"status": "deleted"}
 
 
@@ -264,6 +325,7 @@ def batch_delete_models(
     current_user: User = Depends(get_current_user),
 ):
     deleted = 0
+    skipped = []
     for mid_str in data.ids:
         try:
             uid = uuid.UUID(mid_str)
@@ -272,23 +334,31 @@ def batch_delete_models(
         model = db.query(ModelLibrary).filter(ModelLibrary.id == uid).first()
         if not model:
             continue
-        if model.project_id is None:
-            if model.owner_id != current_user.id:
-                continue
-            db.delete(model)
-        else:
-            access = resolve_project_access(db, model.project_id, current_user.id)
-            with audit_service(db).project_action(
-                db, request=request, actor=current_user, access=access,
-                permission="resource.delete",
-                intent=AuditIntent(
-                    project_id=model.project_id, action="model_library.batch_delete",
-                    resource_type="model_library", resource_id=str(model.id),
-                ),
-                allowed_changes=set(),
-            ):
-                db.delete(model)
-        deleted += 1
-    if db.new or db.dirty or db.deleted:
-        db.commit()
-    return {"deleted": deleted}
+        try:
+            if model.project_id is None:
+                if model.owner_id != current_user.id:
+                    continue
+                _cascade_delete_with_guard(db, model)
+            else:
+                access = resolve_project_access(db, model.project_id, current_user.id)
+                with audit_service(db).project_action(
+                    db, request=request, actor=current_user, access=access,
+                    permission="resource.delete",
+                    intent=AuditIntent(
+                        project_id=model.project_id, action="model_library.batch_delete",
+                        resource_type="model_library", resource_id=str(model.id),
+                    ),
+                    allowed_changes=set(),
+                ):
+                    _cascade_delete_with_guard(db, model)
+            db.commit()
+            deleted += 1
+        except HTTPException as error:
+            # 逐条提交：部署冲突的条目回滚跳过，不影响本批已删条目
+            db.rollback()
+            detail = error.detail if isinstance(error.detail, dict) else {}
+            if detail.get("code") == "MODEL_DEPLOYMENT_EXISTS":
+                skipped.append(mid_str)
+            else:
+                raise
+    return {"deleted": deleted, "skipped": skipped}

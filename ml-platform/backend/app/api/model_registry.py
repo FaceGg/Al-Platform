@@ -13,7 +13,8 @@ from app.models.api_model import PlatformAPI
 from app.models.artifact import Artifact
 from app.models.training import TrainingJob
 from app.models.model_registry import (
-    DeploymentRollout, InferenceDeployment, ModelCard,
+    DeploymentRevision, DeploymentRollout, DeploymentTarget,
+    InferenceDeployment, ModelCard,
     ModelVersion, RegisteredModel,
 )
 from app.models.user import User
@@ -76,6 +77,7 @@ ROLLOUT_AUDIT_ACTIONS = {
 
 def _error(error):
     code = getattr(error, "code", "MODEL_REGISTRY_FAILED")
+    message = getattr(error, "detail_message", None) or code
     status = 409
     if code.endswith("NOT_FOUND"):
         status = 404
@@ -89,7 +91,7 @@ def _error(error):
         status = 422
     elif code == "INFERENCE_LIMIT_EXCEEDED":
         status = 413
-    raise HTTPException(status, {"code": code, "message": code})
+    raise HTTPException(status, {"code": code, "message": message})
 
 
 def _model_view(model):
@@ -416,14 +418,32 @@ def build_model_registry_router(
                 intent=AuditIntent(project_id=model.project_id, action="registered_model.delete", resource_type="registered_model", resource_id=deleted_model_id, changes={"name": model.name}),
                 allowed_changes={"name"},
             ):
-                deployment_exists = (
-                    db.query(InferenceDeployment.id)
-                    .join(ModelVersion, InferenceDeployment.model_version_id == ModelVersion.id)
-                    .filter(ModelVersion.registered_model_id == model.id)
-                    .first()
-                )
+                # 部署主版本与历史发布目标（deployment_targets）都算占用：
+                # 灰度修订的 target 可引用本模型版本而部署主版本是别的模型，
+                # 只查主版本会漏判（现场删除注册模型 500 的根因）。
+                version_ids = [version.id for version in model.versions]
+                deployment_exists = None
+                if version_ids:
+                    deployment_exists = (
+                        db.query(InferenceDeployment)
+                        .filter(
+                            InferenceDeployment.model_version_id.in_(version_ids)
+                            | InferenceDeployment.id.in_(
+                                db.query(DeploymentRevision.deployment_id)
+                                .join(
+                                    DeploymentTarget,
+                                    DeploymentTarget.revision_id == DeploymentRevision.id,
+                                )
+                                .filter(DeploymentTarget.model_version_id.in_(version_ids))
+                            )
+                        )
+                        .first()
+                    )
                 if deployment_exists is not None:
-                    raise ModelRegistryError("MODEL_DEPLOYMENT_EXISTS")
+                    raise ModelRegistryError(
+                        "MODEL_DEPLOYMENT_EXISTS",
+                        deployment_exists.name,
+                    )
                 for version in list(model.versions):
                     db.delete(version)
                 db.delete(model)

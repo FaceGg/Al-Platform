@@ -25,9 +25,10 @@ def utcnow() -> datetime:
 
 
 class ModelRegistryError(RuntimeError):
-    def __init__(self, code: str):
+    def __init__(self, code: str, detail_message: str | None = None):
         super().__init__(code)
         self.code = code
+        self.detail_message = detail_message
 
 
 class ModelRegistryService:

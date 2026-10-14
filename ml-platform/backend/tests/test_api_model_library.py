@@ -190,5 +190,324 @@ class TestModelLibraryAPI(unittest.TestCase):
             db.close()
 
 
+class TestModelLibraryCascadeDelete(unittest.TestCase):
+    """回归：删除已注册的模型库条目。
+
+    model_versions.source_model_library_id 外键无 ondelete，本地 sqlite
+    不强制外键而删得掉（留孤儿行），PostgreSQL 提交时 IntegrityError 报
+    500。修复后与注册表删除端点同语义：版本被推理部署引用时 409 拒绝，
+    否则连带删除版本与变空的注册模型。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        ensure_admin()
+        cls.h = login()
+
+    def _seed(self, db, suffix):
+        import uuid as _uuid
+
+        from app.models.artifact import Artifact
+        from app.models.model_library import ModelLibrary
+        from app.models.model_registry import ModelVersion, RegisteredModel
+        from app.models.project import Project
+        from app.models.user import User
+
+        admin_id = db.query(User.id).filter(User.username == "admin").scalar()
+        project = Project(name=f"casc-{suffix}", owner_id=admin_id)
+        db.add(project)
+        db.flush()
+        model = ModelLibrary(
+            id=_uuid.uuid4(), name=f"casc-model-{suffix}", owner_id=admin_id,
+            project_id=project.id, version="v1", framework="sklearn", status="completed",
+        )
+        db.add(model)
+        db.flush()
+        source_artifact = Artifact(
+            project_id=project.id, name=f"casc-{suffix}-src",
+            type="model", storage_path=f"casc/{suffix}/src",
+        )
+        onnx_artifact = Artifact(
+            project_id=project.id, name=f"casc-{suffix}-onnx",
+            type="model", storage_path=f"casc/{suffix}/onnx",
+        )
+        db.add_all([source_artifact, onnx_artifact])
+        db.flush()
+        registered = RegisteredModel(
+            project_id=project.id, name=f"casc-rm-{suffix}", created_by_id=admin_id,
+        )
+        db.add(registered)
+        db.flush()
+        version = ModelVersion(
+            registered_model_id=registered.id, version_number=1,
+            source_kind="platform_joblib", source_model_library_id=model.id,
+            source_artifact_id=source_artifact.id, onnx_artifact_id=onnx_artifact.id,
+            created_by_id=admin_id,
+        )
+        db.add(version)
+        db.commit()
+        return project, model, registered, version
+
+    def _cleanup(self, project_id):
+        import uuid as _uuid
+
+        from app.database import SessionLocal
+        from app.models.artifact import Artifact
+        from app.models.model_library import ModelLibrary
+        from app.models.model_registry import (
+            InferenceDeployment,
+            ModelVersion,
+            RegisteredModel,
+        )
+        from app.models.project import Project
+
+        db = SessionLocal()
+        try:
+            registered_ids = [
+                row.id for row in db.query(RegisteredModel.id)
+                .filter(RegisteredModel.project_id == project_id).all()
+            ]
+            db.query(InferenceDeployment).filter(
+                InferenceDeployment.project_id == project_id
+            ).delete(synchronize_session=False)
+            db.query(ModelVersion).filter(
+                ModelVersion.registered_model_id.in_(registered_ids)
+            ).delete(synchronize_session=False)
+            db.query(RegisteredModel).filter(
+                RegisteredModel.project_id == project_id
+            ).delete(synchronize_session=False)
+            db.query(ModelLibrary).filter(
+                ModelLibrary.project_id == project_id
+            ).delete(synchronize_session=False)
+            db.query(Artifact).filter(
+                Artifact.project_id == project_id
+            ).delete(synchronize_session=False)
+            db.query(Project).filter(Project.id == project_id).delete(
+                synchronize_session=False
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    def test_01_delete_registered_model_cascades(self):
+        import uuid as _uuid
+
+        from app.database import SessionLocal
+        from app.models.model_library import ModelLibrary
+        from app.models.model_registry import ModelVersion, RegisteredModel
+
+        db = SessionLocal()
+        try:
+            project, model, registered, version = self._seed(db, _uuid.uuid4().hex[:8])
+            project_id = project.id
+            model_id, registered_id, version_id = model.id, registered.id, version.id
+        finally:
+            db.close()
+
+        r = client.delete(f"/api/model-library/{model_id}", headers=self.h)
+        self.assertEqual(r.status_code, 200, r.text)
+
+        db = SessionLocal()
+        try:
+            self.assertIsNone(db.query(ModelLibrary).filter(ModelLibrary.id == model_id).first())
+            self.assertIsNone(db.query(ModelVersion).filter(ModelVersion.id == version_id).first())
+            self.assertIsNone(db.query(RegisteredModel).filter(RegisteredModel.id == registered_id).first())
+        finally:
+            db.close()
+        self._cleanup(project_id)
+
+    def test_02_delete_with_active_deployment_rejected(self):
+        import uuid as _uuid
+
+        from app.database import SessionLocal
+        from app.models.model_library import ModelLibrary
+        from app.models.model_registry import InferenceDeployment, ModelVersion
+
+        db = SessionLocal()
+        try:
+            suffix = _uuid.uuid4().hex[:8]
+            project, model, registered, version = self._seed(db, suffix)
+            db.add(InferenceDeployment(
+                project_id=project.id, name=f"casc-dep-{suffix}",
+                model_version_id=version.id,
+            ))
+            db.commit()
+            project_id = project.id
+            model_id, version_id = model.id, version.id
+        finally:
+            db.close()
+
+        r = client.delete(f"/api/model-library/{model_id}", headers=self.h)
+        self.assertEqual(r.status_code, 409, r.text)
+        self.assertEqual(r.json()["detail"]["code"], "MODEL_DEPLOYMENT_EXISTS")
+
+        db = SessionLocal()
+        try:
+            self.assertIsNotNone(db.query(ModelLibrary).filter(ModelLibrary.id == model_id).first())
+            self.assertIsNotNone(db.query(ModelVersion).filter(ModelVersion.id == version_id).first())
+        finally:
+            db.close()
+        self._cleanup(project_id)
+
+    def test_03_batch_delete_skips_deployed(self):
+        import uuid as _uuid
+
+        from app.database import SessionLocal
+        from app.models.model_library import ModelLibrary
+        from app.models.model_registry import InferenceDeployment
+
+        db = SessionLocal()
+        try:
+            suffix = _uuid.uuid4().hex[:8]
+            project, model, registered, version = self._seed(db, suffix)
+            plain = ModelLibrary(
+                id=_uuid.uuid4(), name=f"casc-plain-{suffix}", owner_id=model.owner_id,
+                project_id=project.id, version="v1", framework="sklearn", status="completed",
+            )
+            db.add(plain)
+            db.commit()
+            db.add(InferenceDeployment(
+                project_id=project.id, name=f"casc-dep-{suffix}",
+                model_version_id=version.id,
+            ))
+            db.commit()
+            project_id = project.id
+            model_id, plain_id = model.id, plain.id
+        finally:
+            db.close()
+
+        r = client.post(
+            "/api/model-library/batch-delete",
+            json={"ids": [str(model_id), str(plain_id)]},
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["deleted"], 1)
+        self.assertEqual(r.json()["skipped"], [str(model_id)])
+
+        db = SessionLocal()
+        try:
+            self.assertIsNotNone(db.query(ModelLibrary).filter(ModelLibrary.id == model_id).first())
+            self.assertIsNone(db.query(ModelLibrary).filter(ModelLibrary.id == plain_id).first())
+        finally:
+            db.close()
+        self._cleanup(project_id)
+
+    def _seed_rollout_target(self, db, suffix, model, version, owner_id):
+        """部署主版本属于另一模型，但其灰度修订 target 引用 model 的版本。
+
+        复现现场 500：旧护栏只查部署主版本，删除被 target 引用的模型时
+        撞 deployment_targets 外键报 IntegrityError。
+        """
+        from app.models.artifact import Artifact
+        from app.models.model_registry import (
+            DeploymentRevision,
+            DeploymentTarget,
+            InferenceDeployment,
+            ModelVersion,
+            RegisteredModel,
+        )
+
+        source_artifact = Artifact(
+            project_id=model.project_id, name=f"casc-{suffix}-o-src",
+            type="model", storage_path=f"casc/{suffix}/o-src",
+        )
+        onnx_artifact = Artifact(
+            project_id=model.project_id, name=f"casc-{suffix}-o-onnx",
+            type="model", storage_path=f"casc/{suffix}/o-onnx",
+        )
+        db.add_all([source_artifact, onnx_artifact])
+        db.flush()
+        other_registered = RegisteredModel(
+            project_id=model.project_id, name=f"casc-rm-other-{suffix}",
+            created_by_id=owner_id,
+        )
+        db.add(other_registered)
+        db.flush()
+        # onnx_artifact 来源版本不要求 source_model_library_id（合同约束）
+        other_version = ModelVersion(
+            registered_model_id=other_registered.id, version_number=1,
+            source_kind="onnx_artifact", source_model_library_id=None,
+            source_artifact_id=source_artifact.id, onnx_artifact_id=onnx_artifact.id,
+            created_by_id=owner_id,
+        )
+        db.add(other_version)
+        db.flush()
+        deployment = InferenceDeployment(
+            project_id=model.project_id, name=f"casc-dep-{suffix}",
+            model_version_id=other_version.id,
+            desired_state="running", observed_state="running",
+        )
+        db.add(deployment)
+        db.flush()
+        revision = DeploymentRevision(
+            deployment_id=deployment.id, revision_number=1,
+            strategy="immediate", status="stable", created_by_id=owner_id,
+        )
+        db.add(revision)
+        db.flush()
+        db.add(DeploymentTarget(
+            revision_id=revision.id, model_version_id=version.id,
+            weight_bps=10000, role="stable",
+        ))
+        db.commit()
+        return deployment
+
+    def test_04_library_delete_with_rollout_target_rejected(self):
+        import uuid as _uuid
+
+        from app.database import SessionLocal
+        from app.models.model_library import ModelLibrary
+
+        db = SessionLocal()
+        try:
+            suffix = _uuid.uuid4().hex[:8]
+            project, model, registered, version = self._seed(db, suffix)
+            self._seed_rollout_target(db, suffix, model, version, model.owner_id)
+            project_id, model_id = project.id, model.id
+        finally:
+            db.close()
+
+        r = client.delete(f"/api/model-library/{model_id}", headers=self.h)
+        self.assertEqual(r.status_code, 409, r.text)
+        self.assertEqual(r.json()["detail"]["code"], "MODEL_DEPLOYMENT_EXISTS")
+
+        db = SessionLocal()
+        try:
+            self.assertIsNotNone(db.query(ModelLibrary).filter(ModelLibrary.id == model_id).first())
+        finally:
+            db.close()
+        self._cleanup(project_id)
+
+    def test_05_registry_delete_with_rollout_target_rejected(self):
+        """现场 500 的原始路径：模型库页删除注册模型（注册表删除端点）。"""
+        import uuid as _uuid
+
+        from app.database import SessionLocal
+        from app.models.model_registry import RegisteredModel
+
+        db = SessionLocal()
+        try:
+            suffix = _uuid.uuid4().hex[:8]
+            project, model, registered, version = self._seed(db, suffix)
+            self._seed_rollout_target(db, suffix, model, version, model.owner_id)
+            project_id, registered_id = project.id, registered.id
+        finally:
+            db.close()
+
+        r = client.delete(f"/api/registered-models/{registered_id}", headers=self.h)
+        self.assertEqual(r.status_code, 409, r.text)
+        detail = r.json()["detail"]
+        self.assertEqual(detail["code"], "MODEL_DEPLOYMENT_EXISTS")
+        self.assertIn("casc-dep-", detail["message"])
+
+        db = SessionLocal()
+        try:
+            self.assertIsNotNone(db.query(RegisteredModel).filter(RegisteredModel.id == registered_id).first())
+        finally:
+            db.close()
+        self._cleanup(project_id)
+
+
 if __name__ == "__main__":
     unittest.main()
