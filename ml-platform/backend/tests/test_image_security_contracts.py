@@ -65,13 +65,15 @@ class ImageSecurityContractTests(unittest.TestCase):
             self.assertIn("ENV HOME=/home/app", content, path.name)
             self.assertIn(f"USER {non_root_uid}:{non_root_uid}", content, path.name)
             self.assertIn(
-                'python3.11 -m pip install --no-deps --retries 10 --resume-retries 20 '
+                'python3.11 -m pip install --find-links /wheels --no-deps '
+                '--retries 10 --resume-retries 20 '
                 '--timeout 120 "xgboost==3.2.*" "catboost==1.2.*"',
                 content,
                 path.name,
             )
             self.assertIn(
-                "python3.11 -m pip install --retries 10 --resume-retries 20 --timeout 120 "
+                "python3.11 -m pip install --find-links /wheels "
+                "--retries 10 --resume-retries 20 --timeout 120 "
                 "graphviz plotly six -r /tmp/requirements-without-boost.txt",
                 content,
                 path.name,
