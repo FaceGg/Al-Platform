@@ -2753,3 +2753,10 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 ## 2026-10-14（续四）API 市场列表接口补 request_schema（调用示例真实字段的前置）
 
 - 用户实测发现编排 API 调用示例仍是 feature1/feature2 占位：前端 buildExample 优先消费行数据 `request_schema.record`，但 `GET /api/platform/apis` 列表接口的返回项**从未序列化 request_schema/response_schema**（仅发布/详情序列化含），前端拿不到真实特征只能走占位兜底。列表项补齐两字段后，部署验证：列表返回「方案B全闭环服务 v2」行含 **73 字段** record（wld1c/wld2c/tipv1…）与 response_schema。回归 test_api_platform + test_api_workflow_publication OK。
+
+---
+
+## 2026-10-14（续五）模型 API 调用示例修复 + 测试面板真实错误展示
+
+- 用户测试模型 API（自动化测试部署）暴露两个问题：① 示例生成器把  形态的特征清单当字符串处理，生成 ——改为兼容对象/字符串两种元素并取 name；② 测试发送遇 HTTP 4xx/5xx 时 axios 抛异常被统一显示为 "0 Network Error"，看不到真实状态码与错误体——catch 分支改为有 e.response 时展示真实 status + 响应体。
+- 实测：该模型 API 对应部署（自动化测试）desired/observed 均 running，用其模型版本真实 73 特征实测 predict **200 OK**（用户所见图中 409 为部署启动期间的瞬时 DEPLOYMENT_NOT_READY）。回归：APIMarketplacePage 11 passed + tsc；前端镜像重建部署。

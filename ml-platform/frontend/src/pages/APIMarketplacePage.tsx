@@ -139,7 +139,11 @@ export default function APIMarketplacePage() {
       body = { record: sample && typeof sample === "object" && !Array.isArray(sample) ? sample : { feature1: 0, feature2: 0 } };
     } else if (api.api_type === "model") {
       const feats = Array.isArray(api.request_schema?.records) ? api.request_schema.records : [];
-      body = { records: [Object.fromEntries(feats.map((f: string) => [f, 0]))] };
+      // Feature entries may be plain names or {name, dtype} schema dicts.
+      const names = feats
+        .map((f: any) => (f && typeof f === "object" ? f.name : f))
+        .filter(Boolean);
+      body = { records: [Object.fromEntries(names.map((n: string) => [String(n), 0]))] };
     } else if (api.request_schema && Object.keys(api.request_schema).length) {
       body = api.request_schema;
     }
@@ -176,7 +180,17 @@ export default function APIMarketplacePage() {
       setTestResponse(result);
       setTestHistory(prev => [{time:new Date().toLocaleTimeString(),method:testMethod,url:testUrl,status:resp.status,body:result}, ...prev.slice(0, 19)]);
     } catch (e: any) {
-      setTestResponse({ status: 0, statusText: "Network Error", error: e.message, elapsed: Date.now() - start });
+      if (e.response) {
+        // HTTP error (4xx/5xx): show the real status and the API's error body
+        // instead of a generic network error.
+        setTestResponse({
+          status: e.response.status, statusText: e.response.statusText || "",
+          headers: e.response.headers || {}, body: e.response.data,
+          elapsed: Date.now() - start,
+        });
+      } else {
+        setTestResponse({ status: 0, statusText: "Network Error", error: e.message, elapsed: Date.now() - start });
+      }
     } finally { setTestLoading(false); }
   };
 
