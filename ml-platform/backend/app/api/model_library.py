@@ -219,8 +219,9 @@ def _cascade_delete_with_guard(db, model):
     )
     if versions:
         version_ids = [v.id for v in versions]
-        # 与注册表删除端点同口径：部署主版本与历史发布目标都算占用，
-        # 灰度修订的 target 可引用本模型版本而部署主版本是别的模型。
+        # 与注册表删除端点同口径：只拦"活"引用——部署主版本，或
+        # stable/candidate/draft 修订上的发布目标。superseded/failed 修订的
+        # 历史目标是自动换模残留，随模型删除一并清理。
         deployment_exists = (
             db.query(InferenceDeployment)
             .filter(
@@ -231,7 +232,10 @@ def _cascade_delete_with_guard(db, model):
                         DeploymentTarget,
                         DeploymentTarget.revision_id == DeploymentRevision.id,
                     )
-                    .filter(DeploymentTarget.model_version_id.in_(version_ids))
+                    .filter(
+                        DeploymentTarget.model_version_id.in_(version_ids),
+                        DeploymentRevision.status.in_(("stable", "candidate", "draft")),
+                    )
                 )
             )
             .first()
@@ -241,6 +245,24 @@ def _cascade_delete_with_guard(db, model):
                 "code": "MODEL_DEPLOYMENT_EXISTS",
                 "message": deployment_exists.name,
             })
+        stale_target_ids = [
+            row.id for row in (
+                db.query(DeploymentTarget.id)
+                .join(
+                    DeploymentRevision,
+                    DeploymentTarget.revision_id == DeploymentRevision.id,
+                )
+                .filter(
+                    DeploymentTarget.model_version_id.in_(version_ids),
+                    DeploymentRevision.status.in_(("superseded", "failed")),
+                )
+                .all()
+            )
+        ]
+        for target_id in stale_target_ids:
+            stale_target = db.get(DeploymentTarget, target_id)
+            if stale_target is not None:
+                db.delete(stale_target)
         registered_ids = {version.registered_model_id for version in versions}
         for version in versions:
             db.delete(version)

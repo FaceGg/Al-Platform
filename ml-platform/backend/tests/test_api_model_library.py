@@ -393,11 +393,12 @@ class TestModelLibraryCascadeDelete(unittest.TestCase):
             db.close()
         self._cleanup(project_id)
 
-    def _seed_rollout_target(self, db, suffix, model, version, owner_id):
-        """部署主版本属于另一模型，但其灰度修订 target 引用 model 的版本。
+    def _seed_rollout_target(self, db, suffix, model, version, owner_id, revision_status="stable"):
+        """部署主版本属于另一模型，但其修订 target 引用 model 的版本。
 
         复现现场 500：旧护栏只查部署主版本，删除被 target 引用的模型时
-        撞 deployment_targets 外键报 IntegrityError。
+        撞 deployment_targets 外键报 IntegrityError。revision_status 决定
+        目标挂在 stable（在役）还是 superseded（自动换模残留）修订上。
         """
         from app.models.artifact import Artifact
         from app.models.model_registry import (
@@ -442,7 +443,7 @@ class TestModelLibraryCascadeDelete(unittest.TestCase):
         db.flush()
         revision = DeploymentRevision(
             deployment_id=deployment.id, revision_number=1,
-            strategy="immediate", status="stable", created_by_id=owner_id,
+            strategy="immediate", status=revision_status, created_by_id=owner_id,
         )
         db.add(revision)
         db.flush()
@@ -552,6 +553,45 @@ class TestModelLibraryCascadeDelete(unittest.TestCase):
             headers=self.h,
         )
         self.assertEqual(r.status_code, 200, r.text)
+        self._cleanup(project_id)
+
+    def test_07_delete_model_with_superseded_rollout_target_succeeds(self):
+        """回归：自动换模残留的 superseded 修订目标不阻塞删除，随删除清理。
+
+        闭环自动重训在被复用的部署上留下大量 superseded 修订目标，旧护栏
+        把它们当占用导致每个换模过的模型都删不掉。
+        """
+        import uuid as _uuid
+
+        from app.database import SessionLocal
+        from app.models.model_library import ModelLibrary
+        from app.models.model_registry import DeploymentTarget, ModelVersion
+
+        db = SessionLocal()
+        try:
+            suffix = _uuid.uuid4().hex[:8]
+            project, model, registered, version = self._seed(db, suffix)
+            self._seed_rollout_target(
+                db, suffix, model, version, model.owner_id, revision_status="superseded",
+            )
+            project_id, model_id, version_id = project.id, model.id, version.id
+        finally:
+            db.close()
+
+        r = client.delete(f"/api/model-library/{model_id}", headers=self.h)
+        self.assertEqual(r.status_code, 200, r.text)
+
+        db = SessionLocal()
+        try:
+            self.assertIsNone(db.query(ModelLibrary).filter(ModelLibrary.id == model_id).first())
+            self.assertIsNone(db.query(ModelVersion).filter(ModelVersion.id == version_id).first())
+            # 历史目标行随删除清理，不再残留
+            self.assertEqual(
+                db.query(DeploymentTarget).filter(DeploymentTarget.model_version_id == version_id).count(),
+                0,
+            )
+        finally:
+            db.close()
         self._cleanup(project_id)
 
 

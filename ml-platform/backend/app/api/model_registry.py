@@ -418,9 +418,10 @@ def build_model_registry_router(
                 intent=AuditIntent(project_id=model.project_id, action="registered_model.delete", resource_type="registered_model", resource_id=deleted_model_id, changes={"name": model.name}),
                 allowed_changes={"name"},
             ):
-                # 部署主版本与历史发布目标（deployment_targets）都算占用：
-                # 灰度修订的 target 可引用本模型版本而部署主版本是别的模型，
-                # 只查主版本会漏判（现场删除注册模型 500 的根因）。
+                # 占用判定只看"活"引用：部署主版本，或 stable/candidate/draft
+                # 修订上的发布目标。闭环自动重训会在同一部署上留下大量
+                # superseded/failed 修订目标，那只是死历史，随模型删除一并
+                # 清理（否则换模过的旧模型永远删不掉）。
                 version_ids = [version.id for version in model.versions]
                 deployment_exists = None
                 if version_ids:
@@ -434,7 +435,10 @@ def build_model_registry_router(
                                     DeploymentTarget,
                                     DeploymentTarget.revision_id == DeploymentRevision.id,
                                 )
-                                .filter(DeploymentTarget.model_version_id.in_(version_ids))
+                                .filter(
+                                    DeploymentTarget.model_version_id.in_(version_ids),
+                                    DeploymentRevision.status.in_(("stable", "candidate", "draft")),
+                                )
                             )
                         )
                         .first()
@@ -444,6 +448,24 @@ def build_model_registry_router(
                         "MODEL_DEPLOYMENT_EXISTS",
                         deployment_exists.name,
                     )
+                stale_target_ids = [
+                    row.id for row in (
+                        db.query(DeploymentTarget.id)
+                        .join(
+                            DeploymentRevision,
+                            DeploymentTarget.revision_id == DeploymentRevision.id,
+                        )
+                        .filter(
+                            DeploymentTarget.model_version_id.in_(version_ids),
+                            DeploymentRevision.status.in_(("superseded", "failed")),
+                        )
+                        .all()
+                    )
+                ]
+                for target_id in stale_target_ids:
+                    stale_target = db.get(DeploymentTarget, target_id)
+                    if stale_target is not None:
+                        db.delete(stale_target)
                 for version in list(model.versions):
                     db.delete(version)
                 db.delete(model)
