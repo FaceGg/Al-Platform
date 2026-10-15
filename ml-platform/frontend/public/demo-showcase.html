@@ -224,6 +224,7 @@
     <button class="spd" data-s="4">×4</button>
     <div class="sep"></div>
     <button id="btnMode">模式：模拟</button>
+    <button id="btnOrch" style="border-color:#ffd166;color:#ffd166">编排 API 实时</button>
     <div id="livePanel">
       <span id="connDot"></span>
       <select id="liveSource">
@@ -732,7 +733,13 @@ async function liveConnect() {
   const source = liveSource();
   const project = document.getElementById("liveProject").value;
   if (source === "orchestration") {
-    const apiId = document.getElementById("liveApi").value || live.apiId;
+    const apiSel = document.getElementById("liveApi");
+    let apiId = apiSel.value || live.apiId;
+    /* 等 API 列表加载（异步），最多 6 秒 */
+    for (let waited = 0; waited < 6000 && !apiId; waited += 400) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      apiId = apiSel.value || live.apiId;
+    }
     if (!apiId) { toast("暂无可上大屏的编排 API（需由通用闭环模板原样创建并发布）", C.red, 3200); return; }
     live.project = project;
     live.apiId = apiId;
@@ -763,7 +770,6 @@ async function liveConnect() {
     await poll();
     live.timer = setInterval(poll, 100);
     live.on = true;
-    const apiSel = document.getElementById("liveApi");
     const aname = apiSel.selectedOptions[0] ? apiSel.selectedOptions[0].textContent : apiId;
     toast(`已连接编排 API 实时闭环 · ${aname}`, C.green);
     return;
@@ -961,6 +967,30 @@ btnMode.onclick = () => {
   }
 };
 document.getElementById("btnConnect").onclick = liveConnect;
+/* 一键入口：切编排 API 数据源并直接连接（面板未开时先展开） */
+document.getElementById("btnOrch").onclick = async () => {
+  const panel = document.getElementById("livePanel");
+  if (!panel.classList.contains("open")) document.getElementById("btnMode").click();
+  const waitFor = async (check, timeoutMs = 8000) => {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (check()) return true;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return false;
+  };
+  /* 等项目列表加载完成（面板展开时异步拉取；单项目时 options 仅 1 项，看选中值） */
+  if (!(await waitFor(() => !!document.getElementById("liveProject").value))) {
+    toast("项目列表加载失败：请先在主界面登录", C.red, 3200);
+    return;
+  }
+  const src = document.getElementById("liveSource");
+  src.value = "orchestration";
+  src.dispatchEvent(new Event("change", { bubbles: true }));
+  /* 等 API 下拉拿到可用项（loadLiveApis 异步），liveConnect 内还有 6s 兜底 */
+  await waitFor(() => (document.getElementById("liveApi").value || "") !== "");
+  await liveConnect();
+};
 document.getElementById("liveProject").addEventListener("change", (e) => {
   live.loopId = null;
   live.apiId = null;
