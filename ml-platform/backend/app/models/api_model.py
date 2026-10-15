@@ -1,5 +1,6 @@
 """API management model for platform APIs."""
 import uuid
+import sqlalchemy as sa
 from sqlalchemy import Column, String, Text, Integer, DateTime, JSON, Boolean, ForeignKey, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
@@ -34,9 +35,11 @@ class PlatformAPI(Base):
     total_calls = Column(Integer, default=0)
     success_calls = Column(Integer, default=0)
     failed_calls = Column(Integer, default=0)
-    # 编排 API 实时大屏留痕：报错回流/告警计数 + 事件流与重训任务引用
-    error_calls = Column(Integer, default=0)
-    alert_calls = Column(Integer, default=0)
+    # 编排 API 实时大屏留痕：报错回流/告警计数 + 事件流与重训任务引用。
+    # nullable/server_default 须与 20261015_70 迁移一致，否则 schema 漂移
+    # 检测（require_current_schema）会拒绝启动。
+    error_calls = Column(Integer, nullable=False, server_default=sa.text("0"))
+    alert_calls = Column(Integer, nullable=False, server_default=sa.text("0"))
     showcase_state = Column(JSON, default=dict)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     is_public = Column(Boolean, default=False)
