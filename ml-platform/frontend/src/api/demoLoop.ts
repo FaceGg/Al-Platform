@@ -32,6 +32,9 @@ export interface DemoLoopConfig {
   retrain_dataset_artifact_ids: string[];
   retrain_target_column: string;
   retrain_max_trials: number;
+  collect_correct_enabled: boolean;
+  correct_sample_ratio: string | null;
+  field_descriptions: Record<string, string> | null;
   retrain_dataset: { id: string; name: string } | null;
   deployment: DemoLoopDeployment | null;
   current_model: DemoLoopModelInfo | null;

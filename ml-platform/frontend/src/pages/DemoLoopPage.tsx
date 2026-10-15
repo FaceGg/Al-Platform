@@ -9,8 +9,9 @@ import {
 import { marked } from "marked";
 import { useNavigate } from "react-router-dom";
 import AppLayout from "../components/AppLayout";
-import LoopConfigModal, { type LoopEditorState } from "../components/loop/LoopConfigModal";
+import LoopConfigModal, { type FieldDescTask, type LoopEditorState } from "../components/loop/LoopConfigModal";
 import { formatApiError } from "../api/client";
+import { listAnnotationTasks } from "../api/annotationTasks";
 import {
   type DemoLoopConfig, deleteDemoLoop, fetchDemoLoopAnnotators, fetchDemoLoopDatasets,
   fetchDemoLoopDeployments, fetchDemoLoopProjects, fetchDemoLoops,
@@ -35,6 +36,7 @@ export default function DemoLoopPage() {
   const [deployments, setDeployments] = useState<Array<{ id: string; name: string; observed_state: string }>>([]);
   const [datasets, setDatasets] = useState<Array<{ id: string; name: string }>>([]);
   const [annotators, setAnnotators] = useState<Array<{ id: string; username: string }>>([]);
+  const [fieldDescTasks, setFieldDescTasks] = useState<FieldDescTask[]>([]);
 
   useEffect(() => {
     fetchDemoLoopProjects().then((res: any) => {
@@ -63,6 +65,18 @@ export default function DemoLoopPage() {
       })));
       setDatasets((ds?.items || []).map((item: any) => ({ id: item.id, name: item.name })));
       setAnnotators((ann?.items || []).map((item: any) => ({ id: item.id, username: item.username })));
+      // 收集带字段解释的标注任务，供闭环配置复用其字段说明
+      try {
+        const tasksRes: any = await listAnnotationTasks(pid, 50);
+        const tasks = tasksRes?.items || tasksRes || [];
+        setFieldDescTasks((Array.isArray(tasks) ? tasks : [])
+          .filter((task: any) => Object.keys(task.task_snapshot?.field_descriptions || {}).length > 0)
+          .map((task: any) => ({
+            id: task.id,
+            name: task.name || task.task_snapshot?.instructions?.slice(0, 20) || task.id.slice(0, 8),
+            descriptions: task.task_snapshot?.field_descriptions || {},
+          })));
+      } catch { setFieldDescTasks([]); }
     } catch (error) {
       message.error(formatApiError(error, "闭环数据加载失败"));
     }
@@ -234,6 +248,7 @@ export default function DemoLoopPage() {
         deployments={deployments}
         datasets={datasets}
         annotators={annotators}
+        fieldDescTasks={fieldDescTasks}
         onCancel={() => setEditor(null)}
         onSaved={() => { setEditor(null); void refreshLoops(); }}
       />

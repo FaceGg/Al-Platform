@@ -107,7 +107,10 @@ export default function SampleStream({
               <div className="field-grid">
                 {annotationFields.map(([key, value]) => (
                   <div className="field-item" key={key}>
-                    <span className="field-item-name">{key}</span>
+                    <span className="field-item-name">
+                      {/prediction/i.test(key) ? <span className="field-item-badge">模型推理输出</span> : null}
+                      {key}
+                    </span>
                     {fieldDescriptions[key] ? <span className="field-item-description">{fieldDescriptions[key]}</span> : null}
                     <span className="field-item-value">{String(value)}</span>
                   </div>
@@ -121,7 +124,10 @@ export default function SampleStream({
               <div className="field-grid">
                 {otherFields.map(([key, value]) => (
                   <div className="field-item" key={key}>
-                    <span className="field-item-name">{key}</span>
+                    <span className="field-item-name">
+                      {/prediction/i.test(key) ? <span className="field-item-badge">模型推理输出</span> : null}
+                      {key}
+                    </span>
                     {fieldDescriptions[key] ? <span className="field-item-description">{fieldDescriptions[key]}</span> : null}
                     <span className="field-item-value">{String(value)}</span>
                   </div>
@@ -183,7 +189,7 @@ export default function SampleStream({
                   />
                 )}
                 {chips.length > 0 && (
-                  <div className="option-chips">
+                  <div className="option-chips" title="快捷选项：徽标数字为键盘快捷键，右侧为标签值">
                     {chips.map(option => (
                       <button
                         type="button"

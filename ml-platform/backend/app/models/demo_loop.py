@@ -64,6 +64,13 @@ class DemoLoopConfig(Base):
     retrain_job_id = Column(UUID(as_uuid=True), nullable=True)
     retrain_status = Column(String(24), nullable=False, default="idle")
     swapped_model_version_id = Column(UUID(as_uuid=True), nullable=True)
+    # 回流时同步收集正确数据：开关 + 「错误:正确」比例（如 "1:3"/"3:1"，空=1:1）
+    collect_correct_enabled = Column(Boolean, nullable=False, default=False)
+    correct_sample_ratio = Column(String(16), nullable=True)
+    # 人工审核字段解释（字段名 → 描述；可复用数据标注的字段解释文件）
+    field_descriptions = Column(JSON, nullable=True)
+    # 正确数据收集缓冲：待按比例并入回流数据集的正常预测行
+    correct_buffer = Column(JSON, nullable=True)
     created_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

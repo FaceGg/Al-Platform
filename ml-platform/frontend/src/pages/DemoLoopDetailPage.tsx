@@ -8,8 +8,9 @@ import {
 } from "@ant-design/icons";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AppLayout from "../components/AppLayout";
-import LoopConfigModal, { type LoopEditorState } from "../components/loop/LoopConfigModal";
+import LoopConfigModal, { type FieldDescTask, type LoopEditorState } from "../components/loop/LoopConfigModal";
 import { formatApiError } from "../api/client";
+import { listAnnotationTasks } from "../api/annotationTasks";
 import {
   type DemoLoopConfig, type DemoLoopPredictResult, type DemoLoopStatus,
   fetchDemoLoopAnnotators, fetchDemoLoopDatasets, fetchDemoLoopDeployments,
@@ -89,6 +90,7 @@ export default function DemoLoopDetailPage() {
   const [deployments, setDeployments] = useState<Array<{ id: string; name: string; observed_state: string }>>([]);
   const [datasets, setDatasets] = useState<Array<{ id: string; name: string }>>([]);
   const [annotators, setAnnotators] = useState<Array<{ id: string; username: string }>>([]);
+  const [fieldDescTasks, setFieldDescTasks] = useState<FieldDescTask[]>([]);
   const [editor, setEditor] = useState<LoopEditorState | null>(null);
 
   const [rows, setRows] = useState<ParsedRow[]>([]);
@@ -236,7 +238,22 @@ export default function DemoLoopDetailPage() {
             <DeploymentUnitOutlined /> {loop?.name || "闭环任务详情"}
           </Title>
           <Button icon={<EditOutlined />} disabled={running || !loop}
-            onClick={() => loop && setEditor({ mode: "edit", loop })}>编辑配置</Button>
+            onClick={async () => {
+              if (loop) {
+                setEditor({ mode: "edit", loop });
+                try {
+                  const tasksRes: any = await listAnnotationTasks(projectId, 50);
+                  const tasks = tasksRes?.items || tasksRes || [];
+                  setFieldDescTasks((Array.isArray(tasks) ? tasks : [])
+                    .filter((task: any) => Object.keys(task.task_snapshot?.field_descriptions || {}).length > 0)
+                    .map((task: any) => ({
+                      id: task.id,
+                      name: task.name || task.id.slice(0, 8),
+                      descriptions: task.task_snapshot?.field_descriptions || {},
+                    })));
+                } catch { setFieldDescTasks([]); }
+              }
+            }}>编辑配置</Button>
           <Button icon={<ReloadOutlined />} onClick={() => { loadLoop(); }}>刷新</Button>
           <Button icon={<MonitorOutlined />}
             onClick={() => window.open(`/demo-showcase.html`, "_blank")}>
@@ -369,6 +386,7 @@ export default function DemoLoopDetailPage() {
         deployments={deployments}
         datasets={datasets}
         annotators={annotators}
+        fieldDescTasks={fieldDescTasks}
         onCancel={() => setEditor(null)}
         onSaved={(saved) => { setEditor(null); setLoop(saved); void loadLoop(); }}
       />

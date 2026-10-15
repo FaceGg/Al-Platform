@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Button, Divider, Form, Input, InputNumber, Modal, Select, Space, Switch } from "antd";
+import { Button, Divider, Form, Input, InputNumber, Modal, Select, Space, Switch, Upload, Typography } from "antd";
 import { useI18n } from "../../i18n";
 import { createDemoLoop, updateDemoLoop, type DemoLoopConfig } from "../../api/demoLoop";
 import { formatApiError } from "../../api/client";
@@ -9,17 +9,35 @@ export type LoopEditorState =
   | { mode: "create"; defaults?: Partial<Record<string, unknown>> }
   | { mode: "edit"; loop: DemoLoopConfig };
 
+/** 可复用字段解释的标注任务（task_snapshot.field_descriptions 非空） */
+export interface FieldDescTask {
+  id: string;
+  name: string;
+  descriptions: Record<string, string>;
+}
+
 interface Props {
   editor: LoopEditorState | null;
   projectId: string;
   deployments: Array<{ id: string; name: string; observed_state: string }>;
   datasets: Array<{ id: string; name: string }>;
   annotators: Array<{ id: string; username: string }>;
+  fieldDescTasks?: FieldDescTask[];
   onCancel: () => void;
   onSaved: (loop: DemoLoopConfig) => void;
 }
 
-export default function LoopConfigModal({ editor, projectId, deployments, datasets, annotators, onCancel, onSaved }: Props) {
+const RATIO_OPTIONS: Array<{ value: string; label: string }> = [
+  ...Array.from({ length: 9 }, (_, i) => ({
+    value: `${10 - i}:1`, label: `错误:正确 = ${10 - i}:1（多收正确数据）`,
+  })),
+  { value: "1:1", label: "错误:正确 = 1:1" },
+  ...Array.from({ length: 9 }, (_, i) => ({
+    value: `1:${i + 2}`, label: `错误:正确 = 1:${i + 2}（多收报错数据）`,
+  })),
+];
+
+export default function LoopConfigModal({ editor, projectId, deployments, datasets, annotators, fieldDescTasks, onCancel, onSaved }: Props) {
   const { t } = useI18n();
   const tr = ((t as unknown as Record<string, Record<string, string | undefined>>).demo_loop ?? {}) as Record<string, string | undefined>;
   const [form] = Form.useForm();
@@ -37,6 +55,9 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
         retrain_dataset_artifact_ids: cfg.retrain_dataset_artifact_ids
           || (cfg.retrain_dataset_artifact_id ? [cfg.retrain_dataset_artifact_id] : []),
         retrain_target_column: cfg.retrain_target_column, retrain_max_trials: cfg.retrain_max_trials,
+        collect_correct_enabled: cfg.collect_correct_enabled,
+        correct_sample_ratio: cfg.correct_sample_ratio || "1:1",
+        field_descriptions: cfg.field_descriptions || {},
       });
     } else {
       form.setFieldsValue({
@@ -44,6 +65,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
         alert_threshold_rows: 1, require_review: false, review_annotator_ids: [],
         retrain_enabled: false, retrain_threshold_rows: 20, retrain_dataset_artifact_ids: [],
         retrain_max_trials: 10, ...(editor.defaults || {}),
+        collect_correct_enabled: false, correct_sample_ratio: "1:1", field_descriptions: {},
       });
     }
   }, [editor, form]);
@@ -53,6 +75,10 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
       ...values,
       error_classes: (values.error_classes as string[]) || [],
       review_annotator_ids: values.require_review ? (values.review_annotator_ids as string[]) || [] : [],
+      collect_correct_enabled: !!values.collect_correct_enabled,
+      correct_sample_ratio: values.collect_correct_enabled
+        ? String(values.correct_sample_ratio || "1:1") : "1:1",
+      field_descriptions: (values.field_descriptions as Record<string, string>) || {},
     };
     try {
       const cfg: any = editor?.mode === "create"
@@ -113,6 +139,85 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
               }))} placeholder={tr.choose_annotators || "选择标注员"} />
             </Form.Item>
           ) : null}
+        </Form.Item>
+        <Divider plain style={{ margin: "8px 0" }}>数据收集</Divider>
+        <Form.Item
+          name="collect_correct_enabled"
+          label="同步收集正确数据"
+          valuePropName="checked"
+          tooltip="回流报错行时，按比例自动并入缓冲中的正常预测行（重新平衡重训数据的正负样本）"
+        >
+          <Switch />
+        </Form.Item>
+        <Form.Item noStyle shouldUpdate={(prev, next) => prev.collect_correct_enabled !== next.collect_correct_enabled}>
+          {({ getFieldValue }) => getFieldValue("collect_correct_enabled") ? (
+            <Form.Item
+              name="correct_sample_ratio"
+              label="错误:正确 收集比例"
+              initialValue="1:1"
+              rules={[{ required: true, message: "请选择收集比例" }]}
+            >
+              <Select options={RATIO_OPTIONS} />
+            </Form.Item>
+          ) : null}
+        </Form.Item>
+        <Divider plain style={{ margin: "8px 0" }}>字段解释</Divider>
+        <Form.Item label="复用已有标注任务的字段解释（可选）">
+          <Select
+            allowClear
+            placeholder={(fieldDescTasks || []).length ? "选择标注任务" : "暂无带字段解释的标注任务"}
+            disabled={!(fieldDescTasks || []).length}
+            options={(fieldDescTasks || []).map((task) => ({
+              value: task.id,
+              label: `${task.name}（${Object.keys(task.descriptions).length} 个字段）`,
+            }))}
+            onSelect={(taskId: string) => {
+              const task = (fieldDescTasks || []).find((item) => item.id === taskId);
+              if (task) form.setFieldValue("field_descriptions", { ...task.descriptions });
+            }}
+          />
+        </Form.Item>
+        <Form.Item label="或上传字段解释文件（csv/txt，每行：字段名,描述）">
+          <Upload
+            accept=".csv,.txt"
+            maxCount={1}
+            showUploadList={false}
+            beforeUpload={(file) => {
+              void file.text().then((text) => {
+                const descriptions: Record<string, string> = {};
+                for (const rawLine of text.split(/\r?\n/)) {
+                  const line = rawLine.trim();
+                  if (!line) continue;
+                  const separators = [line.indexOf(","), line.indexOf("\t")].filter((index) => index >= 0);
+                  if (!separators.length) continue;
+                  const cut = Math.min(...separators);
+                  const name = line.slice(0, cut).trim();
+                  const description = line.slice(cut + 1).trim();
+                  if (name) descriptions[name] = description;
+                }
+                if (Object.keys(descriptions).length) {
+                  form.setFieldValue("field_descriptions", descriptions);
+                  message.success(`已解析 ${Object.keys(descriptions).length} 个字段说明`);
+                } else {
+                  message.error("未从文件中解析到任何「字段名,描述」行");
+                }
+              });
+              return false;
+            }}
+          >
+            <Button>选择文件</Button>
+          </Upload>
+        </Form.Item>
+        <Form.Item noStyle shouldUpdate={(prev, next) => prev.field_descriptions !== next.field_descriptions}>
+          {({ getFieldValue }) => {
+            const descriptions = (getFieldValue("field_descriptions") as Record<string, string>) || {};
+            const count = Object.keys(descriptions).length;
+            return (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {count ? `已配置 ${count} 个字段解释，将展示在标注员工作区的对应字段旁` : "未配置字段解释"}
+              </Typography.Text>
+            );
+          }}
         </Form.Item>
         <Divider plain style={{ margin: "8px 0" }}>{tr.retrain_section || "自动重训"}</Divider>
         <Form.Item name="retrain_enabled" label={tr.retrain_enabled || "积累后自动建模"} valuePropName="checked">

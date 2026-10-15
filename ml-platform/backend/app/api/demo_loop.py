@@ -36,6 +36,9 @@ class DemoLoopConfigUpdate(BaseModel):
     retrain_dataset_artifact_ids: list[str] | None = None
     retrain_target_column: str | None = None
     retrain_max_trials: int | None = None
+    collect_correct_enabled: bool | None = None
+    correct_sample_ratio: str | None = None
+    field_descriptions: dict | None = None
 
 
 class DemoLoopPredictRequest(BaseModel):
@@ -109,6 +112,9 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
         "retrain_dataset_artifact_ids": [str(item) for item in dataset_ids],
         "retrain_target_column": config.retrain_target_column,
         "retrain_max_trials": config.retrain_max_trials,
+        "collect_correct_enabled": bool(config.collect_correct_enabled),
+        "correct_sample_ratio": config.correct_sample_ratio or "1:1",
+        "field_descriptions": config.field_descriptions or {},
         "retrain_dataset": retrain_dataset,
         "deployment": deployment,
         "current_model": model,

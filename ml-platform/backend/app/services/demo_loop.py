@@ -289,6 +289,30 @@ class DemoLoopService:
             config.retrain_max_trials = max(5, int(data["retrain_max_trials"] or 10))
         if "retrain_target_column" in data:
             config.retrain_target_column = str(data["retrain_target_column"] or "").strip()[:128]
+        if "collect_correct_enabled" in data:
+            config.collect_correct_enabled = bool(data["collect_correct_enabled"])
+        if "correct_sample_ratio" in data:
+            ratio = str(data.get("correct_sample_ratio") or "").strip()
+            if not ratio:
+                config.correct_sample_ratio = "1:1"
+            else:
+                parts = ratio.split(":", 1)
+                if (
+                    len(parts) != 2
+                    or not all(part.strip().isdigit() and 1 <= int(part.strip()) <= 10 for part in parts)
+                ):
+                    raise DemoLoopError(
+                        "DEMO_LOOP_CONFIG_INVALID",
+                        "correct_sample_ratio must be like '1:3' (每报错 1 条收 3 条正常) or '3:1'")
+                config.correct_sample_ratio = f"{int(parts[0].strip())}:{int(parts[1].strip())}"
+        if "field_descriptions" in data:
+            descriptions = data.get("field_descriptions") or {}
+            if not isinstance(descriptions, dict):
+                raise DemoLoopError("DEMO_LOOP_CONFIG_INVALID", "field_descriptions must be an object")
+            config.field_descriptions = {
+                str(key).strip(): str(value) for key, value in descriptions.items()
+                if str(key).strip()
+            }
         if "retrain_dataset_artifact_ids" in data:
             raw_list = data.get("retrain_dataset_artifact_ids") or []
             if raw_list:
@@ -375,7 +399,11 @@ class DemoLoopService:
                 labeled[config.retrain_target_column] = str(predicted)
             self._append_error_rows(config, [labeled], actor_id)
             appended = True
+            self._collect_correct_rows(config, actor_id)
             self._after_error_append(config, str(predicted), actor_id)
+        elif config.collect_correct_enabled:
+            # 正确数据收集：缓存正常预测行，回流时按比例随报错行并入
+            self._buffer_correct_row(config, record, str(predicted), confidence)
 
         self.db.commit()
         return {
@@ -590,6 +618,66 @@ class DemoLoopService:
         self._emit(config, "error_appended", f"错误数据已追加（当前 {total} 行）",
                    payload={"rows": len(rows), "total": total})
 
+    # ------------------------------------------------------- correct sampling
+
+    def _correct_buffer(self, config: DemoLoopConfig) -> dict:
+        state = dict(config.correct_buffer or {})
+        rows = state.get("rows")
+        state["rows"] = rows if isinstance(rows, list) else []
+        state.setdefault("since_correct", 0)
+        return state
+
+    def _buffer_correct_row(self, config: DemoLoopConfig, record: dict, predicted: str, confidence) -> None:
+        """缓存正常预测行，供回流时按比例与报错数据一同收集。"""
+        state = self._correct_buffer(config)
+        rows = state["rows"]
+        rows.append(dict(record, **{
+            "prediction": predicted,
+            "confidence": confidence,
+        }))
+        # 上限防止长跑任务无限增长（比例单周期最多 10 倍，200 条足够）
+        del rows[:-200]
+        config.correct_buffer = state
+        self.db.commit()
+
+    def _collect_correct_rows(self, config: DemoLoopConfig, actor_id) -> None:
+        """按「错误:正确」比例在报错回流时同步并入正确数据。
+
+        比例 "e:c"：每累计 e 条报错，追加 c 条缓冲中的正常行；
+        cycle 计数存于 correct_buffer.since_correct。
+        """
+        ratio = str(config.correct_sample_ratio or "1:1")
+        try:
+            error_part, correct_part = (int(part) for part in ratio.split(":", 1))
+            error_part, correct_part = max(1, error_part), max(0, correct_part)
+        except ValueError:
+            error_part, correct_part = 1, 1
+        if not config.collect_correct_enabled or correct_part <= 0:
+            return
+        state = self._correct_buffer(config)
+        since = int(state.get("since_correct") or 0) + 1
+        if since % error_part != 0:
+            state["since_correct"] = since
+            config.correct_buffer = state
+            return
+        state["since_correct"] = 0
+        rows = state["rows"]
+        take = min(correct_part, len(rows))
+        if take <= 0:
+            config.correct_buffer = state
+            return
+        collected, rows = rows[:take], rows[take:]
+        for row in collected:
+            if config.retrain_target_column:
+                row[config.retrain_target_column] = row.get("prediction", "")
+        self._append_error_rows(config, collected, actor_id)
+        self._emit(
+            config, "correct_collected",
+            f"已按 {ratio} 比例同步收集 {take} 条正常数据（缓冲剩余 {len(rows)} 条）",
+            payload={"collected": take},
+        )
+        config.correct_buffer = state
+
     # ---------------------------------------------------------------- thresholds
 
     def _after_error_append(self, config: DemoLoopConfig, predicted: str, actor_id) -> None:
@@ -640,6 +728,24 @@ class DemoLoopService:
 
     # ------------------------------------------------------------- review task
 
+    def _model_output_classes(self, config: DemoLoopConfig) -> list[str]:
+        """模型全部输出类别（复核可选值）：历史预测观察值 ∪ 报错类别。"""
+        classes: set[str] = set(config.error_classes or [])
+        events = self.db.query(DemoLoopEvent).filter(
+            DemoLoopEvent.config_id == config.id,
+            DemoLoopEvent.event_type.in_(["row_predicted", "error_row"]),
+        ).order_by(DemoLoopEvent.created_at.desc()).limit(500).all()
+        for event in events:
+            predicted = (event.payload or {}).get("prediction")
+            if predicted is not None:
+                classes.add(str(predicted))
+        if not classes:
+            classes = {"0", "1"}
+        # 报错类别排在最后（复核语义：确认报错 / 改判正常）
+        ordered = sorted(c for c in classes if c not in set(config.error_classes or []))
+        ordered += [c for c in sorted(classes) if c in set(config.error_classes or [])]
+        return ordered
+
     def _create_review_task(self, config: DemoLoopConfig, actor_id) -> None:
         # 每个闭环任务同一时间只保留一个人工审核任务：进行中的任务不重复
         # 新建，新报错数据继续追加到同一报错数据集，审核完成后下一轮告警再建。
@@ -663,6 +769,8 @@ class DemoLoopService:
             raise DemoLoopError("DEMO_LOOP_ERROR_DATASET_MISSING", "Error dataset artifact missing")
         service = self._artifact_service()
         version = service.create_dataset_version_from_artifact(artifact, operator_id=actor_id)
+        # 复核可选值 = 模型全部输出类别（不止报错类别）：审核员可纠正为正常类
+        classes = self._model_output_classes(config)
         schema = create_label_schema(
             self.db,
             project_id=config.project_id,
@@ -670,9 +778,11 @@ class DemoLoopService:
             columns=[{
                 "machine_key": "review_label",
                 "display_name": "复核标签",
-                "value_type": "enum",
+                # 校验器仅支持 int/float/string（"enum" 非法）；枚举约束由
+                # enum_values 在类型校验后单独执行。
+                "value_type": "string",
                 "required": True,
-                "enum_values": list(config.error_classes or []),
+                "enum_values": classes,
             }],
             commit=False,
         )
@@ -706,7 +816,7 @@ class DemoLoopService:
             "instructions": "自动化闭环自动创建：请复核本行数据是否确实属于报错类别。",
             "completion_criteria": "",
             "configuration": {},
-            "field_descriptions": {},
+            "field_descriptions": dict(config.field_descriptions or {}),
         }
         canonical = json.dumps(snapshot, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         snapshot["config_hash"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
