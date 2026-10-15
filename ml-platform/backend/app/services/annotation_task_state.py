@@ -190,7 +190,11 @@ def create_annotation_preview(db, task_id, task_revision: int, config_hash: str,
     previous_status = task.status
     if task.status in {"pending", "draft", "failed", "preview_ready"}:
         task.status = "previewing"
-    elif task.status != "previewing":
+    elif task.status not in {"previewing", "awaiting_annotation", "in_progress"}:
+        # Tasks already past the preview gate keep their lifecycle state; the
+        # preview is a read-only sample view (e.g. closed-loop review tasks
+        # created directly on awaiting_annotation) and mark_preview_completed
+        # leaves these statuses untouched.
         raise ValueError("TASK_STATE_INVALID")
     preview = AnnotationTaskPreview(
         task_id=task.id,

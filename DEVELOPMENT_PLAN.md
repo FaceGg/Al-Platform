@@ -306,6 +306,19 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-15 闭环审核任务点「预览」报 TASK_STATE_INVALID：预览状态机白名单缺已发布任务状态
+
+- 现象：闭环自动化任务自动创建的人工审核标注任务，在数据标注页点「预览」报「任务当前状态不允许此操作」（`TASK_STATE_INVALID` 409）。
+- 根因：闭环审核任务跳过 draft→预览→发布 流程，直接以 `status="awaiting_annotation"` 落库且无任何 `AnnotationTaskPreview` 记录（`demo_loop.py` `_create_review_task`）；前端「预览」按钮发现无预览记录即调用创建预览接口，而后端 `create_annotation_preview` 的状态白名单只允许 `pending/draft/failed/preview_ready/previewing`，`awaiting_annotation` 被拒。
+- 修复：`annotation_task_state.py` `create_annotation_preview` 对已过发布门的 `awaiting_annotation`/`in_progress` 状态放行，且**不改变生命周期状态**（预览仅作只读样本视图；`mark_preview_completed` 仅在 `previewing` 状态下触发改状态，故补预览不会误触发自动发布/自动执行，也不会落入 `needs_review` 死端）。终态（completed 等）仍拒绝。
+- 验证：`test_annotation_task_state.py` 新增 3 用例（awaiting_annotation/in_progress 补预览全流程跑完状态不变、无 transition/auto_published 审计事件；completed 仍拒）——模块 74 passed；`test_annotation_task_state_api.py`+`test_api_platform.py` 44 passed + 6 subtests 无回归。
+- 待完成：部署侧生效需重建 backend 镜像；存量闭环审核任务无需修复数据，重新点「预览」即可补建。
+
+### 2026-10-15 运行监控大屏实时轮询间隔 100ms → 20ms
+
+- `ml-platform/frontend/public/demo-showcase.html` 编排 API 实时模式与闭环任务模式两处 `setInterval(poll, 100)` 均改为 20ms（10 次/秒 → 50 次/秒）。
+- 部署侧生效：该文件随前端镜像构建打包，需重建 frontend 镜像（或对运行中容器 docker cp 热更新静态文件）后刷新大屏页面。
+
 ### 2026-09-28 门户 HTTP 登录会话丢失：Secure cookie 硬编码（r12）
 
 - 现象：外网（非 localhost）通过 `http://10.12.18.6:8443` 登录门户，接口返回 200 但会话立即丢失——服务器日志呈 `POST /portal/auth/login 200 OK` 紧跟 `GET /portal/auth/me 401` 循环；本地 localhost 登录正常。

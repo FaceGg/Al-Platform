@@ -334,6 +334,46 @@ def test_preview_is_previewing_until_worker_finishes(db, monkeypatch):
     assert auto_event.changes == {"from_status": "preview_ready", "to_status": "awaiting_annotation", "task_revision": 0}
 
 
+@pytest.mark.parametrize("live_status", ["awaiting_annotation", "in_progress"])
+def test_live_task_preview_keeps_lifecycle_state(db, monkeypatch, live_status):
+    """已过发布门的任务补建预览不改状态（闭环审核任务直接落在 awaiting_annotation）。
+
+    回归：闭环自动创建的人工审核任务没有预览记录，点击「预览」曾因状态机
+    白名单缺失 TASK_STATE_INVALID(409)。
+    """
+    task, user, _ = _task(db)
+    task.status = live_status
+    db.commit()
+
+    preview = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:frozen", actor_id=user.id)
+
+    assert preview.status == "queued"
+    assert task.status == live_status
+    assert db.query(AuditEvent).filter_by(resource_id=str(task.id), action="annotation_task.transition").count() == 0
+
+    from app.tasks.annotation_preview_tasks import execute_annotation_preview
+    monkeypatch.setattr("app.tasks.annotation_preview_tasks.SessionLocal", lambda: db)
+    result = execute_annotation_preview.run(str(task.id), str(preview.id), str(user.id))
+
+    assert result["status"] == "completed", db.get(AnnotationTaskPreview, preview.id).error
+    db.refresh(task)
+    assert task.status == live_status
+    assert db.get(AnnotationTaskPreview, preview.id).status == "completed"
+    assert db.query(AuditEvent).filter(
+        AuditEvent.resource_id == str(task.id),
+        AuditEvent.action.in_(["annotation_task.auto_published", "annotation_task.transition"]),
+    ).count() == 0
+
+
+def test_completed_task_preview_still_rejected(db):
+    task, user, _ = _task(db)
+    task.status = "completed"
+    db.commit()
+
+    with pytest.raises(ValueError, match="TASK_STATE_INVALID"):
+        create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:frozen", actor_id=user.id)
+
+
 def test_automatic_task_execution_requires_valid_preview(db):
     task, user, _ = _task(db)
     with pytest.raises(ValueError, match="PREVIEW_STALE"):
