@@ -8,9 +8,12 @@ from app.api.auth import pwd_context
 from app.database import Base, SessionLocal, engine
 from app.models.user import User
 from app.models.access import ProjectMember
+from app.models.api_model import PlatformAPI
 from app.models.artifact import Artifact
 from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
 from app.models.project import Project
+from app.models.workflow import Workflow, WorkflowNode
+from app.models.workflow_version import WorkflowVersion
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
@@ -277,6 +280,107 @@ class TestPlatformAPI(unittest.TestCase):
         )
         self.assertEqual(viewer.status_code, 403)
         self.assertEqual(outsider.status_code, 404)
+
+
+class TestOrchestrationShowcase(unittest.TestCase):
+    """实时大屏仅面向通用闭环模板原样结构的编排 API。"""
+
+    TEMPLATE_OPERATORS = (
+        "api_input", "load_model_artifact", "apply_model", "condition",
+        "append_error_dataset", "notify_admins", "retrain_threshold",
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        ensure_admin()
+        cls.h = login()
+        marker = uuid.uuid4().hex[:8]
+        db = SessionLocal()
+        try:
+            owner = db.query(User).filter(User.username == "admin").one()
+            project = Project(name=f"showcase-{marker}", owner_id=owner.id)
+            db.add(project)
+            db.flush()
+            workflow = Workflow(project_id=project.id, name=f"wf-{marker}", created_by=owner.id)
+            db.add(workflow)
+            db.flush()
+
+            def snapshot(operators):
+                return [
+                    {"id": f"n{i}", "operator_id": op, "label": op, "params": {"threshold_rows": 3}}
+                    for i, op in enumerate(operators)
+                ]
+
+            good_version = WorkflowVersion(
+                workflow_id=workflow.id, version=1, name="v1",
+                nodes_snapshot=snapshot(cls.TEMPLATE_OPERATORS), edges_snapshot=[],
+                published_by=owner.id,
+            )
+            bad_version = WorkflowVersion(
+                workflow_id=workflow.id, version=2, name="v2",
+                nodes_snapshot=snapshot(cls.TEMPLATE_OPERATORS + ("python_script",)),
+                edges_snapshot=[], published_by=owner.id,
+            )
+            db.add_all([good_version, bad_version])
+            db.flush()
+            cls.project_id = str(project.id)
+            cls.good_version_id = str(good_version.id)
+            cls.bad_version_id = str(bad_version.id)
+            cls.workflow_id = str(workflow.id)
+            db.add(PlatformAPI(
+                name=f"闭环编排-{marker}", api_type="orchestration",
+                endpoint=f"/api/orchestration-{marker}", version="v1",
+                status="published", source_kind="orchestration",
+                source_id=good_version.id, workflow_id=workflow.id,
+                total_calls=12, success_calls=12, error_calls=2, alert_calls=2,
+                showcase_state={"events": [
+                    {"id": "e1", "event_type": "row_predicted", "message": "正常预测", "created_at": "2026-10-15T00:00:00"},
+                    {"id": "e2", "event_type": "error_row", "message": "报错行命中回流", "created_at": "2026-10-15T00:00:01"},
+                ], "last_retrain_job_id": None},
+                owner_id=owner.id,
+            ))
+            db.add(PlatformAPI(
+                name=f"编排改造-{marker}", api_type="orchestration",
+                endpoint=f"/api/orchestration-mod-{marker}", version="v1",
+                status="published", source_kind="orchestration",
+                source_id=bad_version.id, workflow_id=workflow.id,
+                owner_id=owner.id,
+            ))
+            db.commit()
+        finally:
+            db.close()
+
+    def test_01_list_marks_showcase_eligibility(self):
+        listing = client.get("/api/platform/apis?status=published&api_type=orchestration", headers=self.h)
+        self.assertEqual(listing.status_code, 200)
+        by_name = {item["name"]: item for item in listing.json()["items"]}
+        good = [v for k, v in by_name.items() if k.startswith("闭环编排-")][0]
+        bad = [v for k, v in by_name.items() if k.startswith("编排改造-")][0]
+        self.assertTrue(good["showcase_eligible"])
+        self.assertFalse(bad["showcase_eligible"])
+
+    def test_02_showcase_status_returns_loop_shaped_payload(self):
+        r = client.get(
+            f"/api/platform/apis/orchestration/{self.good_version_id}/showcase-status",
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        self.assertEqual(data["total_count"], 12)
+        self.assertEqual(data["error_count"], 2)
+        self.assertEqual(data["alert_count"], 2)
+        self.assertEqual(data["retrain_status"], "idle")
+        self.assertEqual(data["retrain_threshold_rows"], 3)
+        self.assertEqual(len(data["events"]), 2)
+        self.assertIn("model_score", data)
+
+    def test_03_modified_template_is_rejected(self):
+        r = client.get(
+            f"/api/platform/apis/orchestration/{self.bad_version_id}/showcase-status",
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.json()["detail"]["code"], "SHOWCASE_NOT_ELIGIBLE")
 
 
 if __name__ == "__main__":

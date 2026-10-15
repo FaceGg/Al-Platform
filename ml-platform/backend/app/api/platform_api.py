@@ -146,6 +146,27 @@ def list_apis(
     if status:
         q = q.filter(PlatformAPI.status == status)
     apis = q.order_by(PlatformAPI.created_at.desc()).all()
+    # 编排条目附带大屏资格（通用闭环模板原样七算子）；批量查版本快照避免 N+1 之外的开销
+    from app.models.workflow_version import WorkflowVersion
+
+    orchestration_versions = {
+        str(a.source_id)
+        for a in apis
+        if (a.source_kind or a.api_type) == "orchestration" and a.source_id
+    }
+    snapshots = {}
+    if orchestration_versions:
+        rows = db.query(WorkflowVersion).filter(
+            WorkflowVersion.id.in_([uuid.UUID(v) for v in orchestration_versions]),
+        ).all()
+        snapshots = {str(row.id): row.nodes_snapshot for row in rows}
+
+    def _eligible(a):
+        if (a.source_kind or a.api_type) != "orchestration":
+            return False
+        snapshot = snapshots.get(str(a.source_id)) if a.source_id else None
+        return _showcase_eligible(snapshot)
+
     return {
         "items": [
             {
@@ -165,6 +186,7 @@ def list_apis(
                 "total_calls": a.total_calls,
                 "success_calls": a.success_calls,
                 "failed_calls": a.failed_calls,
+                "showcase_eligible": _eligible(a),
                 "is_public": a.is_public,
                 "created_at": a.created_at.isoformat() if a.created_at else None,
             }
@@ -443,8 +465,7 @@ class OrchestrationInvokeRequest(BaseModel):
 
 
 @router.post("/orchestration/{version_id}/invoke")
-def invoke_orchestration_api(
-    version_id: str,
+def invoke_orchestration_api(    version_id: str,
     data: OrchestrationInvokeRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -539,6 +560,82 @@ def invoke_orchestration_api(
     api.total_calls = (api.total_calls or 0) + 1
     api.success_calls = (api.success_calls or 0) + 1
     api.last_error = None
+
+    # 实时大屏留痕：报错/告警计数、事件流、重训任务与换模引用（编排 API 专页数据源）
+    nodes_snapshot = version.nodes_snapshot or []
+    condition_node_id = next(
+        (node.get("id") for node in nodes_snapshot if node.get("operator_id") == "condition"),
+        None,
+    )
+    notify_node_id = next(
+        (node.get("id") for node in nodes_snapshot if node.get("operator_id") == "notify_admins"),
+        None,
+    )
+    swap_deployment_id = next(
+        (
+            (node.get("params") or {}).get("swap_deployment_id")
+            for node in nodes_snapshot
+            if node.get("operator_id") == "retrain_threshold"
+        ),
+        None,
+    )
+    # 报错行判定：条件分支节点 true 分支有输出即命中（输出节点的 branch 恒为 null）
+    error_row_hit = False
+    if condition_node_id and condition_node_id in results:
+        condition_results = results[condition_node_id] or {}
+        if "true_branch" in condition_results:
+            error_row_hit = bool(_as_rows(condition_results, "true_branch"))
+    alert_fired = bool(notify_node_id and results.get(notify_node_id))
+    state = dict(api.showcase_state or {})
+    events = list(state.get("events") or [])[-48:]
+    now_iso = started.isoformat()
+    if error_row_hit:
+        api.error_calls = (api.error_calls or 0) + 1
+        events.append({"id": str(uuid.uuid4()), "event_type": "error_row", "severity": "warning",
+                       "message": f"报错行命中回流（累计第 {api.error_calls} 行）", "created_at": now_iso})
+        if alert_fired:
+            api.alert_calls = (api.alert_calls or 0) + 1
+            events.append({"id": str(uuid.uuid4()), "event_type": "alert_triggered", "severity": "warning",
+                           "message": "方案B报错告警：错误数据已回流", "created_at": now_iso})
+    else:
+        events.append({"id": str(uuid.uuid4()), "event_type": "row_predicted", "severity": "info",
+                       "message": "正常预测", "created_at": now_iso})
+    triggered = any(isinstance(r, dict) and r.get("triggered") for r in rows)
+    if triggered:
+        from app.models.training import TrainingJob
+
+        retrain_job = (
+            db.query(TrainingJob)
+            .filter(
+                TrainingJob.project_id == workflow.project_id,
+                TrainingJob.name.like("编排闭环-自动建模-%"),
+            )
+            .order_by(TrainingJob.created_at.desc())
+            .first()
+        )
+        if retrain_job is not None:
+            state["last_retrain_job_id"] = str(retrain_job.id)
+            events.append({"id": str(uuid.uuid4()), "event_type": "retrain_triggered",
+                           "severity": "info",
+                           "message": f"错误积累达阈值，自动建模已触发（{retrain_job.name}）",
+                           "created_at": now_iso})
+    if swap_deployment_id:
+        state["swap_deployment_id"] = str(swap_deployment_id)
+        from app.models.model_registry import InferenceDeployment
+
+        deployment = db.query(InferenceDeployment).filter(
+            InferenceDeployment.id == uuid.UUID(str(swap_deployment_id)),
+        ).first()
+        current_version = str(deployment.model_version_id) if deployment else None
+        previous_version = state.get("last_model_version_id")
+        if current_version and previous_version and current_version != previous_version:
+            events.append({"id": str(uuid.uuid4()), "event_type": "model_swapped",
+                           "severity": "info", "message": "推理模型已替换为重训最优版本",
+                           "created_at": now_iso})
+        if current_version:
+            state["last_model_version_id"] = current_version
+    state["events"] = events
+    api.showcase_state = state
     db.commit()
 
     def _safe(value):
@@ -561,6 +658,159 @@ def invoke_orchestration_api(
         "branch": branch,
         "records": _safe(rows),
         "invoked_at": started.isoformat(),
+    }
+
+
+# 实时大屏仅面向"通用闭环服务模板"原样结构：七算子缺一不可、不得增减。
+SHOWCASE_OPERATOR_SET = frozenset({
+    "api_input",
+    "load_model_artifact",
+    "apply_model",
+    "condition",
+    "append_error_dataset",
+    "notify_admins",
+    "retrain_threshold",
+})
+
+
+def _showcase_eligible(nodes_snapshot) -> bool:
+    operators = {
+        (node.get("operator_id") or "")
+        for node in (nodes_snapshot or [])
+        if isinstance(node, dict)
+    }
+    return operators == SHOWCASE_OPERATOR_SET
+
+
+def _threshold_rows(nodes_snapshot) -> int:
+    for node in nodes_snapshot or []:
+        if node.get("operator_id") == "retrain_threshold":
+            value = (node.get("params") or {}).get("threshold_rows")
+            try:
+                return max(1, int(value))
+            except (TypeError, ValueError):
+                return 3
+    return 3
+
+
+@router.get("/orchestration/{version_id}/showcase-status")
+def orchestration_showcase_status(
+    version_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """编排 API 实时大屏数据源（字段与闭环任务 status 同构）。"""
+    from app.models.model_registry import InferenceDeployment, ModelVersion
+    from app.models.training import TrainingJob
+    from app.models.workflow import Workflow
+    from app.models.workflow_version import WorkflowVersion
+    from app.services.project_access import ProjectAccessError, ProjectAccessService
+
+    from datetime import datetime, timezone
+
+    def utcnow():
+        return datetime.now(timezone.utc)
+
+    def _error(code: str, message: str, http_status: int):
+        return HTTPException(http_status, detail={"code": code, "message": message})
+
+    try:
+        version_uuid = uuid.UUID(version_id)
+    except (TypeError, ValueError, AttributeError) as error:
+        raise _error("ORCHESTRATION_API_NOT_FOUND", "Orchestration API not found", 404) from error
+    api = db.query(PlatformAPI).filter(
+        PlatformAPI.source_kind == "orchestration",
+        PlatformAPI.source_id == version_uuid,
+    ).order_by(PlatformAPI.created_at.desc()).first()
+    if api is None:
+        raise _error("ORCHESTRATION_API_NOT_FOUND", "Orchestration API not found", 404)
+    version = db.query(WorkflowVersion).filter(WorkflowVersion.id == version_uuid).first()
+    if version is None:
+        raise _error("ORCHESTRATION_API_NOT_FOUND", "Bound workflow version no longer exists", 404)
+    workflow = db.query(Workflow).filter(Workflow.id == version.workflow_id).first()
+    if workflow is None:
+        raise _error("ORCHESTRATION_API_NOT_FOUND", "Bound workflow no longer exists", 404)
+    try:
+        ProjectAccessService().require(db, workflow.project_id, current_user.id, "project.read")
+    except ProjectAccessError as error:
+        code = "ORCHESTRATION_API_NOT_FOUND" if error.hidden else "ORCHESTRATION_API_FORBIDDEN"
+        raise _error(code, "Workflow is not accessible", 404 if error.hidden else 403) from error
+    if not _showcase_eligible(version.nodes_snapshot):
+        raise _error(
+            "SHOWCASE_NOT_ELIGIBLE",
+            "仅支持未增减算子的通用闭环服务模板结构（七算子）",
+            409,
+        )
+
+    state = dict(api.showcase_state or {})
+    events = list(state.get("events") or [])[-50:]
+    total = int(api.total_calls or 0)
+    errors = int(api.error_calls or 0)
+
+    # 惰性合成重训事件：重训任务的创建与 invoke 响应存在时序差，轮询侧兜底
+    latest_retrain = db.query(TrainingJob).filter(
+        TrainingJob.project_id == workflow.project_id,
+        TrainingJob.name.like("编排闭环-自动建模-%"),
+    ).order_by(TrainingJob.created_at.desc()).first()
+    if latest_retrain is not None and str(latest_retrain.id) != state.get("last_retrain_job_id"):
+        events.append({"id": str(uuid.uuid4()), "event_type": "retrain_triggered",
+                       "severity": "info",
+                       "message": f"错误积累达阈值，自动建模已触发（{latest_retrain.name}）",
+                       "created_at": (latest_retrain.created_at or utcnow()).isoformat()})
+        state["last_retrain_job_id"] = str(latest_retrain.id)
+        api.showcase_state = state
+        db.commit()
+
+    retrain_status = "idle"
+    retrain_job_id = state.get("last_retrain_job_id")
+    retrain_job = None
+    if retrain_job_id:
+        try:
+            retrain_job = db.query(TrainingJob).filter(
+                TrainingJob.id == uuid.UUID(str(retrain_job_id)),
+            ).first()
+        except (TypeError, ValueError, AttributeError):
+            retrain_job = None
+    if retrain_job is not None:
+        retrain_status = retrain_job.status if retrain_job.status in {
+            "queued", "running", "completed", "failed", "cancelled",
+        } else "running"
+
+    model_score = None
+    model_version = None
+    deployment = None
+    swap_deployment_id = state.get("swap_deployment_id")
+    if swap_deployment_id:
+        try:
+            deployment = db.query(InferenceDeployment).filter(
+                InferenceDeployment.id == uuid.UUID(str(swap_deployment_id)),
+            ).first()
+        except (TypeError, ValueError, AttributeError):
+            deployment = None
+    if deployment is not None and deployment.model_version_id:
+        model_version_row = db.query(ModelVersion).filter(
+            ModelVersion.id == deployment.model_version_id,
+        ).first()
+        if model_version_row is not None:
+            model_version = f"v{model_version_row.version_number}"
+            if model_version_row.registration_task_id:
+                registration_job = db.query(TrainingJob).filter(
+                    TrainingJob.id == model_version_row.registration_task_id,
+                ).first()
+                score = (registration_job.metrics or {}).get("best_score") if registration_job else None
+                if isinstance(score, (int, float)) and 0 < score <= 1:
+                    model_score = round(float(score), 4)
+
+    return {
+        "total_count": total,
+        "error_count": errors,
+        "alert_count": int(api.alert_calls or 0),
+        "model_score": model_score,
+        "retrain_status": retrain_status,
+        "retrain_job_id": retrain_job_id,
+        "retrain_threshold_rows": _threshold_rows(version.nodes_snapshot),
+        "model_version": model_version,
+        "events": events,
     }
 
 

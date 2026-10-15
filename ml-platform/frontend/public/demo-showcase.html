@@ -226,8 +226,13 @@
     <button id="btnMode">模式：模拟</button>
     <div id="livePanel">
       <span id="connDot"></span>
+      <select id="liveSource">
+        <option value="loop">数据源：闭环任务</option>
+        <option value="orchestration">数据源：编排 API</option>
+      </select>
       <select id="liveProject"><option value="">加载项目...</option></select>
       <select id="liveLoop"><option value="">闭环任务...</option></select>
+      <select id="liveApi" style="display:none"><option value="">编排 API...</option></select>
       <input id="liveToken" placeholder="Token（留空自动读取本浏览器登录）">
       <button id="btnConnect">连接</button>
     </div>
@@ -724,7 +729,45 @@ async function loadLiveLoops(project) {
   }
 }
 async function liveConnect() {
+  const source = liveSource();
   const project = document.getElementById("liveProject").value;
+  if (source === "orchestration") {
+    const apiId = document.getElementById("liveApi").value || live.apiId;
+    if (!apiId) { toast("暂无可上大屏的编排 API（需由通用闭环模板原样创建并发布）", C.red, 3200); return; }
+    live.project = project;
+    live.apiId = apiId;
+    live.synced = false;
+    live.seenIds = null;
+    localStorage.setItem("demoLiveProject", project);
+    localStorage.setItem("demoLiveApi", apiId);
+    clearInterval(live.timer);
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/platform/apis/orchestration/${apiId}/showcase-status`, {
+          headers: liveHeaders(),
+        });
+        if (res.status === 409) {
+          toast("该编排 API 增减过算子，不支持大屏展示", C.red, 3200);
+          clearInterval(live.timer); live.timer = null; live.on = false;
+          document.getElementById("connDot").className = "off";
+          return;
+        }
+        if (!res.ok) throw new Error(String(res.status));
+        const st = await res.json();
+        document.getElementById("connDot").className = "on";
+        applyLiveStatus(st);
+      } catch (e) {
+        document.getElementById("connDot").className = "off";
+      }
+    };
+    await poll();
+    live.timer = setInterval(poll, 100);
+    live.on = true;
+    const apiSel = document.getElementById("liveApi");
+    const aname = apiSel.selectedOptions[0] ? apiSel.selectedOptions[0].textContent : apiId;
+    toast(`已连接编排 API 实时闭环 · ${aname}`, C.green);
+    return;
+  }
   const loopId = document.getElementById("liveLoop").value || live.loopId;
   if (!project) { toast("请先选择项目（加载失败时请检查是否已在主界面登录）", C.red, 3200); return; }
   if (!loopId) { toast("该项目的闭环任务为空，请先在「自动化闭环」页创建任务", C.red, 3200); return; }
@@ -789,6 +832,8 @@ function applyLiveStatus(st) {
   const total = st.total_count || 0;
   const errors = st.error_count || 0;
   const okCount = Math.max(0, total - errors);
+  // 编排 API 模式：阈值与线上模型版本来自 showcase-status
+  if (st.retrain_threshold_rows) { sim.retrainAt = st.retrain_threshold_rows; updateGateVisual(); }
   // 已推理/正常通过按真实条数直读状态（total=推理行数，ok=未报错行数）。
   // 直写 DOM：rAF 缓动在页面后台/未聚焦时会被暂停，数字会冻结。
   const setNow = (k, v) => { hud[k] = v; shown[k] = v;
@@ -804,6 +849,11 @@ function applyLiveStatus(st) {
   updateDatasetVisual(errors, sim.alertEvery);
   updateGateVisual();
   setAlertCount(st.alert_count || 0);
+  /* 编排 API 模式：首连同步线上模型版本号 */
+  if (st.model_version && !live.synced) {
+    const v = parseInt(String(st.model_version).replace(/[^\d]/g, ""), 10);
+    if (v > 0) { sim.version = v; setHud("version", v); setBadge("infer", "v" + v); }
+  }
   /* 预估准确率同步当前部署模型的真实验证评分（0-1 → 百分比） */
   if (typeof st.model_score === "number" && st.model_score > 0) {
     sim.accuracy = Math.round(st.model_score * 1000) / 10;
@@ -913,12 +963,48 @@ btnMode.onclick = () => {
 document.getElementById("btnConnect").onclick = liveConnect;
 document.getElementById("liveProject").addEventListener("change", (e) => {
   live.loopId = null;
-  loadLiveLoops(e.target.value);
+  live.apiId = null;
+  if (liveSource() === "orchestration") loadLiveApis(e.target.value);
+  else loadLiveLoops(e.target.value);
 });
 document.getElementById("liveLoop").addEventListener("change", (e) => {
   live.loopId = e.target.value || null;
   localStorage.setItem("demoLiveLoop", live.loopId || "");
 });
+document.getElementById("liveApi").addEventListener("change", (e) => {
+  live.apiId = e.target.value || null;
+  localStorage.setItem("demoLiveApi", live.apiId || "");
+});
+function liveSource() {
+  return document.getElementById("liveSource").value;
+}
+document.getElementById("liveSource").addEventListener("change", (e) => {
+  const orchestration = e.target.value === "orchestration";
+  document.getElementById("liveLoop").style.display = orchestration ? "none" : "";
+  document.getElementById("liveApi").style.display = orchestration ? "" : "none";
+  if (orchestration) loadLiveApis(document.getElementById("liveProject").value);
+  else loadLiveLoops(document.getElementById("liveProject").value);
+});
+/* 编排 API 模式：加载已发布且具备大屏资格（通用闭环模板原样七算子）的编排 API */
+async function loadLiveApis(project) {
+  const sel = document.getElementById("liveApi");
+  sel.innerHTML = `<option value="">（加载编排 API...）</option>`;
+  if (!project) { sel.innerHTML = `<option value="">（请先选择项目）</option>`; return; }
+  try {
+    const res = await fetch(`/api/platform/apis?status=published&api_type=orchestration`, { headers: liveHeaders() });
+    if (!res.ok) throw new Error(String(res.status));
+    const data = await res.json();
+    const items = (data.items || []).filter(a => a.source_kind === "orchestration" && a.showcase_eligible);
+    if (!items.length) { sel.innerHTML = `<option value="">（暂无可上大屏的编排 API：需由通用闭环模板原样创建并发布）</option>`; live.apiId = null; return; }
+    sel.innerHTML = items.map(a => `<option value="${a.source_id}">${a.name}</option>`).join("");
+    const saved = localStorage.getItem("demoLiveApi");
+    if (saved && items.some(a => a.source_id === saved)) sel.value = saved;
+    live.apiId = sel.value;
+  } catch (e) {
+    sel.innerHTML = `<option value="">（加载失败：请先在主界面登录）</option>`;
+    live.apiId = null;
+  }
+}
 
 /* ================= 自适应缩放 ================= */
 function fit() {

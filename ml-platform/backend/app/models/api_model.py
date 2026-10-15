@@ -34,6 +34,10 @@ class PlatformAPI(Base):
     total_calls = Column(Integer, default=0)
     success_calls = Column(Integer, default=0)
     failed_calls = Column(Integer, default=0)
+    # 编排 API 实时大屏留痕：报错回流/告警计数 + 事件流与重训任务引用
+    error_calls = Column(Integer, default=0)
+    alert_calls = Column(Integer, default=0)
+    showcase_state = Column(JSON, default=dict)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     is_public = Column(Boolean, default=False)
     created_at = Column(DateTime, server_default=func.now())
