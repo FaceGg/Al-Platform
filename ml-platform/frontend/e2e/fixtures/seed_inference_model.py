@@ -38,6 +38,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="inference-e2e-") as directory, SessionLocal() as db:
         project = db.query(Project).filter(Project.id == project_id).one()
         model_library_ids = []
+        model_library_names = []
         for version in (1, 2):
             job = TrainingJob(
                 project_id=project.id,
@@ -79,10 +80,12 @@ def main() -> int:
             job.model_artifact_id = artifact.id
             job.model_library_id = library.id
             model_library_ids.append(str(library.id))
+            model_library_names.append(library.name)
         db.commit()
         print(json.dumps({
             "model_library_id": model_library_ids[0],
             "model_library_ids": model_library_ids,
+            "model_library_names": model_library_names,
         }))
     return 0
 

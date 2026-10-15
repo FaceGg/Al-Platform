@@ -5,6 +5,7 @@ import { resolveE2ePython } from "./pythonExecutable";
 
 type SeededInferenceSources = {
   model_library_ids: string[];
+  model_library_names: string[];
 };
 
 type RolloutFixtureResult = {
@@ -86,7 +87,7 @@ test("model registry production release lifecycle", async ({ page, browser }) =>
 
   const sources = runInferenceFixture<SeededInferenceSources>("seed_inference_model.py", projectId);
   expect(sources.model_library_ids).toHaveLength(2);
-  const [v1SourceId, v2SourceId] = sources.model_library_ids;
+  const [v1SourceName, v2SourceName] = sources.model_library_names;
 
   await page.goto("/models");
   await page.getByRole("combobox", { name: "项目" }).click();
@@ -99,10 +100,12 @@ test("model registry production release lifecycle", async ({ page, browser }) =>
   const modelRow = page.getByRole("row", { name: new RegExp(modelName) });
   await expect(modelRow).toBeVisible();
 
-  const registerAndApprove = async (sourceId: string, versionNumber: number) => {
+  const registerAndApprove = async (sourceLabel: string, versionNumber: number) => {
     await modelRow.getByRole("button", { name: `注册版本 ${modelName}` }).click();
     const registerDialog = page.getByRole("dialog", { name: "注册版本" });
-    await registerDialog.getByLabel("来源训练模型 ID").fill(sourceId);
+    // 来源训练模型是本项目模型库条目下拉，选项显示「名称（版本）」
+    await registerDialog.getByRole("combobox", { name: /来源训练模型/ }).click();
+    await page.getByRole("option", { name: new RegExp(sourceLabel) }).click();
     await registerDialog.getByRole("button", { name: "注册版本" }).click();
 
     await modelRow.getByRole("button", { name: `版本 ${modelName}`, exact: true }).click();
@@ -113,8 +116,8 @@ test("model registry production release lifecycle", async ({ page, browser }) =>
     await versionDrawer.getByRole("button", { name: "Close" }).click();
   };
 
-  await registerAndApprove(v1SourceId, 1);
-  await registerAndApprove(v2SourceId, 2);
+  await registerAndApprove(v1SourceName, 1);
+  await registerAndApprove(v2SourceName, 2);
 
   await page.getByRole("tab", { name: "推理部署" }).click();
   await page.getByRole("button", { name: "新建部署" }).click();
