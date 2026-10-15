@@ -112,6 +112,28 @@ def pick_orchestration_api(client: DemoClient) -> dict:
     return items[0]
 
 
+def align_record(record: dict, api: dict) -> dict:
+    """按 API 发布时的 request_schema.record 特征清单过滤对齐输入行。"""
+    schema = api.get("request_schema") or {}
+    expected = schema.get("record") if isinstance(schema, dict) else None
+    if not expected:
+        return record
+    names = [
+        item.get("name") if isinstance(item, dict) else str(item)
+        for item in expected
+    ]
+    aligned: dict = {}
+    missing = [name for name in names if name not in record]
+    if missing:
+        raise SystemExit(
+            f"输入数据缺少 {len(missing)} 个模型特征（如 {missing[:5]}）："
+            "请先对原始数据做特征工程，或换用含全部特征的 CSV"
+        )
+    for name in names:
+        aligned[name] = record[name]
+    return aligned
+
+
 def load_record(args) -> dict:
     if args.json:
         return json.loads(Path(args.json).read_text(encoding="utf-8"))["record"]
@@ -138,7 +160,7 @@ def main() -> int:
     parser.add_argument("--username", default="admin")
     parser.add_argument("--password", default="admin123")
     parser.add_argument("--csv", help="演示 CSV（默认取第 --row 行，跳过 fault 列）")
-    parser.add_argument("--row", type=int, default=0, help="CSV 行号（0 起）")
+    parser.add_argument("--row", type=int, default=1, help="CSV 行号（0 起）")
     parser.add_argument("--json", help="单行请求体 JSON 文件（{\"record\": {...}}）")
     parser.add_argument("--count", type=int, default=1, help="调用次数")
     parser.add_argument("--interval", type=float, default=1.5, help="调用间隔秒")
@@ -153,15 +175,20 @@ def main() -> int:
     print(f"编排 API：{api['name']}（v{api['version']}）")
 
     record = load_record(args)
+    record = align_record(record, api)
     for index in range(args.count):
         status, body = client.request("POST", endpoint, payload={"record": record})
-        records = body.get("records") or []
-        extra = records[0] if records and isinstance(records[0], dict) else {}
-        print(
-            f"[{index + 1}/{args.count}] HTTP {status} | branch={body.get('branch')} "
-            f"| total_rows={extra.get('total_rows')} cycle={extra.get('cycle_rows')}/"
-            f"{extra.get('threshold_rows')} triggered={extra.get('triggered')}"
-        )
+        if status != 200:
+            detail = body.get("detail")
+            print(f"[{index + 1}/{args.count}] HTTP {status} | {json.dumps(detail, ensure_ascii=False)[:300]}")
+        else:
+            records = body.get("records") or []
+            extra = records[0] if records and isinstance(records[0], dict) else {}
+            print(
+                f"[{index + 1}/{args.count}] HTTP {status} | branch={body.get('branch')} "
+                f"| total_rows={extra.get('total_rows')} cycle={extra.get('cycle_rows')}/"
+                f"{extra.get('threshold_rows')} triggered={extra.get('triggered')}"
+            )
         if index < args.count - 1:
             time.sleep(args.interval)
     print("提示：报错累计达阈值会触发自动建模；建模完成后，下一次调用将自动完成换模。")
