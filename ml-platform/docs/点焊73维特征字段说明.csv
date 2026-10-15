@@ -1,0 +1,74 @@
+字段名,说明
+wld1c,焊点1（WLD1）焊接电流（原始报告字段）
+wld2c,焊点2（WLD2）焊接电流（原始报告字段）
+tipv1,焊点1电极尖端电压（原始报告字段）
+tipv2,焊点2电极尖端电压（原始报告字段）
+wres,焊接动态电阻（原始报告字段）
+energy,焊接能量（原始报告字段）
+wld_spatter_strength,焊点飞溅强度-整体（原始报告字段）
+wld1_spatter_strength,焊点1飞溅强度（原始报告字段）
+wld2_spatter_strength,焊点2飞溅强度（原始报告字段）
+spatterpos_wld,焊点处飞溅位置（原始报告字段）
+spatterpos_pre,预焊点飞溅位置（原始报告字段）
+spotdiameter,熔核直径（原始报告字段）
+spotposition,焊点位置编号（原始报告字段）
+spattercode,飞溅代码（原始报告字段，十位为飞溅大类）
+current_ratio,两焊点电流比（wld1c/wld2c，反映电流分配平衡度）
+voltage_ratio,两焊点电压比（tipv1/tipv2）
+power_wld1,焊点1功率（wld1c×tipv1）
+power_wld2,焊点2功率（wld2c×tipv2）
+power_ratio,两焊点功率比（power_wld1/power_wld2）
+energy_per_current,单位电流能量（energy/wld1c）
+spatter_total,两焊点飞溅强度之和
+spatter_asym,两焊点飞溅强度不对称度（绝对差）
+diameter_norm,熔核直径归一化值（相对全批次中位数）
+energy_dev,能量标准化偏差（相对全批均值/标准差的Z分数）
+spatter_seg,飞溅代码分段（spattercode 的十位整数）
+current_mean,电流波形（cvei 解码，870 采样点）——全波形均值
+current_std,电流波形（cvei 解码，870 采样点）——全波形标准差（波动水平）
+current_max,电流波形（cvei 解码，870 采样点）——波形峰值
+current_min,电流波形（cvei 解码，870 采样点）——波形最小值
+current_pp,电流波形（cvei 解码，870 采样点）——峰峰值（最大-最小）
+current_median,电流波形（cvei 解码，870 采样点）——波形中位数
+current_rise_time,电流波形（cvei 解码，870 采样点）——上升时间（幅值 10%→90% 所需采样点数，越小越陡）
+current_stable_mean,电流波形（cvei 解码，870 采样点）——后半段（稳定段）均值
+current_stable_std,电流波形（cvei 解码，870 采样点）——后半段（稳定段）标准差
+current_avg_diff,电流波形（cvei 解码，870 采样点）——相邻采样点平均绝对差（平均变化率）
+current_max_diff,电流波形（cvei 解码，870 采样点）——相邻采样点最大绝对差（最大跳变）
+current_p95_diff,电流波形（cvei 解码，870 采样点）——相邻采样点绝对差的 95 分位数（突变强度）
+voltage_mean,电压波形（cvev 解码，870 采样点）——全波形均值
+voltage_std,电压波形（cvev 解码，870 采样点）——全波形标准差（波动水平）
+voltage_max,电压波形（cvev 解码，870 采样点）——波形峰值
+voltage_min,电压波形（cvev 解码，870 采样点）——波形最小值
+voltage_pp,电压波形（cvev 解码，870 采样点）——峰峰值（最大-最小）
+voltage_median,电压波形（cvev 解码，870 采样点）——波形中位数
+voltage_rise_time,电压波形（cvev 解码，870 采样点）——上升时间（幅值 10%→90% 所需采样点数，越小越陡）
+voltage_stable_mean,电压波形（cvev 解码，870 采样点）——后半段（稳定段）均值
+voltage_stable_std,电压波形（cvev 解码，870 采样点）——后半段（稳定段）标准差
+voltage_avg_diff,电压波形（cvev 解码，870 采样点）——相邻采样点平均绝对差（平均变化率）
+voltage_max_diff,电压波形（cvev 解码，870 采样点）——相邻采样点最大绝对差（最大跳变）
+voltage_p95_diff,电压波形（cvev 解码，870 采样点）——相邻采样点绝对差的 95 分位数（突变强度）
+resistance_mean,电阻波形（cver 解码，870 采样点）——全波形均值
+resistance_std,电阻波形（cver 解码，870 采样点）——全波形标准差（波动水平）
+resistance_max,电阻波形（cver 解码，870 采样点）——波形峰值
+resistance_min,电阻波形（cver 解码，870 采样点）——波形最小值
+resistance_pp,电阻波形（cver 解码，870 采样点）——峰峰值（最大-最小）
+resistance_median,电阻波形（cver 解码，870 采样点）——波形中位数
+resistance_rise_time,电阻波形（cver 解码，870 采样点）——上升时间（幅值 10%→90% 所需采样点数，越小越陡）
+resistance_stable_mean,电阻波形（cver 解码，870 采样点）——后半段（稳定段）均值
+resistance_stable_std,电阻波形（cver 解码，870 采样点）——后半段（稳定段）标准差
+resistance_avg_diff,电阻波形（cver 解码，870 采样点）——相邻采样点平均绝对差（平均变化率）
+resistance_max_diff,电阻波形（cver 解码，870 采样点）——相邻采样点最大绝对差（最大跳变）
+resistance_p95_diff,电阻波形（cver 解码，870 采样点）——相邻采样点绝对差的 95 分位数（突变强度）
+power_mean,功率波形（cvep 解码，870 采样点）——全波形均值
+power_std,功率波形（cvep 解码，870 采样点）——全波形标准差（波动水平）
+power_max,功率波形（cvep 解码，870 采样点）——波形峰值
+power_min,功率波形（cvep 解码，870 采样点）——波形最小值
+power_pp,功率波形（cvep 解码，870 采样点）——峰峰值（最大-最小）
+power_median,功率波形（cvep 解码，870 采样点）——波形中位数
+power_rise_time,功率波形（cvep 解码，870 采样点）——上升时间（幅值 10%→90% 所需采样点数，越小越陡）
+power_stable_mean,功率波形（cvep 解码，870 采样点）——后半段（稳定段）均值
+power_stable_std,功率波形（cvep 解码，870 采样点）——后半段（稳定段）标准差
+power_avg_diff,功率波形（cvep 解码，870 采样点）——相邻采样点平均绝对差（平均变化率）
+power_max_diff,功率波形（cvep 解码，870 采样点）——相邻采样点最大绝对差（最大跳变）
+power_p95_diff,功率波形（cvep 解码，870 采样点）——相邻采样点绝对差的 95 分位数（突变强度）
