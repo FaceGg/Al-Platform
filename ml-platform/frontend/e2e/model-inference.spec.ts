@@ -103,9 +103,11 @@ test("model registry production release lifecycle", async ({ page, browser }) =>
   const registerAndApprove = async (sourceLabel: string, versionNumber: number) => {
     await modelRow.getByRole("button", { name: `注册版本 ${modelName}` }).click();
     const registerDialog = page.getByRole("dialog", { name: "注册版本" });
-    // 来源训练模型是本项目模型库条目下拉，选项显示「名称（版本）」
+    // 来源训练模型是本项目模型库条目下拉，选项显示「名称（版本）」。
+    // 不用 getByRole("option")：antd 的隐藏无障碍选项文本是原始 ID 且
+    // 不可见，会 120s 超时；getByText 直接命中可见下拉项（week12 同款）。
     await registerDialog.getByRole("combobox", { name: /来源训练模型/ }).click();
-    await page.getByRole("option", { name: new RegExp(sourceLabel) }).click();
+    await page.getByText(new RegExp(sourceLabel)).click();
     await registerDialog.getByRole("button", { name: "注册版本" }).click();
 
     await modelRow.getByRole("button", { name: `版本 ${modelName}`, exact: true }).click();
