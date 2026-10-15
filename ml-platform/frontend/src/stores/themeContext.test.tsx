@@ -18,7 +18,25 @@ describe("ThemeProvider", () => {
     delete document.documentElement.dataset.theme;
   });
 
-  it("synchronizes the active theme to the document root", () => {
+  it("defaults to the light theme and synchronizes it to the document root", () => {
+    render(
+      <ThemeProvider>
+        <ThemeProbe />
+      </ThemeProvider>
+    );
+
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    expect(localStorage.getItem("theme")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "light" }));
+
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(localStorage.getItem("theme")).toBe("dark");
+  });
+
+  it("honors a previously saved theme over the default", () => {
+    localStorage.setItem("theme", "dark");
+
     render(
       <ThemeProvider>
         <ThemeProbe />
@@ -26,10 +44,5 @@ describe("ThemeProvider", () => {
     );
 
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
-
-    fireEvent.click(screen.getByRole("button", { name: "dark" }));
-
-    expect(document.documentElement).toHaveAttribute("data-theme", "light");
-    expect(localStorage.getItem("theme")).toBe("light");
   });
 });
