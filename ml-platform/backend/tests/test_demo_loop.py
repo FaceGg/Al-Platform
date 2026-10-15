@@ -711,38 +711,46 @@ class DemoLoopFlow(unittest.TestCase):
             finally:
                 db2.close()
 
-        scoped_predict()
-        scoped_predict()
-        scoped_predict()
+        scoped_predict()  # 告警 → 创建任务 A（报错数据集 1 行）
         tasks = loop_tasks()
         self.assertEqual(len(tasks), 1, [t.name for t in tasks])
 
+        scoped_predict()  # 数据增长 → 任务 A 取消、任务 B 重建（含全部已收集行）
+        tasks = loop_tasks()
+        self.assertEqual(len(tasks), 2, [t.name for t in tasks])
+        self.assertEqual(sum(1 for t in tasks if t.status == "cancelled"), 1)
+        active = [t for t in tasks if t.status == "awaiting_annotation"]
+        self.assertEqual(len(active), 1)
+
+        scoped_predict()  # 再次增长 → 任务 B 取消、任务 C 重建
+        tasks = loop_tasks()
+        self.assertEqual(len(tasks), 3, [t.name for t in tasks])
+        self.assertEqual(sum(1 for t in tasks if t.status == "cancelled"), 2)
+        active = [t for t in tasks if t.status == "awaiting_annotation"]
+        self.assertEqual(len(active), 1)
+
         db = SessionLocal()
         try:
-            task = db.query(GenericAnnotationTask).filter(
+            task = [t for t in db.query(GenericAnnotationTask).filter(
+                GenericAnnotationTask.project_id == uuid.UUID(self.project_id),
                 GenericAnnotationTask.name.startswith(task_prefix),
-            ).one()
+            ).all() if t.status == "awaiting_annotation"][0]
             task.status = "completed"
             db.commit()
+            task_id = task.id
         finally:
             db.close()
-        scoped_predict()
+        scoped_predict()  # 上一任务完成后新一轮告警 → 创建任务 D
         st_dbg = client.get(
             f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}/status",
             headers=self.h,
         ).json()
         types_dbg = [e["event_type"] for e in st_dbg["events"]]
-        # 同事务事件时间戳并列，顺序不保证：按计数断言（两轮各建一个任务）。
-        self.assertGreaterEqual(types_dbg.count("review_task_created"), 2)
-        self.assertGreaterEqual(types_dbg.count("review_task_exists"), 2)
-        self.assertEqual(len(loop_tasks()), 2)
-
-        st = client.get(
-            f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}/status",
-            headers=self.h,
-        ).json()
-        types = [event["event_type"] for event in st["events"]]
-        self.assertIn("review_task_exists", types)
+        self.assertGreaterEqual(types_dbg.count("review_task_created"), 4)
+        self.assertGreaterEqual(types_dbg.count("review_task_superseded"), 2)
+        self.assertEqual(len(loop_tasks()), 4)
+        self.assertEqual(
+            sum(1 for t in loop_tasks() if t.status == "awaiting_annotation"), 1)
 
     def test_20_retrain_state_recovers_after_cancel_and_failure(self):
         # 回归：取消/失败/完成后 retrain_job_id 必须清引用回可触发状态，

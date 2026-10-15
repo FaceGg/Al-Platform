@@ -756,12 +756,31 @@ class DemoLoopService:
             if existing is not None and existing.status not in {
                 "completed", "accepted", "cancelled", "archived",
             }:
-                self._emit(
-                    config, "review_task_exists",
-                    f"人工审核任务仍在进行中（{existing.name}），新报错数据继续追加到同一报错数据集",
-                    severity="info",
+                # 任务创建后又收集了新数据（报错/正确）→ 取消旧任务并重建，
+                # 让审核样本覆盖全部已收集数据；无新增则维持原任务。
+                artifact = self.db.query(Artifact).filter(
+                    Artifact.id == config.error_artifact_id,
+                ).first()
+                created_rows = int(
+                    ((existing.task_snapshot or {}).get("dataset_version") or {}).get("row_count") or 0
                 )
-                return
+                current_rows = int((artifact.metadata_ or {}).get("row_count") or 0) if artifact else 0
+                if artifact is not None and current_rows > created_rows:
+                    existing.status = "cancelled"
+                    config.review_task_id = None
+                    self.db.commit()
+                    self._emit(
+                        config, "review_task_superseded",
+                        f"检测到新增收集数据（{created_rows} → {current_rows} 行），已重建审核任务以纳入全部样本",
+                        severity="info",
+                    )
+                else:
+                    self._emit(
+                        config, "review_task_exists",
+                        f"人工审核任务仍在进行中（{existing.name}），新报错数据继续追加到同一报错数据集",
+                        severity="info",
+                    )
+                    return
         artifact = self.db.query(Artifact).filter(
             Artifact.id == config.error_artifact_id,
         ).first()
