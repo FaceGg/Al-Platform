@@ -768,7 +768,7 @@ async function liveConnect() {
       }
     };
     await poll();
-    live.timer = setInterval(poll, 100);
+    live.timer = setInterval(poll, 20);
     live.on = true;
     const aname = apiSel.selectedOptions[0] ? apiSel.selectedOptions[0].textContent : apiId;
     toast(`已连接编排 API 实时闭环 · ${aname}`, C.green);
@@ -807,7 +807,7 @@ async function liveConnect() {
     }
   };
   await poll();
-  live.timer = setInterval(poll, 100);
+  live.timer = setInterval(poll, 20);
   live.on = true;
   const sel2 = document.getElementById("liveProject");
   const loopSel = document.getElementById("liveLoop");
