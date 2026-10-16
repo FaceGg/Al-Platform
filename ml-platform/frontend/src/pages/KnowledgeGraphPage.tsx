@@ -1,8 +1,9 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
-  Select, Button, Form, Input, List, Typography, message, Card, Space, Tag, Empty
+  Select, Button, Form, Input, List, Typography, message, Card, Space, Tag, Empty,
+  AutoComplete, Statistic, InputNumber,
 } from "antd";
-import { PlusOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, AimOutlined } from "@ant-design/icons";
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
@@ -10,7 +11,8 @@ import { useI18n } from "../i18n";
 const { Text } = Typography;
 
 interface GraphNode {
-  id: string; label: string; type?: string; source?: string; docCount?: number; x?: number; y?: number;
+  id: string; label: string; type?: string; source?: string; freq?: number;
+  docCount?: number; x?: number; y?: number;
 }
 interface GraphEdge {
   source: string; target: string; label?: string; type?: string;
@@ -27,12 +29,24 @@ export default function KnowledgeGraphPage() {
     extractEmpty: "抽取完成：未发现满足阈值的实体（可检查文档内容或降低词频阈值）",
     extractFailed: "自动抽取失败",
     auto: "自动", manual: "手动", docCount: (n: number) => `出处文档 ${n} 篇`,
+    searchPh: "搜索实体，查看它的邻域",
+    overview: "返回总览",
+    inLibrary: "库内实体", viewOf: "当前视图",
+    viewHint: (lib: number, view: number) => `库内 ${lib} 实体 · 视图 ${view} 个${view < lib ? "（Top 高频 + 其关系）" : ""}`,
+    neighborhood: "邻域",
+    expandHint: "点击画布或列表中的实体可聚焦其邻域",
   } : {
     extract: "Auto extract", extracting: "Extracting...",
     extractDone: (e: number, r: number) => `Extracted: ${e} entities, ${r} relations`,
     extractEmpty: "Extracted nothing above threshold (check document content or lower the frequency threshold)",
     extractFailed: "Auto extraction failed",
     auto: "Auto", manual: "Manual", docCount: (n: number) => `${n} source doc(s)`,
+    searchPh: "Search an entity to view its neighborhood",
+    overview: "Back to overview",
+    inLibrary: "In library", viewOf: "View",
+    viewHint: (lib: number, view: number) => `${lib} entities in library · ${view} in view${view < lib ? " (top hubs + their edges)" : ""}`,
+    neighborhood: "Neighborhood",
+    expandHint: "Click an entity on the canvas or in the list to focus its neighborhood",
   };
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [bases, setBases] = useState<any[]>([]);
@@ -41,6 +55,8 @@ export default function KnowledgeGraphPage() {
   const [loading, setLoading] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [hover, setHover] = useState<{ x: number; y: number; node: GraphNode } | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const [viewSize, setViewSize] = useState(100);
   const [form] = Form.useForm();
   const [edgeForm] = Form.useForm();
   const [simNodes, setSimNodes] = useState<Array<GraphNode & { vx: number; vy: number }>>([]);
@@ -63,6 +79,7 @@ export default function KnowledgeGraphPage() {
           label: n.label ?? n.name ?? n.id,
           type: n.type ?? n.entity_type ?? "entity",
           source: n.properties?.source,
+          freq: n.properties?.freq ?? 0,
           docCount: Array.isArray(n.properties?.doc_ids) ? n.properties.doc_ids.length : undefined,
           x: Math.random() * 600 + 50,
           y: Math.random() * 400 + 50,
@@ -74,6 +91,7 @@ export default function KnowledgeGraphPage() {
           type: edge.type ?? edge.relation_type,
         }));
         setGraphData({ nodes, edges });
+        setFocusId(null);
       })
       .catch(() => message.error(t.common.error))
       .finally(() => setLoading(false));
@@ -81,11 +99,53 @@ export default function KnowledgeGraphPage() {
 
   useEffect(() => { loadGraph(); }, [selectedKb]);
 
-  // Simple force-directed layout simulation
+  // 视图模型：聚焦邻域 或 Top-N 总览（数据全量在 graphData，渲染只取子集）
+  const view = useMemo((): GraphData => {
+    const all = graphData.nodes;
+    if (focusId) {
+      const keep = new Set([focusId]);
+      for (const e of graphData.edges) {
+        if (e.source === focusId) keep.add(e.target);
+        if (e.target === focusId) keep.add(e.source);
+      }
+      return {
+        nodes: all.filter((n) => keep.has(n.id)),
+        edges: graphData.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+      };
+    }
+    if (all.length <= viewSize) return graphData;
+    const degree = new Map<string, number>();
+    for (const e of graphData.edges) {
+      degree.set(e.source, (degree.get(e.source) || 0) + 1);
+      degree.set(e.target, (degree.get(e.target) || 0) + 1);
+    }
+    const hubs = [...all]
+      .sort((a, b) => (b.freq || 0) - (a.freq || 0)
+        || (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
+      .slice(0, viewSize);
+    const keep = new Set(hubs.map((n) => n.id));
+    return {
+      nodes: all.filter((n) => keep.has(n.id)),
+      edges: graphData.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+    };
+  }, [graphData, focusId, viewSize]);
+
+  const searchOptions = useMemo(
+    () => graphData.nodes.map((n) => ({ value: n.label, id: n.id })),
+    [graphData.nodes],
+  );
+
+  const focusByLabel = (label: string) => {
+    const node = graphData.nodes.find((n) => n.label === label);
+    if (node) setFocusId(node.id);
+  };
+
+  // Simple force-directed layout simulation over the current view
   useEffect(() => {
-    if (graphData.nodes.length === 0) { setSimNodes([]); return; }
-    const nodes = graphData.nodes.map((n) => ({ ...n, vx: 0, vy: 0 }));
-    const edges = graphData.edges;
+    const viewNodes = view.nodes;
+    if (viewNodes.length === 0) { setSimNodes([]); return; }
+    const nodes = viewNodes.map((n) => ({ ...n, vx: 0, vy: 0 }));
+    const edges = view.edges;
     setSimNodes(nodes);
 
     let frame = 0;
@@ -141,9 +201,9 @@ export default function KnowledgeGraphPage() {
     };
     animRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animRef.current);
-  }, [graphData]);
+  }, [view]);
 
-  // Canvas drawing
+  // Canvas drawing (view subset only)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || simNodes.length === 0) return;
@@ -156,7 +216,7 @@ export default function KnowledgeGraphPage() {
     ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 
     // Draw edges
-    for (const e of graphData.edges) {
+    for (const e of view.edges) {
       const s = simNodes.find((n) => n.id === e.source);
       const t = simNodes.find((n) => n.id === e.target);
       if (!s || !t) continue;
@@ -179,7 +239,7 @@ export default function KnowledgeGraphPage() {
     for (const n of simNodes) {
       ctx.beginPath();
       ctx.arc(n.x || 0, n.y || 0, 18, 0, Math.PI * 2);
-      ctx.fillStyle = n.type === "entity" ? "#1890ff" : "#52c41a";
+      ctx.fillStyle = n.id === focusId ? "#fa8c16" : n.type === "entity" ? "#1890ff" : "#52c41a";
       ctx.fill();
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 2;
@@ -191,7 +251,7 @@ export default function KnowledgeGraphPage() {
       const lbl = n.label.length > 8 ? n.label.slice(0, 7) + ".." : n.label;
       ctx.fillText(lbl, n.x || 0, n.y || 0);
     }
-  }, [simNodes, graphData.edges]);
+  }, [simNodes, view, focusId]);
 
   const handleCanvasMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -199,12 +259,25 @@ export default function KnowledgeGraphPage() {
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
-    const hit = simNodes.find((n) => {
+    let best: { d: number; node: GraphNode } | null = null;
+    for (const n of simNodes) {
       const dx = (n.x || 0) - mx;
       const dy = (n.y || 0) - my;
-      return dx * dx + dy * dy <= 20 * 20;
-    });
-    setHover(hit ? { x: mx, y: my, node: hit } : null);
+      const d = dx * dx + dy * dy;
+      if (d <= 20 * 20 && (!best || d < best.d)) best = { d, node: n };
+    }
+    setHover(best ? { x: mx, y: my, node: best.node } : null);
+  };
+
+  const addRelation = async (values: any) => {
+    try {
+      await apiClient.post("/knowledge/bases/" + selectedKb + "/graph/relations", values);
+      message.success(t.common.success);
+      edgeForm.resetFields();
+      loadGraph();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || t.common.error);
+    }
   };
 
   const addEntity = async (values: any) => {
@@ -237,17 +310,6 @@ export default function KnowledgeGraphPage() {
     }
   };
 
-  const addRelation = async (values: any) => {
-    try {
-      await apiClient.post("/knowledge/bases/" + selectedKb + "/graph/relations", values);
-      message.success(t.common.success);
-      edgeForm.resetFields();
-      loadGraph();
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || t.common.error);
-    }
-  };
-
   const deleteEntity = async (id: string) => {
     try {
       await apiClient.delete("/knowledge/graph/entities/" + id);
@@ -267,7 +329,7 @@ export default function KnowledgeGraphPage() {
             placeholder={t.knowledge.title}
             style={{ width: 200 }}
             value={selectedKb}
-            onChange={setSelectedKb}
+            onChange={(v) => { setSelectedKb(v); setFocusId(null); }}
             options={bases.map((b: any) => ({ value: b.id, label: b.name }))}
           />
           <Button icon={<ReloadOutlined />} onClick={loadGraph} loading={loading}>
@@ -278,21 +340,48 @@ export default function KnowledgeGraphPage() {
           </Button>
         </Space>
       </div>
+      <div style={{ marginBottom: 12 }}>
+        <Space wrap>
+          <AutoComplete
+            options={searchOptions}
+            style={{ width: 260 }}
+            placeholder={graphText.searchPh}
+            filterOption={(input, option) =>
+              (option?.value || "").toLowerCase().includes(input.toLowerCase())}
+            onSelect={(value: string | undefined) => { if (value) focusByLabel(value); }}
+            value={undefined}
+          />
+          {focusId && (
+            <Button icon={<AimOutlined />} onClick={() => setFocusId(null)}>
+              {graphText.overview}
+            </Button>
+          )}
+          <Statistic title={graphText.inLibrary} value={graphData.nodes.length} style={{ margin: 0 }} />
+          <Statistic title={graphText.viewOf} value={view.nodes.length} style={{ margin: 0 }} />
+          <InputNumber
+            min={10} step={50} value={viewSize}
+            onChange={(v) => setViewSize(Number(v) || 100)}
+            style={{ width: 90 }}
+          />
+          <Text type="secondary" style={{ fontSize: 12 }}>{graphText.expandHint}</Text>
+        </Space>
+      </div>
       <div style={{ display: "flex", gap: 16 }}>
         <div style={{ flex: 1 }}>
           <Card
             style={{ height: 500, padding: 0, overflow: "hidden" }}
             styles={{ body: { height: "100%", padding: 0 } }}
           >
-            {simNodes.length === 0 && !loading ? (
+            {view.nodes.length === 0 && !loading ? (
               <Empty description={t.common.loading} style={{ marginTop: 200 }} />
             ) : (
               <div style={{ position: "relative", width: "100%", height: "100%" }}>
                 <canvas
                   ref={canvasRef}
-                  style={{ width: "100%", height: "100%", display: "block" }}
+                  style={{ width: "100%", height: "100%", display: "block", cursor: hover ? "pointer" : "default" }}
                   onMouseMove={handleCanvasMove}
                   onMouseLeave={() => setHover(null)}
+                  onClick={() => { if (hover) setFocusId(hover.node.id === focusId ? null : hover.node.id); }}
                 />
                 {hover && (
                   <div style={{
@@ -352,14 +441,16 @@ export default function KnowledgeGraphPage() {
           <Card size="small" title={t.knowledge.entity + " " + t.nav.data}>
             <List
               size="small"
-              dataSource={graphData.nodes}
-              style={{ maxHeight: 200, overflowY: "auto" }}
+              dataSource={view.nodes}
+              style={{ maxHeight: 260, overflowY: "auto" }}
               locale={{ emptyText: <Empty description={t.common.loading} /> }}
               renderItem={(node: GraphNode) => (
                 <List.Item
+                  style={{ cursor: "pointer", background: node.id === focusId ? "#fff7e6" : undefined }}
+                  onClick={() => setFocusId(node.id === focusId ? null : node.id)}
                   actions={[
                     <Button type="link" danger size="small" icon={<DeleteOutlined />}
-                      onClick={() => deleteEntity(node.id)} />,
+                      onClick={(e) => { e.stopPropagation(); deleteEntity(node.id); }} />,
                   ]}
                 >
                   <Space>

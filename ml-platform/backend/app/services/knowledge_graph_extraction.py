@@ -1,9 +1,15 @@
+# -*- coding: utf-8 -*-
 """Rule + statistics based knowledge-graph extraction for knowledge bases.
 
 Deterministic, no LLM dependency (a future optional LLM pass would tag itself
 via properties.method). The auto layer is fully rebuilt on each run:
 entities/relations flagged properties.source="auto" are replaced, while
 user-created (manual) graph rows are never touched.
+
+Storage follows the mainstream graph-DB model: every candidate above the
+frequency threshold is persisted — entity/relation caps default to unlimited
+(0) and exist only as deployment-level guardrails; the VIEW layer (graph page)
+decides what to render.
 """
 import re
 import time
@@ -15,11 +21,16 @@ from app.models.knowledge import GraphEntity, GraphRelation
 from app.services.knowledge_retrieval import extract_pos_pairs
 
 # Ambiguous high-frequency words that drown out real domain concepts.
+# The legal/regulation filler set matters for statute corpora (应当/不得/…).
 STOPWORDS = {
     "我们", "你们", "他们", "这个", "那个", "一个", "一种", "一些", "以上", "以下",
     "可以", "应该", "需要", "使用", "进行", "出现", "发生", "导致", "造成", "问题",
     "情况", "方法", "方式", "结果", "原因", "时候", "方面", "内容", "数据", "系统",
     "the", "and", "for", "with", "this", "that", "from", "are", "was", "were",
+    # 法律/规范文本高频虚词与套话
+    "应当", "不得", "可以", "有关", "下列", "或者", "以及", "其中", "依法", "按照",
+    "要求", "规定", "办法", "管理", "责任", "部门", "单位", "机构", "国家", "实行",
+    "加强", "完善", "落实", "执行", "检查", "监督", "符合", "满足", "具有", "存在",
 }
 
 SENTENCE_SPLIT = re.compile(r"[。！？；;！?]+|\n+")
@@ -55,10 +66,13 @@ def extract_kb_graph(db, kb, doc_contents: list[tuple[str, str]]) -> dict:
             The auto layer is rebuilt from exactly these documents.
 
     Returns an ExtractionReport dict; never raises on empty input.
+    Entity/relation caps come from settings; values <= 0 mean unlimited —
+    storage keeps everything above min frequency, the view layer limits what
+    is rendered.
     """
     started = time.monotonic()
-    max_entities = getattr(settings, "knowledge_graph_max_entities", 500)
-    max_relations = getattr(settings, "knowledge_graph_max_relations", 2000)
+    max_entities = getattr(settings, "knowledge_graph_max_entities", 0) or 0
+    max_relations = getattr(settings, "knowledge_graph_max_relations", 0) or 0
     min_freq = getattr(settings, "knowledge_graph_min_entity_freq", 2)
     time_budget = getattr(settings, "knowledge_graph_time_budget_seconds", 30)
 
@@ -69,7 +83,7 @@ def extract_kb_graph(db, kb, doc_contents: list[tuple[str, str]]) -> dict:
     freq: Counter = Counter()
     doc_freq: defaultdict = defaultdict(set)
     entity_pos: defaultdict = defaultdict(Counter)
-    sentence_entities: list[set[str]] = []
+    sentences: list[tuple[str, set[str]]] = []
     for doc_id, content in doc_contents:
         for sentence in _split_sentences(content):
             names: set[str] = set()
@@ -83,24 +97,27 @@ def extract_kb_graph(db, kb, doc_contents: list[tuple[str, str]]) -> dict:
                 freq[name] += 1
                 doc_freq[name].add(doc_id)
             if names:
-                sentence_entities.append(names)
+                sentences.append((sentence, names))
             if _expired():
                 break
 
-    # Pass 2: rank, threshold, cap.
+    candidates = sum(1 for _, n in freq.items() if n >= min_freq)
+    # Pass 2: rank by frequency, threshold, cap (cap <= 0 keeps everything).
     ranked = [(name, n) for name, n in freq.most_common() if n >= min_freq]
-    truncated = len(ranked) > max_entities or _expired()
-    kept_names = {name for name, _ in ranked[:max_entities]}
+    truncated = _expired() or (0 < max_entities < len(ranked))
+    kept_names = {name for name, _ in ranked[: max_entities or None]}
     if not kept_names:
         _clear_auto_layer(db, kb.id)
         db.commit()
         return _report(0, 0, len(freq), started, truncated)
 
-    # Pass 3: relations - typed pattern hits, then plain co-occurrence.
+    kept = kept_names
+    # Pass 3: relations - typed pattern hits, then plain co-occurrence. Uses
+    # the per-sentence candidate sets from pass 1 (set intersection), so cost
+    # scales with mentions per sentence, not with the entity vocabulary size.
     relation_counter: Counter = Counter()
-    for sentence in (s for _, content in doc_contents for s in _split_sentences(content)):
-        haystack = sentence.casefold()
-        present = sorted(name for name in kept_names if name in haystack)
+    for sentence, names in sentences:
+        present = sorted(names & kept)
         if len(present) < 2:
             continue
         relation_type = next(
@@ -109,8 +126,7 @@ def extract_kb_graph(db, kb, doc_contents: list[tuple[str, str]]) -> dict:
         )
         for i, source in enumerate(present):
             for target in present[i + 1:]:
-                if source != target:
-                    relation_counter[(source, target, relation_type or "co_occurs_with")] += 1
+                relation_counter[(source, target, relation_type or "co_occurs_with")] += 1
         if _expired():
             truncated = True
             break
@@ -118,7 +134,7 @@ def extract_kb_graph(db, kb, doc_contents: list[tuple[str, str]]) -> dict:
     # Persist: replace the auto layer, keep manual rows untouched.
     _clear_auto_layer(db, kb.id)
     entity_ids: dict[str, GraphEntity] = {}
-    for name, count in ranked[:max_entities]:
+    for name, count in (ranked if not max_entities else ranked[:max_entities]):
         pos_counter = entity_pos.get(name)
         entity_type = "concept"
         if pos_counter:
@@ -137,7 +153,7 @@ def extract_kb_graph(db, kb, doc_contents: list[tuple[str, str]]) -> dict:
 
     relations_created = 0
     for (source, target, relation_type), weight in relation_counter.most_common():
-        if relations_created >= max_relations:
+        if 0 < max_relations <= relations_created:
             truncated = True
             break
         db.add(GraphRelation(
@@ -148,7 +164,7 @@ def extract_kb_graph(db, kb, doc_contents: list[tuple[str, str]]) -> dict:
         relations_created += 1
     db.commit()
 
-    return _report(len(entity_ids), relations_created, len(freq), started, truncated)
+    return _report(len(entity_ids), relations_created, candidates, started, truncated)
 
 
 def _report(entities: int, relations: int, candidates: int, started: float, truncated: bool) -> dict:

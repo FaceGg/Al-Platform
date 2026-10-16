@@ -2835,3 +2835,21 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **predict 计入市场统计**：模型 API 的测试/远程调用走 `/predict`，此前从不计入调用数——predict 端点现按 source_kind=model+source_id=deployment 找目录行累计 total/success/failed 与 last_error（编排 invoke 既有同机制）。
 - **模型行删除策略放宽**：旧策略一刀切禁止删除模型 API；现改为——部署**运行中**→409 并提示先「下线」；**非运行**（已停止/无部署行）→可删除（下次部署发布按幂等重建）。test_05 同步改为新语义，新增 test_08 删除策略用例（含运行中 409 与已停止可删两条路径）。
 - **实测**：predict 计数生效（calls 1→4、success 0→1 随真实调用递增）；offline→online 往返正常；且实测发现并覆盖了一个真实场景——**多次容器重启后推理运行时丢失已加载模型**，市场「上线」按钮触发 `deployment.start` 重载稳定版本别名后 predict 恢复 200（这恰是该按钮的核心价值）。测试：publication/platform/chat/publication 31+ 前端 13 passed + tsc + build；双镜像重建部署。
+
+## 2026-10-16 弱监督新增 UMAP+HDBSCAN 聚类方式 + AutoML 新增 MLP 家族（可配超参）
+
+- 弱监督 UMAP+HDBSCAN：`weighted_clustering.py` 新增密度聚类路线——`cluster_method`（默认 `weighted_kmeans`，可选 `umap_hdbscan`）贯穿 配置快照（`AutomaticAnnotationConfig.cluster_method` + `validate_strategy_config` 合法值校验）→ 发现预览 worker → 构建器。实现要点：① UMAP(8 维, n_neighbors=15, min_dist=0.1, 随机种子+单线程保证确定性) + HDBSCAN(min_cluster_size=20, prediction_data=True)，小范围自适应收缩邻域参数（min(15, n-1)/min(20, n//3)）使 <21 样本的发现任务也能跑；② 全量加权矩阵拟合，范围上限 2 万样本（`UMAP_HDBSCAN_MAX_SAMPLES`，超出报 `CLUSTER_METHOD_SCOPE_TOO_LARGE`），KMeans 路径保持有界流式不变；③ 拟合模型（umap+clusterer）经 joblib 持久化到 `artifact_storage_dir/cluster-models/`，artifact 载荷携带 `model_ref`，新批次/重跑预览用 `umap.transform + hdbscan.approximate_predict` 免重拟合分配；④ 噪声点标签 -1 在预览任务转 NULL 入决策表——不进入任何可选簇、按簇过滤天然排除、策略落 needs_review（对应"噪声→严重告警"语义）；⑤ 预览评估卡新增 `cluster_method`/`noise_count`，前端 `ClusterPreviewPanel` 密度模式显示"簇数自动确定+噪声点数"，向导弱监督=是 时新增"聚类方式"下拉（含方式说明与 2 万上限提示）。策略规则/兜底值/簇映射/标签列定义/指派过滤全部不动。
+- AutoML MLP 家族：`automl_catalog.py` 新增第 8 族 `mlp`（sklearn MLPClassifier/MLPRegressor，`hidden_layers` 以 "256,128,64" 文本编码解析为元组；早停 validation_fraction=0.15；推荐默认 adam/0.001/L2 α=1e-4/隐藏层 256-128-64/200 轮）。用户固定超参机制：`AutoMLRunRequest.algorithm_params`（按族固定参数，校验族存在、参数名在搜索空间/默认集内、禁止固定资源参数 max_iter）→ 持久化 job.params → `run_family_search(fixed_params=)` 以单选 categorical 注入 optuna（trial.params 含固定值，最优重建零额外合并；非法固定值在试跑前失败 `AUTOML_PARAM_INVALID`）。单/多目标两条执行路径均穿透。前端 AutoML 算法族加"MLP 神经网络"，勾选后显示 优化器/学习率/正则化/隐藏层 表单（预填推荐默认），提交携带 `algorithm_params.mlp`。MLP 无原生特征重要性 → 报告留空（聚类侧自动回退置换重要性），注册/ONNX/部署链路与其他 sklearn 族一致。
+- 依赖与部署：requirements.txt 新增 `umap-learn==0.5.*`、`hdbscan==0.8.*`（镜像内 pip 安装实测通过，含 numba/llvmlite）；backend/worker/scheduler/frontend 镜像重建并重启，容器验证通过。
+- 验证：后端 `test_weighted_clustering_umap`（新增，已登记 week 17 清单）5 passed——双簇流式构建+免重拟合分配往返+载荷还原、全帧构建、超限拒绝、非法方法拒绝、KMeans 默认方法回归；`test_automl_search` 新增固定参数两用例（RF 固定 max_features 每试跑一致且最优重建携带、MLP 族固定 solver/lbfgs+hidden_layers 跑通）；`test_automl_catalog` 家族数断言更新为 8；聚焦套件 271+145 passed 无回归。前端 `DataAnnotationPage`（聚类方式切换+创建 payload 携带 cluster_method）与 `AutoMLPage`（MLP 参数表单+payload 固定超参）新增用例，全量 444 passed / 19 skipped、tsc、生产构建通过。
+- 边界：UMAP 路径 2 万样本上限（KMeans 路径不受影响）；UMAP 拟合耗时随样本量上升（1 万样本约数十秒，在预览 worker 异步执行，有租约心跳）；测试 venv 与镜像均已装依赖，远端发布链路需 requirements 随包分发。
+
+---
+
+## 2026-10-14（续十）知识图谱放开入库上限 + 图谱页浏览模式改造
+
+- **入库放开（对齐主流"数据库存全量、视图限量"模式）**：抽取实体/关系上限默认改为 **0=不限量**（`knowledge_graph_max_entities/max_relations`，仍可设正值作护栏）；共现统计由"每句对全部保留实体做子串匹配"（万级实体 × 句数，O(N×M)）重构为 pass1 预收集句级候选集 + pass3 集合交集（随句内提及数扩展）；新增法律/规范文本停用词（应当/不得/可以/有关/下列/或者/以及/其中/依法/按照/要求/规定/办法/管理/责任/部门/单位/机构/国家/实行/加强/完善/落实/执行/检查/监督/符合/满足/具有/存在）。config 默认即 0，无需 env。
+- **图谱页浏览模式改造**（主流"搜索+邻域展开"）：数据全量拉取，渲染走视图模型——默认**总览 Top-N**（按 freq+度数排序，N 可调，默认 100）；搜索框定位实体 → **邻域视图**（该实体 + 一跳邻居及其关系）；画布/实体列表点击实体即聚焦，聚焦节点橙色高亮，「返回总览」一键还原；统计条显示 库内实体数/当前视图数。
+- **实测（点焊标准法规库，315k 字符）**：全量抽取 **5070 实体 / 88775 关系（14.9 秒，无截断）**——此前 500/2000 上限版本的完整形态；关系构成 co_occurs_with 85924 + part_of 2848 + is_a 3；Top 实体已无"应当"类虚词（停用词生效）。compose 将抽取字符预算默认固化 500000/时限 120s（此前 200000/30 会对 315k 语料 422）。
+- 测试：knowledge 抽取系列（含 cap>0 护栏路径与不限量路径）+ model_port **22 passed**；图谱页 2 passed + tsc + build；双镜像重建部署（经历一次 WSL 0x8007274c 抖动，wsl --shutdown 重置后恢复）。
+- **已知边界**：图谱页拉取全量 /graph 数据（5k 节点 JSON 数 MB 级，加载有一次秒级等待），渲染仅 Top-N/邻域所以交互流畅；万级以上浏览如需更流畅可后续升级 G6 WebGL；"智能/GB/作业"等高频词仍偏泛，语义提纯归 LLM 抽取增强（deferred）。

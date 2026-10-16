@@ -227,8 +227,8 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_API_URL: ${LLM_API_URL:-https://api.openai.com/v1/chat/completions}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
-      KNOWLEDGE_GRAPH_MAX_EXTRACT_CHARS: ${KNOWLEDGE_GRAPH_MAX_EXTRACT_CHARS:-200000}
-      KNOWLEDGE_GRAPH_TIME_BUDGET_SECONDS: ${KNOWLEDGE_GRAPH_TIME_BUDGET_SECONDS:-30}
+      KNOWLEDGE_GRAPH_MAX_EXTRACT_CHARS: ${KNOWLEDGE_GRAPH_MAX_EXTRACT_CHARS:-500000}
+      KNOWLEDGE_GRAPH_TIME_BUDGET_SECONDS: ${KNOWLEDGE_GRAPH_TIME_BUDGET_SECONDS:-120}
     volumes:
       - ./ml-platform/backend/data:/app/data
       - ./ml-platform/backend/uploads:/app/app/uploads

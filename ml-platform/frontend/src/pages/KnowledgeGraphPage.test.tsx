@@ -42,7 +42,8 @@ describe("KnowledgeGraphPage", () => {
   it("creates graph entities through the canonical graph route", async () => {
     render(<AntApp><KnowledgeGraphPage /></AntApp>);
 
-    fireEvent.mouseDown(await screen.findByRole("combobox"));
+    // KB 选择器在 DOM 序中最前（搜索框在其后）
+    fireEvent.mouseDown((await screen.findAllByRole("combobox"))[0]);
     fireEvent.click(await screen.findByText("Weld KB"));
     fireEvent.change(await screen.findByLabelText("Entity name"), { target: { value: "Heat" } });
     fireEvent.change(screen.getByLabelText("Entity type"), { target: { value: "process" } });
@@ -65,7 +66,8 @@ describe("KnowledgeGraphPage", () => {
     });
     render(<AntApp><KnowledgeGraphPage /></AntApp>);
 
-    fireEvent.mouseDown(await screen.findByRole("combobox"));
+    // KB 选择器在 DOM 序中最前（搜索框在其后）
+    fireEvent.mouseDown((await screen.findAllByRole("combobox"))[0]);
     fireEvent.click(await screen.findByText("Weld KB"));
     const extract = await screen.findByRole("button", { name: /Auto extract/ });
     fireEvent.click(extract);

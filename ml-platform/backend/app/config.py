@@ -177,9 +177,11 @@ class Settings(BaseSettings):
     llm_api_key: str = Field(default="", repr=False, exclude=True)
     llm_model: str = "gpt-3.5-turbo"
 
-    # Knowledge-graph auto extraction limits (rules + statistics pipeline)
-    knowledge_graph_max_entities: int = 500
-    knowledge_graph_max_relations: int = 2000
+    # Knowledge-graph auto extraction limits (rules + statistics pipeline).
+    # Entity/relation caps of 0 mean unlimited: storage keeps every candidate
+    # above min frequency; the graph page view layer decides what to render.
+    knowledge_graph_max_entities: int = 0
+    knowledge_graph_max_relations: int = 0
     knowledge_graph_min_entity_freq: int = 2
     knowledge_graph_time_budget_seconds: float = 30
     knowledge_graph_max_extract_chars: int = 200000
