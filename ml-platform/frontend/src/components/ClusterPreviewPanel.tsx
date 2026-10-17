@@ -8,6 +8,9 @@ export type ClusterEvaluation = {
   total_sample_count?: number | string | null;
   importance_method?: string | null;
   scatter_points?: Array<[number, number, number]> | null;
+  /** weighted_kmeans（默认，轮廓系数选 K）或 umap_hdbscan（密度聚类自动定簇，含噪声点） */
+  cluster_method?: string | null;
+  noise_count?: number | string | null;
 };
 
 export type ClusterScatterPoint = { x: number; y: number; clusterId: string };
@@ -56,6 +59,8 @@ function importanceMethodLabel(method: string | null | undefined, lang: string):
 }
 
 function clusterColor(clusters: ClusterOption[], clusterId: string): string {
+  // 噪声点（-1）独立灰色，避免与簇 0 的蓝色混淆造成"两簇交错"的误读
+  if (clusterId === "-1") return "#9ca3af";
   const index = Math.max(0, clusters.findIndex((cluster) => cluster.clusterId === clusterId));
   return SCATTER_PALETTE[index % SCATTER_PALETTE.length];
 }
@@ -92,6 +97,8 @@ export default function ClusterPreviewPanel({
   lang: string;
 }) {
   const totalCount = clusters.reduce((sum, cluster) => sum + (Number.isFinite(cluster.sampleCount) ? cluster.sampleCount : 0), 0);
+  const isDensityMethod = evaluation?.cluster_method === "umap_hdbscan";
+  const noiseCount = Number(evaluation?.noise_count ?? 0);
   const kScores = evaluation?.k_scores && typeof evaluation.k_scores === "object" ? evaluation.k_scores : {};
   const sortedScores = Object.entries(kScores)
     .map(([k, score]) => ({ k, score: Number(score) }))
@@ -121,7 +128,11 @@ export default function ClusterPreviewPanel({
                   />
                 ))}
               </svg>
-              <small>{lang === "zh" ? "散点取自轮廓系数评估样本（确定性哈希有序，最多 1000 点）的二维 PCA 投影，仅用于效果预览。" : "Points are the first 1000 silhouette-evaluation rows (deterministic hash order) projected to 2D via PCA; preview only."}</small>
+              <small>{isDensityMethod
+                ? (lang === "zh"
+                  ? "散点为 UMAP 嵌入空间（聚类实际发生空间）的前两维投影（最多 1000 点）；灰色 = 噪声点（不归属任何簇，按 needs_review 处理），彩色 = 所属簇。仅用于效果预览。"
+                  : "First two dims of the UMAP embedding (the space clustering ran in), up to 1000 points; gray = noise (unassigned, needs_review), colors = clusters. Preview only.")
+                : (lang === "zh" ? "散点取自轮廓系数评估样本（确定性哈希有序，最多 1000 点）的二维 PCA 投影，仅用于效果预览。" : "Points are the first 1000 silhouette-evaluation rows (deterministic hash order) projected to 2D via PCA; preview only.")}</small>
             </div>
           )}
           <ul className="data-annotation__cluster-preview-bars">
@@ -131,7 +142,7 @@ export default function ClusterPreviewPanel({
                 <li className="data-annotation__cluster-preview-row" key={cluster.clusterId}>
                   <span className="data-annotation__cluster-preview-label">{lang === "zh" ? `簇 ${cluster.clusterId}` : `Cluster ${cluster.clusterId}`}</span>
                   <span className="data-annotation__cluster-preview-bar-track" aria-hidden="true">
-                    <span className="data-annotation__cluster-preview-bar" style={{ width: `${Math.min(100, Math.max(0, share))}%` }} />
+                    <span className="data-annotation__cluster-preview-bar" style={{ width: `${Math.min(100, Math.max(0, share))}%`, background: clusterColor(clusters, cluster.clusterId) }} />
                   </span>
                   <span className="data-annotation__cluster-preview-count">
                     {numberFormatter.format(cluster.sampleCount)} ({share.toFixed(1)}%)
@@ -139,11 +150,27 @@ export default function ClusterPreviewPanel({
                 </li>
               );
             })}
+            {isDensityMethod && noiseCount > 0 && (
+              <li className="data-annotation__cluster-preview-row" key="noise">
+                <span className="data-annotation__cluster-preview-label">{lang === "zh" ? "噪声" : "Noise"}</span>
+                <span className="data-annotation__cluster-preview-bar-track" aria-hidden="true">
+                  <span className="data-annotation__cluster-preview-bar" style={{ width: `${Math.min(100, (noiseCount / Math.max(1, totalCount + noiseCount)) * 100)}%`, background: "#9ca3af" }} />
+                </span>
+                <span className="data-annotation__cluster-preview-count">
+                  {numberFormatter.format(noiseCount)}
+                </span>
+              </li>
+            )}
           </ul>
         </div>
         <div className="data-annotation__cluster-preview-info">
           <div className="data-annotation__cluster-preview-meta">
-            <span>{lang === "zh" ? `簇数 K：${evaluation?.selected_k ?? "—"}` : `Selected K: ${evaluation?.selected_k ?? "—"}`}</span>
+            {isDensityMethod
+              ? <span>{lang === "zh" ? `簇数自动确定：K=${evaluation?.selected_k ?? "—"}` : `Auto-selected K: ${evaluation?.selected_k ?? "—"}`}</span>
+              : <span>{lang === "zh" ? `簇数 K：${evaluation?.selected_k ?? "—"}` : `Selected K: ${evaluation?.selected_k ?? "—"}`}</span>}
+            {isDensityMethod && Number(evaluation?.noise_count ?? 0) > 0 && (
+              <span>{lang === "zh" ? `噪声点：${formatCount(evaluation?.noise_count ?? null)}（不参与簇选择，落 needs_review）` : `Noise: ${formatCount(evaluation?.noise_count ?? null)} (excluded from selection)`}</span>
+            )}
             <span>{lang === "zh" ? "评估方式：" : "Evaluation: "}{evaluationModeLabel(evaluation?.evaluation_mode, lang)}</span>
             <span>
               {lang === "zh" ? "评估样本：" : "Evaluation rows: "}

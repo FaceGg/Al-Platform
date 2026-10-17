@@ -22,8 +22,10 @@ from app.models.labeling import AnnotationStrategyArtifact, AnnotationStrategyDe
 from app.services.label_schema import LabelColumnContract, LabelSchemaContract, validate_label_value
 from app.services.rule_dsl import RuleEvaluationError, evaluate_rule
 from app.services.weighted_clustering import (
+    CLUSTER_METHODS,
     FeatureMap,
     InputContract,
+    _persist_cluster_model_bundle,
     aggregate_model_importance,
     build_weighted_clusters,
     build_weighted_clusters_streaming,
@@ -45,6 +47,7 @@ class AutomaticAnnotationConfig:
     other_values: Mapping[str, object] = field(default_factory=dict)
     selected_clusters: Sequence[str] | None = None
     cluster_discovery: bool = False
+    cluster_method: str = "weighted_kmeans"
 
 
 @dataclass(frozen=True)
@@ -155,7 +158,11 @@ def validate_strategy_config(
     if config.cluster_discovery:
         if config.strategy is not None or config.cluster_labels or config.rules or config.other_values or config.selected_clusters is not None:
             raise StrategyConfigError("cluster discovery must run before strategy configuration", "CLUSTER_DISCOVERY_CONFIG_INVALID")
+        if config.cluster_method not in CLUSTER_METHODS:
+            raise StrategyConfigError("cluster method must be weighted_kmeans or umap_hdbscan", "CLUSTER_METHOD_INVALID")
         return
+    if config.cluster_method not in CLUSTER_METHODS:
+        raise StrategyConfigError("cluster method must be weighted_kmeans or umap_hdbscan", "CLUSTER_METHOD_INVALID")
     if config.strategy not in {"cluster", "rule", "cluster_rule"}:
         raise StrategyConfigError("exactly one clustering strategy is required", "STRATEGY_EXCLUSIVE")
     if not isinstance(config.cluster_labels, Mapping):
@@ -366,6 +373,7 @@ def _config_from_snapshot(configuration: Mapping[str, object]) -> AutomaticAnnot
         other_values=configuration.get("other_values") or {},
         selected_clusters=configuration.get("selected_clusters"),
         cluster_discovery=bool(configuration.get("cluster_discovery", False)),
+        cluster_method=str(configuration.get("cluster_method") or "weighted_kmeans"),
     )
 
 
@@ -596,6 +604,7 @@ def _cluster_artifact_from_package(
     rows: Mapping[str, Mapping[str, object]],
     seed: int,
     task_revision: int,
+    cluster_method: str = "weighted_kmeans",
 ):
     feature_columns, frozen_importance, importance_method, importance_report, feature_map, importance_encoding = _cluster_package_contract(package)
     frame = pd.DataFrame.from_dict(rows, orient="index")
@@ -607,6 +616,8 @@ def _cluster_artifact_from_package(
         task_revision=task_revision,
         feature_importance=frozen_importance,
         importance_method_hint=importance_method if frozen_importance is not None else None,
+        cluster_method=cluster_method,
+        model_store=_persist_cluster_model_bundle if cluster_method != "weighted_kmeans" else None,
     )
     return artifact, _cluster_artifact_payload(
         artifact,
@@ -626,6 +637,7 @@ def build_streaming_cluster_artifact_from_package(
     task_revision: int,
     total_sample_count: int,
     on_batch: Callable[[], None] | None = None,
+    cluster_method: str = "weighted_kmeans",
 ):
     """Freeze weighted-cluster metadata without materializing all source rows."""
     feature_columns, frozen_importance, importance_method, importance_report, feature_map, importance_encoding = _cluster_package_contract(package)
@@ -639,6 +651,10 @@ def build_streaming_cluster_artifact_from_package(
         feature_importance=frozen_importance,
         importance_method_hint=importance_method if frozen_importance is not None else None,
         on_batch=on_batch,
+        cluster_method=cluster_method,
+        # The density route persists its fitted models so later batches and
+        # re-run previews can assign without refitting.
+        model_store=_persist_cluster_model_bundle if cluster_method != "weighted_kmeans" else None,
     )
     return artifact, _cluster_artifact_payload(
         artifact,
@@ -876,10 +892,11 @@ def apply_preview_annotation_strategy(
                         rows,
                         int(configuration.get("random_seed", 42)),
                         task_revision,
+                        cluster_method=str(configuration.get("cluster_method") or "weighted_kmeans"),
                     )
                     importance = list(cluster_artifact.weights.values())
                     cluster_ids = {
-                        str(sample_id): int(cluster_id)
+                        str(sample_id): (int(cluster_id) if cluster_id >= 0 else None)
                         for sample_id, cluster_id in zip(rows, cluster_artifact.labels)
                     }
                     importance_source = "model_artifact"
@@ -913,7 +930,9 @@ def apply_preview_annotation_strategy(
                     provenance={},
                     status="pending_configuration",
                     model_output=model_outputs[sample_id],
-                    cluster_id=int(cluster_ids[sample_id]),
+                    # Density noise arrives as None: it belongs to no cluster
+                    # and stays out of cluster selection entirely.
+                    cluster_id=(int(cluster_ids[sample_id]) if cluster_ids[sample_id] is not None else None),
                 )
                 for sample_id in rows
             }

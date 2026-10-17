@@ -840,7 +840,17 @@ describe("DataAnnotationPage", () => {
     fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "聚类发现任务" } });
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     fireEvent.change(await screen.findByLabelText("是否启用弱监督标注"), { target: { value: "yes" } });
+    // 密度聚类方式：切换后创建任务 payload 携带 cluster_method=umap_hdbscan
+    fireEvent.change(await screen.findByLabelText("聚类方式"), { target: { value: "umap_hdbscan" } });
+    expect(await screen.findByText(/范围上限 2 万样本/)).toBeInTheDocument();
     fireEvent.click((await screen.findAllByRole("button", { name: "生成聚类预览" }))[0]);
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/annotation-tasks",
+      expect.objectContaining({
+        configuration: { clustering: true, cluster_discovery: true, cluster_method: "umap_hdbscan" },
+      }),
+      expect.anything(),
+    ), { timeout: 3000 });
     await waitFor(() => expect(post).toHaveBeenCalledWith("/annotation-tasks/discovery-task-1/preview", expect.anything()), { timeout: 3000 });
     // 保存标签 schema 前策略编辑器处于锁定提示状态
     expect(await screen.findByLabelText("自动标注策略未解锁")).toBeInTheDocument();
@@ -883,6 +893,7 @@ describe("DataAnnotationPage", () => {
         configuration: {
           clustering: true,
           cluster_discovery: true,
+          cluster_method: "umap_hdbscan",
         },
       }),
       expect.anything(),

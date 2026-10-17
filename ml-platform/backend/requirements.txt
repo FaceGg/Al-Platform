@@ -50,3 +50,7 @@ kubernetes>=31.0,<34
 
 # Cross-platform CPU/memory/network/disk metric sampling for /api/monitor.
 psutil==7.1.*
+
+# Weak-supervision density clustering route (UMAP+HDBSCAN).
+umap-learn==0.5.*
+hdbscan==0.8.*

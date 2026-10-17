@@ -244,6 +244,7 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                                     task_revision=preview.task_revision,
                                     total_sample_count=sample_scope_count,
                                     on_batch=lambda: heartbeat_operation(db, operation_id, worker_id, 300),
+                                    cluster_method=str(configuration.get("cluster_method") or "weighted_kmeans"),
                                 )
                             )
                         except StrategyConfigError:
@@ -283,7 +284,10 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                         strategy_kwargs.update({
                             "precomputed_cluster_artifact": frozen_cluster_payload,
                             "precomputed_cluster_ids": {
-                                sample_id: int(cluster_id)
+                                # Density noise (-1) becomes NULL: noise samples
+                                # stay outside every selectable cluster and
+                                # fall back to needs_review.
+                                sample_id: (int(cluster_id) if cluster_id >= 0 else None)
                                 for sample_id, cluster_id in zip(sample_id_batch, cluster_ids)
                             },
                         })
@@ -366,6 +370,8 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                         "total_sample_count": cluster_artifact.get("total_sample_count"),
                         "importance_method": cluster_artifact.get("importance_method"),
                         "scatter_points": cluster_artifact.get("scatter_points") or [],
+                        "cluster_method": cluster_artifact.get("method") or "weighted_kmeans",
+                        "noise_count": cluster_artifact.get("noise_count") or 0,
                     }
             else:
                 # Manual previews do not need a task-wide in-memory row map.

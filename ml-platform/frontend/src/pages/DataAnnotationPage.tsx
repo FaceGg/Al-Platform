@@ -389,9 +389,10 @@ function automaticConfigurationFromDraft(
   sourceColumns: AutomaticAnnotationSourceColumn[],
   clustering: boolean,
   discovery: boolean,
+  clusterMethod: "weighted_kmeans" | "umap_hdbscan" = "weighted_kmeans",
 ): { configuration?: GenericAutomaticConfiguration; error?: string } {
   if (!clustering) return { configuration: { clustering: false, strategy: "model" } };
-  if (discovery) return { configuration: { clustering: true, cluster_discovery: true } };
+  if (discovery) return { configuration: { clustering: true, cluster_discovery: true, cluster_method: clusterMethod } };
   const useOtherValues = draft.useOtherValues !== false;
   const otherValues: Record<string, string | number> = {};
   if (useOtherValues) {
@@ -498,6 +499,7 @@ export default function DataAnnotationPage() {
   const [genericInstructions, setGenericInstructions] = useState("");
   const [genericModelVersionId, setGenericModelVersionId] = useState("");
   const [genericClustering, setGenericClustering] = useState(false);
+  const [genericClusterMethod, setGenericClusterMethod] = useState<"weighted_kmeans" | "umap_hdbscan">("weighted_kmeans");
   const [genericSetupStep, setGenericSetupStep] = useState<1 | 2>(1);
   const [genericDiscoveryTask, setGenericDiscoveryTask] = useState<AnnotationTask | null>(null);
   const [genericDiscoveryPreviewId, setGenericDiscoveryPreviewId] = useState<string | null>(null);
@@ -1646,6 +1648,7 @@ export default function DataAnnotationPage() {
     setGenericInstructions("");
     setGenericModelVersionId("");
     setGenericClustering(false);
+    setGenericClusterMethod("weighted_kmeans");
     resetGenericScopeDraft();
     setGenericAutomaticDraft(createAutomaticStrategyDraft([]));
     setGenericAutoSchema(null);
@@ -1742,6 +1745,7 @@ export default function DataAnnotationPage() {
         version.columns.map((column) => ({ name: column.name, dtype: column.dtype })),
         genericClustering,
         genericClustering && genericAutomaticDraft.strategy !== "rule",
+        genericClusterMethod,
       )
       : null;
     if (automaticConfiguration?.error) {
@@ -1829,7 +1833,7 @@ export default function DataAnnotationPage() {
         instructions: genericInstructions,
         completion_criteria: genericCompletionCriteria,
         due_at: genericDueAt ? new Date(`${genericDueAt}T23:59:59`).toISOString() : null,
-        configuration: { clustering: true, cluster_discovery: true },
+        configuration: { clustering: true, cluster_discovery: true, cluster_method: genericClusterMethod },
         field_descriptions: genericFieldDescriptions,
       }, createUuid());
       notifyAutoRenamedTask(task, genericTaskName.trim());
@@ -2948,6 +2952,24 @@ export default function DataAnnotationPage() {
             </select>
             <small>{genericClustering ? copy.clusteringOnHint : copy.clusteringOffHint}</small>
           </div>
+          {genericClustering && <div className="data-annotation__setup-field">
+            <label htmlFor="generic-cluster-method">{lang === "zh" ? "聚类方式" : "Clustering method"}</label>
+            <select
+              id="generic-cluster-method"
+              aria-label={lang === "zh" ? "聚类方式" : "Clustering method"}
+              value={genericClusterMethod}
+              disabled={!!genericDiscoveryTask}
+              onChange={(event) => setGenericClusterMethod(event.target.value as "weighted_kmeans" | "umap_hdbscan")}
+            >
+              <option value="weighted_kmeans">{lang === "zh" ? "加权 KMeans（轮廓系数自动选 K）" : "Weighted KMeans (silhouette K)"}</option>
+              <option value="umap_hdbscan">{lang === "zh" ? "UMAP + HDBSCAN（密度聚类，自动定簇，可识别噪声点）" : "UMAP + HDBSCAN (density, auto K, noise)"}</option>
+            </select>
+            <small>
+              {genericClusterMethod === "umap_hdbscan"
+                ? (lang === "zh" ? "非线性降维 + 密度聚类，可发现任意形状簇；噪声点不进入任何簇、按 needs_review 处理。范围上限 2 万样本。" : "Non-linear embedding + density clustering; noise points stay unassigned. Scope cap: 20k samples.")
+                : (lang === "zh" ? "默认路线：全范围有界流式，K 由轮廓系数自动选择。" : "Default route: bounded streaming, silhouette-selected K.")}
+            </small>
+          </div>}
           {genericFinalPreviewId && genericDiscoveryTask ? (
             <div className="data-annotation__setup-field" aria-label="最终预览">
               <label>最终预览</label>
@@ -3067,6 +3089,7 @@ export default function DataAnnotationPage() {
               <button type="button" className="ant-btn" onClick={() => void startGenericDiscovery()} disabled={genericSetupBasicsIncomplete || genericCreating}>
                 {genericCreating ? copy.clusterPreviewRunning : copy.generateClusters}
               </button>
+              {genericDiscoveryError && <p role="alert">{genericDiscoveryError}</p>}
               <small>{copy.discoveryHint}</small>
             </div>)}
           </div>

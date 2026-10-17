@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import heapq
 import hashlib
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 
 import numpy as np
@@ -13,6 +15,30 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
+
+try:  # Optional: UMAP+HDBSCAN clustering path for weak supervision.
+    import hdbscan as _hdbscan
+    import umap as _umap
+
+    UMAP_HDBSCAN_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised only without the extras.
+    _hdbscan = None
+    _umap = None
+    UMAP_HDBSCAN_AVAILABLE = False
+
+
+CLUSTER_METHOD_WEIGHTED_KMEANS = "weighted_kmeans"
+CLUSTER_METHOD_UMAP_HDBSCAN = "umap_hdbscan"
+CLUSTER_METHODS = (CLUSTER_METHOD_WEIGHTED_KMEANS, CLUSTER_METHOD_UMAP_HDBSCAN)
+# UMAP must fit the full feature matrix at once (unlike the bounded streaming
+# KMeans path), so the density route carries an explicit scope ceiling.
+UMAP_HDBSCAN_MAX_SAMPLES = 20_000
+UMAP_HDBSCAN_N_COMPONENTS = 8
+UMAP_HDBSCAN_N_NEIGHBORS = 15
+UMAP_HDBSCAN_MIN_DIST = 0.1
+UMAP_HDBSCAN_MIN_CLUSTER_SIZE = 20
+UMAP_HDBSCAN_MIN_SAMPLES = 5
+CLUSTER_MODEL_DIRECTORY = "cluster-models"
 
 
 @dataclass(frozen=True)
@@ -82,6 +108,9 @@ class ClusterArtifact:
     centers: tuple[tuple[float, ...], ...]
     importance_method: str = "estimator_native"
     scatter_points: tuple[tuple[float, float, int], ...] = ()
+    method: str = CLUSTER_METHOD_WEIGHTED_KMEANS
+    noise_count: int = 0
+    model_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -277,6 +306,24 @@ def _evaluation_sample_hash(
     return hash_builder.hexdigest()
 
 
+def _load_cluster_model_bundle(model_ref: str):
+    """Load a persisted UMAP+HDBSCAN bundle relative to artifact storage."""
+    import joblib
+
+    from app.config import settings
+
+    root = Path(settings.artifact_storage_dir).expanduser().resolve()
+    path = (root / model_ref).resolve()
+    if not path.is_relative_to(root):
+        raise ValueError("CLUSTER_MODEL_UNAVAILABLE")
+    if not path.is_file():
+        raise ValueError("CLUSTER_MODEL_UNAVAILABLE")
+    try:
+        return joblib.load(path)
+    except Exception as error:
+        raise ValueError("CLUSTER_MODEL_UNAVAILABLE") from error
+
+
 def assign_clusters_from_artifact(frame: pd.DataFrame, artifact: ClusterArtifact) -> tuple[int, ...]:
     """Assign rows with only frozen weighted-cluster preprocessing and centers."""
     preprocessing = artifact.preprocessing
@@ -306,10 +353,25 @@ def assign_clusters_from_artifact(frame: pd.DataFrame, artifact: ClusterArtifact
         raise ValueError("CLUSTER_PREPROCESSING_INVALID") from error
     if not np.all(np.isfinite(weights)) or np.any(weights < 0) or weights.sum() <= 0:
         raise ValueError("CLUSTER_PREPROCESSING_INVALID")
+    weighted = ((matrix - mean) / scale) * np.sqrt(weights)
+
+    if getattr(artifact, "method", CLUSTER_METHOD_WEIGHTED_KMEANS) == CLUSTER_METHOD_UMAP_HDBSCAN:
+        if not UMAP_HDBSCAN_AVAILABLE or not artifact.model_ref:
+            raise ValueError("CLUSTER_MODEL_UNAVAILABLE")
+        bundle = _load_cluster_model_bundle(artifact.model_ref)
+        try:
+            embedding = np.asarray(bundle["umap"].transform(weighted), dtype=float)
+            labels, _strengths = _hdbscan.approximate_predict(bundle["clusterer"], embedding)
+            labels = np.asarray(labels, dtype=int)
+        except Exception as error:
+            raise ValueError("CLUSTER_MODEL_UNAVAILABLE") from error
+        if labels.shape[0] != matrix.shape[0]:
+            raise ValueError("CLUSTER_MODEL_UNAVAILABLE")
+        return tuple(int(value) for value in labels)
+
     centers = np.asarray(artifact.centers, dtype=float)
     if centers.ndim != 2 or centers.shape[0] < 1 or centers.shape[1] != matrix.shape[1] or not np.all(np.isfinite(centers)):
         raise ValueError("CLUSTER_ARTIFACT_INVALID")
-    weighted = ((matrix - mean) / scale) * np.sqrt(weights)
     distances = np.sum((weighted[:, np.newaxis, :] - centers[np.newaxis, :, :]) ** 2, axis=2)
     return tuple(int(value) for value in np.argmin(distances, axis=1))
 
@@ -367,6 +429,9 @@ def cluster_artifact_from_payload(payload: Mapping[str, object]) -> ClusterArtif
                 for point in (payload.get("scatter_points") or ())
                 if isinstance(point, (list, tuple)) and len(point) >= 3
             ),
+            method=str(payload.get("method") or CLUSTER_METHOD_WEIGHTED_KMEANS),
+            noise_count=int(payload.get("noise_count") or 0),
+            model_ref=str(payload["model_ref"]) if payload.get("model_ref") else None,
         )
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         raise ValueError("CLUSTER_ARTIFACT_INVALID") from error
@@ -375,6 +440,33 @@ def cluster_artifact_from_payload(payload: Mapping[str, object]) -> ClusterArtif
 def _nearest_cluster_labels(matrix: np.ndarray, centers: np.ndarray) -> np.ndarray:
     distances = np.sum((matrix[:, np.newaxis, :] - centers[np.newaxis, :, :]) ** 2, axis=2)
     return np.argmin(distances, axis=1)
+
+
+def _embedding_scatter(
+    embedding: np.ndarray,
+    labels: Sequence[int],
+    limit: int = 1000,
+) -> tuple[tuple[float, float, int], ...]:
+    """Project the UMAP embedding's first two components for the preview scatter.
+
+    The embedding is the space HDBSCAN clustered in, so this view preserves the
+    density separation (a PCA of the original feature space interleaves
+    clusters and misleads inspection). Noise keeps label -1 and renders gray.
+    """
+    count = min(int(limit), len(embedding))
+    if count <= 0 or len(labels) == 0 or embedding.shape[1] < 1:
+        return ()
+    points = np.asarray(embedding[:count], dtype=float)
+    components = min(2, points.shape[1])
+    if components <= 0:
+        return ()
+    projection = points[:, :components]
+    if components == 1:
+        projection = np.column_stack([projection[:, 0], np.zeros(len(projection))])
+    return tuple(
+        (float(x), float(y), int(label))
+        for (x, y), label in zip(projection, list(labels)[:count])
+    )
 
 
 def _scatter_projection(
@@ -493,6 +585,77 @@ class _EvalRowCollector:
         return entries
 
 
+def _persist_cluster_model_bundle(bundle: dict) -> str:
+    """Persist the fitted UMAP+HDBSCAN bundle under artifact storage."""
+    import joblib
+
+    from app.config import settings
+
+    root = Path(settings.artifact_storage_dir).expanduser().resolve()
+    directory = root / CLUSTER_MODEL_DIRECTORY
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except PermissionError as error:
+        raise ValueError("CLUSTER_MODEL_STORAGE_UNWRITABLE") from error
+    reference = f"{CLUSTER_MODEL_DIRECTORY}/{uuid.uuid4()}.joblib"
+    path = root / reference
+    joblib.dump(bundle, path)
+    return reference
+
+
+def _fit_umap_hdbscan(
+    weighted_matrix: np.ndarray,
+    *,
+    seed: int,
+    model_store: Callable[[dict], str] | None,
+) -> tuple[np.ndarray, int, int, str | None, dict[str, object], np.ndarray]:
+    """Fit UMAP+HDBSCAN on the full weighted matrix.
+
+    Returns (labels, cluster_count, noise_count, model_ref, fit_params, embedding).
+    Labels use -1 for density noise.  Effective hyper-parameters shrink for
+    small scopes so discovery still works below the report-scale defaults.
+    The 8-D embedding is returned so the preview scatter can show the space
+    clustering actually ran in (PCA of the original space interleaves clusters
+    and misleads visual inspection).
+    """
+    if not UMAP_HDBSCAN_AVAILABLE:
+        raise ValueError("CLUSTER_METHOD_UNAVAILABLE")
+    count = int(weighted_matrix.shape[0])
+    n_neighbors = min(UMAP_HDBSCAN_N_NEIGHBORS, max(2, count - 1))
+    min_cluster_size = min(UMAP_HDBSCAN_MIN_CLUSTER_SIZE, max(2, count // 3))
+    min_samples = min(UMAP_HDBSCAN_MIN_SAMPLES, max(1, min_cluster_size - 1))
+    reducer = _umap.UMAP(
+        n_components=UMAP_HDBSCAN_N_COMPONENTS,
+        n_neighbors=n_neighbors,
+        min_dist=UMAP_HDBSCAN_MIN_DIST,
+        random_state=seed,
+        n_jobs=1,
+        transform_seed=seed,
+    )
+    embedding = np.asarray(reducer.fit_transform(weighted_matrix), dtype=float)
+    if embedding.shape[0] != count or not np.all(np.isfinite(embedding)):
+        raise ValueError("CLUSTER_INPUT_INVALID")
+    clusterer = _hdbscan.HDBSCAN(
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+        prediction_data=True,
+    )
+    labels = np.asarray(clusterer.fit_predict(embedding), dtype=int)
+    cluster_count = int(len(set(int(value) for value in labels if value >= 0)))
+    if cluster_count < 1:
+        raise ValueError("CLUSTER_NO_STRUCTURE_FOUND")
+    noise_count = int(np.sum(labels < 0))
+    model_ref = model_store({"umap": reducer, "clusterer": clusterer}) if model_store is not None else None
+    fit_params = {
+        "n_neighbors": int(n_neighbors),
+        "min_dist": UMAP_HDBSCAN_MIN_DIST,
+        "n_components": UMAP_HDBSCAN_N_COMPONENTS,
+        "min_cluster_size": int(min_cluster_size),
+        "min_samples": int(min_samples),
+    }
+    return labels, cluster_count, noise_count, model_ref, fit_params, embedding
+
+
 def build_weighted_clusters_streaming(
     batches: Callable[[], Iterable[tuple[Sequence[object], pd.DataFrame]]],
     model: object,
@@ -505,6 +668,8 @@ def build_weighted_clusters_streaming(
     feature_importance: Mapping[str, float] | Sequence[float] | None = None,
     importance_method_hint: str | None = None,
     on_batch: Callable[[], None] | None = None,
+    cluster_method: str = CLUSTER_METHOD_WEIGHTED_KMEANS,
+    model_store: Callable[[dict], str] | None = None,
 ) -> ClusterArtifact:
     """Fit weighted clusters from repeatable bounded source batches.
 
@@ -516,6 +681,13 @@ def build_weighted_clusters_streaming(
     expected_count = int(total_sample_count)
     if expected_count < 3:
         raise ValueError("CLUSTER_TOO_FEW_ROWS")
+    if cluster_method not in CLUSTER_METHODS:
+        raise ValueError("CLUSTER_METHOD_INVALID")
+    if cluster_method == CLUSTER_METHOD_UMAP_HDBSCAN:
+        if not UMAP_HDBSCAN_AVAILABLE:
+            raise ValueError("CLUSTER_METHOD_UNAVAILABLE")
+        if expected_count > UMAP_HDBSCAN_MAX_SAMPLES:
+            raise ValueError("CLUSTER_METHOD_SCOPE_TOO_LARGE")
     columns = tuple(str(column) for column in feature_contract.feature_columns)
     if not columns:
         raise ValueError("CLUSTER_FEATURE_MISSING")
@@ -562,6 +734,7 @@ def build_weighted_clusters_streaming(
     collector = _EvalRowCollector(expected_count, task_revision=task_revision, seed=seed)
     weighted_space_has_distinct = False
     first_weighted_row: np.ndarray | None = None
+    density_rows: list[np.ndarray] = [] if cluster_method == CLUSTER_METHOD_UMAP_HDBSCAN else None
     for sample_ids, frame in batches():
         if len(sample_ids) != len(frame):
             raise ValueError("CLUSTER_SAMPLE_ID_COUNT_MISMATCH")
@@ -572,10 +745,67 @@ def build_weighted_clusters_streaming(
         if first_weighted_row is not None and not weighted_space_has_distinct:
             if np.any(np.any(weighted != first_weighted_row, axis=1)):
                 weighted_space_has_distinct = True
+        if density_rows is not None:
+            # The density route needs the full weighted matrix (scope is
+            # capped at UMAP_HDBSCAN_MAX_SAMPLES), not the bounded subset.
+            density_rows.append(np.array(weighted, dtype=float, copy=True))
         for sample_id, vector in zip(sample_ids, weighted):
             collector.add(sample_id, vector)
         if on_batch is not None:
             on_batch()
+
+    if density_rows is not None:
+        if not weighted_space_has_distinct:
+            raise ValueError("CLUSTER_DEGENERATE_FEATURE_SPACE")
+        full_matrix = np.concatenate(density_rows, axis=0) if len(density_rows) > 1 else density_rows[0]
+        if full_matrix.shape[0] != expected_count:
+            raise ValueError("CLUSTER_SAMPLE_ID_COUNT_MISMATCH")
+        labels, found_clusters, noise_count, model_ref, fit_params, embedding = _fit_umap_hdbscan(
+            full_matrix,
+            seed=seed,
+            model_store=model_store,
+        )
+        weights = {column: float(value) for column, value in zip(columns, raw_importance)}
+        preprocessing = {
+            "version": "weighted-clustering-v1",
+            "fit_scope": "frozen_task_sample_scope",
+            "fit_algorithm": "umap_hdbscan",
+            "fit_params": fit_params,
+            "feature_columns": tuple(columns),
+            "standardizer": {
+                "mean": tuple(float(value) for value in scaler.mean_),
+                "scale": tuple(float(value) for value in scaler.scale_),
+            },
+        }
+        # Scatter from the UMAP embedding's first two components: that is the
+        # space clustering actually ran in, so the preview matches the
+        # assignment geometry instead of interleaving clusters like a PCA of
+        # the original feature space does.
+        evaluation_rows = collector.rows()
+        scatter_points = _embedding_scatter(embedding, labels)
+        return ClusterArtifact(
+            labels=(),
+            k_scores={},
+            selected_k=found_clusters,
+            seed=int(seed),
+            weights=weights,
+            feature_map=FeatureMap(tuple(columns), {}),
+            sample_count_evaluated=expected_count,
+            total_sample_count=expected_count,
+            sampling_mode="all_rows",
+            sampling_hash=_evaluation_sample_hash(
+                evaluation_rows,
+                task_revision=task_revision,
+                seed=seed,
+            ),
+            preprocessing=preprocessing,
+            centers=(),
+            importance_method=importance_method,
+            scatter_points=scatter_points,
+            method=CLUSTER_METHOD_UMAP_HDBSCAN,
+            noise_count=noise_count,
+            model_ref=model_ref,
+        )
 
     evaluation_rows = collector.rows()
     sampling_mode = collector.sampling_mode
@@ -649,6 +879,7 @@ def build_weighted_clusters_streaming(
         centers=tuple(tuple(float(item) for item in row) for row in centers),
         importance_method=importance_method,
         scatter_points=_scatter_projection(evaluation_matrix, evaluation_labels) if evaluation_labels is not None else (),
+        method=CLUSTER_METHOD_WEIGHTED_KMEANS,
     )
 
 
@@ -662,7 +893,13 @@ def build_weighted_clusters(
     sample_ids: Sequence[object] | None = None,
     feature_importance: Mapping[str, float] | Sequence[float] | None = None,
     importance_method_hint: str | None = None,
+    cluster_method: str = CLUSTER_METHOD_WEIGHTED_KMEANS,
+    model_store: Callable[[dict], str] | None = None,
 ) -> ClusterArtifact:
+    if cluster_method not in CLUSTER_METHODS:
+        raise ValueError("CLUSTER_METHOD_INVALID")
+    if cluster_method == CLUSTER_METHOD_UMAP_HDBSCAN and len(frame) > UMAP_HDBSCAN_MAX_SAMPLES:
+        raise ValueError("CLUSTER_METHOD_SCOPE_TOO_LARGE")
     if frame.empty:
         raise ValueError("CLUSTER_INPUT_EMPTY")
     columns = list(feature_contract.feature_columns)
@@ -686,6 +923,47 @@ def build_weighted_clusters(
     evaluation_ids = tuple(frame.index) if sample_ids is None else tuple(sample_ids)
     if len(evaluation_ids) != row_count:
         raise ValueError("CLUSTER_SAMPLE_ID_COUNT_MISMATCH")
+
+    if cluster_method == CLUSTER_METHOD_UMAP_HDBSCAN:
+        labels, found_clusters, noise_count, model_ref, fit_params, embedding = _fit_umap_hdbscan(
+            weighted,
+            seed=seed,
+            model_store=model_store,
+        )
+        weights = {column: float(value) for column, value in zip(columns, raw_importance)}
+        preprocessing = {
+            "version": "weighted-clustering-v1",
+            "fit_scope": "frozen_task_sample_scope",
+            "fit_algorithm": "umap_hdbscan",
+            "fit_params": fit_params,
+            "feature_columns": tuple(columns),
+            "standardizer": {
+                "mean": tuple(float(value) for value in scaler.mean_),
+                "scale": tuple(float(value) for value in scaler.scale_),
+            },
+        }
+        return ClusterArtifact(
+            labels=tuple(int(value) for value in labels),
+            k_scores={},
+            selected_k=found_clusters,
+            seed=int(seed),
+            weights=weights,
+            feature_map=FeatureMap(tuple(columns), {}),
+            sample_count_evaluated=row_count,
+            total_sample_count=row_count,
+            sampling_mode="all_rows",
+            sampling_hash=deterministic_sample_indices(
+                evaluation_ids, task_revision=task_revision, seed=seed, limit=row_count,
+            )[1],
+            preprocessing=preprocessing,
+            centers=(),
+            importance_method=importance_method,
+            scatter_points=_embedding_scatter(embedding, labels),
+            method=CLUSTER_METHOD_UMAP_HDBSCAN,
+            noise_count=noise_count,
+            model_ref=model_ref,
+        )
+
     if row_count > 100_000:
         eval_indices, sampling_hash = deterministic_sample_indices(
             evaluation_ids,
@@ -741,4 +1019,5 @@ def build_weighted_clusters(
         centers=tuple(tuple(float(item) for item in row) for row in final.cluster_centers_),
         importance_method=importance_method,
         scatter_points=_scatter_projection(eval_matrix, final.labels_[eval_indices]),
+        method=CLUSTER_METHOD_WEIGHTED_KMEANS,
     )
