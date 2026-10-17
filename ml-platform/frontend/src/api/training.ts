@@ -17,6 +17,8 @@ interface AutoMLRunPayloadBase {
   dataset_artifact_id: string;
   input_columns: string[];
   algorithm_ids: string[];
+  /** 按算法族固定超参（其余参数继续自动搜索）；如 { mlp: { solver: "adam", learning_rate_init: 0.001 } } */
+  algorithm_params?: Record<string, Record<string, number | string>>;
   search_method: AutoMLSearchMethod;
   time_budget: AutoMLTimeBudget;
   search_strength: AutoMLSearchStrength;

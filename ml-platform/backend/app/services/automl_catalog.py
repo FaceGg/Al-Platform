@@ -1,6 +1,6 @@
 """Immutable generic AutoML algorithm-family definitions."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib import import_module
 from types import MappingProxyType
 from typing import Callable, Literal, Mapping
@@ -78,6 +78,28 @@ def _lightgbm_builder(task: TaskType, params: Mapping[str, object]):
         raise AlgorithmUnavailable("lightgbm") from error
     estimator = module.LGBMClassifier if task == "classification" else module.LGBMRegressor
     return estimator(random_state=42, n_jobs=1, verbosity=-1, **dict(params))
+
+
+def _mlp_builder(task: TaskType, params: Mapping[str, object]):
+    """sklearn MLP family: hidden layers arrive as \"256,128,64\" text."""
+    from sklearn.neural_network import MLPClassifier, MLPRegressor
+
+    normalized = dict(params)
+    raw_layers = str(normalized.pop("hidden_layers", "256,128,64")).strip()
+    try:
+        hidden = tuple(int(part) for part in raw_layers.split(",") if part.strip())
+    except ValueError as error:
+        raise ValueError("AUTOML_SEARCH_CONFIG_INVALID") from error
+    if not hidden or any(size < 1 or size > 1024 for size in hidden):
+        raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
+    estimator = MLPClassifier if task == "classification" else MLPRegressor
+    return estimator(
+        hidden_layer_sizes=hidden,
+        random_state=42,
+        early_stopping=True,
+        validation_fraction=0.15,
+        **normalized,
+    )
 
 
 def _xgboost_builder(task: TaskType, params: Mapping[str, object]):
@@ -243,10 +265,108 @@ _FAMILIES = (
         },
         "max_iter", 80, 600, _hist_gradient_boosting_builder,
     ),
+    _family(
+        # 推荐默认（sklearn MLP，CPU 可跑）：adam / 0.001 / alpha 1e-4 /
+        # 隐藏层 256-128-64（与拧紧质量感知报告的 MLP 结构一致）。
+        "mlp", "MLP 神经网络",
+        {"hidden_layers": "256,128,64", "learning_rate_init": 0.001, "solver": "adam", "alpha": 0.0001, "max_iter": 200},
+        {"hidden_layers": ("128,64", "256,128,64"), "learning_rate_init": (0.001,), "solver": ("adam",), "alpha": (0.0001,)},
+        {
+            "hidden_layers": ParameterSpec("categorical", choices=("64", "128,64", "128,64,32", "256,128,64")),
+            "learning_rate_init": ParameterSpec("float", low=0.0001, high=0.1, log=True),
+            "solver": ParameterSpec("categorical", choices=("adam", "lbfgs", "sgd")),
+            "alpha": ParameterSpec("float", low=0.000001, high=0.1, log=True),
+            "max_iter": ParameterSpec("int", low=80, high=600, step=20),
+        },
+        "max_iter", 80, 600, _mlp_builder,
+    ),
 )
 
 AUTOML_FAMILY_IDS = tuple(family.id for family in _FAMILIES)
 _FAMILY_BY_ID = MappingProxyType({family.id: family for family in _FAMILIES})
+
+# Search strength scales both the trial budget (SEARCH_STRENGTH_TRIALS) and
+# the breadth of every family's search space. Ultra (1.0) is the identity:
+# full ranges, all categorical candidates, full resource budget.
+SEARCH_STRENGTH_FRACTIONS: Mapping[str, float] = MappingProxyType({
+    "light": 0.25,
+    "medium": 0.5,
+    "high": 0.75,
+    "ultra": 1.0,
+})
+
+
+def _narrowed_count(choices_count: int, fraction: float) -> int:
+    """Candidate count after narrowing: keep the recommended (first) choices.
+
+    Catalog choice order is complexity order (recommended/simplest first), so
+    light explores the smallest conservative subset and ultra keeps everything.
+    """
+    if choices_count <= 1:
+        return choices_count
+    import math
+
+    return max(2, min(choices_count, 1 + math.ceil((choices_count - 1) * fraction)))
+
+
+def _narrowed_spec(name: str, spec: ParameterSpec, fraction: float, *, is_resource: bool) -> ParameterSpec:
+    if fraction >= 1.0:
+        return spec
+    if spec.kind == "categorical":
+        kept = _narrowed_count(len(spec.choices), fraction)
+        return ParameterSpec("categorical", choices=tuple(spec.choices[:kept]))
+    if is_resource:
+        # Resource budget scales from the low end: light explores short
+        # training budgets, ultra the full declared range.
+        low = spec.low if spec.low is not None else 0
+        high = spec.high if spec.high is not None else low
+        narrowed_high = low + (high - low) * fraction
+        if spec.step:
+            narrowed_high = max(low, min(narrowed_high, round(narrowed_high / spec.step) * spec.step))
+        if spec.kind == "int":
+            narrowed_high = int(narrowed_high)
+        return ParameterSpec(spec.kind, low=spec.low, high=narrowed_high, choices=spec.choices, log=spec.log, step=spec.step)
+    # Non-resource numeric: keep the low (conservative) end, broaden the high
+    # end with strength. Log ranges narrow multiplicatively.
+    low = spec.low if spec.low is not None else 0
+    high = spec.high if spec.high is not None else low
+    if spec.log and low > 0 and high > 0:
+        narrowed_high = low * (high / low) ** fraction
+    else:
+        narrowed_high = low + (high - low) * fraction
+    if spec.kind == "int":
+        narrowed_high = int(narrowed_high)
+    return ParameterSpec(spec.kind, low=spec.low, high=narrowed_high, choices=spec.choices, log=spec.log, step=spec.step)
+
+
+def family_for_strength(family: AlgorithmFamily, strength: str) -> AlgorithmFamily:
+    """Derive the strength-narrowed search space for one family.
+
+    Ultra returns the family untouched. Light/medium/high narrow: the resource
+    parameter's budget, continuous ranges (conservative low end first), and
+    categorical candidates (recommended prefix). Grid tuples follow the same
+    candidate-count rule so grid trials stay consistent with the space.
+    """
+    fraction = SEARCH_STRENGTH_FRACTIONS.get(strength)
+    if fraction is None:
+        raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
+    if fraction >= 1.0:
+        return family
+    narrowed_space = {
+        name: _narrowed_spec(name, spec, fraction, is_resource=(name == family.resource_parameter))
+        for name, spec in family.search_space.items()
+    }
+    narrowed_grid = {
+        name: tuple(values[: _narrowed_count(len(values), fraction)])
+        for name, values in family.grid.items()
+    }
+    narrowed_resource_high = narrowed_space[family.resource_parameter].high
+    return replace(
+        family,
+        grid=_grid(narrowed_grid),
+        search_space=_space(narrowed_space),
+        max_resource=int(narrowed_resource_high) if narrowed_resource_high is not None else family.max_resource,
+    )
 
 
 def list_algorithm_families() -> tuple[AlgorithmFamily, ...]:

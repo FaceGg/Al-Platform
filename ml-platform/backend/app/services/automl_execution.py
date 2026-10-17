@@ -44,7 +44,7 @@ from app.models.experiment import Experiment
 from app.models.model_library import ModelLibrary
 from app.models.training import TrainingJob
 from app.services.artifact_service import build_artifact_service
-from app.services.automl_catalog import AlgorithmUnavailable, resolve_algorithm_families
+from app.services.automl_catalog import AlgorithmUnavailable, family_for_strength, resolve_algorithm_families
 from app.services.automl_search import (
     AllFamilySearchesFailed,
     CandidateSummary,
@@ -699,6 +699,12 @@ def _execute_optuna_job(
     dependencies: AutoMLDependencies,
 ) -> AutoMLExecutionResult:
     families = resolve_algorithm_families(params.get("algorithm_ids"))
+    # Search strength narrows each family's hyper-parameter space breadth
+    # (resource budget, continuous ranges, categorical candidates) in addition
+    # to the trial budget. User-pinned algorithm_params bypass narrowing via
+    # the pin mechanism and always keep their explicit values.
+    optuna_search_strength = str(params.get("search_strength", "medium")).lower()
+    families = [family_for_strength(family, optuna_search_strength) for family in families]
     method = str(params.get("search_method", "bayesian"))
     max_trials = int(params.get("max_trials", 20))
     time_budget = int(params.get("time_budget", 3600))
@@ -792,6 +798,7 @@ def _execute_optuna_job(
             progress_callback=record_progress,
             trial_callback=record_trial,
             monotonic=dependencies.monotonic,
+            fixed_params=(params.get("algorithm_params") or {}).get(family.id),
         )
         family_results.append(result)
         if dependencies.cancellation_requested and dependencies.cancellation_requested(job.id):
@@ -1127,6 +1134,7 @@ def _execute_multioutput_job(
                     ),
                     estimator_evaluator=lambda estimator, **_kwargs: evaluate_candidate(estimator)[0],
                     monotonic=dependencies.monotonic,
+                    fixed_params=(params.get("algorithm_params") or {}).get(family.id),
                 )
             except (AutoMLCancelled, TimeoutError):
                 raise

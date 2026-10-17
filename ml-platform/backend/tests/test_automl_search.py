@@ -177,5 +177,92 @@ class TestAutoMLSearch(unittest.TestCase):
             SearchConfig(method="random", max_trials=0, timeout_seconds=1)
 
 
+class TestPinnedAlgorithmParams(unittest.TestCase):
+    def setUp(self):
+        self.features = np.asarray([
+            [index % 11, (index * 3) % 7, index % 5]
+            for index in range(80)
+        ], dtype=float)
+        self.classification_target = np.asarray([
+            int((index % 11) + ((index * 3) % 7) > 8)
+            for index in range(80)
+        ])
+
+    def test_pinned_params_win_every_trial_and_rebuild(self):
+        captured = []
+
+        def builder(_family, _task, params):
+            captured.append(dict(params))
+            from sklearn.dummy import DummyClassifier
+
+            return DummyClassifier(strategy="most_frequent")
+
+        result = run_family_search(
+            family=get_algorithm_family("random_forest"),
+            task="classification",
+            features=self.features,
+            target=self.classification_target,
+            evaluation={"cross_validation_enabled": False, "cross_validation_folds": None},
+            config=SearchConfig(method="random", max_trials=3, timeout_seconds=30),
+            catalog_index=4,
+            estimator_builder=builder,
+            # max_features is a real search-space key; pinning it must hold
+            # the same value in every trial and in the rebuilt best estimator.
+            fixed_params={"max_features": "log2"},
+        )
+        self.assertEqual(result.status, "completed")
+        for params in captured:
+            self.assertEqual(params.get("max_features"), "log2")
+        self.assertEqual(result.best_params.get("max_features"), "log2")
+
+    def test_mlp_family_search_runs_with_pinned_hyper_parameters(self):
+        result = run_family_search(
+            family=get_algorithm_family("mlp"),
+            task="classification",
+            features=self.features,
+            target=self.classification_target,
+            evaluation={"cross_validation_enabled": False, "cross_validation_folds": None},
+            config=SearchConfig(method="random", max_trials=2, timeout_seconds=120),
+            catalog_index=7,
+            fixed_params={"solver": "lbfgs", "hidden_layers": "16"},
+        )
+        self.assertEqual(result.status, "completed")
+        self.assertGreaterEqual(result.completed_trials, 1)
+        self.assertEqual(result.best_params.get("solver"), "lbfgs")
+        self.assertEqual(result.best_params.get("hidden_layers"), "16")
+        self.assertIsNotNone(result.best_estimator)
+
+
+class TestStrengthNarrowedFamilySearch(unittest.TestCase):
+    """强度收窄后的族进入 run_family_search:采样保持在收窄区间内。"""
+
+    def setUp(self):
+        self.features = np.asarray([[index % 11, (index * 3) % 7] for index in range(60)], dtype=float)
+        self.target = np.asarray([int(index % 5 < 2) for index in range(60)])
+
+    def test_light_narrowed_mlp_samples_stay_within_narrowed_bounds(self):
+        from app.services.automl_catalog import family_for_strength
+
+        narrowed = family_for_strength(get_algorithm_family("mlp"), "light")
+        lr_high = narrowed.search_space["learning_rate_init"].high
+        iter_spec = narrowed.search_space["max_iter"]
+
+        result = run_family_search(
+            family=narrowed,
+            task="classification",
+            features=self.features,
+            target=self.target,
+            evaluation={"cross_validation_enabled": False, "cross_validation_folds": None},
+            config=SearchConfig(method="random", max_trials=3, timeout_seconds=120),
+            catalog_index=7,
+        )
+        self.assertEqual(result.status, "completed")
+        for trial in result.trials:
+            self.assertLessEqual(trial.params["learning_rate_init"], lr_high)
+            self.assertLessEqual(trial.params["max_iter"], iter_spec.high)
+        # 多保真阶梯收窄:最优重建不超过收窄后的资源上限
+        self.assertLessEqual(result.best_params["max_iter"], iter_spec.high)
+
+
 if __name__ == "__main__":
     unittest.main()

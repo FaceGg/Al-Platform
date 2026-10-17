@@ -390,19 +390,38 @@ def _suggest_params(
     family: AlgorithmFamily,
     *,
     exclude: str | None = None,
+    fixed_params: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
-        name: _suggest_parameter(trial, name, spec)
-        for name, spec in family.search_space.items()
-        if name != exclude
-    }
+    pinned = dict(fixed_params or {})
+    params: dict[str, object] = {}
+    for name, spec in family.search_space.items():
+        if name == exclude:
+            continue
+        if name in pinned:
+            # A single-choice categorical keeps the pinned value inside
+            # trial.params, so best-trial rebuilds need no extra merging.
+            params[name] = trial.suggest_categorical(name, [pinned.pop(name)])
+            continue
+        params[name] = _suggest_parameter(trial, name, spec)
+    # Pinned non-search keys (e.g. defaults the user froze) ride along verbatim.
+    params.update(pinned)
+    return params
 
 
-def _suggest_grid_params(trial: optuna.Trial, family: AlgorithmFamily) -> dict[str, object]:
+def _suggest_grid_params(
+    trial: optuna.Trial,
+    family: AlgorithmFamily,
+    fixed_params: Mapping[str, object] | None = None,
+) -> dict[str, object]:
     """Sample only declared grid dimensions and retain family defaults elsewhere."""
+    pinned = dict(fixed_params or {})
     params = dict(family.default_params)
     for name, values in family.grid.items():
+        if name in pinned:
+            params[name] = pinned.pop(name)
+            continue
         params[name] = trial.suggest_categorical(name, list(values))
+    params.update(pinned)
     return params
 
 
@@ -563,6 +582,7 @@ def run_family_search(
     estimator_evaluator: Callable[..., float] = _evaluate_estimator,
     estimator_builder: Callable[[AlgorithmFamily, TaskType, Mapping[str, object]], object] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
+    fixed_params: Mapping[str, object] | None = None,
 ) -> FamilySearchResult:
     """Optimize one selected algorithm family within a bounded wall-time slice."""
     started = monotonic()
@@ -573,11 +593,20 @@ def run_family_search(
         status="failed",
     )
     try:
-        family.build(task, family.default_params)
+        # Probe with defaults merged with user-pinned values so an invalid
+        # pin (e.g. malformed hidden layers) fails before any trial runs.
+        family.build(task, {**family.default_params, **dict(fixed_params or {})})
     except AlgorithmUnavailable as error:
         result.status = "unavailable"
         result.error_code = error.code
         result.error_message = str(error)
+        return result
+    except ValueError as error:
+        if str(error) != "AUTOML_SEARCH_CONFIG_INVALID":
+            raise
+        result.status = "failed"
+        result.error_code = "AUTOML_PARAM_INVALID"
+        result.error_message = "algorithm_params contains an invalid value"
         return result
 
     def build_estimator(params: Mapping[str, object]):
@@ -598,7 +627,7 @@ def run_family_search(
     def objective(trial: optuna.Trial) -> float:
         try:
             if config.method == "multi_fidelity":
-                params = _suggest_params(trial, family, exclude=family.resource_parameter)
+                params = _suggest_params(trial, family, exclude=family.resource_parameter, fixed_params=fixed_params)
                 for resource in _resource_rungs(family):
                     rung_params = {**params, family.resource_parameter: resource}
                     score = _finite_score(estimator_evaluator(
@@ -625,7 +654,7 @@ def run_family_search(
                         pass
                 return score
 
-            params = _suggest_grid_params(trial, family) if config.method == "grid" else _suggest_params(trial, family)
+            params = _suggest_grid_params(trial, family, fixed_params=fixed_params) if config.method == "grid" else _suggest_params(trial, family, fixed_params=fixed_params)
             score = _finite_score(estimator_evaluator(
                 build_estimator(params), task=task, features=features,
                 target=target, evaluation=evaluation,

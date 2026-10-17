@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -98,6 +98,7 @@ class AutoMLRunRequest(BaseModel):
     task: str = "classification"
     candidate_ids: list[str] = Field(default_factory=list)
     algorithm_ids: list[str] = Field(default_factory=list)
+    algorithm_params: dict[str, dict[str, float | int | str]] = Field(default_factory=dict)
     search_method: str | None = None
     max_trials: int | None = Field(default=None, ge=5, le=200)
     cross_validation_enabled: bool = True
@@ -106,6 +107,28 @@ class AutoMLRunRequest(BaseModel):
     search_strength: str = "medium"
     class_weight: bool = True
     name: str = Field(default="automl-job", min_length=1, max_length=128)
+
+    @field_validator("algorithm_params")
+    @classmethod
+    def validate_algorithm_params(cls, value: dict[str, dict[str, float | int | str]]) -> dict[str, dict[str, float | int | str]]:
+        from app.services.automl_catalog import get_algorithm_family
+
+        for family_id, pinned in value.items():
+            try:
+                family = get_algorithm_family(family_id)
+            except ValueError as error:
+                raise ValueError(f"unknown algorithm family: {family_id}") from error
+            if not isinstance(pinned, dict) or not pinned:
+                raise ValueError(f"algorithm_params[{family_id}] must be a non-empty object")
+            allowed = set(family.search_space) | set(family.default_params)
+            for name, pinned_value in pinned.items():
+                if name not in allowed:
+                    raise ValueError(f"unknown parameter {name!r} for family {family_id}")
+                if name == family.resource_parameter:
+                    raise ValueError(f"parameter {name!r} is auto-searched and cannot be pinned")
+                if not isinstance(pinned_value, (int, float, str)) or isinstance(pinned_value, bool):
+                    raise ValueError(f"parameter {name!r} for family {family_id} must be a number or string")
+        return value
 
 
 class BatchDeleteRequest(BaseModel):
@@ -737,6 +760,7 @@ def start_automl(
                     {
                         "search_contract": "optuna_v1",
                         "algorithm_ids": resolved_algorithm_ids,
+                        "algorithm_params": dict(data.algorithm_params),
                         "search_method": data.search_method,
                         "max_trials": requested_max_trials,
                     }

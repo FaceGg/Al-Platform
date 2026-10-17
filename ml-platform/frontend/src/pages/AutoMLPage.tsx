@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { App as AntApp, Card, Select, Button, Input, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
+import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
 import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, StopOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
@@ -32,8 +32,18 @@ const AUTOML_ALGORITHM_OPTIONS = [
   { value: "random_forest", label: "Random Forest" },
   { value: "extra_trees", label: "Extra Trees" },
   { value: "hist_gradient_boosting", label: "HistGradientBoosting" },
+  { value: "mlp", label: "MLP 神经网络" },
 ];
 const AUTOML_ALGORITHM_IDS = AUTOML_ALGORITHM_OPTIONS.map(({ value }) => value);
+
+// MLP 推荐默认（与拧紧质量感知报告一致）：adam / 0.001 / L2 1e-4 / 隐藏层 256-128-64。
+const MLP_DEFAULT_PARAMS = {
+  solver: "adam" as "adam" | "lbfgs" | "sgd",
+  learning_rate_init: 0.001,
+  alpha: 0.0001,
+  hidden_layers: "256,128,64",
+};
+const MLP_HIDDEN_LAYER_OPTIONS = ["64", "128,64", "128,64,32", "256,128,64"];
 
 const AUTOML_SEARCH_OPTIONS = [
   { value: "grid", label: "网格搜索" },
@@ -139,6 +149,9 @@ export default function AutoMLPage() {
   const [targetColumns, setTargetColumns] = useState<string[]>([]);
   const [taskType, setTaskType] = useState<AutoMLTaskType>("classification");
   const [algorithmIds, setAlgorithmIds] = useState<string[]>(() => [...AUTOML_ALGORITHM_IDS]);
+  const [mlpParams, setMlpParams] = useState<{ solver: "adam" | "lbfgs" | "sgd"; learning_rate_init: number; alpha: number; hidden_layers: string }>({ ...MLP_DEFAULT_PARAMS });
+  // 默认关闭：全部 MLP 超参交给强度缩放后的自动搜索；开启后才按表单值固定
+  const [mlpCustomizeEnabled, setMlpCustomizeEnabled] = useState(false);
   const [searchMethod, setSearchMethod] = useState<AutoMLSearchMethod>("bayesian");
   const [searchStrength, setSearchStrength] = useState<AutoMLSearchStrength>("medium");
   const [timeBudget, setTimeBudget] = useState<AutoMLTimeBudget>(3600);
@@ -443,6 +456,10 @@ export default function AutoMLPage() {
         dataset_artifact_id: selectedDataset,
         input_columns: inputColumns,
         algorithm_ids: algorithmIds,
+        // 仅当用户显式开启「自定义 MLP 超参」时才固定；默认关闭=全部参数
+        // 交给强度缩放后的自动搜索（否则默认值会钉死隐藏层/学习率/正则化，
+        // 搜索强度只剩 max_iter 可变）。
+        ...(algorithmIds.includes("mlp") && mlpCustomizeEnabled ? { algorithm_params: { mlp: mlpParams } } : {}),
         search_method: searchMethod,
         time_budget: timeBudget,
         search_strength: searchStrength,
@@ -771,6 +788,38 @@ export default function AutoMLPage() {
               onChange={setAlgorithmIds}
               options={AUTOML_ALGORITHM_OPTIONS}
             /></Col>
+          {algorithmIds.includes("mlp") && <>
+            <Col xs={12} sm={4}><Text strong>自定义 MLP 超参</Text>
+              <div style={{ marginTop: 7 }}><Switch
+                aria-label="自定义 MLP 超参"
+                checked={mlpCustomizeEnabled}
+                onChange={setMlpCustomizeEnabled}
+              /></div>
+              <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>
+                {mlpCustomizeEnabled ? "按下方固定值训练" : "关闭=随搜索强度自动调参"}
+              </small>
+            </Col>
+            <Col xs={12} sm={4}><Text strong>MLP 优化器</Text>
+              <Select aria-label="MLP 优化器" style={{ width: "100%", marginTop: 4 }} value={mlpParams.solver} disabled={!mlpCustomizeEnabled}
+                onChange={(solver: "adam" | "lbfgs" | "sgd") => setMlpParams((current) => ({ ...current, solver }))}
+                options={[
+                  { value: "adam", label: "Adam（推荐）" },
+                  { value: "lbfgs", label: "L-BFGS（小数据集）" },
+                  { value: "sgd", label: "SGD" },
+                ]} /></Col>
+            <Col xs={12} sm={4}><Text strong>MLP 学习率</Text>
+              <InputNumber aria-label="MLP 学习率" style={{ width: "100%", marginTop: 4 }} min={0.0001} max={0.1} step={0.0005}
+                value={mlpParams.learning_rate_init} disabled={!mlpCustomizeEnabled}
+                onChange={(value) => setMlpParams((current) => ({ ...current, learning_rate_init: Number(value) || MLP_DEFAULT_PARAMS.learning_rate_init }))} /></Col>
+            <Col xs={12} sm={4}><Text strong>MLP 正则化 (L2 α)</Text>
+              <InputNumber aria-label="MLP 正则化" style={{ width: "100%", marginTop: 4 }} min={0.000001} max={0.1} step={0.0001}
+                value={mlpParams.alpha} disabled={!mlpCustomizeEnabled}
+                onChange={(value) => setMlpParams((current) => ({ ...current, alpha: Number(value) || MLP_DEFAULT_PARAMS.alpha }))} /></Col>
+            <Col xs={12} sm={6}><Text strong>MLP 隐藏层</Text>
+              <Select aria-label="MLP 隐藏层" style={{ width: "100%", marginTop: 4 }} value={mlpParams.hidden_layers} disabled={!mlpCustomizeEnabled}
+                onChange={(hidden_layers: string) => setMlpParams((current) => ({ ...current, hidden_layers }))}
+                options={MLP_HIDDEN_LAYER_OPTIONS.map((layers) => ({ value: layers, label: layers }))} /></Col>
+          </>}
           <Col xs={24} sm={4}><Text strong>搜索方法</Text>
             <Select aria-label="搜索方法" style={{ width: "100%", marginTop: 4 }} value={searchMethod} onChange={setSearchMethod}
               options={AUTOML_SEARCH_OPTIONS} /></Col>

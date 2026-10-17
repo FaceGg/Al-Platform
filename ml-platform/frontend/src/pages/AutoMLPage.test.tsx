@@ -20,6 +20,7 @@ const AUTOML_ALGORITHM_IDS = [
   "random_forest",
   "extra_trees",
   "hist_gradient_boosting",
+  "mlp",
 ];
 
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), delete: vi.fn() }));
@@ -654,6 +655,43 @@ describe("AutoMLPage", () => {
       expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
     }
     expect(screen.getByRole("switch", { name: "类别权重" })).toBeInTheDocument();
+  });
+
+  it("pins MLP hyper-parameters in the run payload only when customization is enabled", async () => {
+    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
+    fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
+
+    // 默认关闭自定义：表单禁用且 payload 不携带 algorithm_params（超参交给强度缩放搜索）
+    expect((await screen.findAllByLabelText("MLP 优化器"))[0]).toHaveClass("ant-select-disabled");
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/training/automl/run",
+      expect.not.objectContaining({ algorithm_params: expect.anything() }),
+      expect.anything(),
+    ));
+
+    // 开启自定义后表单可用，payload 携带固定超参
+    fireEvent.click(screen.getAllByRole("switch", { name: "自定义 MLP 超参" })[0]);
+    expect(screen.getAllByLabelText("MLP 优化器")[0]).toBeEnabled();
+    fireEvent.change(screen.getAllByLabelText("MLP 学习率")[0], { target: { value: "0.01" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "thunderbolt Run" })[0]);
+    await waitFor(() => expect(api.post).toHaveBeenLastCalledWith(
+      "/training/automl/run",
+      expect.objectContaining({
+        algorithm_params: { mlp: { solver: "adam", learning_rate_init: 0.01, alpha: 0.0001, hidden_layers: "256,128,64" } },
+      }),
+      expect.anything(),
+    ));
   });
 
   it("submits a single-output classification with the planned defaults", async () => {
