@@ -329,19 +329,19 @@ const NODES = {
                <div style="position:absolute;top:9px;right:16px;display:flex;flex-direction:column;gap:5px">
                  <span class="lamp" id="lampOk"></span><span class="lamp" id="lampErr"></span>
                </div>`, hexline: true },
-  backflow:{ x: 1415, y: 437, c: C.red,    cls: "n-backflow", title: "错误回流",   sub: "捕获命中行" },
-  dataset: { x: 1105, y: 437, c: C.red,    cls: "n-dataset",  title: "报错数据集", sub: "数据管理" },
-  monitor: { x: 795,  y: 437, c: C.orange, cls: "",           title: "阈值监测",   sub: "每 5 行触发" },
-  alert:   { x: 795,  y: 647, c: C.orange, cls: "",           title: "告警通知",   sub: "站内信 · 管理员",
+  backflow:{ x: 1415, y: 490, c: C.red,    cls: "n-backflow", title: "错误回流",   sub: "捕获命中行" },
+  dataset: { x: 1105, y: 490, c: C.red,    cls: "n-dataset",  title: "报错数据集", sub: "数据管理" },
+  monitor: { x: 1105, y: 700, c: C.orange, cls: "",           title: "阈值监测",   sub: "每 5 行触发" },
+  alert:   { x: 795,  y: 700, c: C.orange, cls: "",           title: "告警通知",   sub: "站内信 · 管理员",
              extra: `<span class="alert-count zero" id="alertCount">0</span>` },
-  review:  { x: 485,  y: 647, c: C.orange, cls: "",           title: "人工审核",   sub: "标注任务 · 可选" },
-  automl:  { x: 175,  y: 647, c: C.purple, cls: "",           title: "自动建模",   sub: "AutoML · 搜索最优",
+  review:  { x: 485,  y: 700, c: C.orange, cls: "",           title: "人工审核",   sub: "标注任务 · 可选" },
+  automl:  { x: 485,  y: 490, c: C.purple, cls: "",           title: "自动建模",   sub: "AutoML · 搜索最优",
              iconOverride: `<div class="orbit"><div class="ring"></div><div class="sat"></div><div class="sat s2"></div>
                <svg viewBox="0 0 40 40" fill="none" style="position:absolute;inset:5px;width:34px;height:34px">
                  <circle cx="20" cy="20" r="4" fill="#b79bff"/>
                  <path d="M20 12v3m0 10v3m8-8h-3m-10 0h-3m13.7-5.7-2.1 2.1M14.4 25.6l-2.1 2.1m0-15.4 2.1 2.1m11.2 11.2-2.1-2.1" stroke="#9b7bff" stroke-width="1.8" stroke-linecap="round"/>
                </svg></div>` },
-  gate:    { x: 485,  y: 780, c: C.purple, cls: "n-gate",     title: "重训阈值",   sub: "触发自动建模", noTxt: true,
+  gate:    { x: 795,  y: 490, c: C.purple, cls: "n-gate",     title: "重训阈值",   sub: "触发自动建模", noTxt: true,
              extra: `<svg class="gate-ring" viewBox="0 0 100 100" fill="none">
                  <circle cx="50" cy="50" r="48" stroke="#9b7bff" stroke-opacity=".22" stroke-width="2.5"/>
                  <circle id="gateArc" cx="50" cy="50" r="48" stroke="#9b7bff" stroke-width="3.5"
@@ -353,7 +353,7 @@ const NODES = {
                  <span class="gate-count" id="gateCount">0 / 12</span>
                  <span class="sub">达到即建模</span>
                </div>` },
-  swap:    { x: 175,  y: 437, c: C.gold,   cls: "",           title: "模型替换",   sub: "最优版本上线" },
+  swap:    { x: 175,  y: 490, c: C.gold,   cls: "",           title: "模型替换",   sub: "最优版本上线" },
 };
 
 const nodesEl = document.getElementById("nodes");
@@ -454,17 +454,17 @@ const EDGES = [
   { id: "e3",  path: [[795, 227], [1105, 227]],                      c: C.blue,   w: 2.5 },
   { id: "e4",  path: [[1105, 227], [1415, 227]],                     c: C.blue,   w: 2.5 },
   { id: "e5",  path: [[1415, 186], [900, 46], [485, 186]],           c: C.green,  w: 1.6, label: "正常 · 继续下一条", dash: [7, 7] },
-  { id: "e6",  path: [[1415, 227], [1415, 396]],                     c: C.red,    w: 2.5, label: "报错" },
-  { id: "e7",  path: [[1317, 437], [1203, 437]],                     c: C.red,    w: 2 },
-  { id: "e8",  path: [[1007, 437], [893, 437]],                      c: C.red,    w: 2 },
-  { id: "e9",  path: [[795, 478], [795, 606]],                       c: C.orange, w: 2, label: "达到阈值" },
-  { id: "e10", path: [[700, 647], [583, 647]],                       c: C.orange, w: 1.6 },
-  { id: "e11", path: [[387, 647], [273, 647]],                       c: C.orange, w: 1.6 },
-  { id: "e12", path: [[175, 606], [175, 478]],                       c: C.purple, w: 2, label: "最优模型" },
-  { id: "e13", path: [[175, 396], [900, -16], [1105, 188]],          c: C.gold,   w: 2.2, label: "闭环 · 新模型上线" },
-  { id: "e14", path: [[1105, 478], [770, 790], [537, 780]],          c: C.purple, w: 1.8, label: "报错数据积累" },
-  { id: "e15", path: [[435, 780], [300, 764], [186, 692]],           c: C.purple, w: 2, label: "达标 · 触发建模" },
-  { id: "e16", path: [[485, 728], [690, 800], [1058, 484]],          c: "#6b5a9e", w: 1.4, label: "未达标 · 继续积累", dash: [5, 8] },
+  { id: "e6",  path: [[1415, 227], [1415, 449]],                     c: C.red,    w: 2.5, label: "报错" },
+  { id: "e7",  path: [[1317, 490], [1203, 490]],                     c: C.red,    w: 2 },
+  { id: "e8",  path: [[1105, 531], [1105, 659]],                     c: C.red,    w: 2 },
+  { id: "e9",  path: [[1007, 700], [893, 700]],                      c: C.orange, w: 2, label: "达到阈值" },
+  { id: "e10", path: [[697, 700], [583, 700]],                       c: C.orange, w: 1.6 },
+  { id: "e11", path: [[485, 659], [485, 531]],                       c: C.orange, w: 1.6 },
+  { id: "e12", path: [[387, 490], [273, 490]],                       c: C.purple, w: 2, label: "最优模型" },
+  { id: "e13", path: [[175, 449], [640, 360], [1030, 270]],          c: C.gold,   w: 2.2, label: "闭环 · 新模型上线" },
+  { id: "e14", path: [[1007, 490], [893, 490]],                      c: C.purple, w: 1.8, label: "报错数据积累" },
+  { id: "e15", path: [[697, 490], [583, 490]],                       c: C.purple, w: 2, label: "达标 · 触发建模" },
+  { id: "e16", path: [[895, 515], [950, 548], [1005, 515]],          c: "#6b5a9e", w: 1.4, label: "未达标 · 继续积累", dash: [5, 8] },
 ];
 function traceEdge(e) {
   const p = e.path; ctx.beginPath(); ctx.moveTo(p[0][0], p[0][1]);
