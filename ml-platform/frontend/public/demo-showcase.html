@@ -462,9 +462,9 @@ const EDGES = [
   { id: "e11", path: [[485, 659], [485, 531]],                       c: C.orange, w: 1.6 },
   { id: "e12", path: [[387, 490], [273, 490]],                       c: C.purple, w: 2, label: "最优模型" },
   { id: "e13", path: [[175, 449], [640, 360], [1030, 270]],          c: C.gold,   w: 2.2, label: "闭环 · 新模型上线" },
-  { id: "e14", path: [[1007, 490], [893, 490]],                      c: C.purple, w: 1.8, label: "报错数据积累" },
-  { id: "e15", path: [[697, 490], [583, 490]],                       c: C.purple, w: 2, label: "达标 · 触发建模" },
-  { id: "e16", path: [[895, 515], [950, 548], [1005, 515]],          c: "#6b5a9e", w: 1.4, label: "未达标 · 继续积累", dash: [5, 8] },
+  { id: "e14", path: [[1007, 490], [845, 490]],                      c: C.purple, w: 1.8, label: "报错数据积累" },
+  { id: "e15", path: [[745, 490], [583, 490]],                       c: C.purple, w: 2, label: "达标 · 触发建模" },
+  { id: "e16", path: [[847, 512], [950, 548], [1005, 512]],          c: "#6b5a9e", w: 1.4, label: "未达标 · 继续积累", dash: [5, 8] },
 ];
 function traceEdge(e) {
   const p = e.path; ctx.beginPath(); ctx.moveTo(p[0][0], p[0][1]);

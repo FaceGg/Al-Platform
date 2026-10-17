@@ -312,7 +312,7 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 演进：经 v1（只调线）→ v2（绿线改走管线下方走廊）→ v3（挪模型替换/重训阈值缩短金弧）→ v4（右侧竖列）四轮浏览器截图验证后，按用户指定落位收敛为 v5 双排蛇形布局：错误回流下移 (1415,490)，报错数据集/重训阈值/自动建模与其同行左排 (1105/795/485,490)，阈值监测/告警通知/人工审核第三行 (1105/795/485,700) 且与上行节点一一同列对齐，模型替换 (175,490)；绿线（正常回流）走画面顶部，金线（闭环·新模型上线）走顶部行正下方走廊。
 - 效果：全部 16 条连线中 14 条为相邻节点 110-180px 短线，零交叉、零穿节点、零标签重叠；仅绿/金两条回流线各占一条独立空旷走廊。
 - 验证：browser_use 对 v2-v5 每版整页截图逐项核对（v5 七项全过）；部署后 `http://localhost:5173/demo-showcase.html` 200 且含 v5 坐标（frontend 镜像重建 + nginx 重启重新解析）。
-- 备注：`temp_test/demo-showcase-layout-preview*.html` 为 v1-v5 预览草稿（gitignore，不随包发布）；原始版式备份留存于 Git 历史 `db98962` 及 `ml-platform/docs/demo-showcase-original-layout-backup.html`。
+- 备注：`temp_test/demo-showcase-layout-preview*.html` 为 v1-v5 预览草稿（gitignore，不随包发布）；原始版式备份留存于 Git 历史 `db98962` 及 `ml-platform/docs/demo-showcase-original-layout-backup.html`。补丁（同日）：重训阈值为 100×100 圆形节点（半宽 50），v5 误按普通节点半宽 98 计算左右连接点导致两侧连线悬空 48px——e14/e15/e16 端点修正为 845/745/847，浏览器复核贴合。
 
 ### 2026-10-15 闭环审核任务点「预览」报 TASK_STATE_INVALID：预览状态机白名单缺已发布任务状态
 
