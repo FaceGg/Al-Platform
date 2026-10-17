@@ -78,7 +78,8 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
       collect_correct_enabled: !!values.collect_correct_enabled,
       correct_sample_ratio: values.collect_correct_enabled
         ? String(values.correct_sample_ratio || "1:1") : "1:1",
-      field_descriptions: (values.field_descriptions as Record<string, string>) || {},
+      // 字段解释由上传/复用经 setFieldValue 写入（无注册 Form.Item），需显式从 store 读取
+      field_descriptions: (form.getFieldValue("field_descriptions") as Record<string, string>) || {},
     };
     try {
       const cfg: any = editor?.mode === "create"

@@ -306,6 +306,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-17 闭环演示大屏节点重排：双排蛇形布局消除连线遮挡（v5）
+
+- 现象：`demo-showcase.html` 节点与连线相互遮挡——顶部绿/金两条回流弧线交错且标签互压，底部数据积累/未达标弧线交叉、标签重叠并从告警通知节点后穿过。
+- 演进：经 v1（只调线）→ v2（绿线改走管线下方走廊）→ v3（挪模型替换/重训阈值缩短金弧）→ v4（右侧竖列）四轮浏览器截图验证后，按用户指定落位收敛为 v5 双排蛇形布局：错误回流下移 (1415,490)，报错数据集/重训阈值/自动建模与其同行左排 (1105/795/485,490)，阈值监测/告警通知/人工审核第三行 (1105/795/485,700) 且与上行节点一一同列对齐，模型替换 (175,490)；绿线（正常回流）走画面顶部，金线（闭环·新模型上线）走顶部行正下方走廊。
+- 效果：全部 16 条连线中 14 条为相邻节点 110-180px 短线，零交叉、零穿节点、零标签重叠；仅绿/金两条回流线各占一条独立空旷走廊。
+- 验证：browser_use 对 v2-v5 每版整页截图逐项核对（v5 七项全过）；部署后 `http://localhost:5173/demo-showcase.html` 200 且含 v5 坐标（frontend 镜像重建 + nginx 重启重新解析）。
+- 备注：`temp_test/demo-showcase-layout-preview*.html` 为 v1-v5 预览草稿（gitignore，不随包发布）；原始版式备份留存于 Git 历史 `db98962` 及 `ml-platform/docs/demo-showcase-original-layout-backup.html`。
+
 ### 2026-10-15 闭环审核任务点「预览」报 TASK_STATE_INVALID：预览状态机白名单缺已发布任务状态
 
 - 现象：闭环自动化任务自动创建的人工审核标注任务，在数据标注页点「预览」报「任务当前状态不允许此操作」（`TASK_STATE_INVALID` 409）。
@@ -2853,3 +2861,26 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - **实测（点焊标准法规库，315k 字符）**：全量抽取 **5070 实体 / 88775 关系（14.9 秒，无截断）**——此前 500/2000 上限版本的完整形态；关系构成 co_occurs_with 85924 + part_of 2848 + is_a 3；Top 实体已无"应当"类虚词（停用词生效）。compose 将抽取字符预算默认固化 500000/时限 120s（此前 200000/30 会对 315k 语料 422）。
 - 测试：knowledge 抽取系列（含 cap>0 护栏路径与不限量路径）+ model_port **22 passed**；图谱页 2 passed + tsc + build；双镜像重建部署（经历一次 WSL 0x8007274c 抖动，wsl --shutdown 重置后恢复）。
 - **已知边界**：图谱页拉取全量 /graph 数据（5k 节点 JSON 数 MB 级，加载有一次秒级等待），渲染仅 Top-N/邻域所以交互流畅；万级以上浏览如需更流畅可后续升级 G6 WebGL；"智能/GB/作业"等高频词仍偏泛，语义提纯归 LLM 抽取增强（deferred）。
+
+## 2026-10-16 UMAP 发现预览两处运行缺陷修复 + 前端错误显示盲区
+
+- 现象与定位（真实环境 E2E 诊断）：用户报告"生成聚类预览没反应"。① 密度聚类模型持久化目标 `./artifact_store`（即 `/app/artifact_store`）未列入 backend/worker 镜像预建目录，运行用户(1000)无权创建，预览失败 `Permission denied`；且失败发生在创建任务成功之后，前端错误只渲染在"已有 discoveryTask"分支，第 2 步初始分支不显示——用户看到的就是"点了没反应"。② 权限修复后发现第二处：HDBSCAN 噪声样本 cluster_id=None 传入 `AnnotationDecision(cluster_id=int(...))` 触发 `int(None)` TypeError。
+- 修复：backend/Dockerfile 与 Dockerfile.worker 预建目录补 `/app/artifact_store`（chown app）；`_persist_cluster_model_bundle` 目录创建失败时返回结构化 `CLUSTER_MODEL_STORAGE_UNWRITABLE`；`annotation_strategies.py` 发现决策构建对 None 显式放行（噪声归属空簇）。前端第 2 步初始"聚类预览"分支补 `genericDiscoveryError` 渲染（role=alert），失败不再静默。
+- E2E 验证（本地 Docker 栈，admin 真实登录）：UMAP+HDBSCAN 发现预览 `completed`，`cluster_method=umap_hdbscan`、自动定簇 K=2（簇0=26、簇1=56）、噪声 19 条排除在簇外，模型工件落盘成功；后端聚焦套件 `test_weighted_clustering_umap+test_annotation_strategies` 40 passed（含噪声 None 决策回归）。
+- 环境事件记录：验证期间 WSL VM 反复崩溃重启（uptime 反复归零，疑似 8GB 配额下双 kind 集群+全 compose 栈内存挤压），以 `wsl --shutdown` 显式重启打破循环后栈恢复 healthy。后续若复现，优先检查 Windows 宿主内存压力并考虑关闭闲置 kind 集群（`kind delete clusters --all`）。
+- 关联澄清：用户同时报告的 AutoML `AUTOML_CONFIG_INVALID: target contains missing values`，经真实请求复现与数据核查确认**不是平台缺陷**——项目内当前数据集（unlabeled_features.csv，101 行 73 列）不含任何目标列（无 fault/DECIDE 等），建模前需上传含标签列的数据（如 tighten_train.csv 含 DECIDE 判定列）。若目标列部分行缺失，需先清洗或填充后再建模，服务端按契约拒绝含缺失的目标列是有意设计。
+
+## 2026-10-16 搜索强度缩放搜索空间 + 散点噪声色修复 + UMAP 结果实证
+
+- 搜索强度完整语义：`automl_catalog.family_for_strength(family, strength)` 按强度(0.25/0.5/0.75/1.0)派生收窄空间——资源参数上限自低端缩放(含 step 取整，族 max_resource 同步，multi_fidelity 阶梯随收)、连续区间保守低端优先(log 区间乘法收窄)、离散候选保留推荐前缀(count=max(2, min(n, 1+ceil((n-1)*fraction))))，grid 元组同规则截断；ultra 恒等全空间。单目标 `_execute_optuna_job` 接入(多输出路径保留原 `_apply_search_strength` 缩放)；用户固定参数(`algorithm_params`)经 pin 机制绕过收窄、保持显式值。修正一次错误落点(误改多输出路径致 3 测试失败，已撤回并在正确位置重接)。MLP 实测：light 只搜 {64,128,64}/lr≤5.6e-4/≤200 轮，ultra 全空间 600 轮。
+- 散点噪声色修复：`ClusterPreviewPanel` 噪声点(-1)原落 palette[0] 与簇 0 同色，造成"两簇交错"误读；改为独立灰色 #9ca3af 并按密度/轮廓两种模式更新图例说明。
+- UMAP 聚类效果实证(unlabeled_features.csv,101×73,等权复跑)：K=2(54/27)+噪声 20,嵌入空间轮廓系数 0.557；两簇在 voltage_std/power_std/resistance_mean/voltage_mean/power_mean/energy 等主要电气特征上差异≈1.9 个标准差(簇 0 高能量档、簇 1 低能量档)；噪声点含 z 分数 38.9/33.9/32.9 的极端异常(即散点右侧孤立点),noise 平均 z 0.859 高于非噪声 0.677——聚类结构真实、噪声识别有效。平台侧(模型重要性加权)56/26/19 与复跑同构。
+- 验证：`test_automl_catalog` 新增 6 个缩放用例(恒等/单调/资源预算/网格/非法强度/可构建)，`test_automl_search` 新增收窄后采样保持区间用例;后端 automl+聚类聚焦套件 148 passed;前端 444 passed、tsc、构建通过；镜像重建部署，容器内缩放与散点修复实测在位。
+
+## 2026-10-16 追加：MLP 默认不钉参 + 散点改 UMAP 嵌入空间 + 簇色进度条与噪声行
+
+- MLP 固定参数改显式开关：AutoMLPage 新增「自定义 MLP 超参」开关（默认关闭，表单禁用）。修复此前表单默认值始终随 payload 提交 `algorithm_params`，导致隐藏层/学习率/正则化/优化器全被钉死、搜索强度实际只剩 max_iter 可变的问题；开启后按表单值固定。测试改为"默认不带 algorithm_params + 开启后携带"双断言。
+- 散点空间修正：聚类在 8 维 UMAP 嵌入中执行，此前散点却取原始加权特征空间的 PCA 投影，两簇在图中交错造成"聚在一起为何不是一个簇"的视觉误判。`weighted_clustering.py` 新增 `_embedding_scatter`（嵌入前两维、最多 1000 点，噪声保持 -1 灰色），密度路径散点改源；`_fit_umap_hdbscan` 返回 embedding。
+- 簇色一致性：进度条按散点同色（clusterColor）渲染，密度模式新增灰色「噪声」行与计数，图例文案更新为 UMAP 嵌入说明。
+- 验证：`test_weighted_clustering_umap+test_annotation_strategies` 40 passed、automl 四套件 107 passed；前端全量 444 passed（限并发复跑；默认并发曾现 7 个资源型偶发失败、单文件复跑全过——WSL 崩溃循环期间宿主资源紧张所致）、tsc/构建通过；backend/worker 镜像重建、frontend 经 update-frontend-image.sh（docker cp+commit）更新；E2E：UMAP 发现 completed、K=2、噪声 19，散点 101 点坐标确认为嵌入值。
+- 部署注意（复现两次）：/mnt/e 9p 上下文缓存会致 docker build 拿到旧源码（frontend/annotator 均遇过，--no-cache 也不可靠）；可靠路径为 temp_test/update-frontend-image.sh（宿主构建 dist → docker cp+commit → force-recreate）或复制源码到 WSL 原生文件系统构建。
