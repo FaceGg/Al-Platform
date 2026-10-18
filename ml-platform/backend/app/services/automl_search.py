@@ -310,6 +310,7 @@ class TrialSummary:
     duration_seconds: float
     intermediate_scores: dict[int, float]
     error_code: str | None = None
+    error_message: str | None = None
     auc: float | None = None
     f1: float | None = None
     accuracy: float | None = None
@@ -558,6 +559,7 @@ def _trial_summary(trial: FrozenTrial) -> TrialSummary:
         duration_seconds=duration,
         intermediate_scores={int(key): float(value) for key, value in trial.intermediate_values.items()},
         error_code=trial.user_attrs.get("error_code"),
+        error_message=trial.user_attrs.get("error_message"),
         auc=trial.user_attrs.get("auc"),
         f1=trial.user_attrs.get("f1"),
         accuracy=trial.user_attrs.get("accuracy", score),
@@ -682,6 +684,9 @@ def run_family_search(
             raise TrialEvaluationFailed(error.code) from error
         except Exception as error:
             trial.set_user_attr("error_code", "AUTOML_SEARCH_TRIAL_FAILED")
+            # Surface the real reason (e.g. sklearn stratified-split errors) so
+            # the UI shows why a trial failed instead of a bare code.
+            trial.set_user_attr("error_message", str(error)[:300])
             raise TrialEvaluationFailed(type(error).__name__) from error
 
     def on_complete(_study: optuna.Study, frozen_trial: FrozenTrial) -> None:

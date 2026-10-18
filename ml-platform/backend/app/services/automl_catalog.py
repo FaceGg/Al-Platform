@@ -81,7 +81,13 @@ def _lightgbm_builder(task: TaskType, params: Mapping[str, object]):
 
 
 def _mlp_builder(task: TaskType, params: Mapping[str, object]):
-    """sklearn MLP family: hidden layers arrive as \"256,128,64\" text."""
+    """sklearn MLP family: hidden layers arrive as \"256,128,64\" text.
+
+    early_stopping stays off: its internal stratified validation split crashes
+    on small imbalanced CV folds (a class with <2 members in a fold's training
+    slice), which is exactly the small industrial-dataset case this platform
+    serves. Regularization comes from alpha and CV-selected max_iter instead.
+    """
     from sklearn.neural_network import MLPClassifier, MLPRegressor
 
     normalized = dict(params)
@@ -96,8 +102,7 @@ def _mlp_builder(task: TaskType, params: Mapping[str, object]):
     return estimator(
         hidden_layer_sizes=hidden,
         random_state=42,
-        early_stopping=True,
-        validation_fraction=0.15,
+        early_stopping=False,
         **normalized,
     )
 

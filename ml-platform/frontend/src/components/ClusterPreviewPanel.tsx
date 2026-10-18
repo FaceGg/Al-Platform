@@ -8,6 +8,8 @@ export type ClusterEvaluation = {
   total_sample_count?: number | string | null;
   importance_method?: string | null;
   scatter_points?: Array<[number, number, number]> | null;
+  /** 散点轴标签：KMeans 为 "PC1 (32.9%)" 等解释方差，UMAP 路径为 "UMAP-1/2" */
+  scatter_axes?: { x?: string; y?: string } | null;
   /** weighted_kmeans（默认，轮廓系数选 K）或 umap_hdbscan（密度聚类自动定簇，含噪声点） */
   cluster_method?: string | null;
   noise_count?: number | string | null;
@@ -16,8 +18,14 @@ export type ClusterEvaluation = {
 export type ClusterScatterPoint = { x: number; y: number; clusterId: string };
 
 const SCATTER_PALETTE = ["#2563eb", "#16a34a", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#db2777", "#65a30d"];
-const SCATTER_VIEW_SIZE = 100;
-const SCATTER_PADDING = 6;
+const NOISE_COLOR = "#9ca3af";
+// 图表化散点尺寸：绘图区 + 坐标轴/刻度/轴标签边距
+const SCATTER_W = 440;
+const SCATTER_H = 300;
+const PAD_L = 52;
+const PAD_R = 14;
+const PAD_T = 34;
+const PAD_B = 40;
 const SCATTER_MAX_POINTS = 1000;
 
 const numberFormatter = new Intl.NumberFormat("en-US");
@@ -60,31 +68,47 @@ function importanceMethodLabel(method: string | null | undefined, lang: string):
 
 function clusterColor(clusters: ClusterOption[], clusterId: string): string {
   // 噪声点（-1）独立灰色，避免与簇 0 的蓝色混淆造成"两簇交错"的误读
-  if (clusterId === "-1") return "#9ca3af";
+  if (clusterId === "-1") return NOISE_COLOR;
   const index = Math.max(0, clusters.findIndex((cluster) => cluster.clusterId === clusterId));
   return SCATTER_PALETTE[index % SCATTER_PALETTE.length];
 }
 
-function normalizeScatterPoints(
+type ScatterPlot = {
+  points: ClusterScatterPoint[];
+  xTicks: Array<{ pos: number; label: string }>;
+  yTicks: Array<{ pos: number; label: string }>;
+};
+
+function formatTick(value: number): string {
+  const rounded = Math.abs(value) >= 100 ? Math.round(value) : Number(value.toFixed(1));
+  return String(rounded);
+}
+
+function buildScatterPlot(
   points: Array<[number, number, number]> | null | undefined,
-): ClusterScatterPoint[] {
-  if (!Array.isArray(points)) return [];
+): ScatterPlot {
+  if (!Array.isArray(points)) return { points: [], xTicks: [], yTicks: [] };
   const finite = points
     .filter((point) => Array.isArray(point) && point.length >= 3 && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])) && Number.isFinite(Number(point[2])))
     .slice(0, SCATTER_MAX_POINTS)
     .map((point) => ({ x: Number(point[0]), y: Number(point[1]), clusterId: String(point[2]) }));
-  if (!finite.length) return [];
+  if (!finite.length) return { points: [], xTicks: [], yTicks: [] };
   const minX = Math.min(...finite.map((point) => point.x));
   const maxX = Math.max(...finite.map((point) => point.x));
   const minY = Math.min(...finite.map((point) => point.y));
   const maxY = Math.max(...finite.map((point) => point.y));
   const spanX = maxX - minX || 1;
   const spanY = maxY - minY || 1;
-  return finite.map((point) => ({
-    clusterId: point.clusterId,
-    x: SCATTER_PADDING + ((point.x - minX) / spanX) * (SCATTER_VIEW_SIZE - 2 * SCATTER_PADDING),
-    y: SCATTER_VIEW_SIZE - SCATTER_PADDING - ((point.y - minY) / spanY) * (SCATTER_VIEW_SIZE - 2 * SCATTER_PADDING),
-  }));
+  const plotW = SCATTER_W - PAD_L - PAD_R;
+  const plotH = SCATTER_H - PAD_T - PAD_B;
+  const toX = (value: number) => PAD_L + ((value - minX) / spanX) * plotW;
+  const toY = (value: number) => SCATTER_H - PAD_B - ((value - minY) / spanY) * plotH;
+  const tickValues = (min: number, max: number) => [min, min + (max - min) / 2, max];
+  return {
+    points: finite.map((point) => ({ clusterId: point.clusterId, x: toX(point.x), y: toY(point.y) })),
+    xTicks: tickValues(minX, maxX).map((value) => ({ pos: toX(value), label: formatTick(value) })),
+    yTicks: tickValues(minY, maxY).map((value) => ({ pos: toY(value), label: formatTick(value) })),
+  };
 }
 
 export default function ClusterPreviewPanel({
@@ -104,29 +128,86 @@ export default function ClusterPreviewPanel({
     .map(([k, score]) => ({ k, score: Number(score) }))
     .filter((item) => Number.isFinite(item.score))
     .sort((left, right) => Number(left.k) - Number(right.k));
-  const scatterPoints = normalizeScatterPoints(evaluation?.scatter_points);
+  const scatterPlot = buildScatterPlot(evaluation?.scatter_points);
+  const scatterAxes = evaluation?.scatter_axes || {};
+  const scatterTitle = isDensityMethod
+    ? (lang === "zh"
+      ? `UMAP + HDBSCAN 聚类（${evaluation?.selected_k ?? "?"} 簇，${formatCount(evaluation?.noise_count ?? 0)} 噪声）`
+      : `UMAP + HDBSCAN Clustering (${evaluation?.selected_k ?? "?"} clusters, ${formatCount(evaluation?.noise_count ?? 0)} noise)`)
+    : (lang === "zh"
+      ? `KMeans 聚类（K=${evaluation?.selected_k ?? "?"}）`
+      : `KMeans Clustering (K=${evaluation?.selected_k ?? "?"})`);
+  const axisXLabel = scatterAxes.x || (isDensityMethod ? "UMAP-1" : "PC1");
+  const axisYLabel = scatterAxes.y || (isDensityMethod ? "UMAP-2" : "PC2");
   return (
     <div className="data-annotation__cluster-preview" aria-label={lang === "zh" ? "聚类预览效果" : "Cluster preview"}>
       <div className="data-annotation__cluster-preview-body">
         <div className="data-annotation__cluster-preview-charts">
-          {scatterPoints.length > 0 && (
+          {scatterPlot.points.length > 0 && (
             <div className="data-annotation__cluster-preview-scatter" aria-label={lang === "zh" ? "聚类散点图" : "Cluster scatter"}>
               <svg
-                viewBox={`0 0 ${SCATTER_VIEW_SIZE} ${SCATTER_VIEW_SIZE}`}
+                viewBox={`0 0 ${SCATTER_W} ${SCATTER_H}`}
                 role="img"
-                aria-label={lang === "zh" ? "聚类分布散点图（前 1000 个评估样本，PCA 投影）" : "Cluster distribution scatter (first 1000 evaluation rows, PCA projection)"}
+                aria-label={lang === "zh" ? `${scatterTitle}散点图` : `${scatterTitle} scatter`}
                 preserveAspectRatio="xMidYMid meet"
+                style={{ width: "100%", height: "auto" }}
               >
-                {scatterPoints.map((point, index) => (
+                <text x={(PAD_L + SCATTER_W - PAD_R) / 2} y={16} textAnchor="middle" fontSize={13} fontWeight={600} fill="currentColor">
+                  {scatterTitle}
+                </text>
+                {/* 坐标轴 */}
+                <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={SCATTER_H - PAD_B} stroke="currentColor" strokeWidth={0.8} />
+                <line x1={PAD_L} y1={SCATTER_H - PAD_B} x2={SCATTER_W - PAD_R} y2={SCATTER_H - PAD_B} stroke="currentColor" strokeWidth={0.8} />
+                {scatterPlot.xTicks.map((tick) => (
+                  <g key={`x-${tick.label}`}>
+                    <line x1={tick.pos} y1={SCATTER_H - PAD_B} x2={tick.pos} y2={SCATTER_H - PAD_B + 4} stroke="currentColor" strokeWidth={0.8} />
+                    <text x={tick.pos} y={SCATTER_H - PAD_B + 14} textAnchor="middle" fontSize={9} fill="currentColor" opacity={0.65}>{tick.label}</text>
+                  </g>
+                ))}
+                {scatterPlot.yTicks.map((tick) => (
+                  <g key={`y-${tick.label}`}>
+                    <line x1={PAD_L - 4} y1={tick.pos} x2={PAD_L} y2={tick.pos} stroke="currentColor" strokeWidth={0.8} />
+                    <text x={PAD_L - 6} y={tick.pos + 3} textAnchor="end" fontSize={9} fill="currentColor" opacity={0.65}>{tick.label}</text>
+                  </g>
+                ))}
+                <text x={(PAD_L + SCATTER_W - PAD_R) / 2} y={SCATTER_H - 6} textAnchor="middle" fontSize={10} fill="currentColor" opacity={0.75}>
+                  {axisXLabel}
+                </text>
+                <text x={12} y={(PAD_T + SCATTER_H - PAD_B) / 2} textAnchor="middle" fontSize={10} fill="currentColor" opacity={0.75} transform={`rotate(-90 12 ${(PAD_T + SCATTER_H - PAD_B) / 2})`}>
+                  {axisYLabel}
+                </text>
+                {/* 散点：噪声灰、其余按簇色 */}
+                {scatterPlot.points.map((point, index) => (
                   <circle
                     key={`${point.clusterId}-${index}`}
                     cx={point.x}
                     cy={point.y}
-                    r={0.9}
+                    r={2.4}
                     fill={clusterColor(clusters, point.clusterId)}
                     fillOpacity={0.75}
                   />
                 ))}
+                {/* 图例：右上角，簇 + 噪声 */}
+                {clusters.map((cluster, index) => {
+                  const legendY = PAD_T + 12 + index * 14;
+                  const color = clusterColor(clusters, cluster.clusterId);
+                  return (
+                    <g key={`legend-${cluster.clusterId}`}>
+                      <circle cx={SCATTER_W - PAD_R - 78} cy={legendY - 3} r={3} fill={color} fillOpacity={0.85} />
+                      <text x={SCATTER_W - PAD_R - 70} y={legendY} fontSize={9.5} fill="currentColor">
+                        {lang === "zh" ? `簇 ${cluster.clusterId} (n=${numberFormatter.format(cluster.sampleCount)})` : `Cluster ${cluster.clusterId} (n=${numberFormatter.format(cluster.sampleCount)})`}
+                      </text>
+                    </g>
+                  );
+                })}
+                {isDensityMethod && noiseCount > 0 && (
+                  <g>
+                    <circle cx={SCATTER_W - PAD_R - 78} cy={PAD_T + 12 + clusters.length * 14 - 3} r={3} fill={NOISE_COLOR} fillOpacity={0.85} />
+                    <text x={SCATTER_W - PAD_R - 70} y={PAD_T + 12 + clusters.length * 14} fontSize={9.5} fill="currentColor">
+                      {lang === "zh" ? `噪声 (n=${numberFormatter.format(noiseCount)})` : `Noise (n=${numberFormatter.format(noiseCount)})`}
+                    </text>
+                  </g>
+                )}
               </svg>
               <small>{isDensityMethod
                 ? (lang === "zh"

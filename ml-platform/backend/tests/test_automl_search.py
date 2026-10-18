@@ -215,6 +215,29 @@ class TestPinnedAlgorithmParams(unittest.TestCase):
             self.assertEqual(params.get("max_features"), "log2")
         self.assertEqual(result.best_params.get("max_features"), "log2")
 
+    def test_mlp_adam_survives_small_imbalanced_dataset(self):
+        """46 行/正类仅 3 条的真实场景：adam 早停内部分层切分曾致 trial 全灭。
+
+        修复后 MLP 默认关闭 early_stopping，adam/sgd 在小不平衡数据上可正常
+        完成 CV；trial 失败时记录真实 error_message 而非空串。
+        """
+        features = np.asarray([[index % 13, (index * 5) % 7] for index in range(46)], dtype=float)
+        target = np.asarray([1 if index % 15 == 0 else 0 for index in range(46)])  # 正类 3 条
+        result = run_family_search(
+            family=get_algorithm_family("mlp"),
+            task="classification",
+            features=features,
+            target=target,
+            evaluation={"cross_validation_enabled": True, "cross_validation_folds": 5},
+            config=SearchConfig(method="random", max_trials=4, timeout_seconds=120),
+            catalog_index=7,
+            fixed_params={"solver": "adam", "hidden_layers": "16"},
+        )
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.failed_trials, 0)
+        self.assertGreaterEqual(result.completed_trials, 1)
+        self.assertIsNotNone(result.best_estimator)
+
     def test_mlp_family_search_runs_with_pinned_hyper_parameters(self):
         result = run_family_search(
             family=get_algorithm_family("mlp"),

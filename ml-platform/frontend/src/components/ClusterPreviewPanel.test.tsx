@@ -49,23 +49,59 @@ describe("ClusterPreviewPanel", () => {
     expect(screen.getByText(/Full-scope scoring/)).toBeTruthy();
   });
 
-  it("renders the deterministic scatter projection with per-cluster colors", () => {
+  it("renders the chart-style scatter with axes, title and colored legend", () => {
     render(
       <ClusterPreviewPanel
         clusters={clusters}
-        evaluation={{ scatter_points: [[0.0, 0.0, 0], [1.0, 1.0, 1], [2.0, 0.5, 0]] }}
+        evaluation={{
+          scatter_points: [[0.0, 0.0, 0], [1.0, 1.0, 1], [2.0, 0.5, 0]],
+          selected_k: 2,
+          scatter_axes: { x: "PC1 (32.9%)", y: "PC2 (16.4%)" },
+        }}
         lang="zh"
       />,
     );
     expect(screen.getByLabelText("聚类散点图")).toBeTruthy();
+    // 图表标题与轴标签（PCA 解释方差）
+    expect(screen.getByText("KMeans 聚类（K=2）")).toBeTruthy();
+    expect(screen.getByText("PC1 (32.9%)")).toBeTruthy();
+    expect(screen.getByText("PC2 (16.4%)")).toBeTruthy();
+    // 散点圆 + 图例圆（每簇 1 个图例点）
     const circles = document.querySelectorAll(".data-annotation__cluster-preview-scatter circle");
-    expect(circles.length).toBe(3);
-    const fills = new Set(Array.from(circles).map((circle) => circle.getAttribute("fill")));
+    expect(circles.length).toBe(3 + 2);
+    const fills = new Set(
+      Array.from(circles)
+        .slice(0, 3)
+        .map((circle) => circle.getAttribute("fill")),
+    );
     expect(fills.size).toBe(2);
-    // Min-max normalization maps the corner points to the padded viewBox.
-    const first = circles[0];
-    expect(Number(first.getAttribute("cx"))).toBeCloseTo(6, 5);
-    expect(Number(first.getAttribute("cy"))).toBeCloseTo(94, 5);
+    // 图例含每簇计数
+    expect(screen.getByText("簇 0 (n=30)")).toBeTruthy();
+    expect(screen.getByText("簇 1 (n=10)")).toBeTruthy();
+  });
+
+  it("renders density scatter title with noise count and gray noise legend", () => {
+    render(
+      <ClusterPreviewPanel
+        clusters={[{ clusterId: "0", sampleCount: 26 }, { clusterId: "1", sampleCount: 56 }]}
+        evaluation={{
+          cluster_method: "umap_hdbscan",
+          selected_k: 2,
+          noise_count: 19,
+          scatter_points: [[0, 0, 0], [1, 1, 1], [2, 2, -1]],
+          scatter_axes: { x: "UMAP-1", y: "UMAP-2" },
+        }}
+        lang="zh"
+      />,
+    );
+    expect(screen.getByText("UMAP + HDBSCAN 聚类（2 簇，19 噪声）")).toBeTruthy();
+    expect(screen.getByText("UMAP-1")).toBeTruthy();
+    expect(screen.getByText("UMAP-2")).toBeTruthy();
+    expect(screen.getByText("噪声 (n=19)")).toBeTruthy();
+    // 噪声散点为灰色
+    const noiseCircle = Array.from(document.querySelectorAll(".data-annotation__cluster-preview-scatter circle"))
+      .find((circle) => circle.getAttribute("fill") === "#9ca3af");
+    expect(noiseCircle).toBeTruthy();
   });
 
   it("ignores malformed scatter points", () => {

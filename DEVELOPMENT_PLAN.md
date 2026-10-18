@@ -2884,3 +2884,10 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 簇色一致性：进度条按散点同色（clusterColor）渲染，密度模式新增灰色「噪声」行与计数，图例文案更新为 UMAP 嵌入说明。
 - 验证：`test_weighted_clustering_umap+test_annotation_strategies` 40 passed、automl 四套件 107 passed；前端全量 444 passed（限并发复跑；默认并发曾现 7 个资源型偶发失败、单文件复跑全过——WSL 崩溃循环期间宿主资源紧张所致）、tsc/构建通过；backend/worker 镜像重建、frontend 经 update-frontend-image.sh（docker cp+commit）更新；E2E：UMAP 发现 completed、K=2、噪声 19，散点 101 点坐标确认为嵌入值。
 - 部署注意（复现两次）：/mnt/e 9p 上下文缓存会致 docker build 拿到旧源码（frontend/annotator 均遇过，--no-cache 也不可靠）；可靠路径为 temp_test/update-frontend-image.sh（宿主构建 dist → docker cp+commit → force-recreate）或复制源码到 WSL 原生文件系统构建。
+
+## 2026-10-16 追加二：MLP 小不平衡数据 trial 全灭修复 + trial 失败原因透出
+
+- 现象：MLP（light 强度）搜索 trial 大面积 `AUTOML_SEARCH_TRIAL_FAILED`。定位：失败 trial 全部 `solver=adam`、成功全部 `lbfgs`——根因是 `_mlp_builder` 强制 `early_stopping=True`，sklearn 早停内部对 CV 折训练集再做分层验证切分（validation_fraction=0.15），而用户数据集 `labeled_features.csv` 仅 46 行、fault=1 仅 3 条，部分折训练集内正类不足，分层切分抛 `The least populated class in y has only 1 member`；lbfgs 不使用早停故幸免。已用真实数据 + 失败 trial 精确参数复现（3/5 折失败）。
+- 修复：① `_mlp_builder` 固定 `early_stopping=False`（小不平衡数据正解；正则化由 alpha、轮数由 CV 搜索的 max_iter 承担）；② trial 异常时 `set_user_attr("error_message", str(error)[:300])`，`TrialSummary` 增加 `error_message` 字段透传——页面从此显示 trial 失败的真实原因而非裸错误码。
+- 验证：新增 `test_mlp_adam_survives_small_imbalanced_dataset`（46 行/正类 3 条、adam 固定，断言 failed_trials=0）；automl 四套件 109 passed；backend/worker 镜像重建部署、健康检查通过。
+- 数据建议（用户侧同根因解法）：46 行/正类 3 条对 5 折 CV 极紧，建议扩充正类或合并数据集；修复保证不再崩溃，但极小正类下 CV 指标波动大，模型可信度有限。

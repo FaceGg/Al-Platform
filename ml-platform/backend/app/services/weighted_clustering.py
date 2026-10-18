@@ -5,7 +5,7 @@ from __future__ import annotations
 import heapq
 import hashlib
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 
@@ -108,6 +108,7 @@ class ClusterArtifact:
     centers: tuple[tuple[float, ...], ...]
     importance_method: str = "estimator_native"
     scatter_points: tuple[tuple[float, float, int], ...] = ()
+    scatter_axes: Mapping[str, str] = field(default_factory=dict)
     method: str = CLUSTER_METHOD_WEIGHTED_KMEANS
     noise_count: int = 0
     model_ref: str | None = None
@@ -429,6 +430,7 @@ def cluster_artifact_from_payload(payload: Mapping[str, object]) -> ClusterArtif
                 for point in (payload.get("scatter_points") or ())
                 if isinstance(point, (list, tuple)) and len(point) >= 3
             ),
+            scatter_axes=dict(payload.get("scatter_axes") or {}),
             method=str(payload.get("method") or CLUSTER_METHOD_WEIGHTED_KMEANS),
             noise_count=int(payload.get("noise_count") or 0),
             model_ref=str(payload["model_ref"]) if payload.get("model_ref") else None,
@@ -473,26 +475,36 @@ def _scatter_projection(
     matrix: np.ndarray,
     labels: Sequence[int],
     limit: int = 1000,
-) -> tuple[tuple[float, float, int], ...]:
+) -> tuple[tuple[tuple[float, float, int], ...], dict[str, str]]:
     """Project the deterministic evaluation rows to 2D for the preview scatter.
 
     PCA on the already hash-ordered evaluation matrix is deterministic, so the
-    same frozen scope always renders the same preview points.
+    same frozen scope always renders the same preview points.  Returns the
+    points plus axis labels carrying each principal component's explained
+    variance ratio (e.g. "PC1 (32.9%)"), matching report-style charts.
     """
     count = min(int(limit), len(matrix))
     if count <= 0 or len(labels) == 0:
-        return ()
+        return (), {}
     points_matrix = np.asarray(matrix[:count], dtype=float)
     components = min(2, points_matrix.shape[1])
     if components <= 0:
-        return ()
-    projection = PCA(n_components=components).fit_transform(points_matrix)
+        return (), {}
+    pca = PCA(n_components=components).fit(points_matrix)
+    projection = pca.transform(points_matrix)
+    ratios = pca.explained_variance_ratio_
     if components == 1:
         projection = np.column_stack([projection[:, 0], np.zeros(len(projection))])
-    return tuple(
+        ratios = np.append(ratios, 0.0)
+    points = tuple(
         (float(x), float(y), int(label))
         for (x, y), label in zip(projection, list(labels)[:count])
     )
+    axes = {
+        "x": f"PC1 ({ratios[0]:.1%})",
+        "y": f"PC2 ({ratios[1]:.1%})",
+    }
+    return points, axes
 
 
 def _fit_streaming_lloyd_kmeans(
@@ -802,6 +814,7 @@ def build_weighted_clusters_streaming(
             centers=(),
             importance_method=importance_method,
             scatter_points=scatter_points,
+            scatter_axes={"x": "UMAP-1", "y": "UMAP-2"},
             method=CLUSTER_METHOD_UMAP_HDBSCAN,
             noise_count=noise_count,
             model_ref=model_ref,
@@ -847,6 +860,11 @@ def build_weighted_clusters_streaming(
         fit_algorithm = "streaming_full_batch_lloyd_kmeans"
 
     evaluation_labels = getattr(final, "labels_", None)
+    scatter_points, scatter_axes = (
+        _scatter_projection(evaluation_matrix, evaluation_labels)
+        if evaluation_labels is not None
+        else ((), {})
+    )
 
     weights = {column: float(value) for column, value in zip(columns, raw_importance)}
     preprocessing = {
@@ -878,7 +896,8 @@ def build_weighted_clusters_streaming(
         preprocessing=preprocessing,
         centers=tuple(tuple(float(item) for item in row) for row in centers),
         importance_method=importance_method,
-        scatter_points=_scatter_projection(evaluation_matrix, evaluation_labels) if evaluation_labels is not None else (),
+        scatter_points=scatter_points,
+        scatter_axes=scatter_axes,
         method=CLUSTER_METHOD_WEIGHTED_KMEANS,
     )
 
@@ -959,6 +978,7 @@ def build_weighted_clusters(
             centers=(),
             importance_method=importance_method,
             scatter_points=_embedding_scatter(embedding, labels),
+            scatter_axes={"x": "UMAP-1", "y": "UMAP-2"},
             method=CLUSTER_METHOD_UMAP_HDBSCAN,
             noise_count=noise_count,
             model_ref=model_ref,
@@ -1004,6 +1024,7 @@ def build_weighted_clusters(
             "scale": tuple(float(value) for value in scaler.scale_),
         },
     }
+    scatter_points, scatter_axes = _scatter_projection(eval_matrix, final.labels_[eval_indices])
     return ClusterArtifact(
         labels=tuple(int(value) for value in final.labels_),
         k_scores=scores,
@@ -1018,6 +1039,7 @@ def build_weighted_clusters(
         preprocessing=preprocessing,
         centers=tuple(tuple(float(item) for item in row) for row in final.cluster_centers_),
         importance_method=importance_method,
-        scatter_points=_scatter_projection(eval_matrix, final.labels_[eval_indices]),
+        scatter_points=scatter_points,
+        scatter_axes=scatter_axes,
         method=CLUSTER_METHOD_WEIGHTED_KMEANS,
     )

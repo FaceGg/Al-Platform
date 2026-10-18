@@ -370,6 +370,7 @@ def execute_annotation_preview(self, task_id: str, preview_id: str, owner_id: st
                         "total_sample_count": cluster_artifact.get("total_sample_count"),
                         "importance_method": cluster_artifact.get("importance_method"),
                         "scatter_points": cluster_artifact.get("scatter_points") or [],
+                        "scatter_axes": cluster_artifact.get("scatter_axes") or {},
                         "cluster_method": cluster_artifact.get("method") or "weighted_kmeans",
                         "noise_count": cluster_artifact.get("noise_count") or 0,
                     }
