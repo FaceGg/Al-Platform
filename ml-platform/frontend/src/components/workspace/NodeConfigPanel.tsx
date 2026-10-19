@@ -380,6 +380,7 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
   const [scriptModalOpen, setScriptModalOpen] = useState(false);
   const [scriptDraft, setScriptDraft] = useState("");
   const [scriptExamples, setScriptExamples] = useState<Array<{ id: string; name: string; description?: string; script: string }>>([]);
+  const [selectedScriptExampleId, setSelectedScriptExampleId] = useState<string | undefined>(undefined);
 
   const nodeId = selectedNode?.id || "";
   const operator = operators.find((op: any) => op.id === selectedNode?.data?.operatorId);
@@ -612,19 +613,29 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
             <Select
               style={{ width: "100%", marginBottom: 4 }}
               placeholder={lang === "zh" ? "插入示例脚本（点击查看）" : "Insert example script (click to view)"}
-              value={undefined}
+              allowClear
+              value={selectedScriptExampleId}
               onChange={(exampleId) => {
-                const example = scriptExamples.find((item) => item.id === exampleId);
-                if (example) {
-                  setScriptDraft(example.script);
-                  setScriptModalOpen(true);
+                setSelectedScriptExampleId(exampleId || undefined);
+                if (exampleId) {
+                  const example = scriptExamples.find((item) => item.id === exampleId);
+                  if (example) {
+                    setScriptDraft(example.script);
+                    setScriptModalOpen(true);
+                  }
+                } else {
+                  // 空白选项「不使用示例」：恢复节点当前脚本（或默认模板）
+                  setScriptDraft(String(value || p.default || ""));
                 }
               }}
-              options={scriptExamples.map((item) => ({
-                label: item.name,
-                value: item.id,
-                title: item.description,
-              }))}
+              options={[
+                { label: lang === "zh" ? "不使用示例" : "No example", value: "" },
+                ...scriptExamples.map((item) => ({
+                  label: item.name,
+                  value: item.id,
+                  title: item.description,
+                })),
+              ]}
             />
           )}
           <Button
