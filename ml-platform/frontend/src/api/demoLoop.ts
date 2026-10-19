@@ -23,6 +23,9 @@ export interface DemoLoopConfig {
   deployment_id: string | null;
   error_classes: string[];
   preprocess_enabled: boolean;
+  feature_engineering_mode?: "legacy" | "operator" | "script";
+  feature_operator_node_id?: string | null;
+  feature_script?: string | null;
   alert_threshold_rows: number;
   require_review: boolean;
   review_annotator_ids: string[];

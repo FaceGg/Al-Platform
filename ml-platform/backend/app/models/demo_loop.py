@@ -38,6 +38,11 @@ class DemoLoopConfig(Base):
     # Predictions whose class lands in error_classes flow back into the error dataset.
     error_classes = Column(JSON, nullable=False, default=list)
     preprocess_enabled = Column(Boolean, nullable=False, default=False)
+    # 特征工程方式：legacy=内置点焊特征桥（兼容旧 preprocess_enabled 开关）、
+    # operator=复用工作流特征工程算子节点、script=用户自写 Python 脚本。
+    feature_engineering_mode = Column(String(16), nullable=False, default="legacy")
+    feature_operator_node_id = Column(UUID(as_uuid=True), nullable=True)
+    feature_script = Column(Text, nullable=True)
     # Alert fires every time error_count crosses a multiple of this threshold (1 = every row).
     alert_threshold_rows = Column(Integer, nullable=False, default=1)
     require_review = Column(Boolean, nullable=False, default=False)

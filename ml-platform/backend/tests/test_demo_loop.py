@@ -1120,5 +1120,110 @@ class DemoLoopFlow(unittest.TestCase):
             )
 
 
+class TestFeatureEngineeringModes(unittest.TestCase):
+    """闭环配置的特征工程方式：operator / script / legacy 三条派生路径。"""
+
+    def _make_service(self):
+        db = SessionLocal()
+        return db, demo_loop_module.DemoLoopService(db)
+
+    def _make_config(self, db, project_id=None, **overrides):
+        config = DemoLoopConfig(
+            project_id=project_id or uuid.uuid4(),
+            name="fe-mode-test",
+            preprocess_enabled=overrides.get("preprocess_enabled", True),
+            feature_engineering_mode=overrides.get("mode", "legacy"),
+            feature_operator_node_id=overrides.get("node_id"),
+            feature_script=overrides.get("script"),
+        )
+        db.add(config)
+        db.commit()
+        db.refresh(config)
+        return config
+
+    def test_operator_mode_derives_features_from_workflow_node(self):
+        from app.models.workflow import Workflow, WorkflowNode
+
+        db, service = self._make_service()
+        try:
+            project_id = uuid.uuid4()
+            workflow = Workflow(project_id=project_id, name="fe-mode-wf")
+            db.add(workflow)
+            db.flush()
+            node = WorkflowNode(
+                workflow_id=workflow.id,
+                operator_id="tighten_feature_engineering",
+                label="拧紧特征工程",
+                position_x=100,
+                position_y=100,
+                params={},
+            )
+            db.add(node)
+            db.commit()
+            db.refresh(node)
+
+            config = self._make_config(db, project_id=project_id, mode="operator", node_id=node.id)
+            merged = service._engineer_missing_features(
+                config,
+                {"ACTUAL_TORQUE": 632.0, "TARGET_TORQUE": 630.0},
+                missing=["TIGHTEN_TORQUE_DEVIATION"],
+                names=["ACTUAL_TORQUE", "TIGHTEN_TORQUE_DEVIATION"],
+            )
+            self.assertAlmostEqual(merged["TIGHTEN_TORQUE_DEVIATION"], 2.0)
+            self.assertAlmostEqual(merged["ACTUAL_TORQUE"], 632.0)
+        finally:
+            db.close()
+
+    def test_script_mode_derives_features_via_python_script(self):
+        from app.operators.utility_operators import PYTHON_SCRIPT_TEMPLATE
+
+        db, service = self._make_service()
+        try:
+            script = PYTHON_SCRIPT_TEMPLATE.replace(
+                "    result = df.copy()        # 输入：以上游数据表 df 为起点\n"
+                "    # ...                     # 中间：在此编写处理逻辑\n"
+                "    return result             # 输出：返回最终结果（pandas.DataFrame 或 dict 记录列表）\n",
+                "    result = df.copy()\n"
+                "    result[\"TIGHTEN_TORQUE_DEVIATION\"] = (\n"
+                "        pd.to_numeric(df[\"ACTUAL_TORQUE\"], errors=\"coerce\")\n"
+                "        - pd.to_numeric(df[\"TARGET_TORQUE\"], errors=\"coerce\")\n"
+                "    )\n"
+                "    return result\n",
+            )
+            self.assertIn("TIGHTEN_TORQUE_DEVIATION", script)
+            config = self._make_config(db, mode="script", script=script)
+            merged = service._engineer_missing_features(
+                config,
+                {"ACTUAL_TORQUE": 478.0, "TARGET_TORQUE": 475.0},
+                missing=["TIGHTEN_TORQUE_DEVIATION"],
+                names=["ACTUAL_TORQUE", "TIGHTEN_TORQUE_DEVIATION"],
+            )
+            self.assertAlmostEqual(merged["TIGHTEN_TORQUE_DEVIATION"], 3.0)
+        finally:
+            db.close()
+
+    def test_config_validation_requires_payload_per_mode(self):
+        db, service = self._make_service()
+        try:
+            config = self._make_config(db, mode="legacy")
+            with self.assertRaises(demo_loop_module.DemoLoopError) as ctx:
+                service._apply_config_fields(config, config.project_id, {"feature_engineering_mode": "operator"})
+            self.assertIn("operator", str(ctx.exception))
+
+            with self.assertRaises(demo_loop_module.DemoLoopError) as ctx:
+                service._apply_config_fields(config, config.project_id, {"feature_engineering_mode": "script"})
+            self.assertIn("script", str(ctx.exception))
+
+            # Invalid scripts are rejected at save time via the fixed interface check.
+            with self.assertRaises(demo_loop_module.DemoLoopError) as ctx:
+                service._apply_config_fields(config, config.project_id, {
+                    "feature_engineering_mode": "script",
+                    "feature_script": "# 输入接口（固定\n被篡改的脚本",
+                })
+            self.assertIn("接口", str(ctx.exception))
+        finally:
+            db.close()
+
+
 if __name__ == "__main__":
     unittest.main()

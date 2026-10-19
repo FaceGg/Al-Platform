@@ -1,8 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Button, Divider, Form, Input, InputNumber, Modal, Select, Space, Switch, Upload, Typography } from "antd";
 import { useI18n } from "../../i18n";
 import { createDemoLoop, updateDemoLoop, type DemoLoopConfig } from "../../api/demoLoop";
-import { formatApiError } from "../../api/client";
+import { apiGet, formatApiError } from "../../api/client";
 import { message } from "antd";
 
 export type LoopEditorState =
@@ -27,6 +27,18 @@ interface Props {
   onSaved: (loop: DemoLoopConfig) => void;
 }
 
+const FEATURE_OPERATOR_IDS = [
+  "spot_weld_feature_engineering",
+  "tighten_feature_engineering",
+  "auto_feature_engineering",
+];
+
+const FEATURE_MODE_OPTIONS = [
+  { value: "legacy", label: "内置点焊特征桥（原始点焊报告数据 → 73 特征）" },
+  { value: "operator", label: "工作流特征工程算子（沿用节点已保存参数）" },
+  { value: "script", label: "Python 脚本自定义（与 python_script 算子同接口）" },
+];
+
 const RATIO_OPTIONS: Array<{ value: string; label: string }> = [
   ...Array.from({ length: 9 }, (_, i) => ({
     value: `${10 - i}:1`, label: `错误:正确 = ${10 - i}:1（多收正确数据）`,
@@ -41,6 +53,60 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
   const { t } = useI18n();
   const tr = ((t as unknown as Record<string, Record<string, string | undefined>>).demo_loop ?? {}) as Record<string, string | undefined>;
   const [form] = Form.useForm();
+  const [feNodeOptions, setFeNodeOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const [feNodesLoading, setFeNodesLoading] = useState(false);
+  const featureMode = Form.useWatch("feature_engineering_mode", form);
+
+  // 拉取项目内工作流中的特征工程算子节点（operator 模式选项）
+  useEffect(() => {
+    if (!editor) return;
+    let cancelled = false;
+    setFeNodesLoading(true);
+    (async () => {
+      try {
+        const wfRes = await apiGet(`/projects/${projectId}/workflows`);
+        const workflows: Array<{ id: string; name: string }> = wfRes.data?.items || wfRes.data || [];
+        const options: Array<{ value: string; label: string }> = [];
+        for (const wf of workflows) {
+          try {
+            const detail = await apiGet(`/workflows/${wf.id}`);
+            for (const node of detail.data?.nodes || []) {
+              if (FEATURE_OPERATOR_IDS.includes(node.operator_id)) {
+                options.push({
+                  value: String(node.id),
+                  label: `${wf.name} · ${node.label || node.operator_id}（${node.operator_id}）`,
+                });
+              }
+            }
+          } catch {
+            // 单个工作流拉取失败不影响其它选项
+          }
+        }
+        if (!cancelled) setFeNodeOptions(options);
+      } catch {
+        if (!cancelled) setFeNodeOptions([]);
+      } finally {
+        if (!cancelled) setFeNodesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [editor, projectId]);
+
+  // 切到脚本模式且脚本为空时，用 python_script 算子的默认模板预填（与后端强校验保持同步）
+  useEffect(() => {
+    if (featureMode !== "script" || !editor) return;
+    const current = (form.getFieldValue("feature_script") as string || "").trim();
+    if (current) return;
+    apiGet("/operators").then((res) => {
+      const data = res.data;
+      const ops = Array.isArray(data) ? data : data.items || [];
+      const scriptOp = ops.find((op: any) => op.id === "python_script");
+      const template = scriptOp?.parameters?.find((p: any) => p.name === "script")?.default;
+      if (template && !(form.getFieldValue("feature_script") as string || "").trim()) {
+        form.setFieldsValue({ feature_script: template });
+      }
+    }).catch(() => {});
+  }, [featureMode, editor, form]);
 
   useEffect(() => {
     if (!editor) return;
@@ -49,7 +115,11 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
       const cfg = editor.loop;
       form.setFieldsValue({
         name: cfg.name, deployment_id: cfg.deployment_id, error_classes: cfg.error_classes,
-        preprocess_enabled: cfg.preprocess_enabled, alert_threshold_rows: cfg.alert_threshold_rows,
+        preprocess_enabled: cfg.preprocess_enabled,
+        feature_engineering_mode: cfg.feature_engineering_mode || "legacy",
+        feature_operator_node_id: cfg.feature_operator_node_id || undefined,
+        feature_script: cfg.feature_script || undefined,
+        alert_threshold_rows: cfg.alert_threshold_rows,
         require_review: cfg.require_review, review_annotator_ids: cfg.review_annotator_ids,
         retrain_enabled: cfg.retrain_enabled, retrain_threshold_rows: cfg.retrain_threshold_rows,
         retrain_dataset_artifact_ids: cfg.retrain_dataset_artifact_ids
@@ -62,6 +132,8 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
     } else {
       form.setFieldsValue({
         name: "自动化闭环", error_classes: [], preprocess_enabled: false,
+        feature_engineering_mode: "legacy", feature_operator_node_id: undefined,
+        feature_script: undefined,
         alert_threshold_rows: 1, require_review: false, review_annotator_ids: [],
         retrain_enabled: false, retrain_threshold_rows: 20, retrain_dataset_artifact_ids: [],
         retrain_max_trials: 10, ...(editor.defaults || {}),
@@ -119,12 +191,58 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
           <Select mode="tags" open={false} placeholder={tr.error_classes_hint || "输入类别后回车"} />
         </Form.Item>
         <Form.Item
-          name="preprocess_enabled"
-          label={tr.preprocess || "自动特征工程（原始点焊报告数据 → 73 特征）"}
-          tooltip={tr.preprocess_hint || "开启后，上传原始点焊报告行（报告字段 + cvei/cvev/cver/cvep 波形列）会先经平台特征工程算子补齐派生列再做预测"}
-          valuePropName="checked"
+          name="feature_engineering_mode"
+          label={tr.preprocess || "特征工程方式"}
+          initialValue="legacy"
+          tooltip="上传数据缺少模型特征列时的自动补齐方式：内置点焊桥 / 复用工作流特征工程算子节点 / 自写 Python 脚本"
         >
-          <Switch />
+          <Select options={FEATURE_MODE_OPTIONS} />
+        </Form.Item>
+        <Form.Item noStyle shouldUpdate={(prev, next) => prev.feature_engineering_mode !== next.feature_engineering_mode}>
+          {({ getFieldValue }) => {
+            const mode = getFieldValue("feature_engineering_mode") || "legacy";
+            if (mode === "operator") {
+              return (
+                <Form.Item
+                  name="feature_operator_node_id"
+                  label="特征工程算子节点"
+                  rules={[{ required: true, message: "请选择工作流中的特征工程算子节点" }]}
+                  tooltip="按所选节点已保存的参数执行特征工程（与训练时配置保持一致）"
+                >
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    loading={feNodesLoading}
+                    options={feNodeOptions}
+                    placeholder={feNodesLoading ? "正在加载工作流算子节点…" : "选择工作流中的特征工程算子节点"}
+                    notFoundContent="本项目工作流中未找到特征工程算子节点"
+                  />
+                </Form.Item>
+              );
+            }
+            if (mode === "script") {
+              return (
+                <Form.Item
+                  name="feature_script"
+                  label="特征工程 Python 脚本"
+                  rules={[{ required: true, message: "请填写特征工程脚本" }]}
+                  tooltip="与 python_script 算子相同的固定输入输出接口：输入 df（单行记录的 DataFrame），在 process(df) 中补齐模型特征列并返回；缺失依赖库按平台白名单源自动安装"
+                >
+                  <Input.TextArea
+                    rows={14}
+                    style={{ fontFamily: "monospace", fontSize: 12 }}
+                  />
+                </Form.Item>
+              );
+            }
+            return (
+              <Form.Item>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  上传原始点焊报告行（报告字段 + cvei/cvev/cver/cvep 波形列）时会先经内置特征桥补齐 73 特征再做预测；拧紧等其它场景请切换为「工作流特征工程算子」或「Python 脚本」。
+                </Typography.Text>
+              </Form.Item>
+            );
+          }}
         </Form.Item>
         <Form.Item name="alert_threshold_rows" label={tr.alert_threshold || "告警阈值（每 N 行报错触发一次）"} initialValue={1}>
           <InputNumber min={1} style={{ width: "100%" }} />

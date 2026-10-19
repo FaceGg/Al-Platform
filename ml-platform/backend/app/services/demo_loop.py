@@ -26,12 +26,15 @@ import pandas as pd
 
 from app.config import settings
 from app.database import SessionLocal
+from app.engine.operator_contract import OperatorContext
+from app.engine.registry import OperatorRegistry
 from app.models.artifact import Artifact
 from app.models.data_version import DatasetSample, DatasetSchemaColumn
 from app.models.demo_loop import DemoLoopConfig, DemoLoopEvent
 from app.models.model_registry import InferenceDeployment, ModelVersion
 from app.models.platform_models import GenericAnnotationTask
 from app.models.training import TrainingJob
+from app.models.workflow import WorkflowNode
 from app.services.annotation_concurrency import AssignmentError, create_assignments
 from app.services.annotation_scope import persist_scope_entries, scope_descriptor, scope_digest
 from app.services.artifact_service import build_artifact_service
@@ -58,6 +61,22 @@ from app.operators.processing import (
     WAVEFORM_FIELDS,
     build_fixed_feature_frame,
 )
+from app.operators.utility_operators import _validate_script_interface
+
+FEATURE_ENGINEERING_MODES = ("legacy", "operator", "script")
+
+
+class _NullExecLogger:
+    """Minimal OperatorContext.logger stand-in for feature-engineering runs."""
+
+    def info(self, message, **details):
+        pass
+
+    def warning(self, message, **details):
+        pass
+
+    def error(self, message, **details):
+        pass
 
 
 class DemoLoopError(ValueError):
@@ -269,6 +288,46 @@ class DemoLoopService:
                 project_id, str(data["name"]).strip()[:128], exclude_id=config.id)
         if "preprocess_enabled" in data:
             config.preprocess_enabled = bool(data["preprocess_enabled"])
+        mode = data.get("feature_engineering_mode")
+        if mode is not None:
+            mode = str(mode).strip() or "legacy"
+            if mode not in FEATURE_ENGINEERING_MODES:
+                raise DemoLoopError(
+                    "DEMO_LOOP_CONFIG_INVALID",
+                    "feature_engineering_mode must be one of legacy/operator/script")
+            config.feature_engineering_mode = mode
+        if "feature_operator_node_id" in data:
+            node_id = data.get("feature_operator_node_id")
+            if not node_id:
+                config.feature_operator_node_id = None
+            else:
+                try:
+                    node_uuid = uuid.UUID(str(node_id))
+                except (TypeError, ValueError, AttributeError):
+                    raise DemoLoopError(
+                        "DEMO_LOOP_CONFIG_INVALID", "feature_operator_node_id must be a UUID")
+                node = self.db.query(WorkflowNode).filter(WorkflowNode.id == node_uuid).first()
+                if node is None:
+                    raise DemoLoopError(
+                        "DEMO_LOOP_CONFIG_INVALID", "所选工作流特征工程节点不存在")
+                config.feature_operator_node_id = node.id
+        if "feature_script" in data:
+            script = str(data.get("feature_script") or "").strip()
+            if not script:
+                config.feature_script = None
+            else:
+                try:
+                    _validate_script_interface(script)
+                except (RuntimeError, ValueError) as error:
+                    raise DemoLoopError(
+                        "DEMO_LOOP_CONFIG_INVALID", f"特征工程脚本接口校验失败：{error}")
+                config.feature_script = script
+        resolved_mode = (getattr(config, "feature_engineering_mode", None) or "legacy")
+        if resolved_mode == "operator" and not config.feature_operator_node_id:
+            raise DemoLoopError(
+                "DEMO_LOOP_CONFIG_INVALID", "operator 模式必须选择工作流特征工程算子节点")
+        if resolved_mode == "script" and not (config.feature_script or "").strip():
+            raise DemoLoopError("DEMO_LOOP_CONFIG_INVALID", "script 模式必须填写特征工程 Python 脚本")
         if "alert_threshold_rows" in data:
             threshold = int(data["alert_threshold_rows"] or 1)
             if threshold < 1:
@@ -478,36 +537,42 @@ class DemoLoopService:
     ) -> dict:
         """Derive the model's engineered features from raw report data.
 
-        Uses the platform's report feature-engineering bridge (report table fields
-        + four waveform channels → fixed 73-feature schema) when the uploaded
-        row carries the raw source columns.
+        Dispatches by ``feature_engineering_mode``:
+        - ``operator``: run the selected workflow feature-engineering node
+          (operator + saved params) on the single-row frame.
+        - ``script``: run the user's Python script via the python_script
+          operator runtime (fixed interface, auto dependency install).
+        - ``legacy``: the platform's spot-weld report feature bridge
+          (report table fields + four waveform channels → 73-feature schema).
         """
-        if not config.preprocess_enabled:
-            raise DemoLoopError(
-                "DEMO_LOOP_RECORD_INVALID",
-                f"数据缺少模型特征列：{', '.join(missing[:10])}。"
-                "若上传的是原始点焊报告数据（含波形列 cvei/cvev/cver/cvep），"
-                "请打开「自动特征工程」开关后重试；否则请上传已做过特征工程的完整特征数据集。",
-            )
-        try:
-            features, _schema, _stats = build_fixed_feature_frame(pd.DataFrame([record]))
-        except Exception as error:
-            raise DemoLoopError(
-                "DEMO_LOOP_RECORD_INVALID",
-                "自动特征工程失败：请确认上传的行为原始点焊报告数据，"
-                f"需包含报告字段 {', '.join(REPORT_TABLE_FIELDS)} 与波形列 {', '.join(WAVEFORM_FIELDS)}"
-                f"（缺失原因：{error}）",
-            ) from error
-        if features.empty:
-            raise DemoLoopError(
-                "DEMO_LOOP_RECORD_INVALID",
-                "自动特征工程未产出任何特征行，请检查上传数据格式",
-            )
-        engineered = {
-            str(key): _json_value(value)
-            for key, value in features.iloc[0].to_dict().items()
-        }
-        merged = {**record, **engineered}
+        mode = (getattr(config, "feature_engineering_mode", None) or "legacy").strip()
+        if mode == "operator":
+            merged = self._engineer_via_operator_node(config, record)
+        elif mode == "script":
+            merged = self._engineer_via_script(config, record)
+        else:
+            # Explicit "legacy" mode means the user asked for the builtin
+            # spot-weld bridge; no extra opt-in switch required.
+            try:
+                features, _schema, _stats = build_fixed_feature_frame(pd.DataFrame([record]))
+            except Exception as error:
+                raise DemoLoopError(
+                    "DEMO_LOOP_RECORD_INVALID",
+                    "自动特征工程失败：请确认上传的行为原始点焊报告数据，"
+                    f"需包含报告字段 {', '.join(REPORT_TABLE_FIELDS)} 与波形列 {', '.join(WAVEFORM_FIELDS)}"
+                    f"（缺失原因：{error}）；也可以在闭环配置中切换为"
+                    "「工作流特征工程算子」/「Python 脚本」方式。",
+                ) from error
+            if features.empty:
+                raise DemoLoopError(
+                    "DEMO_LOOP_RECORD_INVALID",
+                    "自动特征工程未产出任何特征行，请检查上传数据格式",
+                )
+            engineered = {
+                str(key): _json_value(value)
+                for key, value in features.iloc[0].to_dict().items()
+            }
+            merged = {**record, **engineered}
         still_missing = [name for name in names if name not in merged]
         if still_missing:
             raise DemoLoopError(
@@ -515,6 +580,86 @@ class DemoLoopService:
                 f"自动特征工程后仍缺少模型特征列：{', '.join(still_missing[:10])}",
             )
         return merged
+
+    def _feature_engineering_context(self, config: DemoLoopConfig, node_id: str) -> OperatorContext:
+        return OperatorContext(
+            run_id="demo-loop",
+            node_id=node_id,
+            project_id=str(config.project_id),
+            artifact_service=self._artifact_service(),
+            cancel_requested=lambda: False,
+            logger=_NullExecLogger(),
+        )
+
+    @staticmethod
+    def _merge_first_row(record: dict, value) -> dict:
+        """Merge the first row of a DataFrame/records output into the record."""
+        if isinstance(value, pd.DataFrame):
+            if value.empty:
+                raise DemoLoopError(
+                    "DEMO_LOOP_RECORD_INVALID", "特征工程输出为空，无法补齐模型特征列")
+            row = value.iloc[0].to_dict()
+        elif isinstance(value, list) and value and isinstance(value[0], dict):
+            row = value[0]
+        else:
+            return record
+        engineered = {str(key): _json_value(item) for key, item in row.items()}
+        return {**record, **engineered}
+
+    def _engineer_via_operator_node(self, config: DemoLoopConfig, record: dict) -> dict:
+        if not config.feature_operator_node_id:
+            raise DemoLoopError(
+                "DEMO_LOOP_CONFIG_INVALID", "请先选择工作流特征工程算子节点")
+        node = self.db.query(WorkflowNode).filter(
+            WorkflowNode.id == config.feature_operator_node_id,
+        ).first()
+        if node is None:
+            raise DemoLoopError(
+                "DEMO_LOOP_CONFIG_INVALID", "所选特征工程节点已被删除，请重新配置")
+        operator = OperatorRegistry.get(node.operator_id)
+        if operator is None:
+            raise DemoLoopError(
+                "DEMO_LOOP_CONFIG_INVALID", f"算子 {node.operator_id} 未注册")
+        frame = pd.DataFrame([record])
+        context = self._feature_engineering_context(config, str(node.id))
+        try:
+            result = operator.execute(context, {"data": frame}, dict(node.params or {}))
+            merged = record
+            for value in (result.outputs or {}).values():
+                merged = self._merge_first_row(merged, value)
+            return merged
+        except DemoLoopError:
+            raise
+        except Exception as error:
+            raise DemoLoopError(
+                "DEMO_LOOP_RECORD_INVALID",
+                f"工作流特征工程算子执行失败：{error}",
+            ) from error
+
+    def _engineer_via_script(self, config: DemoLoopConfig, record: dict) -> dict:
+        if not (config.feature_script or "").strip():
+            raise DemoLoopError("DEMO_LOOP_CONFIG_INVALID", "请先填写特征工程 Python 脚本")
+        operator = OperatorRegistry.get("python_script")
+        if operator is None:
+            raise DemoLoopError("DEMO_LOOP_CONFIG_INVALID", "python_script 算子未注册")
+        frame = pd.DataFrame([record])
+        context = self._feature_engineering_context(config, "demo-loop-feature-script")
+        try:
+            result = operator.execute(
+                context,
+                {"data": frame},
+                {"script": config.feature_script, "auto_install": True},
+            )
+            rows = (result.outputs or {}).get("data")
+            merged = self._merge_first_row(record, rows)
+            return merged
+        except DemoLoopError:
+            raise
+        except Exception as error:
+            raise DemoLoopError(
+                "DEMO_LOOP_RECORD_INVALID",
+                f"特征工程脚本执行失败：{error}",
+            ) from error
 
     def _predict_in_process(self, version: ModelVersion, record: dict, names: list[str], *, preprocess_enabled: bool):
         model = self._load_model(version)
