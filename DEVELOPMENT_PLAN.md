@@ -311,6 +311,8 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 现象：新项目「拧紧」在数据管理上传 tighten_train.csv（46MB / 35 万行）报错失败；后端日志无任何 POST 记录。
 - 根因：前端 axios 全局 `timeout: 30000`（`api/client.ts`）——大文件上传 + 后端同步解析建库远超 30s，客户端先超时断开；uvicorn 在响应完成才写访问日志，故后端日志无记录。nginx `client_max_body_size 500M` 不是瓶颈。
 - 修复：`DataManagePage.tsx` 与 `DataBrowserPage.tsx` 的数据集上传请求单独放宽 `timeout: 600000`（10 分钟）；错误提示透出后端真实 `detail`（原来一律显示笼统"错误"），客户端超时单独提示"文件较大仍在后台处理中，请稍后在列表中确认"。
+- 二次修复（用户重试仍失败后定位）：**frontend 容器内嵌 nginx 未配置 `client_max_body_size`（默认 1M）**——用户经由 frontend 直连端口（5173→80）上传 46MB 时被 413 拒绝，请求不到后端、无 detail、前端显示"失败"（数据库确认该项目 0 数据集，后端日志无 POST）。已在内嵌 nginx server 级补 `client_max_body_size 500M; proxy_read_timeout 600s; proxy_send_timeout 600s;`（与边缘 nginx.conf 对齐），frontend 镜像重建并在线验证 `nginx -T` 生效。
+- 用户侧注意：列表文件名搜索框输入"行紧"（错字）会把 `tighten_train` 过滤为空，上传成功前请清空该过滤词。
 - 验证：前端 tsc 无错、数据页测试 7 passed；frontend 镜像已重建上线。后端解析 35 万行 CSV 无需改动（10 分钟上限充裕）。
 
 ### 2026-10-19 修复 CI 后端套件失败：venv 模式泄漏 + 泛化契约 + manifest 登记
