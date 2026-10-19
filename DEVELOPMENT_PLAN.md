@@ -338,13 +338,13 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 并行说明：运行以独立 Celery 任务执行，worker --concurrency=2，最多 2 个运行并行、其余排队——本就并行，此次是前端状态泄漏让它"看起来"串行。
 - 部署：backend/worker/frontend 镜像重建，nginx 重启。
 
-### 2026-10-19 演示闭环特征工程方式三选一：内置点焊桥 / 工作流算子节点 / Python 脚本
+### 2026-10-19 演示闭环特征工程方式三选一：内置点焊桥 / 特征工程类别算子 / Python 脚本
 
-- 需求：闭环自动化原「自动特征工程」开关只支持点焊（build_fixed_feature_frame 73 特征桥），需支持选择工作流中的特征工程算子节点，或用 Python 脚本自定义，使拧紧等其它场景可用。用户澄清：可选算子严格限定为算子面板「特征工程」类别下的算子（点焊特征工程/拧紧特征工程），不含「数据处理」类的自动特征工程。
-- 数据：`demo_loop_configs` 新增 3 列（迁移 `20261019_72`）——`feature_engineering_mode`（legacy/operator/script，默认 legacy）、`feature_operator_node_id`（工作流算子节点引用，无 FK 可存活性）、`feature_script`（脚本正文）。
-- 后端：①`_apply_config_fields` 校验三字段（模式合法性、节点存在性、**节点算子必须属「特征工程」类别**（按 OperatorRegistry category 动态判定）、脚本过 python_script 固定接口校验、operator/script 模式必填对应载荷）；②`_engineer_missing_features` 按模式分发——operator 模式解析节点→算子+已存参数→单行 DataFrame 执行→合并首个记录输出口；script 模式复用 python_script 算子（子进程+venv+自动装依赖+接口强校验）；legacy 保持点焊桥且去掉旧 preprocess_enabled 门槛（模式选择即用户意图，旧配置行为兼容）。
-- API：`DemoLoopConfigUpdate` + `_config_view` 透出三字段。前端：`LoopConfigModal` 开关改为三选一下拉（operator 模式按 `/api/operators` 的 `category==="feature_engineering"` 动态过滤项目工作流算子节点，新增类别不在清单时回退内置清单；script 模式从算子默认参数取脚本模板预填）；`demoLoop.ts` 类型扩展。
-- 测试：TestFeatureEngineeringModes 4 用例全过（operator 模式经拧紧特征工程节点派生 TIGHTEN_TORQUE_DEVIATION、script 模式经模板脚本派生、模式载荷校验、**非特征工程类别节点被拒绝**）；test_10/11/12 旧开关语义用例按新语义复核仍绿。注：test_06/07/17/20 的 6 个失败为容器环境预存问题（容器内 mlflow:5000 可达使重训链路真实触发，与 CI 隔离环境不符），已用 stash 基线对照证实与本次改动无关。
+- 需求：闭环自动化原「自动特征工程」开关只支持点焊（build_fixed_feature_frame 73 特征桥），需支持选择算子面板「特征工程」类别下的算子（点焊特征工程/拧紧特征工程，有几个列几个、不依赖工作流节点实例），或用 Python 脚本自定义，使拧紧等其它场景可用。不含「数据处理」类的自动特征工程。
+- 数据：`demo_loop_configs` 新增 3 列（迁移 `20261019_72`）——`feature_engineering_mode`（legacy/operator/script，默认 legacy）、`feature_operator_id`（算子面板「特征工程」类别下的算子 ID，String(64)）、`feature_script`（脚本正文）。用户二次澄清后重做：operator 模式**直接选算子**（不管工作流里有没有拖节点、不管有几个），不再选工作流节点实例；72 迁移未发布故原地修改（`feature_operator_node_id` UUID → `feature_operator_id` String），线上库手工换列（node 列无数据）。
+- 后端：①`_apply_config_fields` 校验三字段（模式合法性、**算子必须存在且属「特征工程」类别**（按 OperatorRegistry category 动态判定）、脚本过 python_script 固定接口校验、operator/script 模式必填对应载荷）；②`_engineer_missing_features` 按模式分发——operator 模式按所选算子+**默认参数**对单行 DataFrame 执行→合并首个记录输出口（需自定义参数用 script 模式）；script 模式复用 python_script 算子（子进程+venv+自动装依赖+接口强校验）；legacy 保持点焊桥且去掉旧 preprocess_enabled 门槛（模式选择即用户意图，旧配置行为兼容）。
+- API：`DemoLoopConfigUpdate` + `_config_view` 透出三字段。前端：`LoopConfigModal` 开关改为三选一下拉（operator 模式按 `/api/operators` 的 `category==="feature_engineering"` 动态列出全部算子，中文名复用 i18n operator 段；script 模式从算子默认参数取脚本模板预填）；`demoLoop.ts` 类型扩展。
+- 测试：TestFeatureEngineeringModes 4 用例全过（operator 模式选 tighten_feature_engineering 派生 TIGHTEN_TORQUE_DEVIATION、script 模式经模板脚本派生、模式载荷校验、**非特征工程类别算子被拒绝**）；test_10/11/12 旧开关语义用例按新语义复核仍绿。注：test_06/07/17/20 的 6 个失败为容器环境预存问题（容器内 mlflow:5000 可达使重训链路真实触发，与 CI 隔离环境不符），已用 stash 基线对照证实与本次改动无关。
 - 部署：backend/frontend/migrate/worker 镜像各自重建（migrate 为独立镜像），`alembic upgrade head` 至 `20261019_72` 已在线验证。
 
 ### 2026-10-19 修复演示闭环特征工程节点下拉永远为空：apiGet 响应双重解包

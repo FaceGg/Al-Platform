@@ -24,12 +24,12 @@ def upgrade() -> None:
                 server_default=sa.text("'legacy'"),
             )
         )
-        batch_op.add_column(sa.Column("feature_operator_node_id", sa.UUID(), nullable=True))
+        batch_op.add_column(sa.Column("feature_operator_id", sa.String(length=64), nullable=True))
         batch_op.add_column(sa.Column("feature_script", sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
     with op.batch_alter_table("demo_loop_configs") as batch_op:
         batch_op.drop_column("feature_script")
-        batch_op.drop_column("feature_operator_node_id")
+        batch_op.drop_column("feature_operator_id")
         batch_op.drop_column("feature_engineering_mode")

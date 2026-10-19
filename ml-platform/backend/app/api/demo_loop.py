@@ -28,7 +28,7 @@ class DemoLoopConfigUpdate(BaseModel):
     error_classes: list[str] | None = None
     preprocess_enabled: bool | None = None
     feature_engineering_mode: str | None = None
-    feature_operator_node_id: str | None = None
+    feature_operator_id: str | None = None
     feature_script: str | None = None
     alert_threshold_rows: int | None = None
     require_review: bool | None = None
@@ -105,9 +105,7 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
         "error_classes": config.error_classes or [],
         "preprocess_enabled": bool(config.preprocess_enabled),
         "feature_engineering_mode": getattr(config, "feature_engineering_mode", None) or "legacy",
-        "feature_operator_node_id": (
-            str(config.feature_operator_node_id) if config.feature_operator_node_id else None
-        ),
+        "feature_operator_id": getattr(config, "feature_operator_id", None),
         "feature_script": getattr(config, "feature_script", None),
         "alert_threshold_rows": config.alert_threshold_rows,
         "require_review": bool(config.require_review),

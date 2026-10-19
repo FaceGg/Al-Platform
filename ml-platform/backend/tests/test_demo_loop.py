@@ -1133,7 +1133,7 @@ class TestFeatureEngineeringModes(unittest.TestCase):
             name="fe-mode-test",
             preprocess_enabled=overrides.get("preprocess_enabled", True),
             feature_engineering_mode=overrides.get("mode", "legacy"),
-            feature_operator_node_id=overrides.get("node_id"),
+            feature_operator_id=overrides.get("operator_id"),
             feature_script=overrides.get("script"),
         )
         db.add(config)
@@ -1141,28 +1141,11 @@ class TestFeatureEngineeringModes(unittest.TestCase):
         db.refresh(config)
         return config
 
-    def test_operator_mode_derives_features_from_workflow_node(self):
-        from app.models.workflow import Workflow, WorkflowNode
-
+    def test_operator_mode_derives_features_with_category_operator(self):
         db, service = self._make_service()
         try:
-            project_id = uuid.uuid4()
-            workflow = Workflow(project_id=project_id, name="fe-mode-wf")
-            db.add(workflow)
-            db.flush()
-            node = WorkflowNode(
-                workflow_id=workflow.id,
-                operator_id="tighten_feature_engineering",
-                label="拧紧特征工程",
-                position_x=100,
-                position_y=100,
-                params={},
-            )
-            db.add(node)
-            db.commit()
-            db.refresh(node)
-
-            config = self._make_config(db, project_id=project_id, mode="operator", node_id=node.id)
+            config = self._make_config(
+                db, mode="operator", operator_id="tighten_feature_engineering")
             merged = service._engineer_missing_features(
                 config,
                 {"ACTUAL_TORQUE": 632.0, "TARGET_TORQUE": 630.0},
@@ -1224,31 +1207,14 @@ class TestFeatureEngineeringModes(unittest.TestCase):
         finally:
             db.close()
 
-    def test_operator_mode_rejects_non_feature_engineering_nodes(self):
-        from app.models.workflow import Workflow, WorkflowNode
-
+    def test_operator_mode_rejects_non_feature_engineering_operators(self):
         db, service = self._make_service()
         try:
-            workflow = Workflow(name="non-fe-wf")
-            db.add(workflow)
-            db.flush()
-            node = WorkflowNode(
-                workflow_id=workflow.id,
-                operator_id="csv_import",  # 数据输入输出类别，不属于「特征工程」
-                label="CSV 导入",
-                position_x=100,
-                position_y=100,
-                params={},
-            )
-            db.add(node)
-            db.commit()
-            db.refresh(node)
-
             config = self._make_config(db, mode="legacy")
             with self.assertRaises(demo_loop_module.DemoLoopError) as ctx:
                 service._apply_config_fields(config, config.project_id, {
                     "feature_engineering_mode": "operator",
-                    "feature_operator_node_id": str(node.id),
+                    "feature_operator_id": "csv_import",  # 数据输入输出类别，不属于「特征工程」
                 })
             self.assertIn("特征工程", str(ctx.exception))
         finally:

@@ -34,7 +34,6 @@ from app.models.demo_loop import DemoLoopConfig, DemoLoopEvent
 from app.models.model_registry import InferenceDeployment, ModelVersion
 from app.models.platform_models import GenericAnnotationTask
 from app.models.training import TrainingJob
-from app.models.workflow import WorkflowNode
 from app.services.annotation_concurrency import AssignmentError, create_assignments
 from app.services.annotation_scope import persist_scope_entries, scope_descriptor, scope_digest
 from app.services.artifact_service import build_artifact_service
@@ -296,26 +295,17 @@ class DemoLoopService:
                     "DEMO_LOOP_CONFIG_INVALID",
                     "feature_engineering_mode must be one of legacy/operator/script")
             config.feature_engineering_mode = mode
-        if "feature_operator_node_id" in data:
-            node_id = data.get("feature_operator_node_id")
-            if not node_id:
-                config.feature_operator_node_id = None
+        if "feature_operator_id" in data:
+            operator_id = str(data.get("feature_operator_id") or "").strip()
+            if not operator_id:
+                config.feature_operator_id = None
             else:
-                try:
-                    node_uuid = uuid.UUID(str(node_id))
-                except (TypeError, ValueError, AttributeError):
-                    raise DemoLoopError(
-                        "DEMO_LOOP_CONFIG_INVALID", "feature_operator_node_id must be a UUID")
-                node = self.db.query(WorkflowNode).filter(WorkflowNode.id == node_uuid).first()
-                if node is None:
-                    raise DemoLoopError(
-                        "DEMO_LOOP_CONFIG_INVALID", "所选工作流特征工程节点不存在")
-                operator = OperatorRegistry.get(node.operator_id)
+                operator = OperatorRegistry.get(operator_id)
                 if operator is None or getattr(operator, "category", "") != "feature_engineering":
                     raise DemoLoopError(
                         "DEMO_LOOP_CONFIG_INVALID",
-                        "所选节点必须是「特征工程」类别下的算子（点焊特征工程/拧紧特征工程）")
-                config.feature_operator_node_id = node.id
+                        "所选算子必须是「特征工程」类别下的算子")
+                config.feature_operator_id = operator_id
         if "feature_script" in data:
             script = str(data.get("feature_script") or "").strip()
             if not script:
@@ -328,9 +318,9 @@ class DemoLoopService:
                         "DEMO_LOOP_CONFIG_INVALID", f"特征工程脚本接口校验失败：{error}")
                 config.feature_script = script
         resolved_mode = (getattr(config, "feature_engineering_mode", None) or "legacy")
-        if resolved_mode == "operator" and not config.feature_operator_node_id:
+        if resolved_mode == "operator" and not config.feature_operator_id:
             raise DemoLoopError(
-                "DEMO_LOOP_CONFIG_INVALID", "operator 模式必须选择工作流特征工程算子节点")
+                "DEMO_LOOP_CONFIG_INVALID", "operator 模式必须选择「特征工程」类别下的算子")
         if resolved_mode == "script" and not (config.feature_script or "").strip():
             raise DemoLoopError("DEMO_LOOP_CONFIG_INVALID", "script 模式必须填写特征工程 Python 脚本")
         if "alert_threshold_rows" in data:
@@ -552,7 +542,7 @@ class DemoLoopService:
         """
         mode = (getattr(config, "feature_engineering_mode", None) or "legacy").strip()
         if mode == "operator":
-            merged = self._engineer_via_operator_node(config, record)
+            merged = self._engineer_via_operator(config, record)
         elif mode == "script":
             merged = self._engineer_via_script(config, record)
         else:
@@ -611,24 +601,20 @@ class DemoLoopService:
         engineered = {str(key): _json_value(item) for key, item in row.items()}
         return {**record, **engineered}
 
-    def _engineer_via_operator_node(self, config: DemoLoopConfig, record: dict) -> dict:
-        if not config.feature_operator_node_id:
+    def _engineer_via_operator(self, config: DemoLoopConfig, record: dict) -> dict:
+        if not config.feature_operator_id:
             raise DemoLoopError(
-                "DEMO_LOOP_CONFIG_INVALID", "请先选择工作流特征工程算子节点")
-        node = self.db.query(WorkflowNode).filter(
-            WorkflowNode.id == config.feature_operator_node_id,
-        ).first()
-        if node is None:
+                "DEMO_LOOP_CONFIG_INVALID", "请先选择「特征工程」类别下的算子")
+        operator = OperatorRegistry.get(config.feature_operator_id)
+        if operator is None or getattr(operator, "category", "") != "feature_engineering":
             raise DemoLoopError(
-                "DEMO_LOOP_CONFIG_INVALID", "所选特征工程节点已被删除，请重新配置")
-        operator = OperatorRegistry.get(node.operator_id)
-        if operator is None:
-            raise DemoLoopError(
-                "DEMO_LOOP_CONFIG_INVALID", f"算子 {node.operator_id} 未注册")
+                "DEMO_LOOP_CONFIG_INVALID", "所选算子不可用（须为「特征工程」类别）")
         frame = pd.DataFrame([record])
-        context = self._feature_engineering_context(config, str(node.id))
+        context = self._feature_engineering_context(
+            config, f"demo-loop-feature-{config.feature_operator_id}")
         try:
-            result = operator.execute(context, {"data": frame}, dict(node.params or {}))
+            # 直接选算子：使用算子默认参数（需要自定义逻辑请用 script 模式）。
+            result = operator.execute(context, {"data": frame}, {})
             merged = record
             for value in (result.outputs or {}).values():
                 merged = self._merge_first_row(merged, value)
@@ -638,7 +624,7 @@ class DemoLoopService:
         except Exception as error:
             raise DemoLoopError(
                 "DEMO_LOOP_RECORD_INVALID",
-                f"工作流特征工程算子执行失败：{error}",
+                f"特征工程算子执行失败：{error}",
             ) from error
 
     def _engineer_via_script(self, config: DemoLoopConfig, record: dict) -> dict:

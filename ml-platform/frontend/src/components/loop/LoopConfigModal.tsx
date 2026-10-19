@@ -27,31 +27,23 @@ interface Props {
   onSaved: (loop: DemoLoopConfig) => void;
 }
 
-const FEATURE_OPERATOR_IDS = [
-  "spot_weld_feature_engineering",
-  "tighten_feature_engineering",
-  "auto_feature_engineering",
-];
-
 const FEATURE_MODE_OPTIONS = [
   { value: "legacy", label: "内置点焊特征桥（原始点焊报告数据 → 73 特征）" },
-  { value: "operator", label: "工作流特征工程算子（沿用节点已保存参数）" },
+  { value: "operator", label: "特征工程类别算子（面板「特征工程」类别，按默认参数执行）" },
   { value: "script", label: "Python 脚本自定义（与 python_script 算子同接口）" },
 ];
 
 /** 「特征工程」类别下的算子（与算子面板分类一致，随平台算子扩展自动更新） */
-async function fetchFeatureOperatorIds(): Promise<Set<string>> {
+async function fetchFeatureOperators(): Promise<Array<{ id: string; name: string }>> {
   try {
     const data = await apiGet("/operators");
     const ops = Array.isArray(data) ? data : data.items || [];
-    const ids = new Set<string>(
-      ops.filter((op: any) => op.category === "feature_engineering").map((op: any) => op.id),
-    );
-    if (ids.size > 0) return ids;
+    return ops
+      .filter((op: any) => op.category === "feature_engineering")
+      .map((op: any) => ({ id: String(op.id), name: String(op.name || op.id) }));
   } catch {
-    // 拉取失败时退回内置清单
+    return [];
   }
-  return new Set<string>(FEATURE_OPERATOR_IDS);
 }
 
 async function fetchPythonScriptTemplate(): Promise<string> {
@@ -79,48 +71,27 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
   const { t } = useI18n();
   const tr = ((t as unknown as Record<string, Record<string, string | undefined>>).demo_loop ?? {}) as Record<string, string | undefined>;
   const [form] = Form.useForm();
-  const [feNodeOptions, setFeNodeOptions] = useState<Array<{ value: string; label: string }>>([]);
-  const [feNodesLoading, setFeNodesLoading] = useState(false);
+  const [feOperatorOptions, setFeOperatorOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const [feOperatorsLoading, setFeOperatorsLoading] = useState(false);
   const scriptTemplateRef = useRef("");
   const featureMode = Form.useWatch("feature_engineering_mode", form);
 
-  // 打开弹窗时：按「特征工程」类别过滤项目工作流中的算子节点（operator 模式选项）
+  // 打开弹窗时：列出算子面板「特征工程」类别下的全部算子（operator 模式选项）
   useEffect(() => {
     if (!editor) return;
     let cancelled = false;
-    setFeNodesLoading(true);
-    (async () => {
-      const feIds = await fetchFeatureOperatorIds();
-      try {
-        const wfList = await apiGet(`/projects/${projectId}/workflows`);
-        // apiGet 已解包响应体：工作流列表是纯数组，详情含 nodes
-        const workflows: Array<{ id: string; name: string }> = Array.isArray(wfList)
-          ? wfList : wfList?.items || [];
-        const options: Array<{ value: string; label: string }> = [];
-        for (const wf of workflows) {
-          try {
-            const detail = await apiGet(`/workflows/${wf.id}`);
-            for (const node of detail?.nodes || []) {
-              if (feIds.has(node.operator_id)) {
-                options.push({
-                  value: String(node.id),
-                  label: `${wf.name} · ${node.label || node.operator_id}（${node.operator_id}）`,
-                });
-              }
-            }
-          } catch {
-            // 单个工作流拉取失败不影响其它选项
-          }
-        }
-        if (!cancelled) setFeNodeOptions(options);
-      } catch {
-        if (!cancelled) setFeNodeOptions([]);
-      } finally {
-        if (!cancelled) setFeNodesLoading(false);
-      }
-    })();
+    setFeOperatorsLoading(true);
+    fetchFeatureOperators().then((operators) => {
+      if (cancelled) return;
+      const operatorNames = ((t as unknown as Record<string, Record<string, string | undefined>>).operator ?? {}) as Record<string, string | undefined>;
+      setFeOperatorOptions(operators.map((op) => ({
+        value: op.id,
+        label: `${operatorNames[op.id] || op.name}（${op.id}）`,
+      })));
+      setFeOperatorsLoading(false);
+    });
     return () => { cancelled = true; };
-  }, [editor, projectId]);
+  }, [editor, t]);
 
   // 切到脚本模式且脚本为空时，用 python_script 算子的默认模板预填（与后端强校验保持同步）
   useEffect(() => {
@@ -146,7 +117,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
         name: cfg.name, deployment_id: cfg.deployment_id, error_classes: cfg.error_classes,
         preprocess_enabled: cfg.preprocess_enabled,
         feature_engineering_mode: cfg.feature_engineering_mode || "legacy",
-        feature_operator_node_id: cfg.feature_operator_node_id || undefined,
+        feature_operator_id: cfg.feature_operator_id || undefined,
         feature_script: cfg.feature_script || undefined,
         alert_threshold_rows: cfg.alert_threshold_rows,
         require_review: cfg.require_review, review_annotator_ids: cfg.review_annotator_ids,
@@ -161,7 +132,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
     } else {
       form.setFieldsValue({
         name: "自动化闭环", error_classes: [], preprocess_enabled: false,
-        feature_engineering_mode: "legacy", feature_operator_node_id: undefined,
+        feature_engineering_mode: "legacy", feature_operator_id: undefined,
         feature_script: undefined,
         alert_threshold_rows: 1, require_review: false, review_annotator_ids: [],
         retrain_enabled: false, retrain_threshold_rows: 20, retrain_dataset_artifact_ids: [],
@@ -223,7 +194,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
           name="feature_engineering_mode"
           label={tr.preprocess || "特征工程方式"}
           initialValue="legacy"
-          tooltip="上传数据缺少模型特征列时的自动补齐方式：内置点焊桥 / 复用工作流特征工程算子节点 / 自写 Python 脚本"
+          tooltip="上传数据缺少模型特征列时的自动补齐方式：内置点焊桥 / 「特征工程」类别算子 / 自写 Python 脚本"
         >
           <Select options={FEATURE_MODE_OPTIONS} />
         </Form.Item>
@@ -233,18 +204,18 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
             if (mode === "operator") {
               return (
                 <Form.Item
-                  name="feature_operator_node_id"
-                  label="特征工程算子节点"
-                  rules={[{ required: true, message: "请选择工作流中的特征工程算子节点" }]}
-                  tooltip="按所选节点已保存的参数执行特征工程（与训练时配置保持一致）"
+                  name="feature_operator_id"
+                  label="特征工程算子"
+                  rules={[{ required: true, message: "请选择「特征工程」类别下的算子" }]}
+                  tooltip="直接选用算子面板「特征工程」类别下的算子，按其默认参数执行（需要自定义逻辑请用 Python 脚本模式）"
                 >
                   <Select
                     showSearch
                     optionFilterProp="label"
-                    loading={feNodesLoading}
-                    options={feNodeOptions}
-                    placeholder={feNodesLoading ? "正在加载工作流算子节点…" : "选择工作流中的特征工程算子节点"}
-                    notFoundContent="本项目工作流中未找到特征工程算子节点"
+                    loading={feOperatorsLoading}
+                    options={feOperatorOptions}
+                    placeholder={feOperatorsLoading ? "正在加载特征工程算子…" : "选择「特征工程」类别下的算子"}
+                    notFoundContent="未找到「特征工程」类别下的算子"
                   />
                 </Form.Item>
               );
