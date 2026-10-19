@@ -71,13 +71,20 @@ export default function DataBrowserPage() {
     const formData = new FormData()
     formData.append('file', file)
     try {
-      await apiClient.post('/projects/' + selectedProjectId + '/datasets/upload', formData)
+      // 大文件（数十 MB / 数十万行）上传加解析远超全局 30s 超时，单独放宽
+      await apiClient.post('/projects/' + selectedProjectId + '/datasets/upload', formData, { timeout: 600000 })
       message.success(t.common.success)
       // refresh
       const res = await apiClient.get('/projects/' + selectedProjectId + '/datasets')
       setDatasets(res.data.items || res.data.datasets || [])
-    } catch {
-      message.error(t.common.error)
+    } catch (error: any) {
+      if (error?.code === 'ECONNABORTED') {
+        message.error('上传超时：文件较大仍在后台处理中，请稍后在列表中确认')
+      } else {
+        const detail = error?.response?.data?.detail
+        const text = typeof detail === 'string' ? detail : (detail?.message || detail?.code)
+        message.error(text || t.common.error)
+      }
     } finally {
       setUploading(false)
     }

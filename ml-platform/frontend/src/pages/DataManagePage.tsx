@@ -136,14 +136,22 @@ export default function DataManagePage() {
     const formData = new FormData();
     formData.append("file", file);
     try {
+      // 大文件（数十 MB / 数十万行）上传加解析远超全局 30s 超时，单独放宽
       await apiClient.post("/projects/" + selectedProject + "/datasets/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        timeout: 600000,
       });
       message.success(t.common.success);
       // reload
       loadDatasets(selectedProject);
     } catch (e: any) {
-      message.error(e.response?.data?.detail || t.common.error);
+      if (e?.code === "ECONNABORTED") {
+        message.error("上传超时：文件较大仍在后台处理中，请稍后在列表中确认");
+      } else {
+        const detail = e?.response?.data?.detail;
+        const text = typeof detail === "string" ? detail : (detail?.message || detail?.code);
+        message.error(text || t.common.error);
+      }
     }
     return false;
   };

@@ -306,6 +306,13 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-19 修复数据管理大文件上传失败：前端 30s 全局超时掐断大 CSV 上传
+
+- 现象：新项目「拧紧」在数据管理上传 tighten_train.csv（46MB / 35 万行）报错失败；后端日志无任何 POST 记录。
+- 根因：前端 axios 全局 `timeout: 30000`（`api/client.ts`）——大文件上传 + 后端同步解析建库远超 30s，客户端先超时断开；uvicorn 在响应完成才写访问日志，故后端日志无记录。nginx `client_max_body_size 500M` 不是瓶颈。
+- 修复：`DataManagePage.tsx` 与 `DataBrowserPage.tsx` 的数据集上传请求单独放宽 `timeout: 600000`（10 分钟）；错误提示透出后端真实 `detail`（原来一律显示笼统"错误"），客户端超时单独提示"文件较大仍在后台处理中，请稍后在列表中确认"。
+- 验证：前端 tsc 无错、数据页测试 7 passed；frontend 镜像已重建上线。后端解析 35 万行 CSV 无需改动（10 分钟上限充裕）。
+
 ### 2026-10-19 修复 CI 后端套件失败：venv 模式泄漏 + 泛化契约 + manifest 登记
 
 - 现象：CI（run 39195816258）双平台 backend suite 失败——①`test_genericization_contract`：`services/python_script_examples.py: forbidden reference spot_weld`；②`test_suite_manifest`：新测试模块未登记（discovered ≠ assigned）；③所有走真实子进程的 python_script 测试 ERROR/FAIL（本地 pytest 通过）。
