@@ -8,6 +8,8 @@ from app.services.spot_weld_features import (
     WAVEFORM_FIELDS,
     build_feature_frame,
 )
+import re
+
 import pandas as pd
 import numpy as np
 
@@ -308,7 +310,19 @@ class TightenFeatureEngineering(BaseOperator):
 
         def resolve_column(name) -> str | None:
             key = str(name or "").strip()
-            return lookup.get(key.casefold()) if key else None
+            if not key:
+                return None
+            folded = key.casefold()
+            if folded in lookup:
+                return lookup[folded]
+            # Production headers often carry Chinese annotations, e.g.
+            # "ACTUAL_TORQUE(实际扭矩/一轴实际扭矩)"; fall back to matching
+            # the base name before the parenthesis (half/full width).
+            for column_folded, original in lookup.items():
+                base = re.split(r"[(（]", column_folded, maxsplit=1)[0].strip()
+                if base == folded:
+                    return original
+            return None
 
         torque_col = resolve_column(params.get("torque_column") or "ACTUAL_TORQUE")
         target_col = resolve_column(params.get("target_torque_column") or "TARGET_TORQUE")

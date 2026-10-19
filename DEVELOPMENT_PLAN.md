@@ -322,6 +322,18 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 修复：①`config.py` `python_script_venv_dir` 默认改为 `""`（解释器模式为全局默认；非容器环境天然安全），生产由 compose `production-environment` anchor 显式注入 `PYTHON_SCRIPT_VENV_DIR: /data/python-script-venv`（backend/worker 共用，容器内持久化 venv 行为不变）；②`run_suite.py` 头部 `os.environ.setdefault("PYTHON_SCRIPT_VENV_DIR", "")` 兜底；③`genericization_gate.py` `LEGACY_ADAPTER_FILES` 白名单加入 `services/python_script_examples.py`，examples 文件补 `LEGACY_ADAPTER_ONLY = True` 桥接标记；④`week_manifest.py` Week 3 登记 `test_python_script_runtime`。
 - 验证：`run_suite.py --week 1` 20/20 passed（manifest + genericization 修复生效）；`--week 3` 17/17 passed（python_script 子进程测试在 run_suite 路径恢复）。镜像无强制重建需求（config 默认值变化随下次构建生效；compose env 已显式注入）。
 
+### 2026-10-19 拧紧特征工程列名匹配兼容「基础名(中文注释)」表头
+
+- 现象：拧紧项目「特征工程」工作流两次运行均失败于拧紧特征工程节点，报错 `requires both actual torque column (ACTUAL_TORQUE) and target torque column (TARGET_TORQUE)`；首次运行 8.4 分钟系 csv_import 解析 28 万行大 CSV（正常），失败才是真正问题。
+- 根因：生产拧紧 CSV 表头带中文注释（如 `ACTUAL_TORQUE(实际扭矩/一轴实际扭矩)`、`TARGET_TORQUE(设定目标力矩（N.m）)`），而 `processing.py` `resolve_column` 仅做全名大小写不敏感精确匹配，基础名匹配不上。
+- 修复：`resolve_column` 精确匹配失败后，按括号（半角/全角）前基础名兜底匹配（`re.split(r"[(（]", folded)[0].strip()`）；基础名间无碰撞（ACTUAL_TORQUE 与 ACTUAL_TORQUE_TWO 基础名不同）。
+- 测试：`test_all_operators.py` 新增 `test_tighten_feature_engineering_resolves_annotated_headers`——五列均带中文注释表头、默认参数，断言五个派生特征值与 skipped 为空。
+- 连带修复 ①：`Dockerfile`/`Dockerfile.worker` 把 `/data` 本身 chown 给 app（此前仅 chown `/data/python-script-venv`，venv 引导在 `/data` 下建 tmp 目录时 Permission denied，python_script 子进程测试 10 errors）。
+- 连带修复 ②：`python_script_runtime._ensure_venv` 挂载卷（命名卷）场景永远引导失败的隐藏 bug——`os.rename(tmp, /data/python-script-venv)` 对挂载点必抛 OSError 被误判为"他人已完成"后删除 tmp。现按 `os.path.ismount` 分流：挂载点场景加 `_InstallLock`（O_EXCL 跨进程锁）原地 `_create_venv_at(venv_dir)`；普通目录保留 tmp+rename 原子流程（抽取 `_create_venv_at` 复用 ensurepip 失败回退逻辑）。
+- 连带修复 ③：venv 引导后 bootstrap 与 auto-install 均固定 pandas/numpy 为父进程同版本（`_pinned` 辅助 + pip `--constraint` 文件）——否则 venv 安装最新版 pandas 导致子进程 pickle 的 DataFrame 父进程 `read_pickle` 反序列化失败（NDArrayBacked.__setstate__）。修复时清空旧 venv 卷重新引导。
+- 验证：容器内（真实 venv 卷模式）test_all_operators + test_operators_utility 125 passed（含新增中文注释表头用例）。
+- 部署：backend 与 worker 镜像均需重建（工作流执行在 worker 内跑）。
+
 ### 2026-10-19 算子面板新增「闭环自动化」分类 + 拧紧特征工程参数中文化
 
 - 需求：①拧紧特征工程算子参数中英文适配；②算子列表新增「闭环自动化」分类，收纳闭环自动化/应用编排算子。

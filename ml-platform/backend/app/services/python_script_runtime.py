@@ -24,6 +24,7 @@ import threading
 import time
 
 import pandas as pd
+import numpy as np
 
 # Common import-name -> distribution-name mapping (import name != pip name).
 MODULE_TO_PACKAGE = {
@@ -183,6 +184,28 @@ class PythonScriptRuntime:
                 return candidate
         return None
 
+    def _create_venv_at(self, target: str) -> None:
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "venv", target],
+                check=True, timeout=300, capture_output=True, text=True,
+            )
+        except subprocess.CalledProcessError:
+            # Some distro images ship python without ensurepip; retry
+            # without pip and seed it from the parent interpreter.
+            shutil.rmtree(target, ignore_errors=True)
+            subprocess.run(
+                [sys.executable, "-m", "venv", "--without-pip", target],
+                check=True, timeout=300, capture_output=True, text=True,
+            )
+            tmp_python = self._venv_python_in(target)
+            subprocess.run(
+                [sys.executable, "-m", "pip", "--python", tmp_python,
+                 "install", "--upgrade", "pip"],
+                check=True, timeout=self.install_timeout,
+                capture_output=True, text=True,
+            )
+
     def _ensure_venv(self) -> str:
         existing = self._venv_python()
         if existing:
@@ -197,39 +220,47 @@ class PythonScriptRuntime:
                 parent, f".{os.path.basename(self.venv_dir)}.tmp-{os.getpid()}-{threading.get_ident()}",
             )
             try:
-                try:
-                    subprocess.run(
-                        [sys.executable, "-m", "venv", tmp_target],
-                        check=True, timeout=300, capture_output=True, text=True,
-                    )
-                except subprocess.CalledProcessError as error:
-                    # Some distro images ship python without ensurepip; retry
-                    # without pip and seed it from the parent interpreter.
-                    shutil.rmtree(tmp_target, ignore_errors=True)
-                    subprocess.run(
-                        [sys.executable, "-m", "venv", "--without-pip", tmp_target],
-                        check=True, timeout=300, capture_output=True, text=True,
-                    )
-                    tmp_python = self._venv_python_in(tmp_target)
-                    subprocess.run(
-                        [sys.executable, "-m", "pip", "--python", tmp_python,
-                         "install", "--upgrade", "pip"],
-                        check=True, timeout=self.install_timeout,
-                        capture_output=True, text=True,
-                    )
-                try:
-                    os.rename(tmp_target, self.venv_dir)
-                except OSError:
-                    # Another process finished the bootstrap first.
-                    pass
+                if os.path.ismount(self.venv_dir):
+                    # A mountpoint (e.g. a named Docker volume) cannot be
+                    # replaced by rename; bootstrap in place under a
+                    # cross-process lock instead.
+                    lock = _InstallLock(os.path.join(
+                        parent, f".{os.path.basename(self.venv_dir)}.bootstrap.lock",
+                    ))
+                    with lock:
+                        existing = self._venv_python()
+                        if existing:
+                            return existing
+                        self._create_venv_at(self.venv_dir)
+                else:
+                    self._create_venv_at(tmp_target)
+                    try:
+                        os.rename(tmp_target, self.venv_dir)
+                    except OSError:
+                        # Another process finished the bootstrap first.
+                        pass
             finally:
                 shutil.rmtree(tmp_target, ignore_errors=True)
             interpreter = self._venv_python()
             if interpreter is None:
                 raise RuntimeError("PythonScript: failed to prepare the script venv")
             if self.bootstrap_packages:
-                self._pip_install(interpreter, list(self.bootstrap_packages))
+                self._pip_install(
+                    interpreter, [self._pinned(pkg) for pkg in self.bootstrap_packages],
+                )
             return interpreter
+
+    @staticmethod
+    def _pinned(package: str) -> str:
+        # The venv subprocess exchanges DataFrames with the parent process via
+        # pickle; pandas/numpy must stay on the parent's exact versions or
+        # read_pickle fails with internal-array mismatches.
+        name = package.casefold()
+        if name == "pandas":
+            return f"pandas=={pd.__version__}"
+        if name == "numpy":
+            return f"numpy=={np.__version__}"
+        return package
 
     def _venv_python_in(self, venv_dir: str) -> str:
         for candidate in (
@@ -294,25 +325,38 @@ class PythonScriptRuntime:
             for extra in self.pip_sources[1:]:
                 command += ["--extra-index-url", extra]
         command += sorted(packages)
-        lock = _InstallLock(os.path.join(
-            os.path.dirname(self.venv_dir) or ".", f".{os.path.basename(self.venv_dir)}.pip.lock",
-        ))
-        with lock:
-            try:
-                proc = subprocess.run(
-                    command, capture_output=True, text=True,
-                    timeout=self.install_timeout, env=self._child_env(for_pip=True),
-                )
-            except subprocess.TimeoutExpired as error:
+        # Keep pandas/numpy aligned with the parent interpreter (pickle contract).
+        constraint_path = None
+        try:
+            with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as handle:
+                handle.write(f"pandas=={pd.__version__}\nnumpy=={np.__version__}\n")
+                constraint_path = handle.name
+            command += ["--constraint", constraint_path]
+            lock = _InstallLock(os.path.join(
+                os.path.dirname(self.venv_dir) or ".", f".{os.path.basename(self.venv_dir)}.pip.lock",
+            ))
+            with lock:
+                try:
+                    proc = subprocess.run(
+                        command, capture_output=True, text=True,
+                        timeout=self.install_timeout, env=self._child_env(for_pip=True),
+                    )
+                except subprocess.TimeoutExpired as error:
+                    raise RuntimeError(
+                        f"PythonScript: pip install of {', '.join(sorted(packages))} "
+                        f"timed out after {self.install_timeout}s",
+                    ) from error
+            if proc.returncode != 0:
                 raise RuntimeError(
-                    f"PythonScript: pip install of {', '.join(sorted(packages))} "
-                    f"timed out after {self.install_timeout}s",
-                ) from error
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"PythonScript: auto-install failed for "
-                f"{', '.join(sorted(packages))}: {self._tail(proc.stderr)}",
-            )
+                    f"PythonScript: auto-install failed for "
+                    f"{', '.join(sorted(packages))}: {self._tail(proc.stderr)}",
+                )
+        finally:
+            if constraint_path:
+                try:
+                    os.unlink(constraint_path)
+                except OSError:
+                    pass
 
     # -- subprocess execution --------------------------------------------------
 

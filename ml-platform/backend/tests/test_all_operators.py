@@ -498,6 +498,30 @@ class TestProcessingOperatorsExecution(unittest.TestCase):
 
         self.assertIn("ACTUAL_TORQUE", str(raised.exception))
 
+    def test_tighten_feature_engineering_resolves_annotated_headers(self):
+        # Production tighten CSVs carry Chinese annotations in the header,
+        # e.g. "ACTUAL_TORQUE(实际扭矩/一轴实际扭矩)"; default base names
+        # must still resolve through the parenthesis fallback.
+        data = [
+            {"ACTUAL_TORQUE(实际扭矩/一轴实际扭矩)": 632.0,
+             "TARGET_TORQUE(设定目标力矩（N.m）)": 630.0,
+             "UPPER_LIMIT(力矩上限（N.m）)": 635.0,
+             "LOWER_LIMIT(力矩下限（N.m）)": 625.0,
+             "ACTUAL_TORQUE_TWO(二轴实际扭矩)": 634.0},
+        ]
+
+        outputs = execute_operator(
+            OperatorRegistry.get("tighten_feature_engineering"),
+            {"data": data}, {})
+
+        first = outputs["features"][0]
+        self.assertAlmostEqual(first["TIGHTEN_TORQUE_DEVIATION"], 2.0)
+        self.assertAlmostEqual(first["TIGHTEN_DEVIATION_RATIO"], 0.2)
+        self.assertAlmostEqual(first["TIGHTEN_UPPER_MARGIN"], 3.0)
+        self.assertAlmostEqual(first["TIGHTEN_LOWER_MARGIN"], 7.0)
+        self.assertAlmostEqual(first["TIGHTEN_DUAL_AXIS_DIFF"], -2.0)
+        self.assertEqual(outputs["statistics"]["skipped"], {})
+
     def test_feature_engineering_category_has_both_domain_operators(self):
         operators = OperatorRegistry.list_by_category("feature_engineering")
         ids = {op.id for op in operators}
