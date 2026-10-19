@@ -63,6 +63,8 @@ class TestLargeDatasetPreviewAndExport(unittest.TestCase):
     def test_export_csv_streams_all_rows(self):
         r = client.get(f"/api/datasets/{self.dataset_id}/export?format=csv", headers=self.h)
         self.assertEqual(r.status_code, 200)
+        # The original filename must ride along for the frontend download.
+        self.assertIn("filename*=utf-8''large.csv", r.headers["content-disposition"])
         # Excel needs the UTF-8 BOM to render Chinese correctly.
         self.assertTrue(r.content.startswith(b"\xef\xbb\xbf"))
         lines = r.content.decode("utf-8-sig").strip().splitlines()

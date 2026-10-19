@@ -195,10 +195,20 @@ export default function DataManagePage() {
   const handleDownload = async (dsId: string) => {
     try {
       const response = await apiClient.get("/datasets/" + dsId + "/export", { responseType: "blob" });
+      // 优先使用后端 Content-Disposition 里的原始文件名（支持 RFC 5987 中文名）
+      const disposition: string = response.headers["content-disposition"] || "";
+      let filename = "dataset.csv";
+      const star = disposition.match(/filename\*=utf-8''([^;]+)/i);
+      if (star) {
+        filename = decodeURIComponent(star[1]);
+      } else {
+        const plain = disposition.match(/filename="?([^";]+)"?/i);
+        if (plain) filename = plain[1];
+      }
       const url = URL.createObjectURL(response.data);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = "dataset.csv";
+      anchor.download = filename;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (e: any) {

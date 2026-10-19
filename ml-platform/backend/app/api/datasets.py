@@ -790,26 +790,25 @@ def export_single_dataset(
         raise HTTPException(400, f"Failed to read file: {e}")
 
     output = None
-    media_type = ""
-    filename = f"{artifact.name or 'dataset'}"
+    media_type = "text/csv"
+    suffix = {"json": ".json", "excel": ".xlsx", "parquet": ".parquet"}.get(format, ".csv")
+    stem = artifact.name or "dataset"
+    # Uploaded names usually already carry the extension; avoid double suffixes.
+    filename = stem if stem.lower().endswith(suffix) else stem + suffix
+    content_disposition = f"attachment; filename*=utf-8''{quote(filename)}"
+
     if format == "json":
         output = io.BytesIO()
         df.to_json(output, orient="records")
         media_type = "application/json"
-        filename += ".json"
     elif format == "excel":
         output = io.BytesIO()
         df.to_excel(output, index=False, engine="openpyxl")
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        filename += ".xlsx"
     elif format == "parquet":
         output = io.BytesIO()
         df.to_parquet(output, index=False)
         media_type = "application/octet-stream"
-        filename += ".parquet"
-    else:
-        media_type = "text/csv"
-        filename += ".csv"
 
     if output is None:
         # CSV streams in chunks: materializing a whole large dataset export
@@ -817,14 +816,14 @@ def export_single_dataset(
         return StreamingResponse(
             _iter_csv_chunks(df),
             media_type=media_type,
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
+            headers={"Content-Disposition": content_disposition},
         )
 
     output.seek(0)
     return StreamingResponse(
         output,
         media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": content_disposition},
     )
 
 
