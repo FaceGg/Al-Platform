@@ -81,6 +81,23 @@ class TestRuntimeSubprocessExecution(unittest.TestCase):
         self.assertIsInstance(result, pd.DataFrame)
         self.assertEqual(result["v"].tolist(), [8])
 
+    def test_main_guard_style_script(self):
+        """正规脚本写法（import + 函数 + if __name__ == "__main__"）受支持。"""
+        df = pd.DataFrame({"a": [1, 2]})
+        script = (
+            "import pandas as pd\n"
+            "\n"
+            "def process(d: pd.DataFrame) -> pd.DataFrame:\n"
+            "    out = d.copy()\n"
+            "    out['b'] = out['a'] * 10\n"
+            "    return out\n"
+            "\n"
+            "if __name__ == \"__main__\":\n"
+            "    result = process(df)\n"
+        )
+        result = self.runtime.execute(script, df)
+        self.assertEqual(result["b"].tolist(), [10, 20])
+
     def test_script_exception_is_wrapped(self):
         df = pd.DataFrame({"a": [1]})
         with self.assertRaises(RuntimeError) as ctx:

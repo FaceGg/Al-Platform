@@ -310,10 +310,11 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 - 需求：①编辑器模板再加一段默认伪代码——输入输出写法正确、中间功能以 "..." 省略；②算子面板分类「数据输入输出」→「输入输出」、「传统机器学习」→「机器学习」；③算子悬停说明适配中英文（此前全按后端英文 description 展示）。
 - 模板：`PYTHON_SCRIPT_TEMPLATE` 功能区改为可运行伪代码框架——`result = df.copy()  # 输入`、`# ...  # 中间：在此编写处理逻辑`、输出说明注释；未改模板直接运行为原样透传（输入输出契约正确），中间逻辑由用户补齐。接口强校验逻辑不变。
+- 模板正式化（同日追加）：应用户要求把模板升级为正规脚本样式——`import pandas as pd` + `def process(df) -> pd.DataFrame`（docstring 标注功能实现区，`# ...` 省略中间逻辑）+ `def main()` + `if __name__ == "__main__": result = main()`；配套 runner exec 作用域注入 `__name__ = "__main__"`（否则主守卫 NameError），正规脚本写法（import/函数/主守卫）全面受支持。存量旧模板脚本兼容不变（接口校验只认首尾块）。新增 runtime 用例验证主守卫风格脚本。
 - 分类改名：`OperatorPanel.tsx` CATEGORY_LABELS 的 data_io/io zh 改「输入输出」、ml zh 改「机器学习」（en 不变）；面板测试同步改断言。
 - 悬停说明：新增 `frontend/src/i18n/operatorDescriptions.ts`——**全部 87 个注册算子**的 zh 说明映射（en 可选），`OperatorPanel` Tooltip 按 `descriptions[id]?.[lang] || description` 取值：中文界面显示中文说明，英文界面优先映射英文（仅后端描述为中文/中英混合的 14 个算子配置了 en 覆盖，其余回落后端英文）。
-- 测试：utility+runtime+all_operators 137 passed（模板用例改为「未改模板直接运行=透传」）；前端 tsc 无错、面板相关 17 passed。
-- 部署：backend（模板常量）与 frontend（面板/映射）镜像均需重建。
+- 测试：utility+runtime+all_operators 138 passed（模板用例改为「未改模板直接运行=透传」，新增主守卫脚本用例）；前端 tsc 无错、面板相关 17 passed。
+- 部署：backend 镜像需重建（模板常量与 runner 作用域）；frontend 镜像需重建（面板/映射）。
 
 ### 2026-10-19 python_script 算子交互改造：自动安装开关 + 编辑弹窗 + 固定输入/输出接口模板
 

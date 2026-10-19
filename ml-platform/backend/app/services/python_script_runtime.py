@@ -64,7 +64,7 @@ def main():
     df = pd.read_pickle(in_path)
     with open(script_path, "r", encoding="utf-8") as handle:
         code = handle.read()
-    scope = {{"df": df}}
+    scope = {{"df": df, "__name__": "__main__"}}
     try:
         exec(compile(code, "<python_script>", "exec"), scope, scope)
     except BaseException as exc:  # noqa: BLE001 - reported back to the operator
