@@ -309,8 +309,8 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 ### 2026-10-19 常规重打包：纳入 r15 后大数据集与稳定性修复（r16）
 
 - 背景：r15（2026-10-14）之后主线新增本节下方一批 2026-10-19 修复（大文件上传 30s 超时、节点完成载荷截断、节点超时 300→1800 秒、运行终止终态与状态泄漏、数据集下载原始文件名/中文支持、CSV 导出 BOM 与流式化、拧紧特征工程中文表头、python_script venv 修复、闭环复核收集等，含新增迁移 `20261015_71`）；用户要求更新文档并重新打包。
-- 发布记录（2026-10-19）：安装包 `output/linkraft-ubuntu-20261019-r16.tar.gz`（3,219,798 字节），manifest 绑定 HEAD `ace6d41`（= tag = 门禁分支 `release/r16` HEAD；README r16 文档提交），SHA-256 `1ee0447ad0b015747713c6efa8330aa36eb8a0b0f94106282c5c430eade45aa0`，`sha256sum -c` 通过；`.git/` 内 LF 临时副本执行打包。归档抽查：节点超时 1800/BOM 修复（utf-8-sig）/迁移 `20261015_71`/r16 文档引用逐项在包；排除项干净（无 `.env`/secrets/数据库/wheelhouse/node_modules/.git）；packaging 脚本 0 CR（WSL 原生工具复核；README-UBUNTU.md 的 CRLF 属文档既有惯例）。
-- 质量门禁：在门禁分支 `release/r16` 隔离并发组验证（r15 教训：dispatch 后勿 push main），终验 run 回填；绿后 tag `ace6d41` 发 GitHub Release `20261019-r16`（资产 = tar.gz + sha256）。
+- 发布记录（2026-10-19）：安装包 `output/linkraft-ubuntu-20261019-r16.tar.gz`（3,219,798 字节），manifest 绑定 HEAD `c04f359`（= tag = 门禁分支 `release/r16` HEAD；含数据集预览用例的 limit=200 契约对齐修复），SHA-256 `13d36ca291199340be0fdad241d9ef872ef44e1bb0fe5c2ffb889aa74e47f75f`，`sha256sum -c` 通过；`.git/` 内 LF 临时副本执行打包。归档抽查：节点超时 1800/BOM 修复（utf-8-sig）/迁移 `20261015_71`/r16 文档引用逐项在包；排除项干净（无 `.env`/secrets/数据库/wheelhouse/node_modules/.git）；packaging 脚本 0 CR（WSL 原生工具复核；README-UBUNTU.md 的 CRLF 属文档既有惯例）。
+- 质量门禁：在门禁分支 `release/r16` 隔离并发组验证（r15 教训：dispatch 后勿 push main）。首跑（run 39253318445）两平台 Quality 挂于 DataManagePage 预览用例——OOM 修复（72de1ae）把预览改为 limit=200 截断后，旧用例仍 mock `?limit=0` 断言无截断契约，Unexpected URL 致预览不加载；已按新契约更新 mock 与用例名，前端全量 75 文件 445 用例本地绿，重打包并以 `c04f359` 终验（run 39259595519，结果回填）；绿后 tag `c04f359` 发 GitHub Release `20261019-r16`（资产 = tar.gz + sha256）。
 
 ### 2026-10-19 修复数据管理大文件上传失败：前端 30s 全局超时掐断大 CSV 上传
 
