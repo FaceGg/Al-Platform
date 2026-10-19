@@ -110,7 +110,7 @@ describe("DataManagePage", () => {
     expect(acceptValues).toContain(".csv,.xls,.xlsx");
   });
 
-  it("previews every dataset row instead of a fixed cap", async () => {
+  it("previews dataset rows through the capped request window", async () => {
     const previewRows = Array.from({ length: 15 }, (_, index) => ({ col1: index + 1, col2: (index + 1) * 10 }));
     get.mockImplementation((url: string) => {
       if (url === "/projects") return Promise.resolve({ data: { items: [] } });
@@ -120,7 +120,8 @@ describe("DataManagePage", () => {
           project_name: "Weld line", file_size: 1024, row_count: 15, column_count: 2, created_at: "2026-07-20T00:00:00",
         }], total: 1 } });
       }
-      if (url === "/datasets/dataset-1/preview?limit=0") {
+      // OOM 修复后预览固定请求 limit=200（小数据集全量返回）
+      if (url === "/datasets/dataset-1/preview?limit=200") {
         return Promise.resolve({ data: { columns: ["col1", "col2"], preview: previewRows, total_rows: 15, dtypes: {} } });
       }
       return Promise.reject(new Error(`Unexpected URL: ${url}`));
