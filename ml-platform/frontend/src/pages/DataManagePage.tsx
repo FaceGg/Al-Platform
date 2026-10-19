@@ -179,7 +179,8 @@ export default function DataManagePage() {
 
   const handlePreview = async (dsId: string) => {
     try {
-      const data = await getDatasetPreview(dsId, { limit: 0 });
+      // 28 万行全量预览曾把后端进程内存打爆（OOM），预览只需前 200 行
+      const data = await getDatasetPreview(dsId, { limit: 200 });
       const columns = data.columns || [];
       const rows = Array.isArray(data.preview)
         ? data.preview.map((row: Record<string, unknown>) => columns.map((column: string) => row[column]))

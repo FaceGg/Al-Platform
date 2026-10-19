@@ -2,7 +2,7 @@ import os
 import io
 import logging
 import mimetypes
-from typing import List, Optional
+from typing import Iterator, List, Optional
 from uuid import UUID
 import uuid
 import json
@@ -417,6 +417,24 @@ def _read_dataset(path: Path):
     raise last_error
 
 
+# Full-dataset JSON previews once OOM-killed backend workers; previews only
+# ever need a few hundred rows (total_rows still reports the real count).
+_MAX_PREVIEW_ROWS = 500
+_EXPORT_CSV_CHUNK_ROWS = 20000
+
+
+def _iter_csv_chunks(frame) -> "Iterator[str]":
+    """Yield a DataFrame as UTF-8 CSV chunks without building one huge buffer."""
+    header = True
+    for start in range(0, len(frame), _EXPORT_CSV_CHUNK_ROWS):
+        buf = io.StringIO()
+        frame.iloc[start:start + _EXPORT_CSV_CHUNK_ROWS].to_csv(
+            buf, index=False, header=header,
+        )
+        header = False
+        yield buf.getvalue()
+
+
 def _json_value(value):
     import math
     import numpy as np
@@ -763,25 +781,36 @@ def export_single_dataset(
     except Exception as e:
         raise HTTPException(400, f"Failed to read file: {e}")
 
-    output = io.BytesIO()
+    output = None
     media_type = ""
     filename = f"{artifact.name or 'dataset'}"
     if format == "json":
+        output = io.BytesIO()
         df.to_json(output, orient="records")
         media_type = "application/json"
         filename += ".json"
     elif format == "excel":
+        output = io.BytesIO()
         df.to_excel(output, index=False, engine="openpyxl")
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         filename += ".xlsx"
     elif format == "parquet":
+        output = io.BytesIO()
         df.to_parquet(output, index=False)
         media_type = "application/octet-stream"
         filename += ".parquet"
     else:
-        df.to_csv(output, index=False)
         media_type = "text/csv"
         filename += ".csv"
+
+    if output is None:
+        # CSV streams in chunks: materializing a whole large dataset export
+        # in memory once OOM-killed the worker mid-download.
+        return StreamingResponse(
+            (chunk.encode("utf-8") for chunk in _iter_csv_chunks(df)),
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
 
     output.seek(0)
     return StreamingResponse(
@@ -1033,10 +1062,13 @@ async def import_zip_dataset(
 @router.get("/datasets/{dataset_id}/preview")
 def preview_dataset(
     dataset_id: str,
-    limit: int = Query(10, ge=0, description="Preview row count; 0 returns all rows"),
+    limit: int = Query(10, ge=0, le=1000, description="Preview row count; 0 returns up to 500 rows"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Hard cap: materializing hundreds of thousands of rows as JSON once OOM-killed
+    # the uvicorn worker ("0 = all rows" is not survivable for large datasets).
+    limit = min(limit, _MAX_PREVIEW_ROWS) or _MAX_PREVIEW_ROWS
     artifact = db.query(Artifact).filter(
         Artifact.id == UUID(dataset_id),
         Artifact.type == "dataset",
@@ -1050,7 +1082,7 @@ def preview_dataset(
             artifact.id, artifact.project_id, expected_type="dataset",
         ) as path:
             df = _read_dataset(path)
-        frame = df if limit == 0 else df.head(limit)
+        frame = df.head(limit)
         return {
             "columns": list(df.columns),
             "preview": _json_records(frame),

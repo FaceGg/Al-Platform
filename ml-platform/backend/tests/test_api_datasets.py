@@ -22,6 +22,59 @@ def login():
     return {"Authorization": "Bearer " + r.json()["access_token"]}
 
 
+class TestLargeDatasetPreviewAndExport(unittest.TestCase):
+    """limit=0 previews of hundreds of thousands of rows once OOM-killed
+    backend workers; previews are capped and CSV export streams."""
+
+    @classmethod
+    def setUpClass(cls):
+        ensure_admin(username="large_dataset_admin")
+        r = client.post(
+            "/api/auth/login", data={"username": "large_dataset_admin", "password": "admin123"},
+        )
+        cls.h = {"Authorization": "Bearer " + r.json()["access_token"]}
+        r = client.post("/api/projects", json={"name": "LargeDatasetProject"}, headers=cls.h)
+        cls.project_id = r.json()["id"]
+        rows = 600  # above the 500-row preview cap
+        content = "idx,value\n" + "".join(
+            f"{index},{index * 2}\n" for index in range(rows)
+        )
+        r = client.post(
+            f"/api/projects/{cls.project_id}/datasets/upload",
+            files={"file": ("large.csv", io.BytesIO(content.encode("utf-8")), "text/csv")},
+            headers=cls.h,
+        )
+        assert r.status_code == 200, r.text
+        cls.dataset_id = r.json()["id"]
+        cls.rows = rows
+
+    def test_preview_limit_zero_is_capped(self):
+        r = client.get(f"/api/datasets/{self.dataset_id}/preview?limit=0", headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertEqual(len(data["preview"]), 500)
+        self.assertEqual(data["total_rows"], self.rows)
+
+    def test_preview_explicit_limit_respected(self):
+        r = client.get(f"/api/datasets/{self.dataset_id}/preview?limit=50", headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.json()["preview"]), 50)
+
+    def test_export_csv_streams_all_rows(self):
+        r = client.get(f"/api/datasets/{self.dataset_id}/export?format=csv", headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        lines = r.content.decode("utf-8").strip().splitlines()
+        self.assertEqual(lines[0], "idx,value")
+        self.assertEqual(len(lines), self.rows + 1)
+        self.assertEqual(lines[-1], f"{self.rows - 1},{(self.rows - 1) * 2}")
+
+    def test_download_returns_original_file(self):
+        r = client.get(f"/api/datasets/{self.dataset_id}/download", headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        lines = r.content.decode("utf-8").strip().splitlines()
+        self.assertEqual(len(lines), self.rows + 1)
+
+
 class TestDatasetsAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
