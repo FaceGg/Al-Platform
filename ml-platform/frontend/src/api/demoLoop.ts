@@ -5,6 +5,7 @@ export interface DemoLoopDeployment {
   name: string;
   desired_state: string;
   observed_state: string;
+  target_columns?: string[];
 }
 
 export interface DemoLoopModelInfo {

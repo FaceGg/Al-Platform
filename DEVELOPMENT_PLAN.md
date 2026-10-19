@@ -338,6 +338,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 并行说明：运行以独立 Celery 任务执行，worker --concurrency=2，最多 2 个运行并行、其余排队——本就并行，此次是前端状态泄漏让它"看起来"串行。
 - 部署：backend/worker/frontend 镜像重建，nginx 重启。
 
+### 2026-10-19 闭环配置：选择部署后目标列自动填充模型 label 列（覆盖新建场景）
+
+- 需求：目标列前端自动填充部署模型的 label 列——此前只有编辑模式预填（靠 current_model），新建闭环选择部署后目标列仍为空。
+- 后端：`GET /api/projects/{id}/inference-deployments` 列表项批量附加各部署当前模型版本的 `target_columns`（来自 output_schema.target_columns，`_deployment_view` 增加可选参数）。
+- 前端：`LoopConfigModal` 监听 deployment_id 变化——目标列为空时按所选部署的 `target_columns[0]` 自动回填（用户已填则不覆盖）；`DemoLoopDeployment` 类型加 `target_columns`。
+- 测试：tsc 无错；TestFeatureEngineeringModes 4 用例全过。
+- 部署：backend/frontend/worker 镜像重建，nginx 重启。
+
 ### 2026-10-19 闭环配置体验修正：收集比例去括号、报错数据集默认参与重训、目标列默认模型 label 列
 
 - 需求：①「错误:正确 收集比例」下拉选项去掉括号补充说明；②重训数据集默认添加闭环收集的报错数据集；③重训目标列默认取模型的 label 列。

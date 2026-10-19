@@ -19,7 +19,7 @@ export interface FieldDescTask {
 interface Props {
   editor: LoopEditorState | null;
   projectId: string;
-  deployments: Array<{ id: string; name: string; observed_state: string }>;
+  deployments: Array<{ id: string; name: string; observed_state: string; target_columns?: string[] }>;
   datasets: Array<{ id: string; name: string }>;
   annotators: Array<{ id: string; username: string }>;
   fieldDescTasks?: FieldDescTask[];
@@ -93,7 +93,17 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
     return () => { cancelled = true; };
   }, [editor, t]);
 
-  // 切到脚本模式且脚本为空时，用 python_script 算子的默认模板预填（与后端强校验保持同步）
+  // 选择推理部署后：目标列为空时自动填充部署模型的 label 列
+  const deploymentId = Form.useWatch("deployment_id", form);
+  useEffect(() => {
+    if (!deploymentId || !editor) return;
+    const current = (form.getFieldValue("retrain_target_column") as string || "").trim();
+    if (current) return;
+    const deployment = deployments.find((item) => item.id === deploymentId);
+    const target = deployment?.target_columns?.[0];
+    if (target) form.setFieldsValue({ retrain_target_column: target });
+  }, [deploymentId, deployments, editor, form]);
+
   useEffect(() => {
     if (featureMode !== "script" || !editor) return;
     const current = (form.getFieldValue("feature_script") as string || "").trim();

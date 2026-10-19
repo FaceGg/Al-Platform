@@ -124,8 +124,8 @@ def _version_view(version):
     }
 
 
-def _deployment_view(deployment):
-    return {
+def _deployment_view(deployment, target_columns=None):
+    view = {
         "id": str(deployment.id), "project_id": str(deployment.project_id),
         "name": deployment.name, "model_version_id": str(deployment.model_version_id),
         "desired_state": deployment.desired_state,
@@ -134,6 +134,10 @@ def _deployment_view(deployment):
         "last_checked_at": deployment.last_checked_at.isoformat() if deployment.last_checked_at else None,
         "created_at": deployment.created_at.isoformat() if deployment.created_at else None,
     }
+    if target_columns is not None:
+        # 模型的 label 列（AutoML 注册时写入），闭环等场景的目标列默认值
+        view["target_columns"] = target_columns
+    return view
 
 
 def _release_view(release):
@@ -563,7 +567,19 @@ def build_model_registry_router(
     def list_deployments(project_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         require_project_access(db, project_id, current_user.id, "project.read")
         items = db.query(InferenceDeployment).filter(InferenceDeployment.project_id == project_id).order_by(InferenceDeployment.created_at.desc()).all()
-        return {"items": [_deployment_view(item) for item in items], "total": len(items)}
+        # 批量取各部署当前模型版本的 label 列，供闭环配置默认目标列使用
+        version_ids = [item.model_version_id for item in items if item.model_version_id]
+        targets_by_version: dict = {}
+        if version_ids:
+            versions = db.query(ModelVersion).filter(ModelVersion.id.in_(version_ids)).all()
+            targets_by_version = {
+                str(version.id): (version.output_schema or {}).get("target_columns") or []
+                for version in versions
+            }
+        return {"items": [
+            _deployment_view(item, targets_by_version.get(str(item.model_version_id)))
+            for item in items
+        ], "total": len(items)}
 
     @router.post("/api/projects/{project_id}/inference-deployments", status_code=201)
     def create_deployment(project_id: UUID, data: DeploymentCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
