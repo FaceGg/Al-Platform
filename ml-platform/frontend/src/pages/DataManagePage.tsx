@@ -47,6 +47,8 @@ export default function DataManagePage() {
   const [loading, setLoading] = useState(false);
   const [previewData, setPreviewData] = useState<{ columns: string[]; rows: any[][] } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadPercent, setUploadPercent] = useState(0);
   const [returnBatches, setReturnBatches] = useState<ReturnBatch[]>([]);
   const [returnBatchesLoading, setReturnBatchesLoading] = useState(false);
   const [returnDiff, setReturnDiff] = useState<ReturnDiffRow[]>([]);
@@ -135,11 +137,17 @@ export default function DataManagePage() {
     if (!selectedProject) { message.warning(t.automl.select_project); return false; }
     const formData = new FormData();
     formData.append("file", file);
+    setUploading(true);
+    setUploadPercent(0);
     try {
       // 大文件（数十 MB / 数十万行）上传加解析远超全局 30s 超时，单独放宽
       await apiClient.post("/projects/" + selectedProject + "/datasets/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
         timeout: 600000,
+        onUploadProgress: (event) => {
+          const total = event.total || file.size;
+          if (total) setUploadPercent(Math.min(100, Math.round((event.loaded / total) * 100)));
+        },
       });
       message.success(t.common.success);
       // reload
@@ -152,6 +160,9 @@ export default function DataManagePage() {
         const text = typeof detail === "string" ? detail : (detail?.message || detail?.code);
         message.error(text || t.common.error);
       }
+    } finally {
+      setUploading(false);
+      setUploadPercent(0);
     }
     return false;
   };
@@ -263,11 +274,19 @@ export default function DataManagePage() {
               allowClear
             />
             <Upload beforeUpload={(file) => { handleUpload(file); return false; }} accept=".csv,.xls,.xlsx,.json,.parquet" maxCount={1} showUploadList={false}>
-              <Button icon={<UploadOutlined />}>{t.data.upload_file}</Button>
+              <Button icon={<UploadOutlined />} loading={uploading}>
+                {uploading
+                  ? (uploadPercent < 100 ? `上传中 ${uploadPercent}%` : "解析中…")
+                  : t.data.upload_file}
+              </Button>
             </Upload>
             <Button icon={<ExportOutlined />} onClick={handleExport}>{t.data.export}</Button>
             <Upload beforeUpload={(file) => { handleUpload(file); return false; }} accept=".csv,.xls,.xlsx" maxCount={99} showUploadList={false} multiple>
-              <Button icon={<ImportOutlined />}>{t.data.batch}</Button>
+              <Button icon={<ImportOutlined />} loading={uploading}>
+                {uploading
+                  ? (uploadPercent < 100 ? `上传中 ${uploadPercent}%` : "解析中…")
+                  : t.data.batch}
+              </Button>
             </Upload>
           </Space>
         </div>

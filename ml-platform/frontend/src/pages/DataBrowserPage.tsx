@@ -28,6 +28,7 @@ export default function DataBrowserPage() {
   const [loading, setLoading] = useState(false)
   const [previewVisible, setPreviewVisible] = useState(false)
   const [previewData, setPreviewData] = useState<string[][]>([])
+  const [uploadPercent, setUploadPercent] = useState(0)
   const [previewColumns, setPreviewColumns] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
 
@@ -72,7 +73,13 @@ export default function DataBrowserPage() {
     formData.append('file', file)
     try {
       // 大文件（数十 MB / 数十万行）上传加解析远超全局 30s 超时，单独放宽
-      await apiClient.post('/projects/' + selectedProjectId + '/datasets/upload', formData, { timeout: 600000 })
+      await apiClient.post('/projects/' + selectedProjectId + '/datasets/upload', formData, {
+        timeout: 600000,
+        onUploadProgress: (event) => {
+          const total = event.total || file.size
+          if (total) setUploadPercent(Math.min(100, Math.round((event.loaded / total) * 100)))
+        },
+      })
       message.success(t.common.success)
       // refresh
       const res = await apiClient.get('/projects/' + selectedProjectId + '/datasets')
@@ -87,6 +94,7 @@ export default function DataBrowserPage() {
       }
     } finally {
       setUploading(false)
+      setUploadPercent(0)
     }
     return false
   }
@@ -128,7 +136,9 @@ export default function DataBrowserPage() {
               disabled={!selectedProjectId || uploading}
             >
               <Button icon={<UploadOutlined />} loading={uploading} disabled={!selectedProjectId}>
-                上传文件
+                {uploading
+                  ? (uploadPercent < 100 ? `上传中 ${uploadPercent}%` : '解析中…')
+                  : '上传文件'}
               </Button>
             </Upload>
           </Col>
