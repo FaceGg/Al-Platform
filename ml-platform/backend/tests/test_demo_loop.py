@@ -1224,6 +1224,36 @@ class TestFeatureEngineeringModes(unittest.TestCase):
         finally:
             db.close()
 
+    def test_operator_mode_rejects_non_feature_engineering_nodes(self):
+        from app.models.workflow import Workflow, WorkflowNode
+
+        db, service = self._make_service()
+        try:
+            workflow = Workflow(name="non-fe-wf")
+            db.add(workflow)
+            db.flush()
+            node = WorkflowNode(
+                workflow_id=workflow.id,
+                operator_id="csv_import",  # 数据输入输出类别，不属于「特征工程」
+                label="CSV 导入",
+                position_x=100,
+                position_y=100,
+                params={},
+            )
+            db.add(node)
+            db.commit()
+            db.refresh(node)
+
+            config = self._make_config(db, mode="legacy")
+            with self.assertRaises(demo_loop_module.DemoLoopError) as ctx:
+                service._apply_config_fields(config, config.project_id, {
+                    "feature_engineering_mode": "operator",
+                    "feature_operator_node_id": str(node.id),
+                })
+            self.assertIn("特征工程", str(ctx.exception))
+        finally:
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main()

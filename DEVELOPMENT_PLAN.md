@@ -340,11 +340,11 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 ### 2026-10-19 演示闭环特征工程方式三选一：内置点焊桥 / 工作流算子节点 / Python 脚本
 
-- 需求：闭环自动化原「自动特征工程」开关只支持点焊（build_fixed_feature_frame 73 特征桥），需支持选择工作流中的特征工程算子节点，或用 Python 脚本自定义，使拧紧等其它场景可用。
+- 需求：闭环自动化原「自动特征工程」开关只支持点焊（build_fixed_feature_frame 73 特征桥），需支持选择工作流中的特征工程算子节点，或用 Python 脚本自定义，使拧紧等其它场景可用。用户澄清：可选算子严格限定为算子面板「特征工程」类别下的算子（点焊特征工程/拧紧特征工程），不含「数据处理」类的自动特征工程。
 - 数据：`demo_loop_configs` 新增 3 列（迁移 `20261019_72`）——`feature_engineering_mode`（legacy/operator/script，默认 legacy）、`feature_operator_node_id`（工作流算子节点引用，无 FK 可存活性）、`feature_script`（脚本正文）。
-- 后端：①`_apply_config_fields` 校验三字段（模式合法性、节点存在性、脚本过 python_script 固定接口校验、operator/script 模式必填对应载荷）；②`_engineer_missing_features` 按模式分发——operator 模式解析节点→算子+已存参数→单行 DataFrame 执行→合并首个记录输出口；script 模式复用 python_script 算子（子进程+venv+自动装依赖+接口强校验）；legacy 保持点焊桥且去掉旧 preprocess_enabled 门槛（模式选择即用户意图，旧配置行为兼容）。
-- API：`DemoLoopConfigUpdate` + `_config_view` 透出三字段。前端：`LoopConfigModal` 开关改为三选一下拉（operator 模式拉取项目工作流中 FE 算子节点选项；script 模式从 /api/operators 取 python_script 脚本默认模板预填，保证与后端强校验同步）；`demoLoop.ts` 类型扩展。
-- 测试：test_demo_loop 新增 TestFeatureEngineeringModes 3 用例（operator 模式经拧紧特征工程节点派生 TIGHTEN_TORQUE_DEVIATION、script 模式经模板脚本派生、保存时模式载荷校验）全过；test_10/11/12 旧开关语义用例按新语义复核仍绿。注：test_06/07/17/20 的 6 个失败为容器环境预存问题（容器内 mlflow:5000 可达使重训链路真实触发，与 CI 隔离环境不符），已用 stash 基线对照证实与本次改动无关。
+- 后端：①`_apply_config_fields` 校验三字段（模式合法性、节点存在性、**节点算子必须属「特征工程」类别**（按 OperatorRegistry category 动态判定）、脚本过 python_script 固定接口校验、operator/script 模式必填对应载荷）；②`_engineer_missing_features` 按模式分发——operator 模式解析节点→算子+已存参数→单行 DataFrame 执行→合并首个记录输出口；script 模式复用 python_script 算子（子进程+venv+自动装依赖+接口强校验）；legacy 保持点焊桥且去掉旧 preprocess_enabled 门槛（模式选择即用户意图，旧配置行为兼容）。
+- API：`DemoLoopConfigUpdate` + `_config_view` 透出三字段。前端：`LoopConfigModal` 开关改为三选一下拉（operator 模式按 `/api/operators` 的 `category==="feature_engineering"` 动态过滤项目工作流算子节点，新增类别不在清单时回退内置清单；script 模式从算子默认参数取脚本模板预填）；`demoLoop.ts` 类型扩展。
+- 测试：TestFeatureEngineeringModes 4 用例全过（operator 模式经拧紧特征工程节点派生 TIGHTEN_TORQUE_DEVIATION、script 模式经模板脚本派生、模式载荷校验、**非特征工程类别节点被拒绝**）；test_10/11/12 旧开关语义用例按新语义复核仍绿。注：test_06/07/17/20 的 6 个失败为容器环境预存问题（容器内 mlflow:5000 可达使重训链路真实触发，与 CI 隔离环境不符），已用 stash 基线对照证实与本次改动无关。
 - 部署：backend/frontend/migrate/worker 镜像各自重建（migrate 为独立镜像），`alembic upgrade head` 至 `20261019_72` 已在线验证。
 
 ### 2026-10-19 数据集下载使用原始文件名（支持中文名）

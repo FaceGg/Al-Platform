@@ -310,6 +310,11 @@ class DemoLoopService:
                 if node is None:
                     raise DemoLoopError(
                         "DEMO_LOOP_CONFIG_INVALID", "所选工作流特征工程节点不存在")
+                operator = OperatorRegistry.get(node.operator_id)
+                if operator is None or getattr(operator, "category", "") != "feature_engineering":
+                    raise DemoLoopError(
+                        "DEMO_LOOP_CONFIG_INVALID",
+                        "所选节点必须是「特征工程」类别下的算子（点焊特征工程/拧紧特征工程）")
                 config.feature_operator_node_id = node.id
         if "feature_script" in data:
             script = str(data.get("feature_script") or "").strip()

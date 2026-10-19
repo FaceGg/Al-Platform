@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Divider, Form, Input, InputNumber, Modal, Select, Space, Switch, Upload, Typography } from "antd";
 import { useI18n } from "../../i18n";
 import { createDemoLoop, updateDemoLoop, type DemoLoopConfig } from "../../api/demoLoop";
@@ -39,6 +39,34 @@ const FEATURE_MODE_OPTIONS = [
   { value: "script", label: "Python 脚本自定义（与 python_script 算子同接口）" },
 ];
 
+/** 「特征工程」类别下的算子（与算子面板分类一致，随平台算子扩展自动更新） */
+async function fetchFeatureOperatorIds(): Promise<Set<string>> {
+  try {
+    const res = await apiGet("/operators");
+    const data = res.data;
+    const ops = Array.isArray(data) ? data : data.items || [];
+    const ids = new Set<string>(
+      ops.filter((op: any) => op.category === "feature_engineering").map((op: any) => op.id),
+    );
+    if (ids.size > 0) return ids;
+  } catch {
+    // 拉取失败时退回内置清单
+  }
+  return new Set<string>(FEATURE_OPERATOR_IDS);
+}
+
+async function fetchPythonScriptTemplate(): Promise<string> {
+  try {
+    const res = await apiGet("/operators");
+    const data = res.data;
+    const ops = Array.isArray(data) ? data : data.items || [];
+    const scriptOp = ops.find((op: any) => op.id === "python_script");
+    return scriptOp?.parameters?.find((p: any) => p.name === "script")?.default || "";
+  } catch {
+    return "";
+  }
+}
+
 const RATIO_OPTIONS: Array<{ value: string; label: string }> = [
   ...Array.from({ length: 9 }, (_, i) => ({
     value: `${10 - i}:1`, label: `错误:正确 = ${10 - i}:1（多收正确数据）`,
@@ -55,14 +83,16 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
   const [form] = Form.useForm();
   const [feNodeOptions, setFeNodeOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [feNodesLoading, setFeNodesLoading] = useState(false);
+  const scriptTemplateRef = useRef("");
   const featureMode = Form.useWatch("feature_engineering_mode", form);
 
-  // 拉取项目内工作流中的特征工程算子节点（operator 模式选项）
+  // 打开弹窗时：按「特征工程」类别过滤项目工作流中的算子节点（operator 模式选项）
   useEffect(() => {
     if (!editor) return;
     let cancelled = false;
     setFeNodesLoading(true);
     (async () => {
+      const feIds = await fetchFeatureOperatorIds();
       try {
         const wfRes = await apiGet(`/projects/${projectId}/workflows`);
         const workflows: Array<{ id: string; name: string }> = wfRes.data?.items || wfRes.data || [];
@@ -71,7 +101,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
           try {
             const detail = await apiGet(`/workflows/${wf.id}`);
             for (const node of detail.data?.nodes || []) {
-              if (FEATURE_OPERATOR_IDS.includes(node.operator_id)) {
+              if (feIds.has(node.operator_id)) {
                 options.push({
                   value: String(node.id),
                   label: `${wf.name} · ${node.label || node.operator_id}（${node.operator_id}）`,
@@ -97,15 +127,14 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
     if (featureMode !== "script" || !editor) return;
     const current = (form.getFieldValue("feature_script") as string || "").trim();
     if (current) return;
-    apiGet("/operators").then((res) => {
-      const data = res.data;
-      const ops = Array.isArray(data) ? data : data.items || [];
-      const scriptOp = ops.find((op: any) => op.id === "python_script");
-      const template = scriptOp?.parameters?.find((p: any) => p.name === "script")?.default;
-      if (template && !(form.getFieldValue("feature_script") as string || "").trim()) {
-        form.setFieldsValue({ feature_script: template });
+    (async () => {
+      if (!scriptTemplateRef.current) {
+        scriptTemplateRef.current = await fetchPythonScriptTemplate();
       }
-    }).catch(() => {});
+      if (scriptTemplateRef.current && !(form.getFieldValue("feature_script") as string || "").trim()) {
+        form.setFieldsValue({ feature_script: scriptTemplateRef.current });
+      }
+    })();
   }, [featureMode, editor, form]);
 
   useEffect(() => {
