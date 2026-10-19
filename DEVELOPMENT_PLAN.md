@@ -332,6 +332,12 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 并行说明：运行以独立 Celery 任务执行，worker --concurrency=2，最多 2 个运行并行、其余排队——本就并行，此次是前端状态泄漏让它"看起来"串行。
 - 部署：backend/worker/frontend 镜像重建，nginx 重启。
 
+### 2026-10-19 数据集 CSV 导出加 UTF-8 BOM，修复 Excel 打开中文乱码
+
+- 现象：数据管理下载的 CSV 用 Excel 打开中文乱码。导出内容本身是正确的 UTF-8 文本（_read_dataset 对 GBK 源文件有编码回退），但无 BOM 时 Excel 按本地 ANSI 解码导致乱码。
+- 修复：`_iter_csv_chunks` 首块前置 UTF-8 BOM（\ufeff）并直接产出 bytes；测试断言响应以 BOM 开头、按 utf-8-sig 解码后 601 行完整。24 passed。
+- 部署：backend 镜像重建。
+
 ### 2026-10-19 数据管理预览/下载 OOM 崩溃修复：预览截断 + CSV 导出流式化
 
 - 现象：项目「拧紧」下 3 个数据集点预览/下载报错失败；后端日志显示请求 200 后 uvicorn `Child process died`，dmesg 证实 OOM（celery 进程 anon-rss 2.6GB 被杀，WSL 总内存 8GB）。

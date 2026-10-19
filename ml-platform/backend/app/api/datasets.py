@@ -423,16 +423,24 @@ _MAX_PREVIEW_ROWS = 500
 _EXPORT_CSV_CHUNK_ROWS = 20000
 
 
-def _iter_csv_chunks(frame) -> "Iterator[str]":
-    """Yield a DataFrame as UTF-8 CSV chunks without building one huge buffer."""
+def _iter_csv_chunks(frame) -> "Iterator[bytes]":
+    """Yield a DataFrame as UTF-8 CSV chunks without building one huge buffer.
+
+    The first chunk carries a UTF-8 BOM so Excel detects the encoding and
+    renders Chinese text correctly on double-click."""
     header = True
+    first = True
     for start in range(0, len(frame), _EXPORT_CSV_CHUNK_ROWS):
         buf = io.StringIO()
         frame.iloc[start:start + _EXPORT_CSV_CHUNK_ROWS].to_csv(
             buf, index=False, header=header,
         )
         header = False
-        yield buf.getvalue()
+        text = buf.getvalue()
+        if first:
+            text = "\ufeff" + text
+            first = False
+        yield text.encode("utf-8")
 
 
 def _json_value(value):
@@ -807,7 +815,7 @@ def export_single_dataset(
         # CSV streams in chunks: materializing a whole large dataset export
         # in memory once OOM-killed the worker mid-download.
         return StreamingResponse(
-            (chunk.encode("utf-8") for chunk in _iter_csv_chunks(df)),
+            _iter_csv_chunks(df),
             media_type=media_type,
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )

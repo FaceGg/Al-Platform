@@ -63,7 +63,9 @@ class TestLargeDatasetPreviewAndExport(unittest.TestCase):
     def test_export_csv_streams_all_rows(self):
         r = client.get(f"/api/datasets/{self.dataset_id}/export?format=csv", headers=self.h)
         self.assertEqual(r.status_code, 200)
-        lines = r.content.decode("utf-8").strip().splitlines()
+        # Excel needs the UTF-8 BOM to render Chinese correctly.
+        self.assertTrue(r.content.startswith(b"\xef\xbb\xbf"))
+        lines = r.content.decode("utf-8-sig").strip().splitlines()
         self.assertEqual(lines[0], "idx,value")
         self.assertEqual(len(lines), self.rows + 1)
         self.assertEqual(lines[-1], f"{self.rows - 1},{(self.rows - 1) * 2}")
