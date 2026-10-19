@@ -332,6 +332,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 并行说明：运行以独立 Celery 任务执行，worker --concurrency=2，最多 2 个运行并行、其余排队——本就并行，此次是前端状态泄漏让它"看起来"串行。
 - 部署：backend/worker/frontend 镜像重建，nginx 重启。
 
+### 2026-10-19 数据集下载使用原始文件名（支持中文名）
+
+- 现象：数据管理下载数据集，文件名一律是 dataset.csv 而非原始文件名。
+- 根因：前端 handleDownload 创建 blob 下载链接时把 anchor.download 写死为 "dataset.csv"，忽略了后端 Content-Disposition。
+- 修复：①前端解析 Content-Disposition（优先 RFC 5987 filename*，回退 filename）取原始文件名；②后端导出接口文件名统一 `filename*=utf-8''` 编码（中文文件名不乱码），且文件名已含目标扩展名时不再追加（避免 .csv.csv）。
+- 测试：断言导出响应 Content-Disposition 携带原始文件名，test_api_datasets 24 passed；前端 tsc 无错。
+- 部署：backend/frontend 镜像重建。
+
 ### 2026-10-19 数据集 CSV 导出加 UTF-8 BOM，修复 Excel 打开中文乱码
 
 - 现象：数据管理下载的 CSV 用 Excel 打开中文乱码。导出内容本身是正确的 UTF-8 文本（_read_dataset 对 GBK 源文件有编码回退），但无 BOM 时 Excel 按本地 ANSI 解码导致乱码。
