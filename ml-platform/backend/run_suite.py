@@ -10,6 +10,10 @@ import sys
 import time
 from pathlib import Path
 
+# The suite runs modules via subprocess without pytest conftest; keep the
+# python_script operator on interpreter mode so CI never bootstraps a venv.
+os.environ.setdefault("PYTHON_SCRIPT_VENV_DIR", "")
+
 from tests.week_manifest import (
     ALL_TEST_MODULES,
     DEPRECATED_TEST_MODULES,

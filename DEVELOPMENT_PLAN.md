@@ -306,6 +306,13 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-19 修复 CI 后端套件失败：venv 模式泄漏 + 泛化契约 + manifest 登记
+
+- 现象：CI（run 39195816258）双平台 backend suite 失败——①`test_genericization_contract`：`services/python_script_examples.py: forbidden reference spot_weld`；②`test_suite_manifest`：新测试模块未登记（discovered ≠ assigned）；③所有走真实子进程的 python_script 测试 ERROR/FAIL（本地 pytest 通过）。
+- 根因：CI 用 `python run_suite.py`（unittest 逐模块 subprocess）跑测试，**pytest conftest 不生效** → `PYTHON_SCRIPT_VENV_DIR` 未设置，取 config 默认 `/data/python-script-venv` → CI 上尝试引导 venv + pip 安装导致子进程测试异常。前两项分别是：示例服务桥接 legacy 点焊模块但不在 gate 白名单；新增 `test_python_script_runtime` 未登记 week manifest。
+- 修复：①`config.py` `python_script_venv_dir` 默认改为 `""`（解释器模式为全局默认；非容器环境天然安全），生产由 compose `production-environment` anchor 显式注入 `PYTHON_SCRIPT_VENV_DIR: /data/python-script-venv`（backend/worker 共用，容器内持久化 venv 行为不变）；②`run_suite.py` 头部 `os.environ.setdefault("PYTHON_SCRIPT_VENV_DIR", "")` 兜底；③`genericization_gate.py` `LEGACY_ADAPTER_FILES` 白名单加入 `services/python_script_examples.py`，examples 文件补 `LEGACY_ADAPTER_ONLY = True` 桥接标记；④`week_manifest.py` Week 3 登记 `test_python_script_runtime`。
+- 验证：`run_suite.py --week 1` 20/20 passed（manifest + genericization 修复生效）；`--week 3` 17/17 passed（python_script 子进程测试在 run_suite 路径恢复）。镜像无强制重建需求（config 默认值变化随下次构建生效；compose env 已显式注入）。
+
 ### 2026-10-19 python_script 算子内置示例脚本（点焊/拧紧特征工程），编辑器可点击插入
 
 - 需求：把点焊/拧紧特征工程的 python_script 复现脚本做成示例，放进算子供用户点击查看。

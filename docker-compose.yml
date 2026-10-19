@@ -55,6 +55,7 @@ services:
     command: ["alembic", "upgrade", "head"]
     environment: &production-environment
       APP_MODE: production
+      PYTHON_SCRIPT_VENV_DIR: /data/python-script-venv
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
       TASK_BACKEND: celery

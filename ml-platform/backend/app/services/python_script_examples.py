@@ -5,6 +5,10 @@ spot-weld example embeds the *current* source of
 ``app/services/spot_weld_features.py`` (read via inspect, so it always stays
 in sync with the native operator); the tighten example mirrors the tighten
 feature operator logic as a curated constant.
+
+This file is an explicit legacy-adapter bridge: it reads the point-weld
+feature module source to build examples and is whitelisted in
+``app/services/genericization_gate.py``.
 """
 
 from __future__ import annotations
@@ -12,6 +16,8 @@ from __future__ import annotations
 import inspect
 
 from app.services import spot_weld_features
+
+LEGACY_ADAPTER_ONLY = True
 
 _SPOT_WELD_GLUE = '''
 # ---- 平台脚本接口：调用嵌入的特征工程模块 ----

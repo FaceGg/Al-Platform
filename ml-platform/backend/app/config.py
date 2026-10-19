@@ -194,8 +194,9 @@ class Settings(BaseSettings):
     # against a persistent venv (docker named volume). Missing imports declared
     # in the script are auto-installed via pip from server-configured sources
     # only; users never specify packages or index URLs. Empty venv_dir disables
-    # the venv and runs against the backend interpreter (tests / local runs).
-    python_script_venv_dir: str = "/data/python-script-venv"
+    # the venv and runs against the current interpreter (tests / local runs /
+    # CI default); production compose injects PYTHON_SCRIPT_VENV_DIR explicitly.
+    python_script_venv_dir: str = ""
     python_script_pip_sources: str = (
         "https://pypi.org/simple,"
         "https://mirrors.aliyun.com/pypi/simple/,"

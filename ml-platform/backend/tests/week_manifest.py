@@ -49,6 +49,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_operators_utility",
         "test_operators_visualization_execution",
         "test_all_operators",
+        "test_python_script_runtime",
         "test_workflow_operator_regressions",
     ],
     4: [

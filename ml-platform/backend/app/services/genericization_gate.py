@@ -16,6 +16,7 @@ LEGACY_ADAPTER_FILES = {
     "models/spot_weld_quality.py",
     "services/spot_weld_quality.py",
     "services/spot_weld_features.py",
+    "services/python_script_examples.py",
     "tasks/spot_weld_quality_tasks.py",
     "api/spot_weld_quality.py",
     "services/annotation_tasks.py",
