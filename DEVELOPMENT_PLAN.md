@@ -306,6 +306,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-19 python_script 算子内置示例脚本（点焊/拧紧特征工程），编辑器可点击插入
+
+- 需求：把点焊/拧紧特征工程的 python_script 复现脚本做成示例，放进算子供用户点击查看。
+- 后端：新增 `app/services/python_script_examples.py` 与 `GET /api/operators/python_script/examples`——点焊示例由 `inspect.getsource(spot_weld_features)` **动态读取原生模块源码**拼装（原生模块升级后示例自动同步），拧紧示例为与原生算子等价的策划常量；两者均按固定接口模板（HEADER/FOOTER）包裹。示例清单：点焊特征工程（波形解码 73 特征，含 Fault 标签处理）、拧紧特征工程（扭矩派生 5 特征，列名可配）。
+- 前端：`NodeConfigPanel.tsx` 选中 python_script 后拉取一次示例清单，「编辑」按钮上方出现「插入示例脚本（点击查看）」下拉——选择后脚本载入编辑弹窗供查看/修改/保存（取消不改动）；接口模板校验对示例天然通过。
+- 等价性基线：交付脚本此前已通过 4 场景逐值比对（点焊含/无标签列、拧紧混合/缺限列降级），本次新增回归测试 `TestPythonScriptExamples` 3 用例（示例模板合规、点焊示例与原生算子 assert_frame_equal 逐值一致、拧紧示例执行正确）。utility+runtime 48 passed；前端 tsc 无错、面板测试 7 passed。
+- 部署：backend（示例接口）与 frontend（示例下拉）镜像均需重建。
+
 ### 2026-10-19 自动特征工程算子：参数中文化 + 特征列下拉多选（只处理选中列）
 
 - 需求：①算子参数为英文，注意中英文显示；②添加下拉菜单筛选特征列，只处理选中的列。

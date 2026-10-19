@@ -379,6 +379,7 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
   const [downloadingExport, setDownloadingExport] = useState(false);
   const [scriptModalOpen, setScriptModalOpen] = useState(false);
   const [scriptDraft, setScriptDraft] = useState("");
+  const [scriptExamples, setScriptExamples] = useState<Array<{ id: string; name: string; description?: string; script: string }>>([]);
 
   const nodeId = selectedNode?.id || "";
   const operator = operators.find((op: any) => op.id === selectedNode?.data?.operatorId);
@@ -462,6 +463,19 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
       .finally(() => { if (active) setLoadingDeployments(false); });
     return () => { active = false; };
   }, [projectId, operator?.id, operator?.parameters]);
+
+  // python_script 示例脚本：选中算子后拉取一次
+  useEffect(() => {
+    if (operator?.id !== "python_script" || scriptExamples.length) return;
+    let active = true;
+    apiClient
+      .get("/operators/python_script/examples")
+      .then((res) => {
+        if (active && Array.isArray(res.data)) setScriptExamples(res.data);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [operator?.id, scriptExamples.length]);
 
   if (!selectedNode) {
     return (
@@ -594,6 +608,25 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
     if (operator?.id === "python_script" && p.name === "script") {
       return (
         <div>
+          {scriptExamples.length > 0 && (
+            <Select
+              style={{ width: "100%", marginBottom: 4 }}
+              placeholder={lang === "zh" ? "插入示例脚本（点击查看）" : "Insert example script (click to view)"}
+              value={undefined}
+              onChange={(exampleId) => {
+                const example = scriptExamples.find((item) => item.id === exampleId);
+                if (example) {
+                  setScriptDraft(example.script);
+                  setScriptModalOpen(true);
+                }
+              }}
+              options={scriptExamples.map((item) => ({
+                label: item.name,
+                value: item.id,
+                title: item.description,
+              }))}
+            />
+          )}
           <Button
             icon={<EditOutlined />}
             onClick={() => {

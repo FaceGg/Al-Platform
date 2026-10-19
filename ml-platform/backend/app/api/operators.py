@@ -41,6 +41,14 @@ def list_operators():
     return result
 
 
+@router.get("/operators/python_script/examples")
+def list_python_script_examples():
+    """Curated example scripts shown in the workflow editor."""
+    from app.services.python_script_examples import list_examples
+
+    return list_examples()
+
+
 @router.post("/upload")
 def upload_file(
     file: UploadFile = File(...),

@@ -162,6 +162,65 @@ class TestPythonScriptOperator(unittest.TestCase):
             execute_operator(op, {"data": [{"a": 1}]}, {"script": "x" * 100_001})
 
 
+class TestPythonScriptExamples(unittest.TestCase):
+    """算子内置示例脚本：接口模板合规 + 与原生算子逐值等价。"""
+
+    def test_examples_are_valid_interface_templates(self):
+        from app.operators.utility_operators import (
+            PYTHON_SCRIPT_FOOTER,
+            PYTHON_SCRIPT_HEADER,
+        )
+        from app.services.python_script_examples import list_examples
+
+        examples = list_examples()
+        self.assertEqual(
+            [item["id"] for item in examples],
+            ["spot_weld_feature_engineering", "tighten_feature_engineering"],
+        )
+        for item in examples:
+            script = item["script"]
+            self.assertTrue(script.startswith(PYTHON_SCRIPT_HEADER), item["id"])
+            self.assertTrue(script.rstrip().endswith(PYTHON_SCRIPT_FOOTER.rstrip()), item["id"])
+            self.assertLessEqual(len(script), 100_000, item["id"])
+
+    def test_spot_weld_example_matches_native_operator(self):
+        from app.services.python_script_examples import list_examples
+        from app.services.spot_weld_quality import build_demo_report_frame
+
+        example = next(
+            item for item in list_examples() if item["id"] == "spot_weld_feature_engineering")
+        frame = build_demo_report_frame(12)
+        frame["Fault"] = [0] * 6 + [1] * 6
+
+        native = execute_operator(
+            OperatorRegistry.get("spot_weld_feature_engineering"), {"data": frame}, {})
+        script_out = execute_operator(
+            OperatorRegistry.get("python_script"),
+            {"data": frame},
+            {"script": example["script"], "auto_install": False})
+
+        pd.testing.assert_frame_equal(
+            pd.DataFrame(native["features"]), pd.DataFrame(script_out["data"]),
+            check_dtype=False)
+
+    def test_tighten_example_executes(self):
+        from app.services.python_script_examples import list_examples
+
+        example = next(
+            item for item in list_examples() if item["id"] == "tighten_feature_engineering")
+        rows = [{
+            "ACTUAL_TORQUE": 632.0, "TARGET_TORQUE": 630.0,
+            "UPPER_LIMIT": 635.0, "LOWER_LIMIT": 625.0,
+        }]
+        outputs = execute_operator(
+            OperatorRegistry.get("python_script"),
+            {"data": rows},
+            {"script": example["script"], "auto_install": False})
+
+        self.assertIn("TIGHTEN_TORQUE_DEVIATION", outputs["data"][0])
+        self.assertAlmostEqual(outputs["data"][0]["TIGHTEN_TORQUE_DEVIATION"], 2.0)
+
+
 class TestCollectOperator(unittest.TestCase):
     """Tests for the collect operator."""
 
