@@ -21,6 +21,10 @@ from app.engine.operator_contract import (
 _EXECUTION_POLICY_PARAMS = {"timeout_seconds", "max_retries", "retry_delay_seconds"}
 _PREVIEW_MAX_STRING_LENGTH = 500
 _PREVIEW_STRING_PREFIX_LENGTH = 200
+# Node completion payloads are persisted to node_runs.result and broadcast
+# over WebSocket; unbounded record lists (hundreds of thousands of rows)
+# made both the JSON-safe walk and the payloads themselves take minutes.
+_PREVIEW_MAX_LIST_ITEMS = 20
 
 
 def _preview_value(port_name: str, raw_data: Any) -> Any:
@@ -33,7 +37,11 @@ def _preview_value(port_name: str, raw_data: Any) -> Any:
                 return raw_data
             return raw_data[:_PREVIEW_STRING_PREFIX_LENGTH] + f"...({len(raw_data)} chars)"
         return raw_data
-    if isinstance(raw_data, (list, dict)):
+    if isinstance(raw_data, (list, tuple)):
+        if len(raw_data) > _PREVIEW_MAX_LIST_ITEMS:
+            return _json_safe(list(raw_data[:_PREVIEW_MAX_LIST_ITEMS]))
+        return _json_safe(raw_data)
+    if isinstance(raw_data, dict):
         return _json_safe(raw_data)
     return str(raw_data)[:_PREVIEW_MAX_STRING_LENGTH]
 
@@ -286,12 +294,19 @@ class DAGExecutor:
 
             completion = preview
             if op_id not in ("loop",):
+                row_counts = {
+                    port_name: len(raw_data)
+                    for port_name, raw_data in outputs.items()
+                    if isinstance(raw_data, (list, tuple))
+                }
                 completion = {
                     **preview,
                     "artifacts": artifact_refs,
                     "metrics": _json_safe(operator_result.metrics),
                     "logs": _json_safe(operator_result.logs),
                 }
+                if row_counts:
+                    completion["row_counts"] = row_counts
             self._emit_status(
                 status_callback, run_id, node_id, "completed", completion,
                 {"attempt": completed_attempt},

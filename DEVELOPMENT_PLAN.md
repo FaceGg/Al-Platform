@@ -332,6 +332,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 并行说明：运行以独立 Celery 任务执行，worker --concurrency=2，最多 2 个运行并行、其余排队——本就并行，此次是前端状态泄漏让它"看起来"串行。
 - 部署：backend/worker/frontend 镜像重建，nginx 重启。
 
+### 2026-10-19 工作流节点完成载荷截断，修复大 CSV 运行十几分钟的根因
+
+- 现象：csv_import→特征工程→写CSV 工作流对 28 万行 CSV 运行 8-22 分钟；CSV 读取本身只需几秒。
+- 根因：`dag_executor` 节点完成时对**全量**输出做 `_json_safe` 递归（28 万行×20 列=560 万次递归调用），整个数据集随完成载荷 ①持久化进 node_runs.result（PostgreSQL JSON，数十 MB）②经 WebSocket 全量广播给浏览器，每个节点一遍。
+- 修复：`_preview_value` 对 list/tuple 输出截断至前 20 行再 `_json_safe`（小列表保持原样；dict/字符串/图表行为不变，前端"数组=records"渲染兼容）；完成载荷新增 `row_counts` 记录各端口真实行数。节点间全量数据仍走 DataBus 文件（JSONL）不受影响。
+- 测试：test_run_reliability 新增 `test_completion_preview_truncates_large_record_lists`——500 行输出断言预览 20 行、row_counts=500、DataBus 全量 500 行；5 个测试模块按 CI 方式独立子进程全过（163 tests）。
+- 部署：backend/worker 镜像重建。
+
 ### 2026-10-19 工作流节点默认超时 300→1800 秒，收尾一次卡死的取消中运行
 
 - 现象：拧紧「特征工程」工作流重跑后，csv_import（28 万行）在恢复执行路径上撞 `Node timed out after 300 seconds` 失败；另一次运行（10:15）csv_import 实际跑了 21.7 分钟——远超 300 秒节点默认超时上限。

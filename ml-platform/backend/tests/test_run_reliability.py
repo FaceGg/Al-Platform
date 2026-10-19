@@ -1,10 +1,14 @@
 import unittest
 import time
 from unittest.mock import patch
+
+import pandas as pd
+
 from sqlalchemy import create_engine, inspect, text
 
 from app.engine.base_operator import BaseOperator, ParamSpec, PortSpec
 from app.engine.dag_executor import DAGExecutor
+from app.engine.data_bus import DataBus
 from app.engine.registry import OperatorRegistry
 from app.engine.run_control import RunCancelled, RunControl
 from app.engine.operator_contract import OperatorResult
@@ -176,6 +180,55 @@ class TestReliableExecutor(unittest.TestCase):
         self.assertEqual(preview["chart"], "data:image/png;base64," + ("A" * 1000))
         self.assertEqual(preview["image_payload"], "data:image/jpeg;base64," + ("C" * 1000))
         self.assertEqual(preview["long_text"], "B" * 200 + "...(1000 chars)")
+
+    def test_completion_preview_truncates_large_record_lists(self):
+        from app.engine.operator_contract import OperatorResult
+
+        class _LargeRecordsOperator(BaseOperator):
+            id = "test_large_records_operator"
+            name = "Large Records"
+            category = "utility"
+            description = "Returns a large records list"
+            inputs = []
+            outputs = [PortSpec("data", "DataTable", "Data")]
+            parameters = []
+
+            def validate(self, inputs):
+                return True
+
+            def execute(self, context, inputs, params):
+                return OperatorResult(outputs={
+                    "data": [{"idx": index, "value": index * 2} for index in range(500)],
+                })
+
+        operator = _LargeRecordsOperator()
+        OperatorRegistry.register(operator)
+        events = []
+        executor = DAGExecutor([{
+            "id": "node", "operator_id": operator.id, "params": {},
+        }], [])
+
+        results = executor.execute(
+            "preview-records-run", lambda *args: events.append(args), RunControl(),
+        )
+
+        completed = [event for event in events if event[2] == "completed"][-1]
+        preview = completed[3]
+        self.assertEqual(len(preview["data"]), 20)
+        self.assertEqual(preview["data"][0], {"idx": 0, "value": 0})
+        self.assertEqual(preview["data"][-1], {"idx": 19, "value": 38})
+        self.assertEqual(preview["row_counts"], {"data": 500})
+        # Full data must still flow through the DataBus untouched.
+        stored = DataBus.load_data(results["node"]["data"])
+        if isinstance(stored, pd.DataFrame):
+            self.assertEqual(len(stored), 500)
+            self.assertEqual(
+                {key: stored.iloc[-1][key] for key in ("idx", "value")},
+                {"idx": 499, "value": 998},
+            )
+        else:
+            self.assertEqual(len(stored), 500)
+            self.assertEqual(stored[-1], {"idx": 499, "value": 998})
 
     def test_failed_node_retries_and_records_attempts(self):
         events = []
