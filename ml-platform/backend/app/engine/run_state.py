@@ -31,14 +31,16 @@ def transition_run_status(current: str, target: str) -> str:
 
 @dataclass(frozen=True)
 class ExecutionPolicy:
-    timeout_seconds: float = 300
+    # 30 min default: data-heavy nodes (csv_import over hundreds of thousands
+    # of rows) legitimately run longer than the previous 300s cap.
+    timeout_seconds: float = 1800
     max_retries: int = 0
     retry_delay_seconds: float = 0
 
     @classmethod
     def from_params(cls, params: dict[str, Any]) -> "ExecutionPolicy":
         policy = cls(
-            timeout_seconds=float(params.get("timeout_seconds", 300)),
+            timeout_seconds=float(params.get("timeout_seconds", 1800)),
             max_retries=int(params.get("max_retries", 0)),
             retry_delay_seconds=float(params.get("retry_delay_seconds", 0)),
         )

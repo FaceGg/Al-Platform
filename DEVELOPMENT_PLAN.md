@@ -322,6 +322,15 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 修复：①`config.py` `python_script_venv_dir` 默认改为 `""`（解释器模式为全局默认；非容器环境天然安全），生产由 compose `production-environment` anchor 显式注入 `PYTHON_SCRIPT_VENV_DIR: /data/python-script-venv`（backend/worker 共用，容器内持久化 venv 行为不变）；②`run_suite.py` 头部 `os.environ.setdefault("PYTHON_SCRIPT_VENV_DIR", "")` 兜底；③`genericization_gate.py` `LEGACY_ADAPTER_FILES` 白名单加入 `services/python_script_examples.py`，examples 文件补 `LEGACY_ADAPTER_ONLY = True` 桥接标记；④`week_manifest.py` Week 3 登记 `test_python_script_runtime`。
 - 验证：`run_suite.py --week 1` 20/20 passed（manifest + genericization 修复生效）；`--week 3` 17/17 passed（python_script 子进程测试在 run_suite 路径恢复）。镜像无强制重建需求（config 默认值变化随下次构建生效；compose env 已显式注入）。
 
+### 2026-10-19 工作流节点默认超时 300→1800 秒，收尾一次卡死的取消中运行
+
+- 现象：拧紧「特征工程」工作流重跑后，csv_import（28 万行）在恢复执行路径上撞 `Node timed out after 300 seconds` 失败；另一次运行（10:15）csv_import 实际跑了 21.7 分钟——远超 300 秒节点默认超时上限。
+- 根因：`run_state.py` `ExecutionPolicy` 节点超时默认 300 秒，对大 CSV 导入这类长节点不合理；且 300 秒超时触发与实际执行时长在并发/恢复场景下表现不一致。
+- 修复：默认超时 300→1800 秒（dataclass 默认值与 `from_params` 回退值同步），节点仍可通过 params.timeout_seconds 覆盖；`test_run_reliability.py` 默认值断言同步更新。
+- 运维处置：用户已点终止但任务被 celery terminate 后状态未落库，运行卡在 cancel_requested、节点卡在 running——按用户意图 SQL 落库为 cancelled/finished（run 1057cc3f）。
+- 性能备注：csv_import 从制品加载 46MB/28 万行需 8-22 分钟（`to_dict(orient="records")` 产生 560 万对象 + 节点结果 JSON 持久化），后续可做 DataTable 传 DataFrame 的引擎级优化。
+- 部署：backend 与 worker 镜像需重建。
+
 ### 2026-10-19 拧紧特征工程列名匹配兼容「基础名(中文注释)」表头
 
 - 现象：拧紧项目「特征工程」工作流两次运行均失败于拧紧特征工程节点，报错 `requires both actual torque column (ACTUAL_TORQUE) and target torque column (TARGET_TORQUE)`；首次运行 8.4 分钟系 csv_import 解析 28 万行大 CSV（正常），失败才是真正问题。

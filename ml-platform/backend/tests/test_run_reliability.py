@@ -29,7 +29,7 @@ class TestRunState(unittest.TestCase):
 
     def test_execution_policy_uses_platform_defaults(self):
         policy = ExecutionPolicy.from_params({})
-        self.assertEqual(policy.timeout_seconds, 300)
+        self.assertEqual(policy.timeout_seconds, 1800)
         self.assertEqual(policy.max_retries, 0)
         self.assertEqual(policy.retry_delay_seconds, 0)
 
