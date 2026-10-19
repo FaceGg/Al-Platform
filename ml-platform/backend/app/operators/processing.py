@@ -195,7 +195,7 @@ class TrainTestSplit(BaseOperator):
 class SpotWeldFeatureEngineering(BaseOperator):
     id = "spot_weld_feature_engineering"
     name = "Spot Weld Feature Engineering"
-    category = "processing"
+    category = "feature_engineering"
     description = "Decode four report waveforms and produce the fixed 73-feature schema"
     inputs = [PortSpec(
         "data", "DataTable", "Report Data",
@@ -266,6 +266,114 @@ class SpotWeldFeatureEngineering(BaseOperator):
             },
             "statistics": statistics,
         })
+
+
+@register_operator
+class TightenFeatureEngineering(BaseOperator):
+    id = "tighten_feature_engineering"
+    name = "Tighten Feature Engineering"
+    category = "feature_engineering"
+    description = (
+        "Derive tightening quality features: torque deviation, tolerance band "
+        "position, limit margins and dual-axis torque difference"
+    )
+    inputs = [PortSpec("data", "DataTable", "Tighten Record Data")]
+    outputs = [
+        PortSpec("features", "DataTable", "Data With Derived Features"),
+        PortSpec("schema", "JSON", "Feature Schema"),
+        PortSpec("statistics", "JSON", "Feature Statistics"),
+    ]
+    parameters = [
+        ParamSpec("torque_column", "str", "ACTUAL_TORQUE", "Actual torque column"),
+        ParamSpec("target_torque_column", "str", "TARGET_TORQUE", "Target torque column"),
+        ParamSpec("upper_limit_column", "str", "UPPER_LIMIT", "Upper limit column"),
+        ParamSpec("lower_limit_column", "str", "LOWER_LIMIT", "Lower limit column"),
+        ParamSpec(
+            "torque_two_column", "str", "ACTUAL_TORQUE_TWO",
+            "Second axis torque column (empty to skip)",
+        ),
+        ParamSpec("output_prefix", "str", "TIGHTEN_", "Derived feature name prefix"),
+    ]
+
+    def validate(self, inputs):
+        return True
+
+    def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
+        data = inputs.get("data", [])
+        df = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
+        if df.empty:
+            raise ValueError("Tighten feature engineering requires non-empty input data")
+
+        lookup = {str(column).casefold(): str(column) for column in df.columns}
+
+        def resolve_column(name) -> str | None:
+            key = str(name or "").strip()
+            return lookup.get(key.casefold()) if key else None
+
+        torque_col = resolve_column(params.get("torque_column") or "ACTUAL_TORQUE")
+        target_col = resolve_column(params.get("target_torque_column") or "TARGET_TORQUE")
+        if torque_col is None or target_col is None:
+            raise ValueError(
+                "Tighten feature engineering requires both actual torque column "
+                f"({params.get('torque_column') or 'ACTUAL_TORQUE'}) and target "
+                f"torque column ({params.get('target_torque_column') or 'TARGET_TORQUE'})"
+            )
+        upper_col = resolve_column(params.get("upper_limit_column") or "UPPER_LIMIT")
+        lower_col = resolve_column(params.get("lower_limit_column") or "LOWER_LIMIT")
+        torque_two_col = resolve_column(params.get("torque_two_column") or "ACTUAL_TORQUE_TWO")
+        prefix = str(params.get("output_prefix") or "").strip() or "TIGHTEN_"
+
+        torque = pd.to_numeric(df[torque_col], errors="coerce")
+        target = pd.to_numeric(df[target_col], errors="coerce")
+        features = df.copy()
+        schema: list[str] = []
+        statistics: dict = {"rows": int(len(df))}
+        skipped: dict[str, str] = {}
+
+        deviation_name = f"{prefix}TORQUE_DEVIATION"
+        features[deviation_name] = torque - target
+        schema.append(deviation_name)
+
+        if upper_col is not None and lower_col is not None:
+            upper = pd.to_numeric(df[upper_col], errors="coerce")
+            lower = pd.to_numeric(df[lower_col], errors="coerce")
+            band = upper - lower
+            ratio_name = f"{prefix}DEVIATION_RATIO"
+            features[ratio_name] = (torque - target) / band.replace(0, np.nan)
+            upper_margin_name = f"{prefix}UPPER_MARGIN"
+            lower_margin_name = f"{prefix}LOWER_MARGIN"
+            features[upper_margin_name] = upper - torque
+            features[lower_margin_name] = torque - lower
+            schema.extend([ratio_name, upper_margin_name, lower_margin_name])
+            statistics["band_width_zero_rows"] = int((band == 0).sum())
+        else:
+            skipped["band_features"] = "UPPER_LIMIT / LOWER_LIMIT column missing"
+
+        if torque_two_col is not None:
+            torque_two = pd.to_numeric(df[torque_two_col], errors="coerce")
+            if torque_two.notna().any():
+                diff_name = f"{prefix}DUAL_AXIS_DIFF"
+                features[diff_name] = torque - torque_two
+                schema.append(diff_name)
+            else:
+                skipped["dual_axis_diff"] = f"Column {torque_two_col} has no numeric values"
+        else:
+            skipped["dual_axis_diff"] = "Second axis torque column not configured"
+
+        for name in schema:
+            statistics[f"{name}_non_null"] = int(features[name].notna().sum())
+        statistics["derived_features"] = schema
+        statistics["skipped"] = skipped
+
+        return OperatorResult(outputs={
+            "features": features.to_dict(orient="records"),
+            "schema": {"derived_columns": schema, "output_prefix": prefix},
+            "statistics": statistics,
+        })
+
+    def get_preview(self, outputs):
+        features = outputs.get("features", [])
+        return {"features": features[:10], "total_rows": len(features)}
 
 
 

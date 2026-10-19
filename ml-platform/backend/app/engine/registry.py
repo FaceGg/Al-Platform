@@ -37,7 +37,7 @@ def register_operator(op_cls: type[BaseOperator]) -> BaseOperator:
 
 def _with_raw_outputs(op: BaseOperator) -> BaseOperator:
     """Add raw input ports and snapshot them around processing/blending execution."""
-    if op.category not in {"processing", "blending"}:
+    if op.category not in {"processing", "blending", "feature_engineering"}:
         return op
     if getattr(op, "_raw_outputs_wrapped", False):
         return op
@@ -47,7 +47,7 @@ def _with_raw_outputs(op: BaseOperator) -> BaseOperator:
     op.inputs = list(op.inputs)
     op.outputs = list(op.outputs)
     declared_names = {port.name for port in op.outputs}
-    if op.category == "processing":
+    if op.category in {"processing", "feature_engineering"}:
         raw_names = ["raw_data"]
     else:
         raw_names = [f"raw_{port.name}" for port in op.inputs]
@@ -68,7 +68,7 @@ def _with_raw_outputs(op: BaseOperator) -> BaseOperator:
         result = original_execute(context, copy.deepcopy(snapshot), params)
         if not isinstance(result, OperatorResult):
             return result
-        if op.category == "processing":
+        if op.category in {"processing", "feature_engineering"}:
             raw_outputs = {"raw_data": copy.deepcopy(snapshot.get("data", []))}
         else:
             raw_outputs = {

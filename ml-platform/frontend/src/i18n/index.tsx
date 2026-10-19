@@ -498,6 +498,7 @@ const ZH = {
     load_model_artifact: "\u52a0\u8f7d\u6a21\u578b\u5236\u54c1",
     anomaly_eval: "\u5f02\u5e38\u8bc4\u4f30",
     spot_weld_feature_engineering: "\u70b9\u710a\u7279\u5f81\u5de5\u7a0b",
+    tighten_feature_engineering: "\u62e7\u7d27\u7279\u5f81\u5de5\u7a0b",
   },
   kubernetes: {
     title: "Kubernetes 集群",
@@ -958,6 +959,7 @@ const EN: Record<string, any> = {
     notify_admins: "Notify Admins", retrain_threshold: "Retrain Threshold",
     load_model_artifact: "Load Model Artifact", anomaly_eval: "Anomaly Evaluation",
     spot_weld_feature_engineering: "Spot Weld Feature Engineering",
+    tighten_feature_engineering: "Tighten Feature Engineering",
   },
   apiErrors: {
     MODEL_DEPLOYMENT_EXISTS: "The model is still referenced by inference deployment \"{message}\"; delete that deployment first.",

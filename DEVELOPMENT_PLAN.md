@@ -306,6 +306,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-19 工作流新增「拧紧特征工程」算子 + 新建「特征工程」算子类别
+
+- 需求：工作流画布新增拧紧特征工程算子；将点焊特征工程与新算子归入新建的「特征工程」（`feature_engineering`）类别。
+- 实现：`app/operators/processing.py` 新增 `TightenFeatureEngineering`（id `tighten_feature_engineering`），按拧紧数据表默认列名派生 5 特征：`TIGHTEN_TORQUE_DEVIATION`（扭矩偏差）、`TIGHTEN_DEVIATION_RATIO`（偏差/公差带宽，带宽 0 置 NaN）、`TIGHTEN_UPPER_MARGIN`/`TIGHTEN_LOWER_MARGIN`（上下限余量）、`TIGHTEN_DUAL_AXIS_DIFF`（双轴扭矩差）；列名可配（大小写不敏感），缺上限/下限列或二轴列全空时跳过对应特征并在 `statistics.skipped` 说明，派生列覆盖数计入统计。`SpotWeldFeatureEngineering.category` 由 `processing` 改为 `feature_engineering`。
+- 兼容：`app/engine/registry.py` 的 raw 输出包装集合加入 `feature_engineering`（与 processing 同样挂 `raw_data` 端口），存量画布上点焊算子的 `raw_data` 连线不受类别迁移影响；前端 `OperatorPanel.tsx` 新增类别标签（中「特征工程」/英 Feature Engineering）、排序（processing 之后）与图标（FunctionOutlined），`i18n/index.tsx` 补中英文算子名。
+- 验证：`test_all_operators.py` 新增 5 用例（核心派生值、缺限列跳过、零带宽 NaN、缺扭矩列报错、feature_engineering 类别双算子 + raw_data 端口保留）93 passed；前端 `tsc --noEmit` 无错误，workspace 相关 4 测试文件 31 passed 无回归。
+- 生效条件：backend 与 frontend 镜像均需重建（前端算子面板/文案在镜像内）。
+
 ### 2026-10-17 闭环演示大屏节点重排：双排蛇形布局消除连线遮挡（v5）
 
 - 现象：`demo-showcase.html` 节点与连线相互遮挡——顶部绿/金两条回流弧线交错且标签互压，底部数据积累/未达标弧线交叉、标签重叠并从告警通知节点后穿过。

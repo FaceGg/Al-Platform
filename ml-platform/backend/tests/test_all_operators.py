@@ -61,6 +61,11 @@ EVAL_DATA = [
 ]
 
 
+def pd_is_nan(value):
+    import math
+    return value is None or (isinstance(value, float) and math.isnan(value))
+
+
 def _trained_model_bytes():
     """Train a simple sklearn model and return joblib bytes."""
     import joblib
@@ -389,6 +394,88 @@ class TestProcessingOperatorsExecution(unittest.TestCase):
         self.assertEqual(error.code, "QUALITY_WAVEFORM_INVALID_BASE64")
         self.assertEqual(error.row_index, 0)
         self.assertEqual(error.field_name, "cvei")
+
+    def test_tighten_feature_engineering_derives_core_features(self):
+        data = [
+            {"ACTUAL_TORQUE": 632.0, "TARGET_TORQUE": 630.0,
+             "UPPER_LIMIT": 635.0, "LOWER_LIMIT": 625.0,
+             "ACTUAL_TORQUE_TWO": 634.0},
+            {"ACTUAL_TORQUE": 478.0, "TARGET_TORQUE": 475.0,
+             "UPPER_LIMIT": 480.0, "LOWER_LIMIT": 470.0,
+             "ACTUAL_TORQUE_TWO": None},
+        ]
+
+        outputs = execute_operator(
+            OperatorRegistry.get("tighten_feature_engineering"),
+            {"data": data}, {})
+
+        derived = outputs["schema"]["derived_columns"]
+        self.assertEqual(
+            derived,
+            ["TIGHTEN_TORQUE_DEVIATION", "TIGHTEN_DEVIATION_RATIO",
+             "TIGHTEN_UPPER_MARGIN", "TIGHTEN_LOWER_MARGIN", "TIGHTEN_DUAL_AXIS_DIFF"],
+        )
+        first = outputs["features"][0]
+        self.assertAlmostEqual(first["TIGHTEN_TORQUE_DEVIATION"], 2.0)
+        self.assertAlmostEqual(first["TIGHTEN_DEVIATION_RATIO"], 0.2)
+        self.assertAlmostEqual(first["TIGHTEN_UPPER_MARGIN"], 3.0)
+        self.assertAlmostEqual(first["TIGHTEN_LOWER_MARGIN"], 7.0)
+        self.assertAlmostEqual(first["TIGHTEN_DUAL_AXIS_DIFF"], -2.0)
+        second = outputs["features"][1]
+        self.assertAlmostEqual(second["TIGHTEN_DEVIATION_RATIO"], 0.3)
+        self.assertTrue(pd_is_nan(second["TIGHTEN_DUAL_AXIS_DIFF"]))
+        statistics = outputs["statistics"]
+        self.assertEqual(statistics["rows"], 2)
+        self.assertEqual(statistics["TIGHTEN_TORQUE_DEVIATION_non_null"], 2)
+        self.assertEqual(statistics["TIGHTEN_DUAL_AXIS_DIFF_non_null"], 1)
+        self.assertEqual(statistics["skipped"], {})
+
+    def test_tighten_feature_engineering_skips_band_when_limits_missing(self):
+        data = [
+            {"ACTUAL_TORQUE": 632.0, "TARGET_TORQUE": 630.0},
+            {"ACTUAL_TORQUE": 478.0, "TARGET_TORQUE": 475.0},
+        ]
+
+        outputs = execute_operator(
+            OperatorRegistry.get("tighten_feature_engineering"),
+            {"data": data}, {"torque_two_column": ""})
+
+        derived = outputs["schema"]["derived_columns"]
+        self.assertEqual(derived, ["TIGHTEN_TORQUE_DEVIATION"])
+        self.assertIn("band_features", outputs["statistics"]["skipped"])
+        self.assertIn("dual_axis_diff", outputs["statistics"]["skipped"])
+        self.assertNotIn("TIGHTEN_DEVIATION_RATIO", outputs["features"][0])
+
+    def test_tighten_feature_engineering_handles_zero_band_width(self):
+        data = [
+            {"ACTUAL_TORQUE": 630.0, "TARGET_TORQUE": 630.0,
+             "UPPER_LIMIT": 630.0, "LOWER_LIMIT": 630.0},
+        ]
+
+        outputs = execute_operator(
+            OperatorRegistry.get("tighten_feature_engineering"),
+            {"data": data}, {})
+
+        self.assertTrue(pd_is_nan(outputs["features"][0]["TIGHTEN_DEVIATION_RATIO"]))
+        self.assertEqual(outputs["statistics"]["band_width_zero_rows"], 1)
+
+    def test_tighten_feature_engineering_requires_torque_columns(self):
+        with self.assertRaises(ValueError) as raised:
+            execute_operator(
+                OperatorRegistry.get("tighten_feature_engineering"),
+                {"data": [{"foo": 1.0}]}, {})
+
+        self.assertIn("ACTUAL_TORQUE", str(raised.exception))
+
+    def test_feature_engineering_category_has_both_domain_operators(self):
+        operators = OperatorRegistry.list_by_category("feature_engineering")
+        ids = {op.id for op in operators}
+        self.assertEqual(
+            ids, {"spot_weld_feature_engineering", "tighten_feature_engineering"})
+        for op in operators:
+            raw_names = [port.name for port in op.outputs]
+            self.assertIn("raw_data", raw_names,
+                f"{op.id} must keep the raw_data output for backward compatibility")
 
     def test_normalize(self):
         outputs = execute_operator(
