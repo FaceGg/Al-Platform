@@ -6,6 +6,10 @@ import os
 # production login IP limit (5 / 15 min). Raise it for the whole test process.
 os.environ.setdefault("LOGIN_IP_RATE_LIMIT_CAPACITY", "100")
 
+# python_script operator tests execute against the current interpreter instead
+# of bootstrapping a real venv (which would download packages from PyPI).
+os.environ.setdefault("PYTHON_SCRIPT_VENV_DIR", "")
+
 import pytest
 from sqlalchemy import event
 

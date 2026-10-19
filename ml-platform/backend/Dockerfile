@@ -33,8 +33,9 @@ RUN --mount=type=bind,target=/wheels,source=wheelhouse \
 COPY . .
 RUN mkdir -p /home/app data app/uploads /var/lib/tensorboard/runs \
     /var/lib/ml-platform/inference-cache /tmp/ml-platform /app/artifact_store \
+    /data/python-script-venv \
     && chown -R app:app /home/app data app/uploads /var/lib/tensorboard \
-    /var/lib/ml-platform /tmp/ml-platform /app/artifact_store
+    /var/lib/ml-platform /tmp/ml-platform /app/artifact_store /data/python-script-venv
 
 EXPOSE 8000
 ENV MPLCONFIGDIR=/tmp/matplotlib

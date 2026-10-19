@@ -190,6 +190,21 @@ class Settings(BaseSettings):
     # TfidfVectorizer word splitting (also requires a reembed afterwards).
     retrieval_use_jieba: bool = True
 
+    # Python script operator runtime: scripts execute in an isolated subprocess
+    # against a persistent venv (docker named volume). Missing imports declared
+    # in the script are auto-installed via pip from server-configured sources
+    # only; users never specify packages or index URLs. Empty venv_dir disables
+    # the venv and runs against the backend interpreter (tests / local runs).
+    python_script_venv_dir: str = "/data/python-script-venv"
+    python_script_pip_sources: str = (
+        "https://pypi.org/simple,"
+        "https://mirrors.aliyun.com/pypi/simple/,"
+        "https://pypi.tuna.tsinghua.edu.cn/simple"
+    )
+    python_script_auto_install: bool = True
+    python_script_timeout_seconds: int = 300
+    python_script_install_timeout_seconds: int = 900
+
     _resolved_secret_key: SecretStr = PrivateAttr()
     _resolved_minio_access_key: SecretStr | None = PrivateAttr(default=None)
     _resolved_minio_secret_key: SecretStr | None = PrivateAttr(default=None)

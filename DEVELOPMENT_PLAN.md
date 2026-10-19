@@ -306,6 +306,15 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-19 python_script 算子改造：子进程隔离 + 依赖自动安装（持久化 venv 卷）
+
+- 需求：python_script 算子支持 import——用户不指定、不填写任何依赖，平台从脚本 import 语句自动解析并安装缺失库；安装源仅限服务端配置（pypi 官方 + 阿里云 + 清华，默认），不支持用户手动指定任何源/包名/URL。
+- 架构：脚本不再在 backend 进程内 exec，改为**子进程隔离执行**（`app/services/python_script_runtime.py`）——AST 收集 import → stdlib（`sys.stdlib_module_names`）过滤 → 子进程探测缺失（`importlib.util.find_spec`）→ 常见 import 名映射 pip 包名（cv2→opencv-python、sklearn→scikit-learn、PIL→pillow 等 12 项）→ 严格包名正则校验（拒绝 extras/版本符/URL/路径）→ pip 安装（`--index-url`/`--extra-index-url` 仅来自 settings）→ 子进程跑 runner（pickle 传输 df/result，`PYSCRIPT_ERROR:` 标记回传错误，超时杀进程，默认 300s/安装 900s）。
+- 隔离细节：子进程环境为**最小白名单**（PATH/HOME/LANG/TMPDIR/CA 证书），绝不继承 backend 环境（防密钥泄漏）；仅 pip 子进程透传 HTTP(S)_PROXY。执行 venv 为持久化 named volume `python-script-venv`（`/data/python-script-venv`，backend 与 worker 同时挂载），首次执行引导创建（ensurepip 失败时回退 `--without-pip` + 父 pip `--python` 种子）并预装 pandas；跨进程安装用 O_EXCL 锁文件（30 分钟防陈旧）。空 `PYTHON_SCRIPT_VENV_DIR` 退化为当前解释器直执行（测试/本地）。
+- 设置：`python_script_venv_dir` / `python_script_pip_sources` / `python_script_auto_install` / `python_script_timeout_seconds` / `python_script_install_timeout_seconds`（config.py）。原进程内沙箱（安全内建白名单、import 禁令、黑名单名）随子进程隔离整体退役，仅保留脚本 10 万字符上限与结果 100 万单元格上限；`import os` 等在子进程内为合法能力（防误不防攻定位不变）。
+- 测试：新增 `test_python_script_runtime.py` 17 用例（import 收集/相对与 __future__ 排除/函数级 import、包名映射与非法名拒绝、子进程 DataFrame/records 往返、异常包装、缺 result/非法 result、超时、ModuleNotFoundError 上抛、自动安装流程 mock 验证 stdlib 过滤与映射、auto_install=False 与解释器模式不安装）；`test_operators_utility.py` 3 用例改写为新语义（import 放开/非法 result 报 RuntimeError/异常透传）；conftest 设 `PYTHON_SCRIPT_VENV_DIR=""` 保证测试不触发 venv 引导。相关套件 110 passed + 6 subtests，runtime+utility 37 passed。
+- 部署：Dockerfile/Dockerfile.worker 预建并 chown `/data/python-script-venv`（容器 uid 1000）；compose 新增命名卷并挂至 backend/worker；backend、worker 镜像需重建（scheduler 共用 worker 镜像不挂卷不执行脚本）。首次在容器内执行 python_script 工作流时会引导建 venv（一次性约 30-60s）。
+
 ### 2026-10-19 工作流新增「拧紧特征工程」算子 + 新建「特征工程」算子类别
 
 - 需求：工作流画布新增拧紧特征工程算子；将点焊特征工程与新算子归入新建的「特征工程」（`feature_engineering`）类别。

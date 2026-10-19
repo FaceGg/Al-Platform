@@ -51,16 +51,33 @@ class TestPythonScriptOperator(unittest.TestCase):
         )
         self.assertEqual(outputs["data"], [{"b": 2}])
 
-    def test_rejects_dangerous_script(self):
+    def test_allows_imports_in_subprocess(self):
+        """子进程隔离后 import 放开：stdlib 直接可用，缺失库由运行时自动安装。"""
+        op = OperatorRegistry.get("python_script")
+        outputs = execute_operator(
+            op,
+            {"data": [{"a": 1}]},
+            {"script": "import json\nimport math\nresult = df.copy()\n"
+                       "result['b'] = float(json.loads(json.dumps(math.floor(3.9))))"},
+        )
+        self.assertEqual(outputs["data"], [{"a": 1.0, "b": 3.0}])
+
+    def test_rejects_invalid_result_type(self):
         op = OperatorRegistry.get("python_script")
         with self.assertRaises(RuntimeError) as ctx:
-            execute_operator(op, {"data": [{"a": 1}]}, {"script": "import os"})
-        self.assertIn("not allowed", str(ctx.exception))
-
-    def test_rejects_non_dataframe_or_record_list_output(self):
-        op = OperatorRegistry.get("python_script")
-        with self.assertRaises(TypeError):
             execute_operator(op, {"data": [{"a": 1}]}, {"script": "result = 123"})
+        self.assertIn("result must be a pandas.DataFrame or a list of records",
+                      str(ctx.exception))
+
+    def test_propagates_script_exception_message(self):
+        op = OperatorRegistry.get("python_script")
+        with self.assertRaises(RuntimeError) as ctx:
+            execute_operator(
+                op,
+                {"data": [{"a": 1}]},
+                {"script": "result = df.copy()\nraise ValueError('boom')"},
+            )
+        self.assertIn("ValueError: boom", str(ctx.exception))
 
     def test_rejects_oversized_script_parameter(self):
         op = OperatorRegistry.get("python_script")

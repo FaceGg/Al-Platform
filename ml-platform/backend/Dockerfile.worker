@@ -27,9 +27,9 @@ RUN --mount=type=bind,target=/wheels,source=wheelhouse \
         -r /tmp/requirements-without-boost.txt
 COPY . .
 RUN mkdir -p /home/app /var/lib/tensorboard/runs /var/lib/ml-platform/inference-cache \
-    /tmp/ml-platform /app/artifact_store \
+    /tmp/ml-platform /app/artifact_store /data/python-script-venv \
     && chown -R app:app /home/app /var/lib/tensorboard \
-    /var/lib/ml-platform /tmp/ml-platform /app/artifact_store
+    /var/lib/ml-platform /tmp/ml-platform /app/artifact_store /data/python-script-venv
 ENV MPLCONFIGDIR=/tmp/matplotlib
 ENV HOME=/home/app
 USER 1000:1000

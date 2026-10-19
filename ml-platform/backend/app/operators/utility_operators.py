@@ -1,45 +1,47 @@
 # -*- coding: utf-8 -*-
-import ast
-import builtins
+import threading
+
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
 from app.engine.export_paths import resolve_export_path
+from app.services.python_script_runtime import PythonScriptRuntime
 import pandas as pd
-import os as os_mod
 
 PYTHON_SCRIPT_MAX_LENGTH = 100_000
 PYTHON_SCRIPT_MAX_CELLS = 1_000_000
-PYTHON_SCRIPT_SAFE_BUILTINS = {
-    name: getattr(builtins, name)
-    for name in ("abs", "all", "any", "bool", "dict", "enumerate", "float",
-                 "int", "len", "list", "max", "min", "range", "round",
-                 "set", "sorted", "str", "sum", "tuple", "zip")
-}
-PYTHON_SCRIPT_BLOCKED_NAMES = {
-    "__builtins__", "__import__", "open", "exec", "eval", "compile",
-    "globals", "locals", "vars", "getattr", "setattr", "delattr",
-    "input", "breakpoint", "os", "sys", "subprocess", "socket", "requests",
-    "pathlib", "shutil", "builtins",
-}
+
+_RUNTIME_LOCK = threading.Lock()
+_RUNTIME: PythonScriptRuntime | None = None
 
 
-def _validate_python_script(script: str) -> None:
-    if len(script) > PYTHON_SCRIPT_MAX_LENGTH:
-        raise ValueError(
-            f"PythonScript: script exceeds {PYTHON_SCRIPT_MAX_LENGTH} characters",
-        )
-    try:
-        tree = ast.parse(script, mode="exec")
-    except SyntaxError as exc:
-        raise RuntimeError(f"PythonScript script error: {exc}") from exc
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            raise RuntimeError("PythonScript: import statements are not allowed")
-        if isinstance(node, ast.Name) and node.id in PYTHON_SCRIPT_BLOCKED_NAMES:
-            raise RuntimeError(f"PythonScript: name '{node.id}' is not allowed")
-        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
-            raise RuntimeError(f"PythonScript: attribute '{node.attr}' is not allowed")
+def _python_script_runtime() -> PythonScriptRuntime:
+    """Build the runtime from settings once per process."""
+    global _RUNTIME
+    with _RUNTIME_LOCK:
+        if _RUNTIME is None:
+            from app.config import settings
+
+            sources = [
+                source.strip()
+                for source in str(settings.python_script_pip_sources or "").split(",")
+                if source.strip()
+            ]
+            _RUNTIME = PythonScriptRuntime(
+                venv_dir=str(settings.python_script_venv_dir or ""),
+                pip_sources=sources,
+                auto_install=bool(settings.python_script_auto_install),
+                exec_timeout=int(settings.python_script_timeout_seconds),
+                install_timeout=int(settings.python_script_install_timeout_seconds),
+            )
+        return _RUNTIME
+
+
+def _reset_python_script_runtime() -> None:
+    """Test helper: drop the cached runtime so settings changes take effect."""
+    global _RUNTIME
+    with _RUNTIME_LOCK:
+        _RUNTIME = None
 
 
 @register_operator
@@ -47,7 +49,11 @@ class PythonScript(BaseOperator):
     id = "python_script"
     name = "Python Script"
     category = "utility"
-    description = "Run a Python script with fixed DataFrame input df and output result"
+    description = (
+        "Run a Python script with fixed DataFrame input df and output result "
+        "in an isolated subprocess; imports missing from the script venv are "
+        "auto-installed from server-configured package sources"
+    )
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("data", "DataTable", "Output Data")]
     parameters = [
@@ -59,29 +65,16 @@ class PythonScript(BaseOperator):
 
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         script = str(params.get("script", ""))
-        _validate_python_script(script)
+        if len(script) > PYTHON_SCRIPT_MAX_LENGTH:
+            raise ValueError(
+                f"PythonScript: script exceeds {PYTHON_SCRIPT_MAX_LENGTH} characters",
+            )
         data = inputs.get("data", [])
         df = data.copy() if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
-        scope = {"__builtins__": PYTHON_SCRIPT_SAFE_BUILTINS, "df": df}
-        try:
-            exec(compile(script, "<python_script>", "exec"), scope, scope)
-        except Exception as exc:
-            raise RuntimeError(f"PythonScript script error: {exc}") from exc
-
-        if "result" not in scope:
-            raise ValueError("PythonScript: script must assign output to 'result'")
-        result = scope["result"]
-        if isinstance(result, pd.DataFrame):
-            if result.shape[0] * result.shape[1] > PYTHON_SCRIPT_MAX_CELLS:
-                raise ValueError("PythonScript: output is too large")
-            output = result.to_dict(orient="records")
-        elif isinstance(result, list) and all(isinstance(row, dict) for row in result):
-            if len(result) * (len(result[0]) if result else 0) > PYTHON_SCRIPT_MAX_CELLS:
-                raise ValueError("PythonScript: output is too large")
-            output = result
-        else:
-            raise TypeError("PythonScript: result must be a pandas.DataFrame or a list of records")
-        return OperatorResult(outputs={"data": output})
+        result = _python_script_runtime().execute(script, df)
+        if result.shape[0] * result.shape[1] > PYTHON_SCRIPT_MAX_CELLS:
+            raise ValueError("PythonScript: output is too large")
+        return OperatorResult(outputs={"data": result.to_dict(orient="records")})
 
 
 @register_operator
