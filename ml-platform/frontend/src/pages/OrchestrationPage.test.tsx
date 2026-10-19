@@ -71,7 +71,8 @@ describe("OrchestrationPage (serving-graph workbench)", () => {
     api.post.mockResolvedValue({ data: { id: "wf-new" } });
     render(<OrchestrationPage />);
     fireEvent.click(await screen.findByRole("button", { name: /新建服务图/ }));
-    await screen.findByRole("dialog");
+    // 慢 runner（windows CI）上 antd Modal 挂载可能超过默认 1s，放宽等待
+    await screen.findByRole("dialog", {}, { timeout: 3000 });
     // antd Modal onOk 的合成点击在 jsdom 下不稳定；直接派发 form submit 触发 onFinish。
     // 名称输入按 placeholder 定位（首个 input 现在是模板下拉的搜索框）。
     const dialog = screen.getByRole("dialog");
