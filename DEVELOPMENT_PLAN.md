@@ -338,6 +338,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 并行说明：运行以独立 Celery 任务执行，worker --concurrency=2，最多 2 个运行并行、其余排队——本就并行，此次是前端状态泄漏让它"看起来"串行。
 - 部署：backend/worker/frontend 镜像重建，nginx 重启。
 
+### 2026-10-19 闭环配置体验修正：收集比例去括号、报错数据集默认参与重训、目标列默认模型 label 列
+
+- 需求：①「错误:正确 收集比例」下拉选项去掉括号补充说明；②重训数据集默认添加闭环收集的报错数据集；③重训目标列默认取模型的 label 列。
+- 前端：①RATIO_OPTIONS 标签去掉「（多收正确数据）/（多收报错数据）」；②编辑闭环时 `retrain_dataset_artifact_ids` 默认并入 `error_artifact_id`（下拉选项缺失时补一项「报错数据集（闭环自动收集）」）；③`retrain_target_column` 为空时默认 `current_model.target_columns[0]`。
+- 后端：①`_trigger_retrain_inner` 把 `error_artifact_id` 自动并入重训数据集（置于最前、去重）——无论表单是否勾选，报错数据一定参与重训；②目标列为空时回退部署模型版本的 `output_schema.target_columns[0]`，触发成功后回填到配置；③`_config_view` 透出 `error_artifact_id` 与 `current_model.target_columns`。
+- 测试：tsc 无错；test_demo_loop 26 用例中失败集与基线完全一致（6 个容器环境预存），无新增回归。
+- 部署：backend/frontend/worker 镜像重建，nginx 重启。
+
 ### 2026-10-19 演示闭环特征工程方式三选一：内置点焊桥 / 特征工程类别算子 / Python 脚本
 
 - 需求：闭环自动化原「自动特征工程」开关只支持点焊（build_fixed_feature_frame 73 特征桥），需支持选择算子面板「特征工程」类别下的算子（点焊特征工程/拧紧特征工程，有几个列几个、不依赖工作流节点实例），或用 Python 脚本自定义，使拧紧等其它场景可用。不含「数据处理」类的自动特征工程。

@@ -1031,13 +1031,21 @@ class DemoLoopService:
             self.db.commit()
 
     def _trigger_retrain_inner(self, config: DemoLoopConfig, actor_id) -> None:
-        if not config.retrain_target_column:
-            raise DemoLoopError("DEMO_LOOP_RETRAIN_TARGET_MISSING", "未配置重训目标列")
         dataset_ids = list(getattr(config, "retrain_dataset_artifact_ids", None) or [])
         if not dataset_ids and config.retrain_dataset_artifact_id is not None:
             dataset_ids = [config.retrain_dataset_artifact_id]
+        # 闭环收集的报错数据集默认参与重训（置于最前，去重）。
+        if config.error_artifact_id:
+            error_id = str(config.error_artifact_id)
+            dataset_ids = [error_id] + [did for did in dataset_ids if did != error_id]
         if not dataset_ids:
             raise DemoLoopError("DEMO_LOOP_RETRAIN_DATASET_MISSING", "未配置重训数据集")
+        target_column = (config.retrain_target_column or "").strip()
+        if not target_column:
+            # 默认取部署模型版本的 label 列（AutoML 注册时写入 output_schema.target_columns）。
+            target_column = self._deployment_default_target(config)
+        if not target_column:
+            raise DemoLoopError("DEMO_LOOP_RETRAIN_TARGET_MISSING", "未配置重训目标列")
         # 绑定表以 experiment_id 为主键（实验↔AutoML 任务 1:1），且重训幂等
         # 指纹含实验名；实验名必须按周期唯一，否则同轮次触发绑定冲突或重放旧任务。
         cycle = uuid.uuid4().hex[:8]
@@ -1048,16 +1056,40 @@ class DemoLoopService:
             experiment_name=f"{config.name}-自动建模-{config.error_count}-{cycle}",
             job_name=f"{config.name}-自动建模-{config.error_count}-{cycle}",
             dataset_artifact_ids=dataset_ids,
-            target_column=config.retrain_target_column,
+            target_column=target_column,
             max_trials=config.retrain_max_trials,
         )
         config.retrain_job_id = job.id
         config.retrain_status = "queued"
+        if not config.retrain_target_column:
+            # 未显式配置时回填模型 label 列，便于前端展示与后续轮次一致。
+            config.retrain_target_column = target_column
         self.db.commit()
         self._emit(config, "retrain_triggered",
                    f"报错数据已达 {config.error_count} 行，自动建模任务已触发（{job.params['max_trials']} 组试验）",
                    severity="warning",
                    payload={"job_id": str(job.id)})
+
+    def _deployment_default_target(self, config: DemoLoopConfig) -> str:
+        """部署模型版本的 label 列（output_schema.target_columns 首个）。"""
+        if not config.deployment_id:
+            return ""
+        deployment = self.db.query(InferenceDeployment).filter(
+            InferenceDeployment.id == config.deployment_id,
+        ).first()
+        if deployment is None or not deployment.model_version_id:
+            return ""
+        version = self.db.query(ModelVersion).filter(
+            ModelVersion.id == deployment.model_version_id,
+        ).first()
+        if version is None:
+            return ""
+        targets = (version.output_schema or {}).get("target_columns") or []
+        for target in targets:
+            text = str(target).strip()
+            if text:
+                return text
+        return ""
 
     def refresh_retrain_status(self, config: DemoLoopConfig, actor_id) -> None:
         # 收敛入口：job 挂着就必须检查（cancel_requested/终态卡住也在此自愈），

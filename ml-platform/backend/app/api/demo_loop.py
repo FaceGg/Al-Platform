@@ -86,6 +86,8 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
                         "lifecycle_state": version.lifecycle_state,
                         "approval_status": version.approval_status,
                         "feature_schema": version.feature_schema or [],
+                        # 模型的 label 列（AutoML 注册时写入），闭环重训目标列默认值
+                        "target_columns": (version.output_schema or {}).get("target_columns", []),
                     }
     retrain_dataset = None
     dataset_ids = list(getattr(config, "retrain_dataset_artifact_ids", None) or [])
@@ -121,6 +123,9 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
         "collect_correct_enabled": bool(config.collect_correct_enabled),
         "correct_sample_ratio": config.correct_sample_ratio or "1:1",
         "field_descriptions": config.field_descriptions or {},
+        "error_artifact_id": (
+            str(config.error_artifact_id) if config.error_artifact_id else None
+        ),
         "retrain_dataset": retrain_dataset,
         "deployment": deployment,
         "current_model": model,

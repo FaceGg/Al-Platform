@@ -59,11 +59,11 @@ async function fetchPythonScriptTemplate(): Promise<string> {
 
 const RATIO_OPTIONS: Array<{ value: string; label: string }> = [
   ...Array.from({ length: 9 }, (_, i) => ({
-    value: `${10 - i}:1`, label: `错误:正确 = ${10 - i}:1（多收正确数据）`,
+    value: `${10 - i}:1`, label: `错误:正确 = ${10 - i}:1`,
   })),
   { value: "1:1", label: "错误:正确 = 1:1" },
   ...Array.from({ length: 9 }, (_, i) => ({
-    value: `1:${i + 2}`, label: `错误:正确 = 1:${i + 2}（多收报错数据）`,
+    value: `1:${i + 2}`, label: `错误:正确 = 1:${i + 2}`,
   })),
 ];
 
@@ -113,6 +113,13 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
     form.resetFields();
     if (editor.mode === "edit") {
       const cfg = editor.loop;
+      // 重训数据集默认包含闭环收集的报错数据集；目标列默认取模型 label 列
+      const retrainIds = new Set<string>(
+        cfg.retrain_dataset_artifact_ids || (cfg.retrain_dataset_artifact_id ? [cfg.retrain_dataset_artifact_id] : []),
+      );
+      if (cfg.error_artifact_id) retrainIds.add(cfg.error_artifact_id);
+      const defaultTarget = cfg.retrain_target_column
+        || cfg.current_model?.target_columns?.[0] || "";
       form.setFieldsValue({
         name: cfg.name, deployment_id: cfg.deployment_id, error_classes: cfg.error_classes,
         preprocess_enabled: cfg.preprocess_enabled,
@@ -122,9 +129,8 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
         alert_threshold_rows: cfg.alert_threshold_rows,
         require_review: cfg.require_review, review_annotator_ids: cfg.review_annotator_ids,
         retrain_enabled: cfg.retrain_enabled, retrain_threshold_rows: cfg.retrain_threshold_rows,
-        retrain_dataset_artifact_ids: cfg.retrain_dataset_artifact_ids
-          || (cfg.retrain_dataset_artifact_id ? [cfg.retrain_dataset_artifact_id] : []),
-        retrain_target_column: cfg.retrain_target_column, retrain_max_trials: cfg.retrain_max_trials,
+        retrain_dataset_artifact_ids: [...retrainIds],
+        retrain_target_column: defaultTarget, retrain_max_trials: cfg.retrain_max_trials,
         collect_correct_enabled: cfg.collect_correct_enabled,
         correct_sample_ratio: cfg.correct_sample_ratio || "1:1",
         field_descriptions: cfg.field_descriptions || {},
@@ -350,11 +356,21 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
               </Form.Item>
               <Form.Item
                 name="retrain_dataset_artifact_ids"
-                label={tr.retrain_dataset || "重训数据集（可多选合并训练；选报错数据时自动用推理结果作标签）"}
+                label={tr.retrain_dataset || "重训数据集（可多选合并训练；闭环收集的报错数据集默认参与）"}
                 rules={[{ required: true, message: "请选择至少一个重训数据集" }]}
               >
-                <Select mode="multiple" options={datasets.map((item) => ({ value: item.id, label: item.name }))}
-                  placeholder={tr.choose_dataset || "选择数据集（可多选）"} />
+                <Select
+                  mode="multiple"
+                  options={(() => {
+                    const options = datasets.map((item) => ({ value: item.id, label: item.name }));
+                    const errId = editor?.mode === "edit" ? editor.loop.error_artifact_id : undefined;
+                    if (errId && !options.some((o) => o.value === errId)) {
+                      options.unshift({ value: errId, label: "报错数据集（闭环自动收集）" });
+                    }
+                    return options;
+                  })()}
+                  placeholder={tr.choose_dataset || "选择数据集（可多选）"}
+                />
               </Form.Item>
               <Form.Item name="retrain_target_column" label={tr.retrain_target || "目标列"} rules={[{ required: true }]}>
                 <Input />

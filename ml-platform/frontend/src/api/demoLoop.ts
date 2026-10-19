@@ -38,9 +38,10 @@ export interface DemoLoopConfig {
   collect_correct_enabled: boolean;
   correct_sample_ratio: string | null;
   field_descriptions: Record<string, string> | null;
+  error_artifact_id: string | null;
   retrain_dataset: { id: string; name: string } | null;
   deployment: DemoLoopDeployment | null;
-  current_model: DemoLoopModelInfo | null;
+  current_model: (DemoLoopModelInfo & { target_columns?: string[] }) | null;
   swapped_model_version_id: string | null;
   error_count: number;
   alert_count: number;
