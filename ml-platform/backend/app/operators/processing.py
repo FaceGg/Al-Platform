@@ -394,6 +394,7 @@ class AutoFeatureEngineering(BaseOperator):
     ]
     parameters = [
         ParamSpec("target_column", "str", "", "Target Column"),
+        ParamSpec("columns", "str", "", "Feature Columns (comma-separated, empty=all numeric)"),
         ParamSpec("interactions", "boolean", True, "Generate Interaction Terms"),
         ParamSpec("polynomial_degree", "int", 2, "Polynomial Degree"),
         ParamSpec("feature_selection", "select", "mutual_info", "Selection Method",
@@ -419,11 +420,25 @@ class AutoFeatureEngineering(BaseOperator):
         max_features = params.get("max_features", 50)
 
         original_cols = list(df.columns)
-        num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        col_str = str(params.get("columns") or "").strip()
+        if col_str:
+            requested = [c.strip() for c in col_str.split(",") if c.strip()]
+            known = [c for c in requested if c in df.columns]
+            num_cols = [c for c in known if pd.api.types.is_numeric_dtype(df[c])]
+        else:
+            requested = []
+            known = []
+            num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         if target_col and target_col in num_cols:
             num_cols = [c for c in num_cols if c != target_col]
 
         report = {"original_features": len(num_cols), "steps": []}
+        if col_str:
+            report["selected_columns"] = known
+            report["ignored_columns"] = [c for c in requested if c not in df.columns]
+            non_numeric = [c for c in known if c not in num_cols and c != target_col]
+            if non_numeric:
+                report["skipped_non_numeric"] = non_numeric
 
         # Step 1: Polynomial features
         if interactions and len(num_cols) >= 2:

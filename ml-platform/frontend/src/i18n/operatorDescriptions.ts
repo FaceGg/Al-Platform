@@ -30,7 +30,7 @@ export const operatorDescriptions: Record<string, { zh: string; en?: string }> =
   select_attributes: { zh: "选择 / 过滤数据列" },
   set_role: { zh: "设置列角色（标签、ID、权重等）" },
   train_test_split: { zh: "将数据划分为训练集与测试集" },
-  auto_feature_engineering: { zh: "自动生成与筛选特征：交互项、多项式特征、特征选择" },
+  auto_feature_engineering: { zh: "自动生成与筛选特征：对选中的数值列生成交互项，再按打分筛选（可限定特征列范围）" },
 
   // ---- 特征工程 (feature_engineering) ----
   spot_weld_feature_engineering: { zh: "解码四路报告波形，生成固定 73 维点焊特征" },

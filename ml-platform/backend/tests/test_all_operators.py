@@ -295,6 +295,37 @@ class TestProcessingOperatorsExecution(unittest.TestCase):
             {"data": REGRESSION_DATA}, {"operations": "poly", "degree": 2})
         self.assertGreater(len(outputs["data"]), 0)
 
+    def test_auto_feature_engineering_respects_column_selection(self):
+        data = [
+            {"a": float(i), "b": float(i * 2), "c": float(i * 3), "target": 0 if i < 8 else 1}
+            for i in range(16)
+        ]
+
+        outputs = execute_operator(
+            OperatorRegistry.get("auto_feature_engineering"),
+            {"data": data},
+            {"columns": "a,b", "interactions": True, "polynomial_degree": 2})
+
+        report = outputs["feature_report"]
+        self.assertEqual(report["original_features"], 2)
+        self.assertEqual(report["selected_columns"], ["a", "b"])
+        step = next(s for s in report["steps"] if s["step"] == "polynomial_interactions")
+        # 选中 a、b 两列 → 仅生成 a×b 一个交互项（3 列全参与应为 3 项），c 未参与
+        self.assertEqual(step["features_added"], 1)
+        self.assertAlmostEqual(outputs["data"][1]["poly_0"], 2.0)  # a=1, b=2 → a×b=2
+
+    def test_auto_feature_engineering_ignores_unknown_columns(self):
+        data = [{"a": float(i), "target": 0 if i < 5 else 1} for i in range(10)]
+
+        outputs = execute_operator(
+            OperatorRegistry.get("auto_feature_engineering"),
+            {"data": data},
+            {"columns": "a,not_there", "interactions": True, "polynomial_degree": 2})
+
+        report = outputs["feature_report"]
+        self.assertEqual(report["original_features"], 1)
+        self.assertEqual(report["ignored_columns"], ["not_there"])
+
     def test_spot_weld_feature_engineering_preserves_report_feature_contract(self):
         frame = build_demo_report_frame(12)
         frame["Fault"] = [0 if index < 6 else 1 for index in range(len(frame))]

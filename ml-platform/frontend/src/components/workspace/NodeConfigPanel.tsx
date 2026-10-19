@@ -255,6 +255,10 @@ const operatorParamLabels: Record<string, Record<string, { zh: string; en?: stri
     message: { zh: "告警内容", en: "Notification Body" },
     severity: { zh: "告警级别", en: "Severity" },
   },
+  auto_feature_engineering: {
+    columns: { zh: "特征列（多选，留空=全部数值列）", en: "Feature Columns (multi-select, empty=all numeric)" },
+    target_column: { zh: "目标列", en: "Target Column" },
+  },
 };
 
 const commonParamLabels: Record<string, { zh: string; en?: string }> = {
@@ -327,6 +331,11 @@ const commonParamLabels: Record<string, { zh: string; en?: string }> = {
   // python_script
   auto_install: { zh: "自动安装依赖库", en: "Auto-install Dependencies" },
   script: { zh: "处理脚本", en: "Script" },
+  // auto_feature_engineering
+  interactions: { zh: "生成交互项", en: "Generate Interaction Terms" },
+  polynomial_degree: { zh: "多项式阶数", en: "Polynomial Degree" },
+  feature_selection: { zh: "特征选择方法", en: "Feature Selection Method" },
+  max_features: { zh: "最大保留特征数", en: "Max Features to Keep" },
 };
 
 export function getParamLabel(opId: string | undefined, paramName: string, lang: "zh" | "en"): string | null {
@@ -564,7 +573,8 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
     const colName = isColumnParam(p.name);
     if (colName && upstreamColumns.length > 0 && (p.type === "str" || p.type === "select")) {
       const portLabel = getPortLabel(operator?.id, p.name, lang) || p.label || p.name;
-      const multiple = operator?.id === "select_attributes" && p.name === "columns";
+      const multiple = p.name === "columns" &&
+        (operator?.id === "select_attributes" || operator?.id === "auto_feature_engineering");
       const selectedValues = multiple
         ? String(value || "").split(",").map((column) => column.trim()).filter(Boolean)
         : value || undefined;

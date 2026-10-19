@@ -306,6 +306,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-19 自动特征工程算子：参数中文化 + 特征列下拉多选（只处理选中列）
+
+- 需求：①算子参数为英文，注意中英文显示；②添加下拉菜单筛选特征列，只处理选中的列。
+- 后端：`auto_feature_engineering` 新增 `columns` 参数（逗号分隔，空=全部数值列，与其他处理算子命名一致）；execute 中数值列来源改为——指定时仅取选中列中实际存在且数值类型的列（目标列仍排除），并在 `feature_report` 新增 `selected_columns` / `ignored_columns`（数据集中不存在的列）/ `skipped_non_numeric`（选中但非数值类型的列）透明化字段；交互项生成仅基于选中列（未选中列在输出中原样透传不删除，仅不参与生成），Step2 打分筛选范围同步受限。
+- 前端：`operatorParamLabels` 新增 `auto_feature_engineering` 段——columns=特征列（多选，留空=全部数值列）、target_column=目标列；`commonParamLabels` 补 interactions=生成交互项、polynomial_degree=多项式阶数、feature_selection=特征选择方法、max_features=最大保留特征数（中英双语）；`isColumnParam` 全局已含 `columns` → 该参数自动渲染为上游列下拉，多选模式从仅 select_attributes 扩展至 auto_feature_engineering；悬停说明同步更新。
+- 测试：新增 2 用例（选中 a,b 仅生成 a×b 一个交互项且 poly_0=a×b、未知列记入 ignored_columns），test_all_operators 95 passed；前端 tsc 无错、面板测试 8 passed。
+- 部署：backend（参数与逻辑）与 frontend（标签/多选）镜像均需重建。
+
 ### 2026-10-19 python_script 模板伪代码化 + 算子面板分类改名与悬停说明中文化
 
 - 需求：①编辑器模板再加一段默认伪代码——输入输出写法正确、中间功能以 "..." 省略；②算子面板分类「数据输入输出」→「输入输出」、「传统机器学习」→「机器学习」；③算子悬停说明适配中英文（此前全按后端英文 description 展示）。
