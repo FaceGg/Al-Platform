@@ -6,14 +6,15 @@ import {
 } from "@ant-design/icons";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { useI18n } from "../../i18n";
+import { operatorDescriptions } from "../../i18n/operatorDescriptions";
 
 const CATEGORY_LABELS: Record<string, { zh: string; en: string }> = {
-  data_io: { zh: "数据输入输出", en: "Data I/O" },
-  io: { zh: "数据输入输出", en: "Data I/O" },
+  data_io: { zh: "输入输出", en: "Data I/O" },
+  io: { zh: "输入输出", en: "Data I/O" },
   processing: { zh: "数据处理", en: "Processing" },
   feature_engineering: { zh: "特征工程", en: "Feature Engineering" },
   blending: { zh: "数据融合", en: "Data Blending" },
-  ml: { zh: "传统机器学习", en: "ML" },
+  ml: { zh: "机器学习", en: "ML" },
   dl: { zh: "深度学习", en: "Deep Learning" },
   evaluation: { zh: "模型评估", en: "Evaluation" },
   visualization: { zh: "可视化", en: "Visualization" },
@@ -95,7 +96,11 @@ export default function OperatorPanel() {
       children: (
         <div className="operator-palette__list">
           {categoryOperators.map((operator: any) => (
-            <Tooltip key={operator.id} title={operator.description || operator.name} placement="right">
+            <Tooltip
+              key={operator.id}
+              title={operatorDescriptions[operator.id]?.[lang] || operator.description || operator.name}
+              placement="right"
+            >
               <div
                 className="operator-palette__item"
                 data-testid={`operator-palette-item-${operator.id}`}

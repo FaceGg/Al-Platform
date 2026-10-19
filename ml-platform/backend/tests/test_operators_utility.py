@@ -70,12 +70,11 @@ class TestPythonScriptOperator(unittest.TestCase):
         self.assertTrue(PYTHON_SCRIPT_TEMPLATE.startswith(PYTHON_SCRIPT_HEADER))
         self.assertTrue(PYTHON_SCRIPT_TEMPLATE.rstrip().endswith(PYTHON_SCRIPT_FOOTER.rstrip()))
 
-    def test_unmodified_template_passes_interface_check(self):
-        """模板未改但功能区未写 result：接口校验通过，运行期提示补齐 result。"""
+    def test_unmodified_template_runs_passthrough(self):
+        """模板伪代码框架输入输出正确：不改模板直接运行，结果原样透传。"""
         op = OperatorRegistry.get("python_script")
-        with self.assertRaises(RuntimeError) as ctx:
-            execute_operator(op, {"data": [{"a": 1}]}, {"script": PYTHON_SCRIPT_TEMPLATE})
-        self.assertIn("must assign output to 'result'", str(ctx.exception))
+        outputs = execute_operator(op, {"data": [{"a": 1}]}, {"script": PYTHON_SCRIPT_TEMPLATE})
+        self.assertEqual(outputs["data"], [{"a": 1}])
 
     def test_template_with_implementation_runs(self):
         script = (

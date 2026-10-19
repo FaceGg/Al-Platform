@@ -15,7 +15,7 @@ describe("OperatorPanel", () => {
   it("localizes IO and optimization categories while keeping groups collapsed by default", () => {
     render(<OperatorPanel />);
 
-    expect(screen.getByText("数据输入输出")).toBeInTheDocument();
+    expect(screen.getByText("输入输出")).toBeInTheDocument();
     expect(screen.getByText("参数优化")).toBeInTheDocument();
     expect(screen.queryByText("CSV/Excel导入")).not.toBeInTheDocument();
   });
