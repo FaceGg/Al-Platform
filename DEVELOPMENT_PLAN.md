@@ -322,6 +322,16 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 修复：①`config.py` `python_script_venv_dir` 默认改为 `""`（解释器模式为全局默认；非容器环境天然安全），生产由 compose `production-environment` anchor 显式注入 `PYTHON_SCRIPT_VENV_DIR: /data/python-script-venv`（backend/worker 共用，容器内持久化 venv 行为不变）；②`run_suite.py` 头部 `os.environ.setdefault("PYTHON_SCRIPT_VENV_DIR", "")` 兜底；③`genericization_gate.py` `LEGACY_ADAPTER_FILES` 白名单加入 `services/python_script_examples.py`，examples 文件补 `LEGACY_ADAPTER_ONLY = True` 桥接标记；④`week_manifest.py` Week 3 登记 `test_python_script_runtime`。
 - 验证：`run_suite.py --week 1` 20/20 passed（manifest + genericization 修复生效）；`--week 3` 17/17 passed（python_script 子进程测试在 run_suite 路径恢复）。镜像无强制重建需求（config 默认值变化随下次构建生效；compose env 已显式注入）。
 
+### 2026-10-19 终止按钮失效与跨工作流运行状态泄漏修复
+
+- 现象：①点「终止」无反应；②新建工作流右上角显示「终止」而非「运行」；用户期望工作流之间并行互不干扰。
+- 根因：a) celery terminate 强杀执行任务后无人落库终态，运行永远卡在 cancel_requested（前端 isRunning 依赖它）；b) 前端 handleStop 成功后未退出运行态（等一个永远不会来的 run_completed WS 事件），currentRunId 为空时静默 return；c) isRunning/currentRunId/节点状态存于全局 zustand store，切换/新建工作流不重置，状态跨工作流泄漏；d) 刷新后无法恢复正在运行的工作流视图。
+- 后端修复（`api/runs.py`）：①cancel 在 celery 模式下 terminate 任务后，若运行仍为 cancel_requested 则落库为 cancelled（含 finished_at/logs；local 模式保持协作取消语义，兼容既有幂等测试）；②新增 `GET /api/workflows/{workflow_id}/runs/active` 返回活动运行（pending/running/cancel_requested）或 null，鉴权走 resolve_workflow_access。
+- 前端修复（`pages/WorkspacePage.tsx`）：①persistNodeRun/reconcileRun/showRunError/WS 监听从 handleRun 抽取为组件级函数；②挂载 effect 切换 workflowId 时 resetExecution() 清泄漏状态，并调 adoptActiveRun() 恢复活动运行的运行态视图（重连 WS）；③handleStop：无 runId 时提示并自愈退出运行态，成功后立即 setIsRunning(false)。
+- 测试：test_api_runs 新增 TestCancelFinalizesUnderCelery（patch task_backend=celery 验证终止落库 cancelled + finished_at）与 active-run 端点用例，8 passed（一次性容器 APP_MODE=local + SQLite）；前端 tsc 无错、WorkspacePage+workflowStore 26 passed。
+- 并行说明：运行以独立 Celery 任务执行，worker --concurrency=2，最多 2 个运行并行、其余排队——本就并行，此次是前端状态泄漏让它"看起来"串行。
+- 部署：backend/worker/frontend 镜像重建，nginx 重启。
+
 ### 2026-10-19 工作流节点默认超时 300→1800 秒，收尾一次卡死的取消中运行
 
 - 现象：拧紧「特征工程」工作流重跑后，csv_import（28 万行）在恢复执行路径上撞 `Node timed out after 300 seconds` 失败；另一次运行（10:15）csv_import 实际跑了 21.7 分钟——远超 300 秒节点默认超时上限。

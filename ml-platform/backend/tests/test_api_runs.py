@@ -1,5 +1,6 @@
 """Workflow Runs API integration tests."""
 import sys, os, unittest, time, uuid, io
+from datetime import datetime, timezone
 sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
@@ -183,6 +184,83 @@ class TestRunCancellation(unittest.TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(second.json()["status"], "cancel_requested")
         self.assertEqual(calls, [("celery-task-1", True), ("celery-task-1", True)])
+
+
+class TestCancelFinalizesUnderCelery(unittest.TestCase):
+    """Celery terminate kills the worker process; the cancel API must persist
+    the final 'cancelled' status itself, otherwise runs spin forever."""
+
+    @classmethod
+    def setUpClass(cls):
+        ensure_admin(username="celery_cancel_admin")
+        login_response = client.post(
+            "/api/auth/login", data={"username": "celery_cancel_admin", "password": "admin123"},
+        )
+        cls.headers = {"Authorization": "Bearer " + login_response.json()["access_token"]}
+        project = client.post("/api/projects", json={"name": "Celery Cancel Project"}, headers=cls.headers)
+        workflow = client.post(
+            f"/api/projects/{project.json()['id']}/workflows",
+            json={"name": "Celery Cancel Workflow", "nodes": [], "edges": []},
+            headers=cls.headers,
+        )
+        cls.workflow_id = workflow.json()["id"]
+
+    def _make_run(self, status: str, task_id: str) -> str:
+        with SessionLocal() as db:
+            run = WorkflowRun(
+                workflow_id=uuid.UUID(self.workflow_id), status=status, task_id=task_id,
+            )
+            db.add(run)
+            db.commit()
+            db.refresh(run)
+            return str(run.id)
+
+    def test_cancel_under_celery_finalizes_cancelled(self):
+        from unittest.mock import patch
+        from app.config import settings
+
+        run_id = self._make_run("running", "celery-task-2")
+        calls = []
+        dispatcher = type("Dispatcher", (), {
+            "cancel": lambda self, task_id, terminate=False: calls.append(task_id),
+        })()
+        app.dependency_overrides[get_task_dispatcher] = lambda: dispatcher
+        try:
+            with patch.object(settings, "task_backend", "celery"):
+                response = client.post(f"/api/runs/{run_id}/cancel", headers=self.headers)
+        finally:
+            app.dependency_overrides.pop(get_task_dispatcher, None)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "cancelled")
+        self.assertEqual(calls, ["celery-task-2"])
+        with SessionLocal() as db:
+            run = db.query(WorkflowRun).filter(WorkflowRun.id == uuid.UUID(run_id)).one()
+            self.assertEqual(run.status, "cancelled")
+            self.assertIsNotNone(run.finished_at)
+
+    def test_active_run_endpoint(self):
+        # No active run yet for a fresh workflow: null.
+        r = client.get(f"/api/workflows/{self.workflow_id}/runs/active", headers=self.headers)
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNone(r.json()["run"])
+
+        active_id = self._make_run("running", "celery-task-3")
+        r = client.get(f"/api/workflows/{self.workflow_id}/runs/active", headers=self.headers)
+        self.assertEqual(r.status_code, 200)
+        run = r.json()["run"]
+        self.assertIsNotNone(run)
+        self.assertEqual(run["id"], active_id)
+        self.assertEqual(run["status"], "running")
+
+        # Cancelled runs are terminal and must not be reported as active.
+        with SessionLocal() as db:
+            db_run = db.query(WorkflowRun).filter(WorkflowRun.id == uuid.UUID(active_id)).one()
+            db_run.status = "cancelled"
+            db_run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+        r = client.get(f"/api/workflows/{self.workflow_id}/runs/active", headers=self.headers)
+        self.assertIsNone(r.json()["run"])
 
 
 if __name__ == "__main__":

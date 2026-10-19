@@ -156,6 +156,10 @@ export default function WorkspacePage() {
   };
 
   useEffect(() => {
+    // Run state (isRunning/currentRunId/node statuses) lives in a global
+    // store; clear it when switching workflows so one workflow's execution
+    // state never leaks into another.
+    resetExecution();
     apiClient.get("/operators")
       .then((res) => {
         const data = res.data;
@@ -164,6 +168,7 @@ export default function WorkspacePage() {
       .catch(() => {})
       .finally(() => {
         loadWorkflow();
+        adoptActiveRun();
       });
     return () => {
       if (wsRef.current) wsRef.current.close();
@@ -306,15 +311,151 @@ export default function WorkspacePage() {
   };
 
   const handleStop = async () => {
-    if (!currentRunId) return;
+    if (!currentRunId) {
+      // Stale UI state without a run: self-heal instead of a silent no-op.
+      setIsRunning(false);
+      message.warning("当前没有正在运行的执行");
+      return;
+    }
     try {
       const response = await apiClient.post("/runs/" + currentRunId + "/cancel");
       setWorkflowStatus(response.data.status as WorkflowRunStatus);
       setNodeStatus("__wf__", "cancelled");
+      // The executor task is terminated server-side, so no run_completed
+      // event will arrive; leave the running state immediately.
+      setIsRunning(false);
       message.info(text.cancelled);
     } catch (error: any) {
       message.error(error.response?.data?.detail || text.cancelFailed);
     }
+  };
+
+  const persistNodeRun = (nodeRun: any) => {
+    const nodeId = String(nodeRun.node_id);
+    const status = nodeRun.status as NodeRunStatus;
+    setNodeStatus(nodeId, status);
+    if (nodeRun.result !== undefined && nodeRun.result !== null || nodeRun.metrics || nodeRun.logs) {
+      const baseResult = nodeRun.result && typeof nodeRun.result === "object" && !Array.isArray(nodeRun.result)
+        ? { ...nodeRun.result }
+        : (nodeRun.result === undefined || nodeRun.result === null ? {} : { value: nodeRun.result });
+      if (nodeRun.metrics && (!baseResult.metrics || Object.keys(baseResult.metrics).length === 0)) {
+        baseResult.metrics = nodeRun.metrics;
+      }
+      if (Array.isArray(nodeRun.logs) && (!Array.isArray(baseResult.logs) || baseResult.logs.length === 0)) {
+        baseResult.logs = nodeRun.logs;
+      }
+      setNodeResult(nodeId, baseResult);
+    }
+    const resultError = nodeRun.result && typeof nodeRun.result === "object"
+      ? nodeRun.result
+      : undefined;
+    const explicitError = nodeRun.error || nodeRun.error_code || nodeRun.error_message ||
+      nodeRun.error_details || resultError?.error || resultError?.error_code || resultError?.error_message;
+    if (explicitError && nodeId !== "__wf__") {
+      const nodeError = normalizeNodeError(nodeId, {
+        ...nodeRun,
+        error: nodeRun.error ?? resultError?.error,
+        error_code: nodeRun.error_code ?? resultError?.error_code,
+        error_message: nodeRun.error_message ?? resultError?.error_message ?? resultError?.error,
+      });
+      if (nodeError) setNodeError(nodeId, nodeError);
+    }
+  };
+
+  const reconcileRun = async (runId: string) => {
+    try {
+      const response = await apiClient.get("/runs/" + runId);
+      const run = response.data;
+      setWorkflowStatus(run.status as WorkflowRunStatus);
+      setIsRunning(["pending", "running", "cancel_requested"].includes(run.status));
+      for (const nodeRun of run.node_runs || []) {
+        persistNodeRun(nodeRun);
+      }
+    } catch {
+      message.warning("无法恢复运行状态");
+    }
+  };
+
+  const showRunError = async (runId: string, fallback: string) => {
+    try {
+      const response = await apiClient.get("/runs/" + runId);
+      const run = response.data;
+      const failedAttempt = (run.node_runs || []).find((item: any) =>
+        ["failed", "timed_out"].includes(item.status)
+      );
+      if (failedAttempt) persistNodeRun(failedAttempt);
+      const lines = [
+        run.error_code ? `错误码：${run.error_code}` : "",
+        run.error_message || fallback,
+        failedAttempt ? `节点：${failedAttempt.node_id}，第 ${failedAttempt.attempt} 次尝试` : "",
+      ].filter(Boolean);
+      Modal.error({ title: "运行失败", content: lines.join("\n") });
+    } catch {
+      message.error("运行失败: " + fallback);
+    }
+  };
+
+  const attachRunListeners = (runId: string) => {
+    const wsUrl = (window.location.protocol === "https:" ? "wss:" : "ws:") +
+      "//" + window.location.host + "/ws/runs/" + runId;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      void reconcileRun(runId);
+    };
+    ws.onmessage = (event: MessageEvent) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === "node_status") {
+        persistNodeRun({
+          ...msg,
+          node_id: msg.node_id,
+          error: msg.error,
+          error_code: msg.error_code,
+          error_message: msg.error_message,
+          error_details: msg.error_details,
+        });
+        if (msg.node_id === "__wf__") setWorkflowStatus(msg.status as WorkflowRunStatus);
+        if (msg.progress != null) setNodeProgress(msg.node_id, msg.progress);
+      } else if (msg.type === "run_completed") {
+        setIsRunning(false);
+        setWorkflowStatus(msg.status as WorkflowRunStatus);
+        wsRef.current = null;
+        ws.close();
+        if (msg.status === "completed") {
+          message.success("工作流运行完成");
+          setNodeStatus("__wf__", "completed");
+        } else if (msg.status === "cancelled") {
+          message.info("工作流已取消");
+          setNodeStatus("__wf__", "cancelled");
+        } else {
+          void showRunError(runId, msg.error || "未知错误");
+          setNodeStatus("__wf__", "failed");
+        }
+      }
+    };
+    ws.onerror = () => {
+      wsRef.current = null;
+      void reconcileRun(runId);
+      message.warning("实时连接已关闭，正在恢复运行状态");
+    };
+  };
+
+  // Restore the running-state UI when opening a workflow whose run is still
+  // executing (e.g. after a page refresh or when switching between workflows).
+  const adoptActiveRun = () => {
+    if (!workflowId) return;
+    apiClient.get("/workflows/" + workflowId + "/runs/active")
+      .then((res) => {
+        const run = res.data?.run;
+        if (run && ["pending", "running", "cancel_requested"].includes(run.status)) {
+          setCurrentRunId(run.id);
+          setWorkflowStatus(run.status as WorkflowRunStatus);
+          setIsRunning(true);
+          attachRunListeners(run.id);
+        }
+      })
+      .catch(() => {});
   };
 
   const handleRun = async () => {
@@ -361,116 +502,7 @@ export default function WorkspacePage() {
       const runId = runRes.data.run_id;
       setCurrentRunId(runId);
       setWorkflowStatus("pending");
-
-      const persistNodeRun = (nodeRun: any) => {
-        const nodeId = String(nodeRun.node_id);
-        const status = nodeRun.status as NodeRunStatus;
-        setNodeStatus(nodeId, status);
-        if (nodeRun.result !== undefined && nodeRun.result !== null || nodeRun.metrics || nodeRun.logs) {
-          const baseResult = nodeRun.result && typeof nodeRun.result === "object" && !Array.isArray(nodeRun.result)
-            ? { ...nodeRun.result }
-            : (nodeRun.result === undefined || nodeRun.result === null ? {} : { value: nodeRun.result });
-          if (nodeRun.metrics && (!baseResult.metrics || Object.keys(baseResult.metrics).length === 0)) {
-            baseResult.metrics = nodeRun.metrics;
-          }
-          if (Array.isArray(nodeRun.logs) && (!Array.isArray(baseResult.logs) || baseResult.logs.length === 0)) {
-            baseResult.logs = nodeRun.logs;
-          }
-          setNodeResult(nodeId, baseResult);
-        }
-        const resultError = nodeRun.result && typeof nodeRun.result === "object"
-          ? nodeRun.result
-          : undefined;
-        const explicitError = nodeRun.error || nodeRun.error_code || nodeRun.error_message ||
-          nodeRun.error_details || resultError?.error || resultError?.error_code || resultError?.error_message;
-        if (explicitError && nodeId !== "__wf__") {
-          const nodeError = normalizeNodeError(nodeId, {
-            ...nodeRun,
-            error: nodeRun.error ?? resultError?.error,
-            error_code: nodeRun.error_code ?? resultError?.error_code,
-            error_message: nodeRun.error_message ?? resultError?.error_message ?? resultError?.error,
-          });
-          if (nodeError) setNodeError(nodeId, nodeError);
-        }
-
-      };
-
-      const reconcileRun = async () => {
-        try {
-          const response = await apiClient.get("/runs/" + runId);
-          const run = response.data;
-          setWorkflowStatus(run.status as WorkflowRunStatus);
-          setIsRunning(["pending", "running", "cancel_requested"].includes(run.status));
-          for (const nodeRun of run.node_runs || []) {
-            persistNodeRun(nodeRun);
-          }
-        } catch {
-          message.warning("无法恢复运行状态");
-        }
-      };
-
-      const showRunError = async (fallback: string) => {
-        try {
-          const response = await apiClient.get("/runs/" + runId);
-          const run = response.data;
-          const failedAttempt = (run.node_runs || []).find((item: any) =>
-            ["failed", "timed_out"].includes(item.status)
-          );
-          if (failedAttempt) persistNodeRun(failedAttempt);
-          const lines = [
-            run.error_code ? `错误码：${run.error_code}` : "",
-            run.error_message || fallback,
-            failedAttempt ? `节点：${failedAttempt.node_id}，第 ${failedAttempt.attempt} 次尝试` : "",
-          ].filter(Boolean);
-          Modal.error({ title: "运行失败", content: lines.join("\n") });
-        } catch {
-          message.error("运行失败: " + fallback);
-        }
-      };
-
-      const wsUrl = (window.location.protocol === "https:" ? "wss:" : "ws:") +
-        "//" + window.location.host + "/ws/runs/" + runId;
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        void reconcileRun();
-      };
-      ws.onmessage = (event: MessageEvent) => {
-        const msg = JSON.parse(event.data);
-        if (msg.type === "node_status") {
-          persistNodeRun({
-            ...msg,
-            node_id: msg.node_id,
-            error: msg.error,
-            error_code: msg.error_code,
-            error_message: msg.error_message,
-            error_details: msg.error_details,
-          });
-          if (msg.node_id === "__wf__") setWorkflowStatus(msg.status as WorkflowRunStatus);
-          if (msg.progress != null) setNodeProgress(msg.node_id, msg.progress);
-        } else if (msg.type === "run_completed") {
-          setIsRunning(false);
-          setWorkflowStatus(msg.status as WorkflowRunStatus);
-          wsRef.current = null;
-          ws.close();
-          if (msg.status === "completed") {
-            message.success("工作流运行完成");
-            setNodeStatus("__wf__", "completed");
-          } else if (msg.status === "cancelled") {
-            message.info("工作流已取消");
-            setNodeStatus("__wf__", "cancelled");
-          } else {
-            void showRunError(msg.error || "未知错误");
-            setNodeStatus("__wf__", "failed");
-          }
-        }
-      };
-      ws.onerror = () => {
-        wsRef.current = null;
-        void reconcileRun();
-        message.warning("实时连接已关闭，正在恢复运行状态");
-      };
+      attachRunListeners(runId);
     } catch (e: any) {
       setIsRunning(false);
       setNodeStatus("__wf__", "failed");

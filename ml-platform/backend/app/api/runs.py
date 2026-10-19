@@ -187,6 +187,31 @@ def get_run(
     return run
 
 
+@router.get("/api/workflows/{workflow_id}/runs/active")
+def get_active_run(
+    workflow_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the workflow's active run (pending/running/cancel_requested) if any.
+
+    The workspace page uses this to restore the running-state UI after a
+    refresh or when switching back to a workflow that is still executing.
+    """
+    workflow, _ = resolve_workflow_access(db, workflow_id, current_user.id)
+    run = db.query(WorkflowRun).filter(
+        WorkflowRun.workflow_id == workflow.id,
+        WorkflowRun.status.in_(["pending", "running", "cancel_requested"]),
+    ).order_by(WorkflowRun.started_at.desc()).first()
+    if run is None:
+        return {"run": None}
+    return {"run": {
+        "id": str(run.id),
+        "status": run.status,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+    }}
+
+
 @router.post("/api/runs/{run_id}/cancel")
 def cancel_run(
     run_id: str,
@@ -221,6 +246,16 @@ def cancel_run(
             dispatcher.cancel(task_id, terminate=True)
         except Exception:
             logger.exception("Failed to revoke workflow task %s", task_id)
+    if settings.task_backend == "celery":
+        # Celery terminate kills the worker process, so the executor can never
+        # persist the final status itself; without this the run would stay in
+        # cancel_requested forever and the UI would show a perpetual spinner.
+        db.refresh(run)
+        if run.status == "cancel_requested":
+            run.status = transition_run_status(run.status, "cancelled")
+            run.finished_at = datetime.now(timezone.utc)
+            run.logs = [*(run.logs or []), {"level": "info", "message": "Run cancelled"}]
+            db.commit()
     return {"run_id": str(run.id), "status": run.status}
 
 
