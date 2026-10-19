@@ -952,6 +952,19 @@ class DemoLoopFlow(unittest.TestCase):
         # 回归：重训数据集支持多选合并；回流行无人工标签时用推理结果自动
         # 补齐（回流数据集可以单独/混合选入重训），同时 total_count 计数。
         client.post(f"/api/projects/{self.project_id}/demo-loop/reset", json={}, headers=self.h)
+        # reset 只清计数不清报错工件；前序用例的报错行会随「报错数据集默认
+        # 参与重训」并入合并。置空 error_artifact_id 让本用例首个报错重建
+        # 全新报错工件，合并行数才可精确断言。
+        db = SessionLocal()
+        try:
+            config = db.query(DemoLoopConfig).filter(
+                DemoLoopConfig.project_id == uuid.UUID(self.project_id),
+            ).order_by(DemoLoopConfig.created_at.asc()).first()
+            if config is not None:
+                config.error_artifact_id = None
+                db.commit()
+        finally:
+            db.close()
         with tempfile.TemporaryDirectory() as tmp:
             base_path = Path(tmp) / "base.csv"
             pd.DataFrame({
@@ -1061,7 +1074,8 @@ class DemoLoopFlow(unittest.TestCase):
             svc = build_artifact_service(db)
             with svc.materialize(merged.id, merged.project_id, expected_type="dataset") as p:
                 merged_frame = pd.read_csv(p)
-            self.assertEqual(len(merged_frame), 12)  # 10 基础 + 2 回流
+            # 报错数据集默认参与重训且置于最前（179acca）：3 报错 + 10 基础 + 2 回流
+            self.assertEqual(len(merged_frame), 15)
             self.assertIn("label", merged_frame.columns)
             self.assertNotIn("prediction", merged_frame.columns)
             self.assertNotIn("confidence", merged_frame.columns)
@@ -1123,13 +1137,35 @@ class DemoLoopFlow(unittest.TestCase):
 class TestFeatureEngineeringModes(unittest.TestCase):
     """闭环配置的特征工程方式：operator / script / legacy 三条派生路径。"""
 
+    @classmethod
+    def setUpClass(cls):
+        ensure_admin()
+        from app.models.project import Project
+
+        db = SessionLocal()
+        try:
+            cls.owner_id = db.query(User).filter(User.username == "admin").one().id
+        finally:
+            db.close()
+
     def _make_service(self):
         db = SessionLocal()
         return db, demo_loop_module.DemoLoopService(db)
 
     def _make_config(self, db, project_id=None, **overrides):
+        # project_id 缺省时必须落一个真实项目行：FK 强制下随机 UUID 会被
+        # demo_loop_configs.project_id → projects.id 外键拒绝。
+        if project_id is None:
+            from app.models.project import Project
+
+            project = Project(
+                name=f"fe-mode-{uuid.uuid4().hex[:6]}", owner_id=self.owner_id,
+            )
+            db.add(project)
+            db.flush()
+            project_id = project.id
         config = DemoLoopConfig(
-            project_id=project_id or uuid.uuid4(),
+            project_id=project_id,
             name="fe-mode-test",
             preprocess_enabled=overrides.get("preprocess_enabled", True),
             feature_engineering_mode=overrides.get("mode", "legacy"),
