@@ -8,12 +8,20 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
+
+import pandas as pd
 
 sys.path.insert(0, ".")
 
 # Import via app.main to trigger operator registration
 from app.main import app  # noqa: F401
 from app.engine.registry import OperatorRegistry
+from app.operators.utility_operators import (
+    PYTHON_SCRIPT_FOOTER,
+    PYTHON_SCRIPT_HEADER,
+    PYTHON_SCRIPT_TEMPLATE,
+)
 from tests.operator_test_utils import execute_operator, operator_context
 
 
@@ -31,7 +39,11 @@ class TestPythonScriptOperator(unittest.TestCase):
         self.assertIsNotNone(op)
         self.assertEqual([port.name for port in op.inputs], ["data"])
         self.assertEqual([port.name for port in op.outputs], ["data"])
-        self.assertEqual([param.name for param in op.parameters], ["script"])
+        self.assertEqual([param.name for param in op.parameters],
+                         ["auto_install", "script"])
+        auto_install = next(p for p in op.parameters if p.name == "auto_install")
+        self.assertEqual(auto_install.type, "boolean")
+        self.assertTrue(auto_install.default)
 
     def test_uses_df_and_result_without_configurable_variable_names(self):
         op = OperatorRegistry.get("python_script")
@@ -50,6 +62,72 @@ class TestPythonScriptOperator(unittest.TestCase):
             {"script": "result = [{'b': df['a'].iloc[0] + 1}]"},
         )
         self.assertEqual(outputs["data"], [{"b": 2}])
+
+    def test_template_is_the_script_default_and_is_runnable_shape(self):
+        op = OperatorRegistry.get("python_script")
+        script_param = next(p for p in op.parameters if p.name == "script")
+        self.assertEqual(script_param.default, PYTHON_SCRIPT_TEMPLATE)
+        self.assertTrue(PYTHON_SCRIPT_TEMPLATE.startswith(PYTHON_SCRIPT_HEADER))
+        self.assertTrue(PYTHON_SCRIPT_TEMPLATE.rstrip().endswith(PYTHON_SCRIPT_FOOTER.rstrip()))
+
+    def test_unmodified_template_passes_interface_check(self):
+        """模板未改但功能区未写 result：接口校验通过，运行期提示补齐 result。"""
+        op = OperatorRegistry.get("python_script")
+        with self.assertRaises(RuntimeError) as ctx:
+            execute_operator(op, {"data": [{"a": 1}]}, {"script": PYTHON_SCRIPT_TEMPLATE})
+        self.assertIn("must assign output to 'result'", str(ctx.exception))
+
+    def test_template_with_implementation_runs(self):
+        script = (
+            PYTHON_SCRIPT_HEADER + "\n"
+            "result = df.copy()\n"
+            "result['b'] = result['a'] * 2\n"
+            + PYTHON_SCRIPT_FOOTER
+        )
+        op = OperatorRegistry.get("python_script")
+        outputs = execute_operator(op, {"data": [{"a": 1}, {"a": 2}]}, {"script": script})
+        self.assertEqual(outputs["data"], [{"a": 1, "b": 2}, {"a": 2, "b": 4}])
+
+    def test_modified_input_interface_rejected(self):
+        script = PYTHON_SCRIPT_TEMPLATE.replace("上游节点的输入数据表", "被我改掉的说明")
+        op = OperatorRegistry.get("python_script")
+        with self.assertRaises(RuntimeError) as ctx:
+            execute_operator(op, {"data": [{"a": 1}]}, {"script": script})
+        self.assertIn("输入/输出接口", str(ctx.exception))
+
+    def test_modified_output_interface_rejected(self):
+        script = PYTHON_SCRIPT_TEMPLATE.replace("平台自动传给下游", "随手一改")
+        op = OperatorRegistry.get("python_script")
+        with self.assertRaises(RuntimeError) as ctx:
+            execute_operator(op, {"data": [{"a": 1}]}, {"script": script})
+        self.assertIn("输入/输出接口", str(ctx.exception))
+
+    def test_interface_only_touched_spaces_tolerated(self):
+        """首尾空白不视为修改接口（模板尾部多敲回车不应拒绝运行）。"""
+        script = PYTHON_SCRIPT_TEMPLATE + "\n\n"
+        script = script.replace(
+            "# TODO: 在此编写你的处理逻辑，例如：\n",
+            "# TODO: 在此编写你的处理逻辑，例如：\nresult = df.copy()\n",
+        )
+        op = OperatorRegistry.get("python_script")
+        outputs = execute_operator(op, {"data": [{"a": 1}]}, {"script": script})
+        self.assertEqual(outputs["data"], [{"a": 1}])
+
+    def test_auto_install_param_forwarded_to_runtime(self):
+        op = OperatorRegistry.get("python_script")
+        runtime = mock.Mock()
+        runtime.execute.return_value = pd.DataFrame({"a": [1]})
+        from app.operators import utility_operators as uo
+
+        with mock.patch.object(uo, "_RUNTIME", runtime):
+            outputs = execute_operator(
+                op,
+                {"data": [{"a": 1}]},
+                {"script": "result = df.copy()", "auto_install": False},
+            )
+        self.assertEqual(outputs["data"], [{"a": 1}])
+        _, kwargs = runtime.execute.call_args
+        self.assertIs(kwargs.get("auto_install"), False)
 
     def test_allows_imports_in_subprocess(self):
         """子进程隔离后 import 放开：stdlib 直接可用，缺失库由运行时自动安装。"""

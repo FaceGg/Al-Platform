@@ -1,5 +1,5 @@
-import { Input, InputNumber, Select, Switch, Form, Divider, Button, Drawer, message, Upload, Typography } from "antd";
-import { DownloadOutlined, MinusCircleOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
+import { Input, InputNumber, Select, Switch, Form, Divider, Button, Drawer, Modal, message, Upload, Typography } from "antd";
+import { DownloadOutlined, EditOutlined, MinusCircleOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import { useI18n } from "../../i18n";
 import { downloadDatasetArtifact, listDatasets, listInferenceDeployments, listModelArtifacts } from "../../api/datasets";
 import { useWorkflowStore } from "../../stores/workflowStore";
@@ -324,6 +324,9 @@ const commonParamLabels: Record<string, { zh: string; en?: string }> = {
   y: { zh: "Y 轴列", en: "Y Column" },
   hue: { zh: "分组列", en: "Hue Column" },
   k: { zh: "Top K", en: "Top K" },
+  // python_script
+  auto_install: { zh: "自动安装依赖库", en: "Auto-install Dependencies" },
+  script: { zh: "处理脚本", en: "Script" },
 };
 
 export function getParamLabel(opId: string | undefined, paramName: string, lang: "zh" | "en"): string | null {
@@ -365,6 +368,8 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
   const [deployments, setDeployments] = useState<Array<{ id: string; name: string; observed_state?: string }>>([]);
   const [loadingDeployments, setLoadingDeployments] = useState(false);
   const [downloadingExport, setDownloadingExport] = useState(false);
+  const [scriptModalOpen, setScriptModalOpen] = useState(false);
+  const [scriptDraft, setScriptDraft] = useState("");
 
   const nodeId = selectedNode?.id || "";
   const operator = operators.find((op: any) => op.id === selectedNode?.data?.operatorId);
@@ -579,20 +584,47 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
     if (operator?.id === "python_script" && p.name === "script") {
       return (
         <div>
-          <Input.TextArea
-            rows={10}
-            maxLength={100_000}
-            showCount
-            value={value || ""}
-            onChange={(e) => handleParamChange(p.name, e.target.value)}
-            placeholder={"result = df.copy()"}
-          />
+          <Button
+            icon={<EditOutlined />}
+            onClick={() => {
+              setScriptDraft(String(value || p.default || ""));
+              setScriptModalOpen(true);
+            }}
+            block
+          >
+            {lang === "zh" ? "编辑" : "Edit"}
+          </Button>
+          <Modal
+            title={lang === "zh"
+              ? "编辑脚本（输入/输出接口为固定模板，请只修改功能实现区）"
+              : "Edit script (I/O interface is fixed; edit the implementation section only)"}
+            open={scriptModalOpen}
+            width={860}
+            okText={lang === "zh" ? "保存" : "Save"}
+            cancelText={lang === "zh" ? "取消" : "Cancel"}
+            onOk={() => {
+              const next = scriptDraft.trim() ? scriptDraft : String(p.default || "");
+              handleParamChange(p.name, next);
+              setScriptModalOpen(false);
+            }}
+            onCancel={() => setScriptModalOpen(false)}
+            destroyOnHidden
+          >
+            <Input.TextArea
+              rows={22}
+              maxLength={100_000}
+              showCount
+              style={{ fontFamily: "Consolas, Menlo, monospace", fontSize: 12 }}
+              value={scriptDraft}
+              onChange={(e) => setScriptDraft(e.target.value)}
+            />
+          </Modal>
           <Upload
             accept=".py"
             beforeUpload={(f) => handleFileUpload(f, p.name)}
             showUploadList={false}
           >
-            <Button icon={<UploadOutlined />} loading={uploading} size="small" block>
+            <Button icon={<UploadOutlined />} loading={uploading} size="small" block style={{ marginTop: 4 }}>
               {lang === "zh" ? "\u4e0a\u4f20 .py \u6587\u4ef6" : "Upload .py file"}
             </Button>
           </Upload>

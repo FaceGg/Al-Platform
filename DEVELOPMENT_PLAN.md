@@ -306,6 +306,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-19 python_script 算子交互改造：自动安装开关 + 编辑弹窗 + 固定输入/输出接口模板
+
+- 需求：①新增「自动安装依赖库」开关（开=自动装缺失 import 依赖，关=不装）；②参数区去掉内嵌脚本文本框，改「编辑」按钮弹窗编辑；③弹窗预填固定输入/输出接口模板，功能区留给用户，运行时强校验接口——改接口则拒绝运行。
+- 后端：`utility_operators.py` 新增 `PYTHON_SCRIPT_HEADER/FOOTER/TEMPLATE` 模板常量（ParamSpec 默认值，引擎执行与前端预填同源）与 `_validate_script_interface`——脚本含「输入接口（固定」标记时必须原样保留首部/尾部接口块（容忍首尾空白），否则报「输入/输出接口为固定模板，不可修改」；无标记的历史脚本按旧契约放行（存量工作流兼容）。新参数 `auto_install`（boolean，默认开）透传到 `PythonScriptRuntime.execute(auto_install=...)`，每次执行可覆盖全局设置；参数顺序 [auto_install, script]。
+- 前端：`NodeConfigPanel.tsx` python_script 的 script 参数渲染改为「编辑」按钮 + Modal 弹窗（等宽字体 TextArea 22 行、10 万字符上限、保存时空文本回填模板默认值），保留上传 .py 入口；弹窗打开时预填当前脚本或模板默认值；`commonParamLabels` 补 `auto_install`（自动安装依赖库/Auto-install Dependencies）与 `script`（处理脚本/Script）中英文标签。
+- 测试：`test_operators_utility.py` python_script 用例扩至 13 个（契约参数序、模板默认值形状、未改模板通过校验但提示补 result、模板+实现可运行、改输入/输出接口拒绝、仅动空白容忍、auto_install 透传 mock 验证）；utility+runtime 44 passed，相关大套件 110 passed + 6 subtests，前端 tsc 无错、workspace 4 测试文件 31 passed。
+- 部署：backend 与 frontend 镜像均需重建（算子参数定义在后端、交互在前端）。
+
 ### 2026-10-19 python_script 算子改造：子进程隔离 + 依赖自动安装（持久化 venv 卷）
 
 - 需求：python_script 算子支持 import——用户不指定、不填写任何依赖，平台从脚本 import 语句自动解析并安装缺失库；安装源仅限服务端配置（pypi 官方 + 阿里云 + 清华，默认），不支持用户手动指定任何源/包名/URL。

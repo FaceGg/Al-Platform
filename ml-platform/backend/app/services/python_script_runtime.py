@@ -240,11 +240,12 @@ class PythonScriptRuntime:
                 return candidate
         raise RuntimeError(f"PythonScript: venv python not found under {venv_dir}")
 
-    def _resolve_interpreter(self, script: str) -> str:
+    def _resolve_interpreter(self, script: str, auto_install: bool | None = None) -> str:
         if not self.venv_dir:
             return sys.executable
         interpreter = self._ensure_venv()
-        if self.auto_install:
+        effective = self.auto_install if auto_install is None else bool(auto_install)
+        if effective:
             external = [
                 module for module in collect_import_modules(script)
                 if module not in getattr(sys, "stdlib_module_names", frozenset())
@@ -315,8 +316,13 @@ class PythonScriptRuntime:
 
     # -- subprocess execution --------------------------------------------------
 
-    def execute(self, script: str, df: pd.DataFrame) -> pd.DataFrame:
-        interpreter = self._resolve_interpreter(script)
+    def execute(
+        self,
+        script: str,
+        df: pd.DataFrame,
+        auto_install: bool | None = None,
+    ) -> pd.DataFrame:
+        interpreter = self._resolve_interpreter(script, auto_install=auto_install)
         with tempfile.TemporaryDirectory(prefix="pyscript-") as tmp:
             script_path = os.path.join(tmp, "script.py")
             in_path = os.path.join(tmp, "input.pkl")

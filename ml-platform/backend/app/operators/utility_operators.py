@@ -11,6 +11,52 @@ import pandas as pd
 PYTHON_SCRIPT_MAX_LENGTH = 100_000
 PYTHON_SCRIPT_MAX_CELLS = 1_000_000
 
+# 固定输入/输出接口模板：编辑器预填，运行时强校验（改接口 → 拒绝运行）。
+PYTHON_SCRIPT_INTERFACE_TOKEN = "输入接口（固定"
+PYTHON_SCRIPT_HEADER = (
+    "# ============================================================\n"
+    "# 输入接口（固定，请勿修改，修改后将无法运行）\n"
+    "# df : pandas.DataFrame —— 上游节点的输入数据表，平台自动注入，直接使用\n"
+    "# ============================================================"
+)
+PYTHON_SCRIPT_FOOTER = (
+    "# ============================================================\n"
+    "# 输出接口（固定，请勿修改，修改后将无法运行）\n"
+    "# result : 输出结果，须为 pandas.DataFrame 或 dict 记录列表，平台自动传给下游\n"
+    "#          （在上方功能实现区为 result 赋值即可）\n"
+    "# ============================================================"
+)
+PYTHON_SCRIPT_TEMPLATE = (
+    PYTHON_SCRIPT_HEADER + "\n"
+    "\n"
+    "# ------------------------------------------------------------\n"
+    "# 功能实现区：在此编写处理逻辑，最终把结果赋值给 result\n"
+    "# ------------------------------------------------------------\n"
+    "# TODO: 在此编写你的处理逻辑，例如：\n"
+    "#   result = df.copy()\n"
+    "#   result[\"new_col\"] = result[\"old_col\"] * 2\n"
+    "\n"
+    + PYTHON_SCRIPT_FOOTER + "\n"
+)
+
+
+def _validate_script_interface(script: str) -> None:
+    """接口强校验：模板脚本（含固定标记）必须原样保留输入/输出接口。
+
+    无模板标记的历史脚本按旧契约放行（向后兼容存量工作流）。
+    """
+    normalized = script.strip()
+    if not normalized or PYTHON_SCRIPT_INTERFACE_TOKEN not in normalized:
+        return
+    if not (
+        normalized.startswith(PYTHON_SCRIPT_HEADER)
+        and normalized.endswith(PYTHON_SCRIPT_FOOTER.rstrip())
+    ):
+        raise RuntimeError(
+            "PythonScript: 输入/输出接口为固定模板，不可修改；"
+            "请在功能实现区编写逻辑，或重新打开编辑器恢复模板后重试",
+        )
+
 _RUNTIME_LOCK = threading.Lock()
 _RUNTIME: PythonScriptRuntime | None = None
 
@@ -57,7 +103,11 @@ class PythonScript(BaseOperator):
     inputs = [PortSpec("data", "DataTable", "Input Data")]
     outputs = [PortSpec("data", "DataTable", "Output Data")]
     parameters = [
-        ParamSpec("script", "str", "", "Python Script (df -> result)", required=True),
+        ParamSpec("auto_install", "boolean", True, "自动安装依赖库"),
+        ParamSpec(
+            "script", "str", PYTHON_SCRIPT_TEMPLATE,
+            "Python Script (df -> result)", required=True,
+        ),
     ]
 
     def validate(self, inputs):
@@ -69,9 +119,14 @@ class PythonScript(BaseOperator):
             raise ValueError(
                 f"PythonScript: script exceeds {PYTHON_SCRIPT_MAX_LENGTH} characters",
             )
+        _validate_script_interface(script)
         data = inputs.get("data", [])
         df = data.copy() if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
-        result = _python_script_runtime().execute(script, df)
+        auto_install = params.get("auto_install")
+        result = _python_script_runtime().execute(
+            script, df,
+            auto_install=None if auto_install is None else bool(auto_install),
+        )
         if result.shape[0] * result.shape[1] > PYTHON_SCRIPT_MAX_CELLS:
             raise ValueError("PythonScript: output is too large")
         return OperatorResult(outputs={"data": result.to_dict(orient="records")})
