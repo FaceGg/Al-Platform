@@ -347,6 +347,12 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 测试：TestFeatureEngineeringModes 4 用例全过（operator 模式经拧紧特征工程节点派生 TIGHTEN_TORQUE_DEVIATION、script 模式经模板脚本派生、模式载荷校验、**非特征工程类别节点被拒绝**）；test_10/11/12 旧开关语义用例按新语义复核仍绿。注：test_06/07/17/20 的 6 个失败为容器环境预存问题（容器内 mlflow:5000 可达使重训链路真实触发，与 CI 隔离环境不符），已用 stash 基线对照证实与本次改动无关。
 - 部署：backend/frontend/migrate/worker 镜像各自重建（migrate 为独立镜像），`alembic upgrade head` 至 `20261019_72` 已在线验证。
 
+### 2026-10-19 修复演示闭环特征工程节点下拉永远为空：apiGet 响应双重解包
+
+- 现象：闭环配置选「工作流特征工程算子」后，节点下拉始终显示"本项目工作流中未找到特征工程算子节点"。
+- 根因：`apiGet` 已返回解包后的响应体，弹窗代码又取了一层 `.data`（`wfRes.data?.items || wfRes.data`），工作流列表恒为空数组；工作流详情 `detail.data?.nodes` 同理。
+- 修复：按 `apiGet` 真实契约取值（列表为纯数组、详情直取 `.nodes`）；`fetchFeatureOperatorIds`/`fetchPythonScriptTemplate` 同步修正（operators 恰为数组故未触发该 bug，仍统一写法）。前端 tsc 无错；新包 `index-u2QRprsg.js` 上线。
+
 ### 2026-10-19 数据集下载使用原始文件名（支持中文名）
 
 - 现象：数据管理下载数据集，文件名一律是 dataset.csv 而非原始文件名。

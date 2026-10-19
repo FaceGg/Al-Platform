@@ -42,8 +42,7 @@ const FEATURE_MODE_OPTIONS = [
 /** 「特征工程」类别下的算子（与算子面板分类一致，随平台算子扩展自动更新） */
 async function fetchFeatureOperatorIds(): Promise<Set<string>> {
   try {
-    const res = await apiGet("/operators");
-    const data = res.data;
+    const data = await apiGet("/operators");
     const ops = Array.isArray(data) ? data : data.items || [];
     const ids = new Set<string>(
       ops.filter((op: any) => op.category === "feature_engineering").map((op: any) => op.id),
@@ -57,8 +56,7 @@ async function fetchFeatureOperatorIds(): Promise<Set<string>> {
 
 async function fetchPythonScriptTemplate(): Promise<string> {
   try {
-    const res = await apiGet("/operators");
-    const data = res.data;
+    const data = await apiGet("/operators");
     const ops = Array.isArray(data) ? data : data.items || [];
     const scriptOp = ops.find((op: any) => op.id === "python_script");
     return scriptOp?.parameters?.find((p: any) => p.name === "script")?.default || "";
@@ -94,13 +92,15 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
     (async () => {
       const feIds = await fetchFeatureOperatorIds();
       try {
-        const wfRes = await apiGet(`/projects/${projectId}/workflows`);
-        const workflows: Array<{ id: string; name: string }> = wfRes.data?.items || wfRes.data || [];
+        const wfList = await apiGet(`/projects/${projectId}/workflows`);
+        // apiGet 已解包响应体：工作流列表是纯数组，详情含 nodes
+        const workflows: Array<{ id: string; name: string }> = Array.isArray(wfList)
+          ? wfList : wfList?.items || [];
         const options: Array<{ value: string; label: string }> = [];
         for (const wf of workflows) {
           try {
             const detail = await apiGet(`/workflows/${wf.id}`);
-            for (const node of detail.data?.nodes || []) {
+            for (const node of detail?.nodes || []) {
               if (feIds.has(node.operator_id)) {
                 options.push({
                   value: String(node.id),
