@@ -18,7 +18,7 @@ from app.engine.registry import register_operator
 class ApiInputOperator(BaseOperator):
     id = "api_input"
     name = "API Input"
-    category = "io"
+    category = "closed_loop"
     description = "Record injected by the orchestration API invoke call"
     inputs = []
     outputs = [PortSpec("data", "DataTable", "Invoked Record")]
@@ -44,7 +44,7 @@ class ApiInputOperator(BaseOperator):
 class LoadModelArtifactOperator(BaseOperator):
     id = "load_model_artifact"
     name = "Load Model Artifact"
-    category = "ml"
+    category = "closed_loop"
     description = "Load a frozen trained-model artifact for serving"
     inputs = []
     outputs = [PortSpec("model", "Model", "Loaded Model")]
@@ -96,7 +96,7 @@ class LoadModelArtifactOperator(BaseOperator):
 class AppendErrorDatasetOperator(BaseOperator):
     id = "append_error_dataset"
     name = "Append Error Dataset"
-    category = "io"
+    category = "closed_loop"
     description = "Append the branch rows to an error dataset artifact (closed loop)"
     inputs = [PortSpec("data", "DataTable", "Error Rows")]
     outputs = [PortSpec("data", "DataTable", "Appended Rows")]
@@ -142,7 +142,7 @@ class AppendErrorDatasetOperator(BaseOperator):
 class NotifyAdminsOperator(BaseOperator):
     id = "notify_admins"
     name = "Notify Admins"
-    category = "io"
+    category = "closed_loop"
     description = "Send an in-app notification to the project owner and platform admins"
     inputs = [PortSpec("data", "DataTable", "Trigger Rows")]
     outputs = [PortSpec("data", "DataTable", "Trigger Rows")]
@@ -187,7 +187,7 @@ class NotifyAdminsOperator(BaseOperator):
 class RetrainThresholdOperator(BaseOperator):
     id = "retrain_threshold"
     name = "Retrain Threshold"
-    category = "control"
+    category = "closed_loop"
     description = ("Trigger AutoML retraining once the accumulated dataset "
                    "reaches the row threshold; completes the model swap on a "
                    "later invoke when the job finishes")

@@ -322,6 +322,15 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 修复：①`config.py` `python_script_venv_dir` 默认改为 `""`（解释器模式为全局默认；非容器环境天然安全），生产由 compose `production-environment` anchor 显式注入 `PYTHON_SCRIPT_VENV_DIR: /data/python-script-venv`（backend/worker 共用，容器内持久化 venv 行为不变）；②`run_suite.py` 头部 `os.environ.setdefault("PYTHON_SCRIPT_VENV_DIR", "")` 兜底；③`genericization_gate.py` `LEGACY_ADAPTER_FILES` 白名单加入 `services/python_script_examples.py`，examples 文件补 `LEGACY_ADAPTER_ONLY = True` 桥接标记；④`week_manifest.py` Week 3 登记 `test_python_script_runtime`。
 - 验证：`run_suite.py --week 1` 20/20 passed（manifest + genericization 修复生效）；`--week 3` 17/17 passed（python_script 子进程测试在 run_suite 路径恢复）。镜像无强制重建需求（config 默认值变化随下次构建生效；compose env 已显式注入）。
 
+### 2026-10-19 算子面板新增「闭环自动化」分类 + 拧紧特征工程参数中文化
+
+- 需求：①拧紧特征工程算子参数中英文适配；②算子列表新增「闭环自动化」分类，收纳闭环自动化/应用编排算子。
+- 分类迁移：`serving_operators.py` 中 5 个编排闭环算子 category 统一改为 `closed_loop`——api_input（原 io）、load_model_artifact（原 ml）、append_error_dataset（原 io）、notify_admins（原 io）、retrain_threshold（原 control）。`OperatorPanel.tsx` 新增 closed_loop 标签（中「闭环自动化」/英 Closed Loop）、排序（evaluation 之后）、图标 ApiOutlined。
+- 参数标签：`NodeConfigPanel.tsx` `operatorParamLabels` 新增 `tighten_feature_engineering` 段——torque_column=实际扭矩列、target_torque_column=目标扭矩列、upper_limit_column=力矩上限列、lower_limit_column=力矩下限列、torque_two_column=二轴扭矩列（留空跳过双轴差）、output_prefix=派生特征前缀（中英双语）。
+- 兼容性：类别仅是面板分组元数据，保存的工作流节点按 operator_id 引用不受影响；registry raw-output 包装集合不含 closed_loop（这些算子本就无 raw_data 端口，行为不变）；测试无分类断言（仅 operator_id 引用）。
+- 验证：后端 test_all_operators + test_operators_utility 124 passed（含新分类的 every_category_has_operators 校验）；前端 tsc 无错、面板测试 8 passed。
+- 部署：backend（分类序列化）与 frontend（面板分组/标签）镜像均需重建。
+
 ### 2026-10-19 python_script 算子内置示例脚本（点焊/拧紧特征工程），编辑器可点击插入
 
 - 需求：把点焊/拧紧特征工程的 python_script 复现脚本做成示例，放进算子供用户点击查看。

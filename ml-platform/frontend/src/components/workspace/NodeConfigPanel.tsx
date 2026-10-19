@@ -259,6 +259,14 @@ const operatorParamLabels: Record<string, Record<string, { zh: string; en?: stri
     columns: { zh: "特征列（多选，留空=全部数值列）", en: "Feature Columns (multi-select, empty=all numeric)" },
     target_column: { zh: "目标列", en: "Target Column" },
   },
+  tighten_feature_engineering: {
+    torque_column: { zh: "实际扭矩列", en: "Actual Torque Column" },
+    target_torque_column: { zh: "目标扭矩列", en: "Target Torque Column" },
+    upper_limit_column: { zh: "力矩上限列", en: "Upper Limit Column" },
+    lower_limit_column: { zh: "力矩下限列", en: "Lower Limit Column" },
+    torque_two_column: { zh: "二轴扭矩列（留空跳过双轴差）", en: "Second Axis Torque Column (empty to skip)" },
+    output_prefix: { zh: "派生特征前缀", en: "Derived Feature Prefix" },
+  },
 };
 
 const commonParamLabels: Record<string, { zh: string; en?: string }> = {

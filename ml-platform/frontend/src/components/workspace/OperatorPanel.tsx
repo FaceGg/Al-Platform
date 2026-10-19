@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Collapse, Input, Tag, Tooltip } from "antd";
 import {
-  AppstoreOutlined, ApartmentOutlined, BarChartOutlined, DatabaseOutlined,
+  AppstoreOutlined, ApartmentOutlined, ApiOutlined, BarChartOutlined, DatabaseOutlined,
   ExperimentOutlined, FilterOutlined, FunctionOutlined, FundOutlined, ThunderboltOutlined, ToolOutlined,
 } from "@ant-design/icons";
 import { useWorkflowStore } from "../../stores/workflowStore";
@@ -17,6 +17,7 @@ const CATEGORY_LABELS: Record<string, { zh: string; en: string }> = {
   ml: { zh: "机器学习", en: "ML" },
   dl: { zh: "深度学习", en: "Deep Learning" },
   evaluation: { zh: "模型评估", en: "Evaluation" },
+  closed_loop: { zh: "闭环自动化", en: "Closed Loop" },
   visualization: { zh: "可视化", en: "Visualization" },
   control: { zh: "流程控制", en: "Control Flow" },
   mechanism: { zh: "机理模型", en: "Mechanism" },
@@ -24,7 +25,7 @@ const CATEGORY_LABELS: Record<string, { zh: string; en: string }> = {
   utility: { zh: "工具", en: "Utilities" },
 };
 
-const CAT_ORDER = ["data_io", "io", "processing", "feature_engineering", "blending", "ml", "dl", "evaluation", "visualization", "control", "mechanism", "optimization", "utility"];
+const CAT_ORDER = ["data_io", "io", "processing", "feature_engineering", "blending", "ml", "dl", "evaluation", "closed_loop", "visualization", "control", "mechanism", "optimization", "utility"];
 
 const CATEGORY_ICONS: Record<string, typeof AppstoreOutlined> = {
   data_io: DatabaseOutlined,
@@ -35,6 +36,7 @@ const CATEGORY_ICONS: Record<string, typeof AppstoreOutlined> = {
   ml: ExperimentOutlined,
   dl: ThunderboltOutlined,
   evaluation: BarChartOutlined,
+  closed_loop: ApiOutlined,
   visualization: FundOutlined,
   control: ApartmentOutlined,
   mechanism: ToolOutlined,
