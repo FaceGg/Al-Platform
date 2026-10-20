@@ -308,6 +308,9 @@ const operatorParamLabels: Record<string, Record<string, { zh: string; en?: stri
     lower_limit_column: { zh: "力矩下限列", en: "Lower Limit Column" },
     torque_two_column: { zh: "二轴扭矩列（留空跳过双轴差）", en: "Second Axis Torque Column (empty to skip)" },
     output_prefix: { zh: "派生特征前缀", en: "Derived Feature Prefix" },
+    drop_columns: { zh: "剔除列（防标签泄漏，基础名匹配）", en: "Columns to Drop (leakage guard)" },
+    missing_strategy: { zh: "缺失填充策略", en: "Missing Value Strategy" },
+    missing_flag_column: { zh: "缺失标记列（空=不生成）", en: "Missing-flag Column (empty to disable)" },
   },
 };
 

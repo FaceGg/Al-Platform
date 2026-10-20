@@ -306,6 +306,15 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 拧紧特征工程算子：默认剔除泄漏判定列 + 缺失填充策略（单轴行保留）
+
+- 背景：测试集评估深度分析（tighten_test.csv 70087 行）结论——全部 13791 个误分类 100% 来自二轴判定缺失（单轴拧紧）行（55.6%，错误率 35.38%）；根因链为 AutoML `drop_rows_before_training` 把训练集 156,306 行二轴缺失行（含 57,381 不合格）整行剔除 + 泄漏列 DECIDE_ONE/DECIDE_TWO 让判定齐全行"作弊"（错误率 0.06%）。用户要求：修改拧紧特征工程算子移除 DECIDE_ONE/DECIDE_TWO、调整缺失策略。
+- 改动（`operators/processing.py` TightenFeatureEngineering）：①新参数 `drop_columns`（默认 `"DECIDE_ONE,DECIDE_TWO"`，逗号分隔、中文表头基础名兼容解析，输出前剔除防标签泄漏；显式空串禁用）；②`missing_strategy`（keep/zero/median/mean，**默认 median**）——派生前填充原始数值列（保证派生特征自洽，如双轴差=实际−填充后二轴），派生后补填派生列残留缺失（零带宽比率），使 AutoML 的 dropna 不再剔除单轴行（可用训练样本 12.4 万 → 28 万，不合格样本 +5.7 万）；③`missing_flag_column`（默认 `TIGHTEN_MISSING_FLAG`，空=禁用）——发生填充的行置 1，模型可显式学习"单轴行"语义。statistics 透出 removed_columns/missing_strategy/filled_cells/missing_flag_rows。
+- 实现：模块级 `_fill_numeric_missing`（含全缺失列回退 0——单行编排调用场景）；ParamSpec 默认值不进 execute，参数回退在 execute 内显式处理（沿用算子既有模式，空串=显式禁用）。前端：`operatorParamLabels` 补 3 参数中英文标签；`isColumnParam` 加入 `drop_columns`（节点参数面板渲染上游列多选下拉）。
+- 兼容性：已保存工作流/编排快照 params 显式不受默认值变化影响；演示闭环 operator 模式（默认参数）补列合并不受剔除影响；**下游 AutoML 重训任务若特征列配置含 DECIDE_ONE/DECIDE_TWO 需同步剔除**（列已不存在）。
+- 验证：test_all_operators 新增 2 用例（默认剔除+填充+标记列全断言 / keep 策略保持缺失）+ 2 个旧用例改显式 keep（聚焦派生逻辑原意图），98/98 passed；前端 tsc + 21 tests passed；backend/worker/frontend 镜像重建，nginx 重启。
+- 后续建议（未实施，deferred）：用新算子重跑拧紧训练工作流生成新训练数据 → AutoML 重训（剔除泄漏列后模型学习扭矩→质量真实关系）→ 同测试集对比不合格类召回率。
+
 ### 2026-10-20 评估结果可视化预览补全：刷新恢复历史结果 + 评估节点可打开结果抽屉 + 指标中文化
 
 - 需求：用户希望测试结果（准确率/精确率/召回率/F1/混淆矩阵）在画布上有可视化预览——评估算子有实现（metrics/per_label/chart 端口），但**缺少预览效果**。

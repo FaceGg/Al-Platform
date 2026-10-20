@@ -270,6 +270,36 @@ class SpotWeldFeatureEngineering(BaseOperator):
         })
 
 
+def _fill_numeric_missing(frame: pd.DataFrame, strategy: str, columns=None):
+    """按策略就地填充数值列缺失，返回 (填充单元格数, 行级缺失掩码)。
+
+    全缺失列（如单行编排调用）无统计量可算时回退 0。
+    """
+    target_columns = (
+        list(frame.select_dtypes(include=[np.number]).columns)
+        if columns is None else [c for c in columns if c in frame.columns]
+    )
+    mask = (
+        frame[target_columns].isna().any(axis=1)
+        if target_columns else pd.Series(False, index=frame.index)
+    )
+    filled = 0
+    if strategy in ("zero", "median", "mean"):
+        for column in target_columns:
+            series = frame[column]
+            if not series.isna().any():
+                continue
+            if strategy == "zero":
+                value = 0
+            else:
+                value = series.median() if strategy == "median" else series.mean()
+                if pd.isna(value):
+                    value = 0
+            filled += int(series.isna().sum())
+            frame[column] = series.fillna(value)
+    return filled, mask
+
+
 @register_operator
 class TightenFeatureEngineering(BaseOperator):
     id = "tighten_feature_engineering"
@@ -295,6 +325,16 @@ class TightenFeatureEngineering(BaseOperator):
             "Second axis torque column (empty to skip)",
         ),
         ParamSpec("output_prefix", "str", "TIGHTEN_", "Derived feature name prefix"),
+        ParamSpec(
+            "drop_columns", "str", "DECIDE_ONE,DECIDE_TWO",
+            "Leakage columns to drop (comma-separated, base-name match)",
+        ),
+        ParamSpec("missing_strategy", "select", "median", "Missing Value Strategy",
+                  options=["keep", "zero", "median", "mean"]),
+        ParamSpec(
+            "missing_flag_column", "str", "TIGHTEN_MISSING_FLAG",
+            "Missing-flag column name (1 = row had gaps, empty to disable)",
+        ),
     ]
 
     def validate(self, inputs):
@@ -337,6 +377,18 @@ class TightenFeatureEngineering(BaseOperator):
         torque_two_col = resolve_column(params.get("torque_two_column") or "ACTUAL_TORQUE_TWO")
         prefix = str(params.get("output_prefix") or "").strip() or "TIGHTEN_"
 
+        # --- 缺失填充（派生前，作用在原始列） ---
+        # 二轴缺失（单轴拧紧）行此前被下游 AutoML 的 drop_rows 整行剔除，模型
+        # 对这类高不良率行零先验。默认 median 填充让单轴行保留参与训练；先填
+        # 原始列再派生，保证派生特征（如双轴差）自洽。keep = 保持缺失。
+        missing_strategy = str(params.get("missing_strategy") or "median").strip().lower()
+        flag_raw = params.get("missing_flag_column")
+        flag_column = str(flag_raw).strip() if flag_raw is not None else "TIGHTEN_MISSING_FLAG"
+        filled_cells = 0
+        missing_mask = pd.Series(False, index=df.index)
+        if missing_strategy != "keep":
+            filled_cells, missing_mask = _fill_numeric_missing(df, missing_strategy)
+
         torque = pd.to_numeric(df[torque_col], errors="coerce")
         target = pd.to_numeric(df[target_col], errors="coerce")
         features = df.copy()
@@ -377,6 +429,34 @@ class TightenFeatureEngineering(BaseOperator):
         for name in schema:
             statistics[f"{name}_non_null"] = int(features[name].notna().sum())
         statistics["derived_features"] = schema
+
+        # --- 泄漏列剔除 ---
+        # 判定结果列（DECIDE_ONE/DECIDE_TWO）与目标强相关属标签泄漏，默认剔除。
+        # 显式传空字符串 = 禁用（ParamSpec 默认值不进 execute，需在此回退）。
+        drop_raw = params.get("drop_columns")
+        drop_source = str(drop_raw) if drop_raw is not None else "DECIDE_ONE,DECIDE_TWO"
+        drop_names = [name.strip() for name in drop_source.split(",") if name.strip()]
+        removed: list[str] = []
+        for name in drop_names:
+            resolved = resolve_column(name)
+            if resolved is not None and resolved in features.columns:
+                features = features.drop(columns=[resolved])
+                removed.append(resolved)
+        statistics["removed_columns"] = removed
+
+        # --- 派生列残留缺失填充（如零带宽比率）+ 缺失标记列 ---
+        if missing_strategy != "keep" and schema:
+            derived_filled, derived_mask = _fill_numeric_missing(
+                features, missing_strategy, columns=schema)
+            filled_cells += derived_filled
+            missing_mask = missing_mask | derived_mask
+        if missing_strategy != "keep" and flag_column:
+            features[flag_column] = missing_mask.astype(int)
+            statistics["missing_flag_column"] = flag_column
+            statistics["missing_flag_rows"] = int(missing_mask.sum())
+        statistics["missing_strategy"] = missing_strategy
+        statistics["filled_cells"] = filled_cells
+
         statistics["skipped"] = skipped
 
         return OperatorResult(outputs={

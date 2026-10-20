@@ -402,7 +402,7 @@ export function extractColumnsFromResult(result: any): string[] {
 }
 
 export function isColumnParam(paramName: string): string | null {
-  const colParams = ["target_column", "left_keys", "right_keys", "sort_column", "columns", "column", "attribute_name", "group_by"];
+  const colParams = ["target_column", "left_keys", "right_keys", "sort_column", "columns", "column", "attribute_name", "group_by", "drop_columns"];
   return colParams.includes(paramName) ? paramName : null;
 }
 

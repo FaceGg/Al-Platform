@@ -438,7 +438,10 @@ class TestProcessingOperatorsExecution(unittest.TestCase):
 
         outputs = execute_operator(
             OperatorRegistry.get("tighten_feature_engineering"),
-            {"data": data}, {})
+            {"data": data},
+            # keep：本用例聚焦派生逻辑本身（缺失保留为 NaN）；默认 median
+            # 填充行为由 drops_leakage_and_fills_missing 用例覆盖。
+            {"missing_strategy": "keep", "missing_flag_column": ""})
 
         derived = outputs["schema"]["derived_columns"]
         self.assertEqual(
@@ -485,7 +488,9 @@ class TestProcessingOperatorsExecution(unittest.TestCase):
 
         outputs = execute_operator(
             OperatorRegistry.get("tighten_feature_engineering"),
-            {"data": data}, {})
+            {"data": data},
+            # keep：聚焦零带宽 → 比率 NaN 的派生逻辑（默认 median 会填充）
+            {"missing_strategy": "keep", "missing_flag_column": ""})
 
         self.assertTrue(pd_is_nan(outputs["features"][0]["TIGHTEN_DEVIATION_RATIO"]))
         self.assertEqual(outputs["statistics"]["band_width_zero_rows"], 1)
@@ -521,6 +526,51 @@ class TestProcessingOperatorsExecution(unittest.TestCase):
         self.assertAlmostEqual(first["TIGHTEN_LOWER_MARGIN"], 7.0)
         self.assertAlmostEqual(first["TIGHTEN_DUAL_AXIS_DIFF"], -2.0)
         self.assertEqual(outputs["statistics"]["skipped"], {})
+
+    def test_tighten_feature_engineering_drops_leakage_and_fills_missing(self):
+        # 默认参数：剔除 DECIDE_ONE/DECIDE_TWO（防标签泄漏）；二轴缺失（单轴
+        # 拧紧）行按 median 填充保留——不再被下游 AutoML drop_rows 整行剔除，
+        # 并生成缺失标记列让模型显式学习"单轴行"语义。
+        data = [
+            {"ACTUAL_TORQUE": 632.0, "TARGET_TORQUE": 630.0, "UPPER_LIMIT": 635.0,
+             "LOWER_LIMIT": 625.0, "ACTUAL_TORQUE_TWO": 634.0,
+             "DECIDE_ONE": 1, "DECIDE_TWO": 1},
+            {"ACTUAL_TORQUE": 640.0, "TARGET_TORQUE": 630.0, "UPPER_LIMIT": 635.0,
+             "LOWER_LIMIT": 625.0, "ACTUAL_TORQUE_TWO": None,
+             "DECIDE_ONE": 1, "DECIDE_TWO": None},
+        ]
+
+        outputs = execute_operator(
+            OperatorRegistry.get("tighten_feature_engineering"),
+            {"data": data}, {})
+
+        features = outputs["features"]
+        self.assertEqual(len(features), 2)
+        self.assertNotIn("DECIDE_ONE", features[0])
+        self.assertNotIn("DECIDE_TWO", features[0])
+        # 二轴缺失行被中位数填充：median([634.0]) = 634.0
+        self.assertAlmostEqual(features[1]["ACTUAL_TORQUE_TWO"], 634.0)
+        self.assertAlmostEqual(features[1]["TIGHTEN_DUAL_AXIS_DIFF"], 640.0 - 634.0)
+        self.assertEqual(features[0]["TIGHTEN_MISSING_FLAG"], 0)
+        self.assertEqual(features[1]["TIGHTEN_MISSING_FLAG"], 1)
+        stats = outputs["statistics"]
+        self.assertEqual(stats["removed_columns"], ["DECIDE_ONE", "DECIDE_TWO"])
+        self.assertEqual(stats["missing_strategy"], "median")
+        self.assertEqual(stats["missing_flag_rows"], 1)
+        self.assertEqual(stats["filled_cells"], 2)  # ACTUAL_TORQUE_TWO + TIGHTEN_DUAL_AXIS_DIFF（行 2）
+
+    def test_tighten_feature_engineering_keep_strategy_disables_fill(self):
+        # missing_strategy=keep：保持缺失，不填充、不生成标记列
+        data = [{"ACTUAL_TORQUE": 632.0, "TARGET_TORQUE": 630.0,
+                 "UPPER_LIMIT": 635.0, "LOWER_LIMIT": 625.0,
+                 "ACTUAL_TORQUE_TWO": None}]
+        outputs = execute_operator(
+            OperatorRegistry.get("tighten_feature_engineering"),
+            {"data": data}, {"missing_strategy": "keep", "missing_flag_column": ""})
+        first = outputs["features"][0]
+        self.assertIsNone(first["ACTUAL_TORQUE_TWO"])
+        self.assertNotIn("TIGHTEN_MISSING_FLAG", first)
+        self.assertEqual(outputs["statistics"]["missing_strategy"], "keep")
 
     def test_feature_engineering_category_has_both_domain_operators(self):
         operators = OperatorRegistry.list_by_category("feature_engineering")
