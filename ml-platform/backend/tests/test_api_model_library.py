@@ -163,10 +163,11 @@ class TestModelLibraryAPI(unittest.TestCase):
         top = r.json()["top_models"]
         top_names = [item["name"] for item in top]
         self.assertIn(f"{marker}-high", top_names)
-        # 共享库中可能存在更高分的真实条目，按标记内相对序断言（best_score 降序）
+        # 共享库中可能存在更高分的真实条目，按标记内相对序断言（best_score 降序；
+        # noscore 无 best_score 排在末位，但名称以同一 marker 开头，须一并断言）
         self.assertEqual(
             [name for name in top_names if name.startswith(marker)],
-            [f"{marker}-high", f"{marker}-mid", f"{marker}-low"],
+            [f"{marker}-high", f"{marker}-mid", f"{marker}-low", f"{marker}-noscore"],
         )
 
         r = client.get("/api/dashboard/top-models", headers=self.h)
@@ -175,7 +176,7 @@ class TestModelLibraryAPI(unittest.TestCase):
         self.assertIn(f"{marker}-high", dash_top)
         self.assertEqual(
             [name for name in dash_top if name.startswith(marker)],
-            [f"{marker}-high", f"{marker}-mid", f"{marker}-low"],
+            [f"{marker}-high", f"{marker}-mid", f"{marker}-low", f"{marker}-noscore"],
         )
 
         # 清理
