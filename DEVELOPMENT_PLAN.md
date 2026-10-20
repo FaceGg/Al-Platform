@@ -306,6 +306,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 「加载模型制品」下拉过滤：ONNX 不列出 + 已删自动建模任务的孤儿工件不列出
+
+- 需求：用户反馈工作流「加载模型制品」算子的「模型制品」下拉存在两个问题——①平台不支持 ONNX 格式的 load_model_artifact，下拉却列出 ONNX 工件；②列出大量已删除自动建模任务残留的模型工件。
+- 根因（查库取证）：`GET /api/projects/{id}/model-artifacts` 仅按 `type=model + archived_at IS NULL` 返回前 200 条，不区分格式也不清理孤儿——任务删除不级联删工件，automl 产物全部残留。
+- 改动（`app/api/datasets.py` list_project_model_artifacts）：①查询加 `Artifact.format == "joblib"`（ONNX 走模型注册表/部署链路，不进画布下拉）；②孤儿过滤——`metadata.source == "automl"` 且带 `training_job_id` 的工件，若任务已不存在（`training_jobs` 查无）且未被模型注册表或模型库引用则排除。引用判定覆盖真实存在的两条链路：直接注册（`model_versions.source_artifact_id` 指向原 automl 工件，如「automl-job - 实验 - XGBoost」）与经模型库中转（`model_library.model_artifact_id` 指向工件，如「Random Forest」库条目）。手动上传工件（无 automl 标记）不受影响。
+- 验证：`test_api_datasets.py` test_10 断言四类工件（任务存活 automl 保留 / 任务已删且无引用 automl 排除 / 任务已删但被模型库引用保留 / onnx 排除，按 format 字段而非文件名后缀），25/25 passed；真实环境下拉从 16 项收敛为 5 项（5 个 ONNX + 6 个已删任务 b6eedb87 的无引用 joblib 被排除；用户在用的 random_forest/xgboost（已导入模型库）保留）；backend 镜像重建部署。
+- 说明：仅过滤下拉展示，孤儿工件文件不删除；模型注册表/模型库删除其引用后对应工件会在下次拉取时自然隐藏。
+
 ### 2026-10-20 拧紧特征工程算子：默认剔除泄漏判定列 + 缺失填充策略（单轴行保留）
 
 - 背景：测试集评估深度分析（tighten_test.csv 70087 行）结论——全部 13791 个误分类 100% 来自二轴判定缺失（单轴拧紧）行（55.6%，错误率 35.38%）；根因链为 AutoML `drop_rows_before_training` 把训练集 156,306 行二轴缺失行（含 57,381 不合格）整行剔除 + 泄漏列 DECIDE_ONE/DECIDE_TWO 让判定齐全行"作弊"（错误率 0.06%）。用户要求：修改拧紧特征工程算子移除 DECIDE_ONE/DECIDE_TWO、调整缺失策略。

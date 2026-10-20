@@ -8,7 +8,9 @@ from app.main import app
 from app.database import Base, SessionLocal, engine
 from app.models.artifact import Artifact
 from app.models.data_version import DatasetVersion
+from app.models.model_library import ModelLibrary
 from app.models.platform_models import GenericAnnotationTask
+from app.models.training import TrainingJob
 from app.models.user import User
 from app.services.artifact_service import build_artifact_service
 from tests.auth_test_support import ensure_admin
@@ -352,6 +354,72 @@ class TestDatasetsAPI(unittest.TestCase):
         datasets = client.get(f"/api/projects/{self.project_id}/datasets", headers=self.h).json()
         dataset_names = {item["name"] for item in datasets["items"]}
         self.assertFalse(any(name in dataset_names for name in names))
+
+    def test_10_model_artifacts_filter_orphans_and_format(self):
+        # ①ONNX 工件不进画布下拉（load_model_artifact 仅支持 joblib）；
+        # ②来源自动建模任务已删除且未被注册/模型库引用的 automl 工件（孤儿）不列出；
+        # ③任务仍存在的 automl 工件与手动上传工件正常列出；
+        # ④任务已删但已被模型库引用的 automl 工件保留。
+        db = SessionLocal()
+        suffix = uuid.uuid4().hex[:6]
+        try:
+            admin = db.query(User).filter(User.username == "admin").first()
+            alive_job = TrainingJob(
+                project_id=uuid.UUID(self.project_id), user_id=admin.id,
+                name=f"alive-job-{suffix}", status="completed",
+            )
+            db.add(alive_job)
+            db.flush()
+            rows = [
+                ("alive-automl.joblib", "joblib",
+                 {"source": "automl", "training_job_id": str(alive_job.id)}),
+                ("orphan-automl.joblib", "joblib",
+                 {"source": "automl", "training_job_id": str(uuid.uuid4())}),
+                ("manual-upload.joblib", "joblib", {"source": "upload"}),
+                ("converted.onnx", "onnx", {}),
+            ]
+            expected_visible = []
+            library_artifact = None
+            for name, fmt, metadata in rows:
+                art = Artifact(
+                    project_id=uuid.UUID(self.project_id),
+                    name=f"{name}-{suffix}", type="model",
+                    storage_path="", storage_uri=f"s3://test/{name}",
+                    file_size=8, format=fmt, metadata_=metadata,
+                )
+                db.add(art)
+                if fmt == "joblib" and not name.startswith("orphan"):
+                    expected_visible.append(art.name)
+            db.flush()
+            # 任务已删但已导入模型库的工件：应保留
+            library_artifact = Artifact(
+                project_id=uuid.UUID(self.project_id),
+                name=f"library-automl.joblib-{suffix}", type="model",
+                storage_path="", storage_uri="s3://test/library-automl.joblib",
+                file_size=8, format="joblib",
+                metadata_={"source": "automl", "training_job_id": str(uuid.uuid4())},
+            )
+            db.add(library_artifact)
+            db.flush()
+            db.add(ModelLibrary(
+                name=f"library-entry-{suffix}", owner_id=admin.id,
+                project_id=uuid.UUID(self.project_id),
+                model_artifact_id=library_artifact.id, format="joblib",
+            ))
+            expected_visible.append(library_artifact.name)
+            db.commit()
+        finally:
+            db.close()
+
+        r = client.get(f"/api/projects/{self.project_id}/model-artifacts", headers=self.h)
+        self.assertEqual(r.status_code, 200, r.text)
+        names_listed = [item["name"] for item in r.json()["items"]]
+        for name in expected_visible:
+            self.assertIn(name, names_listed)
+        self.assertNotIn(f"orphan-automl.joblib-{suffix}", names_listed)
+        self.assertNotIn(f"converted.onnx-{suffix}", names_listed)
+        # 端点只返回 joblib（ONNX 不进画布下拉）
+        self.assertTrue(all(item.get("format") == "joblib" for item in r.json()["items"]))
 
 
 if __name__ == "__main__":

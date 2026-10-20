@@ -36,6 +36,9 @@ from app.services.data_import import (
 from app.models.data_version import DatasetImportProcess, DatasetVersion
 from app.models.operation import DurableOperation
 from app.models.platform_models import AnnotationTask, GenericAnnotationTask
+from app.models.training import TrainingJob
+from app.models.model_library import ModelLibrary
+from app.models.model_registry import ModelVersion
 
 router = APIRouter(prefix="/api", tags=["datasets"])
 logger = logging.getLogger(__name__)
@@ -577,7 +580,54 @@ def list_project_model_artifacts(
         Artifact.project_id == project.id,
         Artifact.type == "model",
         Artifact.archived_at.is_(None),
+        # load_model_artifact 仅支持 joblib（ONNX 走模型注册表/部署链路）——
+        # 不支持的格式不进画布下拉。
+        Artifact.format == "joblib",
     ).order_by(Artifact.created_at.desc()).limit(200).all()
+
+    # 孤儿过滤：自动建模任务删除时不级联删工件，残留的 automl 工件会一直
+    # 堆积在下拉里——来源任务已不存在且未被模型注册表引用的不再列出。
+    job_ids = {
+        str((artifact.metadata_ or {}).get("training_job_id"))
+        for artifact in artifacts
+        if (artifact.metadata_ or {}).get("training_job_id")
+    }
+    existing_job_ids: set[str] = set()
+    valid_job_uuids = []
+    for job_id in job_ids:
+        try:
+            valid_job_uuids.append(uuid.UUID(job_id))
+        except (ValueError, AttributeError, TypeError):
+            continue
+    if valid_job_uuids:
+        existing_job_ids = {
+            str(row[0]) for row in db.query(TrainingJob.id).filter(
+                TrainingJob.id.in_(valid_job_uuids),
+            ).all()
+        }
+    # 来源任务已删的 automl 工件，只要仍被注册版本或模型库引用就保留——
+    # 注册链路有两种：直接写 source_artifact_id，或经模型库中转
+    # （model_library.model_artifact_id → model_versions.source_model_library_id）。
+    registered_ids = {
+        str(row[0]) for row in db.query(ModelVersion.source_artifact_id).filter(
+            ModelVersion.source_artifact_id.isnot(None),
+        ).all()
+    }
+    registered_ids.update(
+        str(row[0]) for row in db.query(ModelLibrary.model_artifact_id).filter(
+            ModelLibrary.model_artifact_id.isnot(None),
+        ).all()
+    )
+
+    def _still_usable(artifact: Artifact) -> bool:
+        metadata = artifact.metadata_ or {}
+        job_id = str(metadata.get("training_job_id") or "")
+        if metadata.get("source") == "automl" and job_id:
+            return job_id in existing_job_ids or str(artifact.id) in registered_ids
+        return True
+
+    artifacts = [artifact for artifact in artifacts if _still_usable(artifact)]
+
     return {
         "items": [
             {
