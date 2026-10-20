@@ -809,6 +809,9 @@ def orchestration_showcase_status(
         "retrain_status": retrain_status,
         "retrain_job_id": retrain_job_id,
         "retrain_threshold_rows": _threshold_rows(version.nodes_snapshot),
+        # 编排工作流的 notify_admins 对每条报错行告警（无阈值参数），
+        # 大屏「阈值监测」文案因此显示每 1 行触发。
+        "alert_threshold_rows": 1,
         "model_version": model_version,
         "events": events,
     }
