@@ -708,6 +708,13 @@ function applySwap() {
 
 /* ================= 实时模式 ================= */
 const live = { on: false, timer: null, seenIds: null, project: null, loopId: null, synced: false };
+function setMonitorThreshold(n) {
+  /* 阈值监测节点的说明文案跟随闭环/编排配置，不再固定“每 5 行触发” */
+  sim.retrainAt = n;
+  const el = document.getElementById("sub_monitor");
+  if (el) el.textContent = `每 ${n} 行触发`;
+  updateGateVisual();
+}
 function liveHeaders() {
   const token = document.getElementById("liveToken").value.trim() || localStorage.getItem("token") || "";
   return { Authorization: "Bearer " + token };
@@ -792,8 +799,7 @@ async function liveConnect() {
     const cfgRes = await fetch(`/api/projects/${project}/demo-loop/loops/${loopId}`, { headers: liveHeaders() });
     if (cfgRes.ok) {
       const cfg = await cfgRes.json();
-      if (cfg.retrain_threshold_rows > 0) sim.retrainAt = cfg.retrain_threshold_rows;
-      updateGateVisual();
+      if (cfg.retrain_threshold_rows > 0) setMonitorThreshold(cfg.retrain_threshold_rows);
     }
   } catch (e) { /* 阈值环保持默认值 */ }
   const poll = async () => {
@@ -842,7 +848,7 @@ function applyLiveStatus(st) {
   const errors = st.error_count || 0;
   const okCount = Math.max(0, total - errors);
   // 编排 API 模式：阈值与线上模型版本来自 showcase-status
-  if (st.retrain_threshold_rows) { sim.retrainAt = st.retrain_threshold_rows; updateGateVisual(); }
+  if (st.retrain_threshold_rows) setMonitorThreshold(st.retrain_threshold_rows);
   // 已推理/正常通过按真实条数直读状态（total=推理行数，ok=未报错行数）。
   // 直写 DOM：rAF 缓动在页面后台/未聚焦时会被暂停，数字会冻结。
   const setNow = (k, v) => { hud[k] = v; shown[k] = v;
