@@ -56,6 +56,8 @@ services:
     environment: &production-environment
       APP_MODE: production
       PYTHON_SCRIPT_VENV_DIR: /data/python-script-venv
+      # UMAP（numba JIT）在部分镜像/系统路径下无法定位缓存定位器，显式重定向
+      NUMBA_CACHE_DIR: /tmp/numba-cache
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
       TASK_BACKEND: celery
