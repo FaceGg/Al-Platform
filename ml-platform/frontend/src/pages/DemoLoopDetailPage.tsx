@@ -97,7 +97,7 @@ export default function DemoLoopDetailPage() {
   const [fileName, setFileName] = useState("");
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [results, setResults] = useState<Array<{ index: number; prediction: string; confidence: number | null; error: boolean; appended: boolean }>>([]);
+  const [results, setResults] = useState<Array<{ index: number; prediction: string; confidence: number | null; error: boolean; appended: boolean; failed?: boolean }>>([]);
   const pauseRef = useRef(false);
   const swapSeenRef = useRef<string | null>(null);
   const [swapPulse, setSwapPulse] = useState(false);
@@ -169,25 +169,70 @@ export default function DemoLoopDetailPage() {
     if (!rows.length || running || !loopId) return;
     pauseRef.current = false;
     setRunning(true);
+    const MAX_RETRY = 3;               // 瞬态失败（网络/5xx）单行重试次数
+    const CONSECUTIVE_LIMIT = 10;      // 连续失败达到该行数才终止（服务不可用）
+    let consecutiveFailures = 0;
+    let failedRows = 0;
+    let stoppedByFailures = false;
     try {
       for (let i = 0; i < rows.length; i += 1) {
         if (pauseRef.current) break;
-        const result: DemoLoopPredictResult = await predictDemoLoopRowScoped(projectId, loopId, rows[i].values);
+        let result: DemoLoopPredictResult | null = null;
+        let lastError: unknown = null;
+        for (let attempt = 0; attempt <= MAX_RETRY; attempt += 1) {
+          try {
+            result = await predictDemoLoopRowScoped(projectId, loopId, rows[i].values);
+            break;
+          } catch (error: any) {
+            lastError = error;
+            const requestStatus = error?.response?.status;
+            // 4xx 属于数据/请求本身的问题（如特征列含空值），重试无意义
+            if (requestStatus && requestStatus < 500 && requestStatus !== 429) break;
+            if (attempt < MAX_RETRY) await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        }
+        if (pauseRef.current) break;
+        if (!result) {
+          // 重试仍失败：跳过该行并在结果面板标记，不中断整个回放
+          consecutiveFailures += 1;
+          failedRows += 1;
+          const reason = formatApiError(lastError, "调用失败");
+          const detail = reason.length > 80 ? `${reason.slice(0, 80)}…` : reason;
+          setResults((prev) => [...prev.slice(-29), {
+            index: rows[i].__index,
+            prediction: detail,
+            confidence: null,
+            error: true,
+            appended: false,
+            failed: true,
+          }]);
+          if (consecutiveFailures >= CONSECUTIVE_LIMIT) {
+            stoppedByFailures = true;
+            message.error(`连续 ${CONSECUTIVE_LIMIT} 行调用失败，闭环已停止，请检查推理服务与网络后重试`);
+            break;
+          }
+          continue;
+        }
+        consecutiveFailures = 0;
+        const current = result;
         setResults((prev) => [...prev.slice(-29), {
           index: rows[i].__index,
-          prediction: result.prediction,
-          confidence: result.confidence,
-          error: result.error_matched,
-          appended: result.appended,
+          prediction: current.prediction,
+          confidence: current.confidence,
+          error: current.error_matched,
+          appended: current.appended,
         }]);
         setStatus((prev) => prev && ({
           ...prev,
-          error_count: result.error_count,
-          alert_count: result.alert_count,
-          retrain_status: result.retrain_status,
+          error_count: current.error_count,
+          alert_count: current.alert_count,
+          retrain_status: current.retrain_status,
         }));
         setProgress(Math.round(((i + 1) / rows.length) * 100));
         await new Promise((resolve) => setTimeout(resolve, 240));
+      }
+      if (!stoppedByFailures && failedRows > 0) {
+        message.warning(`回放结束：${failedRows} 行调用失败已跳过（详见结果面板）`);
       }
     } catch (error) {
       message.error(formatApiError(error, "单行调用失败，闭环已停止"));
@@ -304,9 +349,9 @@ export default function DemoLoopDetailPage() {
                       borderRadius: 6, marginBottom: 4,
                       background: item.error ? "rgba(255,77,79,.08)" : "rgba(82,196,26,.06)",
                     }}>
-                    <Text>第 {item.index} 行 · 预测 <Text strong>{item.prediction}</Text>
+                    <Text>第 {item.index} 行 · {item.failed ? "调用失败：" : "预测 "}<Text strong>{item.prediction}</Text>
                       {item.confidence !== null && item.confidence !== undefined ? ` · 置信度 ${(item.confidence * 100).toFixed(1)}%` : null}</Text>
-                    {item.appended ? <Tag color="red">已回流</Tag> : <Tag color="green">正常</Tag>}
+                    {item.failed ? <Tag color="red">调用失败</Tag> : item.appended ? <Tag color="red">已回流</Tag> : <Tag color="green">正常</Tag>}
                   </div>
                 ))}
               </div>
