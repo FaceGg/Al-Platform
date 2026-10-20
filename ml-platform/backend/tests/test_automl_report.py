@@ -91,6 +91,38 @@ class AutoMLReportTests(unittest.TestCase):
         np.testing.assert_allclose(first_values, second_values)
         np.testing.assert_allclose(first_weights, second_weights)
 
+    def test_large_dataset_report_completes_with_sampled_silhouette(self):
+        # 超过 REPORT_SAMPLE_ROWS 的数据集走确定性抽样轮廓系数——此前全量
+        # silhouette 为 O(n²)，7 万行数据集上报告请求实际挂死无响应。
+        with tempfile.TemporaryDirectory() as temporary:
+            tmp_path = Path(temporary)
+            rng = np.random.default_rng(42)
+            features = pd.DataFrame(rng.normal(size=(6000, 2)), columns=["x1", "x2"])
+            frame = features.assign(label=(features["x1"] > 0).astype(int))
+            dataset_path = tmp_path / "dataset.csv"
+            frame.to_csv(dataset_path, index=False)
+            model = RandomForestClassifier(n_estimators=10, random_state=42).fit(features, frame["label"])
+            model_path = tmp_path / "model.joblib"
+            joblib.dump({
+                "model": model,
+                "feature_schema": [{"name": name, "dtype": str(features[name].dtype)} for name in features.columns],
+                "target_schema": {"task": "classification", "classes": [0, 1]},
+            }, model_path)
+            service = FakeArtifactService(dataset_path, model_path, tmp_path)
+            job = SimpleNamespace(
+                id=uuid.uuid4(), project_id=uuid.uuid4(), operator_id="automl", status="completed",
+                dataset_artifact_id="dataset", model_artifact_id="model", name="large-report",
+                params={"target_column": "label", "input_columns": ["x1", "x2"], "task": "classification"},
+                metrics={"best_model": {"name": "Random Forest"}, "all_results": []},
+                project=SimpleNamespace(name="project"), experiment=SimpleNamespace(name="experiment"),
+            )
+            manifest = generate_automl_report(FakeDb(), job, service)
+            self.assertIn(manifest["preview"]["overview"]["best_k"], range(2, 9))
+            self.assertIn("silhouette", manifest["preview"]["overview"])
+            # 聚类/推理基于全量数据，preview 截断为前 100 行
+            self.assertEqual(manifest["preview"]["inference_total"], len(frame))
+            self.assertEqual(len(manifest["preview"]["inference"]), 100)
+
     def test_generate_detailed_report_files_and_reuse_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:
             tmp_path = Path(temporary)

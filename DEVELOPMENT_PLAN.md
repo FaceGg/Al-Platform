@@ -306,6 +306,13 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 AutoML 分析报告大数值集挂死修复：silhouette/置换重要性确定性抽样
+
+- 现象：用户在自动建模任务（f68cd972，tighten 70087 行 × 24 列，lightgbm）页面点「生成分析报告」无响应——实测 `POST /training/jobs/{id}/automl-report` 60 秒无响应（客户端超时后服务端仍持续计算），按钮无限 loading。
+- 根因（`app/services/automl_report.py`）：`_cluster` 对**全量数据**逐 k（2..8）计算 `silhouette_score`——复杂度 O(n²)，7 万行 ≈ 49 亿对距离 × 7 个 k，分块距离矩阵达数十 GB，实际挂死；`_importance` 兜底路径 `permutation_importance`（n_repeats × 特征数 × 全量行数反复预测）同样无上限。
+- 修复：新增 `REPORT_SAMPLE_ROWS = 5000` 上限与 `_sample_index` 确定性抽样（rng seed 42）——①`silhouette_score` 在抽样上评估，聚类标签/簇计数/PCA 坐标仍基于全量数据（语义不变）；②`permutation_importance` 前对特征/目标行抽样。报告其余环节（全量 predict、Excel、图表）不变。
+- 验证：test_automl_report 新增 6000 行用例（抽样路径 + best_k/silhouette/inference_total 全量断言），4/4 passed；真实任务端到端：报告生成 15 秒完成（修复前 60 秒超时挂死），manifest 含 overview（项目/实验/行数/最优模型）+ 6 个产物；再次调用命中 metrics.automl_report 指纹缓存 0.4 秒返回；backend 镜像重建部署（重建同时清掉了挂起的请求线程），nginx/frontend 按惯例重启。
+
 ### 2026-10-20 模型命名统一：「项目名称-实验名称-算法名称」（模型库条目 + 工作流模型下拉）
 
 - 需求：用户要求模型库中的算法命名与工作流各需要模型的算子下拉列出的模型统一为「项目名称-实验名称-算法名称」格式。此前模型库条目名为裸算法名（"XGBoost"/"Random Forest"）或任务名（"初始模型-普通训练"）、闭环自动注册条目为"{配置名}-自动模型-{jobid8}"，模型下拉直接透出工件存储名（"automl-job-random_forest.joblib"），无法辨识所属项目与实验。
@@ -3125,7 +3132,7 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 现象与定位（真实环境 E2E 诊断）：用户报告"生成聚类预览没反应"。① 密度聚类模型持久化目标 `./artifact_store`（即 `/app/artifact_store`）未列入 backend/worker 镜像预建目录，运行用户(1000)无权创建，预览失败 `Permission denied`；且失败发生在创建任务成功之后，前端错误只渲染在"已有 discoveryTask"分支，第 2 步初始分支不显示——用户看到的就是"点了没反应"。② 权限修复后发现第二处：HDBSCAN 噪声样本 cluster_id=None 传入 `AnnotationDecision(cluster_id=int(...))` 触发 `int(None)` TypeError。
 - 修复：backend/Dockerfile 与 Dockerfile.worker 预建目录补 `/app/artifact_store`（chown app）；`_persist_cluster_model_bundle` 目录创建失败时返回结构化 `CLUSTER_MODEL_STORAGE_UNWRITABLE`；`annotation_strategies.py` 发现决策构建对 None 显式放行（噪声归属空簇）。前端第 2 步初始"聚类预览"分支补 `genericDiscoveryError` 渲染（role=alert），失败不再静默。
 - E2E 验证（本地 Docker 栈，admin 真实登录）：UMAP+HDBSCAN 发现预览 `completed`，`cluster_method=umap_hdbscan`、自动定簇 K=2（簇0=26、簇1=56）、噪声 19 条排除在簇外，模型工件落盘成功；后端聚焦套件 `test_weighted_clustering_umap+test_annotation_strategies` 40 passed（含噪声 None 决策回归）。
-- 环境事件记录：验证期间 WSL VM 反复崩溃重启（uptime 反复归零，疑似 8GB 配额下双 kind 集群+全 compose 栈内存挤压），以 `wsl --shutdown` 显式重启打破循环后栈恢复 healthy。后续若复现，优先检查 Windows 宿主内存压力并考虑关闭闲置 kind 集群（`kind delete clusters --all`）。
+- 环境事件记录：验证期间 WSL VM 反复崩溃重启（uptime 反复归零，疑似 8GB 配额下双 kind 集群+全 compose 栈内存挤压），以 `wsl --shutdown` 显式重启打破循环后栈恢复 healthy。后续若复现，优先检查 Windows 宿主内存压力并考虑关闭闲置 kind 集群（`kind delete clusters --all`）。复发（2026-10-20）：平台全线超时，WSL 服务报 `Wsl/Service/0x8007274c` 无响应，宿主内存 90%（31.5GB 剩 3.2GB，vmmemWSL ~10GB）——同法 `wsl --shutdown` 后 compose 栈凭 restart 策略全量自动拉起（含两个 kind 集群），前后端 200 恢复；根治仍需处置闲置 kind 集群或调低 WSL 内存配额（.wslconfig memory=）。
 - 关联澄清：用户同时报告的 AutoML `AUTOML_CONFIG_INVALID: target contains missing values`，经真实请求复现与数据核查确认**不是平台缺陷**——项目内当前数据集（unlabeled_features.csv，101 行 73 列）不含任何目标列（无 fault/DECIDE 等），建模前需上传含标签列的数据（如 tighten_train.csv 含 DECIDE 判定列）。若目标列部分行缺失，需先清洗或填充后再建模，服务端按契约拒绝含缺失的目标列是有意设计。
 
 ## 2026-10-16 搜索强度缩放搜索空间 + 散点噪声色修复 + UMAP 结果实证

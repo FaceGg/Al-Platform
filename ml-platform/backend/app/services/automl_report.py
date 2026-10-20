@@ -47,6 +47,19 @@ REPORT_RESULT_COLUMNS = [
     "model_library_id",
 ]
 
+# silhouette 为 O(n²) 复杂度：数据集行数超过该上限时按确定性抽样评估轮廓
+# 系数与置换重要性，聚类标签/计数/PCA 坐标仍基于全量数据（7 万行全量
+# silhouette 会占数十 GB 距离矩阵，请求实际挂死）。
+REPORT_SAMPLE_ROWS = 5000
+
+
+def _sample_index(row_count: int) -> np.ndarray | None:
+    if row_count <= REPORT_SAMPLE_ROWS:
+        return None
+    return np.random.default_rng(42).choice(
+        row_count, size=REPORT_SAMPLE_ROWS, replace=False,
+    )
+
 
 def _report_results(raw_results) -> list[dict]:
     """Normalize legacy AutoML rows into the report's stable metric columns."""
@@ -119,6 +132,11 @@ def _importance(model, features: pd.DataFrame, target: pd.Series, task: str):
     if values is None:
         try:
             scoring = "accuracy" if task == "classification" else "r2"
+            # 置换重要性按 n_repeats × 特征数 × 行数 反复预测，大数据集先行抽样。
+            index = _sample_index(len(features))
+            if index is not None:
+                features = features.iloc[index]
+                target = target.iloc[index]
             result = permutation_importance(model, features, target, n_repeats=5, random_state=42, scoring=scoring)
             values = result.importances_mean
         except Exception as error:
@@ -136,12 +154,17 @@ def _importance(model, features: pd.DataFrame, target: pd.Series, task: str):
 def _cluster(features: pd.DataFrame, weights: np.ndarray):
     scaled = StandardScaler().fit_transform(features)
     weighted = scaled * np.sqrt(weights)
+    # silhouette 逐对距离 O(n²)：大数据集按确定性抽样评估轮廓系数，
+    # 聚类标签、簇计数与 PCA 坐标仍基于全量数据计算。
+    index = _sample_index(len(weighted))
+    silhouette_input = weighted if index is None else weighted[index]
     scores = {}
     max_k = min(8, len(features) - 1)
     for k in range(2, max_k + 1):
         labels = KMeans(n_clusters=k, random_state=42, n_init=10).fit_predict(weighted)
         if len(np.unique(labels)) > 1:
-            scores[str(k)] = float(silhouette_score(weighted, labels))
+            evaluated = labels if index is None else labels[index]
+            scores[str(k)] = float(silhouette_score(silhouette_input, evaluated))
     best_k = max(scores, key=lambda key: (scores[key], -int(key))) if scores else None
     labels = KMeans(n_clusters=int(best_k), random_state=42, n_init=10).fit_predict(weighted) if best_k else np.zeros(len(features), dtype=int)
     coordinates = (
