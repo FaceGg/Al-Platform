@@ -306,6 +306,13 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 追加：XGBoost/LightGBM 工件特征名注入兼容（no setter 崩溃修复）
+
+- 现象：用户按指引换用 `automl-job-xgboost.joblib` 重跑模型测试工作流，load_model_artifact 报 `property 'feature_names_in_' of 'XGBClassifier' object has no setter`——上一轮的注入实现直接 setattr，撞上 xgboost/lightgbm 把 `feature_names_in_` 定义为只读 property。
+- 修复：注入抽为多策略 `_inject_feature_names(model, names)`——①sklearn 原生（property 可写）直接 setattr；②xgboost 经 `get_booster().feature_names = names`（实测注入后 property 返回注入值且 predict 按列名校验生效）；③lightgbm 等无公开写入口的库返回 None，加载节点降级 logger.warning（不再崩溃），评估时会得到明确的特征数不匹配错误而非节点崩溃。
+- 验证：新增 xgboost 注入（含 joblib 往返后 property 仍返回列名）与 lightgbm 降级不崩溃两用例，`test_evaluation_operator_execution.py` 16 passed + 14 subtests；真实 XGBoost 工件端到端复现（load → 28 万行 24 列评估）accuracy 0.8011 / f1_macro 0.4739；backend/worker 镜像重建，frontend/nginx 同步重启防 502。
+- deferred：lightgbm 特征名无公开注入点（property 链到 booster 内部），如后续需要可评估 booster 内部结构方案；届时 lightgbm 评估将得到特征数错误（可读），不崩溃。
+
 ### 2026-10-20 模型测试工作流两类报错修复：ONNX 工件加载裸 KeyError + 评估特征列不对齐
 
 - 现象：工作流 69cf54b4（csv_import → load_model_artifact → classification_eval_detailed → tighten_feature_engineering）连续 3 次失败。①错误消息只有 "8"（node '1d5d6aab'）；②`X has 24 features, but RandomForestClassifier is expecting 15 features as input`。

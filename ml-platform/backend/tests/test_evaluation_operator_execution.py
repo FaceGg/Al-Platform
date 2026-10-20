@@ -364,6 +364,51 @@ class TestLoadModelArtifactFormatGuard(unittest.TestCase):
         predictions = reloaded.predict(frame[names])
         self.assertEqual(len(predictions), 5)
 
+    def test_xgboost_packaged_artifact_injects_via_booster(self):
+        """xgboost 的 feature_names_in_ 是只读 property——经 booster.feature_names 注入。"""
+        try:
+            from xgboost import XGBClassifier
+        except ImportError:
+            self.skipTest("xgboost not installed")
+        rng = np.random.RandomState(1)
+        names = ["x1", "x2", "x3"]
+        classifier = XGBClassifier(n_estimators=4, max_depth=2).fit(
+            pd.DataFrame(rng.randn(30, 3), columns=names).to_numpy(), [0, 1] * 15
+        )
+        package = {
+            "model": classifier,
+            "feature_schema": [{"name": name, "dtype": "float64"} for name in names],
+        }
+        outputs = self._execute_load(
+            _FakeArtifact("mem://m.joblib", "joblib"), _model_bytes(package)
+        )
+        reloaded = joblib.load(io.BytesIO(outputs["model"]))
+        # joblib 往返后 property 仍返回注入的列名
+        self.assertEqual([str(name) for name in reloaded.feature_names_in_], names)
+        frame = pd.DataFrame(rng.randn(5, 3), columns=names)
+        self.assertEqual(len(reloaded.predict(frame)), 5)
+
+    def test_lightgbm_unsupported_injection_does_not_crash_load(self):
+        """lightgbm 无公开特征名写入口——加载节点降级告警而不是抛 no setter。"""
+        try:
+            from lightgbm import LGBMClassifier
+        except ImportError:
+            self.skipTest("lightgbm not installed")
+        rng = np.random.RandomState(2)
+        names = ["l1", "l2"]
+        classifier = LGBMClassifier(n_estimators=2, verbose=-1).fit(
+            pd.DataFrame(rng.randn(30, 2), columns=names).to_numpy(), [0, 1] * 15
+        )
+        package = {
+            "model": classifier,
+            "feature_schema": [{"name": name, "dtype": "float64"} for name in names],
+        }
+        outputs = self._execute_load(
+            _FakeArtifact("mem://m.joblib", "joblib"), _model_bytes(package)
+        )
+        reloaded = joblib.load(io.BytesIO(outputs["model"]))
+        self.assertTrue(hasattr(reloaded, "predict"))
+
 
 if __name__ == "__main__":
     unittest.main()

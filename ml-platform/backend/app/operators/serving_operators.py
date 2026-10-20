@@ -16,6 +16,27 @@ from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
 
 
+def _inject_feature_names(model, names: list[str]) -> str | None:
+    """把训练特征列名挂到模型上，返回注入方式（None 表示该库不支持）。
+
+    sklearn 原生模型的 ``feature_names_in_`` 可写；xgboost 的同名属性是只读
+    property（实际存储在 booster.feature_names，predict 按列名校验）；lightgbm
+    等库无公开写入口——注入失败返回 None，调用方降级告警而不是让加载节点崩溃。
+    """
+    values = np.array(names, dtype=object)
+    try:
+        model.feature_names_in_ = values
+        return "sklearn"
+    except AttributeError:
+        pass
+    try:
+        model.get_booster().feature_names = list(names)
+        return "xgboost_booster"
+    except Exception:
+        pass
+    return None
+
+
 @register_operator
 class ApiInputOperator(BaseOperator):
     id = "api_input"
@@ -117,14 +138,20 @@ class LoadModelArtifactOperator(BaseOperator):
                     "publish the deployment inference API instead"
                 )
             # numpy 拟合的 estimator 没有 feature_names_in_，训练特征列名只在
-            # 工件的 feature_schema/input_contract 里——补到模型上，下游评估与
-            # apply_model（predict_with_hint）才能按列名对齐，而不是把测试数据
-            # 的全部列按位置喂入导致 "X has N features, expecting M"。
+            # 工件的 feature_schema/input_contract 里——按库能力注入（sklearn
+            # 直写 / xgboost booster），下游评估与 apply_model
+            # （predict_with_hint）才能按列名对齐，而不是把测试数据的全部列
+            # 按位置喂入导致 "X has N features, expecting M"。
             if not hasattr(loaded, "feature_names_in_"):
                 names = self._package_feature_names(package)
                 n_features = getattr(loaded, "n_features_in_", None)
                 if names and isinstance(n_features, int) and n_features == len(names):
-                    loaded.feature_names_in_ = np.array(names, dtype=object)
+                    injected = _inject_feature_names(loaded, names)
+                    if injected is None:
+                        context.logger.warning(
+                            f"模型工件包含特征列名（{len(names)} 列），但 {type(loaded).__name__}"
+                            " 不支持附加特征名——评估/推理将无法按列名自动对齐特征",
+                        )
         if not hasattr(loaded, "predict"):
             raise RuntimeError("Model artifact does not expose a predict method")
         # Re-serialize the bare estimator so the model port carries something
