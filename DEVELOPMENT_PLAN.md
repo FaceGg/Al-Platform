@@ -306,6 +306,16 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 告警管理员阈值节流 + 修复条件分支未跳过空分支的执行器缺陷
+
+- 需求：用户指出告警管理员算子在每次报错回流时都通知管理员，建议加阈值参数。
+- 改动一（`app/operators/serving_operators.py` NotifyAdminsOperator）：新增 `threshold_rows`（默认 1=每行都通知，向后兼容）与 `error_dataset_artifact_id`（累计计数数据集）——按报错数据集 `metadata.row_count`（上游回流已落库、含本次）每满 N 行通知一次，消息附「累计 N 行报错」；metrics 透出 `notified`/`total_rows`/`threshold_rows`；数据始终透传（重训阈值节点不依赖通知发出）。
+- 改动二（执行器真实缺陷，`app/engine/dag_executor.py`）：条件分支跳过逻辑只认 `outputs["false"]` + 边端口 `"false"`，而闭环模板端口名为 `true_branch/false_branch`——**跳过逻辑从未生效**，未命中分支的后代（回流/告警/阈值）以空输入照常执行：每条正常预测行也发一条 rows:0 的「报错回流」通知并空跑阈值节点。修复为对称处理两代端口命名（true_branch/false_branch 与旧 true/false），空分支的全部后代进入 skipped。连带：invoke 响应的输出节点取「最后一个有产出的节点」（跳过节点仅留空占位）——正常行响应从空阈值统计变为完整预测记录（branch=false + prediction）。
+- 改动三（`app/api/platform_api.py`）：invoke 传 status_callback 捕获节点完成载荷，大屏 alert 语义尊重通知阈值（notified=0 时不再计 alert_triggered）；输出节点取最后有产出节点。
+- 改动四（前端 NodeConfigPanel）：notify_admins 的 `error_dataset_artifact_id` 渲染为数据集下拉（csv 过滤），`threshold_rows` 中文标签；commonParamLabels 补条目。
+- 验证：test_all_operators 新增 TestNotifyAdminsThreshold 4 用例（低于阈值抑制+透传 / 阈值命中通知+累计文案 / 阈值1保持旧行为 / 无数据集始终通知），102/102 passed；test_dag + test_api_platform 32 passed（publication test_06 在容器内因 /app 只读无法写 temp_test，git stash 基线对照证实与本次无关，CI 无此问题）；前端 tsc + NodeConfigPanel 8/8。真实闭环端到端（电焊闭环编排 v3，阈值 3）：正常行无通知无回流（响应含 prediction=0.0）；报错行使累计达 3 → 通知恰发出（payload rows:1, total_rows:3）、alert_triggered 事件、重训任务「编排闭环-自动建模-3-02159abf」已触发运行。backend/frontend 镜像重建部署。
+- 兼容性：既有工作流未配置新参数时行为不变（threshold=1 每行通知）；旧模板（true/false 端口命名）同样被正确跳过。
+
 ### 2026-10-20 新建「电焊闭环编排」任务并 Python 调用打通（含回流验证）
 
 - 需求：用户新建一个电焊编排任务并要求 Python 代码调用成功。

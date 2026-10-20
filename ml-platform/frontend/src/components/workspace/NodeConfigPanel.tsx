@@ -323,6 +323,7 @@ const commonParamLabels: Record<string, { zh: string; en?: string }> = {
   retrain_max_trials: { zh: "搜索试验次数", en: "Max Trials" },
   retrain_threshold_rows: { zh: "重训触发行数", en: "Retrain Threshold Rows" },
   threshold_rows: { zh: "阈值行数", en: "Threshold Rows" },
+  error_dataset_artifact_id: { zh: "报错数据集（累计计数）", en: "Error Dataset (counter)" },
   swap_deployment_id: { zh: "换模部署", en: "Swap Deployment" },
   // 数据输入输出
   file_path: { zh: "文件路径", en: "File Path" },
@@ -399,8 +400,8 @@ export function getParamLabel(opId: string | undefined, paramName: string, lang:
 
 function compatibleDatasetFormats(operatorId?: string): string[] {
   if (operatorId === "csv_import") return ["csv", "xls", "xlsx"];
-  // 闭环回流/重训算子面向 csv 数据集；其余算子不过滤（返回空表示全兼容）。
-  if (operatorId === "append_error_dataset" || operatorId === "retrain_threshold") return ["csv"];
+  // 闭环回流/重训/告警计数算子面向 csv 数据集；其余算子不过滤（返回空表示全兼容）。
+  if (operatorId === "append_error_dataset" || operatorId === "retrain_threshold" || operatorId === "notify_admins") return ["csv"];
   return [];
 }
 
@@ -468,7 +469,8 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
     const supportsArtifactDataset = Boolean(
       projectId
       && operator?.parameters?.some((param: any) =>
-        param.name === "dataset_artifact_id" || param.name === "retrain_dataset_artifact_id"),
+        param.name === "dataset_artifact_id" || param.name === "retrain_dataset_artifact_id"
+        || param.name === "error_dataset_artifact_id"),
     );
     if (!supportsArtifactDataset) {
       setDatasetArtifacts([]);
@@ -769,16 +771,21 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
       );
     }
 
-    if (p.name === "dataset_artifact_id" || p.name === "retrain_dataset_artifact_id") {
+    if (p.name === "dataset_artifact_id" || p.name === "retrain_dataset_artifact_id" || p.name === "error_dataset_artifact_id") {
       // 数据集参数一律下拉选择（普通用户拿不到制品 ID）；
       // csv_import 已在上方按 source 限定仅 artifact 来源渲染。
+      const datasetLabel = p.name === "retrain_dataset_artifact_id"
+        ? { zh: "重训数据集", en: "Retrain dataset" }
+        : p.name === "error_dataset_artifact_id"
+          ? { zh: "报错数据集（累计计数）", en: "Error dataset (counter)" }
+          : { zh: "数据集制品", en: "Dataset artifact" };
       return (
         <Select
-          aria-label={lang === "zh" ? (p.name === "retrain_dataset_artifact_id" ? "重训数据集" : "数据集制品") : "Dataset artifact"}
+          aria-label={lang === "zh" ? datasetLabel.zh : datasetLabel.en}
           style={{ width: "100%" }}
           value={value || undefined}
           onChange={(artifactId) => handleParamChange(p.name, artifactId)}
-          placeholder={lang === "zh" ? (p.name === "retrain_dataset_artifact_id" ? "选择重训数据集" : "选择数据集制品") : "Select a compatible dataset artifact"}
+          placeholder={lang === "zh" ? `选择${datasetLabel.zh}` : `Select a ${datasetLabel.en}`}
           loading={loadingDatasetArtifacts}
           disabled={!projectId}
           allowClear

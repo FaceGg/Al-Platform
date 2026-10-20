@@ -511,6 +511,13 @@ def invoke_orchestration_api(    version_id: str,
         raise _error("ORCHESTRATION_INVOKE_INVALID", "record must be a non-empty object", 422)
 
     run_id = f"invoke-{uuid.uuid4()}"
+    # 捕获各节点完成载荷：告警管理员是否真正发出通知（阈值节流后可能跳过）
+    node_completions: dict[str, dict] = {}
+
+    def _capture_completion(_run_id: str, node_id: str, node_status: str, result=None, metadata=None) -> None:
+        if node_status == "completed" and isinstance(result, dict):
+            node_completions[node_id] = result
+
     executor = DAGExecutor(
         nodes=version.nodes_snapshot or [],
         edges=version.edges_snapshot or [],
@@ -522,7 +529,7 @@ def invoke_orchestration_api(    version_id: str,
     )
     started = datetime.now(timezone.utc)
     try:
-        results = executor.execute(run_id)
+        results = executor.execute(run_id, status_callback=_capture_completion)
     except Exception as error:
         api.total_calls = (api.total_calls or 0) + 1
         api.failed_calls = (api.failed_calls or 0) + 1
@@ -534,7 +541,8 @@ def invoke_orchestration_api(    version_id: str,
             422,
         ) from error
 
-    # 拓扑序最后一个节点即输出节点；读回其数据总线产物。
+    # 拓扑序最后一个有产出的节点即输出节点（条件分支未命中时尾部节点被
+    # 跳过、results 中仅留空占位——此时取分支节点，让调用方拿到预测记录）。
     def _as_rows(node_results, port):
         path = node_results.get(port)
         if not path:
@@ -544,8 +552,8 @@ def invoke_orchestration_api(    version_id: str,
             payload = payload.to_dict(orient="records")
         return payload if isinstance(payload, list) else [payload]
 
-    final_node_id = next(reversed(results))
-    node_results = results[final_node_id] or {}
+    final_node_id = next((nid for nid in reversed(results) if results.get(nid)), None)
+    node_results = results.get(final_node_id) or {}
     output_port = next((p for p in node_results if p != "artifacts"), None)
     rows = _as_rows(node_results, output_port) if output_port else []
     branch = None
@@ -586,6 +594,11 @@ def invoke_orchestration_api(    version_id: str,
         if "true_branch" in condition_results:
             error_row_hit = bool(_as_rows(condition_results, "true_branch"))
     alert_fired = bool(notify_node_id and results.get(notify_node_id))
+    if alert_fired:
+        # 告警管理员的阈值节流：notified=0 表示本次累计行数未达通知阈值
+        notify_metrics = (node_completions.get(notify_node_id) or {}).get("metrics") or {}
+        if notify_metrics.get("notified", 1) == 0:
+            alert_fired = False
     state = dict(api.showcase_state or {})
     events = list(state.get("events") or [])[-48:]
     now_iso = started.isoformat()

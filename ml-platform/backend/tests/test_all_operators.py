@@ -984,5 +984,65 @@ class TestVisualizationOperatorsMetadata(unittest.TestCase):
                 f"{op_id} category is {op.category}")
 
 
+class TestNotifyAdminsThreshold(unittest.TestCase):
+    """告警管理员阈值节流：每累计 N 行报错通知一次，数据始终透传。
+
+    未配置报错数据集或阈值为 1 时保持旧行为（每行都通知）。
+    """
+
+    ROWS = [{"prediction": 1}]
+
+    def _run(self, row_count: int, threshold: int, dataset_id: str = "ds-1"):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from tests.operator_test_utils import TestLogger
+
+        operator = OperatorRegistry.get("notify_admins")
+        context = OperatorContext(
+            run_id="t", node_id="t", project_id="p-1",
+            artifact_service=SimpleNamespace(
+                db=None,
+                resolve=lambda artifact_id, project_id, expected_type=None: SimpleNamespace(
+                    metadata_={"row_count": row_count},
+                ),
+            ),
+            cancel_requested=lambda: False, logger=TestLogger(),
+        )
+        params = {"title": "告警", "message": "报错回流", "severity": "warning"}
+        if threshold is not None:
+            params["threshold_rows"] = threshold
+        if dataset_id is not None:
+            params["error_dataset_artifact_id"] = dataset_id
+        with patch("app.services.closed_loop_actions.notify_project_admins") as notify:
+            notify.return_value = 2
+            result = operator.execute(context, {"data": self.ROWS}, params)
+        return result, notify
+
+    def test_suppresses_below_threshold(self):
+        result, notify = self._run(row_count=2, threshold=3)
+        notify.assert_not_called()
+        self.assertEqual(result.metrics["notified"], 0.0)
+        self.assertEqual(result.metrics["total_rows"], 2.0)
+        # 数据透传：重训阈值节点不依赖通知是否发出
+        self.assertEqual(result.outputs["data"], self.ROWS)
+
+    def test_notifies_on_threshold_multiple(self):
+        result, notify = self._run(row_count=3, threshold=3)
+        self.assertEqual(notify.call_count, 1)
+        self.assertEqual(result.metrics["notified"], 1.0)
+        self.assertIn("累计 3 行", notify.call_args.kwargs["body"])
+
+    def test_threshold_one_keeps_legacy_always_notify(self):
+        result, notify = self._run(row_count=7, threshold=1)
+        self.assertEqual(notify.call_count, 1)
+        self.assertEqual(result.metrics["notified"], 1.0)
+
+    def test_without_dataset_id_always_notifies(self):
+        result, notify = self._run(row_count=5, threshold=3, dataset_id="")
+        self.assertEqual(notify.call_count, 1)
+        self.assertEqual(result.metrics["notified"], 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

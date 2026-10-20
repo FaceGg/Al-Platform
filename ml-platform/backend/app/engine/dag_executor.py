@@ -273,16 +273,24 @@ class DAGExecutor:
                 node_results["artifacts"] = artifact_refs
 
             # Handle condition branching
-            if op_id in ("condition",) and "false" in outputs:
-                false_data = outputs["false"]
-                false_empty = (isinstance(false_data, list) and len(false_data) == 0) or \
-                              (isinstance(false_data, dict) and len(false_data) == 0) or \
-                              (false_data is None or false_data == "")
-                if false_empty:
+            if op_id in ("condition",):
+                # 未命中的分支必须跳过其全部后代：否则闭环模板的回流/告警/阈值
+                # 链路会在每次调用（含正常预测行）都以空输入执行。端口名兼容
+                # 两代命名（true_branch/false_branch 与旧 true/false）。
+                for port_name in ("true_branch", "false_branch", "true", "false"):
+                    if port_name not in outputs:
+                        continue
+                    branch_data = outputs[port_name]
+                    branch_empty = (isinstance(branch_data, list) and len(branch_data) == 0) or \
+                                   (isinstance(branch_data, dict) and len(branch_data) == 0) or \
+                                   (branch_data is None or branch_data == "")
+                    if not branch_empty:
+                        continue
+                    aliases = {port_name, port_name.replace("_branch", "")}
                     for _, target, _, edge_data in self._graph.out_edges(
                         node_id, keys=True, data=True,
                     ):
-                        if edge_data.get("source_port", "") == "false":
+                        if edge_data.get("source_port", "") in aliases:
                             skipped.add(target)
                             descendants = list(nx.descendants(self._graph, target))
                             skipped.update(descendants)

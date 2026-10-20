@@ -212,7 +212,9 @@ class NotifyAdminsOperator(BaseOperator):
     id = "notify_admins"
     name = "Notify Admins"
     category = "closed_loop"
-    description = "Send an in-app notification to the project owner and platform admins"
+    description = ("Send an in-app notification to the project owner and platform "
+                   "admins; optional row threshold notifies once per N accumulated "
+                   "error rows instead of on every reflow")
     inputs = [PortSpec("data", "DataTable", "Trigger Rows")]
     outputs = [PortSpec("data", "DataTable", "Trigger Rows")]
     parameters = [
@@ -220,6 +222,9 @@ class NotifyAdminsOperator(BaseOperator):
         ParamSpec("message", "str", "", "Notification Body", required=True),
         ParamSpec("severity", "select", "warning", "Severity",
                   options=["info", "warning", "critical"]),
+        ParamSpec("threshold_rows", "int", 1, "Notify Every N Error Rows (1 = always)", range_min=1),
+        ParamSpec("error_dataset_artifact_id", "str", "",
+                  "Error Dataset Artifact ID (accumulation counter; empty = always notify)"),
     ]
 
     def validate(self, inputs):
@@ -237,6 +242,23 @@ class NotifyAdminsOperator(BaseOperator):
         body = str(params.get("message") or "").strip() or f"闭环流程触发（{count} 行）"
         if context.artifact_service is None or not context.project_id:
             raise RuntimeError("Artifact service and project context are required")
+        # 阈值节流：按报错数据集累计行数（上游回流已落库，row_count 含本次），
+        # 每满 N 行通知一次；未配置数据集或 N=1 时保持每行通知的旧行为。
+        threshold = max(1, int(params.get("threshold_rows") or 1))
+        dataset_id = str(params.get("error_dataset_artifact_id") or "").strip()
+        total = None
+        if threshold > 1 and dataset_id:
+            artifact = context.artifact_service.resolve(
+                dataset_id, context.project_id, expected_type="dataset",
+            )
+            total = int((artifact.metadata_ or {}).get("row_count", 0))
+            if total % threshold != 0:
+                return OperatorResult(
+                    outputs={"data": rows if isinstance(rows, list) else [rows]},
+                    metrics={"notified": 0.0, "total_rows": float(total),
+                             "threshold_rows": float(threshold)},
+                )
+            body = f"{body}（累计 {total} 行报错）"
         sent = notify_project_admins(
             context.artifact_service.db,
             context.project_id,
@@ -244,11 +266,13 @@ class NotifyAdminsOperator(BaseOperator):
             body=body,
             severity=str(params.get("severity") or "warning"),
             event_type="closed_loop.notify",
-            payload={"rows": count},
+            payload={"rows": count, "total_rows": total},
         )
         return OperatorResult(
             outputs={"data": rows if isinstance(rows, list) else [rows]},
-            metrics={"recipients": float(sent)},
+            metrics={"recipients": float(sent), "notified": 1.0,
+                     "total_rows": float(total) if total is not None else float(count),
+                     "threshold_rows": float(threshold)},
         )
 
 
