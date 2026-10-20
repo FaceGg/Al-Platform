@@ -410,8 +410,8 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 ### 2026-10-20 常规重打包：纳入 r16 未发布内容与工作台/拧紧算子增强（r17）
 
 - 背景：r16 归档构建后主线新增两个功能提交——评估结果可视化预览（刷新/恢复历史节点结果、评估节点结果抽屉、指标中文化，`bdf0e61`）、拧紧特征工程默认剔除泄漏判定列 + 缺失填充策略（单轴行保留，`5d2d20f`）；且 r16 的门禁在跑期间被并发取消未完成、其 GitHub Release 从未发布。用户要求更新文档重新打包，r16 归档作废、内容并入 r17 一并发布。
-- 发布记录（2026-10-20）：安装包 `output/linkraft-ubuntu-20261020-r17.tar.gz`（3,245,415 字节），manifest 绑定 HEAD `fc01ee2`（= tag = 门禁分支 `release/r17` HEAD；README r17 文档提交），SHA-256 `118f4cd21208884a2367b48a9f320f034e1a35350ec0f9c6e151a613c0278828`，`sha256sum -c` 通过；`.git/` 内 LF 临时副本执行打包。归档抽查：特征工程泄漏剔除/评估历史结果端点/迁移 `20261019_72`/r17 文档引用逐项在包；排除项干净（无 `.env`/secrets/数据库/wheelhouse/node_modules/.git）；packaging 脚本 0 CR（WSL 原生工具复核；README-UBUNTU.md 的 CRLF 属文档既有惯例）。
-- 质量门禁：在门禁分支 `release/r17` 隔离并发组验证，终验 run 回填；绿后 tag `fc01ee2` 发 GitHub Release `20261020-r17`（资产 = tar.gz + sha256）。
+- 发布记录（2026-10-20）：安装包 `output/linkraft-ubuntu-20261020-r17.tar.gz`（3,245,415 字节），manifest 绑定 HEAD `0b3173d`（= tag = 门禁分支 `release/r17` HEAD；含 fe5a156 等用户后续提交），SHA-256 `7cb8d87e9ecb78d739afb9c787402f839ad5f63d9dbb4b5fc3719b581bc8d2ed`，`sha256sum -c` 通过；`.git/` 内 LF 临时副本执行打包。归档抽查：特征工程泄漏剔除/评估历史结果端点/迁移 `20261019_72`/r17 文档引用逐项在包；排除项干净（无 `.env`/secrets/数据库/wheelhouse/node_modules/.git）；packaging 脚本 0 CR（WSL 原生工具复核；README-UBUNTU.md 的 CRLF 属文档既有惯例）。
+- 质量门禁：在门禁分支 `release/r17` 隔离并发组验证。首跑（run 39385066387）两平台 Quality 挂于前端测试步骤永久卡挂——DemoLoopPage「新建闭环」用例触发 LoopConfigModal 无界渲染循环（Maximum update depth ×152、destroyOnClose 弃用警告刷 15 万行、vitest worker 内存耗尽崩溃），系 `fetchFeatureOperators` effect 的 `[editor, t]` 依赖组合反复执行所致；修复为 loading 初始 true 由 useState 承担、effect 去掉先行置位与 t 依赖（`0b3173d`，DemoLoopPage 6/6 + 前端全量 75 文件 446 用例本地绿）。重打包并以 `0b3173d` 二跑终验（run 回填）；绿后 tag `0b3173d` 发 GitHub Release `20261020-r17`（资产 = tar.gz + sha256）。
 
 ### 2026-10-19 常规重打包：纳入 r15 后大数据集与稳定性修复（r16）
 
