@@ -6,8 +6,10 @@
 graph never retrains per row (training stays in the training workflow).
 """
 import io
-import joblib
 import uuid
+
+import joblib
+import numpy as np
 
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
@@ -55,6 +57,22 @@ class LoadModelArtifactOperator(BaseOperator):
     def validate(self, inputs):
         return True
 
+    @staticmethod
+    def _package_feature_names(package: dict) -> list[str]:
+        """从打包工件元数据提取训练特征列名（feature_schema 优先，input_contract 兜底）。"""
+        schema = package.get("feature_schema")
+        if (
+            isinstance(schema, list) and schema
+            and all(isinstance(item, dict) and item.get("name") for item in schema)
+        ):
+            return [str(item["name"]) for item in schema]
+        contract = package.get("input_contract")
+        if isinstance(contract, dict):
+            columns = contract.get("input_columns") or contract.get("required_columns")
+            if isinstance(columns, list) and columns:
+                return [str(column) for column in columns]
+        return []
+
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         artifact_id = str(params.get("model_artifact_id") or "").strip()
         if not artifact_id:
@@ -69,10 +87,25 @@ class LoadModelArtifactOperator(BaseOperator):
                 payload = handle.read()
         except Exception as e:
             raise RuntimeError(f"Failed to load model artifact: {e}") from e
-        loaded = joblib.load(io.BytesIO(payload))
+        # 非 joblib 工件（如模型注册表导出的 ONNX）拿去 joblib.load 只会抛出
+        # 裸 "KeyError: 8" 之类反序列化噪声——按工件声明的格式前置拦截。
+        artifact_format = str(getattr(artifact, "format", "") or "").strip().lower()
+        if artifact_format and artifact_format not in ("joblib", "pkl", "pickle"):
+            raise RuntimeError(
+                f"模型工件是 {artifact_format.upper()} 格式，本算子仅支持 joblib 格式的模型工件"
+                "（如 AutoML 任务注册的 .joblib 产物）；ONNX 模型请通过推理部署或模型 API 调用"
+            )
+        try:
+            loaded = joblib.load(io.BytesIO(payload))
+        except Exception as e:
+            raise RuntimeError(
+                f"模型工件无法按 joblib 反序列化（格式声明: {artifact_format or '未知'}）: {e}; "
+                "请确认选择的是 joblib 格式模型工件"
+            ) from e
         if isinstance(loaded, dict):
             # Model-library/AutoML artifacts package the estimator inside a
             # metadata dict; unwrap it for apply_model.
+            package = loaded
             for key in ("model", "estimator", "clf", "pipeline", "best_model"):
                 candidate = loaded.get(key)
                 if candidate is not None and hasattr(candidate, "predict"):
@@ -83,6 +116,15 @@ class LoadModelArtifactOperator(BaseOperator):
                     "Model artifact is a package without a predictable estimator; "
                     "publish the deployment inference API instead"
                 )
+            # numpy 拟合的 estimator 没有 feature_names_in_，训练特征列名只在
+            # 工件的 feature_schema/input_contract 里——补到模型上，下游评估与
+            # apply_model（predict_with_hint）才能按列名对齐，而不是把测试数据
+            # 的全部列按位置喂入导致 "X has N features, expecting M"。
+            if not hasattr(loaded, "feature_names_in_"):
+                names = self._package_feature_names(package)
+                n_features = getattr(loaded, "n_features_in_", None)
+                if names and isinstance(n_features, int) and n_features == len(names):
+                    loaded.feature_names_in_ = np.array(names, dtype=object)
         if not hasattr(loaded, "predict"):
             raise RuntimeError("Model artifact does not expose a predict method")
         # Re-serialize the bare estimator so the model port carries something

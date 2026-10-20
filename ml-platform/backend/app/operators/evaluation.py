@@ -11,6 +11,28 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, mean_squared_error, mean_absolute_error, r2_score
 
 
+def _align_model_features(model, df: pd.DataFrame, target: str) -> pd.DataFrame:
+    """按模型 feature_names_in_ 选特征列（训练特征列的完整记录）。
+
+    测试 CSV 通常带 ID/原始列等多余列，直接 drop(target) 全列喂入会报
+    "X has N features, but model is expecting M features"；无
+    feature_names_in_ 的模型保持旧行为（drop 目标列后全列输入）。
+    """
+    if target not in df.columns:
+        raise ValueError(f"目标列 {target} 不在测试数据中，请检查目标列配置")
+    feature_names = getattr(model, "feature_names_in_", None)
+    if feature_names is None:
+        return df.drop(columns=[target])
+    names = [str(name) for name in feature_names]
+    missing = [name for name in names if name not in df.columns]
+    if missing:
+        raise ValueError(
+            f"测试数据缺少模型特征列（共 {len(missing)} 个）: {missing[:5]}"
+            "；请确认测试数据与训练数据列结构一致"
+        )
+    return df[names].copy()
+
+
 @register_operator
 class AnomalyEval(BaseOperator):
     id = "anomaly_eval"
@@ -82,7 +104,8 @@ class ClassificationEvalDetailed(BaseOperator):
 
         model = joblib.load(io.BytesIO(model_bytes))
         df = pd.DataFrame(test_data)
-        X_test = df.drop(columns=[target])
+        # helper 先校验目标列存在，再按模型特征列对齐
+        X_test = _align_model_features(model, df, target)
         y_test = df[target]
 
         for col in X_test.select_dtypes(include=["object", "category"]).columns:
@@ -211,10 +234,13 @@ class ModelComparison(BaseOperator):
         target = params.get("target_column", "target")
         metric_name = params.get("metric", "accuracy")
         df = pd.DataFrame(test_data)
-        X_test = df.drop(columns=[target])
+        # 双模型分别按各自特征列对齐（两个模型的训练特征集可能不同）；helper 先校验目标列
+        X_tests = {label: _align_model_features(model, df, target)
+                   for label, model in models.items()}
         y_test = df[target]
-        for col in X_test.select_dtypes(include=["object", "category"]).columns:
-            X_test[col] = X_test[col].astype("category").cat.codes
+        for X_test in X_tests.values():
+            for col in X_test.select_dtypes(include=["object", "category"]).columns:
+                X_test[col] = X_test[col].astype("category").cat.codes
 
         results = {}
         metric_fn = {"accuracy": accuracy_score, "precision": lambda yt,yp: precision_score(yt,yp,average="weighted",zero_division=0),
@@ -222,7 +248,7 @@ class ModelComparison(BaseOperator):
                       "f1": lambda yt,yp: f1_score(yt,yp,average="weighted",zero_division=0)}.get(metric_name, accuracy_score)
 
         for label, model in models.items():
-            y_pred = model.predict(X_test)
+            y_pred = model.predict(X_tests[label])
             results[label] = {
                 "accuracy": float(accuracy_score(y_test, y_pred)),
                 "precision": float(precision_score(y_test, y_pred, average="weighted", zero_division=0)),
@@ -261,7 +287,7 @@ class ClassificationEval(BaseOperator):
 
         model = joblib.load(io.BytesIO(model_bytes))
         df = pd.DataFrame(test_data)
-        X_test = df.drop(columns=[target])
+        X_test = _align_model_features(model, df, target)
         y_test = df[target]
 
         for col in X_test.select_dtypes(include=["object", "category"]).columns:
@@ -325,7 +351,7 @@ class RegressionEval(BaseOperator):
 
         model = joblib.load(io.BytesIO(model_bytes))
         df = pd.DataFrame(test_data)
-        X_test = df.drop(columns=[target])
+        X_test = _align_model_features(model, df, target)
         y_test = df[target]
 
         for col in X_test.select_dtypes(include=["object", "category"]).columns:

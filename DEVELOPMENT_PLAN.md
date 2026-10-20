@@ -306,6 +306,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 模型测试工作流两类报错修复：ONNX 工件加载裸 KeyError + 评估特征列不对齐
+
+- 现象：工作流 69cf54b4（csv_import → load_model_artifact → classification_eval_detailed → tighten_feature_engineering）连续 3 次失败。①错误消息只有 "8"（node '1d5d6aab'）；②`X has 24 features, but RandomForestClassifier is expecting 15 features as input`。
+- 根因：①用户第 2/3 次运行把 load_model_artifact 指到了模型注册表导出的 **ONNX 工件**（`automl-job - test - Random Forest-v1.onnx`），该算子只会 `joblib.load`，把 ONNX 字节流当 pickle 读在 opcode 分发表抛 `KeyError: 8`——报错完全不可读；②第 1 次运行加载的是 AutoML joblib 工件（15 特征 RF），但评估算子把测试 CSV **全部 24 列** drop(target) 后喂模型——数据含 ID/原始列等多余列，且该 AutoML 模型是 numpy 拟合（无 `feature_names_in_`），特征列名只存在于工件 `feature_schema` 元数据里，评估算子无从对齐。
+- 修复：①`LoadModelArtifactOperator` 按 `artifact.format` 前置拦截非 joblib 工件（"模型工件是 ONNX 格式，本算子仅支持 joblib 格式…ONNX 模型请通过推理部署或模型 API 调用"），joblib 反序列化失败也包装可读原因；②解包打包 dict 后，若 estimator 无 `feature_names_in_` 且工件 `feature_schema`/`input_contract` 列数与 `n_features_in_` 一致，注入 `feature_names_in_`（下游 `predict_with_hint` 本就按该属性对齐列，serving 链路同步受益）；③evaluation.py 新增 `_align_model_features` helper——按模型 `feature_names_in_` 选特征列（缺失列报可读错误"测试数据缺少模型特征列（共 N 个）…"、目标列不存在报"目标列 X 不在测试数据中"），四个评估算子（classification_eval_detailed/classification_eval/model_comparison 双模型各自对齐/regression_eval）统一接入。
+- 验证：新增回归测试 7 用例（24 列对齐评估/缺特征列/缺目标列/comparison 对齐/ONNX 拦截/joblib 加载/打包工件特征名注入），`test_evaluation_operator_execution.py` 14 passed + 14 subtests；真实工件端到端复现（load_model_artifact → 28 万行 24 列数据评估）accuracy 0.8013 / f1_macro 0.4748 通过；backend/worker 镜像重建部署后正式镜像内复跑全过。
+- 用户侧指引：把加载节点的模型工件换回 **joblib 格式**（如 `automl-job-random_forest.joblib`）即可跑通；ONNX 模型走推理部署/模型 API。工作流中 tighten_feature_engineering 节点当前位于评估之后且未接入数据链路，如需对原始数据派生 TIGHTEN_* 特征应置于 csv_import 与评估之间。
+
 ### 2026-10-20 闭环大屏右上角「预估准确率」改为「实时故障率」
 
 - 需求：大屏右上角指标改为实时故障率，数据使用已推理的全部数据与报错回流数据计算（故障率 = 报错回流数 / 已推理总数）。
