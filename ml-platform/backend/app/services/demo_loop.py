@@ -537,8 +537,8 @@ class DemoLoopService:
           (operator + saved params) on the single-row frame.
         - ``script``: run the user's Python script via the python_script
           operator runtime (fixed interface, auto dependency install).
-        - ``legacy``: the platform's spot-weld report feature bridge
-          (report table fields + four waveform channels → 73-feature schema).
+        - ``legacy``: the platform's builtin report feature bridge
+          (点焊报告字段 + 四路波形通道 → 73 特征 schema).
         """
         mode = (getattr(config, "feature_engineering_mode", None) or "legacy").strip()
         if mode == "operator":
@@ -547,7 +547,7 @@ class DemoLoopService:
             merged = self._engineer_via_script(config, record)
         else:
             # Explicit "legacy" mode means the user asked for the builtin
-            # spot-weld bridge; no extra opt-in switch required.
+            # 点焊特征桥; no extra opt-in switch required.
             try:
                 features, _schema, _stats = build_fixed_feature_frame(pd.DataFrame([record]))
             except Exception as error:
