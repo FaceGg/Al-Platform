@@ -306,6 +306,18 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 模型命名统一：「项目名称-实验名称-算法名称」（模型库条目 + 工作流模型下拉）
+
+- 需求：用户要求模型库中的算法命名与工作流各需要模型的算子下拉列出的模型统一为「项目名称-实验名称-算法名称」格式。此前模型库条目名为裸算法名（"XGBoost"/"Random Forest"）或任务名（"初始模型-普通训练"）、闭环自动注册条目为"{配置名}-自动模型-{jobid8}"，模型下拉直接透出工件存储名（"automl-job-random_forest.joblib"），无法辨识所属项目与实验。
+- 命名规则（新服务 `app/services/model_naming.py`）：`compose_model_name` 跳过空段拼接；实验名取任务关联实验（`job.experiment.name`，缺失回退任务名）；算法段优先算法展示名（如 XGBoost），缺失回退任务名。
+- 改动：
+  - **模型下拉**（`GET /projects/{id}/model-artifacts`，工作流加载模型制品算子唯一模型来源）：展示名按工件元数据即时组合——automl 产物「项目-实验-best_algorithm」，训练产物「项目-实验-任务名」，来源任务已删时退化为「项目-算法」，手动上传保持原名；存储名不改动，工作流节点按工件 id 引用不受影响。
+  - **模型库条目创建点**（4 处）：`model_registry.register_automl_result`（注册结果）、`model_registry.register_automl_candidate`（闭环换模/候选注册，注册模型名保持调用方指定值不变，仅库条目改名）、`training_execution`/`training_service`（普通训练，算法段为模型类名）。
+  - **存量迁移**（alembic `20261020_73_model_library_naming`，数据迁移）：带 training_job_id 的条目按上述规则重命名（指标含 best_score 识别为 AutoML 注册结果取条目名为算法段，否则取 backbone）；不带任务 id 但匹配闭环换模命名（*-自动模型-8hex）的经引用工件元数据回溯任务后重命名；来源任务已删或用户手动导入（自命名）的条目保持不变。纯展示语义，模型注册表/部署按主键引用不受影响。downgrade 为 no-op。
+  - 同步 5 处迁移 head 常量（upgrade_fixture/evidence_manifest/run_upgrade_fixture.sh/test_database_production/test_inference_production_stack）。
+- 验证：test_api_datasets test_10 扩展为五类断言（新增实验关联 + best_algorithm 的组合名断言、存储名不再透出断言），datasets+model_registry 37 passed；test_api_model_library test_13 的绝对榜首断言在共享开发库（21 条真实 best_score 条目、满分 1.0）下预存失败，测试侧改为标记内相对序 + 标记分数高于真实数据；test_demo_loop 6 个失败经 git stash 基线对照（原版代码同样 6 failed）确认为共享库残留状态的预存问题，与本次无关；alembic `20261019_72 → 20261020_73` 实跑通过；真实数据核查：新建普通训练产生的库条目即按「Training Project-weld-quality-model-RandomForestClassifier」组合命名（实验缺失回退任务名），手动导入条目（UpdatedXGBoostModel）保持自命名；拧紧项目的 automl 工件因来源任务在验证期间被用户删除，实验名不可考按退化规则显示「拧紧-算法」——今后新建自动建模任务选择实验后产物即为完整三段格式；backend/migrate 镜像重建部署，nginx/frontend 重启。
+- 说明：用户手动导入的模型库条目（自命名）不自动改名；已注册模型（registered_models）命名不在本次范围。
+
 ### 2026-10-20 「加载模型制品」下拉过滤：ONNX 不列出 + 已删自动建模任务的孤儿工件不列出
 
 - 需求：用户反馈工作流「加载模型制品」算子的「模型制品」下拉存在两个问题——①平台不支持 ONNX 格式的 load_model_artifact，下拉却列出 ONNX 工件；②列出大量已删除自动建模任务残留的模型工件。

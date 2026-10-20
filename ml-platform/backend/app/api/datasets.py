@@ -39,6 +39,7 @@ from app.models.platform_models import AnnotationTask, GenericAnnotationTask
 from app.models.training import TrainingJob
 from app.models.model_library import ModelLibrary
 from app.models.model_registry import ModelVersion
+from app.services.model_naming import artifact_display_name
 
 router = APIRouter(prefix="/api", tags=["datasets"])
 logger = logging.getLogger(__name__)
@@ -628,11 +629,23 @@ def list_project_model_artifacts(
 
     artifacts = [artifact for artifact in artifacts if _still_usable(artifact)]
 
+    # 下拉展示名统一为「项目名称-实验名称-算法名称」：来源任务关联实验名
+    # （缺失回退任务名）+ 工件元数据里的算法名。
+    jobs_by_id = {}
+    if valid_job_uuids:
+        jobs_by_id = {
+            str(job.id): job
+            for job in db.query(TrainingJob)
+            .options(joinedload(TrainingJob.experiment))
+            .filter(TrainingJob.id.in_(valid_job_uuids))
+            .all()
+        }
+
     return {
         "items": [
             {
                 "id": str(artifact.id),
-                "name": artifact.name,
+                "name": artifact_display_name(artifact, project.name, jobs_by_id),
                 "format": artifact.format,
                 "file_size": artifact.file_size,
                 "created_at": artifact.created_at.isoformat() if artifact.created_at else None,

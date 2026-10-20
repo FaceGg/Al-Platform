@@ -17,6 +17,7 @@ from app.models.model_registry import ModelVersion, RegisteredModel
 from app.models.training import TrainingJob
 from app.services.artifact_service import ArtifactService
 from app.services.model_cards import ModelCardService
+from app.services.model_naming import compose_model_name
 from app.services.onnx_conversion import ConversionError, convert_platform_joblib, validate_onnx
 
 
@@ -206,8 +207,15 @@ class ModelRegistryService:
                 ModelLibrary.format == "joblib",
             ).with_for_update().first()
             if library is None:
+                # 模型库条目统一命名：项目名称-实验名称-算法名称（实验缺失回退任务名）。
+                display_name = str(result.get("name") or algorithm_id)
+                experiment_name = self._automl_experiment_name(job)
                 library = ModelLibrary(
-                    name=str(result.get("name") or algorithm_id),
+                    name=compose_model_name(
+                        str(getattr(job.project, "name", "") or ""),
+                        experiment_name or str(job.name or ""),
+                        display_name,
+                    ),
                     project_id=job.project_id,
                     owner_id=job.user_id,
                     status="completed",
@@ -355,8 +363,15 @@ class ModelRegistryService:
             raise ModelRegistryError("MODEL_CONTRACT_INVALID")
         output_contract = self._automl_output_contract(job, candidate_metadata, targets)
         contract_hash = hashlib.sha256(json.dumps(candidate_metadata, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        # 模型库条目统一命名：项目名称-实验名称-算法名称（注册模型名保持调用方指定值不变）。
+        candidate_label = str(candidate.get("name") or candidate.get("algorithm_id") or candidate_id)
+        experiment_name = self._automl_experiment_name(job)
         library = ModelLibrary(
-            name=normalized_name,
+            name=compose_model_name(
+                str(getattr(job.project, "name", "") or ""),
+                experiment_name or str(job.name or ""),
+                candidate_label,
+            ),
             project_id=job.project_id,
             owner_id=actor_id,
             status="completed",

@@ -20,6 +20,7 @@ from app.models.experiment import Experiment
 from app.models.model_library import ModelLibrary
 from app.models.training import TrainingJob
 from app.services.artifact_service import build_artifact_service
+from app.services.model_naming import compose_model_name, artifact_experiment_name
 from app.services.experiment_tracking import (
     MlflowExperimentTracking,
     TrackingError,
@@ -309,7 +310,12 @@ def execute_training_job(
             for name, dtype in result.model_state.feature_schema
         ]
         model_entry = ModelLibrary(
-            name=job.name,
+            # 模型库条目统一命名：项目名称-实验名称-算法名称（实验缺失回退任务名）。
+            name=compose_model_name(
+                str(getattr(job.project, "name", "") or ""),
+                artifact_experiment_name(job),
+                type(result.model).__name__,
+            ),
             project_id=job.project_id,
             owner_id=job.user_id,
             status="completed",

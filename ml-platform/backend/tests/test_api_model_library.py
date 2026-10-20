@@ -136,7 +136,7 @@ class TestModelLibraryAPI(unittest.TestCase):
             project = Project(name=f"{marker}-project", owner_id=owner_id)
             db.add(project)
             db.flush()
-            scores = {"low": 0.42, "high": 0.97, "mid": 0.71}
+            scores = {"low": 1.0001, "high": 1.0003, "mid": 1.0002}
             for name, score in scores.items():
                 db.add(ModelLibrary(
                     project_id=project.id,
@@ -163,18 +163,20 @@ class TestModelLibraryAPI(unittest.TestCase):
         top = r.json()["top_models"]
         top_names = [item["name"] for item in top]
         self.assertIn(f"{marker}-high", top_names)
-        self.assertEqual(top_names.index(f"{marker}-high"), 0)
-        # 无 best_score 的条目不得排在高分行前面
-        self.assertLess(
-            top_names.index(f"{marker}-mid"),
-            top_names.index(f"{marker}-low") if f"{marker}-low" in top_names else len(top_names),
+        # 共享库中可能存在更高分的真实条目，按标记内相对序断言（best_score 降序）
+        self.assertEqual(
+            [name for name in top_names if name.startswith(marker)],
+            [f"{marker}-high", f"{marker}-mid", f"{marker}-low"],
         )
 
         r = client.get("/api/dashboard/top-models", headers=self.h)
         self.assertEqual(r.status_code, 200, r.text)
         dash_top = [item["name"] for item in r.json()["items"]]
         self.assertIn(f"{marker}-high", dash_top)
-        self.assertEqual(dash_top.index(f"{marker}-high"), 0)
+        self.assertEqual(
+            [name for name in dash_top if name.startswith(marker)],
+            [f"{marker}-high", f"{marker}-mid", f"{marker}-low"],
+        )
 
         # 清理
         db = SessionLocal()

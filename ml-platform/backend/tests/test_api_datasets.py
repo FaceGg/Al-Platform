@@ -8,6 +8,7 @@ from app.main import app
 from app.database import Base, SessionLocal, engine
 from app.models.artifact import Artifact
 from app.models.data_version import DatasetVersion
+from app.models.experiment import Experiment
 from app.models.model_library import ModelLibrary
 from app.models.platform_models import GenericAnnotationTask
 from app.models.training import TrainingJob
@@ -359,28 +360,39 @@ class TestDatasetsAPI(unittest.TestCase):
         # ①ONNX 工件不进画布下拉（load_model_artifact 仅支持 joblib）；
         # ②来源自动建模任务已删除且未被注册/模型库引用的 automl 工件（孤儿）不列出；
         # ③任务仍存在的 automl 工件与手动上传工件正常列出；
-        # ④任务已删但已被模型库引用的 automl 工件保留。
+        # ④任务已删但已被模型库引用的 automl 工件保留；
+        # ⑤展示名统一为「项目名称-实验名称-算法名称」。
         db = SessionLocal()
         suffix = uuid.uuid4().hex[:6]
         try:
             admin = db.query(User).filter(User.username == "admin").first()
+            experiment = Experiment(
+                project_id=uuid.UUID(self.project_id), created_by=admin.id,
+                name=f"exp-{suffix}", mlflow_experiment_id=f"mlflow-{suffix}",
+            )
+            db.add(experiment)
+            db.flush()
             alive_job = TrainingJob(
                 project_id=uuid.UUID(self.project_id), user_id=admin.id,
                 name=f"alive-job-{suffix}", status="completed",
+                experiment_id=experiment.id,
             )
             db.add(alive_job)
             db.flush()
             rows = [
                 ("alive-automl.joblib", "joblib",
-                 {"source": "automl", "training_job_id": str(alive_job.id)}),
+                 {"source": "automl", "training_job_id": str(alive_job.id),
+                  "best_algorithm": "random_forest"},
+                 f"DatasetTestProject-exp-{suffix}-random_forest"),
                 ("orphan-automl.joblib", "joblib",
-                 {"source": "automl", "training_job_id": str(uuid.uuid4())}),
-                ("manual-upload.joblib", "joblib", {"source": "upload"}),
-                ("converted.onnx", "onnx", {}),
+                 {"source": "automl", "training_job_id": str(uuid.uuid4())},
+                 None),
+                ("manual-upload.joblib", "joblib", {"source": "upload"},
+                 f"manual-upload.joblib-{suffix}"),
+                ("converted.onnx", "onnx", {}, None),
             ]
             expected_visible = []
-            library_artifact = None
-            for name, fmt, metadata in rows:
+            for name, fmt, metadata, expected_display in rows:
                 art = Artifact(
                     project_id=uuid.UUID(self.project_id),
                     name=f"{name}-{suffix}", type="model",
@@ -389,9 +401,9 @@ class TestDatasetsAPI(unittest.TestCase):
                 )
                 db.add(art)
                 if fmt == "joblib" and not name.startswith("orphan"):
-                    expected_visible.append(art.name)
+                    expected_visible.append(expected_display)
             db.flush()
-            # 任务已删但已导入模型库的工件：应保留
+            # 任务已删但已导入模型库的工件：应保留（实验名不可考，展示名保持原名）
             library_artifact = Artifact(
                 project_id=uuid.UUID(self.project_id),
                 name=f"library-automl.joblib-{suffix}", type="model",
@@ -413,13 +425,16 @@ class TestDatasetsAPI(unittest.TestCase):
 
         r = client.get(f"/api/projects/{self.project_id}/model-artifacts", headers=self.h)
         self.assertEqual(r.status_code, 200, r.text)
-        names_listed = [item["name"] for item in r.json()["items"]]
-        for name in expected_visible:
-            self.assertIn(name, names_listed)
+        items = r.json()["items"]
+        names_listed = [item["name"] for item in items]
+        for expected_display in expected_visible:
+            self.assertIn(expected_display, names_listed)
+        # 存储名不再直接透出（统一为「项目-实验-算法」展示名）
+        self.assertNotIn(f"alive-automl.joblib-{suffix}", names_listed)
         self.assertNotIn(f"orphan-automl.joblib-{suffix}", names_listed)
         self.assertNotIn(f"converted.onnx-{suffix}", names_listed)
         # 端点只返回 joblib（ONNX 不进画布下拉）
-        self.assertTrue(all(item.get("format") == "joblib" for item in r.json()["items"]))
+        self.assertTrue(all(item.get("format") == "joblib" for item in items))
 
 
 if __name__ == "__main__":
