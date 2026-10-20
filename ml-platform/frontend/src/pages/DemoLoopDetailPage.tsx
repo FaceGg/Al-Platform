@@ -229,7 +229,7 @@ export default function DemoLoopDetailPage() {
           retrain_status: current.retrain_status,
         }));
         setProgress(Math.round(((i + 1) / rows.length) * 100));
-        await new Promise((resolve) => setTimeout(resolve, 240));
+        await new Promise((resolve) => setTimeout(resolve, 10));
       }
       if (!stoppedByFailures && failedRows > 0) {
         message.warning(`回放结束：${failedRows} 行调用失败已跳过（详见结果面板）`);
