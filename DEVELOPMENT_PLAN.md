@@ -306,6 +306,13 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 新增工作流编排 API 测试脚本 workflow_api_test.py
+
+- 需求：用户需要一个 Python 脚本测试调用指定工作流（画布页 /workspace/<id>）的编排 API。
+- 实现（`ml-platform/scripts/workflow_api_test.py`，纯标准库）：登录 → `GET /api/workflows/{id}/versions` 取版本 → 与 `GET /api/platform/apis?status=published&api_type=orchestration` 的 source_id 匹配，精确锁定该工作流已发布的编排 API（多个版本取最新）→ 按发布时 request_schema.record 对齐输入行（缺列报错防误测）→ `POST /api/platform/apis/orchestration/{version_id}/invoke` 调用并汇总 branch/prediction/重训阈值计数。支持 `--csv/--json/--sample`（按 schema 自动生成连通性样例）、`--count/--interval` 批量、`--verbose` 全响应；`--base-url` 可指向 8001 直连或 5173 前端反代。
+- 验证：对工作流 c5b8256e（电焊API v1，73 特征通用闭环模板）实测 `--sample --count 2`，2/2 HTTP 200，输出节点产物含 total_rows/cycle_rows/threshold_rows/triggered，预测链路打通。
+- 说明：输出节点为拓扑序最后一个节点（闭环模板即重训阈值节点），其产物行不含 prediction 字段属预期；如需看判定分支可用 --verbose 观察完整响应或在大屏观察事件流。
+
 ### 2026-10-20 拧紧特征工程示例脚本同步 + 闭环算子模式剔除列同步生效
 
 - 需求：用户要求①Python 脚本算子的「拧紧特征工程」示例同步新的算子行为（剔除泄漏列 + 缺失填充）；②闭环自动化「特征工程方式→工作流特征工程算子」选中拧紧特征工程时同步生效。
