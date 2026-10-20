@@ -718,23 +718,45 @@ function setRetrainThreshold(n) {
   sim.retrainAt = n;
   updateGateVisual();
 }
-/* 串行自调度轮询：上一次响应返回后才发起下一次（interval 只延迟不叠加），
-   保证状态按序应用——推理间隔 50ms 时 setInterval 会因请求晚于间隔而
-   乱序返回，旧响应覆盖新响应导致大屏计数回跳/落后于真实进度。 */
+/* 实时轮询跑在专用 Web Worker：页面后台/被遮挡时浏览器会把主线程
+   setTimeout 钳到 ≥1s（Chrome 密集节流甚至 1/min），大屏因此在推理
+   期间落后几十条；Worker 定时器不受可见性节流，始终 20ms 间歇。
+   Worker 只做「串行 fetch + 回传」，响应处理仍留在主线程。
+   串行自调度：上一次响应返回后才发起下一次，状态严格按序应用。 */
 let liveSeq = 0;
-function startLivePolling(pollFn, intervalMs = 20) {
+function startLivePolling(pollFn, url, headers, intervalMs = 20) {
   stopLivePolling();
   const session = ++liveSeq;
-  const tick = async () => {
+  /* Blob Worker 内相对 URL 解析不可靠，主线程先绝对化 */
+  const absoluteUrl = new URL(url, location.href).href;
+  const workerSrc = `
+    let stopped = false;
+    onmessage = (e) => { if (e.data === "stop") stopped = true; };
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const res = await fetch("${absoluteUrl}", { headers: ${JSON.stringify(headers)} });
+        const body = await res.text();
+        postMessage({ status: res.status, body });
+      } catch (err) {
+        postMessage({ status: 0, body: "" });
+      }
+      if (!stopped) setTimeout(tick, ${intervalMs});
+    };
+    tick();
+  `;
+  const worker = new Worker(URL.createObjectURL(new Blob([workerSrc], { type: "text/javascript" })));
+  worker.onmessage = (event) => {
     if (liveSeq !== session) return;
-    try { await pollFn(); } catch (e) { /* pollFn 自身已处理错误 */ }
-    if (liveSeq !== session) return;
-    live.timer = setTimeout(tick, intervalMs);
+    const { status, body } = event.data;
+    pollFn({ status, body });
   };
-  void tick();
+  worker.postMessage("start");
+  live.worker = worker;
 }
 function stopLivePolling() {
   liveSeq += 1;
+  if (live.worker) { try { live.worker.terminate(); } catch (e) {} live.worker = null; }
   if (live.timer) { clearTimeout(live.timer); live.timer = null; }
 }
 function liveHeaders() {
@@ -780,26 +802,24 @@ async function liveConnect() {
     localStorage.setItem("demoLiveProject", project);
     localStorage.setItem("demoLiveApi", apiId);
     stopLivePolling();
-    const poll = async () => {
+    const statusUrl = `/api/platform/apis/orchestration/${apiId}/showcase-status`;
+    const handleResult = ({ status, body }) => {
       try {
-        const res = await fetch(`/api/platform/apis/orchestration/${apiId}/showcase-status`, {
-          headers: liveHeaders(),
-        });
-        if (res.status === 409) {
+        if (status === 409) {
           toast("该编排 API 增减过算子，不支持大屏展示", C.red, 3200);
           stopLivePolling(); live.on = false;
           document.getElementById("connDot").className = "off";
           return;
         }
-        if (!res.ok) throw new Error(String(res.status));
-        const st = await res.json();
+        if (status < 200 || status >= 300) throw new Error(String(status));
+        const st = JSON.parse(body);
         document.getElementById("connDot").className = "on";
         applyLiveStatus(st);
       } catch (e) {
         document.getElementById("connDot").className = "off";
       }
     };
-    startLivePolling(poll);
+    startLivePolling(handleResult, statusUrl, liveHeaders());
     live.on = true;
     const aname = apiSel.selectedOptions[0] ? apiSel.selectedOptions[0].textContent : apiId;
     toast(`已连接编排 API 实时闭环 · ${aname}`, C.green);
@@ -824,20 +844,21 @@ async function liveConnect() {
       if (cfg.retrain_threshold_rows > 0) setRetrainThreshold(cfg.retrain_threshold_rows);
     }
   } catch (e) { /* 阈值环保持默认值 */ }
-  const poll = async () => {
+  const handleResult = ({ status, body }) => {
     try {
-      const res = await fetch(`/api/projects/${project}/demo-loop/loops/${loopId}/status`, {
-        headers: liveHeaders(),
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      const st = await res.json();
+      if (status < 200 || status >= 300) throw new Error(String(status));
+      const st = JSON.parse(body);
       document.getElementById("connDot").className = "on";
       applyLiveStatus(st);
     } catch (e) {
       document.getElementById("connDot").className = "off";
     }
   };
-  startLivePolling(poll);
+  startLivePolling(
+    handleResult,
+    `/api/projects/${project}/demo-loop/loops/${loopId}/status`,
+    liveHeaders(),
+  );
   live.on = true;
   const sel2 = document.getElementById("liveProject");
   const loopSel = document.getElementById("liveLoop");
