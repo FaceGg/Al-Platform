@@ -641,8 +641,10 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
     const colName = isColumnParam(p.name);
     if (colName && upstreamColumns.length > 0 && (p.type === "str" || p.type === "select")) {
       const portLabel = getPortLabel(operator?.id, p.name, lang) || p.label || p.name;
-      const multiple = p.name === "columns" &&
-        (operator?.id === "select_attributes" || operator?.id === "auto_feature_engineering");
+      // drop_columns（剔除列）为防泄漏的列集合，一律多选；columns 在部分算子下多选。
+      const multiple = p.name === "drop_columns" ||
+        (p.name === "columns" &&
+          (operator?.id === "select_attributes" || operator?.id === "auto_feature_engineering"));
       const selectedValues = multiple
         ? String(value || "").split(",").map((column) => column.trim()).filter(Boolean)
         : value || undefined;

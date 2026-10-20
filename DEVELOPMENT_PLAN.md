@@ -306,6 +306,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 「拧紧特征工程」剔除列参数改为多选列下拉
+
+- 需求：工作流「拧紧特征工程」算子的「剔除列」（drop_columns）参数在节点参数面板为单选列下拉，用户要求改为多选样式。
+- 根因：NodeConfigPanel 列参数的多选开关只对 `select_attributes`/`auto_feature_engineering` 的 `columns` 参数生效（L644），`drop_columns` 虽已列入 `isColumnParam`（有上游列时渲染下拉）但落单选分支。
+- 改动（`NodeConfigPanel.tsx`）：`drop_columns` 一律 `mode="multiple"`——已存逗号串拆为已选标签回显、多选变更后仍以逗号串写回（与后端基础名匹配解析、演示闭环默认参数合并完全兼容，存储格式不变）。
+- 验证：NodeConfigPanel 组件测试新增用例（tighten 节点 + 上游列结果 → drop_columns 为唯一 multiple select 且回显已存值），8/8 passed；tsc 通过；frontend 镜像重建部署，nginx 重启，前端页面 200、内嵌反代 API 链路通。
+- 说明：列选项来自上游节点（或本节点）最近一次运行结果；上游未运行过时该参数回退为文本输入（既有列参数一致行为）。
+
 ### 2026-10-20 AutoML 分析报告大数值集挂死修复：silhouette/置换重要性确定性抽样
 
 - 现象：用户在自动建模任务（f68cd972，tighten 70087 行 × 24 列，lightgbm）页面点「生成分析报告」无响应——实测 `POST /training/jobs/{id}/automl-report` 60 秒无响应（客户端超时后服务端仍持续计算），按钮无限 loading。

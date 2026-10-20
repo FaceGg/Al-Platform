@@ -1,7 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import NodeConfigPanel, { getParamLabel, getPortLabel, NodeResultPanel } from "./NodeConfigPanel";
+import { extractColumnsFromResult, isColumnParam } from "./CustomNode";
 import { useWorkflowStore } from "../../stores/workflowStore";
+
+const mockedIsColumnParam = isColumnParam as unknown as Mock;
+const mockedExtractColumns = extractColumnsFromResult as unknown as Mock;
 
 const datasetsApi = vi.hoisted(() => ({
   listDatasets: vi.fn(),
@@ -30,6 +34,8 @@ const visualizationNode = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockedIsColumnParam.mockImplementation(() => false);
+  mockedExtractColumns.mockReturnValue([]);
   useWorkflowStore.getState().reset();
   datasetsApi.listDatasets.mockResolvedValue([]);
   datasetsApi.listModelArtifacts.mockResolvedValue([]);
@@ -137,6 +143,45 @@ describe("closed-loop operator id params render pickers", () => {
       const opts = Array.from(document.querySelectorAll(".ant-select-item-option")).map(o => o.textContent);
       expect(opts.some(t => t.includes("自动模型.joblib"))).toBe(true);
     });
+  });
+});
+
+describe("column param multi-select rendering", () => {
+  it("tighten_feature_engineering drop_columns renders a multiple column select", async () => {
+    mockedIsColumnParam.mockImplementation((name: string) => (name === "drop_columns" ? name : null));
+    mockedExtractColumns.mockImplementation((result: any) => Object.keys(result?.data?.[0] || {}));
+    const node = {
+      id: "n-1", type: "custom", position: { x: 0, y: 0 },
+      data: {
+        operatorId: "tighten_feature_engineering", label: "拧紧特征工程",
+        params: { drop_columns: "DECIDE_ONE" },
+      },
+    };
+    useWorkflowStore.setState({
+      operators: [{
+        id: "tighten_feature_engineering",
+        name: "拧紧特征工程",
+        category: "processing",
+        parameters: [
+          { name: "drop_columns", type: "str", label: "剔除列", default: "DECIDE_ONE,DECIDE_TWO" },
+          { name: "missing_strategy", type: "select", label: "缺失策略", default: "median" },
+        ],
+        inputs: [], outputs: [],
+      } as any],
+      nodes: [node as any],
+      selectedNode: node as any,
+      edges: [{ id: "e1", source: "src", target: "n-1" } as any],
+      nodeResults: { src: { data: [{ A: 1, B: 2 }] } } as any,
+    });
+    render(<NodeConfigPanel projectId="p1" />);
+
+    // drop_columns 为多选列下拉（唯一一个 multiple select），其余参数保持单选/输入框
+    await waitFor(() => expect(document.querySelectorAll(".ant-select-multiple").length).toBe(1));
+    // 已保存的逗号串回显为已选项
+    const tags = Array.from(
+      document.querySelectorAll(".ant-select-multiple .ant-select-selection-item"),
+    ).map((item) => item.textContent);
+    expect(tags).toContain("DECIDE_ONE");
   });
 });
 
