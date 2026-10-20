@@ -306,6 +306,15 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 为用户新建「模型效果测试-tighten_test」工作流 + 完成载荷 metrics 端口覆盖修复
+
+- 需求：用户想用 tighten_test.csv 测试数据测模型准确率等效果，要求直接建好能跑通的工作流。
+- 新建工作流 `867a6cee-2a60-46ec-bdee-b2925ad88159`（项目 39f62a93，容器内按 start_run 相同数据结构直建 Workflow/WorkflowNode/WorkflowEdge）：csv_import(tighten_test.csv，70087 行 20 列**原始**数据) → 拧紧特征工程（默认参数派生 5 个 TIGHTEN_* 特征）→ 分类评估(详细)（target=DECIDE 中文列）；加载模型制品(automl-job-random_forest.joblib) → 评估 model 口。
+- 连带修复①（触发竞态）：手动脚本「先 enqueue 后 commit」导致 worker claim 时读不到未提交的 run 行直接 skipped（残留 pending 运行）——改为先落库再入队（API 路径因 audit 事务先提交无此问题）。
+- 连带修复②（完成载荷 metrics 覆盖）：`dag_executor` 完成载荷组装时 `completion["metrics"]` 无条件取运行级 `OperatorResult.metrics`（评估族算子未设置恒为空 {}），**覆盖**了同名 "metrics" 输出端口的真实指标——节点卡片「指标」永远显示空。修复为端口值优先，无同名端口才回退运行级 metrics（api_input 等旧行为不变）。
+- 验证：test_run_reliability 新增 2 用例（metrics 端口不被运行级覆盖 / 无端口算子保持运行级 metrics），16 passed；重跑工作流 completed，评估节点持久化 accuracy=0.8032 / f1_macro=0.4754（样本 70087，0 类 recall 仅 0.031——模型本身对不合格类识别弱，属 AutoML 模型质量问题，含 DECIDE_ONE/DECIDE_TWO 泄漏特征，非平台缺陷）；backend/worker 镜像重建，frontend/nginx 同步重启防 502。
+- 用户侧：打开 `http://localhost:5173/workspace/867a6cee-2a60-46ec-bdee-b2925ad88159?project=39f62a93-d4d4-4043-a757-e6728a2642dc`，点「运行」即可复现评估；点击评估节点查看准确率/每类指标/混淆矩阵图。
+
 ### 2026-10-20 追加：XGBoost/LightGBM 工件特征名注入兼容（no setter 崩溃修复）
 
 - 现象：用户按指引换用 `automl-job-xgboost.joblib` 重跑模型测试工作流，load_model_artifact 报 `property 'feature_names_in_' of 'XGBClassifier' object has no setter`——上一轮的注入实现直接 setattr，撞上 xgboost/lightgbm 把 `feature_names_in_` 定义为只读 property。

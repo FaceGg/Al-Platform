@@ -302,9 +302,13 @@ class DAGExecutor:
                 completion = {
                     **preview,
                     "artifacts": artifact_refs,
-                    "metrics": _json_safe(operator_result.metrics),
                     "logs": _json_safe(operator_result.logs),
                 }
+                # 端口名恰好叫 "metrics" 的算子（评估族）其端口值就是节点
+                # 指标——只在无同名端口时才回退到运行级 metrics，否则空运行级
+                # 指标会覆盖端口值（节点卡片"指标"显示为空 {}）。
+                if "metrics" not in completion:
+                    completion["metrics"] = _json_safe(operator_result.metrics)
                 if row_counts:
                     completion["row_counts"] = row_counts
             self._emit_status(

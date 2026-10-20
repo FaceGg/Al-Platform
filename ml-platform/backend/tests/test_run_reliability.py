@@ -230,6 +230,79 @@ class TestReliableExecutor(unittest.TestCase):
             self.assertEqual(len(stored), 500)
             self.assertEqual(stored[-1], {"idx": 499, "value": 998})
 
+    def test_completion_metrics_port_not_overwritten_by_run_metrics(self):
+        """完成载荷的 "metrics" 键：有同名输出端口时端口值优先。
+
+        评估族算子的指标在 "metrics" 端口里；运行级 OperatorResult.metrics
+        恒为空 dict，旧行为无条件覆盖导致节点指标显示 {}。
+        """
+        from app.engine.operator_contract import OperatorResult
+
+        class _MetricsPortOperator(BaseOperator):
+            id = "test_metrics_port_operator"
+            name = "Metrics Port"
+            category = "utility"
+            description = "Emits a metrics output port"
+            inputs = []
+            outputs = [PortSpec("metrics", "JSON", "Metrics")]
+            parameters = []
+
+            def validate(self, inputs):
+                return True
+
+            def execute(self, context, inputs, params):
+                # 运行级 metrics 保持空 dict（评估族算子的实际情况）
+                return OperatorResult(outputs={"metrics": {"accuracy": 0.802}})
+
+        operator = _MetricsPortOperator()
+        OperatorRegistry.register(operator)
+        events = []
+        executor = DAGExecutor([{
+            "id": "node", "operator_id": operator.id, "params": {},
+        }], [])
+
+        executor.execute("metrics-port-run", lambda *args: events.append(args), RunControl())
+
+        completed = [event for event in events if event[2] == "completed"][-1]
+        completion = completed[3]
+        self.assertEqual(completion["metrics"], {"accuracy": 0.802})
+
+    def test_completion_run_metrics_used_without_metrics_port(self):
+        """无 metrics 端口的算子保持旧行为：完成载荷 metrics 来自运行级指标。"""
+        from app.engine.operator_contract import OperatorResult
+
+        class _RunMetricsOperator(BaseOperator):
+            id = "test_run_metrics_operator"
+            name = "Run Metrics"
+            category = "utility"
+            description = "Only sets run-level metrics"
+            inputs = []
+            outputs = [PortSpec("data", "DataTable", "Data")]
+            parameters = []
+
+            def validate(self, inputs):
+                return True
+
+            def execute(self, context, inputs, params):
+                return OperatorResult(
+                    outputs={"data": [{"ok": "yes"}]},
+                    metrics={"total_rows": 1.0},
+                )
+
+        operator = _RunMetricsOperator()
+        OperatorRegistry.register(operator)
+        events = []
+        executor = DAGExecutor([{
+            "id": "node", "operator_id": operator.id, "params": {},
+        }], [])
+
+        executor.execute("run-metrics-run", lambda *args: events.append(args), RunControl())
+
+        completed = [event for event in events if event[2] == "completed"][-1]
+        completion = completed[3]
+        self.assertEqual(completion["metrics"], {"total_rows": 1.0})
+        self.assertEqual(completion["data"], [{"ok": "yes"}])
+
     def test_failed_node_retries_and_records_attempts(self):
         events = []
         executor = DAGExecutor([{
