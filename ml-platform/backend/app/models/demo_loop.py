@@ -61,6 +61,8 @@ class DemoLoopConfig(Base):
     retrain_max_trials = Column(Integer, nullable=False, default=10)
     # Artifact that accumulates the error rows (kept without FK: it is created lazily).
     error_artifact_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    # 按比例同步收集的正确预测行（独立数据集，不与报错数据混写）
+    correct_artifact_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     error_count = Column(Integer, nullable=False, default=0)
     alert_count = Column(Integer, nullable=False, default=0)
     # Total rows inferred through this loop (normal + error), for monitoring.

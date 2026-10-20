@@ -766,30 +766,73 @@ class DemoLoopService:
     # ------------------------------------------------------- correct sampling
 
     def _correct_buffer(self, config: DemoLoopConfig) -> dict:
-        state = dict(config.correct_buffer or {})
-        rows = state.get("rows")
-        state["rows"] = rows if isinstance(rows, list) else []
-        state.setdefault("since_correct", 0)
-        return state
+        """深拷贝读取缓冲状态。
+
+        SQLAlchemy 的 JSON 列不做原地变更检测：浅拷贝 dict 与已加载值共享
+        rows 列表，append 后新旧值按值相等 → UPDATE 被静默跳过（缓冲累计
+        丢失、比例收集不足的根因）。这里每次返回全新结构，赋值必然产生
+        可检测的值差异。
+        """
+        loaded = config.correct_buffer or {}
+        rows = loaded.get("rows")
+        return {
+            "rows": [dict(row) for row in rows] if isinstance(rows, list) else [],
+            "since_correct": int(loaded.get("since_correct") or 0),
+        }
+
+    def _correct_artifact(self, config: DemoLoopConfig, columns: list[str]) -> Artifact:
+        """正确数据集（独立于报错数据集，避免计数口径混淆）。"""
+        if config.correct_artifact_id:
+            artifact = self.db.query(Artifact).filter(
+                Artifact.id == config.correct_artifact_id,
+                Artifact.project_id == config.project_id,
+            ).first()
+            if artifact is not None:
+                return artifact
+        name = f"{config.name}-正确数据"
+        exists = self.db.query(Artifact.id).filter(
+            Artifact.project_id == config.project_id,
+            Artifact.name == name,
+            Artifact.type == "dataset",
+        ).first()
+        if exists is not None:
+            name = f"{name}-{uuid.uuid4().hex[:6]}"
+        frame = pd.DataFrame(columns=columns or ["record"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "correct_rows.csv"
+            frame.to_csv(path, index=False)
+            artifact = self._artifact_service().create_from_file(
+                config.project_id, path, name, "dataset",
+                metadata={
+                    "source": "demo_loop",
+                    "kind": "correct",
+                    "row_count": 0,
+                    "column_count": len(frame.columns),
+                },
+            )
+        config.correct_artifact_id = artifact.id
+        self._emit(config, "correct_dataset_created", f"已创建正确数据集 {artifact.name}",
+                   payload={"artifact_id": str(artifact.id)})
+        return artifact
 
     def _buffer_correct_row(self, config: DemoLoopConfig, record: dict, predicted: str, confidence) -> None:
-        """缓存正常预测行，供回流时按比例与报错数据一同收集。"""
+        """缓存正常预测行，供回流时按比例收集进正确数据集。"""
         state = self._correct_buffer(config)
-        rows = state["rows"]
-        rows.append(dict(record, **{
+        state["rows"].append(dict(record, **{
             "prediction": predicted,
             "confidence": confidence,
         }))
         # 上限防止长跑任务无限增长（比例单周期最多 10 倍，200 条足够）
-        del rows[:-200]
+        state["rows"] = state["rows"][-200:]
         config.correct_buffer = state
         self.db.commit()
 
     def _collect_correct_rows(self, config: DemoLoopConfig, actor_id) -> None:
-        """按「错误:正确」比例在报错回流时同步并入正确数据。
+        """按「错误:正确」比例把缓冲中的正常行收集进正确数据集。
 
-        比例 "e:c"：每累计 e 条报错，追加 c 条缓冲中的正常行；
-        cycle 计数存于 correct_buffer.since_correct。
+        比例 "e:c"：每累计 e 条报错，收集 c 条缓冲中的正常行；
+        cycle 计数存于 correct_buffer.since_correct。正确行自带
+        prediction 与目标列标签，供重训合并直接使用。
         """
         ratio = str(config.correct_sample_ratio or "1:1")
         try:
@@ -809,19 +852,25 @@ class DemoLoopService:
         rows = state["rows"]
         take = min(correct_part, len(rows))
         if take <= 0:
+            state["rows"] = []
             config.correct_buffer = state
             return
         collected, rows = rows[:take], rows[take:]
+        state["rows"] = rows
         for row in collected:
             if config.retrain_target_column:
                 row[config.retrain_target_column] = row.get("prediction", "")
-        self._append_error_rows(config, collected, actor_id)
-        self._emit(
-            config, "correct_collected",
-            f"已按 {ratio} 比例同步收集 {take} 条正常数据（缓冲剩余 {len(rows)} 条）",
-            payload={"collected": take},
+        columns = list(collected[0].keys())
+        artifact = self._correct_artifact(config, columns)
+        total = append_rows_to_dataset_artifact(
+            self.db, self._artifact_service(), artifact, collected,
         )
         config.correct_buffer = state
+        self._emit(
+            config, "correct_collected",
+            f"已按 {ratio} 比例收集 {take} 条正常数据（正确数据集当前 {total} 行，缓冲剩余 {len(rows)} 条）",
+            payload={"collected": take, "total": total},
+        )
 
     # ---------------------------------------------------------------- thresholds
 
@@ -1047,6 +1096,12 @@ class DemoLoopService:
         if config.error_artifact_id:
             error_id = str(config.error_artifact_id)
             dataset_ids = [error_id] + [did for did in dataset_ids if did != error_id]
+        # 按比例收集的正确数据集同样参与合并（紧随报错数据）。
+        if getattr(config, "correct_artifact_id", None):
+            correct_id = str(config.correct_artifact_id)
+            dataset_ids = [did for did in dataset_ids if did != correct_id]
+            insert_at = 1 if dataset_ids and dataset_ids[0] == str(config.error_artifact_id) else 0
+            dataset_ids.insert(insert_at, correct_id)
         if not dataset_ids:
             raise DemoLoopError("DEMO_LOOP_RETRAIN_DATASET_MISSING", "未配置重训数据集")
         target_column = (config.retrain_target_column or "").strip()
@@ -1112,6 +1167,27 @@ class DemoLoopService:
             self._emit(config, "retrain_failed", "自动建模任务记录丢失", severity="warning")
             self.db.commit()
             return
+        if job.status == "pending" and job.task_id is None:
+            # 自愈：任务派发竞态（worker 领取时行尚未提交 → skipped）或
+            # broker 丢消息会让 job 永久滞留 pending。超过 2 分钟视为
+            # 未投递，重新派发（claim 幂等，重复投递会被安全跳过）。
+            created = job.created_at
+            if created is not None:
+                from datetime import datetime, timezone
+
+                age = (datetime.now(timezone.utc).replace(tzinfo=None) - created).total_seconds()
+                if age > 120:
+                    from app.tasks.celery_app import celery_app
+
+                    task_id = celery_app.send_task(
+                        "ml_platform.execute_automl", args=[str(job.id)],
+                    ).id
+                    job.task_id = task_id
+                    self._emit(config, "retrain_redispatched",
+                               f"检测到自动建模任务未投递（滞留 {int(age // 60)} 分钟），已重新派发",
+                               severity="warning")
+                    self.db.commit()
+                    return
         if job.status == "cancelled":
             # 用户取消：回到可触发状态，下一轮积累重新出发。
             config.retrain_status = "idle"

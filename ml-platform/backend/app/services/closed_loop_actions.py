@@ -303,7 +303,10 @@ def trigger_retrain_job(
             dataset = service.create_from_file(
                 project_id, merged_path, f"{job_name}-合并数据集", "dataset",
                 metadata={"source": "closed-loop-merge",
-                          "datasets": [str(item.id) for item in datasets]},
+                          "datasets": [str(item.id) for item in datasets],
+                          # 数据管理列表按 row_count 展示行数；缺失会显示为空
+                          "row_count": int(len(frame)),
+                          "column_count": int(len(frame.columns))},
             )
     else:
         dataset = datasets[0]
@@ -358,6 +361,10 @@ def trigger_retrain_job(
     db.add(job)
     db.add(ExperimentAutoMLBinding(experiment_id=experiment.id, job_id=job.id))
     db.flush()
+    # 先提交再派发：worker 领取用 with_for_update 查询，未提交的 INSERT
+    # 对 worker 不可见 → claim 落空返回 skipped，任务永久滞留 pending
+    # （生产复现过：任务 3ms 内 skipped）。
+    db.commit()
     # Local dispatcher only registers on enqueue and needs start(task_id)
     # to spawn the worker thread; Celery's delay runs it inside enqueue.
     dispatcher = automl_dispatcher()

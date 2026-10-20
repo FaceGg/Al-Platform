@@ -86,8 +86,11 @@ export default function SampleStream({
   }
   const visible = new Set(visibleColumns)
   const entries = Object.entries(sample.values ?? {})
-  const annotationFields = entries.filter(([key]) => visible.has(key))
-  const otherFields = entries.filter(([key]) => !visible.has(key))
+  // 模型推理输出（prediction/confidence）不进样本字段区，改在标签区展示
+  const isInferenceOutput = (key: string) => /prediction|confidence/i.test(key)
+  const annotationFields = entries.filter(([key]) => visible.has(key) && !isInferenceOutput(key))
+  const otherFields = entries.filter(([key]) => !visible.has(key) && !isInferenceOutput(key))
+  const inferenceFields = entries.filter(([key]) => isInferenceOutput(key))
   // 自动标注结果一旦发布就永久保留（人工修改后仍显示，用于对照），
   // 因此这里只看样本是否携带自动结果，而不是当前值是否仍来自自动标注。
   const automaticLabels = sample.automatic_labels ?? {}
@@ -107,10 +110,7 @@ export default function SampleStream({
               <div className="field-grid">
                 {annotationFields.map(([key, value]) => (
                   <div className="field-item" key={key}>
-                    <span className="field-item-name">
-                      {/prediction/i.test(key) ? <span className="field-item-badge">模型推理输出</span> : null}
-                      {key}
-                    </span>
+                    <span className="field-item-name">{key}</span>
                     {fieldDescriptions[key] ? <span className="field-item-description">{fieldDescriptions[key]}</span> : null}
                     <span className="field-item-value">{String(value)}</span>
                   </div>
@@ -124,10 +124,7 @@ export default function SampleStream({
               <div className="field-grid">
                 {otherFields.map(([key, value]) => (
                   <div className="field-item" key={key}>
-                    <span className="field-item-name">
-                      {/prediction/i.test(key) ? <span className="field-item-badge">模型推理输出</span> : null}
-                      {key}
-                    </span>
+                    <span className="field-item-name">{key}</span>
                     {fieldDescriptions[key] ? <span className="field-item-description">{fieldDescriptions[key]}</span> : null}
                     <span className="field-item-value">{String(value)}</span>
                   </div>
@@ -160,6 +157,22 @@ export default function SampleStream({
         </div>
         <div className="stream-labels">
           <h3>{hasAutomaticResult ? '标注员修改（人工结果）' : '标签'}</h3>
+          {inferenceFields.length > 0 && (
+            <div className="field-group automatic-labels" aria-label="模型推理输出">
+              <h4>模型推理输出（参考）</h4>
+              <div className="field-grid">
+                {inferenceFields.map(([key, value]) => (
+                  <div className="field-item" key={key}>
+                    <span className="field-item-name">
+                      {key}
+                      {fieldDescriptions[key] ? <span className="field-item-description">{fieldDescriptions[key]}</span> : null}
+                    </span>
+                    <span className="field-item-value">{value == null ? '—' : String(value)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {columns.map((column, index) => {
             const value = draft[column.machine_key]
             const chips = numberedOptions.filter(option => option.column.machine_key === column.machine_key)
