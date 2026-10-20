@@ -1,6 +1,6 @@
 """Workflow Runs API integration tests."""
 import sys, os, unittest, time, uuid, io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
@@ -161,6 +161,9 @@ class TestRunCancellation(unittest.TestCase):
             cls.run_id = str(run.id)
 
     def test_cancel_is_idempotent(self):
+        from unittest.mock import patch
+        from app.config import settings
+
         calls = []
         dispatcher = type("Dispatcher", (), {
             "cancel": lambda self, task_id, terminate=False: calls.append(
@@ -175,8 +178,13 @@ class TestRunCancellation(unittest.TestCase):
             db.commit()
         app.dependency_overrides[get_task_dispatcher] = lambda: dispatcher
         try:
-            first = client.post(f"/api/runs/{self.run_id}/cancel", headers=self.headers)
-            second = client.post(f"/api/runs/{self.run_id}/cancel", headers=self.headers)
+            # Local-mode cancellation is cooperative: repeated cancels keep the
+            # run in cancel_requested. (Under the celery backend the first
+            # cancel finalizes to 'cancelled' — covered by
+            # TestCancelFinalizesUnderCelery.)
+            with patch.object(settings, "task_backend", "local"):
+                first = client.post(f"/api/runs/{self.run_id}/cancel", headers=self.headers)
+                second = client.post(f"/api/runs/{self.run_id}/cancel", headers=self.headers)
         finally:
             app.dependency_overrides.pop(get_task_dispatcher, None)
 
@@ -207,8 +215,11 @@ class TestCancelFinalizesUnderCelery(unittest.TestCase):
 
     def _make_run(self, status: str, task_id: str) -> str:
         with SessionLocal() as db:
+            # Real runs get started_at set by the executor once claimed;
+            # mirror that so latest-run ordering is deterministic.
             run = WorkflowRun(
                 workflow_id=uuid.UUID(self.workflow_id), status=status, task_id=task_id,
+                started_at=datetime.now(timezone.utc),
             )
             db.add(run)
             db.commit()
@@ -261,6 +272,19 @@ class TestCancelFinalizesUnderCelery(unittest.TestCase):
             db.commit()
         r = client.get(f"/api/workflows/{self.workflow_id}/runs/active", headers=self.headers)
         self.assertIsNone(r.json()["run"])
+
+    def test_latest_run_endpoint(self):
+        # Returns the most recent run regardless of state (completed included) —
+        # unlike /runs/active which only reports pending/running runs.
+        first_id = self._make_run("completed", "celery-task-4")
+        second_id = self._make_run("failed", "celery-task-5")
+        r = client.get(f"/api/workflows/{self.workflow_id}/runs/latest", headers=self.headers)
+        self.assertEqual(r.status_code, 200)
+        run = r.json()["run"]
+        self.assertIsNotNone(run)
+        self.assertEqual(run["id"], second_id)
+        self.assertEqual(run["status"], "failed")
+        self.assertNotEqual(run["id"], first_id)
 
 
 if __name__ == "__main__":

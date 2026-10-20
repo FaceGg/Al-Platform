@@ -166,7 +166,8 @@ describe("visualization result panel", () => {
     );
     expect(screen.getByTestId("node-result-table")).toBeInTheDocument();
     expect(screen.getByText("ok", { selector: "td" })).toBeInTheDocument();
-    expect(screen.getByText("r2")).toBeInTheDocument();
+    // zh 环境下指标名中文化：r2 → R² (决定系数)
+    expect(screen.getByText("R² (决定系数)")).toBeInTheDocument();
     expect(screen.getByText("0.9")).toBeInTheDocument();
     expect(screen.getByText("ok", { selector: "pre" })).toBeInTheDocument();
     const json = screen.getByTestId("node-result-json");

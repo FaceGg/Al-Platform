@@ -453,7 +453,19 @@ export default function WorkspacePage() {
           setWorkflowStatus(run.status as WorkflowRunStatus);
           setIsRunning(true);
           attachRunListeners(run.id);
+          return;
         }
+        // No active run: restore the latest run's node results (metrics /
+        // charts / tables) so a refresh doesn't wipe the result previews.
+        apiClient.get("/workflows/" + workflowId + "/runs/latest")
+          .then((latestRes) => {
+            const latest = latestRes.data?.run;
+            if (latest && latest.id && latest.status !== "pending") {
+              setWorkflowStatus(latest.status as WorkflowRunStatus);
+              reconcileRun(latest.id);
+            }
+          })
+          .catch(() => {});
       })
       .catch(() => {});
   };

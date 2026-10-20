@@ -306,6 +306,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 评估结果可视化预览补全：刷新恢复历史结果 + 评估节点可打开结果抽屉 + 指标中文化
+
+- 需求：用户希望测试结果（准确率/精确率/召回率/F1/混淆矩阵）在画布上有可视化预览——评估算子有实现（metrics/per_label/chart 端口），但**缺少预览效果**。
+- 排查（Playwright 三轮采证定位三层缺口）：①**刷新后节点结果全部丢失**——store 不持久化，`adoptActiveRun` 只恢复活动运行，已完成运行的 node_runs.result（含指标/图表）从不回填；②**评估节点点击不打开结果抽屉**——`isVisualizationResultNode` 与 store `openNodeResult` 两处独立白名单都只认 `category==="visualization"`，评估族（evaluation 类别）没有入口；③指标区英文键名直出（accuracy 等）。
+- 修复：①后端新增 `GET /api/workflows/{workflow_id}/runs/latest`（轻量概要，`started_at DESC NULLS LAST`——dispatch 跳过的无 started_at 残留运行不得遮蔽真实执行）；前端无活动运行时拉 latest → 复用 `reconcileRun` 恢复 nodeStatuses/nodeResults；②类别白名单收敛为 `workflowVisualization.RESULT_PANEL_CATEGORIES`（visualization + evaluation）单一事实来源，canvas 点击判定与 store openNodeResult 共用；③NodeResultPanel 指标区中文标签映射（accuracy→准确率、f1_macro→F1（宏平均）、total_samples→样本数、r2→R² 等 25 项）+ 数值格式化（整数千分位/小数 4 位）。
+- 验证：test_api_runs 新增 latest 端点用例 + `test_cancel_is_idempotent` 显式 patch `task_backend="local"`（修复容器 TASK_BACKEND=celery 下的预存环境失败，基线对照证实与本次改动无关），9/9 passed；前端 tsc + workspace/stores 63 tests passed；**真实浏览器端到端**（Playwright）：点击评估节点抽屉打开，指标区显示「准确率 0.8032 / 精确率（宏平均）0.8999 / 召回率（宏平均）0.5157 / F1（宏平均）0.4754 / 样本数 70,087」，混淆矩阵图渲染，**刷新页面后抽屉指标图表完整恢复**；backend/worker/frontend 镜像重建，nginx 重启。
+- 用户侧：打开模型效果测试工作流，点击「分类评估(详细)」节点即可看到指标卡片 + 混淆矩阵图 + 每类指标表 + 错误样本表；刷新不丢失。
+
 ### 2026-10-20 为用户新建「模型效果测试-tighten_test」工作流 + 完成载荷 metrics 端口覆盖修复
 
 - 需求：用户想用 tighten_test.csv 测试数据测模型准确率等效果，要求直接建好能跑通的工作流。

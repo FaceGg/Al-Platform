@@ -212,6 +212,34 @@ def get_active_run(
     }}
 
 
+@router.get("/api/workflows/{workflow_id}/runs/latest")
+def get_latest_run(
+    workflow_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the workflow's most recent run (any state) as a light summary.
+
+    The workspace page uses this after a refresh to restore the *completed*
+    run's node results (metrics/charts/tables) — `active` only covers runs
+    that are still executing.
+    """
+    workflow, _ = resolve_workflow_access(db, workflow_id, current_user.id)
+    # NULLS LAST: runs that never started (dispatch skipped / stale residue)
+    # must not shadow real executions — this endpoint feeds result-preview
+    # restoration, which only runs with actual node results can serve.
+    run = db.query(WorkflowRun).filter(
+        WorkflowRun.workflow_id == workflow.id,
+    ).order_by(WorkflowRun.started_at.desc().nullslast()).first()
+    if run is None:
+        return {"run": None}
+    return {"run": {
+        "id": str(run.id),
+        "status": run.status,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+    }}
+
+
 @router.post("/api/runs/{run_id}/cancel")
 def cancel_run(
     run_id: str,

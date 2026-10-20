@@ -75,6 +75,48 @@ function isChartOutput(name: string, value: unknown): boolean {
   return name.toLowerCase().includes("chart") && chartImageSource(value) !== null;
 }
 
+/** 常见评估指标的中文标签（en 直接显示原键名） */
+const METRIC_LABELS: Record<string, string> = {
+  accuracy: "准确率",
+  precision: "精确率",
+  precision_macro: "精确率（宏平均）",
+  precision_weighted: "精确率（加权）",
+  recall: "召回率",
+  recall_macro: "召回率（宏平均）",
+  recall_weighted: "召回率（加权）",
+  f1: "F1",
+  f1_macro: "F1（宏平均）",
+  f1_weighted: "F1（加权）",
+  f1_score: "F1",
+  anomaly_rate: "异常率",
+  fault_precision: "故障精确率",
+  fault_recall: "故障召回率",
+  fault_f1: "故障F1",
+  error_rate: "错误率",
+  total_errors: "错误样本数",
+  total_samples: "样本数",
+  total_rows: "总行数",
+  threshold: "置信度阈值",
+  mse: "均方误差 (MSE)",
+  rmse: "均方根误差 (RMSE)",
+  mae: "平均绝对误差 (MAE)",
+  r2: "R² (决定系数)",
+};
+
+function metricLabel(name: string, lang: "zh" | "en"): string {
+  return lang === "zh" ? (METRIC_LABELS[name] ?? name) : name;
+}
+
+function metricValue(value: unknown): string {
+  if (value == null) return "-";
+  if (typeof value === "number") {
+    if (Number.isInteger(value)) return value.toLocaleString();
+    return Number.isFinite(value) ? String(Math.round(value * 10000) / 10000) : String(value);
+  }
+  if (typeof value === "object") return formatBoundedResultJson(value, 200);
+  return String(value);
+}
+
 function renderResultCell(value: unknown): string {
   if (value == null) return "-";
   if (typeof value === "object") return formatBoundedResultJson(value, 400);
@@ -162,7 +204,7 @@ export function NodeResultPanel() {
           {Object.keys(metrics).length === 0 ? <p className="node-result-panel__empty">{labels.empty}</p> : (
             <dl className="node-result-panel__metrics">
               {Object.entries(metrics).map(([name, value]) => (
-                <div key={name}><dt>{name}</dt><dd>{renderResultCell(value)}</dd></div>
+                <div key={name}><dt>{metricLabel(name, lang)}</dt><dd>{metricValue(value)}</dd></div>
               ))}
             </dl>
           )}

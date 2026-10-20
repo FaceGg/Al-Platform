@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { Node, Edge, applyNodeChanges, applyEdgeChanges, addEdge, Connection, NodeChange, EdgeChange } from "reactflow";
 import type { ReactFlowInstance } from "reactflow";
 import type { BrowserDirectoryHandle } from "../components/workspace/workflowExport";
+import { RESULT_PANEL_CATEGORIES } from "../components/workspace/workflowVisualization";
 
 export type WorkflowRunStatus = "pending" | "running" | "cancel_requested" | "completed" | "failed" | "cancelled";
 export type NodeRunStatus = "pending" | "running" | "completed" | "failed" | "timed_out" | "cancelled" | "skipped";
@@ -188,7 +189,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       if (!node || state.nodeStatuses[nodeId] !== "completed") return {};
       const operator = state.operators.find((candidate: any) => candidate.id === node.data?.operatorId);
       const category = node.data?.category || operator?.category;
-      if (category !== "visualization") return {};
+      // Same category set as the canvas click gate (workflowVisualization).
+      if (!RESULT_PANEL_CATEGORIES.has(category)) return {};
       return { resultPanelNodeId: nodeId };
     }),
 
