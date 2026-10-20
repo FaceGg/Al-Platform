@@ -306,6 +306,13 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 新建「电焊闭环编排」任务并 Python 调用打通（含回流验证）
+
+- 需求：用户新建一个电焊编排任务并要求 Python 代码调用成功。
+- 建组（纯 API 操作，参考通用闭环服务模板 3d2a2cb4 的 7 节点结构与参数）：项目 eebc7a35 下上传两个数据集（报错回流表头 CSV：模型 14 特征 + prediction；重训数据 = labeled_features_demo.csv 46 行 73 特征 + fault）→ 建工作流「电焊闭环编排」（86e77c08，api_input→load_model_artifact→apply_model→condition(prediction==1 点焊语义)→append_error_dataset→notify_admins→retrain_threshold，阈值 3 行、retrain_max_trials=5，未绑换模部署）→ 发布 v1 → 发布编排 API。
+- 关键决策（模型选择）：最初按模板绑闭环重训产物 LightGBM（14 特征，0de060e9）——实测该模型把 46 行**全部预测为 0**（闭环小样本重训产物退化，报错行永远不命中回流），而「电焊-电焊分类训练-CatBoost」（cce126ee，73 特征，模型库条目）预测分布正确（3/46 恰为真实 fault=1 行）。工作流改绑 CatBoost 后发布 v2 并发布编排 API，退化的 v1 API 下线。
+- 验证（workflow_api_test.py）：正常行（row0）HTTP 200；报错行（row4，fault=1）HTTP 200 且报错数据集 total_rows 0→1、cycle_rows=1/3——预测→条件分流→回流→告警→阈值判断全链路打通；再调用 2 次报错行（row27/row38）即达阈值触发自动重训（本轮未执行，避免留下后台任务）。
+
 ### 2026-10-20 新增工作流编排 API 测试脚本 workflow_api_test.py
 
 - 需求：用户需要一个 Python 脚本测试调用指定工作流（画布页 /workspace/<id>）的编排 API。
