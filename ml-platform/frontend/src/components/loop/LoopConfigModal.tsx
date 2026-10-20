@@ -72,7 +72,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
   const tr = ((t as unknown as Record<string, Record<string, string | undefined>>).demo_loop ?? {}) as Record<string, string | undefined>;
   const [form] = Form.useForm();
   const [feOperatorOptions, setFeOperatorOptions] = useState<Array<{ value: string; label: string }>>([]);
-  const [feOperatorsLoading, setFeOperatorsLoading] = useState(false);
+  const [feOperatorsLoading, setFeOperatorsLoading] = useState(true);
   const scriptTemplateRef = useRef("");
   const featureMode = Form.useWatch("feature_engineering_mode", form);
 
@@ -80,7 +80,6 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
   useEffect(() => {
     if (!editor) return;
     let cancelled = false;
-    setFeOperatorsLoading(true);
     fetchFeatureOperators().then((operators) => {
       if (cancelled) return;
       const operatorNames = ((t as unknown as Record<string, Record<string, string | undefined>>).operator ?? {}) as Record<string, string | undefined>;
@@ -91,7 +90,9 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
       setFeOperatorsLoading(false);
     });
     return () => { cancelled = true; };
-  }, [editor, t]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor]);
+  // EXPERIMENT-A: fetchFeatureOperators effect kept above
 
   useEffect(() => {
     if (featureMode !== "script" || !editor) return;
