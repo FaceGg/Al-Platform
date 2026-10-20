@@ -364,6 +364,12 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 - 备注：status 轮询存在偶发 401（token 过期前的日志噪音，401 会触发全局跳登录），与本次停止无直接关系，未处理。
 - 连带修复：CI（run 39346071816，docs-only 提交）双平台 backend suite 失败于 `test_genericization_contract`——`services/demo_loop.py: forbidden reference spot-weld`，系 2026-10-19 三选一改造时 docstring 引入的英文 "spot-weld"（预存问题，与本次改动无关但会阻塞门禁）。将两处英文注释改为中文（点焊特征桥），全 app 目录门禁扫描 `violations: []`（用 WSL Python 直接对工作区源码执行 `scan_production_sources` 验证），backend 镜像重建保持镜像与 HEAD 一致。
 
+### 2026-10-20 常规重打包：纳入 r16 未发布内容与工作台/拧紧算子增强（r17）
+
+- 背景：r16 归档构建后主线新增两个功能提交——评估结果可视化预览（刷新/恢复历史节点结果、评估节点结果抽屉、指标中文化，`bdf0e61`）、拧紧特征工程默认剔除泄漏判定列 + 缺失填充策略（单轴行保留，`5d2d20f`）；且 r16 的门禁在跑期间被并发取消未完成、其 GitHub Release 从未发布。用户要求更新文档重新打包，r16 归档作废、内容并入 r17 一并发布。
+- 发布记录（2026-10-20）：安装包 `output/linkraft-ubuntu-20261020-r17.tar.gz`（3,245,415 字节），manifest 绑定 HEAD `fc01ee2`（= tag = 门禁分支 `release/r17` HEAD；README r17 文档提交），SHA-256 `118f4cd21208884a2367b48a9f320f034e1a35350ec0f9c6e151a613c0278828`，`sha256sum -c` 通过；`.git/` 内 LF 临时副本执行打包。归档抽查：特征工程泄漏剔除/评估历史结果端点/迁移 `20261019_72`/r17 文档引用逐项在包；排除项干净（无 `.env`/secrets/数据库/wheelhouse/node_modules/.git）；packaging 脚本 0 CR（WSL 原生工具复核；README-UBUNTU.md 的 CRLF 属文档既有惯例）。
+- 质量门禁：在门禁分支 `release/r17` 隔离并发组验证，终验 run 回填；绿后 tag `fc01ee2` 发 GitHub Release `20261020-r17`（资产 = tar.gz + sha256）。
+
 ### 2026-10-19 常规重打包：纳入 r15 后大数据集与稳定性修复（r16）
 
 - 背景：r15（2026-10-14）之后主线新增本节下方一批 2026-10-19 修复（大文件上传 30s 超时、节点完成载荷截断、节点超时 300→1800 秒、运行终止终态与状态泄漏、数据集下载原始文件名/中文支持、CSV 导出 BOM 与流式化、拧紧特征工程中文表头、python_script venv 修复、闭环复核收集等，含新增迁移 `20261015_71`）；用户要求更新文档并重新打包。
