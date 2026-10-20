@@ -93,17 +93,6 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
     return () => { cancelled = true; };
   }, [editor, t]);
 
-  // 选择推理部署后：目标列为空时自动填充部署模型的 label 列
-  const deploymentId = Form.useWatch("deployment_id", form);
-  useEffect(() => {
-    if (!deploymentId || !editor) return;
-    const current = (form.getFieldValue("retrain_target_column") as string || "").trim();
-    if (current) return;
-    const deployment = deployments.find((item) => item.id === deploymentId);
-    const target = deployment?.target_columns?.[0];
-    if (target) form.setFieldsValue({ retrain_target_column: target });
-  }, [deploymentId, deployments, editor, form]);
-
   useEffect(() => {
     if (featureMode !== "script" || !editor) return;
     const current = (form.getFieldValue("feature_script") as string || "").trim();
@@ -198,10 +187,24 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
           <Input />
         </Form.Item>
         <Form.Item name="deployment_id" label={tr.deployment || "推理部署"} rules={[{ required: true }]}>
-          <Select options={deployments.map((item) => ({
-            value: item.id,
-            label: `${item.name}（${item.observed_state === "running" ? "运行中" : item.observed_state}）`,
-          }))} placeholder={tr.choose_deployment || "选择推理部署"} />
+          <Select
+            options={deployments.map((item) => ({
+              value: item.id,
+              label: `${item.name}（${item.observed_state === "running" ? "运行中" : item.observed_state}）`,
+            }))}
+            placeholder={tr.choose_deployment || "选择推理部署"}
+            onChange={(value) => {
+              // 选择推理部署后：目标列为空时自动填充部署模型的 label 列。
+              // 事件驱动实现——勿改回 useEffect + Form.useWatch：form 状态
+              // 更新会与该 effect 互相触发，造成 Maximum update depth 渲染
+              // 循环（r17 门禁 CI 前端套件卡死的根因）。
+              if (!(form.getFieldValue("retrain_target_column") as string || "").trim()) {
+                const deployment = deployments.find((item) => item.id === value);
+                const target = deployment?.target_columns?.[0];
+                if (target) form.setFieldsValue({ retrain_target_column: target });
+              }
+            }}
+          />
         </Form.Item>
         <Form.Item name="error_classes" label={tr.error_classes || "报错类别（命中即回流）"} rules={[{ required: true }]}>
           <Select mode="tags" open={false} placeholder={tr.error_classes_hint || "输入类别后回车"} />
@@ -223,7 +226,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
                   name="feature_operator_id"
                   label="特征工程算子"
                   rules={[{ required: true, message: "请选择「特征工程」类别下的算子" }]}
-                  tooltip="直接选用算子面板「特征工程」类别下的算子，按其默认参数执行（需要自定义逻辑请用 Python 脚本模式）"
+                  tooltip="直接选用算子面板「特征工程」类别下的算子，按其默认参数执行（如拧紧特征工程默认剔除 DECIDE_ONE/DECIDE_TWO 泄漏列、中位数填充缺失并生成缺失标记列；需要自定义逻辑请用 Python 脚本模式）"
                 >
                   <Select
                     showSearch

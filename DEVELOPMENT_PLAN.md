@@ -306,6 +306,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 拧紧特征工程示例脚本同步 + 闭环算子模式剔除列同步生效
+
+- 需求：用户要求①Python 脚本算子的「拧紧特征工程」示例同步新的算子行为（剔除泄漏列 + 缺失填充）；②闭环自动化「特征工程方式→工作流特征工程算子」选中拧紧特征工程时同步生效。
+- 改动一（`app/services/python_script_examples.py`）：`_TIGHTEN_BODY` 重写为与原生 TightenFeatureEngineering 逐值等价——先中位数填充原始数值列（全缺失列回退 0）→ 派生 5 个 TIGHTEN_* 特征 → 按基础名匹配剔除 DROP_COLUMNS（默认 DECIDE_ONE,DECIDE_TWO，空串禁用）→ 派生列残留缺失补填 + 缺失标记列；新增 `MISSING_STRATEGY`/`DROP_COLUMNS`/`MISSING_FLAG_COLUMN` 配置常量，示例描述同步更新。
+- 改动二（`app/services/demo_loop.py` `_engineer_via_operator` 真实缺陷修复）：闭环 operator 模式合并记录以**原始行为底**，算子输出剔除的泄漏列被原样带回（merged 保留 DECIDE_ONE/DECIDE_TWO）——预测虽按模型特征列重索引无碍，但报错回流/重训数据会携带泄漏列。现读取算子 statistics 端口的 `removed_columns` 并从合并记录同步移除（通用机制，任何透出该字段的特征工程算子均生效）。LoopConfigModal 算子模式 tooltip 补充拧紧默认行为说明。
+- 验证：`test_operators_utility` 的拧紧示例测试升级为**与原生算子 assert_frame_equal 逐值等价**（双轴齐全行 + 单轴缺失行，断言判定列剔除/缺失标记列 [0,1]），29 passed；`test_demo_loop` 新增 test_21（闭环空参数路径：合并记录无 DECIDE 列、派生特征就位、单行 None 二轴列双轴差按原生语义跳过），新镜像容器内合计 30 passed；tsc 通过；backend/frontend 镜像重建部署，nginx 重启，前端 200/反代 API 链路通。
+- 说明：闭环 operator 模式按算子默认参数执行为既有设计（自定义逻辑走 script 模式），本次使其默认行为（剔除）真正作用于下游记录。
+
 ### 2026-10-20 「拧紧特征工程」剔除列参数改为多选列下拉
 
 - 需求：工作流「拧紧特征工程」算子的「剔除列」（drop_columns）参数在节点参数面板为单选列下拉，用户要求改为多选样式。

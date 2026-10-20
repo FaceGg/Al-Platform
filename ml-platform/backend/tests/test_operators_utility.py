@@ -203,22 +203,44 @@ class TestPythonScriptExamples(unittest.TestCase):
             pd.DataFrame(native["features"]), pd.DataFrame(script_out["data"]),
             check_dtype=False)
 
-    def test_tighten_example_executes(self):
+    def test_tighten_example_matches_native_operator(self):
+        # 示例脚本必须与原生拧紧特征工程算子逐值等价（缺失填充 + 缺失标记列 +
+        # 泄漏列剔除的默认行为一致）；覆盖双轴齐全行与单轴缺失行。
         from app.services.python_script_examples import list_examples
 
         example = next(
             item for item in list_examples() if item["id"] == "tighten_feature_engineering")
-        rows = [{
-            "ACTUAL_TORQUE": 632.0, "TARGET_TORQUE": 630.0,
-            "UPPER_LIMIT": 635.0, "LOWER_LIMIT": 625.0,
-        }]
-        outputs = execute_operator(
+        rows = [
+            {
+                "ID(主键)": "R1", "ACTUAL_TORQUE": 632.0, "TARGET_TORQUE": 630.0,
+                "UPPER_LIMIT": 635.0, "LOWER_LIMIT": 625.0,
+                "ACTUAL_TORQUE_TWO": 630.0,
+                "DECIDE_ONE(判定/一轴判定（0-不合格，1-合格）)": 1,
+                "DECIDE_TWO(判定/二轴判定（0-不合格，1-合格）)": 1,
+            },
+            {
+                "ID(主键)": "R2", "ACTUAL_TORQUE": 628.0, "TARGET_TORQUE": 630.0,
+                "UPPER_LIMIT": 635.0, "LOWER_LIMIT": 625.0,
+                "ACTUAL_TORQUE_TWO": None,
+                "DECIDE_ONE(判定/一轴判定（0-不合格，1-合格）)": 0,
+                "DECIDE_TWO(判定/二轴判定（0-不合格，1-合格）)": None,
+            },
+        ]
+        native = execute_operator(
+            OperatorRegistry.get("tighten_feature_engineering"), {"data": rows}, {})
+        script_out = execute_operator(
             OperatorRegistry.get("python_script"),
             {"data": rows},
             {"script": example["script"], "auto_install": False})
 
-        self.assertIn("TIGHTEN_TORQUE_DEVIATION", outputs["data"][0])
-        self.assertAlmostEqual(outputs["data"][0]["TIGHTEN_TORQUE_DEVIATION"], 2.0)
+        native_frame = pd.DataFrame(native["features"])
+        script_frame = pd.DataFrame(script_out["data"])
+        # 泄漏判定列被默认剔除、缺失标记列存在（单轴行置 1）
+        self.assertNotIn("DECIDE_ONE(判定/一轴判定（0-不合格，1-合格）)", script_frame.columns)
+        self.assertNotIn("DECIDE_TWO(判定/二轴判定（0-不合格，1-合格）)", script_frame.columns)
+        self.assertIn("TIGHTEN_MISSING_FLAG", script_frame.columns)
+        self.assertEqual(list(script_frame["TIGHTEN_MISSING_FLAG"]), [0, 1])
+        pd.testing.assert_frame_equal(native_frame, script_frame, check_dtype=False)
 
 
 class TestCollectOperator(unittest.TestCase):

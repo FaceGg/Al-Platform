@@ -835,6 +835,43 @@ class DemoLoopFlow(unittest.TestCase):
 
         client.delete(f"/api/projects/{self.project_id}/demo-loop/loops/{loop_id}", headers=self.h)
 
+    def test_21_engineer_via_operator_uses_tighten_defaults(self):
+        # 闭环 operator 模式以空参数调用算子（按默认参数执行）：拧紧特征工程
+        # 默认剔除泄漏判定列（DECIDE_ONE/DECIDE_TWO，基础名匹配），且剔除必须
+        # 同步作用于合并记录（合并以原始行为底，不处理则剔除被原样带回）。
+        from types import SimpleNamespace
+
+        db = SessionLocal()
+        try:
+            service = demo_loop_module.DemoLoopService(db)
+            config = SimpleNamespace(
+                project_id=uuid.UUID(self.project_id),
+                feature_operator_id="tighten_feature_engineering",
+            )
+            record = {
+                "ID(主键)": "R1",
+                "ACTUAL_TORQUE(实际扭矩/一轴实际扭矩)": 25.0,
+                "TARGET_TORQUE(设定目标力矩（N.m）)": 25.0,
+                "UPPER_LIMIT(力矩上限（N.m）)": 30.0,
+                "LOWER_LIMIT(力矩下限（N.m）)": 20.0,
+                "DECIDE_ONE(判定/一轴判定（0-不合格，1-合格）)": 1,
+                "ACTUAL_TORQUE_TWO(二轴实际扭矩)": None,
+                "DECIDE_TWO(判定/二轴判定（0-不合格，1-合格）)": None,
+            }
+            merged = service._engineer_via_operator(config, record)
+        finally:
+            db.close()
+
+        # 泄漏判定列默认剔除（带中文注解表头按基础名匹配），合并记录同步移除
+        self.assertNotIn("DECIDE_ONE(判定/一轴判定（0-不合格，1-合格）)", merged)
+        self.assertNotIn("DECIDE_TWO(判定/二轴判定（0-不合格，1-合格）)", merged)
+        # 派生特征就位（上/下限余量 = 30-25 / 25-20）
+        self.assertAlmostEqual(merged["TIGHTEN_TORQUE_DEVIATION"], 0.0)
+        self.assertAlmostEqual(merged["TIGHTEN_UPPER_MARGIN"], 5.0)
+        self.assertAlmostEqual(merged["TIGHTEN_LOWER_MARGIN"], 5.0)
+        # 单行 None 二轴列无数值可算：双轴差按原生语义跳过（预测时该列置 NaN 由模型处理）
+        self.assertNotIn("TIGHTEN_DUAL_AXIS_DIFF", merged)
+
     def test_15_loop_task_crud(self):
         # 闭环支持多任务：创建/列表/修改/删除。
         r = client.post(

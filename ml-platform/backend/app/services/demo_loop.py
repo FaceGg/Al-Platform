@@ -616,8 +616,17 @@ class DemoLoopService:
             # 直接选算子：使用算子默认参数（需要自定义逻辑请用 script 模式）。
             result = operator.execute(context, {"data": frame}, {})
             merged = record
-            for value in (result.outputs or {}).values():
+            removed_columns: list[str] = []
+            for name, value in (result.outputs or {}).items():
+                if name == "statistics" and isinstance(value, dict):
+                    # 算子显式剔除的列（如拧紧特征工程的 DECIDE_ONE/DECIDE_TWO 泄漏列）
+                    # 必须同步从合并记录移除——合并以原始行为底，否则剔除被原样带回。
+                    removed = value.get("removed_columns")
+                    if isinstance(removed, list):
+                        removed_columns = [str(item) for item in removed]
                 merged = self._merge_first_row(merged, value)
+            for key in removed_columns:
+                merged.pop(key, None)
             return merged
         except DemoLoopError:
             raise
