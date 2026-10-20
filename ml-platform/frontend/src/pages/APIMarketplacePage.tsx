@@ -258,9 +258,9 @@ export default function APIMarketplacePage() {
     { title: tr.col_calls, dataIndex: "total_calls", key: "total_calls", width:80 },
     { title: tr.col_rate, key: "rate", width:100,
       render: (_:any, r:any) => <Text style={{color:r.total_calls>0&&(r.success_calls/r.total_calls)<0.9?"#ff4d4f":undefined}}>{r.total_calls>0?((r.success_calls/r.total_calls)*100).toFixed(1)+"%":"-"}</Text> },
-    { title: tr.col_actions, key: "actions", width:280,
+    { title: tr.col_actions, key: "actions", width:300,
       render: (_:any, r:any) => (
-        <Space size="small">
+        <Space size="small" wrap>
           <Button size="small" icon={<EyeOutlined />} onClick={() => { setDetail(r); setShowDetail(true); }}>{tr.detail}</Button>
           <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => openTest(r)}>{tr.test}</Button>
           {r.status === "published" ? (
