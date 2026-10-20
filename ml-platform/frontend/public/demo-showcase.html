@@ -718,6 +718,25 @@ function setRetrainThreshold(n) {
   sim.retrainAt = n;
   updateGateVisual();
 }
+/* 串行自调度轮询：上一次响应返回后才发起下一次（interval 只延迟不叠加），
+   保证状态按序应用——推理间隔 50ms 时 setInterval 会因请求晚于间隔而
+   乱序返回，旧响应覆盖新响应导致大屏计数回跳/落后于真实进度。 */
+let liveSeq = 0;
+function startLivePolling(pollFn, intervalMs = 20) {
+  stopLivePolling();
+  const session = ++liveSeq;
+  const tick = async () => {
+    if (liveSeq !== session) return;
+    try { await pollFn(); } catch (e) { /* pollFn 自身已处理错误 */ }
+    if (liveSeq !== session) return;
+    live.timer = setTimeout(tick, intervalMs);
+  };
+  void tick();
+}
+function stopLivePolling() {
+  liveSeq += 1;
+  if (live.timer) { clearTimeout(live.timer); live.timer = null; }
+}
 function liveHeaders() {
   const token = document.getElementById("liveToken").value.trim() || localStorage.getItem("token") || "";
   return { Authorization: "Bearer " + token };
@@ -760,7 +779,7 @@ async function liveConnect() {
     live.seenIds = null;
     localStorage.setItem("demoLiveProject", project);
     localStorage.setItem("demoLiveApi", apiId);
-    clearInterval(live.timer);
+    stopLivePolling();
     const poll = async () => {
       try {
         const res = await fetch(`/api/platform/apis/orchestration/${apiId}/showcase-status`, {
@@ -768,7 +787,7 @@ async function liveConnect() {
         });
         if (res.status === 409) {
           toast("该编排 API 增减过算子，不支持大屏展示", C.red, 3200);
-          clearInterval(live.timer); live.timer = null; live.on = false;
+          stopLivePolling(); live.on = false;
           document.getElementById("connDot").className = "off";
           return;
         }
@@ -780,8 +799,7 @@ async function liveConnect() {
         document.getElementById("connDot").className = "off";
       }
     };
-    await poll();
-    live.timer = setInterval(poll, 20);
+    startLivePolling(poll);
     live.on = true;
     const aname = apiSel.selectedOptions[0] ? apiSel.selectedOptions[0].textContent : apiId;
     toast(`已连接编排 API 实时闭环 · ${aname}`, C.green);
@@ -796,7 +814,7 @@ async function liveConnect() {
   live.seenIds = null;
   localStorage.setItem("demoLiveProject", project);
   localStorage.setItem("demoLiveLoop", loopId);
-  clearInterval(live.timer);
+  stopLivePolling();
   /* 读取该任务的真实配置：阈值监测文案用告警阈值，进度环用重训阈值 */
   try {
     const cfgRes = await fetch(`/api/projects/${project}/demo-loop/loops/${loopId}`, { headers: liveHeaders() });
@@ -819,8 +837,7 @@ async function liveConnect() {
       document.getElementById("connDot").className = "off";
     }
   };
-  await poll();
-  live.timer = setInterval(poll, 20);
+  startLivePolling(poll);
   live.on = true;
   const sel2 = document.getElementById("liveProject");
   const loopSel = document.getElementById("liveLoop");
@@ -848,8 +865,15 @@ async function loadLiveProjects() {
   }
 }
 function applyLiveStatus(st) {
-  const total = st.total_count || 0;
-  const errors = st.error_count || 0;
+  // 计数单调化：任何迟到的旧响应都不得让显示回退（首连/重连时以当前
+  // 值重建基线，因此闭环重置后的下降不受影响）
+  live.maxCounts = live.maxCounts || { total: 0, errors: 0, alerts: 0 };
+  if (!live.synced) live.maxCounts = { total: 0, errors: 0, alerts: 0 };
+  live.maxCounts.total = Math.max(live.maxCounts.total, st.total_count || 0);
+  live.maxCounts.errors = Math.max(live.maxCounts.errors, st.error_count || 0);
+  live.maxCounts.alerts = Math.max(live.maxCounts.alerts, st.alert_count || 0);
+  const total = live.maxCounts.total;
+  const errors = live.maxCounts.errors;
   const okCount = Math.max(0, total - errors);
   // 编排 API 模式：阈值监测文案 = 告警阈值（编排每报错行即告警=1），
   // 重训进度环由 retrain_threshold_rows 驱动
@@ -865,11 +889,11 @@ function applyLiveStatus(st) {
   setNow("ok", okCount); sim.ok = okCount;
   setNow("errors", errors);
   setNow("alerts", st.alert_count || 0);
-  sim.alerts = st.alert_count || 0;
+  sim.alerts = live.maxCounts.alerts;
   sim.dataset = errors;
   updateDatasetVisual(errors, sim.alertEvery);
   updateGateVisual();
-  setAlertCount(st.alert_count || 0);
+  setAlertCount(live.maxCounts.alerts);
   /* 编排 API 模式：首连同步线上模型版本号 */
   if (st.model_version && !live.synced) {
     const v = parseInt(String(st.model_version).replace(/[^\d]/g, ""), 10);
@@ -973,12 +997,12 @@ btnMode.onclick = () => {
     panel.classList.add("open");
     const tokenInput = document.getElementById("liveToken");
     if (!tokenInput.value) tokenInput.placeholder = localStorage.getItem("token") ? "已自动读取本浏览器登录 Token" : "未检测到登录，请粘贴 Token";
-    if (live.timer) clearInterval(live.timer);
+    stopLivePolling();
     loadLiveProjects();
   } else {
     btnMode.textContent = "模式：模拟";
     panel.classList.remove("open");
-    if (live.timer) { clearInterval(live.timer); live.timer = null; }
+    stopLivePolling();
     document.getElementById("connDot").className = "";
     toast("已切回模拟模式", C.blue);
   }
