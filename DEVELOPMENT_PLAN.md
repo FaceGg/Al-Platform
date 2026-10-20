@@ -306,6 +306,14 @@ PR #30 的台账收口提交合并产生主分支 SHA `74be1ce9aee0c5b61c7ed0960
 
 > main 在本分支创建后新增的 Ubuntu 安装包、HTTP 兼容性和历史验收记录保留在本节；前面的当前状态台账仍是本文件的权威入口。
 
+### 2026-10-20 闭环大屏右上角「预估准确率」改为「实时故障率」
+
+- 需求：大屏右上角指标改为实时故障率，数据使用已推理的全部数据与报错回流数据计算（故障率 = 报错回流数 / 已推理总数）。
+- 原指标语义：「预估准确率」显示当前部署模型注册来源训练任务的离线验证最佳得分（`model_score`），不是回放实时统计——用户要求换成真实闭环计数派生。
+- 改动（仅 `frontend/public/demo-showcase.html`）：①右上角紫色卡片标签改「实时故障率」、初始 0.0%；②实时模式 `applyLiveStatus` 用 `error_count/total_count` 计算故障率（与已推理/正常/报错计数同源，直写 DOM 绕过 rAF 缓动防后台冻结）；③模拟模式剧情引擎同步改为 `sim.errors/sim.invoked` 实时计算（runRow 计数后与报错落账后各刷新一次），移除换模时 accuracy 固定上升的旧叙事（故障率由实际行数据自然演化）。demo-loop status 与编排 API showcase-status 已有 total_count/error_count 字段，后端无需改动（`model_score` 字段保留，测试断言不动；`_current_model_score` docstring 去掉「大屏预估准确率数据源」过时表述）。
+- 同步文档：`docs/闭环系统演示操作手册.md` 大屏计数描述改「实时故障率」。
+- 验证：内联脚本提取 `node --check` 语法通过；frontend/backend 镜像重建部署（backend 仅注释变更保持镜像一致）。
+
 ### 2026-10-20 闭环回放容错：单行调用失败不再终止整个闭环
 
 - 现象：用户报告闭环自动化任务（loop ee5dc437）回放运行一段时间后停止（停在 3016 行附近）。后端日志确认该 loop 共 4374 次 predict 成功、3 次 **422 Unprocessable Entity**（23:58 两次、01:06 一次）——422 即停止触发点。

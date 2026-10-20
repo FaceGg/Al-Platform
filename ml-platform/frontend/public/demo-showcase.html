@@ -208,7 +208,7 @@
     <div class="stat red"><div class="k">报错回流</div><div class="v" id="stErrors">0</div></div>
     <div class="stat orange"><div class="k">管理员告警</div><div class="v" id="stAlerts">0</div></div>
     <div class="stat gold"><div class="k">线上模型</div><div class="v" id="stVersion">v1</div></div>
-    <div class="stat purple"><div class="k">预估准确率</div><div class="v" id="stAcc">86.4%</div></div>
+    <div class="stat purple"><div class="k">实时故障率</div><div class="v" id="stAcc">0.0%</div></div>
   </div>
 
   <div id="nodes"></div>
@@ -564,7 +564,7 @@ function drawWaves(dt) {
 }
 
 /* ================= HUD ================= */
-const hud = { invoked: 0, ok: 0, errors: 0, alerts: 0, version: 1, acc: 86.4 };
+const hud = { invoked: 0, ok: 0, errors: 0, alerts: 0, version: 1, fault: 0 };
 const shown = { ...hud };
 function setHud(k, v) { hud[k] = v; }
 function renderHud(dt) {
@@ -579,7 +579,7 @@ function renderHud(dt) {
   document.getElementById("stErrors").textContent = Math.round(shown.errors);
   document.getElementById("stAlerts").textContent = Math.round(shown.alerts);
   document.getElementById("stVersion").textContent = "v" + Math.round(hud.version);
-  document.getElementById("stAcc").textContent = shown.acc.toFixed(1) + "%";
+  document.getElementById("stAcc").textContent = shown.fault.toFixed(1) + "%";
 }
 function toast(msg, color = C.blue, ms = 2600) {
   const box = document.getElementById("toasts");
@@ -594,14 +594,14 @@ const sim = {
   playing: true, speed: 1,
   invoked: 0, ok: 0, errors: 0, alerts: 0, dataset: 0, version: 1,
   alertEvery: 5, retrainAt: 12,
-  retrain: "idle", retrainT: 0, accuracy: 86.4,
+  retrain: "idle", retrainT: 0, fault: 0,
   rowTimer: .5,
 };
 function resetSim() {
   Object.assign(sim, { invoked: 0, ok: 0, errors: 0, alerts: 0, dataset: 0, version: 1,
-    retrainAt: 12, retrain: "idle", retrainT: 0, accuracy: 86.4, rowTimer: .5 });
+    retrainAt: 12, retrain: "idle", retrainT: 0, fault: 0, rowTimer: .5 });
   particles.length = 0; waves.length = 0;
-  Object.assign(hud, { invoked: 0, ok: 0, errors: 0, alerts: 0, version: 1, acc: 86.4 });
+  Object.assign(hud, { invoked: 0, ok: 0, errors: 0, alerts: 0, version: 1, fault: 0 });
   setBadge("infer", "v1"); setBadge("swap", null); setAlertCount(0);
   updateDatasetVisual(0, sim.alertEvery);
   updateGateVisual();
@@ -611,6 +611,8 @@ function resetSim() {
 function runRow(visualOnly = false) {
   sim.invoked++;
   setHud("invoked", sim.invoked);
+  /* 实时故障率 = 报错回流数 / 已推理总数 */
+  setHud("fault", sim.errors / Math.max(1, sim.invoked) * 100);
   pulse("upload", 400);
   spawn("e1", C.blue, { speed: 1.6, onArrive: () => {
     spawn("e2", C.blue, { speed: 1.6, onArrive: () => {
@@ -632,6 +634,8 @@ function decide() {
   } else {
     spawn("e6", C.red, { speed: 1.5, size: 5, glow: 1, onArrive: () => {
       sim.errors++; sim.dataset++; setHud("errors", sim.errors);
+      /* 报错落账后同步刷新实时故障率 */
+      setHud("fault", sim.errors / Math.max(1, sim.invoked) * 100);
       updateDatasetVisual(sim.dataset, sim.alertEvery);
       updateGateVisual();
       /* 告警在回流落账瞬间判定（与后端语义一致），粒子随后沿监测链流动 */
@@ -691,7 +695,6 @@ function finishRetrain() {
 }
 function applySwap() {
   sim.version++; setHud("version", sim.version);
-  sim.accuracy = Math.min(97.5, sim.accuracy + 2.6 + Math.random()); setHud("acc", sim.accuracy);
   sim.retrainAt = sim.dataset + 12; sim.retrain = "idle";
   updateGateVisual();
   NODES.infer.el.classList.remove("flip"); void NODES.infer.el.offsetWidth; NODES.infer.el.classList.add("flip");
@@ -860,11 +863,13 @@ function applyLiveStatus(st) {
     const v = parseInt(String(st.model_version).replace(/[^\d]/g, ""), 10);
     if (v > 0) { sim.version = v; setHud("version", v); setBadge("infer", "v" + v); }
   }
-  /* 预估准确率同步当前部署模型的真实验证评分（0-1 → 百分比） */
-  if (typeof st.model_score === "number" && st.model_score > 0) {
-    sim.accuracy = Math.round(st.model_score * 1000) / 10;
-    setHud("acc", sim.accuracy);
-  }
+  /* 实时故障率 = 报错回流数 / 已推理总数（真实闭环计数，直写 DOM 绕过
+     rAF 缓动，避免页面后台时数字冻结） */
+  const faultRate = total > 0 ? (errors / total) * 100 : 0;
+  sim.fault = Math.round(faultRate * 10) / 10;
+  hud.fault = sim.fault; shown.fault = sim.fault;
+  const faultEl = document.getElementById("stAcc");
+  if (faultEl) faultEl.textContent = sim.fault.toFixed(1) + "%";
   const events = st.events || [];
   if (!live.synced) {
     /* 首次同步：登记历史事件 id，不回放动画 */

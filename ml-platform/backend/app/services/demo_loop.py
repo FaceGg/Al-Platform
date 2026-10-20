@@ -1177,7 +1177,7 @@ class DemoLoopService:
     # -------------------------------------------------------------------- status
 
     def _current_model_score(self, config: DemoLoopConfig) -> float | None:
-        """当前部署模型的验证评分（0-1）：大屏「预估准确率」真实数据源。
+        """当前部署模型的验证评分（0-1）。
         取模型版本注册来源任务的最佳得分；历史模型无评分时返回 None。"""
         try:
             deployment = self._deployment(config)
