@@ -3,45 +3,58 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>灵工 Linkraft · 平台改版前端预览（静态稿）</title>
+<title>灵工 Linkraft · 平台改版前端预览 v2</title>
 <style>
   :root {
     --bg: #0d1420; --bg2: #111b2b; --panel: #16223a; --panel2: #1b2a47;
     --line: #24344f; --txt: #d8e2f0; --sub: #8fa8c4; --dim: #5c718c;
     --blue: #2f9bf5; --blue2: #5cb2ff; --green: #47c3a0; --gold: #ffd166;
     --purple: #9b7bff; --red: #e66f75; --orange: #d9ac52;
+    --mono: "Cascadia Code", Consolas, "Courier New", monospace;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: var(--bg); color: var(--txt); font: 13px/1.65 "Microsoft YaHei", "PingFang SC", sans-serif; }
-  a { color: var(--blue2); text-decoration: none; }
+  a { color: var(--blue2); text-decoration: none; cursor: pointer; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
 
   /* ===== 顶部全局导航 ===== */
-  .topnav { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 26px;
-    height: 54px; padding: 0 22px; background: rgba(13,20,32,.92); backdrop-filter: blur(8px);
+  .topnav { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 18px;
+    height: 54px; padding: 0 20px; background: rgba(13,20,32,.94); backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--line); }
   .brand { display: flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 700; letter-spacing: 1px; }
   .brand .bolt { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
     background: linear-gradient(135deg, var(--blue), #1d6fd0); font-size: 12px; }
-  .navtabs { display: flex; gap: 4px; flex: 1; }
-  .navtab { padding: 6px 16px; border-radius: 8px; cursor: pointer; color: var(--sub);
+  .gsearch { flex: 0 0 240px; display: flex; align-items: center; gap: 8px; background: var(--bg2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; color: var(--dim); font-size: 12px; }
+  .gsearch input { background: transparent; border: none; outline: none; color: var(--txt); width: 100%; font-size: 12.5px; }
+  .navtabs { display: flex; gap: 4px; flex: 1; justify-content: center; }
+  .navtab { padding: 6px 15px; border-radius: 8px; cursor: pointer; color: var(--sub);
     border: 1px solid transparent; transition: .18s; font-size: 13.5px; }
   .navtab:hover { color: var(--txt); background: var(--panel); }
   .navtab.on { color: #fff; background: linear-gradient(135deg, rgba(47,155,245,.25), rgba(47,155,245,.08));
-    border-color: rgba(92,178,255,.45); box-shadow: 0 0 0 1px rgba(47,155,245,.12) inset; }
+    border-color: rgba(92,178,255,.45); }
   .navtab .tag { font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 6px;
     background: rgba(255,209,102,.15); color: var(--gold); border: 1px solid rgba(255,209,102,.3); }
   .topright { display: flex; gap: 14px; align-items: center; color: var(--sub); font-size: 12.5px; }
+  .bell { position: relative; cursor: pointer; font-size: 15px; }
+  .bell i { position: absolute; top: -6px; right: -9px; font-style: normal; font-size: 9.5px;
+    background: var(--red); color: #fff; border-radius: 8px; padding: 0 4.5px; }
+  .env-chip { font-size: 10.5px; color: var(--green); border: 1px solid rgba(71,195,160,.35);
+    background: rgba(71,195,160,.08); padding: 1px 8px; border-radius: 9px; }
   .avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--panel2);
-    display: grid; place-items: center; border: 1px solid var(--line); }
+    display: grid; place-items: center; border: 1px solid var(--line); font-size: 12px; }
 
   .view { display: none; }
   .view.on { display: block; }
 
-  /* ===== 中心布局：左侧子菜单 + 主区 ===== */
+  /* ===== 中心布局 ===== */
   .center { display: flex; min-height: calc(100vh - 54px); }
-  .sidebar { width: 196px; flex-shrink: 0; border-right: 1px solid var(--line);
+  .sidebar { width: 200px; flex-shrink: 0; border-right: 1px solid var(--line);
     background: var(--bg2); padding: 14px 10px; }
   .side-group { font-size: 11px; color: var(--dim); letter-spacing: 1.5px; margin: 14px 8px 6px; }
+  .side-group:first-child { margin-top: 2px; }
   .side-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; margin: 2px 0;
     border-radius: 7px; color: var(--sub); cursor: pointer; font-size: 13px; }
   .side-item:hover { color: var(--txt); background: var(--panel); }
@@ -50,66 +63,108 @@
   .side-item .dot { width: 6px; height: 6px; border-radius: 2px; background: currentColor; opacity: .7; }
   .side-badge { margin-left: auto; font-size: 10px; color: var(--gold);
     background: rgba(255,209,102,.12); padding: 0 6px; border-radius: 8px; }
-  .main { flex: 1; padding: 20px 24px; max-width: 1280px; }
-  .crumb { color: var(--dim); font-size: 12px; margin-bottom: 12px; }
+  .side-count { margin-left: auto; font-size: 10.5px; color: var(--dim); }
+  .main { flex: 1; padding: 18px 24px 40px; max-width: 1320px; }
+  .crumb { color: var(--dim); font-size: 12px; margin-bottom: 10px; }
   .crumb b { color: var(--sub); font-weight: 600; }
-  h2.pt { font-size: 19px; margin-bottom: 4px; }
-  .pdesc { color: var(--sub); font-size: 12.5px; margin-bottom: 18px; }
+  .pagehead { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
+  h2.pt { font-size: 19px; }
+  .pdesc { color: var(--sub); font-size: 12.5px; margin-top: 3px; }
 
   /* ===== 门户 ===== */
-  .hero { padding: 40px 8px 26px; }
-  .hero h1 { font-size: 25px; letter-spacing: 1px; }
+  .hero { display: flex; justify-content: space-between; align-items: flex-end; padding: 34px 8px 22px;
+    max-width: 1200px; margin: 0 auto; }
+  .hero h1 { font-size: 24px; letter-spacing: 1px; }
   .hero h1 em { font-style: normal; background: linear-gradient(90deg, var(--blue2), var(--purple));
     -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .hero p { color: var(--sub); margin-top: 8px; max-width: 720px; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; padding: 6px 8px 26px; }
+  .hero p { color: var(--sub); margin-top: 8px; max-width: 700px; }
+  .hero .meta { text-align: right; color: var(--dim); font-size: 11.5px; line-height: 1.9; }
+  .quickbar { display: flex; gap: 10px; max-width: 1200px; margin: 0 auto 18px; }
+  .qbtn { flex: 1; display: flex; align-items: center; gap: 9px; padding: 11px 14px; border-radius: 10px;
+    background: var(--panel); border: 1px solid var(--line); cursor: pointer; font-size: 12.5px; color: var(--sub); }
+  .qbtn:hover { border-color: rgba(92,178,255,.5); color: var(--txt); }
+  .qbtn .ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; font-size: 14px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 15px;
+    max-width: 1200px; margin: 0 auto; }
   .card { background: linear-gradient(160deg, var(--panel), var(--bg2)); border: 1px solid var(--line);
-    border-radius: 14px; padding: 20px 20px 16px; position: relative; overflow: hidden; cursor: pointer;
-    transition: .2s; }
+    border-radius: 14px; padding: 18px 18px 15px; position: relative; cursor: pointer; transition: .2s; }
   .card:hover { transform: translateY(-2px); border-color: rgba(92,178,255,.5); }
-  .card .icon { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
-    font-size: 17px; margin-bottom: 12px; }
-  .card h3 { font-size: 15.5px; margin-bottom: 5px; }
-  .card p { color: var(--sub); font-size: 12px; min-height: 34px; }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .card .icon { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+    font-size: 16px; margin-bottom: 11px; }
+  .card h3 { font-size: 15px; margin-bottom: 4px; display: flex; align-items: center; gap: 7px; }
+  .card p { color: var(--sub); font-size: 12px; min-height: 32px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
   .chip { font-size: 11px; padding: 2.5px 9px; border-radius: 10px; color: var(--sub);
     background: var(--bg); border: 1px solid var(--line); }
   .chip.hot { color: var(--blue2); border-color: rgba(92,178,255,.4); }
-  .card .go { position: absolute; top: 18px; right: 18px; color: var(--dim); font-size: 12px; }
+  .card .go { position: absolute; top: 16px; right: 16px; color: var(--dim); font-size: 12px; }
+  .card .stat { position: absolute; bottom: 15px; right: 18px; font-size: 11px; color: var(--dim); }
   .c-blue { background: rgba(47,155,245,.14); color: var(--blue2); }
   .c-purple { background: rgba(155,123,255,.14); color: var(--purple); }
   .c-green { background: rgba(71,195,160,.14); color: var(--green); }
   .c-gold { background: rgba(255,209,102,.12); color: var(--gold); }
-  .migrate { margin: 10px 8px 40px; background: var(--bg2); border: 1px dashed var(--line);
-    border-radius: 12px; padding: 16px 20px; }
-  .migrate h4 { font-size: 13px; color: var(--sub); margin-bottom: 10px; }
+  .portal-row { display: flex; gap: 15px; max-width: 1200px; margin: 16px auto 0; }
+  .migrate { background: var(--bg2); border: 1px dashed var(--line); border-radius: 12px;
+    padding: 14px 18px; max-width: 1200px; margin: 18px auto 30px; }
+  .migrate h4 { font-size: 13px; color: var(--sub); margin-bottom: 8px; }
   .mtable { width: 100%; border-collapse: collapse; font-size: 12px; }
-  .mtable td { padding: 5px 10px 5px 0; color: var(--sub); vertical-align: top; }
-  .mtable td b { color: var(--txt); font-weight: 600; }
+  .mtable td { padding: 4.5px 10px 4.5px 0; color: var(--sub); vertical-align: top; }
+  .mtable td b { color: var(--txt); }
 
   /* ===== 通用部件 ===== */
-  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
-  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; margin-bottom: 16px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 13px 16px; position: relative; overflow: hidden; }
   .kpi .lb { color: var(--sub); font-size: 12px; }
-  .kpi .v { font-size: 22px; font-weight: 700; margin-top: 3px; }
-  .kpi .t { font-size: 11px; color: var(--dim); margin-top: 2px; }
+  .kpi .v { font-size: 22px; font-weight: 700; margin-top: 2px; }
+  .kpi .t { font-size: 11px; color: var(--dim); margin-top: 1px; }
+  .kpi .spark { position: absolute; right: 12px; top: 14px; display: flex; align-items: flex-end; gap: 2.5px; height: 26px; }
+  .kpi .spark i { width: 5px; border-radius: 2px; background: rgba(92,178,255,.4); }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-    padding: 16px 18px; margin-bottom: 16px; }
-  .panel h4 { font-size: 13.5px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    padding: 15px 17px; margin-bottom: 15px; }
+  .panel h4 { font-size: 13.5px; margin-bottom: 11px; display: flex; align-items: center; gap: 8px; }
   .panel h4 .bar { width: 3px; height: 13px; border-radius: 2px; background: var(--blue); }
-  .row { display: flex; gap: 12px; }
+  .panel h4 .more { margin-left: auto; font-size: 11.5px; color: var(--dim); font-weight: 400; cursor: pointer; }
+  .row { display: flex; gap: 14px; }
   .row > * { flex: 1; }
   .btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 16px; border-radius: 8px;
     border: 1px solid var(--line); background: var(--panel2); color: var(--txt); cursor: pointer; font-size: 12.5px; }
   .btn.primary { background: linear-gradient(135deg, var(--blue), #1d6fd0); border: none; color: #fff; }
   .btn.ghost { background: transparent; }
   .btn.sm { padding: 3px 10px; font-size: 11.5px; }
+  .btn.danger { color: var(--red); border-color: rgba(230,111,117,.4); }
   .note-strip { display: flex; gap: 8px; align-items: flex-start; background: rgba(47,155,245,.07);
     border: 1px solid rgba(47,155,245,.25); border-radius: 8px; padding: 8px 12px; color: var(--sub); font-size: 12px; }
 
+  table.dt { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.dt th { text-align: left; color: var(--dim); font-weight: 600; padding: 7px 10px;
+    border-bottom: 1px solid var(--line); font-size: 11.5px; white-space: nowrap; }
+  table.dt td { padding: 7px 10px; border-bottom: 1px solid rgba(36,52,79,.5); color: var(--sub); }
+  table.dt tr:hover td { background: rgba(47,155,245,.04); }
+  table.dt td.tt { color: var(--txt); }
+  input[type=text], select { background: var(--bg); border: 1px solid var(--line); color: var(--txt);
+    border-radius: 7px; padding: 6px 10px; font-size: 12.5px; outline: none; width: 100%; }
+  input[type=text]:focus { border-color: var(--blue); }
+  input.ck { width: 14px; height: 14px; accent-color: var(--blue); }
+
+  .badge { font-size: 10.5px; padding: 1px 8px; border-radius: 9px; white-space: nowrap; }
+  .b-blue { background: rgba(47,155,245,.14); color: var(--blue2); }
+  .b-green { background: rgba(71,195,160,.14); color: var(--green); }
+  .b-gold { background: rgba(255,209,102,.13); color: var(--gold); }
+  .b-purple { background: rgba(155,123,255,.14); color: var(--purple); }
+  .b-red { background: rgba(230,111,117,.13); color: var(--red); }
+  .b-gray { background: rgba(92,113,140,.15); color: var(--sub); }
+
+  .pbar { height: 5px; border-radius: 3px; background: var(--bg); overflow: hidden; border: 1px solid var(--line); }
+  .pbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--blue), var(--blue2)); border-radius: 3px; }
+  .pbar i.g { background: linear-gradient(90deg, var(--green), #7adcb8); }
+
   /* ===== 向导 ===== */
-  .steps { display: flex; gap: 0; margin-bottom: 20px; }
-  .step { flex: 1; display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+  .wiz-head { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin-bottom: 14px; flex-wrap: wrap; }
+  .wiz-head .fld { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--sub); }
+  .wiz-head select { width: 210px; }
+  .steps { display: flex; margin-bottom: 18px; }
+  .step { flex: 1; display: flex; align-items: center; gap: 10px; padding: 11px 13px;
     border-bottom: 2px solid var(--line); cursor: pointer; color: var(--dim); }
   .step .n { width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--line);
     display: grid; place-items: center; font-size: 12px; flex-shrink: 0; }
@@ -122,65 +177,85 @@
   .step-pane { display: none; }
   .step-pane.on { display: block; }
 
-  table.dt { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  table.dt th { text-align: left; color: var(--dim); font-weight: 600; padding: 7px 10px;
-    border-bottom: 1px solid var(--line); font-size: 11.5px; }
-  table.dt td { padding: 7px 10px; border-bottom: 1px solid rgba(36,52,79,.5); color: var(--sub); }
-  table.dt tr:hover td { background: rgba(47,155,245,.04); }
-  .ck { width: 14px; height: 14px; accent-color: var(--blue); }
-  input[type=text], select { background: var(--bg); border: 1px solid var(--line); color: var(--txt);
-    border-radius: 7px; padding: 6px 10px; font-size: 12.5px; outline: none; width: 100%; }
-  input[type=text]:focus { border-color: var(--blue); }
   .prompt-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
   .pchip { font-size: 11.5px; padding: 3px 11px; border-radius: 14px; cursor: pointer;
     background: var(--bg); border: 1px solid var(--line); color: var(--sub); }
   .pchip:hover { color: var(--blue2); border-color: rgba(92,178,255,.5); }
   .radios { display: flex; gap: 10px; }
-  .radio-card { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px;
+  .radio-card { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
     cursor: pointer; background: var(--bg); }
   .radio-card.on { border-color: var(--blue); background: rgba(47,155,245,.08); }
   .radio-card b { font-size: 13px; display: block; }
   .radio-card span { font-size: 11px; color: var(--dim); }
   .alg-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-  .alg { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 12px;
+  .alg { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 12px;
     color: var(--sub); cursor: pointer; background: var(--bg); display: flex; align-items: center; gap: 7px; }
   .alg.on { border-color: var(--blue); color: var(--txt); background: rgba(47,155,245,.1); }
   .metric-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
-  .metric { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; }
+  .metric { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px; }
   .metric .lb { font-size: 11.5px; color: var(--sub); display: flex; justify-content: space-between; }
   .metric input { border: none; background: transparent; padding: 2px 0 0; font-size: 14px; }
-  .uploadbox { border: 1.5px dashed var(--line); border-radius: 10px; padding: 18px; text-align: center;
+  .uploadbox { border: 1.5px dashed var(--line); border-radius: 10px; padding: 16px; text-align: center;
     color: var(--dim); font-size: 12px; cursor: pointer; background: var(--bg); }
   .uploadbox:hover { border-color: var(--blue); color: var(--sub); }
-
   .switchwrap { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--sub); }
-  .sw { width: 34px; height: 18px; border-radius: 10px; background: var(--line); position: relative; cursor: pointer; }
+  .sw { width: 34px; height: 18px; border-radius: 10px; background: var(--line); position: relative; cursor: pointer; flex-shrink: 0; }
   .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
     border-radius: 50%; background: var(--sub); transition: .18s; }
   .sw.on { background: var(--blue); }
   .sw.on::after { left: 18px; background: #fff; }
 
+  .codebox { background: #0a101c; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+    font-family: var(--mono); font-size: 11.5px; line-height: 1.75; color: #a8c6e8; overflow-x: auto; }
+  .codebox .cm { color: #54708c; }
+  .codebox .kw { color: var(--purple); }
+  .codebox .st { color: var(--green); }
+  .codebox .fn { color: var(--blue2); }
+
   .timeline { border-left: 2px solid var(--line); padding-left: 14px; }
-  .tl-item { position: relative; padding-bottom: 14px; }
+  .tl-item { position: relative; padding-bottom: 13px; }
   .tl-item::before { content: ""; position: absolute; left: -19.5px; top: 5px; width: 8px; height: 8px;
     border-radius: 50%; background: var(--line); }
   .tl-item.ok::before { background: var(--green); }
   .tl-item.run::before { background: var(--blue); box-shadow: 0 0 6px var(--blue); }
-  .tl-item .tt { font-size: 12.5px; }
+  .tl-item.warn::before { background: var(--gold); }
+  .tl-item .tt { font-size: 12.5px; color: var(--txt); }
   .tl-item .ts { font-size: 10.5px; color: var(--dim); }
-  .badge { font-size: 10.5px; padding: 1px 8px; border-radius: 9px; }
-  .b-blue { background: rgba(47,155,245,.14); color: var(--blue2); }
-  .b-green { background: rgba(71,195,160,.14); color: var(--green); }
-  .b-gold { background: rgba(255,209,102,.13); color: var(--gold); }
-  .b-purple { background: rgba(155,123,255,.14); color: var(--purple); }
+  .logbox { background: #0a101c; border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px;
+    font-family: var(--mono); font-size: 11px; line-height: 1.8; color: #7d9cba; }
+  .logbox .ok { color: var(--green); } .logbox .wr { color: var(--gold); } .logbox .bl { color: var(--blue2); }
 
-  .footer-note { text-align: center; color: var(--dim); font-size: 11px; padding: 20px 0 30px; }
+  .subtabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  .subtab { padding: 8px 16px; font-size: 13px; color: var(--dim); cursor: pointer;
+    border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .subtab.on { color: var(--txt); border-bottom-color: var(--blue); }
+  .subpage { display: none; } .subpage.on { display: block; }
+
+  .reci-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 13px; }
+  .reci { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .reci h5 { font-size: 13.5px; display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .reci .meta { font-size: 11.5px; color: var(--dim); line-height: 1.9; }
+  .reci .ops { display: flex; gap: 8px; margin-top: 10px; }
+
+  .dotg { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+  .dg-green { background: var(--green); box-shadow: 0 0 5px rgba(71,195,160,.6); }
+  .dg-gold { background: var(--gold); } .dg-red { background: var(--red); }
+  .health-line { display: flex; justify-content: space-between; padding: 5px 0; font-size: 12px; color: var(--sub);
+    border-bottom: 1px dashed rgba(36,52,79,.6); }
+
+  .bars { display: flex; align-items: flex-end; gap: 5px; height: 64px; padding: 4px 2px 0; }
+  .bars i { flex: 1; background: linear-gradient(180deg, rgba(92,178,255,.7), rgba(47,155,245,.2));
+    border-radius: 3px 3px 0 0; min-height: 3px; }
+  .bars i.hi { background: linear-gradient(180deg, var(--green), rgba(71,195,160,.25)); }
+
+  .footer-note { text-align: center; color: var(--dim); font-size: 11px; padding: 18px 0 26px; }
 </style>
 </head>
 <body>
 
 <div class="topnav">
   <div class="brand"><span class="bolt">⚡</span>灵工 Linkraft</div>
+  <div class="gsearch">🔍 <input placeholder="搜索数据集 / 模型 / 配方 / 任务…  ( / )"></div>
   <div class="navtabs">
     <div class="navtab on" data-v="portal">首页门户</div>
     <div class="navtab" data-v="algo">算法平台</div>
@@ -189,21 +264,35 @@
     <div class="navtab" data-v="admin">系统管理</div>
   </div>
   <div class="topright">
-    <span>🔔 3</span><span>👤 admin</span><div class="avatar">A</div>
+    <span class="env-chip">● 生产环境 v2.0-preview</span>
+    <span class="bell">🔔<i>3</i></span>
+    <span>❓</span>
+    <span>admin · 管理员</span><div class="avatar">A</div>
   </div>
 </div>
 
 <!-- ============ 视图 1：首页门户 ============ -->
 <div class="view on" id="v-portal">
-  <div class="hero" style="max-width:1180px; margin:0 auto;">
-    <h1>一个平台，三大中心：<em>算法 · 智能体 · 基础设施</em></h1>
-    <p>原左侧 25+ 项长菜单按职责拆分为四个独立工作区，各中心自带精简子菜单；
-       新增「智能体中心」承载大模型驱动的自动建模 Agent（向导 / 任务 / 配方 / 经验库）。
-       点击卡片进入对应中心。</p>
+  <div class="hero">
+    <div>
+      <h1>早上好，admin —— 一个平台，三大中心：<em>算法 · 智能体 · 基础设施</em></h1>
+      <p>原左侧 25+ 项长菜单按职责拆分为四个独立工作区，各中心自带精简子菜单；
+         新增「智能体中心」承载大模型驱动的自动建模 Agent。点击卡片进入对应中心。</p>
+    </div>
+    <div class="meta">
+      2026-10-21 星期三 · 晴<br>平台已连续运行 46 天<br>上次登录：10-20 23:41 · 192.168.1.23
+    </div>
   </div>
-  <div class="cards" style="max-width:1180px; margin:0 auto;">
+  <div class="quickbar">
+    <div class="qbtn" data-go="agent"><span class="ic c-purple">🤖</span><div><b>新建智能体建模任务</b><br><span style="font-size:11px;color:var(--dim)">四步向导 · 全自动迭代</span></div></div>
+    <div class="qbtn" data-go="algo"><span class="ic c-blue">📤</span><div><b>上传数据集</b><br><span style="font-size:11px;color:var(--dim)">CSV / Excel，自动画像</span></div></div>
+    <div class="qbtn" data-go="algo"><span class="ic c-blue">🔄</span><div><b>新建闭环任务</b><br><span style="font-size:11px;color:var(--dim)">推理-回流-重训-换模</span></div></div>
+    <div class="qbtn" data-go="algo"><span class="ic c-blue">🛒</span><div><b>API 市场</b><br><span style="font-size:11px;color:var(--dim)">模型 / 编排服务调用</span></div></div>
+    <div class="qbtn" data-go="infra"><span class="ic c-green">☸</span><div><b>集群状态</b><br><span style="font-size:11px;color:var(--dim)">7/8 节点就绪</span></div></div>
+  </div>
+  <div class="cards">
     <div class="card" data-go="algo">
-      <div class="go">进入 →</div>
+      <div class="go">进入 →</div><div class="stat">18 数据集 · 27 模型</div>
       <div class="icon c-blue">🧪</div>
       <h3>算法平台（建模中心）</h3>
       <p>数据到模型的主链路：数据、标注、建模、编排与闭环服务化。</p>
@@ -214,7 +303,7 @@
       </div>
     </div>
     <div class="card" data-go="agent">
-      <div class="go">进入 →</div>
+      <div class="go">进入 →</div><div class="stat">4 任务运行中 · 12 配方</div>
       <div class="icon c-purple">🤖</div>
       <h3>智能体中心 <span class="badge b-purple">NEW</span></h3>
       <p>大模型驱动的自动建模 Agent 与知识体系：四步向导引导、配方固化复用、经验越用越强。</p>
@@ -225,7 +314,7 @@
       </div>
     </div>
     <div class="card" data-go="infra">
-      <div class="go">进入 →</div>
+      <div class="go">进入 →</div><div class="stat">2 集群 · 12 作业</div>
       <div class="icon c-green">☸</div>
       <h3>基础设施（运行时）</h3>
       <p>算力与运行环境：K8s 集群、作业、Notebook、镜像与资源治理。</p>
@@ -235,23 +324,53 @@
       </div>
     </div>
     <div class="card" data-go="admin">
-      <div class="go">进入 →</div>
+      <div class="go">进入 →</div><div class="stat">23 用户 · 11 项目</div>
       <div class="icon c-gold">⚙</div>
       <h3>系统管理</h3>
       <p>平台级管理：用户、权限、项目与审计。</p>
       <div class="chips"><span class="chip">用户管理</span><span class="chip">项目管理</span><span class="chip">审计日志</span></div>
     </div>
   </div>
-  <div class="migrate" style="max-width:1180px; margin:0 auto;">
+  <div class="portal-row">
+    <div class="panel" style="flex:1.5">
+      <h4><span class="bar"></span>我的最近<span class="more">全部 ›</span></h4>
+      <table class="dt">
+        <tr><th>类型</th><th>名称</th><th>项目</th><th>状态</th><th>时间</th></tr>
+        <tr><td><span class="badge b-purple">智能体任务</span></td><td class="tt">拧紧-DECIDE-自动建模</td><td>拧紧</td><td><span class="badge b-blue">迭代中 轮2/3</span></td><td>10 分钟前</td></tr>
+        <tr><td><span class="badge b-blue">闭环任务</span></td><td class="tt">电焊闭环演示</td><td>电焊</td><td><span class="badge b-green">运行中</span></td><td>25 分钟前</td></tr>
+        <tr><td><span class="badge b-gold">配方</span></td><td class="tt">tightening-v1.2</td><td>拧紧</td><td><span class="badge b-green">已固化</span></td><td>2 小时前</td></tr>
+        <tr><td><span class="badge b-gray">数据集</span></td><td class="tt">tighten_test.csv</td><td>拧紧</td><td><span class="badge b-green">就绪 70,087 行</span></td><td>昨天</td></tr>
+      </table>
+    </div>
+    <div style="flex:1; display:flex; flex-direction:column; gap:15px;">
+      <div class="panel" style="margin:0">
+        <h4><span class="bar"></span>平台公告</h4>
+        <div style="font-size:12.5px; color:var(--sub); line-height:2">
+          <div>📌 <b style="color:var(--txt)">智能体中心上线公测</b> —— 建模智能体向导开放，欢迎试用 <span style="color:var(--dim);font-size:11px">10-21</span></div>
+          <div>🔧 周日 02:00-04:00 基础设施例行维护（K8s 升级）<span style="color:var(--dim);font-size:11px">10-26</span></div>
+          <div>📈 API 市场新增编排 API 实时大屏入口 <span style="color:var(--dim);font-size:11px">10-20</span></div>
+        </div>
+      </div>
+      <div class="panel" style="margin:0">
+        <h4><span class="bar"></span>平台健康度</h4>
+        <div class="health-line"><span><span class="dotg dg-green"></span>后端 API</span><span style="color:var(--green)">正常 · 38ms</span></div>
+        <div class="health-line"><span><span class="dotg dg-green"></span>推理运行时</span><span style="color:var(--green)">正常 · 4 部署</span></div>
+        <div class="health-line"><span><span class="dotg dg-gold"></span>K8s w16b</span><span style="color:var(--gold)">1 节点 NotReady</span></div>
+        <div class="health-line"><span><span class="dotg dg-green"></span>训练 Worker</span><span style="color:var(--green)">正常 · 2 并发</span></div>
+        <div class="health-line"><span><span class="dotg dg-green"></span>大模型网关</span><span style="color:var(--green)">正常</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="migrate">
     <h4>旧菜单 → 新中心 迁移映射（前端路由重组，功能不动）</h4>
     <table class="mtable">
       <tr><td style="width:130px"><b>算法平台</b></td><td>工作台仪表板 · 项目管理 · 数据管理 · 数据标注 · 自动建模 · 模型训练 · 模型库 · 应用编排 · 闭环自动化 · API 市场</td></tr>
       <tr><td><b>智能体中心</b></td><td>建模智能体（向导/任务/配方/经验库/提示词模板，新增）· AI 对话 · 知识库 · 知识图谱（自原菜单迁入）</td></tr>
       <tr><td><b>基础设施</b></td><td>K8s 集群 · 作业运行 · Notebook 会话 · 镜像目录 · 集群治理 · 资源监控 · 计算资源</td></tr>
-      <tr><td><b>系统管理</b></td><td>用户管理（工作台仪表板收进算法平台首页，或保留门户快捷卡）</td></tr>
+      <tr><td><b>系统管理</b></td><td>用户管理（工作台仪表板收进算法平台首页，门户保留快捷卡）</td></tr>
     </table>
   </div>
-  <div class="footer-note">灵工 Linkraft · 平台改版静态预览稿 v0.1 · 2026-10-21 · 仅布局示意，非最终视觉</div>
+  <div class="footer-note">灵工 Linkraft · 平台改版静态预览稿 v2 · 2026-10-21 · 布局示意，非最终视觉</div>
 </div>
 
 <!-- ============ 视图 2：算法平台 ============ -->
@@ -260,199 +379,334 @@
     <div class="sidebar">
       <div class="side-group">概览</div>
       <div class="side-item on"><span class="dot"></span>工作台</div>
-      <div class="side-item"><span class="dot"></span>项目管理</div>
+      <div class="side-item"><span class="dot"></span>项目管理<span class="side-count">11</span></div>
       <div class="side-group">数据</div>
-      <div class="side-item"><span class="dot"></span>数据管理</div>
-      <div class="side-item"><span class="dot"></span>数据标注</div>
+      <div class="side-item"><span class="dot"></span>数据管理<span class="side-count">18</span></div>
+      <div class="side-item"><span class="dot"></span>数据标注<span class="side-badge">2 待审</span></div>
       <div class="side-group">建模与服务</div>
       <div class="side-item"><span class="dot"></span>自动建模</div>
       <div class="side-item"><span class="dot"></span>模型训练</div>
-      <div class="side-item"><span class="dot"></span>模型库</div>
+      <div class="side-item"><span class="dot"></span>模型库<span class="side-count">27</span></div>
       <div class="side-item"><span class="dot"></span>应用编排</div>
-      <div class="side-item"><span class="dot"></span>闭环自动化</div>
+      <div class="side-item"><span class="dot"></span>闭环自动化<span class="side-count">6</span></div>
       <div class="side-item"><span class="dot"></span>API 市场</div>
     </div>
     <div class="main">
       <div class="crumb">算法平台 / <b>工作台</b></div>
-      <h2 class="pt">建模总览</h2>
-      <p class="pdesc">原全局仪表板收拢为算法平台首页；左栏仅 10 项（原全局菜单 25+ 项的三分之一）。</p>
+      <div class="pagehead">
+        <div><h2 class="pt">建模总览</h2><p class="pdesc">原全局仪表板收拢为算法平台首页；左栏仅 10 项（原 25+ 的三分之一）。</p></div>
+        <div style="display:flex; gap:9px">
+          <button class="btn">📅 今日</button><button class="btn">↻ 刷新</button><button class="btn primary" data-go="agent">🤖 新建智能体任务</button>
+        </div>
+      </div>
       <div class="grid4">
-        <div class="kpi"><div class="lb">数据集</div><div class="v">18</div><div class="t">本周 +3</div></div>
-        <div class="kpi"><div class="lb">模型版本</div><div class="v">27</div><div class="t">运行中部署 4</div></div>
-        <div class="kpi"><div class="lb">闭环任务</div><div class="v">6</div><div class="t">回流 128 行</div></div>
-        <div class="kpi"><div class="lb">API 调用（24h）</div><div class="v">1,904</div><div class="t">成功率 99.2%</div></div>
+        <div class="kpi"><div class="spark"><i style="height:30%"></i><i style="height:55%"></i><i style="height:42%"></i><i style="height:70%"></i><i style="height:62%"></i><i style="height:88%"></i></div>
+          <div class="lb">数据集</div><div class="v">18</div><div class="t">本周 +3</div></div>
+        <div class="kpi"><div class="spark"><i style="height:45%"></i><i style="height:38%"></i><i style="height:66%"></i><i style="height:58%"></i><i style="height:76%"></i><i style="height:80%"></i></div>
+          <div class="lb">模型版本</div><div class="v">27</div><div class="t">运行中部署 4</div></div>
+        <div class="kpi"><div class="spark"><i style="height:20%"></i><i style="height:48%"></i><i style="height:35%"></i><i style="height:60%"></i><i style="height:52%"></i><i style="height:67%"></i></div>
+          <div class="lb">闭环回流（累计）</div><div class="v">128</div><div class="t">6 任务 · 1 重训中</div></div>
+        <div class="kpi"><div class="spark"><i style="height:50%"></i><i style="height:62%"></i><i style="height:48%"></i><i style="height:75%"></i><i style="height:83%"></i><i style="height:95%"></i></div>
+          <div class="lb">API 调用（24h）</div><div class="v">1,904</div><div class="t">成功率 99.2%</div></div>
       </div>
       <div class="row">
-        <div class="panel"><h4><span class="bar"></span>我的项目</h4>
-          <table class="dt"><tr><th>项目</th><th>数据集</th><th>模型</th><th>最近活动</th></tr>
-            <tr><td>电焊</td><td>6</td><td>9</td><td>闭环回流 10 分钟前</td></tr>
-            <tr><td>拧紧</td><td>4</td><td>8</td><td>自动重训 1 小时前</td></tr></table>
+        <div class="panel" style="flex:1.35">
+          <h4><span class="bar"></span>闭环任务概览<span class="more">闭环自动化 ›</span></h4>
+          <table class="dt">
+            <tr><th>任务</th><th>项目</th><th>已推理</th><th>回流</th><th>告警</th><th>重训</th><th>状态</th></tr>
+            <tr><td class="tt">电焊闭环演示</td><td>电焊</td><td>162</td><td>8</td><td>8</td><td>2 次</td><td><span class="badge b-green">空闲</span></td></tr>
+            <tr><td class="tt">拧紧闭环演示</td><td>拧紧</td><td>645</td><td>7</td><td>7</td><td>1 次</td><td><span class="badge b-blue">重训中</span></td></tr>
+            <tr><td class="tt">电焊编排闭环 v1</td><td>电焊</td><td>195</td><td>8</td><td>8</td><td>—</td><td><span class="badge b-green">服务中</span></td></tr>
+            <tr><td class="tt">拧紧编排闭环 v1</td><td>拧紧</td><td>23</td><td>7</td><td>7</td><td>—</td><td><span class="badge b-green">服务中</span></td></tr>
+          </table>
         </div>
-        <div class="panel"><h4><span class="bar"></span>推荐 → 智能体</h4>
-          <div class="note-strip">💡 重复的建模流程可交给<b>智能体中心</b>：四步向导一次配置，
-            自动分析-特征-建模-评估迭代，验收后固化为配方。<a data-go="agent" style="cursor:pointer">前往智能体中心 →</a></div>
+        <div class="panel">
+          <h4><span class="bar"></span>API 调用趋势（近 12h）</h4>
+          <div class="bars">
+            <i style="height:32%"></i><i style="height:41%"></i><i style="height:38%"></i><i style="height:52%"></i>
+            <i style="height:47%"></i><i style="height:60%"></i><i class="hi" style="height:78%"></i>
+            <i style="height:55%"></i><i style="height:63%"></i><i style="height:70%"></i>
+            <i class="hi" style="height:86%"></i><i style="height:74%"></i>
+          </div>
+          <div style="display:flex; justify-content:space-between; color:var(--dim); font-size:10.5px; margin-top:6px">
+            <span>10:00</span><span>16:00</span><span>22:00</span>
+          </div>
+          <div class="note-strip" style="margin-top:12px">💡 重复建模流程可交给<b>智能体中心</b>：
+            <a data-go="agent">前往 →</a></div>
         </div>
+      </div>
+      <div class="panel">
+        <h4><span class="bar"></span>最近模型版本<span class="more">模型库 ›</span></h4>
+        <table class="dt">
+          <tr><th>注册模型</th><th>版本</th><th>算法</th><th>F1</th><th>召回(少数类)</th><th>来源</th><th>时间</th></tr>
+          <tr><td class="tt">拧紧-拧紧实验1-hist_gradient_boosting</td><td>v1</td><td>HistGB</td><td>0.952</td><td>0.941</td><td><span class="badge b-blue">自动建模</span></td><td>10-20 12:42</td></tr>
+          <tr><td class="tt">电焊-电焊分类训练-extra_trees</td><td>v1</td><td>ExtraTrees</td><td>0.938</td><td>0.917</td><td><span class="badge b-purple">智能体</span></td><td>10-21 09:14</td></tr>
+          <tr><td class="tt">电焊自动化闭环-自动模型-5decf3b0</td><td>v1</td><td>LightGBM</td><td>0.921</td><td>0.896</td><td><span class="badge b-gold">闭环重训</span></td><td>10-20 13:39</td></tr>
+        </table>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ============ 视图 3：智能体中心（核心新功能预览） ============ -->
+<!-- ============ 视图 3：智能体中心 ============ -->
 <div class="view" id="v-agent">
   <div class="center">
     <div class="sidebar">
       <div class="side-group">建模智能体</div>
-      <div class="side-item on"><span class="dot"></span>新建任务（向导）<span class="side-badge">核心</span></div>
-      <div class="side-item"><span class="dot"></span>任务列表</div>
-      <div class="side-item"><span class="dot"></span>配方库</div>
-      <div class="side-item"><span class="dot"></span>经验库</div>
-      <div class="side-item"><span class="dot"></span>提示词模板</div>
+      <div class="side-item on" data-sub="wiz"><span class="dot"></span>新建任务（向导）<span class="side-badge">核心</span></div>
+      <div class="side-item" data-sub="tasks"><span class="dot"></span>任务列表<span class="side-count">7</span></div>
+      <div class="side-item" data-sub="reci"><span class="dot"></span>配方库<span class="side-count">12</span></div>
+      <div class="side-item" data-sub="exp"><span class="dot"></span>经验库<span class="side-count">31</span></div>
+      <div class="side-item"><span class="dot"></span>提示词模板<span class="side-count">8</span></div>
       <div class="side-group">知识与对话</div>
       <div class="side-item"><span class="dot"></span>AI 对话</div>
-      <div class="side-item"><span class="dot"></span>知识库</div>
+      <div class="side-item"><span class="dot"></span>知识库<span class="side-count">3</span></div>
       <div class="side-item"><span class="dot"></span>知识图谱</div>
     </div>
     <div class="main">
-      <div class="crumb">智能体中心 / <b>新建任务（向导）</b></div>
-      <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:14px">
-        <div><h2 class="pt">建模智能体向导</h2>
-          <p class="pdesc" style="margin:0">数据集 <b style="color:var(--txt)">tighten_test.csv</b> ·
-            目标列 <b style="color:var(--txt)">DECIDE(0-不合格,1-合格)</b> ·
-            每一步都可留空交给智能体自动决策</p></div>
-        <div class="switchwrap">逐步确认模式 <div class="sw" onclick="this.classList.toggle('on')"></div></div>
+      <div class="crumb">智能体中心 / <b id="agent-crumb">新建任务（向导）</b></div>
+
+      <div class="subtabs">
+        <div class="subtab on" data-sub="wiz">🧭 新建向导</div>
+        <div class="subtab" data-sub="tasks">📋 任务列表</div>
+        <div class="subtab" data-sub="reci">📚 配方库</div>
+        <div class="subtab" data-sub="exp">🧠 经验库</div>
       </div>
 
-      <div class="steps">
-        <div class="step on" data-s="1"><div class="n">1</div><div><div class="tt">数据分析</div><div class="st">选列说明 · 提示词</div></div></div>
-        <div class="step" data-s="2"><div class="n">2</div><div><div class="tt">特征工程</div><div class="st">表格/波形 · 列指令</div></div></div>
-        <div class="step" data-s="3"><div class="n">3</div><div><div class="tt">自动建模</div><div class="st">算法白名单 · 参数</div></div></div>
-        <div class="step" data-s="4"><div class="n">4</div><div><div class="tt">评估验收</div><div class="st">测试集 · 指标阈值</div></div></div>
+      <!-- ===== 子页：向导 ===== -->
+      <div class="subpage on" id="sub-wiz">
+        <div class="wiz-head">
+          <div class="fld">项目 <select><option>拧紧</option><option>电焊</option></select></div>
+          <div class="fld">数据集 <select><option>tighten_test.csv（70,087 行 × 20 列）</option><option>train_features.csv</option></select></div>
+          <div class="fld">目标列 <select><option>DECIDE(判定（最终判定）（0-不合格，1-合格）)</option></select></div>
+          <div class="switchwrap">逐步确认模式 <div class="sw" onclick="this.classList.toggle('on')"></div></div>
+        </div>
+
+        <div class="steps">
+          <div class="step on" data-s="1"><div class="n">1</div><div><div class="tt">数据分析</div><div class="st">选列说明 · 提示词</div></div></div>
+          <div class="step" data-s="2"><div class="n">2</div><div><div class="tt">特征工程</div><div class="st">表格/波形 · 列指令</div></div></div>
+          <div class="step" data-s="3"><div class="n">3</div><div><div class="tt">自动建模</div><div class="st">算法白名单 · 参数</div></div></div>
+          <div class="step" data-s="4"><div class="n">4</div><div><div class="tt">评估验收</div><div class="st">测试集 · 指标阈值</div></div></div>
+        </div>
+
+        <div class="step-pane on" id="sp-1">
+          <div class="panel"><h4><span class="bar"></span>选择数据并说明（勾选列 + 行内备注，帮助大模型理解业务语义）<span class="more">已选 5 / 20 列</span></h4>
+            <table class="dt">
+              <tr><th></th><th>列名（含注解）</th><th>缺失率</th><th>与目标互信息排名</th><th>我的备注（直接进分析提示词）</th></tr>
+              <tr><td><input type="checkbox" class="ck" checked></td><td class="tt">ACTUAL_TORQUE(实际扭矩/一轴实际扭矩)</td><td>0%</td><td>#2</td>
+                <td><input type="text" value="核心质量信号，重点关注与目标的偏差"></td></tr>
+              <tr><td><input type="checkbox" class="ck" checked></td><td class="tt">TARGET_TORQUE(设定目标力矩)</td><td>0%</td><td>#6</td>
+                <td><input type="text" value="不同螺栓规格目标不同，看比值而非绝对值"></td></tr>
+              <tr><td><input type="checkbox" class="ck" checked></td><td class="tt">ACTUAL_TORQUE_TWO(二轴实际扭矩)</td><td>31%</td><td>#4</td>
+                <td><input type="text" value="单轴行缺失属正常，中位数填充+标记即可"></td></tr>
+              <tr><td><input type="checkbox" class="ck" checked></td><td class="tt">UPPER_LIMIT / LOWER_LIMIT(力矩上下限)</td><td>0%</td><td>#7</td>
+                <td><input type="text" value="裕度类特征应重点派生"></td></tr>
+              <tr><td><input type="checkbox" class="ck"></td><td class="tt">ORDER_PROD(生产工单)</td><td>0%</td><td>—</td>
+                <td><input type="text" placeholder="选中的列与备注会成为大模型的重点输入"></td></tr>
+            </table>
+          </div>
+          <div class="panel"><h4><span class="bar"></span>分析提示词（可选）</h4>
+            <input type="text" placeholder="例如：这批数据来自换夹具后的产线，重点排查工装相关漂移…">
+            <div class="prompt-chips">
+              <span class="pchip">⚡ 聚焦扭矩-目标偏差</span><span class="pchip">⚡ 关注时序漂移</span>
+              <span class="pchip">⚡ 怀疑判定中间列泄漏</span><span class="pchip">⚡ 不平衡数据按召回优先</span>
+              <span class="pchip" style="color:var(--gold); border-color:rgba(255,209,102,.4)">＋ 存为模板</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="step-pane" id="sp-2">
+          <div class="panel"><h4><span class="bar"></span>数据形态（约束特征脚本的处理方式）</h4>
+            <div class="radios">
+              <div class="radio-card"><b>📋 表格数据</b><span>常规列式制造记录（拧紧样例适用）</span></div>
+              <div class="radio-card"><b>〜 波形数据</b><span>含编码波形列，需解码后统计（电焊 cvei/cvev/cver/cvep）</span></div>
+              <div class="radio-card on"><b>◫ 混合形态</b><span>报告列 + 波形列并存，两者兼顾</span></div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="panel"><h4><span class="bar"></span>列级指令</h4>
+              <table class="dt"><tr><th>列</th><th>指令</th></tr>
+                <tr><td class="tt">TIGHTEN_DUAL_AXIS_DIFF</td><td><span class="badge b-green">必须保留</span></td></tr>
+                <tr><td class="tt">DECIDE_ONE / DECIDE_TWO</td><td><span class="badge b-red">建议剔除（泄漏）</span></td></tr>
+                <tr><td class="tt">ID(主键)</td><td><span class="badge b-red">建议剔除（索引）</span></td></tr></table>
+            </div>
+            <div class="panel"><h4><span class="bar"></span>特征提示词（可选）</h4>
+              <input type="text" value="派生特征优先比值/裕度类；缺失用中位数+缺失标记">
+              <div class="prompt-chips"><span class="pchip">⚡ 优先比值特征</span><span class="pchip">⚡ 中位数+标记</span><span class="pchip">⚡ 剔除单基数码列</span></div>
+            </div>
+          </div>
+          <div class="panel"><h4><span class="bar"></span>智能体生成的脚本预览（运行后实时更新，可展开纠错历史）<span class="more">纠错历史 4 次 ›</span></h4>
+            <div class="codebox"><span class="cm"># 第 4 稿 · 沙箱试运行通过（5,000 行抽样 · 1.8s）</span><br>
+<span class="kw">def</span> <span class="fn">derive_features</span>(df):<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># 派生扭矩域特征（用户备注：看比值而非绝对值）</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;dev = df[<span class="st">"ACTUAL_TORQUE"</span>] - df[<span class="st">"TARGET_TORQUE"</span>]<br>
+&nbsp;&nbsp;&nbsp;&nbsp;band = df[<span class="st">"UPPER_LIMIT"</span>] - df[<span class="st">"LOWER_LIMIT"</span>]<br>
+&nbsp;&nbsp;&nbsp;&nbsp;df[<span class="st">"TIGHTEN_TORQUE_DEVIATION"</span>] = dev<br>
+&nbsp;&nbsp;&nbsp;&nbsp;df[<span class="st">"TIGHTEN_DEVIATION_RATIO"</span>] = dev / band.replace(<span class="st">0</span>, pd.NA)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;df[<span class="st">"TIGHTEN_UPPER_MARGIN"</span>] = df[<span class="st">"UPPER_LIMIT"</span>] - df[<span class="st">"ACTUAL_TORQUE"</span>]<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># …（14 维特征，完整脚本 61 行）</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">return</span> df[[<span class="st">"FEATURES"</span> + [<span class="st">"DECIDE"</span>]]</div>
+          </div>
+        </div>
+
+        <div class="step-pane" id="sp-3">
+          <div class="panel"><h4><span class="bar"></span>算法白名单（不选 = 全算法族自动搜索）</h4>
+            <div class="alg-grid">
+              <div class="alg on"><input type="checkbox" class="ck" checked>LightGBM</div>
+              <div class="alg on"><input type="checkbox" class="ck" checked>HistGradientBoosting</div>
+              <div class="alg"><input type="checkbox" class="ck">XGBoost</div>
+              <div class="alg"><input type="checkbox" class="ck">CatBoost</div>
+              <div class="alg"><input type="checkbox" class="ck">RandomForest</div>
+              <div class="alg"><input type="checkbox" class="ck">ExtraTrees</div>
+              <div class="alg"><input type="checkbox" class="ck">GBDT</div>
+              <div class="alg"><input type="checkbox" class="ck">MLP</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="panel"><h4><span class="bar"></span>参数约束（留空 = 智能体按数据画像决定）</h4>
+              <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px">
+                <div>搜索试验数<input type="text" style="margin-top:5px" value="50"></div>
+                <div>时间预算(秒)<input type="text" style="margin-top:5px" placeholder="自动"></div>
+                <div>CV 折数<input type="text" style="margin-top:5px" value="5"></div>
+              </div>
+              <div style="margin-top:12px"><div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--sub);margin-bottom:5px">
+                <span>搜索进度（试运行示意）</span><span>32 / 50</span></div>
+                <div class="pbar"><i style="width:64%"></i></div></div>
+            </div>
+            <div class="panel"><h4><span class="bar"></span>建模提示词（可选）</h4>
+              <input type="text" value="召回优先于精度；需要特征重要性可解释">
+              <div class="prompt-chips"><span class="pchip">⚡ 召回优先</span><span class="pchip">⚡ 可解释性优先</span><span class="pchip">⚡ 限轻量模型</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="step-pane" id="sp-4">
+          <div class="row">
+            <div class="panel"><h4><span class="bar"></span>测试集（可选，不传 = 自动留出切分）</h4>
+              <div class="uploadbox">📎 点击或拖入上传新测试集（CSV）<br>
+                <span style="font-size:11px">上传后作为留出评估集，跳过自动切分，更贴近生产分布</span></div>
+              <div style="margin-top:10px; color:var(--dim); font-size:11.5px">当前：自动留出 20%（分层抽样 · 与训练集同特征工程管线）</div>
+            </div>
+            <div class="panel"><h4><span class="bar"></span>验收指标阈值（留空项不设门禁；对大模型一票否决）</h4>
+              <div class="metric-row">
+                <div class="metric"><div class="lb">召回(少数类) <span>≥</span></div><input type="text" value="0.92"></div>
+                <div class="metric"><div class="lb">精度 <span>≥</span></div><input type="text" value="0.85"></div>
+                <div class="metric"><div class="lb">F1 <span>≥</span></div><input type="text" value="0.88"></div>
+                <div class="metric"><div class="lb">Acc <span>≥</span></div><input type="text" placeholder="—"></div>
+                <div class="metric"><div class="lb">AUC <span>≥</span></div><input type="text" placeholder="—"></div>
+              </div>
+            </div>
+          </div>
+          <div class="panel"><h4><span class="bar"></span>评审重点提示词（可选）</h4>
+            <input type="text" value="重点解释假阴性样本的共同特征；对比上一版配方是否退化">
+          </div>
+          <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:2px">
+            <button class="btn ghost">存为草稿</button>
+            <button class="btn primary" data-go="agent-run">🚀 启动智能体（全自动迭代）</button>
+          </div>
+        </div>
+
+        <!-- 运行时预览 -->
+        <div id="agent-run" style="display:none">
+          <div class="row">
+            <div class="panel" style="flex:1.7"><h4><span class="bar"></span>迭代过程<span class="badge b-blue" style="margin-left:6px">轮 2/3 · S3 自动建模中</span></h4>
+              <div class="timeline">
+                <div class="tl-item ok"><div class="tt">轮1 · S1 数据分析 <span class="badge b-green">完成</span></div>
+                  <div class="ts">域识别=拧紧（扭矩列语义）· 关注通道：偏差/裕度/双轴 · 09:02</div></div>
+                <div class="tl-item ok"><div class="tt">轮1 · S2 特征脚本 <span class="badge b-green">第 4 次修复通过</span></div>
+                  <div class="ts">报错 3 次（列名注解解析×2、零带宽除零×1）→ 自我修复 · 用户列备注已生效</div></div>
+                <div class="tl-item ok"><div class="tt">轮1 · S3/S4 建模与评审 <span class="badge b-gold">fail</span></div>
+                  <div class="ts">HGB F1=0.90 达标，但 ID 列重要性第 3 → 疑似索引信号；教训已入轮内记忆</div></div>
+                <div class="tl-item run"><div class="tt">轮2 · S3 AutoML <span class="badge b-blue">running</span></div>
+                  <div class="ts">已剔除索引列 · 白名单 LightGBM+HGB · 试验 32/50 · 当前最优 F1=0.93</div></div>
+              </div>
+              <div class="logbox" style="margin-top:6px">
+                <span class="bl">[09:41:22]</span> S3 trial#31 lightgbm cv_f1=0.931 recall=0.944 <span class="ok">✓ 当前最优</span><br>
+                <span class="bl">[09:40:58]</span> S3 trial#30 hist_gb cv_f1=0.928 recall=0.939<br>
+                <span class="wr">[09:12:07]</span> S2 第3稿执行失败：ZeroDivisionError (band=0) → 已回喂修复<br>
+                <span class="ok">[09:02:11]</span> S1 AnalysisReport 契约校验通过（14 关注特征）
+              </div>
+            </div>
+            <div style="flex:1; display:flex; flex-direction:column; gap:15px;">
+              <div class="panel" style="margin:0"><h4><span class="bar"></span>轮1 关键产物</h4>
+                <table class="dt"><tr><th>产物</th><th>状态</th></tr>
+                  <tr><td>AnalysisReport</td><td><span class="badge b-green">已校验</span></td></tr>
+                  <tr><td>特征脚本（第4稿）</td><td><span class="badge b-green">沙箱通过</span></td></tr>
+                  <tr><td>特征 14 维</td><td>含 6 个派生</td></tr>
+                  <tr><td>候选 Top-3 指标</td><td><span class="badge b-green">已产出</span></td></tr>
+                  <tr><td>ReviewVerdict</td><td><span class="badge b-gold">fail → 重迭代</span></td></tr></table>
+              </div>
+              <div class="panel" style="margin:0"><h4><span class="bar"></span>注入的经验（L2 检索）</h4>
+                <div style="font-size:12px; color:var(--sub); line-height:2">
+                  <div>🧠 <b>exp-0042</b> 索引列默认剔除 <span class="badge b-green">置信 0.86</span></div>
+                  <div>🧠 <b>exp-0031</b> 扭矩域裕度特征有效 <span class="badge b-green">置信 0.91</span></div>
+                  <div>🧠 <b>exp-0027</b> 单轴行中位数填充+标记 <span class="badge b-green">置信 0.88</span></div>
+                </div>
+                <div class="note-strip" style="margin-top:10px">⏸ 逐步确认模式：每步完成后暂停，可补充引导再放行</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- 步骤 1 -->
-      <div class="step-pane on" id="sp-1">
-        <div class="panel"><h4><span class="bar"></span>选择数据并说明（勾选列 + 行内备注，帮助大模型理解业务语义）</h4>
+      <!-- ===== 子页：任务列表 ===== -->
+      <div class="subpage" id="sub-tasks">
+        <div class="pagehead">
+          <div><h2 class="pt">智能体任务</h2><p class="pdesc">全部自动建模任务与迭代状态；点行查看全链路档案。</p></div>
+          <button class="btn primary">＋ 新建任务</button>
+        </div>
+        <div class="panel">
           <table class="dt">
-            <tr><th></th><th>列名（含注解）</th><th>缺失率</th><th>我的备注（直接进分析提示词）</th></tr>
-            <tr><td><input type="checkbox" class="ck" checked></td><td>ACTUAL_TORQUE(实际扭矩/一轴实际扭矩)</td><td>0%</td>
-              <td><input type="text" value="核心质量信号，重点关注偏差"></td></tr>
-            <tr><td><input type="checkbox" class="ck" checked></td><td>ACTUAL_TORQUE_TWO(二轴实际扭矩)</td><td>31%</td>
-              <td><input type="text" value="单轴行缺失属正常，中位数填充+标记即可"></td></tr>
-            <tr><td><input type="checkbox" class="ck"></td><td>ORDER_PROD(生产工单)</td><td>0%</td>
-              <td><input type="text" placeholder="选中的列/备注会成为大模型的重点输入"></td></tr>
+            <tr><th>任务</th><th>项目</th><th>数据集</th><th>轮次</th><th>当前阶段</th><th>最佳 F1</th><th>状态</th><th>更新时间</th></tr>
+            <tr><td class="tt">拧紧-DECIDE-自动建模</td><td>拧紧</td><td>tighten_test.csv</td><td>2/3</td><td>S3 建模</td><td>0.931</td><td><span class="badge b-blue">迭代中</span></td><td>10 分钟前</td></tr>
+            <tr><td class="tt">电焊-fault-自动建模</td><td>电焊</td><td>labeled_features.csv</td><td>1/3</td><td>S2 纠错</td><td>—</td><td><span class="badge b-blue">迭代中</span></td><td>32 分钟前</td></tr>
+            <tr><td class="tt">电焊-特征脚本-修复验证</td><td>电焊</td><td>unlabeled.csv</td><td>2/3</td><td>S4 评审</td><td>0.917</td><td><span class="badge b-gold">待发布</span></td><td>2 小时前</td></tr>
+            <tr><td class="tt">拧紧-首轮基线</td><td>拧紧</td><td>train_features.csv</td><td>2/2</td><td>已固化</td><td>0.941</td><td><span class="badge b-green">完成</span></td><td>昨天</td></tr>
+            <tr><td class="tt">SMT-贴片-探索</td><td>SMT 试点</td><td>smt_patch.csv</td><td>3/3</td><td>升级人工</td><td>0.71</td><td><span class="badge b-red">需人工</span></td><td>昨天</td></tr>
           </table>
         </div>
-        <div class="panel"><h4><span class="bar"></span>分析提示词（可选）</h4>
-          <input type="text" placeholder="例如：这批数据来自换夹具后的产线，重点排查工装相关漂移…">
-          <div class="prompt-chips">
-            <span class="pchip">⚡ 聚焦扭矩-目标偏差</span><span class="pchip">⚡ 关注时序漂移</span>
-            <span class="pchip">⚡ 怀疑判定中间列泄漏</span><span class="pchip">⚡ 不平衡数据按召回优先</span>
-            <span class="pchip" style="color:var(--gold); border-color:rgba(255,209,102,.4)">＋ 存为模板</span>
-          </div>
+      </div>
+
+      <!-- ===== 子页：配方库 ===== -->
+      <div class="subpage" id="sub-reci">
+        <div class="pagehead">
+          <div><h2 class="pt">配方库（Pipeline Recipe）</h2><p class="pdesc">验收通过固化的建模配方：特征脚本+建模配置+门禁+评审记录，版本化可回滚，可被回流重训与新数据复用。</p></div>
+          <button class="btn">导入配方</button>
+        </div>
+        <div class="reci-grid">
+          <div class="reci"><h5>⚙ tightening-v1.2 <span class="badge b-green">最新</span></h5>
+            <div class="meta">域：拧紧 · 特征 14 维（6 派生）· HGB+LightGBM<br>门禁：召回≥0.92 / F1≥0.88 · 测试 F1 0.941<br>固化 10-21 · 复用 23 次（回流重训 19 · delta 4）</div>
+            <div class="ops"><button class="btn sm">查看档案</button><button class="btn sm">编辑</button><button class="btn sm primary">用于新数据</button></div></div>
+          <div class="reci"><h5>⚙ welding-v2.0 <span class="badge b-green">最新</span></h5>
+            <div class="meta">域：电焊 · 波形 4 通道×12 统计 + 报告 25 维<br>门禁：fault 召回≥0.85 · ExtraTrees+HGB<br>固化 10-20 · 复用 11 次</div>
+            <div class="ops"><button class="btn sm">查看档案</button><button class="btn sm">编辑</button><button class="btn sm primary">用于新数据</button></div></div>
+          <div class="reci"><h5>⚙ tightening-v1.1 <span class="badge b-gray">历史</span></h5>
+            <div class="meta">v1.2 前身 · 含 ID 列（后验证为索引泄漏剔除）<br>固化 10-19 · 已被 v1.2 取代</div>
+            <div class="ops"><button class="btn sm">查看档案</button><button class="btn sm">对比 v1.2</button></div></div>
+          <div class="reci"><h5>⚙ smt-patch-v0.3 <span class="badge b-gold">草稿</span></h5>
+            <div class="meta">域：SMT 贴片（自动发现）· 迭代 3 轮未达门禁<br>升级人工处理中 · 含完整 3 轮档案</div>
+            <div class="ops"><button class="btn sm">查看档案</button><button class="btn sm">继续迭代</button></div></div>
         </div>
       </div>
 
-      <!-- 步骤 2 -->
-      <div class="step-pane" id="sp-2">
-        <div class="panel"><h4><span class="bar"></span>数据形态（约束特征脚本的处理方式）</h4>
-          <div class="radios">
-            <div class="radio-card"><b>📋 表格数据</b><span>常规列式制造记录（拧紧样例适用）</span></div>
-            <div class="radio-card"><b>〜 波形数据</b><span>含编码波形列，需解码后统计（电焊 cvei/cvev/cver/cvep）</span></div>
-            <div class="radio-card on"><b>◫ 混合形态</b><span>报告列 + 波形列并存，两者兼顾</span></div>
-          </div>
+      <!-- ===== 子页：经验库 ===== -->
+      <div class="subpage" id="sub-exp">
+        <div class="pagehead">
+          <div><h2 class="pt">经验库（Experience Store）</h2><p class="pdesc">任务结束蒸馏的可泛化教训，带证据链与置信度；新任务自动检索注入；定期提炼进技能（有界 RSI）。</p></div>
+          <button class="btn">🧬 提炼技能修订提案</button>
         </div>
-        <div class="row">
-          <div class="panel"><h4><span class="bar"></span>列级指令</h4>
-            <table class="dt"><tr><th>列</th><th>指令</th></tr>
-              <tr><td>TIGHTEN_DUAL_AXIS_DIFF</td><td><span class="badge b-green">必须保留</span></td></tr>
-              <tr><td>DECIDE_ONE / DECIDE_TWO</td><td><span class="badge b-red" style="background:rgba(230,111,117,.13);color:var(--red)">建议剔除（泄漏）</span></td></tr></table>
-          </div>
-          <div class="panel"><h4><span class="bar"></span>特征提示词（可选）</h4>
-            <input type="text" value="派生特征优先比值/裕度类；缺失用中位数+缺失标记">
-            <div class="prompt-chips"><span class="pchip">⚡ 优先比值特征</span><span class="pchip">⚡ 中位数+标记</span><span class="pchip">⚡ 剔除单基数码列</span></div>
-          </div>
+        <div class="panel">
+          <table class="dt">
+            <tr><th>ID</th><th>域</th><th>教训</th><th>动作</th><th>置信度</th><th>证据</th><th>状态</th></tr>
+            <tr><td class="tt">exp-0042</td><td>跨域</td><td>索引/单基数码列常被树模型误用</td><td>S2 默认剔除；S4 泄漏复查扩到高基数列</td><td>0.86</td><td>2 任务 · Δ召回 +0.02</td><td><span class="badge b-green">active</span></td></tr>
+            <tr><td class="tt">exp-0031</td><td>拧紧</td><td>扭矩-目标裕度类特征最有效</td><td>S1 预期特征必含上下裕度</td><td>0.91</td><td>3 任务</td><td><span class="badge b-green">active</span></td></tr>
+            <tr><td class="tt">exp-0027</td><td>拧紧</td><td>单轴行二轴扭矩缺失属正常</td><td>中位数填充+缺失标记，勿整行删</td><td>0.88</td><td>2 任务</td><td><span class="badge b-green">active</span></td></tr>
+            <tr><td class="tt">exp-0019</td><td>电焊</td><td>波形四通道统计优于原始报告列</td><td>含波形列时优先解码统计</td><td>0.93</td><td>4 任务</td><td><span class="badge b-blue">已提炼入技能 v3</span></td></tr>
+            <tr><td class="tt">exp-0011</td><td>拧紧</td><td>DECIDE_ONE/TWO 是标签泄漏</td><td>默认剔除判定中间列</td><td>0.97</td><td>5 任务</td><td><span class="badge b-blue">已提炼入技能 v2</span></td></tr>
+          </table>
         </div>
-      </div>
-
-      <!-- 步骤 3 -->
-      <div class="step-pane" id="sp-3">
-        <div class="panel"><h4><span class="bar"></span>算法白名单（不选 = 全算法族自动搜索）</h4>
-          <div class="alg-grid">
-            <div class="alg on"><input type="checkbox" class="ck" checked>LightGBM</div>
-            <div class="alg on"><input type="checkbox" class="ck" checked>HistGradientBoosting</div>
-            <div class="alg"><input type="checkbox" class="ck">XGBoost</div>
-            <div class="alg"><input type="checkbox" class="ck">CatBoost</div>
-            <div class="alg"><input type="checkbox" class="ck">RandomForest</div>
-            <div class="alg"><input type="checkbox" class="ck">ExtraTrees</div>
-            <div class="alg"><input type="checkbox" class="ck">GBDT</div>
-            <div class="alg"><input type="checkbox" class="ck">MLP</div>
-          </div>
-        </div>
-        <div class="row">
-          <div class="panel"><h4><span class="bar"></span>参数约束（留空 = 智能体按数据画像决定）</h4>
-            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px">
-              <div>搜索试验数<input type="text" style="margin-top:5px" value="50"></div>
-              <div>时间预算(秒)<input type="text" style="margin-top:5px" placeholder="自动"></div>
-              <div>CV 折数<input type="text" style="margin-top:5px" value="5"></div>
-            </div>
-          </div>
-          <div class="panel"><h4><span class="bar"></span>建模提示词（可选）</h4>
-            <input type="text" value="召回优先于精度；需要特征重要性可解释">
-          </div>
-        </div>
-      </div>
-
-      <!-- 步骤 4 -->
-      <div class="step-pane" id="sp-4">
-        <div class="row">
-          <div class="panel"><h4><span class="bar"></span>测试集（可选，不传 = 自动留出切分）</h4>
-            <div class="uploadbox">📎 点击或拖入上传新测试集（CSV）<br>
-              <span style="font-size:11px">上传后作为留出评估集，跳过自动切分，更贴近生产分布</span></div>
-            <div style="margin-top:10px; color:var(--dim); font-size:11.5px">当前：自动留出 20%（分层抽样）</div>
-          </div>
-          <div class="panel"><h4><span class="bar"></span>验收指标阈值（留空项不设门禁；对大模型一票否决）</h4>
-            <div class="metric-row">
-              <div class="metric"><div class="lb">召回(少数类) <span>≥</span></div><input type="text" value="0.92"></div>
-              <div class="metric"><div class="lb">精度 <span>≥</span></div><input type="text" value="0.85"></div>
-              <div class="metric"><div class="lb">F1 <span>≥</span></div><input type="text" value="0.88"></div>
-              <div class="metric"><div class="lb">Acc <span>≥</span></div><input type="text" placeholder="—"></div>
-              <div class="metric"><div class="lb">AUC <span>≥</span></div><input type="text" placeholder="—"></div>
-            </div>
-          </div>
-        </div>
-        <div class="panel"><h4><span class="bar"></span>评审重点提示词（可选）</h4>
-          <input type="text" value="重点解释假阴性样本的共同特征；对比上一版配方是否退化">
-        </div>
-        <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:4px">
-          <button class="btn ghost">存为草稿</button>
-          <button class="btn primary" data-go="agent-run">🚀 启动智能体（全自动迭代）</button>
-        </div>
-      </div>
-
-      <!-- 运行时预览（点击启动后切换显示） -->
-      <div id="agent-run" style="display:none">
-        <div class="row">
-          <div class="panel" style="flex:1.6"><h4><span class="bar"></span>迭代过程（轮 2/3 · S3 自动建模中）</h4>
-            <div class="timeline">
-              <div class="tl-item ok"><div class="tt">轮1 · S1 数据分析 <span class="badge b-green">完成</span></div>
-                <div class="ts">域识别=拧紧；关注通道：扭矩偏差/裕度/双轴 · 09:02</div></div>
-              <div class="tl-item ok"><div class="tt">轮1 · S2 特征脚本 <span class="badge b-green">第4次修复通过</span></div>
-                <div class="ts">报错3次（列名注解解析）→ 自我修复 · 用户列备注已生效</div></div>
-              <div class="tl-item ok"><div class="tt">轮1 · S4 评审 <span class="badge b-gold">fail</span></div>
-                <div class="ts">ID 列重要性第3 → 疑似索引信号；教训已入轮内记忆</div></div>
-              <div class="tl-item run"><div class="tt">轮2 · S3 AutoML <span class="badge b-blue">running</span></div>
-                <div class="ts">已剔除索引列 · LightGBM + HGB 白名单 · 试验 32/50</div></div>
-            </div>
-          </div>
-          <div class="panel"><h4><span class="bar"></span>轮1 关键产物</h4>
-            <table class="dt"><tr><th>产物</th><th>状态</th></tr>
-              <tr><td>AnalysisReport</td><td><span class="badge b-green">已校验</span></td></tr>
-              <tr><td>特征脚本（第4稿）</td><td><span class="badge b-green">沙箱通过</span></td></tr>
-              <tr><td>特征 14 维</td><td>含 6 个派生</td></tr>
-              <tr><td>ReviewVerdict</td><td><span class="badge b-gold">fail→重迭代</span></td></tr></table>
-            <div class="note-strip" style="margin-top:10px">⏸ 逐步确认模式：每步完成后暂停，可补充引导再放行</div>
-          </div>
-        </div>
+        <div class="note-strip">🧬 有界 RSI：经验库每新增 ≥8 条触发技能修订提案 → 基准回归集验证 → 分级审批 → SKILL.md 版本 +1（可回滚）。
+          下次触发还需 <b>3</b> 条。</div>
       </div>
     </div>
   </div>
@@ -466,46 +720,93 @@
       <div class="side-item on"><span class="dot"></span>K8s 集群</div>
       <div class="side-item"><span class="dot"></span>集群治理</div>
       <div class="side-group">运行</div>
-      <div class="side-item"><span class="dot"></span>作业运行</div>
-      <div class="side-item"><span class="dot"></span>Notebook 会话</div>
-      <div class="side-item"><span class="dot"></span>镜像目录</div>
+      <div class="side-item"><span class="dot"></span>作业运行<span class="side-count">12</span></div>
+      <div class="side-item"><span class="dot"></span>Notebook 会话<span class="side-count">3</span></div>
+      <div class="side-item"><span class="dot"></span>镜像目录<span class="side-count">26</span></div>
       <div class="side-group">资源</div>
       <div class="side-item"><span class="dot"></span>资源监控</div>
       <div class="side-item"><span class="dot"></span>计算资源</div>
     </div>
     <div class="main">
       <div class="crumb">基础设施 / <b>K8s 集群</b></div>
-      <h2 class="pt">集群总览</h2>
-      <p class="pdesc">运行时能力独立成中心，与算法/智能体解耦；算法平台与智能体提交的训练全部调度到这里。</p>
+      <div class="pagehead">
+        <div><h2 class="pt">集群总览</h2><p class="pdesc">运行时能力独立成中心；算法平台与智能体提交的训练全部调度到这里。</p></div>
+        <div style="display:flex; gap:9px"><button class="btn">↻ 刷新</button><button class="btn">＋ 接入集群</button></div>
+      </div>
       <div class="grid4">
         <div class="kpi"><div class="lb">集群</div><div class="v">2</div><div class="t">w13 / w16b</div></div>
-        <div class="kpi"><div class="lb">节点就绪</div><div class="v">7/8</div><div class="t">1 节点 NotReady</div></div>
+        <div class="kpi"><div class="lb">节点就绪</div><div class="v">7<span style="font-size:13px;color:var(--dim)">/8</span></div><div class="t" style="color:var(--gold)">1 节点 NotReady</div></div>
         <div class="kpi"><div class="lb">运行作业</div><div class="v">12</div><div class="t">GPU 占用 46%</div></div>
         <div class="kpi"><div class="lb">Notebook 会话</div><div class="v">3</div><div class="t">空闲回收 1h</div></div>
       </div>
-      <div class="panel"><h4><span class="bar"></span>命名空间概览</h4>
-        <table class="dt"><tr><th>命名空间</th><th>Pods</th><th>CPU</th><th>内存</th><th>归属</th></tr>
-          <tr><td>ml-weld</td><td>18/18</td><td>62%</td><td>51%</td><td>算法平台</td></tr>
-          <tr><td>ml-agent</td><td>6/6</td><td>23%</td><td>31%</td><td>智能体中心</td></tr>
-          <tr><td>infra-mon</td><td>9/9</td><td>12%</td><td>18%</td><td>基础设施</td></tr></table>
+      <div class="row">
+        <div class="panel" style="flex:1.5">
+          <h4><span class="bar"></span>节点状态<span class="more">资源监控 ›</span></h4>
+          <table class="dt">
+            <tr><th>节点</th><th>集群</th><th>角色</th><th>CPU</th><th>内存</th><th>Pods</th><th>状态</th></tr>
+            <tr><td class="tt">w13-control</td><td>w13</td><td>control-plane</td><td><div class="pbar" style="width:90px"><i style="width:38%"></i></div></td><td><div class="pbar" style="width:90px"><i style="width:52%"></i></div></td><td>14/110</td><td><span class="badge b-green">Ready</span></td></tr>
+            <tr><td class="tt">w16b-control</td><td>w16b</td><td>control-plane</td><td><div class="pbar" style="width:90px"><i style="width:61%"></i></div></td><td><div class="pbar" style="width:90px"><i style="width:67%"></i></div></td><td>19/110</td><td><span class="badge b-green">Ready</span></td></tr>
+            <tr><td class="tt">w16b-worker2</td><td>w16b</td><td>worker</td><td>—</td><td>—</td><td>—</td><td><span class="badge b-red">NotReady</span></td></tr>
+            <tr><td class="tt">w16b-worker1</td><td>w16b</td><td>worker</td><td><div class="pbar" style="width:90px"><i style="width:74%"></i></div></td><td><div class="pbar" style="width:90px"><i style="width:58%"></i></div></td><td>23/110</td><td><span class="badge b-green">Ready</span></td></tr>
+          </table>
+        </div>
+        <div class="panel">
+          <h4><span class="bar"></span>告警流<span class="more">全部 ›</span></h4>
+          <div class="timeline">
+            <div class="tl-item warn"><div class="tt">节点 w16b-worker2 NotReady 超过 10 分钟</div><div class="ts">严重 · 09:31 · 值班：平台组</div></div>
+            <div class="tl-item warn"><div class="tt">命名空间 ml-agent 内存请求超配额 85%</div><div class="ts">警告 · 08:47</div></div>
+            <div class="tl-item ok"><div class="tt">镜像同步任务完成（26/26）</div><div class="ts">信息 · 06:00</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <h4><span class="bar"></span>近期作业<span class="more">作业运行 ›</span></h4>
+        <table class="dt">
+          <tr><th>作业</th><th>命名空间</th><th>镜像</th><th>状态</th><th>耗时</th><th>提交方</th></tr>
+          <tr><td class="tt">automl-tighten-r2</td><td>ml-agent</td><td>automl-cpu:3.11</td><td><span class="badge b-blue">Running</span></td><td>12m</td><td><span class="badge b-purple">智能体</span></td></tr>
+          <tr><td class="tt">retrain-weld-cycle6</td><td>ml-weld</td><td>automl-cpu:3.11</td><td><span class="badge b-green">Succeeded</span></td><td>3h41m</td><td><span class="badge b-gold">闭环重训</span></td></tr>
+          <tr><td class="tt">feat-preview-81</td><td>ml-agent</td><td>sandbox:3.11</td><td><span class="badge b-green">Succeeded</span></td><td>1.8s</td><td><span class="badge b-purple">智能体S2</span></td></tr>
+        </table>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ============ 视图 5：系统管理（简） ============ -->
+<!-- ============ 视图 5：系统管理 ============ -->
 <div class="view" id="v-admin">
   <div class="center">
     <div class="sidebar">
       <div class="side-group">管理</div>
-      <div class="side-item on"><span class="dot"></span>用户管理</div>
-      <div class="side-item"><span class="dot"></span>项目管理</div>
+      <div class="side-item on"><span class="dot"></span>用户管理<span class="side-count">23</span></div>
+      <div class="side-item"><span class="dot"></span>项目管理<span class="side-count">11</span></div>
       <div class="side-item"><span class="dot"></span>审计日志</div>
+      <div class="side-group">平台</div>
+      <div class="side-item"><span class="dot"></span>系统设置</div>
+      <div class="side-item"><span class="dot"></span>大模型网关</div>
     </div>
     <div class="main">
       <div class="crumb">系统管理 / <b>用户管理</b></div>
-      <h2 class="pt">用户与权限</h2>
-      <p class="pdesc">原「用户管理」迁入；平台级设置集中于此。</p>
+      <div class="pagehead">
+        <div><h2 class="pt">用户与权限</h2><p class="pdesc">原「用户管理」迁入；平台级设置集中于此。</p></div>
+        <button class="btn primary">＋ 新建用户</button>
+      </div>
+      <div class="panel">
+        <table class="dt">
+          <tr><th>用户</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr>
+          <tr><td class="tt">admin</td><td><span class="badge b-gold">管理员</span></td><td><span class="badge b-green">启用</span></td><td>10-21 08:58</td><td><button class="btn sm">编辑</button></td></tr>
+          <tr><td class="tt">jing</td><td><span class="badge b-blue">标注员</span></td><td><span class="badge b-green">启用</span></td><td>10-21 09:12</td><td><button class="btn sm">编辑</button> <button class="btn sm danger">禁用</button></td></tr>
+          <tr><td class="tt">ml_eng_01</td><td><span class="badge b-gray">工程师</span></td><td><span class="badge b-green">启用</span></td><td>10-20 17:44</td><td><button class="btn sm">编辑</button></td></tr>
+        </table>
+      </div>
+      <div class="panel">
+        <h4><span class="bar"></span>审计日志（近 24h 摘要）</h4>
+        <table class="dt">
+          <tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>结果</th></tr>
+          <tr><td>09:41</td><td>智能体(任务#12)</td><td>automl.job.dispatch</td><td class="tt">automl-tighten-r2</td><td><span class="badge b-green">成功</span></td></tr>
+          <tr><td>09:14</td><td>admin</td><td>recipe.publish</td><td class="tt">welding-v2.0</td><td><span class="badge b-green">已批准</span></td></tr>
+          <tr><td>08:55</td><td>admin</td><td>deployment.stop</td><td class="tt">电焊模型推理(旧)</td><td><span class="badge b-green">成功</span></td></tr>
+        </table>
+      </div>
     </div>
   </div>
 </div>
@@ -520,12 +821,24 @@
     document.getElementById('agent-run').style.display = '';
     window.scrollTo(0, 0);
   }));
-  // 卡片跳转
-  document.querySelectorAll('[data-go]').forEach(el => el.addEventListener('click', () => {
+  // 卡片/按钮跳转
+  document.querySelectorAll('[data-go]').forEach(el => el.addEventListener('click', e => {
+    e.stopPropagation();
     const target = el.dataset.go;
-    document.querySelector(`.navtab[data-v="${target.replace('-run','')}"]`).click();
-    if (target === 'agent-run') document.getElementById('agent-run').style.display = 'block';
+    if (target === 'agent-run') { document.getElementById('agent-run').style.display = 'block';
+      document.getElementById('sub-wiz').querySelector('.steps').scrollIntoView({ behavior: 'smooth' }); return; }
+    document.querySelector(`.navtab[data-v="${target}"]`).click();
   }));
+  // 智能体中心子页切换（子tab + 侧栏联动）
+  function switchSub(key) {
+    document.querySelectorAll('.subtab').forEach(x => x.classList.toggle('on', x.dataset.sub === key));
+    document.querySelectorAll('.subpage').forEach(x => x.classList.toggle('on', x.id === 'sub-' + key));
+    document.querySelectorAll('#v-agent .side-item[data-sub]').forEach(x => x.classList.toggle('on', x.dataset.sub === key));
+    const names = { wiz: '新建任务（向导）', tasks: '任务列表', reci: '配方库', exp: '经验库' };
+    document.getElementById('agent-crumb').textContent = names[key] || key;
+  }
+  document.querySelectorAll('.subtab').forEach(t => t.addEventListener('click', () => switchSub(t.dataset.sub)));
+  document.querySelectorAll('#v-agent .side-item[data-sub]').forEach(t => t.addEventListener('click', () => switchSub(t.dataset.sub)));
   // 向导步骤切换
   document.querySelectorAll('.step').forEach(s => s.addEventListener('click', () => {
     document.querySelectorAll('.step').forEach(x => x.classList.remove('on'));
@@ -533,13 +846,15 @@
     s.classList.add('on');
     document.getElementById('sp-' + s.dataset.s).classList.add('on');
   }));
-  // 形态/算法选中态（演示）
+  // 形态/算法选中态
   document.querySelectorAll('.radio-card').forEach(r => r.addEventListener('click', () => {
     r.parentElement.querySelectorAll('.radio-card').forEach(x => x.classList.remove('on'));
     r.classList.add('on');
   }));
   document.querySelectorAll('.alg').forEach(a => a.addEventListener('click', () => a.classList.toggle('on')));
-  document.querySelectorAll('.pchip:not(:last-child)').forEach(c => c.addEventListener('click', () => {
+  // 提示词芯片回填
+  document.querySelectorAll('.pchip').forEach(c => c.addEventListener('click', () => {
+    if (c.textContent.includes('存为模板')) return;
     const input = c.closest('.panel').querySelector('input[type=text]');
     input.value = (input.value ? input.value + '；' : '') + c.textContent.replace('⚡ ', '');
   }));
