@@ -572,8 +572,16 @@ def build_model_registry_router(
         targets_by_version: dict = {}
         if version_ids:
             versions = db.query(ModelVersion).filter(ModelVersion.id.in_(version_ids)).all()
+            def _targets(version):
+                schema = version.output_schema or {}
+                columns = schema.get("target_columns")
+                if isinstance(columns, list) and columns:
+                    return columns
+                # 扁平结构（目标列名直接在 name 键）的注册路径兼容
+                name = schema.get("name")
+                return [str(name)] if name else []
             targets_by_version = {
-                str(version.id): (version.output_schema or {}).get("target_columns") or []
+                str(version.id): _targets(version)
                 for version in versions
             }
         return {"items": [

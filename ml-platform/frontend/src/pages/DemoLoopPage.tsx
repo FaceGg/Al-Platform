@@ -62,6 +62,7 @@ export default function DemoLoopPage() {
       setLoops((loopsRes?.items || []) as DemoLoopConfig[]);
       setDeployments((dep?.items || []).map((item: any) => ({
         id: item.id, name: item.name, observed_state: item.observed_state,
+        target_columns: item.target_columns,
       })));
       setDatasets((ds?.items || []).map((item: any) => ({ id: item.id, name: item.name })));
       setAnnotators((ann?.items || []).map((item: any) => ({ id: item.id, username: item.username })));
