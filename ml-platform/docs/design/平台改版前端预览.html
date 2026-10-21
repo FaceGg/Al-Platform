@@ -487,6 +487,7 @@
           <div class="step" data-s="2"><div class="n">2</div><div><div class="tt">特征工程</div><div class="st">表格/波形 · 列指令</div></div></div>
           <div class="step" data-s="3"><div class="n">3</div><div><div class="tt">自动建模</div><div class="st">算法白名单 · 参数</div></div></div>
           <div class="step" data-s="4"><div class="n">4</div><div><div class="tt">评估验收</div><div class="st">测试集 · 指标阈值</div></div></div>
+          <div class="step" data-s="5"><div class="n">5</div><div><div class="tt">服务化发布</div><div class="st">闭环 · 编排 · API</div></div></div>
         </div>
 
         <div class="step-pane on" id="sp-1">
@@ -606,6 +607,45 @@
           </div>
         </div>
 
+        <!-- 步骤 5：服务化发布 -->
+        <div class="step-pane" id="sp-5">
+          <div class="note-strip" style="margin-bottom:14px">✅ 验收已通过（轮 2 · F1 0.931 · 召回 0.944）——智能体将按配方
+            <b>tightening-v2.0</b> 自动生成以下三项线上服务，确认后一键发布。</div>
+          <div class="row">
+            <div class="panel"><h4><span class="bar"></span>① 模型上线<span class="badge b-green" style="margin-left:6px">将执行</span></h4>
+              <table class="dt"><tr><th>步骤</th><th>结果</th></tr>
+                <tr><td>注册模型版本</td><td class="tt">拧紧-智能体-v2.0-hgb · v1</td></tr>
+                <tr><td>批准</td><td>自动批准（配方已过门禁）</td></tr>
+                <tr><td>创建部署并启动</td><td class="tt">拧紧-智能体-v2（running）</td></tr>
+                <tr><td>模型 API 上线</td><td><span class="badge b-green">市场自动发布</span></td></tr></table>
+            </div>
+            <div class="panel"><h4><span class="bar"></span>② 闭环自动化任务<span class="badge b-blue" style="margin-left:6px">将创建</span></h4>
+              <table class="dt"><tr><th>配置</th><th>值（自动推导）</th></tr>
+                <tr><td>推理部署</td><td class="tt">拧紧-智能体-v2</td></tr>
+                <tr><td>报错类别</td><td class="tt">["0"] ← 由"0=不合格"语义推导</td></tr>
+                <tr><td>特征工程</td><td class="tt">script 模式（配方 14 维脚本）</td></tr>
+                <tr><td>重训/收集</td><td>阈值 3 · 正确数据 1:5</td></tr></table>
+            </div>
+          </div>
+          <div class="panel"><h4><span class="bar"></span>③ 应用编排 API（从全局闭环模板生成）<span class="badge b-purple" style="margin-left:6px">将发布</span></h4>
+            <div class="row">
+              <div style="flex:1.3"><table class="dt"><tr><th>节点</th><th>绑定</th></tr>
+                <tr><td>加载模型制品</td><td class="tt">拧紧-智能体-v2.0-hgb.joblib</td></tr>
+                <tr><td>条件分支</td><td class="tt">prediction == 0（缺陷类）</td></tr>
+                <tr><td>回流数据集</td><td class="tt">拧紧-智能体-报错数据（自动新建）</td></tr>
+                <tr><td>重训阈值判断</td><td class="tt">换模→拧紧-智能体-v2 · 目标列 DECIDE · 阈值 3</td></tr></table></div>
+              <div style="flex:1"><div class="codebox" style="font-size:11px"><span class="cm"># 发布后的编排 API 调用示例</span><br>
+POST /api/platform/apis/orchestration/&lt;vid&gt;/invoke<br>
+{ "record": { <span class="st">…14 特征…</span> } }<br>
+<span class="cm"># 智能体调用工具自动用配方脚本对原始行做特征对齐</span></div></div>
+            </div>
+          </div>
+          <div style="display:flex; gap:10px; justify-content:flex-end">
+            <button class="btn ghost">仅固化配方，暂不服务化</button>
+            <button class="btn primary" data-go="agent-run">✅ 确认发布三项服务</button>
+          </div>
+        </div>
+
         <!-- 运行时预览 -->
         <div id="agent-run" style="display:none">
           <div class="row">
@@ -619,6 +659,10 @@
                   <div class="ts">HGB F1=0.90 达标，但 ID 列重要性第 3 → 疑似索引信号；教训已入轮内记忆</div></div>
                 <div class="tl-item run"><div class="tt">轮2 · S3 AutoML <span class="badge b-blue">running</span></div>
                   <div class="ts">已剔除索引列 · 白名单 LightGBM+HGB · 试验 32/50 · 当前最优 F1=0.93</div></div>
+                <div class="tl-item ok"><div class="tt">轮2 · S4 评审 <span class="badge b-green">pass</span></div>
+                  <div class="ts">召回 0.944 ≥ 0.92 · 特征重要性与 S1 预期对齐 · 配方 tightening-v2.0 固化</div></div>
+                <div class="tl-item run"><div class="tt">S5 服务化输出 <span class="badge b-purple">待批准</span></div>
+                  <div class="ts">已生成：部署 拧紧-智能体-v2 · 闭环任务 · 编排 API v1（冒烟 200）——等用户第 5 步确认发布</div></div>
               </div>
               <div class="logbox" style="margin-top:6px">
                 <span class="bl">[09:41:22]</span> S3 trial#31 lightgbm cv_f1=0.931 recall=0.944 <span class="ok">✓ 当前最优</span><br>
@@ -674,8 +718,9 @@
           <button class="btn">导入配方</button>
         </div>
         <div class="reci-grid">
-          <div class="reci"><h5>⚙ tightening-v1.2 <span class="badge b-green">最新</span></h5>
-            <div class="meta">域：拧紧 · 特征 14 维（6 派生）· HGB+LightGBM<br>门禁：召回≥0.92 / F1≥0.88 · 测试 F1 0.941<br>固化 10-21 · 复用 23 次（回流重训 19 · delta 4）</div>
+          <div class="reci"><h5>⚙ tightening-v1.2 <span class="badge b-green">最新</span> <span class="badge b-blue">已服务化</span></h5>
+            <div class="meta">域：拧紧 · 特征 14 维（6 派生）· HGB+LightGBM<br>门禁：召回≥0.92 / F1≥0.88 · 测试 F1 0.941<br>固化 10-21 · 复用 23 次（回流重训 19 · delta 4）<br>
+            <span style="color:var(--blue2)">🔗 部署 拧紧自动化 · 闭环任务 · 编排 API v1</span></div>
             <div class="ops"><button class="btn sm">查看档案</button><button class="btn sm">编辑</button><button class="btn sm primary">用于新数据</button></div></div>
           <div class="reci"><h5>⚙ welding-v2.0 <span class="badge b-green">最新</span></h5>
             <div class="meta">域：电焊 · 波形 4 通道×12 统计 + 报告 25 维<br>门禁：fault 召回≥0.85 · ExtraTrees+HGB<br>固化 10-20 · 复用 11 次</div>
