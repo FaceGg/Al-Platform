@@ -55,7 +55,10 @@ def align(record: dict, names: list[str]) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--csv", default=DEFAULT_CSV)
-    parser.add_argument("--count", type=int, default=5)
+    parser.add_argument("--count", type=int, default=100, help="固定调用行数（与 --errors 二选一）")
+    parser.add_argument("--errors", type=int, default=None,
+                        help="持续调用直到命中 N 条报错行（受 --max 上限保护；演示闭环推荐用）")
+    parser.add_argument("--max", type=int, default=101, help="--errors 模式的行数上限")
     parser.add_argument("--api-source", default=DEFAULT_API_SOURCE)
     parser.add_argument("--interval", type=float, default=0.3)
     args = parser.parse_args()
@@ -82,13 +85,18 @@ def main() -> int:
 
     rows = build_feature_rows(args.csv)
     endpoint = f"/api/platform/apis/orchestration/{args.api_source}/invoke"
-    ok = errors_hit = 0
-    for index in range(args.count):
+    limit = args.max if args.errors else args.count
+    target_errors = args.errors if args.errors else None
+    ok = errors_hit = attempted = 0
+    for index in range(limit):
+        if target_errors is not None and errors_hit >= target_errors:
+            break
+        attempted += 1
         record = align(rows[index % len(rows)], names)
         status, body = client.request("POST", endpoint, payload={"record": record})
         if status != 200:
             detail = body.get("detail")
-            print(f"[{index + 1}/{args.count}] HTTP {status} | {json.dumps(detail, ensure_ascii=False)[:200]}")
+            print(f"[{index + 1}] HTTP {status} | {json.dumps(detail, ensure_ascii=False)[:200]}")
             continue
         ok += 1
         records = body.get("records") or []
@@ -98,22 +106,27 @@ def main() -> int:
         # 但 records 带 total_rows/cycle_rows —— 以此区分正常行
         is_error = body.get("branch") == "true" or extra.get("total_rows") is not None
         errors_hit += 1 if is_error else 0
+        suffix = ""
+        if is_error:
+            suffix = " | ← 报错行，已回流"
+        if triggered:
+            suffix += " ⚠ 触发重训"
         print(
-            f"[{index + 1}/{args.count}] HTTP 200 | branch={body.get('branch')} "
-            f"| total_rows={extra.get('total_rows')} cycle={extra.get('cycle_rows')}/{extra.get('threshold_rows')}"
-            f"{' ⚠ 触发重训' if triggered else ''}"
+            f"[{index + 1}] HTTP 200 | branch={body.get('branch')} "
+            f"| total_rows={extra.get('total_rows')} cycle={extra.get('cycle_rows')}/{extra.get('threshold_rows')}{suffix}"
         )
-        if index < args.count - 1:
-            time.sleep(args.interval)
+        time.sleep(args.interval)
 
     time.sleep(0.5)
     _, after = client.request("GET", f"/api/platform/apis/orchestration/{args.api_source}/showcase-status")
-    print(f"调用后计数：total={after.get('total_count')} errors={after.get('error_count')} alerts={after.get('alert_count')}")
+    print(f"调用后计数：total={after.get('total_count')} errors={after.get('error_count')} alerts={after.get('alert_count')} retrain={after.get('retrain_status')}")
 
-    assert ok == args.count, f"成功调用 {ok}/{args.count}"
-    assert after.get("total_count", 0) - before.get("total_count", 0) == args.count, "大屏计数增量与调用数不一致"
+    if target_errors is not None and errors_hit < target_errors:
+        raise SystemExit(f"已扫 {limit} 行仅命中 {errors_hit} 条报错行（目标 {target_errors}）——换数据或调大 --max")
+    assert ok == attempted, f"成功调用 {ok}/{attempted}"
+    assert after.get("total_count", 0) - before.get("total_count", 0) == ok, "大屏计数增量与调用数不一致"
     assert after.get("error_count", 0) - before.get("error_count", 0) == errors_hit, "大屏报错计数增量不一致"
-    print(f"✅ 电焊编排 API 测试通过：{ok} 次调用全部 200，大屏（showcase-status）计数同步一致")
+    print(f"✅ 电焊编排 API 测试通过：{ok} 次调用全部 200（报错回流 {errors_hit} 条），大屏（showcase-status）计数同步一致")
     return 0
 
 
