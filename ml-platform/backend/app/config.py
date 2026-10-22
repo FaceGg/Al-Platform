@@ -176,6 +176,8 @@ class Settings(BaseSettings):
     )
     llm_api_key: str = Field(default="", repr=False, exclude=True)
     llm_model: str = "gpt-3.5-turbo"
+    # Master key encrypting LLMProfile API keys at rest (spec v0.9 §14.1).
+    llm_master_key: SecretStr | None = Field(default=None, exclude=True)
 
     # Knowledge-graph auto extraction limits (rules + statistics pipeline).
     # Entity/relation caps of 0 mean unlimited: storage keeps every candidate

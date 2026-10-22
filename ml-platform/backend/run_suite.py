@@ -17,6 +17,7 @@ os.environ.setdefault("PYTHON_SCRIPT_VENV_DIR", "")
 from tests.week_manifest import (
     ALL_TEST_MODULES,
     DEPRECATED_TEST_MODULES,
+    PHASE_TEST_MODULES,
     WEEK_TEST_MODULES,
 )
 
@@ -98,11 +99,17 @@ def has_zero_tests(output: str, framework: str | None = None) -> bool:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument(
         "--week",
         type=int,
         choices=sorted(WEEK_TEST_MODULES),
         help="Run only the test modules owned by one development week.",
+    )
+    scope.add_argument(
+        "--phase",
+        choices=sorted(PHASE_TEST_MODULES),
+        help="Run only the test modules owned by one AutoML Agent phase (p1-p6).",
     )
     parser.add_argument(
         "--include-deprecated",
@@ -199,13 +206,17 @@ def run_modules(test_modules: list[str]) -> int:
 
 def main() -> int:
     args = parse_args()
-    if args.week:
+    if args.phase:
+        modules = list(PHASE_TEST_MODULES[args.phase])
+    elif args.week:
         modules = list(WEEK_TEST_MODULES[args.week])
     else:
         modules = list(ALL_TEST_MODULES)
     if not args.include_deprecated:
         modules = [module for module in modules if module not in DEPRECATED_TEST_MODULES]
-    if args.week:
+    if args.phase:
+        print(f"Running phase {args.phase} acceptance suite ({len(modules)} modules).")
+    elif args.week:
         print(f"Running Week {args.week} acceptance suite ({len(modules)} modules).")
     else:
         print(f"Running complete active acceptance suite ({len(modules)} modules).")

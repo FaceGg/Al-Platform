@@ -36,6 +36,7 @@ from app.models.model_registry import (
     ModelCard,
 )
 from app.models.model_export import ModelExport
+from app.models.llm_profile import LLMProfile
 from app.models.api_model import PlatformAPI
 from app.models.compute import ComputeNode, EdgeDevice
 from app.models.platform_models import (
@@ -129,6 +130,7 @@ __all__ = [
     "InferenceMetricBucket",
     "ModelCard",
     "ModelExport",
+    "LLMProfile",
     "PlatformAPI",
     "ComputeNode",
     "EdgeDevice",

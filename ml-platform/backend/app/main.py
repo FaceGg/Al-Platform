@@ -5,6 +5,7 @@ GENERICIZATION_BRIDGE_ONLY = True
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 import asyncio
+import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -84,6 +85,9 @@ from app.api import notebooks as notebooks_api
 from app.api import images as images_api
 from app.api import cluster_governance as cluster_governance_api
 from app.api import demo_loop as demo_loop_api
+from app.api import llm_profiles as llm_profiles_api
+
+logger = logging.getLogger(__name__)
 
 
 def initialize_database(app_settings=None, db_engine=None) -> None:
@@ -217,6 +221,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app_settings, db_engine, session_factory = _runtime_dependencies(app)
     initialize_database(app_settings, db_engine)
     ensure_default_admin(session_factory)
+    try:
+        from app.services.llm_gateway import bootstrap_default_llm_profile
+
+        bootstrap_default_llm_profile(session_factory)
+    except Exception:  # noqa: BLE001 - bootstrap must never block app startup
+        logger.warning("LLM profile env bootstrap failed", exc_info=True)
     with session_factory() as db:
         repair_orphaned_project_owners(db)
         recover_orphaned_local_quality_runs(db)
@@ -342,6 +352,7 @@ app.include_router(notebooks_api.router)
 app.include_router(images_api.router)
 app.include_router(cluster_governance_api.router)
 app.include_router(demo_loop_api.router)
+app.include_router(llm_profiles_api.router)
 app.include_router(spot_weld_quality_api.router)
 app.include_router(spot_weld_quality_api.all_runs_router)
 app.include_router(annotator_internal_api.router)

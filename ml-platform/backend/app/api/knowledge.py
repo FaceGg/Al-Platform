@@ -18,6 +18,7 @@ from app.models.knowledge import KnowledgeBase, Document, Chunk, GraphEntity, Gr
 from app.models.user import User
 from app.api.auth import get_current_user
 from app.config import settings
+from app.services.llm_gateway import resolve_profile as resolve_llm_profile
 
 from app.engine.vector_store import get_vector_store
 from app.services.knowledge_retrieval import (
@@ -489,11 +490,22 @@ def vectorize_kb(
 def rag_query(
     kb_id: str,
     query: str = Body(...),
+    # Deprecated request-level override (spec v0.9 §14.1 收口): kept only to
+    # reject old callers with an explicit 422, never honored.
     llm_api_url: str = Body(default=None),
     top_k: int = Body(default=5),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if llm_api_url:
+        raise HTTPException(
+            422,
+            detail={
+                "code": "LLM_REQUEST_OVERRIDE_REMOVED",
+                "message": "Request-level llm_api_url override was removed; "
+                "configure profiles via /api/llm-profiles.",
+            },
+        )
     # Step 1: Retrieve relevant chunks
     search_results = search_knowledge(
         kb_id=kb_id,
@@ -511,22 +523,20 @@ def rag_query(
     # Step 3: Build prompt
     prompt = f"Based on the following materials, answer the question:\n{context}\n\nQuestion: {query}"
 
-    # Step 4: Call LLM API
-    api_url = llm_api_url or settings.llm_api_url
-    api_key = settings.llm_api_key
-    model = settings.llm_model
+    # Step 4: Call LLM API through the gateway
+    config = resolve_llm_profile(db, purpose="knowledge_rag")
 
     headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
 
     import requests
     try:
         resp = requests.post(
-            api_url,
+            config.api_url,
             headers=headers,
             json={
-                "model": model,
+                "model": config.model_id,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
             },
@@ -573,7 +583,16 @@ def chat(
     normalized_request = normalize_chat_messages(request)
     messages = normalized_request["messages"]
     session_id_str = normalized_request["session_id"]
-    llm_api_url_override = request.get("llm_api_url")
+    if request.get("llm_api_url"):
+        # Deprecated request-level override (spec v0.9 §14.1 收口): explicit 422.
+        raise HTTPException(
+            422,
+            detail={
+                "code": "LLM_REQUEST_OVERRIDE_REMOVED",
+                "message": "Request-level llm_api_url override was removed; "
+                "configure profiles via /api/llm-profiles.",
+            },
+        )
     top_k = request.get("top_k", 5)
 
     if not messages:
@@ -646,22 +665,20 @@ def chat(
     )
     db.add(user_msg)
 
-    # Step 5: Call LLM API
-    api_url = llm_api_url_override or settings.llm_api_url
-    api_key = settings.llm_api_key
-    model = settings.llm_model
+    # Step 5: Call LLM API through the gateway
+    config = resolve_llm_profile(db, purpose="knowledge_chat")
 
     headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
 
     import requests
     try:
         resp = requests.post(
-            api_url,
+            config.api_url,
             headers=headers,
             json={
-                "model": model,
+                "model": config.model_id,
                 "messages": llm_messages,
                 "temperature": 0.3,
             },
@@ -1296,18 +1313,19 @@ def rag_enhanced(
     
     context = "\n\n".join(context_chunks)
     
-    # Try LLM call if configured
+    # Try LLM call if configured (through the gateway)
     llm_answer = None
-    if settings.llm_api_key:
+    gateway_config = resolve_llm_profile(db, purpose="knowledge_rag_enhanced")
+    if gateway_config.api_key:
         try:
             import httpx
             async def _call_llm():
                 async with httpx.AsyncClient(timeout=30) as client:
                     resp = await client.post(
-                        settings.llm_api_url,
-                        headers={"Authorization": f"Bearer {settings.llm_api_key}", "Content-Type": "application/json"},
+                        gateway_config.api_url,
+                        headers={"Authorization": f"Bearer {gateway_config.api_key}", "Content-Type": "application/json"},
                         json={
-                            "model": settings.llm_model,
+                            "model": gateway_config.model_id,
                             "messages": [
                                 {"role": "system", "content": f"You are a helpful assistant. Answer based on this context:\n\n{context}"},
                                 {"role": "user", "content": query}

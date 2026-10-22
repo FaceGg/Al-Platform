@@ -29,8 +29,16 @@ _orchestrator = None
 def get_orchestrator():
     global _orchestrator
     if _orchestrator is None:
-        from app.config import settings
-        _orchestrator = Orchestrator(None, settings.llm_api_url, settings.llm_api_key)
+        from app.database import SessionLocal
+        from app.services.llm_gateway import resolve_profile
+
+        # Endpoint/credentials resolve through the LLM gateway (default
+        # profile → env fallback, spec v0.9 §14.1 收口).
+        with SessionLocal() as session:
+            gateway_config = resolve_profile(session, purpose="orchestration")
+        _orchestrator = Orchestrator(
+            None, gateway_config.api_url, gateway_config.api_key
+        )
     return _orchestrator
 
 

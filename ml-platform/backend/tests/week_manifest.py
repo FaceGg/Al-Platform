@@ -197,6 +197,25 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
 }
 
 
+# AutoML Agent milestone suites (implementation plan 2026-10-22). Phases
+# register their own test modules without occupying week keys; ``18`` stays
+# reserved for the deferred Week 18 track.
+PHASE_TEST_MODULES: dict[str, list[str]] = {
+    "p1": [
+        "test_suite_phase_manifest",
+        "test_llm_profiles_api",
+        "test_llm_gateway",
+        "test_agent_profile_data",
+        "test_agent_contracts",
+    ],
+    "p2": [],
+    "p3": [],
+    "p4": [],
+    "p5": [],
+    "p6": [],
+}
+
+
 # Point-weld-quality modules are retained only as historical compatibility
 # tests. They are not part of the generic platform acceptance contract.
 # Run them explicitly with ``run_suite.py --include-deprecated --week 17``.
@@ -211,7 +230,17 @@ DEPRECATED_TEST_MODULES = {
 
 ALL_TEST_MODULES = [
     module
-    for week in sorted(WEEK_TEST_MODULES)
-    for module in WEEK_TEST_MODULES[week]
+    for module in (
+        [
+            module
+            for week in sorted(WEEK_TEST_MODULES)
+            for module in WEEK_TEST_MODULES[week]
+        ]
+        + [
+            module
+            for phase in sorted(PHASE_TEST_MODULES)
+            for module in PHASE_TEST_MODULES[phase]
+        ]
+    )
     if module not in DEPRECATED_TEST_MODULES
 ]

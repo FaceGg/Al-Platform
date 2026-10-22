@@ -19,6 +19,11 @@ from app.services.knowledge_retrieval import (
     build_rag_context,
     retrieve_chunks,
 )
+from app.services.llm_gateway import (
+    LLMProfileNotFoundError,
+    chat_completion,
+    resolve_profile,
+)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -67,14 +72,27 @@ async def chat(
     message: str = Body(...),
     system_prompt: str = Body(default="You are a helpful AI assistant for welding manufacturing."),
     temperature: float = Body(default=0.7, ge=0, le=1),
+    # Deprecated request-level overrides (spec v0.9 §14.1 收口): kept only to
+    # reject old callers with an explicit 422, never honored.
     api_key: str | None = Body(default=None, max_length=512),
     model: str | None = Body(default=None, max_length=256),
+    profile_id: str | None = Body(default=None, max_length=64),
     kb_id: str | None = Body(default=None, max_length=64),
     top_k: int = Body(default=4, ge=1, le=10),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Send a message to the configured LLM and get a response."""
+    if api_key or model:
+        raise HTTPException(
+            422,
+            detail={
+                "code": "LLM_REQUEST_OVERRIDE_REMOVED",
+                "message": "Request-level api_key/model overrides were removed; "
+                "select a profile via profile_id or configure one at "
+                "/api/llm-profiles.",
+            },
+        )
     kb = _resolve_bound_kb(db, kb_id, current_user)
     sources: list[dict] = []
     kb_info = None
@@ -87,11 +105,13 @@ async def chat(
         if not sources:
             kb_warning = "知识库中没有检索到相关内容，已按通用助手回答"
 
-    resolved_api_key = (api_key or settings.llm_api_key or "").strip()
-    resolved_model = (model or settings.llm_model or "").strip()
-    if not resolved_api_key:
+    try:
+        config = resolve_profile(db, profile_id=profile_id, purpose="chat")
+    except LLMProfileNotFoundError:
+        raise HTTPException(404, detail={"code": "LLM_PROFILE_NOT_FOUND"})
+    if not config.api_key:
         payload = {
-            "reply": "LLM API key not configured. Please set LLM_API_KEY in environment.",
+            "reply": "LLM API key not configured. Please configure an LLM profile.",
             "type": "error",
         }
         if kb_info is not None:
@@ -99,35 +119,26 @@ async def chat(
         return payload
 
     try:
-        import httpx
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                settings.llm_api_url,
-                headers={
-                    "Authorization": f"Bearer {resolved_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": resolved_model,
-                    "messages": _assemble_messages(system_prompt, message, context),
-                    "temperature": temperature,
-                    "max_tokens": 2000,
-                },
-            )
-            data = resp.json()
-            reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            usage = data.get("usage", {})
-            payload = {
-                "reply": reply,
-                "type": "success",
-                "usage": {
-                    "prompt_tokens": usage.get("prompt_tokens", 0),
-                    "completion_tokens": usage.get("completion_tokens", 0),
-                },
-            }
-            if kb_info is not None:
-                payload.update({"sources": sources, "kb": kb_info, "kb_warning": kb_warning})
-            return payload
+        reply, usage = chat_completion(
+            db,
+            config=config,
+            messages=_assemble_messages(system_prompt, message, context),
+            temperature=temperature,
+            purpose="chat",
+            actor=current_user,
+        )
+        db.commit()  # persist the gateway egress audit event
+        payload = {
+            "reply": reply or "",
+            "type": "success" if reply else "error",
+            "usage": {
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+            },
+        }
+        if kb_info is not None:
+            payload.update({"sources": sources, "kb": kb_info, "kb_warning": kb_warning})
+        return payload
     except Exception as e:
         payload = {"reply": f"LLM call failed: {str(e)}", "type": "error"}
         if kb_info is not None:
@@ -136,12 +147,14 @@ async def chat(
 
 
 @router.get("/status")
-def chat_status():
-    """Check if LLM API is configured."""
+def chat_status(db: Session = Depends(get_db)):
+    """Check if an LLM profile (or legacy env config) is available."""
+    config = resolve_profile(db, purpose="chat")
     return {
-        "configured": bool(settings.llm_api_key),
-        "model": settings.llm_model if settings.llm_api_key else "not set",
-        "api_url": settings.llm_api_url if settings.llm_api_key else "not set",
+        "configured": bool(config.api_key),
+        "model": config.model_id if config.api_key else "not set",
+        "api_url": config.api_url if config.api_key else "not set",
+        "profile": config.profile_name,
     }
 
 
@@ -168,25 +181,27 @@ async def chat_stream(
         results = _retrieve_for_chat(db, kb, message, top_k)
         context, sources = build_rag_context(results)
 
+    config = resolve_profile(db, purpose="chat_stream")
+
     async def event_stream():
         if sources:
             import json as _json
             yield f"data: {_json.dumps({'type': 'sources', 'sources': sources}, ensure_ascii=False)}\n\n"
-        if not settings.llm_api_key:
+        if not config.api_key:
             yield "data: {\"error\": \"LLM not configured\"}\n\n"
             return
         import httpx
         try:
             messages = _assemble_messages(system_prompt, message, context)
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
                 async with client.stream(
-                    "POST", settings.llm_api_url,
+                    "POST", config.api_url,
                     headers={
-                        "Authorization": f"Bearer {settings.llm_api_key}",
+                        "Authorization": f"Bearer {config.api_key}",
                         "Content-Type": "application/json",
                     },
                     json={
-                        "model": settings.llm_model,
+                        "model": config.model_id,
                         "messages": messages,
                         "temperature": 0.7,
                         "max_tokens": 2000,
