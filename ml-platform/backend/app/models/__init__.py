@@ -38,6 +38,8 @@ from app.models.model_registry import (
 from app.models.model_export import ModelExport
 from app.models.llm_profile import LLMProfile
 from app.models.agent_run import AgentRun
+from app.models.recipe import PipelineRecipe, PipelineRecipeVersion
+from app.models.experience_entry import ExperienceEntry
 from app.models.api_model import PlatformAPI
 from app.models.compute import ComputeNode, EdgeDevice
 from app.models.platform_models import (
@@ -133,6 +135,9 @@ __all__ = [
     "ModelExport",
     "LLMProfile",
     "AgentRun",
+    "PipelineRecipe",
+    "PipelineRecipeVersion",
+    "ExperienceEntry",
     "PlatformAPI",
     "ComputeNode",
     "EdgeDevice",

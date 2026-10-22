@@ -289,5 +289,11 @@ def bootstrap_default_llm_profile(session_factory: sessionmaker) -> bool:
             purpose_tags=["chat", "agent"],
         )
         db.add(profile)
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            # Multi-worker startup race on the unique profile name: another
+            # worker won the bootstrap — treat as "already bootstrapped".
+            db.rollback()
+            return False
         return True

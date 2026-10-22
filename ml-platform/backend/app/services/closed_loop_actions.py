@@ -392,10 +392,12 @@ def candidate_score(row: dict) -> float:
 
 def complete_retrain_swap(
     db, *, deployment_id, job: TrainingJob, actor_id, model_name: str,
+    recipe_id=None,
 ):
     """Register the best candidate of a finished AutoML job, approve it and
     point the deployment at it. Returns the new ModelVersion, or None when
-    the job has no registerable candidates."""
+    the job has no registerable candidates or the candidate fails the bound
+    recipe's acceptance gates (spec v0.9 §12.3: 换模候选须过配方门禁)."""
     deployment_id = _as_uuid(deployment_id) if deployment_id else None
     actor_id = _as_uuid(actor_id)
     registry = ModelRegistryService(artifact_service=build_artifact_service(db))
@@ -403,6 +405,24 @@ def complete_retrain_swap(
     if not candidates:
         return None
     best = max(candidates, key=candidate_score)
+    if recipe_id is not None:
+        from app.models.recipe import PipelineRecipeVersion
+        from app.services.agent.hard_gates import evaluate_hard_gates
+
+        gate_version = (
+            db.query(PipelineRecipeVersion)
+            .filter(
+                PipelineRecipeVersion.recipe_id == _as_uuid(recipe_id),
+                PipelineRecipeVersion.status == "current",
+            )
+            .first()
+        )
+        gates = (gate_version.content_json or {}).get("acceptance_gates") if gate_version else None
+        if gates:
+            gate_report = evaluate_hard_gates(dict(best.get("metrics") or {}), gates=gates)
+            if not gate_report.passed:
+                # 门禁一票否决：不注册不批准不换模，闭环保持旧模型继续服务。
+                return None
     candidate_id = best.get("candidate_id") or best.get("id")
     # registered_models has a (project_id, name) unique constraint — one model
     # entry per retrain cycle, suffixed by job id for determinism/idempotency.

@@ -213,7 +213,12 @@ PHASE_TEST_MODULES: dict[str, list[str]] = {
         "test_agent_runner",
         "test_agent_hard_gates",
     ],
-    "p3": [],
+    "p3": [
+        "test_agent_recipe",
+        "test_agent_experience",
+        "test_agent_serving_binding",
+        "test_agent_recipe_gated_swap",
+    ],
     "p4": [],
     "p5": [],
     "p6": [],
