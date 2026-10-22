@@ -55,9 +55,16 @@ def test_phase_modules_do_not_collide_with_week_modules():
 
 
 def test_run_suite_phase_empty_group_passes():
-    result = _run_suite("--phase", "p2")
+    empty_phases = [
+        phase
+        for phase, modules in sorted(PHASE_TEST_MODULES.items())
+        if not modules
+    ]
+    assert empty_phases, "at least one phase should still be an unstarted group"
+    phase = empty_phases[0]
+    result = _run_suite("--phase", phase)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Running phase p2 acceptance suite (0 modules)." in result.stdout
+    assert f"Running phase {phase} acceptance suite (0 modules)." in result.stdout
     assert "0 passed, 0 failed out of 0 modules" in result.stdout
 
 

@@ -141,7 +141,7 @@ class TestRunS1(unittest.TestCase):
             "app.services.agent.llm_client.chat_completion",
             return_value=(reply, {}),
         ):
-            report, error = run_s1(
+            report, error, _usage = run_s1(
                 db, config=self._config(), profile_report={"row_count": 10}
             )
         self.assertIsNone(error)
@@ -153,7 +153,7 @@ class TestRunS1(unittest.TestCase):
             "app.services.agent.llm_client.chat_completion",
             return_value=(__import__("json").dumps(broken), {}),
         ):
-            report, error = run_s1(
+            report, error, _usage = run_s1(
                 db, config=self._config(), profile_report={"row_count": 10}
             )
         self.assertIsNone(report)
@@ -165,7 +165,7 @@ class TestRunS1(unittest.TestCase):
             "app.services.agent.llm_client.chat_completion",
             return_value=("我认为这个数据集很好", {}),
         ):
-            report, error = run_s1(
+            report, error, _usage = run_s1(
                 db, config=self._config(), profile_report={"row_count": 10}
             )
         self.assertIsNone(report)
