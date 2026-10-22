@@ -479,6 +479,7 @@
           <div class="fld">项目 <select><option>拧紧</option><option>电焊</option></select></div>
           <div class="fld">数据集 <select><option>tighten_test.csv（70,087 行 × 20 列）</option><option>train_features.csv</option></select></div>
           <div class="fld">目标列 <select><option>DECIDE(判定（最终判定）（0-不合格，1-合格）)</option></select></div>
+          <div class="fld">🧠 模型 <select><option>gpt-4o-mini-strong（默认）</option><option>fast-coder（S2 纠错）</option></select></div>
           <div class="switchwrap">逐步确认模式 <div class="sw" onclick="this.classList.toggle('on')"></div></div>
         </div>
 
@@ -690,6 +691,33 @@ POST /api/platform/apis/orchestration/&lt;vid&gt;/invoke<br>
               </div>
             </div>
           </div>
+          <div class="panel" id="opt-report" style="display:none">
+            <h4><span class="bar"></span>📋 本次优化总结（OptimizationReport · 配方 v1.2 → v1.3）<span class="badge b-green" style="margin-left:6px">自动生成</span></h4>
+            <div class="row">
+              <div style="flex:1">
+                <div style="font-size:12.5px"><b style="color:var(--green)">✔ 优化了什么</b>
+                  <div style="color:var(--sub)">· 剔除 ID 索引列（轮1 评审发现重要性第3）<br>· 裕度特征改用原始值（可解释性↑，召回 +0.023）</div></div>
+                <div style="font-size:12.5px; margin-top:10px"><b style="color:var(--blue2)">🔍 发现了什么</b>
+                  <div style="color:var(--sub)">· 扭矩-目标偏差为第一主导特征（重要性 0.34，与 S1 预期一致）<br>· 二轴差在双轴工位子集上区分度显著（AUC +0.05）</div></div>
+                <div style="font-size:12.5px; margin-top:10px"><b style="color:var(--green)">💪 擅长什么</b>
+                  <div style="color:var(--sub)">· 不合格召回 0.944（门禁 0.92），漏检优先达标<br>· 14 维特征全部可物理解释</div></div>
+              </div>
+              <div style="flex:1">
+                <div style="font-size:12.5px"><b style="color:var(--red)">⚠ 不理想之处</b>
+                  <div style="color:var(--sub); background:rgba(230,111,117,.07); border:1px solid rgba(230,111,117,.25); border-radius:8px; padding:8px 11px; margin-top:5px">
+                    精确率 0.78 低于预期<br>
+                    <b>因为</b>：缺陷样本中约 12% 为边界贴限样本，特征区分度不足<br>
+                    <b>缺少</b>：螺栓规格分层的细粒度阈值列（SPECIFICATION 未编码）<br>
+                    <b>建议</b>：下轮补充规格分组特征或分组建模</div></div>
+                <div style="font-size:12.5px; margin-top:10px"><b style="color:var(--gold)">➡ 下轮提示</b>
+                  <div style="color:var(--sub)">引入 SPECIFICATION 分组特征；收集贴限样本人工复判标签</div></div>
+                <div style="display:flex; gap:8px; margin-top:12px">
+                  <button class="btn sm">导出报告</button>
+                  <button class="btn sm primary">按建议继续迭代 →</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -822,34 +850,39 @@ POST /api/platform/apis/orchestration/&lt;vid&gt;/invoke<br>
   <div class="center">
     <div class="sidebar">
       <div class="side-group">管理</div>
-      <div class="side-item on"><span class="dot"></span>用户管理<span class="side-count">23</span></div>
+      <div class="side-item" data-note="users"><span class="dot"></span>用户管理<span class="side-count">23</span></div>
       <div class="side-item"><span class="dot"></span>项目管理<span class="side-count">11</span></div>
       <div class="side-item"><span class="dot"></span>审计日志</div>
       <div class="side-group">平台</div>
       <div class="side-item"><span class="dot"></span>系统设置</div>
-      <div class="side-item"><span class="dot"></span>大模型网关</div>
+      <div class="side-item on" data-note="llm"><span class="dot"></span>大模型网关<span class="side-badge">NEW</span></div>
     </div>
     <div class="main">
-      <div class="crumb">系统管理 / <b>用户管理</b></div>
+      <div class="crumb">系统管理 / <b>大模型网关</b></div>
       <div class="pagehead">
-        <div><h2 class="pt">用户与权限</h2><p class="pdesc">原「用户管理」迁入；平台级设置集中于此。</p></div>
-        <button class="btn primary">＋ 新建用户</button>
+        <div><h2 class="pt">大模型网关 · 统一配置中心</h2><p class="pdesc">集中配置平台可用的大模型档案：AI 对话、智能体分析/写码/评审、自迭代演进、知识库向量化各自选用；密钥只写不读。</p></div>
+        <button class="btn primary">＋ 新增模型档案</button>
       </div>
       <div class="panel">
         <table class="dt">
-          <tr><th>用户</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr>
-          <tr><td class="tt">admin</td><td><span class="badge b-gold">管理员</span></td><td><span class="badge b-green">启用</span></td><td>10-21 08:58</td><td><button class="btn sm">编辑</button></td></tr>
-          <tr><td class="tt">jing</td><td><span class="badge b-blue">标注员</span></td><td><span class="badge b-green">启用</span></td><td>10-21 09:12</td><td><button class="btn sm">编辑</button> <button class="btn sm danger">禁用</button></td></tr>
-          <tr><td class="tt">ml_eng_01</td><td><span class="badge b-gray">工程师</span></td><td><span class="badge b-green">启用</span></td><td>10-20 17:44</td><td><button class="btn sm">编辑</button></td></tr>
+          <tr><th>档案名</th><th>Provider</th><th>模型</th><th>用途标签</th><th>连通性</th><th>默认</th><th>操作</th></tr>
+          <tr><td class="tt">gpt-4o-mini-strong</td><td>OpenAI 兼容</td><td>gpt-4o-mini</td><td><span class="badge b-purple">智能体分析/评审</span></td><td><span class="badge b-green">正常 1.2s</span></td><td><span class="badge b-green">默认</span></td><td><button class="btn sm">测试</button> <button class="btn sm">编辑</button></td></tr>
+          <tr><td class="tt">fast-coder</td><td>自定义 URL</td><td>qwen2.5-coder-32b</td><td><span class="badge b-blue">S2 脚本纠错</span></td><td><span class="badge b-green">正常 0.6s</span></td><td>—</td><td><button class="btn sm">测试</button> <button class="btn sm">编辑</button></td></tr>
+          <tr><td class="tt">chat-default</td><td>OpenAI 兼容</td><td>gpt-4o</td><td><span class="badge b-gray">AI 对话</span></td><td><span class="badge b-green">正常 1.8s</span></td><td><span class="badge b-green">对话默认</span></td><td><button class="btn sm">测试</button> <button class="btn sm">编辑</button></td></tr>
+          <tr><td class="tt">evolution-x</td><td>OpenAI 兼容</td><td>o1-preview</td><td><span class="badge b-gold">RSI 技能演进</span></td><td><span class="badge b-green">正常 3.2s</span></td><td>—</td><td><button class="btn sm">测试</button> <button class="btn sm">编辑</button></td></tr>
+          <tr><td class="tt">embed-bge</td><td>本地</td><td>bge-m3</td><td><span class="badge b-gray">知识库向量</span></td><td><span class="badge b-green">正常</span></td><td>—</td><td><button class="btn sm">测试</button> <button class="btn sm">编辑</button></td></tr>
         </table>
       </div>
-      <div class="panel">
-        <h4><span class="bar"></span>审计日志（近 24h 摘要）</h4>
+      <div class="note-strip">🔐 密钥仅管理员可写（回显掩码 sk-****）；每次配置变更入审计日志；
+        环境变量 llm_api_url/key/model 已自动迁移为「内置默认」档案。</div>
+      <div class="panel" style="margin-top:14px">
+        <h4><span class="bar"></span>AI 对话 · 平台操作工具权限<span class="more">白名单注册制 ›</span></h4>
         <table class="dt">
-          <tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>结果</th></tr>
-          <tr><td>09:41</td><td>智能体(任务#12)</td><td>automl.job.dispatch</td><td class="tt">automl-tighten-r2</td><td><span class="badge b-green">成功</span></td></tr>
-          <tr><td>09:14</td><td>admin</td><td>recipe.publish</td><td class="tt">welding-v2.0</td><td><span class="badge b-green">已批准</span></td></tr>
-          <tr><td>08:55</td><td>admin</td><td>deployment.stop</td><td class="tt">电焊模型推理(旧)</td><td><span class="badge b-green">成功</span></td></tr>
+          <tr><th>工具</th><th>类型</th><th>权限</th><th>状态</th></tr>
+          <tr><td class="tt">查询数据集 / 数据画像 / 训练状态 / 闭环状态</td><td>读</td><td>project.read</td><td><span class="badge b-green">启用 · 免确认</span></td></tr>
+          <tr><td class="tt">创建自动建模 / 创建闭环自动化 / 按配方跑智能体</td><td>写</td><td>resource.create</td><td><span class="badge b-blue">启用 · 二次确认</span></td></tr>
+          <tr><td class="tt">发布 / 下线编排 API</td><td>写</td><td>发布权限</td><td><span class="badge b-gold">仅管理员</span></td></tr>
+          <tr><td class="tt">修改源代码 / 改库 / 删数据 / 权限管理</td><td>—</td><td>—</td><td><span class="badge b-red">不在白名单（不存在此工具）</span></td></tr>
         </table>
       </div>
     </div>
@@ -871,6 +904,7 @@ POST /api/platform/apis/orchestration/&lt;vid&gt;/invoke<br>
     e.stopPropagation();
     const target = el.dataset.go;
     if (target === 'agent-run') { document.getElementById('agent-run').style.display = 'block';
+      document.getElementById('opt-report').style.display = '';
       document.getElementById('sub-wiz').querySelector('.steps').scrollIntoView({ behavior: 'smooth' }); return; }
     document.querySelector(`.navtab[data-v="${target}"]`).click();
   }));
