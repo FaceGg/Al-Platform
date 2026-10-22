@@ -423,7 +423,9 @@ class DemoLoopService:
 
     # ------------------------------------------------------------------ predict
 
-    def predict(self, config: DemoLoopConfig, record: dict, actor_id) -> dict:
+    def predict(self, config: DemoLoopConfig, record: dict, actor_id, dry_run: bool = False) -> dict:
+        """One loop inference. ``dry_run=True``（S5 服务化冒烟，spec v0.9 §12.1）
+        只做预测：不计数、不写回流数据集、不提交任何状态变更。"""
         if not isinstance(record, dict) or not record:
             raise DemoLoopError("DEMO_LOOP_RECORD_INVALID", "record must be a non-empty object")
         deployment = self._deployment(config)
@@ -432,6 +434,19 @@ class DemoLoopService:
         predicted, confidence = self._run_prediction(config, deployment, version, record)
 
         is_error = str(predicted) in (config.error_classes or [])
+        if dry_run:
+            return {
+                "prediction": str(predicted),
+                "confidence": confidence,
+                "model_version_id": str(version.id),
+                "error_matched": is_error,
+                "appended": False,
+                "dry_run": True,
+                "total_count": int(getattr(config, "total_count", 0) or 0),
+                "error_count": int(getattr(config, "error_count", 0) or 0),
+                "alert_count": int(getattr(config, "alert_count", 0) or 0),
+                "retrain_status": config.retrain_status,
+            }
         config.total_count = int(getattr(config, "total_count", 0) or 0) + 1
         self._emit(
             config,
