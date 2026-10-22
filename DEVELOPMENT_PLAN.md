@@ -22,9 +22,10 @@
 | Week 14 | completed | 本地实现、真实集群 smoke、浏览器验收与远端 CI 全部收口（2026-10-08）：4 个后端测试模块（executor 16 + logs 6 + recovery 11 + job_api 16 = 49 用例，另迁移 upgrade/downgrade/check 3 用例）全绿；`run_suite --week 14` 4/4、`--week 13` 回归 3/3、compileall OK；前端 JobRunsPage 6 用例 + 路由/导航/i18n/错误码（全量 Vitest 410 passed/19 skipped、tsc、build）；kind v1.37.0 真实集群作业 smoke **19/19 PASS**（echo→succeeded+日志、cancel 恰好一次终态+审计、超时→timed_out、无 watcher 恢复对账→succeeded、kubectl 删 Job→orphaned；证据 `ml-platform/backend/temp_test/week14-local/EVIDENCE.md`）；已认证 Playwright **1 passed**（提交→状态流转→日志 marker+end_of_stream→UI 取消→终态禁用，截图 3 张，`e2e/week14-jobruns.spec.ts`）；`run_week13_17_acceptance.sh week14` OVERALL passed（8 步 manifest 绑定 SHA）；**远端 CI 收据 run 37736316661（Quality ubuntu + windows 全绿，绑定 SHA `3329e0c`，Week 14 代码随 `9148965`/`edb4227` 入库）**。smoke 期间修复 6 项实现缺陷（真实客户端缺作业面、manualSelector、命名空间限定调用、1.27+ 无 job-name 标签、1.37 FailureTarget/SuccessCriteriaMet 条件映射、WSL 重启后集群重建）；浏览器验收发现 5177 端口需 `FRONTEND_ORIGIN_ALIASES` 放行 CORS（否则 403） | 无；Week 15 依赖本周统一执行器，且仍受 Task 0 开放项（镜像仓库、GPU 节点、rootless builder 路径）约束 |
 | Week 15 | completed | 本地实现、真实集群 smoke、浏览器验收与远端 CI 全部收口（2026-10-09，代码随 `a42248d` 入库）：四模块 32 用例全绿（notebook 13 + image_catalog 5 + build_security 4 + gpu 10）；`run_suite --week 15/14/13` 全过、alembic upgrade/check（新 head `20261008_66`，5 处常量 + fixture 同步）、production 22 passed；前端 NotebookPage 4 + ImageCatalogPage 4 用例（全量 Vitest 421 passed/19 skipped、tsc、build）；kind v1.37.0 smoke **18/18 PASS**（镜像目录登记/digest 不可变 → 会话启动（真实 jupyter/base-notebook digest 预载）→ K8s service proxy 访问真实 Jupyter 200 → 篡改 token 401 → 构建门 501 → GPU 无节点记 skipped → stop 回收集群资源清零 → scan-failed 拒绝 → 审计 start/stop）+ 空闲回收实测（60s 阈值、审计 notebook.idle_timeout、资源清零）；已认证 Playwright **1 passed**（登记镜像 → 启动 → 代理打开真实 Jupyter → 停止，截图 4 张）；`run_week13_17_acceptance.sh week15` OVERALL passed。预构建目录基线执行：构建端点 501 `IMAGE_BUILD_NOT_APPROVED`（决策门未开），无 DinD/socket；GPU 类空表按 skipped 口径。smoke/浏览器期间修复 5 项缺陷（RealKubernetesClient 作业字段必填假设、V1ServiceSpec 参数名、Week14 RBAC 缺 services/services:proxy、notebook 启动表单缺 namespace 字段、代理端点改自包含 HMAC 令牌——浏览器导航无法带 JWT 头）；**远端 CI 收据 run 37911977130（Quality ubuntu + windows 全绿，绑定 SHA `3fc710c`，Week 15 代码随 `a42248d` 入库）** | 无；Week 16 依赖本周会话与镜像合同 |
 | Week 16 | completed | 本地实现、双集群 smoke、浏览器验收与远端 CI 全部收口（2026-10-10，代码随 `95e9047`+`9a4c335`+`d701ffc` 入库）：四模块 28 用例全绿（scheduler 10 + governance 8 + storage 5 + observability 5）；`run_suite --week 16/15/14/13` 全过、alembic upgrade/check（新 head `20261010_67`，5 处常量 + fixture 同步）、production 22 passed；前端 ClusterGovernancePage 4 用例（全量 Vitest 427 passed/19 skipped、tsc、build）；**双 kind 集群 smoke 19/19 PASS**（第二个集群 linkraft-w16b @46618：无策略确定性选择、双候选带原因、停 B 后路由Away并给 `cluster_not_active`、健康 A 提交 succeeded + 预留 `terminal` 释放、配额收紧后 422 `QUOTA_EXCEEDED`、Summary API 采集 12 行（gpu utilization=unavailable 不伪造）、删策略后单集群退化保持；证据 `ml-platform/backend/temp_test/week16-local/EVIDENCE.md`）；已认证 Playwright **1 passed**（治理页表格 + 路由预演排除原因 + 配额拒绝呈现，截图 2 张）；`run_week13_17_acceptance.sh week16` OVERALL passed；**远端 CI 收据 run 绑定 SHA `d701ffc`（Quality ubuntu + windows 全绿，含 Week 16 代码 `95e9047`）**。CI Windows 曾两次失败：首次为两处与本改动无关的 flaky（重跑后消失），第二次为治理页预演测试的 projectId 竞态（`d701ffc`/`9a4c335` 修复）。预留防超卖并发竞态测试固化（8 线程争 4 cpu 恰好 4 成）；执行器/Notebook 提交前预留钩子 + 终态/孤儿/过期/手动四条幂等释放路径（单集群回归 W13–15 测试全过）；采集失败收敛 stale 不阻塞提交。smoke 期间修复 3 项缺陷（RealKubernetesClient 缺 node_summary——Summary API 经 API server proxy、Week14 RBAC 补 nodes/proxy、cluster B 的 SA 名不匹配致 system:anonymous 403） | 无；Week 17 依赖本周配额与路由合同 |
-| Week 17 | planned | 数据探索与质量报告范围已获批（§4.2，2026-09-28）：DuckDB 只读查询 + 质量 profile + 报告 Artifact，不部署 Superset；上限行 1,000/10MB/30 秒/并发 2；SavedQuery 首期不纳入 | 按 2026-09-28 Week 17 实施计划自 Task 17.1 起实现 |
-| Week 18–20 | deferred | RAG、LLM 网关、AIHub、全产品交付不在本轮范围 | 保持搁置 |
+| Week 17 | pending_decision（让位于智能体方案） | 数据探索与质量报告范围已获批（§4.2，2026-09-28）：DuckDB 只读查询 + 质量 profile + 报告 Artifact，不部署 Superset；上限行 1,000/10MB/30 秒/并发 2；SavedQuery 首期不纳入。**2026-10-22 用户指示：Week 17–20 任务先待定，由智能体方案（AutoML Agent，[技术方案](ml-platform/docs/技术方案-大模型驱动自动建模流水线.md)）主导后续开发**；已获批范围不撤销，智能体 P1 的数据画像工具建议复用本周质量 profile 服务，重启时按 2026-09-28 实施计划自 Task 17.1 起实现 |
+| Week 18–20 | deferred（被智能体方案部分吸收） | RAG、LLM 网关、AIHub、全产品交付不在本轮范围。**2026-10-22 起由智能体方案主导**：BKL-10 的"可靠智能体执行"与 BKL-11 的"LLM 网关"部分由 AutoML Agent 方案承接（见十三章智能体执行、十四章大模型网关）；RAG 检索评估、AIHub、一键微调/部署仍留在本组待定，待智能体方案落地后重新排期 | 保持搁置 |
 | 多模态标注集成（Label Studio） | deferred | 2026-09-28 决策评审后用户决定暂缓（D1）；方案归档备查，D2–D8 结论已记录（§4.3） | 用户明确重新立项前不得自行启动 |
+| **AutoML Agent 智能体方案（当前主导）** | 立项（方案 v0.6，2026-10-21；2026-10-22 用户指示主导开发，Week 17–20 让位待定） | 大模型驱动自动建模流水线：四步迭代（数据智能分析→特征工程自我纠错→AutoML→双门评审）+ S5 服务化输出（闭环任务+编排 API）+ 三级经验体系与有界 RSI + 向导式编辑 + 大模型网关 + AI 对话平台操作（硬边界白名单）+ 复用与优化总结报告；[技术方案](ml-platform/docs/技术方案-大模型驱动自动建模流水线.md) 十五章、[前端预览](ml-platform/docs/design/平台改版前端预览.html) 五视图 | 按 P1→P4 里程碑开工：P1 数据画像工具 + 三契约 + 电焊/拧紧两域 AnalysisReport 互证（画像建议复用 Week 17 已获批的质量 profile 服务设计） |
 
 ## 3. 最近开发计划：Week 13–17
 
@@ -1657,9 +1658,9 @@ Week 9–12 的最终闭环证据为 GitHub Actions Run `33363122355`，验收�
 | Week 15 | Notebook、镜像与 GPU | `planned`（未开始） | 依赖 Kubernetes 基础能力，见 BKL-06。 |
 | Week 16 | 多集群与资源治理 | `planned`（未开始） | 依赖 Week 13–15，见 BKL-07。 |
 | Week 17 | 数据探索、质量报告、标注审核与数据回流 | `pending_decision` | 待产品范围确认，见 BKL-08、BKL-09。 |
-| Week 18 | RAG 与工业智能体 | `deferred` | 暂时搁置，见 BKL-10。 |
-| Week 19 | LLM 网关与 AIHub | `deferred` | 暂时搁置，见 BKL-11。 |
-| Week 20 | 全产品验收、交付与培训 | `deferred` | 暂时搁置；不影响通用平台 Task 14 的独立验收。 |
+| Week 18 | RAG 与工业智能体 | `deferred`（被智能体方案部分吸收） | "可靠智能体执行"子项由 AutoML Agent 方案承接（2026-10-22 用户指示智能体方案主导）；RAG 检索评估/权限过滤待智能体落地后重排。见 BKL-10。 |
+| Week 19 | LLM 网关与 AIHub | `deferred`（被智能体方案部分吸收） | LLM 网关子项由 AutoML Agent 方案第十四章承接；AIHub、一键微调/部署仍待定。见 BKL-11。 |
+| Week 20 | 全产品验收、交付与培训 | `deferred` | 暂时搁置；不影响通用平台 Task 14 的独立验收。智能体中心上线后应纳入本周验收范围。 |
 
 ## 5. 当前主交付计划
 
@@ -1717,8 +1718,8 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 | BKL-07 | 多集群路由、存储挂载和资源治理/监控 | `planned`（Week 16 未开始） | 在单集群执行和 GPU 资源模型稳定后推进。 |
 | BKL-08 | SQL Lab、数据探索、数据质量报告 | `pending_decision`（Week 17） | 需要明确数据权限、查询隔离、审计和成本边界。 |
 | BKL-09 | 多模态标注、审核和数据回流 | `pending_decision`（Week 17） | Label Studio 集成已明确延后；仅在确认多模态需求后立项。 |
-| BKL-10 | 生产级 RAG、检索评估、权限过滤和可靠智能体执行 | `deferred`（Week 18） | 暂时搁置，作为独立知识与智能体子项目处理。 |
-| BKL-11 | LLM 网关、AIHub、一键开发、一键微调和一键部署 | `deferred`（Week 19） | 暂时搁置，依赖模型、资源、权限和交付生命周期稳定。 |
+| BKL-10 | 生产级 RAG、检索评估、权限过滤和可靠智能体执行 | `deferred`（部分启动） | "可靠智能体执行"由 [AutoML Agent 技术方案](ml-platform/docs/技术方案-大模型驱动自动建模流水线.md) 承接（2026-10-21 立项、2026-10-22 用户指示主导开发）；RAG 检索评估与生产级权限过滤仍在待定。 |
+| BKL-11 | LLM 网关、AIHub、一键开发、一键微调和一键部署 | `deferred`（部分启动） | LLM 网关由 AutoML Agent 方案第十四章（多档案模型配置中心）承接；AIHub、一键开发/微调/部署仍待定。 |
 | BKL-12 | 全产品 E2E、性能、安全、备份恢复、升级、培训和交付资料 | `deferred`（Week 20） | 暂时搁置；通用平台 Task 14 的验收范围不受此状态影响。 |
 | BKL-13 | MLflow SDK autolog、模型阶段流转、运行级缓存、错误分支、可配置重试和 Webhook/Event 触发 | `planned` | 拆分为训练治理与工作流增强两个计划，避免与现有运行时语义冲突。 |
 | BKL-14 | 全链路类型化端口强校验、动态工作流、画布与工作流代码互转 | `deferred` | 先定义兼容边界和迁移策略，当前静态 DAG 继续作为稳定基线。 |
