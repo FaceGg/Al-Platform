@@ -212,14 +212,19 @@ class TestCancelFinalizesUnderCelery(unittest.TestCase):
             headers=cls.headers,
         )
         cls.workflow_id = workflow.json()["id"]
+        cls._run_seq = 0
 
     def _make_run(self, status: str, task_id: str) -> str:
         with SessionLocal() as db:
             # Real runs get started_at set by the executor once claimed;
-            # mirror that so latest-run ordering is deterministic.
+            # mirror that so latest-run ordering is deterministic. Windows
+            # clock granularity can make back-to-back datetime.now() calls
+            # return the same value, so space runs a second apart.
+            started_at = datetime.now(timezone.utc) + timedelta(seconds=self.__class__._run_seq)
+            self.__class__._run_seq += 1
             run = WorkflowRun(
                 workflow_id=uuid.UUID(self.workflow_id), status=status, task_id=task_id,
-                started_at=datetime.now(timezone.utc),
+                started_at=started_at,
             )
             db.add(run)
             db.commit()
