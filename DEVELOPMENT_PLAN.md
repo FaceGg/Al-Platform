@@ -3197,3 +3197,9 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 修复：① `_mlp_builder` 固定 `early_stopping=False`（小不平衡数据正解；正则化由 alpha、轮数由 CV 搜索的 max_iter 承担）；② trial 异常时 `set_user_attr("error_message", str(error)[:300])`，`TrialSummary` 增加 `error_message` 字段透传——页面从此显示 trial 失败的真实原因而非裸错误码。
 - 验证：新增 `test_mlp_adam_survives_small_imbalanced_dataset`（46 行/正类 3 条、adam 固定，断言 failed_trials=0）；automl 四套件 109 passed；backend/worker 镜像重建部署、健康检查通过。
 - 数据建议（用户侧同根因解法）：46 行/正类 3 条对 5 折 CV 极紧，建议扩充正类或合并数据集；修复保证不再崩溃，但极小正类下 CV 指标波动大，模型可信度有限。
+
+## 2026-10-22 Windows flaky 修复：test_api_runs latest 断言时钟并列（本地提交，未推送）
+
+- 背景：备份副本仓库 Al-Platform_v1 的远程 CI Windows job 失败（run `39704541195`，绑定 docs 提交 `8d1d688`），定位为 `test_api_runs::test_latest_run_endpoint` 在 Windows 时钟粒度（约 15ms）下两条连续创建的 run `started_at` 相同，`/runs/latest` 按 `started_at.desc()` 排序无次级键导致并列顺序不定；Ubuntu 纳秒级时钟不受影响。与本计划在案的"Windows CI flaky 重跑消失"历史吻合，非功能代码缺陷。
+- 修复（用户指令同步应用于老项目与备份副本）：`TestCancelFinalizesUnderCelery.setUpClass` 增加类级序号 `_run_seq`，`_make_run` 按序号给 `started_at` 显式加整秒偏移，任意时钟粒度下严格递增；不改产品代码与接口合同。
+- 验证：本地 `python -m unittest tests.test_api_runs`（venv、临时 SQLite）9/9 OK；远端 CI 对本提交 not_run（未推送，沿用批量推送习惯；修复代码与副本已推送提交 `82fcf09` 完全相同，其远端复验 run `39712759166` 结果可作同代码证据）。

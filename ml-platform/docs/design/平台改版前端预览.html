@@ -765,8 +765,54 @@ POST /api/platform/apis/orchestration/&lt;vid&gt;/invoke<br>
       <!-- ===== 子页：经验库 ===== -->
       <div class="subpage" id="sub-exp">
         <div class="pagehead">
-          <div><h2 class="pt">经验库（Experience Store）</h2><p class="pdesc">任务结束蒸馏的可泛化教训，带证据链与置信度；新任务自动检索注入；定期提炼进技能（有界 RSI）。</p></div>
+          <div><h2 class="pt">经验库（Experience Store）</h2><p class="pdesc">任务结束蒸馏的可泛化教训，带证据链与置信度；新任务自动检索注入；定期提炼进技能（有界 RSI）；跨域高置信条目自动同步至知识库"平台经验"分区（人审可否决回流）。</p></div>
           <button class="btn">🧬 提炼技能修订提案</button>
+        </div>
+        <div class="panel">
+          <h4><span class="bar"></span>知识库绑定配置（KBBinding）<span class="badge b-purple" style="margin-left:6px">v0.7 NEW</span>
+            <span class="more">知识库详情页可配同样内容 ›</span></h4>
+          <table class="dt">
+            <tr><th>知识库</th><th>总开关</th><th>项目范围</th><th>智能体任务</th><th>对话</th><th>S1 检索</th><th>top_k / 相关性下限</th><th>触发</th><th>经验同步</th></tr>
+            <tr><td class="tt">点焊标准法规</td>
+                <td><div class="sw on" onclick="this.classList.toggle('on')"></div></td>
+                <td><span class="badge b-green">全部项目</span></td>
+                <td>跟随项目</td>
+                <td><input type="checkbox" class="ck" checked></td>
+                <td><input type="checkbox" class="ck" checked></td>
+                <td class="tt">5 / 0.15</td>
+                <td><span class="badge b-blue">自动</span></td>
+                <td>接收 ≥0.85 · 直接可检索</td></tr>
+            <tr><td class="tt">拧紧工艺文档</td>
+                <td><div class="sw on" onclick="this.classList.toggle('on')"></div></td>
+                <td><span class="badge b-blue">拧紧项目</span></td>
+                <td>跟随项目</td>
+                <td><input type="checkbox" class="ck" checked></td>
+                <td><input type="checkbox" class="ck" checked></td>
+                <td class="tt">5 / 0.15</td>
+                <td><span class="badge b-blue">自动</span></td>
+                <td>接收 ≥0.85 · 待审核</td></tr>
+            <tr><td class="tt">平台经验（自动同步）</td>
+                <td><div class="sw on" onclick="this.classList.toggle('on')"></div></td>
+                <td><span class="badge b-green">全部项目</span></td>
+                <td>全部任务</td>
+                <td><input type="checkbox" class="ck" checked></td>
+                <td><input type="checkbox" class="ck" checked></td>
+                <td class="tt">5 / 0.15</td>
+                <td><span class="badge b-blue">自动</span></td>
+                <td>—（本库即同步目标）</td></tr>
+            <tr><td class="tt">SMT 试点资料（草稿）</td>
+                <td><div class="sw" onclick="this.classList.toggle('on')"></div></td>
+                <td><span class="badge b-gray">未绑定</span></td>
+                <td>仅显式指定</td>
+                <td><input type="checkbox" class="ck"></td>
+                <td><input type="checkbox" class="ck"></td>
+                <td class="tt">3 / 0.20</td>
+                <td><span class="badge b-gray">显式</span></td>
+                <td>不接收</td></tr>
+          </table>
+          <div class="note-strip" style="margin-top:10px">🔧 冲突合并：多库同时命中按 score × 库权重排序取 top_k，注入时标注来源库；
+            S1 报告的 kb_citations 记录库名/文档/片段 ID，评审可核对——防 LLM 假引用；
+            用户在知识库页否决某条同步来的经验 → 回写经验条目 retired（RSI 人审闸门）。</div>
         </div>
         <div class="panel">
           <table class="dt">
