@@ -52,7 +52,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { type: "divider" as const },
     { key: "/monitor", icon: <MonitorOutlined />, label: t.nav.monitor },
     { key: "/compute", icon: <CloudServerOutlined />, label: t.nav.compute },
-    ...(userRole === "admin" ? [{ key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users }] : []),
+    ...(userRole === "admin" ? [
+      { key: "/llm-gateway", icon: <ApiOutlined />, label: t.nav.llm_gateway },
+      { key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users },
+    ] : []),
   ];
 
   const userMenuItems = [

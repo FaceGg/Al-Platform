@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { translations } from "./i18n";
 
-const weekTestFiles: Record<number, string[]> = {
+// Numeric keys are development weeks; string keys ("p1".."p6") are AutoML
+// Agent phases, mirroring the backend PHASE_TEST_MODULES registry.
+const weekTestFiles: Record<number | string, string[]> = {
   1: [
     "./api/auth.test.ts",
     "./api/client.test.ts",
@@ -104,6 +106,10 @@ const weekTestFiles: Record<number, string[]> = {
     "./components/ReturnBatchList.test.tsx",
     "./utils/time.test.ts",
     "./utils/uuid.test.ts",
+  ],
+  p1: [
+    "./api/llmProfiles.test.ts",
+    "./pages/LLMGatewayPage.test.tsx",
   ],
 };
 

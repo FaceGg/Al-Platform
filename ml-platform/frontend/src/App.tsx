@@ -35,6 +35,7 @@ const JobRunsPage = lazy(() => import("./pages/JobRunsPage"));
 const NotebookPage = lazy(() => import("./pages/NotebookPage"));
 const ImageCatalogPage = lazy(() => import("./pages/ImageCatalogPage"));
 const ClusterGovernancePage = lazy(() => import("./pages/ClusterGovernancePage"));
+const LLMGatewayPage = lazy(() => import("./pages/LLMGatewayPage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
 
 const LIGHT_TOKENS = {
@@ -96,6 +97,7 @@ function AppContent() {
             <Route path="/models" element={<ProtectedRoute><ModelLibraryPage /></ProtectedRoute>} />
             <Route path="/data" element={<ProtectedRoute><DataManagePage /></ProtectedRoute>} />
             <Route path="/admin/users" element={<ProtectedRoute><UserManagementPage /></ProtectedRoute>} />
+            <Route path="/llm-gateway" element={<ProtectedRoute><LLMGatewayPage /></ProtectedRoute>} />
             <Route path="/knowledge" element={<ProtectedRoute><KnowledgeBasePage /></ProtectedRoute>} />
             <Route path="/knowledge/:kbId" element={<ProtectedRoute><KnowledgeDetailPage /></ProtectedRoute>} />
             <Route path="/knowledge-graph" element={<ProtectedRoute><KnowledgeGraphPage /></ProtectedRoute>} />
