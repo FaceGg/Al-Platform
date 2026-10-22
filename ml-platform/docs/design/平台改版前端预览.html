@@ -309,7 +309,7 @@
       <p>大模型驱动的自动建模 Agent 与知识体系：四步向导引导、配方固化复用、经验越用越强。</p>
       <div class="chips">
         <span class="chip hot">建模智能体向导</span><span class="chip hot">任务列表</span>
-        <span class="chip hot">配方库</span><span class="chip hot">经验库</span>
+        <span class="chip hot">配方库</span><span class="chip hot">知识中心</span>
         <span class="chip">AI 对话</span><span class="chip">知识库</span><span class="chip">知识图谱</span>
       </div>
     </div>
@@ -365,7 +365,7 @@
     <h4>旧菜单 → 新中心 迁移映射（前端路由重组，功能不动）</h4>
     <table class="mtable">
       <tr><td style="width:130px"><b>算法平台</b></td><td>工作台仪表板 · 项目管理 · 数据管理 · 数据标注 · 自动建模 · 模型训练 · 模型库 · 应用编排 · 闭环自动化 · API 市场</td></tr>
-      <tr><td><b>智能体中心</b></td><td>建模智能体（向导/任务/配方/经验库/提示词模板，新增）· AI 对话 · 知识库 · 知识图谱（自原菜单迁入）</td></tr>
+      <tr><td><b>智能体中心</b></td><td>建模智能体（向导/任务/配方/知识中心/提示词模板，新增）· AI 对话 · 知识图谱（自原菜单迁入）</td></tr>
       <tr><td><b>基础设施</b></td><td>K8s 集群 · 作业运行 · Notebook 会话 · 镜像目录 · 集群治理 · 资源监控 · 计算资源</td></tr>
       <tr><td><b>系统管理</b></td><td>用户管理（工作台仪表板收进算法平台首页，门户保留快捷卡）</td></tr>
     </table>
@@ -761,10 +761,10 @@ POST /api/platform/apis/orchestration/&lt;vid&gt;/invoke<br>
         </div>
       </div>
 
-      <!-- ===== 子页：经验库 ===== -->
+      <!-- ===== 子页：知识中心（原知识库+经验库合并） ===== -->
       <div class="subpage" id="sub-exp">
         <div class="pagehead">
-          <div><h2 class="pt">知识中心（原知识库 + 经验库 合并）</h2><p class="pdesc">一个入口管理全部知识：用户上传的工艺文档/标准/法规 + 系统自动管理的「平台经验」分区；S1 与 AI 对话统一检索全部绑定库；经验分区可编辑，否决即回写经验真源（RSI 人审闸门）。</p></div>
+          <div><h2 class="pt">知识中心（原知识库 + 经验库 合并）</h2><p class="pdesc">一个入口管理全部知识：用户上传的工艺文档/标准/法规 + 系统自动管理的「平台经验」分区；S1 与 AI 对话统一检索全部绑定库；经验分区正文只读，状态操作（否决/替代/附注）回写经验真源（RSI 人审闸门）。</p></div>
           <div style="display:flex; gap:9px"><button class="btn">🧬 提炼技能修订提案</button><button class="btn primary">＋ 上传文档 / 新建知识库</button></div>
         </div>
         <div class="panel">

@@ -1,12 +1,13 @@
 # 实施计划索引
 
-> 更新时间：2026-09-28。当前执行入口是 Week 13–17 计划；本索引只负责告诉读者哪一份计划有效，具体状态以顶层 DEVELOPMENT_PLAN.md 为准。
+> 更新时间：2026-10-22。当前执行入口是 AutoML Agent 智能体计划（P1–P6）；Week 13–16 已收口、Week 17 让位待定；本索引只负责告诉读者哪一份计划有效，具体状态以顶层 DEVELOPMENT_PLAN.md 为准。
 
 ## 当前执行计划
 
 | 文档 | 范围 | 状态 | 使用规则 |
 |---|---|---|---|
-| [2026-09-24 Week 13–17 云原生与数据探索开发计划](2026-09-24-week13-17-development.md) | Kubernetes 基础、Job/Pod、Notebook、镜像、GPU、多集群、资源治理；Week 17 决策门 | active | 当前主要开发入口；按 Week 13 → 17 顺序执行 |
+| [2026-10-22 AutoML Agent 智能体实施计划](2026-10-22-automl-agent.md) | LLM 网关、四步迭代智能体、配方与 S5 服务化、经验与有界 RSI、向导、优化报告、统一知识中心、对话工具 | active | **当前主要开发入口**；按 P1→P6 顺序执行（P5 可在 P2 后并行）；无未决决策门，设计冲突以[技术方案 v0.9](../../技术方案-大模型驱动自动建模流水线.md)为准 |
+| [2026-09-24 Week 13–17 云原生与数据探索开发计划](2026-09-24-week13-17-development.md) | Kubernetes 基础、Job/Pod、Notebook、镜像、GPU、多集群、资源治理；Week 17 决策门 | Week 13–16 收口 / Week 17 让位 | Week 17 重启时按其细化计划执行（2026-10-22 用户指示智能体方案主导） |
 | [2026-09-28 Week 13 Kubernetes 基础接入实施计划](2026-09-28-week13-kubernetes-foundation.md) | Week 13 集群登记、凭据引用、命名空间、资源组、节点发现、连通性检查 | planned | Week 13–17 计划 Task 1 的细化执行入口；迁移修订号以本计划为准（`_61` 已被占用） |
 | [2026-09-28 Week 14 Kubernetes 执行闭环实施计划](2026-09-28-week14-kubernetes-executor.md) | Week 14 Job/Pod 提交、状态、日志、取消、超时、回收、恢复 | planned | Week 13–17 计划 Task 2 的细化执行入口；前置 Week 13 收口 |
 | [2026-09-28 Week 15 Notebook、镜像与 GPU 实施计划](2026-09-28-week15-notebooks-images-gpu.md) | Week 15 Notebook 会话、镜像目录、构建决策门、GPU 资源类 | planned | Week 13–17 计划 Task 3 的细化执行入口；构建路径受 Task 0 约束 |
