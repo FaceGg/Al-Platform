@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ReloadOutlined, RocketOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import OptReportPanel from "../components/OptReportPanel";
+import RecipeRow from "../components/RecipeRow";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 import {
@@ -261,6 +263,7 @@ export default function AgentCenterPage() {
               {archiveError ? <div className="v2-empty" style={{ padding: 12 }}>{archiveError}</div> : null}
               {!archive && !archiveError ? <div className="v2-empty" style={{ padding: 12 }}>{zh ? "档案加载中…" : "Loading…"}</div> : null}
               {archive ? (
+                <>
                 <div className="v2-timeline">
                   {(archive.memory_json?.rounds ?? []).map((round) => (
                     <div key={round.round} className="v2-tl-item run">
@@ -290,6 +293,8 @@ export default function AgentCenterPage() {
                     <div className="ts">{relativeTime(archive.updated_at ?? archive.created_at, zh)}</div>
                   </div>
                 </div>
+                <OptReportPanel resultJson={archive.result_json} zh={zh} />
+                </>
               ) : null}
             </div>
           )}
@@ -329,27 +334,19 @@ export default function AgentCenterPage() {
                   <th>{zh ? "域" : "Domain"}</th><th>{zh ? "目标列" : "Target"}</th>
                   <th>{zh ? "版本" : "Version"}</th><th>{zh ? "状态" : "Status"}</th>
                   <th>{zh ? "变更说明" : "Change note"}</th><th>{zh ? "更新时间" : "Updated"}</th>
+                  <th>{zh ? "操作" : "Actions"}</th>
                 </tr></thead>
                 <tbody>
                   {recipes.map((recipe) => (
-                    <tr key={recipe.id}>
-                      <td className="tt">{recipe.name}</td>
-                      <td>{recipe.project_name ?? "-"}</td>
-                      <td>{recipe.domain ?? "-"}</td>
-                      <td className="tt">{recipe.target_column ?? "-"}</td>
-                      <td>v{recipe.current_version}</td>
-                      <td><span className={`v2-badge ${recipe.version_status === "current" ? "v2-bg" : "v2-bgray"}`}>{recipe.version_status ?? "-"}</span></td>
-                      <td title={recipe.change_note ?? ""}>{recipe.change_note ? (recipe.change_note.length > 24 ? recipe.change_note.slice(0, 24) + "…" : recipe.change_note) : "-"}</td>
-                      <td>{relativeTime(recipe.updated_at ?? recipe.created_at, zh)}</td>
-                    </tr>
+                    <RecipeRow key={recipe.id} recipe={recipe} zh={zh} onChanged={loadAgentData} />
                   ))}
                 </tbody>
               </table>
             ) : null}
           </div>
           <div className="v2-note">🧪 {zh
-            ? "配方版本化 / 回滚 / delta 复用 / 换模跟随由后端 P3 交付；此页只读展示元数据，特征脚本与建模配置不经过该接口出域。"
-            : "Recipe versioning, rollback, delta reuse and swap-following shipped with P3; this view exposes metadata only — scripts and configs never leave through this endpoint."}</div>
+            ? "验收通过的任务在档案页一键固化配方；版本树支持展开与 git 式回滚（回滚=发新版本携带旧内容）；delta 复用与换模跟随复用走服务化链路。"
+            : "Accepted runs fixate their recipe from the archive panel; version tree supports expand and git-style rollback; delta reuse and swap-following ride the servitization chain."}</div>
         </>
       )}
 

@@ -9,6 +9,16 @@ const agentCenterMocks = vi.hoisted(() => ({
   listPipelineRecipes: vi.fn(),
   getAgentRun: vi.fn(),
   createAgentRun: vi.fn(),
+  fetchDatasetProfile: vi.fn().mockResolvedValue({
+    row_count: 0,
+    column_count: 0,
+    columns: [],
+    mutual_info_top: [],
+    target: null,
+  }),
+  fixateRecipe: vi.fn(),
+  listRecipeVersions: vi.fn().mockResolvedValue([]),
+  rollbackRecipe: vi.fn(),
 }));
 const datasetMocks = vi.hoisted(() => ({
   listDatasets: vi.fn(),
