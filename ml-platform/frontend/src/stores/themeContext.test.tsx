@@ -18,20 +18,20 @@ describe("ThemeProvider", () => {
     delete document.documentElement.dataset.theme;
   });
 
-  it("defaults to the light theme and synchronizes it to the document root", () => {
+  it("defaults to the dark theme (v2 redesign base) and synchronizes it to the document root", () => {
     render(
       <ThemeProvider>
         <ThemeProbe />
       </ThemeProvider>
     );
 
-    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
     expect(localStorage.getItem("theme")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "light" }));
+    fireEvent.click(screen.getByRole("button", { name: "dark" }));
 
-    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
-    expect(localStorage.getItem("theme")).toBe("dark");
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    expect(localStorage.getItem("theme")).toBe("light");
   });
 
   it("honors a previously saved theme over the default", () => {

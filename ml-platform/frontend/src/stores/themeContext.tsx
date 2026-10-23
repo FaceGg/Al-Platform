@@ -15,10 +15,10 @@ const ThemeContext = createContext<ThemeCtx>({
 });
 
 export function ThemeProvider({ children }: { children: any }) {
-  // 默认明亮主题；仅在用户显式切换过（localStorage 有合法值）时沿用其选择
+  // 默认深色主题（v2 改版基色）；仅在用户显式切换过（localStorage 有合法值）时沿用其选择
   const [theme, setThemeState] = useState<Theme>(() => {
     const saved = localStorage.getItem("theme") as Theme;
-    return saved === "light" || saved === "dark" ? saved : "light";
+    return saved === "light" || saved === "dark" ? saved : "dark";
   });
 
   useEffect(() => {

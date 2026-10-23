@@ -12,6 +12,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 import app.main  # noqa: E402,F401 (load the complete ORM graph)
 from app.config import settings  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
+from app.models.model_registry import DeploymentRollout  # noqa: E402
 from app.services.inference_runtime_client import InferenceRuntimeClient  # noqa: E402
 from app.services.inference_rollout import InferenceRolloutService  # noqa: E402
 
@@ -30,13 +31,16 @@ def _service() -> InferenceRolloutService:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: advance_inference_rollout.py ROLLOUT_ID preload|complete")
+    if len(sys.argv) not in (3, 4):
+        raise SystemExit(
+            "usage: advance_inference_rollout.py ROLLOUT_ID preload|complete|observe [OBSERVATION_JSON]"
+        )
     rollout_id = uuid.UUID(sys.argv[1])
     action = sys.argv[2]
     service = _service()
 
     with SessionLocal() as db:
+        last_error_code = None
         if action == "preload":
             rollout = service.preload(db, rollout_id)
         elif action == "complete":
@@ -48,14 +52,40 @@ def main() -> int:
                     expected_lock_version=rollout.lock_version,
                     observation={"error_rate": 0.0, "p95_ms": 1.0},
                 )
+        elif action == "observe":
+            if len(sys.argv) != 4:
+                raise SystemExit("observe requires an OBSERVATION_JSON argument")
+            observation = json.loads(sys.argv[3])
+            rollout = db.get(DeploymentRollout, rollout_id)
+            if rollout is None:
+                raise RuntimeError("rollout not found")
+            try:
+                rollout = service.advance(
+                    db,
+                    rollout_id,
+                    expected_lock_version=rollout.lock_version,
+                    observation=observation,
+                )
+            except Exception as error:
+                if getattr(error, "code", None) not in {
+                    "ROLLOUT_HEALTH_THRESHOLD_EXCEEDED",
+                    "ROLLOUT_REVISION_CONFLICT",
+                }:
+                    raise
+                db.expire_all()
+                rollout = db.get(DeploymentRollout, rollout_id)
+                if rollout is None:
+                    raise RuntimeError("rollout disappeared after rollout advance")
+                last_error_code = getattr(error, "code", None)
         else:
-            raise SystemExit("action must be preload or complete")
+            raise SystemExit("action must be preload, complete or observe")
 
         print(json.dumps({
             "id": str(rollout.id),
             "state": rollout.state,
             "current_step": rollout.current_step,
             "lock_version": rollout.lock_version,
+            "last_error_code": last_error_code,
         }))
     return 0
 

@@ -1,10 +1,11 @@
-﻿import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vitest";
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import AppLayout from "./AppLayout";
 import { beforeEach, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { LangProvider } from "../i18n";
+import { ThemeProvider } from "../stores/themeContext";
 
 const notificationMocks = vi.hoisted(() => ({
   getUnreadCount: vi.fn(),
@@ -17,9 +18,10 @@ vi.mock("../api/securityNotifications", () => ({
   notificationsApi: notificationMocks,
 }));
 
-describe("AppLayout", () => {
+describe("AppLayout (v2 five-view shell)", () => {
   beforeEach(() => {
     localStorage.setItem("lang", "en");
+    localStorage.removeItem("theme");
     notificationMocks.getUnreadCount.mockReset().mockResolvedValue(2);
     notificationMocks.listInAppNotifications.mockReset().mockResolvedValue({ items: [], total: 0 });
     notificationMocks.markRead.mockReset();
@@ -51,13 +53,24 @@ describe("AppLayout", () => {
     await waitFor(() => expect(container).toBeTruthy());
   });
 
-  it("renders sidebar navigation", async () => {
+  it("renders the portal sidebar on the portal route", async () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/"]}>
         <AppLayout><div>test</div></AppLayout>
       </MemoryRouter>
     );
-    await waitFor(() => expect(document.querySelector(".ant-layout-sider")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("v2-sidebar")).toBeTruthy());
+    expect(within(screen.getByTestId("v2-sidebar")).getByText("首页门户")).toBeInTheDocument();
+    expect(within(screen.getByTestId("v2-sidebar")).getByText("项目管理")).toBeInTheDocument();
+  });
+
+  it("renders the algo sidebar with annotation and API market entries on algo routes", async () => {
+    render(
+      <MemoryRouter initialEntries={["/automl"]}>
+        <AppLayout><div>test</div></AppLayout>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByTestId("v2-sidebar")).toBeTruthy());
     expect(screen.getByText("数据标注")).toBeInTheDocument();
     expect(screen.getByText(/API\s*(市场|Market)/)).toBeInTheDocument();
   });
@@ -74,7 +87,7 @@ describe("AppLayout", () => {
       </MemoryRouter>,
     );
 
-    expect((await screen.findAllByText(brandName)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(new RegExp(brandName))).length).toBeGreaterThan(0);
   });
 
   it("navigates to the API marketplace from the sidebar", async () => {
@@ -82,7 +95,7 @@ describe("AppLayout", () => {
       const location = useLocation();
       return <output data-testid="location">{location.pathname}</output>;
     }
-    render(<MemoryRouter><AppLayout><LocationProbe /></AppLayout></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/automl"]}><AppLayout><LocationProbe /></AppLayout></MemoryRouter>);
     fireEvent.click(await screen.findByText(/API\s*(市场|Market)/));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/api-marketplace"));
   });
@@ -90,12 +103,30 @@ describe("AppLayout", () => {
   it("marks the theme toggle and header with stable theme-aware hooks", async () => {
     render(
       <MemoryRouter>
-        <LangProvider><AppLayout><div>test</div></AppLayout></LangProvider>
+        <LangProvider><ThemeProvider><AppLayout><div>test</div></AppLayout></ThemeProvider></LangProvider>
       </MemoryRouter>,
     );
 
     expect(document.querySelector(".app-header")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /switch to dark mode/i })).toBeInTheDocument();
+    // Default theme is dark (v2 base) so the toggle offers switching to light mode.
+    expect(await screen.findByRole("button", { name: /switch to light mode/i })).toBeInTheDocument();
+  });
+
+  it("keeps the five view tabs visible and switches the active view", async () => {
+    function LocationProbe() {
+      const location = useLocation();
+      return <output data-testid="location">{location.pathname}</output>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <LangProvider><AppLayout><LocationProbe /></AppLayout></LangProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("button", { name: /agent center/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /agent center/i }));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/agent"));
+    expect(within(screen.getByTestId("v2-sidebar")).getByText("Agent Center")).toBeInTheDocument();
   });
 
   it("selects data annotation instead of the shorter data route", async () => {
@@ -105,10 +136,10 @@ describe("AppLayout", () => {
       </MemoryRouter>,
     );
 
-    const annotationItem = screen.getByText("数据标注").closest("li");
-    const dataItem = screen.getByText("数据管理").closest("li");
-    expect(annotationItem).toHaveClass("ant-menu-item-selected");
-    expect(dataItem).not.toHaveClass("ant-menu-item-selected");
+    const annotationItem = screen.getByText("数据标注").closest("button");
+    const dataItem = screen.getByText("数据管理").closest("button");
+    expect(annotationItem).toHaveClass("on");
+    expect(dataItem).not.toHaveClass("on");
   });
 
   it("renders the stable notification trigger with its unread count", async () => {

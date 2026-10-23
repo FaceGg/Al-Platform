@@ -167,80 +167,20 @@ function runInferenceFixture<T>(
   }
 }
 
-const ADVANCE_ROLLOUT_ONCE = String.raw`
-import json
-import sys
-import uuid
-
-import app.main
-from app.config import settings
-from app.database import SessionLocal
-from app.models.model_registry import DeploymentRollout
-from app.services.inference_rollout import InferenceRolloutService
-from app.services.inference_runtime_client import InferenceRuntimeClient
-
-rollout_id = uuid.UUID(sys.argv[1])
-observation = json.loads(sys.argv[2])
-secret = settings.resolved_inference_internal_secret
-if secret is None or not settings.inference_runtime_url:
-    raise RuntimeError("inference runtime is not configured")
-runtime = InferenceRuntimeClient(
-    settings.inference_runtime_url,
-    secret.get_secret_value(),
-    load_timeout_seconds=settings.inference_load_timeout_seconds,
-    predict_timeout_seconds=settings.inference_predict_timeout_seconds,
-)
-with SessionLocal() as db:
-    rollout = db.get(DeploymentRollout, rollout_id)
-    if rollout is None:
-        raise RuntimeError("rollout not found")
-    error_code = None
-    try:
-        advanced = InferenceRolloutService(runtime).advance(
-            db,
-            rollout_id,
-            expected_lock_version=rollout.lock_version,
-            observation=observation,
-        )
-    except Exception as error:
-        if getattr(error, "code", None) not in {
-            "ROLLOUT_HEALTH_THRESHOLD_EXCEEDED",
-            "ROLLOUT_REVISION_CONFLICT",
-        }:
-            raise
-        db.expire_all()
-        advanced = db.get(DeploymentRollout, rollout_id)
-        if advanced is None:
-            raise RuntimeError("rollout disappeared after rollout advance")
-        error_code = getattr(error, "code", None)
-    print(json.dumps({
-        "state": advanced.state,
-        "current_step": advanced.current_step,
-        "lock_version": advanced.lock_version,
-        "last_error_code": error_code,
-    }))
-`;
-
 function advanceRolloutOnce(
   config: Week12AcceptanceConfig,
   rolloutId: string,
   observation: { error_rate: number; p95_ms: number },
 ): RolloutFixtureResult {
-  try {
-    const output = execFileSync(
-      resolveE2ePython(),
-      ["-c", ADVANCE_ROLLOUT_ONCE, rolloutId, JSON.stringify(observation)],
-      {
-        cwd: path.resolve(import.meta.dirname, "../../backend"),
-        encoding: "utf-8",
-        env: fixtureEnvironment(config),
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    return JSON.parse(output) as RolloutFixtureResult;
-  } catch {
-    throw new Error("isolated rollout advance fixture failed");
-  }
+  // The observe action advances one step with a caller-supplied observation and
+  // reports rollout terminal error codes instead of crashing on them.
+  return runInferenceFixture<RolloutFixtureResult>(
+    config,
+    "advance_inference_rollout.py",
+    rolloutId,
+    "observe",
+    JSON.stringify(observation),
+  );
 }
 
 async function loginAs(page: Page, credentials: Credentials, baseUrl: string): Promise<void> {

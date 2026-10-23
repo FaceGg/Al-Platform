@@ -557,7 +557,7 @@ export default function ModelLibraryPage() {
   const keyColumns = [
     { title: production.keyPrefix, dataIndex: "prefix", key: "prefix" },
     { title: production.keyStatus, key: "status", render: (_: unknown, row: InferenceApiKey) => row.revoked_at ? <Tag color="error">{production.revoked}</Tag> : isApiKeyExpired(row) ? <Tag color="warning">{production.expired}</Tag> : <Tag color="success">{production.active}</Tag> },
-    { title: t.model.actions, key: "actions", width: 90, align: "right" as const, render: (_: unknown, row: InferenceApiKey) => canRegister && !row.revoked_at ? <div className="table-row-actions"><TableRowAction label={`${production.rotateApiKey} ${row.prefix}`} icon={<SyncOutlined />} disabled={isApiKeyExpired(row)} onClick={() => void handleRotateApiKey(row)} /><TableRowAction label={`${production.revokeApiKey} ${row.prefix}`} icon={<StopOutlined />} warning onClick={() => void handleRevokeApiKey(row)} /></div> : null },
+    { title: t.model.actions, key: "actions", width: 90, align: "right" as const, render: (_: unknown, row: InferenceApiKey) => canRegister && !row.revoked_at ? <div className="table-row-actions"><TableRowAction label={`${production.rotateAccessToken} ${row.prefix}`} icon={<SyncOutlined />} disabled={isApiKeyExpired(row)} onClick={() => void handleRotateApiKey(row)} /><TableRowAction label={`${production.revokeAccessToken} ${row.prefix}`} icon={<StopOutlined />} warning onClick={() => void handleRevokeApiKey(row)} /></div> : null },
   ];
 
   const logColumns = [
@@ -683,8 +683,8 @@ export default function ModelLibraryPage() {
 
         <section aria-labelledby="api-keys-heading">
           <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
-            <Title id="api-keys-heading" level={5} style={{ margin: 0 }}><KeyOutlined /> {production.apiKeys}</Title>
-            {canRegister && <Button icon={<KeyOutlined />} aria-label={production.createApiKey} onClick={() => void handleCreateApiKey()}>{production.createApiKey}</Button>}
+            <Title id="api-keys-heading" level={5} style={{ margin: 0 }}><KeyOutlined /> {production.accessTokens}</Title>
+            {canRegister && <Button icon={<KeyOutlined />} aria-label={production.createAccessToken} onClick={() => void handleCreateApiKey()}>{production.createAccessToken}</Button>}
           </Space>
           <div style={{ overflowX: "auto" }}>
             <Table
@@ -694,7 +694,7 @@ export default function ModelLibraryPage() {
               columns={keyColumns}
               pagination={false}
               scroll={{ x: 600 }}
-              locale={{ emptyText: <Empty description={canRegister ? production.emptyApiKeys : copy.permissionDenied} /> }}
+              locale={{ emptyText: <Empty description={canRegister ? production.emptyAccessTokens : copy.permissionDenied} /> }}
             />
           </div>
         </section>
@@ -755,13 +755,13 @@ export default function ModelLibraryPage() {
       </Space>}
     </Drawer>
     {createdKey && <Modal
-      title={production.keyCreated}
+      title={production.tokenCreated}
       open
       destroyOnHidden
       onCancel={() => setCreatedKey(undefined)}
-      footer={<Button icon={<KeyOutlined />} aria-label={production.closeCreatedKey} onClick={() => setCreatedKey(undefined)}>{t.common.close}</Button>}
+      footer={<Button icon={<KeyOutlined />} aria-label={production.closeCreatedToken} onClick={() => setCreatedKey(undefined)}>{t.common.close}</Button>}
     >
-      <Input.Password aria-label={production.keyPlaintext} readOnly value={createdKey.plaintext} />
+      <Input.Password aria-label={production.tokenPlaintext} readOnly value={createdKey.plaintext} />
     </Modal>}
     <Modal title={production.createRollout} open={rolloutOpen} onCancel={() => setRolloutOpen(false)} onOk={() => void submitRollout()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
       <Form form={rolloutForm} layout="vertical" autoComplete="off">

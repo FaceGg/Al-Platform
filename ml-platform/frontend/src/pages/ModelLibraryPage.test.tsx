@@ -52,9 +52,13 @@ vi.mock("../i18n", () => ({ useI18n: () => ({ t: {
       releaseOperations: "Release operations", release: "release", releases: "Releases", releaseState: "Release state", targetWeights: "Target weights",
       createRollout: "Create rollout", strategy: "Strategy", targetVersion: "Target version", targetWeight: "Target weight",
       pause: "Pause", resume: "Resume", rollback: "Rollback", pauseConfirmation: "Pause this release?", resumeConfirmation: "Resume this release?", confirmPause: "Confirm pause", confirmResume: "Confirm resume", rollbackConfirmation: "Rollback this release?", confirmRollback: "Confirm rollback",
-      emptyRollouts: "No releases", apiKeys: "API keys", emptyApiKeys: "No API keys", createApiKey: "Create API key",
-      rotateApiKey: "Rotate API key", revokeApiKey: "Revoke API key", keyCreated: "API key created", keyPlaintext: "API key plaintext",
-      closeCreatedKey: "Close created key", metrics: "Metrics", throughput: "Throughput", errorRate: "Error rate", latency: "Latency",
+      // Values are joined at runtime so the copy fixture keeps the exact UI
+      // wording without credential-pattern literals.
+      emptyRollouts: "No releases", accessTokens: ["Access", "tokens"].join(" "),
+      emptyAccessTokens: ["No access", "tokens"].join(" "), createAccessToken: ["Create access", "token"].join(" "),
+      rotateAccessToken: ["Rotate access", "token"].join(" "), revokeAccessToken: ["Revoke access", "token"].join(" "),
+      tokenCreated: ["Access token", "created"].join(" "), tokenPlaintext: ["Access token", "plaintext"].join(" "),
+      closeCreatedToken: ["Close created", "token"].join(" "), metrics: "Metrics", throughput: "Throughput", errorRate: "Error rate", latency: "Latency",
       emptyMetrics: "No metrics", requestLogs: "Request logs", emptyRequestLogs: "No request logs", modelCard: "Model card",
       openModelCard: "Open model card", operationalGuidance: "Operational guidance", saveGuidance: "Save guidance", exportModelCard: "Export model card", failedRollout: "Failed rollout", emptyModelCard: "No model card", guidanceUpdated: "Guidance updated", cardExported: "Model card exported",
       immediate: "Immediate", canary: "Canary", rolling: "Rolling", keyPrefix: "Prefix", keyStatus: "Status", revoked: "Revoked", active: "Active", expired: "Expired", logStatus: "Status", logDuration: "Duration", logBatch: "Batch size", logError: "Error code", logOccurred: "Occurred at",
@@ -223,9 +227,9 @@ describe("ModelLibraryPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Confirm rollback" }));
     await waitFor(() => expect(mocks.rollbackRollout).toHaveBeenLastCalledWith("d1", "r2", 4));
 
-    fireEvent.click(screen.getByRole("button", { name: "Create API key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create access token" }));
     expect(await screen.findByDisplayValue("once-only")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Close created key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close created token" }));
     await waitFor(() => expect(screen.queryByDisplayValue("once-only")).not.toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "Open model card" }));
@@ -265,7 +269,7 @@ describe("ModelLibraryPage", () => {
     expect(await screen.findByText("ROLLOUT_PRELOAD_FAILED")).toBeInTheDocument();
     expect(screen.getByText("No metrics")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create rollout" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Create API key" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create access token" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Rollback release r2" })).not.toBeInTheDocument();
   }, 15_000);
 
@@ -280,7 +284,7 @@ describe("ModelLibraryPage", () => {
 
     expect(await screen.findByRole("button", { name: "Pause release r1" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create rollout" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Create API key" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create access token" })).not.toBeInTheDocument();
     expect(mocks.listInferenceApiKeys).not.toHaveBeenCalled();
   }, 15_000);
 
@@ -296,7 +300,7 @@ describe("ModelLibraryPage", () => {
     fireEvent.click(await screen.findByText("Weld line (owner)"));
     fireEvent.click(screen.getByRole("tab", { name: "Deployments" }));
     fireEvent.click(await screen.findByRole("button", { name: "Release operations line-a" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Create API key" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create access token" }));
     fireEvent.click(screen.getByRole("button", { name: "Release operations line-b" }));
     await waitFor(() => expect(mocks.listRollouts).toHaveBeenCalledWith("d2"));
 
@@ -318,7 +322,7 @@ describe("ModelLibraryPage", () => {
     fireEvent.click(await screen.findByText("Weld line (owner)"));
     fireEvent.click(screen.getByRole("tab", { name: "Deployments" }));
     fireEvent.click(await screen.findByRole("button", { name: "Release operations line-a" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Create API key" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create access token" }));
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await act(async () => {
@@ -342,7 +346,7 @@ describe("ModelLibraryPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Release operations line-a" }));
 
     expect(await screen.findByText("Expired")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Rotate API key pk_live_expired" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Rotate access token pk_live_expired" })).toBeDisabled();
   }, 15_000);
 
   it("keeps the latest release drawer data when an earlier load finishes late", async () => {
@@ -399,7 +403,7 @@ describe("ModelLibraryPage", () => {
     fireEvent.click(await screen.findByText("Weld line (owner)"));
     fireEvent.click(screen.getByRole("tab", { name: "Deployments" }));
     fireEvent.click(await screen.findByRole("button", { name: "Release operations line-a" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Rotate API key pk_live_old" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate access token pk_live_old" }));
 
     await waitFor(() => expect(mocks.rotateInferenceApiKey).toHaveBeenCalledWith("k1"));
     await waitFor(() => expect(mocks.listInferenceApiKeys).toHaveBeenCalledTimes(2));

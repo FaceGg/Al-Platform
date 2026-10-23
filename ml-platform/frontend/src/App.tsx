@@ -7,6 +7,7 @@ import PageErrorBoundary from "./components/PageErrorBoundary";
 
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const RegisterPage = lazy(() => import("./pages/RegisterPage"));
+const PortalPage = lazy(() => import("./pages/PortalPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const ProjectListPage = lazy(() => import("./pages/ProjectListPage"));
 const ProjectDetailPage = lazy(() => import("./pages/ProjectDetailPage"));
@@ -37,6 +38,7 @@ const ImageCatalogPage = lazy(() => import("./pages/ImageCatalogPage"));
 const ClusterGovernancePage = lazy(() => import("./pages/ClusterGovernancePage"));
 const LLMGatewayPage = lazy(() => import("./pages/LLMGatewayPage"));
 const KnowledgeCenterPage = lazy(() => import("./pages/KnowledgeCenterPage"));
+const AgentCenterPage = lazy(() => import("./pages/AgentCenterPage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
 
 const LIGHT_TOKENS = {
@@ -62,15 +64,15 @@ const DARK_TOKENS = {
   colorWarning: "#D9AC52",
   colorError: "#E66F75",
   colorInfo: "#2F9BF5",
-  borderRadius: 14,
-  borderRadiusLG: 20,
+  borderRadius: 10,
+  borderRadiusLG: 14,
   fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif",
-  colorBgContainer: "#10222C",
-  colorBgLayout: "#0C151C",
-  colorBgElevated: "#152C38",
-  colorBorder: "rgba(147, 190, 207, 0.20)",
-  colorText: "#EDF6FA",
-  colorTextSecondary: "#9BB2BF",
+  colorBgContainer: "#16223a",
+  colorBgLayout: "#0d1420",
+  colorBgElevated: "#1b2a47",
+  colorBorder: "#24344f",
+  colorText: "#D8E2F0",
+  colorTextSecondary: "#8FA8C4",
 };
 
 function AppContent() {
@@ -90,7 +92,8 @@ function AppContent() {
             <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
-            <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+            <Route path="/" element={<ProtectedRoute><PortalPage /></ProtectedRoute>} />
+            <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
             <Route path="/projects" element={<ProtectedRoute><ProjectListPage /></ProtectedRoute>} />
             <Route path="/projects/:projectId" element={<ProtectedRoute><ProjectDetailPage /></ProtectedRoute>} />
             <Route path="/workspace/:workflowId" element={<ProtectedRoute><WorkspacePage /></ProtectedRoute>} />
@@ -100,6 +103,7 @@ function AppContent() {
             <Route path="/admin/users" element={<ProtectedRoute><UserManagementPage /></ProtectedRoute>} />
             <Route path="/llm-gateway" element={<ProtectedRoute><LLMGatewayPage /></ProtectedRoute>} />
             <Route path="/knowledge-center" element={<ProtectedRoute><KnowledgeCenterPage /></ProtectedRoute>} />
+            <Route path="/agent" element={<ProtectedRoute><PageErrorBoundary pageName="智能体中心"><AgentCenterPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/knowledge" element={<ProtectedRoute><KnowledgeBasePage /></ProtectedRoute>} />
             <Route path="/knowledge/:kbId" element={<ProtectedRoute><KnowledgeDetailPage /></ProtectedRoute>} />
             <Route path="/knowledge-graph" element={<ProtectedRoute><KnowledgeGraphPage /></ProtectedRoute>} />

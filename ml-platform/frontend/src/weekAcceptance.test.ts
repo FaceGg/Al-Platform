@@ -114,6 +114,10 @@ const weekTestFiles: Record<number | string, string[]> = {
   p6: [
     "./pages/KnowledgeCenterPage.test.tsx",
   ],
+  frontend_v2: [
+    "./pages/PortalPage.test.tsx",
+    "./pages/AgentCenterPage.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(

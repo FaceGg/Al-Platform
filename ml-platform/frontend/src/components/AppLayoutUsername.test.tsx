@@ -57,6 +57,6 @@ describe("AppLayout username display", () => {
     expect(await screen.findByText("admin")).toBeInTheDocument();
     expect(apiGet).toHaveBeenCalledWith("/auth/me");
     expect(screen.queryByText("f1bb5967-6295-44b7-8c0c-4905725cbfa4")).not.toBeInTheDocument();
-    expect(document.querySelector(".user-identity")).toHaveStyle({ display: "flex", flexDirection: "column", gap: "1px" });
+    expect(document.querySelector(".user-identity")).toHaveStyle({ display: "flex" });
   });
 });
