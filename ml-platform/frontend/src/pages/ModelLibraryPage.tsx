@@ -25,6 +25,7 @@ import {
 } from "../api/modelRegistry";
 import { createModelExport, downloadModelExport, getModelExport } from "../api/modelExports";
 import AppLayout from "../components/AppLayout";
+import V2PageFrame from "../components/V2PageFrame";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
 import { useI18n } from "../i18n";
@@ -569,10 +570,10 @@ export default function ModelLibraryPage() {
   ];
 
   return <AppLayout>
+    <V2PageFrame title={copy.title} desc={copy.selectHint} testId="v2-model-library">
     <section style={{ maxWidth: 1440, margin: "0 auto" }}>
       <Space direction="vertical" size={20} style={{ width: "100%" }}>
         <div>
-          <Title level={3} style={{ marginBottom: 12 }}>{copy.title}</Title>
           <Select aria-label={copy.project} placeholder={copy.selectProject} value={projectId} onChange={setProjectId} style={{ width: "min(420px, 100%)" }} options={projects.map((item) => ({ value: item.id, label: `${item.name} (${statusLabel(item.project_role)})` }))} />
         </div>
         {!projectId ? <Empty description={copy.selectHint} /> : <>
@@ -770,5 +771,6 @@ export default function ModelLibraryPage() {
         <Form.Item name="target_weight" label={production.targetWeight} initialValue={10000} rules={[{ required: true }]}><Input type="number" min={0} max={10000} /></Form.Item>
       </Form>
     </Modal>
+    </V2PageFrame>
   </AppLayout>;
 }

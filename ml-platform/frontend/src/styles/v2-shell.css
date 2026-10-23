@@ -254,3 +254,98 @@
   display: inline-flex; align-items: center; border-radius: 4px;
   font-size: 10.5px; background: rgba(124, 189, 247, .1); color: var(--v2-dim);
 }
+
+/* ============================================================
+   P3 v2-legacy：既有 antd 页面的 v2 深色适配（不改页面逻辑）
+   ============================================================ */
+.v2-legacy { min-height: 100%; }
+
+.v2-legacy .ant-card {
+  background: var(--v2-panel) !important;
+  border-color: var(--v2-line) !important;
+  border-radius: 10px !important;
+  margin-bottom: 14px;
+}
+.v2-legacy .ant-card .ant-card-head {
+  background: transparent !important;
+  border-bottom-color: var(--v2-line) !important;
+  color: var(--v2-txt) !important;
+  min-height: 42px;
+}
+.v2-legacy .ant-card .ant-card-head-title { color: var(--v2-txt) !important; font-size: 14px; }
+.v2-legacy .ant-card .ant-card-body { padding: 14px !important; }
+
+.v2-legacy .ant-table {
+  background: transparent !important;
+  color: var(--v2-sub) !important;
+}
+.v2-legacy .ant-table-thead > tr > th,
+.v2-legacy .ant-table-thead > tr > td {
+  background: rgba(36, 52, 79, .35) !important;
+  color: var(--v2-dim) !important;
+  font-size: 12px !important;
+  border-bottom: 1px solid var(--v2-line) !important;
+  padding: 8px 12px !important;
+}
+.v2-legacy .ant-table-tbody > tr > td {
+  color: var(--v2-txt) !important;
+  font-size: 12.5px !important;
+  border-bottom: 1px solid rgba(36, 52, 79, .2) !important;
+  padding: 8px 12px !important;
+}
+.v2-legacy .ant-table-tbody > tr:hover > td {
+  background: rgba(47, 155, 245, .06) !important;
+}
+.v2-legacy .ant-table.ant-table-small .ant-table-thead > tr > th,
+.v2-legacy .ant-table.ant-table-small .ant-table-tbody > tr > td {
+  padding: 6px 10px !important;
+}
+
+.v2-legacy .ant-pagination { margin-top: 12px !important; }
+.v2-legacy .ant-pagination .ant-pagination-item {
+  background: transparent !important;
+  border-color: var(--v2-line) !important;
+  color: var(--v2-sub) !important;
+}
+.v2-legacy .ant-pagination .ant-pagination-item-active {
+  background: rgba(47, 155, 245, .15) !important;
+  border-color: rgba(47, 155, 245, .4) !important;
+  color: var(--v2-blue2) !important;
+}
+
+.v2-legacy .ant-tag {
+  background: rgba(47, 155, 245, .1) !important;
+  border-color: rgba(47, 155, 245, .2) !important;
+  color: var(--v2-blue2) !important;
+  font-size: 11px !important;
+}
+.v2-legacy .ant-tag.ant-tag-success { background: rgba(71,195,160,.1) !important; border-color: rgba(71,195,160,.2) !important; color: #6bc7a8 !important; }
+.v2-legacy .ant-tag.ant-tag-error { background: rgba(230,111,117,.1) !important; border-color: rgba(230,111,117,.2) !important; color: #e68f93 !important; }
+.v2-legacy .ant-tag.ant-tag-warning { background: rgba(255,209,102,.1) !important; border-color: rgba(255,209,102,.2) !important; color: #ecc76e !important; }
+
+.v2-legacy .ant-btn { border-radius: 6px !important; }
+.v2-legacy .ant-form-item-label > label { color: var(--v2-sub) !important; }
+.v2-legacy .ant-input,
+.v2-legacy .ant-select-selector,
+.v2-legacy .ant-input-number {
+  background: rgba(13, 20, 32, .5) !important;
+  border-color: var(--v2-line) !important;
+  color: var(--v2-txt) !important;
+}
+.v2-legacy .ant-input::placeholder,
+.v2-legacy .ant-select-selection-placeholder { color: var(--v2-dim) !important; }
+.v2-legacy .ant-modal .ant-modal-content {
+  background: var(--v2-bg) !important;
+  border: 1px solid var(--v2-line) !important;
+}
+.v2-legacy .ant-modal .ant-modal-header {
+  background: transparent !important;
+  border-bottom-color: var(--v2-line) !important;
+}
+.v2-legacy .ant-modal .ant-modal-title,
+.v2-legacy .ant-modal .ant-modal-body { color: var(--v2-txt) !important; }
+.v2-legacy .ant-empty-description { color: var(--v2-dim) !important; }
+.v2-legacy .ant-tabs-tab { color: var(--v2-sub) !important; }
+.v2-legacy .ant-tabs-tab-active .ant-tabs-tab-btn { color: var(--v2-blue2) !important; }
+.v2-legacy .ant-descriptions-item-label { color: var(--v2-dim) !important; }
+.v2-legacy .ant-descriptions-item-content { color: var(--v2-txt) !important; }

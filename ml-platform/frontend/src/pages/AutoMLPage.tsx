@@ -14,6 +14,7 @@ import {
   type QualityRun,
 } from "../api/spotWeldQuality";
 import AppLayout from "../components/AppLayout";
+import V2PageFrame from "../components/V2PageFrame";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
 import { useI18n } from "../i18n";
@@ -720,8 +721,8 @@ export default function AutoMLPage() {
 
   return (
     <AppLayout>
+      <V2PageFrame title={t.automl?.title || "AutoML"} testId="v2-automl">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <h3>{t.automl?.title || "AutoML"}</h3>
         <Button icon={<PlusOutlined />} aria-label="新建" onClick={() => { setRecipeTab("general"); setResults(null); setConfigurationOpen(true); }}>新建</Button>
       </div>
       <Card title="建模任务" style={{ marginBottom: 16 }} extra={<Button type="link" onClick={() => void refreshModelingTasks()} loading={loadingModelingTasks}>刷新</Button>}>
@@ -1063,6 +1064,7 @@ export default function AutoMLPage() {
           </Space>
         </Card>}
       </section>}
+      </V2PageFrame>
     </AppLayout>
   );
 }

@@ -10,6 +10,7 @@ import apiClient from "../api/client";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
 import { acceptReturnBatch, diffReturnBatch, listReturnBatches, returnReturnBatch, type ReturnBatch, type ReturnDiffRow } from "../api/annotationReturns";
 import AppLayout from "../components/AppLayout";
+import V2PageFrame from "../components/V2PageFrame";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
 import ReturnBatchList from "../components/ReturnBatchList";
@@ -270,11 +271,10 @@ export default function DataManagePage() {
 
   return (
     <AppLayout>
+      <V2PageFrame title={t.data.title} testId="v2-data-manage">
       <div className="page-shell fade-in">
         <div className="page-header">
-          <div className="page-header-copy">
-            <h3 className="page-title">{t.data.title}</h3>
-          </div>
+          <div className="page-header-copy" />
           <Space className="page-actions" wrap>
             <Select
               placeholder={t.automl.select_project}
@@ -373,6 +373,7 @@ export default function DataManagePage() {
           </table>
         </div>}
       </Modal>
+      </V2PageFrame>
     </AppLayout>
   );
 }

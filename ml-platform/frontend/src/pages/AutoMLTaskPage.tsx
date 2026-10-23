@@ -5,6 +5,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import apiClient, { formatApiError } from "../api/client";
 import { registerAutoMLResult } from "../api/modelRegistry";
 import AppLayout from "../components/AppLayout";
+import V2PageFrame from "../components/V2PageFrame";
 import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 
 const { Title, Text } = Typography;
@@ -268,9 +269,9 @@ export default function AutoMLTaskPage() {
   };
 
   return <AppLayout>
+    <V2PageFrame title="建模任务进度" desc="通用自动建模全链路档案" testId="v2-automl-task">
     <div style={{ maxWidth: 1440, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <div><Text type="secondary">通用自动建模</Text><Title level={3} style={{ margin: 0 }}>建模任务进度</Title></div>
         <button type="button" className="ant-btn" onClick={() => navigate("/automl")}>返回任务列表</button>
       </div>
       {error && <Alert type="error" showIcon message={error} />}
@@ -343,5 +344,6 @@ export default function AutoMLTaskPage() {
         </Modal>
       </> : null}
     </div>
+    </V2PageFrame>
   </AppLayout>;
 }
