@@ -4,6 +4,7 @@ import { EyeOutlined, LockOutlined, DeleteOutlined, CheckOutlined, CloseOutlined
 import apiClient, { formatApiError } from '../api/client'
 import { grantAnnotatorProject, listAnnotatorProjectGrants, revokeAnnotatorProject } from '../api/annotatorAssignments'
 import AppLayout from '../components/AppLayout'
+import V2PageFrame from '../components/V2PageFrame'
 import { useI18n } from '../i18n'
 import { formatLocalTime } from '../utils/time'
 
@@ -240,6 +241,7 @@ export default function UserManagementPage() {
 
   return (
     <AppLayout>
+      <V2PageFrame title="用户管理" testId="v2-users">
       {currentUserRole === 'admin' && (
         <Card
           title="标注员账号审核"
@@ -440,6 +442,7 @@ export default function UserManagementPage() {
           options={grantProjects.map((project) => ({ value: project.id, label: project.name }))}
         />
       </Modal>
+      </V2PageFrame>
     </AppLayout>
   )
 }

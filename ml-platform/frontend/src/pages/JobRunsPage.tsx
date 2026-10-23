@@ -4,6 +4,7 @@ import { FileTextOutlined, ReloadOutlined, StopOutlined, SyncOutlined } from "@a
 import { App as AntApp } from "antd";
 import { formatApiError } from "../api/client";
 import AppLayout from "../components/AppLayout";
+import V2PageFrame from "../components/V2PageFrame";
 import { useI18n } from "../i18n";
 import {
   cancelJobRun,
@@ -194,6 +195,7 @@ export default function JobRunsPage() {
 
   return (
     <AppLayout>
+      <V2PageFrame title="作业运行" testId="v2-job-runs">
       <div style={{ padding: 24 }}>
         <Space style={{ marginBottom: 16 }}>
           <Typography.Title level={4} style={{ margin: 0 }}>
@@ -232,6 +234,7 @@ export default function JobRunsPage() {
           <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", fontSize: 12 }}>{logText}</pre>
         </Drawer>
       </div>
+      </V2PageFrame>
     </AppLayout>
   );
 }

@@ -4,6 +4,7 @@ import { ReloadOutlined } from "@ant-design/icons";
 
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
+import V2PageFrame from "../components/V2PageFrame";
 import { useI18n } from "../i18n";
 import "./MonitorPage.css";
 
@@ -347,16 +348,19 @@ export default function MonitorPage() {
 
   if (loading) {
     return <AppLayout>
+      <V2PageFrame title="资源监控" testId="v2-monitor">
       <div className="monitor-page page-shell fade-in" style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 300 }}>
         <Spin size="large" />
       </div>
+      </V2PageFrame>
     </AppLayout>;
   }
 
   return <AppLayout>
+    <V2PageFrame title="资源监控" testId="v2-monitor">
     <section className="monitor-page page-shell fade-in">
       <div className="page-header page-header--stacked">
-        <div className="page-header-copy"><h3 className="page-title">{t.monitor.title}</h3></div>
+        <div className="page-header-copy" />
         <Space direction="horizontal" size={16} align="center" wrap>
           {data?.uptime_seconds != null && (
             <Text type="secondary">{t.monitor.uptime}: {formatUptime(data.uptime_seconds)}</Text>
@@ -429,5 +433,6 @@ export default function MonitorPage() {
         </Col>
       </Row>
     </section>
+    </V2PageFrame>
   </AppLayout>;
 }

@@ -8,6 +8,7 @@ import {
   ReloadOutlined, ThunderboltOutlined,
 } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import V2PageFrame from "../components/V2PageFrame";
 import { apiGet, apiPost, apiPut, apiDelete } from "../api/client";
 import { parseBackendTime } from "../utils/time";
 
@@ -197,7 +198,8 @@ export default function ComputeResourcePage() {
 
   return (
     <AppLayout>
-      <Card title={<Title level={4}>计算资源管理</Title>}
+      <V2PageFrame title="计算资源管理" testId="v2-compute">
+      <Card title={null}
         extra={<Button icon={<ReloadOutlined />} onClick={() => { fetchNodes(); fetchDevices(); }}>刷新</Button>}>
         <Tabs
           activeKey={activeTab}
@@ -271,6 +273,7 @@ export default function ComputeResourcePage() {
           <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
         </Form>
       </Modal>
+      </V2PageFrame>
     </AppLayout>
   );
 }

@@ -4,6 +4,7 @@ import { PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { App as AntApp } from "antd";
 import { formatApiError } from "../api/client";
 import AppLayout from "../components/AppLayout";
+import V2PageFrame from "../components/V2PageFrame";
 import { useI18n } from "../i18n";
 import { ContainerImage, listImages, registerImage, updateImage } from "../api/notebooks";
 
@@ -102,6 +103,7 @@ export default function ImageCatalogPage() {
 
   return (
     <AppLayout>
+      <V2PageFrame title="镜像目录" testId="v2-images">
       <div style={{ padding: 24 }}>
         <Space style={{ marginBottom: 16 }}>
           <Typography.Title level={4} style={{ margin: 0 }}>
@@ -163,6 +165,7 @@ export default function ImageCatalogPage() {
           </Form>
         </Modal>
       </div>
+      </V2PageFrame>
     </AppLayout>
   );
 }

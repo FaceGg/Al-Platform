@@ -4,6 +4,7 @@ import { CaretRightOutlined, ReloadOutlined, StopOutlined } from "@ant-design/ic
 import { App as AntApp } from "antd";
 import apiClient, { formatApiError } from "../api/client";
 import AppLayout from "../components/AppLayout";
+import V2PageFrame from "../components/V2PageFrame";
 import { useI18n } from "../i18n";
 import {
   ContainerImage,
@@ -165,6 +166,7 @@ export default function NotebookPage() {
 
   return (
     <AppLayout>
+      <V2PageFrame title="Notebook 会话" testId="v2-notebooks">
       <div style={{ padding: 24 }}>
         <Space style={{ marginBottom: 16 }}>
           <Typography.Title level={4} style={{ margin: 0 }}>
@@ -232,6 +234,7 @@ export default function NotebookPage() {
           </Form>
         </Modal>
       </div>
+      </V2PageFrame>
     </AppLayout>
   );
 }

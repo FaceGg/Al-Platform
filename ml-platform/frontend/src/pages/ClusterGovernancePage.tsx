@@ -4,6 +4,7 @@ import { ReloadOutlined } from "@ant-design/icons";
 import { App as AntApp } from "antd";
 import { formatApiError } from "../api/client";
 import AppLayout from "../components/AppLayout";
+import V2PageFrame from "../components/V2PageFrame";
 import { useI18n } from "../i18n";
 import {
   listQuotaPolicies,
@@ -164,6 +165,7 @@ export default function ClusterGovernancePage() {
 
   return (
     <AppLayout>
+      <V2PageFrame title="集群治理" testId="v2-cluster-governance">
       <div style={{ padding: 24, display: "grid", gap: 16 }}>
         <Space>
           <Typography.Title level={4} style={{ margin: 0 }}>
@@ -217,6 +219,7 @@ export default function ClusterGovernancePage() {
           <Table rowKey="id" size="small" loading={loading} columns={usageColumns as never} dataSource={usage} pagination={false} />
         </Card>
       </div>
+      </V2PageFrame>
     </AppLayout>
   );
 }
