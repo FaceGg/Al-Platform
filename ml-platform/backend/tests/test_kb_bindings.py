@@ -8,6 +8,8 @@ os.environ.setdefault("LLM_MASTER_KEY", __import__(
     "cryptography.fernet", fromlist=["Fernet"]
 ).Fernet.generate_key().decode("ascii"))
 
+from fastapi.testclient import TestClient  # noqa: E402
+
 from app.database import Base, SessionLocal, engine  # noqa: E402
 from app.models.experience_entry import ExperienceEntry  # noqa: E402
 from app.models.kb_binding import KBBinding  # noqa: E402
@@ -24,6 +26,7 @@ from app.services.knowledge_center import (  # noqa: E402
 from tests.auth_test_support import ensure_admin  # noqa: E402
 
 Base.metadata.create_all(bind=engine)
+client = TestClient(_app := __import__("app.main", fromlist=["app"]).app)
 
 
 class TestKBCenter(unittest.TestCase):
@@ -196,3 +199,44 @@ class TestKBCenter(unittest.TestCase):
             db.commit()
             result = project_experience_entry(db, entry, self.admin_id)
         self.assertIsNone(result)
+
+
+class TestKnowledgeCenterAPI(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        ensure_admin()
+        token = client.post(
+            "/api/auth/login", data={"username": "admin", "password": "admin123"}
+        ).json()["access_token"]
+        cls.h = {"Authorization": "Bearer " + token}
+
+    def test_bindings_list_contains_system_partition(self):
+        response = client.get("/api/knowledge-center/bindings", headers=self.h)
+        self.assertEqual(response.status_code, 200)
+        names = [item["kb_name"] for item in response.json()]
+        self.assertTrue(any("平台经验" in name for name in names))
+
+    def test_experience_list_and_retire(self):
+        with SessionLocal() as db:
+            admin = db.query(User).filter(User.username == "admin").one()
+            entry = ExperienceEntry(
+                domain="tightening",
+                situation="s",
+                lesson="api-list-test",
+                action="a",
+                status="active",
+                confidence=0.9,
+                origin="distilled",
+                evidence_json={"source_tasks": ["t1"]},
+            )
+            db.add(entry)
+            db.commit()
+            entry_id = str(entry.id)
+        listed = client.get(
+            "/api/knowledge-center/experience?status=active", headers=self.h
+        )
+        self.assertIn(entry_id, [item["id"] for item in listed.json()])
+        retired = client.post(
+            "/api/knowledge-center/experience/%s/retire" % entry_id, headers=self.h
+        )
+        self.assertEqual(retired.json()["status"], "retired")

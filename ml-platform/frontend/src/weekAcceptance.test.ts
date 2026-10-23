@@ -111,6 +111,9 @@ const weekTestFiles: Record<number | string, string[]> = {
     "./api/llmProfiles.test.ts",
     "./pages/LLMGatewayPage.test.tsx",
   ],
+  p6: [
+    "./pages/KnowledgeCenterPage.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(

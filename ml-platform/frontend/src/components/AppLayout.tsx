@@ -41,6 +41,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { key: "/api-marketplace", icon: <ApiOutlined />, label: t.nav.api_market },
     { type: "divider" as const },
     { key: "/knowledge", icon: <DatabaseOutlined />, label: t.nav.knowledge },
+    { key: "/knowledge-center", icon: <BookOutlined />, label: t.nav.knowledge_center },
     { key: "/knowledge-graph", icon: <ApartmentOutlined />, label: t.knowledge?.graph || "Graph" },
     { key: "/chat", icon: <MessageOutlined />, label: t.nav.chat },
     { type: "divider" as const },

@@ -36,6 +36,7 @@ const ZH = {
     images: "镜像目录",
     cluster_governance: "集群治理",
     llm_gateway: "大模型网关",
+    knowledge_center: "知识中心",
   },
   llm: {
     title: "大模型网关",
@@ -72,6 +73,18 @@ const ZH = {
     keyKeepBlank: "留空则保持不变",
     httpsOnly: "仅支持 https 地址",
     setDefault: "设为默认档案",
+  },
+  kbcenter: {
+    title: "知识中心", refresh: "刷新", loadFailed: "加载失败", updateFailed: "更新失败",
+    retireOk: "已否决", noteOk: "附注已保存",
+    noteTitle: "附注（意见随条目存储，不改正文）", notePlaceholder: "人工附注",
+    noteSave: "保存", noteCancel: "取消", retire: "否决", retireConfirm: "确认否决该经验？",
+    note: "附注", systemTag: "系统库", experienceTitle: "平台经验（真源条目）",
+    colName: "名称", colDocs: "文档", colEnabled: "总开关", colScope: "项目范围",
+    colChat: "对话", colS1: "S1 检索", colTopK: "top_k", colTrigger: "触发",
+    colSync: "经验同步", colDomain: "域", colLesson: "教训", colAction: "动作",
+    colConfidence: "置信度", colStatus: "状态", colNote: "附注", colActions: "操作",
+    scopeAll: "全部项目", scopeUnbound: "未绑定", syncOff: "不接收",
   },
   common: {
     success: "\u6210\u529f",
@@ -755,7 +768,7 @@ const ZH = {
 
 const EN: Record<string, any> = {
   app: { title: "Linkraft", login: "Login", register: "Register", logout: "Logout", success: "Success", error: "Error", confirm: "Confirm" },
-  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", demo_loop: "Closed-Loop Automation", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources", kubernetes: "Kubernetes Clusters", job_runs: "Job Runs", notebooks: "Notebook Sessions", images: "Image Catalog", cluster_governance: "Cluster Governance", llm_gateway: "LLM Gateway" },
+  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", demo_loop: "Closed-Loop Automation", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources", kubernetes: "Kubernetes Clusters", job_runs: "Job Runs", notebooks: "Notebook Sessions", images: "Image Catalog", cluster_governance: "Cluster Governance", llm_gateway: "LLM Gateway", knowledge_center: "Knowledge Center" },
   llm: {
     title: "LLM Gateway", refresh: "Refresh", create: "New Profile", createTitle: "New Model Profile", editTitle: "Edit Model Profile",
     createOk: "Profile created", createFailed: "Create failed", updateOk: "Profile updated", updateFailed: "Update failed",
@@ -766,6 +779,18 @@ const EN: Record<string, any> = {
     colPurposes: "Purposes", colActions: "Actions", deploymentCloud: "Cloud", deploymentPrivate: "Private",
     providerCustom: "Custom URL", keyWriteOnly: "Keys are write-only; reads return a mask", keyKeepBlank: "Leave blank to keep unchanged",
     httpsOnly: "Only https URLs are allowed", setDefault: "Set as default profile",
+  },
+  kbcenter: {
+    title: "Knowledge Center", refresh: "Refresh", loadFailed: "Load failed", updateFailed: "Update failed",
+    retireOk: "Retired", noteOk: "Note saved",
+    noteTitle: "Note (stored with the entry, body is read-only)", notePlaceholder: "Human note",
+    noteSave: "Save", noteCancel: "Cancel", retire: "Retire", retireConfirm: "Retire this lesson?",
+    note: "Note", systemTag: "System", experienceTitle: "Platform Experience (source entries)",
+    colName: "Name", colDocs: "Docs", colEnabled: "Enabled", colScope: "Projects",
+    colChat: "Chat", colS1: "S1 Retrieval", colTopK: "top_k", colTrigger: "Trigger",
+    colSync: "Sync", colDomain: "Domain", colLesson: "Lesson", colAction: "Action",
+    colConfidence: "Confidence", colStatus: "Status", colNote: "Note", colActions: "Actions",
+    scopeAll: "All projects", scopeUnbound: "Unbound", syncOff: "Off",
   },
   kubernetes: {
     title: "Kubernetes Clusters",
