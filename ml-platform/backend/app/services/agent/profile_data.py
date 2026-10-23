@@ -215,6 +215,7 @@ def _mutual_info_top(
             codes, _uniques = pd.factorize(matrix[name])
             matrix[name] = codes
     matrix = matrix.astype(float)
+    matrix = matrix.replace([np.inf, -np.inf], np.nan).fillna(0.0)
     scores = mutual_info_classif(matrix, target_series, discrete_features=False, random_state=0)
     ranking = sorted(
         (

@@ -43,7 +43,7 @@ class LeakageSuspect(BaseModel):
 
 
 class AnalysisReport(BaseModel):
-    domain_hypothesis: str = Field(min_length=1, max_length=64)
+    domain_hypothesis: str = Field(min_length=1, max_length=200)
     domain_reasoning: str = Field(min_length=1, max_length=4000)
     focus_channels: list[FocusChannel] = Field(min_length=1)
     expected_important_features: list[ExpectedFeature] = Field(min_length=1)

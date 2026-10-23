@@ -26,7 +26,8 @@ S1_SYSTEM_PROMPT = (
     "契约）：domain_hypothesis / domain_reasoning / focus_channels[{name,columns,why}] / "
     "expected_important_features[{name_hint,reason,priority:high|medium|low}] / "
     "data_quality_actions[{column,issue,action}] / leakage_suspects[{column,why}] / "
-    "class_balance_concern / feature_engineering_brief。不要输出 JSON 以外的任何文字。"
+    "class_balance_concern / feature_engineering_brief。domain_hypothesis 用简短"
+    "标签（如 tightening / welding / smt，≤20 字）。不要输出 JSON 以外的任何文字。"
 )
 
 
@@ -90,6 +91,7 @@ def run_s1(
             config=config,
             messages=messages,
             temperature=0.2,
+            max_tokens=8000,
             purpose="agent_s1",
             actor=actor,
         )
