@@ -40,6 +40,7 @@ from app.models.llm_profile import LLMProfile
 from app.models.agent_run import AgentRun
 from app.models.recipe import PipelineRecipe, PipelineRecipeVersion
 from app.models.experience_entry import ExperienceEntry
+from app.models.skill_revision import SkillRevision
 from app.models.api_model import PlatformAPI
 from app.models.compute import ComputeNode, EdgeDevice
 from app.models.platform_models import (
@@ -138,6 +139,7 @@ __all__ = [
     "PipelineRecipe",
     "PipelineRecipeVersion",
     "ExperienceEntry",
+    "SkillRevision",
     "PlatformAPI",
     "ComputeNode",
     "EdgeDevice",
