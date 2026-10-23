@@ -1,6 +1,6 @@
 # 当前开发计划
 
-> 更新时间：2026-09-30。本文档是当前状态台账；完整历史执行记录已保存到 [2026-09-24 归档快照](DEVELOPMENT_PLAN.history-2026-09-24.md)。最近开发重点是 Week 13–17，详细实施步骤见 [Week 13–17 云原生与数据探索开发计划](ml-platform/docs/superpowers/plans/2026-09-24-week13-17-development.md)。
+> 更新时间：2026-10-23。当前主线：AutoML Agent 智能体方案（P1–P6 代码面完成，前端改版进行中）。已完成工作的完整历史记录见 [DEVELOPMENT_PLAN_ARCHIVE.md](DEVELOPMENT_PLAN_ARCHIVE.md)（2026-10-23 归档快照，含更早的 2026-09-24 快照链接）；实施计划索引见 [plans/README](ml-platform/docs/superpowers/plans/README.md)。
 
 ## 1. 状态口径
 
