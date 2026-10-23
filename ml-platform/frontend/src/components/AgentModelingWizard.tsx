@@ -4,7 +4,7 @@ import { RocketOutlined } from "@ant-design/icons";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
 import { fetchDatasetProfile } from "../api/agentCenter";
 import apiClient from "../api/client";
-import { createAgentRun } from "../api/agentCenter";
+import { createAgentRun, listAgentRuns, getAgentRun } from "../api/agentCenter";
 import { AUTOML_ALGORITHM_OPTIONS } from "../pages/AutoMLPage";
 import { useI18n } from "../i18n";
 
@@ -87,6 +87,9 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   }>({ missing: {}, miRank: {} });
   const [templateSaved, setTemplateSaved] = useState("");
 
+  // 最近一次运行的定稿脚本（sp-2 脚本预览数据源）
+  const [lastScript, setLastScript] = useState("");
+
   useEffect(() => {
     if (!datasetId || !targetColumn) {
       setProfileStats({ missing: {}, miRank: {} });
@@ -129,6 +132,31 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
     setDatasets([]); setDatasetId("");
     if (!projectId) return;
     listDatasets(projectId).then((items) => setDatasets(Array.isArray(items) ? items : [])).catch(() => setDatasets([]));
+  }, [projectId]);
+
+  // sp-2 脚本预览数据源：本项目最近一次 Agent 运行的定稿脚本
+  useEffect(() => {
+    if (!projectId) { setLastScript(""); return; }
+    let cancelled = false;
+    listAgentRuns(10).then(async (runs) => {
+      if (cancelled) return;
+      const mine = runs.find((run) => run.project_id === projectId);
+      if (!mine) { setLastScript(""); return; }
+      try {
+        const detail = await getAgentRun(mine.id);
+        if (cancelled) return;
+        const rounds = detail.memory_json?.rounds ?? [];
+        for (let i = rounds.length - 1; i >= 0; i -= 1) {
+          const attempts = rounds[i]?.s2_attempts ?? [];
+          for (let j = attempts.length - 1; j >= 0; j -= 1) {
+            const script = (attempts[j] as { script?: string; ok?: boolean });
+            if (script?.ok && script.script) { setLastScript(script.script); return; }
+          }
+        }
+        setLastScript("");
+      } catch { setLastScript(""); }
+    }).catch(() => setLastScript(""));
+    return () => { cancelled = true; };
   }, [projectId]);
 
   useEffect(() => {
@@ -384,12 +412,23 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             <input className="v2-select" style={{ width: "100%", minWidth: 0 }} value={featurePrompt}
               placeholder={zh ? "派生特征优先比值/裕度类；缺失用中位数+缺失标记" : "e.g. prefer ratio features"}
               onChange={(e) => setFeaturePrompt(e.target.value)} />
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 8 }}>
+            <div className="prompt-chips">
               {FEATURE_PROMPT_CHIPS.map((chip) => (
-                <button key={chip.label} type="button" className="v2-chip" style={{ cursor: "pointer" }}
-                  onClick={() => setFeaturePrompt((cur) => (cur ? cur + "；" : "") + chip.prompt)}>{chip.label}</button>
+                <span key={chip.label} className="pchip" style={{ cursor: "pointer" }}
+                  onClick={() => setFeaturePrompt((cur) => (cur ? cur + "；" : "") + chip.prompt)}>{chip.label}</span>
               ))}
             </div>
+          </div>
+          {/* 智能体生成的脚本预览（最近一次运行的定稿脚本，运行后实时更新） */}
+          <div className="v2-panel">
+            <h4><span className="bar" />{zh ? "智能体生成的脚本预览（运行后实时更新）" : "Agent script preview (live after runs)"}
+              {lastScript ? <span className="more">{zh ? "最近定稿" : "latest final"} · {lastScript.length} {zh ? "字符" : "chars"}</span> : null}</h4>
+            {lastScript ? (
+              <div className="codebox"><span className="cm"># {zh ? "最近一次通过沙箱的特征脚本" : "latest sandbox-passed feature script"}</span>
+{lastScript}</div>
+            ) : (
+              <div className="v2-empty">{zh ? "暂无运行记录——提交任务后此处实时展示智能体生成的脚本" : "No runs yet — the generated script appears here"}</div>
+            )}
           </div>
         </>
       )}

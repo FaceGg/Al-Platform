@@ -23,7 +23,7 @@ interface SideGroup { label: string; items: SideEntry[] }
 
 /** Route prefix -> owning view. Longest prefix wins when resolving. */
 const VIEW_ROUTES: Record<ViewId, string[]> = {
-  portal: ["/", "/dashboard"],
+  portal: ["/"],
   algo: ["/algo", "/projects", "/workspace", "/template", "/models", "/data", "/data-annotation", "/automl", "/training", "/orchestration", "/demo-loop", "/annotations", "/algorithms", "/api-marketplace"],
   agent: ["/agent", "/knowledge-center", "/prompt-templates", "/knowledge", "/knowledge-graph", "/chat"],
   infra: ["/infra", "/kubernetes", "/notebooks", "/images", "/cluster-governance", "/monitor", "/compute"],
@@ -107,8 +107,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     portal: [
       { label: t.nav.portalGroup, items: [
         { key: "/", icon: <HomeOutlined />, label: zh ? "首页门户" : "Portal Home" },
-        { key: "/dashboard", icon: <AppstoreOutlined />, label: t.nav.dashboard },
-        { key: "/projects", icon: <ProjectOutlined />, label: t.nav.projects },
       ] },
     ],
     algo: [
@@ -136,7 +134,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         { key: "/agent", query: "tab=knowledge", icon: <BookOutlined />, label: zh ? "知识中心" : "Knowledge" },
       ] },
       { label: zh ? "知识与对话" : "Knowledge & chat", items: [
-        { key: "/knowledge-center", icon: <BookOutlined />, label: t.nav.knowledge_center },
         { key: "/prompt-templates", icon: <CopyOutlined />, label: t.nav.prompt_templates },
         { key: "/chat", icon: <MessageOutlined />, label: t.nav.chat },
         { key: "/knowledge-graph", icon: <ApartmentOutlined />, label: t.knowledge?.graph || "Graph" },

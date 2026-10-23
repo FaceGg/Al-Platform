@@ -61,7 +61,8 @@ describe("AppLayout (v2 five-view shell)", () => {
     );
     await waitFor(() => expect(screen.getByTestId("v2-sidebar")).toBeTruthy());
     expect(within(screen.getByTestId("v2-sidebar")).getByText("首页门户")).toBeInTheDocument();
-    expect(within(screen.getByTestId("v2-sidebar")).getByText("项目管理")).toBeInTheDocument();
+    // 项目管理已移入算法平台视图（预览稿对齐）
+    expect(within(screen.getByTestId("v2-sidebar")).queryByText("项目管理")).toBeNull();
   });
 
   it("renders the algo sidebar with annotation and project entries on algo routes", async () => {

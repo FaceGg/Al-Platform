@@ -35,7 +35,7 @@ export interface AgentRunDetail extends AgentRunItem {
   memory_json: {
     rounds?: {
       round?: number;
-      s2_attempts?: { attempt?: number; error?: string; detail?: unknown; ok?: boolean }[];
+      s2_attempts?: { attempt?: number; error?: string; detail?: unknown; ok?: boolean; script?: string }[];
       verdict?: string;
       hints?: string[];
     }[];

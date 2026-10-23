@@ -11,6 +11,8 @@ const datasetMocks = vi.hoisted(() => ({
 }));
 const agentCenterMocks = vi.hoisted(() => ({
   createAgentRun: vi.fn(),
+  listAgentRuns: vi.fn().mockResolvedValue([]),
+  getAgentRun: vi.fn().mockResolvedValue({ memory_json: { rounds: [] }, result_json: {} }),
   fetchDatasetProfile: vi.fn().mockResolvedValue({
     row_count: 10,
     column_count: 2,
