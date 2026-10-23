@@ -4,6 +4,12 @@ import { ReloadOutlined, RocketOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
+import {
+  listAgentRuns,
+  listPipelineRecipes,
+  type AgentRunItem,
+  type PipelineRecipeItem,
+} from "../api/agentCenter";
 
 interface AgentJob {
   id: number | string;
@@ -20,6 +26,8 @@ interface AgentJob {
 
 type TabId = "jobs" | "wizard" | "recipes";
 
+const activeChipStyle: React.CSSProperties = { color: "#fff", background: "rgba(47,155,245,.22)", borderColor: "rgba(92,178,255,.45)" };
+
 const statusBadge = (status: string): string => {
   const s = status.toLowerCase();
   if (["running", "progressing"].some((k) => s.includes(k))) return "v2-bb";
@@ -29,7 +37,7 @@ const statusBadge = (status: string): string => {
   return "v2-bgray";
 };
 
-function relativeTime(iso?: string, zh = true): string {
+function relativeTime(iso?: string | null, zh = true): string {
   if (!iso) return "-";
   const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
   if (minutes < 1) return zh ? "刚刚" : "just now";
@@ -47,6 +55,11 @@ export default function AgentCenterPage() {
   const [jobs, setJobs] = useState<AgentJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [jobSource, setJobSource] = useState<"automl" | "agent">("automl");
+  const [agentRuns, setAgentRuns] = useState<AgentRunItem[]>([]);
+  const [agentRunsError, setAgentRunsError] = useState("");
+  const [recipes, setRecipes] = useState<PipelineRecipeItem[]>([]);
+  const [recipesError, setRecipesError] = useState("");
 
   const loadJobs = () => {
     setLoading(true);
@@ -60,18 +73,29 @@ export default function AgentCenterPage() {
     }).finally(() => setLoading(false));
   };
 
-  useEffect(() => { loadJobs(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  const loadAgentData = () => {
+    listAgentRuns().then(setAgentRuns).catch(() => {
+      setAgentRuns([]);
+      setAgentRunsError(zh ? "Agent 运行列表加载失败" : "Failed to load agent runs");
+    });
+    listPipelineRecipes().then(setRecipes).catch(() => {
+      setRecipes([]);
+      setRecipesError(zh ? "配方列表加载失败" : "Failed to load recipes");
+    });
+  };
+
+  useEffect(() => { loadJobs(); loadAgentData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   const kpis = useMemo(() => {
     const running = jobs.filter((j) => statusBadge(String(j.status ?? j.state ?? "")) === "v2-bb").length;
     const done = jobs.filter((j) => statusBadge(String(j.status ?? j.state ?? "")) === "v2-bg").length;
     return [
-      { label: zh ? "任务总数" : "Total jobs", value: jobs.length },
+      { label: zh ? "AutoML 任务" : "AutoML jobs", value: jobs.length },
       { label: zh ? "运行中" : "Running", value: running },
-      { label: zh ? "已完成" : "Completed", value: done },
-      { label: zh ? "配方" : "Recipes", value: "—" },
+      { label: zh ? "Agent 运行" : "Agent runs", value: agentRuns.length },
+      { label: zh ? "配方" : "Recipes", value: recipes.length },
     ];
-  }, [jobs, zh]);
+  }, [jobs, agentRuns, recipes, zh]);
 
   const wizardSteps = [
     { n: 1, title: zh ? "选择项目与数据" : "Project & data", desc: zh ? "选择项目与数据集版本；平台自动完成确定性画像（S1）。" : "Pick project and dataset version; S1 deterministic profiling runs automatically." },
@@ -118,40 +142,86 @@ export default function AgentCenterPage() {
       {tab === "jobs" && (
         <div className="v2-panel">
           <h4>
-            <span className="bar" />{zh ? "全部自动建模任务" : "All modeling jobs"}
-            <span className="more" style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={loadJobs} role="button" tabIndex={0}
-              onKeyDown={(e) => { if (e.key === "Enter") loadJobs(); }}>
+            <span className="bar" />{jobSource === "automl" ? (zh ? "全部自动建模任务" : "All modeling jobs") : (zh ? "Agent 运行记录" : "Agent runs")}
+            <span style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 10 }}>
+              <button
+                type="button"
+                className={`v2-lang${jobSource === "automl" ? " on" : ""}`}
+                style={jobSource === "automl" ? activeChipStyle : undefined}
+                onClick={() => setJobSource("automl")}
+              >{zh ? "AutoML 任务" : "AutoML"}</button>
+              <button
+                type="button"
+                className={`v2-lang${jobSource === "agent" ? " on" : ""}`}
+                style={jobSource === "agent" ? activeChipStyle : undefined}
+                onClick={() => setJobSource("agent")}
+              >{zh ? "Agent 运行" : "Agent"}</button>
+            </span>
+            <span className="more" style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={() => (jobSource === "automl" ? loadJobs() : loadAgentData())} role="button" tabIndex={0}
+              onKeyDown={(e) => { if (e.key === "Enter") jobSource === "automl" ? loadJobs() : loadAgentData(); }}>
               <ReloadOutlined spin={loading} />{zh ? "刷新" : "Refresh"}
             </span>
           </h4>
-          <table className="v2-table">
-            <thead><tr>
-              <th>{zh ? "任务" : "Job"}</th><th>{zh ? "状态" : "Status"}</th>
-              <th>{zh ? "进度" : "Progress"}</th><th>{zh ? "更新时间" : "Updated"}</th>
-              <th>{zh ? "操作" : "Actions"}</th>
-            </tr></thead>
-            <tbody>
-              {error ? <tr><td colSpan={5} className="v2-empty">{error}</td></tr> : null}
-              {!error && jobs.length === 0 ? (
-                <tr><td colSpan={5} className="v2-empty">{zh
-                  ? "暂无任务 —— 点击右上「新建智能体建模任务」，四步向导即可启动全自动迭代"
-                  : "No jobs yet — start the wizard to launch a fully automated run"}</td></tr>
-              ) : null}
-              {jobs.map((job) => {
-                const status = String(job.status ?? job.state ?? "-");
-                const progress = typeof job.progress === "number" ? Math.round(job.progress) : null;
-                return (
-                  <tr key={String(job.id)}>
-                    <td className="tt">{job.name ?? job.task_name ?? String(job.id)}</td>
-                    <td><span className={`v2-badge ${statusBadge(status)}`}>{status}</span></td>
-                    <td>{progress != null ? `${progress}%` : "-"}</td>
-                    <td>{relativeTime(job.updated_at ?? job.created_at, zh)}</td>
-                    <td><a onClick={() => navigate(`/automl/task/${job.id}`)}>{zh ? "全链路档案 ›" : "Details ›"}</a></td>
+          {jobSource === "automl" ? (
+            <table className="v2-table">
+              <thead><tr>
+                <th>{zh ? "任务" : "Job"}</th><th>{zh ? "状态" : "Status"}</th>
+                <th>{zh ? "进度" : "Progress"}</th><th>{zh ? "更新时间" : "Updated"}</th>
+                <th>{zh ? "操作" : "Actions"}</th>
+              </tr></thead>
+              <tbody>
+                {error ? <tr><td colSpan={5} className="v2-empty">{error}</td></tr> : null}
+                {!error && jobs.length === 0 ? (
+                  <tr><td colSpan={5} className="v2-empty">{zh
+                    ? "暂无任务 —— 点击右上「新建智能体建模任务」，四步向导即可启动全自动迭代"
+                    : "No jobs yet — start the wizard to launch a fully automated run"}</td></tr>
+                ) : null}
+                {jobs.map((job) => {
+                  const status = String(job.status ?? job.state ?? "-");
+                  const progress = typeof job.progress === "number" ? Math.round(job.progress) : null;
+                  return (
+                    <tr key={String(job.id)}>
+                      <td className="tt">{job.name ?? job.task_name ?? String(job.id)}</td>
+                      <td><span className={`v2-badge ${statusBadge(status)}`}>{status}</span></td>
+                      <td>{progress != null ? `${progress}%` : "-"}</td>
+                      <td>{relativeTime(job.updated_at ?? job.created_at, zh)}</td>
+                      <td><a onClick={() => navigate(`/automl/task/${job.id}`)}>{zh ? "全链路档案 ›" : "Details ›"}</a></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <table className="v2-table">
+              <thead><tr>
+                <th>{zh ? "运行" : "Run"}</th><th>{zh ? "项目" : "Project"}</th><th>{zh ? "目标列" : "Target"}</th>
+                <th>{zh ? "状态" : "Status"}</th><th>{zh ? "阶段/轮次" : "Stage/Rounds"}</th>
+                <th>{zh ? "Token" : "Tokens"}</th><th>{zh ? "更新时间" : "Updated"}</th>
+              </tr></thead>
+              <tbody>
+                {agentRunsError ? <tr><td colSpan={7} className="v2-empty">{agentRunsError}</td></tr> : null}
+                {!agentRunsError && agentRuns.length === 0 ? (
+                  <tr><td colSpan={7} className="v2-empty">{zh
+                    ? "暂无 Agent 运行记录 —— Agent 任务由智能体建模主线创建（AutoML 绑定全链接入中），P2 真实收敛验证已在拧紧/电焊两域跑通全链"
+                    : "No agent runs yet — agent jobs are created by the modeling agent mainline (AutoML binding in progress); P2 convergence was verified on both real domains"}</td></tr>
+                ) : null}
+                {agentRuns.map((run) => (
+                  <tr key={run.id}>
+                    <td className="tt" title={run.id}>{run.id.slice(0, 8)}…</td>
+                    <td>{run.project_name ?? "-"}</td>
+                    <td className="tt">{run.target_column ?? "-"}</td>
+                    <td>
+                      <span className={`v2-badge ${statusBadge(run.status)}`}>{run.status}</span>
+                      {run.error_code ? <span style={{ marginLeft: 6, fontSize: 11, color: "var(--v2-dim)" }}>{run.error_code}</span> : null}
+                    </td>
+                    <td>{run.current_stage.toUpperCase()} · {zh ? "轮" : "r"}{run.round_count}</td>
+                    <td>{run.token_used.toLocaleString()}</td>
+                    <td>{relativeTime(run.updated_at ?? run.created_at, zh)}</td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
@@ -188,15 +258,48 @@ export default function AgentCenterPage() {
       {tab === "recipes" && (
         <>
           <div className="v2-panel">
-            <h4><span className="bar" />{zh ? "配方库（Pipeline Recipe）" : "Recipe library"}</h4>
-            <div className="v2-empty">
-              {zh ? "配方服务化接口接入中 —— 验收通过的建模配方（特征脚本 + 建模配置 + 门禁 + 评审记录）将在此版本化展示，支持回滚与复用。"
-                : "Recipe serving APIs are being wired — accepted recipes (feature script + config + gates + review) will appear here with versioning, rollback and reuse."}
-            </div>
+            <h4>
+              <span className="bar" />{zh ? "配方库（Pipeline Recipe）" : "Recipe library"}
+              <span className="more" onClick={loadAgentData} role="button" tabIndex={0}
+                onKeyDown={(e) => { if (e.key === "Enter") loadAgentData(); }}>
+                <ReloadOutlined />{zh ? "刷新" : "Refresh"}
+              </span>
+            </h4>
+            {recipesError ? <div className="v2-empty">{recipesError}</div> : null}
+            {!recipesError && recipes.length === 0 ? (
+              <div className="v2-empty">
+                {zh ? "暂无已固化的配方 —— 验收通过的建模任务将配方（特征脚本 + 建模配置 + 门禁 + 评审记录）自动固化到此处，版本化可回滚、换模跟随复用。"
+                  : "No recipes yet — accepted modeling runs persist their recipes here with versioning, rollback and swap-following reuse."}
+              </div>
+            ) : null}
+            {recipes.length > 0 ? (
+              <table className="v2-table">
+                <thead><tr>
+                  <th>{zh ? "配方" : "Recipe"}</th><th>{zh ? "项目" : "Project"}</th>
+                  <th>{zh ? "域" : "Domain"}</th><th>{zh ? "目标列" : "Target"}</th>
+                  <th>{zh ? "版本" : "Version"}</th><th>{zh ? "状态" : "Status"}</th>
+                  <th>{zh ? "变更说明" : "Change note"}</th><th>{zh ? "更新时间" : "Updated"}</th>
+                </tr></thead>
+                <tbody>
+                  {recipes.map((recipe) => (
+                    <tr key={recipe.id}>
+                      <td className="tt">{recipe.name}</td>
+                      <td>{recipe.project_name ?? "-"}</td>
+                      <td>{recipe.domain ?? "-"}</td>
+                      <td className="tt">{recipe.target_column ?? "-"}</td>
+                      <td>v{recipe.current_version}</td>
+                      <td><span className={`v2-badge ${recipe.version_status === "current" ? "v2-bg" : "v2-bgray"}`}>{recipe.version_status ?? "-"}</span></td>
+                      <td title={recipe.change_note ?? ""}>{recipe.change_note ? (recipe.change_note.length > 24 ? recipe.change_note.slice(0, 24) + "…" : recipe.change_note) : "-"}</td>
+                      <td>{relativeTime(recipe.updated_at ?? recipe.created_at, zh)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : null}
           </div>
           <div className="v2-note">🧪 {zh
-            ? "配方在后端已随 P3 交付（版本化 / 回滚 / delta 复用 / 换模跟随），列表 API 接入后此处立即呈现。"
-            : "Backend recipes landed with P3 (versioning, rollback, delta reuse); the list lands here once the API is wired."}</div>
+            ? "配方版本化 / 回滚 / delta 复用 / 换模跟随由后端 P3 交付；此页只读展示元数据，特征脚本与建模配置不经过该接口出域。"
+            : "Recipe versioning, rollback, delta reuse and swap-following shipped with P3; this view exposes metadata only — scripts and configs never leave through this endpoint."}</div>
         </>
       )}
     </AppLayout>
