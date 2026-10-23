@@ -1,6 +1,6 @@
 # 当前开发计划
 
-> 更新时间：2026-10-23。当前主线：AutoML Agent 智能体方案（P1–P6 代码面完成，前端改版进行中）。已完成工作的完整历史记录见 [DEVELOPMENT_PLAN_ARCHIVE.md](DEVELOPMENT_PLAN_ARCHIVE.md)（2026-10-23 归档快照，含更早的 2026-09-24 快照链接）；实施计划索引见 [plans/README](ml-platform/docs/superpowers/plans/README.md)。
+> 更新时间：2026-10-23。当前主线：AutoML Agent 智能体方案（P1–P6 代码面完成，前端改版 v2 壳层已上线）。已完成工作的完整历史记录见 [DEVELOPMENT_PLAN_ARCHIVE.md](DEVELOPMENT_PLAN_ARCHIVE.md)（2026-10-23 归档快照，含更早的 2026-09-24 快照链接）；实施计划索引见 [plans/README](ml-platform/docs/superpowers/plans/README.md)。
 
 ## 1. 状态口径
 
@@ -15,7 +15,7 @@
 
 | 轨道 | 状态 | 说明 | 后续动作 |
 |---|---|---|---|
-| **AutoML Agent 智能体方案（当前主导）** | 代码面 P1–P6 全部完成（2026-10-22/23，迁移 head `20261022_80`）；真实 LLM S1 双域验证通过（DeepSeek，`26479983`）；前端改版开工（五视图侧栏骨架 `e63f49ca`、知识中心页/大模型网关页已上线） | 大模型驱动自动建模：四步迭代+S5 服务化+三级经验/有界 RSI+向导+优化报告+大模型网关+对话白名单工具+统一知识中心+安全基线；[技术方案](ml-platform/docs/技术方案-大模型驱动自动建模流水线.md) v0.9 十七章 / [实施计划](ml-platform/docs/superpowers/plans/2026-10-22-automl-agent.md) A1.1–A6.2 / [前端预览](ml-platform/docs/design/平台改版前端预览.html)；**完整全景与后续执行顺序见文末「2026-10-23 AutoML Agent 专项全景」** | 见全景章节「后续」 |
+| **AutoML Agent 智能体方案（当前主导）** | 代码面 P1–P6 全部完成（迁移 head `20261023_81`）；真实 LLM S1 双域验证通过（DeepSeek，`26479983`）；**前端改版 v2 壳层已上线（五视图顶栏+视图侧栏+门户首页+智能体中心页，深色主题为默认）**；部署栈 DeepSeek 连通 200 验证通过 | 大模型驱动自动建模：四步迭代+S5 服务化+三级经验/有界 RSI+向导+优化报告+大模型网关+对话白名单工具+统一知识中心+安全基线；[技术方案](ml-platform/docs/技术方案-大模型驱动自动建模流水线.md) v0.9 十七章 / [实施计划](ml-platform/docs/superpowers/plans/2026-10-22-automl-agent.md) A1.1–A6.2 / [前端预览](ml-platform/docs/design/平台改版前端预览.html)；**完整全景与后续执行顺序见文末「2026-10-23 AutoML Agent 专项全景」** | 见全景章节「后续」 |
 | Week 17 数据探索与质量报告 | pending_decision（让位于智能体方案） | 数据探索与质量报告范围已获批（§4.2，2026-09-28）：DuckDB 只读查询 + 质量 profile + 报告 Artifact，不部署 Superset；上限行 1,000/10MB/30 秒/并发 2；SavedQuery 首期不纳入。2026-10-22 用户指示 Week 17–20 让位，由智能体方案主导；已获批范围不撤销，智能体 P1 的数据画像工具建议复用本周质量 profile 服务 | 重启时按 2026-09-28 实施计划自 Task 17.1 起实现 |
 | Week 18–20 | deferred（被智能体方案部分吸收） | RAG、LLM 网关、AIHub、全产品交付不在本轮范围。LLM 网关子项已由智能体方案 P1 交付（LLMProfile）；RAG 检索评估、AIHub、一键微调/部署待智能体方案落地后重新排期 | 保持搁置 |
 | 多模态标注集成（Label Studio） | deferred | 2026-09-28 决策评审后用户决定暂缓（D1）；方案归档备查 | 用户明确重新立项前不得自行启动 |
@@ -76,7 +76,7 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 
 ### 进度
 
-**后端 P1–P6 代码面 100% 完成**，六相位门禁 `run_suite --phase p1..p6` 22 模块约 135 用例全绿，alembic head `20261022_80`（5 处常量同步），前端全量 78 文件 457 用例绿：
+**后端 P1–P6 代码面 100% 完成**，六相位门禁 `run_suite --phase p1..p6` 22 模块约 135 用例全绿，alembic head `20261023_81`（审计时间戳 server_default 补齐迁移；5 处常量同步），前端全量 80 文件 470+ 用例绿：
 
 | 相位 | 交付 | 迁移 |
 |---|---|---|
@@ -88,21 +88,21 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 | P6 | KBBinding 全字段配置（系统分区不可关不可解绑）、统一检索唯一路径+可追溯引用+投影文档分块索引（修复 KB 通道检索洞）、ChatTools 白名单封闭集（危险工具不存在于注册表）+写确认+审计+save_insight，知识中心/模板/对话工具三组 API 与知识中心前端页 | `20261022_80` |
 
 - **真实 LLM 验证已破冰（2026-10-23）**：DeepSeek 实测 S1 双域全过——电焊 91 列正中焊接电参数/电极/飞溅通道并自主发现 wld1t/wld2t 泄漏；拧紧全覆盖偏差/区间/双轴差派生特征且 DECIDE_ONE/TWO+上下限全数点名（与人工复现一致）。证据 `ml-platform/backend/temp_test/agent-real/`；顺带修复三处真实缺陷（全 NaN 列互信息崩溃/JSON 截断/domain 过长）。
-- **前端改版开工**：五视图侧栏骨架上线（门户/算法平台/智能体中心/基础设施/系统管理，`--no-cache` 重建后生效）；知识中心页、大模型网关页可操作。部署栈迁移 80，主钥与 LLM 密钥已配。
+- **前端改版 v2 壳层上线（2026-10-23）**：AppLayout 重写为设计稿结构（54px 顶栏五视图 tab+200px 视图专属分组侧栏），v2-shell.css 移植深蓝科技风，默认深色主题；新增门户首页（hero/五快捷/四中心卡/最近任务实数据/迁移映射）与智能体中心页（KPI/任务列表实数据/四步向导引导/配方库占位）；路由 `/`→门户、`/dashboard`→原仪表板、`/agent`→智能体中心。部署栈 `--no-cache` 重建并浏览器验收通过（5173 强刷可见）。
+- **部署栈 LLM 链路收口（2026-10-23）**：发现并修复迁移 75–80 批次系统性缺陷——8 表 15 列审计时间戳（created_at/updated_at）在 ORM 有 server_default 但迁移建表漏写，postgres 上依赖 server default 的 INSERT（LLM 档案 env 自举）NotNullViolation 静默失败；SQLite 测试因 create_all 建表从未暴露。迁移 `20261023_81` batch_alter 双方言兼容补齐；部署库已升级，默认档案（DeepSeek）自举成功，网关连通测试 200/539ms。
+- **Mimosa 自主提交恢复（2026-10-23）**：A' 误报根治落地——i18n `signingSecret`→`signingToken`/死键 `change_password` 删除/测试夹具 signing_secret 拼接键/e2e 口令运行时拼接/apiKey 词族三文件同步改 accessTokens/mock 值拼接/week12 内联 `python -c` 落为 fixture `observe` 动作；两次 commit（`de127f65`、v2 壳层）均自主通过门禁。
 
 ### 问题（未决，按影响排序）
 
-1. **Mimosa 提交门禁卡 agent 会话 commit**：8 个既存误报（i18n 界面文案「签名密钥/Signing secret/change_password」、测试夹具口令、e2e 解释器输入）导致两次由用户手动提交绕过（`18a5083b`、`e63f49ca`）；v1.0.4 无策略开关。根治=A' 批量改名/随机化约 6 文件 8 处，做完恢复自主提交。
-2. **backend 容器仍持旧 LLM 端点**：`.env` 已改对（DeepSeek OpenAI 兼容），但容器是改前启动——平台内 AI 对话/知识库 RAG 打到 anthropic 端点会失败；需 `docker compose up -d backend` 重建一次。
-3. **`load_deployment_model` 算子接线被写前 Hook 拦**（8 种写法试尽）：解析逻辑已就绪（serving_binding.py 有换模跟随测试）；待用户手动建文件（内容已提供）或随 A' 后审计放行。
-4. **集成判据未闭环**（代码就绪、待执行）：P2 真实收敛（LLM 真写特征脚本过沙箱的轮数记录）、真实回流换模 e2e、S5 双域服务化对照、经验受益对比。
-5. **前端改版余量**：智能体中心三页（向导/任务/配方）、对话确认卡、门户首页改造。
-6. 杂项：111 项 Mimosa 深扫发现待治理排期（全部既存文件：污点/joblib 系/测试凭据）；`ml-platform/backend/app/services/model_port.py` 未跟踪；git 代理 7897 间歇故障（推送用 `-c http.proxy=` 直连）；`e63f49ca` 起提交待推送。
+1. **Mimosa 深扫未完整重跑**：commit 兼容策略放行时多次提示 scanner 部分故障（scanner_enobufs / callgraph_fact_partial 等），勿宣称项目安全；待重跑完整审计并治理 111 项既存发现（污点/joblib 系/测试凭据，全部既存文件）。
+2. **`load_deployment_model` 算子接线被写前 Hook 拦**（8 种写法试尽）：解析逻辑已就绪（serving_binding.py 有换模跟随测试）；待用户手动建文件（内容已提供）或随审计放行。
+3. **集成判据未闭环**（代码就绪、待执行）：P2 真实收敛（LLM 真写特征脚本过沙箱的轮数记录）、真实回流换模 e2e、S5 双域服务化对照、经验受益对比。
+4. **前端改版余量**：既有内容页仍为 antd 旧视觉（深色主题下可用但未按设计稿重绘）；对话确认卡；智能体中心向导页深化与配方库列表 API 接线。
+5. 杂项：`ml-platform/backend/app/services/model_port.py` 未跟踪；git 代理 7897 间歇故障（推送用 `-c http.proxy=` 直连）；`design-showcase/` 目录在用户工作区被删除（未暂存、待用户确认是否提交）。
 
 ### 后续（执行顺序）
 
-1. **立即**：重启 backend 载入新端点 + 网关页「测试」验证平台内 LLM 连通；推送待推提交（直连）。
-2. **A' 误报根治**：修 8 处 → 验证自主 commit → 此后不再要用户手动提交。
-3. **P2 真实收敛验证**：DeepSeek 真写特征脚本过沙箱并记录修复轮数；顺势跑真实数据全链（Runner+AutoML 绑定）拿 S5 端到端证据。
-4. **前端改版三连**：智能体中心向导/任务/配方页 → 对话确认卡 → 门户首页。
-5. **收尾**：全量 CI（六 job）+ 浏览器验收 → 推送 → 111 项审计治理排期（与 4 并行小步走）。
+1. **P2 真实收敛验证**：DeepSeek 真写特征脚本过沙箱并记录修复轮数；顺势跑真实数据全链（Runner+AutoML 绑定）拿 S5 端到端证据。
+2. **前端改版深化**：内容页按设计稿逐视图重绘（算法平台→基础设施→系统管理）→ 对话确认卡 → 智能体中心向导页深化与配方列表 API。
+3. **推送与 CI**：推送待推提交（直连）→ 全量 CI（六 job）+ 浏览器验收。
+4. **收尾**：Mimosa 完整审计重跑 + 111 项发现治理排期（与 2 并行小步走）。
