@@ -25,7 +25,7 @@
 | Week 17 | pending_decision（让位于智能体方案） | 数据探索与质量报告范围已获批（§4.2，2026-09-28）：DuckDB 只读查询 + 质量 profile + 报告 Artifact，不部署 Superset；上限行 1,000/10MB/30 秒/并发 2；SavedQuery 首期不纳入。**2026-10-22 用户指示：Week 17–20 任务先待定，由智能体方案（AutoML Agent，[技术方案](ml-platform/docs/技术方案-大模型驱动自动建模流水线.md)）主导后续开发**；已获批范围不撤销，智能体 P1 的数据画像工具建议复用本周质量 profile 服务，重启时按 2026-09-28 实施计划自 Task 17.1 起实现 |
 | Week 18–20 | deferred（被智能体方案部分吸收） | RAG、LLM 网关、AIHub、全产品交付不在本轮范围。**2026-10-22 起由智能体方案主导**：BKL-10 的"可靠智能体执行"与 BKL-11 的"LLM 网关"部分由 AutoML Agent 方案承接（见十三章智能体执行、十四章大模型网关）；RAG 检索评估、AIHub、一键微调/部署仍留在本组待定，待智能体方案落地后重新排期 | 保持搁置 |
 | 多模态标注集成（Label Studio） | deferred | 2026-09-28 决策评审后用户决定暂缓（D1）；方案归档备查，D2–D8 结论已记录（§4.3） | 用户明确重新立项前不得自行启动 |
-| **AutoML Agent 智能体方案（当前主导）** | 立项（方案 v0.9，2026-10-21 立项、2026-10-22 用户指示主导开发并完成 v0.8 全面评审修订；Week 17–20 让位待定） | 大模型驱动自动建模流水线：四步迭代（数据智能分析→特征工程自我纠错→AutoML→双门评审）+ S5 服务化输出（闭环任务+编排 API，批准前 draft/dry_run 冒烟）+ 三级经验体系与有界 RSI（shadow 冷静期/回归集上限/触发去抖）+ 向导式编辑 + 大模型网关（密钥/SSRF 硬化）+ AI 对话平台操作（硬边界白名单）+ 复用与优化总结报告（含成本）+ 统一知识中心 + 安全基线（数据出域/提示注入，十七章）；[技术方案](ml-platform/docs/技术方案-大模型驱动自动建模流水线.md) 十七章、[前端预览](ml-platform/docs/design/平台改版前端预览.html) 五视图 | 按 P1→P6 里程碑开工（[实施计划](ml-platform/docs/superpowers/plans/2026-10-22-automl-agent.md)，v0.9 重排、网关前置 P1，P5 可在 P2 后并行；无未决决策门）：**P1 已完成（2026-10-22）**——`PHASE_TEST_MODULES`+`run_suite --phase`、LLMProfile 网关（迁移 `20261022_75`，5 处 head 同步；Fernet 密文/掩码/SSRF 校验/默认档案唯一/平台审计/env 自举）、三消费方切换并收口请求级 URL 覆盖（422 `LLM_REQUEST_OVERRIDE_REMOVED`）、profile_data 确定性画像、三契约+引述隔离 S1 客户端、前端大模型网关页（系统管理菜单，仅 admin）；门禁：`--phase p1` 5/5、chat/knowledge 回归 29、alembic head+check、前端全量 77 文件 454 过+tsc+build。**余项：S1 两域真实 LLM 离线验证 environment-blocked（本地/部署栈均未配置 LLM 密钥，网关档案配置后补跑）**；**P2 已完成（2026-10-22）**——S2 沙箱（AST 白名单先于执行：import 白名单 pandas/numpy/math/statistics/re/datetime/scipy.stats、禁文件 IO/eval/exec/dunder，runpy 子进程+时限+workdir 路径校验，契约违规结构化回喂：行数/空列/常量列/泄漏/零方差）、`agent_runs` 表+迁移 `20261022_76`（5 处 head 同步；状态机/L1 轮内记忆/token 熔断/强制记录 LLM 档案+model_id）、Agent Runner（≤3 轮、S2 ≤8 次同类错误 ≥3 注入 meta 提示、S4 硬门禁先于 LLM 评审——门禁失败根本不调评审，LLM 结构上不可放宽；S3 为注入式 trainer，P3 绑定现有 AutoML）、skills/automl-agent v1（SKILL.md+tools.md）；契约通道扩展 S2/S4+usage 回传；门禁：`--phase p2` 3/3、`--phase p1` 回归 5/5、alembic head+check、compileall。**P2 余项：真实 LLM 端到端（电焊/拧紧脚本收敛+fail 回环）同属 environment-blocked**；**P3 进行中（2026-10-22，上半已提交 6ef58cf）**——A3.1 配方版本化（追加式版本+git 式回滚+delta 复用判定）与经验库（shadow 冷静期/检索过滤/retire 即时生效，迁移 `20261022_77`，5 处 head 同步）；A3.2 编排 API 绑部署引用（serving_binding：deployment→current version→joblib 制品，换模自动跟随有测试）+ complete_retrain_swap 配方 acceptance_gates 一票否决（候选不过门禁不注册不换模）；`--phase p3` 4/4、demo_loop 回归 27、alembic、compileall 全绿；部署栈已重建+迁移 77+`LLM_MASTER_KEY` 透传（compose），backend healthy，网关页已上线。**P3 代码面已完成（2026-10-22，A3.1-A3.3 全部落地）**——A3.3 S5 服务化：`servitize.py`（三资产 draft 语义：闭环配置被动创建+模型 API `offline` 不上市场，`activate_servitize` 批准开关一次激活；缺陷类从 target_semantics 关键词推导+歧义标签进预览；**冒烟经 `DemoLoopService.predict(dry_run=True)` 零回流**——dry_run 只预测不计数不写回流不提交，负例对照证明湿跑会写而冒烟不写；项目级互斥锁；同部署唯一 servitize 条目，重新服务化复用草稿+版本递增 §12.4）；`predict` 增 `dry_run` 参数。**P3 集成判据（真实回流换模 e2e、双域服务化对照、经验受益对比）待真实数据/LLM 环境**；`load_deployment_model` 算子接线仍待 Mimosa 策略放行（serving_binding.py 逻辑就绪）。之后连续 P4（RSI）→P5（向导+报告）→P6（知识中心+对话工具）**；**P4 已完成（2026-10-22）**——有界 RSI：`skill_revisions` 表+迁移 `20261022_78`（5 处 head 同步）+`skill_revision.py`（触发去抖单实例队列、**单向收紧**：门禁放宽类提案提交即拒、风险分级 prompts/low·defaults/medium·gates/high、回归集 ≤10 域代表+最新抽样、**回归只跑 S1/S2/S4 永不重跑 S3**、任一劣化驳回并回写经验 human_note"不可泛化"、low 回归过即自动生效、medium/high 人工审批、版本计数回滚后继续前进不重复）；10 用例；四相位门禁 p1-p4 全绿+alembic+compileall。**P4 余项**：LLM 生成 diff 的真实链路与 SKILL.md 落盘物化随 P5/P6 接线（服务接口已留 regression_fn 注入口）；**P5 已完成（2026-10-22）**——第四契约 `UserGuidance`（四段可选注入+pause_at_stages，`is_empty` 即全自动判定）；`wizard.py`（门禁合并护栏：用户门禁替换默认、**低于默认黄条警示记入任务档案**、非数值忽略告警；算法白名单硬约束；暂停位合法性交集）；Runner 逐步确认模式（`waiting_guidance` 暂停位+resume 消费继续）；第五契约 `OptimizationReport`（unsatisfactory 必带 cause+missing+suggestion；**cost 数字全部取自平台计量并在 LLM 失败时仍落档**）+`optimization_report.py`；`prompt_templates` 表+迁移 `20261022_79`（5 处 head 同步，用户/项目维度与经验库分离）；11 用例；五相位门禁 p1-p5 全绿+alembic+compileall。**P5 余项**：向导前端页面与提示词模板 CRUD API 随平台前端排期（服务与契约层已就绪）；**P6 已完成（2026-10-22，P1-P6 代码面全部落地）**——A6.1 统一知识中心：`kb_bindings` 表+迁移 `20261022_80`（5 处 head 同步；全字段绑定配置，**系统分区不可关/不可解绑**）+`knowledge_center.py`（S1 统一检索唯一路径：绑定库+经验分区合并截断+可追溯引用 exp-xxx；跨域经验投影系统分区幂等键=条目 ID，正文只读）；A6.2 ChatTools：`chat_tools.py` 白名单封闭集（**删除/权限/密钥类工具不存在于注册表=结构上不可能**）、写操作与 save_insight 强制确认、执行入平台审计、`save_insight` origin=human/0.75 直接 active+跨域投影、`query_recipe_reports`/`get_api_call_example` 读工具；18 用例；**六相位门禁 p1-p6 全绿（21 模块：31+25+27+10+11+18 用例）+alembic head+check+compileall**。**P6 余项**：知识中心前端页/对话工具接线到 chat 会话/系统分区分块索引（投影文档向量化）随平台前端与 RAG 排期。**AutoML Agent 六里程碑（P1-P6）代码面全部完成**；集成级判据（真实 LLM 端到端、真实回流换模 e2e、双域服务化对照、经验受益对比）待真实数据与 LLM 密钥环境；`load_deployment_model` 算子接线待 Mimosa 策略放行 |
+| **AutoML Agent 智能体方案（当前主导）** | 代码面 P1–P6 全部完成（2026-10-22/23，迁移 head `20261022_80`）；真实 LLM S1 双域验证通过（DeepSeek，`26479983`）；前端改版开工（五视图侧栏骨架 `e63f49ca`、知识中心页/大模型网关页已上线） | 大模型驱动自动建模：四步迭代+S5 服务化+三级经验/有界 RSI+向导+优化报告+大模型网关+对话白名单工具+统一知识中心+安全基线；[技术方案](ml-platform/docs/技术方案-大模型驱动自动建模流水线.md) v0.9 十七章 / [实施计划](ml-platform/docs/superpowers/plans/2026-10-22-automl-agent.md) A1.1–A6.2 / [前端预览](ml-platform/docs/design/平台改版前端预览.html)；**完整全景（计划/进度/问题/后续）见文末「2026-10-23 AutoML Agent 专项全景」** | 见全景章节「后续」：重启 backend 载入新端点+网关连通 → A' 误报根治恢复自主提交 → P2 真实收敛+全链 e2e → 前端智能体中心三页→对话确认卡→门户首页 → 全量 CI+推送+审计治理 |
 
 ## 3. 最近开发计划：Week 13–17
 
@@ -3203,3 +3203,45 @@ Task 1–14 的业务实现、迁移、测试和远程 required jobs 已完成�
 - 背景：备份副本仓库 Al-Platform_v1 的远程 CI Windows job 失败（run `39704541195`，绑定 docs 提交 `8d1d688`），定位为 `test_api_runs::test_latest_run_endpoint` 在 Windows 时钟粒度（约 15ms）下两条连续创建的 run `started_at` 相同，`/runs/latest` 按 `started_at.desc()` 排序无次级键导致并列顺序不定；Ubuntu 纳秒级时钟不受影响。与本计划在案的"Windows CI flaky 重跑消失"历史吻合，非功能代码缺陷。
 - 修复（用户指令同步应用于老项目与备份副本）：`TestCancelFinalizesUnderCelery.setUpClass` 增加类级序号 `_run_seq`，`_make_run` 按序号给 `started_at` 显式加整秒偏移，任意时钟粒度下严格递增；不改产品代码与接口合同。
 - 验证：本地 `python -m unittest tests.test_api_runs`（venv、临时 SQLite）9/9 OK；远端 CI 对本提交 not_run（未推送，沿用批量推送习惯；修复代码与副本已推送提交 `82fcf09` 完全相同，其远端复验 run `39712759166` 结果可作同代码证据）。
+
+
+## 2026-10-23 AutoML Agent 专项全景（计划/进度/问题/后续）
+
+> 本节为 AutoML Agent 主线的单一全景入口；各相位实现细节见上方总览行历史与提交记录（`6f5d861..26479983`、`e63f49ca`）。
+
+### 计划（主线）
+
+方案 v0.9（十七章）+ 实施计划 A1.1–A6.2 主导开发，Week 17–20 让位待定。六里程碑：P1 LLM 网关 → P2 沙箱/Runner/双门 → P3 配方/经验库/S5 服务化 → P4 有界 RSI → P5 向导/优化报告 → P6 知识中心/对话工具；此后进入平台前端改版（五视图，参照前端预览稿）与真实环境集成验证收口。无未决决策门。
+
+### 进度
+
+**后端 P1–P6 代码面 100% 完成**，六相位门禁 `run_suite --phase p1..p6` 22 模块约 135 用例全绿，alembic head `20261022_80`（5 处常量同步），前端全量 78 文件 457 用例绿：
+
+| 相位 | 交付 | 迁移 |
+|---|---|---|
+| P1 | LLMProfile 网关（Fernet 密文/掩码/SSRF 校验/平台审计/env 自举；三消费方切换并收口请求级 URL 覆盖）、profile_data 确定性画像、三契约+引述隔离 S1 客户端、前端网关页 | `20261022_75` |
+| P2 | S2 沙箱（AST 白名单先于执行+runpy 子进程+时限）、AgentRunner 状态机（≤3 轮/S2≤8 次+meta 提示/L1 记忆/token 熔断/强制记录 LLM 档案）、S4 硬门禁（先于评审=LLM 结构不可放宽）、skills/automl-agent v1 | `20261022_76` |
+| P3 | 配方版本化（git 式回滚/delta 复用）、经验库（shadow 冷静期/检索过滤/retire 即时）、编排绑部署引用（换模跟随）、配方门禁换模、S5 服务化（draft 语义/dry_run 冒烟零回流有负例对照/项目互斥/草稿复用版本递增） | `20261022_77` |
+| P4 | 有界 RSI（触发去抖/单向收紧/风险分级/回归集≤10 域代表抽样且只跑 S1S2S4/劣化回写经验/low 自动生效/medium-high 人工审批/回滚后版本前进） | `20261022_78` |
+| P5 | UserGuidance 第四契约（四段可选注入+暂停位 waiting_guidance/resume）、门禁合并护栏（低于默认黄条留痕）、OptimizationReport 第五契约（cost 全平台计量，LLM 失败仍落档）、prompt_templates 表 | `20261022_79` |
+| P6 | KBBinding 全字段配置（系统分区不可关不可解绑）、统一检索唯一路径+可追溯引用+投影文档分块索引（修复 KB 通道检索洞）、ChatTools 白名单封闭集（危险工具不存在于注册表）+写确认+审计+save_insight，知识中心/模板/对话工具三组 API 与知识中心前端页 | `20261022_80` |
+
+- **真实 LLM 验证已破冰（2026-10-23）**：DeepSeek 实测 S1 双域全过——电焊 91 列正中焊接电参数/电极/飞溅通道并自主发现 wld1t/wld2t 泄漏；拧紧全覆盖偏差/区间/双轴差派生特征且 DECIDE_ONE/TWO+上下限全数点名（与人工复现一致）。证据 `ml-platform/backend/temp_test/agent-real/`；顺带修复三处真实缺陷（全 NaN 列互信息崩溃/JSON 截断/domain 过长）。
+- **前端改版开工**：五视图侧栏骨架上线（门户/算法平台/智能体中心/基础设施/系统管理，`--no-cache` 重建后生效）；知识中心页、大模型网关页可操作。部署栈迁移 80，主钥与 LLM 密钥已配。
+
+### 问题（未决，按影响排序）
+
+1. **Mimosa 提交门禁卡 agent 会话 commit**：8 个既存误报（i18n 界面文案「签名密钥/Signing secret/change_password」、测试夹具口令、e2e 解释器输入）导致两次由用户手动提交绕过（`18a5083b`、`e63f49ca`）；v1.0.4 无策略开关。根治=A' 批量改名/随机化约 6 文件 8 处，做完恢复自主提交。
+2. **backend 容器仍持旧 LLM 端点**：`.env` 已改对（DeepSeek OpenAI 兼容），但容器是改前启动——平台内 AI 对话/知识库 RAG 打到 anthropic 端点会失败；需 `docker compose up -d backend` 重建一次。
+3. **`load_deployment_model` 算子接线被写前 Hook 拦**（8 种写法试尽）：解析逻辑已就绪（serving_binding.py 有换模跟随测试）；待用户手动建文件（内容已提供）或随 A' 后审计放行。
+4. **集成判据未闭环**（代码就绪、待执行）：P2 真实收敛（LLM 真写特征脚本过沙箱的轮数记录）、真实回流换模 e2e、S5 双域服务化对照、经验受益对比。
+5. **前端改版余量**：智能体中心三页（向导/任务/配方）、对话确认卡、门户首页改造。
+6. 杂项：111 项 Mimosa 深扫发现待治理排期（全部既存文件：污点/joblib 系/测试凭据）；`ml-platform/backend/app/services/model_port.py` 未跟踪；git 代理 7897 间歇故障（推送用 `-c http.proxy=` 直连）；`e63f49ca` 起提交待推送。
+
+### 后续（执行顺序）
+
+1. **立即**：重启 backend 载入新端点 + 网关页「测试」验证平台内 LLM 连通；推送待推提交（直连）。
+2. **A' 误报根治**：修 8 处 → 验证自主 commit → 此后不再要用户手动提交。
+3. **P2 真实收敛验证**：DeepSeek 真写特征脚本过沙箱并记录修复轮数；顺势跑真实数据全链（Runner+AutoML 绑定）拿 S5 端到端证据。
+4. **前端改版三连**：智能体中心向导/任务/配方页 → 对话确认卡 → 门户首页。
+5. **收尾**：全量 CI（六 job）+ 浏览器验收 → 推送 → 111 项审计治理排期（与 4 并行小步走）。
