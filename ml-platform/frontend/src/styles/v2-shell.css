@@ -349,3 +349,105 @@
 .v2-shell .ant-tabs-tab-active .ant-tabs-tab-btn { color: var(--v2-blue2) !important; }
 .v2-shell .ant-descriptions-item-label { color: var(--v2-dim) !important; }
 .v2-shell .ant-descriptions-item-content { color: var(--v2-txt) !important; }
+
+/* ============================================================
+   预览稿核心组件 CSS（从设计稿逐类移植，v2 前缀映射）
+   ============================================================ */
+
+/* wiz-head 配置条 */
+.wiz-head { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  background: var(--v2-panel); border: 1px solid var(--v2-line); border-radius: 12px; padding: 12px 16px; margin-bottom: 14px; flex-wrap: wrap; }
+.wiz-head .fld { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--v2-sub); }
+.wiz-head select { width: 210px; }
+
+/* steps 步骤条 */
+.v2-steps { display: flex; margin-bottom: 18px; }
+.v2-step { flex: 1; display: flex; align-items: center; gap: 10px; padding: 11px 13px;
+  border-bottom: 2px solid var(--v2-line); cursor: pointer; color: var(--v2-dim); border-left: none; background: none; text-align: left; }
+.v2-step .n { width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--v2-line);
+  display: grid; place-items: center; font-size: 12px; flex-shrink: 0; }
+.v2-step .tt { font-size: 13px; }
+.v2-step .st { font-size: 11px; color: var(--v2-dim); }
+.v2-step.on { border-bottom-color: var(--v2-blue); color: var(--v2-txt); }
+.v2-step.on .n { border-color: var(--v2-blue); background: rgba(47,155,245,.15); color: var(--v2-blue2); }
+.v2-step.done { color: var(--v2-sub); }
+.v2-step.done .n { border-color: var(--v2-green); color: var(--v2-green); background: rgba(71,195,160,.12); }
+.step-pane { display: none; }
+.step-pane.on { display: block; }
+
+/* prompt chips */
+.prompt-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+.pchip { font-size: 11.5px; padding: 3px 11px; border-radius: 14px; cursor: pointer;
+  background: var(--v2-bg); border: 1px solid var(--v2-line); color: var(--v2-sub); }
+.pchip:hover { color: var(--v2-blue2); border-color: rgba(92,178,255,.5); }
+
+/* radio cards */
+.v2-radios { display: flex; gap: 10px; }
+.v2-radio-card { flex: 1; border: 1px solid var(--v2-line); border-radius: 10px; padding: 10px 12px;
+  cursor: pointer; background: var(--v2-bg); }
+.v2-radio-card.on { border-color: var(--v2-blue); background: rgba(47,155,245,.08); }
+.v2-radio-card b { font-size: 13px; display: block; }
+.v2-radio-card span { font-size: 11px; color: var(--v2-dim); }
+
+/* algorithm grid */
+.alg-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.alg { border: 1px solid var(--v2-line); border-radius: 8px; padding: 6px 10px; font-size: 12px;
+  color: var(--v2-sub); cursor: pointer; background: var(--v2-bg); display: flex; align-items: center; gap: 7px; }
+.alg.on { border-color: var(--v2-blue); color: var(--v2-txt); background: rgba(47,155,245,.1); }
+
+/* metric cards */
+.metric-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+.metric { background: var(--v2-bg); border: 1px solid var(--v2-line); border-radius: 9px; padding: 8px 11px; }
+.metric .lb { font-size: 11.5px; color: var(--v2-sub); display: flex; justify-content: space-between; }
+.metric input { border: none; background: transparent; padding: 2px 0 0; font-size: 14px; color: var(--v2-txt); outline: none; width: 100%; }
+
+/* upload box */
+.uploadbox { border: 1.5px dashed var(--v2-line); border-radius: 10px; padding: 16px; text-align: center;
+  color: var(--v2-dim); font-size: 12px; cursor: pointer; background: var(--v2-bg); }
+.uploadbox:hover { border-color: var(--v2-blue); color: var(--v2-sub); }
+
+/* switch */
+.switchwrap { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--v2-sub); }
+.sw { width: 34px; height: 18px; border-radius: 10px; background: var(--v2-line); position: relative; cursor: pointer; flex-shrink: 0; transition: background .2s; }
+.sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--v2-sub); transition: left .2s; }
+.sw.on { background: var(--v2-blue); }
+.sw.on::after { left: 18px; background: #fff; }
+
+/* codebox */
+.codebox { background: var(--v2-bg); border: 1px solid var(--v2-line); border-radius: 8px; padding: 10px 12px;
+  font-family: var(--v2-mono, "Cascadia Code", Consolas, monospace); font-size: 12px; line-height: 1.7;
+  color: var(--v2-sub); white-space: pre-wrap; overflow-x: auto; }
+.codebox .cm { color: var(--v2-dim); }
+
+/* panel (v2-shell 已有 .v2-panel 但确保 h4/bar/more 对齐） */
+.v2-panel h4 { font-size: 13.5px; margin-bottom: 11px; display: flex; align-items: center; gap: 8px; }
+.v2-panel h4 .bar { width: 3px; height: 13px; border-radius: 2px; background: var(--v2-blue); flex-shrink: 0; }
+.v2-panel h4 .more { margin-left: auto; font-size: 11.5px; color: var(--v2-dim); font-weight: 400; cursor: pointer; }
+
+/* v2-btn (补齐 primary/ghost/sm/danger 变体） */
+.v2-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 16px; border-radius: 8px;
+  border: 1px solid var(--v2-line); background: var(--v2-panel2); color: var(--v2-txt); cursor: pointer; font-size: 12.5px; }
+.v2-btn.primary { background: linear-gradient(135deg, var(--v2-blue), #1d6fd0); border: none; color: #fff; }
+.v2-btn.ghost { background: transparent; }
+.v2-btn.sm { padding: 3px 10px; font-size: 11.5px; }
+.v2-btn.danger { color: var(--v2-red, #e66f75); border-color: rgba(230,111,117,.4); }
+
+/* note strip */
+.v2-note { display: flex; gap: 8px; align-items: flex-start; background: rgba(47,155,245,.07);
+  border: 1px solid rgba(47,155,245,.25); border-radius: 8px; padding: 8px 12px; color: var(--v2-sub); font-size: 12px; }
+
+/* data table (v2-table 补齐 th/td/tt/hover） */
+table.v2-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.v2-table th { text-align: left; color: var(--v2-dim); font-weight: 600; padding: 7px 10px;
+  border-bottom: 1px solid var(--v2-line); font-size: 11.5px; white-space: nowrap; }
+table.v2-table td { padding: 7px 10px; border-bottom: 1px solid rgba(36,52,79,.5); color: var(--v2-sub); }
+table.v2-table tr:hover td { background: rgba(47,155,245,.04); }
+table.v2-table td.tt { color: var(--v2-txt); }
+
+/* input base */
+.v2-shell input[type="text"], .v2-shell select {
+  background: var(--v2-bg); border: 1px solid var(--v2-line); color: var(--v2-txt);
+  border-radius: 7px; padding: 6px 10px; font-size: 12.5px; outline: none;
+}
+.v2-shell input[type="text"]:focus { border-color: var(--v2-blue); }
+.v2-shell input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--v2-blue); }
