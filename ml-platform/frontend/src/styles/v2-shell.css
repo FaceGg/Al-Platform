@@ -240,3 +240,17 @@
 .v2-shell[data-theme="light"] .v2-card { background: linear-gradient(160deg, #ffffff, #f2f6fb); }
 .v2-shell[data-theme="light"] .v2-navtab.on { color: #10528c; background: linear-gradient(135deg, rgba(47, 155, 245, .18), rgba(47, 155, 245, .05)); }
 .v2-shell[data-theme="light"] .v2-side-item.on { color: #10528c; }
+
+/* 侧栏计数徽标（P4）：数据集/任务/作业等实时计数 */
+.v2-side-count {
+  margin-left: auto; min-width: 20px; padding: 0 6px; height: 17px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 9px; font-size: 11px;
+  background: rgba(47, 155, 245, .16); color: var(--v2-blue2, #7cbdf7);
+}
+.v2-side-item.on .v2-side-count { background: rgba(47, 155, 245, .3); color: #fff; }
+.v2-side-badge {
+  margin-left: auto; padding: 0 6px; height: 17px;
+  display: inline-flex; align-items: center; border-radius: 4px;
+  font-size: 10.5px; background: rgba(124, 189, 247, .1); color: var(--v2-dim);
+}
