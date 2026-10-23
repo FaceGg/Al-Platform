@@ -179,6 +179,38 @@
 }
 .v2-subtab.on { color: var(--v2-txt); border-bottom-color: var(--v2-blue); }
 
+/* ===== 向导步骤条（平台改版设计稿 .steps） ===== */
+.v2-steps { display: flex; margin-bottom: 18px; }
+.v2-step {
+  flex: 1; display: flex; align-items: center; gap: 10px; padding: 11px 13px;
+  border: none; border-bottom: 2px solid var(--v2-line); cursor: pointer; color: var(--v2-dim);
+  background: none; text-align: left;
+}
+.v2-step .n {
+  width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--v2-line);
+  display: grid; place-items: center; font-size: 12px; flex-shrink: 0;
+}
+.v2-step .tt { font-size: 13px; }
+.v2-step .st { font-size: 11px; color: var(--v2-dim); }
+.v2-step.on { border-bottom-color: var(--v2-blue); color: var(--v2-txt); }
+.v2-step.on .n { border-color: var(--v2-blue); background: rgba(47, 155, 245, .15); color: var(--v2-blue2); }
+.v2-step.done { color: var(--v2-sub); }
+.v2-step.done .n { border-color: var(--v2-green); color: var(--v2-green); background: rgba(71, 195, 160, .12); }
+.v2-radio-cards { display: flex; gap: 10px; flex-wrap: wrap; }
+.v2-radio-card {
+  flex: 1; min-width: 150px; border: 1px solid var(--v2-line); border-radius: 10px; padding: 10px 12px;
+  cursor: pointer; background: var(--v2-bg); color: inherit; text-align: left;
+}
+.v2-radio-card.on { border-color: var(--v2-blue); background: rgba(47, 155, 245, .08); }
+.v2-radio-card b { font-size: 13px; display: block; color: var(--v2-txt); }
+.v2-radio-card span { font-size: 11px; color: var(--v2-dim); }
+.v2-form-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+.v2-select {
+  background: var(--v2-bg); border: 1px solid var(--v2-line); color: var(--v2-txt);
+  border-radius: 7px; padding: 6px 10px; font-size: 12.5px; outline: none; min-width: 220px;
+}
+.v2-select:focus { border-color: var(--v2-blue); }
+
 .v2-empty { text-align: center; color: var(--v2-dim); font-size: 12.5px; padding: 34px 10px; }
 .v2-note {
   display: flex; gap: 8px; align-items: flex-start; background: rgba(47, 155, 245, .07);

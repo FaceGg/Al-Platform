@@ -10,6 +10,7 @@ import {
   type AgentRunItem,
   type PipelineRecipeItem,
 } from "../api/agentCenter";
+import AgentModelingWizard from "../components/AgentModelingWizard";
 
 interface AgentJob {
   id: number | string;
@@ -96,13 +97,6 @@ export default function AgentCenterPage() {
       { label: zh ? "配方" : "Recipes", value: recipes.length },
     ];
   }, [jobs, agentRuns, recipes, zh]);
-
-  const wizardSteps = [
-    { n: 1, title: zh ? "选择项目与数据" : "Project & data", desc: zh ? "选择项目与数据集版本；平台自动完成确定性画像（S1）。" : "Pick project and dataset version; S1 deterministic profiling runs automatically." },
-    { n: 2, title: zh ? "确认目标与门禁" : "Target & gates", desc: zh ? "确认预测目标、S4 硬门禁指标与验收阈值，LLM 只能收紧不能放宽。" : "Confirm target, S4 hard gates and acceptance thresholds; LLM may only tighten." },
-    { n: 3, title: zh ? "选择算法强度" : "Search strength", desc: zh ? "fast / standard / ultra 三档搜索空间，或启用大模型全自主迭代（四步循环）。" : "fast / standard / ultra search space, or the LLM-driven four-step loop." },
-    { n: 4, title: zh ? "启动全自动迭代" : "Launch", desc: zh ? "沙箱执行特征脚本，双门禁验收，产物沉淀配方与经验，S5 一键服务化。" : "Sandboxed feature scripts, dual-gate acceptance, recipes and experience, S5 serving." },
-  ];
 
   return (
     <AppLayout>
@@ -227,31 +221,10 @@ export default function AgentCenterPage() {
 
       {tab === "wizard" && (
         <>
-          <div className="v2-panel">
-            <h4><span className="bar" />{zh ? "四步向导 · 全自动建模迭代" : "Four-step wizard"}</h4>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-              {wizardSteps.map((s) => (
-                <div key={s.n} style={{ background: "var(--v2-bg)", border: "1px solid var(--v2-line)", borderRadius: 10, padding: "12px 14px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                    <span style={{ width: 24, height: 24, borderRadius: "50%", border: "1.5px solid var(--v2-blue)", color: "var(--v2-blue2)", display: "grid", placeItems: "center", fontSize: 12 }}>{s.n}</span>
-                    <b style={{ color: "var(--v2-txt)", fontSize: 13 }}>{s.title}</b>
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--v2-sub)" }}>{s.desc}</div>
-                </div>
-              ))}
-            </div>
-            <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button type="button" className="v2-btn primary" onClick={() => navigate("/automl")}>
-                <RocketOutlined />{zh ? "启动向导" : "Launch wizard"}
-              </button>
-              <button type="button" className="v2-btn ghost" onClick={() => navigate("/knowledge-center")}>
-                {zh ? "先逛知识中心" : "Browse knowledge center"}
-              </button>
-            </div>
-          </div>
+          <AgentModelingWizard />
           <div className="v2-note">💡 {zh
-            ? "向导在「自动建模」页内完成配置与提交；本页负责任务总览与全链路档案查看。"
-            : "Configuration and submission happen on the AutoML page; this center tracks jobs and archives."}</div>
+            ? "向导以推荐默认值快速启动（全算法族/贝叶斯搜索/5 折交叉验证/类别加权/硬门禁）；任务提交后自动进入全链路档案页。"
+            : "The wizard launches with recommended defaults; submission opens the full job archive."}</div>
         </>
       )}
 

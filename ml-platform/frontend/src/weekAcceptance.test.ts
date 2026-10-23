@@ -117,6 +117,7 @@ const weekTestFiles: Record<number | string, string[]> = {
   frontend_v2: [
     "./pages/PortalPage.test.tsx",
     "./pages/AgentCenterPage.test.tsx",
+    "./components/AgentModelingWizard.test.tsx",
   ],
 };
 

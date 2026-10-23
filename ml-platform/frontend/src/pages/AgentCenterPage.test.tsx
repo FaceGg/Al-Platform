@@ -49,12 +49,13 @@ describe("AgentCenterPage (v2 agent center)", () => {
     expect(apiGet).toHaveBeenCalledWith("/training/automl/jobs");
   });
 
-  it("switches to the wizard tab with the four steps and launch affordance", async () => {
+  it("switches to the wizard tab and renders the interactive four-step wizard", async () => {
     render(<MemoryRouter><AgentCenterPage /></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("tab", { name: /建模向导|Wizard/ }));
-    expect(await screen.findByText("四步向导 · 全自动建模迭代")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /启动向导|Launch wizard/ })).toBeInTheDocument();
+    expect(await screen.findByText(/选择项目与数据/)).toBeInTheDocument();
+    expect(screen.getByLabelText("选择项目")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /下一步/ })).toBeDisabled();
   });
 
   it("switches to the recipes tab and surfaces the pending-API note", async () => {
