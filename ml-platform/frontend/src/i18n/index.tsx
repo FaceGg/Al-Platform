@@ -37,6 +37,11 @@ const ZH = {
     cluster_governance: "集群治理",
     llm_gateway: "大模型网关",
     knowledge_center: "知识中心",
+    portalGroup: "门户",
+    algoGroup: "算法平台",
+    agentGroup: "智能体中心",
+    infraGroup: "基础设施",
+    adminGroup: "系统管理",
   },
   llm: {
     title: "大模型网关",
@@ -768,7 +773,9 @@ const ZH = {
 
 const EN: Record<string, any> = {
   app: { title: "Linkraft", login: "Login", register: "Register", logout: "Logout", success: "Success", error: "Error", confirm: "Confirm" },
-  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", demo_loop: "Closed-Loop Automation", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources", kubernetes: "Kubernetes Clusters", job_runs: "Job Runs", notebooks: "Notebook Sessions", images: "Image Catalog", cluster_governance: "Cluster Governance", llm_gateway: "LLM Gateway", knowledge_center: "Knowledge Center" },
+  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", demo_loop: "Closed-Loop Automation", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources", kubernetes: "Kubernetes Clusters", job_runs: "Job Runs", notebooks: "Notebook Sessions", images: "Image Catalog", cluster_governance: "Cluster Governance", llm_gateway: "LLM Gateway", knowledge_center: "Knowledge Center",
+portalGroup: "Portal", algoGroup: "Algorithm Platform", agentGroup: "Agent Hub",
+infraGroup: "Infrastructure", adminGroup: "Administration" },
   llm: {
     title: "LLM Gateway", refresh: "Refresh", create: "New Profile", createTitle: "New Model Profile", editTitle: "Edit Model Profile",
     createOk: "Profile created", createFailed: "Create failed", updateOk: "Profile updated", updateFailed: "Update failed",
