@@ -99,7 +99,58 @@ class AgentRunner:
         self.run.memory_json = self.memory
         self.run.result_json = {"token_used": self._usage_total}
         self.db.commit()
+        self._finalize_reports()
         return self.run
+
+    def _l2_references(self) -> list[dict]:
+        """§10.4 任务启动/S1 注入：检索 L2 top-k active 经验（独立引述块）。
+
+        检索失败静默降级为空——经验注入是增益，不是依赖。"""
+        from app.services.agent.experience import retrieve_for_task
+
+        try:
+            entries = retrieve_for_task(
+                self.db,
+                domain=getattr(self, "_last_domain", None) or "cross-domain",
+                profile_fingerprint={},
+                top_k=5,
+                project_id=getattr(self.run, "project_id", None),
+            )
+        except Exception:  # noqa: BLE001 - 经验库故障不应阻断建模
+            return []
+        return [
+            {
+                "entry": str(entry.id)[:13],
+                "situation": entry.situation,
+                "lesson": entry.lesson,
+                "action": entry.action,
+                "confidence": entry.confidence,
+                "origin": entry.origin,
+            }
+            for entry in entries
+        ]
+
+    def _finalize_reports(self) -> None:
+        """终态收尾（§10.1 蒸馏 + §13.2 优化报告）：任何失败都不改终态。"""
+        try:
+            from app.services.agent.optimization_report import build_report
+
+            build_report(self.db, run=self.run, config=self.config, actor=self.actor)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from app.services.agent.experience import distill_experience_entries
+
+            created = distill_experience_entries(
+                self.db, config=self.config, run=self.run, memory=self.memory
+            )
+            if created:
+                result = dict(self.run.result_json or {})
+                result["distilled_experience"] = [str(item) for item in created]
+                self.run.result_json = result
+                self.db.commit()
+        except Exception:  # noqa: BLE001
+            pass
 
     # ----------------------------------------------------------------- stages
     def _run_s2_stage(self, report: AnalysisReport):
@@ -220,6 +271,7 @@ class AgentRunner:
                 config=self.config,
                 profile_report=self.profile_report,
                 prior_memory=self._memory_digest(),
+                experience_references=self._l2_references(),
                 guidance=(self.guidance or {}).get("analysis") if isinstance(self.guidance, dict) else None,
                 actor=self.actor,
             )
@@ -227,6 +279,8 @@ class AgentRunner:
                 return self._escalate("AGENT_TOKEN_BUDGET_EXCEEDED")
             if error:
                 return self._escalate("AGENT_S1_CONTRACT_FAILED")
+            # 下一轮 L2 检索按本轮域假设聚焦（§10.4 domain 匹配）。
+            self._last_domain = str(report.domain_hypothesis)[:32]
             if self._pause_if_requested("s1", pause_at, resume_state, round_number):
                 return self.run
 
@@ -321,6 +375,7 @@ class AgentRunner:
                     "rounds": round_number,
                 }
                 self.db.commit()
+                self._finalize_reports()
                 return self.run
             if verdict.verdict == "escalate":
                 self._record_round(

@@ -169,6 +169,44 @@ def create_agent_run(
     db.add(run)
     db.commit()
     db.refresh(run)
+    # 执行链接线（P0）：提交即启动后台执行；状态全程落 run 行，前端轮询可见。
+    from app.services.agent.executor import AgentRunNotExecutable, launch_agent_run
+
+    try:
+        launch_agent_run(run.id, actor_id=current_user.id)
+    except AgentRunNotExecutable as error:
+        run.status = "waiting_escalate"
+        run.error_code = "AGENT_RUN_NOT_EXECUTABLE"
+        run.result_json = {"executor_error": str(error)}
+        db.commit()
+        db.refresh(run)
+    return get_agent_run(run.id, db=db, current_user=current_user)
+
+
+@router.post("/runs/{run_id}/resume", response_model=AgentRunDetail)
+def resume_agent_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """逐步确认模式的放行：从 waiting_guidance 继续执行到下一暂停位或终态。"""
+    run = db.get(AgentRun, uuid.UUID(run_id))
+    if run is None:
+        raise HTTPException(404, detail={"code": "AGENT_RUN_NOT_FOUND"})
+    if run.status != "waiting_guidance":
+        raise HTTPException(
+            409,
+            detail={"code": "AGENT_RUN_NOT_PAUSED", "status": run.status},
+        )
+    from app.services.agent.executor import AgentRunNotExecutable, launch_agent_run
+
+    try:
+        launch_agent_run(run.id, actor_id=current_user.id)
+    except AgentRunNotExecutable as error:
+        raise HTTPException(
+            422, detail={"code": "AGENT_RUN_NOT_EXECUTABLE", "message": str(error)}
+        ) from error
+    db.refresh(run)
     return get_agent_run(run.id, db=db, current_user=current_user)
 
 

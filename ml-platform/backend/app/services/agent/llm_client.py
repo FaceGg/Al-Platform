@@ -40,6 +40,7 @@ def build_s1_messages(
     *,
     prior_memory: dict | None = None,
     kb_references: list[dict] | None = None,
+    experience_references: list[dict] | None = None,
     guidance: dict | None = None,
 ) -> list[dict]:
     """Assemble the S1 prompt; all untrusted content stays inside quote blocks."""
@@ -47,6 +48,11 @@ def build_s1_messages(
     if prior_memory:
         sections.append(
             _quote_block("上一轮迭代记忆", json.dumps(prior_memory, ensure_ascii=False))
+        )
+    if experience_references:
+        # 方案 §10.4：任务启动/S1 注入 L2 top-k（独立段落，带条目 ID 与置信度）。
+        sections.append(
+            _quote_block("平台经验", json.dumps(experience_references, ensure_ascii=False))
         )
     if kb_references:
         sections.append(
@@ -70,6 +76,7 @@ def run_s1(
     profile_report: dict,
     prior_memory: dict | None = None,
     kb_references: list[dict] | None = None,
+    experience_references: list[dict] | None = None,
     guidance: dict | None = None,
     actor=None,
 ) -> tuple[AnalysisReport | None, str | None, dict]:
@@ -83,6 +90,7 @@ def run_s1(
         profile_report,
         prior_memory=prior_memory,
         kb_references=kb_references,
+        experience_references=experience_references,
         guidance=guidance,
     )
     try:
