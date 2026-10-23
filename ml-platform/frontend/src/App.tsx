@@ -9,6 +9,7 @@ const LoginPage = lazy(() => import("./pages/LoginPage"));
 const RegisterPage = lazy(() => import("./pages/RegisterPage"));
 const PortalPage = lazy(() => import("./pages/PortalPage"));
 const AlgoOverviewPage = lazy(() => import("./pages/AlgoOverviewPage"));
+const InfraOverviewPage = lazy(() => import("./pages/InfraOverviewPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const ProjectListPage = lazy(() => import("./pages/ProjectListPage"));
 const ProjectDetailPage = lazy(() => import("./pages/ProjectDetailPage"));
@@ -96,6 +97,7 @@ function AppContent() {
             <Route path="/" element={<ProtectedRoute><PortalPage /></ProtectedRoute>} />
             <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
             <Route path="/algo" element={<ProtectedRoute><AlgoOverviewPage /></ProtectedRoute>} />
+            <Route path="/infra" element={<ProtectedRoute><InfraOverviewPage /></ProtectedRoute>} />
             <Route path="/projects" element={<ProtectedRoute><ProjectListPage /></ProtectedRoute>} />
             <Route path="/projects/:projectId" element={<ProtectedRoute><ProjectDetailPage /></ProtectedRoute>} />
             <Route path="/workspace/:workflowId" element={<ProtectedRoute><WorkspacePage /></ProtectedRoute>} />

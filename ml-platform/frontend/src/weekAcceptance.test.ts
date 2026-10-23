@@ -118,7 +118,9 @@ const weekTestFiles: Record<number | string, string[]> = {
     "./pages/PortalPage.test.tsx",
     "./pages/AgentCenterPage.test.tsx",
     "./pages/AlgoOverviewPage.test.tsx",
+    "./pages/InfraOverviewPage.test.tsx",
     "./components/AgentModelingWizard.test.tsx",
+    "./components/ChatToolsPanel.test.tsx",
   ],
 };
 

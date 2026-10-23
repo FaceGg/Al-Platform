@@ -26,7 +26,7 @@ const VIEW_ROUTES: Record<ViewId, string[]> = {
   portal: ["/", "/dashboard", "/projects", "/workspace", "/template"],
   algo: ["/algo", "/models", "/data", "/data-annotation", "/automl", "/training", "/algorithms", "/api-marketplace", "/orchestration", "/demo-loop", "/annotations"],
   agent: ["/agent", "/knowledge-center", "/knowledge", "/knowledge-graph", "/chat"],
-  infra: ["/kubernetes", "/notebooks", "/images", "/cluster-governance", "/monitor", "/compute"],
+  infra: ["/infra", "/kubernetes", "/notebooks", "/images", "/cluster-governance", "/monitor", "/compute"],
   admin: ["/llm-gateway", "/admin/users"],
 };
 
@@ -35,7 +35,7 @@ const VIEW_HOME: Record<ViewId, string> = {
   portal: "/",
   algo: "/algo",
   agent: "/agent",
-  infra: "/kubernetes",
+  infra: "/infra",
   admin: "/llm-gateway",
 };
 
@@ -113,6 +113,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       ] },
     ],
     infra: [
+      { label: zh ? "概览" : "Overview", items: [
+        { key: "/infra", icon: <AppstoreOutlined />, label: zh ? "集群总览" : "Overview" },
+      ] },
       { label: t.nav.infraGroup, items: [
         { key: "/kubernetes", icon: <ClusterOutlined />, label: t.nav.kubernetes },
         { key: "/kubernetes/jobs", icon: <PlayCircleOutlined />, label: t.nav.job_runs },

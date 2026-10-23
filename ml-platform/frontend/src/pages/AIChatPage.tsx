@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Card, Input, Button, Typography, Space, Spin, Tag, Empty, Divider, Modal, Slider, Select, Collapse, message as antdMessage } from "antd";
 import { SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined, ShareAltOutlined, FileTextOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import ChatToolsPanel from "../components/ChatToolsPanel";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 
@@ -181,6 +182,9 @@ export default function AIChatPage() {
         </div>
         <Divider style={{ margin: 0 }} />
         <div style={{ padding: "12px 16px" }}>
+          <ChatToolsPanel onResult={(resultText) => {
+            setMessages(prev => [...prev, { role: "assistant", content: resultText, time: new Date().toLocaleTimeString() }]);
+          }} />
           <Space.Compact style={{ width: "100%" }}>
             <Input.TextArea
               autoComplete="off" value={input}
