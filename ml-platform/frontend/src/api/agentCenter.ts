@@ -81,6 +81,68 @@ export async function createAgentRun(payload: AgentRunCreatePayload): Promise<Ag
   return response.data;
 }
 
+export interface DatasetProfileColumn {
+  name: string;
+  base_name: string;
+  semantic: string | null;
+  missing_rate: number;
+  cardinality: number;
+  constant: boolean;
+}
+
+export interface DatasetProfile {
+  row_count: number;
+  column_count: number;
+  columns: DatasetProfileColumn[];
+  mutual_info_top: Array<{ column: string; mi: number }>;
+  target: {
+    distribution: Record<string, number>;
+    imbalance_ratio: number | null;
+  } | null;
+}
+
+export async function fetchDatasetProfile(
+  datasetId: string,
+  target?: string,
+  projectId?: string
+): Promise<DatasetProfile> {
+  const response = await apiClient.get(`/agent/datasets/${datasetId}/profile`, {
+    params: { target: target || undefined, project_id: projectId || undefined },
+  });
+  return response.data;
+}
+
+export async function fixateRecipe(
+  runId: string,
+  name?: string
+): Promise<{ recipe_id: string; version: number; created: boolean }> {
+  const response = await apiClient.post("/agent/recipes/fixate", { run_id: runId, name });
+  return response.data;
+}
+
+export async function listRecipeVersions(recipeId: string): Promise<
+  Array<{
+    version: number;
+    status: string;
+    change_note: string | null;
+    created_at: string | null;
+    baseline_metrics: Record<string, number>;
+  }>
+> {
+  const response = await apiClient.get(`/agent/recipes/${recipeId}/versions`);
+  return response.data;
+}
+
+export async function rollbackRecipe(
+  recipeId: string,
+  toVersion: number
+): Promise<{ new_version: number }> {
+  const response = await apiClient.post(`/agent/recipes/${recipeId}/rollback`, {
+    to_version: toVersion,
+  });
+  return response.data;
+}
+
 export async function listPipelineRecipes(limit = 100): Promise<PipelineRecipeItem[]> {
   const response = await apiClient.get("/agent/recipes", { params: { limit } });
   return Array.isArray(response.data) ? response.data : [];

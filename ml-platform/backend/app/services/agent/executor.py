@@ -22,20 +22,23 @@ class AgentRunNotExecutable(RuntimeError):
     """The run row lacks what the executor needs (dataset/target/profile)."""
 
 
-def _load_dataset_frame(db, run: AgentRun):
+def _load_frame_for(db, artifact_id, project_id):
+    """Load a dataset artifact as a DataFrame (shared by executor + wizard API)."""
     import pandas as pd
 
     from app.services.artifact_service import build_artifact_service
 
-    if run.dataset_artifact_id is None:
-        raise AgentRunNotExecutable("dataset_artifact_id missing")
     service = build_artifact_service(db)
     artifact = service.resolve(
-        str(run.dataset_artifact_id), run.project_id, expected_type="dataset"
+        str(artifact_id), project_id, expected_type="dataset"
     )
     with service.storage.open(artifact.storage_uri) as handle:
         payload = handle.read()
-    frame = pd.read_csv(io.BytesIO(payload))
+    return pd.read_csv(io.BytesIO(payload))
+
+
+def _load_dataset_frame(db, run: AgentRun):
+    frame = _load_frame_for(db, run.dataset_artifact_id, run.project_id)
     if run.target_column and run.target_column not in frame.columns:
         raise AgentRunNotExecutable(
             "target column %s not in dataset" % run.target_column[:64]

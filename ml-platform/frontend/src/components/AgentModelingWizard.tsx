@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { RocketOutlined } from "@ant-design/icons";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
+import { fetchDatasetProfile } from "../api/agentCenter";
 import apiClient from "../api/client";
 import { createAgentRun } from "../api/agentCenter";
 import { AUTOML_ALGORITHM_OPTIONS } from "../pages/AutoMLPage";
@@ -79,6 +80,37 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // sp-1 画像（缺失率/互信息排名——列级出域，无行样例）
+  const [profileStats, setProfileStats] = useState<{
+    missing: Record<string, number>;
+    miRank: Record<string, number>;
+  }>({ missing: {}, miRank: {} });
+  const [templateSaved, setTemplateSaved] = useState("");
+
+  useEffect(() => {
+    if (!datasetId || !targetColumn) {
+      setProfileStats({ missing: {}, miRank: {} });
+      return;
+    }
+    let cancelled = false;
+    fetchDatasetProfile(datasetId, targetColumn, projectId || undefined)
+      .then((profile) => {
+        if (cancelled) return;
+        const missing: Record<string, number> = {};
+        profile.columns.forEach((column) => {
+          missing[column.name] = column.missing_rate;
+        });
+        const miRank: Record<string, number> = {};
+        profile.mutual_info_top.forEach((item, index) => {
+          miRank[item.column] = index + 1;
+        });
+        setProfileStats({ missing, miRank });
+      })
+      .catch(() => setProfileStats({ missing: {}, miRank: {} }));
+    return () => {
+      cancelled = true;
+    };
+  }, [datasetId, targetColumn, projectId]);
 
   useEffect(() => {
     apiClient.get("/projects").then((res) => {
@@ -254,11 +286,14 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
               <span className="more">{zh ? `已选 ${Object.values(selectedColumns).filter(Boolean).length} / ${columns.length} 列` : ""}</span></h4>
             <table className="v2-table">
               <thead><tr>
-                <th></th><th>{zh ? "列名" : "Column"}</th><th>{zh ? "我的备注（直接进分析提示词）" : "My note (joins the analysis prompt)"}</th>
+                <th></th><th>{zh ? "列名" : "Column"}</th>
+                <th>{zh ? "缺失率" : "Missing"}</th>
+                <th>{zh ? "互信息排名" : "MI rank"}</th>
+                <th>{zh ? "我的备注（直接进分析提示词）" : "My note (joins the analysis prompt)"}</th>
               </tr></thead>
               <tbody>
                 {columns.length === 0 ? (
-                  <tr><td colSpan={3} className="v2-empty">{projectId
+                  <tr><td colSpan={5} className="v2-empty">{projectId
                     ? (zh ? "选择数据集后展示列清单" : "Pick a dataset to list columns")
                     : (zh ? "先在上方选择项目与数据集" : "Choose a project and dataset above")}</td></tr>
                 ) : null}
@@ -269,6 +304,9 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
                     <td className="tt" style={{ color: column === targetColumn ? "var(--v2-gold)" : undefined }}>
                       {column}{column === targetColumn ? (zh ? "（目标列）" : " (target)") : ""}
                     </td>
+                    <td>{profileStats.missing[column] !== undefined
+                      ? `${(profileStats.missing[column] * 100).toFixed(1)}%` : "-"}</td>
+                    <td>{profileStats.miRank[column] ? `#${profileStats.miRank[column]}` : "—"}</td>
                     <td><input className="v2-select" style={{ minWidth: 260, width: "90%" }} value={columnNotes[column] ?? ""}
                       placeholder={zh ? "选中的列与备注会成为大模型的重点输入" : "note"}
                       onChange={(e) => setColumnNotes((cur) => ({ ...cur, [column]: e.target.value }))} /></td>
@@ -287,6 +325,19 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
                 <button key={chip.label} type="button" className="v2-chip" style={{ cursor: "pointer" }}
                   onClick={() => setAnalysisPrompt((cur) => (cur ? cur + "；" : "") + chip.prompt)}>{chip.label}</button>
               ))}
+              <button type="button" className="v2-chip" style={{ cursor: analysisPrompt.trim() ? "pointer" : "not-allowed", opacity: analysisPrompt.trim() ? 1 : 0.5 }}
+                onClick={() => {
+                  const content = analysisPrompt.trim();
+                  if (!content) return;
+                  apiClient.post("/prompt-templates", {
+                    name: (zh ? "分析模板 " : "analysis ") + new Date().toISOString().slice(5, 16).replace("T", " "),
+                    stage: "analysis",
+                    content,
+                  }).then(() => {
+                    setTemplateSaved(zh ? "已存为模板 ✓" : "saved ✓");
+                    setTimeout(() => setTemplateSaved(""), 2500);
+                  }).catch(() => setTemplateSaved(zh ? "保存失败" : "failed"));
+                }}>＋ {zh ? "存为模板" : "Save template"}{templateSaved ? ` ${templateSaved}` : ""}</button>
             </div>
           </div>
         </>

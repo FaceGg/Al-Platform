@@ -213,7 +213,8 @@ class AgentRunner:
                 error_history.append(attempt_record)
                 attempts.append(attempt_record)
                 continue
-            attempts.append({"attempt": attempt, "ok": True})
+            attempts.append({"attempt": attempt, "ok": True,
+                             "script": script.script})
             self.run.current_stage = "s3"
             return result.output, attempts
 

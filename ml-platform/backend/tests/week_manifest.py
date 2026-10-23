@@ -233,6 +233,7 @@ PHASE_TEST_MODULES: dict[str, list[str]] = {
         "test_chat_tools",
         "test_agent_wiring_api",
         "test_agent_center_api",
+        "test_agent_extras",
     ],
 }
 

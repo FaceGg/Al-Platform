@@ -11,6 +11,19 @@ const datasetMocks = vi.hoisted(() => ({
 }));
 const agentCenterMocks = vi.hoisted(() => ({
   createAgentRun: vi.fn(),
+  fetchDatasetProfile: vi.fn().mockResolvedValue({
+    row_count: 10,
+    column_count: 2,
+    columns: [
+      { name: "F1", base_name: "F1", semantic: null, missing_rate: 0, cardinality: 10, constant: false },
+      { name: "target", base_name: "target", semantic: null, missing_rate: 0, cardinality: 2, constant: false },
+    ],
+    mutual_info_top: [{ column: "F1", mi: 0.5 }],
+    target: { distribution: { "1": 5, "0": 5 }, imbalance_ratio: 1 },
+  }),
+  fixateRecipe: vi.fn(),
+  listRecipeVersions: vi.fn().mockResolvedValue([]),
+  rollbackRecipe: vi.fn(),
 }));
 
 vi.mock("../api/client", () => ({ default: { get: clientGet, post: clientPost } }));
