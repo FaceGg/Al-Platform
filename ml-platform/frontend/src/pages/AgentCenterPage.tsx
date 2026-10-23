@@ -5,6 +5,7 @@ import AppLayout from "../components/AppLayout";
 import OptReportPanel from "../components/OptReportPanel";
 import RecipeRow from "../components/RecipeRow";
 import ServitizeActions from "../components/ServitizeActions";
+import KnowledgeCenterContent from "../components/KnowledgeCenterContent";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 import {
@@ -55,7 +56,7 @@ function relativeTime(iso?: string | null, zh = true): string {
 
 export default function AgentCenterPage() {
   const navigate = useNavigate();
-  const { lang } = useI18n();
+  const { lang, t } = useI18n();
   const zh = lang === "zh";
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = (["wizard", "tasks", "recipes", "knowledge"] as const).includes(searchParams.get("tab") as TabId)
@@ -362,19 +363,10 @@ export default function AgentCenterPage() {
 
       {tab === "knowledge" && (
         <>
-          <div className="v2-panel">
-            <h4><span className="bar" />{zh ? "知识中心（知识库 + 平台经验合并）" : "Knowledge center"}</h4>
-            <div style={{ fontSize: 12.5, color: "var(--v2-sub)", lineHeight: 2 }}>
-              {zh ? "一个入口管理全部知识：用户上传的工艺文档/标准/法规 + 系统自动管理的「平台经验」分区；S1 分析与 AI 对话统一检索全部绑定库。"
-                : "One entry for uploaded documents and the platform experience partition; S1 and chat share the unified retrieval."}
-            </div>
-            <button type="button" className="v2-btn primary" style={{ marginTop: 10 }} onClick={() => navigate("/knowledge-center")}>
-              {zh ? "进入知识中心 →" : "Open knowledge center →"}
-            </button>
-          </div>
-          <div className="v2-note">🧠 {zh
-            ? "完整知识中心（绑定配置/经验分区/检索引用）在独立页面维护；此处为智能体中心的合并入口。"
-            : "The full center lives on its own page; this is the merged agent-center entry."}</div>
+          <div className="v2-note" style={{ marginBottom: 10 }}>🧠 {zh
+            ? "知识中心内嵌于智能体中心（§16.1 合并呈现）：绑定配置 + 平台经验真源条目与独立页完全同源；S1 分析与 AI 对话统一检索全部绑定库。"
+            : "The knowledge center is embedded here (§16.1): bindings and experience entries share the same source as the standalone page."}</div>
+          <KnowledgeCenterContent t={t} />
         </>
       )}
     </AppLayout>

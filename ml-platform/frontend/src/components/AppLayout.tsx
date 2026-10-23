@@ -7,7 +7,7 @@ import {
   ExperimentOutlined, ApiOutlined, CloudServerOutlined, RobotOutlined,
   MessageOutlined, MonitorOutlined, ClusterOutlined, DeploymentUnitOutlined,
   PlayCircleOutlined, BookOutlined, ControlOutlined, TagsOutlined, ApartmentOutlined,
-  HomeOutlined, RocketOutlined,
+  HomeOutlined, RocketOutlined, CopyOutlined,
 } from "@ant-design/icons";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
 import { useI18n } from "../i18n";
@@ -25,7 +25,7 @@ interface SideGroup { label: string; items: SideEntry[] }
 const VIEW_ROUTES: Record<ViewId, string[]> = {
   portal: ["/", "/dashboard", "/projects", "/workspace", "/template"],
   algo: ["/algo", "/models", "/data", "/data-annotation", "/automl", "/training", "/algorithms", "/api-marketplace", "/orchestration", "/demo-loop", "/annotations"],
-  agent: ["/agent", "/knowledge-center", "/knowledge", "/knowledge-graph", "/chat"],
+  agent: ["/agent", "/knowledge-center", "/prompt-templates", "/knowledge", "/knowledge-graph", "/chat"],
   infra: ["/infra", "/kubernetes", "/notebooks", "/images", "/cluster-governance", "/monitor", "/compute"],
   admin: ["/llm-gateway", "/admin/users"],
 };
@@ -109,6 +109,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         { key: "/agent", query: "tab=knowledge", icon: <BookOutlined />, label: zh ? "知识中心" : "Knowledge" },
       ] },
       { label: zh ? "知识与对话" : "Knowledge & chat", items: [
+        { key: "/knowledge-center", icon: <BookOutlined />, label: t.nav.knowledge_center },
+        { key: "/prompt-templates", icon: <CopyOutlined />, label: t.nav.prompt_templates },
         { key: "/chat", icon: <MessageOutlined />, label: t.nav.chat },
         { key: "/knowledge-graph", icon: <ApartmentOutlined />, label: t.knowledge?.graph || "Graph" },
       ] },

@@ -113,6 +113,7 @@ const weekTestFiles: Record<number | string, string[]> = {
   ],
   p6: [
     "./pages/KnowledgeCenterPage.test.tsx",
+    "./pages/PromptTemplatesPage.test.tsx",
   ],
   frontend_v2: [
     "./pages/PortalPage.test.tsx",

@@ -28,6 +28,13 @@ const datasetMocks = vi.hoisted(() => ({
 vi.mock("../api/client", () => ({ default: { get: apiGet } }));
 vi.mock("../api/agentCenter", () => agentCenterMocks);
 vi.mock("../api/datasets", () => datasetMocks);
+vi.mock("../api/knowledgeCenter", () => ({
+  listBindings: vi.fn().mockResolvedValue([]),
+  listExperience: vi.fn().mockResolvedValue([]),
+  patchBinding: vi.fn(),
+  retireExperience: vi.fn(),
+  annotateExperience: vi.fn(),
+}));
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
 
 describe("AgentCenterPage (design four-tab agent center)", () => {
@@ -118,11 +125,12 @@ describe("AgentCenterPage (design four-tab agent center)", () => {
     expect(screen.getByText("验收通过固化")).toBeInTheDocument();
   });
 
-  it("switches to the knowledge tab with the merged entry", async () => {
+  it("switches to the knowledge tab with the embedded center", async () => {
     render(<MemoryRouter><AgentCenterPage /></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("tab", { name: /知识中心/ }));
-    expect(await screen.findByText(/知识库 \+ 平台经验合并/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /进入知识中心/ })).toBeInTheDocument();
+    // §16.1 合并呈现：知识中心直接内嵌（绑定配置表标题来自同一 i18n 节）
+    const matches = await screen.findAllByText(/绑定配置|知识中心|Knowledge/);
+    expect(matches.length).toBeGreaterThan(1);
   });
 });

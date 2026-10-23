@@ -40,6 +40,7 @@ const ImageCatalogPage = lazy(() => import("./pages/ImageCatalogPage"));
 const ClusterGovernancePage = lazy(() => import("./pages/ClusterGovernancePage"));
 const LLMGatewayPage = lazy(() => import("./pages/LLMGatewayPage"));
 const KnowledgeCenterPage = lazy(() => import("./pages/KnowledgeCenterPage"));
+const PromptTemplatesPage = lazy(() => import("./pages/PromptTemplatesPage"));
 const AgentCenterPage = lazy(() => import("./pages/AgentCenterPage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
 
@@ -107,6 +108,7 @@ function AppContent() {
             <Route path="/admin/users" element={<ProtectedRoute><UserManagementPage /></ProtectedRoute>} />
             <Route path="/llm-gateway" element={<ProtectedRoute><LLMGatewayPage /></ProtectedRoute>} />
             <Route path="/knowledge-center" element={<ProtectedRoute><KnowledgeCenterPage /></ProtectedRoute>} />
+            <Route path="/prompt-templates" element={<ProtectedRoute><PromptTemplatesPage /></ProtectedRoute>} />
             <Route path="/agent" element={<ProtectedRoute><PageErrorBoundary pageName="智能体中心"><AgentCenterPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/knowledge" element={<ProtectedRoute><KnowledgeBasePage /></ProtectedRoute>} />
             <Route path="/knowledge/:kbId" element={<ProtectedRoute><KnowledgeDetailPage /></ProtectedRoute>} />
