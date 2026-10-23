@@ -149,6 +149,36 @@ class TestKBCenter(unittest.TestCase):
         self.assertIsNotNone(first)
         self.assertEqual(len(docs), 1)
 
+    def test_projection_chunks_document_for_retrieval(self):
+        from app.models.knowledge import Chunk
+        from app.services.knowledge_retrieval import retrieve_chunks
+
+        with SessionLocal() as db:
+            entry = ExperienceEntry(
+                domain="cross-domain",
+                situation="索引列被树模型高权重利用",
+                lesson="索引列默认剔除或频度编码",
+                action="S2 脚本默认 drop 单基数码列",
+                status="active",
+                confidence=0.9,
+                origin="distilled",
+                generality="cross-domain",
+                evidence_json={"source_tasks": ["t1"]},
+            )
+            db.add(entry)
+            db.commit()
+            project_experience_entry(db, entry, self.admin_id)
+            kb, _binding = get_system_partition(db, self.admin_id)
+            chunks = db.query(Chunk).filter(Chunk.doc_id.isnot(None)).all()
+            kb_chunks = [
+                chunk
+                for chunk in chunks
+                if db.get(Document, chunk.doc_id).kb_id == kb.id
+            ]
+            self.assertGreaterEqual(len(kb_chunks), 1)
+            hits = retrieve_chunks(db, kb, "索引列", top_k=3)
+        self.assertGreaterEqual(len(hits), 1)
+
     def test_domain_entry_not_projected(self):
         with SessionLocal() as db:
             entry = ExperienceEntry(

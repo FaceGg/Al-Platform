@@ -217,5 +217,28 @@ def project_experience_entry(db: Session, entry: ExperienceEntry, admin_id) -> s
         db.add(doc)
     else:
         doc.content = body  # 同步幂等：同键更新正文（人工附注走 human_note 字段）
+    db.flush()
+    _reindex_document(db, doc, body)
     db.commit()
     return str(doc.id)
+
+
+def _reindex_document(db: Session, doc: Document, body: str) -> None:
+    """Chunk + embed the projected doc so the standard KB retrieval path can
+    find it (v0.9 §16.3 统一检索的 KB 通道)。TF-IDF 向量化复用知识库既有实现。"""
+    from app.api.knowledge import _compute_tfidf_embedding  # noqa: PLC0415 - 复用私有实现
+    from app.models.knowledge import Chunk
+
+    db.query(Chunk).filter(Chunk.doc_id == doc.id).delete()
+    paragraphs = [p.strip() for p in body.split("\n") if p.strip()] or [body]
+    embeddings = _compute_tfidf_embedding(paragraphs)
+    for index, (paragraph, embedding) in enumerate(zip(paragraphs, embeddings)):
+        db.add(
+            Chunk(
+                doc_id=doc.id,
+                content=paragraph,
+                chunk_index=index,
+                embedding=embedding,
+            )
+        )
+    doc.chunk_count = len(paragraphs)
