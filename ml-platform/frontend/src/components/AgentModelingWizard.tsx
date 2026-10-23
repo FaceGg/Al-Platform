@@ -481,13 +481,42 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           </div>
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "验收通过后的服务化（届时在此确认）" : "Post-acceptance serving (confirmed later)"}</h4>
-            <table className="v2-table"><tbody>
-              <tr><td>① {zh ? "模型上线" : "Model serving"}</td><td className="tt">{zh ? "注册模型版本 → 批准 → 部署 → 模型 API" : "register → approve → deploy → API"}</td></tr>
-              <tr><td>② {zh ? "闭环自动化任务" : "Closed loop"}</td><td className="tt">{zh ? "推理-回流-重训-换模（配方门禁）" : "infer-retrain-swap with recipe gates"}</td></tr>
-              <tr><td>③ {zh ? "应用编排 API" : "Orchestration API"}</td><td className="tt">{zh ? "从全局闭环模板生成（工具自动特征对齐）" : "from the closed-loop template"}</td></tr>
-            </tbody></table>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 240, border: "1px solid var(--v2-line)", borderRadius: 10, padding: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <b style={{ fontSize: 13 }}>① {zh ? "模型上线" : "Model serving"}</b>
+                  <span className="v2-badge v2-bg">{zh ? "将执行" : "will run"}</span>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--v2-sub)", lineHeight: 1.7 }}>
+                  {zh ? "最优模型注册 → 批准 → 部署启动；模型 API 进市场前保持 draft（offline）"
+                    : "Best model register → approve → deploy; the model API stays offline until approval"}
+                </div>
+              </div>
+              <div style={{ flex: 1, minWidth: 240, border: "1px solid var(--v2-line)", borderRadius: 10, padding: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <b style={{ fontSize: 13 }}>② {zh ? "闭环自动化任务" : "Closed loop"}</b>
+                  <span className="v2-badge v2-bb">{zh ? "将创建" : "will create"}</span>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--v2-sub)", lineHeight: 1.7 }}>
+                  {zh ? "按配方创建（特征脚本 script 模式）；缺陷类从目标语义自动推导："
+                    : "Created from the recipe (script-mode features); defect classes derived from target semantics: "}
+                  <b style={{ color: "var(--v2-gold)" }}>{zh ? "将把「0」（不合格）判为报错回流" : "「0」 will be treated as error backflow"}</b>
+                </div>
+              </div>
+              <div style={{ flex: 1, minWidth: 240, border: "1px solid var(--v2-line)", borderRadius: 10, padding: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <b style={{ fontSize: 13 }}>③ {zh ? "应用编排 API" : "Orchestration API"}</b>
+                  <span className="v2-badge v2-bp">{zh ? "将发布" : "will publish"}</span>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--v2-sub)", lineHeight: 1.7 }}>
+                  {zh ? "从全局闭环模板生成（工具自动特征对齐）；dry_run 冒烟零回流后，人工批准一次即全部对外"
+                    : "From the closed-loop template; after a zero-backflow dry-run smoke, one approval lists everything"}
+                </div>
+              </div>
+            </div>
             <div style={{ color: "var(--v2-dim)", fontSize: 11.5, marginTop: 8 }}>
-              {zh ? "本页为提交前说明；服务化确认在任务验收通过后激活（S5 servitize，draft→批准）。" : "Serving confirmation activates after acceptance (S5 servitize)."}
+              {zh ? "提交后智能体迭代；验收通过 → 任务档案页「固化配方」→「一键服务化」（draft 三资产 → 批准发布）。"
+                : "After acceptance: fixate the recipe in the run archive, then one-click servitize (draft → approve)."}
             </div>
           </div>
           {error ? <div className="v2-note" style={{ borderColor: "rgba(230,111,117,.4)", background: "rgba(230,111,117,.07)" }}>⚠ {error}</div> : null}

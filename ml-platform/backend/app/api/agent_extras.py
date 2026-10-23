@@ -194,3 +194,99 @@ def recipe_rollback(
         raise HTTPException(404, detail={"code": "RECIPE_NOT_FOUND"})
     return {"recipe_id": recipe_id, "new_version": rolled.version,
             "status": rolled.status}
+
+
+# --------------------------------------------------------------------------
+# S5 servitization (§12.1): draft (①–④ dry-run smoke) + approval switch (⑤)
+# --------------------------------------------------------------------------
+
+class ServitizeRequest(BaseModel):
+    """服务化草稿请求：绑定配方当前版本 + 既有部署。
+
+    部署来自平台标准上线链（注册-批准-部署）；智能体域的自动部署创建
+    随 AutoML 全链接入，此处先支持把配方绑到既有部署（§12.2 映射表）。
+    """
+
+    recipe_id: str = Field(min_length=1, max_length=64)
+    deployment_id: str = Field(min_length=1, max_length=64)
+    project_id: str | None = Field(default=None, max_length=64)
+    model_api_name: str | None = Field(default=None, max_length=240)
+    error_classes_override: list[str] | None = None
+
+
+@router.post("/servitize", status_code=201)
+def servitize(
+    payload: ServitizeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """按配方创建三资产草稿（①部署引用 ②闭环任务 paused ③模型 API offline
+    ④dry_run 冒烟零回流）。返回草稿 + 冒烟结果 + 歧义标签供发布预览。"""
+    from app.models.recipe import PipelineRecipe
+    from app.services.agent.recipe import get_current_version
+    from app.services.agent.servitize import servitize_recipe
+
+    try:
+        recipe_uuid = uuid_module.UUID(payload.recipe_id)
+    except (TypeError, ValueError) as error:
+        raise HTTPException(422, detail={"code": "IDENTIFIER_INVALID"}) from error
+    try:
+        version = get_current_version(db, recipe_uuid)
+    except Exception:
+        raise HTTPException(404, detail={"code": "RECIPE_NOT_FOUND"}) from None
+    recipe_row = db.get(PipelineRecipe, recipe_uuid)
+    project_id = payload.project_id or (
+        str(recipe_row.project_id) if recipe_row and recipe_row.project_id else None
+    )
+    if not project_id:
+        raise HTTPException(422, detail={"code": "PROJECT_REQUIRED"})
+    try:
+        draft = servitize_recipe(
+            db,
+            project_id=uuid_module.UUID(str(project_id)),
+            actor_id=current_user.id,
+            deployment_id=payload.deployment_id,
+            recipe_content=dict(version.content_json or {}),
+            model_api_name=payload.model_api_name,
+            error_classes_override=payload.error_classes_override,
+        )
+    except LookupError:
+        raise HTTPException(404, detail={"code": "DEPLOYMENT_NOT_FOUND"})
+    except ValueError as error:
+        raise HTTPException(422, detail={"code": "SERVITIZE_INVALID",
+                                         "message": str(error)})
+    return {
+        "deployment_id": draft.deployment_id,
+        "loop_config_id": draft.loop_config_id,
+        "model_api_id": draft.model_api_id,
+        "model_api_name": draft.model_api_name,
+        "error_classes": draft.error_classes,
+        "ambiguous_labels": draft.ambiguous_labels,
+        "smoke": draft.smoke,
+        "activated": draft.activated,
+    }
+
+
+class ActivateRequest(BaseModel):
+    model_api_id: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/servitize/activate")
+def servitize_activate(
+    payload: ActivateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """⑤ 人工批准：模型 API offline→published（唯一对外开关）。"""
+    from app.services.agent.servitize import activate_servitize
+
+    try:
+        api = activate_servitize(
+            db, model_api_id=payload.model_api_id, actor_id=current_user.id
+        )
+    except LookupError:
+        raise HTTPException(404, detail={"code": "MODEL_API_NOT_FOUND"})
+    except ValueError as error:
+        raise HTTPException(409, detail={"code": "SERVITIZE_STATE_INVALID",
+                                         "message": str(error)})
+    return {"model_api_id": str(api.id), "status": api.status}
