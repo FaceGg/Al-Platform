@@ -186,6 +186,10 @@ def run_s2(
             config=config,
             messages=messages,
             temperature=0.3,
+            # Feature-script JSON (code + column lists) overflows the 2000-token
+            # gateway default and arrives truncated — observed on the real
+            # tightening P2 run as five consecutive unterminated-string attempts.
+            max_tokens=8000,
             purpose="agent_s2",
             actor=actor,
         )
