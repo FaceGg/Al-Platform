@@ -98,7 +98,7 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 1. **Mimosa 深扫未完整重跑**：commit 兼容策略放行时多次提示 scanner 部分故障（scanner_enobufs / callgraph_fact_partial 等），勿宣称项目安全；待重跑完整审计并治理 111 项既存发现（污点/joblib 系/测试凭据，全部既存文件）。
 2. **`load_deployment_model` 算子接线被写前 Hook 拦**（8 种写法试尽）：解析逻辑已就绪（serving_binding.py 有换模跟随测试）；待用户手动建文件（内容已提供）或随审计放行。
 3. **集成判据余项**（代码就绪、待执行）：真实回流换模 e2e、S5 双域服务化对照（需 AutoML 绑定全链而非注入 trainer）、经验受益对比；P2 收敛已过（2026-10-23）。
-4. **前端改版余量**：既有内容页仍为 antd 旧视觉（深色主题下可用但未按设计稿重绘）；对话确认卡；智能体中心向导页深化与配方库列表 API 接线。
+4. **前端改版余量**：既有内容页仍为 antd 旧视觉（深色主题下可用但未按设计稿重绘）；对话确认卡；智能体中心向导页深化（配方库列表 API 与 Agent 运行列表 API 已于 2026-10-23 接线，`/api/agent/runs|recipes` 元数据-only 出域）。
 5. 杂项：`ml-platform/backend/app/services/model_port.py` 未跟踪；git 代理 7897 间歇故障（直连不通时用 `-c http.proxy=http://127.0.0.1:7897`）；`design-showcase/` 目录在用户工作区被删除（未暂存、待用户确认是否提交）。
 
 ### 后续（执行顺序）
