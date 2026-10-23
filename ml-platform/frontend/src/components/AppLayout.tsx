@@ -7,7 +7,7 @@ import {
   ExperimentOutlined, ApiOutlined, CloudServerOutlined, RobotOutlined,
   MessageOutlined, MonitorOutlined, ClusterOutlined, DeploymentUnitOutlined,
   PlayCircleOutlined, BookOutlined, ControlOutlined, TagsOutlined, ApartmentOutlined,
-  HomeOutlined, RocketOutlined, CopyOutlined,
+  HomeOutlined, RocketOutlined, CopyOutlined, FileTextOutlined, SettingOutlined,
 } from "@ant-design/icons";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
 import { useI18n } from "../i18n";
@@ -23,11 +23,11 @@ interface SideGroup { label: string; items: SideEntry[] }
 
 /** Route prefix -> owning view. Longest prefix wins when resolving. */
 const VIEW_ROUTES: Record<ViewId, string[]> = {
-  portal: ["/", "/dashboard", "/projects", "/workspace", "/template"],
-  algo: ["/algo", "/models", "/data", "/data-annotation", "/automl", "/training", "/algorithms", "/api-marketplace", "/orchestration", "/demo-loop", "/annotations"],
+  portal: ["/", "/dashboard"],
+  algo: ["/algo", "/projects", "/workspace", "/template", "/models", "/data", "/data-annotation", "/automl", "/training", "/orchestration", "/demo-loop", "/annotations", "/algorithms", "/api-marketplace"],
   agent: ["/agent", "/knowledge-center", "/prompt-templates", "/knowledge", "/knowledge-graph", "/chat"],
   infra: ["/infra", "/kubernetes", "/notebooks", "/images", "/cluster-governance", "/monitor", "/compute"],
-  admin: ["/llm-gateway", "/admin/users"],
+  admin: ["/llm-gateway", "/admin/users", "/admin/projects", "/admin/audit", "/admin/settings"],
 };
 
 /** Landing route for each top-level view tab. */
@@ -113,22 +113,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     ],
     algo: [
       { label: zh ? "概览" : "Overview", items: [
-        { key: "/algo", icon: <AppstoreOutlined />, label: zh ? "建模总览" : "Overview" },
+        { key: "/algo", icon: <AppstoreOutlined />, label: zh ? "工作台" : "Dashboard" },
+        { key: "/projects", icon: <ProjectOutlined />, label: zh ? "项目管理" : "Projects" },
       ] },
       { label: zh ? "数据" : "Data", items: [
         { key: "/data", icon: <CloudUploadOutlined />, label: t.nav.data, badge: { count: sideCounts["/data"] } },
         { key: "/data-annotation", icon: <TagsOutlined />, label: t.nav.data_annotation, query: "view=tasks" },
       ] },
-      { label: zh ? "建模" : "Modeling", items: [
+      { label: zh ? "建模与服务" : "Modeling & Serving", items: [
         { key: "/automl", icon: <ThunderboltOutlined />, label: t.nav.automl, badge: { count: sideCounts["/automl"] } },
         { key: "/training", icon: <ExperimentOutlined />, label: t.nav.training },
         { key: "/models", icon: <AppstoreOutlined />, label: t.nav.models },
-        { key: "/algorithms", icon: <DatabaseOutlined />, label: t.nav.algorithms },
-      ] },
-      { label: zh ? "交付" : "Delivery", items: [
         { key: "/orchestration", icon: <RobotOutlined />, label: t.nav.orchestration },
         { key: "/demo-loop", icon: <DeploymentUnitOutlined />, label: t.nav.demo_loop },
-        { key: "/api-marketplace", icon: <ApiOutlined />, label: t.nav.api_market },
       ] },
     ],
     agent: [
@@ -146,23 +143,29 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       ] },
     ],
     infra: [
-      { label: zh ? "概览" : "Overview", items: [
-        { key: "/infra", icon: <AppstoreOutlined />, label: zh ? "集群总览" : "Overview" },
-      ] },
-      { label: t.nav.infraGroup, items: [
+      { label: zh ? "集群" : "Cluster", items: [
         { key: "/kubernetes", icon: <ClusterOutlined />, label: t.nav.kubernetes },
+        { key: "/cluster-governance", icon: <ControlOutlined />, label: t.nav.cluster_governance },
+      ] },
+      { label: zh ? "运行" : "Runtime", items: [
         { key: "/kubernetes/jobs", icon: <PlayCircleOutlined />, label: t.nav.job_runs },
         { key: "/notebooks", icon: <BookOutlined />, label: t.nav.notebooks },
         { key: "/images", icon: <DatabaseOutlined />, label: t.nav.images },
-        { key: "/cluster-governance", icon: <ControlOutlined />, label: t.nav.cluster_governance },
+      ] },
+      { label: zh ? "资源" : "Resources", items: [
         { key: "/monitor", icon: <MonitorOutlined />, label: t.nav.monitor },
         { key: "/compute", icon: <CloudServerOutlined />, label: t.nav.compute },
       ] },
     ],
     admin: [
-      { label: t.nav.adminGroup, items: [
-        { key: "/llm-gateway", icon: <ApiOutlined />, label: t.nav.llm_gateway },
-        { key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users },
+      { label: zh ? "管理" : "Management", items: [
+        { key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users, badge: { count: sideCounts["/admin/users"] } },
+        { key: "/admin/projects", icon: <ProjectOutlined />, label: zh ? "项目管理" : "Projects", badge: { count: sideCounts["/admin/projects"] } },
+        { key: "/admin/audit", icon: <FileTextOutlined />, label: zh ? "审计日志" : "Audit log" },
+      ] },
+      { label: zh ? "平台" : "Platform", items: [
+        { key: "/admin/settings", icon: <SettingOutlined />, label: zh ? "系统设置" : "Settings" },
+        { key: "/llm-gateway", icon: <ApiOutlined />, label: t.nav.llm_gateway, badge: { label: "NEW" } },
       ] },
     ],
   };

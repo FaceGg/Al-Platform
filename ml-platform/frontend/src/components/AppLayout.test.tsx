@@ -64,7 +64,7 @@ describe("AppLayout (v2 five-view shell)", () => {
     expect(within(screen.getByTestId("v2-sidebar")).getByText("项目管理")).toBeInTheDocument();
   });
 
-  it("renders the algo sidebar with annotation and API market entries on algo routes", async () => {
+  it("renders the algo sidebar with annotation and project entries on algo routes", async () => {
     render(
       <MemoryRouter initialEntries={["/automl"]}>
         <AppLayout><div>test</div></AppLayout>
@@ -72,7 +72,7 @@ describe("AppLayout (v2 five-view shell)", () => {
     );
     await waitFor(() => expect(screen.getByTestId("v2-sidebar")).toBeTruthy());
     expect(screen.getByText("数据标注")).toBeInTheDocument();
-    expect(screen.getByText(/API\s*(市场|Market)/)).toBeInTheDocument();
+    expect(screen.getByText(/项目管理/)).toBeInTheDocument();
   });
 
   it.each([
@@ -90,14 +90,14 @@ describe("AppLayout (v2 five-view shell)", () => {
     expect((await screen.findAllByText(new RegExp(brandName))).length).toBeGreaterThan(0);
   });
 
-  it("navigates to the API marketplace from the sidebar", async () => {
+  it("navigates to the projects page from the algo sidebar", async () => {
     function LocationProbe() {
       const location = useLocation();
       return <output data-testid="location">{location.pathname}</output>;
     }
     render(<MemoryRouter initialEntries={["/automl"]}><AppLayout><LocationProbe /></AppLayout></MemoryRouter>);
-    fireEvent.click(await screen.findByText(/API\s*(市场|Market)/));
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/api-marketplace"));
+    fireEvent.click(await screen.findByText(/项目管理/));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/projects"));
   });
 
   it("marks the theme toggle and header with stable theme-aware hooks", async () => {
