@@ -78,6 +78,77 @@ class ReviewVerdict(BaseModel):
     next_iteration_hints: list[str] = Field(default_factory=list)
 
 
+class GuidanceAnalysis(BaseModel):
+    column_notes: list[dict] = Field(default_factory=list)
+    row_notes: list[dict] = Field(default_factory=list)
+    prompts: list[str] = Field(default_factory=list)
+    suspect_focus: list[str] = Field(default_factory=list)
+
+
+class GuidanceFeature(BaseModel):
+    data_shape: str = Field(default="tabular", pattern="^(tabular|waveform|mixed)$")
+    must_keep: list[str] = Field(default_factory=list)
+    suggest_drop: list[dict] = Field(default_factory=list)
+    prompts: list[str] = Field(default_factory=list)
+
+
+class GuidanceModeling(BaseModel):
+    algorithm_whitelist: list[str] = Field(default_factory=list)
+    param_hints: dict = Field(default_factory=dict)
+    prompts: list[str] = Field(default_factory=list)
+
+
+class GuidanceEvaluation(BaseModel):
+    custom_test_dataset_id: str | None = Field(default=None, max_length=64)
+    metric_gates: dict = Field(default_factory=dict)
+    review_focus: list[str] = Field(default_factory=list)
+
+
+class UserGuidance(BaseModel):
+    """第四契约（§11.2）：四步向导的可选注入，全不填即全自动。"""
+
+    analysis: GuidanceAnalysis = Field(default_factory=GuidanceAnalysis)
+    feature: GuidanceFeature = Field(default_factory=GuidanceFeature)
+    modeling: GuidanceModeling = Field(default_factory=GuidanceModeling)
+    evaluation: GuidanceEvaluation = Field(default_factory=GuidanceEvaluation)
+    pause_at_stages: list[str] = Field(default_factory=list)
+
+    def is_empty(self) -> bool:
+        return not (
+            self.analysis.column_notes
+            or self.analysis.row_notes
+            or self.analysis.prompts
+            or self.analysis.suspect_focus
+            or self.feature.must_keep
+            or self.feature.suggest_drop
+            or self.feature.prompts
+            or self.modeling.algorithm_whitelist
+            or self.modeling.param_hints
+            or self.modeling.prompts
+            or self.evaluation.custom_test_dataset_id
+            or self.evaluation.metric_gates
+            or self.evaluation.review_focus
+        )
+
+
+class UnsatisfactoryItem(BaseModel):
+    issue: str = Field(min_length=1, max_length=2000)
+    cause: str = Field(min_length=1, max_length=2000)
+    missing: str = Field(min_length=1, max_length=2000)
+    suggestion: str = Field(min_length=1, max_length=2000)
+
+
+class OptimizationReport(BaseModel):
+    """第五契约（§13.2）：每次任务结束自动生成，数字一律取自平台计量。"""
+
+    what_optimized: list[str] = Field(default_factory=list)
+    findings: list[str] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)
+    unsatisfactory: list[UnsatisfactoryItem] = Field(default_factory=list)
+    next_hints: list[str] = Field(default_factory=list)
+    cost: dict = Field(default_factory=dict)
+
+
 _CODE_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
 

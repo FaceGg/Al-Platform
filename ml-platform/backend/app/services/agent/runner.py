@@ -22,6 +22,7 @@ from app.services.agent.contracts import AnalysisReport
 from app.services.agent.hard_gates import PRIMARY_METRIC, evaluate_hard_gates
 from app.services.agent.llm_client import run_s1, run_s2, run_s4
 from app.services.agent.sandbox import ast_violations, check_contract, run_sandbox
+from app.services.agent.wizard import merge_gates, pause_plan
 from app.services.llm_gateway import GatewayLLMConfig
 
 MAX_ROUNDS = 3
@@ -168,6 +169,25 @@ class AgentRunner:
         return None, attempts
 
     # ------------------------------------------------------------------ main
+    def _pause_if_requested(
+        self, stage: str, pause_at: set, resume_state, round_number: int
+    ) -> bool:
+        """逐步确认模式（§11.1）：stage 完成后若请求了暂停且本轮未暂停过，
+        转 waiting_guidance 并记录；下一次 run_to_completion 跳过该位继续。"""
+        if stage not in pause_at:
+            return False
+        memory = self.run.memory_json or {}
+        done_key = "paused:%s:%d" % (stage, round_number)
+        already = (memory.get("resume") or {}).get("done", [])
+        if resume_state is not None or done_key in already:
+            return False
+        already.append(done_key)
+        memory["resume"] = {"done": already, "next_stage": stage, "round": round_number}
+        self.run.memory_json = memory
+        self.run.status = "waiting_guidance"
+        self.db.commit()
+        return True
+
     def run_to_completion(self) -> AgentRun:
         """Drive the bounded S1→S4 loop and persist terminal state."""
         try:
@@ -183,6 +203,10 @@ class AgentRunner:
         self.run.llm_model_id = self.config.model_id
         self.db.commit()
 
+        guidance_model = self.guidance if isinstance(self.guidance, dict) else None
+        pause_at = pause_plan(self.guidance) if self.guidance is not None else set()
+        resume_state = self.run.memory_json.get("resume") if self.run.memory_json else None
+
         round_number = 0
         while round_number < MAX_ROUNDS:
             round_number += 1
@@ -196,13 +220,15 @@ class AgentRunner:
                 config=self.config,
                 profile_report=self.profile_report,
                 prior_memory=self._memory_digest(),
-                guidance=(self.guidance or {}).get("analysis"),
+                guidance=(self.guidance or {}).get("analysis") if isinstance(self.guidance, dict) else None,
                 actor=self.actor,
             )
             if not self._absorb_usage(usage):
                 return self._escalate("AGENT_TOKEN_BUDGET_EXCEEDED")
             if error:
                 return self._escalate("AGENT_S1_CONTRACT_FAILED")
+            if self._pause_if_requested("s1", pause_at, resume_state, round_number):
+                return self.run
 
             # ---- S2 -------------------------------------------------
             self.run.current_stage = "s2"
@@ -226,9 +252,25 @@ class AgentRunner:
             self.run.current_stage = "s4"
             self.db.commit()
             gates = dict(DEFAULT_GATES)
-            user_gates = ((self.guidance or {}).get("evaluation") or {}).get("metric_gates")
-            if user_gates:
-                gates = {**gates, **user_gates}
+            user_gates = None
+            if isinstance(self.guidance, dict):
+                user_gates = ((self.guidance or {}).get("evaluation") or {}).get(
+                    "metric_gates"
+                )
+            gates, gate_warnings = merge_gates(DEFAULT_GATES, user_gates)
+            if gate_warnings:
+                memory = self.run.memory_json or {}
+                gate_log = list(memory.get("gate_warnings") or [])
+                gate_log.extend(
+                    "round %d: %s" % (round_number, warning)
+                    for warning in gate_warnings
+                )
+                memory["gate_warnings"] = gate_log
+                self.run.memory_json = memory  # 黄条警示随任务档案留痕（§11.3）
+            if resume_state is not None:
+                memory = self.run.memory_json or {}
+                memory.pop("resume", None)
+                self.run.memory_json = memory
             gate_report = evaluate_hard_gates(
                 trainer_result.get("metrics", {}),
                 gates=gates,

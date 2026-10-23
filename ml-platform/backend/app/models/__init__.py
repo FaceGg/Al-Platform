@@ -41,6 +41,7 @@ from app.models.agent_run import AgentRun
 from app.models.recipe import PipelineRecipe, PipelineRecipeVersion
 from app.models.experience_entry import ExperienceEntry
 from app.models.skill_revision import SkillRevision
+from app.models.prompt_template import PromptTemplate
 from app.models.api_model import PlatformAPI
 from app.models.compute import ComputeNode, EdgeDevice
 from app.models.platform_models import (
@@ -140,6 +141,7 @@ __all__ = [
     "PipelineRecipeVersion",
     "ExperienceEntry",
     "SkillRevision",
+    "PromptTemplate",
     "PlatformAPI",
     "ComputeNode",
     "EdgeDevice",
