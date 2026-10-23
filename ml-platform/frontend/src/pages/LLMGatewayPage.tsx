@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Modal, Form, Input, InputNumber, message, Popconfirm, Space, Select, Card, Switch } from 'antd'
+import { Button, Modal, Form, Input, InputNumber, message, Popconfirm, Space, Select, Switch } from 'antd'
 import { PlusOutlined, ReloadOutlined, ApiOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 import AppLayout from '../components/AppLayout'
@@ -17,7 +17,7 @@ import { formatApiError } from '../api/client'
 const PURPOSE_OPTIONS = ['chat', 'agent', 'embedding']
 
 export default function LLMGatewayPage() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const text = t.llm
   const [profiles, setProfiles] = useState<LLMProfile[]>([])
   const [loading, setLoading] = useState(false)
@@ -121,72 +121,69 @@ export default function LLMGatewayPage() {
     }
   }
 
-  const columns = [
-    {
-      title: text.colName,
-      dataIndex: 'name',
-      render: (value: string, record: LLMProfile) => (
-        <Space>
-          <span>{value}</span>
-          {record.is_default && <Tag color="blue">{text.defaultTag}</Tag>}
-        </Space>
-      ),
-    },
-    { title: text.colProvider, dataIndex: 'provider' },
-    { title: 'URL', dataIndex: 'api_url', ellipsis: true },
-    { title: text.colModel, dataIndex: 'model_id' },
-    {
-      title: text.colDeployment,
-      dataIndex: 'deployment',
-      render: (value: string) => (
-        <Tag color={value === 'private' ? 'purple' : 'green'}>
-          {value === 'private' ? text.deploymentPrivate : text.deploymentCloud}
-        </Tag>
-      ),
-    },
-    { title: text.colKey, dataIndex: 'api_key_masked', render: (value: string | null) => value || '-' },
-    {
-      title: text.colPurposes,
-      dataIndex: 'purpose_tags',
-      render: (value: string[]) => (value || []).map((tag) => <Tag key={tag}>{tag}</Tag>),
-    },
-    {
-      title: text.colActions,
-      render: (_: unknown, record: LLMProfile) => (
-        <Space>
-          <Button size="small" icon={<ApiOutlined />} loading={testingId === record.id} onClick={() => runProbe(record)}>
-            {text.probe}
-          </Button>
-          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
-            {text.edit}
-          </Button>
-          <Popconfirm title={text.deleteConfirm} onConfirm={() => remove(record)}>
-            <Button size="small" danger icon={<DeleteOutlined />}>
-              {text.delete}
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ]
-
   return (
     <AppLayout>
-      <Card
-        title={text.title}
-        extra={
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={load}>
-              {text.refresh}
-            </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              {text.create}
-            </Button>
-          </Space>
-        }
-      >
-        <Table rowKey="id" columns={columns as never} dataSource={profiles} loading={loading} pagination={false} />
-      </Card>
+      <div className="v2-crumb">{lang === 'zh' ? '系统管理 / ' : 'Administration / '}<b>{text.title}</b></div>
+      <div className="v2-pagehead">
+        <div>
+          <h2>{text.title}</h2>
+          <div className="v2-pdesc">{lang === 'zh'
+            ? '集中配置平台可用的大模型档案：AI 对话、智能体分析/写码/评审与知识库向量化各自选用；密钥只写不读。'
+            : 'Central registry of LLM profiles for chat, agent analysis/codegen/review and embeddings; keys are write-only.'}</div>
+        </div>
+        <div style={{ display: 'flex', gap: 9 }}>
+          <button type="button" className="v2-btn" onClick={load}>
+            <ReloadOutlined spin={loading} />{text.refresh}
+          </button>
+          <button type="button" className="v2-btn primary" onClick={openCreate}>
+            <PlusOutlined />{text.create}
+          </button>
+        </div>
+      </div>
+
+      <div className="v2-panel">
+        <table className="v2-table">
+          <thead><tr>
+            <th>{text.colName}</th><th>{text.colProvider}</th><th>URL</th>
+            <th>{text.colModel}</th><th>{text.colDeployment}</th>
+            <th>{text.colKey}</th><th>{text.colPurposes}</th><th>{text.colActions}</th>
+          </tr></thead>
+          <tbody>
+            {profiles.length === 0 && !loading ? (
+              <tr><td colSpan={8} className="v2-empty">{lang === 'zh' ? '暂无档案' : 'No profiles'}</td></tr>
+            ) : null}
+            {profiles.map((record) => (
+              <tr key={record.id}>
+                <td className="tt">
+                  {record.name}
+                  {record.is_default ? <span className="v2-badge v2-bb" style={{ marginLeft: 6 }}>{text.defaultTag}</span> : null}
+                </td>
+                <td>{record.provider}</td>
+                <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={record.api_url}>{record.api_url}</td>
+                <td className="tt">{record.model_id}</td>
+                <td><span className={`v2-badge ${record.deployment === 'private' ? 'v2-bp' : 'v2-bg'}`}>{record.deployment === 'private' ? text.deploymentPrivate : text.deploymentCloud}</span></td>
+                <td>{record.api_key_masked || '-'}</td>
+                <td>{(record.purpose_tags || []).map((tag) => <span key={tag} className="v2-badge v2-bgray" style={{ marginRight: 4 }}>{tag}</span>)}</td>
+                <td>
+                  <Space>
+                    <Button size="small" icon={<ApiOutlined />} loading={testingId === record.id} onClick={() => runProbe(record)}>
+                      {text.probe}
+                    </Button>
+                    <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+                      {text.edit}
+                    </Button>
+                    <Popconfirm title={text.deleteConfirm} onConfirm={() => remove(record)}>
+                      <Button size="small" danger icon={<DeleteOutlined />}>
+                        {text.delete}
+                      </Button>
+                    </Popconfirm>
+                  </Space>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       <Modal
         title={editing ? text.editTitle : text.createTitle}
         open={modalOpen}
