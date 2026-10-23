@@ -227,7 +227,10 @@ PHASE_TEST_MODULES: dict[str, list[str]] = {
         "test_agent_wizard",
         "test_agent_optimization_report",
     ],
-    "p6": [],
+    "p6": [
+        "test_kb_bindings",
+        "test_chat_tools",
+    ],
 }
 
 

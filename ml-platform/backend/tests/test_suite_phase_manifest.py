@@ -54,18 +54,26 @@ def test_phase_modules_do_not_collide_with_week_modules():
     assert len(ALL_TEST_MODULES) == len(set(ALL_TEST_MODULES))
 
 
-def test_run_suite_phase_empty_group_passes():
+def test_run_suite_phase_smallest_group_runs():
     empty_phases = [
         phase
         for phase, modules in sorted(PHASE_TEST_MODULES.items())
         if not modules
     ]
-    assert empty_phases, "at least one phase should still be an unstarted group"
-    phase = empty_phases[0]
+    if empty_phases:
+        phase = empty_phases[0]
+        expected = "Running phase %s acceptance suite (0 modules)." % phase
+    else:
+        # All phases have started: the smallest group still runs cleanly.
+        phase = min(
+            PHASE_TEST_MODULES,
+            key=lambda name: len(PHASE_TEST_MODULES[name]),
+        )
+        expected = "Running phase %s acceptance suite" % phase
     result = _run_suite("--phase", phase)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert f"Running phase {phase} acceptance suite (0 modules)." in result.stdout
-    assert "0 passed, 0 failed out of 0 modules" in result.stdout
+    assert expected in result.stdout
+    assert "RESULTS:" in result.stdout
 
 
 def test_run_suite_phase_flag_validates_choices():
