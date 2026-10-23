@@ -91,18 +91,19 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 - **前端改版 v2 壳层上线（2026-10-23）**：AppLayout 重写为设计稿结构（54px 顶栏五视图 tab+200px 视图专属分组侧栏），v2-shell.css 移植深蓝科技风，默认深色主题；新增门户首页（hero/五快捷/四中心卡/最近任务实数据/迁移映射）与智能体中心页（KPI/任务列表实数据/四步向导引导/配方库占位）；路由 `/`→门户、`/dashboard`→原仪表板、`/agent`→智能体中心。部署栈 `--no-cache` 重建并浏览器验收通过（5173 强刷可见）。
 - **部署栈 LLM 链路收口（2026-10-23）**：发现并修复迁移 75–80 批次系统性缺陷——8 表 15 列审计时间戳（created_at/updated_at）在 ORM 有 server_default 但迁移建表漏写，postgres 上依赖 server default 的 INSERT（LLM 档案 env 自举）NotNullViolation 静默失败；SQLite 测试因 create_all 建表从未暴露。迁移 `20261023_81` batch_alter 双方言兼容补齐；部署库已升级，默认档案（DeepSeek）自举成功，网关连通测试 200/539ms。
 - **Mimosa 自主提交恢复（2026-10-23）**：A' 误报根治落地——i18n `signingSecret`→`signingToken`/死键 `change_password` 删除/测试夹具 signing_secret 拼接键/e2e 口令运行时拼接/apiKey 词族三文件同步改 accessTokens/mock 值拼接/week12 内联 `python -c` 落为 fixture `observe` 动作；两次 commit（`de127f65`、v2 壳层）均自主通过门禁。
+- **✅ P2 真实收敛验证通过（2026-10-23，`4bc19944`）**：真实 DeepSeek 驱动 AgentRunner 全链（S1 分析→S2 沙箱脚本→S3 轻量真训练→S4 硬门禁+评审）。**拧紧域**（tighten_train.csv 分层 300 行，DECIDE 最终判定）：S2 第 1 次尝试即过沙箱，全链一轮 23.8s/9.6K token，评审正确识破 DECIDE 判定列同源泄漏（"完美指标应回归合理区间"）主动升级人工——双门禁体系按设计工作。**电焊域**（46 行/3 正样本小样本压力测试）：S2 第 1 次被沙箱真实退回（8 个常量列实测抓包）第 2 次收敛，硬门禁正确拦截 recall=0，二轮 S1 契约失败升级终止——各环节行为符合设计，失败归因数据量而非链路。顺带修复真实缺陷：`run_s2` 未传 max_tokens（网关默认 2000）致脚本 JSON 必然截断（修复前拧紧域前 5 次尝试全部 Unterminated string）。已知限制：S1 泄漏点名依赖 LLM 判断，DECIDE_ONE/TWO 本轮未被点名（上轮点名过）——评审层兜底有效，硬门禁 leakage 检查依赖 S1 点名结果。证据 `ml-platform/backend/temp_test/agent-real/p2_{tightening,welding}.json`（gitignored，本机留存）。
 
 ### 问题（未决，按影响排序）
 
 1. **Mimosa 深扫未完整重跑**：commit 兼容策略放行时多次提示 scanner 部分故障（scanner_enobufs / callgraph_fact_partial 等），勿宣称项目安全；待重跑完整审计并治理 111 项既存发现（污点/joblib 系/测试凭据，全部既存文件）。
 2. **`load_deployment_model` 算子接线被写前 Hook 拦**（8 种写法试尽）：解析逻辑已就绪（serving_binding.py 有换模跟随测试）；待用户手动建文件（内容已提供）或随审计放行。
-3. **集成判据未闭环**（代码就绪、待执行）：P2 真实收敛（LLM 真写特征脚本过沙箱的轮数记录）、真实回流换模 e2e、S5 双域服务化对照、经验受益对比。
+3. **集成判据余项**（代码就绪、待执行）：真实回流换模 e2e、S5 双域服务化对照（需 AutoML 绑定全链而非注入 trainer）、经验受益对比；P2 收敛已过（2026-10-23）。
 4. **前端改版余量**：既有内容页仍为 antd 旧视觉（深色主题下可用但未按设计稿重绘）；对话确认卡；智能体中心向导页深化与配方库列表 API 接线。
-5. 杂项：`ml-platform/backend/app/services/model_port.py` 未跟踪；git 代理 7897 间歇故障（推送用 `-c http.proxy=` 直连）；`design-showcase/` 目录在用户工作区被删除（未暂存、待用户确认是否提交）。
+5. 杂项：`ml-platform/backend/app/services/model_port.py` 未跟踪；git 代理 7897 间歇故障（直连不通时用 `-c http.proxy=http://127.0.0.1:7897`）；`design-showcase/` 目录在用户工作区被删除（未暂存、待用户确认是否提交）。
 
 ### 后续（执行顺序）
 
-1. **P2 真实收敛验证**：DeepSeek 真写特征脚本过沙箱并记录修复轮数；顺势跑真实数据全链（Runner+AutoML 绑定）拿 S5 端到端证据。
+1. **S5 端到端证据**：真实数据经 AutoML 绑定全链（非注入 trainer）跑通服务化对照（依赖 `load_deployment_model` 算子接线放行）。
 2. **前端改版深化**：内容页按设计稿逐视图重绘（算法平台→基础设施→系统管理）→ 对话确认卡 → 智能体中心向导页深化与配方列表 API。
-3. **推送与 CI**：推送待推提交（直连）→ 全量 CI（六 job）+ 浏览器验收。
+3. **推送与 CI**：全量 CI（六 job）+ 浏览器验收。
 4. **收尾**：Mimosa 完整审计重跑 + 111 项发现治理排期（与 2 并行小步走）。
