@@ -1,130 +1,131 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { App as AntApp } from "antd";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AgentModelingWizard from "./AgentModelingWizard";
 
-const apiClientGet = vi.hoisted(() => vi.fn());
-const apiClientPost = vi.hoisted(() => vi.fn());
+const clientGet = vi.hoisted(() => vi.fn());
+const clientPost = vi.hoisted(() => vi.fn());
 const datasetMocks = vi.hoisted(() => ({
   listDatasets: vi.fn(),
   getDatasetPreview: vi.fn(),
 }));
-
-vi.mock("../api/client", () => ({
-  default: { get: apiClientGet, post: apiClientPost },
+const agentCenterMocks = vi.hoisted(() => ({
+  createAgentRun: vi.fn(),
 }));
+
+vi.mock("../api/client", () => ({ default: { get: clientGet, post: clientPost } }));
 vi.mock("../api/datasets", () => datasetMocks);
+vi.mock("../api/agentCenter", () => agentCenterMocks);
 vi.mock("../pages/AutoMLPage", () => ({
-  AUTOML_ALGORITHM_IDS: ["lightgbm", "xgboost", "mlp"],
+  AUTOML_ALGORITHM_OPTIONS: [
+    { value: "lightgbm", label: "LightGBM" },
+    { value: "mlp", label: "MLP" },
+  ],
 }));
 vi.mock("../i18n", () => ({
   useI18n: () => ({ lang: "zh", t: {}, setLang: () => {} }),
 }));
 
 function renderWizard() {
-  return render(
-    <MemoryRouter>
-      <AntApp><AgentModelingWizard /></AntApp>
-    </MemoryRouter>,
-  );
+  return render(<MemoryRouter><AgentModelingWizard /></MemoryRouter>);
 }
 
-describe("AgentModelingWizard", () => {
+describe("AgentModelingWizard (design five-step agent wizard)", () => {
   beforeEach(() => {
     localStorage.clear();
-    apiClientGet.mockReset().mockImplementation((url: string) => {
-      if (url === "/projects") {
-        return Promise.resolve({ data: { items: [{ id: "p1", name: "拧紧产线" }] } });
+    clientGet.mockReset().mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "p1", name: "拧紧" }] } });
+      if (url === "/llm-profiles") {
+        return Promise.resolve({ data: [{ id: "prof-1", name: "内置默认档案", model_id: "deepseek-chat", is_default: true }] });
       }
       return Promise.resolve({ data: {} });
     });
     datasetMocks.listDatasets.mockReset().mockResolvedValue([
-      { id: "d1", name: "tighten_train.csv" },
-      { id: "d2", name: "weld.csv" },
+      { id: "d1", name: "tighten_train.csv", row_count: 70087, column_count: 20 },
     ]);
-    datasetMocks.getDatasetPreview.mockReset().mockImplementation((id: string) => {
-      if (id === "d1") {
-        return Promise.resolve({
-          columns: ["ACTUAL_TORQUE", "TARGET_TORQUE", "DECIDE(判定（最终判定）（0-不合格，1-合格）)"],
-        });
-      }
-      return Promise.resolve({ columns: ["a", "b", "label"] });
+    datasetMocks.getDatasetPreview.mockReset().mockResolvedValue({
+      columns: ["ACTUAL_TORQUE", "TARGET_TORQUE", "DECIDE(判定（最终判定）（0-不合格，1-合格）)"],
     });
-    apiClientPost.mockReset();
+    agentCenterMocks.createAgentRun.mockReset().mockResolvedValue({ id: "run-1", status: "pending" });
   });
 
-  it("walks the four steps and submits an experiment plus an automl run", async () => {
+  it("walks the five steps and archives guidance through POST /agent/runs", async () => {
     renderWizard();
 
-    // Step 1: project + dataset.
+    // Config bar: project, dataset, auto-selected DECIDE target, default profile.
     fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
     fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
+    await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
+    expect(screen.getByLabelText("选择目标列")).toHaveValue("DECIDE(判定（最终判定）（0-不合格，1-合格）)");
+
+    // Step 1: check a column and add a note; add an analysis prompt.
+    const torqueCheck = screen.getByLabelText("select ACTUAL_TORQUE");
+    fireEvent.click(torqueCheck);
+    const noteBox = screen.getAllByPlaceholderText("选中的列与备注会成为大模型的重点输入")[0];
+    fireEvent.change(noteBox, { target: { value: "核心质量信号，关注偏差" } });
+    fireEvent.change(screen.getByPlaceholderText(/这批数据来自换夹具/), { target: { value: "关注工装漂移" } });
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
-    // Step 2: the preferred DECIDE target is auto-selected; inputs = other columns.
-    expect(await screen.findByText(/2 列/)).toBeInTheDocument();
+    // Step 2: default mixed shape; mark DECIDE-like column as keep via directive.
+    fireEvent.click(await screen.findByText(/表格数据/));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
-    // Step 3: default medium strength; keep defaults.
+    // Step 3: whitelist one algorithm.
+    fireEvent.click(await screen.findByText("LightGBM"));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
-    // Step 4: confirm summary then launch.
-    expect(await screen.findByText(/拧紧产线/)).toBeInTheDocument();
-    expect(screen.getByText(/tighten_train\.csv/)).toBeInTheDocument();
-    apiClientPost.mockImplementation((url: string) => {
-      if (url === "/experiments") return Promise.resolve({ data: { id: "e1" } });
-      if (url === "/training/automl/run") return Promise.resolve({ data: { run_id: "r1" } });
-      return Promise.resolve({ data: {} });
-    });
-    fireEvent.click(screen.getByRole("button", { name: /启动全自动建模/ }));
+    // Step 4: gates default recall 0.90; keep and launch.
+    expect(await screen.findByText(/验收指标阈值/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
-    await waitFor(() => expect(apiClientPost).toHaveBeenCalledTimes(2));
-    const runCall = apiClientPost.mock.calls.find(([url]) => url === "/training/automl/run");
-    expect(runCall).toBeTruthy();
-    const payload = runCall![1];
-    expect(payload.project_id).toBe("p1");
-    expect(payload.experiment_id).toBe("e1");
+    // Step 5: launch.
+    fireEvent.click(await screen.findByRole("button", { name: /启动智能体/ }));
+
+    await waitFor(() => expect(agentCenterMocks.createAgentRun).toHaveBeenCalledTimes(1));
+    const payload = agentCenterMocks.createAgentRun.mock.calls[0][0];
     expect(payload.dataset_artifact_id).toBe("d1");
     expect(payload.target_column).toContain("判定");
-    expect(payload.input_columns).toEqual(["ACTUAL_TORQUE", "TARGET_TORQUE"]);
-    expect(payload.search_strength).toBe("medium");
-    expect(payload.time_budget).toBe(3600);
-    expect(payload.algorithm_ids).toEqual(["lightgbm", "xgboost", "mlp"]);
+    expect(payload.project_id).toBe("p1");
+    expect(payload.llm_profile_id).toBe("prof-1");
+    expect(payload.step_by_step).toBe(false);
+    expect(payload.guidance.analysis.column_notes).toEqual([
+      { column: "ACTUAL_TORQUE", note: "核心质量信号，关注偏差" },
+    ]);
+    expect(payload.guidance.analysis.prompts).toEqual(["关注工装漂移"]);
+    expect(payload.guidance.feature.data_shape).toBe("tabular");
+    expect(payload.guidance.modeling.algorithm_whitelist).toEqual(["lightgbm"]);
+    expect(payload.guidance.evaluation.metric_gates).toEqual({ recall_minority: 0.9 });
   });
 
-  it("keeps the next button disabled until project and dataset are chosen", async () => {
-    renderWizard();
-
-    const next = await screen.findByRole("button", { name: /下一步/ });
-    expect(next).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("选择项目"), { target: { value: "p1" } });
-    await waitFor(() => expect(screen.getByLabelText("选择数据集")).not.toBeDisabled());
-    expect(next).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("选择数据集"), { target: { value: "d1" } });
-    await waitFor(() => expect(next).not.toBeDisabled());
-  });
-
-  it("surfaces the empty-dataset hint when a project has no datasets", async () => {
-    datasetMocks.listDatasets.mockResolvedValue([]);
-    renderWizard();
-
-    fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
-    expect(await screen.findByText(/暂无数据集/)).toBeInTheDocument();
-  });
-
-  it("surfaces submission errors without losing the summary", async () => {
+  it("expands step-by-step mode into the pause plan on submit", async () => {
     renderWizard();
     fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
     fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
-    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
-    await screen.findByText(/2 列/);
-    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
-    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
-    apiClientPost.mockRejectedValueOnce({ response: { data: { detail: "quota" } } });
-    fireEvent.click(await screen.findByRole("button", { name: /启动全自动建模/ }));
+    await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
+    const toggle = screen.getByRole("switch", { name: "逐步确认模式" });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    for (let i = 0; i < 4; i += 1) {
+      fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: /启动智能体/ }));
+    await waitFor(() => expect(agentCenterMocks.createAgentRun).toHaveBeenCalled());
+    expect(agentCenterMocks.createAgentRun.mock.calls[0][0].step_by_step).toBe(true);
+    expect(await screen.findByText(/已开启逐步确认/)).toBeInTheDocument();
+  });
 
-    expect(await screen.findByText(/quota/)).toBeInTheDocument();
-    expect(screen.getByText(/拧紧产线/)).toBeInTheDocument();
+  it("surfaces contract validation errors inline", async () => {
+    agentCenterMocks.createAgentRun.mockRejectedValue({
+      response: { data: { detail: { code: "AGENT_RUN_GUIDANCE_INVALID", errors: [{ loc: ["analysis"] }] } } },
+    });
+    renderWizard();
+    fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
+    fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
+    await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
+    for (let i = 0; i < 4; i += 1) {
+      fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: /启动智能体/ }));
+    expect(await screen.findByText(/AGENT_RUN_GUIDANCE_INVALID/)).toBeInTheDocument();
   });
 });

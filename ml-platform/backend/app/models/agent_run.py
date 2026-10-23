@@ -60,6 +60,9 @@ class AgentRun(Base):
     error_code = Column(String(64), nullable=True)
     memory_json = Column(JSON, nullable=False, default=dict)
     result_json = Column(JSON, nullable=False, default=dict)
+    # UserGuidance captured at submission time (spec §11): analysis/feature/
+    # modeling/evaluation sections plus the step-by-step pause plan.
+    guidance_json = Column(JSON, nullable=True)
     created_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

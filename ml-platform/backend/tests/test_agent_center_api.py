@@ -100,6 +100,87 @@ class TestAgentRunsListing(AgentCenterHarness, unittest.TestCase):
         response = client.get("/api/agent/runs")
         self.assertEqual(response.status_code, 401)
 
+    def test_run_detail_returns_full_archive_with_memory(self):
+        project_id, _ = self._project()
+        memory = {"rounds": [{
+            "round": 1,
+            "s2_attempts": [{"attempt": 1, "ok": True}],
+            "verdict": "escalate",
+            "hints": ["剔除判定列后重训"],
+        }]}
+        with SessionLocal() as db:
+            db.add(AgentRun(
+                project_id=uuid.UUID(project_id),
+                target_column="DECIDE",
+                status="waiting_escalate",
+                current_stage="s4",
+                round_count=1,
+                token_used=9588,
+                error_code="AGENT_REVIEW_ESCALATE",
+                memory_json=memory,
+                result_json={"token_used": 9588},
+            ))
+            db.commit()
+            run_id = str(db.query(AgentRun).order_by(AgentRun.created_at.desc()).first().id)
+
+        response = client.get(f"/api/agent/runs/{run_id}", headers=self.h)
+        self.assertEqual(response.status_code, 200)
+        detail = response.json()
+        self.assertEqual(detail["status"], "waiting_escalate")
+        self.assertEqual(detail["round_count"], 1)
+        self.assertEqual(detail["memory_json"], memory)
+        self.assertEqual(detail["result_json"], {"token_used": 9588})
+        self.assertEqual(detail["error_code"], "AGENT_REVIEW_ESCALATE")
+
+    def test_run_detail_404_for_unknown_id(self):
+        response = client.get(f"/api/agent/runs/{uuid4()}", headers=self.h)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "AGENT_RUN_NOT_FOUND")
+
+
+class TestCreateAgentRun(AgentCenterHarness, unittest.TestCase):
+    def test_archives_wizard_submission_with_guidance_and_pause_plan(self):
+        payload = {
+            "dataset_artifact_id": str(uuid4()),
+            "target_column": "DECIDE(判定（最终判定）（0-不合格，1-合格）)",
+            "step_by_step": True,
+            "token_budget": 120000,
+            "guidance": {
+                "analysis": {"column_notes": [{"column": "ACTUAL_TORQUE", "note": "核心质量信号"}]},
+                "feature": {"suggest_drop": [{"column": "DECIDE_ONE", "reason": "同源判定"}, {"column": "DECIDE_TWO", "reason": "同源判定"}]},
+                "modeling": {"algorithm_whitelist": ["lightgbm", "hist_gradient_boosting"]},
+                "evaluation": {"metric_gates": {"recall_minority": 0.92}},
+            },
+        }
+        response = client.post("/api/agent/runs", json=payload, headers=self.h)
+        self.assertEqual(response.status_code, 201)
+        detail = response.json()
+        self.assertEqual(detail["status"], "pending")
+        self.assertEqual(detail["current_stage"], "s1")
+        self.assertEqual(detail["token_budget"], 120000)
+        # guidance_json is exposed via the detail payload
+        self.assertIn("guidance_json", detail)
+        # Step-by-step expands into the full pause plan.
+        self.assertEqual(sorted(detail["guidance_json"]["pause_at_stages"]), ["s1", "s2", "s3", "s4"])
+        self.assertEqual(detail["guidance_json"]["modeling"]["algorithm_whitelist"],
+                         ["lightgbm", "hist_gradient_boosting"])
+
+    def test_rejects_invalid_guidance_with_contract_errors(self):
+        payload = {
+            "dataset_artifact_id": str(uuid4()),
+            "target_column": "fault",
+            "guidance": {"analysis": {"column_notes": "not-a-mapping"}},
+        }
+        response = client.post("/api/agent/runs", json=payload, headers=self.h)
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["detail"]["code"], "AGENT_RUN_GUIDANCE_INVALID")
+
+    def test_requires_authentication(self):
+        response = client.post("/api/agent/runs", json={
+            "dataset_artifact_id": str(uuid4()), "target_column": "fault",
+        })
+        self.assertEqual(response.status_code, 401)
+
 
 class TestRecipeListing(AgentCenterHarness, unittest.TestCase):
     def test_lists_recipes_with_current_version_metadata(self):

@@ -126,7 +126,7 @@ describe("AppLayout (v2 five-view shell)", () => {
     expect(screen.getByRole("button", { name: /agent center/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /agent center/i }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/agent"));
-    expect(within(screen.getByTestId("v2-sidebar")).getByText("Agent Center")).toBeInTheDocument();
+    expect(within(screen.getByTestId("v2-sidebar")).getByText("New task (wizard)")).toBeInTheDocument();
   });
 
   it("selects data annotation instead of the shorter data route", async () => {

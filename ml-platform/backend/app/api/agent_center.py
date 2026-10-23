@@ -8,8 +8,10 @@ the platform through this surface.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -48,6 +50,25 @@ class PipelineRecipeOut(BaseModel):
     change_note: str | None
     created_at: str | None
     updated_at: str | None
+
+
+class AgentRunDetail(AgentRunOut):
+    """Full run archive: stage timeline, per-round memory and terminal result.
+
+    The runner's memory/result JSON are LLM-produced task artifacts (spec §7
+    task archive); they carry no credentials and are shown to the signed-in
+    operator. List endpoints stay metadata-only; only this detail view exposes
+    them.
+    """
+
+    model_config = {"protected_namespaces": ()}
+
+    dataset_artifact_id: str | None
+    llm_model_id: str | None
+    token_budget: int | None
+    guidance_json: dict | None
+    memory_json: dict
+    result_json: dict
 
 
 def _iso(value) -> str | None:
@@ -89,6 +110,96 @@ def list_agent_runs(
         )
         for run, name in rows
     ]
+
+
+class AgentRunCreate(BaseModel):
+    dataset_artifact_id: uuid.UUID
+    target_column: str = Field(min_length=1, max_length=256)
+    project_id: uuid.UUID | None = None
+    llm_profile_id: uuid.UUID | None = None
+    llm_model_id: str | None = Field(default=None, max_length=128)
+    token_budget: int | None = Field(default=None, ge=1000, le=10_000_000)
+    step_by_step: bool = False
+    guidance: dict = Field(default_factory=dict)
+
+
+@router.post("/runs", status_code=201, response_model=AgentRunDetail)
+def create_agent_run(
+    payload: AgentRunCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Archive a wizard submission as a pending run (spec §11).
+
+    The guidance dict must satisfy the fourth contract (UserGuidance); the
+    step-by-step switch expands into the pause plan. Execution hand-off to the
+    AutoML worker binding is staged separately — this endpoint only persists
+    the submission so the task archive exists before any engine starts.
+    """
+    from pydantic import ValidationError
+
+    from app.services.agent.contracts import UserGuidance
+    from app.services.agent.wizard import STAGES
+
+    try:
+        guidance = UserGuidance.model_validate(payload.guidance)
+    except ValidationError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "AGENT_RUN_GUIDANCE_INVALID", "errors": error.errors()[:8]},
+        )
+    guidance_data = guidance.model_dump()
+    if payload.step_by_step:
+        guidance_data["pause_at_stages"] = sorted(set(STAGES))
+
+    run = AgentRun(
+        project_id=payload.project_id,
+        dataset_artifact_id=payload.dataset_artifact_id,
+        target_column=payload.target_column,
+        llm_profile_id=payload.llm_profile_id,
+        llm_model_id=payload.llm_model_id,
+        token_budget=payload.token_budget,
+        status="pending",
+        current_stage="s1",
+        memory_json={},
+        result_json={},
+        guidance_json=guidance_data,
+        created_by=current_user.id,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return get_agent_run(run.id, db=db, current_user=current_user)
+
+
+@router.get("/runs/{run_id}", response_model=AgentRunDetail)
+def get_agent_run(
+    run_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    run = db.get(AgentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail={"code": "AGENT_RUN_NOT_FOUND"})
+    return AgentRunDetail(
+        id=str(run.id),
+        project_id=_uuid_or_none(run.project_id),
+        project_name=None,
+        target_column=run.target_column,
+        status=run.status,
+        current_stage=run.current_stage,
+        round_count=run.round_count,
+        token_used=run.token_used,
+        error_code=run.error_code,
+        created_at=_iso(run.created_at),
+        updated_at=_iso(run.updated_at),
+        dataset_artifact_id=_uuid_or_none(run.dataset_artifact_id),
+        llm_model_id=run.llm_model_id,
+        token_budget=run.token_budget,
+        guidance_json=getattr(run, "guidance_json", None),
+        memory_json=run.memory_json or {},
+        result_json=run.result_json or {},
+    )
 
 
 @router.get("/recipes", response_model=list[PipelineRecipeOut])

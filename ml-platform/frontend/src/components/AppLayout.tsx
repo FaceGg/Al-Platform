@@ -7,7 +7,7 @@ import {
   ExperimentOutlined, ApiOutlined, CloudServerOutlined, RobotOutlined,
   MessageOutlined, MonitorOutlined, ClusterOutlined, DeploymentUnitOutlined,
   PlayCircleOutlined, BookOutlined, ControlOutlined, TagsOutlined, ApartmentOutlined,
-  HomeOutlined,
+  HomeOutlined, RocketOutlined,
 } from "@ant-design/icons";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
 import { useI18n } from "../i18n";
@@ -102,13 +102,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       ] },
     ],
     agent: [
-      { label: t.nav.agentGroup, items: [
-        { key: "/agent", icon: <RobotOutlined />, label: zh ? "智能体中心" : "Agent Center" },
-        { key: "/chat", icon: <MessageOutlined />, label: t.nav.chat },
+      { label: zh ? "建模智能体" : "Modeling agent", items: [
+        { key: "/agent", icon: <RocketOutlined />, label: zh ? "新建任务（向导）" : "New task (wizard)" },
+        { key: "/agent", query: "tab=tasks", icon: <PlayCircleOutlined />, label: zh ? "任务列表" : "Job list" },
+        { key: "/agent", query: "tab=recipes", icon: <DeploymentUnitOutlined />, label: zh ? "配方库" : "Recipes" },
+        { key: "/agent", query: "tab=knowledge", icon: <BookOutlined />, label: zh ? "知识中心" : "Knowledge" },
       ] },
-      { label: zh ? "知识" : "Knowledge", items: [
-        { key: "/knowledge-center", icon: <BookOutlined />, label: t.nav.knowledge_center },
-        { key: "/knowledge", icon: <DatabaseOutlined />, label: t.nav.knowledge },
+      { label: zh ? "知识与对话" : "Knowledge & chat", items: [
+        { key: "/chat", icon: <MessageOutlined />, label: t.nav.chat },
         { key: "/knowledge-graph", icon: <ApartmentOutlined />, label: t.knowledge?.graph || "Graph" },
       ] },
     ],
@@ -146,9 +147,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     if (p === "/") return "/";
     if (p.startsWith("/workspace") || p.startsWith("/template")) return "/projects";
     const entries = (sideGroups[activeView] || []).flatMap((group) => group.items);
+    const here = p + location.search;
+    // Prefer the entry whose full target (path + query) matches exactly, so
+    // /agent?tab=tasks selects the job-list entry rather than the wizard one.
+    const exact = entries
+      .map((item) => ({ full: item.query ? `${item.key}?${item.query}` : item.key, item }))
+      .filter(({ full }) => here === full || here.startsWith(`${full}&`))
+      .sort((left, right) => right.full.length - left.full.length)[0];
+    if (exact) return exact.full;
+    // Path-only fallback: longest matching route wins, so /data-annotation
+    // beats /data even though the latter is a string prefix.
     return entries
-      .map((item) => item.key)
-      .filter((key) => key !== "/" && (p === key || p.startsWith(`${key}/`)))
+      .filter((item) => item.key !== "/" && (p === item.key || p.startsWith(`${item.key}/`)))
+      .map((item) => (item.query ? `${item.key}?${item.query}` : item.key))
       .sort((left, right) => right.length - left.length)[0] || VIEW_HOME[activeView];
   })();
 
@@ -244,7 +255,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   <button
                     key={item.key}
                     type="button"
-                    className={`v2-side-item${selectedKey === item.key ? " on" : ""}`}
+                    className={`v2-side-item${selectedKey === (item.query ? `${item.key}?${item.query}` : item.key) ? " on" : ""}`}
                     onClick={() => handleMenuNavigate(item)}
                   >
                     {item.icon}<span>{item.label}</span>

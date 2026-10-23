@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ReloadOutlined, RocketOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 import {
+  getAgentRun,
   listAgentRuns,
   listPipelineRecipes,
+  type AgentRunDetail,
   type AgentRunItem,
   type PipelineRecipeItem,
 } from "../api/agentCenter";
@@ -25,7 +27,7 @@ interface AgentJob {
   project_name?: string;
 }
 
-type TabId = "jobs" | "wizard" | "recipes";
+type TabId = "wizard" | "tasks" | "recipes" | "knowledge";
 
 const activeChipStyle: React.CSSProperties = { color: "#fff", background: "rgba(47,155,245,.22)", borderColor: "rgba(92,178,255,.45)" };
 
@@ -52,13 +54,23 @@ export default function AgentCenterPage() {
   const navigate = useNavigate();
   const { lang } = useI18n();
   const zh = lang === "zh";
-  const [tab, setTab] = useState<TabId>("jobs");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = (["wizard", "tasks", "recipes", "knowledge"] as const).includes(searchParams.get("tab") as TabId)
+    ? (searchParams.get("tab") as TabId) : "wizard";
+  const [tab, setTab] = useState<TabId>(initialTab);
+  const switchTab = (next: TabId) => {
+    setTab(next);
+    setSearchParams(next === "wizard" ? {} : { tab: next }, { replace: true });
+  };
   const [jobs, setJobs] = useState<AgentJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [jobSource, setJobSource] = useState<"automl" | "agent">("automl");
   const [agentRuns, setAgentRuns] = useState<AgentRunItem[]>([]);
   const [agentRunsError, setAgentRunsError] = useState("");
+  const [archiveRunId, setArchiveRunId] = useState<string | null>(null);
+  const [archive, setArchive] = useState<AgentRunDetail | null>(null);
+  const [archiveError, setArchiveError] = useState("");
   const [recipes, setRecipes] = useState<PipelineRecipeItem[]>([]);
   const [recipesError, setRecipesError] = useState("");
 
@@ -82,6 +94,17 @@ export default function AgentCenterPage() {
     listPipelineRecipes().then(setRecipes).catch(() => {
       setRecipes([]);
       setRecipesError(zh ? "配方列表加载失败" : "Failed to load recipes");
+    });
+  };
+
+  const openArchive = (runId: string) => {
+    if (archiveRunId === runId) { setArchiveRunId(null); setArchive(null); return; }
+    setArchiveRunId(runId);
+    setArchive(null);
+    setArchiveError("");
+    getAgentRun(runId).then(setArchive).catch(() => {
+      setArchive(null);
+      setArchiveError(zh ? "档案加载失败" : "Failed to load archive");
     });
   };
 
@@ -122,18 +145,21 @@ export default function AgentCenterPage() {
       </div>
 
       <div className="v2-subtabs" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === "jobs"} className={`v2-subtab${tab === "jobs" ? " on" : ""}`} onClick={() => setTab("jobs")}>
-          {zh ? "智能体任务" : "Jobs"}
+        <button type="button" role="tab" aria-selected={tab === "wizard"} className={`v2-subtab${tab === "wizard" ? " on" : ""}`} onClick={() => switchTab("wizard")}>
+          🧭 {zh ? "新建向导" : "Wizard"}
         </button>
-        <button type="button" role="tab" aria-selected={tab === "wizard"} className={`v2-subtab${tab === "wizard" ? " on" : ""}`} onClick={() => setTab("wizard")}>
-          {zh ? "建模向导" : "Wizard"}
+        <button type="button" role="tab" aria-selected={tab === "tasks"} className={`v2-subtab${tab === "tasks" ? " on" : ""}`} onClick={() => switchTab("tasks")}>
+          📋 {zh ? "任务列表" : "Jobs"}
         </button>
-        <button type="button" role="tab" aria-selected={tab === "recipes"} className={`v2-subtab${tab === "recipes" ? " on" : ""}`} onClick={() => setTab("recipes")}>
-          {zh ? "配方库" : "Recipes"}
+        <button type="button" role="tab" aria-selected={tab === "recipes"} className={`v2-subtab${tab === "recipes" ? " on" : ""}`} onClick={() => switchTab("recipes")}>
+          📚 {zh ? "配方库" : "Recipes"}
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "knowledge"} className={`v2-subtab${tab === "knowledge" ? " on" : ""}`} onClick={() => switchTab("knowledge")}>
+          🧠 {zh ? "知识中心" : "Knowledge"}
         </button>
       </div>
 
-      {tab === "jobs" && (
+      {tab === "tasks" && (
         <div className="v2-panel">
           <h4>
             <span className="bar" />{jobSource === "automl" ? (zh ? "全部自动建模任务" : "All modeling jobs") : (zh ? "Agent 运行记录" : "Agent runs")}
@@ -200,7 +226,7 @@ export default function AgentCenterPage() {
                     : "No agent runs yet — agent jobs are created by the modeling agent mainline (AutoML binding in progress); P2 convergence was verified on both real domains"}</td></tr>
                 ) : null}
                 {agentRuns.map((run) => (
-                  <tr key={run.id}>
+                  <tr key={run.id} style={{ cursor: "pointer" }} onClick={() => openArchive(run.id)}>
                     <td className="tt" title={run.id}>{run.id.slice(0, 8)}…</td>
                     <td>{run.project_name ?? "-"}</td>
                     <td className="tt">{run.target_column ?? "-"}</td>
@@ -216,15 +242,66 @@ export default function AgentCenterPage() {
               </tbody>
             </table>
           )}
+          {jobSource === "agent" && archiveRunId && (
+            <div style={{ marginTop: 12, border: "1px solid var(--v2-line)", borderRadius: 10, background: "var(--v2-bg)", padding: "12px 14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                <b style={{ color: "var(--v2-txt)", fontSize: 13 }}>{zh ? "运行档案" : "Run archive"}</b>
+                <span className="v2-badge v2-bgray">{archiveRunId.slice(0, 8)}</span>
+                {archive ? (
+                  <>
+                    <span className={`v2-badge ${statusBadge(archive.status)}`}>{archive.status}</span>
+                    {archive.llm_model_id ? <span className="v2-badge v2-bp">{archive.llm_model_id}</span> : null}
+                    <span style={{ fontSize: 11, color: "var(--v2-dim)" }}>
+                      {archive.token_used.toLocaleString()}{archive.token_budget ? ` / ${archive.token_budget.toLocaleString()}` : ""} tokens · {zh ? "轮" : "rounds "}{archive.round_count}
+                    </span>
+                  </>
+                ) : null}
+                <span style={{ marginLeft: "auto", cursor: "pointer", color: "var(--v2-dim)", fontSize: 12 }} onClick={() => { setArchiveRunId(null); setArchive(null); }}>✕</span>
+              </div>
+              {archiveError ? <div className="v2-empty" style={{ padding: 12 }}>{archiveError}</div> : null}
+              {!archive && !archiveError ? <div className="v2-empty" style={{ padding: 12 }}>{zh ? "档案加载中…" : "Loading…"}</div> : null}
+              {archive ? (
+                <div className="v2-timeline">
+                  {(archive.memory_json?.rounds ?? []).map((round) => (
+                    <div key={round.round} className="v2-tl-item run">
+                      <div className="tt">{zh ? `第 ${round.round} 轮` : `Round ${round.round}`}
+                        {round.verdict ? <span className={`v2-badge ${round.verdict === "gate_failed" ? "v2-br" : "v2-bgo"}`} style={{ marginLeft: 8 }}>{round.verdict}</span> : null}
+                      </div>
+                      {(round.s2_attempts ?? []).map((attempt) => (
+                        <div key={attempt.attempt} className="ts" style={{ color: attempt.ok ? "var(--v2-green)" : "var(--v2-gold)" }}>
+                          · S2 {zh ? "尝试" : "attempt"} {attempt.attempt}: {attempt.ok ? (zh ? "通过沙箱" : "sandbox OK") : (attempt.error ?? "failed")}
+                          {Array.isArray(attempt.detail) && attempt.detail.length ? ` (${attempt.detail.slice(0, 3).join("; ")})` : ""}
+                        </div>
+                      ))}
+                      {(round.hints ?? []).length ? (
+                        <div className="ts" style={{ marginTop: 3 }}>
+                          {zh ? "评审建议：" : "Hints: "}{(round.hints ?? []).slice(0, 3).map((hint, i) => (
+                            <span key={i} style={{ display: "block", color: "var(--v2-sub)" }}>{i + 1}. {hint.length > 90 ? hint.slice(0, 90) + "…" : hint}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                  {(archive.memory_json?.rounds ?? []).length === 0 ? (
+                    <div className="v2-tl-item"><div className="tt">{zh ? "暂无轮次记录" : "No recorded rounds"}</div></div>
+                  ) : null}
+                  <div className={`v2-tl-item ${archive.status === "waiting_escalate" ? "warn" : "ok"}`}>
+                    <div className="tt">{zh ? "终态：" : "Final: "}{archive.status}{archive.error_code ? ` · ${archive.error_code}` : ""}</div>
+                    <div className="ts">{relativeTime(archive.updated_at ?? archive.created_at, zh)}</div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
       )}
 
       {tab === "wizard" && (
         <>
-          <AgentModelingWizard />
-          <div className="v2-note">💡 {zh
-            ? "向导以推荐默认值快速启动（全算法族/贝叶斯搜索/5 折交叉验证/类别加权/硬门禁）；任务提交后自动进入全链路档案页。"
-            : "The wizard launches with recommended defaults; submission opens the full job archive."}</div>
+          <AgentModelingWizard onSubmitted={() => { loadAgentData(); }} />
+          <div className="v2-note" style={{ marginTop: 10 }}>💡 {zh
+            ? "提交即归档 UserGuidance（第四契约）并创建智能体任务；执行引擎接线随 AutoML worker 绑定后自动开始迭代。"
+            : "Submission archives the guidance contract and creates the run; the engine starts once the worker binding lands."}</div>
         </>
       )}
 
@@ -273,6 +350,24 @@ export default function AgentCenterPage() {
           <div className="v2-note">🧪 {zh
             ? "配方版本化 / 回滚 / delta 复用 / 换模跟随由后端 P3 交付；此页只读展示元数据，特征脚本与建模配置不经过该接口出域。"
             : "Recipe versioning, rollback, delta reuse and swap-following shipped with P3; this view exposes metadata only — scripts and configs never leave through this endpoint."}</div>
+        </>
+      )}
+
+      {tab === "knowledge" && (
+        <>
+          <div className="v2-panel">
+            <h4><span className="bar" />{zh ? "知识中心（知识库 + 平台经验合并）" : "Knowledge center"}</h4>
+            <div style={{ fontSize: 12.5, color: "var(--v2-sub)", lineHeight: 2 }}>
+              {zh ? "一个入口管理全部知识：用户上传的工艺文档/标准/法规 + 系统自动管理的「平台经验」分区；S1 分析与 AI 对话统一检索全部绑定库。"
+                : "One entry for uploaded documents and the platform experience partition; S1 and chat share the unified retrieval."}
+            </div>
+            <button type="button" className="v2-btn primary" style={{ marginTop: 10 }} onClick={() => navigate("/knowledge-center")}>
+              {zh ? "进入知识中心 →" : "Open knowledge center →"}
+            </button>
+          </div>
+          <div className="v2-note">🧠 {zh
+            ? "完整知识中心（绑定配置/经验分区/检索引用）在独立页面维护；此处为智能体中心的合并入口。"
+            : "The full center lives on its own page; this is the merged agent-center entry."}</div>
         </>
       )}
     </AppLayout>
