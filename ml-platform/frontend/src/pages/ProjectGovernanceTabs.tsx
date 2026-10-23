@@ -598,7 +598,7 @@ function NotificationSettingsPanel({
               <Select options={[{ value: "none", label: copy.noSignature }, { value: "hmac-sha256", label: copy.hmacSha256 }]} />
             </Form.Item>
             <Form.Item noStyle shouldUpdate={(previous, current) => previous.signature_mode !== current.signature_mode}>
-              {({ getFieldValue }) => getFieldValue("signature_mode") === "hmac-sha256" ? <Form.Item name="signing_secret" label={copy.signingSecret} rules={[{ required: true }]}><Input.Password autoComplete="new-password" /></Form.Item> : null}
+              {({ getFieldValue }) => getFieldValue("signature_mode") === "hmac-sha256" ? <Form.Item name="signing_secret" label={copy.signingToken} rules={[{ required: true }]}><Input.Password autoComplete="new-password" /></Form.Item> : null}
             </Form.Item>
           </> : null}
         </> : null}

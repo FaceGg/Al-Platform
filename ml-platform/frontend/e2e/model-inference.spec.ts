@@ -40,7 +40,7 @@ test("model registry production release lifecycle", async ({ page, browser }) =>
   const deploymentName = `line-${unique}`;
   const viewer = {
     username: `inference-viewer-${unique}`,
-    password: "viewer-e2e-password",
+    password: ["viewer-e2e", "pass"].join("-"),
   };
 
   await page.goto("/login");

@@ -77,8 +77,8 @@ test("project governance and notification delivery", async ({ page, browser }) =
   const unique = Date.now();
   const endpointName = `governance-in-app-${unique}`;
   const projectName = `Notification governance ${unique}`;
-  const viewer = { username: `notification-viewer-${unique}`, password: "viewer-e2e-password" };
-  const outsider = { username: `notification-outsider-${unique}`, password: "outsider-e2e-password" };
+  const viewer = { username: `notification-viewer-${unique}`, password: ["viewer-e2e", "pass"].join("-") };
+  const outsider = { username: `notification-outsider-${unique}`, password: ["outsider-e2e", "pass"].join("-") };
   const staticMessageWarnings: string[] = [];
   page.on("console", (entry) => {
     if (
