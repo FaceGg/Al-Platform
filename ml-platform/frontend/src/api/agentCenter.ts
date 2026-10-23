@@ -143,6 +143,33 @@ export async function rollbackRecipe(
   return response.data;
 }
 
+export interface ServitizeDraftResult {
+  deployment_id: string;
+  loop_config_id: string;
+  model_api_id: string;
+  model_api_name: string;
+  error_classes: string[];
+  ambiguous_labels: string[];
+  smoke: { prediction?: string; error_matched?: boolean; dry_run?: boolean };
+}
+
+export async function servitizeDraft(payload: {
+  recipe_id: string;
+  deployment_id: string;
+  project_id?: string | null;
+  model_api_name?: string;
+}): Promise<ServitizeDraftResult> {
+  const response = await apiClient.post("/agent/servitize", payload);
+  return response.data;
+}
+
+export async function servitizeActivate(modelApiId: string): Promise<{ status: string }> {
+  const response = await apiClient.post("/agent/servitize/activate", {
+    model_api_id: modelApiId,
+  });
+  return response.data;
+}
+
 export async function listPipelineRecipes(limit = 100): Promise<PipelineRecipeItem[]> {
   const response = await apiClient.get("/agent/recipes", { params: { limit } });
   return Array.isArray(response.data) ? response.data : [];

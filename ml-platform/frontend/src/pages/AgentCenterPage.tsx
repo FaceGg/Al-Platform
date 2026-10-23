@@ -4,6 +4,7 @@ import { ReloadOutlined, RocketOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import OptReportPanel from "../components/OptReportPanel";
 import RecipeRow from "../components/RecipeRow";
+import ServitizeActions from "../components/ServitizeActions";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 import {
@@ -294,6 +295,15 @@ export default function AgentCenterPage() {
                   </div>
                 </div>
                 <OptReportPanel resultJson={archive.result_json} zh={zh} />
+                {archive.status === "accepted" ? (
+                  <ServitizeActions
+                    runId={archive.id}
+                    projectId={archive.project_id}
+                    recipeId={(archive.result_json?.recipe_id as string | undefined) ?? null}
+                    zh={zh}
+                    onRecipeFixed={() => void openArchive(archive.id)}
+                  />
+                ) : null}
                 </>
               ) : null}
             </div>
