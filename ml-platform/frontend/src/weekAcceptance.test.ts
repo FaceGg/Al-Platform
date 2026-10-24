@@ -114,6 +114,7 @@ const weekTestFiles: Record<number | string, string[]> = {
   p6: [
     "./pages/KnowledgeCenterPage.test.tsx",
     "./pages/PromptTemplatesPage.test.tsx",
+    "./i18n/parity.test.ts",
   ],
   frontend_v2: [
     "./pages/PortalPage.test.tsx",
