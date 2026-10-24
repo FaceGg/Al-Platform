@@ -129,7 +129,7 @@ export default function AgentCenterPage() {
     <AppLayout>
       <div className="v2-pagehead">
         <div>
-          <h2>🤖 {zh ? "智能体中心" : "Agent Center"}</h2>
+          <h2>{zh ? "智能体中心" : "Agent Center"}</h2>
           <div className="v2-pdesc">{zh
             ? "大模型驱动的自动建模 Agent：四步向导 · 任务全链路 · 配方固化复用 · 经验越用越强"
             : "LLM-driven modeling agent: wizard, job pipeline, versioned recipes, accumulated experience"}</div>
@@ -150,16 +150,16 @@ export default function AgentCenterPage() {
 
       <div className="v2-subtabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === "wizard"} className={`v2-subtab${tab === "wizard" ? " on" : ""}`} onClick={() => switchTab("wizard")}>
-          🧭 {zh ? "新建向导" : "Wizard"}
+          {zh ? "新建向导" : "Wizard"}
         </button>
         <button type="button" role="tab" aria-selected={tab === "tasks"} className={`v2-subtab${tab === "tasks" ? " on" : ""}`} onClick={() => switchTab("tasks")}>
-          📋 {zh ? "任务列表" : "Jobs"}
+          {zh ? "任务列表" : "Jobs"}
         </button>
         <button type="button" role="tab" aria-selected={tab === "recipes"} className={`v2-subtab${tab === "recipes" ? " on" : ""}`} onClick={() => switchTab("recipes")}>
-          📚 {zh ? "配方库" : "Recipes"}
+          {zh ? "配方库" : "Recipes"}
         </button>
         <button type="button" role="tab" aria-selected={tab === "knowledge"} className={`v2-subtab${tab === "knowledge" ? " on" : ""}`} onClick={() => switchTab("knowledge")}>
-          🧠 {zh ? "知识中心" : "Knowledge"}
+          {zh ? "知识中心" : "Knowledge"}
         </button>
       </div>
 
@@ -359,7 +359,7 @@ export default function AgentCenterPage() {
       {tab === "wizard" && (
         <>
           <AgentModelingWizard onSubmitted={() => { loadAgentData(); }} />
-          <div className="v2-note" style={{ marginTop: 10 }}>💡 {zh
+          <div className="v2-note" style={{ marginTop: 10 }}>{zh
             ? "提交即归档 UserGuidance（第四契约）并创建智能体任务；执行引擎接线随 AutoML worker 绑定后自动开始迭代。"
             : "Submission archives the guidance contract and creates the run; the engine starts once the worker binding lands."}</div>
         </>
@@ -399,7 +399,7 @@ export default function AgentCenterPage() {
               </table>
             ) : null}
           </div>
-          <div className="v2-note">🧪 {zh
+          <div className="v2-note">{zh
             ? "验收通过的任务在档案页一键固化配方；版本树支持展开与 git 式回滚（回滚=发新版本携带旧内容）；delta 复用与换模跟随复用走服务化链路。"
             : "Accepted runs fixate their recipe from the archive panel; version tree supports expand and git-style rollback; delta reuse and swap-following ride the servitization chain."}</div>
         </>
@@ -407,7 +407,7 @@ export default function AgentCenterPage() {
 
       {tab === "knowledge" && (
         <>
-          <div className="v2-note" style={{ marginBottom: 10 }}>🧠 {zh
+          <div className="v2-note" style={{ marginBottom: 10 }}>{zh
             ? "知识中心内嵌于智能体中心（§16.1 合并呈现）：绑定配置 + 平台经验真源条目与独立页完全同源；S1 分析与 AI 对话统一检索全部绑定库。"
             : "The knowledge center is embedded here (§16.1): bindings and experience entries share the same source as the standalone page."}</div>
           <KnowledgeCenterContent t={t} />

@@ -103,7 +103,7 @@ export default function ServitizeActions({
       }}
     >
       <b style={{ fontSize: 13, color: "var(--v2-txt)" }}>
-        🚀 {zh ? "服务化操作流" : "Servitization"}
+        {zh ? "服务化操作流" : "Servitization"}
       </b>
 
       {recipeId ? (

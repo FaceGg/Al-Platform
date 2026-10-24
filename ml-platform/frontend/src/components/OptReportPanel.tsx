@@ -67,7 +67,7 @@ export default function OptReportPanel({
         }}
       >
         <b style={{ color: "var(--v2-txt)", fontSize: 13 }}>
-          📋 {zh ? "本次优化总结" : "Optimization report"}
+          {zh ? "本次优化总结" : "Optimization report"}
         </b>
         <span className="v2-badge v2-bgo">{zh ? "自动生成" : "auto"}</span>
         {report.cost?.llm_model_id ? (
@@ -125,7 +125,7 @@ export default function OptReportPanel({
           ) : null}
           {distilled.length ? (
             <div style={{ marginTop: 8, fontSize: 12, color: "var(--v2-sub)" }}>
-              🧬 {zh ? "本任务蒸馏经验" : "Distilled lessons"}：{distilled.length}{" "}
+              {zh ? "本任务蒸馏经验" : "Distilled lessons"}：{distilled.length}{" "}
               {zh ? "条（已入经验库 shadow 冷静期）" : "(shadow cooldown)"}
             </div>
           ) : null}

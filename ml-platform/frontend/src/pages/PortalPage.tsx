@@ -183,7 +183,7 @@ export default function PortalPage() {
             <h4><span className="bar" />{zh ? "平台公告" : "Notices"}</h4>
             <div style={{ fontSize: 12.5, lineHeight: 2 }}>
               <div>📌 <b style={{ color: "var(--v2-txt)" }}>{zh ? "智能体中心上线" : "Agent Center is live"}</b> —— {zh ? "建模智能体向导开放，欢迎试用" : "modeling agent wizard available"} <span style={{ color: "var(--v2-dim)", fontSize: 11 }}>2026-10</span></div>
-              <div>🤖 {zh ? "大模型网关已切换 DeepSeek（deepseek-chat），连通验证通过" : "LLM gateway switched to DeepSeek, connectivity verified"} <span style={{ color: "var(--v2-dim)", fontSize: 11 }}>2026-10</span></div>
+              <div>{zh ? "大模型网关已切换 DeepSeek（deepseek-chat），连通验证通过" : "LLM gateway switched to DeepSeek, connectivity verified"} <span style={{ color: "var(--v2-dim)", fontSize: 11 }}>2026-10</span></div>
               <div>☸ {zh ? "五视图改版：门户 / 算法平台 / 智能体中心 / 基础设施 / 系统管理" : "Five-view redesign live"} <span style={{ color: "var(--v2-dim)", fontSize: 11 }}>2026-10</span></div>
             </div>
           </div>

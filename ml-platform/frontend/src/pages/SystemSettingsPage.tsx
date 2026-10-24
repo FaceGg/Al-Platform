@@ -55,7 +55,7 @@ export default function SystemSettingsPage() {
           </tbody>
         </table>
       </div>
-      <div className="v2-note">💡 {zh
+      <div className="v2-note">{zh
         ? "系统设置当前为只读展示；可修改项（语言/主题）在顶栏快捷切换。环境变量配置通过 .env 或部署环境管理。"
         : "Settings are read-only; language/theme toggle from the topbar. Environment config via .env."}</div>
     </AppLayout>

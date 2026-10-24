@@ -19,19 +19,19 @@ type StepId = 1 | 2 | 3 | 4 | 5;
 type DataShape = "tabular" | "waveform" | "mixed";
 
 const ANALYSIS_PROMPT_CHIPS = [
-  { label: "⚡ 聚焦扭矩-目标偏差", prompt: "聚焦扭矩与目标设定值的偏差通道" },
-  { label: "⚡ 关注时序漂移", prompt: "关注批次间的时序漂移与工装变化" },
-  { label: "⚡ 怀疑判定中间列泄漏", prompt: "怀疑判定中间列（DECIDE_ONE/TWO 等）与目标同源泄漏，重点排查" },
-  { label: "⚡ 不平衡数据按召回优先", prompt: "类别不平衡，少数类召回优先于整体精度" },
+  { label: "聚焦扭矩-目标偏差", prompt: "聚焦扭矩与目标设定值的偏差通道" },
+  { label: "关注时序漂移", prompt: "关注批次间的时序漂移与工装变化" },
+  { label: "怀疑判定中间列泄漏", prompt: "怀疑判定中间列（DECIDE_ONE/TWO 等）与目标同源泄漏，重点排查" },
+  { label: "不平衡数据按召回优先", prompt: "类别不平衡，少数类召回优先于整体精度" },
 ];
 const FEATURE_PROMPT_CHIPS = [
-  { label: "⚡ 优先比值特征", prompt: "派生特征优先比值/裕度类" },
-  { label: "⚡ 中位数+标记", prompt: "缺失值用中位数填充并加缺失标记列" },
+  { label: "优先比值特征", prompt: "派生特征优先比值/裕度类" },
+  { label: "中位数+标记", prompt: "缺失值用中位数填充并加缺失标记列" },
 ];
 const MODELING_PROMPT_CHIPS = [
-  { label: "⚡ 召回优先", prompt: "召回优先于精度" },
-  { label: "⚡ 可解释性优先", prompt: "特征重要性可解释优先" },
-  { label: "⚡ 限轻量模型", prompt: "限制轻量模型，避免大容量过拟合" },
+  { label: "召回优先", prompt: "召回优先于精度" },
+  { label: "可解释性优先", prompt: "特征重要性可解释优先" },
+  { label: "限轻量模型", prompt: "限制轻量模型，避免大容量过拟合" },
 ];
 const METRIC_ROWS: { key: string; label: string }[] = [
   { key: "recall_minority", label: "召回(少数类)" },
@@ -273,7 +273,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           </select>
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
-          🧠 {zh ? "模型" : "Model"}
+          {zh ? "模型" : "Model"}
           <select className="v2-select" style={{ minWidth: 170 }} value={llmProfileId} onChange={(e) => setLlmProfileId(e.target.value)} aria-label={zh ? "选择大模型档案" : "LLM profile"}>
             {profiles.length === 0 ? <option value="">{zh ? "（无档案）" : "(none)"}</option> : null}
             {profiles.map((p) => <option key={String(p.id)} value={String(p.id)}>{p.name} · {p.model_id}{p.is_default ? (zh ? "（默认）" : " (default)") : ""}</option>)}
@@ -365,7 +365,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
                     setTemplateSaved(zh ? "已存为模板 ✓" : "saved ✓");
                     setTimeout(() => setTemplateSaved(""), 2500);
                   }).catch(() => setTemplateSaved(zh ? "保存失败" : "failed"));
-                }}>＋ {zh ? "存为模板" : "Save template"}{templateSaved ? ` ${templateSaved}` : ""}</button>
+                }}>{zh ? "存为模板" : "Save template"}{templateSaved ? ` ${templateSaved}` : ""}</button>
             </div>
           </div>
         </>
@@ -377,7 +377,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "数据形态（约束特征脚本的处理方式）" : "Data shape"}</h4>
             <div className="v2-radio-cards">
-              {([["tabular", "📋 " + (zh ? "表格数据" : "Tabular"), zh ? "常规列式制造记录（拧紧样例适用）" : "columnar records"],
+              {([["tabular", "" + (zh ? "表格数据" : "Tabular"), zh ? "常规列式制造记录（拧紧样例适用）" : "columnar records"],
                 ["waveform", "〜 " + (zh ? "波形数据" : "Waveform"), zh ? "含编码波形列，需解码后统计（电焊 cvei/cvev/cver/cvep）" : "encoded waveform columns"],
                 ["mixed", "◫ " + (zh ? "混合形态" : "Mixed"), zh ? "报告列 + 波形列并存，两者兼顾" : "both"]] as [DataShape, string, string][]).map(([value, title, desc]) => (
                 <button key={value} type="button" className={`v2-radio-card${dataShape === value ? " on" : ""}`} onClick={() => setDataShape(value)}>
@@ -571,7 +571,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             onClick={() => setStep((step + 1) as StepId)}>{zh ? "下一步" : "Next"} →</button>
         ) : (
           <button type="button" className="v2-btn primary" disabled={submitting || !datasetId || !targetColumn} onClick={() => void submit()}>
-            <RocketOutlined />{submitting ? (zh ? "提交中…" : "Submitting…") : (zh ? "🚀 启动智能体（全自动迭代）" : "Launch")}
+            <RocketOutlined />{submitting ? (zh ? "提交中…" : "Submitting…") : (zh ? "启动智能体（全自动迭代）" : "Launch")}
           </button>
         )}
       </div>

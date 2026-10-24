@@ -180,7 +180,7 @@ export default function AlgoOverviewPage() {
         </div>
       </div>
 
-      <div className="v2-note" style={{ marginTop: 4 }}>💡 {zh ? (
+      <div className="v2-note" style={{ marginTop: 4 }}>{zh ? (
         <>重复建模流程可交给<b>智能体中心</b>：<a onClick={() => navigate("/agent")}>前往 →</a></>
       ) : (
         <>Repetitive modeling belongs to the <b>Agent Center</b>: <a onClick={() => navigate("/agent")}>open →</a></>
