@@ -267,12 +267,13 @@ class AgentRunner:
             self.db.commit()
 
             # ---- S1 -------------------------------------------------
+            l2_refs = self._l2_references()
             report, error, usage = run_s1(
                 self.db,
                 config=self.config,
                 profile_report=self.profile_report,
                 prior_memory=self._memory_digest(),
-                experience_references=self._l2_references(),
+                experience_references=l2_refs,
                 guidance=(self.guidance or {}).get("analysis") if isinstance(self.guidance, dict) else None,
                 actor=self.actor,
             )
@@ -280,6 +281,11 @@ class AgentRunner:
                 return self._escalate("AGENT_TOKEN_BUDGET_EXCEEDED")
             if error:
                 return self._escalate("AGENT_S1_CONTRACT_FAILED")
+            # 注入的 L2 引用落档案（前端"注入的经验"面板数据源）。
+            if l2_refs:
+                memory = self.run.memory_json or {}
+                memory["injected_experience"] = l2_refs
+                self.run.memory_json = memory
             # 下一轮 L2 检索按本轮域假设聚焦（§10.4 domain 匹配）。
             self._last_domain = str(report.domain_hypothesis)[:32]
             if self._pause_if_requested("s1", pause_at, resume_state, round_number):

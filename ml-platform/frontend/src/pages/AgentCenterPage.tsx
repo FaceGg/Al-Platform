@@ -296,6 +296,50 @@ export default function AgentCenterPage() {
                   </div>
                 </div>
                 <OptReportPanel resultJson={archive.result_json} zh={zh} />
+                {/* 设计稿两块：轮次关键产物表 + 注入的经验（L2 检索） */}
+                <div style={{ display: "flex", gap: 14, marginTop: 14, flexWrap: "wrap" }}>
+                  <div className="v2-panel" style={{ margin: 0, flex: 1, minWidth: 260 }}>
+                    <h4><span className="bar" />{zh ? "轮次关键产物" : "Round artifacts"}</h4>
+                    <table className="v2-table">
+                      <thead><tr><th>{zh ? "产物" : "Artifact"}</th><th>{zh ? "状态" : "Status"}</th></tr></thead>
+                      <tbody>
+                        {(archive.memory_json?.rounds ?? []).some((round) => (round.s2_attempts ?? []).some((a) => a.ok)) ? (
+                          <>
+                            <tr><td>AnalysisReport</td><td><span className="v2-badge v2-bgo">{zh ? "已校验" : "validated"}</span></td></tr>
+                            {(archive.memory_json?.rounds ?? []).some((round) => (round.s2_attempts ?? []).some((a) => a.ok)) ? (
+                              <tr><td>{zh ? "特征脚本（定稿）" : "Feature script (final)"}</td><td><span className="v2-badge v2-bgo">{zh ? "沙箱通过" : "sandbox OK"}</span></td></tr>
+                            ) : null}
+                            {archive.result_json?.metrics ? (
+                              <tr><td>{zh ? "候选指标" : "Candidate metrics"}</td><td><span className="v2-badge v2-bg">{zh ? "已产出" : "produced"}</span></td></tr>
+                            ) : null}
+                            {(archive.memory_json?.rounds ?? []).some((round) => round.verdict) ? (
+                              <tr><td>ReviewVerdict</td><td>
+                                <span className={`v2-badge ${(archive.memory_json?.rounds ?? []).some((round) => round.verdict === "pass") ? "v2-bgo" : "v2-br"}`}>
+                                  {(archive.memory_json?.rounds ?? []).map((round) => round.verdict).filter(Boolean).pop()}
+                                </span>
+                              </td></tr>
+                            ) : null}
+                          </>
+                        ) : (
+                          <tr><td colSpan={2} className="v2-empty">{zh ? "暂无产物——运行后此处展示各阶段交付物" : "No artifacts yet"}</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="v2-panel" style={{ margin: 0, flex: 1, minWidth: 260 }}>
+                    <h4><span className="bar" />{zh ? "注入的经验（L2 检索）" : "Injected experience (L2)"}</h4>
+                    {(archive.memory_json?.injected_experience as Array<{ entry?: string; lesson?: string; confidence?: number }> | undefined)?.length ? (
+                      (archive.memory_json.injected_experience as Array<{ entry?: string; lesson?: string; confidence?: number }>).map((ref, index) => (
+                        <div key={ref.entry ?? index} style={{ fontSize: 12, lineHeight: 1.8, color: "var(--v2-sub)" }}>
+                          · <span className="tt">[{ref.entry?.slice(0, 8) ?? "?"}]</span> {ref.lesson ?? ""}
+                          {ref.confidence != null ? <span style={{ color: "var(--v2-dim)" }}>（{ref.confidence.toFixed(2)}）</span> : null}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="v2-empty">{zh ? "本轮无命中经验（shadow 条目不计入注入）" : "No experience injected this round"}</div>
+                    )}
+                  </div>
+                </div>
                 {archive.status === "accepted" ? (
                   <ServitizeActions
                     runId={archive.id}
