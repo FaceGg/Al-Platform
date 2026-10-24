@@ -4,7 +4,12 @@ import sys
 import unittest
 from pathlib import Path
 
-from tests.week_manifest import ALL_TEST_MODULES, DEPRECATED_TEST_MODULES, WEEK_TEST_MODULES
+from tests.week_manifest import (
+    ALL_TEST_MODULES,
+    DEPRECATED_TEST_MODULES,
+    MODULE_OWNERS,
+    WEEK_TEST_MODULES,
+)
 
 
 class TestSuiteManifest(unittest.TestCase):
@@ -13,10 +18,16 @@ class TestSuiteManifest(unittest.TestCase):
         discovered = {
             path.stem for path in test_dir.glob("test_*.py")
         }
-        assigned = [module for modules in WEEK_TEST_MODULES.values() for module in modules]
-
-        self.assertEqual(len(assigned), len(set(assigned)), "A test module is assigned to multiple weeks")
-        self.assertEqual(discovered, set(assigned))
+        # Ownership spans weeks AND AutoML Agent phases (MODULE_OWNERS merges
+        # both registries); each module must appear in exactly one group.
+        owners = MODULE_OWNERS
+        duplicates = {
+            module: groups for module, groups in owners.items() if len(groups) > 1
+        }
+        self.assertEqual(
+            len(duplicates), 0, f"A test module is assigned to multiple groups: {duplicates}"
+        )
+        self.assertEqual(discovered, set(owners))
 
     def test_deprecated_quality_automl_modules_are_excluded_from_default_suite(self):
         self.assertTrue(DEPRECATED_TEST_MODULES)

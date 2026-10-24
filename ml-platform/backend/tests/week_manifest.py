@@ -238,6 +238,21 @@ PHASE_TEST_MODULES: dict[str, list[str]] = {
 }
 
 
+def _module_owner_groups() -> dict[str, list[str]]:
+    """week + phase 合并视图：模块 → 拥有组列表（供 CI 无主校验与去重检查）。"""
+    merged: dict[str, list[str]] = {}
+    for week, modules in WEEK_TEST_MODULES.items():
+        for module in modules:
+            merged.setdefault(module, []).append(f"week:{week}")
+    for phase, modules in PHASE_TEST_MODULES.items():
+        for module in modules:
+            merged.setdefault(module, []).append(f"phase:{phase}")
+    return merged
+
+
+MODULE_OWNERS = _module_owner_groups()
+
+
 # Point-weld-quality modules are retained only as historical compatibility
 # tests. They are not part of the generic platform acceptance contract.
 # Run them explicitly with ``run_suite.py --include-deprecated --week 17``.
