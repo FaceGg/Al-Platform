@@ -126,7 +126,7 @@
   color: #fff; background: linear-gradient(90deg, rgba(47, 155, 245, .28), rgba(47, 155, 245, .06));
   border-left: 2px solid var(--v2-blue);
 }
-.v2-main { flex: 1; padding: 18px 24px 40px; max-width: 1320px; min-width: 0; }
+.v2-main { flex: 1; padding: 18px 24px 40px; max-width: 1320px; min-width: 0; margin: 0 auto; }
 .v2-crumb { color: var(--v2-dim); font-size: 14px; margin-bottom: 10px; }
 .v2-crumb b { color: var(--v2-sub); font-weight: 600; }
 .v2-pagehead { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }
