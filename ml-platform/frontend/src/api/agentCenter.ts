@@ -56,6 +56,11 @@ export async function getAgentRun(runId: string): Promise<AgentRunDetail> {
   return response.data;
 }
 
+export async function resumeAgentRun(runId: string): Promise<AgentRunDetail> {
+  const response = await apiClient.post(`/agent/runs/${runId}/resume`);
+  return response.data;
+}
+
 export interface AgentRunCreatePayload {
   dataset_artifact_id: string;
   target_column: string;

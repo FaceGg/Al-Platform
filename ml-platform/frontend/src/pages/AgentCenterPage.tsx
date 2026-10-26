@@ -12,6 +12,7 @@ import {
   getAgentRun,
   listAgentRuns,
   listPipelineRecipes,
+  resumeAgentRun,
   type AgentRunDetail,
   type AgentRunItem,
   type PipelineRecipeItem,
@@ -241,6 +242,18 @@ export default function AgentCenterPage() {
                     <span style={{ fontSize: 11, color: "var(--v2-dim)" }}>
                       {archive.token_used.toLocaleString()}{archive.token_budget ? ` / ${archive.token_budget.toLocaleString()}` : ""} tokens · {zh ? "轮" : "rounds "}{archive.round_count}
                     </span>
+                    {archive.status === "waiting_guidance" ? (
+                      <button
+                        type="button"
+                        className="v2-btn primary sm"
+                        onClick={() => {
+                          resumeAgentRun(archive.id)
+                            .then(() => openArchive(archive.id))
+                            .then(() => loadAgentData())
+                            .catch(() => undefined);
+                        }}
+                      >{zh ? "放行继续 →" : "Resume →"}</button>
+                    ) : null}
                   </>
                 ) : null}
                 <span style={{ marginLeft: "auto", cursor: "pointer", color: "var(--v2-dim)", fontSize: 12 }} onClick={() => { setArchiveRunId(null); setArchive(null); }}>✕</span>
