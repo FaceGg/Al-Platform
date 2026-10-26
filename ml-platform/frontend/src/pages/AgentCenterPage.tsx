@@ -82,18 +82,14 @@ export default function AgentCenterPage() {
   const navigate = useNavigate();
   const { lang, t } = useI18n();
   const zh = lang === "zh";
-  const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = (["wizard", "tasks", "recipes", "knowledge"] as const).includes(searchParams.get("tab") as TabId)
+  const [searchParams] = useSearchParams();
+  // tab 直接从 URL 派生（不用独立 state）——侧栏点击 ?tab=xxx 时自动响应
+  const tab: TabId = (["wizard", "tasks", "recipes", "knowledge"] as const).includes(searchParams.get("tab") as TabId)
     ? (searchParams.get("tab") as TabId) : "wizard";
-  const [tab, setTab] = useState<TabId>(initialTab);
-  const switchTab = (next: TabId) => {
-    setTab(next);
-    setSearchParams(next === "wizard" ? {} : { tab: next }, { replace: true });
-  };
   const [jobs, setJobs] = useState<AgentJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [jobSource, setJobSource] = useState<"automl" | "agent">("automl");
+  const [jobSource, setJobSource] = useState<"automl" | "agent">("agent");
   const [agentRuns, setAgentRuns] = useState<AgentRunItem[]>([]);
   const [agentRunsError, setAgentRunsError] = useState("");
   const [archiveRunId, setArchiveRunId] = useState<string | null>(null);
@@ -138,23 +134,11 @@ export default function AgentCenterPage() {
 
   useEffect(() => { loadJobs(); loadAgentData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-  const kpis = useMemo(() => {
-    const running = jobs.filter((j) => statusBadge(String(j.status ?? j.state ?? "")) === "v2-bb").length;
-    const done = jobs.filter((j) => statusBadge(String(j.status ?? j.state ?? "")) === "v2-bg").length;
-    return [
-      { label: zh ? "AutoML 任务" : "AutoML jobs", value: jobs.length },
-      { label: zh ? "运行中" : "Running", value: running },
-      { label: zh ? "Agent 运行" : "Agent runs", value: agentRuns.length },
-      { label: zh ? "配方" : "Recipes", value: recipes.length },
-    ];
-  }, [jobs, agentRuns, recipes, zh]);
-
   return (
     <AppLayout>
       <div className="v2-pagehead">
         <div>
           <h2>{zh ? PAGE_TITLES[tab].zh : PAGE_TITLES[tab].en}</h2>
-          <div className="v2-pdesc">{zh ? PAGE_TITLES[tab].descZh : PAGE_TITLES[tab].descEn}</div>
         </div>
         {tab === "wizard" ? (
           <button type="button" className="v2-btn primary" onClick={() => navigate("/automl")}>
@@ -170,20 +154,20 @@ export default function AgentCenterPage() {
       {tab === "tasks" && (
         <div className="v2-panel">
           <h4>
-            <span className="bar" />{jobSource === "automl" ? (zh ? "全部自动建模任务" : "All modeling jobs") : (zh ? "Agent 运行记录" : "Agent runs")}
+            <span className="bar" />{zh ? "Agent 运行记录" : "Agent runs"}
             <span style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 10 }}>
-              <button
-                type="button"
-                className={`v2-lang${jobSource === "automl" ? " on" : ""}`}
-                style={jobSource === "automl" ? activeChipStyle : undefined}
-                onClick={() => setJobSource("automl")}
-              >{zh ? "AutoML 任务" : "AutoML"}</button>
               <button
                 type="button"
                 className={`v2-lang${jobSource === "agent" ? " on" : ""}`}
                 style={jobSource === "agent" ? activeChipStyle : undefined}
                 onClick={() => setJobSource("agent")}
-              >{zh ? "Agent 运行" : "Agent"}</button>
+              >Agent</button>
+              <button
+                type="button"
+                className={`v2-lang${jobSource === "automl" ? " on" : ""}`}
+                style={jobSource === "automl" ? activeChipStyle : undefined}
+                onClick={() => setJobSource("automl")}
+              >AutoML</button>
             </span>
             <span className="more" style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={() => (jobSource === "automl" ? loadJobs() : loadAgentData())} role="button" tabIndex={0}
               onKeyDown={(e) => { if (e.key === "Enter") jobSource === "automl" ? loadJobs() : loadAgentData(); }}>

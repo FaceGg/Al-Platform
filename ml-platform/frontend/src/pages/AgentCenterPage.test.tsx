@@ -108,6 +108,7 @@ describe("AgentCenterPage (design four-tab agent center)", () => {
   it("shows the AutoML jobs source with live rows", async () => {
     render(<MemoryRouter initialEntries={["/agent?tab=tasks"]}><AgentCenterPage /></MemoryRouter>);
 
+    fireEvent.click(await screen.findByRole("button", { name: /AutoML/ }));
     expect(await screen.findByText("拧紧-自动建模")).toBeInTheDocument();
     expect(screen.getByText("电焊-验收")).toBeInTheDocument();
     expect(screen.getByText("42%")).toBeInTheDocument();
