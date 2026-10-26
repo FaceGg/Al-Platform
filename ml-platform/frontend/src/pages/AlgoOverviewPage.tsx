@@ -106,7 +106,7 @@ export default function AlgoOverviewPage() {
       </div>
 
       {failed ? (
-        <div className="v2-note" style={{ marginBottom: 14 }}>⚠ {zh ? "统计数据加载失败，请刷新重试。" : "Failed to load stats."}</div>
+        <div className="v2-note" style={{ marginBottom: 14 }}>注意：{zh ? "统计数据加载失败，请刷新重试。" : "Failed to load stats."}</div>
       ) : null}
 
       <div className="v2-kpis">
@@ -152,13 +152,13 @@ export default function AlgoOverviewPage() {
           <div className="v2-panel" style={{ margin: 0 }}>
             <h4><span className="bar" />{zh ? "模型状态" : "Model status"}</h4>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, color: "var(--v2-sub)", borderBottom: "1px dashed rgba(36,52,79,.6)" }}>
-              <span>● {zh ? "训练中" : "Training"}</span><b style={{ color: "var(--v2-blue2)" }}>{stats?.model_status?.training ?? "—"}</b>
+              <span>· {zh ? "训练中" : "Training"}</span><b style={{ color: "var(--v2-blue2)" }}>{stats?.model_status?.training ?? "—"}</b>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, color: "var(--v2-sub)", borderBottom: "1px dashed rgba(36,52,79,.6)" }}>
-              <span>● {zh ? "已完成" : "Completed"}</span><b style={{ color: "var(--v2-green)" }}>{stats?.model_status?.completed ?? "—"}</b>
+              <span>· {zh ? "已完成" : "Completed"}</span><b style={{ color: "var(--v2-green)" }}>{stats?.model_status?.completed ?? "—"}</b>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, color: "var(--v2-sub)" }}>
-              <span>● {zh ? "已发布" : "Published"}</span><b style={{ color: "var(--v2-gold)" }}>{stats?.model_status?.published ?? "—"}</b>
+              <span>· {zh ? "已发布" : "Published"}</span><b style={{ color: "var(--v2-gold)" }}>{stats?.model_status?.published ?? "—"}</b>
             </div>
           </div>
           <div className="v2-panel" style={{ margin: 0 }}>

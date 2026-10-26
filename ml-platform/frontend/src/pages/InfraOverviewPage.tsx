@@ -137,7 +137,7 @@ export default function InfraOverviewPage() {
                   <div style={{ fontSize: 11.5, color: "var(--v2-dim)", margin: "6px 0 3px" }}>{cluster?.display_name || cluster?.name || clusterId}</div>
                   {nodeList.slice(0, 5).map((n) => (
                     <div key={n.hostname} style={{ display: "flex", justifyContent: "space-between", padding: "3.5px 0", fontSize: 12, color: "var(--v2-sub)", borderBottom: "1px dashed rgba(36,52,79,.6)" }}>
-                      <span>● {n.hostname}</span>
+                      <span>· {n.hostname}</span>
                       <span>{n.cpu_cores || "-"}C · {n.memory || "-"}{n.gpu && n.gpu !== "0" ? ` · GPU ${n.gpu}` : ""}</span>
                     </div>
                   ))}

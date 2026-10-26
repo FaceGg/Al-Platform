@@ -174,7 +174,7 @@ export default function ServitizeActions({
       ) : null}
 
       {error ? (
-        <span style={{ fontSize: 12, color: "var(--v2-red, #e66f75)" }}>⚠ {error}</span>
+        <span style={{ fontSize: 12, color: "var(--v2-red, #e66f75)" }}>注意：{error}</span>
       ) : null}
     </div>
   );

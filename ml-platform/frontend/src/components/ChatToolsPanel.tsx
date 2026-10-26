@@ -183,7 +183,7 @@ export default function ChatToolsPanel({ onResult }: { onResult: (text: string) 
               </button>
             </div>
           )}
-          {error ? <div style={{ marginTop: 8, fontSize: 12, color: "#e66f75" }}>⚠ {error}</div> : null}
+          {error ? <div style={{ marginTop: 8, fontSize: 12, color: "#e66f75" }}>注意：{error}</div> : null}
         </div>
       )}
     </div>

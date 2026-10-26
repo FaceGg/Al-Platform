@@ -80,7 +80,7 @@ export default function PortalPage() {
 
   const cards = [
     {
-      icon: "🧪", cls: "v2-c-blue", title: zh ? "算法平台（建模中心）" : "Algorithm Platform",
+      icon: "AI", cls: "v2-c-blue", title: zh ? "算法平台（建模中心）" : "Algorithm Platform",
       desc: zh ? "数据到模型的主链路：数据、标注、建模、编排与闭环服务化。" : "Data-to-model pipeline: datasets, labeling, modeling, orchestration and closed loops.",
       chips: zh ? ["数据管理", "数据标注", "自动建模", "模型训练", "模型库", "应用编排", "闭环自动化", "API 市场"] : ["Datasets", "Labeling", "AutoML", "Training", "Models", "Orchestration", "Closed loop", "API market"],
       stat: projectCount != null ? (zh ? `${projectCount} 项目` : `${projectCount} projects`) : "",
@@ -101,7 +101,7 @@ export default function PortalPage() {
       path: "/kubernetes",
     },
     {
-      icon: "⚙", cls: "v2-c-gold", title: zh ? "系统管理" : "Administration",
+      icon: "SYS", cls: "v2-c-gold", title: zh ? "系统管理" : "Administration",
       desc: zh ? "平台级管理：用户、权限、大模型网关与审计。" : "Platform administration: users, roles, LLM gateway and audit.",
       chips: zh ? ["大模型网关", "用户管理"] : ["LLM gateway", "Users"],
       path: "/llm-gateway",
@@ -190,11 +190,11 @@ export default function PortalPage() {
           <div className="v2-panel" style={{ margin: 0 }}>
             <h4><span className="bar" />{zh ? "平台健康度" : "Health"}</h4>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, color: "var(--v2-sub)", borderBottom: "1px dashed rgba(36,52,79,.6)" }}>
-              <span>● {zh ? "后端 API" : "Backend API"}</span>
+              <span>· {zh ? "后端 API" : "Backend API"}</span>
               <span style={{ color: health === (zh ? "正常" : "OK") ? "var(--v2-green)" : "var(--v2-red)" }}>{health}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, color: "var(--v2-sub)", borderBottom: "1px dashed rgba(36,52,79,.6)" }}>
-              <span>● {zh ? "大模型网关" : "LLM gateway"}</span><span style={{ color: "var(--v2-green)" }}>DeepSeek · {zh ? "已连通" : "connected"}</span>
+              <span>· {zh ? "大模型网关" : "LLM gateway"}</span><span style={{ color: "var(--v2-green)" }}>DeepSeek · {zh ? "已连通" : "connected"}</span>
             </div>
           </div>
         </div>

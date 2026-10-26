@@ -378,8 +378,8 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             <h4><span className="bar" />{zh ? "数据形态（约束特征脚本的处理方式）" : "Data shape"}</h4>
             <div className="v2-radio-cards">
               {([["tabular", "" + (zh ? "表格数据" : "Tabular"), zh ? "常规列式制造记录（拧紧样例适用）" : "columnar records"],
-                ["waveform", "〜 " + (zh ? "波形数据" : "Waveform"), zh ? "含编码波形列，需解码后统计（电焊 cvei/cvev/cver/cvep）" : "encoded waveform columns"],
-                ["mixed", "◫ " + (zh ? "混合形态" : "Mixed"), zh ? "报告列 + 波形列并存，两者兼顾" : "both"]] as [DataShape, string, string][]).map(([value, title, desc]) => (
+                ["waveform", "" + (zh ? "波形数据" : "Waveform"), zh ? "含编码波形列，需解码后统计（电焊 cvei/cvev/cver/cvep）" : "encoded waveform columns"],
+                ["mixed", "" + (zh ? "混合形态" : "Mixed"), zh ? "报告列 + 波形列并存，两者兼顾" : "both"]] as [DataShape, string, string][]).map(([value, title, desc]) => (
                 <button key={value} type="button" className={`v2-radio-card${dataShape === value ? " on" : ""}`} onClick={() => setDataShape(value)}>
                   <b>{title}</b><span>{desc}</span>
                 </button>
@@ -505,7 +505,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
               placeholder={zh ? "例如：重点解释假阴性样本的共同特征；对比上一版配方是否退化" : "e.g. explain false negatives"}
               onChange={(e) => setReviewFocus(e.target.value)} />
           </div>
-          {error ? <div className="v2-note" style={{ borderColor: "rgba(230,111,117,.4)", background: "rgba(230,111,117,.07)" }}>⚠ {error}</div> : null}
+          {error ? <div className="v2-note" style={{ borderColor: "rgba(230,111,117,.4)", background: "rgba(230,111,117,.07)" }}>注意：{error}</div> : null}
         </>
       )}
 
@@ -513,7 +513,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
       {step === 5 && (
         <>
           <div className="v2-note" style={{ marginBottom: 12 }}>
-            ✅ {zh ? "提交后智能体将开始迭代（S1 分析 → S2 特征脚本（沙箱）→ S3 建模 → S4 双门禁评审）；"
+            {zh ? "提交后智能体将开始迭代（S1 分析 → S2 特征脚本（沙箱）→ S3 建模 → S4 双门禁评审）；"
               + (stepByStep ? "已开启逐步确认：每个阶段之间会暂停等待你的确认。" : "逐步确认未开启：全自动迭代至终态。")
               : "The agent iterates S1→S4 with sandboxed scripts and hard gates; "
               + (stepByStep ? "step-by-step pauses between stages are ON." : "fully automatic.")}
@@ -558,7 +558,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
                 : "After acceptance: fixate the recipe in the run archive, then one-click servitize (draft → approve)."}
             </div>
           </div>
-          {error ? <div className="v2-note" style={{ borderColor: "rgba(230,111,117,.4)", background: "rgba(230,111,117,.07)" }}>⚠ {error}</div> : null}
+          {error ? <div className="v2-note" style={{ borderColor: "rgba(230,111,117,.4)", background: "rgba(230,111,117,.07)" }}>注意：{error}</div> : null}
         </>
       )}
 

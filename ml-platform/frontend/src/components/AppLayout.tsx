@@ -223,10 +223,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <header className="v2-topnav app-header">
           <div className="v2-brand" onClick={() => navigate("/")} role="button" tabIndex={0}
             onKeyDown={(e) => { if (e.key === "Enter") navigate("/"); }}>
-            <span className="bolt">⚡</span>{t.app.title}
+            {t.app.title}
           </div>
           <div className="v2-gsearch">
-            🔍 <input placeholder={zh ? "搜索数据集 / 模型 / 配方 / 任务…" : "Search datasets / models / recipes / jobs…"} aria-label={zh ? "全局搜索" : "Global search"} />
+            <input placeholder={zh ? "搜索数据集 / 模型 / 配方 / 任务…" : "Search datasets / models / recipes / jobs…"} aria-label={zh ? "全局搜索" : "Global search"} />
           </div>
           <nav className="v2-navtabs" aria-label={zh ? "主导航" : "Primary"}>
             {viewTabs.map((tab) => (
@@ -274,8 +274,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        {/* 中心布局：视图专属侧栏 + 主区 */}
+        {/* 中心布局：视图专属侧栏 + 主区（门户无侧栏，全宽） */}
         <div className="v2-center">
+          {activeView !== "portal" && (
           <aside className="v2-sidebar" data-testid="v2-sidebar">
             {(sideGroups[activeView] || []).map((group) => (
               <div key={group.label}>
@@ -299,6 +300,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               </div>
             ))}
           </aside>
+          )}
           <main className="v2-main">
             <div className="fade-in">{children}</div>
           </main>

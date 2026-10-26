@@ -120,7 +120,7 @@ export default function RecipeRow({
                       disabled={busy}
                       onClick={() => rollback(item.version)}
                     >
-                      ↩ {zh ? `回滚到 v${item.version}` : `Rollback to v${item.version}`}
+                      {zh ? `回滚到 v${item.version}` : `Rollback to v${item.version}`}
                     </button>
                   ) : null}
                 </div>

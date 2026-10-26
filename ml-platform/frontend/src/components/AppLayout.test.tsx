@@ -53,15 +53,14 @@ describe("AppLayout (v2 five-view shell)", () => {
     await waitFor(() => expect(container).toBeTruthy());
   });
 
-  it("renders the portal route without a sidebar menu (design: big-card entry)", async () => {
+  it("renders the portal route without a sidebar (design: big-card entry)", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppLayout><div>test</div></AppLayout>
       </MemoryRouter>
     );
-    await waitFor(() => expect(screen.getByTestId("v2-sidebar")).toBeTruthy());
-    // 门户无侧栏菜单（预览稿对齐：大卡片直入）
-    expect(within(screen.getByTestId("v2-sidebar")).queryByText("首页门户")).toBeNull();
+    // 门户无侧栏元素（v2-center 全宽布局）
+    await waitFor(() => expect(screen.queryByTestId("v2-sidebar")).toBeNull());
   });
 
   it("renders the algo sidebar with annotation and project entries on algo routes", async () => {
