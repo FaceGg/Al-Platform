@@ -45,7 +45,18 @@ class ReadinessService:
             **checks,
             "notification_crypto_configured": notification_crypto_configured,
             "notification_worker_registered": notification_worker_registered,
+            "migration_head": self._migration_head(),
         }
+
+    def _migration_head(self) -> str | None:
+        try:
+            with self.engine.connect() as connection:
+                row = connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar()
+            return str(row) if row else None
+        except Exception:
+            return None
 
     def _notification_crypto_configured(self) -> bool:
         master_key = getattr(self.settings, "resolved_notification_master_key", None)
