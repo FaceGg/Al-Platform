@@ -162,7 +162,12 @@ export default function AlgoOverviewPage() {
             </div>
           </div>
           <div className="v2-panel" style={{ margin: 0 }}>
-            <h4><span className="bar" />{zh ? "算法覆盖" : "Algorithm coverage"}</h4>
+            <h4><span className="bar" />{zh ? "算法覆盖" : "Algorithm coverage"}
+              <span className="more">{zh ? "按模型采用数排序" : "by model adoption"}</span></h4>
+            <div style={{ fontSize: 11, color: "var(--v2-dim)", marginBottom: 8 }}>
+              {zh ? "各算法家族被模型库采用的模型数量（进度条为相对占比）"
+                : "Number of models in the library per algorithm family (bar = relative share)"}
+            </div>
             {(stats?.algorithm_coverage ?? []).slice(0, 5).map((entry) => (
               <div key={entry.name} style={{ padding: "4px 0", fontSize: 12, color: "var(--v2-sub)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>

@@ -98,24 +98,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const viewTabs: { id: ViewId; label: string; tag?: string }[] = [
     { id: "portal", label: zh ? "首页门户" : "Portal" },
     { id: "algo", label: zh ? "算法平台" : "Algorithms" },
-    { id: "agent", label: zh ? "智能体中心" : "Agent Center", tag: "NEW" },
+    { id: "agent", label: zh ? "智能体中心" : "Agent Center" },
     { id: "infra", label: zh ? "基础设施" : "Infrastructure" },
     ...(isAdmin ? [{ id: "admin" as ViewId, label: zh ? "系统管理" : "Administration" }] : []),
   ];
 
   const sideGroups: Record<ViewId, SideGroup[]> = {
-    portal: [
-      { label: t.nav.portalGroup, items: [
-        { key: "/", icon: <HomeOutlined />, label: zh ? "首页门户" : "Portal Home" },
-      ] },
-    ],
+    portal: [],
     algo: [
       { label: zh ? "概览" : "Overview", items: [
         { key: "/algo", icon: <AppstoreOutlined />, label: zh ? "工作台" : "Dashboard" },
         { key: "/projects", icon: <ProjectOutlined />, label: zh ? "项目管理" : "Projects" },
       ] },
       { label: zh ? "数据" : "Data", items: [
-        { key: "/data", icon: <CloudUploadOutlined />, label: t.nav.data, badge: { count: sideCounts["/data"] } },
+        { key: "/data", icon: <CloudUploadOutlined />, label: t.nav.data },
         { key: "/data-annotation", icon: <TagsOutlined />, label: t.nav.data_annotation, query: "view=tasks" },
       ] },
       { label: zh ? "建模与服务" : "Modeling & Serving", items: [
@@ -128,8 +124,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     ],
     agent: [
       { label: zh ? "建模智能体" : "Modeling agent", items: [
-        { key: "/agent", icon: <RocketOutlined />, label: zh ? "新建任务（向导）" : "New task (wizard)" },
-        { key: "/agent", query: "tab=tasks", icon: <PlayCircleOutlined />, label: zh ? "任务列表" : "Job list", badge: { count: sideCounts["/agent"] } },
+        { key: "/agent", icon: <RocketOutlined />, label: zh ? "新建任务" : "New task" },
+        { key: "/agent", query: "tab=tasks", icon: <PlayCircleOutlined />, label: zh ? "任务列表" : "Jobs", badge: { count: sideCounts["/agent"] } },
         { key: "/agent", query: "tab=recipes", icon: <DeploymentUnitOutlined />, label: zh ? "配方库" : "Recipes" },
         { key: "/agent", query: "tab=knowledge", icon: <BookOutlined />, label: zh ? "知识中心" : "Knowledge" },
       ] },
@@ -245,7 +241,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             ))}
           </nav>
           <div className="v2-topright">
-            <span className="v2-env-chip">● {zh ? "生产环境 v2.0" : "Production v2.0"}</span>
+            <span className="v2-env-chip" style={{ display: "none" }} />
             <NotificationCenter />
             <button
               type="button"

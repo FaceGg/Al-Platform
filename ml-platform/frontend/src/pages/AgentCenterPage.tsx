@@ -33,6 +33,30 @@ interface AgentJob {
 
 type TabId = "wizard" | "tasks" | "recipes" | "knowledge";
 
+/** 各侧栏项的页面标题与描述（与其他视图的 pagehead 结构一致）。 */
+const PAGE_TITLES: Record<TabId, { zh: string; en: string; descZh: string; descEn: string }> = {
+  wizard: {
+    zh: "新建任务", en: "New task",
+    descZh: "五步向导：数据分析 → 特征工程 → 自动建模 → 评估验收 → 服务化发布",
+    descEn: "Five-step wizard: analysis → features → modeling → gates → serving",
+  },
+  tasks: {
+    zh: "任务列表", en: "Jobs",
+    descZh: "全部智能体运行与自动建模任务；点击行查看全链路档案",
+    descEn: "All agent runs and AutoML jobs; click a row for the full archive",
+  },
+  recipes: {
+    zh: "配方库", en: "Recipes",
+    descZh: "验收通过固化的建模配方：特征脚本 + 建模配置 + 门禁 + 评审记录，版本化可回滚",
+    descEn: "Versioned recipes fixated from accepted runs: script + config + gates + review log",
+  },
+  knowledge: {
+    zh: "知识中心", en: "Knowledge",
+    descZh: "用户上传的工艺文档/标准/法规 + 系统自动管理的平台经验分区",
+    descEn: "Uploaded documents and standards plus the auto-managed platform experience partition",
+  },
+};
+
 const activeChipStyle: React.CSSProperties = { color: "#fff", background: "rgba(47,155,245,.22)", borderColor: "rgba(92,178,255,.45)" };
 
 const statusBadge = (status: string): string => {
@@ -129,39 +153,19 @@ export default function AgentCenterPage() {
     <AppLayout>
       <div className="v2-pagehead">
         <div>
-          <h2>{zh ? "智能体中心" : "Agent Center"}</h2>
-          <div className="v2-pdesc">{zh
-            ? "大模型驱动的自动建模 Agent：四步向导 · 任务全链路 · 配方固化复用 · 经验越用越强"
-            : "LLM-driven modeling agent: wizard, job pipeline, versioned recipes, accumulated experience"}</div>
+          <h2>{zh ? PAGE_TITLES[tab].zh : PAGE_TITLES[tab].en}</h2>
+          <div className="v2-pdesc">{zh ? PAGE_TITLES[tab].descZh : PAGE_TITLES[tab].descEn}</div>
         </div>
-        <button type="button" className="v2-btn primary" onClick={() => navigate("/automl")}>
-          <RocketOutlined />{zh ? "新建智能体建模任务" : "New agent job"}
-        </button>
+        {tab === "wizard" ? (
+          <button type="button" className="v2-btn primary" onClick={() => navigate("/automl")}>
+            <RocketOutlined />{zh ? "高级配置（AutoML）" : "Advanced (AutoML)"}
+          </button>
+        ) : null}
       </div>
 
-      <div className="v2-kpis">
-        {kpis.map((k) => (
-          <div key={k.label} className="v2-kpi">
-            <div className="lb">{k.label}</div>
-            <div className="v">{k.value}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="v2-subtabs" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === "wizard"} className={`v2-subtab${tab === "wizard" ? " on" : ""}`} onClick={() => switchTab("wizard")}>
-          {zh ? "新建向导" : "Wizard"}
-        </button>
-        <button type="button" role="tab" aria-selected={tab === "tasks"} className={`v2-subtab${tab === "tasks" ? " on" : ""}`} onClick={() => switchTab("tasks")}>
-          {zh ? "任务列表" : "Jobs"}
-        </button>
-        <button type="button" role="tab" aria-selected={tab === "recipes"} className={`v2-subtab${tab === "recipes" ? " on" : ""}`} onClick={() => switchTab("recipes")}>
-          {zh ? "配方库" : "Recipes"}
-        </button>
-        <button type="button" role="tab" aria-selected={tab === "knowledge"} className={`v2-subtab${tab === "knowledge" ? " on" : ""}`} onClick={() => switchTab("knowledge")}>
-          {zh ? "知识中心" : "Knowledge"}
-        </button>
-      </div>
+      {tab === "wizard" && (
+        <AgentModelingWizard onSubmitted={() => { loadAgentData(); }} />
+      )}
 
       {tab === "tasks" && (
         <div className="v2-panel">

@@ -53,16 +53,15 @@ describe("AppLayout (v2 five-view shell)", () => {
     await waitFor(() => expect(container).toBeTruthy());
   });
 
-  it("renders the portal sidebar on the portal route", async () => {
+  it("renders the portal route without a sidebar menu (design: big-card entry)", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppLayout><div>test</div></AppLayout>
       </MemoryRouter>
     );
     await waitFor(() => expect(screen.getByTestId("v2-sidebar")).toBeTruthy());
-    expect(within(screen.getByTestId("v2-sidebar")).getByText("首页门户")).toBeInTheDocument();
-    // 项目管理已移入算法平台视图（预览稿对齐）
-    expect(within(screen.getByTestId("v2-sidebar")).queryByText("项目管理")).toBeNull();
+    // 门户无侧栏菜单（预览稿对齐：大卡片直入）
+    expect(within(screen.getByTestId("v2-sidebar")).queryByText("首页门户")).toBeNull();
   });
 
   it("renders the algo sidebar with annotation and project entries on algo routes", async () => {
@@ -127,7 +126,7 @@ describe("AppLayout (v2 five-view shell)", () => {
     expect(screen.getByRole("button", { name: /agent center/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /agent center/i }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/agent"));
-    expect(within(screen.getByTestId("v2-sidebar")).getByText("New task (wizard)")).toBeInTheDocument();
+    expect(within(screen.getByTestId("v2-sidebar")).getByText("New task")).toBeInTheDocument();
   });
 
   it("selects data annotation instead of the shorter data route", async () => {
