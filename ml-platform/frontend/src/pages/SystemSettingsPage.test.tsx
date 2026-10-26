@@ -54,6 +54,8 @@ describe("SystemSettingsPage", () => {
     expect(await screen.findByText(/deepseek-chat/)).toBeInTheDocument();
     expect(apiGet).toHaveBeenCalledWith("/llm-profiles");
     // The dead /readiness and /config/public calls are gone.
-    expect(apiGet.mock.calls.every(([url]: [string]) => url !== "/readiness" && url !== "/config/public")).toBe(true);
+    const calledUrls = apiGet.mock.calls.map((call: unknown[]) => String(call[0]));
+    expect(calledUrls.includes("/readiness")).toBe(false);
+    expect(calledUrls.includes("/config/public")).toBe(false);
   });
 });
