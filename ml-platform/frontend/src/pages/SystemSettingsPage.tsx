@@ -19,7 +19,7 @@ interface Readiness {
   migration_head?: string | null;
 }
 
-/** 系统管理→系统设置：平台组件健康矩阵与只读运行配置。 */
+/** 系统管理→平台状态：平台组件健康矩阵与只读运行配置。 */
 export default function SystemSettingsPage() {
   const { lang, setLang } = useI18n();
   const zh = lang === "zh";
@@ -67,7 +67,7 @@ export default function SystemSettingsPage() {
     <AppLayout>
       <div className="v2-pagehead">
         <div>
-          <h2 className="v2-pt">{zh ? "系统设置" : "System Settings"}</h2>
+          <h2 className="v2-pt">{zh ? "平台状态" : "Platform Status"}</h2>
           <p className="v2-pdesc">{zh ? "平台组件健康状态与运行配置。" : "Component health and runtime configuration."}</p>
         </div>
         <button type="button" className="v2-btn" onClick={load}>

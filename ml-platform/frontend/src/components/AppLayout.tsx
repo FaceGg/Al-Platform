@@ -158,7 +158,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         { key: "/admin/audit", icon: <FileTextOutlined />, label: zh ? "审计日志" : "Audit log" },
       ] },
       { label: zh ? "平台" : "Platform", items: [
-        { key: "/admin/settings", icon: <SettingOutlined />, label: zh ? "系统设置" : "Settings" },
+        { key: "/admin/settings", icon: <SettingOutlined />, label: zh ? "平台状态" : "Platform Status" },
         { key: "/llm-gateway", icon: <ApiOutlined />, label: t.nav.llm_gateway },
       ] },
     ],
