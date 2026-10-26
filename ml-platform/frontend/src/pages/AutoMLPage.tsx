@@ -25,7 +25,7 @@ import { createUuid } from "../utils/uuid";
 
 const { Text, Title } = Typography;
 
-const AUTOML_ALGORITHM_OPTIONS = [
+export const AUTOML_ALGORITHM_OPTIONS = [
   { value: "lightgbm", label: "LightGBM" },
   { value: "xgboost", label: "XGBoost" },
   { value: "catboost", label: "CatBoost" },
@@ -35,7 +35,6 @@ const AUTOML_ALGORITHM_OPTIONS = [
   { value: "hist_gradient_boosting", label: "HistGradientBoosting" },
   { value: "mlp", label: "MLP 神经网络" },
 ];
-export { AUTOML_ALGORITHM_OPTIONS };
 export const AUTOML_ALGORITHM_IDS = AUTOML_ALGORITHM_OPTIONS.map(({ value }) => value);
 
 // MLP 推荐默认（与拧紧质量感知报告一致）：adam / 0.001 / L2 1e-4 / 隐藏层 256-128-64。

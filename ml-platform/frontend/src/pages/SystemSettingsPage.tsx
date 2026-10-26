@@ -16,7 +16,7 @@ export default function SystemSettingsPage() {
   }, []);
 
   const settings = [
-    { label: zh ? "平台语言" : "Language", value: zh ? "中文" : "English", action: (
+    { label: zh ? "平台语言" : "Language", value: zh ? "中文" : "English", control: (
       <button type="button" className="v2-btn sm" onClick={() => setLang(zh ? "en" : "zh")}>
         {zh ? "切换 English" : "切换中文"}
       </button>
@@ -49,7 +49,7 @@ export default function SystemSettingsPage() {
               <tr key={item.label}>
                 <td className="tt">{item.label}</td>
                 <td>{item.value}</td>
-                <td>{item.action ?? "—"}</td>
+                <td>{item.control ?? "—"}</td>
               </tr>
             ))}
           </tbody>
