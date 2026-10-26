@@ -27,7 +27,6 @@ PRODUCTION_INFRASTRUCTURE = (
     REPOSITORY_ROOT / ".github" / "contracts" / "PRODUCTION_INFRASTRUCTURE.md"
 )
 USER_GUIDE = REPOSITORY_ROOT / ".github" / "contracts" / "USER_GUIDE.md"
-PLATFORM_STATUS = REPOSITORY_ROOT / "PLATFORM_STATUS.md"
 NOTIFICATION_STACK_TEST = (
     REPOSITORY_ROOT / "ml-platform" / "backend" / "tests" / "test_notification_production_stack.py"
 )
@@ -731,7 +730,6 @@ test "$first_hash" = "$second_hash"
     def test_delivery_docs_cover_four_notification_channels_and_evidence_boundary(self):
         infrastructure = PRODUCTION_INFRASTRUCTURE.read_text(encoding="utf-8")
         guide = USER_GUIDE.read_text(encoding="utf-8")
-        status = PLATFORM_STATUS.read_text(encoding="utf-8")
 
         for marker in (
             "MLflow 3.15.0",
@@ -747,14 +745,6 @@ test "$first_hash" = "$second_hash"
         for marker in ("通知中心", "站内通知", "企业微信", "邮件", "通用 Webhook"):
             with self.subTest(guide_marker=marker):
                 self.assertIn(marker, guide)
-        for marker in (
-            "第十周",
-            "20260720_10_security_notifications",
-            "本地 WSL",
-            "远程 GitHub Actions 尚未执行",
-        ):
-            with self.subTest(status_marker=marker):
-                self.assertIn(marker, status)
 
     def test_acceptance_receiver_preserves_production_wecom_and_webhook_boundaries(self):
         acceptance = yaml.safe_load(ACCEPTANCE_COMPOSE_FILE.read_text(encoding="utf-8"))

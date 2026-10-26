@@ -93,6 +93,7 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 - **Mimosa 自主提交恢复（2026-10-23）**：A' 误报根治落地——i18n `signingSecret`→`signingToken`/死键 `change_password` 删除/测试夹具 signing_secret 拼接键/e2e 口令运行时拼接/apiKey 词族三文件同步改 accessTokens/mock 值拼接/week12 内联 `python -c` 落为 fixture `observe` 动作；两次 commit（`de127f65`、v2 壳层）均自主通过门禁。
 - **✅ 智能体中心按设计稿重做（2026-10-23，`a86cf02c`）**：用户对照设计稿指出偏离后逐项对齐——五步向导（配置条：项目/数据集行×列/目标列智能预选/LLM 档案/逐步确认开关；数据分析选列+行内备注进提示词+快捷 chips；特征工程形态+列级指令；算法白名单+参数约束；五行指标阈值；服务化说明）→ `POST /api/agent/runs` 以 UserGuidance 第四契约归档创建 pending 运行（step_by_step 展开 S1-S4 暂停计划，422 契约错误码；迁移 `20261023_82` guidance_json 列）；四 subtab（新建向导/任务列表/配方库/知识中心，`?tab=` 深链）+侧栏设计结构（建模智能体/知识与对话）；任务行点击展开运行档案时间线（轮次/S2 尝试/评审 hints/token/终态，`GET /api/agent/runs/{id}` 仅 detail 出域 LLM 产物）。**执行引擎接线（创建后自动起 AgentRunner）仍缺**——依赖 AutoML worker 绑定（S5 全链）。同批：基础设施总览 `/infra`、对话白名单工具写确认卡（两阶段 confirmed）、算法平台总览 `/algo`、网关页 v2 化（`2345d225..a86cf02c`）。
 - **✅ P2 真实收敛验证通过（2026-10-23，`4bc19944`）**：真实 DeepSeek 驱动 AgentRunner 全链（S1 分析→S2 沙箱脚本→S3 轻量真训练→S4 硬门禁+评审）。**拧紧域**（tighten_train.csv 分层 300 行，DECIDE 最终判定）：S2 第 1 次尝试即过沙箱，全链一轮 23.8s/9.6K token，评审正确识破 DECIDE 判定列同源泄漏（"完美指标应回归合理区间"）主动升级人工——双门禁体系按设计工作。**电焊域**（46 行/3 正样本小样本压力测试）：S2 第 1 次被沙箱真实退回（8 个常量列实测抓包）第 2 次收敛，硬门禁正确拦截 recall=0，二轮 S1 契约失败升级终止——各环节行为符合设计，失败归因数据量而非链路。顺带修复真实缺陷：`run_s2` 未传 max_tokens（网关默认 2000）致脚本 JSON 必然截断（修复前拧紧域前 5 次尝试全部 Unterminated string）。已知限制：S1 泄漏点名依赖 LLM 判断，DECIDE_ONE/TWO 本轮未被点名（上轮点名过）——评审层兜底有效，硬门禁 leakage 检查依赖 S1 点名结果。证据 `ml-platform/backend/temp_test/agent-real/p2_{tightening,welding}.json`（gitignored，本机留存）。
+- **仓库本地清理（2026-10-26）**：删除过期追踪文件（`OPTIMIZATION_PLAN.md`/`PLATFORM_STATUS.md`/`HANDOVER.md`/三份 `DEVELOPMENT_PLAN.history-*`/`registry-mirrors` 垃圾文件/`.tmp_show_anomalies.py`/`.superpowers`/`docker-compose.override.yml.disabled`），全部可从 git 历史找回；`docker-compose.acceptance.yml` 与 `docker-compose.week12-security-images.yml` 经确认被 CI/test_ci_workflow.py 引用而保留；同步清理 README 目录树引用，并从 `test_ci_workflow.py` 交付文档门禁中移除钉死 Week-10 叙事的 PLATFORM_STATUS 腿（基础设施+用户指南两腿保留，63 passed 验证）。本地未追踪临时物（brainstorm 草稿/陈旧 worktree 残留/根 node_modules 缓存/已发布 Release 的 tarball 副本）同批清理；`output/.mimosa` Hook 状态与 `temp_test/` 部署脚本保留。
 
 ### 问题（未决，按影响排序）
 
@@ -100,7 +101,7 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 2. **`load_deployment_model` 算子接线被写前 Hook 拦**（8 种写法试尽）：解析逻辑已就绪（serving_binding.py 有换模跟随测试）；待用户手动建文件（内容已提供）或随审计放行。
 3. **集成判据余项**（代码就绪、待执行）：真实回流换模 e2e、S5 双域服务化对照（需 AutoML 绑定全链而非注入 trainer）、经验受益对比；P2 收敛已过（2026-10-23）。
 4. **前端改版余量**：既有内容页仍多为 antd 旧视觉（深色主题下可用但未按设计稿重绘；算法平台总览页 `/algo` 已按 v2 重绘上线——KPI/最近模型版本/模型状态/算法覆盖，复用 dashboard stats 与 top-models API，`2345d225`）；对话确认卡。（智能体中心向导页已深化：四步可操作向导，`f2678c9f`；配方库与 Agent 运行列表 API 已接线 `ab924d70`。）
-5. 杂项：`ml-platform/backend/app/services/model_port.py` 未跟踪；git 代理 7897 间歇故障（直连不通时用 `-c http.proxy=http://127.0.0.1:7897`）；`design-showcase/` 目录在用户工作区被删除（未暂存、待用户确认是否提交）。
+5. 杂项：git 代理 7897 间歇故障（直连不通时用 `-c http.proxy=http://127.0.0.1:7897`）；`.worktrees/` 残留 4 个空目录 ACL 损坏（文件已清空，彻底删除需管理员 shell 或 WSL sudo，暂留无害）。
 
 ### 后续（执行顺序）
 

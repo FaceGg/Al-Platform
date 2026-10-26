@@ -34,7 +34,7 @@
 |- docker/                     # PostgreSQL 等容器初始化资源
 |- docker-compose.yml          # 生产拓扑 Compose 定义
 |- DEVELOPMENT_PLAN.md         # 当前权威开发计划
-`- PLATFORM_STATUS.md          # 历史平台状态与验收摘要
+`- DEVELOPMENT_PLAN_ARCHIVE.md # 历史计划归档
 ```
 
 ## 本地开发
@@ -140,8 +140,7 @@ docker compose down
 | [架构文档](ml-platform/docs/architecture.md) | 历史架构与技术选型参考 | 包含行业化历史描述 |
 | [API 参考](ml-platform/docs/api_reference.md) | 既有 API 路由参考 | 以运行中的 OpenAPI 为准 |
 | [用户说明](ml-platform/USAGE.md) | 历史操作与部署说明 | 包含过往版本和行业化内容 |
-| [平台状态摘要](PLATFORM_STATUS.md) | 历史交付和验收记录 | 当前待办以开发计划为准 |
-| [历史计划归档](DEVELOPMENT_PLAN.history-2026-09-03.md) | 本轮计划整理前的完整记录 | 仅供追溯，不作为当前待办 |
+| [历史计划归档](DEVELOPMENT_PLAN_ARCHIVE.md) | 本轮计划整理前的完整记录 | 仅供追溯，不作为当前待办 |
 
 ## 开发约定
 
