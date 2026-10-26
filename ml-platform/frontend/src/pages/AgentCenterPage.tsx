@@ -140,11 +140,6 @@ export default function AgentCenterPage() {
         <div>
           <h2>{zh ? PAGE_TITLES[tab].zh : PAGE_TITLES[tab].en}</h2>
         </div>
-        {tab === "wizard" ? (
-          <button type="button" className="v2-btn primary" onClick={() => navigate("/automl")}>
-            <RocketOutlined />{zh ? "高级配置（AutoML）" : "Advanced (AutoML)"}
-          </button>
-        ) : null}
       </div>
 
       {tab === "wizard" && (
@@ -342,15 +337,6 @@ export default function AgentCenterPage() {
             </div>
           )}
         </div>
-      )}
-
-      {tab === "wizard" && (
-        <>
-          <AgentModelingWizard onSubmitted={() => { loadAgentData(); }} />
-          <div className="v2-note" style={{ marginTop: 10 }}>{zh
-            ? "提交即归档 UserGuidance（第四契约）并创建智能体任务；执行引擎接线随 AutoML worker 绑定后自动开始迭代。"
-            : "Submission archives the guidance contract and creates the run; the engine starts once the worker binding lands."}</div>
-        </>
       )}
 
       {tab === "recipes" && (
