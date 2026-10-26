@@ -1,7 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AgentCenterPage from "./AgentCenterPage";
+
+function DetailProbe() {
+  const { runId } = useParams();
+  return <div>DETAIL:{runId}</div>;
+}
 
 const apiGet = vi.hoisted(() => vi.fn());
 const agentCenterMocks = vi.hoisted(() => ({
@@ -95,15 +100,21 @@ describe("AgentCenterPage (design four-tab agent center)", () => {
     expect(agentCenterMocks.listAgentRuns).toHaveBeenCalled();
   });
 
-  it("opens the run archive timeline from an agent run row", async () => {
-    render(<MemoryRouter initialEntries={["/agent?tab=tasks"]}><AgentCenterPage /></MemoryRouter>);
+  it("navigates to the run detail page from the row action button", async () => {
+    render(
+      <MemoryRouter initialEntries={["/agent?tab=tasks"]}>
+        <Routes>
+          <Route path="/agent" element={<AgentCenterPage />} />
+          <Route path="/agent/task/:runId" element={<DetailProbe />} />
+        </Routes>
+      </MemoryRouter>
+    );
     fireEvent.click(await screen.findByRole("button", { name: /^Agent( 运行| runs)?$/ }));
-    const row = await screen.findByText(/aaaabbbb/);
-    fireEvent.click(row.closest("tr")!);
-    expect(await screen.findByText(/运行档案/)).toBeInTheDocument();
-    expect(await screen.findByText(/剔除判定列后重训/)).toBeInTheDocument();
-    expect(screen.getByText(/deepseek-chat/)).toBeInTheDocument();
-    expect(agentCenterMocks.getAgentRun).toHaveBeenCalledWith("aaaabbbb-cccc-dddd-eeee-ffff00001111");
+    const detailButton = await screen.findByRole("button", { name: /详情/ });
+    fireEvent.click(detailButton);
+    expect(await screen.findByText(/DETAIL:aaaabbbb-cccc-dddd-eeee-ffff00001111/)).toBeInTheDocument();
+    // 行内展开已移除：任务列表页不再触发档案加载
+    expect(agentCenterMocks.getAgentRun).not.toHaveBeenCalled();
   });
 
   it("shows the AutoML jobs source with live rows", async () => {

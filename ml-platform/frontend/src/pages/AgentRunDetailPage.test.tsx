@@ -1,0 +1,90 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import AgentRunDetailPage from "./AgentRunDetailPage";
+
+const mocks = vi.hoisted(() => ({
+  getAgentRun: vi.fn(),
+  resumeAgentRun: vi.fn(),
+}));
+
+vi.mock("../api/agentCenter", () => mocks);
+vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
+
+const RUN_ID = "486ea7f9-f342-49a8-a3d3-41e9ac12aff1";
+
+const detailFixture = {
+  id: RUN_ID,
+  project_id: null,
+  project_name: "电焊小样本",
+  target_column: "fault",
+  status: "waiting_escalate",
+  current_stage: "s1",
+  round_count: 1,
+  token_used: 0,
+  token_budget: null,
+  llm_model_id: "deepseek-chat",
+  error_code: "AGENT_S1_LLM_FAILED",
+  created_at: "2026-10-26T07:42:12Z",
+  updated_at: "2026-10-26T07:43:14Z",
+  dataset_artifact_id: null,
+  result_json: {},
+  memory_json: {
+    rounds: [],
+    escalation: {
+      code: "AGENT_S1_LLM_FAILED",
+      detail: "llm_call_failed: ReadTimeout: timed out",
+      round: 1,
+    },
+  },
+};
+
+function renderAt(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <Routes>
+        <Route path="/agent/task/:runId" element={<AgentRunDetailPage />} />
+        <Route path="/agent" element={<div>BACK-TO-JOBS</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+describe("AgentRunDetailPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getAgentRun.mockResolvedValue(detailFixture);
+  });
+
+  it("loads the archive for the routed run id and shows metadata", async () => {
+    renderAt(`/agent/task/${RUN_ID}`);
+
+    expect(mocks.getAgentRun).toHaveBeenCalledWith(RUN_ID);
+    expect(await screen.findByText(/fault/)).toBeInTheDocument();
+    expect(screen.getByText("电焊小样本")).toBeInTheDocument();
+    expect(screen.getAllByText(/deepseek-chat/).length).toBeGreaterThan(0);
+  });
+
+  it("surfaces the persisted escalation detail (486ea7f9 diagnosability)", async () => {
+    renderAt(`/agent/task/${RUN_ID}`);
+
+    expect(await screen.findByText(/升级原因/)).toBeInTheDocument();
+    expect(screen.getByText(/ReadTimeout: timed out/)).toBeInTheDocument();
+  });
+
+  it("renders relative update time in the correct timezone", async () => {
+    renderAt(`/agent/task/${RUN_ID}`);
+    // updated_at 2026-10-26T07:43:14Z（UTC）——修复前被当成本地时间显示 8 小时前级别错位。
+    await waitFor(() => expect(screen.getByText(/终态：/)).toBeInTheDocument());
+    const finalItem = screen.getByText(/终态：/).closest(".v2-tl-item");
+    expect(finalItem?.textContent).toMatch(/刚刚|分钟前|小时前|天前/);
+    expect(finalItem?.textContent).not.toMatch(/8 小时前|9 小时前/);
+  });
+
+  it("shows the load failure state for a missing run", async () => {
+    mocks.getAgentRun.mockRejectedValue(new Error("404"));
+    renderAt(`/agent/task/${RUN_ID}`);
+
+    expect(await screen.findByText(/档案加载失败/)).toBeInTheDocument();
+  });
+});

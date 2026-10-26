@@ -2,22 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ReloadOutlined, RocketOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
-import OptReportPanel from "../components/OptReportPanel";
 import RecipeRow from "../components/RecipeRow";
-import ServitizeActions from "../components/ServitizeActions";
 import KnowledgeCenterContent from "../components/KnowledgeCenterContent";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 import {
-  getAgentRun,
   listAgentRuns,
   listPipelineRecipes,
-  resumeAgentRun,
-  type AgentRunDetail,
   type AgentRunItem,
   type PipelineRecipeItem,
 } from "../api/agentCenter";
 import AgentModelingWizard from "../components/AgentModelingWizard";
+import { parseBackendTime } from "../utils/time";
 
 interface AgentJob {
   id: number | string;
@@ -70,8 +66,11 @@ const statusBadge = (status: string): string => {
 };
 
 function relativeTime(iso?: string | null, zh = true): string {
-  if (!iso) return "-";
-  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  // 后端时间为不带时区的 UTC ISO——必须经 parseBackendTime 补 Z 再解析，
+  // 否则被当成本地时间，相对时间偏差一个时区（更新时间列 8 小时错位根因）。
+  const parsed = parseBackendTime(iso);
+  if (!parsed) return "-";
+  const minutes = Math.round((Date.now() - parsed.getTime()) / 60000);
   if (minutes < 1) return zh ? "刚刚" : "just now";
   if (minutes < 60) return zh ? `${minutes} 分钟前` : `${minutes}m ago`;
   const hours = Math.round(minutes / 60);
@@ -93,9 +92,6 @@ export default function AgentCenterPage() {
   const [jobSource, setJobSource] = useState<"automl" | "agent">("agent");
   const [agentRuns, setAgentRuns] = useState<AgentRunItem[]>([]);
   const [agentRunsError, setAgentRunsError] = useState("");
-  const [archiveRunId, setArchiveRunId] = useState<string | null>(null);
-  const [archive, setArchive] = useState<AgentRunDetail | null>(null);
-  const [archiveError, setArchiveError] = useState("");
   const [recipes, setRecipes] = useState<PipelineRecipeItem[]>([]);
   const [recipesError, setRecipesError] = useState("");
 
@@ -119,17 +115,6 @@ export default function AgentCenterPage() {
     listPipelineRecipes().then(setRecipes).catch(() => {
       setRecipes([]);
       setRecipesError(zh ? "配方列表加载失败" : "Failed to load recipes");
-    });
-  };
-
-  const openArchive = (runId: string) => {
-    if (archiveRunId === runId) { setArchiveRunId(null); setArchive(null); return; }
-    setArchiveRunId(runId);
-    setArchive(null);
-    setArchiveError("");
-    getAgentRun(runId).then(setArchive).catch(() => {
-      setArchive(null);
-      setArchiveError(zh ? "档案加载失败" : "Failed to load archive");
     });
   };
 
@@ -205,16 +190,17 @@ export default function AgentCenterPage() {
                 <th>{zh ? "运行" : "Run"}</th><th>{zh ? "项目" : "Project"}</th><th>{zh ? "目标列" : "Target"}</th>
                 <th>{zh ? "状态" : "Status"}</th><th>{zh ? "阶段/轮次" : "Stage/Rounds"}</th>
                 <th>{zh ? "Token" : "Tokens"}</th><th>{zh ? "更新时间" : "Updated"}</th>
+                <th>{zh ? "操作" : "Actions"}</th>
               </tr></thead>
               <tbody>
-                {agentRunsError ? <tr><td colSpan={7} className="v2-empty">{agentRunsError}</td></tr> : null}
+                {agentRunsError ? <tr><td colSpan={8} className="v2-empty">{agentRunsError}</td></tr> : null}
                 {!agentRunsError && agentRuns.length === 0 ? (
-                  <tr><td colSpan={7} className="v2-empty">{zh
+                  <tr><td colSpan={8} className="v2-empty">{zh
                     ? "暂无 Agent 运行记录 —— Agent 任务由智能体建模主线创建（AutoML 绑定全链接入中），P2 真实收敛验证已在拧紧/电焊两域跑通全链"
                     : "No agent runs yet — agent jobs are created by the modeling agent mainline (AutoML binding in progress); P2 convergence was verified on both real domains"}</td></tr>
                 ) : null}
                 {agentRuns.map((run) => (
-                  <tr key={run.id} style={{ cursor: "pointer" }} onClick={() => openArchive(run.id)}>
+                  <tr key={run.id}>
                     <td className="tt" title={run.id}>{run.id.slice(0, 8)}…</td>
                     <td>{run.project_name ?? "-"}</td>
                     <td className="tt">{run.target_column ?? "-"}</td>
@@ -225,129 +211,15 @@ export default function AgentCenterPage() {
                     <td>{run.current_stage.toUpperCase()} · {zh ? "轮" : "r"}{run.round_count}</td>
                     <td>{run.token_used.toLocaleString()}</td>
                     <td>{relativeTime(run.updated_at ?? run.created_at, zh)}</td>
+                    <td>
+                      <button type="button" className="v2-btn sm" onClick={() => navigate(`/agent/task/${run.id}`)}>
+                        {zh ? "详情 ›" : "Details ›"}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-          {jobSource === "agent" && archiveRunId && (
-            <div style={{ marginTop: 12, border: "1px solid var(--v2-line)", borderRadius: 10, background: "var(--v2-bg)", padding: "12px 14px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-                <b style={{ color: "var(--v2-txt)", fontSize: 13 }}>{zh ? "运行档案" : "Run archive"}</b>
-                <span className="v2-badge v2-bgray">{archiveRunId.slice(0, 8)}</span>
-                {archive ? (
-                  <>
-                    <span className={`v2-badge ${statusBadge(archive.status)}`}>{archive.status}</span>
-                    {archive.llm_model_id ? <span className="v2-badge v2-bp">{archive.llm_model_id}</span> : null}
-                    <span style={{ fontSize: 11, color: "var(--v2-dim)" }}>
-                      {archive.token_used.toLocaleString()}{archive.token_budget ? ` / ${archive.token_budget.toLocaleString()}` : ""} tokens · {zh ? "轮" : "rounds "}{archive.round_count}
-                    </span>
-                    {archive.status === "waiting_guidance" ? (
-                      <button
-                        type="button"
-                        className="v2-btn primary sm"
-                        onClick={() => {
-                          resumeAgentRun(archive.id)
-                            .then(() => openArchive(archive.id))
-                            .then(() => loadAgentData())
-                            .catch(() => undefined);
-                        }}
-                      >{zh ? "放行继续 →" : "Resume →"}</button>
-                    ) : null}
-                  </>
-                ) : null}
-                <span style={{ marginLeft: "auto", cursor: "pointer", color: "var(--v2-dim)", fontSize: 12 }} onClick={() => { setArchiveRunId(null); setArchive(null); }}>✕</span>
-              </div>
-              {archiveError ? <div className="v2-empty" style={{ padding: 12 }}>{archiveError}</div> : null}
-              {!archive && !archiveError ? <div className="v2-empty" style={{ padding: 12 }}>{zh ? "档案加载中…" : "Loading…"}</div> : null}
-              {archive ? (
-                <>
-                <div className="v2-timeline">
-                  {(archive.memory_json?.rounds ?? []).map((round) => (
-                    <div key={round.round} className="v2-tl-item run">
-                      <div className="tt">{zh ? `第 ${round.round} 轮` : `Round ${round.round}`}
-                        {round.verdict ? <span className={`v2-badge ${round.verdict === "gate_failed" ? "v2-br" : "v2-bgo"}`} style={{ marginLeft: 8 }}>{round.verdict}</span> : null}
-                      </div>
-                      {(round.s2_attempts ?? []).map((attempt) => (
-                        <div key={attempt.attempt} className="ts" style={{ color: attempt.ok ? "var(--v2-green)" : "var(--v2-gold)" }}>
-                          · S2 {zh ? "尝试" : "attempt"} {attempt.attempt}: {attempt.ok ? (zh ? "通过沙箱" : "sandbox OK") : (attempt.error ?? "failed")}
-                          {Array.isArray(attempt.detail) && attempt.detail.length ? ` (${attempt.detail.slice(0, 3).join("; ")})` : ""}
-                        </div>
-                      ))}
-                      {(round.hints ?? []).length ? (
-                        <div className="ts" style={{ marginTop: 3 }}>
-                          {zh ? "评审建议：" : "Hints: "}{(round.hints ?? []).slice(0, 3).map((hint, i) => (
-                            <span key={i} style={{ display: "block", color: "var(--v2-sub)" }}>{i + 1}. {hint.length > 90 ? hint.slice(0, 90) + "…" : hint}</span>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                  {(archive.memory_json?.rounds ?? []).length === 0 ? (
-                    <div className="v2-tl-item"><div className="tt">{zh ? "暂无轮次记录" : "No recorded rounds"}</div></div>
-                  ) : null}
-                  <div className={`v2-tl-item ${archive.status === "waiting_escalate" ? "warn" : "ok"}`}>
-                    <div className="tt">{zh ? "终态：" : "Final: "}{archive.status}{archive.error_code ? ` · ${archive.error_code}` : ""}</div>
-                    <div className="ts">{relativeTime(archive.updated_at ?? archive.created_at, zh)}</div>
-                  </div>
-                </div>
-                <OptReportPanel resultJson={archive.result_json} zh={zh} />
-                {/* 设计稿两块：轮次关键产物表 + 注入的经验（L2 检索） */}
-                <div style={{ display: "flex", gap: 14, marginTop: 14, flexWrap: "wrap" }}>
-                  <div className="v2-panel" style={{ margin: 0, flex: 1, minWidth: 260 }}>
-                    <h4><span className="bar" />{zh ? "轮次关键产物" : "Round artifacts"}</h4>
-                    <table className="v2-table">
-                      <thead><tr><th>{zh ? "产物" : "Artifact"}</th><th>{zh ? "状态" : "Status"}</th></tr></thead>
-                      <tbody>
-                        {(archive.memory_json?.rounds ?? []).some((round) => (round.s2_attempts ?? []).some((a) => a.ok)) ? (
-                          <>
-                            <tr><td>AnalysisReport</td><td><span className="v2-badge v2-bgo">{zh ? "已校验" : "validated"}</span></td></tr>
-                            {(archive.memory_json?.rounds ?? []).some((round) => (round.s2_attempts ?? []).some((a) => a.ok)) ? (
-                              <tr><td>{zh ? "特征脚本（定稿）" : "Feature script (final)"}</td><td><span className="v2-badge v2-bgo">{zh ? "沙箱通过" : "sandbox OK"}</span></td></tr>
-                            ) : null}
-                            {archive.result_json?.metrics ? (
-                              <tr><td>{zh ? "候选指标" : "Candidate metrics"}</td><td><span className="v2-badge v2-bg">{zh ? "已产出" : "produced"}</span></td></tr>
-                            ) : null}
-                            {(archive.memory_json?.rounds ?? []).some((round) => round.verdict) ? (
-                              <tr><td>ReviewVerdict</td><td>
-                                <span className={`v2-badge ${(archive.memory_json?.rounds ?? []).some((round) => round.verdict === "pass") ? "v2-bgo" : "v2-br"}`}>
-                                  {(archive.memory_json?.rounds ?? []).map((round) => round.verdict).filter(Boolean).pop()}
-                                </span>
-                              </td></tr>
-                            ) : null}
-                          </>
-                        ) : (
-                          <tr><td colSpan={2} className="v2-empty">{zh ? "暂无产物——运行后此处展示各阶段交付物" : "No artifacts yet"}</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="v2-panel" style={{ margin: 0, flex: 1, minWidth: 260 }}>
-                    <h4><span className="bar" />{zh ? "注入的经验（L2 检索）" : "Injected experience (L2)"}</h4>
-                    {(archive.memory_json?.injected_experience as Array<{ entry?: string; lesson?: string; confidence?: number }> | undefined)?.length ? (
-                      (archive.memory_json.injected_experience as Array<{ entry?: string; lesson?: string; confidence?: number }>).map((ref, index) => (
-                        <div key={ref.entry ?? index} style={{ fontSize: 12, lineHeight: 1.8, color: "var(--v2-sub)" }}>
-                          · <span className="tt">[{ref.entry?.slice(0, 8) ?? "?"}]</span> {ref.lesson ?? ""}
-                          {ref.confidence != null ? <span style={{ color: "var(--v2-dim)" }}>（{ref.confidence.toFixed(2)}）</span> : null}
-                        </div>
-                      ))
-                    ) : (
-                      <div className="v2-empty">{zh ? "本轮无命中经验（shadow 条目不计入注入）" : "No experience injected this round"}</div>
-                    )}
-                  </div>
-                </div>
-                {archive.status === "accepted" ? (
-                  <ServitizeActions
-                    runId={archive.id}
-                    projectId={archive.project_id}
-                    recipeId={(archive.result_json?.recipe_id as string | undefined) ?? null}
-                    zh={zh}
-                    onRecipeFixed={() => void openArchive(archive.id)}
-                  />
-                ) : null}
-                </>
-              ) : null}
-            </div>
           )}
         </div>
       )}

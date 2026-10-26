@@ -119,8 +119,10 @@ const weekTestFiles: Record<number | string, string[]> = {
   frontend_v2: [
     "./pages/PortalPage.test.tsx",
     "./pages/AgentCenterPage.test.tsx",
+    "./pages/AgentRunDetailPage.test.tsx",
     "./pages/AlgoOverviewPage.test.tsx",
     "./pages/InfraOverviewPage.test.tsx",
+    "./pages/SystemSettingsPage.test.tsx",
     "./components/AgentModelingWizard.test.tsx",
     "./components/ChatToolsPanel.test.tsx",
   ],

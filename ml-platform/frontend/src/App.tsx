@@ -45,6 +45,7 @@ const AnnouncementsAdminPage = lazy(() => import("./pages/AnnouncementsAdminPage
 const AuditLogPage = lazy(() => import("./pages/AuditLogPage"));
 const SystemSettingsPage = lazy(() => import("./pages/SystemSettingsPage"));
 const AgentCenterPage = lazy(() => import("./pages/AgentCenterPage"));
+const AgentRunDetailPage = lazy(() => import("./pages/AgentRunDetailPage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
 
 const LIGHT_TOKENS = {
@@ -116,6 +117,7 @@ function AppContent() {
             <Route path="/knowledge-center" element={<ProtectedRoute><KnowledgeCenterPage /></ProtectedRoute>} />
             <Route path="/prompt-templates" element={<ProtectedRoute><PromptTemplatesPage /></ProtectedRoute>} />
             <Route path="/agent" element={<ProtectedRoute><PageErrorBoundary pageName="智能体中心"><AgentCenterPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/agent/task/:runId" element={<ProtectedRoute><PageErrorBoundary pageName="智能体任务详情"><AgentRunDetailPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/knowledge" element={<ProtectedRoute><KnowledgeBasePage /></ProtectedRoute>} />
             <Route path="/knowledge/:kbId" element={<ProtectedRoute><KnowledgeDetailPage /></ProtectedRoute>} />
             <Route path="/knowledge-graph" element={<ProtectedRoute><KnowledgeGraphPage /></ProtectedRoute>} />

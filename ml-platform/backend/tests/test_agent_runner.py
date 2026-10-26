@@ -229,6 +229,32 @@ class TestAgentRunner(RunnerHarness, unittest.TestCase):
         self.assertEqual(result.status, "waiting_escalate")
         self.assertEqual(result.error_code, "AGENT_TOKEN_BUDGET_EXCEEDED")
 
+    def test_s1_llm_failure_gets_distinct_code_and_persisted_detail(self):
+        """486ea7f9 回归：LLM 层失败（超时）不得误报为契约失败，且原因必须落档案。"""
+        detail = "llm_call_failed: ReadTimeout: timed out"
+        runner, db, _ = self.build(
+            {"run_s1": lambda db, **kw: (None, detail, {})}
+        )
+        result = runner.run_to_completion()
+        self.assertEqual(result.status, "waiting_escalate")
+        self.assertEqual(result.error_code, "AGENT_S1_LLM_FAILED")
+        escalation = result.memory_json["escalation"]
+        self.assertEqual(escalation["code"], "AGENT_S1_LLM_FAILED")
+        self.assertEqual(escalation["detail"], detail)
+        self.assertEqual(escalation["round"], 1)
+
+    def test_s1_contract_violation_keeps_code_and_carries_detail(self):
+        runner, db, _ = self.build(
+            {"run_s1": lambda db, **kw: (None, "contract_violation: missing domain", {})}
+        )
+        result = runner.run_to_completion()
+        self.assertEqual(result.status, "waiting_escalate")
+        self.assertEqual(result.error_code, "AGENT_S1_CONTRACT_FAILED")
+        self.assertEqual(
+            result.memory_json["escalation"]["detail"],
+            "contract_violation: missing domain",
+        )
+
     def test_gate_failure_never_consults_review_and_bounded_rounds(self):
         s4_calls = []
 

@@ -19,7 +19,7 @@ import "../styles/v2-shell.css";
 
 type ViewId = "portal" | "algo" | "agent" | "infra" | "admin";
 
-interface SideEntry { key: string; icon: React.ReactNode; label: string; query?: string; badge?: { count?: number; label?: string } }
+interface SideEntry { key: string; icon: React.ReactNode; label: string; query?: string }
 interface SideGroup { label: string; items: SideEntry[] }
 
 /** Route prefix -> owning view. Longest prefix wins when resolving. */
@@ -61,36 +61,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const storedRole = localStorage.getItem("role");
   const [userRole, setUserRole] = useState(storedRole || "user");
 
-  // P4 侧栏计数徽标：一次轻量聚合（失败静默——徽标是增益不是依赖）。
-  const [sideCounts, setSideCounts] = useState<Record<string, number>>({});
-  useEffect(() => {
-    if (!localStorage.getItem("token")) return;
-    let active = true;
-    const fetchCount = (key: string, url: string, extract: (data: unknown) => number) => {
-      apiClient.get(url).then((response) => {
-        const count = extract(response.data);
-        if (active && Number.isFinite(count)) {
-          setSideCounts((cur) => (cur[key] === count ? cur : { ...cur, [key]: count }));
-        }
-      }).catch(() => undefined);
-    };
-    fetchCount("/data", "/datasets", (data) => {
-      const items = (data as { items?: unknown[] })?.items;
-      return Array.isArray(items) ? items.length : 0;
-    });
-    fetchCount("/agent", "/agent/runs?limit=1", (data) => {
-      const items = data as unknown[];
-      return Array.isArray(items) ? items.length : 0;
-    });
-    fetchCount("/automl", "/training/jobs?limit=100", (data) => {
-      const items = (data as { items?: unknown[] })?.items;
-      return Array.isArray(items) ? items.filter(
-        (job) => ["running", "pending", "queued"].includes(String((job as { status?: string })?.status ?? ""))
-      ).length : 0;
-    });
-    return () => { active = false; };
-  }, []);
-
   const activeView = resolveView(location.pathname);
   const isAdmin = userRole === "admin";
 
@@ -116,7 +86,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         { key: "/data-annotation", icon: <TagsOutlined />, label: t.nav.data_annotation, query: "view=tasks" },
       ] },
       { label: zh ? "建模与服务" : "Modeling & Serving", items: [
-        { key: "/automl", icon: <ThunderboltOutlined />, label: t.nav.automl, badge: { count: sideCounts["/automl"] } },
+        { key: "/automl", icon: <ThunderboltOutlined />, label: t.nav.automl },
         { key: "/training", icon: <ExperimentOutlined />, label: t.nav.training },
         { key: "/models", icon: <AppstoreOutlined />, label: t.nav.models },
         { key: "/orchestration", icon: <RobotOutlined />, label: t.nav.orchestration },
@@ -126,7 +96,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     agent: [
       { label: zh ? "建模智能体" : "Modeling agent", items: [
         { key: "/agent", icon: <RocketOutlined />, label: zh ? "新建任务" : "New task" },
-        { key: "/agent", query: "tab=tasks", icon: <PlayCircleOutlined />, label: zh ? "任务列表" : "Jobs", badge: { count: sideCounts["/agent"] } },
+        { key: "/agent", query: "tab=tasks", icon: <PlayCircleOutlined />, label: zh ? "任务列表" : "Jobs" },
         { key: "/agent", query: "tab=recipes", icon: <DeploymentUnitOutlined />, label: zh ? "配方库" : "Recipes" },
         { key: "/agent", query: "tab=knowledge", icon: <BookOutlined />, label: zh ? "知识中心" : "Knowledge" },
       ] },
@@ -153,7 +123,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     ],
     admin: [
       { label: zh ? "管理" : "Management", items: [
-        { key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users, badge: { count: sideCounts["/admin/users"] } },
+        { key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users },
         { key: "/admin/announcements", icon: <NotificationOutlined />, label: zh ? "公告管理" : "Notices" },
         { key: "/admin/audit", icon: <FileTextOutlined />, label: zh ? "审计日志" : "Audit log" },
       ] },
@@ -290,12 +260,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     onClick={() => handleMenuNavigate(item)}
                   >
                     {item.icon}<span>{item.label}</span>
-                    {item.badge && (item.badge.count !== undefined && item.badge.count > 0) ? (
-                      <span className="v2-side-count" data-testid={`side-count-${item.key}`}>{item.badge.count}</span>
-                    ) : null}
-                    {item.badge && item.badge.label ? (
-                      <span className="v2-side-badge">{item.badge.label}</span>
-                    ) : null}
                   </button>
                 ))}
               </div>

@@ -93,9 +93,16 @@ class AgentRunner:
             }
         )
 
-    def _escalate(self, error_code: str) -> AgentRun:
+    def _escalate(self, error_code: str, detail: str | None = None) -> AgentRun:
         self.run.status = "waiting_escalate"
         self.run.error_code = error_code
+        # 升级原因持久化进档案——只存 error_code 会丢掉"网络超时还是契约违反"
+        # 这类关键诊断信息（486ea7f9 事故根因），前端档案面板据此展示。
+        self.memory["escalation"] = {
+            "code": error_code,
+            "detail": (detail or "")[:2000] or None,
+            "round": self.run.round_count,
+        }
         self.run.memory_json = self.memory
         self.run.result_json = {"token_used": self._usage_total}
         self.db.commit()
@@ -280,7 +287,14 @@ class AgentRunner:
             if not self._absorb_usage(usage):
                 return self._escalate("AGENT_TOKEN_BUDGET_EXCEEDED")
             if error:
-                return self._escalate("AGENT_S1_CONTRACT_FAILED")
+                # LLM 层失败（网络超时/空回复）与契约违反分开归因：S1 需要生成
+                # 数千 token 的结构化 JSON，60s 档案超时对它是常态瓶颈，混在
+                # CONTRACT_FAILED 里会误导排障方向。
+                is_llm_failure = error.startswith("llm_call_failed") or error.startswith("llm_empty")
+                return self._escalate(
+                    "AGENT_S1_LLM_FAILED" if is_llm_failure else "AGENT_S1_CONTRACT_FAILED",
+                    detail=error,
+                )
             # 注入的 L2 引用落档案（前端"注入的经验"面板数据源）。
             if l2_refs:
                 memory = self.run.memory_json or {}

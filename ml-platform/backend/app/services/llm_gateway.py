@@ -108,12 +108,18 @@ def chat_completion(
     purpose: str = "chat",
     actor=None,
     request=None,
+    timeout_floor: float | None = None,
 ) -> tuple[str | None, dict]:
     """Synchronous completion through the resolved config, with egress audit.
 
     Audit records destination metadata only — profile, purpose, model and
     payload size — never message content (spec v0.9 §17.1). Network failures
     propagate to the caller's existing error handling.
+
+    ``timeout_floor`` raises the effective HTTP timeout for callers whose
+    completions legitimately run long (the agent's S1/S2/S4 stages emit
+    multi-thousand-token JSON and routinely exceed the 60s profile default
+    tuned for chat).
     """
     from app.services.platform_audit import PlatformAuditIntent, record_platform_event
 
@@ -121,6 +127,11 @@ def chat_completion(
         temperature
         if temperature is not None
         else (config.temperature if config.temperature is not None else 0.7)
+    )
+    effective_timeout = (
+        max(config.timeout_seconds, timeout_floor)
+        if timeout_floor is not None
+        else config.timeout_seconds
     )
     payload_chars = sum(len(message.get("content") or "") for message in messages)
     started = time.perf_counter()
@@ -133,7 +144,7 @@ def chat_completion(
             "temperature": resolved_temperature,
             "max_tokens": max_tokens,
         },
-        timeout=config.timeout_seconds,
+        timeout=effective_timeout,
     )
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
     data = response.json() if response.status_code == 200 else {}
