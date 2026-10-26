@@ -86,6 +86,7 @@ from app.api import images as images_api
 from app.api import cluster_governance as cluster_governance_api
 from app.api import demo_loop as demo_loop_api
 from app.api import llm_profiles as llm_profiles_api
+from app.api import announcements as announcements_api
 from app.api import prompt_templates as prompt_templates_api
 from app.api import chat_tools_api
 from app.api import knowledge_center_api
@@ -358,6 +359,7 @@ app.include_router(images_api.router)
 app.include_router(cluster_governance_api.router)
 app.include_router(demo_loop_api.router)
 app.include_router(llm_profiles_api.router)
+app.include_router(announcements_api.router)
 app.include_router(prompt_templates_api.router)
 app.include_router(chat_tools_api.router)
 app.include_router(knowledge_center_api.router)

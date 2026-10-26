@@ -35,7 +35,7 @@ const ZH = {
     notebooks: "Notebook 会话",
     images: "镜像目录",
     cluster_governance: "集群治理",
-    llm_gateway: "大模型网关",
+    llm_gateway: "大模型管理",
     knowledge_center: "知识中心",
     prompt_templates: "提示词模板",
     portalGroup: "门户",
@@ -54,10 +54,10 @@ const ZH = {
     namePlaceholder: "模板名称", contentPlaceholder: "提示词内容",
   },
   llm: {
-    title: "大模型网关",
+    title: "大模型管理",
     refresh: "刷新",
-    create: "新建档案",
-    createTitle: "新建模型档案",
+    create: "添加供应商",
+    createTitle: "添加供应商",
     editTitle: "编辑模型档案",
     createOk: "档案已创建",
     createFailed: "创建失败",
@@ -782,11 +782,11 @@ const ZH = {
 
 const EN: Record<string, any> = {
   app: { title: "Linkraft", login: "Login", register: "Register", logout: "Logout", success: "Success", error: "Error", confirm: "Confirm" },
-  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", demo_loop: "Closed-Loop Automation", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources", kubernetes: "Kubernetes Clusters", job_runs: "Job Runs", notebooks: "Notebook Sessions", images: "Image Catalog", cluster_governance: "Cluster Governance", llm_gateway: "LLM Gateway", knowledge_center: "Knowledge Center",
+  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", demo_loop: "Closed-Loop Automation", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources", kubernetes: "Kubernetes Clusters", job_runs: "Job Runs", notebooks: "Notebook Sessions", images: "Image Catalog", cluster_governance: "Cluster Governance", llm_gateway: "LLM Management", knowledge_center: "Knowledge Center",
 portalGroup: "Portal", algoGroup: "Algorithm Platform", agentGroup: "Agent Hub",
 infraGroup: "Infrastructure", adminGroup: "Administration", prompt_templates: "Prompt Templates" },
   llm: {
-    title: "LLM Gateway", refresh: "Refresh", create: "New Profile", createTitle: "New Model Profile", editTitle: "Edit Model Profile",
+    title: "LLM Management", refresh: "Refresh", create: "Add Provider", createTitle: "Add Provider", editTitle: "Edit Model Profile",
     createOk: "Profile created", createFailed: "Create failed", updateOk: "Profile updated", updateFailed: "Update failed",
     deleteOk: "Profile deleted", deleteFailed: "Delete failed", deleteConfirm: "Delete this profile?",
     probe: "Test", probeOk: "Connected", probeFailed: "Probe failed", loadFailed: "Load failed", defaultTag: "Default",

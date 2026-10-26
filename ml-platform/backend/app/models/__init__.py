@@ -37,6 +37,7 @@ from app.models.model_registry import (
 )
 from app.models.model_export import ModelExport
 from app.models.llm_profile import LLMProfile
+from app.models.announcement import Announcement
 from app.models.agent_run import AgentRun
 from app.models.recipe import PipelineRecipe, PipelineRecipeVersion
 from app.models.experience_entry import ExperienceEntry

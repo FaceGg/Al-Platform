@@ -21,6 +21,17 @@ describe("PortalPage (v2 portal home)", () => {
       }
       if (url === "/projects") return Promise.resolve({ data: { items: [{ id: 1 }, { id: 2 }] } });
       if (url === "/health") return Promise.resolve({ data: { status: "ok" } });
+      if (url === "/announcements") {
+        return Promise.resolve({ data: [
+          { id: "a1", title: "智能体中心上线", content: "建模智能体向导开放，欢迎试用", pinned: true, created_at: "2026-10-23T00:00:00Z" },
+          { id: "a2", title: "五视图改版上线", content: "", pinned: false, created_at: "2026-10-22T00:00:00Z" },
+        ] });
+      }
+      if (url === "/llm-profiles") {
+        return Promise.resolve({ data: [
+          { id: "p1", name: "deepseek", model_id: "deepseek-chat", is_default: true },
+        ] });
+      }
       return Promise.resolve({ data: {} });
     });
   });
@@ -53,10 +64,30 @@ describe("PortalPage (v2 portal home)", () => {
     await waitFor(() => expect(screen.getByText(/暂无自动建模任务/)).toBeInTheDocument());
   });
 
-  it("shows the old-menu to new-center migration table", () => {
+  it("lists real announcements and the LLM gateway state instead of static copy", async () => {
     render(<MemoryRouter><PortalPage /></MemoryRouter>);
 
-    expect(screen.getByText(/迁移映射/)).toBeInTheDocument();
+    expect(await screen.findByText("智能体中心上线", { selector: "b" })).toBeInTheDocument();
+    expect(apiGet).toHaveBeenCalledWith("/announcements");
+    expect(apiGet).toHaveBeenCalledWith("/llm-profiles");
+    expect(await screen.findByText(/deepseek-chat/)).toBeInTheDocument();
+    // The redesign-explanatory migration mapping is gone.
+    expect(screen.queryByText(/迁移映射/)).not.toBeInTheDocument();
+    // No hardcoded "already connected" claim when the panel now derives state.
+    expect(screen.queryByText(/已连通/)).not.toBeInTheDocument();
+  });
+
+  it("shows the notices empty state when the API returns none", async () => {
+    apiGet.mockImplementation((url: string) =>
+      url === "/training/automl/jobs"
+        ? Promise.resolve({ data: { items: [] } })
+        : url === "/announcements"
+          ? Promise.resolve({ data: [] })
+          : Promise.resolve({ data: {} }));
+
+    render(<MemoryRouter><PortalPage /></MemoryRouter>);
+
+    expect(await screen.findByText(/暂无公告/)).toBeInTheDocument();
   });
 
   it("navigates to the agent center when its card is activated", async () => {

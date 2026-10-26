@@ -22,10 +22,10 @@ vi.mock("../i18n", () => ({
   useI18n: () => ({
     t: {
       llm: {
-        title: "大模型网关",
+        title: "大模型管理",
         refresh: "刷新",
-        create: "新建档案",
-        createTitle: "新建模型档案",
+        create: "添加供应商",
+        createTitle: "添加供应商",
         editTitle: "编辑模型档案",
         createOk: "档案已创建",
         createFailed: "创建失败",
@@ -105,8 +105,8 @@ describe("LLMGatewayPage", () => {
       </AntApp>
     );
     await screen.findByText("glm-default");
-    fireEvent.click(screen.getByText("新建档案"));
-    await waitFor(() => expect(screen.getByText("新建模型档案")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("添加供应商"));
+    await waitFor(() => expect(screen.getByLabelText("名称")).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "glm-backup" } });
     fireEvent.change(screen.getByLabelText("URL"), {
       target: { value: "https://api.backup.com/v1/chat/completions" },

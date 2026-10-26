@@ -16,6 +16,14 @@ interface RecentJob {
   project_name?: string;
 }
 
+interface Announcement {
+  id: string;
+  title: string;
+  content: string;
+  pinned: boolean;
+  created_at?: string;
+}
+
 function greeting(zh: boolean): string {
   const hour = new Date().getHours();
   const word = hour < 6 ? (zh ? "凌晨好" : "Good early morning")
@@ -55,6 +63,8 @@ export default function PortalPage() {
   const [recentJobs, setRecentJobs] = useState<RecentJob[]>([]);
   const [projectCount, setProjectCount] = useState<number | null>(null);
   const [health, setHealth] = useState<string>("…");
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [gateway, setGateway] = useState<{ label: string; ok: boolean }>({ label: zh ? "检测中…" : "checking…", ok: false });
 
   useEffect(() => {
     apiClient.get("/training/automl/jobs").then((res) => {
@@ -66,6 +76,16 @@ export default function PortalPage() {
       setProjectCount(Array.isArray(items) ? items.length : null);
     }).catch(() => setProjectCount(null));
     apiClient.get("/health").then(() => setHealth(zh ? "正常" : "OK")).catch(() => setHealth(zh ? "不可用" : "down"));
+    apiClient.get("/announcements").then((res) => {
+      setAnnouncements(Array.isArray(res.data) ? res.data.slice(0, 5) : []);
+    }).catch(() => setAnnouncements([]));
+    apiClient.get("/llm-profiles").then((res) => {
+      const profiles = Array.isArray(res.data) ? res.data : [];
+      const fallback = profiles.find((p: { is_default?: boolean }) => p.is_default) ?? profiles[0];
+      setGateway(fallback
+        ? { label: `${fallback.model_id ?? fallback.name ?? (zh ? "已配置" : "configured")} · ${zh ? "已配置" : "configured"}`, ok: true }
+        : { label: zh ? "未配置" : "not configured", ok: false });
+    }).catch(() => setGateway({ label: zh ? "未配置" : "not configured", ok: false }));
   }, [zh]);
 
   const go = (path: string) => navigate(path);
@@ -87,7 +107,7 @@ export default function PortalPage() {
       path: "/automl",
     },
     {
-      icon: "🤖", cls: "v2-c-purple", title: zh ? "智能体中心" : "Agent Center", badge: "NEW",
+      icon: "🤖", cls: "v2-c-purple", title: zh ? "智能体中心" : "Agent Center",
       desc: zh ? "大模型驱动的自动建模 Agent 与知识体系：四步向导引导、配方固化复用、经验越用越强。" : "LLM-driven modeling agent with recipes, experience and knowledge.",
       chips: zh ? ["建模智能体向导", "任务列表", "配方库", "知识中心", "AI 对话", "知识图谱"] : ["Wizard", "Jobs", "Recipes", "Knowledge", "Chat", "Graph"],
       hot: [0, 1, 2, 3],
@@ -102,8 +122,8 @@ export default function PortalPage() {
     },
     {
       icon: "SYS", cls: "v2-c-gold", title: zh ? "系统管理" : "Administration",
-      desc: zh ? "平台级管理：用户、权限、大模型网关与审计。" : "Platform administration: users, roles, LLM gateway and audit.",
-      chips: zh ? ["大模型网关", "用户管理"] : ["LLM gateway", "Users"],
+      desc: zh ? "平台级管理：用户、权限、大模型管理与审计。" : "Platform administration: users, roles, LLM management and audit.",
+      chips: zh ? ["大模型管理", "用户管理"] : ["LLM management", "Users"],
       path: "/llm-gateway",
     },
   ];
@@ -115,9 +135,6 @@ export default function PortalPage() {
           <h1>{greeting(zh)}，{username} —— {zh ? "一个平台，三大中心：" : "One platform, three centers: "}
             <em>{zh ? "算法 · 智能体 · 基础设施" : "Algorithms · Agents · Infra"}</em>
           </h1>
-          <p>{zh
-            ? "原左侧 25+ 项长菜单按职责拆分为五个工作区，各中心自带精简子菜单；新增「智能体中心」承载大模型驱动的自动建模 Agent。点击卡片进入对应中心。"
-            : "The 25+ item menu is now five focused workspaces; the new Agent Center hosts the LLM-driven modeling agent."}</p>
         </div>
         <div className="meta">
           {new Date().toLocaleDateString(zh ? "zh-CN" : "en-US", { year: "numeric", month: "2-digit", day: "2-digit", weekday: "long" })}
@@ -144,7 +161,7 @@ export default function PortalPage() {
             <div className="go">{zh ? "进入 →" : "Open →"}</div>
             {c.stat ? <div className="stat">{c.stat}</div> : null}
             <div className={`icon ${c.cls}`}>{c.icon}</div>
-            <h3>{c.title}{(c as { badge?: string }).badge ? <span className="v2-badge v2-bp">{zh ? "新" : "NEW"}</span> : null}</h3>
+            <h3>{c.title}</h3>
             <p>{c.desc}</p>
             <div className="v2-chips">
               {c.chips.map((chip, i) => (
@@ -182,9 +199,17 @@ export default function PortalPage() {
           <div className="v2-panel" style={{ margin: 0 }}>
             <h4><span className="bar" />{zh ? "平台公告" : "Notices"}</h4>
             <div style={{ fontSize: 12.5, lineHeight: 2 }}>
-              <div>📌 <b style={{ color: "var(--v2-txt)" }}>{zh ? "智能体中心上线" : "Agent Center is live"}</b> —— {zh ? "建模智能体向导开放，欢迎试用" : "modeling agent wizard available"} <span style={{ color: "var(--v2-dim)", fontSize: 11 }}>2026-10</span></div>
-              <div>{zh ? "大模型网关已切换 DeepSeek（deepseek-chat），连通验证通过" : "LLM gateway switched to DeepSeek, connectivity verified"} <span style={{ color: "var(--v2-dim)", fontSize: 11 }}>2026-10</span></div>
-              <div>☸ {zh ? "五视图改版：门户 / 算法平台 / 智能体中心 / 基础设施 / 系统管理" : "Five-view redesign live"} <span style={{ color: "var(--v2-dim)", fontSize: 11 }}>2026-10</span></div>
+              {announcements.length === 0 ? (
+                <div style={{ color: "var(--v2-dim)" }}>{zh ? "暂无公告" : "No notices"}</div>
+              ) : announcements.map((item) => (
+                <div key={item.id}>
+                  {item.pinned ? "📌 " : ""}<b style={{ color: "var(--v2-txt)" }}>{item.title}</b>
+                  {item.content ? <span style={{ color: "var(--v2-dim)" }}> —— {item.content}</span> : null}
+                  <span style={{ color: "var(--v2-dim)", fontSize: 11, marginLeft: 6 }}>
+                    {item.created_at ? new Date(item.created_at).toLocaleDateString(zh ? "zh-CN" : "en-US") : ""}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
           <div className="v2-panel" style={{ margin: 0 }}>
@@ -194,23 +219,14 @@ export default function PortalPage() {
               <span style={{ color: health === (zh ? "正常" : "OK") ? "var(--v2-green)" : "var(--v2-red)" }}>{health}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, color: "var(--v2-sub)", borderBottom: "1px dashed rgba(36,52,79,.6)" }}>
-              <span>· {zh ? "大模型网关" : "LLM gateway"}</span><span style={{ color: "var(--v2-green)" }}>DeepSeek · {zh ? "已连通" : "connected"}</span>
+              <span>· {zh ? "大模型管理" : "LLM management"}</span>
+              <span style={{ color: gateway.ok ? "var(--v2-green)" : "var(--v2-red)" }}>{gateway.label}</span>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="v2-migrate">
-        <h4>{zh ? "旧菜单 → 新中心 迁移映射（前端路由重组，功能不动）" : "Old menu → new centers mapping (routes only)"}</h4>
-        <table className="v2-mtable"><tbody>
-          <tr><td style={{ width: 130 }}><b>{zh ? "首页门户" : "Portal"}</b></td><td>{zh ? "工作台仪表板 · 项目管理（原首页收拢为门户，仪表板移入侧栏）" : "Dashboard · projects"}</td></tr>
-          <tr><td><b>{zh ? "算法平台" : "Algorithms"}</b></td><td>{zh ? "数据管理 · 数据标注 · 自动建模 · 模型训练 · 模型库 · 算法目录 · 应用编排 · 闭环自动化 · API 市场" : "Data · labeling · AutoML · training · models · orchestration · closed loop · API market"}</td></tr>
-          <tr><td><b>{zh ? "智能体中心" : "Agent Center"}</b></td><td>{zh ? "智能体中心（向导 / 任务 / 配方，新增）· AI 对话 · 知识中心 · 知识库 · 知识图谱（自原菜单迁入）" : "Agent center (new) · chat · knowledge"}</td></tr>
-          <tr><td><b>{zh ? "基础设施" : "Infrastructure"}</b></td><td>{zh ? "K8s 集群 · 作业运行 · Notebook 会话 · 镜像目录 · 集群治理 · 资源监控 · 计算资源" : "K8s · jobs · notebooks · images · governance · monitor · compute"}</td></tr>
-          <tr><td><b>{zh ? "系统管理" : "Administration"}</b></td><td>{zh ? "大模型网关 · 用户管理" : "LLM gateway · users"}</td></tr>
-        </tbody></table>
-      </div>
-      <div className="v2-footer-note">灵工 Linkraft · {zh ? "平台改版 v2" : "Platform v2"} · 2026-10</div>
+      <div className="v2-footer-note">灵工 Linkraft</div>
     </AppLayout>
   );
 }

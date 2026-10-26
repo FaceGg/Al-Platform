@@ -41,7 +41,7 @@ const ClusterGovernancePage = lazy(() => import("./pages/ClusterGovernancePage")
 const LLMGatewayPage = lazy(() => import("./pages/LLMGatewayPage"));
 const KnowledgeCenterPage = lazy(() => import("./pages/KnowledgeCenterPage"));
 const PromptTemplatesPage = lazy(() => import("./pages/PromptTemplatesPage"));
-const ProjectAdminPage = lazy(() => import("./pages/ProjectAdminPage"));
+const AnnouncementsAdminPage = lazy(() => import("./pages/AnnouncementsAdminPage"));
 const AuditLogPage = lazy(() => import("./pages/AuditLogPage"));
 const SystemSettingsPage = lazy(() => import("./pages/SystemSettingsPage"));
 const AgentCenterPage = lazy(() => import("./pages/AgentCenterPage"));
@@ -109,7 +109,7 @@ function AppContent() {
             <Route path="/models" element={<ProtectedRoute><ModelLibraryPage /></ProtectedRoute>} />
             <Route path="/data" element={<ProtectedRoute><DataManagePage /></ProtectedRoute>} />
             <Route path="/admin/users" element={<ProtectedRoute><UserManagementPage /></ProtectedRoute>} />
-            <Route path="/admin/projects" element={<ProtectedRoute><ProjectAdminPage /></ProtectedRoute>} />
+            <Route path="/admin/announcements" element={<ProtectedRoute><AnnouncementsAdminPage /></ProtectedRoute>} />
             <Route path="/admin/audit" element={<ProtectedRoute><AuditLogPage /></ProtectedRoute>} />
             <Route path="/admin/settings" element={<ProtectedRoute><SystemSettingsPage /></ProtectedRoute>} />
             <Route path="/llm-gateway" element={<ProtectedRoute><LLMGatewayPage /></ProtectedRoute>} />

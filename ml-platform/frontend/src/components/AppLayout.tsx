@@ -8,6 +8,7 @@ import {
   MessageOutlined, MonitorOutlined, ClusterOutlined, DeploymentUnitOutlined,
   PlayCircleOutlined, BookOutlined, ControlOutlined, TagsOutlined, ApartmentOutlined,
   HomeOutlined, RocketOutlined, CopyOutlined, FileTextOutlined, SettingOutlined,
+  NotificationOutlined,
 } from "@ant-design/icons";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
 import { useI18n } from "../i18n";
@@ -27,7 +28,7 @@ const VIEW_ROUTES: Record<ViewId, string[]> = {
   algo: ["/algo", "/projects", "/workspace", "/template", "/models", "/data", "/data-annotation", "/automl", "/training", "/orchestration", "/demo-loop", "/annotations", "/algorithms", "/api-marketplace"],
   agent: ["/agent", "/knowledge-center", "/prompt-templates", "/knowledge", "/knowledge-graph", "/chat"],
   infra: ["/infra", "/kubernetes", "/notebooks", "/images", "/cluster-governance", "/monitor", "/compute"],
-  admin: ["/llm-gateway", "/admin/users", "/admin/projects", "/admin/audit", "/admin/settings"],
+  admin: ["/llm-gateway", "/admin/users", "/admin/announcements", "/admin/audit", "/admin/settings"],
 };
 
 /** Landing route for each top-level view tab. */
@@ -153,12 +154,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     admin: [
       { label: zh ? "管理" : "Management", items: [
         { key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users, badge: { count: sideCounts["/admin/users"] } },
-        { key: "/admin/projects", icon: <ProjectOutlined />, label: zh ? "项目管理" : "Projects", badge: { count: sideCounts["/admin/projects"] } },
+        { key: "/admin/announcements", icon: <NotificationOutlined />, label: zh ? "公告管理" : "Notices" },
         { key: "/admin/audit", icon: <FileTextOutlined />, label: zh ? "审计日志" : "Audit log" },
       ] },
       { label: zh ? "平台" : "Platform", items: [
         { key: "/admin/settings", icon: <SettingOutlined />, label: zh ? "系统设置" : "Settings" },
-        { key: "/llm-gateway", icon: <ApiOutlined />, label: t.nav.llm_gateway, badge: { label: "NEW" } },
+        { key: "/llm-gateway", icon: <ApiOutlined />, label: t.nav.llm_gateway },
       ] },
     ],
   };
