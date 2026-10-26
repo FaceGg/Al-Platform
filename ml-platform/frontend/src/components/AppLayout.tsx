@@ -31,13 +31,13 @@ const VIEW_ROUTES: Record<ViewId, string[]> = {
   admin: ["/llm-gateway", "/admin/users", "/admin/announcements", "/admin/audit", "/admin/settings"],
 };
 
-/** Landing route for each top-level view tab. */
+/** Landing route for each top-level view tab (admin: first sidebar entry). */
 const VIEW_HOME: Record<ViewId, string> = {
   portal: "/",
   algo: "/algo",
   agent: "/agent",
   infra: "/infra",
-  admin: "/llm-gateway",
+  admin: "/admin/users",
 };
 
 function resolveView(pathname: string): ViewId {

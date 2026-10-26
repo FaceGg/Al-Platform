@@ -1,5 +1,6 @@
 """Strict contracts shared by platform security audit producers and readers."""
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -29,6 +30,7 @@ class PlatformAuditEventResponse(BaseModel):
     source_ip: str | None
     changes: dict[str, object]
     error_code: str | None
+    created_at: datetime
 
 
 class PlatformAuditEventList(BaseModel):

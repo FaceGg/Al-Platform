@@ -13,11 +13,10 @@ export default function AuditLogPage() {
 
   const load = () => {
     setLoading(true);
-    apiClient.get("/platform-audit").then((res) => {
+    apiClient.get("/admin/security-audit", { params: { limit: 200 } }).then((res) => {
       const items = Array.isArray(res.data) ? res.data : res.data?.items || [];
       setEvents(items);
     }).catch(() => {
-      // 审计端点可能不存在，降级为空
       setEvents([]);
     }).finally(() => setLoading(false));
   };
