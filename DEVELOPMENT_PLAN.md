@@ -116,3 +116,26 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 2. **前端改版深化**：内容页按设计稿逐视图重绘（算法平台→基础设施→系统管理）→ 对话确认卡 → 智能体中心向导页深化与配方列表 API。
 3. **推送与 CI**：全量 CI（六 job）+ 浏览器验收。
 4. **收尾**：Mimosa 完整审计重跑 + 111 项发现治理排期（与 2 并行小步走）。
+
+### 代码层性能/健壮性优化路线（2026-10-27 审计；P0 已完成，P1/P2 待排期）
+
+> 审计结论（静态代码审查，未做 profiling/压测量化）：P0 四项已落地于 `359bd04b`（AgentRun 心跳恢复、项目列表 N+1、预览快路径、LLM 连接复用，迁移 `20261026_84`）；以下为剩余待办，按收益/风险排序，动工前需逐项复核文件位置是否漂移。
+
+**P1（明显收益，待排期）**
+
+1. **readiness 探针全串行（约 3s）**：`readiness_service.py::check_all()` DB→Redis→Celery inspect（ping+registered 两次广播）→MinIO→MLflow→TensorBoard→推理运行时顺序执行；`_database()` 每次探活还重跑 `require_current_schema`（扫 alembic versions 目录）。改法：独立探测并行化（线程池 + 各自超时），alembic head 校验进程内首次缓存。
+2. **Redis 事件桥无自愈**：`events/subscriber.py::run()` 循环无 try/except，Redis 中断抛 ConnectionError 后任务静默死亡（`main.py` 只 create_task 不 await 不察觉）。改法：循环包 retry/backoff + 重订阅，任务加 done-callback 日志。
+3. **Dashboard /stats 全表加载**：`dashboard.py::get_dashboard_stats` 全量载入所有 dataset artifacts 与可访问项目后在 Python 过滤 `metadata_.source`、逐条求和 row_count。改法：统计下推 SQL（JSON 抽取或冗余列）+ 短 TTL 缓存；10k 样本规模下尚可，属模式性风险。
+4. **前端轮询密度高且未复用 WS 桥**：`DataAnnotationPage` 1s×3 处、`AutoMLPage` 1.5s、`TrainingJobsPage` 1.5s、`MonitorPage` 3s；`/ws` 与 Redis→WS 桥已存在。改法：运行类状态改 WS 推送或 ETag/304，空闲退避（任务终态停轮已做，保持）。
+5. **401 一律硬跳转登录页**：`frontend/src/api/client.ts` 任意 401 即 `window.location.href='/login'`，丢失页面状态。改法：至少改 router 跳转保留原路由；是否引入 refresh token 流程属产品决策，需用户确认后再做。
+6. **默认管理员口令 admin/admin123**（`main.py::ensure_default_admin`）：生产部署应改环境注入或首启强制改密；属安全口径问题，策略需用户确认。
+
+**P2（结构性/依赖，中期）**
+
+1. **巨型文件拆分**：`spot_weld_quality.py` 3255 行、`automl_execution.py` 1866 行、前端 `DataAnnotationPage.tsx` 3082 行（另 2279 行测试）——随去行业化 Task 1 与前端改版推进，拆分本身即降维护成本。
+2. **裸 `except Exception:` 约 30 处无日志**（`app/api`、`app/services` 下）：引入 lint 规则（如 ruff `B902`/`TRY` 系）要求"吞异常必须留痕"，存量逐步补 `logger.debug/warning`。
+3. **依赖升级候选（逐项评估，不批量做）**：`passlib 1.7`（2020 年后未发版，生态性风险）→ 直迁 `bcrypt`（涉及哈希兼容，需迁移策略 + 双写过渡验证）；Celery 5.4→5.5（低风险，不改变契约）；React 18→19（计划性升级，非小步修复）。
+4. **DB 连接池默认偏小**：`config.py` 默认 pool_size=5/overflow=10，生产 compose 未覆盖；实测后经 compose 环境变量调参即可，无代码改动。
+5. **AgentRun 常态化周期清扫**：当前清扫仅在启动期执行（进程存活期间线程崩溃由 `waiting_escalate` 兜底）；随 S5 AutoML worker 绑定一起做周期化。
+
+**值得保留的既有机制（避免误改）**：Celery `acks_late/prefetch=1`、DurableOperation 租约恢复、通知 outbox、DAG 预览截断、前端路由级代码分割与终态停轮、迁移时间戳 server_default 教训（81/83 号迁移固化）。
