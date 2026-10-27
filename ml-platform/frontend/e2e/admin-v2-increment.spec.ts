@@ -143,6 +143,8 @@ test("agent task list navigates to the run detail page", async ({ page }) => {
   // 侧栏与行内均不再有计数徽标；详情按钮跳转专属详情页。
   await page.getByRole("button", { name: "详情 ›" }).click();
   await expect(page).toHaveURL(/\/agent\/task\/run-e2e-0001$/);
+  // 详情页侧栏高亮「任务列表」而非按 query 长度误落「知识中心」。
+  await expect(page.locator(".v2-side-item.on")).toContainText("任务列表");
   await expect(page.locator("#root")).toContainText("e2e-项目");
   await expect(page.locator("#root")).toContainText("升级原因");
   await expect(page.locator("#root")).toContainText("ReadTimeout: timed out");

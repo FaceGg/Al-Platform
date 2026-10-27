@@ -145,6 +145,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     const p = location.pathname;
     if (p === "/") return "/";
     if (p.startsWith("/workspace") || p.startsWith("/template")) return "/projects";
+    // 详情子路由显式归属其列表 tab：/agent/task/:id 属于「任务列表」而非
+    // 落入下面的前缀兜底（兜底对同路由多 query 项会退化成 query 最长者
+    // 胜，曾导致详情页光标停在「知识中心」）。
+    if (p.startsWith("/agent/task/")) return "/agent?tab=tasks";
     const entries = (sideGroups[activeView] || []).flatMap((group) => group.items);
     const here = p + location.search;
     // Prefer the entry whose full target (path + query) matches exactly, so
@@ -154,12 +158,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       .filter(({ full }) => here === full || here.startsWith(`${full}&`))
       .sort((left, right) => right.full.length - left.full.length)[0];
     if (exact) return exact.full;
-    // Path-only fallback: longest matching route wins, so /data-annotation
-    // beats /data even though the latter is a string prefix.
-    return entries
-      .filter((item) => item.key !== "/" && (p === item.key || p.startsWith(`${item.key}/`)))
-      .map((item) => (item.query ? `${item.key}?${item.query}` : item.key))
-      .sort((left, right) => right.length - left.length)[0] || VIEW_HOME[activeView];
+    // Path-only fallback: longest matching ROUTE wins (so /data-annotation
+    // beats /data). Entries sharing one route key are collapsed to their
+    // query-less base item first — subroutes never arbitrate by query length.
+    const fallbackByKey = new Map<string, string>();
+    for (const item of entries) {
+      if (item.key === "/" || !(p === item.key || p.startsWith(`${item.key}/`))) continue;
+      if (!fallbackByKey.has(item.key) || !item.query) {
+        fallbackByKey.set(item.key, item.query ? `${item.key}?${item.query}` : item.key);
+      }
+    }
+    return (
+      [...fallbackByKey.values()]
+        .sort((left, right) => right.length - left.length)[0] || VIEW_HOME[activeView]
+    );
   })();
 
   const handleMenuNavigate = (item: SideEntry) => {
