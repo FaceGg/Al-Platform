@@ -1,3 +1,4 @@
+import { LoadingOutlined } from "@ant-design/icons";
 import OptReportPanel from "./OptReportPanel";
 import ServitizeActions from "./ServitizeActions";
 import { parseBackendTime } from "../utils/time";
@@ -33,12 +34,22 @@ interface Props {
   archive: AgentRunDetail | null;
   archiveError: string;
   zh: boolean;
+  /** 非终态：头部转圈指示当前阶段（详情页自动轮询驱动）。 */
+  active?: boolean;
   onClose?: () => void;
   onRefresh: () => void;
 }
 
-export default function AgentRunArchivePanel({ runId, archive, archiveError, zh, onClose, onRefresh }: Props) {
+const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
+  s1: { zh: "数据分析（LLM 思考中）", en: "Analysis (LLM)" },
+  s2: { zh: "特征工程（生成/验证脚本）", en: "Feature script" },
+  s3: { zh: "候选训练（全量重放+训练）", en: "Training" },
+  s4: { zh: "硬门禁与评审", en: "Gates & review" },
+};
+
+export default function AgentRunArchivePanel({ runId, archive, archiveError, zh, active, onClose, onRefresh }: Props) {
   const escalation = archive?.memory_json?.escalation;
+  const activeStage = active && archive ? STAGE_LABELS[archive.current_stage] : null;
   return (
     <div style={{ marginTop: 12, border: "1px solid var(--v2-line)", borderRadius: 10, background: "var(--v2-bg)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
@@ -47,6 +58,11 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
         {archive ? (
           <>
             <span className={`v2-badge ${statusBadge(archive.status)}`}>{archive.status}</span>
+            {activeStage ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--v2-blue, #2f9bf5)" }}>
+                <LoadingOutlined spin />{zh ? activeStage.zh : activeStage.en}
+              </span>
+            ) : null}
             {archive.llm_model_id ? <span className="v2-badge v2-bp">{archive.llm_model_id}</span> : null}
             <span style={{ fontSize: 11, color: "var(--v2-dim)" }}>
               {archive.token_used.toLocaleString()}{archive.token_budget ? ` / ${archive.token_budget.toLocaleString()}` : ""} tokens · {zh ? "轮" : "rounds "}{archive.round_count}

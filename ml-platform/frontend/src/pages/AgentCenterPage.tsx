@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ReloadOutlined, RocketOutlined, DeleteOutlined } from "@ant-design/icons";
+import { Button, Popconfirm, Tooltip } from "antd";
+import { DeleteOutlined, EyeOutlined, ReloadOutlined, RocketOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import RecipeRow from "../components/RecipeRow";
 import KnowledgeCenterContent from "../components/KnowledgeCenterContent";
@@ -179,7 +180,11 @@ export default function AgentCenterPage() {
                       <td><span className={`v2-badge ${statusBadge(status)}`}>{status}</span></td>
                       <td>{progress != null ? `${progress}%` : "-"}</td>
                       <td>{relativeTime(job.updated_at ?? job.created_at, zh)}</td>
-                      <td><a onClick={() => navigate(`/automl/task/${job.id}`)}>{zh ? "全链路档案 ›" : "Details ›"}</a></td>
+                      <td>
+                        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/automl/task/${job.id}`)}>
+                          {zh ? "详情" : "Details"}
+                        </Button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -213,21 +218,25 @@ export default function AgentCenterPage() {
                     <td>{run.token_used.toLocaleString()}</td>
                     <td>{relativeTime(run.updated_at ?? run.created_at, zh)}</td>
                     <td style={{ whiteSpace: "nowrap" }}>
-                      <button type="button" className="v2-btn sm" onClick={() => navigate(`/agent/task/${run.id}`)}>
-                        {zh ? "详情 ›" : "Details ›"}
-                      </button>{" "}
-                      <DeleteOutlined
-                        title={["pending", "running"].includes(run.status) ? (zh ? "运行中的任务不可删除" : "Active run") : (zh ? "删除任务" : "Delete run")}
-                        style={{
-                          marginLeft: 6, cursor: ["pending", "running"].includes(run.status) ? "not-allowed" : "pointer",
-                          color: ["pending", "running"].includes(run.status) ? "var(--v2-dim)" : "var(--v2-red)",
-                        }}
-                        onClick={() => {
-                          if (["pending", "running"].includes(run.status)) return;
-                          if (!window.confirm(zh ? "确认删除该任务及其档案？此操作不可恢复。" : "Delete this run and its archive?")) return;
-                          deleteAgentRun(run.id).then(loadAgentData).catch(() => undefined);
-                        }}
-                      />
+                      <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/agent/task/${run.id}`)}>
+                        {zh ? "详情" : "Details"}
+                      </Button>
+                      {["pending", "running"].includes(run.status) ? (
+                        <Tooltip title={zh ? "运行中的任务不可删除" : "Active run cannot be deleted"}>
+                          <Button type="link" size="small" danger icon={<DeleteOutlined />} disabled>
+                            {zh ? "删除" : "Delete"}
+                          </Button>
+                        </Tooltip>
+                      ) : (
+                        <Popconfirm
+                          title={zh ? "确认删除该任务及其档案？此操作不可恢复。" : "Delete this run and its archive?"}
+                          onConfirm={() => { deleteAgentRun(run.id).then(loadAgentData).catch(() => undefined); }}
+                        >
+                          <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+                            {zh ? "删除" : "Delete"}
+                          </Button>
+                        </Popconfirm>
+                      )}
                     </td>
                   </tr>
                 ))}

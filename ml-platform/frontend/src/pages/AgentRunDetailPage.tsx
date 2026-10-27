@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeftOutlined, DeleteOutlined, ReloadOutlined } from "@ant-design/icons";
+import { ArrowLeftOutlined, ReloadOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import AgentRunArchivePanel from "../components/AgentRunArchivePanel";
-import { deleteAgentRun, getAgentRun, type AgentRunDetail } from "../api/agentCenter";
+import { getAgentRun, type AgentRunDetail } from "../api/agentCenter";
 import { formatLocalTime } from "../utils/time";
 import { useI18n } from "../i18n";
 
 /** 智能体中心→任务详情页：单个 Agent 运行的全链路档案（/agent/task/:runId）。 */
 
 const ACTIVE_STATUSES = new Set(["pending", "running"]);
+// 非终态轮询间隔：S2 沙箱/LLM 阶段秒级产出，10s 足够"有新消息自动出现"。
+const ACTIVE_POLL_MS = 10_000;
 
 function runSeconds(created?: string | null, updated?: string | null): string {
   if (!created || !updated) return "—";
@@ -26,7 +28,7 @@ export default function AgentRunDetailPage() {
   const zh = lang === "zh";
   const [archive, setArchive] = useState<AgentRunDetail | null>(null);
   const [archiveError, setArchiveError] = useState("");
-  const [deleting, setDeleting] = useState(false);
+  const timer = useRef<number | null>(null);
 
   const load = useCallback(() => {
     setArchiveError("");
@@ -38,19 +40,20 @@ export default function AgentRunDetailPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const remove = () => {
-    setDeleting(true);
-    deleteAgentRun(runId).then(() => {
-      navigate("/agent?tab=tasks");
-    }).catch(() => {
-      setDeleting(false);
-    });
-  };
+  const isActive = archive != null && ACTIVE_STATUSES.has(archive.status);
+
+  // 非终态自动轮询：新阶段产物/状态变化自动出现；终态即停。
+  useEffect(() => {
+    if (timer.current != null) { window.clearInterval(timer.current); timer.current = null; }
+    if (isActive) {
+      timer.current = window.setInterval(load, ACTIVE_POLL_MS);
+    }
+    return () => { if (timer.current != null) window.clearInterval(timer.current); };
+  }, [isActive, load]);
 
   const guidance = archive?.guidance_json ?? null;
   const gates = guidance?.evaluation?.metric_gates ?? {};
   const whitelist = guidance?.modeling?.algorithm_whitelist ?? [];
-  const deletable = archive != null && !ACTIVE_STATUSES.has(archive.status);
 
   return (
     <AppLayout>
@@ -64,16 +67,6 @@ export default function AgentRunDetailPage() {
           </button>
           <button type="button" className="v2-btn" onClick={load}>
             <ReloadOutlined /> {zh ? "刷新" : "Refresh"}
-          </button>
-          <button
-            type="button"
-            className="v2-btn"
-            style={{ color: "var(--v2-red)", borderColor: "var(--v2-red)" }}
-            disabled={!deletable || deleting}
-            title={deletable ? "" : zh ? "运行中的任务不可删除" : "Active runs cannot be deleted"}
-            onClick={() => { if (window.confirm(zh ? "确认删除该任务及其档案？此操作不可恢复。" : "Delete this run and its archive?")) remove(); }}
-          >
-            <DeleteOutlined /> {zh ? "删除任务" : "Delete"}
           </button>
         </div>
       </div>
@@ -91,12 +84,6 @@ export default function AgentRunDetailPage() {
                 <td>{archive.project_name ?? "-"}</td>
               </tr>
               <tr>
-                <td className="tt">{zh ? "运行 ID" : "Run ID"}</td>
-                <td className="tt" style={{ fontSize: 12 }}>{archive.id}</td>
-                <td className="tt">{zh ? "数据集工件" : "Dataset artifact"}</td>
-                <td className="tt" style={{ fontSize: 12 }}>{archive.dataset_artifact_id ?? "-"}</td>
-              </tr>
-              <tr>
                 <td className="tt">{zh ? "模型 / 档案" : "Model / profile"}</td>
                 <td>{archive.llm_model_id ?? "-"}{archive.llm_profile_name ? ` · ${archive.llm_profile_name}` : ""}</td>
                 <td className="tt">{zh ? "阶段 / 轮次" : "Stage / rounds"}</td>
@@ -111,14 +98,8 @@ export default function AgentRunDetailPage() {
               <tr>
                 <td className="tt">{zh ? "运行时长" : "Duration"}</td>
                 <td>{runSeconds(archive.created_at, archive.updated_at)}</td>
-                <td className="tt">{zh ? "最近心跳" : "Last heartbeat"}</td>
-                <td>{archive.heartbeat_at ? formatLocalTime(archive.heartbeat_at, true) : "—"}</td>
-              </tr>
-              <tr>
                 <td className="tt">Token</td>
                 <td>{archive.token_used.toLocaleString()}{archive.token_budget ? ` / ${archive.token_budget.toLocaleString()}` : ""}</td>
-                <td className="tt">{zh ? "逐步确认" : "Step-by-step"}</td>
-                <td>{(guidance?.pause_at_stages ?? []).length ? (guidance!.pause_at_stages!.join(" → ").toUpperCase()) : (zh ? "关闭" : "off")}</td>
               </tr>
             </tbody>
           </table>
@@ -145,10 +126,6 @@ export default function AgentRunDetailPage() {
                   <td className="tt">{zh ? "数据形态" : "Data shape"}</td>
                   <td>{guidance.feature?.data_shape ?? (zh ? "未指定（自动）" : "auto")}</td>
                 </tr>
-                <tr>
-                  <td className="tt">{zh ? "泄漏关注列" : "Leakage focus"}</td>
-                  <td>{(guidance.analysis?.suspect_focus ?? []).length ? (guidance.analysis!.suspect_focus!.join("、")) : (zh ? "未指定" : "none")}</td>
-                </tr>
                 {(guidance.analysis?.prompts ?? []).length || (guidance.feature?.prompts ?? []).length || (guidance.modeling?.prompts ?? []).length ? (
                   <tr>
                     <td className="tt">{zh ? "自定义提示" : "Custom prompts"}</td>
@@ -170,8 +147,10 @@ export default function AgentRunDetailPage() {
         archive={archive}
         archiveError={archiveError}
         zh={zh}
+        active={isActive}
         onRefresh={load}
       />
     </AppLayout>
   );
 }
+
