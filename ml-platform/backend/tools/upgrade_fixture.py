@@ -33,7 +33,28 @@ EXPECTED_N_MINUS_ONE_HEADS = frozenset(
         "20260730_09",
     },
 )
-EXPECTED_HEAD = "20261026_84"
+
+
+def current_alembic_head() -> str:
+    """Single source of truth for the migration head: the alembic script dir.
+
+   此前 EXPECTED_HEAD 是手写字面量，每批迁移要同步改 5+ 处（测试侧/工具侧/
+    shell），漏改即 CI 全线红（82→83 事故）。直接从 ScriptDirectory 推导，
+    新迁移落盘即自动生效；多分支头（并行迁移未合流）时显式报错。
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    heads = ScriptDirectory.from_config(config).get_heads()
+    if len(heads) != 1:
+        raise RuntimeError(
+            f"expected exactly one alembic head, found {len(heads)}: {heads}"
+        )
+    return heads[0]
+
+
+EXPECTED_HEAD = current_alembic_head()
 UPGRADE_ACCEPTANCE_DATABASE_URL_ENV = "UPGRADE_ACCEPTANCE_DATABASE_URL"
 UPGRADE_ACCEPTANCE_ISOLATED_ENV = "UPGRADE_ACCEPTANCE_ISOLATED"
 _REQUIRED_REPRESENTATIVE_TABLES = (
@@ -356,7 +377,8 @@ def main(argv: list[str] | None = None) -> int:
     seed.add_argument("--output", type=Path, required=True)
     upgrade = subparsers.add_parser("upgrade")
     upgrade.add_argument("--database-url")
-    upgrade.add_argument("--target", required=True)
+    # 省略时自动用当前 alembic head（单一来源），保留参数供发布验收钉死用。
+    upgrade.add_argument("--target", default=EXPECTED_HEAD)
     upgrade.add_argument("--output", type=Path, required=True)
     verify = subparsers.add_parser("verify")
     verify.add_argument("--before", type=Path, required=True)

@@ -42,7 +42,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMP_ROOT = PROJECT_ROOT / "temp_test"
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 BASELINE_REVISION = BACKEND_ROOT / "alembic" / "versions" / "20260715_01_baseline_schema.py"
-HEAD_REVISION = "20261026_84"
+# 从 ScriptDirectory 推导（每批迁移免手工跟进；多分支头显式失败）。
+from tools.upgrade_fixture import current_alembic_head  # noqa: E402
+
+HEAD_REVISION = current_alembic_head()
 NOTIFICATION_REVISION = "20260720_10_security_notifications"
 WEEK9_TABLES = {
     "deployment_revisions",

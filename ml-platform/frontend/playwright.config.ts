@@ -67,6 +67,9 @@ export default defineConfig({
         INFERENCE_RUNTIME_URL: "http://127.0.0.1:7000",
         INFERENCE_INTERNAL_SECRET: e2eInferenceSecret,
         NOTIFICATION_MASTER_KEY: e2eNotificationMasterKey,
+        // 每条 spec 各自登录一次；默认 5/15min 的登录 IP 限流在本地复用
+        // uvicorn 的多轮运行下必然触顶（CI 作业级 env 同值，这里补齐本地）。
+        LOGIN_IP_RATE_LIMIT_CAPACITY: "100",
       },
     },
     {

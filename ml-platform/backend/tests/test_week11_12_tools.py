@@ -3214,9 +3214,13 @@ class UpgradeFixtureTests(unittest.TestCase):
 
         self.assertEqual(EXPECTED_N_MINUS_ONE, "20260720_10_security_notifications")
         backend = Path(__file__).resolve().parents[1]
+        # EXPECTED_HEAD 从 ScriptDirectory 推导（单一来源）：这里钉住的是推导
+        # 本身与脚本目录一致，且升级脚本不再硬编码任何版本字面量。
         self.assertEqual([EXPECTED_HEAD], ScriptDirectory(str(backend / "alembic")).get_heads())
-        runner = backend / "tools" / "acceptance" / "run_upgrade_fixture.sh"
-        self.assertIn(f"--target {EXPECTED_HEAD}", runner.read_text(encoding="utf-8"))
+        runner_text = (
+            backend / "tools" / "acceptance" / "run_upgrade_fixture.sh"
+        ).read_text(encoding="utf-8")
+        self.assertNotRegex(runner_text, r"--target\s+\d{8}_")
 
     def test_wrong_target_revision_fails_closed(self):
         with self.assertRaises(ValueError):
