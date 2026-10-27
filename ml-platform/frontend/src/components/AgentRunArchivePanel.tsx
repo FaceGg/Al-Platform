@@ -84,12 +84,69 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
               <div className="tt">{zh ? `第 ${round.round} 轮` : `Round ${round.round}`}
                 {round.verdict ? <span className={`v2-badge ${round.verdict === "gate_failed" ? "v2-br" : "v2-bgo"}`} style={{ marginLeft: 8 }}>{round.verdict}</span> : null}
               </div>
-              {(round.s2_attempts ?? []).map((attempt) => (
-                <div key={attempt.attempt} className="ts" style={{ color: attempt.ok ? "var(--v2-green)" : "var(--v2-gold)" }}>
-                  · S2 {zh ? "尝试" : "attempt"} {attempt.attempt}: {attempt.ok ? (zh ? "通过沙箱" : "sandbox OK") : (attempt.error ?? "failed")}
-                  {Array.isArray(attempt.detail) && attempt.detail.length ? ` (${attempt.detail.slice(0, 3).join("; ")})` : ""}
+              {round.s1 ? (
+                <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.8 }}>
+                  <b style={{ color: "var(--v2-txt)" }}>S1 {zh ? "数据分析" : "Analysis"}</b>
+                  {round.s1.domain ? <div className="ts" style={{ color: "var(--v2-sub)" }}>{zh ? "域假设" : "Domain"}: {round.s1.domain}</div> : null}
+                  {round.s1.reasoning ? <div className="ts" style={{ color: "var(--v2-sub)" }}>{round.s1.reasoning.length > 220 ? round.s1.reasoning.slice(0, 220) + "…" : round.s1.reasoning}</div> : null}
+                  {(round.s1.focus_channels ?? []).length ? (
+                    <div className="ts" style={{ color: "var(--v2-sub)" }}>{zh ? "关键通道" : "Channels"}: {(round.s1.focus_channels ?? []).slice(0, 5).map((c) => c.channel).filter(Boolean).join("、")}</div>
+                  ) : null}
+                  {(round.s1.leakage ?? []).length ? (
+                    <div className="ts" style={{ color: "var(--v2-gold)" }}>{zh ? "泄漏嫌疑" : "Leakage"}: {(round.s1.leakage ?? []).slice(0, 5).map((l) => l.column).filter(Boolean).join("、")}</div>
+                  ) : null}
+                  {(round.s1.quality_actions ?? []).length ? (
+                    <div className="ts" style={{ color: "var(--v2-sub)" }}>{zh ? "数据质量动作" : "Quality actions"}: {(round.s1.quality_actions ?? []).slice(0, 3).map((q) => q.action).filter(Boolean).join("；")}</div>
+                  ) : null}
+                  {round.s1.class_balance ? <div className="ts" style={{ color: "var(--v2-sub)" }}>{zh ? "类不平衡" : "Balance"}: {round.s1.class_balance}</div> : null}
                 </div>
-              ))}
+              ) : null}
+              {round.s2 ? (
+                <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.8 }}>
+                  <b style={{ color: "var(--v2-txt)" }}>S2 {zh ? "特征工程" : "Features"}</b>
+                  <span style={{ marginLeft: 8, color: "var(--v2-dim)" }}>{zh ? `${round.s2.attempts ?? 1} 次尝试` : `${round.s2.attempts ?? 1} attempts`}{round.s2.data_shape ? ` · ${round.s2.data_shape}` : ""}</span>
+                  {round.s2.description ? <div className="ts" style={{ color: "var(--v2-sub)" }}>{round.s2.description.length > 200 ? round.s2.description.slice(0, 200) + "…" : round.s2.description}</div> : null}
+                  {(round.s2.generated_columns ?? []).length ? <div className="ts" style={{ color: "var(--v2-green)" }}>{zh ? "新增" : "Added"}: {(round.s2.generated_columns ?? []).slice(0, 8).join("、")}</div> : null}
+                  {(round.s2.dropped_columns ?? []).length ? <div className="ts" style={{ color: "var(--v2-dim)" }}>{zh ? "剔除" : "Dropped"}: {(round.s2.dropped_columns ?? []).slice(0, 8).join("、")}</div> : null}
+                </div>
+              ) : (
+                (round.s2_attempts ?? []).map((attempt) => (
+                  <div key={attempt.attempt} className="ts" style={{ color: attempt.ok ? "var(--v2-green)" : "var(--v2-gold)" }}>
+                    · S2 {zh ? "尝试" : "attempt"} {attempt.attempt}: {attempt.ok ? (zh ? "通过沙箱" : "sandbox OK") : (attempt.error ?? "failed")}
+                    {Array.isArray(attempt.detail) && attempt.detail.length ? ` (${attempt.detail.slice(0, 3).join("; ")})` : ""}
+                  </div>
+                ))
+              )}
+              {round.s3 ? (
+                <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.8 }}>
+                  <b style={{ color: "var(--v2-txt)" }}>S3 {zh ? "候选训练" : "Training"}</b>
+                  {Object.keys(round.s3.metrics ?? {}).length ? (
+                    <div className="ts" style={{ color: "var(--v2-sub)" }}>
+                      {Object.entries(round.s3.metrics ?? {}).slice(0, 6).map(([k, v]) => `${k}=${v}`).join("  ")}
+                    </div>
+                  ) : null}
+                  {(round.s3.importance ?? []).length ? (
+                    <div className="ts" style={{ color: "var(--v2-sub)" }}>{zh ? "特征重要性" : "Importance"}: {(round.s3.importance ?? []).slice(0, 5).map((i) => `${i.feature}(${i.importance})`).join("、")}</div>
+                  ) : null}
+                </div>
+              ) : null}
+              {round.s4 ? (
+                <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.8 }}>
+                  <b style={{ color: "var(--v2-txt)" }}>S4 {zh ? "硬门禁" : "Gates"}</b>
+                  <span className={`v2-badge ${round.s4.gate_passed ? "v2-bg" : "v2-br"}`} style={{ marginLeft: 8 }}>{round.s4.gate_passed ? (zh ? "通过" : "passed") : (zh ? "未过" : "failed")}</span>
+                  {(round.s4.gate_failures ?? []).length ? (
+                    <div className="ts" style={{ color: "var(--v2-gold)" }}>{(round.s4.gate_failures ?? []).slice(0, 4).map((f, i) => <span key={i} style={{ display: "block" }}>· {f}</span>)}</div>
+                  ) : null}
+                </div>
+              ) : null}
+              {round.review ? (
+                <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.8 }}>
+                  <b style={{ color: "var(--v2-txt)" }}>{zh ? "评审" : "Review"}</b>
+                  <span className={`v2-badge ${round.review.verdict === "pass" ? "v2-bg" : "v2-bgo"}`} style={{ marginLeft: 8 }}>{round.review.verdict ?? "-"}</span>
+                  {round.review.readiness ? <div className="ts" style={{ color: "var(--v2-sub)" }}>{round.review.readiness.length > 200 ? round.review.readiness.slice(0, 200) + "…" : round.review.readiness}</div> : null}
+                  {(round.review.surprises ?? []).length ? <div className="ts" style={{ color: "var(--v2-gold)" }}>{zh ? "意外发现" : "Surprises"}: {(round.review.surprises ?? []).slice(0, 3).join("；")}</div> : null}
+                </div>
+              ) : null}
               {(round.hints ?? []).length ? (
                 <div className="ts" style={{ marginTop: 3 }}>
                   {zh ? "评审建议：" : "Hints: "}{(round.hints ?? []).slice(0, 3).map((hint, i) => (
@@ -100,7 +157,10 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
             </div>
           ))}
           {(archive.memory_json?.rounds ?? []).length === 0 ? (
-            <div className="v2-tl-item"><div className="tt">{zh ? "暂无轮次记录" : "No recorded rounds"}</div></div>
+            <div className="v2-tl-item">
+              <div className="tt">{zh ? "暂无轮次记录" : "No recorded rounds"}</div>
+              <div className="ts">{zh ? "该任务运行早于阶段产物落档案功能上线（2026-10-27），仅有骨架信息；新任务将逐阶段记录 S1 分析/S2 特征/S3 训练/S4 门禁与评审。" : "This run predates per-stage artifact persistence; new runs record each stage."}</div>
+            </div>
           ) : null}
           <div className={`v2-tl-item ${archive.status === "waiting_escalate" ? "warn" : "ok"}`}>
             <div className="tt">{zh ? "终态：" : "Final: "}{archive.status}{archive.error_code ? ` · ${archive.error_code}` : ""}</div>

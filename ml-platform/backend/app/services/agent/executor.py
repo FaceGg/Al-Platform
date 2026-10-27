@@ -62,6 +62,10 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
     """S3 真训练（轻量）：分层切分 + 少量 sklearn 家族，按少数类召回选优。
 
     返回 Runner/S4 需要的形状：metrics / topk_metrics / importance。
+
+    行/宽双重上限对齐"轻量"定位：全量数据上高基数类别经 get_dummies 会
+    展开成数千列宽矩阵，随机森林单核可跑数十分钟（8381156a 事故——
+    非挂死，是无限时慢算）。分层抽样 2 万行 + 类别编码截断 top 200。
     """
     import pandas as pd
     from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
@@ -73,9 +77,22 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
     frame = feature_frame if isinstance(feature_frame, pd.DataFrame) else pd.DataFrame(feature_frame)
     labels = LabelEncoder().fit_transform([str(value) for value in y])
     minority = 1 if (labels == 1).mean() <= 0.5 else 0
+    if len(labels) > 20000:
+        keep, _ = train_test_split(
+            range(len(labels)), train_size=20000, random_state=7,
+            stratify=labels,
+        )
+        frame = frame.iloc[keep].reset_index(drop=True)
+        labels = labels[keep]
     numeric = frame.select_dtypes(include=["number"]).fillna(0.0)
     categorical = frame.select_dtypes(exclude=["number"]).astype(str)
     if not categorical.empty and categorical.shape[1]:
+        # 每列只保留 top 200 类别，其余归并 __other__，防宽矩阵爆炸。
+        for column in categorical.columns:
+            top = categorical[column].value_counts().head(200).index
+            categorical[column] = categorical[column].where(
+                categorical[column].isin(top), "__other__"
+            )
         X = pd.get_dummies(categorical, dummy_na=True).join(numeric)
     else:
         X = numeric
@@ -86,7 +103,8 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
     families = {
         "logistic": LogisticRegression(max_iter=500, class_weight="balanced"),
         "random_forest": RandomForestClassifier(
-            n_estimators=120, min_samples_leaf=2, class_weight="balanced", random_state=7
+            n_estimators=120, min_samples_leaf=2, class_weight="balanced",
+            random_state=7, n_jobs=-1,
         ),
         "hist_gb": HistGradientBoostingClassifier(max_iter=120, random_state=7),
     }
@@ -182,9 +200,10 @@ def launch_agent_run(run_id, actor_id=None) -> None:
                 if run is not None and run.status in ("pending", "running"):
                     run.status = "waiting_escalate"
                     run.error_code = "AGENT_EXECUTOR_CRASHED"
-                    # 崩溃堆栈落档案（85bd8c96 事故：只留错误码不留堆栈，
-                    # 详情页无从归因）。截尾防超大堆栈撑爆 JSON 列。
-                    memory = run.memory_json or {}
+                    # JSON 列变更检测按对象身份：必须写入"新字典"再赋值，
+                    # 原地改再赋回同一对象会被 ORM 判为无变化而跳过 UPDATE
+                    # （677d973d 崩溃时 escalation 丢失的根因）。
+                    memory = dict(run.memory_json or {})
                     memory["escalation"] = {
                         "code": "AGENT_EXECUTOR_CRASHED",
                         "detail": _traceback.format_exc()[-2000:],
@@ -220,6 +239,20 @@ def recover_stale_agent_runs(db, stale_after) -> int:
     for run in stale_runs:
         run.status = "failed"
         run.error_code = "AGENT_RUN_INTERRUPTED"
+        # 尸检随行：心跳超时是"为什么死"的第一手信息（执行进程重启/线程
+        # 无响应），不留会让详情页只有错误码可看。写新字典（JSON 列身份坑）。
+        memory = dict(run.memory_json or {})
+        memory["escalation"] = {
+            "code": "AGENT_RUN_INTERRUPTED",
+            "detail": (
+                "heartbeat stale: last beat at "
+                f"{run.heartbeat_at.isoformat() if run.heartbeat_at else 'never'}"
+                f", cutoff {( _sweep_utcnow() - stale_after).isoformat()}"
+                " — 执行进程重启或执行线程无响应，由陈旧恢复清扫标记。"
+            ),
+            "round": run.round_count,
+        }
+        run.memory_json = memory
     if stale_runs:
         db.commit()
     return len(stale_runs)

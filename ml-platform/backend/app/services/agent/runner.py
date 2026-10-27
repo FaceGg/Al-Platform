@@ -87,6 +87,13 @@ class AgentRunner:
     def _record_round(
         self, round_number: int, *, s2_attempts: list, verdict: str | None, hints: list
     ) -> None:
+        # 轮次骨架合并进已存在的轮次条目（_stage_digest 先行创建，崩溃也保留产物）。
+        for entry in self.memory.get("rounds", []):
+            if entry.get("round") == round_number:
+                entry.update(
+                    {"s2_attempts": s2_attempts, "verdict": verdict, "hints": hints}
+                )
+                return
         self.memory.setdefault("rounds", []).append(
             {
                 "round": round_number,
@@ -95,6 +102,79 @@ class AgentRunner:
                 "hints": hints,
             }
         )
+
+    def _stage_digest(self, round_number: int, stage: str, digest: dict) -> None:
+        """阶段产物边跑边落档案（§7 任务档案的"干了什么得到什么"）。
+
+        每阶段完成即 commit——S3/S4 崩溃的 run（85bd8c96 事故）也能在档案里
+        看到此前 S1/S2 的完整产出，而不是一个空壳轮次骨架。
+        """
+        rounds = self.memory.setdefault("rounds", [])
+        entry = next(
+            (item for item in rounds if item.get("round") == round_number), None
+        )
+        if entry is None:
+            entry = {"round": round_number}
+            rounds.append(entry)
+        entry[stage] = digest
+        self.run.memory_json = self.memory
+        # 阶段产物提交即刷新心跳：S3 全量重放/训练可达分钟级，不刷新会被
+        # 陈旧恢复清扫误判（8381156a：训练慢算被当无响应杀掉）。
+        from app.tasks.time_utils import utcnow as _hb_utcnow
+
+        self.run.heartbeat_at = _hb_utcnow()
+        self.db.commit()
+
+    @staticmethod
+    def _s1_digest(report: AnalysisReport) -> dict:
+        def _short(text: str | None, limit: int = 400) -> str | None:
+            if text is None:
+                return None
+            return text[:limit] + ("…" if len(text) > limit else "")
+
+        return {
+            "domain": report.domain_hypothesis,
+            "reasoning": _short(report.domain_reasoning, 600),
+            "focus_channels": [
+                {
+                    "channel": getattr(item, "channel", getattr(item, "name", "")),
+                    "reason": _short(getattr(item, "reason", ""), 160),
+                }
+                for item in report.focus_channels[:6]
+            ],
+            "expected_features": [
+                getattr(item, "feature", getattr(item, "name", ""))
+                for item in report.expected_important_features[:8]
+            ],
+            "leakage": [
+                {
+                    "column": item.column,
+                    "reason": _short(getattr(item, "reason", ""), 160),
+                }
+                for item in report.leakage_suspects[:8]
+            ],
+            "quality_actions": [
+                {
+                    "action": getattr(item, "action", ""),
+                    "columns": getattr(item, "columns", [])[:6],
+                }
+                for item in report.data_quality_actions[:6]
+            ],
+            "class_balance": _short(report.class_balance_concern, 300),
+            "brief": _short(report.feature_engineering_brief, 400),
+        }
+
+    @staticmethod
+    def _s3_digest(trainer_result: dict) -> dict:
+        metrics = {
+            key: round(value, 4)
+            for key, value in (trainer_result.get("metrics") or {}).items()
+        }
+        importance = [
+            {"feature": item.get("feature"), "importance": round(item.get("importance", 0), 4)}
+            for item in (trainer_result.get("importance") or [])[:5]
+        ]
+        return {"metrics": metrics, "importance": importance}
 
     def _escalate(self, error_code: str, detail: str | None = None) -> AgentRun:
         self.run.status = "waiting_escalate"
@@ -164,7 +244,7 @@ class AgentRunner:
 
     # ----------------------------------------------------------------- stages
     def _run_s2_stage(self, report: AnalysisReport):
-        """Generate + sandbox-verify the feature script; returns (df, attempts)."""
+        """Generate + sandbox-verify the feature script; returns (df, attempts, script)."""
         sample = self.frame.head(S2_SAMPLE_ROWS)
         columns = [
             {"name": str(name), "dtype": str(dtype)}
@@ -226,9 +306,9 @@ class AgentRunner:
             attempts.append({"attempt": attempt, "ok": True,
                              "script": script.script})
             self.run.current_stage = "s3"
-            return result.output, attempts
+            return result.output, attempts, script
 
-        return None, attempts
+        return None, attempts, None
 
     # ------------------------------------------------------------------ main
     def _pause_if_requested(
@@ -238,7 +318,7 @@ class AgentRunner:
         转 waiting_guidance 并记录；下一次 run_to_completion 跳过该位继续。"""
         if stage not in pause_at:
             return False
-        memory = self.run.memory_json or {}
+        memory = dict(self.run.memory_json or {})
         done_key = "paused:%s:%d" % (stage, round_number)
         already = (memory.get("resume") or {}).get("done", [])
         if resume_state is not None or done_key in already:
@@ -300,31 +380,89 @@ class AgentRunner:
                 )
             # 注入的 L2 引用落档案（前端"注入的经验"面板数据源）。
             if l2_refs:
-                memory = self.run.memory_json or {}
+                memory = dict(self.run.memory_json or {})
                 memory["injected_experience"] = l2_refs
                 self.run.memory_json = memory
             # 下一轮 L2 检索按本轮域假设聚焦（§10.4 domain 匹配）。
             self._last_domain = str(report.domain_hypothesis)[:32]
+            self._stage_digest(round_number, "s1", self._s1_digest(report))
             if self._pause_if_requested("s1", pause_at, resume_state, round_number):
                 return self.run
 
             # ---- S2 -------------------------------------------------
             self.run.current_stage = "s2"
             self.db.commit()
-            feature_df, s2_attempts = self._run_s2_stage(report)
+            feature_df, s2_attempts, feature_script = self._run_s2_stage(report)
             if feature_df is None:
                 self._record_round(
                     round_number, s2_attempts=s2_attempts, verdict=None, hints=[]
                 )
-                return self._escalate("AGENT_S2_NOT_CONVERGED")
+                last_error = next(
+                    (
+                        attempt.get("error")
+                        for attempt in reversed(s2_attempts)
+                        if attempt.get("error")
+                    ),
+                    None,
+                )
+                return self._escalate(
+                    "AGENT_S2_NOT_CONVERGED",
+                    detail=(
+                        f"{len(s2_attempts)} attempts; last error: {last_error}"
+                        if last_error
+                        else f"{len(s2_attempts)} attempts"
+                    ),
+                )
+            self._stage_digest(
+                round_number,
+                "s2",
+                {
+                    "description": feature_script.description[:800],
+                    "generated_columns": feature_script.generated_columns[:12],
+                    "dropped_columns": feature_script.dropped_columns[:12],
+                    "data_shape": feature_script.data_shape,
+                    "attempts": len(s2_attempts),
+                    # 定稿脚本随档案留痕（§7）：S3 全量重放/后续配方固化共用。
+                    "script": feature_script.script,
+                },
+            )
 
             # ---- S3 -------------------------------------------------
             self.run.current_stage = "s3"
             self.db.commit()
+            # S2 的沙箱验证跑在 5000 行样本上；训练必须用全量数据重放特征
+            # 脚本——否则特征表(样本行数)与标签(全量行数)错位，train_test_split
+            # 直接 ValueError（85bd8c96/677d973d 崩溃根因）。
+            full_features = run_sandbox(
+                feature_script.script, self.frame, timeout_seconds=600
+            )
+            if not full_features.ok:
+                self._record_round(
+                    round_number, s2_attempts=s2_attempts, verdict=None, hints=[]
+                )
+                return self._escalate(
+                    "AGENT_S3_TRANSFORM_FAILED",
+                    detail=f"full-data replay: {full_features.error}",
+                )
+            feature_df = full_features.output
+            frame_len = int(getattr(self.frame, "shape", [0])[0] or 0)
+            out_len = int(getattr(feature_df, "shape", [0])[0] or 0)
+            if out_len != frame_len:
+                self._record_round(
+                    round_number, s2_attempts=s2_attempts, verdict=None, hints=[]
+                )
+                return self._escalate(
+                    "AGENT_S3_TRANSFORM_FAILED",
+                    detail=(
+                        f"full-data replay changed row count: "
+                        f"{frame_len} -> {out_len}"
+                    ),
+                )
             target = self.run.target_column
             frame_columns = getattr(self.frame, "columns", [])
             y = self.frame[target] if target and target in frame_columns else None
             trainer_result = self.trainer(feature_df, y, {})
+            self._stage_digest(round_number, "s3", self._s3_digest(trainer_result))
 
             # ---- S4 hard gates (before any LLM sees the numbers) ----
             self.run.current_stage = "s4"
@@ -337,7 +475,7 @@ class AgentRunner:
                 )
             gates, gate_warnings = merge_gates(DEFAULT_GATES, user_gates)
             if gate_warnings:
-                memory = self.run.memory_json or {}
+                memory = dict(self.run.memory_json or {})
                 gate_log = list(memory.get("gate_warnings") or [])
                 gate_log.extend(
                     "round %d: %s" % (round_number, warning)
@@ -346,7 +484,7 @@ class AgentRunner:
                 memory["gate_warnings"] = gate_log
                 self.run.memory_json = memory  # 黄条警示随任务档案留痕（§11.3）
             if resume_state is not None:
-                memory = self.run.memory_json or {}
+                memory = dict(self.run.memory_json or {})
                 memory.pop("resume", None)
                 self.run.memory_json = memory
             gate_report = evaluate_hard_gates(
@@ -355,6 +493,15 @@ class AgentRunner:
                 topk_metrics=trainer_result.get("topk_metrics"),
                 importance=trainer_result.get("importance"),
                 leakage_columns=[item.column for item in report.leakage_suspects],
+            )
+            self._stage_digest(
+                round_number,
+                "s4",
+                {
+                    "gates": gates,
+                    "gate_passed": gate_report.passed,
+                    "gate_failures": gate_report.failures[:6],
+                },
             )
 
             if not gate_report.passed:
@@ -384,9 +531,18 @@ class AgentRunner:
             if not self._absorb_usage(usage):
                 return self._escalate("AGENT_TOKEN_BUDGET_EXCEEDED")
             if error:
-                return self._escalate("AGENT_S4_CONTRACT_FAILED")
+                return self._escalate("AGENT_S4_CONTRACT_FAILED", detail=error)
 
             if verdict.verdict == "pass":
+                self._stage_digest(
+                    round_number,
+                    "review",
+                    {
+                        "verdict": verdict.verdict,
+                        "surprises": verdict.surprises[:4],
+                        "readiness": verdict.business_readiness[:600],
+                    },
+                )
                 self._record_round(
                     round_number, s2_attempts=s2_attempts, verdict="pass", hints=[]
                 )
@@ -402,6 +558,16 @@ class AgentRunner:
                 self._finalize_reports()
                 return self.run
             if verdict.verdict == "escalate":
+                self._stage_digest(
+                    round_number,
+                    "review",
+                    {
+                        "verdict": verdict.verdict,
+                        "surprises": verdict.surprises[:4],
+                        "readiness": verdict.business_readiness[:600],
+                        "hints": verdict.next_iteration_hints[:4],
+                    },
+                )
                 self._record_round(
                     round_number,
                     s2_attempts=s2_attempts,
@@ -409,6 +575,16 @@ class AgentRunner:
                     hints=list(verdict.next_iteration_hints),
                 )
                 return self._escalate("AGENT_REVIEW_ESCALATE")
+            self._stage_digest(
+                round_number,
+                "review",
+                {
+                    "verdict": verdict.verdict,
+                    "surprises": verdict.surprises[:4],
+                    "readiness": verdict.business_readiness[:600],
+                    "hints": verdict.next_iteration_hints[:4],
+                },
+            )
             self._record_round(
                 round_number,
                 s2_attempts=s2_attempts,

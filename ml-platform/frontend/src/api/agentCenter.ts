@@ -40,6 +40,19 @@ export interface AgentRunDetail extends AgentRunItem {
       s2_attempts?: { attempt?: number; error?: string; detail?: unknown; ok?: boolean; script?: string }[];
       verdict?: string;
       hints?: string[];
+      // 阶段产物（边跑边落，崩溃保留）：S1 分析 / S2 特征 / S3 训练 / S4 门禁 / review 评审
+      s1?: {
+        domain?: string; reasoning?: string;
+        focus_channels?: { channel?: string; reason?: string }[];
+        expected_features?: string[];
+        leakage?: { column?: string; reason?: string }[];
+        quality_actions?: { action?: string; columns?: string[] }[];
+        class_balance?: string | null; brief?: string;
+      };
+      s2?: { description?: string; generated_columns?: string[]; dropped_columns?: string[]; data_shape?: string; attempts?: number };
+      s3?: { metrics?: Record<string, number>; importance?: { feature?: string; importance?: number }[] };
+      s4?: { gates?: Record<string, number>; gate_passed?: boolean; gate_failures?: string[] };
+      review?: { verdict?: string; surprises?: string[]; readiness?: string; hints?: string[] };
     }[];
     gate_warnings?: string[];
     resume?: Record<string, unknown>;
