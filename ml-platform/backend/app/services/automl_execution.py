@@ -1,5 +1,6 @@
 """Finite, deterministic AutoML execution with MLflow child Runs."""
 
+import logging
 import math
 import tempfile
 import time
@@ -60,6 +61,8 @@ from app.services.automl_search import (
     SEARCH_STRENGTH_TRIALS,
 )
 from app.services.training_execution import build_training_tracking, claim_training_job, utcnow
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -1897,7 +1900,7 @@ def execute_automl_job(
             try:
                 tracking.end_run(parent.run_id, "FAILED")
             except Exception:
-                pass
+                logger.warning("mlflow end_run(FAILED) failed for %s, run left dangling", parent.run_id, exc_info=True)
         error_code = (
             "AUTOML_CANCELLED"
             if isinstance(error, AutoMLCancelled)

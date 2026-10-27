@@ -7,10 +7,13 @@ token_pattern treats a run of Han characters as one token, which collapses
 Chinese similarity to near-exact substring matching.
 """
 import json
+import logging
 import uuid as uuid_mod
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
+
+logger = logging.getLogger(__name__)
 
 try:
     import jieba
@@ -35,7 +38,8 @@ def tokenize_text(text: str) -> str:
         if not getattr(settings, "retrieval_use_jieba", True):
             return text
     except Exception:
-        pass
+        # 配置读取失败按默认走 jieba，留痕即可
+        logger.debug("retrieval_use_jieba config probe failed, defaulting to jieba", exc_info=True)
     words = [w.strip() for w in jieba.lcut(text) if w.strip()]
     return " ".join(words) if words else text
 

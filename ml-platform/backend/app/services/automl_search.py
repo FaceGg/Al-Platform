@@ -1,5 +1,6 @@
 """Bounded Optuna search for one generic AutoML algorithm family."""
 
+import logging
 import math
 import time
 from dataclasses import dataclass, field
@@ -17,6 +18,8 @@ from sklearn.metrics import f1_score, get_scorer, mean_absolute_error, mean_squa
 from sklearn.model_selection import KFold, StratifiedKFold, cross_val_predict, cross_val_score, train_test_split
 
 from app.services.automl_catalog import AlgorithmFamily, AlgorithmUnavailable, ParameterSpec, TaskType
+
+logger = logging.getLogger(__name__)
 
 
 SEARCH_METHODS = frozenset({"grid", "random", "bayesian", "evolutionary", "multi_fidelity"})
@@ -675,7 +678,8 @@ def run_family_search(
                         trial.set_user_attr("f1", f1)
                     trial.set_user_attr("accuracy", score)
                 except (TypeError, ValueError, RuntimeError):
-                    pass
+                    # auc/f1 属可选附加指标：失败不影响主分数，但留痕便于排查
+                    logger.debug("trial auc/f1 metrics unavailable", exc_info=True)
             return score
         except TrialPruned:
             raise

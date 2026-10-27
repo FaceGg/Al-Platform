@@ -1,6 +1,7 @@
 """
 Resource monitoring API - collects CPU, memory, disk, and GPU usage data.
 """
+import logging
 import os
 import subprocess
 import shutil
@@ -13,6 +14,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query
 from app.models.user import User
 from app.api.auth import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 
@@ -56,7 +59,7 @@ def get_cpu_usage():
                     if total > 0:
                         return round(max(0.0, min(100.0, (total - idle_delta) * 100 / total)), 1)
         except Exception:
-            pass
+            logger.debug("windows GetSystemTimes CPU sampling unavailable", exc_info=True)
     try:
         load_1, _, _ = os.getloadavg()
         return round(max(0.0, min(100.0, load_1 * 100 / max(1, os.cpu_count() or 1))), 1)
@@ -88,7 +91,7 @@ def get_memory_usage():
                 return {"total_bytes": total, "used_bytes": used, "free_bytes": free,
                         "percent": round(used * 100 / total, 1) if total else 0.0}
         except Exception:
-            pass
+            logger.debug("windows GlobalMemoryStatusEx sampling unavailable", exc_info=True)
     try:
         page_size = os.sysconf("SC_PAGE_SIZE")
         total = int(page_size * os.sysconf("SC_PHYS_PAGES"))
@@ -223,7 +226,7 @@ def get_network_io() -> dict:
         counters = psutil.net_io_counters()
         return {"rx_bytes": int(counters.bytes_recv), "tx_bytes": int(counters.bytes_sent)}
     except Exception:
-        pass
+        logger.debug("psutil network counters unavailable, falling back to /proc/net/dev", exc_info=True)
     try:
         rx = tx = 0
         with open("/proc/net/dev", "r", encoding="utf-8") as handle:
@@ -249,7 +252,7 @@ def get_disk_io() -> dict:
             raise OSError("disk io counters unavailable")
         return {"read_bytes": int(counters.read_bytes), "write_bytes": int(counters.write_bytes)}
     except Exception:
-        pass
+        logger.debug("psutil disk counters unavailable, falling back to /proc/diskstats", exc_info=True)
     try:
         read = written = 0
         with open("/proc/diskstats", "r", encoding="utf-8") as handle:
@@ -271,7 +274,7 @@ def get_uptime_seconds() -> int:
 
         return max(0, int(time.time() - psutil.boot_time()))
     except Exception:
-        pass
+        logger.debug("psutil boot time unavailable, falling back to /proc/uptime", exc_info=True)
     if os.name != "nt":
         try:
             with open("/proc/uptime", "r", encoding="utf-8") as handle:
@@ -302,7 +305,8 @@ def _background_collect():
             with _history_lock:
                 history.append(snapshot)
         except Exception:
-            pass
+            # 单项指标各自降级，这里失败 = 快照组装异常，监控已盲
+            logger.warning("monitor snapshot collection failed", exc_info=True)
         time.sleep(5)
 
 

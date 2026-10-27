@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import tempfile
 import threading
 import uuid
@@ -34,6 +35,8 @@ from app.services.automl_catalog import AUTOML_FAMILY_IDS, resolve_algorithm_fam
 from app.services.automl_execution import normalize_evaluation_config, resolve_automl_feature_columns
 from app.services.automl_search import normalize_search_controls, validate_target_columns
 from app.services.model_registry import ModelRegistryService, ModelRegistryError
+
+logger = logging.getLogger(__name__)
 
 
 class ClosedLoopError(ValueError):
@@ -155,7 +158,7 @@ def append_rows_to_dataset_artifact(
             try:
                 service.storage.delete(old_uri)
             except Exception:
-                pass
+                logger.debug("stale dataset artifact cleanup failed: %s", old_uri, exc_info=True)
     return int(len(frame))
 
 

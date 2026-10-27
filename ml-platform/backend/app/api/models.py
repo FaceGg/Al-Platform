@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
@@ -9,6 +10,8 @@ from app.api.auth import get_current_user
 from app.services.artifact_service import build_artifact_service
 from app.api.project_security import audit_service, require_project_access, resolve_project_access
 from app.services.audit import AuditIntent
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["models"])
 PROJECT_WRITE_ACTIONS = {
@@ -95,5 +98,6 @@ def delete_model(
     try:
         build_artifact_service(db).storage.delete(storage_uri)
     except Exception:
-        pass
+        # 数据库已删，孤儿文件仅影响存储占用；留痕便于清理
+        logger.debug("model artifact file cleanup failed: %s", storage_uri, exc_info=True)
     return {"message": "Model deleted"}

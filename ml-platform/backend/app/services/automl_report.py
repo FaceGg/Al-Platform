@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import io
 import json
 import tempfile
@@ -25,6 +26,8 @@ from sqlalchemy.orm import Session
 from app.models.training import TrainingJob
 from app.services.artifact_service import ArtifactService
 from app.services.automl_execution import read_automl_dataset, resolve_automl_feature_columns
+
+logger = logging.getLogger(__name__)
 
 
 REPORT_FILES = (
@@ -230,7 +233,8 @@ def generate_automl_report(
                 artifact_service.resolve(artifact_id, job.project_id, expected_type="report")
             return existing
         except Exception:
-            pass
+            # 缓存报告引用失效 → 重新生成（自愈路径），留痕即可
+            logger.debug("cached automl report artifacts missing for job %s, regenerating", job.id, exc_info=True)
     if not job.model_artifact_id or not job.dataset_artifact_id:
         raise AutoMLReportError("AUTOML_REPORT_SOURCE_UNAVAILABLE", "任务缺少模型或数据集制品")
     params = dict(job.params or {})

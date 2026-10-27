@@ -10,6 +10,7 @@ binds it to the platform AutoML engine; tests inject a deterministic fake.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections import Counter
 from typing import Callable
@@ -24,6 +25,8 @@ from app.services.agent.llm_client import run_s1, run_s2, run_s4
 from app.services.agent.sandbox import ast_violations, check_contract, run_sandbox
 from app.services.agent.wizard import merge_gates, pause_plan
 from app.services.llm_gateway import GatewayLLMConfig
+
+logger = logging.getLogger(__name__)
 
 MAX_ROUNDS = 3
 MAX_S2_ATTEMPTS = 8
@@ -144,7 +147,7 @@ class AgentRunner:
 
             build_report(self.db, run=self.run, config=self.config, actor=self.actor)
         except Exception:  # noqa: BLE001
-            pass
+            logger.warning("agent run %s: optimization report finalize failed", self.run.id, exc_info=True)
         try:
             from app.services.agent.experience import distill_experience_entries
 
@@ -157,7 +160,7 @@ class AgentRunner:
                 self.run.result_json = result
                 self.db.commit()
         except Exception:  # noqa: BLE001
-            pass
+            logger.warning("agent run %s: experience distillation failed", self.run.id, exc_info=True)
 
     # ----------------------------------------------------------------- stages
     def _run_s2_stage(self, report: AnalysisReport):

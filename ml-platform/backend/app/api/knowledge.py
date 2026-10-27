@@ -1,6 +1,7 @@
 """
 Knowledge Base, Knowledge Graph, and RAG API endpoints.
 """
+import logging
 import uuid
 import io
 import json
@@ -16,6 +17,8 @@ import numpy as np
 from app.database import get_db
 from app.models.knowledge import KnowledgeBase, Document, Chunk, GraphEntity, GraphRelation, ChatSession, ChatMessage
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 from app.api.auth import get_current_user
 from app.config import settings
 from app.services.llm_gateway import resolve_profile as resolve_llm_profile
@@ -1147,8 +1150,12 @@ def vectorize_documents(
                     embs = _compute_tfidf_embedding(texts_list)
                     vecs = np.array([np.array(json.loads(e), dtype=np.float32) for e in embs])
                     vstore.add(ids_list, vecs, meta_list)
-                except Exception as e:
-                    pass
+                except Exception:
+                    # 向量入库失败 = 检索静默退化，必须留痕
+                    logger.warning(
+                        "kb %s doc %s: batch embedding/vector add failed, %s chunks unindexed",
+                        kb_id, doc.id, len(ids_list), exc_info=True,
+                    )
         else:
             for chunk in chunks:
                 if chunk.embedding and chunk.embedding.strip():
@@ -1156,16 +1163,19 @@ def vectorize_documents(
                         vec = np.array(json.loads(chunk.embedding), dtype=np.float32)
                         vstore.add([str(chunk.id)], vec.reshape(1, -1), [{"doc_id": str(doc.id), "kb_id": kb_id, "filename": doc.filename, "chunk_index": chunk.chunk_index}])
                         total_chunks += 1
-                    except:
-                        pass
+                    except Exception:
+                        logger.warning(
+                            "kb %s doc %s chunk %s: stored embedding unparsable, chunk unindexed",
+                            kb_id, doc.id, chunk.id, exc_info=True,
+                        )
     doc.chunk_count = total_chunks
     db.commit()
     # Auto-save vector store
     save_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", f"vs_{kb_id}.pkl")
     try:
         vstore.save(save_path)
-    except:
-        pass
+    except Exception:
+        logger.warning("kb %s: vector store persist failed at %s", kb_id, save_path, exc_info=True)
     return {"message": f"Vectorized {total_chunks} chunks", "count": total_chunks}
 
 

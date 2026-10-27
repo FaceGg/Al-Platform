@@ -89,7 +89,7 @@ def _broadcast_from_thread(loop, run_id: str, payload: dict):
     try:
         asyncio.run_coroutine_threadsafe(manager.broadcast(run_id, payload), loop)
     except Exception:
-        pass
+        logger.debug("run %s: websocket broadcast from worker thread failed", run_id, exc_info=True)
 
 
 def _run_workflow(workflow_run_id: str, main_loop):

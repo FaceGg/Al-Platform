@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import math
 import re
 import tempfile
@@ -27,6 +28,8 @@ from app.models.operation import DurableOperation
 from app.schemas.dataset_import import ParseOptions
 from app.services.artifact_service import build_artifact_service
 from app.services.operation_lifecycle import claim_operation, complete_operation, fail_operation
+
+logger = logging.getLogger(__name__)
 
 
 class DataImportError(ValueError):
@@ -398,7 +401,7 @@ def create_dataset_import_process(
             try:
                 service.storage.delete(original.storage_uri)
             except Exception:
-                pass
+                logger.debug("uploaded artifact cleanup after import failure failed: %s", original.storage_uri, exc_info=True)
         raise
 
 
@@ -469,7 +472,7 @@ def process_dataset_import(
             try:
                 service.storage.delete(normalized_artifact.storage_uri)
             except Exception:
-                pass
+                logger.debug("normalized artifact cleanup after import failure failed: %s", normalized_artifact.storage_uri, exc_info=True)
         process = db.get(DatasetImportProcess, process_id)
         if process is not None:
             process.status = "failed"

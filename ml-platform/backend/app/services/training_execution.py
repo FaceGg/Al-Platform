@@ -1,5 +1,6 @@
 """Durable TrainingJob execution across ORM, tracking, and artifacts."""
 
+import logging
 import os
 import tempfile
 import time
@@ -28,6 +29,8 @@ from app.services.experiment_tracking import (
     resolve_tracking_configuration,
 )
 from app.services.iterative_training import IterativeTrainer, TrainingCheckpoint, TrainingConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -359,7 +362,7 @@ def execute_training_job(
             try:
                 tracking.end_run(run.run_id, "FAILED")
             except Exception:
-                pass
+                logger.warning("tracking end_run(FAILED) failed for %s, run left dangling", run.run_id, exc_info=True)
         error_code = (
             "TRACKING_UNAVAILABLE"
             if isinstance(error, TrackingError)

@@ -7,6 +7,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 import json
+import logging
 from io import BytesIO
 from pathlib import Path
 import tempfile
@@ -45,6 +46,8 @@ from app.services.spot_weld_features import (
     canonicalize_report_frame,
     decode_report_waveforms,
 )
+
+logger = logging.getLogger(__name__)
 
 LEGACY_ADAPTER_ONLY = True
 
@@ -299,7 +302,8 @@ def annotation_feature_frame(frame: pd.DataFrame, bundle: Mapping[str, Any]) -> 
             if derived_schema == feature_names:
                 return derived.loc[:, feature_names].apply(pd.to_numeric, errors="raise")
         except (QualityPipelineError, KeyError, TypeError, ValueError):
-            pass
+            # 重建失败将落到下方 QUALITY_INPUT_COLUMNS_INVALID 报错；留痕保留真实原因
+            logger.debug("legacy feature frame reconstruction failed", exc_info=True)
     if not feature_names or missing:
         raise QualityPipelineError(
             "QUALITY_INPUT_COLUMNS_INVALID",
