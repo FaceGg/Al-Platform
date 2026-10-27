@@ -34,7 +34,7 @@ require_command() {
 }
 
 create_production_env() {
-  local postgres_password minio_password secret_key tensorboard_secret inference_secret frontend_origin frontend_aliases frontend_bind_address annotator_bind_address
+  local postgres_password minio_password secret_key tensorboard_secret inference_secret frontend_origin frontend_aliases frontend_bind_address annotator_bind_address admin_initial_password
 
   frontend_origin="${PUBLIC_ORIGIN:-http://localhost:${PUBLIC_PORT}}"
   frontend_aliases="${PUBLIC_ORIGIN_ALIASES:-$(default_frontend_origin_aliases)}"
@@ -48,6 +48,9 @@ create_production_env() {
   inference_secret="$(openssl rand -hex 32)"
 
   umask 077
+  # 初始 admin 口令：默认随机生成（仅全新数据库首启生效）；统一口令请以
+  # ADMIN_INITIAL_PASSWORD 环境变量安装。真实口令只落 .env（600），不进安装日志。
+  admin_initial_password="${ADMIN_INITIAL_PASSWORD:-$(openssl rand -hex 12)}"
   cat > "$ENV_FILE" <<EOF
 # Generated for this deployment. Keep this file and secrets/ outside version control.
 POSTGRES_DB=ml_platform
@@ -56,6 +59,7 @@ POSTGRES_PASSWORD=${postgres_password}
 DATABASE_URL=postgresql+psycopg://ml_platform:${postgres_password}@postgres:5432/ml_platform
 
 SECRET_KEY=${secret_key}
+ML_PLATFORM_ADMIN_INITIAL_PASSWORD=${admin_initial_password}
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/1
 REDIS_EVENTS_URL=redis://redis:6379/2
@@ -148,6 +152,14 @@ if [[ ! -f "$ENV_FILE" ]]; then
   create_production_env
 else
   info "Existing .env detected; preserving its secrets and service configuration."
+fi
+
+# 初始 admin 口令（backend 引导用，仅全新数据库首启生效）：升级部署缺键时
+# 补随机值，保证全新卷/重置库后仍能引导；统一口令用 ADMIN_INITIAL_PASSWORD 安装。
+if ! grep -Eq '^[[:space:]]*ML_PLATFORM_ADMIN_INITIAL_PASSWORD[[:space:]]*=' "$ENV_FILE"; then
+  set_env_value ML_PLATFORM_ADMIN_INITIAL_PASSWORD "${ADMIN_INITIAL_PASSWORD:-$(openssl rand -hex 12)}"
+elif [[ -n "$ADMIN_INITIAL_PASSWORD" ]]; then
+  set_env_value ML_PLATFORM_ADMIN_INITIAL_PASSWORD "$ADMIN_INITIAL_PASSWORD"
 fi
 
 if [[ -n "$PUBLIC_ORIGIN" ]]; then

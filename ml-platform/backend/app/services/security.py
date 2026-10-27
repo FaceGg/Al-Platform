@@ -62,6 +62,34 @@ def expand_local_dev_origins(origins: Iterable[str]) -> frozenset[str]:
     return frozenset(normalized)
 
 
+# 注册口令策略：数字、大写字母、小写字母、符号四类字符至少出现三类。
+PASSWORD_MIN_CATEGORIES = 3
+PASSWORD_POLICY_CODE = "PASSWORD_POLICY_VIOLATION"
+PASSWORD_POLICY_MESSAGE = "密码必须包含数字、大写字母、小写字母、符号中的至少 3 种"
+
+
+def password_category_count(password: str) -> int:
+    """Count how many of the four character classes (digit/lower/upper/symbol) appear."""
+    has_digit = has_lower = has_upper = has_symbol = False
+    for char in password:
+        if char.isdigit():
+            has_digit = True
+        elif char.islower():
+            has_lower = True
+        elif char.isupper():
+            has_upper = True
+        else:
+            has_symbol = True
+    return sum((has_digit, has_lower, has_upper, has_symbol))
+
+
+def password_policy_error(password: str) -> str | None:
+    """Return the policy message when the password mixes fewer than three classes."""
+    if password_category_count(password) < PASSWORD_MIN_CATEGORIES:
+        return PASSWORD_POLICY_MESSAGE
+    return None
+
+
 @dataclass(frozen=True)
 class SecurityPolicy:
     """HTTP security policy for a single application surface."""

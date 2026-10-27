@@ -29,9 +29,12 @@ from app.services.platform_audit import (
 from app.services.security import (
     LOGIN_ACCOUNT_LIMIT,
     LOGIN_IP_LIMIT,
+    PASSWORD_POLICY_CODE,
+    PASSWORD_POLICY_MESSAGE,
     RateLimitPolicy,
     REGISTRATION_LIMIT,
     enforce_rate_limit,
+    password_policy_error,
 )
 
 
@@ -182,6 +185,25 @@ def register(
     db: Session = Depends(get_db),
 ):
     enforce_rate_limit(f"auth:register:ip:{_client_key(request)}", REGISTRATION_LIMIT)
+    # 口令组成策略（数字/大写/小写/符号至少 3 类）先于用户名查重：
+    # 不合策略的请求不应探测用户名是否已存在
+    policy_error = password_policy_error(data.password)
+    if policy_error is not None:
+        record_failed_platform_event(
+            db,
+            actor=None,
+            request=request,
+            intent=PlatformAuditIntent(
+                action="auth.register.failed",
+                resource_type="user",
+                changes={"username": data.username},
+            ),
+            error_code=PASSWORD_POLICY_CODE,
+        )
+        raise HTTPException(
+            400,
+            {"code": PASSWORD_POLICY_CODE, "message": PASSWORD_POLICY_MESSAGE},
+        )
     existing = db.query(User).filter(User.username == data.username).first()
 
     if existing:

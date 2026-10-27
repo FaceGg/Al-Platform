@@ -67,6 +67,9 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: ml-platform
         shell: pwsh
+        # 冒烟库为全新 SQLite：显式注入 CI 专用引导口令（与登录语句一致）
+        env:
+          ML_PLATFORM_ADMIN_INITIAL_PASSWORD: admin123
         run: |
           try {
             ./scripts/start.ps1
@@ -80,6 +83,8 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: ml-platform
         shell: bash
+        env:
+          ML_PLATFORM_ADMIN_INITIAL_PASSWORD: admin123
         run: |
           chmod +x scripts/*.sh
           trap './scripts/stop.sh' EXIT
@@ -140,6 +145,8 @@ jobs:
       WEEK12_ACCEPTANCE_ISOLATED: "1"
       WEEK12_OWNER_USERNAME: admin
       WEEK12_OWNER_PASSWORD: admin123
+      # 验收栈为全新数据库：后端 production 模式引导 admin 需要初始口令
+      ML_PLATFORM_ADMIN_INITIAL_PASSWORD: admin123
       WEEK12_FIXTURE_DATABASE_URL: postgresql+psycopg://ml_platform:ci-browser-postgres-password@127.0.0.1:15432/ml_platform
       WEEK12_FIXTURE_MINIO_ENDPOINT: 127.0.0.1:9000
       WEEK12_INFERENCE_RUNTIME_URL: http://127.0.0.1:17000

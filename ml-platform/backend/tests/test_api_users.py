@@ -8,6 +8,7 @@ from app.database import Base, engine
 from app.database import SessionLocal
 from app.models.user import User
 from app.services.security import rate_limiter
+from tests.auth_test_support import ensure_admin
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
@@ -21,14 +22,8 @@ def admin_login():
 class TestUsersAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Ensure admin user exists
-        r = client.post("/api/auth/register", json={
-            "username": "admin", "password": "admin123"
-        })
-        with SessionLocal() as db:
-            administrator = db.query(User).filter(User.username == "admin").one()
-            administrator.role = "admin"
-            db.commit()
+        # DB 直建 admin（不经注册 API，与注册口令策略解耦）
+        ensure_admin()
         cls.admin_h = admin_login()
 
     def setUp(self):
@@ -78,17 +73,19 @@ class TestUsersAPI(unittest.TestCase):
 
     def test_05_register_new_user(self):
         import random
+        import uuid as uuid_mod
         uname = f"user_{random.randint(10000, 99999)}"
         r = client.post("/api/auth/register", json={
             "username": uname,
-            "password": "newpass123",
+            "password": f"User-{uuid_mod.uuid4().hex[:8]}",
         })
         self.assertIn(r.status_code, [200, 201])
 
     def test_06_register_duplicate_username(self):
+        import uuid as uuid_mod
         r = client.post("/api/auth/register", json={
             "username": "admin",
-            "password": "somepass123",
+            "password": f"User-{uuid_mod.uuid4().hex[:8]}",
         })
         self.assertIn(r.status_code, [400, 409])
 
@@ -121,7 +118,7 @@ class TestUsersAPI(unittest.TestCase):
             username = f"batch_delete_{uuid.uuid4().hex[:10]}"
             created = client.post("/api/auth/register", json={
                 "username": username,
-                "password": "newpass123",
+                "password": f"User-{uuid.uuid4().hex[:8]}",
             })
             self.assertIn(created.status_code, [200, 201])
             usernames.append(username)
@@ -146,7 +143,7 @@ class TestUsersAPI(unittest.TestCase):
         username = f"batch_delete_member_{uuid.uuid4().hex[:10]}"
         created = client.post("/api/auth/register", json={
             "username": username,
-            "password": "newpass123",
+            "password": f"User-{uuid.uuid4().hex[:8]}",
         })
         self.assertIn(created.status_code, [200, 201])
 
@@ -174,7 +171,7 @@ class TestUsersAPI(unittest.TestCase):
         username = f"delete_owned_model_{uuid.uuid4().hex[:10]}"
         created = client.post("/api/auth/register", json={
             "username": username,
-            "password": "newpass123",
+            "password": f"User-{uuid.uuid4().hex[:8]}",
         })
         self.assertIn(created.status_code, [200, 201])
 

@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     secret_key_file: str | None = Field(default=None, repr=False, exclude=True)
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
+    # 引导管理员初始口令：只从环境变量 ML_PLATFORM_ADMIN_INITIAL_PASSWORD 读取，
+    # 源码/示例/测试不落真实凭据；production 未配置时启动引导 fail-closed
+    # （见 main.ensure_default_admin），local/CI 回退开发口令保持夹具兼容。
+    admin_initial_password: SecretStr | None = Field(
+        default=None, repr=False, exclude=True,
+    )
     frontend_origin: str = "http://localhost:5173"
     frontend_origin_aliases: str = ""
     annotator_public_origin: str = "http://localhost:8443"

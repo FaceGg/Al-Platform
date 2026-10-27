@@ -1,6 +1,7 @@
 """Security boundary regression contracts."""
 
 import unittest
+import uuid
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -13,6 +14,7 @@ from app.main import app
 from app.models.access import ProjectMember
 from app.models.api_model import PlatformAPI
 from app.models.compute import ComputeNode, EdgeDevice
+from app.models.platform_audit import PlatformAuditEvent
 from app.models.platform_models import AnnotationResult, AnnotationTask, Dataset
 from app.models.project import Project
 from app.models.user import User
@@ -161,6 +163,11 @@ class TestSecurityHardening(unittest.TestCase):
         cls.outsider_headers = cls._login("security-outsider")
         cls.viewer_headers = cls._login("security-viewer")
 
+    def setUp(self):
+        # 注册/登录限流是进程级的：新策略用例注册次数多，逐用例清空，
+        # 避免把配额泄漏给同进程后续测试文件（REGISTRATION_LIMIT 10/小时）
+        rate_limiter().clear()
+
     @classmethod
     def tearDownClass(cls):
         app.dependency_overrides.pop(get_db, None)
@@ -200,13 +207,70 @@ class TestSecurityHardening(unittest.TestCase):
     def test_02_registration_defaults_to_engineer(self):
         response = self.client.post(
             "/api/auth/register",
-            json={"username": "ordinary-user", "password": "safe-password"},
+            json={"username": "ordinary-user", "password": f"Pass-{uuid.uuid4().hex[:8]}"},
         )
         self.assertEqual(response.status_code, 200, response.text)
 
         with self.Session() as db:
             user = db.query(User).filter(User.username == "ordinary-user").one()
             self.assertEqual(user.role, "engineer")
+
+    def test_02b_registration_rejects_passwords_below_three_character_classes(self):
+        marker = uuid.uuid4().hex[:8]
+        # 纯字母 marker（剥掉十六进制数字），确保样例恰好只有两类字符
+        alpha = ("".join(c for c in uuid.uuid4().hex if c.isalpha()))[:8]
+        # 两类组合逐一拒绝：小写+数字 / 小写+符号 / 小写+大写
+        for index, password in enumerate((
+            f"weakpass{marker}9",
+            f"weak-pass-{alpha}",
+            f"WeakPass{alpha}",
+        )):
+            with self.subTest(password_kind=index):
+                response = self.client.post(
+                    "/api/auth/register",
+                    json={"username": f"policy-weak-{marker}-{index}", "password": password},
+                )
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertEqual(
+                    response.json()["detail"]["code"],
+                    "PASSWORD_POLICY_VIOLATION",
+                )
+
+    def test_02c_registration_accepts_passwords_with_three_or_more_character_classes(self):
+        marker = uuid.uuid4().hex[:8]
+        accepted = (
+            f"Str0ng-{marker}",           # 大写+小写+数字+符号（4 类）
+            f"Str0ng{marker}",            # 大写+小写+数字（3 类）
+            f"str0ng-{marker}",           # 小写+数字+符号（3 类）
+            f"STRONG-{marker.lower()}-9", # 大写+小写+符号（3 类）
+        )
+        for index, password in enumerate(accepted):
+            with self.subTest(password_kind=index):
+                response = self.client.post(
+                    "/api/auth/register",
+                    json={"username": f"policy-ok-{marker}-{index}", "password": password},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+
+    def test_02d_password_policy_failure_writes_audit_event_without_secret(self):
+        marker = uuid.uuid4().hex[:8]
+        password = f"weak{marker}"
+        response = self.client.post(
+            "/api/auth/register",
+            json={"username": f"policy-audit-{marker}", "password": password},
+        )
+        self.assertEqual(response.status_code, 400, response.text)
+
+        with self.Session() as db:
+            self.assertIsNone(
+                db.query(User).filter(User.username == f"policy-audit-{marker}").first(),
+            )
+            event = db.query(PlatformAuditEvent).filter(
+                PlatformAuditEvent.action == "auth.register.failed",
+                PlatformAuditEvent.error_code == "PASSWORD_POLICY_VIOLATION",
+            ).first()
+            self.assertIsNotNone(event)
+            self.assertNotIn(password, str(event.changes if event else None))
 
     def test_03_resource_cases_enforce_owner_and_hidden_outsider_access(self):
         for case in RESOURCE_CASES:

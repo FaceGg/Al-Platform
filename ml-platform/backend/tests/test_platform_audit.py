@@ -88,9 +88,10 @@ class TestPlatformAudit(unittest.TestCase):
         return {"Authorization": "Bearer " + response.json()["access_token"]}
 
     def test_registration_writes_a_redacted_platform_event(self):
+        password = f"Pass-{uuid.uuid4().hex[:8]}"
         response = self.client.post(
             "/api/auth/register",
-            json={"username": "audited-registration", "password": "safe-password"},
+            json={"username": "audited-registration", "password": password},
         )
         self.assertEqual(response.status_code, 200, response.text)
 
@@ -120,9 +121,10 @@ class TestPlatformAudit(unittest.TestCase):
             self.assertNotIn("wrong-password", str(event.changes))
 
     def test_duplicate_registration_writes_a_redacted_failed_event(self):
+        password = f"Pass-{uuid.uuid4().hex[:8]}"
         response = self.client.post(
             "/api/auth/register",
-            json={"username": "audit-user", "password": "wrong-password"},
+            json={"username": "audit-user", "password": password},
         )
         self.assertEqual(response.status_code, 400, response.text)
 
@@ -135,7 +137,7 @@ class TestPlatformAudit(unittest.TestCase):
             if event is not None:
                 self.assertEqual(event.result, "failed")
                 self.assertEqual(event.changes, {"username": "audit-user"})
-                self.assertNotIn("wrong-password", str(event.changes))
+                self.assertNotIn(password, str(event.changes))
 
     def test_admin_role_change_writes_a_platform_event(self):
         response = self.client.put(

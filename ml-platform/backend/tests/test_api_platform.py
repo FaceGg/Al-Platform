@@ -209,7 +209,7 @@ class TestPlatformAPI(unittest.TestCase):
     def test_12_public_api_is_read_only_for_non_owner(self):
         marker = uuid.uuid4().hex
         username = f"api-reader-{marker}"
-        password = "reader-password"
+        password = f"Reader-{marker[:8]}"
         registered = client.post(
             "/api/auth/register",
             json={"username": username, "password": password},

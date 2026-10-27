@@ -714,6 +714,8 @@ const ZH = {
     cancel: "取消",
   },
   apiErrors: {
+    PASSWORD_POLICY_VIOLATION: "密码必须包含数字、大写字母、小写字母、符号中的至少 3 种。",
+    USERNAME_EXISTS: "用户名已被注册。",
     MODEL_DEPLOYMENT_EXISTS: "模型正被推理部署使用:{message},请先删除对应推理部署。",
     KUBERNETES_ENDPOINT_INVALID: "API server 地址不合法(http 需集群标记与全局开关同时开启)。",
     KUBERNETES_ENDPOINT_FORBIDDEN: "API server 地址不在 allowlist 内,或命中禁用地址。",
@@ -1060,6 +1062,8 @@ infraGroup: "Infrastructure", adminGroup: "Administration", prompt_templates: "P
     tighten_feature_engineering: "Tighten Feature Engineering",
   },
   apiErrors: {
+    PASSWORD_POLICY_VIOLATION: "The password must contain at least 3 of: digits, uppercase letters, lowercase letters, and symbols.",
+    USERNAME_EXISTS: "This username is already taken.",
     MODEL_DEPLOYMENT_EXISTS: "The model is still referenced by inference deployment \"{message}\"; delete that deployment first.",
     KUBERNETES_ENDPOINT_INVALID: "API server URL is invalid (http requires both the cluster flag and the global switch).",
     KUBERNETES_ENDPOINT_FORBIDDEN: "API server host is outside the allowlist or explicitly blocked.",

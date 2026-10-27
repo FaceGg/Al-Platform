@@ -56,6 +56,10 @@ services:
     environment: &production-environment
       APP_MODE: production
       PYTHON_SCRIPT_VENV_DIR: /data/python-script-venv
+      # 初始管理员口令（仅全新数据库首启需要；已部署环境 admin 已存在不受影响）。
+      # 留空时后端在"库中无 admin"场景拒绝启动（fail-closed），由后端裁决而非
+      # compose 强制，保证老部署升级重启不因缺新变量而失败。
+      ML_PLATFORM_ADMIN_INITIAL_PASSWORD: ${ML_PLATFORM_ADMIN_INITIAL_PASSWORD:-}
       # UMAP（numba JIT）在部分镜像/系统路径下无法定位缓存定位器，显式重定向
       NUMBA_CACHE_DIR: /tmp/numba-cache
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}

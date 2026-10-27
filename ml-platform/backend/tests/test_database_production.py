@@ -15,6 +15,7 @@ from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import sqlalchemy as sa
+from pydantic import SecretStr
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.exc import IntegrityError
@@ -252,8 +253,88 @@ class TestDatabaseLifespan(TestCase):
                 return None
 
         db = Session()
-        main_module.ensure_default_admin(lambda: db)
+        # 引导口令只认环境注入；夹具用随机值，不在源码落凭据字面量
+        with mock.patch.object(
+            main_module,
+            "settings",
+            SimpleNamespace(
+                app_mode="production",
+                admin_initial_password=SecretStr(f"seed-{uuid.uuid4().hex}"),
+            ),
+        ):
+            main_module.ensure_default_admin(lambda: db)
         self.assertTrue(db.rollback_called)
+
+    def test_bootstrap_refuses_production_without_configured_password(self):
+        class Query:
+            def filter(self, *_args):
+                return self
+            def first(self):
+                return None
+
+        class Session:
+            def query(self, _model):
+                return Query()
+            def close(self):
+                return None
+
+        with mock.patch.object(
+            main_module,
+            "settings",
+            SimpleNamespace(app_mode="production", admin_initial_password=None),
+        ):
+            with self.assertRaises(RuntimeError):
+                main_module.ensure_default_admin(Session)
+
+    def test_bootstrap_uses_configured_initial_password(self):
+        marker = f"bootstrap-{uuid.uuid4().hex}"
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            db_engine = create_engine(database_url, **engine_options(database_url))
+            from app.database import Base
+
+            Base.metadata.create_all(bind=db_engine)
+            factory = sessionmaker(autocommit=False, autoflush=False, bind=db_engine)
+            try:
+                with mock.patch.object(
+                    main_module,
+                    "settings",
+                    SimpleNamespace(
+                        app_mode="production",
+                        admin_initial_password=SecretStr(marker),
+                    ),
+                ):
+                    main_module.ensure_default_admin(factory)
+                with factory() as check:
+                    admin = check.query(User).filter(User.username == "admin").one()
+                from passlib.context import CryptContext
+
+                pwd_ctx = CryptContext(schemes=["pbkdf2_sha256"])
+                self.assertTrue(pwd_ctx.verify(marker, admin.password_hash))
+            finally:
+                db_engine.dispose()
+
+    def test_local_bootstrap_skips_when_password_unset(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with _TemporaryDatabase() as database_url:
+            db_engine = create_engine(database_url, **engine_options(database_url))
+            from app.database import Base
+
+            Base.metadata.create_all(bind=db_engine)
+            factory = sessionmaker(autocommit=False, autoflush=False, bind=db_engine)
+            try:
+                with mock.patch.object(
+                    main_module,
+                    "settings",
+                    SimpleNamespace(app_mode="local", admin_initial_password=None),
+                ):
+                    main_module.ensure_default_admin(factory)
+                with factory() as check:
+                    self.assertIsNone(
+                        check.query(User).filter(User.username == "admin").first(),
+                    )
+            finally:
+                db_engine.dispose()
 
     def test_lifespan_uses_injected_database_dependencies(self):
         TEMP_ROOT.mkdir(parents=True, exist_ok=True)
@@ -267,7 +348,10 @@ class TestDatabaseLifespan(TestCase):
             test_app = FastAPI(lifespan=main_module.lifespan)
             main_module.configure_runtime_dependencies(
                 test_app,
-                app_settings=SimpleNamespace(app_mode="local"),
+                app_settings=SimpleNamespace(
+                    app_mode="local",
+                    admin_initial_password=SecretStr(f"lifespan-{uuid.uuid4().hex}"),
+                ),
                 db_engine=db_engine,
                 session_factory=session_factory,
             )
