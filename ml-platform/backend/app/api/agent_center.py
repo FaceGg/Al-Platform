@@ -65,7 +65,9 @@ class AgentRunDetail(AgentRunOut):
 
     dataset_artifact_id: str | None
     llm_model_id: str | None
+    llm_profile_name: str | None
     token_budget: int | None
+    heartbeat_at: str | None
     guidance_json: dict | None
     memory_json: dict
     result_json: dict
@@ -219,6 +221,12 @@ def get_agent_run(
     run = db.get(AgentRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail={"code": "AGENT_RUN_NOT_FOUND"})
+    llm_profile_name = None
+    if run.llm_profile_id is not None:
+        from app.models.llm_profile import LLMProfile
+
+        profile = db.get(LLMProfile, run.llm_profile_id)
+        llm_profile_name = profile.name if profile is not None else None
     return AgentRunDetail(
         id=str(run.id),
         project_id=_uuid_or_none(run.project_id),
@@ -233,11 +241,40 @@ def get_agent_run(
         updated_at=_iso(run.updated_at),
         dataset_artifact_id=_uuid_or_none(run.dataset_artifact_id),
         llm_model_id=run.llm_model_id,
+        llm_profile_name=llm_profile_name,
         token_budget=run.token_budget,
+        heartbeat_at=_iso(getattr(run, "heartbeat_at", None)),
         guidance_json=getattr(run, "guidance_json", None),
         memory_json=run.memory_json or {},
         result_json=run.result_json or {},
     )
+
+
+# 活跃态不可删：执行线程仍在写 run 行，删除会产生孤儿写入与误导性报错。
+DELETABLE_RUN_STATUSES = frozenset(
+    {"waiting_escalate", "waiting_guidance", "accepted", "failed"}
+)
+
+
+@router.delete("/runs/{run_id}", status_code=204)
+def delete_agent_run(
+    run_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    run = db.get(AgentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail={"code": "AGENT_RUN_NOT_FOUND"})
+    if current_user.role != "admin" and run.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail={"code": "AGENT_RUN_FORBIDDEN"})
+    if run.status not in DELETABLE_RUN_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "AGENT_RUN_ACTIVE", "status": run.status},
+        )
+    db.delete(run)
+    db.commit()
+    return None
 
 
 @router.get("/recipes", response_model=list[PipelineRecipeOut])

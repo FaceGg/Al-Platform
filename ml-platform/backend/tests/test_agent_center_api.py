@@ -216,5 +216,57 @@ class TestRecipeListing(AgentCenterHarness, unittest.TestCase):
         self.assertEqual(response.status_code, 401)
 
 
+class TestDeleteAgentRun(AgentCenterHarness, unittest.TestCase):
+    def _seed_run(self, status, created_by=None):
+        with SessionLocal() as db:
+            run = AgentRun(
+                target_column="DECIDE",
+                status=status,
+                current_stage="s4",
+                round_count=1,
+                token_used=10,
+                memory_json={},
+                result_json={},
+                created_by=uuid.UUID(created_by) if created_by else None,
+            )
+            db.add(run)
+            db.commit()
+            return str(run.id)
+
+    def test_creator_can_delete_a_terminal_run(self):
+        run_id = self._seed_run("waiting_escalate", created_by=self.user_id)
+        response = client.delete(f"/api/agent/runs/{run_id}", headers=self.h)
+        self.assertEqual(response.status_code, 204)
+        with SessionLocal() as db:
+            self.assertIsNone(db.get(AgentRun, uuid.UUID(run_id)))
+
+    def test_active_run_rejects_delete_with_409(self):
+        run_id = self._seed_run("running", created_by=self.user_id)
+        response = client.delete(f"/api/agent/runs/{run_id}", headers=self.h)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"]["code"], "AGENT_RUN_ACTIVE")
+
+    def test_non_owner_non_admin_rejects_delete_with_403(self):
+        from app.api.auth import pwd_context
+
+        other_user = "agent-other-" + uuid4().hex[:8]
+        other_password = uuid4().hex + uuid4().hex[:4]
+        with SessionLocal() as db:
+            db.add(User(username=other_user, password_hash=pwd_context.hash(other_password), role="engineer"))
+            db.commit()
+        token = client.post(
+            "/api/auth/login", data={"username": other_user, "password": other_password},
+        ).json()["access_token"]
+        run_id = self._seed_run("waiting_escalate", created_by=self.user_id)
+        response = client.delete(
+            f"/api/agent/runs/{run_id}", headers={"Authorization": "Bearer " + token},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_delete_unknown_run_returns_404(self):
+        response = client.delete(f"/api/agent/runs/{uuid4()}", headers=self.h)
+        self.assertEqual(response.status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

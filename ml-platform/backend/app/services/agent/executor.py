@@ -168,14 +168,29 @@ def launch_agent_run(run_id, actor_id=None) -> None:
         try:
             execute_agent_run(run_id, actor_id=actor_id)
         except Exception:  # noqa: BLE001 - 后台线程崩溃也要在 run 行留下尸检信息
+            import logging
+            import traceback as _traceback
+
             from app.database import SessionLocal
 
+            logging.getLogger(__name__).exception(
+                "agent executor thread crashed for run %s", run_id
+            )
             db = SessionLocal()
             try:
                 run = db.get(AgentRun, UUID(str(run_id)))
                 if run is not None and run.status in ("pending", "running"):
                     run.status = "waiting_escalate"
                     run.error_code = "AGENT_EXECUTOR_CRASHED"
+                    # 崩溃堆栈落档案（85bd8c96 事故：只留错误码不留堆栈，
+                    # 详情页无从归因）。截尾防超大堆栈撑爆 JSON 列。
+                    memory = run.memory_json or {}
+                    memory["escalation"] = {
+                        "code": "AGENT_EXECUTOR_CRASHED",
+                        "detail": _traceback.format_exc()[-2000:],
+                        "round": run.round_count,
+                    }
+                    run.memory_json = memory
                     db.commit()
             finally:
                 db.close()

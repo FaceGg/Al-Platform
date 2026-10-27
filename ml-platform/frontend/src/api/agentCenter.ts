@@ -31,7 +31,9 @@ export interface PipelineRecipeItem {
 export interface AgentRunDetail extends AgentRunItem {
   dataset_artifact_id: string | null;
   llm_model_id: string | null;
+  llm_profile_name: string | null;
   token_budget: number | null;
+  heartbeat_at: string | null;
   memory_json: {
     rounds?: {
       round?: number;
@@ -44,6 +46,13 @@ export interface AgentRunDetail extends AgentRunItem {
     injected_experience?: Array<{ entry?: string; lesson?: string; action?: string; confidence?: number; origin?: string }>;
     escalation?: { code?: string; detail?: string | null; round?: number };
   };
+  guidance_json: {
+    analysis?: { column_notes?: unknown[]; row_notes?: unknown[]; prompts?: string[]; suspect_focus?: string[] };
+    feature?: { data_shape?: string; must_keep?: string[]; suggest_drop?: string[]; prompts?: string[] };
+    modeling?: { algorithm_whitelist?: string[]; param_hints?: Record<string, unknown>; prompts?: string[] };
+    evaluation?: { custom_test_dataset_id?: string | null; metric_gates?: Record<string, number>; review_focus?: string[] };
+    pause_at_stages?: string[];
+  } | null;
   result_json: Record<string, unknown>;
 }
 
@@ -55,6 +64,10 @@ export async function listAgentRuns(limit = 50): Promise<AgentRunItem[]> {
 export async function getAgentRun(runId: string): Promise<AgentRunDetail> {
   const response = await apiClient.get(`/agent/runs/${runId}`);
   return response.data;
+}
+
+export async function deleteAgentRun(runId: string): Promise<void> {
+  await apiClient.delete(`/agent/runs/${runId}`);
 }
 
 export async function resumeAgentRun(runId: string): Promise<AgentRunDetail> {

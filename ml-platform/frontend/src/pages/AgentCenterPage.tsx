@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ReloadOutlined, RocketOutlined } from "@ant-design/icons";
+import { ReloadOutlined, RocketOutlined, DeleteOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import RecipeRow from "../components/RecipeRow";
 import KnowledgeCenterContent from "../components/KnowledgeCenterContent";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 import {
+  deleteAgentRun,
   listAgentRuns,
   listPipelineRecipes,
   type AgentRunItem,
@@ -211,10 +212,22 @@ export default function AgentCenterPage() {
                     <td>{run.current_stage.toUpperCase()} · {zh ? "轮" : "r"}{run.round_count}</td>
                     <td>{run.token_used.toLocaleString()}</td>
                     <td>{relativeTime(run.updated_at ?? run.created_at, zh)}</td>
-                    <td>
+                    <td style={{ whiteSpace: "nowrap" }}>
                       <button type="button" className="v2-btn sm" onClick={() => navigate(`/agent/task/${run.id}`)}>
                         {zh ? "详情 ›" : "Details ›"}
-                      </button>
+                      </button>{" "}
+                      <DeleteOutlined
+                        title={["pending", "running"].includes(run.status) ? (zh ? "运行中的任务不可删除" : "Active run") : (zh ? "删除任务" : "Delete run")}
+                        style={{
+                          marginLeft: 6, cursor: ["pending", "running"].includes(run.status) ? "not-allowed" : "pointer",
+                          color: ["pending", "running"].includes(run.status) ? "var(--v2-dim)" : "var(--v2-red)",
+                        }}
+                        onClick={() => {
+                          if (["pending", "running"].includes(run.status)) return;
+                          if (!window.confirm(zh ? "确认删除该任务及其档案？此操作不可恢复。" : "Delete this run and its archive?")) return;
+                          deleteAgentRun(run.id).then(loadAgentData).catch(() => undefined);
+                        }}
+                      />
                     </td>
                   </tr>
                 ))}
