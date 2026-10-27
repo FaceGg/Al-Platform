@@ -58,7 +58,7 @@ def upgrade() -> None:
     op.execute(
         sa.table(
             "announcements",
-            sa.column("id", sa.UUID),
+            sa.column("id", sa.Uuid),
             sa.column("title", sa.String),
             sa.column("content", sa.Text),
             sa.column("pinned", sa.Boolean),
@@ -68,7 +68,7 @@ def upgrade() -> None:
         ).insert().values(
             [
                 {
-                    "id": str(uuid.uuid4()),
+                    "id": uuid.uuid4(),
                     "title": item["title"],
                     "content": item["content"],
                     "pinned": item["pinned"],
