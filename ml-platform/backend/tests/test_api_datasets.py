@@ -437,5 +437,110 @@ class TestDatasetsAPI(unittest.TestCase):
         self.assertTrue(all(item.get("format") == "joblib" for item in items))
 
 
+class TestPreviewFastPath(unittest.TestCase):
+    """Preview 快路径：pyarrow 有界读取、编码守卫与行数缓存回填。"""
+
+    @classmethod
+    def setUpClass(cls):
+        ensure_admin(username="preview_fast_admin")
+        r = client.post(
+            "/api/auth/login",
+            data={"username": "preview_fast_admin", "password": "admin123"},
+        )
+        cls.h = {"Authorization": "Bearer " + r.json()["access_token"]}
+        r = client.post("/api/projects", json={"name": "PreviewFastPathProject"}, headers=cls.h)
+        cls.project_id = r.json()["id"]
+
+    def test_preview_csv_rows_bounded_utf8(self):
+        from pathlib import Path
+        import tempfile
+
+        from app.api.datasets import _preview_csv_rows
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bounded.csv"
+            path.write_text("a,b,c\n" + "".join(
+                f"{i},x{i},{i}.5\n" for i in range(5)
+            ), encoding="utf-8")
+            frame = _preview_csv_rows(path, 3)
+            self.assertIsNotNone(frame)
+            self.assertEqual(len(frame), 3)
+            self.assertEqual(list(frame.columns), ["a", "b", "c"])
+
+    def test_preview_csv_rows_gb18030_returns_none(self):
+        from pathlib import Path
+        import tempfile
+
+        from app.api.datasets import _preview_csv_rows
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "gb.csv"
+            path.write_text("a,b\n1,中文内容\n2,中文测试\n", encoding="gb18030")
+            # 二进制列守卫：gb18030 文件必须回退 pandas 编码兜底路径。
+            self.assertIsNone(_preview_csv_rows(path, 2))
+
+    def test_preview_csv_rows_header_only_returns_none(self):
+        from pathlib import Path
+        import tempfile
+
+        from app.api.datasets import _preview_csv_rows
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.csv"
+            path.write_text("a,b\n", encoding="utf-8")
+            self.assertIsNone(_preview_csv_rows(path, 3))
+
+    def test_preview_backfills_row_count_then_reuses_cache(self):
+        import tempfile
+        from pathlib import Path
+
+        from app.services.artifact_service import build_artifact_service
+
+        # create_from_file 不写 row_count（无版本行、无 metadata 缓存），
+        # 首次预览应走全量兜底并回填，第二次直接复用缓存。
+        with SessionLocal() as db, tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "legacy.csv"
+            path.write_text("x,y\n1,a\n2,b\n3,c\n", encoding="utf-8")
+            service = build_artifact_service(db)
+            artifact = service.create_from_file(
+                self.project_id, path, "preview-legacy-%s" % uuid.uuid4().hex[:6], "dataset"
+            )
+            db.commit()
+            artifact_id = str(artifact.id)
+
+        r = client.get(f"/api/datasets/{artifact_id}/preview?limit=2", headers=self.h)
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        self.assertEqual(data["total_rows"], 3)
+        self.assertEqual(len(data["preview"]), 2)
+        self.assertEqual(data["columns"], ["x", "y"])
+
+        with SessionLocal() as db:
+            stored = db.query(Artifact).filter(Artifact.id == uuid.UUID(artifact_id)).one()
+            self.assertEqual((stored.metadata_ or {}).get("row_count"), 3)
+
+        r = client.get(f"/api/datasets/{artifact_id}/preview?limit=2", headers=self.h)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["total_rows"], 3)
+
+    def test_upload_preview_fast_path_response_shape(self):
+        # 常规上传：行数来自 DatasetVersion，快路径直接生效且响应结构不变。
+        content = "m,n\n1,2.5\n2,3.5\n3,4.5\n4,5.5\n"
+        r = client.post(
+            f"/api/projects/{self.project_id}/datasets/upload",
+            files={"file": ("fast.csv", io.BytesIO(content.encode("utf-8")), "text/csv")},
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        dataset_id = r.json()["id"]
+        r = client.get(f"/api/datasets/{dataset_id}/preview?limit=2", headers=self.h)
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        self.assertEqual(data["total_rows"], 4)
+        self.assertEqual(data["columns"], ["m", "n"])
+        self.assertEqual(len(data["preview"]), 2)
+        self.assertEqual(set(data["dtypes"].keys()), {"m", "n"})
+
+
 if __name__ == "__main__":
     unittest.main()

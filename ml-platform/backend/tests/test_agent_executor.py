@@ -37,6 +37,7 @@ from app.services.agent.executor import (  # noqa: E402
     AgentRunNotExecutable,
     execute_agent_run,
     launch_agent_run,
+    recover_stale_agent_runs,
 )
 from app.services.artifact_service import build_artifact_service  # noqa: E402
 from tests.auth_test_support import ensure_admin  # noqa: E402
@@ -184,6 +185,8 @@ class TestExecutor(ExecutorHarness, unittest.TestCase):
         with SessionLocal() as db:
             run = db.get(AgentRun, uuid.UUID(run_id))
             self.assertEqual(run.status, "accepted")
+            # 心跳在执行链路中被写入（含启动时刻），恢复扫描据此判活。
+            self.assertIsNotNone(run.heartbeat_at)
             self.assertGreater(
                 run.result_json["metrics"].get("recall_minority", 0), 0.8
             )
@@ -208,6 +211,60 @@ class TestExecutor(ExecutorHarness, unittest.TestCase):
         run_id = self._make_run(target_column="nonexistent_col")
         with self.assertRaises(AgentRunNotExecutable):
             execute_agent_run(run_id)
+
+
+class TestStaleAgentRunSweep(ExecutorHarness, unittest.TestCase):
+    """启动期恢复扫描：陈旧/NULL 心跳的 running 行标记失败，其余不动。"""
+
+    def _make_stale_run(self, **extra) -> str:
+        run_id = self._make_run(status="running", **extra)
+        return run_id
+
+    def test_sweep_marks_stale_and_null_heartbeat_running_runs_failed(self):
+        from datetime import timedelta
+
+        from app.tasks.time_utils import utcnow as _stale_utcnow
+
+        stale_run_id = self._make_stale_run()
+        null_heartbeat_run_id = self._make_stale_run(heartbeat_at=None)
+        with SessionLocal() as db:
+            # 显式写入 1 小时前的心跳，确保该行陈旧（而不是依赖 0 秒截断）。
+            db.get(AgentRun, uuid.UUID(stale_run_id)).heartbeat_at = (
+                _stale_utcnow() - timedelta(hours=1)
+            )
+            db.commit()
+        with SessionLocal() as db:
+            swept = recover_stale_agent_runs(db, stale_after=timedelta(minutes=10))
+        self.assertGreaterEqual(swept, 2)
+        with SessionLocal() as db:
+            for run_id in (stale_run_id, null_heartbeat_run_id):
+                run = db.get(AgentRun, uuid.UUID(run_id))
+                self.assertEqual(run.status, "failed")
+                self.assertEqual(run.error_code, "AGENT_RUN_INTERRUPTED")
+
+    def test_sweep_leaves_fresh_running_and_paused_runs_untouched(self):
+        from datetime import timedelta
+
+        from app.tasks.time_utils import utcnow as _test_utcnow
+
+        # 预清理：把库里其他用例遗留的陈旧 running 行先清成 failed，
+        # 保证本用例断言只针对自己创建的新鲜行。
+        with SessionLocal() as db:
+            recover_stale_agent_runs(db, stale_after=timedelta(seconds=0))
+        fresh_run_id = self._make_run(status="running")
+        paused_run_id = self._make_run(status="waiting_guidance")
+        with SessionLocal() as db:
+            db.get(AgentRun, uuid.UUID(fresh_run_id)).heartbeat_at = _test_utcnow()
+            db.get(AgentRun, uuid.UUID(paused_run_id)).heartbeat_at = _test_utcnow()
+            db.commit()
+        with SessionLocal() as db:
+            swept = recover_stale_agent_runs(db, stale_after=timedelta(seconds=600))
+        self.assertEqual(swept, 0)
+        with SessionLocal() as db:
+            self.assertEqual(db.get(AgentRun, uuid.UUID(fresh_run_id)).status, "running")
+            self.assertEqual(
+                db.get(AgentRun, uuid.UUID(paused_run_id)).status, "waiting_guidance"
+            )
 
 
 class TestL2InjectionAndDistill(ExecutorHarness, unittest.TestCase):

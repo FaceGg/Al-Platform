@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     redis_events_url: SecretStr | None = Field(default=None, exclude=True)
     task_soft_timeout_seconds: int = Field(default=3600, gt=0)
     task_hard_timeout_seconds: int = Field(default=3900, gt=0)
+    # Agent 运行心跳陈旧阈值：超过该秒数未刷新心跳的 running 行会被
+    # 启动期恢复扫描标记为失败（AGENT_RUN_INTERRUPTED）。
+    agent_run_stale_after_seconds: int = Field(default=600, ge=60)
 
     artifact_storage_backend: Literal["local", "minio"] = "local"
     artifact_storage_dir: str = "./artifact_store"

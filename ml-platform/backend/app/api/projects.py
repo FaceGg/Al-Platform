@@ -7,6 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload
 from app.config import settings
 from app.database import get_db
+from app.models.access import ProjectMember
 from app.models.experiment import Experiment
 from app.models.artifact import Artifact
 from app.models.project import Project
@@ -327,6 +328,14 @@ def list_projects(
         .order_by(ordering)
         .all()
     )
+    # N+1 修复：一次取当前用户全部成员关系，按 project_id 映射角色；
+    # owner 项目直接判 owner，避免逐项目再查 Project/ProjectMember。
+    memberships = (
+        db.query(ProjectMember)
+        .filter(ProjectMember.user_id == current_user.id)
+        .all()
+    )
+    role_map = {membership.project_id: membership.role for membership in memberships}
     items = [{
         "id": project.id,
         "name": project.name,
@@ -335,7 +344,9 @@ def list_projects(
         "creator_username": project.owner.username if project.owner is not None else None,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
-        "project_role": service.resolve(db, project.id, current_user.id).role.value,
+        "project_role": (
+            "owner" if project.owner_id == current_user.id else role_map.get(project.id)
+        ),
     } for project in projects]
     return {"items": items, "total": len(items)}
 

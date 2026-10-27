@@ -138,6 +138,11 @@ def execute_agent_run(run_id, actor_id=None) -> AgentRun:
             raise AgentRunNotExecutable("run not found: %s" % run_id)
         if run.status not in ("pending", "running", "waiting_guidance"):
             return run
+        # 记录进程内执行心跳：恢复扫描据此判断 run 是否仍在执行。
+        from app.tasks.time_utils import utcnow as _agent_utcnow
+
+        run.heartbeat_at = _agent_utcnow()
+        db.commit()
         frame = _load_dataset_frame(db, run)
         config = _resolve_config(db, run)
         profile = profile_data(frame, target=run.target_column)
@@ -177,3 +182,29 @@ def launch_agent_run(run_id, actor_id=None) -> None:
 
     thread = threading.Thread(target=_worker, name="agent-run-%s" % str(run_id)[:8], daemon=True)
     thread.start()
+
+
+def recover_stale_agent_runs(db, stale_after) -> int:
+    """把进程重启后遗留的 running 状态 AgentRun 标记为失败。
+
+    判定依据 heartbeat_at：NULL（列出现前的历史行）或早于 stale_after 的行
+    都视为已中断。waiting_guidance（暂停等待用户确认）与终态行不参与清扫。
+    """
+    from sqlalchemy import or_
+
+    from app.tasks.time_utils import utcnow as _sweep_utcnow
+
+    cutoff = _sweep_utcnow() - stale_after
+    stale_runs = db.query(AgentRun).filter(
+        AgentRun.status == "running",
+        or_(
+            AgentRun.heartbeat_at.is_(None),
+            AgentRun.heartbeat_at < cutoff,
+        ),
+    ).all()
+    for run in stale_runs:
+        run.status = "failed"
+        run.error_code = "AGENT_RUN_INTERRUPTED"
+    if stale_runs:
+        db.commit()
+    return len(stale_runs)

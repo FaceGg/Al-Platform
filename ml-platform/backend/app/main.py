@@ -4,6 +4,7 @@ GENERICIZATION_BRIDGE_ONLY = True
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import timedelta
 import asyncio
 import logging
 
@@ -236,6 +237,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     with session_factory() as db:
         repair_orphaned_project_owners(db)
         recover_orphaned_local_quality_runs(db)
+        # 启动期清扫进程重启遗留的 running 状态 AgentRun（依据 heartbeat_at）。
+        from app.services.agent.executor import recover_stale_agent_runs
+
+        recover_stale_agent_runs(
+            db,
+            stale_after=timedelta(seconds=getattr(
+                app_settings,
+                "agent_run_stale_after_seconds",
+                settings.agent_run_stale_after_seconds,
+            )),
+        )
     # Capture event loop for background thread WebSocket broadcast
     import app.api.runs as runs_mod
     runs_mod._main_loop = asyncio.get_running_loop()

@@ -27,6 +27,12 @@ from app.services.llm_profile_crypto import (
     encrypt_llm_api_key,
 )
 
+# 模块级共享 HTTP 客户端：连接池复用，避免每次调用重新建立 TCP/TLS。
+# 每次请求仍带各自的超时参数（timeout=...），不改任何超时语义。
+_HTTP_CLIENT = httpx.Client(
+    limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
+)
+
 
 class LLMProfileNotFoundError(LookupError):
     """Explicit profile_id does not resolve to an existing profile."""
@@ -135,7 +141,7 @@ def chat_completion(
     )
     payload_chars = sum(len(message.get("content") or "") for message in messages)
     started = time.perf_counter()
-    response = httpx.post(
+    response = _HTTP_CLIENT.post(
         config.api_url,
         headers={"Authorization": f"Bearer {config.api_key}"} if config.api_key else {},
         json={
@@ -239,7 +245,7 @@ def _post_chat(
 ) -> tuple[int, float, str]:
     """Single outbound probe call, kept trivially monkeypatchable."""
     started = time.perf_counter()
-    response = httpx.post(
+    response = _HTTP_CLIENT.post(
         api_url,
         json={
             "model": model_id,

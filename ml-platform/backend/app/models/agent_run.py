@@ -63,6 +63,9 @@ class AgentRun(Base):
     # UserGuidance captured at submission time (spec §11): analysis/feature/
     # modeling/evaluation sections plus the step-by-step pause plan.
     guidance_json = Column(JSON, nullable=True)
+    # Liveness heartbeat refreshed by the in-process executor; NULL marks rows
+    # written before the column existed (swept as stale by recovery).
+    heartbeat_at = Column(DateTime, nullable=True)
     created_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

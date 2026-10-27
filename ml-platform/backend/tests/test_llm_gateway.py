@@ -28,6 +28,7 @@ from app.models.user import User  # noqa: E402
 from app.services.llm_gateway import (  # noqa: E402
     GatewayLLMConfig,
     LLMProfileNotFoundError,
+    _HTTP_CLIENT,
     chat_completion,
     resolve_profile,
 )
@@ -127,8 +128,8 @@ class TestLLMGateway(unittest.TestCase):
             }
             return response
 
-        with SessionLocal() as db, mock.patch(
-            "app.services.llm_gateway.httpx.post", side_effect=fake_post
+        with SessionLocal() as db, mock.patch.object(
+            _HTTP_CLIENT, "post", side_effect=fake_post
         ):
             user = db.query(User).filter(User.username == _ADMIN_USER).first()
             reply, usage = chat_completion(

@@ -55,6 +55,10 @@ class TestProjectsCRUD(unittest.TestCase):
         self.assertIn("items", data)
         self.assertIn("total", data)
         self.assertGreaterEqual(data["total"], 2)
+        # N+1 修复后角色仍按 owner/membership 正确返回（批量映射不改变语义）。
+        for item in data["items"]:
+            self.assertIn("project_role", item)
+            self.assertIn(item["project_role"], [None, "owner", "editor", "operator", "viewer"])
 
     def test_04_get_project(self):
         pid = self.created_ids[0]

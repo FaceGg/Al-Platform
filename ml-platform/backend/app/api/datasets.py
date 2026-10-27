@@ -421,6 +421,63 @@ def _read_dataset(path: Path):
     raise last_error
 
 
+def _preview_csv_rows(path: Path, limit: int):
+    """Bounded streaming CSV preview read (pyarrow).
+
+    Returns a pandas frame of at most ``limit`` rows, or None when the file
+    cannot be fast-pathed (non-UTF-8 encodings surface as binary columns,
+    parse errors bubble to the caller's fallback). The caller then falls
+    back to the full pandas read without changing the response shape.
+    """
+    import pyarrow as pa
+    import pyarrow.csv as pacsv
+
+    rows = []
+    with path.open("rb") as handle:
+        reader = pacsv.open_csv(handle)
+        try:
+            while sum(batch.num_rows for batch in rows) < limit:
+                batch = reader.read_next_batch()
+                if batch is None or batch.num_rows == 0:
+                    break
+                rows.append(batch)
+        except StopIteration:
+            pass
+        finally:
+            # Windows: 必须 close 才释放句柄，否则 materialize 的临时文件删不掉。
+            reader.close()
+    if not rows:
+        return None
+    table = pa.Table.from_batches(rows)
+    # gb18030/gbk 内容会被 pyarrow 解成原始二进制列：这类文件必须回退
+    # 到 pandas 编码兜底路径，不能走快路径。
+    if any(
+        pa.types.is_binary(field.type) or pa.types.is_large_binary(field.type)
+        for field in table.schema
+    ):
+        return None
+    return table.slice(0, limit).to_pandas()
+
+
+def _cache_dataset_row_count(db: Session, artifact: Artifact, df) -> None:
+    """一次性回填 row_count/column_count 到 artifact metadata（尽力而为）。
+
+    后续预览请求即可复用缓存行数，走 pyarrow 有界读取快路径，不再
+    全量读盘计数。回填失败只记日志，不影响预览响应。
+    """
+    metadata = dict(artifact.metadata_ or {})
+    if isinstance(metadata.get("row_count"), int):
+        return
+    metadata["row_count"] = int(len(df))
+    metadata["column_count"] = int(len(df.columns))
+    artifact.metadata_ = metadata
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.warning("dataset row_count backfill failed", exc_info=True)
+
+
 # Full-dataset JSON previews once OOM-killed backend workers; previews only
 # ever need a few hundred rows (total_rows still reports the real count).
 _MAX_PREVIEW_ROWS = 500
@@ -1147,17 +1204,53 @@ def preview_dataset(
         raise HTTPException(404, "Dataset not found")
     require_project_access(db, artifact.project_id, current_user.id, "project.read")
 
+    # 上传产物的行数在 DatasetVersion 上（与列表端点同一来源），历史/算子
+    # 产物在 artifact.metadata_ 里；两边都取不到时兜底路径会全量读并回填。
+    dataset_version = (
+        db.query(DatasetVersion)
+        .filter(DatasetVersion.original_artifact_id == artifact.id)
+        .order_by(DatasetVersion.created_at.desc())
+        .first()
+    )
+
     try:
         with build_artifact_service(db).materialize(
             artifact.id, artifact.project_id, expected_type="dataset",
         ) as path:
-            df = _read_dataset(path)
-        frame = df.head(limit)
+            metadata = artifact.metadata_ or {}
+            cached_rows = (
+                dataset_version.row_count
+                if dataset_version is not None
+                else metadata.get("row_count")
+            )
+            frame = None
+            # 快路径：行数已知时仅读前 limit 行（pyarrow 流式），total_rows
+            # 复用 version/metadata 缓存，不再全量读盘计数。dtype 保持 pandas
+            # 词汇（与旧行为一致），不用 version 的便携 dtype（int/float/string）。
+            if (
+                isinstance(cached_rows, int)
+                and path.suffix.lower() not in {".xls", ".xlsx"}
+            ):
+                frame = _preview_csv_rows(path, limit)
+            if frame is not None:
+                total_rows = int(cached_rows)
+                columns = list(frame.columns)
+                dtypes = {str(k): str(v) for k, v in frame.dtypes.items()}
+            else:
+                # 兜底路径：pandas 全量读（Excel / 无缓存 / 编码回退），并
+                # 一次性回填行数缓存供后续预览复用。
+                df = _read_dataset(path)
+                frame = df.head(limit)
+                total_rows = len(df)
+                columns = list(df.columns)
+                dtypes = {str(k): str(v) for k, v in df.dtypes.items()}
+                if not isinstance(cached_rows, int):
+                    _cache_dataset_row_count(db, artifact, df)
         return {
-            "columns": list(df.columns),
+            "columns": columns,
             "preview": _json_records(frame),
-            "total_rows": len(df),
-            "dtypes": {str(k): str(v) for k, v in df.dtypes.items()},
+            "total_rows": total_rows,
+            "dtypes": dtypes,
         }
     except ArtifactAccessError as e:
         raise HTTPException(404, str(e)) from e
