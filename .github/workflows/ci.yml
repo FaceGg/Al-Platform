@@ -568,6 +568,9 @@ jobs:
       # base compose 发布 "${BACKEND_PORT:-8001}:8000"；本 job 的 /api/ready 探测
       # 打 127.0.0.1:8000，必须显式把宿主端口对齐（browser-acceptance 同样设 8000）。
       BACKEND_PORT: "8000"
+      # 本 job 起全新数据库的 production 栈：backend 引导 admin 需要初始口令
+      # （CI 专用假口令，与冒烟/Week12 惯例一致）
+      ML_PLATFORM_ADMIN_INITIAL_PASSWORD: admin123
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
@@ -752,6 +755,8 @@ jobs:
       WEEK12_TENSORBOARD_IMAGE: ml-platform-tensorboard:week11-12-${{ github.sha }}
       COMPOSE_FILE: docker-compose.yml:docker-compose.week12-security-images.yml
       COMPOSE_PROJECT_NAME: ci-week12-security-${{ github.run_id }}-${{ github.run_attempt }}
+      # 净栈全新数据库的 production 模式：backend 引导 admin 需要初始口令（CI 专用假口令）
+      ML_PLATFORM_ADMIN_INITIAL_PASSWORD: admin123
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
