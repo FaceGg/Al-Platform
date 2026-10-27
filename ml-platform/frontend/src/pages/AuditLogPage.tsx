@@ -3,6 +3,7 @@ import { ReloadOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
+import { formatLocalTime } from "../utils/time";
 
 /** 系统管理→审计日志（预览稿 v-admin 侧栏项）：平台审计事件流。 */
 export default function AuditLogPage() {
@@ -57,7 +58,7 @@ export default function AuditLogPage() {
                       {String(event.result ?? "—")}
                     </span>
                   </td>
-                  <td>{event.created_at ? new Date(String(event.created_at)).toLocaleString() : "—"}</td>
+                  <td>{formatLocalTime(event.created_at as string | null, true)}</td>
                 </tr>
               ))}
             </tbody>

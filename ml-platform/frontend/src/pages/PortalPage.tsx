@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import AppLayout from "../components/AppLayout";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
+import { parseBackendTime } from "../utils/time";
 
 interface RecentJob {
   id: number | string;
@@ -34,8 +35,10 @@ function greeting(zh: boolean): string {
 }
 
 function relativeTime(iso?: string, zh = true): string {
-  if (!iso) return "-";
-  const delta = Date.now() - new Date(iso).getTime();
+  // 后端时间为无时区 UTC ISO，必须经 parseBackendTime 补 Z 再解析。
+  const parsed = parseBackendTime(iso);
+  if (!parsed) return "-";
+  const delta = Date.now() - parsed.getTime();
   const minutes = Math.round(delta / 60000);
   if (minutes < 1) return zh ? "刚刚" : "just now";
   if (minutes < 60) return zh ? `${minutes} 分钟前` : `${minutes}m ago`;
@@ -206,7 +209,7 @@ export default function PortalPage() {
                   {item.pinned ? "📌 " : ""}<b style={{ color: "var(--v2-txt)" }}>{item.title}</b>
                   {item.content ? <span style={{ color: "var(--v2-dim)" }}> —— {item.content}</span> : null}
                   <span style={{ color: "var(--v2-dim)", fontSize: 11, marginLeft: 6 }}>
-                    {item.created_at ? new Date(item.created_at).toLocaleDateString(zh ? "zh-CN" : "en-US") : ""}
+                    {(() => { const d = parseBackendTime(item.created_at); return d ? d.toLocaleDateString(zh ? "zh-CN" : "en-US") : ""; })()}
                   </span>
                 </div>
               ))}

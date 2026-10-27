@@ -4,6 +4,7 @@ import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant
 import apiClient from '../api/client'
 import AppLayout from '../components/AppLayout'
 import { useI18n } from '../i18n'
+import { formatLocalTime } from '../utils/time'
 
 interface Announcement {
   id: string
@@ -140,8 +141,7 @@ export default function AnnouncementsAdminPage() {
               title: zh ? '发布时间' : 'Published',
               dataIndex: 'created_at',
               width: 160,
-              render: (value: string | null) =>
-                value ? new Date(value).toLocaleString(zh ? 'zh-CN' : 'en-US') : '—',
+              render: (value: string | null) => formatLocalTime(value, true),
             },
             {
               title: zh ? '操作' : 'Actions',
