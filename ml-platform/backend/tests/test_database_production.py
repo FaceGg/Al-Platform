@@ -1,6 +1,7 @@
 """Production database and Alembic baseline tests."""
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from queue import Queue
@@ -335,6 +336,19 @@ class TestDatabaseLifespan(TestCase):
                     )
             finally:
                 db_engine.dispose()
+
+    def test_admin_initial_password_env_name_matches_deploy_contract(self):
+        # compose/CI/installer 全用 ML_PLATFORM_ADMIN_INITIAL_PASSWORD；
+        # 字段默认 env 映射是 ADMIN_INITIAL_PASSWORD，必须显式 alias（CI 净栈踩坑）
+        from app.config import Settings
+
+        marker = f"env-{uuid.uuid4().hex}"
+        with mock.patch.dict(
+            os.environ, {"ML_PLATFORM_ADMIN_INITIAL_PASSWORD": marker},
+        ):
+            parsed = Settings(_env_file=None).admin_initial_password
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.get_secret_value(), marker)
 
     def test_lifespan_uses_injected_database_dependencies(self):
         TEMP_ROOT.mkdir(parents=True, exist_ok=True)
