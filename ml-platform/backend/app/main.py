@@ -64,6 +64,8 @@ except ImportError:
 
 import app.operators.control_operators  # noqa: F401
 
+logger = logging.getLogger(__name__)
+
 # Import API routers
 from app.api import auth, projects, workflows, runs, operators, datasets, workflows_direct, workflow_versions, templates
 from app.api import users, models as model_api
@@ -138,6 +140,18 @@ def _runtime_dependencies(target_app: FastAPI):
     )
 
 
+def _log_event_subscriber_exit(task: "asyncio.Task") -> None:
+    """订阅任务只被 create_task 持有，异常死亡须留下日志痕迹。"""
+    if task.cancelled():
+        logger.info("run event subscriber task cancelled")
+        return
+    error = task.exception()
+    if error is not None:
+        logger.error("run event subscriber task terminated: %r", error)
+    else:
+        logger.info("run event subscriber task stopped")
+
+
 async def start_event_subscriber(app_settings):
     """Start the Redis-to-WebSocket bridge when event Redis is configured."""
     redis_events_url = getattr(app_settings, "redis_events_url", None)
@@ -150,6 +164,7 @@ async def start_event_subscriber(app_settings):
     stop_event = asyncio.Event()
     subscriber = RedisRunEventSubscriber(redis_client, manager)
     task = asyncio.create_task(subscriber.run(stop_event))
+    task.add_done_callback(_log_event_subscriber_exit)
     return redis_client, stop_event, task
 
 
@@ -164,19 +179,43 @@ async def stop_event_subscriber(runtime) -> None:
         await redis_client.aclose()
 
 
-def ensure_default_admin(session_factory) -> None:
-    """Create the local bootstrap administrator without startup races."""
-    from app.models.user import User
+def ensure_default_admin(session_factory, app_settings=None) -> None:
+    """Create the bootstrap administrator without startup races.
+
+    初始口令只从 ML_PLATFORM_ADMIN_INITIAL_PASSWORD（settings.
+    admin_initial_password）读取，源码不落任何凭据字面量。仅当库中
+    尚无 admin 时才需要口令：production 未配置则拒绝引导（fail-closed，
+    不创建不可控账号；已部署环境 admin 已存在，升级重启不受影响）；
+    本地开发未配置则跳过引导并提示，避免弱口令默认值。lifespan 会传入
+    注入式 settings，与其它运行时依赖的注入口径一致。
+    """
     from passlib.context import CryptContext
 
+    from app.models.user import User
+
+    runtime_settings = app_settings if app_settings is not None else settings
     db = session_factory()
     try:
         if db.query(User).filter(User.username == "admin").first():
             return
+        configured = getattr(runtime_settings, "admin_initial_password", None)
+        password = configured.get_secret_value() if configured is not None else None
+        if not password or not password.strip():
+            if getattr(runtime_settings, "app_mode", "local") == "production":
+                raise RuntimeError(
+                    "ML_PLATFORM_ADMIN_INITIAL_PASSWORD must be set to bootstrap "
+                    "the initial administrator in production"
+                )
+            logger.warning(
+                "bootstrap: ML_PLATFORM_ADMIN_INITIAL_PASSWORD not set; skipping "
+                "initial admin creation (set it before first start, or register "
+                "the first user and promote it)"
+            )
+            return
         pwd_ctx = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
         db.add(User(
             username="admin",
-            password_hash=pwd_ctx.hash("admin123"),
+            password_hash=pwd_ctx.hash(password),
             role="admin",
         ))
         try:
@@ -227,7 +266,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Create database tables on startup and clean up on shutdown."""
     app_settings, db_engine, session_factory = _runtime_dependencies(app)
     initialize_database(app_settings, db_engine)
-    ensure_default_admin(session_factory)
+    ensure_default_admin(session_factory, app_settings=app_settings)
     try:
         from app.services.llm_gateway import bootstrap_default_llm_profile
 

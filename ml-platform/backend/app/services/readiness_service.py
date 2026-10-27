@@ -1,9 +1,28 @@
 """Infrastructure readiness checks with stable, redacted status codes."""
 
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
+
 import httpx
 from sqlalchemy import text
 
 from app.database_schema import require_current_schema
+
+_DEFAULT_PROBE_TIMEOUT_SECONDS = 10.0
+
+# 探测超时的回退值：状态类探针沿用既有稳定 code，布尔/可选值探针回到失败位。
+_PROBE_TIMEOUT_FALLBACKS = {
+    "database": {"ready": False, "code": "DATABASE_UNAVAILABLE"},
+    "redis": {"ready": False, "code": "REDIS_UNAVAILABLE"},
+    "celery": {"ready": False, "code": "CELERY_UNAVAILABLE"},
+    "storage": {"ready": False, "code": "MINIO_UNAVAILABLE"},
+    "mlflow": {"ready": False, "code": "MLFLOW_UNAVAILABLE"},
+    "tensorboard": {"ready": False, "code": "TENSORBOARD_UNAVAILABLE"},
+    "inference_runtime": {"ready": False, "code": "INFERENCE_RUNTIME_UNAVAILABLE"},
+    "notification_worker_registered": False,
+    "migration_head": None,
+}
 
 
 class ReadinessService:
@@ -15,6 +34,7 @@ class ReadinessService:
         celery_app=None,
         storage=None,
         http_client=None,
+        probe_timeout_seconds=None,
     ):
         self.engine = engine
         self.settings = settings
@@ -22,19 +42,35 @@ class ReadinessService:
         self.celery_app = celery_app
         self.storage = storage
         self.http_client = http_client or httpx
+        self.probe_timeout_seconds = probe_timeout_seconds
 
     def check_all(self) -> dict:
+        probes = {
+            "database": self._database,
+            "redis": self._redis,
+            "celery": self._celery,
+            "storage": self._storage,
+            "mlflow": self._mlflow,
+            "tensorboard": self._tensorboard,
+            "inference_runtime": self._inference_runtime,
+            "notification_worker_registered": self._notification_worker_registered,
+            "migration_head": self._migration_head,
+        }
+        results = self._run_probes_concurrently(probes)
         checks = {
-            "database": self._database(),
-            "redis": self._redis(),
-            "celery": self._celery(),
-            "storage": self._storage(),
-            "mlflow": self._mlflow(),
-            "tensorboard": self._tensorboard(),
-            "inference_runtime": self._inference_runtime(),
+            name: results[name]
+            for name in (
+                "database",
+                "redis",
+                "celery",
+                "storage",
+                "mlflow",
+                "tensorboard",
+                "inference_runtime",
+            )
         }
         notification_crypto_configured = self._notification_crypto_configured()
-        notification_worker_registered = self._notification_worker_registered()
+        notification_worker_registered = results["notification_worker_registered"]
         notification_ready = (
             getattr(self.settings, "app_mode", "local") != "production"
             or (notification_crypto_configured and notification_worker_registered)
@@ -45,8 +81,47 @@ class ReadinessService:
             **checks,
             "notification_crypto_configured": notification_crypto_configured,
             "notification_worker_registered": notification_worker_registered,
-            "migration_head": self._migration_head(),
+            "migration_head": results["migration_head"],
         }
+
+    def _run_probes_concurrently(self, probes: dict) -> dict:
+        """Run independent probes in parallel under one shared deadline.
+
+        Serial probing stacks each probe's timeout (Redis/Celery 广播 +
+        3 个 HTTP 探测曾合计约 3s)；并行后总时延 ≈ 最慢单项。超时的
+        探针按 _PROBE_TIMEOUT_FALLBACKS 回退，线程留给其自身 I/O 超时
+        收尾，不阻塞响应。
+        """
+        if self.probe_timeout_seconds is not None:
+            timeout = self.probe_timeout_seconds
+        else:
+            timeout = float(
+                getattr(
+                    self.settings,
+                    "readiness_probe_timeout_seconds",
+                    _DEFAULT_PROBE_TIMEOUT_SECONDS,
+                )
+            )
+        deadline = time.monotonic() + timeout
+        pool = ThreadPoolExecutor(
+            max_workers=min(len(probes), 8),
+            thread_name_prefix="readiness-probe",
+        )
+        try:
+            futures = {name: pool.submit(fn) for name, fn in probes.items()}
+            results = {}
+            for name, future in futures.items():
+                remaining = max(0.0, deadline - time.monotonic())
+                try:
+                    results[name] = future.result(timeout=remaining)
+                except FutureTimeoutError:
+                    fallback = _PROBE_TIMEOUT_FALLBACKS.get(
+                        name, {"ready": False, "code": "PROBE_TIMEOUT"}
+                    )
+                    results[name] = dict(fallback) if isinstance(fallback, dict) else fallback
+            return results
+        finally:
+            pool.shutdown(wait=False)
 
     def _migration_head(self) -> str | None:
         try:

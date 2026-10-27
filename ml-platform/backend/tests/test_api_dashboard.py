@@ -4,6 +4,8 @@ sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
 from app.main import app
+from app.api import dashboard as dashboard_api
+from tests.auth_test_support import ensure_admin
 from app.database import Base, engine
 from app.database import SessionLocal
 from app.models.artifact import Artifact
@@ -29,15 +31,14 @@ def login(username: str, password: str):
 class TestDashboardAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        client.post(
-            "/api/auth/register",
-            json={"username": "admin", "password": "admin123"},
-        )
-        with SessionLocal() as db:
-            administrator = db.query(User).filter(User.username == "admin").one()
-            administrator.role = "admin"
-            db.commit()
+        # DB 直建 admin（不经注册 API，与注册口令策略解耦）
+        ensure_admin()
         cls.admin_headers = login("admin", "admin123")
+
+    def setUp(self):
+        # 统计端点带 5s TTL 缓存：用例内「改数据-再请求」断言立即可见性，
+        # 须从干净缓存起算（缓存语义由专门用例覆盖）
+        dashboard_api._stats_cache.clear()
 
     def test_01_dashboard_stats(self):
         r = client.get("/api/dashboard/stats", headers=self.admin_headers)
@@ -92,6 +93,7 @@ class TestDashboardAPI(unittest.TestCase):
             ))
             db.commit()
 
+        dashboard_api._stats_cache.clear()
         after = client.get(
             "/api/dashboard/stats", headers=self.admin_headers,
         ).json()["core_assets"]["total_datasets"]
@@ -100,7 +102,7 @@ class TestDashboardAPI(unittest.TestCase):
     def test_07_regular_user_dashboard_is_scoped_but_admin_sees_all(self):
         marker = f"dashboard-scope-{uuid.uuid4().hex}"
         member_username = f"{marker}-member"
-        member_password = "dashboard-member-password"
+        member_password = f"Member-{uuid.uuid4().hex[:8]}"
         registered = client.post(
             "/api/auth/register",
             json={"username": member_username, "password": member_password},
@@ -326,6 +328,7 @@ class TestDashboardAPI(unittest.TestCase):
             ))
             db.commit()
 
+        dashboard_api._stats_cache.clear()
         after_create = client.get(
             "/api/dashboard/stats", headers=self.admin_headers,
         ).json()
@@ -352,6 +355,7 @@ class TestDashboardAPI(unittest.TestCase):
             db.query(PlatformAPI).filter(PlatformAPI.name == f"{marker}-api").delete()
             db.commit()
 
+        dashboard_api._stats_cache.clear()
         after_delete = client.get(
             "/api/dashboard/stats", headers=self.admin_headers,
         ).json()
@@ -372,6 +376,150 @@ class TestDashboardAPI(unittest.TestCase):
             db.query(Project).filter(Project.name == f"{marker}-project").delete()
             db.query(User).filter(User.username == f"{marker}-owner").delete()
             db.commit()
+
+    def test_09_stats_cache_serves_within_ttl_and_refreshes_after_expiry(self):
+        marker = f"dashboard-cache-{uuid.uuid4().hex}"
+        first = client.get(
+            "/api/dashboard/stats", headers=self.admin_headers,
+        ).json()["core_assets"]
+
+        with SessionLocal() as db:
+            owner = User(username=f"{marker}-owner", password_hash="hash")
+            db.add(owner)
+            db.flush()
+            project = Project(name=f"{marker}-project", owner_id=owner.id)
+            db.add(project)
+            db.flush()
+            db.add(Artifact(
+                project_id=project.id,
+                name=f"{marker}.csv",
+                type="dataset",
+                storage_path=f"datasets/{marker}.csv",
+                storage_uri=f"file:///datasets/{marker}.csv",
+                file_size=16,
+                format="csv",
+                metadata_={"row_count": 7},
+            ))
+            db.commit()
+
+        try:
+            cached = client.get(
+                "/api/dashboard/stats", headers=self.admin_headers,
+            ).json()["core_assets"]
+            self.assertEqual(cached["total_datasets"], first["total_datasets"])
+            self.assertEqual(cached["total_samples"], first["total_samples"])
+
+            dashboard_api._stats_cache.clear()
+            refreshed = client.get(
+                "/api/dashboard/stats", headers=self.admin_headers,
+            ).json()["core_assets"]
+            self.assertEqual(
+                refreshed["total_datasets"],
+                first["total_datasets"] + 1,
+            )
+            self.assertEqual(
+                refreshed["total_samples"],
+                first["total_samples"] + 7,
+            )
+        finally:
+            with SessionLocal() as db:
+                db.query(Artifact).filter(Artifact.name == f"{marker}.csv").delete()
+                db.query(Project).filter(Project.name == f"{marker}-project").delete()
+                db.query(User).filter(User.username == f"{marker}-owner").delete()
+                db.commit()
+
+    def test_10_normalized_datasets_are_excluded_and_samples_sum_pushed_down(self):
+        marker = f"dashboard-normalized-{uuid.uuid4().hex}"
+        member_username = f"{marker}-member"
+        # 口令取随机 marker，避免测试源码内出现口令字面量
+        member_password = marker
+        registered = client.post(
+            "/api/auth/register",
+            json={"username": member_username, "password": member_password},
+        )
+        self.assertEqual(registered.status_code, 200)
+        member_headers = login(member_username, member_password)
+
+        try:
+            before = client.get(
+                "/api/dashboard/stats", headers=member_headers,
+            ).json()["core_assets"]
+
+            with SessionLocal() as db:
+                member = db.query(User).filter(
+                    User.username == member_username,
+                ).one()
+                project = Project(name=f"{marker}-project", owner_id=member.id)
+                db.add(project)
+                db.flush()
+                db.add_all([
+                    Artifact(
+                        project_id=project.id,
+                        name=f"{marker}-small.csv",
+                        type="dataset",
+                        storage_path=f"datasets/{marker}-small.csv",
+                        storage_uri=f"file:///datasets/{marker}-small.csv",
+                        file_size=16,
+                        format="csv",
+                        metadata_={"row_count": 3},
+                    ),
+                    Artifact(
+                        project_id=project.id,
+                        name=f"{marker}-large.csv",
+                        type="dataset",
+                        storage_path=f"datasets/{marker}-large.csv",
+                        storage_uri=f"file:///datasets/{marker}-large.csv",
+                        file_size=16,
+                        format="csv",
+                        metadata_={"row_count": 5},
+                    ),
+                    # 内部 normalized 产物与无 row_count 的数据集：
+                    # 前者不计入两项统计，后者计入数据集但样本数记 0
+                    Artifact(
+                        project_id=project.id,
+                        name=f"{marker}-internal.csv",
+                        type="dataset",
+                        storage_path=f"datasets/{marker}-internal.csv",
+                        storage_uri=f"file:///datasets/{marker}-internal.csv",
+                        file_size=16,
+                        format="csv",
+                        metadata_={"source": "normalized", "row_count": 999},
+                    ),
+                    Artifact(
+                        project_id=project.id,
+                        name=f"{marker}-no-count.csv",
+                        type="dataset",
+                        storage_path=f"datasets/{marker}-no-count.csv",
+                        storage_uri=f"file:///datasets/{marker}-no-count.csv",
+                        file_size=16,
+                        format="csv",
+                    ),
+                ])
+                db.commit()
+
+            dashboard_api._stats_cache.clear()
+            after = client.get(
+                "/api/dashboard/stats", headers=member_headers,
+            ).json()["core_assets"]
+            self.assertEqual(
+                after["total_datasets"],
+                before["total_datasets"] + 3,
+            )
+            self.assertEqual(
+                after["total_samples"],
+                before["total_samples"] + 8,
+            )
+        finally:
+            with SessionLocal() as db:
+                db.query(Artifact).filter(Artifact.name.like(f"{marker}%")).delete(
+                    synchronize_session=False,
+                )
+                db.query(Project).filter(
+                    Project.name == f"{marker}-project",
+                ).delete()
+                db.query(User).filter(User.username == member_username).delete()
+                db.commit()
+
 
 if __name__ == "__main__":
     unittest.main()

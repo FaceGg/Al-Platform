@@ -67,5 +67,85 @@ class TestEventBridge(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    def test_subscriber_reconnects_and_resubscribes_after_connection_error(self):
+        import asyncio
+
+        class FlakyPubSub:
+            def __init__(self):
+                self.subscriptions = 0
+                self.delivered = False
+
+            async def psubscribe(self, *channels):
+                self.subscriptions += 1
+
+            async def get_message(self, ignore_subscribe_messages=True, timeout=1.0):
+                # 真实 pubsub.get_message 会挂起让出事件循环，伪对象同样须挂起，
+                # 否则订阅循环自旋饿死 stop_event
+                await asyncio.sleep(0.005)
+                if self.subscriptions == 1:
+                    raise ConnectionError("redis restarted")
+                if not self.delivered:
+                    self.delivered = True
+                    return {"data": b'{"run_id":"r2","type":"done"}'}
+                return None
+
+            def aclose(self):
+                return None
+
+        class ReconnectingRedis:
+            def __init__(self):
+                self.pubsub_instance = FlakyPubSub()
+
+            def pubsub(self):
+                return self.pubsub_instance
+
+        class CollectingManager:
+            def __init__(self):
+                self.events = []
+
+            async def broadcast(self, run_id, event):
+                self.events.append((run_id, event))
+
+        async def exercise():
+            manager = CollectingManager()
+            redis_client = ReconnectingRedis()
+            subscriber = RedisRunEventSubscriber(
+                redis_client,
+                manager,
+                retry_initial_delay=0.02,
+            )
+            stop = asyncio.Event()
+            task = asyncio.create_task(subscriber.run(stop))
+            for _ in range(200):
+                await asyncio.sleep(0.01)
+                if manager.events:
+                    break
+            stop.set()
+            await asyncio.wait_for(task, timeout=2)
+            return manager.events, redis_client.pubsub_instance.subscriptions
+
+        events, subscriptions = asyncio.run(exercise())
+        self.assertEqual(events, [("r2", {"run_id": "r2", "type": "done"})])
+        self.assertEqual(subscriptions, 2)
+
+    def test_subscriber_stop_event_interrupts_backoff_wait(self):
+        import asyncio
+
+        subscriber = RedisRunEventSubscriber(
+            None,
+            MagicMock(),
+            retry_initial_delay=30.0,
+        )
+
+        async def exercise():
+            stop = asyncio.Event()
+            task = asyncio.create_task(subscriber.run(stop))
+            await asyncio.sleep(0.05)
+            stop.set()
+            # 退避等待 30s 期间收到停止事件须立即退出
+            await asyncio.wait_for(task, timeout=1)
+
+        asyncio.run(exercise())
+
 
 if __name__ == "__main__": unittest.main()

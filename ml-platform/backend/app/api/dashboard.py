@@ -1,6 +1,8 @@
 """Dashboard / Data Cockpit API - aggregated platform stats."""
+import time
+
 from fastapi import APIRouter, Depends
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.database import get_db
@@ -16,6 +18,23 @@ from app.services.project_access import ProjectAccessService
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
+# 短 TTL 缓存：统计改为 SQL 聚合后仍避免每次轮询都打满聚合查询；
+# 按用户分键保持权限口径，TTL 内允许看板数字短暂滞后。
+_STATS_CACHE_TTL_SECONDS = 5.0
+_stats_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _visible_dataset_filters() -> list:
+    # Same semantics as the dataset management list: archived (deleted) and
+    # internal normalized artifacts are not user-visible datasets. JSON 抽取
+    # 下推到 SQL（SQLite JSON_EXTRACT / PG ->>），缺 source 键返回 NULL 视为可见。
+    source = Artifact.metadata_["source"].as_string()
+    return [
+        Artifact.type == "dataset",
+        Artifact.archived_at.is_(None),
+        or_(source.is_(None), source != "normalized"),
+    ]
+
 
 @router.get("/stats")
 def get_dashboard_stats(
@@ -27,6 +46,12 @@ def get_dashboard_stats(
 
     from app.engine.registry import OperatorRegistry
 
+    cache_key = f"user:{current_user.id}"
+    now = time.monotonic()
+    cached = _stats_cache.get(cache_key)
+    if cached is not None and cached[0] > now:
+        return cached[1]
+
     operators = OperatorRegistry.list_all()
     access_service = ProjectAccessService()
     is_platform_admin = access_service.is_platform_admin(db, current_user.id)
@@ -37,21 +62,18 @@ def get_dashboard_stats(
     )
     accessible_project_ids = [project.id for project in accessible_projects]
 
-    # Same semantics as the dataset management list: archived (deleted) and
-    # internal normalized artifacts are not user-visible datasets.
-    datasets_query = db.query(Artifact).filter(
-        Artifact.type == "dataset",
-        Artifact.archived_at.is_(None),
-    )
+    dataset_filters = _visible_dataset_filters()
     if not is_platform_admin:
-        datasets_query = datasets_query.filter(
-            Artifact.project_id.in_(accessible_project_ids),
-        )
-    datasets = [
-        artifact
-        for artifact in datasets_query.all()
-        if (artifact.metadata_ or {}).get("source") != "normalized"
-    ]
+        dataset_filters.append(Artifact.project_id.in_(accessible_project_ids))
+    total_datasets = (
+        db.query(func.count(Artifact.id)).filter(*dataset_filters).scalar() or 0
+    )
+    row_count_value = Artifact.metadata_["row_count"].as_integer()
+    total_samples = int(
+        db.query(func.coalesce(func.sum(row_count_value), 0))
+        .filter(*dataset_filters)
+        .scalar()
+    )
 
     apis_query = db.query(PlatformAPI)
     training_jobs_query = db.query(TrainingJob)
@@ -65,17 +87,10 @@ def get_dashboard_stats(
         )
 
     total_algorithms = len(operators)
-    total_datasets = len(datasets)
     total_apis = apis_query.count()
     total_projects = len(accessible_projects)
     total_users = db.query(User).count() if is_platform_admin else 1
     total_training_jobs = training_jobs_query.count()
-
-    # Dataset sample total
-    total_samples = sum(
-        int((artifact.metadata_ or {}).get("row_count") or 0)
-        for artifact in datasets
-    )
 
     # API call stats
     api_calls = apis_query.with_entities(
@@ -109,7 +124,7 @@ def get_dashboard_stats(
         for operator in operators
     )
 
-    return {
+    payload = {
         "core_assets": {
             "total_algorithms": total_algorithms,
             "total_datasets": total_datasets,
@@ -134,6 +149,8 @@ def get_dashboard_stats(
             for category, count in sorted(algorithm_categories.items())
         ],
     }
+    _stats_cache[cache_key] = (now + _STATS_CACHE_TTL_SECONDS, payload)
+    return payload
 
 
 @router.get("/top-models")

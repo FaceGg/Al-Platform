@@ -200,5 +200,61 @@ class TestReadiness(unittest.TestCase):
         self.assertIs(service.celery_app, celery_app)
         self.assertIs(service.storage, storage)
 
+    def test_independent_probes_run_concurrently(self):
+        import threading
+
+        first_ready = threading.Event()
+        second_ready = threading.Event()
+        service = ReadinessService(
+            engine=SimpleNamespace(connect=lambda: None),
+            settings=SimpleNamespace(
+                task_backend="local",
+                artifact_storage_backend="local",
+            ),
+            probe_timeout_seconds=3.0,
+        )
+
+        def probe_database():
+            first_ready.set()
+            assert second_ready.wait(1.5), "redis probe did not overlap database probe"
+            return {"ready": True, "code": "OK"}
+
+        def probe_redis():
+            second_ready.set()
+            assert first_ready.wait(1.5), "database probe did not overlap redis probe"
+            return {"ready": True, "code": "OK"}
+
+        service._database = probe_database
+        service._redis = probe_redis
+
+        result = service.check_all()
+
+        self.assertTrue(result["database"]["ready"])
+        self.assertTrue(result["redis"]["ready"])
+
+    def test_slow_probe_times_out_with_stable_unavailable_code(self):
+        import time as time_module
+
+        service = ReadinessService(
+            engine=SimpleNamespace(connect=lambda: None),
+            settings=SimpleNamespace(
+                task_backend="local",
+                artifact_storage_backend="local",
+            ),
+            probe_timeout_seconds=0.05,
+        )
+
+        def slow_redis_probe():
+            time_module.sleep(0.3)
+            return {"ready": True, "code": "OK"}
+
+        service._redis = slow_redis_probe
+
+        result = service.check_all()
+
+        self.assertEqual(
+            result["redis"], {"ready": False, "code": "REDIS_UNAVAILABLE"},
+        )
+
 
 if __name__ == "__main__": unittest.main()
