@@ -171,7 +171,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn("mlflow-skinny==3.15.*", requirements)
         self.assertNotIn("mlflow==3.15.*", requirements)
 
-        security_job = yaml.safe_load(self.workflow)["jobs"]["week11-12-verification"]
+        security_job = yaml.safe_load(self.workflow)["jobs"]["security-release-verification"]
         rendered_steps = "\n".join(str(step.get("run", "")) for step in security_job["steps"])
         self.assertNotIn("--pip-audit-exception", rendered_steps)
         self.assertFalse(PIP_AUDIT_EXCEPTION.exists())
@@ -179,7 +179,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
     def test_ci_downloaded_tools_use_pinned_verified_release_assets(self):
         parsed = yaml.safe_load(self.workflow)
         production_steps = parsed["jobs"]["production-integration"]["steps"]
-        verification_steps = parsed["jobs"]["week11-12-verification"]["steps"]
+        verification_steps = parsed["jobs"]["security-release-verification"]["steps"]
         minio = next(step for step in production_steps if step.get("name") == "Create MinIO bucket")
         scanners = next(
             step for step in verification_steps if step.get("name") == "Install security scanners"
@@ -293,7 +293,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         jobs = yaml.safe_load(self.workflow)["jobs"]
         expected_steps = (
             ("experiment-integration", "Generate notification test key"),
-            ("week11-12-verification", "Run frozen-stack web security gate"),
+            ("security-release-verification", "Run frozen-stack web security gate"),
         )
 
         for job_name, step_name in expected_steps:
@@ -548,7 +548,7 @@ test "$first_hash" = "$second_hash"
 
     def test_week11_12_ci_installs_and_executes_real_redacted_security_scanners(self):
         parsed = yaml.safe_load(self.workflow)
-        job = parsed["jobs"]["week11-12-verification"]
+        job = parsed["jobs"]["security-release-verification"]
         steps = job["steps"]
         install = next(
             step for step in steps if step.get("name") == "Install security scanners"
@@ -571,7 +571,7 @@ test "$first_hash" = "$second_hash"
 
     def test_week11_12_ci_builds_and_scans_every_production_python_image_from_the_commit(self):
         parsed = yaml.safe_load(self.workflow)
-        job = parsed["jobs"]["week11-12-verification"]
+        job = parsed["jobs"]["security-release-verification"]
         steps = job["steps"]
         build = next(
             step
@@ -602,7 +602,7 @@ test "$first_hash" = "$second_hash"
 
     def test_week11_12_frozen_stack_uses_the_exact_scanned_images_without_rebuild(self):
         parsed = yaml.safe_load(self.workflow)
-        job = parsed["jobs"]["week11-12-verification"]
+        job = parsed["jobs"]["security-release-verification"]
         steps = job["steps"]
         build = next(
             step
@@ -688,7 +688,7 @@ test "$first_hash" = "$second_hash"
 
     def test_week11_12_ci_runs_web_gate_on_frozen_stack_then_summarizes_security_evidence(self):
         parsed = yaml.safe_load(self.workflow)
-        steps = parsed["jobs"]["week11-12-verification"]["steps"]
+        steps = parsed["jobs"]["security-release-verification"]["steps"]
         rendered_steps = "\n".join(str(step.get("run", "")) for step in steps)
 
         for step_name in (
@@ -977,7 +977,7 @@ test "$first_hash" = "$second_hash"
 
     def test_week11_12_verification_waits_for_frozen_stack_and_uploads_evidence(self):
         parsed = yaml.safe_load(self.workflow)
-        job = parsed["jobs"]["week11-12-verification"]
+        job = parsed["jobs"]["security-release-verification"]
 
         self.assertEqual(
             job["needs"],
@@ -1254,7 +1254,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             "browser-acceptance",
             "production-integration",
             "experiment-integration",
-            "week11-12-verification",
+            "security-release-verification",
         ):
             with self.subTest(job=job_name):
                 condition = jobs[job_name].get("if", "")
@@ -1266,7 +1266,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
         jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
 
         self.assertGreaterEqual(
-            jobs["week11-12-verification"].get("timeout-minutes", 0),
+            jobs["security-release-verification"].get("timeout-minutes", 0),
             60,
         )
 
@@ -1295,7 +1295,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
             ("browser-acceptance", "Upload Playwright evidence"): 14,
             ("production-integration", "Upload production failure evidence"): 7,
             ("experiment-integration", "Upload experiment failure evidence"): 7,
-            ("week11-12-verification", "Upload verification evidence"): 14,
+            ("security-release-verification", "Upload verification evidence"): 14,
         }
 
         for (job_name, step_name), days in expected_retention.items():
@@ -1477,7 +1477,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
 
     def test_week11_generates_and_validates_generic_acceptance_receipts(self):
         parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
-        job = parsed["jobs"]["week11-12-verification"]
+        job = parsed["jobs"]["security-release-verification"]
         steps = job["steps"]
         receipt = next(
             step for step in steps if step.get("name") == "Generate generic acceptance receipts"
@@ -1497,7 +1497,7 @@ class TestActionsQuotaWorkflows(unittest.TestCase):
 
     def test_week11_generic_receipts_feed_the_final_evidence_manifest(self):
         parsed = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
-        job = parsed["jobs"]["week11-12-verification"]
+        job = parsed["jobs"]["security-release-verification"]
         steps = job["steps"]
         receipt = next(
             step for step in steps if step.get("name") == "Generate generic acceptance receipts"

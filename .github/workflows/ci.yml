@@ -710,8 +710,8 @@ jobs:
           sudo rm -f "$NOTIFICATION_CRYPTO_SECRET_FILE"
           sudo rm -f "$NOTIFICATION_ACCEPTANCE_CA_FILE" "$NOTIFICATION_RECEIVER_CERTIFICATE_FILE" "$NOTIFICATION_RECEIVER_PRIVATE_KEY_FILE"
 
-  week11-12-verification:
-    name: Week 11-12 verification (Ubuntu)
+  security-release-verification:
+    name: Security & release verification (Ubuntu)
     if: >-
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'full')
