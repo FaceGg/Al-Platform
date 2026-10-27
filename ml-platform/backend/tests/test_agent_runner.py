@@ -158,6 +158,63 @@ class TestAgentRunner(RunnerHarness, unittest.TestCase):
         self.assertTrue(result.memory_json["rounds"][0]["s2_attempts"][0]["ok"])
         self.assertEqual(calls["s1"], 1)
 
+    def test_stage_artifacts_persist_per_stage_into_round_memory(self):
+        """§7 任务档案：S1 分析/S2 特征/S3 训练/S4 门禁与评审逐阶段落 memory。"""
+        def fake_s1(db, **kwargs):
+            return _REPORT, None, {"total_tokens": 100}
+
+        runner, db, run_id = self.build(
+            {
+                "run_s1": fake_s1,
+                "run_s2": lambda db, **kw: (_SCRIPT_OK, None, {"total_tokens": 100}),
+                "run_s4": lambda db, **kw: (_verdict("pass"), None, {"total_tokens": 100}),
+            }
+        )
+        result = runner.run_to_completion()
+        self.assertEqual(result.status, "accepted")
+        entry = result.memory_json["rounds"][0]
+        self.assertEqual(entry["s1"]["domain"], _REPORT.domain_hypothesis)
+        self.assertTrue(entry["s1"]["focus_channels"])
+        self.assertEqual(entry["s2"]["data_shape"], _SCRIPT_OK.data_shape)
+        self.assertTrue(entry["s2"]["generated_columns"])
+        self.assertIn("recall_minority", entry["s3"]["metrics"])
+        self.assertTrue(entry["s3"]["importance"])
+        self.assertTrue(entry["s4"]["gate_passed"])
+        self.assertEqual(entry["review"]["verdict"], "pass")
+        self.assertIn("readiness", entry["review"])
+
+    def test_s3_trains_on_full_data_replay_not_sandbox_sample(self):
+        """回归（85bd8c96）：S3 必须全量重放特征脚本，特征行数=标签行数。
+
+        沙箱验证跑 S2_SAMPLE_ROWS 样本；修复前样本输出被直接喂给训练器，
+        与全量标签行数错位 → train_test_split ValueError 崩溃。
+        """
+        def fake_s1(db, **kwargs):
+            return _REPORT, None, {"total_tokens": 100}
+
+        seen_shapes = []
+
+        def trainer(feature_df, y, hints):
+            seen_shapes.append((int(feature_df.shape[0]), int(len(y))))
+            return {
+                "metrics": {"recall_minority": 0.94, "f1": 0.9},
+                "topk_metrics": [{"recall_minority": 0.94}],
+                "importance": [{"feature": "TORQUE_DEVIATION", "importance": 0.6}],
+            }
+
+        runner, db, run_id = self.build(
+            {
+                "run_s1": fake_s1,
+                "run_s2": lambda db, **kw: (_SCRIPT_OK, None, {"total_tokens": 100}),
+                "run_s4": lambda db, **kw: (_verdict("pass"), None, {"total_tokens": 100}),
+            },
+            trainer=trainer,
+        )
+        result = runner.run_to_completion()
+        self.assertEqual(result.status, "accepted")
+        # 全量 40 行（_frame 默认）而非 5000 行样本；且特征与标签等长。
+        self.assertEqual(seen_shapes[0], (40, 40))
+
     def test_s4_fail_carries_hints_into_next_round_s1(self):
         seen_memories = []
 

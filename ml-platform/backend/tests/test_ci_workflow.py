@@ -157,13 +157,17 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             self.assertEqual(rejected.json()["detail"]["code"], "CORS_ORIGIN_FORBIDDEN")
 
     def test_worker_startup_waits_for_ready_log_without_control_probe(self):
-        wait_step = self.workflow.split(
-            "- name: Wait for Celery worker",
+        worker_step = self.workflow.split(
+            "- name: Start Celery worker (one automatic retry)",
             maxsplit=1,
         )[1].split("- name: Run production integration tests", maxsplit=1)[0]
 
-        self.assertIn('grep -q " ready\\." "$RUNNER_TEMP/celery.log"', wait_step)
-        self.assertNotIn("celery -A", wait_step)
+        # 等待判据只认 ready 日志，不引入 celery inspect 控制探针
+        self.assertIn('grep -q " ready\\." "$RUNNER_TEMP/celery.log"', worker_step)
+        self.assertNotIn("inspect", worker_step)
+        # 2026-10-27 起允许 worker 死亡后自动重拉一次（runner 环境抖动），且仅一次
+        self.assertEqual(worker_step.count("start_worker"), 3)
+        self.assertEqual(worker_step.count("nohup celery"), 1)
 
     def test_python_security_stack_uses_skinny_mlflow_and_fixed_cryptography_without_exception(self):
         requirements = BACKEND_REQUIREMENTS.read_text(encoding="utf-8")

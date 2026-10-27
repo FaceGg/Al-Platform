@@ -314,7 +314,9 @@ jobs:
     timeout-minutes: 60
     services:
       postgres:
-        image: postgres:16
+        # digest 固定：聚合 tag 会被上游重推（2026-10-26 redis:7 重推后开始出现
+        # 环境性差异），固定到已知良好 digest 保证 job 可复现
+        image: postgres:16@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97
         env:
           POSTGRES_PASSWORD: test-password
           POSTGRES_DB: ml_platform
@@ -324,7 +326,7 @@ jobs:
           --health-cmd="pg_isready -U postgres -d ml_platform"
           --health-interval 5s --health-timeout 5s --health-retries 20
       redis:
-        image: redis:7
+        image: redis:7.4.6@sha256:a9cc41d6d01da2aa26c219e4f99ecbeead955a7b656c1c499cce8922311b2514
         ports: ["6379:6379"]
         options: >-
           --health-cmd="redis-cli ping"
@@ -429,30 +431,37 @@ jobs:
           alembic upgrade head
           alembic current
           alembic check
-      - name: Start Celery worker
+      - name: Start Celery worker (one automatic retry)
         working-directory: ml-platform/backend
         env:
           ML_PLATFORM_TEMP_DIR: ${{ runner.temp }}/ml-platform-production
-        run: |
-          nohup celery -A app.tasks.celery_app:celery_app worker --loglevel=INFO --concurrency=2 > "$RUNNER_TEMP/celery.log" 2>&1 &
-          echo $! > "$RUNNER_TEMP/celery.pid"
-      - name: Wait for Celery worker
-        working-directory: ml-platform/backend
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in {1..30}; do
-            if grep -q " ready\." "$RUNNER_TEMP/celery.log"; then
-              exit 0
-            fi
-            if ! kill -0 "$(cat "$RUNNER_TEMP/celery.pid")" 2>/dev/null; then
+          # 2026-10-27：worker 曾在同提交上间歇性于 mingle 阶段被无声击杀
+          # （无 traceback，早过晚挂，判定为 runner 环境抖动）——死亡后重拉一次
+          start_worker() {
+            nohup celery -A app.tasks.celery_app:celery_app worker --loglevel=INFO --concurrency=2 > "$RUNNER_TEMP/celery.log" 2>&1 &
+            echo $! > "$RUNNER_TEMP/celery.pid"
+          }
+          wait_ready() {
+            for attempt in {1..30}; do
+              if grep -q " ready\." "$RUNNER_TEMP/celery.log"; then return 0; fi
+              if ! kill -0 "$(cat "$RUNNER_TEMP/celery.pid")" 2>/dev/null; then return 1; fi
+              sleep 1
+            done
+            return 1
+          }
+          start_worker
+          if ! wait_ready; then
+            echo "::warning::celery worker died before ready; restarting once"
+            cat "$RUNNER_TEMP/celery.log"
+            start_worker
+            if ! wait_ready; then
               cat "$RUNNER_TEMP/celery.log"
               exit 1
             fi
-            sleep 1
-          done
-          cat "$RUNNER_TEMP/celery.log"
-          exit 1
+          fi
       - name: Run production integration tests
         working-directory: ml-platform/backend
         env:
