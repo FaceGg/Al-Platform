@@ -14,11 +14,14 @@ const pythonExecutable = resolveE2ePython();
 const pythonCommand = `"${pythonExecutable.replaceAll('"', '""')}"`;
 const externalAcceptanceBaseUrl = process.env.WEEK12_ACCEPTANCE_BASE_URL?.trim();
 const useExternalAcceptanceStack = process.env.RUN_WEEK12_BROWSER_ACCEPTANCE === "1";
-const standardBaseUrl = process.env.PLAYWRIGHT_E2E_BASE_URL?.trim() || "http://127.0.0.1:5173";
-const standardFrontendPort = Number(new URL(standardBaseUrl).port || "5173");
+const standardBaseUrl = process.env.PLAYWRIGHT_E2E_BASE_URL?.trim() || "http://127.0.0.1:5177";
+const standardFrontendPort = Number(new URL(standardBaseUrl).port || "5177");
 // Backend port is overridable so a locally occupied 8000 (docker stack, stray
 // dev server) does not force the whole e2e run to serialize behind it.
-const standardBackendPort = process.env.PLAYWRIGHT_E2E_BACKEND_PORT?.trim() || "8000";
+// 默认 5177/8010 与 Week12 验收栈错开：栈发布 5173/8000（BACKEND_PORT=8000），
+// 若同端口，ready 探测会被栈劫持，标准 e2e 实际打到 production 栈后端，
+// 登录被 CORS_ORIGIN_FORBIDDEN 拒（2026-10-27 Chromium 全挂根因）。
+const standardBackendPort = process.env.PLAYWRIGHT_E2E_BACKEND_PORT?.trim() || "8010";
 const externalAcceptanceEvidenceDir = path.join(tempTestDir, "week11-12", "playwright");
 const externalAcceptanceReportPath = path.join(
   externalAcceptanceEvidenceDir,
@@ -70,6 +73,15 @@ export default defineConfig({
         // 每条 spec 各自登录一次；默认 5/15min 的登录 IP 限流在本地复用
         // uvicorn 的多轮运行下必然触顶（CI 作业级 env 同值，这里补齐本地）。
         LOGIN_IP_RATE_LIMIT_CAPACITY: "100",
+        // 浏览器同源登录必带 Origin: <standardBaseUrl>。作业级 env 可能带
+        // APP_MODE=production（week12 段需要）并被 ...process.env 继承进来，
+        // production 分支不做 127.0.0.1 回环别名扩展 → 登录被 CORS_ORIGIN_FORBIDDEN
+        // 拒。按实际 e2e 前端地址显式注入别名，两种 app_mode 下都进 allowed 集合。
+        FRONTEND_ORIGIN_ALIASES: [
+          new URL(standardBaseUrl).origin,
+          "http://127.0.0.1:5173",
+          "http://localhost:5173",
+        ].join(","),
       },
     },
     {
@@ -92,6 +104,12 @@ export default defineConfig({
       url: `${standardBaseUrl.replace(/\/$/, "")}/login`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
+      env: {
+        ...process.env,
+        // vite.config 的 /api 代理默认打 127.0.0.1:8000；标准 e2e 后端在
+        // standardBackendPort（默认 8010），必须显式指过去
+        VITE_API_PROXY_TARGET: `http://127.0.0.1:${standardBackendPort}`,
+      },
     },
     {
       command: "npm run dev -- --host 127.0.0.1 --port 5174",

@@ -4,7 +4,9 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // Backend target is overridable for e2e runs where port 8000 is occupied.
-const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000'
+// 默认用显式 IPv4：uvicorn e2e 实例只绑 127.0.0.1，而 localhost 在部分环境
+// 优先解析为 ::1（IPv6），代理会静默连不上后端（登录停留 /login）。
+const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000'
 const wsProxyTarget = apiProxyTarget.replace(/^http/, 'ws')
 
 export default defineConfig({
