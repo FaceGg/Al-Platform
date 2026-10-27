@@ -17,6 +17,7 @@ import AutomaticAnnotationStrategyEditor, {
   type ClusterOption,
 } from "../components/AutomaticAnnotationStrategyEditor";
 import { useI18n } from "../i18n";
+import { useAdaptivePolling } from "../hooks/useAdaptivePolling";
 import { normalizeTaskStatus, taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 import { parseBackendTime } from "../utils/time";
 import { createUuid } from "../utils/uuid";
@@ -819,11 +820,11 @@ export default function DataAnnotationPage() {
   const hasTransitioningTasks = isTaskList && genericTasks.some(
     (task) => ["previewing", "executing"].includes(task.status),
   );
-  useEffect(() => {
-    if (!hasTransitioningTasks) return undefined;
-    const timer = setInterval(() => { void refreshGenericTaskData(); }, 2000);
-    return () => { clearInterval(timer); };
-  }, [hasTransitioningTasks, projectId]);
+  useAdaptivePolling(() => { void refreshGenericTaskData(); }, {
+    enabled: hasTransitioningTasks,
+    intervalMs: 2000,
+    signature: genericTasks.map((task) => task.status).join(","),
+  });
 
   useEffect(() => {
     if (!previewDrawer?.previewId) return undefined;
@@ -2207,13 +2208,13 @@ export default function DataAnnotationPage() {
     }
   };
 
-  useEffect(() => {
-    if (!projectId || !runId || !["queued", "validating", "running"].includes(String(selectedRun?.status || ""))) return;
-    const timer = window.setInterval(() => {
-      void refreshActiveWorkspace().catch((error) => message.error(formatApiError(error, "标注进度刷新失败")));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [projectId, runId, selectedRun?.status, selected?.id, message]);
+  useAdaptivePolling(() => {
+    void refreshActiveWorkspace().catch((error) => message.error(formatApiError(error, "标注进度刷新失败")));
+  }, {
+    enabled: Boolean(projectId && runId && ["queued", "validating", "running"].includes(String(selectedRun?.status || ""))),
+    intervalMs: 1000,
+    signature: `${selectedRun?.status || ""}:${selectedRun?.annotation_progress?.annotated_count ?? ""}:${selectedRun?.annotation_progress?.percent ?? ""}`,
+  });
 
   const taskColumns = [
     {

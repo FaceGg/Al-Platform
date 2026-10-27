@@ -18,6 +18,7 @@ import V2PageFrame from "../components/V2PageFrame";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
 import { useI18n } from "../i18n";
+import { useAdaptivePolling } from "../hooks/useAdaptivePolling";
 import { notifyDashboardStatsChanged } from "../events/dashboardStats";
 import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 import { formatLocalTime } from "../utils/time";
@@ -286,11 +287,11 @@ export default function AutoMLPage() {
     void refreshModelingTasks();
   }, [selectedProject]);
 
-  useEffect(() => {
-    if (!selectedProject || !modelingTasks.some((task) => ["queued", "validating", "running", "pending"].includes(String(task.status)))) return;
-    const timer = window.setInterval(() => { void refreshModelingTasks(); }, 1500);
-    return () => window.clearInterval(timer);
-  }, [selectedProject, modelingTasks]);
+  useAdaptivePolling(() => { void refreshModelingTasks(); }, {
+    enabled: Boolean(selectedProject) && modelingTasks.some((task) => ["queued", "validating", "running", "pending"].includes(String(task.status))),
+    intervalMs: 1500,
+    signature: modelingTasks.map((task) => `${task.id}:${task.status}`).join(","),
+  });
 
   useEffect(() => {
     const requestGeneration = ++datasetPreviewRequestRef.current;
@@ -597,24 +598,21 @@ export default function AutoMLPage() {
     }
   };
 
-  useEffect(() => {
-    if (!selectedProject || !qualityRun || !["queued", "validating", "running"].includes(String(qualityRun.status))) return;
-    let active = true;
-    const refreshQualityRun = async () => {
-      try {
-        const latest = await getQualityRun(selectedProject, qualityRun.id);
-        if (active) {
-          setQualityRun(latest);
-          void refreshModelingTasks();
-        }
-      } catch {
-        // Annotation workspace remains the recovery path when a queued task is no longer readable.
-      }
-    };
-    void refreshQualityRun();
-    const timer = window.setInterval(() => { void refreshQualityRun(); }, 1500);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [qualityRun?.id, qualityRun?.status, selectedProject]);
+  useAdaptivePolling(async () => {
+    if (!selectedProject || !qualityRun) return;
+    try {
+      const latest = await getQualityRun(selectedProject, qualityRun.id);
+      setQualityRun(latest);
+      void refreshModelingTasks();
+    } catch {
+      // Annotation workspace remains the recovery path when a queued task is no longer readable.
+    }
+  }, {
+    enabled: Boolean(selectedProject && qualityRun && ["queued", "validating", "running"].includes(String(qualityRun.status))),
+    intervalMs: 1500,
+    signature: String(qualityRun?.status ?? ""),
+    immediate: true,
+  });
 
   useEffect(() => {
     let active = true;

@@ -49,6 +49,49 @@ describe("LoginPage", () => {
     expect(await screen.findByText("authenticated-home")).toBeInTheDocument();
   });
 
+  it("returns to the original route captured by a 401 redirect", async () => {
+    login.mockResolvedValue({ access_token: "token", user_id: "user-id", role: "admin" });
+
+    render(
+      <MemoryRouter initialEntries={["/login?redirect=%2Fagent%2Ftask%2Frun-9"]}>
+        <AntApp>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/agent/task/:runId" element={<div>agent-task-page</div>} />
+          </Routes>
+        </AntApp>
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("用户名"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByPlaceholderText("密码"), { target: { value: "password" } });
+    fireEvent.click(screen.getByRole("button", { name: /登\s*录/ }));
+
+    expect(await screen.findByText("agent-task-page")).toBeInTheDocument();
+  });
+
+  it("ignores redirect targets that are not internal paths", async () => {
+    login.mockResolvedValue({ access_token: "token", user_id: "user-id", role: "admin" });
+
+    render(
+      <MemoryRouter initialEntries={["/login?redirect=https%3A%2F%2Fevil.example%2Fphish"]}>
+        <AntApp>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/" element={<div>authenticated-home</div>} />
+          </Routes>
+        </AntApp>
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("用户名"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByPlaceholderText("密码"), { target: { value: "password" } });
+    fireEvent.click(screen.getByRole("button", { name: /登\s*录/ }));
+
+    expect(await screen.findByText("authenticated-home")).toBeInTheDocument();
+    expect(screen.queryByText("agent-task-page")).not.toBeInTheDocument();
+  });
+
   it("does not report a rate limit as a bad password", async () => {
     login.mockRejectedValue({ response: { status: 429 } });
 

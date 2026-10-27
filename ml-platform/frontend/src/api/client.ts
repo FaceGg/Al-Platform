@@ -24,7 +24,15 @@ apiClient.interceptors.response.use(
       localStorage.removeItem('token')
       localStorage.removeItem('userId')
       localStorage.removeItem('role')
-      window.location.href = '/login'
+      // 登录请求自身的 401（口令错误）交给页面提示，跳转会整页刷新丢消息
+      const requestUrl = String(error.config?.url || '')
+      if (!requestUrl.includes('/auth/login')) {
+        const current = window.location.pathname + window.location.search + window.location.hash
+        const canReturn = current !== '/' && current !== '/login' && !current.startsWith('/login?')
+        window.location.href = canReturn
+          ? `/login?redirect=${encodeURIComponent(current)}`
+          : '/login'
+      }
     }
     return Promise.reject(error)
   }

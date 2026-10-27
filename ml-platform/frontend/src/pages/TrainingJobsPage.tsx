@@ -28,6 +28,7 @@ import {
 } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
+import { useAdaptivePolling } from "../hooks/useAdaptivePolling";
 import { formatLocalTime } from "../utils/time";
 import apiClient, { formatApiError } from "../api/client";
 import {
@@ -157,11 +158,11 @@ export default function TrainingJobsPage() {
     void loadJobs(jobProjectId);
   }, [jobProjectId, loadJobs]);
 
-  useEffect(() => {
-    if (!jobs.some((job) => !TERMINAL_TRAINING_STATUSES.has(job.status || ""))) return;
-    const timer = window.setInterval(() => void loadJobs(jobProjectId), 1500);
-    return () => window.clearInterval(timer);
-  }, [jobProjectId, jobs, loadJobs]);
+  useAdaptivePolling(() => { void loadJobs(jobProjectId); }, {
+    enabled: jobs.some((job) => !TERMINAL_TRAINING_STATUSES.has(job.status || "")),
+    intervalMs: 1500,
+    signature: jobs.map((job) => `${job.id}:${job.status}`).join(","),
+  });
 
   const refresh = () => {
     if (activeTab === "experiments") void loadExperiments(experimentProjectId);

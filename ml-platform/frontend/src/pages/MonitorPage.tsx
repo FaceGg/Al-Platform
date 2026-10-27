@@ -6,6 +6,7 @@ import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
 import V2PageFrame from "../components/V2PageFrame";
 import { useI18n } from "../i18n";
+import { useAdaptivePolling } from "../hooks/useAdaptivePolling";
 import "./MonitorPage.css";
 
 const { Text } = Typography;
@@ -323,10 +324,16 @@ export default function MonitorPage() {
 
   useEffect(() => {
     void fetchHistory();
-    void fetchData();
-    const timer = window.setInterval(() => { void fetchData(); }, 3000);
-    return () => window.clearInterval(timer);
-  }, [fetchData, fetchHistory]);
+  }, [fetchHistory]);
+
+  // 指标有动静时保持 3s 节奏，系统安静时退避到 9s
+  useAdaptivePolling(() => { void fetchData(); }, {
+    enabled: true,
+    intervalMs: 3000,
+    maxIntervalMs: 9000,
+    signature: JSON.stringify(data ?? null),
+    immediate: true,
+  });
 
   const gpus = data?.gpus ?? [];
   const load = data?.load ?? null;

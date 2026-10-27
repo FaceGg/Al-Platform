@@ -1,16 +1,23 @@
 import { App as AntApp, Form, Input, Button, Card, Typography } from "antd";
 import { UserOutlined, LockOutlined, ThunderboltOutlined } from "@ant-design/icons";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { login } from "../api/auth";
 import { formatApiError } from "../api/client";
 import { useTheme } from "../stores/themeContext";
 
 const { Title, Text } = Typography;
 
+// 只允许站内路径，拦截协议相对地址等开放重定向
+function resolveRedirectTarget(redirect: string | null): string {
+  if (redirect && redirect.startsWith("/") && !redirect.startsWith("//")) return redirect;
+  return "/";
+}
+
 export default function LoginPage() {
   const { message } = AntApp.useApp();
   const { theme } = useTheme();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const onFinish = async (values: { username: string; password: string }) => {
     try {
@@ -20,7 +27,7 @@ export default function LoginPage() {
       localStorage.setItem("username", values.username);
       localStorage.setItem("role", result.role);
       message.success("登录成功");
-      navigate("/");
+      navigate(resolveRedirectTarget(searchParams.get("redirect")));
     } catch (error: any) {
       if (error?.response?.status === 429) {
         message.error("登录尝试过于频繁，请稍后再试");
