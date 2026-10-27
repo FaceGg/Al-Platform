@@ -13,6 +13,10 @@ vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{c
 
 const RUN_ID = "486ea7f9-f342-49a8-a3d3-41e9ac12aff1";
 
+// 相对当前时间生成夹具时间戳（90 分钟前的 UTC ISO），避免固定时间随真实时间流逝漂移。
+const UPDATED_AT = new Date(Date.now() - 90 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+const CREATED_AT = new Date(Date.now() - 92 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+
 const detailFixture = {
   id: RUN_ID,
   project_id: null,
@@ -25,8 +29,8 @@ const detailFixture = {
   token_budget: null,
   llm_model_id: "deepseek-chat",
   error_code: "AGENT_S1_LLM_FAILED",
-  created_at: "2026-10-26T07:42:12Z",
-  updated_at: "2026-10-26T07:43:14Z",
+  created_at: CREATED_AT,
+  updated_at: UPDATED_AT,
   dataset_artifact_id: null,
   result_json: {},
   memory_json: {
@@ -77,8 +81,10 @@ describe("AgentRunDetailPage", () => {
     // updated_at 2026-10-26T07:43:14Z（UTC）——修复前被当成本地时间显示 8 小时前级别错位。
     await waitFor(() => expect(screen.getByText(/终态：/)).toBeInTheDocument());
     const finalItem = screen.getByText(/终态：/).closest(".v2-tl-item");
-    expect(finalItem?.textContent).toMatch(/刚刚|分钟前|小时前|天前/);
-    expect(finalItem?.textContent).not.toMatch(/8 小时前|9 小时前/);
+    // 90 分钟前（UTC 正确解析）必须显示为小时级相对时间；时区 bug 会显示成
+    // "负偏移被钳为刚刚"或"十几小时前"级别错位——用区间断言钉住正确区间。
+    expect(finalItem?.textContent).toMatch(/[12] 小时前/);
+    expect(finalItem?.textContent).not.toMatch(/1[0-9] 小时前/);
   });
 
   it("shows the load failure state for a missing run", async () => {
