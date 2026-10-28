@@ -94,7 +94,7 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
     // Step 5: launch.
-    fireEvent.click(await screen.findByRole("button", { name: /启动智能体/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^rocket 启动智能体$/ }));
 
     await waitFor(() => expect(agentCenterMocks.createAgentRun).toHaveBeenCalledTimes(1));
     const payload = agentCenterMocks.createAgentRun.mock.calls[0][0];
@@ -123,7 +123,7 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     for (let i = 0; i < 4; i += 1) {
       fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     }
-    fireEvent.click(await screen.findByRole("button", { name: /启动智能体/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^rocket 启动智能体$/ }));
     await waitFor(() => expect(agentCenterMocks.createAgentRun).toHaveBeenCalled());
     expect(agentCenterMocks.createAgentRun.mock.calls[0][0].step_by_step).toBe(true);
     expect(await screen.findByText(/已开启逐步确认/)).toBeInTheDocument();
@@ -140,7 +140,7 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     for (let i = 0; i < 4; i += 1) {
       fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     }
-    fireEvent.click(await screen.findByRole("button", { name: /启动智能体/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^rocket 启动智能体$/ }));
     expect(await screen.findByText(/AGENT_RUN_GUIDANCE_INVALID/)).toBeInTheDocument();
   });
 });

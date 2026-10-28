@@ -49,6 +49,60 @@ const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   s4: { zh: "硬门禁与评审", en: "Gates & review" },
 };
 
+/** 终态人性化说明：失败给信号+归因+建议，而非裸错误码（ed95d930 类诉求）。 */
+const TERMINAL_EXPLAIN: Record<string, { signal: string; why: string; advice: string }> = {
+  AGENT_MAX_ROUNDS: {
+    signal: "未达验收标准",
+    why: "多轮迭代均未通过硬门禁。常见原因是数据量不足、类别严重不平衡，或门禁阈值高于该数据集能达到的上限。",
+    advice: "建议：放宽门禁阈值（如 recall ≥ 0.6）／换更大数据集／检查目标列语义是否正确。",
+  },
+  AGENT_S1_LLM_FAILED: {
+    signal: "大模型服务不可用",
+    why: "调用大模型失败（网络超时或服务无响应），与数据无关。",
+    advice: "建议：稍后重试；到大模型管理页点「测试」确认供应商连通；持续失败请检查密钥与网络。",
+  },
+  AGENT_S1_CONTRACT_FAILED: {
+    signal: "分析结果不合格",
+    why: "大模型返回的分析报告不符合平台契约（字段缺失/格式错误）。",
+    advice: "建议：重新提交任务即可（偶发）；频繁出现可尝试更换模型或收紧分析提示词。",
+  },
+  AGENT_S2_NOT_CONVERGED: {
+    signal: "特征工程未收敛",
+    why: "多轮生成的特征脚本均未通过沙箱验证（违反列数/泄漏/运行约束）。",
+    advice: "建议：在向导第二步明确数据形态与必留列，或换个能力更强的模型档案。",
+  },
+  AGENT_S3_TRANSFORM_FAILED: {
+    signal: "特征脚本全量执行失败",
+    why: "特征脚本在沙箱样本上通过，但对全量数据重放时失败（行数/内存/超时）。",
+    advice: "建议：重新提交；若复现请在第二步提示「避免高基数类别展开」。",
+  },
+  AGENT_S4_CONTRACT_FAILED: {
+    signal: "评审结果不合格",
+    why: "大模型评审输出不符合平台契约。",
+    advice: "建议：重新提交任务即可（偶发）。",
+  },
+  AGENT_REVIEW_ESCALATE: {
+    signal: "评审请求人工确认",
+    why: "评审发现指标异常（如完美指标疑似数据泄漏），按设计暂停等待人工判断。",
+    advice: "建议：查看各轮评审建议，确认泄漏点名是否属实后决定重提或采纳。",
+  },
+  AGENT_EXECUTOR_CRASHED: {
+    signal: "执行异常终止",
+    why: "执行线程发生未预期异常，堆栈已在下方留档。",
+    advice: "建议：重新提交；若复现请把升级原因中的堆栈反馈给平台维护者。",
+  },
+  AGENT_RUN_INTERRUPTED: {
+    signal: "执行被中断",
+    why: "执行进程重启导致任务中断（心跳超时被清扫标记）。",
+    advice: "建议：重新提交任务即可。",
+  },
+  AGENT_TOKEN_BUDGET_EXCEEDED: {
+    signal: "Token 预算耗尽",
+    why: "迭代消耗超出设定的 Token 预算，主动熔断。",
+    advice: "建议：提高预算或收紧门禁让任务更早收敛。",
+  },
+};
+
 export default function AgentRunArchivePanel({ runId, archive, archiveError, zh, active, onClose, onRefresh }: Props) {
   const escalation = archive?.memory_json?.escalation;
   const activeStage = active && archive ? STAGE_LABELS[archive.current_stage] : null;
@@ -195,15 +249,10 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
     }
     list.push({
       id: "final",
-      label: zh ? "终态" : "Final",
+      label: zh ? "结果" : "Result",
       node: (
-        <div className="agent-msg" id="sec-final" style={{ color: archive.status === "waiting_escalate" ? "var(--v2-red)" : "var(--v2-green)" }}>
-          <div className="meta">
-            <b>{zh ? "终态" : "Final"}</b>
-            <span className={`v2-badge ${statusBadge(archive.status)}`}>{archive.status}</span>
-            {archive.error_code ? <span className="mono">{archive.error_code}</span> : null}
-            <span>{relativeTime(archive.updated_at ?? archive.created_at, zh)}</span>
-          </div>
+        <div className="agent-msg" id="sec-final">
+          <TerminalOutcome archive={archive} zh={zh} />
         </div>
       ),
     });
@@ -271,8 +320,45 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
   );
 }
 
-function RoundBlock({ round, zh }: { round: NonNullable<AgentRunDetail["memory_json"]["rounds"]>[number]; zh: boolean }) {
+/** 终态块：成功给绿色验收信号；失败给「信号+原因+建议」，技术码仅作小字备注。 */
+function TerminalOutcome({ archive, zh }: { archive: AgentRunDetail; zh: boolean }) {
+  const explain = archive.error_code ? TERMINAL_EXPLAIN[archive.error_code] : undefined;
+  const accepted = archive.status === "accepted";
   return (
+    <div style={{
+      border: `1px solid ${accepted ? "rgba(71,195,160,.45)" : "rgba(230,111,117,.45)"}`,
+      background: accepted ? "rgba(71,195,160,.07)" : "rgba(230,111,117,.07)",
+      borderRadius: 9, padding: "10px 12px", marginBottom: 6,
+    }}>
+      <div className="meta">
+        <b style={{ color: accepted ? "var(--v2-green)" : "var(--v2-red)", fontSize: 13 }}>
+          {accepted ? (zh ? "✓ 验收通过" : "✓ Accepted") : `✕ ${zh ? "任务未通过" : "Not accepted"}`}
+        </b>
+        <span>{explain?.signal ?? archive.status}</span>
+        <span style={{ marginLeft: "auto" }}>{relativeTime(archive.updated_at ?? archive.created_at, zh)}</span>
+      </div>
+      {!accepted ? (
+        <div className="body" style={{ marginTop: 4 }}>
+          {explain ? (
+            <>
+              <div>{zh ? "原因：" : "Why: "}{explain.why}</div>
+              <div style={{ color: "var(--v2-gold)" }}>{explain.advice}</div>
+            </>
+          ) : (
+            <div>{zh ? "原因：见升级原因与技术详情。" : "See escalation detail."}</div>
+          )}
+          {archive.error_code ? <div className="mono" style={{ marginTop: 4 }}>code: {archive.error_code} · {archive.status}</div> : null}
+        </div>
+      ) : (
+        <div className="body" style={{ marginTop: 4 }}>
+          {zh ? "全部硬门禁与评审通过，配方可在下方固化与服务化。" : "All gates and review passed."}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RoundBlock({ round, zh }: { round: NonNullable<AgentRunDetail["memory_json"]["rounds"]>[number]; zh: boolean }) {  return (
     <div className="agent-msg" id={`sec-round-${round.round}`}>
       <div className="meta">
         <b>{zh ? `第 ${round.round} 轮` : `Round ${round.round}`}</b>

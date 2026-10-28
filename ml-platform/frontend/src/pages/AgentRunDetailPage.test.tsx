@@ -78,8 +78,8 @@ describe("AgentRunDetailPage", () => {
 
   it("renders relative update time in the correct timezone", async () => {
     renderAt(`/agent/task/${RUN_ID}`);
-    const finalMsg = (await screen.findAllByText("终态")).find((el) => el.tagName === "B");
-    const finalBlock = finalMsg?.closest(".agent-msg");
+    const outcome = await screen.findByText(/任务未通过/);
+    const finalBlock = outcome.closest(".agent-msg");
     // 90 分钟前（UTC 正确解析）必须显示为小时级相对时间；时区 bug 会显示成
     // "负偏移被钳为刚刚"或"十几小时前"级别错位——用区间断言钉住正确区间。
     expect(finalBlock?.textContent).toMatch(/[12] 小时前/);

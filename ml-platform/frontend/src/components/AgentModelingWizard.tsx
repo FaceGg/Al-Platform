@@ -76,6 +76,8 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   // Step 4
   const [metricGates, setMetricGates] = useState<Record<string, string>>({ recall_minority: "0.90" });
   const [reviewFocus, setReviewFocus] = useState("");
+  const [testDatasetId, setTestDatasetId] = useState("");
+  const [maxRounds, setMaxRounds] = useState("3");
   const [analysisPrompt, setAnalysisPrompt] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
@@ -191,7 +193,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
     { n: 5, tt: zh ? "服务化发布" : "Serving", st: zh ? "闭环 · 编排 · API" : "closed loop · API" },
   ];
 
-  const submit = async () => {
+  const submit = async (servitize: boolean) => {
     if (!datasetId || !targetColumn) return;
     setSubmitting(true); setError("");
     const gates: Record<string, number> = {};
@@ -228,9 +230,12 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             prompts: modelingPrompt.trim() ? [modelingPrompt.trim()] : [],
           },
           evaluation: {
+            custom_test_dataset_id: testDatasetId || null,
             metric_gates: gates,
             review_focus: reviewFocus.trim() ? [reviewFocus.trim()] : [],
           },
+          max_rounds: Math.max(1, Math.min(5, Number(maxRounds) || 3)),
+          auto_servitize: servitize,
         },
       });
       setSearchParams({ tab: "tasks" }, { replace: true });
@@ -481,10 +486,32 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
       {step === 4 && (
         <>
           <div className="v2-panel">
-            <h4><span className="bar" />{zh ? "测试集（不传 = 自动留出切分）" : "Test set (auto split by default)"}</h4>
-            <div style={{ color: "var(--v2-dim)", fontSize: 12 }}>
-              {zh ? "当前：自动留出 20%（分层抽样 · 与训练集同特征工程管线）" : "Auto hold-out 20% (stratified)"}
+            <h4><span className="bar" />{zh ? "测试集（不选 = 自动留出切分）" : "Test set (auto split by default)"}</h4>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, flexWrap: "wrap" }}>
+              {zh ? "从项目数据集选择独立测试集" : "Pick a hold-out test dataset"}
+              <select className="v2-select" style={{ minWidth: 220 }} value={testDatasetId}
+                onChange={(e) => setTestDatasetId(e.target.value)} aria-label={zh ? "测试集" : "Test dataset"}>
+                <option value="">{zh ? "— 自动留出 20%（分层抽样）—" : "— auto hold-out 20% —"}</option>
+                {datasets.filter((d) => d.id !== datasetId).map((d) => (
+                  <option key={d.id} value={d.id}>{d.name ?? d.id}</option>
+                ))}
+              </select>
+            </label>
+            <div style={{ color: "var(--v2-dim)", fontSize: 11.5, marginTop: 6 }}>
+              {zh
+                ? "未上传独立测试集时自动留出；测试集与训练集走同一特征工程管线。如需新数据集，请先到「算法平台 → 数据管理」上传后回到此处选择。"
+                : "Auto hold-out when unset; uploads go through Data Management first."}
             </div>
+          </div>
+          <div className="v2-panel">
+            <h4><span className="bar" />{zh ? "搜索轮数上限" : "Iteration rounds"}</h4>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+              {zh ? "双门禁迭代最多轮数" : "Max rounds"}
+              <input className="v2-select" style={{ width: 90 }} type="number" min={1} max={5}
+                value={maxRounds} onChange={(e) => setMaxRounds(e.target.value)}
+                aria-label={zh ? "搜索轮数" : "Rounds"} />
+              <span style={{ color: "var(--v2-dim)", fontSize: 11.5 }}>{zh ? "（1-5，默认 3；轮数越多耗时与 Token 越多）" : "1-5, default 3"}</span>
+            </label>
           </div>
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "验收指标阈值（留空项不设门禁；对大模型一票否决）" : "Acceptance gates (blank = no gate)"}</h4>
@@ -570,9 +597,14 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           <button type="button" className="v2-btn primary" disabled={!datasetId || !targetColumn}
             onClick={() => setStep((step + 1) as StepId)}>{zh ? "下一步" : "Next"} →</button>
         ) : (
-          <button type="button" className="v2-btn primary" disabled={submitting || !datasetId || !targetColumn} onClick={() => void submit()}>
-            <RocketOutlined />{submitting ? (zh ? "提交中…" : "Submitting…") : (zh ? "启动智能体（全自动迭代）" : "Launch")}
-          </button>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button type="button" className="v2-btn" disabled={submitting || !datasetId || !targetColumn} onClick={() => void submit(false)}>
+              <RocketOutlined />{submitting ? (zh ? "提交中…" : "Submitting…") : (zh ? "启动智能体" : "Launch agent")}
+            </button>
+            <button type="button" className="v2-btn primary" disabled={submitting || !datasetId || !targetColumn} onClick={() => void submit(true)}>
+              <RocketOutlined />{zh ? "启动智能体并服务化（验收通过后自动起草发布资产）" : "Launch & servitize"}
+            </button>
+          </div>
         )}
       </div>
     </div>

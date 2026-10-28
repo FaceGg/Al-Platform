@@ -105,7 +105,10 @@ export interface AgentRunCreatePayload {
       prompts?: string[];
     };
     modeling?: { algorithm_whitelist?: string[]; param_hints?: Record<string, number | string>; prompts?: string[] };
-    evaluation?: { metric_gates?: Record<string, number>; review_focus?: string[] };
+    evaluation?: { custom_test_dataset_id?: string | null; metric_gates?: Record<string, number>; review_focus?: string[] };
+    pause_at_stages?: string[];
+    max_rounds?: number;
+    auto_servitize?: boolean;
   };
 }
 
