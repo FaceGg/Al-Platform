@@ -115,10 +115,80 @@ def run_s1(
         return None, "llm_empty_completion", usage or {}
     try:
         data = parse_llm_json(reply)
+        _sanitize_analysis_payload(data)
         report = validate_contract(AnalysisReport, data)
     except AgentContractError as error:
         return None, f"contract_violation: {error}; fields: {error.details}", usage or {}
     return report, None, usage or {}
+
+
+# 净化规则：短标识字段（列名/通道名）超长 = 模型把说明文字塞错了字段，
+# 丢弃该条目胜过截断出垃圾标识；长文本字段截断即可（273368c1 事故：
+# data_quality_actions[].column 写了 >256 字符导致整份报告被拒）。
+_S1_TEXT_LIMITS = {
+    "domain_hypothesis": 200,
+    "domain_reasoning": 4000,
+    "class_balance_concern": 2000,
+    "feature_engineering_brief": 8000,
+}
+_S1_ITEM_RULES = {
+    # 字段名 -> (类型, 短标识上限, 长文本字段上限)
+    "focus_channels": {"name": 64, "why": 2000},
+    "expected_important_features": {"name_hint": 128, "reason": 2000},
+    "data_quality_actions": {"column": 256, "issue": 2000, "action": 256},
+    "leakage_suspects": {"column": 256, "why": 2000},
+}
+
+
+def _sanitize_analysis_payload(data: dict) -> None:
+    """LLM 输出入口净化（§11 契约前置）：可修复的长度违规不再整单拒收。"""
+    import logging
+
+    dropped: list[str] = []
+    for field, limit in _S1_TEXT_LIMITS.items():
+        value = data.get(field)
+        if isinstance(value, str) and len(value) > limit:
+            data[field] = value[:limit]
+    for list_field, field_limits in _S1_ITEM_RULES.items():
+        items = data.get(list_field)
+        if not isinstance(items, list):
+            continue
+        kept = []
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            malformed = False
+            for name, limit in field_limits.items():
+                value = item.get(name)
+                if isinstance(value, str) and len(value) > limit:
+                    # 短标识字段超长 = 字段用错，丢弃整条；长文本截断保留。
+                    if name in {"column", "name", "name_hint"}:
+                        malformed = True
+                        # 留证：丢弃条目的前 80 字符进日志（内容不落 run 行）。
+                        dropped.append(
+                            f"{list_field}[{index}].{name}={value[:80]!r}…({len(value)} chars)"
+                        )
+                        break
+                    item[name] = value[:limit]
+            if not malformed:
+                kept.append(item)
+        # 合同要求至少 1 条的列表（focus_channels/expected_important_features）
+        # 被清空时，硬截断首条的短标识字段兜底，避免整单拒收。
+        if not kept and items and list_field in {
+            "focus_channels", "expected_important_features",
+        }:
+            first = next((i for i in items if isinstance(i, dict)), None)
+            if first is not None:
+                for name, limit in field_limits.items():
+                    value = first.get(name)
+                    if isinstance(value, str) and len(value) > limit:
+                        first[name] = value[:limit]
+                kept = [first]
+        data[list_field] = kept
+    if dropped:
+        logging.getLogger(__name__).warning(
+            "S1 sanitize dropped malformed entries: %s", "; ".join(dropped)
+        )
 
 
 S2_SYSTEM_PROMPT = (
