@@ -220,6 +220,85 @@ class AgentRunner:
             for entry in entries
         ]
 
+    def _auto_servitize_if_requested(self) -> None:
+        """「启动并服务化」：验收通过后自动固化配方 + 尽力起草 S5 三资产。
+
+        服务化的部署绑定依赖平台标准上线链（注册-批准-部署），智能体任务
+        目前不产出部署——无部署时固化到配方为止，档案页 ServitizeActions
+        可凭已固化的配方一键续。任何失败都不改 accepted 终态。
+        """
+        guidance = self.guidance if isinstance(self.guidance, dict) else {}
+        if not guidance.get("auto_servitize"):
+            return
+        note: dict = {}
+        try:
+            from app.services.agent.recipe import create_recipe
+
+            result = dict(self.run.result_json or {})
+            if not result.get("recipe_id"):
+                name = "recipe-%s" % str(self.run.id)[:8]
+                recipe = create_recipe(
+                    self.db,
+                    project_id=self.run.project_id,
+                    name=name,
+                    content={
+                        "memory": self.memory,
+                        "result": result,
+                        "target_column": self.run.target_column,
+                    },
+                    change_note="auto-fixated on acceptance (auto_servitize)",
+                    created_by=self.actor,
+                )
+                result["recipe_id"] = str(recipe.id)
+                note["recipe_fixated"] = True
+            else:
+                note["recipe_fixated"] = "already"
+            note["recipe_id"] = result.get("recipe_id")
+            # 绑定既有部署起草三资产：项目内取最新 running 部署，无则待档案页续。
+            deployment = None
+            try:
+                from app.models.model_registry import InferenceDeployment
+
+                query = self.db.query(InferenceDeployment).filter(
+                    InferenceDeployment.project_id == self.run.project_id
+                )
+                deployment = (
+                    query.filter(InferenceDeployment.observed_state == "running")
+                    .order_by(InferenceDeployment.created_at.desc())
+                    .first()
+                )
+            except Exception:  # noqa: BLE001 - 部署探测失败按无部署处理
+                deployment = None
+            if deployment is not None:
+                from app.services.agent.recipe import get_current_version
+                from app.services.agent.servitize import servitize_recipe
+
+                recipe_uuid = uuid.UUID(str(result["recipe_id"]))
+                version = get_current_version(self.db, recipe_uuid)
+                draft = servitize_recipe(
+                    self.db,
+                    project_id=self.run.project_id,
+                    actor_id=self.actor,
+                    deployment_id=deployment.id,
+                    recipe_content=dict(version.content_json or {}),
+                )
+                note["servitize"] = {
+                    "deployment_id": str(draft.deployment_id),
+                    "loop_config_id": str(draft.loop_config_id),
+                    "model_api_id": str(draft.model_api_id),
+                }
+            else:
+                note["servitize"] = "pending_no_deployment"
+        except Exception:  # noqa: BLE001 - 自动服务化失败不影响验收终态
+            logger.warning(
+                "agent run %s: auto servitize failed", self.run.id, exc_info=True
+            )
+            note["error"] = "auto_servitize_failed (see backend log)"
+        result = dict(self.run.result_json or {})
+        result["auto_servitize"] = note
+        self.run.result_json = result
+        self.db.commit()
+
     def _finalize_reports(self) -> None:
         """终态收尾（§10.1 蒸馏 + §13.2 优化报告）：任何失败都不改终态。"""
         try:
@@ -350,7 +429,14 @@ class AgentRunner:
         resume_state = self.run.memory_json.get("resume") if self.run.memory_json else None
 
         round_number = 0
-        while round_number < MAX_ROUNDS:
+        # 用户可设搜索轮数上限（1-5，合同校验）；缺省 MAX_ROUNDS=3。
+        guidance_dict = self.guidance if isinstance(self.guidance, dict) else {}
+        try:
+            rounds_cap = int(guidance_dict.get("max_rounds") or MAX_ROUNDS)
+        except (TypeError, ValueError):
+            rounds_cap = MAX_ROUNDS
+        rounds_cap = max(1, min(5, rounds_cap))
+        while round_number < rounds_cap:
             round_number += 1
             self.run.round_count = round_number
             self.run.current_stage = "s1"
@@ -555,6 +641,7 @@ class AgentRunner:
                     "rounds": round_number,
                 }
                 self.db.commit()
+                self._auto_servitize_if_requested()
                 self._finalize_reports()
                 return self.run
             if verdict.verdict == "escalate":
@@ -592,7 +679,14 @@ class AgentRunner:
                 hints=list(verdict.next_iteration_hints),
             )
 
-        return self._escalate("AGENT_MAX_ROUNDS")
+        return self._escalate(
+            "AGENT_MAX_ROUNDS",
+            detail=(
+                f"{rounds_cap} 轮迭代均未通过硬门禁；最后一轮失败项见档案 s4/gate_failures。"
+                "常见原因：数据量不足/类不平衡严重/门禁阈值高于数据可达上限——"
+                "建议降低阈值、换更大数据集或检查目标列语义。"
+            ),
+        )
 
 
 class _BudgetExceeded(Exception):

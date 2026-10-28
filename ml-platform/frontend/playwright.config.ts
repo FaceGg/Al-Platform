@@ -76,6 +76,10 @@ export default defineConfig({
         // 每条 spec 各自登录一次；默认 5/15min 的登录 IP 限流在本地复用
         // uvicorn 的多轮运行下必然触顶（CI 作业级 env 同值，这里补齐本地）。
         LOGIN_IP_RATE_LIMIT_CAPACITY: "100",
+        // 账号维度限流默认 10/15min（无 env 时硬编码）——全量 13+ spec 以同一
+        // admin 顺序登录必触顶（trace 实锤：core-navigation 第 11 次登录 429，
+        // Retry-After 593s），这里同步放开
+        LOGIN_ACCOUNT_RATE_LIMIT_CAPACITY: "100",
         // 浏览器同源登录必带 Origin: <standardBaseUrl>。作业级 env 可能带
         // APP_MODE=production（week12 段需要）并被 ...process.env 继承进来，
         // production 分支不做 127.0.0.1 回环别名扩展 → 登录被 CORS_ORIGIN_FORBIDDEN

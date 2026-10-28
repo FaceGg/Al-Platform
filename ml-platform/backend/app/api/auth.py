@@ -135,7 +135,10 @@ def login(
         RateLimitPolicy(settings.login_ip_rate_limit_capacity, LOGIN_IP_LIMIT.window_seconds),
     )
     username = _normalize_username(form.username)
-    enforce_rate_limit(f"auth:login:account:{username.casefold()}", LOGIN_ACCOUNT_LIMIT)
+    enforce_rate_limit(
+        f"auth:login:account:{username.casefold()}",
+        RateLimitPolicy(settings.login_account_rate_limit_capacity, LOGIN_ACCOUNT_LIMIT.window_seconds),
+    )
 
     user = db.query(User).filter(func.lower(User.username) == username.casefold()).first()
 

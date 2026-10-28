@@ -1,7 +1,9 @@
 """Security boundary regression contracts."""
 
+import os
 import unittest
 import uuid
+from unittest import mock
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -271,6 +273,21 @@ class TestSecurityHardening(unittest.TestCase):
             ).first()
             self.assertIsNotNone(event)
             self.assertNotIn(password, str(event.changes if event else None))
+
+    def test_02e_login_account_rate_limit_capacity_is_configurable(self):
+        # e2e 全量套件以同一账号顺序登录 13+ 次：账号维度容量必须可经 env
+        # 放开（LOGIN_ACCOUNT_RATE_LIMIT_CAPACITY），默认仍为 10/15min
+        from app.config import Settings
+
+        with mock.patch.dict(
+            os.environ, {"LOGIN_ACCOUNT_RATE_LIMIT_CAPACITY": "100"},
+        ):
+            self.assertEqual(
+                Settings(_env_file=None).login_account_rate_limit_capacity, 100,
+            )
+        self.assertEqual(
+            Settings(_env_file=None).login_account_rate_limit_capacity, 10,
+        )
 
     def test_03_resource_cases_enforce_owner_and_hidden_outsider_access(self):
         for case in RESOURCE_CASES:

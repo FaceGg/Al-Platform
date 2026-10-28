@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     annotator_service_algorithm: str = "HS256"
     annotator_service_secret: SecretStr = Field(default=SecretStr("change-me-annotator-service-secret"), exclude=True)
     login_ip_rate_limit_capacity: int = Field(default=5, ge=1, le=100)
+    # 登录账号维度限流容量（默认 10/15min）：e2e 全量套件以同一账号顺序登录
+    # 13+ 次，必须能经 env 放开（playwright webServer 注入 100）
+    login_account_rate_limit_capacity: int = Field(default=10, ge=1, le=100)
 
     @property
     def resolved_annotator_service_secret(self) -> SecretStr:
