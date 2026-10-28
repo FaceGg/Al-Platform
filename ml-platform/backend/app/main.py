@@ -157,8 +157,13 @@ async def start_event_subscriber(app_settings):
     redis_events_url = getattr(app_settings, "redis_events_url", None)
     if redis_events_url is None:
         return None
+    resolved = redis_events_url.get_secret_value().strip()
+    if not resolved:
+        # 作业级 env 可能泄漏空串（如标准 e2e 段未配事件 Redis）——视同未配置，
+        # 否则订阅器会对空地址无限重连刷错。
+        return None
     redis_client = redis_async.Redis.from_url(
-        redis_events_url.get_secret_value(),
+        resolved,
         decode_responses=False,
     )
     stop_event = asyncio.Event()

@@ -195,6 +195,9 @@ jobs:
           ARTIFACT_STORAGE_BACKEND: local
           ARTIFACT_STORAGE_DIR: ../../temp_test/playwright-artifacts
           ML_PLATFORM_TEMP_DIR: ../../temp_test/playwright-data
+          # 本地 webServer 后端跑全新 SQLite：显式注入 CI 专用引导口令
+          # （口令策略批次移除了无口令的默认 admin 引导）
+          ML_PLATFORM_ADMIN_INITIAL_PASSWORD: admin123
         run: |
           mkdir -p ../../temp_test/playwright-artifacts ../../temp_test/playwright-data
           npm run test:e2e -- --project=chromium --grep-invert "Week 12 isolated acceptance"

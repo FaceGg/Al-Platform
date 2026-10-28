@@ -48,7 +48,10 @@ export default defineConfig({
       : "list",
   outputDir: externalAcceptanceEvidenceDir,
   use: {
-    baseURL: externalAcceptanceBaseUrl || standardBaseUrl,
+    // 外部地址仅在 Week12 栈模式下生效；标准回归段跑在栈启动之前，
+    // 且作业级 env 会泄漏 WEEK12_ACCEPTANCE_BASE_URL——若无条件采用，
+    // baseURL 会指向尚未存在/属于栈的 5173，与本地 webServer 端口错位。
+    baseURL: useExternalAcceptanceStack ? externalAcceptanceBaseUrl : standardBaseUrl,
     trace: useExternalAcceptanceStack ? "on" : "on-first-retry",
     screenshot: "only-on-failure",
   },
