@@ -198,6 +198,10 @@ jobs:
           # 本地 webServer 后端跑全新 SQLite：显式注入 CI 专用引导口令
           # （口令策略批次移除了无口令的默认 admin 引导）
           ML_PLATFORM_ADMIN_INITIAL_PASSWORD: admin123
+          # 顶层 env 的 REDIS_EVENTS_URL=redis://redis:6379/2 是为 Week12 compose
+          # 栈准备的；标准段本地后端无该主机名，Linux DNS 失败超时 25s/次会让
+          # 事件订阅重连风暴拖慢进程——标准段显式置空（后端视同未配置）
+          REDIS_EVENTS_URL: ""
         run: |
           mkdir -p ../../temp_test/playwright-artifacts ../../temp_test/playwright-data
           npm run test:e2e -- --project=chromium --grep-invert "Week 12 isolated acceptance"
