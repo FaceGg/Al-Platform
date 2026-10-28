@@ -51,7 +51,8 @@ test("week16 governance page and quota rejection", async ({ page }) => {
 
   // Governance page renders the tables.
   await page.goto("/cluster-governance");
-  await expect(page.getByRole("heading", { name: "集群治理" })).toBeVisible();
+  // v2 页头 h2 与卡片 h4 同名，取主标题（strict mode 要求唯一定位）
+  await expect(page.locator("h2.v2-pt", { hasText: "集群治理" })).toBeVisible();
   await page.waitForTimeout(1500);
   await page.screenshot({ path: path.join(EVIDENCE_DIR, "01-governance.png"), fullPage: true });
 
