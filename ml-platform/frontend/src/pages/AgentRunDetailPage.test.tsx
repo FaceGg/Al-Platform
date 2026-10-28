@@ -78,13 +78,12 @@ describe("AgentRunDetailPage", () => {
 
   it("renders relative update time in the correct timezone", async () => {
     renderAt(`/agent/task/${RUN_ID}`);
-    // updated_at 2026-10-26T07:43:14Z（UTC）——修复前被当成本地时间显示 8 小时前级别错位。
-    await waitFor(() => expect(screen.getByText(/终态：/)).toBeInTheDocument());
-    const finalItem = screen.getByText(/终态：/).closest(".v2-tl-item");
+    const finalMsg = (await screen.findAllByText("终态")).find((el) => el.tagName === "B");
+    const finalBlock = finalMsg?.closest(".agent-msg");
     // 90 分钟前（UTC 正确解析）必须显示为小时级相对时间；时区 bug 会显示成
     // "负偏移被钳为刚刚"或"十几小时前"级别错位——用区间断言钉住正确区间。
-    expect(finalItem?.textContent).toMatch(/[12] 小时前/);
-    expect(finalItem?.textContent).not.toMatch(/1[0-9] 小时前/);
+    expect(finalBlock?.textContent).toMatch(/[12] 小时前/);
+    expect(finalBlock?.textContent).not.toMatch(/1[0-9] 小时前/);
   });
 
   it("shows the load failure state for a missing run", async () => {

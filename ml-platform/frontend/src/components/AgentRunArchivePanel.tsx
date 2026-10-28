@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Spin } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import OptReportPanel from "./OptReportPanel";
 import ServitizeActions from "./ServitizeActions";
@@ -94,95 +96,7 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
             <div style={{ color: "var(--v2-sub)", wordBreak: "break-all" }}>{escalation.detail}</div>
           </div>
         ) : null}
-        <div className="v2-timeline">
-          {(archive.memory_json?.rounds ?? []).map((round) => (
-            <div key={round.round} className="v2-tl-item run">
-              <div className="tt">{zh ? `第 ${round.round} 轮` : `Round ${round.round}`}
-                {round.verdict ? <span className={`v2-badge ${round.verdict === "gate_failed" ? "v2-br" : "v2-bgo"}`} style={{ marginLeft: 8 }}>{round.verdict}</span> : null}
-              </div>
-              {round.s1 ? (
-                <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.8 }}>
-                  <b style={{ color: "var(--v2-txt)" }}>S1 {zh ? "数据分析" : "Analysis"}</b>
-                  {round.s1.domain ? <div className="ts" style={{ color: "var(--v2-sub)" }}>{zh ? "域假设" : "Domain"}: {round.s1.domain}</div> : null}
-                  {round.s1.reasoning ? <div className="ts" style={{ color: "var(--v2-sub)" }}>{round.s1.reasoning.length > 220 ? round.s1.reasoning.slice(0, 220) + "…" : round.s1.reasoning}</div> : null}
-                  {(round.s1.focus_channels ?? []).length ? (
-                    <div className="ts" style={{ color: "var(--v2-sub)" }}>{zh ? "关键通道" : "Channels"}: {(round.s1.focus_channels ?? []).slice(0, 5).map((c) => c.channel).filter(Boolean).join("、")}</div>
-                  ) : null}
-                  {(round.s1.leakage ?? []).length ? (
-                    <div className="ts" style={{ color: "var(--v2-gold)" }}>{zh ? "泄漏嫌疑" : "Leakage"}: {(round.s1.leakage ?? []).slice(0, 5).map((l) => l.column).filter(Boolean).join("、")}</div>
-                  ) : null}
-                  {(round.s1.quality_actions ?? []).length ? (
-                    <div className="ts" style={{ color: "var(--v2-sub)" }}>{zh ? "数据质量动作" : "Quality actions"}: {(round.s1.quality_actions ?? []).slice(0, 3).map((q) => q.action).filter(Boolean).join("；")}</div>
-                  ) : null}
-                  {round.s1.class_balance ? <div className="ts" style={{ color: "var(--v2-sub)" }}>{zh ? "类不平衡" : "Balance"}: {round.s1.class_balance}</div> : null}
-                </div>
-              ) : null}
-              {round.s2 ? (
-                <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.8 }}>
-                  <b style={{ color: "var(--v2-txt)" }}>S2 {zh ? "特征工程" : "Features"}</b>
-                  <span style={{ marginLeft: 8, color: "var(--v2-dim)" }}>{zh ? `${round.s2.attempts ?? 1} 次尝试` : `${round.s2.attempts ?? 1} attempts`}{round.s2.data_shape ? ` · ${round.s2.data_shape}` : ""}</span>
-                  {round.s2.description ? <div className="ts" style={{ color: "var(--v2-sub)" }}>{round.s2.description.length > 200 ? round.s2.description.slice(0, 200) + "…" : round.s2.description}</div> : null}
-                  {(round.s2.generated_columns ?? []).length ? <div className="ts" style={{ color: "var(--v2-green)" }}>{zh ? "新增" : "Added"}: {(round.s2.generated_columns ?? []).slice(0, 8).join("、")}</div> : null}
-                  {(round.s2.dropped_columns ?? []).length ? <div className="ts" style={{ color: "var(--v2-dim)" }}>{zh ? "剔除" : "Dropped"}: {(round.s2.dropped_columns ?? []).slice(0, 8).join("、")}</div> : null}
-                </div>
-              ) : (
-                (round.s2_attempts ?? []).map((attempt) => (
-                  <div key={attempt.attempt} className="ts" style={{ color: attempt.ok ? "var(--v2-green)" : "var(--v2-gold)" }}>
-                    · S2 {zh ? "尝试" : "attempt"} {attempt.attempt}: {attempt.ok ? (zh ? "通过沙箱" : "sandbox OK") : (attempt.error ?? "failed")}
-                    {Array.isArray(attempt.detail) && attempt.detail.length ? ` (${attempt.detail.slice(0, 3).join("; ")})` : ""}
-                  </div>
-                ))
-              )}
-              {round.s3 ? (
-                <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.8 }}>
-                  <b style={{ color: "var(--v2-txt)" }}>S3 {zh ? "候选训练" : "Training"}</b>
-                  {Object.keys(round.s3.metrics ?? {}).length ? (
-                    <div className="ts" style={{ color: "var(--v2-sub)" }}>
-                      {Object.entries(round.s3.metrics ?? {}).slice(0, 6).map(([k, v]) => `${k}=${v}`).join("  ")}
-                    </div>
-                  ) : null}
-                  {(round.s3.importance ?? []).length ? (
-                    <div className="ts" style={{ color: "var(--v2-sub)" }}>{zh ? "特征重要性" : "Importance"}: {(round.s3.importance ?? []).slice(0, 5).map((i) => `${i.feature}(${i.importance})`).join("、")}</div>
-                  ) : null}
-                </div>
-              ) : null}
-              {round.s4 ? (
-                <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.8 }}>
-                  <b style={{ color: "var(--v2-txt)" }}>S4 {zh ? "硬门禁" : "Gates"}</b>
-                  <span className={`v2-badge ${round.s4.gate_passed ? "v2-bg" : "v2-br"}`} style={{ marginLeft: 8 }}>{round.s4.gate_passed ? (zh ? "通过" : "passed") : (zh ? "未过" : "failed")}</span>
-                  {(round.s4.gate_failures ?? []).length ? (
-                    <div className="ts" style={{ color: "var(--v2-gold)" }}>{(round.s4.gate_failures ?? []).slice(0, 4).map((f, i) => <span key={i} style={{ display: "block" }}>· {f}</span>)}</div>
-                  ) : null}
-                </div>
-              ) : null}
-              {round.review ? (
-                <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.8 }}>
-                  <b style={{ color: "var(--v2-txt)" }}>{zh ? "评审" : "Review"}</b>
-                  <span className={`v2-badge ${round.review.verdict === "pass" ? "v2-bg" : "v2-bgo"}`} style={{ marginLeft: 8 }}>{round.review.verdict ?? "-"}</span>
-                  {round.review.readiness ? <div className="ts" style={{ color: "var(--v2-sub)" }}>{round.review.readiness.length > 200 ? round.review.readiness.slice(0, 200) + "…" : round.review.readiness}</div> : null}
-                  {(round.review.surprises ?? []).length ? <div className="ts" style={{ color: "var(--v2-gold)" }}>{zh ? "意外发现" : "Surprises"}: {(round.review.surprises ?? []).slice(0, 3).join("；")}</div> : null}
-                </div>
-              ) : null}
-              {(round.hints ?? []).length ? (
-                <div className="ts" style={{ marginTop: 3 }}>
-                  {zh ? "评审建议：" : "Hints: "}{(round.hints ?? []).slice(0, 3).map((hint, i) => (
-                    <span key={i} style={{ display: "block", color: "var(--v2-sub)" }}>{i + 1}. {hint.length > 90 ? hint.slice(0, 90) + "…" : hint}</span>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ))}
-          {(archive.memory_json?.rounds ?? []).length === 0 ? (
-            <div className="v2-tl-item">
-              <div className="tt">{zh ? "暂无轮次记录" : "No recorded rounds"}</div>
-              <div className="ts">{zh ? "该任务运行早于阶段产物落档案功能上线（2026-10-27），仅有骨架信息；新任务将逐阶段记录 S1 分析/S2 特征/S3 训练/S4 门禁与评审。" : "This run predates per-stage artifact persistence; new runs record each stage."}</div>
-            </div>
-          ) : null}
-          <div className={`v2-tl-item ${archive.status === "waiting_escalate" ? "warn" : "ok"}`}>
-            <div className="tt">{zh ? "终态：" : "Final: "}{archive.status}{archive.error_code ? ` · ${archive.error_code}` : ""}</div>
-            <div className="ts">{relativeTime(archive.updated_at ?? archive.created_at, zh)}</div>
-          </div>
-        </div>
+        <AgentStream archive={archive} zh={zh} active={!!active} />
         <OptReportPanel resultJson={archive.result_json} zh={zh} />
         {/* 设计稿两块：轮次关键产物表 + 注入的经验（L2 检索） */}
         <div style={{ display: "flex", gap: 14, marginTop: 14, flexWrap: "wrap" }}>
@@ -238,6 +152,203 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
           />
         ) : null}
         </>
+      ) : null}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 流式控制台：左侧章节大纲（点击跳转）+ 右侧滚动条 + 运行态菊花 spinner */
+/* ------------------------------------------------------------------ */
+
+interface StreamSection {
+  id: string;
+  label: string;
+  node: React.ReactNode;
+}
+
+function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boolean; active: boolean }) {
+  const streamRef = useRef<HTMLDivElement | null>(null);
+  const followRef = useRef(true);
+  const [activeId, setActiveId] = useState<string>("");
+
+  const sections: StreamSection[] = useMemo(() => {
+    const list: StreamSection[] = [];
+    const rounds = archive.memory_json?.rounds ?? [];
+    for (const round of rounds) {
+      const id = `round-${round.round}`;
+      list.push({ id, label: zh ? `第 ${round.round} 轮` : `Round ${round.round}`, node: <RoundBlock key={id} round={round} zh={zh} /> });
+    }
+    if (!rounds.length) {
+      list.push({
+        id: "empty",
+        label: zh ? "暂无轮次" : "No rounds",
+        node: (
+          <div className="agent-msg" id="sec-empty">
+            <div className="meta"><b>{zh ? "暂无轮次记录" : "No recorded rounds"}</b></div>
+            <div className="body">{zh
+              ? "该任务运行早于阶段产物落档案功能上线（2026-10-27）；新任务将逐阶段流式记录。"
+              : "This run predates per-stage artifact persistence."}</div>
+          </div>
+        ),
+      });
+    }
+    list.push({
+      id: "final",
+      label: zh ? "终态" : "Final",
+      node: (
+        <div className="agent-msg" id="sec-final" style={{ color: archive.status === "waiting_escalate" ? "var(--v2-red)" : "var(--v2-green)" }}>
+          <div className="meta">
+            <b>{zh ? "终态" : "Final"}</b>
+            <span className={`v2-badge ${statusBadge(archive.status)}`}>{archive.status}</span>
+            {archive.error_code ? <span className="mono">{archive.error_code}</span> : null}
+            <span>{relativeTime(archive.updated_at ?? archive.created_at, zh)}</span>
+          </div>
+        </div>
+      ),
+    });
+    return list;
+  }, [archive, zh]);
+
+  // 新内容到达时若用户停留在底部附近则自动跟随到最新。
+  const signature = `${archive.round_count}:${archive.updated_at ?? ""}:${archive.token_used}`;
+  useEffect(() => {
+    const el = streamRef.current;
+    if (el && followRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [signature]);
+
+  const onScroll = () => {
+    const el = streamRef.current;
+    if (!el) return;
+    followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    let current = sections[0]?.id ?? "";
+    for (const section of sections) {
+      const node = el.querySelector(`#sec-${section.id}`);
+      if (node && (node as HTMLElement).offsetTop - el.scrollTop <= 60) current = section.id;
+    }
+    setActiveId(current);
+  };
+
+  const jump = (id: string) => {
+    const el = streamRef.current;
+    const node = el?.querySelector(`#sec-${id}`);
+    if (el && node) {
+      el.scrollTo({ top: Math.max(0, (node as HTMLElement).offsetTop - 8), behavior: "smooth" });
+      followRef.current = false;
+    }
+  };
+
+  const activeStageLabel = active ? STAGE_LABELS[archive.current_stage] : null;
+
+  return (
+    <div className="agent-stream-wrap" style={{ marginTop: 4 }}>
+      <div className="agent-outline" role="tablist" aria-label={zh ? "章节导航" : "Sections"}>
+        {sections.map((section) => (
+          <button
+            key={section.id}
+            type="button"
+            role="tab"
+            aria-selected={activeId === section.id}
+            className={activeId === section.id ? "on" : ""}
+            onClick={() => jump(`sec-${section.id}`)}
+          >
+            <span className="tick" />{section.label}
+          </button>
+        ))}
+      </div>
+      <div className="agent-stream" ref={streamRef} onScroll={onScroll}>
+        {sections.map((section) => section.node)}
+        {activeStageLabel ? (
+          <div className="agent-spin-line">
+            <Spin size="small" />
+            {zh ? `正在 ${activeStageLabel.zh}…（10s 自动刷新）` : `${activeStageLabel.en}…`}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function RoundBlock({ round, zh }: { round: NonNullable<AgentRunDetail["memory_json"]["rounds"]>[number]; zh: boolean }) {
+  return (
+    <div className="agent-msg" id={`sec-round-${round.round}`}>
+      <div className="meta">
+        <b>{zh ? `第 ${round.round} 轮` : `Round ${round.round}`}</b>
+        {round.verdict ? <span className={`v2-badge ${round.verdict === "gate_failed" ? "v2-br" : "v2-bgo"}`}>{round.verdict}</span> : null}
+      </div>
+
+      {round.s1 ? (
+        <div className="body" style={{ marginBottom: 8 }}>
+          <div className="meta"><b>S1 · {zh ? "数据分析" : "Analysis"}</b></div>
+          {round.s1.domain ? <div className="kv">{zh ? "域假设" : "Domain"}：<b style={{ color: "var(--v2-txt)" }}>{round.s1.domain}</b></div> : null}
+          {round.s1.reasoning ? <div>{round.s1.reasoning.length > 260 ? round.s1.reasoning.slice(0, 260) + "…" : round.s1.reasoning}</div> : null}
+          {(round.s1.focus_channels ?? []).length ? <div className="kv">{zh ? "关键通道" : "Channels"}：{(round.s1.focus_channels ?? []).map((c) => c.channel).filter(Boolean).join("、")}</div> : null}
+          {(round.s1.leakage ?? []).length ? <div className="kv" style={{ color: "var(--v2-gold)" }}>{zh ? "泄漏嫌疑" : "Leakage"}：{(round.s1.leakage ?? []).map((l) => l.column).filter(Boolean).join("、")}</div> : null}
+          {(round.s1.quality_actions ?? []).length ? <div className="kv">{zh ? "数据质量动作" : "Quality"}：{(round.s1.quality_actions ?? []).map((q) => q.action).filter(Boolean).join("；")}</div> : null}
+          {round.s1.class_balance ? <div className="kv">{zh ? "类不平衡" : "Balance"}：{round.s1.class_balance}</div> : null}
+        </div>
+      ) : null}
+
+      {(round.s2_attempts ?? []).map((attempt) => (
+        <div key={attempt.attempt} className="mono" style={{ color: attempt.ok ? "var(--v2-green)" : "var(--v2-gold)", marginBottom: 2 }}>
+          $ S2 {zh ? "尝试" : "attempt"} {attempt.attempt}: {attempt.ok ? (zh ? "通过沙箱" : "sandbox OK") : (attempt.error ?? "failed")}
+          {Array.isArray(attempt.detail) && attempt.detail.length ? ` (${attempt.detail.slice(0, 3).join("; ")})` : ""}
+        </div>
+      ))}
+
+      {round.s2 ? (
+        <div className="body" style={{ marginBottom: 8 }}>
+          <div className="meta">
+            <b>S2 · {zh ? "特征工程" : "Features"}</b>
+            <span>{zh ? `${round.s2.attempts ?? 1} 次尝试` : `${round.s2.attempts ?? 1} attempts`}{round.s2.data_shape ? ` · ${round.s2.data_shape}` : ""}</span>
+          </div>
+          {round.s2.description ? <div>{round.s2.description.length > 240 ? round.s2.description.slice(0, 240) + "…" : round.s2.description}</div> : null}
+          {(round.s2.generated_columns ?? []).length ? <div className="kv" style={{ color: "var(--v2-green)" }}>{zh ? "新增" : "Added"}：{(round.s2.generated_columns ?? []).join("、")}</div> : null}
+          {(round.s2.dropped_columns ?? []).length ? <div className="kv" style={{ color: "var(--v2-dim)" }}>{zh ? "剔除" : "Dropped"}：{(round.s2.dropped_columns ?? []).join("、")}</div> : null}
+        </div>
+      ) : null}
+
+      {round.s3 ? (
+        <div className="body" style={{ marginBottom: 8 }}>
+          <div className="meta"><b>S3 · {zh ? "候选训练" : "Training"}</b></div>
+          {Object.keys(round.s3.metrics ?? {}).length ? (
+            <div className="mono">{Object.entries(round.s3.metrics ?? {}).slice(0, 8).map(([k, v]) => `${k}=${v}`).join("  ")}</div>
+          ) : null}
+          {(round.s3.importance ?? []).length ? <div className="kv">{zh ? "特征重要性" : "Importance"}：{(round.s3.importance ?? []).slice(0, 5).map((i) => `${i.feature}(${i.importance})`).join("、")}</div> : null}
+        </div>
+      ) : null}
+
+      {round.s4 ? (
+        <div className="body" style={{ marginBottom: 8 }}>
+          <div className="meta">
+            <b>S4 · {zh ? "硬门禁" : "Gates"}</b>
+            <span className={`v2-badge ${round.s4.gate_passed ? "v2-bg" : "v2-br"}`}>{round.s4.gate_passed ? (zh ? "通过" : "passed") : (zh ? "未过" : "failed")}</span>
+          </div>
+          {(round.s4.gate_failures ?? []).length ? (
+            <div className="mono" style={{ color: "var(--v2-gold)" }}>{(round.s4.gate_failures ?? []).slice(0, 4).map((f, i) => <div key={i}>· {f}</div>)}</div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {round.review ? (
+        <div className="body" style={{ marginBottom: 8 }}>
+          <div className="meta">
+            <b>{zh ? "评审" : "Review"}</b>
+            <span className={`v2-badge ${round.review.verdict === "pass" ? "v2-bg" : "v2-bgo"}`}>{round.review.verdict ?? "-"}</span>
+          </div>
+          {round.review.readiness ? <div>{round.review.readiness.length > 240 ? round.review.readiness.slice(0, 240) + "…" : round.review.readiness}</div> : null}
+          {(round.review.surprises ?? []).length ? <div className="kv" style={{ color: "var(--v2-gold)" }}>{zh ? "意外发现" : "Surprises"}：{(round.review.surprises ?? []).join("；")}</div> : null}
+        </div>
+      ) : null}
+
+      {(round.hints ?? []).length ? (
+        <div className="body">
+          {(round.hints ?? []).slice(0, 3).map((hint, i) => (
+            <div key={i} className="kv">· {hint.length > 120 ? hint.slice(0, 120) + "…" : hint}</div>
+          ))}
+        </div>
       ) : null}
     </div>
   );

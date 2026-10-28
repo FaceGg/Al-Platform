@@ -208,9 +208,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             onKeyDown={(e) => { if (e.key === "Enter") navigate("/"); }}>
             {t.app.title}
           </div>
-          <div className="v2-gsearch">
-            <input placeholder={zh ? "搜索数据集 / 模型 / 配方 / 任务…" : "Search datasets / models / recipes / jobs…"} aria-label={zh ? "全局搜索" : "Global search"} />
-          </div>
           <nav className="v2-navtabs" aria-label={zh ? "主导航" : "Primary"}>
             {viewTabs.map((tab) => (
               <button
