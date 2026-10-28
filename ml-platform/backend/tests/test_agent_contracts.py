@@ -158,7 +158,50 @@ class TestRunS1(unittest.TestCase):
             )
         self.assertIsNone(report)
         self.assertIn("contract_violation", error)
-        self.assertIn("focus_channels", error)
+
+    def test_run_s1_sanitizes_overlong_fields_instead_of_rejecting(self):
+        """273368c1 回归：column 字段被塞说明文字（>256 字符）不再整单拒收。"""
+        import copy
+
+        rambling = "该列语义说明" * 60  # > 256 字符
+        payload = copy.deepcopy(_VALID_ANALYSIS)
+        payload["data_quality_actions"].append(
+            {"column": rambling, "issue": "说明误填入列名", "action": "drop"}
+        )
+        payload["leakage_suspects"].append(
+            {"column": "OK_COL", "why": "正常条目但理由超长" * 400}
+        )
+        with SessionLocal() as db, mock.patch(
+            "app.services.agent.llm_client.chat_completion",
+            return_value=(__import__("json").dumps(payload), {}),
+        ):
+            report, error, _usage = run_s1(
+                db, config=self._config(), profile_report={"row_count": 10}
+            )
+        self.assertIsNone(error)
+        # 超长 column 的条目被丢弃；超长 why 被截断保留。
+        self.assertEqual(len(report.data_quality_actions), 1)
+        self.assertEqual(len(report.leakage_suspects), 2)
+        self.assertLessEqual(len(report.leakage_suspects[1].why), 2000)
+
+    def test_run_s1_keeps_one_channel_when_all_malformed(self):
+        """必填列表（focus_channels ≥1）全超长时硬截断兜底，不整单拒收。"""
+        payload = {
+            **_VALID_ANALYSIS,
+            "focus_channels": [
+                {"name": "通道说明文字" * 30, "columns": ["A"], "why": "ok"}
+            ],
+        }
+        with SessionLocal() as db, mock.patch(
+            "app.services.agent.llm_client.chat_completion",
+            return_value=(__import__("json").dumps(payload), {}),
+        ):
+            report, error, _usage = run_s1(
+                db, config=self._config(), profile_report={"row_count": 10}
+            )
+        self.assertIsNone(error)
+        self.assertEqual(len(report.focus_channels), 1)
+        self.assertLessEqual(len(report.focus_channels[0].name), 64)
 
     def test_run_s1_non_json_output_returns_parse_error(self):
         with SessionLocal() as db, mock.patch(
