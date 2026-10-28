@@ -20,7 +20,7 @@ sys.path.insert(0, str(ML_ROOT / "backend"))
 from workflow_api_test import Client  # noqa: E402
 
 DEFAULT_CSV = r"C:\Users\17723\Desktop\点焊数据\unlabeled.csv"
-DEFAULT_API_SOURCE = "c52c6fb6-73b5-4c57-8adb-069c5db5ba5a"
+DEFAULT_API_SOURCE = "c52c6fb6-73b5-4c57-8adb-069c5db5ba5a"  # gitleaks:allow 演示环境资源 ID，非凭据
 
 
 def build_feature_rows(csv_path: str) -> list[dict]:

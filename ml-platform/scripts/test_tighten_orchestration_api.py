@@ -20,7 +20,7 @@ sys.path.insert(0, str(ML_ROOT / "scripts"))
 from workflow_api_test import Client  # noqa: E402
 
 DEFAULT_CSV = r"C:\Users\17723\Desktop\拧紧\tighten_test.csv"
-DEFAULT_API_SOURCE = "65bba646-b7b3-4a17-8aa6-64f285cfd955"
+DEFAULT_API_SOURCE = "65bba646-b7b3-4a17-8aa6-64f285cfd955"  # gitleaks:allow 演示环境资源 ID，非凭据
 
 # 平台 tighten_feature_engineering 的原始输入列（CSV 中带中文注解，按基础名解析）
 RAW_NUMERIC = [
