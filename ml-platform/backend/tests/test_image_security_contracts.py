@@ -154,7 +154,8 @@ class ImageSecurityContractTests(unittest.TestCase):
             if line.split("#", 1)[0].strip()
         }
         self.assertIn("tensorboard==2.21.*", lines)
-        self.assertIn("setuptools==83.0.0", lines)
+        # 84.1.0 修复 GHSA-xmj3-9gf7-h52w（Windows wheel namespace_packages 反序列化）
+        self.assertIn("setuptools==84.1.0", lines)
 
     def test_cryptography_exception_is_removed_after_clean_resolution(self):
         self.assertFalse(EXCEPTION.exists())
