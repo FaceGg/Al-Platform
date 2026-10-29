@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App as AntApp } from "antd";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import KnowledgeCenterPage from "./KnowledgeCenterPage";
 import type { ExperienceEntry, KBBinding } from "../api/knowledgeCenter";
@@ -15,7 +16,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
 vi.mock("../api/knowledgeCenter", () => mocks);
 vi.mock("../api/client", () => ({
-  default: {},
+  default: {
+    get: vi.fn().mockResolvedValue({ data: [
+      { id: "kb-1", name: "拧紧工艺标准", description: "扭矩规范", document_count: 4 },
+    ] }),
+    post: vi.fn().mockResolvedValue({ data: { id: "kb-2" } }),
+    delete: vi.fn().mockResolvedValue({ data: {} }),
+  },
   formatApiError: (_error: unknown, fallback: string) => fallback,
 }));
 vi.mock("../i18n", () => ({
@@ -94,9 +101,11 @@ beforeEach(() => {
 describe("KnowledgeCenterPage", () => {
   it("renders bindings with system badge and experience entries", async () => {
     render(
-      <AntApp>
-        <KnowledgeCenterPage />
-      </AntApp>
+      <MemoryRouter>
+        <AntApp>
+          <KnowledgeCenterPage />
+        </AntApp>
+      </MemoryRouter>
     );
     expect(await screen.findByText("平台经验（系统分区）")).toBeInTheDocument();
     expect(screen.getByText("系统库")).toBeInTheDocument();
@@ -106,9 +115,11 @@ describe("KnowledgeCenterPage", () => {
   it("toggles a non-system binding", async () => {
     mocks.patchBinding.mockResolvedValue(makeBinding({ enabled: false }));
     render(
-      <AntApp>
-        <KnowledgeCenterPage />
-      </AntApp>
+      <MemoryRouter>
+        <AntApp>
+          <KnowledgeCenterPage />
+        </AntApp>
+      </MemoryRouter>
     );
     await screen.findByText("点焊标准法规");
     const switches = screen.getAllByRole("switch");
@@ -121,9 +132,11 @@ describe("KnowledgeCenterPage", () => {
   it("retires an experience entry after confirmation", async () => {
     mocks.retireExperience.mockResolvedValue(undefined);
     render(
-      <AntApp>
-        <KnowledgeCenterPage />
-      </AntApp>
+      <MemoryRouter>
+        <AntApp>
+          <KnowledgeCenterPage />
+        </AntApp>
+      </MemoryRouter>
     );
     await screen.findByText("索引列默认剔除");
     fireEvent.click(screen.getByText("否决"));
@@ -131,5 +144,19 @@ describe("KnowledgeCenterPage", () => {
     await waitFor(() =>
       expect(mocks.retireExperience).toHaveBeenCalledWith("e-0042")
     );
+  });
+
+  it("lists knowledge bases with document counts and manage actions", async () => {
+    render(
+      <MemoryRouter>
+        <AntApp>
+          <KnowledgeCenterPage />
+        </AntApp>
+      </MemoryRouter>
+    );
+    expect(await screen.findByText("知识库管理")).toBeInTheDocument();
+    expect(await screen.findByText("拧紧工艺标准")).toBeInTheDocument();
+    expect(screen.getByText("管理文档")).toBeInTheDocument();
+    expect(screen.getByText("删除")).toBeInTheDocument();
   });
 });

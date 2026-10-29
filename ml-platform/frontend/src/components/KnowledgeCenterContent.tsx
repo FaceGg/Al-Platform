@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Input, message, Popconfirm, Space, Card, Switch } from 'antd'
-import { ReloadOutlined, PushpinOutlined } from '@ant-design/icons'
+import { Table, Tag, Button, Input, message, Popconfirm, Space, Card, Switch, Form, Modal } from 'antd'
+import { ReloadOutlined, PushpinOutlined, PlusOutlined, DeleteOutlined, FileTextOutlined } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
+import apiClient from '../api/client'
 import {
   ExperienceEntry,
   KBBinding,
@@ -18,18 +20,23 @@ import { formatApiError } from '../api/client'
  */
 export default function KnowledgeCenterContent({ t }: { t: any }) {
   const text = t.kbcenter
+  const navigate = useNavigate()
   const [bindings, setBindings] = useState<KBBinding[]>([])
   const [entries, setEntries] = useState<ExperienceEntry[]>([])
+  const [kbs, setKbs] = useState<Array<Record<string, unknown>>>([])
   const [loading, setLoading] = useState(false)
   const [noteTarget, setNoteTarget] = useState<string | null>(null)
   const [noteText, setNoteText] = useState('')
+  const [kbModalOpen, setKbModalOpen] = useState(false)
+  const [kbForm] = Form.useForm()
 
   const load = () => {
     setLoading(true)
-    Promise.all([listBindings(), listExperience()])
-      .then(([bindingList, entryList]) => {
+    Promise.all([listBindings(), listExperience(), apiClient.get('/knowledge/bases')])
+      .then(([bindingList, entryList, kbRes]) => {
         setBindings(bindingList)
         setEntries(entryList)
+        setKbs(kbRes.data?.items || kbRes.data || [])
       })
       .catch((error) => message.error(formatApiError(error, text.loadFailed)))
       .finally(() => setLoading(false))
@@ -67,6 +74,31 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       message.error(formatApiError(error, text.updateFailed))
     }
   }
+
+  const createKb = async (values: { name: string; description?: string }) => {
+    try {
+      await apiClient.post('/knowledge/bases', values)
+      message.success('知识库已创建')
+      setKbModalOpen(false)
+      kbForm.resetFields()
+      load()
+    } catch (error) {
+      message.error(formatApiError(error, '创建失败'))
+    }
+  }
+
+  const deleteKb = async (kb: Record<string, unknown>) => {
+    try {
+      await apiClient.delete(`/knowledge/bases/${kb.id}`)
+      message.success('知识库已删除（文档与检索配置一并清理）')
+      load()
+    } catch (error) {
+      message.error(formatApiError(error, '删除失败'))
+    }
+  }
+
+  // 系统分区（平台经验真源）对应的 KB 不可删除——删掉等于毁掉经验源。
+  const systemKbIds = new Set(bindings.filter((b) => b.is_system).map((b) => b.kb_id))
 
   const bindingColumns = [
     {
@@ -153,6 +185,76 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
   return (
     <>
       <Card
+        title="知识库管理"
+        extra={
+          <Space>
+            <Button icon={<PlusOutlined />} type="primary" onClick={() => setKbModalOpen(true)}>
+              新建知识库
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={load}>
+              刷新
+            </Button>
+          </Space>
+        }
+        style={{ marginBottom: 16 }}
+      >
+        <Table
+          rowKey="id"
+          size="small"
+          loading={loading}
+          dataSource={kbs}
+          pagination={kbs.length > 8 ? { pageSize: 8 } : false}
+          locale={{ emptyText: '暂无知识库 —— 点击右上角「新建知识库」创建，或到旧版知识库页迁移' }}
+          columns={[
+            {
+              title: '名称',
+              dataIndex: 'name',
+              render: (value: string) => <span className="tt">{value}</span>,
+            },
+            { title: '描述', dataIndex: 'description', ellipsis: true, render: (v: string) => v || '—' },
+            { title: '文档数', dataIndex: 'document_count', width: 80, render: (v: number) => v ?? 0 },
+            {
+              title: '操作',
+              key: 'actions',
+              width: 220,
+              render: (_: unknown, record: Record<string, unknown>) => {
+                const isSystemKb = systemKbIds.has(String(record.id));
+                return (
+                <Space>
+                  <Button
+                    size="small"
+                    icon={<FileTextOutlined />}
+                    onClick={() => navigate(`/knowledge/${record.id}`)}
+                  >
+                    管理文档
+                  </Button>
+                  <Popconfirm
+                    title="确认删除该知识库？"
+                    description="文档、向量与检索绑定将一并删除，不可恢复。"
+                    onConfirm={() => deleteKb(record)}
+                    disabled={isSystemKb}
+                  >
+                    <Button
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      disabled={isSystemKb}
+                      title={isSystemKb ? '系统经验分区不可删除' : undefined}
+                    >
+                      删除
+                    </Button>
+                  </Popconfirm>
+                </Space>
+                );
+              },
+            },
+          ] as never}
+        />
+        <div style={{ color: 'var(--v2-dim)', fontSize: 11.5, marginTop: 6 }}>
+          「管理文档」支持上传 PDF / Word / Excel / 文本并做向量化与检索测试；删除知识库会级联清理其绑定配置。
+        </div>
+      </Card>
+      <Card
         title={text.title}
         extra={
           <Button icon={<ReloadOutlined />} onClick={load}>
@@ -183,6 +285,24 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
           </Space.Compact>
         </Card>
       )}
+      <Modal
+        title="新建知识库"
+        open={kbModalOpen}
+        onCancel={() => setKbModalOpen(false)}
+        onOk={() => kbForm.submit()}
+        okText="创建"
+        cancelText="取消"
+        destroyOnHidden
+      >
+        <Form form={kbForm} layout="vertical" onFinish={createKb} autoComplete="off">
+          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入知识库名称' }]}>
+            <Input maxLength={128} placeholder="例如：拧紧工艺标准 / 电焊缺陷图谱" />
+          </Form.Item>
+          <Form.Item name="description" label="描述">
+            <Input.TextArea rows={3} maxLength={500} placeholder="知识库用途说明（可选）" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </>
   )
 }
