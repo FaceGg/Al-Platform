@@ -64,20 +64,23 @@ class ImageSecurityContractTests(unittest.TestCase):
             )
             self.assertIn("ENV HOME=/home/app", content, path.name)
             self.assertIn(f"USER {non_root_uid}:{non_root_uid}", content, path.name)
+            # 自适应安装（d9b31394）：wheelhouse 非空时注入 --no-index 前缀，
+            # 因此从 --find-links 起钉死稳定片段，包/重试/超时合同不变。
             self.assertIn(
-                'python3.11 -m pip install --find-links /wheels --no-deps '
+                '--find-links /wheels --no-deps '
                 '--retries 10 --resume-retries 20 '
                 '--timeout 120 "xgboost==3.2.*" "catboost==1.2.*"',
                 content,
                 path.name,
             )
             self.assertIn(
-                "python3.11 -m pip install --find-links /wheels "
+                "--find-links /wheels "
                 "--retries 10 --resume-retries 20 --timeout 120 "
                 "graphviz plotly six -r /tmp/requirements-without-boost.txt",
                 content,
                 path.name,
             )
+            self.assertIn("$INDEX_FLAGS", content, path.name)
 
     def test_runtime_record_uses_current_wolfi_python_311_security_pins(self):
         record = json.loads(BASE_RECORD.read_text(encoding="utf-8"))
