@@ -229,4 +229,11 @@ def run_sandbox(
             )
         except pd.errors.ParserError as error:
             return SandboxResult(ok=False, error=f"output_unparseable: {error}")
+        if output.empty:
+            # 有表头但 0 行：下游训练/切分必崩，统一按结构化失败退回自纠。
+            return SandboxResult(
+                ok=False,
+                error="empty_output: script produced 0 rows",
+                violations=["empty_output"],
+            )
         return SandboxResult(ok=True, output=output, error=None)

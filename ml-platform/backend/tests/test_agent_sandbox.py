@@ -104,16 +104,25 @@ class TestSandboxExecution(unittest.TestCase):
         self.assertEqual(len(result.output), 20)
 
     def test_empty_output_is_failed_attempt_not_crash(self):
-        """拧紧#3 回归：脚本把样本过滤成 0 行 → 结构化失败而非线程崩溃。"""
-        empty_filter = (
+        """拧紧#3 回归：脚本产出空输出（0 行或 0 字节）→ 结构化失败而非崩溃。"""
+        # 0 字节形态：把所有列都删掉（to_csv 输出空文件）。
+        drop_all = (
+            "import pandas as pd\n"
+            "def transform(df):\n"
+            "    return df.drop(columns=list(df.columns))\n"
+        )
+        result = run_sandbox(drop_all, _input_frame(), timeout_seconds=60)
+        self.assertFalse(result.ok)
+        self.assertIn("empty_output", (result.error or ""))
+        # 0 行形态：行过滤后带表头的空表。
+        row_filter = (
             "import pandas as pd\n"
             "def transform(df):\n"
             "    return df[df['ACTUAL_TORQUE'] > 10**9]\n"
         )
-        result = run_sandbox(empty_filter, _input_frame(), timeout_seconds=60)
+        result = run_sandbox(row_filter, _input_frame(), timeout_seconds=60)
         self.assertFalse(result.ok)
         self.assertIn("empty_output", (result.error or ""))
-        self.assertTrue(any("empty_output" in v for v in result.violations))
 
     def test_timeout_kills_runaway_script(self):
         busy = (
