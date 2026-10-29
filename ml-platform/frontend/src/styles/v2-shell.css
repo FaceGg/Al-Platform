@@ -144,6 +144,8 @@
   background: rgba(255, 209, 102, .15); color: var(--v2-gold); border: 1px solid rgba(255, 209, 102, .3);
 }
 .v2-topright { display: flex; gap: 12px; align-items: center; color: var(--v2-sub); font-size: 14.5px; }
+/* 导航改绝对定位后脱离 flex 流，用户区需自驱靠右（原依赖 navtabs flex:1 推挤）。 */
+.v2-topright { margin-left: auto; }
 .v2-env-chip {
   font-size: 11.5px; color: var(--v2-green); border: 1px solid rgba(71, 195, 160, .35);
   background: rgba(71, 195, 160, .08); padding: 1px 8px; border-radius: 9px; white-space: nowrap;
