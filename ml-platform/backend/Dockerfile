@@ -7,7 +7,7 @@ RUN set -eu; \
         if apk add --no-cache \
             python-3.11=3.11.17-r3 \
             py3.11-pip=26.2.1-r4 \
-            postgresql-16-client=16.11-r0 \
+            postgresql-16-client=16.14-r1 \
             glibc \
             libgomp; then \
             exit 0; \
