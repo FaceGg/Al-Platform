@@ -168,7 +168,14 @@ def _sanitize_analysis_payload(data: dict) -> None:
     dropped: list[str] = []
     for field, limit in _S1_TEXT_LIMITS.items():
         value = data.get(field)
-        if isinstance(value, str) and len(value) > limit:
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            # LLM 偶发返回对象/列表（如 class_balance_concern 给成
+            # {"ratio":...}）——序列化成字符串而不是整单拒收。
+            value = json.dumps(value, ensure_ascii=False)
+            data[field] = value
+        if len(value) > limit:
             data[field] = value[:limit]
     for list_field, field_limits in _S1_ITEM_RULES.items():
         items = data.get(list_field)
@@ -181,6 +188,9 @@ def _sanitize_analysis_payload(data: dict) -> None:
             malformed = False
             for name, limit in field_limits.items():
                 value = item.get(name)
+                if value is not None and not isinstance(value, str):
+                    value = json.dumps(value, ensure_ascii=False)
+                    item[name] = value
                 if isinstance(value, str) and len(value) > limit:
                     # 短标识字段超长 = 字段用错，丢弃整条；长文本截断保留。
                     if name in {"column", "name", "name_hint"}:
