@@ -124,7 +124,12 @@
   display: flex; align-items: center; gap: 8px; font-size: 12.5px;
   color: var(--v2-blue); padding: 2px 0 6px;
 }
-.v2-navtabs { display: flex; gap: 4px; flex: 1; justify-content: center; }
+.v2-navtabs { display: flex; gap: 4px; flex: 1; justify-content: center; flex-wrap: wrap; }
+/* 五视图主导航相对视口绝对居中（brand 与右侧用户区不等宽，剩余空间居中会整体偏移）；
+   窄窗口（<900px）回退为流式避免与两侧重叠。 */
+@media (min-width: 900px) {
+  .v2-navtabs { position: absolute; left: 50%; transform: translateX(-50%); flex-wrap: nowrap; }
+}
 .v2-navtab {
   padding: 6px 15px; border-radius: 8px; cursor: pointer; color: var(--v2-sub);
   border: 1px solid transparent; transition: .18s; font-size: 14.5px; background: none; white-space: nowrap;
