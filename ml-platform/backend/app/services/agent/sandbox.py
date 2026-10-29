@@ -218,4 +218,15 @@ def run_sandbox(
             output = pd.read_csv(output_path)
         except OSError as error:
             return SandboxResult(ok=False, error=f"output_unreadable: {error}")
+        except pd.errors.EmptyDataError:
+            # 脚本把样本过滤成了 0 行/0 列——模型的合法失误（过滤过严），
+            # 应作为该次尝试失败退回 S2 自纠，而不是炸掉执行线程
+            # （拧紧#3 a8764623 事故）。
+            return SandboxResult(
+                ok=False,
+                error="empty_output: script produced no rows/columns",
+                violations=["empty_output"],
+            )
+        except pd.errors.ParserError as error:
+            return SandboxResult(ok=False, error=f"output_unparseable: {error}")
         return SandboxResult(ok=True, output=output, error=None)

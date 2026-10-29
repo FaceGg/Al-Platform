@@ -103,6 +103,18 @@ class TestSandboxExecution(unittest.TestCase):
         self.assertIn("TORQUE_DEVIATION", result.output.columns)
         self.assertEqual(len(result.output), 20)
 
+    def test_empty_output_is_failed_attempt_not_crash(self):
+        """拧紧#3 回归：脚本把样本过滤成 0 行 → 结构化失败而非线程崩溃。"""
+        empty_filter = (
+            "import pandas as pd\n"
+            "def transform(df):\n"
+            "    return df[df['ACTUAL_TORQUE'] > 10**9]\n"
+        )
+        result = run_sandbox(empty_filter, _input_frame(), timeout_seconds=60)
+        self.assertFalse(result.ok)
+        self.assertIn("empty_output", (result.error or ""))
+        self.assertTrue(any("empty_output" in v for v in result.violations))
+
     def test_timeout_kills_runaway_script(self):
         busy = (
             "import numpy as np\n"
