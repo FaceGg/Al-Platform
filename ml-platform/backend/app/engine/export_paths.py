@@ -11,15 +11,13 @@ def resolve_export_path(
     operator_id: str,
     file_name: str | None,
     extension: str,
-    *,
-    legacy_file_path: str | None = None,
 ) -> Path:
-    """Resolve a deterministic export path without exposing server paths to clients."""
-    if legacy_file_path and str(legacy_file_path).strip():
-        path = Path(str(legacy_file_path)).expanduser()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+    """Resolve a deterministic export path without exposing server paths to clients.
 
+    导出一律落在工作区 exports 目录（审计 A-04：历史 legacy_file_path 分支
+    可写服务器任意路径，已删除；旧工作流里的 file_path 参数由调用方降级为
+    文件名提示传入 file_name，basename 在此处被截取，不含任何目录语义）。
+    """
     workspace = context.workspace_dir or (
         Path(tempfile.gettempdir()) / "ml_platform_data" / "legacy" / str(context.run_id)
     )

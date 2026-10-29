@@ -72,6 +72,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_production_stack",
         "test_storage_factory",
         "test_events_local",
+        "test_safe_expression",
+        "test_outbound_security",
     ],
     6: [
         "test_experiment_config",

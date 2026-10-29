@@ -51,6 +51,8 @@ create_production_env() {
   # 初始 admin 口令：默认随机生成（仅全新数据库首启生效）；统一口令请以
   # ADMIN_INITIAL_PASSWORD 环境变量安装。真实口令只落 .env（600），不进安装日志。
   admin_initial_password="${ADMIN_INITIAL_PASSWORD:-$(openssl rand -hex 12)}"
+  # A-02：内部服务令牌/门户会话签名密钥（production 校验拒绝默认值）
+  annotator_service_secret="$(openssl rand -hex 32)"
   cat > "$ENV_FILE" <<EOF
 # Generated for this deployment. Keep this file and secrets/ outside version control.
 POSTGRES_DB=ml_platform
@@ -60,6 +62,7 @@ DATABASE_URL=postgresql+psycopg://ml_platform:${postgres_password}@postgres:5432
 
 SECRET_KEY=${secret_key}
 ML_PLATFORM_ADMIN_INITIAL_PASSWORD=${admin_initial_password}
+ANNOTATOR_SERVICE_SECRET=${annotator_service_secret}
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/1
 REDIS_EVENTS_URL=redis://redis:6379/2
@@ -160,6 +163,12 @@ if ! grep -Eq '^[[:space:]]*ML_PLATFORM_ADMIN_INITIAL_PASSWORD[[:space:]]*=' "$E
   set_env_value ML_PLATFORM_ADMIN_INITIAL_PASSWORD "${ADMIN_INITIAL_PASSWORD:-$(openssl rand -hex 12)}"
 elif [[ -n "$ADMIN_INITIAL_PASSWORD" ]]; then
   set_env_value ML_PLATFORM_ADMIN_INITIAL_PASSWORD "$ADMIN_INITIAL_PASSWORD"
+fi
+
+# A-02：内部服务/门户签名密钥——升级部署缺键时同样补随机值
+#（production 校验拒绝默认值，不补键 backend/annotator 会拒绝启动）
+if ! grep -Eq '^[[:space:]]*ANNOTATOR_SERVICE_SECRET[[:space:]]*=' "$ENV_FILE"; then
+  set_env_value ANNOTATOR_SERVICE_SECRET "$(openssl rand -hex 32)"
 fi
 
 if [[ -n "$PUBLIC_ORIGIN" ]]; then

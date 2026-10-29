@@ -108,6 +108,8 @@ jobs:
       POSTGRES_PASSWORD: ci-browser-postgres-password
       DATABASE_URL: postgresql+psycopg://ml_platform:ci-browser-postgres-password@postgres:5432/ml_platform
       SECRET_KEY: ci-browser-secret-key-with-at-least-32-characters
+      # A-02：compose 强制注入 + production 校验拒绝默认值
+      ANNOTATOR_SERVICE_SECRET: ci-annotator-service-secret-at-least-32-bytes
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       REDIS_EVENTS_URL: redis://redis:6379/1
@@ -556,6 +558,8 @@ jobs:
       POSTGRES_PASSWORD: ci-postgres-password
       DATABASE_URL: postgresql+psycopg://ml_platform:ci-postgres-password@postgres:5432/ml_platform
       SECRET_KEY: ci-experiment-secret-key-with-at-least-32-characters
+      # A-02：compose 强制注入 + production 校验拒绝默认值
+      ANNOTATOR_SERVICE_SECRET: ci-annotator-service-secret-at-least-32-bytes
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       REDIS_EVENTS_URL: redis://redis:6379/1
@@ -751,6 +755,8 @@ jobs:
       POSTGRES_PASSWORD: ci-postgres-password
       DATABASE_URL: postgresql+psycopg://ml_platform:ci-postgres-password@postgres:5432/ml_platform
       SECRET_KEY: ci-week12-security-secret-key-with-at-least-32-characters
+      # A-02：compose 强制注入 + production 校验拒绝默认值
+      ANNOTATOR_SERVICE_SECRET: ci-annotator-service-secret-at-least-32-bytes
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       REDIS_EVENTS_URL: redis://redis:6379/1

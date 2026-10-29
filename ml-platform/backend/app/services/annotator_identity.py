@@ -24,6 +24,19 @@ PORTAL_COOKIE_NAME = "portal_session"
 # port-scoped, so a second portal origin would not separate them).
 ADMIN_PORTAL_COOKIE_NAME = "admin_portal_session"
 
+
+def _portal_session_key() -> str:
+    """A-02 域分离：门户管理员 Cookie 密钥从服务令牌密钥派生（用途隔离）。
+
+    内部服务令牌（verify_internal_service_token）与管理员门户 Cookie 历史
+    上共用同一密钥——泄露一个即同时伪造另一个。派生域标签使两把密钥独立，
+    且旧默认密钥签的 Cookie 在派生后自然失效。
+    """
+    material = settings.resolved_annotator_service_secret.get_secret_value()
+    return hashlib.sha256(
+        ("portal-admin-session-v1:" + material).encode("utf-8")
+    ).hexdigest()
+
 class PortalAuthError(ValueError):
     def __init__(self, code: str, message: str | None = None):
         self.code = code
@@ -108,7 +121,7 @@ def issue_admin_portal_token(db: Session, username: str, password: str) -> Porta
             "iat": now,
             "exp": expires,
         },
-        settings.resolved_annotator_service_secret.get_secret_value(),
+        _portal_session_key(),
         algorithm=settings.annotator_service_algorithm,
     )
     return PortalSession(
@@ -252,7 +265,7 @@ def resolve_portal_identity(request: Request, db: Session, *, viewer: str = "ann
     annotator and an admin session side by side.
     """
     if viewer == "admin":
-        return _resolve_admin_identity(request)
+        return _resolve_admin_identity(request, db)
     return _resolve_annotator_identity(request, db)
 
 def _resolve_annotator_identity(request: Request, db: Session) -> PortalIdentity:
@@ -274,14 +287,14 @@ def _resolve_annotator_identity(request: Request, db: Session) -> PortalIdentity
         raise PortalAuthError("ANNOTATOR_SESSION_REVOKED")
     return PortalIdentity(kind="annotator", subject_id=account.subject_id, account_id=account.id, username=account.username)
 
-def _resolve_admin_identity(request: Request) -> PortalIdentity:
+def _resolve_admin_identity(request: Request, db: Session | None = None) -> PortalIdentity:
     token = request.cookies.get(ADMIN_PORTAL_COOKIE_NAME)
     if not token:
         raise PortalAuthError("PORTAL_SESSION_REQUIRED")
     try:
         payload = jwt.decode(
             token,
-            settings.resolved_annotator_service_secret.get_secret_value(),
+            _portal_session_key(),
             algorithms=[settings.annotator_service_algorithm],
             options={"verify_aud": False, "verify_iss": False},
         )
@@ -294,6 +307,12 @@ def _resolve_admin_identity(request: Request) -> PortalIdentity:
         username = str(payload.get("username"))
     except (TypeError, ValueError, AttributeError) as error:
         raise PortalAuthError("PORTAL_SESSION_INVALID") from error
+    # A-02：签名有效 ≠ 角色仍有效——复核 DB 中用户存在且仍是 admin，
+    # 防止降权/删除后的旧 Cookie 继续以管理员身份操作门户
+    if db is not None:
+        admin_user = db.query(User).filter(User.id == admin_user_id).first()
+        if admin_user is None or admin_user.role != "admin":
+            raise PortalAuthError("PORTAL_SESSION_INVALID")
     return PortalIdentity(kind="admin", subject_id=None, account_id=None, username=username, user_id=admin_user_id)
 
 def ensure_annotator_mapping(db: Session, subject_id: uuid.UUID, actor=None) -> AnnotatorSubjectMapping:

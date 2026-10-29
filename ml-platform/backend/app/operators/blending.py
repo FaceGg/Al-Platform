@@ -2,6 +2,7 @@
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
+from app.engine.safe_expression import evaluate_row_expression
 import pandas as pd
 import numpy as np
 
@@ -300,7 +301,8 @@ class GenerateAttributesOp(BaseOperator):
         for _, row in df.iterrows():
             row_dict = row.to_dict()
             try:
-                row_dict[new_col] = eval(expression, {"__builtins__": {}}, {"row": row_dict})
+                # A-01：AST 白名单求值器，替代历史动态执行（空 builtins 非沙箱）
+                row_dict[new_col] = evaluate_row_expression(expression, row_dict)
             except Exception as e:
                 raise ValueError(f"Expression evaluation failed at row with expression '{expression}': {e}")
             results.append(row_dict)

@@ -10,6 +10,7 @@ import io
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 from app.engine.registry import OperatorRegistry
 from app.engine.operator_contract import OperatorContext, OperatorResult
@@ -158,21 +159,31 @@ class TestIOOperatorsExecution(unittest.TestCase):
     def test_csv_import_no_file_returns_error(self):
         op = OperatorRegistry.get("csv_import")
         with self.assertRaises(RuntimeError):
-            op.execute(operator_context(), {}, {"source": "local", "file_path": ""})
+            execute_operator(op, {}, {"source": "local", "file_path": ""})
+
+    def test_csv_import_rejects_path_outside_allowed_roots(self):
+        # A-04 回归：越界路径（工作区外的系统文件）必须被拒绝
+        with tempfile.TemporaryDirectory() as workspace:
+            outside = str(Path(workspace).parent / "etc_passwd_should_not_be_readable.csv")
+            with self.assertRaisesRegex(RuntimeError, "OPERATOR_PATH_OUTSIDE_WORKSPACE"):
+                execute_operator(
+                    OperatorRegistry.get("csv_import"),
+                    {},
+                    {"source": "local", "file_path": outside, "delimiter": ",", "has_header": True},
+                    workspace_dir=Path(workspace),
+                )
 
     def test_csv_import_reads_local_file(self):
-        op = OperatorRegistry.get("csv_import")
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, newline='') as f:
-            f.write("a,b\n1,2\n3,4\n")
-            f.flush()
-            path = f.name
-        try:
-            result = op.execute(operator_context(), {},
-                {"source": "local", "file_path": path, "delimiter": ",", "has_header": True})
-            self.assertIsInstance(result, OperatorResult)
-            self.assertEqual(len(result.outputs["data"]), 2)
-        finally:
-            os.unlink(path)
+        with tempfile.TemporaryDirectory() as workspace:
+            path = Path(workspace) / "input.csv"
+            path.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
+            outputs = execute_operator(
+                OperatorRegistry.get("csv_import"),
+                {},
+                {"source": "local", "file_path": str(path), "delimiter": ",", "has_header": True},
+                workspace_dir=Path(workspace),
+            )
+            self.assertEqual(len(outputs["data"]), 2)
 
     def test_csv_export_passthrough(self):
         outputs = execute_operator(
@@ -181,44 +192,44 @@ class TestIOOperatorsExecution(unittest.TestCase):
         self.assertEqual(outputs["data"], [{"a": 1}])
 
     def test_csv_export_writes_file(self):
-        with tempfile.NamedTemporaryFile(suffix='.csv', delete=False) as f:
-            path = f.name
-        try:
-            execute_operator(
+        # A-04：导出一律落在工作区 exports（legacy 任意路径写已删除）
+        with tempfile.TemporaryDirectory() as workspace:
+            outputs = execute_operator(
                 OperatorRegistry.get("csv_export"),
                 {"data": [{"a": 1, "b": 2}]},
-                {"file_path": path, "separator": ","})
-            self.assertTrue(os.path.exists(path))
-        finally:
-            if os.path.exists(path):
-                os.unlink(path)
+                {"file_name": "result", "separator": ","},
+                workspace_dir=Path(workspace))
+            exports = list((Path(workspace) / "exports").glob("*.csv"))
+            self.assertEqual(len(exports), 1)
+            self.assertEqual(exports[0].read_text(encoding="utf-8").splitlines()[0], "a,b")
+            self.assertEqual(outputs["data"], [{"a": 1, "b": 2}])
 
     def test_image_import_no_path_returns_empty(self):
-        outputs = execute_operator(
-            OperatorRegistry.get("image_import"), {}, {"file_path": "", "pattern": "*.png"})
-        self.assertEqual(outputs["data"], [])
+        # A-04 后空路径在边界守卫处即被拒（不再静默返回空）
+        with tempfile.TemporaryDirectory() as workspace:
+            with self.assertRaisesRegex(RuntimeError, "OPERATOR_PATH"):
+                execute_operator(
+                    OperatorRegistry.get("image_import"), {}, {"file_path": "", "pattern": "*.png"},
+                    workspace_dir=Path(workspace))
 
     def test_json_import_no_path_returns_empty(self):
-        outputs = execute_operator(
-            OperatorRegistry.get("json_import"), {}, {"file_path": "", "orient": "records"})
-        self.assertEqual(outputs["data"], [])
+        with self.assertRaisesRegex(RuntimeError, "OPERATOR_PATH"):
+            execute_operator(
+                OperatorRegistry.get("json_import"), {}, {"file_path": "", "orient": "records"})
 
     def test_json_import_reads_file(self):
         import json
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump([{"x": 1}, {"x": 2}], f)
-            f.flush()
-            path = f.name
-        try:
+        with tempfile.TemporaryDirectory() as workspace:
+            path = Path(workspace) / "input.json"
+            path.write_text(json.dumps([{"x": 1}, {"x": 2}]), encoding="utf-8")
             outputs = execute_operator(
                 OperatorRegistry.get("json_import"), {},
-                {"file_path": path, "orient": "records"})
+                {"file_path": str(path), "orient": "records"},
+                workspace_dir=Path(workspace))
             self.assertEqual(len(outputs["data"]), 2)
-        finally:
-            os.unlink(path)
 
     def test_read_excel_no_path_raises_required_error(self):
-        with self.assertRaisesRegex(RuntimeError, "Excel file path is required"):
+        with self.assertRaisesRegex(RuntimeError, "OPERATOR_PATH"):
             execute_operator(
                 OperatorRegistry.get("read_excel"), {}, {"file_path": ""})
 

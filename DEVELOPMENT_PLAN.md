@@ -1,6 +1,6 @@
 # 当前开发计划
 
-> 更新时间：2026-10-23。当前主线：AutoML Agent 智能体方案（P1–P6 代码面完成，前端改版 v2 壳层已上线）。已完成工作的完整历史记录见 [DEVELOPMENT_PLAN_ARCHIVE.md](DEVELOPMENT_PLAN_ARCHIVE.md)（2026-10-23 归档快照，含更早的 2026-09-24 快照链接）；实施计划索引见 [plans/README](ml-platform/docs/superpowers/plans/README.md)。
+> 更新时间：2026-10-28。当前主线：AutoML Agent 智能体方案（P1–P6 代码面完成，前端改版 v2 壳层已上线）；**新增：2026-10-27~28 全项目代码走查（第二轮审计，68 条问题，含 3 条实证 P0）——见文末「2026-10-27~28 全项目代码走查」章节**。已完成工作的完整历史记录见 [DEVELOPMENT_PLAN_ARCHIVE.md](DEVELOPMENT_PLAN_ARCHIVE.md)（2026-10-23 归档快照，含更早的 2026-09-24 快照链接）；实施计划索引见 [plans/README](ml-platform/docs/superpowers/plans/README.md)。
 
 ## 1. 状态口径
 
@@ -146,3 +146,106 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 5. **AgentRun 常态化周期清扫**：当前清扫仅在启动期执行（进程存活期间线程崩溃由 `waiting_escalate` 兜底）；随 S5 AutoML worker 绑定一起做周期化。
 
 **值得保留的既有机制（避免误改）**：Celery `acks_late/prefetch=1`、DurableOperation 租约恢复、通知 outbox、DAG 预览截断、前端路由级代码分割与终态停轮、迁移时间戳 server_default 教训（81/83 号迁移固化）。
+
+---
+
+## 2026-10-27~28 全项目代码走查（第二轮审计）
+
+> **基线**：commit `24acdcb5`（main，工作区干净）。**本轮为只读审计，未修改任何业务文件**。
+> **与既有路线的关系**：本节取代并扩展上文「代码层性能/健壮性优化路线（2026-10-27 审计）」的待排期项——那节是纯静态审计；本节把其中多条升级为运行时实证，并补入它未覆盖的问题面。原节内容保留作历史记录，不回改。
+
+### 一、证据等级口径
+
+| 等级 | 含义 | 可否直接作为修复依据 |
+|---|---|---|
+| **A（运行时实证）** | 在本地部署栈容器内实际复现。只读 PoC：只读无害文件（`/etc/hostname`、自建临时 CSV）、未写业务数据、未调用任何写接口、临时文件已清理 | 可 |
+| **B（静态判定）** | 代码走查结论，经二次读码复核；未压测、未运行时验证 | 需按各条给出的复现方法补证后定级 |
+
+**A 级实证清单**（容器内，基线 `24acdcb5`）：
+
+| 结论 | 复现结果 |
+|---|---|
+| `operators/blending.py:303` `eval` 空 builtins 可逃逸 | ✅ 完整载荷跑通，取回真实 `open`/`exec`/`__import__`（206 个子类中 `_ModuleLock` 链可用） |
+| `operators/io_operators.py:110` 算子 `file_path` 越界读 | ✅ 经算子注册表执行，读到 `/etc/passwd` 20 行并原样带回输出；工作区目录全程为空 |
+| `engine/export_paths.py:18` `legacy_file_path` 越界写 | ✅ 解析到工作区外路径并写入成功 |
+| `config.py:79` 默认密钥可伪造内部服务令牌 | ✅ 经 nginx :80 打 `/api/internal/portal/tasks`：无 token 401、伪造 token **200** |
+| 同上，可伪造管理员门户 Cookie | ✅ 打 `/portal/auth/me`：**200** `{"username":"admin","kind":"admin"}` |
+| 同上，可伪造 `admin_review` 权限 | ✅ 打 `/api/internal/portal/admin/tasks`：**200** |
+| `services/knowledge_retrieval.py:65-80` 向量库快路径失效 | ✅ 语料维度 59 / query 维度 3 → `np.dot` `ValueError` → 快路径是死代码 |
+| 迁移头唯一性 | ✅ `alembic heads` / `alembic current` 均为单头 `20261026_84` |
+| 活库索引现状 | ✅ `pg_indexes` 实查：38 张表有二级索引；**12 张只有主键**（`projects`/`workflows`/`nodes`/`node_runs`/`kb_chunks`/`chat_messages`/`datasets`/`model_library`/`edges` 等）；`EXPLAIN` 证实 `workflow_runs`、`kb_chunks` 走 Seq Scan + Filter |
+
+### 二、对上一轮静态结论的三处修正（保留历史，纠正结论）
+
+1. **「模型声明 `index=True` 但迁移未建索引 11 列」→ 误判，撤回。** 活库 `pg_indexes` 实查 `ix_artifacts_archived_at`、`ix_training_jobs_*`、`ix_generic_annotation_tasks_*`、`ix_dataset_schema_columns_dataset_version_id`、`ix_demo_loop_configs_correct_artifact_id` **均存在**——成因是部分迁移用多行 `op.create_index(...)` 或建表内联 `sa.Index(...)`，被静态扫描的正则漏匹配。**口径改为以活库 `pg_indexes` 为准**：真正缺索引的是上述 12 张只有主键的表，以及 `dataset_versions.original_artifact_id`/`normalized_artifact_id`、`dataset_samples.sample_id` 三个过滤列。
+2. **「`df.query(user_expr)` = RCE」→ 定级过高，降级为 P2 危险面。** 实测 pandas 2.3.3 显式拦截 `@__import__`（报 `"__pd_eval_local___import__" is not a supported function`）；实际可达能力是「`@var` 读取调用方变量、`@fn()` 调用调用方作用域函数」。容器内 `numexpr` 未安装且 `pandas.core.computation.expr.NUMEXPR_INSTALLED=False` → 确认会回退 python 引擎（eval），但**未构成直接任意命令执行**。仍需收口（AST 白名单），但不属于 P0。
+3. **「3 个迁移头」→ 误判，撤回。** 系扫描脚本正则未兼容 `down_revision: tuple[str, str] = (...)` 注解形式；实跑 `alembic heads` 为单头。**迁移图健康，本轮无多头问题。**
+
+### 三、问题清单（未决，按影响排序）
+
+#### P0（A 级实证）
+
+| 编号 | 位置 | 问题 | 修复方向 |
+|---|---|---|---|
+| **A-01** | `app/operators/blending.py:303` | `generate_attributes` 算子用 `eval()` 执行用户可控表达式，空 builtins 非沙箱 → **后端容器内任意命令执行**。完整链条：开放自助注册 → 自建项目成 OWNER → 写工作流节点参数 → 运行 | 改 AST 白名单求值器（禁 `ast.Attribute`；白名单 `Name`/`Constant`/`BinOp`/`Compare`/受限 `Call`）。**仓库已有范式**：`app/services/agent/sandbox.py:92-129`（AST 白名单 + dunder 拦截） |
+| **A-02** | `app/config.py:79` + `:371-372`；`docker-compose.yml` `&production-environment` 锚点；`app/services/annotator_identity.py:277-297`、`:354-377` | `ANNOTATOR_SERVICE_SECRET` 生产校验**只查长度 ≥32**，公开默认值（34 字符）通过——对比同文件 `:365` 对 `SECRET_KEY` 做了默认值比较，漏了。compose 从未注入该变量（实测运行中 backend 与 annotator 容器**均 UNSET**）。该密钥同时签内部服务令牌与管理员门户 Cookie，而 `_resolve_admin_identity` **只验签不回查 DB 角色** | ① 生产校验加「不得等于默认值」比较；② compose 改 `${ANNOTATOR_SERVICE_SECRET:?}` 强制注入 backend 与 annotator；③ 门户会话密钥与内部令牌密钥分离；④ `_resolve_admin_identity` 补 `db.get(User, sub)` + `role=="admin"` 复核；⑤ nginx 对 `/api/internal/` 与 `/portal/` 收口，并取消 backend 的 `:8001` 宿主直发 |
+| **A-03** | `app/api/chat.py:71`、`:162`；`app/services/llm_gateway.py:144`；`app/config.py:51-53`；`app/api/knowledge.py:538`、`:680`；`app/api/platform_api.py:939` | `async def` 端点内同步执行 DB 查询 + 全语料 TF-IDF 重算 + 阻塞 `httpx`（默认超时 60s）→ **冻结整个 worker 事件循环**。叠加 DB 池 15/进程 vs anyio 40 线程/进程，且 `knowledge.py:538` 的 30s 外部调用**全程持有 DB 连接** → 单 worker 15 并发即打满池，其余请求排队 30s 后 500（跨端点雪崩） | ① `chat`/`chat_stream` 改同步 `def`（FastAPI 自动进线程池，一行级改动收益最大）；② 外部调用前释放连接；③ 池参数按 `worker × 线程` 校准并用 anyio 限流器对齐；④ 三处 `requests.post` 改走 `llm_gateway` 共享客户端 |
+
+#### P1
+
+| 编号 | 位置 | 问题 | 修复方向 |
+|---|---|---|---|
+| **A-04** | `app/operators/io_operators.py:110`/`:185`/`:204`/`:229`；`app/engine/export_paths.py:18-21` | 算子 `file_path` 无边界：可读服务器任意文件（已实证读到 `/etc/passwd`）、可写任意路径（已实证写成功）、`ImageImport` 还能 glob 任意目录 | 删 `legacy_file_path` 分支；读取侧统一 `Path(raw).resolve()` 后 `is_relative_to(allowed_roots)`，`allowed_roots` 仅含 `UPLOAD_DIR` 与 `context.workspace_dir` |
+| **A-05** | `app/operators/io_operators.py:62-63`、`:290-296` | 算子出站 URL **无任何 SSRF 校验**（`urlopen` 无协议白名单/无 DNS 解析/默认跟重定向）。仓库已有正确实现 `app/services/webhook_security.py:96-143`（DNS 解析 + `is_global` 判定）却未复用 | 抽出通用 `services/outbound.py`，出站 URL 一律走它；禁自动重定向或对 `Location` 二次校验 |
+| **A-06** | `app/api/auth.py:49-51`、`:133-136`；`app/services/security.py:208-215`；`Dockerfile` CMD | 登录限流的 client key 取 `request.client.host`——经 nginx 时**恒为 nginx 容器 IP**（nginx 设了 `X-Real-IP` 但后端从不读；uvicorn 未加 `--forwarded-allow-ips`）→ **任意匿名者 5 次请求让全站 15 分钟无法登录**；且限流器是进程内单例，`--workers 2` 下实际额度再翻倍 | 新增 `client_ip(request)`：peer 属受信代理网段时取 XFF 最左一跳并做 `ipaddress` 校验；限流迁 Redis（复用 `services/inference_rate_limit.py` 的 `RedisTokenBucket`） |
+| **A-07** | `app/api/annotator_internal.py:76-97`；`docker-compose.yml` backend `:8001` publish | 门户登录 `/portal/auth/login` **完全无限流**，且该端点同时接受平台管理员口令（`issue_admin_portal_token`）；backend 直接 publish `:8001`，而 nginx 只反代 `/api/` → 该路径不经 nginx 直达，可在线爆破管理员 | 接入 `LOGIN_IP_LIMIT`/`LOGIN_ACCOUNT_LIMIT`；取消 backend 宿主端口发布，统一走 nginx |
+| **A-08** | `app/api/runs.py:290-297`；`app/websocket/manager.py:25-35` | 运行事件 WebSocket **无任何鉴权**：知道 `run_id` 即可订阅他人工作流的节点输出/metrics/logs；`nginx.conf:89` 对外暴露 `/ws/` | 从 query string 或 `Sec-WebSocket-Protocol` 取 JWT，`connect` 前调 `resolve_run_access` |
+| **A-09** | `app/engine/dag_executor.py:519-526`、`:540-542`；`app/engine/run_control.py:5` | 循环体算子异常被 `except Exception` 吞掉（`body_outputs = {}`），随后**无条件上报 `completed`** → 同一 NodeRun 行被覆盖，**失败从 DB 里消失**；且 `RunCancelled(RuntimeError)` 被同一分支吃掉 → **循环体内取消失效**（要跑完 `max_iterations`） | `except RunCancelled: raise` 提到 `Exception` 之前；`completed` 上报移入成功分支并补 `attempt` 区分失败行 |
+| **A-10** | `app/tasks/recovery.py:37-60`；`app/tasks/celery_app.py:41-94` | `reconcile_stale_runs`（把僵尸 `running` run 判失败）**生产环境无调用者**——`beat_schedule` 13 条里没有它，`main.py` lifespan 也没接 → worker 被硬超时 SIGKILL / OOM 后 `WorkflowRun` 永久停在 `running`，`/runs/active` 持续返回它，前端永久转圈 | beat 增加 `workflow-run-recovery`（60s），`active_task_ids` 用 `celery_app.control.inspect`（照 `training_tasks.py:17-35`）；lifespan 补一次启动清扫 |
+| **A-11** | `app/services/closed_loop_actions.py:117-161`（锁在 `:120`）；`Dockerfile.worker` CMD `--concurrency=2` | 闭环错误集追加用**进程内 `threading.Lock`** 串行化「读 CSV→追加→换 `storage_uri`→删旧对象」；worker 是 2 个 prefork 子进程 → **不互斥 → 先写者的行永久丢失**、旧对象变孤儿 | 改 DB 级 CAS：`Artifact` 加 `append_version`，`UPDATE ... WHERE id=:id AND append_version=:v`；删旧对象只在 CAS 成功后 |
+| **A-12** | `app/services/agent/executor.py:157`；`app/api/agent_center.py:195-206` | AgentRun 放行无 CAS/无锁，且执行器白名单**含 `running`** → 并发 resume 双跑：LLM 花费翻倍（`token_used` 被后写者覆盖）、`memory_json` 档案互相覆盖、终态可回退 | 放行改 `UPDATE ... WHERE id=:id AND status='waiting_guidance'`（rowcount!=1 返回 409）；白名单去掉 `running`；token 改 DB 侧累加 |
+| **A-13** | `app/services/knowledge_retrieval.py:65-80`、`:149-157`、`:175-197`；`app/engine/vector_store.py:128-133` | **向量库快路径是死代码**：语料用全语料 fit、query 用 `[query]` 单独 fit，词表必然不等 → `np.dot` 抛 ValueError 被 `except (ValueError, TypeError)` 静默吞掉 → 每次检索退回全语料重算 TF-IDF + 逐条 `json.loads`。子代理实测 2000 chunk **0.65s/请求**、5000 chunk **6.95s/请求** | 缓存语料级 `TfidfVectorizer`，query 只 `transform` 不 `fit`（向量快路径自动生效）；相似度改 `np.fromiter`+`np.stack` 批量解析 + `np.argpartition`；`:156` 的 except 补 `logger.warning` |
+| **A-14** | `app/api/knowledge.py:1303-1306` | `rag-enhanced` 的 `vstore.search` 未被 try/except 包裹 → 同一维度问题直接冒泡，**向量库非空即 500** | 随 A-13 一并修；并在 `rag_enhanced` 补兜底退回 `retrieve_chunks` |
+| **A-15** | `app/api/knowledge.py:538`、`:680`；`app/api/platform_api.py:939` | 三处 `requests.post` 每次新建 TCP+TLS 连接，且**在 DB 事务未提交时发起**（连接不归还）；`platform_api.py:939` 每次还 `asyncio.run()` 新建事件循环 | 三处改走 `llm_gateway.chat_completion`（共享连接池 + 出口审计）；外部调用前 `db.rollback()` 归还连接 |
+| **A-16** | `app/services/annotation_task_state.py:448-469`、`:508-513`；`app/api/generic_tasks.py:512` | `GET /api/annotation-tasks` 每行 3-5 次查询（快照 ×2 + 预览 ×1~3），limit 上限 200 → **600-1000 次往返/请求**；前端 `DataAnnotationPage.tsx:823` 在 previewing/executing 时每 2s 轮询 | 列表路径改批量预取（按 `(task_id, task_revision)` 聚合一次 `IN` 查询），拆「批量版 + 单条版」 |
+| **A-17** | `app/api/spot_weld_quality.py:235`、`:243`、`:245`、`:253`、`:255`、`:260`、`:716-718` | 焊接质量运行列表**无分页** + `run.project`/`run.created_by`/`run.samples` 三处懒加载（samples 含 `waveforms`/`feature_values`/`table_values` 三个 JSON 列）→ 最少 2N 次额外查询 | 加 `limit/offset`；`_serialize_run` 改接预聚合值（照 `agent_center.py:91-97` 的 `outerjoin` 写法）；**删掉所有 `run.samples` 访问**改 SQL `COUNT` |
+| **A-18** | `app/services/artifact_service.py:124-130`；`app/services/annotation_returns.py:594-600`、`:966-973`；`app/services/data_import.py:688-690` | 4 处 `DatasetVersion.version = max+1` 裸算，撞唯一索引 `uq_dataset_versions_project_version` → 并发必炸 | 版本号改 DB 分配（PG `nextval`）或捕获 `IntegrityError` 后重读重试（≤3 次） |
+| **A-19** | `app/services/workflow_execution.py:199`；`app/schemas/run.py:31` | `current_run.error_message = str(error)` 把 SQL 原文、约束名、参数经 `GET /api/runs/{id}` 回吐前端 | 对外只给 `error_code` + 归一化文案；原始异常仅进 logger |
+| **A-20** | `app/tasks/workflow_tasks.py:48-70`；`app/engine/dag_executor.py:396-423` | ① 心跳线程无 try/except，一次 DB 异常即永久死亡（仅 stderr），2 分钟后 `claim_run` 允许第二 worker 接管仍在跑的 run；② 节点超时后被放弃的算子线程**不可终止**，继续持有同一个 SQLAlchemy Session（Session 非线程安全）并可能继续写制品 | 心跳循环包 try/except 留痕并 `continue`；`claim_run` 接管前确认无对应活跃 Celery task；超时分支记录「孤儿线程」告警，超时后换独立 Session |
+
+#### P2 / P3（摘要，不逐条展开）
+
+- **未鉴权端点泄露跨项目数据**：`app/api/dashboard.py:156`/`:183`、`app/api/model_library.py:315`、`app/api/chat.py:149`（后者还回吐 LLM `api_url`）、`app/api/labeling.py:17`/`:116`（用户正则进 `re.search` → ReDoS 风险）。**注**：`app/api/operators.py:16`/`:44` 亦未挂鉴权。
+- **`/api/upload` 未复用已加固的上传校验**（`app/api/operators.py:52-62`）：自行做分隔符替换、可用同名覆盖、无限体积、回吐服务器绝对路径；仓库已有 `services/security.py:232-269` 的 `validate_upload_filename`/`validate_upload_magic` 未在此接入。
+- **改密不套口令策略、不撤销已签发 JWT**（`app/api/auth.py:262-273`）：注册路径有 3/4 类组合策略，改密路径没有；JWT 无 `jti`/`token_version`。
+- **索引缺口（以活库为准）**：12 张表只有主键——`projects.owner_id`、`workflows.project_id`、`nodes.workflow_id`、`node_runs.run_id`、`kb_chunks.doc_id`、`kb_documents.kb_id`、`chat_messages.session_id`、`chat_sessions.kb_id`、`datasets.*`、`model_library.project_id`、`edges.workflow_id`、`workflow_versions.workflow_id`；另 `dataset_versions.original_artifact_id`/`normalized_artifact_id`、`dataset_samples.sample_id` 三个过滤列无索引。
+- **列表端点无分页 / 一次性全量载入**：`app/api/datasets.py:569`/`:599`、`app/api/notifications.py:805-817`（前端每 30s 拉全量）、`app/api/spot_weld_quality.py:1080-1090`、`app/api/annotations.py:186-189`、`app/api/experiments.py:215-223`（拉 1000 条再切片）。
+- **其余 N+1**：`app/api/annotator_internal.py:574-579`/`:720-724`、`app/api/model_registry.py:98`/`:271`、`app/api/knowledge.py:738`、`app/api/generic_tasks.py:474-500`。
+- **前端**：`DataAnnotationPage.tsx`（94 个 `useState`）在 1Hz 轮询下整页重渲染 + JSX 内联 `columns`；`:883`/`:910`/`:944` 三处裸 `setInterval(…, 1000)` 绕过 `useAdaptivePolling` 退避；`:1114-1126` 轮询把用户「加载更多」重置回第一页；`AutoMLPage.tsx:629-641` blob URL 从不 revoke；`App.tsx:119-141` 仅 11/42 路由有 `PageErrorBoundary`；`stores/workflowStore.ts` 5 处全量订阅被 WS progress 消息放大；62 处 toast / Error Boundary 兜底文案硬编码中文绕过 i18n；`MonitorPage.tsx:334` 用 `JSON.stringify(data)` 作 signature，而后端 `api/monitor.py:190` 每次发新 timestamp → **自适应退避在监控页永久失效**（批次五的优化被抵消）。
+- **部署加固**：15/15 服务无 `deploy.resources.limits`；0/15 配置日志轮转（docker json-file 默认无上限）；`websockets>=12.0` 无上界；`ml-platform/backend/temp_test/assignment-idempotency-fresh.sqlite`（1.4MB 空表结构快照）仍被 git 追踪（`.gitignore` 的 `*.db` 规则管不到 `.sqlite`）。
+- **CI 门禁强度**：`browser-acceptance`/`production-integration`/`experiment-integration`/`security-release-verification` 四个 job 的 `if:` 限定为 `schedule`（每周日 02:00）或手动 `workflow_dispatch full` → **普通 push/PR 只跑 `quality` 矩阵**；且 `Run security scans`（`ci.yml:860-862`）与 `Run frozen-stack web security gate`（`:871-873`）均为 `continue-on-error: true` → **没有任何安全扫描能阻断合并**（扫描器 pip-audit/bandit/trivy/gitleaks 本身已正确安装并固定版本）。
+
+### 四、优化路线（批次九~十四，2026-10-28）
+
+> 承接上文批次一~八。批次九~十一为 P0/P1 收敛，批次十二~十四为 P2/P3 批量治理。每批次完成后需按上文「证据等级」口径补齐运行时验证与回归用例。
+
+| 批次 | 主题 | 内容 | 验收 |
+|---|---|---|---|
+| **批次九** | 算子执行面收口（A-01/A-04/A-05/A-02） | ① `blending.py` 换 AST 白名单求值器；② `export_paths` 删 `legacy_file_path`、读取侧加 `is_relative_to` 边界；③ 出站 URL 统一走 `services/outbound.py`；④ `ANNOTATOR_SERVICE_SECRET` fail-closed + compose 强制注入 + 门户密钥分离 + `_resolve_admin_identity` 补角色复核 | 回归用例：恶意表达式被 AST 门禁拒；`file_path=/etc/passwd` 抛 `OPERATOR_PATH_OUTSIDE_WORKSPACE`；未注入密钥时 production 启动即失败；用旧默认密钥签的令牌被拒 |
+| **批次十** | 认证边界与限流（A-03/A-06/A-07/A-08/A-19） | ① `client_ip(request)` 信任代理感知 + 限流迁 Redis；② 门户登录接限流；③ WebSocket 接 `resolve_run_access`；④ 错误信息脱敏（`error_code` 口径统一） | 回归用例：经 nginx 的多用户登录互不影响桶；`/ws/runs/{id}` 无 JWT 被 401；`/portal/auth/login` 第 6 次被限 |
+| **批次十一** | 运行时与检索（A-03/A-13/A-14/A-15/A-16/A-17） | ① `chat`/`chat_stream` 改同步 `def`；② 外部调用前释放连接 + 池参数校准 + anyio 限流器；③ 缓存语料级 vectorizer 修向量快路径；④ 三处 `requests.post` 走共享客户端；⑤ 标注任务列表与焊接质量列表改批量预取 | 回归用例：单次 `POST /api/chat` 期间 `/api/ready` P99 < 1s；向量库非空时 `rag-enhanced` 返回 200；`GET /api/annotation-tasks?limit=200` 查询数 ≤ 5 |
+| **批次十二** | 并发与幂等（A-09/A-10/A-11/A-12/A-18/A-20） | ① DAG 循环体 `RunCancelled` 提前捕获 + 失败不得上报 completed；② 补 `workflow-run-recovery` beat + lifespan 清扫；③ 闭环追加改 DB 级 CAS；④ AgentRun 放行 CAS + token DB 累加；⑤ `DatasetVersion` 版本号 DB 分配；⑥ 心跳线程容错 + 超时线程可中断 | 回归用例：并发 resume 只起 1 个 runner；循环体算子失败后 NodeRun 状态为 `failed`；SIGKILL 后 run 能在对账窗口内转 `failed`；并发建版本号不冲突 |
+| **批次十三** | 列表与索引（A-16/A-17 + P2 索引项） | 补 12 张表与 3 个过滤列的索引（含 Alembic 迁移 + `database_migrations.py` 运行时索引同步口径对齐）；各类列表端点统一分页 | `EXPLAIN` 显示 Index Cond 而非 Seq Scan；`pg_indexes` 与模型声明逐表对齐 |
+| **批次十四** | 前端渲染与部署加固（P2/P3 前端项 + compose/CI 项） | ① `DataAnnotationPage` 拆分 + `columns` useMemo + 裸 `setInterval` 迁 `useAdaptivePolling` + 修 `MonitorPage` signature；② blob URL 回收；③ Error Boundary 覆盖全路由；④ toast/兜底文案收敛 i18n；⑤ compose 资源限制 + 日志轮转；⑥ CI 扫描步骤去掉 `continue-on-error` 并把安全 job 纳入 PR 路径 | React Profiler 下 1Hz 轮询不再触发整页 commit；blob `revoke` 有用例；compose `docker compose config` 含 limits 与 log-opts；CI 上安全扫描失败能阻断合并 |
+
+### 五、后续（执行顺序）
+
+> **✅ 批次九已落地（2026-10-29，A-01/A-04/A-05/A-02 全部四项）**：① A-01——新建 `app/engine/safe_expression.py` AST 白名单求值器（Name[row]/Constant/Subscript/Slice/算术/比较/逻辑/条件；Attribute/Call/Import/推导式/lambda 一概拒绝 + 序列重复与幂指数上限防 DoS），`blending.py::GenerateAttributesOp` 换用之；② A-04——新建 `app/engine/path_guard.py`（读取仅允许上传目录+运行工作区两根，`resolve` 后 `is_relative_to` 判定，稳定码 `OPERATOR_PATH_OUTSIDE_WORKSPACE`），CSVImport/ImageImport/JSONImport/ReadExcel 四读取算子接入；`export_paths.py` 删 `legacy_file_path` 分支（三处调用方旧 `file_path` 参数降级为文件名提示，导出一律落工作区 exports）；③ A-05——新建 `app/services/outbound.py`（`validate_outbound_url` 复用 webhook_security 的 DNS 解析+受限地址判定，泛化为 http/https 任意端口；`fetch_url_bytes/fetch_url_frame` 出口 + 重定向逐跳重校验），CSVImport 下载与 ReadURL 全部改走该服务（file://、内网、环回、链路本地、元数据服务全拒，DNS 重绑定至内网同拒）；④ A-02——config production 校验拒绝默认 `ANNOTATOR_SERVICE_SECRET`（`AliasChoices` 保字段名传参 + env 名解析测试）、门户管理员 Cookie 密钥改域分离派生（旧默认密钥签的 Cookie 自然失效）、`_resolve_admin_identity` 补 DB 存在性+admin 角色复核（降权/删除后旧 Cookie 失效）、compose 锚点+annotator sidecar `${ANNOTATOR_SERVICE_SECRET:?}` 强制注入、backend/annotator 端口默认回环绑定（`BACKEND_BIND_ADDRESS`/`ANNOTATOR_BIND_ADDRESS` 可覆盖）、根 nginx `/api/internal/` 与 `/portal/` 全 404 收口（门户流量走 annotator-frontend 自有反代）；部署侧联动——根 .env 已补键、installer 全新生成+升级幂等补键、CI 三个 compose job（browser/experiment/security）注入 ci 专用值。测试：新建 `test_safe_expression`（10 用例）+ `test_outbound_security`（10 用例）登记 week5 清单；`test_all_operators` 文件路径用例改工作区口径 + 新增越界拒读用例；`test_config` 新增默认/短密钥拒绝两用例。受影响面回归 333 passed/1 skipped（含 test_ci_workflow 合同）。**注意**：本地部署栈重启前需确认根 .env 已有 `ANNOTATOR_SERVICE_SECRET`（已补）；已部署线上升级走 installer 幂等补键，缺键时 backend 将拒绝启动（fail-closed 设计）。
+
+1. **批次十**（认证边界与限流：client_ip 信任代理感知、门户登录限流、WS 鉴权、错误脱敏）。
+2. **批次十一**（性能收益最大且与本周已做的性能批次衔接；`chat` 改 `def` 是一行级改动）。
+3. **批次十二**（并发/幂等，需先补复现用例再改，避免回归）。
+4. **批次十三 + 批次十四**（批量治理，可与上面并行）。
+5. **审计收尾**：① 复核 `pickle/joblib` 反序列化通道（枚举所有 `Artifact` 创建点的字节来源，确认是否存在用户可直接上传 `.joblib` 的入口）；② `app/services/agent/sandbox.py:193` 的子进程**未传 `env=`**（与 `python_script_runtime._child_env` 做法相反），需确认 Agent 特征脚本的威胁模型；③ 生产 `DATABASE_POOL_SIZE`/`DATABASE_MAX_OVERFLOW` 实际取值（compose 未覆盖，走默认值）需运维确认；④ `/api/internal/**` 的生产网络隔离策略待确认（根 nginx 已 404，容器网络层隔离另行评估）。
+6. **CI 状态**：main HEAD `dbc0f7e3` 全量六 job 全绿（run 40795562091，2026-10-29）；本批修复推送后将再触发验证。
+

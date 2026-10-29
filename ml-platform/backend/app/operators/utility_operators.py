@@ -223,9 +223,9 @@ class WriteAsText(BaseOperator):
         file_path = resolve_export_path(
             context,
             self.id,
-            params.get("file_name"),
+            # A-04：legacy file_path 已删除，旧参数值降级为文件名提示（basename 截取）
+            params.get("file_name") or params.get("file_path"),
             extension,
-            legacy_file_path=params.get("file_path"),
         )
 
         df = pd.DataFrame(data)

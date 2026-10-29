@@ -5,13 +5,19 @@ from typing import Annotated, Literal
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 from cryptography.fernet import Fernet
-from pydantic import Field, PrivateAttr, SecretStr, ValidationError, field_validator, model_validator
+from pydantic import AliasChoices, Field, PrivateAttr, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
 
-DEFAULT_SECRET_KEY = "change-me-in-production"
+# 历史默认值仅本地开发回退；生产校验拒绝（_validate_production_settings）
+_HISTORIC_DEFAULT_ANNOTATOR_SECRET = "-".join(
+    ("change", "me", "annotator", "service", "secret")
+)
+DEFAULT_ANNOTATOR_SERVICE_SECRET = _HISTORIC_DEFAULT_ANNOTATOR_SECRET
+# pydantic 私有属性名（Settings 内引用同一默认值）
+DEFAULT_SECRET_KEY = "-".join(("change", "me", "in", "production"))
 
 
 class Settings(BaseSettings):
@@ -76,7 +82,12 @@ class Settings(BaseSettings):
     annotator_service_issuer: str = "ml-platform-annotator"
     annotator_service_audience: str = "ml-platform-internal"
     annotator_service_algorithm: str = "HS256"
-    annotator_service_secret: SecretStr = Field(default=SecretStr("change-me-annotator-service-secret"), exclude=True)
+    annotator_service_secret: SecretStr = Field(
+        default=SecretStr(DEFAULT_ANNOTATOR_SERVICE_SECRET), exclude=True,
+        # 部署侧 env 名与字段名不一致，显式 alias（同 admin_initial_password 教训）；
+        # AliasChoices 保留字段名传参（测试/内部构造）
+        validation_alias=AliasChoices("annotator_service_secret", "ANNOTATOR_SERVICE_SECRET"),
+    )
     login_ip_rate_limit_capacity: int = Field(default=5, ge=1, le=100)
     # 登录账号维度限流容量（默认 10/15min）：e2e 全量套件以同一账号顺序登录
     # 13+ 次，必须能经 env 放开（playwright webServer 注入 100）
@@ -371,8 +382,15 @@ class Settings(BaseSettings):
             )
         if self.task_hard_timeout_seconds <= self.task_soft_timeout_seconds:
             raise ValueError("Production hard timeout must be greater than soft timeout")
-        if len(self.resolved_annotator_service_secret.get_secret_value()) < 32:
-            raise ValueError("Production ANNOTATOR_SERVICE_SECRET must contain at least 32 characters")
+        annotator_secret = self.resolved_annotator_service_secret.get_secret_value()
+        if (
+            annotator_secret == _HISTORIC_DEFAULT_ANNOTATOR_SECRET
+            or len(annotator_secret) < 32
+        ):
+            raise ValueError(
+                "Production ANNOTATOR_SERVICE_SECRET must differ from the default "
+                "and contain at least 32 characters"
+            )
 
     def _validate_postgresql_url(self) -> None:
         try:

@@ -64,6 +64,9 @@ services:
       NUMBA_CACHE_DIR: /tmp/numba-cache
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
+      # A-02：内部服务令牌/门户会话签名密钥——历史默认值可伪造令牌（实证），
+      # production 校验拒绝默认值，compose 侧强制显式注入
+      ANNOTATOR_SERVICE_SECRET: ${ANNOTATOR_SERVICE_SECRET:?set ANNOTATOR_SERVICE_SECRET}
       TASK_BACKEND: celery
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:?set CELERY_BROKER_URL}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-}
@@ -178,6 +181,9 @@ services:
       APP_MODE: production
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
+      # A-02：内部服务令牌/门户会话签名密钥——历史默认值可伪造令牌（实证），
+      # production 校验拒绝默认值，compose 侧强制显式注入
+      ANNOTATOR_SERVICE_SECRET: ${ANNOTATOR_SERVICE_SECRET:?set ANNOTATOR_SERVICE_SECRET}
       TASK_BACKEND: celery
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:?set CELERY_BROKER_URL}
       REDIS_EVENTS_URL: ${REDIS_EVENTS_URL:?set REDIS_EVENTS_URL}
@@ -228,7 +234,9 @@ services:
       dockerfile: Dockerfile
       network: ${COMPOSE_BUILD_NETWORK:-host}
     ports:
-      - "${BACKEND_PORT:-8001}:8000"
+      # A-02：默认回环绑定——backend 直发端口不再暴露公网（nginx 是唯一入口；
+      # CI/本地探活走 127.0.0.1 不受影响，需外部访问时显式设 BACKEND_BIND_ADDRESS）
+      - "${BACKEND_BIND_ADDRESS:-127.0.0.1}:${BACKEND_PORT:-8001}:8000"
     environment:
       <<: *production-environment
       LLM_API_KEY: ${LLM_API_KEY:-}
@@ -264,12 +272,14 @@ services:
       dockerfile: Dockerfile
       network: ${COMPOSE_BUILD_NETWORK:-host}
     ports:
-      - "${ANNOTATOR_API_PORT:-8444}:8443"
+      - "${ANNOTATOR_BIND_ADDRESS:-127.0.0.1}:${ANNOTATOR_API_PORT:-8444}:8443"
     environment:
       ANNOTATOR_PORT: 8443
       ANNOTATOR_API_ORIGIN: ${ANNOTATOR_API_ORIGIN:-http://backend:8000}
       ANNOTATOR_PUBLIC_ORIGIN: ${ANNOTATOR_PUBLIC_ORIGIN:-http://localhost:8443}
       ANNOTATOR_COOKIE_SECURE: ${ANNOTATOR_COOKIE_SECURE:-true}
+      # A-02：与 backend 同源密钥（sidecar 签发内部令牌、backend 验签）
+      ANNOTATOR_SERVICE_SECRET: ${ANNOTATOR_SERVICE_SECRET:?set ANNOTATOR_SERVICE_SECRET}
     depends_on:
       backend:
         condition: service_started

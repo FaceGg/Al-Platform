@@ -16,6 +16,7 @@ class TestSettings(unittest.TestCase):
             "app_mode": "production",
             "database_url": "postgresql+psycopg://app:db-password@db/ml_platform",
             "secret_key": "j" * 32,
+            "annotator_service_secret": "annotator-service-secret-value-1234567890",
             "task_backend": "celery",
             "celery_broker_url": "redis://:broker-password@redis:6379/0",
             "redis_events_url": "redis://:events-password@redis:6379/1",
@@ -115,6 +116,19 @@ class TestSettings(unittest.TestCase):
     def test_production_rejects_empty_minio_bucket(self):
         with self.assertRaisesRegex(ValidationError, "MINIO_BUCKET"):
             Settings(**self.production_values(minio_bucket="   "))
+
+    def test_production_rejects_default_annotator_service_secret(self):
+        # A-02 回归：历史公开默认值可伪造内部令牌/门户 Cookie，必须拒绝
+        from app.config import _HISTORIC_DEFAULT_ANNOTATOR_SECRET
+
+        with self.assertRaisesRegex(ValidationError, "ANNOTATOR_SERVICE_SECRET"):
+            Settings(**self.production_values(
+                annotator_service_secret=_HISTORIC_DEFAULT_ANNOTATOR_SECRET,
+            ))
+
+    def test_production_rejects_short_annotator_service_secret(self):
+        with self.assertRaisesRegex(ValidationError, "ANNOTATOR_SERVICE_SECRET"):
+            Settings(**self.production_values(annotator_service_secret="short"))
 
     def test_complete_production_configuration_passes(self):
         production_settings = Settings(**self.production_values())

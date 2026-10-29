@@ -2,11 +2,17 @@ from app.engine.operator_contract import ArtifactDraft, OperatorContext, Operato
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
 from app.engine.export_paths import resolve_export_path
+from app.engine.path_guard import resolve_operator_read_path
 import pandas as pd
 import os
 import tempfile
 import urllib.request
 from pathlib import Path
+
+
+def _param(params, key, default=""):
+    """算子参数取值（集中一处，便于审计数据流）。"""
+    return params.get(key, default)
 
 
 def _dataset_export_result(data, frame: pd.DataFrame, path: Path) -> OperatorResult:
@@ -60,23 +66,26 @@ class CSVImport(BaseOperator):
         return True
 
     def _download_url(self, url, workspace_dir: Path | None = None):
-        with urllib.request.urlopen(url) as response:
-            suffix = ".csv"
-            if ".xls" in url.lower():
-                suffix = ".xlsx"
-            elif ".xlsx" in url.lower():
-                suffix = ".xlsx"
-            download_dir = None
-            if workspace_dir is not None:
-                download_dir = Path(workspace_dir) / "downloads"
-                download_dir.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(
-                delete=False,
-                suffix=suffix,
-                dir=download_dir,
-            ) as tmp:
-                tmp.write(response.read())
-                return tmp.name
+        # A-05：出站抓取统一走 services/outbound（SSRF 校验 + 逐跳重验跳转）
+        from app.services.outbound import fetch_url_bytes
+
+        content = fetch_url_bytes(url)
+        suffix = ".csv"
+        if ".xls" in url.lower():
+            suffix = ".xlsx"
+        elif ".xlsx" in url.lower():
+            suffix = ".xlsx"
+        download_dir = None
+        if workspace_dir is not None:
+            download_dir = Path(workspace_dir) / "downloads"
+            download_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=suffix,
+            dir=download_dir,
+        ) as tmp:
+            tmp.write(content)
+            return tmp.name
 
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         source = params.get("source", "local")
@@ -107,7 +116,10 @@ class CSVImport(BaseOperator):
                 downloaded_path = self._download_url(url, context.workspace_dir)
                 file_path = downloaded_path
             else:
-                file_path = params.get("file_path", "")
+                # A-04：读取路径强制落在上传目录/工作区内
+                file_path = resolve_operator_read_path(
+                    context, params.get("file_path", ""),
+                )
 
             if not file_path:
                 raise RuntimeError("File path or URL is required")
@@ -149,13 +161,9 @@ class CSVExport(BaseOperator):
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         data = inputs.get('data', [])
         df = pd.DataFrame(data)
-        path = resolve_export_path(
-            context,
-            self.id,
-            params.get('file_name'),
-            'csv',
-            legacy_file_path=params.get('file_path'),
-        )
+        # A-04：legacy file_path 已删除，旧参数值降级为文件名提示（basename 截取）
+        name_hint = params.get('file_name') or params.get('file_path')
+        path = resolve_export_path(context, self.id, name_hint, 'csv')
         sep = params.get('separator', ',').replace('\\t', '	')
         df.to_csv(
             path,
@@ -182,9 +190,10 @@ class ImageImport(BaseOperator):
     def validate(self, inputs): return True
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         import glob as _glob
-        path = params.get('file_path', '')
+        # A-04：目录/文件均须落在允许根内（含 glob 根）
+        path = resolve_operator_read_path(context, params.get('file_path', ''))
         pattern = params.get('pattern', '*.png')
-        files = _glob.glob(os.path.join(path, pattern)) if os.path.isdir(path) else ([path] if os.path.isfile(path) else [])
+        files = sorted(_glob.glob(str(path / pattern))) if path.is_dir() else ([str(path)] if path.is_file() else [])
         return OperatorResult(outputs={'data': [{'filename': os.path.basename(f), 'path': f} for f in files]})
 
 @register_operator
@@ -201,7 +210,8 @@ class JSONImport(BaseOperator):
     ]
     def validate(self, inputs): return True
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
-        path = params.get('file_path', '')
+        # A-04：JSON 读取路径守卫
+        path = resolve_operator_read_path(context, params.get('file_path', ''))
         orient = params.get('orient', 'records')
         if path and os.path.isfile(path):
             df = pd.read_json(path, orient=orient)
@@ -226,7 +236,8 @@ class ReadExcel(BaseOperator):
     ]
     def validate(self, inputs): return True
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
-        path = params.get('file_path', '')
+        # A-04：Excel 读取路径守卫
+        path = resolve_operator_read_path(context, params.get('file_path', ''))
         sheet = params.get('sheet_name', '0')
         try: sheet = int(sheet)
         except ValueError: pass
@@ -288,17 +299,17 @@ class ReadURL(BaseOperator):
     ]
     def validate(self, inputs): return True
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
-        url = params.get('url', '')
-        if not url: return OperatorResult(outputs={'data': []})
+        # A-05：出站抓取统一走 services/outbound（SSRF 校验 + 逐跳重验跳转）
+        from app.services.outbound import OutboundUrlError, fetch_url_frame
+
+        raw_url = _param(params, 'url')
+        if not raw_url: return OperatorResult(outputs={'data': []})
         try:
-            import urllib.request
-            with urllib.request.urlopen(url) as resp:
-                content = resp.read()
-            ft = params.get('file_type', 'csv')
-            buf = io.BytesIO(content)
-            df = pd.read_csv(buf) if ft == 'csv' else (pd.read_excel(buf) if ft == 'excel' else pd.read_json(buf))
+            df = fetch_url_frame(raw_url, _param(params, 'file_type', 'csv'))
             return OperatorResult(outputs={'data': df.to_dict(orient='records')})
-        except: return OperatorResult(outputs={'data': []})
+        except OutboundUrlError:
+            raise
+        except Exception: return OperatorResult(outputs={'data': []})
 
 @register_operator
 class WriteCSV(BaseOperator):
@@ -320,13 +331,9 @@ class WriteCSV(BaseOperator):
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         data = inputs.get('data', [])
         df = pd.DataFrame(data)
-        path = resolve_export_path(
-            context,
-            self.id,
-            params.get('file_name'),
-            'csv',
-            legacy_file_path=params.get('file_path'),
-        )
+        # A-04：legacy file_path 已删除，旧参数值降级为文件名提示（basename 截取）
+        name_hint = params.get('file_name') or params.get('file_path')
+        path = resolve_export_path(context, self.id, name_hint, 'csv')
         sep = params.get('separator', ',').replace('\\t', '	')
         df.to_csv(
             path,
