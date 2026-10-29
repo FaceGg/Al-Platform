@@ -82,6 +82,7 @@ class TestValidateOutboundUrl(unittest.TestCase):
 
 class TestOperatorWiring(unittest.TestCase):
     def test_read_url_rejects_internal_target(self):
+        import app.operators.io_operators  # noqa: F401  显式注册（独立子进程）
         from app.engine.registry import OperatorRegistry
         from tests.operator_test_utils import execute_operator
 

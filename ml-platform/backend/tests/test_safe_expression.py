@@ -70,10 +70,16 @@ class TestSafeExpression(unittest.TestCase):
 
 
 class TestGenerateAttributesOperator(unittest.TestCase):
-    def test_operator_rejects_escape_expression(self):
+    def _operator(self):
+        # run_suite 每模块独立子进程：显式 import 触发注册（与 test_all_operators 同口径）
+        import app.operators.blending  # noqa: F401
+
         from app.engine.registry import OperatorRegistry
 
-        operator = OperatorRegistry.get("generate_attributes")
+        return OperatorRegistry.get("generate_attributes")
+
+    def test_operator_rejects_escape_expression(self):
+        operator = self._operator()
         with self.assertRaises(ValueError) as raised:
             operator.execute(
                 None,
@@ -86,9 +92,7 @@ class TestGenerateAttributesOperator(unittest.TestCase):
         self.assertIn("Expression evaluation failed", str(raised.exception))
 
     def test_operator_keeps_legitimate_expression(self):
-        from app.engine.registry import OperatorRegistry
-
-        operator = OperatorRegistry.get("generate_attributes")
+        operator = self._operator()
         result = operator.execute(
             None,
             {"data": [{"x": 1, "y": 2}]},

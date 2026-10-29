@@ -311,33 +311,33 @@ class TestWriteAsTextOperator(unittest.TestCase):
         self.assertEqual(op.category, "utility")
 
     def test_writes_text_file_and_passes_data_through(self):
+        # A-04：导出一律落工作区 exports（legacy 任意路径写已删除，file_path 仅作名提示）
         op = OperatorRegistry.get("write_as_text")
-        path = os.path.join(self.tmpdir.name, "out.txt")
         inputs = {"data": [{"a": 1}, {"a": 2}]}
-        params = {"file_path": path, "format": "text"}
-        outputs = execute_operator(op, inputs, params)
+        params = {"file_path": "out.txt", "format": "text"}
+        outputs = execute_operator(op, inputs, params, workspace_dir=Path(self.tmpdir.name))
         self.assertEqual(outputs["data"], [{"a": 1}, {"a": 2}])
-        self.assertTrue(Path(path).is_file())
-        content = Path(path).read_text(encoding="utf-8")
-        self.assertIn("Rows: 2", content)
+        path = Path(self.tmpdir.name) / "exports" / "out.txt"
+        self.assertTrue(path.is_file())
+        self.assertIn("Rows: 2", path.read_text(encoding="utf-8"))
 
     def test_writes_json_file(self):
         op = OperatorRegistry.get("write_as_text")
-        path = os.path.join(self.tmpdir.name, "sub", "out.json")
         inputs = {"data": [{"a": 1}]}
-        params = {"file_path": path, "format": "json"}
-        execute_operator(op, inputs, params)
-        self.assertTrue(Path(path).is_file())
+        params = {"file_path": "out.json", "format": "json"}
+        execute_operator(op, inputs, params, workspace_dir=Path(self.tmpdir.name))
+        path = Path(self.tmpdir.name) / "exports" / "out.json"
+        self.assertTrue(path.is_file())
         # pandas to_json(orient="records", indent=2) emits "a":1 with no space
-        self.assertIn('"a":1', Path(path).read_text(encoding="utf-8"))
+        self.assertIn('"a":1', path.read_text(encoding="utf-8"))
 
     def test_writes_csv_file(self):
         op = OperatorRegistry.get("write_as_text")
-        path = os.path.join(self.tmpdir.name, "out.csv")
         inputs = {"data": [{"a": 1, "b": 2}]}
-        params = {"file_path": path, "format": "csv"}
-        execute_operator(op, inputs, params)
-        content = Path(path).read_text(encoding="utf-8")
+        params = {"file_path": "out.csv", "format": "csv"}
+        execute_operator(op, inputs, params, workspace_dir=Path(self.tmpdir.name))
+        path = Path(self.tmpdir.name) / "exports" / "out.csv"
+        content = path.read_text(encoding="utf-8")
         self.assertIn("a,b", content)
 
     def test_empty_file_path_uses_workspace_export_default(self):

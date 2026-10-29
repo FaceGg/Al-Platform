@@ -350,6 +350,8 @@ jobs:
       APP_MODE: production
       DATABASE_URL: postgresql+psycopg://postgres:test-password@127.0.0.1:5432/ml_platform
       SECRET_KEY: ci-production-secret-key-with-at-least-32-characters
+      # A-02：production 校验拒绝默认值（alembic/uvicorn 均读 Settings）
+      ANNOTATOR_SERVICE_SECRET: ci-annotator-service-secret-at-least-32-bytes
       MLFLOW_TRACKING_URI: http://127.0.0.1:5000
       MLFLOW_BACKEND_STORE_URI: postgresql+psycopg://postgres:test-password@127.0.0.1:5432/ml_platform
       MLFLOW_ARTIFACT_ROOT: s3://ml-platform-test/mlflow

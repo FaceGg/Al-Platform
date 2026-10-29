@@ -65,7 +65,7 @@ class TestExcelAndExportSettings(unittest.TestCase):
                 "skiprows": 1,
                 "usecols": "A:B",
                 "nrows": 1,
-            })
+            }, workspace_dir=Path(directory))
 
         self.assertEqual(result["data"], [{"id": 1, "value": 10}])
 
