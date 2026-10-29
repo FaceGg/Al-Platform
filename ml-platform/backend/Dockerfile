@@ -21,16 +21,24 @@ RUN python3.11 -c "import sqlite3"
 RUN addgroup -S -g 1000 app && adduser -S -D -H -h /home/app -u 1000 -G app app
 COPY requirements.txt .
 # Keep the CPU image free of XGBoost's Linux NCCL dependency.
-# wheelhouse（本地 wheel）优先、网络兜底；retries/resume/timeout 针对大包
-# 下载停滞（2026-10-28 事故：131MB xgboost 下载停滞阻塞部署）。--no-index
-# 完全离线形态要求 wheelhouse 全量跟进且 CI/安装包链路不可复现，已回退。
+# wheelhouse 非空（本机自持 144+ 轮子）→ 纯离线安装，网络好坏不影响构建
+# （2026-10-28 事故：代理宕机 + PyPI 82KB/s，131MB 下载阻塞部署 1 小时）；
+# wheelhouse 为空（CI/全新 checkout，.keep 占位）→ 走网络安装（CI 网络快）。
+# 维护约定：requirements 升版本必须同步 pip download 补 wheelhouse 对应 wheel。
 RUN --mount=type=bind,target=/wheels,source=wheelhouse \
     --mount=type=cache,target=/root/.cache/pip \
     set -eu; \
-    python3.11 -m pip install --find-links /wheels --no-deps --retries 10 --resume-retries 20 --timeout 120 \
+    if [ -n "$(ls /wheels 2>/dev/null | head -1)" ]; then \
+        echo "wheelhouse populated: offline install"; \
+        INDEX_FLAGS="--no-index"; \
+    else \
+        echo "wheelhouse empty: online install"; \
+        INDEX_FLAGS=""; \
+    fi; \
+    python3.11 -m pip install $INDEX_FLAGS --find-links /wheels --no-deps --retries 10 --resume-retries 20 --timeout 120 \
         "xgboost==3.2.*" "catboost==1.2.*"; \
     sed '/^xgboost==/d; /^catboost==/d' requirements.txt > /tmp/requirements-without-boost.txt; \
-    python3.11 -m pip install --find-links /wheels --retries 10 --resume-retries 20 --timeout 120 \
+    python3.11 -m pip install $INDEX_FLAGS --find-links /wheels --retries 10 --resume-retries 20 --timeout 120 \
         graphviz plotly six \
         -r /tmp/requirements-without-boost.txt
 COPY . .
