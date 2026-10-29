@@ -157,6 +157,24 @@
 .v2-iconbtn { background: none; border: none; color: var(--v2-sub); cursor: pointer; font-size: 14px; padding: 4px; border-radius: 6px; }
 .v2-iconbtn:hover { color: var(--v2-txt); background: var(--v2-panel); }
 .v2-lang { border: 1px solid var(--v2-line); background: var(--v2-bg2); color: var(--v2-sub); border-radius: 7px; font-size: 14.5px; padding: 2px 8px; cursor: pointer; }
+/* 顶栏分段控件：语言两段 + 主题图标段，统一尺寸、无缝相连。 */
+.v2-seg {
+  display: inline-flex; align-items: stretch; border: 1px solid var(--v2-line);
+  border-radius: 8px; overflow: hidden; background: var(--v2-bg2);
+}
+.v2-seg-btn {
+  width: 42px; height: 30px; border: none; background: none;
+  color: var(--v2-sub); font-size: 13.5px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: .18s; line-height: 1;
+}
+.v2-seg-btn + .v2-seg-btn { border-left: 1px solid var(--v2-line); }
+.v2-seg-btn:hover { color: var(--v2-txt); background: var(--v2-panel); }
+.v2-seg-btn.on {
+  color: #fff;
+  background: linear-gradient(135deg, rgba(47,155,245,.3), rgba(47,155,245,.12));
+}
+.v2-seg-btn .anticon { font-size: 14px; }
 .v2-lang.on { color: #fff; background: rgba(47, 155, 245, .22); border-color: rgba(92, 178, 255, .45); }
 
 /* ===== 中心布局 ===== */

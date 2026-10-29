@@ -223,27 +223,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="v2-topright">
             <span className="v2-env-chip" style={{ display: "none" }} />
             <NotificationCenter />
-            <button
-              type="button"
-              className="v2-lang"
-              onClick={() => setLang("zh")}
-              style={{ ...(lang === "zh" ? onLangStyle : {}) }}
-            >中</button>
-            <button
-              type="button"
-              className="v2-lang"
-              onClick={() => setLang("en")}
-              style={{ ...(lang === "en" ? onLangStyle : {}) }}
-            >EN</button>
-            <button
-              type="button"
-              className="v2-iconbtn"
-              onClick={toggleTheme}
-              aria-label={theme === "dark" ? (zh ? "切换到明亮模式" : "Switch to light mode") : (zh ? "切换到暗黑模式" : "Switch to dark mode")}
-              title={theme === "dark" ? (zh ? "切换到明亮模式" : "Switch to light mode") : (zh ? "切换到暗黑模式" : "Switch to dark mode")}
-            >
-              {theme === "dark" ? <SunOutlined /> : <MoonOutlined />}
-            </button>
+            <div className="v2-seg" role="group" aria-label={zh ? "语言与主题" : "Language & theme"}>
+              <button type="button" className={`v2-seg-btn${lang === "zh" ? " on" : ""}`}
+                onClick={() => setLang("zh")} title="中文">中</button>
+              <button type="button" className={`v2-seg-btn${lang === "en" ? " on" : ""}`}
+                onClick={() => setLang("en")} title="English">EN</button>
+              <button type="button" className="v2-seg-btn"
+                onClick={toggleTheme}
+                aria-label={theme === "dark" ? (zh ? "切换到明亮模式" : "Switch to light mode") : (zh ? "切换到暗黑模式" : "Switch to dark mode")}
+                title={theme === "dark" ? (zh ? "切换到明亮模式" : "Switch to light mode") : (zh ? "切换到暗黑模式" : "Switch to dark mode")}
+              >
+                {theme === "dark" ? <SunOutlined /> : <MoonOutlined />}
+              </button>
+            </div>
             <Dropdown menu={{ items: userMenuItems }}>
               <span className="user-identity" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <span style={{ fontSize: 12 }}>{displayUsername.slice(0, 12)}</span>
@@ -293,7 +285,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   );
 }
 
-const onLangStyle: React.CSSProperties = { color: "#fff", background: "rgba(47,155,245,.22)", borderColor: "rgba(92,178,255,.45)" };
 
 function tagLabel(tag: string, zh: boolean) {
   if (tag === "NEW") return zh ? "新" : "NEW";
