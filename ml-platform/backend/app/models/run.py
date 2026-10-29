@@ -12,7 +12,7 @@ class WorkflowRun(Base):
     __tablename__ = "workflow_runs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
+    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(String(16), default="pending")
     started_at = Column(DateTime)
     finished_at = Column(DateTime)
@@ -40,7 +40,7 @@ class NodeRun(Base):
     __tablename__ = "node_runs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True)
     node_id = Column(UUID(as_uuid=True), ForeignKey("nodes.id", ondelete="SET NULL"))
     status = Column(String(16), default="pending")
     attempt = Column(Integer, default=1, nullable=False)

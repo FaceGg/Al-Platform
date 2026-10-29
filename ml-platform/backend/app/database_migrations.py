@@ -191,6 +191,9 @@ _SQLITE_INDEXES = {
         "ix_workflows_project_id": "project_id",
         "ix_workflows_created_by": "created_by",
     },
+    "workflow_runs": {
+        "ix_workflow_runs_workflow_id": "workflow_id",
+    },
     "nodes": {
         "ix_nodes_workflow_id": "workflow_id",
     },

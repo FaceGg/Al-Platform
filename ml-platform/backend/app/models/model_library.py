@@ -12,7 +12,7 @@ class ModelLibrary(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(256), nullable=False)
     algorithm_id = Column(UUID(as_uuid=True), ForeignKey("algorithms.id", ondelete="SET NULL"), nullable=True)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     version = Column(String(32), default="v1")
     status = Column(String(32), default="training")

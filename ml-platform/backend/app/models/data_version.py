@@ -21,8 +21,8 @@ class DatasetVersion(Base):
     content_hash = Column(String(128), nullable=False)
     schema_hash = Column(String(128), nullable=False)
     parse_contract = Column(JSON, nullable=False, default=dict)
-    original_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id"), nullable=True)
-    normalized_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id"), nullable=True)
+    original_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id"), nullable=True, index=True)
+    normalized_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id"), nullable=True, index=True)
     archived_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
@@ -56,7 +56,7 @@ class DatasetSample(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     dataset_version_id = Column(UUID(as_uuid=True), ForeignKey("dataset_versions.id", ondelete="CASCADE"), nullable=False, index=True)
-    sample_id = Column(String(256), nullable=False)
+    sample_id = Column(String(256), nullable=False, index=True)
     row_index = Column(Integer, nullable=False)
     values = Column(JSON, nullable=False)
 

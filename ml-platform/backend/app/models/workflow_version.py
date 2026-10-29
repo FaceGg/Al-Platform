@@ -12,7 +12,7 @@ class WorkflowVersion(Base):
     __table_args__ = (UniqueConstraint("workflow_id", "version", name="uq_workflow_version"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
+    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True)
     version = Column(Integer, nullable=False)
     name = Column(String(128), nullable=False)
     description = Column(Text, default="")

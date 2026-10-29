@@ -18,6 +18,7 @@ _INDEXES = (
     ("ix_projects_owner_id", "projects", ["owner_id"]),
     ("ix_workflows_project_id", "workflows", ["project_id"]),
     ("ix_workflows_created_by", "workflows", ["created_by"]),
+    ("ix_workflow_runs_workflow_id", "workflow_runs", ["workflow_id"]),
     ("ix_nodes_workflow_id", "nodes", ["workflow_id"]),
     ("ix_node_runs_run_id", "node_runs", ["run_id"]),
     ("ix_edges_workflow_id", "edges", ["workflow_id"]),

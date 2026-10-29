@@ -98,19 +98,40 @@ def run_s1(
         experience_references=experience_references,
         guidance=guidance,
     )
-    try:
-        reply, usage = chat_completion(
-            db,
-            config=config,
-            messages=messages,
-            temperature=0.2,
-            max_tokens=8000,
-            purpose="agent_s1",
-            actor=actor,
-            timeout_floor=AGENT_STAGE_TIMEOUT_FLOOR,
-        )
-    except Exception as error:  # noqa: BLE001 - surfaced as retryable failure
-        return None, f"llm_call_failed: {type(error).__name__}: {error}", {}
+    # 瞬时网络故障自动重试（ReadTimeout/ConnectError）：本周三个任务死于
+    # S1 偶发超时（a1d8bd26/486ea7f9/a3673016），重试 2 次可救回绝大多数；
+    # 退避 5s/15s。契约类失败在调用成功后才发生，不进入此循环。
+    import time as _time
+
+    reply: str | None = None
+    usage: dict = {}
+    last_network_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            reply, usage = chat_completion(
+                db,
+                config=config,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=8000,
+                purpose="agent_s1",
+                actor=actor,
+                timeout_floor=AGENT_STAGE_TIMEOUT_FLOOR,
+            )
+            last_network_error = None
+            break
+        except Exception as error:  # noqa: BLE001 - 网络类失败重试，其余上抛
+            name = type(error).__name__
+            if name not in {"ReadTimeout", "ConnectError", "ConnectTimeout", "RemoteProtocolError"}:
+                return None, f"llm_call_failed: {name}: {error}", {}
+            last_network_error = error
+            if attempt < 2:
+                _time.sleep(5 * (attempt + 1))
+    if last_network_error is not None:
+        return None, (
+            f"llm_call_failed: {type(last_network_error).__name__}: {last_network_error}"
+            " (3 attempts incl. backoff)"
+        ), {}
     if not reply:
         return None, "llm_empty_completion", usage or {}
     try:
