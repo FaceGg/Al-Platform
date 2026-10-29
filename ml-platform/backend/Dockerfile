@@ -21,15 +21,16 @@ RUN python3.11 -c "import sqlite3"
 RUN addgroup -S -g 1000 app && adduser -S -D -H -h /home/app -u 1000 -G app app
 COPY requirements.txt .
 # Keep the CPU image free of XGBoost's Linux NCCL dependency.
-# --no-index: 完全离线安装（wheelhouse 覆盖全部依赖）——代理网络不稳时
-# 构建不再卡 PyPI 下载（2026-10-28 事故：131MB xgboost 下载停滞阻塞部署）。
+# wheelhouse（本地 wheel）优先、网络兜底；retries/resume/timeout 针对大包
+# 下载停滞（2026-10-28 事故：131MB xgboost 下载停滞阻塞部署）。--no-index
+# 完全离线形态要求 wheelhouse 全量跟进且 CI/安装包链路不可复现，已回退。
 RUN --mount=type=bind,target=/wheels,source=wheelhouse \
     --mount=type=cache,target=/root/.cache/pip \
     set -eu; \
-    python3.11 -m pip install --no-index --find-links /wheels --no-deps \
+    python3.11 -m pip install --find-links /wheels --no-deps --retries 10 --resume-retries 20 --timeout 120 \
         "xgboost==3.2.*" "catboost==1.2.*"; \
     sed '/^xgboost==/d; /^catboost==/d' requirements.txt > /tmp/requirements-without-boost.txt; \
-    python3.11 -m pip install --no-index --find-links /wheels \
+    python3.11 -m pip install --find-links /wheels --retries 10 --resume-retries 20 --timeout 120 \
         graphviz plotly six \
         -r /tmp/requirements-without-boost.txt
 COPY . .
