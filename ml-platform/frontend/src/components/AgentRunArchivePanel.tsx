@@ -49,6 +49,9 @@ const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   s4: { zh: "硬门禁与评审", en: "Gates & review" },
 };
 
+/** 活跃态：结果块不渲染失败判定（running/pending 不是"未通过"）。 */
+const ACTIVE_STATUSES = new Set(["pending", "running"]);
+
 /** 终态人性化说明：失败给信号+归因+建议，而非裸错误码（ed95d930 类诉求）。 */
 const TERMINAL_EXPLAIN: Record<string, { signal: string; why: string; advice: string }> = {
   AGENT_MAX_ROUNDS: {
@@ -247,15 +250,31 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
         ),
       });
     }
-    list.push({
-      id: "final",
-      label: zh ? "结果" : "Result",
-      node: (
-        <div className="agent-msg" id="sec-final">
-          <TerminalOutcome archive={archive} zh={zh} />
-        </div>
-      ),
-    });
+    // 结果块只在终态渲染——running/pending 不是"未通过"（a1d8bd26 误报修复）。
+    if (ACTIVE_STATUSES.has(archive.status)) {
+      list.push({
+        id: "final",
+        label: zh ? "进度" : "Progress",
+        node: (
+          <div className="agent-msg" id="sec-final">
+            <div className="meta"><b>{zh ? "当前进度" : "Progress"}</b></div>
+            <div className="body">{zh
+              ? `正在执行 ${STAGE_LABELS[archive.current_stage]?.zh ?? archive.current_stage}，新阶段产物将自动出现在此处。`
+              : `Running ${archive.current_stage}; new artifacts appear automatically.`}</div>
+          </div>
+        ),
+      });
+    } else {
+      list.push({
+        id: "final",
+        label: zh ? "结果" : "Result",
+        node: (
+          <div className="agent-msg" id="sec-final">
+            <TerminalOutcome archive={archive} zh={zh} />
+          </div>
+        ),
+      });
+    }
     return list;
   }, [archive, zh]);
 
